@@ -17,6 +17,7 @@ var camera_state: CameraState
 var _screenshot_path := ""
 var _screenshot_timer := 0.0
 var _blackout_at := -1.0
+var _shot_at := 2.0
 
 
 func _ready() -> void:
@@ -50,6 +51,10 @@ func _ready() -> void:
 			camera_state.set_zoom_t(float(String(arg).trim_prefix("--zoom=")))
 		elif String(arg) == "--blackout":
 			_blackout_at = 0.8  # trigger partway in so the ramps settle on film
+		elif String(arg).begins_with("--shot-at="):
+			_shot_at = float(String(arg).trim_prefix("--shot-at="))
+		elif String(arg).begins_with("--cut-feeder="):
+			sim_host.sim.grid.force_open(String(arg).trim_prefix("--cut-feeder="))
 
 
 func _build_environment(render_data: Dictionary) -> void:
@@ -173,6 +178,7 @@ func _build_city_view(render_data: Dictionary) -> void:
 	city_view.name = "CityView"
 	add_child(city_view)
 	city_view.setup(render_model, render_data)
+	sim_host.ticked.connect(_on_sim_batch)
 	# Streetlights: one every 4th road tile (32 m), doc 11 §2.10.
 	var lamps: Array = []
 	var next_lamp_id := 100000
@@ -191,22 +197,48 @@ func _build_city_view(render_data: Dictionary) -> void:
 	streetlights.setup(render_model, render_data, lamps)
 
 
-## Demo controls: B blacks out the southern feeder (sim + render); N restores.
+## Sim → render event bridge: translate string building ids to render ids and
+## feed the model. The renderer follows the SIMULATION — nothing is staged.
+func _on_sim_batch(batch: Array) -> void:
+	var translated: Array = []
+	for event in batch:
+		match StringName(String(event["type"])):
+			&"BlockDarkChanged":
+				translated.append(event)
+			&"BuildingPowerChanged":
+				var rid := _render_id(String(event.get("building", "")))
+				if rid >= 0:
+					translated.append({"type": &"BuildingPowerChanged",
+							"building": rid, "state": event.get("state", &"LIT")})
+			&"building_damaged", &"building_destroyed", &"building_completed":
+				var rid2 := _render_id_from_int(event.get("building", -1))
+				if rid2 >= 0:
+					var out: Dictionary = event.duplicate()
+					out["building"] = rid2
+					translated.append(out)
+			&"PowerRestored":
+				pass  # per-block relights arrive via BlockDarkChanged(false)
+			_:
+				pass
+	if not translated.is_empty():
+		render_model.apply_events(translated)
+
+
+func _render_id(sim_id: String) -> int:
+	var b: Building = sim_host.sim.buildings.get(sim_id)
+	return b.id if b != null else -1
+
+
+func _render_id_from_int(value: Variant) -> int:
+	return int(value) if typeof(value) != TYPE_STRING else _render_id(String(value))
+
+
+## Demo controls act on the SIM only; the renderer reacts through events.
 func _trigger_blackout_demo(active: bool) -> void:
-	var south_blocks := {}
-	for id in sim_host.sim.buildings.keys():
-		var transformer := sim_host.sim.grid.attachment_of(id)
-		if transformer != "" \
-				and String(sim_host.sim.grid.component(transformer)["parent"]) == "F_SOUTH":
-			south_blocks[String(sim_host.sim._building_records[id]["block"])] = true
 	if active:
 		sim_host.sim.grid.force_open("F_SOUTH")
-		for block_id in south_blocks:
-			render_model.plan_blackout(block_id)
 	else:
 		sim_host.sim.grid.force_close("F_SOUTH")
-		for block_id in south_blocks:
-			render_model.plan_relight(block_id)
 
 
 func _process(delta: float) -> void:
@@ -219,7 +251,7 @@ func _process(delta: float) -> void:
 		_blackout_at = -1.0
 	if _screenshot_path != "":
 		_screenshot_timer += delta
-		if _screenshot_timer > 2.0:
+		if _screenshot_timer > _shot_at:
 			var image := get_viewport().get_texture().get_image()
 			image.save_png(_screenshot_path)
 			print("screenshot saved: ", _screenshot_path)

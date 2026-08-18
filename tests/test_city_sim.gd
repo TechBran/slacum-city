@@ -136,3 +136,28 @@ func test_tutorial_tags_resolve() -> void:
 	assert_false(sim.loader.resolve_tag("tutorial_transformer").is_empty())
 	assert_false(sim.loader.resolve_tag("tutorial_land_block").is_empty())
 	assert_false(sim.loader.resolve_tag("tutorial_pump").is_empty())
+
+
+func test_block_dark_events_drive_the_renderer_contract() -> void:
+	# The sim emits BlockDarkChanged on transitions (report 98 C-38) — the
+	# render model's blackout ceremony consumes exactly this event.
+	var sim := CitySim.boot_from_files()
+	sim.advance_hours(1.0)
+	sim.bus.drain()
+	sim.grid.force_open("F_SOUTH")
+	sim.advance_hours(0.1)  # > hysteresis window
+	var dark_events: Array = []
+	for event in sim.bus.drain():
+		if event["type"] == &"BlockDarkChanged" and bool(event["block_dark"]):
+			dark_events.append(event)
+	assert_true(dark_events.size() >= 1, "southern blocks report dark")
+	for event in dark_events:
+		assert_almost_eq(float(event["powered_fraction"]), 0.0, 1e-9)
+	# Restore: the same channel carries the relight.
+	sim.grid.force_close("F_SOUTH")
+	sim.advance_hours(0.1)
+	var relit := 0
+	for event in sim.bus.drain():
+		if event["type"] == &"BlockDarkChanged" and not bool(event["block_dark"]):
+			relit += 1
+	assert_true(relit >= 1, "relight arrives on the same event channel")

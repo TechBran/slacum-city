@@ -71,6 +71,8 @@ var _building_records: Dictionary = {}  # id -> starter record (block, tags…)
 var _block_to_district: Dictionary = {}
 var _last_demands: Dictionary = {}
 var _water_kw_by_building: Dictionary = {}  # water_facility id -> Σ hosted variant kW
+var _block_dark_weights: Dictionary = {}  # building id -> pop+jobs weight
+var _prev_block_dark: Dictionary = {}  # block id -> bool
 var boot_errors: PackedStringArray = []
 
 
@@ -204,6 +206,9 @@ func _boot_districts() -> void:
 	for d in loader.districts:
 		for block_id in d.get("blocks", []):
 			_block_to_district[String(block_id)] = String(d["id"])
+	for id in _sorted(buildings):
+		var b: Building = buildings[id]
+		_block_dark_weights[id] = int(b.stats.get("population", 0)) + int(b.stats.get("jobs", 0))
 	# The city is born already inhabited: aggregates are live from tick 0, so
 	# the first settled hour sees real employment, not a zero warm-up.
 	_rollup_district_population()
@@ -594,6 +599,18 @@ class ReportPhaseSystem extends SimSystem:
 			sim.bus.emit(StringName(String(event["type"])), event)
 		for event in sim.events.drain_events():
 			sim.bus.emit(StringName(String(event["type"])), event)
+		# Block-dark transitions (report 98 C-38): the renderer's blackout /
+		# relight ceremony is driven by these, never by direct calls.
+		var fractions := sim.grid.block_dark_fractions(sim._block_dark_weights)
+		for block_id in fractions:
+			var dark: bool = fractions[block_id]["dark"]
+			if bool(sim._prev_block_dark.get(block_id, false)) != dark:
+				sim._prev_block_dark[block_id] = dark
+				sim.bus.emit(&"BlockDarkChanged", {
+					"block_id": block_id, "block_dark": dark,
+					"dark_fraction": fractions[block_id]["fraction"],
+					"powered_fraction": 0.0 if dark else 1.0,
+				})
 	func advance_coarse(ctx: TimeContext) -> void:
 		advance_fine(ctx)
 
