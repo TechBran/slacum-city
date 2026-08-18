@@ -98,7 +98,11 @@ func _upload_all() -> void:
 			mm.visible_instance_count = bucket.visible_count
 
 
-func refresh(delta: float, hour: float) -> void:
+func refresh(delta: float, hour: float, camera_pos: Vector3 = Vector3.ZERO) -> void:
 	model.set_hour(hour)
 	model.advance(delta)
+	# advance() ramps the records; flush_dirty() is what writes them into the
+	# bucket mirrors. Unbudgeted here — bring-up scale; the streaming pass
+	# adopts the per-frame write budget.
+	model.flush_dirty(camera_pos, 1000000)
 	_upload_all()

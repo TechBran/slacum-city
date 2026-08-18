@@ -12,10 +12,13 @@ const PARCEL_TILES := 3
 
 var render_model: RenderStateModel
 var city_view: CityView
+var streetlights: StreetlightView
 var environment_controller: EnvironmentController
 var _screenshot_path := ""
 var _hour := 19.0
 var _timer := 0.0
+var _shot_at := 2.0
+var _blackout_at := -1.0
 var _cam_pos := Vector3(90.0, 210.0, 900.0)
 var _cam_look := Vector3(384.0, 70.0, 340.0)
 
@@ -41,6 +44,10 @@ func _ready() -> void:
 			_cam_pos = _parse_vec(s.trim_prefix("--cam="))
 		elif s.begins_with("--look="):
 			_cam_look = _parse_vec(s.trim_prefix("--look="))
+		elif s.begins_with("--shot-at="):
+			_shot_at = float(s.trim_prefix("--shot-at="))
+		elif s.begins_with("--blackout-at="):
+			_blackout_at = float(s.trim_prefix("--blackout-at="))
 
 	var render_data: Dictionary = StarterCityLoader.read_json("res://data/render.json")
 	_build_environment(render_data)
@@ -176,14 +183,44 @@ func _build_city(render_data: Dictionary) -> void:
 	city_view = CityView.new()
 	add_child(city_view)
 	city_view.setup(render_model, render_data)
+	_build_streetlights(render_data)
+
+
+func _build_streetlights(render_data: Dictionary) -> void:
+	var lamps: Array = []
+	var next_id := 100000
+	var span := CHUNKS * 128.0
+	for i in CHUNKS + 1:
+		var line := i * 128.0
+		var along := 16.0
+		while along < span:
+			var chunk_a := mini(int(along / 128.0), CHUNKS - 1)
+			var chunk_l := mini(i, CHUNKS - 1)
+			lamps.append({"id": next_id, "block_id": "C_%d_%d" % [chunk_a, chunk_l],
+					"pos": Vector3(along, 0.0, line - 6.0)})
+			next_id += 1
+			lamps.append({"id": next_id, "block_id": "C_%d_%d" % [chunk_l, chunk_a],
+					"pos": Vector3(line + 6.0, 0.0, along)})
+			next_id += 1
+			along += 32.0
+	streetlights = StreetlightView.new()
+	add_child(streetlights)
+	streetlights.setup(render_model, render_data, lamps)
 
 
 func _process(delta: float) -> void:
 	environment_controller.apply(_hour, delta)
-	city_view.refresh(delta, _hour)
+	city_view.refresh(delta, _hour, _cam_pos)
+	streetlights.refresh()
+	_timer += delta
+	if _blackout_at >= 0.0 and _timer >= _blackout_at:
+		_blackout_at = -1.0
+		for cz in CHUNKS:
+			for cx in range(3, CHUNKS):
+				render_model.plan_blackout("C_%d_%d" % [cx, cz])
+		print("blackout: eastern chunks cut")
 	if _screenshot_path != "":
-		_timer += delta
-		if _timer > 2.0:
+		if _timer > _shot_at:
 			get_viewport().get_texture().get_image().save_png(_screenshot_path)
 			print("screenshot saved: ", _screenshot_path)
 			get_tree().quit()

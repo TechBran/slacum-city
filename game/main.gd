@@ -10,6 +10,7 @@ extends Node3D
 var sim_host: SimHost
 var render_model: RenderStateModel
 var city_view: CityView
+var streetlights: StreetlightView
 var environment_controller: EnvironmentController
 var camera_rig: CameraRig
 var camera_state: CameraState
@@ -172,6 +173,22 @@ func _build_city_view(render_data: Dictionary) -> void:
 	city_view.name = "CityView"
 	add_child(city_view)
 	city_view.setup(render_model, render_data)
+	# Streetlights: one every 4th road tile (32 m), doc 11 §2.10.
+	var lamps: Array = []
+	var next_lamp_id := 100000
+	var world := sim_host.sim.world
+	for z in TileGrid.SIZE:
+		for x in TileGrid.SIZE:
+			if world.grid.has_flag(x, z, TileGrid.FLAG_ROAD) and (x + z) % 4 == 0:
+				var block := world.block_of_tile(x, z)
+				lamps.append({"id": next_lamp_id,
+						"block_id": block.id if block != null else "",
+						"pos": Vector3(x * 8.0 + 4.0, 0.0, z * 8.0 + 4.0)})
+				next_lamp_id += 1
+	streetlights = StreetlightView.new()
+	streetlights.name = "Streetlights"
+	add_child(streetlights)
+	streetlights.setup(render_model, render_data, lamps)
 
 
 ## Demo controls: B blacks out the southern feeder (sim + render); N restores.
@@ -195,7 +212,8 @@ func _trigger_blackout_demo(active: bool) -> void:
 func _process(delta: float) -> void:
 	var hour := sim_host.hour_of_day_float()
 	environment_controller.apply(hour, delta)
-	city_view.refresh(delta, hour)
+	city_view.refresh(delta, hour, camera_rig.camera.global_position)
+	streetlights.refresh()
 	if _blackout_at >= 0.0 and _screenshot_timer >= _blackout_at:
 		_trigger_blackout_demo(true)
 		_blackout_at = -1.0
