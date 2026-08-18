@@ -1,0 +1,3640 @@
+{
+ "schema_version": 1,
+ "generator_version": 3,
+ "_owner": "doc 11 \u00a73.2 (rendering & performance). Generator input for tools/gen_graybox.gd.",
+ "_generator": "tools/gen_building_shapes.py",
+ "_roster_note": "The shipped roster is data/buildings.json's 12 archetypes (doc 02), not doc 11 \u00a72.14's 15-row placeholder table; doc11_id maps each shipped archetype onto the \u00a72.14 silhouette row it realises. Tri budgets, lod1_volume_keep_frac and the tall-archetype list are read from data/render.json \u00a78 'lod' and are never restated here.",
+ "floor_height_m": 3.5,
+ "tile_m": 8.0,
+ "window_spacing_x_m": 3.2,
+ "uv0_atlas_cells": 4,
+ "ao": {
+  "_rule": "doc 11 \u00a72.14 baked vertex-colour AO table, written to COLOR.rgb as a multiplier.",
+  "default": 1.0,
+  "facade_base": 0.55,
+  "facade_band_m": 3.0,
+  "inner_corner": 0.7,
+  "inner_corner_dist_m": 1.0,
+  "overhang_underside": 0.45,
+  "roof_prop_contact": 0.65,
+  "roof_prop_contact_m": 0.5
+ },
+ "level_markers": {
+  "_rule": "Cumulative per doc 11 \u00a72.14: L1 none; L2 +1 rooftop box; L3 +setback at 60% height (authored in blocks); L4 +crown band + 2 masts; L5 +spire with blinking red aviation beacon. Sizes are proportional to the top block so a house does not grow a skyscraper mast.",
+  "sequence": [
+   "none",
+   "rooftop_box",
+   "setback",
+   "crown_band_plus_masts",
+   "spire_beacon"
+  ],
+  "rooftop_box": {
+   "from_level": 2,
+   "size_frac": 0.3,
+   "offset_frac": [0.55, 0.15],
+   "height_frac": 0.06,
+   "height_min_m": 2.0,
+   "height_max_m": 4.0
+  },
+  "crown_band": {
+   "from_level": 4,
+   "inset_m": 0.5,
+   "height_frac": 0.02,
+   "height_min_m": 0.8,
+   "height_max_m": 2.5
+  },
+  "masts": {
+   "from_level": 4,
+   "count": 2,
+   "width_m": 0.5,
+   "height_frac": 0.1,
+   "height_min_m": 3.0,
+   "height_max_m": 9.0,
+   "pos_frac": [
+    [0.2, 0.2],
+    [0.8, 0.8]
+   ]
+  },
+  "spire": {
+   "from_level": 5,
+   "width_m": 0.6,
+   "height_frac": 0.18,
+   "height_min_m": 4.5,
+   "height_max_m": 14.0,
+   "beacon_m": 0.6,
+   "beacon_blink_hz": 0.5
+  }
+ },
+ "lod1": {
+  "_rule": "doc 11 \u00a72.14: keep blocks with volume >= lod.lod1_volume_keep_frac of total (data/render.json), drop decor (balcony ledges, sign bands, chamfers), replace roof_props with one AABB box UNLESS the archetype's signature props are flagged lod1 -- those are kept instead, because they are the silhouette that preserves archetype readability at 400 m. The 3 m AO band split is dropped at LOD1.",
+  "ao_band_split": false,
+  "merged_prop_box": true
+ },
+ "silhouette": {
+  "_rule": "doc 11 \u00a72.14 24-bit descriptor: [height_bucket:4][aspect_bucket:3][roof_sig_id:4][setback_count:2][mast_count:2][prop_count:3][notch_flags:3][windowless:1][footprint_id:2]. Tested in \u00a77.1 test 7.",
+  "bits": [
+   [
+    "height_bucket",
+    4
+   ],
+   [
+    "aspect_bucket",
+    3
+   ],
+   [
+    "roof_sig_id",
+    4
+   ],
+   [
+    "setback_count",
+    2
+   ],
+   [
+    "mast_count",
+    2
+   ],
+   [
+    "prop_count",
+    3
+   ],
+   [
+    "notch_flags",
+    3
+   ],
+   [
+    "windowless",
+    1
+   ],
+   [
+    "footprint_id",
+    2
+   ]
+  ],
+  "height_buckets_m": [4, 7, 11, 15, 20, 26, 34, 44, 56, 72, 92, 118, 150, 190, 240],
+  "slenderness_buckets": [0.35, 0.7, 1.2, 2.0, 3.2, 5.0, 8.0],
+  "notch_flag_bits": {
+   "overhang_or_canopy": 1,
+   "notch_or_apron": 2,
+   "fenced_yard": 4
+  },
+  "roof_signature_id": {
+   "gable_prism": 1,
+   "flat_stair_boxes": 2,
+   "chiller_bank": 3,
+   "hvac_cluster": 4,
+   "hose_tower": 5,
+   "transformer_yard": 6,
+   "parapet_sign_band": 7,
+   "setback_tower_mast": 8,
+   "crane_mast": 9,
+   "twin_stacks": 10,
+   "tank_cluster": 12,
+   "antenna_mast": 15
+  }
+ },
+ "far_mesh": {
+  "_rule": "doc 11 \u00a72.14 LOD2: one shared 12-tri unit box for the whole city, scaled per instance to (fx*8, height_m, fz*8) by the FAR shader.",
+  "id": "far_unit_box",
+  "tris": 12
+ },
+ "archetypes": [
+  {
+   "id": "house",
+   "doc11_id": "res_house",
+   "family": "residential",
+   "roof_signature": "gable_prism",
+   "footprint_tiles_by_level": [
+    [1, 1],
+    [1, 1],
+    [1, 1],
+    [1, 1],
+    [1, 1]
+   ],
+   "levels": [
+    {
+     "level": 1,
+     "floors": 1,
+     "footprint_tiles": [1, 1],
+     "level_marker": "none",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [0.9, 0.9],
+       "base_floor": 0,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "gable",
+       "pos_t": [0.05, 0.05],
+       "size_t": [0.9, 0.9],
+       "base_m": 3.5,
+       "height_m": 2.0,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [0.68, 0.12],
+       "size_t": [0.16, 0.16],
+       "base_m": 3.5,
+       "height_m": 1.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 0.3],
+       "size_t": [0.35, 0.4],
+       "base_m": 2.6,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
+    },
+    {
+     "level": 2,
+     "floors": 2,
+     "footprint_tiles": [1, 1],
+     "level_marker": "rooftop_box",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [0.9, 0.9],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "gable",
+       "pos_t": [0.05, 0.05],
+       "size_t": [0.9, 0.9],
+       "base_m": 7.0,
+       "height_m": 2.4,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [0.68, 0.12],
+       "size_t": [0.16, 0.16],
+       "base_m": 7.0,
+       "height_m": 1.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 0.3],
+       "size_t": [0.35, 0.4],
+       "base_m": 2.6,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
+    },
+    {
+     "level": 3,
+     "floors": 2,
+     "footprint_tiles": [1, 1],
+     "level_marker": "setback",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [0.9, 0.9],
+       "base_floor": 0,
+       "floors": 1,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.15, 0.15],
+       "size_t": [0.7, 0.7],
+       "base_floor": 1,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "gable",
+       "pos_t": [0.15, 0.15],
+       "size_t": [0.7, 0.7],
+       "base_m": 7.0,
+       "height_m": 2.8,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [0.68, 0.12],
+       "size_t": [0.16, 0.16],
+       "base_m": 7.0,
+       "height_m": 1.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 0.3],
+       "size_t": [0.35, 0.4],
+       "base_m": 2.6,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
+    },
+    {
+     "level": 4,
+     "floors": 3,
+     "footprint_tiles": [1, 1],
+     "level_marker": "crown_band_plus_masts",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [0.9, 0.9],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.15, 0.15],
+       "size_t": [0.7, 0.7],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "gable",
+       "pos_t": [0.15, 0.15],
+       "size_t": [0.7, 0.7],
+       "base_m": 10.5,
+       "height_m": 3.2,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [0.68, 0.12],
+       "size_t": [0.16, 0.16],
+       "base_m": 10.5,
+       "height_m": 1.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 0.3],
+       "size_t": [0.35, 0.4],
+       "base_m": 2.6,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
+    },
+    {
+     "level": 5,
+     "floors": 3,
+     "footprint_tiles": [1, 1],
+     "level_marker": "spire_beacon",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [0.9, 0.9],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.15, 0.15],
+       "size_t": [0.7, 0.7],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "gable",
+       "pos_t": [0.15, 0.15],
+       "size_t": [0.7, 0.7],
+       "base_m": 10.5,
+       "height_m": 3.6,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [0.68, 0.12],
+       "size_t": [0.16, 0.16],
+       "base_m": 10.5,
+       "height_m": 1.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 0.3],
+       "size_t": [0.35, 0.4],
+       "base_m": 2.6,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "apartment",
+   "doc11_id": "res_apartment",
+   "family": "residential",
+   "roof_signature": "flat_stair_boxes",
+   "footprint_tiles_by_level": [
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [2, 2]
+   ],
+   "levels": [
+    {
+     "level": 1,
+     "floors": 3,
+     "footprint_tiles": [2, 2],
+     "level_marker": "none",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 3,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 7.0,
+       "height_m": 0.4,
+       "window": "none",
+       "decor": true,
+       "overhang": true
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [0.25, 0.25],
+       "size_t": [0.45, 0.45],
+       "base_m": 10.5,
+       "height_m": 3.0
+      },
+      {
+       "type": "box",
+       "pos_t": [1.3, 1.3],
+       "size_t": [0.45, 0.45],
+       "base_m": 10.5,
+       "height_m": 3.0
+      }
+     ]
+    },
+    {
+     "level": 2,
+     "floors": 4,
+     "footprint_tiles": [2, 2],
+     "level_marker": "rooftop_box",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 4,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 7.0,
+       "height_m": 0.4,
+       "window": "none",
+       "decor": true,
+       "overhang": true
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [0.25, 0.25],
+       "size_t": [0.45, 0.45],
+       "base_m": 14.0,
+       "height_m": 3.0
+      },
+      {
+       "type": "box",
+       "pos_t": [1.3, 1.3],
+       "size_t": [0.45, 0.45],
+       "base_m": 14.0,
+       "height_m": 3.0
+      }
+     ]
+    },
+    {
+     "level": 3,
+     "floors": 6,
+     "footprint_tiles": [2, 2],
+     "level_marker": "setback",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 4,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.25, 0.25],
+       "size_t": [1.5, 1.5],
+       "base_floor": 4,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 7.0,
+       "height_m": 0.4,
+       "window": "none",
+       "decor": true,
+       "overhang": true
+      },
+      {
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 14.0,
+       "height_m": 0.4,
+       "window": "none",
+       "decor": true,
+       "overhang": true
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [0.25, 0.25],
+       "size_t": [0.45, 0.45],
+       "base_m": 21.0,
+       "height_m": 3.0
+      },
+      {
+       "type": "box",
+       "pos_t": [1.3, 1.3],
+       "size_t": [0.45, 0.45],
+       "base_m": 21.0,
+       "height_m": 3.0
+      }
+     ]
+    },
+    {
+     "level": 4,
+     "floors": 8,
+     "footprint_tiles": [2, 2],
+     "level_marker": "crown_band_plus_masts",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 5,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.25, 0.25],
+       "size_t": [1.5, 1.5],
+       "base_floor": 5,
+       "floors": 3,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 7.0,
+       "height_m": 0.4,
+       "window": "none",
+       "decor": true,
+       "overhang": true
+      },
+      {
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 14.0,
+       "height_m": 0.4,
+       "window": "none",
+       "decor": true,
+       "overhang": true
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [0.25, 0.25],
+       "size_t": [0.45, 0.45],
+       "base_m": 28.0,
+       "height_m": 3.0
+      },
+      {
+       "type": "box",
+       "pos_t": [1.3, 1.3],
+       "size_t": [0.45, 0.45],
+       "base_m": 28.0,
+       "height_m": 3.0
+      }
+     ]
+    },
+    {
+     "level": 5,
+     "floors": 10,
+     "footprint_tiles": [2, 2],
+     "level_marker": "spire_beacon",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 6,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.25, 0.25],
+       "size_t": [1.5, 1.5],
+       "base_floor": 6,
+       "floors": 4,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 7.0,
+       "height_m": 0.4,
+       "window": "none",
+       "decor": true,
+       "overhang": true
+      },
+      {
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 14.0,
+       "height_m": 0.4,
+       "window": "none",
+       "decor": true,
+       "overhang": true
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [0.25, 0.25],
+       "size_t": [0.45, 0.45],
+       "base_m": 35.0,
+       "height_m": 3.0
+      },
+      {
+       "type": "box",
+       "pos_t": [1.3, 1.3],
+       "size_t": [0.45, 0.45],
+       "base_m": 35.0,
+       "height_m": 3.0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "store",
+   "doc11_id": "com_retail",
+   "family": "commercial",
+   "roof_signature": "parapet_sign_band",
+   "footprint_tiles_by_level": [
+    [1, 1],
+    [1, 1],
+    [2, 2],
+    [2, 2],
+    [2, 2]
+   ],
+   "levels": [
+    {
+     "level": 1,
+     "floors": 1,
+     "footprint_tiles": [1, 1],
+     "level_marker": "none",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [0.9, 0.9],
+       "base_floor": 0,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "sign_band",
+       "pos_t": [0.0, 0.0],
+       "size_t": [1.0, 0.18],
+       "base_m": 3.5,
+       "height_m": 1.1
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.0, 0.82],
+       "size_t": [1.0, 0.18],
+       "base_m": 3.5,
+       "height_m": 1.1
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 0.45],
+       "size_t": [1.0, 0.55],
+       "base_m": 3.0,
+       "height_m": 0.35,
+       "overhang": true
+      },
+      {
+       "type": "box",
+       "pos_t": [0.55, 0.15],
+       "size_t": [0.3, 0.3],
+       "base_m": 3.5,
+       "height_m": 2.0
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.0, 0.5],
+       "size_t": [1.0, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
+    },
+    {
+     "level": 2,
+     "floors": 2,
+     "footprint_tiles": [1, 1],
+     "level_marker": "rooftop_box",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [0.9, 0.9],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "sign_band",
+       "pos_t": [0.0, 0.0],
+       "size_t": [1.0, 0.18],
+       "base_m": 7.0,
+       "height_m": 1.1
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.0, 0.82],
+       "size_t": [1.0, 0.18],
+       "base_m": 7.0,
+       "height_m": 1.1
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 0.45],
+       "size_t": [1.0, 0.55],
+       "base_m": 3.0,
+       "height_m": 0.35,
+       "overhang": true
+      },
+      {
+       "type": "box",
+       "pos_t": [0.55, 0.15],
+       "size_t": [0.3, 0.3],
+       "base_m": 7.0,
+       "height_m": 2.0
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.0, 0.5],
+       "size_t": [1.0, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
+    },
+    {
+     "level": 3,
+     "floors": 3,
+     "footprint_tiles": [2, 2],
+     "level_marker": "setback",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.3, 0.3],
+       "size_t": [1.4, 1.4],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "sign_band",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 0.18],
+       "base_m": 10.5,
+       "height_m": 1.1
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.0, 1.82],
+       "size_t": [2.0, 0.18],
+       "base_m": 10.5,
+       "height_m": 1.1
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.45],
+       "size_t": [2.0, 0.55],
+       "base_m": 3.0,
+       "height_m": 0.35,
+       "overhang": true
+      },
+      {
+       "type": "box",
+       "pos_t": [1.1, 0.3],
+       "size_t": [0.3, 0.3],
+       "base_m": 10.5,
+       "height_m": 2.0
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.0, 1.5],
+       "size_t": [2.0, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
+    },
+    {
+     "level": 4,
+     "floors": 3,
+     "footprint_tiles": [2, 2],
+     "level_marker": "crown_band_plus_masts",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.3, 0.3],
+       "size_t": [1.4, 1.4],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "sign_band",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 0.18],
+       "base_m": 10.5,
+       "height_m": 1.1
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.0, 1.82],
+       "size_t": [2.0, 0.18],
+       "base_m": 10.5,
+       "height_m": 1.1
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.45],
+       "size_t": [2.0, 0.55],
+       "base_m": 3.0,
+       "height_m": 0.35,
+       "overhang": true
+      },
+      {
+       "type": "box",
+       "pos_t": [1.1, 0.3],
+       "size_t": [0.3, 0.3],
+       "base_m": 10.5,
+       "height_m": 2.0
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.0, 1.5],
+       "size_t": [2.0, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
+    },
+    {
+     "level": 5,
+     "floors": 4,
+     "footprint_tiles": [2, 2],
+     "level_marker": "spire_beacon",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.3, 0.3],
+       "size_t": [1.4, 1.4],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.55, 0.55],
+       "size_t": [0.9, 0.9],
+       "base_floor": 3,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "sign_band",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 0.18],
+       "base_m": 14.0,
+       "height_m": 1.1
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.0, 1.82],
+       "size_t": [2.0, 0.18],
+       "base_m": 14.0,
+       "height_m": 1.1
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.45],
+       "size_t": [2.0, 0.55],
+       "base_m": 3.0,
+       "height_m": 0.35,
+       "overhang": true
+      },
+      {
+       "type": "box",
+       "pos_t": [1.1, 0.3],
+       "size_t": [0.3, 0.3],
+       "base_m": 14.0,
+       "height_m": 2.0
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.0, 1.5],
+       "size_t": [2.0, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "office",
+   "doc11_id": "com_office",
+   "family": "commercial",
+   "roof_signature": "hvac_cluster",
+   "footprint_tiles_by_level": [
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [2, 2]
+   ],
+   "levels": [
+    {
+     "level": 1,
+     "floors": 4,
+     "footprint_tiles": [2, 2],
+     "level_marker": "none",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 4,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [0.2, 0.2],
+       "size_t": [0.4, 0.35],
+       "base_m": 14.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.7, 0.25],
+       "size_t": [0.35, 0.3],
+       "base_m": 14.0,
+       "height_m": 1.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.3, 0.8],
+       "size_t": [0.5, 0.3],
+       "base_m": 14.0,
+       "height_m": 1.9
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.55],
+       "size_t": [2.0, 0.45],
+       "base_m": 4.2,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
+    },
+    {
+     "level": 2,
+     "floors": 6,
+     "footprint_tiles": [2, 2],
+     "level_marker": "rooftop_box",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 6,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [0.2, 0.2],
+       "size_t": [0.4, 0.35],
+       "base_m": 21.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.7, 0.25],
+       "size_t": [0.35, 0.3],
+       "base_m": 21.0,
+       "height_m": 1.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.3, 0.8],
+       "size_t": [0.5, 0.3],
+       "base_m": 21.0,
+       "height_m": 1.9
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.55],
+       "size_t": [2.0, 0.45],
+       "base_m": 4.2,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
+    },
+    {
+     "level": 3,
+     "floors": 9,
+     "footprint_tiles": [2, 2],
+     "level_marker": "setback",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 6,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.2, 0.2],
+       "size_t": [1.6, 1.6],
+       "base_floor": 6,
+       "floors": 3,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [0.35, 0.35],
+       "size_t": [0.4, 0.35],
+       "base_m": 31.5,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.85, 0.4],
+       "size_t": [0.35, 0.3],
+       "base_m": 31.5,
+       "height_m": 1.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.45, 0.95],
+       "size_t": [0.5, 0.3],
+       "base_m": 31.5,
+       "height_m": 1.9
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.55],
+       "size_t": [2.0, 0.45],
+       "base_m": 4.2,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
+    },
+    {
+     "level": 4,
+     "floors": 13,
+     "footprint_tiles": [2, 2],
+     "level_marker": "crown_band_plus_masts",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 8,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.2, 0.2],
+       "size_t": [1.6, 1.6],
+       "base_floor": 8,
+       "floors": 5,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [0.35, 0.35],
+       "size_t": [0.4, 0.35],
+       "base_m": 45.5,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.85, 0.4],
+       "size_t": [0.35, 0.3],
+       "base_m": 45.5,
+       "height_m": 1.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.45, 0.95],
+       "size_t": [0.5, 0.3],
+       "base_m": 45.5,
+       "height_m": 1.9
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.55],
+       "size_t": [2.0, 0.45],
+       "base_m": 4.2,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
+    },
+    {
+     "level": 5,
+     "floors": 18,
+     "footprint_tiles": [2, 2],
+     "level_marker": "spire_beacon",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 12,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.2, 0.2],
+       "size_t": [1.6, 1.6],
+       "base_floor": 12,
+       "floors": 6,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [0.35, 0.35],
+       "size_t": [0.4, 0.35],
+       "base_m": 63.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.85, 0.4],
+       "size_t": [0.35, 0.3],
+       "base_m": 63.0,
+       "height_m": 1.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.45, 0.95],
+       "size_t": [0.5, 0.3],
+       "base_m": 63.0,
+       "height_m": 1.9
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.55],
+       "size_t": [2.0, 0.45],
+       "base_m": 4.2,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "high_rise",
+   "doc11_id": "res_highrise",
+   "family": "residential",
+   "roof_signature": "setback_tower_mast",
+   "footprint_tiles_by_level": [
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [2, 2]
+   ],
+   "levels": [
+    {
+     "level": 1,
+     "floors": 12,
+     "footprint_tiles": [2, 2],
+     "level_marker": "none",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 12,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.0, 1.0],
+       "base_m": 42.0,
+       "height_m": 8.0,
+       "width_m": 0.5,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [0.15, 0.15],
+       "size_t": [0.35, 0.35],
+       "base_m": 42.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.55],
+       "size_t": [2.0, 0.45],
+       "base_m": 4.2,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
+    },
+    {
+     "level": 2,
+     "floors": 24,
+     "footprint_tiles": [2, 2],
+     "level_marker": "rooftop_box",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 24,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.0, 1.0],
+       "base_m": 84.0,
+       "height_m": 8.0,
+       "width_m": 0.5,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [0.15, 0.15],
+       "size_t": [0.35, 0.35],
+       "base_m": 84.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.55],
+       "size_t": [2.0, 0.45],
+       "base_m": 4.2,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
+    },
+    {
+     "level": 3,
+     "floors": 36,
+     "footprint_tiles": [2, 2],
+     "level_marker": "setback",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 22,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.25, 0.25],
+       "size_t": [1.5, 1.5],
+       "base_floor": 22,
+       "floors": 14,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.0, 1.0],
+       "base_m": 126.0,
+       "height_m": 8.0,
+       "width_m": 0.5,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [0.35, 0.35],
+       "size_t": [0.35, 0.35],
+       "base_m": 126.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.55],
+       "size_t": [2.0, 0.45],
+       "base_m": 4.2,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
+    },
+    {
+     "level": 4,
+     "floors": 48,
+     "footprint_tiles": [2, 2],
+     "level_marker": "crown_band_plus_masts",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 30,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.25, 0.25],
+       "size_t": [1.5, 1.5],
+       "base_floor": 30,
+       "floors": 18,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.0, 1.0],
+       "base_m": 168.0,
+       "height_m": 10.56,
+       "width_m": 0.5,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [0.35, 0.35],
+       "size_t": [0.35, 0.35],
+       "base_m": 168.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.55],
+       "size_t": [2.0, 0.45],
+       "base_m": 4.2,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
+    },
+    {
+     "level": 5,
+     "floors": 62,
+     "footprint_tiles": [2, 2],
+     "level_marker": "spire_beacon",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 34,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.25, 0.25],
+       "size_t": [1.5, 1.5],
+       "base_floor": 34,
+       "floors": 19,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.45, 0.45],
+       "size_t": [1.1, 1.1],
+       "base_floor": 53,
+       "floors": 9,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.0, 1.0],
+       "base_m": 217.0,
+       "height_m": 13.64,
+       "width_m": 0.5,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [0.55, 0.55],
+       "size_t": [0.35, 0.35],
+       "base_m": 217.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.55],
+       "size_t": [2.0, 0.45],
+       "base_m": 4.2,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "data_center",
+   "doc11_id": "tech_datacenter",
+   "family": "tech",
+   "roof_signature": "chiller_bank",
+   "footprint_tiles_by_level": [
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [2, 2]
+   ],
+   "levels": [
+    {
+     "level": 1,
+     "floors": 2,
+     "footprint_tiles": [2, 2],
+     "level_marker": "none",
+     "blocks": [
+      {
+       "pos_t": [0.15, 0.15],
+       "size_t": [1.7, 1.7],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "none"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.27, 0.27],
+       "size_t": [0.36, 0.32],
+       "base_m": 7.0,
+       "height_m": 1.8,
+       "lod1": true,
+       "signature": true
+      },
+      {
+       "type": "box",
+       "pos_t": [1.12, 0.27],
+       "size_t": [0.36, 0.32],
+       "base_m": 7.0,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      },
+      {
+       "type": "box",
+       "pos_t": [0.27, 1.12],
+       "size_t": [0.36, 0.32],
+       "base_m": 7.0,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      },
+      {
+       "type": "box",
+       "pos_t": [1.12, 1.12],
+       "size_t": [0.36, 0.32],
+       "base_m": 7.0,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      }
+     ]
+    },
+    {
+     "level": 2,
+     "floors": 2,
+     "footprint_tiles": [2, 2],
+     "level_marker": "rooftop_box",
+     "blocks": [
+      {
+       "pos_t": [0.15, 0.15],
+       "size_t": [1.7, 1.7],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "none"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.27, 0.27],
+       "size_t": [0.36, 0.32],
+       "base_m": 7.0,
+       "height_m": 1.8,
+       "lod1": true,
+       "signature": true
+      },
+      {
+       "type": "box",
+       "pos_t": [1.12, 0.27],
+       "size_t": [0.36, 0.32],
+       "base_m": 7.0,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      },
+      {
+       "type": "box",
+       "pos_t": [0.27, 1.12],
+       "size_t": [0.36, 0.32],
+       "base_m": 7.0,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      },
+      {
+       "type": "box",
+       "pos_t": [1.12, 1.12],
+       "size_t": [0.36, 0.32],
+       "base_m": 7.0,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      }
+     ]
+    },
+    {
+     "level": 3,
+     "floors": 3,
+     "footprint_tiles": [2, 2],
+     "level_marker": "setback",
+     "blocks": [
+      {
+       "pos_t": [0.15, 0.15],
+       "size_t": [1.7, 1.7],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "none"
+      },
+      {
+       "pos_t": [0.35, 0.35],
+       "size_t": [1.3, 1.3],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "none"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.47, 0.47],
+       "size_t": [0.36, 0.32],
+       "base_m": 10.5,
+       "height_m": 1.8,
+       "lod1": true,
+       "signature": true
+      },
+      {
+       "type": "box",
+       "pos_t": [1.12, 0.47],
+       "size_t": [0.36, 0.32],
+       "base_m": 10.5,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      },
+      {
+       "type": "box",
+       "pos_t": [0.47, 1.12],
+       "size_t": [0.36, 0.32],
+       "base_m": 10.5,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      },
+      {
+       "type": "box",
+       "pos_t": [1.12, 1.12],
+       "size_t": [0.36, 0.32],
+       "base_m": 10.5,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      }
+     ]
+    },
+    {
+     "level": 4,
+     "floors": 3,
+     "footprint_tiles": [2, 2],
+     "level_marker": "crown_band_plus_masts",
+     "blocks": [
+      {
+       "pos_t": [0.15, 0.15],
+       "size_t": [1.7, 1.7],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "none"
+      },
+      {
+       "pos_t": [0.35, 0.35],
+       "size_t": [1.3, 1.3],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "none"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.47, 0.47],
+       "size_t": [0.36, 0.32],
+       "base_m": 10.5,
+       "height_m": 1.8,
+       "lod1": true,
+       "signature": true
+      },
+      {
+       "type": "box",
+       "pos_t": [1.12, 0.47],
+       "size_t": [0.36, 0.32],
+       "base_m": 10.5,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      },
+      {
+       "type": "box",
+       "pos_t": [0.47, 1.12],
+       "size_t": [0.36, 0.32],
+       "base_m": 10.5,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      },
+      {
+       "type": "box",
+       "pos_t": [1.12, 1.12],
+       "size_t": [0.36, 0.32],
+       "base_m": 10.5,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      }
+     ]
+    },
+    {
+     "level": 5,
+     "floors": 4,
+     "footprint_tiles": [2, 2],
+     "level_marker": "spire_beacon",
+     "blocks": [
+      {
+       "pos_t": [0.15, 0.15],
+       "size_t": [1.7, 1.7],
+       "base_floor": 0,
+       "floors": 3,
+       "window": "none"
+      },
+      {
+       "pos_t": [0.35, 0.35],
+       "size_t": [1.3, 1.3],
+       "base_floor": 3,
+       "floors": 1,
+       "window": "none"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.47, 0.47],
+       "size_t": [0.36, 0.32],
+       "base_m": 14.0,
+       "height_m": 1.8,
+       "lod1": true,
+       "signature": true
+      },
+      {
+       "type": "box",
+       "pos_t": [1.12, 0.47],
+       "size_t": [0.36, 0.32],
+       "base_m": 14.0,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      },
+      {
+       "type": "box",
+       "pos_t": [0.47, 1.12],
+       "size_t": [0.36, 0.32],
+       "base_m": 14.0,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      },
+      {
+       "type": "box",
+       "pos_t": [1.12, 1.12],
+       "size_t": [0.36, 0.32],
+       "base_m": 14.0,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "police_station",
+   "doc11_id": "civ_police",
+   "family": "civic",
+   "roof_signature": "antenna_mast",
+   "footprint_tiles_by_level": [
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [2, 2]
+   ],
+   "levels": [
+    {
+     "level": 1,
+     "floors": 1,
+     "footprint_tiles": [2, 2],
+     "level_marker": "none",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.5, 1.3],
+       "base_floor": 0,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.35, 0.25],
+       "base_m": 3.5,
+       "height_m": 9.0,
+       "width_m": 0.4,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.05, 1.45],
+       "size_t": [1.9, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.05, 0.02],
+       "size_t": [1.5, 0.12],
+       "base_m": 2.4,
+       "height_m": 0.45
+      },
+      {
+       "type": "box",
+       "pos_t": [0.25, 0.25],
+       "size_t": [0.4, 0.35],
+       "base_m": 3.5,
+       "height_m": 1.5
+      }
+     ]
+    },
+    {
+     "level": 2,
+     "floors": 2,
+     "footprint_tiles": [2, 2],
+     "level_marker": "rooftop_box",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.5, 1.3],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.35, 0.25],
+       "base_m": 7.0,
+       "height_m": 11.0,
+       "width_m": 0.4,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.05, 1.45],
+       "size_t": [1.9, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.05, 0.02],
+       "size_t": [1.5, 0.12],
+       "base_m": 2.4,
+       "height_m": 0.45
+      },
+      {
+       "type": "box",
+       "pos_t": [0.25, 0.25],
+       "size_t": [0.4, 0.35],
+       "base_m": 7.0,
+       "height_m": 1.5
+      }
+     ]
+    },
+    {
+     "level": 3,
+     "floors": 2,
+     "footprint_tiles": [2, 2],
+     "level_marker": "setback",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.5, 1.3],
+       "base_floor": 0,
+       "floors": 1,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.25, 0.2],
+       "size_t": [1.1, 1.0],
+       "base_floor": 1,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.35, 0.25],
+       "base_m": 7.0,
+       "height_m": 13.0,
+       "width_m": 0.4,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.05, 1.45],
+       "size_t": [1.9, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.05, 0.02],
+       "size_t": [1.5, 0.12],
+       "base_m": 2.4,
+       "height_m": 0.45
+      },
+      {
+       "type": "box",
+       "pos_t": [0.45, 0.4],
+       "size_t": [0.4, 0.35],
+       "base_m": 7.0,
+       "height_m": 1.5
+      }
+     ]
+    },
+    {
+     "level": 4,
+     "floors": 3,
+     "footprint_tiles": [2, 2],
+     "level_marker": "crown_band_plus_masts",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.5, 1.3],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.25, 0.2],
+       "size_t": [1.1, 1.0],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.35, 0.25],
+       "base_m": 10.5,
+       "height_m": 15.0,
+       "width_m": 0.4,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.05, 1.45],
+       "size_t": [1.9, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.05, 0.02],
+       "size_t": [1.5, 0.12],
+       "base_m": 2.4,
+       "height_m": 0.45
+      },
+      {
+       "type": "box",
+       "pos_t": [0.45, 0.4],
+       "size_t": [0.4, 0.35],
+       "base_m": 10.5,
+       "height_m": 1.5
+      }
+     ]
+    },
+    {
+     "level": 5,
+     "floors": 3,
+     "footprint_tiles": [2, 2],
+     "level_marker": "spire_beacon",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.5, 1.3],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.25, 0.2],
+       "size_t": [1.1, 1.0],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.35, 0.25],
+       "base_m": 10.5,
+       "height_m": 18.0,
+       "width_m": 0.4,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.05, 1.45],
+       "size_t": [1.9, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.05, 0.02],
+       "size_t": [1.5, 0.12],
+       "base_m": 2.4,
+       "height_m": 0.45
+      },
+      {
+       "type": "box",
+       "pos_t": [0.45, 0.4],
+       "size_t": [0.4, 0.35],
+       "base_m": 10.5,
+       "height_m": 1.5
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "fire_station",
+   "doc11_id": "civ_fire",
+   "family": "civic",
+   "roof_signature": "hose_tower",
+   "footprint_tiles_by_level": [
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [2, 2]
+   ],
+   "levels": [
+    {
+     "level": 1,
+     "floors": 1,
+     "footprint_tiles": [2, 2],
+     "level_marker": "none",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.5, 1.2],
+       "base_floor": 0,
+       "floors": 1,
+       "window": "grid"
+      },
+      {
+       "pos_t": [1.58, 0.1],
+       "size_t": [0.36, 0.36],
+       "base_m": 0.0,
+       "height_m": 9.0,
+       "window": "none"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "notch",
+       "pos_t": [0.15, 1.18],
+       "size_t": [0.4, 0.14],
+       "base_m": 0.0,
+       "height_m": 2.8
+      },
+      {
+       "type": "notch",
+       "pos_t": [0.65, 1.18],
+       "size_t": [0.4, 0.14],
+       "base_m": 0.0,
+       "height_m": 2.8
+      },
+      {
+       "type": "notch",
+       "pos_t": [1.15, 1.18],
+       "size_t": [0.4, 0.14],
+       "base_m": 0.0,
+       "height_m": 2.8
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.05, 1.2],
+       "size_t": [1.5, 0.12],
+       "base_m": 2.9,
+       "height_m": 0.45
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.05, 1.45],
+       "size_t": [1.9, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
+    },
+    {
+     "level": 2,
+     "floors": 2,
+     "footprint_tiles": [2, 2],
+     "level_marker": "rooftop_box",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.5, 1.2],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [1.58, 0.1],
+       "size_t": [0.36, 0.36],
+       "base_m": 0.0,
+       "height_m": 11.5,
+       "window": "none"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "notch",
+       "pos_t": [0.15, 1.18],
+       "size_t": [0.4, 0.14],
+       "base_m": 0.0,
+       "height_m": 2.8
+      },
+      {
+       "type": "notch",
+       "pos_t": [0.65, 1.18],
+       "size_t": [0.4, 0.14],
+       "base_m": 0.0,
+       "height_m": 2.8
+      },
+      {
+       "type": "notch",
+       "pos_t": [1.15, 1.18],
+       "size_t": [0.4, 0.14],
+       "base_m": 0.0,
+       "height_m": 2.8
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.05, 1.2],
+       "size_t": [1.5, 0.12],
+       "base_m": 6.4,
+       "height_m": 0.45
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.05, 1.45],
+       "size_t": [1.9, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
+    },
+    {
+     "level": 3,
+     "floors": 2,
+     "footprint_tiles": [2, 2],
+     "level_marker": "setback",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.5, 1.2],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.2, 0.2],
+       "size_t": [1.15, 0.9],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "grid"
+      },
+      {
+       "pos_t": [1.58, 0.1],
+       "size_t": [0.36, 0.36],
+       "base_m": 0.0,
+       "height_m": 13.5,
+       "window": "none"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "notch",
+       "pos_t": [0.15, 1.18],
+       "size_t": [0.4, 0.14],
+       "base_m": 0.0,
+       "height_m": 2.8
+      },
+      {
+       "type": "notch",
+       "pos_t": [0.65, 1.18],
+       "size_t": [0.4, 0.14],
+       "base_m": 0.0,
+       "height_m": 2.8
+      },
+      {
+       "type": "notch",
+       "pos_t": [1.15, 1.18],
+       "size_t": [0.4, 0.14],
+       "base_m": 0.0,
+       "height_m": 2.8
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.05, 1.2],
+       "size_t": [1.5, 0.12],
+       "base_m": 6.4,
+       "height_m": 0.45
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.05, 1.45],
+       "size_t": [1.9, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
+    },
+    {
+     "level": 4,
+     "floors": 3,
+     "footprint_tiles": [2, 2],
+     "level_marker": "crown_band_plus_masts",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.5, 1.2],
+       "base_floor": 0,
+       "floors": 3,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.2, 0.2],
+       "size_t": [1.15, 0.9],
+       "base_floor": 3,
+       "floors": 1,
+       "window": "grid"
+      },
+      {
+       "pos_t": [1.58, 0.1],
+       "size_t": [0.36, 0.36],
+       "base_m": 0.0,
+       "height_m": 16.0,
+       "window": "none"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "notch",
+       "pos_t": [0.15, 1.18],
+       "size_t": [0.4, 0.14],
+       "base_m": 0.0,
+       "height_m": 2.8
+      },
+      {
+       "type": "notch",
+       "pos_t": [0.65, 1.18],
+       "size_t": [0.4, 0.14],
+       "base_m": 0.0,
+       "height_m": 2.8
+      },
+      {
+       "type": "notch",
+       "pos_t": [1.15, 1.18],
+       "size_t": [0.4, 0.14],
+       "base_m": 0.0,
+       "height_m": 2.8
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.05, 1.2],
+       "size_t": [1.5, 0.12],
+       "base_m": 9.9,
+       "height_m": 0.45
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.05, 1.45],
+       "size_t": [1.9, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
+    },
+    {
+     "level": 5,
+     "floors": 3,
+     "footprint_tiles": [2, 2],
+     "level_marker": "spire_beacon",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.5, 1.2],
+       "base_floor": 0,
+       "floors": 3,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.2, 0.2],
+       "size_t": [1.15, 0.9],
+       "base_floor": 3,
+       "floors": 1,
+       "window": "grid"
+      },
+      {
+       "pos_t": [1.58, 0.1],
+       "size_t": [0.36, 0.36],
+       "base_m": 0.0,
+       "height_m": 19.0,
+       "window": "none"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "notch",
+       "pos_t": [0.15, 1.18],
+       "size_t": [0.4, 0.14],
+       "base_m": 0.0,
+       "height_m": 2.8
+      },
+      {
+       "type": "notch",
+       "pos_t": [0.65, 1.18],
+       "size_t": [0.4, 0.14],
+       "base_m": 0.0,
+       "height_m": 2.8
+      },
+      {
+       "type": "notch",
+       "pos_t": [1.15, 1.18],
+       "size_t": [0.4, 0.14],
+       "base_m": 0.0,
+       "height_m": 2.8
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.05, 1.2],
+       "size_t": [1.5, 0.12],
+       "base_m": 9.9,
+       "height_m": 0.45
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.05, 1.45],
+       "size_t": [1.9, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "power_facility",
+   "doc11_id": "civ_utility",
+   "family": "civic",
+   "roof_signature": "twin_stacks",
+   "footprint_tiles_by_level": [
+    [3, 3],
+    [3, 3],
+    [3, 3],
+    [4, 4],
+    [4, 4]
+   ],
+   "levels": [
+    {
+     "level": 1,
+     "floors": 2,
+     "footprint_tiles": [3, 3],
+     "level_marker": "none",
+     "blocks": [
+      {
+       "pos_t": [0.1, 0.1],
+       "size_t": [1.86, 2.8],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [2.16, 0.35],
+       "size_t": [0.42, 0.42],
+       "base_m": 0.0,
+       "height_m": 18.0,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [2.16, 2.23],
+       "size_t": [0.42, 0.42],
+       "base_m": 0.0,
+       "height_m": 16.56,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [3.0, 3.0],
+       "base_m": 0.0,
+       "height_m": 2.4
+      },
+      {
+       "type": "box",
+       "pos_t": [2.04, 1.35],
+       "size_t": [0.5, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [2.04, 1.86],
+       "size_t": [0.5, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      }
+     ]
+    },
+    {
+     "level": 2,
+     "floors": 2,
+     "footprint_tiles": [3, 3],
+     "level_marker": "rooftop_box",
+     "blocks": [
+      {
+       "pos_t": [0.1, 0.1],
+       "size_t": [1.86, 2.8],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [2.16, 0.35],
+       "size_t": [0.42, 0.42],
+       "base_m": 0.0,
+       "height_m": 22.0,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [2.16, 2.23],
+       "size_t": [0.42, 0.42],
+       "base_m": 0.0,
+       "height_m": 20.24,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [3.0, 3.0],
+       "base_m": 0.0,
+       "height_m": 2.4
+      },
+      {
+       "type": "box",
+       "pos_t": [2.04, 1.35],
+       "size_t": [0.5, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [2.04, 1.86],
+       "size_t": [0.5, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      }
+     ]
+    },
+    {
+     "level": 3,
+     "floors": 3,
+     "footprint_tiles": [3, 3],
+     "level_marker": "setback",
+     "blocks": [
+      {
+       "pos_t": [0.1, 0.1],
+       "size_t": [1.86, 2.8],
+       "base_floor": 0,
+       "floors": 3,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.3, 0.35],
+       "size_t": [1.05, 1.35],
+       "base_floor": 3,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [2.16, 0.35],
+       "size_t": [0.42, 0.42],
+       "base_m": 0.0,
+       "height_m": 28.0,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [2.16, 2.23],
+       "size_t": [0.42, 0.42],
+       "base_m": 0.0,
+       "height_m": 25.76,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [3.0, 3.0],
+       "base_m": 0.0,
+       "height_m": 2.4
+      },
+      {
+       "type": "box",
+       "pos_t": [2.04, 1.35],
+       "size_t": [0.5, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [2.04, 1.86],
+       "size_t": [0.5, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      }
+     ]
+    },
+    {
+     "level": 4,
+     "floors": 3,
+     "footprint_tiles": [4, 4],
+     "level_marker": "crown_band_plus_masts",
+     "blocks": [
+      {
+       "pos_t": [0.1, 0.1],
+       "size_t": [2.48, 3.8],
+       "base_floor": 0,
+       "floors": 3,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.3, 0.35],
+       "size_t": [1.4, 1.8],
+       "base_floor": 3,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [2.88, 0.35],
+       "size_t": [0.42, 0.42],
+       "base_m": 0.0,
+       "height_m": 34.0,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [2.88, 3.23],
+       "size_t": [0.42, 0.42],
+       "base_m": 0.0,
+       "height_m": 31.28,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [4.0, 4.0],
+       "base_m": 0.0,
+       "height_m": 2.4
+      },
+      {
+       "type": "box",
+       "pos_t": [2.72, 1.8],
+       "size_t": [0.5, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [2.72, 2.48],
+       "size_t": [0.5, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      }
+     ]
+    },
+    {
+     "level": 5,
+     "floors": 4,
+     "footprint_tiles": [4, 4],
+     "level_marker": "spire_beacon",
+     "blocks": [
+      {
+       "pos_t": [0.1, 0.1],
+       "size_t": [2.48, 3.8],
+       "base_floor": 0,
+       "floors": 4,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.3, 0.35],
+       "size_t": [1.4, 1.8],
+       "base_floor": 4,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [2.88, 0.35],
+       "size_t": [0.42, 0.42],
+       "base_m": 0.0,
+       "height_m": 42.0,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [2.88, 3.23],
+       "size_t": [0.42, 0.42],
+       "base_m": 0.0,
+       "height_m": 38.64,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [4.0, 4.0],
+       "base_m": 0.0,
+       "height_m": 2.4
+      },
+      {
+       "type": "box",
+       "pos_t": [2.72, 1.8],
+       "size_t": [0.5, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [2.72, 2.48],
+       "size_t": [0.5, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "substation",
+   "doc11_id": "civ_substation",
+   "family": "civic",
+   "roof_signature": "transformer_yard",
+   "footprint_tiles_by_level": [
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [2, 2]
+   ],
+   "levels": [
+    {
+     "level": 1,
+     "floors": 1,
+     "footprint_tiles": [2, 2],
+     "level_marker": "none",
+     "blocks": [
+      {
+       "pos_t": [0.1, 0.1],
+       "size_t": [0.75, 0.7],
+       "base_floor": 0,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.5, 1.5],
+       "base_m": 0.0,
+       "height_m": 11.0,
+       "width_m": 0.9,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 0.0,
+       "height_m": 2.4
+      },
+      {
+       "type": "box",
+       "pos_t": [1.0, 0.15],
+       "size_t": [0.4, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [1.0, 0.75],
+       "size_t": [0.4, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.15, 1.2],
+       "size_t": [0.4, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.2
+      }
+     ]
+    },
+    {
+     "level": 2,
+     "floors": 1,
+     "footprint_tiles": [2, 2],
+     "level_marker": "rooftop_box",
+     "blocks": [
+      {
+       "pos_t": [0.1, 0.1],
+       "size_t": [0.75, 0.7],
+       "base_floor": 0,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.5, 1.5],
+       "base_m": 0.0,
+       "height_m": 13.0,
+       "width_m": 0.9,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 0.0,
+       "height_m": 2.4
+      },
+      {
+       "type": "box",
+       "pos_t": [1.0, 0.15],
+       "size_t": [0.4, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [1.0, 0.75],
+       "size_t": [0.4, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.15, 1.2],
+       "size_t": [0.4, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.2
+      }
+     ]
+    },
+    {
+     "level": 3,
+     "floors": 2,
+     "footprint_tiles": [2, 2],
+     "level_marker": "setback",
+     "blocks": [
+      {
+       "pos_t": [0.1, 0.1],
+       "size_t": [0.75, 0.7],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.2, 0.18],
+       "size_t": [0.55, 0.5],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.5, 1.5],
+       "base_m": 0.0,
+       "height_m": 17.0,
+       "width_m": 0.9,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 0.0,
+       "height_m": 2.4
+      },
+      {
+       "type": "box",
+       "pos_t": [1.0, 0.15],
+       "size_t": [0.4, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [1.0, 0.75],
+       "size_t": [0.4, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.15, 1.2],
+       "size_t": [0.4, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.2
+      }
+     ]
+    },
+    {
+     "level": 4,
+     "floors": 2,
+     "footprint_tiles": [2, 2],
+     "level_marker": "crown_band_plus_masts",
+     "blocks": [
+      {
+       "pos_t": [0.1, 0.1],
+       "size_t": [0.75, 0.7],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.2, 0.18],
+       "size_t": [0.55, 0.5],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.5, 1.5],
+       "base_m": 0.0,
+       "height_m": 21.0,
+       "width_m": 0.9,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 0.0,
+       "height_m": 2.4
+      },
+      {
+       "type": "box",
+       "pos_t": [1.0, 0.15],
+       "size_t": [0.4, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [1.0, 0.75],
+       "size_t": [0.4, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.15, 1.2],
+       "size_t": [0.4, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.2
+      }
+     ]
+    },
+    {
+     "level": 5,
+     "floors": 3,
+     "footprint_tiles": [2, 2],
+     "level_marker": "spire_beacon",
+     "blocks": [
+      {
+       "pos_t": [0.1, 0.1],
+       "size_t": [0.75, 0.7],
+       "base_floor": 0,
+       "floors": 3,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.2, 0.18],
+       "size_t": [0.55, 0.5],
+       "base_floor": 3,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.5, 1.5],
+       "base_m": 0.0,
+       "height_m": 30.0,
+       "width_m": 0.9,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 0.0,
+       "height_m": 2.4
+      },
+      {
+       "type": "box",
+       "pos_t": [1.0, 0.15],
+       "size_t": [0.4, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [1.0, 0.75],
+       "size_t": [0.4, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.15, 1.2],
+       "size_t": [0.4, 0.4],
+       "base_m": 0.0,
+       "height_m": 2.2
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "water_facility",
+   "doc11_id": "civ_waterworks",
+   "family": "civic",
+   "roof_signature": "tank_cluster",
+   "footprint_tiles_by_level": [
+    [3, 3],
+    [3, 3],
+    [3, 3],
+    [3, 3],
+    [4, 4]
+   ],
+   "levels": [
+    {
+     "level": 1,
+     "floors": 1,
+     "footprint_tiles": [3, 3],
+     "level_marker": "none",
+     "blocks": [
+      {
+       "pos_t": [0.12, 0.12],
+       "size_t": [1.26, 1.14],
+       "base_floor": 0,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "octprism",
+       "pos_t": [1.53, 1.53],
+       "size_t": [1.35, 1.35],
+       "base_m": 0.0,
+       "height_m": 8.0,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [3.0, 3.0],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.12, 1.8],
+       "size_t": [1.26, 0.9],
+       "base_m": 0.0,
+       "height_m": 1.4
+      },
+      {
+       "type": "box",
+       "pos_t": [1.8, 0.12],
+       "size_t": [0.9, 0.9],
+       "base_m": 0.0,
+       "height_m": 1.4
+      },
+      {
+       "type": "box",
+       "pos_t": [1.86, 1.86],
+       "size_t": [0.3, 0.28],
+       "base_m": 0.0,
+       "height_m": 2.4
+      }
+     ]
+    },
+    {
+     "level": 2,
+     "floors": 2,
+     "footprint_tiles": [3, 3],
+     "level_marker": "rooftop_box",
+     "blocks": [
+      {
+       "pos_t": [0.12, 0.12],
+       "size_t": [1.26, 1.14],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "octprism",
+       "pos_t": [1.53, 1.53],
+       "size_t": [1.35, 1.35],
+       "base_m": 0.0,
+       "height_m": 10.0,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [3.0, 3.0],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.12, 1.8],
+       "size_t": [1.26, 0.9],
+       "base_m": 0.0,
+       "height_m": 1.4
+      },
+      {
+       "type": "box",
+       "pos_t": [1.8, 0.12],
+       "size_t": [0.9, 0.9],
+       "base_m": 0.0,
+       "height_m": 1.4
+      },
+      {
+       "type": "box",
+       "pos_t": [1.86, 1.86],
+       "size_t": [0.3, 0.28],
+       "base_m": 0.0,
+       "height_m": 2.4
+      }
+     ]
+    },
+    {
+     "level": 3,
+     "floors": 2,
+     "footprint_tiles": [3, 3],
+     "level_marker": "setback",
+     "blocks": [
+      {
+       "pos_t": [0.12, 0.12],
+       "size_t": [1.26, 1.14],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.25, 0.22],
+       "size_t": [0.84, 0.72],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "octprism",
+       "pos_t": [1.53, 1.53],
+       "size_t": [1.35, 1.35],
+       "base_m": 0.0,
+       "height_m": 12.0,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [3.0, 3.0],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.12, 1.8],
+       "size_t": [1.26, 0.9],
+       "base_m": 0.0,
+       "height_m": 1.4
+      },
+      {
+       "type": "box",
+       "pos_t": [1.8, 0.12],
+       "size_t": [0.9, 0.9],
+       "base_m": 0.0,
+       "height_m": 1.4
+      },
+      {
+       "type": "box",
+       "pos_t": [1.86, 1.86],
+       "size_t": [0.3, 0.28],
+       "base_m": 0.0,
+       "height_m": 2.4
+      }
+     ]
+    },
+    {
+     "level": 4,
+     "floors": 3,
+     "footprint_tiles": [3, 3],
+     "level_marker": "crown_band_plus_masts",
+     "blocks": [
+      {
+       "pos_t": [0.12, 0.12],
+       "size_t": [1.26, 1.14],
+       "base_floor": 0,
+       "floors": 3,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.25, 0.22],
+       "size_t": [0.84, 0.72],
+       "base_floor": 3,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "octprism",
+       "pos_t": [1.53, 1.53],
+       "size_t": [1.35, 1.35],
+       "base_m": 0.0,
+       "height_m": 15.0,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [3.0, 3.0],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.12, 1.8],
+       "size_t": [1.26, 0.9],
+       "base_m": 0.0,
+       "height_m": 1.4
+      },
+      {
+       "type": "box",
+       "pos_t": [1.8, 0.12],
+       "size_t": [0.9, 0.9],
+       "base_m": 0.0,
+       "height_m": 1.4
+      },
+      {
+       "type": "box",
+       "pos_t": [1.86, 1.86],
+       "size_t": [0.3, 0.28],
+       "base_m": 0.0,
+       "height_m": 2.4
+      }
+     ]
+    },
+    {
+     "level": 5,
+     "floors": 3,
+     "footprint_tiles": [4, 4],
+     "level_marker": "spire_beacon",
+     "blocks": [
+      {
+       "pos_t": [0.12, 0.12],
+       "size_t": [1.68, 1.52],
+       "base_floor": 0,
+       "floors": 3,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.25, 0.22],
+       "size_t": [1.12, 0.96],
+       "base_floor": 3,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "octprism",
+       "pos_t": [2.08, 2.08],
+       "size_t": [1.8, 1.8],
+       "base_m": 0.0,
+       "height_m": 18.0,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [4.0, 4.0],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.12, 2.4],
+       "size_t": [1.68, 1.2],
+       "base_m": 0.0,
+       "height_m": 1.4
+      },
+      {
+       "type": "box",
+       "pos_t": [2.4, 0.12],
+       "size_t": [1.2, 1.2],
+       "base_m": 0.0,
+       "height_m": 1.4
+      },
+      {
+       "type": "box",
+       "pos_t": [2.48, 2.48],
+       "size_t": [0.3, 0.28],
+       "base_m": 0.0,
+       "height_m": 2.4
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "construction_yard",
+   "doc11_id": "civ_yard",
+   "family": "civic",
+   "roof_signature": "crane_mast",
+   "footprint_tiles_by_level": [
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [3, 3],
+    [3, 3]
+   ],
+   "levels": [
+    {
+     "level": 1,
+     "floors": 1,
+     "footprint_tiles": [2, 2],
+     "level_marker": "none",
+     "blocks": [
+      {
+       "pos_t": [0.1, 0.1],
+       "size_t": [0.9, 0.8],
+       "base_floor": 0,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.5, 1.5],
+       "base_m": 0.0,
+       "height_m": 16.0,
+       "width_m": 0.7,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 0.0,
+       "height_m": 2.0
+      },
+      {
+       "type": "box",
+       "pos_t": [0.15, 1.24],
+       "size_t": [0.8, 0.56],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [1.1, 0.15],
+       "size_t": [0.6, 0.6],
+       "base_m": 0.0,
+       "height_m": 1.8
+      },
+      {
+       "type": "pad",
+       "pos_t": [1.0, 1.0],
+       "size_t": [0.9, 0.9],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
+    },
+    {
+     "level": 2,
+     "floors": 2,
+     "footprint_tiles": [2, 2],
+     "level_marker": "rooftop_box",
+     "blocks": [
+      {
+       "pos_t": [0.1, 0.1],
+       "size_t": [0.9, 0.8],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.5, 1.5],
+       "base_m": 0.0,
+       "height_m": 20.0,
+       "width_m": 0.7,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 0.0,
+       "height_m": 2.0
+      },
+      {
+       "type": "box",
+       "pos_t": [0.15, 1.24],
+       "size_t": [0.8, 0.56],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [1.1, 0.15],
+       "size_t": [0.6, 0.6],
+       "base_m": 0.0,
+       "height_m": 1.8
+      },
+      {
+       "type": "pad",
+       "pos_t": [1.0, 1.0],
+       "size_t": [0.9, 0.9],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
+    },
+    {
+     "level": 3,
+     "floors": 2,
+     "footprint_tiles": [2, 2],
+     "level_marker": "setback",
+     "blocks": [
+      {
+       "pos_t": [0.1, 0.1],
+       "size_t": [0.9, 0.8],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.2, 0.18],
+       "size_t": [0.6, 0.52],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.5, 1.5],
+       "base_m": 0.0,
+       "height_m": 24.0,
+       "width_m": 0.7,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 0.0,
+       "height_m": 2.0
+      },
+      {
+       "type": "box",
+       "pos_t": [0.15, 1.24],
+       "size_t": [0.8, 0.56],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [1.1, 0.15],
+       "size_t": [0.6, 0.6],
+       "base_m": 0.0,
+       "height_m": 1.8
+      },
+      {
+       "type": "pad",
+       "pos_t": [1.0, 1.0],
+       "size_t": [0.9, 0.9],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
+    },
+    {
+     "level": 4,
+     "floors": 3,
+     "footprint_tiles": [3, 3],
+     "level_marker": "crown_band_plus_masts",
+     "blocks": [
+      {
+       "pos_t": [0.1, 0.1],
+       "size_t": [1.35, 1.2],
+       "base_floor": 0,
+       "floors": 3,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.2, 0.18],
+       "size_t": [0.9, 0.78],
+       "base_floor": 3,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [2.5, 2.5],
+       "base_m": 0.0,
+       "height_m": 27.0,
+       "width_m": 0.7,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [3.0, 3.0],
+       "base_m": 0.0,
+       "height_m": 2.0
+      },
+      {
+       "type": "box",
+       "pos_t": [0.15, 1.86],
+       "size_t": [1.2, 0.84],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [1.65, 0.15],
+       "size_t": [0.9, 0.9],
+       "base_m": 0.0,
+       "height_m": 1.8
+      },
+      {
+       "type": "pad",
+       "pos_t": [1.5, 1.5],
+       "size_t": [1.35, 1.35],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
+    },
+    {
+     "level": 5,
+     "floors": 3,
+     "footprint_tiles": [3, 3],
+     "level_marker": "spire_beacon",
+     "blocks": [
+      {
+       "pos_t": [0.1, 0.1],
+       "size_t": [1.35, 1.2],
+       "base_floor": 0,
+       "floors": 3,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.2, 0.18],
+       "size_t": [0.9, 0.78],
+       "base_floor": 3,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [2.5, 2.5],
+       "base_m": 0.0,
+       "height_m": 38.0,
+       "width_m": 0.7,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [3.0, 3.0],
+       "base_m": 0.0,
+       "height_m": 2.0
+      },
+      {
+       "type": "box",
+       "pos_t": [0.15, 1.86],
+       "size_t": [1.2, 0.84],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [1.65, 0.15],
+       "size_t": [0.9, 0.9],
+       "base_m": 0.0,
+       "height_m": 1.8
+      },
+      {
+       "type": "pad",
+       "pos_t": [1.5, 1.5],
+       "size_t": [1.35, 1.35],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

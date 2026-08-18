@@ -7,6 +7,17 @@ config/name="Slacum City"
 config/description="Persistent urban survival city builder. You built it. Now keep it alive."
 config/version="0.1.0"
 config/features=PackedStringArray("4.7")
+run/main_scene="res://game/main.tscn"
+
+[shader_globals]
+
+sc_night={"type": "float", "value": 0.0}
+sc_time={"type": "float", "value": 0.0}
+sc_wetness={"type": "float", "value": 0.0}
+sc_lightning={"type": "float", "value": 0.0}
+sc_wind={"type": "vec2", "value": Vector2(0, 0)}
+sc_overlay_mode={"type": "int", "value": 0}
+sc_fog_tint={"type": "vec3", "value": Vector3(0.1, 0.12, 0.16)}
 
 [display]
 

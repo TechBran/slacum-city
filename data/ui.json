@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "_source": "docs/design/12-ui-ux.md §8 (Draft v1, report 98 amendments C-25/C-35/C-59/C-62/C-63/C-64/C-65/C-71/C-72/G-8). Transcribed verbatim; no number invented here.",
+  "_units": "Every length is dp (Android density-independent pixels, doc 12 §2.1) unless the key says _m (metres) or _s / _ms (time).",
+  "layout": {
+    "reference_box_dp": [880, 400], "min_safe_box_dp": [640, 340], "safe_area_bleed_dp": 4,
+    "breakpoints_dp": {"compact_max": 699, "regular_max": 899},
+    "top_bar_h_dp": 48, "chip_gap_dp": 6, "clock_chip_w_dp": 132, "chip_never_hidden_count": 4,
+    "chip_priority": ["treasury", "incidents", "grid", "water", "population", "net_income", "stability"],
+    "chip_widths_full_dp": {"treasury": 104, "incidents": 64, "grid": 80, "water": 80, "population": 104, "net_income": 96, "stability": 112},
+    "chip_widths_compact_dp": {"treasury": 72, "incidents": 48, "grid": 56, "water": 56, "population": 64, "net_income": 64, "stability": 64},
+    "fab_d_dp": 64, "rail_button_d_dp": 56, "rail_gap_dp": 8, "rail_margin_dp": 12,
+    "drawer_w_ratio": 0.34, "drawer_w_min_dp": 260, "drawer_w_max_dp": 340,
+    "drawer_row_h_dp": 72, "drawer_handle_dp": [44, 160], "drawer_handle_center_from_bottom_dp": 140,
+    "side_panel_w_dp": 300, "bottom_sheet_h_dp": 200, "unit_picker_h_dp": 240, "unit_row_h_dp": 56,
+    "placement_bar_h_dp": 56, "placement_ghost_finger_offset_dp": 64, "build_card_dp": [96, 120],
+    "legend_w_dp": 200, "legend_max_h_dp": 180,
+    "alert_dp": [400, 44], "alert_max_stack": 2, "alert_ttl_s": 6.0,
+    "toast_dp": [320, 40], "toast_ttl_s": 2.5, "toast_undo_s": 5.0,
+    "marker_tap_dp": 48, "marker_visual_dp": 32, "marker_cluster_dp": 40, "marker_rect_inset_dp": [12, 60, 12, 70],
+    "thumb_pivot_inset_dp": 28, "thumb_frequent_r_dp": 110, "thumb_occasional_r_dp": 165,
+    "touch_target_min_dp": 48, "touch_target_large_dp": 56, "touch_spacing_min_dp": 8,
+    "sheet_anim_s": 0.22, "drawer_anim_s": 0.22, "coach_cutout_anim_s": 0.20, "hold_to_confirm_ms": 800
+  },
+  "type_scale_dp": {"display": 28, "title": 20, "body": 14, "label": 12, "numeric": 16},
+  "text_scale_options": [0.85, 1.0, 1.15, 1.30, 1.50],
+  "palette": {
+    "default": {"normal": "#33C27A", "warning": "#F2B13C", "critical": "#E5533D", "offline": "#5A6270", "selected": "#4FA8FF",
+                "tier1": "#7FB2D9", "tier2": "#E3C64A", "tier3": "#EE8C36", "tier4": "#E5533D", "tier5": "#FF3B6B",
+                "bg": "#0E1116", "surface": "#161B22", "surface_alt": "#1E242D", "text": "#E6EAF0", "text_dim": "#9AA3B0", "accent": "#4FA8FF"},
+    "deuteran": {"normal": "#3AA6FF", "warning": "#F2C43C", "critical": "#D6453B", "offline": "#5A6270", "selected": "#B36BFF"},
+    "protan":   {"normal": "#3AA6FF", "warning": "#EFD24A", "critical": "#C8452F", "offline": "#5A6270", "selected": "#B36BFF"},
+    "tritan":   {"normal": "#2FBF9E", "warning": "#F07C9B", "critical": "#D6453B", "offline": "#5A6270", "selected": "#3AA6FF"}
+  },
+  "_comment_states": "Exactly four data states — these four ARE doc 11's 2-bit overlay_state (C-64). SELECTED is not one of them.",
+  "state_glyphs": {"normal": "circle_filled", "warning": "triangle", "critical": "diamond", "offline": "cross"},
+  "state_dash":   {"normal": [1, 0], "warning": [8, 6], "critical": [4, 4], "offline": [2, 6]},
+  "state_pulse_hz": {"normal": 0.0, "warning": 0.0, "critical": 1.2, "offline": 0.0},
+  "state_luminance_min_delta": 0.10,
+  "selection_ring": {"color_token": "selected", "glyph": "ring", "width_dp": 3, "pulse_hz": 0.6,
+                     "layer": "MarkerLayer", "max_concurrent": 1, "is_overlay_state": false},
+  "overlay": {
+    "modes": ["none", "power", "water", "police", "fire", "traffic"],
+    "desaturate": 0.25, "exposure": 0.70, "transition_s": 0.18,
+    "strip_chip_dp": [64, 56], "strip_x_offset_dp": 80,
+    "outage_fill_alpha": 0.25, "coverage_disc_alpha": 0.18, "flow_dash_speed_m_s": 14.0, "heat_bin_m": 32.0
+  },
+  "camera": {
+    "_comment": "Interaction range only (C-63). Projection constants fov_deg/near_m/far_m live in data/render.json (doc 11) and are read from there; they must never be added to this block.",
+    "projection_from": "data/render.json",
+    "dist_min_m": 18.0, "dist_max_m": 420.0, "dist_max_city_factor": 1.6, "dist_max_city_min_m": 120.0,
+    "pitch_near_deg": 34.0, "pitch_far_deg": 62.0,
+    "default_zoom_t": 0.42, "default_zoom_dist_m_derived": 67.6, "default_yaw_deg": 45.0, "bounds_pad_blocks": 2,
+    "rubber_band": 0.35, "spring_omega": 12.0,
+    "momentum_min_start_m_s": 3.0, "momentum_max_m_s": 220.0, "momentum_decay_k": 6.0,
+    "momentum_stop_m_s": 0.5, "velocity_ema_alpha": 0.4, "ray_parallel_eps": 0.08,
+    "double_tap_zoom_delta_t": 0.18, "double_tap_tween_s": 0.28,
+    "jump_tween_s": 0.45, "jump_arc_threshold_m": 400.0, "jump_arc_tween_s": 0.75, "jump_arc_zoom_bump_t": 0.25,
+    "follow_lerp_k": 8.0, "rotation_mode_default": "snap45", "rotation_snap_deg": 45.0, "rotation_snap_tween_s": 0.25
+  },
+  "gestures_dp_ms": {
+    "tap_slop_dp": 8, "tap_max_ms": 220, "longpress_ms": 450, "longpress_slop_dp": 10,
+    "double_tap_ms": 260, "double_tap_slop_dp": 24, "drag_start_slop_dp": 8,
+    "pinch_span_slop_dp": 24, "twist_deadzone_deg": 8.0, "multi_suppress_ms": 80
+  },
+  "placement": {"validity_tint_alpha": 0.35, "revalidate_hz": 10, "max_issue_chips": 3, "commit_requires_button": true},
+  "thresholds": {
+    "grid_normal_pct": 95, "grid_warning_pct": 85, "grid_critical_pct": 60,
+    "water_normal_pct": 95, "water_warning_pct": 85, "water_critical_pct": 60,
+    "stability_high": 75, "stability_moderate": 50, "stability_low": 25,
+    "population_decline_warn_pct_per_day": -0.5, "escalation_bar_critical_remaining_tiers": 0.25, "escalation_bar_held_when_assist_ratio_ge": 1.0
+  },
+  "speed": {"options": [1, 2, 3], "default": 1, "paused_is_separate_flag": true, "resume_unpaused": true, "auto_speed_reset_on_critical": true},
+  "away_report": {"min_real_seconds": 120, "max_timeline_entries": 8, "max_unresolved_shown": 3},
+  "in_app_alerts": {
+    "_comment": "FOREGROUND banners and toasts ONLY (C-71/C-72). These are ~3x doc 08's PUSH budgets in data/notifications.json and that is deliberate: an in-app banner costs a glance the player is already giving. Never read these to decide a push, or a push budget to decide a banner.",
+    "classes": {
+      "p1": {"bucket_capacity": 6, "refill_per_real_hour": 6, "never_drop": true, "exempt_from_global": true,
+             "coalesce_window_s": 300, "surface": "banner"},
+      "p2": {"bucket_capacity": 3, "refill_per_real_hour": 3, "never_drop": false, "exempt_from_global": false,
+             "coalesce_window_s": 0, "surface": "banner", "degrade_to": "toast"},
+      "p3": {"bucket_capacity": 1, "refill_per_real_hour": 1, "never_drop": false, "exempt_from_global": false,
+             "coalesce_window_s": 0, "surface": "banner", "degrade_to": "toast"}
+    },
+    "global_max_per_hour": 3, "global_applies_to": ["p2", "p3"], "per_type_cooldown_s": 600,
+    "consults_quiet_hours": false, "may_emit_push": false,
+    "class_map_from": "data/notifications.json", "enabled_default": true
+  },
+  "haptics_ms": {
+    "light": {"button": 0, "snap_tile": 0, "blocked": 20, "dispatch": 12, "escalate": 40, "power_restored": 30, "rotation_snap": 0},
+    "full":  {"button": 8, "snap_tile": 5, "blocked": 30, "dispatch": 20, "escalate": 40, "power_restored": 60, "rotation_snap": 8}
+  },
+  "defaults": {"text_scale": 1.0, "colorblind": "default", "reduce_motion": false, "larger_touch_targets": false,
+               "haptics": "light", "invert_pan": false, "follow_dispatched_unit": true, "graphics": "balanced", "battery_saver": false}
+}

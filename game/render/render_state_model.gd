@@ -1,0 +1,1380 @@
+class_name RenderStateModel
+extends RefCounted
+## All render bookkeeping and arithmetic for the city view (doc 11 §2.2, §2.3,
+## §2.5, §2.6, §2.7).
+##
+## Deliberately a RefCounted with NO Node dependency: ~90% of rendering logic is
+## headless-testable this way (doc 11 §2.3). `RenderBridge` and `ChunkView` are
+## thin Node shells over this class.
+##
+## Time is a parameter, never a wall clock: `advance(delta)` drives every ramp
+## and `set_hour()` / `apply_snapshot()` supply sim time. Every constant comes
+## from `data/render.json` (constitution §2, §12) — this file holds rules only.
+
+const TIER_NEAR := 0
+const TIER_MEDIUM := 1
+const TIER_FAR := 2
+const TIER_CULLED := 3
+const TIER_NAMES := ["NEAR", "MEDIUM", "FAR", "CULLED"]
+
+const OVERLAY_NORMAL := 0
+const OVERLAY_WARNING := 1
+const OVERLAY_CRITICAL := 2
+const OVERLAY_OFFLINE := 3
+
+## §2.6 packed-state constants. `112 = 16 * 7`: 16 variants x 7 stages.
+const PACK_VARIANT_SPAN := 16
+const PACK_STAGE_SPAN := 7
+const PACK_OVERLAY_STRIDE := 112
+const INSTANCE_STRIDE := 16  # 12 transform floats + 4 custom-data floats
+
+const RAMP_IDLE := 0
+const RAMP_EXP := 1       # exponential approach (blackout fall, plain changes)
+const RAMP_RELIGHT := 2   # inrush overshoot curve
+
+const POWER_LIT := &"LIT"
+
+# ------------------------------------------------------------------- config
+
+var cfg: Dictionary = {}
+var preset: String = "balanced"
+
+var chunk_m: float = 128.0
+var near_max_m: float = 150.0
+var medium_max_m: float = 420.0
+var far_cull_m: float = 1200.0
+var hysteresis_m: float = 20.0
+var lod_dwell_s: float = 0.5
+
+var zoom_min_dist_m: float = 18.0
+var zoom_max_dist_m: float = 420.0
+var pitch_min_deg: float = 34.0
+var pitch_max_deg: float = 62.0
+
+var writes_per_frame: int = 2000
+var bucket_granularity: int = 32
+var max_instances_per_bucket: int = 256
+var max_animating: int = 1200
+var bulk_upload_threshold: int = 8
+
+var emissive_cfg: Dictionary = {}
+var blackout_cfg: Dictionary = {}
+var occupancy_curves: Dictionary = {}
+
+# ------------------------------------------------------------------- state
+
+var _recs: Dictionary = {}        # id -> BuildingRec
+var _chunks: Dictionary = {}      # Vector2i -> ChunkRec
+var _blocks: Dictionary = {}      # block_id -> BlockRec
+var _streetlights: Dictionary = {}  # id -> StreetlightRec
+var _archetype_ids: Dictionary = {}  # StringName -> int (bucket key packing)
+var _archetype_order: Array = []
+var _animating: Array = []        # ids, insertion-ordered
+var _out_events: Array = []
+var _suppress_events: bool = false
+
+var time_s: float = 0.0           # model clock, advanced only by advance()
+var hour: float = 21.0            # game hour, 0..24 (art input, §2.7.1)
+
+
+# ------------------------------------------------------------------- records
+
+class BuildingRec extends RefCounted:
+	var id: int = 0
+	var block_id: Variant = 0
+	var chunk := Vector2i.ZERO
+	var bucket_key: int = 0
+	var slot: int = -1
+	var archetype: StringName = &""
+	var level: int = 1
+	var family: String = "residential"
+	var world_pos := Vector3.ZERO
+	var transform := Transform3D.IDENTITY
+
+	var occ_b: float = 1.0
+	var powered: bool = true
+	var has_backup_power: bool = false
+	var priority_load: bool = false
+	var damage: float = 0.0
+	var condition: float = 1.0
+	var stage: int = 0
+	var overlay_state: int = 0
+
+	var variant: int = 0
+	var anim_phase: float = 0.0
+
+	var emissive_cur: float = 0.0
+	var emissive_target: float = 0.0
+	var emissive_delay: float = 0.0
+	var ramp_mode: int = 0
+	var ramp_t: float = 0.0
+
+
+class StreetlightRec extends RefCounted:
+	var id: int = 0
+	var block_id: Variant = 0
+	var chunk := Vector2i.ZERO
+	var world_pos := Vector3.ZERO
+	var anim_phase: float = 0.0
+	var lit_target: float = 1.0
+	var cur: float = 1.0
+	var delay: float = 0.0
+	var ramp_mode: int = 0
+	var ramp_t: float = 0.0
+
+
+class BlockRec extends RefCounted:
+	var block_id: Variant = 0
+	var chunk := Vector2i.ZERO
+	var buildings: Array = []
+	var streetlights: Array = []
+	var dark: bool = false
+	var powered_fraction: float = 1.0
+	var dark_since: float = -1.0
+	var envelope_t: float = -1.0     # < 0 = inactive
+	var ground_dark: float = 0.0     # 0 lit .. 1 dark, ramped
+	var relight_active: bool = false
+	var relight_t: float = 0.0
+	var relight_peak_fired: bool = true
+	var relight_duration: float = 0.0
+
+
+class Bucket extends RefCounted:
+	var key: int = 0
+	var chunk := Vector2i.ZERO
+	var archetype: StringName = &""
+	var level: int = 1
+	var capacity: int = 0
+	var visible_count: int = 0
+	var mirror := PackedFloat32Array()
+	var slot_owner := PackedInt32Array()
+	var free_slots: Array = []
+	var dirty: Dictionary = {}
+
+
+class ChunkRec extends RefCounted:
+	var coord := Vector2i.ZERO
+	var tier: int = -1
+	var dwell: float = 0.0
+	var buckets: Dictionary = {}
+	var buildings: Array = []
+
+
+# --------------------------------------------------------------------- setup
+
+func _init(render_cfg: Dictionary = {}, preset_name: String = "balanced") -> void:
+	configure(render_cfg, preset_name)
+
+
+static func load_config(path: String = "res://data/render.json") -> Dictionary:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return {}
+	var text := f.get_as_text()
+	f.close()
+	var parsed: Variant = JSON.parse_string(text)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return {}
+	return parsed
+
+
+func configure(render_cfg: Dictionary, preset_name: String = "balanced") -> void:
+	cfg = render_cfg
+	preset = preset_name
+	var world: Dictionary = cfg.get("world", {})
+	chunk_m = float(world.get("chunk_m", chunk_m))
+
+	var lod: Dictionary = cfg.get("lod", {})
+	near_max_m = float(lod.get("near_max_m", near_max_m))
+	medium_max_m = float(lod.get("medium_max_m", medium_max_m))
+	hysteresis_m = float(lod.get("hysteresis_m", hysteresis_m))
+	lod_dwell_s = float(lod.get("dwell_s", lod_dwell_s))
+
+	var cam: Dictionary = cfg.get("camera", {})
+	zoom_min_dist_m = float(cam.get("zoom_min_dist_m", zoom_min_dist_m))
+	zoom_max_dist_m = float(cam.get("zoom_max_dist_m", zoom_max_dist_m))
+	pitch_min_deg = float(cam.get("pitch_min_deg", pitch_min_deg))
+	pitch_max_deg = float(cam.get("pitch_max_deg", pitch_max_deg))
+
+	var streaming: Dictionary = cfg.get("streaming", {})
+	writes_per_frame = int(streaming.get("multimesh_instance_writes_per_frame", writes_per_frame))
+	bucket_granularity = int(streaming.get("bucket_alloc_granularity", bucket_granularity))
+	max_instances_per_bucket = int(streaming.get("max_instances_per_bucket", max_instances_per_bucket))
+	max_animating = int(streaming.get("max_animating_buildings", max_animating))
+	bulk_upload_threshold = int(streaming.get("bulk_upload_dirty_threshold", bulk_upload_threshold))
+
+	emissive_cfg = cfg.get("emissive", {})
+	blackout_cfg = cfg.get("blackout", {})
+	occupancy_curves = cfg.get("occupancy_hour_curve", {})
+	set_preset(preset_name)
+
+
+func set_preset(preset_name: String) -> void:
+	preset = preset_name
+	var presets: Dictionary = cfg.get("presets", {})
+	if presets.has(preset_name):
+		far_cull_m = float((presets[preset_name] as Dictionary).get("far_cull_m", far_cull_m))
+
+
+func set_hour(h: float) -> void:
+	hour = fposmod(h, 24.0)
+	_retarget_all()
+
+
+# ------------------------------------------------------------- hashes (§2.3)
+
+## Deterministic 32-bit mix — the renderer's own hash so `variant`/`anim_phase`
+## never depend on engine hash internals (doc 11 §9 item 1: render-side
+## randomness is not part of sim determinism and is never persisted).
+static func hash_u32(x: int) -> int:
+	var h := x & 0xFFFFFFFF
+	h = (h ^ (h >> 16)) * 0x7FEB352D & 0xFFFFFFFF
+	h = (h ^ (h >> 15)) * 0x2545F491 & 0xFFFFFFFF
+	h = (h ^ (h >> 16)) & 0xFFFFFFFF
+	return h
+
+
+static func variant_of(id: int) -> int:
+	return hash_u32(id) & (PACK_VARIANT_SPAN - 1)
+
+
+static func anim_phase_of(id: int) -> float:
+	return float((hash_u32(id) >> 4) & 0xFFFF) / 65535.0
+
+
+## Stable per-building [0,1) used by the fractional-outage rule (§2.7.4).
+static func hash01(id: int) -> float:
+	return float(hash_u32(id ^ 0x9E3779B9) & 0xFFFFFF) / 16777216.0
+
+
+## Mirrors the shader's `hash21` so the lit-window count is testable headlessly
+## (§7.2 test 10).
+static func hash21(cell: Vector2, seed_v: float = 0.0) -> float:
+	var p := cell + Vector2(seed_v, seed_v)
+	var n := sin(p.dot(Vector2(12.9898, 78.233))) * 43758.5453
+	return n - floor(n)
+
+
+## Number of lit window cells for `e = emissive_scale` — `lit = step(1-e, h)`.
+func lit_window_count(cols: int, rows: int, faces: int, e: float, variant: int = 0) -> int:
+	var lit := 0
+	var seed_v := float(variant) * 37.0
+	for f in faces:
+		for cx in cols:
+			for cy in rows:
+				var cell := Vector2(float(cx + f * cols), float(cy))
+				if hash21(cell, seed_v) >= 1.0 - e:
+					lit += 1
+	return lit
+
+
+# ----------------------------------------------------------- custom data §2.6
+
+static func pack_state(variant: int, stage: int, overlay: int) -> float:
+	return float(variant + PACK_VARIANT_SPAN * stage + PACK_OVERLAY_STRIDE * overlay)
+
+
+static func unpack_state(packed: float) -> Dictionary:
+	return {
+		"variant": int(fposmod(packed, float(PACK_VARIANT_SPAN))),
+		"stage": int(fposmod(floor(packed / float(PACK_VARIANT_SPAN)), float(PACK_STAGE_SPAN))),
+		"overlay": int(floor(packed / float(PACK_OVERLAY_STRIDE))),
+	}
+
+
+## The four custom-data channels for one building: (emissive, damage, packed, phase).
+func custom_data(id: int) -> Color:
+	var rec: BuildingRec = _recs.get(id)
+	if rec == null:
+		return Color(0, 0, 0, 0)
+	return Color(emissive_out(id), rec.damage,
+			pack_state(rec.variant, rec.stage, rec.overlay_state), rec.anim_phase)
+
+
+## Emissive actually written to the instance buffer: the ramp state modulated by
+## the block-wide brownout stutter envelope (§2.7.2 step 1).
+func emissive_out(id: int) -> float:
+	var rec: BuildingRec = _recs.get(id)
+	if rec == null:
+		return 0.0
+	return maxf(0.0, rec.emissive_cur * _envelope_mult(rec.block_id))
+
+
+# -------------------------------------------------------- building lifecycle
+
+## `view` mirrors doc 11 §5's BuildingView plus the chunk/block the renderer
+## places it in: {id, archetype_id, level, chunk, block_id, world_pos, family,
+## occ_b, powered, has_backup_power, priority_load, damage, condition,
+## construction_stage, overlay_state, transform}.
+func add_building(view: Dictionary) -> BuildingRec:
+	var id := int(view["id"])
+	if _recs.has(id):
+		remove_building(id)
+	var rec := BuildingRec.new()
+	rec.id = id
+	rec.archetype = StringName(view.get("archetype_id", &""))
+	rec.level = int(view.get("level", 1))
+	rec.family = String(view.get("family", "residential"))
+	rec.world_pos = view.get("world_pos", Vector3.ZERO)
+	rec.chunk = view.get("chunk", chunk_of(rec.world_pos))
+	rec.block_id = view.get("block_id", rec.chunk)
+	rec.transform = view.get("transform", Transform3D(Basis.IDENTITY, rec.world_pos))
+	rec.occ_b = float(view.get("occ_b", 1.0))
+	rec.powered = bool(view.get("powered", true))
+	rec.has_backup_power = bool(view.get("has_backup_power", false))
+	rec.priority_load = bool(view.get("priority_load", false))
+	rec.damage = float(view.get("damage", 0.0))
+	rec.condition = float(view.get("condition", 1.0))
+	rec.stage = int(view.get("construction_stage", 0))
+	rec.overlay_state = int(view.get("overlay_state", OVERLAY_NORMAL))
+	rec.variant = variant_of(id)
+	rec.anim_phase = anim_phase_of(id)
+	rec.emissive_target = emissive_target_for(rec)
+	rec.emissive_cur = rec.emissive_target
+	rec.ramp_mode = RAMP_IDLE
+
+	_recs[id] = rec
+	var chunk := _chunk_rec(rec.chunk)
+	chunk.buildings.append(id)
+	var block := _block_rec(rec.block_id, rec.chunk)
+	block.buildings.append(id)
+	_alloc_slot(rec)
+	return rec
+
+
+func remove_building(id: int) -> void:
+	var rec: BuildingRec = _recs.get(id)
+	if rec == null:
+		return
+	_free_slot(rec)
+	var chunk := _chunk_rec(rec.chunk)
+	chunk.buildings.erase(id)
+	var block := _block_rec(rec.block_id, rec.chunk)
+	block.buildings.erase(id)
+	_animating.erase(id)
+	_recs.erase(id)
+
+
+func add_streetlight(id: int, block_id: Variant, world_pos: Vector3) -> StreetlightRec:
+	var rec := StreetlightRec.new()
+	rec.id = id
+	rec.block_id = block_id
+	rec.world_pos = world_pos
+	rec.chunk = chunk_of(world_pos)
+	rec.anim_phase = anim_phase_of(id)
+	_streetlights[id] = rec
+	_block_rec(block_id, rec.chunk).streetlights.append(id)
+	return rec
+
+
+func building(id: int) -> BuildingRec:
+	return _recs.get(id)
+
+
+func streetlight(id: int) -> StreetlightRec:
+	return _streetlights.get(id)
+
+
+func block(block_id: Variant) -> BlockRec:
+	return _blocks.get(block_id)
+
+
+func building_count() -> int:
+	return _recs.size()
+
+
+func chunk_of(world_pos: Vector3) -> Vector2i:
+	return Vector2i(int(floor(world_pos.x / chunk_m)), int(floor(world_pos.z / chunk_m)))
+
+
+func _chunk_rec(coord: Vector2i) -> ChunkRec:
+	if not _chunks.has(coord):
+		var c := ChunkRec.new()
+		c.coord = coord
+		_chunks[coord] = c
+	return _chunks[coord]
+
+
+func _block_rec(block_id: Variant, chunk: Vector2i = Vector2i.ZERO) -> BlockRec:
+	if not _blocks.has(block_id):
+		var b := BlockRec.new()
+		b.block_id = block_id
+		b.chunk = chunk
+		_blocks[block_id] = b
+	return _blocks[block_id]
+
+
+# ------------------------------------------------------- slot allocator §2.2
+
+func _bucket_key(archetype: StringName, level: int) -> int:
+	if not _archetype_ids.has(archetype):
+		_archetype_ids[archetype] = _archetype_order.size()
+		_archetype_order.append(archetype)
+	return (int(_archetype_ids[archetype]) << 3) | (level & 7)
+
+
+func bucket(chunk: Vector2i, archetype: StringName, level: int) -> Bucket:
+	var c := _chunk_rec(chunk)
+	return c.buckets.get(_bucket_key(archetype, level))
+
+
+func buckets_of(chunk: Vector2i) -> Array:
+	var c := _chunk_rec(chunk)
+	var out: Array = []
+	for k in c.buckets:
+		out.append(c.buckets[k])
+	return out
+
+
+func _alloc_slot(rec: BuildingRec) -> void:
+	var c := _chunk_rec(rec.chunk)
+	var key := _bucket_key(rec.archetype, rec.level)
+	rec.bucket_key = key
+	var b: Bucket = c.buckets.get(key)
+	if b == null:
+		b = Bucket.new()
+		b.key = key
+		b.chunk = rec.chunk
+		b.archetype = rec.archetype
+		b.level = rec.level
+		c.buckets[key] = b
+	if b.visible_count + 1 > b.capacity:
+		_grow_bucket(b, b.visible_count + 1)
+	rec.slot = b.visible_count
+	b.slot_owner[rec.slot] = rec.id
+	b.visible_count += 1
+	b.free_slots = _tail_free_slots(b)
+	_write_slot(b, rec)
+	b.dirty[rec.slot] = true
+	assert(b.visible_count <= max_instances_per_bucket,
+			"bucket over %d instances — doc 11 §2.2 assertion" % max_instances_per_bucket)
+
+
+## O(1) removal: the last live slot's 16 floats are copied over the freed slot
+## and `slot_owner` patched, so the buffer never develops holes (§2.2).
+func _free_slot(rec: BuildingRec) -> void:
+	var c := _chunk_rec(rec.chunk)
+	var b: Bucket = c.buckets.get(rec.bucket_key)
+	if b == null or rec.slot < 0:
+		return
+	var last := b.visible_count - 1
+	if rec.slot != last:
+		var moved_id := b.slot_owner[last]
+		for i in INSTANCE_STRIDE:
+			b.mirror[rec.slot * INSTANCE_STRIDE + i] = b.mirror[last * INSTANCE_STRIDE + i]
+		b.slot_owner[rec.slot] = moved_id
+		var moved: BuildingRec = _recs.get(moved_id)
+		if moved != null:
+			moved.slot = rec.slot
+		b.dirty[rec.slot] = true
+	b.slot_owner[last] = -1
+	b.visible_count -= 1
+	b.dirty.erase(last)
+	b.free_slots = _tail_free_slots(b)
+	rec.slot = -1
+
+
+func _tail_free_slots(b: Bucket) -> Array:
+	var out: Array = []
+	for s in range(b.visible_count, b.capacity):
+		out.append(s)
+	return out
+
+
+func _grow_bucket(b: Bucket, needed: int) -> void:
+	var g := maxi(1, bucket_granularity)
+	var new_cap := int(ceil(float(needed) / float(g))) * g
+	var old_cap := b.capacity
+	b.mirror.resize(new_cap * INSTANCE_STRIDE)
+	b.slot_owner.resize(new_cap)
+	for i in range(old_cap, new_cap):
+		b.slot_owner[i] = -1
+	b.capacity = new_cap
+
+
+func _write_slot(b: Bucket, rec: BuildingRec) -> void:
+	if rec.slot < 0:
+		return
+	var base := rec.slot * INSTANCE_STRIDE
+	var t := rec.transform
+	b.mirror[base + 0] = t.basis.x.x
+	b.mirror[base + 1] = t.basis.y.x
+	b.mirror[base + 2] = t.basis.z.x
+	b.mirror[base + 3] = t.origin.x
+	b.mirror[base + 4] = t.basis.x.y
+	b.mirror[base + 5] = t.basis.y.y
+	b.mirror[base + 6] = t.basis.z.y
+	b.mirror[base + 7] = t.origin.y
+	b.mirror[base + 8] = t.basis.x.z
+	b.mirror[base + 9] = t.basis.y.z
+	b.mirror[base + 10] = t.basis.z.z
+	b.mirror[base + 11] = t.origin.z
+	var custom := custom_data(rec.id)
+	b.mirror[base + 12] = custom.r
+	b.mirror[base + 13] = custom.g
+	b.mirror[base + 14] = custom.b
+	b.mirror[base + 15] = custom.a
+
+
+func mirror_custom(chunk: Vector2i, archetype: StringName, level: int, slot: int) -> Color:
+	var b := bucket(chunk, archetype, level)
+	if b == null or slot < 0 or slot >= b.visible_count:
+		return Color(0, 0, 0, 0)
+	var base := slot * INSTANCE_STRIDE
+	return Color(b.mirror[base + 12], b.mirror[base + 13], b.mirror[base + 14],
+			b.mirror[base + 15])
+
+
+func _mark_dirty(rec: BuildingRec) -> void:
+	if rec.slot < 0:
+		return
+	var c := _chunk_rec(rec.chunk)
+	var b: Bucket = c.buckets.get(rec.bucket_key)
+	if b != null:
+		b.dirty[rec.slot] = true
+
+
+func dirty_instance_count() -> int:
+	var n := 0
+	for coord in _chunks:
+		var c: ChunkRec = _chunks[coord]
+		for k in c.buckets:
+			n += (c.buckets[k] as Bucket).dirty.size()
+	return n
+
+
+# ------------------------------------------------------------ camera and LOD
+
+func camera_distance_m(zoom_t: float) -> float:
+	var t := clampf(zoom_t, 0.0, 1.0)
+	return zoom_min_dist_m * pow(zoom_max_dist_m / zoom_min_dist_m, t)
+
+
+func camera_pitch_deg(zoom_t: float) -> float:
+	var t := clampf(zoom_t, 0.0, 1.0)
+	return pitch_min_deg + (pitch_max_deg - pitch_min_deg) * smoothstep(0.0, 1.0, t)
+
+
+## §2.5 camera rig: pivot at the ground focus, camera at (0, D sin p, D cos p)
+## rotated by yaw. Doc 12 owns {focus, zoom_t, yaw}; this derives the transform.
+func camera_position(focus: Vector3, zoom_t: float, yaw_deg: float) -> Vector3:
+	var d := camera_distance_m(zoom_t)
+	var p := deg_to_rad(camera_pitch_deg(zoom_t))
+	var offset := Vector3(0.0, d * sin(p), d * cos(p))
+	return focus + offset.rotated(Vector3.UP, deg_to_rad(yaw_deg))
+
+
+## Distance from the camera to the nearest point of the chunk's GROUND-PLANE
+## AABB — never the building-inclusive AABB (§2.5, test 19b).
+func chunk_ground_distance(chunk: Vector2i, camera_pos: Vector3) -> float:
+	var x0 := float(chunk.x) * chunk_m
+	var z0 := float(chunk.y) * chunk_m
+	var x1 := x0 + chunk_m
+	var z1 := z0 + chunk_m
+	var dx := maxf(maxf(x0 - camera_pos.x, camera_pos.x - x1), 0.0)
+	var dz := maxf(maxf(z0 - camera_pos.z, camera_pos.z - z1), 0.0)
+	return sqrt(dx * dx + dz * dz + camera_pos.y * camera_pos.y)
+
+
+func tier_band_max(tier: int) -> float:
+	match tier:
+		TIER_NEAR: return near_max_m
+		TIER_MEDIUM: return medium_max_m
+		TIER_FAR: return far_cull_m
+		_: return INF
+
+
+func raw_tier(dist: float) -> int:
+	if dist <= near_max_m:
+		return TIER_NEAR
+	if dist <= medium_max_m:
+		return TIER_MEDIUM
+	if dist <= far_cull_m:
+		return TIER_FAR
+	return TIER_CULLED
+
+
+## §2.5: upgrade at `edge - hysteresis`, downgrade at `edge + hysteresis`, at
+## most one tier step per `lod_dwell_s`. `cur_tier < 0` means "no tier yet".
+func lod_for(dist: float, cur_tier: int, dwell: float) -> int:
+	var target := raw_tier(dist)
+	if cur_tier < 0:
+		return target
+	if target == cur_tier:
+		return cur_tier
+	if dwell < lod_dwell_s:
+		return cur_tier
+	if target < cur_tier:
+		# more detail: must be inside the upper edge of the next tier up
+		var next_tier := cur_tier - 1
+		if dist <= tier_band_max(next_tier) - hysteresis_m:
+			return next_tier
+		return cur_tier
+	# less detail: must be outside this tier's edge plus hysteresis
+	if dist > tier_band_max(cur_tier) + hysteresis_m:
+		return cur_tier + 1
+	return cur_tier
+
+
+## Advances per-chunk dwell timers and applies `lod_for` to every known chunk.
+## Returns {chunk: tier} for the chunks whose tier changed this call.
+func update_chunk_tiers(camera_pos: Vector3, delta: float) -> Dictionary:
+	var changed: Dictionary = {}
+	for coord in _sorted_chunk_coords():
+		var c: ChunkRec = _chunks[coord]
+		c.dwell += delta
+		var dist := chunk_ground_distance(coord, camera_pos)
+		var tier := lod_for(dist, c.tier, c.dwell)
+		if tier != c.tier:
+			c.tier = tier
+			c.dwell = 0.0
+			changed[coord] = tier
+	return changed
+
+
+func chunk_tier(coord: Vector2i) -> int:
+	var c: ChunkRec = _chunks.get(coord)
+	return c.tier if c != null else -1
+
+
+func set_chunk_tier(coord: Vector2i, tier: int) -> void:
+	var c := _chunk_rec(coord)
+	c.tier = tier
+	c.dwell = 0.0
+
+
+func _sorted_chunk_coords() -> Array:
+	var out: Array = []
+	for coord in _chunks:
+		out.append(coord)
+	out.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		if a.x == b.x:
+			return a.y < b.y
+		return a.x < b.x)
+	return out
+
+
+# ----------------------------------------------------- emissive targets §2.7.1
+
+func occupancy_curve(family: String, at_hour: float) -> float:
+	var keys: Array = occupancy_curves.get(family, [])
+	if keys.is_empty():
+		return 1.0
+	var h := fposmod(at_hour, 24.0)
+	var n := keys.size()
+	var first: Array = keys[0]
+	var last: Array = keys[n - 1]
+	if h <= float(first[0]):
+		# wrap segment: last key -> first key + 24
+		var span := 24.0 - float(last[0]) + float(first[0])
+		var t := (h + 24.0 - float(last[0])) / maxf(0.0001, span)
+		return lerpf(float(last[1]), float(first[1]), t)
+	if h >= float(last[0]):
+		var span2 := 24.0 - float(last[0]) + float(first[0])
+		var t2 := (h - float(last[0])) / maxf(0.0001, span2)
+		return lerpf(float(last[1]), float(first[1]), t2)
+	for i in range(n - 1):
+		var a: Array = keys[i]
+		var b: Array = keys[i + 1]
+		if h >= float(a[0]) and h <= float(b[0]):
+			var t3 := (h - float(a[0])) / maxf(0.0001, float(b[0]) - float(a[0]))
+			return lerpf(float(a[1]), float(b[1]), t3)
+	return float(last[1])
+
+
+func emissive_target_for(rec: BuildingRec) -> float:
+	var occ := rec.occ_b * occupancy_curve(rec.family, hour)
+	var e := 0.0
+	if rec.powered:
+		e = float(emissive_cfg.get("powered_base", 0.55)) \
+				+ float(emissive_cfg.get("powered_occ_gain", 0.45)) * occ
+	elif rec.has_backup_power:
+		e = float(emissive_cfg.get("backup_lit", 0.22))
+	else:
+		e = float(emissive_cfg.get("dark_lit", 0.05))
+	e *= 1.0 - float(emissive_cfg.get("damage_dim_gain", 0.50)) * rec.damage
+	if rec.condition < float(emissive_cfg.get("condition_critical_threshold", 0.15)):
+		e *= float(emissive_cfg.get("condition_critical_mult", 0.40))
+	return clampf(e, 0.0, 1.0)
+
+
+func _retarget_all(animate: bool = true) -> void:
+	for id in _recs:
+		_retarget(_recs[id], animate)
+
+
+func _retarget(rec: BuildingRec, animate: bool = true) -> void:
+	rec.emissive_target = emissive_target_for(rec)
+	if animate:
+		if not is_equal_approx(rec.emissive_cur, rec.emissive_target):
+			rec.ramp_mode = RAMP_EXP
+			_touch_animating(rec.id)
+	else:
+		rec.emissive_cur = rec.emissive_target
+		rec.ramp_mode = RAMP_IDLE
+	_mark_dirty(rec)
+
+
+func _touch_animating(id: int) -> void:
+	if not _animating.has(id):
+		_animating.append(id)
+
+
+# --------------------------------------------------------- blackout §2.7.2
+
+func _envelope_keys() -> Array:
+	return blackout_cfg.get("stutter_envelope", [])
+
+
+func _envelope_value(t: float) -> float:
+	var keys := _envelope_keys()
+	if keys.is_empty():
+		return 1.0
+	var first: Array = keys[0]
+	if t <= float(first[0]):
+		return float(first[1])
+	var last: Array = keys[keys.size() - 1]
+	if t >= float(last[0]):
+		return float(last[1])
+	for i in range(keys.size() - 1):
+		var a: Array = keys[i]
+		var b: Array = keys[i + 1]
+		if t >= float(a[0]) and t <= float(b[0]):
+			var span := maxf(0.0001, float(b[0]) - float(a[0]))
+			return lerpf(float(a[1]), float(b[1]), (t - float(a[0])) / span)
+	return float(last[1])
+
+
+func _envelope_mult(block_id: Variant) -> float:
+	var b: BlockRec = _blocks.get(block_id)
+	if b == null or b.envelope_t < 0.0:
+		return 1.0
+	return _envelope_value(b.envelope_t)
+
+
+func envelope_mult(block_id: Variant) -> float:
+	return _envelope_mult(block_id)
+
+
+## Per-chunk ground/road albedo multiplier (§2.7.2 step 6).
+func chunk_power_mult(block_id: Variant) -> float:
+	var b: BlockRec = _blocks.get(block_id)
+	if b == null:
+		return 1.0
+	return lerpf(1.0, float(blackout_cfg.get("ground_darken_mult", 0.45)), b.ground_dark)
+
+
+## §2.7.2. `powered_fraction < 1` keeps a stable hashed subset lit (§2.7.4).
+func plan_blackout(block_id: Variant, powered_fraction: float = 0.0) -> void:
+	var b := _block_rec(block_id)
+	b.dark = true
+	b.powered_fraction = clampf(powered_fraction, 0.0, 1.0)
+	b.dark_since = time_s
+	b.envelope_t = 0.0
+	b.relight_active = false
+	var stagger := float(blackout_cfg.get("stagger_s", 0.35))
+	for id in b.buildings:
+		var rec: BuildingRec = _recs.get(id)
+		if rec == null:
+			continue
+		rec.powered = _stays_powered(rec, b.powered_fraction)
+		rec.emissive_target = emissive_target_for(rec)
+		rec.emissive_delay = rec.anim_phase * stagger
+		rec.ramp_mode = RAMP_EXP
+		rec.ramp_t = 0.0
+		_touch_animating(id)
+		_mark_dirty(rec)
+	var sl_mult := float(blackout_cfg.get("streetlight_delay_mult", 0.60))
+	for sid in b.streetlights:
+		var sl: StreetlightRec = _streetlights.get(sid)
+		if sl == null:
+			continue
+		sl.lit_target = 0.0
+		sl.delay = sl.anim_phase * stagger * sl_mult
+		sl.ramp_mode = RAMP_EXP
+	_emit(&"render_blackout_started", {"block_id": block_id})
+
+
+func _stays_powered(rec: BuildingRec, powered_fraction: float) -> bool:
+	if powered_fraction >= 1.0:
+		return true
+	if powered_fraction <= 0.0:
+		return false
+	if rec.priority_load:
+		return true
+	return hash01(rec.id) < powered_fraction
+
+
+## Which buildings of a block stay lit at a given fraction — stable by hash,
+## never random (§2.7.4).
+func powered_set(block_id: Variant, powered_fraction: float) -> Array:
+	var b: BlockRec = _blocks.get(block_id)
+	var out: Array = []
+	if b == null:
+		return out
+	for id in b.buildings:
+		var rec: BuildingRec = _recs.get(id)
+		if rec != null and _stays_powered(rec, powered_fraction):
+			out.append(id)
+	return out
+
+
+# --------------------------------------------------------- relight §2.7.3/5
+
+## `restore_order` first (report C-39), `source_pos` then block centroid as
+## fallbacks. Classifies momentary vs sustained from how long the block was dark.
+func plan_relight(block_id: Variant, restore_order: Array = [],
+		source_pos: Variant = null, powered_fraction: float = 1.0) -> Dictionary:
+	var b := _block_rec(block_id)
+	var outage := -1.0 if b.dark_since < 0.0 else time_s - b.dark_since
+	var momentary_s := float(blackout_cfg.get("momentary_outage_s", 4.50))
+	var momentary := outage >= 0.0 and outage <= momentary_s
+	var sweep := float(blackout_cfg.get("relight_sweep_s", 2.2))
+	var jitter := float(blackout_cfg.get("relight_jitter_s", 0.5))
+
+	var ranks := _relight_ranks(b, restore_order, source_pos)
+	var delays: Dictionary = {}
+	for id in b.buildings:
+		var rec: BuildingRec = _recs.get(id)
+		if rec == null:
+			continue
+		var d := 0.0
+		if not momentary:
+			d = sweep * float(ranks.get(id, 0.0)) + rec.anim_phase * jitter
+		rec.powered = _stays_powered(rec, powered_fraction)
+		rec.emissive_target = emissive_target_for(rec)
+		rec.emissive_delay = d
+		rec.ramp_mode = RAMP_RELIGHT
+		rec.ramp_t = 0.0
+		delays[id] = d
+		_touch_animating(id)
+		_mark_dirty(rec)
+
+	var sl_mult := float(blackout_cfg.get("relight_streetlight_mult", 0.80))
+	for sid in b.streetlights:
+		var sl: StreetlightRec = _streetlights.get(sid)
+		if sl == null:
+			continue
+		sl.lit_target = 1.0
+		sl.ramp_mode = RAMP_RELIGHT
+		sl.ramp_t = 0.0
+		if momentary:
+			sl.delay = 0.0
+		else:
+			sl.delay = sl_mult * float(delays.get(_nearest_building(b, sl.world_pos), 0.0))
+
+	b.dark = false
+	b.powered_fraction = powered_fraction
+	b.relight_active = true
+	b.relight_t = 0.0
+	b.relight_peak_fired = momentary
+	var ramp := float(blackout_cfg.get("relight_ramp_s", 0.15))
+	var settle := float(blackout_cfg.get("relight_settle_s", 0.30))
+	b.relight_duration = float(blackout_cfg.get("momentary_relight_total_s", 0.75)) if momentary \
+			else sweep + jitter + ramp + settle
+	_emit(&"render_relight_started", {"block_id": block_id,
+			"duration_s": b.relight_duration, "momentary": momentary})
+	return {"momentary": momentary, "outage_s": outage, "delays": delays,
+			"duration_s": b.relight_duration}
+
+
+## Normalised sweep position in [0,1] per building.
+func _relight_ranks(b: BlockRec, restore_order: Array, source_pos: Variant) -> Dictionary:
+	var ranks: Dictionary = {}
+	var order: Array = []
+	for v in restore_order:
+		var id := int(v)
+		if _recs.has(id) and b.buildings.has(id):
+			order.append(id)
+	if not order.is_empty():
+		var n := order.size()
+		for k in n:
+			ranks[order[k]] = float(k) / float(maxi(n - 1, 1))
+		# buildings missing from the order sweep last
+		for id in b.buildings:
+			if not ranks.has(id):
+				ranks[id] = 1.0
+		return ranks
+	var origin: Vector3 = source_pos if source_pos is Vector3 else _block_centroid(b)
+	var floor_m := float(blackout_cfg.get("relight_source_dist_floor_m", 40.0))
+	var d_max := floor_m
+	for id in b.buildings:
+		var rec: BuildingRec = _recs.get(id)
+		if rec != null:
+			d_max = maxf(d_max, rec.world_pos.distance_to(origin))
+	for id in b.buildings:
+		var rec2: BuildingRec = _recs.get(id)
+		if rec2 != null:
+			ranks[id] = rec2.world_pos.distance_to(origin) / maxf(0.0001, d_max)
+	return ranks
+
+
+func _block_centroid(b: BlockRec) -> Vector3:
+	var sum := Vector3.ZERO
+	var n := 0
+	for id in b.buildings:
+		var rec: BuildingRec = _recs.get(id)
+		if rec != null:
+			sum += rec.world_pos
+			n += 1
+	return sum / float(maxi(n, 1))
+
+
+func _nearest_building(b: BlockRec, pos: Vector3) -> int:
+	var best := -1
+	var best_d := INF
+	for id in b.buildings:
+		var rec: BuildingRec = _recs.get(id)
+		if rec == null:
+			continue
+		var d := rec.world_pos.distance_to(pos)
+		if d < best_d:
+			best_d = d
+			best = id
+	return best
+
+
+# ------------------------------------------------------------ events §2.3/§4
+
+func apply_event(e: Dictionary) -> void:
+	var type := StringName(e.get("type", &""))
+	match type:
+		&"BuildingPowerChanged", &"building_power_changed":
+			var rec := _rec_of(e.get("building", e.get("building_id", -1)))
+			if rec != null:
+				var state: Variant = e.get("state", POWER_LIT)
+				if typeof(state) == TYPE_BOOL:
+					rec.powered = bool(state)
+				else:
+					rec.powered = StringName(state) == POWER_LIT
+				_retarget(rec)
+		&"BlockDarkChanged":
+			var block_id: Variant = e.get("block_id", e.get("block", 0))
+			var fraction := float(e.get("powered_fraction", 0.0))
+			if bool(e.get("block_dark", true)):
+				plan_blackout(block_id, fraction)
+			else:
+				plan_relight(block_id, e.get("restore_order", []),
+						e.get("source_pos", null), maxf(fraction, 0.0))
+		&"PowerRestored":
+			# doc 04's citywide restoration: each dark block relights on its own
+			# sweep, no extra citywide sweep on top (§2.7.5).
+			var order: Array = e.get("restore_order", [])
+			for bid in _dark_block_ids():
+				plan_relight(bid, order, e.get("source_pos", null),
+						float(e.get("powered_fraction", 1.0)))
+		&"StreetlightsChanged":
+			_set_streetlights(e.get("block_id", 0), bool(e.get("lit", true)))
+		&"TotalBlackout":
+			for bid in _sorted_block_ids():
+				plan_blackout(bid, 0.0)
+		&"building_damaged", &"building_damage_changed":
+			var rec2 := _rec_of(e.get("building", e.get("building_id", -1)))
+			if rec2 != null:
+				if e.has("damage"):
+					rec2.damage = clampf(float(e["damage"]), 0.0, 1.0)
+				if e.has("condition"):
+					rec2.condition = clampf(float(e["condition"]), 0.0, 1.0)
+				rec2.overlay_state = OVERLAY_WARNING if rec2.overlay_state == OVERLAY_NORMAL \
+						else rec2.overlay_state
+				_retarget(rec2)
+		&"building_destroyed":
+			var rec3 := _rec_of(e.get("building", e.get("building_id", -1)))
+			if rec3 != null:
+				rec3.damage = 1.0
+				rec3.powered = false
+				rec3.overlay_state = OVERLAY_OFFLINE
+				_retarget(rec3)
+		&"building_completed", &"building_upgraded":
+			var rec4 := _rec_of(e.get("building", e.get("building_id", -1)))
+			if rec4 != null:
+				var new_level := int(e.get("level", rec4.level))
+				if new_level != rec4.level:
+					_rebucket(rec4, new_level)
+				rec4.stage = 0
+				rec4.damage = float(e.get("damage", rec4.damage))
+				rec4.overlay_state = OVERLAY_NORMAL
+				_retarget(rec4)
+		&"building_construction_stage":
+			var rec5 := _rec_of(e.get("building", e.get("building_id", -1)))
+			if rec5 != null:
+				rec5.stage = clampi(int(e.get("stage", 0)), 0, PACK_STAGE_SPAN - 1)
+				_mark_dirty(rec5)
+		&"building_removed":
+			var id := int(e.get("building", e.get("building_id", -1)))
+			if _recs.has(id):
+				remove_building(id)
+		&"building_placed":
+			if e.has("view"):
+				add_building(e["view"])
+		&"AutoReclosedOK", &"AutoRecloseLockout", &"LoadShedStarted", &"LoadShedEnded", \
+		&"RollingBlackoutRotated", &"TrafficSignalPowerChanged", &"network_topology_changed", \
+		&"road_network_changed", &"block_development_changed":
+			pass  # consumed by other views; no per-building emissive effect here
+		_:
+			pass
+
+
+func apply_events(batch: Array) -> void:
+	for e in batch:
+		if typeof(e) == TYPE_DICTIONARY:
+			apply_event(e)
+
+
+## §2.7.6 — on `is_resync` every value SNAPS and no ceremony is scheduled.
+func apply_snapshot(snap: Dictionary) -> void:
+	var resync := bool(snap.get("is_resync", false))
+	if resync:
+		_suppress_events = true
+	if snap.has("sim_time_minutes"):
+		hour = fposmod(float(snap["sim_time_minutes"]) / 60.0, 24.0)
+	elif snap.has("hour"):
+		hour = fposmod(float(snap["hour"]), 24.0)
+	for v in snap.get("buildings", []) as Array:
+		var view: Dictionary = v
+		var rec := _rec_of(view.get("id", -1))
+		if rec == null:
+			continue
+		if view.has("powered"):
+			rec.powered = bool(view["powered"])
+		if view.has("has_backup_power"):
+			rec.has_backup_power = bool(view["has_backup_power"])
+		if view.has("damage"):
+			rec.damage = float(view["damage"])
+		if view.has("condition"):
+			rec.condition = float(view["condition"])
+		if view.has("occ_b"):
+			rec.occ_b = float(view["occ_b"])
+		if view.has("construction_stage"):
+			rec.stage = int(view["construction_stage"])
+		if view.has("overlay_state"):
+			rec.overlay_state = int(view["overlay_state"])
+	for v in snap.get("blocks", []) as Array:
+		var bv: Dictionary = v
+		var b := _block_rec(bv.get("block_id", 0))
+		b.dark = bool(bv.get("block_dark", false))
+		b.powered_fraction = float(bv.get("powered_fraction", 1.0 if not b.dark else 0.0))
+	if resync:
+		resync_snap()
+		_out_events.clear()
+		_suppress_events = false
+	else:
+		_retarget_all()
+
+
+## Full resync: snap every value to steady state and drop queued ceremony.
+## Also used on save load, chunk build and preset change (§2.3).
+func resync_snap() -> void:
+	for id in _recs:
+		var rec: BuildingRec = _recs[id]
+		rec.emissive_target = emissive_target_for(rec)
+		rec.emissive_cur = rec.emissive_target
+		rec.emissive_delay = 0.0
+		rec.ramp_mode = RAMP_IDLE
+		rec.ramp_t = 0.0
+		_mark_dirty(rec)
+	for sid in _streetlights:
+		var sl: StreetlightRec = _streetlights[sid]
+		sl.cur = sl.lit_target
+		sl.delay = 0.0
+		sl.ramp_mode = RAMP_IDLE
+		sl.ramp_t = 0.0
+	for bid in _blocks:
+		var b: BlockRec = _blocks[bid]
+		b.envelope_t = -1.0
+		b.relight_active = false
+		b.relight_peak_fired = true
+		b.relight_t = 0.0
+		b.ground_dark = 1.0 if b.dark else 0.0
+	_animating.clear()
+
+
+func queued_plan_count() -> int:
+	var n := 0
+	for bid in _blocks:
+		var b: BlockRec = _blocks[bid]
+		if b.envelope_t >= 0.0 or b.relight_active:
+			n += 1
+	return n
+
+
+func animating_count() -> int:
+	return _animating.size()
+
+
+func _rec_of(id_value: Variant) -> BuildingRec:
+	return _recs.get(int(id_value))
+
+
+func _rebucket(rec: BuildingRec, new_level: int) -> void:
+	_free_slot(rec)
+	rec.level = new_level
+	_alloc_slot(rec)
+
+
+func _dark_block_ids() -> Array:
+	var out: Array = []
+	for bid in _sorted_block_ids():
+		if (_blocks[bid] as BlockRec).dark:
+			out.append(bid)
+	return out
+
+
+func _sorted_block_ids() -> Array:
+	var out: Array = []
+	for bid in _blocks:
+		out.append(bid)
+	out.sort_custom(func(a: Variant, b: Variant) -> bool: return str(a) < str(b))
+	return out
+
+
+func _set_streetlights(block_id: Variant, lit: bool) -> void:
+	var b := _block_rec(block_id)
+	var stagger := float(blackout_cfg.get("stagger_s", 0.35))
+	var mult := float(blackout_cfg.get("streetlight_delay_mult", 0.60))
+	for sid in b.streetlights:
+		var sl: StreetlightRec = _streetlights.get(sid)
+		if sl == null:
+			continue
+		sl.lit_target = 1.0 if lit else 0.0
+		sl.delay = sl.anim_phase * stagger * mult
+		sl.ramp_mode = RAMP_RELIGHT if lit else RAMP_EXP
+		sl.ramp_t = 0.0
+
+
+func _emit(type: StringName, payload: Dictionary) -> void:
+	if _suppress_events:
+		return
+	var e := payload.duplicate()
+	e["type"] = type
+	e["t"] = time_s
+	_out_events.append(e)
+
+
+func drain_render_events() -> Array:
+	var out := _out_events
+	_out_events = []
+	return out
+
+
+func peek_render_events() -> Array:
+	return _out_events
+
+
+# ------------------------------------------------------------------- advance
+
+## Advances every ramp by `delta` seconds. `max_animating_buildings` caps the
+## number of buildings actually interpolated; the remainder snap to target
+## (§2.3).
+func advance(delta: float) -> void:
+	time_s += delta
+	_advance_blocks(delta)
+
+	if _animating.size() > max_animating:
+		var overflow := _animating.slice(max_animating)
+		for id in overflow:
+			var rec: BuildingRec = _recs.get(id)
+			if rec != null:
+				rec.emissive_cur = rec.emissive_target
+				rec.emissive_delay = 0.0
+				rec.ramp_mode = RAMP_IDLE
+				_mark_dirty(rec)
+		_animating = _animating.slice(0, max_animating)
+
+	var still: Array = []
+	for id in _animating:
+		var rec: BuildingRec = _recs.get(id)
+		if rec == null:
+			continue
+		if _advance_rec(rec, delta):
+			still.append(id)
+		_mark_dirty(rec)
+	_animating = still
+
+	for sid in _streetlights:
+		_advance_streetlight(_streetlights[sid], delta)
+
+
+func _advance_blocks(delta: float) -> void:
+	var env_keys := _envelope_keys()
+	var env_end := 0.0
+	if not env_keys.is_empty():
+		env_end = float((env_keys[env_keys.size() - 1] as Array)[0])
+	var tau := float(blackout_cfg.get("tau_fall_s", 0.12))
+	var peak_at := float(blackout_cfg.get("relight_peak_event_s", 1.1))
+	for bid in _sorted_block_ids():
+		var b: BlockRec = _blocks[bid]
+		if b.envelope_t >= 0.0:
+			b.envelope_t += delta
+			if b.envelope_t > env_end:
+				# The envelope's terminal keyframe is the collapse to black. Fold
+				# it into every ramp state as it expires so releasing the block
+				# multiplier cannot flash the block back up (§2.7.2 steps 1-3:
+				# 0.30 envelope + 0.35 stagger + 0.55 fall = 1.20 s worst case).
+				var final_mult := _envelope_value(env_end)
+				for id in b.buildings:
+					var rec: BuildingRec = _recs.get(id)
+					if rec != null:
+						rec.emissive_cur *= final_mult
+						_mark_dirty(rec)
+				for sid in b.streetlights:
+					var sl: StreetlightRec = _streetlights.get(sid)
+					if sl != null:
+						sl.cur *= final_mult
+				b.envelope_t = -1.0
+		var target := 1.0 if b.dark else 0.0
+		if not is_equal_approx(b.ground_dark, target):
+			b.ground_dark += (target - b.ground_dark) * (1.0 - exp(-delta / maxf(0.0001, tau)))
+			if absf(target - b.ground_dark) < 0.001:
+				b.ground_dark = target
+		if b.relight_active:
+			b.relight_t += delta
+			if not b.relight_peak_fired and b.relight_t >= peak_at:
+				b.relight_peak_fired = true
+				_emit(&"render_relight_peak", {"block_id": bid})
+			if b.relight_t >= b.relight_duration:
+				b.relight_active = false
+
+
+## Returns true while the record still needs animating.
+func _advance_rec(rec: BuildingRec, delta: float) -> bool:
+	var dt := delta
+	if rec.emissive_delay > 0.0:
+		if rec.emissive_delay >= dt:
+			rec.emissive_delay -= dt
+			return true
+		dt -= rec.emissive_delay
+		rec.emissive_delay = 0.0
+	match rec.ramp_mode:
+		RAMP_RELIGHT:
+			rec.ramp_t += dt
+			var ramp := float(blackout_cfg.get("relight_ramp_s", 0.15))
+			var settle := float(blackout_cfg.get("relight_settle_s", 0.30))
+			var over := float(blackout_cfg.get("relight_overshoot", 1.35))
+			if rec.ramp_t < ramp:
+				rec.emissive_cur = rec.emissive_target * (rec.ramp_t / maxf(0.0001, ramp)) * over
+				return true
+			var k := minf(1.0, (rec.ramp_t - ramp) / maxf(0.0001, settle))
+			rec.emissive_cur = rec.emissive_target * (over - (over - 1.0) * k)
+			if k >= 1.0:
+				rec.emissive_cur = rec.emissive_target
+				rec.ramp_mode = RAMP_IDLE
+				return false
+			return true
+		RAMP_EXP:
+			var tau := float(blackout_cfg.get("tau_fall_s", 0.12))
+			rec.emissive_cur += (rec.emissive_target - rec.emissive_cur) \
+					* (1.0 - exp(-dt / maxf(0.0001, tau)))
+			if absf(rec.emissive_target - rec.emissive_cur) < 0.0005:
+				rec.emissive_cur = rec.emissive_target
+				rec.ramp_mode = RAMP_IDLE
+				return false
+			return true
+		_:
+			return false
+
+
+func _advance_streetlight(sl: StreetlightRec, delta: float) -> void:
+	var dt := delta
+	if sl.delay > 0.0:
+		if sl.delay >= dt:
+			sl.delay -= dt
+			return
+		dt -= sl.delay
+		sl.delay = 0.0
+	if sl.ramp_mode == RAMP_RELIGHT:
+		sl.ramp_t += dt
+		var ramp := float(blackout_cfg.get("relight_ramp_s", 0.15))
+		var settle := float(blackout_cfg.get("relight_settle_s", 0.30))
+		var over := float(blackout_cfg.get("relight_overshoot", 1.35))
+		if sl.ramp_t < ramp:
+			sl.cur = sl.lit_target * (sl.ramp_t / maxf(0.0001, ramp)) * over
+			return
+		var k := minf(1.0, (sl.ramp_t - ramp) / maxf(0.0001, settle))
+		sl.cur = sl.lit_target * (over - (over - 1.0) * k)
+		if k >= 1.0:
+			sl.cur = sl.lit_target
+			sl.ramp_mode = RAMP_IDLE
+	elif sl.ramp_mode == RAMP_EXP:
+		var tau := float(blackout_cfg.get("tau_fall_s", 0.12))
+		sl.cur += (sl.lit_target - sl.cur) * (1.0 - exp(-dt / maxf(0.0001, tau)))
+		if absf(sl.lit_target - sl.cur) < 0.0005:
+			sl.cur = sl.lit_target
+			sl.ramp_mode = RAMP_IDLE
+
+
+## Value a streetlight MultiMesh writes, including the block stutter envelope.
+func streetlight_out(id: int) -> float:
+	var sl: StreetlightRec = _streetlights.get(id)
+	if sl == null:
+		return 0.0
+	return maxf(0.0, sl.cur * _envelope_mult(sl.block_id))
+
+
+# ------------------------------------------------------------- dirty flush
+
+## Drains dirty instances in ascending chunk-distance order under the
+## `multimesh_instance_writes_per_frame` budget; overflow carries to the next
+## call (§2.3). Returns {writes, chunks, bulk_uploads, single_writes, remaining}.
+func flush_dirty(camera_pos: Vector3, budget: int = -1) -> Dictionary:
+	var remaining_budget := writes_per_frame if budget < 0 else budget
+	var order: Array = []
+	for coord in _sorted_chunk_coords():
+		var c: ChunkRec = _chunks[coord]
+		var count := 0
+		for k in c.buckets:
+			count += (c.buckets[k] as Bucket).dirty.size()
+		if count > 0:
+			order.append({"coord": coord, "dist": chunk_ground_distance(coord, camera_pos),
+					"count": count})
+	order.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if is_equal_approx(float(a["dist"]), float(b["dist"])):
+			var ca: Vector2i = a["coord"]
+			var cb: Vector2i = b["coord"]
+			if ca.x == cb.x:
+				return ca.y < cb.y
+			return ca.x < cb.x
+		return float(a["dist"]) < float(b["dist"]))
+
+	var writes := 0
+	var bulk := 0
+	var singles := 0
+	var touched: Array = []
+	for entry_v in order:
+		if remaining_budget <= 0:
+			break
+		var entry: Dictionary = entry_v
+		var coord: Vector2i = entry["coord"]
+		var c: ChunkRec = _chunks[coord]
+		var chunk_writes := 0
+		for k in _sorted_bucket_keys(c):
+			var b: Bucket = c.buckets[k]
+			if b.dirty.is_empty():
+				continue
+			if b.dirty.size() >= bulk_upload_threshold:
+				bulk += 1
+			else:
+				singles += b.dirty.size()
+			var slots: Array = b.dirty.keys()
+			slots.sort()
+			for slot in slots:
+				if remaining_budget <= 0:
+					break
+				var owner_id := b.slot_owner[slot] if slot < b.slot_owner.size() else -1
+				var rec: BuildingRec = _recs.get(owner_id)
+				if rec != null:
+					_write_slot(b, rec)
+				b.dirty.erase(slot)
+				remaining_budget -= 1
+				writes += 1
+				chunk_writes += 1
+		if chunk_writes > 0:
+			touched.append(coord)
+	return {"writes": writes, "chunks": touched, "bulk_uploads": bulk,
+			"single_writes": singles, "remaining": dirty_instance_count()}
+
+
+func _sorted_bucket_keys(c: ChunkRec) -> Array:
+	var keys: Array = c.buckets.keys()
+	keys.sort()
+	return keys

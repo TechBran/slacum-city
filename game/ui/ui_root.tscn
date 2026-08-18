@@ -1,0 +1,95 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://ui/ui_root.gd" id="1_uiroot"]
+
+[node name="UIRoot" type="CanvasLayer"]
+layer = 10
+script = ExtResource("1_uiroot")
+
+[node name="SafeArea" type="MarginContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="MarkerLayer" type="Control" parent="SafeArea"]
+layout_mode = 2
+mouse_filter = 1
+
+[node name="HUDLayer" type="Control" parent="SafeArea"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="TopBar" type="HBoxContainer" parent="SafeArea/HUDLayer"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 48.0
+grow_horizontal = 2
+mouse_filter = 2
+
+[node name="LeftRail" type="VBoxContainer" parent="SafeArea/HUDLayer"]
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 12.0
+offset_top = -204.0
+offset_right = 76.0
+offset_bottom = -12.0
+grow_vertical = 0
+mouse_filter = 2
+
+[node name="RightRail" type="Control" parent="SafeArea/HUDLayer"]
+layout_mode = 1
+anchors_preset = 11
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -80.0
+grow_horizontal = 0
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="AlertStack" type="VBoxContainer" parent="SafeArea/HUDLayer"]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -200.0
+offset_top = 56.0
+offset_right = 200.0
+offset_bottom = 144.0
+grow_horizontal = 2
+mouse_filter = 2
+
+[node name="PanelLayer" type="Control" parent="SafeArea"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="SheetLayer" type="Control" parent="SafeArea"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="ModalLayer" type="Control" parent="SafeArea"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="CoachLayer" type="Control" parent="SafeArea"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="ToastLayer" type="CanvasLayer" parent="."]
+layer = 20
+
+[node name="ToastAnchor" type="Control" parent="ToastLayer"]
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -60.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2

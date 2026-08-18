@@ -1,0 +1,3397 @@
+{
+ "archetype_count": 12,
+ "generated_from_hash": "8892ea238a31cd6681b2701fdd6552159aaa4ceb",
+ "generator": "tools/gen_graybox.gd",
+ "generator_version": 3,
+ "meshes": [
+  {
+   "aabb": [
+    8.0,
+    5.5,
+    8.0
+   ],
+   "archetype": "house",
+   "doc11_id": "res_house",
+   "family": "residential",
+   "floors": 1,
+   "footprint_tiles": [
+    1,
+    1
+   ],
+   "height_m": 5.5,
+   "level": 1,
+   "lod": 0,
+   "mesh_hash": "2763d9b7f37ed5d6ddd7ad4c99386fe794701f93",
+   "path": "res://game/meshes/generated/house_L1_lod0.res",
+   "roof_extra_m": 2.0,
+   "roof_signature": "gable_prism",
+   "silhouette_descriptor": "0x1220C8",
+   "tris": 46,
+   "vertices": 94,
+   "window_cols": 2,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    8.0,
+    5.5,
+    8.0
+   ],
+   "archetype": "house",
+   "doc11_id": "res_house",
+   "family": "residential",
+   "floors": 1,
+   "footprint_tiles": [
+    1,
+    1
+   ],
+   "height_m": 5.5,
+   "level": 1,
+   "lod": 1,
+   "mesh_hash": "8a788f7fd526cfe5a5bb6a2e29f861144f735a33",
+   "path": "res://game/meshes/generated/house_L1_lod1.res",
+   "roof_extra_m": 2.0,
+   "roof_signature": "gable_prism",
+   "silhouette_descriptor": "0x1220C8",
+   "tris": 16,
+   "vertices": 34,
+   "window_cols": 2,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    8.0,
+    9.4,
+    8.0
+   ],
+   "archetype": "house",
+   "doc11_id": "res_house",
+   "family": "residential",
+   "floors": 2,
+   "footprint_tiles": [
+    1,
+    1
+   ],
+   "height_m": 9.4,
+   "level": 2,
+   "lod": 0,
+   "mesh_hash": "280df9aa206f013e975a3fc1db8cf93966a6ef98",
+   "path": "res://game/meshes/generated/house_L2_lod0.res",
+   "roof_extra_m": 2.4,
+   "roof_signature": "gable_prism",
+   "silhouette_descriptor": "0x242108",
+   "tris": 56,
+   "vertices": 114,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    8.0,
+    9.4,
+    8.0
+   ],
+   "archetype": "house",
+   "doc11_id": "res_house",
+   "family": "residential",
+   "floors": 2,
+   "footprint_tiles": [
+    1,
+    1
+   ],
+   "height_m": 9.4,
+   "level": 2,
+   "lod": 1,
+   "mesh_hash": "be229804005025dfd204c86f2e4ad08974a11b67",
+   "path": "res://game/meshes/generated/house_L2_lod1.res",
+   "roof_extra_m": 2.4,
+   "roof_signature": "gable_prism",
+   "silhouette_descriptor": "0x242108",
+   "tris": 16,
+   "vertices": 34,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    8.0,
+    9.8,
+    8.0
+   ],
+   "archetype": "house",
+   "doc11_id": "res_house",
+   "family": "residential",
+   "floors": 2,
+   "footprint_tiles": [
+    1,
+    1
+   ],
+   "height_m": 9.8,
+   "level": 3,
+   "lod": 0,
+   "mesh_hash": "9573008087e8ae98fe9872d5388867800630778c",
+   "path": "res://game/meshes/generated/house_L3_lod0.res",
+   "roof_extra_m": 2.8,
+   "roof_signature": "gable_prism",
+   "silhouette_descriptor": "0x262908",
+   "tris": 66,
+   "vertices": 134,
+   "window_cols": 2,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    8.0,
+    9.8,
+    8.0
+   ],
+   "archetype": "house",
+   "doc11_id": "res_house",
+   "family": "residential",
+   "floors": 2,
+   "footprint_tiles": [
+    1,
+    1
+   ],
+   "height_m": 9.8,
+   "level": 3,
+   "lod": 1,
+   "mesh_hash": "494979ee1da30041236c4ec6a2d48ee9e2c1fe03",
+   "path": "res://game/meshes/generated/house_L3_lod1.res",
+   "roof_extra_m": 2.8,
+   "roof_signature": "gable_prism",
+   "silhouette_descriptor": "0x262908",
+   "tris": 26,
+   "vertices": 54,
+   "window_cols": 2,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    8.0,
+    14.3,
+    8.0
+   ],
+   "archetype": "house",
+   "doc11_id": "res_house",
+   "family": "residential",
+   "floors": 3,
+   "footprint_tiles": [
+    1,
+    1
+   ],
+   "height_m": 14.3,
+   "level": 4,
+   "lod": 0,
+   "mesh_hash": "8f62cc87b94cc8a5e3ac89c27480e59c66add342",
+   "path": "res://game/meshes/generated/house_L4_lod0.res",
+   "roof_extra_m": 3.8,
+   "roof_signature": "gable_prism",
+   "silhouette_descriptor": "0x362DC8",
+   "tris": 84,
+   "vertices": 170,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    8.0,
+    13.7,
+    8.0
+   ],
+   "archetype": "house",
+   "doc11_id": "res_house",
+   "family": "residential",
+   "floors": 3,
+   "footprint_tiles": [
+    1,
+    1
+   ],
+   "height_m": 13.7,
+   "level": 4,
+   "lod": 1,
+   "mesh_hash": "5ba359b6cc1f4873293087f7c41314bbc47692ad",
+   "path": "res://game/meshes/generated/house_L4_lod1.res",
+   "roof_extra_m": 3.2,
+   "roof_signature": "gable_prism",
+   "silhouette_descriptor": "0x362DC8",
+   "tris": 26,
+   "vertices": 54,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    8.0,
+    16.4,
+    8.0
+   ],
+   "archetype": "house",
+   "doc11_id": "res_house",
+   "family": "residential",
+   "floors": 3,
+   "footprint_tiles": [
+    1,
+    1
+   ],
+   "height_m": 16.4,
+   "level": 5,
+   "lod": 0,
+   "mesh_hash": "125d4067b77eee187a81956109db48598ca54efa",
+   "path": "res://game/meshes/generated/house_L5_lod0.res",
+   "roof_extra_m": 5.9,
+   "roof_signature": "gable_prism",
+   "silhouette_descriptor": "0x482FC8",
+   "tris": 98,
+   "vertices": 198,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    8.0,
+    14.1,
+    8.0
+   ],
+   "archetype": "house",
+   "doc11_id": "res_house",
+   "family": "residential",
+   "floors": 3,
+   "footprint_tiles": [
+    1,
+    1
+   ],
+   "height_m": 14.1,
+   "level": 5,
+   "lod": 1,
+   "mesh_hash": "0ddf29a9e5ee0111233b994b32cf99f7e53f9967",
+   "path": "res://game/meshes/generated/house_L5_lod1.res",
+   "roof_extra_m": 3.6,
+   "roof_signature": "gable_prism",
+   "silhouette_descriptor": "0x482FC8",
+   "tris": 26,
+   "vertices": 54,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    13.5,
+    16.0
+   ],
+   "archetype": "apartment",
+   "doc11_id": "res_apartment",
+   "family": "residential",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 13.5,
+   "level": 1,
+   "lod": 0,
+   "mesh_hash": "4d9cf8bd60ec5576636946680cfd601b3422cd16",
+   "path": "res://game/meshes/generated/apartment_L1_lod0.res",
+   "roof_extra_m": 3.0,
+   "roof_signature": "flat_stair_boxes",
+   "silhouette_descriptor": "0x344089",
+   "tris": 50,
+   "vertices": 100,
+   "window_cols": 5,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    13.5,
+    16.0
+   ],
+   "archetype": "apartment",
+   "doc11_id": "res_apartment",
+   "family": "residential",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 13.5,
+   "level": 1,
+   "lod": 1,
+   "mesh_hash": "df1edd18473a68c3d51cf33261a2dcc955798b2d",
+   "path": "res://game/meshes/generated/apartment_L1_lod1.res",
+   "roof_extra_m": 3.0,
+   "roof_signature": "flat_stair_boxes",
+   "silhouette_descriptor": "0x344089",
+   "tris": 20,
+   "vertices": 40,
+   "window_cols": 5,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    17.0,
+    16.0
+   ],
+   "archetype": "apartment",
+   "doc11_id": "res_apartment",
+   "family": "residential",
+   "floors": 4,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 17.0,
+   "level": 2,
+   "lod": 0,
+   "mesh_hash": "de4f6aa39dd914cf8e47f013928699722e1b555b",
+   "path": "res://game/meshes/generated/apartment_L2_lod0.res",
+   "roof_extra_m": 3.0,
+   "roof_signature": "flat_stair_boxes",
+   "silhouette_descriptor": "0x4440C9",
+   "tris": 60,
+   "vertices": 120,
+   "window_cols": 5,
+   "window_rows": 4,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    17.0,
+    16.0
+   ],
+   "archetype": "apartment",
+   "doc11_id": "res_apartment",
+   "family": "residential",
+   "floors": 4,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 17.0,
+   "level": 2,
+   "lod": 1,
+   "mesh_hash": "5726bfedae92b526acdd84f15e303575c19f6816",
+   "path": "res://game/meshes/generated/apartment_L2_lod1.res",
+   "roof_extra_m": 3.0,
+   "roof_signature": "flat_stair_boxes",
+   "silhouette_descriptor": "0x4440C9",
+   "tris": 20,
+   "vertices": 40,
+   "window_cols": 5,
+   "window_rows": 4,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    24.0,
+    16.0
+   ],
+   "archetype": "apartment",
+   "doc11_id": "res_apartment",
+   "family": "residential",
+   "floors": 6,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 24.0,
+   "level": 3,
+   "lod": 0,
+   "mesh_hash": "251fbd3acff1134dc011e867982fe12ba9561fb6",
+   "path": "res://game/meshes/generated/apartment_L3_lod0.res",
+   "roof_extra_m": 3.0,
+   "roof_signature": "flat_stair_boxes",
+   "silhouette_descriptor": "0x5648C9",
+   "tris": 82,
+   "vertices": 164,
+   "window_cols": 5,
+   "window_rows": 4,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    24.0,
+    16.0
+   ],
+   "archetype": "apartment",
+   "doc11_id": "res_apartment",
+   "family": "residential",
+   "floors": 6,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 24.0,
+   "level": 3,
+   "lod": 1,
+   "mesh_hash": "4b7f446ce904588fc39628139e1a807017a4e11f",
+   "path": "res://game/meshes/generated/apartment_L3_lod1.res",
+   "roof_extra_m": 3.0,
+   "roof_signature": "flat_stair_boxes",
+   "silhouette_descriptor": "0x5648C9",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 5,
+   "window_rows": 4,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    31.8,
+    16.0
+   ],
+   "archetype": "apartment",
+   "doc11_id": "res_apartment",
+   "family": "residential",
+   "floors": 8,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 31.8,
+   "level": 4,
+   "lod": 0,
+   "mesh_hash": "72b7df38cf18aaca1c2d3c86e670c1f03f559cf9",
+   "path": "res://game/meshes/generated/apartment_L4_lod0.res",
+   "roof_extra_m": 3.8,
+   "roof_signature": "flat_stair_boxes",
+   "silhouette_descriptor": "0x664D89",
+   "tris": 100,
+   "vertices": 200,
+   "window_cols": 5,
+   "window_rows": 5,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    31.8,
+    16.0
+   ],
+   "archetype": "apartment",
+   "doc11_id": "res_apartment",
+   "family": "residential",
+   "floors": 8,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 31.8,
+   "level": 4,
+   "lod": 1,
+   "mesh_hash": "fb178ebf9ae1f9b69c713e5127442f84846ccd59",
+   "path": "res://game/meshes/generated/apartment_L4_lod1.res",
+   "roof_extra_m": 3.8,
+   "roof_signature": "flat_stair_boxes",
+   "silhouette_descriptor": "0x664D89",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 5,
+   "window_rows": 5,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    42.7,
+    16.0
+   ],
+   "archetype": "apartment",
+   "doc11_id": "res_apartment",
+   "family": "residential",
+   "floors": 10,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 42.7,
+   "level": 5,
+   "lod": 0,
+   "mesh_hash": "d8a7d886ed6e7a27728010ce439f7f43628cf53f",
+   "path": "res://game/meshes/generated/apartment_L5_lod0.res",
+   "roof_extra_m": 7.7,
+   "roof_signature": "flat_stair_boxes",
+   "silhouette_descriptor": "0x784FC9",
+   "tris": 114,
+   "vertices": 228,
+   "window_cols": 5,
+   "window_rows": 6,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    42.1,
+    16.0
+   ],
+   "archetype": "apartment",
+   "doc11_id": "res_apartment",
+   "family": "residential",
+   "floors": 10,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 42.1,
+   "level": 5,
+   "lod": 1,
+   "mesh_hash": "09c7e59ac02c10f3a6df548523d21ecdac8a2e38",
+   "path": "res://game/meshes/generated/apartment_L5_lod1.res",
+   "roof_extra_m": 7.1,
+   "roof_signature": "flat_stair_boxes",
+   "silhouette_descriptor": "0x784FC9",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 5,
+   "window_rows": 6,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    8.0,
+    5.5,
+    8.0
+   ],
+   "archetype": "store",
+   "doc11_id": "com_retail",
+   "family": "commercial",
+   "floors": 1,
+   "footprint_tiles": [
+    1,
+    1
+   ],
+   "height_m": 5.5,
+   "level": 1,
+   "lod": 0,
+   "mesh_hash": "8b3fc577c70aa8a39fa6a0a297c5db739137aaf6",
+   "path": "res://game/meshes/generated/store_L1_lod0.res",
+   "roof_extra_m": 2.0,
+   "roof_signature": "parapet_sign_band",
+   "silhouette_descriptor": "0x12E158",
+   "tris": 62,
+   "vertices": 124,
+   "window_cols": 2,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    8.0,
+    5.5,
+    8.0
+   ],
+   "archetype": "store",
+   "doc11_id": "com_retail",
+   "family": "commercial",
+   "floors": 1,
+   "footprint_tiles": [
+    1,
+    1
+   ],
+   "height_m": 5.5,
+   "level": 1,
+   "lod": 1,
+   "mesh_hash": "530432edb9f68aea9812b7fce2929f29327522d6",
+   "path": "res://game/meshes/generated/store_L1_lod1.res",
+   "roof_extra_m": 2.0,
+   "roof_signature": "parapet_sign_band",
+   "silhouette_descriptor": "0x12E158",
+   "tris": 20,
+   "vertices": 40,
+   "window_cols": 2,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    8.0,
+    9.0,
+    8.0
+   ],
+   "archetype": "store",
+   "doc11_id": "com_retail",
+   "family": "commercial",
+   "floors": 2,
+   "footprint_tiles": [
+    1,
+    1
+   ],
+   "height_m": 9.0,
+   "level": 2,
+   "lod": 0,
+   "mesh_hash": "529c6fb21ff1ec60c8e20510b5498507e9f53e10",
+   "path": "res://game/meshes/generated/store_L2_lod0.res",
+   "roof_extra_m": 2.0,
+   "roof_signature": "parapet_sign_band",
+   "silhouette_descriptor": "0x24E198",
+   "tris": 72,
+   "vertices": 144,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    8.0,
+    9.0,
+    8.0
+   ],
+   "archetype": "store",
+   "doc11_id": "com_retail",
+   "family": "commercial",
+   "floors": 2,
+   "footprint_tiles": [
+    1,
+    1
+   ],
+   "height_m": 9.0,
+   "level": 2,
+   "lod": 1,
+   "mesh_hash": "54eb82a386daaf1d36aaf1567fc1c9974fedd57e",
+   "path": "res://game/meshes/generated/store_L2_lod1.res",
+   "roof_extra_m": 2.0,
+   "roof_signature": "parapet_sign_band",
+   "silhouette_descriptor": "0x24E198",
+   "tris": 20,
+   "vertices": 40,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    12.5,
+    16.0
+   ],
+   "archetype": "store",
+   "doc11_id": "com_retail",
+   "family": "commercial",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 12.5,
+   "level": 3,
+   "lod": 0,
+   "mesh_hash": "1a7492f8286dae61939676c397236326594df243",
+   "path": "res://game/meshes/generated/store_L3_lod0.res",
+   "roof_extra_m": 2.0,
+   "roof_signature": "parapet_sign_band",
+   "silhouette_descriptor": "0x34E999",
+   "tris": 82,
+   "vertices": 164,
+   "window_cols": 5,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    12.5,
+    16.0
+   ],
+   "archetype": "store",
+   "doc11_id": "com_retail",
+   "family": "commercial",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 12.5,
+   "level": 3,
+   "lod": 1,
+   "mesh_hash": "978cf9badf68165efdb37c1b84a76fd218151d8b",
+   "path": "res://game/meshes/generated/store_L3_lod1.res",
+   "roof_extra_m": 2.0,
+   "roof_signature": "parapet_sign_band",
+   "silhouette_descriptor": "0x34E999",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 5,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    14.3,
+    16.0
+   ],
+   "archetype": "store",
+   "doc11_id": "com_retail",
+   "family": "commercial",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 14.3,
+   "level": 4,
+   "lod": 0,
+   "mesh_hash": "c5e17c0ba5512477fabf7e69ae907d613c8b28cc",
+   "path": "res://game/meshes/generated/store_L4_lod0.res",
+   "roof_extra_m": 3.8,
+   "roof_signature": "parapet_sign_band",
+   "silhouette_descriptor": "0x34EDD9",
+   "tris": 100,
+   "vertices": 200,
+   "window_cols": 5,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    14.3,
+    16.0
+   ],
+   "archetype": "store",
+   "doc11_id": "com_retail",
+   "family": "commercial",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 14.3,
+   "level": 4,
+   "lod": 1,
+   "mesh_hash": "6d71a1d9857d534373c8bd5d8489b9084d87aea9",
+   "path": "res://game/meshes/generated/store_L4_lod1.res",
+   "roof_extra_m": 3.8,
+   "roof_signature": "parapet_sign_band",
+   "silhouette_descriptor": "0x34EDD9",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 5,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    19.9,
+    16.0
+   ],
+   "archetype": "store",
+   "doc11_id": "com_retail",
+   "family": "commercial",
+   "floors": 4,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 19.9,
+   "level": 5,
+   "lod": 0,
+   "mesh_hash": "6cd156de93f3669de5c5325e5cd711de0b4be469",
+   "path": "res://game/meshes/generated/store_L5_lod0.res",
+   "roof_extra_m": 5.9,
+   "roof_signature": "parapet_sign_band",
+   "silhouette_descriptor": "0x46F7D9",
+   "tris": 124,
+   "vertices": 248,
+   "window_cols": 5,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    19.3,
+    16.0
+   ],
+   "archetype": "store",
+   "doc11_id": "com_retail",
+   "family": "commercial",
+   "floors": 4,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 19.3,
+   "level": 5,
+   "lod": 1,
+   "mesh_hash": "6aee1fc00623546cdcaa975be3328b08b79df1fe",
+   "path": "res://game/meshes/generated/store_L5_lod1.res",
+   "roof_extra_m": 5.3,
+   "roof_signature": "parapet_sign_band",
+   "silhouette_descriptor": "0x46F7D9",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 5,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    16.2,
+    16.0
+   ],
+   "archetype": "office",
+   "doc11_id": "com_office",
+   "family": "commercial",
+   "floors": 4,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 16.2,
+   "level": 1,
+   "lod": 0,
+   "mesh_hash": "f6f345d100b82a8284a75b7c232963407a3d3f59",
+   "path": "res://game/meshes/generated/office_L1_lod0.res",
+   "roof_extra_m": 2.2,
+   "roof_signature": "hvac_cluster",
+   "silhouette_descriptor": "0x448109",
+   "tris": 60,
+   "vertices": 120,
+   "window_cols": 5,
+   "window_rows": 4,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    16.2,
+    16.0
+   ],
+   "archetype": "office",
+   "doc11_id": "com_office",
+   "family": "commercial",
+   "floors": 4,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 16.2,
+   "level": 1,
+   "lod": 1,
+   "mesh_hash": "e68dfc51a482c43ea2ad2e9bc8bfa5b6445f944a",
+   "path": "res://game/meshes/generated/office_L1_lod1.res",
+   "roof_extra_m": 2.2,
+   "roof_signature": "hvac_cluster",
+   "silhouette_descriptor": "0x448109",
+   "tris": 20,
+   "vertices": 40,
+   "window_cols": 5,
+   "window_rows": 4,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    23.2,
+    16.0
+   ],
+   "archetype": "office",
+   "doc11_id": "com_office",
+   "family": "commercial",
+   "floors": 6,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 23.2,
+   "level": 2,
+   "lod": 0,
+   "mesh_hash": "49a7654e9f48e87861ee62b27b041df3658763a3",
+   "path": "res://game/meshes/generated/office_L2_lod0.res",
+   "roof_extra_m": 2.2,
+   "roof_signature": "hvac_cluster",
+   "silhouette_descriptor": "0x568149",
+   "tris": 70,
+   "vertices": 140,
+   "window_cols": 5,
+   "window_rows": 6,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    23.2,
+    16.0
+   ],
+   "archetype": "office",
+   "doc11_id": "com_office",
+   "family": "commercial",
+   "floors": 6,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 23.2,
+   "level": 2,
+   "lod": 1,
+   "mesh_hash": "38e6035617f7feba1e60c5e495efbf3712ef9328",
+   "path": "res://game/meshes/generated/office_L2_lod1.res",
+   "roof_extra_m": 2.2,
+   "roof_signature": "hvac_cluster",
+   "silhouette_descriptor": "0x568149",
+   "tris": 20,
+   "vertices": 40,
+   "window_cols": 5,
+   "window_rows": 6,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    33.7,
+    16.0
+   ],
+   "archetype": "office",
+   "doc11_id": "com_office",
+   "family": "commercial",
+   "floors": 9,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 33.7,
+   "level": 3,
+   "lod": 0,
+   "mesh_hash": "cab09ffdb20c888be461e2fa1dd6f99664e7279a",
+   "path": "res://game/meshes/generated/office_L3_lod0.res",
+   "roof_extra_m": 2.2,
+   "roof_signature": "hvac_cluster",
+   "silhouette_descriptor": "0x688949",
+   "tris": 80,
+   "vertices": 160,
+   "window_cols": 5,
+   "window_rows": 6,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    33.7,
+    16.0
+   ],
+   "archetype": "office",
+   "doc11_id": "com_office",
+   "family": "commercial",
+   "floors": 9,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 33.7,
+   "level": 3,
+   "lod": 1,
+   "mesh_hash": "356ea3d1883aa3a0970f86646ae8cf7ebe7e2d42",
+   "path": "res://game/meshes/generated/office_L3_lod1.res",
+   "roof_extra_m": 2.2,
+   "roof_signature": "hvac_cluster",
+   "silhouette_descriptor": "0x688949",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 5,
+   "window_rows": 6,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    50.96,
+    16.0
+   ],
+   "archetype": "office",
+   "doc11_id": "com_office",
+   "family": "commercial",
+   "floors": 13,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 50.96,
+   "level": 4,
+   "lod": 0,
+   "mesh_hash": "254f013fdcae02ba9c268aa6ea5f6bf8947e7078",
+   "path": "res://game/meshes/generated/office_L4_lod0.res",
+   "roof_extra_m": 5.46,
+   "roof_signature": "hvac_cluster",
+   "silhouette_descriptor": "0x888DC9",
+   "tris": 98,
+   "vertices": 196,
+   "window_cols": 5,
+   "window_rows": 8,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    50.96,
+    16.0
+   ],
+   "archetype": "office",
+   "doc11_id": "com_office",
+   "family": "commercial",
+   "floors": 13,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 50.96,
+   "level": 4,
+   "lod": 1,
+   "mesh_hash": "d91e88ff7fb1f3cc7a6759f7b49bf81dd6d61691",
+   "path": "res://game/meshes/generated/office_L4_lod1.res",
+   "roof_extra_m": 5.46,
+   "roof_signature": "hvac_cluster",
+   "silhouette_descriptor": "0x888DC9",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 5,
+   "window_rows": 8,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    76.2,
+    16.0
+   ],
+   "archetype": "office",
+   "doc11_id": "com_office",
+   "family": "commercial",
+   "floors": 18,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 76.2,
+   "level": 5,
+   "lod": 0,
+   "mesh_hash": "9a88ecaea5ab5d2845563778161f24fff3af4a5e",
+   "path": "res://game/meshes/generated/office_L5_lod0.res",
+   "roof_extra_m": 13.2,
+   "roof_signature": "hvac_cluster",
+   "silhouette_descriptor": "0xAA8FC9",
+   "tris": 112,
+   "vertices": 224,
+   "window_cols": 5,
+   "window_rows": 12,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    75.6,
+    16.0
+   ],
+   "archetype": "office",
+   "doc11_id": "com_office",
+   "family": "commercial",
+   "floors": 18,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 75.6,
+   "level": 5,
+   "lod": 1,
+   "mesh_hash": "a72299314bc286baf00ca1fc37bb5c7d1c5d4109",
+   "path": "res://game/meshes/generated/office_L5_lod1.res",
+   "roof_extra_m": 12.6,
+   "roof_signature": "hvac_cluster",
+   "silhouette_descriptor": "0xAA8FC9",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 5,
+   "window_rows": 12,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    50.0,
+    16.0
+   ],
+   "archetype": "high_rise",
+   "doc11_id": "res_highrise",
+   "family": "residential",
+   "floors": 12,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 50.0,
+   "level": 1,
+   "lod": 0,
+   "mesh_hash": "a87af4f49d8891ffc948131797b335e5aa575934",
+   "path": "res://game/meshes/generated/high_rise_L1_lod0.res",
+   "roof_extra_m": 8.0,
+   "roof_signature": "setback_tower_mast",
+   "silhouette_descriptor": "0x8902C9",
+   "tris": 44,
+   "vertices": 88,
+   "window_cols": 5,
+   "window_rows": 12,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    50.0,
+    16.0
+   ],
+   "archetype": "high_rise",
+   "doc11_id": "res_highrise",
+   "family": "residential",
+   "floors": 12,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 50.0,
+   "level": 1,
+   "lod": 1,
+   "mesh_hash": "302be9ba55a9434e34178f57b2e3efbd80026f2d",
+   "path": "res://game/meshes/generated/high_rise_L1_lod1.res",
+   "roof_extra_m": 8.0,
+   "roof_signature": "setback_tower_mast",
+   "silhouette_descriptor": "0x8902C9",
+   "tris": 14,
+   "vertices": 28,
+   "window_cols": 5,
+   "window_rows": 12,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    92.0,
+    16.0
+   ],
+   "archetype": "high_rise",
+   "doc11_id": "res_highrise",
+   "family": "residential",
+   "floors": 24,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 92.0,
+   "level": 2,
+   "lod": 0,
+   "mesh_hash": "15cf867dfd5e3df68b6e9dc7e0b1042952c0fb8e",
+   "path": "res://game/meshes/generated/high_rise_L2_lod0.res",
+   "roof_extra_m": 8.0,
+   "roof_signature": "setback_tower_mast",
+   "silhouette_descriptor": "0xAD0309",
+   "tris": 54,
+   "vertices": 108,
+   "window_cols": 5,
+   "window_rows": 24,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    92.0,
+    16.0
+   ],
+   "archetype": "high_rise",
+   "doc11_id": "res_highrise",
+   "family": "residential",
+   "floors": 24,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 92.0,
+   "level": 2,
+   "lod": 1,
+   "mesh_hash": "656b1fbd891783f6bc409fc9f3c4538117e9aa51",
+   "path": "res://game/meshes/generated/high_rise_L2_lod1.res",
+   "roof_extra_m": 8.0,
+   "roof_signature": "setback_tower_mast",
+   "silhouette_descriptor": "0xAD0309",
+   "tris": 14,
+   "vertices": 28,
+   "window_cols": 5,
+   "window_rows": 24,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    134.0,
+    16.0
+   ],
+   "archetype": "high_rise",
+   "doc11_id": "res_highrise",
+   "family": "residential",
+   "floors": 36,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 134.0,
+   "level": 3,
+   "lod": 0,
+   "mesh_hash": "e2f53efb3e2ffaed90cb9cd3642937d1b5a1f45d",
+   "path": "res://game/meshes/generated/high_rise_L3_lod0.res",
+   "roof_extra_m": 8.0,
+   "roof_signature": "setback_tower_mast",
+   "silhouette_descriptor": "0xCF0B09",
+   "tris": 64,
+   "vertices": 128,
+   "window_cols": 5,
+   "window_rows": 22,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    134.0,
+    16.0
+   ],
+   "archetype": "high_rise",
+   "doc11_id": "res_highrise",
+   "family": "residential",
+   "floors": 36,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 134.0,
+   "level": 3,
+   "lod": 1,
+   "mesh_hash": "418358b2fe1f264988792b7aa4bd59f4d45918ec",
+   "path": "res://game/meshes/generated/high_rise_L3_lod1.res",
+   "roof_extra_m": 8.0,
+   "roof_signature": "setback_tower_mast",
+   "silhouette_descriptor": "0xCF0B09",
+   "tris": 24,
+   "vertices": 48,
+   "window_cols": 5,
+   "window_rows": 22,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    179.5,
+    16.0
+   ],
+   "archetype": "high_rise",
+   "doc11_id": "res_highrise",
+   "family": "residential",
+   "floors": 48,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 179.5,
+   "level": 4,
+   "lod": 0,
+   "mesh_hash": "ff7526feadaa95fd8c2a59a10b2077bafb1e45ce",
+   "path": "res://game/meshes/generated/high_rise_L4_lod0.res",
+   "roof_extra_m": 11.5,
+   "roof_signature": "setback_tower_mast",
+   "silhouette_descriptor": "0xDF0FC9",
+   "tris": 82,
+   "vertices": 164,
+   "window_cols": 5,
+   "window_rows": 30,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    178.56,
+    16.0
+   ],
+   "archetype": "high_rise",
+   "doc11_id": "res_highrise",
+   "family": "residential",
+   "floors": 48,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 178.56,
+   "level": 4,
+   "lod": 1,
+   "mesh_hash": "7fe07074eb8850fb89466ad5a30ab9e46ac656a1",
+   "path": "res://game/meshes/generated/high_rise_L4_lod1.res",
+   "roof_extra_m": 10.56,
+   "roof_signature": "setback_tower_mast",
+   "silhouette_descriptor": "0xDF0FC9",
+   "tris": 24,
+   "vertices": 48,
+   "window_cols": 5,
+   "window_rows": 30,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    234.1,
+    16.0
+   ],
+   "archetype": "high_rise",
+   "doc11_id": "res_highrise",
+   "family": "residential",
+   "floors": 62,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 234.1,
+   "level": 5,
+   "lod": 0,
+   "mesh_hash": "643845ca8fa44ed57326669ec469c6e58d8aea4e",
+   "path": "res://game/meshes/generated/high_rise_L5_lod0.res",
+   "roof_extra_m": 17.1,
+   "roof_signature": "setback_tower_mast",
+   "silhouette_descriptor": "0xEF17C9",
+   "tris": 106,
+   "vertices": 212,
+   "window_cols": 5,
+   "window_rows": 34,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    230.64,
+    16.0
+   ],
+   "archetype": "high_rise",
+   "doc11_id": "res_highrise",
+   "family": "residential",
+   "floors": 62,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 230.64,
+   "level": 5,
+   "lod": 1,
+   "mesh_hash": "1c6376764b07981cde1b77a9a52dfdbbcd26aed9",
+   "path": "res://game/meshes/generated/high_rise_L5_lod1.res",
+   "roof_extra_m": 13.64,
+   "roof_signature": "setback_tower_mast",
+   "silhouette_descriptor": "0xEF17C9",
+   "tris": 24,
+   "vertices": 48,
+   "window_cols": 5,
+   "window_rows": 34,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    8.8,
+    16.0
+   ],
+   "archetype": "data_center",
+   "doc11_id": "tech_datacenter",
+   "family": "tech",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 8.8,
+   "level": 1,
+   "lod": 0,
+   "mesh_hash": "6d7a758cee5c0a9286ca3744a61a8a20a766fd43",
+   "path": "res://game/meshes/generated/data_center_L1_lod0.res",
+   "roof_extra_m": 1.8,
+   "roof_signature": "chiller_bank",
+   "silhouette_descriptor": "0x226165",
+   "tris": 66,
+   "vertices": 132,
+   "window_cols": 0,
+   "window_rows": 0,
+   "windowless": true
+  },
+  {
+   "aabb": [
+    16.0,
+    8.8,
+    16.0
+   ],
+   "archetype": "data_center",
+   "doc11_id": "tech_datacenter",
+   "family": "tech",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 8.8,
+   "level": 1,
+   "lod": 1,
+   "mesh_hash": "1b5de9b33de9cdd230086f0e215f9a552f630e39",
+   "path": "res://game/meshes/generated/data_center_L1_lod1.res",
+   "roof_extra_m": 1.8,
+   "roof_signature": "chiller_bank",
+   "silhouette_descriptor": "0x226165",
+   "tris": 20,
+   "vertices": 40,
+   "window_cols": 0,
+   "window_rows": 0,
+   "windowless": true
+  },
+  {
+   "aabb": [
+    16.0,
+    9.0,
+    16.0
+   ],
+   "archetype": "data_center",
+   "doc11_id": "tech_datacenter",
+   "family": "tech",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 9.0,
+   "level": 2,
+   "lod": 0,
+   "mesh_hash": "174848a32d996ad90d918c4d3038d7f7ab35ab70",
+   "path": "res://game/meshes/generated/data_center_L2_lod0.res",
+   "roof_extra_m": 2.0,
+   "roof_signature": "chiller_bank",
+   "silhouette_descriptor": "0x2261A5",
+   "tris": 76,
+   "vertices": 152,
+   "window_cols": 0,
+   "window_rows": 0,
+   "windowless": true
+  },
+  {
+   "aabb": [
+    16.0,
+    8.8,
+    16.0
+   ],
+   "archetype": "data_center",
+   "doc11_id": "tech_datacenter",
+   "family": "tech",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 8.8,
+   "level": 2,
+   "lod": 1,
+   "mesh_hash": "1b5de9b33de9cdd230086f0e215f9a552f630e39",
+   "path": "res://game/meshes/generated/data_center_L2_lod1.res",
+   "roof_extra_m": 1.8,
+   "roof_signature": "chiller_bank",
+   "silhouette_descriptor": "0x2261A5",
+   "tris": 20,
+   "vertices": 40,
+   "window_cols": 0,
+   "window_rows": 0,
+   "windowless": true
+  },
+  {
+   "aabb": [
+    16.0,
+    12.5,
+    16.0
+   ],
+   "archetype": "data_center",
+   "doc11_id": "tech_datacenter",
+   "family": "tech",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 12.5,
+   "level": 3,
+   "lod": 0,
+   "mesh_hash": "f52d06ab592a369ac8002f55d492a6ea4c37ac2f",
+   "path": "res://game/meshes/generated/data_center_L3_lod0.res",
+   "roof_extra_m": 2.0,
+   "roof_signature": "chiller_bank",
+   "silhouette_descriptor": "0x3469A5",
+   "tris": 86,
+   "vertices": 172,
+   "window_cols": 0,
+   "window_rows": 0,
+   "windowless": true
+  },
+  {
+   "aabb": [
+    16.0,
+    12.3,
+    16.0
+   ],
+   "archetype": "data_center",
+   "doc11_id": "tech_datacenter",
+   "family": "tech",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 12.3,
+   "level": 3,
+   "lod": 1,
+   "mesh_hash": "3f745e81b485424cbb7c6c862ea1cd7949c9921d",
+   "path": "res://game/meshes/generated/data_center_L3_lod1.res",
+   "roof_extra_m": 1.8,
+   "roof_signature": "chiller_bank",
+   "silhouette_descriptor": "0x3469A5",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 0,
+   "window_rows": 0,
+   "windowless": true
+  },
+  {
+   "aabb": [
+    16.0,
+    14.3,
+    16.0
+   ],
+   "archetype": "data_center",
+   "doc11_id": "tech_datacenter",
+   "family": "tech",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 14.3,
+   "level": 4,
+   "lod": 0,
+   "mesh_hash": "bf8fc533ec55624fd930e6eb91ca533f7d4b354f",
+   "path": "res://game/meshes/generated/data_center_L4_lod0.res",
+   "roof_extra_m": 3.8,
+   "roof_signature": "chiller_bank",
+   "silhouette_descriptor": "0x346DE5",
+   "tris": 104,
+   "vertices": 208,
+   "window_cols": 0,
+   "window_rows": 0,
+   "windowless": true
+  },
+  {
+   "aabb": [
+    16.0,
+    12.3,
+    16.0
+   ],
+   "archetype": "data_center",
+   "doc11_id": "tech_datacenter",
+   "family": "tech",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 12.3,
+   "level": 4,
+   "lod": 1,
+   "mesh_hash": "3f745e81b485424cbb7c6c862ea1cd7949c9921d",
+   "path": "res://game/meshes/generated/data_center_L4_lod1.res",
+   "roof_extra_m": 1.8,
+   "roof_signature": "chiller_bank",
+   "silhouette_descriptor": "0x346DE5",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 0,
+   "window_rows": 0,
+   "windowless": true
+  },
+  {
+   "aabb": [
+    16.0,
+    19.9,
+    16.0
+   ],
+   "archetype": "data_center",
+   "doc11_id": "tech_datacenter",
+   "family": "tech",
+   "floors": 4,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 19.9,
+   "level": 5,
+   "lod": 0,
+   "mesh_hash": "737c8cc7fd91d3af41edab0e5431db46b3b6ef55",
+   "path": "res://game/meshes/generated/data_center_L5_lod0.res",
+   "roof_extra_m": 5.9,
+   "roof_signature": "chiller_bank",
+   "silhouette_descriptor": "0x466FE5",
+   "tris": 118,
+   "vertices": 236,
+   "window_cols": 0,
+   "window_rows": 0,
+   "windowless": true
+  },
+  {
+   "aabb": [
+    16.0,
+    15.8,
+    16.0
+   ],
+   "archetype": "data_center",
+   "doc11_id": "tech_datacenter",
+   "family": "tech",
+   "floors": 4,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 15.8,
+   "level": 5,
+   "lod": 1,
+   "mesh_hash": "2548d1c0e3dce304e1e620974ff10f964cefe77b",
+   "path": "res://game/meshes/generated/data_center_L5_lod1.res",
+   "roof_extra_m": 1.8,
+   "roof_signature": "chiller_bank",
+   "silhouette_descriptor": "0x466FE5",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 0,
+   "window_rows": 0,
+   "windowless": true
+  },
+  {
+   "aabb": [
+    16.0,
+    12.5,
+    16.0
+   ],
+   "archetype": "police_station",
+   "doc11_id": "civ_police",
+   "family": "civic",
+   "floors": 1,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 12.5,
+   "level": 1,
+   "lod": 0,
+   "mesh_hash": "acf3f558ea49ec5ee70f0bf935cbfae4be2333ce",
+   "path": "res://game/meshes/generated/police_station_L1_lod0.res",
+   "roof_extra_m": 9.0,
+   "roof_signature": "antenna_mast",
+   "silhouette_descriptor": "0x35E311",
+   "tris": 44,
+   "vertices": 88,
+   "window_cols": 4,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    12.5,
+    16.0
+   ],
+   "archetype": "police_station",
+   "doc11_id": "civ_police",
+   "family": "civic",
+   "floors": 1,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 12.5,
+   "level": 1,
+   "lod": 1,
+   "mesh_hash": "972f88b66f5f2e99b2aa2b6c4dc3c82463048f18",
+   "path": "res://game/meshes/generated/police_station_L1_lod1.res",
+   "roof_extra_m": 9.0,
+   "roof_signature": "antenna_mast",
+   "silhouette_descriptor": "0x35E311",
+   "tris": 14,
+   "vertices": 28,
+   "window_cols": 4,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    18.0,
+    16.0
+   ],
+   "archetype": "police_station",
+   "doc11_id": "civ_police",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 18.0,
+   "level": 2,
+   "lod": 0,
+   "mesh_hash": "02125316321ff06305ac0150fb472c83d30d538d",
+   "path": "res://game/meshes/generated/police_station_L2_lod0.res",
+   "roof_extra_m": 11.0,
+   "roof_signature": "antenna_mast",
+   "silhouette_descriptor": "0x45E351",
+   "tris": 54,
+   "vertices": 108,
+   "window_cols": 4,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    18.0,
+    16.0
+   ],
+   "archetype": "police_station",
+   "doc11_id": "civ_police",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 18.0,
+   "level": 2,
+   "lod": 1,
+   "mesh_hash": "0ff994863bf1a40bc5a0ec1c5b0e4a4382f263b1",
+   "path": "res://game/meshes/generated/police_station_L2_lod1.res",
+   "roof_extra_m": 11.0,
+   "roof_signature": "antenna_mast",
+   "silhouette_descriptor": "0x45E351",
+   "tris": 14,
+   "vertices": 28,
+   "window_cols": 4,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    20.0,
+    16.0
+   ],
+   "archetype": "police_station",
+   "doc11_id": "civ_police",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 20.0,
+   "level": 3,
+   "lod": 0,
+   "mesh_hash": "dd24b8e3c583891fd226305912d66dfc0a5c02cb",
+   "path": "res://game/meshes/generated/police_station_L3_lod0.res",
+   "roof_extra_m": 13.0,
+   "roof_signature": "antenna_mast",
+   "silhouette_descriptor": "0x47EB51",
+   "tris": 64,
+   "vertices": 128,
+   "window_cols": 4,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    20.0,
+    16.0
+   ],
+   "archetype": "police_station",
+   "doc11_id": "civ_police",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 20.0,
+   "level": 3,
+   "lod": 1,
+   "mesh_hash": "f9d1433a0525d7642196f709afe4f14c77a34610",
+   "path": "res://game/meshes/generated/police_station_L3_lod1.res",
+   "roof_extra_m": 13.0,
+   "roof_signature": "antenna_mast",
+   "silhouette_descriptor": "0x47EB51",
+   "tris": 24,
+   "vertices": 48,
+   "window_cols": 4,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    25.5,
+    16.0
+   ],
+   "archetype": "police_station",
+   "doc11_id": "civ_police",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 25.5,
+   "level": 4,
+   "lod": 0,
+   "mesh_hash": "f6197df723f5695046b10fbbb0748f0c0f6412ec",
+   "path": "res://game/meshes/generated/police_station_L4_lod0.res",
+   "roof_extra_m": 15.0,
+   "roof_signature": "antenna_mast",
+   "silhouette_descriptor": "0x57EFD1",
+   "tris": 82,
+   "vertices": 164,
+   "window_cols": 4,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    25.5,
+    16.0
+   ],
+   "archetype": "police_station",
+   "doc11_id": "civ_police",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 25.5,
+   "level": 4,
+   "lod": 1,
+   "mesh_hash": "872cab7ee63d0609bb2ef4849df4cc3665b0554b",
+   "path": "res://game/meshes/generated/police_station_L4_lod1.res",
+   "roof_extra_m": 15.0,
+   "roof_signature": "antenna_mast",
+   "silhouette_descriptor": "0x57EFD1",
+   "tris": 24,
+   "vertices": 48,
+   "window_cols": 4,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    28.5,
+    16.0
+   ],
+   "archetype": "police_station",
+   "doc11_id": "civ_police",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 28.5,
+   "level": 5,
+   "lod": 0,
+   "mesh_hash": "7b977a31bf3acbadb5cfb88a46dcd03a7d302ef8",
+   "path": "res://game/meshes/generated/police_station_L5_lod0.res",
+   "roof_extra_m": 18.0,
+   "roof_signature": "antenna_mast",
+   "silhouette_descriptor": "0x67EFD1",
+   "tris": 96,
+   "vertices": 192,
+   "window_cols": 4,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    28.5,
+    16.0
+   ],
+   "archetype": "police_station",
+   "doc11_id": "civ_police",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 28.5,
+   "level": 5,
+   "lod": 1,
+   "mesh_hash": "a55130ad2a3ff2bfbfc5128dffddd43985a2a0da",
+   "path": "res://game/meshes/generated/police_station_L5_lod1.res",
+   "roof_extra_m": 18.0,
+   "roof_signature": "antenna_mast",
+   "silhouette_descriptor": "0x67EFD1",
+   "tris": 24,
+   "vertices": 48,
+   "window_cols": 4,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    9.0,
+    16.0
+   ],
+   "archetype": "fire_station",
+   "doc11_id": "civ_fire",
+   "family": "civic",
+   "floors": 1,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 9.0,
+   "level": 1,
+   "lod": 0,
+   "mesh_hash": "4298aad6e6200321160924410ab4da258070144a",
+   "path": "res://game/meshes/generated/fire_station_L1_lod0.res",
+   "roof_extra_m": 5.5,
+   "roof_signature": "hose_tower",
+   "silhouette_descriptor": "0x22A151",
+   "tris": 86,
+   "vertices": 172,
+   "window_cols": 4,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    9.0,
+    16.0
+   ],
+   "archetype": "fire_station",
+   "doc11_id": "civ_fire",
+   "family": "civic",
+   "floors": 1,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 9.0,
+   "level": 1,
+   "lod": 1,
+   "mesh_hash": "b0849ab3a414c280d204d28568d3e20be1ecae51",
+   "path": "res://game/meshes/generated/fire_station_L1_lod1.res",
+   "roof_extra_m": 5.5,
+   "roof_signature": "hose_tower",
+   "silhouette_descriptor": "0x22A151",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 4,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    13.5,
+    16.0
+   ],
+   "archetype": "fire_station",
+   "doc11_id": "civ_fire",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 13.5,
+   "level": 2,
+   "lod": 0,
+   "mesh_hash": "9e6757339f16ee58b9d8e3f8b03dd9c53c385cd6",
+   "path": "res://game/meshes/generated/fire_station_L2_lod0.res",
+   "roof_extra_m": 6.5,
+   "roof_signature": "hose_tower",
+   "silhouette_descriptor": "0x34A191",
+   "tris": 88,
+   "vertices": 176,
+   "window_cols": 4,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    13.5,
+    16.0
+   ],
+   "archetype": "fire_station",
+   "doc11_id": "civ_fire",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 13.5,
+   "level": 2,
+   "lod": 1,
+   "mesh_hash": "06f81c3ea6f7dbfa60c298907e57ff960fb27865",
+   "path": "res://game/meshes/generated/fire_station_L2_lod1.res",
+   "roof_extra_m": 6.5,
+   "roof_signature": "hose_tower",
+   "silhouette_descriptor": "0x34A191",
+   "tris": 20,
+   "vertices": 40,
+   "window_cols": 4,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    15.5,
+    16.0
+   ],
+   "archetype": "fire_station",
+   "doc11_id": "civ_fire",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 15.5,
+   "level": 3,
+   "lod": 0,
+   "mesh_hash": "bb1fec6785c3d812ff4664cb6b4c94f3b75fe5b0",
+   "path": "res://game/meshes/generated/fire_station_L3_lod0.res",
+   "roof_extra_m": 8.5,
+   "roof_signature": "hose_tower",
+   "silhouette_descriptor": "0x44A991",
+   "tris": 98,
+   "vertices": 196,
+   "window_cols": 4,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    15.5,
+    16.0
+   ],
+   "archetype": "fire_station",
+   "doc11_id": "civ_fire",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 15.5,
+   "level": 3,
+   "lod": 1,
+   "mesh_hash": "3879943288f0607c67a7419a3292508807e6912e",
+   "path": "res://game/meshes/generated/fire_station_L3_lod1.res",
+   "roof_extra_m": 8.5,
+   "roof_signature": "hose_tower",
+   "silhouette_descriptor": "0x44A991",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 4,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    19.8,
+    16.0
+   ],
+   "archetype": "fire_station",
+   "doc11_id": "civ_fire",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 19.8,
+   "level": 4,
+   "lod": 0,
+   "mesh_hash": "bcda210dd7d962a46a2f71ae916a8e8ee7562fd1",
+   "path": "res://game/meshes/generated/fire_station_L4_lod0.res",
+   "roof_extra_m": 9.3,
+   "roof_signature": "hose_tower",
+   "silhouette_descriptor": "0x46ADD1",
+   "tris": 116,
+   "vertices": 232,
+   "window_cols": 4,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    19.8,
+    16.0
+   ],
+   "archetype": "fire_station",
+   "doc11_id": "civ_fire",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 19.8,
+   "level": 4,
+   "lod": 1,
+   "mesh_hash": "407d4930d02650912a066794ddd94626deb380b0",
+   "path": "res://game/meshes/generated/fire_station_L4_lod1.res",
+   "roof_extra_m": 9.3,
+   "roof_signature": "hose_tower",
+   "silhouette_descriptor": "0x46ADD1",
+   "tris": 20,
+   "vertices": 40,
+   "window_cols": 4,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    24.9,
+    16.0
+   ],
+   "archetype": "fire_station",
+   "doc11_id": "civ_fire",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 24.9,
+   "level": 5,
+   "lod": 0,
+   "mesh_hash": "5bf4d149f015004fd99e0565556e06ce7e42c773",
+   "path": "res://game/meshes/generated/fire_station_L5_lod0.res",
+   "roof_extra_m": 14.4,
+   "roof_signature": "hose_tower",
+   "silhouette_descriptor": "0x56AFD1",
+   "tris": 130,
+   "vertices": 260,
+   "window_cols": 4,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    24.3,
+    16.0
+   ],
+   "archetype": "fire_station",
+   "doc11_id": "civ_fire",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 24.3,
+   "level": 5,
+   "lod": 1,
+   "mesh_hash": "d055501c008638b6f00051465516785a6c7ce305",
+   "path": "res://game/meshes/generated/fire_station_L5_lod1.res",
+   "roof_extra_m": 13.8,
+   "roof_signature": "hose_tower",
+   "silhouette_descriptor": "0x56AFD1",
+   "tris": 20,
+   "vertices": 40,
+   "window_cols": 4,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    18.0,
+    24.0
+   ],
+   "archetype": "power_facility",
+   "doc11_id": "civ_utility",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 18.0,
+   "level": 1,
+   "lod": 0,
+   "mesh_hash": "b289be7148a80348e2d6f9c803170ce17a7b7ad3",
+   "path": "res://game/meshes/generated/power_facility_L1_lod0.res",
+   "roof_extra_m": 11.0,
+   "roof_signature": "twin_stacks",
+   "silhouette_descriptor": "0x454162",
+   "tris": 82,
+   "vertices": 164,
+   "window_cols": 7,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    18.0,
+    24.0
+   ],
+   "archetype": "power_facility",
+   "doc11_id": "civ_utility",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 18.0,
+   "level": 1,
+   "lod": 1,
+   "mesh_hash": "da1c4fd475b4cdb8374e2aefa5408a723d1a819b",
+   "path": "res://game/meshes/generated/power_facility_L1_lod1.res",
+   "roof_extra_m": 11.0,
+   "roof_signature": "twin_stacks",
+   "silhouette_descriptor": "0x454162",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 7,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    22.0,
+    24.0
+   ],
+   "archetype": "power_facility",
+   "doc11_id": "civ_utility",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 22.0,
+   "level": 2,
+   "lod": 0,
+   "mesh_hash": "9c867c4a57b7ee95dfea8d64c1ca6ce3ac6b9414",
+   "path": "res://game/meshes/generated/power_facility_L2_lod0.res",
+   "roof_extra_m": 15.0,
+   "roof_signature": "twin_stacks",
+   "silhouette_descriptor": "0x5541A2",
+   "tris": 92,
+   "vertices": 184,
+   "window_cols": 7,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    22.0,
+    24.0
+   ],
+   "archetype": "power_facility",
+   "doc11_id": "civ_utility",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 22.0,
+   "level": 2,
+   "lod": 1,
+   "mesh_hash": "1eded4310d6f1a713dd7831c88ef0dbaa26831b1",
+   "path": "res://game/meshes/generated/power_facility_L2_lod1.res",
+   "roof_extra_m": 15.0,
+   "roof_signature": "twin_stacks",
+   "silhouette_descriptor": "0x5541A2",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 7,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    28.0,
+    24.0
+   ],
+   "archetype": "power_facility",
+   "doc11_id": "civ_utility",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 28.0,
+   "level": 3,
+   "lod": 0,
+   "mesh_hash": "cef237267cf7a40c02284809207fc932c168f420",
+   "path": "res://game/meshes/generated/power_facility_L3_lod0.res",
+   "roof_extra_m": 17.5,
+   "roof_signature": "twin_stacks",
+   "silhouette_descriptor": "0x6549A2",
+   "tris": 102,
+   "vertices": 204,
+   "window_cols": 7,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    28.0,
+    24.0
+   ],
+   "archetype": "power_facility",
+   "doc11_id": "civ_utility",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 28.0,
+   "level": 3,
+   "lod": 1,
+   "mesh_hash": "9f97b2e0c52283e3a666c21ce4164af1227ee74b",
+   "path": "res://game/meshes/generated/power_facility_L3_lod1.res",
+   "roof_extra_m": 17.5,
+   "roof_signature": "twin_stacks",
+   "silhouette_descriptor": "0x6549A2",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 7,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    32.0,
+    34.0,
+    32.0
+   ],
+   "archetype": "power_facility",
+   "doc11_id": "civ_utility",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    4,
+    4
+   ],
+   "height_m": 34.0,
+   "level": 4,
+   "lod": 0,
+   "mesh_hash": "3521c47c4bdb46a035e8e91484685ed6d25538c2",
+   "path": "res://game/meshes/generated/power_facility_L4_lod0.res",
+   "roof_extra_m": 23.5,
+   "roof_signature": "twin_stacks",
+   "silhouette_descriptor": "0x654DE3",
+   "tris": 120,
+   "vertices": 240,
+   "window_cols": 9,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    32.0,
+    34.0,
+    32.0
+   ],
+   "archetype": "power_facility",
+   "doc11_id": "civ_utility",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    4,
+    4
+   ],
+   "height_m": 34.0,
+   "level": 4,
+   "lod": 1,
+   "mesh_hash": "a9ef19d3c83fb8f9989d74ab012c2102a75b4b7b",
+   "path": "res://game/meshes/generated/power_facility_L4_lod1.res",
+   "roof_extra_m": 23.5,
+   "roof_signature": "twin_stacks",
+   "silhouette_descriptor": "0x654DE3",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 9,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    32.0,
+    42.0,
+    32.0
+   ],
+   "archetype": "power_facility",
+   "doc11_id": "civ_utility",
+   "family": "civic",
+   "floors": 4,
+   "footprint_tiles": [
+    4,
+    4
+   ],
+   "height_m": 42.0,
+   "level": 5,
+   "lod": 0,
+   "mesh_hash": "dc5dcbebb9fd3c0250e9834e9051386a72962442",
+   "path": "res://game/meshes/generated/power_facility_L5_lod0.res",
+   "roof_extra_m": 28.0,
+   "roof_signature": "twin_stacks",
+   "silhouette_descriptor": "0x774FE3",
+   "tris": 134,
+   "vertices": 268,
+   "window_cols": 9,
+   "window_rows": 4,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    32.0,
+    42.0,
+    32.0
+   ],
+   "archetype": "power_facility",
+   "doc11_id": "civ_utility",
+   "family": "civic",
+   "floors": 4,
+   "footprint_tiles": [
+    4,
+    4
+   ],
+   "height_m": 42.0,
+   "level": 5,
+   "lod": 1,
+   "mesh_hash": "af3ecf925e5317586bf3fcf5d5afe6470aa79f53",
+   "path": "res://game/meshes/generated/power_facility_L5_lod1.res",
+   "roof_extra_m": 28.0,
+   "roof_signature": "twin_stacks",
+   "silhouette_descriptor": "0x774FE3",
+   "tris": 30,
+   "vertices": 60,
+   "window_cols": 9,
+   "window_rows": 4,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    11.0,
+    16.0
+   ],
+   "archetype": "substation",
+   "doc11_id": "civ_substation",
+   "family": "civic",
+   "floors": 1,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 11.0,
+   "level": 1,
+   "lod": 0,
+   "mesh_hash": "4f22e1d756de9dcfe415f00297f692ee7283c0aa",
+   "path": "res://game/meshes/generated/substation_L1_lod0.res",
+   "roof_extra_m": 7.5,
+   "roof_signature": "transformer_yard",
+   "silhouette_descriptor": "0x22C361",
+   "tris": 60,
+   "vertices": 120,
+   "window_cols": 2,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    11.0,
+    16.0
+   ],
+   "archetype": "substation",
+   "doc11_id": "civ_substation",
+   "family": "civic",
+   "floors": 1,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 11.0,
+   "level": 1,
+   "lod": 1,
+   "mesh_hash": "ec8b9a7b0fa68584c53751a83420bae5524dfe2d",
+   "path": "res://game/meshes/generated/substation_L1_lod1.res",
+   "roof_extra_m": 7.5,
+   "roof_signature": "transformer_yard",
+   "silhouette_descriptor": "0x22C361",
+   "tris": 14,
+   "vertices": 28,
+   "window_cols": 2,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    13.0,
+    16.0
+   ],
+   "archetype": "substation",
+   "doc11_id": "civ_substation",
+   "family": "civic",
+   "floors": 1,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 13.0,
+   "level": 2,
+   "lod": 0,
+   "mesh_hash": "a0a536f772b30aaa87ebf80322b03c56c4fecc61",
+   "path": "res://game/meshes/generated/substation_L2_lod0.res",
+   "roof_extra_m": 9.5,
+   "roof_signature": "transformer_yard",
+   "silhouette_descriptor": "0x34C3A1",
+   "tris": 70,
+   "vertices": 140,
+   "window_cols": 2,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    13.0,
+    16.0
+   ],
+   "archetype": "substation",
+   "doc11_id": "civ_substation",
+   "family": "civic",
+   "floors": 1,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 13.0,
+   "level": 2,
+   "lod": 1,
+   "mesh_hash": "329271fd1d69d5faf6be3742e2ad5ad04b1b3478",
+   "path": "res://game/meshes/generated/substation_L2_lod1.res",
+   "roof_extra_m": 9.5,
+   "roof_signature": "transformer_yard",
+   "silhouette_descriptor": "0x34C3A1",
+   "tris": 14,
+   "vertices": 28,
+   "window_cols": 2,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    17.0,
+    16.0
+   ],
+   "archetype": "substation",
+   "doc11_id": "civ_substation",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 17.0,
+   "level": 3,
+   "lod": 0,
+   "mesh_hash": "a7e524d563b5520792bc55e50cf96cc5b369ecf8",
+   "path": "res://game/meshes/generated/substation_L3_lod0.res",
+   "roof_extra_m": 10.0,
+   "roof_signature": "transformer_yard",
+   "silhouette_descriptor": "0x44CBA1",
+   "tris": 80,
+   "vertices": 160,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    17.0,
+    16.0
+   ],
+   "archetype": "substation",
+   "doc11_id": "civ_substation",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 17.0,
+   "level": 3,
+   "lod": 1,
+   "mesh_hash": "f008cd63580e381f1f1ac9c4cf6597fcf0bf4405",
+   "path": "res://game/meshes/generated/substation_L3_lod1.res",
+   "roof_extra_m": 10.0,
+   "roof_signature": "transformer_yard",
+   "silhouette_descriptor": "0x44CBA1",
+   "tris": 24,
+   "vertices": 48,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    21.0,
+    16.0
+   ],
+   "archetype": "substation",
+   "doc11_id": "civ_substation",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 21.0,
+   "level": 4,
+   "lod": 0,
+   "mesh_hash": "5f3ff4973c3829c8df6e3e44ddb693ef46fc1cff",
+   "path": "res://game/meshes/generated/substation_L4_lod0.res",
+   "roof_extra_m": 14.0,
+   "roof_signature": "transformer_yard",
+   "silhouette_descriptor": "0x56CFE1",
+   "tris": 98,
+   "vertices": 196,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    21.0,
+    16.0
+   ],
+   "archetype": "substation",
+   "doc11_id": "civ_substation",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 21.0,
+   "level": 4,
+   "lod": 1,
+   "mesh_hash": "70ecacbfa1870359f16c5d72e7c5838d67f07e17",
+   "path": "res://game/meshes/generated/substation_L4_lod1.res",
+   "roof_extra_m": 14.0,
+   "roof_signature": "transformer_yard",
+   "silhouette_descriptor": "0x56CFE1",
+   "tris": 24,
+   "vertices": 48,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    30.0,
+    16.0
+   ],
+   "archetype": "substation",
+   "doc11_id": "civ_substation",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 30.0,
+   "level": 5,
+   "lod": 0,
+   "mesh_hash": "338eb977731c84393a2ee014b43185348d4dec93",
+   "path": "res://game/meshes/generated/substation_L5_lod0.res",
+   "roof_extra_m": 19.5,
+   "roof_signature": "transformer_yard",
+   "silhouette_descriptor": "0x66CFE1",
+   "tris": 112,
+   "vertices": 224,
+   "window_cols": 2,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    30.0,
+    16.0
+   ],
+   "archetype": "substation",
+   "doc11_id": "civ_substation",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 30.0,
+   "level": 5,
+   "lod": 1,
+   "mesh_hash": "3fe8d849b3648695f04300bd8c8b68cce03146e4",
+   "path": "res://game/meshes/generated/substation_L5_lod1.res",
+   "roof_extra_m": 19.5,
+   "roof_signature": "transformer_yard",
+   "silhouette_descriptor": "0x66CFE1",
+   "tris": 14,
+   "vertices": 28,
+   "window_cols": 2,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    8.0,
+    24.0
+   ],
+   "archetype": "water_facility",
+   "doc11_id": "civ_waterworks",
+   "family": "civic",
+   "floors": 1,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 8.0,
+   "level": 1,
+   "lod": 0,
+   "mesh_hash": "6e51c40ce153b56fa76ae93e3b16c6d8882ad171",
+   "path": "res://game/meshes/generated/water_facility_L1_lod0.res",
+   "roof_extra_m": 4.5,
+   "roof_signature": "tank_cluster",
+   "silhouette_descriptor": "0x218162",
+   "tris": 94,
+   "vertices": 194,
+   "window_cols": 3,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    8.0,
+    24.0
+   ],
+   "archetype": "water_facility",
+   "doc11_id": "civ_waterworks",
+   "family": "civic",
+   "floors": 1,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 8.0,
+   "level": 1,
+   "lod": 1,
+   "mesh_hash": "bd4be569875f1faf02b82ebbef581b34c4f571c7",
+   "path": "res://game/meshes/generated/water_facility_L1_lod1.res",
+   "roof_extra_m": 4.5,
+   "roof_signature": "tank_cluster",
+   "silhouette_descriptor": "0x218162",
+   "tris": 32,
+   "vertices": 70,
+   "window_cols": 3,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    10.0,
+    24.0
+   ],
+   "archetype": "water_facility",
+   "doc11_id": "civ_waterworks",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 10.0,
+   "level": 2,
+   "lod": 0,
+   "mesh_hash": "3babd2348619898a1c127b1934e1dca8cdc07659",
+   "path": "res://game/meshes/generated/water_facility_L2_lod0.res",
+   "roof_extra_m": 3.0,
+   "roof_signature": "tank_cluster",
+   "silhouette_descriptor": "0x2381A2",
+   "tris": 104,
+   "vertices": 214,
+   "window_cols": 3,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    10.0,
+    24.0
+   ],
+   "archetype": "water_facility",
+   "doc11_id": "civ_waterworks",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 10.0,
+   "level": 2,
+   "lod": 1,
+   "mesh_hash": "680dd77b4cc9efe163c2807db192edcf0de5d209",
+   "path": "res://game/meshes/generated/water_facility_L2_lod1.res",
+   "roof_extra_m": 3.0,
+   "roof_signature": "tank_cluster",
+   "silhouette_descriptor": "0x2381A2",
+   "tris": 32,
+   "vertices": 70,
+   "window_cols": 3,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    12.5,
+    24.0
+   ],
+   "archetype": "water_facility",
+   "doc11_id": "civ_waterworks",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 12.5,
+   "level": 3,
+   "lod": 0,
+   "mesh_hash": "6c9ddd5bc43148098032f59d82ad54a54ec0fd4f",
+   "path": "res://game/meshes/generated/water_facility_L3_lod0.res",
+   "roof_extra_m": 5.5,
+   "roof_signature": "tank_cluster",
+   "silhouette_descriptor": "0x3389A2",
+   "tris": 114,
+   "vertices": 234,
+   "window_cols": 3,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    12.0,
+    24.0
+   ],
+   "archetype": "water_facility",
+   "doc11_id": "civ_waterworks",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 12.0,
+   "level": 3,
+   "lod": 1,
+   "mesh_hash": "2d7c78452067861e21d48f243f03e1375793cecb",
+   "path": "res://game/meshes/generated/water_facility_L3_lod1.res",
+   "roof_extra_m": 5.0,
+   "roof_signature": "tank_cluster",
+   "silhouette_descriptor": "0x3389A2",
+   "tris": 42,
+   "vertices": 90,
+   "window_cols": 3,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    17.8,
+    24.0
+   ],
+   "archetype": "water_facility",
+   "doc11_id": "civ_waterworks",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 17.8,
+   "level": 4,
+   "lod": 0,
+   "mesh_hash": "95f86ffa526848853b92671cd767b5527fdba25e",
+   "path": "res://game/meshes/generated/water_facility_L4_lod0.res",
+   "roof_extra_m": 7.3,
+   "roof_signature": "tank_cluster",
+   "silhouette_descriptor": "0x458DE2",
+   "tris": 132,
+   "vertices": 270,
+   "window_cols": 3,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    15.0,
+    24.0
+   ],
+   "archetype": "water_facility",
+   "doc11_id": "civ_waterworks",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 15.0,
+   "level": 4,
+   "lod": 1,
+   "mesh_hash": "410ab3c7fce2d1cd5ceb28fff5967749edaee70d",
+   "path": "res://game/meshes/generated/water_facility_L4_lod1.res",
+   "roof_extra_m": 4.5,
+   "roof_signature": "tank_cluster",
+   "silhouette_descriptor": "0x458DE2",
+   "tris": 32,
+   "vertices": 70,
+   "window_cols": 3,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    32.0,
+    19.9,
+    32.0
+   ],
+   "archetype": "water_facility",
+   "doc11_id": "civ_waterworks",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    4,
+    4
+   ],
+   "height_m": 19.9,
+   "level": 5,
+   "lod": 0,
+   "mesh_hash": "3d128952584283e4ffa9bd0b71d4535cc310b5fa",
+   "path": "res://game/meshes/generated/water_facility_L5_lod0.res",
+   "roof_extra_m": 9.4,
+   "roof_signature": "tank_cluster",
+   "silhouette_descriptor": "0x438FE3",
+   "tris": 146,
+   "vertices": 298,
+   "window_cols": 4,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    32.0,
+    18.0,
+    32.0
+   ],
+   "archetype": "water_facility",
+   "doc11_id": "civ_waterworks",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    4,
+    4
+   ],
+   "height_m": 18.0,
+   "level": 5,
+   "lod": 1,
+   "mesh_hash": "4e10d96523709769cf1798af5f6b897cb960fc0a",
+   "path": "res://game/meshes/generated/water_facility_L5_lod1.res",
+   "roof_extra_m": 7.5,
+   "roof_signature": "tank_cluster",
+   "silhouette_descriptor": "0x438FE3",
+   "tris": 32,
+   "vertices": 70,
+   "window_cols": 4,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    16.0,
+    16.0
+   ],
+   "archetype": "construction_yard",
+   "doc11_id": "civ_yard",
+   "family": "civic",
+   "floors": 1,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 16.0,
+   "level": 1,
+   "lod": 0,
+   "mesh_hash": "3328edb4b6339b8e591e44f846fb2f112ada478e",
+   "path": "res://game/meshes/generated/construction_yard_L1_lod0.res",
+   "roof_extra_m": 12.5,
+   "roof_signature": "crane_mast",
+   "silhouette_descriptor": "0x452371",
+   "tris": 52,
+   "vertices": 104,
+   "window_cols": 2,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    16.0,
+    16.0
+   ],
+   "archetype": "construction_yard",
+   "doc11_id": "civ_yard",
+   "family": "civic",
+   "floors": 1,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 16.0,
+   "level": 1,
+   "lod": 1,
+   "mesh_hash": "0876e618e71dd2713bd3f14e12f43b715ab34618",
+   "path": "res://game/meshes/generated/construction_yard_L1_lod1.res",
+   "roof_extra_m": 12.5,
+   "roof_signature": "crane_mast",
+   "silhouette_descriptor": "0x452371",
+   "tris": 14,
+   "vertices": 28,
+   "window_cols": 2,
+   "window_rows": 1,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    20.0,
+    16.0
+   ],
+   "archetype": "construction_yard",
+   "doc11_id": "civ_yard",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 20.0,
+   "level": 2,
+   "lod": 0,
+   "mesh_hash": "0ad48631bf9d5cdee04ecc11b04111fad448d308",
+   "path": "res://game/meshes/generated/construction_yard_L2_lod0.res",
+   "roof_extra_m": 13.0,
+   "roof_signature": "crane_mast",
+   "silhouette_descriptor": "0x4723B1",
+   "tris": 62,
+   "vertices": 124,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    20.0,
+    16.0
+   ],
+   "archetype": "construction_yard",
+   "doc11_id": "civ_yard",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 20.0,
+   "level": 2,
+   "lod": 1,
+   "mesh_hash": "2d1fd0b398c8204048f622f84c0766caea9a8ab9",
+   "path": "res://game/meshes/generated/construction_yard_L2_lod1.res",
+   "roof_extra_m": 13.0,
+   "roof_signature": "crane_mast",
+   "silhouette_descriptor": "0x4723B1",
+   "tris": 14,
+   "vertices": 28,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    24.0,
+    16.0
+   ],
+   "archetype": "construction_yard",
+   "doc11_id": "civ_yard",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 24.0,
+   "level": 3,
+   "lod": 0,
+   "mesh_hash": "3be2f1882f7c530bcd9f3ff42b42dc7c45ad7b57",
+   "path": "res://game/meshes/generated/construction_yard_L3_lod0.res",
+   "roof_extra_m": 17.0,
+   "roof_signature": "crane_mast",
+   "silhouette_descriptor": "0x572BB1",
+   "tris": 72,
+   "vertices": 144,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    16.0,
+    24.0,
+    16.0
+   ],
+   "archetype": "construction_yard",
+   "doc11_id": "civ_yard",
+   "family": "civic",
+   "floors": 2,
+   "footprint_tiles": [
+    2,
+    2
+   ],
+   "height_m": 24.0,
+   "level": 3,
+   "lod": 1,
+   "mesh_hash": "a0551c5fa6232ff9cdc21fd44e903472c6f4c7b2",
+   "path": "res://game/meshes/generated/construction_yard_L3_lod1.res",
+   "roof_extra_m": 17.0,
+   "roof_signature": "crane_mast",
+   "silhouette_descriptor": "0x572BB1",
+   "tris": 24,
+   "vertices": 48,
+   "window_cols": 2,
+   "window_rows": 2,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    27.0,
+    24.0
+   ],
+   "archetype": "construction_yard",
+   "doc11_id": "civ_yard",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 27.0,
+   "level": 4,
+   "lod": 0,
+   "mesh_hash": "96a400feba571f0e4e77d77e5218ce5697b14a40",
+   "path": "res://game/meshes/generated/construction_yard_L4_lod0.res",
+   "roof_extra_m": 16.5,
+   "roof_signature": "crane_mast",
+   "silhouette_descriptor": "0x652FF2",
+   "tris": 90,
+   "vertices": 180,
+   "window_cols": 3,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    27.0,
+    24.0
+   ],
+   "archetype": "construction_yard",
+   "doc11_id": "civ_yard",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 27.0,
+   "level": 4,
+   "lod": 1,
+   "mesh_hash": "457a83b946016db1db503ab5e8245732a2d4a0fa",
+   "path": "res://game/meshes/generated/construction_yard_L4_lod1.res",
+   "roof_extra_m": 16.5,
+   "roof_signature": "crane_mast",
+   "silhouette_descriptor": "0x652FF2",
+   "tris": 14,
+   "vertices": 28,
+   "window_cols": 3,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    38.0,
+    24.0
+   ],
+   "archetype": "construction_yard",
+   "doc11_id": "civ_yard",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 38.0,
+   "level": 5,
+   "lod": 0,
+   "mesh_hash": "a098a8cb26ed6de66d7e751bb45511f8ea832282",
+   "path": "res://game/meshes/generated/construction_yard_L5_lod0.res",
+   "roof_extra_m": 27.5,
+   "roof_signature": "crane_mast",
+   "silhouette_descriptor": "0x772FF2",
+   "tris": 104,
+   "vertices": 208,
+   "window_cols": 3,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    24.0,
+    38.0,
+    24.0
+   ],
+   "archetype": "construction_yard",
+   "doc11_id": "civ_yard",
+   "family": "civic",
+   "floors": 3,
+   "footprint_tiles": [
+    3,
+    3
+   ],
+   "height_m": 38.0,
+   "level": 5,
+   "lod": 1,
+   "mesh_hash": "4fe4dd0a4a77704e650b78206ab223812e043edb",
+   "path": "res://game/meshes/generated/construction_yard_L5_lod1.res",
+   "roof_extra_m": 27.5,
+   "roof_signature": "crane_mast",
+   "silhouette_descriptor": "0x772FF2",
+   "tris": 14,
+   "vertices": 28,
+   "window_cols": 3,
+   "window_rows": 3,
+   "windowless": false
+  },
+  {
+   "aabb": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "archetype": "far_unit_box",
+   "doc11_id": "shared_far_box",
+   "family": "",
+   "floors": 0,
+   "footprint_tiles": [
+    1,
+    1
+   ],
+   "height_m": 1.0,
+   "level": 0,
+   "lod": 2,
+   "mesh_hash": "76c80bf552bfaabfe133c47d4075486e972c8348",
+   "path": "res://game/meshes/generated/far_unit_box.res",
+   "roof_extra_m": 0.0,
+   "roof_signature": "unit_box",
+   "silhouette_descriptor": "0x000000",
+   "tris": 12,
+   "vertices": 24,
+   "window_cols": 0,
+   "window_rows": 0,
+   "windowless": true
+  }
+ ],
+ "source": "res://data/building_shapes.json"
+}
