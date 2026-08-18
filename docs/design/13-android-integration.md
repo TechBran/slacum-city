@@ -1,0 +1,862 @@
+# 13 — Android Native Integration & Export Pipeline
+
+**Status:** Draft for overseer review. Complies with `00-constitution.md` (LOCKED) and with the binding rulings in `98-consistency-report.md` (see the final section for the amendments applied).
+**Owns:** Android export pipeline, signing, lifecycle, the notification **platform** (channels, `AlarmManager`, permission flow, scheduling mechanics), battery/thermal policy, permissions, Play readiness, crash breadcrumbs, device test matrix. Files: `data/android.json`, `data/notifications_text.json`; save section `android`.
+**Does NOT own:** persistence (doc 08 — save format, atomic write, retention, recovery), the offline cap and coarse schedule (doc 01 `data/time.json`, doc 08 fidelity policy), notification *policy* (doc 08 `data/notifications.json` — classes, budgets, quiet hours, event→class mapping), or any other system's save section.
+**Code roots:** `game/android/` (GDScript shell) + `android/plugins/slacum_native/` (Kotlin AAR, build-system territory). **There is no `platform/` source layer** — constitution §3's four layers stand unchanged (report 98 C-04).
+**Spec refs:** §21 (Persistent Simulation), §22 (Notifications), §27.3 (Android Native Layer), §29.6, §43, §45 Phase 4, §49, §50.
+
+---
+
+## 1. Overview & Goals
+
+The sim is engine- and platform-agnostic by constitutional decree (§3): `sim/` never touches `Node`, `OS`, `Input`, or the wall clock. Everything platform-specific therefore lives in exactly one place — the **app shell**, a thin `game/` layer that sits between Android and the sim. This document specifies that shell and the build pipeline that puts it on a phone.
+
+Four responsibilities:
+
+1. **Export pipeline.** A reproducible, scriptable path from a git checkout to (a) a debug APK on a tethered device in under 90 seconds and (b) a signed release AAB for Play. No editor GUI in the loop.
+2. **Lifecycle.** Android can background and then kill the process at any moment with no further callbacks. The shell must guarantee: *no city is ever lost*, and *returning to the app produces the WHILE YOU WERE AWAY report* (spec §21.2) computed from real elapsed time.
+3. **Local notifications — the platform half.** Godot 4.7 ships **zero** notification API. The city does not run in the background, so notifications must be *scheduled at save time*. Doc 08 decides **what** is worth sending (classes, budgets, quiet hours, event→class mapping in `data/notifications.json`); this doc delivers it — Android channels, `AlarmManager`, ids, permission flow, reboot replay — through a first-party Kotlin plugin, and owns the copy in `data/notifications_text.json`.
+4. **Battery, thermal, and store readiness.** A game that is checked five times a day must be cheap to leave installed. Frame caps, thermal response, and a permissions manifest so lean that the Play Data Safety form reads "collects nothing".
+
+**Design position — RULED (report 98 §12, spec §21.1 amendment APPROVED):** there is **no background simulation, ever**. Spec §21.1's clause "when background execution occurs" is **struck**; the sim advances only when the app reopens, mathematically, from measured elapsed real time. Catch-up-on-resume is the architecture, not a compromise — see §2.1 for the argument and §9 for the ruling record.
+
+**Success criteria for this layer:**
+
+| Metric | Target |
+|---|---|
+| Cold start → interactive city (Tier B device) | ≤ 4.0 s |
+| Pause sequence, shell main-thread cost | ≤ 250 ms (hard budget, §2.2) — excludes doc 08's worker-side encode/write |
+| Worst-case play lost to process death | ≤ 60 s of real play — **requires doc 08 to run a 60 s foreground autosave on Android**; doc 08 §2.7 currently specifies 5 real minutes (flagged, §9) |
+| Offline catch-up main-thread hitch | ≤ 12 ms per frame (sliced, §2.9), never an ANR |
+| Battery drain, Tier B, Balanced 60 fps | ≤ 6.0 %/hour |
+| Battery drain, Tier B, Battery-Saver 30 fps | ≤ 3.5 %/hour |
+| Notification volume | doc 08's budget: global **8 per rolling 24 h**, ≥ 5 min between any two (doc 08 §2.13.2). This doc enforces nothing of its own. |
+| Permissions in release manifest | 4 (§2.7) |
+
+## 2. Mechanics
+
+### 2.0 Toolchain (verified present on this machine)
+
+| Component | Version / path |
+|---|---|
+| Godot | 4.7.2.stable — `/home/bbx/.local/bin/godot` |
+| Export templates | `~/.local/share/godot/export_templates/4.7.2.stable/` (`android_debug.apk`, `android_release.apk`, `android_source.zip` present) |
+| Android SDK | `~/Android/Sdk` — platform `android-37.0`, build-tools `36.0.0` + `37.0.0`, `platform-tools`, `cmdline-tools` |
+| JDK | Temurin 21.0.12 LTS |
+| targetSdk / minSdk / ABI | 37 / 29 / `arm64-v8a` only |
+
+`arm64-v8a` only is deliberate: Vulkan-capable Android 10+ devices are universally 64-bit, Play has required 64-bit since 2019, and dropping `armeabi-v7a` halves the native payload (~35 MB saved) and halves build time.
+
+### 2.1 Why catch-up-on-resume, not background simulation
+
+The platform has spent a decade closing every door a background simulation would need:
+
+| API level | Restriction | Effect on a background sim |
+|---|---|---|
+| 23+ / 28 (P) | Doze (`setAndAllowWhileIdle` ~1 fire per 9 min) + App Standby Buckets | No fine-grained ticking; wake cadence varies per user |
+| 26 (O) | Background execution limits — no background services | A plain `Service` cannot run |
+| 31 (S) | `SCHEDULE_EXACT_ALARM` gated; FGS cannot be started from background | Exact ticking needs a permission a game cannot justify |
+| 33 (T) | `POST_NOTIFICATIONS` runtime permission | Notifications are opt-in, never guaranteed |
+| 34 (U) | Foreground services require a declared *type* + permission, Play-reviewed | **No FGS type exists for "keep simulating a city"** — fatal on its own |
+| 35 (V) / 36+ | FGS runtime timeouts (~6 h/24 h); tighter JobScheduler quotas; unused-app hibernation | Even an abusive FGS would be reaped; long absences kill scheduled work |
+| n/a | OEM process killers (One UI, MIUI, EMUI, ColorOS) | Kills compliant apps anyway; unfixable from our side |
+
+Even if all that were survivable, a background sim would be *worse gameplay*: partial progress makes offline outcomes depend on the user's battery settings — non-deterministic and untestable, a direct violation of constitution §5 (same save + same elapsed time ⇒ same outcome). Catch-up-on-resume instead is deterministic and **headless-testable** (the same code path runs in `tests/`), costs exactly **zero** battery while away (Play vitals stay clean — no wakelocks, no excessive wakeups), behaves identically after 10 minutes or 3 days or a reboot + force-stop, and keeps one implementation of the rules (constitution §4).
+
+The only capability genuinely lost is *notifying the player about something we did not know at save time*. §2.4 shows that this loss is small: everything the vertical slice needs to notify about is either a deterministic timer or a pre-rolled Director event, both of which are already in the save at pause time. Truly emergent events would need a look-ahead projection, which is budget-bounded and **ships disabled in MVP** (§2.4c). **Constitutional read:** compliant. The spec §21.1 amendment is **approved** (report 98 §12) — see §9.
+
+**Layering (report 98 C-04).** Nothing here creates a fifth source layer. The shell is `game/android/*` in GDScript plus a Kotlin AAR under `android/plugins/slacum_native/`, which is build-system territory. `sim/` reaches Android only through the injected interfaces `IClockSource`, `IFileSink` and `INotificationSink` (doc 08 §4), whose only implementations live in `game/android/`. Doc 08's proposed `platform/` directory is withdrawn.
+
+### 2.2 Lifecycle state machine
+
+Godot delivers Android lifecycle as `MainLoop`/`Node` notifications. The shell node `game/app_shell.gd` (autoload, `process_mode = PROCESS_MODE_ALWAYS`) handles:
+
+```
+NOTIFICATION_APPLICATION_FOCUS_OUT   → soft: pause input, mute audio bus, drop fps cap to IDLE_FPS
+NOTIFICATION_APPLICATION_PAUSED      → hard: the pause sequence below
+NOTIFICATION_APPLICATION_RESUMED     → the resume sequence below
+NOTIFICATION_APPLICATION_FOCUS_IN    → restore audio + fps cap
+NOTIFICATION_WM_GO_BACK_REQUEST      → close topmost modal, else open pause menu. NEVER quits.
+NOTIFICATION_OS_MEMORY_WARNING       → drop far-LOD chunk cache, flush texture streaming (doc 11)
+```
+
+`application/config/quit_on_go_back` **must be `false`** in `project.godot`, otherwise the back button destroys the process before the pause sequence completes.
+
+**Pause sequence — hard budget 250 ms of shell main-thread work, ordered, each step guarded.** Persistence itself is **doc 08's** (report 98 C-24): this doc no longer writes, rotates or recovers any file. It owns the *ordering* and the *budget*.
+
+| # | Step | Main-thread budget | Notes |
+|---|---|---|---|
+| 1 | Stamp `android.last_pause` into `AndroidState` (§3.2) | 1 ms | unix_s, elapsed_realtime_ms, boot_id, clock ticks. **Must precede the snapshot** or the stamp misses the generation being written. |
+| 2 | `SaveManager.request_save("pause")` (doc 08 §2.6) | 25 ms | Doc 08's snapshot barrier runs on the sim thread; encode → SHA-256 → zstd → `gen_NNNNNN.sav` → `manifest.json` rename (the commit) run on doc 08's worker. |
+| 3 | Build the notification candidate list — classes (a) + (b) only in MVP (§2.4) | 80 ms | Droppable. Guarded by the recorded rolling mean, not a mid-step abort. |
+| 4 | `NotificationBridge.cancel_all()` then `schedule()` × the plan doc 08 accepted | 30 ms | JNI calls; the plan size is doc 08's budget, not ours. |
+| 5 | Await doc 08's manifest commit | ≤ 110 ms worst case | Overlapped with steps 3–4: doc 08 budgets ≤ 120 ms for encode+write and that clock starts at ~26 ms, so ~10 ms of real waiting is typical. |
+| 6 | Delete `user://runtime/session_open.flag` (clean-exit marker, §2.11) | 1 ms | |
+| | slack | 13 ms | |
+
+Arithmetic: nominal `1 + 25 + 80 + 30 + 10 + 1 = 147 ms`; worst case `1 + 25 + 80 + 30 + 110 + 1 = 247 ms ≤ 250 ms`. Steps 1, 2, 5 and 6 always complete (correctness beats budget); steps 3–4 are the only droppable ones.
+
+**Interface requirement on doc 08.** `request_save("pause")` must return once the snapshot barrier is done and complete encode/write asynchronously, so the shell can overlap steps 3–4 with the write. Doc 08 §2.6 permits blocking up to 400 ms on a `pause` trigger; blocking synchronously for 400 ms *before* returning would blow this budget on its own. Flagged in §9.
+
+**Autosave cadence is doc 08's** (`CheckpointPolicy`, doc 08 §2.7). This doc no longer defines an interval; it only supplies the Android-specific triggers — `NOTIFICATION_APPLICATION_PAUSED`, `NOTIFICATION_APPLICATION_FOCUS_OUT` — as `request_save` reasons. The ≤ 60 s process-death goal in §1 needs doc 08's foreground autosave at 60 s on Android rather than its current 5 real minutes (§9).
+
+**Process-death safety.** After `onStop`, Android may kill the process with no callback whatsoever, so nothing important may happen in `NOTIFICATION_WM_CLOSE_REQUEST`, `_exit_tree`, or a destructor — those are best-effort on Android and are not part of the design. The save requested at pause is the *only* Android-specific recovery point, and it is requested before the process is at risk. Torn writes are impossible by doc 08's construction: generation files are immutable once renamed and the `manifest.json` rename is the commit point, so a kill at any moment leaves the previous generation active plus one orphan. Corruption handling — the 7-check load gate, quarantine-never-delete, the 6 unpinned + 2 pinned retention ladder and the repair notes — is doc 08 §2.7/§2.9 and is **not** reimplemented here.
+
+### 2.3 Resume: measuring elapsed real time
+
+The sim never reads a clock (constitution §4); the shell measures once and hands the sim a tick count.
+
+Wall clock (`Time.get_unix_time_from_system()`) can jump — the user changes the device clock, a timezone transition happens, NTP corrects. `Time.get_ticks_msec()` uses `CLOCK_MONOTONIC`, which **does not advance while the device is in deep sleep**, so it is useless for offline measurement. The plugin therefore exposes `SystemClock.elapsedRealtime()` (advances during sleep, resets on reboot) plus a `boot_id`, giving a monotonic cross-check.
+
+```
+raw_s = now_unix_s - stamp.unix_s
+
+if raw_s < 0:
+    anomaly = "clock_backwards"; elapsed_s = 0
+elif plugin_available and stamp.boot_id == current_boot_id:
+    mono_s   = (elapsed_realtime_ms_now - stamp.elapsed_realtime_ms) / 1000.0
+    elapsed_s = min(raw_s, mono_s + clock_tolerance_s)      # tolerance = 120
+else:
+    elapsed_s = raw_s                                        # rebooted or plugin absent
+
+offline_cap_s = time_json.catchup.offline_cap_real_ms / 1000        # doc 01, = 43 200 s
+elapsed_s   = clamp(elapsed_s, 0, offline_cap_s)             # 12 real hours
+game_minutes = int(elapsed_s * time_scale_gmin_per_rsec * offline_rate)   # 1.0 * 1.0
+ticks        = game_minutes * GameClock.TICKS_PER_MINUTE                  # ×4
+```
+
+**The offline cap is not ours** (report 98 C-19). It is `catchup.offline_cap_real_ms = 43 200 000` in `data/time.json`, owned by doc 01: **12 real hours = 720 game-hours = 30 game-days**. This doc reads it and defines no constant of its own; the deleted `offline_max_hours` used to live in §8 and is gone. Surplus beyond the cap is discarded and reported, never banked (constitution §4).
+
+`offline_rate` exists so doc 08 can slow offline progression without every other formula in this doc changing; default `1.0`. It multiplies *credited* time only — it never changes the cap.
+
+**Branching on `elapsed_s`:**
+
+| Range | Path | UI |
+|---|---|---|
+| `< 60 s` | Fine ticks: `sim.tick()` × `elapsed_s × 4`, capped at 240 ticks, executed inside one frame | None — seamless |
+| `60 s … 12 h` | Coarse offline path (doc 01's `advance_coarse_sliced`, under doc 08's fidelity bands), sliced (§2.9) | Progress veil → WHILE YOU WERE AWAY report |
+| `> 12 h` | Same, clamped to 12 h | Report additionally shows "Your city ran for 30 game-days; N hours of your absence were beyond the cap and were not simulated" |
+
+The 60 s threshold is exactly one coarse step, since 1 real second = 1 game minute ⇒ 60 real s = 1 game hour = the coarse granularity.
+
+**Worked example — at the cap exactly.** Player backgrounds at `unix_s = 1 800 000 000` with `GameClock.ticks = 49 920` (game-minute 12 480 = day 8, 16:00). They return at `unix_s = 1 800 043 200`.
+`raw_s = 43 200` (12 real hours). No reboot; `mono_s = 43 190` → `elapsed_s = min(43 200, 43 310) = 43 200`, which is exactly `offline_cap_s`.
+`game_minutes = 43 200` → 720 game-hours = **30 game-days**. `ticks = 172 800`. New `GameClock.ticks = 222 720`, game-minute 55 680, day 38, 16:00. Coarse path executes 720 one-game-hour steps.
+
+**Worked example — over the cap.** A three-day absence: `raw_s = 259 200` (72 real hours). `elapsed_s = clamp(259 200, 0, 43 200) = 43 200`; `216 000 s = 60 real hours` are discarded. The city still advances exactly 720 game-hours = 30 game-days — the same as the 12-hour absence above — and the report says so. This is the whole point of C-19's ruling: the old 72-hour cap would have credited 4 320 game-hours = **180 game-days** for the same absence, handing back six months of city and breaking doc 03's offline/online income guardrail G4, doc 07's fairness budget and doc 08's damage-cap arithmetic at once.
+
+**Cold start after process death** uses the identical code, reading `stamp` out of the loaded save instead of memory. There is no second implementation.
+
+### 2.4 Notification scheduling: the schedule-at-save-time model
+
+Because nothing runs while the app is closed, every notification must be *predicted at pause time*. Report 98 C-23 splits the problem by **predictability class**, and the split is what makes the horizon question disappear:
+
+| Class | Needs a projection? | Scheduling horizon | MVP |
+|---|---|---|---|
+| (a) deterministic timers | **No** — the fire time is already in the save | the full offline cap, **12 real hours** (43 200 s = 720 game-hours) | ships |
+| (b) pre-rolled Director forecast events | **No** — the onset is already in the save | the full offline cap, **12 real hours** | ships |
+| (c) emergent events | Yes — only running the sim reveals them | budget-bounded, **12–60 coarse steps** (§2.4c) | **disabled** |
+
+Classes (a) and (b) carry every notification the vertical slice needs, at the full cap, for free. The previous version of this doc ran `advance_coarse_hours(1) × plan_horizon_hours = 24` and called the result "24 real hours of look-ahead": **at the locked 60× scale, 24 coarse game-hours = 24 REAL MINUTES** (24 game-hours × 60 game-min/game-h ÷ 60 game-min per real min = 24 real minutes). A true 24-real-hour horizon would need `24 × 60 = 1 440` coarse steps — at doc 08 §2.12's cost model that is `1 440 × 27.3 ms ≈ 39 s` raw, or `1 440 × 55 ms ≈ 79 s` with allocation overhead, against an **80 ms** pause budget: three orders of magnitude out. The horizon was never real; the ruling replaces it with the table above. `plan_horizon_hours` is deleted from §8.
+
+**(a) Deterministic timers — free.** Construction/upgrade completion, land development completion, research completion. The sim already knows the completion game-minute. Conversion is the identity at default scale:
+
+```
+real_delay_s   = (event_gmin - now_gmin) / (time_scale_gmin_per_rsec * offline_rate)
+fire_at_unix_s = now_unix_s + real_delay_s - lead_s[class]
+```
+
+*Worked:* a Level-3 office completes at game-minute 14 760; now 12 480. Δ = 2 280 game-min → **2 280 real seconds = 38 min**. Class `routine`, `lead_s = 0` → fires 38 min after backgrounding.
+
+*Worked, at the horizon:* a land development completes at game-minute 54 480; now 12 480. Δ = 42 000 game-min → **42 000 real seconds = 11 h 40 m**, which is ≤ `offline_cap_s = 43 200` → **scheduled**. A timer 44 000 real seconds out is **dropped**: the cap would clamp the catch-up before it ever fired, so the alarm would describe a future the sim never reaches.
+
+**(b) Pre-rolled forecastable events — requires doc 07.** The Disaster Director must commit its next forecastable event *at roll time*, not at onset. Interface demanded of doc 07 in §5. Given that, the storm exists in the save before the player leaves, and its warning can be scheduled — also out to the full 12-hour cap, with no projection.
+
+*Worked:* Director has a severe thunderstorm with `onset_gmin = 13 920` and `warning_lead_gmin = 180`. Warning game-minute = 13 740; Δ from now (12 480) = 1 260 game-min = **1 260 real seconds = 21 min**. Class `critical`.
+Doze slop guard: require `real_delay_s ≥ doze_slop_s (900) + min_useful_lead_s (300) = 1200`. 1 260 ≥ 1 200 → **accepted**. Had the storm been 15 real minutes out, the warning would arrive after landfall and is **dropped** rather than shown late.
+
+**(c) Emergent events — requires a projection. DISABLED IN MVP.** Blackouts, fires, crime surges, treasury thresholds. These are knowable only by running the sim — and because of constitution §5 determinism, *running it now produces exactly the same events as running it later*. So the shell would run the offline path on a throwaway sim and read off the events:
+
+```
+projection_steps = clamp(floor(projection_budget_ms / measured_coarse_ms), 12, 60)
+
+plan_sim = Sim.deserialize(save_dict)          # fresh instance from the dict doc 08 just snapshotted
+events   = []
+for h in range(projection_steps):              # coarse steps == game-hours == real minutes
+    plan_sim.advance_coarse_hours(1)
+    events += [e for e in plan_sim.drain_events() if e.notify_class != NONE]
+discard plan_sim
+```
+
+**The horizon is bounded by budget, not by wishful hours.** One coarse step = 1 game-hour = **1 real minute** of look-ahead at 60×, so the clamp `[12, 60]` buys **12–60 game-hours = 12–60 real minutes** of emergent look-ahead. `measured_coarse_ms` comes from doc 08's Phase-0 benchmark `tests/perf/test_coarse_step_cost.gd` (task P0-27, report 98 C-21) — never from a guess in this doc.
+
+Generating formula: `projection_steps = clamp(floor(80 / measured_coarse_ms), 12, 60)`; realised cost `= projection_steps × measured_coarse_ms`.
+
+| `measured_coarse_ms` | `floor(80 / m)` | `projection_steps` | Realised cost | Verdict |
+|---|---|---|---|---|
+| 55.0 (doc 08 §2.12 per-entity estimate) | 1 | 12 (floor) | 660 ms | **8× over the 80 ms budget → class (c) stays off** |
+| 12.0 | 6 | 12 (floor) | 144 ms | over budget → off |
+| 6.67 (break-even) | 12 | 12 | 80 ms | the point at which class (c) becomes affordable |
+| 4.00 | 20 | 20 | 80 ms | 20 real minutes of look-ahead |
+| 1.33 | 60 | 60 (ceiling) | 80 ms | 60 real minutes — the maximum this doc will ever buy |
+| 0.60 (doc 01's retired estimate) | 133 | 60 (ceiling) | 36 ms | ceiling binds, not budget |
+
+So: **class (c) ships disabled** (`projection_enabled: false`). It may be switched on only when P0-27 measures `measured_coarse_ms ≤ 6.67`, and even then it buys minutes, not hours. Classes (a) and (b) carry every notification the slice needs, at the full 12-hour cap. The live sim is never touched by a projection, so a surviving process resumes from correct in-memory state.
+
+**Budget guard (retained).** When enabled, the shell records the measured pause cost of the projection; if the 5-sample rolling mean exceeds `pause_projection_abort_ms = 120`, projection is disabled for the rest of the session and only classes (a) and (b) are scheduled (`projection_degraded = true` recorded in `android.diagnostics` for telemetry). Note the floor of 12 means the guard can trip on the very first pause — `floor(80/m)` clamps *up* to 12, it does not shrink below it.
+
+### 2.5 The notification platform: channels, ids, delivery
+
+**Policy is doc 08's; this section is the platform half only** (report 98 C-71). Doc 08 owns the four priority classes, the token buckets, the min-gaps, quiet hours, coalescing and the event→class table in `data/notifications.json`. **This doc's parallel rate limiter is deleted** — the old `max_per_wake` / `max_p3_per_wake` / `min_gap_s` / `max_per_day` / `quiet_shift_max_s` constants are gone from §8; the equivalents live in `data/notifications.json` (doc 08 §3.3) and the in-app banner gate lives in `data/ui.json` under `in_app_alerts` (doc 12). There is exactly one push budget in the game: doc 08's.
+
+**Class → Android channel map** (this doc owns the right-hand side):
+
+| Doc 08 class | Channel id | Android importance | Behaviour | MVP |
+|---|---|---|---|---|
+| `P1_critical` | `slacum_critical` | `IMPORTANCE_HIGH` | sound + vibrate | created |
+| `P2_important` | `slacum_important` | `IMPORTANCE_DEFAULT` | sound, no vibrate | created |
+| `P3_routine` | `slacum_routine` | `IMPORTANCE_LOW` | silent | created |
+| `P4_ambient` | `slacum_ambient` | `IMPORTANCE_MIN` | silent | **not created** — doc 08 ships P4 disabled |
+
+Channels are created once at plugin init (mandatory since API 26) and never mutated afterwards — importance is user-owned after creation. P4's channel is deliberately absent rather than created-and-silent: an unused row in the system settings screen is user-visible clutter. If doc 08 ever enables P4, adding `slacum_ambient` is a plugin-init change, not a schema change.
+
+**What examples belong to which class is doc 08's `events` table**, not this doc's. The thresholds that used to sit in §8 (`blackout_demand_fraction`, `fire_unresolved_gmin`, `district_stability_critical`, `water_break_demand_fraction`, `large_construction_cost`) are deleted: the events themselves are emitted by their owning systems (doc 04 blackouts, doc 06 fires, doc 09 stability, doc 05 water, doc 02 construction) and classified by doc 08's table.
+
+**The delivery contract.** Doc 08's `NotificationPlanner.plan()` returns an accepted, budgeted, quiet-hours-resolved list. This doc:
+
+1. supplies the platform inputs doc 08's planner cannot obtain from `sim/` — the device-local UTC offset for quiet hours (`Time.get_time_zone_from_system().bias`, the only device-local wall-clock read in the game), `now_unix_s`, and `notifications_enabled()`;
+2. converts each accepted entry's `fire_unix` into an `AlarmManager` alarm;
+3. assigns the platform alarm id and returns it, so doc 08's `notifications.scheduled[].alarm_id` is truthful;
+4. renders title/body from `data/notifications_text.json` (owned here) using doc 08's conventional keys `n_<event>_title` / `n_<event>_body`;
+5. reports back what actually fired.
+
+**Doze slop guard (platform, ours).** Alarms are inexact by choice (§2.6), so any entry whose `real_delay_s < doze_slop_s (900) + min_useful_lead_s (300) = 1 200 s` is **dropped before scheduling** rather than delivered after the event it warns about. This is a delivery-feasibility filter, not a budget: doc 08 has already decided the item is worth sending.
+
+**Ids.** `cancel_all_notifications()` runs before every batch, so ids need only be unique within a batch: `id = id_base + index = 1000 + index`. This makes the plugin's persisted schedule trivially replaceable and removes a whole class of stale-notification bugs.
+
+**On resume:** cancel everything immediately (`cancel_all_notifications()`), because every scheduled item now describes a future that the player has just changed; doc 08 re-plans. Log which ones fired (`delivered_log`, §3.2) for doc 08's report reconciliation ("we told you about the storm") and for tuning.
+
+**Never notify in the foreground.** If the app is running, a P1 is an in-game alert owned by doc 12 (`in_app_alerts` in `data/ui.json`).
+
+### 2.6 The `SlacumNative` Kotlin plugin
+
+**What ships built-in with Godot 4.7 on Android: nothing relevant.** There is no notification API, no thermal API, no power-save query, no `elapsedRealtime`, no runtime-permission request flow beyond `OS.request_permission()` (which handles the request but gives no rationale/permanent-denial state). Third-party notification plugins exist but are unmaintained across Godot minor versions and CLAUDE.md rules out external plugins. We write our own — it is ~450 lines of Kotlin.
+
+**Plugin requires the Gradle build template.** `res://android/plugins/slacum_native.gdap` + `slacum_native.aar`:
+
+```ini
+[config]
+name="SlacumNative"
+binary_type="local"
+binary="slacum_native.aar"
+
+[dependencies]
+local=[]
+remote=["androidx.core:core-ktx:1.13.1"]
+custom_maven_repos=[]
+```
+
+**Kotlin surface** (`org.godotengine.godot.plugin.GodotPlugin`, methods `@UsedByGodot`):
+
+```kotlin
+// permissions
+fun notifications_enabled(): Boolean     // NotificationManagerCompat.areNotificationsEnabled()
+fun permission_state(): String           // granted|denied|denied_permanent|never_asked|unsupported
+fun request_notification_permission()    // -> signal permission_result(granted: Boolean)
+fun open_app_notification_settings()     // ACTION_APP_NOTIFICATION_SETTINGS
+// scheduling
+fun schedule_notification(req: Dictionary): Int   // returns id, or -1
+fun cancel_notification(id: Int); fun cancel_all_notifications(); fun scheduled_ids(): IntArray
+// time
+fun elapsed_realtime_ms(): Long          // SystemClock.elapsedRealtime()
+fun boot_id(): String                    // hash of /proc/sys/kernel/random/boot_id
+// device / power
+fun thermal_status(): Int                // PowerManager.getCurrentThermalStatus(), 0..6, API 29+
+fun is_power_save_mode(): Boolean; fun battery_percent(): Int; fun is_charging(): Boolean
+fun display_refresh_hz(): Int; fun set_sustained_performance(on: Boolean)
+// launch payload ("" if not opened from a notification)
+fun consume_launch_payload(): String
+// signals: permission_result(Boolean), thermal_status_changed(Int), notification_opened(String)
+
+// schedule_notification request dictionary:
+// { "id":1000, "at_unix_ms":1800045600000, "channel":"slacum_critical", "group":"storm",
+//   "title":"Severe thunderstorm warning",
+//   "body":"Storm reaches Slacum City in about 3 hours. Crews on standby?",
+//   "payload":"disaster:thunderstorm:d_0031" }
+```
+
+**Implementation decisions:**
+
+- **`AlarmManager.setAndAllowWhileIdle(RTC_WAKEUP, …)` for every notification. Inexact, always.** We deliberately do **not** request `SCHEDULE_EXACT_ALARM`/`USE_EXACT_ALARM`: Play restricts `USE_EXACT_ALARM` to alarm-clock and calendar apps, and a city builder cannot justify it — requesting it risks store rejection. Consequence: up to ~15 min of Doze slop, which the `doze_slop_s = 900` guard in §2.5 already accounts for. Notification copy therefore **never states an exact time** — "in about 3 hours", never "at 19:00".
+- `PendingIntent` flags `FLAG_IMMUTABLE or FLAG_UPDATE_CURRENT` (mutability is explicit since API 31).
+- `AlarmReceiver : BroadcastReceiver` builds the notification with `NotificationCompat` and posts through `NotificationManagerCompat`. Tap → `PendingIntent` to `com.godot.game.GodotApp` with extra `slacum_payload`; if the process is alive the plugin emits `notification_opened`, otherwise the payload is stashed for `consume_launch_payload()`.
+- **Reboot survival.** Alarms are cleared on reboot. The plugin owns `filesDir/notif_schedule.json`, rewritten on every schedule/cancel; `BootReceiver` (`RECEIVE_BOOT_COMPLETED`) replays entries whose `at_unix_ms` is still in the future and drops the rest. `am force-stop` also cancels alarms and *cannot* be recovered from until the user launches the app — accepted and documented, not worked around.
+- The plugin ships its own `AndroidManifest.xml` declaring its receivers and its permissions, so manifest merging keeps the plugin self-contained and `export_presets.cfg` needs no `custom_permissions` entries.
+
+**Bounded scope.** The plugin contains no game logic, no scheduling policy, and no strings — GDScript decides *what* and *when*; Kotlin only knows *how*. That keeps the untestable-headlessly surface as small as possible.
+
+### 2.7 Permissions
+
+Release manifest, complete:
+
+| Permission | Type | Why |
+|---|---|---|
+| `android.permission.POST_NOTIFICATIONS` | runtime (API 33+) | All notifications |
+| `android.permission.RECEIVE_BOOT_COMPLETED` | normal | Re-arm alarms after reboot |
+| `android.permission.WAKE_LOCK` | normal | Godot keep-screen-on while playing |
+| `android.permission.VIBRATE` | normal | Haptics (spec §49) + P1 channel vibration |
+
+**Deliberately absent:** `INTERNET` (MVP is fully offline — this is what lets the Data Safety form say "no data collected"), `SCHEDULE_EXACT_ALARM`, `USE_EXACT_ALARM`, `FOREGROUND_SERVICE*`, `ACCESS_NETWORK_STATE`, any storage permission, `QUERY_ALL_PACKAGES`, and `com.google.android.gms.permission.AD_ID` (if any future dependency injects it, strip it with `tools:node="remove"`).
+
+Godot injects `INTERNET` into **debug** exports for the remote debugger — expected and correct; the release build must not have it, which is what the `aapt2 dump permissions` gate in §2.10 enforces on every release.
+
+**POST_NOTIFICATIONS runtime flow.** Never ask on first launch — cold permission prompts convert poorly and a denial on Android 13+ is effectively permanent after two dismissals.
+
+```
+1. Trigger point: the FIRST time the shell wants to schedule anything, which in practice is
+   the end of onboarding step 10 ("Upgrade one building" → first construction timer exists).
+2. If plugin.notifications_enabled() → done, state = granted.
+3. Show an in-game rationale modal (ours, not the system's):
+     "Get told when your city is in trouble."
+     "Storm warnings, major outages, and finished construction — nothing else."
+     [ Turn on ]  [ Not now ]
+4. [Turn on] → plugin.request_notification_permission() → system dialog
+             → signal permission_result(granted) → persist state.
+5. [Not now] → state = denied, asked_count += 1. Do not ask again this session.
+6. denied_permanent (system auto-denies): stop prompting forever. Settings shows
+   "Notifications: Off — Open system settings" → open_app_notification_settings().
+7. Re-prompt policy: allowed at most reprompt_max (2) times in the app's lifetime,
+   only if (now - last_asked) >= reprompt_cooldown_days (7) AND the player has just
+   returned to a city where a P1 event occurred offline. The modal then reads
+   "You missed a citywide blackout. Want a heads-up next time?"
+8. API < 33: no runtime permission exists; notifications_enabled() still reports the
+   user's system toggle, so the Settings row stays truthful.
+```
+
+### 2.8 Battery, frame pacing, and thermal policy
+
+**Frame cap** (`Engine.max_fps`), resolved every 2 s from the highest-priority active rule:
+
+| Rule | Cap | Extra effects |
+|---|---|---|
+| Modal/menu open (3D viewport not visible) | `idle_fps` 30 | `SubViewport.render_target_update_mode = UPDATE_DISABLED` |
+| Thermal `CRITICAL`(4) / `EMERGENCY`(5) / `SHUTDOWN`(6) | 30 | Force Performance preset; one-time toast |
+| Thermal `SEVERE`(3) | 30 | Glow off, particles ×0.25, shadows off |
+| Thermal `MODERATE`(2) | 45 | Shadow distance ×0.7, particles ×0.5 |
+| Device power-save on, or battery < 20 % and not charging, or user Battery Saver toggle | 30 | Weather VFX ×0.5, glow half-res, night lights LOD −1 |
+| High-refresh opt-in (user, flagship only) | `min(display_hz, 120)` | |
+| Default | `min(display_hz, 60)` | |
+
+Thermal is push-based: the plugin registers `PowerManager.addThermalStatusListener` (API 29+, exactly our minSdk) and emits `thermal_status_changed`. Hysteresis: a *downward* (cooler) transition only applies after `thermal_recover_s = 30` at the lower status, so the preset does not oscillate.
+
+**Frame pacing.** Godot 4.3+ integrates Swappy. Set in `project.godot`:
+
+```ini
+display/window/frame_pacing/android/enable_frame_pacing=true
+display/window/frame_pacing/android/swappy_mode=2      ; auto-fps + auto-pipeline
+display/window/vsync/vsync_mode=1                      ; VSYNC_ENABLED, always
+display/window/energy_saving/keep_screen_on=true
+application/config/quit_on_go_back=false
+```
+
+Capping at 60 on a 120 Hz panel is the single biggest battery lever available (roughly halves GPU work); the high-refresh toggle is off by default and lives under Settings → Graphics with the label "High refresh rate (uses more battery)".
+
+**Sim cost while foregrounded** is negligible by construction — 4 Hz utility tick, 1 Hz incidents, per-game-hour economy (constitution §4). No battery rule touches sim cadence; slowing the sim to save battery would change gameplay, which is not allowed.
+
+**Measurement protocol.** `dumpsys batterystats --reset`, play a scripted 30-minute session (§7 D-07), then `dumpsys batterystats com.slacumcity.game`, and convert: `drain_pct_per_hour = (level_start - level_end) * 2`. Ship gate: Tier B ≤ 6.0 %/h Balanced, ≤ 3.5 %/h Saver.
+
+### 2.9 Long catch-up without an ANR
+
+The worst case is now the C-19 cap: **12 real hours of absence = 720 coarse steps** (720 game-hours = 30 game-days), down from the 4 320 steps the deleted 72-hour cap implied. Doc 08 may lower the effective count further via `max_coarse_hours` (report 98 C-21: `ceil(2000 / measured_ms)`, floored at 72, capped at 720, set by the P0-27 benchmark). Catch-up is **sliced on the main thread** — report 98 C-22 ruled against threading it, because sim state is single-owner `RefCounted` (constitution §3) and the platform can kill the process mid-task:
+
+```
+veil.show()                                  # animated "Simulating 30 days…" with a progress bar
+while not sim.advance_coarse_sliced(12):     # doc 01 §4: whole coarse steps until the budget is spent
+    veil.set_progress(sim.steps_done() / float(sim.steps_total()))
+    await get_tree().process_frame
+veil.hide(); report.show(catchup.summary())
+```
+
+Veil wall time = `steps × measured_coarse_ms`, generated from doc 08's P0-27 measurement:
+
+| `measured_coarse_ms` | 720 steps (12 h cap) | Frames at a 12 ms slice | Veil reads as |
+|---|---|---|---|
+| 0.60 (doc 01's retired estimate) | 432 ms | 36 | a blink |
+| 4.00 | 2.88 s | 240 | a short load |
+| 12.0 | 8.64 s | 720 | a real load screen |
+| 55.0 (doc 08 §2.12 estimate) | 39.6 s | 720 (one step per frame, 55 ms each) | unacceptable — this is why `max_coarse_hours` exists |
+
+**ANR safety is structural, not budgetary.** `advance_coarse_sliced` runs *whole* coarse steps, so a single step longer than the budget still runs to completion; the main loop is therefore blocked for at most one step. Android's ANR line is 5 s, so the design is safe for any `measured_coarse_ms < 5 000` — a 90× margin even at the pessimistic 55 ms. The 12 ms budget is about keeping the 30 fps veil animation smooth, not about avoiding the ANR.
+
+Progress fraction = `steps_done() / steps_total()`, so the bar is honest. If `steps_total ≤ 4` (`catchup_veil_min_steps = 5`) the veil is skipped entirely — sub-frame work.
+
+### 2.10 Export pipeline
+
+**One-time setup — `tools/setup_android.sh`:**
+
+```bash
+export ANDROID_HOME="$HOME/Android/Sdk"
+export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(which java)")")")"
+yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
+
+# Headless export reads SDK/JDK paths from editor settings, so they must exist:
+godot --headless --editor --quit --path "$P"        # generates ~/.config/godot/editor_settings-4.7.tres
+# then set:  export/android/android_sdk_path = "$ANDROID_HOME"
+#            export/android/java_sdk_path    = "$JAVA_HOME"
+
+keytool -keyalg RSA -genkeypair -alias androiddebugkey \
+  -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android \
+  -dname "CN=Android Debug,O=Android,C=US" -validity 10000 -deststoretype pkcs12
+
+# Gradle build template — required for the plugin. Do once; commit the result.
+godot --headless --path "$P" --install-android-build-template
+# Manual equivalent if the CLI flag misbehaves:
+#   unzip ~/.local/share/godot/export_templates/4.7.2.stable/android_source.zip -d android/build
+#   echo "4.7.2.stable" > android/.build_version
+```
+
+`.gitignore` currently excludes `android/build/`. **That must change** — with a custom template it is source. Narrow it to `android/build/.gradle/`, `android/build/build/`, `android/build/local.properties` (§9). Reinstalling the template (a Godot upgrade forces this) overwrites the directory, so every edit lives as a patch in `tools/android_patches/*.patch`, reapplied by `tools/reinstall_android_template.sh`. **Design goal: keep that patch set empty** — the plugin owns its own manifest entries, so no template edit is currently needed.
+
+**Signing.** No secret ever enters `export_presets.cfg` (which is committed). Godot 4.2+ reads keystores from the environment:
+
+```bash
+export GODOT_ANDROID_KEYSTORE_DEBUG_PATH="$HOME/.android/debug.keystore"
+export GODOT_ANDROID_KEYSTORE_DEBUG_USER="androiddebugkey"
+export GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD="android"
+export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$HOME/keys/slacum-upload.keystore"
+export GODOT_ANDROID_KEYSTORE_RELEASE_USER="slacum-upload"
+export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="…"    # password manager, never a repo file
+
+# Upload keystore, generated once, backed up in two offline places:
+keytool -genkeypair -v -keystore ~/keys/slacum-upload.keystore -alias slacum-upload \
+  -keyalg RSA -keysize 4096 -validity 10950 -storetype pkcs12 \
+  -dname "CN=Slacum City, O=<legal entity>, L=<city>, C=<cc>"
+```
+
+We enrol in **Play App Signing**, so this is the *upload* key only and Google holds the app signing key: losing the upload key is recoverable, losing a self-managed app signing key would be terminal.
+
+**Version code:** `major*10000 + minor*100 + patch` → `0.1.0 → 100`, `1.0.0 → 10000`. `tools/build_android.sh` derives `version/code` and `version/name` from `project.godot`'s `config/version` and refuses to build if the code is ≤ `tools/.last_uploaded_version_code`.
+
+**Build, verify, deploy:**
+
+```bash
+P="/home/bbx/Slacum City game"
+godot --headless --path "$P" --export-debug   "Android Debug APK" "$P/build/slacum-debug.apk"
+godot --headless --path "$P" --export-release "Android Test APK"  "$P/build/slacum-test.apk"
+godot --headless --path "$P" --export-release "Android Play AAB"  "$P/build/slacum-release.aab"
+# First Gradle build ~3–5 min; incremental ~40 s with the daemon warm.
+
+# 16 KB page-size gate (Play requirement for target-15+ apps; verify EVERY release):
+unzip -o build/slacum-release.aab -d /tmp/aab
+llvm-readelf -l /tmp/aab/base/lib/arm64-v8a/libgodot_android.so | grep LOAD
+#   every LOAD segment must report Align 0x4000 (16384)
+"$ANDROID_HOME/build-tools/37.0.0/aapt2" dump permissions build/slacum-release.aab   # expect exactly 4
+
+adb devices -l
+adb install -r -d build/slacum-debug.apk
+adb shell am start -n com.slacumcity.game/com.godot.game.GodotApp
+adb logcat -c && adb logcat -v time godot:V GodotPlugin:V SlacumNative:V AndroidRuntime:E *:S
+```
+
+Three presets exist because release builds behave differently from debug: the **Test APK** is release-signed and used for all perf and battery measurement, while the AAB goes to Play and the debug APK drives the dev loop.
+
+### 2.11 Crash reporting without a heavy SDK
+
+Ranked, with the MVP decision:
+
+1. **Play Console Android vitals + Pre-launch report — CHOSEN for MVP.** Zero SDK, zero permissions, zero Data Safety impact, free. Gives native crash clusters, ANR rate, excessive-wakeup flags, and startup-time percentiles across real devices. Gate thresholds to stay under: crash rate < 1.09 %, ANR rate < 0.47 % (Play "bad behaviour" thresholds). Godot's shipped release `.so` is stripped, so native frames are partly unsymbolicated — acceptable, because most of our failures will be GDScript.
+2. **Local breadcrumb ring — CHOSEN for MVP, ours.** On launch the shell writes `user://runtime/session_open.flag`; the pause sequence deletes it. Finding the flag at launch means the previous session died uncleanly. The shell then writes `user://logs/incident_<unix>.json` (ring of 5) containing: app version, `OS.get_model_name()`, API level, thermal status at last sample, `GameClock.ticks`, the last 64 event-bus entries, the last 20 GDScript errors captured via a `push_error` hook, and free RAM. Settings → "Report a problem" renders that JSON and offers an Android share intent — **no network permission required**, the user chooses the channel.
+3. **Sentry (native + GDScript)** — post-alpha only. Adds `INTERNET`, changes the Data Safety declaration to "Crash logs collected", and needs an opt-in toggle. Revisit at Phase 3.
+4. **Firebase Crashlytics — rejected.** Pulls in Google Play services, risks `AD_ID` injection, heavy, and the Data Safety story degrades for a solo-dev offline game.
+
+### 2.12 Play Store readiness (targetSdk 37)
+
+| Item | State for MVP | Note |
+|---|---|---|
+| targetSdk | 37 | Within Play's 1-year window |
+| Format | AAB, Play App Signing | APK uploads not accepted for new apps |
+| ABI | `arm64-v8a` only | 64-bit requirement satisfied |
+| 16 KB pages | Verified per build (§2.10) | Hard requirement for target-15+ apps |
+| Data Safety | "No data collected, no data shared" | True only while `INTERNET` is absent; re-file the moment crash reporting or billing lands |
+| Privacy policy | Required field — publish a one-page policy (GitHub Pages) stating no collection | Cheap now, mandatory later |
+| Content rating (IARC) | Disasters, fire, no gore, no blood → expect PEGI 7 / ESRB E10+ | Post-launch zombie/alien packs likely push to Teen — re-run the questionnaire then |
+| Ads / IAP | "Contains ads": No. No `BILLING` permission, no Play Billing Library in the binary | Deferred post-alpha per constitution §7 |
+| App access / audience | "All functionality available without restrictions" — no login; 13+, not designed for children | Avoids Families policy obligations |
+| Store assets | Icon 512×512 32-bit PNG; feature graphic 1024×500; ≥ 4 landscape phone screenshots ≥ 1080p; 7" + 10" tablet screenshots | Landscape only (constitution §1) |
+| Release track path | Internal testing (≤ 100 testers, no review wait) → closed testing → production; enable the Pre-launch report | Free crash/perf sweep on real devices |
+| **Closed-testing gate** | Personal developer accounts must run a closed test with **≥ 12 testers opted in for ≥ 14 continuous days** before production access | Schedule-critical; recruit at Milestone C, not at launch |
+| Base install size | Target ≤ 150 MB | Play Asset Delivery not needed for MVP |
+
+## 3. Data Schema
+
+### 3.1 `data/android.json` — see the consolidated block in §8.
+
+This doc owns exactly two data files (report 98 C-71): **`data/android.json`** (platform config — channels, alarm mechanics, power, build) and **`data/notifications_text.json`** (copy, §3.1.1). It owns **no** notification policy file; `data/notifications.json` is doc 08's.
+
+#### 3.1.1 `data/notifications_text.json` — owned here, reviewed by whoever owns tone
+
+Keyed by doc 08's convention (`n_<event key>_title` / `n_<event key>_body`, doc 08 §3.3), so adding an event touches doc 08's policy file and this copy file only. Copy **never states an exact time** — alarms are inexact by choice (§2.6).
+
+```json
+{
+  "schema_version": 1,
+  "strings": {
+    "n_storm_forecast_title":        "Severe thunderstorm warning",
+    "n_storm_forecast_body":         "A storm reaches Slacum City in about {hours} hours. Crews on standby?",
+    "n_district_blackout_title":     "{district} has gone dark",
+    "n_district_blackout_body":      "Power has been out for about {hours} hours.",
+    "n_hospital_service_lost_title": "The hospital has lost power",
+    "n_hospital_service_lost_body":  "Backup generators are running.",
+    "n_major_fire_title":            "Fire still burning",
+    "n_major_fire_body":             "{building} has been alight for a while and crews have not contained it.",
+    "n_construction_complete_title": "Construction finished",
+    "n_construction_complete_body":  "{building} is ready.",
+    "n_coalesced_summary_title":     "{count} problems in your city",
+    "n_coalesced_summary_body":      "Tap to review."
+  }
+}
+```
+
+English only in MVP; when doc 12's `data/strings.en.json` (report 98 G-8) gains a localization pipeline, this file becomes one of its namespaces rather than a second mechanism.
+
+### 3.2 Save-file section: `save.android`
+
+Owned by this system; serialized/deserialized by `AndroidState` (constitution §9: each system owns its section).
+
+Per the canonical registry (report 98 §11) this section carries exactly three things: **the last pause stamp, the permission state, and the device profile** — plus platform diagnostics. Notification *preferences* (`class_enabled`, `quiet_hours`) and the *scheduled plan* live in doc 08's `notifications` section and are **deleted from here**; `delivered_log` stays because it is platform delivery feedback that doc 08 has no field for and consumes for report reconciliation.
+
+```json
+"android": {
+  "section_version": 1,
+  "last_pause": { "unix_s": 1800000000, "elapsed_realtime_ms": 88123456, "boot_id": "3f2a…c19",
+                  "clock_ticks": 49920, "app_version": "0.1.0", "clean": true },
+  "permission": {
+    "post_notifications": "granted", "asked_count": 1, "last_asked_unix": 1799000000,
+    "reprompt_count": 0, "channels_created": ["slacum_critical", "slacum_important", "slacum_routine"]
+  },
+  "delivered_log": [ { "id": 1000, "class": "P1_critical", "key": "storm_forecast",
+                       "fired_at_unix_s": 1800001291, "opened": true } ],
+  "device_profile": { "graphics_preset": "balanced", "fps_cap": 60, "high_refresh_opt_in": false,
+                      "battery_saver_mode": "auto", "last_thermal_status": 0 },
+  "diagnostics": { "pause_ms_mean": 147.0, "projection_ms_mean": 0.0, "projection_degraded": false,
+                   "unclean_exits": 0 }
+}
+```
+
+`delivered_log` is capped at 32 entries (ring). `projection_ms_mean` is 0.0 while class (c) is disabled (§2.4c). The `scheduled` array is doc 08's (`notifications.scheduled`, capped by doc 08's budget), and `saves_recovered_from_backup` is deleted — recovery is doc 08's and is reported through `meta.repair_notes` (doc 08 §3.2).
+
+### 3.3 Non-save runtime files
+
+| Path | Purpose | Lifetime |
+|---|---|---|
+| `user://runtime/session_open.flag` | Unclean-exit sentinel (§2.11) | Created at launch, deleted at pause |
+| `user://logs/incident_<unix>.json` | Crash breadcrumb, ring of 5 | Manual share / auto-pruned |
+| `user://perf/session_<unix>.csv` | 1 Hz perf sample, **debug builds only** | Pulled by adb, ring of 3 |
+| `filesDir/notif_schedule.json` | Plugin-owned, for `BOOT_COMPLETED` replay | Rewritten per batch |
+
+### 3.4 `export_presets.cfg` (committed; secrets by env only)
+
+```ini
+[preset.0]
+name="Android Debug APK"
+platform="Android"
+runnable=true
+advanced_options=true
+export_filter="all_resources"
+export_path="build/slacum-debug.apk"
+script_export_mode=2
+
+[preset.0.options]
+gradle_build/use_gradle_build=true
+gradle_build/export_format=0            ; 0 = APK, 1 = AAB
+gradle_build/min_sdk="29"
+gradle_build/target_sdk="37"
+gradle_build/compress_native_libraries=false
+architectures/armeabi-v7a=false
+architectures/arm64-v8a=true
+architectures/x86=false; architectures/x86_64=false
+version/code=100
+version/name="0.1.0"
+package/unique_name="com.slacumcity.game"
+package/name="Slacum City"
+package/signed=true
+package/app_category=2                  ; Game
+package/retain_data_on_uninstall=false
+package/show_in_android_tv=false
+launcher_icons/main_192x192="res://game/branding/icon_192.png"
+launcher_icons/adaptive_foreground_432x432="res://game/branding/icon_fg_432.png"
+launcher_icons/adaptive_background_432x432="res://game/branding/icon_bg_432.png"
+launcher_icons/adaptive_monochrome_432x432="res://game/branding/icon_mono_432.png"
+keystore/debug=""; keystore/debug_user=""; keystore/debug_password=""     ; env-supplied
+keystore/release=""; keystore/release_user=""; keystore/release_password="" ; env-supplied
+screen/immersive_mode=true
+screen/support_small=false                        ; support_normal/large/xlarge = true
+user_data_backup/allow=false
+apk_expansion/enable=false
+permissions/custom_permissions=PackedStringArray()   ; plugin manifest owns permissions
+
+[preset.1]  name="Android Play AAB"
+;   as preset.0, but export_path="build/slacum-release.aab" and gradle_build/export_format=1
+[preset.2]  name="Android Test APK"
+;   as preset.0, release-signed, export_path="build/slacum-test.apk" (perf/battery measurement)
+```
+
+(The `; a; b` one-line pairings above are documentation shorthand — the real file puts each key on its own line.)
+
+**Implementation note:** Godot's exporter option keys occasionally shift between minor versions. The authoritative procedure is to configure preset 0 once in the editor GUI, `git diff` the generated `export_presets.cfg` against this block, and update this document with any deltas in the same commit (constitution §12).
+
+## 4. Sim API Sketch
+
+Nothing in this document lives in `sim/`. The shell classes below are `game/` layer.
+
+| Class | Location | Responsibility |
+|---|---|---|
+| `AppShell` | `game/app_shell.gd` (autoload, `PROCESS_MODE_ALWAYS`) | `_notification()` router; owns the pause/resume sequences |
+| `LifecycleStamp` | `game/android/lifecycle_stamp.gd` | Builds and reads `save.android.last_pause`; the elapsed-time formula (§2.3) |
+| `NotificationScheduler` | `game/android/notification_scheduler.gd` | Collects class (a)/(b) candidates, calls doc 08's `sim/notify/NotificationPlanner.plan()`, then schedules whatever it returns. **Owns no budget, no classes, no quiet hours** (C-71). Also runs the optional class (c) projection when enabled. |
+| `NotificationTextStore` | `game/android/notification_text.gd` | Renders `n_<event>_title` / `n_<event>_body` from `data/notifications_text.json` |
+| `NotificationBridge` | `game/android/notification_bridge.gd` | Thin wrapper over `Engine.get_singleton("SlacumNative")`; **stubs cleanly to no-ops on desktop/headless** |
+| `PermissionFlow` | `game/android/permission_flow.gd` | The POST_NOTIFICATIONS state machine (§2.7) |
+| `PowerPolicy` | `game/android/power_policy.gd` | Frame caps, thermal/power-save rules, preset switching |
+| `CrashSentinel` | `game/android/crash_sentinel.gd` | Session flag, breadcrumb ring, error hook |
+| `AndroidState` | `game/android/android_state.gd` | serialize/deserialize of `save.android` |
+
+**Injected-interface implementations (C-04).** These three are the *only* way `sim/` reaches Android; there is no `platform/` layer:
+
+| Interface (declared by doc 08 §4) | Implementation | Provides |
+|---|---|---|
+| `IClockSource` | `game/android/lifecycle_stamp.gd` | `now_unix()`, `elapsed_realtime_ms()`, `boot_id()` |
+| `IFileSink` | `game/android/file_sink.gd` | `write/rename/list/delete` under `user://` for doc 08's atomic protocol |
+| `INotificationSink` | `game/android/notification_bridge.gd` | `schedule(entry) -> alarm_id`, `cancel(id)`, `cancel_all()`, `channels()`, `local_utc_offset_s()` |
+
+**Commands accepted** (from `ui/`): `request_notification_permission()`, `open_system_notification_settings()`, `set_graphics_preset(name)`, `set_high_refresh_opt_in(bool)`, `set_battery_saver_mode(auto|on|off)`, `export_incident_report()`. *(`set_notification_class_enabled` and `set_quiet_hours` are deleted from this doc's command list — those preferences are doc 08's `notifications` section; the UI sends them to doc 08 and this doc only re-reads the resulting plan.)*
+
+**Events emitted** (onto the shell's own bus, not the sim's): `app_paused`, `app_resumed(elapsed_s, anomaly)`, `catchup_started(steps_total)`, `catchup_progress(fraction)`, `catchup_finished(summary)`, `notification_permission_changed(state)`, `notification_opened(payload)`, `notification_delivered(id, key)`, `thermal_changed(status)`, `power_preset_changed(preset, reason)`, `unclean_exit_detected(path)`.
+
+**Nothing here ever calls into `sim/` except through the sanctioned surface**: `Sim.deserialize()`, `Sim.tick()`, `Sim.advance_coarse_hours()`, `Sim.advance_coarse_sliced(max_ms)` + `steps_done()` / `steps_total()`, `Sim.drain_events()`, `SaveManager.request_save(reason)` and `SaveManager.load_slot(slot)`. **`Sim.serialize()` is no longer called from here** — snapshotting is inside doc 08's `request_save`.
+
+## 5. Cross-System Interfaces
+
+**Doc numbers are the on-disk filenames** — the canonical map ruled in report 98 §0 (Ruling Zero). The previous version of this table used a private numbering in which persistence was 10, the Director was 08, incidents were 07, buildings were 03 and economy was 02; every one of those is corrected below. No number in this doc is a guess any more.
+
+| Doc | System | What this doc needs / provides |
+|---|---|---|
+| **01** Time model & tick scheduler | needs | `GameClock.TICKS_PER_MINUTE`, `time_scale_gmin_per_rsec = 1.0`, and **`catchup.offline_cap_real_ms` from `data/time.json`** (the 12-real-hour cap, C-19 — this doc stores no cap of its own). Also `advance_coarse_sliced(max_ms) -> bool` with `steps_done()` / `steps_total()` (C-22) and `advance_coarse_hours(n)` usable on a throwaway instance with no global side effects. This doc converts real seconds → ticks and must be the **only** place that does so. |
+| **02** Buildings, upgrades & construction | needs | `ConstructionQueue.pending_completions() -> Array[{project_id, kind, completion_gmin, cost}]`, valid at snapshot time. Drives class (a) notifications; the "large construction" threshold is doc 08's, not ours. |
+| **03** Economy, taxes & land market | needs | Treasury-crossing events emitted with the keys doc 08's event table classifies (e.g. `treasury_threshold`). |
+| **06** Incidents, dispatch & fleets | needs | Every emitted incident event carries a stable event `key` and a `payload` string usable as a deep link (`incident:<type>:<id>`). Classification is doc 08's `data/notifications.json`; this doc only delivers. |
+| **07** Weather & Disaster Director | **needs (hard dependency)** | `Director.forecast_queue() -> Array[{event_id, kind, severity, onset_gmin, warning_lead_gmin}]`, **pre-rolled and committed to the save**, deterministic under the `director` RNG stream. This is predictability class (b): without pre-rolling, storm-warning notifications (spec §22 P1) are impossible — the single most important notification in the game — because class (c) projection ships disabled. |
+| **08** Persistence, offline policy & notification policy | **needs (hard dependency)** | (a) `SaveManager.request_save(reason)` returning after the snapshot barrier, `load_slot(slot) -> LoadResult`, and all recovery/retention (C-24); (b) `Sim.deserialize()` round-trip fidelity, for the optional class (c) projection; (c) `OfflinePolicy.band_for(hour_index)` and `max_coarse_hours` (C-21); (d) `NotificationPlanner.plan()` — classes, budgets, quiet hours, coalescing, event→class mapping in `data/notifications.json` (C-71). |
+| **08** | provides | Implementations of `IClockSource`, `IFileSink` and `INotificationSink`; the elapsed-time measurement and `offline_rate` hook; the device-local UTC offset for quiet hours; alarm ids for `notifications.scheduled[].alarm_id`; delivery receipts (`delivered_log`) for report reconciliation. |
+| **09** Map, land, districts, population & stability | needs | Land-development completion times for class (a) notifications. |
+| **11** Rendering & performance | provides | Authoritative frame cap and graphics preset, with the reason (`thermal`, `power_save`, `user`). Doc 11 owns what each preset *means*; this doc owns *when* it switches. needs: `GraphicsPresets.apply(name)` and the `SubViewport` handle for idle-render suspension. |
+| **12** UI/UX & onboarding | provides | `catchup_progress` for the veil, `catchup_finished(summary)` for the WHILE YOU WERE AWAY modal, permission state for the Settings rows. needs: the rationale modal, the Settings → Notifications page (whose toggles write doc 08's prefs), the Battery Saver toggle, the "Report a problem" screen. |
+
+## 6. MVP Cut
+
+**Milestone A — first build on a real device (target: day 1 of Android work).**
+Ships: prebuilt-template debug APK (no Gradle yet — fastest possible path to validating the device, drivers, and Vulkan), `arm64-v8a`, debug keystore, `adb install` loop, back-button handling, pause/resume with save + elapsed measurement + catch-up + report, perf HUD overlay, `CrashSentinel`. **No notifications, no plugin, no permissions beyond Godot's defaults.**
+Rationale for prebuilt-first: the Gradle path has more failure modes (SDK licences, JDK mismatch, Gradle daemon), and none of them should block "does the city render on the phone at all?".
+
+**Milestone B — alpha on-device (Phase 2, spec §45).**
+Adds: Gradle build template installed and committed; `SlacumNative` plugin v1 (notifications, thermal, power-save, `elapsedRealtime`, `boot_id`, launch payload); `NotificationScheduler` driving doc 08's planner over predictability classes (a) and (b) only — **class (c) projection is not built for MVP** (§2.4c); `data/notifications_text.json`; POST_NOTIFICATIONS flow; `PowerPolicy` with thermal + Battery Saver; Settings → Notifications; release-signed test APK for battery measurement.
+
+**Milestone C — Play internal testing (Phase 4).**
+Adds: release AAB, upload keystore + Play App Signing, store listing assets, Data Safety, privacy policy, content rating, 16 KB verification in the build script, pre-launch report enabled, closed-testing tester recruitment started (the 12-tester/14-day gate).
+
+**Deferred, explicitly:** Google Play Billing and all IAP (constitution §7: no premium currency in MVP); ads; cloud save / Play Games Services; achievements and leaderboards; app shortcuts and widgets; deep links beyond the notification payload; a network crash SDK; `armeabi-v7a`; Android TV / large-screen optimisation; Play Asset Delivery; localisation beyond English.
+
+## 7. Test Plan
+
+### Headless tests (`tests/test_android_*.gd`, run by the existing runner)
+
+`NotificationBridge` stubs to no-ops off-device, so everything except the Kotlin itself is headless-testable.
+
+| ID | Case | Assertion |
+|---|---|---|
+| A-01 | Elapsed, normal | `raw=43 200`, `mono=43 190`, same boot → `elapsed_s = 43 200`, `ticks = 172 800` |
+| A-02 | Clock moved forward | `raw=86 400`, `mono=600`, same boot → `elapsed_s = 720` (mono + 120 tolerance) |
+| A-03 | Clock moved backwards | `raw = -5 000` → `elapsed_s = 0`, `anomaly = "clock_backwards"` |
+| A-04 | Reboot | `boot_id` differs → mono ignored, `elapsed_s = raw` |
+| A-05 | Clamp at the C-19 cap | `raw = 30 × 86 400 = 2 592 000` → `elapsed_s = 43 200` (= `offline_cap_real_ms / 1000`), `game_minutes = 43 200`, `ticks = 172 800`, `steps_total = 720`, report flagged `capped: true` with `discarded_real_s = 2 548 800` |
+| A-06 | Sub-threshold | `elapsed_s = 45` → fine-tick path, `catchup_started` never emitted |
+| A-07 | Delay formula | `event_gmin=14 760`, `now=12 480` → `real_delay_s = 2 280` |
+| A-08 | Doze guard | `real_delay_s = 900` on a P1 warning → dropped; `= 1 260` → accepted |
+| A-09 | *(deleted — rate limiting is doc 08's; see doc 08 §7)* | — |
+| A-10 | *(deleted — P3 cap is doc 08's)* | — |
+| A-11 | *(deleted — min-gap is doc 08's)* | — |
+| A-12 | *(deleted — quiet-hours shifting is doc 08's)* | — |
+| A-13 | Quiet-hours input | `local_utc_offset_s()` handed to doc 08's planner equals `Time.get_time_zone_from_system().bias × 60`, including a negative-offset and a 30-minute-offset zone |
+| A-14 | Plan pass-through | Given a 9-entry plan from doc 08, exactly 9 alarms are scheduled — the shell adds no cap of its own |
+| A-15 | Id allocation | Accepted list of 3 → ids `1000,1001,1002`, stable across re-runs; each id is written back into doc 08's `notifications.scheduled[].alarm_id` |
+| A-16 | Scheduling horizon (classes a+b) | `now_gmin = 12 480`. A timer at `54 480` (Δ = 42 000 game-min → 42 000 real s ≤ 43 200) is **scheduled**; one at `56 480` (Δ = 44 000 real s > the 12 h cap) is **dropped**. No coarse step is executed to decide either |
+| A-17 | Projection step derivation (C-23) | `projection_steps = clamp(floor(80 / m), 12, 60)`: `m = 55 → 12`; `m = 6.67 → 12`; `m = 4.0 → 20`; `m = 1.33 → 60`; `m = 0.6 → 60`. Projected span = `projection_steps` game-hours = the same number of **real minutes**, never hours |
+| A-18 | Projection ≡ reality, and isolated | With projection forced on at `m = 4.0` (20 steps): project 20 coarse hours, then advance the live sim 20 coarse hours → the notified event set matches exactly; the live sim's state hash is unchanged by the projection |
+| A-19 | Projection disabled + budget guard | Default config → `projection_enabled = false`, zero coarse steps run at pause, plan contains only classes (a)+(b). With it forced on and an injected `m = 200 ms` (⇒ 12 steps × 200 = 2 400 ms) ×5 samples → rolling mean > `pause_projection_abort_ms = 120` → `projection_degraded = true`, class (c) off for the session |
+| A-20 | Permission FSM | never_asked→denied→denied(2nd)→`denied_permanent`; no further prompts; re-prompt only after 7 days + a P1-offline event + `reprompt_count < 2` |
+| A-21 | Section round-trip | `AndroidState.deserialize(serialize())` is identity, including `delivered_log` ring truncation at 32; the section contains no `class_enabled`, `quiet_hours` or `scheduled` keys (those are doc 08's) |
+| A-22 | Unclean exit | Flag present at launch → breadcrumb written, ring pruned to 5 |
+| A-23 | Pause delegates persistence | One pause emits exactly one `SaveManager.request_save("pause")`; the shell opens no file under `user://saves/` itself; `android.last_pause` is present in the committed generation (stamped before the snapshot); the pause sequence never references a `.bak` file. Corruption/fallback assertions live in doc 08's test plan |
+| A-24 | Power policy resolution | `thermal=3` + `power_save=true` + `high_refresh=true` → cap 30, Performance preset, reason `thermal` |
+| A-25 | Thermal hysteresis | 3→2 transition does not change the cap until 30 s have elapsed at status 2 |
+| A-26 | Pause budget arithmetic | Simulated step costs `1 + 25 + 80 + 30 + 110 + 1 = 247 ms ≤ 250 ms`; dropping steps 3–4 yields `1 + 25 + 110 + 1 = 137 ms`; steps 1, 2, 5, 6 always run |
+| A-27 | Channel map | Plugin init creates exactly three channels — `slacum_critical` HIGH, `slacum_important` DEFAULT, `slacum_routine` LOW — mapped from doc 08's `P1_critical` / `P2_important` / `P3_routine`; `slacum_ambient` is **not** created while doc 08 ships P4 disabled |
+
+### On-device tests (adb, manual/scripted `tools/android_smoke.sh`)
+
+| ID | Case | Method |
+|---|---|---|
+| D-01 | Install + launch | `adb install -r -d`; `am start -n com.slacumcity.game/com.godot.game.GodotApp`; no `AndroidRuntime: FATAL`, no `SCRIPT ERROR` in logcat |
+| D-02 | Background kill (OOM-like) | `adb shell am kill com.slacumcity.game` → relaunch → city state matches the last autosave; alarms **survive** (`dumpsys alarm \| grep slacumcity`) |
+| D-03 | User force-stop | `adb shell am force-stop …` → alarms are gone (expected); relaunch rebuilds them at next pause |
+| D-04 | Reboot | `adb reboot` with alarms pending → `dumpsys alarm` shows them re-armed by `BootReceiver` |
+| D-05 | Doze delivery | `dumpsys deviceidle force-idle`, wait past a scheduled fire time, `dumpsys deviceidle unforce` → notification arrives within 15 min of target |
+| D-06 | Notification tap, cold | Force-stop, fire a notification, tap → app launches and `consume_launch_payload()` deep-links to the incident |
+| D-07 | Battery | `dumpsys batterystats --reset`; scripted 30-min session; `dumpsys batterystats com.slacumcity.game` → ≤ 6.0 %/h Balanced, ≤ 3.5 %/h Saver |
+| D-08 | Frame times | `dumpsys gfxinfo com.slacumcity.game framestats` over a 60 s scripted camera pan → 99th-percentile frame ≤ 22 ms at the 60 fps cap |
+| D-09 | Thermal response | Sustained 15-min play until `dumpsys thermalservice` reports MODERATE+ → confirm cap drops and no oscillation |
+| D-10 | Memory | `dumpsys meminfo com.slacumcity.game` after 30 min → PSS stable within ±10 % of the 5-min reading (no leak) |
+| D-11 | Permission denial | Deny POST_NOTIFICATIONS twice → app functions fully, Settings row reads "Off", no crash, no re-prompt |
+| D-12 | Trim memory | `adb shell am send-trim-memory com.slacumcity.game COMPLETE` → no crash, caches dropped |
+| D-13 | Manifest audit | `aapt2 dump permissions` on the release AAB → exactly the four permissions in §2.7 |
+| D-14 | 16 KB alignment | `llvm-readelf -l` on every shipped `.so` → `Align 0x4000` |
+| D-15 | Long absence | Set device clock +3 days, relaunch → elapsed clamps to 12 real hours (720 coarse steps), catch-up sliced, no ANR (`dumpsys activity anr` clean), report renders and states the discarded surplus |
+| D-16 | Cold start | `am start -W` → `TotalTime` ≤ 4 000 ms on Tier B |
+
+### Device matrix
+
+| Tier | Representative | Android | Purpose | Perf target |
+|---|---|---|---|---|
+| A — flagship | Pixel 9 / Galaxy S24 class | 15+ | Ceiling, 120 Hz opt-in, thermal headroom | 60 fps High |
+| **B — reference** | Pixel 7a / Galaxy A54 class | 13–15 | **All balance and battery numbers are defined on this tier** | 60 fps Balanced |
+| C — min spec | Any Adreno 610 / Mali-G52, 4 GB RAM | 10 (API 29) | minSdk floor, Vulkan baseline, worst case | 30 fps Performance |
+| D — OEM hostile | Any Samsung One UI + any Xiaomi MIUI | any | Process-killer and autostart-restriction behaviour for D-02…D-05 | n/a |
+| E — emulator | `system-images;android-37;google_apis;x86_64` | 37 | Lifecycle, permissions, notification logic in CI. **Never** for perf | n/a |
+
+Axes to cross: {A, B, C} × {permission granted, denied} × {battery saver on, off}. D-tier runs only the lifecycle/notification subset.
+
+## 8. Tunables — `data/android.json`
+
+```json
+{
+  "schema_version": 1,
+
+  "time_bridge": {
+    "time_scale_gmin_per_rsec": 1.0, "offline_rate": 1.0,
+    "clock_tolerance_s": 120, "silent_catchup_threshold_s": 60, "silent_catchup_max_ticks": 240
+  },
+  "//time_bridge": "offline_max_hours DELETED (report 98 C-19) — read data/time.json catchup.offline_cap_real_ms (doc 01, 43200000 ms = 12 real h = 720 game-h).",
+
+  "lifecycle": {
+    "pause_budget_ms": 250, "stamp_budget_ms": 1, "snapshot_barrier_budget_ms": 25,
+    "projection_budget_ms": 80, "schedule_budget_ms": 30, "save_commit_wait_budget_ms": 110,
+    "pause_projection_abort_ms": 120, "projection_cost_samples": 5,
+    "catchup_slice_ms": 12, "catchup_veil_min_steps": 5
+  },
+  "//lifecycle": "serialize/write budgets, autosave_interval_s, autosave_on_purchase_over and save_backup_depth DELETED (report 98 C-24) — snapshot, encode, write, cadence and retention are doc 08 (data/persistence.json, doc 08 §2.6/§2.7).",
+
+  "notification_platform": {
+    "projection_enabled": false,
+    "projection_steps_min": 12, "projection_steps_max": 60,
+    "doze_slop_s": 900, "min_useful_lead_s": 300,
+    "delivered_log_capacity": 32, "id_base": 1000, "cancel_all_on_resume": true,
+    "text_file": "data/notifications_text.json",
+    "lead_s": { "P1_critical": 0, "P2_important": 0, "P3_routine": 0 },
+    "channels": {
+      "P1_critical":  { "id": "slacum_critical",  "importance": "high",    "vibrate": true,  "sound": true,  "create": true },
+      "P2_important": { "id": "slacum_important", "importance": "default", "vibrate": false, "sound": true,  "create": true },
+      "P3_routine":   { "id": "slacum_routine",   "importance": "low",     "vibrate": false, "sound": false, "create": true },
+      "P4_ambient":   { "id": "slacum_ambient",   "importance": "min",     "vibrate": false, "sound": false, "create": false }
+    }
+  },
+  "//notification_platform": "plan_horizon_hours, max_per_wake, max_p3_per_wake, max_per_day, min_gap_s, quiet_hours_*, quiet_shift_max_s and the thresholds block DELETED (report 98 C-23, C-71, C-72) — budgets, quiet hours and event→class mapping are doc 08 (data/notifications.json); in-app banner rates are doc 12 (data/ui.json in_app_alerts). projection_steps = clamp(floor(projection_budget_ms / measured_coarse_ms), 12, 60), where measured_coarse_ms comes from doc 08's P0-27 benchmark.",
+
+  "permission_flow": {
+    "reprompt_max": 2, "reprompt_cooldown_days": 7, "reprompt_requires_missed_p1": true
+  },
+
+  "power": {
+    "default_fps_cap": 60, "high_refresh_fps_cap": 120, "idle_fps": 30,
+    "battery_saver_fps": 30, "low_battery_percent": 20,
+    "thermal_recover_s": 30, "thermal_poll_fallback_s": 10,
+    "thermal_rules": [
+      { "status": 0, "fps_cap": 60, "preset": null,          "shadow_distance_mul": 1.0, "particle_mul": 1.0 },
+      { "status": 1, "fps_cap": 60, "preset": null,          "shadow_distance_mul": 1.0, "particle_mul": 1.0 },
+      { "status": 2, "fps_cap": 45, "preset": null,          "shadow_distance_mul": 0.7, "particle_mul": 0.5 },
+      { "status": 3, "fps_cap": 30, "preset": "performance", "shadow_distance_mul": 0.0, "particle_mul": 0.25 },
+      { "status": 4, "fps_cap": 30, "preset": "performance", "shadow_distance_mul": 0.0, "particle_mul": 0.0 },
+      { "status": 5, "fps_cap": 30, "preset": "performance", "shadow_distance_mul": 0.0, "particle_mul": 0.0 },
+      { "status": 6, "fps_cap": 30, "preset": "performance", "shadow_distance_mul": 0.0, "particle_mul": 0.0 }
+    ],
+    "battery_saver_effects": { "weather_vfx_mul": 0.5, "glow_resolution_scale": 0.5,
+                               "night_light_lod_bias": -1 },
+    "targets": { "drain_pct_per_hour_balanced": 6.0, "drain_pct_per_hour_saver": 3.5,
+                 "cold_start_ms": 4000, "frame_p99_ms_at_60": 22.0 }
+  },
+
+  "build": {
+    "package_id": "com.slacumcity.game", "min_sdk": 29, "target_sdk": 37, "abis": ["arm64-v8a"],
+    "version_code_formula": "major*10000 + minor*100 + patch",
+    "max_base_install_mb": 150, "required_so_alignment_bytes": 16384
+  },
+
+  "diagnostics": {
+    "breadcrumb_ring": 5, "breadcrumb_event_count": 64, "breadcrumb_error_count": 20,
+    "perf_csv_ring": 3, "perf_sample_hz": 1,
+    "play_crash_rate_ceiling": 0.0109, "play_anr_rate_ceiling": 0.0047
+  }
+}
+```
+
+## 9. Conflicts & Open Questions
+
+### Conflicts with the parent spec
+
+1. **Spec §21.1 — RULED, AMENDMENT APPROVED (report 98 §12).** The clause "When background execution occurs or the app reopens, advance the simulation" has its **first clause struck**: §21.1 now reads *"When the app reopens, advance the simulation mathematically."* **Catch-up-on-resume is the architecture; no background simulation ships, ever.** §2.1 carries the argument (Android 14 foreground-service types alone are fatal; OEM killers and Play vitals make it worse; partial background progress would break constitution §5 determinism). Constitution §4 already specified resume-only measurement, so no constitutional amendment was needed. This is no longer a request — it is a ruling, and the rest of this doc is written on top of it.
+2. **Spec §22 assumes notifications can describe emerging events.** Ruled by report 98 C-23 and now settled by construction rather than by look-ahead: predictability classes (a) deterministic timers and (b) pre-rolled Director events cover the vertical slice out to the full 12-hour cap with **no** projection. The dependency that matters is therefore doc 07 pre-rolling forecastable events (§5). If doc 07 rolls disasters lazily during catch-up instead, storm-warning notifications become impossible and spec §22's flagship example dies — class (c) projection cannot rescue it, because it buys 12–60 real minutes of look-ahead, not hours.
+3. **Spec §27.3 lists Google Play Billing under the Android Native Layer.** Deferred entirely — constitution §7 forbids premium currency in MVP, and adding the Billing library changes the Data Safety declaration. Recorded here so the omission is intentional, not an oversight.
+
+### Conflicts with the repo as it stands
+
+4. **`.gitignore` line `android/build/` must change.** With the Gradle build template, `android/build/` is source (it holds our manifest and any template patches). Replace with `android/build/.gradle/`, `android/build/build/`, `android/build/local.properties`. Also `export_presets.cfg` must be **committed** (it currently is not ignored — correct) while `export_presets.cfg.secret` stays ignored (correct); this doc's §2.10 keeps all secrets in env vars so that stays safe.
+5. **`project.godot` needs four additions** before Milestone A: `quit_on_go_back=false`, `keep_screen_on=true`, `enable_frame_pacing=true`, `swappy_mode=2`. These are shell concerns; requesting permission to add them in the Milestone A commit.
+
+### Ruled since the last revision — recorded, not open
+
+6. **Offline cap — RULED (C-19).** 12 real hours, owned by doc 01 in `data/time.json`. This doc's `offline_max_hours = 72` is deleted; the old open question ("should the cap be 72 h with a grace rule?") is closed with it. The grace behaviour it asked for already exists in a stronger form: doc 08 §2.3 rule 1 allows at most one pre-warned Tier-1 Director hazard per catch-up, in the FULL band only, zero on casual (report 98 C-55).
+7. **Doc numbering — RULED (Ruling Zero).** The on-disk filenames are canonical. §5's table is corrected: persistence/offline/notification policy is **08**, the Weather & Disaster Director is **07**, incidents & dispatch is **06**, buildings & construction is **02**, economy is **03**. This doc no longer guesses a number anywhere.
+8. **Notification copy ownership — RULED (C-71).** `data/notifications_text.json` is owned here (§3.1.1), keyed by doc 08's convention, reviewed by whoever owns tone. Notification *policy* is doc 08's; the in-app banner gate is doc 12's.
+9. **Notification rate limiting — RULED (C-71/C-72).** This doc's parallel limiter is deleted. One push budget exists, doc 08's: global 8 per rolling 24 h, ≥ 5 min between any two, per-class buckets and quiet hours as in doc 08 §2.13.
+
+### Open questions for the overseer
+
+10. **Offline rate.** 12 real hours away = 30 game-days at the locked 60× scale (§2.3 worked example) — and, after C-19, that is *also* what a three-day absence returns. Is that the intended feel, or should doc 08 apply an `offline_rate < 1.0` (e.g. 0.25, making a full-cap absence ≈ 7.5 game-days)? This doc supports either via one tunable, but the answer changes how much a returning player has to read. **Recommendation: keep 1.0 for the vertical slice and revisit after the first WHILE YOU WERE AWAY report is playable.**
+11. **Autosave cadence on Android (needs doc 08).** This doc's §1 gate — ≤ 60 s of play lost to process death — needs a 60 s foreground autosave; doc 08 §2.7 currently specifies 5 real minutes. Android is the platform where process death is routine, not exceptional. **Recommendation: doc 08 adds a platform-supplied `autosave_interval_s` and this doc requests 60 s on Android.** If doc 08 declines, the §1 gate relaxes to ≤ 5 minutes and should be restated there rather than left aspirational.
+12. **Pause save must be non-blocking (needs doc 08).** §2.2 requires `request_save("pause")` to return after the snapshot barrier (≤ 25 ms) and finish encode/write on doc 08's worker. Doc 08 §2.6 permits blocking up to 400 ms on a `pause` trigger, which would exceed this doc's 250 ms pause budget by itself. **Recommendation: doc 08 exposes the wait as `await`-able so the shell can overlap it with notification scheduling, as §2.2 step 5 assumes.**
+13. **Godot exporter key drift.** The `export_presets.cfg` block in §3.4 is written from the 4.2–4.4 key set; 4.7.2 may have renamed or added keys (`gradle_build/android_source_template`, `patches`, `seed`). The block is marked as verify-on-first-export in §3.4. Not a design risk, but the first Android commit must diff and update this doc.
+14. **Prebuilt-template first, or Gradle from day one?** §6 recommends prebuilt for Milestone A to decouple "does it render on the phone" from Gradle toolchain risk. The cost is one pipeline switch a few days later. If the overseer prefers a single pipeline forever, Milestone A goes straight to Gradle and accepts the added first-build risk.
+
+---
+
+## Amendments applied (report 98)
+
+Every row of this doc's worklist in report 98 §12, with what changed and where.
+
+| Ruling | Change |
+|---|---|
+| **Ruling Zero** (canonical doc numbering) | §5's cross-reference table renumbered to the on-disk filenames: persistence/offline/notifications **10 → 08**, Weather & Disaster Director **08 → 07**, incidents & dispatch **07 → 06**, buildings & construction **03 → 02**, economy **02 → 03**; doc 09 retitled *Map, Land, Districts, Population & Stability*. Every in-body reference (§2.3, §2.4, §2.9, §4, §6, §9) fixed to match. The old "doc numbers assumed…" disclaimer and open question 8 are deleted — no number in this doc is a guess. |
+| **C-04** (no `platform/` layer) | §1 and §2.1 state the ruled structure: the shell is `game/android/*` (GDScript) plus a Kotlin AAR under `android/plugins/slacum_native/` (build-system territory, not a source layer). Constitution §3's four layers stand; `sim/` reaches Android only through `IClockSource` / `IFileSink` / `INotificationSink`, whose implementations are listed in §4. Doc 08's proposed fifth layer is withdrawn. |
+| **C-19** (offline cap = 12 real hours) | `offline_max_hours = 72` **deleted** from §8; §2.3 now reads `catchup.offline_cap_real_ms = 43 200 000` from doc 01's `data/time.json`. Branch table, clamp, both worked examples and test **A-05** recomputed: `elapsed_s = 43 200 s`, `game_minutes = 43 200`, `ticks = 172 800`, `steps_total = 720` = 720 game-hours = **30 game-days** (was 4 320 game-hours = 180 game-days). A 72-hour absence now discards 60 real hours and reports it. |
+| **C-23** (look-ahead horizon off by 60×) | §2.4 restructured by predictability class. (a) deterministic timers and (b) pre-rolled Director events need **no projection** and are scheduled to the full 12-hour cap. (c) emergent projection is budget-bounded — `projection_steps = clamp(floor(80 / measured_coarse_ms), 12, 60)` = **12–60 coarse steps = 12–60 game-hours = 12–60 real minutes** — and **ships disabled**. `plan_horizon_hours = 24` deleted (it was 24 real *minutes*, not hours). Tests **A-16..A-19** rewritten: horizon at the cap, the clamp table, projection ≡ reality at 20 steps, and the disabled-by-default + budget-guard case. |
+| **C-24** (persistence belongs to doc 08) | §2.2 pause step 3 is now `SaveManager.request_save("pause")`. The `city.tmp → city.json` write, the 3-deep `city.bak` rotation, the launch fallback chain and the `saves_recovered_from_backup` counter are **deleted** — recovery, quarantine, retention and the 7-check load gate are doc 08 §2.6/§2.7/§2.9. The ≤ 250 ms budget and the lifecycle ordering are kept, with the step arithmetic restated (`1 + 25 + 80 + 30 + 110 + 1 = 247 ms`). `save_backup_depth`, `serialize_budget_ms`, `write_budget_ms`, `autosave_interval_s` and `autosave_on_purchase_over` deleted from §8. Test **A-23** recomputed as a delegation assertion; **A-26** added for the budget arithmetic. |
+| **C-71** (one notification owner per layer) | §2.5 rewritten as the platform half only. The parallel rate limiter and its constants (`max_per_wake`, `max_p3_per_wake`, `max_per_day`, `min_gap_s`, `quiet_hours_*`, `quiet_shift_max_s`) and the `thresholds` block are **deleted**; this doc consumes doc 08's `NotificationPlanner.plan()` and `data/notifications.json`. The three Android channels are mapped explicitly to **P1_critical / P2_important / P3_routine** (P4 has no channel while doc 08 ships it disabled). This doc keeps `data/android.json` (platform config) and gains `data/notifications_text.json` (copy, §3.1.1). Save section trimmed to the registry's three responsibilities; tests A-09..A-12 deleted, A-13/A-14 repurposed, **A-27** added. |
+| **C-72** (budgets differ 3×) | The §1 success-criteria row "≤ 3 per offline session, ≥ 30 min apart" is replaced by doc 08's budget: **global 8 per rolling 24 h, ≥ 5 min between any two**. This doc enforces no volume rule of its own. |
+| **C-25** (`section_version`) | No change required — `save.android` already used `section_version`; this doc is not listed under C-25. Recorded so the next reader does not re-check. |
+| **Spec §21.1 amendment** | **APPROVED** and recorded in §9 item 1: the background-execution clause is struck, catch-up-on-resume is the architecture, and no background simulation ships. It is stated as a ruling, not a request, in §1 and §2.1 as well. |
+
+**Deliberate readings, flagged rather than assumed.**
+
+1. Report 98 C-23 phrases the emergent budget as "12–60 game-minutes of real-world look-ahead". Its own arithmetic — and C-23's headline that 24 coarse game-hours = 24 real minutes — makes a coarse step one game-hour, so `clamp(…, 12, 60)` steps buys 12–60 game-**hours** = 12–60 real **minutes**. The formula is implemented verbatim; the units are stated the way the arithmetic requires.
+2. The report does not rule on autosave cadence, but C-24 gives doc 08 persistence outright, so this doc deleted its own `autosave_interval_s = 60` rather than keep a second cadence. The resulting gap against the ≤ 60 s process-death gate is raised as open question 11 instead of being papered over.
+3. Doc 08 §2.6 allows a `pause` save to block for 400 ms, which cannot coexist with this doc's kept 250 ms budget. Rather than change either number, §2.2 requires the wait to be `await`-able and overlapped; open question 12.

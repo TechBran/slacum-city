@@ -1,0 +1,201 @@
+{
+  "meta": { "schema_version": 1, "doc": "03-economy.md", "units": "dollars per game-hour",
+            "currency_authority": true,
+            "note": "Sole price table for the project (report 98 C-07). No build_cost, purchase_cost, upkeep or repair-price column may exist in any other data file." },
+
+  "tax": {
+    "TAX_LEVEL_GROWTH": 2.15, "TAX_RATE_BASE": 0.09, "TAX_RATE_MIN": 0.04, "TAX_RATE_MAX": 0.16,
+    "TAX_RATE_COOLDOWN_HOURS": 48, "TAX_RATE_HAPPINESS_COEFF": 220.0, "TAX_RATE_GROWTH_COEFF": 3.5,
+    "OCCUPANCY_RAMP_HOURS": 36,
+    "_stability_note": "S is [0,1] from doc 09 (C-56). f_stability = STAB_FLOOR + (1-STAB_FLOOR) * S^STAB_EXP. No /100.",
+    "STAB_FLOOR": 0.25, "STAB_EXP": 0.70,
+    "HAPPY_SLOPE": 0.50, "HAPPY_FACTOR_MIN": 0.75, "HAPPY_FACTOR_MAX": 1.25, "COND_FLOOR": 0.55,
+    "_tax_yield_note": "DESCRIPTIVE ONLY (RR-5). The published base_tax_by_level rows in data/buildings.json and the $686/gh starter anchor are normative; this map documents why the L1 rows have the shape they do and is checked by test 7 as a +/-6% drift guard, never as an equality. Max drift today is 4.76% (store, office).",
+    "TAX_YIELD": { "residential": 0.0100, "commercial": 0.0105, "industrial": 0.0095, "tech": 0.0117 },
+    "TAX_YIELD_DRIFT_TOLERANCE": 0.06,
+    "_road_note": "f_road consumes doc 10's access_quality(pos) in [0,1] (C-61). This doc defines no road_access_factor.",
+    "utility_floors": {
+      "residential": { "power": 0.35, "water": 0.45, "road": 0.85 },
+      "commercial":  { "power": 0.10, "water": 0.35, "road": 0.55 },
+      "industrial":  { "power": 0.15, "water": 0.20, "road": 0.60 },
+      "tech":        { "power": 0.00, "water": 0.10, "road": 0.80 }
+    }
+  },
+
+  "upgrades": {
+    "UPG_COEFF": 1.45, "UPG_GROWTH": 2.55, "DEMOLITION_REFUND_FRACTION": 0.25,
+    "_demand_growth_note": "RR-7: the requirement is an EXCLUSIVE FLOOR, not an equality. Every doc-02 growth class must satisfy k_dem > REQUIRED_MIN_DEMAND_LEVEL_GROWTH. Doc 02 is the authority on the values (2.35 steady / 2.45 standard / 2.55 vertical, C-13). The old REQUIRED_DEMAND_LEVEL_GROWTH: 2.35 equality constant is DELETED - it rejected 9 of 12 archetypes.",
+    "REQUIRED_MIN_DEMAND_LEVEL_GROWTH": 2.15,
+    "REQUIRED_MIN_DEMAND_LEVEL_GROWTH_EXCLUSIVE": true,
+    "CAPITAL_VALUE_V": [1.000, 2.450, 6.147, 15.576, 39.620]
+  },
+
+  "roads": {
+    "_note": "Sole road price table (report 98 RR-2, extending C-07). data/roads.json carries build_cost, upgrade_cost, upkeep_per_game_day and repair_cost_base in NO form. Doc 10 owns road work and physics - crew-hours, condition on [0,1] (RR-3), decay rates, damage fractions - and no prices.",
+    "_no_upkeep_note": "ROADS CARRY NO STANDING PER-TILE UPKEEP IN MVP, mirroring C-08. The recurring cost of a road is decay bought back through the C-16 repair formula; see 2.12(f) for the derived starter expectation of $185.87/gh over the 783-tile core, evaluated at doc 10's published starter operating point c_day = 0.35 (RR-13). The $147.22/gh figure Round 2 booked is the c_day = 0 FLOOR, which the sim never observes.",
+    "build_cost_per_tile":   { "STREET": 1800, "AVENUE": 5200 },
+    "upgrade_cost_per_tile": { "STREET_TO_AVENUE": 4000 },
+    "ROAD_REPAIR_CAPITAL_FRACTION": 0.20,
+    "_repair_basis_note": "capital_value(road tile) = build_cost_per_tile * ROAD_REPAIR_CAPITAL_FRACTION -> STREET 360, AVENUE 1040. Repair re-buys the wearing course and the top of the base, not the excavation, sub-base, utility corridor or right-of-way. A 1.00 basis prices the starter core's routine maintenance at $929.35/gh at c_day 0.35 = 110.7% of gross revenue ($736.12 even at the c_day 0 floor); see 2.5 and 2.12(f).",
+    "collapsed_rebuild_uses_full_build_cost": true,
+    "demolish_refund_fraction": 0.25,
+    "_demolish_note": "Same DEMOLITION_REFUND_FRACTION as buildings: STREET $450, AVENUE $1300 per tile."
+  },
+
+  "expenses": {
+    "BUILDING_MAINT_RATE": 0.00040, "MAINT_CONDITION_PENALTY": 1.5, "DEPT_LEVEL_GROWTH": 1.75,
+    "MOTHBALL_UPKEEP_FRACTION": 0.15, "MOTHBALL_REACTIVATE_HOURS_OF_UPKEEP": 14.4,
+    "VEHICLE_RESALE_FRACTION": 0.40, "ASSET_CONDITION_PENALTY_COEFF": 2.0,
+    "GRID_MAINT_PER_MW_HOUR": 4.0, "LINE_MAINT_PER_KM_HOUR": 0.9, "PLANT_OM_PER_MW_HOUR": 5.0,
+    "WATER_TREAT_COST_PER_M3": 0.06, "WATER_MAIN_MAINT_PER_KM_HOUR": 0.7, "PUMP_OM_PER_M3H_HOUR": 0.35,
+    "REPAIR_COST_PER_CAPITAL": 0.85, "PM_COST_FRACTION": 0.06, "PM_MIN_CONDITION": 0.50, "PM_CREW_HOURS": 2,
+    "_repair_note": "repair_cost = capital_value * damage_fraction * REPAIR_COST_PER_CAPITAL * M_repair (C-16). Docs 02/04/05/06/07 supply damage_fraction only and hold no price table.",
+    "CONTRACTOR_SURCHARGE": 1.80, "CONTRACTOR_TIME_FRACTION": 0.35,
+    "FUEL_COST_PER_KM": { "light": 0.6, "medium": 1.1, "heavy": 1.9 },
+    "FUEL_PRICE_PER_MWH": { "gas": 38, "diesel": 95, "coal": 30, "nuclear": 9, "solar": 0, "wind": 0, "hydro": 0 },
+    "plant_efficiency_mult": { "gas": [1.000, 0.935, 0.871, 0.806, 0.758] },
+    "_station_staffing_note": "RR-16: where E_grid or E_water already bills a facility's O&M, that service's department line is STAFFING ONLY and says so here. water_works 20 is staffing only - the water works' plant O&M is E_water's pump_capacity_m3h * PUMP_OM_PER_M3H_HOUR ($14.00/gh on the starter pump). Power plants and substations carry NO station_upkeep row at all: E_grid's PLANT_OM_PER_MW_HOUR and GRID_MAINT_PER_MW_HOUR bill them in full (C-08 no-double-billing). No value changed under RR-16.",
+    "station_upkeep_l1": { "police_station": 26, "fire_station": 30, "utility_depot": 24,
+      "water_works": 20, "construction_yard": 20, "ems_station": 28, "hospital": 45 },
+    "station_upkeep_is_staffing_only": ["water_works"],
+
+    "_vehicle_note": "Sole vehicle price table (C-07 / R-14). purchase for the five doc-06 MVP types = round_to_100(9000 * (purchase_06/45000)^0.32631), anchored so fire_engine = 1.60 x patrol_car. dispatch_cost = round(2.4 * upkeep). upkeep and active_mult are authored per role.",
+    "VEHICLE_PURCHASE_COMPRESSION_GAMMA": 0.32631,
+    "DISPATCH_COST_UPKEEP_MULT": 2.4,
+    "VEHICLE_UPKEEP_FRACTION_BAND": [0.00050, 0.00115],
+    "vehicles": {
+      "patrol_car":            { "purchase": 9000,  "upkeep": 7,  "active_mult": 2.5, "dispatch_cost": 17, "fuel_class": "light" },
+      "water_repair_truck":    { "purchase": 11100, "upkeep": 9,  "active_mult": 2.5, "dispatch_cost": 22, "fuel_class": "medium" },
+      "utility_service_truck": { "purchase": 11500, "upkeep": 9,  "active_mult": 2.5, "dispatch_cost": 22, "fuel_class": "medium" },
+      "construction_crew":     { "purchase": 12400, "upkeep": 14, "active_mult": 2.0, "dispatch_cost": 34, "fuel_class": "medium" },
+      "supervisor":            { "purchase": 14000, "upkeep": 10, "active_mult": 2.5, "dispatch_cost": 24, "fuel_class": "light" },
+      "fire_engine":           { "purchase": 14400, "upkeep": 12, "active_mult": 3.0, "dispatch_cost": 29, "fuel_class": "heavy" },
+      "pump_truck":            { "purchase": 18000, "upkeep": 13, "active_mult": 2.5, "dispatch_cost": 31, "fuel_class": "medium" },
+      "bucket_truck":          { "purchase": 20000, "upkeep": 14, "active_mult": 2.5, "dispatch_cost": 34, "fuel_class": "medium" },
+      "road_crew":             { "purchase": 20000, "upkeep": 16, "active_mult": 2.0, "dispatch_cost": 38, "fuel_class": "heavy" },
+      "rescue":                { "purchase": 22000, "upkeep": 15, "active_mult": 3.0, "dispatch_cost": 36, "fuel_class": "medium" },
+      "ladder_truck":          { "purchase": 26000, "upkeep": 18, "active_mult": 3.0, "dispatch_cost": 43, "fuel_class": "heavy" },
+      "heavy_equipment_crew":  { "purchase": 30000, "upkeep": 22, "active_mult": 2.0, "dispatch_cost": 53, "fuel_class": "heavy" },
+      "heavy_repair_truck":    { "purchase": 34000, "upkeep": 20, "active_mult": 2.5, "dispatch_cost": 48, "fuel_class": "heavy" },
+      "crane_crew":            { "purchase": 42000, "upkeep": 28, "active_mult": 2.0, "dispatch_cost": 67, "fuel_class": "heavy" },
+      "mobile_transformer":    { "purchase": 48000, "upkeep": 24, "active_mult": 2.0, "dispatch_cost": 58, "fuel_class": "heavy" }
+    },
+
+    "_grid_cost_note": "Rescaled from doc 04 onto this ladder (C-07). Doc 04's build_cost, upkeep_per_gh and fuel_cost_per_kwh columns are deleted; recurring grid cost is E_grid above, generation fuel is FUEL_PRICE_PER_MWH.",
+    "GRID_COST_SCALE": 0.125,
+    "PLANT_COST_SCALE": 0.33333,
+    "grid_components": {
+      "plant_gas":     { "build_cost": [60000, 127000, 253000, 500000, 967000] },
+      "plant_solar":   { "build_cost": [73300, 167000, 317000, 600000, 1033000] },
+      "plant_wind":    { "build_cost": [86700, 187000, 350000, 633000, 1100000] },
+      "substation":    { "build_cost": [15000, 32500, 65000, 131000, 263000] },
+      "transformer":   { "build_cost": [500, 1100, 2800, 6900, 16300] },
+      "feeder":        { "cost_per_tile_overhead": [110, 210, 400], "underground_cost_mult": 2.6 },
+      "transmission":  { "cost_per_tile": [730, 1200, 2000] },
+      "battery":       { "build_cost": [17500, 40000, 87500, 188000, 400000], "_status": "post_mvp" },
+      "backup_gen":    { "build_cost": { "S": 2300, "M": 7800, "L": 26300 } },
+      "tie_switch":    { "build_cost": 3500 },
+      "flood_wall":    { "build_cost_per_level": 5600 },
+      "surge_arrester":{ "build_cost_fraction_of_host": 0.09 }
+    }
+  },
+
+  "tariffs": { "POWER_TARIFF_PER_MWH": 62, "WATER_TARIFF_PER_M3": 0.55, "POLICE_FINE_PER_RESOLVED_INCIDENT": 350 },
+
+  "land": {
+    "LAND_BASE": 9000, "DIST_DECAY": 4.0, "DIST_FLOOR": 0.55, "RISK_DISCOUNT": 0.45,
+    "WATERFRONT_PREMIUM": 0.55, "ROAD_ADJ_PREMIUM": 0.09, "PROX_COEFF": 0.35, "ELEV_COEFF": 0.20,
+    "LAND_ESCALATION": 0.06, "STARTER_BLOCKS_FREE": 9, "ESCALATION_CAP": 4.0,
+    "NONADJACENT_PREMIUM": 1.60, "LAND_RESALE_FRACTION": 0.55, "PRICE_ROUNDING": 100,
+    "PRE_SURVEY_RISK_UNCERTAINTY": 0.20,
+    "terrain_mult": { "flat": 1.00, "gentle": 1.08, "hilly": 1.30, "steep": 1.65,
+      "rocky": 1.45, "forest": 1.05, "marsh": 0.80, "island": 1.90 }
+  },
+
+  "development": {
+    "ROAD_ACCESS_DISCOUNT_PER_CONNECTION": 0.15,
+    "phases": [
+      { "id": "survey",            "base": 1200, "dist_coeff": 0.02, "hours": 4 },
+      { "id": "clearing",          "base": 3000, "dist_coeff": 0.03, "hours": 8 },
+      { "id": "grading",           "base": 4500, "dist_coeff": 0.03, "hours": 12 },
+      { "id": "road_install",      "base": 7500, "dist_coeff": 0.16, "hours": 14 },
+      { "id": "utility_corridor",  "base": 9000, "dist_coeff": 0.22, "hours": 16 },
+      { "id": "final_development", "base": 5000, "dist_coeff": 0.05, "hours": 6 }
+    ],
+    "terrain_phase_mult": {
+      "flat":   [1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
+      "gentle": [1.00, 1.05, 1.25, 1.10, 1.05, 1.00],
+      "hilly":  [1.05, 1.20, 2.20, 1.50, 1.20, 1.05],
+      "steep":  [1.15, 1.40, 3.40, 2.10, 1.45, 1.10],
+      "rocky":  [1.10, 1.80, 2.80, 1.60, 1.55, 1.05],
+      "forest": [1.00, 1.90, 1.30, 1.15, 1.10, 1.00],
+      "marsh":  [1.10, 1.60, 2.60, 1.90, 1.40, 1.25],
+      "island": [1.30, 1.30, 1.50, 4.50, 3.20, 1.20]
+    }
+  },
+
+  "offline": {
+    "_note": "This doc owns the economic curve only. Absence detection, the minimum-absence threshold, the session-start reset and the offline cap are doc 08 / doc 01 mechanism (C-19, C-20). OFFLINE_MIN_MINUTES and SESSION_START_SECONDS are deleted from this file.",
+    "OFF_FULL_HOURS": 4, "OFF_TAU_HOURS": 90,
+    "HOUR_INDEX_SOURCE": "ctx.catchup_index",
+    "PUBLISHES_TO": "OfflinePolicy.band_for(h).yield_mult",
+    "TAPER_APPLIES_TO": ["revenue", "recurring_expenses"],
+    "TAPER_EXEMPT": ["construction", "repairs", "crew_work", "condition_decay", "population", "weather", "incidents"]
+  },
+
+  "_difficulty_note": "MOVED — every difficulty knob now lives in data/difficulty.json (C-17, §3.4). This file defines none.",
+
+  "recovery": {
+    "AUSTERITY_EXPENSE_MULT": 0.55, "AUSTERITY_DECAY_MULT": 2.5, "AUSTERITY_VEHICLE_BREAKDOWN_MULT": 2.0,
+    "AUSTERITY_EXIT_DAYS_OF_EXPENSE": 0.5, "CREDIT_LIMIT_FLOOR": 20000, "CREDIT_LIMIT_DAYS_OF_REVENUE": 6,
+    "DEFERRED_CONDITION_PENALTY_PER_1000": 0.004, "DEFERRED_REPAY_FRACTION": 0.35,
+    "RELIEF_COOLDOWN_HOURS": 120, "RELIEF_TRIGGER_CREDIT_FRACTION": 0.5, "RELIEF_DAYS_OF_REVENUE": 1.5,
+    "RELIEF_MIN": 8000, "RELIEF_MAX": 250000,
+    "RELIEF_AD_COOLDOWN_REDUCTION_HOURS": 24, "RELIEF_AD_ENABLED": false
+  },
+
+  "presentation": {
+    "NET_DISPLAY_EMA_ALPHA": 0.25, "ECONOMY_HISTORY_HOURS": 168,
+    "DAILY_SETTLEMENT_GAME_HOUR": 6, "CASH_BUFFER_TARGET_DAYS": 5,
+    "resilience_index_weights": { "grid_margin": 0.30, "grid_redundancy": 0.20, "water_margin": 0.15,
+      "response_capacity": 0.15, "condition": 0.10, "cash_buffer": 0.10 }
+  },
+
+  "pacing_guardrails": {
+    "_round2_note": "Restated under report 98 RR-6. Every starter line below is derived from the owning doc's published inventory: tax from doc 09's t0 f_stability 0.9722 x f_happiness 1.110 = 1.07914 (NOT the old assumed 0.90 aggregate); E_grid from doc 09 2.9.5 (2.40 MVA, 1.416 km); E_water from the C-34 rescale (40 m3/h pump); roads from RR-2. STARTER_POWER_TARIFF and STARTER_GAS_FUEL are still HELD pending doc 04's RR-10 delivered-MWh restatement.",
+    "_round3_note": "RR-13: the road-repair line is re-priced at doc 10's published starter operating point c_day = 0.35 (decay multiplier 1 + 0.75*0.35 = 1.2625), not the c_day = 0 floor. Road line 147.22 -> 185.87, per-block term 16.35825 -> 20.65229, expense 482 -> 521, net 357 -> 319, and the S1-S12 rows and G1-G5 all re-ran. ALL FIVE GUARDRAILS HOLD, so no expense constant was retuned: ROAD_REPAIR_CAPITAL_FRACTION stays 0.20 and PACING_ROUND2_K stays 1.35200.",
+    "STARTER_GROSS_TAX_PER_HOUR": 686, "STARTER_GROSS_TAX_TOLERANCE": 0.05,
+    "STARTER_T0_AGGREGATE_MULT": 1.07914,
+    "STARTER_TAX_REVENUE_PER_HOUR": 740,
+    "STARTER_GROSS_REVENUE_PER_HOUR": 839,
+    "STARTER_GROSS_REVENUE_PER_HOUR_EXACT": 839.349412,
+    "STARTER_EXPENSE_PER_HOUR": 521, "STARTER_NET_PER_HOUR": 319,
+    "STARTER_EXPENSE_PER_HOUR_EXACT": 520.576566, "STARTER_NET_PER_HOUR_EXACT": 318.772846,
+    "STARTER_E_GRID_PER_HOUR": 74.87,
+    "STARTER_E_GRID_TEST_TOLERANCE": 0.5,
+    "STARTER_E_WATER_PER_HOUR": 15.39,
+    "STARTER_DEPARTMENTS_PER_HOUR": 96,
+    "STARTER_ROAD_REPAIR_PER_HOUR": 185.87,
+    "STARTER_ROAD_C_DAY": 0.35,
+    "STARTER_ROAD_DECAY_MULT": 1.2625,
+    "_road_operating_point_note": "RR-13: c_day and the multiplier are DOC 10's (10 sec 2.3 / 2.12, test 42); this file records them so the ledger line is reproducible, and owns neither. multiplier = 1 + 0.75*c_day at wx_wear_day 0. The c_day 0 floor is 147.22/gh; test 43 asserts both points so the coupling is pinned, not just its value.",
+    "STARTER_ROAD_REPAIR_PER_HOUR_AT_C_DAY_0": 147.22,
+    "STARTER_ROAD_TILES": { "AVENUE": 540, "STREET": 243, "total": 783 },
+    "PACING_ROUND2_K": 1.35200,
+    "_k_rounding_note": "PACING_ROUND2_K was derived against the ROUNDED $839 gross, so the founding sanity check (1.35200*373 - 20.65229*9 = 318.43) sits $0.35/gh below the ledger's directly computed 318.77. Re-deriving at (839.349412 - 334.706)/373 = 1.35293 would close it and move all 23 rows by ~0.3%; RR-13 did not ask for that and the model tolerance (test 27) is +/-20%. Recorded, not absorbed.",
+    "PACING_K_PER_DISTRICT_VARIANT": 1.36378,
+    "_k_per_district_note": "RR-18: the sensitivity constant for doc 09's tax-weighted f_stability 0.977524 (tax 744.34). Corrects Round 2's 1.36285, which reproduced from no consistent input set. NOT used by the shipped model, which uses the ruled 0.9722 path; unrounded arithmetic lands on 1.363799 and the ruled 1.36378 is published.",
+    "PACING_ROAD_PER_DEVELOPED_BLOCK": 20.65229,
+    "PACING_BLOCKS_DEVELOPED_BY_SESSION": [9, 9, 10, 10, 10, 11, 11, 11, 11, 11, 12, 13],
+    "_deleted": "PACING_GRID_CORRECTION_MULT 0.90097 - superseded by PACING_ROUND2_K plus the per-block road term (RR-6). PACING_ROAD_PER_DEVELOPED_BLOCK 16.35825 - the c_day 0 value, superseded by 20.65229 (RR-13).",
+    "G1_MAX_DAYS_OF_NET_BANKED": 14, "G2_MIN_DAYS_OF_NET_BANKED": 1.5,
+    "G3_MIN_PACKAGE_SUM_VS_TREASURY": 1.15, "G3_MIN_SINGLE_PACKAGE_VS_TREASURY": 0.45,
+    "G4_OFFLINE_ONLINE_RATIO_RANGE": [1.2, 2.0], "G5_FIRST_BLOCK_AFFORDABLE_BY_HOUR": 120,
+    "MODEL_SESSION_END_TREASURY": [31460, 57346, 49050, 95542, 131233, 145237, 206147, 80107, 237325, 466573, 777932, 897900],
+    "MODEL_TCO_RATIO_E_OVER_D": 1.602, "MODEL_G4_RATIO": 1.242,
+    "MODEL_G1_PEAK_RATIO": 11.48, "MODEL_G1_PEAK_SESSION": "S7",
+    "MODEL_G2_FLOOR_RATIO": 3.84, "MODEL_G2_FLOOR_SESSION": "S8",
+    "MODEL_G5_AVAILABLE_BY_HOUR_120": 68339, "MODEL_G5_REQUIRED": 59988,
+    "MODEL_G3_S8": { "treasury": 341107, "growth": 261000, "resilience": 222600, "sum_ratio": 1.418, "min_ratio": 0.653 }
+  }
+}

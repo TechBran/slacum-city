@@ -1,0 +1,148 @@
+{
+  "schema_version": 2,
+  "world": {
+    "tile_meters": 8,
+    "block_tiles": 16,
+    "size_blocks": [7, 7],
+    "core_origin_block": [2, 2],
+    "core_size_blocks": [3, 3],
+    "city_center_tile": [56, 56],
+    "road_area_fraction": 0.34,
+    "reference_buildable_tiles": 169,
+    "grid_label_columns": "ABCDEFG",
+    "grid_label_row_offset": 1
+  },
+  "elevation_meters_by_class": [0, 5, 12, 22, 34],
+  "elevation_band_by_class": ["LOW", "LOW", "MID", "HIGH", "HIGH"],
+  "env_risk_weights": {"flood": 0.35, "wildfire": 0.15, "subsidence": 0.15, "pollution": 0.2, "wind": 0.1, "hazmat": 0.05},
+  "land_value_index": {"base": 0.25, "amenity_weight": 0.3, "safety_weight": 0.25, "stability_weight": 0.2},
+  "block_road_access_score": {"NONE": 0.0, "STUB": 0.35, "EDGE": 0.7, "ARTERIAL": 1.0},
+  "_renamed": "road_access_score -> block_road_access_score (report 98 C-61). Tile-level road access is doc 10's access_quality(pos); this key is a block development attribute and the two must never be conflated.",
+  "flood": {
+    "drain_base_mm_h": 25.0,
+    "drain_flood_coeff": 0.8,
+    "drain_elevation_coeff": 0.5,
+    "impassable_at_depth_class": 2,
+    "depth_classes": 3
+  },
+  "development": {
+    "phase_order": ["SURVEY", "CLEARING", "GRADING", "ROAD_INSTALL", "UTILITY_CORRIDOR", "FINAL_DEVELOPMENT"],
+    "crew_hours": {"SURVEY": 4, "CLEARING": 8, "GRADING": 12, "ROAD_INSTALL": 14, "UTILITY_CORRIDOR": 16, "FINAL_DEVELOPMENT": 6},
+    "primary_crew": {
+      "SURVEY": "construction_crew",
+      "CLEARING": "heavy_equipment_crew",
+      "GRADING": "heavy_equipment_crew",
+      "ROAD_INSTALL": "road_crew",
+      "UTILITY_CORRIDOR": "heavy_equipment_crew",
+      "FINAL_DEVELOPMENT": "construction_crew"
+    },
+    "fallback_time_mult": {
+      "SURVEY": {"road_crew": 1.0, "heavy_equipment_crew": 1.0, "crane_crew": 1.0},
+      "CLEARING": {"construction_crew": 1.4},
+      "GRADING": {"construction_crew": 1.6},
+      "ROAD_INSTALL": {"construction_crew": 1.8},
+      "UTILITY_CORRIDOR": {"road_crew": 1.3, "construction_crew": 2.0},
+      "FINAL_DEVELOPMENT": {"road_crew": 1.0, "heavy_equipment_crew": 1.0, "crane_crew": 1.0}
+    },
+    "work_units_multiply_construction_rate": true,
+    "_c29": "Every work unit multiplies ctx.channels.construction_rate (24-h mean 0.804, night floor 0.60) per report 98 C-29. Authored crew-hours are WORK, not wall time.",
+    "first_block_time_mult": 0.48,
+    "_first_block_retune": "0.60 -> 0.48 (C-29): 97.6 crew-h x 0.48 = 46.85 crew-h / 0.804 = 58.27 gh wall time, preserving the one-session-plus-one-offline-gap beat that 0.60 delivered against the un-channelled figure.",
+    "pause_allowed_mid_phase": false,
+    "risk_hidden_until_survey": true,
+    "pre_survey_risk_band": 0.2,
+    "placement_requires_ready": true
+  },
+  "terrain_defaults": {
+    "vegetation_density": {"flat": 0.35, "waterfront": 0.45, "hills": 0.7, "industrial_edge": 0.2},
+    "slope_index": {"flat": 0.05, "waterfront": 0.1, "hills_low": 0.45, "hills_high": 0.7, "industrial_edge": 0.1},
+    "amenity_score": {
+      "river": 0.75,
+      "marsh": 0.35,
+      "ridge": 0.8,
+      "hills_low": 0.65,
+      "farmland": 0.45,
+      "flats": 0.35,
+      "flat_other": 0.4,
+      "industrial_edge": 0.1
+    },
+    "dev_terrain_map": {
+      "flat": "flat",
+      "flats_floodplain": "gentle",
+      "river": "gentle",
+      "marsh": "marsh",
+      "hills_low": "hilly",
+      "hills_high": "steep",
+      "industrial_edge": "forest"
+    }
+  },
+  "env_profiles": {
+    "waterfront": {"wildfire": 0.05, "subsidence": 0.35, "pollution": 0.2, "wind": 0.25, "hazmat": 0.05},
+    "flat_upland": {"wildfire": 0.2, "subsidence": 0.1, "pollution": 0.06, "wind": 0.22, "hazmat": 0.03},
+    "flat_floodplain": {"wildfire": 0.1, "subsidence": 0.3, "pollution": 0.12, "wind": 0.2, "hazmat": 0.05},
+    "hills": {"wildfire": 0.45, "subsidence": 0.2, "pollution": 0.04, "wind": 0.45, "hazmat": 0.02},
+    "industrial_edge": {"wildfire": 0.3, "subsidence": 0.15, "pollution": 0.7, "wind": 0.2, "hazmat": 0.6}
+  },
+  "districts": {
+    "min_blocks": 1,
+    "max_blocks": 4,
+    "reassign_cooldown_game_hours": 24,
+    "reliability_ema_halflife_game_hours": 6,
+    "auto_assign_prefers_same_terrain": true,
+    "workforce_fraction_of_population": 0.55,
+    "stability_weights": {"power": 0.3, "water": 0.2, "crime": 0.2, "road": 0.15, "employment": 0.1, "fire": 0.05},
+    "district_dark_threshold": 0.6,
+    "district_dark_weight": "population",
+    "_c38": "district_dark is the population-weighted aggregate of doc 04's per-block block_dark; unweighted mean is the zero-population fallback.",
+    "city_stability_weight": "population",
+    "_c56": "city_stability = population-weighted mean of district stability, on [0,1], published by this doc. Doc 03 reads it as f_stability = 0.25 + 0.75*S^0.70 with S already in [0,1]."
+  },
+  "roads": {
+    "boundary_arterial_tiles_per_side": 1,
+    "interior_collector_block_local_index": 7,
+    "widen_boundary_on_neighbour_development": true,
+    "boundary_class": "AVENUE",
+    "interior_class": "STREET",
+    "player_placed_default_class": "STREET",
+    "_c60": "This doc owns the template; doc 10 owns the class semantics. 87 road tiles per block; 540 AVENUE + 243 STREET in the 48x48 core."
+  },
+  "starter": {
+    "manifest": {
+      "house": 18,
+      "store": 5,
+      "apartment": 3,
+      "office": 1,
+      "construction_yard": 1,
+      "fire_station": 1,
+      "police_station": 1,
+      "substation": 1,
+      "power_facility": 1,
+      "water_facility": 2
+    },
+    "target_gross_tax_per_hour": 686,
+    "target_population": 144,
+    "target_jobs": 152,
+    "target_jobs_market": 66,
+    "target_jobs_civic": 86,
+    "building_nameplate_kw": 402.0,
+    "night_peak_kw": 783.3,
+    "night_peak_hour": 20,
+    "feeder_night_kw": {"F_NORTH": 361.8, "F_SOUTH": 421.6},
+    "water_demand_m3h": 5.56,
+    "water_peak_m3h": 7.1,
+    "water_peak_hour": 7,
+    "tank_autonomy_gh_mean": 21.6,
+    "tank_autonomy_gh_peak": 16.9,
+    "tank_autonomy_gh_two_engines": 5.4,
+    "vacant_buildable_tiles": 1429,
+    "transformer_headroom_frac": 0.7,
+    "transformer_levels": {"L1": 13, "L2": 9, "L3": 1},
+    "transformer_rated_mva_total": 2.4,
+    "line_tiles": {"feeder": 147, "transmission": 30},
+    "line_km": 1.42,
+    "hydrant_effective_radius_tiles": 12,
+    "t0_city_stability": 0.9475,
+    "t0_happiness": 82.0,
+    "t0_city_level": 0
+  }
+}

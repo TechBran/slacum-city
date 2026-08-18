@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "clock": {
+    "real_seconds_per_game_minute": 1.0,
+    "game_seconds_per_sim_tick": 15,
+    "ticks_per_game_minute": 4,
+    "ticks_per_game_hour": 240,
+    "ticks_per_game_day": 5760,
+    "minutes_per_game_day": 1440,
+    "days_per_week": 7,
+    "days_per_season": 30,
+    "seasons_per_year": 4,
+    "founding_offset_minutes": 360,
+    "founding_day_of_week": 0,
+    "weekend_first_day_of_week": 5
+  },
+  "speeds": {
+    "allowed": [1, 2, 3],
+    "default": 1,
+    "max_ticks_per_frame": 8,
+    "backlog_spill_ticks": 240,
+    "auto_speed_reset_on_critical": true,
+    "pause_is_foreground_only": true
+  },
+  "catchup": {
+    "offline_cap_real_ms": 43200000,
+    "offline_grace_seconds": 120,
+    "fine_catchup_max_ticks": 20,
+    "fine_tail_ticks": 40,
+    "coarse_step_game_seconds": 3600,
+    "real_ms_per_tick_offline": 250,
+    "coarse_lambda_normal_threshold": 4.0
+  },
+  "phases": [
+    "CLOCK", "COMMANDS", "TIMERS", "EVENTS", "WEATHER", "DEMAND",
+    "POWER", "WATER", "ROADS", "VEHICLES", "WORK", "INCIDENTS",
+    "CASCADE", "DISTRICTS", "ECONOMY", "POPULATION", "DIRECTOR", "REPORT"
+  ],
+  "day_phases": [
+    { "id": "NIGHT",         "start_minute": 1320, "end_minute": 300 },
+    { "id": "DAWN",          "start_minute": 300,  "end_minute": 420 },
+    { "id": "MORNING_RUSH",  "start_minute": 420,  "end_minute": 570 },
+    { "id": "MIDDAY",        "start_minute": 570,  "end_minute": 990 },
+    { "id": "EVENING_RUSH",  "start_minute": 990,  "end_minute": 1140 },
+    { "id": "EVENING",       "start_minute": 1140, "end_minute": 1320 }
+  ],
+  "curves": {
+    "power_demand_residential": {
+      "kind": "normalized",
+      "keys": [[0,0.76],[5,0.67],[7,1.14],[9,0.92],[12,0.87],[17,1.19],[20,1.46],[22,1.25]]
+    },
+    "power_demand_commercial": {
+      "kind": "normalized",
+      "keys": [[0,0.36],[6,0.42],[8,1.14],[10,1.51],[18,1.51],[20,1.14],[22,0.62]]
+    },
+    "power_demand_industrial": {
+      "kind": "normalized",
+      "keys": [[0,0.84],[6,0.89],[8,1.08],[16,1.13],[22,0.94]]
+    },
+    "power_demand_civic": {
+      "kind": "normalized",
+      "keys": [[0,0.84],[3,0.82],[5,0.89],[7,1.10],[8,1.15],[16,1.10],[19,0.99],[23,0.86]]
+    },
+    "power_demand_datacenter": {
+      "kind": "normalized",
+      "keys": [[0,1.00]]
+    },
+    "streetlight_load": {
+      "kind": "absolute",
+      "keys": [[0,1.00],[6,1.00],[7,0.00],[18,0.00],[19,1.00],[23,1.00]]
+    },
+    "water_demand_residential": {
+      "kind": "normalized",
+      "keys": [[0,0.45],[5,0.50],[7,1.55],[9,1.10],[12,1.15],[14,1.00],[18,1.35],[21,1.30],[23,0.75]]
+    },
+    "water_demand_commercial": {
+      "kind": "normalized",
+      "keys": [[0,0.25],[3,0.20],[5,0.40],[7,1.05],[9,1.65],[11,1.90],[13,1.65],[14,1.70],
+               [16,1.45],[19,1.00],[21,0.65],[23,0.35]]
+    },
+    "traffic_density": {
+      "kind": "normalized",
+      "keys": [[0,0.19],[5,0.23],[6,0.59],[7,1.71],[8,2.08],[9,1.44],[11,1.12],[13,1.28],
+               [15,1.23],[16,1.66],[17,2.08],[18,1.87],[19,1.17],[21,0.80],[23,0.37]]
+    },
+    "crime_rate": {
+      "kind": "normalized",
+      "keys": [[0,1.66],[3,1.44],[6,0.59],[9,0.48],[12,0.59],[15,0.75],[18,1.02],[21,1.44],[23,1.66]]
+    },
+    "commercial_output": {
+      "kind": "normalized",
+      "keys": [[0,0.22],[7,0.33],[9,1.46],[12,1.74],[14,1.57],[18,1.68],[20,1.30],[22,0.60]]
+    },
+    "construction_rate": {
+      "kind": "absolute",
+      "keys": [[0,0.60],[6,0.60],[7,1.00],[17,1.00],[19,0.75],[21,0.60]]
+    },
+    "response_speed": {
+      "kind": "absolute",
+      "keys": [[0,1.00]]
+    },
+    "incident_rate": {
+      "kind": "normalized",
+      "keys": [[0,1.00]]
+    },
+    "daylight": {
+      "kind": "absolute",
+      "keys": [[0,0.00],[5,0.00],[6,0.15],[7,0.75],[8,1.00],[17,1.00],[18,0.75],[19,0.15],[20,0.00]]
+    }
+  },
+  "weekend_curve_overrides": {},
+  "channels": {
+    "power_demand_residential": { "curve": "power_demand_residential", "min": 0.20, "max": 3.00 },
+    "power_demand_commercial":  { "curve": "power_demand_commercial",  "min": 0.20, "max": 3.00 },
+    "power_demand_industrial":  { "curve": "power_demand_industrial",  "min": 0.20, "max": 3.00 },
+    "power_demand_civic":       { "curve": "power_demand_civic",       "min": 0.20, "max": 3.00 },
+    "power_demand_datacenter":  { "curve": "power_demand_datacenter",  "min": 0.20, "max": 3.00 },
+    "streetlight_load":         { "curve": "streetlight_load",         "min": 0.00, "max": 1.00 },
+    "water_demand_residential": { "curve": "water_demand_residential", "min": 0.20, "max": 3.00 },
+    "water_demand_commercial":  { "curve": "water_demand_commercial",  "min": 0.20, "max": 3.00 },
+    "traffic_density":          { "curve": "traffic_density",          "min": 0.05, "max": 4.00 },
+    "crime_rate":               { "curve": "crime_rate",               "min": 0.00, "max": 5.00 },
+    "commercial_output":        { "curve": "commercial_output",        "min": 0.00, "max": 2.50 },
+    "construction_rate":        { "curve": "construction_rate",        "min": 0.00, "max": 2.00 },
+    "response_speed":           { "curve": "response_speed",           "min": 0.25, "max": 1.50 },
+    "incident_rate":            { "curve": "incident_rate",            "min": 0.00, "max": 6.00 },
+    "daylight":                 { "curve": "daylight",                 "min": 0.00, "max": 1.00 }
+  },
+  "modifier_source_rank": {
+    "weather": 0, "scheduled_event": 1, "district": 2, "policy": 3, "debug": 4
+  },
+  "timer_kinds": [
+    "scheduled_event_phase", "hazard_phase", "incident_escalation",
+    "director_cooldown", "policy_window", "notification"
+  ],
+  "work_kinds": [
+    "construction", "land_development", "utility_repair",
+    "fire_suppression", "debris_clearance"
+  ],
+  "work": {
+    "milli_units_per_unit": 1000000,
+    "accumulator_denominator": 3600000
+  },
+  "event_templates": {
+    "thunderstorm_hazard": {
+      "phases": [
+        { "name": "watch",    "offset_minutes": -240, "notify": "important", "modifiers": {} },
+        { "name": "warning",  "offset_minutes": -60,  "notify": "critical",  "modifiers": {} },
+        { "name": "impact",   "offset_minutes": 0,    "notify": "critical",  "modifiers": {} },
+        { "name": "clearing", "offset_minutes": 90,   "notify": "routine",   "modifiers": {} },
+        { "name": "end",      "offset_minutes": 180,  "notify": "none",      "modifiers": {} }
+      ]
+    }
+  },
+  "budget": {
+    "fine_tick_avg_ms": 1.2,
+    "fine_tick_p99_ms": 3.0,
+    "hour_tick_avg_ms": 3.0,
+    "day_tick_avg_ms": 6.0,
+    "day_tick_slice_threshold_ms": 8.0,
+    "catchup_total_warn_ms": 500
+  },
+  "debug": {
+    "advance_log_ring_size": 4096,
+    "enable_debug_time_commands": false
+  }
+}

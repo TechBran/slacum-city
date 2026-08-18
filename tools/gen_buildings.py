@@ -1,0 +1,827 @@
+#!/usr/bin/env python3
+"""Generate `data/buildings.json` and `data/building_rules.json` for SLACUM CITY.
+
+Source of truth: `docs/design/02-buildings.md` (Draft v2.1, report 98 wave 1 +
+Round 2 rulings RR-8 / RR-9).  Nothing is read from disk: the whole doc 02 s8
+tunables block is transcribed verbatim below as `BUILDING_RULES`, and every one
+of the 60 published stat rows is regenerated from `BUILDING_RULES["seed_rows"]`
+by the s2.2 curve family.
+
+Generation contract (doc 02 s2.2 / s2.3, report 98 RR-8):
+
+    value(L) = round_rule( seed x k^(L-1) )
+
+  * the raw product is formed from the NORMATIVE UNROUNDED SEED, never from a
+    printed or already-rounded L1 cell (RR-8 / verifier finding F-07: three
+    water seeds -- store 0.128, high_rise 1.28, police_station 0.192 -- differ
+    from their display cells, and regrowing from the cell breaks 8 of the 60
+    water cells);
+  * the rounding ladder is applied ONCE per cell, half-up at every tie;
+  * arithmetic is exact: `decimal.Decimal` with ROUND_HALF_UP, so a tie is a
+    real tie and never a binary-float artefact.
+
+Every generated cell is diffed against the doc's own published s2.3 / s2.4
+tables (transcribed in `PUBLISHED`).  All 60 rows reproduce exactly and there is
+no whitelist: report 98 RR-19 ruled the s2.2 rules + s8 seeds the single source
+of truth and corrected the four cells that used to violate them (`house` L4 fire
+0.00032 -> 0.00031, `construction_yard` L3 fire 0.00065 -> 0.00066,
+`fire_station` L2 radius 22 -> 23, `water_facility` L2 jobs 18 -> 19).  Any
+mismatch at all is a hard failure and nothing is written.
+
+Usage:
+    python3 tools/gen_buildings.py [--out-dir DATA_DIR] [--check]
+
+    --check   validate only; do not write.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from decimal import Decimal as D, ROUND_HALF_UP, getcontext
+from typing import Any, Dict, List, Optional, Tuple
+
+getcontext().prec = 60
+
+
+# ==========================================================================
+# 0. `data/building_rules.json` -- doc 02 s8, transcribed verbatim
+# ==========================================================================
+# Numeric literals are `D("...")` so the emitted JSON keeps the doc's exact
+# decimal rendering (and so the curve engine never touches a binary float).
+# Three keys are ADDITIVE, marked with a leading `_added_` note inside them:
+#   * `demand_growth_invariant.must_exceed_value` -- doc 02 s8 names
+#     "economy.TAX_LEVEL_GROWTH" as a string only; sim/ may not carry the
+#     magic number 2.15, so the mirror value is data.
+#   * `rounding_derived` -- s8's `rounding` block covers time_h / kw / wu /
+#     decay; s2.2's prose adds "population/jobs/radii: nearest integer", and
+#     the published tables fix fire_ignition at 5 dp, crime_weight at 2 dp and
+#     the coverage requirements at 2 dp.  s8's own `rounding` block is left
+#     byte-faithful; the remaining columns' steps live here.
+#   * `upgrade_time_derivation` -- see UPGRADE_TIME_NOTE.
+
+BUILDING_RULES: Dict[str, Any] = {
+    "schema_version": 2,
+    "growth_classes": {
+        "steady":   {"k_out": D("1.55"), "k_dem": D("2.35"), "k_time": D("1.40")},
+        "standard": {"k_out": D("1.85"), "k_dem": D("2.45"), "k_time": D("1.55")},
+        "vertical": {"k_out": D("2.10"), "k_dem": D("2.55"), "k_time": D("1.70")},
+    },
+    "demand_growth_invariant": {
+        "must_exceed": "economy.TAX_LEVEL_GROWTH",
+        "must_exceed_value": D("2.15"),
+        "_added_note": "`must_exceed_value` is ADDITIVE to doc 02 s8: a read-only"
+                       " mirror of doc 03's TAX_LEVEL_GROWTH so sim/ and the tests"
+                       " carry no magic number. data/economy.json (doc 03) stays"
+                       " authoritative; the loader only checks k_dem > this.",
+        "reason": "report 98 C-13 / spec s55 rule 3 -- every upgrade must be less utility-efficient",
+    },
+    "shared_curves": {
+        "k_decay": D("1.20"),
+        "k_fire_rate": D("1.28"),
+        "k_fire_load": D("2.00"),
+        "k_crime": D("1.60"),
+        "k_radius": D("1.25"),
+        "upgrade_time_factor": D("0.65"),
+    },
+    "water_facility_variants": ["source", "treatment", "pump", "tank", "booster"],
+    "water_facility_reference_variant": "pump",
+    "water_facility_per_variant_numbers": {
+        "_owner": "doc 05 -- data/water.json components[variant]",
+        "_fields": ["footprint_w", "footprint_h", "base_kw", "capacity", "volume",
+                    "head_m", "coverage_frac", "backup_kw"],
+        "_note": "report 98 C-35 + RR-8. This file's water_facility seed row is the"
+                 " `pump` REFERENCE variant only. Doc 02 authors NO per-variant"
+                 " footprint; the earlier 'all variants reuse the 3x3 shell' claim is"
+                 " deleted (a tank L1 is 2x2 / 5.0 kW). Doc 02 owns only the"
+                 " k_dem = 2.45 shape doc 05 generates those ladders on.",
+    },
+    "coverage_ladder": {
+        "fire":   [D("0.00"), D("0.20"), D("0.40"), D("0.60"), D("0.80")],
+        "police": [D("0.00"), D("0.15"), D("0.35"), D("0.55"), D("0.75")],
+        "archetype_multiplier": {
+            "default": D("1.00"), "high_rise": D("1.25"), "data_center": D("1.25"),
+            "police_station": D("0.75"), "fire_station": D("0.75"),
+            "power_facility": D("0.75"), "substation": D("0.75"),
+            "water_facility": D("0.75"), "construction_yard": D("0.75"),
+        },
+        "max_requirement": D("0.95"),
+        "falloff_exponent": D("1.5"),
+        "redundancy_bonus_per_extra_station": D("0.15"),
+        "redundancy_min_contribution": D("0.30"),
+        "station_condition_floor": D("0.50"),
+        "station_condition_span": D("0.50"),
+        "station_condition_low_anchor": D("0.20"),
+        "station_condition_range": D("0.80"),
+    },
+    "min_city_level_by_level": [0, 1, 2, 3, 4],
+    "safety_coverage_factor": {"floor": D("0.80"), "span": D("0.20")},
+    "condition": {
+        "start": D("1.00"),
+        "band_good": D("0.85"), "band_worn": D("0.60"), "band_poor": D("0.35"),
+        "auto_damage_threshold": D("0.35"),
+        "structural_failure_threshold": D("0.10"),
+        "structural_failure_p_per_hour": D("0.02"),
+        "offline_burn_down_clamp": D("0.15"),
+        "overload_decay_coefficient": D("0.80"),
+        "unpowered_decay_coefficient": D("0.50"),
+        "damaged_decay_multiplier": D("1.50"),
+        "repair_time_factor": D("0.50"),
+        "repair_target_active": D("1.00"),
+        "repair_target_damaged": D("0.85"),
+        "min_condition_to_upgrade": D("0.55"),
+    },
+    "fire": {
+        "condition_mult_coefficient": D("1.5"),
+        "condition_mult_exponent": D("1.5"),
+        "state_ignition_multiplier": {
+            "under_construction": D("1.4"), "active": D("1.0"),
+            "damaged": D("1.8"), "repairing": D("1.8"),
+        },
+        "s_req_base_coefficient": D("0.50"),
+        "s_req_base_anchor_fire_load": 20,
+        "s_req_base_exponent": D("0.45"),
+        "_s_req_base_note": "LOCKED by report 98 RR-9. 0.50 x (fire_load/20)^0.45 is"
+                            " canonical: house L1 = 0.500, high_rise L5 = 3.06"
+                            " (0.50 x 56^0.45 = 3.05948). C-43's old '~3.6' gloss was"
+                            " arithmetically wrong and is corrected in place; reaching"
+                            " 3.60 would need exponent 0.490424. Doc 02's earlier 0.474"
+                            " proposal is withdrawn. Doc 06 implements; doc 02 owns only"
+                            " fire_load.",
+    },
+    "construction": {
+        "work_units_per_crew_hour": 100,
+        "base_crew_rate": D("1.0"),
+        "max_crews_per_project_base": 1,
+        "hours_per_extra_crew_slot": 20,
+        "max_crews_per_project_cap": 4,
+        "max_road_distance_tiles": 2,
+        "road_access_mult_1_tile": D("1.00"),
+        "road_access_mult_2_tiles": D("0.85"),
+        "crew_preempt_priority": 400,
+        "auto_dispatch_construction": False,
+        "refund_fraction_planned": D("1.00"),
+        "refund_fraction_under_construction_new": D("0.60"),
+        "refund_fraction_under_construction_upgrade": D("0.50"),
+        "rubble_clear_time_factor": D("0.25"),
+        "rebuild_grace_hours": 72,
+    },
+    "headroom_safety": {"power": D("1.15"), "water": D("1.10")},
+    "avenue_gate": {"min_level": 4, "max_distance_tiles": 4, "road_class": "AVENUE"},
+    "state_modifiers": {
+        "planned":                    {"output": D("0.00"), "demand": D("0.00"), "occupancy": D("0.00"), "coverage": D("0.00")},
+        "under_construction_new":     {"output": D("0.00"), "demand": D("0.15"), "water_demand": D("0.10"), "occupancy": D("0.00"), "coverage": D("0.00")},
+        "under_construction_upgrade": {"output": D("0.35"), "demand": D("1.00"), "occupancy": D("0.50"), "coverage": D("0.50")},
+        "active":                     {"output": D("1.00"), "demand": D("1.00"), "occupancy": D("1.00"), "coverage": D("1.00")},
+        "damaged":                    {"output": D("0.40"), "demand": D("0.50"), "occupancy": D("0.40"), "coverage": D("0.25")},
+        "repairing":                  {"output": D("0.40"), "demand": D("0.50"), "occupancy": D("0.40"), "coverage": D("0.25")},
+        "on_fire":                    {"output": D("0.00"), "demand": D("0.00"), "occupancy": D("0.00"), "coverage": D("0.00")},
+        "destroyed":                  {"output": D("0.00"), "demand": D("0.00"), "occupancy": D("0.00"), "coverage": D("0.00")},
+    },
+    "seed_rows": {
+        "_note": "NORMATIVE GENERATION INPUT (report 98 RR-8). data/buildings.json is"
+                 " generated from these rows; nothing regenerates from a printed or"
+                 " stored L1 cell. `water` is the UNROUNDED C-34 quotient (old WU/gh /"
+                 " 6.25) and for store / high_rise / police_station it differs from the"
+                 " displayed L1 cell (0.128 vs 0.13, 1.28 vs 1.3, 0.192 vs 0.19)."
+                 " Regenerating from the rounded cell breaks 8 of the 60 water cells."
+                 " `power_kw` seeds coincide with their displayed cells for all 12"
+                 " archetypes. Footprints for the four non-reference water_facility"
+                 " variants are NOT here -- see water_facility_per_variant_numbers.",
+        "house":             {"class": "steady",   "tax_class": "residential", "footprints": ["1x1", "1x1", "1x1", "1x1", "1x1"], "pop": 4,  "jobs": 0,  "power_kw": 3,   "water": D("0.08"),  "time_h": 2,  "decay": D("0.00045"), "fire_p": D("0.00015"), "fire_load": 20, "crime": D("1.0"), "min_city": 0},
+        "apartment":         {"class": "standard", "tax_class": "residential", "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 24, "jobs": 2,  "power_kw": 22,  "water": D("0.48"),  "time_h": 6,  "decay": D("0.00050"), "fire_p": D("0.00022"), "fire_load": 45, "crime": D("2.0"), "min_city": 1},
+        "store":             {"class": "steady",   "tax_class": "commercial",  "footprints": ["1x1", "1x1", "2x2", "2x2", "2x2"], "pop": 0,  "jobs": 6,  "power_kw": 9,   "water": D("0.128"), "time_h": 3,  "decay": D("0.00055"), "fire_p": D("0.00030"), "fire_load": 25, "crime": D("3.0"), "min_city": 0},
+        "office":            {"class": "standard", "tax_class": "commercial",  "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 0,  "jobs": 30, "power_kw": 35,  "water": D("0.32"),  "time_h": 8,  "decay": D("0.00045"), "fire_p": D("0.00020"), "fire_load": 40, "crime": D("1.5"), "min_city": 1},
+        "high_rise":         {"class": "vertical", "tax_class": "residential", "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 60, "jobs": 15, "power_kw": 90,  "water": D("1.28"),  "time_h": 16, "decay": D("0.00060"), "fire_p": D("0.00026"), "fire_load": 70, "crime": D("2.5"), "min_city": 3},
+        "data_center":       {"class": "vertical", "tax_class": "tech",        "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 0,  "jobs": 12, "power_kw": 400, "water": D("3.2"),   "time_h": 20, "decay": D("0.00075"), "fire_p": D("0.00060"), "fire_load": 80, "crime": D("2.0"), "min_city": 4},
+        "police_station":    {"class": "standard", "tax_class": "civic",       "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 0,  "jobs": 12, "power_kw": 25,  "water": D("0.192"), "time_h": 10, "decay": D("0.00040"), "fire_p": D("0.00010"), "fire_load": 30, "crime": D("0.2"), "min_city": 0, "coverage_radius": 20},
+        "fire_station":      {"class": "standard", "tax_class": "civic",       "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 0,  "jobs": 14, "power_kw": 28,  "water": D("0.40"),  "time_h": 10, "decay": D("0.00040"), "fire_p": D("0.00006"), "fire_load": 25, "crime": D("0.3"), "min_city": 0, "coverage_radius": 18},
+        "power_facility":    {"class": "vertical", "tax_class": "utility",     "footprints": ["3x3", "3x3", "3x3", "4x4", "4x4"], "pop": 0,  "jobs": 20, "power_kw": 0,   "water": D("0.96"),  "time_h": 18, "decay": D("0.00090"), "fire_p": D("0.00090"), "fire_load": 90, "crime": D("1.2"), "min_city": 0},
+        "substation":        {"class": "standard", "tax_class": "utility",     "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 0,  "jobs": 4,  "power_kw": 0,   "water": D("0.0"),   "time_h": 8,  "decay": D("0.00080"), "fire_p": D("0.00070"), "fire_load": 55, "crime": D("1.5"), "min_city": 0},
+        "water_facility":    {"class": "standard", "tax_class": "utility",     "footprints": ["3x3", "3x3", "3x3", "3x3", "4x4"], "pop": 0,  "jobs": 10, "power_kw": 60,  "water": D("0.0"),   "time_h": 12, "decay": D("0.00070"), "fire_p": D("0.00012"), "fire_load": 25, "crime": D("0.8"), "min_city": 0, "variants": ["source", "treatment", "pump", "tank", "booster"], "reference_variant": "pump", "footprints_are_reference_variant_only": True, "per_variant_footprint_source": "data/water.json components[variant][L].footprint_w/h"},
+        "construction_yard": {"class": "steady",   "tax_class": "civic",       "footprints": ["2x2", "2x2", "2x2", "3x3", "3x3"], "pop": 0,  "jobs": 16, "power_kw": 12,  "water": D("0.16"),  "time_h": 10, "decay": D("0.00065"), "fire_p": D("0.00040"), "fire_load": 50, "crime": D("2.2"), "min_city": 0, "coverage_radius": 30},
+    },
+    "rounding": {
+        "_applies_to": "the raw product seed x k^(L-1), once per cell, at"
+                       " table-generation time only -- never at runtime",
+        "_tie_break": "half_up",
+        "time_h": [[20, D("0.5")], [None, D("1")]],
+        "kw":     [[10, D("0.5")], [100, D("1")], [1000, D("5")], [10000, D("10")], [None, D("50")]],
+        "wu":     [[1, D("0.01")], [10, D("0.1")], [100, D("0.5")], [None, D("1")]],
+        "decay":  [[None, D("0.000001")]],
+    },
+    "rounding_derived": {
+        "_added_note": "ADDITIVE to doc 02 s8's `rounding` block, which covers only"
+                       " time_h / kw / wu / decay. s2.2 states 'population/jobs/radii:"
+                       " nearest integer'; the remaining steps are the precision the"
+                       " s2.3 published tables are printed at and the precision the"
+                       " tables reproduce at. Same tie rule: half_up.",
+        "_tie_break": "half_up",
+        "population": D("1"),
+        "jobs": D("1"),
+        "coverage_radius_tiles": D("1"),
+        "fire_load": D("1"),
+        "fire_ignition_per_hour": D("0.00001"),
+        "crime_weight": D("0.01"),
+        "coverage_requirement": D("0.01"),
+    },
+    "upgrade_time_derivation": {
+        "_added_note": "ADDITIVE. s2.2 gives upgrade_time(L->L+1) = build_time(L+1) x"
+                       " 0.65 but does not say which build_time. The published s2.3"
+                       " column reproduces from the ROUNDED build_time cell (48/48);"
+                       " the raw-product reading misses 3 cells (store L3 5.5 vs 5,"
+                       " water_facility L2 18.5 vs 19, construction_yard L3 18 vs"
+                       " 17.5). This is not a violation of 'never round an"
+                       " already-rounded cell' -- that rule governs seed x k^(L-1)"
+                       " products, and build_time(L+1) is named as a column, not a"
+                       " raw product.",
+        "source": "rounded_build_time_of_next_level",
+        "factor": D("0.65"),
+        "rounding": "time_h",
+    },
+}
+
+
+# ==========================================================================
+# 1. Roster metadata (doc 02 s2.1)
+# ==========================================================================
+
+ARCHETYPE_ORDER = [
+    "house", "apartment", "store", "office", "high_rise", "data_center",
+    "police_station", "fire_station", "power_facility", "substation",
+    "water_facility", "construction_yard",
+]
+
+# id -> (display name, category, produces tokens)
+ROSTER: Dict[str, Tuple[str, str, List[str]]] = {
+    "house":             ("House",               "residential", ["population"]),
+    "apartment":         ("Apartment Block",     "residential", ["population", "jobs"]),
+    "store":             ("Commercial Store",    "commercial",  ["jobs"]),
+    "office":            ("Office Building",     "commercial",  ["jobs"]),
+    "high_rise":         ("Mixed-Use High-Rise", "residential", ["population", "jobs"]),
+    "data_center":       ("Data Center",         "industrial",  ["jobs"]),
+    "police_station":    ("Police Station",      "service",     ["police_coverage"]),
+    "fire_station":      ("Fire Station",        "service",     ["fire_coverage"]),
+    "power_facility":    ("Power Facility",      "utility",     ["power_generation_shell"]),
+    "substation":        ("Substation",          "utility",     ["grid_node_shell"]),
+    "water_facility":    ("Water Facility",      "utility",     ["water_node_shell"]),
+    "construction_yard": ("Construction Yard",   "service",     ["crew_home", "construction_reach"]),
+}
+
+LEVELS_PER_ARCHETYPE = 5
+
+
+# ==========================================================================
+# 2. Rounding engine (doc 02 s2.2 -- half-up at every tie, applied once)
+# ==========================================================================
+
+def step_round(x: D, step: D) -> D:
+    """Round `x` to the nearest multiple of `step`, half-up at a tie.
+
+    The result carries `step`'s own exponent, so a cell rounded on the 0.5 kW
+    step renders as `3.0` and one rounded on the 1 kW step renders as `17` --
+    exactly how doc 02 s2.3 prints them.
+    """
+    return (x / step).quantize(D(1), rounding=ROUND_HALF_UP) * step
+
+
+def ladder_round(x: D, ladder: List[List[Any]]) -> D:
+    """Apply a s8 `rounding` ladder: the first `[bound, step]` whose bound the
+    magnitude falls under wins; a `None` bound is the catch-all tail."""
+    magnitude = abs(x)
+    for bound, step in ladder:
+        if bound is None or magnitude < D(bound):
+            return step_round(x, step)
+    raise AssertionError("rounding ladder has no tail entry")
+
+
+def is_tie(x: D, step: D) -> bool:
+    q = x / step
+    return q - q.to_integral_value(rounding="ROUND_FLOOR") == D("0.5")
+
+
+# ==========================================================================
+# 3. Cells corrected by report 98 RR-19 -- audit trail, NOT a whitelist
+# ==========================================================================
+# These four published cells used to violate doc 02's own generation rules: two
+# arithmetic slips and two exact `.5` ties published half-DOWN under a half-up
+# rule.  RR-19 ruled the s2.2 rules + s8 seeds canonical and corrected all four
+# in doc 02 s2.3 / s2.4, so `PUBLISHED` below carries the corrected values and
+# the generator carries no override mechanism at all.  The record is kept so a
+# future reader can tell a correction from a regression.
+#
+# The `water_facility` cell was found by this generator's own sweep: doc 97 s1
+# swept k_dem (power, water) and the k_decay / k_fire_rate / k_fire_load /
+# k_crime columns but never swept k_out (population / jobs), so the tie survived
+# every earlier audit.  The table's other three exact ties -- office L2 jobs
+# 55.5 -> 56, high_rise L2 jobs 31.5 -> 32, construction_yard L2 radius
+# 37.5 -> 38 -- were already half-up and did not move.
+
+RR19_CORRECTIONS: List[Dict[str, Any]] = [
+    {
+        "archetype": "house", "level": 4, "field": "fire_ignition_per_hour",
+        "was": D("0.00032"), "now": D("0.00031"),
+        "arithmetic": "0.00015 x 1.28^3 = 0.000314573 -> half-up at 5 dp = 0.00031",
+    },
+    {
+        "archetype": "construction_yard", "level": 3, "field": "fire_ignition_per_hour",
+        "was": D("0.00065"), "now": D("0.00066"),
+        "arithmetic": "0.00040 x 1.28^2 = 0.00065536 -> half-up at 5 dp = 0.00066",
+    },
+    {
+        "archetype": "fire_station", "level": 2, "field": "coverage_radius_tiles",
+        "was": 22, "now": 23,
+        "arithmetic": "18 x 1.25 = 22.5 exactly -> half-up = 23. Worked example E6"
+                      " re-derived at 23 (margin 0.027, gate closes below condition 0.834).",
+    },
+    {
+        "archetype": "water_facility", "level": 2, "field": "jobs",
+        "was": 18, "now": 19,
+        "arithmetic": "10 x 1.85 = 18.5 exactly -> half-up = 19",
+    },
+]
+
+
+# ==========================================================================
+# 4. The published s2.3 / s2.4 tables, transcribed for verification
+# ==========================================================================
+# Column order: pop, jobs, power_kw, water, build_h, upgrade_h, decay, fire_p,
+# fire_load, crime, req_fire, req_police, min_city_level.
+
+_P = D
+PUBLISHED: Dict[str, List[Tuple[Any, ...]]] = {
+    "house": [
+        (4, 0, _P("3.0"), _P("0.08"), _P("2"), _P("2"), _P("0.000450"), _P("0.00015"), 20, _P("1.00"), _P("0.00"), _P("0.00"), 0),
+        (6, 0, _P("7.0"), _P("0.19"), _P("3"), _P("2.5"), _P("0.000540"), _P("0.00019"), 40, _P("1.60"), _P("0.20"), _P("0.15"), 1),
+        (10, 0, _P("17"), _P("0.44"), _P("4"), _P("3.5"), _P("0.000648"), _P("0.00025"), 80, _P("2.56"), _P("0.40"), _P("0.35"), 2),
+        (15, 0, _P("39"), _P("1.0"), _P("5.5"), _P("5"), _P("0.000778"), _P("0.00031"), 160, _P("4.10"), _P("0.60"), _P("0.55"), 3),  # fire p/gh corrected by RR-19
+        (23, 0, _P("91"), _P("2.4"), _P("7.5"), None, _P("0.000933"), _P("0.00040"), 320, _P("6.55"), _P("0.80"), _P("0.75"), 4),
+    ],
+    "apartment": [
+        (24, 2, _P("22"), _P("0.48"), _P("6"), _P("6"), _P("0.000500"), _P("0.00022"), 45, _P("2.00"), _P("0.00"), _P("0.00"), 1),
+        (44, 4, _P("54"), _P("1.2"), _P("9.5"), _P("9.5"), _P("0.000600"), _P("0.00028"), 90, _P("3.20"), _P("0.20"), _P("0.15"), 1),
+        (82, 7, _P("130"), _P("2.9"), _P("14.5"), _P("14.5"), _P("0.000720"), _P("0.00036"), 180, _P("5.12"), _P("0.40"), _P("0.35"), 2),
+        (152, 13, _P("325"), _P("7.1"), _P("22"), _P("23"), _P("0.000864"), _P("0.00046"), 360, _P("8.19"), _P("0.60"), _P("0.55"), 3),
+        (281, 23, _P("795"), _P("17.5"), _P("35"), None, _P("0.001037"), _P("0.00059"), 720, _P("13.11"), _P("0.80"), _P("0.75"), 4),
+    ],
+    "store": [
+        (0, 6, _P("9.0"), _P("0.13"), _P("3"), _P("2.5"), _P("0.000550"), _P("0.00030"), 25, _P("3.00"), _P("0.00"), _P("0.00"), 0),
+        (0, 9, _P("21"), _P("0.30"), _P("4"), _P("4"), _P("0.000660"), _P("0.00038"), 50, _P("4.80"), _P("0.20"), _P("0.15"), 1),
+        (0, 14, _P("50"), _P("0.71"), _P("6"), _P("5"), _P("0.000792"), _P("0.00049"), 100, _P("7.68"), _P("0.40"), _P("0.35"), 2),
+        (0, 22, _P("115"), _P("1.7"), _P("8"), _P("7.5"), _P("0.000950"), _P("0.00063"), 200, _P("12.29"), _P("0.60"), _P("0.55"), 3),
+        (0, 35, _P("275"), _P("3.9"), _P("11.5"), None, _P("0.001140"), _P("0.00081"), 400, _P("19.66"), _P("0.80"), _P("0.75"), 4),
+    ],
+    "office": [
+        (0, 30, _P("35"), _P("0.32"), _P("8"), _P("8"), _P("0.000450"), _P("0.00020"), 40, _P("1.50"), _P("0.00"), _P("0.00"), 1),
+        (0, 56, _P("86"), _P("0.78"), _P("12.5"), _P("12.5"), _P("0.000540"), _P("0.00026"), 80, _P("2.40"), _P("0.20"), _P("0.15"), 1),
+        (0, 103, _P("210"), _P("1.9"), _P("19"), _P("19.5"), _P("0.000648"), _P("0.00033"), 160, _P("3.84"), _P("0.40"), _P("0.35"), 2),
+        (0, 190, _P("515"), _P("4.7"), _P("30"), _P("30"), _P("0.000778"), _P("0.00042"), 320, _P("6.14"), _P("0.60"), _P("0.55"), 3),
+        (0, 351, _P("1260"), _P("11.5"), _P("46"), None, _P("0.000933"), _P("0.00054"), 640, _P("9.83"), _P("0.80"), _P("0.75"), 4),
+    ],
+    "high_rise": [
+        (60, 15, _P("90"), _P("1.3"), _P("16"), _P("17.5"), _P("0.000600"), _P("0.00026"), 70, _P("2.50"), _P("0.00"), _P("0.00"), 3),
+        (126, 32, _P("230"), _P("3.3"), _P("27"), _P("30"), _P("0.000720"), _P("0.00033"), 140, _P("4.00"), _P("0.25"), _P("0.19"), 3),
+        (265, 66, _P("585"), _P("8.3"), _P("46"), _P("51"), _P("0.000864"), _P("0.00043"), 280, _P("6.40"), _P("0.50"), _P("0.44"), 3),
+        (556, 139, _P("1490"), _P("21.0"), _P("79"), _P("87"), _P("0.001037"), _P("0.00055"), 560, _P("10.24"), _P("0.75"), _P("0.69"), 3),
+        (1167, 292, _P("3810"), _P("54.0"), _P("134"), None, _P("0.001244"), _P("0.00070"), 1120, _P("16.38"), _P("0.95"), _P("0.94"), 4),
+    ],
+    "data_center": [
+        (0, 12, _P("400"), _P("3.2"), _P("20"), _P("22"), _P("0.000750"), _P("0.00060"), 80, _P("2.00"), _P("0.00"), _P("0.00"), 4),
+        (0, 25, _P("1020"), _P("8.2"), _P("34"), _P("38"), _P("0.000900"), _P("0.00077"), 160, _P("3.20"), _P("0.25"), _P("0.19"), 4),
+        (0, 53, _P("2600"), _P("21.0"), _P("58"), _P("64"), _P("0.001080"), _P("0.00098"), 320, _P("5.12"), _P("0.50"), _P("0.44"), 4),
+        (0, 111, _P("6630"), _P("53.0"), _P("98"), _P("109"), _P("0.001296"), _P("0.00126"), 640, _P("8.19"), _P("0.75"), _P("0.69"), 4),
+        (0, 233, _P("16900"), _P("135"), _P("167"), None, _P("0.001555"), _P("0.00161"), 1280, _P("13.11"), _P("0.95"), _P("0.94"), 4),
+    ],
+    "police_station": [
+        (0, 12, _P("25"), _P("0.19"), _P("10"), _P("10"), _P("0.000400"), _P("0.00010"), 30, _P("0.20"), _P("0.00"), _P("0.00"), 0),
+        (0, 22, _P("61"), _P("0.47"), _P("15.5"), _P("15.5"), _P("0.000480"), _P("0.00013"), 60, _P("0.32"), _P("0.15"), _P("0.11"), 1),
+        (0, 41, _P("150"), _P("1.2"), _P("24"), _P("24"), _P("0.000576"), _P("0.00016"), 120, _P("0.51"), _P("0.30"), _P("0.26"), 2),
+        (0, 76, _P("370"), _P("2.8"), _P("37"), _P("38"), _P("0.000691"), _P("0.00021"), 240, _P("0.82"), _P("0.45"), _P("0.41"), 3),
+        (0, 141, _P("900"), _P("6.9"), _P("58"), None, _P("0.000829"), _P("0.00027"), 480, _P("1.31"), _P("0.60"), _P("0.56"), 4),
+    ],
+    "fire_station": [
+        (0, 14, _P("28"), _P("0.40"), _P("10"), _P("10"), _P("0.000400"), _P("0.00006"), 25, _P("0.30"), _P("0.00"), _P("0.00"), 0),
+        (0, 26, _P("69"), _P("0.98"), _P("15.5"), _P("15.5"), _P("0.000480"), _P("0.00008"), 50, _P("0.48"), _P("0.15"), _P("0.11"), 1),
+        (0, 48, _P("170"), _P("2.4"), _P("24"), _P("24"), _P("0.000576"), _P("0.00010"), 100, _P("0.77"), _P("0.30"), _P("0.26"), 2),
+        (0, 89, _P("410"), _P("5.9"), _P("37"), _P("38"), _P("0.000691"), _P("0.00013"), 200, _P("1.23"), _P("0.45"), _P("0.41"), 3),
+        (0, 164, _P("1010"), _P("14.5"), _P("58"), None, _P("0.000829"), _P("0.00016"), 400, _P("1.97"), _P("0.60"), _P("0.56"), 4),
+    ],
+    "power_facility": [
+        (0, 20, _P("0"), _P("0.96"), _P("18"), _P("20"), _P("0.000900"), _P("0.00090"), 90, _P("1.20"), _P("0.00"), _P("0.00"), 0),
+        (0, 42, _P("0"), _P("2.4"), _P("31"), _P("34"), _P("0.001080"), _P("0.00115"), 180, _P("1.92"), _P("0.15"), _P("0.11"), 1),
+        (0, 88, _P("0"), _P("6.2"), _P("52"), _P("57"), _P("0.001296"), _P("0.00147"), 360, _P("3.07"), _P("0.30"), _P("0.26"), 2),
+        (0, 185, _P("0"), _P("16.0"), _P("88"), _P("98"), _P("0.001555"), _P("0.00189"), 720, _P("4.92"), _P("0.45"), _P("0.41"), 3),
+        (0, 389, _P("0"), _P("40.5"), _P("150"), None, _P("0.001866"), _P("0.00242"), 1440, _P("7.86"), _P("0.60"), _P("0.56"), 4),
+    ],
+    "substation": [
+        (0, 4, _P("0"), _P("0"), _P("8"), _P("8"), _P("0.000800"), _P("0.00070"), 55, _P("1.50"), _P("0.00"), _P("0.00"), 0),
+        (0, 7, _P("0"), _P("0"), _P("12.5"), _P("12.5"), _P("0.000960"), _P("0.00090"), 110, _P("2.40"), _P("0.15"), _P("0.11"), 1),
+        (0, 14, _P("0"), _P("0"), _P("19"), _P("19.5"), _P("0.001152"), _P("0.00115"), 220, _P("3.84"), _P("0.30"), _P("0.26"), 2),
+        (0, 25, _P("0"), _P("0"), _P("30"), _P("30"), _P("0.001382"), _P("0.00147"), 440, _P("6.14"), _P("0.45"), _P("0.41"), 3),
+        (0, 47, _P("0"), _P("0"), _P("46"), None, _P("0.001659"), _P("0.00188"), 880, _P("9.83"), _P("0.60"), _P("0.56"), 4),
+    ],
+    "water_facility": [
+        (0, 10, _P("60"), _P("0"), _P("12"), _P("12"), _P("0.000700"), _P("0.00012"), 25, _P("0.80"), _P("0.00"), _P("0.00"), 0),
+        (0, 19, _P("145"), _P("0"), _P("18.5"), _P("19"), _P("0.000840"), _P("0.00015"), 50, _P("1.28"), _P("0.15"), _P("0.11"), 1),  # jobs corrected by RR-19
+        (0, 34, _P("360"), _P("0"), _P("29"), _P("29"), _P("0.001008"), _P("0.00020"), 100, _P("2.05"), _P("0.30"), _P("0.26"), 2),
+        (0, 63, _P("880"), _P("0"), _P("45"), _P("45"), _P("0.001210"), _P("0.00025"), 200, _P("3.28"), _P("0.45"), _P("0.41"), 3),
+        (0, 117, _P("2160"), _P("0"), _P("69"), None, _P("0.001452"), _P("0.00032"), 400, _P("5.24"), _P("0.60"), _P("0.56"), 4),
+    ],
+    "construction_yard": [
+        (0, 16, _P("12"), _P("0.16"), _P("10"), _P("9"), _P("0.000650"), _P("0.00040"), 50, _P("2.20"), _P("0.00"), _P("0.00"), 0),
+        (0, 25, _P("28"), _P("0.38"), _P("14"), _P("12.5"), _P("0.000780"), _P("0.00051"), 100, _P("3.52"), _P("0.15"), _P("0.11"), 1),
+        (0, 38, _P("66"), _P("0.88"), _P("19.5"), _P("17.5"), _P("0.000936"), _P("0.00066"), 200, _P("5.63"), _P("0.30"), _P("0.26"), 2),  # fire p/gh corrected by RR-19
+        (0, 60, _P("155"), _P("2.1"), _P("27"), _P("25"), _P("0.001123"), _P("0.00084"), 400, _P("9.01"), _P("0.45"), _P("0.41"), 3),
+        (0, 92, _P("365"), _P("4.9"), _P("38"), None, _P("0.001348"), _P("0.00107"), 800, _P("14.42"), _P("0.60"), _P("0.56"), 4),
+    ],
+}
+
+PUBLISHED_FOOTPRINTS = {aid: BUILDING_RULES["seed_rows"][aid]["footprints"]
+                        for aid in ARCHETYPE_ORDER}
+
+# doc 02 s2.4 -- the only "special output" column this doc still owns.
+PUBLISHED_RADII: Dict[str, List[int]] = {
+    "police_station": [20, 25, 31, 39, 49],
+    "fire_station": [18, 23, 28, 35, 44],  # L2 corrected 22 -> 23 by RR-19 (18 x 1.25 = 22.5)
+    "construction_yard": [30, 38, 47, 59, 73],
+}
+
+PUBLISHED_COLUMNS = [
+    "population", "jobs", "power_demand_kw", "water_demand", "build_time_hours",
+    "upgrade_time_hours", "decay_per_hour", "fire_ignition_per_hour", "fire_load",
+    "crime_weight", "req_fire_coverage", "req_police_coverage", "min_city_level",
+]
+
+# Columns every level row must carry (loader invariant, doc 02 s3.1).
+REQUIRED_LEVEL_KEYS = [
+    "level", "footprint", "population", "jobs", "power_demand_kw", "water_demand",
+    "build_time_hours", "decay_per_hour", "fire_ignition_per_hour", "fire_load",
+    "crime_weight", "req_fire_coverage", "req_police_coverage", "min_city_level",
+]
+
+# Fields deleted by report 98 -- must never appear (doc 02 s3.1 / s7 test 3).
+FORBIDDEN_KEYS = [
+    "build_cost", "upgrade_cost", "tax_cents_per_hour", "upkeep_cents_per_hour",
+    "power_supply_kw", "power_throughput_kw", "feeder_radius_tiles",
+    "water_supply_wu_per_hour", "pressure_radius_tiles", "unit_slots", "crew_slots",
+    "burn_hours", "condition_loss_per_hour", "required_fire_units", "spread_radius_tiles",
+]
+
+FAILURES: List[str] = []
+
+
+def fail(message: str) -> None:
+    FAILURES.append(message)
+
+
+# ==========================================================================
+# 5. Curve family (doc 02 s2.2)
+# ==========================================================================
+
+def generate_levels(archetype: str) -> List[Dict[str, Any]]:
+    seed = BUILDING_RULES["seed_rows"][archetype]
+    growth = BUILDING_RULES["growth_classes"][seed["class"]]
+    shared = BUILDING_RULES["shared_curves"]
+    derived = BUILDING_RULES["rounding_derived"]
+    ladders = BUILDING_RULES["rounding"]
+    cov = BUILDING_RULES["coverage_ladder"]
+
+    k_out = growth["k_out"]
+    k_dem = growth["k_dem"]
+    k_time = growth["k_time"]
+    arch_mult = cov["archetype_multiplier"].get(archetype, cov["archetype_multiplier"]["default"])
+    max_req = cov["max_requirement"]
+    city_ladder = BUILDING_RULES["min_city_level_by_level"]
+
+    # build_time first: upgrade_time(L->L+1) reads the ROUNDED build_time cell.
+    build_time = [ladder_round(D(seed["time_h"]) * k_time ** e, ladders["time_h"])
+                  for e in range(LEVELS_PER_ARCHETYPE)]
+
+    rows: List[Dict[str, Any]] = []
+    for level in range(1, LEVELS_PER_ARCHETYPE + 1):
+        e = level - 1
+        w, h = seed["footprints"][e].split("x")
+        row: Dict[str, Any] = {
+            "level": level,
+            "footprint": [int(w), int(h)],
+            "population": int(step_round(D(seed["pop"]) * k_out ** e, derived["population"])),
+            "jobs": int(step_round(D(seed["jobs"]) * k_out ** e, derived["jobs"])),
+            "power_demand_kw": ladder_round(D(seed["power_kw"]) * k_dem ** e, ladders["kw"]),
+            "water_demand": ladder_round(seed["water"] * k_dem ** e, ladders["wu"]),
+            "build_time_hours": build_time[e],
+            "decay_per_hour": ladder_round(seed["decay"] * shared["k_decay"] ** e, ladders["decay"]),
+            "fire_ignition_per_hour": step_round(seed["fire_p"] * shared["k_fire_rate"] ** e,
+                                                 derived["fire_ignition_per_hour"]),
+            "fire_load": int(step_round(D(seed["fire_load"]) * shared["k_fire_load"] ** e,
+                                        derived["fire_load"])),
+            "crime_weight": step_round(seed["crime"] * shared["k_crime"] ** e, derived["crime_weight"]),
+            "req_fire_coverage": min(step_round(cov["fire"][e] * arch_mult,
+                                                derived["coverage_requirement"]), max_req),
+            "req_police_coverage": min(step_round(cov["police"][e] * arch_mult,
+                                                  derived["coverage_requirement"]), max_req),
+            "min_city_level": max(int(seed["min_city"]), city_ladder[e]),
+        }
+        if "coverage_radius" in seed:
+            row["coverage_radius_tiles"] = int(step_round(
+                D(seed["coverage_radius"]) * shared["k_radius"] ** e,
+                derived["coverage_radius_tiles"]))
+        if level < LEVELS_PER_ARCHETYPE:
+            row["upgrade_time_hours"] = ladder_round(
+                build_time[level] * shared["upgrade_time_factor"], ladders["time_h"])
+        rows.append(row)
+    return rows
+
+
+def check_rr19_corrections(archetype: str, rows: List[Dict[str, Any]]) -> None:
+    """RR-19's four cells must equal the RULE-generated value, not the old one.
+
+    This is the opposite of a whitelist: it fails if a corrected cell ever drifts
+    back to the figure doc 02 used to publish.
+    """
+    for entry in RR19_CORRECTIONS:
+        if entry["archetype"] != archetype:
+            continue
+        row = rows[entry["level"] - 1]
+        field = entry["field"]
+        if field not in row:
+            fail("RR-19 record targets missing field %s.%s L%d"
+                 % (archetype, field, entry["level"]))
+            continue
+        if D(str(row[field])) != D(str(entry["now"])):
+            fail("RR-19: %s L%d %s must generate %s (%s), got %s"
+                 % (archetype, entry["level"], field, entry["now"],
+                    entry["arithmetic"], row[field]))
+        if D(str(row[field])) == D(str(entry["was"])):
+            fail("RR-19 regression: %s L%d %s is back at the corrected-away value %s"
+                 % (archetype, entry["level"], field, entry["was"]))
+
+
+# ==========================================================================
+# 6. Verification against the published tables
+# ==========================================================================
+
+def verify(archetype: str, rows: List[Dict[str, Any]]) -> None:
+    published = PUBLISHED[archetype]
+    if len(published) != LEVELS_PER_ARCHETYPE:
+        fail("%s: published table has %d rows" % (archetype, len(published)))
+        return
+    for e, row in enumerate(rows):
+        level = e + 1
+        for column, value in zip(PUBLISHED_COLUMNS, published[e]):
+            if value is None:
+                if column in row:
+                    fail("%s L%d: %s must be absent (published '--')" % (archetype, level, column))
+                continue
+            if column not in row:
+                fail("%s L%d: missing column %s" % (archetype, level, column))
+                continue
+            got = row[column]
+            if D(str(got)) != D(str(value)):
+                fail("%s L%d %s: generated %s, published %s"
+                     % (archetype, level, column, got, value))
+        expect_foot = PUBLISHED_FOOTPRINTS[archetype][e]
+        if "%dx%d" % (row["footprint"][0], row["footprint"][1]) != expect_foot:
+            fail("%s L%d footprint: generated %s, published %s"
+                 % (archetype, level, row["footprint"], expect_foot))
+        if archetype in PUBLISHED_RADII:
+            want = PUBLISHED_RADII[archetype][e]
+            if row.get("coverage_radius_tiles") != want:
+                fail("%s L%d coverage_radius_tiles: generated %s, published %s"
+                     % (archetype, level, row.get("coverage_radius_tiles"), want))
+        elif "coverage_radius_tiles" in row:
+            fail("%s L%d: coverage_radius_tiles must be absent" % (archetype, level))
+
+        for key in row:
+            if key in FORBIDDEN_KEYS:
+                fail("%s L%d: forbidden column %s (report 98)" % (archetype, level, key))
+        for key in REQUIRED_LEVEL_KEYS:
+            if key not in row:
+                fail("%s L%d: required column %s missing" % (archetype, level, key))
+
+    # Loader invariants (doc 02 s3.1) asserted at generation time too.
+    for e in range(1, LEVELS_PER_ARCHETYPE):
+        prev, cur = rows[e - 1], rows[e]
+        if cur["footprint"][0] < prev["footprint"][0] or cur["footprint"][1] < prev["footprint"][1]:
+            fail("%s: footprint shrinks at L%d" % (archetype, e + 1))
+        if cur["min_city_level"] < prev["min_city_level"]:
+            fail("%s: min_city_level decreases at L%d" % (archetype, e + 1))
+    if "upgrade_time_hours" in rows[-1]:
+        fail("%s: level 5 must not carry upgrade_time_hours" % archetype)
+    for row in rows:
+        if row["decay_per_hour"] >= D("0.01"):
+            fail("%s L%d: decay_per_hour %s not on the [0,1] scale"
+                 % (archetype, row["level"], row["decay_per_hour"]))
+
+
+def verify_invariants() -> None:
+    """The cross-cutting claims doc 02 makes about the family itself."""
+    tax_growth = BUILDING_RULES["demand_growth_invariant"]["must_exceed_value"]
+    classes = BUILDING_RULES["growth_classes"]
+    for name, g in classes.items():
+        if g["k_dem"] <= tax_growth:
+            fail("C-13: growth class %s has k_dem %s <= TAX_LEVEL_GROWTH %s"
+                 % (name, g["k_dem"], tax_growth))
+    if not (classes["steady"]["k_dem"] < classes["standard"]["k_dem"] < classes["vertical"]["k_dem"]):
+        fail("C-13: k_dem must increase steady < standard < vertical")
+
+    # s2.3 RR-8 audit trail: three water seeds differ from their display cell.
+    differs = {"store": D("0.13"), "high_rise": D("1.3"), "police_station": D("0.19")}
+    wu = BUILDING_RULES["rounding"]["wu"]
+    for aid in ARCHETYPE_ORDER:
+        seed = BUILDING_RULES["seed_rows"][aid]["water"]
+        shown = ladder_round(seed, wu)
+        expect_differs = aid in differs
+        if expect_differs and shown != differs[aid]:
+            fail("RR-8: %s water seed %s displays as %s, doc says %s"
+                 % (aid, seed, shown, differs[aid]))
+        if (shown != seed) != expect_differs:
+            fail("RR-8: %s water seed %s vs display %s -- differ flag mismatch"
+                 % (aid, seed, shown))
+
+    # s2.6 / s2.3 anchors doc 05 arbitrates against.
+    if BUILDING_RULES["seed_rows"]["house"]["water"] != D("0.08"):
+        fail("C-34 anchor: house L1 water seed must be 0.08 (4 x 0.020)")
+    if BUILDING_RULES["seed_rows"]["apartment"]["water"] != D("0.48"):
+        fail("C-34 anchor: apartment L1 water seed must be 0.48 (24 x 0.020)")
+
+    if sorted(ROSTER) != sorted(BUILDING_RULES["seed_rows"].keys() - {"_note"}):
+        fail("roster and seed_rows disagree on the archetype set")
+    if len(ARCHETYPE_ORDER) != 12:
+        fail("roster must hold exactly 12 archetypes (spec s43.2)")
+
+
+# ==========================================================================
+# 7. Assembly
+# ==========================================================================
+
+def build_buildings_doc() -> Dict[str, Any]:
+    archetypes: Dict[str, Any] = {}
+    for aid in ARCHETYPE_ORDER:
+        seed = BUILDING_RULES["seed_rows"][aid]
+        name, category, produces = ROSTER[aid]
+        rows = generate_levels(aid)
+        verify(aid, rows)
+        check_rr19_corrections(aid, rows)
+        entry: Dict[str, Any] = {
+            "name": name,
+            "category": category,
+            "tax_class": seed["tax_class"],
+            "growth_class": seed["class"],
+            "produces": produces,
+        }
+        if aid == "water_facility":
+            entry["variants"] = list(BUILDING_RULES["water_facility_variants"])
+            entry["reference_variant"] = BUILDING_RULES["water_facility_reference_variant"]
+            entry["footprints_are_reference_variant_only"] = True
+            entry["per_variant_footprint_source"] = seed["per_variant_footprint_source"]
+        entry["levels"] = rows
+        archetypes[aid] = entry
+
+    corrections = [
+        {
+            "archetype": o["archetype"], "level": o["level"], "field": o["field"],
+            "doc_02_before_rr19": o["was"], "generated": o["now"],
+            "arithmetic": o["arithmetic"],
+        }
+        for o in RR19_CORRECTIONS
+    ]
+
+    return {
+        "schema_version": 1,
+        "generated": {
+            "generator": "tools/gen_buildings.py",
+            "source_doc": "docs/design/02-buildings.md (Draft v2.1; report 98 wave 1 + RR-8 / RR-9)",
+            "rules_file": "data/building_rules.json",
+            "generation_input": "building_rules.json seed_rows (normative, RR-8)",
+            "archetype_count": len(ARCHETYPE_ORDER),
+            "levels_per_archetype": LEVELS_PER_ARCHETYPE,
+            "archetype_order": list(ARCHETYPE_ORDER),
+            "forbidden_keys": list(FORBIDDEN_KEYS),
+            "required_level_keys": list(REQUIRED_LEVEL_KEYS),
+            "rr19_corrected_cells": corrections,
+            "_note": "Every one of the 60 rows is round_rule(seed x k^(L-1)) with the"
+                     " s2.2 ladders applied once, half-up at every tie. There are no"
+                     " exceptions: report 98 RR-19 made the rules canonical and"
+                     " corrected the four cells doc 02 used to publish against them"
+                     " (listed in rr19_corrected_cells for audit, not as overrides)."
+                     " water_facility.levels[*].footprint is the `pump` REFERENCE"
+                     " variant only (RR-8); the other four variants' footprints live"
+                     " in data/water.json (doc 05).",
+        },
+        "archetypes": archetypes,
+    }
+
+
+# ==========================================================================
+# 8. JSON emitter
+# ==========================================================================
+# Hand-rolled so `Decimal` renders with its own exponent -- `3.0` where doc 02
+# rounds on the 0.5 kW step, `17` where it rounds on the 1 kW step -- instead of
+# going through a binary float.
+
+MAX_INLINE = 460
+FORCE_BLOCK = {
+    "archetypes", "levels", "growth_classes", "seed_rows", "state_modifiers",
+    "condition", "construction", "coverage_ladder", "rounding",
+    "rounding_derived", "generated", "rr19_corrected_cells",
+}
+_ESCAPES = {'"': '\\"', "\\": "\\\\", "\n": "\\n", "\t": "\\t", "\r": "\\r"}
+
+
+def _scalar(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, D):
+        return str(value)
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        raise TypeError("binary floats are not allowed in generated data: %r" % value)
+    if isinstance(value, str):
+        return '"' + "".join(_ESCAPES.get(c, c) for c in value) + '"'
+    raise TypeError("cannot encode %r" % (value,))
+
+
+def _compact(value: Any) -> str:
+    if isinstance(value, dict):
+        return "{" + ", ".join('%s: %s' % (_scalar(str(k)), _compact(v))
+                               for k, v in value.items()) + "}"
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_compact(v) for v in value) + "]"
+    return _scalar(value)
+
+
+def _encode(value: Any, indent: int, key: Optional[str]) -> str:
+    pad = "  " * indent
+    inner = "  " * (indent + 1)
+    if isinstance(value, (dict, list, tuple)):
+        if not value:
+            return "{}" if isinstance(value, dict) else "[]"
+        compact = _compact(value)
+        if key not in FORCE_BLOCK and len(compact) + len(pad) <= MAX_INLINE:
+            return compact
+        if isinstance(value, dict):
+            parts = ["%s%s: %s" % (inner, _scalar(str(k)), _encode(v, indent + 1, str(k)))
+                     for k, v in value.items()]
+            return "{\n" + ",\n".join(parts) + "\n" + pad + "}"
+        parts = ["%s%s" % (inner, _encode(v, indent + 1, None)) for v in value]
+        return "[\n" + ",\n".join(parts) + "\n" + pad + "]"
+    return _scalar(value)
+
+
+def write_json(path: str, document: Dict[str, Any]) -> None:
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(_encode(document, 0, None) + "\n")
+
+
+# ==========================================================================
+# 9. Entry point
+# ==========================================================================
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--out-dir", default=None,
+                        help="directory to write into (default: <repo>/data)")
+    parser.add_argument("--check", action="store_true",
+                        help="validate only; do not write")
+    args = parser.parse_args()
+
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    out_dir = args.out_dir or os.path.join(repo_root, "data")
+
+    verify_invariants()
+    buildings = build_buildings_doc()
+
+    if FAILURES:
+        print("gen_buildings: %d failure(s), nothing written" % len(FAILURES), file=sys.stderr)
+        for failure in FAILURES:
+            print("  FAIL %s" % failure, file=sys.stderr)
+        return 1
+
+    if args.check:
+        print("gen_buildings: all invariants pass (--check, nothing written)")
+        return 0
+
+    os.makedirs(out_dir, exist_ok=True)
+    write_json(os.path.join(out_dir, "building_rules.json"), BUILDING_RULES)
+    write_json(os.path.join(out_dir, "buildings.json"), buildings)
+
+    print("gen_buildings: wrote %s" % os.path.join(out_dir, "building_rules.json"))
+    print("gen_buildings: wrote %s" % os.path.join(out_dir, "buildings.json"))
+    print("  %d archetypes x %d levels = %d rows, regenerated from seed_rows"
+          % (len(ARCHETYPE_ORDER), LEVELS_PER_ARCHETYPE,
+             len(ARCHETYPE_ORDER) * LEVELS_PER_ARCHETYPE))
+    print("  all 60 rows reproduce from the rules -- no whitelist (report 98 RR-19)")
+    print("  %d cell(s) RR-19 corrected in doc 02 to match the rules:"
+          % len(RR19_CORRECTIONS))
+    for o in RR19_CORRECTIONS:
+        print("    %-18s L%d %-24s %s -> %s"
+              % (o["archetype"], o["level"], o["field"], o["was"], o["now"]))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
