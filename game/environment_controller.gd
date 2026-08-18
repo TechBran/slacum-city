@@ -50,8 +50,10 @@ func apply(hour: float, delta: float) -> void:
 	var s := controller.sample(hour)
 	_sky_material.sky_top_color = s["sky_top"]
 	_sky_material.sky_horizon_color = s["sky_horizon"]
-	_sky_material.ground_bottom_color = (s["sky_horizon"] as Color).darkened(0.7)
-	_sky_material.ground_horizon_color = (s["sky_horizon"] as Color).darkened(0.4)
+	# Ground hemisphere must meet the sky at the SAME horizon color or the
+	# seam reads as a dark band across the skyline from any elevated camera.
+	_sky_material.ground_horizon_color = s["sky_horizon"]
+	_sky_material.ground_bottom_color = (s["sky_horizon"] as Color).darkened(0.55)
 	var elevation: float = s["sun_elevation_deg"]
 	var azimuth: float = s["sun_azimuth_deg"]
 	_sun.rotation_degrees = Vector3(-maxf(elevation, 1.0), azimuth, 0.0)

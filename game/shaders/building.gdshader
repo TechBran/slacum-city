@@ -53,6 +53,10 @@ void fragment() {
 				* (1.0 - 0.6 * v_custom.g);
 	}
 	ALBEDO = base_albedo * v_color.rgb;                       // baked vertex AO
+	// Per-building facade variation: variant shifts tone slightly so a block
+	// of identical archetypes never reads as copy-paste.
+	float tint = (variant / 15.0 - 0.5) * 0.16;
+	ALBEDO *= vec3(1.0 + tint, 1.0 + tint * 0.8, 1.0 + tint * 0.55);
 	ALBEDO *= mix(vec3(1.0), soot_color, v_custom.g * 0.8);   // damage soot
 	ROUGHNESS = 0.85;
 	SPECULAR = 0.35;
