@@ -949,9 +949,16 @@ func test_gate_18_a_competent_player_keeps_the_city_lit() -> void:
 ## What doc 92 §17.3 measured, and what this gate now holds — same rig, same
 ## agent lineage, seed 1337, 50 game-days, dark share of all building-time:
 ##
+## The two sides are measured on different paths and that is worth stating: the
+## Wave-5 column is a fine-path `tools/playtest.gd --days=50` run, the Wave-6
+## column is this rig. **They agree at this scale** — doc 92 §17.3 measured the
+## same Wave-5 city at **54.9 %** on its own online-coarse rig against the fine
+## path's **54.63 %**, a 0.3-point spread on a 55-point number — so the
+## before/after below is a real comparison and not two different questions.
+##
 ## | | Wave 5 | Wave 6 |
 ## |---|---|---|
-## | dark share, 50 game-days | **54.63 %** (fine path; §15.2's fine run read 66.8 %) | **6.25 %** (coarse-online rig) |
+## | dark share, 50 game-days | **54.63 %** (fine; §17.3's rig read 54.9 %, §15.2's earlier fine run 66.8 %) | **6.25 %** |
 ## | worst feeder at the end | doc 92's day-50 fleet AGGREGATE was 111.8 % | **r = 0.31** |
 ## | buildings | 716 | 741 |
 ## | feeders the player could buy | **none — no verb existed** | 11, $59,430 |
