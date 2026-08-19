@@ -1,0 +1,175 @@
+{
+  "schema_version": 2,
+  "units": { "volume": "m3", "flow": "m3_per_game_hour", "head": "m", "power": "kW",
+             "_note": "1 WU == 1 m3/h (report 98 C-34). No currency appears in this file." },
+
+  "_provenance": {
+    "applied_wu_scale": 0.1333,
+    "_note": "Every flow/capacity/volume L1 anchor below = the pre-C-34 native value x 0.1333 (R-09). Levels 2-5 are generated on doc 02's k_dem = 2.45 standard-class curve with doc 02's rounding rules. base_kw = kw_per_m3h[variant] x capacity, which reproduces doc 02's water_facility kW column 60/145/360/880/2160 exactly.",
+    "k_dem": 2.45,
+    "_starter_reference": {
+      "_owner": "doc 09 section 2.9.4 - quoted for cross-checking only, NOT owned or authored here (report 98 RR-11). The loader must not read these keys as sim inputs.",
+      "starter_demand_m3h_mean": 5.56,
+      "starter_demand_m3h_morning_peak": 7.10,
+      "starter_demand_m3h_evening": 6.24,
+      "starter_supply_m3h": 40.0,
+      "starter_headroom_x": 7.2,
+      "starter_tank_autonomy_gh_mean": 21.6,
+      "_derivation": "18x0.08 + 3x0.48 + 5x0.13 + 1x0.32 + 0.19 + 0.40 + 0.96 + 0.16 = 5.56 against doc 02's post-C-34 water column on C-11's reverted 18/5/3/1 + 6 civic manifest; 40.0/5.56 = 7.194.",
+      "_superseded": "8.2 m3/h / 4.9x - that was 51.1/6.25, the WU rescale of the pre-C-11 28/8/6/1 manifest with the mix revert never applied (verifier 96 F-5 / 97 F-05)."
+    }
+  },
+
+  "global": {
+    "res_per_capita_m3h_reference": 0.020, "job_per_capita_m3h_reference": 0.012,
+    "hydrant_reach_tiles": 2, "max_service_distance_tiles": 12, "prox_falloff_per_tile": 0.10,
+    "elev_penalty_per_m": 0.015, "elev_factor_floor": 0.30,
+    "pressure_curve_exponent": 1.3, "pressure_tau_h": 0.05,
+    "tank_low_frac": 0.15, "tank_low_head_floor": 0.40,
+    "break_pressure_penalty_fallback": 0.12, "break_penalty_cap": 0.50, "leak_frac_of_capacity": 0.25,
+    "fire_flow_per_engine_m3h": 8.0, "overpressure_bonus_max": 0.20,
+    "pump_trip_fraction": 0.35, "pump_restart_minutes": 5.0,
+    "shortage_warn_minutes": 20.0, "restriction_demand_mult": 0.75,
+    "nominal_pressure": 0.60, "building_sample_interval_minutes": 1.0,
+    "tank_low_warn_frac": 0.25,
+    "kw_per_m3h": { "pump": 1.50, "treatment": 0.50, "source_river": 0.30, "source_well": 0.75,
+                    "booster": 1.50, "tank_anchor_kw": 5.0 }
+  },
+
+  "demand_split": {
+    "_note": "Shares of doc 02's published water_demand, routed to doc 01's residential / commercial channels and to flat process load. Rows sum to 1.000. This is the surviving form of the per-archetype process split (C-33); the magnitude is doc 02's and appears nowhere here.",
+    "house":             { "res": 1.00, "com": 0.00, "proc": 0.00 },
+    "apartment":         { "res": 0.88, "com": 0.05, "proc": 0.07 },
+    "store":             { "res": 0.00, "com": 0.55, "proc": 0.45 },
+    "office":            { "res": 0.00, "com": 0.73, "proc": 0.27 },
+    "high_rise":         { "res": 0.73, "com": 0.11, "proc": 0.16 },
+    "data_center":       { "res": 0.00, "com": 0.03, "proc": 0.97 },
+    "police_station":    { "res": 0.00, "com": 0.52, "proc": 0.48 },
+    "fire_station":      { "res": 0.00, "com": 0.34, "proc": 0.66 },
+    "power_facility":    { "res": 0.00, "com": 0.07, "proc": 0.93 },
+    "substation":        { "res": 0.00, "com": 0.00, "proc": 1.00 },
+    "water_facility":    { "res": 0.00, "com": 0.00, "proc": 1.00 },
+    "construction_yard": { "res": 0.00, "com": 0.42, "proc": 0.58 },
+    "_post_mvp": {
+      "factory":   { "res": 0.00, "com": 0.10, "proc": 0.90 },
+      "warehouse": { "res": 0.00, "com": 0.55, "proc": 0.45 },
+      "hospital":  { "res": 0.35, "com": 0.25, "proc": 0.40 },
+      "school":    { "res": 0.00, "com": 0.45, "proc": 0.55 },
+      "stadium":   { "res": 0.20, "com": 0.30, "proc": 0.50 }
+    },
+    "stadium_event_process_mult": 4.0
+  },
+
+  "_component_columns": {
+    "source_river": ["level","yield_m3h","base_kw","footprint_w","footprint_h"],
+    "source_well":  ["level","yield_m3h","base_kw","footprint_w","footprint_h"],
+    "treatment":    ["level","throughput_m3h","base_kw","footprint_w","footprint_h"],
+    "pump":         ["level","rated_flow_m3h","base_kw","head_m","footprint_w","footprint_h"],
+    "tank":         ["level","capacity_m3","max_inflow_m3h","max_outflow_m3h","head_m","base_kw","footprint_w","footprint_h"],
+    "booster":      ["level","boost_flow_m3h","head_bonus_m","base_kw","footprint_w","footprint_h"]
+  },
+  "components": {
+    "source_river": [[1,107,32,2,2],[2,262,79,2,2],[3,642,195,3,3],
+                     [4,1574,470,3,3],[5,3855,1160,4,4]],
+    "source_well":  [[1,66.5,50,1,1],[2,163,120,1,1],[3,399,300,2,2],
+                     [4,978,735,2,2],[5,2396,1800,3,3]],
+    "treatment":    [[1,80.0,40,2,2],[2,196,98,3,3],[3,480,240,3,3],
+                     [4,1176,590,4,4],[5,2882,1440,4,4]],
+    "pump":         [[1,40.0,60,34,3,3],[2,98.0,145,38,3,3],[3,240,360,42,3,3],
+                     [4,588,880,46,3,3],[5,1441,2160,52,4,4]],
+    "tank":         [[1,120,26.5,66.5,30,5.0,2,2],[2,294,65.0,163,32,12,2,2],
+                     [3,720,159,399,35,30,3,3],[4,1765,390,978,38,74,3,3],
+                     [5,4324,955,2396,42,180,4,4]],
+    "booster":      [[1,8.0,25,12,1,1],[2,19.5,34,29,1,1],[3,48.0,44,72,1,1],
+                     [4,118,56,175,2,2],[5,288,70,430,2,2]]
+  },
+
+  "mains": {
+    "service":  {"capacity_m3h":53.5, "break_rate_mult":1.0},
+    "trunk":    {"capacity_m3h":213,  "break_rate_mult":0.6},
+    "arterial": {"capacity_m3h":640,  "break_rate_mult":0.5},
+    "insulation_levels": [1, 2]
+  },
+
+  "backup": {
+    "_note": "This doc owns coverage_frac and the backup_kw sizing input (C-36). Doc 04 owns the generator: fuel, burn rate, tank size, start delay, refuelling, state and events. Doc 03 owns the price.",
+    "coverage_frac": { "1": 0.00, "2": 0.60, "3": 0.70, "4": 0.85, "5": 1.00 },
+    "backup_kw": {
+      "source_river": { "2": 47,  "3": 135, "4": 400, "5": 1160 },
+      "source_well":  { "2": 72,  "3": 210, "4": 625, "5": 1800 },
+      "treatment":    { "2": 59,  "3": 170, "4": 500, "5": 1440 },
+      "pump":         { "2": 87,  "3": 250, "4": 750, "5": 2160 },
+      "tank":         { "2": 7.0, "3": 21,  "4": 63,  "5": 180 },
+      "booster":      { "2": 17,  "3": 50,  "4": 150, "5": 430 }
+    }
+  },
+
+  "price_inputs": {
+    "_note": "Dimensionless ratios ONLY. Doc 03 is the sole currency authority (C-07) and prices every water asset from its build_cost_l1.water_plant = 45,000 anchor, which is the L1 pump reference variant. This doc authors no dollar figure; the deleted build_cost / maintenance_per_hour / cost_per_tile / base_cost / flush_cost / overhaul_cost_frac columns lived here and now live in doc 03 sections 2.3 / 2.5 / 2.13.",
+    "variant_cost_ratio_l1": { "source_river": 0.84, "source_well": 1.16, "treatment": 2.67,
+                               "pump": 1.00, "tank": 1.33, "booster": 0.78 },
+    "main_cost_ratio_per_tile": { "service": 1.00, "trunk": 2.81, "arterial": 7.50 },
+    "insulation_cost_ratio_per_tile": { "1": 0.34, "2": 0.81 },
+    "flush_cost_frac_of_capital": 0.125
+  },
+
+  "failures": {
+    "base_rate_per_hour": { "main_break": 0.000040, "pump_failure": 0.001500,
+                            "treatment_failure": 0.000900, "source_failure": 0.000300,
+                            "_main_break_note": "fallback / calibration reference only - doc 06 owns the roll (C-46)" },
+    "cond_mult_k": 6.0, "main_load_mult_knee": 0.85, "pump_load_mult_knee": 0.95,
+    "load_mult_gain": 1.5, "age_mult_per_60_days": 0.15, "age_mult_cap": 2.0,
+    "freeze_hazard_gain": 2.5, "freeze_mult_cap": 6.0,
+    "weather_failure_mult": { "thunderstorm": 1.20, "flood": 1.80, "heat_wave": 1.15, "blizzard": 1.10 },
+    "severity_base": 0.25, "severity_random": 0.60, "severity_condition_gain": 0.20,
+    "freeze": { "threshold_c": -6.0, "stress_gain_div": 10.0, "thaw_rate_per_hour": 0.5,
+                "insulation_reduction_per_level": 0.45, "break_base": 0.0020,
+                "exposed_pump_temp_c": -12.0, "exposed_pump_mult": 2.0 },
+    "condition_decay_per_hour": { "main": 0.000060, "pump": 0.000100, "treatment": 0.000080,
+                                  "tank": 0.000030, "source": 0.000060, "booster": 0.000090 },
+    "maintenance_decay_curve": { "at_zero_funding": 2.5, "gain": 1.5 }
+  },
+
+  "repair": {
+    "base_minutes": { "main_break": 50, "freeze_break": 50, "pump_failure": 90,
+                      "treatment_failure": 180, "source_failure": 120, "isolate_main": 8, "overhaul": 240 },
+    "damage_fraction": { "_formula": "clamp(0.5 + severity, 0, 1) * frozen_mult, clamped to [0,1] - the conversion doc 03 published for this doc (C-16)",
+                         "severity_base": 0.5, "severity_gain": 1.0, "frozen_mult": 1.15 },
+    "severity_floor": 0.6, "severity_gain": 0.8,
+    "mods": { "frozen": 1.6, "flooded": 1.4, "night": 1.1 },
+    "crew_mult": { "water_repair_truck": 1.0, "water_pump_truck": 0.8,
+                   "water_heavy_truck": 1.5, "water_flood_response": 1.0 },
+    "post_repair_condition": { "main_break": 0.85, "freeze_break": 0.80, "pump_failure": 0.90,
+                               "treatment_failure": 0.90, "source_failure": 0.90, "overhaul": 1.00 },
+    "temp_supply_m3h": 16.0, "temp_supply_hours": 10
+  },
+
+  "effects": {
+    "happiness_penalty_max": 40.0, "happiness_pressure_ref": 0.60, "happiness_exponent": 1.2,
+    "output_mult_floor": 0.15, "output_pressure_ref": 0.60, "upgrade_min_pressure": 0.55,
+    "upgrade_headroom_safety": 1.10,
+    "health_decay_start_hours": 12.0, "health_decay_per_hour": 2.0,
+    "abandon_hours": 36.0, "abandon_rate_per_hour": 0.005,
+    "no_water_pressure_threshold": 0.10, "recovery_pressure_threshold": 0.35,
+    "no_water_counter_decay_per_hour": 4.0,
+    "bands": { "normal": 0.60, "warn": 0.35, "critical": 0.10 }
+  },
+
+  "contamination": {
+    "on_treatment_fail_chance": 0.35, "on_flood_source_chance": 0.50, "base_minutes": 720,
+    "flush_minutes": 360, "happiness_penalty": 12.0,
+    "commercial_output_mult": 0.90, "hospital_service_mult": 0.85
+  },
+
+  "overlay": {
+    "quantize_steps": 255, "refresh_cadence": "EVERY_TICK",
+    "notification_priority": { "water_tank_empty": 1, "water_zone_offline": 1,
+                              "water_main_break": 2, "water_pump_failed": 2,
+                              "water_tank_low": 2, "water_capacity_shortage": 2,
+                              "water_contamination_started": 2, "water_repair_completed": 3 }
+  },
+
+  "feature_flags": { "freeze_enabled": false, "contamination_enabled": true,
+                     "boosters_enabled": false, "restrictions_enabled": false,
+                     "levels_4_5_enabled": false, "source_well_enabled": false }
+}
