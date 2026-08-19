@@ -468,7 +468,9 @@ Network lines (power feeders, water mains, congestion) draw as **one `ImmediateM
 
 ### 2.12 Vehicles
 
-**Civilian traffic — cosmetic, MultiMesh, render-side only** (constitution §8). **Doc 10** (roads, routing & traffic) supplies per-edge `density ∈ [0,1]` and cached polylines. `TrafficVisualizer` keeps ghost cars `(edge_id, s, speed, class)`, advances `s += speed·delta/edge_length`, respawns onto a weighted-random edge on completion. Spawn count per edge = `round(density · edge_length_m / 45.0)` (= `civ_spawn_per_m 0.0222`), capped by preset, only for edges within `civ_visible_radius_m` of focus. Headlights are a paired additive cone quad in `MM_headlights` with `visible_instance_count = 0` when `sc_night < 0.15`.
+**Civilian traffic — cosmetic, MultiMesh, render-side only** (constitution §8). **Doc 10** (roads, routing & traffic) supplies per-edge `density ∈ [0,1]` and cached polylines.
+
+**The pose feed is ONE packed event per tick (doc 91 D-10, shipped 2026-08-19).** `sim/roads/traffic_feed.gd` used to publish a `vehicle_state` dictionary per vehicle per tick — measured at **79.3% of every event on the bus**, and the largest allocator in a running city. It now publishes a single `traffic_snapshot{count, ids, edge_ids, kinds, flags, pose}` carrying every civilian pose in parallel `Packed*Array` columns (`pose` is 4 floats per vehicle: world x, world z, heading, speed; `flags` is a bitfield with headlights and dark-signal bits; civilians carry no siren or light bar, so neither is in the format). `sim/roads/traffic_snapshot.gd` owns the layout and both sides index it through the same constants. `vehicle_spawned` and `vehicle_despawned` stay individual — they are rare, they carry identity rather than motion, and the renderer allocates and retires a pooled record off each one. **The cadence is unchanged at 4 Hz**: the Hermite blend below interpolates between poses at Δt = 0.25 s, and a once-a-game-minute feed would be a 16× longer gap than it is authored for. The saving is the 256-to-1 collapse of the event *count*, not a cadence cut. Content and order are identical (ascending vehicle id), so the stream is as deterministic as it was, and the sim's own state is untouched — proved by the `state_hash` baseline, not asserted. `TrafficVisualizer` keeps ghost cars `(edge_id, s, speed, class)`, advances `s += speed·delta/edge_length`, respawns onto a weighted-random edge on completion. Spawn count per edge = `round(density · edge_length_m / 45.0)` (= `civ_spawn_per_m 0.0222`), capped by preset, only for edges within `civ_visible_radius_m` of focus. Headlights are a paired additive cone quad in `MM_headlights` with `visible_instance_count = 0` when `sc_night < 0.15`.
 
 `civ_visible_radius_m` is **re-derived from the new Z2 pose** (report R-17), because it must cover everything the camera can see at max zoom. At Z2 the camera nadir sits `420·cos 62° = 197.2` m behind the focus and the visible ground runs from 52.1 m to 411.8 m ahead of the nadir — i.e. from `52.1 − 197.2 = −145.1` m to `411.8 − 197.2 = +214.6` m along the view axis relative to focus, and out to `717.1 / 2 = 358.6` m laterally. Worst-case distance from focus: `sqrt(214.6² + 358.6²) = sqrt(46,053 + 128,594) = sqrt(174,647) = 418.0` m. **`civ_visible_radius_m` moves 400 → 420 m**, which covers the far corner with 2 m to spare. (The old 400 m was sized against the old 560 m ceiling and under-covered by 18 m; the coincidence that the number barely moved is because a 420 m orbit at 62° sees roughly as much ground as a 560 m orbit did off-centre.)
 
@@ -655,6 +657,61 @@ High (cap 8 NEAR, 4 splits, budget 520)
   8·13 = 104 opaque; shadow 8·8·4 = 256; + 41 = 401                                          ✓
 ```
 
+#### As shipped — the benchmark city, and what it measured (2026-08-19)
+
+Everything above this line was **arithmetic**. Doc 91 §2.13 filed that as D-8: the device matrix, the draw-call budget and the instance budget were all written against a 1,500-building city that nothing in the repo could produce, so none of them had ever been checked against a running frame. That city now exists and the numbers below are measured, not derived.
+
+**The fixture.** `tools/gen_bench_city.py --profile bench` emits `tests/fixtures/bench_city.json`, byte-identically on a re-run (doc 09 §2.13, test 40). It is the same generator family as the starter city — it imports `tools/gen_starter_city.py` for the environment profiles, the risk weights and the JSON encoder — and it is validated before it is written: 49 block rows, a 6×6 developed core, `36 × 87 = 3,132` road tiles, no building on a road or in the water, no overlaps, every building inside a transformer's service radius, and a night peak inside the grid's headroom.
+
+| as shipped | value | note |
+|---|---|---|
+| world / developed core | 7×7 blocks, **6×6 core (36 blocks)** | doc 09 §2.13 says an 8×8 world; `TileGrid.BLOCKS` is 7 and `StarterCityLoader` requires exactly 49 block rows, so the world stays 7×7 and the *core* is the doc's 6×6. The contents the doc sizes against are unchanged. |
+| buildings | **1,500** | 737 house · 324 store · 236 apartment · 103 office · 59 high_rise · 15 data_center · 26 civic |
+| level mix | L1 385 · **L2 519 · L3 347** · L4 209 · L5 40 | weighted to L2–L3 as doc 09 §2.13 asks; every LOD tier has instances |
+| road tiles | 3,132 | doc 09 §2.13's figure exactly |
+| streetlight *props* | ~780 (one per 4th road tile, §2.10) | the electrical sink is 3,132, one per road tile (doc 04) — deliberately different numbers |
+| water tiles | 85 | two lakes, each filling one road-bounded parcel |
+| power | 144 transformers (L5) · 36 feeders (class 3) · 6 substations (L4) · 2 plants (L5) | sized against the measured 122.3 MW night peak, not guessed |
+| population / jobs | 35,417 / 19,185 | |
+
+**Sim cost** — `tools/profile_sim.gd --city=res://tests/fixtures/bench_city.json`, best of 2, debug headless build on the dev workstation:
+
+| | starter (34 buildings) | **bench (1,500)** | ratio |
+|---|---|---|---|
+| fine tick (1 SimTick) | 1.58 ms | **22.00 ms** | 13.9× |
+| coarse step (1 game-hour) | 8.20 ms | **259.18 ms** | 31.6× |
+| 12 h catch-up (doc 01 budget 2 s) | 0.10 s | **3.11 s** | over budget |
+
+The fine tick's largest terms on the bench city are `roads_congestion` 5.17 ms, `water` 4.39, `power` 3.99, `roads` 2.50; the coarse step's are `incidents` 135.07 ms (52%) and `hourly` 62.03 (24%). **This is the headline finding of the exercise and it is a sim finding, not a render one:** at 1,500 buildings one SimTick costs 22 ms of a 250 ms tick period, which is fine for throughput but lands as a 22 ms spike on the frame it runs — over the whole 16.7 ms frame on its own. Doc 13 §2.9's catch-up arithmetic also has to be re-read against 259 ms/step: the 720-step cap is 186 s of veil, not the 39.6 s worst case that table contemplates, so `max_coarse_hours` (doc 08, report C-21's `ceil(2000 / measured_ms)`) resolves to **7** on this city.
+
+**Frame cost** — `tools/profile_frame.gd`, 1920×1080, Balanced, hour 21:00 (the emissive/glow worst case), 60 warm-up frames discarded, 240 measured. **Dev workstation, NVIDIA RTX 2000 Ada, Forward+ — this is not a phone and not the Mobile renderer.** It is a *relative* measurement: the draw-call and chunk columns are platform-independent and are the ones the budget is written against; the millisecond columns are here to show where the cost sits, not to claim a device result.
+
+| pose | mean ms | p95 ms | RS cpu | RS gpu | draw calls | +UI | budget | bucket nodes | NEAR | MED | FAR |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Z0 `D 18 / 34°` | 10.83 | 11.11 | 0.13 | 0.83 | 92 | 117 | 320 | 591 | 12 | 24 | 0 |
+| Z1 `D 86.9 / 48°` | 11.20 | 13.33 | 0.17 | 2.23 | 133 | 158 | 320 | 591 | 8 | 28 | 0 |
+| **Z2 `D 420 / 62°`** | 11.64 | 14.29 | 0.28 | 2.67 | **327** | **352** | **320** | 279 | **0** | 16 | 20 |
+| *starter city, Z2, for scale* | 0.96 | 1.23 | 0.06 | 0.83 | 80 | 105 | 320 | 18 | 0 | 9 | 0 |
+
+`RS cpu` / `RS gpu` are the RenderingServer's own measured times for the viewport; they do **not** sum to `mean ms` — the remainder (~8–9 ms) is the render layer's per-frame GDScript plus present.
+
+Three results, in order of how much they matter:
+
+1. **Z2 is over the Balanced draw-call budget: 352 against 320.** Not by a rounding error, and not for the reason §2.13's derivation would predict. The derivation's per-chunk cost model (8 building buckets NEAR, 6 MEDIUM) assumes a chunk holds about six distinct `archetype:level` combinations. The bench city's mix gives **591 bucket nodes across 36 chunks — 16.4 per chunk**, because a real block holds five archetypes at four levels rather than one archetype at one. Every §2.13 conclusion that rests on "10 calls per MEDIUM chunk" is optimistic by roughly 1.7× on a mixed city. *The fix is bucket merging (one MultiMesh per chunk per LOD, with the mesh selected by instance custom data) and it is not in this change; it is filed as a defect against §2.6.* Note that **the empty Z2 shadow pass survives intact** — 0 NEAR chunks, exactly as §2.13 claims, and that claim is what keeps the number at 352 rather than several hundred more.
+2. **The frame is main-thread bound, not GPU bound, and it scales with the city.** 0.96 ms per frame on 34 buildings against 11.64 ms on 1,500, while the GPU column moves only 0.83 → 2.67 ms. `CityView.refresh` flushes every dirty instance unbudgeted (`flush_dirty(camera_pos, 1000000)`), re-tiers every chunk, and walks all 591 bucket nodes on every frame. §2.2's `multimesh_instance_writes_per_frame = 2000` budget is authored but not enforced by the bring-up path.
+3. **The instance budget is comfortable.** 1,500 resident instances against a 7,000 Balanced budget, 100,906 primitives at the densest pose. Nothing in §2.13's instance or VRAM arithmetic is threatened.
+
+**Bus volume** — `tools/qa_soak.gd`, 0.25 real-hour session on the starter city, before and after the D-10 diet:
+
+| | events on the bus | share |
+|---|---|---|
+| before (one `vehicle_state` per vehicle per tick) | 55,675 | `vehicle_state` = 44,153 = **79.3%** |
+| **after** (one packed `traffic_snapshot` per tick) | **18,221** | `traffic_snapshot` = 6,699 events carrying the same 44,153 poses |
+
+**3.05× less traffic on the bus**, and the 44,153 dictionaries became 6,699 events of five packed buffers. Save identity is unchanged and proved rather than asserted: `tools/profile_sim.gd --hash-only --baseline=…` reports `BEHAVIOUR UNCHANGED` on both the starter and the bench city, on both the fine and the coarse path. The bus is not persisted (`SimEventBus` keeps no history), so this was true by construction; the baseline check is what makes it checked.
+
+**The governor, as shipped.** `game/render/perf_governor.gd` implements the ladder and the holds above and doc 13 §2.8's thermal policy, as a model with no Node and no engine singleton — which is what lets `tests/test_perf_governor.gd` drive the 5 s and 30 s holds in microseconds. Settings row `auto_quality` ("Auto quality", `data/ui.json`), **default on**, device-scoped. Two behaviours worth stating because they are choices, not consequences: switching the row **off freezes the knobs where they stand** rather than restoring the preset (a quality *jump* is the one thing a manual-control switch must not cause), and a preset the *player* picks resets the ladder and clears a latched drop, because their choice outranks the governor's.
+
 #### Device matrix
 
 | Tier | Representative devices | GPU | Preset | Target |
@@ -756,7 +813,7 @@ Level identity = height + a **cumulative** marker: L1 none; L2 +1 rooftop box; L
 | `BlockDarkChanged{block_dark: false}`, `render_relight_started(block_id, duration_s)` | sim / §2.7.3 t=0 | `relight_hum` | transformer swell, file length **3.15 s**, peak at **1.10 s** carrying the **1.35×** inrush overshoot — `render_relight_peak` needs no cue of its own because the beat is baked into the asset |
 | `lightning_strike{world_pos, magnitude}` | doc 07 | `thunder_crack` ≤ 260 m, else `thunder_rumble` | delayed by `distance(camera, strike) / 340.0` s; `magnitude` spans a 6 dB range |
 | `weather_changed{precip01, wind_kph}` | doc 07 | `rain` / `wind` / **`storm`** beds | rain gain follows `precip01` past a threshold; wind gain *and pitch* follow `wind_kph`; the storm bed needs **both** and sits under the wind bed (§2.15.1) |
-| `vehicle_state{siren}` | doc 10 / doc 06 | `siren_pass`, throttled | at most 2 audible, nearest-first, three hysteresis mechanisms, re-triggered every 3.3 s at the unit's current position (§2.15.1) |
+| `vehicle_state{siren}` | doc 06 *(doc 10's civilian feed no longer emits it — D-10's diet)* | `siren_pass`, throttled | at most 2 audible, nearest-first, three hysteresis mechanisms, re-triggered every 3.3 s at the unit's current position (§2.15.1) |
 | `incident_created` | doc 06 | `alert_high` when `notification_priority == 1`, else `alert_low` | doc 08's notification class picks the sting |
 | `unit_dispatched` | doc 06 | `siren_pass` | placed at the incident it is answering (the payload carries no position); the pass-by fade and doppler are in the asset |
 | `building_placed_sim` | doc 02 | `purchase` | the player's own confirmation — distance `none`, always crisp |
@@ -773,7 +830,7 @@ Level identity = height + a **cumulative** marker: L1 none; L2 +1 rooftop box; L
 
 Four changes, three of them from the Audio-2 ruling and one from the same pass's weather brief.
 
-**Moving sirens, and the throttle that is the actual deliverable.** `vehicle_state.siren` is wired. What made it wrong before was never the doppler — that stays baked into `siren_pass` and nothing pitch-shifts at runtime — it was that ~1,400 events per game hour with no policy is a wall of noise. `game/audio/siren_throttle.gd` is the policy: at most `sirens.max_sources` (2) audible, nearest-first, with **three separate hysteresis mechanisms** because one radius pops three different ways — `enter_m` 420 < `exit_m` 640 so a source must come closer to win a slot than to keep one; `takeover_margin_m` 90 so a challenger must be *meaningfully* closer than an incumbent, not merely closer; and `min_hold_s` 4.0 to bound how often the audible set can change at all. An audible source re-triggers its baked pass every `retrigger_s` 3.3 **at its current position**, so distance and direction fall out of the ordinary attenuation. Two ingest doors, one table: doc 10's `vehicle_state` events and doc 06's `IncidentSystem.vehicle_states()` snapshot (`sirens.siren_statuses` is the only place audio names a doc 06 FSM status). `unit_dispatched` keeps its rule as the *departure* beat and shares the throttle's identity (`key_prefix: "u"` → `siren_pass/u7`), so the two can never sound the same unit twice at the station door. A civilian vehicle still costs two dictionary probes and nothing else.
+**Moving sirens, and the throttle that is the actual deliverable.** `vehicle_state.siren` is wired. What made it wrong before was never the doppler — that stays baked into `siren_pass` and nothing pitch-shifts at runtime — it was that ~1,400 events per game hour with no policy is a wall of noise. `game/audio/siren_throttle.gd` is the policy: at most `sirens.max_sources` (2) audible, nearest-first, with **three separate hysteresis mechanisms** because one radius pops three different ways — `enter_m` 420 < `exit_m` 640 so a source must come closer to win a slot than to keep one; `takeover_margin_m` 90 so a challenger must be *meaningfully* closer than an incumbent, not merely closer; and `min_hold_s` 4.0 to bound how often the audible set can change at all. An audible source re-triggers its baked pass every `retrigger_s` 3.3 **at its current position**, so distance and direction fall out of the ordinary attenuation. Two ingest doors, one table: the `vehicle_state` record shape and doc 06's `IncidentSystem.vehicle_states()` snapshot (`sirens.siren_statuses` is the only place audio names a doc 06 FSM status). `unit_dispatched` keeps its rule as the *departure* beat and shares the throttle's identity (`key_prefix: "u"` → `siren_pass/u7`), so the two can never sound the same unit twice at the station door. A civilian vehicle now costs *nothing at all*: since D-10's bus diet (2026-08-19) doc 10 publishes one packed `traffic_snapshot` per tick carrying no siren field, audio does not subscribe to it, and the ~1,400-events-per-game-hour firehose that made the throttle necessary in the first place never reaches this class. The throttle stays — doc 06's fleet is what it was always really for — and the two-probe fast path stays with it, because a bulk-arriving vehicle record must be cheap whoever sends it.
 
 **`count_gain`.** The dedup fold has always been right — twelve dark blocks are ONE thunk — but it also meant twelve blocks and one block were the same *sound*, which is a lie. `count_gain` adds `per_doubling_db` (1.6) per doubling of the fold count, capped at the ruling's **+4 dB**: legible between one block and eight, identical between twelve and forty. Opt-in per rule (blackout, relight, thunder, routine incidents); a construction tick deliberately does not swell.
 
@@ -872,7 +929,7 @@ battery_saver=false        ; caps to 30 FPS and forces Performance
 | `TrafficVisualizer` | Node | cosmetic civilian MultiMesh traffic |
 | `VehicleView` | Node3D | one emergency/service vehicle, interpolated |
 | `OverlayRenderer` | Node3D | `ImmediateMesh` network lines |
-| `PerfGovernor` | Node | p95 tracking, knob ladder, `PERF` logcat line |
+| `PerfGovernor` | **RefCounted** *(as shipped)* | p95 tracking, knob ladder, thermal ladder, `PERF` logcat line. Shipped as a model rather than a Node: it owns no timer and touches no engine singleton, so its 5 s and 30 s holds are driven in microseconds by `tests/test_perf_governor.gd` instead of being untestable. The shell feeds it `submit_frame(ms)` / `update(delta)` and routes `knobs()` to the four owners |
 | `GrayboxGenerator` | `@tool` | `tools/gen_graybox.gd`, offline |
 
 **Entry points**
@@ -888,11 +945,29 @@ RenderStateModel.apply_snapshot(snap) -> void                 # honours snap.is_
 RenderStateModel.plan_blackout(block_id: int) -> void
 RenderStateModel.plan_relight(block_id: int, restore_order: PackedInt32Array,
                               source_pos: Vector3) -> void    # order first, distance fallback
+RenderStateModel.apply_governor(knobs: Dictionary) -> void    # §2.13 knob 3, clamped to the preset
+RenderStateModel.tier_census() -> Dictionary                  # {near, medium, far, culled}
+CityView.apply_governor(knobs: Dictionary) -> void            # + an immediate re-upload
+CityView.perf_stats() -> Dictionary                           # the PERF line's counters
+
+PerfGovernor.submit_frame(frame_ms: float) -> void            # every frame
+PerfGovernor.update(delta: float) -> bool                     # true = a knob moved
+PerfGovernor.knobs() -> Dictionary                            # {render_scale, particle_ratio,
+                                                              #  far_cull_m, street_lights, preset}
+PerfGovernor.set_thermal_status(status: int) -> void          # AndroidNative's signal
+PerfGovernor.target_fps() -> int                              # doc 13 §2.8's frame cap
+PerfGovernor.perf_line(t_s: float, stats: Dictionary) -> String
 ```
+
+**Knob ownership.** Only `far_cull_m` lands inside this doc's own objects (`RenderStateModel` →
+`raw_tier` → `CityView`'s culled chunks). The other three belong to their owners and the shell
+routes them: `render_scale` to the 3D `SubViewport` (§5's C-69 ruling), `particle_ratio` to
+`WeatherFX`'s `amount_ratio`, `street_lights` to `StreetlightView`'s omni pool, `preset` to whoever
+holds the preset switch. The governor deliberately reaches into none of them.
 
 **Commands issued inward:** none. The renderer is read-only. A pick resolves a building **id** via raycast against chunk AABBs + footprint tiles and hands it to `ui/`, which issues the command.
 
-**Events consumed:** `building_placed`, `building_upgraded`, `building_removed`, `building_construction_stage`, `building_damage_changed`, `building_power_changed`, **`BlockDarkChanged{block_id, block_dark, powered_fraction, restore_order}`** *(report RR-1: renamed from `DistrictDarkChanged`; doc 04 §4 is the emitter and owns the name)*, `block_development_changed`, `road_network_changed`, `network_topology_changed`, `vehicle_spawned/state/despawned`, `weather_changed{precip01, …}`, `lightning_strike`.
+**Events consumed:** `building_placed`, `building_upgraded`, `building_removed`, `building_construction_stage`, `building_damage_changed`, `building_power_changed`, **`BlockDarkChanged{block_id, block_dark, powered_fraction, restore_order}`** *(report RR-1: renamed from `DistrictDarkChanged`; doc 04 §4 is the emitter and owns the name)*, `block_development_changed`, `road_network_changed`, `network_topology_changed`, `vehicle_spawned`, **`traffic_snapshot`** *(doc 91 D-10: the packed civilian pose event that replaced per-vehicle `vehicle_state`; doc 06's emergency fleet still arrives as the `vehicle_states()` snapshot, not on the bus)*, `vehicle_despawned`, `weather_changed{precip01, …}`, `lightning_strike`.
 
 **Events emitted outward** (to `ui/`, and to `game/audio/` from Phase 2 — report G-3): `render_relight_started(block_id, duration_s)`, `render_relight_peak(block_id)`, `render_blackout_started(block_id)`, `render_lightning_flash(world_pos, magnitude)`, `render_preset_changed(preset)`, `render_governor_stepped(knob, direction)`, `render_chunk_ready(bx, by)`. *(The `district_id` parameter is renamed `block_id` throughout, per report C-38: the renderer's unit is the land block, and it is the same integer it always was.)*
 
@@ -1044,7 +1119,7 @@ These read two or more files and fail the build when a sibling doc's data drifts
 
 ### 7.4 On-device — `tools/bench_flythrough.gd` + adb
 
-A deterministic 90 s camera path over `tests/fixtures/bench_city.json` — **generated by doc 09 (`tools/gen_bench_city.py`, same generator family as the starter city), validated by doc 08 against the current save schema in CI, consumed here** (report G-7, ruled; former §9 open question 20 is closed). Contents: 6×6 developed blocks, ~1,100 buildings, ~790 streetlights (36 blocks × ~22), 20 emergency vehicles. Three scenarios:
+A deterministic 90 s camera path over `tests/fixtures/bench_city.json` — **generated by doc 09 (`tools/gen_bench_city.py`, same generator family as the starter city), validated by doc 08 against the current save schema in CI, consumed here** (report G-7, ruled; former §9 open question 20 is closed). Contents **as shipped** (see §2.13's as-shipped table): a 7×7 world with a **6×6 developed core (36 blocks)**, **1,500 buildings** across L1–L5, 3,132 road tiles, ~780 streetlight props, and the civic roster that houses the emergency fleet. *(The pre-build figures were "~1,100 buildings" and an 8×8 world; the count moved to doc 91's 1,500 — the size this section's device matrix is written against — and the world stayed 7×7 because `TileGrid.BLOCKS` is 7. Doc 09 §2.13's profile table carries the same numbers.)* The device harness is `tools/bench_device.sh`, which drives the three scenarios below over adb and collects both our `PERF` lines and the platform's `gfxinfo`/`meminfo`/`thermalservice` output; it ships ready and **has not been run against a device yet**. Three scenarios:
 
 - **S1** — 12:00 clear (worst case for shadows + draw calls)
 - **S2** — 20:00 clear (worst case for emissives + glow)

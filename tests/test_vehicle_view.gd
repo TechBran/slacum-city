@@ -2,7 +2,9 @@ extends SimTest
 ## Doc 11 §2.12's vehicle layer, view side: the procedural bodies against the
 ## triangle budgets in `data/render.json`, the draw-call count against §2.13's
 ## budget, and `VehicleView`'s ingestion of both feeds — doc 10's cosmetic
-## `vehicle_spawned/state/despawned` stream and doc 06's fleet snapshot.
+## `vehicle_spawned` / `traffic_snapshot` / `vehicle_despawned` stream (doc 91
+## D-10's bus diet packed motion into one event per tick) and doc 06's fleet
+## snapshot.
 
 const CIV_TRI_MAX := 90       # data/render.json vehicles.civ_body_tris_max
 const EMERGENCY_TRI_MAX := 180  # …emergency_body_tris_max
@@ -15,6 +17,36 @@ func _view() -> VehicleView:
 	var view := VehicleView.new()
 	view.setup(StarterCityLoader.read_json("res://data/render.json"))
 	return view
+
+
+## Build the packed motion event the sim now publishes, from readable rows.
+## The test writes what it means; `TrafficSnapshot` owns the layout.
+func _snapshot(rows: Array) -> Dictionary:
+	var count := rows.size()
+	var ids := PackedInt32Array()
+	var edges := PackedInt32Array()
+	var kinds := PackedByteArray()
+	var flags := PackedByteArray()
+	var pose := PackedFloat32Array()
+	ids.resize(count)
+	edges.resize(count)
+	kinds.resize(count)
+	flags.resize(count)
+	pose.resize(count * TrafficSnapshot.POSE_STRIDE)
+	for i in count:
+		var row: Dictionary = rows[i]
+		ids[i] = int(row.get("id", 0))
+		edges[i] = int(row.get("edge_id", -1))
+		kinds[i] = TrafficSnapshot.kind_index(String(row.get("kind", "car")))
+		flags[i] = (TrafficSnapshot.FLAG_HEADLIGHTS if bool(row.get("headlights", false)) else 0) \
+				| (TrafficSnapshot.FLAG_DARK if bool(row.get("dark", false)) else 0)
+		var position: Vector3 = row.get("pos", Vector3.ZERO)
+		var base := i * TrafficSnapshot.POSE_STRIDE
+		pose[base + TrafficSnapshot.POSE_X] = position.x
+		pose[base + TrafficSnapshot.POSE_Z] = position.z
+		pose[base + TrafficSnapshot.POSE_HEADING] = float(row.get("heading", 0.0))
+		pose[base + TrafficSnapshot.POSE_SPEED] = float(row.get("speed", 0.0))
+	return TrafficSnapshot.make_vehicle_event(count, ids, edges, kinds, flags, pose)
 
 
 func _spawn(id: int, kind := "car", pos := Vector3(80.0, 0.0, 80.0),
@@ -109,16 +141,47 @@ func test_spawn_state_despawn_lifecycle() -> void:
 	assert_eq(view.vehicle_count(), 1, "a spawn adds one vehicle")
 	var v := view.motion(4)
 	assert_true(v != null and v.mesh_key == "car", "kind picks the body")
-	view.apply_event({"type": &"vehicle_state", "id": 4, "kind": "car",
-			"vehicle_class": "civilian", "pos": Vector3(88.0, 0.0, 80.0),
-			"heading": 0.0, "speed": 34.0, "edge_id": 7, "siren": false,
-			"lightbar": false, "headlights": true})
-	assert_true(view.motion(4).headlights, "state carries the headlight flag")
+	view.apply_event(_snapshot([{"id": 4, "kind": "car", "edge_id": 7,
+			"pos": Vector3(88.0, 0.0, 80.0), "heading": 0.0, "speed": 34.0,
+			"headlights": true}]))
+	assert_true(view.motion(4).headlights, "the packed flag byte carries headlights")
+	assert_eq(view.motion(4).edge_id, 7, "and the edge column lands too")
 	view.apply_event({"type": &"vehicle_despawned", "id": 4, "reason": "arrived"})
 	assert_false(view.motion(4).alive, "despawn marks it dying…")
 	assert_eq(view.vehicle_count(), 1, "…but it is still fading")
 	view.refresh(view.fade_s + 0.1, 0.0, 1.0)
 	assert_eq(view.vehicle_count(), 0, "and is dropped once faded out")
+	view.free()
+
+
+## Doc 91 D-10: the packed event is also the RESYNC path. `main.gd` rebuilds the
+## whole view on save-load, so the first batch after that carries poses for cars
+## whose `vehicle_spawned` went to the previous view.
+func test_snapshot_row_for_an_unknown_vehicle_seeds_it() -> void:
+	var view := _view()
+	view.apply_event(_snapshot([
+		{"id": 11, "kind": "van", "edge_id": 3, "pos": Vector3(40.0, 0.0, 24.0),
+			"heading": 1.5, "speed": 20.0},
+		{"id": 12, "kind": "truck", "edge_id": 4, "pos": Vector3(48.0, 0.0, 24.0),
+			"heading": 1.5, "speed": 18.0, "headlights": true},
+	]))
+	assert_eq(view.vehicle_count(), 2, "both rows became vehicles without a spawn event")
+	assert_eq(view.motion(11).mesh_key, "van", "the packed kind byte picks the body")
+	assert_eq(view.motion(12).mesh_key, "truck")
+	assert_false(view.motion(11).headlights)
+	assert_true(view.motion(12).headlights, "flags are per row, not per event")
+	assert_false(view.motion(12).siren, "civilians carry no siren in the packed format")
+	view.free()
+
+
+## An empty snapshot is not a despawn — the feed simply skips the event when the
+## city is asleep, and a stray empty one must not blank the street.
+func test_empty_snapshot_changes_nothing() -> void:
+	var view := _view()
+	view.apply_event(_spawn(9))
+	view.apply_event(_snapshot([]))
+	assert_eq(view.vehicle_count(), 1)
+	assert_true(view.motion(9).alive)
 	view.free()
 
 

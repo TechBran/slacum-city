@@ -829,6 +829,12 @@
 				"default_from": "defaults.graphics"
 			},
 			{
+				"_comment": "Doc 11 §2.13's adaptive governor (game/render/perf_governor.gd). ON by default: the preset above is a ceiling the player picks, and this decides whether the game is allowed to spend less than it under load or thermal pressure. Switching it OFF freezes the knobs where they stand rather than snapping them back to the preset -- a quality JUMP at the moment the player asks for manual control is the one thing the toggle must not do. Device-scoped, like the preset it modulates.",
+				"key": "auto_quality",
+				"kind": "toggle",
+				"default": true
+			},
+			{
 				"key": "autosave_interval_min",
 				"kind": "choice",
 				"options": [
@@ -877,6 +883,7 @@
 		],
 		"device_scoped_keys": [
 			"graphics",
+			"auto_quality",
 			"text_scale",
 			"reduce_motion",
 			"larger_touch_targets",

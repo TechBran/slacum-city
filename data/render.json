@@ -206,7 +206,8 @@
                   "t95_high_ms":13.0, "t95_balanced_ms":20.0, "t95_performance_ms":30.0,
                   "tier_d_far_cull_m":700.0, "tier_d_chunk_budget":16 },
 
-  "governor": { "window_frames":120, "eval_interval_s":1.0,
+  "governor": { "_owner": "doc 11 §2.13, implemented by game/render/perf_governor.gd. The budget the ratios are taken against is 1000 / presets[active].target_fps, so a Performance device is judged at 33.3 ms and a Balanced one at 16.7 -- the governor never compares a phone against a budget its preset did not promise.",
+                "window_frames":120, "eval_interval_s":1.0,
                 "step_down_ratio":1.25, "step_down_hold_s":5.0,
                 "step_up_ratio":0.80, "step_up_hold_s":30.0,
                 "knobs": [ {"id":"render_scale","delta":-0.05,"floor":0.60},
@@ -215,5 +216,10 @@
                            {"id":"street_lights","delta":-4,"floor":4},
                            {"id":"preset_drop","latch":true} ],
                 "protected": ["emissive","blackout","glow_enabled"],
+                "_thermal": "doc 13 §2.8's statuses (PowerManager.THERMAL_STATUS_*, 0 NONE .. 6 SHUTDOWN), pushed through AndroidNative.thermal_status_changed. At/above thermal_block_up_status the governor stops stepping UP; at/above thermal_step_down_status it steps down on the next evaluation WITHOUT waiting out step_down_hold_s, because thermal headroom does not return by itself; at/above thermal_force_preset_status it latches the preset one rung down immediately. Cooling is hysteretic: a lower status only takes effect after thermal_recover_s at that status (doc 13 §2.8), so a device sitting on a boundary cannot oscillate. NOTE, flagged: doc 13 §2.8 also lists 'glow off' at SEVERE. glow_enabled is on `protected` above and doc 11 owns rendering, so the governor drops the preset instead and the signature moment survives.",
+                "thermal_block_up_status": 2,
+                "thermal_step_down_status": 3,
+                "thermal_force_preset_status": 4,
+                "thermal_recover_s": 30.0,
                 "perf_log_interval_s": 2.0 }
 }

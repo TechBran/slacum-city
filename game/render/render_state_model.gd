@@ -43,6 +43,10 @@ var chunk_m: float = 128.0
 var near_max_m: float = 150.0
 var medium_max_m: float = 420.0
 var far_cull_m: float = 1200.0
+## The active preset's authored `far_cull_m` — the ceiling `apply_governor`
+## clamps to, so a governor step can shorten the draw distance but never extend
+## it past the quality level the player selected.
+var preset_far_cull_m: float = 1200.0
 var hysteresis_m: float = 20.0
 var lod_dwell_s: float = 0.5
 
@@ -233,6 +237,39 @@ func set_preset(preset_name: String) -> void:
 	var presets: Dictionary = cfg.get("presets", {})
 	if presets.has(preset_name):
 		far_cull_m = float((presets[preset_name] as Dictionary).get("far_cull_m", far_cull_m))
+	preset_far_cull_m = far_cull_m
+
+
+## §2.13's adaptive governor, knob 3 (`far_cull_m`, −128 m per step, floor
+## 600 m). `game/render/perf_governor.gd` owns the ladder and the hysteresis; all
+## that reaches the model is the value in force, and `raw_tier` picks it up on
+## the very next `update_chunk_tiers` — a shortened cull distance moves chunks
+## straight to `TIER_CULLED` and `CityView` stops submitting them.
+##
+## The model deliberately holds `preset_far_cull_m` separately: a preset change
+## must re-base the ceiling (that is what `set_preset` does), while a governor
+## step must never be able to *raise* the cull beyond the preset the player
+## chose. Anything the governor sends is clamped to that ceiling here rather
+## than trusted, because this is the layer the LOD arithmetic actually reads.
+func apply_governor(knobs: Dictionary) -> void:
+	if not knobs.has("far_cull_m"):
+		return
+	far_cull_m = clampf(float(knobs["far_cull_m"]), 1.0, preset_far_cull_m)
+
+
+## Census of the tiers actually assigned right now — `{near, medium, far,
+## culled}`. Doc 11 §7.2 test 19 asserts against it at the three §2.5 poses and
+## §7.4's PERF line reports it, which is why it lives here (the model owns the
+## tiers) rather than being recounted by each caller.
+func tier_census() -> Dictionary:
+	var out := {"near": 0, "medium": 0, "far": 0, "culled": 0}
+	for coord in _chunks:
+		match (_chunks[coord] as ChunkRec).tier:
+			TIER_NEAR: out["near"] = int(out["near"]) + 1
+			TIER_MEDIUM: out["medium"] = int(out["medium"]) + 1
+			TIER_FAR: out["far"] = int(out["far"]) + 1
+			TIER_CULLED: out["culled"] = int(out["culled"]) + 1
+	return out
 
 
 func set_hour(h: float) -> void:

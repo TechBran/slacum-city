@@ -529,6 +529,43 @@ func building_draw_calls() -> int:
 	return n + far_chunk_count()
 
 
+## §2.13's adaptive governor, applied to the city layer.
+##
+## Only one rung of the ladder lands here — `far_cull_m` — and it lands through
+## the model, because the model owns tier assignment and the view only mirrors
+## it. What this method adds is IMMEDIACY: a re-upload right now, so a step
+## taken because the frame is already too long pays back on the next frame
+## rather than at the next tier update.
+##
+## `render_scale` belongs to the 3D SubViewport, `particle_ratio` to
+## `WeatherFX`, `street_lights` to `StreetlightView`, and `preset` to whoever
+## owns the preset switch; the shell routes each to its owner. This view
+## deliberately does not reach across to any of them.
+func apply_governor(knobs: Dictionary) -> void:
+	if model == null:
+		return
+	var was := model.far_cull_m
+	model.apply_governor(knobs)
+	if not is_equal_approx(was, model.far_cull_m):
+		_upload_all()
+
+
+## The counters §7.4's PERF line reports, gathered in the one place that can see
+## both the model's tiers and the nodes actually submitted.
+func perf_stats() -> Dictionary:
+	var census: Dictionary = model.tier_census() if model != null else {}
+	var visible_chunks := int(census.get("near", 0)) + int(census.get("medium", 0)) \
+			+ int(census.get("far", 0))
+	return {
+		"chunks": visible_chunks,
+		"near_chunks": int(census.get("near", 0)),
+		"far_chunks": int(census.get("far", 0)),
+		"culled_chunks": int(census.get("culled", 0)),
+		"instances": model.building_count() if model != null else 0,
+		"draw_calls": building_draw_calls(),
+	}
+
+
 func _upload_all() -> void:
 	for chunk in model._sorted_chunk_coords():
 		var far := _renders_far(chunk)

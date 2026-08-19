@@ -8,7 +8,11 @@ extends Node3D
 ##
 ##   vehicle_spawned  {id, kind, vehicle_class, pos, heading, speed, edge_id,
 ##                     siren, lightbar, headlights}
-##   vehicle_state    {…the same shape, once per sim TICK…}
+##   traffic_snapshot {count, ids, edge_ids, kinds, flags, pose} — ONE event per
+##                    sim TICK carrying EVERY civilian pose in packed columns
+##                    (doc 91 D-10's bus diet; format in
+##                    `sim/roads/traffic_snapshot.gd`). It replaced the
+##                    per-vehicle `vehicle_state` event, which no longer exists.
 ##   vehicle_despawned{id, reason}
 ##
 ## Doc 06's fleet does not publish poses on the bus; it exposes them as
@@ -267,8 +271,8 @@ func apply_event(e: Dictionary) -> void:
 	match String(e.get("type", "")):
 		"vehicle_spawned":
 			_ingest(e, true)
-		"vehicle_state":
-			_ingest(e, false)
+		"traffic_snapshot":
+			_ingest_snapshot(e)
 		"vehicle_despawned":
 			_retire(_key_for(e))
 		"unit_dispatched":
@@ -402,6 +406,52 @@ func _ingest(e: Dictionary, spawned: bool) -> void:
 	v.set_state(_as_vec3(e.get("pos", Vector3.ZERO)),
 			float(e.get("heading", 0.0)), float(e.get("speed", 0.0)),
 			_gm_per_s, spawned)
+
+
+## Doc 10's packed pose event (doc 91 D-10's bus diet) — one event carrying
+## every civilian vehicle's pose for this tick, in ascending id.
+##
+## The columns are read STRAIGHT out of the `Packed*Array`s. Round-tripping
+## each row through `TrafficSnapshot.vehicle_at()` would be tidier to read and
+## would re-allocate the 256 dictionaries the diet exists to delete, so the
+## layout constants are used directly and the accessor is left for tests.
+##
+## A pose for a vehicle we have never seen is not an error and is not dropped:
+## it is a spawn we missed (a save was loaded, the view was rebuilt, the batch
+## was truncated), so the row seeds a fresh record exactly as `vehicle_spawned`
+## would. The layer keys off the packed `kind` byte for its mesh.
+func _ingest_snapshot(e: Dictionary) -> void:
+	var count := TrafficSnapshot.vehicle_count(e)
+	if count <= 0:
+		return
+	var ids: PackedInt32Array = e[TrafficSnapshot.KEY_IDS]
+	var edge_ids: PackedInt32Array = e[TrafficSnapshot.KEY_EDGES]
+	var kinds: PackedByteArray = e[TrafficSnapshot.KEY_KINDS]
+	var flags: PackedByteArray = e[TrafficSnapshot.KEY_FLAGS]
+	var pose: PackedFloat32Array = e[TrafficSnapshot.KEY_POSE]
+	for index in count:
+		var key := int(ids[index])
+		var v: VehicleMotion = _vehicles.get(key)
+		var spawned := false
+		if v == null:
+			var kind := TrafficSnapshot.kind_name(int(kinds[index]))
+			v = _make(key, kind if CIV_KINDS.has(kind) else "car", "civilian")
+			v.kind = kind
+			v.paint = _paint_for(v)
+			spawned = true
+		var bits := int(flags[index])
+		v.alive = true
+		v.edge_id = int(edge_ids[index])
+		v.headlights = (bits & TrafficSnapshot.FLAG_HEADLIGHTS) != 0
+		# Civilians have neither, always — the packed format does not carry them.
+		v.siren = false
+		v.lightbar = false
+		var base := index * TrafficSnapshot.POSE_STRIDE
+		v.set_state(Vector3(pose[base + TrafficSnapshot.POSE_X], 0.0,
+						pose[base + TrafficSnapshot.POSE_Z]),
+				float(pose[base + TrafficSnapshot.POSE_HEADING]),
+				float(pose[base + TrafficSnapshot.POSE_SPEED]),
+				_gm_per_s, spawned)
 
 
 func _key_for(e: Dictionary) -> int:

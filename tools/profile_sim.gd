@@ -26,6 +26,13 @@ extends SceneTree
 ##                       any state_hash mismatch
 ##   --out=FILE          write this run's JSON (hashes + per-system usec)
 ##   --quiet             table only, no progress lines
+##   --city=PATH         boot a different city file instead of
+##                       `data/starter_city.json` — e.g. doc 09 §2.13's
+##                       benchmark fixture, `res://tests/fixtures/bench_city.json`
+##                       (1,500 buildings). Doc 11 §2.13's sim-step column is
+##                       measured with this flag; the hashes it prints belong to
+##                       that city and must not be compared against a starter
+##                       baseline.
 ##
 ## Typical optimization loop:
 ##   ... --out=/tmp/before.json          # record
@@ -34,6 +41,11 @@ extends SceneTree
 const DEFAULT_SEED := 1337
 const DEFAULT_FINE_HOURS := 2.0
 const DEFAULT_COARSE_HOURS := 24
+const STARTER_CITY := "res://data/starter_city.json"
+
+## The city every boot in this run uses. A single place, because a run that
+## timed one city and hashed another would be worse than no measurement.
+static var city_path := STARTER_CITY
 
 var _timer_stack: Array[int] = []
 var _timer_ids: Array[StringName] = []
@@ -64,10 +76,17 @@ func _initialize() -> void:
 			return
 		baseline = parsed
 
+	city_path = opts.city
+	if city_path != STARTER_CITY and not FileAccess.file_exists(city_path):
+		printerr("profile_sim: no such city file " + city_path)
+		quit(2)
+		return
+
 	var result := {
 		"seed": opts.seed,
 		"fine_hours": opts.fine_hours,
 		"coarse_hours": opts.coarse_hours,
+		"city": city_path,
 	}
 
 	# ---------------------------------------------------------- identity pass
@@ -118,14 +137,34 @@ func _initialize() -> void:
 
 # --------------------------------------------------------------- identity
 
+## One boot, one place. `CitySim.boot_from_files` hard-codes the starter city,
+## so a non-default `--city` takes the long form — the same five data files,
+## with the city swapped.
+static func _boot(seed_value: int) -> CitySim:
+	if city_path == STARTER_CITY:
+		return CitySim.boot_from_files(seed_value)
+	var sim := CitySim.new()
+	sim.boot(seed_value,
+			StarterCityLoader.read_json("res://data/time.json"),
+			StarterCityLoader.read_json(city_path),
+			StarterCityLoader.read_json("res://data/buildings.json"),
+			StarterCityLoader.read_json("res://data/building_rules.json"),
+			StarterCityLoader.read_json("res://data/grid_components.json"))
+	if not sim.boot_errors.is_empty():
+		printerr("profile_sim: %d boot error(s) from %s" % [sim.boot_errors.size(), city_path])
+		for message in sim.boot_errors:
+			printerr("  " + String(message))
+	return sim
+
+
 func _hash_after_coarse(seed_value: int, hours: int) -> String:
-	var sim := CitySim.boot_from_files(seed_value)
+	var sim := _boot(seed_value)
 	sim.advance_coarse_hours(hours)
 	return sim.state_hash()
 
 
 func _hash_after_fine(seed_value: int, hours: float) -> String:
-	var sim := CitySim.boot_from_files(seed_value)
+	var sim := _boot(seed_value)
 	sim.advance_hours(hours)
 	return sim.state_hash()
 
@@ -152,7 +191,7 @@ func _compare_hashes(baseline: Dictionary, result: Dictionary) -> bool:
 # ----------------------------------------------------------------- timing
 
 func _time_fine(seed_value: int, ticks: int, profiled: bool) -> Dictionary:
-	var sim := CitySim.boot_from_files(seed_value)
+	var sim := _boot(seed_value)
 	_reset()
 	if profiled:
 		_attach(sim.scheduler)
@@ -164,7 +203,7 @@ func _time_fine(seed_value: int, ticks: int, profiled: bool) -> Dictionary:
 
 
 func _time_coarse(seed_value: int, hours: int, profiled: bool) -> Dictionary:
-	var sim := CitySim.boot_from_files(seed_value)
+	var sim := _boot(seed_value)
 	_reset()
 	if profiled:
 		_attach(sim.scheduler)
@@ -298,6 +337,7 @@ class Options:
 	var baseline: String = ""
 	var out: String = ""
 	var quiet: bool = false
+	var city: String = STARTER_CITY
 	var errors: PackedStringArray = PackedStringArray()
 
 
@@ -323,6 +363,8 @@ func _parse(argv: PackedStringArray) -> Options:
 			opts.baseline = arg.substr(11)
 		elif arg.begins_with("--out="):
 			opts.out = arg.substr(6)
+		elif arg.begins_with("--city="):
+			opts.city = arg.substr(7)
 		else:
 			opts.errors.append("unknown option: " + arg)
 	if opts.fine_hours < 0.0:

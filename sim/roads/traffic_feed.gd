@@ -1,8 +1,13 @@
 class_name TrafficFeed
 extends RefCounted
 ## Doc 10 §2.15 — the cosmetic civilian traffic feed, published as the
-## `vehicle_spawned` / `vehicle_state` / `vehicle_despawned` event stream doc 11
-## §5 consumes.
+## `vehicle_spawned` / `traffic_snapshot` / `vehicle_despawned` event stream
+## doc 11 §5 consumes.
+##
+## `traffic_snapshot` replaced the per-vehicle `vehicle_state` event in the bus
+## diet (doc 91 D-10): identity events stay individual, motion is one packed
+## event per tick. `sim/roads/traffic_snapshot.gd` owns the wire format and
+## explains the trade in full.
 ##
 ## ZERO SIMULATION AUTHORITY. Nothing here feeds congestion, incidents, economy
 ## or any query another system makes; deleting the whole class changes nothing
@@ -214,21 +219,60 @@ func _allocate_targets() -> Dictionary:
 	return out
 
 
-## Publish this step's positions. Doc 11 §2.12 Hermite interpolation needs
-## explicit `speed` and `heading`, not derived ones (report 98 C-67).
+## Publish this step's positions as ONE packed `traffic_snapshot` event (doc 91
+## D-10, the bus diet). Doc 11 §2.12's Hermite interpolation needs explicit
+## `speed` and `heading`, not derived ones (report 98 C-67), so both are still
+## carried per vehicle — they moved into a column, they did not go away.
+##
+## The columns are written by index into buffers resized once, and the rows are
+## in ascending vehicle id (`vehicle_ids_sorted`), which is the feed's canonical
+## order everywhere else: same seed ⇒ same rows in the same slots.
+##
+## The old per-vehicle `vehicle_state` event is GONE, not deprecated. Keeping
+## both would have doubled the cost of the thing the diet exists to halve, and
+## the only consumer that ever read it is `game/render/vehicle_view.gd`, which
+## moved with it. (`game/audio/` never read a civilian one: its door opens on
+## `siren`, which is false for every vehicle in this feed, and its moving-siren
+## path takes doc 06's fleet snapshot directly.)
 func emit_states() -> void:
 	if not enabled:
 		return
-	for vehicle_id in vehicle_ids_sorted():
+	var ids_sorted := vehicle_ids_sorted()
+	var count := ids_sorted.size()
+	if count == 0:
+		return
+	var ids := PackedInt32Array()
+	var edge_ids := PackedInt32Array()
+	var kinds := PackedByteArray()
+	var flags := PackedByteArray()
+	var pose := PackedFloat32Array()
+	ids.resize(count)
+	edge_ids.resize(count)
+	kinds.resize(count)
+	flags.resize(count)
+	pose.resize(count * TrafficSnapshot.POSE_STRIDE)
+	var headlight_bit := TrafficSnapshot.FLAG_HEADLIGHTS if headlights else 0
+	var index := 0
+	for vehicle_id in ids_sorted:
 		var v: Dictionary = _vehicles[vehicle_id]
-		var pose := _pose_of(v)
-		_emit(&"vehicle_state", {
-			"id": vehicle_id, "kind": String(v["kind"]), "vehicle_class": "civilian",
-			"pos": pose["pos"], "heading": float(pose["heading"]),
-			"speed": float(v["speed_mpgm"]), "siren": false, "lightbar": false,
-			"headlights": headlights, "edge_id": int(v["edge_id"]),
-			"dark": bool(pose["dark"]),
-		})
+		var p := _pose_of(v)
+		var position: Vector3 = p["pos"]
+		ids[index] = int(vehicle_id)
+		edge_ids[index] = int(v["edge_id"])
+		kinds[index] = TrafficSnapshot.kind_index(String(v["kind"]))
+		flags[index] = headlight_bit \
+				| (TrafficSnapshot.FLAG_DARK if bool(p["dark"]) else 0)
+		var base := index * TrafficSnapshot.POSE_STRIDE
+		pose[base + TrafficSnapshot.POSE_X] = position.x
+		pose[base + TrafficSnapshot.POSE_Z] = position.z
+		pose[base + TrafficSnapshot.POSE_HEADING] = float(p["heading"])
+		pose[base + TrafficSnapshot.POSE_SPEED] = float(v["speed_mpgm"])
+		index += 1
+	# Straight onto the queue: `_emit` duplicates its payload (the right default
+	# for a caller-owned literal), and these buffers are freshly built and handed
+	# over wholesale, so a copy here would be 256 poses of pure waste.
+	_events.append(TrafficSnapshot.make_vehicle_event(
+			count, ids, edge_ids, kinds, flags, pose))
 
 
 # ----------------------------------------------------------------- internals

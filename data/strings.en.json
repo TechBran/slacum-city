@@ -533,6 +533,7 @@
 	"ui_settings_about_version": "Slacum City {version}",
 	"ui_settings_close": "Close settings",
 	"ui_settings_open_saves": "MANAGE SAVES",
+	"ui_settings_row_auto_quality": "Auto quality",
 	"ui_settings_row_autosave_interval_min": "Autosave",
 	"ui_settings_row_graphics": "Graphics",
 	"ui_settings_row_in_app_banners": "In-app banners",
