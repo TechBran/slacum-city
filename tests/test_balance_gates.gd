@@ -329,6 +329,29 @@ func test_gate_04_maintenance_pays() -> void:
 ## that was 25 % dark. If 10–20 % is wanted back on a lit city the levers are
 ## `data/buildings.json`'s `decay_per_hour` rows or `expenses.REPAIR_COST_PER_CAPITAL`
 ## — both doc 02/03 constants, both left alone here.
+##
+## **WAVE-6 RE-ANCHOR — the same mechanism, one more step, and again no constant
+## moved.** Wave 5 named the cause exactly: doc 02 §2.6 decays an **unpowered**
+## building 1.5× faster, so the repair queue is a function of how dark the city
+## is. Wave 6's power expansion took `balanced` from **8.70 / 9.05 / 11.01 %**
+## dark at 21 game-days to **0.05 / 0.16 / 0.10 %**, and the queue moved with it
+## for the third time in a row. Measured on the same rig, same seeds:
+##
+## | | 1337 | 4242 | 9001 |
+## |---|---|---|---|
+## | repair spend / net | 6.26 % | 5.58 % | 5.49 % |
+## | trips / game-day | 1.29 | 1.05 | 1.05 |
+## | worst building at d21 | 0.801 | 0.815 | 0.809 |
+##
+## Only the trips FLOOR moves, 1.2 → **0.8**: the spend share (5.5–6.3 %) is
+## still inside the band Wave 5 fitted, and the two ruled purposes still hold —
+## $59–64k of repairs against ~$1.02–1.08M of net is a visible line item, and
+## the worst building in the city still sits at the repair threshold rather than
+## sliding toward doc 03's `COND_FLOOR`. 0.8 is the worst measured seed (1.05)
+## with ~24 % of margin under it, which is the same shape of margin the ceiling
+## gate uses and enough that a seed cannot flip it. The floor is there to catch
+## "maintenance stopped happening at all", and 0.8 trips/game-day — 17 repairs
+## over the horizon — is comfortably still happening.
 func test_gate_04b_maintenance_pacing_is_a_line_item_not_a_chore() -> void:
 	var summary := _summary("balanced")
 	var samples: Array = _run("balanced")["samples"]
@@ -337,13 +360,14 @@ func test_gate_04b_maintenance_pacing_is_a_line_item_not_a_chore() -> void:
 		net += float((samples[i] as Dictionary)["net"])
 	var share := float(int(summary["repair_spend"])) / maxf(1.0, net)
 	assert_true(share >= 0.04 and share <= 0.12,
-			"upkeep is %.1f%% of net over %d game-days; Wave 5 measured 6.5–6.8 %% "
-			% [share * 100.0, LONG_DAYS] + "across three seeds on a lit city")
+			"upkeep is %.1f%% of net over %d game-days; Wave 6 measured 5.5–6.3 %% "
+			% [share * 100.0, LONG_DAYS] + "across three seeds on a fully lit city")
 	assert_true(int(summary["repair_spend"]) > 0, "and it is not free")
 	var trips_per_day := float(int(summary["repaired"])) / float(LONG_DAYS)
-	assert_true(trips_per_day >= 1.2 and trips_per_day <= 9.0,
-			"%.2f repair trips per game-day — the ruled target is 'a few', and "
-			% trips_per_day + "pass 2's 0.90 threshold measured 11.5")
+	assert_true(trips_per_day >= 0.8 and trips_per_day <= 9.0,
+			"%.2f repair trips per game-day — the ruled target is 'a few', "
+			% trips_per_day + "pass 2's 0.90 threshold measured 11.5, and Wave 6 "
+			+ "measures 1.05–1.29 on a city that is no longer dark")
 	# And it is buying something: the maintained city holds its floor at the
 	# threshold rather than sliding toward the auto-damage line.
 	assert_true(float(summary["min_condition_end"]) >= 0.60,
@@ -886,8 +910,17 @@ func test_gate_14_min_city_level_is_enforced_at_placement() -> void:
 ## buying the worst rung on the ladder.
 ##
 ## **15 % at the 21-game-day pacing horizon is the ruled target and this gate
-## holds it.** The ruling also asked for 15 % at FIFTY game-days, and that is not
-## reachable by strategy — see gate 18b, which pins why.
+## holds it.** The ruling also asked for 15 % at FIFTY game-days, which Wave 5
+## could not reach by strategy at all — see gate 18b.
+##
+## **WAVE-6 RE-MEASUREMENT.** With `route_feeder` and the two node shells live,
+## the 21-game-day figure is no longer close to the bound: **0.05 / 0.16 / 0.10 %**
+## across the three seeds, against Wave 5's 8.70 / 9.05 / 11.01. The threshold is
+## deliberately left at 15 % — it is the RULED number and this gate exists to
+## defend it, not to ratchet — but the horizon that now measures anything is gate
+## 18b's fifty game-days, where the ceiling actually lives. The `disaster_neglect`
+## contrast is unchanged in kind and much larger in size: **27.25 %** against
+## 0.05, i.e. the knob still costs a city its lights.
 func test_gate_18_a_competent_player_keeps_the_city_lit() -> void:
 	var summary := _summary("balanced")
 	var dark := float(summary["unserved_share"])
@@ -906,70 +939,108 @@ func test_gate_18_a_competent_player_keeps_the_city_lit() -> void:
 					% [neglected * 100.0, dark * 100.0])
 
 
-## GATE 18b — **the late-game ceiling is the FEEDER PAIR, and no verb answers it.**
+## GATE 18b — **the late-game ceiling, and the verbs that lifted it.**
 ##
-## The ruling's other half: *two thirds dark is not survivable-by-design; if the
-## improved strategy still cannot hold ~25 % at day 50, report the constants that
-## would fix supply rather than changing them.* It cannot, and this is the report,
-## made executable. Measured over 50 game-days, seed 1337, with the improved agent
-## (`tools/scratch` rig, doc-04 ladder dumped every 10 game-days):
+## The other half of F-11's ruling: *two thirds dark is not survivable-by-design;
+## if the improved strategy still cannot hold ~25 % at day 50, report the
+## constants that would fix supply rather than changing them.* Wave 5 could not,
+## and reported. **Wave 6 can, and no capacity constant moved to do it.**
 ##
-## | day | buildings | demand kW | feeder util | transformer util | substation | plant |
-## |---|---|---|---|---|---|---|
-## | 10 | 180 | 922 | 51.8 % | 37.7 % | 20.7 % | idle |
-## | 20 | 256 | 1,599 | 80.1 % | 44.2 % | 32.0 % | idle |
-## | 30 | 428 | 2,183 | **104.4 %** | 47.7 % | 41.8 % | idle |
-## | 40 | 626 | 2,539 | **119.2 %** | 45.4 % | 47.7 % | idle |
-## | 50 | 772 | 2,360 | **111.8 %** | 38.9 % | 44.7 % | idle |
+## What doc 92 §17.3 measured, and what this gate now holds — same rig, same
+## agent lineage, seed 1337, 50 game-days, dark share of all building-time:
 ##
-## The transformers are fine — the strategy fix did its job, and the fleet sits
-## under half-loaded. The substation is at 45 % of 6 MVA and the plant is barely
-## touched at 8 MW. **Everything the city has runs through the two class-1
-## feeders doc 09 §2.9.5 authored, rated 1,200 kW each**, and doc 04 §2.6 derates
-## even that with condition and ambient temperature. The city crosses 100 % at
-## roughly **410 buildings**, and there is no verb to add or upgrade a feeder:
-## `data/grid_components.json`'s `placeable` roster ships exactly one kind.
+## | | Wave 5 | Wave 6 |
+## |---|---|---|
+## | dark share, 50 game-days | **54.63 %** (fine path; §15.2's fine run read 66.8 %) | **6.25 %** (coarse-online rig) |
+## | worst feeder at the end | doc 92's day-50 fleet AGGREGATE was 111.8 % | **r = 0.31** |
+## | buildings | 716 | 741 |
+## | feeders the player could buy | **none — no verb existed** | 11, $59,430 |
+## | substations the player could buy | none that did anything | 3 |
 ##
-## **The named fixes, in order of leverage — none applied here** (doc 04 and doc
-## 03 own them; this gate exists so the day one lands, it fails and gets a real
-## threshold):
+## Three command-layer gaps did it, all of the same family — a purchase that
+## bought the player nothing — and all fixed without touching doc 04 §2.2:
 ##
-## 1. **Ship a feeder verb.** Doc 04 §4's `route_feeder` / `place_power_component`
-##    for `feeder`, and add `feeder` (and `substation`, which has 2 spare slots at
-##    L1 and 3 at L2) to `data/grid_components.json`'s `placeable`. Doc 03
-##    §2.13(b) already prices both — feeder class 2 is $210/tile, a substation L1
-##    $15,000 — so this is a command-layer gap, not a missing price. Class 2
-##    raises a feeder 1,200 → 3,000 kW, which moves the ceiling from ~410
-##    buildings to ~1,000.
-## 2. **Make the `substation` / `power_facility` SHELLS real.** `cmd_place_building`
-##    will happily sell either one today, and neither adds a `PowerGrid`
-##    component — a $15,000 building that supplies nothing. Either wire the shell
-##    to a component (as Wave 5 wired `water_facility` to its doc-05 node) or take
-##    the cards off the sheet.
-## 3. **Only then look at a constant.** `PowerGrid.CAPACITY.transformer` L1 = 50 kW
-##    against a radius-3 (49-tile) service area is the one genuine mismatch in the
-##    ladder — every other rung's capacity tracks its radius — and 90 kW would
-##    make L1 a sensible first buy rather than a rung to skip. It is NOT the
-##    late-game ceiling and moving it would not raise the feeder's.
-func test_gate_18b_the_late_game_ceiling_is_pinned() -> void:
+## 1. **`route_feeder` shipped** (doc 04 §4). `cmd_route_feeder(path, class)`,
+##    plus the one-tap `cmd_place_grid_component("feeder", far_end, class)` that
+##    fills the polyline. Class 2 is 3,000 kW at doc 03 §2.13(b)'s $210/tile.
+## 2. **The `substation` / `power_facility` shells became real.** The shell's
+##    sim_id IS its grid node's id — doc 09 §2.9.5 already authors `SUB-A` that
+##    way — so a finished substation roots feeders, a finished plant generates,
+##    an upgrade re-rates both, and a demolition retires them.
+## 3. **Adoption.** §2.1's service attachment is only ever evaluated for a
+##    component with NO parent, so new copper next to a saturated circuit picked
+##    up nothing and neither purchase relieved anything that already existed.
+##    New feeders now take transformers and new transformers take buildings, by
+##    §2.9's transfer rule, bounded by §5.10's NORMAL band.
+##
+## **Cost.** This gate runs a 50-game-day city, which is the most expensive
+## single test in the file: the whole file runs in 2 m 29 s and roughly a minute
+## and a half of that is this one run. It is here rather than in
+## `balance_matrix.gd` because the ruling it answers is a THRESHOLD, and a
+## threshold that only merge-time runs is a threshold nothing defends.
+const CEILING_DAYS := 50
+## The ruled bound. Measured across three seeds on this rig: **6.25 / 5.91 /
+## 5.74 %** (741 / 701 / 673 buildings; 11 / 11 / 12 feeders; 3 / 3 / 5
+## substations; worst feeder 0.31 / 0.36 / 0.32). The ruling's 20 % therefore has
+## better than 3× of margin, deliberately: the point of the gate is to catch the
+## ceiling COMING BACK, not to ratchet a measurement into a target.
+const CEILING_DARK_SHARE := 0.20
+
+
+func test_gate_18b_the_late_game_ceiling_is_lifted() -> void:
+	var summary := _summary("balanced", CEILING_DAYS)
+	var dark := float(summary["unserved_share"])
+	assert_true(dark <= CEILING_DARK_SHARE,
+			("balanced spent %.2f %% of building-time dark over %d game-days; the "
+					+ "ruled bound is %.0f %% (measured 6.25 %% on this seed, against "
+					+ "Wave 5's 54.63 %%)")
+					% [dark * 100.0, CEILING_DAYS, CEILING_DARK_SHARE * 100.0])
+	# …and it got there by buying TRUNK, not by building a smaller city.
+	assert_true(int(summary["feeders_routed"]) >= 4,
+			"routed %d feeders" % int(summary["feeders_routed"]))
+	assert_true(int(summary["substations_built"]) >= 1,
+			"…which is only possible because it bought %d substation(s): doc 04 "
+					% int(summary["substations_built"])
+					+ "§2.2 gives an L1 two feeder slots and doc 09 §2.9.5 fills both at t0")
+	assert_true(float(summary["feeder_peak_ratio_end"]) < PowerGrid.OVERLAY_CRITICAL_R,
+			"the city ends UNDER its own trunk: worst feeder %.2f"
+					% float(summary["feeder_peak_ratio_end"]))
+	assert_true(int(summary["buildings_end"]) >= 600,
+			"on a city of %d buildings — the ceiling moved, it was not avoided"
+					% int(summary["buildings_end"]))
+
+
+## GATE 18c — **the ceiling moved because of the VERBS, not because a capacity
+## constant moved.** Doc 92 §17.3 fix 3 named `PowerGrid.CAPACITY.transformer`
+## L1 = 50 kW as the one genuine mismatch in doc 04's ladder and said moving it
+## would not raise the feeder's. Wave 6 did not move it, or any other rung, and
+## this is the pin that says so: every published §2.2 capacity is still §2.2's,
+## and the starter city is still the one doc 09 §2.9.5 authors.
+func test_gate_18c_no_capacity_constant_moved() -> void:
+	assert_eq(PowerGrid.CAPACITY[&"transformer"], [50.0, 150.0, 400.0, 1000.0, 2500.0])
+	assert_eq(PowerGrid.CAPACITY[&"substation"], [6000.0, 14000.0, 30000.0, 60000.0, 110000.0])
+	assert_eq(PowerGrid.CAPACITY[&"plant_gas"], [8000.0, 18000.0, 36000.0, 70000.0, 120000.0])
+	assert_eq(PowerGrid.FEEDER_CAPACITY, [1200.0, 3000.0, 7500.0])
+	assert_eq(PowerGrid.SUBSTATION_FEEDER_SLOTS, [2, 3, 4, 6, 8])
 	var sim := CitySim.boot_from_files(GATE_SEED)
 	var feeder_kw := 0.0
 	var feeders := 0
 	for id in sim.grid.component_ids_of_kind(&"feeder"):
 		feeder_kw += float(sim.grid.component(String(id))["capacity_kw"])
 		feeders += 1
-	assert_eq(feeders, 2, "doc 09 §2.9.5: F_NORTH and F_SOUTH, no tie")
-	assert_almost_eq(feeder_kw, 2400.0, 0.5,
-			"2 × class-1 at 1,200 kW is the whole city's supply path")
-	# …and nothing the player can buy widens it.
+	assert_eq(feeders, 2, "doc 09 §2.9.5 still authors F_NORTH and F_SOUTH, no more")
+	assert_almost_eq(feeder_kw, 2400.0, 0.5, "still 2 × class-1 at 1,200 kW at t0")
+	assert_eq(int(sim.grid.feeder_slots("SUB-A")["free"]), 0,
+			"and SUB-A is still full on game-hour zero — which is exactly why the "
+			+ "first thing a growing city has to buy is a second substation")
+	# The point roster is still one kind wide: `feeder` is a LINE and lives in
+	# `routable`, `substation` is a BUILDING (C-30) and lives in `node_shells`.
 	var placeable := BuildController.load_grid_placeable()
-	assert_eq(placeable.size(), 1, "the placement roster is one kind wide")
+	assert_eq(placeable.size(), 1)
 	assert_true(placeable.has("transformer"))
-	assert_false(placeable.has("feeder"),
-			"a feeder verb has landed — gate 18 wants its 50-game-day threshold now")
-	assert_false(placeable.has("substation"))
-	# The shells doc 02 sells but doc 04 does not know about (fix 2 above).
-	assert_true(sim.catalog.has("substation") and sim.catalog.has("power_facility"),
-			"both are still on the build sheet")
-	assert_false(sim.grid.has_component("P-SUBSTATION"),
-			"and still add no grid capacity when placed")
+	assert_false(placeable.has("substation"),
+			"a substation is a building and must never appear on the grid roster")
+	# The two shells doc 02 sells are now doc 04 nodes — the id is the seam.
+	assert_true(sim.catalog.has("substation") and sim.catalog.has("power_facility"))
+	assert_true(sim.grid.has_component("SUB-A") and sim.grid.has_component("PLANT-1"),
+			"the authored shell and its node already share one id")

@@ -434,3 +434,179 @@ func test_capacity_summary_counts_what_is_past_pickup_not_past_nameplate() -> vo
 			"a transformer past pickup is on the list before it trips")
 	assert_almost_eq(float(hot["headroom_kw"]),
 			float(hot["supply_kw"]) - float(hot["demand_kw"]), 1e-9)
+
+
+# ===========================================================================
+# Wave 6 — doc 04 §4 `route_feeder`, §2.9's transfer rules, and the two grid
+# nodes that are BUILDINGS (report 98 C-30)
+# ===========================================================================
+
+func test_feeder_slots_are_the_2_3_4_6_8_ladder() -> void:
+	# §2.2: a substation roots exactly as many feeders as it has slots. This is
+	# what makes "buy a substation" the answer to a saturated feeder pair rather
+	# than "buy more copper".
+	var grid := _rig()
+	assert_eq(int(grid.feeder_slots("s_1")["total"]), 4, "L3 = 4 slots")
+	assert_eq(int(grid.feeder_slots("s_1")["used"]), 1, "f_3")
+	assert_eq(int(grid.feeder_slots("s_1")["free"]), 3)
+	grid.set_level("s_1", 1)
+	assert_eq(int(grid.feeder_slots("s_1")["total"]), 2, "re-rated to L1")
+	assert_almost_eq(float(grid.component("s_1")["capacity_kw"]), 6000.0, 1e-9,
+			"set_level moves the §2.2 capacity with the level, not just the label")
+	assert_false(grid.set_level("f_3", 2), "a feeder is rated by class, not level")
+	assert_eq(int(grid.feeder_slots("f_3")["total"]), 0, "only a substation has slots")
+
+
+func test_route_continuity_is_a_walkable_polyline() -> void:
+	assert_eq(PowerGrid.route_break_index([Vector2i(0, 0), Vector2i(1, 1), Vector2i(2, 1)]), -1,
+			"Chebyshev steps, diagonals included")
+	assert_eq(PowerGrid.route_break_index([Vector2i(0, 0), Vector2i(2, 0)]), 1, "a jump")
+	assert_eq(PowerGrid.route_break_index([Vector2i(0, 0), Vector2i(0, 0)]), 1, "a repeat")
+	# What the C-41 assist emits is always legal input to the verb.
+	var suggested := PowerGrid.route_between(Vector2i(4, 9), Vector2i(11, 3))
+	assert_eq(PowerGrid.route_break_index(suggested), -1)
+	assert_eq(suggested[0], Vector2i(4, 9))
+	assert_eq(suggested[suggested.size() - 1], Vector2i(11, 3))
+	assert_eq(suggested.size(), 8, "Chebyshev distance 7, both ends inclusive")
+
+
+func test_feeder_at_tile_finds_the_trunk_to_branch() -> void:
+	var grid := _rig()
+	grid.component("f_3")["route"] = [[5, 5], [6, 5], [7, 5]]
+	assert_eq(grid.feeder_at_tile(Vector2i(6, 5)), "f_3")
+	assert_eq(grid.feeder_at_tile(Vector2i(6, 6)), "", "off the run is off the network")
+	grid.component("f_3")["state"] = &"FAILED"
+	assert_eq(grid.feeder_at_tile(Vector2i(6, 5)), "",
+			"a failed feeder is not something to hang a new circuit on")
+
+
+func test_new_feeder_adopts_the_hottest_transformers_first() -> void:
+	# §2.9's transfer rule at placement: the whole reason `route_feeder` is
+	# RELIEF and not just headroom for buildings that do not exist yet.
+	var grid := _rig()
+	grid.attach_building("hot", Vector2i(10, 10))
+	grid.attach_building("cool", Vector2i(30, 10))
+	_tick(grid, {"hot": 600.0, "cool": 100.0})   # t_7 r 1.50, t_8 r 0.10
+	grid.add_component("f_new", &"feeder", {"conductor_class": 2, "parent": "s_1",
+			"route": [[10, 12], [20, 12], [30, 12]]})
+	var plan := grid.adopt_transformers("f_new", 8, 25.0)
+	assert_eq(plan["adopted"], ["t_7"],
+			"the cooking transformer moves; the one at r = 0.10 stays put, because "
+			+ "a transfer that does not relieve anything is theft, not redundancy")
+	assert_almost_eq(float(plan["moved_kw"]), 600.0, 0.01)
+	assert_eq(String(grid.component("t_7")["parent"]), "f_new")
+	assert_eq(String(grid.component("t_8")["parent"]), "f_3", "untouched")
+
+
+func test_adoption_leaves_new_copper_in_the_green_not_at_95_percent() -> void:
+	# ADOPTION_MAX_R is §5.10's WARNING line (0.75), NOT §2.9's emergency
+	# auto-transfer bound (0.95): a PLANNED transfer that fills brand-new plate
+	# to 95 % has bought the player nothing.
+	var grid := _rig()
+	var demands := {}
+	for i in 6:
+		grid.add_component("t_%d" % (20 + i), &"transformer",
+				{"level": 4, "parent": "f_3", "tile": Vector2i(10 + i, 40)})
+		grid.attach_building("b_%d" % i, Vector2i(10 + i, 40))
+		demands["b_%d" % i] = 500.0
+	_tick(grid, demands)
+	grid.add_component("f_new", &"feeder", {"conductor_class": 2, "parent": "s_1",
+			"route": [[10, 40], [15, 40]]})
+	var plan := grid.adopt_transformers("f_new", 8, 25.0)
+	assert_true(float(plan["moved_kw"]) <= PowerGrid.ADOPTION_MAX_R * 3000.0 + 0.01,
+			"took %.1f kW onto a 3,000 kW class-2 run" % float(plan["moved_kw"]))
+	assert_eq(int((plan["adopted"] as Array).size()), 4,
+			"4 × 500 = 2,000 ≤ 2,250; a fifth would be 2,500")
+	assert_almost_eq(float(plan["carried_kw"]) / 3000.0, 0.6667, 0.01,
+			"the new run comes out NORMAL on §5.10's overlay, with room to grow")
+
+
+func test_parallel_transformer_takes_load_off_a_cooking_one() -> void:
+	# §2.9's "parallel transformer on one service group", made real. §2.1's
+	# service attachment is only ever evaluated for a building with NO
+	# transformer, so before this a second transformer beside a cooking one
+	# adopted nothing and the purchase doc 04 sells as the fix bought nothing.
+	var grid := _rig()
+	var demands := {}
+	var origins := {}
+	for i in 4:
+		grid.attach_building("b_%d" % i, Vector2i(10, 10 + i))
+		demands["b_%d" % i] = 150.0
+		origins["b_%d" % i] = Vector2i(10, 10 + i)
+	_tick(grid, demands)
+	assert_almost_eq(float(grid.component("t_7")["load_kw"]) / 400.0, 1.5, 0.001,
+			"600 kW on a 400 kW L3 — §2.6 says this one dies in game-minutes")
+	grid.add_component("t_par", &"transformer",
+			{"level": 3, "parent": "f_3", "tile": Vector2i(11, 11)})
+	var plan := grid.adopt_buildings("t_par", demands, origins, 25.0)
+	assert_eq(int((plan["adopted"] as Array).size()), 2, "2 × 150 = 300 ≤ 0.75 × 400")
+	assert_almost_eq(float(plan["moved_kw"]), 300.0, 0.01)
+	_tick(grid, demands)
+	assert_almost_eq(float(grid.component("t_7")["load_kw"]) / 400.0, 0.75, 0.001,
+			"both ends land on §5.10's NORMAL line — the split doc 04 §2.13 WE-1 sells")
+	assert_almost_eq(float(grid.component("t_par")["load_kw"]) / 400.0, 0.75, 0.001)
+
+
+func test_adoption_never_strips_a_healthy_neighbour() -> void:
+	var grid := _rig()
+	grid.attach_building("b", Vector2i(10, 10))
+	var demands := {"b": 40.0}                      # t_7 at r = 0.10
+	var origins := {"b": Vector2i(10, 10)}
+	_tick(grid, demands)
+	grid.add_component("t_par", &"transformer",
+			{"level": 1, "parent": "f_3", "tile": Vector2i(10, 11)})
+	var plan := grid.adopt_buildings("t_par", demands, origins, 25.0)
+	assert_eq(plan["adopted"], [], "an L1 at r 0.80 is worse than an L3 at r 0.10")
+	assert_eq(grid.attachment_of("b"), "t_7")
+
+
+func test_remove_component_orphans_children_and_takes_the_circuits_it_roots() -> void:
+	var grid := _rig()
+	grid.attach_building("b", Vector2i(10, 10))
+	_tick(grid, {"b": 100.0})
+	assert_true(grid.is_energized("t_7"))
+	# A substation is a BUILDING (C-30): demolishing the shell removes the node,
+	# and §2.1 says its feeders do not outlive their root.
+	var removed := grid.remove_component("s_1")
+	assert_eq(removed, ["f_3", "s_1"], "the substation and the circuits it rooted")
+	assert_false(grid.has_component("f_3"))
+	assert_eq(String(grid.component("t_7")["parent"]), "",
+			"the transformer stands, orphaned — dark until new copper adopts it")
+	_tick(grid, {"b": 100.0})
+	assert_false(grid.is_energized("t_7"))
+	# …and an orphan is exactly what the next feeder picks up first.
+	grid.add_component("s_2", &"substation", {"level": 1})
+	grid.add_component("f_fix", &"feeder", {"conductor_class": 2, "parent": "s_2",
+			"route": [[10, 10]]})
+	assert_eq(grid.adopt_transformers("f_fix", 8, 25.0)["adopted"], ["t_7"],
+			"only what the new run REACHES: t_8 is 20 tiles away and stays dark "
+			+ "until copper is drawn to it too")
+	_tick(grid, {"b": 100.0})
+	assert_true(grid.is_energized("t_7"), "the recovery path is real")
+	assert_false(grid.is_energized("t_8"))
+
+
+func test_removing_a_transformer_detaches_its_buildings() -> void:
+	var grid := _rig()
+	grid.attach_building("b", Vector2i(10, 10))
+	_tick(grid, {"b": 100.0})
+	grid.remove_component("t_7")
+	assert_eq(grid.attachment_of("b"), "", "no dangling attachment to a gone node")
+	assert_eq(grid.unserved_building_ids(), ["b"])
+	_tick(grid, {"b": 100.0})  # must not crash on the missing parent
+
+
+func test_worst_rows_read_the_derated_capacity() -> void:
+	var grid := _rig()
+	grid.attach_building("b", Vector2i(10, 10))
+	_tick(grid, {"b": 300.0})
+	var feeder := grid.worst_feeder(25.0)
+	var transformer := grid.worst_transformer(25.0)
+	assert_eq(String(feeder["id"]), "f_3")
+	assert_eq(String(transformer["id"]), "t_7")
+	assert_almost_eq(float(transformer["load_ratio"]),
+			300.0 / grid.cap_eff("t_7", 25.0), 1e-9)
+	# 45 °C derates by 0.88 (§2.5), so the same load reads hotter — which is the
+	# whole point of publishing the derated ratio rather than the nameplate one.
+	assert_true(float(grid.worst_transformer(45.0)["load_ratio"])
+			> float(transformer["load_ratio"]))

@@ -32,6 +32,13 @@ static func _serviceable_vacant_tile(sim: CitySim) -> Vector2i:
 	return Vector2i(-1, -1)
 
 
+static func _line_km(sim: CitySim) -> float:
+	var total := 0.0
+	for line in (sim.grid.grid_inventory()["lines"] as Array):
+		total += float((line as Dictionary)["line_km"])
+	return total
+
+
 static func _feeder_route_tiles(sim: CitySim) -> Array:
 	var out: Array = []
 	for id in sim.grid.component_ids_of_kind(&"feeder"):
@@ -106,11 +113,16 @@ func test_grid_placement_rejections() -> void:
 	var lot := _lot_a(sim)
 	var spot := _transformer_spot(sim, lot, 3)
 
-	# 1 unknown kind — substations are buildings (doc 04 §2.1 / report 98 C-30).
+	# 1 unknown kind — a substation is a BUILDING (doc 04 §2.1 / report 98 C-30)
+	# and is placed by `cmd_place_building`; it will never be in this roster.
 	assert_eq(sim.cmd_place_grid_component("substation", spot, 1)["reason_code"],
 			&"E_UNKNOWN_COMPONENT")
-	assert_eq(sim.cmd_place_grid_component("feeder", spot, 1)["reason_code"],
+	assert_eq(sim.cmd_place_grid_component("battery", spot, 1)["reason_code"],
 			&"E_UNKNOWN_COMPONENT")
+	# `feeder` IS known now (Wave 6) — it is a LINE, so it routes rather than
+	# placing, and its own blockers are tested with `cmd_route_feeder` below.
+	assert_eq(sim.cmd_place_grid_component("feeder", spot, 2)["reason_code"],
+			&"E_NO_SLOT", "doc 09 §2.9.5 fills both of SUB-A's slots at t0")
 	# 2 level outside the placeable roster (L1–L3 in this cut).
 	assert_eq(sim.cmd_place_grid_component("transformer", spot, 4)["reason_code"],
 			&"E_LEVEL_UNAVAILABLE")
@@ -238,6 +250,313 @@ func test_grid_placement_determinism_and_save_roundtrip() -> void:
 	var spot: Vector2i = a.grid.component("PT-001")["tile"]
 	assert_false(a.world.grid.can_place(spot, Vector2i.ONE),
 			"the transformer's tile is still reserved after a load")
+
+
+# ============================================ 1b. cmd_route_feeder (doc 04 §4)
+#
+# The verb doc 92 §17.3 named as the late-game's answer. Its own header carries
+# the reason-code order; every one of them gets a case here, plus the success
+# path, the adoption that makes it relief, determinism and a save round-trip.
+
+## Build and finish a player substation near `centre`, returning its sim_id.
+## A substation IS a building (report 98 C-30), so this is `cmd_place_building`
+## plus the construction time doc 02 charges for it.
+static func _finished_substation(sim: CitySim, centre: Vector2i) -> String:
+	sim.treasury.credit(400_000, &"test_grant")
+	var size := Vector2i(2, 2)
+	var best := Vector2i(-1, -1)
+	var best_distance := 999999
+	for z in range(32, 80):
+		for x in range(32, 80):
+			var origin := Vector2i(x, z)
+			var distance: int = maxi(absi(x - centre.x), absi(z - centre.y))
+			if distance >= best_distance:
+				continue
+			if sim.world.grid.can_place(origin, size) and sim.grid.would_serve(origin):
+				best = origin
+				best_distance = distance
+	if best.x < 0:
+		return ""
+	var placed := sim.cmd_place_building("substation", best)
+	if not bool(placed["ok"]):
+		return ""
+	var sim_id := String((placed["payload"] as Dictionary)["sim_id"])
+	# doc 02: substation L1 is 8 build-hours, but the MVP yard crew is shared, so
+	# run until the shell is actually standing rather than guessing a number.
+	_finish_construction(sim, sim_id)
+	return sim_id
+
+
+## Advance until `sim_id` leaves `under_construction`, bounded so a genuinely
+## stuck job fails the test instead of hanging it.
+static func _finish_construction(sim: CitySim, sim_id: String) -> bool:
+	for i in 20:
+		if (sim.buildings[sim_id] as Building).state != &"under_construction":
+			return true
+		sim.advance_hours(4.0)
+	return (sim.buildings[sim_id] as Building).state != &"under_construction"
+
+
+func test_substation_shell_becomes_a_real_grid_node() -> void:
+	# Doc 92 §17.3 fix 2, and the same class of bug as pass-2 F-3's frozen
+	# fleet: `cmd_place_building` sold a $15,000 substation that added no
+	# capacity at all. The shell's sim_id IS the node's id — doc 09 §2.9.5
+	# already authors `SUB-A` that way, so authored and player nodes are one
+	# thing, not two.
+	var sim := CitySim.boot_from_files()
+	assert_true(sim.grid.has_component("SUB-A"), "the authored pair share one id")
+	var sub := _finished_substation(sim, Vector2i(64, 50))
+	assert_true(sub != "")
+	var node := sim.grid.component(sub)
+	assert_eq(String(node["kind"]), "substation")
+	assert_almost_eq(float(node["capacity_kw"]), 6000.0, 1e-9, "doc 04 §2.2 L1")
+	assert_eq(int(sim.grid.feeder_slots(sub)["free"]), 2, "§2.2: L1 roots two feeders")
+	assert_true(sim.grid.is_energized(sub) or sim.grid.topology_dirty)
+	# …and it is the ONLY thing that unblocks more copper: SUB-A is full at t0.
+	assert_eq(int(sim.grid.feeder_slots("SUB-A")["free"]), 0)
+
+
+func test_plant_shell_generates_and_re_rates_on_upgrade() -> void:
+	var sim := CitySim.boot_from_files()
+	sim.advance_hours(1.0)
+	var before := sim.grid.system_supply_kw
+	assert_almost_eq(before, 8000.0, 1e-9, "one authored plant_gas L1")
+	sim.treasury.credit(900_000, &"test_grant")
+	var origin := Vector2i(-1, -1)
+	for z in range(32, 78):
+		for x in range(32, 78):
+			var candidate := Vector2i(x, z)
+			if sim.world.grid.can_place(candidate, Vector2i(3, 3)) \
+					and sim.grid.would_serve(candidate):
+				origin = candidate
+				break
+		if origin.x >= 0:
+			break
+	assert_true(origin.x >= 0, "a 3×3 site exists somewhere in the core")
+	var placed := sim.cmd_place_building("power_facility", origin)
+	assert_true(bool(placed["ok"]), str(placed))
+	var sim_id := String((placed["payload"] as Dictionary)["sim_id"])
+	assert_false(sim.grid.has_component(sim_id), "a hole in the ground generates nothing")
+	assert_true(_finish_construction(sim, sim_id))
+	sim.advance_hours(1.0)
+	assert_true(sim.grid.has_component(sim_id))
+	assert_almost_eq(sim.grid.system_supply_kw, before + 8000.0, 1e-9,
+			"doc 04 §2.2: plant_gas L1 = 8,000 kW of bulk pool")
+	# The doc 02 upgrade job is what buys the next rung of the §2.2 ladder.
+	sim.progression.city_level = 3  # doc 02: power_facility L2 is min_city_level 1
+	var upgraded := sim.cmd_upgrade_building(sim_id)
+	assert_true(bool(upgraded["ok"]), str(upgraded))
+	for i in 30:
+		if int(sim.grid.component(sim_id)["level"]) >= 2:
+			break
+		sim.advance_hours(4.0)
+	assert_almost_eq(float(sim.grid.component(sim_id)["capacity_kw"]), 18000.0, 1e-9,
+			"L2 = 18 MW")
+
+
+func test_route_feeder_success_relieves_the_authored_pair() -> void:
+	var sim := CitySim.boot_from_files()
+	sim.advance_hours(6.0)
+	var hot := sim.grid.worst_feeder(25.0)
+	var target := Vector2i.ZERO
+	var best_load := -1.0
+	for id in sim.grid.component_ids_of_kind(&"transformer"):
+		var c: Dictionary = sim.grid.component(String(id))
+		if String(c["parent"]) == String(hot["id"]) and float(c["load_kw"]) > best_load:
+			best_load = float(c["load_kw"])
+			target = c["tile"]
+	var sub := _finished_substation(sim, target)
+	assert_true(sub != "")
+
+	var preview := sim.cmd_place_grid_component("feeder", target, 2, true)
+	assert_true(bool(preview["ok"]), str(preview))
+	var quote: Dictionary = preview["payload"]
+	var balance: int = sim.treasury.balance
+	var line_km_before := _line_km(sim)
+	assert_almost_eq(float(quote["capacity_kw"]), 3000.0, 1e-9, "doc 04 §2.2 class 2")
+	assert_eq(int(quote["cost"]),
+			int(quote["billed_tiles"]) * 210, "doc 03 §2.13(b): $210/tile class 2")
+	assert_true(int(quote["adopts"]) > 0,
+			"the quote names what the run would pick up, or it is quoting a price "
+			+ "for an effect the player cannot see")
+	assert_eq(sim.treasury.balance, balance, "a preview charges nothing")
+	assert_eq(sim.grid.component_ids_of_kind(&"feeder").size(), 2,
+			"…and adds nothing to the graph")
+
+	var routed := sim.cmd_place_grid_component("feeder", target, 2)
+	assert_true(bool(routed["ok"]), str(routed))
+	var payload: Dictionary = routed["payload"]
+	assert_eq(int(payload["cost"]), int(quote["cost"]), "the quote is the price")
+	assert_eq(sim.treasury.balance, balance - int(quote["cost"]))
+	var feeder_id := String(payload["component"])
+	assert_eq(String(sim.grid.component(feeder_id)["parent"]), sub)
+	assert_eq(int(sim.grid.feeder_slots(sub)["free"]), 1, "one slot spent")
+	assert_true(int(payload["adopts"]) > 0 and float(payload["adopted_kw"]) > 0.0)
+	# The relief is real: the hot feeder's load falls by what moved.
+	var before: float = float(sim.grid.component(String(hot["id"]))["load_kw"])
+	sim.advance_hours(1.0)
+	assert_true(float(sim.grid.component(String(hot["id"]))["load_kw"]) < before,
+			"routing copper into a saturated circuit takes load OFF it (§2.9)")
+	# `line_km` grew by exactly the run, so doc 03's E_grid bills the new copper
+	# (report 98 C-12: `line_km = route_tiles × 0.008`).
+	assert_almost_eq(_line_km(sim) - line_km_before,
+			int(payload["tiles"]) * 0.008, 1e-9,
+			"every tile of the polyline is inventory, at 8 m each")
+
+
+func test_route_feeder_rejections() -> void:
+	var sim := CitySim.boot_from_files()
+	var routes := _feeder_route_tiles(sim)
+	var trunk: Vector2i = routes[0]
+
+	# 2 E_CLASS_UNAVAILABLE — doc 04 §6 ships class 1–2 overhead, not class 3.
+	assert_eq(sim.cmd_route_feeder([trunk, trunk + Vector2i(1, 0)], 3)["reason_code"],
+			&"E_CLASS_UNAVAILABLE")
+	assert_eq(sim.cmd_route_feeder([trunk, trunk + Vector2i(1, 0)], 0)["reason_code"],
+			&"E_CLASS_UNAVAILABLE")
+	# 3 E_NO_TILES.
+	assert_eq(sim.cmd_route_feeder([trunk], 2)["reason_code"], &"E_NO_TILES")
+	assert_eq(sim.cmd_route_feeder([], 2)["reason_code"], &"E_NO_TILES")
+	# 4 E_OUT_OF_BOUNDS.
+	assert_eq(sim.cmd_route_feeder([Vector2i(-1, 0), Vector2i(0, 0)], 2)["reason_code"],
+			&"E_OUT_OF_BOUNDS")
+	# 5 E_DISCONTINUOUS — a feeder is a polyline, not a set of tiles.
+	assert_eq(sim.cmd_route_feeder([trunk, trunk + Vector2i(4, 0)], 2)["reason_code"],
+			&"E_DISCONTINUOUS")
+	# 7 E_NOT_CONNECTED — a run that starts nowhere near the network.
+	var orphan := Vector2i(40, 40)
+	assert_eq(sim.cmd_route_feeder([orphan, orphan + Vector2i(1, 0)], 2)["reason_code"],
+			&"E_NOT_CONNECTED")
+	# 8 E_NO_SLOT — SUB-A is L1, doc 09 §2.9.5 fills both slots at t0, and no
+	#   amount of money buys copper the substation cannot root.
+	assert_eq(sim.cmd_route_feeder([trunk, trunk + Vector2i(0, 1)], 2)["reason_code"],
+			&"E_NO_SLOT")
+
+	# With a substation to hang it on, the same run is legal — so 6 and 9 are
+	# testable against a command that would otherwise pass.
+	var sub := _finished_substation(sim, trunk)
+	var pad: Vector2i = sim.buildings[sub].origin
+	var start := pad + Vector2i(-1, 0)
+	assert_true(bool(sim.cmd_route_feeder([start, start + Vector2i(0, 1)], 2, true)["ok"]))
+	# 6 E_NOT_DEVELOPED — a run out over unowned ring land.
+	var into_the_ring := PowerGrid.route_between(start, Vector2i(8, 8))
+	assert_eq(sim.cmd_route_feeder(into_the_ring, 2)["reason_code"], &"E_NOT_DEVELOPED")
+	# 9 E_FUNDS, and a refused run charges nothing. Even one billed tile is
+	# $210 at class 2, so $10 cannot buy the shortest legal run there is.
+	sim.treasury.spend(sim.treasury.balance - 10, &"misc")
+	assert_eq(sim.cmd_route_feeder([start, start + Vector2i(0, 1)], 2)["reason_code"],
+			&"E_FUNDS")
+	assert_eq(sim.treasury.balance, 10)
+
+
+func test_route_feeder_assist_stays_on_owned_ground() -> void:
+	# The C-41 assist is what makes the one-tap path usable: a straight
+	# Chebyshev line between two owned tiles routinely crosses land the city
+	# does not own, and the verb would refuse it. Every tile it suggests is one
+	# `cmd_route_feeder` will accept.
+	var sim := CitySim.boot_from_files()
+	var a := Vector2i(34, 34)
+	var b := Vector2i(76, 76)
+	var path := sim.suggest_feeder_route(a, b)
+	assert_eq(PowerGrid.route_break_index(path), -1, "a walkable polyline")
+	assert_eq(path[0], a)
+	assert_eq(path[path.size() - 1], b)
+	for entry in path:
+		var tile: Vector2i = entry
+		var block := sim.world.block_of_tile(tile.x, tile.y)
+		assert_true(block != null and block.is_owned() and block.is_ready(),
+				"%s is off the developed city" % tile)
+
+
+func test_route_feeder_survives_save_roundtrip_and_is_deterministic() -> void:
+	var sim := CitySim.boot_from_files(4242)
+	sim.advance_hours(4.0)
+	var sub := _finished_substation(sim, Vector2i(70, 60))
+	assert_true(sub != "")
+	assert_true(bool(sim.cmd_place_grid_component("feeder", Vector2i(70, 60), 2)["ok"]))
+	sim.advance_hours(1.5)
+
+	var body := sim.canonical_capture()
+	var a := CitySim.boot_from_files(4242)
+	a.restore_state(body)
+	var b := CitySim.boot_from_files(4242)
+	b.restore_state(body)
+	assert_eq(a.state_hash(), b.state_hash(), "two restores of one capture agree")
+	a.advance_hours(8.0)
+	b.advance_hours(8.0)
+	assert_eq(a.state_hash(), b.state_hash())
+	sim.advance_hours(8.0)
+	assert_eq(sim.state_hash(), a.state_hash(), "the live sim matches the reload")
+	# The routed copper is still copper, still rooted, still carrying.
+	var reloaded: Dictionary = a.grid.component("PF-001")
+	assert_eq(String(reloaded["kind"]), "feeder")
+	assert_eq(String(reloaded["parent"]), sub)
+	assert_almost_eq(float(reloaded["capacity_kw"]), 3000.0, 1e-9)
+	assert_true((reloaded["route"] as Array).size() > 1)
+	# A line reserves no ground. The reload re-stamps the one-tile reservation
+	# every PLACEABLE player component carries, and a feeder is not one of them —
+	# it has no `tile`, so re-stamping it would occupy (0, 0) on every load.
+	assert_false(a.world.grid.has_flag(0, 0, TileGrid.FLAG_OCCUPIED),
+			"a routed feeder reserved the origin tile on reload")
+
+
+func test_demolishing_a_substation_takes_its_circuits_and_leaves_a_way_back() -> void:
+	var sim := CitySim.boot_from_files()
+	sim.advance_hours(4.0)
+	var sub := _finished_substation(sim, Vector2i(70, 60))
+	assert_true(bool(sim.cmd_place_grid_component("feeder", Vector2i(70, 60), 2)["ok"]))
+	sim.advance_hours(1.0)
+	var adopted := sim.grid.component("PF-001")["route"] as Array
+	assert_true(adopted.size() > 1)
+	var moved: Array = []
+	for id in sim.grid.component_ids_of_kind(&"transformer"):
+		if String(sim.grid.component(String(id))["parent"]) == "PF-001":
+			moved.append(String(id))
+	assert_true(moved.size() > 0, "the run picked something up")
+
+	assert_true(bool(sim.cmd_demolish_building(sub)["ok"]))
+	assert_false(sim.grid.has_component(sub), "the shell IS the node")
+	assert_false(sim.grid.has_component("PF-001"),
+			"§2.1: a feeder does not outlive the substation that roots it")
+	for id in moved:
+		assert_eq(String(sim.grid.component(String(id))["parent"]), "",
+				"%s stands, orphaned" % id)
+	sim.advance_hours(1.0)
+	# And the recovery path is the verb itself: a new substation and a new run.
+	var replacement := _finished_substation(sim, sim.grid.component(moved[0])["tile"])
+	assert_true(replacement != "")
+	var again := sim.cmd_place_grid_component("feeder",
+			sim.grid.component(moved[0])["tile"], 2)
+	assert_true(bool(again["ok"]), str(again))
+	assert_true(int((again["payload"] as Dictionary)["adopts"]) > 0,
+			"an orphan is the first thing new copper picks up")
+
+
+func test_parallel_transformer_relieves_a_hotspot_through_the_verb() -> void:
+	# Doc 04 §2.9's "parallel transformer on one service group", end to end
+	# through `cmd_place_grid_component`. Before Wave 6 this purchase moved no
+	# load at all, because §2.1's attachment rule only ever runs for a building
+	# with NO transformer.
+	var sim := CitySim.boot_from_files()
+	sim.advance_hours(8.0)
+	var hot := sim.grid.worst_transformer(25.0)
+	assert_true(String(hot["id"]) != "")
+	var before: float = float(hot["load_kw"])
+	assert_true(before > 0.0)
+	var spot := _transformer_spot(sim, hot["tile"], 2)
+	assert_true(spot.x >= 0)
+	var preview := sim.cmd_place_grid_component("transformer", spot, 3, true)
+	assert_true(bool(preview["ok"]), str(preview))
+	assert_true(int((preview["payload"] as Dictionary)["relieves"]) > 0,
+			"the quote says what it takes off the neighbour")
+	var placed := sim.cmd_place_grid_component("transformer", spot, 3)
+	assert_true(bool(placed["ok"]))
+	assert_eq(int((placed["payload"] as Dictionary)["relieves"]),
+			int((preview["payload"] as Dictionary)["relieves"]),
+			"and the quote is what happens")
+	sim.advance_hours(1.0)
+	assert_true(float(sim.grid.component(String(hot["id"]))["load_kw"]) < before,
+			"the cooking transformer is measurably cooler for the purchase")
 
 
 # =================================================== 2. cmd_demolish_building

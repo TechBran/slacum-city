@@ -70,6 +70,11 @@ const KNOWN_VERBS: Array[String] = [
 	"cmd_place_road", "cmd_upgrade_road", "cmd_demolish_road",
 	"cmd_place_water_component", "cmd_place_water_main",
 	"cmd_upgrade_water_component",
+	# Wave 6's doc 04 §4 `route_feeder`. Recorded here so its presence shows in
+	# the report; `Balanced` drives it through the one-tap
+	# `cmd_place_grid_component("feeder", …)` door, which is the one the build
+	# sheet will use, so the harness measures the path the player takes.
+	"cmd_route_feeder",
 ]
 
 
@@ -251,6 +256,14 @@ class Api extends RefCounted:
 	var repair_spend: int = 0
 	var grid_placed: int = 0
 	var grid_spend: int = 0
+	## Wave 6 — doc 04 §4's `route_feeder`, the verb doc 92 §17.3 named as the
+	## late-game's answer. Counted separately from `grid_placed` because a feeder
+	## is a different decision at a different scale: a tap is $1k of local ground,
+	## a feeder is $5k of trunk capacity that only a substation can root.
+	var feeders_routed: int = 0
+	var feeder_spend: int = 0
+	var feeder_adopted_kw: float = 0.0
+	var substations_built: int = 0
 	var demolished: int = 0
 	var demolition_refund: int = 0
 	var blocks_bought: int = 0
@@ -494,6 +507,49 @@ class Api extends RefCounted:
 			unserved_walls += 1
 		return _log("place", archetype, result, {"origin": [origin.x, origin.y]})
 
+	## `place`, ranked by distance to `centre` instead of by the round-robin
+	## block cursor. Still the HARNESS's site search — the strategy names a
+	## centre, never a tile — and it exists for exactly one archetype class: a
+	## grid SOURCE. A substation is bought to feed a specific overloaded circuit
+	## and the feeder that leaves it is priced per tile (doc 03 §2.13(b)), so
+	## siting it wherever the cursor happened to point would price the decision
+	## by an accident of the scan order rather than by the decision. Ties break
+	## row-major inside sorted block ids, as every other search here does.
+	func place_near(archetype: String, centre: Vector2i) -> Dictionary:
+		if not has_verb("cmd_place_building"):
+			return _log("place_near", archetype, CommandQueue.fail(&"E_NO_VERB"), {})
+		var size := footprint(archetype)
+		var origin := site_near(size, centre)
+		if origin.x < 0:
+			return _log("place_near", archetype, CommandQueue.fail(&"E_NO_SITE"), {})
+		var result: Dictionary = sim.cmd_place_building(archetype, origin)
+		if bool(result["ok"]):
+			placed += 1
+			construction_spend += int(result["payload"].get("cost", 0))
+		return _log("place_near", archetype, result, {"origin": [origin.x, origin.y]})
+
+	## The placeable, served footprint of `size` nearest `centre` (Chebyshev),
+	## scanned row-major inside sorted owned+READY block ids so the tie-break is
+	## the same on every run.
+	func site_near(size: Vector2i, centre: Vector2i) -> Vector2i:
+		var best := Vector2i(-1, -1)
+		var best_distance := 999999
+		for block_id in _ready_blocks():
+			var block: LandBlock = sim.world.block(block_id)
+			var x0: int = block.grid.x * BLOCK_TILES
+			var z0: int = block.grid.y * BLOCK_TILES
+			for z in range(z0, z0 + BLOCK_TILES - size.y + 1):
+				for x in range(x0, x0 + BLOCK_TILES - size.x + 1):
+					var origin := Vector2i(x, z)
+					var distance: int = maxi(absi(x - centre.x), absi(z - centre.y))
+					if distance >= best_distance:
+						continue
+					if sim.world.grid.can_place(origin, size) \
+							and sim.grid.would_serve(origin):
+						best = origin
+						best_distance = distance
+		return best
+
 	## Place at a NAMED tile rather than at the next candidate site. Only the
 	## controlled experiments use this: a strategy must take the ground the
 	## harness's own site search offers it, or its curve stops being comparable.
@@ -661,6 +717,104 @@ class Api extends RefCounted:
 			grid_placed += 1
 			grid_spend += int((result["payload"] as Dictionary).get("cost", 0))
 		return result
+
+	## Doc 04 §4's `route_feeder`, through the same one-tap door the build sheet
+	## would use: `cmd_place_grid_component("feeder", far_end, conductor_class)`
+	## picks the source substation and fills the polyline (the C-41 assist).
+	func route_feeder(target: Vector2i, conductor_class: int = 2) -> Dictionary:
+		var result := _optional("cmd_place_grid_component", 3,
+				["feeder", target, conductor_class],
+				"feeder c%d@%d,%d" % [conductor_class, target.x, target.y])
+		if bool(result["ok"]):
+			var payload: Dictionary = result["payload"]
+			feeders_routed += 1
+			feeder_spend += int(payload.get("cost", 0))
+			feeder_adopted_kw += float(payload.get("adopted_kw", 0.0))
+		return result
+
+	## The hottest feeder's load ratio, against the §2.5 DERATED capacity — the
+	## number the inverse-time relay trips on, not the nameplate. This is the
+	## reading doc 92 §17.3 charted at 51.8 / 80.1 / 104.4 / 119.2 / 111.8 % and
+	## the one a competent player watches, because a feeder past 1.05 opens and
+	## takes its whole subtree dark with it.
+	func feeder_peak_ratio() -> float:
+		return float(sim.grid.worst_feeder(_ambient())["load_ratio"])
+
+	## Where new copper wants to go: the tile of the biggest transformer hanging
+	## off the hottest feeder. Routing THROUGH the overloaded circuit is what
+	## lets doc 04 §2.9's transfer rule move load off it — a feeder drawn into
+	## empty ground would only ever carry buildings that do not exist yet.
+	func hot_feeder_target() -> Vector2i:
+		var worst := String(sim.grid.worst_feeder(_ambient())["id"])
+		if worst == "":
+			return Vector2i(-1, -1)
+		var best := Vector2i(-1, -1)
+		var best_load := -1.0
+		for id in sim.grid.component_ids_of_kind(&"transformer"):
+			var c: Dictionary = sim.grid.component(String(id))
+			if String(c["parent"]) != worst:
+				continue
+			if float(c["load_kw"]) > best_load:
+				best_load = float(c["load_kw"])
+				best = c["tile"]
+		return best
+
+	## The $15,000 answer to `has_feeder_slot() == false`: a new substation,
+	## sited near the load it is being bought for.
+	func build_substation(centre: Vector2i) -> Dictionary:
+		var result := place_near("substation", centre)
+		if bool(result["ok"]):
+			substations_built += 1
+		return result
+
+	## The hottest transformer's load ratio, against the §2.5 derated capacity.
+	## A transformer has no protection (§2.5): it does not trip, it cooks, and
+	## §2.6's table gives a 52-game-hour MTTF at r = 1.15 and a THREE-game-hour
+	## one at r = 1.30. So this reading has to be acted on well under 1.0.
+	func transformer_peak_ratio() -> float:
+		return float(sim.grid.worst_transformer(_ambient())["load_ratio"])
+
+	## Where a parallel transformer wants to go (doc 04 §2.9): the first legal
+	## tile within `radius` of the hottest transformer whose own placement
+	## preview says it would actually TAKE load off it. Scanned outward in
+	## row-major rings so the choice is the same on every run, and gated on the
+	## preview's `relieved_kw` so the agent never buys a tap that relieves
+	## nothing.
+	func relief_spot(level: int, radius: int) -> Vector2i:
+		var hot := sim.grid.worst_transformer(_ambient())
+		if String(hot["id"]) == "":
+			return Vector2i(-1, -1)
+		var centre: Vector2i = hot["tile"]
+		for dz in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				var tile := centre + Vector2i(dx, dz)
+				if tile == centre:
+					continue
+				var quote: Dictionary = sim.cmd_place_grid_component(
+						"transformer", tile, level, true)
+				if not bool(quote["ok"]):
+					continue
+				if float((quote["payload"] as Dictionary).get("relieved_kw", 0.0)) <= 0.0:
+					continue
+				return tile
+		return Vector2i(-1, -1)
+
+	## Is there a substation with a free feeder slot (doc 04 §2.2's 2/3/4/6/8
+	## ladder)? When there is not, more copper is not buyable at any price and
+	## the answer is a $15,000 substation instead.
+	func has_feeder_slot() -> bool:
+		for sim_id in Api._sorted(sim.buildings):
+			if not sim.grid.has_component(String(sim_id)):
+				continue
+			if String(sim.grid.component(String(sim_id))["kind"]) != "substation":
+				continue
+			if int(sim.grid.feeder_slots(String(sim_id))["free"]) > 0:
+				return true
+		return false
+
+	## Doc 07's ambient, as the grid tick reads it.
+	func _ambient() -> float:
+		return float(sim.weather.env_for_grid().get("t_ambient_c", 25.0))
 
 	## The same command's read-only quote. Costs no money and no log line — the
 	## price probe `Experiments.transformer_payback` reads the $ figure from here.
@@ -1246,6 +1400,68 @@ class Balanced extends Strategy:
 	## horizon the rung is decisive: **8.70 % dark against pass 3's 25.72 %**.
 	const GRID_LEVEL := 2
 
+	# --- Wave 6: the TRUNK, which is a different decision from the tap --------
+	##
+	## Doc 92 §17.3 measured the ceiling the transformer rung above cannot lift:
+	## every kW the city draws runs through doc 09 §2.9.5's two class-1 feeders,
+	## 1,200 kW each, and the demand crosses them at ~410 buildings. The fleet
+	## was fine, the substation sat at 45 % of 6 MVA and the plant was idle —
+	## **the trunk was the whole of it**, and no verb could widen it.
+	##
+	## Wave 6 ships doc 04 §4's `route_feeder`, and this is the rule that uses
+	## it. A competent player watches ONE number, the hottest feeder's load
+	## ratio against its derated capacity, and buys trunk before it opens.
+	##
+	## **The trigger is doc 04's own, not a swept number.** §5.10 publishes the
+	## overlay's three bands — `NORMAL` r < 0.75, `WARNING` 0.75 ≤ r < 0.95,
+	## `CRITICAL` r ≥ 0.95 — and they are the only authored statement in the
+	## project of how loaded is too loaded. A competent player buys when the
+	## overlay changes colour, so this agent does.
+	##
+	## **A feeder is bought at WARNING** because its fix is slow: with every slot
+	## full the answer is a $15,000 substation, an 8-game-hour build and then a
+	## route, and §2.5's relay picks up at 1.05 and trips at r = 1.10 in
+	## `120 / (1.10² − 1) = 571` game-seconds. From 0.75 this agent's demand
+	## growth (~4–6 %/game-day, measured) leaves **five to eight game-days**;
+	## from CRITICAL it would leave under two, which does not cover the build.
+	const FEEDER_RELIEF_RATIO := PowerGrid.OVERLAY_WARNING_R
+	## A routed feeder's load only exists after the next Pass A, and doc 04
+	## §2.9's adoption takes what it can reach in ONE pass, so re-reading the
+	## ratio sooner than this would buy a second run against a stale number.
+	## Six game-hours also caps the rule at four purchases a game-day.
+	const FEEDER_COOLDOWN := 6
+	## Class 2 — 3,000 kW for doc 03 §2.13(b)'s $210/tile against class 1's
+	## 1,200 kW for $110. **2.5× the capacity for 1.9× the price**, the same
+	## shape of choice `GRID_LEVEL` makes on the transformer ladder, and doc 04
+	## §6 ships no class 3.
+	const FEEDER_CLASS := 2
+	## A run to the middle of an overloaded circuit is order 30–50 tiles, so
+	## ~$6k–$11k; this is the working balance below which even that waits.
+	const FEEDER_ATTEMPT_FLOOR := 10_000
+
+	## **The hotspot rule**, and it is the same reading one level down.
+	##
+	## With the trunk fixed, doc 92 §17.3's ceiling moves to the transformer —
+	## measured on the Wave-6 sim, seed 1337, 50 game-days: feeders end at 26.8 %
+	## aggregate and a 0.86 peak, while the transformer fleet has **13 of 51 past
+	## 100 %** and a worst of r = 2.32. That is not a rating problem, it is a
+	## *purchase* the agent never makes: `_lead_grid` buys a tap when a block runs
+	## out of SERVED GROUND, and an overloaded transformer sitting in the middle
+	## of ground that is fully served never triggers it.
+	##
+	## Doc 04 §2.9 sells the answer as "parallel transformer on one service
+	## group", and Wave 6 makes it real (`PowerGrid.adopt_buildings`). This rule
+	## buys it — and buys it at **CRITICAL**, not at WARNING like the feeder,
+	## because the fix lands inside one command: a tap is placed and adopts its
+	## share in the same game-hour, so there is nothing to get ahead of. Waiting
+	## for red is also what stops the rule from becoming a treadmill — measured
+	## at WARNING on the same seed it bought **116 transformers for $153,830** and
+	## left the fleet 20.7 % loaded, which is a city paying to over-build the one
+	## thing that was no longer its problem.
+	const HOTSPOT_RATIO := PowerGrid.OVERLAY_CRITICAL_R
+	const HOTSPOT_RADIUS := 3
+	const HOTSPOT_COOLDOWN := 2
+
 	## KNOB 1 — maintenance. `disaster_neglect` sets this false and changes
 	## nothing else: no repair, no priority class, no transformer. Everything it
 	## builds, it builds exactly as `balanced` would.
@@ -1260,6 +1476,13 @@ class Balanced extends Strategy:
 	var _last_expense_per_hour: float = 0.0
 	var _expand_hour: int = -1000
 	var _grid_hour: int = -1000
+	var _feeder_hour: int = -1000
+	var _hotspot_hour: int = -1000
+	## Set while the trunk is past `FEEDER_RELIEF_RATIO` and every feeder slot in
+	## the city is full — i.e. while the ONE purchase that would fix it is a
+	## substation the agent cannot yet afford. It stands the land fund down (see
+	## `reserve`) and holds the expansion ladder, and nothing else.
+	var _trunk_starved: bool = false
 	var _tax_hour: int = -1000
 	var _priorities_set: bool = false
 	## Doc 03 §2.10-shaped maintenance allowance, in dollars. Credited every
@@ -1291,7 +1514,10 @@ class Balanced extends Strategy:
 				int(RESERVE_DAYS_OF_EXPENSE * 24.0 * _last_expense_per_hour))
 
 	func reserve() -> int:
-		return operating_reserve() + int(_land_fund)
+		# The land fund is earmarked money the growth ladder may not touch —
+		# EXCEPT while the city's trunk is starved, when the next block is the
+		# last thing it needs and the $15,000 substation is the first.
+		return operating_reserve() + (0 if _trunk_starved else int(_land_fund))
 
 	## Wave-4 rebalance (ruling 1). Pass 2's `act` was a single-action ladder with
 	## a repair-first early return, and doc 92 pass 2 / the Wave-3 report both
@@ -1440,6 +1666,14 @@ class Balanced extends Strategy:
 		var spare := api.balance() - reserve()
 		if spare <= 0:
 			return
+		# 0a. The TRUNK, before the tap: a saturated feeder takes its whole
+		#     subtree dark, and no number of transformers under it helps.
+		if maintains and _relieve_feeders(api, hour, spare):
+			return
+		# 0a2. Then the hotspot: a transformer past 0.85 cooks, and doc 04 §2.9's
+		#      parallel transformer is what takes the load off it.
+		if maintains and _relieve_transformers(api, hour, spare):
+			return
 		# 0b. Keep the grid ahead of the building, not behind it (F-11).
 		if maintains and _lead_grid(api, hour, spare):
 			return
@@ -1472,6 +1706,8 @@ class Balanced extends Strategy:
 	func _expand(api: Api, hour: int) -> bool:
 		if not api.has_verb("cmd_buy_block") or _land_block == "":
 			return false
+		if _trunk_starved:
+			return false  # not while the lights are going out on the land you own
 		if hour - _expand_hour < EXPAND_COOLDOWN:
 			return false
 		if _land_target <= 0.0 or _land_fund + 0.5 < _land_target:
@@ -1537,6 +1773,82 @@ class Balanced extends Strategy:
 		if tile.x < 0:
 			return false
 		_grid_hour = hour
+		return bool(api.place_grid_component("transformer", tile, GRID_LEVEL)["ok"])
+
+	## Trunk ahead of the relay — see `FEEDER_RELIEF_RATIO` for the doc 92 §17.3
+	## measurement this answers. One number in, two possible purchases out:
+	##
+	## 1. **A feeder**, when some substation still has a slot (doc 04 §2.2 gives
+	##    L1 two, L2 three). Routed to the middle of the hottest circuit, because
+	##    §2.9's transfer rule only picks up transformers the new route passes
+	##    near — copper drawn into empty ground would relieve nothing that exists.
+	## 2. **A substation**, when none does. The city cannot buy copper at any
+	##    price with every slot full, and doc 09 §2.9.5 fills both of SUB-A's on
+	##    game-hour zero, so a growing city buys its SECOND substation the way it
+	##    buys its second fire station.
+	##
+	## Budget-gated like everything else this agent does, `E_NO_VERB`-safe, and
+	## gated on `maintains` so `disaster_neglect` still differs in one field.
+	func _relieve_feeders(api: Api, hour: int, spare: int) -> bool:
+		if not api.has_verb("cmd_place_grid_component"):
+			return false
+		if api.feeder_peak_ratio() < FEEDER_RELIEF_RATIO:
+			_trunk_starved = false
+			return false
+		if hour - _feeder_hour < FEEDER_COOLDOWN:
+			return false
+		var target := api.hot_feeder_target()
+		if target.x < 0:
+			return false
+		if api.has_feeder_slot():
+			_trunk_starved = false
+			if spare < FEEDER_ATTEMPT_FLOOR:
+				return false
+			_feeder_hour = hour
+			return bool(api.route_feeder(target, FEEDER_CLASS)["ok"])
+		# Every slot is full, so the ONLY thing that makes more copper buyable at
+		# any price is a substation. Two things follow, and both are what a
+		# competent player does rather than what a tidy one does:
+		#
+		#   * it is gated on its own price and nothing else — putting the routing
+		#     floor on top of it (measured) left the agent unable to afford it
+		#     for the whole back half of a 50-game-day run while it spent the
+		#     same money on taps;
+		#   * `_trunk_starved` stands the LAND FUND down until it is bought — you
+		#     do not buy the next block while the lights are going out on the one
+		#     you have. **This one is a judgement, not a measurement**, and it is
+		#     labelled as such: it was added while chasing seed 4242's late game,
+		#     and the change that actually fixed that seed was the source
+		#     resolution in `CitySim._feeder_source` — 16 × `E_NO_SLOT`, ONE
+		#     substation and 18.0 % dark at 50 game-days, against 0 × `E_NO_SLOT`,
+		#     three substations and 5.9 % on the shipped code. It is kept because
+		#     an agent that saves for its next block while its trunk sits at
+		#     r = 1.5 is not a competent player, and because it costs nothing
+		#     while the trunk is healthy: the flag is false on every hour the
+		#     peak is under WARNING.
+		_trunk_starved = true
+		if spare < api.build_cost("substation"):
+			return false
+		_feeder_hour = hour
+		var bought := bool(api.build_substation(target)["ok"])
+		if bought:
+			_trunk_starved = false
+		return bought
+
+	## Doc 04 §2.9's parallel transformer, bought — see `HOTSPOT_RADIUS` for the
+	## measurement. Budget-gated on the same floor a lead tap uses, because it is
+	## the same purchase at the same price; what differs is the trigger.
+	func _relieve_transformers(api: Api, hour: int, spare: int) -> bool:
+		if not api.has_verb("cmd_place_grid_component"):
+			return false
+		if hour - _hotspot_hour < HOTSPOT_COOLDOWN or spare < GRID_ATTEMPT_FLOOR:
+			return false
+		if api.transformer_peak_ratio() < HOTSPOT_RATIO:
+			return false
+		var tile := api.relief_spot(GRID_LEVEL, HOTSPOT_RADIUS)
+		if tile.x < 0:
+			return false
+		_hotspot_hour = hour
 		return bool(api.place_grid_component("transformer", tile, GRID_LEVEL)["ok"])
 
 	## The densest affordable row inside `categories` — same ranking as greedy,
@@ -1868,6 +2180,16 @@ class Runner extends RefCounted:
 			"value_created": int(last["treasury"]) + api.construction_spend,
 			"grid_placed": api.grid_placed,
 			"grid_spend": api.grid_spend,
+			# --- Wave 6: the trunk half of the grid decision -----------------
+			"feeders_routed": api.feeders_routed,
+			"feeder_spend": api.feeder_spend,
+			"feeder_adopted_kw": api.feeder_adopted_kw,
+			"substations_built": api.substations_built,
+			## The reading `FEEDER_RELIEF_RATIO` gates on, at the end of the run:
+			## doc 92 §17.3's ceiling, published as a column so a report row can
+			## say whether the city ended over its own trunk.
+			"feeder_peak_ratio_end": float(sim.grid.worst_feeder(
+					float(sim.weather.env_for_grid().get("t_ambient_c", 25.0)))["load_ratio"]),
 			"repaired": api.repaired,
 			"repair_spend": api.repair_spend,
 			"demolished": api.demolished,
