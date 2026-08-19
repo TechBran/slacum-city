@@ -27,6 +27,10 @@ var build_sheet: BuildSheet
 var building_panel: BuildingPanel
 var ghost_view: GhostView
 var construction_view: ConstructionSiteView
+var save_service: SaveService
+var android_lifecycle: AndroidLifecycle
+var _autosave_interval_s := 0.0
+var _autosave_timer := 0.0
 var _family_of: Dictionary = {}  # archetype -> mesh-manifest family
 var _height_of: Dictionary = {}  # "archetype:level" -> mesh height_m (lod 0)
 var _tap_origin := Vector2.ZERO
@@ -50,6 +54,15 @@ func _ready() -> void:
 	sim_host.name = "SimHost"
 	add_child(sim_host)
 
+	save_service = SaveService.new()
+	save_service.name = "SaveService"
+	add_child(save_service)
+	android_lifecycle = AndroidLifecycle.new()
+	android_lifecycle.name = "AndroidLifecycle"
+	add_child(android_lifecycle)
+	android_lifecycle.setup(save_service, sim_host.sim)
+	android_lifecycle.resumed.connect(_on_app_resumed)
+
 	_build_environment(render_data)
 	_build_ground()
 	_build_city_view(render_data)
@@ -68,6 +81,7 @@ func _ready() -> void:
 		add_child(ui_instance)
 		_wire_hud(ui_instance)
 		_wire_build_ui(ui_instance)
+		_wire_ui_screens(ui_instance)
 
 	touch_input = TouchInput.new()
 	touch_input.name = "TouchInput"
@@ -135,12 +149,10 @@ func _build_ground() -> void:
 	var ground_root := Node3D.new()
 	ground_root.name = "Ground"
 	add_child(ground_root)
-	var developed := StandardMaterial3D.new()
-	developed.albedo_color = Color(0.30, 0.31, 0.30)
-	developed.roughness = 0.9
-	var undeveloped := StandardMaterial3D.new()
-	undeveloped.albedo_color = Color(0.24, 0.30, 0.22)
-	undeveloped.roughness = 1.0
+	var developed := GroundSurface.material("pavement", Vector2(128.0, 128.0),
+			Color(0.52, 0.53, 0.52), 0.90)
+	var undeveloped := GroundSurface.material("pavement", Vector2(128.0, 128.0),
+			Color(0.40, 0.50, 0.36), 1.00)
 	for block_id in world.block_ids_sorted():
 		var block: LandBlock = world.block(block_id)
 		var plane := MeshInstance3D.new()
@@ -155,9 +167,8 @@ func _build_ground() -> void:
 	road_mm.transform_format = MultiMesh.TRANSFORM_3D
 	var road_mesh := BoxMesh.new()
 	road_mesh.size = Vector3(8.0, 0.1, 8.0)
-	var road_material := StandardMaterial3D.new()
-	road_material.albedo_color = Color(0.12, 0.12, 0.14)
-	road_material.roughness = 0.85
+	var road_material := GroundSurface.material("asphalt", Vector2(8.0, 8.0),
+			Color(0.34, 0.34, 0.38), 0.85)
 	road_mesh.material = road_material
 	road_mm.mesh = road_mesh
 	var road_tiles: Array[Vector2i] = []
@@ -273,6 +284,12 @@ func _add_construction_site(sim_id: String) -> void:
 ## Sim → render event bridge: translate string building ids to render ids and
 ## feed the model. The renderer follows the SIMULATION — nothing is staged.
 func _on_sim_batch(batch: Array) -> void:
+	# doc 12 §4.5: the same drained batch feeds the alerts centre. Clock first,
+	# so `{time}` placeholders read the sim's clock and not a stale one.
+	if ui_root != null:
+		ui_root.set_sim_clock(sim_host.sim.clock.minute_of_day(),
+				sim_host.sim.clock.day_index())
+		ui_root.feed_events(batch)
 	var translated: Array = []
 	for event in batch:
 		match StringName(String(event["type"])):
@@ -437,6 +454,82 @@ func _wire_build_ui(ui_instance: Node) -> void:
 		ui_root.back_requested.connect(_on_ui_back)
 
 
+## doc 12 §2.5/§2.13/§2.15. `UIRoot.bring_up_screens()` already built and wired
+## the overlay rail, alerts centre, settings sheet, save slots and pause menu
+## against one shared UIConfig; this only binds them to the sim and the camera.
+func _wire_ui_screens(ui_instance: Node) -> void:
+	var root := ui_instance as UIRoot
+	if root == null:
+		return
+	root.set_alert_locator(_alert_world_pos)
+	root.focus_requested.connect(_on_ui_focus_requested)
+	root.pause_intent.connect(_on_hud_pause_toggled)     # doc 01 owns `paused`
+	root.quit_requested.connect(_on_ui_quit_requested)
+	root.settings_changed.connect(_on_ui_setting_changed)
+	root.save_loaded.connect(_on_ui_save_loaded)
+	if save_service != null:
+		root.bind_save_service(save_service, sim_host.sim)
+	if root.settings_sheet != null:
+		_autosave_interval_s = root.settings_sheet.model.autosave_interval_s()
+
+
+## `Callable(kind, id) -> Vector3` for the alerts centre: only the shell knows
+## where an entity id sits in metres. `null` means "no jump affordance".
+func _alert_world_pos(kind: StringName, id: Variant) -> Variant:
+	var tile_m := 8.0
+	if kind == &"block_id":
+		var block: LandBlock = sim_host.sim.world.block(str(id))
+		if block == null:
+			return null
+		return Vector3((block.grid.x * 16 + 8) * tile_m, 0.0,
+				(block.grid.y * 16 + 8) * tile_m)
+	if kind == &"building":
+		for sim_id: String in sim_host.sim.buildings.keys():
+			var b: Building = sim_host.sim.buildings[sim_id]
+			if sim_id == str(id) or b.id == int(id):
+				return Vector3(b.origin.x * tile_m, 0.0, b.origin.y * tile_m)
+	return null
+
+
+func _on_ui_focus_requested(world_pos: Vector3) -> void:
+	camera_state.focus_on(world_pos)
+
+
+func _on_ui_quit_requested() -> void:
+	# Single-scene game: quit means save, then close. The view only asks.
+	if save_service != null:
+		save_service.autosave(sim_host.sim)
+	get_tree().quit()
+
+
+func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
+	var model: SettingsModel = ui_root.settings_sheet.model
+	match key:
+		&"graphics":
+			render_model.set_preset(str(model.value("graphics")))
+		&"autosave_interval_min":
+			_autosave_interval_s = model.autosave_interval_s()
+			_autosave_timer = 0.0
+		&"text_scale", &"larger_touch_targets":
+			ui_root.rebuild_theme(model.theme_opts())
+		_:
+			pass   # reduce_motion / in_app_banners / sound are read where used
+
+
+func _on_ui_save_loaded(_slot: int) -> void:
+	# The sim was replaced in place; re-seed anything that cached from it.
+	_refresh_hud()
+
+
+## doc 13 §2.3: the shell measures, the sim decides. The 12 real-hour cap and
+## the coarse catch-up are CitySim's; this only hands over the measurement.
+func _on_app_resumed(elapsed_wall_s: float) -> void:
+	if elapsed_wall_s < 60.0:
+		sim_host.sim.scheduler.advance_fine_n(mini(int(elapsed_wall_s * 4.0), 240))
+	else:
+		sim_host.sim.advance_coarse_hours(int(elapsed_wall_s / 60.0))
+
+
 func _on_placement_started(_archetype: String, _variant: String) -> void:
 	if building_panel != null:
 		building_panel.close()
@@ -534,6 +627,11 @@ func _process(delta: float) -> void:
 	city_view.refresh(delta, hour, camera_rig.camera.global_position)
 	if construction_view != null:
 		construction_view.refresh(delta, environment_controller.last_night)
+	if _autosave_interval_s > 0.0 and save_service != null:
+		_autosave_timer += delta
+		if _autosave_timer >= _autosave_interval_s:
+			_autosave_timer = 0.0
+			save_service.autosave(sim_host.sim)
 	streetlights.refresh()
 	if _blackout_at >= 0.0 and _screenshot_timer >= _blackout_at:
 		_trigger_blackout_demo(true)
