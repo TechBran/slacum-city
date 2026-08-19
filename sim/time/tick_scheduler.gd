@@ -176,3 +176,10 @@ static func _system_less(a: SimSystem, b: SimSystem) -> bool:
 	if a.phase() != b.phase():
 		return a.phase() < b.phase()
 	return String(a.system_id()) < String(b.system_id())
+
+
+## Break the sim ↔ scheduler ↔ adapter reference cycle (doc 91 D-9): every
+## phase adapter holds its CitySim strongly while the sim holds this scheduler,
+## so a RefCounted-only sim can never free itself. Call when a sim is retired.
+func dispose() -> void:
+	_systems.clear()

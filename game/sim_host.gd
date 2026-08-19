@@ -43,3 +43,10 @@ func hour_of_day_float() -> float:
 		return 12.0
 	return float(sim.clock.minute_of_day()) / 60.0 \
 			+ float(sim.clock.residual_game_ms) / 3_600_000.0
+
+
+func _exit_tree() -> void:
+	# Doc 91 D-9: unregister the phase adapters so the RefCounted cycle
+	# (sim -> scheduler -> adapter -> sim) breaks and the city can free.
+	if sim != null and sim.scheduler != null:
+		sim.scheduler.dispose()

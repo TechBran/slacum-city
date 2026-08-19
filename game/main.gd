@@ -33,6 +33,7 @@ var vehicle_view: VehicleView
 ## that cannot ride the packed per-building state and gets its own MultiMesh.
 var road_overlay: RoadOverlayView
 var audio: AudioService
+var notification_router: NotificationRouter
 var save_service: SaveService
 var _before_snapshot: Dictionary = {}   # captured on pause for the away report
 var android_lifecycle: AndroidLifecycle
@@ -57,6 +58,7 @@ var _hud_net_per_hour := 0.0
 var _last_overlay_minute := -1
 var _resumed_slot := -1   # >= 0 when this session restored a save at boot
 var _render_data: Dictionary = {}
+var _road_node: MultiMeshInstance3D
 
 
 func _ready() -> void:
@@ -83,6 +85,9 @@ func _ready() -> void:
 	audio.set_locator(_alert_world_pos)
 	android_lifecycle.focus_changed.connect(
 			func(has_focus: bool) -> void: audio.set_muted(not has_focus))
+	notification_router = NotificationRouter.load_from_files()
+	notification_router.set_sink(NativeNotificationSink.new())  # inert until doc 13 phase 2
+	android_lifecycle.notification_router = notification_router
 
 	# Session restore (doc 08 §2.1): on a PLAIN launch — no dev args, which is
 	# every real device launch — the most recent save IS the city, restored
@@ -241,6 +246,7 @@ func _build_ground() -> void:
 	road_node.name = "Roads"
 	road_node.multimesh = road_mm
 	ground_root.add_child(road_node)
+	_road_node = road_node
 	# Water tiles: ONE animated material for the whole city (doc 11 §2.1.1).
 	# The wave field is world-space, so the quads read as one body.
 	var water_mm := MultiMesh.new()
@@ -358,12 +364,23 @@ func _on_sim_batch(batch: Array) -> void:
 		ui_root.feed_events(batch)
 	if weather_fx != null:
 		weather_fx.feed_events(batch)   # doc 07's weather_changed / lightning_strike
+	for event in batch:
+		match StringName(String(event.get("type", ""))):
+			&"road_graph_changed", &"block_roads_stamped":
+				# Player roads and stamped ring blocks would otherwise be
+				# invisible until restart — the slab MultiMesh is built at boot.
+				_rebuild_road_multimesh()
 	if vehicle_view != null:
 		vehicle_view.apply_events(batch)
 		# Idempotent fleet pose sync — per TICK batch, never per frame.
 		vehicle_view.apply_unit_states(sim_host.sim.incidents.vehicle_states())
 	if audio != null:
 		audio.feed_batch(batch)
+		# Moving sirens: the same fleet snapshot vehicle_view already takes,
+		# once per TICK — the siren follows the streets, throttled inside.
+		audio.feed_unit_states(sim_host.sim.incidents.vehicle_states())
+	if notification_router != null:
+		notification_router.feed_batch(batch)
 	var translated: Array = []
 	for event in batch:
 		match StringName(String(event["type"])):
@@ -616,6 +633,7 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 		if audio != null:
 			audio.set_sound_volume(root.settings_sheet.model.value_num("sound_volume"))
 	_wire_audio_ui(root)
+	root.ui_coverage_changed.connect(audio.set_ui_coverage)  # interior muffle
 	# Saves carry the UI section (doc 12 §3.2) so a restored city keeps its
 	# tutorial progress and overlay prefs; the provider rides every save.
 	save_service.ui_provider = root.capture_ui_state
@@ -916,6 +934,24 @@ func _on_ui_save_loaded(_slot: int) -> void:
 	_refresh_hud()
 
 
+## Re-scan the tile grid for FLAG_ROAD and rebuild the slab MultiMesh — fired
+## on `road_graph_changed` / `block_roads_stamped` and after a mid-session load.
+func _rebuild_road_multimesh() -> void:
+	if _road_node == null or _road_node.multimesh == null:
+		return
+	var world := sim_host.sim.world
+	var road_tiles: Array[Vector2i] = []
+	for z in TileGrid.SIZE:
+		for x in TileGrid.SIZE:
+			if world.grid.has_flag(x, z, TileGrid.FLAG_ROAD):
+				road_tiles.append(Vector2i(x, z))
+	var mm := _road_node.multimesh
+	mm.instance_count = road_tiles.size()
+	for i in road_tiles.size():
+		mm.set_instance_transform(i, Transform3D(Basis.IDENTITY,
+				Vector3(road_tiles[i].x * 8.0 + 4.0, 0.05, road_tiles[i].y * 8.0 + 4.0)))
+
+
 ## Rebuild every world view from the (just-replaced) sim. The render model's
 ## roster is diffed rather than recreated — CityView's buckets self-heal from
 ## `_upload_all`, so removing the stale records and re-adding the live ones is
@@ -942,6 +978,7 @@ func _resync_world_views() -> void:
 		for sim_id: String in sim.buildings:
 			if (sim.buildings[sim_id] as Building).state == &"under_construction":
 				_add_construction_site(String(sim_id))
+	_rebuild_road_multimesh()
 	# The vehicle layer keys off a live event stream; the cheapest correct
 	# resync is a fresh view (its whole state rebuilds within a game-minute).
 	if vehicle_view != null:
@@ -1039,18 +1076,27 @@ func _on_app_paused(_saved: bool) -> void:
 			"happiness": sim.happiness.happiness}
 
 
-## doc 13 §2.3: the shell measures, the sim decides. The 12 real-hour cap and
-## the coarse catch-up are CitySim's; this only hands over the measurement.
+## doc 13 §2.3: the shell measures, the sim decides. The catch-up SHAPE is
+## CatchUpPlanner's (doc 01) — the naive fine-then-coarse split violated
+## `advance_coarse_n`'s hour-alignment contract on 239 of 240 tick offsets
+## (doc 91 D-1); the planner emits segments that always land on boundaries.
 func _on_app_resumed(elapsed_wall_s: float) -> void:
-	if elapsed_wall_s < 60.0:
-		sim_host.sim.scheduler.advance_fine_n(mini(int(elapsed_wall_s * 4.0), 240))
-	else:
-		sim_host.sim.advance_coarse_hours(int(elapsed_wall_s / 60.0))
-	var offline_batch: Array = sim_host.sim.bus.drain()
+	var sim := sim_host.sim
+	var plan: Dictionary = CatchUpPlanner.plan(int(elapsed_wall_s * 1000.0),
+			sim.clock.residual_game_ms, sim.clock.tick_index)
+	for segment: Dictionary in plan.get("segments", []):
+		var count := int(segment.get("count", 0))
+		if count <= 0:
+			continue
+		if String(segment.get("kind", "")) == "coarse":
+			sim.advance_coarse_hours(count)
+		else:
+			sim.scheduler.advance_fine_n(count)
+	sim.clock.residual_game_ms = int(plan.get("new_residual_game_ms", 0))
+	var offline_batch: Array = sim.bus.drain()
 	_on_sim_batch(offline_batch)
 	if ui_root == null or _before_snapshot.is_empty() or elapsed_wall_s < 60.0:
 		return
-	var sim := sim_host.sim
 	var toast := ui_root.present_away_report({
 		"elapsed_wall_s": elapsed_wall_s,
 		"elapsed_game_minutes": elapsed_wall_s,      # 1 real s = 1 game min at 1x

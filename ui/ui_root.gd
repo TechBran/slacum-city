@@ -56,6 +56,7 @@ const BACK_MINIMISE := &"minimise"
 signal back_requested(action: StringName)
 signal breakpoint_changed(bp: Breakpoint)
 signal safe_area_changed(rect: Rect2i)
+signal ui_coverage_changed(coverage01: float)
 
 ## Re-emitted from the screens below, so `game/main.gd` connects to one object
 ## instead of six. Nothing here decides anything — the root is a switchboard.
@@ -711,6 +712,7 @@ func _on_build_placement_committed(result: Dictionary) -> void:
 ## works out the fix on their own skip ahead by opening the GRID tab. Polled only
 ## while the tutorial is running, and never otherwise.
 func _process(_delta: float) -> void:
+	_update_ui_coverage()
 	if onboarding == null or not onboarding.is_active() or build_sheet == null:
 		return
 	var category := build_sheet.active_category() if build_sheet.is_open() else ""
@@ -720,6 +722,32 @@ func _process(_delta: float) -> void:
 	if category != "":
 		feed_onboarding({"kind": OnboardingModel.OBS_UI_OPENED,
 				"path": OnboardingFlow.SCREEN_BUILD_CATEGORY + category})
+
+
+## How much of the safe area a sheet, panel or modal currently covers, 0..1.
+## `game/audio/audio_service.gd` uses it for the interior muffle (doc 11
+## §2.15.1): over half the screen and the city is heard through the sheet.
+## Recomputed per frame over <= 12 Controls — far cheaper than remembering to
+## emit from all eight screen-toggle handlers and missing the ninth.
+func _update_ui_coverage() -> void:
+	if safe_area == null:
+		return
+	var area := safe_area.get_global_rect()
+	if area.get_area() <= 0.0:
+		return
+	var covered := 0.0
+	for layer: Control in [modal_layer, sheet_layer, panel_layer]:
+		if layer == null or not layer.visible:
+			continue
+		for child: Node in layer.get_children():
+			var panel := child as Control
+			if panel != null and panel.visible:
+				covered += panel.get_global_rect().intersection(area).get_area()
+	var coverage := clampf(covered / area.get_area(), 0.0, 1.0)
+	if is_equal_approx(coverage, _last_coverage):
+		return
+	_last_coverage = coverage
+	ui_coverage_changed.emit(coverage)
 
 
 ## `CitySim.cmd_set_tax_level` itself plus the detent it sits on.
@@ -870,6 +898,7 @@ func _recompute_layout() -> void:
 ## whatever panel happened to be open. Harnesses and tests set a device box here;
 ## the game never touches it.
 var safe_area_override := Rect2i()
+var _last_coverage := -1.0
 
 
 ## Lays the whole deck out at a device box **without a rendered frame**.

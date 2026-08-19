@@ -27,6 +27,7 @@ extends SimTest
 ## reference box. Every surface has to fit every one of them.
 const BOXES: Array[Vector2i] = [
 	Vector2i(360, 800), Vector2i(412, 915), Vector2i(794, 924), Vector2i(880, 400),
+	Vector2i(1280, 720),  # the project's own viewport (doc 91 D-12's blind spot)
 ]
 
 ## Node paths, from the safe area, of every surface that occupies the full width

@@ -252,7 +252,7 @@ func test_full_tutorial_through_the_real_ui() -> void:
 	# The step's on_enter already asked the root to open the GRID tab; the
 	# player cancels the house they could not place and buys the answer.
 	assert_true(rig.root.build_sheet.is_open(), "the coach opened the sheet for us")
-	assert_eq(rig.root.build_sheet.active_category(), BuildController.CATEGORY_GRID,
+	assert_eq(rig.root.build_sheet.active_category(), BuildController.CATEGORY_INFRASTRUCTURE,
 			"on the GRID tab, per the step's on_enter action")
 	rig.root.build_sheet.cancel_placement()
 	var components_before := rig.sim.grid.component_ids().size()

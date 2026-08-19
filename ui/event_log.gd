@@ -68,6 +68,14 @@ func _ready() -> void:
 		setup(UIRoot.config_from(self))
 
 
+## Same corner discipline as AlertsCenter (doc 91 D-12): the chip yields to any
+## other PanelLayer surface so two edge affordances never overlap.
+func _process(_delta: float) -> void:
+	if _chip == null or is_open():
+		return
+	_chip.visible = not UIWidgets.any_sibling_open(self)
+
+
 func _bind_nodes() -> void:
 	_chip = get_node_or_null("Chip") as Button
 	_panel = get_node_or_null("Panel") as PanelContainer
