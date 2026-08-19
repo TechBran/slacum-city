@@ -13,6 +13,10 @@ var _shader: Shader
 var _window_colors: Dictionary = {}
 var _window_nits: float = 3.2
 var _day_gate: float = 0.06
+## Optional `construction` block in data/render.json. Keys map 1:1 onto the
+## building shader's construction uniforms and override its art defaults;
+## absent keys keep the shader's. Strings are read as colours.
+var _construction: Dictionary = {}
 
 
 func setup(p_model: RenderStateModel, render_data: Dictionary) -> void:
@@ -25,6 +29,7 @@ func setup(p_model: RenderStateModel, render_data: Dictionary) -> void:
 	_window_colors = emissive.get("window_color", {})
 	_window_nits = float(emissive.get("window_nits", 3.2))
 	_day_gate = float(emissive.get("day_gate", 0.06))
+	_construction = render_data.get("construction", {})
 	_rebuild()
 
 
@@ -68,6 +73,17 @@ func _ensure_bucket_node(bucket: RenderStateModel.Bucket) -> void:
 			Color(String(_window_colors.get(family, "#FFCE8A"))))
 	material.set_shader_parameter("window_nits", _window_nits)
 	material.set_shader_parameter("day_gate", _day_gate)
+	# Construction look (stage 1..6): the shader clamps geometry to
+	# `stage/6 * build_height_m`, so it needs this mesh's own height.
+	material.set_shader_parameter("build_height_m",
+			maxf(float(entry.get("height_m", 10.0)), 0.001))
+	for key in _construction:
+		var value: Variant = _construction[key]
+		match typeof(value):
+			TYPE_STRING:
+				material.set_shader_parameter(String(key), Color(String(value)))
+			TYPE_INT, TYPE_FLOAT:
+				material.set_shader_parameter(String(key), float(value))
 	mm.mesh = mesh
 	node.multimesh = mm
 	node.material_override = material
