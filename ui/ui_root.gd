@@ -105,6 +105,7 @@ var toast_layer: CanvasLayer
 var hud: CityHUD
 var overlay_rail: OverlayRail
 var alerts_center: AlertsCenter
+var event_log: EventLog
 var settings_sheet: SettingsSheet
 var save_load_sheet: SaveLoadSheet
 var pause_menu: PauseMenu
@@ -196,6 +197,7 @@ func _bind_nodes() -> void:
 	hud = hud_layer as CityHUD
 	overlay_rail = safe_area.get_node_or_null("HUDLayer/OverlayRail") as OverlayRail
 	alerts_center = safe_area.get_node_or_null("PanelLayer/AlertsCenter") as AlertsCenter
+	event_log = safe_area.get_node_or_null("PanelLayer/EventLog") as EventLog
 	settings_sheet = safe_area.get_node_or_null("ModalLayer/SettingsSheet") as SettingsSheet
 	save_load_sheet = safe_area.get_node_or_null("ModalLayer/SaveLoadSheet") as SaveLoadSheet
 	pause_menu = safe_area.get_node_or_null("ModalLayer/PauseMenu") as PauseMenu
@@ -224,6 +226,8 @@ func bring_up_screens() -> void:
 		overlay_rail.setup(config)
 	if alerts_center != null and alerts_center.model == null:
 		alerts_center.setup(config)
+	if event_log != null and event_log.model == null:
+		event_log.setup(config)
 	if settings_sheet != null and settings_sheet.model == null:
 		settings_sheet.setup(config)
 	if save_load_sheet != null and save_load_sheet.model == null:
@@ -272,6 +276,8 @@ func _connect_screens() -> void:
 	if alerts_center != null:
 		_connect(alerts_center.focus_requested, _on_focus_requested)
 		_connect(alerts_center.unread_changed, _on_unread_changed)
+	if event_log != null:
+		_connect(event_log.focus_requested, _on_focus_requested)
 	if settings_sheet != null:
 		_connect(settings_sheet.settings_changed, _on_settings_changed)
 		_connect(settings_sheet.saves_requested, _on_saves_requested)
@@ -410,6 +416,12 @@ func _on_deeplink_requested(target: String) -> void:
 		if incident_drawer != null:
 			incident_drawer.open()
 		return
+	if target == "event_log":
+		if city_dashboard != null:
+			city_dashboard.close()
+		if event_log != null:
+			event_log.open()
+		return
 	deeplink_requested.emit(target)
 
 
@@ -450,6 +462,10 @@ func bind_save_service(service: Object, sim: Object = null) -> void:
 func feed_events(batch: Array) -> void:
 	if alerts_center != null:
 		alerts_center.feed_batch(batch)
+	# S13: the same batch, a different reading of it. The alerts centre keeps
+	# the ones that need doing; the log keeps all of them, in order.
+	if event_log != null:
+		event_log.feed_batch(batch)
 	if incident_drawer != null:
 		incident_drawer.feed_batch(batch)
 	if onboarding == null or not onboarding.is_active():
@@ -465,6 +481,8 @@ func feed_events(batch: Array) -> void:
 func set_sim_clock(minute_of_day: int, day_index: int = 0) -> void:
 	if alerts_center != null:
 		alerts_center.set_clock(minute_of_day, day_index)
+	if event_log != null:
+		event_log.set_clock(minute_of_day, day_index)
 
 
 ## `Callable(kind: StringName, id: Variant) -> Vector3` — how an alert's entity
@@ -472,6 +490,8 @@ func set_sim_clock(minute_of_day: int, day_index: int = 0) -> void:
 func set_alert_locator(locator: Callable) -> void:
 	if alerts_center != null:
 		alerts_center.set_locator(locator)
+	if event_log != null:
+		event_log.set_locator(locator)
 
 
 # ---------------------------------------------------------------------------

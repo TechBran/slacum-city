@@ -15,6 +15,11 @@ extends Control
 ## doc 11's `sc_overlay_mode` shader global, and emits `overlay_changed` for the
 ## shell. An overlay whose system has not landed renders greyed with its reason
 ## in words (A14) rather than vanishing from the strip.
+##
+## The legend is **rebuilt on every mode change**, because the four data states
+## are not what every overlay means: WATER reads "Full pressure … No water" and
+## TRAFFIC has five congestion bands, not four states. `OverlayModel` decides
+## which rows those are; this file still only turns rows into Labels.
 
 signal overlay_changed(mode: StringName, index: int)  ## → doc 11 render mode
 signal overlay_refused(mode: StringName, message: String)
@@ -42,6 +47,11 @@ var _spacing := 8.0
 var _longpress_ms := 450.0
 var _pressed_at_ms := -1.0
 var _suppress_next_press := false
+## Which mode's legend is currently on screen, so a repaint that changes nothing
+## does not rebuild five Labels. Starts on a sentinel that is not in
+## `overlay.modes`, so the first `_apply_active` always builds one.
+const LEGEND_UNBUILT := &"__legend_unbuilt__"
+var _legend_mode: StringName = LEGEND_UNBUILT
 
 
 ## The one wiring entry point, mirroring `BuildSheet.setup()`: `game/main.gd`
@@ -61,8 +71,10 @@ func setup(cfg: UIConfig = null, p_model: OverlayModel = null) -> void:
 	_bind_nodes()
 	_build_button()
 	_build_chips()
-	_build_legend()
 	close()
+	# `_apply_active` builds the legend for whatever the active mode is — on a
+	# fresh rail that is NONE, on a restored one it is the saved overlay.
+	_legend_mode = LEGEND_UNBUILT
 	_apply_active(false)
 	set_process(true)
 
@@ -131,20 +143,34 @@ func _build_chips() -> void:
 		_chip_buttons[mode] = button
 
 
-func _build_legend() -> void:
+## The legend for one mode. `row_id` is the state token for the four-state
+## legends and the band name for TRAFFIC's five, so a test can find either row
+## by name and a repeated state (two bands share a hue) never collides.
+func _build_legend(mode: StringName = OverlayModel.MODE_NONE) -> void:
 	if _legend_box == null:
 		return
+	_legend_mode = mode
 	UIWidgets.clear_children(_legend_box)
 	_legend_box.add_child(UIWidgets.label("Title",
 			UIWidgets.t(config, "ui_overlay_legend_title"), &"LegendRow"))
-	for row: Dictionary in model.legend_rows():
-		var text := "%s %s" % [str(row["glyph"]),
-				UIWidgets.t(config, str(row["label_key"]))]
-		var line := UIWidgets.label("State_" + String(row["state"]), text.strip_edges())
+	for row: Dictionary in model.legend_rows_for(mode):
+		var text := "%s %s" % [str(row["glyph"]), _legend_label(row)]
+		var row_id := String(row["band"]) if row.has("band") else String(row["state"])
+		var line := UIWidgets.label("Row_" + row_id, text.strip_edges())
 		_legend_box.add_child(line)
 		UIWidgets.paint_state(self, line, row["state"])
-	if _notice != null:
-		_notice.visible = false
+	# The notice is NOT touched here. `_after_verdict` raises it on a refusal and
+	# then repaints the strip; a legend rebuild that cleared it would swallow the
+	# A14 sentence the refusal just wrote.
+
+
+## `mode_label_key` when the table carries that phrasing, the plain state key
+## otherwise. Copy is never authored here (G-8) — this only picks the key.
+func _legend_label(row: Dictionary) -> String:
+	var mode_key := str(row.get("mode_label_key", ""))
+	if mode_key != "" and config != null and config.has_string(mode_key):
+		return config.t(mode_key)
+	return UIWidgets.t(config, str(row["label_key"]))
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +221,14 @@ func select(mode: StringName) -> Dictionary:
 	return verdict
 
 
+## Alias for `select`, and the name §2.10's deep links use: the city dashboard
+## emits `overlay/<mode>` and the shell forwards it here. Kept because a deep
+## link is a different intent from a chip tap even though it resolves the same
+## way — and because a caller that says `select_mode` should not have to know.
+func select_mode(mode: StringName) -> Dictionary:
+	return select(mode)
+
+
 ## §2.5's long press: `NONE ↔ last-used overlay`. Public so the gesture layer,
 ## the tests and the button's own hold timer all reach the same path.
 func long_press() -> Dictionary:
@@ -241,6 +275,12 @@ func _apply_active(changed: bool) -> void:
 		_button.tooltip_text = UIWidgets.t(config, "ui_overlay_button") \
 				if active == OverlayModel.MODE_NONE \
 				else UIWidgets.t_args(config, "ui_overlay_active", {"name": name_text})
+	# The legend belongs to the ACTIVE overlay, not to the console: TRAFFIC's
+	# five bands and WATER's pressure words are different rows, and a legend
+	# that keeps saying "Normal / Warning" while a congestion map is on screen
+	# is worse than no legend at all.
+	if active != _legend_mode:
+		_build_legend(active)
 	if changed:
 		_write_shader_global()
 		overlay_changed.emit(active, model.active_index())
@@ -249,13 +289,23 @@ func _apply_active(changed: bool) -> void:
 ## Doc 11 reads the active overlay here (data/ui.json.overlay.shader_global).
 ## The value is the mode's index into `overlay.modes`, and this is the only
 ## writer in the project.
+##
+## The write is UNGUARDED, and that is the fix for a bug that made every
+## overlay a no-op outside the editor. `RenderingServer.
+## global_shader_parameter_get_list()` is editor-only: in a game build
+## (`renderer_rd/storage_rd/material_storage.cpp:1848`) it fails with "This
+## function should never be used outside the editor" and returns an EMPTY
+## list — so the `if not …has(name): return` this used to open with was always
+## true on device, the global was never written, and the city never greyed out.
+## It passed the suite because the HEADLESS dummy renderer has no such guard
+## and answers honestly. `project.godot` declares `sc_overlay_mode`, so there is
+## nothing to check for: `applies_shader_global` is still the switch a test
+## mounting the rail without a renderer turns off.
 func _write_shader_global() -> void:
 	if not applies_shader_global or model == null:
 		return
-	var global_name := StringName(model.shader_global_name())
-	if not RenderingServer.global_shader_parameter_get_list().has(global_name):
-		return
-	RenderingServer.global_shader_parameter_set(global_name, model.active_index())
+	RenderingServer.global_shader_parameter_set(
+			StringName(model.shader_global_name()), model.active_index())
 
 
 func _set_notice(text: String) -> void:
@@ -306,6 +356,18 @@ func chip_button(mode: StringName) -> Button:
 
 func rail_button() -> Button:
 	return _button
+
+
+## One legend line by its row id — a state token (`normal`…`offline`) or, in
+## TRAFFIC, a band name (`clear`…`gridlock`).
+func legend_row(row_id: StringName) -> Label:
+	if _legend_box == null:
+		return null
+	return _legend_box.get_node_or_null("Row_" + String(row_id)) as Label
+
+
+func legend_mode() -> StringName:
+	return _legend_mode
 
 
 func capture_state() -> Dictionary:

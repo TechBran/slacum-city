@@ -51,12 +51,14 @@ func test_modes_match_the_doc_and_index_is_the_shader_value() -> void:
 	assert_eq(model.shader_global_name(), "sc_overlay_mode")
 
 
-func test_only_power_is_live_and_the_rest_explain_themselves() -> void:
+func test_only_the_landed_systems_are_live_and_the_rest_explain_themselves() -> void:
 	var model := _model()
 	assert_true(model.is_enabled(&"none"), "turning overlays off is never blocked")
 	assert_true(model.is_enabled(&"power"), "doc 04 shipped")
-	for mode: StringName in [&"water", &"police", &"fire", &"traffic"]:
-		assert_false(model.is_enabled(mode), "%s has no sim yet" % mode)
+	assert_true(model.is_enabled(&"water"), "doc 05 publishes service_factors()")
+	assert_true(model.is_enabled(&"traffic"), "doc 10 publishes TrafficSnapshot")
+	for mode: StringName in [&"police", &"fire"]:
+		assert_false(model.is_enabled(mode), "%s has no coverage query yet" % mode)
 		# A14: the chip stays listed with a reason, it does not disappear.
 		var chip_ids: Array[StringName] = []
 		for chip: Dictionary in model.chips():
@@ -78,9 +80,9 @@ func test_selection_is_mutually_exclusive_and_disabled_modes_are_refused() -> vo
 	assert_eq(model.active(), &"power")
 	assert_eq(int(power["index"]), 1)
 
-	var water := model.select(&"water")
-	assert_false(bool(water["ok"]))
-	assert_eq(water["reason"], OverlayModel.REASON_DISABLED)
+	var police := model.select(&"police")
+	assert_false(bool(police["ok"]))
+	assert_eq(police["reason"], OverlayModel.REASON_DISABLED)
 	assert_eq(model.active(), &"power", "a refused select never moves the active one")
 
 	var unknown := model.select(&"nonsense")
@@ -137,10 +139,10 @@ func test_overlay_state_round_trips_and_never_resurrects_a_dead_overlay() -> voi
 	assert_eq(restored.active(), &"power")
 	assert_eq(restored.last_used(), &"power")
 
-	# A save written when WATER was live must not bring it back once the system
-	# has been pulled: the restore goes through the same enabled gate.
+	# A save written when POLICE was live must not bring it back before that
+	# system lands: the restore goes through the same enabled gate.
 	var stale := _model()
-	stale.restore_state({"overlay": "water", "overlay_last": "water"})
+	stale.restore_state({"overlay": "police", "overlay_last": "police"})
 	assert_eq(stale.active(), OverlayModel.MODE_NONE)
 
 
@@ -191,7 +193,7 @@ func test_a_disabled_chip_answers_in_words_and_changes_nothing() -> void:
 	rail.overlay_refused.connect(func(_mode: StringName, message: String) -> void:
 		refusals.append(message))
 	rail.open()
-	rail.chip_button(&"water").pressed.emit()
+	rail.chip_button(&"police").pressed.emit()
 	assert_eq(rail.active_mode(), OverlayModel.MODE_NONE)
 	assert_eq(refusals.size(), 1)
 	assert_true(refusals[0].length() > 0, "the refusal is a sentence")
@@ -203,7 +205,13 @@ func test_rail_writes_doc11s_shader_global() -> void:
 	var mounted := _mount()
 	var rail: OverlayRail = mounted["rail"]
 	var global_name := StringName(rail.model.shader_global_name())
-	assert_true(RenderingServer.global_shader_parameter_get_list().has(global_name),
+	# NOT `global_shader_parameter_get_list()`: that call is editor-only and
+	# returns an empty Array in a game build, which is exactly the trap the rail
+	# used to guard its write with (see `_write_shader_global`). project.godot is
+	# the declaration, so the declaration is asserted against project.godot.
+	var project := ConfigFile.new()
+	assert_eq(project.load("res://project.godot"), OK)
+	assert_true(project.has_section_key("shader_globals", String(global_name)),
 			"project.godot declares %s" % global_name)
 	rail.select(&"power")
 	assert_eq(rail.active_index(), 1, "power is index 1 of overlay.modes")
@@ -226,4 +234,124 @@ func test_long_press_on_the_rail_button_does_not_also_toggle_the_strip() -> void
 	rail.long_press()
 	assert_eq(rail.active_mode(), &"power", "the hold restores the last overlay")
 	assert_eq(rail.is_open(), was_open, "the hold is not also a tap")
+	_unmount(mounted)
+
+
+func test_select_mode_is_the_deeplink_alias() -> void:
+	# §2.10's dashboard rows emit `overlay/<mode>` and the shell forwards it as
+	# `select_mode`. Same path, same verdict — a deep link is not a second rule.
+	var mounted := _mount()
+	var rail: OverlayRail = mounted["rail"]
+	assert_true(bool(rail.select_mode(&"water")["ok"]))
+	assert_eq(rail.active_mode(), &"water")
+	assert_false(bool(rail.select_mode(&"fire")["ok"]), "a dead system still refuses")
+	assert_eq(rail.active_mode(), &"water")
+	_unmount(mounted)
+
+
+# ===========================================================================
+# WATER (mode 2) — doc 05's per-building factor → doc 11's 2 bits
+# ===========================================================================
+
+func test_water_bands_map_a_service_factor_onto_the_four_data_states() -> void:
+	var model := _model()
+	# The four §2.5 states, in doc 11's packing order: this IS what gets written
+	# into `overlay_state` while mode 2 is live.
+	assert_eq(model.water_state(0.00), RenderStateModel.OVERLAY_OFFLINE,
+			"no water at all is OFFLINE, not a dark red CRITICAL")
+	assert_eq(model.water_state(0.20), RenderStateModel.OVERLAY_CRITICAL)
+	assert_eq(model.water_state(0.60), RenderStateModel.OVERLAY_WARNING)
+	assert_eq(model.water_state(1.00), RenderStateModel.OVERLAY_NORMAL)
+	assert_eq(model.water_state(-5.0), RenderStateModel.OVERLAY_OFFLINE,
+			"out of range clamps rather than falling off the ladder")
+	assert_eq(model.water_state(9.0), RenderStateModel.OVERLAY_NORMAL)
+	# The band edges are ordered, so the ladder is monotone: a wetter building
+	# is never in a worse state than a drier one.
+	var previous := 4
+	for i in 21:
+		var state := model.water_state(float(i) / 20.0)
+		assert_true(state <= previous, "water state is monotone at %f" % (float(i) / 20.0))
+		previous = state
+
+
+func test_water_states_is_the_bulk_form_the_shell_feeds() -> void:
+	var model := _model()
+	var states := model.water_states({"R1": 1.0, "R2": 0.5, "R3": 0.0})
+	assert_eq(states.size(), 3)
+	assert_eq(int(states["R1"]), RenderStateModel.OVERLAY_NORMAL)
+	assert_eq(int(states["R2"]), RenderStateModel.OVERLAY_WARNING)
+	assert_eq(int(states["R3"]), RenderStateModel.OVERLAY_OFFLINE)
+
+
+func test_the_water_legend_speaks_water_not_warning() -> void:
+	var cfg := _cfg()
+	var model := OverlayModel.new(cfg)
+	var rows := model.legend_rows(OverlayModel.MODE_WATER)
+	assert_eq(rows.size(), 4, "still exactly doc 11's four bits, never a fifth")
+	for row: Dictionary in rows:
+		assert_true(cfg.has_string(str(row["mode_label_key"])),
+				"%s has water phrasing" % row["mode_label_key"])
+		assert_ne(str(row["glyph"]), "", "%s still carries its glyph (A5)" % row["state"])
+	assert_eq(str(rows[0]["mode_label_key"]), "ui_overlay_water_normal")
+	# POWER has no bespoke phrasing, so it falls back to the generic words.
+	var power_rows := model.legend_rows(OverlayModel.MODE_POWER)
+	assert_eq(str(power_rows[0]["mode_label_key"]), "ui_overlay_state_normal")
+
+
+# ===========================================================================
+# TRAFFIC (mode 5) — doc 10's per-edge congestion index
+# ===========================================================================
+
+func test_traffic_bands_are_the_same_cut_points_the_sim_uses() -> void:
+	# doc 10 §2.15's ladder lives in `RoadCosts.overlay_band`; the overlay's copy
+	# of it lives in data/ui.json so the legend can print it. They are the same
+	# ladder or the legend lies — this is the test that keeps them one.
+	var model := _model()
+	for i in 101:
+		var c := float(i) / 100.0
+		assert_eq(model.traffic_band(c), RoadCosts.overlay_band(c),
+				"congestion %f classifies the same in both tables" % c)
+	assert_eq(model.traffic_band(1.4), &"gridlock", "past the top is still gridlock")
+
+
+func test_traffic_band_rows_carry_a_second_channel_besides_colour() -> void:
+	# Constitution §11 / spec §49: colour is never load-bearing. The alpha ramp
+	# and the hatch duty both have to rise with congestion, and the two bands
+	# that mean STOP have to move.
+	var model := _model()
+	var previous_alpha := -1.0
+	var previous_duty := -1.0
+	var moving := 0
+	for row: Dictionary in model.traffic_legend_rows():
+		var paint := model.traffic_band_row(row["band"])
+		assert_true(float(paint["alpha"]) > previous_alpha,
+				"%s is denser than the band below it" % row["band"])
+		assert_true(float(paint["stripe_duty"]) >= previous_duty,
+				"%s hatches at least as hard as the band below it" % row["band"])
+		assert_ne(str(row["glyph"]), "", "%s carries a glyph" % row["band"])
+		previous_alpha = float(paint["alpha"])
+		previous_duty = float(paint["stripe_duty"])
+		if float(paint["pulse_hz"]) > 0.0:
+			moving += 1
+	assert_eq(moving, 2, "severe and gridlock move; the calmer three hold still")
+
+
+func test_the_legend_follows_the_active_overlay() -> void:
+	var mounted := _mount()
+	var rail: OverlayRail = mounted["rail"]
+	assert_eq(rail.legend_mode(), OverlayModel.MODE_NONE)
+	rail.select(&"traffic")
+	assert_eq(rail.legend_mode(), &"traffic")
+	for band: StringName in [&"clear", &"light", &"heavy", &"severe", &"gridlock"]:
+		var line := rail.legend_row(band)
+		assert_ne(line, null, "the traffic legend lists %s" % band)
+		assert_ne(line.text.strip_edges(), "", "%s reads as words" % band)
+	assert_eq(rail.legend_row(&"normal"), null,
+			"and the four data states are NOT on screen under a band legend")
+	rail.select(&"water")
+	assert_eq(rail.legend_mode(), &"water")
+	assert_ne(rail.legend_row(&"normal"), null, "water is back on the four states")
+	assert_true(rail.legend_row(&"normal").text.contains(
+			(mounted["root"] as UIRoot).config.t("ui_overlay_water_normal")),
+			"and it says `Full pressure`, not `Normal`")
 	_unmount(mounted)
