@@ -179,12 +179,18 @@ func _next_daynight_boundary_h() -> float:
 	var hour := fposmod(now_h + founding_offset_h, 24.0)
 	var night_start := catalog.global_value("night_start_hour", 19.0)
 	var night_end := catalog.global_value("night_end_hour", 6.0)
+	# Unrolled rather than iterating a literal array: this runs once per
+	# integrator sub-step and the literal was a fresh Array every time.
 	var best := INF
-	for boundary in [night_end, night_start, night_end + 24.0, night_start + 24.0]:
-		var delta: float = float(boundary) - hour
-		if delta > EPS:
-			best = minf(best, delta)
+	best = _closer(best, night_end - hour)
+	best = _closer(best, night_start - hour)
+	best = _closer(best, night_end + 24.0 - hour)
+	best = _closer(best, night_start + 24.0 - hour)
 	return best
+
+
+static func _closer(best: float, delta: float) -> float:
+	return minf(best, delta) if delta > EPS else best
 
 
 ## Exact fraction of [t0, t1] that falls in night hours — computed analytically,
@@ -692,6 +698,14 @@ func _generate_crime(dt_h: float, dark_frac: float, damper: float) -> void:
 	# the multiplier is identical across every candidate by construction.
 	var f_weather := world.weather_effect(catalog.weather_channel_for("crime"))
 	var base := float(catalog.generator_base_rates.get("crime_per_1000_pop", 0.012))
+	# Hoisted: constants for the whole sub-step, and this loop runs on each one.
+	var k_stability := catalog.factor("crime", "k_stability", 3.0)
+	var k_dark := catalog.factor("crime", "k_dark", 0.35)
+	var k_outage_in_dark := catalog.factor("crime", "k_outage_in_dark", 1.5)
+	var police_base := catalog.factor("crime", "police_base", 1.4)
+	var police_slope := catalog.factor("crime", "police_slope", 0.6)
+	var police_min := catalog.factor("crime", "police_min", 0.5)
+	var police_max := catalog.factor("crime", "police_max", 1.4)
 	var candidates: Array = []
 	var total := 0.0
 	for district_id in world.district_ids():
@@ -702,13 +716,11 @@ func _generate_crime(dt_h: float, dark_frac: float, damper: float) -> void:
 		var stability := clampf(float(d.get("stability", 1.0)), 0.0, 1.0)
 		var outage := clampf(float(d.get("outage_frac", 0.0)), 0.0, 1.0)
 		var coverage := clampf(float(d.get("police_coverage", 0.0)), 0.0, 1.0)
-		var f_stab := 1.0 + catalog.factor("crime", "k_stability", 3.0) * pow(1.0 - stability, 2)
-		var f_dark := 1.0 + catalog.factor("crime", "k_dark", 0.35) * dark_frac \
-				* (1.0 + catalog.factor("crime", "k_outage_in_dark", 1.5) * outage)
-		var f_police := clampf(catalog.factor("crime", "police_base", 1.4)
-				- catalog.factor("crime", "police_slope", 0.6) * coverage,
-				catalog.factor("crime", "police_min", 0.5),
-				catalog.factor("crime", "police_max", 1.4))
+		var f_stab := 1.0 + k_stability * pow(1.0 - stability, 2)
+		var f_dark := 1.0 + k_dark * dark_frac \
+				* (1.0 + k_outage_in_dark * outage)
+		var f_police := clampf(police_base - police_slope * coverage,
+				police_min, police_max)
 		var lam := base * (population / 1000.0) * dt_h * f_stab * f_dark * f_police * f_weather
 		if lam <= 0.0:
 			continue
@@ -760,24 +772,35 @@ func _generate_structure_fire(dt_h: float, damper: float) -> void:
 	var stream := catalog.stream_for("structure_fire")
 	var f_weather := world.weather_effect(catalog.weather_channel_for("structure_fire"))
 	var base := float(catalog.generator_base_rates.get("structure_fire_global_scalar", 0.40))
+	# Hoisted out of the roster loop: these are constants for the whole
+	# sub-step, and this generator runs on every one of them.
+	var unpowered_mult := catalog.factor("fire", "unpowered_mult", 0.8)
+	var knee := catalog.factor("fire", "arson_stability_knee", 0.35)
+	var arson_k := catalog.factor("fire", "arson_k", 2.0)
+	var stability_by_district: Dictionary = {}
 	var candidates: Array = []
 	var total := 0.0
-	for building_id in world.building_ids():
-		var id := String(building_id)
-		var b := world.building(id)
-		var state_mult := world.state_fire_mult(id)
+	# ONE row per building per sub-step: this loop used to ask `building()` for
+	# the same building three times over, and `fire_candidate_rows()` carries
+	# only the six fields it actually reads.
+	for row in world.fire_candidate_rows():
+		var b: Dictionary = row
+		var id := String(b["id"])
+		var state_mult := IncidentWorld.state_fire_mult_of(b)
 		if state_mult <= 0.0:
 			continue
 		var p_ignite := float(b.get("fire_ignition_per_hour", 0.0)) \
-				* world.fire_condition_mult(id) * state_mult
+				* IncidentWorld.fire_condition_mult_of(b) * state_mult
 		if p_ignite <= 0.0:
 			continue
-		var f_power := 1.0 + catalog.factor("fire", "unpowered_mult", 0.8) \
+		var f_power := 1.0 + unpowered_mult \
 				* (0.0 if bool(b.get("powered", true)) else 1.0)
-		var stability := clampf(float(world.district(String(b.get("district_id", "")))
-				.get("stability", 1.0)), 0.0, 1.0)
-		var knee := catalog.factor("fire", "arson_stability_knee", 0.35)
-		var f_arson := 1.0 + catalog.factor("fire", "arson_k", 2.0) \
+		var district_id := String(b.get("district_id", ""))
+		if not stability_by_district.has(district_id):
+			stability_by_district[district_id] = clampf(
+					float(world.district(district_id).get("stability", 1.0)), 0.0, 1.0)
+		var stability: float = stability_by_district[district_id]
+		var f_arson := 1.0 + arson_k \
 				* maxf(0.0, knee - stability) / maxf(0.0001, knee)
 		var lam := base * p_ignite * dt_h * f_power * f_weather * f_arson
 		if lam <= 0.0:
@@ -801,26 +824,42 @@ func _generate_transformer(dt_h: float, damper: float) -> void:
 	var f_weather := world.weather_effect(catalog.weather_channel_for("transformer_failure"))
 	var base := float(catalog.generator_base_rates.get("transformer_per_node", 0.0012))
 	var clamp_row: Array = catalog.factors.get("transformer", {}).get("load_clamp", [0.20, 1.60])
+	# Hoisted: constants for the whole sub-step (see _generate_crime).
+	var clamp_lo := float(clamp_row[0])
+	var clamp_hi := float(clamp_row[1])
+	var load_ref := maxf(0.0001, catalog.factor("transformer", "load_ref", 0.70))
+	var load_exp := catalog.factor("transformer", "load_exp", 3.0)
+	var temp_k := catalog.factor("transformer", "temp_k", 0.9)
+	var temp_knee_c := catalog.factor("transformer", "temp_knee_c", 65.0)
+	var temp_span_c := maxf(0.0001, catalog.factor("transformer", "temp_span_c", 35.0))
 	var candidates: Array = []
 	var total := 0.0
-	for node in world.power_transformers():
+	# The scan reads three numbers per node; `power_transformer_rates()` carries
+	# exactly those.
+	for node in world.power_transformer_rates():
 		var row: Dictionary = node
-		var load_ratio := clampf(float(row.get("load_ratio", 0.0)),
-				float(clamp_row[0]), float(clamp_row[1]))
-		var f_load := pow(load_ratio / maxf(0.0001,
-				catalog.factor("transformer", "load_ref", 0.70)),
-				catalog.factor("transformer", "load_exp", 3.0))
+		var load_ratio := clampf(float(row.get("load_ratio", 0.0)), clamp_lo, clamp_hi)
+		var f_load := pow(load_ratio / load_ref, load_exp)
 		var f_cond := pow(2.0 - clampf(float(row.get("condition", 1.0)), 0.0, 1.0), 2)
-		var f_temp := 1.0 + catalog.factor("transformer", "temp_k", 0.9) \
-				* maxf(0.0, (float(row.get("temp_c", 25.0))
-				- catalog.factor("transformer", "temp_knee_c", 65.0))
-				/ maxf(0.0001, catalog.factor("transformer", "temp_span_c", 35.0)))
+		var f_temp := 1.0 + temp_k \
+				* maxf(0.0, (float(row.get("temp_c", 25.0)) - temp_knee_c) / temp_span_c)
 		var lam := base * dt_h * f_load * f_cond * f_temp * f_weather
 		if lam <= 0.0:
 			continue
 		candidates.append({"id": String(row.get("id", "")), "lambda": lam, "row": row})
 		total += lam
 	var count := _poisson(total * damper, stream)
+	if count > 0:
+		# Only a sub-step that actually spawns needs the FULL component rows
+		# `spawn_component_incident` reads (kind, tile, the downstream roll-up).
+		# Nothing between the scan above and here touches grid state — `_poisson`
+		# only draws — so these are the rows the scan would have captured.
+		var full_by_id: Dictionary = {}
+		for full_row in world.power_transformers():
+			full_by_id[String((full_row as Dictionary).get("id", ""))] = full_row
+		for candidate in candidates:
+			var entry: Dictionary = candidate
+			entry["row"] = full_by_id.get(String(entry["id"]), entry["row"])
 	for i in count:
 		var picked := _weighted_pick_row(candidates, total, stream)
 		if picked.is_empty():

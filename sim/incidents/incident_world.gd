@@ -48,20 +48,45 @@ func buildings_within_m(_tile: Vector2i, _radius_m: float, _exclude_id: String =
 	return []
 
 
+## The whole roster as the structure-fire generator wants it, ASCENDING by id.
+## That generator runs on every integrator sub-step and reads exactly six
+## fields, so a world with a cheaper way to produce those six overrides this;
+## the default composes the full `building()` rows and is always correct.
+## Required keys: id · state · condition · fire_ignition_per_hour · powered ·
+## district_id.
+func fire_candidate_rows() -> Array:
+	var out: Array = []
+	for id in building_ids():
+		var row := building(String(id))
+		if not row.is_empty():
+			out.append(row)
+	return out
+
+
 ## Doc 02 §2.6: 1 + 1.5·(1 − condition)^1.5.
 func fire_condition_mult(id: String) -> float:
-	var b := building(id)
-	if b.is_empty():
-		return 1.0
-	return 1.0 + 1.5 * pow(1.0 - clampf(float(b.get("condition", 1.0)), 0.0, 1.0), 1.5)
+	return fire_condition_mult_of(building(id))
 
 
 ## Doc 02 §2.12 per-state ignition multiplier (0 ⇒ ineligible candidate).
 func state_fire_mult(id: String) -> float:
-	var b := building(id)
-	if b.is_empty():
+	return state_fire_mult_of(building(id))
+
+
+## Row-taking twins of the two above. `building(id)` materialises a fresh row
+## dictionary on every call, and the fire generator needs all three numbers for
+## the same building on the same sub-step — so it fetches the row ONCE and calls
+## these. Same arithmetic on the same row: the id-taking forms are these.
+static func fire_condition_mult_of(row: Dictionary) -> float:
+	if row.is_empty():
+		return 1.0
+	return 1.0 + 1.5 * pow(1.0 - clampf(float(row.get("condition", 1.0)), 0.0, 1.0), 1.5)
+
+
+static func state_fire_mult_of(row: Dictionary) -> float:
+	if row.is_empty():
 		return 0.0
-	match String(b.get("state", "active")):
+	match String(row.get("state", "active")):
 		"under_construction": return 1.4
 		"damaged", "repairing": return 1.8
 		"active": return 1.0
@@ -137,6 +162,16 @@ func power_transformers() -> Array:
 
 func power_component(_id: String) -> Dictionary:
 	return {}
+
+
+## The transformer roster as the failure generator SCANS it: {id, load_ratio,
+## condition, temp_c} and nothing else. That scan runs on every integrator
+## sub-step and reads exactly those three numbers; the full `power_component()`
+## row — kind, tile, the downstream roll-up — is materialised only on the rare
+## sub-step that actually spawns. A world with no cheaper answer hands back the
+## full rows, which already contain them.
+func power_transformer_rates() -> Array:
+	return power_transformers()
 
 
 func power_customers_downstream(_id: String) -> int:

@@ -21,6 +21,19 @@ var _systems: Array[SimSystem] = []
 var _hour_cache_key := Vector3i(-1, -1, -1)
 var _hour_cache: Dictionary = {}
 
+## Opt-in per-system timing hook for tools/profile_sim.gd. OFF by default and
+## the profiled path is a SEPARATE loop, so an unprofiled step pays exactly one
+## boolean test per step — never one per system, never a call.
+##
+## The scheduler owns no clock of its own (constitution §3 forbids `Time` inside
+## sim/): the tool injects two Callables and does the measuring. Purely
+## observational — it changes no ordering, no RNG draw, no state.
+##   profile_enter.call(id: StringName)
+##   profile_exit.call(id: StringName)
+var profiling: bool = false
+var profile_enter: Callable = Callable()
+var profile_exit: Callable = Callable()
+
 
 func _init(p_clock: GameClock, p_curves: DayCurveSet, p_modifiers: ModifierStack) -> void:
 	clock = p_clock
@@ -51,6 +64,9 @@ func advance_coarse_n(hours: int, is_catchup: bool = false, catchup_index_base: 
 
 
 func _step_fine() -> void:
+	if profiling:
+		_step_fine_profiled()
+		return
 	var t := clock.tick_index
 	var ctx := _build_context(TimeContext.Mode.FINE)
 	for system in _systems:
@@ -60,6 +76,9 @@ func _step_fine() -> void:
 
 
 func _step_coarse(is_catchup: bool, catchup_index: int, catchup_total: int) -> void:
+	if profiling:
+		_step_coarse_profiled(is_catchup, catchup_index, catchup_total)
+		return
 	var t := clock.tick_index
 	var ctx := _build_context(TimeContext.Mode.COARSE)
 	ctx.is_catchup = is_catchup
@@ -70,6 +89,41 @@ func _step_coarse(is_catchup: bool, catchup_index: int, catchup_total: int) -> v
 		# integrated call for the hour); EVERY_DAY fires only on day boundary.
 		if (t - system.cadence_offset()) % system.period_ticks() == 0:
 			system.advance_coarse(ctx)
+	clock.tick_index += GameClock.TICKS_PER_HOUR
+
+
+# ------------------------------------------------------------- profiled twins
+# Byte-identical work to the loops above, wrapped in the injected hook. They
+# exist only so the unprofiled loops stay free of any per-system branch.
+
+func _step_fine_profiled() -> void:
+	var t := clock.tick_index
+	profile_enter.call(&"@context")
+	var ctx := _build_context(TimeContext.Mode.FINE)
+	profile_exit.call(&"@context")
+	for system in _systems:
+		if (t - system.cadence_offset()) % system.period_ticks() == 0:
+			var id := system.system_id()
+			profile_enter.call(id)
+			system.advance_fine(ctx)
+			profile_exit.call(id)
+	clock.tick_index += 1
+
+
+func _step_coarse_profiled(is_catchup: bool, catchup_index: int, catchup_total: int) -> void:
+	var t := clock.tick_index
+	profile_enter.call(&"@context")
+	var ctx := _build_context(TimeContext.Mode.COARSE)
+	ctx.is_catchup = is_catchup
+	ctx.catchup_index = catchup_index
+	ctx.catchup_total = catchup_total
+	profile_exit.call(&"@context")
+	for system in _systems:
+		if (t - system.cadence_offset()) % system.period_ticks() == 0:
+			var id := system.system_id()
+			profile_enter.call(id)
+			system.advance_coarse(ctx)
+			profile_exit.call(id)
 	clock.tick_index += GameClock.TICKS_PER_HOUR
 
 

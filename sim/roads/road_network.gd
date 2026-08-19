@@ -62,6 +62,10 @@ var _events: Array = []
 var _mean_congestion: float = 0.0
 var _default_profile: RouteProfile = null
 
+## Shared read-only miss value for `tile_edges` lookups in hot sweeps, so the
+## miss path does not allocate a fresh Array per tile.
+const EMPTY_EDGE_LIST: Array = []
+
 const FLAG_UNDER_CONSTRUCTION: int = 1
 const FLAG_FLOODED_SHALLOW: int = 2
 const FLAG_FLOODED_DEEP: int = 4
@@ -142,7 +146,23 @@ func step(ctx: TimeContext) -> void:
 func full_pass(ctx: TimeContext) -> void:
 	sim_minute = ctx.game_seconds / 60
 	var hour: float = ctx.hour_midpoint
-	_recompute_all_congestion(false, hour, _dt_minutes(ctx))
+	# ONE env build for the whole minute: the smoothed update below and the
+	# hourly c_day sample differ only in `hour`/`dt`/`bypass`, and the env is
+	# the expensive half (the incident field is a graph walk).
+	var env := _congestion_env()
+	# The daily sampler wants c_raw at (hour_of_day + 0.5). A COARSE step's
+	# `hour_midpoint` IS that value — same expression, same bits — so this pass
+	# already computes every number it needs and hands them over. A fine step
+	# samples the curve a few thousandths of an hour off h, so `sample_hour`
+	# differs and the sampler falls back to its own pass (once per game-hour).
+	var sample_hour := float(ctx.hour_of_day) + 0.5
+	var raw_sink: Dictionary = {}
+	var share_raw := hour == sample_hour
+	if not graph.edge_ids_ref().is_empty():   # `_recompute_congestion`'s guard
+		congestion.recompute(graph.edge_ids_ref(),
+				_stamp_inputs(env, hour, _dt_minutes(ctx), false),
+				raw_sink if share_raw else null)
+		_mean_congestion = congestion.mean_congestion()
 	# One c_day sample per GAME-HOUR in both modes — sampling c_raw (not the
 	# smoothed c) at the same 24 points is what makes daily condition decay
 	# bit-identical online and offline (doc 06's mode-invariance guarantee).
@@ -157,12 +177,15 @@ func full_pass(ctx: TimeContext) -> void:
 		# condition decay derived from them — are bit-identical online and
 		# offline. Using ctx.hour_midpoint here would sample h + 0.002 in a fine
 		# step and h + 0.5 in a coarse one, and the two modes would drift apart.
-		_sample_c_day(float(ctx.hour_of_day) + 0.5)
+		_sample_c_day(sample_hour, env, raw_sink)
 	snapshot.rebuild(_closures, congestion.epoch)
 	if ctx.mode == TimeContext.Mode.FINE:
 		feed.rebalance()
+	# `_mean_congestion` was taken from this pass and nothing since has written
+	# a congestion value (c_day sampling and the snapshot both only read), so
+	# this is the same number a second O(E) sweep would produce.
 	_emit(&"congestion_updated", {"epoch": congestion.epoch,
-			"mean": congestion.mean_congestion()})
+			"mean": _mean_congestion})
 
 
 ## EVERY_DAY — condition decay, L_dens refresh, auto-repair queueing.
@@ -216,10 +239,15 @@ func _profile_weights(district_id: String) -> Dictionary:
 	return tun.default_profile_weights
 
 
-func _congestion_inputs(hour: float, dt_gm: float, bypass: bool) -> Dictionary:
+## The hour-INDEPENDENT half of the congestion inputs: the per-district profile
+## weights, the incident field, the event field and the weather additive. None
+## of it varies with `hour`, `dt` or `bypass`, and a full pass needs it twice
+## (the smoothed update, then the daily c_raw sample) — so it is built once and
+## both dictionaries are stamped from it.
+func _congestion_env() -> Dictionary:
 	var wx := tun.weather_row(weather_state)
 	var weights: Dictionary = {}
-	for edge_id in graph.edge_ids_sorted():
+	for edge_id in graph.edge_ids_ref():
 		var district := String(graph.edge(edge_id).get("district_id", ""))
 		if not weights.has(district):
 			weights[district] = _profile_weights(district)
@@ -229,11 +257,22 @@ func _congestion_inputs(hour: float, dt_gm: float, bypass: bool) -> Dictionary:
 		if not closure.is_empty():
 			causes[edge_id] = String(closure["cause"])
 	return {
-		"hour": hour, "dt_game_minutes": dt_gm, "bypass_smoothing": bypass,
 		"wx_cong_add": float(wx["cong_add"]),
 		"i_inc": congestion.compute_i_inc(causes),
 		"weights": weights, "evt": _event_factors(),
 	}
+
+
+static func _stamp_inputs(env: Dictionary, hour: float, dt_gm: float, bypass: bool) -> Dictionary:
+	return {
+		"hour": hour, "dt_game_minutes": dt_gm, "bypass_smoothing": bypass,
+		"wx_cong_add": env["wx_cong_add"], "i_inc": env["i_inc"],
+		"weights": env["weights"], "evt": env["evt"],
+	}
+
+
+func _congestion_inputs(hour: float, dt_gm: float, bypass: bool) -> Dictionary:
+	return _stamp_inputs(_congestion_env(), hour, dt_gm, bypass)
 
 
 func _recompute_all_congestion(bypass: bool, hour: float, dt_gm: float = 1.0) -> void:
@@ -278,11 +317,19 @@ func _event_factors() -> Dictionary:
 	return out
 
 
-func _sample_c_day(hour: float) -> void:
-	var inputs := _congestion_inputs(hour, 1.0, true)
-	for edge_id in graph.edge_ids_sorted():
-		_c_day_sum[edge_id] = float(_c_day_sum.get(edge_id, 0.0)) \
-				+ congestion.c_raw(edge_id, inputs)
+## `env` lets a caller that already built one this step hand it over; `{}` means
+## "build your own" (the day-boundary sampler, which runs on its own). `raw`, if
+## non-empty, is this hour's c_raw per edge already computed by `full_pass` —
+## the same numbers this would otherwise recompute, summed in the same order.
+func _sample_c_day(hour: float, env: Dictionary = {}, raw: Dictionary = {}) -> void:
+	if not raw.is_empty():
+		for edge_id in graph.edge_ids_ref():
+			_c_day_sum[edge_id] = float(_c_day_sum.get(edge_id, 0.0)) \
+					+ float(raw.get(edge_id, 0.0))
+	else:
+		var inputs := _stamp_inputs(env if not env.is_empty() else _congestion_env(),
+				hour, 1.0, true)
+		congestion.accumulate_c_raw(graph.edge_ids_ref(), inputs, _c_day_sum)
 	_c_day_samples += 1
 	_wx_wear_day = maxf(_wx_wear_day, float(tun.weather_row(weather_state)["wear"]))
 
@@ -321,7 +368,9 @@ func refresh_density() -> void:
 		for dz in range(-r, r + 1):
 			for dx in range(-r, r + 1):
 				var q := Vector2i(tile.x + dx, tile.y + dz)
-				for edge_id in graph.edges_at(q):
+				# `tile_edges` read directly: `edges_at()` hands out a defensive
+				# copy, and this loop only reads, (2r+1)² times per source.
+				for edge_id in graph.tile_edges.get(q, EMPTY_EDGE_LIST):
 					touched[edge_id] = true
 		for edge_id in _sorted_keys(touched):
 			pj_by_edge[edge_id] = float(pj_by_edge.get(edge_id, 0.0)) + pj

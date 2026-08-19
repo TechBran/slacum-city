@@ -114,9 +114,15 @@ func global_int(key: String, fallback: int = 0) -> int:
 	return int(globals.get(key, fallback))
 
 
+## Hot: the generators call this a few dozen times per integrator sub-step.
+## `factors.get(group, {})` built a throwaway Dictionary on EVERY call (the
+## literal default is constructed before the lookup runs, hit or miss); this
+## shape allocates nothing.
 func factor(group: String, key: String, fallback: float = 0.0) -> float:
-	var block: Dictionary = factors.get(group, {})
-	return float(block.get(key, fallback))
+	var block: Variant = factors.get(group)
+	if typeof(block) != TYPE_DICTIONARY:
+		return fallback
+	return float((block as Dictionary).get(key, fallback))
 
 
 func stream_for(type_id: String) -> String:

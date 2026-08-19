@@ -44,10 +44,25 @@ static func block_key_of(bx: int, bz: int) -> String:
 
 func register_tile(tx: int, tz: int, elevation_class: String) -> void:
 	_elevation[key_of(tx, tz)] = elevation_class
+	_elevation_order.clear()
 
 
 func register_block(bx: int, bz: int, elevation_class: String) -> void:
 	_elevation[block_key_of(bx, bz)] = elevation_class
+	_elevation_order.clear()
+
+
+## The registered cell keys in sorted order — the order `integrate` sweeps, and
+## therefore load-bearing. DERIVED from `_elevation` and rebuilt the first time
+## anyone asks after a registration; never persisted, so a loaded field simply
+## rebuilds it. (`_elevation` is written only by the two registrars above.)
+var _elevation_order: PackedStringArray = PackedStringArray()
+
+
+func _elevation_keys_sorted() -> PackedStringArray:
+	if _elevation_order.size() != _elevation.size():
+		_elevation_order = PackedStringArray(_sorted_keys(_elevation))
+	return _elevation_order
 
 
 func registered_count() -> int:
@@ -80,7 +95,15 @@ func integrate(dt_hours: float, precip_mm_h: float) -> void:
 	var runoff: Dictionary = tables.flood.get("runoff_concentration", {})
 	var drain_rate := float(tables.flood.get("drain_rate_mm_h", 40.0))
 	var max_depth := float(tables.flood.get("max_depth_mm", 900))
-	for key in _sorted_keys(_elevation):
+	# A dry city with no rain falling is the overwhelmingly common tick. Walk
+	# the loop below for it and EVERY cell takes the same path: before = 0,
+	# inflow = 0, `net` is drainage only (≤ 0, which is what the drain-rate test
+	# pins down), `after` clamps back to 0, the erase is a no-op and the two
+	# band indices match — so it `continue`s before it can touch anything. This
+	# guard is that outcome, without the sweep.
+	if precip_mm_h <= 0.0 and drain_rate >= 0.0 and depth_mm.is_empty():
+		return
+	for key in _elevation_keys_sorted():
 		var elevation := String(_elevation[key])
 		var before := float(depth_mm.get(key, 0.0))
 		var inflow := precip_mm_h * float(runoff.get(elevation, 1.0))
