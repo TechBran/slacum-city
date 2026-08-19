@@ -1,4 +1,4 @@
-[gd_scene load_steps=16 format=3]
+[gd_scene load_steps=18 format=3]
 
 [ext_resource type="Script" path="res://ui/ui_root.gd" id="1_uiroot"]
 [ext_resource type="Script" path="res://ui/hud.gd" id="2_hud"]
@@ -15,6 +15,8 @@
 [ext_resource type="Script" path="res://ui/away_report_sheet.gd" id="13_awayreport"]
 [ext_resource type="Script" path="res://ui/onboarding_flow.gd" id="14_onboarding"]
 [ext_resource type="Script" path="res://ui/event_log.gd" id="15_eventlog"]
+[ext_resource type="Script" path="res://ui/land_panel.gd" id="16_landpanel"]
+[ext_resource type="Script" path="res://ui/toast_view.gd" id="17_toast"]
 
 [node name="UIRoot" type="CanvasLayer"]
 layer = 10
@@ -249,6 +251,105 @@ layout_mode = 2
 custom_minimum_size = Vector2(96, 48)
 layout_mode = 2
 tooltip_text = "UPGRADE"
+theme_type_variation = &"PrimaryFAB"
+
+[node name="LandPanel" type="Control" parent="SafeArea/PanelLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("16_landpanel")
+
+[node name="Panel" type="PanelContainer" parent="SafeArea/PanelLayer/LandPanel"]
+visible = false
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 1
+anchors_preset = 11
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -300.0
+offset_top = 56.0
+grow_horizontal = 0
+grow_vertical = 2
+theme_type_variation = &"SidePanel"
+
+[node name="Frame" type="VBoxContainer" parent="SafeArea/PanelLayer/LandPanel/Panel"]
+layout_mode = 2
+
+[node name="Scroll" type="ScrollContainer" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Header" type="HBoxContainer" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+clip_text = true
+
+[node name="Close" type="Button" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body/Header"]
+custom_minimum_size = Vector2(48, 48)
+layout_mode = 2
+tooltip_text = "Close block"
+theme_type_variation = &"GhostButton"
+
+[node name="Subtitle" type="Label" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body"]
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="Facts" type="GridContainer" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body"]
+layout_mode = 2
+columns = 2
+
+[node name="RiskTitle" type="Label" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body"]
+layout_mode = 2
+
+[node name="Risks" type="VBoxContainer" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body"]
+layout_mode = 2
+
+[node name="AdvantageTitle" type="Label" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body"]
+layout_mode = 2
+
+[node name="Advantages" type="VBoxContainer" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body"]
+layout_mode = 2
+
+[node name="Note" type="Label" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body"]
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="PhaseTitle" type="Label" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body"]
+layout_mode = 2
+
+[node name="Phases" type="VBoxContainer" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body"]
+layout_mode = 2
+
+[node name="Blockers" type="VBoxContainer" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body"]
+layout_mode = 2
+
+[node name="Progress" type="Label" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame"]
+visible = false
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="ActionNote" type="Label" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame"]
+visible = false
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="ActionButton" type="Button" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame"]
+custom_minimum_size = Vector2(96, 48)
+layout_mode = 2
+tooltip_text = "PURCHASE"
 theme_type_variation = &"PrimaryFAB"
 
 [node name="AlertsCenter" type="Control" parent="SafeArea/PanelLayer"]
@@ -1010,3 +1111,35 @@ offset_top = -60.0
 grow_horizontal = 2
 grow_vertical = 0
 mouse_filter = 2
+
+[node name="Toast" type="Control" parent="ToastLayer/ToastAnchor"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("17_toast")
+
+[node name="Panel" type="PanelContainer" parent="ToastLayer/ToastAnchor/Toast"]
+visible = false
+custom_minimum_size = Vector2(320, 40)
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -160.0
+offset_top = -48.0
+offset_right = 160.0
+offset_bottom = -8.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+theme_type_variation = &"ToastPanel"
+
+[node name="Label" type="Label" parent="ToastLayer/ToastAnchor/Toast/Panel"]
+layout_mode = 2
+mouse_filter = 2
+horizontal_alignment = 1

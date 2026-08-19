@@ -837,6 +837,59 @@ func sim_id_at_ground(point: Vector3) -> String:
 	return sim_id_at_tile(BuildController.tile_at(point, tile_m))
 
 
+## The land half of the same tap (doc 12 §2.8). A tap that misses every building
+## still landed *somewhere*, and doc 09's map can say which 16×16 block that was.
+## Returns "" only for a point outside the map.
+func block_id_at_tile(tile: Vector2i) -> String:
+	if sim == null or not TileGrid.in_bounds(tile.x, tile.y):
+		return ""
+	var block := sim.world.block_of_tile(tile.x, tile.y)
+	return block.id if block != null else ""
+
+
+func block_id_at_ground(point: Vector3) -> String:
+	return block_id_at_tile(BuildController.tile_at(point, tile_m))
+
+
+## Pick kinds — the answer `pick_at_ground` gives the shell's tap handler.
+const PICK_NONE := &"none"
+const PICK_BUILDING := &"building"
+const PICK_BLOCK := &"block"
+
+
+## **The whole tap seam, in one call.** Before S4 the shell asked
+## `sim_id_at_ground()` and treated `""` as "deselect"; that is why land was
+## untouchable — every tap on unowned ground resolved to nothing, and the one
+## screen that could have sold it to the player had no way to open.
+##
+## The order is the order of specificity, and it is decided here rather than in
+## the shell so the two panels can never both claim a tap:
+##
+##   1. a building on the tile  → `{kind: "building", id: sim_id}` → S5
+##   2. otherwise the block, when S4 has something to offer for it (unowned,
+##      owned-undeveloped, or mid-pipeline) → `{kind: "block", id: block_id}`
+##   3. otherwise `{kind: "none"}` — finished ground the player already owns, or
+##      a point off the map, which deselects exactly as it does today.
+##
+## `block` is filled in on every in-bounds pick, kind 1 and 3 included, so a
+## caller that wants the block a *building* sits in does not need a second query.
+func pick_at_ground(point: Vector3) -> Dictionary:
+	var tile := BuildController.tile_at(point, tile_m)
+	var block_id := block_id_at_tile(tile)
+	var out := {"kind": PICK_NONE, "id": "", "tile": tile, "block": block_id}
+	var sim_id := sim_id_at_tile(tile)
+	if sim_id != "":
+		out["kind"] = PICK_BUILDING
+		out["id"] = sim_id
+		return out
+	if block_id == "" or sim == null:
+		return out
+	if LandPanelModel.stage_opens_panel(sim.world.block(block_id)):
+		out["kind"] = PICK_BLOCK
+		out["id"] = block_id
+	return out
+
+
 # ===========================================================================
 # Building panel view model (doc 12 §2.9)
 # ===========================================================================

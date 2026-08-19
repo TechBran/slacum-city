@@ -39,6 +39,7 @@ const SURFACES: Array[String] = [
 	"PanelLayer/AlertsCenter/Panel",
 	"PanelLayer/IncidentDrawer/Panel",
 	"PanelLayer/BuildingPanel/Panel",
+	"PanelLayer/LandPanel/Panel",
 	"SheetLayer/BuildSheet/Sheet",
 	"SheetLayer/BuildSheet/PlacementBar",
 	"SheetLayer/UnitPicker/Sheet",
@@ -124,8 +125,27 @@ func _populate(root: UIRoot, panel: String = "drawer") -> void:
 			var ids := sim.buildings.keys()
 			ids.sort()
 			building_panel.show_building(str(ids[0]))
+		"land":
+			# S4 on a block the starter city leaves purchasable, which is the
+			# state with the most rows in it: price, risks, advantages, six
+			# phases and whatever the treasury is refusing today.
+			var sim := CitySim.boot_from_files()
+			root.land_panel.setup(root.config,
+					LandPanelModel.new(sim, RequirementFormatter.new(root.config),
+							root.config))
+			root.land_panel.show_block(_purchasable_block(sim))
 		_:
 			root.incident_drawer.open()
+
+
+## The first block the starter city offers for sale, found by asking the world
+## rather than by naming one — doc 09's map may move.
+static func _purchasable_block(sim: CitySim) -> String:
+	for id: Variant in sim.world.block_ids_sorted():
+		var block: LandBlock = sim.world.block(String(id))
+		if block.ownership_state == &"PURCHASABLE":
+			return String(id)
+	return String(sim.world.block_ids_sorted()[0])
 
 
 static func _snapshot() -> Dictionary:
@@ -188,7 +208,7 @@ func test_every_surface_fits_the_narrowest_display_at_130_percent_text() -> void
 # ===========================================================================
 
 func test_no_screen_shows_a_raw_key_or_an_unfilled_placeholder() -> void:
-	for panel: String in ["drawer", "alerts", "building"]:
+	for panel: String in ["drawer", "alerts", "building", "land"]:
 		var root := _mount(1.0, false, panel)
 		var findings := UIAudit.walk_frame_free(root.safe_area)
 		assert_eq(UIAudit.format(findings, ""), "  clean",
@@ -212,7 +232,7 @@ func test_nothing_clips_without_a_width_to_clip_within() -> void:
 
 func test_every_target_names_itself() -> void:
 	# A15: a Button with no `tooltip_text` has no accessibility name.
-	for panel: String in ["drawer", "alerts", "building"]:
+	for panel: String in ["drawer", "alerts", "building", "land"]:
 		var root := _mount(1.0, false, panel)
 		var findings := UIAudit.only(UIAudit.walk(root.safe_area, 0.0, Rect2()),
 				[UIAudit.KIND_NO_TOOLTIP])

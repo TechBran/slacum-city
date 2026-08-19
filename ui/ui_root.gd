@@ -87,6 +87,15 @@ signal away_dismissed
 signal onboarding_action(action: StringName, payload: Dictionary)
 signal onboarding_finished(skipped: bool)
 
+## S4 (doc 12 §2.8). The sim has already answered by the time these fire — the
+## shell re-reads it for the camera, the render state and the HUD.
+signal land_purchased(block_id: String, result: Dictionary)
+signal land_developed(block_id: String, result: Dictionary)
+signal land_fix_requested(fix_target: Dictionary)
+## §2.13's progression moment: the city level moved, and this is the one place
+## that knows it before the alert row does.
+signal city_level_changed(level: int, unlocked: PackedStringArray)
+
 @export var apply_content_scale: bool = true
 
 var config: UIConfig
@@ -116,6 +125,13 @@ var city_dashboard: CityDashboard
 var away_report: AwayReportSheet
 var build_sheet: BuildSheet
 var onboarding: OnboardingFlow
+var land_panel: LandPanel
+var toast_view: ToastView
+
+## Doc 12 §2.14's one vibrator. Owned here because three screens fire cues and
+## two settings rows gate them; a per-screen instance would be a per-screen
+## opinion about what the player asked for.
+var haptics: Haptics
 
 var current_breakpoint: Breakpoint = Breakpoint.REGULAR
 var drawer_w_dp: int = 300
@@ -131,6 +147,11 @@ var _last_back_ms := -1.0e9
 ## needs (which archetype, which tile) has to be remembered one signal earlier.
 var _pending_place: Dictionary = {}
 var _last_build_category := ""
+## Doc 06's policy wire — see `bind_dispatch_policy`.
+var _dispatch_command := Callable()
+var _dispatch_values: Dictionary = {}
+## The city level the last batch reported, so §2.13's moment fires once.
+var _city_level := -1
 
 
 ## Config is loaded here rather than in `_ready()` because a parent's
@@ -165,6 +186,10 @@ func initialize() -> void:
 	layer = CANVAS_LAYER_UI
 	_bind_nodes()
 	_load_config()
+	if haptics == null:
+		haptics = Haptics.new(config)
+	else:
+		haptics.setup(config)
 	_apply_content_scale()
 	rebuild_theme()
 	_recompute_layout()
@@ -210,6 +235,8 @@ func _bind_nodes() -> void:
 	away_report = safe_area.get_node_or_null("ModalLayer/AwayReport") as AwayReportSheet
 	build_sheet = safe_area.get_node_or_null("SheetLayer/BuildSheet") as BuildSheet
 	onboarding = safe_area.get_node_or_null("CoachLayer/Onboarding") as OnboardingFlow
+	land_panel = safe_area.get_node_or_null("PanelLayer/LandPanel") as LandPanel
+	toast_view = get_node_or_null("ToastLayer/ToastAnchor/Toast") as ToastView
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +279,19 @@ func bring_up_screens() -> void:
 		build_sheet.setup(config)
 	if onboarding != null and onboarding.model == null:
 		onboarding.setup(config)
+	# S4 comes up with the config alone and no model, for the same reason the
+	# build sheet does: `game/main.gd` owns the sim, and `setup()` is idempotent.
+	if land_panel != null and land_panel.config == null:
+		land_panel.setup(config)
+	if toast_view != null and toast_view.config == null:
+		toast_view.setup(config)
+	# §2.14: the two screens that fire their own cues share the root's one gate.
+	# The other three cues (dispatch, escalate, relight) are events rather than
+	# taps, so they are fired here, where the sim batch arrives.
+	if build_sheet != null:
+		build_sheet.haptics = haptics
+	if land_panel != null:
+		land_panel.haptics = haptics
 	_connect_screens()
 
 
@@ -302,6 +342,12 @@ func _connect_screens() -> void:
 	if onboarding != null:
 		_connect(onboarding.action_requested, _on_onboarding_action)
 		_connect(onboarding.finished, _on_onboarding_finished)
+	if land_panel != null:
+		_connect(land_panel.purchased, _on_land_purchased)
+		_connect(land_panel.developed, _on_land_developed)
+		_connect(land_panel.fix_requested, _on_land_fix_requested)
+	if hud != null:
+		_connect(hud.toast_requested, _on_toast_requested)
 
 
 static func _connect(source: Signal, target: Callable) -> void:
@@ -335,7 +381,58 @@ const SETTING_REPLAY_TUTORIAL := &"replay_tutorial"
 func _on_settings_changed(key: StringName, value: Variant) -> void:
 	if key == SETTING_REPLAY_TUTORIAL and bool(value):
 		_replay_tutorial()
+	# §2.14's two rows reach the vibrator here rather than through the shell, so
+	# the gate is live the instant the row is tapped rather than one frame and
+	# one `game/main.gd` branch later.
+	if haptics != null:
+		haptics.apply_setting(key, value)
+	_write_dispatch_policy(key, value)
 	settings_changed.emit(key, value)
+
+
+# ---------------------------------------------------------------------------
+# Auto-response policies (doc 12 §2.13, doc 91 D-11)
+#
+# The rows are `data/ui.json.settings.rows` entries carrying `policy: dispatch`;
+# the values are doc 06's, held by `DispatchPolicy` inside the sim. This root
+# owns neither — it owns the wire between them, which is one injected Callable
+# and one seeding pass, exactly like `bind_tax`.
+# ---------------------------------------------------------------------------
+
+## `Callable(key: String, value: Variant) -> Dictionary` — the shell hands over
+## `CitySim.cmd_set_dispatch_policy`. `values` is the sim's live policy block
+## (`DispatchPolicy.serialize()`), which **wins over the data defaults and over a
+## restored `ui.settings` block**: the policy lives in the city's save, not in
+## the UI's, and a stale UI copy must never be able to re-write it.
+func bind_dispatch_policy(command: Callable, values: Dictionary = {}) -> void:
+	_dispatch_command = command
+	_dispatch_values = values.duplicate()
+	_seed_dispatch_rows()
+
+
+func _seed_dispatch_rows() -> void:
+	if settings_sheet == null or settings_sheet.model == null or _dispatch_values.is_empty():
+		return
+	for key: String in settings_sheet.model.policy_keys(SettingsModel.POLICY_DISPATCH):
+		if _dispatch_values.has(key):
+			settings_sheet.model.set_value(key, _dispatch_values[key])
+	settings_sheet.refresh_values()
+
+
+func _write_dispatch_policy(key: StringName, value: Variant) -> void:
+	if settings_sheet == null or settings_sheet.model == null:
+		return
+	if settings_sheet.model.policy_of(String(key)) != SettingsModel.POLICY_DISPATCH:
+		return
+	_dispatch_values[String(key)] = value
+	if _dispatch_command.is_valid():
+		_dispatch_command.call(String(key), value)
+
+
+## The policy block as the rows currently read it — what the shell writes back
+## into a save, and what `tests/test_ui_land.gd` asserts against the sim.
+func dispatch_policy_values() -> Dictionary:
+	return _dispatch_values.duplicate()
 
 
 func _replay_tutorial() -> void:
@@ -461,14 +558,17 @@ func bind_save_service(service: Object, sim: Object = null) -> void:
 ## running, the onboarding step machine (§2.17). The shell calls this once from
 ## its tick handler; nothing else in `ui/` sees a sim event.
 func feed_events(batch: Array) -> void:
+	var raised: Array[Dictionary] = []
 	if alerts_center != null:
-		alerts_center.feed_batch(batch)
+		raised = alerts_center.feed_batch(batch)
 	# S13: the same batch, a different reading of it. The alerts centre keeps
 	# the ones that need doing; the log keeps all of them, in order.
 	if event_log != null:
 		event_log.feed_batch(batch)
 	if incident_drawer != null:
 		incident_drawer.feed_batch(batch)
+	_cue_events(raised)
+	_check_city_level(batch)
 	if onboarding == null or not onboarding.is_active():
 		return
 	for entry: Variant in batch:
@@ -477,6 +577,123 @@ func feed_events(batch: Array) -> void:
 		var event: Dictionary = entry
 		onboarding.feed({"kind": OnboardingModel.OBS_SIM_EVENT,
 				"event": str(event.get("type", "")), "payload": event})
+
+
+## §2.14's two event cues, fired from the rows the §2.13 gate actually raised —
+## at most one of each per batch, because a batch that carries eight failures is
+## one thing that happened, not eight.
+const CUE_NOTIFY_IDS := {
+	"power_restored": Haptics.CUE_POWER_RESTORED,
+	"load_shed_ended": Haptics.CUE_POWER_RESTORED,
+}
+
+
+func _cue_events(raised: Array) -> void:
+	if haptics == null or raised.is_empty():
+		return
+	var escalated := false
+	var relit := false
+	for entry: Variant in raised:
+		var row: Dictionary = entry
+		if not escalated and str(row.get("class", "")) == "p1":
+			escalated = true
+		var notify_id := str(row.get("notify_id", ""))
+		if not relit and CUE_NOTIFY_IDS.has(notify_id):
+			relit = true
+	if escalated:
+		haptics.fire(Haptics.CUE_ESCALATE)
+	if relit:
+		haptics.fire(Haptics.CUE_POWER_RESTORED)
+
+
+## Doc 12 §2.13's progression moment. `city_level_changed` used to reach the
+## player as one alert row among twenty and nothing else, which is a progression
+## ladder with no rung: this raises the toast **and** marks the build cards the
+## level just unlocked so the reward is visible on the thing that was rewarded.
+##
+## Guarded on the level itself rather than on the event, so a replayed batch, a
+## save reload or a doubled feed cannot celebrate twice.
+func _check_city_level(batch: Array) -> void:
+	for entry: Variant in batch:
+		if not (entry is Dictionary):
+			continue
+		var event: Dictionary = entry
+		if StringName(str(event.get("type", ""))) != &"city_level_changed":
+			continue
+		var level := int(event.get("to", event.get("level", 0)))
+		if level <= _city_level:
+			continue
+		var first_reading := _city_level < 0
+		_city_level = level
+		if first_reading:
+			continue  # attaching to a city already at level N is not a level-up
+		var unlocked: PackedStringArray = []
+		if build_sheet != null:
+			unlocked = build_sheet.reveal_unlocked(level)
+		push_toast(UIWidgets.t_args(config, "ui_toast_city_level", {"level": level}),
+				HudModel.STATE_NORMAL)
+		city_level_changed.emit(level, unlocked)
+
+
+## The city level this root believes the city is at; `-1` before the first
+## `city_level_changed` reading. The shell seeds it on boot so a resumed city
+## does not celebrate the level it already had (`set_city_level`).
+func city_level() -> int:
+	return _city_level
+
+
+func set_city_level(level: int) -> void:
+	_city_level = level
+
+
+## §2.15's toast surface. One line, bottom-centre, newest replaces.
+func push_toast(text: String, state: StringName = &"") -> void:
+	if toast_view != null:
+		toast_view.show_toast(text, state)
+
+
+func _on_toast_requested(text: String, state: StringName) -> void:
+	push_toast(text, state)
+
+
+# ---------------------------------------------------------------------------
+# S4 land panel (doc 12 §2.8)
+# ---------------------------------------------------------------------------
+
+## The shell's tap seam: `BuildController.pick_at_ground` said `block`, and this
+## opens S4 on it. Returns whether the panel took the tap, so the caller can fall
+## through to its own deselect when it did not.
+func show_land_block(block_id: String) -> bool:
+	if land_panel == null or land_panel.model == null:
+		return false
+	land_panel.show_block(block_id)
+	return land_panel.is_open()
+
+
+func close_land_panel() -> void:
+	if land_panel != null:
+		land_panel.close()
+
+
+## Re-reads the selected block. Cheap, and the shell calls it on its HUD cadence
+## so a development phase's bar and ETA move while the panel is open.
+func refresh_land_panel() -> void:
+	if land_panel != null and land_panel.is_open():
+		land_panel.refresh()
+
+
+func _on_land_purchased(result: Dictionary) -> void:
+	if build_sheet != null:
+		build_sheet.rebuild_cards()  # new ground can change what is affordable
+	land_purchased.emit(land_panel.selected_id() if land_panel != null else "", result)
+
+
+func _on_land_developed(result: Dictionary) -> void:
+	land_developed.emit(land_panel.selected_id() if land_panel != null else "", result)
+
+
+func _on_land_fix_requested(fix_target: Dictionary) -> void:
+	land_fix_requested.emit(fix_target)
 
 
 func set_sim_clock(minute_of_day: int, day_index: int = 0) -> void:
@@ -536,6 +753,8 @@ func set_unit_provider(provider: Callable) -> void:
 func report_dispatch_result(unit_id: int, ok: bool) -> String:
 	feed_onboarding({"kind": OnboardingModel.OBS_COMMAND, "command": "dispatch_unit",
 			"ok": ok, "unit_id": unit_id})
+	if haptics != null:
+		haptics.fire(Haptics.CUE_DISPATCH if ok else Haptics.CUE_BLOCKED)
 	return unit_picker.report_result(unit_id, ok) if unit_picker != null else ""
 
 
@@ -827,6 +1046,14 @@ func restore_ui_state(state: Dictionary) -> void:
 	if settings_sheet != null:
 		var block: Variant = state.get("settings", {})
 		settings_sheet.apply_state(block if block is Dictionary else {})
+		# §2.13's auto-response rows are a VIEW of doc 06's policy, which lives in
+		# the city's own save. A restored `ui.settings` block may carry a stale
+		# copy of them; the sim's values win, always.
+		_seed_dispatch_rows()
+		if haptics != null:
+			for key: StringName in [Haptics.SETTING_LEVEL, Haptics.SETTING_REDUCE_MOTION]:
+				if settings_sheet.model.has_key(String(key)):
+					haptics.apply_setting(key, settings_sheet.model.value(String(key)))
 	if onboarding != null:
 		var coach: Variant = state.get("onboarding", {})
 		onboarding.restore_state(coach if coach is Dictionary else {})

@@ -41,6 +41,7 @@ const SCREENS: Array[String] = [
 	"build", "build_grid", "build_locked",
 	"placement_ok", "placement_blocked",
 	"building", "building_blocked",
+	"land_buy", "land_blocked", "land_developing",
 	"drawer", "drawer_empty", "drawer_expanded",
 	"picker", "picker_empty",
 	"dashboard", "economy", "infrastructure", "response",
@@ -145,6 +146,9 @@ func _mount() -> void:
 			"PanelLayer/BuildingPanel") as BuildingPanel
 	if _building_panel != null:
 		_building_panel.setup(_root.config, _controller)
+	if _root.land_panel != null:
+		_root.land_panel.setup(_root.config, LandPanelModel.new(_sim,
+				_controller.formatter, _root.config, _controller.tile_m))
 	if _root.build_sheet != null:
 		_root.build_sheet.setup(_root.config, _controller)
 	_populate()
@@ -378,6 +382,25 @@ func _apply(screen: String) -> void:
 				var b: Building = _sim.buildings[_first_building()]
 				b.condition = 0.35
 				_building_panel.show_building(_first_building())
+		"land_buy":
+			# The city can afford it: the panel's happy face, with the primary
+			# button live and no blocker rows under it.
+			_sim.treasury.balance = 500_000
+			_root.land_panel.show_block(_purchasable_block())
+		"land_blocked":
+			# Broke. `cmd_buy_block(preview)` answers E_FUNDS and the button goes
+			# dead with the formatter's sentence under it — the state §2.8's
+			# blocker list exists for.
+			_sim.treasury.balance = 0
+			_root.land_panel.show_block(_purchasable_block())
+		"land_developing":
+			# Bought, developing, one phase in — the six-step progress list with a
+			# live bar and an ETA (§2.8 item 4).
+			_sim.treasury.balance = 500_000
+			var block_id := _purchasable_block()
+			_sim.cmd_buy_block(block_id, false, true)
+			_sim.advance_hours(3.0)
+			_root.land_panel.show_block(block_id)
 		"drawer":
 			_root.incident_drawer.open()
 		"drawer_empty":
@@ -557,6 +580,16 @@ func _place_ghost(want_valid: bool) -> void:
 	card.pressed.emit()
 	var tile := _valid_tile(sheet.controller) if want_valid else _occupied_tile()
 	sheet.move_ghost(Vector3(float(tile.x) * 8.0 + 4.0, 0.0, float(tile.y) * 8.0 + 4.0))
+
+
+## The first block doc 09's starter city leaves for sale. Asked rather than
+## named, like `_valid_tile` — the map is data and may move.
+func _purchasable_block() -> String:
+	for id: Variant in _sim.world.block_ids_sorted():
+		var block: LandBlock = _sim.world.block(String(id))
+		if block.ownership_state == &"PURCHASABLE":
+			return String(id)
+	return String(_sim.world.block_ids_sorted()[0])
 
 
 func _first_building() -> String:

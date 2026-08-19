@@ -103,6 +103,8 @@
 		"drawer_anim_s": 0.22,
 		"coach_cutout_anim_s": 0.2,
 		"hold_to_confirm_ms": 800,
+		"_unlock_pulse_s": "§2.13's progression payoff: how long a build card that a new city level just unlocked pulses for, once. A8 suppresses it entirely under reduce_motion — the toast still announces the level.",
+		"unlock_pulse_s": 1.2,
 		"_top_bar_max_rows": "§2.4's collapse solver hides P5-P7 once demotion runs out. On a near-square display (Fold inner, 2160x1856) the four never-hidden chips plus a measured value string still overflow one 48 dp row, and A1/A2 forbid clipping — so the bar wraps to a second row BEFORE anything is hidden. 1 restores the doc's single-row behaviour exactly.",
 		"top_bar_max_rows": 2
 	},
@@ -819,6 +821,41 @@
 			"debt"
 		]
 	},
+	"land": {
+		"_comment": "S4 (doc 12 §2.8), the land purchase panel. PRESENTATION ONLY. The price is doc 03 §2.7's (EconomySystem.land_price), the phase costs are §2.8's, the six phases and their crew-hours are doc 09 §2.3's (DevelopmentController), and the block's own attributes are doc 09's starter-city data — none of them is restated here. What this block owns is which risks get a row, how a [0,1] risk becomes five segments and one word, and the glyphs the bars are drawn with.",
+		"risk_rows": [
+			"flood",
+			"wildfire",
+			"subsidence",
+			"pollution",
+			"wind",
+			"hazmat"
+		],
+		"risk_bar_segments": 5,
+		"_risk_bands": "Five words over [0,1], band = clamp(floor(v*5), 0, 4), so 0.00-0.19 is `low` and 0.80-1.00 is `severe`. The word and the bar both carry the reading (A5): colour is the third channel, never the only one, which is why `risk_band_states` has fewer distinct values than there are bands.",
+		"risk_band_words": [
+			"low",
+			"moderate",
+			"elevated",
+			"high",
+			"severe"
+		],
+		"risk_band_states": [
+			"normal",
+			"normal",
+			"warning",
+			"warning",
+			"critical"
+		],
+		"phase_bar_segments": 5,
+		"bar_filled": "▮",
+		"bar_empty": "▯",
+		"phase_glyph_done": "✓",
+		"phase_glyph_active": "▶",
+		"phase_glyph_pending": "·",
+		"_advantage_min_pct": "§2.8's `advantages` are the terms of the price product, measured by re-pricing the block with each term neutralised (see ui/land_panel_model.gd). A term worth less than this either way is dropped: a `+0 %` row is noise, and rounding a real 0.4 % to `+0 %` is a lie about a number that is not zero.",
+		"advantage_min_pct": 1.0
+	},
 	"settings": {
 		"_comment": "S9 (doc 12 §2.13), Phase-1 pages only. Every row is data so the sheet holds no option list and no default; `options_from`/`default_from` resolve against data/render.json (doc 11 owns the graphics presets) and this file's own `defaults` block.",
 		"rows": [
@@ -845,7 +882,21 @@
 				"min": 0.0,
 				"max": 1.0,
 				"step": 0.1,
-				"default": 0.8
+				"default": 0.8,
+				"hint_key": "ui_settings_sound_hint"
+			},
+			{
+				"_comment": "§2.14. off / light / full, default light, durations in `haptics_ms` above. `reduce_motion` SUPPRESSES haptics without changing this row (A8: a vibration is motion), so switching reduce_motion back off restores the player's own choice.",
+				"key": "haptics",
+				"kind": "choice",
+				"options": [
+					"off",
+					"light",
+					"full"
+				],
+				"default_from": "defaults.haptics",
+				"value_text_from": "haptics",
+				"hint_key": "ui_settings_haptics_hint"
 			},
 			{
 				"key": "reduce_motion",
@@ -873,6 +924,73 @@
 				"key": "replay_tutorial",
 				"kind": "toggle",
 				"default": false
+			},
+			{
+				"_comment": "§2.13's AUTO-RESPONSE block (doc 06 §2.12, doc 91 D-11). Every row below carries `policy: dispatch`: its default is read from data/dispatch.json.policy_defaults — doc 06's own file, never a second copy here — and its value is written with CitySim.cmd_set_dispatch_policy, which refuses any key DispatchPolicy does not carry. The keys are spelled exactly as the sim spells them, so a row can never address a policy that does not exist. The utility RESTORATION ORDER (a drag-reorder list) is deliberately absent: it is a list, not a 48 dp cycling target, and shipping it as one would be a control that lies about what it does.",
+				"key": "auto_dispatch_fire",
+				"kind": "toggle",
+				"policy": "dispatch",
+				"default_from": "dispatch.auto_dispatch_fire",
+				"hint_key": "ui_settings_auto_dispatch_fire_hint"
+			},
+			{
+				"key": "auto_dispatch_police",
+				"kind": "toggle",
+				"policy": "dispatch",
+				"default_from": "dispatch.auto_dispatch_police",
+				"hint_key": "ui_settings_auto_dispatch_police_hint"
+			},
+			{
+				"key": "auto_dispatch_utility",
+				"kind": "toggle",
+				"policy": "dispatch",
+				"default_from": "dispatch.auto_dispatch_utility",
+				"hint_key": "ui_settings_auto_dispatch_utility_hint"
+			},
+			{
+				"key": "auto_dispatch_water",
+				"kind": "toggle",
+				"policy": "dispatch",
+				"default_from": "dispatch.auto_dispatch_water",
+				"hint_key": "ui_settings_auto_dispatch_water_hint"
+			},
+			{
+				"_comment": "§2.13's `reserve N fire engines`. The ladder is the control's, the default is doc 06's; 3 is the top because a reserve larger than a starter station's roster would refuse every fire.",
+				"key": "fire_reserve_units",
+				"kind": "choice",
+				"policy": "dispatch",
+				"options": [
+					0,
+					1,
+					2,
+					3
+				],
+				"default_from": "dispatch.fire_reserve_units",
+				"hint_key": "ui_settings_fire_reserve_units_hint"
+			},
+			{
+				"_comment": "§2.13's `auto-repair cost ceiling`, whose stated range is $0-$250K. A cycling row rather than a drag slider (A3), so the range is a ladder; doc 06's default sits on it.",
+				"key": "auto_repair_cost_cap",
+				"kind": "choice",
+				"policy": "dispatch",
+				"options": [
+					0,
+					5000,
+					25000,
+					100000,
+					250000
+				],
+				"default_from": "dispatch.auto_repair_cost_cap",
+				"value_format": "money",
+				"hint_key": "ui_settings_auto_repair_cost_cap_hint"
+			},
+			{
+				"_comment": "§2.13 phrases this one as `never spend emergency contractor funds (on)`. The ROW is phrased as the sim key instead — spending ON/OFF, not never-spend ON/OFF — because an inverted control is the single easiest settings bug to ship and the hardest for a player to notice.",
+				"key": "auto_spend_contractor",
+				"kind": "toggle",
+				"policy": "dispatch",
+				"default_from": "dispatch.auto_spend_contractor",
+				"hint_key": "ui_settings_auto_spend_contractor_hint"
 			}
 		],
 		"device_scoped_keys": [
@@ -880,7 +998,8 @@
 			"text_scale",
 			"reduce_motion",
 			"larger_touch_targets",
-			"sound_volume"
+			"sound_volume",
+			"haptics"
 		],
 		"settings_file": "user://settings.cfg"
 	},

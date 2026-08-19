@@ -141,6 +141,11 @@ func show_building(sim_id: String) -> void:
 	if not bool(view.get("exists", false)):
 		close()
 		return
+	# `PanelLayer` shows one surface at a time (D-16). S4 landed beside this
+	# panel on the same layer and the same right edge, so opening either one has
+	# to put the other away — two 300 dp panels sharing an edge do not occlude,
+	# they collide, and their tap targets collide with them.
+	UIWidgets.close_siblings(self)
 	_sim_id = sim_id
 	_view = view
 	if _panel != null:

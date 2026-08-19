@@ -128,17 +128,20 @@ func _build_row(row: Dictionary) -> Container:
 	line.add_child(value)
 	_row_buttons[key] = value
 
-	# The sound row stores a level for an audio stack that lands later; say so on
-	# the row rather than shipping a control that silently does nothing (A14).
-	if key != "sound_volume":
+	# A row whose effect is not obvious from its own name says so on a second
+	# line rather than shipping a control the player has to guess at (A14). The
+	# key is the row's, in `data/ui.json` — the sound row's caveat and the
+	# auto-response rows' one-sentence explanations are the same mechanism, and
+	# neither is a branch in this file.
+	var hint_key := str(row.get("hint_key", ""))
+	if hint_key == "":
 		return line
 	var stack := VBoxContainer.new()
 	stack.name = "Row_" + key
 	line.name = "Line"
 	stack.add_theme_constant_override(&"separation", 0)
 	stack.add_child(line)
-	var hint := UIWidgets.label("Hint",
-			UIWidgets.t(config, "ui_settings_sound_hint"), &"LegendRow", true)
+	var hint := UIWidgets.label("Hint", UIWidgets.t(config, hint_key), &"LegendRow", true)
 	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	stack.add_child(hint)
 	return stack
@@ -180,6 +183,14 @@ func _refresh_values() -> void:
 		button.text = str(row["value_text"])
 		button.tooltip_text = "%s: %s" % [
 				UIWidgets.t(config, str(row["label_key"])), str(row["value_text"])]
+
+
+## Re-reads every row's value from the model. Public because §2.13's
+## auto-response rows are seeded from the *sim* rather than from a tap
+## (`UIRoot.bind_dispatch_policy`), and a seeded row that still shows its old
+## face is a settings screen that lies about the city it is attached to.
+func refresh_values() -> void:
+	_refresh_values()
 
 
 ## Applies a whole settings block (a loaded save, or `user://settings.cfg`) and

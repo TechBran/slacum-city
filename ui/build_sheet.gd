@@ -30,6 +30,9 @@ const CLOSE_GLYPH := "✕"
 var config: UIConfig
 var controller: BuildController
 var model: HudModel
+## Set by `UIRoot`. Doc 12 §2.14: a commit taps, a refusal buzzes, a ghost that
+## snaps to a new tile ticks. Never `Input.vibrate_handheld` from here.
+var haptics: Haptics
 
 var _fab: Button
 var _sheet: PanelContainer
@@ -52,6 +55,16 @@ var _text_scale := 1.0
 ## display narrower than they are wide. Built in `_build_static()`, never in the
 ## scene — see `_wrap_tabs_in_scroller()`.
 var _tab_scroll: ScrollContainer
+## §2.13's unlock reveal: card ids waiting to be shown off, and the ones
+## currently mid-pulse (`card id -> seconds remaining`).
+var _pending_unlocks: PackedStringArray = []
+var _pulsing: Dictionary = {}
+var _pulse_s := 1.2
+var _reduce_motion := false
+## Ghost state at the last `move_ghost`, so a haptic fires on a *change* rather
+## than at the 10 Hz revalidation rate (§2.7) — a buzz per frame is not feedback.
+var _last_ghost_origin := Vector2i(-1, -1)
+var _last_verdict: StringName = &""
 
 
 ## The one wiring entry point. `game/main.gd` hands over the parsed config and
@@ -70,6 +83,8 @@ func setup(cfg: UIConfig = null, p_controller: BuildController = null) -> void:
 			UIConfig.get_num(defaults, "text_scale", 1.0),
 			bool(defaults.get("larger_touch_targets", false))))
 	_spacing = UIConfig.get_num(config.layout(), "touch_spacing_min_dp", 8.0)
+	_reduce_motion = bool(defaults.get("reduce_motion", false))
+	_pulse_s = UIConfig.get_num(config.layout(), "unlock_pulse_s", 1.2)
 	_bind_nodes()
 	_build_static()
 	rebuild_cards()
@@ -87,7 +102,8 @@ func _ready() -> void:
 ## sheet, the placement bar, and the unit picker rising from the same edge. Polled
 ## rather than wired, because `UIWidgets.close_siblings()` only speaks to screens
 ## that are already open — a closed build sheet is never told the picker arrived.
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_advance_pulse(delta)
 	if _fab == null:
 		return
 	_fab.visible = not is_open() and not is_placing() \
@@ -411,6 +427,88 @@ func is_open() -> bool:
 	return _sheet != null and _sheet.visible
 
 
+# ---------------------------------------------------------------------------
+# The unlock reveal (doc 12 §2.13's progression payoff)
+# ---------------------------------------------------------------------------
+
+## A city level landed. The cards it unlocked pulse **once**, so the reward is
+## visible on the thing that was rewarded rather than only in a line of alert
+## text that scrolls away — `city_level_changed` used to reach the player as an
+## alert row and nothing else, which is a progression loop with no payoff.
+##
+## Safe while the sheet is closed: the ids are held and the reveal runs the next
+## time it opens, which is the moment the player is actually looking. Returns
+## what the level unlocked either way, because the caller announces it in a toast
+## whether or not the sheet happens to be up.
+func reveal_unlocked(city_level: int) -> PackedStringArray:
+	var ids := unlocked_ids(city_level)
+	_pending_unlocks = ids
+	rebuild_cards()  # the lock glyphs are stale the instant the level moves
+	if is_open():
+		_reveal_pending()
+	return ids
+
+
+## Card ids whose `min_city_level` is exactly this level — the ones that were
+## locked one level ago and are not any more. Empty when a level unlocks nothing,
+## which is a normal answer and must not pulse the whole sheet.
+func unlocked_ids(city_level: int) -> PackedStringArray:
+	var out: PackedStringArray = []
+	for card: Dictionary in _cards:
+		if int(card["min_city_level"]) == city_level:
+			out.append(str(card["id"]))
+	return out
+
+
+func pending_unlocks() -> PackedStringArray:
+	return _pending_unlocks
+
+
+## Switches to the category the first newly-unlocked card lives in and starts the
+## pulse. The category switch is deliberate and is the *only* time this file
+## overrides the player's last tab: a reveal that leaves the new card on a tab
+## the player is not looking at has revealed nothing.
+func _reveal_pending() -> void:
+	if _pending_unlocks.is_empty():
+		return
+	for card: Dictionary in _cards:
+		if str(card["id"]) == _pending_unlocks[0]:
+			select_category(str(card["category"]))
+			break
+	# A8: a pulse is motion, so `reduce_motion` gets the rebuilt sheet and the
+	# toast and no animation at all.
+	if not _reduce_motion:
+		for id: String in _pending_unlocks:
+			if card_button(id) != null:
+				_pulsing[id] = _pulse_s
+	_pending_unlocks = []
+
+
+## One cosine hump per card: opaque → half → opaque, over `unlock_pulse_s`.
+func _advance_pulse(delta: float) -> void:
+	if _pulsing.is_empty():
+		return
+	var done: PackedStringArray = []
+	for id: Variant in _pulsing:
+		var left := float(_pulsing[id]) - delta
+		var button := card_button(str(id))
+		if button == null or left <= 0.0:
+			if button != null:
+				button.modulate.a = 1.0
+			done.append(str(id))
+			continue
+		_pulsing[id] = left
+		button.modulate.a = 1.0 - 0.5 * sin(PI * (1.0 - left / maxf(_pulse_s, 0.001)))
+	for id: String in done:
+		_pulsing.erase(id)
+
+
+func pulsing_ids() -> PackedStringArray:
+	var out: PackedStringArray = PackedStringArray(_pulsing.keys())
+	out.sort()
+	return out
+
+
 func open() -> void:
 	rebuild_cards()  # locks follow the live city level
 	if _sheet != null:
@@ -421,6 +519,7 @@ func open() -> void:
 	if _fab != null:
 		_fab.visible = false
 	_set_notice("")
+	_reveal_pending()  # §2.13: whatever the last city level unlocked, shown now
 	sheet_toggled.emit(true)
 
 
@@ -473,6 +572,7 @@ func _on_card_pressed(archetype: String, variant: String) -> void:
 		# §2.7: a locked card explains its unlock condition instead of placing.
 		var failure := controller.formatter.format(entered["reason_code"], entered["payload"])
 		_set_notice(str(failure["body"]))
+		_cue(Haptics.CUE_BLOCKED)
 		card_refused.emit(failure)
 		return
 	close()
@@ -487,8 +587,28 @@ func move_ghost(ground_point: Vector3) -> void:
 	if controller == null or not controller.is_placing():
 		return
 	controller.move_to_ground(ground_point)
+	_cue_ghost()
 	_refresh_bar()
 	placement_changed.emit()
+
+
+## §2.14's two placement cues, fired on a *change* rather than on every
+## revalidation: the ghost is re-evaluated at 10 Hz (§2.7), and a device that
+## buzzes ten times a second while a thumb is moving is a fault, not feedback.
+func _cue_ghost() -> void:
+	var origin := controller.origin
+	var verdict := StringName(str(controller.verdict().get("verdict", "")))
+	if origin != _last_ghost_origin:
+		_last_ghost_origin = origin
+		_cue(Haptics.CUE_SNAP_TILE)
+	if verdict == BuildController.VERDICT_BLOCKED and verdict != _last_verdict:
+		_cue(Haptics.CUE_BLOCKED)
+	_last_verdict = verdict
+
+
+func _cue(cue: StringName) -> void:
+	if haptics != null:
+		haptics.fire(cue)
 
 
 ## §2.7: "Placement is never committed on finger-up" — only this button commits.
@@ -498,9 +618,13 @@ func confirm_placement() -> void:
 	var result := controller.commit()
 	if bool(result["ok"]):
 		_set_notice("")
+		_cue(Haptics.CUE_BUTTON)
 	else:
 		var failure := controller.formatter.format(result["reason_code"], result["payload"])
 		_set_notice(str(failure["body"]))
+		_cue(Haptics.CUE_BLOCKED)
+	_last_ghost_origin = Vector2i(-1, -1)
+	_last_verdict = &""
 	_refresh_bar()
 	placement_committed.emit(result)
 	placement_changed.emit()

@@ -83,18 +83,53 @@ func start_development(block_id: String, crew_type: StringName = &"construction_
 	return _submit_phase(block_id)
 
 
+## The crew type a phase will actually run with: the requested one when that
+## phase's fallback table accepts it, the generic crew otherwise. Every phase
+## accepts the generic crew (at its fallback multiplier), so a specialist plan
+## degrades gracefully instead of stalling.
+func resolved_crew_type(phase: StringName, crew_type: StringName) -> StringName:
+	return crew_type if (PHASE_FALLBACK[phase] as Dictionary).has(crew_type) \
+			else &"construction_crew"
+
+
+## Crew-hours one phase costs, first-block discount included. Public because
+## doc 12 §2.8's panel quotes a schedule before the pipeline runs it, and the
+## quote and the submitted job must be the same arithmetic in the same order —
+## `_submit_phase` calls this rather than repeating it.
+func phase_crew_hours(phase: StringName, crew_type: StringName = &"construction_crew",
+		first_block: bool = false) -> float:
+	var resolved := resolved_crew_type(phase, crew_type)
+	var crew_hours: float = float(PHASE_CREW_HOURS[phase]) \
+			* float((PHASE_FALLBACK[phase] as Dictionary)[resolved])
+	if first_block:
+		crew_hours *= FIRST_BLOCK_TIME_MULT
+	return crew_hours
+
+
+## All six phases summed — §2.8's `Development time` line.
+func total_crew_hours(crew_type: StringName = &"construction_crew",
+		first_block: bool = false) -> float:
+	var total := 0.0
+	for phase: StringName in PHASES:
+		total += phase_crew_hours(phase, crew_type, first_block)
+	return total
+
+
+## A read-only COPY of the live pipeline record for one block — `phase_index`,
+## `job_id`, `crew_type`, `paused`, `first_block` — or `{}` when nothing is in
+## flight there. The S4 panel reads this to draw the six-step progress list; it
+## is a copy so a view can never write the pipeline's own state.
+func active_view(block_id: String) -> Dictionary:
+	if not _active.has(block_id):
+		return {}
+	return (_active[block_id] as Dictionary).duplicate()
+
+
 func _submit_phase(block_id: String) -> Dictionary:
 	var record: Dictionary = _active[block_id]
 	var phase: StringName = PHASES[int(record["phase_index"])]
-	var crew_type: StringName = record["crew_type"]
-	var fallback: Dictionary = PHASE_FALLBACK[phase]
-	if not fallback.has(crew_type):
-		# Every phase accepts the generic crew (at its fallback multiplier), so
-		# a specialist plan degrades gracefully instead of stalling.
-		crew_type = &"construction_crew"
-	var crew_hours: float = float(PHASE_CREW_HOURS[phase]) * float(fallback[crew_type])
-	if bool(record["first_block"]):
-		crew_hours *= FIRST_BLOCK_TIME_MULT
+	var crew_type := resolved_crew_type(phase, record["crew_type"])
+	var crew_hours := phase_crew_hours(phase, crew_type, bool(record["first_block"]))
 	var job_id := queue.submit(&"development", block_id, crew_hours, crew_type,
 			{"block_id": block_id, "phase": String(phase)})
 	record["job_id"] = job_id

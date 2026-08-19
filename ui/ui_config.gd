@@ -19,6 +19,12 @@ extends RefCounted
 const UI_JSON_PATH := "res://data/ui.json"
 const STRINGS_JSON_PATH := "res://data/strings.en.json"
 const RENDER_JSON_PATH := "res://data/render.json"
+## Doc 06's own file. Read for exactly one reason: S9's auto-response rows
+## (§2.13) must default to whatever `DispatchPolicy` actually boots with, and the
+## authority for that is `policy_defaults` here — never a second copy in
+## `data/ui.json`. Same contract as `data/render.json`: absence is not an error
+## for the UI layer, it means the rows fall back to their own `default`.
+const DISPATCH_JSON_PATH := "res://data/dispatch.json"
 
 ## Projection keys that belong to doc 11 and must never appear in ui.json.camera.
 const PROJECTION_KEYS := ["fov_deg", "near_m", "far_m"]
@@ -36,24 +42,30 @@ var errors: PackedStringArray = []
 var _ui: Dictionary = {}
 var _strings: Dictionary = {}
 var _render: Dictionary = {}
+var _dispatch: Dictionary = {}
 
 
-func _init(ui: Dictionary = {}, strings: Dictionary = {}, render: Dictionary = {}) -> void:
+func _init(ui: Dictionary = {}, strings: Dictionary = {}, render: Dictionary = {},
+		dispatch: Dictionary = {}) -> void:
 	_ui = ui
 	_strings = strings
 	_render = render
+	_dispatch = dispatch
 
 
 static func load_from_files(
 		ui_path: String = UI_JSON_PATH,
 		strings_path: String = STRINGS_JSON_PATH,
-		render_path: String = RENDER_JSON_PATH) -> UIConfig:
+		render_path: String = RENDER_JSON_PATH,
+		dispatch_path: String = DISPATCH_JSON_PATH) -> UIConfig:
 	var cfg := UIConfig.new()
 	cfg._ui = UIConfig._parse(ui_path, cfg.errors, true)
 	cfg._strings = UIConfig._parse(strings_path, cfg.errors, true)
 	# data/render.json is doc 11's and is authored separately; its absence is not
 	# an error for the UI layer, it just means the projection must be injected.
 	cfg._render = UIConfig._parse(render_path, cfg.errors, false)
+	# data/dispatch.json is doc 06's, on the same terms.
+	cfg._dispatch = UIConfig._parse(dispatch_path, cfg.errors, false)
 	return cfg
 
 
@@ -87,6 +99,17 @@ func render_data() -> Dictionary:
 
 func has_render_data() -> bool:
 	return not _render.is_empty()
+
+
+func dispatch_data() -> Dictionary:
+	return _dispatch
+
+
+## Doc 06's `policy_defaults` — the values `DispatchPolicy` boots with, and
+## therefore the only correct default for S9's auto-response rows (§2.13, D-11).
+func dispatch_policy_defaults() -> Dictionary:
+	var raw: Variant = _dispatch.get("policy_defaults", {})
+	return raw if raw is Dictionary else {}
 
 
 ## Top-level section of data/ui.json, e.g. "camera", "layout", "gestures_dp_ms".
