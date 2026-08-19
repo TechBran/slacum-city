@@ -1,0 +1,386 @@
+class_name TrafficFeed
+extends RefCounted
+## Doc 10 §2.15 — the cosmetic civilian traffic feed, published as the
+## `vehicle_spawned` / `vehicle_state` / `vehicle_despawned` event stream doc 11
+## §5 consumes.
+##
+## ZERO SIMULATION AUTHORITY. Nothing here feeds congestion, incidents, economy
+## or any query another system makes; deleting the whole class changes nothing
+## except the picture. Densities are read FROM the congestion model, never
+## written back (§2.10 "no feedback loop").
+##
+## Doc 10 §2.15 puts the ghost cars in `game/` on a renderer-local RNG. This
+## build instead publishes a SIM-SIDE feed on the constitution's reserved
+## `traffic` stream (report 98 C-45 keeps that stream reserved, not deleted), so
+## the renderer receives a real, deterministic, capped feed instead of inventing
+## one: two runs of the same seed produce a byte-identical event stream, which a
+## renderer-local RNG could never promise. Vehicles are NEVER saved — on load
+## the feed starts empty and repopulates within a game-minute.
+
+const KINDS: Array[String] = ["car", "van", "truck"]
+
+var graph: RoadGraph
+var tun: RoadTunables
+var rng: RngStreams
+
+var enabled: bool = true
+var preset: String = "balanced"
+var next_vehicle_id: int = 1
+var headlights: bool = false
+
+var _vehicles: Dictionary = {}  # vehicle id -> record
+var _by_edge: Dictionary = {}  # edge_id -> Array[int] vehicle ids
+var _events: Array = []
+
+
+func _init(p_graph: RoadGraph, p_tun: RoadTunables, p_rng: RngStreams) -> void:
+	graph = p_graph
+	tun = p_tun
+	rng = p_rng
+
+
+func vehicle_count() -> int:
+	return _vehicles.size()
+
+
+func vehicle(vehicle_id: int) -> Dictionary:
+	return _vehicles.get(vehicle_id, {})
+
+
+func vehicle_ids_sorted() -> Array:
+	var ids := _vehicles.keys()
+	ids.sort()
+	return ids
+
+
+func global_cap() -> int:
+	return tun.civ_cap(preset)
+
+
+func drain_events() -> Array:
+	var out := _events
+	_events = []
+	return out
+
+
+## Clear the whole feed (load, preset change, renderer teardown).
+func reset(emit_despawns: bool = true) -> void:
+	if emit_despawns:
+		for vehicle_id in vehicle_ids_sorted():
+			_emit(&"vehicle_despawned", {"id": vehicle_id, "reason": "reset"})
+	_vehicles.clear()
+	_by_edge.clear()
+
+
+## Advance every live vehicle by `dt_game_minutes`. Called EVERY_TICK in fine
+## mode only — offline catch-up runs no cosmetic traffic (§2.15).
+func advance(dt_game_minutes: float, hour_of_day: float) -> void:
+	if not enabled:
+		return
+	headlights = hour_of_day >= float(tun.civ_headlights_on_hour) \
+			or hour_of_day < float(tun.civ_headlights_off_hour)
+	for vehicle_id in vehicle_ids_sorted():
+		var v: Dictionary = _vehicles[vehicle_id]
+		if not graph.has_edge(int(v["edge_id"])):
+			_despawn(vehicle_id, "graph")
+			continue
+		var record: Dictionary = graph.edge(int(v["edge_id"]))
+		if _hard_blocked(record):
+			_despawn(vehicle_id, "blocked")
+			continue
+		var speed := _speed_of(v, record)
+		v["speed_mpgm"] = speed
+		v["s_m"] = float(v["s_m"]) + speed * dt_game_minutes
+		var guard := 0
+		while float(v["s_m"]) >= float(record["length_m"]) and guard < 8:
+			guard += 1
+			v["s_m"] = float(v["s_m"]) - float(record["length_m"])
+			v["hops_remaining"] = int(v["hops_remaining"]) - 1
+			if int(v["hops_remaining"]) <= 0:
+				_despawn(vehicle_id, "arrived")
+				break
+			if not _hop(v):
+				_despawn(vehicle_id, "dead_end")
+				break
+			record = graph.edge(int(v["edge_id"]))
+			if record.is_empty() or _hard_blocked(record):
+				_despawn(vehicle_id, "blocked")
+				break
+		if _vehicles.has(vehicle_id):
+			v["s_m"] = clampf(float(v["s_m"]), 0.0, maxf(0.0, float(record["length_m"])))
+
+
+## Spawn / despawn to the per-edge targets. Called EVERY_MINUTE (§2.15's
+## TrafficSnapshot cadence) so the population tracks congestion without
+## thrashing at 4 Hz.
+##
+## DEVIATION FROM DOC 10 §2.15, deliberate: the doc rounds `n_e = round(0.9 · c ·
+## L / 100)` PER EDGE, which assumes ~200 m edges. On the real contracted graph
+## the starter core's mean edge is ~15 m, so every per-edge target rounds to
+## zero and the city would show no traffic at any congestion level. The demand
+## is therefore summed across the network FIRST — the constant still means "0.9
+## cars per 100 m at capacity" — and allocated by largest remainder, which is
+## deterministic and reproduces the doc's per-edge answer exactly whenever edges
+## are long enough for it to be non-degenerate.
+func rebalance() -> void:
+	if not enabled:
+		_shrink_to(0)
+		return
+	var targets := _allocate_targets()
+	# 1. Trim edges that are over their target (oldest first).
+	for edge_id in _sorted_keys(_by_edge):
+		var target := int(targets.get(edge_id, 0))
+		var ids: Array = (_by_edge.get(edge_id, []) as Array).duplicate()
+		ids.sort()
+		var index := 0
+		while ids.size() - index > target:
+			_despawn(int(ids[index]), "density")
+			index += 1
+	# 2. Fill deficits.
+	var cap := global_cap()
+	for edge_id in _sorted_keys(targets):
+		var have: int = (_by_edge.get(edge_id, []) as Array).size()
+		for i in maxi(0, int(targets[edge_id]) - have):
+			if _vehicles.size() >= cap:
+				return
+			_spawn(int(edge_id))
+
+
+## Largest-remainder allocation of the network-wide target across eligible
+## edges. Ties break by ascending edge_id, so the result is reproducible.
+func _allocate_targets() -> Dictionary:
+	var shares: Dictionary = {}
+	var total := 0.0
+	for edge_id in graph.edge_ids_sorted():
+		var record: Dictionary = graph.edge(edge_id)
+		if not _eligible(record):
+			continue
+		var share := tun.civ_density_k * float(record["congestion"]) \
+				* float(record["length_m"]) / 100.0
+		if share <= 0.0:
+			continue
+		shares[edge_id] = share
+		total += share
+	var wanted := clampi(roundi(total), 0, global_cap())
+	var out: Dictionary = {}
+	var assigned := 0
+	var remainders: Array = []
+	for edge_id in _sorted_keys(shares):
+		var share := float(shares[edge_id])
+		var whole := clampi(int(share), 0, tun.civ_max_cars_per_edge)
+		out[edge_id] = whole
+		assigned += whole
+		remainders.append({"edge_id": edge_id, "frac": share - float(int(share))})
+	remainders.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if absf(float(a["frac"]) - float(b["frac"])) > 1e-9:
+			return float(a["frac"]) > float(b["frac"])
+		return int(a["edge_id"]) < int(b["edge_id"]))
+	var pass_count := 0
+	while assigned < wanted and pass_count < tun.civ_max_cars_per_edge:
+		var progressed := false
+		for entry in remainders:
+			if assigned >= wanted:
+				break
+			var edge_id := int(entry["edge_id"])
+			if int(out[edge_id]) >= tun.civ_max_cars_per_edge:
+				continue
+			out[edge_id] = int(out[edge_id]) + 1
+			assigned += 1
+			progressed = true
+		if not progressed:
+			break
+		pass_count += 1
+	return out
+
+
+## Publish this step's positions. Doc 11 §2.12 Hermite interpolation needs
+## explicit `speed` and `heading`, not derived ones (report 98 C-67).
+func emit_states() -> void:
+	if not enabled:
+		return
+	for vehicle_id in vehicle_ids_sorted():
+		var v: Dictionary = _vehicles[vehicle_id]
+		var pose := _pose_of(v)
+		_emit(&"vehicle_state", {
+			"id": vehicle_id, "kind": String(v["kind"]), "vehicle_class": "civilian",
+			"pos": pose["pos"], "heading": float(pose["heading"]),
+			"speed": float(v["speed_mpgm"]), "siren": false, "lightbar": false,
+			"headlights": headlights, "edge_id": int(v["edge_id"]),
+			"dark": bool(pose["dark"]),
+		})
+
+
+# ----------------------------------------------------------------- internals
+
+func _eligible(record: Dictionary) -> bool:
+	if record.is_empty():
+		return false
+	if float(record["length_m"]) <= 0.0:
+		return false
+	if float(record["condition"]) <= 0.0:
+		return false
+	if _hard_blocked(record):
+		return false
+	if String(record.get("closure_cause", "")) == "construction_new":
+		return false
+	return true
+
+
+func _hard_blocked(record: Dictionary) -> bool:
+	if bool(record.get("collapsed", false)):
+		return true
+	var cause := String(record.get("closure_cause", ""))
+	if cause == "":
+		return false
+	return bool(tun.cause_row(cause).get("hard", false))
+
+
+func _speed_of(v: Dictionary, record: Dictionary) -> float:
+	var road_class := int(record["road_class"])
+	var congestion := float(record["congestion"])
+	var speed := tun.civ_base_speed_mpgm * tun.class_mult(road_class) \
+			* (1.0 - tun.civ_speed_congestion_coeff * congestion) * float(v["jitter"])
+	var tier := RoadCosts.condition_tier(float(record["condition"]), tun.tier_good,
+			tun.tier_poor, tun.tier_failing)
+	if tier == &"poor" or tier == &"failing":
+		speed *= tun.poor_civilian_speed_mult
+	# At gridlock (c = 2) cars crawl at 0.35× rather than stopping dead.
+	return maxf(speed, tun.civ_base_speed_mpgm * 0.10)
+
+
+func _spawn(edge_id: int) -> void:
+	var record: Dictionary = graph.edge(edge_id)
+	if record.is_empty():
+		return
+	var stream := rng.stream("traffic")
+	var vehicle_id := next_vehicle_id
+	next_vehicle_id += 1
+	var from_a := stream.randi_range(0, 1) == 0
+	var kind := KINDS[_weighted_kind(stream.randf())]
+	var jitter := tun.civ_speed_jitter_min \
+			+ (tun.civ_speed_jitter_max - tun.civ_speed_jitter_min) * stream.randf()
+	var hops := stream.randi_range(tun.civ_trip_hops_min, tun.civ_trip_hops_max)
+	var v := {
+		"id": vehicle_id, "kind": kind, "edge_id": edge_id,
+		"forward": from_a, "s_m": 0.0, "jitter": jitter,
+		"hops_remaining": hops, "speed_mpgm": 0.0,
+	}
+	_vehicles[vehicle_id] = v
+	var list: Array = _by_edge.get(edge_id, [])
+	list.append(vehicle_id)
+	_by_edge[edge_id] = list
+	v["speed_mpgm"] = _speed_of(v, record)
+	var pose := _pose_of(v)
+	_emit(&"vehicle_spawned", {
+		"id": vehicle_id, "kind": kind, "vehicle_class": "civilian",
+		"pos": pose["pos"], "heading": float(pose["heading"]),
+		"speed": float(v["speed_mpgm"]), "edge_id": edge_id,
+		"siren": false, "lightbar": false, "headlights": headlights,
+	})
+
+
+func _weighted_kind(u: float) -> int:
+	var acc := 0.0
+	for i in KINDS.size():
+		acc += float(tun.civ_kind_weights.get(KINDS[i], 0.0))
+		if u < acc:
+			return i
+	return 0
+
+
+func _despawn(vehicle_id: int, reason: String) -> void:
+	var v: Dictionary = _vehicles.get(vehicle_id, {})
+	if v.is_empty():
+		return
+	var edge_id := int(v["edge_id"])
+	var list: Array = _by_edge.get(edge_id, [])
+	list.erase(vehicle_id)
+	if list.is_empty():
+		_by_edge.erase(edge_id)
+	else:
+		_by_edge[edge_id] = list
+	_vehicles.erase(vehicle_id)
+	_emit(&"vehicle_despawned", {"id": vehicle_id, "reason": reason})
+
+
+func _shrink_to(count: int) -> void:
+	var ids := vehicle_ids_sorted()
+	var index := 0
+	while _vehicles.size() > count and index < ids.size():
+		_despawn(int(ids[index]), "cap")
+		index += 1
+
+
+## At a node a car picks a uniformly random outgoing edge excluding the one it
+## arrived on; reversal is allowed only at dead ends (§2.15).
+func _hop(v: Dictionary) -> bool:
+	var edge_id := int(v["edge_id"])
+	var record: Dictionary = graph.edge(edge_id)
+	if record.is_empty():
+		return false
+	var arrival_node := int(record["node_b"]) if bool(v["forward"]) else int(record["node_a"])
+	var node_record: Dictionary = graph.node(arrival_node)
+	if node_record.is_empty():
+		return false
+	var options: Array = []
+	for candidate in node_record["edge_ids"]:
+		if int(candidate) == edge_id:
+			continue
+		var other: Dictionary = graph.edge(int(candidate))
+		if _eligible(other):
+			options.append(int(candidate))
+	if options.is_empty():
+		options.append(edge_id)  # dead end: reversal is the only legal move
+	options.sort()
+	var pick := int(options[rng.stream("traffic").randi_range(0, options.size() - 1)])
+	var next_record: Dictionary = graph.edge(pick)
+	var list: Array = _by_edge.get(edge_id, [])
+	list.erase(int(v["id"]))
+	if list.is_empty():
+		_by_edge.erase(edge_id)
+	else:
+		_by_edge[edge_id] = list
+	v["edge_id"] = pick
+	v["forward"] = int(next_record["node_a"]) == arrival_node
+	var next_list: Array = _by_edge.get(pick, [])
+	next_list.append(int(v["id"]))
+	_by_edge[pick] = next_list
+	return true
+
+
+## World-space pose. 1 tile = 8 m (constitution §6); the tile centre is the
+## lane reference, and `game/` adds the lane offset and the Y ground height.
+func _pose_of(v: Dictionary) -> Dictionary:
+	var record: Dictionary = graph.edge(int(v["edge_id"]))
+	if record.is_empty():
+		return {"pos": Vector3.ZERO, "heading": 0.0, "dark": false}
+	var tiles: Array = record["tiles"]
+	var count := tiles.size()
+	var forward := bool(v["forward"])
+	var s := float(v["s_m"])
+	var segment := clampi(int(s / tun.tile_m), 0, maxi(0, count - 2))
+	var frac := clampf((s - float(segment) * tun.tile_m) / tun.tile_m, 0.0, 1.0)
+	var i0 := segment if forward else count - 1 - segment
+	var i1 := clampi(i0 + (1 if forward else -1), 0, count - 1)
+	var a := _tile_centre(tiles[i0])
+	var b := _tile_centre(tiles[i1])
+	var pos := a.lerp(b, frac)
+	var heading := atan2(b.z - a.z, b.x - a.x)
+	var dark := graph.dark_signal_endpoints(int(v["edge_id"])) > 0
+	return {"pos": pos, "heading": heading, "dark": dark}
+
+
+func _tile_centre(t: Vector2i) -> Vector3:
+	return Vector3((float(t.x) + 0.5) * tun.tile_m, 0.0, (float(t.y) + 0.5) * tun.tile_m)
+
+
+func _emit(event_type: StringName, payload: Dictionary) -> void:
+	var event := payload.duplicate()
+	event["type"] = event_type
+	_events.append(event)
+
+
+static func _sorted_keys(dict: Dictionary) -> Array:
+	var keys := dict.keys()
+	keys.sort()
+	return keys
