@@ -73,6 +73,10 @@ var _last_demands: Dictionary = {}
 var _water_kw_by_building: Dictionary = {}  # water_facility id -> Σ hosted variant kW
 var _block_dark_weights: Dictionary = {}  # building id -> pop+jobs weight
 var _prev_block_dark: Dictionary = {}  # block id -> bool
+## Last building_construction_stage emitted per building — DERIVED state, so it
+## never enters capture_state(): a reloaded game simply re-announces the stage
+## its jobs are actually at on the next tick, which is what the renderer wants.
+var _last_construction_stage: Dictionary = {}  # sim_id -> stage 1..6
 var boot_errors: PackedStringArray = []
 
 
@@ -549,6 +553,38 @@ func stats_add(counter: StringName) -> void:
 	stats.add(String(counter))
 
 
+## Construction stage pulses for the renderer (doc 11 §5): a site under
+## build/upgrade walks six visual stages, and the crane/site loop switches on
+## each. One event per CHANGE only — a pulse every tick would be 240 events an
+## hour per site. Jobs are read in job_id order so the stream is deterministic.
+func _emit_construction_stages() -> void:
+	var live := {}
+	for job in construction.active_jobs():
+		var kind := String(job["kind"])
+		if kind != "build" and kind != "upgrade":
+			continue
+		var sim_id := String((job.get("payload", {}) as Dictionary).get("sim_id", ""))
+		if sim_id == "":
+			continue
+		var b: Building = buildings.get(sim_id)
+		if b == null:
+			continue
+		live[sim_id] = true
+		# progress() is the exact integer accumulator, so the stage a given
+		# work_units count maps to is identical on every machine and after load.
+		var stage := clampi(1 + int(6.0 * construction.progress(int(job["job_id"]))), 1, 6)
+		if int(_last_construction_stage.get(sim_id, 0)) == stage:
+			continue
+		_last_construction_stage[sim_id] = stage
+		bus.emit(&"building_construction_stage",
+				{"building": b.id, "sim_id": sim_id, "stage": stage})
+	# Completed (or cancelled) jobs leave no residue: the next job on the same
+	# building starts its stage walk from 1 again.
+	for sim_id in _sorted(_last_construction_stage):
+		if not live.has(sim_id):
+			_last_construction_stage.erase(sim_id)
+
+
 ## Route a completed construction job to its building (build or upgrade).
 func on_construction_completed(job: Dictionary) -> void:
 	var sim_id := String(job.get("payload", {}).get("sim_id", ""))
@@ -692,7 +728,12 @@ class WorkPhaseSystem extends SimSystem:
 	func cadence() -> int: return Cadence.EVERY_TICK
 	func advance_fine(ctx: TimeContext) -> void:
 		sim.work.advance(ctx)
-		for job in sim.construction.advance(ctx):
+		var completed := sim.construction.advance(ctx)
+		# Stage pulses read the queue AFTER this tick's work landed and AFTER
+		# finished jobs left it, so a completing site never pulses again — its
+		# building_completed event is what takes the scaffolding down.
+		sim._emit_construction_stages()
+		for job in completed:
 			if not sim.development.on_job_completed(job):
 				sim.on_construction_completed(job)
 	func advance_coarse(ctx: TimeContext) -> void:
