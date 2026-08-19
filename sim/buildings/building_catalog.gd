@@ -186,8 +186,12 @@ func cross_check_water_footprints(water_data: Dictionary) -> PackedStringArray:
 		problems.append("data/water.json components.%s has %d levels, expected %d"
 				% [reference, per_level.size(), _levels_per_archetype])
 		return problems
+	# Doc 05 §3.1 ships `components` as COLUMN-ORDERED rows zipped through
+	# `_component_columns`; a plain {footprint_w, footprint_h} row is also
+	# accepted so a hand-written fixture stays readable.
+	var columns: Array = water_data.get("_component_columns", {}).get(reference, [])
 	for i in per_level.size():
-		var theirs: Dictionary = per_level[i]
+		var theirs: Dictionary = _as_component_row(per_level[i], columns)
 		var ours: Array = stats(WATER_ARCHETYPE, i + 1).get("footprint", [])
 		var w := int(theirs.get("footprint_w", -1))
 		var h := int(theirs.get("footprint_h", -1))
@@ -195,6 +199,16 @@ func cross_check_water_footprints(water_data: Dictionary) -> PackedStringArray:
 			problems.append("water_facility L%d footprint %s != doc 05 components.%s [%d, %d]"
 					% [i + 1, str(ours), reference, w, h])
 	return problems
+
+
+static func _as_component_row(row: Variant, columns: Array) -> Dictionary:
+	if row is Dictionary:
+		return row
+	var values: Array = row
+	var out: Dictionary = {}
+	for i in mini(values.size(), columns.size()):
+		out[String(columns[i])] = values[i]
+	return out
 
 
 # --------------------------------------------------------------------------
