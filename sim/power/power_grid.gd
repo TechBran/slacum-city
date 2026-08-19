@@ -77,6 +77,12 @@ var _service: Dictionary = {}  # building_id -> service record
 var _last_trip_gs: int = -1000000
 var _last_trip_component: String = ""
 var _events: Array = []
+## Per-block streetlight state, doc 04 §5.2 / doc 11 §2.10 (report 93 §D).
+## DERIVED, never persisted: it is rebuilt from the first energization pass
+## after a load, which is also what makes a loaded save re-announce any block
+## that came back dark. An unseen block is assumed LIT, so a healthy boot emits
+## nothing at all.
+var _block_streetlights: Dictionary = {}  # block_id -> bool
 
 
 # -------------------------------------------------------------- construction
@@ -694,6 +700,47 @@ func _pass_d_energize() -> void:
 	if any_restored:
 		_emit(&"PowerRestored", {"restore_order": restore_order,
 				"powered_fraction": 1.0})
+	_emit_streetlight_changes()
+
+
+## §5.2's `StreetlightsChanged(block_id, lit)`, per land block.
+##
+## "Today streetlights die with their transformer" (§9 item 12) is the shipped
+## rule, and this is it stated exactly: a block's lights are LIT while at least
+## one transformer serving that block is energized, and go dark when the last
+## one drops. That is deliberately NOT `block_dark_fractions`' ≥60 % weighted
+## threshold — that threshold answers "does this block READ as blacked out",
+## which is a renderer-ceremony question about buildings. A street is lit or it
+## is not, and it goes out with the circuit, not with a quorum of its
+## neighbours' windows.
+##
+## Called from pass D, i.e. exactly when energization is recomputed, so the
+## event cannot describe a stale graph. Blocks are visited in sorted order and
+## only transitions emit, which keeps the stream identical between the fine and
+## coarse paths (report 98 E2 mode-invariance).
+func _emit_streetlight_changes() -> void:
+	var lit_by_block: Dictionary = {}
+	for building_id in _sorted_keys(_service):
+		var block: String = _service[building_id].get("block_id", "")
+		if block == "":
+			continue
+		var transformer_id: String = _attachments.get(building_id, "")
+		var lit: bool = transformer_id != "" \
+				and _components.has(transformer_id) \
+				and bool(_components[transformer_id]["energized"])
+		lit_by_block[block] = bool(lit_by_block.get(block, false)) or lit
+	for block in _sorted_keys(lit_by_block):
+		var lit: bool = lit_by_block[block]
+		if bool(_block_streetlights.get(block, true)) == lit:
+			continue
+		_block_streetlights[block] = lit
+		_emit(&"StreetlightsChanged", {"block_id": block, "lit": lit})
+
+
+## The per-block streetlight state doc 11 §2.10 draws, for tests and for a
+## renderer that wants to seed itself without waiting for a transition.
+func streetlights_lit(block_id: String) -> bool:
+	return bool(_block_streetlights.get(block_id, true))
 
 
 func _any_plant_ok() -> bool:

@@ -20,6 +20,14 @@ render_mode cull_back, depth_draw_opaque;
 
 global uniform float sc_night;
 global uniform float sc_time;
+// §2.9's wetness integrator and §2.5's overlay mode. Both are project shader
+// globals with a 0 default, and BOTH consumers below are written so that
+// sc_wetness = 0.0 and sc_overlay_mode = 0 reproduce the pre-atmosphere
+// output bit for bit — `mix(a, b, 0.0)` is exactly `a`, and the whole overlay
+// block is skipped by a uniform branch. The §2.6 window-hash contract that
+// RenderStateModel.lit_window_count mirrors is never touched by either.
+global uniform float sc_wetness;
+global uniform int sc_overlay_mode;
 
 uniform float window_cols = 4.0;
 uniform float window_rows = 3.0;
@@ -79,6 +87,50 @@ uniform float night_spill = 0.05;
 uniform float day_nits_scale = 0.30;
 // ═════════ END texture pass ═══════════════════════════════════════════════
 
+// ═════════ BEGIN atmosphere pass — wetness (doc 11 §2.9) ══════════════════
+// The doc's wet-ground cheat #1 is authored for road/ground (albedo ×0.62).
+// A façade is not asphalt: it darkens where rain runs down it and picks up a
+// sheen, but a 38% darken turns a lit block into a silhouette. These are the
+// building-side values — subtle on purpose, and exactly identity at
+// sc_wetness = 0.
+uniform float wet_albedo_mult = 0.85;   // ~15% darker when fully soaked
+uniform float wet_roughness = 0.42;     // walls never go full mirror
+uniform float wet_specular = 0.72;
+// ═════════ END atmosphere pass ════════════════════════════════════════════
+
+// ═════════ BEGIN overlay pass — sc_overlay_mode (doc 12 §2.5) ═════════════
+// The world greys back and the data reads forward. Blend/emission strengths
+// are data/render.json's `overlay.desaturate_blend` / `overlay.emission_mult`;
+// the four state hues are doc 12 §2.5's constitution-compliant palette, with
+// the POWER wash deliberately NOT the green `#33C27A` of the legend — a city
+// where every healthy building glows green is a city where nothing reads.
+// NORMAL is a cool neutral, and only the three states that mean "look here"
+// carry hue.
+uniform float overlay_desaturate = 0.55;
+uniform float overlay_emission_mult = 0.40;
+uniform vec3 overlay_normal_color: source_color = vec3(0.404, 0.463, 0.541);
+uniform vec3 overlay_warning_color: source_color = vec3(0.949, 0.694, 0.235);
+uniform vec3 overlay_critical_color: source_color = vec3(0.898, 0.325, 0.239);
+uniform vec3 overlay_offline_color: source_color = vec3(0.400, 0.070, 0.055);
+uniform float overlay_normal_blend = 0.50;
+uniform float overlay_data_blend = 0.88;
+uniform float overlay_critical_hz = 1.2;   // doc 12 §2.5 CRITICAL motion
+uniform float overlay_offline_hz = 0.35;   // slow, "dead" — never confused with it
+uniform float overlay_state_emission = 0.55;
+// POWER mode reads the service state straight out of the emissive channel,
+// which IS the model's powered/backup/dark ladder: RenderStateModel's
+// `emissive_target_for` writes `dark_lit` 0.05, `backup_lit` 0.22 and
+// `powered_base` 0.55 + occupancy. No second channel, no extra packing bit,
+// and it is exactly as day/night-independent as the ladder itself — the
+// §2.6 `day_gate` is applied further down, to how many windows light, never
+// to `v_custom.r`. A damage-dimmed or condition-critical building lands in
+// the middle band and reads WARNING, which is the honest answer.
+uniform float power_dark_lo = 0.10;
+uniform float power_dark_hi = 0.17;
+uniform float power_weak_lo = 0.30;
+uniform float power_weak_hi = 0.42;
+// ═════════ END overlay pass ═══════════════════════════════════════════════
+
 // `flat`, and it is load-bearing. INSTANCE_CUSTOM is constant over an
 // instance, but interpolating it still walks the value by a fraction of an
 // ulp — and `variant * 37.0` inside hash21 amplifies that into a *different
@@ -105,6 +157,12 @@ float hash21(vec2 p) {
 // §2.6 unpack: packed = variant + 16*stage + 112*overlay.
 float stage_of(float packed) {
 	return mod(floor(packed / 16.0), 7.0);
+}
+
+// The 2-bit overlay_state doc 12 §2.5 / report C-64 pack at stride 112:
+// 0 NORMAL, 1 WARNING, 2 CRITICAL, 3 OFFLINE.
+float overlay_of(float packed) {
+	return clamp(floor(packed / 112.0), 0.0, 3.0);
 }
 
 void vertex() {
@@ -229,4 +287,59 @@ void fragment() {
 		ROUGHNESS = 0.94;
 		SPECULAR = 0.18;
 	}
+
+	// ═════════ BEGIN atmosphere pass — wet façades (§2.9) ═════════════════
+	// Applied to both branches: a construction shell gets rained on too. Every
+	// term is an exact identity at sc_wetness = 0, so the dry frame is the
+	// frame that shipped. EMISSION is untouched — a wet window is not a
+	// brighter window, and lit_window_count must keep mirroring this shader.
+	ALBEDO *= mix(1.0, wet_albedo_mult, sc_wetness);
+	ROUGHNESS = mix(ROUGHNESS, wet_roughness, sc_wetness);
+	SPECULAR = mix(SPECULAR, wet_specular, sc_wetness);
+	// ═════════ END atmosphere pass ════════════════════════════════════════
+
+	// ═════════ BEGIN overlay pass — sc_overlay_mode (doc 12 §2.5) ═════════
+	// One uniform branch over the whole draw: at mode 0 not a single
+	// instruction below executes and the finished-building path is bit-exact.
+	if (sc_overlay_mode > 0) {
+		// The world greys back (§2.5's de-emphasis) in every mode, including
+		// the four that have no data yet — an empty overlay must still look
+		// like an overlay, or the player thinks the toggle is broken.
+		float luma = dot(ALBEDO, vec3(0.2126, 0.7152, 0.0722));
+		ALBEDO = mix(ALBEDO, vec3(luma), overlay_desaturate);
+		EMISSION *= overlay_emission_mult;
+		if (sc_overlay_mode == 1) {
+			// POWER. Severity is the worse of the packed overlay_state (doc
+			// 11 owns it: damage → WARNING, destroyed → OFFLINE) and the
+			// service state read off the emissive ladder. `max` is correct
+			// because 0..3 IS the severity order.
+			float e_raw = v_custom.r;
+			float dark = 1.0 - smoothstep(power_dark_lo, power_dark_hi, e_raw);
+			float weak = (1.0 - dark)
+					* (1.0 - smoothstep(power_weak_lo, power_weak_hi, e_raw));
+			float from_power = dark * 3.0 + weak * 1.0;
+			float state = max(overlay_of(packed), from_power);
+			// Pick the hue by state without four branches.
+			vec3 tint = overlay_normal_color;
+			tint = mix(tint, overlay_warning_color, step(0.5, state));
+			tint = mix(tint, overlay_critical_color, step(1.5, state));
+			tint = mix(tint, overlay_offline_color, step(2.5, state));
+			float is_data = step(0.5, state);
+			// Motion, so colour is never load-bearing (doc 12 §2.5): CRITICAL
+			// pulses at 1.2 Hz, OFFLINE breathes slowly at 0.35 Hz, and the
+			// two lower states hold still.
+			float hz = mix(overlay_critical_hz, overlay_offline_hz, step(2.5, state));
+			float pulse01 = 0.5 + 0.5 * sin(sc_time * 6.283185 * hz);
+			float pulse_amt = step(1.5, state) * 0.35 * pulse01;
+			float blend = mix(overlay_normal_blend, overlay_data_blend, is_data)
+					* (1.0 - pulse_amt);
+			ALBEDO = mix(ALBEDO, tint, blend);
+			// A dark building emits nothing, so the state has to carry its own
+			// light or the overlay is unreadable at night — which is exactly
+			// when a blackout is being diagnosed.
+			EMISSION += tint * (overlay_state_emission * is_data
+					* (0.65 + 0.35 * pulse01));
+		}
+	}
+	// ═════════ END overlay pass ═══════════════════════════════════════════
 }
