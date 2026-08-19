@@ -953,6 +953,124 @@ func can_upgrade_power(building_id: String, delta_kw: float, t_ambient: float = 
 	return {"ok": true, "reason": "", "deficit_kw": 0.0}
 
 
+# -------------------------------------------------------- read-only rows (UI)
+
+## Doc 12 §2.10's Infrastructure tab: "power gen/cap/load + worst 5 feeders".
+##
+## Three ADDITIVE queries, in the same shape as `grid_inventory()`: they compute
+## nothing the passes do not already hold, they mutate nothing, and they walk
+## `_order` (already sorted) so two calls on the same state produce byte-identical
+## rows. `t_ambient` is the reader's — `cap_eff` derates with it, and the UI is
+## the only caller that has the weather in hand.
+
+const _UI_ROW_KINDS := {&"feeder": true, &"transmission": true}
+
+
+## One row per feeder / transmission line, ascending by id:
+## `{id, kind, parent, load_kw, capacity_kw, effective_kw, load_ratio,
+##   headroom_kw, condition, state, energized, shed, customers}`.
+## `load_ratio` is against the CONDITION- and temperature-derated capacity, which
+## is the number the protection pass trips on — a UI that showed nameplate would
+## call a feeder healthy while it was opening.
+func feeder_rows(t_ambient: float = 25.0) -> Array:
+	var downstream := _customer_index()
+	var out: Array = []
+	for id in _order:
+		var c: Dictionary = _components[id]
+		if not _UI_ROW_KINDS.has(c["kind"]):
+			continue
+		out.append(_row(String(id), c, t_ambient, _feeder_customers(String(id), downstream)))
+	return out
+
+
+## One row per transformer, ascending by id — the same shape as `feeder_rows()`
+## plus the winding temperature, which is what puts a transformer on the worst
+## list before its load ratio does.
+func transformer_rows(t_ambient: float = 25.0) -> Array:
+	var downstream := _customer_index()
+	var out: Array = []
+	for id in _order:
+		var c: Dictionary = _components[id]
+		if c["kind"] != &"transformer":
+			continue
+		var row := _row(String(id), c, t_ambient, int(downstream.get(String(id), 0)))
+		row["temp_c"] = t_ambient + float(c["theta_c"])
+		out.append(row)
+	return out
+
+
+func _row(id: String, c: Dictionary, t_ambient: float, customers: int) -> Dictionary:
+	var effective := cap_eff(id, t_ambient)
+	var load: float = float(c["load_kw"])
+	return {
+		"id": id,
+		"kind": String(c["kind"]),
+		"parent": String(c["parent"]),
+		"level": int(c["level"]),
+		"load_kw": load,
+		"capacity_kw": float(c["capacity_kw"]),
+		"effective_kw": effective,
+		"load_ratio": load / maxf(1.0, effective),
+		"headroom_kw": effective - load,
+		"condition": float(c["condition"]),
+		"state": String(c["state"]),
+		"energized": bool(c["energized"]),
+		"shed": shed_feeders.has(id),
+		"customers": customers,
+	}
+
+
+## {transformer id: attached building count}, one pass over the attachment map.
+## Order is irrelevant to a count, so this deliberately skips a sort.
+func _customer_index() -> Dictionary:
+	var out: Dictionary = {}
+	for building_id in _attachments:
+		var transformer_id: String = _attachments[building_id]
+		out[transformer_id] = int(out.get(transformer_id, 0)) + 1
+	return out
+
+
+func _feeder_customers(feeder_id: String, downstream: Dictionary) -> int:
+	var count := 0
+	for id in _order:
+		var c: Dictionary = _components[id]
+		if c["kind"] == &"transformer" and String(c["parent"]) == feeder_id:
+			count += int(downstream.get(String(id), 0))
+	return count
+
+
+## The three city-wide figures §2.10 puts above the worst-N lists:
+## `{supply_kw, demand_kw, plant_capacity_kw, headroom_kw, load_ratio,
+##   feeders_over, transformers_over, shed_feeders}`. `over` counts what the
+## protection pass calls loaded past pickup (`R_PICKUP`), not past 100 %.
+func capacity_summary(t_ambient: float = 25.0) -> Dictionary:
+	var plant_capacity := 0.0
+	var feeders_over := 0
+	var transformers_over := 0
+	for id in _order:
+		var c: Dictionary = _components[id]
+		match c["kind"]:
+			&"plant_gas":
+				if String(c["state"]) == "OK":
+					plant_capacity += cap_eff(String(id), t_ambient)
+			&"feeder", &"transmission":
+				if float(c["load_kw"]) > R_PICKUP * cap_eff(String(id), t_ambient):
+					feeders_over += 1
+			&"transformer":
+				if float(c["load_kw"]) > R_PICKUP * cap_eff(String(id), t_ambient):
+					transformers_over += 1
+	return {
+		"supply_kw": system_supply_kw,
+		"demand_kw": system_demand_kw,
+		"plant_capacity_kw": plant_capacity,
+		"headroom_kw": system_supply_kw - system_demand_kw,
+		"load_ratio": system_demand_kw / maxf(1.0, system_supply_kw),
+		"feeders_over": feeders_over,
+		"transformers_over": transformers_over,
+		"shed_feeders": shed_feeders.size(),
+	}
+
+
 # ------------------------------------------------------------- inventory
 
 ## The contract doc 03's E_grid bills against (report 98 C-12).

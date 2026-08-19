@@ -136,8 +136,15 @@ uniform float power_weak_hi = 0.42;
 // modes are one decoder here and the buffer layout §2.6 fixes never moved.
 // A mode with no channel published simply shows every building NORMAL under
 // the grey wash, which is what "this system has nothing to say" looks like.
+// POLICE (3) and FIRE (4) are per-building reads too — doc 02 §2.9's coverage
+// field, banded by OverlayModel against each building's own requirement rung and
+// published through the same `set_overlay_channel` path WATER uses. They need no
+// decoder of their own: the channel arrives as the same two bits. TRAFFIC (5) is
+// per-EDGE and is drawn by `game/render/road_overlay_view.gd`, which is why the
+// per-building branch below stops at 4.
 const int OVERLAY_MODE_POWER = 1;
 const int OVERLAY_MODE_WATER = 2;
+const int OVERLAY_MODE_FIRE = 4;
 // ═════════ END overlay pass ═══════════════════════════════════════════════
 
 // `flat`, and it is load-bearing. INSTANCE_CUSTOM is constant over an
@@ -343,12 +350,13 @@ void fragment() {
 		float luma = dot(ALBEDO, vec3(0.2126, 0.7152, 0.0722));
 		ALBEDO = mix(ALBEDO, vec3(luma), overlay_desaturate);
 		EMISSION *= overlay_emission_mult;
-		if (sc_overlay_mode == OVERLAY_MODE_POWER
-				|| sc_overlay_mode == OVERLAY_MODE_WATER) {
-			// Both per-building overlays start from the packed 2-bit state
+		if (sc_overlay_mode >= OVERLAY_MODE_POWER
+				&& sc_overlay_mode <= OVERLAY_MODE_FIRE) {
+			// Every per-building overlay starts from the packed 2-bit state
 			// (doc 11 owns it: damage → WARNING, destroyed → OFFLINE; under
-			// WATER, RenderStateModel has mapped doc 05's service factor onto
-			// those same two bits and saved each building's own value).
+			// WATER / POLICE / FIRE, RenderStateModel has mapped that mode's
+			// channel onto those same two bits and saved each building's own
+			// value for the way out).
 			float state = overlay_of(packed);
 			if (sc_overlay_mode == OVERLAY_MODE_POWER) {
 				// POWER also reads the service state off the emissive ladder

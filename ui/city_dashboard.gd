@@ -1,15 +1,16 @@
 class_name CityDashboard
 extends Control
-## The city dashboard (doc 12 §2.10, S8) at Phase-2 scope: the **Overview** band
-## list with a sparkline per vital and a full-size chart under the selected one,
-## and the **Economy** tab — doc 03's tax detent and the ledger of the hour that
-## just settled.
+## The city dashboard (doc 12 §2.10, S8), all four tabs: the **Overview** band
+## list with a sparkline per vital and a full-size chart under the selected one;
+## the **Economy** tab — doc 03's tax detent and the ledger of the hour that just
+## settled; **Infrastructure** — doc 04's generation/demand/headroom with the
+## worst feeders and transformers, and doc 05's lowest pressure zones; and
+## **Response** — doc 06's per-department roster and its rolling response times.
 ##
-## §2.10 specifies four tabs; Infrastructure and Response need per-feeder and
-## per-department queries that docs 04/05/06 do not publish yet, and A14 says a
-## blocked thing states its reason rather than being hidden — so
-## `data/ui.json.dashboard.tabs` lists the two that are live and the rest arrive
-## by editing that array, with no code change here.
+## The last two are `data/ui.json.dashboard.tabs` entries like the first two, and
+## the two feeds behind them (`feed_infrastructure`, `feed_response`) are plain
+## dictionaries the shell fills from `PowerGrid` / `WaterSnapshot` / `FleetSystem`
+## — dropping a tab is still an edit to that array and no code change here.
 ##
 ## A full-screen modal on `ModalLayer`, so its scrim is the only `STOP` control
 ## while it is up and Android BACK closes it first (§2.2).
@@ -123,14 +124,26 @@ func _build_tabs() -> void:
 	UIWidgets.clear_children(_tabs_box)
 	_tab_buttons.clear()
 	_tabs_box.add_theme_constant_override(&"separation", int(_spacing))
+	# §2.10 has FOUR tabs and a 360 dp phone has 344 dp of panel: a fixed strip of
+	# four 96 dp buttons reports a 408 dp minimum and drags the whole modal — ✕ and
+	# all — off the display. The strip wraps instead, and each chip is only as wide
+	# as its own word (never under the A3 touch floor), so it wraps as late as it
+	# can and never clips a label.
+	var flow := HFlowContainer.new()
+	flow.name = "Flow"
+	flow.add_theme_constant_override(&"h_separation", int(_spacing))
+	flow.add_theme_constant_override(&"v_separation", int(_spacing))
+	flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tabs_box.add_child(flow)
 	for tab: Dictionary in model.tabs():
 		var id: StringName = tab["id"]
 		var text := str(tab["label"])
 		var button := UIWidgets.button("Tab_" + String(id), text, text,
-				Vector2(maxf(_touch_min * 2.0, 96.0), _touch_min), &"TabButton")
+				Vector2(_touch_min, _touch_min), &"TabButton")
 		button.toggle_mode = true
 		button.pressed.connect(_on_tab_pressed.bind(id))
-		_tabs_box.add_child(button)
+		flow.add_child(button)
+		UIWidgets.fit_width(button)
 		_tab_buttons[id] = button
 
 
@@ -168,6 +181,24 @@ func bind_tax(command: Callable, level: int, level_count: int, rate: float) -> v
 func ingest_service(snapshot: Dictionary) -> void:
 	model.ingest_service(snapshot)
 	if is_open():
+		refresh(_last_snapshot)
+
+
+## §2.10's Infrastructure feed: `{power, feeders, transformers, water}`, straight
+## out of `PowerGrid.capacity_summary/feeder_rows/transformer_rows` and
+## `WaterSnapshot.build`. Only the shell holds a sim, so only the shell can fill
+## it; this class still computes nothing.
+func feed_infrastructure(snapshot: Dictionary) -> void:
+	model.feed_infrastructure(snapshot)
+	if is_open() and model.tab() == DashboardModel.TAB_INFRASTRUCTURE:
+		refresh(_last_snapshot)
+
+
+## §2.10's Response feed: `{units, stats, open}` — doc 06's roster, its dispatch
+## statistics and the live incident count.
+func feed_response(snapshot: Dictionary) -> void:
+	model.feed_response(snapshot)
+	if is_open() and model.tab() == DashboardModel.TAB_RESPONSE:
 		refresh(_last_snapshot)
 
 
@@ -248,10 +279,15 @@ func _render(view: Dictionary) -> void:
 	_tax_apply = null
 	_tax_happiness = null
 	_tax_growth = null
-	if view["tab"] == DashboardModel.TAB_ECONOMY:
-		_build_economy(view)
-	else:
-		_build_overview(view)
+	match view["tab"]:
+		DashboardModel.TAB_ECONOMY:
+			_build_economy(view)
+		DashboardModel.TAB_INFRASTRUCTURE:
+			_build_sections(view["infrastructure"] as Dictionary)
+		DashboardModel.TAB_RESPONSE:
+			_build_sections(view["response"] as Dictionary)
+		_:
+			_build_overview(view)
 
 
 ## §2.10: "each row a 48 dp band with label, value, state glyph, and a 64 × 24 dp
@@ -349,6 +385,74 @@ func _fill_chart(chart: Dictionary) -> void:
 	axis.add_child(UIWidgets.spacer("Spacer2"))
 	axis.add_child(UIWidgets.label("Max", str(chart["max_text"])))
 	_chart_box.add_child(axis)
+
+
+# ---------------------------------------------------------------------------
+# Infrastructure and Response — §2.10's other two tabs
+# ---------------------------------------------------------------------------
+
+## Both tabs are the same shape: titled sections of `label · value · detail`
+## lines, in the model's order. Which sections exist, which rows are in them and
+## which of them are the "worst N" is entirely `DashboardModel`'s — this draws
+## whatever it is handed, so adding the condition histogram §2.10 also asks for
+## is a section in the model and no code here.
+func _build_sections(view: Dictionary) -> void:
+	var raw: Variant = view.get("sections", [])
+	for value: Variant in (raw as Array if raw is Array else []):
+		if value is Dictionary:
+			_content.add_child(_build_section(value as Dictionary))
+
+
+func _build_section(section: Dictionary) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	box.name = "Section_" + str(section.get("id", ""))
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_theme_constant_override(&"separation", int(_spacing))
+	box.add_child(UIWidgets.label("Title", str(section.get("title", "")), &"LegendRow"))
+	var raw: Variant = section.get("rows", [])
+	var rows: Array = raw if raw is Array else []
+	if rows.is_empty():
+		# A14: an empty section says why in words rather than showing a blank gap.
+		box.add_child(UIWidgets.label("Empty", str(section.get("empty_text", "")),
+				&"", true))
+		return box
+	for value: Variant in rows:
+		if value is Dictionary:
+			box.add_child(_build_section_row(value as Dictionary))
+	return box
+
+
+## One reading. `detail` rides UNDER the value rather than beside it: `78 %` and
+## `12 lots` on one line is 3 dp wider than a 360 dp panel at 130 % text, and the
+## figure — the thing the row exists to show — was the half that lost.
+func _build_section_row(row: Dictionary) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	box.name = "Row_" + str(row.get("id", ""))
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var line := HBoxContainer.new()
+	line.name = "Line"
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line.add_theme_constant_override(&"separation", int(_spacing))
+	var label := UIWidgets.elide(UIWidgets.label("Label", str(row.get("label", ""))),
+			_touch_min) as Label
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	line.add_child(label)
+	# A5: the state glyph rides with the value, so a CRITICAL feeder is legible in
+	# greyscale exactly like its HUD chip.
+	var state: StringName = StringName(str(row.get("state", "")))
+	var value := _fixed(UIWidgets.label("Value",
+			("%s %s" % [str(row.get("value", "")),
+					str(row.get("state_glyph", ""))]).strip_edges()))
+	UIWidgets.paint_state(self, value, state)
+	line.add_child(value)
+	line.add_child(_gutter())
+	box.add_child(line)
+
+	var detail := str(row.get("detail", ""))
+	if detail != "":
+		box.add_child(UIWidgets.label("Detail", detail, &"", true))
+	return box
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +675,19 @@ func tab_button(tab_id: StringName) -> Button:
 
 func row_button(row_id: String) -> Button:
 	return _row_buttons.get(row_id, null)
+
+
+## One Infrastructure / Response section by its model id, and one row inside it.
+func section_box(section_id: String) -> VBoxContainer:
+	if _content == null:
+		return null
+	return _content.get_node_or_null("Section_" + section_id) as VBoxContainer
+
+
+func section_row(section_id: String, row_id: String) -> VBoxContainer:
+	var box := section_box(section_id)
+	return box.get_node_or_null("Row_" + row_id) as VBoxContainer if box != null \
+			else null
 
 
 ## The stepper's three keys plus APPLY, which sits on the tax block's second line

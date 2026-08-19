@@ -350,3 +350,87 @@ func test_serialize_roundtrip() -> void:
 			float(grid.component("t_7")["theta_c"]), 1e-9)
 	assert_eq(restored.attachment_of("b"), "t_7")
 	assert_almost_eq(restored.power_availability_hour("b"), grid.power_availability_hour("b"), 1e-9)
+
+
+# ===========================================================================
+# The additive read-only rows doc 12 §2.10's Infrastructure tab is built on
+# ===========================================================================
+
+func test_feeder_and_transformer_rows_are_sorted_and_read_the_derated_capacity() -> void:
+	var grid := _rig()
+	for i in 4:
+		grid.attach_building("apt_%d" % i, Vector2i(10 + i, 10))
+	grid.attach_building("office", Vector2i(30, 10))
+	var demands := {"office": 400.0}
+	for i in 4:
+		demands["apt_%d" % i] = 160.0
+	_tick(grid, demands)
+
+	var feeders := grid.feeder_rows(25.0)
+	assert_eq(feeders.size(), 1, "one feeder in this rig")
+	var feeder: Dictionary = feeders[0]
+	assert_eq(str(feeder["id"]), "f_3")
+	# `load_ratio` must be against the CONDITION- and temperature-derated
+	# capacity, which is what the protection pass trips on — a tab that showed
+	# nameplate would call a feeder healthy while it was opening.
+	assert_almost_eq(float(feeder["effective_kw"]), grid.cap_eff("f_3", 25.0), 1e-9)
+	assert_almost_eq(float(feeder["load_ratio"]),
+			float(feeder["load_kw"]) / float(feeder["effective_kw"]), 1e-9)
+	assert_almost_eq(float(feeder["headroom_kw"]),
+			float(feeder["effective_kw"]) - float(feeder["load_kw"]), 1e-9)
+	assert_eq(int(feeder["customers"]), 5, "every lot downstream of the feeder")
+
+	var transformers := grid.transformer_rows(25.0)
+	var ids: Array = []
+	for row: Dictionary in transformers:
+		ids.append(str(row["id"]))
+	assert_eq(str(ids), str(["t_7", "t_8"]), "ascending, like every other query")
+	assert_eq(int((transformers[0] as Dictionary)["customers"]), 4)
+	assert_eq(int((transformers[1] as Dictionary)["customers"]), 1)
+	assert_true((transformers[0] as Dictionary).has("temp_c"),
+			"a transformer's winding temperature is what puts it on the worst list")
+
+
+func test_the_rows_are_a_pure_read_and_repeat_exactly() -> void:
+	# Additive by construction: two calls on the same state are the same rows,
+	# and asking must not move the sim.
+	var grid := _rig()
+	grid.attach_building("office", Vector2i(30, 10))
+	_tick(grid, {"office": 500.0})
+	var before := str(grid.feeder_rows(25.0)) + str(grid.transformer_rows(25.0)) \
+			+ str(grid.capacity_summary(25.0))
+	var again := str(grid.feeder_rows(25.0)) + str(grid.transformer_rows(25.0)) \
+			+ str(grid.capacity_summary(25.0))
+	assert_eq(again, before, "the query is a read")
+	assert_almost_eq(grid.power_availability_hour("office"),
+			grid.power_availability_hour("office"), 1e-12)
+
+
+func test_a_dead_component_is_reported_dead_not_lightly_loaded() -> void:
+	var grid := _rig()
+	grid.attach_building("office", Vector2i(30, 10))
+	_tick(grid, {"office": 500.0})
+	grid.force_open("f_3")
+	_tick(grid, {"office": 500.0})
+	var row: Dictionary = grid.feeder_rows(25.0)[0]
+	assert_eq(str(row["state"]), "OPEN")
+	assert_false(bool(row["energized"]),
+			"an open feeder carries no load, and that is not `healthy`")
+
+
+func test_capacity_summary_counts_what_is_past_pickup_not_past_nameplate() -> void:
+	var grid := _rig()
+	grid.attach_building("office", Vector2i(30, 10))
+	_tick(grid, {"office": 100.0})
+	var calm := grid.capacity_summary(25.0)
+	assert_eq(int(calm["feeders_over"]), 0)
+	assert_eq(int(calm["transformers_over"]), 0)
+	assert_true(float(calm["plant_capacity_kw"]) > 0.0, "the plant is counted")
+	# Past `R_PICKUP` (1.05) on the derated capacity, the transformer is over.
+	var over_kw := PowerGrid.R_PICKUP * grid.cap_eff("t_8", 25.0) * 1.2
+	_tick(grid, {"office": over_kw})
+	var hot := grid.capacity_summary(25.0)
+	assert_true(int(hot["transformers_over"]) >= 1,
+			"a transformer past pickup is on the list before it trips")
+	assert_almost_eq(float(hot["headroom_kw"]),
+			float(hot["supply_kw"]) - float(hot["demand_kw"]), 1e-9)

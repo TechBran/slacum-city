@@ -16,14 +16,23 @@ extends Control
 ## shell. An overlay whose system has not landed renders greyed with its reason
 ## in words (A14) rather than vanishing from the strip.
 ##
-## The legend is **rebuilt on every mode change**, because the four data states
-## are not what every overlay means: WATER reads "Full pressure … No water" and
-## TRAFFIC has five congestion bands, not four states. `OverlayModel` decides
-## which rows those are; this file still only turns rows into Labels.
+## The legend is **not in the strip** (doc 12 §2.5, and report 98's last open
+## item against this section): the strip is a control that the player raises to
+## pick an overlay and dismisses immediately afterwards, so a legend inside it
+## was on screen only while nobody was reading it. It now lives in the separate
+## top-left `OverlayLegend` card, which this rail owns, positions and drives —
+## the strip keeps the chips and its refusal notice, and nothing else.
+##
+## The card is **rebuilt on every mode change**, because the four data states are
+## not what every overlay means: WATER reads "Full pressure … No water", POLICE
+## and FIRE read a coverage margin, and TRAFFIC has five congestion bands rather
+## than four states. `OverlayModel` decides which rows those are; the card only
+## turns rows into Labels.
 
 signal overlay_changed(mode: StringName, index: int)  ## → doc 11 render mode
 signal overlay_refused(mode: StringName, message: String)
 signal strip_toggled(open: bool)
+signal legend_collapsed(mode: StringName, collapsed: bool)  ## → the `ui` save
 
 const CHECK_GLYPH := "✓"
 const OVERLAY_GLYPH := "◈"  ## §2.3's overlay button face
@@ -39,6 +48,7 @@ var _button: Button
 var _strip: PanelContainer
 var _chips_box: GridContainer
 var _legend_box: VBoxContainer
+var _legend_card: OverlayLegend
 var _notice: Label
 
 var _chip_buttons: Dictionary = {}   # StringName mode -> Button
@@ -51,6 +61,8 @@ var _suppress_next_press := false
 ## does not rebuild five Labels. Starts on a sentinel that is not in
 ## `overlay.modes`, so the first `_apply_active` always builds one.
 const LEGEND_UNBUILT := &"__legend_unbuilt__"
+## `_legend_left`'s "stand down" answer — see there.
+const YIELD_LEFT := -2.0
 var _legend_mode: StringName = LEGEND_UNBUILT
 
 
@@ -73,12 +85,28 @@ func setup(cfg: UIConfig = null, p_model: OverlayModel = null) -> void:
 	_build_button()
 	_build_title()
 	_build_chips()
+	_build_legend_card()
 	close()
 	# `_apply_active` builds the legend for whatever the active mode is — on a
 	# fresh rail that is NONE, on a restored one it is the saved overlay.
 	_legend_mode = LEGEND_UNBUILT
 	_apply_active(false)
+	# The rail is laid out AFTER `setup()` runs, and both the strip's clamp and
+	# the card's corner are answers about the display's real size — so they are
+	# re-solved on the resize that gives it to us, not only once a frame. The
+	# `_process` pass still runs, for the theme and type-scale changes that move
+	# the same geometry without resizing anything.
+	if not resized.is_connected(_on_resized):
+		resized.connect(_on_resized)
 	set_process(true)
+
+
+func _on_resized() -> void:
+	if config == null:
+		return
+	if is_open():
+		_clamp_strip()
+	_place_legend()
 
 
 func _ready() -> void:
@@ -201,34 +229,96 @@ func _wrap_body_in_scroller() -> void:
 	_strip.add_child(scroll)
 
 
-## The legend for one mode. `row_id` is the state token for the four-state
-## legends and the band name for TRAFFIC's five, so a test can find either row
-## by name and a repeated state (two bands share a hue) never collides.
-func _build_legend(mode: StringName = OverlayModel.MODE_NONE) -> void:
-	if _legend_box == null:
+## The §2.5 card, built once and re-driven on every mode change. It is parented
+## to the rail — which is anchored full-rect over the HUD layer and ignores the
+## mouse — so the card reaches the top-left corner without `ui_root.tscn` gaining
+## a node, and the rail stays the one owner of everything overlay.
+##
+## The strip's authored `Legend` box is emptied and hidden rather than deleted:
+## a scene node this file did not create is not this file's to free, and a build
+## that turns the card off gets the old behaviour back by flipping one line.
+func _build_legend_card() -> void:
+	if _legend_box != null:
+		UIWidgets.clear_children(_legend_box)
+		_legend_box.visible = false
+	if _legend_card == null:
+		_legend_card = OverlayLegend.new()
+		add_child(_legend_card)
+		_legend_card.collapse_toggled.connect(_on_legend_collapsed)
+	# `setup()` may run twice (UIRoot, then a shell or a test injecting its own
+	# model); the card follows whichever model the rail ended up with.
+	_legend_card.setup(config, model)
+	_place_legend()
+	_legend_mode = LEGEND_UNBUILT
+
+
+## The top bar as MEASURED, falling back to the authored `top_bar_h_dp`. §2.4's
+## `solve_top_bar` wraps the chips onto a second row on a narrow phone, so the
+## bar is not the constant — this is the same reservation `_clamp_strip` makes
+## for the strip at the other end of the same column.
+## Where the card's left edge belongs. Its own authored offset normally; to the
+## RIGHT of the raised strip when the two would share the left edge, which is
+## what happens on the doc's own 880 × 400 landscape box once the type is turned
+## up: the strip grows toward the top bar and reaches the card. `-1` means "your
+## own offset is fine".
+func _legend_left() -> float:
+	if not is_open() or _strip == null or _legend_card == null:
+		return -1.0
+	# Measured against where the card WANTS to be, never against where it
+	# currently is: testing its live rect would un-collide it the moment it moved
+	# and bounce it back and forth once a frame.
+	var block := config.section("overlay").get("legend_card", {}) as Dictionary
+	var wanted := Rect2(
+			Vector2(UIConfig.get_num(block, "left_dp", 12.0), _top_bar_h()),
+			_legend_card.get_combined_minimum_size())
+	var strip := _strip_rect()
+	if not strip.intersects(wanted):
+		return -1.0
+	var beside := strip.end.x + _spacing
+	# A 360 dp phone at 130 % type has no room beside the strip either. Rather
+	# than hang the card off the display, it stands down until the strip — which
+	# is one tap from being dismissed — goes away.
+	if beside + wanted.size.x > size.x:
+		return YIELD_LEFT
+	return beside
+
+
+## The strip's rect in this rail's own space, computed from its OFFSETS rather
+## than read from `get_rect()`. `_clamp_strip()` has usually just written those
+## offsets and a `Control` does not resize until the next layout pass, so the
+## live rect is one frame stale — and one frame is all the collision test gets in
+## the preview harness.
+func _strip_rect() -> Rect2:
+	return Rect2(Vector2(_strip.offset_left, size.y + _strip.offset_top),
+			Vector2(_strip.offset_right - _strip.offset_left,
+			_strip.offset_bottom - _strip.offset_top))
+
+
+func _top_bar_h() -> float:
+	var top_bar := get_parent().get_node_or_null("TopBar") as Control \
+			if get_parent() != null else null
+	if top_bar == null:
+		return UIConfig.get_num(config.layout(), "top_bar_h_dp", 48.0)
+	return maxf(top_bar.size.y, top_bar.get_combined_minimum_size().y)
+
+
+func _on_legend_collapsed(mode: StringName, collapsed: bool) -> void:
+	_place_legend()
+	legend_collapsed.emit(mode, collapsed)
+
+
+## Re-solve the card's corner. Called from every place the geometry moves —
+## raising or dismissing the strip, changing overlay, folding the card — and once
+## a frame besides, because the theme and the type scale settle late.
+func _place_legend() -> void:
+	if _legend_card == null:
 		return
-	_legend_mode = mode
-	UIWidgets.clear_children(_legend_box)
-	_legend_box.add_child(UIWidgets.label("Title",
-			UIWidgets.t(config, "ui_overlay_legend_title"), &"LegendRow"))
-	for row: Dictionary in model.legend_rows_for(mode):
-		var text := "%s %s" % [str(row["glyph"]), _legend_label(row)]
-		var row_id := String(row["band"]) if row.has("band") else String(row["state"])
-		var line := UIWidgets.label("Row_" + row_id, text.strip_edges())
-		_legend_box.add_child(line)
-		UIWidgets.paint_state(self, line, row["state"])
-	# The notice is NOT touched here. `_after_verdict` raises it on a refusal and
-	# then repaints the strip; a legend rebuild that cleared it would swallow the
-	# A14 sentence the refusal just wrote.
-
-
-## `mode_label_key` when the table carries that phrasing, the plain state key
-## otherwise. Copy is never authored here (G-8) — this only picks the key.
-func _legend_label(row: Dictionary) -> String:
-	var mode_key := str(row.get("mode_label_key", ""))
-	if mode_key != "" and config != null and config.has_string(mode_key):
-		return config.t(mode_key)
-	return UIWidgets.t(config, str(row["label_key"]))
+	var left := _legend_left()
+	# `YIELD_LEFT` is "there is nowhere to put you": see `_legend_left`.
+	var yielded := is_equal_approx(left, YIELD_LEFT)
+	_legend_card.set_yielded(yielded)
+	if not yielded:
+		_legend_card.place(_top_bar_h(), left)
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +333,7 @@ func open() -> void:
 	if _strip != null:
 		_strip.visible = true
 		_clamp_strip()
+	_place_legend()
 	_set_notice("")
 	strip_toggled.emit(true)
 
@@ -283,6 +374,7 @@ func _clamp_strip() -> void:
 func close() -> void:
 	if _strip != null:
 		_strip.visible = false
+	_place_legend()
 	strip_toggled.emit(false)
 
 
@@ -368,11 +460,13 @@ func _apply_active(changed: bool) -> void:
 				if active == OverlayModel.MODE_NONE \
 				else UIWidgets.t_args(config, "ui_overlay_active", {"name": name_text})
 	# The legend belongs to the ACTIVE overlay, not to the console: TRAFFIC's
-	# five bands and WATER's pressure words are different rows, and a legend
-	# that keeps saying "Normal / Warning" while a congestion map is on screen
-	# is worse than no legend at all.
-	if active != _legend_mode:
-		_build_legend(active)
+	# five bands, WATER's pressure words and POLICE/FIRE's coverage margin are
+	# different rows, and a legend that keeps saying "Normal / Warning" while a
+	# congestion map is on screen is worse than no legend at all.
+	if active != _legend_mode and _legend_card != null:
+		_legend_mode = active
+		_legend_card.show_mode(active)
+		_place_legend()
 	if changed:
 		_write_shader_global()
 		overlay_changed.emit(active, model.active_index())
@@ -436,6 +530,12 @@ func _process(_delta: float) -> void:
 	# Second slot of §2.3's rail stack, re-solved because the button's height is
 	# only knowable once the theme and the layout have both run.
 	UIWidgets.place_in_rail(_button, 1, config.layout(), _touch_min)
+	if _legend_card != null:
+		# Same reason the rail button is re-placed: the card's height is only
+		# knowable once the theme and the type scale have both run, and it grows
+		# when the player turns the text up. The top bar is measured, not assumed
+		# — its chips wrap onto a second row on a narrow phone.
+		_place_legend()
 	if is_open():
 		_clamp_strip()
 	if _pressed_at_ms < 0.0 or _suppress_next_press:
@@ -460,15 +560,28 @@ func rail_button() -> Button:
 
 
 ## One legend line by its row id — a state token (`normal`…`offline`) or, in
-## TRAFFIC, a band name (`clear`…`gridlock`).
+## TRAFFIC, a band name (`clear`…`gridlock`). Reads the §2.5 card, which is where
+## the legend lives now.
 func legend_row(row_id: StringName) -> Label:
-	if _legend_box == null:
-		return null
-	return _legend_box.get_node_or_null("Row_" + String(row_id)) as Label
+	return _legend_card.legend_row(row_id) if _legend_card != null else null
 
 
 func legend_mode() -> StringName:
 	return _legend_mode
+
+
+func legend_card() -> OverlayLegend:
+	return _legend_card
+
+
+## §2.5's "1–3 overlay-specific aggregate lines", from the shell — only the shell
+## holds a sim. `[{label, value, state?}]`, already formatted.
+func set_summary_lines(mode: StringName, lines: Array) -> void:
+	if model == null:
+		return
+	model.set_summary_lines(mode, lines)
+	if _legend_card != null and _legend_card.mode() == mode:
+		_legend_card.refresh()
 
 
 func capture_state() -> Dictionary:

@@ -556,3 +556,193 @@ func test_the_dashboard_is_a_modal_and_back_closes_it_first() -> void:
 	assert_eq(root.handle_back(0.0), UIRoot.BACK_CLOSE_MODAL)
 	assert_false(dashboard.is_open())
 	_unmount(mounted)
+
+
+# ===========================================================================
+# Infrastructure (§2.10: gen/cap/load + worst 5 feeders, water + worst 5 zones)
+# ===========================================================================
+
+## The two feeds are the sim queries verbatim, so the fixtures are the shapes
+## `PowerGrid.feeder_rows()` and `WaterSnapshot.build()` actually publish.
+static func _infrastructure() -> Dictionary:
+	var feeders: Array = []
+	for i in 8:
+		feeders.append({"id": "F-%02d" % i, "kind": "feeder", "parent": "SUB-1",
+				"load_kw": 100.0 * float(i), "capacity_kw": 1200.0,
+				"effective_kw": 1000.0, "load_ratio": 0.1 * float(i),
+				"headroom_kw": 1000.0 - 100.0 * float(i), "condition": 0.9,
+				"state": "OK", "energized": true, "shed": false, "customers": i})
+	return {
+		"power": {"supply_kw": 8000.0, "demand_kw": 6400.0,
+				"plant_capacity_kw": 8000.0, "headroom_kw": 1600.0,
+				"load_ratio": 0.8, "feeders_over": 1, "transformers_over": 0,
+				"shed_feeders": 0},
+		"feeders": feeders,
+		"transformers": [{"id": "T-01", "kind": "transformer", "load_ratio": 1.4,
+				"headroom_kw": -80.0, "condition": 0.5, "state": "OK",
+				"energized": true, "shed": false, "customers": 12, "temp_c": 96.0}],
+		"water": {
+			"zones": [
+				{"zone_key": "Z-A", "pressure": 0.92, "building_count": 20},
+				{"zone_key": "Z-B", "pressure": 0.08, "building_count": 4},
+				{"zone_key": "Z-C", "pressure": 0.44, "building_count": 9},
+			],
+			"city": {"total_supply_m3h": 400.0, "total_demand_m3h": 380.0,
+					"storage_frac": 0.72, "zones_in_deficit": 1},
+		},
+	}
+
+
+func test_the_worst_feeders_are_the_first_five_by_load_not_by_id() -> void:
+	var model := DashboardModel.new(_cfg())
+	model.feed_infrastructure(_infrastructure())
+	var sections: Array = model.infrastructure_view()["sections"]
+	var feeders: Dictionary = {}
+	for section: Dictionary in sections:
+		if str(section["id"]) == "feeders":
+			feeders = section
+	assert_eq((feeders["rows"] as Array).size(), 5, "§2.10 says worst FIVE")
+	var ids: Array = []
+	for row: Dictionary in (feeders["rows"] as Array):
+		ids.append(str(row["id"]))
+	assert_eq(str(ids), str(["F-07", "F-06", "F-05", "F-04", "F-03"]),
+			"worst first, and the id is only the tiebreak")
+
+
+func test_a_feeder_past_its_derated_capacity_reads_critical() -> void:
+	var model := DashboardModel.new(_cfg())
+	model.feed_infrastructure(_infrastructure())
+	var sections: Array = model.infrastructure_view()["sections"]
+	for section: Dictionary in sections:
+		if str(section["id"]) != "transformers":
+			continue
+		var row: Dictionary = (section["rows"] as Array)[0]
+		assert_eq(row["state"], HudModel.STATE_CRITICAL,
+				"140 % of the derated capacity is not a warning")
+		assert_ne(str(row["state_glyph"]), "", "A5: the figure carries its glyph")
+	assert_eq(DashboardModel.load_state(0.5), HudModel.STATE_NORMAL)
+	assert_eq(DashboardModel.load_state(0.92), HudModel.STATE_WARNING,
+			"past doc 02 E2's 0.90 upgrade gate the player can no longer grow")
+	assert_eq(DashboardModel.load_state(1.05), HudModel.STATE_CRITICAL)
+
+
+func test_the_driest_zone_is_listed_first_and_banded_on_doc05s_own_cuts() -> void:
+	var model := DashboardModel.new(_cfg())
+	model.feed_infrastructure(_infrastructure())
+	var water: Dictionary = {}
+	for section: Dictionary in (model.infrastructure_view()["sections"] as Array):
+		if str(section["id"]) == "water":
+			water = section
+	var zone_ids: Array = []
+	for row: Dictionary in (water["rows"] as Array):
+		if str(row["id"]).begins_with("zone_"):
+			zone_ids.append(str(row["label"]))
+	assert_eq(str(zone_ids), str(["Z-B", "Z-C", "Z-A"]), "lowest pressure first")
+	assert_eq(DashboardModel.pressure_state(0.92), HudModel.STATE_NORMAL)
+	assert_eq(DashboardModel.pressure_state(0.44), HudModel.STATE_WARNING)
+	assert_eq(DashboardModel.pressure_state(0.20), HudModel.STATE_CRITICAL)
+	assert_eq(DashboardModel.pressure_state(0.02), HudModel.STATE_OFFLINE,
+			"a zone with nothing in the pipe is offline, not merely critical")
+
+
+func test_an_unfed_infrastructure_tab_says_so_in_words() -> void:
+	# A14: a blocked or empty thing states its reason; it never draws a blank gap.
+	var model := DashboardModel.new(_cfg())
+	assert_false(model.has_infrastructure())
+	for section: Dictionary in (model.infrastructure_view()["sections"] as Array):
+		assert_true((section["rows"] as Array).is_empty())
+		assert_ne(str(section["empty_text"]), "", "%s explains itself" % section["id"])
+
+
+func test_power_and_flow_are_printed_in_one_unit_per_surface() -> void:
+	# D-18: one convention per surface, and the ladder switches at the magnitude,
+	# never inside a column.
+	assert_eq(DashboardModel.power_text(840.0), "840 kW")
+	assert_eq(DashboardModel.power_text(8000.0), "8.0 MW")
+	assert_eq(DashboardModel.flow_text(380.0), "380 m³/h")
+
+
+# ===========================================================================
+# Response (§2.10: per-department roster + rolling response times)
+# ===========================================================================
+
+static func _response() -> Dictionary:
+	return {
+		"units": [
+			{"id": 1, "department": "fire", "status": "IDLE"},
+			{"id": 2, "department": "fire", "status": "RESPONDING"},
+			{"id": 3, "department": "police", "status": "IDLE"},
+			{"id": 4, "department": "police", "status": "IDLE"},
+			{"id": 5, "department": "utility", "status": "ON_SCENE"},
+		],
+		"stats": {"resolved_total": 12, "failed_total": 2, "abandoned_total": 0,
+				"avg_response_min": 11.0, "rolling_response_score": 0.62,
+				"response_samples": 14},
+		"open": 3,
+	}
+
+
+func test_every_department_gets_a_row_even_with_no_station() -> void:
+	var model := DashboardModel.new(_cfg())
+	model.feed_response(_response())
+	var roster: Dictionary = {}
+	for section: Dictionary in (model.response_view()["sections"] as Array):
+		if str(section["id"]) == "roster":
+			roster = section
+	var by_id: Dictionary = {}
+	for row: Dictionary in (roster["rows"] as Array):
+		by_id[str(row["id"])] = row
+	assert_eq((roster["rows"] as Array).size(), 5, "doc 06 §2.11's five departments")
+	assert_eq(by_id["water"]["state"], HudModel.STATE_OFFLINE,
+			"a department with no units is offline, and still has a row")
+	assert_eq(by_id["utility"]["state"], HudModel.STATE_CRITICAL,
+			"every utility truck is out: nothing is left to send")
+	assert_eq(by_id["police"]["state"], HudModel.STATE_NORMAL)
+	assert_eq(by_id["fire"]["state"], HudModel.STATE_WARNING,
+			"half the engines out is a warning, not yet a failure")
+
+
+func test_the_response_average_is_graded_against_doc06s_target() -> void:
+	var model := DashboardModel.new(_cfg())
+	model.feed_response(_response())
+	var target := model.response_target_min()
+	assert_true(target > 0.0, "data/ui.json.dashboard.response_target_min is authored")
+	assert_eq(model.response_state(target * 0.5), HudModel.STATE_NORMAL)
+	assert_eq(model.response_state(target * 1.1), HudModel.STATE_WARNING)
+	assert_eq(model.response_state(target * 2.0), HudModel.STATE_CRITICAL)
+	var times: Dictionary = {}
+	for section: Dictionary in (model.response_view()["sections"] as Array):
+		if str(section["id"]) == "times":
+			times = section
+	var ids: Array = []
+	for row: Dictionary in (times["rows"] as Array):
+		ids.append(str(row["id"]))
+	assert_true(ids.has("avg"), "with samples in hand the average is printed")
+	assert_true(ids.has("open"), "and the live incident count beside it")
+
+
+func test_the_response_average_is_withheld_until_a_call_is_answered() -> void:
+	var model := DashboardModel.new(_cfg())
+	model.feed_response({"units": [], "stats": {"response_samples": 0}, "open": 0})
+	for section: Dictionary in (model.response_view()["sections"] as Array):
+		if str(section["id"]) != "times":
+			continue
+		for row: Dictionary in (section["rows"] as Array):
+			assert_ne(str(row["id"]), "avg",
+					"an average over zero samples is a number nobody measured")
+
+
+func test_both_new_tabs_render_their_sections_in_a_live_tree() -> void:
+	var mounted := _mount()
+	var dashboard: CityDashboard = mounted["dashboard"]
+	dashboard.feed_infrastructure(_infrastructure())
+	dashboard.feed_response(_response())
+	dashboard.open(DashboardModel.TAB_INFRASTRUCTURE)
+	assert_ne(dashboard.tab_button(DashboardModel.TAB_INFRASTRUCTURE), null,
+			"the tab has a chip")
+	assert_ne(dashboard.section_box("feeders"), null, "the worst-feeder list drew")
+	assert_ne(dashboard.section_row("feeders", "F-07"), null, "and its worst row")
+	dashboard.open(DashboardModel.TAB_RESPONSE)
+	assert_ne(dashboard.section_box("roster"), null)
+	assert_ne(dashboard.section_row("roster", "fire"), null)
+	_unmount(mounted)

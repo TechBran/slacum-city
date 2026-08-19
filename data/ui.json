@@ -47,8 +47,8 @@
     "_strip_chip_dp": "64 dp clipped `Power` to `Powe` and `Traffic` to `Traffi` — A1/A2 forbid clipping, and a console whose labels are truncated teaches the player nothing. 104 dp fits the longest mode name at the 1.0 text scale with the theme's own margins; the strip widened to match (game/ui/ui_root.tscn).",
     "strip_chip_dp": [104, 56], "strip_x_offset_dp": 80, "strip_columns": 2,
     "outage_fill_alpha": 0.25, "coverage_disc_alpha": 0.18, "flow_dash_speed_m_s": 14.0, "heat_bin_m": 32.0,
-    "_enabled_modes": "An overlay ships enabled only once the sim behind it publishes an OverlayQuery (doc 12 §4.4). POWER is live (doc 04), WATER is live (doc 05 §5.8 + WaterSystem.service_factors) and TRAFFIC is live (doc 10 §2.15's TrafficSnapshot); POLICE/FIRE stay listed, greyed and tooltip-explained (A14: every blocked action states its reason in words) until doc 06 publishes coverage — never hidden, so the player learns the shape of the console once.",
-    "enabled_modes": ["none", "power", "water", "traffic"],
+    "_enabled_modes": "An overlay ships enabled only once the sim behind it publishes an OverlayQuery (doc 12 §4.4). All six are live as of Wave 5: POWER (doc 04), WATER (doc 05 §5.8 + WaterSystem.service_factors), TRAFFIC (doc 10 §2.15's TrafficSnapshot) and now POLICE/FIRE (doc 02 §2.9's coverage field, C-51, published by CityIncidentWorld.coverage_police/coverage_fire). The greying machinery stays — A14 wants a blocked chip to state its reason in words rather than disappear — so pulling a system out of a build is still an edit to this array and nothing else.",
+    "enabled_modes": ["none", "power", "water", "police", "fire", "traffic"],
     "_shader_global": "doc 11 reads the active overlay from this project shader global; its value is the mode's INDEX INTO overlay.modes above (none 0, power 1, water 2, police 3, fire 4, traffic 5). The int is written by ui/overlay_rail.gd and by nothing else; the per-instance 2-bit overlay_state that the building shader tints with is doc 11's and is never set from here (C-64).",
     "shader_global": "sc_overlay_mode",
     "legend_states": ["normal", "warning", "critical", "offline"],
@@ -59,6 +59,22 @@
       {"state": "warning", "max": 0.75},
       {"state": "normal", "max": 1.01}
     ],
+    "_coverage_bands": "POLICE (mode 3) and FIRE (mode 4) are per-BUILDING reads of doc 02 §2.9's coverage field (C-51) and ride the same 2-bit overlay_state WATER does. Two ladders, because doc 02 §2.9 says `the UI must show the margin, not just pass/fail`: a building whose level carries a coverage REQUIREMENT is banded on how it stands against that requirement (below it = its upgrades are blocked and it is paying the safety penalty, so CRITICAL), and one with no requirement — every L1, and every service/utility shell at low level — is banded on the absolute scalar. `coverage_margin_warn` is how much clear air above the requirement still reads as WARNING: 0.10 is a little more than one dispatched engine costs a two-engine station (doc 02 worked example E6 loses 0.31 outright), so a building inside it is one bad hour from failing its own gate.",
+    "coverage_bands": [
+      {"state": "offline", "max": 0.02},
+      {"state": "critical", "max": 0.30},
+      {"state": "warning", "max": 0.60},
+      {"state": "normal", "max": 1.01}
+    ],
+    "coverage_margin_warn": 0.10,
+    "_legend_card": "Doc 12 §2.5's OverlayLegend: a 200 dp card at the TOP-LEFT, under the top bar, carrying the overlay's name, its state rows and 1-3 aggregate lines. It replaces the legend that used to live inside the chip strip — the strip is a control, the legend is a reading, and the two do not belong in one panel (the strip also closes, which took the legend with it). Collapsible to a pill; `collapsed_modes` is the persisted set, per overlay, and lives in the `ui` save section beside `overlay`/`overlay_last`.",
+    "legend_card": {
+      "w_dp": 200,
+      "top_dp": 8,
+      "left_dp": 12,
+      "pill_dp": [32, 32],
+      "max_aggregate_lines": 3
+    },
     "_traffic_bands": "TRAFFIC (mode 5) is a per-EDGE read, so it tints the ROAD, never the building. The five bands and their cut points are doc 10 §2.15's own (RoadCosts.overlay_band) and tests/test_ui_overlays.gd asserts the two tables agree — change one and the other fails. Colour is never load-bearing (constitution §11 / spec §49): `state` picks the hue out of the SAME palette the legend uses (so a colourblind variant carries it), `darken` deepens it, `alpha` is a monotone lightness ramp, and `stripe_duty` is a diagonal hatch whose density rises with congestion — the pattern channel that survives greyscale. `pulse_hz` is motion, reserved for the two bands that mean STOP.",
     "traffic_bands": [
       {"band": "clear", "max": 0.25, "state": "normal", "darken": 0.0, "alpha": 0.10, "stripe_duty": 0.0, "pulse_hz": 0.0, "glyph": "circle_filled"},
@@ -71,7 +87,14 @@
     "traffic_stripe_period_m": 5.6,
     "traffic_stripe_scroll_m_s": 1.8,
     "traffic_wash_floor": 0.45,
-    "traffic_refresh_game_minutes": 1
+    "traffic_refresh_game_minutes": 1,
+    "_building_state_paint": "The colours the BUILDING overlay tints with, so the colourblind palette reaches the 3D city and not just the legend beside it (the road bands already did, via road_overlay_view). `hue` names a palette token — resolved through data/ui.json.palette[variant], which is exactly what the legend row is painted with, so a deuteran city and a deuteran legend can never disagree. `mix` is how far the albedo is pulled to that hue and `emission` how hard it glows; both are the building shader's own `overlay_normal_blend` / `overlay_data_blend` / `overlay_state_emission` split, restated per state so NORMAL can stay calm. NORMAL deliberately does NOT take the palette's green: a city where every healthy building glows is a city where nothing reads, so it borrows `text_dim` — a cool neutral — and only the three states that mean LOOK HERE carry hue. OFFLINE takes §2.5's own `#5A6270` — the shader shipped a dark RED there, which reads as an emergency when the honest meaning is `nothing to report from here`: on the coverage overlays every lot outside a station's reach is OFFLINE, and a city painted crisis-red end to end tells the player nothing. Grey is what the §2.5 state table says and what the legend row beside it is painted in.",
+    "building_state_paint": [
+      {"state": "normal", "hue": "text_dim", "mix": 0.50, "emission": 0.0, "darken": 0.0},
+      {"state": "warning", "hue": "warning", "mix": 0.88, "emission": 0.55, "darken": 0.0},
+      {"state": "critical", "hue": "critical", "mix": 0.88, "emission": 0.55, "darken": 0.0},
+      {"state": "offline", "hue": "offline", "mix": 0.88, "emission": 0.0, "darken": 0.25}
+    ]
   },
   "alerts": {
     "_comment": "The §2.15 alerts centre: the persistent feed behind the banner stack. Class and surface come from in_app_alerts above (C-71/C-72) — this block only says which sim event becomes which notification, and it is a STAND-IN for doc 08's data/notifications.json event->class map. When that file lands it REPLACES `events` wholesale; the two are never merged.",
@@ -196,8 +219,16 @@
                     "public_works": "🔧", "construction": "🏗", "unknown": "▪"}
   },
   "dashboard": {
-    "_comment": "S8 (doc 12 §2.10). §2.10 specifies four tabs; `tabs` lists the ones whose sim queries exist. Infrastructure needs per-feeder headroom (doc 04) and per-zone pressure (doc 05); Response needs the unit roster with rolling response times (doc 06). Adding either is an edit to this array plus its rows, never a code change.",
-    "tabs": ["overview", "economy"],
+    "_comment": "S8 (doc 12 §2.10). All four tabs are live as of Wave 5: Infrastructure reads PowerGrid.feeder_rows/transformer_rows/capacity_summary (doc 04) and WaterSnapshot's §5.8 zones (doc 05); Response reads FleetSystem's roster plus DispatchSystem.stats (doc 06). Dropping a tab is still an edit to this array and nothing else.",
+    "tabs": ["overview", "economy", "infrastructure", "response"],
+    "_worst_n": "§2.10 asks for `worst 5 feeders` and `worst 5 zones`. One number, because the two lists sit on one scrolling tab and a reader who can hold five rows of one can hold five of the other. The lists are sorted worst-first on load ratio (feeders/transformers) and lowest-pressure-first (zones), with the id as the tiebreak so the order never depends on hashing.",
+    "worst_n": 5,
+    "infrastructure_sections": ["power", "feeders", "transformers", "water"],
+    "_response_departments": "Doc 06 §2.11's five departments, in roster order. A department with no station in the city still prints its row — `0 of 0` is a reading, and a row that vanishes teaches the player that fire trucks are optional.",
+    "response_departments": ["fire", "police", "utility", "water", "construction"],
+    "_response_target_min": "The response time the rolling score is graded against (doc 06 §2.9's `target_response_min`). It is the UI's THRESHOLD, not the sim's: the score itself is DispatchSystem.stats.rolling_response_score and is computed there.",
+    "response_target_min": 8.0,
+    "response_warn_mult": 1.25,
     "overview_rows": ["population", "treasury", "net_income", "happiness", "stability",
                       "grid", "water", "incidents"],
     "_series": "What ui/history_model.gd rings. `power01`/`water01` are the [0,1] service fractions the ⚡/💧 chips read, sampled at the same hourly boundary as the rest.",

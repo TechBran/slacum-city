@@ -36,6 +36,21 @@ func building_ids() -> Array:
 	return []
 
 
+## Doc 02 §2.9's service-coverage scalars (report 98 C-51 — doc 02 owns the
+## formula, doc 06 only reads the number). Both ∈ [0,1].
+##
+## The neutral default is **0.0**, not 0.5: a world with no station roster has no
+## coverage, and 0.5 is a value the crime generator would treat as half a police
+## force that does not exist. A test world that wants a coverage figure states it
+## on the district row, which is where the generator reads it from.
+func coverage_police(_tile: Vector2i) -> float:
+	return 0.0
+
+
+func coverage_fire(_tile: Vector2i) -> float:
+	return 0.0
+
+
 ## {archetype, level, condition, occupants, powered, state, tile,
 ##  fire_load, fire_ignition_per_hour, crime_weight, district_id}
 func building(_id: String) -> Dictionary:

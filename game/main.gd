@@ -507,6 +507,9 @@ func _refresh_hud() -> void:
 		_feed_water_overlay()
 	elif active_overlay == OverlayModel.MODE_TRAFFIC:
 		_feed_traffic_overlay()
+	elif active_overlay == OverlayModel.MODE_POLICE \
+			or active_overlay == OverlayModel.MODE_FIRE:
+		_feed_coverage_overlay(active_overlay)
 	if ui_root != null:
 		ui_root.refresh_incidents(sim.incidents.snapshot(), sim.incidents.now_h)
 		ui_root.set_incident_reference(camera_state.focus)
@@ -517,6 +520,7 @@ func _refresh_hud() -> void:
 			"stability": sim.districts.city_stability,
 			"happiness": sim.happiness.happiness,
 		})
+		_feed_dashboard_tabs()
 
 
 # ---------------------------------------------------------------------------
@@ -640,10 +644,22 @@ func _wire_overlays(root: UIRoot) -> void:
 		variant = str(root.settings_sheet.model.value("colorblind"))
 	road_overlay.setup(cfg, overlay_model, 8.0, variant)
 	root.overlay_changed.connect(_on_overlay_changed)
-	# Publish both channels once at boot so the first tap on a chip is a
+	# Publish every channel once at boot so the first tap on a chip is a
 	# repaint and not a wait for the next settled hour.
 	_feed_water_overlay()
 	_feed_traffic_overlay()
+	_feed_coverage_overlay(OverlayModel.MODE_POLICE, true)
+	_feed_coverage_overlay(OverlayModel.MODE_FIRE, true)
+	# A6: the four state hues the 3D city tints with follow the same palette the
+	# legend does. One table, `data/ui.json.overlay.building_state_paint`.
+	_apply_overlay_palette(variant)
+
+
+func _apply_overlay_palette(variant: String) -> void:
+	if city_view == null or ui_root == null or ui_root.overlay_rail == null:
+		return
+	city_view.set_overlay_palette(
+			ui_root.overlay_rail.model.building_state_paint_ordered(variant))
 
 
 func _on_overlay_changed(mode: StringName, _index: int) -> void:
@@ -651,6 +667,8 @@ func _on_overlay_changed(mode: StringName, _index: int) -> void:
 		_feed_water_overlay()
 	elif mode == OverlayModel.MODE_TRAFFIC:
 		_feed_traffic_overlay()
+	elif mode == OverlayModel.MODE_POLICE or mode == OverlayModel.MODE_FIRE:
+		_feed_coverage_overlay(mode, true)
 	if city_view != null:
 		city_view.set_overlay_mode(mode, camera_rig.camera.global_position)
 	if road_overlay != null:
@@ -682,6 +700,88 @@ func _feed_traffic_overlay() -> void:
 	if road_overlay == null or sim_host.sim.roads == null:
 		return
 	road_overlay.apply_edges(sim_host.sim.roads.snapshot.visible_edges)
+
+
+## §2.5 modes 3 and 4. Doc 02 §2.9's coverage field, sampled at every building's
+## own tile and banded against that building's own requirement rung — which is
+## why the shell reads the catalog here and hands `OverlayModel` a pair rather
+## than a bare scalar: doc 02 is explicit that the UI must show the MARGIN, and
+## an L4 office at 0.55 cover is failing while an L1 house at 0.55 is fine.
+##
+## `rebuild` forces the field to be re-solved before it is read. It is memoised
+## per game-hour for the incident integrator's sake, which is right for a rate
+## and wrong for the moment a player places a station — so the two calls that
+## follow a change (entering the overlay, and the boot publish) pay for a rebuild
+## and the 1 Hz repaint does not.
+func _feed_coverage_overlay(mode: StringName, rebuild: bool = false) -> void:
+	if render_model == null or ui_root == null or ui_root.overlay_rail == null:
+		return
+	var overlay_model := ui_root.overlay_rail.model
+	var sim := sim_host.sim
+	var world: CityIncidentWorld = sim.incident_world
+	if rebuild:
+		world.invalidate_coverage()
+	var police := mode == OverlayModel.MODE_POLICE
+	var kind: StringName = CoverageIndex.KIND_POLICE if police else CoverageIndex.KIND_FIRE
+	var requirement_key := "req_police_coverage" if police else "req_fire_coverage"
+	var rows: Dictionary = {}
+	var uncovered := 0
+	var below := 0
+	for sim_id: String in sim.buildings:
+		var render_id := _render_id(sim_id)
+		if render_id < 0:
+			continue
+		var b: Building = sim.buildings[sim_id]
+		var cover := world.coverage_police(b.origin) if police \
+				else world.coverage_fire(b.origin)
+		var stats: Dictionary = sim.catalog.stats(String(b.archetype), maxi(1, b.level))
+		var requirement := float(stats.get(requirement_key, 0.0))
+		rows[render_id] = {"coverage": cover, "requirement": requirement}
+		if cover <= 0.0:
+			uncovered += 1
+		elif requirement > 0.0 and cover < requirement:
+			below += 1
+	render_model.set_overlay_channel(mode, overlay_model.coverage_states(rows))
+	# §2.5's 1–3 aggregate lines on the legend card.
+	ui_root.feed_overlay_summary(mode, [
+		{"label": UIWidgets.t(ui_root.config, "ui_overlay_summary_stations"),
+				"value": str(world.coverage.station_count(kind))},
+		{"label": UIWidgets.t(ui_root.config, "ui_overlay_summary_uncovered"),
+				"value": str(uncovered),
+				"state": HudModel.STATE_NORMAL if uncovered == 0 else HudModel.STATE_CRITICAL},
+		{"label": UIWidgets.t(ui_root.config, "ui_overlay_summary_below_req"),
+				"value": str(below),
+				"state": HudModel.STATE_NORMAL if below == 0 else HudModel.STATE_WARNING},
+	])
+
+
+## §2.10's Infrastructure and Response tabs. Both are pure reads of queries the
+## sim already publishes — `PowerGrid`'s additive row queries, doc 05's §5.8
+## snapshot, doc 06's roster and dispatch statistics — so the shell assembles
+## them and the models do the sorting, the trimming and the words.
+func _feed_dashboard_tabs() -> void:
+	var sim := sim_host.sim
+	# The same ambient doc 04's own tick derates on, so the headroom the tab
+	# prints is the headroom the protection pass is working against.
+	var t_ambient := float(sim.weather.env_for_grid().get("t_ambient_c", 25.0)) \
+			if sim.weather != null else 25.0
+	ui_root.feed_infrastructure({
+		"power": sim.grid.capacity_summary(t_ambient),
+		"feeders": sim.grid.feeder_rows(t_ambient),
+		"transformers": sim.grid.transformer_rows(t_ambient),
+		"water": WaterSnapshot.build(sim.water),
+	})
+	var units: Array = []
+	for unit_id in sim.incidents.fleet.unit_ids():
+		var u: Vehicle = sim.incidents.fleet.unit(int(unit_id))
+		if u != null:
+			units.append({"id": u.id, "type": u.type, "department": u.department,
+					"status": u.status, "station": u.home_station_id})
+	ui_root.feed_response({
+		"units": units,
+		"stats": sim.incidents.dispatch.stats,
+		"open": sim.incidents.active_count(),
+	})
 
 
 func _coach_world_rect(tag: String) -> Variant:
@@ -762,11 +862,13 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 		&"text_scale", &"larger_touch_targets":
 			ui_root.rebuild_theme(model.theme_opts())
 		&"colorblind":
-			# The traffic bands borrow the legend's hues, so the map has to
-			# follow the palette the theme just switched to.
+			# The traffic bands and the building tint both borrow the legend's
+			# hues, so the whole map follows the palette the theme just switched
+			# to — A6 is not a UI-layer-only promise.
 			ui_root.rebuild_theme(model.theme_opts())
 			if road_overlay != null:
 				road_overlay.set_palette_variant(str(model.value("colorblind")))
+			_apply_overlay_palette(str(model.value("colorblind")))
 		_:
 			pass   # reduce_motion / in_app_banners are read where used
 

@@ -299,6 +299,28 @@ static func _support_bonus(row: Dictionary, role: String) -> float:
 	return 0.0
 
 
+## §2.6's `access_factor`: doc 10's `access_quality` knee, and nothing else.
+##
+## **Why the police term is not here** *(measured, Wave 5)*. Doc 06 §2.6 writes
+## `access_factor` as `road_knee × (1.15 if a police unit is on scene)`, and
+## `globals.access_police_bonus` carries that 1.15 — but the same 15 % is ALSO
+## `types.<t>.support_roles[police].rate_bonus = 0.15`, which `_effective_rate`
+## already bills through `(1 + support_bonus)`. The doc states one effect twice
+## and the shipped path implements the support-role half; wiring the global as a
+## second multiplier charges it twice.
+##
+## It is not a harmless duplicate either. Wired as
+## `× (1 + 0.15 · coverage_police(tile))` and measured on the doc 92 rig at seed
+## 1337 / 21 game-days, balance **gate 04 inverts**: maintained $61,843 against
+## neglected $71,644, where the same runs without it read $69,876 / $59,959. A
+## blanket suppression buff pays the agent that never repairs the most, because
+## fires it would have let burn are put out before they cost it anything.
+##
+## Doc 02's `coverage_police` is therefore consumed where doc 06 §2.6 actually
+## reads it — `factors.crime.police_base / police_slope` in `_generate_crime`,
+## through the district scalar, which is now the real C-51 number instead of the
+## 0.5 stub. `globals.access_police_bonus` stays unread and is reported as a
+## data/doc redundancy rather than being quietly spent.
 func access_factor(inc: Incident) -> float:
 	var quality := travel.access_quality(inc.tile)
 	if quality < catalog.global_value("access_degraded_knee", 0.60):
