@@ -111,6 +111,9 @@ func add_component(id: String, kind: StringName, opts: Dictionary = {}) -> Dicti
 		"tree_adjacent": bool(opts.get("tree_adjacent", false)),
 		"priority_override": false,
 		"cause_chain": [],
+		# Player-placed components carry grid geometry the world map must
+		# re-reserve after a load; authored ones come back with the loader.
+		"player_placed": bool(opts.get("player_placed", false)),
 	}
 	_components[id] = component
 	_order.append(id)
@@ -121,6 +124,32 @@ func add_component(id: String, kind: StringName, opts: Dictionary = {}) -> Dicti
 
 func component(id: String) -> Dictionary:
 	return _components.get(id, {})
+
+
+func has_component(id: String) -> bool:
+	return _components.has(id)
+
+
+## Every component id, in the sorted order every pass iterates.
+func component_ids() -> Array:
+	return _order.duplicate()
+
+
+func component_ids_of_kind(kind: StringName) -> Array:
+	var out: Array = []
+	for id in _order:
+		if _components[id]["kind"] == kind:
+			out.append(id)
+	return out
+
+
+## Route entries are stored as [x, z] pairs (JSON round-trips them that way);
+## authored boot data may hand in Vector2i. One reader for both.
+static func route_tile(entry: Variant) -> Vector2i:
+	if entry is Vector2i:
+		return entry
+	var pair: Array = entry
+	return Vector2i(int(pair[0]), int(pair[1]))
 
 
 func add_tie(id: String, a: String, b: String, mode: StringName = &"MANUAL") -> void:
@@ -161,6 +190,102 @@ func attach_building(building_id: String, tile: Vector2i,
 
 func attachment_of(building_id: String) -> String:
 	return _attachments.get(building_id, "")
+
+
+## Drop a building off the grid entirely (demolition, doc 02 §2.12). The
+## service record goes with it, so the building stops counting toward
+## `block_dark_fractions` and `settle_hour` the instant it is gone.
+func detach_building(building_id: String) -> bool:
+	var had: bool = _attachments.has(building_id) or _service.has(building_id)
+	_attachments.erase(building_id)
+	_service.erase(building_id)
+	return had
+
+
+## Doc 04 §2.4: the shed score reads `priority_class` off the service record, so
+## this is the whole of `cmd_set_priority`'s grid-side effect. Returns false
+## when the building has no service record (never attached ⇒ nothing to weight).
+func set_priority_class(building_id: String, priority_class: StringName) -> bool:
+	if not _service.has(building_id):
+		return false
+	_service[building_id]["priority_class"] = priority_class
+	return true
+
+
+func priority_class_of(building_id: String) -> StringName:
+	return _service.get(building_id, {}).get("priority_class", &"STANDARD")
+
+
+## Every building the grid knows about that has NO transformer in range — the
+## orphans a newly placed transformer may be able to adopt.
+func unserved_building_ids() -> Array:
+	var out: Array = []
+	for building_id in _sorted_keys(_service):
+		if String(_attachments.get(building_id, "")) == "":
+			out.append(building_id)
+	return out
+
+
+## The nearest tappable feeder for a new transformer (doc 04 §2.1's radial
+## tree: a transformer is the child of exactly one feeder). Chebyshev distance
+## to the closest tile of the feeder's route, tie-broken by lowest load ratio
+## then id — the same ordering `attach_building` uses, so the choice is
+## deterministic and reads the same way to a player. FAILED feeders are not
+## tappable; an OPEN (tripped) one is, because it will reclose.
+## Returns {} when nothing is in range.
+func nearest_feeder_tap(tile: Vector2i, max_radius: int) -> Dictionary:
+	var best := {}
+	var best_key := [999999, 999999.0, ""]
+	for id in _order:
+		var c: Dictionary = _components[id]
+		if c["kind"] != &"feeder" or c["state"] == &"FAILED":
+			continue
+		var route: Array = c["route"]
+		var nearest := Vector2i.ZERO
+		var nearest_d := 999999
+		for entry in route:
+			var t := route_tile(entry)
+			var d: int = maxi(absi(tile.x - t.x), absi(tile.y - t.y))
+			if d < nearest_d or (d == nearest_d and [t.x, t.y] < [nearest.x, nearest.y]):
+				nearest_d = d
+				nearest = t
+		if nearest_d > max_radius:
+			continue
+		var ratio: float = c["load_kw"] / maxf(1.0, c["capacity_kw"])
+		var key := [nearest_d, ratio, id]
+		if key < best_key:
+			best_key = key
+			best = {"feeder": id, "tap_tile": nearest, "distance": nearest_d,
+					"conductor_class": int(c["conductor_class"]),
+					"underground": bool(c["underground"])}
+	return best
+
+
+## The tiles a lateral must add to reach `to` from a route tile `from`: a
+## diagonal run while both axes still differ, then straight — each axis steps
+## only while it is short of the target, so an unequal delta cannot overshoot
+## (which a single fixed step vector, as in `polyline_tiles`, would). The tap
+## tile is already on the route and is excluded, so the count is exactly the
+## Chebyshev distance — what doc 03 §2.13(b) prices per tile.
+static func lateral_tiles(from: Vector2i, to: Vector2i) -> Array:
+	var out: Array = []
+	var cursor := from
+	while cursor != to:
+		cursor.x += signi(to.x - cursor.x)
+		cursor.y += signi(to.y - cursor.y)
+		out.append([cursor.x, cursor.y])
+	return out
+
+
+## Append route tiles to a line component (a feeder lateral). `line_km` in
+## `grid_inventory()` grows with it, so doc 03's E_grid bills the new copper.
+func extend_route(id: String, tiles: Array) -> int:
+	if not _components.has(id) or tiles.is_empty():
+		return 0
+	var route: Array = _components[id]["route"]
+	for entry in tiles:
+		route.append(entry)
+	return tiles.size()
 
 
 ## Placement probe (doc 04 §2.1: no transformer in range ⇒ UNSERVED, and the

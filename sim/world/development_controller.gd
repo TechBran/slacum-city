@@ -35,6 +35,11 @@ var queue: ConstructionQueue
 var blocks_developed: int = 0
 var _active: Dictionary = {}  # block_id -> {phase_index, job_id, crew_type, paused}
 var _events: Array = []
+## Phase costs owed to doc 03 for phases submitted since the last drain. This
+## controller never touches money (§ header); it only records what was started
+## so the coordinator can charge `EconomySystem.development_phase_cost()`.
+## Produced and drained inside one tick, so it is derived state and never saved.
+var _pending_charges: Array = []
 
 
 func _init(p_world: WorldMap, p_queue: ConstructionQueue) -> void:
@@ -45,6 +50,15 @@ func _init(p_world: WorldMap, p_queue: ConstructionQueue) -> void:
 func drain_events() -> Array:
 	var out := _events
 	_events = []
+	return out
+
+
+## Doc 03 §2.8 phase costs owed since the last call, in submission order:
+## `[{block_id, phase, phase_index, job_id, crew_type}]`. The coordinator prices
+## and charges each, and binds the job's crew (doc 06 owns crews, not this class).
+func take_phase_charges() -> Array:
+	var out := _pending_charges
+	_pending_charges = []
 	return out
 
 
@@ -86,6 +100,9 @@ func _submit_phase(block_id: String) -> Dictionary:
 	record["job_id"] = job_id
 	var block := world.block(block_id)
 	block.development_state = phase
+	_pending_charges.append({"block_id": block_id, "phase": String(phase),
+			"phase_index": int(record["phase_index"]), "job_id": job_id,
+			"crew_type": String(crew_type)})
 	_events.append({"type": &"development_phase_started", "block": block_id,
 			"phase": phase, "crew_hours": crew_hours})
 	return CommandQueue.ok({"job_id": job_id, "phase": phase, "crew_hours": crew_hours})

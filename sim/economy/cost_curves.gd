@@ -153,9 +153,20 @@ func capital_value(type: String, level: int) -> int:
 	return int(rows[level - 1])
 
 
+## doc 03 §2.13(b) — the price of placing one grid component at `level`.
+## `level` is 1-based; components priced as a flat scalar (tie switch) ignore it.
+func grid_build_cost(component: String, level: int = 1, m_build: float = 1.0) -> int:
+	return CostCurves.round_half_up(float(_grid_build_cost_l(component, level)) * m_build)
+
+
 ## doc 03 §2.5 — a grid component's repair capital is its §2.13(b) build cost at
-## the current level; grid components are replaced, not upgraded.
+## the current level; grid components are replaced, not upgraded. Same table as
+## `grid_build_cost`, read for a different question.
 func capital_value_grid(component: String, level: int = 1) -> int:
+	return _grid_build_cost_l(component, level)
+
+
+func _grid_build_cost_l(component: String, level: int) -> int:
 	var entry: Dictionary = _grid_components.get(component, {})
 	var cost: Variant = entry.get("build_cost", null)
 	if cost is Array:

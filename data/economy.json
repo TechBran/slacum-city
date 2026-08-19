@@ -6,6 +6,8 @@
   "tax": {
     "TAX_LEVEL_GROWTH": 2.15, "TAX_RATE_BASE": 0.09, "TAX_RATE_MIN": 0.04, "TAX_RATE_MAX": 0.16,
     "TAX_RATE_COOLDOWN_HOURS": 48, "TAX_RATE_HAPPINESS_COEFF": 220.0, "TAX_RATE_GROWTH_COEFF": 3.5,
+    "_tax_level_note": "The player knob of doc 03 §2.2 is the RATE r, bounded by TAX_RATE_MIN/MAX. cmd_set_tax_level exposes it as the discrete ladder MIN, MIN+STEP, ... , MAX so the UI has detents; level 5 lands exactly on TAX_RATE_BASE. The ladder is computed in basis points so no float drift can move a detent off its authored rate. Note this is the tax RATE ladder and has nothing to do with TAX_LEVEL_GROWTH, which is base_tax growth per BUILDING level.",
+    "TAX_RATE_STEP": 0.01,
     "OCCUPANCY_RAMP_HOURS": 36,
     "_stability_note": "S is [0,1] from doc 09 (C-56). f_stability = STAB_FLOOR + (1-STAB_FLOOR) * S^STAB_EXP. No /100.",
     "STAB_FLOOR": 0.25, "STAB_EXP": 0.70,
