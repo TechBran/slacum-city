@@ -151,6 +151,80 @@ func test_tutorial_tags_resolve() -> void:
 	assert_false(sim.loader.resolve_tag("tutorial_pump").is_empty())
 
 
+## Doc 02 §2.6's last dead path, wired (Wave 4): a `damaged` building below
+## condition 0.10 collapses at 0.02/gh on the `failures` stream, from the same
+## hourly loop that already ran `apply_decay`.
+func test_structural_failure_is_wired_to_the_hourly_loop() -> void:
+	var sim := CitySim.boot_from_files(4242)
+	var target := ""
+	for id in sim.buildings:
+		var b: Building = sim.buildings[id]
+		if b.state == &"active" and b.decays():
+			target = String(id)
+			break
+	assert_ne(target, "", "the founding manifest has something that decays")
+	var doomed: Building = sim.buildings[target]
+	doomed.state = &"damaged"
+	doomed.condition = 0.05
+	sim.bus.drain()
+	var destroyed := {}
+	for _h in 400:
+		sim.advance_coarse_hours(1, false)
+		for event in sim.bus.drain():
+			if event["type"] == &"building_destroyed":
+				destroyed[String(event.get("sim_id", ""))] = String(event.get("cause", ""))
+		if doomed.state == &"destroyed":
+			break
+	assert_eq(String(doomed.state), "destroyed",
+			"0.02/gh never fired in 400 game-hours — the roll has no caller again")
+	assert_eq(String(destroyed.get(target, "")), "structural_failure",
+			"doc 02's own event, with its own cause, reaches the bus")
+	# A destroyed building houses nobody: doc 09 reads STATE_OCCUPANCY 0.
+	assert_almost_eq(doomed.state_occupancy(), 0.0, 1e-9)
+
+
+## Doc 08 C-47: an absence may not silently demolish the city. The roll is not
+## TAKEN during catch-up, so the rot is still standing when the player returns.
+func test_structural_failure_is_refused_during_catchup() -> void:
+	var sim := CitySim.boot_from_files(4242)
+	var target := ""
+	for id in sim.buildings:
+		var b: Building = sim.buildings[id]
+		if b.state == &"active" and b.decays():
+			target = String(id)
+			break
+	var doomed: Building = sim.buildings[target]
+	doomed.state = &"damaged"
+	doomed.condition = 0.05
+	sim.advance_coarse_hours(400, true)
+	assert_ne(String(doomed.state), "destroyed",
+			"offline catch-up destroyed a building behind the player's back")
+	assert_true(doomed.condition < 0.05, "and it still decayed while they were away")
+
+
+## Doc 12 §2.17 / doc 07: the tutorial holds the Director's floor, through
+## `CitySim`, and the hold survives a save round trip like every other gate.
+func test_director_suppression_api_for_the_tutorial() -> void:
+	var sim := CitySim.boot_from_files()
+	assert_false(sim.director.scripted_suppression_active())
+	sim.suppress_director(3600.0)  # one game-hour of game-seconds
+	assert_true(sim.director.scripted_suppression_active())
+	assert_true(bool(sim.director.get_debug_state()["scripted_suppressed"]))
+	# Calls EXTEND, never shorten: overlapping tutorial steps cannot uncover.
+	sim.suppress_director(7200.0)
+	var far := sim.director.suppress_until_min
+	sim.suppress_director(60.0)
+	assert_eq(sim.director.suppress_until_min, far)
+	# It is not F5's earned suppression, and it does not claim to be.
+	assert_false(bool(sim.director.suppression["active"]))
+	var restored := CitySim.boot_from_files()
+	restored.director.deserialize(sim.director.serialize())
+	assert_eq(restored.director.suppress_until_min, sim.director.suppress_until_min)
+	sim.release_director()
+	assert_false(sim.director.scripted_suppression_active())
+	assert_eq(sim.director.suppress_until_min, -1)
+
+
 func test_block_dark_events_drive_the_renderer_contract() -> void:
 	# The sim emits BlockDarkChanged on transitions (report 98 C-38) — the
 	# render model's blackout ceremony consumes exactly this event.

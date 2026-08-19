@@ -601,8 +601,16 @@ func _on_coach_action(action: StringName, payload: Dictionary) -> void:
 			camera_state.focus_on(Vector3(tile.x * 8.0, 0.0, tile.y * 8.0))
 		&"trigger_tutorial_incident":
 			sim_host.sim.trigger_tutorial_transformer_failure()
-		&"suppress_director", &"release_director":
-			pass            # doc 07's switch, when it exposes one
+		&"suppress_director":
+			# Doc 12 §2.17's budget is REAL seconds; doc 07's hold is game time.
+			# `SimHost.GAME_MS_PER_REAL_MS` is the shell's own published rate, so
+			# the tutorial's 300 s is 5 game-hours at speed 1 — long enough to
+			# cover the Director's hourly evaluation, which 300 game-seconds
+			# (5 game-minutes) would step straight over.
+			sim_host.sim.suppress_director(float(payload.get("seconds", 300.0))
+					* SimHost.GAME_MS_PER_REAL_MS)
+		&"release_director":
+			sim_host.sim.release_director()
 
 
 ## `Callable(kind, id) -> Vector3` for the alerts centre: only the shell knows

@@ -771,14 +771,70 @@ occ_b (civic / utility)  = STATE_OCCUPANCY[state]                        # alway
 ramp(age_h)     = clamp(0.35 + 0.65 × age_h / OCCUPANCY_RAMP_HOURS (36), 0.35, 1.00)
 job_fill_city   = clamp01( workforce / max(1, jobs_market) )
 A_city(t+dt)    = A_city + (A_target − A_city) × (1 − exp(−dt_h × growth_rate_multiplier / ATTRACT_TAU_H (12)))
-A_target        = clamp( (city_stability − 0.35) / 0.50, 0.25, 1.00 )
+A_target        = min( A_stab(city_stability), A_happy(H), A_tax(Δ_tax) )        # §2.10.2a
+A_stab(S)       = clamp( (S − 0.35) / 0.50, 0.25, 1.00 )
 ```
 
 - `STATE_OCCUPANCY` is **doc 02's** eight-row state table (`active` 1.00, `damaged`/`repairing` 0.40, `under_construction_upgrade` 0.50, `on_fire`/`destroyed`/`planned`/`under_construction_new` 0.00). This doc multiplies it; it does not redefine it.
 - `ramp` is exactly doc 03's stated behaviour — a fresh building fills from 0.35 to 1.00 over **36 game-hours**, linearly. `age_b` is `(sim_time_minutes − built_at_minutes) / 60`.
-- `A_city` is **city attractiveness**: the fraction of a building's nominal tenants who are willing to live in this city right now. It relaxes toward `A_target` with a 12 game-hour time constant, so a blackout empties buildings gradually and refilling them takes just as long. `growth_rate_multiplier = 1 − (tax_rate − 0.09) × 3.5` comes from **doc 03**; a 16 % tax rate slows the refill by 24.5 %.
-- `A_target` is deliberately saturated: at `city_stability ≥ 0.85` it clamps to 1.00, so a well-run city loses nobody, and it falls linearly to a 0.25 floor as stability collapses. The floor exists because a city never empties completely.
+- `A_city` is **city attractiveness**: the fraction of a building's nominal tenants who are willing to live in this city right now. It relaxes toward `A_target` with a 12 game-hour time constant, so a blackout empties buildings gradually and refilling them takes just as long. `growth_rate_multiplier = 1 − (tax_rate − 0.09) × TAX_RATE_GROWTH_COEFF (8.0)` comes from **doc 03** and scales the relaxation RATE, in both directions: a 16 % rate empties *and* refills the city 56 % slower.
+- `A_stab` is deliberately saturated: at `city_stability ≥ 0.85` it clamps to 1.00, so a well-run city loses nobody to instability, and it falls linearly to a 0.25 floor as stability collapses. The floor exists because a city never empties completely.
+- `A_happy` and `A_tax` are **§2.10.2a**, below. Both are 1.00 for the founding city, so every worked value in this section is unchanged by their arrival.
 - `job_fill_city` is a single city-wide ratio, applied uniformly. There is **no per-building job allocation loop** — a loop would be order-dependent and would break the offline coarse path's exactness for no gameplay gain.
+
+##### 2.10.2a The tax–growth coupling — amendment T-1
+
+> **Why this exists.** Doc 03 §2.2 publishes `growth_rate_multiplier` into this doc's relaxation, and doc 92 pass-2 F-5 ruled `TAX_RATE_GROWTH_COEFF` 3.5 → 8.0 so that the top tax detent would cost "a city later" instead of a decimal of happiness. It cost nothing. The multiplier scales `(A_target − A_city)`, and for **any** city with `city_stability ≥ 0.85` that difference is exactly zero: `A_target` was saturated at 1.00 and a founding city starts at 1.00. A controlled pair at detent 5 and detent 12 ended 2, 3, 5, 7, 10 and 14 game-days with **the same 224 people**. The rate lever cannot move a city that is already where it is going, and no value of the coefficient could have fixed that. T-1 adds the half that was missing: the tax slider moves the **target**.
+
+`A_target` is the **most binding of three ceilings**, not their product:
+
+```
+A_target  = min( A_stab(S), A_happy(H), A_tax(Δ_tax) )                    ∈ [0.25, 1.00]
+
+A_happy(H)     = clamp( 1 + ATTRACT_HAPPINESS_PULL × min(0, H − ATTRACT_HAPPINESS_REF) / 100,  0.25, 1.00 )
+A_tax(Δ_tax)   = clamp( 1 + TAX_RATE_ATTRACT_PULL  × min(0, Δ_tax)                      / 100,  0.25, 1.00 )
+
+ATTRACT_HAPPINESS_REF  = 60      # this doc, sim/population/population_system.gd
+ATTRACT_HAPPINESS_PULL = 1.30    # this doc
+TAX_RATE_ATTRACT_PULL  = 1.30    # DOC 03, data/economy.json → tax
+Δ_tax = happiness_tax_delta = −(r − 0.09) × 220                          # doc 03 §2.2, unchanged
+```
+
+**`min`, and not a product — this is the whole no-double-count rule.** The tax bill is *already* inside `H`: `happiness_tax_delta` is a term of `H_target` (§2.10.3), so twelve game-hours after a hike the happiness channel has absorbed it too. Multiplying `A_happy × A_tax` would bill the same discontent twice, and it compounds exactly where it should not: the shipped detent-12 city settles at `H = 57.9` *because of the tax*, so the product would deepen the ceiling from 0.7998 to 0.778 for the same 15.4 points, and the deeper it went the further `H` would fall. Taking the **minimum** bills it once, through whichever channel is currently harsher: the tax term is *immediate* (policy is instant), the happiness term is *lagged* (mood is not). Because both terms carry the same pull, the crossover has a one-line reading: **the happiness ceiling takes over exactly when `H` has fallen further below 60 than the tax bill itself** — at the top detent, below `60 − 15.4 = 44.6`. That is genuine misery, not the tax bill charged again. The rate is read exactly once in the entire coupling, by `happiness_tax_delta`; §2.10 never sees `tax_rate`.
+
+**Why the reference is 60.** It is this doc's own `H` baseline (§2.10.3) and the pivot of doc 03's `f_happiness`, so *a perfectly average city is attractiveness-neutral exactly as it is revenue-neutral*. Above 60 the happiness ceiling is 1.00 — happiness can never lift `A_target` **above** the stability ceiling, only fail to drag it below. The same one-sided rule governs `A_tax` (`min(0, Δ_tax)`): cutting tax buys a 1.40× faster refill through `growth_rate_multiplier`, never a higher ceiling. Rate and target are different levers on purpose.
+
+**Worked at the three detents**, founding city (`S = 0.9475`, so `A_stab = 1.00`):
+
+| detent | `r` | `Δ_tax` | `A_tax` | equilibrium `H` | `A_happy` | **`A_target`** | equilibrium `occupied_population` |
+|---|---|---|---|---|---|---|---|
+| 0 | 0.04 | **+11.0** | 1.00 (`min(0, +11) = 0`) | 93.2 | 1.00 | **1.00** | 144 |
+| 5 (base) | 0.09 | **0.0** | 1.00 | 82.2 | 1.00 | **1.00** | **144** |
+| 12 | 0.16 | **−15.4** | `1 + 1.30 × (−15.4)/100` = **0.7998** | 66.8 | 1.00 (66.8 > 60) | **0.7998** | 115 |
+
+Detent 12 in full: `A_tax = 0.7998`; `A_happy(66.8) = 1.00` because the happiness channel has *not* been charged for the same 15.4 points; `A_stab = 1.00`; so `A_target = 0.7998`. `A_city` walks down to it with the rate multiplier `0.44`, i.e. an effective time constant of `12 / 0.44 = 27.3` game-hours — half the loss is gone by hour 19, and `occupied_population = 144 × 0.7998 = 115.2 → 115`. **Twenty-nine residents, the same order as the `F_SOUTH` multi-district blackout above**, for a revenue factor of ×1.778. That is the trade doc 92 F-5 costed the ruling against: money now, a smaller city later, and the two are legible against each other on the same screen.
+
+**Measured as integrated** (`tests/test_balance_gates.gd` gates 12 / 12b, seed 1337, a controlled pair — identical build plan, identical tiles, identical seed, one field different):
+
+| game-day | detent 5 population / treasury | detent 12 population / treasury |
+|---|---|---|
+| 1 | 224 / $13,485 | 198 / $26,896 |
+| 3 | 224 / $38,470 | 182 / $69,652 |
+| 7 | 224 / $86,415 | **179** / $147,073 |
+| 21 | 222 / $211,882 | **177** / $359,430 |
+
+−20.3 % population for +69.6 % cash at three game-weeks, diverging inside the **first** game-day. The detent-12 city settles at `H = 57.9`, which is *below* the 60 reference — `A_happy = 0.973` — and still does not bind, because `A_tax = 0.7998` is harsher. That is the `min` doing its job in the shipped sim, not just on paper.
+
+And on the shared strategy matrix, where doc 92 F-5 originally measured "+46 % value created for a happiness number that changed nothing else" (`tools/playtest.gd`, 21 game-days, seed 1337, coarse):
+
+| strategy | treasury | value created | **population** | happiness |
+|---|---|---|---|---|
+| `balanced` | $480,480 | $847,620 | **811** | 71.9 |
+| `tax_squeezer` | $1,133,515 | $1,719,615 | **747** | 64.9 |
+
+`tax_squeezer` now **trails on population** while leading on cash — F-5's threshold, met. The matrix is quoted here as corroboration only; the *gate* is the controlled pair above, because two scripted agents earn different money and therefore build different cities, and the population column of a strategy comparison confounds the detent with the build plan.
+
+**Ordering.** `PopulationSystem.advance` reads the `H` of the game-hour just lived and `HappinessModel.advance` then relaxes on the aggregates population just produced (`employment_balance` is a §2.10.1 output and an §2.10.3 input). One game-hour of lag, deliberately: it cuts the cycle, it is the same on the fine and coarse paths, and every term is still a closed-form exponential in `dt_h`, so §5's "the 1 Hz and 1-game-hour paths agree exactly" survives T-1 intact.
 
 **Worked at t0.** Every authored building has `age ≥ 36 gh` ⇒ `ramp = 1.00`; all are `active` ⇒ `STATE_OCCUPANCY = 1.00`; `city_stability = 0.9475` ⇒ `A_target = (0.9475 − 0.35)/0.50 = 1.195 → clamp 1.00`, and `A_city` is authored at 1.00.
 
@@ -1088,7 +1144,7 @@ Doc numbers below are the **canonical on-disk numbering** (report 98 Ruling Zero
 |---|---|---|
 | **01 Time & ticks** | `ctx.channels.construction_rate` (**every development work unit multiplies it** — C-29), `EVERY_SECOND` / `EVERY_HOUR` / `EVERY_DAY` cadences, `ctx.catchup_index` and `OfflinePolicy.band_for()` for the coarse path, `sim_time_minutes` for building age | nothing (this doc authors no curve and no timer template) |
 | **02 Buildings & construction** | footprints, `population` / `jobs` **capacity**, `condition ∈ [0,1]`, `state` + `STATE_OCCUPANCY`, `fire_load`, `power_demand_kw`, `water_demand`, `coverage_police/fire`; the §2.10 crew-hour timing model; the `water_facility` variant list | `block_of(tile)`, `district_id` of a tile, buildable/vacant tile set, parcel geometry, road-adjacency legality, tile-occupancy arbitration; **`city_level` for `E_CITY_LEVEL` and `min_city_level`**; **`occupancy[id]` / `job_fill[id]`** (G-1); land-development jobs submitted into `ConstructionQueue` (G-2) |
-| **03 Economy, taxes & land** | the canonical `land_price()` (§2.7), the six `PHASE_BASE` costs + `terrain_phase_mult` (§2.8), treasury debits, `tax_rate`, `happiness_tax_delta = −(r − 0.09) × 220`, `growth_rate_multiplier = 1 − (r − 0.09) × 3.5` | the full input bundle of §2.4; `dev_terrain`, `d`, `n`, `risk_index`, `prestige`, `blocks_owned`; **`occ_b` per building**, **district `stability ∈ [0,1]`**, **`city_stability`**, **city `happiness ∈ [0,100]`**, **`city_level`**. **The starter city delivers exactly $686/gh gross base tax against `STARTER_GROSS_TAX_PER_HOUR 686 ± 5 %`** |
+| **03 Economy, taxes & land** | the canonical `land_price()` (§2.7), the six `PHASE_BASE` costs + `terrain_phase_mult` (§2.8), treasury debits, `tax_rate`, `happiness_tax_delta = −(r − 0.09) × 220`, `growth_rate_multiplier = 1 − (r − 0.09) × 8.0`, **`attractiveness_tax_factor(r)` (§2.10.2a, amendment T-1)** | the full input bundle of §2.4; `dev_terrain`, `d`, `n`, `risk_index`, `prestige`, `blocks_owned`; **`occ_b` per building**, **district `stability ∈ [0,1]`**, **`city_stability`**, **city `happiness ∈ [0,100]`**, **`city_level`**. **The starter city delivers exactly $686/gh gross base tax against `STARTER_GROSS_TAX_PER_HOUR 686 ± 5 %`** |
 | **04 Electrical grid** | component capacities/levels/radii, outage state, **`block_dark` per block**, `power_availability_hour(b)` | starter topology (§2.9.5) with exact tile polylines, **23 transformer sites (13 L1 / 9 L2 / 1 L3, `rated_mva` 2.40)**, **177 line tiles = 1.42 km**, 783 road tiles and 81 intersections as distributed-sink counts, `wind`/`wildfire` per block for doc 06's storm rolls, `block_of(tile)` for crew routing; **`district_dark` derived from their `block_dark`** (C-38) |
 | **05 Water system** | pressure, zone state, tank level, per-variant `base_kw` / capacity / `coverage_frac`, `water_service_factor_hour(b)` | starter topology (§2.9.6) with the `source`/`treatment`/`pump`/`tank` variant split, 9 hydrant tiles, Mill Pond as the `source`, **`elev_m(tile)`** (block-flat), `is_developed(tile)`, `block_of(tile)`; `WTR-1`'s power dependency on `F_SOUTH` |
 | **06 Incidents, dispatch & fleets** | `crime_index`, `fire_risk` per district, station/vehicle definitions, crew roster and rates, `destroy_allowed()` participation | **`stability ∈ [0,1]` per district** (§2.6) for `f_stab`, `city_level` for vehicle unlocks, station sites, hydrant sites, `block_of(tile)`, the land-development phase→crew-type mapping (G-2) |
@@ -1346,7 +1402,9 @@ Only constants **owned by this doc**. Land price constants live in `data/economy
 }
 ```
 
-Constants read from elsewhere and **never restated here**: `happiness_tax_delta` and `growth_rate_multiplier` coefficients (doc 03 §2.4), `HAPPY_SLOPE` / `f_happiness` clamps (doc 03), `STATE_OCCUPANCY` (doc 02 §2.12), `construction_rate` (doc 01 `data/time.json`), transformer capacities and streetlight/signal kW (doc 04 `data/power.json`), `fire_flow_per_engine_m3h` and every tank/pump rating (doc 05 `data/water.json`).
+**§2.10 population constants live in code**, beside the relaxation they belong to, not in `data/world.json`: `WORKFORCE_FRACTION 0.55`, `OCCUPANCY_RAMP_HOURS 36`, `ATTRACT_TAU_H 12`, `HAPPINESS_TAU_H 12`, and T-1's `ATTRACT_FLOOR 0.25` / `ATTRACT_HAPPINESS_REF 60` / `ATTRACT_HAPPINESS_PULL 1.30` (`sim/population/`). T-1's **tax-side** coefficient is doc 03's, in `data/economy.json → tax.TAX_RATE_ATTRACT_PULL`, because it is a price on the tax slider and doc 03 is the tax authority; it is authored to the same 1.30 as the happiness-side pull because both act on happiness points, and neither reads the other — a retune of one is a retune of one.
+
+Constants read from elsewhere and **never restated here**: `happiness_tax_delta`, `growth_rate_multiplier` and `attractiveness_tax_factor` coefficients (doc 03 §2.2 / §2.4), `HAPPY_SLOPE` / `f_happiness` clamps (doc 03), `STATE_OCCUPANCY` (doc 02 §2.12), `construction_rate` (doc 01 `data/time.json`), transformer capacities and streetlight/signal kW (doc 04 `data/power.json`), `fire_flow_per_engine_m3h` and every tank/pump rating (doc 05 `data/water.json`).
 
 ---
 
@@ -1413,6 +1471,12 @@ These were *findings*, not disagreements — each was a number a sibling doc pro
 | **G-5** | `stats` section owned as **local counters only** (§2.12), 23 monotone counters, append-only migration, no network analytics. |
 | **G-7** | **`tools/gen_bench_city.py`** specified as the same generator family as `tools/gen_starter_city.py`, with three profiles (`starter` / `bench` / `reference`); emits `tests/fixtures/bench_city.json` as a save file so doc 08's ladder applies; new test 40 as this doc's leg of the three-way tripwire. |
 | **R-16** | Full recomputation shown with arithmetic in §2.9.4–§2.9.6: manifest, tax anchor, population, jobs, per-class night peak, feeder split, water demand at three hours of the day, tank autonomy in four scenarios, transformer fleet and line inventory, four district stability values and `city_stability`. Tests 10–14 and 24–26 carry the new expectations. |
+
+### Wave 4 (overseer ruling — the tax–growth coupling)
+
+| Ruling | What changed in this doc |
+|---|---|
+| **T-1** | **New §2.10.2a: `A_target` becomes a function of stability AND happiness AND tax burden.** `A_target = min(A_stab(S), A_happy(H), A_tax(Δ_tax))`, with `A_happy(H) = clamp(1 + 1.30 × min(0, H − 60)/100, 0.25, 1.00)` and `A_tax(Δ) = clamp(1 + TAX_RATE_ATTRACT_PULL (1.30, doc 03) × min(0, Δ)/100, 0.25, 1.00)`. **`A_stab` is this doc's published formula verbatim**, so §2.10.2's t0 (`A_target = 1.00`, 144 people) and `F_SOUTH` (`S = 0.60 → 0.50`, 144 → 116 in six hours) worked values are unchanged, and so is the founding ledger (`+$336.50/gh`, gate 1). The composition is `min` and not a product: `Δ_tax` is already a term of `H_target` (§2.10.3), so a product would bill the same discontent twice; `min` bills it once through whichever channel is harsher, and the tax rate is read exactly once in the whole coupling (by `happiness_tax_delta`, doc 03). §8 gains a "these constants live in code" paragraph naming the three new ones and pointing at doc 03 for the tax-side pull; §5's doc 03 row gains `attractiveness_tax_factor(r)` and its `growth_rate_multiplier` coefficient is corrected 3.5 → 8.0 (doc 92 pass-2 F-5 moved it and this doc still quoted the old value). **What it fixes:** doc 92 F-5's ruling had no bite — `growth_rate_multiplier` scales `(A_target − A_city)`, which is zero for any city sitting at the saturated ceiling, so the top detent cost a healthy city literally zero people. Measured after T-1, controlled pair, seed 1337: **−20.3 % population for +69.6 % cash at 21 game-days, diverging inside the first game-day.** New gate `test_gate_12b_tax_squeezing_trails_on_population`; gate 12's `assert_eq(healthy_max, healthy_base)` — written to fail loudly on this day — becomes the divergence assertion it was waiting for. |
 
 ### Round 3 (report 98 §15)
 
