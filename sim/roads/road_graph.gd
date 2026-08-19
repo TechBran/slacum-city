@@ -1,0 +1,848 @@
+class_name RoadGraph
+extends RefCounted
+## Doc 10 §2.4–§2.5, §2.9: the contracted road graph derived from the tile grid.
+##
+## Nodes are intersections, dead ends, isolated tiles and class-transition
+## points. Corners (degree 2, same class) are interior polyline vertices, which
+## roughly halves node count versus a naive per-tile graph. Edges are the
+## polylines between nodes, inclusive of both endpoint tiles.
+##
+## THE GRAPH IS NEVER SAVED (§3.2). It is rebuilt in full from the tile grid on
+## load and closures are re-applied over it. Everything here is therefore
+## derived state — but it is derived DETERMINISTICALLY: tiles are scanned in
+## (y, x) order, neighbours in a fixed direction order, and edge/node ids are
+## recycled by tile-list hash so an unrelated edit 30 tiles away cannot
+## renumber a corridor (which would storm `route_invalidated`).
+
+## Fixed neighbour order — determinism (constitution §5). No diagonals (§2.2).
+const DIRS: Array[Vector2i] = [
+	Vector2i(0, -1), Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, 1),
+]
+
+var grid: TileGrid
+var tun: RoadTunables
+
+var graph_version: int = 0
+## Instrumented: tiles walked by the last rebuild pass (doc 10 test 6 asserts it).
+var last_retraced_tiles: int = 0
+## True while a budgeted rebuild still has work queued; route-cache reuse is
+## suppressed for pending edges while it is set (§2.5).
+var graph_dirty: bool = false
+
+var _nodes: Dictionary = {}  # node_id -> record
+var _edges: Dictionary = {}  # edge_id -> record
+var _node_order: Array[int] = []
+var _edge_order: Array[int] = []
+var tile_to_node: Dictionary = {}  # Vector2i -> node_id
+var tile_edges: Dictionary = {}  # Vector2i -> Array[int] (ascending)
+var _road_tiles: Dictionary = {}  # Vector2i -> road class id (never CLASS_NONE)
+var _edge_key: Dictionary = {}  # canonical tile-list key -> edge_id (live)
+var _next_node_id: int = 0
+var _next_edge_id: int = 0
+var _free_node_ids: Array[int] = []
+var _free_edge_ids: Array[int] = []
+var _pending_dirty: Array[Vector2i] = []
+## Id order is kept lazily: appends mark it dirty and the sorted accessors
+## resolve it once. Sorting on every create was ~40% of a full rebuild.
+var _order_dirty: bool = false
+var _components: Dictionary = {}  # component_id -> Array[int] node ids
+var _component_count: int = 0
+## Components are relabelled LAZILY: an edit marks them dirty and the first
+## component query resolves it. A per-tick edit that nobody asks about (the
+## common case while the player is dragging a road) costs nothing.
+var _components_dirty: bool = true
+
+
+func _init(p_grid: TileGrid, p_tun: RoadTunables) -> void:
+	grid = p_grid
+	tun = p_tun
+
+
+# --------------------------------------------------------------- construction
+
+## Full rebuild from the tile grid. Measured target: < 30 ms for 12,000 road
+## tiles (§3.2); the 783-tile starter core is ~1 ms.
+func rebuild_all() -> Dictionary:
+	var removed := edge_ids_sorted()
+	_nodes.clear()
+	_edges.clear()
+	_node_order.clear()
+	_edge_order.clear()
+	tile_to_node.clear()
+	tile_edges.clear()
+	_edge_key.clear()
+	_road_tiles.clear()
+	_free_node_ids.clear()
+	_free_edge_ids.clear()
+	_next_node_id = 0
+	_next_edge_id = 0
+	_pending_dirty.clear()
+	last_retraced_tiles = 0
+
+	var tiles := _scan_road_tiles()
+	for t in tiles:
+		_road_tiles[t] = grid.road_class_at(t.x, t.y)
+	for t in tiles:
+		if _is_node_tile(t):
+			_create_node(t)
+	var seen: Dictionary = {}
+	var added: Array[int] = []
+	_trace_from_nodes(node_ids_sorted(), seen, added)
+	_promote_orphan_loops(tiles, seen, added)
+	_refresh_node_meta(node_ids_sorted())
+	_components_dirty = true
+	graph_dirty = false
+	graph_version += 1
+	return {"added_edges": added, "removed_edges": removed}
+
+
+## Incremental rebuild (§2.5). `edited` is this tick's batch of tiles that were
+## added, removed or class-changed. Returns {added_edges, removed_edges}.
+##
+## The dirty set is the edits plus their orthogonal neighbours, because those
+## are exactly the tiles whose node predicate an edit can change. Retracing
+## never walks past a surviving node, so cost is O(length of affected chains).
+func apply_edits(edited: Array) -> Dictionary:
+	last_retraced_tiles = 0
+	var dirty: Dictionary = {}
+	for entry in _pending_dirty:
+		dirty[entry] = true
+	_pending_dirty.clear()
+	for entry in edited:
+		var t: Vector2i = entry
+		dirty[t] = true
+		for d in DIRS:
+			var q: Vector2i = t + d
+			if TileGrid.in_bounds(q.x, q.y):
+				dirty[q] = true
+	# Re-read tile membership for every dirty tile (the grid is authoritative).
+	for t in _sorted_tiles(dirty.keys()):
+		var live := _grid_class(t)
+		if live != RoadTunables.CLASS_NONE:
+			_road_tiles[t] = live
+		else:
+			_road_tiles.erase(t)
+
+	var dirty_tiles := _sorted_tiles(dirty.keys())
+	# 1. Delete every edge whose tile list intersects the dirty set.
+	var removed: Array[int] = []
+	var doomed: Dictionary = {}
+	for t in dirty_tiles:
+		for edge_id in tile_edges.get(t, []):
+			doomed[edge_id] = true
+	var doomed_ids := doomed.keys()
+	doomed_ids.sort()
+	var stash: Dictionary = {}  # key -> {id, record}
+	for edge_id in doomed_ids:
+		var record: Dictionary = _edges[edge_id]
+		stash[String(record["key"])] = {"id": edge_id, "record": record}
+		_delete_edge(edge_id)
+		removed.append(edge_id)
+	_settle_order()  # free lists must be ascending before any id is recycled
+
+	# 2. Re-evaluate the node predicate across the dirty set.
+	var touched: Array[int] = []
+	for t in dirty_tiles:
+		var is_road := _road_tiles.has(t)
+		var was_node: bool = tile_to_node.has(t)
+		var should_be_node := is_road and _is_node_tile(t)
+		if was_node and not should_be_node:
+			_delete_node(int(tile_to_node[t]))
+		elif should_be_node and not was_node:
+			touched.append(_create_node(t))
+		elif should_be_node:
+			touched.append(int(tile_to_node[t]))
+	# Endpoints of deleted edges that still exist must be retraced too — an
+	# edit can merge two edges through a node that itself did not change.
+	for key in _sorted_keys(stash):
+		var record: Dictionary = stash[key]["record"]
+		for tile in [record["tiles"][0], record["tiles"][-1]]:
+			if tile_to_node.has(tile):
+				touched.append(int(tile_to_node[tile]))
+	# Neighbours of dirty tiles that are nodes: their outgoing chain may now
+	# reach a different place.
+	for t in dirty_tiles:
+		for d in DIRS:
+			var q: Vector2i = t + d
+			if tile_to_node.has(q):
+				touched.append(int(tile_to_node[q]))
+
+	var unique_touched: Array[int] = []
+	var seen_nodes: Dictionary = {}
+	for node_id in touched:
+		if not seen_nodes.has(node_id):
+			seen_nodes[node_id] = true
+			unique_touched.append(node_id)
+	unique_touched.sort()
+
+	# 3. Retrace, within the per-tick tile budget.
+	var seen: Dictionary = {}
+	var added: Array[int] = []
+	var budget := tun.rebuild_tile_budget
+	var deferred: Array[Vector2i] = []
+	for i in unique_touched.size():
+		if last_retraced_tiles >= budget:
+			# Carry the rest: the graph stays valid, just not yet complete.
+			for j in range(i, unique_touched.size()):
+				if _nodes.has(unique_touched[j]):
+					deferred.append(_nodes[unique_touched[j]]["tile"])
+			break
+		_trace_from_nodes([unique_touched[i]], seen, added, stash)
+	_promote_orphan_loops(dirty_tiles, seen, added, stash)
+	_refresh_node_meta(unique_touched)
+	_pending_dirty = deferred
+	graph_dirty = not _pending_dirty.is_empty()
+	_components_dirty = true
+	graph_version += 1
+	# An edge that was deleted and recreated with the SAME id and tile list is
+	# not a change at all — §2.5's edge-id stability rule.
+	var net_removed: Array[int] = []
+	for edge_id in removed:
+		if not _edges.has(edge_id):
+			net_removed.append(edge_id)
+	var net_added: Array[int] = []
+	for edge_id in added:
+		if not removed.has(edge_id):
+			net_added.append(edge_id)
+	return {"added_edges": net_added, "removed_edges": net_removed}
+
+
+# --------------------------------------------------------------- tile queries
+
+## Reads the AUTHORITATIVE tile grid. Used only where membership is in question;
+## every hot path uses `_class_of`, which reads the cached membership map.
+func _grid_class(t: Vector2i) -> int:
+	if not TileGrid.in_bounds(t.x, t.y):
+		return RoadTunables.CLASS_NONE
+	return grid.road_class_at(t.x, t.y)
+
+
+func _class_of(t: Vector2i) -> int:
+	return int(_road_tiles.get(t, RoadTunables.CLASS_NONE))
+
+
+## Doc 10 §2.4 calls an edge's class "uniform by construction", but at a class
+## TRANSITION both flanking tiles satisfy the node predicate, so the 2-tile edge
+## between them is genuinely mixed (see §9 of the roads REPORT). An edge takes
+## the SLOWEST class it contains, so a mixed segment can never be priced with
+## the arterial bonus it does not fully deserve.
+func _edge_class(tiles: Array) -> int:
+	var best := _class_of(tiles[0])
+	var best_mult := tun.class_mult(best)
+	for t in tiles:
+		var candidate := _class_of(t)
+		var mult := tun.class_mult(candidate)
+		if mult < best_mult or (mult == best_mult and candidate < best):
+			best = candidate
+			best_mult = mult
+	return best
+
+
+func _is_road(t: Vector2i) -> bool:
+	return _road_tiles.has(t)
+
+
+func is_road_tile(t: Vector2i) -> bool:
+	return _road_tiles.has(t)
+
+
+func road_tile_count() -> int:
+	return _road_tiles.size()
+
+
+func road_tiles_sorted() -> Array:
+	return _sorted_tiles(_road_tiles.keys())
+
+
+func road_tile_counts() -> Dictionary:
+	var street := 0
+	var avenue := 0
+	for t in _road_tiles:
+		if int(_road_tiles[t]) == RoadTunables.CLASS_AVENUE:
+			avenue += 1
+		else:
+			street += 1
+	return {"STREET": street, "AVENUE": avenue}
+
+
+func _road_neighbours(t: Vector2i) -> Array:
+	var out: Array = []
+	for d in DIRS:
+		var q: Vector2i = t + d
+		if _is_road(q):
+			out.append(q)
+	return out
+
+
+## §2.4 node predicate: degree ≠ 2, or degree 2 with a class transition.
+func _is_node_tile(t: Vector2i) -> bool:
+	var neighbours := _road_neighbours(t)
+	if neighbours.size() != 2:
+		return true
+	var own := _class_of(t)
+	var a := _class_of(neighbours[0])
+	var b := _class_of(neighbours[1])
+	return a != b or a != own
+
+
+func _scan_road_tiles() -> Array:
+	var out: Array = []
+	for z in TileGrid.SIZE:
+		for x in TileGrid.SIZE:
+			if grid.road_class_at(x, z) != RoadTunables.CLASS_NONE:
+				out.append(Vector2i(x, z))
+	return out
+
+
+# ------------------------------------------------------------- nodes & edges
+
+func _create_node(t: Vector2i) -> int:
+	if tile_to_node.has(t):
+		return int(tile_to_node[t])
+	var node_id: int
+	if not _free_node_ids.is_empty():
+		node_id = _free_node_ids.pop_front()
+	else:
+		node_id = _next_node_id
+		_next_node_id += 1
+	_nodes[node_id] = {
+		"id": node_id, "tile": t, "edge_ids": [] as Array[int], "degree": 0,
+		"signalised": false, "powered": true, "component_id": -1,
+	}
+	tile_to_node[t] = node_id
+	_node_order.append(node_id)
+	_order_dirty = true
+	return node_id
+
+
+func _delete_node(node_id: int) -> void:
+	if not _nodes.has(node_id):
+		return
+	var t: Vector2i = _nodes[node_id]["tile"]
+	tile_to_node.erase(t)
+	_nodes.erase(node_id)
+	_node_order.erase(node_id)
+	_free_node_ids.append(node_id)
+	_order_dirty = true
+
+
+func _create_edge(tiles: Array, key: String, stash: Dictionary = {}) -> int:
+	var edge_id: int
+	var carried: Dictionary = {}
+	if stash.has(key):
+		edge_id = int(stash[key]["id"])
+		carried = stash[key]["record"]
+		_free_edge_ids.erase(edge_id)
+	elif not _free_edge_ids.is_empty():
+		edge_id = _free_edge_ids.pop_front()
+	else:
+		edge_id = _next_edge_id
+		_next_edge_id += 1
+	var typed: Array[Vector2i] = []
+	for t in tiles:
+		typed.append(t)
+	var node_a := int(tile_to_node.get(typed[0], -1))
+	var node_b := int(tile_to_node.get(typed[typed.size() - 1], -1))
+	var record := {
+		"id": edge_id, "key": key,
+		"node_a": node_a, "node_b": node_b,
+		"tiles": typed,
+		"length_m": float(typed.size() - 1) * tun.tile_m,
+		"road_class": _edge_class(typed),
+		"condition": float(carried.get("condition", 1.0)),
+		"congestion": float(carried.get("congestion", 0.0)),
+		"closure_id": int(carried.get("closure_id", -1)),
+		"closure_cause": String(carried.get("closure_cause", "")),
+		"blocked_mask": int(carried.get("blocked_mask", 0)),
+		"district_id": String(carried.get("district_id", "")),
+		"dens_index": float(carried.get("dens_index", tun.dens_min)),
+		"speed_override": float(carried.get("speed_override", 1.0)),
+		"override_until_minute": int(carried.get("override_until_minute", -1)),
+	}
+	_edges[edge_id] = record
+	_edge_order.append(edge_id)
+	_order_dirty = true
+	_edge_key[key] = edge_id
+	for t in typed:
+		var list: Array = tile_edges.get(t, [])
+		if not list.has(edge_id):
+			list.append(edge_id)
+			list.sort()
+		tile_edges[t] = list
+	if node_a >= 0:
+		_attach_edge_to_node(node_a, edge_id)
+	if node_b >= 0 and node_b != node_a:
+		_attach_edge_to_node(node_b, edge_id)
+	return edge_id
+
+
+func _attach_edge_to_node(node_id: int, edge_id: int) -> void:
+	var list: Array[int] = _nodes[node_id]["edge_ids"]
+	if not list.has(edge_id):
+		list.append(edge_id)
+		list.sort()
+
+
+func _delete_edge(edge_id: int) -> void:
+	if not _edges.has(edge_id):
+		return
+	var record: Dictionary = _edges[edge_id]
+	for t in record["tiles"]:
+		var list: Array = tile_edges.get(t, [])
+		list.erase(edge_id)
+		if list.is_empty():
+			tile_edges.erase(t)
+		else:
+			tile_edges[t] = list
+	for node_key in ["node_a", "node_b"]:
+		var node_id := int(record[node_key])
+		if _nodes.has(node_id):
+			(_nodes[node_id]["edge_ids"] as Array).erase(edge_id)
+	_edge_key.erase(String(record["key"]))
+	_edges.erase(edge_id)
+	_edge_order.erase(edge_id)
+	_free_edge_ids.append(edge_id)
+	_order_dirty = true
+
+
+# ------------------------------------------------------------------- tracing
+
+func _direction_covered(node_tile: Vector2i, toward: Vector2i) -> bool:
+	for edge_id in tile_edges.get(node_tile, []):
+		var tiles: Array = _edges[edge_id]["tiles"]
+		if tiles[0] == node_tile and tiles.size() >= 2 and tiles[1] == toward:
+			return true
+		if tiles[tiles.size() - 1] == node_tile and tiles.size() >= 2 \
+				and tiles[tiles.size() - 2] == toward:
+			return true
+	return false
+
+
+func _walk(from_tile: Vector2i, first: Vector2i) -> Array:
+	var out: Array = [from_tile, first]
+	var prev := from_tile
+	var cur := first
+	var guard := 0
+	var limit := TileGrid.SIZE * TileGrid.SIZE
+	while not tile_to_node.has(cur):
+		var nxt := Vector2i(-1, -1)
+		var found := false
+		for d in DIRS:
+			var q: Vector2i = cur + d
+			if q == prev:
+				continue
+			if _is_road(q):
+				nxt = q
+				found = true
+				break
+		if not found:
+			break
+		prev = cur
+		cur = nxt
+		out.append(cur)
+		guard += 1
+		if guard > limit:
+			break
+	return out
+
+
+func _trace_from_nodes(node_ids: Array, seen: Dictionary, added: Array,
+		stash: Dictionary = {}) -> void:
+	for node_id in node_ids:
+		if not _nodes.has(node_id):
+			continue
+		var nt: Vector2i = _nodes[node_id]["tile"]
+		for d in DIRS:
+			var p: Vector2i = nt + d
+			if not _is_road(p):
+				continue
+			if _direction_covered(nt, p):
+				continue
+			var tiles := _walk(nt, p)
+			if tiles.size() < 2:
+				continue
+			if not tile_to_node.has(tiles[tiles.size() - 1]):
+				continue  # incomplete chain (budget stop) — retried next pass
+			var key := _tiles_key(tiles)
+			if seen.has(key) or _edge_key.has(key):
+				continue
+			seen[key] = true
+			added.append(_create_edge(tiles, key, stash))
+			last_retraced_tiles += tiles.size()
+
+
+## §2.4 degenerate case: a connected component with zero node candidates (a
+## pure loop) gets its lowest-(y, x) tile promoted to a node.
+func _promote_orphan_loops(candidates: Array, seen: Dictionary, added: Array,
+		stash: Dictionary = {}) -> void:
+	var visited: Dictionary = {}
+	for entry in candidates:
+		var t: Vector2i = entry
+		if not _is_road(t) or visited.has(t) or tile_to_node.has(t) or tile_edges.has(t):
+			continue
+		# Flood the component; abort if it already contains a node.
+		var component: Array = []
+		var stack: Array = [t]
+		var local: Dictionary = {t: true}
+		var has_node := false
+		while not stack.is_empty():
+			var cur: Vector2i = stack.pop_back()
+			component.append(cur)
+			if tile_to_node.has(cur):
+				has_node = true
+				break
+			for d in DIRS:
+				var q: Vector2i = cur + d
+				if _is_road(q) and not local.has(q):
+					local[q] = true
+					stack.push_back(q)
+		for c in local:
+			visited[c] = true
+		if has_node:
+			continue
+		var sorted_component := _sorted_tiles(component)
+		if sorted_component.is_empty():
+			continue
+		var promoted := _create_node(sorted_component[0])
+		_trace_from_nodes([promoted], seen, added, stash)
+
+
+func _refresh_node_meta(node_ids: Array) -> void:
+	var ids := node_ids if not node_ids.is_empty() else node_ids_sorted()
+	for node_id in ids:
+		if not _nodes.has(node_id):
+			continue
+		var record: Dictionary = _nodes[node_id]
+		var t: Vector2i = record["tile"]
+		record["degree"] = _road_neighbours(t).size()
+		record["signalised"] = _compute_signalised(record)
+
+
+## `signalised = degree ≥ 3 AND (any incident edge is AVENUE OR degree ≥ 4)`,
+## generalised through each class's `signal_min_degree` (avenue 3, street 4).
+func _compute_signalised(record: Dictionary) -> bool:
+	var degree := int(record["degree"])
+	if degree < 3:
+		return false
+	var min_degree := 99
+	for edge_id in record["edge_ids"]:
+		if not _edges.has(edge_id):
+			continue
+		min_degree = mini(min_degree, tun.signal_min_degree(int(_edges[edge_id]["road_class"])))
+	if min_degree == 99:
+		min_degree = tun.signal_min_degree(_class_of(record["tile"]))
+	return degree >= min_degree
+
+
+# ---------------------------------------------------------------- components
+
+## Deterministic component labelling by union-find over the edge list, with
+## component ids handed out in ascending node-id order so the partition is
+## reproducible. Union-find over a plain int Array is ~30x faster than the
+## dictionary BFS it replaced, which mattered: this runs on every road edit.
+func _relabel_components() -> void:
+	_components.clear()
+	var parent: Array[int] = []
+	parent.resize(_next_node_id)
+	for i in _next_node_id:
+		parent[i] = i
+	for edge_id in _edge_order:
+		var record: Dictionary = _edges[edge_id]
+		var a := int(record["node_a"])
+		var b := int(record["node_b"])
+		if a >= 0 and b >= 0:
+			_union(parent, a, b)
+	var root_to_component: Dictionary = {}
+	var next_component := 0
+	for node_id in node_ids_sorted():
+		var root := _find(parent, node_id)
+		if not root_to_component.has(root):
+			root_to_component[root] = next_component
+			next_component += 1
+		var component_id := int(root_to_component[root])
+		_nodes[node_id]["component_id"] = component_id
+		var members: Array = _components.get(component_id, [])
+		members.append(node_id)
+		_components[component_id] = members
+	_component_count = next_component
+	_components_dirty = false
+
+
+static func _find(parent: Array[int], start: int) -> int:
+	var root := start
+	while parent[root] != root:
+		root = parent[root]
+	var cursor := start
+	while parent[cursor] != root:
+		var next := parent[cursor]
+		parent[cursor] = root
+		cursor = next
+	return root
+
+
+static func _union(parent: Array[int], a: int, b: int) -> void:
+	var ra := _find(parent, a)
+	var rb := _find(parent, b)
+	if ra == rb:
+		return
+	if ra < rb:
+		parent[rb] = ra
+	else:
+		parent[ra] = rb
+
+
+func _settle_components() -> void:
+	if _components_dirty:
+		_relabel_components()
+
+
+func component_count() -> int:
+	_settle_components()
+	return _component_count
+
+
+func component_members(component_id: int) -> Array:
+	_settle_components()
+	return _components.get(component_id, [])
+
+
+func component_ids_sorted() -> Array:
+	_settle_components()
+	var ids := _components.keys()
+	ids.sort()
+	return ids
+
+
+func component_of_node(node_id: int) -> int:
+	_settle_components()
+	return int(_nodes.get(node_id, {}).get("component_id", -1))
+
+
+func component_of_tile(t: Vector2i) -> int:
+	if tile_to_node.has(t):
+		return component_of_node(int(tile_to_node[t]))
+	var list: Array = tile_edges.get(t, [])
+	if list.is_empty():
+		return -1
+	return component_of_node(int(_edges[list[0]]["node_a"]))
+
+
+# ------------------------------------------------------------------ accessors
+
+func node(node_id: int) -> Dictionary:
+	return _nodes.get(node_id, {})
+
+
+func edge(edge_id: int) -> Dictionary:
+	return _edges.get(edge_id, {})
+
+
+func has_edge(edge_id: int) -> bool:
+	return _edges.has(edge_id)
+
+
+func node_ids_sorted() -> Array[int]:
+	_settle_order()
+	return _node_order.duplicate()
+
+
+func edge_ids_sorted() -> Array[int]:
+	_settle_order()
+	return _edge_order.duplicate()
+
+
+func _settle_order() -> void:
+	if not _order_dirty:
+		return
+	_node_order.sort()
+	_edge_order.sort()
+	_free_node_ids.sort()
+	_free_edge_ids.sort()
+	_order_dirty = false
+
+
+func node_count() -> int:
+	return _nodes.size()
+
+
+func edge_count() -> int:
+	return _edges.size()
+
+
+func node_at(t: Vector2i) -> int:
+	return int(tile_to_node.get(t, -1))
+
+
+## One representative edge for a tile (the lowest id containing it); node tiles
+## resolve too, so `tile_to_edge` covers every road tile (doc 10 test 1).
+func edge_at(t: Vector2i) -> int:
+	var list: Array = tile_edges.get(t, [])
+	return int(list[0]) if not list.is_empty() else -1
+
+
+func edges_at(t: Vector2i) -> Array:
+	return (tile_edges.get(t, []) as Array).duplicate()
+
+
+func edge_tile_index(edge_id: int, t: Vector2i) -> int:
+	if not _edges.has(edge_id):
+		return -1
+	return (_edges[edge_id]["tiles"] as Array).find(t)
+
+
+## §2.7 endpoint snapping: expanding ring up to SNAP_RADIUS_TILES, ties broken
+## by (dist, y, x). Returns Vector2i(-1, -1) when nothing is in range.
+func nearest_road_tile(t: Vector2i, radius: int = -1) -> Vector2i:
+	if _is_road(t):
+		return t
+	var limit := radius if radius >= 0 else tun.snap_radius_tiles
+	for r in range(1, limit + 1):
+		var best := Vector2i(-1, -1)
+		var best_key := [999, 999]
+		for dz in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if maxi(absi(dx), absi(dz)) != r:
+					continue
+				var q := Vector2i(t.x + dx, t.y + dz)
+				if not _is_road(q):
+					continue
+				var key := [q.y, q.x]
+				if best.x < 0 or key < best_key:
+					best = q
+					best_key = key
+		if best.x >= 0:
+			return best
+	return Vector2i(-1, -1)
+
+
+func nearest_node(t: Vector2i) -> int:
+	var road := nearest_road_tile(t)
+	if road.x < 0:
+		return -1
+	if tile_to_node.has(road):
+		return int(tile_to_node[road])
+	var edge_id := edge_at(road)
+	if edge_id < 0:
+		return -1
+	var record: Dictionary = _edges[edge_id]
+	var index := (record["tiles"] as Array).find(road)
+	var from_a := index
+	var from_b := (record["tiles"] as Array).size() - 1 - index
+	return int(record["node_a"]) if from_a <= from_b else int(record["node_b"])
+
+
+func other_node(edge_id: int, node_id: int) -> int:
+	var record: Dictionary = _edges[edge_id]
+	return int(record["node_b"]) if int(record["node_a"]) == node_id else int(record["node_a"])
+
+
+## Signal power refresh (§2.6): read at P08 from THIS step's P06 output, so a
+## signal that goes dark at P06 slows the ambulance dispatched at P09 with zero
+## lag. `powered_of` is `power.is_tile_powered(tile) -> bool`.
+func refresh_signal_power(powered_of: Callable) -> int:
+	var changed := 0
+	for node_id in node_ids_sorted():
+		var record: Dictionary = _nodes[node_id]
+		if not bool(record["signalised"]):
+			record["powered"] = true
+			continue
+		var powered := true
+		if powered_of.is_valid():
+			powered = bool(powered_of.call(record["tile"]))
+		if bool(record["powered"]) != powered:
+			record["powered"] = powered
+			changed += 1
+	return changed
+
+
+## Doc 06 consumes this for `dark_frac` (§2.11). `district_of` maps a tile to a
+## district id; pass "" to list every signalised intersection in the city.
+func signalised_intersections(district_id: String, district_of: Callable) -> Array:
+	var out: Array = []
+	for node_id in node_ids_sorted():
+		var record: Dictionary = _nodes[node_id]
+		if not bool(record["signalised"]):
+			continue
+		if district_id != "":
+			var owner := ""
+			if district_of.is_valid():
+				owner = String(district_of.call(record["tile"]))
+			if owner != district_id:
+				continue
+		out.append({"node_id": node_id, "tile": record["tile"], "powered": bool(record["powered"])})
+	return out
+
+
+func dark_signal_endpoints(edge_id: int) -> int:
+	var record: Dictionary = _edges.get(edge_id, {})
+	if record.is_empty():
+		return 0
+	var count := 0
+	var seen: Dictionary = {}
+	for node_key in ["node_a", "node_b"]:
+		var node_id := int(record[node_key])
+		if node_id < 0 or seen.has(node_id) or not _nodes.has(node_id):
+			continue
+		seen[node_id] = true
+		var n: Dictionary = _nodes[node_id]
+		if bool(n["signalised"]) and not bool(n["powered"]):
+			count += 1
+	return count
+
+
+## Edges within `hops` graph hops of `edge_id`, keyed edge_id -> hop count
+## (excluding the edge itself). Used by closure spillback (§2.10).
+func edges_within_hops(edge_id: int, hops: int) -> Dictionary:
+	var out: Dictionary = {}
+	var frontier: Array[int] = [edge_id]
+	var seen: Dictionary = {edge_id: 0}
+	for hop in range(1, hops + 1):
+		var next_frontier: Array[int] = []
+		for current in frontier:
+			if not _edges.has(current):
+				continue
+			var record: Dictionary = _edges[current]
+			for node_key in ["node_a", "node_b"]:
+				var node_id := int(record[node_key])
+				if not _nodes.has(node_id):
+					continue
+				var incident: Array = _nodes[node_id]["edge_ids"]
+				for neighbour in incident:
+					if seen.has(neighbour):
+						continue
+					seen[neighbour] = hop
+					out[neighbour] = hop
+					next_frontier.append(neighbour)
+		frontier = next_frontier
+	return out
+
+
+# --------------------------------------------------------------------- helpers
+
+static func _tiles_key(tiles: Array) -> String:
+	var count := tiles.size()
+	var forward := PackedStringArray()
+	var reverse := PackedStringArray()
+	for i in count:
+		var a: Vector2i = tiles[i]
+		var b: Vector2i = tiles[count - 1 - i]
+		forward.append("%d,%d" % [a.x, a.y])
+		reverse.append("%d,%d" % [b.x, b.y])
+	var fwd := "|".join(forward)
+	var rev := "|".join(reverse)
+	return fwd if fwd <= rev else rev
+
+
+static func _sorted_tiles(tiles: Array) -> Array:
+	var out: Array = tiles.duplicate()
+	out.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		if a.y != b.y:
+			return a.y < b.y
+		return a.x < b.x)
+	return out
+
+
+static func _sorted_keys(dict: Dictionary) -> Array:
+	var keys := dict.keys()
+	keys.sort()
+	return keys

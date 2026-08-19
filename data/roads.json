@@ -1,0 +1,228 @@
+{
+  "version": 1,
+
+  "_pricing_owner_note": "report 98 RR-2 (extending C-07): ALL road prices live in data/economy.json -> roads, owned by doc 03. Deleted from this file: classes.*.build_cost, classes.*.upkeep_per_game_day, classes.*.demolish_refund_pct, avenue.upgrade_from_street_cost, condition.repair_cost_base, build.block_template_replacement_cost, build.block_template_upkeep_per_game_day. Roads carry NO standing upkeep in MVP: road cost = build + decay + repair, and repair is priced by doc 03's C-16 formula capital_value x damage_fraction x 0.85 x M_repair. This file keeps only physical constants: crew-hours, condition, decay, damage fractions.",
+  "_condition_scale_note": "report 98 RR-3 (extending C-14): condition is on [0,1] everywhere in this file. The former [0,100] point scale is deleted; decay rates and the hazard threshold were divided by 100 and the hazard coefficient multiplied by 100 so every output value is unchanged. UI may display round(condition * 100) as a percentage.",
+
+  "classes": {
+    "street": {
+      "id": 1, "doc06_name": "local", "road_class_mult": 1.00,
+      "k_base": 1.00, "s_cong": 0.80,
+      "build_crew_hours": 0.50,
+      "condition_base_decay": 0.0090,
+      "signal_min_degree": 4
+    },
+    "avenue": {
+      "id": 2, "doc06_name": "arterial", "road_class_mult": 1.25,
+      "k_base": 0.64, "s_cong": 0.55,
+      "build_crew_hours": 1.40,
+      "condition_base_decay": 0.0060,
+      "signal_min_degree": 3,
+      "upgrade_from_street_crew_hours": 0.90
+    }
+  },
+  "_classes_note": "alley (id 3, doc06_name 'alley', road_class_mult 0.80) is reserved, not built in MVP",
+  "_classes_price_note": "per-tile build price, street->avenue upgrade price and the demolish refund fraction are doc 03's: data/economy.json -> roads.build_cost_per_tile / roads.upgrade_cost_per_tile / roads.demolish_refund_fraction (RR-2)",
+
+  "route_classes": {
+    "emergency":    { "id": 0, "cong_relief": 0.65, "node_relief": 0.60, "wx_resist": 0.25 },
+    "utility":      { "id": 1, "cong_relief": 0.30, "node_relief": 0.20, "wx_resist": 0.10 },
+    "construction": { "id": 2, "cong_relief": 0.10, "node_relief": 0.00, "wx_resist": 0.00 },
+    "civilian":     { "id": 3, "cong_relief": 0.00, "node_relief": 0.00, "wx_resist": 0.00 }
+  },
+  "_route_classes_note": "absolute speed (speed_mpgm) is owned by doc 06, never by this file",
+
+  "cost": {
+    "tile_m": 8.0,
+    "cond_penalty_max": 0.60,
+    "desperate_block_mult": 12.0,
+    "reverse_penalty_gm": 0.50,
+    "speed_override_min": 0.10,
+    "congestion_index_max": 2.0
+  },
+
+  "node_delay": {
+    "_owner_note": "report 98 G-6: the traffic-signal outage penalty is OWNED by doc 10. dark_signal_delay_gm here and congestion.dark_signal_add below are the whole of it. Doc 04 publishes power state only and defines neither.",
+    "stop_delay_gm": 0.04,
+    "signal_delay_gm": 0.12,
+    "dark_signal_delay_gm": 0.45,
+    "dark_congestion_coeff": 2.0,
+    "powered_congestion_coeff": 1.0
+  },
+
+  "congestion": {
+    "full_pass_cadence": "EVERY_MINUTE",
+    "smooth_per_game_minute": 0.35,
+    "quantise_step": 0.05,
+    "dens_k": 0.0022,
+    "dens_min": 0.20,
+    "dens_max": 1.60,
+    "dens_radius_tiles": 6,
+    "spillback_hop1": 0.50,
+    "spillback_hop2": 0.25,
+    "dark_signal_add": 0.19,
+    "_dark_signal_add_note": "report 98 G-6, doc 10 owns it; pairs with node_delay.dark_signal_delay_gm",
+    "max_active_closures": 128,
+    "event_peak": 1.40,
+    "event_radius_tiles": 40,
+    "event_inbound_lead_gm": 45,
+    "event_outbound_tail_gm": 45,
+    "event_during_factor": 0.25,
+    "evac_peak": 2.50,
+    "evac_decay_gm": 180,
+    "default_profile_weights": { "res": 0.55, "com": 0.30, "ind": 0.05, "civ": 0.10 },
+    "_default_profile_weights_note": "ADDED BEYOND doc 10 section 8: doc 09's DistrictRegistry does not yet publish district_profile_weights(), so an edge whose district has no published mix falls back to this. These are worked example D's weights. Delete the fallback once doc 09 ships the real per-district building mix."
+  },
+
+  "tod_curves": {
+    "res": [0.10,0.06,0.05,0.05,0.07,0.15,0.40,0.85,0.70,0.45,0.35,0.35,0.45,0.40,0.38,0.45,0.65,0.90,0.95,0.70,0.50,0.40,0.28,0.18],
+    "com": [0.08,0.05,0.04,0.04,0.05,0.10,0.25,0.55,0.80,0.85,0.85,0.90,0.95,0.90,0.85,0.85,0.90,0.95,0.85,0.65,0.50,0.40,0.28,0.15],
+    "ind": [0.20,0.18,0.18,0.18,0.22,0.35,0.60,0.75,0.70,0.68,0.68,0.65,0.60,0.65,0.68,0.70,0.75,0.65,0.45,0.35,0.30,0.28,0.25,0.22],
+    "civ": [0.10,0.08,0.08,0.08,0.10,0.15,0.35,0.75,0.65,0.50,0.45,0.45,0.50,0.50,0.55,0.75,0.70,0.60,0.45,0.35,0.30,0.25,0.20,0.14]
+  },
+
+  "weather": {
+    "clear":        { "slowdown": 0.00, "cong_add": 0.00, "wear": 0.00 },
+    "cloudy":       { "slowdown": 0.00, "cong_add": 0.00, "wear": 0.00 },
+    "fog":          { "slowdown": 0.10, "cong_add": 0.16, "wear": 0.00 },
+    "rain":         { "slowdown": 0.08, "cong_add": 0.08, "wear": 0.30 },
+    "heavy_rain":   { "slowdown": 0.18, "cong_add": 0.19, "wear": 0.30 },
+    "thunderstorm": { "slowdown": 0.22, "cong_add": 0.24, "wear": 0.30 },
+    "high_wind":    { "slowdown": 0.05, "cong_add": 0.03, "wear": 0.00 },
+    "snow":         { "slowdown": 0.30, "cong_add": 0.32, "wear": 0.80 },
+    "blizzard":     { "slowdown": 0.55, "cong_add": 0.48, "wear": 0.80 },
+    "extreme_cold": { "slowdown": 0.12, "cong_add": 0.06, "wear": 0.80 },
+    "heat_wave":    { "slowdown": 0.00, "cong_add": 0.00, "wear": 0.25 }
+  },
+
+  "closures": {
+    "dominance_order": ["flood_deep","accident_major","debris","flood_shallow","police_cordon","construction_new","accident_minor","construction_work"],
+    "causes": {
+      "accident_minor":    { "mult": [1.4, 2.2, 2.2, 3.0], "cong_add": 0.56, "hard": false, "auto_expire_gm": 90 },
+      "accident_major":    { "mult": [1.8, 4.0, 3.5, -1 ], "cong_add": 0.88, "hard": false, "auto_expire_gm": 240 },
+      "flood_shallow":     { "mult": [2.0, 2.5, 2.2, 3.5], "cong_add": 0.64, "hard": false, "auto_expire_gm": -1 },
+      "flood_deep":        { "mult": [-1,  -1,  -1,  -1 ], "cong_add": 0.80, "hard": true,  "auto_expire_gm": -1 },
+      "construction_new":  { "mult": [2.2, 2.5, 1.0, -1 ], "cong_add": 0.32, "hard": false, "auto_expire_gm": -1 },
+      "construction_work": { "mult": [1.5, 1.6, 1.2, 2.0], "cong_add": 0.40, "hard": false, "auto_expire_gm": -1 },
+      "debris":            { "mult": [2.5, 3.0, 1.5, -1 ], "cong_add": 0.72, "hard": false, "auto_expire_gm": -1 },
+      "police_cordon":     { "mult": [1.0, 1.2, 1.2, -1 ], "cong_add": 0.48, "hard": false, "auto_expire_gm": -1 }
+    },
+    "_mult_index": "[emergency, utility, construction, civilian]; -1 = BLOCK",
+    "soft_block_second_chance": ["accident_major","debris","police_cordon","construction_new"],
+    "flood_deep_to_shallow_depth_m": 0.35,
+    "flood_shallow_clear_depth_m": 0.10
+  },
+
+  "condition": {
+    "_scale": "[0,1]; 1.0 = newly finished, 0.0 = COLLAPSED (report 98 RR-3)",
+    "congestion_wear_coeff": 0.75,
+    "tiers": { "good": 0.75, "poor": 0.50, "failing": 0.25, "critical_event": 0.20 },
+    "poor_civilian_speed_mult": 0.90,
+    "damage": {
+      "_note": "these deltas are also the C-16 damage_fraction per cause; doc 03 multiplies them by capital_value to price the repair (RR-2)",
+      "accident_major_resolve": -0.08,  "accident_major_tiles": 3,
+      "flood_deep_recede": -0.15,
+      "flood_shallow_recede": -0.04,
+      "adjacent_structure_fire": -0.06,
+      "earthquake": -0.40, "earthquake_collapse_chance": 0.12
+    },
+    "_repair_price_note": "report 98 RR-2: the former repair_cost_base 600 is DELETED. Repair price = economy.repair_cost_road(class, damage_fraction) where damage_fraction = 1 - condition; the formula and every dollar are doc 03's (C-16), in data/economy.json.",
+    "repair_crew_hours_base": 0.35,
+    "repair_min_tiles": 4,
+    "under_construction_seed": 0.10,
+    "auto_repair_thresholds": [0, 0.25, 0.40, 0.55],
+    "auto_repair_default_threshold": 0.40,
+    "auto_repair_default_daily_cap": 25000,
+    "_auto_repair_cap_note": "a player budget setting evaluated against doc 03's quotes, not a price authored here",
+    "auto_repair_max_jobs_per_day": 3
+  },
+
+  "build": {
+    "_template_note": "report 98 C-60: the block road template is doc 09's (data/starter_city.json / doc 09 section 2.9.1), NOT this file's. The deleted {0,8} 60-tile grid lived here; this file now carries only the class MAPPING and the derived totals.",
+    "block_template_owner_doc": "09",
+    "block_template_class_map": { "boundary_arterial": "avenue", "interior_collector": "street", "player_placed": "street" },
+    "block_template_tiles_per_block": 87,
+    "block_template_avenue_tiles": 60,
+    "block_template_street_tiles": 27,
+    "block_template_crew_hours": 97.5,
+    "block_template_baseline_decay_per_game_day": 0.6030,
+    "core_tiles_783": { "avenue": 540, "street": 243 },
+    "core_damage_fraction_accrual_per_gh": 0.28548,
+    "_core_accrual_note": "report 98 RR-2: ((540 x 0.0060) + (243 x 0.0090)) x 1.2625 / 24 at c_day 0.35 clear. Published so doc 03 can DERIVE its routine road-repair expectation line rather than assume it. Doc 10 supplies the damage-fraction throughput; doc 03 supplies capital_value and every dollar.",
+    "_block_template_billing_note": "report 98 RR-2: the former block_template_replacement_cost 360600 and block_template_upkeep_per_game_day 419.40 are DELETED. The stamp is charged once by doc 03's road_install development phase; per-tile replacement value for COLLAPSED rebuild and demolish refund is priced from data/economy.json.",
+
+    "work_units_per_crew_hour": 100,
+    "_work_units_note": "report 98 G-2: unit and accumulator owned by doc 02's ConstructionQueue; the former work_required_mu = crew_hours x 3600 x 1000 milli-unit conversion is deleted",
+    "construction_rate_channel": "ctx.channels.construction_rate",
+    "_construction_rate_note": "report 98 C-29: MANDATORY multiplier on every road work unit; all crew-hour figures in doc 10 are authored against its 0.804 24-hour mean (0.60 night floor). Channel values are doc 01's, never authored here.",
+
+    "snap_radius_tiles": 6,
+    "access_radius_tiles": 1,
+    "avenue_gate_level": 4,
+    "avenue_gate_radius_tiles": 4,
+    "_avenue_gate_note": "report 98 C-62: ACCEPTED as a hard gate and OWNED by doc 02 as upgrade check #13 E_AVENUE. This file holds only the radius the has_class_within() lookup uses; doc 10 does not evaluate, format or store the gate.",
+    "generic_crew_speed_mult": 0.70,
+    "road_crew_speed_mult": 1.00,
+    "road_crew_unlock_city_level": 3
+  },
+
+  "routing": {
+    "max_routes_per_tick": 6,
+    "emergency_overflow": 3,
+    "max_expansions_per_tick": 1500,
+    "max_expansions_per_route": 600,
+    "max_route_ticks": 6,
+    "route_cache_size": 256,
+    "dispatch_candidates": 3,
+    "priority_age_ticks": 8,
+    "epsilon_critical": 1.00,
+    "epsilon_routine": 1.25,
+    "critical_priority_max": 1,
+    "detour_factor": 1.25,
+    "practical_congestion_coeff": 0.45,
+    "estimate_class_mult_max": 1.25,
+    "cong_quant": 0.05,
+    "rebuild_tile_budget": 2048,
+    "component_bfs_budget": 4000,
+    "perf_budget_ms_per_tick": 4.0,
+    "hierarchical_trigger_road_tiles": 8000,
+    "hierarchical_trigger_median_expansions": 800
+  },
+
+  "civilian_traffic": {
+    "density_k": 0.9,
+    "base_speed_mpgm": 34.0,
+    "max_cars_per_edge": 6,
+    "global_cap_performance": 40,
+    "global_cap_balanced": 90,
+    "global_cap_high": 160,
+    "max_dist_m": 320,
+    "fade_seconds": 0.40,
+    "offscreen_despawn_seconds": 1.5,
+    "min_spawn_separation_m": 15,
+    "speed_congestion_coeff": 0.325,
+    "speed_jitter_min": 0.85,
+    "speed_jitter_max": 1.15,
+    "headlights_on_hour": 19,
+    "headlights_off_hour": 6,
+    "trip_hops_min": 2,
+    "trip_hops_max": 6,
+    "_trip_hops_note": "ADDED BEYOND doc 10 section 8: the sim-side visual feed gives every cosmetic vehicle a finite trip so it DESPAWNS ON ARRIVAL instead of wandering forever. Doc 10 section 2.15 leaves lifetime to the renderer; a sim-side feed needs a bounded, deterministic one.",
+    "kind_weights": { "car": 0.70, "van": 0.20, "truck": 0.10 }
+  },
+
+  "hazard": {
+    "_note": "doc 06 owns traffic_accident generation; roads supplies only this multiplier",
+    "_scale_note": "report 98 RR-3: rescaled from (coeff 0.004, threshold 75) on [0,100] to (0.40, 0.75) on [0,1]; outputs are identical (condition 0.10 -> 1.26, 0.55 -> 1.08, >=0.75 -> 1.00)",
+    "condition_coeff": 0.40,
+    "condition_threshold": 0.75
+  },
+
+  "access_quality": {
+    "_owner_note": "report 98 C-61: the SINGLE tile-level road-access definition. Docs 02 (road_access_mult / E_ROAD), 03 (a_b in f_road) and 06 (< 0.6 degraded response) all consume it and define none of their own. Doc 09's block_road_access_score is a different, block-level quantity.",
+    "w_dist_1_tile": 1.00, "w_dist_2_tiles": 0.85, "w_dist_3_to_6_tiles": 0.60, "w_dist_none": 0.00,
+    "w_class_avenue_within_4": 1.00, "w_class_street_only": 0.90,
+    "w_state_normal": 1.00, "w_state_soft_closed": 0.55, "w_state_hard_blocked": 0.20,
+    "w_state_no_station_in_component": 0.00
+  }
+}
