@@ -55,10 +55,13 @@ var _hud_timer := 0.0
 ## income chip renders it per day through `NumberFormat.rate()` (doc 12 §2.4).
 var _hud_net_per_hour := 0.0
 var _last_overlay_minute := -1
+var _resumed_slot := -1   # >= 0 when this session restored a save at boot
+var _render_data: Dictionary = {}
 
 
 func _ready() -> void:
 	var render_data: Dictionary = StarterCityLoader.read_json("res://data/render.json")
+	_render_data = render_data
 	sim_host = SimHost.new()
 	sim_host.name = "SimHost"
 	add_child(sim_host)
@@ -80,6 +83,15 @@ func _ready() -> void:
 	audio.set_locator(_alert_world_pos)
 	android_lifecycle.focus_changed.connect(
 			func(has_focus: bool) -> void: audio.set_muted(not has_focus))
+
+	# Session restore (doc 08 §2.1): on a PLAIN launch — no dev args, which is
+	# every real device launch — the most recent save IS the city, restored
+	# BEFORE the views build so the world below is the player's progress, not
+	# the authored founding state. Dev/screenshot runs stay on the founding
+	# city for reproducibility unless they pass --resume.
+	var user_args := OS.get_cmdline_user_args()
+	if user_args.is_empty() or user_args.has("--resume"):
+		_resumed_slot = save_service.load_latest(sim_host.sim)
 
 	_build_environment(render_data)
 	_build_ground()
@@ -143,6 +155,9 @@ func _ready() -> void:
 			var inc := sim_host.sim.trigger_tutorial_transformer_failure()
 			if inc != null:
 				camera_state.set_focus(Vector3(inc.tile.x * 8.0, 0.0, inc.tile.y * 8.0))
+		elif String(arg) == "--save-now":
+			save_service.autosave(sim_host.sim)
+			print("[save-now] autosaved, slot meta: ", save_service.list_slots())
 
 
 func _build_environment(render_data: Dictionary) -> void:
@@ -597,14 +612,24 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 		if audio != null:
 			audio.set_sound_volume(root.settings_sheet.model.value_num("sound_volume"))
 	_wire_audio_ui(root)
-	# Onboarding (doc 12 S12): a fresh boot IS a new city — a loaded save's `ui`
-	# section resumes (or stays finished) by itself inside UIRoot.
+	# Saves carry the UI section (doc 12 §3.2) so a restored city keeps its
+	# tutorial progress and overlay prefs; the provider rides every save.
+	save_service.ui_provider = root.capture_ui_state
+	if _resumed_slot >= 0:
+		root.restore_ui_state(save_service.last_loaded_ui)
+	# Onboarding (doc 12 S12): starts only on a genuinely new city. A resumed
+	# save's flow — mid-tutorial or finished — came back through the UI section
+	# above; the regions are set either way so world-tag cutouts work on resume.
 	root.set_onboarding_world_resolver(_coach_world_rect)
 	root.onboarding_action.connect(_on_coach_action)
-	root.start_onboarding({
+	var tutorial_regions := {
 		"tutorial_lot_a": sim_host.sim.loader.resolve_tag("tutorial_lot_a")["tile_global"],
 		"tutorial_lot_b": sim_host.sim.loader.resolve_tag("tutorial_lot_b")["tile_global"],
-	})
+	}
+	if root.onboarding != null and root.onboarding.model != null:
+		root.onboarding.model.set_regions(tutorial_regions)
+	if _resumed_slot < 0:
+		root.start_onboarding(tutorial_regions)
 
 
 # ---------------------------------------------------------------------------
@@ -779,11 +804,50 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 
 
 func _on_ui_save_loaded(_slot: int) -> void:
-	# The sim was replaced in place; re-seed anything that cached from it —
+	# The sim was replaced in place; re-seed EVERYTHING that cached from it —
 	# and don't carry the old city's thunder into the new one.
 	if audio != null:
 		audio.reset()
+	_resync_world_views()
+	if ui_root != null:
+		ui_root.restore_ui_state(save_service.last_loaded_ui)
 	_refresh_hud()
+
+
+## Rebuild every world view from the (just-replaced) sim. The render model's
+## roster is diffed rather than recreated — CityView's buckets self-heal from
+## `_upload_all`, so removing the stale records and re-adding the live ones is
+## the whole job; `resync_snap` then snaps emissive/blackout ceremony to the
+## restored steady state (doc 11 §2.7.6).
+func _resync_world_views() -> void:
+	var sim := sim_host.sim
+	var live: Dictionary = {}
+	for sim_id: String in sim.buildings:
+		live[int((sim.buildings[sim_id] as Building).id)] = String(sim_id)
+	var stale: Array = []
+	for rid: int in render_model._recs:
+		if not live.has(int(rid)):
+			stale.append(int(rid))
+	for rid: int in stale:
+		render_model.remove_building(rid)
+	var render_ids := live.keys()
+	render_ids.sort()
+	for rid: int in render_ids:
+		render_model.add_building(_building_view(live[rid]))
+	render_model.resync_snap()
+	if construction_view != null:
+		construction_view.clear()
+		for sim_id: String in sim.buildings:
+			if (sim.buildings[sim_id] as Building).state == &"under_construction":
+				_add_construction_site(String(sim_id))
+	# The vehicle layer keys off a live event stream; the cheapest correct
+	# resync is a fresh view (its whole state rebuilds within a game-minute).
+	if vehicle_view != null:
+		vehicle_view.queue_free()
+		vehicle_view = VehicleView.new()
+		vehicle_view.name = "Vehicles"
+		add_child(vehicle_view)
+		vehicle_view.setup(_render_data)
 
 
 func _on_ui_dispatch(unit_id: int, incident_id: int) -> void:

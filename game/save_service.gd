@@ -41,6 +41,14 @@ const META_SCAN_BYTES := 4096
 ## Where slots live. Overridable so tests never touch a real player profile
 ## (same convention as `SaveManager.base_dir`, doc 08).
 var base_dir: String = SAVE_DIR
+## Optional: the shell registers a Callable returning the UI save section
+## (doc 12 §3.2 — overlay prefs, settings, tutorial progress). When set, every
+## save carries it and `last_loaded_ui` hands it back after a load, so the
+## tutorial never restarts on a city that already finished it.
+var ui_provider: Callable = Callable()
+## The `ui` section of the most recent successful load. A boot-time restore
+## happens before the UI exists; the shell applies this once it does.
+var last_loaded_ui: Dictionary = {}
 ## Reason string for the last failure, "" after a success. Useful for UI that
 ## wants the detail without connecting to `failed`.
 var last_error: String = ""
@@ -67,11 +75,16 @@ func save_slot(sim: Object, slot: int) -> Dictionary:
 
 	var meta := _meta_of(sim, slot)
 	var state: Dictionary = sim.call("canonical_capture")
+	var ui_json := "{}"
+	if ui_provider.is_valid():
+		var ui_state: Variant = ui_provider.call()
+		if ui_state is Dictionary:
+			ui_json = JSON.stringify(ui_state)
 	# Concatenated rather than stringified as one dictionary so `meta` is
 	# guaranteed to sit in the first bytes of the file — that is the whole
 	# reason `list_slots()` is cheap. JSON key order is otherwise unspecified.
-	var text := "{\"format\":%d,\"meta\":%s,\"state\":%s}" % [
-		FORMAT_VERSION, JSON.stringify(meta), JSON.stringify(state)]
+	var text := "{\"format\":%d,\"meta\":%s,\"ui\":%s,\"state\":%s}" % [
+		FORMAT_VERSION, JSON.stringify(meta), ui_json, JSON.stringify(state)]
 	var reason := _write_atomic(_path(slot), text)
 	if reason != "":
 		return _fail_dict(slot, reason)
@@ -108,9 +121,35 @@ func load_slot(sim: Object, slot: int) -> bool:
 		_fail_dict(slot, "no_state")
 		return false
 	sim.call("restore_state", state)
+	var ui_state: Variant = envelope.get("ui", {})
+	last_loaded_ui = ui_state if ui_state is Dictionary else {}
 	last_error = ""
 	loaded.emit(slot)
 	return true
+
+
+## The slot holding the newest save — manual or autosave, whichever the player
+## touched last — or -1 when nothing is saved. This is what a plain launch
+## resumes from: the most recent save IS the city.
+func latest_slot() -> int:
+	var best := -1
+	var best_at := -1
+	for meta in list_slots():
+		var at := int(meta.get("saved_at_unix", 0))
+		if at > best_at:
+			best_at = at
+			best = int(meta.get("slot", -1))
+	return best
+
+
+## Session restore: load the newest save into `sim`. Returns the slot loaded,
+## or -1 when there was nothing (a genuinely new city) or the load failed —
+## the caller treats both as "fresh founding".
+func load_latest(sim: Object) -> int:
+	var slot := latest_slot()
+	if slot < 0:
+		return -1
+	return slot if load_slot(sim, slot) else -1
 
 
 ## Every occupied slot's meta, ascending by slot index. Reads only each file's

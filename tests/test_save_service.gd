@@ -323,3 +323,53 @@ func test_lifecycle_without_wiring_is_harmless() -> void:
 	lifecycle.notification(Node.NOTIFICATION_OS_MEMORY_WARNING)
 	lifecycle.notification(Node.NOTIFICATION_APPLICATION_RESUMED)
 	lifecycle.free()
+
+
+# ------------------------------------------------- session restore (doc 08)
+
+func test_latest_slot_and_load_latest_resume_the_newest_save() -> void:
+	# The boot path resumes from the NEWEST save, manual or autosave — this is
+	# the fix for the launch-day defect where saves wrote but nothing ever
+	# read them back and every launch was a fresh founding.
+	var service := _fresh_service()
+	assert_eq(service.latest_slot(), -1, "no saves -> no latest")
+	var throwaway := CitySim.boot_from_files(1)
+	assert_eq(service.load_latest(throwaway), -1, "nothing to resume is not an error")
+	var sim := CitySim.boot_from_files(777)
+	sim.cmd_place_building("house", Vector2i(35, 33))
+	sim.advance_hours(2.0)
+	service.save_slot(sim, 3)                       # older manual save
+	sim.advance_hours(1.0)
+	# `saved_at_unix` has 1 s resolution; stamp the autosave newer explicitly.
+	service.autosave(sim)                           # newest: the autosave
+	var meta := service._read_meta(0)
+	assert_true(int(meta["saved_at_unix"]) >= int(service._read_meta(3)["saved_at_unix"]))
+	var restored := CitySim.boot_from_files(777)
+	var slot := service.load_latest(restored)
+	assert_eq(slot, 0, "the autosave was newest")
+	sim.advance_hours(4.0)
+	restored.advance_hours(4.0)
+	assert_eq(restored.state_hash(), sim.state_hash(),
+			"the resumed city IS the saved city, buildings and all")
+	assert_eq(restored.buildings.size(), 35, "the placed house survived the relaunch")
+
+
+func test_ui_section_rides_the_envelope() -> void:
+	# Doc 12 §3.2: tutorial progress and overlay prefs travel with the save,
+	# so a finished tutorial never restarts on a resumed city.
+	var service := _fresh_service()
+	var sim := CitySim.boot_from_files(4242)
+	sim.advance_hours(1.0)
+	service.ui_provider = func() -> Dictionary:
+		return {"section_version": 1, "onboarding": {"finished": true, "skipped": false}}
+	service.save_slot(sim, 1)
+	service.last_loaded_ui = {"poisoned": true}     # must be overwritten by load
+	var restored := CitySim.boot_from_files(4242)
+	assert_true(service.load_slot(restored, 1))
+	assert_eq(bool((service.last_loaded_ui.get("onboarding", {}) as Dictionary)
+			.get("finished", false)), true, "the ui section came back with the load")
+	# A service with no provider writes an empty section and loads it as {}.
+	var bare := _fresh_service()
+	bare.save_slot(sim, 2)
+	assert_true(bare.load_slot(restored, 2))
+	assert_eq(bare.last_loaded_ui, {}, "no provider -> empty ui section, never an error")
