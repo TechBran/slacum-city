@@ -52,6 +52,17 @@ func progress(job_id: int) -> float:
 	return float(int(j["work_units"])) / maxf(1.0, float(int(j["required_work_units"])))
 
 
+## Every live job in ascending job_id order — the deterministic read path for
+## observers (progress pulses, UI listings) that must never touch _jobs.
+func active_jobs() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	var ids := _jobs.keys()
+	ids.sort()
+	for job_id in ids:
+		out.append(_jobs[job_id])
+	return out
+
+
 func pending_order() -> Array:
 	return _pending_order.duplicate()
 
