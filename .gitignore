@@ -14,3 +14,6 @@ android/build/
 .DS_Store
 *~
 *.tmp
+
+# Agent worktrees and session-local state
+.claude/
