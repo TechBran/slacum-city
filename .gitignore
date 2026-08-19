@@ -4,10 +4,41 @@
 export.cfg
 export_presets.cfg.secret
 
-# Android build
-android/build/
+# Android — the Gradle build template under android/build/ is SOURCE, not output
+# (doc 13 §9 item 4): it is where template patches would live and it pins the
+# build system the APK is produced by. Only what Gradle and the Godot exporter
+# generate inside it is ignored.
+#
+# Gradle's own working state:
+android/build/.gradle/
+android/build/build/
+android/build/local.properties
+# Written by the exporter on every export, from export_presets.cfg and the
+# project's resources — never edited by hand:
+android/build/src/main/assets/
+android/build/src/debug/
+android/build/src/release/
+android/build/res/mipmap*/
+android/build/res/drawable/
+# "WARNING: THIS FILE WILL BE OVERWRITTEN AT BUILD TIME" — the exporter says so
+# itself, in all 40-odd locale copies:
+android/build/res/values*/godot_project_name_string.xml
+# Verbatim engine payload unzipped from android_source.zip — 215 MB of
+# godot-lib.template_*.aar, each single file well over GitHub's 100 MB limit,
+# and reproducible from the installed export templates in one command:
+#   tools/setup_android.sh          (or --install-android-build-template)
+android/build/libs/
+# The plugin AAR is built from the Kotlin sources next to it; committing it
+# would let a stale binary outlive an edited source. tools/setup_android.sh
+# builds it.
+android/plugins/slacum_native.aar
+android/plugins/slacum_native/build/
+android/plugins/slacum_native/.gradle/
+android/plugins/slacum_native/local.properties
+
 *.apk
 *.aab
+*.idsig
 *.keystore
 
 # OS / editor cruft

@@ -6,8 +6,9 @@ Persistent urban survival city builder for Android (working spec: `docs/BLACKOUT
 ## Stack
 
 - Godot **4.7.2 stable**, typed GDScript, Mobile (Vulkan) renderer. Binary: `~/.local/bin/godot`.
-- Android export: SDK at `~/Android/Sdk` (targetSdk 37, minSdk 29), export templates installed for 4.7.2.
-- No external plugins; custom minimal test runner.
+- Android export: SDK at `~/Android/Sdk` (targetSdk 36 — the build template's `compileSdk`, doc 13 §10.2 — minSdk 29), export templates installed for 4.7.2, Gradle build template committed under `android/`.
+- No third-party plugins; the one Android plugin (`SlacumNative`, `android/plugins/`) is ours. Custom minimal test runner.
+- After a fresh clone, `tools/setup_android.sh` restores the two build inputs git does not carry (engine AARs, plugin AAR).
 
 ## Commands
 

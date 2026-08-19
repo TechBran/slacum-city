@@ -1,0 +1,11 @@
+[config]
+
+name="SlacumNative"
+binary_type="local"
+binary="slacum_native.aar"
+
+[dependencies]
+
+local=[]
+remote=[]
+custom_maven_repos=[]

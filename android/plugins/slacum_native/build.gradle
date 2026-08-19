@@ -1,0 +1,57 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+plugins {
+	id 'com.android.library'
+	id 'org.jetbrains.kotlin.android'
+}
+
+apply from: '../../build/config.gradle'
+
+// The engine API this plugin compiles against is whatever version of the build
+// template is installed — `android/.build_version` is written by
+// `--install-android-build-template` and is the single source of truth.
+def godotVersion = file('../../.build_version').text.trim()
+
+android {
+	namespace 'com.slacumcity.nativeplugin'
+	compileSdk versions.compileSdk
+	buildToolsVersion versions.buildTools
+
+	defaultConfig {
+		// Matches export_presets.cfg. `PowerManager.addThermalStatusListener`
+		// is API 29, so the plugin cannot honestly claim to support less.
+		minSdk 29
+		consumerProguardFiles 'consumer-rules.pro'
+	}
+
+	compileOptions {
+		sourceCompatibility versions.javaVersion
+		targetCompatibility versions.javaVersion
+	}
+
+	buildTypes {
+		release {
+			minifyEnabled false
+		}
+	}
+
+	// One artifact name, both variants — `tools/build_native_plugin.sh` copies
+	// the release one next to the .gdap that names it.
+	libraryVariants.all { variant ->
+		variant.outputs.all { output ->
+			outputFileName = "slacum_native.aar"
+		}
+	}
+}
+
+kotlin {
+	compilerOptions {
+		jvmTarget = JvmTarget.fromTarget(versions.javaVersion.toString())
+	}
+}
+
+dependencies {
+	// compileOnly: the engine classes are already in the app (godot-lib.*.aar),
+	// so bundling them here would collide at dex time.
+	compileOnly "org.godotengine:godot:$godotVersion"
+}

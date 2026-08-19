@@ -105,6 +105,9 @@ Arithmetic: nominal `1 + 25 + 80 + 30 + 10 + 1 = 147 ms`; worst case `1 + 25 + 8
 
 ### 2.3 Resume: measuring elapsed real time
 
+> **As built:** §10.7. Both bounds now exist in `AndroidLifecycle`; the two places
+> where the implementation reads this pseudocode deliberately are recorded there.
+
 The sim never reads a clock (constitution §4); the shell measures once and hands the sim a tick count.
 
 Wall clock (`Time.get_unix_time_from_system()`) can jump — the user changes the device clock, a timezone transition happens, NTP corrects. `Time.get_ticks_msec()` uses `CLOCK_MONOTONIC`, which **does not advance while the device is in deep sleep**, so it is useless for offline measurement. The plugin therefore exposes `SystemClock.elapsedRealtime()` (advances during sleep, resets on reboot) plus a `boot_id`, giving a monotonic cross-check.
@@ -241,6 +244,11 @@ Channels are created once at plugin init (mandatory since API 26) and never muta
 
 ### 2.6 The `SlacumNative` Kotlin plugin
 
+> **As built:** §10.6. v1 ships the time and power methods only —
+> `elapsed_realtime_ms`, `boot_id`, `thermal_status` + its push signal, and
+> sustained performance mode. The notification, permission and alarm half of the
+> surface below is Milestone B and is not written yet.
+
 **What ships built-in with Godot 4.7 on Android: nothing relevant.** There is no notification API, no thermal API, no power-save query, no `elapsedRealtime`, no runtime-permission request flow beyond `OS.request_permission()` (which handles the request but gives no rationale/permanent-denial state). Third-party notification plugins exist but are unmaintained across Godot minor versions and CLAUDE.md rules out external plugins. We write our own — it is ~450 lines of Kotlin.
 
 **Plugin requires the Gradle build template.** `res://android/plugins/slacum_native.gdap` + `slacum_native.aar`:
@@ -309,7 +317,7 @@ Release manifest, complete:
 
 **Deliberately absent:** `INTERNET` (MVP is fully offline — this is what lets the Data Safety form say "no data collected"), `SCHEDULE_EXACT_ALARM`, `USE_EXACT_ALARM`, `FOREGROUND_SERVICE*`, `ACCESS_NETWORK_STATE`, any storage permission, `QUERY_ALL_PACKAGES`, and `com.google.android.gms.permission.AD_ID` (if any future dependency injects it, strip it with `tools:node="remove"`).
 
-Godot injects `INTERNET` into **debug** exports for the remote debugger — expected and correct; the release build must not have it, which is what the `aapt2 dump permissions` gate in §2.10 enforces on every release.
+~~Godot injects `INTERNET` into **debug** exports for the remote debugger~~ — **not on the Gradle path (§10.8): the debug APK declares zero permissions.** The release build must not have `INTERNET` either, which is what the `aapt2 dump permissions` gate in §2.10 enforces on every release; it now passes on debug builds too, and the consequence for the editor's remote debugger is recorded in §10.8.
 
 **POST_NOTIFICATIONS runtime flow.** Never ask on first launch — cold permission prompts convert poorly and a denial on Android 13+ is effectively permanent after two dismissals.
 
@@ -392,6 +400,11 @@ Veil wall time = `steps × measured_coarse_ms`, generated from doc 08's P0-27 me
 Progress fraction = `steps_done() / steps_total()`, so the bar is honest. If `steps_total ≤ 4` (`catchup_veil_min_steps = 5`) the veil is skipped entirely — sub-frame work.
 
 ### 2.10 Export pipeline
+
+> **As built:** §10.1–§10.4. The `--install-android-build-template` line below
+> does not work headless on 4.7.2 — the manual unzip beneath it is the procedure,
+> and `tools/setup_android.sh` runs it. Sizes and the verified preset keys are in
+> §10.2 and §10.4.
 
 **One-time setup — `tools/setup_android.sh`:**
 
@@ -556,6 +569,11 @@ Per the canonical registry (report 98 §11) this section carries exactly three t
 | `filesDir/notif_schedule.json` | Plugin-owned, for `BOOT_COMPLETED` replay | Rewritten per batch |
 
 ### 3.4 `export_presets.cfg` (committed; secrets by env only)
+
+> **Superseded in detail by §10.2**, which is the diffed 4.7.2 key set from a
+> build that actually ran. The block below is kept for its intent (one preset per
+> output, secrets by env, ABI and version policy); where the two disagree, §10.2
+> is what the exporter accepts.
 
 ```ini
 [preset.0]
@@ -819,7 +837,7 @@ Axes to cross: {A, B, C} × {permission granted, denied} × {battery saver on, o
 
 ### Conflicts with the repo as it stands
 
-4. **`.gitignore` line `android/build/` must change.** With the Gradle build template, `android/build/` is source (it holds our manifest and any template patches). Replace with `android/build/.gradle/`, `android/build/build/`, `android/build/local.properties`. Also `export_presets.cfg` must be **committed** (it currently is not ignored — correct) while `export_presets.cfg.secret` stays ignored (correct); this doc's §2.10 keeps all secrets in env vars so that stays safe.
+4. **`.gitignore` line `android/build/` must change. — DONE, see §10.5.** Shipped with the three exclusions asked for, plus `android/build/libs/` (the 215 MB of engine AAR, each file over GitHub's 100 MB limit) and the paths the exporter regenerates on every export. `export_presets.cfg` is committed, `export_presets.cfg.secret` stays ignored, and 4.7.2 has no keystore fields in the preset at all (§10.2), so the secrets story only got safer.
 5. **`project.godot` needs four additions** before Milestone A: `quit_on_go_back=false`, `keep_screen_on=true`, `enable_frame_pacing=true`, `swappy_mode=2`. These are shell concerns; requesting permission to add them in the Milestone A commit.
 
 ### Ruled since the last revision — recorded, not open
@@ -834,8 +852,238 @@ Axes to cross: {A, B, C} × {permission granted, denied} × {battery saver on, o
 10. **Offline rate.** 12 real hours away = 30 game-days at the locked 60× scale (§2.3 worked example) — and, after C-19, that is *also* what a three-day absence returns. Is that the intended feel, or should doc 08 apply an `offline_rate < 1.0` (e.g. 0.25, making a full-cap absence ≈ 7.5 game-days)? This doc supports either via one tunable, but the answer changes how much a returning player has to read. **Recommendation: keep 1.0 for the vertical slice and revisit after the first WHILE YOU WERE AWAY report is playable.**
 11. **Autosave cadence on Android (needs doc 08).** This doc's §1 gate — ≤ 60 s of play lost to process death — needs a 60 s foreground autosave; doc 08 §2.7 currently specifies 5 real minutes. Android is the platform where process death is routine, not exceptional. **Recommendation: doc 08 adds a platform-supplied `autosave_interval_s` and this doc requests 60 s on Android.** If doc 08 declines, the §1 gate relaxes to ≤ 5 minutes and should be restated there rather than left aspirational.
 12. **Pause save must be non-blocking (needs doc 08).** §2.2 requires `request_save("pause")` to return after the snapshot barrier (≤ 25 ms) and finish encode/write on doc 08's worker. Doc 08 §2.6 permits blocking up to 400 ms on a `pause` trigger, which would exceed this doc's 250 ms pause budget by itself. **Recommendation: doc 08 exposes the wait as `await`-able so the shell can overlap it with notification scheduling, as §2.2 step 5 assumes.**
-13. **Godot exporter key drift.** The `export_presets.cfg` block in §3.4 is written from the 4.2–4.4 key set; 4.7.2 may have renamed or added keys (`gradle_build/android_source_template`, `patches`, `seed`). The block is marked as verify-on-first-export in §3.4. Not a design risk, but the first Android commit must diff and update this doc.
-14. **Prebuilt-template first, or Gradle from day one?** §6 recommends prebuilt for Milestone A to decouple "does it render on the phone" from Gradle toolchain risk. The cost is one pipeline switch a few days later. If the overseer prefers a single pipeline forever, Milestone A goes straight to Gradle and accepts the added first-build risk.
+13. **Godot exporter key drift.** ~~The `export_presets.cfg` block in §3.4 is written from the 4.2–4.4 key set…~~ **CLOSED — the diff is done, §10.2 carries the real 4.7.2 key set.**
+14. **Prebuilt-template first, or Gradle from day one?** §6 recommends prebuilt for Milestone A to decouple "does it render on the phone" from Gradle toolchain risk. The cost is one pipeline switch a few days later. If the overseer prefers a single pipeline forever, Milestone A goes straight to Gradle and accepts the added first-build risk. **Resolved as written: Milestone A shipped prebuilt, the switch to Gradle happened in one commit (§10) and cost nothing but this section.**
+
+---
+
+## 10. As shipped — Gradle pipeline and `SlacumNative` v1
+
+Written from the commit that flipped the pipeline, against Godot 4.7.2.stable on
+the machine in §2.0. Everything below was **verified by building**, not inferred;
+where reality disagreed with the design, reality is recorded and the reason given.
+
+### 10.1 What is on disk
+
+| Path | What it is | Committed? |
+|---|---|---|
+| `android/.build_version` | `4.7.2.stable` — the engine the template belongs to | yes |
+| `android/.gdignore` | keeps the editor from importing 200 MB of build system | yes |
+| `android/build/**` | the Gradle build template, unzipped from `android_source.zip` | yes, minus the generated paths below |
+| `android/build/libs/**` | `godot-lib.template_{debug,release}.aar`, 215 MB of engine | **no — see §10.5** |
+| `android/plugins/slacum_native.gdap` | tells the exporter where the plugin binary is | yes |
+| `android/plugins/slacum_native/**` | the Kotlin sources + their own Gradle build | yes |
+| `android/plugins/slacum_native.aar` | the built plugin, 6 KB | no — built by `tools/setup_android.sh` |
+| `tools/setup_android.sh` | restores both AAR sets after a clone or an engine upgrade | yes |
+| `tools/build_native_plugin.sh` | builds the plugin AAR alone | yes |
+| `game/android_native.gd` | the `Engine.has_singleton` bridge | yes |
+
+`tools/reinstall_android_template.sh` from §2.10 was **not** written as a separate
+script: `tools/setup_android.sh` does that job, because the patch set is empty
+(as designed) and re-unzipping the template is therefore the whole procedure. The
+moment a patch exists, it goes to `tools/android_patches/*.patch` and that script
+grows a reapply step — the hook is documented in its header.
+
+### 10.2 `export_presets.cfg` — the real 4.7.2 key set (closes §9.13)
+
+Deltas from the §3.4 block, all verified against a successful export:
+
+* **`plugins/<PluginName>=true` is a required preset key.** It is generated at
+  runtime, one per `.gdap` found under `res://android/plugins/`, and it defaults
+  to **false** — a plugin that is present but not listed is silently left out of
+  the build, which is exactly what happened on the first attempt here (the APK
+  built fine and simply had no plugin in it). `plugins/SlacumNative=true` is now
+  in the preset. Godot also *refuses* to export when a plugin is enabled and
+  `use_gradle_build` is false, which is the check that makes the coupling safe.
+* **`keystore/*` keys do not exist in the preset any more.** 4.7.2 takes the debug
+  keystore from editor settings (`export/android/debug_keystore*`) and the release
+  one from `GODOT_ANDROID_KEYSTORE_RELEASE_*`. §2.10's env-var discipline is
+  unchanged and no secret can leak through the committed file — there is now
+  literally no field to leak through.
+* **Keys that exist in 4.7.2 and were not in §3.4:** `gradle_build/gradle_build_directory`,
+  `gradle_build/android_source_template`, `package/exclude_from_recents`,
+  `package/show_in_app_library`, `package/show_as_launcher_app`,
+  `graphics/opengl_debug`, `screen/edge_to_edge`, `screen/background_color`,
+  `command_line/extra_args`, and at preset level `patches`, `seed`,
+  `encrypt_pck`, `encrypt_directory`, `encryption_*_filters`, `script_export_mode`,
+  `dedicated_server`, `advanced_options`.
+* **`screen/support_small`** is `true` in the repo, not §3.4's `false`. Left alone:
+  it is not this doc's call to change a shipped screen-support matrix in a build
+  commit.
+* **`min_sdk` / `target_sdk` are only accepted when `use_gradle_build=true`.**
+  With the prebuilt template Godot rejects the whole preset as misconfigured, so
+  the two settings move together — which is also why the size comparison in §10.4
+  needed the fields blanked.
+
+**targetSdk is 36, not §2.0/§2.12's 37.** The template pins `compileSdk = 36`
+(`android/build/config.gradle`), and a `targetSdk` above `compileSdk` is a build
+this project has no reason to attempt. The SDK dir does contain a
+`platforms/android-37.0` package, but its `source.properties` reads
+`AndroidVersion.ApiLevel=37.0` — not an integer API level and not what AGP 8.6.1
+consumes. **37 becomes reachable when the engine's template moves to
+`compileSdk 37`, not before**; Play's one-year window does not bite for this
+milestone. §2.12's "targetSdk 37" row is therefore aspirational until then.
+
+### 10.3 Toolchain reality
+
+* `platforms;android-36` and `build-tools;36.1.0` were **not installed** and had to
+  be added (`sdkmanager "platforms;android-36" "build-tools;36.1.0"`). §2.0's table
+  listed 36.0.0/37.0.0 build-tools, neither of which is the `36.1.0` the template
+  pins. Recorded so the next machine is provisioned in one go.
+* `godot --headless --path . --install-android-build-template` **does not work**:
+  it installs nothing and never returns (reproduced on this project and on an
+  empty scratch project). The standalone tool is editor-side; headless falls
+  through it. §2.10's documented manual equivalent — unzip `android_source.zip`
+  into `android/build/`, write `android/.build_version` — is what actually works
+  and is what `tools/setup_android.sh` does. The `.gdignore` file the editor also
+  writes is created by hand there.
+* No NDK is required for the app build (nothing compiles native code; the engine
+  arrives prebuilt in the AAR) even though `config.gradle` declares an
+  `ndkVersion`. AGP 8.6.1 warns that it was tested only up to `compileSdk 35`; the
+  build is otherwise clean.
+* First Gradle build ≈ 60 s; a repeat export with a warm daemon and unchanged
+  sources is **≈ 5 s end to end** (52 Gradle tasks, all up to date). Both are far
+  under §2.10's 3–5 min estimate, because the Maven and Gradle caches on this
+  machine were already populated — a genuinely cold machine still pays for
+  Gradle 8.11.1, AGP 8.6.1 and Kotlin 2.1.21 downloads on the first run.
+* The plugin AAR builds in ≈ 35 s cold, under 1 s warm, through the template's
+  own `gradlew`.
+
+### 10.4 APK size — Gradle vs prebuilt template
+
+Same tree, same debug build, `arm64-v8a` only, measured three ways:
+
+| Build | APK | vs prebuilt |
+|---|---|---|
+| Prebuilt template (what shipped at Milestone A) | 35 385 245 B (33.7 MiB) | — |
+| **Gradle, `compress_native_libraries=false` (shipped)** | **87 665 826 B (83.6 MiB)** | **+52.3 MB** |
+| Gradle, `compress_native_libraries=true` | 38 446 566 B (36.7 MiB) | +3.1 MB |
+
+**The +52 MB is packaging policy, not payload.** `lib/arm64-v8a/libgodot_android.so`
+is byte-identical in all three (same CRC, 76 181 608 B): the prebuilt path deflates
+it to ~25 MB inside the APK, the Gradle path with `compress_native_libraries=false`
+stores it raw so the loader can `mmap` it straight out of the APK. The device pays
+*less* total storage for the uncompressed build — one copy at 87.7 MB against
+38.4 MB of APK plus ~77.5 MB extracted — and gains the 16 KB page alignment §2.12
+requires (verified: every `LOAD` segment reports `Align 0x4000`). The honest
+Gradle-vs-prebuilt overhead, measured like-for-like, is the **+3.1 MB** row:
+the plugin (6 KB) plus AGP's androidx additions and resources.
+
+Two caveats for the release build, neither of them a surprise:
+
+1. This is a **debug** APK, so the engine `.so` is the unstripped debug template.
+   The engine archives it comes from are `godot-lib.template_debug.aar` at 112.7 MB
+   against `godot-lib.template_release.aar` at 103.3 MB, and the release `.so` is
+   stripped on top of that — so the release APK is a different measurement, not a
+   scaled one, and it has not been taken yet (no release keystore on this machine).
+2. `config.gradle` would default `useLegacyPackaging` to **true** at `minSdk ≤ 29`,
+   citing godot#108842 for API-29 device compatibility. The preset overrides that
+   to false per §3.4. The Z Fold 6 is Android 16, so nothing in the test matrix
+   exercises the case — **flagged for the device matrix, not for this commit.**
+
+### 10.5 `.gitignore` (closes §9.4, with one amendment)
+
+§9.4 asked for `android/build/` to become source with three exclusions. Shipped as
+asked, **plus `android/build/libs/`**, and that addition is not optional: the two
+`godot-lib.template_*.aar` files are 112 MB and 103 MB, and GitHub rejects any file
+over 100 MB. They are also verbatim engine payload — not ours, not patched, and
+reproducible in one command — so they fail the "is it source?" test on the merits
+as well as on the mechanics.
+
+Ignored beyond §9.4's three: `android/build/src/main/assets/` (the exported game,
+rewritten every export), `android/build/src/{debug,release}/AndroidManifest.xml`
+(generated from the preset), `android/build/res/mipmap*/` and `res/drawable/`
+(launcher icons and splash, generated from `game/branding/`),
+`android/build/res/values*/godot_project_name_string.xml` (40-odd locale files
+whose own first line reads *"WARNING: THIS FILE WILL BE OVERWRITTEN AT BUILD
+TIME"*), and the plugin's own `build/`, `.gradle/`, `local.properties` and built
+`.aar`. Total committed footprint under `android/`: **43 files, 166 583 B**, the
+largest of them the 59 KB Gradle wrapper jar.
+
+### 10.6 `SlacumNative` v1 — what the plugin actually contains
+
+§2.6 specifies the full Kotlin surface. **Shipped now (the time and power half):**
+
+```kotlin
+fun elapsed_realtime_ms(): Long              // SystemClock.elapsedRealtime()
+fun boot_id(): String                        // /proc/sys/kernel/random/boot_id
+fun thermal_status(): Int                    // PowerManager.getCurrentThermalStatus()
+fun is_sustained_performance_supported(): Boolean
+fun set_sustained_performance(on: Boolean)
+// signal thermal_status_changed(Int)        // addThermalStatusListener, push
+```
+
+**Not yet built:** every notification, permission and alarm method
+(`schedule_notification`, `cancel_*`, `scheduled_ids`, `notifications_enabled`,
+`permission_state`, `request_notification_permission`,
+`open_app_notification_settings`, `consume_launch_payload`), plus
+`is_power_save_mode`, `battery_percent`, `is_charging` and `display_refresh_hz`.
+Those are the Milestone B half (§6) and they bring `AlarmReceiver`,
+`BootReceiver`, `filesDir/notif_schedule.json` and the four permissions of §2.7
+with them. The manifest this plugin ships today declares **no permissions at all**,
+which is why the debug APK's permission set is still Godot's default.
+
+Mechanics worth recording:
+
+* **Registration is v2 manifest meta-data**, not the `.gdap`:
+  `org.godotengine.plugin.v2.SlacumNative` → the class name, inside the AAR's own
+  manifest. The `.gdap` only feeds `-Pplugins_local_binaries` to Gradle. 4.7.2
+  writes no v1 metadata of its own, so there is exactly one registration path and
+  no risk of the plugin being instantiated twice.
+* **Compiled against `org.godotengine:godot:<android/.build_version>`** from Maven
+  Central, `compileOnly`, and against the template's own `config.gradle` version
+  pins (AGP 8.6.1, Kotlin 2.1.21, Java 17, `compileSdk 36`). The plugin build
+  borrows `android/build/gradlew`, so the repo has exactly one Gradle version and
+  it is the engine's.
+* `GodotPlugin.runOnUiThread` is deprecated in 4.7; `runOnHostThread` is the
+  replacement and is what `set_sustained_performance` uses.
+* The plugin's `minSdk` is 29 because `addThermalStatusListener` is 29 — the same
+  floor as the app, so no API guards are needed anywhere in the file.
+
+### 10.7 Elapsed time now has both bounds (implements §2.3)
+
+`AndroidLifecycle.measure_elapsed` was the "plugin-free half": monotonic as a
+lower bound only. With the plugin it brackets the wall clock from both sides —
+floor `Time.get_ticks_msec()`, ceiling `elapsed_realtime_ms() + clock_tolerance`,
+the ceiling disabled whenever `boot_id()` differs from the one stamped at pause
+(or is unreadable, or the reading went backwards). `last_anomaly` gains
+`"clock_forward"` alongside `"clock_backwards"`, and `last_cross_checked` says
+whether the ceiling applied at all.
+
+Two deliberate readings of §2.3's pseudocode, both covered by tests in
+`tests/test_android_native.gd`:
+
+1. §2.3 returns `0` with `anomaly = "clock_backwards"` when `raw_s < 0`. The repo
+   returns the **monotonic delta** instead, which is a strictly better lower bound
+   and was already shipped and tested. Kept; the ceiling is layered on top rather
+   than replacing it.
+2. §2.3 writes `min(raw_s, mono_s + tolerance)`. Implemented exactly, with the
+   tolerance added once — the two clocks are sampled milliseconds apart and
+   neither is a stopwatch.
+
+Sustained performance mode is turned on once, from `AndroidLifecycle._ready()`,
+and thermal transitions are re-emitted as `AndroidLifecycle.thermal_status_changed`
+so doc 11's power policy has one node to listen to. Off-device — desktop, the
+headless runner, a prebuilt-template APK — `AndroidNative.detect()` finds no
+singleton and every one of these paths is skipped, which is asserted directly.
+
+### 10.8 The debug APK declares zero permissions
+
+`aapt2 dump permissions build/slacum-debug.apk` prints the package line and
+nothing else. §2.7 expected `INTERNET` to be injected into debug exports; on the
+Gradle path 4.7.2 does not inject it, and the plugin's manifest declares nothing,
+so **the permission set is empty in debug as well as release**. Two consequences:
+
+* Good: the §2.10 permission gate now passes on every build, not just release,
+  and the "no data collected" Data Safety story is true of the artefacts a tester
+  might sideload.
+* **Open:** the editor's remote debugger and profiler talk to the device over TCP
+  and therefore need `INTERNET`. Nothing in the current loop uses them — logcat
+  and the on-device perf HUD cover it — but if remote debugging is wanted, the
+  fix is `permissions/custom_permissions=PackedStringArray("android.permission.INTERNET")`
+  on a **debug-only preset**, never on the one that produces the AAB. That is a
+  reason to split the presets the way §3.4 always intended, and it is the only
+  argument for doing so that this commit found.
 
 ---
 
