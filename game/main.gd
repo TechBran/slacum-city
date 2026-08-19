@@ -26,7 +26,9 @@ var build_controller: BuildController
 var build_sheet: BuildSheet
 var building_panel: BuildingPanel
 var ghost_view: GhostView
+var construction_view: ConstructionSiteView
 var _family_of: Dictionary = {}  # archetype -> mesh-manifest family
+var _height_of: Dictionary = {}  # "archetype:level" -> mesh height_m (lod 0)
 var _tap_origin := Vector2.ZERO
 var _tap_started_ms := 0.0
 var _tap_candidate := false
@@ -193,6 +195,9 @@ func _build_city_view(render_data: Dictionary) -> void:
 			"res://game/meshes/generated/manifest.json")
 	for entry in manifest.get("meshes", []):
 		_family_of[String(entry["archetype"])] = String(entry.get("family", "residential"))
+		if int(entry.get("lod", 0)) == 0:
+			_height_of["%s:%d" % [entry["archetype"], int(entry["level"])]] = \
+					float(entry.get("height_m", 10.0))
 	for id in sim_host.sim.buildings.keys():
 		render_model.add_building(_building_view(String(id)))
 	city_view = CityView.new()
@@ -216,6 +221,13 @@ func _build_city_view(render_data: Dictionary) -> void:
 	streetlights.name = "Streetlights"
 	add_child(streetlights)
 	streetlights.setup(render_model, render_data, lamps)
+	construction_view = ConstructionSiteView.new()
+	construction_view.name = "ConstructionSites"
+	add_child(construction_view)
+	construction_view.setup(render_data)
+	for id in sim_host.sim.buildings.keys():
+		if (sim_host.sim.buildings[id] as Building).state == &"under_construction":
+			_add_construction_site(String(id))
 
 
 ## doc 11 §5's BuildingView for one sim building, as the render model wants it.
@@ -243,6 +255,21 @@ func _building_view(sim_id: String) -> Dictionary:
 	}
 
 
+## Fence/crane props for one under-construction building. The crane is sized
+## to the level being BUILT (pending_level during upgrades), not the current one.
+func _add_construction_site(sim_id: String) -> void:
+	var b: Building = sim_host.sim.buildings.get(sim_id)
+	if b == null or construction_view == null:
+		return
+	var record: Dictionary = sim_host.sim._building_records[sim_id]
+	var size: Vector2i = record["footprint"]
+	var center := Vector3(b.origin.x * 8.0 + size.x * 4.0, 0.0,
+			b.origin.y * 8.0 + size.y * 4.0)
+	var target_level := maxi(b.pending_level, maxi(b.level, 1))
+	var height := float(_height_of.get("%s:%d" % [b.archetype, target_level], 10.0))
+	construction_view.add_site(b.id, center, size, height)
+
+
 ## Sim → render event bridge: translate string building ids to render ids and
 ## feed the model. The renderer follows the SIMULATION — nothing is staged.
 func _on_sim_batch(batch: Array) -> void:
@@ -255,6 +282,14 @@ func _on_sim_batch(batch: Array) -> void:
 				var view := _building_view(String(event.get("sim_id", "")))
 				if not view.is_empty():
 					translated.append({"type": &"building_placed", "view": view})
+					_add_construction_site(String(event.get("sim_id", "")))
+			&"upgrade_started_sim":
+				_add_construction_site(String(event.get("sim_id", "")))
+			&"building_construction_stage":
+				translated.append(event)  # already carries the int render id
+				if construction_view != null:
+					construction_view.set_stage(int(event.get("building", -1)),
+							int(event.get("stage", 1)))
 			&"BuildingPowerChanged":
 				var rid := _render_id(String(event.get("building", "")))
 				if rid >= 0:
@@ -266,6 +301,9 @@ func _on_sim_batch(batch: Array) -> void:
 					var out: Dictionary = event.duplicate()
 					out["building"] = rid2
 					translated.append(out)
+					if StringName(String(event["type"])) == &"building_completed" \
+							and construction_view != null:
+						construction_view.remove_site(rid2)
 			&"PowerRestored":
 				pass  # per-block relights arrive via BlockDarkChanged(false)
 			_:
@@ -288,10 +326,12 @@ func _render_id_from_int(value: Variant) -> int:
 ## render add end-to-end.
 func _place_demo(archetype: String) -> void:
 	var sim := sim_host.sim
+	var foot: Array = sim.catalog.stats(archetype, 1).get("footprint", [1, 1])
+	var size := Vector2i(int(foot[0]), int(foot[1]))
 	for z in range(32, 80):
 		for x in range(32, 80):
 			var origin := Vector2i(x, z)
-			if sim.world.grid.can_place(origin, Vector2i.ONE) and sim.grid.would_serve(origin):
+			if sim.world.grid.can_place(origin, size) and sim.grid.would_serve(origin):
 				print("[place-demo] ", archetype, " at ", origin, " -> ",
 						sim.cmd_place_building(archetype, origin))
 				return
@@ -488,6 +528,8 @@ func _process(delta: float) -> void:
 		_refresh_hud()
 	environment_controller.apply(hour, delta)
 	city_view.refresh(delta, hour, camera_rig.camera.global_position)
+	if construction_view != null:
+		construction_view.refresh(delta, environment_controller.last_night)
 	streetlights.refresh()
 	if _blackout_at >= 0.0 and _screenshot_timer >= _blackout_at:
 		_trigger_blackout_demo(true)

@@ -892,7 +892,7 @@ RenderStateModel.plan_relight(block_id: int, restore_order: PackedInt32Array,
 
 - Snow / blizzard / fog-weather VFX (only the fog profile table lands; snow particles wait for the weather expansion).
 - `ReflectionProbe` on High (§2.9 trick 3) — gated behind on-device validation.
-- Construction-site props (cranes, fencing, partial frames) beyond a single scaffold box driven by `construction_stage`. Spec §12.3's six-stage visualisation is Phase 2.
+- ~~Construction-site props (cranes, fencing, partial frames) beyond a single scaffold box driven by `construction_stage`. Spec §12.3's six-stage visualisation is Phase 2.~~ **Amended 2026-08-18 (user directive): pulled forward and shipped — six-stage shader growth (`building.gdshader` vertex clamp + concrete shell), `ConstructionSiteView` hoarding/crane/scaffold props, `building_construction_stage` sim events.**
 - The remaining 3 archetypes (`ind_warehouse` variants, `civ_school`, `civ_stadium` detail) and all post-launch archetypes.
 - Water / police / fire / traffic / construction overlay line layers (mechanism ships, layers are doc 12's Phase 2).
 - Decorative pedestrians (spec §29.1 explicitly allows them as visual-only; not slice content).

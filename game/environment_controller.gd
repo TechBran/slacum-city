@@ -12,6 +12,8 @@ extends Node
 var controller := DayNightController.new()
 var far_cull_m: float = 1200.0
 var render_clock_s: float = 0.0
+## Last sampled night scalar (0 day .. 1 night) for views that need it on CPU.
+var last_night: float = 0.0
 var _environment: Environment
 var _sky_material: ProceduralSkyMaterial
 var _sun: DirectionalLight3D
@@ -71,7 +73,8 @@ func apply(hour: float, delta: float) -> void:
 	_environment.fog_density = float(fog.get("density", 0.0012))
 	_environment.fog_sky_affect = float(fog.get("sky", 0.5))
 	_environment.fog_aerial_perspective = float(fog.get("aerial", 0.3))
-	RenderingServer.global_shader_parameter_set("sc_night", float(s["night"]))
+	last_night = float(s["night"])
+	RenderingServer.global_shader_parameter_set("sc_night", last_night)
 	RenderingServer.global_shader_parameter_set("sc_time", render_clock_s)
 	RenderingServer.global_shader_parameter_set("sc_fog_tint",
 			Vector3((s["fog_tint"] as Color).r, (s["fog_tint"] as Color).g, (s["fog_tint"] as Color).b))
