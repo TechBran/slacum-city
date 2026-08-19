@@ -84,6 +84,47 @@
        "key": "block_id", "args": {"block": "block_id"}}
     ]
   },
+  "incident_drawer": {
+    "_comment": "S6 (doc 12 §2.6). The drawer's GEOMETRY is already in `layout` (drawer_w_ratio/min/max, drawer_row_h_dp, drawer_handle_dp, drawer_handle_center_from_bottom_dp, drawer_anim_s) and its escalation-bar thresholds are already in `thresholds` (escalation_bar_critical_remaining_tiers, escalation_bar_held_when_assist_ratio_ge) — this block adds only what §2.6 says and no other block does: the sort orders, the row cap, and the two glyph sets.",
+    "sort_orders": ["priority", "nearest", "newest", "unassigned"],
+    "default_sort": "priority",
+    "_max_rows": "The drawer is a list of things to DO, not a log; doc 06's storm cascade can open dozens at once and a list past this depth is not readable on a phone. The lowest-tier row is the one dropped, never a T5.",
+    "max_rows": 40,
+    "_tier_glyphs": "§2.6's A5 redundancy set, verbatim: T1 ▪, T2 ▴, T3 ▴▴, T4 ◆, T5 ✶. The tier DIGIT is the primary channel; these reinforce it. Colours are palette.tier1…tier5, which already exist.",
+    "tier_glyphs": {"1": "▪", "2": "▴", "3": "▴▴", "4": "◆", "5": "✶"},
+    "_kind_glyphs": "One per doc 06 incident `type`. Keys are doc 06's type ids verbatim so a rename there is a visible miss here rather than a silent fallback.",
+    "kind_glyphs": {
+      "structure_fire": "🔥", "transformer_failure": "⚡", "water_main_break": "💧",
+      "traffic_accident": "🚗", "crime": "🛡", "storm_damage": "🌩", "unknown": "⚠"
+    }
+  },
+  "unit_picker": {
+    "_comment": "S7 (doc 12 §2.6 steps 1-5). Sheet height and row height are `layout.unit_picker_h_dp` / `layout.unit_row_h_dp`; the rank key is §2.6's and lives in ui/unit_picker_model.gd. This block carries only the department glyph set — doc 06 owns the department names.",
+    "dept_glyphs": {"fire": "🚒", "police": "🚓", "utility": "🔧", "water": "🚰",
+                    "public_works": "🔧", "construction": "🏗", "unknown": "▪"}
+  },
+  "dashboard": {
+    "_comment": "S8 (doc 12 §2.10). §2.10 specifies four tabs; `tabs` lists the ones whose sim queries exist. Infrastructure needs per-feeder headroom (doc 04) and per-zone pressure (doc 05); Response needs the unit roster with rolling response times (doc 06). Adding either is an edit to this array plus its rows, never a code change.",
+    "tabs": ["overview", "economy"],
+    "overview_rows": ["population", "treasury", "net_income", "happiness", "stability",
+                      "grid", "water", "incidents"],
+    "_series": "What ui/history_model.gd rings. `power01`/`water01` are the [0,1] service fractions the ⚡/💧 chips read, sampled at the same hourly boundary as the rest.",
+    "series": ["population", "treasury", "net_per_hour", "happiness", "stability",
+               "power01", "water01"],
+    "_history_capacity": "168 hourly samples = 7 game-days, exactly what §2.10's '7-day treasury chart' needs. The ring is fixed-size and is NOT persisted: doc 12 §3.2 fixes the `ui` save section and report 98 §E2 makes save identity exact.",
+    "history_capacity": 168,
+    "spark_hours": 24,
+    "chart_hours": 168,
+    "row_h_dp": 48,
+    "sparkline_dp": [64, 24],
+    "chart_dp": [280, 96]
+  },
+  "budget": {
+    "_comment": "The Economy tab's ledger. Keys are doc 03's settle-snapshot keys VERBATIM (`revenue.*` and `expenses.*` from EconomySystem.settle_hour) so a rename there shows up as a missing line here rather than as a wrong total. Order is the reading order, not doc 03's; the tax ladder itself is doc 03's and is never restated here.",
+    "revenue_keys": ["tax", "power_tariff", "water_tariff", "fines"],
+    "expense_keys": ["building_maint", "departments", "fleet", "vehicle_fuel", "grid",
+                     "generation_fuel", "water", "roads_repair", "debt"]
+  },
   "settings": {
     "_comment": "S9 (doc 12 §2.13), Phase-1 pages only. Every row is data so the sheet holds no option list and no default; `options_from`/`default_from` resolve against data/render.json (doc 11 owns the graphics presets) and this file's own `defaults` block.",
     "rows": [

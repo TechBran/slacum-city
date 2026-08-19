@@ -110,6 +110,21 @@ var _state_glyphs: Dictionary = {}
 ## §3.2 `settings.in_app_banners` — the one notification control this doc owns.
 var banners_enabled := true
 
+## The ⚡ and 💧 chips' readings, on `[0, 1]`, or `< 0` for "no reading yet"
+## (which is what makes the chip say `—` in OFFLINE grey rather than `0%` in
+## CRITICAL red — a city with no water system is not a city with no water).
+##
+## Doc 04 publishes power availability per building
+## (`PowerGrid.power_availability_hour`) and doc 05 publishes the water service
+## factor per building (`WaterServiceLedger.all_service_factors`); the city-wide
+## figure the chip wants is the mean of those, which `mean01()` computes. They
+## live here rather than in the per-refresh snapshot because they settle on the
+## game-hour boundary while the HUD refreshes several times a second: re-deriving
+## a mean over every building at 4 Hz to display one integer would be the most
+## expensive thing the UI does.
+var service_power01 := -1.0
+var service_water01 := -1.0
+
 # --- InAppAlertGate live state ----------------------------------------------
 var _buckets: Dictionary = {}       # class id -> tokens (float)
 var _bucket_time: Dictionary = {}   # class id -> last refill timestamp
@@ -134,6 +149,65 @@ func _init(cfg: UIConfig = null) -> void:
 
 static func load_from_files() -> HudModel:
 	return HudModel.new(UIConfig.load_from_files())
+
+
+# ===========================================================================
+# Service readings (doc 12 §2.4 P3/P4 — the ⚡ and 💧 chips)
+# ===========================================================================
+
+## `{power01, water01}` on `[0, 1]`. Either key may be absent (that reading is
+## left alone) or negative (that chip goes back to "no reading"). Called by the
+## shell on the game-hour boundary, when docs 04/05 settle.
+func ingest_service(snapshot: Dictionary) -> void:
+	if snapshot.has("power01"):
+		service_power01 = HudModel._clamp_or_unknown(float(snapshot["power01"]))
+	if snapshot.has("water01"):
+		service_water01 = HudModel._clamp_or_unknown(float(snapshot["water01"]))
+
+
+static func _clamp_or_unknown(value: float) -> float:
+	return -1.0 if value < 0.0 else clampf(value, 0.0, 1.0)
+
+
+## The city-wide fraction from a per-building publication: `{id: fraction}` from
+## `PowerGrid`/`WaterServiceLedger`, or a bare `Array` of fractions. An empty
+## collection is `-1.0`, i.e. "no reading", not `0`.
+##
+## Unweighted on purpose: doc 04's own block-dark rule is population-weighted and
+## doc 12 §2.4 asks the chip for "grid health", not for "how many people are in
+## the dark" — that second number is what the alerts feed's `{count} blocks are
+## dark` already says, and the two must not be the same statistic wearing
+## different labels.
+static func mean01(values: Variant) -> float:
+	var total := 0.0
+	var count := 0
+	if values is Dictionary:
+		for key: Variant in (values as Dictionary):
+			total += clampf(float((values as Dictionary)[key]), 0.0, 1.0)
+			count += 1
+	elif values is Array:
+		for value: Variant in (values as Array):
+			total += clampf(float(value), 0.0, 1.0)
+			count += 1
+	elif values is PackedFloat32Array or values is PackedFloat64Array:
+		for value: float in values:
+			total += clampf(value, 0.0, 1.0)
+			count += 1
+	if count <= 0:
+		return -1.0
+	return total / float(count)
+
+
+## The percentage a chip renders, resolved in one place: an explicit `*_pct` on
+## the snapshot wins, then a `[0,1]` fraction on the snapshot, then the ingested
+## reading, then "no reading".
+func _service_pct(snapshot: Dictionary, pct_key: String, frac_key: String,
+		stored: float) -> float:
+	if snapshot.has(pct_key):
+		return float(snapshot[pct_key])
+	if snapshot.has(frac_key):
+		return HudModel._clamp_or_unknown(float(snapshot[frac_key])) * 100.0
+	return stored * 100.0 if stored >= 0.0 else -1.0
 
 
 # ===========================================================================
@@ -598,7 +672,8 @@ func _pack_rows(order: Array, modes: Dictionary, gap: float, min_widths: Diction
 ## `snapshot` keys (all optional, all plain data — the UI never holds a sim ref):
 ##   population:int · population_delta_pct_per_day:float · treasury:int
 ##   net_per_hour:float · stability:float ∈[0,1] · happiness:float
-##   grid_pct:float · water_pct:float (negative or absent → OFFLINE "—")
+##   grid_pct:float · water_pct:float, or power01/water01 on [0,1]; absent on
+##     both falls back to `ingest_service()`'s reading and then to OFFLINE "—"
 ##   incidents:int | {count, worst_tier | severities}
 ##   clock:int minutes | {minute_of_day, day_index} · speed:int · paused:bool
 func build_view(snapshot: Dictionary, width_dp: float,
@@ -637,8 +712,8 @@ func chip_values(snapshot: Dictionary) -> Dictionary:
 	var population := int(snapshot.get("population", 0))
 	var pop_delta := float(snapshot.get("population_delta_pct_per_day", 0.0))
 	var stability01 := float(snapshot.get("stability", 0.0))
-	var grid_pct := float(snapshot.get("grid_pct", -1.0))
-	var water_pct := float(snapshot.get("water_pct", -1.0))
+	var grid_pct := _service_pct(snapshot, "grid_pct", "power01", service_power01)
+	var water_pct := _service_pct(snapshot, "water_pct", "water01", service_water01)
 	var incidents: Dictionary = _incident_block(snapshot.get("incidents", 0))
 	var count := int(incidents["count"])
 	var badge := int(incidents["worst_tier"])

@@ -1,4 +1,4 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=14 format=3]
 
 [ext_resource type="Script" path="res://ui/ui_root.gd" id="1_uiroot"]
 [ext_resource type="Script" path="res://ui/hud.gd" id="2_hud"]
@@ -9,6 +9,10 @@
 [ext_resource type="Script" path="res://ui/settings_sheet.gd" id="7_settingssheet"]
 [ext_resource type="Script" path="res://ui/save_load_sheet.gd" id="8_saveloadsheet"]
 [ext_resource type="Script" path="res://ui/pause_menu.gd" id="9_pausemenu"]
+[ext_resource type="Script" path="res://ui/incident_drawer.gd" id="10_incidentdrawer"]
+[ext_resource type="Script" path="res://ui/unit_picker.gd" id="11_unitpicker"]
+[ext_resource type="Script" path="res://ui/city_dashboard.gd" id="12_citydashboard"]
+[ext_resource type="Script" path="res://ui/away_report_sheet.gd" id="13_awayreport"]
 
 [node name="UIRoot" type="CanvasLayer"]
 layer = 10
@@ -263,9 +267,9 @@ anchor_left = 1.0
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -84.0
+offset_left = -128.0
 offset_top = -140.0
-offset_right = -12.0
+offset_right = -56.0
 offset_bottom = -92.0
 grow_horizontal = 0
 grow_vertical = 0
@@ -321,6 +325,81 @@ size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
 [node name="List" type="VBoxContainer" parent="SafeArea/PanelLayer/AlertsCenter/Panel/Body/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="IncidentDrawer" type="Control" parent="SafeArea/PanelLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("10_incidentdrawer")
+
+[node name="Handle" type="Button" parent="SafeArea/PanelLayer/IncidentDrawer"]
+custom_minimum_size = Vector2(48, 160)
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -48.0
+offset_top = -220.0
+offset_bottom = -60.0
+grow_horizontal = 0
+grow_vertical = 0
+text = "▤"
+tooltip_text = "Incidents"
+theme_type_variation = &"StatChip"
+
+[node name="Panel" type="PanelContainer" parent="SafeArea/PanelLayer/IncidentDrawer"]
+visible = false
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 1
+anchors_preset = 11
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -300.0
+offset_top = 56.0
+grow_horizontal = 0
+grow_vertical = 2
+theme_type_variation = &"SidePanel"
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/PanelLayer/IncidentDrawer/Panel"]
+layout_mode = 2
+
+[node name="Header" type="HBoxContainer" parent="SafeArea/PanelLayer/IncidentDrawer/Panel/Body"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="SafeArea/PanelLayer/IncidentDrawer/Panel/Body/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+clip_text = true
+
+[node name="Close" type="Button" parent="SafeArea/PanelLayer/IncidentDrawer/Panel/Body/Header"]
+custom_minimum_size = Vector2(48, 48)
+layout_mode = 2
+text = "✕"
+tooltip_text = "Close incidents"
+theme_type_variation = &"GhostButton"
+
+[node name="Sort" type="HBoxContainer" parent="SafeArea/PanelLayer/IncidentDrawer/Panel/Body"]
+layout_mode = 2
+
+[node name="Empty" type="Label" parent="SafeArea/PanelLayer/IncidentDrawer/Panel/Body"]
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="Scroll" type="ScrollContainer" parent="SafeArea/PanelLayer/IncidentDrawer/Panel/Body"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="List" type="VBoxContainer" parent="SafeArea/PanelLayer/IncidentDrawer/Panel/Body/Scroll"]
 layout_mode = 2
 size_flags_horizontal = 3
 
@@ -416,6 +495,68 @@ custom_minimum_size = Vector2(64, 48)
 layout_mode = 2
 tooltip_text = "PLACE"
 theme_type_variation = &"PrimaryFAB"
+
+[node name="UnitPicker" type="Control" parent="SafeArea/SheetLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("11_unitpicker")
+
+[node name="Sheet" type="PanelContainer" parent="SafeArea/SheetLayer/UnitPicker"]
+visible = false
+custom_minimum_size = Vector2(0, 240)
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -240.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_type_variation = &"SheetPanel"
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/SheetLayer/UnitPicker/Sheet"]
+layout_mode = 2
+
+[node name="Header" type="HBoxContainer" parent="SafeArea/SheetLayer/UnitPicker/Sheet/Body"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="SafeArea/SheetLayer/UnitPicker/Sheet/Body/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+clip_text = true
+
+[node name="Close" type="Button" parent="SafeArea/SheetLayer/UnitPicker/Sheet/Body/Header"]
+custom_minimum_size = Vector2(48, 48)
+layout_mode = 2
+text = "✕"
+tooltip_text = "Close unit picker"
+theme_type_variation = &"GhostButton"
+
+[node name="Auto" type="Button" parent="SafeArea/SheetLayer/UnitPicker/Sheet/Body"]
+custom_minimum_size = Vector2(200, 48)
+layout_mode = 2
+text = "AUTO — best available"
+tooltip_text = "AUTO — best available"
+theme_type_variation = &"PrimaryFAB"
+
+[node name="Message" type="Label" parent="SafeArea/SheetLayer/UnitPicker/Sheet/Body"]
+visible = false
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="Scroll" type="ScrollContainer" parent="SafeArea/SheetLayer/UnitPicker/Sheet/Body"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="List" type="VBoxContainer" parent="SafeArea/SheetLayer/UnitPicker/Sheet/Body/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
 
 [node name="ModalLayer" type="Control" parent="SafeArea"]
 layout_mode = 2
@@ -628,6 +769,138 @@ horizontal_alignment = 1
 [node name="Buttons" type="VBoxContainer" parent="SafeArea/ModalLayer/PauseMenu/Panel/Body"]
 layout_mode = 2
 size_flags_vertical = 3
+
+[node name="CityDashboard" type="Control" parent="SafeArea/ModalLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("12_citydashboard")
+
+[node name="Scrim" type="ColorRect" parent="SafeArea/ModalLayer/CityDashboard"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="Panel" type="PanelContainer" parent="SafeArea/ModalLayer/CityDashboard"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 24.0
+offset_top = 24.0
+offset_right = -24.0
+offset_bottom = -24.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_type_variation = &"SheetPanel"
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/ModalLayer/CityDashboard/Panel"]
+layout_mode = 2
+
+[node name="Header" type="HBoxContainer" parent="SafeArea/ModalLayer/CityDashboard/Panel/Body"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="SafeArea/ModalLayer/CityDashboard/Panel/Body/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+clip_text = true
+
+[node name="Close" type="Button" parent="SafeArea/ModalLayer/CityDashboard/Panel/Body/Header"]
+custom_minimum_size = Vector2(48, 48)
+layout_mode = 2
+text = "✕"
+tooltip_text = "Close city dashboard"
+theme_type_variation = &"GhostButton"
+
+[node name="Tabs" type="HBoxContainer" parent="SafeArea/ModalLayer/CityDashboard/Panel/Body"]
+layout_mode = 2
+
+[node name="Scroll" type="ScrollContainer" parent="SafeArea/ModalLayer/CityDashboard/Panel/Body"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="Content" type="VBoxContainer" parent="SafeArea/ModalLayer/CityDashboard/Panel/Body/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AwayReport" type="Control" parent="SafeArea/ModalLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("13_awayreport")
+
+[node name="Scrim" type="ColorRect" parent="SafeArea/ModalLayer/AwayReport"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="Panel" type="PanelContainer" parent="SafeArea/ModalLayer/AwayReport"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 24.0
+offset_top = 24.0
+offset_right = -24.0
+offset_bottom = -24.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_type_variation = &"SheetPanel"
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/ModalLayer/AwayReport/Panel"]
+layout_mode = 2
+
+[node name="Header" type="HBoxContainer" parent="SafeArea/ModalLayer/AwayReport/Panel/Body"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="SafeArea/ModalLayer/AwayReport/Panel/Body/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+clip_text = true
+
+[node name="Close" type="Button" parent="SafeArea/ModalLayer/AwayReport/Panel/Body/Header"]
+custom_minimum_size = Vector2(48, 48)
+layout_mode = 2
+text = "✕"
+tooltip_text = "DISMISS"
+theme_type_variation = &"GhostButton"
+
+[node name="Scroll" type="ScrollContainer" parent="SafeArea/ModalLayer/AwayReport/Panel/Body"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="Content" type="VBoxContainer" parent="SafeArea/ModalLayer/AwayReport/Panel/Body/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Dismiss" type="Button" parent="SafeArea/ModalLayer/AwayReport/Panel/Body"]
+custom_minimum_size = Vector2(96, 48)
+layout_mode = 2
+text = "DISMISS"
+tooltip_text = "DISMISS"
+theme_type_variation = &"PrimaryFAB"
 
 [node name="CoachLayer" type="Control" parent="SafeArea"]
 layout_mode = 2
