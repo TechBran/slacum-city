@@ -118,8 +118,13 @@ func damage_fraction() -> float:
 	return clampf(1.0 - condition, 0.0, 1.0)
 
 
+## doc 02 §2.6: `build_time_hours(L) × REPAIR_TIME_FACTOR × damage_fraction`.
+## `data/buildings.json` names the column `build_time_hours`; `build_hours` is
+## accepted as a legacy alias so a fixture written either way still prices.
 func repair_crew_hours() -> float:
-	return float(stats.get("build_hours", 0.0)) * REPAIR_TIME_FACTOR * damage_fraction()
+	var build_hours := float(stats.get("build_time_hours",
+			stats.get("build_hours", 0.0)))
+	return build_hours * REPAIR_TIME_FACTOR * damage_fraction()
 
 
 ## One settled hour (or dt_h of them) of decay. `powered_fraction` is doc 04's

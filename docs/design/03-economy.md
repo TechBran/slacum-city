@@ -157,6 +157,8 @@ tax_policy_factor = r / TAX_RATE_BASE,   TAX_RATE_BASE = 0.09
 
 The cost is paid in doc 09: `happiness_tax_delta = -(r - 0.09) × 220` happiness points, and `growth_rate_multiplier = 1 - (r - 0.09) × 3.5`. At r=0.16 revenue is ×1.778 but happiness drops 15.4 points and population growth drops 24.5% — a short-term lever with a long-term bill. Rate changes are limited to once per `TAX_RATE_COOLDOWN_HOURS = 48` gh to stop yo-yo exploitation.
 
+**As shipped (Wave 1.5, audit doc 93 §B).** The slider has detents: **`cmd_set_tax_level(level, preview)`** walks `TAX_RATE_MIN … TAX_RATE_MAX` in `TAX_RATE_STEP` (new in §8, **0.01**) increments — 13 levels, with **level 5 landing exactly on `TAX_RATE_BASE`** — and the ladder is computed in basis points so no detent can drift off its authored rate through float arithmetic. Codes are `E_TAX_LEVEL_RANGE` then `E_TAX_COOLDOWN` (whose payload carries `hours_remaining`); re-selecting the level already in force is a free no-op that starts **no** cooldown, so the UI need not special-case it. All three couplings are live: the policy factor scales revenue here, and `happiness_tax_delta` / `growth_rate_multiplier` are passed into doc 09's happiness target and attractiveness relaxation at the hourly settlement — both exactly neutral at the base rate, so the shipped starter city is unaffected. *(The audit's phrase "the `TAX_LEVEL_GROWTH` curve exists" conflated two constants: `TAX_LEVEL_GROWTH 2.15` is `base_tax` growth per **building** level and has nothing to do with the tax rate.)*
+
 **M_rev[difficulty]** — §2.9.
 
 **City revenue floor (anti-death-spiral).** After summing all buildings:
@@ -939,6 +941,8 @@ Plants keep a shallower factor because a plant is a *strategic* purchase — at 
 
 Underground feeder still costs `× UNDERGROUND_COST_MULT (2.6)` per tile — that multiplier is doc 04's topology decision, not a price.
 
+**What a placed transformer actually costs (Wave 1.5).** Doc 04's `cmd_place_grid_component` charges the `transformer` row at the chosen level **plus the feeder lateral it takes to reach the grid**, at this table's per-tile feeder price for the tapped feeder's conductor class (and its underground multiplier where it applies). An L1 transformer two tiles off a class-1 overhead feeder is therefore `500 + 2 × 110 = $720`, and one eight tiles out is `500 + 8 × 110 = $1,380` — the copper is the interesting half of the decision, which is the point. Those lateral tiles join the feeder's `route`, so §2.4's `E_grid` bills their `line_km` from the next game-hour: **extending the grid raises the standing bill**, with no separate per-component upkeep (C-08 still holds). The `road_install` / `utility_corridor` no-double-billing rule below applies unchanged — a development phase's trunk is charged once, by §2.8, and never again per tile.
+
 **Worked check against §2.12's S8 resilience package:** `substation L1 15,000 + 34 × transmission cls-2 1,200 = 40,800 + tie_switch 3,500 = 59,300` — the package line this doc has always priced at "≈60,000". The rescale reproduces the pacing model's own assumptions, which is the strongest available evidence that 1/8 and 1/3 are the right factors.
 
 #### (c) Vehicles — the definitive roster (recomputation R-14)
@@ -1280,6 +1284,8 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
   "tax": {
     "TAX_LEVEL_GROWTH": 2.15, "TAX_RATE_BASE": 0.09, "TAX_RATE_MIN": 0.04, "TAX_RATE_MAX": 0.16,
     "TAX_RATE_COOLDOWN_HOURS": 48, "TAX_RATE_HAPPINESS_COEFF": 220.0, "TAX_RATE_GROWTH_COEFF": 3.5,
+    "_tax_level_note": "The player knob of §2.2 is the RATE r, bounded by TAX_RATE_MIN/MAX. cmd_set_tax_level exposes it as the discrete ladder MIN, MIN+STEP, ... , MAX so the UI has detents; 13 levels, and level 5 lands exactly on TAX_RATE_BASE. The ladder is computed in basis points so no float drift can move a detent off its authored rate. This is the tax RATE ladder and is unrelated to TAX_LEVEL_GROWTH, which is base_tax growth per BUILDING level.",
+    "TAX_RATE_STEP": 0.01,
     "OCCUPANCY_RAMP_HOURS": 36,
     "_stability_note": "S is [0,1] from doc 09 (C-56). f_stability = STAB_FLOOR + (1-STAB_FLOOR) * S^STAB_EXP. No /100.",
     "STAB_FLOOR": 0.25, "STAB_EXP": 0.70,
