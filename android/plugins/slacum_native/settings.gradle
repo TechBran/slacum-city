@@ -1,0 +1,29 @@
+// Standalone Gradle build for the SlacumNative AAR (doc 13 §2.6).
+//
+// It deliberately borrows the engine's own version pins from the installed
+// build template (`android/build/config.gradle`) instead of declaring its own:
+// the plugin is compiled against the engine, so AGP, Kotlin, compileSdk and the
+// Java level must be whatever the template says they are. Reinstalling the
+// template after a Godot upgrade therefore retargets this build automatically.
+pluginManagement {
+	apply from: '../../build/config.gradle'
+
+	plugins {
+		id 'com.android.library' version versions.androidGradlePlugin
+		id 'org.jetbrains.kotlin.android' version versions.kotlinVersion
+	}
+	repositories {
+		google()
+		mavenCentral()
+		gradlePluginPortal()
+	}
+}
+
+dependencyResolutionManagement {
+	repositories {
+		google()
+		mavenCentral()
+	}
+}
+
+rootProject.name = 'slacum_native'
