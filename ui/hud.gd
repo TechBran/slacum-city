@@ -20,16 +20,20 @@ signal clock_activated                          ## → weather/forecast surface
 signal speed_selected(multiplier: int)          ## → `set_speed` (doc 01)
 signal pause_toggled(paused: bool)              ## → `set_paused` (doc 01)
 signal alert_activated(alert_id: String)        ## banner tap → jump + select
+signal menu_requested                           ## → the pause menu on ModalLayer
 
 const PALETTE_TYPE := "Palette"
 const REFERENCE_WIDTH_DP := 880.0
 const ALERT_REFRESH_S := 0.2
+const MENU_GLYPH := "☰"
 
 var config: UIConfig
 var model: HudModel
 
-var _chips_box: HBoxContainer
+var _top_bar: Control
+var _chips_box: VBoxContainer     ## one `Row<i>` HBox per wrapped top-bar row
 var _clock_chip: Button
+var _menu_button: Button
 var _speed_button: Button
 var _speed_options_box: VBoxContainer
 var _alert_stack: VBoxContainer
@@ -43,9 +47,17 @@ var _paused := false
 var _rail_expanded := false
 var _reduce_motion := false
 var _touch_min := 48.0
+var _chip_gap := 6.0
+var _spacing := 8.0
+var _max_rows := 1
 var _pulse_hz := 1.2
 var _pulse_phase := 0.0
 var _alert_timer := 0.0
+var _row_signature := ""
+## Layout width in dp. `< 0` means "measure the tree"; the tests and the
+## screenshot harness set it explicitly so a headless run can exercise a Fold's
+## near-square box without a window.
+var _width_override := -1.0
 var _last_snapshot: Dictionary = {}
 
 
@@ -67,6 +79,10 @@ func setup(cfg: UIConfig = null, hud_model: HudModel = null) -> void:
 	_touch_min = float(ThemeBuilder.touch_min_dp(config,
 			UIConfig.get_num(defaults, "text_scale", 1.0),
 			bool(defaults.get("larger_touch_targets", false))))
+	var layout := config.layout()
+	_chip_gap = UIConfig.get_num(layout, "chip_gap_dp", 6.0)
+	_spacing = UIConfig.get_num(layout, "touch_spacing_min_dp", 8.0)
+	_max_rows = model.top_bar_max_rows()
 	var pulse := config.section("state_pulse_hz")
 	_pulse_hz = UIConfig.get_num(pulse, "critical", 1.2)
 	_bind_nodes()
@@ -89,8 +105,10 @@ static func _clear_children(node: Node) -> void:
 
 
 func _bind_nodes() -> void:
-	_chips_box = get_node_or_null("TopBar/Chips") as HBoxContainer
+	_top_bar = get_node_or_null("TopBar") as Control
+	_chips_box = get_node_or_null("TopBar/Chips") as VBoxContainer
 	_clock_chip = get_node_or_null("TopBar/ClockChip") as Button
+	_menu_button = get_node_or_null("TopBar/MenuButton") as Button
 	_speed_button = get_node_or_null("LeftRail/SpeedButton") as Button
 	_speed_options_box = get_node_or_null("LeftRail/SpeedOptions") as VBoxContainer
 	_alert_stack = get_node_or_null("AlertStack") as VBoxContainer
@@ -99,6 +117,7 @@ func _bind_nodes() -> void:
 func _rebuild() -> void:
 	_build_chips()
 	_build_clock()
+	_build_menu_button()
 	_build_speed_rail()
 	_build_alert_rows()
 	if not _last_snapshot.is_empty():
@@ -109,11 +128,18 @@ func _rebuild() -> void:
 # Construction
 # ---------------------------------------------------------------------------
 
+## Chips are built once and then **re-flowed** between top-bar rows as the width
+## changes — rebuilding them on every resize would drop their state and their
+## measured widths for no gain.
 func _build_chips() -> void:
 	if _chips_box == null:
 		return
 	_clear_children(_chips_box)
 	_chips.clear()
+	_row_signature = ""
+	_chips_box.add_theme_constant_override(&"separation", int(_spacing))
+	var row := _new_chip_row(0)
+	_chips_box.add_child(row)
 	for chip_id: String in model.chip_order():
 		var button := Button.new()
 		button.name = "Chip_" + chip_id
@@ -124,8 +150,16 @@ func _build_chips() -> void:
 		button.clip_text = true
 		button.tooltip_text = _chip_label(chip_id)  # A15 accessibility name
 		button.pressed.connect(_on_chip_pressed.bind(StringName(chip_id)))
-		_chips_box.add_child(button)
+		row.add_child(button)
 		_chips[chip_id] = button
+
+
+func _new_chip_row(index: int) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.name = "Row%d" % index
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_theme_constant_override(&"separation", int(_chip_gap))
+	return row
 
 
 func _build_clock() -> void:
@@ -138,6 +172,20 @@ func _build_clock() -> void:
 	_clock_chip.tooltip_text = _text("ui_hud_clock", "City clock")
 	if not _clock_chip.pressed.is_connected(_on_clock_pressed):
 		_clock_chip.pressed.connect(_on_clock_pressed)
+
+
+## The pause menu's entry point. Top-right, in the "rare" reach zone (§2.3) —
+## nothing time-critical lives behind it, so 340 dp from the thumb is correct.
+func _build_menu_button() -> void:
+	if _menu_button == null:
+		return
+	_menu_button.theme_type_variation = &"RailButton"
+	_menu_button.focus_mode = Control.FOCUS_NONE
+	_menu_button.custom_minimum_size = Vector2(_touch_min, _touch_min)
+	_menu_button.text = MENU_GLYPH
+	_menu_button.tooltip_text = _text("ui_hud_pause_menu", "Pause menu")
+	if not _menu_button.pressed.is_connected(_on_menu_pressed):
+		_menu_button.pressed.connect(_on_menu_pressed)
 
 
 func _build_speed_rail() -> void:
@@ -227,19 +275,81 @@ func refresh(snapshot: Dictionary) -> void:
 		return
 	_speed = int(snapshot.get("speed", _speed))
 	_paused = bool(snapshot.get("paused", _paused))
-	var view := model.build_view(snapshot, _width_dp())
+	var view := model.build_view(snapshot, _width_dp(), _clock_width_dp(),
+			_measure_chips(snapshot), _max_rows)
 	_apply_chips(view["chips"])
+	_apply_rows((view["top_bar"] as Dictionary)["rows"] as Array)
 	_apply_clock(view["clock"])
 	_apply_speed(view["speed"])
 	_render_alerts(_now_s())
 
 
+## Overrides the measured layout width (dp). The tests and the screenshot
+## harness use it to solve the top bar for a device box — a Fold's near-square
+## inner display, say — without opening a window that size.
+func set_width_dp(width_dp: float) -> void:
+	_width_override = width_dp
+	if not _last_snapshot.is_empty():
+		refresh(_last_snapshot)
+
+
 func _width_dp() -> float:
+	if _width_override > 1.0:
+		return _width_override
 	var w := size.x
 	if w <= 1.0:
 		var parent := get_parent() as Control
 		w = parent.size.x if parent != null else 0.0
 	return w if w > 1.0 else REFERENCE_WIDTH_DP
+
+
+## The clock chip and the menu button share row 0 with the stat chips, so both
+## come out of the chips' budget (§2.4's `avail = W - clock_w - 16`).
+func _clock_width_dp() -> float:
+	var clock_w := UIConfig.get_num(config.layout(), "clock_chip_w_dp", 132.0)
+	if _clock_chip != null:
+		clock_w = maxf(clock_w, _clock_chip.custom_minimum_size.x)
+	if _menu_button != null and _menu_button.visible:
+		clock_w += _menu_button.custom_minimum_size.x + _chip_gap
+	return clock_w
+
+
+## What each chip's text actually needs, in dp, for both collapse modes. The
+## solver widens the doc's budget to this, which is what stops a value string
+## from clipping on a narrow display (A1/A2) — and it is measured against the
+## live theme, so a text-scale change re-measures for free.
+func _measure_chips(snapshot: Dictionary) -> Dictionary:
+	var out: Dictionary = {}
+	if model == null:
+		return out
+	var values := model.chip_values(snapshot)
+	for chip_id: Variant in _chips:
+		var button: Button = _chips[chip_id]
+		var chip: Dictionary = values.get(str(chip_id), {})
+		if chip.is_empty():
+			continue
+		out[str(chip_id)] = {
+			"full": _measure_text(button, _chip_text(chip, str(chip["text_full"]))),
+			"compact": _measure_text(button, _chip_text(chip, str(chip["text_compact"]))),
+		}
+	return out
+
+
+## Text width plus the theme's own horizontal content margins — the two halves
+## of what a themed Button needs before `clip_text` starts eating characters.
+static func _measure_text(control: Control, text: String) -> float:
+	if control == null or text == "":
+		return 0.0
+	var font := control.get_theme_font(&"font")
+	if font == null:
+		return 0.0
+	var font_size := control.get_theme_font_size(&"font_size")
+	var width := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1.0,
+			font_size).x
+	var box := control.get_theme_stylebox(&"normal")
+	if box != null:
+		width += box.content_margin_left + box.content_margin_right
+	return ceilf(width)
 
 
 func _apply_chips(chips: Array) -> void:
@@ -253,18 +363,67 @@ func _apply_chips(chips: Array) -> void:
 		if not button.visible:
 			continue
 		button.custom_minimum_size = Vector2(float(chip["width_dp"]), _touch_min)
-		button.text = _chip_text(chip)
+		button.text = _chip_text(chip, str(chip["text"]))
 		button.set_meta("state", chip["state"])
 		button.set_meta("pulse", bool(chip.get("pulse", false)))
 		_apply_state_color(button, chip["state"])
 
 
-func _chip_text(chip: Dictionary) -> String:
+## Re-parents the chips into the rows the solver produced. Hidden chips stay in
+## row 0 as invisible children — a container skips those, and keeping them in
+## the tree means no chip is ever an orphan waiting to be freed.
+func _apply_rows(rows: Array) -> void:
+	if _chips_box == null:
+		return
+	var signature := str(rows)
+	if signature == _row_signature:
+		return
+	_row_signature = signature
+	for chip_id: Variant in _chips:
+		var button: Button = _chips[chip_id]
+		if button.get_parent() != null:
+			button.get_parent().remove_child(button)
+	var wanted := maxi(1, rows.size())
+	while _chips_box.get_child_count() < wanted:
+		_chips_box.add_child(_new_chip_row(_chips_box.get_child_count()))
+	while _chips_box.get_child_count() > wanted:
+		var extra := _chips_box.get_child(_chips_box.get_child_count() - 1)
+		_chips_box.remove_child(extra)
+		extra.free()
+	var placed: Dictionary = {}
+	for i in rows.size():
+		var row := _chips_box.get_child(i) as HBoxContainer
+		for chip_id: Variant in (rows[i] as Array):
+			var button: Button = _chips.get(str(chip_id), null)
+			if button == null:
+				continue
+			row.add_child(button)
+			placed[str(chip_id)] = true
+	var first_row := _chips_box.get_child(0) as HBoxContainer
+	for chip_id: Variant in _chips:
+		if not placed.has(str(chip_id)):
+			first_row.add_child(_chips[chip_id] as Button)
+	_reposition_alert_stack()
+
+
+## The banner stack sits under the top bar (§2.3); when the bar wraps to two rows
+## the banners follow it down instead of landing on top of the chips.
+func _reposition_alert_stack() -> void:
+	if _alert_stack == null or _top_bar == null:
+		return
+	var bar_h := maxf(_top_bar.get_combined_minimum_size().y,
+			UIConfig.get_num(config.layout(), "top_bar_h_dp", 48.0))
+	var height := _alert_stack.offset_bottom - _alert_stack.offset_top
+	_alert_stack.offset_top = bar_h + _spacing
+	_alert_stack.offset_bottom = _alert_stack.offset_top + maxf(height, 0.0)
+
+
+func _chip_text(chip: Dictionary, text: String) -> String:
 	var parts: PackedStringArray = []
 	var glyph := str(chip["glyph"])
 	if glyph != "":
 		parts.append(glyph)
-	parts.append(str(chip["text"]))
+	parts.append(text)
 	# A5: colour is never load-bearing, so a non-NORMAL chip also carries the
 	# state glyph. NORMAL stays clean — the §2.3 mock has no glyph on a good chip.
 	var state_glyph := str(chip["state_glyph"])
@@ -281,7 +440,8 @@ func _apply_clock(clock: Dictionary) -> void:
 	var glyph := str(clock.get("weather_glyph", ""))
 	_clock_chip.text = ("%s %s" % [glyph, clock["time"]]).strip_edges() \
 			if glyph != "" else str(clock["time"])
-	_clock_chip.tooltip_text = _text("ui_hud_day", str(clock["day"]))
+	_clock_chip.tooltip_text = _text_args("ui_hud_day",
+			{"day": int(clock["day_index"]) + 1}, str(clock["day"]))
 
 
 func _apply_speed(view: Dictionary) -> void:
@@ -361,6 +521,10 @@ func _on_clock_pressed() -> void:
 	clock_activated.emit()
 
 
+func _on_menu_pressed() -> void:
+	menu_requested.emit()
+
+
 func _on_speed_button_pressed() -> void:
 	_rail_expanded = not _rail_expanded
 	if _speed_options_box != null:
@@ -418,6 +582,37 @@ func _text(key: String, fallback: String) -> String:
 	if config != null and config.has_string(key):
 		return config.t(key)
 	return fallback
+
+
+## Same contract with `{named}` arguments (G-8): the table first, the fallback
+## only while a key is missing.
+func _text_args(key: String, args: Dictionary, fallback: String) -> String:
+	if config != null and config.has_string(key):
+		return config.t(key, args)
+	return fallback
+
+
+func menu_button() -> Button:
+	return _menu_button
+
+
+## Which top-bar row each visible chip landed on — what the layout tests assert
+## against, and what a screenshot harness prints.
+func chip_rows() -> Array:
+	var out: Array = []
+	if _chips_box == null:
+		return out
+	for i in _chips_box.get_child_count():
+		var row := _chips_box.get_child(i) as HBoxContainer
+		if row == null:
+			continue
+		var ids: Array[String] = []
+		for child in row.get_children():
+			var button := child as Button
+			if button != null and button.visible:
+				ids.append(str(button.name).trim_prefix("Chip_"))
+		out.append(ids)
+	return out
 
 
 func _apply_state_color(control: Control, state: StringName) -> void:

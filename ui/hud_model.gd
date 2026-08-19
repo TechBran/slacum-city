@@ -289,6 +289,12 @@ func chip_order() -> Array:
 	return priority.duplicate() if priority is Array else _DEFAULT_CHIP_PRIORITY.duplicate()
 
 
+## How many rows the top bar may wrap to before it starts hiding chips
+## (`layout.top_bar_max_rows`). 1 is the doc's single-row behaviour exactly.
+func top_bar_max_rows() -> int:
+	return maxi(1, UIConfig.get_int(_layout, "top_bar_max_rows", 1))
+
+
 func chip_width_dp(chip_id: String, mode: StringName) -> float:
 	if mode == MODE_HIDDEN:
 		return 0.0
@@ -400,16 +406,33 @@ func state_glyph(state: StringName) -> String:
 # TopBarLayoutSolver (doc 12 §2.4, test 10)
 # ===========================================================================
 
-## The §2.4 pseudocode verbatim:
+## The §2.4 pseudocode verbatim, plus two things the doc's version cannot know
+## about on its own:
 ##
 ##     avail = W - clock_w - 16
 ##     loop: demote the lowest-priority FULL chip, then hide the lowest-priority
 ##           COMPACT chip whose priority > 4; P1–P4 are never hidden.
 ##
+## **`min_widths`** is what the view measured for each chip's actual text
+## (`{chip_id: {full: dp, compact: dp}}`, or a bare number for both). The doc's
+## widths are a layout *budget*; a chip whose value string is wider than its
+## budget would clip, and A1/A2 forbid clipping. The effective width is therefore
+## `max(doc width, measured width)`, so the collapse decisions are taken against
+## the pixels that will actually be drawn.
+##
+## **`max_rows`** lets the bar wrap. With `max_rows == 1` this function is
+## byte-identical to the doc's single-row solver. With more, the demotion phase
+## still runs first, but when everything-compact still overflows the bar wraps
+## instead of hiding: a wrapped chip is readable, a hidden one is gone, and on a
+## near-square display (Fold inner, ~1:1) that is the difference between the
+## whole top bar and four of its seven readings. Chips are only hidden once even
+## the last row is full.
+##
 ## `clock_w_dp < 0` takes `layout.clock_chip_w_dp`. Returns
-## `{modes, order, visible, avail, need, iterations}` — pure, deterministic, and
-## bounded at 7 demotions + 3 hides.
-func solve_top_bar(width_dp: float, clock_w_dp: float = -1.0) -> Dictionary:
+## `{modes, order, visible, rows, row_widths, wrapped, avail, need, iterations}` —
+## pure, deterministic, and bounded at 7 demotions + 3 hides.
+func solve_top_bar(width_dp: float, clock_w_dp: float = -1.0,
+		min_widths: Dictionary = {}, max_rows: int = 1) -> Dictionary:
 	var order := chip_order()
 	var gap := UIConfig.get_num(_layout, "chip_gap_dp", _DEFAULT_CHIP_GAP)
 	var clock_w := clock_w_dp if clock_w_dp >= 0.0 \
@@ -417,58 +440,155 @@ func solve_top_bar(width_dp: float, clock_w_dp: float = -1.0) -> Dictionary:
 	var never_hidden := UIConfig.get_int(_layout, "chip_never_hidden_count",
 			_DEFAULT_NEVER_HIDDEN)
 	var avail := width_dp - clock_w - _DEFAULT_TOP_BAR_MARGIN
+	var avail_rest := width_dp - _DEFAULT_TOP_BAR_MARGIN
 
 	var modes: Dictionary = {}
 	for chip_id: String in order:
 		modes[chip_id] = MODE_FULL
 
+	# --- demotion phase (§2.4, unchanged) ----------------------------------
 	var iterations := 0
-	var need := _top_bar_need(order, modes, gap)
+	var need := _top_bar_need(order, modes, gap, min_widths)
 	while need > avail:
-		iterations += 1
 		var demoted := false
 		for i in range(order.size() - 1, -1, -1):
 			if modes[order[i]] == MODE_FULL:
 				modes[order[i]] = MODE_COMPACT
 				demoted = true
 				break
-		if demoted:
-			need = _top_bar_need(order, modes, gap)
-			continue
-		var hidden := false
-		for i in range(order.size() - 1, never_hidden - 1, -1):
-			if modes[order[i]] == MODE_COMPACT:
-				modes[order[i]] = MODE_HIDDEN
-				hidden = true
+		if not demoted:
+			break
+		iterations += 1
+		need = _top_bar_need(order, modes, gap, min_widths)
+
+	var rows: Array = [[]]
+	var row_widths: Array = [need]
+	var wrapped := false
+
+	if need > avail and maxi(1, max_rows) > 1:
+		# --- wrap phase: nothing is hidden while a row can still hold it ----
+		var packed := _pack_rows(order, modes, gap, min_widths, avail, avail_rest,
+				max_rows)
+		while not (packed["leftover"] as Array).is_empty():
+			var hidden := false
+			for i in range(order.size() - 1, never_hidden - 1, -1):
+				if modes[order[i]] != MODE_HIDDEN:
+					modes[order[i]] = MODE_HIDDEN
+					hidden = true
+					break
+			if not hidden:
+				break  # P1–P4 stay, even if they overflow: the doc's final `break`.
+			iterations += 1
+			packed = _pack_rows(order, modes, gap, min_widths, avail, avail_rest, max_rows)
+		rows = packed["rows"]
+		row_widths = packed["widths"]
+		wrapped = rows.size() > 1
+		need = 0.0
+		for width: Variant in row_widths:
+			need = maxf(need, float(width))
+	elif need > avail:
+		# --- hide phase (§2.4, single-row behaviour) -----------------------
+		while need > avail:
+			var hidden := false
+			for i in range(order.size() - 1, never_hidden - 1, -1):
+				if modes[order[i]] == MODE_COMPACT:
+					modes[order[i]] = MODE_HIDDEN
+					hidden = true
+					break
+			if not hidden:
 				break
-		if not hidden:
-			break  # P1–P4 stay, even if they overflow: the doc's final `break`.
-		need = _top_bar_need(order, modes, gap)
+			iterations += 1
+			need = _top_bar_need(order, modes, gap, min_widths)
 
 	var visible: Array[String] = []
 	for chip_id: String in order:
 		if modes[chip_id] != MODE_HIDDEN:
 			visible.append(chip_id)
+	if not wrapped:
+		rows = [visible.duplicate()]
+		row_widths = [need]
 	return {
 		"modes": modes,
 		"order": order,
 		"visible": visible,
+		"rows": rows,
+		"row_widths": row_widths,
+		"wrapped": wrapped,
 		"avail": avail,
+		"avail_rest": avail_rest,
 		"need": need,
 		"iterations": iterations,
 	}
 
 
-func _top_bar_need(order: Array, modes: Dictionary, gap: float) -> float:
+## Effective width of one chip: the doc's budget, widened to whatever the view
+## measured its text at. Hidden chips are 0.
+func _effective_width(chip_id: String, mode: StringName, min_widths: Dictionary) -> float:
+	if mode == MODE_HIDDEN:
+		return 0.0
+	var base := chip_width_dp(chip_id, mode)
+	var entry: Variant = min_widths.get(chip_id, null)
+	if entry is Dictionary:
+		return maxf(base, UIConfig.get_num(entry,
+				"full" if mode == MODE_FULL else "compact", 0.0))
+	if entry is float or entry is int:
+		return maxf(base, float(entry))
+	return base
+
+
+func _top_bar_need(order: Array, modes: Dictionary, gap: float,
+		min_widths: Dictionary = {}) -> float:
 	var total := 0.0
 	var count := 0
 	for chip_id: String in order:
 		var mode: StringName = modes[chip_id]
 		if mode == MODE_HIDDEN:
 			continue
-		total += chip_width_dp(chip_id, mode)
+		total += _effective_width(chip_id, mode, min_widths)
 		count += 1
 	return total + gap * float(maxi(0, count - 1))
+
+
+## Greedy priority-order packing. Row 0 shares its line with the clock chip, so
+## it gets `avail`; every wrapped row below spans the whole bar. A chip wider
+## than a whole row still gets its own row rather than being dropped — that is
+## the caller's cue to raise `max_rows` or the player's to raise the window.
+func _pack_rows(order: Array, modes: Dictionary, gap: float, min_widths: Dictionary,
+		avail_first: float, avail_rest: float, max_rows: int) -> Dictionary:
+	var rows: Array = []
+	var widths: Array = []
+	var leftover: Array = []
+	var current: Array = []
+	var width := 0.0
+	for chip_id: String in order:
+		if modes[chip_id] == MODE_HIDDEN:
+			continue
+		if rows.size() >= max_rows:
+			leftover.append(chip_id)
+			continue
+		var chip_w := _effective_width(chip_id, modes[chip_id], min_widths)
+		var limit := avail_first if rows.is_empty() else avail_rest
+		var addition := chip_w if current.is_empty() else gap + chip_w
+		if current.is_empty() or width + addition <= limit:
+			current.append(chip_id)
+			width += addition
+			continue
+		rows.append(current)
+		widths.append(width)
+		if rows.size() >= max_rows:
+			leftover.append(chip_id)
+			current = []
+			width = 0.0
+			continue
+		current = [chip_id]
+		width = chip_w
+	if not current.is_empty():
+		rows.append(current)
+		widths.append(width)
+	if rows.is_empty():
+		rows.append([])
+		widths.append(0.0)
+	return {"rows": rows, "widths": widths, "leftover": leftover}
 
 
 # ===========================================================================
@@ -482,17 +602,21 @@ func _top_bar_need(order: Array, modes: Dictionary, gap: float) -> float:
 ##   incidents:int | {count, worst_tier | severities}
 ##   clock:int minutes | {minute_of_day, day_index} · speed:int · paused:bool
 func build_view(snapshot: Dictionary, width_dp: float,
-		clock_w_dp: float = -1.0) -> Dictionary:
+		clock_w_dp: float = -1.0, min_widths: Dictionary = {},
+		max_rows: int = 1) -> Dictionary:
 	var balance := int(snapshot.get("treasury", 0))
 	var net_per_hour := float(snapshot.get("net_per_hour", 0.0))
-	var solve := solve_top_bar(width_dp, clock_w_dp)
+	var solve := solve_top_bar(width_dp, clock_w_dp, min_widths, max_rows)
 	var values := chip_values(snapshot)
 	var chips: Array[Dictionary] = []
 	for chip_id: String in solve["order"]:
 		var chip: Dictionary = values[chip_id]
 		var mode: StringName = (solve["modes"] as Dictionary)[chip_id]
 		chip["mode"] = mode
-		chip["width_dp"] = chip_width_dp(chip_id, mode)
+		# The width the view stamps on the button: never below what its own text
+		# measured, or the chip would clip on a narrow display.
+		chip["width_dp"] = _effective_width(chip_id, mode, min_widths)
+		chip["budget_dp"] = chip_width_dp(chip_id, mode)
 		chip["text"] = chip["text_compact"] if mode == MODE_COMPACT else chip["text_full"]
 		chips.append(chip)
 	return {
