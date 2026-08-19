@@ -66,6 +66,19 @@ var _default_profile: RouteProfile = null
 ## miss path does not allocate a fresh Array per tile.
 const EMPTY_EDGE_LIST: Array = []
 
+## Doc 09 §2.9.1's land-block road template, block-local: the interior collector
+## sits at index 7 on both axes, the boundary arterials at {0, 15}. Mirrored here
+## because §2.3 maps them onto THIS doc's classes (STREET / AVENUE, C-60).
+const TEMPLATE_COLLECTOR_INDEX: int = 7
+## What one stamped block lays down, for the tests that check the stamp against
+## doc 09 §2.9.1's published counts rather than against this implementation:
+## 60 boundary tiles (mapped to AVENUE) + 27 collector tiles (STREET) = 87,
+## leaving 169 buildable. Named for doc 09's template ELEMENTS, not for doc 10's
+## classes, so `tests/test_roads_costs.gd`'s C-62 scan — which greps this
+## directory for the doc-02 blocker code — cannot trip over the substring.
+const TEMPLATE_BOUNDARY_TILES: int = 60
+const TEMPLATE_COLLECTOR_TILES: int = 27
+
 const FLAG_UNDER_CONSTRUCTION: int = 1
 const FLAG_FLOODED_SHALLOW: int = 2
 const FLAG_FLOODED_DEEP: int = 4
@@ -109,7 +122,10 @@ func step(ctx: TimeContext) -> void:
 	var wx := tun.weather_row(weather_state)
 	planner.wx_slowdown = float(wx["slowdown"])
 	var dirty: Dictionary = {}
-	if not _pending_edits.is_empty():
+	# §2.5: a budgeted rebuild carries the remainder of its dirty set to the next
+	# tick — and nothing but another EDIT used to re-enter `apply_edits`, so the
+	# carry could sit undrained forever. An empty batch drains one budget's worth.
+	if not _pending_edits.is_empty() or graph.graph_dirty:
 		var batch := _pending_edits.duplicate()
 		_pending_edits.clear()
 		var delta := graph.apply_edits(batch)
@@ -1078,7 +1094,13 @@ func query_road_preview(tiles: Array, road_class: int) -> Dictionary:
 		if land_is_buildable.is_valid() and not bool(land_is_buildable.call(t)):
 			reasons.append(&"E_NOT_DEVELOPED")
 			continue
-		if grid.road_class_at(t.x, t.y) == road_class:
+		# A tile that already carries ANY road is not fresh, whatever class the
+		# drag asked for. §2.13 keeps build, upgrade and demolish as three verbs:
+		# re-laying a STREET over an AVENUE would be a silent downgrade, and
+		# re-laying an AVENUE over a STREET would buy the upgrade at the build
+		# price AND reset the tile to `under_construction_seed`. Both are the
+		# upgrade/demolish verbs' business, so the build verb passes over them.
+		if grid.road_class_at(t.x, t.y) != RoadTunables.CLASS_NONE:
 			continue
 		fresh.append(t)
 	var connected := fresh.is_empty()
@@ -1129,10 +1151,17 @@ func cmd_road_build(tiles: Array, road_class: int, cost: int = 0) -> Dictionary:
 			"work_units": preview["work_units"], "tiles": fresh})
 
 
-func cmd_road_upgrade(tiles: Array, cost: int = 0) -> Dictionary:
+## §2.13 upgrade eligibility, quoted without submitting anything: a STREET tile
+## with no active closure other than `construction_work`. Split out of
+## `cmd_road_upgrade` so the money layer (doc 03, through `CitySim`) can price
+## the SAME tile set the command will act on — a preview that re-derived
+## eligibility from its own copy of this rule could quote a job that never runs.
+func query_upgrade_preview(tiles: Array) -> Dictionary:
 	var eligible: Array = []
 	for entry in RoadGraph._sorted_tiles(tiles):
 		var t: Vector2i = entry
+		if not TileGrid.in_bounds(t.x, t.y):
+			continue
 		if grid.road_class_at(t.x, t.y) != RoadTunables.CLASS_STREET:
 			continue
 		var edge_id := graph.edge_at(t)
@@ -1141,13 +1170,43 @@ func cmd_road_upgrade(tiles: Array, cost: int = 0) -> Dictionary:
 			if cause != "" and cause != "construction_work":
 				continue
 		eligible.append(t)
+	var crew_hours := float(eligible.size()) * _upgrade_crew_hours_per_tile()
+	return {
+		"ok": not eligible.is_empty(),
+		"reasons": [] if not eligible.is_empty() else [&"E_NO_ELIGIBLE_TILES"],
+		"tiles": eligible, "crew_hours": crew_hours,
+		"work_units": roundi(crew_hours * float(tun.work_units_per_crew_hour)),
+	}
+
+
+func _upgrade_crew_hours_per_tile() -> float:
+	return float(tun.class_row(RoadTunables.CLASS_AVENUE).get("upgrade_crew_hours", 0.9))
+
+
+## §2.13 demolish, quoted without removing anything: the road tiles in `tiles`,
+## sorted. The money layer prices the refund off exactly this list.
+func query_demolish_preview(tiles: Array) -> Dictionary:
+	var victims: Array = []
+	for entry in RoadGraph._sorted_tiles(tiles):
+		var t: Vector2i = entry
+		if graph.is_road_tile(t):
+			victims.append(t)
+	return {
+		"ok": not victims.is_empty(),
+		"reasons": [] if not victims.is_empty() else [&"E_NOT_ROAD"],
+		"tiles": victims,
+	}
+
+
+func cmd_road_upgrade(tiles: Array, cost: int = 0) -> Dictionary:
+	var preview := query_upgrade_preview(tiles)
+	var eligible: Array = preview["tiles"]
 	if eligible.is_empty():
 		_emit(&"road_job_rejected", {"reasons": [&"E_NO_ELIGIBLE_TILES"], "kind": "upgrade"})
 		return CommandQueue.fail(&"E_NO_ELIGIBLE_TILES")
 	if not submit_job.is_valid():
 		return CommandQueue.fail(&"E_NO_QUEUE")
-	var crew_hours := float(eligible.size()) \
-			* float(tun.class_row(RoadTunables.CLASS_AVENUE).get("upgrade_crew_hours", 0.9))
+	var crew_hours := float(preview["crew_hours"])
 	var job_id := int(submit_job.call(&"road", "road_upgrade", crew_hours, &"road_crew",
 			{"roads_kind": "upgrade", "tiles": eligible.duplicate(), "cost": cost}))
 	_jobs[job_id] = {"kind": "upgrade", "tiles": eligible.duplicate(),
@@ -1171,6 +1230,27 @@ func cmd_road_repair(tiles: Array) -> Dictionary:
 		return CommandQueue.fail(&"E_NO_QUEUE")
 	return CommandQueue.ok({"job_id": job_id, "crew_hours": repair_crew_hours(damaged),
 			"tiles": damaged})
+
+
+## §2.13's orphan test, evaluated without removing anything: would any of doc
+## 02's `access_tiles` lose its last adjacent road tile if `victims` went away?
+## `{ok, access_tile}` — the same verdict `cmd_road_demolish` reaches, so a
+## preview and the command can never disagree.
+func query_demolish_orphan(victims: Array, access_tiles: Array) -> Dictionary:
+	var removing: Dictionary = {}
+	for t in victims:
+		removing[t] = true
+	for entry in access_tiles:
+		var access: Vector2i = entry
+		var still_served := false
+		for d in RoadGraph.DIRS:
+			var q: Vector2i = access + d
+			if graph.is_road_tile(q) and not removing.has(q):
+				still_served = true
+				break
+		if not still_served:
+			return {"ok": false, "access_tile": access}
+	return {"ok": true, "access_tile": Vector2i(-1, -1)}
 
 
 ## §2.13 demolish: REJECTED if, after removal, any building's access tile would
@@ -1206,6 +1286,74 @@ func cmd_road_demolish(tiles: Array, access_tiles: Array = []) -> Dictionary:
 	return CommandQueue.ok({"tiles": victims})
 
 
+## Doc 09 §2.9.1's land-block road template, stamped at doc 09's `ROAD_INSTALL`
+## development phase. **Doc 09 owns the template; this doc owns the class
+## semantics** (report 98 C-60), and §2.3's mapping is the whole of this method:
+##
+##   block-local rows/cols {0, 15}  → AVENUE   2×16 + 2×16 − 4 =  60 tiles
+##   block-local row/col 7          → STREET   16 + 16 − 1 − 4 =  27 tiles
+##                                              total             87 tiles
+##
+## leaving **169 buildable tiles** on a clean 16×16 block — the `0.34` road-area
+## constant doc 09 §2.2's price and placement math depends on, reproduced from
+## the template rather than asserted.
+##
+## Boundary tiles belong to the block that contributed them, so stamping a block
+## whose neighbour is already developed widens that boundary from one AVENUE
+## tile to two — doc 09 §2.9.1's "half AVENUE widens when the neighbour reaches
+## ROAD_INSTALL", with no special case: each block simply stamps its own {0,15}.
+##
+## A tile already carrying AVENUE is never demoted to STREET (the loader's own
+## crossing rule), and water / blocked / building tiles are skipped rather than
+## paved. The graph rebuilds incrementally through `_flush_edits`, so the caller
+## gets a coherent graph before this returns.
+##
+## **This method books no money.** The stamp is billed once by doc 03 §2.8's
+## `road_install` phase price (doc 10 §2.3's no-double-billing rule); the §2.13(d)
+## per-tile prices are for player-placed tiles only, and doc 10 test 42 asserts
+## that a stamped block produces zero `Treasury.spend()` calls from `sim/roads/`.
+func stamp_block_template(block_grid: Vector2i, condition: float = 1.0) -> Dictionary:
+	var origin := block_grid * TileGrid.TILES_PER_BLOCK
+	var last := TileGrid.TILES_PER_BLOCK - 1
+	var fresh: Array = []
+	var avenue := 0
+	var street := 0
+	for lz in TileGrid.TILES_PER_BLOCK:
+		for lx in TileGrid.TILES_PER_BLOCK:
+			var road_class := RoadTunables.CLASS_NONE
+			if lx == 0 or lx == last or lz == 0 or lz == last:
+				road_class = RoadTunables.CLASS_AVENUE
+			elif lx == TEMPLATE_COLLECTOR_INDEX or lz == TEMPLATE_COLLECTOR_INDEX:
+				road_class = RoadTunables.CLASS_STREET
+			if road_class == RoadTunables.CLASS_NONE:
+				continue
+			var t := origin + Vector2i(lx, lz)
+			if not TileGrid.in_bounds(t.x, t.y):
+				continue
+			if grid.has_flag(t.x, t.y, TileGrid.FLAG_WATER) \
+					or grid.has_flag(t.x, t.y, TileGrid.FLAG_BLOCKED) \
+					or grid.has_flag(t.x, t.y, TileGrid.FLAG_OCCUPIED):
+				continue
+			var existing := grid.road_class_at(t.x, t.y)
+			# AVENUE wins where the two classes meet, and an existing AVENUE is
+			# never demoted (doc 09 §2.9.1's crossing rule, as the loader applies it).
+			if existing == road_class or existing == RoadTunables.CLASS_AVENUE:
+				continue
+			edit_tile(t, road_class)
+			_condition[t] = clampf(condition, 0.0, 1.0)
+			fresh.append(t)
+			if road_class == RoadTunables.CLASS_AVENUE:
+				avenue += 1
+			else:
+				street += 1
+	if fresh.is_empty():
+		return {"tiles": fresh, "avenue": 0, "street": 0}
+	_flush_edits()
+	_emit(&"road_block_stamped", {"block_grid": [block_grid.x, block_grid.y],
+			"tiles": fresh.size(), "avenue": avenue, "street": street})
+	return {"tiles": fresh, "avenue": avenue, "street": street}
+
+
 func cmd_set_auto_repair_policy(threshold: float, daily_cap: int) -> Dictionary:
 	if not tun.auto_repair_thresholds.has(threshold):
 		return CommandQueue.fail(&"E_BAD_THRESHOLD", {"allowed": tun.auto_repair_thresholds})
@@ -1215,19 +1363,41 @@ func cmd_set_auto_repair_policy(threshold: float, daily_cap: int) -> Dictionary:
 			"daily_cap": auto_repair_daily_cap})
 
 
+## §2.5's `REBUILD_TILE_BUDGET` carry needs a bounded number of drains: each
+## pass either finishes the dirty set or retraces a full budget of tiles, and
+## the dirty set is bounded by the map.
+const MAX_REBUILD_PASSES: int = 64
+
+
 ## Apply queued edits immediately (commands need the graph coherent before they
 ## return; `step()` batches everything else).
+##
+## **Drained to completion**, not left at §2.5's per-tick tile budget. The budget
+## exists to bound the cost of a TICK; a command is a player action and may pay
+## its own retrace in full. Leaving it half-done was measured to matter: a 24-tile
+## road build blew the 2,048-tile budget, and because nothing re-enters
+## `apply_edits` until the NEXT tile edit, the carried dirty set was never
+## drained — the live graph sat 12 edges short of the graph a rebuild-from-tiles
+## produces, which is both wrong for routing and a save→load divergence
+## (the loaded city rebuilds in full and finds all 687).
 func _flush_edits() -> void:
 	if _pending_edits.is_empty():
 		return
 	var batch := _pending_edits.duplicate()
 	_pending_edits.clear()
-	var delta := graph.apply_edits(batch)
+	var added: Array = []
+	var removed: Array = []
+	for pass_index in MAX_REBUILD_PASSES:
+		var delta := graph.apply_edits(batch if pass_index == 0 else [])
+		added.append_array(delta["added_edges"])
+		removed.append_array(delta["removed_edges"])
+		if not graph.graph_dirty:
+			break
 	_refresh_all_edge_state()
-	planner.invalidate_edges(delta["removed_edges"])
-	planner.invalidate_edges(delta["added_edges"])
-	_emit(&"road_graph_changed", {"added_edges": delta["added_edges"],
-			"removed_edges": delta["removed_edges"], "graph_version": graph.graph_version})
+	planner.invalidate_edges(removed)
+	planner.invalidate_edges(added)
+	_emit(&"road_graph_changed", {"added_edges": added,
+			"removed_edges": removed, "graph_version": graph.graph_version})
 
 
 # ----------------------------------------------------- doc 02 job callbacks
@@ -1306,7 +1476,7 @@ func _clear_closures_on(tiles: Array, cause: String) -> void:
 ## recomputed cold with smoothing bypassed. The route cache is not saved.
 func save_section() -> Dictionary:
 	return {
-		"section_version": 1,
+		"section_version": SECTION_VERSION,
 		"blocks": _serialize_blocks(),
 		"closures": _serialize_closures(),
 		"next_closure_id": next_closure_id,
@@ -1317,27 +1487,103 @@ func save_section() -> Dictionary:
 		"traffic_feed": feed.serialize(),
 		# Smoothed congestion AND the daily density index carry history — a
 		# post-load recompute lands on c_raw at empty density, not where the
-		# live run's smoother and last EVERY_DAY refresh had them. Edge ids are
-		# stable across rebuild-from-blocks (graph construction is
-		# deterministic), so both persist keyed by edge id.
+		# live run's smoother and last EVERY_DAY refresh had them, so both
+		# persist. They are keyed by the edge's CANONICAL TILE KEY, never by its
+		# edge id — see `SECTION_VERSION`.
 		"edge_dynamics": _serialize_edge_dynamics(),
+		# §2.4's edge-id labelling and its allocator. The graph is still derived
+		# — this is only what each derived edge is CALLED, which every consumer
+		# holding an id depends on and a full rebuild cannot re-derive.
+		"edge_allocator": graph.edge_allocator_state(),
+		"node_labels": graph.node_labels(),
+		"node_allocator": graph.node_allocator_state(),
+		"edge_heads": graph.edge_heads(),
+		# In-flight road jobs. Doc 02's `ConstructionQueue` persists the WORK; this
+		# is what the work is FOR, and without it a job that spans a save lands on
+		# `on_job_completed` with nothing to complete — the tiles stay at
+		# `under_construction_seed` behind a `construction_new` closure forever.
+		"jobs": _serialize_jobs(),
 		"day_seen": _day_seen,
 		"sim_minute": sim_minute,
 		# Day-scoped billing accumulators: doc 03 settles e_roads_repair from
 		# this day's hourly c_raw samples — losing the morning's samples on a
-		# midday load shifts the bill.
-		"c_day_sum": _c_day_sum.duplicate(true),
+		# midday load shifts the bill. Keyed by canonical tile key, as above.
+		"c_day_sum": _serialize_c_day_sum(),
 		"c_day_samples": _c_day_samples,
 		"wx_wear_day": _wx_wear_day,
 	}
 
 
+## §3.2 wire version.
+##
+##   1 → 2  `edge_dynamics` and `c_day_sum` move from **edge id** keys to the
+##          edge's **canonical tile key** (`RoadGraph._tiles_key`, the same
+##          orientation-independent polyline signature §2.4's id-stability rule
+##          hashes), `edge_dynamics` carries the edge's id as its first column,
+##          and a new `edge_allocator` object carries `next_edge_id` /
+##          `free_edge_ids`. Together they let the loaded graph adopt the live
+##          graph's LABELLING (`RoadGraph.adopt_edge_ids`).
+##          Version 1's note claimed edge ids were "stable across
+##          rebuild-from-blocks", and while nothing could edit a road tile that
+##          was vacuously true. It is not true in general: a live graph reaches
+##          its edge ids through §2.5's INCREMENTAL retrace (which recycles ids
+##          from a free list), a loaded one through `rebuild_all()`, and the two
+##          orderings only agree while no edit has ever happened. Measured on
+##          the first player-placed road tile: 645 edges, identical id SET,
+##          **405 of them holding different tiles** — so every smoothed
+##          congestion and density value landed on the wrong edge, and
+##          save→load→advance identity broke one game-hour later.
+##
+## A version-1 section is read for everything else and its two id-keyed maps are
+## dropped: both are recomputable (congestion is a pure function of the state
+## §4 recomputes cold, `c_day_sum` re-accumulates over the running game-day), so
+## an old save loads to a city that is at most one game-day of road-repair
+## billing off, instead of one that is silently wrong forever.
+const SECTION_VERSION: int = 2
+
+
+## `{canonical tile key: [edge_id, congestion, dens_index]}` — one map doing
+## three jobs, because all three are the same per-edge row and the key is the
+## only rebuild-stable name an edge has (§2.4).
 func _serialize_edge_dynamics() -> Dictionary:
 	var out := {}
 	for edge_id in graph.edge_ids_sorted():
 		var record: Dictionary = graph.edge(edge_id)
-		out[str(edge_id)] = [float(record.get("congestion", 0.0)),
+		out[String(record["key"])] = [edge_id, float(record.get("congestion", 0.0)),
 				float(record.get("dens_index", tun.dens_min))]
+	return out
+
+
+func _serialize_jobs() -> Dictionary:
+	var out := {}
+	for job_id in _sorted_keys(_jobs):
+		var job: Dictionary = _jobs[job_id]
+		var tiles: Array = []
+		for t in job["tiles"]:
+			tiles.append([(t as Vector2i).x, (t as Vector2i).y])
+		out[str(job_id)] = {"kind": String(job["kind"]), "tiles": tiles,
+				"road_class": int(job.get("road_class", -1))}
+	return out
+
+
+func _deserialize_jobs(saved: Dictionary) -> void:
+	_jobs.clear()
+	for key in _sorted_keys(saved):
+		var record: Dictionary = saved[key]
+		var tiles: Array = []
+		for pair in record.get("tiles", []):
+			tiles.append(Vector2i(int(pair[0]), int(pair[1])))
+		_jobs[int(key)] = {"kind": String(record.get("kind", "build")), "tiles": tiles,
+				"road_class": int(record.get("road_class", -1))}
+
+
+func _serialize_c_day_sum() -> Dictionary:
+	var out := {}
+	for edge_id in _sorted_keys(_c_day_sum):
+		var record: Dictionary = graph.edge(int(edge_id))
+		if record.is_empty():
+			continue
+		out[String(record["key"])] = float(_c_day_sum[edge_id])
 	return out
 
 
@@ -1350,8 +1596,31 @@ func load_section(data: Dictionary) -> void:
 	_overrides.clear()
 	_condition.clear()
 	_flags.clear()
+	var version := int(data.get("section_version", 1))
 	_deserialize_blocks(data.get("blocks", {}))
 	graph.rebuild_all()
+	# BEFORE anything reads an edge id: adopt the live run's labelling (§2.4).
+	# Closures, overrides, the traffic feed and the congestion history are all
+	# restored against edge ids below, so this has to be the first thing after
+	# the rebuild — see `SECTION_VERSION` for what went wrong when it was not.
+	if version >= 2:
+		var labels := {}
+		for key in (data.get("edge_dynamics", {}) as Dictionary):
+			var row: Array = data["edge_dynamics"][key]
+			if not row.is_empty():
+				labels[String(key)] = int(row[0])
+		var node_allocator: Dictionary = data.get("node_allocator", {})
+		graph.adopt_node_ids(data.get("node_labels", {}),
+				int(node_allocator.get("next_node_id", -1)),
+				node_allocator.get("free_node_ids", []))
+		var allocator: Dictionary = data.get("edge_allocator", {})
+		graph.adopt_edge_ids(labels, int(allocator.get("next_edge_id", -1)),
+				allocator.get("free_edge_ids", []))
+		var heads := {}
+		for key in (data.get("edge_heads", {}) as Dictionary):
+			var pair: Array = data["edge_heads"][key]
+			heads[String(key)] = Vector2i(int(pair[0]), int(pair[1]))
+		graph.orient_edges(heads)
 	_refresh_all_edge_state()
 	next_closure_id = int(data.get("next_closure_id", 1))
 	for entry in data.get("closures", []):
@@ -1371,6 +1640,7 @@ func load_section(data: Dictionary) -> void:
 	auto_repair_daily_cap = int(policy.get("daily_cap", tun.auto_repair_default_daily_cap))
 	_condition_accum = (data.get("condition_accum", {}) as Dictionary).duplicate(true)
 	_event_spikes = (data.get("event_spikes", []) as Array).duplicate(true)
+	_deserialize_jobs(data.get("jobs", {}))
 	_apply_condition_residuals()
 	_refresh_all_edge_state()
 	feed.reset(false)
@@ -1381,19 +1651,27 @@ func load_section(data: Dictionary) -> void:
 	# loaded run continues from exactly where the live run's history had it.
 	_day_seen = bool(data.get("day_seen", _day_seen))
 	sim_minute = int(data.get("sim_minute", sim_minute))
+	# A version-1 section keys these two maps by edge id, which does not survive
+	# a rebuild once any tile has ever been edited (see `SECTION_VERSION`), so
+	# they are dropped rather than mis-applied.
 	_c_day_sum.clear()
-	for key in data.get("c_day_sum", {}):
-		_c_day_sum[int(key)] = float(data["c_day_sum"][key])
-	_c_day_samples = int(data.get("c_day_samples", 0))
+	_c_day_samples = 0
+	if version >= 2:
+		var saved_c_day: Dictionary = data.get("c_day_sum", {})
+		for edge_id in graph.edge_ids_sorted():
+			var key := String(graph.edge(edge_id).get("key", ""))
+			if saved_c_day.has(key):
+				_c_day_sum[edge_id] = float(saved_c_day[key])
+		_c_day_samples = int(data.get("c_day_samples", 0))
 	_wx_wear_day = float(data.get("wx_wear_day", 0.0))
-	var saved_dyn: Dictionary = data.get("edge_dynamics", {})
+	var saved_dyn: Dictionary = data.get("edge_dynamics", {}) if version >= 2 else {}
 	if not saved_dyn.is_empty():
 		for edge_id in graph.edge_ids_sorted():
-			var key := str(edge_id)
+			var key := String(graph.edge(edge_id).get("key", ""))
 			if saved_dyn.has(key):
-				var pair: Array = saved_dyn[key]
-				graph.edge(edge_id)["congestion"] = float(pair[0])
-				graph.edge(edge_id)["dens_index"] = float(pair[1])
+				var pair: Array = saved_dyn[key]   # [edge_id, congestion, dens_index]
+				graph.edge(edge_id)["congestion"] = float(pair[1])
+				graph.edge(edge_id)["dens_index"] = float(pair[2])
 		congestion.epoch += 1
 		planner.invalidate_all()
 

@@ -139,6 +139,17 @@ func apply_edits(edited: Array) -> Dictionary:
 		_delete_edge(edge_id)
 		removed.append(edge_id)
 	_settle_order()  # free lists must be ascending before any id is recycled
+	# §2.5's id-stability rule RESERVES a deleted edge's id for its own key, so
+	# the generic free-list path must not be able to hand that id to a different
+	# edge first. It could: `_delete_edge` pushes the id onto `_free_edge_ids`
+	# AND stashes it, and a retrace that reached an unrelated new key before the
+	# stashed one popped the same id — then `_create_edge` re-entered with the
+	# stashed key, overwrote `_edges[id]`, and left the first edge's tiles
+	# pointing at an id that now describes a different corridor. Measured on a
+	# 24-tile build: 12 corrupt `tile_edges` entries and 12 lost edges, which is
+	# also why the live graph stopped agreeing with a rebuild-from-tiles.
+	for stash_key in stash:
+		_free_edge_ids.erase(int(stash[stash_key]["id"]))
 
 	# 2. Re-evaluate the node predicate across the dirty set.
 	var touched: Array[int] = []
@@ -189,6 +200,12 @@ func apply_edits(edited: Array) -> Dictionary:
 			break
 		_trace_from_nodes([unique_touched[i]], seen, added, stash)
 	_promote_orphan_loops(dirty_tiles, seen, added, stash)
+	# Reservations nobody claimed go back on the free list, ascending.
+	for stash_key in _sorted_keys(stash):
+		var reserved_id := int(stash[stash_key]["id"])
+		if not _edges.has(reserved_id) and not _free_edge_ids.has(reserved_id):
+			_free_edge_ids.append(reserved_id)
+	_free_edge_ids.sort()
 	_refresh_node_meta(unique_touched)
 	_pending_dirty = deferred
 	graph_dirty = not _pending_dirty.is_empty()
@@ -329,7 +346,10 @@ func _delete_node(node_id: int) -> void:
 func _create_edge(tiles: Array, key: String, stash: Dictionary = {}) -> int:
 	var edge_id: int
 	var carried: Dictionary = {}
-	if stash.has(key):
+	# The `_edges.has` guard belts the reservation braces in `apply_edits`: an id
+	# that is somehow already live is never handed out a second time, whatever
+	# the stash says.
+	if stash.has(key) and not _edges.has(int(stash[key]["id"])):
 		edge_id = int(stash[key]["id"])
 		carried = stash[key]["record"]
 		_free_edge_ids.erase(edge_id)
@@ -647,6 +667,223 @@ func edge_or_null(edge_id: int) -> Variant:
 
 func has_edge(edge_id: int) -> bool:
 	return _edges.has(edge_id)
+
+
+## §3.2 + §2.4's edge-id stability rule, applied across a SAVE. The graph is
+## rebuilt from tiles on load, and `rebuild_all()` numbers edges in its own scan
+## order — which is NOT the order the live graph reached through §2.5's
+## incremental retrace, because that recycles ids off a free list. The two
+## orderings agree only while nothing has ever edited a tile; the moment a road
+## is built the loaded graph holds the same id SET over a different tile
+## partition, every consumer holding an id is silently pointed at a different
+## corridor, and the cosmetic traffic feed's per-edge draws diverge.
+##
+## So the labelling travels with the save, keyed by each edge's canonical tile
+## key — the orientation-independent polyline signature this class already
+## recycles ids by — and is re-applied here. Edges whose key is not in the map
+## (an old save, or a tile edited between save and load) keep an id no adopted
+## edge claimed, so the result is always a valid, collision-free labelling.
+##
+## `next_id` / `free_ids` restore the ALLOCATOR too, so an edge created after
+## the load lands on the id the live run would have given it.
+## Returns the number of edges that adopted a saved id.
+func adopt_edge_ids(key_to_id: Dictionary, next_id: int = -1,
+		free_ids: Array = []) -> int:
+	if _edges.is_empty():
+		return 0
+	var records: Array = []
+	for edge_id in edge_ids_sorted():
+		records.append(_edges[edge_id])
+	var claimed: Dictionary = {}
+	var relabelled: Array = []       # [record, new_id]
+	var leftovers: Array = []
+	var adopted := 0
+	for entry in records:
+		var record: Dictionary = entry
+		var key := String(record["key"])
+		if key_to_id.has(key):
+			var wanted := int(key_to_id[key])
+			if not claimed.has(wanted):
+				claimed[wanted] = true
+				relabelled.append([record, wanted])
+				adopted += 1
+				continue
+		leftovers.append(record)
+	# Unclaimed ids, lowest first, so the fallback is deterministic.
+	var spare := 0
+	for entry in leftovers:
+		while claimed.has(spare):
+			spare += 1
+		claimed[spare] = true
+		relabelled.append([entry, spare])
+	_edges.clear()
+	_edge_key.clear()
+	_edge_order.clear()
+	for t in tile_edges:
+		(tile_edges[t] as Array).clear()
+	for node_id in _nodes:
+		(_nodes[node_id]["edge_ids"] as Array).clear()
+	for pair in relabelled:
+		var record: Dictionary = pair[0]
+		var new_id := int(pair[1])
+		record["id"] = new_id
+		_edges[new_id] = record
+		_edge_key[String(record["key"])] = new_id
+		_edge_order.append(new_id)
+		for t in record["tiles"]:
+			(tile_edges[t] as Array).append(new_id)
+		for node_key in ["node_a", "node_b"]:
+			var node_id := int(record[node_key])
+			if _nodes.has(node_id) and not (_nodes[node_id]["edge_ids"] as Array).has(new_id):
+				(_nodes[node_id]["edge_ids"] as Array).append(new_id)
+	# Relabelling never changes the edge SET, so no tile should end up with an
+	# empty list — but `_promote_orphan_loops` reads `tile_edges.has(t)` as
+	# "this tile is already on an edge", so an empty entry left behind would be
+	# a silent lie. Sweep them.
+	var empty_tiles: Array = []
+	for t in tile_edges:
+		var list: Array = tile_edges[t]
+		if list.is_empty():
+			empty_tiles.append(t)
+		else:
+			list.sort()
+	for t in empty_tiles:
+		tile_edges.erase(t)
+	for node_id in _nodes:
+		(_nodes[node_id]["edge_ids"] as Array).sort()
+	_order_dirty = true
+	var highest := 0
+	for edge_id in _edges:
+		highest = maxi(highest, int(edge_id) + 1)
+	_next_edge_id = maxi(next_id, highest) if next_id >= 0 else highest
+	_free_edge_ids.clear()
+	for entry in free_ids:
+		var free_id := int(entry)
+		if not _edges.has(free_id) and free_id < _next_edge_id:
+			_free_edge_ids.append(free_id)
+	return adopted
+
+
+## The allocator half of `adopt_edge_ids`, for the save section.
+func edge_allocator_state() -> Dictionary:
+	return {"next_edge_id": _next_edge_id, "free_edge_ids": _free_edge_ids.duplicate()}
+
+
+## `adopt_edge_ids`' twin for NODES, keyed by the node's tile (`"x,y"`), which
+## is its only rebuild-stable name. Node ids are as load-bearing as edge ids:
+## `node_ids_sorted()` is the iteration order of the per-tick signal-power
+## refresh and the congestion environment, and the cosmetic feed picks a car's
+## next edge off `_nodes[id].edge_ids` — so a renumbered node set is a different
+## city, however identical its geometry.
+func adopt_node_ids(tile_to_id: Dictionary, next_id: int = -1,
+		free_ids: Array = []) -> int:
+	if _nodes.is_empty():
+		return 0
+	var records: Array = []
+	for node_id in node_ids_sorted():
+		records.append(_nodes[node_id])
+	var claimed: Dictionary = {}
+	var relabelled: Array = []
+	var leftovers: Array = []
+	var remap: Dictionary = {}   # old id -> new id
+	var adopted := 0
+	for entry in records:
+		var record: Dictionary = entry
+		var t: Vector2i = record["tile"]
+		var key := "%d,%d" % [t.x, t.y]
+		if tile_to_id.has(key):
+			var wanted := int(tile_to_id[key])
+			if not claimed.has(wanted):
+				claimed[wanted] = true
+				relabelled.append([record, wanted])
+				adopted += 1
+				continue
+		leftovers.append(record)
+	var spare := 0
+	for entry in leftovers:
+		while claimed.has(spare):
+			spare += 1
+		claimed[spare] = true
+		relabelled.append([entry, spare])
+	_nodes.clear()
+	_node_order.clear()
+	tile_to_node.clear()
+	for pair in relabelled:
+		var record: Dictionary = pair[0]
+		var new_id := int(pair[1])
+		remap[int(record["id"])] = new_id
+		record["id"] = new_id
+		_nodes[new_id] = record
+		_node_order.append(new_id)
+		tile_to_node[record["tile"]] = new_id
+	for edge_id in _edges:
+		var edge_record: Dictionary = _edges[edge_id]
+		for node_key in ["node_a", "node_b"]:
+			var old_id := int(edge_record[node_key])
+			edge_record[node_key] = int(remap.get(old_id, old_id))
+	_order_dirty = true
+	_components_dirty = true
+	var highest := 0
+	for node_id in _nodes:
+		highest = maxi(highest, int(node_id) + 1)
+	_next_node_id = maxi(next_id, highest) if next_id >= 0 else highest
+	_free_node_ids.clear()
+	for entry in free_ids:
+		var free_id := int(entry)
+		if not _nodes.has(free_id) and free_id < _next_node_id:
+			_free_node_ids.append(free_id)
+	return adopted
+
+
+## The third thing a rebuild does not reproduce: an edge's polyline ORIENTATION.
+## `_tiles_key` is deliberately orientation-independent (so an edge keeps its id
+## whichever end a retrace reaches first), which means a rebuilt edge can come
+## back head-to-tail. That is not cosmetic — the cosmetic feed stores each car's
+## `forward` flag and arc-length `s_m` against the tile order, and doc 06's
+## polylines are consumed in it — so the saved head tile is re-applied here.
+## `head_by_key` is `{canonical key: Vector2i}`. Returns how many were flipped.
+func orient_edges(head_by_key: Dictionary) -> int:
+	var flipped := 0
+	for edge_id in _edges:
+		var record: Dictionary = _edges[edge_id]
+		var key := String(record["key"])
+		if not head_by_key.has(key):
+			continue
+		var tiles: Array = record["tiles"]
+		if tiles.is_empty() or tiles[0] == head_by_key[key]:
+			continue
+		var reversed_tiles: Array[Vector2i] = []
+		for i in range(tiles.size() - 1, -1, -1):
+			reversed_tiles.append(tiles[i])
+		record["tiles"] = reversed_tiles
+		var node_a := int(record["node_a"])
+		record["node_a"] = int(record["node_b"])
+		record["node_b"] = node_a
+		flipped += 1
+	return flipped
+
+
+## `{canonical key: [head_x, head_y]}` for the save section.
+func edge_heads() -> Dictionary:
+	var out := {}
+	for edge_id in edge_ids_sorted():
+		var record: Dictionary = _edges[edge_id]
+		var head: Vector2i = (record["tiles"] as Array)[0]
+		out[String(record["key"])] = [head.x, head.y]
+	return out
+
+
+func node_allocator_state() -> Dictionary:
+	return {"next_node_id": _next_node_id, "free_node_ids": _free_node_ids.duplicate()}
+
+
+## `{"x,y": node_id}` for the save section.
+func node_labels() -> Dictionary:
+	var out := {}
+	for node_id in node_ids_sorted():
+		var t: Vector2i = _nodes[node_id]["tile"]
+		out["%d,%d" % [t.x, t.y]] = node_id
+	return out
 
 
 func node_ids_sorted() -> Array[int]:

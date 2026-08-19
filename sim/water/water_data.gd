@@ -29,6 +29,11 @@ var mains: Dictionary = {}  # tier -> {capacity_m3h, break_rate_mult}
 var coverage_frac: Dictionary = {}  # level int -> float
 var backup_kw: Dictionary = {}  # component key -> level int -> float
 var price_inputs: Dictionary = {}
+## §6's MVP placement roster and its shared siting rules. Carries no dollar and
+## no capacity — which variant, at which levels, sited how. The placement layer
+## reads it exactly as doc 04's reads `data/grid_components.json`.
+var placeable: Dictionary = {}
+var placement: Dictionary = {}
 var failures: Dictionary = {}
 var repair: Dictionary = {}
 var effects: Dictionary = {}
@@ -58,6 +63,8 @@ func load_from(data: Dictionary) -> bool:
 	global_values = data.get("global", {})
 	mains = data.get("mains", {})
 	price_inputs = data.get("price_inputs", {})
+	placeable = data.get("placeable", {})
+	placement = data.get("placement", {})
 	failures = data.get("failures", {})
 	repair = data.get("repair", {})
 	effects = data.get("effects", {})
@@ -298,6 +305,43 @@ func kw_required(variant: StringName, level: int, subtype: String = "") -> float
 
 func flag(name: String) -> bool:
 	return bool(feature_flags.get(name, false))
+
+
+## §6 placement roster: the rules for one variant, `{}` when it is not placeable.
+func placeable_rules(variant: String) -> Dictionary:
+	var row: Variant = placeable.get(variant, {})
+	return row if row is Dictionary else {}
+
+
+func placeable_variants() -> Array:
+	var out: Array = []
+	for key in placeable:
+		if not String(key).begins_with("_"):
+			out.append(String(key))
+	out.sort()
+	return out
+
+
+func placement_value(key: String, fallback: Variant) -> Variant:
+	return placement.get(key, fallback)
+
+
+## Doc 05 §2.1: a variant's footprint at a level, from the component table (doc
+## 02's `per_variant_footprint_source` points here, so nothing is duplicated).
+func footprint_of(variant: StringName, level: int, subtype: String = "") -> Vector2i:
+	var row := component(variant, level, subtype)
+	return Vector2i(int(row.get("footprint_w", 1)), int(row.get("footprint_h", 1)))
+
+
+## The dimensionless L1 cost ratio doc 03 multiplies its `water_plant` anchor by.
+func variant_cost_ratio(variant: StringName, subtype: String = "") -> float:
+	var ratios: Dictionary = price_inputs.get("variant_cost_ratio_l1", {})
+	return float(ratios.get(component_key(variant, subtype), 0.0))
+
+
+func main_cost_ratio(tier: String) -> float:
+	var ratios: Dictionary = price_inputs.get("main_cost_ratio_per_tile", {})
+	return float(ratios.get(tier, 0.0))
 
 
 func raw() -> Dictionary:

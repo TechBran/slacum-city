@@ -36,11 +36,22 @@ const VERDICT_BLOCKED := &"blocked"
 const TILE_M_DEFAULT := 8.0
 const WORLD_JSON_PATH := "res://data/world.json"
 
-## Doc 04 §2.1's placement roster (`data/grid_components.json`). The sheet lists
-## these beside the buildings because to the player they are one verb — "put a
-## thing on a tile" — and because `E_UNSERVED` is unanswerable without them.
+## The two placement rosters the sheet lists beside the buildings — doc 04 §2.1's
+## grid components (`data/grid_components.json`) and doc 05 §6's water components
+## (`data/water.json` `placeable`). They share a tab because to the player they
+## are one verb — "put a thing on a tile" — and because the two walls the city
+## runs into, `E_UNSERVED` and `E_NO_MAIN`, are unanswerable without them.
 const GRID_JSON_PATH := "res://data/grid_components.json"
-const CATEGORY_GRID := "grid"
+const WATER_JSON_PATH := "res://data/water.json"
+## Wave 5: the `grid` tab becomes `infrastructure` and carries both rosters.
+const CATEGORY_INFRASTRUCTURE := "infrastructure"
+## Which command a component card reaches. `""` on a building card.
+const DOMAIN_GRID := "grid"
+const DOMAIN_WATER := "water"
+## The doc 02 shell every doc-05 variant is drawn as, so the water cards reuse
+## the `ui_build_card_water_facility_<variant>` copy the string table has always
+## carried and no new name key is invented here.
+const WATER_SHELL_ARCHETYPE := "water_facility"
 ## The tutorial (doc 12 §2.17) and Wave 1.5 both ship exactly L1; the level a
 ## card offers is data (`placeable_levels`), never a constant here.
 const GRID_CARD_LEVEL := 1
@@ -59,10 +70,12 @@ const AVENUE_RADIUS_TILES := 4
 ## "beyond the search"; purely a display figure for the `{have}` parameter.
 const AVENUE_SEARCH_TILES := 16
 
-## Sheet ordering: category first (the doc's tab order), then cost. `grid` is
-## last because it is the tab you go to once something else has already said no.
+## Sheet ordering: category first (the doc's tab order), then cost.
+## `infrastructure` is last because it is the tab you go to once something else
+## has already said no.
 const CATEGORY_ORDER: Array[String] = [
-	"residential", "commercial", "industrial", "service", "utility", CATEGORY_GRID,
+	"residential", "commercial", "industrial", "service", "utility",
+	CATEGORY_INFRASTRUCTURE,
 ]
 
 ## The four coverage tiles of doc 12 §2.9 item 4.
@@ -83,13 +96,17 @@ var variant := ""
 var origin := Vector2i.ZERO
 var size := Vector2i.ONE
 var has_origin := false
-## Set while the ghost is a grid component rather than a building; it is the
-## `kind` of `cmd_place_grid_component` and "" for every building.
+## Set while the ghost is an infrastructure component rather than a building; it
+## is the `kind` of `cmd_place_grid_component` / `cmd_place_water_component`, and
+## "" for every building. `component_domain` says which of the two.
 var component_kind := ""
+var component_domain := ""
 var component_level := GRID_CARD_LEVEL
 
 var _verdict: Dictionary = {}
 var _grid_placeable: Dictionary = {}
+var _water_placeable: Dictionary = {}
+var _water_components: Dictionary = {}
 
 
 func _init(p_sim: CitySim = null, p_formatter: RequirementFormatter = null,
@@ -98,6 +115,9 @@ func _init(p_sim: CitySim = null, p_formatter: RequirementFormatter = null,
 	formatter = p_formatter if p_formatter != null else RequirementFormatter.load_from_files()
 	tile_m = p_tile_m if p_tile_m > 0.0 else BuildController.load_tile_m()
 	_grid_placeable = BuildController.load_grid_placeable()
+	var water := BuildController.load_water_placeable()
+	_water_placeable = water["placeable"]
+	_water_components = water["components"]
 
 
 ## `data/world.json.world.tile_meters`, mirroring `CameraState._apply_world()`.
@@ -127,6 +147,44 @@ static func load_grid_placeable() -> Dictionary:
 	return placeable if placeable is Dictionary else {}
 
 
+## `data/water.json`'s §6 roster plus the component table its footprints and kW
+## come from. Doc 05's file carries no price either (its own C-07 guard), so a
+## water card quotes doc 03 through `cmd_place_water_component`'s preview exactly
+## as a grid card quotes it through doc 04's.
+static func load_water_placeable() -> Dictionary:
+	var empty := {"placeable": {}, "components": {}}
+	if not FileAccess.file_exists(WATER_JSON_PATH):
+		return empty
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(WATER_JSON_PATH))
+	if not (parsed is Dictionary):
+		return empty
+	var data: Dictionary = parsed
+	var placeable: Variant = data.get("placeable", {})
+	var columns: Variant = data.get("_component_columns", {})
+	var rows: Variant = data.get("components", {})
+	if not (placeable is Dictionary) or not (columns is Dictionary) or not (rows is Dictionary):
+		return empty
+	# Zip the column names onto the rows, the same shape `WaterData` builds, so
+	# the card can read `footprint_w` / `base_kw` by name.
+	var components: Dictionary = {}
+	for key: Variant in rows:
+		var component_key := str(key)
+		if not (columns as Dictionary).has(component_key):
+			continue
+		var names: Array = (columns as Dictionary)[component_key]
+		var levels: Dictionary = {}
+		for row: Variant in (rows as Dictionary)[component_key]:
+			var values: Array = row
+			if values.size() != names.size():
+				continue
+			var record: Dictionary = {}
+			for i in names.size():
+				record[str(names[i])] = values[i]
+			levels[int(record.get("level", 0))] = record
+		components[component_key] = levels
+	return {"placeable": placeable, "components": components}
+
+
 # ===========================================================================
 # Build sheet cards (doc 12 §2.7)
 # ===========================================================================
@@ -142,21 +200,70 @@ func cards() -> Array[Dictionary]:
 		out.append(card(String(id)))
 	for kind: Variant in grid_kinds():
 		out.append(grid_card(String(kind)))
+	for kind: Variant in water_kinds():
+		out.append(water_card(String(kind)))
 	out.sort_custom(BuildController._card_less)
 	return out
 
 
 ## The placeable grid kinds, sorted so the sheet is deterministic.
 func grid_kinds() -> Array[String]:
+	return BuildController._roster_keys(_grid_placeable)
+
+
+## The placeable doc-05 water kinds, same contract.
+func water_kinds() -> Array[String]:
+	return BuildController._roster_keys(_water_placeable)
+
+
+## Roster keys, sorted, minus the `_note` documentation entries the data files
+## carry (both rosters are self-documenting by design).
+static func _roster_keys(roster: Dictionary) -> Array[String]:
 	var out: Array[String] = []
-	for key: Variant in _grid_placeable:
-		out.append(str(key))
+	for key: Variant in roster:
+		var id := str(key)
+		if not id.begins_with("_"):
+			out.append(id)
 	out.sort()
 	return out
 
 
 func is_grid_kind(id: String) -> bool:
 	return _grid_placeable.has(id)
+
+
+func is_water_kind(id: String) -> bool:
+	return not id.begins_with("_") and _water_placeable.has(id)
+
+
+func is_component_kind(id: String) -> bool:
+	return is_grid_kind(id) or is_water_kind(id)
+
+
+func water_rules(kind: String) -> Dictionary:
+	var raw: Variant = _water_placeable.get(kind, {})
+	return raw if raw is Dictionary else {}
+
+
+## Doc 05's own key for a variant's component row (`source` splits on subtype).
+func water_component_key(kind: String) -> String:
+	if kind != "source":
+		return kind
+	return "source_well" if str(water_rules(kind).get("subtype", "river")) == "well" \
+			else "source_river"
+
+
+func water_row(kind: String, level: int) -> Dictionary:
+	var levels: Variant = _water_components.get(water_component_key(kind), {})
+	if not (levels is Dictionary):
+		return {}
+	var row: Variant = (levels as Dictionary).get(level, {})
+	return row if row is Dictionary else {}
+
+
+## Lowest level the water roster offers for a kind — the one the card places.
+func water_level(kind: String) -> int:
+	return BuildController._lowest_level(water_rules(kind))
 
 
 func grid_rules(kind: String) -> Dictionary:
@@ -166,7 +273,11 @@ func grid_rules(kind: String) -> Dictionary:
 
 ## Lowest level the roster offers for a kind — the one the card places.
 func grid_level(kind: String) -> int:
-	var levels: Array = grid_rules(kind).get("placeable_levels", [])
+	return BuildController._lowest_level(grid_rules(kind))
+
+
+static func _lowest_level(rules: Dictionary) -> int:
+	var levels: Array = rules.get("placeable_levels", [])
 	var lowest := GRID_CARD_LEVEL
 	var found := false
 	for entry: Variant in levels:
@@ -197,8 +308,9 @@ func grid_card(kind: String) -> Dictionary:
 		"archetype": kind,
 		"variant": "",
 		"component_kind": kind,
+		"component_domain": DOMAIN_GRID,
 		"level": level,
-		"category": CATEGORY_GRID,
+		"category": CATEGORY_INFRASTRUCTURE,
 		"name_key": BuildController.card_name_key(kind),
 		"name_fallback": kind.capitalize(),
 		"cost": cost,
@@ -218,6 +330,51 @@ func grid_card(kind: String) -> Dictionary:
 	}
 
 
+## A doc-05 water component's card. Same shape as a grid card, so `build_sheet`
+## still renders one list; `component_domain` is what routes the tap into
+## `cmd_place_water_component` instead of `cmd_place_grid_component`.
+##
+## Everything quoted is READ: the footprint and kW are doc 05's component row,
+## the price is doc 03's through `CostCurves`, and the display name reuses the
+## `ui_build_card_water_facility_<variant>` keys the string table already owns —
+## the same names the authored `WTR-1` / `WTR-2` sites carry.
+func water_card(kind: String) -> Dictionary:
+	var level := water_level(kind)
+	var row := water_row(kind, level)
+	var size := Vector2i(int(row.get("footprint_w", 1)), int(row.get("footprint_h", 1)))
+	var kw := float(row.get("base_kw", 0.0))
+	var cost := 0
+	var required_level := 0
+	if sim != null:
+		cost = sim.econ_curves.water_component_build_cost(
+				sim.water.data.variant_cost_ratio(StringName(kind),
+						str(water_rules(kind).get("subtype", ""))),
+				level, float(sim.treasury.difficulty().get("M_build", 1.0)))
+		required_level = int(sim.catalog.stats(WATER_SHELL_ARCHETYPE, level)
+				.get("min_city_level", 0))
+	return {
+		"id": "%s_%s" % [WATER_SHELL_ARCHETYPE, kind],
+		"archetype": kind,
+		"variant": kind,
+		"component_kind": kind,
+		"component_domain": DOMAIN_WATER,
+		"level": level,
+		"category": CATEGORY_INFRASTRUCTURE,
+		"name_key": BuildController.card_name_key(WATER_SHELL_ARCHETYPE, kind),
+		"name_fallback": kind.capitalize(),
+		"cost": cost,
+		"cost_text": RequirementFormatter.money(cost),
+		"footprint": size,
+		"power_kw": kw,
+		"power_text": RequirementFormatter.power(kw),
+		"water_demand": 0.0,
+		"min_city_level": required_level,
+		"locked": sim != null and required_level > sim.progression.city_level,
+		"affordable": sim == null or sim.treasury.balance >= cost,
+		"service_radius_tiles": 0,
+	}
+
+
 func card(p_archetype: String, p_variant: String = "") -> Dictionary:
 	var stats: Dictionary = sim.catalog.stats(p_archetype, 1)
 	var foot: Array = stats.get("footprint", [1, 1])
@@ -228,8 +385,10 @@ func card(p_archetype: String, p_variant: String = "") -> Dictionary:
 		"id": p_archetype if p_variant == "" else "%s_%s" % [p_archetype, p_variant],
 		"archetype": p_archetype,
 		"variant": p_variant,
-		# Empty here, the kind on a grid card: one card shape, two commands.
+		# Empty here, the kind on a component card: one card shape, three
+		# commands (building / grid component / water component).
 		"component_kind": "",
+		"component_domain": "",
 		"category": sim.catalog.category(p_archetype),
 		"name_key": BuildController.card_name_key(p_archetype, p_variant),
 		"name_fallback": str(sim.catalog.archetype_info(p_archetype).get("name", p_archetype)),
@@ -291,6 +450,13 @@ func is_placing() -> bool:
 func enter(p_archetype: String, p_variant: String = "") -> Dictionary:
 	if is_grid_kind(p_archetype):
 		return enter_component(p_archetype)
+	# A water card's `archetype` IS its doc-05 kind, so `enter("pump")` works;
+	# `enter("water_facility", "pump")` — the shape a building card would use —
+	# reaches the same place, which is what keeps the sheet's tap handler one line.
+	if is_water_kind(p_archetype):
+		return enter_water_component(p_archetype)
+	if p_archetype == WATER_SHELL_ARCHETYPE and is_water_kind(p_variant):
+		return enter_water_component(p_variant)
 	if sim == null or not sim.catalog.has(p_archetype):
 		cancel()
 		return CommandQueue.fail(&"E_UNKNOWN_ARCHETYPE", {"archetype": p_archetype})
@@ -307,6 +473,7 @@ func enter(p_archetype: String, p_variant: String = "") -> Dictionary:
 	archetype = p_archetype
 	variant = p_variant
 	component_kind = ""
+	component_domain = ""
 	component_level = GRID_CARD_LEVEL
 	size = Vector2i(int(foot[0]), int(foot[1]))
 	origin = Vector2i.ZERO
@@ -339,17 +506,63 @@ func enter_component(kind: String, level: int = -1) -> Dictionary:
 	archetype = kind
 	variant = ""
 	component_kind = kind
+	component_domain = DOMAIN_GRID
 	component_level = wanted
 	size = Vector2i(foot, foot)
 	origin = Vector2i.ZERO
 	has_origin = false
 	_verdict = {}
 	return CommandQueue.ok({"archetype": kind, "component_kind": kind,
-			"level": wanted, "size": size})
+			"domain": DOMAIN_GRID, "level": wanted, "size": size})
+
+
+## Placement mode for a doc-05 water component (§6). Identical state machine to
+## the grid one — the footprint just comes from doc 05's component table instead
+## of doc 04's `footprint_tiles`, because a pump house is 3×3 and a tank is 2×2.
+func enter_water_component(kind: String, level: int = -1) -> Dictionary:
+	if sim == null or not is_water_kind(kind):
+		cancel()
+		return CommandQueue.fail(&"E_UNKNOWN_COMPONENT", {"archetype": kind})
+	var rules := water_rules(kind)
+	var wanted := level if level > 0 else water_level(kind)
+	var allowed := false
+	for entry: Variant in (rules.get("placeable_levels", []) as Array):
+		if int(entry) == wanted:
+			allowed = true
+			break
+	if not allowed:
+		cancel()
+		return CommandQueue.fail(&"E_LEVEL_UNAVAILABLE",
+				{"archetype": kind, "level": wanted})
+	var required_level := int(sim.catalog.stats(WATER_SHELL_ARCHETYPE, wanted)
+			.get("min_city_level", 0))
+	if required_level > sim.progression.city_level:
+		cancel()
+		return CommandQueue.fail(&"E_CITY_LEVEL", {
+			"required_level": required_level, "city_level": sim.progression.city_level,
+			"archetype": kind,
+		})
+	var row := water_row(kind, wanted)
+	state = STATE_PLACING
+	archetype = kind
+	variant = kind
+	component_kind = kind
+	component_domain = DOMAIN_WATER
+	component_level = wanted
+	size = Vector2i(int(row.get("footprint_w", 1)), int(row.get("footprint_h", 1)))
+	origin = Vector2i.ZERO
+	has_origin = false
+	_verdict = {}
+	return CommandQueue.ok({"archetype": kind, "component_kind": kind,
+			"domain": DOMAIN_WATER, "level": wanted, "size": size})
 
 
 func is_placing_component() -> bool:
 	return is_placing() and component_kind != ""
+
+
+func is_placing_water() -> bool:
+	return is_placing() and component_domain == DOMAIN_WATER
 
 
 ## Leaves placement mode. Idempotent — the Android back stack calls it blind.
@@ -358,6 +571,7 @@ func cancel() -> void:
 	archetype = ""
 	variant = ""
 	component_kind = ""
+	component_domain = ""
 	component_level = GRID_CARD_LEVEL
 	size = Vector2i.ONE
 	origin = Vector2i.ZERO
@@ -412,6 +626,8 @@ static func footprint_centre(p_origin: Vector2i, p_size: Vector2i,
 func evaluate(p_origin: Vector2i) -> Dictionary:
 	if sim == null or archetype == "":
 		return _blocked(&"E_UNKNOWN_ARCHETYPE", {"archetype": archetype})
+	if component_domain == DOMAIN_WATER:
+		return evaluate_water_component(p_origin)
 	if component_kind != "":
 		return evaluate_component(p_origin)
 	if not sim.catalog.has(archetype):
@@ -443,8 +659,20 @@ func evaluate(p_origin: Vector2i) -> Dictionary:
 ## order, charges nothing and returns the quote, so the ghost's verdict and the
 ## command's answer are the same code path rather than two copies of one rule.
 func evaluate_component(p_origin: Vector2i) -> Dictionary:
-	var preview := sim.cmd_place_grid_component(component_kind, p_origin,
-			component_level, true)
+	return _component_verdict(p_origin, sim.cmd_place_grid_component(component_kind,
+			p_origin, component_level, true))
+
+
+## The water twin, and for the same reason: `cmd_place_water_component(preview =
+## true)` runs doc 05 §6's twelve checks in their order, charges nothing and
+## returns the quote — so the ghost's verdict and the command's answer are one
+## code path rather than two copies of one rule.
+func evaluate_water_component(p_origin: Vector2i) -> Dictionary:
+	return _component_verdict(p_origin, sim.cmd_place_water_component(component_kind,
+			p_origin, component_level, true))
+
+
+func _component_verdict(p_origin: Vector2i, preview: Dictionary) -> Dictionary:
 	var payload: Dictionary = preview.get("payload", {})
 	var params: Dictionary = {"tile": p_origin, "archetype": component_kind}
 	params.merge(payload, true)
@@ -493,14 +721,17 @@ func confirm() -> Dictionary:
 		"origin": origin,
 		"variant": variant,
 		"component_kind": component_kind,
+		"component_domain": component_domain,
 		"level": component_level,
 		"cost": placement_cost(),
 	})
 
 
 ## What the confirm button is about to spend. A building's cost is the archetype
-## table's; a grid component's is the preview's quote, because it includes the
-## feeder lateral the placement will have to build (doc 04 §2.1 / doc 03 §2.13b).
+## table's; a component's is the preview's quote, because it includes the run of
+## line the placement will have to build — a feeder lateral for a transformer
+## (doc 04 §2.1 / doc 03 §2.13b), a service main for a water site (doc 05 §2.2 /
+## doc 03 §8 `water`). That run is the interesting half of both decisions.
 func placement_cost() -> int:
 	if sim == null or archetype == "":
 		return 0
@@ -509,8 +740,13 @@ func placement_cost() -> int:
 	var params: Variant = _verdict.get("params", {})
 	if params is Dictionary and (params as Dictionary).has("cost"):
 		return int((params as Dictionary)["cost"])
-	return sim.econ_curves.grid_build_cost(component_kind, component_level,
-			float(sim.treasury.difficulty().get("M_build", 1.0)))
+	var m_build := float(sim.treasury.difficulty().get("M_build", 1.0))
+	if component_domain == DOMAIN_WATER:
+		return sim.econ_curves.water_component_build_cost(
+				sim.water.data.variant_cost_ratio(StringName(component_kind),
+						str(water_rules(component_kind).get("subtype", ""))),
+				component_level, m_build)
+	return sim.econ_curves.grid_build_cost(component_kind, component_level, m_build)
 
 
 ## Submit the confirmed placement through `CitySim` and leave placement mode on
@@ -521,12 +757,16 @@ func commit() -> Dictionary:
 		return args
 	var payload: Dictionary = args["payload"]
 	var result: Dictionary
-	if str(payload.get("component_kind", "")) != "":
-		result = sim.cmd_place_grid_component(str(payload["component_kind"]),
-				payload["origin"], int(payload["level"]))
-	else:
-		result = sim.cmd_place_building(str(payload["archetype"]),
-				payload["origin"], str(payload["variant"]))
+	match str(payload.get("component_domain", "")):
+		DOMAIN_WATER:
+			result = sim.cmd_place_water_component(str(payload["component_kind"]),
+					payload["origin"], int(payload["level"]))
+		DOMAIN_GRID:
+			result = sim.cmd_place_grid_component(str(payload["component_kind"]),
+					payload["origin"], int(payload["level"]))
+		_:
+			result = sim.cmd_place_building(str(payload["archetype"]),
+					payload["origin"], str(payload["variant"]))
 	if bool(result["ok"]):
 		cancel()
 	return result
@@ -562,7 +802,10 @@ func placement_view() -> Dictionary:
 		"archetype": archetype,
 		"variant": variant,
 		"component_kind": component_kind,
-		"name_key": BuildController.card_name_key(archetype, variant),
+		"component_domain": component_domain,
+		"name_key": BuildController.card_name_key(WATER_SHELL_ARCHETYPE, component_kind) \
+				if component_domain == DOMAIN_WATER \
+				else BuildController.card_name_key(archetype, variant),
 		"cost": cost,
 		"cost_text": RequirementFormatter.money(cost),
 		"verdict": str(_verdict.get("verdict", VERDICT_BLOCKED)),

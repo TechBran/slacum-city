@@ -1478,9 +1478,230 @@ or decay constant to paper over it would break §13.2's fit.
 
 ## 16. Open edits this pass could not make
 
+> **ALL FOUR ARE CLOSED (Wave 5 — see §17.1).** The three doc edits are applied
+> in their source docs, and the fourth — the hour-48 ruling — is answered in doc
+> 93 §E2 by retiring the goal. This table is kept as the record of what was held
+> and where it went; it is no longer a to-do list.
+
+
 | where | what | why it is here |
 |---|---|---|
 | doc 03 §2.2, lines quoting `COND_FLOOR = 0.55` and worked examples A/B | `COND_FLOOR` is **0.40**; `f_condition = 0.40 + 0.60 × C`; example A `f_condition` 0.9775 → 0.9700 and revenue $23.86 → **$23.68**/gh; example B $8.23 → **$8.17**/gh | §13.3 ruled the constant; doc 03 is not this pass's file. `tests/test_economy.gd` already carries the new literals with the arithmetic in a comment, so the doc is the only stale copy. |
 | doc 03 §2.12's founding ledger | `E_grid` $74.874 → **$74.274**/gh, total expense $520.577 → **$519.977**/gh, net $318.773 → **$319.372**/gh, day net $7,650.55 → **$7,664.94** | §14.1: F-4 took 0.15 MVA of transformer plate out of the inventory. `data/economy.json` `pacing_guardrails` and `tests/test_economy.gd` are re-stamped; doc 93 §E2 carries the shift table. |
 | doc 09 §2.9.5's transformer table | 23 rows → **18**; T-05, T-08, T-16, T-21, T-22 deleted; T-03/T-04/T-07/T-12/T-13/T-14/T-15/T-17/T-19/T-20/T-23 re-load; fleet `13×L1 + 9×L2 + 1×L3` → **`7×L1 + 10×L2 + 1×L3`**, `rated_mva` 2.40 → **2.25**; feeder rollups 361.8/421.6 → **365.8/417.6**; `F_SOUTH` 53.8 % → **53.3 %** | §14.1. `data/starter_city.json`, `data/world.json` and `tests/test_starter_city.gd` are updated and carry the derivations; doc 09's printed table is the stale copy. |
 | doc 09 §2.9.3/§2.9.4 (a **ruling**, not an edit) | how big and how full is the starter core? Hour-48 pacing for `cmd_place_grid_component` needs ≈35–80 served vacant tiles and the geometric floor under doc 09's own siting rule is 452 | §14.1 and §14.2. Neither a grid edit nor a READY-block trim can reach it; it is a core-size question. |
+
+---
+
+## 17. Pass 4 — the infrastructure verbs and F-11
+
+*Wave 5, 2026-08-19. Same rig, same strategies, same summariser: every number
+below is read off the live sim through `tests/balance_matrix.gd`, which drives
+`BalanceGateRig` and therefore `tools/playtest.gd`'s own agents.*
+
+### 17.1 The three open edits from §16 are applied
+
+Doc 03 §2.2's `COND_FLOOR` lines and worked examples A/B, doc 03 §2.12's founding
+ledger (and the `E_grid` derivation it comes from), and doc 09 §2.9.5's
+transformer table are all edited in their SOURCE docs. §16's table is now
+historical; the docs are the truth again. Doc 09's table is republished with
+loads **metered off the running sim** rather than hand-derived, and carries a
+basis note: this doc's own arithmetic gives 783.4 kW (`F_NORTH 365.8 / F_SOUTH
+417.6`), the sim meters 801.7 kW (`376.0 / 425.7`), and the ~18.4 kW gap is doc
+05's live node roster over its published L1 constants — doc 93 §E2 owns that
+shift and always has.
+
+The fourth §16 row was a **ruling**, not an edit, and it is answered in doc 93
+§E2: **the hour-48 `E_UNSERVED` goal is retired.** The wall is money-paced by
+design and that is correct — teaching the transformer by starving the player of
+LAND would be teaching it with a fake shortage. Gate 10 re-anchors onto the
+first infrastructure DECISION (a tap bought ahead of growth, inside the first
+game-week) and stops asserting an hour.
+
+### 17.2 F-11 — the strategy half, done, and what it bought
+
+F-11 filed two halves. The first is a strategy change and it is made:
+`tools/playtest.gd`'s `Balanced` now buys grid **ahead** of growth.
+
+Two rules moved, and the second is the one pass 3 did not see:
+
+1. **The trigger.** Pass 3 asked *"is there a served 1×1 tile anywhere in the
+   city"* — which a founding core of 452 served tiles answers `yes` long after
+   the block being built on has run dry, and long after a freshly developed block
+   (which doc 09 §2.3 hands over with a utility corridor and **no transformer**)
+   has gone entirely dark. It is now **`GRID_LEAD_TILES = 40` served, buildable,
+   empty tiles per owned+READY block**, checked per block, on a 2-game-hour
+   cooldown instead of 8.
+2. **The rung.** Pass 3 bought L1 transformers. Doc 04 §8 rates an L1 at **50 kW**
+   and gives it a Chebyshev-3 service area — a **49-tile** patch — so the tap
+   saturates at roughly a third of the ground it is allowed to serve and the
+   surplus is shed. Measured at day 30 of the lead-only run: 37 transformers, 11
+   over 100 %, worst **94 kW on a 50 kW rating (1.89×)**. L2 is 150 kW for
+   $1,100 against L1's 50 kW for $500 — **3× the capacity for 2.2× the price** —
+   and it is the rung whose rating matches its radius. `GRID_LEVEL = 2`.
+
+Seed 1337, 21 game-days, the pacing horizon the rulings are written against:
+
+| column | pass 3 | Wave 5 | |
+|---|---|---|---|
+| **dark share** | 25.72 % | **8.70 %** | ruled target ≤ 15 % ✅ |
+| transformers bought | 1 | **11** | |
+| happiness | 56.7 | **73.5** | |
+| city stability | 0.7754 | **0.9310** | |
+| treasury | $65,845 | **$91,291** | |
+| min condition | 0.792 | 0.796 | unchanged, as intended |
+
+Across three seeds the dark share is **8.70 / 9.05 / 11.01 %**. `disaster_neglect`
+is still this agent with exactly one field changed, and it now differs on the
+lights as well: **26.09 % against 8.70 %**. Gate 18 asserts the target; gate 4
+keeps the columns it was fitted on, so neither gate measures two things at once.
+
+### 17.3 F-11's other half — the ruling, and the constants it names
+
+**The ruling asked for ≤ 15 % dark at FIFTY game-days. It is not reachable by
+strategy, and this is the report the ruling asked for instead.** Measured with
+the improved agent, seed 1337, doc 04's ladder dumped every 10 game-days:
+
+| day | buildings | demand kW | **feeder** | transformer | substation | plant |
+|---|---|---|---|---|---|---|
+| 10 | 180 | 922 | 51.8 % | 37.7 % | 20.7 % | idle |
+| 20 | 256 | 1,599 | 80.1 % | 44.2 % | 32.0 % | idle |
+| 30 | 428 | 2,183 | **104.4 %** | 47.7 % | 41.8 % | idle |
+| 40 | 626 | 2,539 | **119.2 %** | 45.4 % | 47.7 % | idle |
+| 50 | 772 | 2,360 | **111.8 %** | 38.9 % | 44.7 % | idle |
+
+Read the columns in that order. **The transformer fleet is fine** — the strategy
+fix did its job and the fleet sits under half loaded. The substation is at 45 %
+of its 6 MVA and the plant is barely touched at 8 MW. **Everything the city has
+runs through the two class-1 feeders doc 09 §2.9.5 authored, rated 1,200 kW
+each**; doc 04 §2.6 derates even that with condition and ambient temperature, and
+the city crosses 100 % at roughly **410 buildings**. Dark share by game-day
+tracks it exactly: 5.1 % at day 10, 4.2 % at 15, 33.7 % at 20, 66.7 % at 25, and
+the 50-game-day run ends at **54.9 %**.
+
+**And no verb answers it.** `data/grid_components.json`'s `placeable` roster ships
+exactly one kind. So the late-game ceiling is not a balance constant at all — it
+is a command-layer gap, and the fixes are named in this order:
+
+1. **Ship a feeder verb.** Doc 04 §4's `route_feeder` / `place_power_component`
+   for `feeder`, and add `feeder` and `substation` to the placeable roster. Doc
+   03 §2.13(b) **already prices both** — feeder class 2 at $210/tile, substation
+   L1 at $15,000 — so nothing needs a new price. Class 2 raises a feeder
+   1,200 → 3,000 kW and moves the ceiling from ~410 buildings to ~1,000.
+2. **Make the `substation` / `power_facility` SHELLS real.** `cmd_place_building`
+   sells either one today and neither adds a `PowerGrid` component: a $15,000
+   building that supplies nothing, and a $60,000 one that generates nothing.
+   Either wire the shell to a component — exactly as Wave 5 wired
+   `water_facility` to its doc-05 node — or take the cards off the build sheet.
+   This is the same class of finding as pass-2 F-3's frozen fleet: a purchase
+   that buys the player nothing.
+3. **Only then look at a constant.** `PowerGrid.CAPACITY.transformer` L1 = 50 kW
+   against a 49-tile service area is the one genuine mismatch in doc 04's ladder
+   — every other rung's capacity tracks its radius — and ~90 kW would make L1 a
+   sensible first buy rather than a rung to skip. **It is not the late-game
+   ceiling**, and moving it would not raise the feeder's.
+
+**No constant was moved for any of this.** Gate 18b pins the ceiling with the
+feeder inventory and the one-kind roster, so the day a feeder verb lands the gate
+fails and gate 18 gets its 50-game-day threshold.
+
+### 17.4 What else moved, and why
+
+- **A developed ring block now arrives with roads.** Doc 09 §2.9.1's 87-tile
+  template had never been stamped, so a bought block reached READY with **256
+  placeable tiles and no road access at all** — on a map whose revenue formula
+  multiplies by `f_road`. It is now doc 09's published **169 buildable tiles**
+  plus 60 AVENUE and 27 STREET. Two things follow and both are corrections: the
+  city's road-repair line grows with the network exactly as §2.12's per-block
+  term intends, and a ring block's buildings finally earn a road multiplier they
+  were previously neither charged for nor paid on.
+- **`min_city_level` is enforced at placement**, and the curves did not move —
+  because every scripted strategy already filtered on `Api.buildable`, which has
+  always applied the same rule. The harness was playing by the UI's rules while
+  the sim was not.
+- **Gate 4b's band needs its denominator restated.** Maintenance spend fell from
+  ~12 % of net to **6.5 / 6.8 / 6.6 %** across three seeds, and neither the decay
+  rows nor `REPAIR_COST_PER_CAPITAL` moved. Both halves of the ratio changed for
+  the same reason: a lit city earns more (net $1,794 → $2,003/gh) and wears more
+  slowly (doc 02 §2.6 decays an unpowered building **1.5×** faster, and a quarter
+  of this city used to be unpowered). The ruled purposes both still hold —
+  **2.0 trips per game-day** and the worst building held at **0.80** — so the
+  band is re-anchored on the measurement and **flagged**: if 10–20 % is wanted
+  back on a lit city, the levers are `data/buildings.json`'s `decay_per_hour` or
+  `expenses.REPAIR_COST_PER_CAPITAL`, and this pass moved neither.
+
+### 17.5 The matrix — 18 of 18, 21 game-days
+
+Same rig as §15, re-run after every Wave-5 change.
+
+| strategy | seed | treasury | value | net $/gh | pop | happy | stab | dark % | placed | upg | minC | open inc |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| do_nothing | 1337 | $159,077 | $159,077 | 262 | 144 | 82.2 | 0.9475 | 0.59 | 0 | 0 | 0.511 | 0.01 |
+| do_nothing | 4242 | $161,260 | $161,260 | 268 | 144 | 82.2 | 0.9475 | 0.01 | 0 | 0 | 0.457 | 0.00 |
+| do_nothing | 9001 | $161,147 | $161,147 | 258 | 142 | 83.1 | 0.9486 | 0.08 | 0 | 0 | 0.505 | 0.01 |
+| greedy_growth | 1337 | $100,635 | $972,630 | 1,313 | 1,845 | 53.4 | 0.7112 | 34.76 | 126 | 39 | 0.382 | 1.65 |
+| greedy_growth | 4242 | $115,145 | $1,003,783 | 1,448 | 1,690 | 52.9 | 0.7072 | 37.63 | 127 | 46 | 0.395 | 1.57 |
+| greedy_growth | 9001 | $178,867 | $1,031,084 | 1,477 | 1,906 | 53.6 | 0.7300 | 35.97 | 126 | 35 | 0.362 | 1.53 |
+| infrastructure_first | 1337 | $11,504 | $127,904 | 364 | 232 | 77.6 | 0.9752 | 0.65 | 27 | 0 | 0.888 | 0.01 |
+| infrastructure_first | 4242 | $19,166 | $135,566 | 384 | 232 | 77.1 | 0.9690 | 0.02 | 27 | 0 | 0.891 | 0.00 |
+| infrastructure_first | 9001 | $20,046 | $136,446 | 380 | 230 | 77.1 | 0.9690 | 0.01 | 27 | 0 | 0.891 | 0.01 |
+| **balanced** | 1337 | $91,291 | $965,771 | 2,003 | 1,463 | 73.5 | 0.9310 | **8.70** | 236 | 142 | 0.796 | 0.32 |
+| **balanced** | 4242 | $86,727 | $976,027 | 2,070 | 1,514 | 72.6 | 0.9097 | **9.05** | 245 | 145 | 0.797 | 0.28 |
+| **balanced** | 9001 | $85,754 | $986,634 | 2,029 | 1,602 | 69.4 | 0.8771 | **11.01** | 242 | 142 | 0.797 | 0.35 |
+| tax_squeezer | 1337 | $86,708 | $1,616,068 | 3,331 | 1,946 | 53.9 | 0.8229 | 25.92 | 312 | 126 | 0.778 | 0.85 |
+| tax_squeezer | 4242 | $87,344 | $1,626,193 | 3,342 | 1,901 | 47.9 | 0.7735 | 27.19 | 287 | 156 | 0.776 | 0.98 |
+| tax_squeezer | 9001 | $100,981 | $1,702,861 | 3,541 | 1,974 | 56.8 | 0.7674 | 27.66 | 296 | 147 | 0.775 | 0.82 |
+| disaster_neglect | 1337 | $75,219 | $1,125,179 | 1,714 | 1,410 | 55.9 | 0.7542 | 26.09 | 295 | 134 | 0.338 | 1.20 |
+| disaster_neglect | 4242 | $65,896 | $1,089,527 | 1,773 | 1,626 | 62.5 | 0.8594 | 24.71 | 279 | 146 | 0.399 | 0.92 |
+| disaster_neglect | 9001 | $66,217 | $1,082,077 | 1,768 | 1,407 | 55.0 | 0.7310 | 25.70 | 286 | 144 | 0.382 | 0.95 |
+
+| strategy (mean of 3) | treasury | value | net $/gh | pop | happy | stab | dark % | placed | upg | minC | repairs |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| **do_nothing** | $160,494 | $160,494 | 263 | 143 | 82.5 | 0.9479 | 0.23 | 0 | 0 | 0.491 | 0 |
+| **greedy_growth** | $131,549 | $1,002,499 | 1,412 | 1,813 | 53.3 | 0.7161 | 36.12 | 126 | 40 | 0.380 | 0 |
+| **infrastructure_first** | $16,905 | $133,305 | 376 | 231 | 77.3 | 0.9711 | 0.23 | 27 | 0 | 0.890 | 110.0 |
+| **balanced** | $87,924 | $976,144 | 2,034 | 1,526 | 71.8 | 0.9060 | **9.59** | 241 | 143 | 0.797 | 41.7 |
+| **tax_squeezer** | $91,677 | $1,648,374 | 3,405 | 1,940 | 52.9 | 0.7880 | 26.92 | 298 | 143 | 0.776 | 113.0 |
+| **disaster_neglect** | $69,110 | $1,098,927 | 1,752 | 1,481 | 57.8 | 0.7815 | 25.50 | 286 | 141 | 0.373 | 0 |
+
+**Read the three unchanged rows first.** `do_nothing`, `greedy_growth` and
+`infrastructure_first` reproduce §15's numbers **to the digit** on all nine runs.
+That is the evidence for two Wave-5 claims that would otherwise be assertions:
+`min_city_level` enforcement moved nothing (those agents already filtered on
+`Api.buildable`, which has always applied the rule), and the block road stamp
+moved nothing for agents that buy no land. Every difference below is the three
+agents that descend from `Balanced`, and inside those, the two rules F-11 named.
+
+**The headline ordering survives, and `balanced` improved on every column that
+is not cash.** Against §15: value $1,016,422 → $976,144 (−4 %, the honest cost of
+169 buildable tiles per ring block instead of 256), population 1,437 → 1,526,
+happiness **58.9 → 71.8**, stability **0.7927 → 0.9060**, dark **22.43 % → 9.59 %**,
+treasury $71,645 → $87,924. It builds a slightly smaller city and keeps all of it
+running, which is the trade the ruling asked for.
+
+**`tax_squeezer` is still dominant on value and still not free.** +69 %
+value created against `balanced` (§15: +57 %), for **−18.9** happiness, **−0.118**
+stability and **2.8× the dark share** — the detent now visibly buys its revenue
+by outrunning the grid, which is a more legible price than §15's could show.
+`incident_created` falls 703.7 → 315.3 for the same reason `balanced`'s does: a
+lit city catches fire less.
+
+**`incident_abandoned` is 0 and `credit_line_engaged` is 0 on all eighteen runs**,
+and `director_event_started` is exactly 2 on every one — pass-2 F-3's cascade and
+F-1's silent Director stay closed at every city size this matrix reaches.
+
+### 17.6 The infrastructure verbs are shipped but not yet DRIVEN
+
+`cmd_place_road` / `cmd_upgrade_road` / `cmd_demolish_road` and
+`cmd_place_water_component` / `cmd_place_water_main` /
+`cmd_upgrade_water_component` are live, tested and probed by the harness — and no
+strategy reaches for one. That is deliberate for this pass and it is a gap the
+next one should close: roads arrive stamped with doc 09's block template and
+water arrives with doc 09's authored topology, so neither is on the critical path
+of a 21-game-day run, and an agent that laid roads it did not need would measure
+the harness rather than the game. **The measurements they exist to enable, in
+priority order:** what does a player-laid street grid on a bought block cost
+against the template's, at doc 03 §2.13(d)'s 17–52× piece-rate premium; and at
+what city size does the authored water topology (one pump, 40 m³/h, 7.2× headroom
+at founding) stop covering the demand — the water twin of §17.3's feeder ceiling,
+and the one the new verbs CAN answer.

@@ -120,6 +120,8 @@ Doc 10 does **not** evaluate the gate, format its message, or store its result. 
 
 `87 × 9 blocks = 783` road tiles in doc 09's 3×3 core, `169` buildable tiles on a clean block, and the `0.34` road-area constant doc 09's price and placement math depends on — all reproduced exactly. Boundary tiles belong to the block that contributed them, so a boundary between two developed blocks is 2 tiles wide (one AVENUE tile from each side) and **is never counted twice**.
 
+> **The stamp ships (Wave 5).** Until Wave 5 this table described something nothing executed: doc 09's `ROAD_INSTALL` phase advanced the block's `road_access` attribute and stamped no tiles, so **a developed ring block reached READY with no roads at all** — 256 placeable tiles, none of them with road access, on a map whose revenue formula multiplies by `f_road` and whose L4/L5 gate asks for an AVENUE. `RoadNetwork.stamp_block_template(block_grid)` now lays the 60 + 27 exactly as tabled, at the phase doc 09 §2.3 names, through the same incremental retrace every other edit uses; `CitySim` calls it from the `development_phase_completed` seam that already handled `UTILITY_CORRIDOR`, because doc 09's pipeline may not reach into the tile grid itself. **It books no money** — doc 03 §2.8's `road_install` phase price paid for it once, which is this section's no-double-billing rule, and `tests/test_infra_verbs.gd` asserts the whole development cost less than the $360,600 the same 87 tiles would cost at §2.13(d) piece rates. A block whose neighbour is already developed widens that boundary from one AVENUE tile to two with no special case: each block simply stamps its own local `{0, 15}`.
+
 **Re-derived block road-install figures — work and decay only (RR-2).** The cost and upkeep rows of this table are **deleted**; `data/economy.json` prices the same 60 + 27 tile counts. Generating formulas: `work = 60 × avenue.build_crew_hours + 27 × street.build_crew_hours`; `decay = 60 × avenue.condition_base_decay + 27 × street.condition_base_decay` (per game-day, at `c_day = 0`, clear).
 
 | quantity | avenue term (60 tiles) | street term (27 tiles) | **per block** | **doc 09 core (×9)** |
@@ -573,6 +575,17 @@ Roads consumes doc 02's events `job_started{job_id, target_ref, crew_ids}` (→ 
 **Upgrade street → avenue:** `0.9 crew-hours/tile` (`90 work units/tile`), priced by doc 03 (`data/economy.json → roads.upgrade_street_to_avenue`; the former `$4,000/tile` is deleted from this doc per RR-2), requires the tile to have no active closure other than `construction_work`; applies `construction_work` during the job; condition is preserved (not reset).
 
 **Demolish:** refunded at doc 03's road demolish-refund fraction (formerly 15% here; the fraction moves to `data/economy.json` with the price it multiplies, RR-2). **Rejected** if, after removal, any building's access tile would have no adjacent road tile, or would land in a graph component that contains no station of any department. (Cheap check: simulate the removal against the union-find, evaluate only buildings whose access tile is within 2 tiles of the removed set.)
+
+**As shipped (Wave 5).** The three verbs live in `sim/city_sim.gd` as `cmd_place_road(tiles, road_class, preview)`, `cmd_upgrade_road(tiles, preview)` and `cmd_demolish_road(tiles, preview)`. This doc keeps the geometry, the lifecycle and the reason codes; `CitySim` joins them to doc 03's money and doc 02's queue, and is the only place a road command can move a dollar. Notes on what the integration pinned down:
+
+| point | as shipped |
+|---|---|
+| check order | `E_UNKNOWN_ROAD_CLASS` → `E_NO_TILES` → this section's own set (`E_OUT_OF_BOUNDS` · `E_WATER` · `E_FOOTPRINT` · `E_NOT_DEVELOPED` · `E_NOT_CONNECTED`) → `E_ALREADY_ROAD` → `E_FUNDS` / `E_AUSTERITY`. Money is always last, so a refusal names the real problem. |
+| what is billed | the **fresh** tiles only. A drag that crosses existing pavement pays for what it lays. |
+| build over an existing road | **skipped, not re-laid.** Build, upgrade and demolish stay three verbs: re-laying STREET over AVENUE would be a silent downgrade, and re-laying AVENUE over STREET would buy the §2.13 upgrade at the build price *and* reset the tile to `under_construction_seed`. |
+| the orphan test | doc 02 owns the access list, so `CitySim` supplies one representative tile per building near the removed set — chosen so this doc's per-tile rule reproduces doc 09 §2.9.1's per-BUILDING one (a building survives if ANY footprint tile keeps a neighbouring road). The code and the event stay here. |
+| freeing the ground | `TileGrid.set_road` clears `BUILDABLE` when a tile is paved and does not restore it when the pavement goes, so the coordinator re-opens a demolished tile. Without that, ripping up a road sterilised the tile for the life of the city. |
+| `E_NO_QUEUE` | unreachable in the integrated build — `submit_job` is always injected — and kept for the fixtures that construct a bare `RoadNetwork`. |
 
 ### 2.14 Routing performance budget
 

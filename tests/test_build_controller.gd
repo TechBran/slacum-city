@@ -31,35 +31,49 @@ static func _serviceable_vacant_tile(sim: CitySim, size: Vector2i = Vector2i.ONE
 
 func test_card_list_covers_the_twelve_archetypes() -> void:
 	# Doc 12 §2.17's tutorial needs the answer to `E_UNSERVED` on the same sheet,
-	# so the list is now the twelve buildings PLUS doc 04 §2.1's placeable grid
-	# roster. `component_kind` is what tells the two apart — and which command a
-	# card's tap ends up in.
+	# so the list is the twelve buildings PLUS doc 04 §2.1's placeable grid
+	# roster — and, from Wave 5, doc 05 §6's placeable WATER roster beside it, on
+	# one `infrastructure` tab. `component_domain` is what tells the three apart,
+	# and which command a card's tap ends up in.
 	var sim := _sim()
 	var controller := _controller(sim)
 	var cards := controller.cards()
-	assert_eq(cards.size(),
-			BuildingCatalog.ARCHETYPE_COUNT + controller.grid_kinds().size(),
-			"spec §43.2 MVP roster + doc 04's placeable components")
+	assert_eq(cards.size(), BuildingCatalog.ARCHETYPE_COUNT
+			+ controller.grid_kinds().size() + controller.water_kinds().size(),
+			"spec §43.2 MVP roster + doc 04's and doc 05's placeable components")
 	var seen: Array[String] = []
 	var buildings := 0
+	var m_build := float(sim.treasury.difficulty().get("M_build", 1.0))
 	for card: Dictionary in cards:
-		assert_false(seen.has(str(card["archetype"])), "one card per archetype")
-		seen.append(str(card["archetype"]))
-		assert_true(int(card["cost"]) > 0, "%s quotes a build cost" % card["archetype"])
-		if str(card["component_kind"]) == "":
-			buildings += 1
-			assert_eq(int(card["cost"]), sim.econ_curves.build_cost(str(card["archetype"])),
-					"cost is read from the economy table, never authored in the UI")
-		else:
-			assert_eq(int(card["cost"]), sim.econ_curves.grid_build_cost(
-					str(card["component_kind"]), int(card["level"]),
-					float(sim.treasury.difficulty().get("M_build", 1.0))),
-					"and a component's comes from the same table, doc 03 §2.13(b)")
+		assert_false(seen.has(str(card["id"])), "one card per id")
+		seen.append(str(card["id"]))
+		assert_true(int(card["cost"]) > 0, "%s quotes a build cost" % card["id"])
+		match str(card["component_domain"]):
+			"":
+				buildings += 1
+				assert_eq(int(card["cost"]),
+						sim.econ_curves.build_cost(str(card["archetype"])),
+						"cost is read from the economy table, never authored in the UI")
+			BuildController.DOMAIN_GRID:
+				assert_eq(int(card["cost"]), sim.econ_curves.grid_build_cost(
+						str(card["component_kind"]), int(card["level"]), m_build),
+						"and a grid component's comes from the same table, §2.13(b)")
+			BuildController.DOMAIN_WATER:
+				var kind := str(card["component_kind"])
+				assert_eq(int(card["cost"]), sim.econ_curves.water_component_build_cost(
+						sim.water.data.variant_cost_ratio(StringName(kind),
+								str(controller.water_rules(kind).get("subtype", ""))),
+						int(card["level"]), m_build),
+						"and a water component's off doc 03 §8 water, C-07 unbroken")
 		assert_true((card["footprint"] as Vector2i).x >= 1)
 		assert_true(str(card["name_key"]).begins_with("ui_build_card_"), "G-8 key")
+		assert_eq(str(card["category"]) == BuildController.CATEGORY_INFRASTRUCTURE,
+				str(card["component_domain"]) != "",
+				"every component sits on the infrastructure tab and nothing else does")
 	assert_eq(buildings, BuildingCatalog.ARCHETYPE_COUNT)
 	assert_true(seen.has("house") and seen.has("water_facility"))
 	assert_true(seen.has("transformer"), "the card that answers E_UNSERVED")
+	assert_true(seen.has("water_facility_pump"), "and the one that answers E_NO_MAIN")
 
 
 func test_card_names_and_tabs_resolve_from_the_string_table() -> void:
@@ -520,14 +534,18 @@ func test_scene_carries_the_build_sheet_and_building_panel() -> void:
 	assert_ne(panel, null, "SafeArea/PanelLayer/BuildingPanel is wired")
 	assert_false(sheet.is_open(), "the sheet starts closed behind the FAB")
 	assert_false(panel.is_open())
-	assert_eq(sheet.cards().size(),
-			BuildingCatalog.ARCHETYPE_COUNT + sheet.controller.grid_kinds().size())
+	assert_eq(sheet.cards().size(), BuildingCatalog.ARCHETYPE_COUNT
+			+ sheet.controller.grid_kinds().size()
+			+ sheet.controller.water_kinds().size())
 	sheet.open()
 	assert_true(sheet.is_open())
 	assert_ne(sheet.card_button("house"), null, "the residential tab lists House")
 	sheet.select_category("utility")
 	assert_ne(sheet.card_button("substation"), null)
 	assert_eq(sheet.card_button("house"), null, "tabs filter the card row")
+	sheet.select_category(BuildController.CATEGORY_INFRASTRUCTURE)
+	assert_ne(sheet.card_button("transformer"), null, "grid and water share the tab")
+	assert_ne(sheet.card_button("water_facility_pump"), null)
 	_unmount(mounted)
 
 

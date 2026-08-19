@@ -274,7 +274,7 @@ func _apply(screen: String) -> void:
 			_root.build_sheet.open()
 		"build_grid":
 			_root.build_sheet.open()
-			_root.build_sheet.select_category(BuildController.CATEGORY_GRID)
+			_root.build_sheet.select_category(BuildController.CATEGORY_INFRASTRUCTURE)
 		"build_locked":
 			_root.build_sheet.open()
 			_root.build_sheet.select_category("commercial")

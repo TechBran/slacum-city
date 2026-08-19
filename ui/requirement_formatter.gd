@@ -81,6 +81,28 @@ const CODE_TABLE := {
 	&"E_UNKNOWN_BUILDING": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	&"E_NO_FEEDER": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
 	&"E_AUSTERITY": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	# --- Wave 5: the infrastructure verbs (doc 05 §6 water, doc 10 §2.13 roads).
+	# Placement's `E_UNSERVED` twin for water, and the roster/level rows the
+	# INFRASTRUCTURE tab can now show on a card it refuses to place.
+	&"E_UNKNOWN_COMPONENT": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	&"E_LEVEL_UNAVAILABLE": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	&"E_VARIANT_LOCKED": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	&"E_OUT_OF_BOUNDS": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	&"E_NO_MAIN": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	&"E_NO_WATER": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	&"E_MAIN_OVERLAP": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	&"E_UNKNOWN_TIER": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	&"E_TIER_LOCKED": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	# Doc 10 §2.13's own vocabulary. `E_WATER` is a road on a water tile, which
+	# is a different refusal from water's `E_NO_WATER` (an intake off the river).
+	&"E_UNKNOWN_ROAD_CLASS": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	&"E_NO_TILES": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	&"E_ALREADY_ROAD": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
+	&"E_NOT_CONNECTED": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	&"E_WATER": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	&"E_NOT_ROAD": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	&"E_NO_ELIGIBLE_TILES": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	&"E_WOULD_ORPHAN": {"severity": SEVERITY_BLOCKED, "fix": FIX_ROAD_SEGMENT},
 	UNKNOWN_CODE: {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 }
 

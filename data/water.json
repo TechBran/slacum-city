@@ -91,6 +91,24 @@
     "insulation_levels": [1, 2]
   },
 
+  "placeable": {
+    "_note": "Section 6's MVP placement roster, and NOTHING priced (C-07: doc 03 is the sole currency authority, and the placement layer reads data/economy.json water.* at runtime exactly as data/grid_components.json does for doc 04). Footprints are not repeated here either - they are the components[variant][L] footprint_w/h columns above, which data/buildings.json already names as their source. This block adds only what section 6's prose does not state in machine-readable form: which variants a player may place, at which levels, and what siting each needs.",
+    "source":    {"placeable_levels": [1, 2], "subtype": "river", "requires_water_adjacent": true,
+                  "_subtype_note": "Section 6 ships subtype river only; well stays behind source_well_enabled.",
+                  "_water_note": "A river intake has to touch the river: some tile orthogonally adjacent to the footprint carries doc 09's FLAG_WATER. Mill Pond is the starter city's, and WTR-1 sits on it at core-local (0,20)."},
+    "treatment": {"placeable_levels": [1, 2]},
+    "pump":      {"placeable_levels": [1, 2, 3]},
+    "tank":      {"placeable_levels": [1, 2, 3]}
+  },
+
+  "placement": {
+    "_note": "Shared siting rules for every placeable variant. main_tap_radius_tiles mirrors doc 04's feeder_tap_radius_tiles for the same reason and at the same value: it is half a 16x16 land block (constitution section 6), so the utility_corridor development phase running a trunk to a block's centre leaves every tile of that block - corners included, Chebyshev 8 - within reach of one tap.",
+    "main_tap_radius_tiles": 8,
+    "requires_block_owned": true,
+    "requires_block_ready": true,
+    "lateral_tier": "service"
+  },
+
   "backup": {
     "_note": "This doc owns coverage_frac and the backup_kw sizing input (C-36). Doc 04 owns the generator: fuel, burn rate, tank size, start delay, refuelling, state and events. Doc 03 owns the price.",
     "coverage_frac": { "1": 0.00, "2": 0.60, "3": 0.70, "4": 0.85, "5": 1.00 },
