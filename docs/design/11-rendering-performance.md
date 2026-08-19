@@ -52,6 +52,8 @@ Main (Node)                                    game/main.tscn
 ```
 Chunk_<bx>_<by> (ChunkView)
 ├── Ground   (MeshInstance3D)  128×128 m, 8×8 quads, 2 surfaces: terrain + roads
+├── Water    (MultiMeshInstance3D)  8 m quads on the block's water tiles, one shared
+│                                   material (§2.1.1) — absent on a dry block
 ├── Buildings
 │   ├── MM_<archetype>_<level> (MultiMeshInstance3D)  NEAR/MEDIUM only
 │   └── MM_far                 (MultiMeshInstance3D)  FAR only, one for the whole chunk
@@ -60,6 +62,16 @@ Chunk_<bx>_<by> (ChunkView)
 ```
 
 **Rule: LOD is per chunk, not per building.** A chunk is 128 m; the narrowest LOD band is 150 m. Per-building LOD would triple MultiMesh count for no visible gain. This single decision is what keeps draw calls tractable (§2.13 worked example).
+
+#### 2.1.1 Water (`game/shaders/water.gdshader`, `GroundSurface.water()`)
+
+The third ground surface, and the only one that moves. **One material for every water quad in the city**, because the wave field is evaluated in **world space**: adjacent 8 m tiles are one body of water with the pattern crossing their seams, and driving it off UV instead would restart the noise at every quad and read as tiling. Constants are `water_surface` in `data/render.json`.
+
+Two scrolling value-noise octaves at different scales, speeds and headings (7.5 m / 0.035 and 2.6 m / 0.11, crossing), their finite-difference gradients perturbing `NORMAL` so the specular highlight crawls; a fresnel-weighted lift toward `sky_color` at grazing angles; `sc_night` darkening the body to 0.34; a crest-power sparkle on the swell. `sc_wetness` roughens it into chop and kills the glare — the rain read everyone knows and nobody can name. `sc_overlay_mode` greys it back with every other surface, or an overlay leaves one glowing blue rectangle in a desaturated city.
+
+**No reflection probe, at any preset.** §2.11 gates the ONE probe the game may own to High and to the city at large, and that probe is already flagged for on-device validation (§9). Water that needs a second one cannot ship on the mobile presets. The sky read is the fresnel term, which costs one dot product and lands within a few percent of a probe for a flat horizontal surface under a gradient sky at the camera's 34°–62° pitch band.
+
+**Nothing animates on the CPU.** `sc_time` is already published for the window flicker; the water reads it. A `MultiMeshInstance3D` of water quads is touched once, at build time.
 
 ### 2.2 Chunk lifecycle and slot allocation
 
@@ -187,15 +199,35 @@ ALBEDO *= mix(vec3(1.0), soot_color, INSTANCE_CUSTOM.g * 0.8);
 **FAR shader** drops the per-window hash (shimmer at 12 tris and 500 m) for horizontal bands; `rows = max(2, floor(height_m / 3.5))` where `height_m = length(MODEL_MATRIX[1].xyz)`:
 
 ```glsl
-float band = fract(UV.y * rows);
-float lit  = step(0.30, band) * step(band, 0.78)
-           * step(1.0 - e, hash11(floor(UV.y*rows) + variant));
-EMISSION   = window_color * lit * window_nits_far * gate;
+float band    = fract(y01 * rows);                     // y01 = local y, unit box
+float along_m = <metres along this wall>;              // picks x or z by normal
+float segment = floor(along_m / far_cell_m);           // far_cell_m = 6.4 (2 bays)
+float lit     = step(0.30, band) * step(band, 0.78)
+              * step(1.0 - e, hash21(vec2(segment, floor(y01*rows)) + variant·k));
+float bay     = along_m / far_bay_m;                   // far_bay_m = 3.2
+float sharp   = step(1.0 - far_mullion_duty, fract(bay));
+lit          *= mix(sharp, far_mullion_duty, clamp(fwidth(bay)*2.0, 0.0, 1.0));
+EMISSION      = window_colors[family] * lit * vary
+              * window_nits_far * far_energy_scale * gate;
 ```
+
+**Three amendments, made when the tier was first wired to the renderer and all three measured against the frame** (`game/shaders/building_far.gdshader`, `CityView`):
+
+1. **A lit storey is segmented, not lit end to end.** The original `hash11(storey)` lights a storey's whole perimeter at once. Rendered next to the MEDIUM chunks in front of it, the far city came out as continuous cream chevrons — brighter and far more regular than the tier it must match, so the boundary read as a *lighting change*, which is precisely what the LOD ladder may not do. The hash is now taken over `(segment, storey)` where a segment is `far_cell_m = 6.4` m of façade. **This is not the per-window hash this section rejects**: a 3.2 m window cell is sub-pixel at 500 m and samples white noise per pixel, whereas 6.4 m is ≈ 23 px at 500 m and ≈ 10 px at 1200 m — an order of magnitude above the crawl threshold.
+2. **Mullions, filtered analytically.** At 21:00 residential `e ≈ 1`, so nearly every segment lights and a tower reads as one solid stripe per floor — the near tier only escapes that because its §2.14 texture *draws* the wall between the panes. The far tier therefore multiplies in a `far_bay_m = 3.2` m periodic strip at `far_mullion_duty = 0.72`. **A periodic pattern under minification is the textbook moiré case**, and the reason this section banned the per-window hash in the first place; it is legal here only because it is crossfaded to its own mean before it can alias. `fwidth(bay)` is bays-per-pixel: below ≈ 0.5 the strip is resolvable and drawn sharp, above it the term becomes the constant `far_mullion_duty` — which is *exactly* the average the sharp pattern integrates to, so the structure fades out with no brightness step and no shimmer. Structure wherever structure is visible, and nothing where it is not.
+3. **`far_energy_scale = 0.98` compensates band coverage.** A lit band covers 100% of its segment's width; a lit near-tier window covers only the pane inside its cell. At equal nits the far tier out-emits the tier in front of it. Measured at the Z2 showcase pose, a swapped chunk now sits at **0.84** of the LOD0 luminance it replaces (whole-frame delta **−2.0%**), against ≈ 1.4× before the scale existed — the residual is aerial perspective's sign, not a lighting change. Brightness only: it never changes how many segments light.
+
+**`INSTANCE_CUSTOM.a` means something different in the FAR buffer.** The §2.6 contract above locks `.a` to `anim_phase` for the NEAR/MEDIUM buffers, which `RenderStateModel` writes and which the mirror tests assert. The FAR buffer is not one of those: `CityView._upload_far` builds it by folding the chunk's buckets together, the FAR shader is its only reader, and there is no flicker at 500 m for a phase to drive. `.a` therefore carries the **family index** (0 residential … 4 civic), which is what buys per-family window colour inside **one draw call per chunk**. `.r`, `.g` and `.b` are copied across untouched, so a chunk crossing the boundary mid-blackout carries its exact emissive ramp, damage and construction stage over the swap.
+
+**The swap is the model's decision, not the renderer's.** `CityView.refresh` calls `RenderStateModel.update_chunk_tiers` with the camera it is already given and reads `chunk_tier` — so the far tier inherits §2.5's 20 m hysteresis and 0.5 s dwell unchanged, and cannot flicker at a band edge. `CityView.lod_enabled = false` restores the pre-tier renderer (every chunk at LOD0) for A/B work.
 
 **Materials.** Material lives on the generated `ArrayMesh` surface, shared across levels and chunks: **2 `Shader` resources total** (building, far), instanced as 15 archetypes × 5 levels × 2 LODs = 150 `ShaderMaterial`s differing only in uniforms (`window_cols/rows/color`). Two pipeline states for the entire city — the number that matters on tiled mobile GPUs. Gate: `RENDER_TOTAL_SHADER_COMPILES_IN_FRAME == 0` after warm-up.
 
 `window_color` per family: residential `#FFCE8A` (warm tungsten), commercial `#CFE6FF` (cool office), industrial `#BFD0C8` (sodium-green), tech `#7FF0D0` (cyan, data center), civic `#E8F0FF` (clinical white).
+
+**`window_nits` is per family too, and it has to be.** The five hues are not equally bright at equal nits — luma runs civic `0.94` > commercial `0.89` > tech `0.84` > residential `0.83` > industrial `0.80` — so a flat `3.2` pushed the cool-white office and civic bays past the glow's HDR threshold and they read as solid white blocks at Z2 while the warm residential bays still resolved into individual windows. `emissive.window_nits` is now `{family: nits}` — residential `3.2`, commercial `2.4`, industrial `2.7`, tech `2.6`, civic `2.5` — and a plain number is still accepted, meaning the same brightness for every family (an older `data/render.json` still boots). Equal-luma normalisation alone would put commercial at `2.98`; `2.4` goes further deliberately, because an office floor lit for the cleaners at 21:00 *should* sit below a living room. Measured at the Z2 showcase pose: cool-white bays fall from mean luminance `167.7` to `154.2` (below the warm bays' `159.7`, where they were above it), and the warm channel is **byte-identical**.
+
+**Everything in this paragraph is brightness, and only brightness.** `day_gate` alone decides how many cells light. No value of `window_nits`, `window_nits_far` or `far_energy_scale` can move `lit = step(1 − e, h)`, so `RenderStateModel.lit_window_count` keeps mirroring the shader — which is the property job 1 (the blackout read) rests on.
 
 ### 2.7 THE BLACKOUT — exact definition
 
@@ -362,13 +394,17 @@ Authored `clear_day.end` is lowered `1500 → 1200` in §8 so the Balanced/High 
 
 **Glow** — the neon-noir signature, supported on Mobile. `glow_blend_mode = SCREEN` not ADDITIVE: additive blows out a 960-window tower and destroys the contrast the noir look depends on. Per-preset levels/intensity/threshold in §2.13 and §8; `glow_hdr_threshold` interpolates by `sc_night` so night is more bloom-prone than day.
 
+> **Not yet wired (found by the render-polish pass, not fixed by it — the file has another owner).** `EnvironmentController.setup` pushes `glow_intensity`, `glow_strength` and `glow_bloom`, and **nothing reads `glow_levels`, `glow_hdr_threshold_day/night` or `glow_hdr_scale`**. The threshold in force is therefore Godot's default `1.0` at every preset and every hour, and the `sc_night` interpolation above does not happen. Measured while chasing the commercial blowout: pushing the authored Balanced night value `0.78` makes the frame *marginally brighter*, not dimmer, so this is a correctness gap rather than the cause of that blowout — but the three preset rows are dead data until someone wires them.
+
 **No SSAO.** Compensated at generation time by baked vertex-colour AO (§2.14): free at runtime, and the thing that stops gray boxes looking like floating cardboard.
 
 ### 2.9 Weather VFX
 
 **The precipitation input is `precip01` (report C-58, ruled).** Doc 07 publishes `precip01 = clamp(precip_mm_h / 35.0, 0, 1)` — continuous on `[0,1]`, and lerped across the last 60 game-seconds of a weather segment into the next so it never steps. Everything below consumes `precip01`; the renderer does **not** see `precip_mm_h`, the weather enum, or any per-state table. Former §9 conflict 7 is closed.
 
-**Rain.** One `GPUParticles3D`, emission box `90×40×90` m, repositioned each frame to `focus + (0, 20, 0)` with `local_coords = false` so drops do not swim during pans. Draw pass: quad `0.02×0.55` m, `transform_align = Y_TO_VELOCITY`, unshaded additive, brightened by `sc_lightning`. Intensity uses **`amount_ratio = precip01`** (no particle restart, so it ramps continuously). Wind tilt: `gravity = Vector3(sc_wind.x·2.2, −22.0, sc_wind.y·2.2)`.
+**Rain.** One `GPUParticles3D`, emission box `90×40×90` m, repositioned each frame to `focus + (0, 20, 0)` with `local_coords = false` so drops do not swim during pans.
+
+> **The box scales in XZ with camera distance (ruled).** `90 m` comfortably overshoots the frame at Z0/Z1. At Z2 the camera is 370.8 m up and the far chunk row is ~717 m wide, so the same box is a 90 m square of rain in the middle of a dry city — the worst weather read in the game, and one that made a thunderstorm look like a sprinkler. `scale = clamp(D / rain_box_dist_ref_m, 1, rain_box_max_scale)` with `ref = 90`, `cap = 8`, applied to the emitter's X and Z extents (and, on a shorter leash, `splash_radius_m`). **`amount` is never written, and THAT is the density cap:** the bed keeps the preset's exact particle count at every zoom and the same drops spread over more ground. Writing `amount` would also dump and restart the bed, which the "nothing restarts" rule forbids. **Y is never scaled** — the fall height sets `lifetime` at build time and re-writing `lifetime` on a live emitter re-ages every drop in flight. `WeatherFX.refresh` takes `D` as an optional third argument and otherwise reads it off the viewport's active camera, so a shell that predates this gets the fix with no integration. Measured at the Z2 pose in `main.tscn`: frame cells containing rain go from **26/48 to 45/48**. Draw pass: quad `0.02×0.55` m, `transform_align = Y_TO_VELOCITY`, unshaded additive, brightened by `sc_lightning`. Intensity uses **`amount_ratio = precip01`** (no particle restart, so it ramps continuously). Wind tilt: `gravity = Vector3(sc_wind.x·2.2, −22.0, sc_wind.y·2.2)`.
 
 **Splash.** Second emitter, ring radius 60 m around focus, quad `0.35×0.35` m, lifetime 0.28 s, `amount_ratio = precip01²` — splashes appear late, which reads as rain "getting serious". At doc 07's heaviest authored rate, `precip_mm_h = 35 → precip01 = 1.00 → amount_ratio = 1.00`; at a light shower, `precip_mm_h = 7 → precip01 = 0.20 → rain 20%, splash 4%`.
 
@@ -436,11 +472,13 @@ Network lines (power feeders, water mains, congestion) draw as **one `ImmediateM
 
 `civ_visible_radius_m` is **re-derived from the new Z2 pose** (report R-17), because it must cover everything the camera can see at max zoom. At Z2 the camera nadir sits `420·cos 62° = 197.2` m behind the focus and the visible ground runs from 52.1 m to 411.8 m ahead of the nadir — i.e. from `52.1 − 197.2 = −145.1` m to `411.8 − 197.2 = +214.6` m along the view axis relative to focus, and out to `717.1 / 2 = 358.6` m laterally. Worst-case distance from focus: `sqrt(214.6² + 358.6²) = sqrt(46,053 + 128,594) = sqrt(174,647) = 418.0` m. **`civ_visible_radius_m` moves 400 → 420 m**, which covers the far corner with 2 m to spare. (The old 400 m was sized against the old 560 m ceiling and under-covered by 18 m; the coincidence that the number barely moved is because a 420 m orbit at 62° sees roughly as much ground as a 560 m orbit did off-centre.)
 
-| preset | cars | vans | trucks | headlight pairs | emergency nodes |
-|---|---|---|---|---|---|
-| Performance | 64 | 20 | 12 | 96 | 12 |
-| Balanced | 160 | 60 | 36 | 256 | 20 |
-| High | 320 | 120 | 72 | 512 | 28 |
+| preset | cars | vans | trucks | headlight pairs | emergency nodes | **body shadows** |
+|---|---|---|---|---|---|---|
+| Performance | 64 | 20 | 12 | 96 | 12 | **off** |
+| Balanced | 160 | 60 | 36 | 256 | 20 | **off** |
+| High | 320 | 120 | 72 | 512 | 28 | **on** |
+
+**Vehicle shadows are off on mobile (`vehicles.cast_shadows = false`, overridden per preset by `vehicle_shadows`).** A vehicle layer's custom AABB is world-sized — it has to be, because instances are written straight into the MultiMesh buffer and never update the auto AABB — so **every** body layer intersects **every** directional shadow split and is re-drawn once per split whether or not a car is standing in it. At Balanced (2 splits) that is 7 extra draw calls for shadows nobody can see from 87 m up; at High (4 splits) it is 14, which High can afford and takes. The nine remaining `VehicleView` tuning constants (`road_top_m`, `lane_offset_m`, `fade_seconds`, `interp_blend_seconds`, `headlight_cone_m`, `headlight_cone_energy`, `headlight_color`, `lightbar_amber`, `lightbar_amber_pale`) are in `data/render.json`'s `vehicles` block at the same values, with the script constants kept as the fallback.
 
 **Emergency/service vehicles — individual nodes, real routing** (constitution §8). **Doc 06** (incidents, dispatch & fleets) emits `vehicle_state` at 4 Hz, carrying explicit `speed` and `heading` fields (report C-67, ruled). Pooled `VehicleView` = `Body` (MeshInstance3D, ≤ 180 tris, dept colour) + `LightBar` (2 emissive quads) + `Beacon` (`OmniLight3D`, only while checked out from the emergency light budget).
 

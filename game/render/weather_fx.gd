@@ -65,6 +65,12 @@ var _flash_magnitude: float = 0.0
 var _rain_box := Vector3(90.0, 40.0, 90.0)
 var _rain_box_y := 20.0
 var _splash_radius := 60.0
+## §2.9 rain-box scaling (render-polish item 4). `_box_scale` is the live XZ
+## multiplier on the authored box; 1.0 is the authored box exactly.
+var _box_dist_ref := 90.0
+var _box_max_scale := 8.0
+var _splash_max_scale := 4.0
+var _box_scale := 1.0
 var _wind_gain := 2.2
 var _gravity_y := -22.0
 var _tau_up := 25.0
@@ -89,6 +95,9 @@ func setup(render_data: Dictionary, env: EnvironmentController = null,
 	_rain_box = Vector3(float(box[0]), float(box[1]), float(box[2]))
 	_rain_box_y = float(_cfg.get("rain_box_y_offset_m", 20.0))
 	_splash_radius = float(_cfg.get("splash_radius_m", 60.0))
+	_box_dist_ref = maxf(1.0, float(_cfg.get("rain_box_dist_ref_m", 90.0)))
+	_box_max_scale = maxf(1.0, float(_cfg.get("rain_box_max_scale", 8.0)))
+	_splash_max_scale = maxf(1.0, float(_cfg.get("splash_max_scale", 4.0)))
 	_wind_gain = float(_cfg.get("rain_wind_gain", 2.2))
 	_gravity_y = float(_cfg.get("rain_gravity_y", -22.0))
 	_tau_up = float(_cfg.get("wetness_tau_up_s", 25.0))
@@ -133,9 +142,14 @@ func _build_rain() -> void:
 	var drop_m := _rain_box.y + _rain_box_y
 	_rain.lifetime = sqrt(2.0 * drop_m / maxf(1.0, absf(_gravity_y)))
 	_rain.preprocess = _rain.lifetime   # a full bed on the first visible frame
+	# Sized for the WIDEST box the zoom range can ask for, not the authored one:
+	# the visibility AABB is set once (it is not per-frame state) and a box that
+	# grew past it would have the whole storm culled the moment the camera
+	# pulled back — the exact failure this scaling exists to fix.
+	var reach := _rain_box * Vector3(_box_max_scale, 1.0, _box_max_scale)
 	_rain.visibility_aabb = AABB(
-			Vector3(-_rain_box.x, -_rain_box_y - 4.0, -_rain_box.z),
-			Vector3(_rain_box.x * 2.0, _rain_box.y + _rain_box_y + 8.0, _rain_box.z * 2.0))
+			Vector3(-reach.x, -_rain_box_y - 4.0, -reach.z),
+			Vector3(reach.x * 2.0, _rain_box.y + _rain_box_y + 8.0, reach.z * 2.0))
 	_rain_process = ParticleProcessMaterial.new()
 	_rain_process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
 	_rain_process.emission_box_extents = Vector3(
@@ -166,9 +180,10 @@ func _build_splash() -> void:
 	_splash.emitting = false
 	_splash.visible = false
 	_splash.lifetime = float(_cfg.get("splash_lifetime_s", 0.28))
+	var splash_reach := _splash_radius * _splash_max_scale
 	_splash.visibility_aabb = AABB(
-			Vector3(-_splash_radius, -2.0, -_splash_radius),
-			Vector3(_splash_radius * 2.0, 6.0, _splash_radius * 2.0))
+			Vector3(-splash_reach, -2.0, -splash_reach),
+			Vector3(splash_reach * 2.0, 6.0, splash_reach * 2.0))
 	_splash_process = ParticleProcessMaterial.new()
 	_splash_process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_RING
 	_splash_process.emission_ring_axis = Vector3(0.0, 1.0, 0.0)
@@ -345,9 +360,19 @@ func flash01() -> float:
 ## `focus` is the camera's ground focus (doc 12 owns it). Everything follows it
 ## so the emitters stay a local box around what the player is looking at rather
 ## than a city-sized volume.
-func refresh(delta: float, focus: Vector3) -> void:
+##
+## `camera_dist_m` is the camera's distance to that focus — doc 12's `D`, 18 m
+## at Z0 and 420 m at Z2 — and it is what sizes the box (see `set_zoom_reach`).
+## Negative means "work it out yourself": the node looks for the viewport's
+## current Camera3D, so a shell that has not been updated still gets the fix,
+## and a headless test that has no camera still gets the authored box.
+func refresh(delta: float, focus: Vector3, camera_dist_m: float = -1.0) -> void:
 	_advance_wetness(delta)
 	_advance_flash(delta)
+	var dist := camera_dist_m
+	if dist < 0.0:
+		dist = _viewport_camera_distance(focus)
+	set_zoom_reach(dist)
 	# Dry weather draws nothing. `emitting = false` alone is not enough: the
 	# node still submits its (empty, or preprocessed-and-expiring) buffer, and
 	# a clear midnight came out speckled with leftover drops. Hiding the
@@ -370,6 +395,65 @@ func refresh(delta: float, focus: Vector3) -> void:
 		_splash.amount_ratio = precip01 * precip01
 	_publish_globals()
 	_push_environment()
+
+
+## Grow the rain footprint to cover what the camera can actually see.
+##
+## The authored `rain_box_m` is 90 m square, which comfortably overshoots the
+## frame at Z0/Z1 — and at Z2, where the camera is 370.8 m up and the far chunk
+## row is ~717 m wide, is a 90 m puddle of rain in the middle of a dry city. So
+## the box scales in XZ with the camera's own distance to its focus, capped at
+## `rain_box_max_scale`.
+##
+## **`amount` is not touched, and that is the density cap.** The bed keeps
+## exactly the preset's particle count (Balanced 4000) at every zoom; spreading
+## it over `scale²` more ground thins it instead of costing more, which is the
+## right trade — a storm seen from 370 m does not need 4000 drops per 8100 m²,
+## it needs to reach the horizon. Writing `amount` would also dump and restart
+## the bed, which §2.9's rule 2 forbids outright.
+##
+## Y is never scaled. The fall height sets `lifetime` at build time, and
+## re-writing `lifetime` on a live emitter re-ages every drop in flight.
+func set_zoom_reach(camera_dist_m: float) -> void:
+	var scale := 1.0
+	if camera_dist_m > 0.0:
+		scale = clampf(camera_dist_m / _box_dist_ref, 1.0, _box_max_scale)
+	if is_equal_approx(scale, _box_scale):
+		return
+	_box_scale = scale
+	if _rain_process != null:
+		_rain_process.emission_box_extents = Vector3(
+				_rain_box.x * 0.5 * scale, _rain_box.y * 0.5, _rain_box.z * 0.5 * scale)
+	if _splash_process != null:
+		# Splashes are a close-range read (they are 0.35 m quads on the road), so
+		# they spread on a shorter leash than the rain does.
+		_splash_process.emission_ring_radius = _splash_radius \
+				* minf(scale, _splash_max_scale)
+
+
+## The live XZ multiplier on the authored rain box. 1.0 at Z0/Z1.
+func box_scale() -> float:
+	return _box_scale
+
+
+## The rain footprint actually emitting, in metres. Tests assert against this
+## rather than reaching into the process material.
+func rain_box_m() -> Vector3:
+	return Vector3(_rain_box.x * _box_scale, _rain_box.y, _rain_box.z * _box_scale)
+
+
+## Distance from the viewport's active 3D camera to `focus`, or -1 when there
+## is no camera (headless, or the node is outside the tree).
+func _viewport_camera_distance(focus: Vector3) -> float:
+	if not is_inside_tree():
+		return -1.0
+	var viewport := get_viewport()
+	if viewport == null:
+		return -1.0
+	var camera := viewport.get_camera_3d()
+	if camera == null:
+		return -1.0
+	return camera.global_position.distance_to(focus)
 
 
 ## §2.9's integrator: soaks fast (τ 25 s), dries slow (τ 90 s). `precip01 ≥

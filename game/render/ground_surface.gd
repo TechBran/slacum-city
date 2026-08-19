@@ -25,11 +25,14 @@ extends RefCounted
 const MANIFEST := "res://game/textures/generated/manifest.json"
 const RENDER_DATA := "res://data/render.json"
 const SHADER := "res://game/shaders/ground.gdshader"
+const WATER_SHADER := "res://game/shaders/water.gdshader"
 
 static var _pages: Dictionary = {}      # "asphalt" -> Texture2D
 static var _tile_m: float = 4.0
 static var _wet: Dictionary = {}        # doc 11 §2.9 wet-ground constants
 static var _shader: Shader = null
+static var _water_shader: Shader = null
+static var _water: Dictionary = {}      # data/render.json `water_surface`
 static var _loaded := false
 
 
@@ -39,6 +42,8 @@ static func _ensure_loaded() -> void:
 	_loaded = true
 	if ResourceLoader.exists(SHADER):
 		_shader = load(SHADER)
+	if ResourceLoader.exists(WATER_SHADER):
+		_water_shader = load(WATER_SHADER)
 	# doc 11 §2.9's authored wet-ground numbers, read once. Defaults mirror
 	# data/render.json so a stripped clone still looks right.
 	_wet = {"roughness_dry": 0.85, "roughness_wet": 0.18, "specular_dry": 0.50,
@@ -51,6 +56,7 @@ static func _ensure_loaded() -> void:
 		_wet["specular_dry"] = float(weather.get("wet_specular_dry", _wet["specular_dry"]))
 		_wet["specular_wet"] = float(weather.get("wet_specular_wet", _wet["specular_wet"]))
 		_wet["albedo_mult"] = float(weather.get("wet_albedo_mult", _wet["albedo_mult"]))
+		_water = render_data.get("water_surface", {})
 	if not ResourceLoader.exists(MANIFEST):
 		return
 	var doc: Dictionary = StarterCityLoader.read_json(MANIFEST)
@@ -101,6 +107,54 @@ static func material(page_name: String, world_size: Vector2, tint := Color.WHITE
 	mat.set_shader_parameter("uv_scale", Vector2(
 			maxf(1.0, world_size.x / _tile_m), maxf(1.0, world_size.y / _tile_m)))
 	return mat
+
+
+## Doc 11 §2.1's third ground surface: animated water for the map's water
+## tiles. ONE material for every water quad in the city — the wave field is
+## computed in WORLD space, so adjacent 8 m tiles read as one body and the
+## caller can share this material across the whole set (it is what makes 15
+## planes cost one pipeline state and zero per-frame script work).
+##
+## Every constant is `water_surface` in data/render.json; the shader's own
+## defaults are the same numbers, so a stripped clone still gets water.
+## `sc_time`, `sc_night`, `sc_wetness` and `sc_overlay_mode` do the rest — no
+## `_process`, no tween, and no reflection probe (§2.11 gates the one probe the
+## game may own to High, and a canal is not where to spend it).
+static func water() -> Material:
+	_ensure_loaded()
+	if _water_shader == null:
+		# Pre-water clone: the flat slab main.gd used to build inline.
+		return _fallback(Color(0.10, 0.20, 0.30), 0.15)
+	var mat := ShaderMaterial.new()
+	mat.shader = _water_shader
+	_set_color(mat, "deep_color", "#12303F")
+	_set_color(mat, "shallow_color", "#1E4E5C")
+	_set_color(mat, "sky_color", "#6E93B4")
+	for key in ["night_mult", "fresnel_power", "fresnel_gain",
+			"wave_scale_a_m", "wave_scale_b_m", "wave_speed_a", "wave_speed_b",
+			"wave_amp", "sparkle_gain", "sparkle_power", "rain_chop_gain",
+			"page_blend"]:
+		if _water.has(key):
+			mat.set_shader_parameter(key, float(_water[key]))
+	if _water.has("roughness"):
+		mat.set_shader_parameter("base_roughness", float(_water["roughness"]))
+	if _water.has("specular"):
+		mat.set_shader_parameter("base_specular", float(_water["specular"]))
+	for key in ["wave_dir_a", "wave_dir_b"]:
+		var dir: Array = _water.get(key, [])
+		if dir.size() == 2:
+			mat.set_shader_parameter(key, Vector2(float(dir[0]), float(dir[1])))
+	# The optional detail page. The shader is complete without it.
+	var page: Texture2D = _pages.get("water")
+	mat.set_shader_parameter("has_page", 0.0 if page == null else 1.0)
+	if page != null:
+		mat.set_shader_parameter("page", page)
+		mat.set_shader_parameter("page_tile_m", _tile_m)
+	return mat
+
+
+static func _set_color(mat: ShaderMaterial, key: String, fallback: String) -> void:
+	mat.set_shader_parameter(key, Color(String(_water.get(key, fallback))))
 
 
 ## No shader on this clone at all: the pre-texture StandardMaterial3D path.
