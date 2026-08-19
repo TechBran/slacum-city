@@ -22,6 +22,9 @@ const SAMPLE_KEYS: Array[String] = [
 	"population", "happiness", "stability", "city_level", "blackout_minutes",
 	"buildings", "metered_buildings", "dark_buildings", "under_construction",
 	"deferred_liability",
+	# pass 2
+	"damaged_buildings", "destroyed_buildings", "min_condition", "mean_condition",
+	"open_incidents", "failed_components", "tax_rate", "blocks_owned",
 ]
 const SUMMARY_KEYS: Array[String] = [
 	"days", "hours", "treasury_start", "treasury_end", "treasury_min",
@@ -32,6 +35,13 @@ const SUMMARY_KEYS: Array[String] = [
 	"buildings_start", "buildings_end", "placed", "upgraded",
 	"construction_spend", "actions", "reason_codes", "deferred_liability_end",
 	"austerity_active_end", "credit_limit_end", "lifetime", "day_rows",
+	# pass 2
+	"value_created", "grid_placed", "grid_spend", "repaired", "repair_spend",
+	"demolished", "demolition_refund", "blocks_bought", "land_spend",
+	"tax_changes", "priority_sets", "unserved_walls", "tax_rate_end",
+	"tax_level_end", "blocks_owned_end", "min_condition", "min_condition_end",
+	"mean_condition_end", "damaged_end", "destroyed_end",
+	"failed_components_end", "open_incidents_mean",
 ]
 
 
@@ -117,8 +127,22 @@ func test_greedy_spends_down_and_balanced_does_not() -> void:
 					% [int(greedy["treasury_min"]), int(balanced["treasury_min"])])
 	assert_true(int(balanced["treasury_min"]) >= 0,
 			"balanced never touches the credit line in a quiet fortnight")
-	assert_true(int(greedy["placed"]) > int(balanced["placed"]),
-			"greedy builds more than balanced")
+	assert_true(int(greedy["construction_spend"]) > 0
+			and int(balanced["construction_spend"]) > 0,
+			"both agents actually build")
+
+
+func test_greedy_buys_no_infrastructure_ever() -> void:
+	# `greedy_growth` is the experiment "growth with nothing bought to support
+	# it". If it ever repairs, grids or expands, doc 92's whole growth-versus-
+	# infrastructure comparison stops meaning anything.
+	var summary: Dictionary = _run("greedy_growth", 1337, 3)["summary"]
+	assert_eq(int(summary["grid_placed"]), 0, "greedy never buys a transformer")
+	assert_eq(int(summary["repaired"]), 0, "greedy never repairs")
+	assert_eq(int(summary["blocks_bought"]), 0, "greedy never buys land")
+	assert_eq(int(summary["priority_sets"]), 0, "greedy never touches priority")
+	assert_eq(int(summary["tax_changes"]), 0, "greedy leaves the tax rate alone")
+	assert_true(int(summary["placed"]) > 0, "but it does grow")
 
 
 func test_infrastructure_first_buys_civic_before_revenue() -> void:
@@ -136,6 +160,103 @@ func test_infrastructure_first_buys_civic_before_revenue() -> void:
 			"first purchase is civic, got '%s' (%s)" % [first_archetype, category])
 
 
+# ------------------------------------------------- pass-2 strategy behaviour
+
+func test_tax_squeezer_pins_the_top_detent_and_pays_for_it() -> void:
+	# The agent's entire content is doc 03 §2.2's tax knob at TAX_RATE_MAX. It
+	# must reach the top detent, reach it once, and be measurably less happy
+	# than the identical builder at the founding rate.
+	var sim := CitySim.boot_from_files(1337)
+	var top := sim.tax_level_count() - 1
+	var squeezer: Dictionary = _run("tax_squeezer", 1337)["summary"]
+	var balanced: Dictionary = _run("balanced", 1337)["summary"]
+	assert_eq(int(squeezer["tax_level_end"]), top,
+			"tax_squeezer holds the top detent (level %d)" % top)
+	assert_almost_eq(float(squeezer["tax_rate_end"]), sim.tax_rate_for_level(top), 1e-9,
+			"and the rate that detent names")
+	assert_eq(int(squeezer["tax_changes"]), 1,
+			"it moves the slider exactly once, not every hour")
+	assert_eq(int(balanced["tax_level_end"]), sim.tax_level(),
+			"the control leaves the rate at the founding TAX_RATE_BASE")
+	assert_true(float(squeezer["happiness_end"]) < float(balanced["happiness_end"]),
+			"the top detent costs happiness (%.2f vs %.2f)"
+					% [float(squeezer["happiness_end"]), float(balanced["happiness_end"])])
+
+
+func test_disaster_neglect_is_balanced_with_maintenance_switched_off() -> void:
+	# Single-variable design: `disaster_neglect` must issue NO maintenance verb,
+	# while the agent it is derived from issues at least one. Anything else and
+	# the pair stops being a controlled comparison.
+	var neglect: Dictionary = _run("disaster_neglect", 1337, 3)["summary"]
+	var balanced: Dictionary = _run("balanced", 1337, 3)["summary"]
+	assert_eq(int(neglect["repaired"]), 0, "neglect never repairs")
+	assert_eq(int(neglect["priority_sets"]), 0, "neglect never prioritises")
+	assert_eq(int(neglect["grid_placed"]), 0, "neglect never buys grid")
+	assert_true(int(balanced["priority_sets"]) > 0,
+			"the control DOES set doc 04 §2.4 priority classes")
+	assert_eq(int(neglect["tax_level_end"]), int(balanced["tax_level_end"]),
+			"and the two agree on the knob they do not differ on")
+	assert_true(Playtest.Factory.make("disaster_neglect") is Playtest.Balanced,
+			"neglect is literally the balanced agent, one flag down")
+	assert_true(Playtest.Factory.make("tax_squeezer") is Playtest.Balanced,
+			"and so is the squeezer")
+
+
+func test_grid_siting_prefers_the_densest_dark_patch() -> void:
+	# `best_transformer_tile` is the only judgement the harness makes about
+	# where a transformer goes, so it has to be a real one: the tile it picks
+	# must be legal, currently unserved, and cover at least as much dark ground
+	# as the first tile a naive row-major scan would have taken.
+	var sim := CitySim.boot_from_files(1337)
+	var api := Playtest.Api.new(sim)
+	var dark := api.unserved_tiles()
+	assert_true(dark.size() > 0, "the founding core has unserved buildable ground")
+	var chosen: Vector2i = api.best_transformer_tile()
+	assert_true(dark.has(chosen), "the chosen tile is one of the dark ones")
+	assert_true(sim.world.grid.can_place(chosen, Vector2i.ONE), "and it is placeable")
+	assert_false(sim.grid.would_serve(chosen), "and nothing serves it yet")
+	assert_true(_dark_cover(api, dark, chosen) >= _dark_cover(api, dark, dark[0]),
+			"the pick covers at least as much dark ground as the first scan hit")
+	# And the command layer accepts it, which is the property the strategies rely
+	# on when they spend money against this answer.
+	var quote: Dictionary = api.grid_quote("transformer", chosen)
+	assert_true(bool(quote["ok"]), "cmd_place_grid_component previews it ok (%s)"
+			% String(quote["reason_code"]))
+	assert_true(int((quote["payload"] as Dictionary)["cost"]) > 0, "and quotes a price")
+
+
+static func _dark_cover(api: Playtest.Api, dark: Array[Vector2i], centre: Vector2i) -> int:
+	var radius: int = Playtest.Api.TRANSFORMER_L1_RADIUS
+	var count := 0
+	for tile in dark:
+		if maxi(absi(tile.x - centre.x), absi(tile.y - centre.y)) <= radius:
+			count += 1
+	return count
+
+
+func test_transformer_radius_constant_tracks_the_live_grid() -> void:
+	# The siting heuristic hard-codes doc 04 §8's L1 service radius. If doc 04
+	# retunes it, this fails here rather than silently mis-siting every
+	# transformer the harness ever buys.
+	assert_eq(Playtest.Api.TRANSFORMER_L1_RADIUS,
+			int(PowerGrid.TRANSFORMER_SERVICE_RADIUS[0]),
+			"harness L1 radius == PowerGrid.TRANSFORMER_SERVICE_RADIUS[0]")
+
+
+func test_place_into_the_wall_reports_e_unserved() -> void:
+	# `greedy_growth`'s wall probe depends on this exact contract: asked for a
+	# site nothing serves, the command layer must answer E_UNSERVED and the
+	# harness must count it.
+	var sim := CitySim.boot_from_files(1337)
+	var api := Playtest.Api.new(sim)
+	var dark: Vector2i = api.unserved_footprint(Vector2i.ONE)
+	assert_true(dark.x >= 0, "the founding core has an unserved 1x1 footprint")
+	var result := api.place_at("house", dark)
+	assert_false(bool(result["ok"]), "building on dark ground is refused")
+	assert_eq(String(result["reason_code"]), "E_UNSERVED", "with doc 04 §2.1's code")
+	assert_eq(api.unserved_walls, 1, "and the harness counts the wall")
+
+
 func test_every_strategy_id_builds_and_runs() -> void:
 	for strategy_id in Playtest.STRATEGY_IDS:
 		var strategy := Playtest.Factory.make(String(strategy_id))
@@ -150,8 +271,12 @@ func test_every_strategy_id_builds_and_runs() -> void:
 func test_verb_probe_reports_the_live_command_layer() -> void:
 	var sim := CitySim.boot_from_files(1337)
 	var api := Playtest.Api.new(sim)
-	assert_true(api.has_verb("cmd_place_building"), "the place verb exists today")
-	assert_true(api.has_verb("cmd_upgrade_building"), "the upgrade verb exists today")
+	# Wave 1.5 landed every verb doc 93 §B asked for. The probe stays because it
+	# is what keeps a mid-wave harness from crashing, but the expectation now is
+	# that the whole roster answers.
+	for verb in Playtest.KNOWN_VERBS:
+		assert_true(api.has_verb(String(verb)),
+				"%s is live in sim/city_sim.gd" % String(verb))
 	for verb in Playtest.KNOWN_VERBS:
 		assert_true(api.verbs.has(String(verb)),
 				"%s is probed, present or not" % String(verb))
@@ -164,14 +289,17 @@ func test_verb_probe_reports_the_live_command_layer() -> void:
 
 
 func test_optional_verbs_degrade_instead_of_crashing() -> void:
-	# Doc 93 §B is landing in parallel; a harness that dies on a missing verb is
-	# useless mid-wave. Every optional call answers with a reason code either
-	# way, so this test keeps passing as those verbs land.
+	# A harness that dies on a missing or reshaped verb is useless mid-wave.
+	# Every wrapped call answers with a reason code either way, so this test
+	# keeps passing whether the command layer moves under it or not.
 	var sim := CitySim.boot_from_files(1337)
 	var api := Playtest.Api.new(sim)
 	var calls := {
 		"cmd_repair_building": api.repair("H-001"),
+		"cmd_demolish_building": api.demolish("NOPE-999"),
 		"cmd_buy_block": api.buy_block("B_0_0"),
+		"cmd_start_development": api.start_development("B_0_0"),
+		"cmd_set_priority": api.set_priority("NOPE-999", "CRITICAL"),
 		"cmd_set_tax_level": api.set_tax_level(1),
 		"cmd_place_grid_component": api.place_grid_component("transformer", Vector2i(48, 48)),
 	}
@@ -229,7 +357,7 @@ func test_run_document_has_the_published_schema() -> void:
 	var report := _run("balanced", 1337, 1)
 	for key in DOC_KEYS:
 		assert_true(report.has(key), "run document is missing '%s'" % key)
-	assert_eq(int(report["schema_version"]), 1, "doc 92 reads schema_version 1")
+	assert_eq(int(report["schema_version"]), 2, "doc 92 reads schema_version 2")
 	var harness: Dictionary = report["harness"]
 	assert_eq(String(harness["mode"]), "coarse")
 	assert_eq(int(harness["days"]), 1)
@@ -318,7 +446,8 @@ func test_writer_produces_a_readable_file() -> void:
 func test_option_parsing() -> void:
 	var opts := Playtest.Options.parse(PackedStringArray([
 			"--days=3", "--seeds=1,2", "--strategies=balanced,do_nothing",
-			"--mode=coarse", "--out=res://tmp", "--no-json", "--quiet"]))
+			"--mode=coarse", "--out=res://tmp", "--no-json", "--quiet",
+			"--experiment=tax_curve"]))
 	assert_eq((opts.errors as Array).size(), 0, ", ".join(opts.errors))
 	assert_eq(opts.days, 3)
 	assert_eq(opts.hours(), 72)
@@ -326,6 +455,7 @@ func test_option_parsing() -> void:
 	assert_eq(opts.strategies, ["balanced", "do_nothing"] as Array[String])
 	assert_eq(opts.mode, "coarse")
 	assert_eq(opts.out_dir, "res://tmp")
+	assert_eq(opts.experiment, "tax_curve")
 	assert_false(opts.write_json)
 	assert_true(opts.quiet)
 
@@ -333,11 +463,13 @@ func test_option_parsing() -> void:
 func test_option_defaults_and_errors() -> void:
 	var defaults := Playtest.Options.parse(PackedStringArray([]))
 	assert_eq((defaults.errors as Array).size(), 0)
-	assert_eq(defaults.days, 14, "doc 92's default horizon")
+	assert_eq(defaults.days, 21, "doc 92 pass 2's default horizon")
 	assert_eq(defaults.mode, "fine", "the default is the path the player plays")
 	assert_eq((defaults.seeds as Array).size(), 3, "3+ seeds per strategy")
-	assert_eq((defaults.strategies as Array).size(), 4)
+	assert_eq((defaults.strategies as Array).size(), 6)
+	assert_eq(defaults.experiment, "", "the matrix runs unless one is named")
 	var bad := Playtest.Options.parse(PackedStringArray([
-			"--nonsense", "--mode=warp", "--strategies=cheat"]))
-	assert_eq((bad.errors as Array).size(), 3, "every bad option is reported: %s"
+			"--nonsense", "--mode=warp", "--strategies=cheat",
+			"--experiment=teleport"]))
+	assert_eq((bad.errors as Array).size(), 4, "every bad option is reported: %s"
 			% ", ".join(bad.errors))

@@ -1,616 +1,991 @@
-# 92 — Balance report: first harness pass
+# 92 — Balance report, pass 2: the game as a game
 
-**Status:** DATA + RECOMMENDATIONS. Nothing in `data/` was changed by this pass.
-Every recommendation below is a proposal for the lead engineer to rule on; the
-harness owns measurement, not tuning.
+**Status:** DATA + RECOMMENDATIONS. **Nothing in `data/` was changed by this
+pass.** Every recommendation below is a proposal for the lead engineer to rule
+on; the harness owns measurement, not tuning. Each one names the exact
+`data/*.json` key it would move.
 **Scope:** doc 93 §E — "headless playtest harness (scripted strategies over N
-game-days → curves) so tuning decisions come from data, not vibes".
-**Instrument:** `tools/playtest.gd`, tested by `tests/test_playtest_harness.gd`.
-**Run:** 4 strategies × 3 seeds × 14 game-days (336 game-hours), sampled every
-game-hour, on **both** the fine (online) and coarse (offline catch-up) paths —
-24 runs, 8,088 samples.
+game-days → curves) so tuning decisions come from data, not vibes". Pass 1
+measured a sim with no pressure and two verbs. This pass measures the
+**integrated** game: water, incidents/dispatch, roads, weather and the Disaster
+Director are live, and all six of doc 93 §B's player verbs exist.
+**Anchors:** doc 93 §E2's as-integrated founding ledger is the binding baseline,
+not doc 03 §2.12's stub-era worked example.
+**Instrument:** `tools/playtest.gd` (schema 2), presented by
+`tools/playtest_report.py`, tested by `tests/test_playtest_harness.gd`.
 
 ---
 
 ## 0. Reproduce
 
 ```bash
-# 12 runs on the path the player actually plays (~13 min), JSON under build/playtest/
+# the matrix: 6 strategies x 3 seeds x 21 game-days (504 game-hours each)
 ~/.local/bin/godot --headless --path "/home/bbx/Slacum City game" \
-    -s res://tools/playtest.gd -- --days=14 --mode=fine
+    -s res://tools/playtest.gd -- --days=21 --mode=coarse
 
-# the same 12 on doc 01's coarse offline path (~20 s) — needed for §5 F-4
+# the late curve: one 90-game-day greedy run
 ~/.local/bin/godot --headless --path "/home/bbx/Slacum City game" \
-    -s res://tools/playtest.gd -- --days=14 --mode=coarse
+    -s res://tools/playtest.gd -- --days=90 --mode=coarse \
+    --seeds=1337 --strategies=greedy_growth
 
-# regenerate every table in this document from those files
-python3 tools/playtest_report.py build/playtest --mode fine   --section all
-python3 tools/playtest_report.py build/playtest --mode fine   --section compare
+# the two controlled micro-experiments (§6 and §7)
+~/.local/bin/godot --headless --path "/home/bbx/Slacum City game" \
+    -s res://tools/playtest.gd -- --experiment=transformer_payback --mode=coarse
+~/.local/bin/godot --headless --path "/home/bbx/Slacum City game" \
+    -s res://tools/playtest.gd -- --experiment=tax_curve --mode=coarse
+
+# the online/offline pair (§9 F-9)
+~/.local/bin/godot --headless --path "/home/bbx/Slacum City game" \
+    -s res://tools/playtest.gd -- --days=7 --mode=fine --seeds=1337 \
+    --strategies=do_nothing,greedy_growth,balanced,disaster_neglect
+
+# every table in this document, regenerated from those files
+python3 tools/playtest_report.py build/playtest --mode coarse --days 21
+python3 tools/playtest_report.py build/playtest --mode coarse --days 7 --section compare
 ```
 
-Seeds `1337, 4242, 9001`. Run files are `build/playtest/<strategy>_seed<N>_d<D>_<mode>.json`
-(schema_version 1) and are **not committed** — they are regenerated per merge.
-`tests/test_playtest_harness.gd` pins the schema and the determinism guarantee:
-same strategy + seed + mode ⇒ byte-identical sample stream and `state_hash`.
+Seeds `1337, 4242, 9001`. Run files are
+`build/playtest/<strategy>_seed<N>_d<D>_<mode>.json` (schema_version 2) and are
+**not committed** — they are regenerated per merge.
 
-**Everything below was measured on the FINE path unless a row says otherwise.**
-The two paths are not the same city; F-4 is about exactly that, and it is the
-reason every number in this report is path-tagged.
+**Coverage of this pass: 17 of the 18 matrix runs.** `tax_squeezer` seed 9001
+did not finish inside the harness's wall-clock budget, so every `tax_squeezer`
+aggregate below is the mean of **two** seeds and is marked where it matters. The
+cause is the harness, not the sim: `Api.upgrade_candidates()` previews
+`cmd_upgrade_building` for every standing building, and the two agents that call
+it do so up to six times per game-hour, so wall time grows with (buildings ×
+hours). A very large city therefore costs superlinearly to *measure*, not to
+run. Fixing that is a pass-3 harness job and is listed in §9 F-10.
+`tests/test_playtest_harness.gd` pins the schema, the determinism guarantee
+(same strategy + seed + mode ⇒ byte-identical sample stream and `state_hash`)
+and one behavioural signature per strategy.
+
+**A note on the path.** The headline matrix runs on the **coarse** (doc 01
+offline catch-up) path, because a 21-game-day fine run costs ~13 minutes and the
+matrix is 18 of them. Doc 93 §E2 makes this legitimate — mode-invariance is
+per-system and each stochastic subsystem's own suite bounds its sanctioned
+parity — but it is not free, and §9 F-9 measures exactly how much it costs on a
+paired 7-game-day fine/coarse set. **Every number below is coarse-path unless
+the row says otherwise.**
 
 ---
 
-## 1. The strategies
+## 1. What moved since pass 1
 
-Four scripted agents, all driving the real command layer
-(`cmd_place_building`, `cmd_upgrade_building` — the only two verbs that exist
-today; the harness probes for the other six of doc 93 §B and degrades around
-them). None of them makes a stochastic choice: site selection scans sorted block
-ids then row-major tiles, archetype preference lists sort with an id tie-break.
+| pass-1 finding | status now | evidence |
+|---|---|---|
+| **F-3** a failed grid component is failed forever | **CLOSED** | doc 06's dispatch calls `PowerGrid.repair_component` (`sim/incidents/city_incident_world.gd:278`). Across the matrix, `power_restored_by_repair` ≈ `PowerComponentFailed` (greedy: 284.7 restored vs 278.3 failed per run). Grid failures are now transient. |
+| **F-1** standing still is the second-most-profitable strategy | **WORSE** — it is now the most profitable on cash by 4.5× | §3 |
+| **F-2** growth is rewarded through the collapse it causes | **REVERSED, and overshot** — growth is now punished by a cliff, not a slope | §5.2, §9 F-3 |
+| **F-5** the upgrade ladder is dominated by sprawl | **PARTLY SELF-CORRECTING** — greedy now upgrades 26×/run, but only after game-day 16 when it runs out of 2×2 ground | §9 F-6 |
+| **F-6** `power_facility` / `substation` are build-sheet traps | **UNCHANGED** | not re-measured this pass; the code path is untouched |
+| **F-7** `cmd_place_building` does not enforce `min_city_level` | **UNCHANGED** | `sim/city_sim.gd:742` still has no `E_CITY_LEVEL` gate |
+| **F-8** building condition never changes | **PARTLY** — incidents now damage buildings, but `Building.apply_decay()` still has no caller in `sim/` | §9 F-2 |
+| **F-9** the doc 03 §2.10 recovery ladder is not wired | **UNCHANGED, and now it costs something** | §9 F-7 — a run ended at −$12,724 with the credit limit still pinned at its floor |
+| **F-4** the coarse path does not implement doc 04 §2.12's fidelity rule | **UNCHANGED** | `PowerPhaseSystem.advance_coarse` still calls `advance_fine` unconditionally (`sim/city_sim.gd:1649`) |
+| **F-10** the founding ledger drifts from doc 03 §2.12 | **SUPERSEDED** by doc 93 §E2, which this pass measures against and matches | §4 |
+
+---
+
+## 2. The strategies
+
+Six scripted agents, all driving the real command layer, none making a
+stochastic choice: site selection scans sorted block ids then row-major tiles,
+archetype preference lists sort with an id tie-break.
 
 | id | policy |
 |---|---|
-| `do_nothing` | issues no commands. The control curve — what the founding city does when left alone. |
-| `greedy_growth` | maximises heads (population + jobs) bought per dollar, zero reserve, saves up to 24 gh for a denser row. Upgrades are scored on their *delta*, so the agent picks the genuinely better buy. |
-| `infrastructure_first` | civic/utility archetypes before revenue floorspace, $8k operating reserve, revenue only out of surplus above $40k. |
-| `balanced` | doc 03 §2.12's "competent but not optimal": one game-day of gross expense held in reserve (floor $12k), upgrade what stands before adding more, then 2:1 residential:commercial, plus one civic building per city level. |
+| `do_nothing` | issues no commands. The control — what the founding city does when left alone. |
+| `greedy_growth` | max heads (population + jobs) per dollar, zero reserve. **Buys no infrastructure, ever**: no transformer, no repair, no land, no priority. When the served ground runs out it walks into `E_UNSERVED` on purpose and then monetises what already stands. |
+| `infrastructure_first` | repair → **grid ahead of growth** → **land** → civic → floorspace out of deep surplus. Keeps ≥24 served empty tiles in every owned block, and saves for the next block's purchase *and* development bill rather than spending the difference. |
+| `balanced` | doc 03 §2.12's "competent but not optimal": one game-day of gross expense in reserve (floor $12k), 2:1 residential:commercial, upgrade-first, one civic per city level, repairs below condition 0.90, sets doc 04 §2.4 priority classes on the civic roster, buys a transformer when it actually hits the wall, expands on an $80k surplus. |
+| `tax_squeezer` | **`balanced` with exactly one knob moved**: the tax slider pinned to `TAX_RATE_MAX` (detent 12, r = 0.16) from game-hour 0. |
+| `disaster_neglect` | **`balanced` with exactly one knob moved**: `maintains = false` — never repairs, never sets a priority class, never buys grid. Everything it builds, it builds identically to `balanced`. |
+
+The last two are the design of this pass. They are literally the `Balanced`
+class with one field changed (`tests/test_playtest_harness.gd` asserts the
+`is Balanced` relationship and that each issues/withholds exactly the verbs its
+knob controls), so a difference in their curves is attributable to that knob and
+nothing else.
 
 ---
 
-## 2. Headline — 14 game-days, fine path
+## 3. Headline — 21 game-days, coarse path
 
-| strategy (mean of 3 seeds) | treasury d14 | value created¹ | net $/gh | pop | happiness | stability | dark %² | placed | upgraded |
+| strategy | seed | treasury d21 | value created | net $/gh | pop | happiness | stability | level | dark % | placed | upgraded |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| do_nothing | 1337 | $199,757 | $199,757 | 342 | 144 | 82.2 | 0.9475 | 0 | 0.05 | 0 | 0 |
+| do_nothing | 4242 | $198,380 | $198,380 | 342 | 144 | 82.2 | 0.9475 | 0 | 0.00 | 0 | 0 |
+| do_nothing | 9001 | $200,145 | $200,145 | 336 | 142 | 83.1 | 0.9485 | 0 | 0.07 | 0 | 0 |
+| greedy_growth | 1337 | $16,925 | $813,525 | 1,047 | 415 | 58.9 | 0.4325 | 2 | 46.93 | 137 | 0 |
+| greedy_growth | 4242 | $55,682 | $1,062,953 | 1,424 | 1,844 | 52.0 | 0.6892 | 2 | 46.01 | 137 | 42 |
+| greedy_growth | 9001 | $59,553 | $1,053,469 | 1,422 | 1,963 | 52.1 | 0.6741 | 2 | 46.18 | 137 | 37 |
+| infrastructure_first | 1337 | $26,837 | $222,037 | 477 | 304 | 77.7 | 0.9744 | 1 | 0.39 | 47 | 1 |
+| infrastructure_first | 4242 | $11,647 | $206,847 | 469 | 304 | 77.6 | 0.9740 | 1 | 0.00 | 47 | 1 |
+| infrastructure_first | 9001 | $25,924 | $206,324 | 453 | 295 | 77.6 | 0.9731 | 1 | 0.08 | 47 | 1 |
+| balanced | 1337 | $-12,724 | $656,856 | 857 | 279 | 52.0 | 0.6732 | 2 | 39.40 | 237 | 107 |
+| balanced | 4242 | $33,442 | $1,060,303 | 1,682 | 1,390 | 61.9 | 0.7144 | 2 | 41.05 | 306 | 157 |
+| balanced | 9001 | $32,810 | $1,112,997 | 1,675 | 1,421 | 62.7 | 0.7263 | 2 | 45.23 | 307 | 159 |
+| tax_squeezer | 1337 | $-2,577 | $1,203,697 | 1,518 | 7 | 42.4 | 0.9390 | 2 | 30.97 | 245 | 98 |
+| tax_squeezer | 4242 | $162,001 | $1,551,746 | 2,734 | 1,816 | 45.7 | 0.7111 | 2 | 70.22 | 271 | 101 |
+| disaster_neglect | 1337 | $32,471 | $1,026,628 | 1,444 | 1,463 | 67.1 | 0.7745 | 2 | 49.35 | 327 | 140 |
+| disaster_neglect | 4242 | $31,043 | $1,055,144 | 1,679 | 1,434 | 62.1 | 0.7324 | 2 | 42.02 | 309 | 155 |
+| disaster_neglect | 9001 | $33,199 | $1,082,950 | 1,608 | 1,460 | 62.9 | 0.7453 | 2 | 45.77 | 317 | 149 |
+
+| strategy (mean of seeds) | treasury d21 | value created | net $/gh | pop | happiness | stability | dark % | placed | upgraded |
 |---|---|---|---|---|---|---|---|---|---|
-| **do_nothing** | **$125,493** | $125,493 | 299 | 144 | 81.0 | 0.9343 | 3.01 | 0 | 0 |
-| **greedy_growth** | $2,981 | **$436,781** | 1,226 | 1,179 | 54.5 | 0.7150 | 30.20 | 86 | 0 |
-| **infrastructure_first** | $21,752 | $112,952 | 262 | 187 | 77.4 | 0.9579 | 3.04 | 15 | 0 |
-| **balanced** | $20,061 | $431,805 | 1,211 | 763 | 57.8 | 0.7521 | 31.49 | 172 | 90 |
+| **do_nothing** | $199,427 | $199,427 | 340 | 143 | 82.5 | 0.9478 | 0.04 | 0 | 0 |
+| **greedy_growth** | $44,053 | $976,649 | 1,297 | 1,407 | 54.3 | 0.5986 | 46.37 | 137 | 26 |
+| **infrastructure_first** | $21,469 | $211,736 | 466 | 301 | 77.6 | 0.9738 | 0.16 | 47 | 1 |
+| **balanced** | $17,843 | $943,385 | 1,405 | 1,030 | 58.9 | 0.7046 | 41.89 | 283 | 141 |
+| **tax_squeezer** | $79,712 | $1,377,722 | 2,126 | 912 | 44.0 | 0.8251 | 50.59 | 258 | 100 |
+| **disaster_neglect** | $32,238 | $1,054,907 | 1,577 | 1,452 | 64.1 | 0.7507 | 45.71 | 318 | 148 |
 
-¹ `treasury_end + construction_spend` — cash plus everything the agent turned
-into buildings. Spend-everything agents pin the treasury near zero, so cash
-alone ranks them wrongly.
-² `blackout_minutes_total ÷ (60 × Σ metered buildings × hours)` — the share of
-all building-time spent without power. Substations draw no service load
-(doc 04 §2.3) and are excluded.
+The `tax_squeezer` mean row is **two seeds** (§0). Every other row is three.
 
-Per seed:
+**Read the two money columns together.** `treasury` is cash; `value created` is
+`treasury_end + construction_spend`, i.e. cash plus everything the agent turned
+into buildings. Spend-everything agents pin cash near zero, so cash alone ranks
+them wrongly — and yet the cash column is the one a player sees.
 
-| strategy | seed | treasury d14 | net $/gh | pop | happiness | stability | level | dark % | placed | upgraded |
+Three things jump off this table and each one is a finding:
+
+1. **`do_nothing` ends with 2.5× the cash of the best-funded agent that plays,
+   and 11× the "competent" one** ($199,427 vs $79,712 vs $17,843) — and it is
+   the only strategy that never sees an incident, never loses power, and never
+   goes near the credit line. (§9 F-1)
+2. **`disaster_neglect` beats `balanced` on every axis** — more cash, more
+   value, more people, *higher* happiness and *higher* stability — while
+   spending $0 on maintenance. (§9 F-2)
+3. **`tax_squeezer` is the richest player in the study**, on cash and on value
+   created, on both the seeds it completed. Doubling the tax rate buys 46 % more
+   value than the same builder at the founding rate. (§9 F-5)
+
+And one thing that should jump off it and does not: **the seed spread is larger
+than the strategy spread.** `greedy_growth` ends at 415 population on one seed
+and 1,963 on another; `balanced` ends bankrupt on one and $33k up on another.
+That is §9 F-10, and it is the reason every aggregate here should be read as a
+range, not a point.
+
+### 3.1 Which verb each agent actually reached for
+
+| strategy (mean of seeds) | transformers | grid $ | repairs | repair $ | blocks | land $ | demolitions | priority sets | tax moves | `E_UNSERVED` walls |
 |---|---|---|---|---|---|---|---|---|---|---|
-| do_nothing | 1337 | $128,220 | 307 | 144 | 79.9 | 0.9222 | 0 | 2.71 | 0 | 0 |
-| do_nothing | 4242 | $132,305 | 319 | 144 | 82.2 | 0.9475 | 0 | 0.00 | 0 | 0 |
-| do_nothing | 9001 | $115,953 | 271 | 144 | 80.8 | 0.9333 | 0 | 6.34 | 0 | 0 |
-| greedy_growth | 1337 | $3,669 | 1,248 | 1,232 | 55.2 | 0.7262 | 2 | 28.00 | 87 | 0 |
-| greedy_growth | 4242 | $2,388 | 1,453 | 1,446 | 56.4 | 0.7415 | 2 | 23.74 | 97 | 0 |
-| greedy_growth | 9001 | $2,886 | 975 | 860 | 52.0 | 0.6774 | 2 | 38.86 | 74 | 0 |
-| infrastructure_first | 1337 | $10,470 | 275 | 200 | 74.9 | 0.9518 | 0 | 2.39 | 19 | 0 |
-| infrastructure_first | 4242 | $14,147 | 289 | 204 | 77.4 | 0.9740 | 0 | 0.00 | 20 | 0 |
-| infrastructure_first | 9001 | $40,639 | 222 | 156 | 79.8 | 0.9478 | 0 | 6.73 | 7 | 0 |
-| balanced | 1337 | $23,372 | 1,346 | 827 | 59.6 | 0.7791 | 1 | 25.15 | 161 | 129 |
-| balanced | 4242 | $21,180 | 1,543 | 841 | 61.7 | 0.7862 | 1 | 19.90 | 154 | 142 |
-| balanced | 9001 | $15,632 | 744 | 621 | 52.1 | 0.6909 | 1 | 49.43 | 202 | 0 |
+| do_nothing | 0.0 | $0 | 0.0 | $0 | 0.0 | $0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| greedy_growth | 0.0 | $0 | 0.0 | $0 | 0.0 | $0 | 0.0 | 0.0 | 0.0 | 18.7 |
+| infrastructure_first | 4.3 | $4,000 | 0.0 | $0 | 1.0 | $12,700 | 0.0 | 0.0 | 0.0 | 0.0 |
+| balanced | 0.0 | $0 | 5.3 | $7,966 | 0.3 | $4,200 | 0.0 | 6.0 | 0.0 | 0.0 |
+| tax_squeezer | 0.0 | $0 | 8.0 | $21,098 | 2.5 | $26,900 | 0.0 | 6.0 | 1.0 | 0.0 |
+| disaster_neglect | 0.0 | $0 | 0.0 | $0 | 0.3 | $4,200 | 0.0 | 0.0 | 0.0 | 0.0 |
 
-Seed spread is large and it is not noise: it is **whether and when a transformer
-burned out** (see F-3). `do_nothing` 4242 never lost one and ends 14 % richer
-than `do_nothing` 9001, which lost four.
+Doc 93 §B's six verbs are all live, and four of them are barely touched by
+anyone. Only `infrastructure_first` ever buys a transformer; nobody demolishes
+anything; `balanced` repairs five times in three game-weeks and
+`infrastructure_first` — the agent whose whole thesis is maintenance — repairs
+**zero** times, because nothing ever gets damaged in a city that small. §9 F-2,
+F-3 and F-4 are all about why.
+
+### 3.2 The maintenance and pressure channel
+
+| strategy (mean of seeds) | min condition | mean condition end | damaged end | destroyed end | failed grid components end | open incidents (mean/hour) | dark % | stability end |
+|---|---|---|---|---|---|---|---|---|
+| do_nothing | 1.000 | 1.000 | 0.7 | 0.0 | 0.0 | 0.01 | 0.04 | 0.9478 |
+| greedy_growth | 0.530 | 0.876 | 19.0 | 0.0 | 2.0 | 11.25 | 46.37 | 0.5986 |
+| infrastructure_first | 1.000 | 1.000 | 1.3 | 0.0 | 0.0 | 0.02 | 0.16 | 0.9738 |
+| balanced | 0.600 | 0.816 | 16.0 | 1.0 | 1.3 | 18.68 | 41.89 | 0.7046 |
+| tax_squeezer | 0.475 | 0.570 | 9.0 | 4.5 | 4.5 | 68.44 | 50.59 | 0.8251 |
+| disaster_neglect | 0.900 | 1.000 | 18.0 | 0.0 | 2.7 | 7.59 | 45.71 | 0.7507 |
+
+### 3.3 Sim events per run, mean of seeds
+
+| strategy | PowerComponentFailed | BuildingPowerChanged:DARK | BlockDarkChanged | incident_created | incident_resolved | incident_failed | power_restored_by_repair | city_level_changed | building_completed | credit_line_engaged | deferred_liability_accrued |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| do_nothing | 2.3 | 3.3 | 1.3 | 4.0 | 4.0 | 0.0 | 3.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| greedy_growth | 278.3 | 583.0 | 94.3 | 445.3 | 373.7 | 0.0 | 284.7 | 2.0 | 163.0 | 0.0 | 0.0 |
+| infrastructure_first | 7.3 | 20.3 | 4.0 | 10.0 | 10.0 | 0.0 | 8.3 | 1.0 | 46.7 | 0.0 | 0.0 |
+| balanced | 203.0 | 930.0 | 88.7 | 433.7 | 299.7 | 0.0 | 214.7 | 2.0 | 421.0 | 0.0 | 0.0 |
+| tax_squeezer | 272.0 | 729.5 | 93.5 | 827.0 | 498.5 | 0.0 | 277.0 | 2.0 | 356.0 | 0.0 | 0.0 |
+| disaster_neglect | 242.0 | 1087.7 | 116.7 | 338.3 | 318.7 | 0.0 | 247.3 | 2.0 | 460.7 | 0.0 | 0.0 |
+
+`power_restored_by_repair` ≈ `PowerComponentFailed` in every row: pass-1 F-3 is
+closed, grid failures are transient now. `incident_failed` is **0** in every row,
+which is not good news — see §9 F-3.
+
+### 3.4 What the command layer answered
+
+| strategy | command results (mean per run) |
+|---|---|
+| do_nothing | — |
+| greedy_growth | `E_NO_SITE` 122, `E_UNSERVED` 19, `OK` 163 |
+| infrastructure_first | `OK` 53 |
+| balanced | `E_FUNDS` 4, `E_UNSERVED` 1, `OK` 436 |
+| tax_squeezer | `E_FUNDS` 12, `E_NO_SITE` 62, `E_UNSERVED` 1, `OK` 375 |
+| disaster_neglect | `OK` 466 |
 
 ---
 
-## 3. Regression anchors — doc 03 §2.12's founding ledger
+## 4. Regression anchors — doc 93 §E2's as-integrated founding ledger
 
 Measured at the first settled game-hour of a `do_nothing` run:
 
-| doc 03 §2.12 founding line | published | measured | drift |
-|---|---|---|---|
-| gross revenue $/gh | 839.349 | **843.405** | +0.48 % |
-| expense $/gh | 520.577 | **520.649** | +0.01 % |
-| **net $/gh** | **318.773** | **322.756** | **+1.25 %** |
-| first game-day net | +$7,650.55 | **+$7,748** | +1.27 % |
-| starter gross base tax (doc 03 §8, ±5 %) | 686 | **686.0** | **0.00 %** |
+| founding line | doc 03 §2.12 (stub-era) | doc 93 §E2 (as-integrated) | measured (hour 1, do_nothing) | drift vs §E2 |
+|---|---|---|---|---|
+| gross revenue $/gh | 839.349 | — | 841.440 | — |
+| expense $/gh | 520.577 | — | 492.757 | — |
+| net $/gh | 318.773 | ≈ 345 | 348.683 | +1.07% |
+| first game-day net | ≈ 7,650 | ≈ 8,350 | 8,351 | +0.01% |
+| day-1 mean net $/gh | — | — | 347.948 | — |
 
-The base-tax anchor is exact. Backing the §2.5 non-tax lines out of the measured
-gross — `power_tariff 1.5 MWh × 62 = 93`, `water_tariff 5.56 m³ × 0.55 = 3.058`,
-`fines 3` — leaves `843.405 − 99.058 = 744.347`, and `744.347 / 686 = 1.085054`,
-which is doc 03 RR-18's per-district aggregate `1.085051` to six figures. So the
-starter city hits its LOCKED $686/gh base exactly and the whole +0.48 % gross gap
-lives in one multiplier. That is F-10.
+Doc 93 §E2's two as-integrated anchors are **hit almost exactly**: the first
+settled hour lands at $348.68/gh against "≈ +$345", and the first game-day at
+$8,351 against "≈ +$8,350" — 0.01 % on the day figure. The expense line has
+moved further from doc 03 §2.12's stub-era $520.58 (measured $492.76, −5.3 %)
+because docs 05/10 now bill live inventories rather than the held constants;
+§E2 already sanctions that the chain, not the number, is what is preserved.
+
+**Recommendation (bookkeeping, no ruling needed on the numbers).** Doc 93 §E2
+publishes the net anchors to two significant figures ("≈ +$345", "≈ +$8,350").
+Now that the integration has settled, promote them to the measured values —
+**$348.68/gh and $8,351/game-day** — and add the gross/expense pair
+(**$841.44 / $492.76**), so the next pass has a three-line regression target
+instead of a one-line approximate one. `data/economy.json`'s
+`STARTER_EXPENSE_PER_HOUR_EXACT` (520.576566) and `STARTER_NET_PER_HOUR_EXACT`
+(318.772846) are still the stub-era pair and are now 5.3 % and 9.4 % adrift of
+what the sim bills; they should be re-stamped in the same ruling.
 
 ---
 
-## 4. The curves
+## 5. The curves
 
-### 4.1 Treasury by game-day, mean of seeds ($)
+### 5.1 Treasury by game-day, mean of seeds ($)
 
-| day | do_nothing | greedy_growth | infrastructure_first | balanced |
+| day | do_nothing | greedy_growth | infrastructure_first | balanced | tax_squeezer | disaster_neglect |
+|---|---|---|---|---|---|---|
+| 3 | $50,281 | $3,738 | $25,807 | $14,031 | $22,205 | $13,956 |
+| 6 | $75,035 | $4,758 | $26,098 | $15,925 | $25,936 | $16,093 |
+| 9 | $99,864 | $6,607 | $19,092 | $40,449 | $39,546 | $41,722 |
+| 12 | $125,070 | $6,296 | $19,315 | $26,695 | $35,708 | $24,700 |
+| 15 | $150,580 | $5,779 | $53,009 | $29,199 | $29,089 | $29,327 |
+| 18 | $175,163 | $6,971 | $9,860 | $22,175 | $82,086 | $29,839 |
+| 21 | $199,427 | $44,053 | $21,469 | $17,843 | $79,712 | $32,238 |
+
+### 5.2 Net income $/gh, mean of seeds
+
+| day | do_nothing | greedy_growth | infrastructure_first | balanced | tax_squeezer | disaster_neglect |
+|---|---|---|---|---|---|---|
+| 3 | 345.79 | 867.26 | 344.21 | 769.65 | 2,384.38 | 772.22 |
+| 6 | 343.27 | 1,614.05 | 469.18 | 1,463.44 | 5,079.20 | 1,461.24 |
+| 9 | 341.47 | 2,817.47 | 501.82 | 2,409.47 | 3,404.71 | 2,415.93 |
+| 12 | 340.24 | 1,562.23 | 447.76 | 2,483.90 | 2,118.90 | 2,467.71 |
+| 15 | 337.71 | 1,313.83 | 444.19 | 1,705.56 | 1,187.25 | 1,542.31 |
+| 18 | 336.22 | 587.75 | 515.43 | 573.66 | 156.35 | 1,288.61 |
+| 21 | 334.21 | 280.99 | 592.26 | 482.96 | 119.45 | 1,255.32 |
+
+**Every growth curve turns over, and this time it is a cliff, not a slope.**
+
+| strategy | peak net $/gh | peak day | day-21 net $/gh | fall from peak |
 |---|---|---|---|---|
-| 1 | $32,748 | $2,895 | $16,474 | $13,412 |
-| 2 | $40,473 | $4,775 | $23,982 | $14,219 |
-| 3 | $48,112 | $4,593 | $11,094 | $14,521 |
-| 4 | $55,715 | $4,469 | $17,776 | $14,460 |
-| 5 | $63,300 | $3,644 | $24,450 | $15,161 |
-| 6 | $70,872 | $5,433 | $12,652 | $15,489 |
-| 7 | $78,429 | $5,095 | $18,681 | $16,055 |
-| 8 | $85,601 | $4,551 | $24,327 | $17,226 |
-| 9 | $92,409 | $4,121 | $29,606 | $21,325 |
-| 10 | $99,078 | $2,362 | $34,746 | $23,639 |
-| 11 | $105,702 | $6,701 | $39,048 | $28,284 |
-| 12 | $112,312 | $5,476 | $40,232 | $34,093 |
-| 13 | $118,910 | $3,974 | $35,364 | $32,253 |
-| 14 | $125,493 | $2,981 | $21,752 | $20,061 |
+| `tax_squeezer` | 5,513 | 7 | 119 | **−98 %** |
+| `greedy_growth` | 2,817 | 9 | 281 | **−90 %** |
+| `balanced` | 2,498 | 10 | 483 | **−81 %** |
+| `disaster_neglect` | 2,492 | 10 | 1,255 | −50 % |
+| `infrastructure_first` | 592 | 21 | 592 | still climbing |
+| `do_nothing` | 348 | 1 | 334 | −4 % |
 
-`do_nothing` is very nearly a straight line: **+$7,748 on game-day 1, +$6,583 on
-game-day 14**, mean +$7,178/game-day. The slight droop is F-3, not a growth curve
-running out — nothing else about that city ever changes.
+Pass 1 measured the same shape and blamed permanent grid failures. That cause is
+gone (§1). The new cause is §9 F-3: an incident cascade that the fixed
+eight-vehicle fleet cannot answer.
 
-### 4.2 Net income $/gh, mean of seeds
+### 5.3 Population by game-day, mean of seeds
 
-| day | do_nothing | greedy_growth | infrastructure_first | balanced |
-|---|---|---|---|---|
-| 1 | 323 | 529 | 311 | 442 |
-| 2 | 322 | 662 | 313 | 584 |
-| 3 | 318 | 770 | 296 | 696 |
-| 4 | 317 | 870 | 278 | 864 |
-| 5 | 316 | 1,035 | 278 | 1,079 |
-| 6 | 315 | 1,241 | 258 | 1,291 |
-| 7 | 315 | 1,444 | 251 | 1,438 |
-| 8 | 299 | 1,727 | 235 | 1,529 |
-| 9 | 284 | **2,024** | 220 | 1,501 |
-| 10 | 278 | 1,968 | 214 | **1,718**³ |
-| 11 | 276 | 1,347 | 213 | 1,718 |
-| 12 | 275 | 1,213 | 233 | 1,585 |
-| 13 | 275 | 1,201 | 269 | 1,324 |
-| 14 | 274 | 1,125 | 294 | 1,278 |
+| day | do_nothing | greedy_growth | infrastructure_first | balanced | tax_squeezer | disaster_neglect |
+|---|---|---|---|---|---|---|
+| 3 | 143 | 351 | 155 | 295 | 295 | 295 |
+| 6 | 143 | 671 | 207 | 523 | 672 | 527 |
+| 9 | 143 | 1,310 | 230 | 671 | 1,176 | 676 |
+| 12 | 143 | 1,484 | 230 | 855 | 1,380 | 835 |
+| 15 | 143 | 1,811 | 230 | 1,113 | 914 | 1,110 |
+| 18 | 143 | 1,750 | 257 | 893 | 898 | 1,265 |
+| 21 | 143 | 1,407 | 301 | 1,030 | 912 | 1,452 |
 
-³ balanced peaks day 11 at 1,718.
-**Every curve turns over.** `greedy_growth` loses **44 %** of its peak income
-between day 9 and day 14 *while still building*; `balanced` loses 26 % from day
-11; `do_nothing` loses 15 % without ever taking an action. The cause is the same
-in all three: permanent grid failures (F-3).
+### 5.4 The collapse, hour by hour (seed 1337)
 
-### 4.3 Blackout minutes per game-day, mean of seeds
+Three runs on the same seed, at day granularity. The bold columns are the same
+event in all three, arriving on a different day each time: the city crosses the
+fleet's capacity and stops being a city.
 
-| day | do_nothing | greedy_growth | infrastructure_first | balanced |
-|---|---|---|---|---|
-| 2 | 239 | 1,304 | 239 | 918 |
-| 4 | 480 | 6,903 | 480 | 1,920 |
-| 6 | 480 | 11,031 | 480 | 8,120 |
-| 8 | 1,282 | 17,765 | 1,282 | 54,251 |
-| 10 | 2,694 | 44,982 | 2,826 | 94,467 |
-| 12 | 2,880 | 93,125 | 3,360 | 142,201 |
-| 14 | 2,880 | 111,794 | 3,360 | 192,532 |
+| `balanced` seed 1337 | d9 | d12 | d15 | **d16** | **d17** | d18 | d21 |
+|---|---|---|---|---|---|---|---|
+| net $/gh | 2,451 | 978 | 1,768 | 414 | **−67** | −722 | −763 |
+| population | 676 | 767 | 1,051 | 1,027 | **401** | 151 | 279 |
+| stability | 0.938 | 0.748 | 0.793 | 0.705 | **0.188** | 0.531 | 0.673 |
+| open incidents | 0 | 14 | 13 | 14 | **127** | 210 | 183 |
+| min condition | 1.00 | 1.00 | 0.90 | 1.00 | **0.10** | 0.10 | 0.10 |
+| treasury | $42,018 | $22,911 | $30,642 | $20,549 | $19,922 | **−$91** | **−$12,724** |
 
-Monotone in every column. A blackout in this build is a ratchet.
+| `tax_squeezer` seed 1337 | d12 | d13 | d14 | **d15** | **d16** | d18 | d21 |
+|---|---|---|---|---|---|---|---|
+| net $/gh | 1,490 | 2,203 | 2,775 | **300** | −1,514 | −1,575 | −1,577 |
+| population | 1,328 | 1,449 | 1,629 | **104** | **0** | 13 | **7** |
+| open incidents | 22 | 23 | 21 | **442** | 384 | 375 | 339 |
+| min condition | 0.90 | 0.90 | 0.90 | **0.10** | 0.10 | 0.10 | 0.10 |
 
-### 4.4 Population and stability, mean of seeds
+| `greedy_growth` seed 1337 | d16 | d17 | d18 | d19 | **d20** | **d21** |
+|---|---|---|---|---|---|---|
+| net $/gh | 1,381 | 282 | 33 | 23 | **−102** | **−624** |
+| population | 1,863 | 1,528 | 1,534 | 1,464 | **887** | **415** |
+| stability | 0.731 | 0.612 | 0.672 | 0.628 | **0.197** | 0.433 |
+| open incidents | 20 | 18 | 16 | 17 | **48** | **87** |
+| min condition | 0.80 | 0.45 | 0.45 | 0.45 | **0.10** | 0.10 |
 
-| day | pop: do_nothing / greedy / infra / balanced | stability: do_nothing / greedy / infra / balanced |
+A city of 1,629 people goes to **zero in two game-days** and never recovers over
+the remaining game-week. Whatever else is true, that is not a difficulty curve —
+and note the shape is identical in all three: a slow bleed of condition
+(1.00 → 0.90 → 0.45) that costs almost nothing, then a two-day vertical drop.
+
+---
+
+## 6. Experiment — what does one transformer buy?
+
+A strategy run cannot isolate this, so the harness runs a controlled pair: boot
+two identical cities, give one an L1 transformer on the tile that lights the most
+dark ground plus houses on **exactly** the tiles that tap lit, and compare the
+settled net $/gh of both after construction and the doc 03 §8 36-hour occupancy
+ramp have finished.
+
+| seed | tap tile | tap $ | lateral tiles | tiles lit | houses | house $ | total outlay | Δ net $/gh | tap payback (gh) | total payback (gh) | total payback (game-days) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1337 | (43,57) | $1,270 | 7 | 35 | 19 | $22,800 | $24,070 | +180.03 | **7** | 134 | 5.6 |
+| 4242 | (43,57) | $1,270 | 7 | 35 | 19 | $22,800 | $24,070 | +166.41 | **8** | 145 | 6.0 |
+| 9001 | (43,57) | $1,270 | 7 | 35 | 19 | $22,800 | $24,070 | +174.51 | **7** | 138 | 5.7 |
+
+The three seeds agree to the tile because the choice is deterministic and the
+founding grid is authored; only the settled net differs, by the weather and
+incident draw.
+
+And the price of the verb itself, read straight off `cmd_place_grid_component`'s
+own preview (doc 03 §2.13(b): `transformer` L1 build cost + one feeder lateral
+per Chebyshev tile at that feeder's conductor price):
+
+| lateral tiles | tap price | example tile |
 |---|---|---|
-| 1 | 144 / 256 / 144 / 184 | 0.9475 / 0.9435 / 0.9677 / 0.9424 |
-| 5 | 144 / 492 / 144 / 429 | 0.9391 / 0.8960 / 0.9604 / 0.9272 |
-| 9 | 144 / 988 / 144 / 672 | 0.9348 / 0.8592 / 0.9569 / 0.8417 |
-| 14 | 144 / 1,179 / 187 / 763 | 0.9343 / 0.7150 / 0.9579 / 0.7521 |
+| 1 | $610 | (38,38) |
+| **2** | **$720** | (37,38) |
+| 3 | $830 | (36,38) |
+| 4 | $940 | (43,37) |
+| 5 | $1,050 | (44,41) |
+| 6 | $1,160 | (45,41) |
+| 7 | $1,270 | (46,41) |
+| 8 | $1,380 | (40,56) |
 
-`do_nothing`'s population is **144 for all 336 game-hours** — the founding city
-never grows by itself and never reaches city level 1 (threshold 250, doc 09
-§2.11). `greedy_growth`'s population flattens from day 10 while it keeps
-building, because `PopulationSystem.attractiveness_target = clamp((S − 0.35)/0.50)`
-falls with stability (F-11).
+The **$720 two-tile tap is confirmed exactly**: `$500` from
+`data/economy.json` `expenses.grid_components.transformer.build_cost[0]`, plus
+`2 × $110` from `expenses.grid_components.feeder.cost_per_tile_overhead[0]`.
 
 ---
 
-## 5. Findings
+## 7. Experiment — what does one tax detent cost?
 
-Each finding is **evidence → doc anchor → recommendation**. Recommendations are
-proposals for the lead engineer; **no `data/*.json` was touched by this pass.**
+Every detent of doc 03 §8's 13-rung ladder, one game-week each, same seed, same
+untouched `do_nothing` city. The only thing that differs between rows is `r`.
 
-### F-1 — Standing still is the second-most-profitable strategy in the game
+| level | rate | policy factor | published Δhappy | published growth× | treasury after 7 gd | net $/gh | pop | happiness | stability |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | 0.04 | 0.4444 | +11.00 | 1.175 | $16,423 | **−51.1** | 144 | 93.2 | 0.9475 |
+| 1 | 0.05 | 0.5556 | +8.80 | 1.140 | $30,286 | 31.5 | 144 | 91.0 | 0.9475 |
+| 2 | 0.06 | 0.6667 | +6.60 | 1.105 | $43,895 | 112.5 | 144 | 88.8 | 0.9475 |
+| 3 | 0.07 | 0.7778 | +4.40 | 1.070 | $57,250 | 192.0 | 144 | 86.6 | 0.9475 |
+| 4 | 0.08 | 0.8889 | +2.20 | 1.035 | $70,351 | 269.9 | 144 | 84.4 | 0.9475 |
+| **5** | **0.09** | **1.0000** | **0.00** | **1.000** | **$83,198** | **346.4** | **144** | **82.2** | **0.9475** |
+| 6 | 0.10 | 1.1111 | −2.20 | 0.965 | $95,790 | 421.4 | 144 | 80.0 | 0.9475 |
+| 7 | 0.11 | 1.2222 | −4.40 | 0.930 | $108,129 | 494.8 | 144 | 77.8 | 0.9475 |
+| 8 | 0.12 | 1.3333 | −6.60 | 0.895 | $120,214 | 566.8 | 144 | 75.6 | 0.9475 |
+| 9 | 0.13 | 1.4444 | −8.80 | 0.860 | $132,044 | 637.2 | 144 | 73.4 | 0.9475 |
+| 10 | 0.14 | 1.5556 | −11.00 | 0.825 | $143,620 | 706.1 | 144 | 71.2 | 0.9475 |
+| 11 | 0.15 | 1.6667 | −13.20 | 0.790 | $154,942 | 773.5 | 144 | 69.0 | 0.9475 |
+| **12** | **0.16** | **1.7778** | **−15.40** | **0.755** | **$166,011** | **839.4** | **144** | **66.8** | **0.9475** |
 
-**Evidence.** `do_nothing` ends the fortnight with **$125,493** — 42× the greedy
-agent's cash, 6× balanced's, and more *total value* than `infrastructure_first`
-creates ($125,493 vs $112,952). It never touches the credit line, never enters
-austerity, never loses a building, and never levels up. Its treasury curve is a
-straight line.
+---
 
-**Anchor.** Doc 03 §2.12 models "competent-but-not-optimal play" and never models
-the null strategy, because the systems that were supposed to make standing still
-lethal — doc 06 incidents, doc 07 weather/disaster director, doc 05 water — have
-not landed. Constitution §1: *"You built it. Now keep it alive."*
+## 8. The late curve — 90 game-days of `greedy_growth`
 
-**Recommendation.** **No economy retune is justified by this finding.** The gap
-is content, not numbers: doc 93 §A says as much, and retuning doc 03 against a
-city with no pressure would have to be undone when Wave 1 merges. Record this
-curve as the baseline the pressure systems must bend, and re-run this report the
-day incidents and weather merge. If `do_nothing` still out-earns `balanced` on
-cash at that point, *that* is the moment to move doc 03's constants — and doc 03
-§9 item 9b (the founding `f_happiness` ceiling) already names the honest lever.
+Three game-weeks is the pacing horizon doc 03 §2.12 models. This is what happens
+if you keep going: one 90-game-day run (2,160 game-hours) of the fastest builder
+in the study.
 
-### F-2 — Growth is rewarded right through the collapse it causes
+_seed 4242, coarse path, one row every 5 game-days_
 
-**Evidence.** `greedy_growth` takes the city from 144 to 1,179 residents and from
-$323/gh to a peak of $2,024/gh, and in doing so drives stability 0.9475 → 0.7150,
-happiness 82.2 → 54.5, and **30.2 % of all building-time into darkness** with 41
-permanent component failures and 111 block-dark transitions across three seeds.
-Its income then falls 44 % from the peak. And yet: it ends the fortnight with
-**3.5× the total value** of the control, never goes negative, and never has a run
-that fails. The collapse is expensive; it is never dangerous.
+| day | treasury | net $/gh | population | happiness | stability | buildings | damaged | open incidents | min condition |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | $5,032 | 568 | 256 | 76.0 | 0.943 | 62 | 0 | 0 | 1.00 |
+| 2 | $954 | 705 | 304 | 75.1 | 0.946 | 65 | 0 | 0 | 1.00 |
+| 3 | $7,904 | 873 | 352 | 74.4 | 0.940 | 67 | 0 | 0 | 1.00 |
+| 5 | $8,048 | 1,324 | 544 | 73.6 | 0.927 | 76 | 0 | 1 | 1.00 |
+| 10 | $7,803 | 2,667 | 1,448 | 62.4 | 0.801 | 123 | 4 | 5 | 0.90 |
+| 15 | $3,408 | 1,362 | 1,872 | 53.3 | 0.725 | 171 | 19 | 17 | 0.90 |
+| 20 | $16,710 | 796 | 1,769 | 52.1 | 0.651 | 171 | 21 | 27 | 0.90 |
+| 25 | $205,517 | 727 | 1,835 | 52.0 | 0.698 | 171 | 26 | 27 | 0.54 |
+| 30 | $398,907 | 658 | 1,821 | 52.0 | 0.701 | 171 | 28 | 37 | 0.54 |
+| 35 | $590,607 | 682 | 1,844 | 52.0 | 0.701 | 171 | 28 | 37 | 0.54 |
+| 40 | $771,862 | 316 | 1,777 | 52.0 | 0.640 | 171 | 28 | 48 | 0.54 |
+| 45 | $895,246 | 282 | 1,620 | 52.0 | 0.695 | 171 | 29 | 42 | 0.54 |
+| 50 | $1,043,048 | 498 | 1,752 | 52.0 | 0.696 | 171 | 30 | 54 | 0.54 |
+| 55 | $1,120,156 | 348 | 1,725 | 52.0 | 0.658 | 171 | 30 | 56 | 0.54 |
+| 60 | $1,270,201 | 348 | 1,768 | 52.0 | 0.662 | 171 | 30 | 63 | 0.54 |
+| 65 | $1,424,364 | 379 | 1,813 | 52.0 | 0.675 | 171 | 31 | 60 | 0.54 |
+| 70 | $1,558,320 | -492 | 121 | 53.4 | 0.225 | 171 | 6 | 330 | 0.10 |
+| 75 | $1,555,682 | -1,368 | 154 | 52.0 | 0.644 | 171 | 5 | 248 | 0.10 |
+| 80 | $1,514,246 | -1,355 | 175 | 52.0 | 0.615 | 171 | 8 | 231 | 0.10 |
+| 85 | $1,424,427 | -1,449 | 24 | 52.2 | 0.481 | 171 | 5 | 234 | 0.10 |
+| 90 | $1,315,347 | -1,517 | 19 | 52.0 | 0.266 | 171 | 4 | 220 | 0.10 |
 
-**Anchor.** Doc 03 §2.2 `utility_floors.residential.power = 0.35` — a dark house
-still bills 35 % of its power term (commercial 0.10, industrial 0.15, tech 0.00).
-Doc 04 §2.6 `XFMR_BURNOUT_R 3.0`.
+The curve has **three regimes and none of them is a game**:
 
-**Recommendation (two candidates, ruling needed).**
-1. The utility floor is calibrated for a *transient* outage; nothing in §2.2
-   distinguishes "dark for an hour" from "dark for nine days". Rather than
-   lowering the flat 0.35 — which would over-punish exactly the storm case doc 07
-   owns — propose §2.2 gain a **duration term**: the floor decays toward 0 as a
-   building's consecutive dark hours accumulate (e.g. `floor × 2^(−dark_hours/τ)`,
-   τ on the order of a game-day). One new constant, no existing row moves.
-2. Do nothing to the floor until F-3 is fixed. A revenue penalty for darkness is
-   only fair when the player has a verb that ends the darkness.
+1. **Days 1–15, growth.** Population 144 → 1,872, net income peaks at
+   **$2,667/gh** on day 10, 171 buildings go up.
+2. **Days 15–67, the plateau.** The city stops. Building count is frozen at
+   **171** for **fifty-three consecutive game-days** — over the run
+   `cmd_place_building` answers `E_NO_SITE` **1,834 times** and `E_UNSERVED`
+   **300 times** against **198** successes, and the agent, which by design never
+   buys a transformer, has nothing left to do but upgrade (61 upgrades) and bank
+   the difference. Treasury runs from **$16,710** on day
+   20 to **$1,424,364** on day 65 with nothing to spend it on. Happiness is
+   pinned at exactly 52.0 for the whole stretch (§9 F-5); minimum condition sits
+   at 0.54, just under doc 03 §2.2's `COND_FLOOR` 0.55, for forty game-days.
+3. **Days 68–90, the cascade and after.** Population 1,813 → **19** in under a
+   game-week, open incidents peak above 330, net income goes to **−$1,500/gh**
+   and stays there. The run ends with **$1,315,347 in the bank and 19 residents.**
 
-This report recommends **(2) first, then (1)** — see F-3.
+The plateau is the finding. A player who reaches game-day 20 has a city that
+cannot grow, an income that cannot rise, and a treasury that cannot be spent —
+and the only event left in their future is the one that destroys it. Everything
+§9 recommends (a reachable transformer wall, F-4; a smaller READY core, F-8; a
+fleet that grows, F-3) exists to give days 16–67 something to be.
 
-### F-3 — A failed grid component is failed forever, and the cost is enormous
+---
 
-**Evidence.** `PowerGrid.repair_component()` exists and **has no caller anywhere
-in `sim/`, `game/` or `ui/`.** The consequence, measured on the control strategy
-that does nothing wrong:
+## 9. Findings
 
-| `do_nothing` seed 1337 | day 1 | 2 | 3 | 4 | … | 14 |
-|---|---|---|---|---|---|---|
-| blackout minutes/day | 0 | 717 | 1,440 | 1,440 | … | **1,440** |
-| stability | 0.9475 | 0.9286 | 0.9226 | 0.9222 | … | 0.9222 |
-| net $/gh | 322.9 | 320.5 | 310.8 | 307.5 | … | **301.4** |
+Each finding is **evidence → doc anchor → recommendation with the exact key**.
+Recommendations are proposals for the lead engineer; **no `data/*.json` was
+touched by this pass.**
 
-One transformer (`T-15`, serving the water works) burns out at game-hour 35 and
-the city runs dark on that node for the remaining **twelve game-days** — exactly
-1,440 building-minutes a day, a perfect flat line, forever.
+### F-1 — Doing nothing is now, by a wide margin, the richest a player can be
 
-Seed 9001 is worse: four failures from day 8, and
+**Evidence.** Over 21 game-days `do_nothing` ends with **$199,427** in cash. The
+best-funded agent that actually plays ends with **$79,712** (`tax_squeezer`),
+and the "competent" agent ends with **$17,843**. Over the whole three
+weeks the control sees **4 incidents**, **0.04 %** of building-time dark, **0** damaged
+buildings at the end, and stability **0.9478**. Its curve is a straight line of
+**+$8,306/game-day** that never bends.
 
-| `do_nothing` seed 9001 | d7 | d8 | d9 | d10 | d11 | d14 |
-|---|---|---|---|---|---|---|
-| blackout minutes/day | 0 | 2,405 | 4,320 | 6,643 | 7,200 | **7,200** |
-| net $/gh | 319.7 | 272.7 | 228.3 | 212.0 | 207.7 | **205.9** |
+The pressure systems that pass 1 said would bend this curve have all landed —
+and none of them touch it, because every one of them scales with the city:
+`crime_per_1000_pop` 0.012 on a population of 144, `transformer_per_node` 0.0012
+on 24 nodes, `structure_fire_global_scalar` 0.4 against 34 buildings' `fire_load`.
+A 34-building city is below every threshold in doc 06.
 
-**a −36 % permanent income loss for a player who never touched the game.**
-Across all 12 fine runs there were **80 component failures**; in **10 of 12 runs
-not a single building was ever relit** (the 626 LIT transitions that do occur are
-rolling-shed rotation in two greedy/balanced runs, not recovery).
+**Anchor.** Constitution §1 — *"You built it. Now keep it alive."* Doc 06 §2.6's
+generator rates; doc 07's `DirectorInputs`.
 
-**Anchor.** Doc 93 §B — `cmd_repair_building`, `cmd_place_grid_component`
-("THE game"). Doc 06 dispatch, not landed. Doc 04 §2.9's auto-reclose exists
-(and works, for *trips*); a `_fail()` is terminal.
+**Interpretation.** This is not the same finding as pass-1 F-1. Pass 1's null
+strategy won because nothing existed to threaten it. This one wins because
+*everything that exists is proportional to what the player built*. That is a
+defensible design for incident **volume**, but it means the founding city is a
+risk-free savings account, and doc 03's own pacing model (§2.12, "competent but
+not optimal play") is scored against a baseline that beats it.
 
-**Recommendation.** **This is the single highest-value item in doc 93 §B and the
-data confirms it.** Until a repair path exists, no blackout-, stability- or
-happiness-related constant should be retuned — the harness is currently measuring
-a city with no immune system, and any number fitted to it will be wrong twice.
-Two concrete asks, in order:
-1. `cmd_repair_building` / a grid-repair verb, priced off doc 03 §2.5
-   (`capital_value × damage_fraction × REPAIR_COST_PER_CAPITAL 0.85`), which
-   `CostCurves.repair_cost()` already implements and nobody calls.
-2. `cmd_place_grid_component` so a burnt transformer can at least be replaced.
-   The harness already drives it the moment it exists
-   (`InfrastructureFirst._extend_grid`, guarded by `has_method` + arity probe).
+**Recommendation (ruling needed).** Do **not** raise the ambient rates — that
+would multiply the late-game cascade in §9 F-3, which is already too strong. The
+honest lever is a **floor** rather than a slope, and it belongs to the Director,
+not to the generators:
 
-### F-4 — The coarse path does not implement doc 04 §2.12's fidelity rule, and offline players are measurably luckier
+- `data/director.json` — add a minimum scheduled-event cadence that does not
+  scale with city size, so a 34-building city still gets a storm and a
+  transformer failure inside the first game-week. This is also exactly what doc
+  93 §C.3's scripted tutorial needs, so the two asks are the same ask.
+- Do **not** move `data/incidents.json` `generator_base_rates.*`. Every one of
+  those is calibrated per-asset by report 98 R-11/R-13, and raising them to
+  pressure a small city would make a large one unplayable.
 
-**Evidence.** Same seeds, same scripts, both paths:
+### F-2 — Maintenance is unpriced: the agent that never repairs wins
 
-| strategy | seed | value online | value offline | offline edge | dark % on/off |
+**Evidence.** `disaster_neglect` is `balanced` with `maintains = false` and
+nothing else changed. Over 21 game-days, mean of three seeds:
+
+| | `balanced` | `disaster_neglect` | delta |
+|---|---|---|---|
+| treasury d21 | $17,843 | **$32,238** | **+81 %** |
+| value created | $943,385 | **$1,054,907** | +12 % |
+| population | 1,030 | **1,452** | +41 % |
+| happiness | 58.9 | **64.1** | +5.2 |
+| stability | 0.7046 | **0.7507** | +0.046 |
+| repair spend | $7,966 | **$0** | — |
+| min condition | 0.600 | 0.900 | — |
+
+Per seed, the picture is sharper and more damning:
+
+| seed | balanced treasury | neglect treasury | balanced repairs | neglect repairs | note |
 |---|---|---|---|---|---|
-| do_nothing | 1337 | $128,220 | $132,305 | +3.2 % | 2.71 / 0.00 |
-| do_nothing | 4242 | $132,305 | $132,305 | +0.0 % | 0.00 / 0.00 |
-| do_nothing | 9001 | $115,953 | $131,063 | **+13.0 %** | 6.34 / 0.73 |
-| greedy_growth | 9001 | $352,686 | $516,284 | **+46.4 %** | 38.86 / 26.10 |
-| balanced | 9001 | $274,832 | $524,708 | **+90.9 %** | 49.43 / 23.43 |
-| *(all 12 pairs)* | | | | **mean +17.3 %, median +7.5 %, positive in 10 of 12** | |
+| 1337 | **−$12,724** | $32,471 | 14 | 0 | the cascade hit `balanced` and missed `neglect` |
+| 4242 | $33,442 | $31,043 | **0** | 0 | indistinguishable |
+| 9001 | $32,810 | $33,199 | **2** | 0 | indistinguishable |
 
-Component *failures* are comparable across paths (greedy: 41 fine, 46 coarse), but
-building **DARK transitions are 2.6× higher online** (726 vs 275) and measured
-dark-time is far higher — because rolling shed rotation
-(`ROLLING_SHED_PERIOD_GM` = 30 game-minutes) and the LIT/DARK hysteresis
-(20 / 10 game-seconds) cannot resolve inside a single 3,600-game-second step.
+**Read the middle two rows first.** On the two seeds where no cascade fired,
+`balanced` performed **zero and two** repairs in 504 game-hours each — because
+there was nothing to repair. The maintenance queue fires below condition 0.90,
+and the lowest condition anywhere in those two cities across three game-weeks
+was **0.90 and 0.80**. Seed 1337's $45k gap is chaotic divergence (a repair
+consumes construction-crew capacity, which shifts every subsequent RNG draw into
+a different weather and incident stream), not a causal effect of repairing —
+which is itself the point: **the maintenance verb has so little to do that its
+main measurable effect is to perturb the seed.**
 
-**Anchor.** Doc 04 §2.12 states the rule in terms:
+**The mechanism.** `Building.apply_decay(dt_h, overload_excess,
+powered_fraction, weather_decay_mult)` — the doc 02 §2.6 wear model — is called
+**only from `tests/test_building.gd`**. Nothing in `sim/` calls it. So condition
+does not creep; it only jumps, in discrete lumps, when an incident lands on the
+building. `data/buildings.json` authors `decay_per_hour` on all 60 archetype
+levels (apartment L1 = 0.0005/gh, i.e. condition 1.00 → the 0.35 auto-damage
+threshold in 1,300 game-hours ≈ 54 game-days) and every one of those numbers is
+dead data.
 
-> **Fidelity rule:** if any component ended the previous step with `r > 1.0`, or
-> a storm is active, the hour is sub-stepped at `dt = 300 game-seconds`
-> (12 sub-steps) so cascades and inverse-time trips resolve correctly; otherwise
-> the hour runs in one step.
+**Anchor.** Doc 02 §2.6 (condition & decay); doc 03 §2.4
+`MAINT_CONDITION_PENALTY`; doc 03 §2.2 `COND_FLOOR 0.55`; doc 93 §B
+(`cmd_repair_building` — *"condition decay already punishes neglect"* — it still
+does not). Pass-1 F-8, unchanged.
 
-`CitySim.PowerPhaseSystem.advance_coarse()` calls `advance_fine(ctx)`
-unconditionally. Its own comment quotes the precondition — *"coarse hour in one
-step when nothing was overloaded"* — and never checks it. Constitution §4:
-offline catch-up must use the same system code, and it does; it does not use the
-same *fidelity*.
+**Recommendation (highest-value item in this report).**
+1. **Wire the decay call.** `HourlyPhaseSystem.advance_fine` already holds
+   everything `apply_decay` needs: `availability` from `grid.settle_hour()` is
+   `powered_fraction`, the serving node's overload is on the grid, and doc 07's
+   `get_effect()` publishes `weather_decay_mult`. One call per building per
+   settled hour, before the economy settles. Until this exists there is no
+   routine input to the repair verb, and the entire second half of the
+   constitution's sentence is unreachable.
+2. **Do not touch a single repair or condition constant until it is wired.**
+   `data/economy.json` `expenses.REPAIR_COST_PER_CAPITAL`, `tax.COND_FLOOR`
+   0.55, `expenses.MAINT_CONDITION_PENALTY` and every
+   `data/buildings.json` `decay_per_hour` are currently being measured against a
+   city where wear does not happen. Any number fitted to that will be wrong
+   twice.
+3. Once decay is live, re-run this exact A/B. `disaster_neglect` losing to
+   `balanced` is the acceptance test for the core loop, and it should be added to
+   §10's gate table as a hard one.
 
-**Recommendation.** Implement the fidelity rule in `PowerPhaseSystem.advance_coarse`:
-track whether any component ended the previous step with `r > 1.0` and, if so,
-run `grid.tick(300, …)` twelve times instead of `grid.tick(3600, …)` once. The
-budget is there — the coarse step measures **0.82 ms** on the starter city
-(`tests/test_milestone1.gd`'s P0-30 probe, 720-hour cap at the 2 s budget), so
-a 12× sub-step on overloaded hours only stays far inside it. Until then every
-balance number must be path-tagged, and doc 08's WHILE YOU WERE AWAY sheet is
-describing a city luckier than the one the player would have got online.
+### F-3 — The fleet is frozen at eight vehicles, and that is what kills every city
 
-### F-5 — The upgrade ladder is economically dominated by sprawl, at every level
+**Evidence.** `FleetSystem.populate_from_stations()` has **exactly one caller**,
+`CitySim._boot_incidents()` (`sim/city_sim.gd:204`), which runs once at boot.
+Measured directly: a booted starter city has a fleet of **8**; place a
+`fire_station`, run 72 game-hours until it completes, and `station_rows()`
+reports the new station while `fleet.size()` is **still 8**.
 
-**Evidence.** Two rankings, both measured off the shipped tables:
+Incident volume, meanwhile, scales with the city. Per run, mean of seeds:
 
-*Heads (population + jobs) bought per dollar:*
+| strategy | buildings end | incidents created | resolved | abandoned | fire_spread | open incidents (mean/hour) |
+|---|---|---|---|---|---|---|
+| `do_nothing` | 34 | 4.0 | 4.0 | 0.0 | 0.0 | 0.01 |
+| `infrastructure_first` | 81 | 10.0 | 10.0 | 0.0 | 0.0 | 0.02 |
+| `disaster_neglect` | 352 | 338.3 | 318.7 | 0.0 | 0.3 | 7.59 |
+| `greedy_growth` | 171 | 445.3 | 373.7 | 25.3 | 27.0 | 11.25 |
+| `balanced` | 317 | 433.7 | 299.7 | 59.0 | 70.3 | 18.68 |
+| `tax_squeezer`¹ | 292 | 827.0 | 498.5 | 145.5 | 223.0 | **68.44** |
 
-| archetype | build L1 | L1→2 | L2→3 | L3→4 | L4→5 |
-|---|---|---|---|---|---|
-| apartment | **0.00371** | 0.00217 | 0.00158 | 0.00115 | 0.00083 |
-| house | **0.00333** | 0.00115 | 0.00090 | 0.00044 | 0.00028 |
-| high_rise | **0.00288** | 0.00220 | 0.00180 | 0.00148 | 0.00122 |
-| office | **0.00231** | 0.00138 | 0.00098 | 0.00071 | 0.00052 |
-| store | **0.00231** | 0.00080 | 0.00052 | 0.00033 | 0.00021 |
+¹ two seeds (§0).
 
-*Base tax $/gh bought per dollar of capital:* every revenue archetype's L1 sits on
-a flat **0.0100** (that is the RR-5 yield anchor doing its job); every upgrade
-step returns **≈0.0080** — a uniform **−20 %**. The single exception is
-`data_center` L1 at **0.01167** (+16.7 %, the drift RR-5 documents and locks).
+Eight vehicles against 68 simultaneous open incidents. `incident_abandoned` —
+the dispatcher giving up — reaches 145 per run. `fire_spread` reaches 223: fires
+that no engine gets to, spreading building-to-building, which is precisely the
+§5.4 cliff. Note `incident_failed` is **0** in every row: incidents do not fail,
+they queue forever and burn. The one run that finished with the largest city
+(`disaster_neglect`, 352 buildings) is *not* the one with the worst backlog —
+the backlog tracks how far into the cascade the run got, not how big it was.
 
-The consequence in play: `greedy_growth`, which scores builds and upgrades on the
-same axis and takes whichever is better, performed **zero upgrades in 336
-game-hours across all three seeds**. `balanced` upgraded 90 times only because
-its policy puts upgrades ahead of floorspace by rule, not by value.
+**Anchor.** Doc 06 §2.x fleet capacity; `data/vehicles.json`
+`types.<id>.capacity_per_station_level` (patrol car `[2,3,4,5,6]`, fire engine
+similar) — an authored ladder per station level that the sim reads exactly once.
+Doc 06's `load_damper()` already anticipates saturation
+(`excess = max(0, open_incidents − fleet.size())`) but damps the *generation
+rate*, not the backlog.
 
-**Anchor.** Doc 02 Core Design Rule 5 (five levels per archetype); doc 03 §2.2
-`base_tax_by_level` (LOCKED by RR-5); doc 03 §8
-`REQUIRED_MIN_DEMAND_LEVEL_GROWTH 2.15`. Also: the starter core offers **510
-placeable, transformer-served 1×1 sites** at founding, and `E_NO_SITE` was never
-returned on any fine run — land inside an owned block is free and effectively
-unlimited.
+**Recommendation (ruling needed; this is the top mechanical fix).**
+1. **Re-populate the fleet when the station roster changes.** Call
+   `incidents.fleet.populate_from_stations(incident_world.station_rows())` from
+   `CitySim.on_construction_completed` (station archetypes only) and from
+   `cmd_demolish_building`, or give `FleetSystem` an incremental
+   `sync_stations()`. This is a code fix, not a balance edit, and it converts
+   `fire_station` from a pure cost line (`data/economy.json`
+   `expenses.station_upkeep_l1.fire_station` = 30 $/gh, pass-1 F-6) into the
+   answer to the cascade. **Until it lands, no incident-rate constant should be
+   retuned**, because the city has no way to buy response capacity.
+2. Once it lands, the honest tuning question becomes the *ratio* of
+   `data/vehicles.json` `capacity_per_station_level` to
+   `data/incidents.json` `generator_base_rates.structure_fire_global_scalar`
+   (0.4). Recommend re-running this matrix before touching either.
+3. Separately, consider whether an abandoned incident should be able to *fail*
+   rather than queue. `balanced` seed 1337 ends game-day 21 with **183
+   simultaneously open incidents** and `tax_squeezer` seed 1337 with **339** —
+   a backlog the player can never clear and doc 12's incident drawer can never
+   usefully show. `incident_failed` fired **zero** times in 17 runs.
 
-**Recommendation.** **Do not reprice `base_tax_by_level`** — RR-5 locked it and
-the flat 0.0100 line is deliberate. The ladder is dominated because the *costs
-it avoids* are not modelled yet. In priority order:
-1. **Make footprint scarce.** The starter core is 62 % vacant (doc 03 §2.12) and
-   a lot inside an owned block costs nothing. The block-development bill exists
-   (doc 03 §2.8) but only for new blocks. A per-footprint charge — or simply the
-   arrival of `cmd_buy_block` so expansion has a price — turns "upgrade vs
-   sprawl" into a real decision.
-2. **Make grid headroom the binding constraint.** It nearly already is (F-2):
-   sprawl is what kills the grid. Once `cmd_place_grid_component` prices the
-   transformer that a 40th house needs, upgrading a served building beats
-   building an unserved one *without touching a single tax row*.
-3. Only if 1 and 2 leave the ladder dominated: revisit `growth_classes.k_out`
-   in `building_rules.json`, which is the number that actually sets upgrade
-   yield per level.
+### F-4 — The transformer is priced well; the problem is that nothing makes you buy one for two game-weeks
 
-### F-6 — Civic buildings are pure cost, and two archetypes are outright traps
+**Evidence (price).** The L1 tap costs `$500 + $110 × lateral tiles`, i.e.
+**$610 at one tile, $720 at two, $1,380 at eight** (the tap radius limit). The
+controlled experiment: one tap at the densest dark patch cost **$1,270**, lit
+**35** buildable tiles, and the 19 houses that fit on them added **+$174/gh**
+(mean of three seeds). Payback:
 
-**Evidence.** `infrastructure_first` spent **$90,000** on 5 civic buildings
-(2 construction_yard, 2 fire_station, 1 police_station on seed 1337) plus $16,800
-on 14 houses, and finished the fortnight with **less total value than doing nothing**
-($112,952 vs $125,493) and a **lower mean net income** (262 vs 299 $/gh). Its
-stability is the best in the study (0.9579) and buys it nothing.
+- **tap alone: 7–8 game-hours.**
+- tap + the houses it enables: **134–145 game-hours (5.6–6.0 game-days)**, which
+  is simply the payback of a house.
 
-Why: every service/utility archetype carries `base_tax = 0` (doc 03 §2.2) and
-adds a permanent department line — `police_station 26`, `fire_station 30`,
-`construction_yard 20` $/gh at L1 (`data/economy.json` `station_upkeep_l1`). The
-offsetting benefit does not exist: `req_fire_coverage` / `req_police_coverage`
-are loaded and validated by `BuildingCatalog` and **read by nothing**, and
-`cmd_upgrade_building`'s own comment says coverage checks "join when docs 05 /
-02-coverage land".
+The verb is close to free relative to what it unlocks. It is not mispriced.
 
-Two archetypes are worse than useless. Measured directly — buy both on a booted
-starter city, run a game-day, and read `PowerGrid.grid_inventory()`:
+**Evidence (pacing).** The founding core ships with **510 transformer-served
+buildable tiles and 919 unserved ones**. `greedy_growth` — the fastest possible
+builder, three actions per game-hour, zero reserve — does not see its first
+`E_NO_SITE` until **game-hour 362 — game-day 16** — and its first `E_UNSERVED`
+in that same hour. `balanced` never buys a transformer in 21 game-days on any seed,
+because it never runs out of 1×1 ground. Only `infrastructure_first`, which buys
+land, ever needs the verb — and it needs it *because* a block bought and
+developed through doc 09 §2.3 arrives with a utility corridor to its centre and
+**no transformer**, so all 256 of its tiles answer `E_UNSERVED`.
+
+**Anchor.** Doc 93 §A calls `cmd_place_grid_component` "THE game" and doc 93 §B
+ranks it first. Doc 04 §2.1. Doc 09 §2.3's `utility_corridor` phase.
+
+**Recommendation (ruling needed — this is a starter-city shape question, not a
+price question).** Do **not** move
+`data/economy.json` `expenses.grid_components.transformer.build_cost` or
+`expenses.grid_components.feeder.cost_per_tile_overhead`. The measured payback
+says both are right. Instead, make the verb reachable:
+
+1. **Thin the founding grid.** `data/starter_city.json` `power.nodes` currently
+   serves 510 of the core's 1,429 buildable tiles. Cutting the authored
+   transformer roster so the founding core has ~60–100 served tiles puts the
+   first `E_UNSERVED` inside game-day 1–2, which is where doc 93 §C.3's tutorial
+   beat wants it, and it costs nothing but an authored-data edit. Every
+   consequence is already tested: `tests/test_playtest_harness.gd` asserts the
+   harness's siting heuristic against `PowerGrid.TRANSFORMER_SERVICE_RADIUS`, and
+   the pass-2 harness will show the change as a shift in first-`E_UNSERVED` hour.
+2. Alternatively (or additionally), raise the **land** side: the city can grow
+   to 500+ buildings inside nine blocks it already owns. See F-8.
+
+### F-5 — Doubling the tax rate is a 78 % revenue multiplier bought for a happiness number that changes nothing
+
+**Evidence (static).** Thirteen booted cities, one per detent, one game-week
+each, nothing else touched:
+
+| level | rate | policy factor | treasury after 7 gd | net $/gh | pop | happiness | stability |
+|---|---|---|---|---|---|---|---|
+| 0 | 0.04 | 0.4444 | $16,423 | **−51.1** | 144 | 93.2 | 0.9475 |
+| 5 (base) | 0.09 | 1.0000 | $83,198 | 346.4 | 144 | 82.2 | 0.9475 |
+| 12 (max) | 0.16 | 1.7778 | **$166,011** | **839.4** | **144** | 66.8 | **0.9475** |
+
+Level 12 earns **exactly twice** level 5's treasury over a game-week. Population
+is **144 at every detent** and stability is **0.9475 at every detent** — the two
+channels doc 03 §2.2 says the tax rate is supposed to cost you.
+`growth_rate_multiplier` 0.755 has no observable effect because the founding
+city has no growth to slow, and `happiness_tax_delta −15.4` lands happiness at
+66.8, which is still comfortably inside `HAPPY_FACTOR_MIN/MAX`'s band and
+therefore costs a few percent of revenue against a 78 % gain.
+
+Note also that **level 0 is a trap**: at r = 0.04 the founding city runs at
+−$51/gh and slowly dies. The ladder is not symmetric around the base.
+
+**Evidence (dynamic).** `tax_squeezer` vs `balanced` — same builder, only the
+detent differs — over 21 game-days:
+
+| | mean of seeds¹ | seed 4242 only² |
+|---|---|---|
+| value created | $1,377,722 vs $943,385 — **+46 %** | $1,551,746 vs $1,060,303 — **+46 %** |
+| treasury d21 | $79,712 vs $17,843 — **+347 %** | $162,001 vs $33,442 — **+384 %** |
+| happiness | 44.0 vs 58.9 — **−14.9** | 45.7 vs 61.9 — **−16.2** |
+| population | 912 vs 1,030 — −11 % | 1,816 vs 1,390 — **+31 %** |
+
+¹ `tax_squeezer` two seeds, `balanced` three; both means are contaminated by
+seed 1337's cascade (§9 F-10).
+² the one seed on which neither agent's city collapsed inside the horizon — the
+cleanest paired comparison in this report.
+
+On the clean pair the growth penalty does not appear **at all**: the
+max-tax city ends with 31 % *more* people than the base-rate city, because the
+extra revenue bought floorspace faster than `growth_rate_multiplier` 0.755 slowed
+occupancy. The published −15.4 happiness shows up almost exactly (−16.2) and
+costs nothing that shows up in any other column.
+
+**Anchor.** Doc 03 §2.2; `data/economy.json` `tax.TAX_RATE_HAPPINESS_COEFF`
+220.0, `tax.TAX_RATE_GROWTH_COEFF` 3.5, `tax.TAX_RATE_MAX` 0.16,
+`tax.TAX_RATE_COOLDOWN_HOURS` 48, `tax.HAPPY_SLOPE` 0.5,
+`tax.HAPPY_FACTOR_MIN` 0.75 / `HAPPY_FACTOR_MAX` 1.25.
+
+**Recommendation (ruling needed — one of these three, not all).**
+1. **Cheapest and most targeted: raise `tax.TAX_RATE_GROWTH_COEFF` from 3.5.**
+   At 3.5, the top detent multiplies growth by 0.755 and costs 11 % of
+   population against +46 % value. A coefficient near **8.0** would put the top
+   detent at ~0.44× growth, which is a real choice: money now versus a city
+   later. This is one number, it is already read on every settlement
+   (`EconomySystem.growth_rate_multiplier`), and it does not touch revenue.
+2. **Or make happiness bite harder**: `tax.HAPPY_FACTOR_MIN` 0.75 is the floor of
+   the revenue multiplier that happiness buys. Widening it (e.g. 0.55) makes a
+   66.8-happiness city visibly poorer per building. Riskier, and for a reason
+   the 90-game-day run makes plain: **happiness saturates.** From game-day 20 to
+   game-day 68 the greedy city's happiness sits at **exactly 52.0**, unmoved,
+   while stability wanders between 0.64 and 0.70 and open incidents climb from
+   27 to 63. `HappinessModel.target` is `60 + 14·u(stability) + 8·u(uptime) +
+   8·u(employment) + 6·u(condition) + tax_delta` with every `u` a unit ramp
+   clamped to ±1 over a narrow window, so a city at 46 % dark is already pinned
+   at −1 on two terms and cannot get any unhappier for any additional damage.
+   52.0 is `60 − 14 − 8 + 8 + 6` to the decimal. Any lever routed through
+   happiness therefore acts as a step, not a gradient, for every large city —
+   which is precisely why lever (1) is the recommendation.
+3. **Do not clamp `TAX_RATE_MAX`.** The ladder's top detent existing is fine; it
+   simply has to cost something. Note also that if (1) is adopted, the
+   `tax_squeezer` strategy in this harness becomes the regression test for it.
+
+Separately and independently: **level 0 running the founding city at a loss**
+should be a deliberate ruling, not an accident. If it is intended (a "starve the
+city" option), doc 03 §2.2 should say so; if not, `tax.TAX_RATE_MIN` 0.04 wants
+raising to the break-even detent, which the table puts between 0.04 and 0.05.
+
+### F-6 — Sprawl still beats upgrading, until the footprint runs out — and then upgrading is all there is
+
+**Evidence.** `greedy_growth` scores builds and upgrades on the same axis and
+takes the better one. Its action log (seed 4242) reads:
 
 ```
-before:      plants=1  nodes=24   system_supply_kw   0.0
-place power_facility -> ok=true  cost=60000
-place substation     -> ok=true  cost=15000
-after 24 gh: plants=1  nodes=24   system_supply_kw 8000.0     (unchanged)
+place apartment  OK          n=109   first at game-hour 27
+place house      OK          n= 28   first at game-hour 0
+place apartment  E_NO_SITE   n=162   first at game-hour 362
+place apartment  E_UNSERVED  n= 24   first at game-hour 362
+upgrade  …       OK          n= 42   first at game-hour 378
 ```
 
-- **`power_facility` — $60,000, 3×3, adds no generation.** `CitySim._boot_power()`
-  builds the electrical graph exclusively from `starter_city.json`'s
-  `power.nodes`; a player-placed `power_facility` becomes an ordinary `Building`
-  with `power_demand_kw = 0.0` and never becomes a `PowerGrid` component.
-- **`substation` — $15,000, and `_boot_power()` explicitly skips it** ("no service
-  draw, doc 04 §2.3"). It is an inert box. `balanced` bought one on two of three
-  seeds because it is the cheapest "utility" card on the sheet.
+**Zero upgrades before game-hour 378 (day 16); 42 after.** The switch is not a
+change of mind, it is the 2×2 apartment footprint running out of served ground.
+Pass-1 F-5 measured the same dominance with no upgrades at all in 14 game-days;
+the ladder has not become more attractive, the map has become fuller.
 
-**Anchor.** Doc 03 §2.4 `E_departments` (RR-16); doc 02 §2.4 coverage columns;
-doc 04 §2.1 (grid components are placed by `cmd_place_grid_component`, not by the
-building command).
+**Anchor.** Doc 02 Core Design Rule 5; doc 03 §2.2 `base_tax_by_level` (LOCKED by
+RR-5); `data/building_rules.json` `growth_classes.k_out`.
 
-**Recommendation.**
-1. **Remove `power_facility` and `substation` from the build sheet**, or route
-   those cards to `cmd_place_grid_component` when it lands. Today they are a
-   $60,000 and a $15,000 trap that the UI presents as a normal purchase. This is
-   the cheapest fix in this report and it is a player-facing bug, not a balance
-   knob.
-2. Coverage must gate *something* before "infrastructure first" can be a strategy
-   rather than a self-inflicted wound. Until then, treat this strategy's curve as
-   a measurement of the missing system, not as evidence that civic prices are
-   wrong.
+**Recommendation.** Unchanged from pass 1 and reinforced: **do not reprice
+`base_tax_by_level`.** The ladder is dominated because floorspace inside an
+owned block is free, and the fix is the land/grid scarcity of F-4 and F-8, not a
+yield edit. Revisit `growth_classes.k_out` only if the ladder is still dominated
+after the footprint actually becomes scarce.
 
-### F-7 — `cmd_place_building` does not enforce `min_city_level`
+### F-7 — A city can now go $12,724 into the red with the entire doc 03 §2.10 recovery ladder asleep
 
-**Evidence.** Verified directly: a city at level 0 with sufficient funds places a
-`high_rise` (`min_city_level` 3) and a `data_center` (`min_city_level` 4), both
-`ok = true`. The gate exists only in `BuildController.card()`'s `locked` flag —
-i.e. in the UI. `cmd_upgrade_building` *does* check it and returns `E_CITY_LEVEL`.
+**Evidence.** `balanced` seed 1337 ends at **−$12,724** with a minimum of
+**−$13,309**. In that same run:
 
-**Stake.** `data_center` L1 is the single highest-ROI purchase in the game
-(0.01167 $/gh per dollar of capital against the flat 0.0100 — F-5), and it is
-what the unenforced gate is guarding.
+| §2.10 layer | key | value at day 21 | expected |
+|---|---|---|---|
+| credit limit (layer 3) | `recovery.CREDIT_LIMIT_DAYS_OF_REVENUE` 6 | **$20,000** | ~6 game-days of gross revenue |
+| austerity (layer 2) | `recovery.AUSTERITY_EXPENSE_MULT` 0.55 | **false** | engaged |
+| deferred liability (layer 4) | `recovery.DEFERRED_REPAY_FRACTION` 0.35 | **0** | accruing |
+| relief grants (layer 5) | `recovery.RELIEF_MIN` 8000 | never offered | offered |
+| `credit_line_engaged` events | — | **0** across all 17 runs | ≥1 |
 
-**Anchor.** Doc 02 §2.3 `min_city_level` column; doc 02 §2.12 place path; doc 12
-§2.7 lock glyph; constitution §3 (the sim validates commands, the UI does not).
+`Treasury.update_credit_limit()`, `update_austerity()` and
+`maybe_grant_relief()` still have no caller in `sim/` outside tests. The credit
+limit is therefore pinned at `CREDIT_LIMIT_FLOOR` for the whole game.
 
-**Recommendation.** Add the `E_CITY_LEVEL` check to `cmd_place_building` in the
-documented gate order — after `E_NOT_DEVELOPED`, before `E_FOOTPRINT` — reusing
-the reason code `cmd_upgrade_building` already publishes. One comparison; closes
-a command-layer bypass that a scripted client, a replayed save, or the harness
-itself walks straight through.
+**And the latent bug from pass-1 F-9 is still live and has grown.** Six call
+sites now discard the result of `Treasury.spend()`:
 
-### F-8 — Building condition never changes
-
-**Evidence.** `Building.apply_decay()` and `Building.roll_structural_failure()`
-are called **only from `tests/test_building.gd`**. Measured: after 336 game-hours
-of a booted starter city, the **minimum** condition over all 34 buildings is
-**1.000**. Nothing ages.
-
-Consequences, all currently inert: `f_condition` (doc 03 §2.2, `COND_FLOOR 0.55`)
-is pinned at 1.0; `MAINT_CONDITION_PENALTY 1.5` on `E_building_maint` never
-fires; the `E_CONDITION` upgrade blocker
-(`Building.MIN_CONDITION_TO_UPGRADE`) can never trigger; and the "repair your
-city" half of the core loop has no input. Note the interaction with F-3: the
-income decay this report measures comes **entirely from grid failures**, not from
-building wear — the wear channel is switched off.
-
-**Anchor.** Doc 02 §2.6 (condition & decay); doc 03 §2.4; doc 93 §B
-(`cmd_repair_building` — *"`Building.repair()` exists unsurfaced; condition decay
-already punishes neglect"* — it does not, yet).
-
-**Recommendation.** Wire `apply_decay(dt_h, overload_excess, powered_fraction)`
-into the hourly phase before `cmd_repair_building` ships, or the repair verb
-arrives with nothing to repair. `powered_fraction` is exactly the availability
-`PowerGrid.settle_hour()` already returns and `HourlyPhaseSystem` already holds.
-
-### F-9 — Doc 03 §2.10's recovery ladder is not wired, and the build commands ignore `Treasury.spend()`
-
-**Evidence.** `Treasury.update_credit_limit()`, `update_austerity()` and
-`maybe_grant_relief()` have no caller in `sim/` outside tests. So:
-`credit_limit` sits at `CREDIT_LIMIT_FLOOR` **$20,000** for the whole game
-regardless of revenue (§2.10 layer 3 sizes it at 6 days of gross revenue —
-≈$121,000 at founding); austerity never engages (layer 2); the three relief
-grants per era are unreachable (layer 5). Only `debt_interest_per_hour()` is
-live, and only because `EconomySystem.settle_hour()` reaches for it as a default
-argument.
-
-No run in this pass went negative, so the ladder's absence cost nothing
-*measurable* — but it hides a latent bug. Both construction commands do:
-
-```gdscript
-if treasury.balance < cost:
-    return CommandQueue.fail(&"E_FUNDS", …)
-treasury.spend(cost, &"construction")   # result discarded
+```
+sim/city_sim.gd:763   treasury.spend(cost,  &"construction")          # cmd_place_building
+sim/city_sim.gd:828   treasury.spend(cost,  &"construction")          # cmd_upgrade_building
+sim/city_sim.gd:912   treasury.spend(cost,  &"construction")          # cmd_place_grid_component
+sim/city_sim.gd:1091  treasury.spend(cost,  &"repair", …)             # cmd_repair_building
+sim/city_sim.gd:1305  treasury.spend(price, &"land", …)               # cmd_buy_block
+sim/city_sim.gd:1423  treasury.spend(cost,  &"construction", …)       # development phases
 ```
 
 `Treasury.AUSTERITY_BLOCKED_CATEGORIES` contains `&"construction"`, and a blocked
-`spend()` charges **nothing** and returns `ok = false`. The day austerity is
-wired, every build placed under austerity will be **free**.
+`spend()` charges nothing and returns `ok = false`. The day austerity is wired,
+every build, every transformer, every land purchase and every development phase
+placed under austerity is **free**.
 
-**Anchor.** Doc 03 §2.10 layers 2/3/4/5; doc 03 §5 ("nothing outside `Treasury`
-mutates the balance… every earn/spend goes through `credit()`/`spend()`").
+**Anchor.** Doc 03 §2.10 layers 2/3/4/5; doc 03 §5 ("every earn/spend goes
+through `credit()`/`spend()`").
 
-**Recommendation.** Call the three ladder functions from `HourlyPhaseSystem`
-(they need only trailing gross revenue and gross expense, both already in the
-`BudgetSnapshot` `EconomySystem.settle_hour()` returns), and make both `cmd_*`
-verbs read the `spend()` result and fail with the returned `reason_code`. Fix the
-second half **before** the first, or turning the ladder on ships a free-building
-exploit.
+**Recommendation.** Unchanged from pass-1 F-9 but now with a live negative
+balance behind it: call the three ladder functions from `HourlyPhaseSystem` (they
+need only trailing gross revenue and gross expense, both already in the
+`BudgetSnapshot` that `EconomySystem.settle_hour()` returns), and make all six
+`cmd_*` sites read the `spend()` result and fail with its `reason_code`. **Fix
+the second half first**, or turning the ladder on ships a free-everything
+exploit. No `data/economy.json` `recovery.*` value needs to move — they have
+simply never been exercised.
 
-### F-10 — The founding ledger measures +$322.76/gh, doc 03 §2.12 publishes +$318.77/gh
+### F-8 — Land is priced for a city that runs out of room, and no city runs out of room
 
-**Evidence.** Measured gross **843.405**, expense **520.649**, net **322.756**
-against §2.12's 839.349 / 520.577 / 318.773.
+**Evidence.** A ring block costs **$10,400–$16,700** to buy plus
+**$34,588–$49,570** to develop — call it **$45k–$66k all-in**, against a
+founding treasury of $25,000 and a `do_nothing` income of $8,306/game-day. That
+is a serious, well-shaped purchase.
 
-**This is the doc being behind the code, not the code being wrong.**
-`EconomySystem.revenue_for_building()` reads `f_stability` from the building's own
-district, exactly as doc 03 §2.2 requires. §2.12's headline ledger instead uses
-doc 09's ruled *city aggregate* 0.9722 (RR-6). Doc 03 RR-18 already worked the
-per-district answer:
+Nobody makes it. Over 21 game-days: `greedy_growth` **0 blocks**, `balanced`
+**0.3 blocks**, `disaster_neglect` **0.3**, `infrastructure_first` **1.0**,
+`tax_squeezer` **2.5**. The reason is not the price — it is that the nine
+founding blocks hold **1,429 buildable tiles** and the biggest city any agent
+built in three game-weeks stood on **352 buildings**. `E_NO_SITE` appears only
+for the 2×2 apartment footprint, only after game-day 16, and only for the single
+fastest builder.
 
-```
-f_stability (tax-weighted) = (296 × 0.96596 + 390 × 0.98630) / 686 = 0.977524
-aggregate                  = 0.977524 × 1.110                     = 1.085051
-tax                        = 686 × 1.085051                       = 744.345
-gross                      = 744.345 + 93 + 3.058 + 3             = 843.403
-```
+**Anchor.** Doc 09 §2.5; doc 03 §2.7 `land.LAND_BASE` 9000,
+`land.LAND_ESCALATION` 0.06; doc 03 §2.8 `development.phases[].base`.
 
-The harness measures **843.405** — RR-18's own figure, to three decimals. §2.12
-explicitly reserved the outcome: *"if doc 09 later publishes a tax-weighted
-aggregate the line moves to $744 and the pacing `K` to 1.36378."*
+**Recommendation.** The land *price* needs no ruling — it is never tested. What
+needs a ruling is the **founding footprint**: `data/starter_city.json` ships nine
+owned+READY blocks (`land.STARTER_BLOCKS_FREE` 9). Reducing the READY core to
+**four or five** blocks would make expansion a real mid-game decision, put the
+$45k land bill on the critical path where it was designed to sit, and — with
+F-4's thinner grid — make the two headline verbs (`cmd_buy_block`,
+`cmd_place_grid_component`) the spine of the first game-week instead of
+optional. Both are authored-data edits with no code change and no constant move.
 
-**Recommendation (ruling needed — this one changes a published table).**
-Adopt the per-district basis, which §2.2 already mandates and the code already
-implements:
+### F-9 — The online/offline gap has all but closed, and the reason is F-3's fix, not a fidelity fix
 
-- §2.12 founding ledger → gross **$843.40**, expense **$520.58**, net
-  **+$322.76/gh**, **+$7,746/game-day**;
-- `PACING_ROUND2_K` → the already-published **1.36378**; regenerate the S1–S12
-  table on `net = round(1.36378 × net_r1 − 20.65229 × blocks_developed)` and re-run
-  guardrails G1–G5 (the shift is +0.9 % on the proportional term, well inside
-  test 27's ±20 %, so no guardrail is expected to move);
-- `data/economy.json`'s `STARTER_EXPENSE_PER_HOUR_EXACT 520.576566` and
-  `STARTER_NET_PER_HOUR_EXACT 318.772846` → the per-district pair
-  (**520.649 / 322.756**).
+**Evidence.** Same seed, same scripts, both paths, 7 game-days:
 
-The alternative — amending §2.2 to read the city aggregate — is worse: §2.2 is
-the normative rule and per-district is the physically correct reading.
+| strategy | seed | value online | value offline | offline edge | pop on/off | stability on/off | dark % on/off |
+|---|---|---|---|---|---|---|---|
+| do_nothing | 1337 | $84,442 | $83,198 | -1.5% | 144 / 144 | 0.9475 / 0.9475 | 0.00 / 0.00 |
+| greedy_growth | 1337 | $267,694 | $233,731 | -12.7% | 930 / 832 | 0.9169 / 0.9211 | 1.27 / 0.80 |
+| balanced | 1337 | $205,390 | $206,534 | +0.6% | 592 / 580 | 0.9479 / 0.9449 | 0.26 / 0.56 |
+| disaster_neglect | 1337 | $209,560 | $206,773 | -1.3% | 580 / 586 | 0.9442 / 0.9396 | 0.46 / 0.55 |
+| **all 4 pairs** | | | | **mean -3.7%, median -1.4%, offline ahead in 1 of 4** | | | |
 
-**Test debt either way.** `tests/test_city_sim.gd::test_economy_settles_in_the_loop`
-asserts the first settled hour in `[315, 322]` and the live value is **322**, and
-the first game-day in `[7,500, 7,800]` against a live **7,748**. Both are passing
-on their boundary and will break on any move. Re-centre them on whichever figure
-is ruled, with an explicit ±1 % band and the doc reference in the message.
+Pass 1 measured **mean +17.3 %, median +7.5 %, offline ahead in 10 of 12** —
+offline players were measurably luckier. This pass measures **mean −3.7 %,
+median −1.4 %, offline ahead in 1 of 4**. `do_nothing` is now identical on both
+paths to 1.5 %, where pass 1 had it at +13 % on the worst seed.
 
-### F-11 — Population is capped by stability, not by land (working as designed)
+**But nothing was fixed in the coarse path.**
+`CitySim.PowerPhaseSystem.advance_coarse()` (`sim/city_sim.gd:1649`) still calls
+`advance_fine(ctx)` unconditionally, with its own comment quoting the doc 04
+§2.12 precondition it never checks. What changed is pass-1 F-3: component
+failures used to be permanent, so the paths' differing blackout resolution
+compounded forever; now doc 06's dispatch repairs them and the difference stays
+local. The gap is smaller because the ratchet is gone, not because the fidelity
+rule arrived.
 
-**Evidence.** `greedy_growth`'s population flattens at ~1,100 from day 10 while it
-keeps placing buildings, because `attractiveness_target = clamp((S − 0.35)/0.50)`
-falls to 0.73 as stability collapses to 0.715. Land never binds: 510 servable
-1×1 sites at founding and `E_NO_SITE` was never returned on the fine path.
+The blackout channel still diverges by the amount doc 04 §2.12 predicts:
+`greedy_growth` spends **1.27 %** of building-time dark online and **0.80 %**
+offline — a 59 % relative difference on exactly the channel that
+`ROLLING_SHED_PERIOD_GM` (30 game-minutes) and the LIT/DARK hysteresis (20/10
+game-seconds) cannot resolve inside a single 3,600-game-second step.
 
-**Anchor.** Doc 09 §2.10 (`PopulationSystem`), doc 09 §2.10.3.
+**Anchor.** Doc 04 §2.12's fidelity rule; constitution §4; doc 93 §E2
+(mode-invariance is per-system and each subsystem's suite bounds its own
+sanctioned parity).
 
-**No recommendation.** Recorded because it is the mechanism F-2's fix should lean
-on: the negative feedback loop from blackouts → stability → attractiveness →
-population → tax **already exists and works**. It is not painful enough to change
-behaviour (greedy still ends 3.5× ahead), but it is the right lever to sharpen,
-and it needs no new system.
+**Recommendation.** Unchanged in substance from pass-1 F-4, but the priority
+drops: implement the fidelity rule in `PowerPhaseSystem.advance_coarse` — track
+whether any component ended the previous step with `r > 1.0` (or a storm is
+active) and if so run `grid.tick(300, …)` twelve times instead of
+`grid.tick(3600, …)` once. No `data/*.json` key moves.
+
+**The budget claim from pass 1 no longer holds and should be re-checked before
+this is scheduled.** Pass 1 justified the 12× sub-step by quoting
+`tests/test_milestone1.gd`'s P0-30 probe at **0.82 ms/coarse-step**; with Wave 1
+integrated the same probe now reports **≈28.6 ms/step**, and `max_coarse_hours`
+at the 2-second budget has fallen from the 720 cap to **72**. A blanket 12×
+sub-step of the grid phase on overloaded hours is no longer obviously free, and
+the fidelity rule's own precondition (*only* when something ended overloaded, or
+a storm is active) is doing much more work than it was. Measure before
+implementing.
+
+Until then, doc 08's WHILE YOU WERE AWAY sheet is describing a city
+whose *blackout* history is understated by roughly a third, even though its
+*money* is now honest to a few percent — and this report's headline matrix,
+being coarse, is understating dark-time by the same factor.
+
+### F-10 — Three seeds are not enough, because the outcome is a coin flip
+
+**Evidence.** `tax_squeezer` seed 1337 ends with **7 residents and −$2,577**;
+seed 4242 ends with **1,816 residents and $162,001**. Same strategy, same
+horizon, same everything except the RNG seed. `greedy_growth` seed 1337 ends at
+415 population and stability 0.4325; seeds 4242 and 9001 end at ~1,900 and
+~0.68. `balanced` seed 1337 goes bankrupt; 4242 and 9001 do not.
+
+In every case the split is the same event: whether the §5.4 cascade fired inside
+the horizon. It is not a difficulty gradient — it is a **bimodal outcome**, and a
+three-seed mean over a bimodal distribution is a number with no meaning. Several
+of the aggregate rows in §3 are dominated by one seed's catastrophe.
+
+**Recommendation (two, one for the harness and one for the game).**
+1. **Harness (mine, next pass).** Raise the default seed count from 3 to 8 and
+   report median plus min/max rather than the mean, at least for the columns the
+   cascade dominates. A per-strategy "cascade fired: n of m runs" column is more
+   informative than any mean in §3. `tools/playtest.gd` `DEFAULT_SEEDS`.
+   Prerequisite: `Api.upgrade_candidates()` previews every standing building on
+   every call and is called up to six times per game-hour by `greedy_growth`,
+   which is why one run of this matrix did not finish (§0). Eight seeds needs
+   that scan bounded first — most likely by ranking on the *cheap* fields
+   (level, archetype, condition) and previewing only the top few — which is a
+   behaviour change and so belongs to a pass boundary, not to a re-run.
+2. **Game (ruling needed).** A single unrecoverable cascade that takes a city
+   from 1,629 people to 0 in two game-days, with no recovery over the following
+   game-week, is a failure state disguised as a difficulty curve. Doc 03 §2.10's
+   recovery ladder (F-7) is precisely the mechanism that is supposed to catch
+   this, and it is asleep. **Wire F-7 before tuning F-3's fleet**, so that the
+   measurement of "how hard should the cascade be" is taken on a game that has
+   its safety net switched on.
 
 ---
 
-## 6. What this pass could not see
+## 10. Proposed regression gates for the next run
 
-The harness measures what is wired. These are stubbed or absent today, and every
-number above should be re-read when they land:
-
-| system | state in this run |
-|---|---|
-| water (doc 05) | `water: 1.0` constant in `build_settlement_inputs`; `HELD_WATER` metering constants |
-| roads (doc 10) | `road: 1.0` constant; `E_roads_repair` billed off a fixed 540 AVENUE / 243 STREET inventory at `c_day 0.35` |
-| incidents & dispatch (doc 06) | absent; `HELD_FINE_RATE`, a fixed 6-vehicle `STARTER_VEHICLES` roster |
-| weather & disasters (doc 07) | clear-sky stub, `t_ambient 22 °C`, `heat_wave: false` — **no storm ever fires**, so doc 04 §2.12's storm sub-step condition is untested too |
-| taxes (doc 03 §2.2) | rate pinned at `0.09`; `cmd_set_tax_level` absent |
-| land market (doc 09 §2.5) | `cmd_buy_block` absent; the city is 9 blocks for all 14 days |
-| demolish / repair / priority | absent (doc 93 §B) |
-
-`tools/playtest.gd` probes all six missing verbs by name and arity every run and
-prints which are present, so the first re-run after any of them merges will
-exercise them without a code change here.
-
----
-
-## 7. Proposed regression gates for the next run
-
-Not implemented as tests by this pass — they are proposals, because several of
-them should *fail* today on purpose.
+Not implemented as tests by this pass — they are proposals, and several of them
+should *fail* today on purpose.
 
 | gate | today | proposed threshold |
 |---|---|---|
-| founding first settled hour, net $/gh | 322.756 | ruled figure ±1 % (F-10) |
-| `do_nothing` 14-day treasury | $125,493 | **upper** bound once Wave 1 lands; today record-only |
-| `balanced` beats `do_nothing` on cash at d14 | ✗ ($20,061 vs $125,493) | must hold once pressure systems land |
-| relit buildings after a component failure | 0 in 10 of 12 runs | > 0 once a repair verb exists (F-3) |
-| `greedy_growth` dark % at d14 | 30.2 % | ≤ 10 % once grid verbs exist (F-3) |
-| offline/online value edge | +17.3 % mean | \|Δ\| ≤ 5 % once doc 04 §2.12's fidelity rule is implemented (F-4) |
-| `cmd_place_building` on a locked archetype | succeeds | must return `E_CITY_LEVEL` (F-7) |
-| building condition after 14 game-days | 1.000 | < 1.000 once decay is wired (F-8) |
+| founding first settled hour, net $/gh | 348.68 | ruled figure ±1 % (§4) |
+| founding first game-day net | $8,351 | ruled figure ±1 % (§4) |
+| `do_nothing` 21-day treasury | $199,427 | **upper** bound; must fall once F-1's Director floor lands |
+| `balanced` beats `disaster_neglect` on value at d21 | ✗ ($943k vs $1,055k) | **must hold** once decay is wired (F-2) |
+| `balanced` beats `do_nothing` on cash at d21 | ✗ ($17,843 vs $199,427) | must hold |
+| minimum building condition after 21 game-days, `do_nothing` | 1.000 | < 1.000 once decay is wired (F-2) |
+| fleet size after building a station | 8 (unchanged) | > 8 (F-3) |
+| open incidents, mean/hour, `balanced` | 18.68 | ≤ 3 once the fleet tracks stations (F-3) |
+| `incident_abandoned` per run, `balanced` | 59.0 | ≈ 0 (F-3) |
+| first `E_UNSERVED` for `greedy_growth` | game-hour 362 | < game-hour 48 once the founding grid is thinned (F-4) |
+| blocks bought by `balanced` in 21 game-days | 0.3 | ≥ 2 once the READY core is trimmed (F-8) |
+| `tax_squeezer` value vs `balanced` at d21 | +46 % | ≤ +10 % once `TAX_RATE_GROWTH_COEFF` is ruled (F-5) |
+| `credit_line_engaged` events on a run that ends negative | 0 | ≥ 1 (F-7) |
+| `cmd_place_building` on a locked archetype | succeeds | must return `E_CITY_LEVEL` (pass-1 F-7) |
+| offline/online value edge, 7 game-days | mean −3.7 % | \|Δ\| ≤ 5 % held once doc 04 §2.12's fidelity rule is implemented (F-9) |
+| offline/online **dark %** edge, `greedy_growth`, 7 game-days | 1.27 vs 0.80 (−37 %) | \|Δ\| ≤ 10 % (F-9) |
+| matrix runs completed | 17 of 18 | 18 of 18, then 8 seeds (F-10) |
 
 ---
 
-## 8. Changelog
+## 11. What this pass still could not see
+
+| system | state in this run |
+|---|---|
+| building wear (doc 02 §2.6) | `apply_decay` has no caller; `decay_per_hour` is dead data on all 60 archetype levels (F-2) |
+| coverage gating (doc 02 §2.4) | `req_fire_coverage` / `req_police_coverage` are loaded, validated and read by nothing — so civic buildings are still pure cost (pass-1 F-6) |
+| fleet growth (doc 06) | frozen at the founding 8 vehicles (F-3) |
+| recovery ladder (doc 03 §2.10) | never engages (F-7) |
+| `min_city_level` on placement | not enforced by the sim (pass-1 F-7, unchanged) |
+| demolition | no strategy had a reason to demolish; `cmd_demolish_building` is exercised only by its own tests |
+| difficulty multipliers | every run is at `M_build`/`M_repair`/`M_land` = 1.0; the difficulty ladder is untested by the harness |
+| the fine path at scale | only a 7-game-day paired subset (F-9); the 21-day matrix is coarse-only |
+
+---
+
+## 12. Changelog
 
 | pass | date | what changed |
 |---|---|---|
-| **1** | 2026-08-18 | First harness pass. `tools/playtest.gd` + `tools/playtest_report.py` + `tests/test_playtest_harness.gd` land; 24 runs (4 strategies × 3 seeds × 2 paths × 14 game-days). Findings F-1 … F-11 opened. No `data/` change. |
+| **1** | 2026-08-18 | First harness pass. 24 runs (4 strategies × 3 seeds × 2 paths × 14 game-days) against a sim with two player verbs and no pressure systems. Findings F-1 … F-11. No `data/` change. |
+| **2** | 2026-08-19 | Post-Wave-1 integration. Strategies rewritten to use the full doc 93 §B verb set; `tax_squeezer` and `disaster_neglect` added as single-variable variants of `balanced`; two controlled micro-experiments added (transformer payback, tax ladder); schema → 2; `tests/test_playtest_harness.gd` grows six behavioural tests (909 suite tests green). 17 of 18 matrix runs (6 strategies × 3 seeds × 21 game-days, `tax_squeezer` seed 9001 excepted — §0) + a 90-game-day late curve + a paired 7-day fine/coarse set. Findings F-1 … F-10 restated from new data. No `data/` change. |
