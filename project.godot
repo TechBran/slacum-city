@@ -5,9 +5,21 @@ config_version=5
 
 config/name="Slacum City"
 config/description="Persistent urban survival city builder. You built it. Now keep it alive."
-config/version="0.1.0"
+config/version="0.2.0"
 config/features=PackedStringArray("4.7")
 run/main_scene="res://game/main.tscn"
+config/icon="res://icon.png"
+; doc 13 §2.2: the back button must NEVER destroy the process — AndroidLifecycle
+; needs the WM_GO_BACK_REQUEST notification to run its autosave first.
+config/quit_on_go_back=false
+; doc 13 §2: dark from the first frame. The Android window background
+; (export preset screen/background_color), this splash field and the 3D clear
+; colour are all the same near-black blue, so there is no white flash anywhere
+; between launcher tap and first rendered frame.
+boot_splash/bg_color=Color(0.019608, 0.039216, 0.07451, 1)
+boot_splash/image="res://game/branding/splash.png"
+boot_splash/stretch_mode=4
+boot_splash/use_filter=true
 
 [input_devices]
 
@@ -29,9 +41,14 @@ sc_fog_tint={"type": "vec3", "value": Vector3(0.1, 0.12, 0.16)}
 window/size/viewport_width=1280
 window/size/viewport_height=720
 window/handheld/orientation=4
+window/energy_saving/keep_screen_on=true
+window/vsync/vsync_mode=1
+window/frame_pacing/android/enable_frame_pacing=true
+window/frame_pacing/android/swappy_mode=2
 
 [rendering]
 
 renderer/rendering_method="mobile"
 renderer/rendering_method.mobile="mobile"
 textures/vram_compression/import_etc2_astc=true
+environment/defaults/default_clear_color=Color(0.019608, 0.039216, 0.07451, 1)
