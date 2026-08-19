@@ -56,6 +56,17 @@
     "traffic_per_intersection": 0.0020,
     "storm_per_exposed_asset": 0.0149
   },
+  "_ambient_floor_note": "doc 06 §2.6(z) / doc 92 §18 (audit 91 D-6). Every rate above is PER ASSET — per 1000 residents, per node, per kilometre, per intersection — and report 98 R-11/R-13 calibrated them against a city that HAS those assets. The founding city has 144 residents and 18 transformer nodes, so doc 92 §18.1 measures its whole ambient budget at 0.268 incidents/game-day = 1.88/game-week (transformer 0.134, fire 0.083, crime 0.051; 12 seeds x 28 game-days with this block disabled): the dispatch drawer, the picker, the fleet and doc 06's five-tier escalation ladder are, at starter scale, close to scenery. Raising the per-asset rates is the wrong lever — report 98 calibrated them per asset, and a rate that pressures 34 buildings buries 800. The right lever is the one doc 07 §8 already uses for the Director's threat points: a size-independent FLOOR under the rate, as a max(), so a channel whose own inventory already out-generates its floor never sees it and the crossover is CONTINUOUS in city size — no cliff, no branch, no 'small city' mode. Per channel rather than aggregate, so the MIX is authored rather than accidental and each department in the founding roster gets work. Budget 0.40/game-day; measured delivery 3.04/game-week, ruled band 2-4 (doc 92 §18.3, gate 19). NOTE the max() takes the INSTANTANEOUS lambda, not the daily mean, so transformer_failure gains 40% from a floor below its daily average — doc 06 prices it on (load_ratio/0.70)^3 and that collapses to 0.023 at the 03:00 load clamp. The floor fills troughs; it never touches peaks.",
+  "_ambient_floor_coverage_note": "Only three of the six generators carry a row, and the reason is a measurement, not a taste: the floor CANNOT INVENT A TARGET, and `IncidentWorld.water_mains()` and `IncidentWorld.road_intersections()` are still the base stubs returning [] — `CityIncidentWorld` overrides neither, so water_main_break and traffic_accident have no candidate source in the shipped city and generate exactly zero regardless of any rate (doc 92 §18.2, filed as D-14/D-15). A row for them would be dead data, which is the thing report 98 spent itself deleting. storm_damage carries no row for a different and permanent reason: its candidates exist only inside a live doc 07 storm cell, and while one is overhead the player has plenty to answer. When the two adapters land, doc 92 §18.2 says what to re-derive.",
+  "ambient_floor": {
+    "enabled": true,
+    "grace_days": 2.0,
+    "per_day": {
+      "crime": 0.20,
+      "structure_fire": 0.10,
+      "transformer_failure": 0.10
+    }
+  },
   "factors": {
     "crime": {
       "k_stability": 3.0, "k_dark": 0.35, "k_outage_in_dark": 1.5,

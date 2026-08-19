@@ -173,24 +173,45 @@ func test_happiness_band_and_tax_reach() -> void:
 	assert_almost_eq(model.f_happiness(), 0.75, 1e-6, "lower clamp engaged (raw would be 0.70)")
 
 
+## The RULE, not the rungs. Doc 92 §19 retuned doc 09 §2.11's ladder and this
+## test used to pin the old rungs as literals, so a legitimate retune read as
+## three failures here and as nothing at all where it mattered. The numbers now
+## live in `data/progression.json` and are gated — with their measured
+## justification — by `tests/test_balance_gates.gd::test_gate_20_*`; what this
+## test owns is the arithmetic that must hold for ANY ascending ladder.
 func test_city_level_ladder_and_monotonicity() -> void:
-	assert_eq(ProgressionSystem.level_reached(144), 0)
-	assert_eq(ProgressionSystem.level_reached(250), 1)
-	assert_eq(ProgressionSystem.level_reached(999), 1)
-	assert_eq(ProgressionSystem.level_reached(4000), 3)
-	assert_eq(ProgressionSystem.level_reached(30000), 5)
+	var ladder := ProgressionSystem.city_level_pop()
+	assert_eq(ladder[0], 0)
+	for level in ladder.size():
+		# Exactly at a rung you are on it; one resident short you are below it.
+		assert_eq(ProgressionSystem.level_reached(ladder[level]), level)
+		if ladder[level] > 0:
+			assert_eq(ProgressionSystem.level_reached(ladder[level] - 1), level - 1)
+	var top := ladder[ladder.size() - 1]
+	assert_eq(ProgressionSystem.level_reached(top * 10), ladder.size() - 1,
+			"the top rung is the top: more people cannot make a seventh level")
 	var progression := ProgressionSystem.new()
-	var events := progression.update(1000)
+	# One update that crosses two rungs at once must grant BOTH milestones.
+	var events := progression.update(ladder[2])
 	assert_eq(progression.city_level, 2)
 	var types: Array = events.map(func(e: Dictionary) -> String: return String(e.get("id", e["type"])))
 	assert_true(types.has("city_level_changed"))
 	assert_true(types.has("city_level_1"))
 	assert_true(types.has("city_level_2"))
-	assert_true(types.has("population_1k"))
 	# Disaster halves the city: the level is never lost, no events fire.
-	assert_eq(progression.update(100).size(), 0)
+	assert_eq(progression.update(ladder[1] / 2).size(), 0)
 	assert_eq(progression.city_level, 2)
-	assert_eq(progression.next_level_threshold(), 4000)
+	assert_eq(progression.next_level_threshold(), ladder[3])
+	# Doc 09 §2.11's population milestones are named for their POPULATION and are
+	# independent of the level ladder — they must not move when it is retuned.
+	var pop_milestones := ProgressionSystem.new()
+	var crossed: Array = pop_milestones.update(10000).map(
+			func(e: Dictionary) -> String: return String(e.get("id", e["type"])))
+	assert_true(crossed.has("population_1k"))
+	assert_true(crossed.has("population_10k"))
+	assert_false(ProgressionSystem.new().update(999).map(
+			func(e: Dictionary) -> String: return String(e.get("id", e["type"])))
+			.has("population_1k"))
 
 
 func test_milestones_one_shot_and_roundtrip() -> void:

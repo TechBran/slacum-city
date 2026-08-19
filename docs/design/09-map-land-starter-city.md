@@ -902,20 +902,24 @@ A one-feeder fault costs 2.1 happiness points and 1 % of revenue in three hours 
 
 ### 2.11 City level and progression — absorbed per report 98 G-1 / G-4
 
-Doc 02 proposed the population ladder and nothing owned it. **Adopted verbatim**, in `data/progression.json`:
+Doc 02 proposed the population ladder and nothing owned it. Adopted here, and **RETUNED against measurement by doc 92 §19** (audit 91 D-7). `data/progression.json` — the file this section has always named, and which doc 92 §19 is the pass that finally wrote it:
 
 | `city_level` | 0 | 1 | 2 | 3 | 4 | 5 |
 |---|---|---|---|---|---|---|
-| min city population | **0** | **250** | **1,000** | **4,000** | **12,000** | **30,000** |
+| min city population | **0** | **200** | **700** | **1,600** | **3,600** | **8,000** |
+| *doc 02's original proposal* | 0 | 250 | 1,000 | 4,000 | 12,000 | 30,000 |
+| `balanced` reaches it on game-day | t0 | **2** | **11** | **23** | *unfitted* | *unfitted* |
+
+The proposal predated every measurement in doc 92 and four of its six rungs were unreachable by anything the game can do: the fastest builder in the study peaks at 1,872 residents over 90 game-days and the competent player ends fifty game-days at 2,710, so a 12-game-day city sat at level 0 and refused 376 upgrades with `E_CITY_LEVEL`. The rungs above are placed on doc 92 §19.1's measured `balanced` population curve at game-days that roughly double; levels 4 and 5 are placed by the ~2.25× ratio the fitted rungs settle into rather than by fit, because nothing has yet produced 3,600 residents — that is doc 92 pass-3 F-11's power ceiling, and they get a real fit when the feeder verb lands.
 
 ```
 city_level_reached = max{ i : city_population >= CITY_LEVEL_POP[i] }
 city_level         = max(city_level, city_level_reached)      # monotone — a level is never lost
 ```
 
-**Progression is monotone by design.** A disaster that halves your population must not re-lock the buildings you already own, re-lock land you have already bought, or repossess a fire engine. `city_level_max` is stored in the `progression` save section; the *displayed* level is the max, and doc 12 may show "population 810 / 1,000 to level 3" as a separate readout.
+**Progression is monotone by design.** A disaster that halves your population must not re-lock the buildings you already own, re-lock land you have already bought, or repossess a fire engine. `city_level_max` is stored in the `progression` save section; the *displayed* level is the max, and doc 12 may show "population 610 / 700 to level 2" as a separate readout — `ProgressionSystem.next_level_threshold()` is the reader, so a retuned ladder moves the readout with it.
 
-At t0 `city_population = 144 ⇒ city_level = 0`. Level 1 arrives at 250 residents — 27 more houses, or 5 more apartments, or the mix in between; against a 62 %-vacant core that is a first-session goal, not a grind.
+At t0 `city_population = 144 ⇒ city_level = 0`. Level 1 arrives at 200 residents — **56 more people: fourteen more houses, or three more apartments**, or the mix in between; against a 62 %-vacant core that is a *first-session* goal, and doc 92 §19.3 measures the competent player reaching it on game-day 2 on all three seeds. The old 250 put it on game-day 4, at the far edge of playable, and put every rung above it out of reach.
 
 **What `city_level` gates** (this doc publishes the scalar and the event; each consumer owns its own thresholds):
 
@@ -1348,11 +1352,23 @@ Only constants **owned by this doc**. Land price constants live in `data/economy
 
 ### 8.2 `data/progression.json` — new, owned here (report 98 G-1 / G-4 / G-5)
 
+> **Shipped state (doc 92 §19, Wave 6).** The file now exists, and it carries the
+> `city_level_population_thresholds` block and nothing else. Report 98 named this
+> file and no pass ever wrote it, so the ladder lived as a `const` in
+> `sim/population/progression_system.gd` and was the one balance number in the
+> game that could not be retuned without a code edit — which is audit 91 D-7.
+> The `population`, `happiness`, `milestones`, `stats_counters` and `bench_city`
+> blocks below are still authored-but-unshipped: their consumers hold their own
+> constants, and moving them is the job of whoever next touches those systems.
+> **Do not add a second copy of the ladder anywhere** —
+> `ProgressionSystem.CITY_LEVEL_POP_FALLBACK` is a missing-file degrade, gated
+> equal by `tests/test_balance_gates.gd::test_gate_20_*`, not a mirror.
+
 ```json
 {
   "schema_version": 1,
-  "city_level_population_thresholds": [0, 250, 1000, 4000, 12000, 30000],
-  "_source": "Adopted verbatim from doc 02's proposal (report 98 G-1); doc 02's copy is deleted.",
+  "city_level_population_thresholds": [0, 200, 700, 1600, 3600, 8000],
+  "_source": "Adopted from doc 02's proposal (report 98 G-1), RETUNED against doc 92 §19's measured curves; doc 02's copy is read-only.",
   "city_level_monotone": true,
   "population": {
     "workforce_fraction": 0.55,

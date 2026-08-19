@@ -1794,6 +1794,12 @@ class Runner extends RefCounted:
 			elif type == "BuildingPowerChanged":
 				var key := "BuildingPowerChanged:" + String(event.get("state", ""))
 				events[key] = int(events.get(key, 0)) + 1
+			elif type == "incident_created":
+				# Doc 92 §18 wants the MIX, not just the count: the ambient floor
+				# is authored one channel at a time, so the only way to check the
+				# authored split against the delivered one is to bucket by type.
+				var key := "incident_created:" + String(event.get("incident_type", ""))
+				events[key] = int(events.get(key, 0)) + 1
 		return settled
 
 	# --- summary ------------------------------------------------------------

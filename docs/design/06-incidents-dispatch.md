@@ -272,6 +272,24 @@ Global safety valve: `λ_total *= incident_load_damper` where
 `incident_load_damper = clamp(1.0 - 0.06 * max(0, active_incident_count - fleet_size), 0.25, 1.0)`.
 This is the anti-death-spiral rule (spec §51 Risk 5) and it is applied identically online and offline.
 
+#### 2.6(z) The ambient floor — *added by doc 92 §18 (audit 91 D-6)*
+
+Every rate in `generator_base_rates` is **per asset**, so `λ_total` is proportional to what the player has already built and a 34-building founding city generates 1.88 incidents per game-week — the drawer, the picker, the fleet and §2.5's whole five-tier escalation ladder are, at starter scale, scenery. The answer is **not** a rate change (report 98 R-11/R-13 calibrated all six per asset, and a rate that pressures 34 buildings buries 800). It is the same instrument doc 07 §8 uses for the Director's threat points — a size-independent **floor**, taken per channel, immediately before the damper:
+
+```
+λ_used(type) = max( λ_total(type), ambient_floor.per_day[type] / 24 * dt_h )   # if λ_total > 0
+n            = poisson(λ_used(type) * incident_load_damper, stream_for(type))
+```
+
+Four rules, and each one falls out of the `max()` rather than being enforced separately:
+
+1. **It never lowers a rate.** A channel whose own inventory out-generates its floor never sees it, so the crossover is continuous in city size — there is no "small city" mode.
+2. **It never invents a target.** `λ_total <= 0` means the channel scanned and found no eligible candidate; the floor stays out and the guard is the `if` above. The candidate is still drawn from the channel's own weighted list, so the floor changes *how often*, never *where*.
+3. **It is still damped.** It sits inside the `incident_load_damper` multiply, so the anti-death-spiral rule, doc 08's beyond-72-hour offline damper and a difficulty's `generation_mult` all still apply.
+4. **It works on the instantaneous λ, not the daily mean**, so it fills a channel's troughs (transformer failure at 03:00, where `(load_ratio/0.70)³` collapses to 0.023) without touching its peaks.
+
+`grace_days` suppresses it for the first N game-days so the scripted `TUT_TRANSFORMER_FAIL` incident (`data/incidents.json` `tutorial`, requested through `director.request_scripted_incident`) is still the first one a new player ever meets. Only channels with a live candidate source carry a row: `water_main_break` and `traffic_accident` are **omitted** because their candidate sources are unimplemented (doc 92 §18.2, D-14/D-15) and a floor row for them would be dead data, and `storm_damage` is omitted permanently because its candidates exist only inside a live doc 07 storm cell. Authored values and the measured A/B: doc 92 §18.3; gated by `tests/test_balance_gates.gd::test_gate_19_*`.
+
 **Weather enters generation through doc 07's channels only — doc 06 authors no weather constant** *(report 98 RR-4, extending C-57).* The `weather_mults` table (`crime` / `fire` / `transformer` / `traffic`, with its dead `snow` / `blizzard` / `fog` columns) is **deleted from this doc and from `data/incidents.json`**. It was a second statement of a quantity doc 07 already publishes, keyed by discrete state, so it could not express doc 07's intensity lerp and it drifted the moment doc 07 retuned a row. Each generator now names exactly one channel:
 
 | generator | channel consumed | doc 07 §2.2 range (CLEAR → THUNDERSTORM at intensity 1.0) |
@@ -1291,6 +1309,11 @@ One document, three top-level keys — split into `data/incidents.json`, `data/v
       "water_main_per_km": 0.0022,
       "traffic_per_intersection": 0.0020,
       "storm_per_exposed_asset": 0.0149
+    },
+    "ambient_floor": {                             /* §2.6(z), doc 92 §18 */
+      "enabled": true,
+      "grace_days": 2.0,
+      "per_day": { "crime": 0.20, "structure_fire": 0.10, "transformer_failure": 0.10 }
     },
     "factors": {
       "crime": { "k_stability": 3.0, "k_dark": 0.35, "k_outage_in_dark": 1.5,

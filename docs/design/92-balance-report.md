@@ -62,6 +62,18 @@ not doc 03 §2.12's stub-era worked example.
     -s res://tools/playtest.gd -- --days=7 --mode=fine --seeds=1337 \
     --strategies=do_nothing,greedy_growth,balanced,disaster_neglect
 
+# the pacing rate (§18.3). 12 seeds, because an incident rate measured on one
+# seed is a sample and not a rate. Flip `ambient_floor.enabled` in
+# data/incidents.json to reproduce the floor-off column of the same table.
+~/.local/bin/godot --headless --path "/home/bbx/Slacum City game" \
+    -s res://tools/playtest.gd -- --days=28 --mode=coarse --strategies=do_nothing \
+    --seeds=1337,4242,9001,101,202,303,404,505,606,707,808,909
+
+# the 50-game-day pair, past the pacing horizon (§15.2, re-run in §19.5)
+~/.local/bin/godot --headless --path "/home/bbx/Slacum City game" \
+    -s res://tools/playtest.gd -- --days=50 --mode=coarse --seeds=1337 \
+    --strategies=balanced,disaster_neglect
+
 # every table in this document, regenerated from those files
 python3 tools/playtest_report.py build/playtest --mode coarse --days 21
 python3 tools/playtest_report.py build/playtest --mode coarse --days 7 --section compare
@@ -69,7 +81,10 @@ python3 tools/playtest_report.py build/playtest --mode coarse --days 7 --section
 
 Seeds `1337, 4242, 9001`. Run files are
 `build/playtest/<strategy>_seed<N>_d<D>_<mode>.json` (schema_version 2) and are
-**not committed** — they are regenerated per merge.
+**not committed** — they are regenerated per merge. Since §18 the `events` block
+of every run file also buckets `incident_created` **by incident type**
+(`incident_created:crime`, …); the terminal table's `WATCH` list still prints the
+total only, so the mix is read off the JSON.
 
 **Coverage of this pass: 17 of the 18 matrix runs.** `tax_squeezer` seed 9001
 did not finish inside the harness's wall-clock budget, so every `tax_squeezer`
@@ -1705,3 +1720,385 @@ against the template's, at doc 03 §2.13(d)'s 17–52× piece-rate premium; and 
 what city size does the authored water topology (one pump, 40 m³/h, 7.2× headroom
 at founding) stop covering the demand — the water twin of §17.3's feeder ceiling,
 and the one the new verbs CAN answer.
+
+---
+
+## 18. Pass 5 — incident pacing (audit 91 D-6)
+
+*Wave 6, 2026-08-19. Same rig, same strategies, same summariser. New this pass:
+`tools/playtest.gd` buckets `incident_created` **by type**, because the ruling is
+about a MIX and a bare count cannot show one.*
+
+Audit 91 **D-6**: *"2 incidents in 287 game-hours … the drawer, the picker, the
+fleet and doc 06's whole escalation ladder are almost never seen."* The ruling
+this pass answers: **the small-city floor should make the dispatch loop a weekly
+beat — 2–4 ambient incidents per game-week at starter scale, scaling smoothly. A
+`do_nothing` city must still survive it; a neglected one meets its fires
+sooner.**
+
+### 18.1 What the founding city actually generates, and why
+
+Every doc 06 §2.6 generator is priced **per asset** — per 1,000 residents, per
+transformer node, per kilometre of main, per intersection, per exposed span — and
+report 98 R-11/R-13 calibrated each rate against a city that *has* those assets.
+The founding city has 144 residents and 18 transformer nodes. Measured over
+**336 game-days** (12 seeds × 28 game-days of `do_nothing`) with the floor
+switched off, which is the honest counterfactual because `ambient_floor.enabled`
+`false` restores the pre-Wave-6 generation exactly:
+
+| channel | candidate source at t0 | incidents / game-day | / game-week |
+|---|---|---|---|
+| `transformer_failure` | 18 nodes | 0.134 | 0.94 |
+| `structure_fire` | 34 buildings | 0.083 | 0.58 |
+| `crime` | 4 districts, 144 residents | 0.051 | 0.35 |
+| `water_main_break` | **0 segments** | **0.000** | **0.00** |
+| `traffic_accident` | **0 intersections** | **0.000** | **0.00** |
+| `storm_damage` | only inside a live doc 07 cell | 0 between storms | — |
+| **total ambient** | | **0.268** | **1.88** |
+| doc 07 §8 Director floor, for scale | | 0.071 | 0.50 |
+
+1.88 per game-week is *below* the ruled band, and it is also the first thing this
+pass found: D-6's headline "2 in 287 game-hours" is a 12-game-day sample of a
+0.27/day process, whose expectation is 3.2 — so part of the audit's number is
+Poisson noise on a rate that was low, but not as low as one sample read. The rate
+being low is real. **The other half is not a rate at all**, and §18.2 is about
+that.
+
+**The lever, and why it is a floor.** Raising `generator_base_rates` is the wrong
+answer twice over: report 98 calibrated all six per asset against real physics
+(R-13 against doc 07's own published storm outcome targets), and a rate that
+pressures 34 buildings buries 800. The right instrument already exists one
+document over — doc 07 §8's Director floor, which doc 92 pass 2 introduced for
+exactly this shape of problem — and it is a `max()`:
+
+```
+λ_used(channel) = max( λ_natural(channel), floor_per_hour(channel) × dt_h )
+```
+
+`data/incidents.json` `ambient_floor` authors it **per channel**, not in
+aggregate, and three properties follow from the shape rather than from the
+numbers:
+
+1. **Continuous in city size.** A channel whose own inventory out-generates its
+   floor never sees it, and the handover happens at one city size with no cliff
+   and no branch. There is no "small city" mode to test, and no size at which the
+   rate jumps.
+2. **It cannot invent a target.** `λ_natural ≤ 0` means the channel scanned and
+   found no eligible candidate; the floor stays out. It changes how OFTEN, never
+   WHERE — the target is still drawn from the channel's own weighted candidate
+   list, so a floored fire still picks the building doc 02 says is likeliest to
+   burn and a floored crime still picks by `crime_weight`.
+3. **Still dampened.** The floor sits inside `_poisson(… × damper)`, so
+   `load_damper` (an overwhelmed fleet), doc 08's beyond-72-hour offline damper
+   and a difficulty's `generation_mult` all still apply to it. A floor is a
+   minimum on the *rate*, not a guarantee of an *incident*.
+
+It also works on the **instantaneous** rate rather than the daily mean, which is
+worth stating because it is why the three channels respond so differently in
+§18.3: the floor fills a channel's troughs without touching its peaks.
+
+### 18.2 Two of the six generators have no candidate source at all — D-14 / D-15
+
+`water_main_break` and `traffic_accident` generate **exactly zero** in the
+shipped city, at every city size, for a reason that is not a rate:
+
+```
+IncidentWorld.water_mains()        -> []      sim/incidents/incident_world.gd:243
+IncidentWorld.road_intersections() -> []      sim/incidents/incident_world.gd:302
+```
+
+`CityIncidentWorld` overrides **neither**. They are the base class's pre-doc-05 /
+pre-doc-10 stubs, and doc 06's water and traffic generators have been scanning an
+empty array since the day they were written. That is a third of doc 06's
+generator surface, and two of the five departments in the founding roster — 2
+water repair trucks and the construction crew that supports them — with no
+ambient work to answer.
+
+For this pass it is also the reason the floor carries **three** rows instead of
+five: **a floor row for a channel with no candidate source is dead data**, which
+is the thing report 98 spent itself deleting, so none is authored and
+`test_gate_19` asserts their absence.
+
+Filed as **D-14** (water) and **D-15** (traffic). Both are adapter work in
+`sim/incidents/city_incident_world.gd` and both need a schema join, not a number.
+Doc 06 already documents exactly what it wants, and both subsystems already
+publish every field:
+
+| generator | row doc 06 wants (`incident_world.gd`) | who has it |
+|---|---|---|
+| `water_main_break` | `{id, tile, length_km, condition, pressure_ratio, utilization, freeze_stress, zone}` | doc 05 `WaterSystem` |
+| `traffic_accident` | `{id, tile, congestion_index, signalised, signal_powered, condition_hazard_mult}` | doc 10 `RoadNetwork` |
+
+When they land, §18.3's budget is re-derived across five channels rather than
+three, and **the two new rows come out of the three existing ones** — the ruled
+2–4/game-week band is a budget for the whole dispatch loop, not a per-channel
+allowance.
+
+### 18.3 The ruling, the numbers, and the A/B they were measured on
+
+**Budget: 3.0 ambient incidents per game-week at starter scale** — the middle of
+the ruled band rather than its edge, so Poisson noise on a real session lands
+inside the band instead of on its rim. Split by which department answers it and
+by how much stake each one carries:
+
+| channel | floor, /game-day | department | why this share |
+|---|---|---|---|
+| `crime` | **0.20** | police (2 patrol) | the safest channel to floor: it self-resolves at tier ≤ 2 after 2 game-hours, damages no building, and its natural rate at t0 (0.051) is the furthest below a playable beat. It carries the ambient texture. |
+| `transformer_failure` | **0.10** | utility (2 trucks) | the *teaching* incident — what the tutorial scripts, and the one whose consequence (a dark block) is legible from the camera without opening a panel. |
+| `structure_fire` | **0.10** | fire (1 engine) | deliberately the rarest, and the only one authored within noise of its own natural rate (0.083) — a **1.2×** lift where crime gets 3.9×. One engine, `esc_base 2.20`, a 0.5-game-hour burn-down timer and a building at the end of it: a fire should be an event, not a chore. Its floor is insurance for a *shrunken* roster, not a lift on a full one. |
+| **authored total** | **0.40** | | 2.80/game-week of floor, before the natural rate and doc 06's grid-failure map add to it |
+| `grace_days` | **2.0** | | the founding day and the one after are quiet, so the tutorial's scripted transformer is the first incident a new player ever meets. One game-day tighter than doc 07 §8's Director grace of 3, so the first *ambient* beat lands before the first Director event. |
+
+**The A/B. Same twelve seeds, same 28 game-days, same `do_nothing` control, one
+boolean apart — 336 game-days on each side:**
+
+| | floor off | **floor on** | ruled band |
+|---|---|---|---|
+| ambient incidents / game-week | 1.88 | **3.04** | 2–4 |
+| — `crime` | 0.35 | **1.15** | |
+| — `transformer_failure` | 0.94 | **1.31** | |
+| — `structure_fire` | 0.58 | **0.58** | |
+| Director events / game-week | 0.50 | **0.50** | untouched — doc 07 §8's floor is a different question |
+| incidents resolved | 90 / 90 | **146 / 146** | the ruling's survival clause |
+| failed / abandoned | 0 / 0 | **0 / 0** | |
+| buildings destroyed | 0 | **0** | |
+| treasury, 28 game-days, mean | $187,551 | **$189,863** | +1.2 % |
+
+**Three channels, three different answers, one `max()`** — this is the table that
+explains the design:
+
+- **`crime` triples** (0.35 → 1.15). Its natural rate is a fifth of its floor at
+  every hour of the day, so the floor simply *is* its rate at starter scale.
+- **`transformer_failure` rises 40 %** (0.94 → 1.31) even though its daily-mean
+  natural rate (0.134) is *above* its floor (0.10). The floor works on the
+  instantaneous λ, and doc 06 prices transformer failure on `(load_ratio /
+  0.70)³` — at 03:00 the load ratio is pinned at its 0.20 clamp and that cube is
+  0.023, so the natural rate collapses overnight. The floor fills the trough and
+  leaves the evening peak exactly as doc 04 wrote it.
+- **`structure_fire` does not move measurably** (0.58 → 0.58, and 28 incidents on
+  both sides — the same integer twice). Its floor is only 1.2× its natural rate,
+  so the arithmetic lift is on the order of **+3 expected incidents over 336
+  game-days against a standard deviation of 5.6**: below this measurement's own
+  noise floor. Landing on *exactly* the same integer rather than merely a similar
+  one is the shared RNG stream — `structure_fire` draws from `incidents`, and at
+  a per-sub-step λ near 3.5 × 10⁻⁴ the Poisson draw consumes exactly one
+  `randf()` whether it returns 0 or 1, so a 20 % λ change moves the break
+  threshold by ~7 × 10⁻⁵ and only a handful of the run's ~95,000 draws could flip
+  at all. None did. Stated plainly because the tempting reading of this row —
+  *"the `max()` never binds for fire"* — is **false**, and a reader who believed
+  it would mis-set the next fire constant. Resolving it wants either more seeds
+  or a channel-level λ probe, and neither is worth a pass on a 1.2× lift.
+
+  What is true is the design intent behind it: doc 02's `fire_ignition_per_hour`
+  is a per-building constant that drifts only with condition, so on a full
+  34-building roster fire is the one channel that was already close to a playable
+  rate and it is authored to stay there. Its floor is what stands between the
+  player and silence when the roster **shrinks** — a city that has just lost
+  buildings to a fire, or an early one that has not built many — and that is a
+  case this A/B does not contain.
+
+And the last row is the pleasant surprise: because doc 06 credits `reward_base`
+on resolve, giving the dispatch loop a heartbeat makes the control city
+*slightly richer*, not poorer. The pacing floor is not a tax on standing still;
+it is the game's smallest income stream finally having something to bill.
+
+### 18.4 A neglected city meets its fires sooner — the gradient, measured
+
+The ruling's second clause holds without a single constant spent on it, because
+the floor is a `max()` and neglect raises the natural rate straight through it.
+This document's own six agents, 21 game-days × 3 seeds each:
+
+| strategy | incidents / game-week | of which fires | failed | what it does differently |
+|---|---|---|---|---|
+| `do_nothing` | 3.11 | 5 | 0 | nothing — the floor IS its rate |
+| `infrastructure_first` | 3.00 | 6 | 0 | grid ahead of growth; it stays small, so the floor is still its rate |
+| `balanced` | 45.8 | 20 | 4 | 272 buildings by day 21 — the natural rate has left the floor two orders behind |
+| `tax_squeezer` | 99.3 | 27 | 13 | `balanced` with the slider pinned: more city, more of everything |
+| `disaster_neglect` | 107.2 | **70** | **106** | `balanced` with `maintains = false`: **3.5× the fires and 26× the failures of the agent it is otherwise identical to** |
+| `greedy_growth` | 148.1 | **105** | **298** | never repairs, never buys grid, never sets a priority class |
+
+`disaster_neglect` differs from `balanced` in exactly one field
+(`tests/test_playtest_harness.gd` asserts the `is Balanced` relationship and that
+each issues or withholds exactly the verbs its knob controls), so the
+70-fires-against-20 row is attributable to neglect and to nothing else. The
+mechanism is doc 06's own: `factors.fire.unpowered_mult` on a dark building,
+`arson_k` on a district whose stability has fallen through 0.35, and doc 02's
+`fire_condition_mult` on a roster nobody repairs. **The floor is invisible in
+every row below the first two**, which is the whole point of writing it as a
+`max()`.
+
+### 18.5 Where the pacing floor is NOT the instrument
+
+Three things this pass deliberately did not move, each with its reason:
+
+- **`data/incidents.json` `generator_base_rates`.** Report 98 R-11/R-13
+  calibrated all six per asset. A pacing problem at 34 buildings is not evidence
+  about a rate per node, and the same edit would make an 800-building city
+  unplayable.
+- **`data/director.json` `floor`.** Doc 92 pass-2 F-1 set it at 6 tp/game-day,
+  `max_hazard_tier 1`, `classes ["minor"]`; it delivers 0.50 events/game-week at
+  starter scale — measured, unchanged, and answering a *different question*
+  (*does anything ever HAPPEN to this city?*) from the one D-6 asks (*does the
+  dispatch loop ever RUN?*). Two floors, two documents, two questions. Raising
+  the Director's to fix D-6 would have bought weather instead of dispatch.
+- **`data/director.json` `fairness` cooldowns.** The ambient floor is doc 06
+  generation and is not subject to doc 07's per-type cooldowns or target
+  immunity, which is correct: those exist to stop the *Director* staging the same
+  disaster twice, and a neighbourhood having two burglaries in a game-week is not
+  unfair — it is a neighbourhood.
+
+---
+
+## 19. Pass 5 — progression pacing (audit 91 D-7)
+
+Audit 91 **D-7**: *"the soak's city never left city level 0 in 12 game-days, so
+every one of 376 upgrade attempts was refused `E_CITY_LEVEL`."*
+
+### 19.1 The old ladder was never measured against anything
+
+`[0, 250, 1000, 4000, 12000, 30000]` was adopted verbatim by report 98 G-1 from a
+doc 02 *proposal*, into a `data/progression.json` that report 98 named and nobody
+ever wrote — so the six rows lived as a `const` in
+`sim/population/progression_system.gd` and were the one balance number in the
+game that could not be retuned without a code edit. Set against this document's
+own measurements, four of the six rungs are unreachable by anything the game can
+currently do:
+
+| evidence | measurement | highest rung it clears |
+|---|---|---|
+| §8 — 90 game-days of `greedy_growth`, the fastest builder in the study | peak population **1,872** | level 2 (1,000) |
+| §19.1 here — **50** game-days of `balanced`, the competent player | population **2,710**, still **city level 2** | level 2 |
+| audit 91 §14.2 — the 2-real-hour QA soak, 12 game-days | population never left the founding band | **level 0** |
+
+Level 3 (4,000) was out of reach at fifty game-days. Levels 4 and 5 (12,000 and
+30,000) are out of reach by factors of six and sixteen against the highest
+population this game has ever produced. Doc 02 §2.10–2.11's entire upgrade
+ladder — every L4 and L5 rung, `high_rise` at all, `data_center` at all, doc 10's
+`road_crew` at `city_level 3` — sat behind a door with no key.
+
+**The fit's input: measured `balanced` population, seed 1337, coarse path.**
+
+| game-day | 1 | 2 | 3 | 4 | 5 | 10 | 15 | 20 | 25 | 30 | 40 | 50 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| population | 180 | 208 | 244 | 292 | 344 | 678 | 890 | 1,340 | 1,432 | 1,898 | 2,145 | 2,710 |
+
+### 19.2 The retune, and the cadence it is fitted to
+
+The ruling: **a played city hits level 1 inside game-days 2–4 and level 2 by
+about day 10–14, and the unlock cadence should feel like progression.** A cadence
+is felt in TIME, not in ratios, so the rungs are placed on the measured curve
+above at game-days that roughly double — **2, 11, 23** — and the two rungs beyond
+the measured window are placed by the ratio the fitted rungs settle into.
+
+| city level | 0 | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|---|
+| **was** | 0 | 250 | 1,000 | 4,000 | 12,000 | 30,000 |
+| **is** | 0 | **200** | **700** | **1,600** | **3,600** | **8,000** |
+| ratio to previous rung | — | — | 3.50× | 2.29× | 2.25× | 2.22× |
+| `balanced` reaches it on game-day | t0 | **2** | **11** | **23** | *outside the window* | *outside the window* |
+
+The steep first ratio is deliberate and is the shape of the finding: the founding
+city is 62 %-vacant and the first rung has to be **56 residents away** — fourteen
+houses or three apartments — or the first session has no beat in it at all. From
+level 2 up the ladder settles at a flat ~2.25×, which is what "each rung costs
+about twice the last one in game-days" works out to once the occupancy ramp and
+the block-development pipeline are both running.
+
+The ladder now lives in **`data/progression.json`** — doc 09 §8.2's file, created
+by this pass. `ProgressionSystem.CITY_LEVEL_POP_FALLBACK` holds the same six rows
+as a **missing-file degrade and not as a mirror**; gate 20 asserts the two agree,
+so a half-landed retune is a test failure rather than a surprise six weeks later.
+Doc 09 §8.2 also authors `population`, `happiness`, `milestones`,
+`stats_counters` and `bench_city` blocks for that file; their consumers still hold
+their own constants and moving them is not this pass's job, so the file ships
+with the one block that has a reader and its header says exactly that.
+
+**What levels 4 and 5 are waiting on.** They are placed by ratio because there is
+nothing to fit them to: no strategy in this document has ever produced 3,600
+residents. That is pass-3 **F-11**'s ceiling and not a progression finding — a
+well-played city runs into the two-feeder 2,400 kW supply path at around game-day
+24 and its growth flattens (§17.3; gate 18b pins it). **When the feeder verb
+lands, levels 4 and 5 get a real fit and this table gets a fourth row.** Until
+then they are honest extrapolation, labelled as such.
+
+### 19.3 Measured — the full matrix, 6 strategies × 3 seeds × 21 game-days
+
+| strategy | level 1 | level 2 | level 3 | level at day 21 |
+|---|---|---|---|---|
+| `greedy_growth` | day 1 | day 7 | **day 11–13** | 3 |
+| `tax_squeezer` | day 2 | day 11–12 | **day 18–19** | 3 |
+| `balanced` | **day 2** (all 3 seeds) | **day 11** (all 3 seeds) | — | 2 |
+| `disaster_neglect` | day 2 | day 10 | — | 2 |
+| `infrastructure_first` | day 6–7 | — | — | 1 |
+| `do_nothing` | never | — | — | 0 |
+
+Both ruled windows are hit on all three seeds with **no seed-to-seed spread at
+all**, which is itself worth recording: the early population curve is driven by
+the agent's build order and doc 09's occupancy ramp, not by the RNG, so this is a
+rung *placement* and not a lucky sample.
+
+Three things the table shows that the ruling did not ask for but wanted:
+
+- **Level 3 is now reachable inside a three-game-week session** by the two agents
+  that push hardest, where it was previously unreachable in fifty game-days by
+  anyone. That is `high_rise` on the build sheet, every L4 upgrade, and doc 10's
+  `road_crew`, all inside the horizon this document measures. At the 50-game-day
+  horizon `balanced` reaches level 3 on **day 23**.
+- **`do_nothing` still never levels.** The ladder is not a participation trophy:
+  it is population, and population is buildings.
+- **`infrastructure_first` reaching level 1 on day 6–7 rather than day 2** is the
+  agent, not the ladder. It holds ≥ 24 served empty tiles per owned block and
+  saves for the next block's development bill instead of spending the difference,
+  so a player who invests before growing pays for it in progression time. That is
+  a legitimate trade, and now a visible one.
+
+### 19.4 What did NOT move, and the checks that say so
+
+- **Monotonicity (doc 09 §2.11)** is unchanged and untouchable: a level, once
+  earned, survives any disaster. Retuning a threshold *down* can only grant a
+  level, never take one back, so this retune cannot un-earn anything in an
+  existing save — `city_level_max` in the `progression` save section still wins.
+- **The founding city is still below rung 1.** 144 residents against 200, so
+  `cmd_place_building("apartment", …)` still answers `E_CITY_LEVEL` at t0: the
+  Wave-5 `min_city_level` ruling, gate 14, and the tutorial's first locked build
+  card all still bite. Gate 20 asserts it directly rather than trusting it.
+- **The tutorial is unaffected.** Every one of the eleven steps places
+  `min_city_level 0` archetypes at city level 0.
+  `tests/test_tutorial_flow.gd` is green over the real `game/main.tscn` shell,
+  5/5, with the eleven steps advancing and the scripted transformer resolving in
+  its measured 62-game-minute window.
+- **`data/starter_city.json`'s 40 block `min_city_level` rows are untouched.**
+  Report 98 G-1 re-based them onto this ladder's *indices*, and indices are what
+  they reference — ring 1 still opens at level 0, ring 2 at levels 1–2. What
+  changed is when the player earns those indices, which is the point.
+
+### 19.5 The 50-game-day pair, re-run — and what the two passes cost it
+
+Both changes are pressure, so the honest thing is to re-run §15.2's pair past the
+pacing horizon and print the bill. Seed 1337, coarse, before → after:
+
+| | `balanced` before | `balanced` after | `disaster_neglect` before | `disaster_neglect` after |
+|---|---|---|---|---|
+| population, day 50 | 2,710 | **2,274** | 1,015 | **1,012** |
+| city level, day 50 | 2 | **3** (day 23) | 2 | **3** (day 22) |
+| buildings | 829 | 795 | 369 | 398 |
+| treasury | $75,444 | $106,462 | $1,097,301 | $831,313 |
+| value created | $2,178,744 | $2,021,692 | $2,288,951 | $2,012,240 |
+| incidents created | 1,374 | 1,363 | 1,701 | 1,587 |
+| buildings destroyed | 0 | **2** | 97 | 87 |
+| dark share | 55.7 % | 56.5 % | 41.7 % | 47.2 % |
+
+`balanced` pays **16 % of its day-50 population** for the two passes, and the two
+causes are separable: it now builds one civic building per city level and there
+are three levels instead of two, and it loses two buildings to fire where it
+previously lost none. Both are the passes working — a city with a real dispatch
+loop loses the occasional building, and a city with a reachable ladder spends
+some of its floorspace on the stations that ladder unlocks.
+
+Neither is a finding, because **neither is inside the horizon the rulings are
+written against**: at 21 game-days every gate holds unmoved (§18.3, §19.3, 25/25
+green), and past game-day 24 both columns are governed by pass-3 F-11's power
+cliff — 56 % dark, minimum condition 0.000 — which was already true before this
+pass and is the feeder verb's problem, not the pacing floor's. Recorded here so
+that when the feeder verb lands, the day-50 population is re-measured against
+**2,274** and not against pass-3's number.
