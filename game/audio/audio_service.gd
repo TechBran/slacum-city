@@ -16,6 +16,9 @@ extends Node
 ##     audio.set_locator(_alert_world_pos)                        # ids → metres
 ##     audio.set_sound_volume(settings_model.value_num("sound_volume"))
 ##     sim_host.ticked.connect(audio.feed_batch)                  # sim events
+##     ui_root.ui_coverage_changed.connect(audio.set_ui_coverage) # interior muffle
+##     ... each sim tick:
+##     audio.feed_unit_states(sim.incidents.vehicle_states())     # moving sirens
 ##     ... each frame:
 ##     audio.update_audio(delta, camera_rig.camera.global_position,
 ##             environment_controller.last_night)
@@ -54,12 +57,23 @@ var _muted := false
 var _elapsed := 0.0
 var _ready_to_play := false
 
+## Interior muffle. `_coverage` is what the UI last reported (0 = nothing over
+## the city, 1 = a full-screen sheet); `_muffle` is the ramped value the filter
+## actually runs at, so opening a sheet is a fade and not a switch.
+var _coverage := 0.0
+var _muffle := 0.0
+var _muffle_spec: Dictionary = {}
+var _lowpass: AudioEffectLowPassFilter = null
+var _muffle_bus := -1
+var _muffle_bus_db := 0.0
+
 
 func setup(cfg: AudioConfig = null) -> void:
 	_cfg = cfg if cfg != null else AudioConfig.load_from_files()
 	_mix = _cfg.mix()
 	events = AudioEvents.new(_cfg)
 	_build_buses()
+	_build_muffle()
 	_build_voices()
 	_build_beds()
 	_apply_master()
@@ -94,6 +108,100 @@ func _build_buses() -> void:
 		AudioServer.set_bus_send(index, str(spec.get("send", String(BUS_MASTER))))
 		AudioServer.set_bus_volume_db(index, AudioConfig.get_num(spec, "volume_db", 0.0))
 		_bus_indices[name] = index
+
+
+# ---------------------------------------------------------------------------
+# Interior muffle
+# ---------------------------------------------------------------------------
+
+## One `AudioEffectLowPassFilter`, on the **Ambient bus only**, created once.
+##
+## When a sheet or a panel covers more than half the screen the player has
+## stopped looking at the city and started looking at a document about it — and
+## the city should be heard the way it is seen: through something. Rolling the
+## ambience off (and trimming it a few dB) is the cheapest possible version of
+## that, and it is the correct one, because the alternative — a second set of
+## "interior" beds — would double the asset budget to say the same thing.
+##
+## The SFX and UI buses are deliberately untouched. A confirmation blip and a
+## critical sting are in the room with the player, not out of the window; if
+## they muffled too, the sheet would feel like a fault rather than a place.
+func _build_muffle() -> void:
+	_muffle_spec = _mix.get("muffle", {}) if _mix.get("muffle", null) is Dictionary else {}
+	if _muffle_spec.is_empty():
+		return
+	var bus_name := str(_muffle_spec.get("bus", "Ambient"))
+	_muffle_bus = AudioServer.get_bus_index(bus_name)
+	if _muffle_bus < 0:
+		return
+	_muffle_bus_db = AudioServer.get_bus_volume_db(_muffle_bus)
+	# Idempotent: `setup()` runs once per process in the game but repeatedly
+	# across a test file, and a second filter on the same bus would double the
+	# rolloff for every test after the first.
+	for i in AudioServer.get_bus_effect_count(_muffle_bus):
+		var existing := AudioServer.get_bus_effect(_muffle_bus, i) as AudioEffectLowPassFilter
+		if existing != null:
+			_lowpass = existing
+			break
+	if _lowpass == null:
+		_lowpass = AudioEffectLowPassFilter.new()
+		AudioServer.add_bus_effect(_muffle_bus, _lowpass)
+	_lowpass.resonance = AudioConfig.get_num(_muffle_spec, "resonance", 0.5)
+	_apply_muffle()
+
+
+## What `ui/ui_root.gd` reports: the fraction of the screen currently covered by
+## a sheet or panel. Below `threshold01` nothing happens at all — a 300 dp side
+## panel is not an interior — and the roll-off reaches full at `full01`.
+func set_ui_coverage(coverage01: float) -> void:
+	_coverage = clampf(coverage01, 0.0, 1.0)
+
+
+func ui_coverage() -> float:
+	return _coverage
+
+
+## 0..1 — how far the muffle has actually ramped, which is not the same as how
+## much of the screen is covered until the ramp has caught up.
+func muffle01() -> float:
+	return _muffle
+
+
+func muffle_cutoff_hz() -> float:
+	return _lowpass.cutoff_hz if _lowpass != null else 0.0
+
+
+func _muffle_target() -> float:
+	if _muffle_spec.is_empty():
+		return 0.0
+	var threshold := AudioConfig.get_num(_muffle_spec, "threshold01", 0.5)
+	var full := AudioConfig.get_num(_muffle_spec, "full01", 1.0)
+	return clampf((_coverage - threshold) / maxf(full - threshold, 0.0001), 0.0, 1.0)
+
+
+func _update_muffle(delta: float) -> void:
+	if _lowpass == null:
+		return
+	var target := _muffle_target()
+	var ramp := maxf(AudioConfig.get_num(_muffle_spec, "ramp_s", 0.25), 0.0001)
+	_muffle = lerpf(_muffle, target, 1.0 - exp(-maxf(delta, 0.0) / ramp))
+	if absf(_muffle - target) < 0.001:
+		_muffle = target
+	_apply_muffle()
+
+
+## Cutoff is interpolated in LOG frequency, because that is the axis hearing
+## uses: a linear slide from 20 kHz to 900 Hz spends its first half doing
+## nothing audible and then slams shut.
+func _apply_muffle() -> void:
+	if _lowpass == null:
+		return
+	var open_hz := maxf(AudioConfig.get_num(_muffle_spec, "open_hz", 20500.0), 20.0)
+	var covered_hz := maxf(AudioConfig.get_num(_muffle_spec, "covered_hz", 900.0), 20.0)
+	_lowpass.cutoff_hz = open_hz * pow(covered_hz / open_hz, clampf(_muffle, 0.0, 1.0))
+	if _muffle_bus >= 0:
+		AudioServer.set_bus_volume_db(_muffle_bus, _muffle_bus_db
+				+ AudioConfig.get_num(_muffle_spec, "covered_db", 0.0) * _muffle)
 
 
 func bus_index(name: String) -> int:
@@ -337,6 +445,16 @@ func feed_batch(batch: Array) -> void:
 		events.feed_batch(batch)
 
 
+## doc 06's fleet snapshot — `IncidentSystem.vehicle_states()` — once per sim
+## tick, the same call `game/render/vehicle_view.gd` already takes. It is what
+## gives the siren throttle a moving position for a unit that is out; without it
+## the mix still works, and a dispatched unit simply sounds once at its incident
+## instead of following the streets.
+func feed_unit_states(states: Array) -> void:
+	if events != null:
+		events.feed_unit_states(states)
+
+
 ## One synthetic UI event — `AudioService.UI_TAP` / `UI_CONFIRM` / `UI_DENY`.
 ## The UI layer emits intent signals, not sounds; the shell translates.
 func ui_cue(kind: StringName) -> void:
@@ -352,6 +470,7 @@ func update_audio(delta: float, listener_pos: Vector3, night01: float) -> void:
 	for cue: Dictionary in events.update(delta, listener_pos, night01):
 		play_cue(cue)
 	_update_beds(delta)
+	_update_muffle(delta)
 
 
 ## A save load replaced the city: drop scheduled sound from the old one and let

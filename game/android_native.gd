@@ -20,6 +20,15 @@ extends RefCounted
 ##   only reports and forwards; what a status *means* for the frame cap and the
 ##   graphics preset is doc 11's.
 ##
+## A fourth capability is **declared and not implemented**: the notification
+## surface (`supports_notifications`, `ensure_channel`, `post_notification`,
+## `cancel_notifications`). Doc 08 §2.13 owns the *policy* and it ships now in
+## `game/notifications/`; doc 13 owns the *platform* and it is phase 2. Every one
+## of those four methods probes the singleton with `has_method` and degrades to
+## "no", so this file already describes the whole contract the Kotlin side has to
+## satisfy — see `game/notifications/native_notification_sink.gd`, which is the
+## seam's other half and is equally finished and equally inert.
+##
 ## Tests substitute the plugin by subclassing: override `is_available()` and the
 ## accessors, hand the instance to `AndroidLifecycle.native`, and no JNI is
 ## involved.
@@ -109,6 +118,46 @@ func set_sustained_performance(on: bool) -> void:
 	if _plugin == null:
 		return
 	_plugin.set_sustained_performance(on)
+
+
+# ------------------------------------------------------ notifications (phase 2)
+
+## True only on a build whose `SlacumNative` implements the notification
+## surface. It does not today, on any build — this is the probe that lets doc 08's
+## router be finished and correct while doc 13's platform half is still to come,
+## rather than the two having to land in the same change.
+func supports_notifications() -> bool:
+	return _plugin != null and _plugin.has_method("post_notification")
+
+
+## One Android channel per enabled class, ids from `data/notifications.json`'s
+## class table. Channels are part of the install, not part of a notification: a
+## player who silences `slacum_routine` in Android's own settings has silenced
+## P3 for good, which is the point (spec §49).
+func ensure_channel(channel_id: String, importance: String, sound: bool,
+		vibrate: bool) -> bool:
+	if _plugin == null or channel_id == "" or not _plugin.has_method("ensure_channel"):
+		return false
+	return bool(_plugin.ensure_channel(channel_id, importance, sound, vibrate))
+
+
+## Post or schedule one plan from `NotificationRouter`. A `fire_at_wall_ms` in
+## the future is an alarm (inexact `setWindow`, per doc 08 §2.13.4); absent or
+## past means now. **No rate limiting on the far side** (report C-71) — the plan
+## has already passed `NotificationBudget`.
+func post_notification(plan: Dictionary) -> bool:
+	if not supports_notifications():
+		return false
+	return bool(_plugin.post_notification(plan))
+
+
+## Everything pending, dropped. doc 08 §2.13's resume step: the catch-up has
+## replaced the future those alarms assumed, so they are re-planned rather than
+## allowed to fire.
+func cancel_notifications() -> int:
+	if _plugin == null or not _plugin.has_method("cancel_notifications"):
+		return 0
+	return int(_plugin.cancel_notifications())
 
 
 func _on_thermal_status_changed(status: int) -> void:

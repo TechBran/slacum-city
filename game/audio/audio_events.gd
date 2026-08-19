@@ -64,7 +64,20 @@ const SOURCE_DAY := "day"
 const SOURCE_NIGHT := "night"
 const SOURCE_PRECIP := "precip"
 const SOURCE_WIND := "wind"
+## Wind AND rain together. A dry gale is a gale and a still downpour is a
+## downpour; only the two at once are a storm, and only a storm gets the bed
+## that sits under the wind bed.
+const SOURCE_STORM := "storm"
 const SOURCE_SITES := "sites"
+
+## doc 10's per-vehicle feed. Named because it is the one event type that
+## reaches `feed()` in bulk and must stay cheap — see `_feed_vehicle_state`.
+const VEHICLE_STATE := "vehicle_state"
+## Prefix for ids coming off doc 10's traffic feed, so a civilian vehicle 7 and a
+## doc 06 unit 7 are two different siren sources.
+const SIREN_VEHICLE_PREFIX := "v"
+## …and doc 06's fleet snapshot.
+const SIREN_UNIT_PREFIX := "u"
 
 ## Event types this class learns from even when they make no sound of their own
 ## — the weather that drives the beds, the incident whose place a later siren
@@ -74,6 +87,10 @@ const OBSERVED_TYPES := [
 	"incident_created", "incident_resolved", "incident_closed",
 	"building_placed_sim", "building_construction_stage", "upgrade_started_sim",
 	"building_completed", "building_destroyed", "building_demolished",
+	# The moving-siren feed. `vehicle_state` is doc 10's ~1,400-per-game-hour
+	# firehose and is handled by a fast path before anything else runs; the other
+	# three are how a siren source stops existing without waiting for its TTL.
+	VEHICLE_STATE, "vehicle_despawned", "unit_arrived", "unit_returned",
 ]
 
 const MIN_GAIN_DB := -60.0
@@ -122,13 +139,22 @@ var _bed_pitch: Dictionary = {}
 var _duck := 0.0
 var _duck_target := 0.0
 
+## The moving-siren policy (Audio-2 ruling). Always present, even with no
+## `sirens` block: an empty spec throttles to its defaults rather than crashing.
+var _sirens: SirenThrottle
+var _siren_cue := ""
+
 var missing_cues: PackedStringArray = []
 
 
 func _init(cfg: AudioConfig = null) -> void:
+	# Built from an empty spec when there is no config at all, so the throttle is
+	# never null and every caller can skip the check.
+	_sirens = SirenThrottle.new(cfg.section("sirens") if cfg != null else {})
 	if cfg == null:
 		return
 	_cfg = cfg
+	_siren_cue = _sirens.cue_id()
 	_rules = cfg.rules()
 	_mix = cfg.mix()
 	_world = cfg.world()
@@ -184,6 +210,7 @@ func reset() -> void:
 	_last_at.clear()
 	_sites.clear()
 	_incident_pos.clear()
+	_sirens.clear()
 	_duck = 0.0
 	_duck_target = 0.0
 
@@ -202,6 +229,11 @@ func feed(event: Dictionary) -> Dictionary:
 	# ~99% of a drained batch that is doc 10's traffic feed.
 	if not _interesting.has(type_name):
 		return NOT_SONIFIED
+	# …and doc 10's feed IS in the interesting set now that sirens move, so it
+	# gets its own door before any of the general machinery runs. See
+	# `_feed_vehicle_state` for what a civilian vehicle actually costs.
+	if type_name == VEHICLE_STATE:
+		return _feed_vehicle_state(event)
 
 	var world_pos: Variant = _position_of(event)
 	_remember(event, type_name, world_pos)
@@ -240,11 +272,26 @@ func feed(event: Dictionary) -> Dictionary:
 	if cooldown > 0.0 and _last_at.has(identity) \
 			and _now - float(_last_at[identity]) < cooldown:
 		return NOT_SONIFIED
-	_last_at[identity] = _now
 
-	var gain_db := AudioConfig.get_num(cue_def, "gain_db", 0.0)
-	gain_db += linear_to_db(maxf(reach01, 0.0001))
-	gain_db += _value_gain_db(rule, event)
+	return _schedule(cue_id, cue_def, world_pos, placed, distance, reach01, delay,
+			identity, _value_gain_db(rule, event), type_name,
+			rule.get("count_gain", null))
+
+
+## The one place a cue becomes a scheduled entry. `feed()` reaches it through a
+## rule; the siren throttle reaches it directly, because a moving siren has no
+## event of its own to match — it is a *state*, sampled. Both paths therefore
+## share the cooldown table, the gain arithmetic and the seeded pitch jitter,
+## which is what stops `unit_dispatched` and the throttle from doubling the same
+## siren at the station door.
+func _schedule(cue_id: String, cue_def: Dictionary, world_pos: Variant, placed: bool,
+		distance: float, reach01: float, delay: float, identity: String,
+		extra_gain_db: float, event_type: String,
+		count_gain: Variant) -> Dictionary:
+	_last_at[identity] = _now
+	var base_gain_db := AudioConfig.get_num(cue_def, "gain_db", 0.0)
+	base_gain_db += linear_to_db(maxf(reach01, 0.0001))
+	base_gain_db += extra_gain_db
 	var jitter := AudioConfig.get_num(cue_def, "pitch_jitter", 0.0)
 	var pitch := 1.0 + (_rng.randf_range(-jitter, jitter) if jitter > 0.0 else 0.0)
 
@@ -254,7 +301,8 @@ func feed(event: Dictionary) -> Dictionary:
 		"cue": cue_id,
 		"stream": str(cue_def.get("stream", cue_id)),
 		"bus": str(cue_def.get("bus", "SFX")),
-		"gain_db": maxf(gain_db, MIN_GAIN_DB),
+		"base_gain_db": base_gain_db,
+		"gain_db": maxf(base_gain_db, MIN_GAIN_DB),
 		"reach01": reach01,
 		"pitch": pitch,
 		"delay_s": delay,
@@ -264,12 +312,94 @@ func feed(event: Dictionary) -> Dictionary:
 		"world_pos": world_pos if placed else _listener,
 		"identity": identity,
 		"count": 1,
+		"count_gain": count_gain,
+		"count_gain_db": 0.0,
 		"duck": AudioConfig.get_num(cue_def, "duck", 0.0),
 		"priority": AudioConfig.get_int(cue_def, "priority", 1),
-		"event_type": type_name,
+		"event_type": event_type,
 	}
 	_pending.append(scheduled)
 	return scheduled
+
+
+# ---------------------------------------------------------------------------
+# Moving sirens (Audio-2 ruling; doc 11 §2.15's `vehicle_state.siren`)
+# ---------------------------------------------------------------------------
+
+## doc 10's firehose, and the only event type in the set that arrives in bulk.
+##
+## **What a civilian vehicle costs.** Two dictionary probes: `type` (already
+## paid by `feed`) and `siren`. Nothing else runs — no position resolve, no
+## locator call, no rule scan — because `_sirens.is_empty()` is true whenever no
+## siren is sounding anywhere, which is almost always, and a silent vehicle in a
+## city with no sirens has nothing to forget. That is the throttle's admission
+## price, and it is what makes it honest to have wired the feed at all.
+func _feed_vehicle_state(event: Dictionary) -> Dictionary:
+	var siren_on := bool(event.get("siren", false))
+	if not siren_on and _sirens.is_empty():
+		return NOT_SONIFIED
+	var id := SIREN_VEHICLE_PREFIX + str(event.get("id", ""))
+	if not siren_on:
+		_sirens.forget(id)
+		return NOT_SONIFIED
+	var world_pos: Variant = _position_of(event)
+	_sirens.observe(id, world_pos if world_pos is Vector3 else _listener, true, _now)
+	# A siren is a STATE, not an event: it makes no sound at the instant it is
+	# observed. `update()` decides which of them are audible and when each one
+	# gets its next pass.
+	return NOT_SONIFIED
+
+
+## doc 06's fleet snapshot — `IncidentSystem.vehicle_states()`, whole, once per
+## sim tick. It is not on the event bus (it is a snapshot, exactly as
+## `game/render/vehicle_view.gd` takes it), so the shell hands it over directly:
+##
+##     audio.events.feed_unit_states(sim.incidents.vehicle_states())
+##
+## `pos` is in TILES, which is why this and not the throttle does the conversion:
+## `tile_m` is `data/audio.json`'s and the throttle only ever sees metres.
+func feed_unit_states(states: Array) -> void:
+	_sirens.observe_unit_states(states, _now, _unit_world_pos, SIREN_UNIT_PREFIX)
+
+
+func _unit_world_pos(record: Dictionary) -> Variant:
+	var pos: Variant = record.get("pos", null)
+	if pos is Array and (pos as Array).size() >= 2:
+		return _tile_to_world(float((pos as Array)[0]), float((pos as Array)[1]))
+	if pos is Vector2i:
+		return _tile_to_world(float((pos as Vector2i).x), float((pos as Vector2i).y))
+	if pos is Vector3:
+		return pos
+	return null
+
+
+## Ask the throttle who is audible, and schedule a pass for each one that is due.
+## Called from `update()` **before** the due list is drained, so a siren fires in
+## the frame it is chosen rather than one frame late.
+func _update_sirens() -> void:
+	if _cfg == null or _siren_cue == "":
+		return
+	var firing := _sirens.update(_now, _listener)
+	if firing.is_empty():
+		return
+	var cue_def := _cfg.cue(_siren_cue)
+	if cue_def.is_empty():
+		if not missing_cues.has(_siren_cue):
+			missing_cues.append(_siren_cue)
+		return
+	var attenuation := _sirens.attenuation()
+	if attenuation.is_empty():
+		attenuation = _attenuation_for({}, cue_def)
+	for pass_info: Dictionary in firing:
+		var distance := float(pass_info["distance_m"])
+		var reach01 := _attenuate(distance, attenuation)
+		if reach01 <= 0.0:
+			continue
+		# One identity per unit, shared with the `unit_dispatched` rule, so the
+		# departure and the throttle can never both sound the same vehicle.
+		_schedule(_siren_cue, cue_def, pass_info["world_pos"], true, distance,
+				reach01, 0.0, "%s/%s" % [_siren_cue, str(pass_info["id"])],
+				0.0, VEHICLE_STATE, null)
 
 
 ## Drain-shaped ingest: hand it `SimEventBus.drain()` and get back only the cues
@@ -345,11 +475,15 @@ static func _in_range(raw_range: Variant, event: Dictionary, ctx: Dictionary) ->
 	return true
 
 
+## `key_prefix` exists for exactly one reason: the siren throttle namespaces its
+## sources (`u7` is doc 06's unit 7, `v7` is doc 10's civilian 7), and
+## `unit_dispatched` has to land on the SAME identity or a unit would get its
+## departure pass and its first moving pass in the same breath.
 func _identity(rule: Dictionary, cue_id: String, event: Dictionary) -> String:
 	var key_name := str(rule.get("key", ""))
 	var mode := str(rule.get("dedup_by", DEDUP_KEY if key_name != "" else DEDUP_CUE))
 	if mode == DEDUP_KEY and key_name != "" and event.has(key_name):
-		return "%s/%s" % [cue_id, str(event[key_name])]
+		return "%s/%s%s" % [cue_id, str(rule.get("key_prefix", "")), str(event[key_name])]
 	return cue_id
 
 
@@ -365,8 +499,48 @@ func _merge_pending(identity: String, dedup_s: float) -> Dictionary:
 		if _now - (float(entry["due_at"]) - float(entry["delay_s"])) > dedup_s:
 			continue
 		entry["count"] = int(entry["count"]) + 1
+		_apply_count_gain(entry)
 		return entry
 	return NOT_SONIFIED
+
+
+## The Audio-2 `count_gain` ruling, applied on every fold: a blackout that
+## darkens the whole city is LOUDER than one that darkens a block.
+##
+## The fold has always been the right shape — twelve dark blocks are one story —
+## but it also meant twelve blocks and one block were the same sound, which is a
+## lie the mix was telling. `per_doubling_db` per doubling is the honest curve
+## (loudness is logarithmic, and so is "how much of the city"), and the cap is
+## what keeps it a *nuance*: at the shipped 1.6 dB / +4 dB the difference between
+## one block and eight is legible, twelve blocks and forty are the same sound,
+## and nothing a storm can do makes the whomp dominate the mix.
+##
+## Recomputed rather than accumulated, so a fold is idempotent in gain terms and
+## the entry can be inspected at any point in its life.
+func _apply_count_gain(entry: Dictionary) -> void:
+	var boost := _count_gain_db(entry.get("count_gain", null), int(entry["count"]))
+	entry["count_gain_db"] = boost
+	entry["gain_db"] = maxf(float(entry["base_gain_db"]) + boost, MIN_GAIN_DB)
+
+
+## `count_gain` is `true` (take `mix.count_gain`), an object of its own, or
+## absent (no swell at all — a construction tick must not get louder because two
+## sites ticked together).
+func _count_gain_db(raw: Variant, count: int) -> float:
+	if count <= 1:
+		return 0.0
+	var spec: Variant = raw
+	if spec is bool:
+		if not bool(spec):
+			return 0.0
+		spec = _mix.get("count_gain", {})
+	if not (spec is Dictionary):
+		return 0.0
+	var per_doubling := AudioConfig.get_num(spec, "per_doubling_db", 0.0)
+	if per_doubling <= 0.0:
+		return 0.0
+	var cap := AudioConfig.get_num(spec, "max_db", 0.0)
+	return clampf(per_doubling * (log(float(count)) / log(2.0)), 0.0, maxf(cap, 0.0))
 
 
 ## `gain_from` maps a 0..1 payload field onto a dB range — lightning's
@@ -484,6 +658,20 @@ func _remember(event: Dictionary, type_name: String, world_pos: Variant) -> void
 				}
 		"building_completed", "building_destroyed", "building_demolished":
 			_sites.erase(_site_key(event))
+		"unit_dispatched":
+			# Seed the throttle from the departure. The unit is placed at the
+			# incident it is answering — the best guess anyone has until doc 06's
+			# next snapshot — and its retrigger clock is stamped, so the
+			# departure pass IS its first pass and the throttle waits a full
+			# interval instead of sounding the same siren twice at the door.
+			var unit_id := SIREN_UNIT_PREFIX + str(event.get("unit_id", ""))
+			if world_pos is Vector3:
+				_sirens.observe(unit_id, world_pos, true, _now)
+			_sirens.note_cue(unit_id, _now)
+		"unit_arrived", "unit_returned":
+			_sirens.forget(SIREN_UNIT_PREFIX + str(event.get("unit_id", "")))
+		"vehicle_despawned":
+			_sirens.forget(SIREN_VEHICLE_PREFIX + str(event.get("id", "")))
 		_:
 			pass
 
@@ -519,6 +707,9 @@ func update(dt: float, listener_pos: Vector3, night01: float) -> Array[Dictionar
 	_now += maxf(dt, 0.0)
 	_listener = listener_pos
 	_night01 = clampf(night01, 0.0, 1.0)
+
+	# Before the drain, not after: a siren chosen this frame sounds this frame.
+	_update_sirens()
 
 	var due: Array[Dictionary] = []
 	var keep: Array[Dictionary] = []
@@ -563,6 +754,10 @@ func _update_beds() -> void:
 				var w := clampf((_wind_kph - lo) / maxf(hi - lo, 0.0001), 0.0, 1.0)
 				gain = pow(w, AudioConfig.get_num(bed, "exponent", 1.0))
 				pitch = lerpf(1.0, AudioConfig.get_num(bed, "pitch_at_max", 1.0), w)
+			SOURCE_STORM:
+				var w := _storm01(bed)
+				gain = pow(w, AudioConfig.get_num(bed, "exponent", 1.0))
+				pitch = lerpf(1.0, AudioConfig.get_num(bed, "pitch_at_max", 1.0), w)
 			SOURCE_SITES:
 				gain = _site_bed_gain(bed)
 			_:
@@ -570,6 +765,26 @@ func _update_beds() -> void:
 		_bed_gain[bed_id] = clampf(maxf(gain, AudioConfig.get_num(bed, "floor", 0.0)),
 				0.0, 1.0)
 		_bed_pitch[bed_id] = pitch
+
+
+## Storm bed: wind AND rain, with wind holding the veto.
+##
+## A dry gale is a gale — the wind bed already has it. A still downpour is a
+## downpour — the rain bed already has it. Only the two together are the thing
+## the storm bed exists for, so `min_precip01` is a **gate** (below it the bed is
+## silent no matter how hard it blows) and wind is the axis that then sets the
+## level, with rain allowed to carry `precip_weight` of it. That asymmetry is
+## deliberate: the bed is buffeting, and buffeting is wind.
+func _storm01(bed: Dictionary) -> float:
+	if _precip01 < AudioConfig.get_num(bed, "min_precip01", 0.0):
+		return 0.0
+	var lo := AudioConfig.get_num(bed, "min_kph", 0.0)
+	var hi := AudioConfig.get_num(bed, "max_kph", 100.0)
+	var wind01 := clampf((_wind_kph - lo) / maxf(hi - lo, 0.0001), 0.0, 1.0)
+	if wind01 <= 0.0:
+		return 0.0
+	var rain_share := clampf(AudioConfig.get_num(bed, "precip_weight", 0.0), 0.0, 1.0)
+	return wind01 * lerpf(1.0 - rain_share, 1.0, clampf(_precip01, 0.0, 1.0))
 
 
 ## Site bed: how many are live (up to `ref_count`) times how close the nearest
@@ -636,6 +851,13 @@ func pending_count() -> int:
 
 func active_site_count() -> int:
 	return _sites.size()
+
+
+## The siren policy, for the shell and for tests. Everything the throttle decides
+## is observable through it — which is how `tests/test_audio_model.gd` holds the
+## hysteresis to account without owning a scene.
+func sirens() -> SirenThrottle:
+	return _sirens
 
 
 func precip01() -> float:

@@ -673,7 +673,17 @@ func test_the_root_pipes_one_batch_and_one_snapshot_into_both_feeds() -> void:
 		{"type": &"BlockDarkChanged", "block_id": "B2", "block_dark": true},
 	])
 	assert_eq(drawer.count(), 1, "the incident reached the drawer")
-	assert_eq(root.alerts_center.model.size(), 1, "and the outage reached the feed")
+	# Two rows, not one: doc 08's table wires `incident_created` as well as the
+	# outage, so the drawer and the feed now tell the player about the SAME
+	# incident from their two angles — a live job to dispatch, and a line in the
+	# history. Under the deleted stand-in the fire never reached the feed at all.
+	assert_eq(root.alerts_center.model.size(), 2,
+			"the outage AND the incident reached the feed")
+	var notify_ids: PackedStringArray = []
+	for row: Dictionary in root.alerts_center.model.entries():
+		notify_ids.append(str(row["notify_id"]))
+	notify_ids.sort()
+	assert_eq(notify_ids, PackedStringArray(["incident_started", "outage_major"]))
 	root.refresh_incidents([Fixtures.snapshot_row(7, "structure_fire", 3.4, [], 18.0)],
 			10.0)
 	assert_almost_eq(float(drawer.model.row(7)["eta_min"]), 18.0, 0.0001)

@@ -67,7 +67,12 @@ func test_block_dark_and_restore_are_two_different_rules_on_one_event() -> void:
 	var lit := model.feed({"type": &"BlockDarkChanged", "block_id": "B2",
 			"block_dark": false, "powered_fraction": 1.0})
 	assert_eq(str(lit["notify_id"]), "power_restored")
-	assert_eq(str(lit["class"]), "p2")
+	# doc 08's table, not the deleted stand-in: the lights coming back is
+	# `P3_routine` -> doc 12's `p3`. The stand-in filed it as p2, which put a
+	# banner in front of the player to tell them a problem had stopped.
+	assert_eq(str(lit["class"]), "p3")
+	assert_eq(str(lit["push_class"]), "P3_routine",
+			"and the row carries doc 08's own class name for the push side")
 	assert_eq(lit["state"], HudModel.STATE_NORMAL)
 	assert_eq(model.size(), 2, "restoring power is its own row, not an edit")
 
@@ -110,8 +115,15 @@ func test_treasury_events_format_money_the_way_the_hud_does() -> void:
 	var low := model.feed({"type": &"credit_line_engaged", "balance": -1200000,
 			"credit_limit": 5000000})
 	assert_false(low.is_empty())
-	assert_eq(str(low["class"]), "p1")
+	# doc 08 §2.13.1 reserves P1 for "major disaster, citywide blackout, hospital
+	# threat, civil emergency". A treasury running dry is a warning the player
+	# can act on at their leisure, so it is P2 — the stand-in's p1 was a banner
+	# that could not be dismissed for a problem with hours of runway.
+	assert_eq(str(low["class"]), "p2")
 	assert_eq(low["state"], HudModel.STATE_WARNING)
+	# …and hitting the limit still is: spending is blocked, the city has stopped.
+	assert_eq(str(model.feed({"type": &"credit_limit_reached", "balance": -5000000,
+			"credit_limit": 5000000})["class"]), "p1")
 	assert_true(str(low["body"]).contains(HudModel.money(-1200000)),
 			"the body reads −$1.2M like the chip does: %s" % low["body"])
 	var stop := model.feed({"type": &"credit_limit_reached", "balance": -5000000,
@@ -123,6 +135,13 @@ func test_copy_comes_from_the_string_table_and_never_shows_a_hole() -> void:
 	# G-8: every row resolves `n_<notify_id>_title` / `_body`, the same keys doc 13
 	# renders for a push. A sentence whose data the sim did not supply is dropped
 	# rather than printed with a `{placeholder}` in it.
+	#
+	# Every payload below is the dictionary `sim/` ACTUALLY emits, checked
+	# against its emit site. That is not pedantry: the deleted stand-in table
+	# read `city_level_changed.level` and `block_ready.block_id`, and the sim
+	# emits `from`/`to` and `block`. Both rows rendered an empty title against
+	# the real game while passing a test that fed them a fixture with the field
+	# the table wanted. Feeding the real shape is the only way that stays fixed.
 	var cfg := _cfg()
 	var model := AlertsModel.new(cfg)
 	model.set_clock(372, 2)
@@ -132,12 +151,41 @@ func test_copy_comes_from_the_string_table_and_never_shows_a_hole() -> void:
 		{"type": &"PowerComponentFailed", "component": "T-04", "cause": "overload"},
 		{"type": &"PowerComponentTripped", "component": "F_SOUTH"},
 		{"type": &"LoadShedStarted", "feeders": ["F_SOUTH"], "shed_kw": 420.0},
+		{"type": &"LoadShedEnded"},
 		{"type": &"credit_line_engaged", "balance": -1200},
 		{"type": &"credit_limit_reached", "balance": -5000},
 		{"type": &"austerity_entered"},
-		{"type": &"city_level_changed", "level": 3},
+		{"type": &"tax_rate_changed", "level": 3, "rate": 0.11, "previous": 0.09, "hour": 9},
+		# sim/population/progression_system.gd: `from` / `to`, never `level`.
+		{"type": &"city_level_changed", "from": 2, "to": 3},
 		{"type": &"building_completed", "building": 12, "level": 2},
-		{"type": &"block_ready", "block_id": "E4"},
+		# sim/world/development_controller.gd: `block`, never `block_id`.
+		{"type": &"block_ready", "block": "E4"},
+		# doc 05's water set, now wired: every one of these strings existed and
+		# none of them had a rule until doc 08's table landed.
+		{"type": &"water_main_break", "edge": "M-12", "severity": 0.6,
+			"damage_fraction": 0.4},
+		{"type": &"water_freeze_break", "edge": "M-04", "severity": 0.5,
+			"damage_fraction": 0.3},
+		{"type": &"water_zone_offline", "zone": "Z1", "dead": true},
+		{"type": &"water_pressure_low", "zone": "Z2", "pressure": 12.0},
+		{"type": &"water_pressure_restored", "zone": "Z2", "pressure": 31.0},
+		{"type": &"water_contamination_started", "zone": "Z3", "until_minutes": 900},
+		{"type": &"water_pump_tripped", "node": "P-02", "power_fraction": 0.2},
+		{"type": &"water_repair_completed", "kind": "main", "target_id": "M-12",
+			"job_id": 4},
+		# doc 06's incidents and doc 10's roads, likewise.
+		{"type": &"incident_created", "incident_id": 3, "incident_type": "structure_fire",
+			"tile": [10, 10], "severity": 0.4, "tier": 2, "notification_priority": 2},
+		{"type": &"incident_resolved", "incident_id": 3, "incident_type": "structure_fire",
+			"tier_peak": 2, "response_min": 8.0, "reward": 0},
+		{"type": &"incident_failed", "incident_id": 4, "incident_type": "structure_fire",
+			"tier_peak": 3},
+		{"type": &"road_collapsed", "tile": Vector2i(4, 9), "road_class": "local"},
+		{"type": &"road_closed_flood", "cell": "R4_9", "is_block": false,
+			"depth_mm": 180.0},
+		{"type": &"weather_warning", "event_uid": 7, "kind": "severe_thunderstorm",
+			"impact_min": 40, "lead_min": 25, "notify_class": "CRITICAL", "priority": 1},
 	]
 	var made := model.feed_batch(events)
 	assert_eq(made.size(), events.size(), "every listed event is notifiable")

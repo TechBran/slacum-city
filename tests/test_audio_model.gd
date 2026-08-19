@@ -94,7 +94,11 @@ func test_02_the_generated_set_fits_its_budget_and_loops_are_seamless() -> void:
 	var manifest: Dictionary = StarterCityLoader.read_json(MANIFEST)
 	assert_false(manifest.is_empty(), "run tools/gen_audio.py to build the set")
 	var total := int(manifest.get("total_bytes", 0))
-	var budget := int(manifest.get("budget_bytes", 4 * 1024 * 1024))
+	var budget := int(manifest.get("budget_bytes", 0))
+	# The Audio-2 ruling raised the ceiling 4.0 -> 4.5 MiB and no further. Held
+	# here as well as in the generator so a future `--out` with a bigger constant
+	# cannot quietly ship a fatter set.
+	assert_eq(budget, 4608 * 1024, "the ruling's 4.5 MiB budget, not more")
 	assert_true(total > 0 and total <= budget,
 			"the whole soundscape is %d B against a %d B budget" % [total, budget])
 	assert_eq(int(manifest.get("channels", 0)), 1, "mono: a phone speaker is mono")
@@ -114,7 +118,11 @@ func test_02_the_generated_set_fits_its_budget_and_loops_are_seamless() -> void:
 					"%s fits inside %d Hz (%.3f%% against Nyquist)"
 					% [name, rate, 100.0 * float(asset["top_band_energy"])])
 		if bool(asset["loop"]):
-			assert_true(float(asset["seconds"]) < 8.0, "%s loop stays short" % name)
+			# Audio-2 ruling: the under-8 s brief is RELAXED. The atmospheric beds
+			# run 12 s and the storm bed 10 — coprime in seconds, so the pair
+			# realigns only once a minute — while the 6 s crane loop stays short
+			# on purpose, because machinery is meant to be periodic.
+			assert_true(float(asset["seconds"]) <= 12.0, "%s loop stays bounded" % name)
 			assert_true(float(asset["seconds"]) >= 5.0,
 					"%s loop is long enough not to read as a pattern" % name)
 			# The seam is measured against the buffer's OWN median sample step,
@@ -649,8 +657,10 @@ func test_30_the_pool_caps_one_cue_and_steals_from_the_weakest() -> void:
 
 func test_31_the_traffic_feed_costs_one_dictionary_probe() -> void:
 	# doc 10 emits ~1,400 `vehicle_state` events per game hour and every one of
-	# them carries a `pos`. If an unrecognised type reached the position
-	# resolver, the mix would pay a locator call per vehicle per tick.
+	# them carries a `pos`. The siren throttle wired that feed, so the claim it
+	# has to keep is now sharper than "unrecognised types are cheap": a CIVILIAN
+	# vehicle, in a city with no siren sounding, must still cost only its two
+	# dictionary probes — no position resolve, no locator call, no rule scan.
 	var model := _model()
 	var locator_calls := 0
 	model.set_locator(func(_kind: StringName, _id: Variant) -> Variant:
@@ -666,6 +676,474 @@ func test_31_the_traffic_feed_costs_one_dictionary_probe() -> void:
 	assert_eq(model.feed_batch(firehose).size(), 0, "the traffic feed is silent")
 	assert_eq(locator_calls, 0, "and never asked the shell to place anything")
 	assert_eq(model.pending_count(), 0)
+	assert_eq(model.sirens().source_count(), 0,
+			"and a car with its siren off is not a siren source")
+	assert_eq(_tick(model).size(), 0, "so no frame of it makes a sound")
+
+
+# ===========================================================================
+# Moving sirens — the Audio-2 ruling's actual deliverable is the THROTTLE
+# ===========================================================================
+
+## `n` vehicles in a line east of the listener, all wailing, ids ascending with
+## distance so "nearest" and "lowest id" are the same order unless a test says
+## otherwise.
+func _siren_batch(spacing_m: float, count: int, from_index: int = 0) -> Array:
+	var out: Array = []
+	for i in count:
+		out.append({"type": &"vehicle_state", "id": from_index + i, "kind": "engine",
+				"vehicle_class": "emergency",
+				"pos": Vector3(spacing_m * float(i + 1), 0.0, 0.0), "heading": 0.0,
+				"speed": 14.0, "siren": true, "lightbar": true, "headlights": true,
+				"edge_id": i, "dark": false})
+	return out
+
+
+func test_33_at_most_n_sirens_are_audible_and_they_are_the_nearest() -> void:
+	var cfg := _cfg()
+	var spec := cfg.section("sirens")
+	var cap := AudioConfig.get_int(spec, "max_sources", 2)
+	assert_true(cap >= 1 and cap <= 4, "the cap is a small number: %d" % cap)
+
+	var model := _model()
+	# Six units inside the enter radius. Without a throttle that is six voices
+	# and a wall of noise; doc 11 §2.15's whole reason for not wiring this feed.
+	model.feed_batch(_siren_batch(50.0, 6))
+	var cues := _tick(model)
+	assert_eq(model.sirens().source_count(), 6, "all six are tracked")
+	assert_eq(cues.size(), cap, "but only %d of them sound" % cap)
+	assert_eq(model.sirens().audible_count(), cap)
+	# Nearest-first: ids 0 and 1 sit at 50 m and 100 m.
+	assert_eq(model.sirens().audible_ids(), PackedStringArray(["v0", "v1"]) as Array,
+			"and they are the nearest, in distance order")
+	for cue: Dictionary in cues:
+		assert_eq(str(cue["cue"]), "siren_pass")
+
+
+func test_34_hysteresis_keeps_a_siren_from_popping() -> void:
+	var spec := _cfg().section("sirens")
+	var enter := AudioConfig.get_num(spec, "enter_m", 420.0)
+	var exit_m := AudioConfig.get_num(spec, "exit_m", 640.0)
+	assert_true(exit_m > enter, "the exit radius is wider than the entry one")
+
+	# One unit hovering just OUTSIDE the entry radius never gets in…
+	var model := _model()
+	var outside := [{"type": &"vehicle_state", "id": 1, "siren": true,
+			"pos": Vector3(enter + 5.0, 0.0, 0.0)}]
+	model.feed_batch(outside)
+	_tick(model)
+	assert_eq(model.sirens().audible_count(), 0, "past the entry radius it is silent")
+
+	# …and one that got in at the entry radius keeps its slot out to the exit
+	# radius, so a camera drifting a metre cannot strobe it.
+	model.feed_batch([{"type": &"vehicle_state", "id": 1, "siren": true,
+			"pos": Vector3(enter - 5.0, 0.0, 0.0)}])
+	_tick(model)
+	assert_eq(model.sirens().audible_count(), 1, "inside the entry radius it sounds")
+	for metres: float in [enter + 5.0, enter + 60.0, exit_m - 5.0]:
+		model.feed_batch([{"type": &"vehicle_state", "id": 1, "siren": true,
+				"pos": Vector3(metres, 0.0, 0.0)}])
+		_tick(model, 0.2)
+		assert_eq(model.sirens().audible_count(), 1,
+				"at %.0f m — inside the exit radius — it keeps its slot" % metres)
+	model.feed_batch([{"type": &"vehicle_state", "id": 1, "siren": true,
+			"pos": Vector3(exit_m + 20.0, 0.0, 0.0)}])
+	_tick(model, 0.2)
+	assert_eq(model.sirens().audible_count(), 0, "past the exit radius it lets go")
+
+
+func test_35_a_challenger_needs_the_margin_and_the_hold_to_take_a_slot() -> void:
+	var spec := _cfg().section("sirens")
+	var margin := AudioConfig.get_num(spec, "takeover_margin_m", 90.0)
+	var hold := AudioConfig.get_num(spec, "min_hold_s", 4.0)
+	var cap := AudioConfig.get_int(spec, "max_sources", 2)
+
+	var model := _model()
+	# Fill every slot with far-ish incumbents, then wait out the hold so the
+	# only thing left defending them is the takeover margin.
+	var incumbents: Array = []
+	for i in cap:
+		incumbents.append({"type": &"vehicle_state", "id": i, "siren": true,
+				"pos": Vector3(300.0 + 10.0 * float(i), 0.0, 0.0)})
+	model.feed_batch(incumbents)
+	_tick(model)
+	assert_eq(model.sirens().audible_count(), cap)
+
+	# A challenger CLOSER than the worst incumbent, but not by the margin.
+	var worst := 300.0 + 10.0 * float(cap - 1)
+	for i in int(ceil(hold / 0.5)) + 2:
+		model.feed_batch(incumbents)
+		model.feed_batch([{"type": &"vehicle_state", "id": 90, "siren": true,
+				"pos": Vector3(worst - margin * 0.5, 0.0, 0.0)}])
+		_tick(model, 0.5)
+	assert_false(model.sirens().audible_ids().has("v90"),
+			"merely closer is not closer ENOUGH: the incumbent keeps its slot")
+
+	# Past the margin, and past the hold, it takes it.
+	for i in int(ceil(hold / 0.5)) + 2:
+		model.feed_batch(incumbents)
+		model.feed_batch([{"type": &"vehicle_state", "id": 90, "siren": true,
+				"pos": Vector3(worst - margin * 2.0, 0.0, 0.0)}])
+		_tick(model, 0.5)
+	assert_true(model.sirens().audible_ids().has("v90"),
+			"closer by more than the margin wins the slot")
+	assert_eq(model.sirens().audible_count(), cap, "and the cap still holds")
+
+
+func test_36_an_audible_siren_holds_its_slot_for_min_hold_s() -> void:
+	var spec := _cfg().section("sirens")
+	var hold := AudioConfig.get_num(spec, "min_hold_s", 4.0)
+	var margin := AudioConfig.get_num(spec, "takeover_margin_m", 90.0)
+	var cap := AudioConfig.get_int(spec, "max_sources", 2)
+
+	var model := _model()
+	var incumbents: Array = []
+	for i in cap:
+		incumbents.append({"type": &"vehicle_state", "id": i, "siren": true,
+				"pos": Vector3(360.0, 0.0, 0.0)})
+	model.feed_batch(incumbents)
+	_tick(model)
+	# A unit right on top of the listener — far more than the margin closer —
+	# still may not evict anything until the hold expires. This is the defence
+	# the other two cannot provide: it bounds how OFTEN the set may change.
+	var stalker: Array = [{"type": &"vehicle_state", "id": 90, "siren": true,
+			"pos": Vector3(10.0, 0.0, 0.0)}]
+	model.feed_batch(incumbents)
+	model.feed_batch(stalker)
+	_tick(model, hold * 0.4)
+	assert_false(model.sirens().audible_ids().has("v90"),
+			"inside the hold the audible set does not change, however tempting")
+	model.feed_batch(incumbents)
+	model.feed_batch(stalker)
+	_tick(model, hold * 0.8)
+	assert_true(model.sirens().audible_ids().has("v90"),
+			"past the hold it takes the slot it has more than earned")
+	assert_true(margin > 0.0)
+
+
+func test_37_a_moving_siren_retriggers_at_its_new_position() -> void:
+	var spec := _cfg().section("sirens")
+	var retrigger := AudioConfig.get_num(spec, "retrigger_s", 3.3)
+	var model := _model()
+
+	model.feed_batch([{"type": &"vehicle_state", "id": 1, "siren": true,
+			"pos": Vector3(80.0, 0.0, 0.0)}])
+	var first := _tick(model)
+	assert_eq(first.size(), 1, "it sounds as soon as it is audible")
+	assert_almost_eq(float(first[0]["distance_m"]), 80.0, 0.01)
+
+	# Inside the retrigger window it is audible but silent — the pass-by asset is
+	# three seconds long and the doppler is baked into it; re-firing sooner would
+	# be two passes on top of each other, not a louder siren.
+	for i in 10:
+		model.feed_batch([{"type": &"vehicle_state", "id": 1, "siren": true,
+				"pos": Vector3(80.0 - 4.0 * float(i), 0.0, 0.0)}])
+		assert_eq(_tick(model, retrigger * 0.08).size(), 0,
+				"no second pass inside the retrigger window")
+	assert_eq(model.sirens().audible_count(), 1, "though it never stopped being audible")
+
+	# Past the window it fires again — AT ITS NEW PLACE, which is the whole
+	# reason the throttle samples a state rather than answering an event.
+	model.feed_batch([{"type": &"vehicle_state", "id": 1, "siren": true,
+			"pos": Vector3(300.0, 0.0, 0.0)}])
+	var second := _tick(model, retrigger)
+	assert_eq(second.size(), 1, "past the window the siren passes again")
+	assert_almost_eq(float(second[0]["distance_m"]), 300.0, 0.01,
+			"and it is heard where the unit is NOW, not where it was")
+	assert_true(float(second[0]["gain_db"]) < float(first[0]["gain_db"]),
+			"so driving away really does get quieter")
+
+
+func test_38_a_siren_switched_off_or_gone_stops_at_once() -> void:
+	var model := _model()
+	model.feed_batch(_siren_batch(60.0, 1))
+	_tick(model)
+	assert_eq(model.sirens().audible_count(), 1)
+	# The same vehicle, siren off: forgotten now, not `ttl_s` from now.
+	model.feed({"type": &"vehicle_state", "id": 0, "siren": false,
+			"pos": Vector3(60.0, 0.0, 0.0)})
+	_tick(model)
+	assert_eq(model.sirens().source_count(), 0, "switching it off stops it")
+
+	# And a unit that simply stops being reported times out on its own, because
+	# a despawn is the one thing a vehicle cannot announce.
+	var quiet := _model()
+	quiet.feed_batch(_siren_batch(60.0, 1))
+	_tick(quiet)
+	assert_eq(quiet.sirens().source_count(), 1)
+	_tick(quiet, AudioConfig.get_num(_cfg().section("sirens"), "ttl_s", 6.0) + 0.5)
+	assert_eq(quiet.sirens().source_count(), 0, "an unreported source expires")
+
+	# doc 06's own end-of-run events retire it immediately rather than waiting.
+	var arrived := _model()
+	arrived.feed({"type": &"incident_created", "incident_id": 5, "tile": [10, 0],
+			"severity": 0.5, "notification_priority": 2})
+	arrived.feed({"type": &"unit_dispatched", "unit_id": 3, "incident_id": 5,
+			"unit_type": "engine", "role": "primary", "eta_h": 0.1, "manual": false})
+	_tick(arrived)
+	assert_eq(arrived.sirens().source_count(), 1, "the dispatch seeded the throttle")
+	arrived.feed({"type": &"unit_arrived", "unit_id": 3, "incident_id": 5})
+	_tick(arrived)
+	assert_eq(arrived.sirens().source_count(), 0, "arriving parks the siren")
+
+
+func test_39_the_departure_and_the_throttle_never_double_the_same_unit() -> void:
+	# `unit_dispatched` is the departure beat and the throttle owns everything
+	# after it. They share one identity (`siren_pass/u3`) and one clock, so a
+	# dispatched unit gets ONE pass at the door, not two.
+	var model := _model()
+	model.feed({"type": &"incident_created", "incident_id": 5, "tile": [10, 0],
+			"severity": 0.5, "notification_priority": 2})
+	_tick(model)
+	model.feed({"type": &"unit_dispatched", "unit_id": 3, "incident_id": 5,
+			"unit_type": "engine", "role": "primary", "eta_h": 0.1, "manual": false})
+	var at_the_door := _tick(model)
+	assert_eq(at_the_door.size(), 1, "exactly one siren leaves the station")
+	assert_eq(str(at_the_door[0]["identity"]), "siren_pass/u3",
+			"and the rule lands on the throttle's own identity")
+
+	# The fleet snapshot now reports the unit, close by and running hot. It must
+	# not sound again until the retrigger interval has passed.
+	var retrigger := AudioConfig.get_num(_cfg().section("sirens"), "retrigger_s", 3.3)
+	for i in 6:
+		model.feed_unit_states([{"id": 3, "type": "engine", "pos": [10, 0],
+				"speed": 12.0, "heading": 0.0, "status": "RESPONDING",
+				"incident_id": 5, "route_progress": 0.2}])
+		assert_eq(_tick(model, retrigger * 0.12).size(), 0,
+				"the throttle waits out the departure it did not make")
+	model.feed_unit_states([{"id": 3, "type": "engine", "pos": [10, 0], "speed": 12.0,
+			"heading": 0.0, "status": "RESPONDING", "incident_id": 5,
+			"route_progress": 0.5}])
+	assert_eq(_tick(model, retrigger).size(), 1, "then it takes over")
+
+
+func test_40_the_fleet_snapshot_is_the_other_door_and_status_is_the_switch() -> void:
+	var model := _model()
+	var statuses: Array = _cfg().section("sirens").get("siren_statuses", [])
+	assert_true(statuses.has("RESPONDING"),
+			"data/audio.json is the only place audio names a doc 06 status")
+	# `pos` is in TILES here (doc 06's snapshot shape), so tile [10,0] is the
+	# centre of an 8 m tile: (84, 0, 4) m.
+	model.feed_unit_states([
+		{"id": 1, "type": "engine", "pos": [10, 0], "speed": 12.0, "heading": 0.0,
+			"status": "RESPONDING", "incident_id": 5, "route_progress": 0.2},
+		{"id": 2, "type": "patrol", "pos": [11, 0], "speed": 0.0, "heading": 0.0,
+			"status": "ON_SCENE", "incident_id": 5, "route_progress": 1.0},
+		{"id": 3, "type": "engine", "pos": [12, 0], "speed": 9.0, "heading": 0.0,
+			"status": "RETURNING", "incident_id": -1, "route_progress": 0.4},
+	])
+	var cues := _tick(model)
+	assert_eq(model.sirens().source_count(), 1,
+			"only the unit RESPONDING is a siren; on-scene and returning are quiet")
+	assert_eq(cues.size(), 1)
+	assert_almost_eq(float(cues[0]["distance_m"]), Vector3(84.0, 0.0, 4.0).length(), 0.01,
+			"and the snapshot's TILE became metres on the way in")
+
+	# A unit missing from the next snapshot is gone: a snapshot is complete truth
+	# about the fleet, unlike an event, so absence from it means something.
+	model.feed_unit_states([])
+	_tick(model)
+	assert_eq(model.sirens().source_count(), 0)
+
+
+func test_41_the_siren_throttle_is_deterministic() -> void:
+	# Same events, same order, same audible set — twice, including the tie case
+	# where two units are the same distance away and only the id can break it.
+	var runs: Array = []
+	for run in 2:
+		var model := _model()
+		var seen: Array = []
+		for step in 12:
+			var batch: Array = []
+			for i in 6:
+				# Six units, three PAIRS at identical distances, so the only thing
+				# that can order them is the id. The set is the same in both runs
+				# and only the arrival order differs — which is exactly what a
+				# drained batch does not guarantee between two runs of a city.
+				var metres := 120.0 + 40.0 * float(((i / 2) + step) % 3)
+				batch.append({"type": &"vehicle_state", "id": i, "siren": true,
+						"pos": Vector3(metres, 0.0, 0.0)})
+			if run == 1:
+				batch.reverse()
+			model.feed_batch(batch)
+			for cue: Dictionary in _tick(model, 0.5):
+				seen.append("%s@%.1f" % [str(cue["identity"]), float(cue["distance_m"])])
+			seen.append("|" + ",".join(model.sirens().audible_ids()))
+		runs.append(seen)
+	assert_eq(runs[0], runs[1],
+			"sorted iteration and an id tiebreak, so feed order cannot change the mix")
+	assert_true((runs[0] as Array).size() > 12, "and the run actually did something")
+
+
+func test_42_sirens_still_respect_the_voice_pool() -> void:
+	var service := _mount_service()
+	service.feed_batch(_siren_batch(50.0, 6))
+	service.update_audio(FRAME, Vector3.ZERO, 0.0)
+	var cap := AudioConfig.get_int(_cfg().section("sirens"), "max_sources", 2)
+	assert_eq(service.busy_voice_count(), cap,
+			"six wailing units cost %d voices, not six" % cap)
+	assert_eq(service.events.sirens().audible_count(), cap)
+	_unmount(service)
+
+
+# ===========================================================================
+# count_gain — a citywide blackout is louder than one dark block
+# ===========================================================================
+
+func test_43_a_bigger_blackout_is_a_louder_thunk_up_to_the_cap() -> void:
+	var spec: Dictionary = _cfg().mix().get("count_gain", {})
+	var cap := AudioConfig.get_num(spec, "max_db", 0.0)
+	# The ruling's ceiling, held in the test rather than clamped in code so
+	# `data/audio.json` stays the only place a level is written (constitution §3).
+	assert_true(cap > 0.0 and cap <= 4.0, "count_gain caps at +4 dB: %.2f" % cap)
+	var per_doubling := AudioConfig.get_num(spec, "per_doubling_db", 0.0)
+	assert_true(per_doubling > 0.0)
+
+	var levels: Dictionary = {}
+	for blocks: int in [1, 2, 4, 8, 12, 40]:
+		var model := _model()
+		for i in blocks:
+			model.feed({"type": &"BlockDarkChanged", "block_id": "B%d" % i,
+					"block_dark": true, "dark_fraction": 1.0})
+		var cues := _tick(model)
+		assert_eq(cues.size(), 1, "%d blocks are still ONE thunk" % blocks)
+		assert_eq(int(cues[0]["count"]), blocks)
+		levels[blocks] = float(cues[0]["gain_db"])
+
+	assert_almost_eq(float(levels[2]) - float(levels[1]), per_doubling, 0.001,
+			"one doubling is one step")
+	assert_almost_eq(float(levels[4]) - float(levels[1]), 2.0 * per_doubling, 0.001,
+			"two doublings are two steps — the curve is logarithmic, like loudness")
+	assert_almost_eq(float(levels[8]) - float(levels[1]), cap, 0.001,
+			"and it hits the ceiling at eight blocks")
+	assert_almost_eq(float(levels[40]), float(levels[12]), 0.001,
+			"past the cap, more of the city is not more sound")
+
+
+func test_44_count_gain_is_opt_in_and_folds_are_idempotent() -> void:
+	# A construction tick does NOT swell: two sites ticking together is a
+	# coincidence, not a bigger event, and the cue is deliberately subliminal.
+	var model := _model()
+	for i in 6:
+		model.feed({"type": &"building_construction_stage", "building": i, "stage": 2})
+	var ticks := _tick(model)
+	assert_eq(ticks.size(), 1, "the ticks folded")
+	assert_true(int(ticks[0]["count"]) > 1)
+	assert_almost_eq(float(ticks[0]["count_gain_db"]), 0.0, 0.0001,
+			"but a rule that did not ask for count_gain does not get it")
+	assert_almost_eq(float(ticks[0]["gain_db"]), float(ticks[0]["base_gain_db"]), 0.0001)
+
+	# The boost is recomputed from the count, never accumulated, so the entry can
+	# be read at any point in its life and still be right.
+	var dark := _model()
+	var entry := dark.feed({"type": &"BlockDarkChanged", "block_id": "B0",
+			"block_dark": true})
+	var base := float(entry["base_gain_db"])
+	for i in range(1, 5):
+		dark.feed({"type": &"BlockDarkChanged", "block_id": "B%d" % i, "block_dark": true})
+		assert_almost_eq(float(entry["gain_db"]),
+				base + float(entry["count_gain_db"]), 0.0001,
+				"gain is base + boost at every fold, never base + boost + boost")
+
+
+# ===========================================================================
+# Weather-bed polish: the storm bed, and the interior muffle
+# ===========================================================================
+
+func test_45_the_storm_bed_needs_wind_AND_rain() -> void:
+	var model := _model()
+	assert_true(_cfg().bed_ids().has("storm"), "there is a storm bed")
+
+	# A dry gale is a gale: the wind bed has it, the storm bed does not.
+	model.feed({"type": &"weather_changed", "precip01": 0.0, "wind_kph": 95.0})
+	_tick(model)
+	assert_almost_eq(model.bed_gain("wind"), 1.0, 0.001, "the wind bed is full up")
+	assert_almost_eq(model.bed_gain("storm"), 0.0, 0.001,
+			"but a dry gale is not a storm")
+
+	# A still downpour is a downpour: the rain bed has it.
+	model.feed({"type": &"weather_changed", "precip01": 1.0, "wind_kph": 2.0})
+	_tick(model)
+	assert_almost_eq(model.bed_gain("rain"), 1.0, 0.001)
+	assert_almost_eq(model.bed_gain("storm"), 0.0, 0.001,
+			"and a still downpour is not a storm either")
+
+	# Both at once is.
+	model.feed({"type": &"weather_changed", "precip01": 1.0, "wind_kph": 95.0})
+	_tick(model)
+	assert_almost_eq(model.bed_gain("storm"), 1.0, 0.001, "the two together are")
+	assert_almost_eq(model.bed_gain("wind"), 1.0, 0.001,
+			"and the storm bed goes UNDER the wind bed, it does not replace it")
+
+	# It rises with the wind rather than switching on.
+	var last := -1.0
+	for kph: float in [40.0, 55.0, 70.0, 95.0]:
+		model.feed({"type": &"weather_changed", "precip01": 0.8, "wind_kph": kph})
+		_tick(model)
+		var gain := model.bed_gain("storm")
+		assert_true(gain >= last, "the storm bed rises with the wind (%.0f kph)" % kph)
+		last = gain
+	assert_true(last > 0.0)
+
+
+func test_46_a_sheet_over_half_the_screen_muffles_the_city() -> void:
+	var service := _mount_service()
+	var spec: Dictionary = _cfg().mix().get("muffle", {})
+	assert_false(spec.is_empty(), "data/audio.json owns the muffle")
+	var threshold := AudioConfig.get_num(spec, "threshold01", 0.5)
+	assert_almost_eq(threshold, 0.5, 0.001, "doc 12's brief: over HALF the screen")
+
+	var open_hz := service.muffle_cutoff_hz()
+	assert_true(open_hz > 15000.0, "with nothing open the city is not filtered at all")
+
+	# A side panel is not an interior.
+	service.set_ui_coverage(threshold * 0.6)
+	for i in 60:
+		service.update_audio(FRAME, Vector3.ZERO, 0.0)
+	assert_almost_eq(service.muffle01(), 0.0, 0.001, "under the threshold, nothing")
+	assert_almost_eq(service.muffle_cutoff_hz(), open_hz, 1.0)
+
+	# A full-screen sheet is.
+	service.set_ui_coverage(1.0)
+	service.update_audio(FRAME, Vector3.ZERO, 0.0)
+	var after_one_frame := service.muffle01()
+	assert_true(after_one_frame > 0.0 and after_one_frame < 0.5,
+			"one frame is a ramp, not a switch: %.3f" % after_one_frame)
+	for i in 120:
+		service.update_audio(FRAME, Vector3.ZERO, 0.0)
+	assert_almost_eq(service.muffle01(), 1.0, 0.01, "half a second later it is closed")
+	assert_almost_eq(service.muffle_cutoff_hz(),
+			AudioConfig.get_num(spec, "covered_hz", 900.0), 20.0)
+
+	# …and it opens again rather than staying shut.
+	service.set_ui_coverage(0.0)
+	for i in 120:
+		service.update_audio(FRAME, Vector3.ZERO, 0.0)
+	assert_almost_eq(service.muffle01(), 0.0, 0.01)
+	assert_almost_eq(service.muffle_cutoff_hz(), open_hz, 1.0)
+	_unmount(service)
+
+
+func test_47_the_muffle_is_on_the_ambience_bus_alone() -> void:
+	# A confirmation blip and a critical sting are in the room with the player,
+	# not out of the window. If they muffled too, a sheet would read as a fault.
+	var service := _mount_service()
+	var muffled := str((_cfg().mix().get("muffle", {}) as Dictionary).get("bus", "Ambient"))
+	assert_eq(muffled, "Ambient")
+	for bus_name: String in ["SFX", "UI", "Master"]:
+		var index := AudioServer.get_bus_index(bus_name)
+		var filters := 0
+		for i in AudioServer.get_bus_effect_count(index):
+			if AudioServer.get_bus_effect(index, i) is AudioEffectLowPassFilter:
+				filters += 1
+		assert_eq(filters, 0, "%s carries no lowpass" % bus_name)
+	var ambient := AudioServer.get_bus_index("Ambient")
+	var found := 0
+	for i in AudioServer.get_bus_effect_count(ambient):
+		if AudioServer.get_bus_effect(ambient, i) is AudioEffectLowPassFilter:
+			found += 1
+	assert_eq(found, 1, "and Ambient carries exactly one, however often setup ran")
+	_unmount(service)
 
 
 func test_32_a_real_city_blacking_out_makes_exactly_one_thunk() -> void:
