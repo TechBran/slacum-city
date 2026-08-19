@@ -43,7 +43,9 @@ func test_place_house_full_lifecycle() -> void:
 	sim.advance_hours(6.0)
 	assert_eq(b.state, &"active")
 	assert_eq(b.level, 1)
-	assert_almost_eq(b.condition, 1.0, 1e-9)
+	# doc 02 §2.6 wear is live (doc 92 F-2): the house completes at 1.00 and has
+	# been standing (and wearing, at 0.00045/gh) for the rest of the six hours.
+	assert_almost_eq(b.condition, 1.0, 6.0 * 0.00045)
 	# The new building draws power and houses people.
 	assert_eq(sim.grid.attachment_of(sim_id) != "", true, "attached to a transformer")
 	sim.advance_hours(1.0)

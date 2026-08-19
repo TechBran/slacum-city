@@ -17,6 +17,8 @@ const PRESSURE_KEYS: Array[String] = [
 ]
 
 var tp: Dictionary = {}
+## doc 92 F-1's size-independent pressure floor (see the data file's own note).
+var floor_config: Dictionary = {}
 var preparedness: Dictionary = {}
 var severity: Dictionary = {}
 var scheduling: Dictionary = {}
@@ -48,6 +50,7 @@ func load_from(data: Dictionary) -> bool:
 		errors.append("director.json schema_version must be %d" % SCHEMA_VERSION)
 		return false
 	tp = data.get("tp", {})
+	floor_config = data.get("floor", {})
 	preparedness = data.get("preparedness", {})
 	severity = data.get("severity", {})
 	scheduling = data.get("scheduling", {})
@@ -109,7 +112,41 @@ func city_tier(population: int) -> int:
 
 func tp_base_per_day(tier: int) -> float:
 	var table: Array = tp.get("base_per_day_by_tier", [0, 6, 12, 20, 30])
-	return float(table[clampi(tier, 0, table.size() - 1)])
+	return maxf(float(table[clampi(tier, 0, table.size() - 1)]), floor_tp_per_day())
+
+
+## doc 92 F-1: the size-independent minimum accrual, in threat points per
+## game-day. 0 when the floor is disabled, so the tier ladder is then the only
+## authority — and even enabled, `max()` means it is invisible above tier 0.
+func floor_tp_per_day() -> float:
+	if not floor_enabled():
+		return 0.0
+	return float(floor_config.get("tp_per_day", 0.0))
+
+
+func floor_enabled() -> bool:
+	return bool(floor_config.get("enabled", false))
+
+
+## The catalog rows the floor is allowed to unlock for a city below an event's
+## own `min_city_tier`: minor class, hazard tier 1, cheap. A small city gets
+## weather and a cooked transformer; it does not get a major structure fire.
+func floor_allows(event: Dictionary) -> bool:
+	if not floor_enabled():
+		return false
+	var classes: Array = floor_config.get("classes", [CLASS_MINOR])
+	if not classes.has(String(event.get("class", ""))):
+		return false
+	if int(event.get("hazard_tier", 3)) > int(floor_config.get("max_hazard_tier", 1)):
+		return false
+	return float(event.get("tp_cost", 0)) <= float(floor_config.get("max_tp_cost", 0))
+
+
+## The floor's own grace: doc 07 F1 holds the Director off a city that is both
+## young AND small, which a founding city never stops being. The floor keeps the
+## age half of that gate and drops the population half.
+func floor_grace_days() -> int:
+	return int(floor_config.get("grace_days", 3))
 
 
 func lightning() -> Dictionary:

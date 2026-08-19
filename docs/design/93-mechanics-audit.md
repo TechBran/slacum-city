@@ -78,8 +78,52 @@ unchanged and each shift is explained by a named replacement:
 | anchor | doc value (stub) | as-integrated | why |
 |---|---|---|---|
 | 20:00 system peak | 783.3 kW | **801.7 kW** | doc 05's live node roster meters the real plant, ~+18.4 kW over the L1-variant constants |
-| founding net, first hour | +$318.77/gh | **≈ +$345/gh** | live `E_water` inventory + per-building water service + road access replace `HELD_WATER` / `road: 1.0` / `c_day 0.35` |
-| founding day net | ≈ +$7,650 | **≈ +$8,350** | same, over 24 settlements |
+| founding gross revenue, first hour | $839.349 | **$841.278** | live inventories; +0.23%, unmoved in substance |
+| founding expense, first hour | $520.577 | **$504.777** | see the fleet-billing ruling below |
+| founding net, first hour | +$318.77/gh | **+$336.502/gh** | ditto |
+| founding day net | ≈ +$7,650 | **+$8,006** | same, over 24 settlements |
+
+**Fleet-billing ruling (doc 92 pass-2 F-3, 2026-08-19).** Doc 06 owns fleet
+capacity (C-50), so doc 03 bills the roster doc 06 actually houses:
+`build_settlement_inputs`' `vehicles` is `incidents.fleet.roster_for_economy()`
+and the held `CitySim.STARTER_VEHICLES` constant is **deleted**. Two lines move
+in opposite directions and the net is **−$15.80/gh** against the stub ledger:
+
+| line | stub (`STARTER_VEHICLES`) | as-integrated (doc 06 roster) | why |
+|---|---|---|---|
+| `E_fleet` | $58.00/gh — 6 held rows | **$76.00/gh** — the real 8, `2/1/2/2/1` | doc 06's `capacity_per_station_level` houses 2 patrol, 1 engine, **2** utility, **2** water repair, 1 crew; doc 03's held list had one utility and one water truck |
+| `E_fuel_vehicle` | $6.00/gh | **$0.00/gh** | the held rows carried an invented `km_this_hour`; the live roster meters no road distance yet, so it bills none rather than a fiction |
+| everything else | — | −$3.80/gh | docs 05/10 live inventories, unchanged in kind |
+
+`data/economy.json`'s `STARTER_EXPENSE_PER_HOUR_EXACT` and
+`STARTER_NET_PER_HOUR_EXACT` are **re-stamped to the as-integrated pair**
+(504.776677 / 336.501773) and are the regression target
+`tests/test_balance_gates.gd` gates 1–2 hold to ±1 %. The unsuffixed
+`STARTER_EXPENSE_PER_HOUR` 521 / `STARTER_NET_PER_HOUR` 319 stay doc 03 §2.12's
+published round figures, and `tests/test_economy.gd::test_founding_ledger` still
+checks the doc's own arithmetic against its own literals — the CHAIN is
+preserved, as this section has said from the start; only the inventory changed.
+
+**Also binding from the same pass (doc 92 pass-2 rulings 1, 4, 5, 6, 8):**
+
+- **doc 02 §2.6 wear is live.** `Building.apply_decay` is called once per settled
+  game-hour from `HourlyPhaseSystem`, before doc 03 bills the hour, with doc 04's
+  `power_availability_hour`, the serving transformer's overload excess and doc
+  07's `condition_decay_mult` (× doc 03 §2.10 layer 2's `AUSTERITY_DECAY_MULT`).
+  `data/buildings.json`'s 60 authored `decay_per_hour` rows stop being dead data.
+- **doc 03 §2.10's recovery ladder is live.** `update_credit_limit` /
+  `update_austerity` / `maybe_grant_relief` run every settled hour off the
+  settlement snapshot; all six `treasury.spend()` call sites read their result and
+  fail with `E_AUSTERITY` rather than proceeding for free.
+- **`tax.TAX_RATE_GROWTH_COEFF` 3.5 → 8.0.** Top detent growth ×0.755 → **×0.44**;
+  bottom detent ×1.175 → ×1.40. No revenue term moves.
+- **`data/director.json` gains a `floor` block.** A size-independent minimum
+  threat-point cadence, whitelisted to minor tier-1 events under `max_tp_cost`, so
+  a founding city gets weather and a cooked transformer inside its first game-week.
+  `data/incidents.json` `generator_base_rates` are untouched.
+- **Incident lifecycle events name their own kind.** `incident_created` /
+  `tier_changed` / `resolved` / `failed` / `abandoned` carry the incident's kind as
+  **`incident_type`**; `type` is the bus event name and always was. No compat key.
 
 Also binding from the same pass: **mode-invariance is per-system, not
 whole-hash** — doc 06 §2.6 sanctions Poisson-count differences per step size,

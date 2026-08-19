@@ -340,10 +340,17 @@ func _update_suppression(inputs: DirectorInputs) -> void:
 			_emit(&"director_suppressed", {"active": false, "reasons": [], "minute": _now_min})
 
 
-## F1 — grace period.
+## F1 — grace period. The doc's gate is age AND population, which a founding
+## city fails forever on the population half (doc 92 F-1): 144 people against a
+## threshold of 400, so the Director never wakes up in a small city. The floor
+## (doc 92 F-1 ruling) keeps the age half and drops the population half, and
+## `candidates()` still holds everything but cheap tier-1 minors back until the
+## city is genuinely big enough for the doc's own ladder.
 func _grace_passed(inputs: DirectorInputs) -> bool:
-	return inputs.city_age_days >= int(tables.fairness.get("grace_days", 3)) \
-			and inputs.population >= int(tables.fairness.get("grace_population", 400))
+	if inputs.city_age_days >= int(tables.fairness.get("grace_days", 3)) \
+			and inputs.population >= int(tables.fairness.get("grace_population", 400)):
+		return true
+	return tables.floor_enabled() and inputs.city_age_days >= tables.floor_grace_days()
 
 
 func cooldown(key: String) -> int:
@@ -431,7 +438,7 @@ func candidates(inputs: DirectorInputs, ctx: TimeContext, p: float) -> Array:
 	var soft_max := int(tables.fairness.get("soft_suppress_max_cost", 12))
 	var city_tier := tables.city_tier(inputs.population)
 	for event in tables.events:  # file order — never dictionary order
-		if city_tier < int(event.get("min_city_tier", 1)):
+		if city_tier < int(event.get("min_city_tier", 1)) and not tables.floor_allows(event):
 			continue
 		if p < float(event.get("min_preparedness", 0.0)):
 			continue

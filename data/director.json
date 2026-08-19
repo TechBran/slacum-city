@@ -15,6 +15,15 @@
     "post_event_bleed_mult": 0.5,
     "post_event_bleed_min": 720
   },
+  "floor": {
+    "_note": "doc 92 pass-2 F-1 ruling. Every pressure channel in the game scales with what the player built, so a 34-building founding city sits below EVERY threshold in doc 06 and doc 07 and the do-nothing control ends 21 game-days having seen 4 incidents and no Director event at all. The honest lever is a FLOOR, not a slope, and it belongs to the Director: base_per_day_by_tier[0] is 0, so a tier-0 city accrues no threat points, is filtered out by min_city_tier, and never passes the fairness grace gate. This block is the size-independent minimum. data/incidents.json generator_base_rates are NOT raised (report 98 R-11/R-13 calibrated them per-asset; raising them to pressure a small city makes a large one unplayable). Note this is a floor in every sense: tp_per_day is a max() against the tier ladder, so a tier-1+ city (base 6/day and up) is unchanged, and the class/cost caps mean a small city gets minor tier-1 weather and utility events only.",
+    "enabled": true,
+    "tp_per_day": 6.0,
+    "grace_days": 3,
+    "max_tp_cost": 10,
+    "max_hazard_tier": 1,
+    "classes": ["minor"]
+  },
   "preparedness": {
     "w_redundancy": 0.35,
     "w_fleet": 0.25,

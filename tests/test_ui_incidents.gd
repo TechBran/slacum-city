@@ -95,20 +95,22 @@ func test_created_builds_a_row_the_view_can_draw() -> void:
 
 
 func test_the_created_event_cannot_name_the_kind() -> void:
-	# `IncidentSystem._emit()` stamps `event["type"] = "incident_created"` over the
-	# payload's own `type`, which is where doc 06 puts the incident kind. This test
-	# pins the consequence rather than pretending it away: the row falls back to
-	# the generic label and the snapshot supplies the real one.
+	# HISTORY: `IncidentSystem._emit()` stamps `event["type"] = "incident_created"`
+	# over the payload's own `type`, which is where doc 06 used to put the incident
+	# kind — so the kind never reached the bus and the row fell back to the generic
+	# label until the next `refresh()`. Doc 92 pass-2 ruling 8 renamed the field to
+	# `incident_type`; the fallback path below still has to work, because a payload
+	# that names no kind (an old fixture, a scripted spawn) must not crash the row.
 	var model := _model()
 	var row := model.feed(Fixtures.created(7, 9.0, 3.4))
-	assert_eq(str(row["kind"]), "", "there is nothing on the event to read")
+	assert_eq(str(row["kind"]), "", "a payload with no `incident_type` names nothing")
 	assert_eq(str(row["title"]), UIWidgets.t(_cfg(), "ui_incident_kind_unknown"))
 	model.refresh([Fixtures.snapshot_row(7, "transformer_failure", 3.4)])
 	assert_eq(str(model.row(7)["kind"]), "transformer_failure")
 	assert_eq(str(model.row(7)["title"]),
 			UIWidgets.t(_cfg(), "ui_incident_kind_transformer_failure"))
 	assert_ne(str(model.row(7)["glyph"]), "", "and now it has its own glyph")
-	# Forward-compatible with the one-line sim rename in the report.
+	# And the shipped sim path: doc 06 names the kind, the row reads it live.
 	var patched := _model()
 	var named := patched.feed({"type": "incident_created", "incident_id": 8,
 			"incident_type": "crime", "severity": 2.0, "tier": 2, "at_h": 9.0,

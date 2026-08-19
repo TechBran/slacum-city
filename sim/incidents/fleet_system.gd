@@ -52,6 +52,70 @@ func populate_from_stations(stations: Array) -> void:
 				_spawn(type_id, station_id, tile)
 
 
+## ONE station arrived, was upgraded, or changed level — re-house only that
+## station (doc 06 §2.11 / C-50). `populate_from_stations` builds the founding
+## roster once at boot; this is what keeps the roster true for every station the
+## player builds afterwards, so a new `fire_station` is response capacity and not
+## just an upkeep line (doc 92 F-3).
+##
+## An upgrade never destroys a unit the station already houses: only the
+## difference between the old and the new capacity rung is commissioned. The
+## returned dictionary reports what actually changed, so the caller can stay
+## silent when nothing did.
+func sync_station(station_id: String, archetype: String, level: int,
+		tile: Vector2i) -> Dictionary:
+	var out := {"station": station_id, "archetype": archetype, "added": 0,
+			"units": [] as Array, "known": _stations.has(station_id)}
+	if not STATION_ARCHETYPES.has(archetype):
+		return out
+	var clamped := clampi(level, 1, 5)
+	_stations[station_id] = {"archetype": archetype, "level": clamped, "tile": tile}
+	out["level"] = clamped
+	# Sorted: `vehicle_types_for_station` walks the catalog's own id order, which
+	# is authored and stable, so the ids a station issues never depend on hashing.
+	for type_id in catalog.vehicle_types_for_station(archetype):
+		var want := capacity_for(archetype, type_id, clamped)
+		var have := units_of_type_at(station_id, type_id)
+		for _i in maxi(0, want - have):
+			var unit := _spawn(type_id, station_id, tile)
+			(out["units"] as Array).append(unit.id)
+			out["added"] = int(out["added"]) + 1
+			_emit("unit_commissioned", {"unit_id": unit.id, "unit_type": type_id,
+					"station_id": station_id, "archetype": archetype,
+					"station_level": clamped, "tile": [tile.x, tile.y]})
+	return out
+
+
+## The station is gone (doc 02 §2.12 demolition). Its units go with it; an
+## incident holding a retired unit simply loses that contribution and the
+## dispatcher re-asks (every `fleet.unit()` read on an assigned id is
+## null-guarded).
+func remove_station(station_id: String) -> Dictionary:
+	var removed: Array = []
+	for unit_id in _order.duplicate():
+		var u: Vehicle = _units[unit_id]
+		if u.home_station_id != station_id:
+			continue
+		removed.append(unit_id)
+		remove_unit(unit_id)
+		_emit("unit_decommissioned", {"unit_id": unit_id, "unit_type": u.type,
+				"station_id": station_id})
+	var known := _stations.has(station_id)
+	_stations.erase(station_id)
+	return {"station": station_id, "removed": removed.size(), "units": removed,
+			"known": known}
+
+
+## How many units of one type this station currently houses (any status).
+func units_of_type_at(station_id: String, vehicle_type_id: String) -> int:
+	var count := 0
+	for unit_id in _order:
+		var u: Vehicle = _units[unit_id]
+		if u.home_station_id == station_id and u.type == vehicle_type_id:
+			count += 1
+	return count
+
+
 func capacity_for(archetype: String, vehicle_type_id: String, level: int) -> int:
 	if not catalog.vehicle_types_for_station(archetype).has(vehicle_type_id):
 		return 0

@@ -386,9 +386,16 @@ func test_sample_stream_is_hourly_and_well_formed() -> void:
 	var first: Dictionary = samples[0]
 	assert_eq(int(first["treasury"]), 25_000, "doc 03 §2.12 starting treasury")
 	assert_almost_eq(float(first["net"]), 0.0, 1e-9, "no hour has been billed at t0")
-	# The first settled hour tracks the AS-INTEGRATED founding net (doc 93):
-	# doc 03's worked +$318.77 predates docs 05/10 billing live.
-	assert_almost_eq(float((samples[1] as Dictionary)["net"]), 348.7, 8.0,
+	# The first settled hour tracks the AS-INTEGRATED founding net (doc 93 §E2):
+	# doc 03's worked +$318.77 predates docs 05/10 billing live, and the pass-2
+	# figure of 348.7 predates doc 06's live fleet roster replacing doc 03's held
+	# `STARTER_VEHICLES` (doc 92 fleet-billing ruling). The ruled anchor is
+	# `data/economy.json` `STARTER_NET_PER_HOUR_EXACT`; read it rather than
+	# repeating it, so a future re-stamp moves one number and not two.
+	var pacing: Dictionary = StarterCityLoader.read_json("res://data/economy.json") \
+			.get("pacing_guardrails", {})
+	assert_almost_eq(float((samples[1] as Dictionary)["net"]),
+			float(pacing["STARTER_NET_PER_HOUR_EXACT"]), 8.0,
 			"first settled hour tracks the as-integrated founding net")
 
 

@@ -256,7 +256,9 @@ func test_occupancy_ramp_and_tax_policy() -> void:
 	assert_almost_eq(system.tax_policy_factor(0.09), 1.0)
 	assert_almost_eq(system.tax_policy_factor(0.16), 1.7778, 0.0001, "×1.778 at the top")
 	assert_almost_eq(system.happiness_tax_delta(0.16), -15.4, 0.001)
-	assert_almost_eq(system.growth_rate_multiplier(0.16), 0.755, 0.001)
+	# TAX_RATE_GROWTH_COEFF 8.0 (doc 92 F-5 ruling): the top detent halves growth.
+	assert_almost_eq(system.growth_rate_multiplier(0.16), 0.44, 0.001)
+	assert_almost_eq(system.growth_rate_multiplier(0.04), 1.40, 0.001)
 	assert_false(system.tax_rate_change_allowed(40, 0), "48 gh cooldown")
 	assert_true(system.tax_rate_change_allowed(48, 0))
 
@@ -428,9 +430,16 @@ func test_founding_ledger_matches_published_guardrails() -> void:
 	var snapshot := _system().settle_hour(_founding_inputs())
 	assert_almost_eq(float(snapshot["revenue"]["gross"]),
 			float(pacing["STARTER_GROSS_REVENUE_PER_HOUR_EXACT"]), 0.5)
-	assert_almost_eq(float(snapshot["expenses"]["total"]),
-			float(pacing["STARTER_EXPENSE_PER_HOUR_EXACT"]), 0.5)
-	assert_almost_eq(float(snapshot["net"]), float(pacing["STARTER_NET_PER_HOUR_EXACT"]), 0.5)
+	# NOTE the expense/net pair is deliberately NOT compared here any more.
+	# `STARTER_EXPENSE_PER_HOUR_EXACT` / `STARTER_NET_PER_HOUR_EXACT` were promoted
+	# to the AS-INTEGRATED anchors by doc 92 §4's ruling, and this fixture is doc 03
+	# §2.12's stub-era worked example: it checks the doc's own arithmetic (its
+	# literals are asserted in `test_founding_ledger` above), while the live sim is
+	# held to the promoted pair by `tests/test_balance_gates.gd` gates 1 and 2.
+	assert_true(float(pacing["STARTER_EXPENSE_PER_HOUR_EXACT"])
+			< float(snapshot["expenses"]["total"]),
+			"the as-integrated ledger bills LESS than doc 03's stub example: "
+			+ "E_fuel_vehicle stopped inventing kilometres (doc 92 §4)")
 	assert_almost_eq(float(snapshot["expenses"]["roads_repair"]),
 			float(pacing["STARTER_ROAD_REPAIR_PER_HOUR"]), 0.5)
 	assert_almost_eq(float(snapshot["expenses"]["water"]),
