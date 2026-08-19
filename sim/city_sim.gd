@@ -97,6 +97,7 @@ var _prev_block_dark: Dictionary = {}  # block id -> bool
 ## its jobs are actually at on the next tick, which is what the renderer wants.
 var _last_construction_stage: Dictionary = {}  # sim_id -> stage 1..6
 var _last_expense_hour: float = 1.0            # DirectorInputs.daily_opex source
+var _director_links: Dictionary = {}           # incident id -> director event_uid
 var _strike_roster: Array = []
 var _strike_roster_min: int = -1
 var boot_errors: PackedStringArray = []
@@ -241,9 +242,7 @@ func _boot_weather() -> void:
 			DirectorTables.load_from_file("res://data/director.json"), rng)
 	if not director.tables.is_valid():
 		boot_errors.append_array(director.tables.errors)
-	# Doc 06's live sink is a Phase-2 seam: director requests are recorded, not
-	# executed, so pacing/fairness run without inventing an unmapped incident.
-	incident_sink = IncidentRequestSink.Recording.new()
+	incident_sink = DirectorIncidentSink.new(self)
 	director.attach(weather, incident_sink, modifiers)
 	weather.bootstrap(_boot_context())
 
@@ -569,6 +568,7 @@ func capture_state() -> Dictionary:
 		"policy": {"tax_rate": tax_rate, "tax_rate_changed_hour": tax_rate_changed_hour,
 				"grid_id_high_water": _grid_id_high_water},
 		"water": water.serialize(),
+		"director_links": _serialize_director_links(),
 		"incidents": incidents.serialize_incidents(),
 		"fleet": incidents.fleet.serialize(),
 		"dispatch": incidents.dispatch.serialize(),
@@ -688,6 +688,9 @@ func restore_state(raw_body: Dictionary) -> void:
 		_block_dark_weights[id] = int(live.stats.get("population", 0)) \
 				+ int(live.stats.get("jobs", 0))
 	water.deserialize(body.get("water", {}))
+	_director_links.clear()
+	for key in body.get("director_links", {}):
+		_director_links[int(key)] = int(body["director_links"][key])
 	incidents.deserialize_incidents(body.get("incidents", {}))
 	incidents.fleet.deserialize(body.get("fleet", {}))
 	incidents.dispatch.deserialize(body.get("dispatch", {}))
@@ -709,6 +712,13 @@ func state_hash() -> String:
 	ctx.start(HashingContext.HASH_SHA256)
 	ctx.update(text.to_utf8_buffer())
 	return ctx.finish().hex_encode()
+
+
+func _serialize_director_links() -> Dictionary:
+	var out := {}
+	for incident_id in _sorted(_director_links):
+		out[str(incident_id)] = int(_director_links[incident_id])
+	return out
 
 
 func _serialize_buildings() -> Array:
@@ -1676,6 +1686,41 @@ class WorkPhaseSystem extends SimSystem:
 		advance_fine(ctx)
 
 
+## Doc 07 → doc 06 live seam: the Director REQUESTS, doc 06 EXECUTES (contract
+## in sim/weather/incident_request_sink.gd). The adapter refuses unknown kinds
+## and unresolvable targets — the Director never assumes an incident exists
+## because it asked for one. The severity_mult travels in `cause` for a later
+## doc-06 pressure amendment rather than overriding doc 06's own severity roll.
+class DirectorIncidentSink extends IncidentRequestSink:
+	var sim: CitySim
+	func _init(p_sim: CitySim) -> void: sim = p_sim
+	func request_incident(kind: StringName, target: Dictionary) -> void:
+		if not sim.incident_catalog.has_type(String(kind)):
+			return
+		var ref := String(target.get("ref", ""))
+		var tile := Vector2i(-1, -1)
+		var target_ref := {}
+		if sim.buildings.has(ref):
+			tile = (sim.buildings[ref] as Building).origin
+			target_ref = {"kind": "building", "id": ref}
+		elif ref != "" and sim.grid.has_component(ref):
+			tile = sim.grid.component(ref).get("tile", Vector2i(-1, -1))
+			target_ref = {"kind": "component", "id": ref}
+		elif target.get("pos") is Vector2:
+			var pos: Vector2 = target["pos"]
+			tile = Vector2i(int(pos.x), int(pos.y))
+		if tile.x < 0 or not TileGrid.in_bounds(tile.x, tile.y):
+			return  # unresolvable target: refused, per the contract
+		var inc := sim.incidents.spawn(String(kind), "", tile, target_ref, -1.0, {
+			"reason": "director",
+			"event_uid": int(target.get("event_uid", 0)),
+			"severity_mult": float(target.get("severity_mult", 1.0)),
+			"condition_floor": float(target.get("condition_floor", 0.0)),
+		}, String(target.get("district_id", "")))
+		if inc != null:
+			sim._director_links[inc.id] = int(target.get("event_uid", 0))
+
+
 class WeatherPhaseSystem extends SimSystem:
 	var sim: CitySim
 	func _init(p_sim: CitySim) -> void: sim = p_sim
@@ -1826,6 +1871,14 @@ class ReportPhaseSystem extends SimSystem:
 			sim.incidents.on_power_event(event)
 			sim.bus.emit(StringName(String(event["type"])), event)
 		for event in sim.incidents.drain_events():
+			# A director-requested incident closing frees the event's slot (F2).
+			match StringName(String(event["type"])):
+				&"incident_resolved", &"incident_failed", &"incident_abandoned":
+					var incident_id := int(event.get("incident_id", -1))
+					if sim._director_links.has(incident_id):
+						sim.director.on_incident_resolved(incident_id,
+								int(sim._director_links[incident_id]))
+						sim._director_links.erase(incident_id)
 			sim.bus.emit(StringName(String(event["type"])), event)
 		for event in sim.water.drain_events():
 			sim.bus.emit(StringName(String(event["type"])), event)
