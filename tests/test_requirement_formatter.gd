@@ -248,3 +248,13 @@ func test_from_result_folds_the_payload_into_the_parameters() -> void:
 	# `{cost, balance}` came straight off the command payload.
 	assert_eq(str(row["args"]["need"]), HudModel.money(int(refused["payload"]["cost"])))
 	assert_eq(str(row["args"]["have"]), HudModel.money(int(refused["payload"]["balance"])))
+
+
+func test_checklist_text_is_the_name_when_passing_and_the_reason_when_not() -> void:
+	var formatter := _fmt()
+	var rows := formatter.checklist([&"E_CONDITION", &"E_FUNDS"], [&"E_FUNDS"], _params())
+	assert_eq(str(rows[0]["text"]), str(rows[0]["title"]),
+			"a satisfied requirement is named, never explained in the failure voice")
+	assert_eq(str(rows[1]["text"]), str(rows[1]["body"]),
+			"the row the player must act on carries the whole sentence")
+	assert_true(str(rows[1]["text"]).contains("$"), rows[1]["text"])

@@ -75,17 +75,26 @@ var _last_back_ms := -1.0e9
 
 
 func _ready() -> void:
+	initialize()
+
+
+## Bring-up, split out of `_ready()` and idempotent: a headless test never
+## reaches an idle frame, so `_ready` never fires there and the screens hanging
+## off this scaffold would bind against a null config. Callers that mount the
+## scene by hand call this once after `add_child()`.
+func initialize() -> void:
 	layer = CANVAS_LAYER_UI
 	_bind_nodes()
-	config = UIConfig.load_from_files()
-	if not config.is_valid():
-		for message: String in config.errors:
-			push_error("UIRoot: %s" % message)
+	if config == null:
+		config = UIConfig.load_from_files()
+		if not config.is_valid():
+			for message: String in config.errors:
+				push_error("UIRoot: %s" % message)
 	_apply_content_scale()
 	rebuild_theme()
 	_recompute_layout()
 	var window := get_window()
-	if window != null:
+	if window != null and not window.size_changed.is_connected(_recompute_layout):
 		window.size_changed.connect(_recompute_layout)
 
 
@@ -216,9 +225,9 @@ static func resolve_back(ctx: Dictionary) -> StringName:
 
 func back_context(now_ms: float) -> Dictionary:
 	return {
-		"modal_open": _has_children(modal_layer),
-		"sheet_open": _has_children(sheet_layer),
-		"panel_open": _has_children(panel_layer),
+		"modal_open": _has_open_child(modal_layer),
+		"sheet_open": _has_open_child(sheet_layer),
+		"panel_open": _has_open_child(panel_layer),
 		"placement_active": placement_active,
 		"has_selection": selected_entity_id != "",
 		"back_pressed_recently":
@@ -233,11 +242,11 @@ func handle_back(now_ms: float = -1.0) -> StringName:
 	var action := UIRoot.resolve_back(back_context(t))
 	_last_back_ms = t
 	if action == BACK_CLOSE_MODAL:
-		_pop_last(modal_layer)
+		_close_last(modal_layer)
 	elif action == BACK_CLOSE_SHEET:
-		_pop_last(sheet_layer)
+		_close_last(sheet_layer)
 	elif action == BACK_CLOSE_PANEL:
-		_pop_last(panel_layer)
+		_close_last(panel_layer)
 	elif action == BACK_CANCEL_PLACEMENT:
 		placement_active = false
 	elif action == BACK_DESELECT:
@@ -246,13 +255,46 @@ func handle_back(now_ms: float = -1.0) -> StringName:
 	return action
 
 
-static func _has_children(node: Node) -> bool:
-	return node != null and node.get_child_count() > 0
+## Is anything on this layer actually open?
+##
+## Two kinds of child live on a layer. A **transient** one is pushed when it
+## opens and freed when it closes, so its mere presence means "open" — that was
+## the P1-30 scaffold's only case. A **persistent** screen (`BuildSheet`,
+## `BuildingPanel`, P1-33/P1-34) is authored into `ui_root.tscn` and is always
+## present, because its FAB has to stay on screen while the sheet itself is shut;
+## it answers `is_open()` for itself. Anything else counts as open while visible.
+static func _has_open_child(node: Node) -> bool:
+	if node == null:
+		return false
+	for child in node.get_children():
+		if child.has_method("is_open"):
+			if bool(child.call("is_open")):
+				return true
+			continue
+		var control := child as Control
+		if control == null or control.visible:
+			return true
+	return false
 
 
-static func _pop_last(node: Node) -> void:
-	if node == null or node.get_child_count() == 0:
-		return
-	var child := node.get_child(node.get_child_count() - 1)
-	node.remove_child(child)
-	child.queue_free()
+## Closes the topmost open child: a persistent screen is told to `close()`, a
+## transient one is popped and freed. Returns true when something closed.
+static func _close_last(node: Node) -> bool:
+	if node == null:
+		return false
+	for i in range(node.get_child_count() - 1, -1, -1):
+		var child := node.get_child(i)
+		if child.has_method("is_open"):
+			if not bool(child.call("is_open")):
+				continue
+			if child.has_method("close"):
+				child.call("close")
+				return true
+			continue
+		var control := child as Control
+		if control != null and not control.visible:
+			continue
+		node.remove_child(child)
+		child.queue_free()
+		return true
+	return false

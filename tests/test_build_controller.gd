@@ -452,3 +452,227 @@ func test_upgrade_of_a_missing_building_is_safe() -> void:
 	var view: Dictionary = controller.upgrade_view("NOPE-999")
 	assert_false(bool(view["ok"]))
 	assert_eq((view["checklist"] as Array).size(), 1, "one reason row, no fake checklist")
+
+
+# ===========================================================================
+# Scene binding — the S2/S3/S5 `Control`s hung on the UIRoot scaffold
+# ===========================================================================
+# These mount `game/ui/ui_root.tscn` in the headless tree so the bindings are
+# exercised for real: doc 12 test 19's A3 (48 dp) and A15 (accessibility name)
+# tree walk, and the card → ghost → PLACE flow end to end.
+
+func _tree() -> SceneTree:
+	return Engine.get_main_loop() as SceneTree
+
+
+## Mounts the UI scaffold and wires both screens to `sim`. Free with `_unmount`.
+func _mount(sim: CitySim) -> Dictionary:
+	var packed: PackedScene = load("res://game/ui/ui_root.tscn")
+	var root: UIRoot = packed.instantiate()
+	root.apply_content_scale = false  # never touch the test runner's window
+	_tree().root.add_child(root)
+	# A test loop never reaches an idle frame, so `_ready` does not fire: the
+	# scaffold and its screens are brought up explicitly, exactly as `main.gd`
+	# does after `add_child()`.
+	root.initialize()
+	var cfg: UIConfig = root.config
+	var controller := BuildController.new(sim, RequirementFormatter.new(cfg))
+	var hud := root.get_node_or_null("SafeArea/HUDLayer") as CityHUD
+	if hud != null:
+		hud.setup(cfg)
+	var sheet := root.get_node_or_null("SafeArea/SheetLayer/BuildSheet") as BuildSheet
+	var panel := root.get_node_or_null("SafeArea/PanelLayer/BuildingPanel") as BuildingPanel
+	if sheet != null:
+		sheet.setup(cfg, controller)
+	if panel != null:
+		panel.setup(cfg, controller)
+	return {"root": root, "sheet": sheet, "panel": panel, "controller": controller}
+
+
+func _unmount(mounted: Dictionary) -> void:
+	var root: Node = mounted["root"]
+	_tree().root.remove_child(root)
+	root.free()
+
+
+func test_scene_carries_the_build_sheet_and_building_panel() -> void:
+	var mounted := _mount(_sim())
+	var sheet: BuildSheet = mounted["sheet"]
+	var panel: BuildingPanel = mounted["panel"]
+	assert_ne(sheet, null, "SafeArea/SheetLayer/BuildSheet is wired")
+	assert_ne(panel, null, "SafeArea/PanelLayer/BuildingPanel is wired")
+	assert_false(sheet.is_open(), "the sheet starts closed behind the FAB")
+	assert_false(panel.is_open())
+	assert_eq(sheet.cards().size(), BuildingCatalog.ARCHETYPE_COUNT)
+	sheet.open()
+	assert_true(sheet.is_open())
+	assert_ne(sheet.card_button("house"), null, "the residential tab lists House")
+	sheet.select_category("utility")
+	assert_ne(sheet.card_button("substation"), null)
+	assert_eq(sheet.card_button("house"), null, "tabs filter the card row")
+	_unmount(mounted)
+
+
+func test_persistent_screens_do_not_jam_the_back_stack() -> void:
+	# The scaffold's back stack pops "whatever is on the layer"; a persistent
+	# screen has to report its own open state or BACK would close the FAB.
+	var mounted := _mount(_sim())
+	var root: UIRoot = mounted["root"]
+	var sheet: BuildSheet = mounted["sheet"]
+	assert_eq(root.handle_back(0.0), UIRoot.BACK_PROMPT_MINIMISE,
+			"nothing is open, so BACK falls through to the minimise prompt")
+	sheet.open()
+	assert_eq(root.handle_back(1.0), UIRoot.BACK_CLOSE_SHEET)
+	assert_false(sheet.is_open(), "BACK closed the sheet, not freed it")
+	assert_ne(root.get_node_or_null("SafeArea/SheetLayer/BuildSheet"), null,
+			"the screen survives its own close")
+	_unmount(mounted)
+
+
+func test_every_interactive_control_meets_a3_and_a15() -> void:
+	# doc 12 A3: min 48 × 48 dp for anything with a `pressed` signal.
+	# doc 12 A15: `tooltip_text` is the accessibility name and is never blank.
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var sheet: BuildSheet = mounted["sheet"]
+	var panel: BuildingPanel = mounted["panel"]
+	sheet.open()
+	panel.show_building("H-001")
+	var root: UIRoot = mounted["root"]
+	var minimum := float(ThemeBuilder.touch_min_dp(root.config, 1.0, false))
+	var checked := 0
+	var seen: Array[String] = []
+	for node: Node in _walk(root):
+		if not (node is Button):
+			continue
+		var button := node as Button
+		checked += 1
+		seen.append(str(button.name))
+		assert_true(button.custom_minimum_size.x >= minimum,
+				"%s is %d dp wide, needs %d" % [button.name, button.custom_minimum_size.x,
+						minimum])
+		assert_true(button.custom_minimum_size.y >= minimum,
+				"%s is %d dp tall, needs %d" % [button.name, button.custom_minimum_size.y,
+						minimum])
+		assert_true(button.tooltip_text.length() > 0, "%s has an A15 name" % button.name)
+	# The walk must actually have reached both new screens, not just the HUD.
+	for expected: String in ["Fab", "Confirm", "Cancel", "Close", "UpgradeButton",
+			"Tab_residential", "Card_house"]:
+		assert_true(seen.has(expected), "the walk reached %s" % expected)
+	assert_true(checked >= 20, "the whole UI was walked (%d buttons)" % checked)
+	_unmount(mounted)
+
+
+func _walk(node: Node) -> Array[Node]:
+	var out: Array[Node] = [node]
+	for child: Node in node.get_children():
+		out.append_array(_walk(child))
+	return out
+
+
+func test_card_tap_raises_the_placement_bar_and_place_commits() -> void:
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var sheet: BuildSheet = mounted["sheet"]
+	var controller: BuildController = mounted["controller"]
+	sheet.open()
+	sheet.card_button("house").pressed.emit()
+	assert_true(controller.is_placing(), "the card entered placement mode")
+	assert_false(sheet.is_open(), "the sheet collapses into the PlacementBar")
+	var bar := mounted["root"].get_node("SafeArea/SheetLayer/BuildSheet/PlacementBar") as Control
+	var confirm := mounted["root"].get_node(
+			"SafeArea/SheetLayer/BuildSheet/PlacementBar/Row/Confirm") as Button
+	var issue := mounted["root"].get_node(
+			"SafeArea/SheetLayer/BuildSheet/PlacementBar/Row/Issue") as Label
+	assert_true(bar.visible)
+
+	# A blocked lot disables PLACE and says why in words (A14).
+	sheet.move_ghost(Vector3(8 * 8.0 + 4.0, 0.0, 8 * 8.0 + 4.0))
+	assert_true(confirm.disabled, "BLOCKED disables the commit button")
+	assert_true(issue.text.length() > 0, "the bar names the reason")
+
+	# A good lot enables it, and only the button commits.
+	var origin := _serviceable_vacant_tile(sim)
+	var balance := sim.treasury.balance
+	sheet.move_ghost(Vector3(origin.x * 8.0 + 4.0, 0.0, origin.y * 8.0 + 4.0))
+	assert_false(confirm.disabled)
+	assert_eq(sim.treasury.balance, balance, "moving the ghost charges nothing")
+	confirm.pressed.emit()
+	assert_true(sim.treasury.balance < balance, "PLACE committed the build")
+	assert_false(controller.is_placing())
+	assert_false(bar.visible, "the bar retires with placement mode")
+	_unmount(mounted)
+
+
+func test_locked_card_explains_itself_instead_of_placing() -> void:
+	var sim := _sim()
+	sim.progression.city_level = 0
+	var mounted := _mount(sim)
+	var sheet: BuildSheet = mounted["sheet"]
+	var refusals: Array[Dictionary] = []
+	sheet.card_refused.connect(func(failure: Dictionary) -> void: refusals.append(failure))
+	sheet.open()
+	sheet.select_category("industrial")
+	sheet.card_button("data_center").pressed.emit()
+	assert_false((mounted["controller"] as BuildController).is_placing())
+	assert_eq(refusals.size(), 1, "the tap was answered, not swallowed")
+	assert_eq(str(refusals[0]["canonical"]), "CITY_LEVEL")
+	var notice := mounted["root"].get_node(
+			"SafeArea/SheetLayer/BuildSheet/Sheet/Body/Notice") as Label
+	assert_true(notice.visible and notice.text.length() > 0, "the sheet shows the reason")
+	_unmount(mounted)
+
+
+func test_building_panel_renders_the_checklist_and_gates_upgrade() -> void:
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	sim.progression.city_level = 1
+	var mounted := _mount(sim)
+	var panel: BuildingPanel = mounted["panel"]
+	panel.show_building("H-001")
+	assert_true(panel.is_open())
+	assert_eq(panel.selected_id(), "H-001")
+	assert_eq(panel.checklist_rows().size(), 6, "every check is listed, not just the first")
+	assert_false(panel.upgrade_button().disabled, "no blockers, so UPGRADE is live")
+
+	# Break one requirement and the button must lock behind it.
+	(sim.buildings["H-001"] as Building).condition = 0.40
+	panel.refresh()
+	assert_true(panel.upgrade_button().disabled, "§2.9: disabled while any ✗ remains")
+	var fix_row := panel.get_node_or_null(
+			"Panel/Scroll/Body/Checklist/Check_E_CONDITION/Fix") as Button
+	assert_ne(fix_row, null, "a blocker row carries `Fix this →`")
+
+	# Repair it and the real command runs on the button press.
+	(sim.buildings["H-001"] as Building).condition = 1.0
+	panel.refresh()
+	var results: Array[Dictionary] = []
+	panel.upgraded.connect(func(result: Dictionary) -> void: results.append(result))
+	var balance := sim.treasury.balance
+	panel.upgrade_button().pressed.emit()
+	assert_eq(results.size(), 1)
+	assert_true(bool(results[0]["ok"]), str(results[0]))
+	assert_true(sim.treasury.balance < balance)
+	assert_true(panel.upgrade_button().disabled,
+			"the refreshed panel reflects the upgrade in progress")
+	_unmount(mounted)
+
+
+func test_building_panel_closes_on_empty_ground() -> void:
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var panel: BuildingPanel = mounted["panel"]
+	panel.show_building("H-001")
+	assert_true(panel.is_open())
+	panel.show_building("NOPE-999")
+	assert_false(panel.is_open(), "an unknown pick closes rather than showing stale data")
+	assert_eq(panel.selected_id(), "")
+	_unmount(mounted)
+
+
+func test_level_pips_read_exactly_as_the_doc_writes_them() -> void:
+	# §2.9's header row: `L1 L2 ▮L3▮ L4 L5`.
+	assert_eq(BuildingPanel.level_pips(3, 5), "L1 L2 ▮L3▮ L4 L5")
+	assert_eq(BuildingPanel.level_pips(1, 5), "▮L1▮ L2 L3 L4 L5")
+	assert_eq(BuildingPanel.level_pips(0, 5), "L1 L2 L3 L4 L5",
+			"a build in progress has no level yet")

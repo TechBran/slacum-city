@@ -260,11 +260,17 @@ func toggle() -> void:
 		open()
 
 
-func _on_tab_pressed(category: String) -> void:
+## Switch the visible category (the §2.7 tab bar). Public so the onboarding
+## director and the `Buy a unit` deep link can preselect a tab.
+func select_category(category: String) -> void:
 	_category = category
 	for id: Variant in _tab_buttons:
 		(_tab_buttons[id] as Button).set_pressed_no_signal(str(id) == category)
 	_build_cards()
+
+
+func _on_tab_pressed(category: String) -> void:
+	select_category(category)
 
 
 # ---------------------------------------------------------------------------
@@ -337,8 +343,9 @@ func _refresh_bar() -> void:
 		return
 	var name_text := _text(str(view["name_key"]), str(view["archetype"]))
 	if _bar_title != null:
-		_bar_title.text = _text("ui_placement_summary", "%s %s").format(
-				{"name": name_text, "cost": str(view["cost_text"])})
+		_bar_title.text = _text_args("ui_placement_summary",
+				{"name": name_text, "cost": str(view["cost_text"])},
+				"%s %s" % [name_text, str(view["cost_text"])])
 	if _bar_confirm != null:
 		_bar_confirm.disabled = not bool(view["can_confirm"])
 	if _bar_issue == null:
@@ -368,7 +375,9 @@ func _set_notice(text: String) -> void:
 # ---------------------------------------------------------------------------
 
 func card_button(card_id: String) -> Button:
-	return _cards_box.get_node_or_null("Card_" + card_id) as Button if _cards_box != null else null
+	if _cards_box == null:
+		return null
+	return _cards_box.get_node_or_null("Card_" + card_id) as Button
 
 
 func cards() -> Array[Dictionary]:
@@ -382,6 +391,14 @@ func active_category() -> String:
 func _text(key: String, fallback: String) -> String:
 	if config != null and config.has_string(key):
 		return config.t(key)
+	return fallback
+
+
+## Same contract with `{named}` arguments — `data/strings.en.json` first, the
+## fallback only while a key is missing (G-8).
+func _text_args(key: String, args: Dictionary, fallback: String) -> String:
+	if config != null and config.has_string(key):
+		return config.t(key, args)
 	return fallback
 
 

@@ -1,7 +1,9 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://ui/ui_root.gd" id="1_uiroot"]
 [ext_resource type="Script" path="res://ui/hud.gd" id="2_hud"]
+[ext_resource type="Script" path="res://ui/build_sheet.gd" id="3_buildsheet"]
+[ext_resource type="Script" path="res://ui/building_panel.gd" id="4_buildingpanel"]
 
 [node name="UIRoot" type="CanvasLayer"]
 layer = 10
@@ -98,9 +100,171 @@ mouse_filter = 2
 layout_mode = 2
 mouse_filter = 2
 
+[node name="BuildingPanel" type="Control" parent="SafeArea/PanelLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("4_buildingpanel")
+
+[node name="Panel" type="PanelContainer" parent="SafeArea/PanelLayer/BuildingPanel"]
+visible = false
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 1
+anchors_preset = 11
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -300.0
+offset_top = 56.0
+grow_horizontal = 0
+grow_vertical = 2
+theme_type_variation = &"SidePanel"
+
+[node name="Scroll" type="ScrollContainer" parent="SafeArea/PanelLayer/BuildingPanel/Panel"]
+layout_mode = 2
+horizontal_scroll_mode = 0
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/PanelLayer/BuildingPanel/Panel/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Header" type="HBoxContainer" parent="SafeArea/PanelLayer/BuildingPanel/Panel/Scroll/Body"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="SafeArea/PanelLayer/BuildingPanel/Panel/Scroll/Body/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+clip_text = true
+
+[node name="Close" type="Button" parent="SafeArea/PanelLayer/BuildingPanel/Panel/Scroll/Body/Header"]
+custom_minimum_size = Vector2(48, 48)
+layout_mode = 2
+tooltip_text = "Close"
+theme_type_variation = &"GhostButton"
+
+[node name="Level" type="Label" parent="SafeArea/PanelLayer/BuildingPanel/Panel/Scroll/Body"]
+layout_mode = 2
+
+[node name="Vitals" type="GridContainer" parent="SafeArea/PanelLayer/BuildingPanel/Panel/Scroll/Body"]
+layout_mode = 2
+columns = 2
+
+[node name="Coverage" type="GridContainer" parent="SafeArea/PanelLayer/BuildingPanel/Panel/Scroll/Body"]
+layout_mode = 2
+columns = 2
+
+[node name="UpgradeHeader" type="Label" parent="SafeArea/PanelLayer/BuildingPanel/Panel/Scroll/Body"]
+layout_mode = 2
+
+[node name="UpgradeNote" type="Label" parent="SafeArea/PanelLayer/BuildingPanel/Panel/Scroll/Body"]
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="Checklist" type="VBoxContainer" parent="SafeArea/PanelLayer/BuildingPanel/Panel/Scroll/Body"]
+layout_mode = 2
+
+[node name="UpgradeButton" type="Button" parent="SafeArea/PanelLayer/BuildingPanel/Panel/Scroll/Body"]
+custom_minimum_size = Vector2(96, 48)
+layout_mode = 2
+tooltip_text = "UPGRADE"
+theme_type_variation = &"PrimaryFAB"
+
 [node name="SheetLayer" type="Control" parent="SafeArea"]
 layout_mode = 2
 mouse_filter = 2
+
+[node name="BuildSheet" type="Control" parent="SafeArea/SheetLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("3_buildsheet")
+
+[node name="Fab" type="Button" parent="SafeArea/SheetLayer/BuildSheet"]
+custom_minimum_size = Vector2(64, 64)
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 12.0
+offset_top = -76.0
+offset_right = 76.0
+offset_bottom = -12.0
+grow_vertical = 0
+tooltip_text = "BUILD"
+theme_type_variation = &"PrimaryFAB"
+
+[node name="Sheet" type="PanelContainer" parent="SafeArea/SheetLayer/BuildSheet"]
+visible = false
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -200.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_type_variation = &"SheetPanel"
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/SheetLayer/BuildSheet/Sheet"]
+layout_mode = 2
+
+[node name="Tabs" type="HBoxContainer" parent="SafeArea/SheetLayer/BuildSheet/Sheet/Body"]
+layout_mode = 2
+
+[node name="Notice" type="Label" parent="SafeArea/SheetLayer/BuildSheet/Sheet/Body"]
+visible = false
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="Scroll" type="ScrollContainer" parent="SafeArea/SheetLayer/BuildSheet/Sheet/Body"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="Cards" type="HBoxContainer" parent="SafeArea/SheetLayer/BuildSheet/Sheet/Body/Scroll"]
+layout_mode = 2
+
+[node name="PlacementBar" type="PanelContainer" parent="SafeArea/SheetLayer/BuildSheet"]
+visible = false
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -56.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_type_variation = &"SheetPanel"
+
+[node name="Row" type="HBoxContainer" parent="SafeArea/SheetLayer/BuildSheet/PlacementBar"]
+layout_mode = 2
+
+[node name="Cancel" type="Button" parent="SafeArea/SheetLayer/BuildSheet/PlacementBar/Row"]
+custom_minimum_size = Vector2(48, 48)
+layout_mode = 2
+tooltip_text = "CANCEL"
+theme_type_variation = &"GhostButton"
+
+[node name="Title" type="Label" parent="SafeArea/SheetLayer/BuildSheet/PlacementBar/Row"]
+layout_mode = 2
+
+[node name="Issue" type="Label" parent="SafeArea/SheetLayer/BuildSheet/PlacementBar/Row"]
+layout_mode = 2
+size_flags_horizontal = 3
+clip_text = true
+
+[node name="Confirm" type="Button" parent="SafeArea/SheetLayer/BuildSheet/PlacementBar/Row"]
+custom_minimum_size = Vector2(64, 48)
+layout_mode = 2
+tooltip_text = "PLACE"
+theme_type_variation = &"PrimaryFAB"
 
 [node name="ModalLayer" type="Control" parent="SafeArea"]
 layout_mode = 2

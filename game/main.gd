@@ -1,8 +1,8 @@
 extends Node3D
 ## Scene root (doc 11 §2.1). Assembles SimHost, environment, ground,
 ## placeholder buildings (until the gray-box pipeline is wired), camera and
-## UI. Desktop mouse controls are a dev convenience; touch gestures are
-## doc 12's GestureRecognizer (wired with the HUD pass).
+## UI. Desktop mouse controls are a dev convenience; device touch runs
+## through `TouchInput` → `GestureRecognizer` → `CameraState` (doc 12 §2.16).
 ##
 ## `--screenshot=<path>` (user arg after `--`): renders ~2 s then saves a
 ## PNG and quits — used for visual bring-up review.
@@ -18,7 +18,20 @@ var streetlights: StreetlightView
 var environment_controller: EnvironmentController
 var camera_rig: CameraRig
 var camera_state: CameraState
+var touch_input: TouchInput
 var hud: CityHUD
+## P1-33/P1-34 (doc 12 §2.7/§2.9): build sheet, placement ghost, building panel.
+var ui_root: UIRoot
+var build_controller: BuildController
+var build_sheet: BuildSheet
+var building_panel: BuildingPanel
+var ghost_view: GhostView
+var _family_of: Dictionary = {}  # archetype -> mesh-manifest family
+var _tap_origin := Vector2.ZERO
+var _tap_started_ms := 0.0
+var _tap_candidate := false
+var _tap_slop_dp := 8.0
+var _tap_max_ms := 220.0
 var _screenshot_path := ""
 var _screenshot_timer := 0.0
 var _blackout_at := -1.0
@@ -49,9 +62,17 @@ func _ready() -> void:
 
 	var ui_scene: PackedScene = load("res://game/ui/ui_root.tscn")
 	if ui_scene != null:
-		var ui_root := ui_scene.instantiate()
-		add_child(ui_root)
-		_wire_hud(ui_root)
+		var ui_instance := ui_scene.instantiate()
+		add_child(ui_instance)
+		_wire_hud(ui_instance)
+		_wire_build_ui(ui_instance)
+
+	touch_input = TouchInput.new()
+	touch_input.name = "TouchInput"
+	add_child(touch_input)
+	touch_input.setup(camera_state, ui_root.config if ui_root != null else null)
+	touch_input.tapped.connect(_on_touch_tapped)
+	touch_input.long_pressed.connect(_on_touch_tapped)
 
 	for arg in OS.get_cmdline_user_args():
 		if String(arg).begins_with("--screenshot="):
@@ -66,6 +87,12 @@ func _ready() -> void:
 			_shot_at = float(String(arg).trim_prefix("--shot-at="))
 		elif String(arg).begins_with("--cut-feeder="):
 			sim_host.sim.grid.force_open(String(arg).trim_prefix("--cut-feeder="))
+		elif String(arg).begins_with("--place="):
+			_place_demo(String(arg).trim_prefix("--place="))
+		elif String(arg).begins_with("--focus="):
+			var p := String(arg).trim_prefix("--focus=").split(",")
+			if p.size() == 2:
+				camera_state.set_focus(Vector3(float(p[0]), 0.0, float(p[1])))
 
 
 func _build_environment(render_data: Dictionary) -> void:
@@ -164,27 +191,10 @@ func _build_city_view(render_data: Dictionary) -> void:
 	render_model = RenderStateModel.new(render_data)
 	var manifest: Dictionary = StarterCityLoader.read_json(
 			"res://game/meshes/generated/manifest.json")
-	var family_of := {}
 	for entry in manifest.get("meshes", []):
-		family_of[String(entry["archetype"])] = String(entry.get("family", "residential"))
+		_family_of[String(entry["archetype"])] = String(entry.get("family", "residential"))
 	for id in sim_host.sim.buildings.keys():
-		var b: Building = sim_host.sim.buildings[id]
-		var record: Dictionary = sim_host.sim._building_records[id]
-		var size: Vector2i = record["footprint"]
-		var center := Vector3(b.origin.x * 8.0 + size.x * 4.0, 0.0,
-				b.origin.y * 8.0 + size.y * 4.0)
-		render_model.add_building({
-			"id": b.id,
-			"archetype_id": StringName(b.archetype),
-			"level": maxi(b.level, 1),
-			"family": String(family_of.get(String(b.archetype), "residential")),
-			"world_pos": center,
-			"block_id": String(record.get("block", "")),
-			"transform": Transform3D(Basis.IDENTITY, center),
-			"occ_b": 1.0,
-			"powered": true,
-			"condition": b.condition,
-		})
+		render_model.add_building(_building_view(String(id)))
 	city_view = CityView.new()
 	city_view.name = "CityView"
 	add_child(city_view)
@@ -208,6 +218,31 @@ func _build_city_view(render_data: Dictionary) -> void:
 	streetlights.setup(render_model, render_data, lamps)
 
 
+## doc 11 §5's BuildingView for one sim building, as the render model wants it.
+## Used for the boot population and for every incremental placement after.
+func _building_view(sim_id: String) -> Dictionary:
+	var b: Building = sim_host.sim.buildings.get(sim_id)
+	if b == null:
+		return {}
+	var record: Dictionary = sim_host.sim._building_records[sim_id]
+	var size: Vector2i = record["footprint"]
+	var center := Vector3(b.origin.x * 8.0 + size.x * 4.0, 0.0,
+			b.origin.y * 8.0 + size.y * 4.0)
+	return {
+		"id": b.id,
+		"archetype_id": StringName(b.archetype),
+		"level": maxi(b.level, 1),
+		"family": String(_family_of.get(String(b.archetype), "residential")),
+		"world_pos": center,
+		"block_id": String(record.get("block", "")),
+		"transform": Transform3D(Basis.IDENTITY, center),
+		"occ_b": 1.0,
+		"powered": true,
+		"condition": b.condition,
+		"construction_stage": 1 if b.state == &"under_construction" else 0,
+	}
+
+
 ## Sim → render event bridge: translate string building ids to render ids and
 ## feed the model. The renderer follows the SIMULATION — nothing is staged.
 func _on_sim_batch(batch: Array) -> void:
@@ -216,6 +251,10 @@ func _on_sim_batch(batch: Array) -> void:
 		match StringName(String(event["type"])):
 			&"BlockDarkChanged":
 				translated.append(event)
+			&"building_placed_sim":
+				var view := _building_view(String(event.get("sim_id", "")))
+				if not view.is_empty():
+					translated.append({"type": &"building_placed", "view": view})
 			&"BuildingPowerChanged":
 				var rid := _render_id(String(event.get("building", "")))
 				if rid >= 0:
@@ -242,6 +281,21 @@ func _render_id(sim_id: String) -> int:
 
 func _render_id_from_int(value: Variant) -> int:
 	return int(value) if typeof(value) != TYPE_STRING else _render_id(String(value))
+
+
+## Dev arg `--place=<archetype>`: buy one building on the first serviceable
+## vacant core lot, exactly as a player tap would — verifies the incremental
+## render add end-to-end.
+func _place_demo(archetype: String) -> void:
+	var sim := sim_host.sim
+	for z in range(32, 80):
+		for x in range(32, 80):
+			var origin := Vector2i(x, z)
+			if sim.world.grid.can_place(origin, Vector2i.ONE) and sim.grid.would_serve(origin):
+				print("[place-demo] ", archetype, " at ", origin, " -> ",
+						sim.cmd_place_building(archetype, origin))
+				return
+	print("[place-demo] no serviceable vacant lot found")
 
 
 ## Demo controls act on the SIM only; the renderer reacts through events.
@@ -300,6 +354,123 @@ func _refresh_hud() -> void:
 	})
 
 
+# ---------------------------------------------------------------------------
+# Build sheet, placement ghost & building panel (doc 12 §2.7 / §2.9) — P1-33,
+# P1-34. Same contract as the HUD block above: the UI reads sim state through
+# `BuildController` and issues the two `CitySim` commands; nothing about
+# placement validity or requirement copy lives in this file.
+# ---------------------------------------------------------------------------
+
+func _wire_build_ui(ui_instance: Node) -> void:
+	ui_root = ui_instance as UIRoot
+	var cfg: UIConfig = ui_root.config if ui_root != null and ui_root.config != null \
+			else UIConfig.load_from_files()
+	var gestures := cfg.gestures()
+	_tap_slop_dp = UIConfig.get_num(gestures, "tap_slop_dp", 8.0)
+	_tap_max_ms = UIConfig.get_num(gestures, "tap_max_ms", 220.0)
+
+	build_controller = BuildController.new(sim_host.sim, RequirementFormatter.new(cfg))
+
+	ghost_view = GhostView.new()
+	ghost_view.name = "PlacementGhost"
+	add_child(ghost_view)
+	ghost_view.setup(cfg, build_controller.tile_m)
+
+	build_sheet = ui_instance.get_node_or_null(
+			"SafeArea/SheetLayer/BuildSheet") as BuildSheet
+	if build_sheet != null:
+		build_sheet.setup(cfg, build_controller)
+		build_sheet.placement_started.connect(_on_placement_started)
+		build_sheet.placement_changed.connect(_on_placement_changed)
+		build_sheet.placement_committed.connect(_on_placement_committed)
+		build_sheet.placement_cancelled.connect(_on_placement_changed)
+
+	building_panel = ui_instance.get_node_or_null(
+			"SafeArea/PanelLayer/BuildingPanel") as BuildingPanel
+	if building_panel != null:
+		building_panel.setup(cfg, build_controller)
+		building_panel.closed.connect(_on_building_panel_closed)
+		building_panel.upgraded.connect(_on_building_upgraded)
+		building_panel.fix_requested.connect(_on_fix_requested)
+
+	if ui_root != null:
+		ui_root.back_requested.connect(_on_ui_back)
+
+
+func _on_placement_started(_archetype: String, _variant: String) -> void:
+	if building_panel != null:
+		building_panel.close()
+	_on_placement_changed()
+
+
+func _on_placement_changed() -> void:
+	if ghost_view != null and build_controller != null:
+		ghost_view.apply(build_controller.ghost())
+	if ui_root != null and build_controller != null:
+		ui_root.placement_active = build_controller.is_placing()
+
+
+func _on_placement_committed(result: Dictionary) -> void:
+	_on_placement_changed()
+	if bool(result.get("ok", false)):
+		# The sim charged and stamped; the HUD's treasury chip follows on the
+		# next refresh, and doc 11's instance buffer picks the new building up
+		# when the render bridge grows an incremental add (tracked separately).
+		_refresh_hud()
+
+
+func _on_building_panel_closed() -> void:
+	if ui_root != null:
+		ui_root.selected_entity_id = ""
+
+
+func _on_building_upgraded(_result: Dictionary) -> void:
+	_refresh_hud()
+
+
+## §2.7's `Fix this →`: focus the blocking entity. Only the power path resolves
+## to a placed entity today (docs 05/06/10 own the rest), so anything else is a
+## no-op rather than a camera jump to nowhere.
+func _on_fix_requested(fix_target: Dictionary) -> void:
+	var id := str(fix_target.get("id", ""))
+	if id == "" or build_controller == null:
+		return
+	var b: Building = sim_host.sim.buildings.get(id)
+	if b == null:
+		return
+	camera_state.focus_on(Vector3(b.origin.x * build_controller.tile_m, 0.0,
+			b.origin.y * build_controller.tile_m))
+
+
+func _on_ui_back(action: StringName) -> void:
+	if action == UIRoot.BACK_CANCEL_PLACEMENT and build_sheet != null:
+		build_sheet.cancel_placement()
+
+
+## Tap-vs-drag on the desktop mouse path (doc 12 §2.16 thresholds). Device
+## touch reaches the same selection through `TouchInput.tapped`.
+func _handle_tap(screen_pos: Vector2, viewport_size: Vector2) -> void:
+	if build_controller == null:
+		return
+	var ground := camera_state.screen_to_ground(screen_pos, viewport_size)
+	if build_sheet != null and build_sheet.is_placing():
+		build_sheet.move_ghost(ground)
+		return
+	var sim_id := build_controller.sim_id_at_ground(ground)
+	if building_panel == null:
+		return
+	if sim_id == "":
+		building_panel.close()
+		return
+	building_panel.show_building(sim_id)
+	if ui_root != null:
+		ui_root.selected_entity_id = sim_id
+
+
+func _on_touch_tapped(position: Vector2) -> void:
+	_handle_tap(position, Vector2(get_viewport().get_visible_rect().size))
+
+
 func _on_hud_speed_selected(multiplier: int) -> void:
 	sim_host.speed = multiplier
 	sim_host.paused = false
@@ -326,7 +497,8 @@ func _process(delta: float) -> void:
 		if _screenshot_timer > _shot_at:
 			var image := get_viewport().get_texture().get_image()
 			image.save_png(_screenshot_path)
-			print("screenshot saved: ", _screenshot_path)
+			print("screenshot saved: ", _screenshot_path,
+					" render_buildings=", render_model.building_count())
 			get_tree().quit()
 
 
@@ -345,9 +517,27 @@ func _unhandled_input(event: InputEvent) -> void:
 			camera_state.step_zoom(button.position, viewport_size, 1)
 		elif button.button_index == MOUSE_BUTTON_LEFT:
 			if button.pressed:
+				_tap_origin = button.position
+				_tap_started_ms = float(Time.get_ticks_msec())
+				_tap_candidate = true
 				camera_state.begin_pan(button.position, viewport_size)
 			else:
 				camera_state.end_pan()
-	elif event is InputEventMouseMotion and (event as InputEventMouseMotion).button_mask & MOUSE_BUTTON_MASK_LEFT:
-		camera_state.update_pan((event as InputEventMouseMotion).position, viewport_size,
-				get_process_delta_time())
+				# doc 12 §2.16: ≤8 dp of travel in ≤220 ms is a TAP, not a pan —
+				# and a tap is what selects a building or moves the ghost.
+				if _tap_candidate \
+						and float(Time.get_ticks_msec()) - _tap_started_ms <= _tap_max_ms:
+					_handle_tap(button.position, viewport_size)
+				_tap_candidate = false
+	elif event is InputEventMouseMotion:
+		var motion := event as InputEventMouseMotion
+		if motion.button_mask & MOUSE_BUTTON_MASK_LEFT:
+			if motion.position.distance_to(_tap_origin) > _tap_slop_dp:
+				_tap_candidate = false
+			camera_state.update_pan(motion.position, viewport_size,
+					get_process_delta_time())
+		elif build_sheet != null and build_sheet.is_placing():
+			# Hover keeps the ghost under the pointer; the verdict is recomputed
+			# on every move (§2.7) and only PLACE ever commits it.
+			build_sheet.move_ghost(camera_state.screen_to_ground(
+					motion.position, viewport_size))

@@ -434,8 +434,7 @@ func building_view(sim_id: String) -> Dictionary:
 			_vital("power", "ui_building_vital_power",
 					RequirementFormatter.power(b.stats.get("power_demand_kw", 0.0))),
 			_vital("water", "ui_building_vital_water",
-					"%s m³/h" % RequirementFormatter._trim(
-							String.num(float(b.stats.get("water_demand", 0.0)), 2))),
+					RequirementFormatter.water_m3h(b.stats.get("water_demand", 0.0))),
 			_vital("condition", "ui_building_vital_condition",
 					RequirementFormatter.percent(b.condition)),
 		],
@@ -536,10 +535,12 @@ func _check_params(sim_id: String, b: Building, next_level: int,
 			- float(b.stats.get("power_demand_kw", 0.0))
 	var avenue_distance := nearest_avenue_tiles(b.origin)
 	return {
-		&"E_STATE": {"state": String(b.state), "required_state": "active"},
+		&"E_STATE": {"state": String(b.state), "required_state": "active",
+				"fix_target_id": sim_id},
 		&"E_MAX_LEVEL": {"level": b.level, "max_level": sim.catalog.max_level()},
 		&"E_CONDITION": {"condition": b.condition,
-				"min_condition": Building.MIN_CONDITION_TO_UPGRADE},
+				"min_condition": Building.MIN_CONDITION_TO_UPGRADE,
+				"fix_target_id": sim_id},
 		&"E_CITY_LEVEL": {"city_level": sim.progression.city_level,
 				"required_level": int(next_stats.get("min_city_level", 0))},
 		&"E_FUNDS": {"cost": int(payload.get("cost", 0)),

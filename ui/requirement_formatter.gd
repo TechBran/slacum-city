@@ -123,9 +123,10 @@ static func canonical(code: Variant) -> StringName:
 	return UNKNOWN_CODE
 
 
+## False for a code this build has no copy for — the row still renders, but the
+## generic template is a copy hole worth failing a lint on.
 static func is_known(code: Variant) -> bool:
-	return RequirementFormatter.canonical(code) != UNKNOWN_CODE \
-			or StringName(str(code).to_upper()) == UNKNOWN_CODE
+	return RequirementFormatter.canonical(code) != UNKNOWN_CODE
 
 
 ## `ui_requirement_<code_lowercase>` (doc 12 §3.1) — the only key shape.
@@ -173,6 +174,11 @@ static func power(kw: Variant) -> String:
 	if absf(value) >= 100.0:
 		return "%d kW" % int(round(value))
 	return "%s kW" % _trim(String.num(value, 1))
+
+
+## Doc 05's unit for a building's draw, rendered the way the panel shows it.
+static func water_m3h(m3h: Variant) -> String:
+	return "%s m³/h" % _trim(String.num(float(m3h), 2))
 
 
 static func percent(fraction: Variant) -> String:
@@ -241,14 +247,7 @@ func format_all(codes_in: Array, shared: Dictionary = {},
 		params_by_code: Dictionary = {}) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for code: Variant in codes_in:
-		var merged := shared.duplicate()
-		var extra: Variant = params_by_code.get(StringName(str(code).to_upper()), null)
-		if extra == null:
-			extra = params_by_code.get(str(code), null)
-		if extra is Dictionary:
-			for key: Variant in (extra as Dictionary):
-				merged[key] = (extra as Dictionary)[key]
-		out.append(format(code, merged))
+		out.append(format(code, RequirementFormatter._merged(shared, params_by_code, code)))
 	return out
 
 
@@ -280,16 +279,24 @@ func checklist(checks: Array, blockers: Array, shared: Dictionary = {},
 		var ok := not failed.has(RequirementFormatter.canonical(code))
 		row["ok"] = ok
 		row["glyph"] = GLYPH_PASS if ok else GLYPH_FAIL
+		# A satisfied requirement is named, not explained: the body sentence is
+		# written in the failure voice ("Condition too low: …"), which would read
+		# as a contradiction next to a `✓`. The failing row keeps the full
+		# sentence, because that is the row the player has to act on.
+		row["text"] = str(row["title"]) if ok else str(row["body"])
 		if ok:
 			row["state"] = HudModel.STATE_NORMAL
 		out.append(row)
 	return out
 
 
+## `shared` under a per-code override, keyed either by `StringName` or `String`.
 static func _merged(shared: Dictionary, params_by_code: Dictionary,
 		code: Variant) -> Dictionary:
 	var merged: Dictionary = shared.duplicate()
 	var extra: Variant = params_by_code.get(StringName(str(code).to_upper()), null)
+	if extra == null:
+		extra = params_by_code.get(str(code).to_upper(), null)
 	if extra is Dictionary:
 		for key: Variant in (extra as Dictionary):
 			merged[key] = (extra as Dictionary)[key]
