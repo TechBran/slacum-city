@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "_price_note": "C-07 / R-14: doc 03 is the sole currency authority. purchase, upkeep, active_mult and dispatch_cost live in data/economy.json expenses.vehicles, keyed by economy_id. Nothing in this file carries a price.",
+  "_speed_note": "C-49: no weather_speed_mult and no road_class_mult here. Weather reaches travel time once, through doc 07 get_effect(\"road_speed_mult\") applied by doc 10; road class is doc 10's alone.",
+  "_capacity_note": "C-50: doc 06 owns unit capacity per station level. data/buildings.json carries no unit_slots / crew_slots key.",
+  "types": {
+    "police_patrol": {
+      "display_name": "Patrol Car",
+      "economy_id": "patrol_car", "department": "police",
+      "speed_mpgm": 32.0, "siren_mult": 1.25, "turnout_min": 1.0, "refit_min": 0,
+      "capabilities": ["police", "traffic_control", "crowd_control"],
+      "resolve_rate": { "police": 1.00, "traffic": 0.90 },
+      "suppression": 0.0,
+      "home_department_station": "police_station",
+      "unlock": { "city_level": 1 },
+      "capacity_per_station_level": [2, 3, 4, 5, 6]
+    },
+    "fire_engine": {
+      "display_name": "Fire Engine",
+      "economy_id": "fire_engine", "department": "fire",
+      "speed_mpgm": 26.0, "siren_mult": 1.25, "turnout_min": 1.5, "refit_min": 6,
+      "capabilities": ["fire_suppression", "rescue_basic", "traffic_control"],
+      "resolve_rate": { "fire": 1.00, "rescue": 1.00, "traffic": 0.50 },
+      "suppression": 1.00,
+      "home_department_station": "fire_station",
+      "unlock": { "city_level": 1 },
+      "capacity_per_station_level": [1, 2, 3, 4, 5]
+    },
+    "utility_service_truck": {
+      "display_name": "Utility Service Truck",
+      "economy_id": "utility_service_truck", "department": "utility",
+      "speed_mpgm": 24.0, "siren_mult": 1.15, "turnout_min": 2.0, "refit_min": 0,
+      "capabilities": ["electrical_repair", "line_work"],
+      "resolve_rate": { "utility": 1.00, "construction": 0.30 },
+      "suppression": 0.0,
+      "home_department_station": "substation",
+      "also_housed_at": ["power_facility"],
+      "unlock": { "city_level": 1 },
+      "capacity_per_station_level": [1, 2, 3, 4, 5]
+    },
+    "water_repair_truck": {
+      "display_name": "Water Repair Truck",
+      "economy_id": "water_repair_truck", "department": "water",
+      "speed_mpgm": 24.0, "siren_mult": 1.15, "turnout_min": 2.0, "refit_min": 5,
+      "capabilities": ["water_repair", "hydrant_service"],
+      "resolve_rate": { "water": 1.00, "construction": 0.30 },
+      "suppression": 0.0,
+      "home_department_station": "water_facility",
+      "unlock": { "city_level": 1 },
+      "capacity_per_station_level": [1, 2, 3, 4, 5]
+    },
+    "construction_crew_vehicle": {
+      "display_name": "Construction Crew",
+      "economy_id": "construction_crew", "department": "construction",
+      "speed_mpgm": 18.0, "siren_mult": 1.00, "turnout_min": 2.5, "refit_min": 0,
+      "capabilities": ["debris_clearance", "road_repair", "structure_repair", "land_development"],
+      "resolve_rate": { "construction": 1.00, "utility": 0.25, "water": 0.25 },
+      "suppression": 0.0,
+      "home_department_station": "construction_yard",
+      "unlock": { "city_level": 1 },
+      "capacity_per_station_level": [1, 2, 3, 4, 5]
+    }
+  }
+}

@@ -1,0 +1,380 @@
+{
+  "schema_version": 1,
+  "_doc": "Doc 06 §8 `incidents` block, verbatim, plus the §2.7 cascade tables expressed as declarative op lists (constitution §8: cascades are data). No price lives here (C-07/R-14 -> doc 03). No weather number and no weather state key lives here (RR-4/RR-15 -> doc 07 get_effect channel NAMES only).",
+  "globals": {
+    "esc_tier_accel": 0.25,
+    "hold_tier_slope": 0.40,
+    "rate_cap_mult": 3.0,
+    "keep_resolved_min": 15,
+    "max_substeps_per_hour": 64,
+    "min_substep_h": 0.000278,
+    "spread_roll_interval_h": 0.0833333333333333,
+    "spread_radius_m": 40.0,
+    "spread_min_gap_m": 6.0,
+    "spread_dist_decay_m": 12.0,
+    "p_spread_base": 0.30,
+    "fire_burn_down_h": 0.50,
+    "fire_fatality_fraction": 0.02,
+    "transformer_burn_down_h": 0.40,
+    "offline_destroy_clamp_condition": 0.15,
+    "hydrant_floor": 0.25,
+    "hydrant_span": 0.75,
+    "hydrant_cap": 1.15,
+    "access_degraded_mult": 0.75,
+    "access_degraded_knee": 0.60,
+    "access_police_bonus": 1.15,
+    "esc_env_clamp": [0.40, 3.00],
+    "severity_min": 1.0,
+    "severity_max": 5.0,
+    "severity_spawn_max": 4.99,
+    "load_damper_per_excess": 0.06,
+    "load_damper_floor": 0.25,
+    "offline_full_fidelity_h": 72,
+    "offline_beyond_damper": 0.50,
+    "night_start_hour": 19,
+    "night_end_hour": 6
+  },
+  "_rng_note": "C-45: crime generation AND crime target selection draw from the `crime` stream; every other generator draws from `incidents`. `traffic` is reserved and consumed by nothing in sim/.",
+  "rng_streams": {
+    "crime": "crime",
+    "structure_fire": "incidents",
+    "transformer_failure": "incidents",
+    "water_main_break": "incidents",
+    "traffic_accident": "incidents",
+    "storm_damage": "incidents"
+  },
+  "generator_order": [
+    "crime", "structure_fire", "transformer_failure",
+    "water_main_break", "traffic_accident", "storm_damage"
+  ],
+  "generator_base_rates": {
+    "_note": "R_fire_base and R_storm_base recalibrated by report 98 R-11 and R-13; see doc 06 §2.6(b) and §2.6(f) for the arithmetic.",
+    "crime_per_1000_pop": 0.012,
+    "structure_fire_global_scalar": 0.40,
+    "transformer_per_node": 0.0012,
+    "water_main_per_km": 0.0022,
+    "traffic_per_intersection": 0.0020,
+    "storm_per_exposed_asset": 0.0149
+  },
+  "factors": {
+    "crime": {
+      "k_stability": 3.0, "k_dark": 0.35, "k_outage_in_dark": 1.5,
+      "police_base": 1.4, "police_slope": 0.6, "police_min": 0.5, "police_max": 1.4,
+      "target_weight_source": "doc02.crime_weight",
+      "esc_stability_k": 1.5, "esc_dark_k": 0.20, "esc_outage_k": 0.35,
+      "sev_stability_knee": 0.5, "sev_stability_k": 1.2, "sev_unpowered_bonus": 0.3
+    },
+    "fire": {
+      "unpowered_mult": 0.8, "arson_stability_knee": 0.35, "arson_k": 2.0,
+      "base_rate_source": "doc02.fire_ignition_per_hour * doc02.fire_condition_mult * doc02.state_fire_mult",
+      "esc_wind_knee_kph": 20.0, "esc_wind_k": 0.010,
+      "esc_hydrant_knee": 0.7, "esc_hydrant_k": 0.6,
+      "esc_weather_source": "doc07.fire_escalation_mult",
+      "sev_level_k": 0.15, "sev_hydrant_knee": 0.5, "sev_hydrant_bonus": 0.4
+    },
+    "transformer": {
+      "load_ref": 0.70, "load_exp": 3.0, "load_clamp": [0.20, 1.60],
+      "temp_knee_c": 65.0, "temp_span_c": 35.0, "temp_k": 0.9,
+      "esc_storm_k": 0.30, "esc_load_k": 0.5,
+      "sev_load_k": 0.8, "sev_no_redundancy_bonus": 0.5
+    },
+    "water_main": {
+      "press_knee": 1.05, "press_k": 1.5, "ground_k": 0.5,
+      "cond_mult_source": "doc05.cond_mult", "load_mult_source": "doc05.load_mult",
+      "freeze_break_base": 0.0020, "freeze_cond_offset": 1.2,
+      "freeze_gated_by": "doc05.feature_flags.freeze_enabled",
+      "esc_press_k": 0.4, "esc_flood_k": 0.5,
+      "sev_press_knee": 1.15, "sev_press_k": 0.6
+    },
+    "traffic": {
+      "flow_exp": 1.5, "flow_clamp": [0.05, 2.0],
+      "signal_powered": 1.0, "signal_unpowered": 3.0, "unsignalised": 1.6, "dark_k": 0.25,
+      "road_condition_source": "doc10.condition_hazard_mult", "road_condition_agg": "max",
+      "road_condition_scale": "[0,1]",
+      "esc_congestion_k": 0.6, "esc_dark_k": 0.25,
+      "sev_unpowered_bonus": 0.5, "sev_injury_bonus": 0.4
+    },
+    "storm": {
+      "wind_knee_kph": 40.0, "wind_span_kph": 30.0, "wind_exp": 2.0,
+      "exposure_class": { "overhead_span": 1.0, "pole": 0.8, "rooftop_mech": 0.5, "tree_adjacent": 1.8 },
+      "subtype_weights": { "downed_power_line": 0.45, "blocked_road": 0.35, "roof_damage": 0.20 },
+      "wind_source": "doc07.weather.current().wind_kph",
+      "cell_mask_source": "doc07.weather.get_storm_cell()",
+      "exposure_source": "doc04.power.exposed_components()",
+      "exclude_if": "underground",
+      "esc_wind_knee_kph": 40.0, "esc_wind_k": 0.015,
+      "sev_wind_knee_kph": 60.0, "sev_wind_span_kph": 40.0, "sev_wind_k": 0.5
+    }
+  },
+  "_weather_note": "RR-4/RR-15: doc 07 §2.2 get_effect() is the sole statement of weather. These maps carry channel NAMES only (null = this generator reads no weather channel). This file carries no weather number and no weather state key.",
+  "weather_channels": {
+    "crime": "incident_crime_mult",
+    "structure_fire": "fire_ignition_mult",
+    "transformer_failure": "incident_utility_mult",
+    "traffic_accident": "incident_traffic_mult",
+    "water_main_break": null,
+    "storm_damage": null
+  },
+  "_fire_weather_note": "RR-15. Three fire questions, three doc 07 channels, three call sites, never interchangeable: fire_ignition_mult = how often a fire starts (generation); fire_escalation_mult = how fast a burning one grows (esc_env); fire_spread_mult = how readily it jumps (g_weather). Both are passed through UNCLAMPED. Wind is NOT in either channel: it enters escalation via the wind term and spread via g_wind, both off doc 07's wind_kph, exactly once each.",
+  "fire_weather_channels": {
+    "escalation": "fire_escalation_mult",
+    "spread": "fire_spread_mult"
+  },
+  "_power_event_note": "Doc 04 fails components; doc 06 turns each failure into a repairable incident. The map is data so a new component kind never needs new incident code.",
+  "power_event_map": {
+    "transformer": { "type": "transformer_failure" },
+    "substation": { "type": "transformer_failure" },
+    "feeder": { "type": "storm_damage", "subtype": "downed_power_line" },
+    "transmission": { "type": "storm_damage", "subtype": "downed_power_line" },
+    "plant_gas": { "type": "transformer_failure" }
+  },
+  "_tutorial_note": "Doc 09 §2.9.7: the tutorial addresses entities by tag, never by raw id. TUT_TRANSFORMER_FAIL is the doc 06 scripted-incident tag; `tutorial_transformer` is the tag data/starter_city.json currently publishes for the same node, so both resolve.",
+  "tutorial": {
+    "transformer_fail": {
+      "tags": ["TUT_TRANSFORMER_FAIL", "tutorial_transformer"],
+      "type": "transformer_failure",
+      "severity_0": 1.6,
+      "cause": { "source": "scripted", "scripted": true }
+    }
+  },
+  "types": {
+    "crime": {
+      "display_name": "Crime",
+      "type_priority": 2, "sev_bias": 0.0, "sev_spread": 1.0,
+      "esc_base": 0.80, "hold_base": 1.00, "hold_tier_slope": 0.40,
+      "w_base": 0.30, "w_slope": 0.40, "suppression_model": "generic",
+      "self_resolve_h": 2.0, "self_resolve_max_tier": 2,
+      "primary_role": "police", "primary_counts_by_tier": [1, 1, 2, 3, 3],
+      "support_roles": [],
+      "generator": { "candidate_source": "district", "factors": ["stability", "dark", "police_coverage", "weather"] },
+      "reward_base": 350, "target_response_min": 8,
+      "stability_on_resolve": 0.010,
+      "notification_priority_by_tier": [3, 3, 2, 1, 1],
+      "on_tier_enter": {
+        "2": [ { "op": "district_stability", "value": -0.010 } ],
+        "3": [ { "op": "district_stability", "value": -0.025 },
+               { "op": "city_confidence", "value": -0.010 },
+               { "op": "notify", "priority": 2 } ],
+        "4": [ { "op": "district_stability", "value": -0.045 },
+               { "op": "spawn_incident", "type": "crime", "count": 1, "scope": "district" } ],
+        "5": [ { "op": "district_stability", "value": -0.070 },
+               { "op": "spawn_incident", "type": "crime", "count": 2, "scope": "district" },
+               { "op": "set_district_flag", "flag": "unrest", "duration_h": 4.0 } ]
+      },
+      "on_fail": {
+        "condition": { "hold_tier": 5, "hold_h": 1.0 },
+        "terminal_status": "ABANDONED",
+        "actions": [ { "op": "district_stability", "value": -0.10 },
+                     { "op": "spawn_incident", "type": "structure_fire",
+                       "scope": "district_random_building", "severity_0": 2.0 } ]
+      }
+    },
+    "structure_fire": {
+      "display_name": "Structure Fire",
+      "type_priority": 5, "sev_bias": 0.0, "sev_spread": 0.6,
+      "esc_base": 2.20, "hold_base": 0.00, "hold_tier_slope": 0.40,
+      "w_base": 0.30, "w_slope": 0.45, "suppression_model": "fire",
+      "self_resolve_h": 0.0, "self_resolve_max_tier": 0,
+      "primary_role": "fire", "primary_counts_by_tier": [1, 1, 2, 3, 4],
+      "support_roles": [ { "role": "police", "rate_bonus": 0.15, "min_tier": 2 },
+                         { "role": "construction", "rate_bonus": 0.00, "min_tier": 4 } ],
+      "generator": { "candidate_source": "building", "factors": ["power", "weather", "arson"] },
+      "reward_base": 900, "target_response_min": 6,
+      "stability_on_resolve": 0.020,
+      "notification_priority_by_tier": [3, 3, 2, 1, 1],
+      "burn_down_key": "fire_burn_down_h",
+      "on_tier_enter": {
+        "2": [ { "op": "building_condition", "value": -0.10 } ],
+        "3": [ { "op": "district_stability", "value": -0.02 },
+               { "op": "notify", "priority": 2 } ],
+        "4": [ { "op": "building_condition", "value": -0.25 },
+               { "op": "notify", "priority": 1 } ],
+        "5": []
+      },
+      "on_fail": {
+        "condition": { "burn_timer_h": 0.50 },
+        "terminal_status": "FAILED",
+        "actions": [ { "op": "destroy_building" },
+                     { "op": "population_delta", "fraction": 0.02 },
+                     { "op": "district_stability", "value": -0.12 },
+                     { "op": "city_confidence", "value": -0.05 },
+                     { "op": "spawn_incident", "type": "storm_damage", "subtype": "blocked_road",
+                       "scope": "self", "severity_0": 1.0 } ]
+      }
+    },
+    "transformer_failure": {
+      "display_name": "Transformer Failure",
+      "type_priority": 4, "sev_bias": 0.2, "sev_spread": 0.8,
+      "esc_base": 0.50, "hold_base": 1.00, "hold_tier_slope": 0.40,
+      "w_base": 0.90, "w_slope": 0.30, "suppression_model": "generic",
+      "self_resolve_h": 0.0, "self_resolve_max_tier": 0,
+      "primary_role": "utility", "primary_counts_by_tier": [1, 1, 2, 2, 2],
+      "support_roles": [ { "role": "construction", "rate_bonus": 0.20, "min_tier": 3 } ],
+      "generator": { "candidate_source": "transformer", "factors": ["load", "condition", "temp", "weather"] },
+      "reward_base": 600, "target_response_min": 12,
+      "stability_on_resolve": 0.015,
+      "notification_priority_by_tier": [3, 2, 2, 1, 1],
+      "burn_down_key": "transformer_burn_down_h",
+      "on_tier_enter": {
+        "2": [ { "op": "feeder_load_shed", "fraction": 0.25 } ],
+        "3": [ { "op": "feeder_offline" },
+               { "op": "notify", "priority": 2 } ],
+        "4": [ { "op": "district_stability", "value": -0.03 } ],
+        "5": []
+      },
+      "on_fail": {
+        "condition": { "burn_timer_h": 0.40 },
+        "terminal_status": "FAILED",
+        "actions": [ { "op": "feeder_destroy" },
+                     { "op": "spawn_incident", "type": "structure_fire", "scope": "nearest_building",
+                       "chance": 0.30, "severity_0": 1.0 } ]
+      }
+    },
+    "water_main_break": {
+      "display_name": "Water Main Break",
+      "type_priority": 3, "sev_bias": 0.1, "sev_spread": 0.9,
+      "esc_base": 0.60, "hold_base": 1.00, "hold_tier_slope": 0.40,
+      "w_base": 1.20, "w_slope": 0.30, "suppression_model": "generic",
+      "self_resolve_h": 0.0, "self_resolve_max_tier": 0,
+      "primary_role": "water", "primary_counts_by_tier": [1, 1, 2, 2, 2],
+      "support_roles": [ { "role": "construction", "rate_bonus": 0.25, "min_tier": 2 } ],
+      "generator": { "candidate_source": "water_segment", "factors": ["pressure", "condition", "load", "ground", "freeze"] },
+      "reward_base": 500, "target_response_min": 15,
+      "stability_on_resolve": 0.015,
+      "notification_priority_by_tier": [3, 3, 2, 1, 1],
+      "zone_pressure_delta_by_tier": [0.0, 0.0, -0.15, -0.35, -0.60, -0.80],
+      "on_tier_enter": {
+        "2": [ { "op": "zone_pressure_delta", "value": -0.15 } ],
+        "3": [ { "op": "zone_pressure_delta", "value": -0.35 },
+               { "op": "notify", "priority": 2 } ],
+        "4": [ { "op": "edge_speed_mult", "value": 0.5 } ],
+        "5": [ { "op": "zone_pressure_delta", "value": -0.60 },
+               { "op": "district_stability", "value": -0.04 } ]
+      },
+      "on_fail": {
+        "condition": { "hold_tier": 5, "hold_h": 1.0 },
+        "terminal_status": "FAILED",
+        "actions": [ { "op": "edge_close", "duration_h": 1.0 },
+                     { "op": "spawn_incident", "type": "storm_damage", "subtype": "blocked_road", "scope": "self" },
+                     { "op": "zone_pressure_delta", "value": -0.80 },
+                     { "op": "district_stability", "value": -0.06 } ]
+      }
+    },
+    "traffic_accident": {
+      "display_name": "Traffic Accident",
+      "type_priority": 3, "sev_bias": 0.0, "sev_spread": 0.8,
+      "esc_base": 0.70, "hold_base": 1.00, "hold_tier_slope": 0.40,
+      "w_base": 0.35, "w_slope": 0.35, "suppression_model": "generic",
+      "self_resolve_h": 1.0, "self_resolve_max_tier": 2,
+      "primary_role": "police", "primary_counts_by_tier": [1, 1, 1, 2, 2],
+      "support_roles": [ { "role": "fire", "rate_bonus": 0.30, "min_tier": 1 },
+                         { "role": "construction", "rate_bonus": 0.20, "min_tier": 3 } ],
+      "generator": { "candidate_source": "intersection", "factors": ["flow", "signal", "weather", "dark", "road_condition"] },
+      "reward_base": 300, "target_response_min": 7,
+      "stability_on_resolve": 0.008,
+      "notification_priority_by_tier": [3, 3, 2, 1, 1],
+      "on_tier_enter": {
+        "2": [ { "op": "edge_speed_mult", "value": 0.6 } ],
+        "3": [ { "op": "edge_speed_mult", "value": 0.3 } ],
+        "4": [ { "op": "edge_close" },
+               { "op": "district_stability", "value": -0.01 } ],
+        "5": [ { "op": "spawn_incident", "type": "traffic_accident", "scope": "adjacent_edge", "count": 1 } ]
+      },
+      "on_fail": {
+        "condition": { "self_resolve": true },
+        "terminal_status": "ABANDONED",
+        "actions": [ { "op": "edge_close", "duration_h": 1.0 },
+                     { "op": "city_confidence", "value": -0.01 } ]
+      }
+    },
+    "storm_damage": {
+      "display_name": "Storm Damage",
+      "type_priority": 3, "sev_bias": 0.1, "sev_spread": 0.9,
+      "esc_base": 0.40, "hold_base": 1.00, "hold_tier_slope": 0.40,
+      "w_base": 0.70, "w_slope": 0.30, "suppression_model": "generic",
+      "self_resolve_h": 0.0, "self_resolve_max_tier": 0,
+      "primary_role": "utility", "primary_counts_by_tier": [1, 1, 2, 2, 2],
+      "support_roles": [ { "role": "construction", "rate_bonus": 0.20, "min_tier": 1 } ],
+      "generator": { "candidate_source": "exposed_asset", "factors": ["wind", "exposure", "condition"] },
+      "reward_base": 400, "target_response_min": 15,
+      "stability_on_resolve": 0.010,
+      "notification_priority_by_tier": [3, 3, 2, 1, 1],
+      "on_tier_enter": {},
+      "subtypes": {
+        "downed_power_line": {
+          "primary_role": "utility", "esc_base": 0.40, "w_base": 0.70, "w_slope": 0.30,
+          "on_tier_enter": {
+            "2": [ { "op": "feeder_load_shed", "fraction": 0.30 } ],
+            "3": [ { "op": "feeder_offline" } ],
+            "4": [ { "op": "spawn_incident", "type": "structure_fire", "scope": "nearest_building",
+                     "chance": 0.25, "severity_0": 1.0 } ],
+            "5": [ { "op": "edge_close" } ]
+          },
+          "on_fail": {
+            "condition": { "hold_tier": 5, "hold_h": 1.0 },
+            "terminal_status": "FAILED",
+            "actions": [ { "op": "feeder_destroy" } ]
+          }
+        },
+        "blocked_road": {
+          "primary_role": "construction", "esc_base": 0.30, "w_base": 0.50, "w_slope": 0.25,
+          "self_resolve_h": 6.0, "self_resolve_max_tier": 2, "type_priority": 2,
+          "support_roles": [],
+          "on_tier_enter": {
+            "2": [ { "op": "edge_speed_mult", "value": 0.5 } ],
+            "3": [ { "op": "edge_close" } ],
+            "4": [ { "op": "set_district_flag", "flag": "congestion_pressure", "value": 0.2, "duration_h": 2.0 } ]
+          },
+          "on_fail": {
+            "condition": { "self_resolve": true },
+            "terminal_status": "ABANDONED",
+            "actions": [ { "op": "edge_close", "duration_h": 0.0 } ]
+          }
+        },
+        "roof_damage": {
+          "primary_role": "construction", "esc_base": 0.35, "w_base": 0.80, "w_slope": 0.25,
+          "type_priority": 2, "support_roles": [],
+          "on_tier_enter": {
+            "2": [ { "op": "building_condition", "value": -0.05 } ],
+            "3": [ { "op": "building_condition", "value": -0.12 } ],
+            "4": [ { "op": "building_condition", "value": -0.25 } ]
+          },
+          "on_fail": {
+            "condition": { "hold_tier": 5, "hold_h": 2.0 },
+            "terminal_status": "FAILED",
+            "actions": [ { "op": "building_condition", "floor": 0.20 } ]
+          }
+        }
+      }
+    }
+  },
+  "fire": {
+    "_s_req_note": "C-43 / R-12. S_req(b) = s_req_anchor * (doc02.fire_load(archetype, level) / fire_load_anchor) ^ s_req_exp. No per-archetype constant and no level slope live here any more. Anchors: house L1 fire_load 20 -> 0.500 exactly; high_rise L5 fire_load 1120 -> 3.060.",
+    "s_req_anchor": 0.50,
+    "fire_load_anchor": 20,
+    "s_req_exp": 0.45,
+    "stage_mult": [0.0, 0.60, 0.90, 1.30, 1.80, 2.40],
+    "g_stage": [0.0, 0.00, 0.35, 1.00, 1.80, 3.00],
+    "g_wind_k": 1.2, "g_wind_ref_kph": 60.0, "g_density_k": 0.5, "g_density_ref": 6,
+    "g_density_radius_m": 24.0,
+    "g_weather_source": "doc07.fire_spread_mult",
+    "spread_material_mult": {
+      "house": 1.40, "apartment": 1.00, "store": 1.10, "office": 0.70,
+      "high_rise": 0.70, "data_center": 0.60, "industrial": 1.30, "default": 1.00
+    },
+    "residual_damage": { "tier_k": 0.10, "burn_timer_k": 0.30, "cap": 0.95 },
+    "spread_severity_parent_k": 0.25
+  },
+  "reward": {
+    "tier_k": 0.35, "speed_bonus_base": 1.5, "speed_bonus_k": 0.5,
+    "speed_bonus_min": 0.60, "speed_bonus_max": 1.50
+  },
+  "_difficulty_note": "Doc 06 §8: these rows are AUTHORED here and FILED in doc 03's data/difficulty.json (C-17, one difficulty file, one loader). Until doc 03 ships that file the loader reads them from here and IncidentWorld.difficulty_escalation_mult() overrides.",
+  "difficulty_escalation": {
+    "_owner": "06",
+    "casual":   { "escalation_mult": 0.75, "generation_mult": 0.80 },
+    "standard": { "escalation_mult": 1.00, "generation_mult": 1.00 },
+    "hard":     { "escalation_mult": 1.35, "generation_mult": 1.20 },
+    "crisis":   { "escalation_mult": 1.60, "generation_mult": 1.40 }
+  }
+}

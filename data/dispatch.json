@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "scoring": {
+    "w_type": 60, "w_sev": 45, "w_wait": 30, "wait_cap_h": 3.0, "w_exposure": 70,
+    "w_life": 120, "w_coverage": 90, "pin_bonus": 500, "cluster_bonus": 25, "tie_band": 25
+  },
+  "exposure": {
+    "fire_pop_ref": 400, "fire_neighbour_k": 0.4, "fire_neighbour_radius_m": 24.0,
+    "customers_ref": 800, "critical_facility_bonus": 0.35, "fire_in_zone_bonus": 0.30,
+    "congestion_ref": 1.5, "crime_pop_ref": 6000, "crime_pop_w": 0.6, "crime_stability_w": 0.4
+  },
+  "route_profile_fields": ["speed_mpgm", "siren", "ignores_closures", "capabilities"],
+  "assignment": {
+    "max_assignments_per_tick": 16, "reassign_threshold": 120, "reassign_penalty_min": 12,
+    "reserve_penalty_min": 45, "role_fit_penalty_min": 30, "max_acceptable_cost_min": 90,
+    "construction_preempt_priority": 400
+  },
+  "policy_defaults": {
+    "auto_dispatch_fire": true, "auto_dispatch_police": true,
+    "auto_dispatch_police_min_priority": 150, "auto_dispatch_utility": true,
+    "auto_dispatch_water": true, "auto_dispatch_construction": false,
+    "utility_priority_order": ["critical_facility", "water_pump", "substation", "commercial", "residential"],
+    "fire_reserve_units": 1, "police_reserve_units": 0, "reserve_break_tier": 4,
+    "auto_spend_contractor": false, "auto_repair_cost_cap": 5000,
+    "offline_notify_min_priority": 2
+  },
+  "response_score_ewma_alpha": 0.05
+}
