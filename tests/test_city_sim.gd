@@ -12,7 +12,8 @@ func test_boot_loads_everything() -> void:
 	assert_eq(sim.districts.district_ids_sorted().size(), 4)
 	assert_eq(sim.clock.hour_of_day(), 6, "founded at dawn")
 	# Grid: plant + substation + 2 feeders + 1 transmission + 23 transformers.
-	assert_eq(sim.grid.grid_inventory()["nodes"].size(), 24, "substation + 23 transformers")
+	assert_eq(sim.grid.grid_inventory()["nodes"].size(), 19,
+			"substation + 18 transformers (doc 92 F-4 thinned the roster from 23)")
 	assert_eq(sim.grid.grid_inventory()["plants"].size(), 1)
 
 

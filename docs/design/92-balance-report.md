@@ -1,4 +1,15 @@
-# 92 — Balance report, pass 2: the game as a game
+# 92 — Balance report: the game as a game
+
+> **PASS 3 IS §13–§16 (2026-08-19, Wave 4) — the maintenance fit.** §13 rebuilds
+> `balanced` into a credible player and fits the maintenance pacing (one constant
+> moved, `tax.COND_FLOOR` 0.55 → 0.40; `decay_per_hour` and
+> `MAINT_CONDITION_PENALTY` **held with the measurements that hold them**). §14
+> implements F-4's founding-grid thinning (23 → 18 transformers) and establishes
+> the geometric floor that makes doc 92 pass-2's "wall before game-hour 48" a
+> core-size ruling rather than a grid edit, and declines F-8 with data. §15 is
+> the new 18-of-18 matrix and the headline ordering. §16 lists the doc 03 / doc
+> 09 edits this pass could not make itself. **§3–§8's tables are pass 2's and
+> remain historical; §15 supersedes them.**
 
 > **RULINGS LANDED, 2026-08-19 — every measurement below is now HISTORICAL.**
 > The lead engineer ruled on F-1, F-2, F-3, F-5, F-7 and §4's anchor promotion,
@@ -1001,3 +1012,475 @@ should *fail* today on purpose.
 |---|---|---|
 | **1** | 2026-08-18 | First harness pass. 24 runs (4 strategies × 3 seeds × 2 paths × 14 game-days) against a sim with two player verbs and no pressure systems. Findings F-1 … F-11. No `data/` change. |
 | **2** | 2026-08-19 | Post-Wave-1 integration. Strategies rewritten to use the full doc 93 §B verb set; `tax_squeezer` and `disaster_neglect` added as single-variable variants of `balanced`; two controlled micro-experiments added (transformer payback, tax ladder); schema → 2; `tests/test_playtest_harness.gd` grows six behavioural tests (909 suite tests green). 17 of 18 matrix runs (6 strategies × 3 seeds × 21 game-days, `tax_squeezer` seed 9001 excepted — §0) + a 90-game-day late curve + a paired 7-day fine/coarse set. Findings F-1 … F-10 restated from new data. No `data/` change. |
+| **3** | 2026-08-19 | **The maintenance fit** (Wave-4 rulings 1–5). `balanced` rebuilt as a two-ladder agent with a budget-gated maintenance line, a station roster and a land fund (§13.1); the maintenance pacing fitted against matrix runs — `REPAIR_THRESHOLD` 0.90 → **0.80**, `tax.COND_FLOOR` 0.55 → **0.40**, `decay_per_hour` and `MAINT_CONDITION_PENALTY` **held with the measurements** (§13.2–13.4); F-4's founding-grid thinning implemented, **23 → 18 transformers**, and its geometric floor established (§14.1); F-8 **declined with data** (§14.2); `Api.upgrade_candidates` bounded, closing pass-2 F-10's wall-clock finding (§13.5). **18 of 18** matrix runs at 21 game-days + a paired 50-game-day neglect A/B (§15). Gates 4, 5 and 10 retuned with their measurements; gate 4b added. |
+
+---
+
+## 13. Pass 3 — the maintenance fit
+
+Everything in §13 and §14 is measured on the **online** coarse step
+(`tests/balance_matrix.gd` → `BalanceGateRig`), not on an offline catch-up
+session, because doc 08 §2.3 rule 1 silences the Disaster Director for the whole
+of a catch-up and the pass-2 matrix could not see the pressure it was measuring.
+Reproduce with:
+
+```bash
+~/.local/bin/godot --headless --path "/home/bbx/Slacum City game" \
+    -s res://tests/balance_matrix.gd -- days=21
+~/.local/bin/godot --headless --path "/home/bbx/Slacum City game" \
+    -s tools/run_one.gd -- test_balance_gates.gd      # the 20 gates, ~60 s
+```
+
+### 13.1 Ruling 1 — `balanced` is a credible player again
+
+**The finding it answers.** Pass 2 and the Wave-3 report both recorded the same
+defect: once doc 02 §2.6 wear is live the maintenance queue is never empty, and
+`Balanced.act` was a single-action ladder with a **repair-first early return**.
+The agent therefore spent roughly half of every game-hour's action budget on
+maintenance and stopped growing — it banked instead. Measured, seed 1337, 21
+game-days, pass-2 agent: **153 buildings, 242 repairs, $480,480 of idle cash**.
+That is not a competent player, and it poisoned two gates: `value created`
+rewarded the agent that let the city rot, and gate 5 passed only because the
+"player" was hoarding.
+
+**The redesign.** `Balanced.act` now runs two independent ladders in the same
+game-hour, so neither starves the other:
+
+| ladder | what it does | budget |
+|---|---|---|
+| **maintenance** | one repair at most, worst condition first, only below `REPAIR_THRESHOLD` | a purse credited `MAINT_BUDGET_SHARE` (0.20) of every settled net, capped at `MAINT_PURSE_DAYS` (7) game-days of accrual against a smoothed net |
+| **growth** | expand → unwall → civic → upgrade → floorspace, pass 2's order unchanged | the surplus above `reserve()`, which is one game-day of gross expense **plus the land fund** |
+
+Three details are load-bearing and each was found by measurement, not design:
+
+1. **The purse scan walks DOWN the worst-first queue** (`MAINT_SCAN` 12→24
+   quotes) instead of stopping at its head. Repair price is
+   `capital × damage_fraction × REPAIR_COST_PER_CAPITAL`, so the worst building
+   is usually also the dearest: a head-only budget gate head-of-line blocks
+   forever on one civic asset while forty cheap houses rot behind it. Measured
+   with the head-only gate: **0 repairs in 21 game-days** with the worst
+   building at 0.34.
+2. **The purse cap is sized against a smoothed net, not the instantaneous one.**
+   Hourly net is spiky (construction-completion hours and storm hours bill very
+   differently); capping against one bad hour collapses the purse and strands the
+   queue. Measured with an instantaneous cap: **4.9 % of net spent, worst
+   building 0.34**. With the EMA: **12.1 %, worst building 0.79**.
+3. **The civic rule became a station roster.** Pass 2 built one civic building
+   per city level, which doc 92 pass-2 F-3 costed as a pure upkeep line — and
+   with C-50 live (a finished station is response capacity) that rule is simply
+   wrong play. The rebalanced agent builds a bigger city, and the pass-2 rule
+   walked it straight into the §5.4 cascade: **a 266-building city with a
+   ten-vehicle fleet reached 558 simultaneously open incidents at game-hour
+   384.** `STATION_PER_BUILDINGS` 45 (one more engine house per 45 buildings)
+   removes it: same seed, same horizon, **open incidents never exceed 7** and
+   `incident_abandoned` is 0 across all 18 matrix runs.
+
+**The land fund.** Pass-2's expansion rule was "buy the next block on an $80,000
+surplus", and it worked only by accident — the starving agent banked, so it saw
+$80k. The rebalanced agent invests its surplus and never sees it again:
+measured, seed 1337, 21 game-days, **0 blocks bought and 0 `E_NO_SITE`**, which
+fails gate 11. Expansion is therefore a budget line like maintenance:
+`LAND_BUDGET_SHARE` 0.15 of every settled net accrues into a land fund that
+`reserve()` counts (so the growth ladder cannot spend it), capped at the quoted
+all-in cost of the next block, and the purchase fires when the fund covers it.
+Doc 92 F-8 measured that all-in at $45k–$66k per ring block. Result: **2 blocks
+per 21 game-days on every seed**, gate 11 green by the map and the money
+together.
+
+### 13.2 Ruling 2 — what actually made maintenance a chore
+
+The ruling's premise was that at the authored `decay_per_hour` "a ~120-building
+city needs more than 1 repair per game-hour to hold 0.90". That is true, and the
+measurement says the culprit is **0.90**, not `decay_per_hour`. The two ruled
+targets are set by two different parameters:
+
+```
+repair $/gh       = Σ_b capital_b × decay_b × REPAIR_COST_PER_CAPITAL   ← the RATE
+repair trips/day  = Σ_b decay_b × 24 / (1 − threshold)                  ← the THRESHOLD
+```
+
+The money a maintaining city spends does **not** depend on the threshold at
+steady state — a repair restores exactly the condition that was lost, at a price
+linear in the loss. Only the *trip count* does, and it scales as `1/(1 − T)`.
+So the fit is: pin the rate against the money target and the neglect arc, then
+solve the trip count with the threshold.
+
+**Step 1 — is the rate right?** Measured directly, `need = Σ capital × decay ×
+0.85` against the settled net, on a live `balanced` run (seed 1337):
+
+| game-hour | buildings | need $/gh | net $/gh | need / net |
+|---|---|---|---|---|
+| 12 | 44 | 166.5 | 495.1 | 33.6 % |
+| 84 | 84 | 184.9 | 902.4 | 20.5 % |
+| 108 | 104 | 194.0 | 1,127.8 | **17.2 %** |
+| 156 | 150 | 221.3 | 1,717.3 | **12.9 %** |
+| 204 | 158 | 270.1 | 2,342.9 | **11.5 %** |
+| 300 | 207 | 380.5 | 2,530.7 | **15.0 %** |
+| 336 | 224 | 445.8 | 3,214.3 | **13.9 %** |
+
+A played city — the 100–250-building range `balanced` lives in for the whole
+pacing horizon — costs **11.5–17.2 % of net** to keep at full condition. The
+ruled band is 10–20 %. The founding city reads 33–46 % only because 71 % of its
+capital is civic (`power_facility` $60,000, two `water_facility` at $45,000,
+`police_station` $18,000, `fire_station` $20,000, `construction_yard` $16,000 of
+$287,600 total) against 34 buildings' worth of revenue — and it never has to pay
+it, because at the fitted threshold the first repair is not due until game-day 8.
+
+**Step 2 — is the neglect arc right?** Measured on the two agents that never
+repair, seed 1337, first crossing of each marker:
+
+| marker | `do_nothing` | `disaster_neglect` | ruled target |
+|---|---|---|---|
+| worst building < doc 03 `COND_FLOOR` | game-day 19.5 (**2.8 gw**) | game-day 15.5 (**2.2 gw**) | 2–3 game-weeks ✅ |
+| worst building < `AUTO_DAMAGE_THRESHOLD` 0.35 | ~game-day 28 | game-day 21 (**3.0 gw**) | — |
+| worst building at 0.00, mass damage | — | game-day 27 (**3.9 gw**), 297 damaged at day 50 | ≈5 gw within 2× ✅ |
+
+Both ruled arcs are met **at the authored rates**. `data/buildings.json`'s 60
+`decay_per_hour` rows are therefore **HELD**, and the ruling's "scale, keep the
+relative ladder" is answered with a scale factor of **1.0** and the three
+measurements above. Any slow-down large enough to fix the trip count (×0.58 to
+reach five trips a game-day at threshold 0.90) would push the danger marker from
+2.8 to 4.8 game-weeks and break the arc the same ruling protects.
+
+**Step 3 — solve the trip count with the threshold.** `REPAIR_THRESHOLD`
+0.90 → **0.80**, measured over three seeds at 21 game-days:
+
+| threshold | repair trips / game-day | repair spend / net | worst building at day 21 | value created |
+|---|---|---|---|---|
+| 0.90 (pass 2) | **11.5** | 11.8 % | 0.90 | $847,620 |
+| 0.70 | 0.95 / 1.14 / 1.48 | 8.3 / 8.9 / 8.7 % | 0.70 | $1.00–1.03 M |
+| **0.80 (fitted)** | **4.4 / 5.1 / 5.1** | **12.1 / 11.4 / 11.3 %** | **0.79 / 0.80 / 0.78** | **$1.02 / 1.01 / 1.02 M** |
+
+0.80 is the only rung that lands both ruled targets at once. 0.70 saves actions
+by parking the city at the last rung before doc 03 §2.2's `f_condition` starts
+docking revenue, and the money falls out of the band with it; 0.90 is the chore.
+`tests/test_balance_gates.gd` gate 4b holds both halves.
+
+### 13.3 `tax.COND_FLOOR` 0.55 → **0.40** — the payback period of a repair
+
+This is the only `data/` constant the fit moved, and the quantity it sets is the
+one doc 92 F-2 has been asking about since pass 1: **how long a repair takes to
+pay for itself.**
+
+```
+repair price     = capital × Δc × REPAIR_COST_PER_CAPITAL (0.85)
+revenue recovered = base_tax × (1 − COND_FLOOR) × Δc  per game-hour
+payback (gh)     = capital × 0.85 / (base_tax × (1 − COND_FLOOR))
+```
+
+`Δc` cancels: the payback is a property of the archetype and the floor alone.
+For a `house` L1 (capital $1,200, `base_tax` $12/gh) that is **453 game-hours =
+18.9 game-days at `COND_FLOOR` 0.55**, and **340 game-hours = 14.2 game-days at
+0.40**. Nineteen game-days is *outside the pacing horizon doc 03 §2.12 models*,
+which is the mechanical reason pass 2's A/B could not see maintenance pay and
+why `disaster_neglect` beat `balanced` on every axis.
+
+Measured on the A/B, seed 1337, 21 game-days, everything else identical:
+
+| `COND_FLOOR` | `balanced` treasury | `disaster_neglect` treasury | gap |
+|---|---|---|---|
+| 0.55 | $37,808 | $65,668 | **−$27,860 — neglect wins** |
+| **0.40** | **$65,845** | $59,971 | **+$5,874 — maintenance wins** |
+
+**What it does not move.** `f_condition(1.0) = COND_FLOOR + (1 − COND_FLOOR)·1
+= 1.0` at every floor, so the founding ledger, the tax ladder, every §7 detent
+row and gates 1/2/2b are untouched (measured drift on the first settled hour:
+−0.0063 % of gross). What it does move is doc 03 §2.2's worked examples A and B —
+`f_condition` 0.9775 → 0.9700, revenue $23.86 → $23.68/gh and $8.23 → $8.17/gh.
+`tests/test_economy.gd` carries the new literals with the derivation; **doc 03
+§2.2's own printed example is an open edit for that doc's owner** (§16).
+
+### 13.4 `expenses.MAINT_CONDITION_PENALTY` 1.5 — **HELD**, with the measurement
+
+The obvious companion lever, and the data says no. `building_maint` is the single
+largest expense line in a grown city — measured **$466.89/gh of $1,289.80 total
+(36 %)** on a 320-building `disaster_neglect` city at day 21 — so raising the
+penalty from 1.5 to 2.5 is a real edit. Isolated on the same A/B it contributes
+**+$703 of the $5,874 maintenance-pays gap (12 %)** while charging *both* agents
+8–16 % more on their biggest line. `COND_FLOOR` alone already flips the gate.
+Held, and recorded so it is not re-litigated.
+
+### 13.5 Pass-2 F-10 closed — the harness stopped being the bottleneck
+
+`Api.upgrade_candidates()` previewed `cmd_upgrade_building` for **every**
+standing building on every call, and the agents call it up to six times a
+game-hour. Pass 2 shipped 17 of 18 runs because of it; the rebalance made it
+fatal, because the rebalanced `balanced` builds a 358-building city and a
+21-game-day run went from **12 s to over 13 minutes on the preview scan alone**.
+
+Fixed as pass-2 F-10 itself recommended — **rank on the cheap fields, price only
+the head**. Upgrade price is `econ_curves.upgrade_cost(type, level)`, a pure
+function of (archetype, level) with no gate in it, so the cost ordering is known
+before any preview runs; only the ordered head is previewed, and only until
+`UPGRADE_LIMIT` (8) rows have cleared the doc 02 §2.11 gate, with a hard scan cap
+of `UPGRADE_SCAN` (64). Both consumers rank on a cheap key and take the head, so
+the bound is invisible to them. **18 of 18 matrix runs now finish, the slowest in
+22.5 s**, and the whole 20-gate suite runs in 59 s.
+
+---
+
+## 14. Pass 3 — the founding grid (F-4) and the founding footprint (F-8)
+
+### 14.1 F-4 implemented — 23 → 18 transformers — and its geometric floor
+
+**What landed.** `data/starter_city.json` `power.nodes` drops **T-05, T-08,
+T-16, T-21 and T-22** — the five transformers that are redundant against doc 09
+§2.9.5's own siting rule. Their 204 streetlights, 24 signals and two building
+customers (a house on T-08, `POL-1` on T-21) re-home to the nearest surviving
+node (doc 04 §2.3 attaches a sink with no radius limit), which pushes T-19 and
+T-20 across the §2.9.5 headroom rule from L1 to L2. Everything conserved,
+everything measured:
+
+| quantity | before | after |
+|---|---|---|
+| transformers | 23 | **18** |
+| level histogram | 13 / 9 / 1 | **7 / 10 / 1** |
+| `rated_mva` | 2.40 | **2.25** (`7×0.05 + 10×0.15 + 1×0.40`) |
+| night peak | 783.3 kW | **783.4 kW** — conserved |
+| streetlight / signal sinks | 783 / 81 | **783 / 81** — conserved |
+| `F_SOUTH` share of night load | 53.8 % | **53.3 %** — the designed lesson survives |
+| `E_grid` | $74.874/gh | **$74.274/gh** (`−0.15 MVA × $4.00`) |
+| **served vacant ground** | **510 tiles** | **452 tiles** |
+| served 2×2 origins | 257 | **226** |
+| `tutorial_lot_a` (11,8) | unserved, one tap away | **unchanged** |
+| `tutorial_lot_b` (13,8) | served (by T-09) | **unchanged** |
+| `T-04` | L2, tutorial_transformer, 4 customers | **unchanged** |
+
+**What did not land, and why — this is the finding.** Doc 92 pass-2 F-4 asked
+for the first `E_UNSERVED` wall "before game-hour 48". It is at **game-hour
+385**, and thinning further cannot get it to 48. Two measurements say so.
+
+*First, the wall is money-limited, not ground-limited.* `greedy_growth` is the
+fastest builder in the study — three actions per game-hour, zero reserve, buys
+no infrastructure ever — and it converts income into floorspace at ~0.35
+buildings per game-hour early on, because a founding city nets ~$340/gh against
+$1,200 a house and $7,000 an apartment.
+
+| roster | served vacant tiles | buildings placed before the wall | first `E_UNSERVED` |
+|---|---|---|---|
+| 23 nodes (pass 2) | 510 | 137 | game-hour 362 |
+| **18 nodes (now)** | **452** | **126** | **game-hour 385** |
+
+The wall moved *later* even though the ground shrank 11 %, because the same
+Wave-4 pass also made the city poorer per hour (wear is billed, `COND_FLOOR` is
+0.40) and the builder slowed by more than the ground did. `wall_hour ≈
+served_tiles / fill_rate`; hour 48 at the measured fill rate needs **≈35–80
+served tiles**, which is doc 92 pass 2's own "60–100" estimate.
+
+*Second, 452 tiles is a geometric floor.* Doc 09 §2.9.5 requires every one of the
+34 authored building origins to sit within Chebyshev 3 of a transformer — the
+rule `tests/test_starter_city.gd::test_every_building_within_transformer_radius`
+enforces — and those 34 buildings are spread across all nine core blocks. A
+minimum set cover of them is **16 nodes**; 17 with `tutorial_lot_b`'s server
+(T-09, the only node that reaches (13,8)); 18 once the removed nodes' inherited
+sinks push two survivors up a level. Eighteen radius-3/4/5 patches already union
+to **452 of the core's 1,429 vacant lots**, and every candidate roster below that
+darkens an authored building at boot:
+
+| roster | valid? | served vacant tiles |
+|---|---|---|
+| 23 (authored) | yes | 510 |
+| **18 (shipped)** | **yes** | **452** |
+| 17 (min cover + T-09, fixed levels) | yes | 427 |
+| ≤16 | **no** — orphans a building | — |
+
+Re-siting the survivors (an optimiser over the 783 road tiles, minimising served
+vacant ground subject to every doc 09 constraint) reaches **356 tiles** — still
+4–7× too much, at the cost of relocating ten of the eighteen nodes off doc 09's
+authored table. Not taken: the ruling says respect the authored layout logic, and
+96 tiles does not buy the pacing beat.
+
+**The open ruling (doc 09's owner).** Hour 48 is a **core-size** question, not a
+grid question. The two levers that reach it are (a) fewer READY blocks at t0 —
+which §14.2 shows cannot be done as doc 92 F-8 describes it — or (b) a denser
+authored building manifest, so the founding 34 buildings occupy more of the
+ground their transformers light. Both are `data/starter_city.json` shape edits
+that belong with doc 09 §2.9.3/§2.9.4, not with a balance pass.
+`tests/test_balance_gates.gd` gate 10 now holds the measured hour ±1 game-day
+with this derivation inline.
+
+**What F-4 did buy.** The 50-game-day runs say the thinner grid is doing real
+work later: `balanced` holds condition 0.80 and single-digit open incidents
+through game-day 23, then falls off a cliff as its 762 buildings outrun 18
+transformers — **66.8 % of building-time dark at day 50**, ten transformer taps
+bought and not enough. `cmd_place_grid_component` stops being optional at
+game-day ~24 instead of never. That is a pacing beat one game-week later than
+the ruling wanted and three game-weeks earlier than pass 2 had it.
+
+### 14.2 F-8 — the READY-core trim is DECLINED, with data
+
+The ruling was conditional: *trim the nine READY blocks if and only if the matrix
+shows land purchase becoming a real decision, and gate 11 must stay green.* Both
+halves say no.
+
+**It is already a real decision.** With the land fund (§13.1) `balanced` buys
+**2 blocks in every 21-game-day run on every seed**, spending 10–13 % of its net
+on land, and `tax_squeezer` and `disaster_neglect` do the same. Gate 11 is green
+without the trim.
+
+**And the trim as doc 92 F-8 describes it is not available.** "Reduce the READY
+core to four or five blocks" strands authored civic infrastructure: the nine core
+blocks are not a homogeneous field of housing, they hold the whole starter city,
+and doc 09 §2.3 makes building placement require `development_state == READY`.
+
+| block | authored buildings that would be stranded |
+|---|---|
+| `B_2_3` | `WTR-1` and `WTR-2` — the water works and the tank |
+| `B_2_4` | `POL-1` |
+| `B_4_2` | `FIRE-1` |
+| `B_4_3` | `SUB-A` — the only substation |
+| `B_4_4` | `PLANT-1` — the only generation |
+
+Any four- or five-block core leaves at least one of the police station, the fire
+station, the substation, the water works or the power plant grandfathered onto
+ground the player may not build beside — and `land.STARTER_BLOCKS_FREE` 9,
+doc 09's district roster, the t0 stability arithmetic (0.9475) and the 1,429
+vacant-lot count all move with it. **Declined.** The founding-footprint question
+is re-filed as the same doc-09 open ruling as §14.1: it is one question ("how big
+and how full is the starter core?"), not two.
+
+---
+
+## 15. Pass 3 — the matrix
+
+**18 of 18 runs**, 6 strategies × 3 seeds × 21 game-days, online coarse step.
+Wall clock 4.0–22.5 s per run; the whole matrix is ~4.5 minutes. `credit` is
+`credit_line_engaged`, `dir ev` is `director_event_started`.
+
+| strategy | seed | treasury | value | net $/gh | pop | happy | stab | lvl | dark % | placed | upg | minC | open inc | abandoned |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| do_nothing | 1337 | $159,077 | $159,077 | 262 | 144 | 82.2 | 0.9475 | 0 | 0.59 | 0 | 0 | 0.511 | 0.01 | 0 |
+| do_nothing | 4242 | $161,260 | $161,260 | 268 | 144 | 82.2 | 0.9475 | 0 | 0.01 | 0 | 0 | 0.457 | 0.00 | 0 |
+| do_nothing | 9001 | $161,147 | $161,147 | 258 | 142 | 83.1 | 0.9486 | 0 | 0.08 | 0 | 0 | 0.505 | 0.01 | 0 |
+| greedy_growth | 1337 | $100,635 | $972,630 | 1,313 | 1,845 | 53.4 | 0.7112 | 2 | 34.76 | 126 | 39 | 0.382 | 1.65 | 0 |
+| greedy_growth | 4242 | $115,145 | $1,003,783 | 1,448 | 1,690 | 52.9 | 0.7072 | 2 | 37.63 | 127 | 46 | 0.395 | 1.57 | 0 |
+| greedy_growth | 9001 | $178,867 | $1,031,084 | 1,477 | 1,906 | 53.6 | 0.7300 | 2 | 35.97 | 126 | 35 | 0.362 | 1.53 | 0 |
+| infrastructure_first | 1337 | $11,504 | $127,904 | 364 | 232 | 77.6 | 0.9752 | 0 | 0.65 | 27 | 0 | 0.888 | 0.01 | 0 |
+| infrastructure_first | 4242 | $19,166 | $135,566 | 384 | 232 | 77.1 | 0.9690 | 0 | 0.02 | 27 | 0 | 0.891 | 0.00 | 0 |
+| infrastructure_first | 9001 | $20,046 | $136,446 | 380 | 230 | 77.1 | 0.9690 | 0 | 0.01 | 27 | 0 | 0.891 | 0.01 | 0 |
+| balanced | 1337 | $65,845 | $1,021,565 | 1,794 | 1,366 | 56.7 | 0.7754 | 2 | 25.72 | 291 | 118 | 0.792 | 1.03 | 0 |
+| balanced | 4242 | $68,151 | $1,005,901 | 1,880 | 1,447 | 60.9 | 0.8271 | 2 | 20.01 | 274 | 129 | 0.796 | 0.78 | 0 |
+| balanced | 9001 | $80,941 | $1,021,801 | 1,882 | 1,500 | 59.3 | 0.7756 | 2 | 21.55 | 277 | 130 | 0.789 | 0.82 | 0 |
+| tax_squeezer | 1337 | $89,139 | $1,501,133 | 2,681 | 1,319 | 47.1 | 0.6886 | 2 | 46.47 | 315 | 146 | 0.742 | 1.79 | 0 |
+| tax_squeezer | 4242 | $56,252 | $1,643,238 | 2,974 | 1,877 | 52.4 | 0.7404 | 2 | 48.78 | 341 | 117 | 0.664 | 1.70 | 0 |
+| tax_squeezer | 9001 | $57,445 | $1,636,415 | 2,975 | 1,691 | 53.7 | 0.7461 | 2 | 49.78 | 317 | 123 | 0.711 | 1.85 | 0 |
+| disaster_neglect | 1337 | $59,971 | $1,120,551 | 1,701 | 1,451 | 57.8 | 0.7882 | 2 | 25.67 | 290 | 137 | 0.353 | 1.13 | 0 |
+| disaster_neglect | 4242 | $75,064 | $1,108,024 | 1,828 | 1,480 | 56.6 | 0.8071 | 2 | 21.37 | 278 | 148 | 0.401 | 0.94 | 0 |
+| disaster_neglect | 9001 | $75,001 | $1,122,938 | 1,855 | 1,348 | 57.1 | 0.7707 | 2 | 23.55 | 279 | 152 | 0.340 | 0.96 | 0 |
+
+| strategy (mean of 3 seeds) | treasury | value | net $/gh | pop | happy | stab | dark % | placed | upg | minC | open inc | inc created | repairs |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **do_nothing** | $160,494 | $160,494 | 263 | 143 | 82.5 | 0.9479 | 0.23 | 0 | 0 | 0.491 | 0.01 | 4.7 | 0 |
+| **greedy_growth** | $131,549 | $1,002,499 | 1,412 | 1,813 | 53.3 | 0.7161 | 36.12 | 126 | 40 | 0.380 | 1.59 | 464.7 | 0 |
+| **infrastructure_first** | $16,905 | $133,305 | 376 | 231 | 77.3 | 0.9711 | 0.23 | 27 | 0 | 0.890 | 0.01 | 5.3 | 110.0 |
+| **balanced** | $71,645 | $1,016,422 | 1,852 | 1,437 | 58.9 | 0.7927 | 22.43 | 280 | 125 | 0.792 | 0.88 | 322.3 | 91.3 |
+| **tax_squeezer** | $67,612 | $1,593,595 | 2,877 | 1,629 | 51.1 | 0.7251 | 48.34 | 324 | 128 | 0.706 | 1.78 | 703.7 | 205.3 |
+| **disaster_neglect** | $70,012 | $1,117,171 | 1,795 | 1,426 | 57.2 | 0.7886 | 23.53 | 282 | 145 | 0.365 | 1.01 | 372.0 | 0 |
+
+`incident_abandoned` is **0** in all eighteen runs, `credit_line_engaged` is 0 in
+all eighteen (nobody went negative), and `director_event_started` is 2 on
+seventeen of them — pass-2 F-3's cascade and F-1's silent Director are both
+closed and stay closed at every city size the matrix reaches.
+
+### 15.1 The headline ordering, checked
+
+**1. `balanced` beats `do_nothing`. ✅ — but not on idle cash, and it never can.**
+
+| column | `balanced` | `do_nothing` | ratio |
+|---|---|---|---|
+| value created (cash + city) | **$1,016,422** | $160,494 | **6.3×** |
+| population | **1,437** | 143 | 10.0× |
+| net $/gh (run mean) | **1,852** | 263 | 7.0× |
+| min condition | **0.792** | 0.491 | the control is rotting |
+| treasury (idle cash) | $71,645 | $160,494 | 0.45× |
+
+The cash row is the one to read carefully, because pass 2's version of this gate
+passed on it and the rebalanced agent fails it. A spend-everything agent's cash
+sits at its reserve *by construction* — doc 92 §3 warned about exactly this
+before the rebalance made it bite — so ranking a builder below a savings account
+because the builder spent its money on buildings is a measurement error. Gate 5
+is retuned onto the four columns above, and it gains a new assertion that answers
+the other half of F-1: **standing still now costs something.** The control's
+worst building falls 1.000 → 0.491 in three game-weeks on wear alone (4.7
+incidents per run — it is not being attacked), and its three-week take fell from
+$169,592 to $159,077 when `COND_FLOOR` was ruled: **decay alone bills an
+untouched city 6.2 % of its earnings**, where pass 2 measured a perfectly
+straight, perfectly free line.
+
+**2. Neglect is fatal. ✅ — and the arc is now legible.** `disaster_neglect` is
+`balanced` with one field changed, and the two build the same city (282 vs 280
+placed, 1,426 vs 1,437 people, 23.5 % vs 22.4 % dark). Every difference is the
+knob:
+
+| | `balanced` | `disaster_neglect` |
+|---|---|---|
+| treasury, day 21 (mean) | **$71,645** | $70,012 |
+| min condition, day 21 (mean) | **0.792** | 0.365 |
+| worst building reaches 0.00 | day 35 | **day 27** |
+| damaged buildings, day 50 | 471 of 762 | 297 of 386 |
+
+Maintenance buys the city **twelve extra game-days of health** at 11–12 % of
+net. Note the day-50 rows carefully: **both** cities are wrecked by then, and
+the second one is not a maintenance failure — see §15.2.
+
+**3. `tax_squeezer`'s dominance persists, as expected. ✅ (noted, not fought.)**
+Doc 92 pass-2 F-5 measured the top detent at **+46 %** value created; it is now
+**+57 %** ($1,593,595 vs $1,016,422) for **−7.8** happiness and, on the mean,
+**+13 %** population. The coupling agent that would make the detent cost a city
+has not landed, and `tax.TAX_RATE_GROWTH_COEFF` 8.0 cannot do it alone —
+`tests/test_balance_gates.gd` gate 12 records why in full (the multiplier scales
+the *relaxation* of `attractiveness` toward a target that is already 1.0 in a
+healthy city, so in a healthy city it multiplies zero). One thing did change and
+it is worth the ruling's attention: **the treasury half of the dominance is
+gone.** `tax_squeezer` now ends 21 game-days with **$67,612** against
+`balanced`'s $71,645, because the same land fund and maintenance purse that make
+`balanced` a credible player make the squeezer spend its windfall too. The
+dominance is entirely in what it built, which is the honest shape of the finding.
+
+### 15.2 The 50-game-day pair — and a new pass-3 finding
+
+One paired 50-game-day run, seed 1337, the neglect A/B extended past the
+fatality arc:
+
+| | `balanced` | `disaster_neglect` |
+|---|---|---|
+| treasury, day 50 | $273,460 | $905,381 |
+| value created | $2,114,700 | $2,215,652 |
+| buildings | 762 | 386 |
+| population | 2,229 | 1,238 |
+| repairs | 200 (4.0 / game-day) | 0 |
+| repair spend / net | **17.3 %** | 0 % |
+| min condition, by day | 0.80 through **day 23**, 0.00 from day 35 | 0.35 by day 21, 0.00 from **day 27** |
+| dark share | **66.8 %** | 44.8 % |
+
+The maintenance line holds exactly as fitted — 4.0 trips per game-day and 17.3 %
+of net over fifty game-days, both inside the ruled bands, on a city that grew to
+762 buildings. And then it stops working, **for a reason that is not
+maintenance**: `balanced` builds 762 buildings onto a founding grid of eighteen
+transformers plus the ten taps it buys, ends the run with **two thirds of all
+building-time dark**, and an unpowered building decays 1.5× faster (doc 02 §2.6)
+and earns a fraction of its tax line. The condition cliff at game-day 23–24 is a
+POWER cliff.
+
+**Filed as pass-3 F-11.** After F-4's thinning the binding constraint on a
+well-played city moves from land to grid capacity at around game-day 24, and the
+agent's reactive `_unwall` rule — buy one transformer when the served ground has
+actually run out, on an 8-hour cooldown — cannot keep up with a builder placing
+~15 buildings a game-day. This is the good version of the problem doc 93 §A
+wanted (*"`cmd_place_grid_component` is THE game"*), and it wants a pass-4
+answer on both sides: a `balanced` that buys grid *ahead* of growth the way
+`infrastructure_first` does, and a ruling on whether 66.8 % dark should be
+survivable at all. **No constant was moved for it in this pass** — it is outside
+the 21-game-day pacing horizon the rulings are written against, and moving a grid
+or decay constant to paper over it would break §13.2's fit.
+
+---
+
+## 16. Open edits this pass could not make
+
+| where | what | why it is here |
+|---|---|---|
+| doc 03 §2.2, lines quoting `COND_FLOOR = 0.55` and worked examples A/B | `COND_FLOOR` is **0.40**; `f_condition = 0.40 + 0.60 × C`; example A `f_condition` 0.9775 → 0.9700 and revenue $23.86 → **$23.68**/gh; example B $8.23 → **$8.17**/gh | §13.3 ruled the constant; doc 03 is not this pass's file. `tests/test_economy.gd` already carries the new literals with the arithmetic in a comment, so the doc is the only stale copy. |
+| doc 03 §2.12's founding ledger | `E_grid` $74.874 → **$74.274**/gh, total expense $520.577 → **$519.977**/gh, net $318.773 → **$319.372**/gh, day net $7,650.55 → **$7,664.94** | §14.1: F-4 took 0.15 MVA of transformer plate out of the inventory. `data/economy.json` `pacing_guardrails` and `tests/test_economy.gd` are re-stamped; doc 93 §E2 carries the shift table. |
+| doc 09 §2.9.5's transformer table | 23 rows → **18**; T-05, T-08, T-16, T-21, T-22 deleted; T-03/T-04/T-07/T-12/T-13/T-14/T-15/T-17/T-19/T-20/T-23 re-load; fleet `13×L1 + 9×L2 + 1×L3` → **`7×L1 + 10×L2 + 1×L3`**, `rated_mva` 2.40 → **2.25**; feeder rollups 361.8/421.6 → **365.8/417.6**; `F_SOUTH` 53.8 % → **53.3 %** | §14.1. `data/starter_city.json`, `data/world.json` and `tests/test_starter_city.gd` are updated and carry the derivations; doc 09's printed table is the stale copy. |
+| doc 09 §2.9.3/§2.9.4 (a **ruling**, not an edit) | how big and how full is the starter core? Hour-48 pacing for `cmd_place_grid_component` needs ≈35–80 served vacant tiles and the geometric floor under doc 09's own siting rule is 452 | §14.1 and §14.2. Neither a grid edit nor a READY-block trim can reach it; it is a core-size question. |

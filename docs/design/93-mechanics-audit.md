@@ -78,10 +78,28 @@ unchanged and each shift is explained by a named replacement:
 | anchor | doc value (stub) | as-integrated | why |
 |---|---|---|---|
 | 20:00 system peak | 783.3 kW | **801.7 kW** | doc 05's live node roster meters the real plant, ~+18.4 kW over the L1-variant constants |
-| founding gross revenue, first hour | $839.349 | **$841.278** | live inventories; +0.23%, unmoved in substance |
-| founding expense, first hour | $520.577 | **$504.777** | see the fleet-billing ruling below |
-| founding net, first hour | +$318.77/gh | **+$336.502/gh** | ditto |
-| founding day net | ≈ +$7,650 | **+$8,006** | same, over 24 settlements |
+| founding gross revenue, first hour | $839.349 | **$841.225** | live inventories; +0.22%, unmoved in substance |
+| founding expense, first hour | $520.577 | **$504.177** | see the fleet-billing ruling below, then the Wave-4 F-4 line |
+| founding net, first hour | +$318.77/gh | **+$337.048/gh** | ditto |
+| founding day net | ≈ +$7,650 | **+$8,004** | same, over 24 settlements |
+
+**Wave-4 re-anchor (doc 92 §13/§14, 2026-08-19).** Three of the five rows above
+moved again, by −$0.60/gh of expense and −$0.053/gh of gross, and both shifts
+have one cause each:
+
+| line | before Wave 4 | after | why |
+|---|---|---|---|
+| `E_grid` | $74.874/gh | **$74.274/gh** | doc 92 F-4 thinned `data/starter_city.json`'s founding transformer roster **23 → 18 nodes**. That is 0.15 MVA of rated plate (`2.40 → 7×0.05 + 10×0.15 + 1×0.40 = 2.25`), and doc 03 §2.4 bills $4.00/MVA-gh on the inventory, so the line falls by exactly `0.15 × 4.0 = $0.60/gh`. The plant, the substation and the 1.416 km of line are untouched. |
+| gross revenue, first hour | $841.278/gh | **$841.225/gh** | `tax.COND_FLOOR` 0.55 → 0.40. `f_condition(1.0) = 1.0` at **every** floor, so this is only the first settled hour's own decay (condition 0.99955) re-weighted: −0.0063 %. Every founding anchor is preserved to five significant figures. |
+| night peak / feeder split | 783.3 kW · 361.8 / 421.6 | **783.4 kW · 365.8 / 417.6** | the thinning re-homes the removed nodes' streetlights, signals and building customers to the nearest survivor (doc 04 §2.3, no radius limit), so the LOAD is conserved and only its distribution moves. `F_SOUTH` still carries **53.3 %** of the city's night load — doc 09 §2.9.5's designed lesson survives. |
+
+`data/economy.json`'s `pacing_guardrails` carries the re-stamped pair
+(504.176677 / 337.047860, first-day 8004.047) and `STARTER_E_GRID_PER_HOUR`
+74.27; `data/world.json`'s `starter` block carries the new transformer
+histogram (**L1 7 / L2 10 / L3 1**, `rated_mva` **2.25**), night peak and feeder
+split. `tests/test_balance_gates.gd` gates 1, 2 and 2b hold the pair to ±1 %,
+and `tests/test_starter_city.gd` / `tests/test_city_sim.gd` /
+`tests/test_economy.gd` carry the derivations inline.
 
 **Fleet-billing ruling (doc 92 pass-2 F-3, 2026-08-19).** Doc 06 owns fleet
 capacity (C-50), so doc 03 bills the roster doc 06 actually houses:
@@ -124,6 +142,32 @@ preserved, as this section has said from the start; only the inventory changed.
 - **Incident lifecycle events name their own kind.** `incident_created` /
   `tier_changed` / `resolved` / `failed` / `abandoned` carry the incident's kind as
   **`incident_type`**; `type` is the bus event name and always was. No compat key.
+
+**Binding from the Wave-4 maintenance fit (doc 92 §13/§14, 2026-08-19):**
+
+- **`tax.COND_FLOOR` 0.55 → 0.40.** Doc 03 §2.2's `f_condition = COND_FLOOR +
+  (1 − COND_FLOOR)·C`. The floor sets *the payback period of a repair*: at 0.55 a
+  repair bought back its price in ≈19 game-days of recovered revenue, which is
+  outside the pacing horizon and is why doc 92 pass-2 F-2 could not measure
+  maintenance paying for itself; at 0.40 it is ≈14, and the maintained agent
+  overtakes the neglecting one inside 21 game-days for the first time. `f_condition(1.0)`
+  is 1.0 at every floor, so **no founding anchor moves**. Doc 03 §2.2's worked
+  examples A and B re-price (`0.9775 → 0.9700`, `$23.86 → $23.68/gh`,
+  `$8.23 → $8.17/gh`) — `tests/test_economy.gd` carries the new literals; doc 03's
+  own §2.2 text is an open edit for that doc's owner.
+- **`expenses.MAINT_CONDITION_PENALTY` 1.5 — HELD, measured.** Isolated on the
+  same A/B it contributes **+$703 of a $5,874 maintenance-pays gap (12 %)** while
+  raising the single largest expense line in a grown city (`building_maint`, 36 %
+  of a 320-building city's hourly expense) by 8–16 % for BOTH agents. Not worth a
+  doc 03 constant move for that.
+- **`data/buildings.json`'s 60 `decay_per_hour` rows — HELD, measured.** The
+  ruled pacing targets are met at the authored rates: a maintaining city spends
+  **11.3–12.1 % of net** on repairs (ruled band 10–20 %), a neglected city reaches
+  doc 03's `COND_FLOOR` in **2.2–2.8 game-weeks** (ruled 2–3) and is fatal at
+  **4.7 game-weeks** (ruled ≈5, tolerance 2×). What made maintenance a chore was
+  the repair THRESHOLD, not the rate — see doc 92 §13.
+- **The founding transformer roster is 18 nodes, not 23** (doc 92 F-4). See the
+  re-anchor table above.
 
 Also binding from the same pass: **mode-invariance is per-system, not
 whole-hash** — doc 06 §2.6 sanctions Poisson-count differences per step size,

@@ -340,7 +340,19 @@ func test_no_same_archetype_orthogonally_adjacent() -> void:
 func test_every_building_within_transformer_radius() -> void:
 	var loader := _loaded()
 	var transformers := loader.power_nodes_of_kind("transformer")
-	assert_eq(transformers.size(), 23, "23 transformers (§2.9.5)")
+	# **F-4 grid thinning, Wave 4** (doc 92 §14). Doc 09 §2.9.5 authored 23
+	# transformers; five of them (T-05, T-08, T-16, T-21, T-22) were redundant
+	# against the rule this very test states — every building origin within
+	# Chebyshev 3 of SOME transformer — and doc 92 F-4 asked for the founding
+	# grid to be thinned so `cmd_place_grid_component` stops being optional. The
+	# surviving 18 are the minimum roster that still covers all 34 authored
+	# buildings AND keeps the tutorial beats (tutorial_lot_a unserved,
+	# tutorial_lot_b served, T-04 in place); the removed nodes' streetlights,
+	# signals and building customers re-home to the nearest survivor, so the
+	# night peak, the sink totals and the F_SOUTH lesson are all conserved.
+	# Measured effect: served vacant ground 510 → 452 tiles, served 2×2 origins
+	# 257 → 226. Doc 92 §14 carries the derivation and the geometric floor.
+	assert_eq(transformers.size(), 18, "18 transformers (§2.9.5, thinned by doc 92 F-4)")
 	for node in transformers:
 		var tile := Vector2i(int(node["tile"][0]), int(node["tile"][1]))
 		assert_true(_is_road_local(loader, tile.x, tile.y),
@@ -383,23 +395,34 @@ func test_transformer_fleet_and_sizing() -> void:
 			assert_true(load_kw > TRANSFORMER_HEADROOM_FRAC
 					* float(TRANSFORMER_CAPACITY_KW[level - 1]),
 					"%s is authored above the smallest level that satisfies the rule" % node["id"])
-	assert_eq(int(by_level[1]), 13, "13 × L1")
-	assert_eq(int(by_level[2]), 9, "9 × L2")
+	# Wave-4 F-4 histogram. Dropping five nodes removes 4×L1 + 1×L2, and the two
+	# survivors that inherit the biggest orphaned sink groups (T-19 takes T-21's
+	# 46 streetlights, T-20 takes T-22's 74) cross the §2.9.5 headroom rule and
+	# are re-authored L1 → L2: 13/9/1 → **7/10/1**.
+	# `rated_mva = 7×0.05 + 10×0.15 + 1×0.40 = 0.35 + 1.50 + 0.40 = 2.25`.
+	assert_eq(int(by_level[1]), 7, "7 × L1")
+	assert_eq(int(by_level[2]), 10, "10 × L2")
 	assert_eq(int(by_level[3]), 1, "1 × L3 (WTR-1's water works)")
-	assert_almost_eq(rated_mva, 2.40, 1e-9, "fleet rated_mva")
+	assert_almost_eq(rated_mva, 2.25, 1e-9, "fleet rated_mva")
 
-	# Distributed sinks: one streetlight per road tile, one signal per intersection.
+	# Distributed sinks: one streetlight per road tile, one signal per
+	# intersection. CONSERVED by the thinning — doc 04 §2.3 attaches a sink to
+	# its nearest transformer with no radius limit, so removing a node moves its
+	# sinks, it does not delete them. This pair is the invariant that proves it.
 	assert_eq(streetlights, 783, "streetlight sinks == road tiles (§2.9.4)")
 	assert_eq(signals, 81, "signal sinks == intersections")
 
-	# Feeder rollups (§2.9.5). F_SOUTH's authored column sums to 421.7 against a
-	# stated 421.6 — 0.1 kW of rounding drift in the doc's own table.
-	assert_almost_eq(float(feeder_kw["F_NORTH"]), 361.8, 0.15, "F_NORTH night load")
-	assert_almost_eq(float(feeder_kw["F_SOUTH"]), 421.6, 0.15, "F_SOUTH night load")
+	# Feeder rollups (§2.9.5). The city's night peak is conserved to the same
+	# 0.1 kW of rounding drift the doc's own table carried (783.3 → 783.4); what
+	# moves is the SPLIT, because a sink re-homes to its nearest node and four of
+	# the five removed nodes sat on F_SOUTH: 361.8/421.6 → **365.8/417.6**.
+	assert_almost_eq(float(feeder_kw["F_NORTH"]), 365.8, 0.15, "F_NORTH night load")
+	assert_almost_eq(float(feeder_kw["F_SOUTH"]), 417.6, 0.15, "F_SOUTH night load")
 	var total: float = float(feeder_kw["F_NORTH"]) + float(feeder_kw["F_SOUTH"])
-	assert_almost_eq(total, 783.3, 0.25, "night peak building+sink load")
-	assert_almost_eq(float(feeder_kw["F_SOUTH"]) / total, 0.538, 0.002,
-			"F_SOUTH carries 53.8 % of the city's night load — the designed lesson")
+	assert_almost_eq(total, 783.4, 0.25, "night peak building+sink load")
+	assert_almost_eq(float(feeder_kw["F_SOUTH"]) / total, 0.533, 0.002,
+			"F_SOUTH still carries 53.3 % of the city's night load — the designed "
+			+ "lesson survives the thinning (was 53.8 %)")
 
 	# The tutorial transformer and the radial topology.
 	var t04 := loader.power_node("T-04")
@@ -698,9 +721,10 @@ func test_world_json_tunables() -> void:
 	assert_eq(int(starter["target_jobs_market"]) + int(starter["target_jobs_civic"]),
 			int(starter["target_jobs"]), "66 market + 86 civic = 152")
 	assert_eq(int(starter["vacant_buildable_tiles"]), 1429)
-	assert_almost_eq(float(starter["night_peak_kw"]), 783.3, 0.05)
+	# 783.4 after Wave-4 F-4: the roster is thinner, the LOAD is conserved.
+	assert_almost_eq(float(starter["night_peak_kw"]), 783.4, 0.05)
 	assert_almost_eq(float(starter["water_demand_m3h"]), 5.56, 1e-9)
-	assert_almost_eq(float(starter["transformer_rated_mva_total"]), 2.40, 1e-9)
+	assert_almost_eq(float(starter["transformer_rated_mva_total"]), 2.25, 1e-9)
 	assert_almost_eq(float(starter["line_km"]), 1.42, 1e-9)
 	assert_almost_eq(float(starter["t0_city_stability"]), 0.9475, 1e-9)
 	assert_eq(int(starter["t0_city_level"]), 0)
