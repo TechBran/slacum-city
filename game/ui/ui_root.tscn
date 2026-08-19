@@ -1,4 +1,4 @@
-[gd_scene load_steps=14 format=3]
+[gd_scene load_steps=15 format=3]
 
 [ext_resource type="Script" path="res://ui/ui_root.gd" id="1_uiroot"]
 [ext_resource type="Script" path="res://ui/hud.gd" id="2_hud"]
@@ -13,6 +13,7 @@
 [ext_resource type="Script" path="res://ui/unit_picker.gd" id="11_unitpicker"]
 [ext_resource type="Script" path="res://ui/city_dashboard.gd" id="12_citydashboard"]
 [ext_resource type="Script" path="res://ui/away_report_sheet.gd" id="13_awayreport"]
+[ext_resource type="Script" path="res://ui/onboarding_flow.gd" id="14_onboarding"]
 
 [node name="UIRoot" type="CanvasLayer"]
 layer = 10
@@ -905,6 +906,15 @@ theme_type_variation = &"PrimaryFAB"
 [node name="CoachLayer" type="Control" parent="SafeArea"]
 layout_mode = 2
 mouse_filter = 2
+
+[node name="Onboarding" type="Control" parent="SafeArea/CoachLayer"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("14_onboarding")
 
 [node name="ToastLayer" type="CanvasLayer" parent="."]
 layer = 20
