@@ -272,9 +272,10 @@ func test_crime_uses_crime_stream() -> void:
 	assert_eq(system.rng.stream("incidents").state, incidents_before,
 			"the incidents stream was NOT touched by the crime generator")
 	assert_eq(system.rng.stream("traffic").state, traffic_before, "traffic is reserved")
-	# And no sim/ file draws from `traffic` at all.
-	assert_false(_sim_tree_text().contains("stream(\"traffic\")"),
-			"no sim/ code consumes the reserved traffic stream")
+	# And no doc-06 file draws from `traffic` at all. (Doc 10's cosmetic feed
+	# is the stream's one sanctioned consumer and guards that itself.)
+	assert_false(_read_tree("res://sim/incidents").contains("stream(\"traffic\")"),
+			"no doc-06 code consumes the traffic stream")
 
 
 ## Doc 06 §7 test 26 (C-44) — the within-district pick is doc 02's
@@ -435,13 +436,14 @@ func test_no_weather_table_in_doc06() -> void:
 		for state in ["\"snow\"", "\"blizzard\"", "\"fog\"", "\"thunderstorm\"",
 				"\"heat_wave\"", "\"clear\""]:
 			assert_false(text.contains(state), "%s carries no weather state key %s" % [path, state])
-	# Scan sim/ as CODE — comments and string literals stripped — so the guard
-	# catches a reintroduced identifier without tripping over the guard lists
-	# that name the deleted keys on purpose.
-	var code := _sim_tree_code()
-	assert_false(code.contains("heat_mult"), "the identifier heat_mult no longer exists in sim/")
-	assert_false(code.contains("rain_mult"), "the identifier rain_mult no longer exists in sim/")
-	assert_false(code.contains("weather_mults"), "no weather_mults table in sim/")
+	# Scan doc 06's OWN tree as CODE — comments and string literals stripped —
+	# so the guard catches a reintroduced identifier without tripping over the
+	# guard lists that name the deleted keys on purpose. (Doc 07 legitimately
+	# owns heat multipliers in sim/weather/; the ban is on doc 06 owning them.)
+	var code := _strip_comments_and_strings(_read_tree("res://sim/incidents"))
+	assert_false(code.contains("heat_mult"), "heat_mult does not exist in sim/incidents/")
+	assert_false(code.contains("rain_mult"), "rain_mult does not exist in sim/incidents/")
+	assert_false(code.contains("weather_mults"), "no weather_mults table in sim/incidents/")
 	# The four generators name exactly the four RR-4 channels; water_main_break
 	# and storm_damage name none.
 	var catalog := IncidentCatalog.load_from_files()

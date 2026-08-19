@@ -397,9 +397,10 @@ func test_travel_time_provider_contract() -> void:
 	# UNREACHABLE is -1, never a large finite number.
 	var island := RoadsTestRig.network_with({Vector2i(60, 60): STREET})
 	assert_eq(island.travel_gs(Vector2i(60, 60), Vector2i(90, 90)), -1)
-	# The null provider lets doc 06 be tested with no road network at all.
+	# The bare base class is doc 06's Chebyshev fallback (34 tiles × 8 m at
+	# 24 m/gm = 680 gs) — doc 10's network provider replaces it, same type.
 	var null_provider := TravelTimeProvider.new()
-	assert_eq(null_provider.travel_gs(a, b), 60)
+	assert_eq(null_provider.travel_gs(a, b), 680)
 
 
 func test_estimate_then_quote_dispatch_pattern() -> void:
