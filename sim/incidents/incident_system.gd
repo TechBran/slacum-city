@@ -457,7 +457,7 @@ func _fire_tier_entries() -> void:
 			if priorities.size() >= t:
 				inc.notification_priority = int(priorities[t - 1])
 			_emit("incident_tier_changed", {"incident_id": inc.id, "tier": t,
-					"severity": inc.severity, "type": inc.type, "subtype": inc.subtype,
+					"severity": inc.severity, "incident_type": inc.type, "subtype": inc.subtype,
 					"at_h": now_h, "notification_priority": inc.notification_priority})
 			ops.run(inc, entries.get(str(t), []))
 
@@ -499,7 +499,7 @@ func _resolve(inc: Incident) -> void:
 				float(row.get("stability_on_resolve", 0.0)))
 	dispatch.record_outcome(inc, Incident.STATUS_RESOLVED,
 			float(row.get("target_response_min", 10.0)))
-	_emit("incident_resolved", {"incident_id": inc.id, "type": inc.type,
+	_emit("incident_resolved", {"incident_id": inc.id, "incident_type": inc.type,
 			"subtype": inc.subtype, "tier_peak": inc.tier_peak, "at_h": now_h,
 			"response_min": inc.response_minutes(), "reward": reward,
 			"target_ref": inc.target_ref.duplicate(true)})
@@ -579,10 +579,10 @@ func _run_fail(inc: Incident) -> void:
 	inc.resolved_h = now_h
 	dispatch.record_outcome(inc, terminal, float(row.get("target_response_min", 10.0)))
 	if terminal == Incident.STATUS_ABANDONED:
-		_emit("incident_abandoned", {"incident_id": inc.id, "type": inc.type,
+		_emit("incident_abandoned", {"incident_id": inc.id, "incident_type": inc.type,
 				"subtype": inc.subtype, "tier_peak": inc.tier_peak})
 	else:
-		_emit("incident_failed", {"incident_id": inc.id, "type": inc.type,
+		_emit("incident_failed", {"incident_id": inc.id, "incident_type": inc.type,
 				"subtype": inc.subtype, "tier_peak": inc.tier_peak,
 				"target_ref": inc.target_ref.duplicate(true)})
 
@@ -1091,7 +1091,11 @@ func spawn(type_id: String, subtype: String, tile: Vector2i, target_ref: Diction
 	_active[inc.id] = inc
 	_order.append(inc.id)
 	_order.sort()
-	_emit("incident_created", {"incident_id": inc.id, "type": type_id, "subtype": subtype,
+	# `incident_type`, never `type`: `_emit` stamps the BUS event name into
+	# `type`, so an incident that named its own kind there lost it on the way out
+	# (doc 92 ruling 8 — pre-1.0, no compatibility key).
+	_emit("incident_created", {"incident_id": inc.id, "incident_type": type_id,
+			"subtype": subtype,
 			"tile": [tile.x, tile.y], "severity": inc.severity, "tier": inc.tier(),
 			"district_id": inc.district_id, "target_ref": inc.target_ref.duplicate(true),
 			"cause": inc.cause.duplicate(true), "at_h": now_h,

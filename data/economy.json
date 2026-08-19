@@ -5,7 +5,8 @@
 
   "tax": {
     "TAX_LEVEL_GROWTH": 2.15, "TAX_RATE_BASE": 0.09, "TAX_RATE_MIN": 0.04, "TAX_RATE_MAX": 0.16,
-    "TAX_RATE_COOLDOWN_HOURS": 48, "TAX_RATE_HAPPINESS_COEFF": 220.0, "TAX_RATE_GROWTH_COEFF": 3.5,
+    "TAX_RATE_COOLDOWN_HOURS": 48, "TAX_RATE_HAPPINESS_COEFF": 220.0, "TAX_RATE_GROWTH_COEFF": 8.0,
+    "_growth_coeff_note": "3.5 -> 8.0 (doc 92 pass-2 F-5 ruling). At 3.5 the top detent bought +46% value created for an 11% population cost and was strictly dominant; at 8.0 the top detent multiplies growth by 0.44 and the bottom by 1.40, so the slider is money-now versus a-city-later. Revenue is untouched: TAX_RATE_HAPPINESS_COEFF, TAX_RATE_MIN/MAX and the policy factor all hold.",
     "_tax_level_note": "The player knob of doc 03 §2.2 is the RATE r, bounded by TAX_RATE_MIN/MAX. cmd_set_tax_level exposes it as the discrete ladder MIN, MIN+STEP, ... , MAX so the UI has detents; level 5 lands exactly on TAX_RATE_BASE. The ladder is computed in basis points so no float drift can move a detent off its authored rate. Note this is the tax RATE ladder and has nothing to do with TAX_LEVEL_GROWTH, which is base_tax growth per BUILDING level.",
     "TAX_RATE_STEP": 0.01,
     "OCCUPANCY_RAMP_HOURS": 36,
@@ -172,7 +173,9 @@
     "STARTER_GROSS_REVENUE_PER_HOUR": 839,
     "STARTER_GROSS_REVENUE_PER_HOUR_EXACT": 839.349412,
     "STARTER_EXPENSE_PER_HOUR": 521, "STARTER_NET_PER_HOUR": 319,
-    "STARTER_EXPENSE_PER_HOUR_EXACT": 520.576566, "STARTER_NET_PER_HOUR_EXACT": 318.772846,
+    "_as_integrated_anchor_note": "ANCHOR PROMOTION (doc 92 pass-2 §4 ruling). The two _EXACT keys below are no longer doc 03 §2.12's stub-era worked example — they are the AS-INTEGRATED founding ledger, measured at the first settled game-hour of a do_nothing run on the shipped sim, and they are the regression target tests/test_balance_gates.gd gates 1 and 2 hold to +/-1%. The unsuffixed STARTER_EXPENSE_PER_HOUR 521 / STARTER_NET_PER_HOUR 319 above stay doc 03 §2.12's PUBLISHED round figures, which tests/test_economy.gd::test_founding_ledger still checks the doc's own arithmetic against; doc 93 sec E2 carries the shift table. Expense moved 520.576566 -> 504.776677: -18.53/gh because E_fuel_vehicle stopped billing a fabricated kilometre per unit (the roster meters no road distance yet, doc 06 C-50), +18.00/gh because E_fleet now bills doc 06's real 8-unit roster (2/1/2/2/1) instead of doc 03's held 6-row STARTER_VEHICLES, and the rest is docs 05/10 billing live inventories. Gross is unmoved (839.35 published, 841.28 measured, 0.23%).",
+    "STARTER_EXPENSE_PER_HOUR_EXACT": 504.776677, "STARTER_NET_PER_HOUR_EXACT": 336.501773,
+    "STARTER_FIRST_GAME_DAY_NET_EXACT": 8006.291,
     "STARTER_E_GRID_PER_HOUR": 74.87,
     "STARTER_E_GRID_TEST_TOLERANCE": 0.5,
     "STARTER_E_WATER_PER_HOUR": 15.39,

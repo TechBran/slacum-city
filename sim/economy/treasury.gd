@@ -214,6 +214,33 @@ func austerity_expense_mult() -> float:
 	return float(_recovery.get("AUSTERITY_EXPENSE_MULT", 1.0)) if austerity_active else 1.0
 
 
+## Layer 2's other half: an austerity budget buys less maintenance, so doc 02
+## §2.6 wear runs faster while it is engaged. `AUSTERITY_DECAY_MULT` was authored
+## for this and had no reader until the ladder was wired (doc 92 F-7).
+func austerity_decay_mult() -> float:
+	return float(_recovery.get("AUSTERITY_DECAY_MULT", 1.0)) if austerity_active else 1.0
+
+
+## Layer 4, without a charge: book a liability the city owes but the treasury
+## may not pay right now. Used for work already in flight when austerity lands —
+## doc 03 §2.10 layer 2 never strands a half-built tower, so the phase proceeds
+## and the money is owed instead of silently forgiven.
+func defer(amount: int, category: StringName = &"misc", reason: String = "") -> Dictionary:
+	if amount <= 0:
+		return {"ok": true, "reason_code": &"", "deferred": 0, "balance": balance}
+	deferred_liability += amount
+	var units := float(amount) / 1000.0
+	_emit(&"deferred_liability_accrued", {
+		"amount": amount, "total": deferred_liability,
+		"condition_penalty_units": units,
+		"condition_penalty_per_unit": float(_recovery.get(
+				"DEFERRED_CONDITION_PENALTY_PER_1000", 0.0)),
+		"condition_penalty_total": units * float(_recovery.get(
+				"DEFERRED_CONDITION_PENALTY_PER_1000", 0.0)),
+		"category": category, "reason": reason})
+	return {"ok": false, "reason_code": &"DEFERRED", "deferred": amount, "balance": balance}
+
+
 ## Layer 5: free, automatic, cooldowned, capped, and absent on crisis.
 ## All four §2.10 conditions must hold; returns the granted amount (0 = no grant).
 func maybe_grant_relief(hour: int, daily_gross_revenue: float,

@@ -108,21 +108,25 @@ func test_economy_settles_in_the_loop() -> void:
 	# Milestone 1 criterion 7: economy settles hourly; the founding ledger's
 	# +$318.77/gh lands in the treasury through the LIVE input chain (real
 	# grid inventory, real district stability, real occupancy).
-	# As-integrated anchors (doc 93): doc 03's worked +$318.77/gh was computed
-	# against the HELD water/road stubs. Docs 05/10 now bill live — water
-	# service factors, real E_water inventory, per-building road access — and
-	# the founding hour lands at ≈ +$345/gh, ≈ +$8.3k/day. The doc 03 §2.12
-	# worked-example refresh is tracked in doc 93; the LIVE CHAIN is the test.
+	# As-integrated anchors (doc 93 §E2): doc 03's worked +$318.77/gh was computed
+	# against the HELD water/road stubs. Docs 05/10 now bill live — water service
+	# factors, real E_water inventory, per-building road access — and doc 06's
+	# live fleet roster replaced doc 03's held `STARTER_VEHICLES` (doc 92 pass-2
+	# fleet-billing ruling: E_fleet 58 → 76, E_fuel_vehicle 6 → 0). The founding
+	# hour lands at ≈ +$336.50/gh, ≈ +$8.0k/day, which is what
+	# `data/economy.json`'s re-stamped `STARTER_NET_PER_HOUR_EXACT` says. The doc
+	# 03 §2.12 worked-example refresh is tracked in doc 93; the LIVE CHAIN is the
+	# test, and `tests/test_balance_gates.gd` gates 1–2 hold the exact figure.
 	var sim := CitySim.boot_from_files()
 	var start: int = sim.treasury.balance
 	sim.advance_hours(1.0)
 	var first_hour: int = sim.treasury.balance - start
-	assert_true(first_hour >= 338 and first_hour <= 352,
-			"first settled hour ≈ +$345 (got %d)" % first_hour)
+	assert_true(first_hour >= 330 and first_hour <= 343,
+			"first settled hour ≈ +$336.50 (got %d)" % first_hour)
 	sim.advance_hours(23.0)
 	var day_net: int = sim.treasury.balance - start
-	assert_true(day_net >= 8_150 and day_net <= 8_550,
-			"a founding day nets ≈ +$8,350 (got %d)" % day_net)
+	assert_true(day_net >= 7_800 and day_net <= 8_200,
+			"a founding day nets ≈ +$8,006 (got %d)" % day_net)
 
 
 func test_availability_settles_hourly() -> void:

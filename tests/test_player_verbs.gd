@@ -411,7 +411,12 @@ func test_repair_from_active_restores_to_new() -> void:
 	assert_eq(job["kind"], &"repair", "doc 02 §2.13 job kind")
 	sim.advance_hours(4.0)
 	assert_eq(b.state, &"active")
-	assert_almost_eq(b.condition, 1.0, 1e-9, "repair from active targets 1.00")
+	# doc 02 §2.6 wear is live (doc 92 F-2), so the hours the house stands AFTER
+	# its repair have already cost it condition: the target is 1.00 and what is
+	# left of it is `1.00 − hours_since × decay_per_hour` (house L1, 0.00045/gh).
+	assert_almost_eq(b.condition, 1.0, 4.0 * 0.00045,
+			"repair from active targets 1.00, less the wear since")
+	assert_true(b.condition < 1.0, "and the city keeps wearing out afterwards")
 
 
 func test_repair_from_damaged_targets_085() -> void:
@@ -426,7 +431,8 @@ func test_repair_from_damaged_targets_085() -> void:
 			Building.REPAIR_TARGET_FROM_DAMAGED, 1e-9)
 	sim.advance_hours(4.0)
 	assert_eq(b.state, &"active")
-	assert_almost_eq(b.condition, 0.85, 1e-9)
+	assert_almost_eq(b.condition, 0.85, 4.0 * 0.00045,
+			"0.85 target, less doc 02 §2.6 wear since (doc 92 F-2)")
 
 
 func test_repair_rejections() -> void:
@@ -561,8 +567,8 @@ func test_set_tax_level_effects() -> void:
 	# doc 03 §2.2's two couplings, exactly.
 	assert_almost_eq(float(result["payload"]["happiness_delta"]), -15.4, 1e-9,
 			"−(0.16 − 0.09) × 220")
-	assert_almost_eq(float(result["payload"]["growth_multiplier"]), 0.755, 1e-9,
-			"1 − (0.16 − 0.09) × 3.5")
+	assert_almost_eq(float(result["payload"]["growth_multiplier"]), 0.44, 1e-9,
+			"1 − (0.16 − 0.09) × 8.0")
 	# And they reach the sim: happiness falls where the base rate held it.
 	var base := CitySim.boot_from_files()
 	base.advance_hours(6.0)

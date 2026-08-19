@@ -284,14 +284,14 @@ func _row_for(incident_id: int, event: Dictionary) -> Dictionary:
 	return row
 
 
-## **The kind is not on the event.** `IncidentSystem._emit()` stamps
-## `event["type"] = <bus event name>` over whatever the payload had there, and
-## doc 06 puts the incident's own type under exactly that key — so by the time
-## `incident_created` reaches the bus, `type` says `"incident_created"` and the
-## kind is gone. This reads the three keys a payload could carry it under and
-## never `type`, which the bus owns; until doc 06 renames its field the kind
-## arrives on the first `refresh()` instead, and the row reads `Incident` for the
-## tick in between. See the report's sim patch for the one-line fix.
+## **The kind is `incident_type`, never `type`.** `IncidentSystem._emit()` stamps
+## `event["type"] = <bus event name>` over whatever the payload had there, so an
+## incident that named its own kind in `type` lost it on the way out. Doc 06 now
+## names the field `incident_type` on the whole lifecycle (`incident_created` /
+## `tier_changed` / `resolved` / `failed` / `abandoned`) — doc 92 pass-2 ruling 8,
+## pre-1.0, no compatibility key. The two fallbacks below are for hand-built
+## fixtures and for the `refresh()` snapshot rows, which key it as `type` because
+## a snapshot row is not a bus event.
 func _apply_created(row: Dictionary, event: Dictionary) -> void:
 	row["kind"] = str(event.get("incident_type",
 			event.get("type_id", event.get("kind", ""))))

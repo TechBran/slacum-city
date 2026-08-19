@@ -54,18 +54,29 @@ var weather: WeatherSystem
 var director: DisasterDirector
 var incident_sink: IncidentRequestSink
 
-## Held metering pair + starter roster (doc 03 §9 item 6b): constants until
-## doc 04 meters delivered energy and the doc-06 fleet-billing ruling lands.
-## (HELD_WATER retired — doc 05's live inventory() feeds the settlement now.)
+## Held metering pair (doc 03 §9 item 6b): constants until doc 04 meters
+## delivered energy. (HELD_WATER retired — doc 05's live inventory() feeds the
+## settlement now; STARTER_VEHICLES retired — doc 06's live roster does, per the
+## fleet-billing ruling on doc 92 F-3.)
 const HELD_DELIVERED_MWH := 1.5
 const HELD_FINE_RATE := 3.0 / 350.0
-const STARTER_VEHICLES := [
-	{"type": "patrol_car", "km_this_hour": 1.0},
-	{"type": "patrol_car", "km_this_hour": 1.0},
-	{"type": "fire_engine", "km_this_hour": 1.5 / 1.9},
-	{"type": "utility_service_truck", "km_this_hour": 1.0},
-	{"type": "water_repair_truck", "km_this_hour": 1.0},
-	{"type": "construction_crew", "km_this_hour": 1.0},
+
+## Station shells whose roster doc 06 houses (doc 06 §2.11 / C-50). A completed
+## build or upgrade of one of these re-runs that station's housing, which is what
+## makes `fire_station` response capacity instead of an upkeep line (doc 92 F-3).
+const FLEET_STATION_ARCHETYPES: Array[StringName] = [
+	&"police_station", &"fire_station", &"construction_yard",
+	&"water_facility", &"power_facility", &"substation",
+]
+
+## The doc 03 §2.10 recovery-ladder events the coordinator republishes on the
+## shared bus. `treasury_credited` stays private (it fires on every incident
+## reward), and `economy_hour_settled` is EconomySystem's to publish — the
+## treasury's copy of it would shadow the settlement snapshot the UI reads.
+const TREASURY_BUS_EVENTS: Array[StringName] = [
+	&"austerity_entered", &"austerity_exited", &"credit_line_engaged",
+	&"credit_limit_reached", &"deferred_liability_accrued",
+	&"deferred_liability_cleared", &"relief_grant_awarded",
 ]
 
 ## data/grid_components.json — doc 04 §2.1's placement rules for player-placed
@@ -792,7 +803,12 @@ func cmd_place_building(archetype: String, origin: Vector2i, variant: String = "
 	if treasury.balance < cost:
 		# Construction never auto-borrows; the credit ladder is for crises.
 		return CommandQueue.fail(&"E_FUNDS", {"cost": cost, "balance": treasury.balance})
-	treasury.spend(cost, &"construction")
+	var paid := treasury.spend(cost, &"construction")
+	if not bool(paid["ok"]):
+		# doc 03 §2.10 layer 2 blocks NEW commitments under austerity; a refused
+		# spend charges nothing, so the command must refuse too (doc 92 F-7).
+		return CommandQueue.fail(_spend_reason(paid),
+				{"cost": cost, "balance": treasury.balance})
 	var grid_id := _next_building_grid_id()
 	var sim_id := "P-%03d" % grid_id
 	var b := Building.new(grid_id, StringName(archetype), origin, StringName(variant))
@@ -857,7 +873,10 @@ func cmd_upgrade_building(sim_id: String, preview: bool = false) -> Dictionary:
 				"deficit_kw": headroom.get("deficit_kw", 0.0)})
 		if preview or not blockers.is_empty():
 			return result
-	treasury.spend(cost, &"construction")
+	var paid := treasury.spend(cost, &"construction")
+	if not bool(paid["ok"]):
+		return CommandQueue.fail(_spend_reason(paid), {"blockers": [_spend_reason(paid)],
+				"cost": cost, "balance": treasury.balance})
 	b.start_upgrade()
 	var job_id := construction.submit(&"upgrade", sim_id,
 			float(next_stats.get("upgrade_time_hours", 4.0)), &"construction_crew",
@@ -941,7 +960,10 @@ func cmd_place_grid_component(kind: String, tile: Vector2i, level: int = 1,
 	if preview:
 		return CommandQueue.ok(quote)
 
-	treasury.spend(cost, &"construction")
+	var paid := treasury.spend(cost, &"construction")
+	if not bool(paid["ok"]):
+		quote["blockers"] = [_spend_reason(paid)]
+		return CommandQueue.fail(_spend_reason(paid), quote)
 	var component_id := _next_component_id(kind)
 	grid.add_component(component_id, StringName(kind), {
 		"level": level, "parent": String(tap["feeder"]), "tile": tile,
@@ -1042,6 +1064,16 @@ func cmd_demolish_building(sim_id: String, preview: bool = false) -> Dictionary:
 	world.grid.remove_building(b.id, b.origin, footprint)
 	grid.detach_building(sim_id)
 	water.detach_building(sim_id)
+	# A demolished station takes its units with it (doc 06 §2.11): the roster has
+	# to shrink for the same reason it has to grow (doc 92 F-3).
+	if FLEET_STATION_ARCHETYPES.has(b.archetype):
+		var retired := incidents.fleet.remove_station(sim_id)
+		if int(retired.get("removed", 0)) > 0:
+			bus.emit(&"fleet_station_retired", {"sim_id": sim_id,
+					"archetype": String(b.archetype),
+					"removed": int(retired["removed"]),
+					"units": (retired["units"] as Array).duplicate(),
+					"fleet_size": incidents.fleet.size()})
 	buildings.erase(sim_id)
 	_building_records.erase(sim_id)
 	_block_dark_weights.erase(sim_id)
@@ -1120,7 +1152,12 @@ func cmd_repair_building(sim_id: String, preview: bool = false) -> Dictionary:
 	if preview:
 		return CommandQueue.ok(quote)
 
-	treasury.spend(cost, &"repair", "repair " + sim_id)
+	# `repair` is NOT an austerity-blocked category (doc 03 §2.10 layer 2 keeps
+	# the city repairable), but it can still be refused at the credit floor.
+	var paid := treasury.spend(cost, &"repair", "repair " + sim_id)
+	if not bool(paid["ok"]):
+		quote["blockers"] = [_spend_reason(paid)]
+		return CommandQueue.fail(_spend_reason(paid), quote)
 	var started := b.start_repair()
 	if not bool(started["ok"]):
 		return started  # unreachable: the state gate above already passed
@@ -1334,7 +1371,10 @@ func cmd_buy_block(block_id: String, preview: bool = false,
 	if preview:
 		return CommandQueue.ok(quote)
 
-	treasury.spend(price, &"land", "land " + block_id)
+	var paid := treasury.spend(price, &"land", "land " + block_id)
+	if not bool(paid["ok"]):
+		quote["blockers"] = [_spend_reason(paid)]
+		return CommandQueue.fail(_spend_reason(paid), quote)
 	block.ownership_state = &"OWNED"
 	block.purchase_price = price
 	block.purchased_minute = clock.sim_time_minutes()
@@ -1452,10 +1492,20 @@ func _charge_development_phases() -> void:
 		var cost := _development_phase_cost(block_id, int(charge["phase_index"]))
 		if cost <= 0:
 			continue
-		treasury.spend(cost, &"construction", "development %s %s"
-				% [block_id, String(charge["phase"])])
+		var reason := "development %s %s" % [block_id, String(charge["phase"])]
+		var paid := treasury.spend(cost, &"construction", reason)
+		var deferred := int(paid.get("deferred", 0))
+		if StringName(String(paid.get("reason_code", ""))) == &"AUSTERITY_BLOCKED":
+			# The phase is already in flight — doc 03 §2.10 layer 2 never strands
+			# half-built work — so the bill becomes a layer-4 liability instead of
+			# being silently forgiven, which is what the pre-fix code did. (A
+			# credit-floor refusal books its own deferral inside `spend()`.)
+			deferred = cost
+			treasury.defer(deferred, &"construction", reason)
 		bus.emit(&"development_phase_charged", {"block": block_id,
-				"phase": String(charge["phase"]), "cost": cost})
+				"phase": String(charge["phase"]), "cost": cost,
+				"deferred": deferred})
+	_publish_treasury_events()
 
 
 func _avenue_within(origin: Vector2i, radius: int) -> bool:
@@ -1538,11 +1588,121 @@ func on_construction_completed(job: Dictionary) -> void:
 		return
 	b.stats = catalog.stats(String(b.archetype), b.level)
 	_block_dark_weights[sim_id] = int(b.stats.get("population", 0)) + int(b.stats.get("jobs", 0))
+	_sync_station_fleet(sim_id, b)
 	for event in done["payload"]["events"]:
 		var out: Dictionary = event.duplicate()
 		out["sim_id"] = sim_id
 		out["level"] = b.level
 		bus.emit(StringName(String(out["type"])), out)
+
+
+## A station shell just finished (a new build, or an upgrade to level L+1), so
+## doc 06 re-houses it: a new station commissions its whole L1 rung, an upgraded
+## one commissions only the difference. Doc 02 owns the shell, doc 06 owns how
+## many units live in it (C-50), and this is the seam between them (doc 92 F-3).
+func _sync_station_fleet(sim_id: String, b: Building) -> void:
+	if not FLEET_STATION_ARCHETYPES.has(b.archetype):
+		return
+	var result := incidents.fleet.sync_station(sim_id, String(b.archetype),
+			maxi(1, b.level), b.origin)
+	if int(result.get("added", 0)) <= 0:
+		return
+	bus.emit(&"fleet_station_synced", {"sim_id": sim_id,
+			"archetype": String(b.archetype), "level": maxi(1, b.level),
+			"added": int(result["added"]), "units": (result["units"] as Array).duplicate(),
+			"fleet_size": incidents.fleet.size()})
+
+
+## doc 02 §2.6 wear, one settled game-hour of it, for every building that decays
+## (§2.12's state table: active, damaged, and an upgrade in flight — never a
+## fresh site, never a ruin). Called from `HourlyPhaseSystem` after the grid has
+## settled the hour and before doc 03 bills it, because `apply_decay` reads the
+## availability that settlement produced and the economy reads the condition this
+## produces.
+##
+##   powered_fraction  doc 04's `power_availability_hour` for the hour just closed
+##   overload_excess   `max(0, load/capacity − 1)` of the transformer serving it
+##   weather_decay_mult doc 07's `condition_decay_mult`, × doc 03 §2.10 layer 2's
+##                     `AUSTERITY_DECAY_MULT` while austerity is engaged
+##
+## No RNG is drawn here: decay is a deterministic integration, so wiring it moves
+## no stochastic stream and the save→load→advance identity is untouched.
+func apply_hourly_decay(dt_h: float, availability: Dictionary) -> void:
+	if dt_h <= 0.0:
+		return
+	var weather_mult := weather.get_effect("condition_decay_mult")
+	if is_nan(weather_mult):
+		weather_mult = 1.0
+	weather_mult *= treasury.austerity_decay_mult()
+	var overload := _overload_excess_by_component()
+	for id in _sorted(buildings):
+		var b: Building = buildings[id]
+		if not b.decays():
+			continue
+		var excess := float(overload.get(grid.attachment_of(String(id)), 0.0))
+		for event in b.apply_decay(dt_h, excess,
+				float(availability.get(id, 1.0)), weather_mult):
+			var out: Dictionary = event.duplicate()
+			out["sim_id"] = id
+			out["condition"] = b.condition
+			bus.emit(StringName(String(out["type"])), out)
+
+
+## Per-component `max(0, load/capacity − 1)`, computed once per settled hour and
+## shared by every building the component serves. Components are few and
+## buildings are many, so this is the cheap half of the join.
+func _overload_excess_by_component() -> Dictionary:
+	var out: Dictionary = {}
+	for component_id in grid.component_ids():
+		var c: Dictionary = grid.component(String(component_id))
+		var capacity := float(c.get("capacity_kw", 0.0))
+		if capacity <= 0.0:
+			continue
+		var excess := float(c.get("load_kw", 0.0)) / capacity - 1.0
+		if excess > 0.0:
+			out[String(component_id)] = excess
+	return out
+
+
+## Doc 03 §2.10 layers 2/3/5, run once per settled game-hour off the settlement
+## the economy just produced. The ladder needs a *daily* gross revenue and gross
+## expense; the last settled hour annualised to a game-day is the same reading
+## `DirectorInputs.daily_opex` already takes, and it keeps the ladder stateless —
+## no new persisted field, so save→load→advance identity is unchanged.
+##
+## Order is the doc's: the credit limit is sized first (layer 3), austerity is
+## judged against it (layer 2), then relief is offered last (layer 5) so a city
+## that austerity alone can save is never handed a grant.
+func update_recovery_ladder(settled: Dictionary, hour: int) -> void:
+	var gross := float((settled.get("revenue", {}) as Dictionary).get("gross", 0.0))
+	var expense := float((settled.get("expenses", {}) as Dictionary).get("total", 0.0))
+	var daily_revenue := maxf(0.0, gross) * 24.0
+	var daily_expense := maxf(0.0, expense) * 24.0
+	treasury.update_credit_limit(daily_revenue)
+	treasury.update_austerity(daily_expense, hour)
+	treasury.maybe_grant_relief(hour, daily_revenue, (gross - expense) * 24.0)
+	_publish_treasury_events()
+
+
+## Drain the treasury's own event queue every settled hour — the ladder's events
+## go to the bus, the bookkeeping ones are consumed here. Draining is not
+## optional: an undrained queue grows for the life of the city.
+func _publish_treasury_events() -> void:
+	for event in treasury.drain_events():
+		var type := StringName(String(event["type"]))
+		if TREASURY_BUS_EVENTS.has(type):
+			bus.emit(type, event)
+
+
+## One `spend()` refusal, translated into the command layer's reason code.
+## Doc 03 §5: nothing outside `Treasury` moves the balance, so a command that
+## cannot pay must fail here rather than proceed for free (doc 92 F-7).
+static func _spend_reason(result: Dictionary) -> StringName:
+	match StringName(String(result.get("reason_code", ""))):
+		&"AUSTERITY_BLOCKED":
+			return &"E_AUSTERITY"
+		_:
+			return &"E_FUNDS"
 
 
 ## Assemble the §2.2/§2.4 settlement inputs from live sim state (held
@@ -1585,10 +1745,13 @@ func build_settlement_inputs(ctx: TimeContext, availability: Dictionary) -> Dict
 		"happiness": happiness.happiness,
 		"tax_rate": tax_rate,
 		"stations": stations,
-		# Doc 06 owns fleet capacity (C-50) but its authored ladders disagree
-		# with doc 03's STARTER_VEHICLES on utility/water counts — a billing
-		# change that needs a doc-03 ruling before the swap (report §Wave-1).
-		"vehicles": STARTER_VEHICLES,
+		# Doc 06 owns fleet capacity (C-50), so doc 03 bills the roster doc 06
+		# actually houses — not a held constant. The founding roster is 2 patrol /
+		# 1 engine / 2 utility / 2 water / 1 crew off doc 06's per-level ladders,
+		# and it GROWS when the player builds a station (doc 92 F-3 ruling).
+		# `km_this_hour` is 0 until doc 06 meters road distance, so E_fuel_vehicle
+		# bills nothing rather than a fabricated kilometre.
+		"vehicles": incidents.fleet.roster_for_economy(),
 		"grid_inventory": grid.grid_inventory(),
 		"delivered_mwh": HELD_DELIVERED_MWH,
 		"generation": [{"plant_type": "gas", "mwh": HELD_DELIVERED_MWH, "level": 1}],
@@ -1856,12 +2019,18 @@ class HourlyPhaseSystem extends SimSystem:
 	func phase() -> int: return Phase.ECONOMY
 	func cadence() -> int: return Cadence.EVERY_HOUR
 	func advance_fine(ctx: TimeContext) -> void:
-		# P14 order: availability finalized → districts settle → economy bills
-		# the completed hour → population/happiness relax (P15 material).
+		# P14 order: availability finalized → doc 02 §2.6 wear → districts settle
+		# → economy bills the completed hour → doc 03 §2.10 recovery ladder →
+		# population/happiness relax (P15 material).
 		var availability := sim.grid.settle_hour()
+		# Wear runs BEFORE the settlement, so the hour that was lived at the old
+		# condition is billed at the new one — the same ordering doc 03 §2.4's
+		# MAINT_CONDITION_PENALTY assumes, and the reason neglect costs money.
+		sim.apply_hourly_decay(1.0, availability)
 		sim.districts.recompute_slow(1.0)
 		var settled := sim.economy.settle_hour(sim.build_settlement_inputs(ctx, availability))
 		sim.last_settlement = settled
+		sim.update_recovery_ladder(settled, ctx.tick_index / GameClock.TICKS_PER_HOUR)
 		sim._last_expense_hour = float(
 				(settled.get("expenses", {}) as Dictionary).get("total", sim._last_expense_hour))
 		# doc 03 §2.2: the tax rate is not only a revenue scalar — it slows

@@ -1,5 +1,17 @@
 # 92 — Balance report, pass 2: the game as a game
 
+> **RULINGS LANDED, 2026-08-19 — every measurement below is now HISTORICAL.**
+> The lead engineer ruled on F-1, F-2, F-3, F-5, F-7 and §4's anchor promotion,
+> and they are implemented. `Building.apply_decay` has a caller; the fleet grows
+> with the station roster and is what doc 03 bills; the doc 03 §2.10 recovery
+> ladder runs every settled hour and all six `spend()` sites respect refusal;
+> `data/director.json` carries a size-independent event floor;
+> `tax.TAX_RATE_GROWTH_COEFF` is 8.0. §10's gate table is implemented as
+> `tests/test_balance_gates.gd`. Doc 93 §E2 carries the new founding anchors and
+> the fleet-billing shift. **The tables in §3–§8 describe the sim as it was on
+> 2026-08-19 BEFORE those changes** and are kept as the pass-2 baseline the gates
+> measure against — see §12 for what moved and where the new numbers live.
+
 **Status:** DATA + RECOMMENDATIONS. **Nothing in `data/` was changed by this
 pass.** Every recommendation below is a proposal for the lead engineer to rule
 on; the harness owns measurement, not tuning. Each one names the exact

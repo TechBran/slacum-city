@@ -67,7 +67,7 @@ func test_tax_drag_slows_refill() -> void:
 	fast.advance(starter_buildings(), 6.0, 0.95, 1.0)
 	var slow := PopulationSystem.new()
 	slow.attractiveness = 0.5
-	slow.advance(starter_buildings(), 6.0, 0.95, 0.755)  # 16% tax rate
+	slow.advance(starter_buildings(), 6.0, 0.95, 0.44)  # 16% tax rate (coeff 8.0)
 	assert_true(slow.attractiveness < fast.attractiveness)
 
 

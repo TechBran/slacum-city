@@ -163,10 +163,39 @@ func test_1_grace_period() -> void:
 			"units_owned": {"fire": 4, "police": 5, "utility": 3, "water": 2, "construction": 3}})
 	var result := _drive(director, young, 3)
 	assert_eq((result["starts"] as Array).size(), 0, "F1: nothing before day 3")
+	# doc 92 F-1 ruling: below `grace_population` the gate is a FLOOR, not a wall.
+	# Every pressure channel in the game scales with what the player built, so a
+	# founding city used to sit under every threshold and see NOTHING for three
+	# game-weeks. A small city now gets pressure — but only the cheap tier-1
+	# minors `floor.classes` / `max_tp_cost` / `max_hazard_tier` whitelist.
 	var tiny := DirectorInputs.make({"city_age_days": 30, "population": 300,
 			"treasury": 500000, "daily_opex": 50000, "city_stability": 0.8})
-	var result2 := _drive(_director(), tiny, 20)
-	assert_eq((result2["starts"] as Array).size(), 0, "F1: nothing below 400 population")
+	var small := _director()
+	var result2 := _drive(small, tiny, 20)
+	var starts: Array = result2["starts"]
+	assert_true(starts.size() > 0, "F-1 floor: a 300-person city still gets events")
+	var config: Dictionary = small.tables.floor_config
+	for row in starts:
+		var event := small.tables.event_by_id(String(row["kind"]))
+		assert_true((config["classes"] as Array).has(String(event["class"])),
+				"the floor schedules %s only, got %s" % [config["classes"], row["kind"]])
+		assert_true(int(event["tp_cost"]) <= int(config["max_tp_cost"]),
+				"%s costs more than the floor's cap" % row["kind"])
+		assert_true(int(event["hazard_tier"]) <= int(config["max_hazard_tier"]),
+				"%s is above the floor's hazard tier" % row["kind"])
+
+
+func test_1_floor_is_invisible_above_tier_0() -> void:
+	# The floor is a `max()` against the tier ladder, so a city the doc's own
+	# ladder already covers is unchanged: tier 1 pays 6/day, which is the floor.
+	var director := _director()
+	assert_almost_eq(director.tables.tp_base_per_day(0),
+			director.tables.floor_tp_per_day(), 1e-9, "tier 0 is the floor")
+	assert_almost_eq(director.tables.tp_base_per_day(2), 12.0, 1e-9, "tier 2 untouched")
+	assert_almost_eq(director.tables.tp_base_per_day(4), 30.0, 1e-9, "tier 4 untouched")
+	# And a big city's candidate list is not widened by it.
+	var event := director.tables.event_by_id("severe_thunderstorm")
+	assert_false(director.tables.floor_allows(event), "no major rides the floor")
 
 
 func test_18_19_class_and_type_cooldowns() -> void:
