@@ -690,28 +690,44 @@ Level identity = height + a **cumulative** marker: L1 none; L2 +1 rooftop box; L
 
 **Silhouette descriptor** (generated, tested in §7.1), 24 bits: `[height_bucket:4][aspect_bucket:3][roof_sig_id:4][setback_count:2][mast_count:2][prop_count:3][notch_flags:3][windowless:1][footprint_id:2]`. Every pair of archetypes at the same level must differ in ≥ 4 bits; every pair of levels within an archetype in ≥ 2 bits.
 
-### 2.15 Audio — Phase 2, owned by this doc (report G-3)
+### 2.15 Audio — owned by this doc (report G-3), **shipped 2026-08-19**
 
-**Ruled (report G-3).** Spec §39 lists the required sounds and calls out power restoration's audiovisual signature explicitly; no doc owned audio. **This doc owns it**, because it already owns the event hooks and the timing beats the mix must be authored against. **MVP ships silent** — this is recorded, not hidden. Phase 2 adds the source root `game/audio/` and an `AudioDirector` node beside `RenderBridge`, plus a `data/audio.json` tunables file owned here.
+**Ruled (report G-3).** Spec §39 lists the required sounds and calls out power restoration's audiovisual signature explicitly; no doc owned audio. **This doc owns it**, because it already owns the event hooks and the timing beats the mix must be authored against.
 
-**Placeholder note.** Nothing in `data/render.json` is an audio constant today, and no MVP acceptance gate in §7.4 references sound. The only MVP obligation is that the event hooks below exist and fire with correct timing in the slice, so Phase 2 is a mix pass rather than a re-architecture. `AudioDirector` will be a listener on the same event batch `RenderBridge` drains — never a second consumer of sim state, and never a `sim/` dependency.
+**What ships.** Source root `game/audio/`, tunables in `data/audio.json`, assets in `game/audio/generated/`, tests in `tests/test_audio_model.gd`:
 
-**Event hooks available on day one** (all already emitted or consumed by §4; the beat column is what the sound designer authors against):
+| file | role |
+|---|---|
+| `game/audio/audio_config.gd` (`AudioConfig`) | the single reader for `data/audio.json` + the asset manifest, `UIConfig`-shaped so everything below is constructible from a fixture |
+| `game/audio/audio_events.gd` (`AudioEvents`) | **the brain.** `RefCounted`, Node-free, clock-injected: events in, *scheduled cues* out, plus the ambience picture. Dedup, cooldown, distance attenuation, speed-of-sound delay, bed sources, ducking |
+| `game/audio/audio_service.gd` (`AudioService`) | **the hands.** `AudioDirector` under its planning-era name: buses, a 12-voice pool with priority stealing, one looping player per bed. Decides nothing |
+| `tools/gen_audio.py` | the whole asset set, synthesised from numpy — 19 mono 16-bit WAVs, 55.3 s, **3.23 MB** (77% of the 4 MB budget). No samples, no network, no licence trail |
 
-| hook | source | beat |
-|---|---|---|
-| `render_blackout_started(block_id)` | §2.7.2 t=0 | mains hum cuts; two stutters at 0.09 s and 0.17 s land on the envelope's dips |
-| *(collapse settles)* | §2.7.2 | silence floor at ≈ 1.20 s worst case |
-| `render_relight_started(block_id, duration_s)` | §2.7.3 t=0 | transformer-hum swell begins, `duration_s = 3.15` |
-| `render_relight_peak(block_id)` | §2.7.3 t=1.1 s | swell peak, aligned with the bulk of the 1.35× inrush overshoot |
-| `render_lightning_flash(world_pos, magnitude)` | §2.9 | thunder delayed by `distance(camera, strike_pos) / 340.0` s |
-| `render_preset_changed(preset)` | §2.13 | mix bus reconfiguration only, no diegetic sound |
-| `render_governor_stepped(knob, direction)` | §2.13 | silent; telemetry only |
-| `render_chunk_ready(bx, by)` | §2.2 | ambience bed enable/disable per chunk |
-| `vehicle_spawned/despawned`, `vehicle_state.siren` | doc 06 via §2.12 | siren doppler from the interpolated `pos`/`speed`/`heading` |
-| `incident_started/escalated/resolved` | doc 06 | fire crackle, alarm stingers |
-| `weather_changed{precip01, wind}` | doc 07 | rain bed gain follows `precip01`, wind bed follows `|sc_wind|` |
-| `building_construction_stage` | doc 02 | crane/site loop per stage |
+**Two asset-side decisions worth naming.** *Loops are built in the frequency domain*, so they are seamless **by construction**: white noise through `rfft` → spectral shape → `irfft` is exactly periodic over the buffer, every LFO and tone is snapped to a whole number of cycles per loop, and transients are stamped with modulo indexing. No cross-fade, no taper. The generator then *measures* each seam against that buffer's own median sample step and records the ratio in the manifest, so a future edit that breaks periodicity fails `tests/test_audio_model.gd` instead of ticking every few seconds. *Sample rate is chosen per asset from its own bandwidth* — a night bed whose content stops at 460 Hz spends three quarters of its bytes on empty spectrum at 44.1 kHz, and those bytes are worth far more as loop length. Nine assets ship at 22.05 kHz, and the generator fails any of them whose spectrum crowds its own Nyquist. That trade bought the beds 7.5 s each (up from 3.5 s) for *fewer* total bytes; Godot stores `mix_rate` per `AudioStreamWAV` and resamples at playback, so it costs nothing at runtime.
+
+`AudioService` is a listener on the same drained event batch `RenderBridge` consumes — never a second consumer of sim state, and never a `sim/` dependency. Ingest is `feed(event)` taking a sim bus dictionary verbatim, the shape `AlertsModel` already uses.
+
+**Three rules the mix is built on.** *Block granularity is the audio granularity* (below): a blackout that darkens twelve blocks is ONE thunk, folded by cue identity inside a dedup window. *Distance decides audibility before a voice is reserved*: an event past a cue's `max_m` is dropped, not mixed at -60 dB. *The volume slider mutes rather than attenuates at zero* — `ui/settings_model.gd`'s `sound_volume` row drives the Master bus, and 0 sets `set_bus_mute`, because a phone told to be silent should cost nothing to be silent.
+
+**The wired set.** The beat column is what the asset is authored against; every number in it is in the WAV, not in a fader.
+
+| event | source | cue | beat as shipped |
+|---|---|---|---|
+| `BlockDarkChanged{block_dark: true}`, `render_blackout_started(block_id)` | sim / §2.7.2 t=0 | `blackout_whomp` | mains hum cuts and glides down; the envelope's two stutters are at **0.09 s and 0.17 s** and the rumble reaches its silence floor at **1.20 s** |
+| `BlockDarkChanged{block_dark: false}`, `render_relight_started(block_id, duration_s)` | sim / §2.7.3 t=0 | `relight_hum` | transformer swell, file length **3.15 s**, peak at **1.10 s** carrying the **1.35×** inrush overshoot — `render_relight_peak` needs no cue of its own because the beat is baked into the asset |
+| `lightning_strike{world_pos, magnitude}` | doc 07 | `thunder_crack` ≤ 260 m, else `thunder_rumble` | delayed by `distance(camera, strike) / 340.0` s; `magnitude` spans a 6 dB range |
+| `weather_changed{precip01, wind_kph}` | doc 07 | `rain` / `wind` beds | rain gain follows `precip01` past a threshold; wind gain *and pitch* follow `wind_kph` |
+| `incident_created` | doc 06 | `alert_high` when `notification_priority == 1`, else `alert_low` | doc 08's notification class picks the sting |
+| `unit_dispatched` | doc 06 | `siren_pass` | placed at the incident it is answering (the payload carries no position); the pass-by fade and doppler are in the asset |
+| `building_placed_sim` | doc 02 | `purchase` | the player's own confirmation — distance `none`, always crisp |
+| `building_construction_stage` | doc 02 | `construct_stage` tick + the `site` bed | the bed follows how many sites are live and how near the closest is |
+| `building_completed` | doc 02 | `construct_complete` | and the site bed loses one source |
+| `city_level_changed` | doc 02 | `level_fanfare` | 2 s, 20 s cooldown |
+| `ui_tap` / `ui_confirm` / `ui_deny` | `ui/` via the shell | the three blips | synthetic events, so the UI layer emits intent and never a sound |
+| `render_preset_changed(preset)` | §2.13 | — | mix bus reconfiguration only, no diegetic sound |
+| `render_governor_stepped(knob, direction)` | §2.13 | — | silent; telemetry only |
+
+**Not wired, deliberately.** `vehicle_state.siren` (doc 06 via §2.12) would give per-vehicle doppler, but doc 10's feed is ~1,400 events per game hour and a per-vehicle emitter needs its own throttle design; `unit_dispatched` is the meaningful beat and is what ships. `render_chunk_ready` per-chunk bed gating is unnecessary while the bed set is five loops. `incident_escalated/resolved` and the flood events (`road_closed_flood`, `flood_level_changed`) are unsonified because `data/ui.json.alerts` does not notify on them either — the mix and the alerts centre tell the player about the same things.
 
 **Deliberately not hooks.** There is no per-window, per-streetlight or per-instance audio event — the same reason there are no per-building dynamic lights. Block granularity is the audio granularity, exactly as it is the blackout granularity (report C-38).
 
@@ -899,7 +915,7 @@ RenderStateModel.plan_relight(block_id: int, restore_order: PackedInt32Array,
 - Boot auto-detect (§2.13). **Slice ships Balanced only**, hard-coded, with a manual preset switcher for profiling. The preset *table* and the governor ship; the detection benchmark does not.
 - Cosmetic city themes / window-colour reskins (§9 open question 19).
 - Vehicle headlight cone projection onto road surfaces beyond the additive quad.
-- **All audio. MVP ships silent** — owned by this doc from Phase 2 per report G-3 (§2.15). What ships in the slice is the *event hooks* with correct timing (`render_relight_started/peak`, `render_blackout_started`, `render_lightning_flash`), so Phase 2 is a mix pass and not a re-architecture.
+- ~~**All audio. MVP ships silent** — owned by this doc from Phase 2 per report G-3 (§2.15). What ships in the slice is the *event hooks* with correct timing (`render_relight_started/peak`, `render_blackout_started`, `render_lightning_flash`), so Phase 2 is a mix pass and not a re-architecture.~~ **Amended 2026-08-19: pulled forward and shipped** — `game/audio/` (`AudioConfig`, `AudioEvents`, `AudioService`), `data/audio.json`, a procedural asset set from `tools/gen_audio.py`, and `tests/test_audio_model.gd`. §2.15 below is now description, not plan. The Phase-2 prediction held: it was a mix pass, and the hooks needed no change.
 - Sub-block ground darkening from doc 04's per-tile dark mask (§9 item 5) — polish, nothing depends on it.
 
 **Slice acceptance:** scenario S3 in §7.4 (20:00 thunderstorm, scripted 4-block blackout at t=45 s, relight at t=65 s) runs on a Pixel 6 at Balanced within the §7.4 gates, and the blackout/relight is legible at Z0, Z1 and Z2 without an overlay.
