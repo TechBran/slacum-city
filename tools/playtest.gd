@@ -513,12 +513,37 @@ class Api extends RefCounted:
 			construction_spend += int(result["payload"].get("cost", 0))
 		return _log("upgrade", sim_id, result, {})
 
+	## How many gate-clearing rows `upgrade_candidates` returns, and how many
+	## rows it is willing to price to find them.
+	##
+	## **Doc 92 pass-2 F-10, closed.** Pass 2 previewed `cmd_upgrade_building` for
+	## EVERY standing building on every call, and the agents call it up to six
+	## times a game-hour, so the harness cost `O(buildings × hours)` previews and
+	## one matrix run of 18 did not finish inside the wall-clock budget. It is
+	## also what made the Wave-4 rebalance unmeasurable: the rebalanced `balanced`
+	## builds a 358-building city, and a 21-game-day run went from 12 s to over 13
+	## minutes on the preview scan alone.
+	##
+	## The fix is doc 92 F-10's own recommendation: **rank on the cheap fields,
+	## price only the head.** Upgrade price is `econ_curves.upgrade_cost(type,
+	## level)` — a pure function of (archetype, level) with no gate in it — so the
+	## cost ordering is known before a single preview runs. Only the ordered head
+	## is previewed, and only until `UPGRADE_LIMIT` rows have cleared the doc 02
+	## §2.11 gate. Both consumers rank on a cheap key (cost for `balanced`,
+	## heads-per-dollar for `greedy_growth`) and take the head, so the bound is
+	## invisible to them unless more than `UPGRADE_SCAN` of the cheapest rows are
+	## all gate-blocked at once.
+	const UPGRADE_LIMIT := 8
+	const UPGRADE_SCAN := 64
+
 	## Every upgradeable building, cheapest first, id tie-break. Each entry is
 	## `{sim_id, cost, level, archetype}`; only clear-gate rows are returned.
 	func upgrade_candidates(categories: Array = []) -> Array[Dictionary]:
 		var out: Array[Dictionary] = []
 		if not has_verb("cmd_upgrade_building"):
 			return out
+		var m_build := float(sim.treasury.difficulty().get("M_build", 1.0))
+		var ranked: Array[Dictionary] = []
 		for id in _sorted(sim.buildings):
 			var sim_id := String(id)
 			var b: Building = sim.buildings[sim_id]
@@ -527,15 +552,21 @@ class Api extends RefCounted:
 			var archetype := String(b.archetype)
 			if not categories.is_empty() and not categories.has(sim.catalog.category(archetype)):
 				continue
-			var preview := upgrade_preview(sim_id)
-			if not bool(preview["ok"]):
-				continue
-			out.append({"sim_id": sim_id, "archetype": archetype, "level": b.level,
-					"cost": int(preview["payload"].get("cost", 0))})
-		out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			ranked.append({"sim_id": sim_id, "archetype": archetype, "level": b.level,
+					"cost": sim.econ_curves.upgrade_cost(archetype, b.level, m_build)})
+		ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 			if int(a["cost"]) != int(b["cost"]):
 				return int(a["cost"]) < int(b["cost"])
 			return String(a["sim_id"]) < String(b["sim_id"]))
+		for i in mini(ranked.size(), UPGRADE_SCAN):
+			var row: Dictionary = ranked[i]
+			var preview := upgrade_preview(String(row["sim_id"]))
+			if not bool(preview["ok"]):
+				continue
+			row["cost"] = int(preview["payload"].get("cost", row["cost"]))
+			out.append(row)
+			if out.size() >= UPGRADE_LIMIT:
+				break
 		return out
 
 	# --- the doc 93 §B verbs ------------------------------------------------
@@ -547,12 +578,38 @@ class Api extends RefCounted:
 			repair_spend += int((result["payload"] as Dictionary).get("cost", 0))
 		return result
 
+	## What one repair would cost, read straight off `cmd_repair_building`'s own
+	## preview (doc 02 §2.6 × doc 03 `REPAIR_COST_PER_CAPITAL`). Read-only, and
+	## never logged — a budget-gated agent has to price the job before it takes
+	## it, and a quote is not an action.
+	func repair_quote(sim_id: String) -> int:
+		if not has_verb("cmd_repair_building"):
+			return 0
+		var quote: Dictionary = sim.cmd_repair_building(sim_id, true)
+		return int((quote.get("payload", {}) as Dictionary).get("cost", 0))
+
+	## The last settled game-hour's net, as doc 03 billed it. `0.0` before the
+	## first settlement. This is what a budget-gated maintenance policy sizes its
+	## purse against — the city's own income, not a held constant.
+	func last_net() -> float:
+		return float((sim.last_settlement.get("net", 0.0)))
+
 	func demolish(sim_id: String) -> Dictionary:
 		var result := _optional("cmd_demolish_building", 1, [sim_id], sim_id)
 		if bool(result["ok"]):
 			demolished += 1
 			demolition_refund += int((result["payload"] as Dictionary).get("refund", 0))
 		return result
+
+	## `{price, development_estimate}` for one block, off `cmd_buy_block`'s own
+	## preview. Returned even when the preview fails on `E_FUNDS` — the quote is
+	## in the failure payload, and an agent saving up needs the number precisely
+	## when it cannot yet pay it.
+	func land_quote(block_id: String) -> Dictionary:
+		if not has_verb("cmd_buy_block") or block_id == "":
+			return {}
+		var result: Dictionary = sim.cmd_buy_block(block_id, true)
+		return result.get("payload", {})
 
 	func buy_block(block_id: String) -> Dictionary:
 		var result := _optional("cmd_buy_block", 1, [block_id], block_id)
@@ -1002,8 +1059,18 @@ class InfrastructureFirst extends Strategy:
 ## Competent-but-not-optimal play, which is what doc 03 §2.12's pacing model is
 ## modelled on: hold a reserve of one game-day of gross expense (floor $12k),
 ## grow residential and commercial at a 2:1 ratio, upgrade what is already
-## standing before adding more, add one civic building per city level, keep the
-## city in repair, and expand outward when the war chest allows.
+## standing before adding more, keep a station roster sized to the city, keep the
+## city in repair out of a maintenance budget, and expand outward out of a land
+## budget.
+##
+## **Wave-4 rebalance (doc 92 §13.1).** Pass 2's version was a single-action
+## ladder with a repair-first early return; once doc 02 §2.6 wear went live the
+## maintenance queue was never empty, so the agent spent half its action budget
+## repairing and stopped growing — 153 buildings and $480,480 of idle cash in 21
+## game-days. It now runs a **maintenance ladder and a growth ladder in the same
+## game-hour**, each on its own budget line, and builds a 325-building city while
+## holding its worst building at the repair threshold. Both variants below
+## inherit all of it, so they are still the same agent with one field changed.
 ##
 ## Two knobs on this class are the whole design of pass 2's new strategies.
 ## `tax_squeezer` and `disaster_neglect` are this agent with ONE of them moved,
@@ -1021,12 +1088,71 @@ class Balanced extends Strategy:
 
 	## Expansion: a competent player buys the next block when the war chest can
 	## absorb both the purchase and the development bill (doc 03 §2.7/§2.8).
-	const EXPAND_SURPLUS := 80_000
+	##
+	## Pass 2 read that as a flat $80,000 surplus and it worked only by accident:
+	## the repair-first early return starved building, so the agent BANKED, and
+	## gate 11 was met "by the money, not the map". With the Wave-4 rebalance the
+	## same agent spends its surplus on floorspace and never sees $80k again —
+	## measured, seed 1337, 21 game-days: **0 blocks bought, 0 `E_NO_SITE`**. So
+	## expansion becomes a BUDGET LINE like maintenance: `LAND_BUDGET_SHARE` of
+	## every settled net is set aside in a land fund (which `reserve()` counts, so
+	## the growth ladder cannot spend it), the fund is capped at the quoted
+	## all-in cost of the next block, and the purchase fires when the fund covers
+	## it. Doc 92 F-8 measured that all-in at **$45k–$66k** per ring block, so a
+	## 15 % line buys one roughly every 3–5 game-days at the mid-game net.
+	const LAND_BUDGET_SHARE := 0.15
 	const EXPAND_COOLDOWN := 24
+	## How often the land quote is refreshed (game-hours). `cmd_buy_block`'s
+	## preview walks doc 03 §2.7's seven-term price, so it is not a per-hour call.
+	const LAND_QUOTE_PERIOD := 24
 
 	## Maintenance (doc 02 §2.6): repair below this condition, worst first, and
 	## give the civic roster a shed-proof priority class once (doc 04 §2.4).
-	const REPAIR_THRESHOLD := 0.90
+	##
+	## **0.80, FITTED, not chosen** (Wave-4 ruling 2; full derivation in doc 92
+	## §13.2). Two ruled targets ride on this number and on `decay_per_hour`, and
+	## they separate cleanly:
+	##
+	##     repair $/gh      = Σ capital_b × decay_b × REPAIR_COST_PER_CAPITAL  ← RATE
+	##     repair trips/day = Σ decay_b × 24 / (1 − threshold)                 ← THRESHOLD
+	##
+	## The money a maintaining city spends does not depend on the threshold at
+	## steady state (a repair restores exactly what was lost, at a price linear in
+	## the loss); only the trip count does, as `1/(1 − T)`. So the rate was pinned
+	## first — measured at **11.5–17.2 % of net** for the 100–250-building city
+	## this agent lives in, with a neglect arc of 2.2–2.8 game-weeks to doc 03's
+	## `COND_FLOOR` and 3.9 to total decay, all three inside the ruled bands, so
+	## **no `data/buildings.json` row moved** — and the trip count was then solved
+	## with the threshold. Measured over three seeds at 21 game-days:
+	##
+	## | threshold | trips / game-day | repair spend / net | worst building at d21 |
+	## |---|---|---|---|
+	## | 0.90 (pass 2) | 11.5 | 11.8 % | 0.90 |
+	## | 0.70 | 0.95 / 1.14 / 1.48 | 8.3 / 8.9 / 8.7 % | 0.70 |
+	## | **0.80** | **4.4 / 5.1 / 5.1** | **12.1 / 11.4 / 11.3 %** | **0.79 / 0.80 / 0.78** |
+	##
+	## 0.80 is the only rung that lands both ruled targets at once. 0.90 is what
+	## "more than one repair per game-hour to hold it" was measuring — the chore.
+	const REPAIR_THRESHOLD := 0.80
+	## Doc 92's ruled band for what a maintaining city spends on upkeep is 10–20 %
+	## of net. This agent enforces the top of it as a HARD budget rather than
+	## hoping: every settled game-hour credits `MAINT_BUDGET_SHARE × net` to a
+	## maintenance purse, and a repair is taken only when the purse covers the
+	## quote. Two things fall out of that and both are the point — the agent can
+	## never repair itself insolvent, and a city whose income has collapsed stops
+	## being able to afford maintenance, which is a failure mode rather than an
+	## accounting rounding.
+	const MAINT_BUDGET_SHARE := 0.20
+	## An unbounded purse would defer nothing, so it is capped at one game-WEEK of
+	## accrual. A shorter cap does not work and the reason is a price, not a
+	## preference: the queue is worst-first and repair price is
+	## `capital × damage_fraction × 0.85`, so its head is routinely a civic asset
+	## — `WTR-1` at $45,000 of capital quotes ~$13k at the fitted threshold —
+	## while one game-day of a mid-game allowance is ~$7k. Measured at
+	## `MAINT_PURSE_DAYS` 1.0: **0 repairs in 21 game-days** and the worst
+	## building at 0.34, because the purse could never reach the head of its own
+	## queue.
+	const MAINT_PURSE_DAYS := 7.0
 	const CIVIC_PRIORITY := "ESSENTIAL"
 	## A transformer only when the served ground has actually run out — a
 	## competent player reacts to the wall, they do not pre-buy against it the
@@ -1049,20 +1175,57 @@ class Balanced extends Strategy:
 	var _grid_hour: int = -1000
 	var _tax_hour: int = -1000
 	var _priorities_set: bool = false
+	## Doc 03 §2.10-shaped maintenance allowance, in dollars. Credited every
+	## game-hour from the settled net, spent by `_maintain`, capped at
+	## `MAINT_PURSE_DAYS` game-days of accrual against `_net_ema`.
+	var _maint_purse: float = 0.0
+	var _net_ema: float = 0.0
+	## The land fund and the cached quote it is saving toward.
+	var _land_fund: float = 0.0
+	var _land_target: float = 0.0
+	var _land_block: String = ""
+	var _land_quote_hour: int = -1000
 
 	func id() -> String:
 		return "balanced"
 
 	func describe() -> String:
-		return "2:1 residential:commercial, 1-day reserve, upgrade-first, maintained"
+		return "2:1 residential:commercial, 1-day reserve, upgrade-first, " \
+				+ "budget-gated maintenance, station roster, land fund"
 
 	func note_expense(expense_per_hour: float) -> void:
 		_last_expense_per_hour = expense_per_hour
 
-	func reserve() -> int:
+	## One game-day of gross expense, floored — the payroll this agent will not
+	## touch. `reserve()` adds the land fund on top so the growth ladder cannot
+	## spend money that is already earmarked for the next block.
+	func operating_reserve() -> int:
 		return maxi(RESERVE_FLOOR,
 				int(RESERVE_DAYS_OF_EXPENSE * 24.0 * _last_expense_per_hour))
 
+	func reserve() -> int:
+		return operating_reserve() + int(_land_fund)
+
+	## Wave-4 rebalance (ruling 1). Pass 2's `act` was a single-action ladder with
+	## a repair-first early return, and doc 92 pass 2 / the Wave-3 report both
+	## measured what that costs: once doc 02 §2.6 wear is live the maintenance
+	## queue is never empty, so the early return spent roughly half of every
+	## game-hour's action budget on repairs and the "competent" agent stopped
+	## growing — it banked instead. That is a harness artifact standing in front
+	## of a design question, and it made `value created` reward the agent that let
+	## the city rot (see `tests/test_balance_gates.gd`'s header).
+	##
+	## The fix is that a competent player does BOTH in the same game-hour. This
+	## `act` now runs two independent ladders:
+	##
+	##   1. **maintenance**, budget-gated — at most one repair, paid out of a
+	##      purse that accrues `MAINT_BUDGET_SHARE` of the settled net;
+	##   2. **growth**, unchanged from pass 2 — expand → unwall → civic → upgrade
+	##      → floorspace, out of the surplus above the reserve.
+	##
+	## Neither starves the other, the maintenance spend is bounded by the ruled
+	## 10–20 % band by construction, and `disaster_neglect` still differs from
+	## this agent in exactly one field.
 	func act(api: Api, hour: int) -> void:
 		# Policy first: it is free (doc 03 prices no rate change beyond its
 		# consequences) and it must be in force before the first settlement the
@@ -1070,32 +1233,136 @@ class Balanced extends Strategy:
 		if _hold_tax(api, hour):
 			return
 		if maintains:
-			if _set_civic_priorities(api):
-				return
-			# KNOWN LIMITATION (Wave-3 report, integration snippet 2): the
-			# repair-first early-return starves building once wear keeps the
-			# queue non-empty (~day 10+), so `balanced` banks instead of
-			# growing. Changing it re-tunes every balance gate — that rebalance
-			# is the top pass-3 item and belongs with the maintenance-pacing
-			# fit, not here.
-			if _repair_something(api):
-				return
+			_credit_maintenance(api)
+			if not _set_civic_priorities(api):
+				_maintain(api)
+		_credit_land(api, hour)
+		_grow(api, hour)
+
+	## Layer 1 — the maintenance ladder. One repair at most, worst condition
+	## first, only below `REPAIR_THRESHOLD`, only when the purse covers the quote.
+	##
+	## The scan walks DOWN the worst-first queue instead of stopping at its head,
+	## and that is not a nicety: repair price is `capital × damage_fraction ×
+	## REPAIR_COST_PER_CAPITAL`, so the worst building is usually also the dearest,
+	## and a head-only budget gate head-of-line blocks forever on one L4 tower
+	## while forty cheap houses rot behind it. Bounded at `MAINT_SCAN` quotes so
+	## the per-hour cost stays flat in city size.
+	const MAINT_SCAN := 24
+
+	func _maintain(api: Api) -> bool:
+		if not api.has_verb("cmd_repair_building"):
+			return false
+		var queue := api.maintenance_queue(REPAIR_THRESHOLD)
+		for i in mini(queue.size(), MAINT_SCAN):
+			var sim_id := String((queue[i] as Dictionary)["sim_id"])
+			var cost := float(api.repair_quote(sim_id))
+			if cost > _maint_purse:
+				continue
+			if not bool(api.repair(sim_id)["ok"]):
+				continue
+			_maint_purse -= cost
+			return true
+		return false
+
+	## `MAINT_BUDGET_SHARE` of the last settled game-hour's net, capped at
+	## `MAINT_PURSE_DAYS` game-days of accrual. A loss-making hour credits
+	## nothing — maintenance is bought out of income, never out of the credit line.
+	##
+	## The cap is sized against a SMOOTHED net, not the instantaneous one. Hourly
+	## net is spiky (doc 03 bills construction-completion hours and storm hours
+	## very differently), and capping against a single bad hour collapses the purse
+	## to nothing and strands the queue — measured: threshold 0.70 with an
+	## instantaneous cap spent 4.9 % of net and still let the worst building reach
+	## 0.34 in three game-weeks.
+	const MAINT_NET_EMA := 0.05  # ~20-game-hour horizon
+
+	func _credit_maintenance(api: Api) -> void:
+		var net := api.last_net()
+		_net_ema += (net - _net_ema) * MAINT_NET_EMA
+		if net > 0.0:
+			_maint_purse += MAINT_BUDGET_SHARE * net
+		var cap := MAINT_BUDGET_SHARE * MAINT_PURSE_DAYS * 24.0 * maxf(0.0, _net_ema)
+		_maint_purse = minf(_maint_purse, cap)
+
+	## What civic building the city is short of, or "" when the roster is right.
+	##
+	## Pass 2 built ONE civic building per city level and doc 92 pass 2 costed it
+	## as a pure `station_upkeep` line, because `FleetSystem` never re-read the
+	## roster. Doc 92 F-3's fix (C-50, live in Wave 3) made a finished station
+	## into response capacity, and this is the strategy half of that ruling: a
+	## competent player buys engines as the city grows, and the agent that does
+	## not walks into the §5.4 cascade. Measured on the rebalanced agent with the
+	## pass-2 rule still in place — a 266-building city with a **ten**-vehicle
+	## fleet reached **558 simultaneously open incidents** at game-hour 384.
+	##
+	## `STATION_PER_BUILDINGS` 45 is fitted to doc 06's own ladder rather than
+	## chosen: `fire_station` L1 houses one engine and doc 06's
+	## `structure_fire_global_scalar` 0.4 against a mean `fire_ignition_per_hour`
+	## of ~2.5e-4 puts a 45-building block of the city at roughly one structure
+	## fire per three game-days, which is one engine's duty cycle.
+	const STATION_PER_BUILDINGS := 45
+	const STATION_ORDER: Array[String] = ["fire_station", "police_station",
+			"construction_yard"]
+
+	func _civic_shortfall(api: Api) -> String:
+		# a) the level ladder, unchanged from pass 2.
+		if api.city_level() > _civic_at_level:
+			var cheapest := _cheapest(api, INFRA)
+			if cheapest != "":
+				return cheapest
+		# b) the station roster: one more engine house per STATION_PER_BUILDINGS.
+		var want := 1 + api.sim.buildings.size() / STATION_PER_BUILDINGS
+		var have := {}
+		for id in api.sim.buildings:
+			var b: Building = api.sim.buildings[id]
+			if b.state == &"destroyed":
+				continue
+			var archetype := String(b.archetype)
+			have[archetype] = int(have.get(archetype, 0)) + 1
+		for archetype in STATION_ORDER:
+			if int(have.get(archetype, 0)) < want:
+				return archetype
+		return ""
+
+	## `LAND_BUDGET_SHARE` of the settled net, earmarked for the next block and
+	## capped at that block's quoted all-in cost (price + doc 09 §2.3 development).
+	func _credit_land(api: Api, hour: int) -> void:
+		if not api.has_verb("cmd_buy_block"):
+			return
+		if hour - _land_quote_hour >= LAND_QUOTE_PERIOD or _land_block == "":
+			_land_quote_hour = hour
+			_land_block = api.purchasable_block()
+			var quote := api.land_quote(_land_block)
+			_land_target = float(int(quote.get("price", 0))) \
+					+ float(int(quote.get("development_estimate", 0)))
+		if _land_target <= 0.0:
+			_land_fund = 0.0
+			return
+		var net := api.last_net()
+		if net > 0.0:
+			_land_fund += LAND_BUDGET_SHARE * net
+		_land_fund = minf(_land_fund, _land_target)
+
+	## Layer 2 — the growth ladder, exactly pass 2's order.
+	func _grow(api: Api, hour: int) -> void:
+		# 0. Expand outward when the land fund has covered the quote. Checked
+		#    BEFORE the operating surplus, because the fund is the saved surplus.
+		if _expand(api, hour):
+			return
 		var spare := api.balance() - reserve()
 		if spare <= 0:
-			return
-		# 0. Expand outward when the war chest allows.
-		if _expand(api, hour, spare):
 			return
 		# 0b. Buy the transformer the wall is asking for.
 		if maintains and _unwall(api, hour, spare):
 			return
-		# 1. One civic building each time the city levels up.
-		if api.city_level() > _civic_at_level:
-			var civic := _cheapest(api, INFRA)
-			if civic != "" and spare >= api.build_cost(civic):
-				if bool(api.place(civic)["ok"]):
-					_civic_at_level = api.city_level()
-					return
+		# 1. Civic: one on every city level, plus a station roster sized to the
+		#    city (see `_civic_shortfall`).
+		var civic := _civic_shortfall(api)
+		if civic != "" and spare >= api.build_cost(civic):
+			if bool(api.place(civic)["ok"]):
+				_civic_at_level = api.city_level()
+				return
 		# 2. Upgrade what is already standing, cheapest gate-clear row first.
 		var upgrades := api.upgrade_candidates(REVENUE)
 		if not upgrades.is_empty() \
@@ -1115,16 +1382,22 @@ class Balanced extends Strategy:
 			else:
 				_residential_streak = 0
 
-	func _expand(api: Api, hour: int, spare: int) -> bool:
-		if not api.has_verb("cmd_buy_block"):
+	func _expand(api: Api, hour: int) -> bool:
+		if not api.has_verb("cmd_buy_block") or _land_block == "":
 			return false
-		if hour - _expand_hour < EXPAND_COOLDOWN or spare < EXPAND_SURPLUS:
+		if hour - _expand_hour < EXPAND_COOLDOWN:
 			return false
-		var block_id := api.purchasable_block()
-		if block_id == "":
+		if _land_target <= 0.0 or _land_fund + 0.5 < _land_target:
+			return false
+		if float(api.balance() - operating_reserve()) < _land_target:
 			return false
 		_expand_hour = hour
-		return bool(api.buy_block(block_id)["ok"])
+		if not bool(api.buy_block(_land_block)["ok"]):
+			return false
+		_land_fund = 0.0
+		_land_block = ""
+		_land_target = 0.0
+		return true
 
 	## Move to `tax_target` once and hold it. `cmd_set_tax_level` is a no-op that
 	## returns ok when the rate is already there, so the cooldown guard is what
@@ -1154,14 +1427,6 @@ class Balanced extends Strategy:
 				continue
 			touched = bool(api.set_priority(String(id), CIVIC_PRIORITY)["ok"]) or touched
 		return touched
-
-	func _repair_something(api: Api) -> bool:
-		if not api.has_verb("cmd_repair_building"):
-			return false
-		var queue := api.maintenance_queue(REPAIR_THRESHOLD)
-		if queue.is_empty():
-			return false
-		return bool(api.repair(String(queue[0]["sim_id"]))["ok"])
 
 	## The reactive half of the grid verb: when there is no served site left for
 	## the archetype this agent wants, buy the tap that opens the most ground.

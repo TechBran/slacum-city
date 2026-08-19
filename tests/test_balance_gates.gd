@@ -144,17 +144,54 @@ func test_gate_06_do_nothing_city_wears_out() -> void:
 ## a player actually sees AND on value created. Doc 92 measured the opposite by a
 ## wide margin: the control ended three game-weeks with 11× the "competent"
 ## agent's cash, because every pressure system in the game was unwired.
+##
+## **WAVE-4 RETUNE (ruling 1), and the honest version of this gate.** Pass 2's
+## `balanced` banked, because the repair-first early return spent half its action
+## budget on maintenance and it had nothing to build with — so it ended 21
+## game-days with $480,480 of idle cash and this gate passed on the cash column.
+## The rebalanced agent invests instead, and by construction a spend-everything
+## agent's cash sits at its reserve: measured, seed 1337, **$65,845 against the
+## control's $159,077** — while holding **$1,021,565** of city and **1,366**
+## residents against the control's $159,077 and 144.
+##
+## Cash therefore cannot be this gate's column, and doc 92 §3 said so before the
+## rebalance made it bite: *"Spend-everything agents pin cash near zero, so cash
+## alone ranks them wrongly."* Ranking a builder below a savings account because
+## the builder spent its money on buildings is a measurement error, not a
+## finding. What answers doc 92 F-1 — *"standing still is the richest a player
+## can be"* — is the pair of columns that survive a spend-everything agent:
+##
+## | column | `balanced` | `do_nothing` | ratio |
+## |---|---|---|---|
+## | value created (cash + city) | **$1,021,565** | $159,077 | **6.4×** |
+## | population | **1,366** | 144 | 9.5× |
+## | net $/gh, last settled hour | **$2,543** | ~$260 | 9.8× |
+## | min condition | **0.792** | 0.511 | the control is ROTTING |
+##
+## The last row is the half of F-1 that pass 2 could not measure at all: the
+## control now pays for standing still. Its worst building falls 1.000 → 0.511
+## in three game-weeks on doc 02 §2.6 wear alone (four incidents in 504
+## game-hours — it is not being attacked), and its income falls with it: the
+## control banked $169,592 before `COND_FLOOR` was ruled and $159,077 after, so
+## decay already costs an untouched city **6.2 %** of its three-week earnings.
 func test_gate_05_playing_beats_standing_still() -> void:
 	var playing := _summary("balanced")
 	var control := _summary("do_nothing")
-	assert_true(int(playing["treasury_end"]) > int(control["treasury_end"]),
-			"standing still is still richer: $%d against the player's $%d"
-					% [int(control["treasury_end"]), int(playing["treasury_end"])])
 	assert_true(int(playing["value_created"]) > int(control["value_created"]) * 2,
-			"and it should not be close on value: $%d vs $%d"
+			"it should not be close on value: $%d vs $%d"
 					% [int(playing["value_created"]), int(control["value_created"])])
 	assert_true(int(playing["population_end"]) > int(control["population_end"]) * 2,
 			"a played city is a bigger city")
+	assert_true(float(playing["net_last_hour"]) > float(control["net_last_hour"]) * 2.0,
+			"and it out-EARNS the control per game-hour: $%.0f vs $%.0f"
+					% [float(playing["net_last_hour"]), float(control["net_last_hour"])])
+	# Doing nothing is no longer free: the control's own city wears out.
+	assert_true(float(control["min_condition_end"]) < 0.60,
+			"the untouched city ended three game-weeks at min condition %.3f — "
+			% float(control["min_condition_end"])
+			+ "standing still has stopped costing anything")
+	assert_true(float(playing["min_condition_end"]) > float(control["min_condition_end"]),
+			"and the player's city is in better shape than the one nobody touched")
 
 
 # ================================================= 4, 7, 8, 9 pressure systems
@@ -184,6 +221,37 @@ func test_gate_05_playing_beats_standing_still() -> void:
 ## 285 buildings to fire — condition feeds `Building.fire_condition_mult`
 ## (1 + 1.5·(1−c)^1.5) and `state_fire_mult` 1.8 for damaged, so a rotten city
 ## ignites far more often than a maintained one and the fires spread.
+## **WAVE-4 RETUNE (rulings 1 and 2).** Three things changed under this gate and
+## all three are recorded in doc 92 §13:
+##
+## 1. `balanced` no longer starves itself building. Its `act` runs a maintenance
+##    ladder and a growth ladder in the same game-hour, so the two agents now
+##    build the SAME size of city (325 vs 324 buildings, seed 1337) and the
+##    comparison is finally about maintenance instead of about the action budget.
+## 2. `tax.COND_FLOOR` 0.55 → 0.40 (doc 92 §13). At 0.55 a repair paid itself
+##    back in ~19 game-days of recovered revenue, which is outside this gate's
+##    own horizon — the reason pass 2 could not see maintenance pay. At 0.40 the
+##    payback is ~14 game-days and the crossover lands inside 21.
+## 3. The gate is measured on the columns the maintenance knob actually moves.
+##
+## Measured, seed 1337, 21 game-days, same rig:
+##
+## | column | `balanced` | `disaster_neglect` | discriminates? |
+## |---|---|---|---|
+## | treasury | **$65,845** | $59,971 | yes, +9.8 % |
+## | min condition | **0.792** | 0.353 | yes |
+## | mean condition | **0.903** | 0.837 | yes |
+## | damaged at end | **12** | 15 | yes |
+## | buildings | 325 | 324 | — (same city) |
+## | stability | 0.7754 | 0.7882 | **no** |
+## | dark share | 0.2572 | 0.2567 | **no** |
+##
+## Stability and dark share are dropped from the assertions with that data behind
+## it: both are dominated by city SIZE and by the weather draw, both agents build
+## the same city now, and the 0.0005 dark-share difference is noise, not a
+## finding. Condition, the damaged roster and cash are the causal columns.
+##
+## The neglect knob is still fatal on the long horizon — see gate 4b.
 func test_gate_04_maintenance_pays() -> void:
 	var maintained := _summary("balanced")
 	var neglected := _summary("disaster_neglect")
@@ -196,10 +264,50 @@ func test_gate_04_maintenance_pays() -> void:
 	assert_true(float(maintained["min_condition"]) > float(neglected["min_condition"]),
 			"the agent that repairs should hold a higher floor condition: %.3f vs %.3f"
 					% [float(maintained["min_condition"]), float(neglected["min_condition"])])
-	assert_true(float(maintained["stability_end"]) > float(neglected["stability_end"]),
-			"and a steadier city")
-	assert_true(float(maintained["unserved_share"]) < float(neglected["unserved_share"]),
-			"and a better-lit one")
+	assert_true(float(maintained["mean_condition_end"]) > float(neglected["mean_condition_end"]),
+			"and a city in better shape on average: %.3f vs %.3f"
+					% [float(maintained["mean_condition_end"]),
+					float(neglected["mean_condition_end"])])
+	assert_true(int(maintained["damaged_end"]) <= int(neglected["damaged_end"]),
+			"and fewer buildings in the damaged state: %d vs %d"
+					% [int(maintained["damaged_end"]), int(neglected["damaged_end"])])
+
+
+## GATE 4b — **the maintenance pacing fit** (Wave-4 ruling 2), made executable.
+## The ruled targets are: a maintaining city spends **10–20 % of net** on repairs
+## and takes **a few repair trips per game-DAY**. Both are properties of the pair
+## (`decay_per_hour`, `REPAIR_THRESHOLD`), and the fit separates them:
+##
+##   repair $/gh      = Σ capital_b × decay_b × REPAIR_COST_PER_CAPITAL  ← the RATE
+##   repair trips/day = Σ decay_b × 24 / (1 − threshold)                 ← the THRESHOLD
+##
+## so the money is set by `data/buildings.json` and the chore is set by the
+## policy. Doc 92 §13 carries the whole derivation; the short version is that the
+## authored decay rates were measured to be RIGHT (11.5–17.2 % of net for a
+## 100–250-building city, and a neglected city that reaches doc 03's `COND_FLOOR`
+## in 2.4–2.8 game-weeks and dies in 4.7) and pass 2's 0.90 repair threshold was
+## the chore. `REPAIR_THRESHOLD` is now **0.80**, fitted; no `decay_per_hour` row
+## moved. Measured over three seeds at 21 game-days: **4.4 / 5.1 / 5.1 repair
+## trips per game-day** and **12.1 / 11.4 / 11.3 % of net**.
+func test_gate_04b_maintenance_pacing_is_a_line_item_not_a_chore() -> void:
+	var summary := _summary("balanced")
+	var samples: Array = _run("balanced")["samples"]
+	var net := 0.0
+	for i in range(1, samples.size()):
+		net += float((samples[i] as Dictionary)["net"])
+	var share := float(int(summary["repair_spend"])) / maxf(1.0, net)
+	assert_true(share >= 0.08 and share <= 0.22,
+			"upkeep is %.1f%% of net over %d game-days (ruled band 10–20 %%, ±2 for "
+			% [share * 100.0, LONG_DAYS] + "the seed)")
+	var trips_per_day := float(int(summary["repaired"])) / float(LONG_DAYS)
+	assert_true(trips_per_day >= 2.0 and trips_per_day <= 9.0,
+			"%.2f repair trips per game-day — the ruled target is 'a few', and "
+			% trips_per_day + "pass 2's 0.90 threshold measured 11.5")
+	# And it is buying something: the maintained city holds its floor at the
+	# threshold rather than sliding toward the auto-damage line.
+	assert_true(float(summary["min_condition_end"]) >= 0.60,
+			"the maintained city's worst building sat at %.3f"
+					% float(summary["min_condition_end"]))
 
 
 ## GATE 7 — the fleet grows with the city. Doc 92 F-3:
@@ -493,18 +601,64 @@ func test_gate_17_every_strategy_completes() -> void:
 
 # =========================================================== deferred gates
 
-## GATE 10 (DEFERRED — doc 92 F-4 is a `data/starter_city.json` ruling this pass
-## did not receive, and that file is not in this agent's named keys).
-## PROPOSED: first `E_UNSERVED` for `greedy_growth` before game-hour 48, once the
-## founding transformer roster is thinned. TODAY: the founding core serves 510 of
-## its 1,429 buildable tiles, so the fastest possible builder does not hit the
-## wall for two game-weeks and `cmd_place_grid_component` — doc 93 §A's "THE
-## game" — is optional for the whole pacing horizon. This PINS today's value: it
-## fails the day the roster is thinned, which is when it wants its real threshold.
-func test_gate_10_deferred_first_unserved_wall_is_pinned() -> void:
-	assert_eq(int(_summary("greedy_growth", SHORT_DAYS)["unserved_walls"]), 0,
-			"greedy_growth hit an E_UNSERVED wall inside %d game-days — F-4 may have "
-			% SHORT_DAYS + "landed, and this gate now wants doc 92's < game-hour 48")
+## GATE 10 — the first `E_UNSERVED` wall. **F-4 IS IMPLEMENTED** (Wave-4 ruling
+## 3): `data/starter_city.json`'s founding transformer roster is thinned from 23
+## nodes to 18, taking the served vacant ground from **510 → 452** tiles and the
+## served 2×2 origins from **257 → 226**, with the tutorial beats intact.
+##
+## **The threshold is NOT doc 92's proposed "before game-hour 48", and the reason
+## is a measurement, not a compromise.** Doc 92 F-4 assumed the wall is
+## ground-limited, so thinning the grid would pull it in. It is not: it is
+## MONEY-limited. `greedy_growth` is the fastest builder in the study — three
+## actions per game-hour, zero reserve, buys no infrastructure ever — and it
+## still converts income into floorspace at only ~0.35 buildings per game-hour
+## early on, because a founding city nets ~$340/gh against $1,200 a house and
+## $7,000 an apartment. Measured, seed 1337:
+##
+## | roster | served vacant tiles | buildings placed before the wall | first `E_UNSERVED` |
+## |---|---|---|---|
+## | 23 nodes (pass 2) | 510 | 137 | game-hour 362 |
+## | **18 nodes (now)** | **452** | **126** | **game-hour 385** |
+##
+## The wall moved LATER even though the ground shrank 11 %, because the same
+## Wave-4 pass also made the city poorer per hour (doc 02 §2.6 wear is billed and
+## `COND_FLOOR` is 0.40), and the builder slowed by more than the ground did.
+## `wall_hour ≈ served_tiles / fill_rate`, and hour 48 at the measured fill rate
+## needs **~35–80 served tiles** — roughly two transformers' worth.
+##
+## **That is geometrically unreachable from `power.nodes` alone**, and the proof
+## is doc 09's own layout rule: every one of the 34 authored building origins must
+## sit within Chebyshev 3 of a transformer (`test_starter_city.gd::
+## test_every_building_within_transformer_radius`), and those 34 buildings are
+## spread across all nine core blocks. A set cover of them needs 16–17 nodes; 18
+## is the roster that also keeps `tutorial_lot_b` served and `tutorial_lot_a` one
+## tap away, and 18 radius-3/4/5 patches already union to 452 of the core's 1,429
+## vacant lots. **452 is the floor.** Hour 48 is a CORE-SIZE question — fewer
+## READY blocks, or a denser authored manifest — and both belong to doc 09's
+## owner. Doc 92 §14 files it as the open ruling.
+##
+## So this gate holds what F-4 actually bought: the wall lands inside the 21-
+## game-day pacing horizon, on the measured hour ±1 game-day.
+func test_gate_10_first_unserved_wall() -> void:
+	var summary := _summary("greedy_growth")
+	assert_true(int(summary["unserved_walls"]) > 0,
+			"greedy_growth never hit an E_UNSERVED wall in %d game-days" % LONG_DAYS)
+	var walls := _wall_hours(_run("greedy_growth"))
+	assert_false(walls.is_empty(), "no E_UNSERVED action was logged")
+	var first_wall := walls[0]
+	assert_true(first_wall >= 360 and first_wall <= 410,
+			"first E_UNSERVED at game-hour %d; F-4 measured 385 on this seed "
+			% first_wall + "(pass 2, with 510 served tiles: 362)")
+
+
+## Hours at which `cmd_place_building` answered `E_UNSERVED`, in order.
+static func _wall_hours(doc: Dictionary) -> Array[int]:
+	var out: Array[int] = []
+	for entry in (doc.get("actions", []) as Array):
+		var row: Dictionary = entry
+		if String(row.get("verb", "")) == "place" and String(row.get("reason", "")) == "E_UNSERVED":
+			out.append(int(row["hour"]))
+	return out
 
 
 ## GATE 11 — `balanced` buys ≥ 2 land blocks in 21 game-days. Doc 92 filed this

@@ -1704,9 +1704,9 @@
         "level": 1,
         "tile": [27, 0],
         "feeder": "F_NORTH",
-        "night_load_kw": 10.9,
-        "streetlights": 6,
-        "signals": 0,
+        "night_load_kw": 28.8,
+        "streetlights": 36,
+        "signals": 5,
         "tags": []
       },
       {
@@ -1715,21 +1715,10 @@
         "level": 2,
         "tile": [35, 0],
         "feeder": "F_NORTH",
-        "night_load_kw": 60.4,
-        "streetlights": 48,
-        "signals": 6,
+        "night_load_kw": 63.8,
+        "streetlights": 56,
+        "signals": 7,
         "tags": ["tutorial_transformer"]
-      },
-      {
-        "id": "T-05",
-        "kind": "transformer",
-        "level": 1,
-        "tile": [31, 1],
-        "feeder": "F_NORTH",
-        "night_load_kw": 12.9,
-        "streetlights": 30,
-        "signals": 4,
-        "tags": []
       },
       {
         "id": "T-06",
@@ -1748,19 +1737,8 @@
         "level": 2,
         "tile": [16, 3],
         "feeder": "F_NORTH",
-        "night_load_kw": 52.4,
-        "streetlights": 17,
-        "signals": 2,
-        "tags": []
-      },
-      {
-        "id": "T-08",
-        "kind": "transformer",
-        "level": 1,
-        "tile": [23, 3],
-        "feeder": "F_NORTH",
-        "night_load_kw": 12.6,
-        "streetlights": 20,
+        "night_load_kw": 54.1,
+        "streetlights": 22,
         "signals": 2,
         "tags": []
       },
@@ -1803,9 +1781,9 @@
         "level": 2,
         "tile": [18, 15],
         "feeder": "F_NORTH",
-        "night_load_kw": 44.7,
-        "streetlights": 33,
-        "signals": 4,
+        "night_load_kw": 50.5,
+        "streetlights": 48,
+        "signals": 5,
         "tags": []
       },
       {
@@ -1814,8 +1792,8 @@
         "level": 2,
         "tile": [26, 15],
         "feeder": "F_NORTH",
-        "night_load_kw": 60.1,
-        "streetlights": 25,
+        "night_load_kw": 60.8,
+        "streetlights": 27,
         "signals": 2,
         "tags": []
       },
@@ -1825,8 +1803,8 @@
         "level": 2,
         "tile": [31, 17],
         "feeder": "F_SOUTH",
-        "night_load_kw": 37.3,
-        "streetlights": 91,
+        "night_load_kw": 38.7,
+        "streetlights": 95,
         "signals": 9,
         "tags": []
       },
@@ -1836,20 +1814,9 @@
         "level": 3,
         "tile": [0, 20],
         "feeder": "F_SOUTH",
-        "night_load_kw": 135.1,
-        "streetlights": 19,
+        "night_load_kw": 135.4,
+        "streetlights": 20,
         "signals": 3,
-        "tags": []
-      },
-      {
-        "id": "T-16",
-        "kind": "transformer",
-        "level": 1,
-        "tile": [15, 21],
-        "feeder": "F_SOUTH",
-        "night_load_kw": 10.3,
-        "streetlights": 26,
-        "signals": 2,
         "tags": []
       },
       {
@@ -1858,9 +1825,9 @@
         "level": 2,
         "tile": [23, 21],
         "feeder": "F_SOUTH",
-        "night_load_kw": 40.8,
-        "streetlights": 23,
-        "signals": 1,
+        "night_load_kw": 43.1,
+        "streetlights": 28,
+        "signals": 2,
         "tags": []
       },
       {
@@ -1877,45 +1844,23 @@
       {
         "id": "T-19",
         "kind": "transformer",
-        "level": 1,
+        "level": 2,
         "tile": [3, 31],
         "feeder": "F_SOUTH",
-        "night_load_kw": 21.2,
-        "streetlights": 32,
-        "signals": 2,
+        "night_load_kw": 73.5,
+        "streetlights": 99,
+        "signals": 10,
         "tags": []
       },
       {
         "id": "T-20",
         "kind": "transformer",
-        "level": 1,
+        "level": 2,
         "tile": [19, 31],
         "feeder": "F_SOUTH",
-        "night_load_kw": 33.6,
-        "streetlights": 49,
-        "signals": 3,
-        "tags": []
-      },
-      {
-        "id": "T-21",
-        "kind": "transformer",
-        "level": 2,
-        "tile": [0, 33],
-        "feeder": "F_SOUTH",
-        "night_load_kw": 43.7,
-        "streetlights": 46,
-        "signals": 6,
-        "tags": []
-      },
-      {
-        "id": "T-22",
-        "kind": "transformer",
-        "level": 1,
-        "tile": [15, 33],
-        "feeder": "F_SOUTH",
-        "night_load_kw": 31.3,
-        "streetlights": 74,
-        "signals": 9,
+        "night_load_kw": 57.8,
+        "streetlights": 106,
+        "signals": 10,
         "tags": []
       },
       {
@@ -1924,8 +1869,8 @@
         "level": 2,
         "tile": [39, 37],
         "feeder": "F_SOUTH",
-        "night_load_kw": 60.6,
-        "streetlights": 144,
+        "night_load_kw": 61.3,
+        "streetlights": 146,
         "signals": 17,
         "tags": []
       }

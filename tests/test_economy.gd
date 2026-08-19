@@ -194,8 +194,8 @@ func test_tax_worked_example_a() -> void:
 			{"happiness": 68.0, "policy_factor": 1.0, "m_rev": 1.0})
 	assert_almost_eq(float(result["f_stability"]), 0.9027, 0.0001)
 	assert_almost_eq(float(result["f_happiness"]), 1.040, 0.0001)
-	assert_almost_eq(float(result["f_condition"]), 0.9775, 0.0001)
-	assert_almost_eq(float(result["revenue"]), 23.86, 0.01, "doc 03 example A ⇒ $24/gh")
+	assert_almost_eq(float(result["f_condition"]), 0.9700, 0.0001)  # COND_FLOOR 0.40
+	assert_almost_eq(float(result["revenue"]), 23.68, 0.01, "doc 03 example A ⇒ $24/gh")
 
 
 func test_tax_worked_example_b_outage() -> void:
@@ -211,7 +211,7 @@ func test_tax_worked_example_b_outage() -> void:
 	assert_almost_eq(float(outage["f_power"]), 0.5667, 0.0001)
 	assert_almost_eq(float(outage["f_water"]), 0.7250, 0.0001)
 	assert_almost_eq(float(outage["f_stability"]), 0.7806, 0.0001)
-	assert_almost_eq(float(outage["revenue"]), 8.23, 0.01, "doc 03 example B ⇒ $8/gh")
+	assert_almost_eq(float(outage["revenue"]), 8.17, 0.01, "doc 03 example B ⇒ $8/gh")
 	var loss := 1.0 - float(outage["revenue"]) / float(healthy["revenue"])
 	assert_true(loss >= 0.60, "doc 03 example B loses two thirds of the hour: %f" % loss)
 
@@ -363,7 +363,16 @@ func test_development_tco_inversion() -> void:
 
 func test_e_grid_starter_inventory() -> void:
 	# doc 03 §7 test 37 / doc 04 test 24: 8.0 MW plant + 6.0 MVA substation +
-	# 2.40 MVA of transformers + 1.416 km of line ⇒ $74.9 ± 0.5/gh.
+	# 2.25 MVA of transformers + 1.416 km of line ⇒ $74.3 ± 0.5/gh.
+	#
+	# **Wave-4 F-4 re-anchor.** Doc 92 F-4 thinned the founding transformer
+	# roster from 23 nodes to 18 (`data/starter_city.json`), which is 0.15 MVA of
+	# rated plant: `2.40 → 7×0.05 + 10×0.15 + 1×0.40 = 2.25`, and the substation's
+	# 6.0 carries the rest, so the inventory total is `8.40 → 8.25`. E_grid is
+	# `24 $/MVA-gh` on that plate plus the fuel and line terms, so the line falls
+	# by `0.15 × 4.0 = 0.5996/gh`: **74.874 → 74.274**. Nothing else in doc 03's
+	# §2.12 chain moved — the line kilometres, the plant and the substation are
+	# untouched by the thinning.
 	var grid := _starter_power_grid()
 	var inventory := grid.grid_inventory()
 	var rated := 0.0
@@ -372,10 +381,10 @@ func test_e_grid_starter_inventory() -> void:
 	var line_km := 0.0
 	for line in inventory["lines"]:
 		line_km += float((line as Dictionary)["line_km"])
-	assert_almost_eq(rated, 8.40, 0.001, "6.0 MVA substation + 2.40 MVA transformers")
+	assert_almost_eq(rated, 8.25, 0.001, "6.0 MVA substation + 2.25 MVA transformers")
 	assert_almost_eq(line_km, 1.416, 0.0001, "177 tiles × 8 m")
 	var e_grid := _system().e_grid(inventory)
-	assert_almost_eq(e_grid, 74.874, 0.5, "40.000 + 24.000 + 9.600 + 1.274")
+	assert_almost_eq(e_grid, 74.274, 0.5, "40.000 + 24.000 + 9.000 + 1.274")
 	var economy := _curves().economy_data()
 	assert_almost_eq(e_grid, float(economy["pacing_guardrails"]["STARTER_E_GRID_PER_HOUR"]),
 			float(economy["pacing_guardrails"]["STARTER_E_GRID_TEST_TOLERANCE"]))
@@ -408,19 +417,19 @@ func test_founding_ledger() -> void:
 	assert_almost_eq(float(expenses["building_maint"]), 27.44, 0.01, "68,600 × 0.00040")
 	assert_almost_eq(float(expenses["departments"]), 96.0, 0.01, "26 + 30 + 20 + 20")
 	assert_almost_eq(float(expenses["fleet"]), 58.0, 0.01, "2×7 + 12 + 9 + 9 + 14")
-	assert_almost_eq(float(expenses["grid"]), 74.874, 0.5)
+	assert_almost_eq(float(expenses["grid"]), 74.274, 0.5)  # F-4: 2.40 -> 2.25 MVA
 	assert_almost_eq(float(expenses["generation_fuel"]), 57.0, 0.01)
 	assert_almost_eq(float(expenses["vehicle_fuel"]), 6.0, 0.01)
 	assert_almost_eq(float(expenses["water"]), 15.392, 0.01, "0.334 + 1.058 + 14.000")
 	assert_almost_eq(float(expenses["roads_repair"]), 185.87, 0.5,
 			"150.667 + 35.204 at c_day 0.35")
 	assert_almost_eq(float(expenses["debt"]), 0.0)
-	assert_almost_eq(float(expenses["total"]), 520.576566, 0.5, "TOTAL EXPENSE $/gh")
+	assert_almost_eq(float(expenses["total"]), 519.977016, 0.5, "TOTAL EXPENSE $/gh")
 
-	assert_almost_eq(float(snapshot["net"]), 318.772846, 0.5, "NET +$319/gh")
-	assert_almost_eq(float(snapshot["net"]) * 24.0, 7650.55, 12.0, "+$7,650/game-day")
-	assert_eq(treasury.balance, 25000 + 318, "the settled dollar lands in the treasury")
-	assert_almost_eq(float(treasury.carry_millidollars) / 1000.0, 0.78, 0.02,
+	assert_almost_eq(float(snapshot["net"]), 319.372396, 0.5, "NET +$319/gh")
+	assert_almost_eq(float(snapshot["net"]) * 24.0, 7664.94, 12.0, "+$7,665/game-day")
+	assert_eq(treasury.balance, 25000 + 319, "the settled dollar lands in the treasury")
+	assert_almost_eq(float(treasury.carry_millidollars) / 1000.0, 0.38, 0.02,
 			"and the sub-dollar remainder in the carry")
 
 
@@ -751,7 +760,9 @@ func test_settlement_is_deterministic_and_offline_uses_one_code_path() -> void:
 		system_b.settle_hour(offline)
 	assert_eq(first.balance, second.balance)
 	assert_eq(first.carry_millidollars, second.carry_millidollars)
-	assert_true(absi(first.balance - (25000 + 31878)) <= 3,
+	# 100 × $319.372396 = $31,937 (was $31,878 before doc 92 F-4 took 0.15 MVA
+	# of transformer plate out of `E_grid`).
+	assert_true(absi(first.balance - (25000 + 31937)) <= 3,
 			"100 gh of the founding ledger, got %d" % first.balance)
 
 

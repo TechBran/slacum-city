@@ -55,6 +55,11 @@ static func run(strategy_id: String, seed_value: int, days: int) -> Dictionary:
 	return {
 		"run": {"strategy": strategy_id, "seed": seed_value, "days": days},
 		"samples": samples,
+		## The per-command action log, same shape `tools/playtest.gd` writes into
+		## its JSON. Gates that need a REASON CODE and the game-hour it landed on
+		## — doc 92 F-4's `E_UNSERVED` wall is the one — read it from here; the
+		## sample stream carries city state only.
+		"actions": api.actions,
 		"events": events,
 		"summary": Playtest.Runner._summarise(sim, api, samples, opts),
 		"state_hash": sim.state_hash(),
