@@ -141,19 +141,21 @@ class Layer extends RefCounted:
 ##
 ## Already in `vehicles` today and honoured here: `civ_visible_radius_m`,
 ## `interp_teleport_threshold_m`, `headlight_night_threshold`, `lightbar_hz`,
-## `lightbar_emission`, `lightbar_red`, `lightbar_blue`. The tuning knobs this
-## view ADDS — all optional, all shipping at the constants above, deliberately
-## not written into data/render.json so the file stays one owner's:
-##   road_top_m              road-slab top surface the wheels rest on (0.10)
-##   lane_offset_m           right-hand lane offset off the centreline (1.85)
-##   fade_seconds            spawn / despawn fade (0.40, doc 10's own figure)
-##   interp_blend_seconds    Hermite blend window on a new state (0.28)
-##   headlight_cone_m        ground-cone length (8.0)
-##   headlight_cone_energy   additive strength of that cone (0.22)
-##   headlight_color         cone tint (#FFE7B4)
-##   lightbar_amber          utility bar half A (#FFAE1E)
-##   lightbar_amber_pale     utility bar half B (#FFD873)
-##   cast_shadows            bodies cast shadows (true; see `_build_layers`)
+## `lightbar_emission`, `lightbar_red`, `lightbar_blue`.
+##
+## The nine tuning knobs this view once carried as script constants were
+## promoted into `data/render.json`'s `vehicles` block by the render-polish
+## pass and are read from there now — `road_top_m`, `lane_offset_m`,
+## `fade_seconds`, `interp_blend_seconds`, `headlight_cone_m`,
+## `headlight_cone_energy`, `headlight_color`, `lightbar_amber`,
+## `lightbar_amber_pale`. The `DEF_*` constants above stay as the fallback for
+## a render.json that predates them, so nothing here is load-bearing on the
+## file having been updated.
+##
+## `cast_shadows` is the tenth and reads in two steps: `vehicles.cast_shadows`
+## is the baseline, and a preset row's `vehicle_shadows` overrides it. It ships
+## OFF on Performance and Balanced and ON on High — see `_build_layers` for why
+## a world-sized AABB makes this a per-split cost rather than a per-car one.
 func setup(render_data: Dictionary = {}) -> void:
 	var cfg: Dictionary = render_data.get("vehicles", {})
 	tile_m = _num(render_data.get("world", {}), "tile_m", DEF_TILE_M)
@@ -193,8 +195,13 @@ func set_preset(name: String, render_data: Dictionary = {}) -> void:
 	preset = name
 	if not render_data.is_empty():
 		_read_presets(render_data)
+	var shadow_setting := GeometryInstance3D.SHADOW_CASTING_SETTING_ON \
+			if cast_shadows else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	for key: String in _layers:
-		(_layers[key] as Layer).cap = int(caps.get(key, 256))
+		var layer := _layers[key] as Layer
+		layer.cap = int(caps.get(key, 256))
+		if layer.node != null:
+			layer.node.cast_shadow = shadow_setting
 	_size_beacons()
 
 
@@ -571,6 +578,12 @@ func _read_presets(render_data: Dictionary) -> void:
 	for key: String in EMERGENCY_MESHES:
 		caps[key] = nodes
 	beacon_budget = clampi(int(row.get("emergency_lights", 4)), 0, 8)
+	# The preset has the last word on shadows: a quality tier that has already
+	# decided how many splits it can afford is the right place to decide whether
+	# the traffic layer gets re-drawn into all of them. A row without the key
+	# leaves `vehicles.cast_shadows` standing.
+	if row.has("vehicle_shadows"):
+		cast_shadows = bool(row["vehicle_shadows"])
 
 
 ## doc 06's `data/vehicles.json` is the only place that knows a type's
@@ -618,9 +631,11 @@ func _build_layers(cfg: Dictionary) -> void:
 		layer.node.multimesh = layer.mm
 		layer.node.custom_aabb = aabb
 		# Shadows are a real quality win on traffic and a real cost: the
-		# world-sized custom AABB means each body layer is always inside every
-		# shadow split, so this doubles the layer's draw calls. One switch, so
-		# the performance pass can take it back without touching the view.
+		# world-sized custom AABB means each body layer is always inside EVERY
+		# shadow split, so a layer is re-drawn once per split whether or not a
+		# car is standing in it. The performance pass took the switch (report 98
+		# / vehicle q5): OFF on Performance and Balanced, ON on High, driven by
+		# the preset's `vehicle_shadows` row.
 		layer.node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON \
 				if cast_shadows else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(layer.node)
