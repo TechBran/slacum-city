@@ -207,6 +207,8 @@ static func _trim(text: String) -> String:
 func format(code: Variant, params: Dictionary = {}) -> Dictionary:
 	var name := RequirementFormatter.canonical(code)
 	var args := _args_for(name, params)
+	# The raw sim spelling, so the generic row can name what it could not explain.
+	args["code"] = str(code).to_upper()
 	var remedy := _resolve(RequirementFormatter.string_key(name, REMEDY_SUFFIX), args, "")
 	args["remedy"] = remedy
 	var body := _resolve(RequirementFormatter.string_key(name), args,

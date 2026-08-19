@@ -27,9 +27,17 @@ func _process(delta: float) -> void:
 		_apply(recognizer.tick(_time_ms))
 
 
+func _input(event: InputEvent) -> void:
+	# Earliest-stage debug trace: what does Android actually deliver?
+	if OS.is_debug_build() and not (event is InputEventMouseMotion):
+		print("[input-stage] ", event.get_class())
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if recognizer == null:
 		return
+	if OS.is_debug_build() and (event is InputEventScreenTouch or event is InputEventScreenDrag):
+		print("[touch] ", event.get_class(), " ", event)
 	var viewport := Vector2(get_viewport().get_visible_rect().size)
 	if event is InputEventScreenTouch:
 		var touch := event as InputEventScreenTouch
@@ -48,6 +56,8 @@ func _unhandled_input(event: InputEvent) -> void:
 func _apply(gestures: Array) -> void:
 	var viewport := Vector2(get_viewport().get_visible_rect().size)
 	for g in gestures:
+		if OS.is_debug_build():
+			print("[gesture] ", g.get("kind", "?"))
 		match StringName(String(g.get("kind", g.get("type", "")))):
 			&"pan":
 				var pos: Vector2 = g["position"]

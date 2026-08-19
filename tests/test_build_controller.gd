@@ -1,0 +1,454 @@
+extends SimTest
+## P1-33/P1-34's headless half: `BuildController` — the build sheet's card list,
+## the placement state machine and its preflight verdicts, and the building
+## panel's view model with the doc 12 §2.9 upgrade checklist.
+##
+## Every verdict is asserted against a **real `CitySim`**, because the whole
+## point of the preflight is that it agrees with `cmd_place_building`: the same
+## checks, the same order, the same answer, without charging the treasury.
+
+
+func _sim() -> CitySim:
+	return CitySim.boot_from_files()
+
+
+func _controller(sim: CitySim) -> BuildController:
+	return BuildController.new(sim, RequirementFormatter.load_from_files())
+
+
+static func _serviceable_vacant_tile(sim: CitySim, size: Vector2i = Vector2i.ONE) -> Vector2i:
+	for z in range(32, 80):
+		for x in range(32, 80):
+			var origin := Vector2i(x, z)
+			if sim.world.grid.can_place(origin, size) and sim.grid.would_serve(origin):
+				return origin
+	return Vector2i(-1, -1)
+
+
+# ===========================================================================
+# Build sheet cards (doc 12 §2.7)
+# ===========================================================================
+
+func test_card_list_covers_the_twelve_archetypes() -> void:
+	var sim := _sim()
+	var cards := _controller(sim).cards()
+	assert_eq(cards.size(), BuildingCatalog.ARCHETYPE_COUNT, "spec §43.2 MVP roster")
+	var seen: Array[String] = []
+	for card: Dictionary in cards:
+		assert_false(seen.has(str(card["archetype"])), "one card per archetype")
+		seen.append(str(card["archetype"]))
+		assert_true(int(card["cost"]) > 0, "%s quotes a build cost" % card["archetype"])
+		assert_eq(int(card["cost"]), sim.econ_curves.build_cost(str(card["archetype"])),
+				"cost is read from the economy table, never authored in the UI")
+		assert_true((card["footprint"] as Vector2i).x >= 1)
+		assert_true(str(card["name_key"]).begins_with("ui_build_card_"), "G-8 key")
+	assert_true(seen.has("house") and seen.has("water_facility"))
+
+
+func test_card_names_and_tabs_resolve_from_the_string_table() -> void:
+	var sim := _sim()
+	var cfg := UIConfig.load_from_files()
+	for card: Dictionary in _controller(sim).cards():
+		assert_true(cfg.has_string(str(card["name_key"])),
+				"data/strings.en.json carries %s" % card["name_key"])
+		assert_true(cfg.has_string(BuildController.category_tab_key(str(card["category"]))),
+				"the %s tab has a label" % card["category"])
+
+
+func test_cards_lock_on_min_city_level_but_stay_listed() -> void:
+	# §2.7: "locked cards show a lock glyph and reveal the unlock condition on
+	# tap" — they are never dropped from the sheet.
+	var sim := _sim()
+	var controller := _controller(sim)
+	sim.progression.city_level = 0
+	var locked_at_zero := 0
+	for card: Dictionary in controller.cards():
+		if bool(card["locked"]):
+			locked_at_zero += 1
+			assert_true(int(card["min_city_level"]) > 0)
+	assert_true(locked_at_zero > 0, "the tall archetypes start locked")
+	sim.progression.city_level = 5
+	for card: Dictionary in controller.cards():
+		assert_false(bool(card["locked"]), "%s unlocks at level 5" % card["archetype"])
+
+
+func test_unaffordable_cards_are_not_locked() -> void:
+	# An unaffordable card stays tappable so the requirement panel can explain
+	# why (§2.7); only `min_city_level` locks.
+	var sim := _sim()
+	sim.progression.city_level = 5
+	sim.treasury.spend(sim.treasury.balance, &"test_drain")
+	for card: Dictionary in _controller(sim).cards():
+		assert_false(bool(card["locked"]))
+		assert_false(bool(card["affordable"]))
+
+
+# ===========================================================================
+# Placement state machine (doc 12 §2.2 S2 → S3)
+# ===========================================================================
+
+func test_enter_move_confirm_cancel_transitions() -> void:
+	var sim := _sim()
+	var controller := _controller(sim)
+	assert_eq(controller.state, BuildController.STATE_IDLE)
+	assert_false(controller.is_placing())
+	assert_false(bool(controller.confirm()["ok"]), "confirm from IDLE is refused")
+
+	assert_true(bool(controller.enter("house")["ok"]))
+	assert_eq(controller.state, BuildController.STATE_PLACING)
+	assert_eq(controller.size, Vector2i.ONE, "house footprint from the catalog")
+	assert_false(controller.has_origin, "no ghost until the finger lands")
+	assert_false(bool(controller.ghost()["visible"]))
+	assert_false(bool(controller.confirm()["ok"]), "confirm before a target is refused")
+
+	var origin := _serviceable_vacant_tile(sim)
+	assert_true(origin.x >= 0, "the core has serviceable vacant lots")
+	controller.move_to_tile(origin)
+	assert_true(controller.has_origin)
+	assert_true(controller.can_confirm())
+
+	controller.cancel()
+	assert_eq(controller.state, BuildController.STATE_IDLE)
+	assert_eq(controller.archetype, "")
+	assert_false(controller.has_origin)
+	assert_false(bool(controller.ghost()["visible"]))
+	assert_true(controller.verdict().is_empty(), "cancel leaves no stale verdict")
+	# Cancel is idempotent — the Android back stack calls it blind.
+	controller.cancel()
+	assert_eq(controller.state, BuildController.STATE_IDLE)
+
+
+func test_enter_refuses_unknown_and_locked_archetypes() -> void:
+	var sim := _sim()
+	var controller := _controller(sim)
+	var unknown := controller.enter("stadium")
+	assert_false(bool(unknown["ok"]))
+	assert_eq(unknown["reason_code"], &"E_UNKNOWN_ARCHETYPE")
+	assert_eq(controller.state, BuildController.STATE_IDLE)
+
+	sim.progression.city_level = 0
+	var locked := controller.enter("data_center")  # min_city_level 4
+	assert_false(bool(locked["ok"]))
+	assert_eq(locked["reason_code"], &"E_CITY_LEVEL")
+	assert_eq(int(locked["payload"]["required_level"]), 4)
+	assert_eq(controller.state, BuildController.STATE_IDLE, "a locked card never places")
+
+	sim.progression.city_level = 4
+	assert_true(bool(controller.enter("data_center")["ok"]), "unlocked at city level 4")
+
+
+# ===========================================================================
+# Validity (the preflight must agree with `cmd_place_building`)
+# ===========================================================================
+
+func test_valid_lot_reads_valid_and_charges_nothing() -> void:
+	var sim := _sim()
+	var controller := _controller(sim)
+	var balance := sim.treasury.balance
+	var buildings := sim.buildings.size()
+	controller.enter("house")
+	var verdict := controller.move_to_tile(_serviceable_vacant_tile(sim))
+	assert_eq(str(verdict["verdict"]), String(BuildController.VERDICT_VALID))
+	assert_true((verdict["failure"] as Dictionary).is_empty())
+	assert_eq(str(controller.ghost()["state"]), String(HudModel.STATE_NORMAL))
+	assert_eq(sim.treasury.balance, balance, "the preflight never charges")
+	assert_eq(sim.buildings.size(), buildings, "and never stamps a tile")
+
+
+func test_unowned_block_is_blocked() -> void:
+	var sim := _sim()
+	var controller := _controller(sim)
+	controller.enter("house")
+	var verdict := controller.move_to_tile(Vector2i(8, 8))  # undeveloped ring
+	assert_eq(str(verdict["verdict"]), String(BuildController.VERDICT_BLOCKED))
+	assert_eq(verdict["code"], &"E_NOT_OWNED")
+	assert_false(controller.can_confirm())
+	assert_eq(str(controller.ghost()["state"]), String(HudModel.STATE_CRITICAL))
+	assert_true(str(verdict["failure"]["body"]).length() > 0, "the bar says why in words")
+	# The command agrees.
+	assert_eq(sim.cmd_place_building("house", Vector2i(8, 8))["reason_code"], &"E_NOT_OWNED")
+
+
+func test_occupied_tile_is_blocked() -> void:
+	var sim := _sim()
+	var controller := _controller(sim)
+	var occupied: Vector2i = (sim.buildings["H-001"] as Building).origin
+	controller.enter("house")
+	var verdict := controller.move_to_tile(occupied)
+	assert_eq(verdict["code"], &"E_FOOTPRINT")
+	assert_eq(sim.cmd_place_building("house", occupied)["reason_code"], &"E_FOOTPRINT")
+
+
+func test_unserved_lot_is_blocked() -> void:
+	# The tutorial lot sits 4 tiles from an L1 transformer (radius 3) — doc 04
+	# §2.1 blocks it, and the ghost must say so before the player commits.
+	var sim := _sim()
+	var controller := _controller(sim)
+	var lot: Vector2i = sim.loader.resolve_tag("tutorial_lot_a")["tile_global"]
+	controller.enter("house")
+	var verdict := controller.move_to_tile(lot)
+	assert_eq(verdict["code"], &"E_UNSERVED")
+	assert_eq(sim.cmd_place_building("house", lot)["reason_code"], &"E_UNSERVED")
+
+
+func test_poor_treasury_is_blocked_with_the_numbers() -> void:
+	var sim := _sim()
+	var controller := _controller(sim)
+	var origin := _serviceable_vacant_tile(sim)
+	sim.treasury.spend(sim.treasury.balance - 100, &"test_drain")
+	controller.enter("house")
+	var verdict := controller.move_to_tile(origin)
+	assert_eq(verdict["code"], &"E_FUNDS")
+	var failure: Dictionary = verdict["failure"]
+	assert_eq(str(failure["args"]["have"]), HudModel.money(100))
+	assert_eq(str(failure["args"]["need"]),
+			HudModel.money(sim.econ_curves.build_cost("house")))
+	assert_eq(sim.cmd_place_building("house", origin)["reason_code"], &"E_FUNDS")
+
+
+func test_verdict_recomputes_on_every_move() -> void:
+	var sim := _sim()
+	var controller := _controller(sim)
+	controller.enter("house")
+	assert_eq(controller.move_to_tile(Vector2i(8, 8))["code"], &"E_NOT_OWNED")
+	assert_eq(str(controller.move_to_tile(_serviceable_vacant_tile(sim))["verdict"]),
+			String(BuildController.VERDICT_VALID))
+	assert_eq(controller.move_to_tile((sim.buildings["H-001"] as Building).origin)["code"],
+			&"E_FOOTPRINT")
+
+
+# ===========================================================================
+# Confirm / commit
+# ===========================================================================
+
+func test_confirm_returns_the_command_arguments() -> void:
+	var sim := _sim()
+	var controller := _controller(sim)
+	var origin := _serviceable_vacant_tile(sim)
+	controller.enter("house")
+	controller.move_to_tile(origin)
+	var args := controller.confirm()
+	assert_true(bool(args["ok"]))
+	assert_eq(str(args["payload"]["archetype"]), "house")
+	assert_eq(args["payload"]["origin"], origin)
+	assert_eq(str(args["payload"]["variant"]), "")
+	assert_eq(int(args["payload"]["cost"]), sim.econ_curves.build_cost("house"))
+	# Those exact arguments satisfy the real command.
+	var placed := sim.cmd_place_building(str(args["payload"]["archetype"]),
+			args["payload"]["origin"], str(args["payload"]["variant"]))
+	assert_true(bool(placed["ok"]), str(placed))
+
+
+func test_confirm_is_refused_while_blocked() -> void:
+	var sim := _sim()
+	var controller := _controller(sim)
+	controller.enter("house")
+	controller.move_to_tile(Vector2i(8, 8))
+	var args := controller.confirm()
+	assert_false(bool(args["ok"]))
+	assert_eq(args["reason_code"], &"E_NOT_OWNED")
+
+
+func test_commit_places_and_leaves_placement_mode() -> void:
+	var sim := _sim()
+	var controller := _controller(sim)
+	var origin := _serviceable_vacant_tile(sim)
+	var balance := sim.treasury.balance
+	controller.enter("house")
+	controller.move_to_tile(origin)
+	var result := controller.commit()
+	assert_true(bool(result["ok"]), str(result))
+	assert_eq(sim.treasury.balance, balance - int(result["payload"]["cost"]))
+	assert_eq(controller.state, BuildController.STATE_IDLE, "the sheet closes on success")
+	assert_true(sim.buildings.has(str(result["payload"]["sim_id"])))
+	# A second commit on the same spot is refused by the sim, not by a stale ghost.
+	controller.enter("house")
+	controller.move_to_tile(origin)
+	assert_eq(controller.verdict()["code"], &"E_FOOTPRINT")
+	assert_false(bool(controller.commit()["ok"]))
+	assert_eq(controller.state, BuildController.STATE_PLACING, "a refusal keeps the ghost")
+
+
+# ===========================================================================
+# Ghost geometry
+# ===========================================================================
+
+func test_ghost_centres_the_footprint_on_the_pointed_tile() -> void:
+	var sim := _sim()
+	var controller := _controller(sim)
+	sim.progression.city_level = 5
+	controller.enter("power_facility")  # 3×3
+	assert_eq(controller.size, Vector2i(3, 3))
+	assert_eq(controller.centre_offset(), Vector2i(1, 1))
+	var point := Vector3(40 * 8.0 + 4.0, 0.0, 44 * 8.0 + 4.0)
+	controller.move_to_ground(point)
+	assert_eq(controller.origin, Vector2i(39, 43), "a 3×3 ghost centres on the finger")
+	var ghost := controller.ghost()
+	assert_true(bool(ghost["visible"]))
+	assert_eq(ghost["centre"] as Vector3,
+			Vector3(39 * 8.0 + 12.0, 0.0, 43 * 8.0 + 12.0))
+	assert_eq(BuildController.tile_at(Vector3(0.5, 0.0, 8.5), 8.0), Vector2i(0, 1))
+	# 1×1 lands exactly under the finger.
+	controller.enter("house")
+	controller.move_to_ground(point)
+	assert_eq(controller.origin, Vector2i(40, 44))
+
+
+# ===========================================================================
+# Picking (doc 12 §2.16 tap → panel)
+# ===========================================================================
+
+func test_tile_and_ground_picking_resolve_a_sim_id() -> void:
+	var sim := _sim()
+	var controller := _controller(sim)
+	var b: Building = sim.buildings["H-001"]
+	assert_eq(controller.sim_id_at_tile(b.origin), "H-001")
+	assert_eq(controller.sim_id_at_ground(
+			Vector3(b.origin.x * 8.0 + 4.0, 0.0, b.origin.y * 8.0 + 4.0)), "H-001")
+	assert_eq(controller.sim_id_at_tile(_serviceable_vacant_tile(sim)), "",
+			"empty ground selects nothing")
+	assert_eq(controller.sim_id_at_tile(Vector2i(-5, -5)), "", "out of bounds is safe")
+
+
+# ===========================================================================
+# Building panel view model (doc 12 §2.9)
+# ===========================================================================
+
+func test_building_view_reports_live_stats() -> void:
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	var view := _controller(sim).building_view("H-001")
+	assert_true(bool(view["exists"]))
+	assert_eq(str(view["archetype"]), "house")
+	assert_eq(int(view["max_level"]), 5, "Core Design Rule 5")
+	assert_eq((view["vitals"] as Array).size(), 6, "§2.9's 2×3 vitals grid")
+	assert_eq((view["coverage"] as Array).size(), 4, "Power/Water/Police/Fire tiles")
+	var power_tile: Dictionary = (view["coverage"] as Array)[0]
+	assert_eq(str(power_tile["id"]), "power")
+	assert_ne(str(power_tile["state"]), String(HudModel.STATE_OFFLINE),
+			"the starter house is fed")
+	assert_true(str(power_tile["attachment"]).length() > 0, "names its transformer")
+	for tile: Dictionary in (view["coverage"] as Array):
+		if str(tile["id"]) != "power":
+			assert_eq(str(tile["value"]), HudModel.NO_DATA,
+					"docs 05/06 publish no coverage yet — no invented number")
+	assert_eq(str(view["state_key"]), "ui_building_state_active")
+	assert_false(view["condition_text"] == "")
+
+
+func test_building_view_of_a_missing_building_is_safe() -> void:
+	var view := _controller(_sim()).building_view("NOPE-999")
+	assert_false(bool(view["exists"]))
+
+
+func test_upgrade_checklist_shows_every_check_passing() -> void:
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	sim.progression.city_level = 1
+	var view := _controller(sim).building_view("H-001")
+	var upgrade: Dictionary = view["upgrade"]
+	assert_true(bool(upgrade["ok"]), str(upgrade["checklist"]))
+	assert_eq(int(upgrade["to_level"]), 2)
+	assert_eq(int(upgrade["cost"]), sim.econ_curves.upgrade_cost("house", 1))
+	var rows: Array = upgrade["checklist"]
+	assert_eq(rows.size(), 6, "E_AVENUE is not a check below Level 4 (C-62)")
+	for row: Dictionary in rows:
+		assert_true(bool(row["ok"]))
+		assert_eq(str(row["glyph"]), RequirementFormatter.GLYPH_PASS)
+		assert_true(str(row["body"]).length() > 0, "a passing row still explains itself")
+	assert_true((upgrade["blocked_by"] as Dictionary).is_empty())
+
+
+func test_upgrade_checklist_names_the_blocker_in_words() -> void:
+	var sim := _sim()
+	sim.progression.city_level = 1
+	var b: Building = sim.buildings["H-002"]
+	b.condition = 0.40
+	var upgrade: Dictionary = _controller(sim).building_view("H-002")["upgrade"]
+	assert_false(bool(upgrade["ok"]))
+	var condition_row: Dictionary = {}
+	for row: Dictionary in (upgrade["checklist"] as Array):
+		if str(row["canonical"]) == "E_CONDITION":
+			condition_row = row
+	assert_false(condition_row.is_empty(), "the condition check is listed")
+	assert_false(bool(condition_row["ok"]))
+	assert_true(str(condition_row["body"]).contains("40%"), condition_row["body"])
+	assert_true(str(condition_row["body"]).contains("55%"),
+			"the threshold comes from Building.MIN_CONDITION_TO_UPGRADE")
+	assert_eq(str((upgrade["blocked_by"] as Dictionary)["canonical"]), "E_CONDITION")
+
+
+func test_upgrade_checklist_quotes_the_power_deficit() -> void:
+	# Doc 02 E2 on real starter data: L2→L3 is what the transformer cannot carry.
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	sim.progression.city_level = 2
+	sim.treasury.credit(100_000, &"test_grant")
+	assert_true(bool(sim.cmd_upgrade_building("APT-001")["ok"]))
+	sim.advance_hours(12.0)
+	sim.advance_hours(13.0)
+	var upgrade: Dictionary = _controller(sim).building_view("APT-001")["upgrade"]
+	assert_false(bool(upgrade["ok"]))
+	assert_true(float(upgrade["deficit_kw"]) > 0.0)
+	var blocker: Dictionary = upgrade["blocked_by"]
+	assert_eq(str(blocker["canonical"]), "POWER_CAPACITY")
+	assert_true(str(blocker["body"]).contains("kW") or str(blocker["body"]).contains("MW"),
+			blocker["body"])
+	assert_true(str(blocker["fix_target"]["id"]).length() > 0,
+			"`Fix this →` routes to the transformer that said no")
+
+
+func test_avenue_check_appears_only_from_level_four() -> void:
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	sim.progression.city_level = 5
+	var b: Building = sim.buildings["H-001"]
+	b.level = 3
+	b.stats = sim.catalog.stats("house", 3)
+	var controller := _controller(sim)
+	var rows: Array = controller.building_view("H-001")["upgrade"]["checklist"]
+	var has_avenue := false
+	for row: Dictionary in rows:
+		if str(row["canonical"]) == "E_AVENUE":
+			has_avenue = true
+	assert_true(has_avenue, "L3→L4 is where the avenue gate turns on")
+	# The measured distance must agree with the sim's own radius test, or the
+	# message would quote a number the gate did not use.
+	var measured := controller.nearest_avenue_tiles(b.origin)
+	assert_eq(measured <= BuildController.AVENUE_RADIUS_TILES,
+			_avenue_within(sim, b.origin, BuildController.AVENUE_RADIUS_TILES))
+
+
+static func _avenue_within(sim: CitySim, origin: Vector2i, radius: int) -> bool:
+	for z in range(origin.y - radius, origin.y + radius + 1):
+		for x in range(origin.x - radius, origin.x + radius + 1):
+			if TileGrid.in_bounds(x, z) \
+					and sim.world.grid.road_class_at(x, z) == TileGrid.ROAD_AVENUE:
+				return true
+	return false
+
+
+func test_upgrade_command_runs_and_the_view_refreshes() -> void:
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	sim.progression.city_level = 1
+	var controller := _controller(sim)
+	var balance := sim.treasury.balance
+	var result := controller.upgrade("H-001")
+	assert_true(bool(result["ok"]), str(result))
+	assert_eq(int(result["payload"]["to_level"]), 2)
+	assert_true(sim.treasury.balance < balance)
+	# The refreshed panel now reads the in-progress state rather than a stale one.
+	var after: Dictionary = controller.building_view("H-001")["upgrade"]
+	assert_false(bool(after["ok"]), "an upgrade in progress blocks a second one")
+	assert_eq(str((after["blocked_by"] as Dictionary)["canonical"]), "E_STATE")
+
+
+func test_upgrade_of_a_missing_building_is_safe() -> void:
+	var controller := _controller(_sim())
+	var result := controller.upgrade("NOPE-999")
+	assert_false(bool(result["ok"]))
+	assert_eq(result["reason_code"], &"E_UNKNOWN_BUILDING")
+	var view: Dictionary = controller.upgrade_view("NOPE-999")
+	assert_false(bool(view["ok"]))
+	assert_eq((view["checklist"] as Array).size(), 1, "one reason row, no fake checklist")
