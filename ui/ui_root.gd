@@ -746,6 +746,24 @@ func refresh_dashboard(snapshot: Dictionary) -> void:
 		city_dashboard.refresh(snapshot)
 
 
+## §2.10's Infrastructure tab: `{power, feeders, transformers, water}`.
+func feed_infrastructure(snapshot: Dictionary) -> void:
+	if city_dashboard != null:
+		city_dashboard.feed_infrastructure(snapshot)
+
+
+## §2.10's Response tab: `{units, stats, open}`.
+func feed_response(snapshot: Dictionary) -> void:
+	if city_dashboard != null:
+		city_dashboard.feed_response(snapshot)
+
+
+## §2.5's OverlayLegend aggregate lines, per mode: `[{label, value, state?}]`.
+func feed_overlay_summary(mode: StringName, lines: Array) -> void:
+	if overlay_rail != null:
+		overlay_rail.set_summary_lines(mode, lines)
+
+
 ## `{power01, water01}` on `[0, 1]` for the ⚡/💧 chips (§2.4 P3/P4) and for the
 ## dashboard bands that show the same two readings.
 func ingest_service(snapshot: Dictionary) -> void:

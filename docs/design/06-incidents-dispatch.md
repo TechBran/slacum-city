@@ -199,6 +199,8 @@ water_factor   = hydrant_factor  if type == structure_fire else 1.0
 contribution   = base * access_factor * water_factor
 ```
 
+**Wave-5 correction — `access_police_bonus` is a duplicate and is NOT spent.** The 1.15 above and `types.<t>.support_roles[police].rate_bonus = 0.15` (§2.9's table, live on `structure_fire` and `traffic_accident`) are the same effect written twice, and `_effective_rate` already bills the support-role half through `(1 + support_bonus)`. `IncidentSystem.access_factor()` therefore implements only doc 10's road knee, and `globals.access_police_bonus` stays unread. It is not a harmless duplicate: wired as `× (1 + 0.15 · coverage_police(tile))` and measured on the doc 92 rig at seed 1337 / 21 game-days, **balance gate 04 inverts** — maintained $61,843 against neglected $71,644, where the same runs without it read $69,876 / $59,959. A blanket suppression buff pays the agent who never repairs the most, because fires it would have let burn are put out before they cost it anything. Doc 02's `coverage_police` is consumed where §2.6 above actually reads it: `f_police` in the crime generator.
+
 **Worked escalation example — house fire, no response** *(re-derived through the channel, RR-15; every figure reproduces).*
 Wood house L2, wind 45 kph, **CLEAR** (`fire_escalation_mult = 1.00` at every intensity), hydrant ratio 1.0. `esc_base[structure_fire] = 2.2`, difficulty 1.0.
 
@@ -294,6 +296,8 @@ R_crime_base = 0.012
 f_stab    = 1 + 3.0 * (1 - stability)^2                      # stability 0..1 (doc 09)
 f_dark    = 1 + 0.35 * dark_frac * (1 + 1.5 * outage_frac)
 f_police  = clamp(1.4 - 0.6 * police_coverage, 0.5, 1.4)     # coverage_police(pos), doc 02 (C-51)
+                                                             # district scalar = MEAN of coverage_police
+                                                             # over that district's buildings (Wave 5)
 f_weather = weather.get_effect("incident_crime_mult")        # doc 07 §2.2 — sole owner (RR-4)
 ```
 *Worked:* pop 6,000, stability 0.55, full night, 40% of district unpowered, coverage 0.5, **CLEAR** (`incident_crime_mult = 1.00` at every intensity) →

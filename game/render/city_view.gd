@@ -580,6 +580,42 @@ func set_overlay_mode(mode: StringName, camera_pos: Vector3 = Vector3.ZERO) -> v
 	_upload_all()
 
 
+## The four §2.5 state colours the overlay pass tints with, resolved against the
+## player's colourblind palette. `paint` is `OverlayModel.
+## building_state_paint_ordered(variant)` — doc 11's packing order,
+## `[{color, mix, emission}] × 4`.
+##
+## Until this existed the four hues were baked into `building.gdshader` as
+## uniform defaults, so a deuteran player read a deuteran legend beside a city
+## still tinted for trichromats. The road bands already followed the palette
+## (`RoadOverlayView._build_band_paint`); this is the other half of A6, and it
+## reads the same `data/ui.json.palette` table the legend is painted from.
+func set_overlay_palette(paint: Array) -> void:
+	if paint.size() < 4:
+		return
+	var names := ["overlay_normal_color", "overlay_warning_color",
+			"overlay_critical_color", "overlay_offline_color"]
+	var keys: Array = _bucket_nodes.keys()
+	keys.sort()
+	for key: Variant in keys:
+		var node: MultiMeshInstance3D = _bucket_nodes[key]
+		var material := node.material_override as ShaderMaterial
+		if material == null:
+			continue
+		for i in 4:
+			var row: Dictionary = paint[i]
+			material.set_shader_parameter(names[i], row.get("color", Color(1, 1, 1)))
+		# NORMAL is the calm state and carries its own, lighter blend; the three
+		# that mean LOOK HERE share the data blend. Both are §2.5's, restated per
+		# state in `data/ui.json.overlay.building_state_paint`.
+		material.set_shader_parameter("overlay_normal_blend",
+				float((paint[0] as Dictionary).get("mix", 0.50)))
+		material.set_shader_parameter("overlay_data_blend",
+				float((paint[2] as Dictionary).get("mix", 0.88)))
+		material.set_shader_parameter("overlay_state_emission",
+				float((paint[2] as Dictionary).get("emission", 0.55)))
+
+
 func refresh(delta: float, hour: float, camera_pos: Vector3 = Vector3.ZERO) -> void:
 	model.set_hour(hour)
 	model.advance(delta)

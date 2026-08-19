@@ -94,20 +94,24 @@ func test_overlay_desaturates_the_world_in_every_mode() -> void:
 			"the ground greys back too, or only the buildings look overlaid")
 
 
-func test_power_and_water_share_one_state_decoder() -> void:
-	# doc 12 §2.5 modes 1 and 2 differ ONLY in how the 0..3 state was derived:
-	# POWER reads the emissive ladder on top of the packed bits, WATER reads the
-	# bits `RenderStateModel.set_overlay_channel` mapped doc 05's factor into.
-	# One `overlay_paint()` decodes both, so the two cannot drift visually.
+func test_every_per_building_overlay_shares_one_state_decoder() -> void:
+	# doc 12 §2.5 modes 1–4 differ ONLY in how the 0..3 state was derived: POWER
+	# reads the emissive ladder on top of the packed bits, and WATER, POLICE and
+	# FIRE read the bits `RenderStateModel.set_overlay_channel` mapped their own
+	# system's reading into. One `overlay_paint()` decodes all four, so they
+	# cannot drift visually. TRAFFIC (5) is per-EDGE and is not in this branch.
 	var src := _src(BUILDING)
 	assert_true(src.contains("vec4 overlay_paint(float state, out float emit_amt)"),
 			"there is exactly one state → hue/blend/emission decoder")
 	assert_true(src.contains("const int OVERLAY_MODE_POWER = 1;"))
 	assert_true(src.contains("const int OVERLAY_MODE_WATER = 2;"))
-	# The power-only correction stays inside its own branch: WATER must not have
-	# its state raised by a building that happens to be dark.
-	var per_building := src.find("if (sc_overlay_mode == OVERLAY_MODE_POWER")
+	assert_true(src.contains("const int OVERLAY_MODE_FIRE = 4;"),
+			"the per-building branch stops at FIRE, leaving TRAFFIC to the roads")
+	# The power-only correction stays inside its own branch: no other mode may
+	# have its state raised by a building that happens to be dark.
+	var per_building := src.find("if (sc_overlay_mode >= OVERLAY_MODE_POWER")
 	var power_only := src.find("if (sc_overlay_mode == OVERLAY_MODE_POWER) {")
+	assert_true(per_building >= 0, "the shared branch is a RANGE over modes 1..4")
 	assert_true(power_only > per_building,
 			"the emissive-ladder read is nested one level deeper than the shared paint")
 	assert_true(src.find("float emit_amt;") > power_only,

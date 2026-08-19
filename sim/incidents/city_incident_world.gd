@@ -21,11 +21,19 @@ var catalog: IncidentCatalog
 ## Set by the phase adapter from `ctx.is_catchup`: the only path by which doc 06
 ## learns it is offline (doc 08 fairness rule 4 / C-47).
 var offline: bool = false
-## Doc 02 §2.4's `coverage_police(pos)` is not implemented yet (C-51); until it
-## is, every district reports the same neutral coverage.
-var default_police_coverage: float = 0.5
 ## Doc 05's hydrant network has not landed; nominal pressure until it does.
 var default_hydrant_ratio: float = 1.0
+
+## Doc 02 §2.9's coverage field (C-51), rebuilt from the live station roster.
+## `CoverageIndex` is pure — this adapter is the half that knows what a
+## `Building` and a `FleetSystem` are.
+var coverage: CoverageIndex = null
+## The game-hour the field was last rebuilt on, so the answer is stable inside
+## one hour (the incident integrator asks per SUB-step) and is recomputed from
+## live state after a load rather than being carried in the save. `-1` forces
+## the first read to build.
+var _coverage_hour: int = -1
+var _district_coverage: Dictionary = {}  # district id -> {police, fire}
 
 ## Recorded because CitySim has no city-confidence model yet — doc 06 supplies
 ## the delta, and the lead engineer wires it when doc 09's scalar exists.
@@ -91,6 +99,158 @@ func building(id: String) -> Dictionary:
 		"crime_weight": float(stats.get("crime_weight", 0.0)),
 		"district_id": district_of_tile(b.origin),
 	}
+
+
+# ------------------------------------------------- doc 02 §2.9 coverage (C-51)
+
+## `coverage_police(tile)` / `coverage_fire(tile)`, both ∈ [0,1]. Doc 02 owns the
+## formula; `CoverageIndex` is it, and this half assembles its inputs from the
+## live roster.
+func coverage_police(tile: Vector2i) -> float:
+	return _coverage().coverage_at_tile(CoverageIndex.KIND_POLICE, tile)
+
+
+func coverage_fire(tile: Vector2i) -> float:
+	return _coverage().coverage_at_tile(CoverageIndex.KIND_FIRE, tile)
+
+
+## The same answer with its reasons — `{coverage, best, best_id, overlapping,
+## redundancy}` — for the §2.7 service tiles and the overlay's tap readout.
+func coverage_explain(kind: StringName, tile: Vector2i) -> Dictionary:
+	return _coverage().explain(kind, Vector2(float(tile.x), float(tile.y)))
+
+
+## One district's coverage: the MEAN of `coverage_<kind>` over the buildings that
+## district holds. Doc 09 owns `police_coverage` as a district scalar and doc 02
+## publishes it per position, so the district figure is the average of the
+## positions that district actually occupies — an empty district reads 0.
+func district_coverage(district_id: String, kind: StringName) -> float:
+	_coverage()
+	var row: Variant = _district_coverage.get(district_id, null)
+	return float((row as Dictionary).get(String(kind), 0.0)) if row is Dictionary else 0.0
+
+
+## Force the field to be rebuilt on the next read. The hourly key already covers
+## decay and dispatch; this is for the discrete events that move a station —
+## a build, an upgrade, a demolition — which the shell knows about first.
+func invalidate_coverage() -> void:
+	_coverage_hour = -1
+
+
+func _coverage() -> CoverageIndex:
+	var hour := int(floor(float(now_minutes()) / 60.0))
+	if coverage != null and _coverage_hour == hour:
+		return coverage
+	_rebuild_coverage()
+	_coverage_hour = hour
+	return coverage
+
+
+## Rebuilt from the roster in ONE pass per kind. Sorted throughout: station rows
+## come from `building_ids()` (already ascending) and `CoverageIndex` re-sorts
+## them by id, so nothing here depends on Dictionary hashing.
+func _rebuild_coverage() -> void:
+	if coverage == null:
+		coverage = CoverageIndex.new(sim.catalog.rules().get("coverage_ladder", {}))
+	var rows: Array = []
+	for building_id in building_ids():
+		var id := String(building_id)
+		var b: Building = sim.buildings[id]
+		var kind: Variant = CoverageIndex.ARCHETYPE_KIND.get(String(b.archetype), null)
+		if kind == null:
+			continue
+		var level := maxi(1, b.level)
+		var stats: Dictionary = sim.catalog.stats(String(b.archetype), level)
+		var radius := float(stats.get("coverage_radius_tiles", 0.0))
+		if radius <= 0.0:
+			continue
+		rows.append({
+			"id": id, "kind": StringName(str(kind)), "level": level,
+			"centroid": _centroid(b.origin, stats.get("footprint", [1, 1])),
+			"radius_tiles": radius,
+			"staffing": _staffing(id, String(b.archetype), level),
+			"condition": b.condition,
+			# Doc 02 §2.9 writes the state term as `active ? 1 : 0`; the shipped
+			# §2.12 table (`data/building_rules.json.state_modifiers.*.coverage`)
+			# is finer — a station mid-upgrade still answers half its calls, a
+			# damaged one a quarter — and `Building.coverage_mult()` IS that
+			# column. The table is the narrower, later statement of the same rule.
+			"state_mult": b.coverage_mult(),
+		})
+	coverage.set_stations(rows)
+	_rebuild_district_coverage()
+
+
+static func _centroid(origin: Vector2i, footprint: Variant) -> Vector2:
+	var w := 1.0
+	var h := 1.0
+	if footprint is Array and (footprint as Array).size() >= 2:
+		w = maxf(1.0, float((footprint as Array)[0]))
+		h = maxf(1.0, float((footprint as Array)[1]))
+	return Vector2(float(origin.x) + (w - 1.0) * 0.5, float(origin.y) + (h - 1.0) * 0.5)
+
+
+## Doc 02 §2.9's `staffing(s) = min(1, units_housed(s) / capacity(s))`, with doc
+## 06's `capacity_per_station_level` (C-50) as the denominator.
+##
+## **Ruling — what "housed" counts.** Doc 06 §2.11 says the station shell is doc
+## 02's and doc 06 "supplies how many units live in it", so `units_housed` is the
+## ROSTER, not the units standing in the bay: a station whose only engine is out
+## on a call still covers its district, and the alternative reading would make
+## coverage oscillate with every dispatch and feed the crime generator a signal
+## that rises the moment police respond to crime. Units parked `OFFLINE` by doc
+## 03's austerity layer are excluded — an unaffordable unit does not live
+## anywhere. See the report's open questions.
+func _staffing(station_id: String, archetype: String, level: int) -> float:
+	if sim.incidents == null:
+		return 0.0
+	var fleet: FleetSystem = sim.incidents.fleet
+	if fleet == null:
+		return 0.0
+	var capacity := 0
+	for type_id in catalog.vehicle_types_for_station(archetype):
+		capacity += fleet.capacity_for(archetype, String(type_id), level)
+	if capacity <= 0:
+		return 0.0
+	var housed := 0
+	for unit_id in fleet.unit_ids():
+		var u: Vehicle = fleet.unit(int(unit_id))
+		if u != null and u.home_station_id == station_id and u.status != Vehicle.OFFLINE:
+			housed += 1
+	return minf(1.0, float(housed) / float(capacity))
+
+
+func _rebuild_district_coverage() -> void:
+	var totals: Dictionary = {}
+	for building_id in building_ids():
+		var b: Building = sim.buildings[String(building_id)]
+		var district_id := district_of_tile(b.origin)
+		if district_id == "":
+			continue
+		var row: Variant = totals.get(district_id)
+		var record: Dictionary
+		if row == null:
+			record = {"police": 0.0, "fire": 0.0, "count": 0}
+			totals[district_id] = record
+		else:
+			record = row
+		var pos := Vector2(float(b.origin.x), float(b.origin.y))
+		record["police"] = float(record["police"]) \
+				+ coverage.coverage(CoverageIndex.KIND_POLICE, pos)
+		record["fire"] = float(record["fire"]) \
+				+ coverage.coverage(CoverageIndex.KIND_FIRE, pos)
+		record["count"] = int(record["count"]) + 1
+	var out: Dictionary = {}
+	var ids: Array = totals.keys()
+	ids.sort()
+	for district_id: String in ids:
+		var record: Dictionary = totals[district_id]
+		var count := maxf(1.0, float(record["count"]))
+		out[district_id] = {
+			"police": float(record["police"]) / count,
+			"fire": float(record["fire"]) / count,
+		}
+	_district_coverage = out
 
 
 ## Six fields instead of `building()`'s twelve. The fire generator asks for the
@@ -185,7 +345,7 @@ func district(id: String) -> Dictionary:
 		"id": id,
 		"population": float(row.get("population", 0)),
 		"stability": clampf(float(row.get("stability", 1.0)), 0.0, 1.0),
-		"police_coverage": default_police_coverage,
+		"police_coverage": district_coverage(id, CoverageIndex.KIND_POLICE),
 		"outage_frac": clampf(float(row.get("district_dark_fraction", 0.0)), 0.0, 1.0),
 	}
 

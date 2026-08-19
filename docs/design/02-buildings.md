@@ -445,7 +445,12 @@ Ordering is preserved and still meaningful: an L5 store carries weight 19.66 aga
 
 ### 2.9 Service coverage — owned and implemented here
 
-*(Report 98 C-51: this doc owns the radii, the staffing term and the requirement ladder, so it implements the formula. `sim/buildings/coverage.gd` publishes `coverage_police(pos: Vector2i) -> float` and `coverage_fire(pos: Vector2i) -> float`, both `∈ [0,1]`. Doc 06 reads the scalars and implements nothing.)*
+*(Report 98 C-51: this doc owns the radii, the staffing term and the requirement ladder, so it implements the formula. It publishes `coverage_police(pos: Vector2i) -> float` and `coverage_fire(pos: Vector2i) -> float`, both `∈ [0,1]`. Doc 06 reads the scalars and implements nothing.)*
+
+**Where it lives, Wave 5.** The formula shipped as **`sim/incidents/coverage_index.gd`** (`CoverageIndex`) rather than at C-51's named `sim/buildings/coverage.gd`, and the two `coverage_*` queries are published from `CityIncidentWorld`. The reason is that the formula needs three things at once — this doc's radii and per-state condition, doc 06's `capacity_per_station_level` and its live roster — and `CityIncidentWorld` is the only adapter that already holds all three. `CoverageIndex` itself is **pure**: station rows in, scalars out, every constant read from `data/building_rules.json.coverage_ladder`, and it knows nothing about `Building`, `CitySim` or the fleet — so moving it to `sim/buildings/` when a `BuildingSystem`-side assembler exists is a file move and nothing else. Two Wave-5 readings the code fixes in place:
+
+- **`units_housed(s)` is the roster, not the bay.** Units whose `home_station_id` is the station and whose status is not `OFFLINE` (doc 03's austerity parking). A station whose only engine is out on a call still covers its district; the other reading makes coverage oscillate with every dispatch and feeds doc 06's crime generator a signal that *rises* the moment police answer a crime. E6's "one engine dispatched away" still collapses `c` to 0.314 — as a decommissioning or an unpayable roster, not as a call.
+- **The state term is §2.12's table, not `active ? 1 : 0`.** `data/building_rules.json.state_modifiers.*.coverage` already publishes 1.00 / 0.50 (upgrading) / 0.25 (damaged or repairing) / 0, and `Building.coverage_mult()` is that column. The table is the narrower, later statement of the same rule.
 
 ```
 c_station(pos, s) = clamp(1 − (dist_tiles(pos, s) / coverage_radius_tiles(s))^FALLOFF (1.5), 0, 1)

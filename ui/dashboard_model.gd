@@ -17,8 +17,18 @@ extends RefCounted
 
 const TAB_OVERVIEW := &"overview"
 const TAB_ECONOMY := &"economy"
+const TAB_INFRASTRUCTURE := &"infrastructure"
+const TAB_RESPONSE := &"response"
 
-const _DEFAULT_TABS: Array[String] = ["overview", "economy"]
+const _DEFAULT_TABS: Array[String] = ["overview", "economy", "infrastructure",
+		"response"]
+const _DEFAULT_WORST_N := 5
+const _DEFAULT_DEPARTMENTS: Array[String] = ["fire", "police", "utility", "water",
+		"construction"]
+const _DEFAULT_INFRA_SECTIONS: Array[String] = ["power", "feeders", "transformers",
+		"water"]
+const _DEFAULT_TARGET_MIN := 8.0
+const _DEFAULT_WARN_MULT := 1.25
 const _DEFAULT_ROWS: Array[String] = ["population", "treasury", "net_income",
 		"happiness", "stability", "grid", "water", "incidents"]
 const _DEFAULT_SPARK_HOURS := 24
@@ -64,6 +74,11 @@ var _dashboard: Dictionary = {}
 var _hud: HudModel
 var _tab: StringName = TAB_OVERVIEW
 var _selected_row := ""
+## The two feeds the shell publishes for the tabs that read a live system rather
+## than the history ring. Both default to empty, and an empty feed is a tab that
+## says so in words (A14) rather than a tab of zeroes.
+var _infrastructure: Dictionary = {}
+var _response: Dictionary = {}
 
 
 func _init(cfg: UIConfig = null, p_history: HistoryModel = null,
@@ -191,7 +206,359 @@ func build_view(snapshot: Dictionary) -> Dictionary:
 		"budget": budget.breakdown(),
 		"selected_row": _selected_row,
 		"history_size": history.size(),
+		"infrastructure": infrastructure_view(),
+		"response": response_view(),
 	}
+
+
+# ---------------------------------------------------------------------------
+# Infrastructure (§2.10: "power gen/cap/load + worst 5 feeders, water
+# supply/demand + worst 5 zones")
+# ---------------------------------------------------------------------------
+
+func worst_n() -> int:
+	return maxi(1, UIConfig.get_int(_dashboard, "worst_n", _DEFAULT_WORST_N))
+
+
+## The shell's one call per refresh:
+##
+##     {power:   PowerGrid.capacity_summary(),
+##      feeders: PowerGrid.feeder_rows(),
+##      transformers: PowerGrid.transformer_rows(),
+##      water:   WaterSnapshot.build(...)}
+##
+## Rows are consumed exactly as those queries publish them — this model sorts and
+## trims and formats, and computes no engineering of its own.
+func feed_infrastructure(snapshot: Dictionary) -> void:
+	_infrastructure = snapshot.duplicate(true)
+
+
+func has_infrastructure() -> bool:
+	return not _infrastructure.is_empty()
+
+
+func infrastructure_view() -> Dictionary:
+	var sections: Array[Dictionary] = []
+	for section_id: String in _string_list("infrastructure_sections",
+			_DEFAULT_INFRA_SECTIONS):
+		match section_id:
+			"power":
+				sections.append(_power_section())
+			"feeders":
+				sections.append(_line_section("feeders", "feeders",
+						"ui_dashboard_infra_feeders_title"))
+			"transformers":
+				sections.append(_line_section("transformers", "transformers",
+						"ui_dashboard_infra_transformers_title"))
+			"water":
+				sections.append(_water_section())
+	return {"sections": _with_glyphs(sections), "has_data": has_infrastructure()}
+
+
+## A5: every state-coloured figure also carries its glyph, so the tab is legible
+## in greyscale exactly like the HUD chips. Done in one pass here rather than in
+## each row builder — the glyph is a property of the state, never of the row.
+func _with_glyphs(sections: Array[Dictionary]) -> Array[Dictionary]:
+	for section: Dictionary in sections:
+		for value: Variant in (section["rows"] as Array):
+			var row: Dictionary = value
+			row["state_glyph"] = _hud.state_glyph(StringName(str(row.get("state", ""))))
+	return sections
+
+
+func _power_section() -> Dictionary:
+	var power: Variant = _infrastructure.get("power", {})
+	var rows: Array[Dictionary] = []
+	if power is Dictionary and not (power as Dictionary).is_empty():
+		var block: Dictionary = power
+		var supply := UIConfig.get_num(block, "supply_kw", 0.0)
+		var demand := UIConfig.get_num(block, "demand_kw", 0.0)
+		var headroom := UIConfig.get_num(block, "headroom_kw", supply - demand)
+		var ratio := UIConfig.get_num(block, "load_ratio", 0.0)
+		rows.append(_figure("supply", "ui_dashboard_infra_supply", power_text(supply),
+				HudModel.STATE_NORMAL))
+		rows.append(_figure("demand", "ui_dashboard_infra_demand",
+				"%s  %s" % [power_text(demand), HudModel.percent_text(ratio * 100.0)],
+				load_state(ratio)))
+		rows.append(_figure("headroom", "ui_dashboard_infra_headroom",
+				power_text(headroom),
+				HudModel.STATE_CRITICAL if headroom <= 0.0 else HudModel.STATE_NORMAL))
+		var over := UIConfig.get_int(block, "feeders_over", 0) \
+				+ UIConfig.get_int(block, "transformers_over", 0)
+		rows.append(_figure("over", "ui_dashboard_infra_over", str(over),
+				HudModel.STATE_NORMAL if over == 0 else HudModel.STATE_WARNING))
+		var shed := UIConfig.get_int(block, "shed_feeders", 0)
+		rows.append(_figure("shed", "ui_dashboard_infra_shed", str(shed),
+				HudModel.STATE_NORMAL if shed == 0 else HudModel.STATE_CRITICAL))
+	return {
+		"id": "power",
+		"title": UIWidgets.t(_cfg, "ui_dashboard_infra_power_title"),
+		"rows": rows,
+		"empty_text": UIWidgets.t(_cfg, "ui_dashboard_no_grid"),
+	}
+
+
+## One feeder / transformer list, worst-first. "Worst" is the load ratio against
+## the DERATED capacity — the number the protection pass trips on — with the id
+## as the tiebreak so two equally loaded feeders never swap places between two
+## refreshes of the same state.
+func _line_section(section_id: String, feed_key: String,
+		title_key: String) -> Dictionary:
+	var raw: Variant = _infrastructure.get(feed_key, [])
+	var source: Array = raw if raw is Array else []
+	var sorted: Array = source.duplicate()
+	sorted.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var ra := UIConfig.get_num(a, "load_ratio", 0.0)
+		var rb := UIConfig.get_num(b, "load_ratio", 0.0)
+		if not is_equal_approx(ra, rb):
+			return ra > rb
+		return str(a.get("id", "")) < str(b.get("id", "")))
+	var rows: Array[Dictionary] = []
+	for value: Variant in sorted:
+		if rows.size() >= worst_n():
+			break
+		if not (value is Dictionary):
+			continue
+		rows.append(_line_row(value as Dictionary))
+	return {
+		"id": section_id,
+		"title": UIWidgets.t_args(_cfg, title_key, {"count": rows.size()}),
+		"rows": rows,
+		"empty_text": UIWidgets.t(_cfg, "ui_dashboard_no_grid"),
+	}
+
+
+func _line_row(row: Dictionary) -> Dictionary:
+	var ratio := UIConfig.get_num(row, "load_ratio", 0.0)
+	var customers := UIConfig.get_int(row, "customers", 0)
+	var detail := UIWidgets.t_args(_cfg, "ui_dashboard_infra_customers",
+			{"count": customers})
+	var state := load_state(ratio)
+	# A component that is OPEN or FAILED is not "lightly loaded", it is out — the
+	# load ratio of a dead feeder is 0 and would otherwise read NORMAL.
+	if not bool(row.get("energized", true)) or str(row.get("state", "OK")) != "OK":
+		state = HudModel.STATE_OFFLINE
+	elif bool(row.get("shed", false)):
+		state = HudModel.STATE_CRITICAL
+	return {
+		"id": str(row.get("id", "")),
+		"label": str(row.get("id", "")),
+		"value": "%s  %s" % [HudModel.percent_text(ratio * 100.0),
+				power_text(UIConfig.get_num(row, "headroom_kw", 0.0))],
+		"detail": detail,
+		"state": state,
+	}
+
+
+func _water_section() -> Dictionary:
+	var water: Variant = _infrastructure.get("water", {})
+	var rows: Array[Dictionary] = []
+	var city: Dictionary = {}
+	var zones: Array = []
+	if water is Dictionary:
+		var block: Dictionary = water
+		var city_raw: Variant = block.get("city", {})
+		city = city_raw if city_raw is Dictionary else {}
+		var zones_raw: Variant = block.get("zones", [])
+		zones = zones_raw if zones_raw is Array else []
+	if not city.is_empty():
+		rows.append(_figure("water_supply", "ui_dashboard_infra_water_supply",
+				flow_text(UIConfig.get_num(city, "total_supply_m3h", 0.0)),
+				HudModel.STATE_NORMAL))
+		var demand := UIConfig.get_num(city, "total_demand_m3h", 0.0)
+		var supply := UIConfig.get_num(city, "total_supply_m3h", 0.0)
+		rows.append(_figure("water_demand", "ui_dashboard_infra_water_demand",
+				flow_text(demand),
+				HudModel.STATE_CRITICAL if demand > supply else HudModel.STATE_NORMAL))
+		rows.append(_figure("storage", "ui_dashboard_infra_storage",
+				HudModel.percent_text(UIConfig.get_num(city, "storage_frac", 0.0) * 100.0),
+				pressure_state(UIConfig.get_num(city, "storage_frac", 1.0))))
+	# §2.10's "worst 5 zones": lowest pressure first, id as the tiebreak.
+	var sorted: Array = zones.duplicate()
+	sorted.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var pa := UIConfig.get_num(a, "pressure", 1.0)
+		var pb := UIConfig.get_num(b, "pressure", 1.0)
+		if not is_equal_approx(pa, pb):
+			return pa < pb
+		return str(a.get("zone_key", "")) < str(b.get("zone_key", "")))
+	var listed := 0
+	for value: Variant in sorted:
+		if listed >= worst_n() or not (value is Dictionary):
+			break
+		var zone: Dictionary = value
+		var pressure := UIConfig.get_num(zone, "pressure", 1.0)
+		rows.append({
+			"id": "zone_" + str(zone.get("zone_key", "")),
+			"label": str(zone.get("zone_key", "")),
+			"value": HudModel.percent_text(pressure * 100.0),
+			"detail": UIWidgets.t_args(_cfg, "ui_dashboard_infra_customers",
+					{"count": UIConfig.get_int(zone, "building_count", 0)}),
+			"state": pressure_state(pressure),
+		})
+		listed += 1
+	return {
+		"id": "water",
+		"title": UIWidgets.t_args(_cfg, "ui_dashboard_infra_water_title",
+				{"count": listed}),
+		"rows": rows,
+		"empty_text": UIWidgets.t(_cfg, "ui_dashboard_no_water"),
+	}
+
+
+# ---------------------------------------------------------------------------
+# Response (§2.10: "per-department unit roster with status, rolling-24 h average
+# response time, incident throughput")
+# ---------------------------------------------------------------------------
+
+func response_departments() -> Array[String]:
+	return _string_list("response_departments", _DEFAULT_DEPARTMENTS)
+
+
+func response_target_min() -> float:
+	return UIConfig.get_num(_dashboard, "response_target_min", _DEFAULT_TARGET_MIN)
+
+
+## The shell's one call per refresh:
+##
+##     {units: [{id, type, department, status, station}],
+##      stats: DispatchSystem.stats,
+##      open: <active incident count>}
+func feed_response(snapshot: Dictionary) -> void:
+	_response = snapshot.duplicate(true)
+
+
+func has_response() -> bool:
+	return not _response.is_empty()
+
+
+func response_view() -> Dictionary:
+	var raw: Variant = _response.get("units", [])
+	var units: Array = raw if raw is Array else []
+	var idle: Dictionary = {}
+	var total: Dictionary = {}
+	for value: Variant in units:
+		if not (value is Dictionary):
+			continue
+		var unit: Dictionary = value
+		var dept := str(unit.get("department", ""))
+		total[dept] = int(total.get(dept, 0)) + 1
+		if str(unit.get("status", "")) == "IDLE":
+			idle[dept] = int(idle.get(dept, 0)) + 1
+	var roster: Array[Dictionary] = []
+	for dept: String in response_departments():
+		var have := int(total.get(dept, 0))
+		var free := int(idle.get(dept, 0))
+		roster.append({
+			"id": dept,
+			"label": UIWidgets.t(_cfg, "ui_dashboard_dept_%s" % dept),
+			"value": UIWidgets.t_args(_cfg, "ui_dashboard_response_idle",
+					{"idle": free, "total": have}),
+			"detail": "",
+			"state": _roster_state(free, have),
+		})
+	var stats_raw: Variant = _response.get("stats", {})
+	var stats: Dictionary = stats_raw if stats_raw is Dictionary else {}
+	var times: Array[Dictionary] = []
+	if int(stats.get("response_samples", 0)) > 0:
+		var average := UIConfig.get_num(stats, "avg_response_min", 0.0)
+		times.append(_figure("avg", "ui_dashboard_response_avg",
+				"%d min" % int(round(average)), response_state(average)))
+		var score := UIConfig.get_num(stats, "rolling_response_score", 1.0)
+		times.append(_figure("score", "ui_dashboard_response_score",
+				HudModel.percent_text(score * 100.0), _score_state(score)))
+	times.append(_figure("resolved", "ui_dashboard_response_resolved",
+			str(UIConfig.get_int(stats, "resolved_total", 0)), HudModel.STATE_NORMAL))
+	var failed := UIConfig.get_int(stats, "failed_total", 0)
+	times.append(_figure("failed", "ui_dashboard_response_failed", str(failed),
+			HudModel.STATE_NORMAL if failed == 0 else HudModel.STATE_WARNING))
+	var open_now := UIConfig.get_int(_response, "open", 0)
+	times.append(_figure("open", "ui_dashboard_response_open", str(open_now),
+			HudModel.STATE_NORMAL if open_now == 0 else HudModel.STATE_WARNING))
+	var sections: Array[Dictionary] = [
+			{
+				"id": "roster",
+				"title": UIWidgets.t(_cfg, "ui_dashboard_response_roster_title"),
+				"rows": roster,
+				"empty_text": UIWidgets.t(_cfg, "ui_dashboard_no_roster"),
+			},
+			{
+				"id": "times",
+				"title": UIWidgets.t(_cfg, "ui_dashboard_response_times_title"),
+				"rows": times,
+				"empty_text": UIWidgets.t(_cfg, "ui_dashboard_no_response_data"),
+			},
+	]
+	return {"has_data": has_response(), "sections": _with_glyphs(sections)}
+
+
+static func _roster_state(free: int, total: int) -> StringName:
+	if total <= 0:
+		return HudModel.STATE_OFFLINE
+	if free <= 0:
+		return HudModel.STATE_CRITICAL
+	# More than half the department still in the bay is fine; exactly half or
+	# fewer is the point at which one more call leaves the city short.
+	return HudModel.STATE_NORMAL if free * 2 > total else HudModel.STATE_WARNING
+
+
+func _score_state(score: float) -> StringName:
+	if score >= 0.75:
+		return HudModel.STATE_NORMAL
+	return HudModel.STATE_WARNING if score >= 0.45 else HudModel.STATE_CRITICAL
+
+
+## Doc 06's `target_response_min` is the grade; `response_warn_mult` is how far
+## past it still reads as a warning rather than a failure.
+func response_state(minutes: float) -> StringName:
+	var target := response_target_min()
+	if minutes <= target:
+		return HudModel.STATE_NORMAL
+	var warn := UIConfig.get_num(_dashboard, "response_warn_mult", _DEFAULT_WARN_MULT)
+	return HudModel.STATE_WARNING if minutes <= target * warn \
+			else HudModel.STATE_CRITICAL
+
+
+# ---------------------------------------------------------------------------
+# Shared shapes and units
+# ---------------------------------------------------------------------------
+
+func _figure(row_id: String, label_key: String, value: String,
+		state: StringName) -> Dictionary:
+	return {"id": row_id, "label": UIWidgets.t(_cfg, label_key), "value": value,
+			"detail": "", "state": state}
+
+
+## kW below a megawatt, MW above it — the same "three significant figures, one
+## unit per surface" rule `HudModel.money` follows (D-18).
+static func power_text(kw: float) -> String:
+	if absf(kw) >= 1000.0:
+		return "%.1f MW" % (kw / 1000.0)
+	return "%d kW" % int(round(kw))
+
+
+static func flow_text(m3h: float) -> String:
+	if absf(m3h) >= 1000.0:
+		return "%.1f k m³/h" % (m3h / 1000.0)
+	return "%d m³/h" % int(round(m3h))
+
+
+## Doc 04's own pickup ratio is 1.05; anything past it is on its way to tripping,
+## and 0.90 is doc 02 §E2's upgrade gate — the point at which the player can no
+## longer grow on that feeder.
+static func load_state(ratio: float) -> StringName:
+	if ratio >= 1.0:
+		return HudModel.STATE_CRITICAL
+	return HudModel.STATE_WARNING if ratio >= 0.90 else HudModel.STATE_NORMAL
+
+
+## Doc 05 §2.8's own bands (`data/water.json.effects.bands`): 0.60 normal,
+## 0.35 warn, 0.10 critical. Restated as the four §2.5 data states.
+static func pressure_state(pressure: float) -> StringName:
+	if pressure >= 0.60:
+		return HudModel.STATE_NORMAL
+	if pressure >= 0.35:
+		return HudModel.STATE_WARNING
+	return HudModel.STATE_CRITICAL if pressure >= 0.10 else HudModel.STATE_OFFLINE
 
 
 func _row(row_id: String, snapshot: Dictionary, chips: Dictionary) -> Dictionary:

@@ -43,10 +43,11 @@ const SCREENS: Array[String] = [
 	"building", "building_blocked",
 	"drawer", "drawer_empty", "drawer_expanded",
 	"picker", "picker_empty",
-	"dashboard", "economy",
+	"dashboard", "economy", "infrastructure", "response",
 	"away", "away_short",
 	"alerts", "alerts_empty",
-	"overlay", "settings", "saves", "pause",
+	"overlay", "overlay_police", "overlay_fire", "overlay_folded",
+	"settings", "saves", "pause",
 	"coach_welcome", "coach_place_house", "coach_dispatch", "coach_payoff",
 ]
 
@@ -199,7 +200,85 @@ func _populate() -> void:
 	_root.bind_tax(_sim.cmd_set_tax_level, _sim.tax_level(), _sim.tax_level_count(),
 			_sim.tax_rate)
 	_root.ingest_service({"power01": 0.93, "water01": 0.71})
+	_root.feed_infrastructure(_infrastructure())
+	_root.feed_response(_response())
 	_root.refresh_dashboard(snapshot)
+	for mode: StringName in [OverlayModel.MODE_POLICE, OverlayModel.MODE_FIRE]:
+		_root.feed_overlay_summary(mode, _coverage_summary())
+
+
+## §2.10's Infrastructure feed, in the shape `PowerGrid.feeder_rows()` and
+## `WaterSnapshot.build()` publish — a mid-sized city an hour into a heat wave,
+## which is the state the tab exists to read.
+static func _infrastructure() -> Dictionary:
+	var feeders: Array = []
+	for i in 9:
+		var ratio := 0.28 + 0.09 * float(i)
+		feeders.append({"id": "F-%02d" % (i + 1), "kind": "feeder", "parent": "SUB-1",
+				"load_kw": 3000.0 * ratio, "capacity_kw": 3000.0,
+				"effective_kw": 3000.0, "load_ratio": ratio,
+				"headroom_kw": 3000.0 * (1.0 - ratio), "condition": 0.94 - 0.04 * float(i),
+				"state": "OPEN" if i == 8 else "OK", "energized": i != 8,
+				"shed": i == 7, "customers": 12 + i * 5})
+	var transformers: Array = []
+	for i in 7:
+		var ratio := 0.42 + 0.11 * float(i)
+		transformers.append({"id": "T-%02d" % (i + 1), "kind": "transformer",
+				"parent": "F-01", "load_kw": 400.0 * ratio, "capacity_kw": 400.0,
+				"effective_kw": 400.0, "load_ratio": ratio,
+				"headroom_kw": 400.0 * (1.0 - ratio), "condition": 0.88,
+				"state": "OK", "energized": true, "shed": false,
+				"customers": 4 + i * 3, "temp_c": 58.0 + 6.0 * float(i)})
+	return {
+		"power": {"supply_kw": 51000.0, "demand_kw": 42100.0,
+				"plant_capacity_kw": 51000.0, "headroom_kw": 8900.0,
+				"load_ratio": 0.8255, "feeders_over": 2, "transformers_over": 1,
+				"shed_feeders": 1},
+		"feeders": feeders,
+		"transformers": transformers,
+		"water": {
+			"zones": [
+				{"zone_key": "Harbour", "pressure": 0.07, "building_count": 12},
+				{"zone_key": "Old Town", "pressure": 0.31, "building_count": 41},
+				{"zone_key": "Riverside", "pressure": 0.52, "building_count": 28},
+				{"zone_key": "Northgate", "pressure": 0.78, "building_count": 63},
+				{"zone_key": "Foundry", "pressure": 0.91, "building_count": 19},
+				{"zone_key": "Millpond", "pressure": 0.96, "building_count": 22},
+			],
+			"city": {"total_supply_m3h": 1840.0, "total_demand_m3h": 1912.0,
+					"storage_frac": 0.41, "zones_in_deficit": 2},
+		},
+	}
+
+
+## §2.10's Response feed: doc 06's roster mid-incident, with the fire department
+## fully committed — the state the tab is for.
+static func _response() -> Dictionary:
+	var units: Array = []
+	var roster := {"fire": 4, "police": 6, "utility": 3, "water": 2}
+	var busy := {"fire": 4, "police": 2, "utility": 1, "water": 0}
+	var next_id := 1
+	for dept: String in ["fire", "police", "utility", "water"]:
+		for i in int(roster[dept]):
+			units.append({"id": next_id, "department": dept,
+					"status": "RESPONDING" if i < int(busy[dept]) else "IDLE"})
+			next_id += 1
+	return {
+		"units": units,
+		"stats": {"resolved_total": 58, "failed_total": 4, "abandoned_total": 1,
+				"avg_response_min": 9.4, "rolling_response_score": 0.71,
+				"response_samples": 63},
+		"open": 3,
+	}
+
+
+## §2.5's aggregate lines for a coverage overlay.
+static func _coverage_summary() -> Array:
+	return [
+		{"label": "Stations", "value": "2"},
+		{"label": "Lots with no cover", "value": "18", "state": "critical"},
+		{"label": "Below requirement", "value": "5", "state": "warning"},
+	]
 
 
 static func _snapshot() -> Dictionary:
@@ -321,6 +400,10 @@ func _apply(screen: String) -> void:
 			_root.city_dashboard.row_button("treasury").pressed.emit()
 		"economy":
 			_root.city_dashboard.open(DashboardModel.TAB_ECONOMY)
+		"infrastructure":
+			_root.city_dashboard.open(DashboardModel.TAB_INFRASTRUCTURE)
+		"response":
+			_root.city_dashboard.open(DashboardModel.TAB_RESPONSE)
 		"away":
 			_root.present_away_report(_away_input(22320.0, true))
 		"away_short":
@@ -340,6 +423,16 @@ func _apply(screen: String) -> void:
 						and _root.overlay_rail.model.is_enabled(mode):
 					_root.overlay_rail.select(mode)
 					break
+		"overlay_police":
+			# The §2.5 legend CARD, which is the point of these two states: the
+			# strip is closed and the reading is still on screen.
+			_root.overlay_rail.select(OverlayModel.MODE_POLICE)
+		"overlay_fire":
+			_root.overlay_rail.open()
+			_root.overlay_rail.select(OverlayModel.MODE_FIRE)
+		"overlay_folded":
+			_root.overlay_rail.select(OverlayModel.MODE_FIRE)
+			_root.overlay_rail.legend_card().toggle_button().pressed.emit()
 		"settings":
 			_root.settings_sheet.open()
 		"saves":

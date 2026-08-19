@@ -16,7 +16,11 @@ extends Node
 ##   godot --path . tools/overlay_preview.tscn -- --mode=log --incident \
 ##       --out=/tmp/log.png
 ##
-## `--mode=` is `water`, `traffic`, `power`, `none` or `log` (the S13 sheet).
+## `--mode=` is `water`, `traffic`, `power`, `police`, `fire`, `none` or `log`
+## (the S13 sheet). POLICE and FIRE need nothing broken to be worth a look — a
+## starter city with one L1 station of each covers a corner of the map and
+## nothing else, which is the reading, and the §2.5 legend card prints the count
+## of uncovered lots beside it.
 ## `--break-main` snaps the highest-capacity main in the city, which is the one
 ## whose loss is visible; `--incident` cooks the tutorial transformer; `--hour=`
 ## advances the sim to that hour of the day first, which is how you get the
