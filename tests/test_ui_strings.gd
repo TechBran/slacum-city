@@ -314,6 +314,14 @@ func _referenced_families() -> Array:
 			_add_family(out, [match.get_string(1), ""])
 		for match in prefix.search_all(src):
 			_add_family(out, [match.get_string(1), ""])
+	# `data/ui.json` builds keys too: the event log's `@lookup:<prefix>:<field>`
+	# argument form (see EventLogModel.ARG_LOOKUP_PREFIX) makes every key under
+	# <prefix> reachable, and no GDScript source ever names them.
+	var lookup := RegEx.new()
+	lookup.compile("@lookup:((?:ui|n)_[a-z0-9_]*):")
+	var ui_json := FileAccess.get_file_as_string("res://data/ui.json")
+	for match in lookup.search_all(ui_json):
+		_add_family(out, [match.get_string(1), ""])
 	return out
 
 
