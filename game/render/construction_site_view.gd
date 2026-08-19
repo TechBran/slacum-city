@@ -7,11 +7,27 @@ extends Node3D
 ## the placement and are gone the moment the building completes.
 ##
 ## Geometry is procedural (no asset files, nothing in the mesh manifest): boxes
-## and prisms in the gray-box language of `game/meshes/generated`, vertex
-## coloured through one shared material, with the repeated fence pieces on
-## per-site MultiMeshes the way `StreetlightView` does its poles. Site counts
-## are tiny (one per building under construction), so the moving parts are
-## plain per-frame transform writes rather than a shader.
+## and prisms in the gray-box language of `game/meshes/generated`, with the
+## repeated fence pieces on per-site MultiMeshes the way `StreetlightView` does
+## its poles. Site counts are tiny (one per building under construction), so the
+## moving parts are plain per-frame transform writes rather than a shader.
+##
+## SURFACE. Three `PropSurface` materials, one per page of
+## `tools/gen_textures.py`'s props set, and no new draw calls — the hoarding,
+## the posts, the structure and the stockpile were already four separate nodes:
+##
+##   hoarding panels -> `prop_hoarding`, ONE printed panel mapped 0..1 across
+##                      each run, so the hazard band sits at a fixed height
+##                      above the pavement whatever the bay length
+##   posts, crane, scaffold, cable, hook -> `prop_steel`, tiled in METRES, whose
+##                      half-metre baked AO bands are what give a flat-faced
+##                      lattice leg depth
+##   stockpiles      -> `prop_stock`, tiled in metres
+##
+## Every page is near-neutral VALUE and the material multiplies the VERTEX
+## colour, so the tints below are still the colours: safety orange stays safety
+## orange. A clone with no generated pages gets flat vertex-coloured materials
+## and the view is exactly what it was before the surface pass.
 ##
 ## Integration (`main.gd` owns the wiring):
 ##   view.setup(render_data)                                # data/render.json
@@ -117,7 +133,14 @@ var scaffold_color := Color("#8C9298")
 var _sites: Dictionary = {}  # int -> Site
 var _time := 0.0
 var _night := 1.0
-var _material: StandardMaterial3D
+## The props surface set (`tools/gen_textures.py` + `PropSurface`). Three
+## materials, one per page, and every one of them is a vertex-colour material —
+## the tints above are still the colour, the page is only surface. A clone with
+## no generated pages gets identical flat materials and the view is exactly what
+## it was before this pass.
+var _material: StandardMaterial3D          # hoarding panels (printed page)
+var _steel_material: StandardMaterial3D    # crane, scaffold, posts, cable, hook
+var _stock_material: StandardMaterial3D    # timber, aggregate, skips
 var _panel_mesh: ArrayMesh
 var _post_mesh: ArrayMesh
 var _cable_mesh: ArrayMesh
@@ -287,28 +310,37 @@ func _ensure_setup() -> void:
 
 
 func _build_shared() -> void:
-	if _material == null:
-		_material = StandardMaterial3D.new()
-		_material.vertex_color_use_as_albedo = true
-		_material.roughness = 0.85
-		_material.metallic = 0.0
+	# Hoarding is a printed panel and reads matte; galvanised steel is the one
+	# thing on a site with any sheen, and it needs a little metallic to pick the
+	# sky up along a crane chord; a heap of aggregate is as rough as it gets.
+	_material = PropSurface.material("hoarding", 0.88, 0.0)
+	_steel_material = PropSurface.material("steel", 0.62, 0.28)
+	_stock_material = PropSurface.material("stock", 0.95, 0.0)
+	var tile := PropSurface.tile_m()
 	# A unit-length panel: instances scale it along local X to the run they
-	# cover and carry the gray/orange tint as their instance colour.
+	# cover and carry the gray/orange tint as their instance colour. UV_UNIT,
+	# because the hoarding page is ONE panel with its hazard band at a fixed
+	# height — a tiled projection would slide the band with the run length, and
+	# a 3.6 m bay and a 4.4 m bay would wear different markings.
 	var panel := PropMesh.new()
+	panel.uv_mode = PropMesh.UV_UNIT
 	panel.add_box(Vector3(0.0, fence_height * 0.5, 0.0),
 			Vector3(1.0, fence_height, fence_thickness), Color.WHITE)
 	_panel_mesh = panel.to_mesh(_material)
 	var post := PropMesh.new()
+	post.uv_tile_m = tile
 	post.add_box(Vector3(0.0, (fence_height + 0.12) * 0.5, 0.0),
 			Vector3(fence_post, fence_height + 0.12, fence_post), Color.WHITE)
-	_post_mesh = post.to_mesh(_material)
+	_post_mesh = post.to_mesh(_steel_material)
 	var cable := PropMesh.new()
+	cable.uv_tile_m = tile
 	cable.add_box(Vector3(0.0, -0.5, 0.0), Vector3(0.07, 1.0, 0.07), crane_dark_color)
-	_cable_mesh = cable.to_mesh(_material)
+	_cable_mesh = cable.to_mesh(_steel_material)
 	var hook := PropMesh.new()
+	hook.uv_tile_m = tile
 	hook.add_box(Vector3.ZERO, Vector3(0.55, 0.7, 0.55), crane_dark_color)
 	hook.add_box(Vector3(0.0, -0.55, 0.0), Vector3(0.22, 0.5, 0.22), crane_accent_color)
-	_hook_mesh = hook.to_mesh(_material)
+	_hook_mesh = hook.to_mesh(_steel_material)
 	var beacon := PropMesh.new()
 	beacon.add_box(Vector3.ZERO, Vector3(0.55, 0.55, 0.55), Color.WHITE)
 	_beacon_mesh = beacon.to_mesh(null)
@@ -455,12 +487,13 @@ func _build_crane(site: Site) -> void:
 	site.structure = crane
 
 	var mast := PropMesh.new()
+	mast.uv_tile_m = PropSurface.tile_m()
 	mast.add_box(Vector3(0.0, 0.20, 0.0),
 			Vector3(crane_mast_w * 1.7, 0.40, crane_mast_w * 1.7), concrete_color)
 	_lattice_mast(mast, site.mast_h)
 	var mast_node := MeshInstance3D.new()
 	mast_node.name = "Mast"
-	mast_node.mesh = mast.to_mesh(_material)
+	mast_node.mesh = mast.to_mesh(_steel_material)
 	crane.add_child(mast_node)
 
 	site.slew = Node3D.new()
@@ -469,6 +502,7 @@ func _build_crane(site: Site) -> void:
 	crane.add_child(site.slew)
 
 	var head := PropMesh.new()
+	head.uv_tile_m = PropSurface.tile_m()
 	var apex_y := 7.4
 	var jib_y := 2.6
 	# Turntable, machinery deck and cab.
@@ -515,7 +549,7 @@ func _build_crane(site: Site) -> void:
 			crane_dark_color)
 	var head_node := MeshInstance3D.new()
 	head_node.name = "Jib"
-	head_node.mesh = head.to_mesh(_material)
+	head_node.mesh = head.to_mesh(_steel_material)
 	site.slew.add_child(head_node)
 
 	site.hoist = Node3D.new()
@@ -594,6 +628,7 @@ func _build_scaffold(site: Site) -> void:
 	var over := scaffold_over * lerpf(0.65, 1.0, _stage_t(site))
 	var top := maxf(site.height_m + over, scaffold_height)
 	var buf := PropMesh.new()
+	buf.uv_tile_m = PropSurface.tile_m()
 	var corners := [Vector2(ext.x, ext.y), Vector2(-ext.x, ext.y),
 			Vector2(-ext.x, -ext.y), Vector2(ext.x, -ext.y)]
 	for c: Vector2 in corners:
@@ -620,7 +655,7 @@ func _build_scaffold(site: Site) -> void:
 			Vector3(0.32, 0.09, ext.y * 1.5), timber_color)
 	var node := MeshInstance3D.new()
 	node.name = "Scaffold"
-	node.mesh = buf.to_mesh(_material)
+	node.mesh = buf.to_mesh(_steel_material)
 	site.root.add_child(node)
 	site.structure = node
 
@@ -645,6 +680,7 @@ func _build_clutter(site: Site) -> void:
 	var ring := _fence_ring(site)
 	var depth := maxf(site_margin - fence_thickness * 0.5 - 0.06, 0.14)
 	var buf := PropMesh.new()
+	buf.uv_tile_m = PropSurface.tile_m()
 	# The skip stands IN the gate, straddling the hoarding line: the one prop
 	# with a clear line of sight from the street, and the only spot with room
 	# for it (the neighbouring massing keeps the same 0.05 t inset).
@@ -699,7 +735,7 @@ func _build_clutter(site: Site) -> void:
 		return
 	var node := MeshInstance3D.new()
 	node.name = "Stockpile"
-	node.mesh = buf.to_mesh(_material)
+	node.mesh = buf.to_mesh(_stock_material)
 	site.root.add_child(node)
 	site.clutter = node
 
@@ -796,10 +832,30 @@ class Site extends RefCounted:
 ## material. Winding matches `tools/gen_graybox.gd` — Godot's front faces are
 ## CLOCKWISE, so each triangle is emitted with its geometric cross product
 ## pointing AGAINST the outward normal.
+##
+## UV. Two modes, because the props want two different things from
+## `tools/gen_textures.py`'s prop pages:
+##
+## * `UV_TILED` (the default) projects the vertex position onto whichever axis
+##   pair its face is most perpendicular to and divides by `uv_tile_m` —
+##   metres, not mesh fractions. That is what lets one steel page serve a
+##   0.22 m crane leg, a 0.16 m scaffold standard and a 4.6 m ladder with the
+##   same grain and the same baked AO band pitch, with no per-primitive UV
+##   authoring anywhere.
+## * `UV_UNIT` maps each face across its own bounding box, v flipped so 0 is the
+##   TOP. The hoarding panel needs this: its page is ONE printed panel with the
+##   hazard band at a fixed height, and a tiled projection would slide the band
+##   up and down with the panel's run length.
 class PropMesh extends RefCounted:
+	enum { UV_TILED, UV_UNIT }
+
+	var uv_mode := UV_TILED
+	var uv_tile_m := 2.0
+
 	var _verts := PackedVector3Array()
 	var _norms := PackedVector3Array()
 	var _cols := PackedColorArray()
+	var _uvs := PackedVector2Array()
 	var _idx := PackedInt32Array()
 
 	func is_empty() -> bool:
@@ -883,31 +939,74 @@ class PropMesh extends RefCounted:
 		arrays[Mesh.ARRAY_VERTEX] = _verts
 		arrays[Mesh.ARRAY_NORMAL] = _norms
 		arrays[Mesh.ARRAY_COLOR] = _cols
+		arrays[Mesh.ARRAY_TEX_UV] = _uvs
 		arrays[Mesh.ARRAY_INDEX] = _idx
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		if material != null:
 			mesh.surface_set_material(0, material)
 		return mesh
 
-	func _push(p: Vector3, n: Vector3, color: Color) -> int:
+	func _push(p: Vector3, n: Vector3, color: Color, uv: Vector2) -> int:
 		_verts.push_back(p)
 		_norms.push_back(n)
 		_cols.push_back(color)
+		_uvs.push_back(uv)
 		return _verts.size() - 1
+
+	## Metres-along-the-face, divided by the page pitch. Continuous across a
+	## box's four flanks, so a hoarding post or a crane chord never shows a seam
+	## where two faces meet.
+	func _tiled_uv(p: Vector3, n: Vector3) -> Vector2:
+		var t := maxf(uv_tile_m, 0.01)
+		if absf(n.y) > 0.5:
+			return Vector2(p.x / t, p.z / t)
+		if absf(n.x) >= absf(n.z):
+			return Vector2(p.z / t, -p.y / t)
+		return Vector2(p.x / t, -p.y / t)
+
+	## The face's own [0,1] box, v flipped so the page's top is the prop's top.
+	static func _unit_uv(p: Vector3, n: Vector3, lo: Vector3, hi: Vector3) -> Vector2:
+		var ext := hi - lo
+		if absf(n.y) > 0.5:
+			return Vector2((p.x - lo.x) / maxf(ext.x, 0.0001),
+					(p.z - lo.z) / maxf(ext.z, 0.0001))
+		var u := (p.z - lo.z) / maxf(ext.z, 0.0001) if absf(n.x) >= absf(n.z) \
+				else (p.x - lo.x) / maxf(ext.x, 0.0001)
+		return Vector2(u, (hi.y - p.y) / maxf(ext.y, 0.0001))
 
 	func _quad(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, n: Vector3,
 			color: Color) -> void:
-		var i0 := _push(p0, n, color)
-		var i1 := _push(p1, n, color)
-		var i2 := _push(p2, n, color)
-		var i3 := _push(p3, n, color)
+		var u0 := Vector2.ZERO
+		var u1 := Vector2.ZERO
+		var u2 := Vector2.ZERO
+		var u3 := Vector2.ZERO
+		if uv_mode == UV_UNIT:
+			var lo := Vector3(minf(minf(p0.x, p1.x), minf(p2.x, p3.x)),
+					minf(minf(p0.y, p1.y), minf(p2.y, p3.y)),
+					minf(minf(p0.z, p1.z), minf(p2.z, p3.z)))
+			var hi := Vector3(maxf(maxf(p0.x, p1.x), maxf(p2.x, p3.x)),
+					maxf(maxf(p0.y, p1.y), maxf(p2.y, p3.y)),
+					maxf(maxf(p0.z, p1.z), maxf(p2.z, p3.z)))
+			u0 = _unit_uv(p0, n, lo, hi)
+			u1 = _unit_uv(p1, n, lo, hi)
+			u2 = _unit_uv(p2, n, lo, hi)
+			u3 = _unit_uv(p3, n, lo, hi)
+		else:
+			u0 = _tiled_uv(p0, n)
+			u1 = _tiled_uv(p1, n)
+			u2 = _tiled_uv(p2, n)
+			u3 = _tiled_uv(p3, n)
+		var i0 := _push(p0, n, color, u0)
+		var i1 := _push(p1, n, color, u1)
+		var i2 := _push(p2, n, color, u2)
+		var i3 := _push(p3, n, color, u3)
 		_wind(i0, i1, i2, p0, p1, p2, n)
 		_wind(i0, i2, i3, p0, p2, p3, n)
 
 	func _tri(p0: Vector3, p1: Vector3, p2: Vector3, n: Vector3, color: Color) -> void:
-		var i0 := _push(p0, n, color)
-		var i1 := _push(p1, n, color)
-		var i2 := _push(p2, n, color)
+		var i0 := _push(p0, n, color, _tiled_uv(p0, n))
+		var i1 := _push(p1, n, color, _tiled_uv(p1, n))
+		var i2 := _push(p2, n, color, _tiled_uv(p2, n))
 		_wind(i0, i1, i2, p0, p1, p2, n)
 
 	func _wind(i0: int, i1: int, i2: int, p0: Vector3, p1: Vector3, p2: Vector3,

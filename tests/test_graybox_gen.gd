@@ -249,6 +249,66 @@ func test_05_uv2_window_grid_rule() -> void:
 	assert_true(windowed >= 100, "every non-datacenter mesh carries a window grid")
 
 
+func test_05c_roof_props_and_gables_carry_the_roof_surface_sentinel() -> void:
+	# The texture pass's open question 3: a roof prop's SIDE faces have no normal
+	# to tell them apart from a wall, so they fell through to the façade
+	# projection and a rooftop chiller came out clad in brick with a sash window
+	# sliced across it. The second sentinel (-1,-2) is what marks them, and it
+	# has to reach the meshes that actually have props.
+	var with_roof_flag := 0
+	var facade_flag_seen := false
+	for e_v in _entries():
+		var e: Dictionary = e_v
+		var mesh: ArrayMesh = load(String(e["path"]))
+		var uv2: PackedVector2Array = mesh.surface_get_arrays(0)[Mesh.ARRAY_TEX_UV2]
+		var roof_flag := 0
+		for w: Vector2 in uv2:
+			if w.x >= 0.0:
+				continue
+			# BOTH sentinels stay strictly negative in both components, which is
+			# the shape test_05 and the shader's `has_uv2` already depend on.
+			assert_true(w.y < 0.0, "%s: a non-façade UV2 must stay negative" % e["path"])
+			assert_true(w.x == GEN.UV2_FACADE_PLANAR.x, "%s: sentinel u is -1" % e["path"])
+			if is_equal_approx(w.y, GEN.UV2_ROOF_PLANAR.y):
+				roof_flag += 1
+			else:
+				assert_true(is_equal_approx(w.y, GEN.UV2_FACADE_PLANAR.y),
+						"%s: unknown UV2 sentinel %s" % [e["path"], str(w)])
+				facade_flag_seen = true
+		if roof_flag > 0:
+			with_roof_flag += 1
+	assert_true(with_roof_flag >= 20,
+			"only %d meshes carry a roof-surface prop; the flag is not reaching "
+			% with_roof_flag + "the emitters")
+	assert_true(facade_flag_seen,
+			"plain block walls must keep the façade sentinel — a windowless "
+			+ "data-centre wall IS that building's façade")
+
+
+func test_05d_the_house_gable_wears_the_roof_page() -> void:
+	# A gable prism's end triangles are vertical and used to sample the clapboard
+	# façade page, which put half a sash window in the middle of the roof. They
+	# are a ROOF surface now, like the slopes either side of them.
+	for e_v in _entries():
+		var e: Dictionary = e_v
+		if String(e["archetype"]) != "house" or int(e["lod"]) != 0:
+			continue
+		var mesh: ArrayMesh = load(String(e["path"]))
+		var arrays := mesh.surface_get_arrays(0)
+		var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+		var uv2: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV2]
+		var vertical_roof_flags := 0
+		for i in normals.size():
+			if absf(normals[i].y) < 0.2 and uv2[i].x < 0.0 \
+					and is_equal_approx(uv2[i].y, GEN.UV2_ROOF_PLANAR.y):
+				vertical_roof_flags += 1
+		assert_true(vertical_roof_flags > 0,
+				"%s has no vertical roof-page face — the gable ends lost the flag"
+				% e["path"])
+		return
+	assert_true(false, "no house LOD0 mesh in the manifest")
+
+
 func test_05b_window_grid_metadata() -> void:
 	for e_v in _entries():
 		var e: Dictionary = e_v

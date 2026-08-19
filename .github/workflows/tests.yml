@@ -32,6 +32,15 @@ jobs:
           python3 tools/gen_buildings.py --check
           python3 tools/gen_building_economy.py --check
           python3 tools/gen_starter_city.py --check
+          python3 tools/gen_building_shapes.py --check
+
+      # The committed texture pages, byte for byte from their generator. The
+      # suite already hashes them against the manifest; this catches the other
+      # direction — a generator edit whose pages were never regenerated.
+      - name: Install Pillow
+        run: python3 -m pip install --quiet Pillow
+      - name: Texture pages are in sync with their generator
+        run: python3 tools/gen_textures.py --check
 
       - name: Import project (registers class_name scripts)
         run: ~/godot/godot --headless --path . --import || true

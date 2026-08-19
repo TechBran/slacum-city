@@ -222,6 +222,108 @@ func test_far_instances_are_scaled_boxes_carrying_the_near_custom_data() -> void
 	view.free()
 
 
+# ═════════════════ 2b. the FAR tier's chunk-aggregate overlay ═══════════════
+#
+# Doc 12 §2.5 stops at the MEDIUM boundary without this: the far city greyed
+# out under the wash and then said nothing, so a blackout three chunks out was
+# invisible in the one overlay opened to find it. The state is packed into `.a`
+# ABOVE the family index (CityView.FAR_OVERLAY_STRIDE) because that is the only
+# channel this tier owns — `.g` is the damage the far shader reads for soot and
+# the emissive dim, and taking it would have cost a burnt block its soot the
+# moment the overlay opened.
+
+func _far_view(model: RenderStateModel) -> CityView:
+	var view := CityView.new()
+	view.keep_far_buffers = true
+	view.setup(model, _data())
+	return view
+
+
+func test_far_alpha_is_the_bare_family_index_with_no_overlay() -> void:
+	# Mode 0 must be byte-for-byte what it was before the far overlay landed.
+	var view := _far_view(_far_model())
+	view.refresh(0.1, 21.0, Vector3(64.0, 20.0, 64.0))
+	var buffer := view.far_buffer(Vector2i(8, 0))
+	assert_true(buffer.size() >= 16, "the far chunk has instances")
+	for i in buffer.size() / 16:
+		var a := buffer[i * 16 + 15]
+		assert_true(a >= 0.0 and a <= 4.0,
+				".a is the bare family index at overlay mode 0, got %f" % a)
+	view.free()
+
+
+func test_far_alpha_packs_the_chunk_state_above_the_family_index() -> void:
+	# One OFFLINE building in the far chunk must colour the WHOLE chunk, and the
+	# family index has to survive underneath it — the far city keeps its
+	# per-family window hue while it is being diagnosed.
+	var model := _far_model()
+	# ids 3,4,5 are the far chunk (x >= 1064). Mark one destroyed-equivalent.
+	model.set_overlay_channel(&"water", {4: RenderStateModel.OVERLAY_OFFLINE})
+	var view := _far_view(model)
+	view.set_overlay_mode(&"water", Vector3(64.0, 20.0, 64.0))
+	view.refresh(0.1, 21.0, Vector3(64.0, 20.0, 64.0))
+	var buffer := view.far_buffer(Vector2i(8, 0))
+	assert_true(buffer.size() >= 16, "the far chunk has instances")
+	var families: Dictionary = {}
+	for i in buffer.size() / 16:
+		var a := buffer[i * 16 + 15]
+		var state := floorf(a / CityView.FAR_OVERLAY_STRIDE)
+		var family := a - state * CityView.FAR_OVERLAY_STRIDE
+		assert_almost_eq(state, 3.0, 1e-6,
+				"the worst state in the chunk paints the whole chunk, got %f" % state)
+		assert_true(family >= 0.0 and family <= 4.0,
+				"the family index survives the packing, got %f" % family)
+		families[int(family)] = true
+	assert_true(families.size() >= 2,
+			"a mixed chunk keeps its mixed window colour under the overlay")
+	view.free()
+
+
+func test_far_power_overlay_reads_the_emissive_ladder_like_the_near_shader() -> void:
+	# A chunk does not get to change verdict as it crosses the LOD boundary: the
+	# near shader grades POWER off `v_custom.r` (the model's dark 0.05 / backup
+	# 0.22 / powered 0.55 ladder) and the aggregate has to use the same
+	# thresholds. A blacked-out chunk therefore reads OFFLINE at 500 m for the
+	# same reason a single dark tower does at 50 m.
+	var model := _far_model()
+	var view := _far_view(model)
+	view.set_overlay_mode(&"power", Vector3(64.0, 20.0, 64.0))
+	view.refresh(0.1, 21.0, Vector3(64.0, 20.0, 64.0))
+	var lit := view.far_buffer(Vector2i(8, 0))
+	assert_true(lit.size() >= 16, "the far chunk has instances")
+	var lit_state := floorf(lit[15] / CityView.FAR_OVERLAY_STRIDE)
+	# Now cut the block and let the ramps settle. `_far_model` puts every
+	# building on block "B", so this is the whole city going dark — which is
+	# what a far chunk reading OFFLINE has to survive.
+	model.plan_blackout("B")
+	model.advance(30.0)
+	view.refresh(0.1, 21.0, Vector3(64.0, 20.0, 64.0))
+	var dark := view.far_buffer(Vector2i(8, 0))
+	var dark_state := floorf(dark[15] / CityView.FAR_OVERLAY_STRIDE)
+	assert_true(dark_state > lit_state,
+			"a blacked-out far chunk must read worse than a lit one (%f -> %f)"
+			% [lit_state, dark_state])
+	assert_almost_eq(dark_state, 3.0, 1e-6, "…and specifically OFFLINE")
+	view.free()
+
+
+func test_far_shader_decodes_the_packing_and_stays_identity_at_mode_zero() -> void:
+	var src := _code_only(_src(FAR))
+	assert_true(src.contains("far_overlay_stride"),
+			"the far shader reads the packing stride from a uniform")
+	assert_true(src.contains("mod(packed_a, far_overlay_stride)"),
+			"the family index is the remainder, so it survives the packing")
+	assert_true(src.contains("if (sc_overlay_mode > 0)"),
+			"the whole overlay block is behind ONE uniform branch")
+	assert_true(src.contains("OVERLAY_MODE_POWER")
+			and src.contains("OVERLAY_MODE_WATER"),
+			"only modes 1 and 2 paint a state (doc 12 §2.5)")
+	# Motion, not just colour: constitution §11.
+	assert_true(src.contains("overlay_critical_hz")
+			and src.contains("overlay_offline_hz"),
+			"CRITICAL pulses and OFFLINE breathes at range too")
+
+
 func test_lod_can_be_switched_off_and_every_chunk_comes_back() -> void:
 	var data := _data()
 	var model := _far_model()

@@ -12,6 +12,15 @@ extends Node3D
 ## band tier, the animated water, weather + wetness + lightning, streetlights,
 ## construction shells and props, and the vehicle layer.
 ##
+## The surface pass added three things that had nowhere else to be judged:
+## the ground is built as one 128 m plane per chunk with the four DISTRICT
+## tones quartered across the grid (doc 09's `color_index`, which the showcase
+## has no sim to ask for and so synthesises); the traffic batch carries one body
+## from each department so the LIVERY cells and the light-bar strobe are on
+## screen; and `--overlay=N` now pushes the mode into the RenderStateModel as
+## well as into `sc_overlay_mode`, without which the FAR tier's chunk-aggregate
+## overlay has no state to draw.
+##
 ## Args (after `--`), all optional:
 ##   --screenshot=<path>   --shot-at=<seconds>    --hour=<0..24>
 ##   --zoom=<0..1>         doc 12's zoom_t: 0 = Z0 street, 1 = Z2 skyline
@@ -39,6 +48,10 @@ const CANAL_BRANCH_FROM_Z := 48
 const SITE_FRACTION := 0.03
 ## Frames before the frame-time average starts counting.
 const WARMUP_S := 1.0
+## `data/ui.json`'s `overlay.modes`, in the order `sc_overlay_mode` indexes them
+## (doc 12 §2.5). `--overlay=N` picks one; the name is what the RenderStateModel
+## needs, the index is what the shaders read.
+const OVERLAY_MODES := ["none", "power", "water", "police", "fire", "traffic"]
 
 var render_model: RenderStateModel
 var city_view: CityView
@@ -106,6 +119,14 @@ func _ready() -> void:
 				get_viewport().get_viewport_rid(), true)
 	if _overlay > 0:
 		RenderingServer.global_shader_parameter_set("sc_overlay_mode", _overlay)
+		# The shader global alone only greys the world back. The per-building
+		# states — and the FAR tier's chunk aggregate — come from the MODEL, so
+		# the mode has to be pushed there too, exactly as the overlay rail does
+		# it in main.gd. Without this the far city washes out and then says
+		# nothing, which is the defect the far overlay exists to fix.
+		if _overlay < OVERLAY_MODES.size():
+			city_view.set_overlay_mode(StringName(OVERLAY_MODES[_overlay]),
+					_cam_pos)
 
 
 func _parse_args() -> void:
@@ -202,25 +223,44 @@ func _build_environment(render_data: Dictionary) -> void:
 
 
 func _build_ground() -> void:
+	# The hinterland: one big plane under everything, at the undeveloped tone, so
+	# the city reads as a built patch inside unbought land rather than as a
+	# floating slab.
 	var ground := MeshInstance3D.new()
 	var mesh := PlaneMesh.new()
 	mesh.size = Vector2(SPAN + 4000.0, SPAN + 4000.0)
 	# Textured ground (tools/gen_textures.py); falls back to the flat tint when
 	# the pages are absent.
-	var material := GroundSurface.material("pavement", mesh.size,
-			Color(0.62, 0.63, 0.64))
-	mesh.material = material
+	mesh.material = GroundSurface.block_material(-1, false, mesh.size)
 	ground.mesh = mesh
-	ground.position = Vector3(SPAN * 0.5, -0.02, SPAN * 0.5)
+	ground.position = Vector3(SPAN * 0.5, -0.06, SPAN * 0.5)
 	add_child(ground)
+	# The developed core, one 128 m plane per chunk, tinted by DISTRICT (doc 11
+	# §2.1 / doc 09's `color_index`). The showcase has no sim to ask, so it
+	# quarters the grid into four synthetic districts — which is exactly the
+	# starter city's shape (Northgate / Downtown / Millpond / Foundry Flats) and
+	# puts all four ground tones in one frame, which is the only way to judge
+	# whether the trims are readable without being loud.
+	var tones := maxi(GroundSurface.district_tone_count(), 1)
+	for cz in CHUNKS:
+		for cx in CHUNKS:
+			var district := (0 if cx < CHUNKS / 2 else 1) \
+					+ (0 if cz < CHUNKS / 2 else 2)
+			var plane := MeshInstance3D.new()
+			var block := PlaneMesh.new()
+			block.size = Vector2(128.0, 128.0)
+			block.material = GroundSurface.block_material(district % tones, true,
+					block.size)
+			plane.mesh = block
+			plane.position = Vector3(cx * 128.0 + 64.0, 0.0, cz * 128.0 + 64.0)
+			add_child(plane)
 	# Avenue grid on chunk boundaries.
 	var road_mm := MultiMesh.new()
 	road_mm.transform_format = MultiMesh.TRANSFORM_3D
 	var strip := BoxMesh.new()
 	strip.size = Vector3(SPAN, 0.06, 10.0)
-	var road_material := GroundSurface.material("asphalt",
-			Vector2(strip.size.x, strip.size.z), Color(0.52, 0.53, 0.56), 0.80)
-	strip.material = road_material
+	strip.material = GroundSurface.road_material(
+			Vector2(strip.size.x, strip.size.z))
 	road_mm.mesh = strip
 	road_mm.instance_count = (CHUNKS + 1) * 2
 	for i in CHUNKS + 1:
@@ -363,6 +403,13 @@ func _build_sites(render_data: Dictionary, records: Array) -> void:
 	for record: Array in records:
 		sites.add_site(int(record[0]), record[1], record[2], float(record[3]))
 		sites.set_stage(int(record[0]), int(record[4]))
+	# Where the hoarding and the cranes actually are, so a `--cam=` inspection
+	# pose can be aimed at one instead of hunted for across 768 m of city.
+	for i in mini(4, records.size()):
+		var r: Array = records[i]
+		print("showcase site %d at %.0f,%.0f h=%.0f stage=%d crane=%s"
+				% [int(r[0]), (r[1] as Vector3).x, (r[1] as Vector3).z,
+				float(r[3]), int(r[4]), sites.has_crane(int(r[0]))])
 
 
 func _build_streetlights(render_data: Dictionary) -> void:
@@ -428,6 +475,21 @@ func _build_vehicles(render_data: Dictionary) -> void:
 						PI * 0.5 if south else -PI * 0.5, rng))
 				id += 1
 			along += 26.0
+	# A response in progress: one body from each department, bars running, out on
+	# the avenues with the traffic. The showcase exists to put every render pass
+	# on screen at once, and the department LIVERIES and the light-bar strobe are
+	# a pass — without a rolling fleet they are only ever seen in a unit test.
+	# These go down doc 10's cosmetic feed rather than doc 06's fleet snapshot
+	# because `vehicle_class` names the department directly, and doc 06's roster
+	# has no medical type to borrow an ambulance from.
+	var fleet := ["police", "fire", "medical", "utility"]
+	for i in fleet.size():
+		var line := float(2 + i) * 128.0
+		batch.append({"type": &"vehicle_spawned", "id": 900 + i, "kind": "car",
+				"vehicle_class": String(fleet[i]),
+				"pos": Vector3(SPAN * (0.26 + 0.13 * float(i)), 0.0, line + 1.85),
+				"heading": 0.0, "speed": 11.0, "edge_id": 900 + i,
+				"siren": true, "lightbar": true, "headlights": true})
 	vehicles.apply_events(batch)
 	print("showcase vehicles: ", vehicles.vehicle_count())
 

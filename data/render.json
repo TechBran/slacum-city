@@ -107,12 +107,26 @@
     "thunder_speed_of_sound_mps": 340.0 },
 
   "streetlights": { "lamp_billboard_m": 1.6, "lamp_color": "#FFD9A0",
+                    "_pole": "POLE ART ONLY. The billboard / pool / omni system is tuned and the surface pass does not touch it. `pole_color` multiplies the galvanised prop page and the base-weathering ramp StreetlightView bakes into the pole's vertex colour, so it has to stay dark enough to silhouette against a lit pavement and light enough for the page's half-metre AO bands to survive the multiply.",
+                    "pole_color": "#575E61",
                     "pool_radius_m": 6.0, "pool_y_m": 0.06,
                     "pool_wet_radius_gain": 0.5, "pool_wet_energy_gain": 0.6,
                     "omni_range_m": 14.0, "omni_energy": 1.6, "omni_attenuation": 1.6,
                     "omni_shadows": false, "omni_distance_fade_begin_m": 55.0,
                     "omni_distance_fade_len_m": 15.0,
                     "pool_rebind_hz": 4.0, "pool_crossfade_s": 0.25 },
+
+  "ground": {
+    "_owner": "doc 11 §2.1's ground surfaces, ART side. `GroundSurface` reads this block and nothing else does; the shader constants stay in `weather`. The page set is tools/gen_textures.py's `ground_*`.",
+    "_districts": "A district is doc 09's 1-4 contiguous blocks and carries a `color_index` 0..3 (data/starter_city.json `districts`). The renderer spends that index on GROUND TONE and on nothing else: the same pavement page, trimmed a few per cent in value and hue per district, so a player reading the skyline can still tell Downtown's pale slabs from Foundry Flats' oiled yard without a legend, an outline or a second texture in VRAM. A block with no district (every unbought block at t0) takes `undeveloped_tint`, which is why the city edge reads as scrub and the owned core reads as pavement.",
+    "page": "pavement",
+    "developed_tint": "#858785", "developed_roughness": 0.90,
+    "undeveloped_tint": "#66805C", "undeveloped_roughness": 1.00,
+    "road_page": "asphalt", "road_tint": "#57575F", "road_roughness": 0.85,
+    "_tone_calibration": "Measured on the showcase's four-quadrant ground at 120 m, hour 13. The first draft (#8E9089/#98948E/#7C8A8C/#8C8378) was invisible across the avenue: four greys a few per cent apart, which is a tone nobody can name. These keep the SAME luma band (every one within 0.06 of developed_tint's 0.527, so no district reads as brighter ground) and spend the difference on HUE instead - cool slate, warm limestone, green-grey, oiled brown. That is the split the eye actually resolves at 80-200 m, and it stays a trim: put any two side by side against a road and they are still one city.",
+    "district_tones": ["#8A8F92", "#9A9488", "#86908A", "#8E877E"],
+    "district_pages": ["pavement", "pavement", "pavement", "asphalt"],
+    "district_roughness": [0.90, 0.86, 0.94, 0.96] },
 
   "water_surface": {
     "_owner": "doc 11 §2.1's third ground surface. main.gd builds the water tiles; GroundSurface.water() builds the material for them. Animated in the shader, never in script: a MultiMeshInstance3D of 15 quads cannot afford a per-frame CPU touch, and sc_time is already published for the window flicker.",

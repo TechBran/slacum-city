@@ -55,7 +55,7 @@ func test_01_every_archetype_resolves_to_a_surface() -> void:
 
 func test_02_every_page_loads_as_a_texture() -> void:
 	var tex := _tex()
-	for group in ["facades", "roofs", "grounds"]:
+	for group in ["facades", "roofs", "grounds", "props", "vehicles"]:
 		var pages: Dictionary = tex.get(group, {})
 		assert_true(pages.size() > 0, "%s group is empty" % group)
 		for name in pages:
@@ -95,7 +95,7 @@ func test_04_pages_import_vram_compressed_and_mipmapped() -> void:
 	# and a 256 px bay is roughly one pixel at Z2 — without mipmaps the whole
 	# skyline crawls.
 	var tex := _tex()
-	for group in ["facades", "roofs", "grounds"]:
+	for group in ["facades", "roofs", "grounds", "props", "vehicles"]:
 		for name in tex.get(group, {}):
 			var path := String((tex[group][name] as Dictionary).get("path", ""))
 			var f := FileAccess.open(path + ".import", FileAccess.READ)
@@ -194,6 +194,24 @@ func test_08_instance_custom_is_flat_interpolated() -> void:
 			"v_custom must be flat or the per-window hash dithers per pixel")
 
 
+func test_08b_roof_props_sample_the_roof_page_not_the_facade() -> void:
+	# The texture pass's open question 3, closed. A roof prop's SIDE faces have
+	# no normal to distinguish them from a wall, so they fell through to the
+	# façade projection: a rooftop chiller wore brick with a sash window sliced
+	# across it and a house's gable end grew half a window. `gen_graybox.gd`
+	# marks them UV2 = (-1,-2) and this is the line that reads it.
+	var src := _shader_source()
+	assert_true(src.contains("float prop_side = (1.0 - has_uv2) * step(v_uv2.y, -1.5)"),
+			"the shader lost the roof-prop surface flag")
+	assert_true(src.contains("float use_roof = max(is_roof, prop_side);"),
+			"a flagged side face has to take the roof page")
+	# And it must cost no extra fetch: one façade sample, one roof sample, the
+	# roof one re-projected for a vertical face. A third sampler would have made
+	# the whole city pay to dress a handful of rooftop boxes.
+	assert_eq(src.count("texture(facade_tex"), 1, "exactly one façade fetch")
+	assert_eq(src.count("texture(roof_tex"), 1, "exactly one roof fetch")
+
+
 func test_09_texture_pass_degrades_to_the_grayboxed_look() -> void:
 	# A clone without the generated pages still has to boot: CityView sets
 	# tex_mix = 0 and every textured term collapses to what shipped before.
@@ -212,9 +230,18 @@ func test_10_generator_manifest_is_self_consistent() -> void:
 	var bay: Array = tex.get("bay_m", [])
 	assert_eq(bay.size(), 2, "bay_m is a 2-vector")
 	assert_true(float(bay[0]) > 0.0 and float(bay[1]) > 0.0, "bay_m positive")
+	# The two pitches the non-building pages are baked against. Both are read by
+	# code (PropSurface, VehicleMesh), so a silent edit here would desynchronise
+	# the meshes from their pages with nothing else complaining.
+	assert_true(float(tex.get("prop_tile_m", 0.0)) > 0.0, "prop tile pitch declared")
+	assert_true(float(tex.get("vehicle_uv_inset", 0.0)) > 0.0,
+			"the vehicle atlas declares its cell inset")
+	var cells: Dictionary = tex.get("vehicle_cells", {})
+	for cell_name in ["paint", "glass", "dark", "livery"]:
+		assert_true(cells.has(cell_name), "the atlas declares its %s cell" % cell_name)
 	# Every page's committed bytes match the hash the generator recorded, which
 	# is what makes `python3 tools/gen_textures.py --check` meaningful in CI.
-	for group in ["facades", "roofs", "grounds"]:
+	for group in ["facades", "roofs", "grounds", "props", "vehicles"]:
 		for name in tex.get(group, {}):
 			var page: Dictionary = tex[group][name]
 			var path := String(page.get("path", ""))

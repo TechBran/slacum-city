@@ -44,15 +44,33 @@
 // contract locks `.a` to `anim_phase` for the NEAR/MEDIUM buffers, which the
 // model writes. The FAR buffer is not one of those: `CityView._upload_far`
 // builds it, this shader is its only reader, and there is no flicker at 500 m
-// for a phase to drive — so `.a` carries the building's FAMILY INDEX instead
-// (0 residential … 4 civic). That is what buys per-family window colour inside
-// a single draw call per chunk. `.r`, `.g` and `.b` are copied across from the
-// near buffer untouched, so a chunk crossing the boundary mid-blackout carries
-// its exact emissive ramp, damage and construction stage over the swap.
+// for a phase to drive — so `.a` carries
+//
+//     family_index + 8 * chunk_overlay_state
+//
+// the building's FAMILY INDEX (0 residential … 4 civic), which buys per-family
+// window colour inside a single draw call per chunk, plus doc 12 §2.5's overlay
+// state AGGREGATED OVER THE CHUNK, which is what lets the far city answer the
+// power and water overlays at all. `.r`, `.g` and `.b` are copied across from
+// the near buffer untouched, so a chunk crossing the boundary mid-blackout
+// carries its exact emissive ramp, damage and construction stage over the swap.
+//
+// Why not `.g`: it is the damage channel and this shader READS it, for the soot
+// multiply and the emissive dim. Packing the overlay there would have traded a
+// working damage read for the overlay and turned a burnt-out block clean the
+// moment the player opened the power overlay. `.a` was already an integer 0..4
+// with the whole float above it free. See `CityView.FAR_OVERLAY_STRIDE`.
+//
+// **The overlay is per CHUNK, not per building** (`CityView._far_overlay_state`
+// carries the reasoning): at 420–1200 m a building is a handful of pixels, and a
+// per-building wash reads as coloured noise — the same failure the per-window
+// hash was rejected for. The state drawn is the WORST in the chunk, because 0..3
+// is the severity order and an overlay exists to point at trouble.
 shader_type spatial;
 render_mode cull_back, depth_draw_opaque;
 
 global uniform float sc_night;
+global uniform float sc_time;
 global uniform float sc_wetness;
 global uniform int sc_overlay_mode;
 
@@ -77,6 +95,26 @@ uniform float wet_albedo_mult = 0.85;
 uniform float wet_roughness = 0.42;
 uniform float overlay_desaturate = 0.55;
 uniform float overlay_emission_mult = 0.40;
+
+// ═════════ BEGIN far overlay — doc 12 §2.5, chunk aggregate ════════════════
+// The same four hues, the same two motion rates and the same blend weights the
+// NEAR shader paints with, so a chunk does not change colour when it crosses
+// the LOD boundary — only its granularity does (per building in front, per
+// chunk behind). Every value here mirrors a `building.gdshader` uniform.
+uniform vec3 overlay_normal_color: source_color = vec3(0.404, 0.463, 0.541);
+uniform vec3 overlay_warning_color: source_color = vec3(0.949, 0.694, 0.235);
+uniform vec3 overlay_critical_color: source_color = vec3(0.898, 0.325, 0.239);
+uniform vec3 overlay_offline_color: source_color = vec3(0.400, 0.070, 0.055);
+uniform float overlay_normal_blend = 0.50;
+uniform float overlay_data_blend = 0.88;
+uniform float overlay_critical_hz = 1.2;
+uniform float overlay_offline_hz = 0.35;
+uniform float overlay_state_emission = 0.55;
+// `family_index + far_overlay_stride * chunk_state` — CityView.FAR_OVERLAY_STRIDE.
+uniform float far_overlay_stride = 8.0;
+const int OVERLAY_MODE_POWER = 1;
+const int OVERLAY_MODE_WATER = 2;
+// ═════════ END far overlay ═════════════════════════════════════════════════
 
 // `flat` for the same reason the near shader needs it: interpolating
 // INSTANCE_CUSTOM walks `variant` by a fraction of an ulp and the hash below
@@ -151,8 +189,16 @@ void fragment() {
 	float vary = 0.55 + 0.45 * hash21(vec2(storey + 91.0, segment));
 	float nits = window_nits_far * far_energy_scale
 			* mix(day_nits_scale, 1.0, sc_night);
-	// §2.6's per-family hue, indexed off the channel CityView repurposes.
-	int family = int(clamp(v_custom.a, 0.0, 4.0) + 0.5);
+	// §2.6's per-family hue, indexed off the channel CityView repurposes. The
+	// chunk overlay state rides ABOVE the family index in the same float, so
+	// take the remainder first — at stride 0 (an older buffer, or a mode with
+	// nothing to say) this is exactly the bare index it always was.
+	float packed_a = max(v_custom.a, 0.0);
+	float fam_raw = far_overlay_stride > 0.5
+			? mod(packed_a, far_overlay_stride) : packed_a;
+	float chunk_state = far_overlay_stride > 0.5
+			? clamp(floor(packed_a / far_overlay_stride), 0.0, 3.0) : 0.0;
+	int family = int(clamp(fam_raw, 0.0, 4.0) + 0.5);
 	vec3 window_color = window_colors[family];
 	EMISSION = window_color * lit * vary * nits * (1.0 - 0.6 * v_custom.g);
 
@@ -168,9 +214,34 @@ void fragment() {
 	ALBEDO *= mix(1.0, wet_albedo_mult, sc_wetness);
 	ROUGHNESS = mix(ROUGHNESS, wet_roughness, sc_wetness);
 
+	// One uniform branch over the whole draw: at mode 0 nothing below executes
+	// and the frame is bit-exact what it was before the far overlay landed.
 	if (sc_overlay_mode > 0) {
 		float luma = dot(ALBEDO, vec3(0.2126, 0.7152, 0.0722));
 		ALBEDO = mix(ALBEDO, vec3(luma), overlay_desaturate);
 		EMISSION *= overlay_emission_mult;
+		if (sc_overlay_mode == OVERLAY_MODE_POWER
+				|| sc_overlay_mode == OVERLAY_MODE_WATER) {
+			// `overlay_paint` from the near shader, inlined: the same tint
+			// ladder, the same 1.2 Hz CRITICAL pulse and 0.35 Hz OFFLINE
+			// breath, so motion still carries the state when colour cannot
+			// (constitution §11).
+			vec3 tint = overlay_normal_color;
+			tint = mix(tint, overlay_warning_color, step(0.5, chunk_state));
+			tint = mix(tint, overlay_critical_color, step(1.5, chunk_state));
+			tint = mix(tint, overlay_offline_color, step(2.5, chunk_state));
+			float is_data = step(0.5, chunk_state);
+			float hz = mix(overlay_critical_hz, overlay_offline_hz,
+					step(2.5, chunk_state));
+			float pulse01 = 0.5 + 0.5 * sin(sc_time * 6.283185 * hz);
+			float pulse_amt = step(1.5, chunk_state) * 0.35 * pulse01;
+			float blend = mix(overlay_normal_blend, overlay_data_blend, is_data)
+					* (1.0 - pulse_amt);
+			ALBEDO = mix(ALBEDO, tint, blend);
+			// A dark chunk emits nothing, so the state carries its own light —
+			// which is exactly the case a blackout overlay is opened in.
+			EMISSION += tint * overlay_state_emission * is_data
+					* (0.65 + 0.35 * pulse01);
+		}
 	}
 }

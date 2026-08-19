@@ -26,6 +26,49 @@ const FAR_MESH_NAME := "far_unit_box"
 # Godot renders triangles with CLOCKWISE winding as front faces.
 const WINDING_CLOCKWISE := true
 
+# ---------------------------------------------------------------- UV2 codes
+#
+# UV2 is the window grid on a façade — [0,1]² across the block — and a NEGATIVE
+# sentinel everywhere else. The sentinel is not one value but two, and the
+# second one is what fixes the texture pass's open question 3 ("roof-prop side
+# faces sample the façade page", i.e. a rooftop chiller box came out wearing
+# brick with windows in it, and a house's gable end grew half a sash window):
+#
+#   (-1, -1)  no window grid, sample the FAÇADE page in model space.
+#             Blocks whose `window` is not "grid" — the windowless data-centre
+#             walls — which is right: a data centre's blank wall IS its façade.
+#   (-1, -2)  no window grid, sample the ROOF page in model space.
+#             Roof PROPS: gables, masts, drums, yard fences, aprons, and the
+#             `box`/`notch` props that sit AT OR ABOVE the top of their tallest
+#             block — chimneys, chiller units, crowns. A chiller wears the same
+#             cladding as the deck it stands on, and a gable end wears the same
+#             shingle as the slopes either side of it.
+#             NOT everything a level calls a "roof prop": a `sign_band` is a
+#             fascia and lands on the storefront page's authored sign band, and
+#             a `box` below the roof line is a canopy or a plinth. Both keep the
+#             façade. `_emit_prop` owns that split.
+#
+# Both stay strictly negative in BOTH components, which is the shape the mesh
+# tests and `building.gdshader`'s `has_uv2 = step(0.0, v_uv2.x)` already
+# assert, so nothing that consumed the old sentinel had to change — the shader
+# reads the second component only after it has established there is no grid.
+const UV2_FACADE_PLANAR := Vector2(-1.0, -1.0)
+const UV2_ROOF_PLANAR := Vector2(-1.0, -2.0)
+
+
+static func _uv2_none(roof_surface: bool) -> Vector2:
+	return UV2_ROOF_PLANAR if roof_surface else UV2_FACADE_PLANAR
+
+
+static func _uv2_quad(roof_surface: bool) -> Array:
+	var w := _uv2_none(roof_surface)
+	return [w, w, w, w]
+
+
+static func _uv2_tri(roof_surface: bool) -> Array:
+	var w := _uv2_none(roof_surface)
+	return [w, w, w]
+
 
 # --------------------------------------------------------------- entry point
 
@@ -571,12 +614,35 @@ static func _emit_prop(mb: MeshBuf, p_v: Variant, ox: float, oz: float, tile_m: 
 	var px := ox + float(pos[0]) * tile_m
 	var pz := oz + float(pos[1]) * tile_m
 
+	# Which page a prop's SIDES wear. Not "every prop is a roof": a prop's sides
+	# have no normal to tell them apart from a wall, and the answer depends on
+	# what the prop IS.
+	#
+	#   `sign_band` is a FASCIA. The storefront façade page draws a parapet sign
+	#   band in its upper bay row and a `sign_band` prop lands exactly on it —
+	#   that alignment is authored, and moving these to the roof page would have
+	#   put gravel on every shop sign in the city.
+	#   `box` / `notch` split by HEIGHT: at or above the top of the tallest block
+	#   they are rooftop plant (chimneys, chiller units, crowns) and wear the
+	#   roof page; below it they are a canopy, a plinth or a set-back — façade
+	#   elements, and they keep the façade page they always had.
+	#   Everything else — gables, masts, octagonal drums, yard fences, aprons —
+	#   is a roof/structure surface unconditionally.
+	var roof_level := 0.0
+	for r_v in rects:
+		roof_level = maxf(roof_level, float((r_v as Dictionary)["y1"]))
+	var above_roof := base >= roof_level - 0.01
 	match type:
-		"box", "notch", "sign_band":
+		"sign_band":
+			var sb: Array = p["size_t"]
+			_emit_box(mb, px, pz, px + float(sb[0]) * tile_m, pz + float(sb[1]) * tile_m,
+					base, base + h, false, ao_cfg, ao_band,
+					bool(p.get("overhang", false)), base, rects, -1, false)
+		"box", "notch":
 			var size: Array = p["size_t"]
 			_emit_box(mb, px, pz, px + float(size[0]) * tile_m, pz + float(size[1]) * tile_m,
 					base, base + h, false, ao_cfg, ao_band,
-					bool(p.get("overhang", false)), base, rects, -1)
+					bool(p.get("overhang", false)), base, rects, -1, above_roof)
 		"gable":
 			var gs: Array = p["size_t"]
 			_emit_gable(mb, px, pz, px + float(gs[0]) * tile_m, pz + float(gs[1]) * tile_m,
@@ -587,7 +653,8 @@ static func _emit_prop(mb: MeshBuf, p_v: Variant, ox: float, oz: float, tile_m: 
 			if bool(p.get("beacon", false)):
 				var bm := float(p.get("beacon_m", 0.6))
 				_emit_box(mb, px - bm * 0.5, pz - bm * 0.5, px + bm * 0.5, pz + bm * 0.5,
-						base + h, base + h + bm, false, ao_cfg, false, false, base + h, [], -1)
+						base + h, base + h + bm, false, ao_cfg, false, false, base + h,
+						[], -1, true)
 		"octprism":
 			var os_: Array = p["size_t"]
 			_emit_octprism(mb, px, pz, px + float(os_[0]) * tile_m,
@@ -606,7 +673,8 @@ static func _emit_prop(mb: MeshBuf, p_v: Variant, ox: float, oz: float, tile_m: 
 
 static func _emit_box(mb: MeshBuf, x0: float, z0: float, x1: float, z1: float,
 		y0: float, y1: float, window_grid: bool, ao_cfg: Dictionary, ao_band: bool,
-		overhang: bool, prop_base: float, rects: Array, owner_index: int) -> void:
+		overhang: bool, prop_base: float, rects: Array, owner_index: int,
+		roof_surface: bool = false) -> void:
 	var band := float(ao_cfg.get("facade_band_m", 3.0))
 	var split := ao_band and y0 < band and band < y1
 	# side faces: (normal, corner order counter-clockwise seen from outside)
@@ -634,7 +702,7 @@ static func _emit_box(mb: MeshBuf, x0: float, z0: float, x1: float, z1: float,
 			var v3 := Vector3(a.x, sy1, a.z)
 			var t0 := (sy0 - y0) / maxf(0.0001, y1 - y0)
 			var t1 := (sy1 - y0) / maxf(0.0001, y1 - y0)
-			var uv2: Array = [Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1)]
+			var uv2: Array = _uv2_quad(roof_surface)
 			if window_grid:
 				uv2 = [Vector2(0.0, t0), Vector2(1.0, t0), Vector2(1.0, t1), Vector2(0.0, t1)]
 			var uv: Array = [Vector2(0.0, 1.0 - t0), Vector2(1.0, 1.0 - t0),
@@ -651,22 +719,21 @@ static func _emit_box(mb: MeshBuf, x0: float, z0: float, x1: float, z1: float,
 	mb.add_quad(Vector3(x0, y1, z0), Vector3(x1, y1, z0), Vector3(x1, y1, z1),
 			Vector3(x0, y1, z1), top_n,
 			[Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)],
-			[Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1)],
-			[ao_top, ao_top, ao_top, ao_top])
+			_uv2_quad(roof_surface), [ao_top, ao_top, ao_top, ao_top])
 	if overhang:
 		var bot_n := Vector3(0, -1, 0)
 		var ao_bot := float(ao_cfg.get("overhang_underside", 0.45))
 		mb.add_quad(Vector3(x0, y0, z1), Vector3(x1, y0, z1), Vector3(x1, y0, z0),
 				Vector3(x0, y0, z0), bot_n,
 				[Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)],
-				[Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1)],
-				[ao_bot, ao_bot, ao_bot, ao_bot])
+				_uv2_quad(roof_surface), [ao_bot, ao_bot, ao_bot, ao_bot])
 
 
 static func _emit_gable(mb: MeshBuf, x0: float, z0: float, x1: float, z1: float,
 		base: float, ridge_h: float, ao_cfg: Dictionary) -> void:
 	var top := base + ridge_h
-	var uv_neg: Array = [Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1)]
+	var uv_neg: Array = _uv2_quad(true)
+	var uv_neg3: Array = _uv2_tri(true)
 	var one := float(ao_cfg.get("default", 1.0))
 	var contact := float(ao_cfg.get("roof_prop_contact", 0.65))
 	if absf(x1 - x0) >= absf(z1 - z0):
@@ -683,10 +750,10 @@ static func _emit_gable(mb: MeshBuf, x0: float, z0: float, x1: float, z1: float,
 		# gable end triangles
 		mb.add_tri(Vector3(x0, base, z0), Vector3(x0, base, z1), Vector3(x0, top, zm),
 				Vector3(-1, 0, 0), [Vector2(0, 1), Vector2(1, 1), Vector2(0.5, 0)],
-				[Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1)], [contact, contact, one])
+				uv_neg3, [contact, contact, one])
 		mb.add_tri(Vector3(x1, base, z1), Vector3(x1, base, z0), Vector3(x1, top, zm),
 				Vector3(1, 0, 0), [Vector2(0, 1), Vector2(1, 1), Vector2(0.5, 0)],
-				[Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1)], [contact, contact, one])
+				uv_neg3, [contact, contact, one])
 	else:
 		var xm := (x0 + x1) * 0.5
 		mb.add_quad(Vector3(x1, base, z0), Vector3(x1, base, z1), Vector3(xm, top, z1),
@@ -699,10 +766,10 @@ static func _emit_gable(mb: MeshBuf, x0: float, z0: float, x1: float, z1: float,
 				[contact, contact, one, one])
 		mb.add_tri(Vector3(x1, base, z0), Vector3(x0, base, z0), Vector3(xm, top, z0),
 				Vector3(0, 0, -1), [Vector2(0, 1), Vector2(1, 1), Vector2(0.5, 0)],
-				[Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1)], [contact, contact, one])
+				uv_neg3, [contact, contact, one])
 		mb.add_tri(Vector3(x0, base, z1), Vector3(x1, base, z1), Vector3(xm, top, z1),
 				Vector3(0, 0, 1), [Vector2(0, 1), Vector2(1, 1), Vector2(0.5, 0)],
-				[Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1)], [contact, contact, one])
+				uv_neg3, [contact, contact, one])
 
 
 static func _emit_mast(mb: MeshBuf, cx: float, cz: float, base: float, h: float,
@@ -710,7 +777,7 @@ static func _emit_mast(mb: MeshBuf, cx: float, cz: float, base: float, h: float,
 	var top := base + h
 	var half := w * 0.5
 	var uv: Array = [Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(0, 0)]
-	var uv_neg: Array = [Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1)]
+	var uv_neg: Array = _uv2_quad(true)
 	var contact := float(ao_cfg.get("roof_prop_contact", 0.65))
 	var one := float(ao_cfg.get("default", 1.0))
 	mb.add_quad(Vector3(cx - half, base, cz), Vector3(cx + half, base, cz),
@@ -750,7 +817,7 @@ static func _emit_octprism(mb: MeshBuf, x0: float, z0: float, x1: float, z1: flo
 			var v3 := Vector3(p1.x, sy1, p1.y)
 			mb.add_quad(v0, v1, v2, v3, n,
 					[Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(0, 0)],
-					[Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1)],
+					_uv2_quad(true),
 					[_ao(v0, n, ao_cfg, y0, [], -1), _ao(v1, n, ao_cfg, y0, [], -1),
 					_ao(v2, n, ao_cfg, y0, [], -1), _ao(v3, n, ao_cfg, y0, [], -1)])
 	var one := float(ao_cfg.get("default", 1.0))
@@ -760,13 +827,13 @@ static func _emit_octprism(mb: MeshBuf, x0: float, z0: float, x1: float, z1: flo
 		var c: Vector2 = ring[i + 1]
 		mb.add_tri(Vector3(a.x, y1, a.y), Vector3(b.x, y1, b.y), Vector3(c.x, y1, c.y),
 				Vector3(0, 1, 0), [Vector2(0, 0), Vector2(1, 0), Vector2(1, 1)],
-				[Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1)], [one, one, one])
+				_uv2_tri(true), [one, one, one])
 
 
 static func _emit_fence(mb: MeshBuf, x0: float, z0: float, x1: float, z1: float,
 		y0: float, y1: float, ao_cfg: Dictionary) -> void:
 	var uv: Array = [Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(0, 0)]
-	var uv_neg: Array = [Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1)]
+	var uv_neg: Array = _uv2_quad(true)
 	var faces := [
 		[Vector3(x1, y0, z1), Vector3(x0, y0, z1), Vector3(0, 0, 1)],
 		[Vector3(x0, y0, z0), Vector3(x1, y0, z0), Vector3(0, 0, -1)],
@@ -791,8 +858,7 @@ static func _emit_pad(mb: MeshBuf, x0: float, z0: float, x1: float, z1: float,
 	mb.add_quad(Vector3(x0, y, z0), Vector3(x1, y, z0), Vector3(x1, y, z1),
 			Vector3(x0, y, z1), Vector3(0, 1, 0),
 			[Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)],
-			[Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1), Vector2(-1, -1)],
-			[one, one, one, one])
+			_uv2_quad(true), [one, one, one, one])
 
 
 ## Baked vertex-colour AO (§2.14 table).

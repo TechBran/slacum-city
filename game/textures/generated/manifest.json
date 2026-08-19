@@ -1,6 +1,6 @@
 {
 	"generator": "tools/gen_textures.py",
-	"generator_version": 1,
+	"generator_version": 2,
 	"seed": 20260818,
 	"bay_px": 256,
 	"page_px": 512,
@@ -10,6 +10,34 @@
 	],
 	"roof_tile_m": 4.0,
 	"note": "facade pages are a seamless 2x2 grid of window bays; bay row 0 (ground floor) maps to the page's bottom half. RGB = albedo with baked shading, A = shine/glass mask.",
+	"prop_tile_m": 2.0,
+	"hoarding_panel_m": [
+		4.0,
+		2.2
+	],
+	"prop_note": "prop pages are tiled in METRES at prop_tile_m and are authored as near-neutral VALUE: the consumer's existing vertex/instance colour is still the colour. `hoarding` is the exception - it is ONE panel, u and v run 0..1 across it, so the hazard band sits at a fixed height.",
+	"vehicle_page_px": 512,
+	"vehicle_cell_px": 256,
+	"vehicle_uv_inset": 0.06,
+	"vehicle_cells": {
+		"paint": [
+			0,
+			0
+		],
+		"glass": [
+			1,
+			0
+		],
+		"dark": [
+			0,
+			1
+		],
+		"livery": [
+			1,
+			1
+		]
+	},
+	"vehicle_note": "UV2 on a vehicle body is cell + the face's own [0,1] coordinate, inset by vehicle_uv_inset. A cell is a MATERIAL, never a tile - no UV ever leaves its cell, which is what keeps a mip from bleeding the glass cell into a car door.",
 	"facades": {
 		"brick": {
 			"path": "res://game/textures/generated/facade_brick.png",
@@ -70,6 +98,26 @@
 		"pavement": {
 			"path": "res://game/textures/generated/ground_pavement.png",
 			"sha256": "eefe20b97a9242a5bfddb3d62eecafb653c82d29718bc3ea098ac7de8ea54977"
+		}
+	},
+	"props": {
+		"hoarding": {
+			"path": "res://game/textures/generated/prop_hoarding.png",
+			"sha256": "2fe9f8b181842a932321c2673436ec941519e131c485d11c747ae9c07707b19c"
+		},
+		"steel": {
+			"path": "res://game/textures/generated/prop_steel.png",
+			"sha256": "23545bb0f640baf0b2b4dd2b34fcbc99989980ebbbaaf20e7beb685c4d439737"
+		},
+		"stock": {
+			"path": "res://game/textures/generated/prop_stock.png",
+			"sha256": "90cb1269d35befb2e6779108e924f7f45341dfda8949a7d52ffd018e97ead6fb"
+		}
+	},
+	"vehicles": {
+		"atlas": {
+			"path": "res://game/textures/generated/vehicle_atlas.png",
+			"sha256": "015abc3d5b42d057b7510fd9846d1b55e72d944944260d97ed5bcab50e604ad7"
 		}
 	},
 	"archetype_surface": {

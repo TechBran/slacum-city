@@ -288,3 +288,113 @@ func test_clear_empties_the_layer() -> void:
 	view.clear()
 	assert_eq(view.vehicle_count(), 0)
 	view.free()
+
+
+# ------------------------------------------------------- the surface atlas
+#
+# `tools/gen_textures.py`'s `vehicle_atlas.png`: 2x2 MATERIAL cells addressed by
+# UV2 = cell + the face's own inset [0,1] coordinate. The shader derives
+# `is_glass` from `floor(UV2)`, so the cell layout, the inset and the page are
+# one contract and all three are asserted here.
+
+func _uv2_of(key: String) -> PackedVector2Array:
+	return VehicleMesh.factory(key).to_mesh().surface_get_arrays(0)[Mesh.ARRAY_TEX_UV2]
+
+
+func test_every_body_vertex_carries_an_atlas_coordinate() -> void:
+	for key in ["car", "van", "truck", "police", "fire", "ambulance", "utility"]:
+		var arrays := VehicleMesh.factory(key).to_mesh().surface_get_arrays(0)
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var uv2: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV2]
+		assert_eq(uv2.size(), verts.size(), "%s carries UV2 per vertex" % key)
+
+
+func test_no_face_ever_leaves_its_atlas_cell() -> void:
+	# This is what stops a mip level bleeding the glass gradient into a car door
+	# at 200 m. Every UV2 has to sit inside its cell by at least the inset, or
+	# `floor(UV2)` also stops being a stable cell index across a face.
+	var inset := VehicleMesh.UV_INSET
+	for key in ["car", "van", "truck", "police", "fire", "ambulance", "utility"]:
+		for uv: Vector2 in _uv2_of(key):
+			var frac := Vector2(uv.x - floorf(uv.x), uv.y - floorf(uv.y))
+			assert_true(frac.x >= inset - 1e-5 and frac.x <= 1.0 - inset + 1e-5,
+					"%s: u %f is outside the %f inset" % [key, uv.x, inset])
+			assert_true(frac.y >= inset - 1e-5 and frac.y <= 1.0 - inset + 1e-5,
+					"%s: v %f is outside the %f inset" % [key, uv.y, inset])
+
+
+func test_the_four_cells_land_on_the_parts_they_are_drawn_for() -> void:
+	# A civilian car uses paint, glass and rubber and no livery; a patrol car
+	# adds the livery band. If the livery cell ever stopped reaching a department
+	# body the fleet would silently lose its markings and still pass every other
+	# test in this file.
+	var seen: Dictionary = {}
+	for uv: Vector2 in _uv2_of("car"):
+		seen[Vector2(floorf(uv.x), floorf(uv.y))] = true
+	assert_true(seen.has(VehicleMesh.CELL_PAINT), "a car is painted")
+	assert_true(seen.has(VehicleMesh.CELL_GLASS), "…and glazed")
+	assert_true(seen.has(VehicleMesh.CELL_DARK), "…and has tyres")
+	assert_false(seen.has(VehicleMesh.CELL_LIVERY), "…and no department livery")
+	for key in ["police", "fire", "ambulance", "utility"]:
+		var dept: Dictionary = {}
+		for uv: Vector2 in _uv2_of(key):
+			dept[Vector2(floorf(uv.x), floorf(uv.y))] = true
+		assert_true(dept.has(VehicleMesh.CELL_LIVERY),
+				"%s wears a livery band" % key)
+
+
+func test_the_glass_gradient_runs_the_right_way_up() -> void:
+	# The glass cell bakes the sky at the top of the page. UV2's v is derived
+	# from the FACE's own extent and runs 0 at the top, which is the only reason
+	# a raked windscreen and an upright side window both come out with the sky on
+	# their upper edge — corner order alone cannot do it, because `add_box` and
+	# `add_side_quads` start from different corners.
+	var arrays := VehicleMesh.car().to_mesh().surface_get_arrays(0)
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var uv2: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV2]
+	var top_v := 9.0
+	var top_y := -9.0
+	var bottom_v := -9.0
+	var bottom_y := 9.0
+	for i in verts.size():
+		if Vector2(floorf(uv2[i].x), floorf(uv2[i].y)) != VehicleMesh.CELL_GLASS:
+			continue
+		if verts[i].y > top_y:
+			top_y = verts[i].y
+			top_v = uv2[i].y
+		if verts[i].y < bottom_y:
+			bottom_y = verts[i].y
+			bottom_v = uv2[i].y
+	assert_true(top_y > bottom_y, "the car has glass at two heights")
+	assert_true(top_v < bottom_v,
+			"the highest glass vertex samples v %f, the lowest %f — the sky must "
+			% [top_v, bottom_v] + "be on top")
+
+
+func test_the_shader_still_degrades_to_the_flat_shaded_layer() -> void:
+	# A clone with no generated atlas: VehicleView sets tex_mix = 0 and every
+	# textured term has to collapse to what the layer shipped with.
+	var f := FileAccess.open("res://game/shaders/vehicle.gdshader", FileAccess.READ)
+	assert_true(f != null, "shader source readable")
+	if f == null:
+		return
+	var src := f.get_as_text()
+	assert_true(src.contains("uniform float tex_mix"), "tex_mix uniform present")
+	assert_true(src.contains("mix(vec4(1.0, 1.0, 1.0, 0.0)"),
+			"the sample falls back to white with no shine at tex_mix = 0")
+	assert_true(src.contains("v_data.r"),
+			"the per-vehicle tone rides INSTANCE_CUSTOM.r")
+	assert_true(src.contains("float is_glass = step(0.5, cell.x)"),
+			"is_glass is derived from the atlas cell, not from a new role")
+
+
+func test_department_liveries_are_wordless_and_distinct() -> void:
+	# Doc 12: no baked text in a texture. The livery cell is VALUE only — the
+	# battenburg and the roundel — and the DEPARTMENT is the vertex tint, so
+	# these four have to differ or every service vehicle wears the same band.
+	var liveries := [VehicleMesh.LIVERY_POLICE, VehicleMesh.LIVERY_FIRE,
+			VehicleMesh.LIVERY_MEDICAL, VehicleMesh.LIVERY_UTILITY]
+	for i in liveries.size():
+		for j in range(i + 1, liveries.size()):
+			assert_false((liveries[i] as Color).is_equal_approx(liveries[j]),
+					"livery %d and %d are the same colour" % [i, j])
