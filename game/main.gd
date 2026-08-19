@@ -496,6 +496,10 @@ func _handle_tap(screen_pos: Vector2, viewport_size: Vector2) -> void:
 	if build_sheet != null and build_sheet.is_placing():
 		build_sheet.move_ghost(ground)
 		return
+	if build_sheet != null and build_sheet.is_open():
+		# A tap that reached the world missed every sheet control: dismiss.
+		build_sheet.close()
+		return
 	var sim_id := build_controller.sim_id_at_ground(ground)
 	if building_panel == null:
 		return
@@ -545,7 +549,12 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	# Desktop dev controls; touch is doc 12's recognizer (HUD pass).
+	# Desktop dev controls. Device touch runs through TouchInput; the mouse
+	# events Godot synthesises FROM touch (device id -1, needed so
+	# ScrollContainer and friends pan on Android) must not double-drive the
+	# camera on top of the gesture layer.
+	if event is InputEventMouse and event.device == InputEvent.DEVICE_ID_EMULATION:
+		return
 	if event is InputEventKey and (event as InputEventKey).pressed:
 		match (event as InputEventKey).keycode:
 			KEY_B: _trigger_blackout_demo(true)

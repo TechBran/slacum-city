@@ -3,8 +3,9 @@ extends Node
 ## Touch routing: Godot ScreenTouch/ScreenDrag → GestureRecognizer →
 ## CameraState. Pan begins on the recognizer's first pan of a stroke and the
 ## anchor is shared with pinch/twist (full one-hand RST manipulation).
-## Mouse emulation is disabled project-wide so desktop mouse and device touch
-## never double-apply.
+## `emulate_mouse_from_touch` is ON so Godot's GUI (ScrollContainer panning
+## etc.) works on device; Main's mouse dev-controls skip those synthesised
+## events by `DEVICE_ID_EMULATION`, so touch is only ever applied here.
 
 signal tapped(position: Vector2)
 signal long_pressed(position: Vector2)
@@ -27,17 +28,9 @@ func _process(delta: float) -> void:
 		_apply(recognizer.tick(_time_ms))
 
 
-func _input(event: InputEvent) -> void:
-	# Earliest-stage debug trace: what does Android actually deliver?
-	if OS.is_debug_build() and not (event is InputEventMouseMotion):
-		print("[input-stage] ", event.get_class())
-
-
 func _unhandled_input(event: InputEvent) -> void:
 	if recognizer == null:
 		return
-	if OS.is_debug_build() and (event is InputEventScreenTouch or event is InputEventScreenDrag):
-		print("[touch] ", event.get_class(), " ", event)
 	var viewport := Vector2(get_viewport().get_visible_rect().size)
 	if event is InputEventScreenTouch:
 		var touch := event as InputEventScreenTouch
@@ -56,8 +49,6 @@ func _unhandled_input(event: InputEvent) -> void:
 func _apply(gestures: Array) -> void:
 	var viewport := Vector2(get_viewport().get_visible_rect().size)
 	for g in gestures:
-		if OS.is_debug_build():
-			print("[gesture] ", g.get("kind", "?"))
 		match StringName(String(g.get("kind", g.get("type", "")))):
 			&"pan":
 				var pos: Vector2 = g["position"]

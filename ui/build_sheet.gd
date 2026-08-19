@@ -161,6 +161,21 @@ func _build_tabs() -> void:
 		button.pressed.connect(_on_tab_pressed.bind(category))
 		_tabs.add_child(button)
 		_tab_buttons[category] = button
+	# Right-aligned ✕ so backing out never depends on knowing the FAB toggles.
+	var spacer := Control.new()
+	spacer.name = "TabSpacer"
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tabs.add_child(spacer)
+	var close_button := Button.new()
+	close_button.name = "CloseSheet"
+	close_button.theme_type_variation = &"GhostButton"
+	close_button.focus_mode = Control.FOCUS_NONE
+	close_button.custom_minimum_size = Vector2(_touch_min, _touch_min)
+	close_button.text = _text("ui_sheet_close", "✕")
+	close_button.tooltip_text = _text("ui_sheet_close_tip", "Close")
+	close_button.pressed.connect(close)
+	_tabs.add_child(close_button)
 
 
 func _build_cards() -> void:
