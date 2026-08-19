@@ -286,17 +286,24 @@ func test_feed_has_zero_simulation_authority() -> void:
 				"and so is every route quote")
 
 
-func test_feed_is_never_saved() -> void:
+func test_feed_survives_a_save() -> void:
+	# AMENDED (doc 93 §E2): §2.15's "vehicles are never saved" predates the
+	# feed living sim-side on the PERSISTED `traffic` stream. An empty
+	# post-load feed re-draws a different number of times than the live run
+	# and the stream state diverges forever — so the roster rides the save
+	# and the loaded feed continues draw-for-draw where the live one was.
 	var net := _busy_network(88, 1.2)
 	_run_feed(net, 5)
 	assert_true(net.feed.vehicle_count() > 0)
 	var section := net.save_section()
-	var text := JSON.stringify(section)
-	assert_false(text.contains("vehicle"), "no vehicle survives a save (§2.15)")
-	assert_false(text.contains("hops_remaining"))
 	var reloaded := RoadNetwork.new(TileGrid.new(), net.tun, RngStreams.new(1))
 	reloaded.load_section(section)
-	assert_eq(reloaded.feed.vehicle_count(), 0, "the feed comes back empty and repopulates")
+	assert_eq(reloaded.feed.vehicle_count(), net.feed.vehicle_count(),
+			"the roster survives the reload")
+	assert_eq(reloaded.feed.vehicle_ids_sorted(), net.feed.vehicle_ids_sorted(),
+			"same vehicles, same ids")
+	assert_eq(reloaded.feed.next_vehicle_id, net.feed.next_vehicle_id,
+			"the id high-water mark survives, so ids never recycle")
 
 
 func test_no_cosmetic_traffic_in_coarse_steps() -> void:

@@ -17,12 +17,15 @@ func test_boot_loads_everything() -> void:
 
 
 func test_night_peak_matches_doc09_table() -> void:
-	# Doc 09 §2.9.4 / doc 04 §2.13: at the 20:00 peak the system demand is
-	# 460.7 (buildings) + 274.05 (streetlights) + 48.60 (signals) = 783.3 kW.
+	# Doc 09 §2.9.4 / doc 04 §2.13 authored 783.3 kW at the 20:00 peak with the
+	# HELD water metering (the L1-variant constants). Doc 05's live node roster
+	# meters the real plant — heavier than the L1 table by ~18.4 kW — so the
+	# as-integrated peak is 801.7 kW. Doc 93 tracks the doc 09 §2.9.4 worked-
+	# example refresh; the CHAIN this test guards is unchanged.
 	var sim := CitySim.boot_from_files()
 	sim.advance_hours(14.0)  # 06:00 → 20:00
 	assert_eq(sim.clock.hour_of_day(), 20)
-	assert_almost_eq(sim.grid.system_demand_kw, 783.3, 1.5,
+	assert_almost_eq(sim.grid.system_demand_kw, 801.7, 1.5,
 			"the whole demand chain: catalog base_kw × channels × sinks")
 	# Nameplate check at channel ≈ 1.0 is doc 09's 402.0 building figure;
 	# verify the street/signal split exactly.
@@ -105,16 +108,21 @@ func test_economy_settles_in_the_loop() -> void:
 	# Milestone 1 criterion 7: economy settles hourly; the founding ledger's
 	# +$318.77/gh lands in the treasury through the LIVE input chain (real
 	# grid inventory, real district stability, real occupancy).
+	# As-integrated anchors (doc 93): doc 03's worked +$318.77/gh was computed
+	# against the HELD water/road stubs. Docs 05/10 now bill live — water
+	# service factors, real E_water inventory, per-building road access — and
+	# the founding hour lands at ≈ +$345/gh, ≈ +$8.3k/day. The doc 03 §2.12
+	# worked-example refresh is tracked in doc 93; the LIVE CHAIN is the test.
 	var sim := CitySim.boot_from_files()
 	var start: int = sim.treasury.balance
 	sim.advance_hours(1.0)
 	var first_hour: int = sim.treasury.balance - start
-	assert_true(first_hour >= 315 and first_hour <= 322,
-			"first settled hour ≈ +$318 (got %d)" % first_hour)
+	assert_true(first_hour >= 338 and first_hour <= 352,
+			"first settled hour ≈ +$345 (got %d)" % first_hour)
 	sim.advance_hours(23.0)
 	var day_net: int = sim.treasury.balance - start
-	assert_true(day_net >= 7_500 and day_net <= 7_800,
-			"a founding day nets ≈ +$7,650 (got %d)" % day_net)
+	assert_true(day_net >= 8_150 and day_net <= 8_550,
+			"a founding day nets ≈ +$8,350 (got %d)" % day_net)
 
 
 func test_availability_settles_hourly() -> void:

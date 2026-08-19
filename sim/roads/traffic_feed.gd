@@ -14,8 +14,10 @@ extends RefCounted
 ## `traffic` stream (report 98 C-45 keeps that stream reserved, not deleted), so
 ## the renderer receives a real, deterministic, capped feed instead of inventing
 ## one: two runs of the same seed produce a byte-identical event stream, which a
-## renderer-local RNG could never promise. Vehicles are NEVER saved — on load
-## the feed starts empty and repopulates within a game-minute.
+## renderer-local RNG could never promise. Because those draws come from a
+## PERSISTED stream, the vehicles persist too: an empty post-load feed would
+## re-draw a different number of times than the live run and the `traffic`
+## stream state would diverge forever, breaking save→load→advance identity.
 
 const KINDS: Array[String] = ["car", "van", "truck"]
 
@@ -384,3 +386,44 @@ static func _sorted_keys(dict: Dictionary) -> Array:
 	var keys := dict.keys()
 	keys.sort()
 	return keys
+
+
+## Save-identity support: the vehicle roster rides the roads save section so a
+## loaded feed continues draw-for-draw where the live one was. Records are
+## plain int/bool/float/String throughout; `_by_edge` is derived and rebuilt.
+func serialize() -> Dictionary:
+	var vehicles: Array = []
+	for vehicle_id in vehicle_ids_sorted():
+		vehicles.append((_vehicles[vehicle_id] as Dictionary).duplicate())
+	return {
+		"next_vehicle_id": next_vehicle_id,
+		"enabled": enabled,
+		"preset": preset,
+		"headlights": headlights,
+		"vehicles": vehicles,
+	}
+
+
+func deserialize(data: Dictionary) -> void:
+	if data.is_empty():
+		return
+	next_vehicle_id = int(data.get("next_vehicle_id", 1))
+	enabled = bool(data.get("enabled", true))
+	preset = String(data.get("preset", "balanced"))
+	headlights = bool(data.get("headlights", false))
+	_vehicles.clear()
+	_by_edge.clear()
+	_events.clear()
+	for entry in data.get("vehicles", []):
+		var v: Dictionary = entry
+		var vehicle_id := int(v["id"])
+		_vehicles[vehicle_id] = {
+			"id": vehicle_id, "kind": String(v["kind"]),
+			"edge_id": int(v["edge_id"]), "forward": bool(v["forward"]),
+			"s_m": float(v["s_m"]), "jitter": float(v["jitter"]),
+			"hops_remaining": int(v["hops_remaining"]),
+			"speed_mpgm": float(v["speed_mpgm"]),
+		}
+		var list: Array = _by_edge.get(int(v["edge_id"]), [])
+		list.append(vehicle_id)
+		_by_edge[int(v["edge_id"])] = list

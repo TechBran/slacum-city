@@ -1265,7 +1265,31 @@ func save_section() -> Dictionary:
 		"auto_repair": {"threshold": auto_repair_threshold, "daily_cap": auto_repair_daily_cap},
 		"condition_accum": _condition_accum.duplicate(true),
 		"event_spikes": _event_spikes.duplicate(true),
+		"traffic_feed": feed.serialize(),
+		# Smoothed congestion AND the daily density index carry history — a
+		# post-load recompute lands on c_raw at empty density, not where the
+		# live run's smoother and last EVERY_DAY refresh had them. Edge ids are
+		# stable across rebuild-from-blocks (graph construction is
+		# deterministic), so both persist keyed by edge id.
+		"edge_dynamics": _serialize_edge_dynamics(),
+		"day_seen": _day_seen,
+		"sim_minute": sim_minute,
+		# Day-scoped billing accumulators: doc 03 settles e_roads_repair from
+		# this day's hourly c_raw samples — losing the morning's samples on a
+		# midday load shifts the bill.
+		"c_day_sum": _c_day_sum.duplicate(true),
+		"c_day_samples": _c_day_samples,
+		"wx_wear_day": _wx_wear_day,
 	}
+
+
+func _serialize_edge_dynamics() -> Dictionary:
+	var out := {}
+	for edge_id in graph.edge_ids_sorted():
+		var record: Dictionary = graph.edge(edge_id)
+		out[str(edge_id)] = [float(record.get("congestion", 0.0)),
+				float(record.get("dens_index", tun.dens_min))]
+	return out
 
 
 func load_section(data: Dictionary) -> void:
@@ -1301,8 +1325,28 @@ func load_section(data: Dictionary) -> void:
 	_apply_condition_residuals()
 	_refresh_all_edge_state()
 	feed.reset(false)
+	feed.deserialize(data.get("traffic_feed", {}))
 	planner.invalidate_all()
 	_recompute_all_congestion(true, 12.0)
+	# Overwrite the recompute with the SAVED smoother + density state so the
+	# loaded run continues from exactly where the live run's history had it.
+	_day_seen = bool(data.get("day_seen", _day_seen))
+	sim_minute = int(data.get("sim_minute", sim_minute))
+	_c_day_sum.clear()
+	for key in data.get("c_day_sum", {}):
+		_c_day_sum[int(key)] = float(data["c_day_sum"][key])
+	_c_day_samples = int(data.get("c_day_samples", 0))
+	_wx_wear_day = float(data.get("wx_wear_day", 0.0))
+	var saved_dyn: Dictionary = data.get("edge_dynamics", {})
+	if not saved_dyn.is_empty():
+		for edge_id in graph.edge_ids_sorted():
+			var key := str(edge_id)
+			if saved_dyn.has(key):
+				var pair: Array = saved_dyn[key]
+				graph.edge(edge_id)["congestion"] = float(pair[0])
+				graph.edge(edge_id)["dens_index"] = float(pair[1])
+		congestion.epoch += 1
+		planner.invalidate_all()
 
 
 func _restore_closure(entry: Dictionary) -> void:

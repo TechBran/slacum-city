@@ -449,3 +449,8 @@ func deserialize(data: Dictionary) -> void:
 	_last_mults.clear()
 	_last_emitted_precip01 = -1.0
 	_last_emitted_wind = -1.0
+	# The boot that preceded this load pushed ITS OWN rolled segment's channel
+	# mults into the ModifierStack; the restored timeline may sit in another
+	# segment. Re-apply now — push_source is a keyed SET — so the first tick
+	# after load samples exactly the channels the saving instance sampled.
+	_apply_modifiers()

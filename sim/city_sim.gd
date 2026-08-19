@@ -9,11 +9,6 @@ extends RefCounted
 
 ## Doc 05 §8's per-variant L1 base_kw anchors (source 0.30 × 107 → 32,
 ## treatment 0.50 × 80 → 40, pump 60 reference, tank 5 telemetry-only).
-## A water_facility building draws the SUM of its hosted variant nodes —
-## replaced by data/water.json when the water system lands.
-const WATER_VARIANT_KW_L1 := {
-	"source": 32.0, "treatment": 40.0, "pump": 60.0, "tank": 5.0, "booster": 12.0,
-}
 const STREETLIGHT_KW := 0.35
 const SIGNAL_KW := 0.6
 const DEMAND_CLASS_CHANNEL := {
@@ -50,12 +45,19 @@ var development: DevelopmentController
 var econ_curves: CostCurves
 var treasury: Treasury
 var economy: EconomySystem
+var water: WaterSystem
+var incident_catalog: IncidentCatalog
+var incident_world: CityIncidentWorld
+var incidents: IncidentSystem
+var roads: RoadNetwork
+var weather: WeatherSystem
+var director: DisasterDirector
+var incident_sink: IncidentRequestSink
 
 ## Held metering pair + starter roster (doc 03 §9 item 6b): constants until
-## doc 04 meters delivered energy and doc 06 owns the live fleet.
+## doc 04 meters delivered energy and the doc-06 fleet-billing ruling lands.
+## (HELD_WATER retired — doc 05's live inventory() feeds the settlement now.)
 const HELD_DELIVERED_MWH := 1.5
-const HELD_WATER := {"m3_treated": 5.56, "main_km": 1.512, "main_condition": 1.0,
-		"pump_capacity_m3h": 40.0, "delivered_m3": 5.56}
 const HELD_FINE_RATE := 3.0 / 350.0
 const STARTER_VEHICLES := [
 	{"type": "patrol_car", "km_this_hour": 1.0},
@@ -94,6 +96,9 @@ var _prev_block_dark: Dictionary = {}  # block id -> bool
 ## never enters capture_state(): a reloaded game simply re-announces the stage
 ## its jobs are actually at on the next tick, which is what the renderer wants.
 var _last_construction_stage: Dictionary = {}  # sim_id -> stage 1..6
+var _last_expense_hour: float = 1.0            # DirectorInputs.daily_opex source
+var _strike_roster: Array = []
+var _strike_roster_min: int = -1
 var boot_errors: PackedStringArray = []
 
 
@@ -153,10 +158,179 @@ func boot(seed_value: int, time_data: Dictionary, starter_data: Dictionary,
 	tax_rate_changed_hour = -1
 	_boot_buildings()
 	_boot_power()
+	_boot_water()
 	_boot_districts()
+	_boot_incidents()
+	_boot_roads()
+	_boot_weather()
 	_check_grid_rules()
 	_register_systems()
 	return boot_errors.is_empty()
+
+
+func _boot_water() -> void:
+	var water_data := WaterData.from_dict(
+			StarterCityLoader.read_json("res://data/water.json"))
+	if not water_data.is_valid():
+		boot_errors.append_array(water_data.errors)
+	water = WaterBoot.build(water_data, loader, world.grid)
+	# Doc 05 §2.6: water reads power ONLY through doc 04's published function.
+	water.powered_provider = func(power_ref: String) -> bool:
+		return grid.is_powered(power_ref)
+	WaterBoot.attach_buildings(water, loader)
+	water.rebuild_zones()
+	# Doc 05 owns the per-variant kW at every level, so the site loads
+	# doc 02 meters come from the live nodes, not the boot-time L1 table.
+	# (Sorted iteration — float addition order is persisted state.)
+	_water_kw_by_building.clear()
+	var node_ids := water.nodes.keys()
+	node_ids.sort()
+	for node_id in node_ids:
+		var n: WaterNode = water.nodes[node_id]
+		if n.variant == &"junction" or n.power_ref == "":
+			continue
+		_water_kw_by_building[n.power_ref] = \
+				float(_water_kw_by_building.get(n.power_ref, 0.0)) \
+				+ water.data.kw_required(n.variant, n.level, n.subtype)
+
+
+func _boot_incidents() -> void:
+	incident_catalog = IncidentCatalog.load_from_files()
+	if not incident_catalog.is_valid():
+		boot_errors.append_array(incident_catalog.errors)
+	incident_world = CityIncidentWorld.new(self, incident_catalog)
+	incidents = IncidentSystem.new(incident_catalog, incident_world, rng)
+	incidents.founding_offset_h = float(GameClock.FOUNDING_OFFSET_MINUTES) / 60.0
+	incidents.fleet.populate_from_stations(incident_world.station_rows())
+
+
+func _boot_roads() -> void:
+	var tun := RoadTunables.from_file("res://data/roads.json")
+	if not tun.is_valid():
+		boot_errors.append_array(tun.errors)
+	roads = RoadNetwork.new(world.grid, tun, rng)
+	roads.bootstrap()
+	roads.power_is_tile_powered = _is_tile_powered      # doc 04 (G-6)
+	roads.district_of_tile = _district_of_tile          # doc 09
+	roads.land_is_buildable = func(t: Vector2i) -> bool:
+		var b := world.block_of_tile(t.x, t.y)
+		return b != null and b.is_ready()
+	roads.repair_quote = func(road_class: String, damage_fraction: float) -> int:
+		return econ_curves.repair_cost_road(road_class, damage_fraction)
+	roads.submit_job = func(kind: StringName, target: String, crew_hours: float,
+			crew: StringName, payload: Dictionary) -> int:
+		var job_id := construction.submit(kind, target, crew_hours, crew, payload)
+		construction.assign_crew(job_id, "YARD-CREW-1")   # MVP binding, as buildings do
+		return job_id
+	_refresh_road_density()
+	RoadsPhaseSystems.register_all(scheduler, roads, bus.emit)
+
+
+func _boot_weather() -> void:
+	weather = WeatherSystem.new(
+			WeatherTables.load_from_file("res://data/weather.json"), rng)
+	if not weather.tables.is_valid():
+		boot_errors.append_array(weather.tables.errors)
+	weather.set_city_bounds(Vector2(56, 56), 56.0)      # doc 09 map bounds
+	weather.attach_modifiers(modifiers)
+	for block_id in world.block_ids_sorted():
+		var block: LandBlock = world.block(String(block_id))
+		weather.flood.register_block(block.grid.x, block.grid.y,
+				String(block.elevation_band()))
+	director = DisasterDirector.new(
+			DirectorTables.load_from_file("res://data/director.json"), rng)
+	if not director.tables.is_valid():
+		boot_errors.append_array(director.tables.errors)
+	# Doc 06's live sink is a Phase-2 seam: director requests are recorded, not
+	# executed, so pacing/fairness run without inventing an unmapped incident.
+	incident_sink = IncidentRequestSink.Recording.new()
+	director.attach(weather, incident_sink, modifiers)
+	weather.bootstrap(_boot_context())
+
+
+func _boot_context() -> TimeContext:
+	var ctx := TimeContext.new()
+	ctx.tick_index = clock.tick_index
+	ctx.minute_of_day = clock.minute_of_day()
+	ctx.day_index = clock.day_index()
+	ctx.season_index = clock.season_index()
+	return ctx
+
+
+func _refresh_road_density() -> void:
+	var sources: Array = []
+	for id in _sorted(buildings):
+		var b: Building = buildings[id]
+		sources.append({"tile": b.origin,
+				"pj": float(int(b.stats.get("population", 0)) + int(b.stats.get("jobs", 0)))})
+	roads.set_density_sources(sources)
+
+
+## Doc 04 publishes power state only; doc 10 turns it into delay + congestion
+## (G-6). Implemented here because CitySim owns the cross-doc seams.
+func _is_tile_powered(tile: Vector2i) -> bool:
+	var best := ""
+	var best_key := [999999.0, ""]
+	for node in loader.power.get("nodes", []):
+		if String(node["kind"]) != "transformer":
+			continue
+		var t := StarterCityLoader.core_to_global(int(node["tile"][0]), int(node["tile"][1]))
+		var dist := maxf(absf(tile.x - t.x), absf(tile.y - t.y))
+		if dist > float(PowerGrid.TRANSFORMER_SERVICE_RADIUS[int(node.get("level", 1)) - 1]):
+			continue
+		var key := [dist, String(node["id"])]
+		if key < best_key:
+			best_key = key
+			best = String(node["id"])
+	return true if best == "" else grid.is_energized(best)   # uncovered ⇒ lit
+
+
+func _district_of_tile(tile: Vector2i) -> String:
+	var b := world.block_of_tile(tile.x, tile.y)
+	return String(_block_to_district.get(b.id, "")) if b != null else ""
+
+
+## Strikes are generated at WEATHER and resolved before POWER, so the grid sees
+## the damage in the same tick it was struck.
+func _route_lightning(ctx: TimeContext) -> void:
+	if not director.storm.active:
+		return
+	var now_min: int = ctx.tick_index / GameClock.TICKS_PER_MINUTE
+	if now_min != _strike_roster_min:
+		_strike_roster = GridStrikeAdapter.roster(grid)
+		_strike_roster_min = now_min
+	for strike in director.storm.tick(now_min, float(ctx.dt_game_seconds) / 60.0,
+			rng, _strike_roster, weather.get_storm_cell(),
+			director.target_hard_exclude, director.target_immunity):
+		if String(strike["domain"]) == "grid":
+			GridStrikeAdapter.resolve(grid, strike, rng)
+
+
+func build_director_inputs() -> DirectorInputs:
+	var dark := 0
+	var total := 0
+	for id in _sorted(buildings):
+		total += 1
+		if not grid.is_powered(String(id)):
+			dark += 1
+	return DirectorInputs.make({
+		"city_age_days": clock.day_index(),
+		"season_index": clock.season_index(),
+		"population": population.city_population,
+		"treasury": treasury.balance,
+		"daily_opex": maxi(1, int(_last_expense_hour * 24.0)),
+		"grid_redundancy": 0.0,      # doc 04 seam — publish and read here
+		"water_redundancy": 0.0,     # doc 05 seam
+		"road_redundancy": 0.0,      # doc 10 seam
+		"units_owned": {},           # doc 06 seam
+		"total_response_units": 0,   # doc 06 seam
+		"city_stability": districts.city_stability,
+		"active_incidents": incidents.active_count(),
+		"unresolved_major_incidents": 0,     # doc 06 seam
+		"customers_out_pct": float(dark) / float(maxi(1, total)),
+		"roads_impassable_pct": 0.0,         # doc 10 seam
+		"difficulty": "standard",
+	})
 
 
 ## The P0-01 pattern: `data/grid_components.json` republishes doc 04 §2.2's
@@ -192,12 +366,8 @@ func _boot_buildings() -> void:
 		b.stats = catalog.stats(String(archetype), b.level)
 		buildings[id] = b
 		_building_records[id] = record
-	for node in loader.water.get("nodes", []):
-		var host := String(node.get("building", ""))
-		var variant := String(node.get("variant", ""))
-		if host != "" and WATER_VARIANT_KW_L1.has(variant):
-			_water_kw_by_building[host] = float(_water_kw_by_building.get(host, 0.0)) \
-					+ float(WATER_VARIANT_KW_L1[variant])
+	# Water-site kW loads are derived from the LIVE water nodes in _boot_water,
+	# which runs right after _boot_power — doc 05 owns per-variant kW now.
 
 
 func _boot_power() -> void:
@@ -302,6 +472,8 @@ func advance_hours(hours: float) -> void:
 
 
 func advance_coarse_hours(hours: int, is_catchup: bool = true) -> void:
+	if is_catchup and director != null:
+		director.catchup_begin()   # doc 07 C-55: once per catch-up session
 	scheduler.advance_coarse_n(hours, is_catchup, 0, hours)
 
 
@@ -327,7 +499,11 @@ static func _encode_floats(value: Variant) -> Variant:
 			var bytes := PackedByteArray()
 			bytes.resize(8)
 			bytes.encode_double(0, value)
-			return "~f~%016x" % bytes.decode_u64(0)
+			# Two u32 halves, high first — the same 16 hex chars "%016x" printed,
+			# but sign-bit-set doubles survive: a whole-u64 "%016x" prints a
+			# NEGATIVE int with a minus sign, and hex_to_int refuses any pattern
+			# above int64 max, so both full-width paths break on negative doubles.
+			return "~f~%08x%08x" % [bytes.decode_u32(4), bytes.decode_u32(0)]
 		TYPE_DICTIONARY:
 			var out_dict := {}
 			for key in value:
@@ -346,9 +522,11 @@ static func _decode_floats(value: Variant) -> Variant:
 	match typeof(value):
 		TYPE_STRING:
 			if (value as String).begins_with("~f~"):
+				var hex := (value as String).substr(3)
 				var bytes := PackedByteArray()
 				bytes.resize(8)
-				bytes.encode_u64(0, ("0x" + (value as String).substr(3)).hex_to_int())
+				bytes.encode_u32(4, ("0x" + hex.substr(0, 8)).hex_to_int())
+				bytes.encode_u32(0, ("0x" + hex.substr(8, 8)).hex_to_int())
 				return bytes.decode_double(0)
 			return value
 		TYPE_DICTIONARY:
@@ -390,6 +568,13 @@ func capture_state() -> Dictionary:
 		"removed_records": _serialize_removed_records(),
 		"policy": {"tax_rate": tax_rate, "tax_rate_changed_hour": tax_rate_changed_hour,
 				"grid_id_high_water": _grid_id_high_water},
+		"water": water.serialize(),
+		"incidents": incidents.serialize_incidents(),
+		"fleet": incidents.fleet.serialize(),
+		"dispatch": incidents.dispatch.serialize(),
+		"roads": roads.save_section(),
+		"weather": weather.serialize(),
+		"director": director.serialize(),
 	}
 
 
@@ -502,6 +687,14 @@ func restore_state(raw_body: Dictionary) -> void:
 		var live: Building = buildings[id]
 		_block_dark_weights[id] = int(live.stats.get("population", 0)) \
 				+ int(live.stats.get("jobs", 0))
+	water.deserialize(body.get("water", {}))
+	incidents.deserialize_incidents(body.get("incidents", {}))
+	incidents.fleet.deserialize(body.get("fleet", {}))
+	incidents.dispatch.deserialize(body.get("dispatch", {}))
+	roads.load_section(body.get("roads", {}))
+	weather.deserialize(body.get("weather", {}))
+	director.deserialize(body.get("director", {}))
+	_refresh_road_density()
 
 
 ## Deterministic digest of the full sim state (Milestone 1 criterion 4).
@@ -586,6 +779,8 @@ func cmd_place_building(archetype: String, origin: Vector2i, variant: String = "
 	construction.assign_crew(job_id, "YARD-CREW-1")
 	b.start_construction()
 	grid.attach_building(sim_id, origin, &"STANDARD", block.id)
+	water.attach_building(sim_id, origin, archetype)
+	_refresh_road_density()
 	bus.emit(&"building_placed_sim", {"building": grid_id, "sim_id": sim_id,
 			"archetype": archetype, "cost": cost})
 	stats_add(&"buildings_built")
@@ -617,7 +812,10 @@ func cmd_upgrade_building(sim_id: String, preview: bool = false) -> Dictionary:
 	var headroom := grid.can_upgrade_power(sim_id, delta_kw * 1.15)
 	if not bool(headroom["ok"]):
 		blockers.append(&"E_POWER_HEADROOM")
-	# E_WATER_HEADROOM / coverage checks join when docs 05 / 02-coverage land.
+	var delta_water := float(next_stats.get("water_demand", 0.0)) \
+			- float(b.stats.get("water_demand", 0.0))
+	if not bool(water.can_upgrade_water(sim_id, delta_water)["ok"]):
+		blockers.append(&"E_WATER_HEADROOM")
 	if next_level >= 4 and not _avenue_within(b.origin, 4):
 		blockers.append(&"E_AVENUE")
 	if preview or not blockers.is_empty():
@@ -811,11 +1009,13 @@ func cmd_demolish_building(sim_id: String, preview: bool = false) -> Dictionary:
 		footprint = Vector2i(int(foot[0]), int(foot[1]))
 	world.grid.remove_building(b.id, b.origin, footprint)
 	grid.detach_building(sim_id)
+	water.detach_building(sim_id)
 	buildings.erase(sim_id)
 	_building_records.erase(sim_id)
 	_block_dark_weights.erase(sim_id)
 	_last_construction_stage.erase(sim_id)
 	_last_demands.erase(sim_id)
+	_refresh_road_density()
 	_grid_id_high_water = maxi(_grid_id_high_water, b.id)
 	if not sim_id.begins_with("P-"):
 		# Only an AUTHORED building needs a replay row: the loader re-creates and
@@ -940,6 +1140,33 @@ func cmd_set_priority(sim_id: String, priority_class: String) -> Dictionary:
 
 ## How many detents the tax slider has: `TAX_RATE_MIN … TAX_RATE_MAX` in
 ## `TAX_RATE_STEP` increments, computed in basis points so no detent can drift.
+# --------------------------------------------------- doc 06 player commands
+
+func cmd_dispatch_unit(unit_id: int, incident_id: int) -> Dictionary:
+	return incidents.dispatch.cmd_dispatch_unit(unit_id, incident_id, incidents.now_h)
+
+
+func cmd_recall_unit(unit_id: int) -> Dictionary:
+	return incidents.dispatch.cmd_recall_unit(unit_id)
+
+
+func cmd_pin_incident(incident_id: int, pinned: bool) -> Dictionary:
+	return incidents.dispatch.cmd_pin_incident(incident_id, pinned)
+
+
+func cmd_acknowledge_incident(incident_id: int) -> Dictionary:
+	return incidents.dispatch.cmd_acknowledge_incident(incident_id)
+
+
+func cmd_set_dispatch_policy(key: String, value: Variant) -> Dictionary:
+	return incidents.dispatch.cmd_set_policy(key, value)
+
+
+## The doc 12 P1-38 onboarding hook: the tutorial's transformer cooks on cue.
+func trigger_tutorial_transformer_failure() -> Incident:
+	return incidents.spawn_scripted_from_tag(loader, "transformer_fail")
+
+
 func tax_level_count() -> int:
 	var t := _tax_ladder()
 	return (int(t[1]) - int(t[0])) / int(t[2]) + 1
@@ -1292,6 +1519,7 @@ func build_settlement_inputs(ctx: TimeContext, availability: Dictionary) -> Dict
 	var building_inputs: Array = []
 	var stations: Array = []
 	var has_pump := false
+	var water_service := water.service_factors()
 	for id in _sorted(buildings):
 		var b: Building = buildings[id]
 		var district_id: String = _block_to_district.get(
@@ -1303,7 +1531,8 @@ func build_settlement_inputs(ctx: TimeContext, availability: Dictionary) -> Dict
 			"type": String(b.archetype), "level": b.level,
 			"occ": population.occ_of(id) * b.state_occupancy(),
 			"power": float(availability.get(id, 1.0)),
-			"water": 1.0, "road": 1.0,  # stubs until docs 05/10 land
+			"water": float(water_service.get(id, 1.0)),
+			"road": roads.access_quality(b.origin),
 			"stability": stability, "condition": b.condition,
 		})
 		match b.archetype:
@@ -1311,8 +1540,10 @@ func build_settlement_inputs(ctx: TimeContext, availability: Dictionary) -> Dict
 				stations.append({"type": String(b.archetype), "level": b.level})
 			&"water_facility":
 				pass  # water_works staffing added once, below (RR-16)
-	for node in loader.water.get("nodes", []):
-		if String(node.get("variant", "")) == "pump":
+	var pump_ids := water.nodes.keys()
+	pump_ids.sort()
+	for node_id in pump_ids:
+		if (water.nodes[node_id] as WaterNode).variant == &"pump":
 			has_pump = true
 	if has_pump:
 		stations.append({"type": "water_works", "level": 1})
@@ -1322,12 +1553,15 @@ func build_settlement_inputs(ctx: TimeContext, availability: Dictionary) -> Dict
 		"happiness": happiness.happiness,
 		"tax_rate": tax_rate,
 		"stations": stations,
+		# Doc 06 owns fleet capacity (C-50) but its authored ladders disagree
+		# with doc 03's STARTER_VEHICLES on utility/water counts — a billing
+		# change that needs a doc-03 ruling before the swap (report §Wave-1).
 		"vehicles": STARTER_VEHICLES,
 		"grid_inventory": grid.grid_inventory(),
 		"delivered_mwh": HELD_DELIVERED_MWH,
 		"generation": [{"plant_type": "gas", "mwh": HELD_DELIVERED_MWH, "level": 1}],
-		"water": HELD_WATER,
-		"roads": {"tiles": {"AVENUE": 540, "STREET": 243}, "c_day": 0.35, "wx_wear_day": 0.0},
+		"water": water.inventory(),
+		"roads": roads.settlement_inputs(),
 		"police_incidents_resolved": HELD_FINE_RATE,
 	}
 
@@ -1366,11 +1600,25 @@ func _rollup_district_population() -> void:
 
 func _register_systems() -> void:
 	scheduler.register(TimerPhaseSystem.new(self))
+	scheduler.register(WeatherPhaseSystem.new(self))
 	scheduler.register(PowerPhaseSystem.new(self))
+	scheduler.register(WaterPhaseSystem.new(self))
+	scheduler.register(WaterHourlySystem.new(self))
 	scheduler.register(WorkPhaseSystem.new(self))
+	scheduler.register(IncidentPhaseSystem.new(self))
 	scheduler.register(DistrictPhaseSystem.new(self))
 	scheduler.register(HourlyPhaseSystem.new(self))
+	scheduler.register(DirectorPhaseSystem.new(self))
+	scheduler.register(WeatherReportPhaseSystem.new(self))
 	scheduler.register(ReportPhaseSystem.new(self))
+
+
+func compose_water_demands() -> Dictionary:
+	var out: Dictionary = {}
+	for id in _sorted(buildings):
+		var b: Building = buildings[id]
+		out[id] = float(b.stats.get("water_demand", 0.0)) * b.water_demand_mult()
+	return out
 
 
 # ------------------------------------------------------------ phase adapters
@@ -1397,7 +1645,7 @@ class PowerPhaseSystem extends SimSystem:
 		var demands := sim.compose_demands(ctx)
 		sim._last_demands = demands
 		sim.grid.tick(ctx.dt_game_seconds, demands, sim.distributed_sinks(ctx),
-				{"t_ambient_c": 22.0, "heat_wave": false}, sim.rng)
+				sim.weather.env_for_grid(), sim.rng)
 	func advance_coarse(ctx: TimeContext) -> void:
 		# Doc 04 §2.12: coarse hour in one step when nothing was overloaded.
 		advance_fine(ctx)
@@ -1417,11 +1665,101 @@ class WorkPhaseSystem extends SimSystem:
 		# building_completed event is what takes the scaffolding down.
 		sim._emit_construction_stages()
 		for job in completed:
-			if not sim.development.on_job_completed(job):
+			if (job.get("payload", {}) as Dictionary).has("roads_kind"):
+				sim.roads.on_job_completed(int(job["job_id"]))
+			elif not sim.development.on_job_completed(job):
 				sim.on_construction_completed(job)
 		# A finished phase auto-submits the next one; doc 03 §2.8 bills it here,
 		# in the same tick, so the ledger never runs a phase behind the site.
 		sim._charge_development_phases()
+	func advance_coarse(ctx: TimeContext) -> void:
+		advance_fine(ctx)
+
+
+class WeatherPhaseSystem extends SimSystem:
+	var sim: CitySim
+	func _init(p_sim: CitySim) -> void: sim = p_sim
+	func system_id() -> StringName: return &"weather"
+	func phase() -> int: return Phase.WEATHER
+	func cadence() -> int: return Cadence.EVERY_TICK
+	func advance_fine(ctx: TimeContext) -> void:
+		sim.weather.tick(ctx)
+		sim._route_lightning(ctx)
+	func advance_coarse(ctx: TimeContext) -> void:
+		sim.weather.advance_coarse(ctx)
+		sim._route_lightning(ctx)
+
+
+class WaterPhaseSystem extends SimSystem:
+	var sim: CitySim
+	func _init(p_sim: CitySim) -> void: sim = p_sim
+	func system_id() -> StringName: return &"water"
+	func phase() -> int: return Phase.WATER
+	func cadence() -> int: return Cadence.EVERY_TICK
+	func advance_fine(ctx: TimeContext) -> void:
+		sim.water.set_demands(sim.compose_water_demands())
+		sim.water.advance(float(ctx.dt_game_seconds) / 3600.0, ctx.channels)
+	func advance_coarse(ctx: TimeContext) -> void:
+		advance_fine(ctx)
+
+
+class WaterHourlySystem extends SimSystem:
+	var sim: CitySim
+	func _init(p_sim: CitySim) -> void: sim = p_sim
+	func system_id() -> StringName: return &"water_hourly"
+	func phase() -> int: return Phase.WATER          # sorts AFTER &"water"
+	func cadence() -> int: return Cadence.EVERY_HOUR
+	func advance_fine(_ctx: TimeContext) -> void:
+		sim.water.hourly_step(sim.rng, {
+			"weather_kind": sim.weather.get_state().to_lower(),
+			"air_temp_c": sim.weather.get_ambient_temp_c(),
+		})
+	func advance_coarse(ctx: TimeContext) -> void:
+		advance_fine(ctx)
+
+
+class IncidentPhaseSystem extends SimSystem:
+	var sim: CitySim
+	func _init(p_sim: CitySim) -> void: sim = p_sim
+	func system_id() -> StringName: return &"incidents"
+	func phase() -> int: return Phase.INCIDENTS
+	func cadence() -> int: return Cadence.EVERY_MINUTE
+	func advance_fine(ctx: TimeContext) -> void: _run(ctx, period_ticks())
+	func advance_coarse(ctx: TimeContext) -> void: _run(ctx, GameClock.TICKS_PER_HOUR)
+	func _run(ctx: TimeContext, step_ticks: int) -> void:
+		# The only path by which doc 06 learns it is offline (doc 08 rule 4).
+		sim.incident_world.offline = ctx.is_catchup
+		# Absolute game-hours off an exact integer tick, never an accumulated
+		# delta: this is what makes the fine and coarse paths land together.
+		sim.incidents.advance_to(float(ctx.tick_index + step_ticks)
+				/ float(GameClock.TICKS_PER_HOUR))
+
+
+class DirectorPhaseSystem extends SimSystem:
+	var sim: CitySim
+	func _init(p_sim: CitySim) -> void: sim = p_sim
+	func system_id() -> StringName: return &"director"
+	func phase() -> int: return Phase.DIRECTOR
+	func cadence() -> int: return Cadence.EVERY_HOUR
+	func advance_fine(ctx: TimeContext) -> void:
+		sim.director.tick_hour(sim.build_director_inputs(), ctx)
+	func advance_coarse(ctx: TimeContext) -> void:
+		advance_fine(ctx)
+
+
+class WeatherReportPhaseSystem extends SimSystem:
+	var sim: CitySim
+	func _init(p_sim: CitySim) -> void: sim = p_sim
+	func system_id() -> StringName: return &"weather_report"
+	func phase() -> int: return Phase.REPORT
+	func cadence() -> int: return Cadence.EVERY_TICK
+	func advance_fine(_ctx: TimeContext) -> void:
+		for event in sim.weather.drain_events():
+			sim.bus.emit(StringName(String(event["type"])), event)
+		for event in sim.director.drain_events():
+			sim.bus.emit(StringName(String(event["type"])), event)
+		for event in sim.director.storm.drain_events():
+			sim.bus.emit(StringName(String(event["type"])), event)
 	func advance_coarse(ctx: TimeContext) -> void:
 		advance_fine(ctx)
 
@@ -1455,7 +1793,9 @@ class HourlyPhaseSystem extends SimSystem:
 		# the completed hour → population/happiness relax (P15 material).
 		var availability := sim.grid.settle_hour()
 		sim.districts.recompute_slow(1.0)
-		sim.economy.settle_hour(sim.build_settlement_inputs(ctx, availability))
+		var settled := sim.economy.settle_hour(sim.build_settlement_inputs(ctx, availability))
+		sim._last_expense_hour = float(
+				(settled.get("expenses", {}) as Dictionary).get("total", sim._last_expense_hour))
 		# doc 03 §2.2: the tax rate is not only a revenue scalar — it slows
 		# growth and shifts the happiness target, which is the whole reason the
 		# knob is interesting. Both terms are exactly 0 / 1.0 at TAX_RATE_BASE.
@@ -1482,6 +1822,12 @@ class ReportPhaseSystem extends SimSystem:
 	func cadence() -> int: return Cadence.EVERY_TICK
 	func advance_fine(_ctx: TimeContext) -> void:
 		for event in sim.grid.drain_events():
+			# Doc 04 fails the component; doc 06 files the repair.
+			sim.incidents.on_power_event(event)
+			sim.bus.emit(StringName(String(event["type"])), event)
+		for event in sim.incidents.drain_events():
+			sim.bus.emit(StringName(String(event["type"])), event)
+		for event in sim.water.drain_events():
 			sim.bus.emit(StringName(String(event["type"])), event)
 		for event in sim.development.drain_events():
 			# The two phase effects that reach outside the land block itself —

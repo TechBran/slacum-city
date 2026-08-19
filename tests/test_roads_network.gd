@@ -509,19 +509,21 @@ func test_save_size_on_a_large_map() -> void:
 			"%d road tiles serialise to %d bytes, inside the 400 KB budget" % [count, bytes])
 
 
-func test_congestion_is_not_saved() -> void:
-	# §3.2: congestion is a pure function of time, density, weather and closures,
-	# so it is recomputed cold on load with smoothing bypassed.
+func test_congestion_smoother_is_saved() -> void:
+	# AMENDED (doc 93 §E2): §3.2 called congestion a pure function and reloaded
+	# it cold — but the smoother CARRIES HISTORY, and a cold reload made a
+	# loaded city diverge from the live run it was saved from, breaking the
+	# save→load→advance identity doctrine (which outranks §3.2). The smoothed
+	# value now rides the save and comes back exactly where the live run had it.
 	var net := _corridor()
 	var edge_id := net.graph.edge_ids_sorted()[0]
 	net.congestion.set_congestion(edge_id, 1.9)
 	var section := net.save_section()
-	assert_false(JSON.stringify(section).contains("congestion"),
-			"the word never appears in the save section")
 	var reloaded := RoadNetwork.new(TileGrid.new(), net.tun, RngStreams.new(1))
 	reloaded.load_section(section)
-	assert_true(reloaded.congestion.congestion_of(reloaded.graph.edge_ids_sorted()[0]) < 1.0,
-			"it comes back cold, not at the saved jam level")
+	assert_almost_eq(
+			reloaded.congestion.congestion_of(reloaded.graph.edge_ids_sorted()[0]),
+			1.9, 1e-9, "the saved jam level survives the reload bit-exactly")
 
 
 # ------------------------------------------------------- offline / online parity

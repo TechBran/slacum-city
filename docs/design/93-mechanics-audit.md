@@ -60,6 +60,29 @@ first, do-nothing, and disaster-heavy runs. Report lands as doc 92 and gets
 re-run per merge. Doc 03's anchors ($686/gh, +$318.77/gh founding net) are the
 regression baseline.
 
+## E2. As-integrated anchor shifts (Wave-1 integration, 2026-08-18 — binding
+## until docs 03/09 refresh their worked examples)
+
+Docs 03/09's worked examples were computed against the held water/road stubs.
+With docs 05/10 billing live, the founding anchors move; the CHAINS are
+unchanged and each shift is explained by a named replacement:
+
+| anchor | doc value (stub) | as-integrated | why |
+|---|---|---|---|
+| 20:00 system peak | 783.3 kW | **801.7 kW** | doc 05's live node roster meters the real plant, ~+18.4 kW over the L1-variant constants |
+| founding net, first hour | +$318.77/gh | **≈ +$345/gh** | live `E_water` inventory + per-building water service + road access replace `HELD_WATER` / `road: 1.0` / `c_day 0.35` |
+| founding day net | ≈ +$7,650 | **≈ +$8,350** | same, over 24 settlements |
+
+Also binding from the same pass: **mode-invariance is per-system, not
+whole-hash** — doc 06 §2.6 sanctions Poisson-count differences per step size,
+doc 04 §2.12 sanctions one-step coarse thermal integration, and the cosmetic
+traffic feed draws per-minute online. The milestone criterion guards the
+deterministic core (clock, population, happiness, settled economy ±5%) with
+ambient generation disabled; each stochastic subsystem's own suite bounds its
+sanctioned parity. Save→load→advance identity remains EXACT and whole-hash —
+that doctrine is untouched (and Wave-1 integration hardened it: negative-double
+encoding, traffic-feed/congestion/density/day-accumulator persistence).
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

@@ -17,3 +17,4 @@ android/build/
 
 # Agent worktrees and session-local state
 .claude/
+build/playtest/

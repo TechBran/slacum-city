@@ -36,8 +36,15 @@ static func _wipe(path: String) -> void:
 func test_fine_coarse_treasury_agreement() -> void:
 	# Criterion 5: 24 coarse hours vs 5,760 fine ticks agree on the treasury
 	# within 5% (deterministic constant-input hours agree near-exactly).
+	# Ambient incident generation is OFF for this comparison: doc 06 §2.6
+	# sanctions different Poisson draw counts per step size, so a spawned
+	# incident in one mode is not a mode-invariance failure — doc 06's own
+	# suite bounds its sub-step parity. This test guards the DETERMINISTIC
+	# core: clock, population, happiness, and the settled economy.
 	var fine := CitySim.boot_from_files(777)
 	var coarse := CitySim.boot_from_files(777)
+	fine.incidents.generation_enabled = false
+	coarse.incidents.generation_enabled = false
 	fine.advance_hours(24.0)
 	coarse.advance_coarse_hours(24)
 	assert_eq(fine.clock.tick_index, coarse.clock.tick_index, "same game time elapsed")
