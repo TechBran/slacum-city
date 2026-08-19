@@ -51,6 +51,13 @@ func is_available() -> bool:
 	return false
 
 
+## Hand the sink `data/notifications.json`'s `delivery` block (doc 13's platform
+## half). Called by `NotificationRouter.set_sink`, so a sink never has to open a
+## file and a test can pass a fixture.
+func configure(_delivery: Dictionary) -> void:
+	pass
+
+
 ## Create (or update) one Android channel per enabled class. Called once at
 ## bring-up with the rows from `NotificationConfig.classes()`. Returns how many
 ## channels the platform now has.

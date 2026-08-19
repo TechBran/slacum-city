@@ -40,8 +40,27 @@ extends RefCounted
 ##
 ## **One device-local clock read, here.** Quiet hours is the only wall-clock
 ## read in the game and it lives in the platform layer, never in `sim/`
-## (constitution §5). `wall_clock` and `local_minute_of_day` are injectable
-## Callables for exactly that reason: a test drives them and never touches `Time`.
+## (constitution §5). `wall_clock`, `local_minute_of_day` and `utc_offset_minutes`
+## are injectable Callables for exactly that reason: a test drives them and never
+## touches `Time`.
+##
+## Offline planning (doc 13 §2.4)
+## ------------------------------
+##
+## `plan_for_background(sim, now_unix)` is the pause-time pass. It asks
+## `NotificationScheduler` what the city will do while nobody is watching —
+## deterministic completions and pre-rolled Director forecasts, both already in
+## the save — and runs each candidate through the budget **at its own fire time**,
+## which doc 08 §2.13 specifically permits because the fire times are known and the
+## token buckets can therefore be simulated forward.
+##
+## Spending tokens for a future that may not happen needs an answer, and this is
+## it: the budget is snapshotted before the pass, and on resume the snapshot is
+## restored and only the entries whose fire time has *already passed* are
+## re-spent. A player who comes back in five minutes gets their whole budget back;
+## one who comes back tomorrow keeps the cost of the notifications they actually
+## received. No delivery receipt is needed for that, which matters, because the
+## receipt only exists when the process happened to be alive.
 
 ## Emitted for every push decision that was refused. `reason` is one of
 ## `NotificationBudget`'s `REASON_*` constants.
@@ -51,10 +70,20 @@ signal notification_planned(plan: Dictionary)
 
 const NOT_ROUTED := {}
 
+## S10's row keys (doc 12 §2.13). The master switch, one per class, and the
+## quiet-hours bypass — the *only* push preferences that exist, because doc 08
+## owns the rest of the policy and it is not a preference.
+const SETTING_MASTER := "notifications_enabled"
+const SETTING_QUIET_CRITICAL := "quiet_hours_allow_critical"
+
 var _cfg: NotificationConfig
 var _budget: NotificationBudget
 var _sink: NotificationSink
 var _rules: Array = []
+## Optional. When set, `plan_for_background(sim, …)` predicts offline fire times
+## through it; without it the pass degrades to "flush what is queued", which is
+## exactly what the desktop build and the headless runner want.
+var scheduler: NotificationScheduler
 
 ## Real minutes since the unix epoch. Monotone across a session and across a
 ## restart, which is what token buckets need; the default reads the system
@@ -64,6 +93,12 @@ var wall_clock: Callable = func() -> float: return Time.get_unix_time_from_syste
 var local_minute_of_day: Callable = func() -> int:
 	var now := Time.get_datetime_dict_from_system()
 	return int(now["hour"]) * 60 + int(now["minute"])
+## Device-local offset from UTC in minutes — the one input doc 08's planner cannot
+## obtain from `sim/` (doc 13 §2.5 item 1). Needed because a *future* fire time
+## has to be tested against quiet hours in the player's own evening, not in UTC's.
+var utc_offset_minutes: Callable = func() -> int:
+	var zone := Time.get_time_zone_from_system()
+	return int(zone.get("bias", 0))
 
 ## Push candidates waiting for a `flush()`.
 var _pending: Array[Dictionary] = []
@@ -71,6 +106,10 @@ var _pending: Array[Dictionary] = []
 var _plans: Array[Dictionary] = []
 ## Quiet-hours deferrals, waiting for the window to close (`defer_to_end`).
 var _deferred: Array[Dictionary] = []
+## The budget as it stood before the last offline pass, and what that pass armed.
+## Together they are how a cancelled alarm gets its token back on resume.
+var _offline_snapshot: Dictionary = {}
+var _offline_scheduled: Array[Dictionary] = []
 var _was_quiet := false
 var _quiet_seen := false
 var _seq := 0
@@ -84,7 +123,10 @@ func _init(cfg: NotificationConfig = null, sink: NotificationSink = null) -> voi
 
 
 static func load_from_files(sink: NotificationSink = null) -> NotificationRouter:
-	return NotificationRouter.new(NotificationConfig.load_from_files(), sink)
+	var router := NotificationRouter.new(NotificationConfig.load_from_files(), sink)
+	router.scheduler = NotificationScheduler.load_from_files()
+	router.scheduler.configure(router.config().delivery())
+	return router
 
 
 func config() -> NotificationConfig:
@@ -104,6 +146,7 @@ func sink() -> NotificationSink:
 ## notification (spec §49).
 func set_sink(new_sink: NotificationSink) -> void:
 	_sink = new_sink if new_sink != null else NotificationSink.new()
+	_sink.configure(_cfg.delivery())
 	var rows: Array = []
 	for class_id: String in _cfg.class_ids():
 		var row := _cfg.class_def(class_id).duplicate(true)
@@ -142,6 +185,11 @@ func feed(event: Dictionary) -> Dictionary:
 		# doc 08 §3.3's convention, not authored copy: the sink resolves these.
 		"title_key": "n_%s_title" % notify_id,
 		"body_key": "n_%s_body" % notify_id,
+		# The binding's `args` map — template name → event payload field — so a
+		# push and its in-app row render from the same numbers as well as the
+		# same string (G-8). Missing fields are simply absent: a placeholder is
+		# uglier than a wrong number is dangerous.
+		"args": _args_for(rule, event),
 		"deeplink": _deeplink(str(event_row.get("deeplink", "")), ref),
 		# The per-key cooldown identity. `aggregate` events share one key (every
 		# dark block is one outage), the rest are per entity.
@@ -182,6 +230,22 @@ func rule_for(event: Dictionary) -> Dictionary:
 			continue
 		return rule
 	return {}
+
+
+## `{template_arg: event_field}` resolved against one event payload.
+static func _args_for(rule: Dictionary, event: Dictionary) -> Dictionary:
+	var mapping: Variant = rule.get("args", {})
+	var out: Dictionary = {}
+	if not (mapping is Dictionary):
+		return out
+	var names: Array = (mapping as Dictionary).keys()
+	names.sort()  # deterministic, so a rendered body is byte-stable
+	for raw: Variant in names:
+		var name := str(raw)
+		var field := str((mapping as Dictionary)[name])
+		if event.has(field):
+			out[name] = event[field]
+	return out
 
 
 ## `"incident/{ref}"` with the entity substituted, or the bare target when the
@@ -284,6 +348,7 @@ func _summary_for(group: Array[Dictionary], class_id: String,
 		"channel_id": str(_cfg.class_def(class_id).get("channel_id", "")),
 		"title_key": "n_%s_title" % notify_id,
 		"body_key": "n_%s_body" % notify_id,
+		"args": {"count": group.size()},
 		"deeplink": str(row.get("deeplink", "report")),
 		"key": notify_id,
 		"ref": null,
@@ -346,6 +411,7 @@ func _release_quiet_hours(now_min: float, minute_of_day: int) -> Array[Dictionar
 		"channel_id": str(_cfg.class_def(class_id).get("channel_id", "")),
 		"title_key": "n_%s_title" % notify_id,
 		"body_key": "n_%s_body" % notify_id,
+		"args": {"count": count},
 		"deeplink": str(row.get("deeplink", "report")),
 		"key": notify_id,
 		"ref": null,
@@ -363,18 +429,177 @@ func _release_quiet_hours(now_min: float, minute_of_day: int) -> Array[Dictionar
 ## doc 08 §2.13's scheduling pass: run at `pause`/`quit`, when the process is
 ## about to stop existing and the fire times in the save are all anyone will
 ## have until it comes back.
-func plan_for_background() -> Array[Dictionary]:
-	return flush()
+##
+## Two halves, in this order. First everything already queued is flushed —
+## in-session events that never got a `flush()`. Then, when a `sim` and a
+## `scheduler` are both present, the *future* is planned: the city's deterministic
+## completions and its pre-rolled forecasts, armed as alarms out to the full
+## 12-real-hour offline cap.
+func plan_for_background(sim: Object = null, now_unix: float = -1.0) -> Array[Dictionary]:
+	# The queued in-session candidates are decided first, and — now that the sink
+	# is live — they are also POSTED, immediately, as the app goes away. That is
+	# doc 08 §2.13's shipped behaviour and `tests/test_notifications.gd` §30 pins
+	# it; doc 13 §2.5's "never notify in the foreground" does not contradict it,
+	# because by this point the foreground is over.
+	#
+	# It does mean an event the player watched happen can spend a token that the
+	# offline plan below then does not have. That is one shared push budget doing
+	# exactly what report C-72 says it should — but it is also a judgement call
+	# about *whose* notification matters more, and it is raised as an open
+	# question in doc 13 §11.10 rather than settled here.
+	var out := flush()
+	if sim == null or scheduler == null:
+		return out
+	var now := now_unix if now_unix >= 0.0 else _now_unix()
+	out.append_array(plan_offline(scheduler.collect(sim, now), now))
+	return out
+
+
+## Decide and arm one list of predicted entries (`NotificationScheduler.collect`).
+##
+## Each entry is budgeted **at its own fire time**, not at now: doc 08 §2.13's
+## scheduling pass explicitly simulates the buckets forward, which is the only way
+## a plan spanning twelve hours can respect a rule phrased as "8 per rolling 24 h,
+## ≥ 5 min apart". Quiet hours is likewise evaluated in the player's local evening
+## at the moment the alarm would ring, not in the one they are leaving.
+func plan_offline(entries: Array, now_unix: float) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if entries.is_empty():
+		return out
+	# Only the FIRST pass since the last resume takes a snapshot. A second pause
+	# with no resume between them (rare, but Android is allowed to do it) would
+	# otherwise overwrite the rewind point with an already-spent budget and make
+	# the first batch's tokens unrecoverable.
+	if _offline_snapshot.is_empty():
+		_offline_snapshot = _budget.serialize()
+		_offline_scheduled.clear()
+	for raw: Variant in entries:
+		if not (raw is Dictionary):
+			continue
+		var entry: Dictionary = raw
+		var fire_unix := float(entry.get("fire_at_unix", now_unix))
+		var plan := _offline_plan(entry, fire_unix)
+		if plan.is_empty():
+			continue
+		var decided := _decide(plan, fire_unix / 60.0, minute_of_day_at(fire_unix))
+		out.append(decided)
+		if bool(decided["allowed"]):
+			_offline_scheduled.append({
+				"fire_at_unix": fire_unix,
+				"class": str(decided["class"]),
+				"severity": int(decided["severity"]),
+				"key": str(decided["key"]),
+				"cooldown_minutes": float(decided["cooldown_minutes"]),
+			})
+	return out
 
 
 ## …and its other half. *"On resume all pending alarms are cancelled and
 ## re-planned."* A notification that fired for an event that then did not happen
 ## is reconciled honestly in the report footer; one that has not fired yet is
 ## simply wrong by now, because the catch-up has replaced the future it assumed.
-func replan_after_resume() -> int:
+##
+## The budget is rewound with it: the pre-pass snapshot is restored, then every
+## armed entry whose fire time has already passed is re-spent. What survives is
+## exactly the cost of the notifications the player actually got.
+func replan_after_resume(now_unix: float = -1.0) -> int:
 	var cancelled := _sink.cancel_all()
 	_pending.clear()
+	if _offline_snapshot.is_empty():
+		return cancelled
+	var now := now_unix if now_unix >= 0.0 else _now_unix()
+	_budget.deserialize(_offline_snapshot)
+	for row: Dictionary in _offline_scheduled:
+		var fire_unix := float(row["fire_at_unix"])
+		if fire_unix > now:
+			continue  # cancelled before it ever rang: the token comes back
+		_budget.request(str(row["class"]), int(row["severity"]), str(row["key"]),
+				float(row["cooldown_minutes"]), fire_unix / 60.0,
+				minute_of_day_at(fire_unix))
+	_offline_snapshot = {}
+	_offline_scheduled.clear()
 	return cancelled
+
+
+## Alarms armed by the last offline pass and not yet reconciled.
+func offline_scheduled_count() -> int:
+	return _offline_scheduled.size()
+
+
+
+
+## S10's writes (doc 12 §2.13): the master switch, the per-class switches and the
+## quiet-hours bypass. Everything else on that screen is doc 08's policy shown
+## read-only, and this method deliberately refuses to accept it.
+##
+## A class doc 08 ships disabled (P4) can never be switched on from here — the
+## budget enforces that — so an S10 row for it is a greyed statement of fact.
+func apply_settings(values: Dictionary) -> void:
+	var master := bool(values.get(SETTING_MASTER, true))
+	for class_id: String in _cfg.class_ids():
+		var key := setting_key_for(class_id)
+		var on := bool(values.get(key, _cfg.class_enabled(class_id)))
+		_budget.set_class_enabled(class_id, master and on)
+	if values.has(SETTING_QUIET_CRITICAL):
+		_budget.set_allow_critical_in_quiet(bool(values[SETTING_QUIET_CRITICAL]))
+
+
+## `P1_critical` → `notify_p1_critical`. The settings row key IS the class id,
+## lowercased, so `data/ui.json` and `data/notifications.json` cannot drift.
+static func setting_key_for(class_id: String) -> String:
+	return "notify_%s" % class_id.to_lower()
+
+
+## Device-local minutes past midnight for any unix second — quiet hours' input
+## for a fire time that has not happened yet.
+func minute_of_day_at(unix_s: float) -> int:
+	var minutes := int(floor(unix_s / 60.0)) + int(utc_offset_minutes.call())
+	return posmod(minutes, NotificationBudget.MINUTES_PER_DAY)
+
+
+## One predicted entry, in the plan shape `_decide` and the sink understand.
+## Returns `{}` for a notify_id doc 08's table does not carry — an event nobody
+## classified has no class, no budget and no copy, and inventing any of the three
+## here would put a second policy owner in the game.
+func _offline_plan(entry: Dictionary, fire_unix: float) -> Dictionary:
+	var notify_id := str(entry.get("notify_id", ""))
+	var row := _cfg.event_def(notify_id)
+	if notify_id == "" or row.is_empty():
+		return {}
+	var class_id := str(row.get("class", "P3_routine"))
+	var ref: Variant = entry.get("ref", null)
+	var args: Variant = entry.get("args", {})
+	_seq += 1
+	return {
+		"seq": _seq,
+		"notify_id": notify_id,
+		"class": class_id,
+		"in_app_class": _cfg.in_app_class(class_id),
+		"severity": AudioConfig.get_int(row, "severity", 0),
+		"aggregate": bool(row.get("aggregate", false)),
+		"cooldown_minutes": AudioConfig.get_num(row, "cooldown_minutes", 0.0),
+		"channel_id": str(_cfg.class_def(class_id).get("channel_id", "")),
+		"title_key": "n_%s_title" % notify_id,
+		"body_key": "n_%s_body" % notify_id,
+		"args": args if args is Dictionary else {},
+		"deeplink": _deeplink(str(row.get("deeplink", "")), ref),
+		"key": notify_id if bool(row.get("aggregate", false)) or ref == null
+				else "%s/%s" % [notify_id, str(ref)],
+		"ref": ref,
+		"event_type": "",
+		"at_min": fire_unix / 60.0,
+		"count": 1,
+		"offline": true,
+		"source": str(entry.get("source", "")),
+		"due_tick": int(entry.get("due_tick", 0)),
+		"real_delay_s": float(entry.get("real_delay_s", 0.0)),
+		# The platform reads this: in the future it is an alarm, otherwise a post.
+		"fire_at_wall_ms": int(round(fire_unix * 1000.0)),
+	}
+
+
+func _now_unix() -> float:
+	return float(wall_clock.call()) * 60.0
 
 
 # ---------------------------------------------------------------------------

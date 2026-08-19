@@ -873,6 +873,33 @@
 				"key": "replay_tutorial",
 				"kind": "toggle",
 				"default": false
+			},
+			{
+				"_comment": "S10 (doc 12 §2.13) — the notification rows. These are a VIEW of doc 08's policy, not a second copy of it: the master switch and the three class switches write NotificationBudget through NotificationRouter.apply_settings(), and the row key IS the class id lowercased (P1_critical → notify_p1_critical) so data/ui.json and data/notifications.json cannot drift. P4_ambient has no row because it has no channel — doc 08 ships it disabled and the budget refuses to enable it, so a row would be a switch that does nothing. Defaults mirror data/notifications.json's `default_enabled`; doc 12 §2.13's 'P3 off by default' is superseded, because C-71 made doc 08 sole owner of that answer and doc 08 says on.",
+				"key": "notifications_enabled",
+				"kind": "toggle",
+				"default": true
+			},
+			{
+				"key": "notify_p1_critical",
+				"kind": "toggle",
+				"default": true
+			},
+			{
+				"key": "notify_p2_important",
+				"kind": "toggle",
+				"default": true
+			},
+			{
+				"key": "notify_p3_routine",
+				"kind": "toggle",
+				"default": true
+			},
+			{
+				"_comment": "doc 08 §2.13.3's explicit opt-in, default OFF: quiet hours otherwise defer even a P1 to the 08:00 summary. Informed rather than woken is the ship default, and this row is how a player who wants the 03:00 buzz asks for it.",
+				"key": "quiet_hours_allow_critical",
+				"kind": "toggle",
+				"default": false
 			}
 		],
 		"device_scoped_keys": [
@@ -880,7 +907,12 @@
 			"text_scale",
 			"reduce_motion",
 			"larger_touch_targets",
-			"sound_volume"
+			"sound_volume",
+			"notifications_enabled",
+			"notify_p1_critical",
+			"notify_p2_important",
+			"notify_p3_routine",
+			"quiet_hours_allow_critical"
 		],
 		"settings_file": "user://settings.cfg"
 	},

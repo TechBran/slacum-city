@@ -68,4 +68,13 @@ cat <<EOF
 Android build is ready. To produce the debug APK:
 
   "$GODOT" --headless --path "$REPO_ROOT" --export-debug "Android" "$REPO_ROOT/build/slacum-debug.apk"
+
+For the signed release pair (AAB + APK), with the keystore env vars set:
+
+  tools/make_release.sh                  # builds both, verifies both, prints hashes
+  tools/make_release.sh --init-keystore  # once, to create the upload keystore
+
+And for the Play listing assets (icon, feature graphic, screenshots):
+
+  python3 tools/gen_store_assets.py
 EOF

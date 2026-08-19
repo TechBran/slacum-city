@@ -1,9 +1,18 @@
 package com.slacumcity.nativeplugin
 
+import android.Manifest
+import android.app.Activity
+import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
+import org.godotengine.godot.Dictionary
 import org.godotengine.godot.Godot
 import org.godotengine.godot.plugin.GodotPlugin
 import org.godotengine.godot.plugin.SignalInfo
@@ -11,33 +20,32 @@ import org.godotengine.godot.plugin.UsedByGodot
 import java.io.File
 
 /**
- * `SlacumNative` — the Slacum City Android plugin (design doc 13 §2.6), v1 scope.
+ * `SlacumNative` — the Slacum City Android plugin (design doc 13 §2.6).
  *
  * Bounded on purpose: this class contains **no game logic, no policy and no
  * strings**. GDScript decides *what* and *when*; Kotlin only knows *how*. That
- * keeps the surface that cannot be tested headlessly as small as it can be.
+ * keeps the surface that cannot be tested headlessly as small as it can be — and
+ * it is why the rate limiter, the quiet-hours window and the class table are
+ * nowhere in this file (report C-71: everything that arrives here has already
+ * passed doc 08's budget and is final).
  *
- * Three capabilities ship here, and nothing else:
+ * Four capabilities ship:
  *
- *  1. **`elapsed_realtime_ms()`** — `SystemClock.elapsedRealtime()`, which keeps
- *     counting while the device is in deep sleep. Godot's `Time.get_ticks_msec()`
- *     is `CLOCK_MONOTONIC`, which **stalls** in deep sleep, so it can only ever be
- *     a *lower* bound on how long the player was away. `elapsedRealtime` is the
- *     missing *upper* bound that lets `AndroidLifecycle` reject a wall clock that
- *     jumped forward (NTP correction, manual clock change, timezone rollover)
- *     without punishing an honest 12-hour absence.
- *  2. **`boot_id()`** — `elapsedRealtime` resets to ~0 on reboot, so it may only be
- *     compared across a pause/resume pair that stayed inside one boot. The kernel's
- *     random boot id names the boot; a mismatch means "reboot happened, ignore the
- *     monotonic cross-check and trust the wall clock".
- *  3. **Thermal + sustained performance** — `PowerManager.getCurrentThermalStatus()`
- *     (API 29, exactly our minSdk) plus a push listener, and the window's sustained
- *     performance mode, which asks the SoC for a level it can hold indefinitely
- *     rather than a boost it must throttle out of. A city builder is played in long
- *     sessions; a stable 60 fps beats a fast three minutes and a hot phone.
- *
- * Notifications, permissions and the alarm registry are deliberately NOT here yet —
- * they are Milestone B (doc 13 §6) and would triple this file.
+ *  1. **Time** — `elapsed_realtime_ms()` (`SystemClock.elapsedRealtime()`, which
+ *     keeps counting through deep sleep where Godot's `CLOCK_MONOTONIC` stalls) and
+ *     `boot_id()`, without which two readings from different boots would be
+ *     subtracted from each other and a three-day absence would measure four minutes.
+ *  2. **Thermal + sustained performance** — `getCurrentThermalStatus()` (API 29,
+ *     exactly our minSdk) plus a push listener, and the window's sustained
+ *     performance mode: a clock the SoC can hold beats a boost it must throttle
+ *     out of, in a game played in half-hour sittings.
+ *  3. **Notifications** (Milestone B, doc 13 §2.4/§2.5) — channels, immediate posts,
+ *     `AlarmManager` schedules, cancellation and the reboot registry, all in
+ *     [NotificationCenter].
+ *  4. **The `POST_NOTIFICATIONS` runtime flow** (doc 13 §2.7) — request, state
+ *     reporting and a route into system settings for the permanently-denied case.
+ *     The *when* is GDScript's (`game/notifications/permission_flow.gd`); this side
+ *     only knows how to ask and how to report what the system said.
  */
 class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 
@@ -47,37 +55,97 @@ class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 
 		/** Emitted on every thermal transition; payload is `THERMAL_STATUS_*` (0..6). */
 		private const val SIGNAL_THERMAL_STATUS_CHANGED = "thermal_status_changed"
+		/** `POST_NOTIFICATIONS` came back: true = granted. */
+		private const val SIGNAL_PERMISSION_RESULT = "permission_result"
+		/** A scheduled notification actually fired while the process was alive. */
+		private const val SIGNAL_NOTIFICATION_DELIVERED = "notification_delivered"
+		/** The player tapped a notification and it brought the app up: payload string. */
+		private const val SIGNAL_NOTIFICATION_OPENED = "notification_opened"
 
 		/** Randomised per boot by the kernel, world-readable, no permission needed. */
 		private const val BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
 
 		/** Returned by every accessor that has no platform answer to give. */
 		private const val UNKNOWN_STATUS = -1
+
+		private const val PERMISSION_REQUEST_CODE = 7301
+		private const val PREFS = "slacum_native"
+		private const val PREF_ASKED = "post_notifications_asked"
+
+		const val STATE_GRANTED = "granted"
+		const val STATE_DENIED = "denied"
+		const val STATE_DENIED_PERMANENT = "denied_permanent"
+		const val STATE_NEVER_ASKED = "never_asked"
+		const val STATE_UNSUPPORTED = "unsupported"
+
+		/**
+		 * The live plugin, or null when the process is dead — which is the normal
+		 * case for [AlarmReceiver], since scheduling notifications for a closed app
+		 * is the whole feature. Weak-by-nulling rather than a `WeakReference`
+		 * because the lifetime is explicit: set at setup, cleared at destroy.
+		 */
+		@Volatile
+		private var live: SlacumNative? = null
+
+		/** Called by [AlarmReceiver] after a scheduled notification was posted. */
+		@JvmStatic
+		fun onNotificationFired(id: Int, key: String) {
+			val plugin = live ?: return
+			try {
+				plugin.emitSignal(SIGNAL_NOTIFICATION_DELIVERED, id, key)
+			} catch (e: Exception) {
+				Log.w(TAG, "delivery signal refused: ${e.message}")
+			}
+		}
 	}
 
-	// Context, not activity: the power service has nothing to do with the window,
-	// and a Godot host that is a fragment rather than an activity still has one.
+	// Context, not activity: the power and notification services have nothing to do
+	// with the window, and a Godot host that is a fragment rather than an activity
+	// still has a context.
 	private val powerManager: PowerManager?
 		get() = (context ?: activity)?.getSystemService(Context.POWER_SERVICE) as? PowerManager
+
+	private val notificationManager: NotificationManager?
+		get() = (context ?: activity)
+			?.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+
+	private val center: NotificationCenter?
+		get() = (context ?: activity)?.let { NotificationCenter(it.applicationContext) }
 
 	/** Read once — the boot id cannot change without the process dying with it. */
 	private val cachedBootId: String by lazy { readBootId() }
 
 	private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
 
+	/** Set when the app was launched (or resumed) from a notification tap. */
+	private var launchPayload: String = ""
+
 	override fun getPluginName(): String = PLUGIN_NAME
 
 	override fun getPluginSignals(): MutableSet<SignalInfo> = mutableSetOf(
-		SignalInfo(SIGNAL_THERMAL_STATUS_CHANGED, Integer::class.java)
+		SignalInfo(SIGNAL_THERMAL_STATUS_CHANGED, Integer::class.java),
+		SignalInfo(SIGNAL_PERMISSION_RESULT, java.lang.Boolean::class.java),
+		SignalInfo(SIGNAL_NOTIFICATION_DELIVERED, Integer::class.java, String::class.java),
+		SignalInfo(SIGNAL_NOTIFICATION_OPENED, String::class.java),
 	)
 
 	override fun onGodotSetupCompleted() {
 		super.onGodotSetupCompleted()
+		live = this
 		registerThermalListener()
+		captureLaunchPayload()
+	}
+
+	override fun onMainResume() {
+		super.onMainResume()
+		// A tap while the process is alive arrives as a new intent on the launcher
+		// activity; re-reading it here is the only hook a GodotPlugin is given.
+		captureLaunchPayload()
 	}
 
 	override fun onMainDestroy() {
 		unregisterThermalListener()
+		live = null
 		super.onMainDestroy()
 	}
 
@@ -130,7 +198,274 @@ class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 		}
 	}
 
+	// ------------------------------------------------------------- permissions
+
+	/**
+	 * The only question that matters before scheduling anything: will the system
+	 * show what we post? Covers the runtime permission *and* the per-app master
+	 * switch in system settings, which exists on every API level and which no
+	 * permission state reports.
+	 */
+	@UsedByGodot
+	fun notifications_enabled(): Boolean = notificationManager?.areNotificationsEnabled() ?: false
+
+	/**
+	 * `granted` | `denied` | `denied_permanent` | `never_asked` | `unsupported`.
+	 *
+	 * `denied_permanent` is inferred the only way Android allows: the permission is
+	 * not held, we have asked at least once, and the system now declines to show a
+	 * rationale — which is its way of saying the dialog will never appear again.
+	 * Getting this wrong in the optimistic direction produces an app that prompts
+	 * forever and never shows a dialog, so the pessimistic reading is the safe one.
+	 */
+	@UsedByGodot
+	fun permission_state(): String {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+			// No runtime permission exists below 33; the master switch still does,
+			// so `notifications_enabled()` stays the truthful reading there.
+			return if (notifications_enabled()) STATE_GRANTED else STATE_UNSUPPORTED
+		}
+		val host = activity ?: return STATE_UNSUPPORTED
+		if (host.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+			PackageManager.PERMISSION_GRANTED
+		) {
+			return STATE_GRANTED
+		}
+		if (!hasAsked()) {
+			return STATE_NEVER_ASKED
+		}
+		return if (host.shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS))
+			STATE_DENIED else STATE_DENIED_PERMANENT
+	}
+
+	/**
+	 * Show the system dialog. The answer arrives as `permission_result(granted)`;
+	 * a call that cannot possibly produce a dialog (below API 33, or already
+	 * decided) answers immediately rather than leaving GDScript waiting on a signal
+	 * that will never come.
+	 */
+	@UsedByGodot
+	fun request_notification_permission() {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+			emitPermissionResult(notifications_enabled())
+			return
+		}
+		val host = activity ?: run {
+			emitPermissionResult(false)
+			return
+		}
+		if (host.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+			PackageManager.PERMISSION_GRANTED
+		) {
+			emitPermissionResult(true)
+			return
+		}
+		markAsked()
+		runOnHostThread {
+			try {
+				host.requestPermissions(
+					arrayOf(Manifest.permission.POST_NOTIFICATIONS), PERMISSION_REQUEST_CODE)
+			} catch (e: Exception) {
+				Log.w(TAG, "permission request refused: ${e.message}")
+				emitPermissionResult(false)
+			}
+		}
+	}
+
+	override fun onMainRequestPermissionsResult(
+		requestCode: Int,
+		permissions: Array<out String>?,
+		grantResults: IntArray?,
+	) {
+		super.onMainRequestPermissionsResult(requestCode, permissions, grantResults)
+		if (requestCode != PERMISSION_REQUEST_CODE) {
+			return
+		}
+		val granted = grantResults != null && grantResults.isNotEmpty() &&
+			grantResults[0] == PackageManager.PERMISSION_GRANTED
+		emitPermissionResult(granted)
+	}
+
+	/**
+	 * The escape hatch for `denied_permanent`: the app can never prompt again, but
+	 * it can still take the player to the screen where the switch lives. Falls back
+	 * to the app details page on hosts that do not implement the notification one.
+	 */
+	@UsedByGodot
+	fun open_app_notification_settings(): Boolean {
+		val host = activity ?: return false
+		val direct = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+			.putExtra(Settings.EXTRA_APP_PACKAGE, host.packageName)
+			.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+		val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+			.setData(Uri.fromParts("package", host.packageName, null))
+			.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+		return startFirstResolvable(host, direct, fallback)
+	}
+
+	private fun startFirstResolvable(host: Activity, vararg intents: Intent): Boolean {
+		for (intent in intents) {
+			try {
+				host.startActivity(intent)
+				return true
+			} catch (e: Exception) {
+				Log.w(TAG, "settings intent refused: ${e.message}")
+			}
+		}
+		return false
+	}
+
+	// ----------------------------------------------------------- notifications
+
+	/**
+	 * Create one Android channel per enabled class (doc 13 §2.5). Called once at
+	 * bring-up from GDScript, with the ids and importances out of
+	 * `data/notifications.json` — this side invents neither.
+	 */
+	@UsedByGodot
+	fun ensure_channel(
+		channel_id: String,
+		name: String,
+		importance: String,
+		sound: Boolean,
+		vibrate: Boolean,
+	): Boolean = center?.ensureChannel(channel_id, name, importance, sound, vibrate) ?: false
+
+	/** True once [ensure_channel] has created it (and the player has not deleted it). */
+	@UsedByGodot
+	fun channel_exists(channel_id: String): Boolean = center?.channelExists(channel_id) ?: false
+
+	/**
+	 * Post now. `priority` names the channel-ish urgency for callers that have no
+	 * channel id to hand (`critical` | `important` | `routine`); a caller that does
+	 * have one should pass it as `priority` directly, because an unrecognised value
+	 * is used verbatim as the channel id.
+	 */
+	@UsedByGodot
+	fun show_notification(id: Int, title: String, body: String, priority: String): Boolean {
+		val entry = NotificationCenter.Entry(
+			id = id, atMs = 0L, channel = channelFor(priority),
+			title = title, body = body, payload = "", key = "")
+		return center?.postNow(entry) ?: false
+	}
+
+	/**
+	 * Schedule for `at_unix` (**seconds**, the unit every clock in this game speaks).
+	 * A time already past posts immediately rather than being dropped: a plan built
+	 * during the pause sequence can name a moment that arrives before the JNI hop
+	 * lands, and silently discarding it would be a lost notification with no trace.
+	 */
+	@UsedByGodot
+	fun schedule_notification(
+		id: Int,
+		title: String,
+		body: String,
+		at_unix: Long,
+		priority: String,
+	): Boolean {
+		val entry = NotificationCenter.Entry(
+			id = id, atMs = at_unix * 1000L, channel = channelFor(priority),
+			title = title, body = body, payload = "", key = "")
+		return center?.schedule(entry, System.currentTimeMillis()) ?: false
+	}
+
+	/**
+	 * The dictionary form `game/notifications/native_notification_sink.gd` uses:
+	 * one decided plan, rendered. `fire_at_wall_ms` in the future is an alarm;
+	 * absent or past is a post. Keys: `id`, `channel_id`, `title`, `body`,
+	 * `deeplink`, `key`, `fire_at_wall_ms`.
+	 */
+	@UsedByGodot
+	fun post_notification(plan: Dictionary): Boolean {
+		val bridge = center ?: return false
+		val id = intOf(plan["id"], 0)
+		if (id == 0) {
+			return false
+		}
+		val entry = NotificationCenter.Entry(
+			id = id,
+			atMs = longOf(plan["fire_at_wall_ms"], 0L),
+			channel = stringOf(plan["channel_id"]),
+			title = stringOf(plan["title"]),
+			body = stringOf(plan["body"]),
+			payload = stringOf(plan["deeplink"]),
+			key = stringOf(plan["key"]),
+		)
+		val now = System.currentTimeMillis()
+		return if (entry.atMs > now + 1000L) bridge.schedule(entry, now) else bridge.postNow(entry)
+	}
+
+	@UsedByGodot
+	fun cancel_notification(id: Int): Boolean = center?.cancel(id) ?: false
+
+	/** Everything pending, dropped. Returns how many alarms were cancelled. */
+	@UsedByGodot
+	fun cancel_notifications(): Int = center?.cancelAll() ?: 0
+
+	@UsedByGodot
+	fun scheduled_ids(): IntArray = center?.scheduledIds() ?: IntArray(0)
+
+	/**
+	 * The deeplink of the notification the app was opened from, or `""`. Consuming
+	 * clears it — a payload that survived would deep-link the player back into a
+	 * three-day-old incident every launch.
+	 */
+	@UsedByGodot
+	fun consume_launch_payload(): String {
+		val payload = launchPayload
+		launchPayload = ""
+		return payload
+	}
+
 	// ---------------------------------------------------------------- internals
+
+	/**
+	 * The channel-id mapping doc 13 §2.5 fixes. Anything unrecognised is passed
+	 * through untouched, so GDScript can hand a real channel id from
+	 * `data/notifications.json` and skip the shorthand entirely.
+	 */
+	private fun channelFor(priority: String): String = when (priority.lowercase()) {
+		"critical", "p1", "p1_critical", "high" -> "slacum_critical"
+		"important", "p2", "p2_important", "default" -> "slacum_important"
+		"routine", "p3", "p3_routine", "low" -> "slacum_routine"
+		"", "ambient", "p4", "p4_ambient", "min" -> "slacum_routine"
+		else -> priority
+	}
+
+	private fun captureLaunchPayload() {
+		val intent = activity?.intent ?: return
+		val payload = intent.getStringExtra(NotificationCenter.EXTRA_PAYLOAD) ?: return
+		if (payload.isEmpty()) {
+			return
+		}
+		// Consume it off the intent as well: `activity.intent` is sticky, so a
+		// plain rotation would otherwise replay the same deep link.
+		intent.removeExtra(NotificationCenter.EXTRA_PAYLOAD)
+		launchPayload = payload
+		try {
+			emitSignal(SIGNAL_NOTIFICATION_OPENED, payload)
+		} catch (e: Exception) {
+			Log.w(TAG, "open signal refused: ${e.message}")
+		}
+	}
+
+	private fun emitPermissionResult(granted: Boolean) {
+		try {
+			emitSignal(SIGNAL_PERMISSION_RESULT, granted)
+		} catch (e: Exception) {
+			Log.w(TAG, "permission signal refused: ${e.message}")
+		}
+	}
+
+	private fun hasAsked(): Boolean = (context ?: activity)
+		?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+		?.getBoolean(PREF_ASKED, false) ?: false
+
+	private fun markAsked() {
+		(context ?: activity)
+			?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+			?.edit()?.putBoolean(PREF_ASKED, true)?.apply()
+	}
 
 	private fun registerThermalListener() {
 		val manager = powerManager ?: return
@@ -164,4 +499,14 @@ class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 		Log.w(TAG, "boot id unreadable: ${e.message}")
 		""
 	}
+
+	// Godot marshals every Variant number as Integer/Long/Double depending on the
+	// value, so a dictionary field has to be read through Number rather than cast.
+	private fun stringOf(value: Any?): String = value?.toString() ?: ""
+
+	private fun intOf(value: Any?, fallback: Int): Int =
+		(value as? Number)?.toInt() ?: fallback
+
+	private fun longOf(value: Any?, fallback: Long): Long =
+		(value as? Number)?.toLong() ?: fallback
 }

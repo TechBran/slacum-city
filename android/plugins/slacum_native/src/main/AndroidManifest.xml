@@ -5,17 +5,58 @@
 	instantiates the named class. No .gdap entry does this — the .gdap next to the
 	AAR only tells Gradle where the binary is.
 
-	No permissions are declared, and that is the whole point of this file being
-	three lines long: elapsedRealtime, the boot id, thermal status and sustained
-	performance mode are all permission-free. Doc 13 §2.7's four permissions
-	arrive with the notification half of the plugin, not before.
+	The plugin declares its own permissions and receivers so that manifest merging
+	keeps it self-contained and `export_presets.cfg` needs no `custom_permissions`
+	entry (doc 13 §2.6). These four are the WHOLE release manifest (doc 13 §2.7),
+	and the list is enforced on every build by `tools/make_release.sh`:
+
+	  POST_NOTIFICATIONS      runtime (API 33+)  every notification
+	  RECEIVE_BOOT_COMPLETED  normal             re-arm alarms after a reboot
+	  VIBRATE                 normal             the P1 channel's vibration + haptics
+	  WAKE_LOCK               normal             Godot's keep-screen-on while playing
+
+	Deliberately absent, and each absence is load-bearing: INTERNET (the reason the
+	Play Data Safety form can say "collects nothing"), SCHEDULE_EXACT_ALARM and
+	USE_EXACT_ALARM (Play restricts them to clocks and calendars — a city builder
+	asking for one risks the listing, which is why every alarm here is inexact),
+	FOREGROUND_SERVICE* (there is no service; the sim never runs in the background),
+	and any storage or ad-id permission.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+	<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+	<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+	<uses-permission android:name="android.permission.VIBRATE" />
+	<uses-permission android:name="android.permission.WAKE_LOCK" />
 
 	<application>
 		<meta-data
 			android:name="org.godotengine.plugin.v2.SlacumNative"
 			android:value="com.slacumcity.nativeplugin.SlacumNative" />
+
+		<!--
+			Both receivers are `exported="false"`: nothing outside this package has
+			any business firing a Slacum notification, and the alarm one is reached
+			through an explicit PendingIntent held by the system, which does not
+			need export. `directBootAware` is false by design — the schedule file
+			lives in credential-encrypted storage, so replay waits for unlock.
+		-->
+		<receiver
+			android:name="com.slacumcity.nativeplugin.AlarmReceiver"
+			android:exported="false">
+			<intent-filter>
+				<action android:name="com.slacumcity.nativeplugin.FIRE" />
+			</intent-filter>
+		</receiver>
+
+		<receiver
+			android:name="com.slacumcity.nativeplugin.BootReceiver"
+			android:exported="false">
+			<intent-filter>
+				<action android:name="android.intent.action.BOOT_COMPLETED" />
+				<action android:name="android.intent.action.QUICKBOOT_POWERON" />
+			</intent-filter>
+		</receiver>
 	</application>
 
 </manifest>

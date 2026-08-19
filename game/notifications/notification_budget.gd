@@ -259,12 +259,18 @@ func deserialize(data: Dictionary) -> void:
 	_refilled_at = AudioConfig.get_num(data, "refilled_at_min", _refilled_at)
 	_started = bool(data.get("started", _started))
 	_last_any = AudioConfig.get_num(data, "last_any_min", _last_any)
+	# Replace, never merge. A restore is authoritative — whether it comes from a
+	# save or from the router rewinding an offline plan that was cancelled — and a
+	# merge would leave a stamp from the discarded timeline behind, muting the
+	# next real notification of that key for its whole cooldown.
 	var last_class: Variant = data.get("last_class_min", {})
 	if last_class is Dictionary:
+		_last_class.clear()
 		for key: Variant in (last_class as Dictionary):
 			_last_class[str(key)] = float((last_class as Dictionary)[key])
 	var last_key: Variant = data.get("last_key_min", {})
 	if last_key is Dictionary:
+		_last_key.clear()
 		for key: Variant in (last_key as Dictionary):
 			_last_key[str(key)] = float((last_key as Dictionary)[key])
 	var enabled: Variant = data.get("enabled", {})

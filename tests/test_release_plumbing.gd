@@ -1,0 +1,275 @@
+extends SimTest
+## Doc 13 §2.7 / §2.10 / §2.12 — the release contract, checked without building.
+##
+## `tools/make_release.sh` verifies the *artefacts*: it opens the keystore, reads
+## the permissions back out of the AAB and the APK, and checks every LOAD segment
+## for 16 KB alignment. That takes two Gradle builds and about a minute, and it
+## needs signing secrets in the environment, so it cannot run in this suite.
+##
+## What can run here is everything the artefacts are made **from**: the presets,
+## the version arithmetic, the plugin's manifest, and the promise that no secret
+## has crept into a committed file. Those are exactly the things a hurried commit
+## breaks, and each of them fails a store submission hours after the fact — a
+## version code that did not increment, an INTERNET permission that changes the
+## Data Safety declaration, a keystore path pasted into a preset.
+##
+## The two halves meet at the permission list: it is written down once in doc 13
+## §2.7, declared in the plugin's `AndroidManifest.xml`, asserted here against
+## that file, and asserted again by `make_release.sh` against the built binary.
+
+const PROJECT_GODOT := "res://project.godot"
+const PRESETS := "res://export_presets.cfg"
+const PLUGIN_MANIFEST := "res://android/plugins/slacum_native/src/main/AndroidManifest.xml"
+const MAKE_RELEASE := "res://tools/make_release.sh"
+const SETUP_ANDROID := "res://tools/setup_android.sh"
+const STORE_ASSETS := "res://tools/gen_store_assets.py"
+const AAB_BADGING := "res://tools/aab_badging.py"
+
+## doc 13 §2.7, and this list is the whole release manifest.
+const EXPECTED_PERMISSIONS: Array[String] = [
+	"android.permission.POST_NOTIFICATIONS",
+	"android.permission.RECEIVE_BOOT_COMPLETED",
+	"android.permission.VIBRATE",
+	"android.permission.WAKE_LOCK",
+]
+
+## Every one of these would change the Play Data Safety answer, the store
+## listing's eligibility, or both.
+const FORBIDDEN_PERMISSIONS: Array[String] = [
+	"android.permission.INTERNET",
+	"android.permission.SCHEDULE_EXACT_ALARM",
+	"android.permission.USE_EXACT_ALARM",
+	"android.permission.ACCESS_NETWORK_STATE",
+	"android.permission.QUERY_ALL_PACKAGES",
+	"android.permission.FOREGROUND_SERVICE",
+	"com.google.android.gms.permission.AD_ID",
+]
+
+
+static func _read(path: String) -> String:
+	return FileAccess.get_file_as_string(path)
+
+
+func _presets() -> String:
+	return _read(PRESETS)
+
+
+## Every `key=value` occurrence in export_presets.cfg, as strings.
+static func _values(text: String, key: String) -> PackedStringArray:
+	var out: PackedStringArray = []
+	for line: String in text.split("\n"):
+		var trimmed := line.strip_edges()
+		if trimmed.begins_with(key + "="):
+			out.append(trimmed.substr(key.length() + 1).strip_edges().trim_prefix("\"")
+					.trim_suffix("\""))
+	return out
+
+
+func _project_version() -> String:
+	for line: String in _read(PROJECT_GODOT).split("\n"):
+		if line.begins_with("config/version="):
+			return line.substr("config/version=".length()).strip_edges().trim_prefix("\"") \
+					.trim_suffix("\"")
+	return ""
+
+
+# ===========================================================================
+# Version
+# ===========================================================================
+
+func test_the_version_code_is_the_documented_function_of_the_version_name() -> void:
+	# doc 13 §2.10: major*10000 + minor*100 + patch. It is a formula rather than
+	# a number so that two people bumping two files can never disagree, and so
+	# that a code can never go backwards — which Play refuses, permanently.
+	var version := _project_version()
+	assert_ne(version, "", "project.godot carries application/config/version")
+	var parts := version.split(".")
+	assert_eq(parts.size(), 3, "semantic version: %s" % version)
+	var expected := int(parts[0]) * 10000 + int(parts[1]) * 100 + int(parts[2])
+
+	var names := _values(_presets(), "version/name")
+	var codes := _values(_presets(), "version/code")
+	assert_true(names.size() >= 3, "one preset per output (debug, AAB, test APK)")
+	assert_eq(names.size(), codes.size())
+	for i in names.size():
+		assert_eq(names[i], version,
+				"preset %d's version/name matches project.godot" % i)
+		assert_eq(int(codes[i]), expected,
+				"preset %d's version/code is %d" % [i, expected])
+
+
+func test_this_release_is_0_4_0() -> void:
+	# Pinned deliberately: the release plumbing landed at 0.4.0 / 400, and a
+	# silent revert of either is the kind of thing that is only noticed by a
+	# rejected upload.
+	assert_eq(_project_version(), "0.4.0")
+	for code: String in _values(_presets(), "version/code"):
+		assert_eq(int(code), 400)
+
+
+# ===========================================================================
+# Presets
+# ===========================================================================
+
+func test_three_presets_one_per_output() -> void:
+	var text := _presets()
+	var names := _values(text, "name")
+	assert_true(names.has("Android"), "the debug APK the dev loop installs")
+	assert_true(names.has("Android Play AAB"), "the bundle Play accepts")
+	assert_true(names.has("Android Test APK"),
+			"a release-signed APK: every perf and battery number is measured on "
+			+ "release code, never on a debug build")
+	var paths := _values(text, "export_path")
+	assert_true(paths.has("build/slacum-debug.apk"))
+	assert_true(paths.has("build/slacum-release.aab"))
+	assert_true(paths.has("build/slacum-release.apk"))
+	# Exactly one bundle: `export_format=1` is AAB, 0 is APK.
+	var formats := _values(text, "gradle_build/export_format")
+	var bundles := 0
+	for value: String in formats:
+		if int(value) == 1:
+			bundles += 1
+	assert_eq(bundles, 1, "one preset produces a bundle, and it is the AAB one")
+
+
+func test_every_preset_ships_the_plugin_and_the_gradle_build() -> void:
+	# A plugin that is present but not listed is silently left OUT of the build
+	# (doc 13 §10.2 — it happened once and the APK simply had no plugin in it).
+	# Without the plugin there are no notifications, no channels and no alarms,
+	# and nothing about the build would say so.
+	var text := _presets()
+	var enabled := _values(text, "plugins/SlacumNative")
+	assert_eq(enabled.size(), 3, "every preset names the plugin")
+	for value: String in enabled:
+		assert_eq(value, "true")
+	for value: String in _values(text, "gradle_build/use_gradle_build"):
+		assert_eq(value, "true", "the plugin requires the Gradle template")
+	for value: String in _values(text, "gradle_build/min_sdk"):
+		assert_eq(int(value), 29, "minSdk 29 — addThermalStatusListener's floor")
+	for value: String in _values(text, "package/signed"):
+		assert_eq(value, "true")
+
+
+func test_arm64_only_on_every_preset() -> void:
+	# Play has required 64-bit since 2019 and every Vulkan-capable Android 10+
+	# device is arm64, so armeabi-v7a is ~35 MB of payload for nobody.
+	var text := _presets()
+	for key: String in ["architectures/armeabi-v7a", "architectures/x86",
+			"architectures/x86_64"]:
+		for value: String in _values(text, key):
+			assert_eq(value, "false", "%s is off" % key)
+	for value: String in _values(text, "architectures/arm64-v8a"):
+		assert_eq(value, "true")
+
+
+func test_no_secret_can_live_in_a_committed_file() -> void:
+	# Godot 4.7 has no keystore fields in the preset at all, which is the
+	# strongest possible version of this rule: there is no field to leak through.
+	# The assertion stands anyway, because a future engine could add them back.
+	var text := _presets()
+	for key: String in ["keystore/release", "keystore/release_user",
+			"keystore/release_password", "keystore/debug_password"]:
+		assert_false(text.contains(key + "=\"") and not text.contains(key + "=\"\""),
+				"%s carries no value in a committed file" % key)
+	var script := _read(MAKE_RELEASE)
+	assert_true(script.contains("GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD"),
+			"the release script reads the password from the environment")
+	assert_false(script.contains("GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD=\""),
+			"…and never assigns one")
+	# A keystore inside the working tree is a compromised keystore, whatever
+	# .gitignore says about it today.
+	assert_eq(str(_files_matching("res://", ".keystore")), "[]",
+			"no keystore anywhere in the repository")
+	assert_eq(str(_files_matching("res://", ".jks")), "[]")
+
+
+static func _files_matching(root: String, suffix: String) -> PackedStringArray:
+	var out: PackedStringArray = []
+	var dir := DirAccess.open(root)
+	if dir == null:
+		return out
+	dir.list_dir_begin()
+	var entry := dir.get_next()
+	while entry != "":
+		var full := root.path_join(entry)
+		if dir.current_is_dir():
+			if entry != "." and entry != ".." and entry != ".godot":
+				out.append_array(_files_matching(full, suffix))
+		elif entry.ends_with(suffix):
+			out.append(full)
+		entry = dir.get_next()
+	dir.list_dir_end()
+	return out
+
+
+# ===========================================================================
+# The plugin manifest — doc 13 §2.7's four permissions
+# ===========================================================================
+
+func test_the_plugin_declares_exactly_the_four_permissions() -> void:
+	var manifest := _read(PLUGIN_MANIFEST)
+	assert_ne(manifest, "", "the plugin ships its own manifest")
+	var declared: Array[String] = []
+	var regex := RegEx.new()
+	regex.compile("<uses-permission[^>]*android:name=\"([^\"]+)\"")
+	for match in regex.search_all(manifest):
+		declared.append(match.get_string(1))
+	declared.sort()
+	var expected := EXPECTED_PERMISSIONS.duplicate()
+	expected.sort()
+	assert_eq(declared, expected, "the release manifest is these four and no more")
+
+
+func test_the_forbidden_permissions_are_absent() -> void:
+	# INTERNET is the load-bearing one: its absence is the entire reason the Play
+	# Data Safety form can say "no data collected". The two exact-alarm
+	# permissions are Play-restricted to alarm clocks and calendars, and asking
+	# for either risks the listing — which is why every alarm in this game is
+	# inexact and why the copy never states a time.
+	var manifest := _read(PLUGIN_MANIFEST)
+	for permission: String in FORBIDDEN_PERMISSIONS:
+		assert_false(manifest.contains("\"%s\"" % permission),
+				"%s is not declared" % permission)
+	# …and no preset smuggles one in through custom_permissions either.
+	for value: String in _values(_presets(), "permissions/custom_permissions"):
+		assert_eq(value, "PackedStringArray()",
+				"presets add no permissions of their own")
+
+
+func test_the_plugin_registers_itself_and_its_two_receivers() -> void:
+	var manifest := _read(PLUGIN_MANIFEST)
+	assert_true(manifest.contains("org.godotengine.plugin.v2.SlacumNative"),
+			"v2 meta-data registration — the .gdap does not do this")
+	assert_true(manifest.contains("com.slacumcity.nativeplugin.AlarmReceiver"),
+			"the receiver that posts a scheduled notification with the app dead")
+	assert_true(manifest.contains("com.slacumcity.nativeplugin.BootReceiver"),
+			"…and the one that re-arms the schedule after a reboot")
+	assert_true(manifest.contains("android.intent.action.BOOT_COMPLETED"))
+	assert_false(manifest.contains("android:exported=\"true\""),
+			"nothing outside the package may fire a Slacum notification")
+
+
+# ===========================================================================
+# The scripts
+# ===========================================================================
+
+func test_the_release_tooling_is_present_and_documented() -> void:
+	for path: String in [MAKE_RELEASE, SETUP_ANDROID, STORE_ASSETS, AAB_BADGING]:
+		assert_true(FileAccess.file_exists(path), "%s exists" % path)
+		assert_true(_read(path).length() > 400, "%s is not a stub" % path)
+	var script := _read(MAKE_RELEASE)
+	for gate: String in ["16 KB", "aapt2", "sha256", "version code",
+			"--init-keystore"]:
+		assert_true(script.contains(gate),
+				"tools/make_release.sh still covers: %s" % gate)
+
+
+func test_the_shell_still_refuses_to_die_on_the_back_button() -> void:
+	# Not release plumbing as such, but the one project setting whose loss would
+	# make every notification and every autosave in this document pointless: with
+	# quit_on_go_back on, the back button destroys the process before the pause
+	# sequence has saved anything (doc 13 §2.2).
+	var project := _read(PROJECT_GODOT)
+	assert_true(project.contains("config/quit_on_go_back=false"))
+	assert_true(project.contains("window/energy_saving/keep_screen_on=true"))
+	assert_true(project.contains("frame_pacing/android/enable_frame_pacing=true"))

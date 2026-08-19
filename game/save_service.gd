@@ -31,6 +31,17 @@ const TEMP_SUFFIX := ".tmp"
 ## Slots the UI may address. 0 is reserved for the lifecycle autosave.
 const MAX_SLOTS := 8
 const AUTOSAVE_SLOT := 0
+## …and its shadow. The autosave **alternates** between these two (doc 13 §2.11):
+## every write lands on whichever is older, so the newer one is always a city
+## that was complete a moment ago. The rename in `_write_atomic` already makes a
+## torn file impossible, but it cannot help with the failure above it — a save
+## that is structurally perfect and semantically wrong, written moments before
+## the process died. One slot cannot survive that. Two always can.
+##
+## Slot 7 rather than 1 because `data/ui.json.save_slots.count` is 3: the shadow
+## sits outside every slot the player can see, so it can never overwrite a save
+## someone meant to keep.
+const AUTOSAVE_SHADOW_SLOT := 7
 ## Bumped only when the envelope around `state` changes; `state` itself is
 ## versioned by the sim's own sections.
 const FORMAT_VERSION := 1
@@ -54,6 +65,8 @@ var last_loaded_ui: Dictionary = {}
 var last_error: String = ""
 ## Unix seconds of the last successful autosave, 0 if none this session.
 var last_autosave_unix: int = 0
+## Which half of the rotation the last autosave landed on, -1 if none yet.
+var last_autosave_slot: int = -1
 
 
 func _ready() -> void:
@@ -93,13 +106,100 @@ func save_slot(sim: Object, slot: int) -> Dictionary:
 	return meta
 
 
-## Lifecycle autosave (doc 13 §2.2 step 2): commit the live city to the
-## reserved autosave slot. Never throws, never blocks the caller on a result —
-## listen to `saved` / `failed` if you need one.
+## Lifecycle autosave (doc 13 §2.2 step 2): commit the live city to the autosave
+## rotation. Never throws, never blocks the caller on a result — listen to
+## `saved` / `failed` if you need one.
+##
+## The write lands on [next_autosave_slot], which is whichever half of the
+## rotation is older. That single decision is what makes an unclean exit
+## survivable: whatever happens to this write, the *other* slot still holds the
+## city as it was one autosave ago.
 func autosave(sim: Object) -> void:
-	var meta := save_slot(sim, AUTOSAVE_SLOT)
+	var slot := next_autosave_slot()
+	var meta := save_slot(sim, slot)
 	if not meta.is_empty():
 		last_autosave_unix = int(meta["saved_at_unix"])
+		last_autosave_slot = slot
+
+
+## The two slots the autosave alternates between, in rotation order.
+static func autosave_slots() -> Array[int]:
+	return [AUTOSAVE_SLOT, AUTOSAVE_SHADOW_SLOT]
+
+
+## Where the next autosave will land: the older of the pair, or an empty one.
+##
+## Derived from the files themselves rather than from a counter, because a
+## counter is state that can be lost exactly when it matters — after a crash,
+## which is the one case this rotation exists for.
+func next_autosave_slot() -> int:
+	var oldest := AUTOSAVE_SLOT
+	var oldest_at := -1
+	for slot: int in autosave_slots():
+		if not FileAccess.file_exists(_path(slot)):
+			return slot
+		# Header only, and quiet. Header only because this runs inside the pause
+		# sequence, where doc 13 §2.2 budgets 250 ms for everything and parsing
+		# two whole cities to read two timestamps would spend it on nothing.
+		# Quiet because an unparseable half reports `saved_at_unix = 0`, which
+		# makes it the oldest and therefore the next to be overwritten — the right
+		# answer, and not a load failure to report to the player.
+		var at := _meta_quiet(slot)
+		if oldest_at < 0 or at < oldest_at:
+			oldest_at = at
+			oldest = slot
+	return oldest
+
+
+## The newest autosave that actually loads — the answer `CrashSentinel` asks for
+## after an unclean exit. -1 when neither half is readable.
+##
+## "Readable" here means the whole envelope parses and carries a `state`
+## dictionary, which is a full read of the file rather than its header: after a
+## crash the cheap check is the wrong one, because the file that is about to be
+## offered is the one most likely to be damaged.
+func last_good_autosave_slot() -> int:
+	var best := -1
+	var best_at := -1
+	for slot: int in autosave_slots():
+		# Deliberately NOT `_read_envelope`: that reports every miss through the
+		# `failed` signal, and a health check is not a failed load. A damaged
+		# shadow slot is an expected finding here, not an error to surface.
+		var envelope := _envelope_quiet(slot)
+		if envelope.is_empty() or not (envelope.get("state", null) is Dictionary):
+			continue
+		var at := 0
+		var meta: Variant = envelope.get("meta", {})
+		if meta is Dictionary:
+			at = int((meta as Dictionary).get("saved_at_unix", 0))
+		if at >= best_at:
+			best_at = at
+			best = slot
+	return best
+
+
+## `saved_at_unix` from a slot's header, or 0 when there is nothing readable
+## there. Reads `META_SCAN_BYTES`, never the city.
+func _meta_quiet(slot: int) -> int:
+	var file := FileAccess.open(_path(slot), FileAccess.READ)
+	if file == null:
+		return 0
+	var head := file.get_buffer(META_SCAN_BYTES).get_string_from_utf8()
+	file = null
+	return int(_extract_meta(head).get("saved_at_unix", 0))
+
+
+## A full parse that reports nothing — the health-check read.
+func _envelope_quiet(slot: int) -> Dictionary:
+	if not _valid_slot(slot) or not FileAccess.file_exists(_path(slot)):
+		return {}
+	var file := FileAccess.open(_path(slot), FileAccess.READ)
+	if file == null:
+		return {}
+	var text := file.get_as_text()
+	file = null
+	var parsed: Variant = _parse_quiet(text)
+	return parsed if parsed is Dictionary else {}
 
 
 # ----------------------------------------------------------------- load path
@@ -143,13 +243,22 @@ func latest_slot() -> int:
 
 
 ## Session restore: load the newest save into `sim`. Returns the slot loaded,
-## or -1 when there was nothing (a genuinely new city) or the load failed —
+## or -1 when there was nothing (a genuinely new city) or nothing would load —
 ## the caller treats both as "fresh founding".
+##
+## Newest-first with a fallback, because the newest save is the one a crash was
+## most likely to damage. With the autosave rotation (`AUTOSAVE_SHADOW_SLOT`) the
+## second candidate is normally the previous autosave, so the cost of a bad write
+## is one autosave interval of play rather than the city.
 func load_latest(sim: Object) -> int:
-	var slot := latest_slot()
-	if slot < 0:
-		return -1
-	return slot if load_slot(sim, slot) else -1
+	var candidates := list_slots()
+	candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a.get("saved_at_unix", 0)) > int(b.get("saved_at_unix", 0)))
+	for meta: Dictionary in candidates:
+		var slot := int(meta.get("slot", -1))
+		if slot >= 0 and load_slot(sim, slot):
+			return slot
+	return -1
 
 
 ## Every occupied slot's meta, ascending by slot index. Reads only each file's

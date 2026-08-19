@@ -76,6 +76,13 @@ func runtime() -> Dictionary:
 	return section("runtime")
 
 
+## The platform block — ids, the Doze feasibility guard, channel-name keys and
+## the offline predictability map. Doc 13's, and the only part of this file that
+## is not doc 08's (report C-71 splits policy from platform, not file from file).
+func delivery() -> Dictionary:
+	return section("delivery")
+
+
 func quiet_hours() -> Dictionary:
 	var value: Variant = runtime().get("quiet_hours", {})
 	return value if value is Dictionary else {}
