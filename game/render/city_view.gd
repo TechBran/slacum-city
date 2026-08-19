@@ -25,6 +25,37 @@ const CHUNK_M := 128.0
 ## Godot's MultiMesh buffer stride with `use_custom_data`: 12 transform floats
 ## then 4 custom-data floats. Mirrored from RenderStateModel.INSTANCE_STRIDE.
 const INSTANCE_STRIDE := 16
+## The FAR buffer's `.a` packs `family_index + 8 * chunk_overlay_state`.
+##
+## THE CHANNEL CHOICE, recorded. `.g` was proposed as "the damage slot the far
+## tier ignores"; it is not ignored — `building_far.gdshader` reads it for the
+## soot multiply AND for the damage dim on EMISSION, so writing the overlay
+## there would trade a working damage read for the overlay and lose a burnt
+## building's soot the moment the player opened the power overlay. `.r` is the
+## emissive ramp the blackout rides across the tier swap and `.b` is the packed
+## variant/stage the site shell needs. `.a` is the only channel this tier owns
+## outright (§2.6 locks it to `anim_phase` for NEAR/MEDIUM; the far tier has no
+## flicker), it already carries a 0..4 integer, and 8 is the smallest power of
+## two clear of it — so the state rides ABOVE the family index in the same float
+## and nothing else in the buffer had to move.
+const FAR_OVERLAY_STRIDE := 8.0
+## The two per-building overlay modes (doc 12 §2.5). `OverlayModel` owns the
+## names; the model stores whichever one is live and the far shader sees the
+## same pair as `sc_overlay_mode` 1 and 2.
+const OVERLAY_POWER := &"power"
+const OVERLAY_WATER := &"water"
+## `building.gdshader`'s `power_dark_hi` / `power_weak_hi`. The far aggregate has
+## to grade a chunk the same way the near shader grades a building, or a chunk
+## changes verdict as it crosses the LOD boundary.
+##
+## The near shader ramps these with `smoothstep` and then thresholds the result;
+## this takes the upper edge as a hard cut instead, which is the same answer on
+## every value the ladder actually produces — `emissive_target_for` emits
+## dark 0.05 (OFFLINE both ways), backup 0.22 (WARNING both ways) and
+## powered ≥ 0.55 (NORMAL both ways). The two only disagree part-way through a
+## blackout stutter, on a chunk that is mid-ramp for a fraction of a second.
+const POWER_DARK_HI := 0.17
+const POWER_WEAK_HI := 0.42
 
 var model: RenderStateModel
 ## Doc 11 §2.5 tier swapping. Off puts every chunk back on its LOD0 buckets,
@@ -315,6 +346,9 @@ func _far_node_for(chunk: Vector2i) -> MultiMeshInstance3D:
 	material.set_shader_parameter("band_lo", _far_band.x)
 	material.set_shader_parameter("band_hi", _far_band.y)
 	material.set_shader_parameter("window_colors", far_window_colors())
+	# The `.a` packing constant, pushed rather than left to the shader default,
+	# so the buffer writer and its only reader cannot drift apart silently.
+	material.set_shader_parameter("far_overlay_stride", FAR_OVERLAY_STRIDE)
 	node.material_override = material
 	node.custom_aabb = _chunk_aabb(chunk)
 	# §2.5: only NEAR casts. A FAR chunk is 420 m+ out, well past
@@ -342,6 +376,57 @@ func far_window_colors() -> PackedColorArray:
 	return out
 
 
+## Doc 12 §2.5's per-building overlay, aggregated for the FAR tier.
+##
+## **Why an aggregate and not the per-building state.** Every far instance
+## already carries its own packed 2-bit `overlay_state` in `.b` — it is copied
+## across from the near mirror untouched. Decoding it per instance would be free.
+## It is not what this draws, because at 420–1200 m a building is a few pixels
+## wide and a per-building wash reads as coloured noise over the far city, which
+## is the same failure mode §2.6 rejected the per-window hash for. A CHUNK is
+## 128 m and stays legible to the far cull distance, and "somewhere in that block
+## something is offline" is the honest resolution of the data at that range.
+##
+## **Worst, not mean.** 0..3 IS the severity order, so `max` is the aggregate
+## that cannot hide a dead building behind twenty healthy ones — the overlay
+## exists to point at trouble.
+##
+## POWER additionally reads the emissive ladder, exactly as the near shader
+## does: `RenderStateModel.emissive_target_for` writes dark 0.05 / backup 0.22 /
+## powered 0.55+, so an unlit building lands OFFLINE and a weak one WARNING even
+## when its own packed state is NORMAL. The thresholds are the near shader's
+## `power_dark_*` / `power_weak_*` uniforms, mirrored here.
+##
+## Modes 1 and 2 only. In mode 0 this returns 0 and `.a` is the bare family
+## index, byte for byte what it was before this pass.
+func _far_overlay_state(buckets: Array) -> float:
+	if model == null:
+		return 0.0
+	var mode := model.overlay_mode()
+	if mode != OVERLAY_POWER and mode != OVERLAY_WATER:
+		return 0.0
+	var worst := 0.0
+	for bucket: RenderStateModel.Bucket in buckets:
+		var mirror := bucket.mirror
+		for i in bucket.visible_count:
+			var base := i * INSTANCE_STRIDE
+			if base + INSTANCE_STRIDE > mirror.size():
+				break
+			var packed: float = mirror[base + 14]
+			var state := clampf(floor(packed / float(
+					RenderStateModel.PACK_OVERLAY_STRIDE)), 0.0, 3.0)
+			if mode == OVERLAY_POWER:
+				var e: float = mirror[base + 12]
+				if e < POWER_DARK_HI:
+					state = maxf(state, 3.0)
+				elif e < POWER_WEAK_HI:
+					state = maxf(state, 1.0)
+			worst = maxf(worst, state)
+			if worst >= 3.0:
+				return worst
+	return worst
+
+
 ## Fold every bucket of `chunk` into the chunk's far MultiMesh. Reads the
 ## bucket mirrors rather than the model's records so the far buffer carries
 ## exactly what the near buffer would have drawn this frame, ramps included.
@@ -366,6 +451,7 @@ func _upload_far(chunk: Vector2i) -> void:
 	# padding beyond `visible_instance_count` costs one allocation and no copy.
 	var buffer := PackedFloat32Array()
 	buffer.resize(mm.instance_count * INSTANCE_STRIDE)
+	var chunk_state := _far_overlay_state(buckets)
 	var out := 0
 	for bucket: RenderStateModel.Bucket in buckets:
 		var scale: Vector3 = _far_scale.get(
@@ -389,10 +475,12 @@ func _upload_far(chunk: Vector2i) -> void:
 			buffer[out + 12] = mirror[base + 12]
 			buffer[out + 13] = mirror[base + 13]
 			buffer[out + 14] = mirror[base + 14]
-			# .a is `anim_phase` in the model's buffers and the FAMILY INDEX in
-			# this one — see the far shader's header. Nothing reads the far
-			# buffer but that shader, and there is no flicker at 500 m.
-			buffer[out + 15] = family_index
+			# .a is `anim_phase` in the model's buffers and, in this one,
+			# `family_index + FAR_OVERLAY_STRIDE * chunk_overlay_state` — see
+			# `_far_overlay_state` and the far shader's header. Nothing reads
+			# the far buffer but that shader, and there is no flicker at 500 m
+			# for a phase to drive.
+			buffer[out + 15] = family_index + FAR_OVERLAY_STRIDE * chunk_state
 			out += INSTANCE_STRIDE
 	if keep_far_buffers:
 		_far_buffers[chunk] = buffer.slice(0, out)

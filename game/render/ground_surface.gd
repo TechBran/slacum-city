@@ -33,6 +33,8 @@ static var _wet: Dictionary = {}        # doc 11 §2.9 wet-ground constants
 static var _shader: Shader = null
 static var _water_shader: Shader = null
 static var _water: Dictionary = {}      # data/render.json `water_surface`
+static var _ground: Dictionary = {}     # data/render.json `ground`
+static var _block_materials: Dictionary = {}   # "tone:state:size" -> Material
 static var _loaded := false
 
 
@@ -57,6 +59,7 @@ static func _ensure_loaded() -> void:
 		_wet["specular_wet"] = float(weather.get("wet_specular_wet", _wet["specular_wet"]))
 		_wet["albedo_mult"] = float(weather.get("wet_albedo_mult", _wet["albedo_mult"]))
 		_water = render_data.get("water_surface", {})
+		_ground = render_data.get("ground", {})
 	if not ResourceLoader.exists(MANIFEST):
 		return
 	var doc: Dictionary = StarterCityLoader.read_json(MANIFEST)
@@ -107,6 +110,72 @@ static func material(page_name: String, world_size: Vector2, tint := Color.WHITE
 	mat.set_shader_parameter("uv_scale", Vector2(
 			maxf(1.0, world_size.x / _tile_m), maxf(1.0, world_size.y / _tile_m)))
 	return mat
+
+
+## How many district tones `data/render.json`'s `ground` block publishes. Doc 09
+## hands every district a `color_index`; this is the modulus it is taken against,
+## so a city with more districts than tones wraps instead of going untinted.
+static func district_tone_count() -> int:
+	_ensure_loaded()
+	return (_ground.get("district_tones", []) as Array).size()
+
+
+## The ground under ONE land block (doc 11 §2.1 / doc 09 §2.2).
+##
+## `district_index` is the district's `color_index`, or **-1 for a block that
+## belongs to no district** — every unbought block at t0. That is the whole
+## rule: no district means scrub (`undeveloped_tint`), a district means
+## pavement in that district's tone, and a block that is owned but not yet
+## READY takes `developed`'s tone at the undeveloped page so a block under
+## development reads as cleared ground rather than as finished street.
+##
+## Why the DISTRICT and not the block: a district is 1–4 contiguous blocks, so
+## tinting per district paints a neighbourhood-sized patch the player can
+## actually recognise from the Z2 skyline pose. Tinting per block would produce
+## a 128 m checkerboard, which is noise, not information.
+##
+## Integration (main.gd owns the ground build — see the branch report):
+##     var district := sim.districts.district_of_block(block.id)
+##     var tone := sim.districts.color_index_of(district)   # -1 when none
+##     plane.material_override = GroundSurface.block_material(tone, block.is_ready())
+static func block_material(district_index: int, developed: bool,
+		world_size := Vector2(128.0, 128.0)) -> Material:
+	_ensure_loaded()
+	# Shared per (tone, state, size): a 49-block city has at most a handful of
+	# distinct grounds, and handing every plane its own ShaderMaterial would cost
+	# 49 pipeline states for four looks.
+	var key := "%d:%d:%.1fx%.1f" % [district_index, 1 if developed else 0,
+			world_size.x, world_size.y]
+	if _block_materials.has(key):
+		return _block_materials[key]
+	var page := String(_ground.get("page", "pavement"))
+	var tint := Color(String(_ground.get("developed_tint", "#858785")))
+	var rough := float(_ground.get("developed_roughness", 0.90))
+	if not developed:
+		tint = Color(String(_ground.get("undeveloped_tint", "#66805C")))
+		rough = float(_ground.get("undeveloped_roughness", 1.00))
+	var tones: Array = _ground.get("district_tones", [])
+	if developed and district_index >= 0 and not tones.is_empty():
+		var i := district_index % tones.size()
+		tint = Color(String(tones[i]))
+		var pages: Array = _ground.get("district_pages", [])
+		if i < pages.size():
+			page = String(pages[i])
+		var roughs: Array = _ground.get("district_roughness", [])
+		if i < roughs.size():
+			rough = float(roughs[i])
+	var mat := material(page, world_size, tint, rough)
+	_block_materials[key] = mat
+	return mat
+
+
+## The road strip surface, from the same `ground` block — so main.gd stops
+## carrying the asphalt tint as a literal.
+static func road_material(world_size := Vector2(8.0, 8.0)) -> Material:
+	_ensure_loaded()
+	return material(String(_ground.get("road_page", "asphalt")), world_size,
+			Color(String(_ground.get("road_tint", "#57575F"))),
+			float(_ground.get("road_roughness", 0.85)))
 
 
 ## Doc 11 §2.1's third ground surface: animated water for the map's water

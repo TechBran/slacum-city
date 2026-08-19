@@ -75,7 +75,7 @@ except ImportError:  # pragma: no cover - environment guard
     raise
 
 GENERATOR = "tools/gen_textures.py"
-GENERATOR_VERSION = 1
+GENERATOR_VERSION = 2
 SEED = 20260818
 
 BAY_PX = 256                 # one window bay
@@ -83,6 +83,24 @@ PAGE = BAY_PX * 2            # 512x512 facade page, 2x2 bays
 ROOF_PAGE = 512              # roof / ground pages
 ROOF_TILE_M = 4.0            # metres per roof-page repeat
 BAY_M = (3.2, 3.5)           # nominal bay footprint, doc 11 §2.14 window grid
+
+# --- the props set (construction sites, streetlight poles) ------------------
+# Everything that is NOT a building, a road or the water: hoarding, crane
+# lattice, scaffold tube, stockpiles, lamp poles. Three seamless pages, tiled in
+# METRES so a 0.22 m crane leg and an 8 m pole carry the same grain, plus one
+# non-tiling page that is a single hoarding panel drawn end to end.
+PROP_PAGE = 512
+PROP_TILE_M = 2.0            # metres per repeat for the tiling prop pages
+HOARDING_PANEL_M = (4.0, 2.2)  # the hoarding page IS one panel: u,v run 0..1
+
+# --- the vehicle micro-atlas ----------------------------------------------
+# 2x2 cells. UV2 on a vehicle body is `cell + inset..1-inset`, so one cell is
+# one material and the mesh never tiles: a face maps its own extent into its
+# cell exactly once. The inset is what keeps a mip level from bleeding a
+# neighbouring cell into a car door at 200 m.
+VEHICLE_PAGE = 512
+VEHICLE_CELL = VEHICLE_PAGE // 2
+VEHICLE_UV_INSET = 0.06
 
 
 # --------------------------------------------------------------- determinism
@@ -673,6 +691,347 @@ def build_ground(name: str) -> Image.Image:
     return p.image()
 
 
+# =============================================================== prop pages
+#
+# The non-building world: construction hoarding, crane lattice, scaffold tube,
+# stockpiles, streetlight poles. Every consumer multiplies the page by a VERTEX
+# or INSTANCE colour it already had (safety orange, crane yellow, timber brown,
+# galvanised grey), so these pages are authored as near-neutral VALUE — light
+# where the material catches the sky, dark in the joints — and the colour still
+# comes from the same place it always did. That is what lets one steel page
+# serve a yellow crane leg, a grey scaffold standard and a lamp post.
+
+def prop_hoarding(p: Page, lcg: Lcg) -> None:
+    """One printed site-hoarding panel, drawn end to end: the page IS the panel
+    (u and v both run 0..1 across it) rather than a tile, which is what puts the
+    hazard band at a fixed height above the pavement instead of wherever the
+    repeat happens to land. Value only — ConstructionSiteView tints one panel in
+    `fence_accent_every` safety orange and the rest hoarding grey."""
+    S = p.size
+    board = (206, 208, 205)
+    p.rect(0, 0, S - 1, S - 1, board, shine=0)
+    # Three ply sheets across the panel, each a shade off its neighbour.
+    for i in range(3):
+        x0 = S * i // 3
+        x1 = S * (i + 1) // 3 - 1
+        p.rect(x0, 0, x1, S - 1, shade(board, 0.95 + 0.07 * lcg.f()), shine=0)
+        p.rect(x1 - 3, 0, x1, S - 1, shade(board, 0.72), shine=0)      # seam
+        p.rect(x0, 0, x0 + 2, S - 1, shade(board, 1.08), shine=0)      # lit edge
+    # Top and bottom rails, with the bolt line that reads as fixings at 30 m.
+    for ry, rh in ((0, 46), (S - 54, 54)):
+        p.rect(0, ry, S - 1, ry + rh, shade(board, 0.86), shine=30)
+        p.rect(0, ry, S - 1, ry + 4, shade(board, 1.14), shine=40)
+        p.shadow_down(0, S - 1, ry + rh + 1, 10, 0.40)
+        for x in range(26, S, 96):
+            p.rect(x, ry + rh // 2 - 5, x + 9, ry + rh // 2 + 4,
+                   shade(board, 1.20), shine=60)
+            p.rect(x + 1, ry + rh // 2 - 1, x + 9, ry + rh // 2 + 4,
+                   shade(board, 0.62), shine=10)
+    # The hazard band: 45° bars, drawn row by row so the diagonal is exact and
+    # the page needs no rotation pass. Alternating value, not alternating hue —
+    # the instance tint decides whether this ends up orange/black or grey/black.
+    by0, by1 = int(S * 0.56), int(S * 0.78)
+    p.rect(0, by0 - 6, S - 1, by0 - 1, shade(board, 0.66), shine=0)
+    p.rect(0, by1 + 1, S - 1, by1 + 6, shade(board, 0.66), shine=0)
+    period = 68
+    for y in range(by0, by1 + 1):
+        off = y - by0
+        for x in range(-period * 2, S + period * 2, period):
+            xa = x + off
+            p.rect(xa, y, xa + period // 2 - 1, y, shade(board, 1.16), shine=0)
+            p.rect(xa + period // 2, y, xa + period - 1, y,
+                   shade(board, 0.34), shine=0)
+    p.shadow_down(0, S - 1, by1 + 7, 8, 0.30)
+    # Weathering: rain streaks off the top rail, a splash line at grade, and
+    # scuffs where plant has clipped it.
+    for _ in range(70):
+        x = int(lcg.f() * S)
+        w = 1 + int(lcg.f() * 4)
+        h = 60 + int(lcg.f() * (S * 0.55))
+        p.over(x, 50, x + w, 50 + h, (58, 54, 48), 14 + int(lcg.f() * 26))
+    for _ in range(120):
+        x = int(lcg.f() * S)
+        y = S - 70 + int(lcg.f() * 66)
+        s = 2 + int(lcg.f() * 7)
+        p.over(x, y, x + s, y + s, (74, 62, 48), 30 + int(lcg.f() * 60))
+    for _ in range(9):
+        x = int(lcg.f() * S)
+        y = int(S * 0.30 + lcg.f() * S * 0.55)
+        w = 14 + int(lcg.f() * 60)
+        p.over(x, y, x + w, y + 2 + int(lcg.f() * 3), (250, 250, 250), 40)
+    p.rect(0, S - 8, S - 1, S - 1, shade(board, 0.52), shine=0)
+
+
+def prop_steel(p: Page, lcg: Lcg) -> None:
+    """Hot-dip galvanised: spangle, a drawn vertical grain, and — the reason
+    this page exists — horizontal AO bands every half metre. A crane leg is a
+    0.22 m square beam with four flat faces and no geometry to catch light; the
+    bands are what give it segments and therefore depth, and they land at the
+    same physical pitch on a scaffold standard and a lamp post because the page
+    is tiled in metres."""
+    S = p.size
+    steel = (176, 180, 183)
+    p.rect(0, 0, S - 1, S - 1, steel, shine=90)
+    # Spangle: many SMALL crystal facets at low contrast. The earlier draft used
+    # 260 big ones and the page came out reading as breeze block — a galvanised
+    # surface is a fine crystalline scatter, and the moment a facet is bigger
+    # than the beam it lands on it stops being a surface and becomes a stain.
+    for _ in range(900):
+        x = int(lcg.f() * S)
+        y = int(lcg.f() * S)
+        w = 4 + int(lcg.f() * 16)
+        h = 3 + int(lcg.f() * 13)
+        p.over(x, y, x + w, y + h,
+               (255, 255, 255) if lcg.f() < 0.5 else (24, 30, 36),
+               12 + int(lcg.f() * 26))
+    # Drawn grain, vertical: the mill direction. Low contrast but continuous, so
+    # a minified beam keeps a lengthwise read instead of dissolving to flat grey.
+    for x in range(0, S, 5):
+        up = lcg.f() < 0.5
+        p.over(x, 0, x + 1, S - 1, (255, 255, 255) if up else (0, 0, 0),
+               6 + int(lcg.f() * 14))
+    # The AO bands: a joint line, its shadow below and its catch-light above.
+    band = S // 4                       # 0.5 m at PROP_TILE_M = 2.0
+    for y in range(0, S, band):
+        p.rect(0, y, S - 1, y + 2, shade(steel, 0.56), shine=40)
+        p.shadow_down(0, S - 1, y + 3, 14, 0.42)
+        p.light_up(0, S - 1, y - 1, 8, 0.30)
+    # Rust freckles where the coating has been kicked off. Sparse and low —
+    # visible on a 512 px page, invisible on a 0.22 m leg at 80 m, which is
+    # exactly the budget a weathering pass gets.
+    for _ in range(70):
+        x = int(lcg.f() * S)
+        y = int(lcg.f() * S)
+        s = 2 + int(lcg.f() * 7)
+        p.over(x, y, x + s, y + s, (126, 78, 46), 26 + int(lcg.f() * 44))
+
+
+def prop_stock(p: Page, lcg: Lcg) -> None:
+    """Bulk site material: coarse aggregate grain with strap bands across it.
+    One page for the timber bundles, the aggregate ridge and the skip, because
+    all three are the same read at 30–150 m — a heap of stuff with banding — and
+    the vertex colour already separates them into brown, grey-brown and green."""
+    S = p.size
+    base = (172, 168, 160)
+    p.rect(0, 0, S - 1, S - 1, base, shine=0)
+    for _ in range(1400):
+        x = int(lcg.f() * S)
+        y = int(lcg.f() * S)
+        s = 2 + int(lcg.f() * 9)
+        p.rect(x, y, x + s, y + s, shade(base, 0.70 + 0.56 * lcg.f()), shine=0)
+    for _ in range(90):
+        x = int(lcg.f() * S)
+        y = int(lcg.f() * S)
+        w = 12 + int(lcg.f() * 30)
+        h = 8 + int(lcg.f() * 20)
+        p.rect(x, y, x + w, y + h, shade(base, 0.74 + 0.42 * lcg.f()), shine=0)
+        p.rect(x, y, x + w, y + 1, shade(base, 1.24), shine=0)
+        p.shadow_down(x, x + w, y + h + 1, 5, 0.44)
+    # Strap / course bands: what makes a tinted box read as a BUNDLE rather than
+    # a painted crate.
+    for y in range(0, S, S // 4):
+        p.rect(0, y, S - 1, y + 3, shade(base, 0.60), shine=0)
+        p.rect(0, y + 4, S - 1, y + 5, shade(base, 1.18), shine=20)
+        p.shadow_down(0, S - 1, y + 6, 7, 0.34)
+
+
+PROPS = {
+    "hoarding": (prop_hoarding, (204, 206, 203), 0.030),
+    "steel": (prop_steel, (176, 180, 183), 0.026),
+    "stock": (prop_stock, (172, 168, 160), 0.040),
+}
+
+
+def build_prop(name: str) -> Image.Image:
+    fn, base, spk = PROPS[name]
+    lcg = Lcg(SEED ^ name_seed("prop:" + name))
+    p = Page(PROP_PAGE, base, 0)
+    fn(p, lcg)
+    p.noise(lcg, spk)
+    return p.image()
+
+
+# ========================================================== vehicle atlas
+#
+# Four cells, one page, ONE extra texture fetch on the whole traffic layer.
+# `game/render/vehicle_mesh.gd` writes UV2 = cell + the face's own [0,1]
+# coordinate (inset), so a cell is a MATERIAL, not a tile: the paint cell covers
+# a car door once, the glass cell covers a windscreen once, and the reflection
+# gradient therefore runs the right way up on both.
+#
+#   (0,0) paint   (1,0) glass
+#   (0,1) dark    (1,1) livery
+#
+# A = the shine mask, exactly as on the façade pages: it drives ROUGHNESS and
+# SPECULAR, so glass is glossy and rubber is dead without a second texture.
+
+def veh_paint(p: Page, lcg: Lcg) -> None:
+    """Automotive paint. Near-white because the PAINT is the instance colour —
+    everything here is the metallic fleck, the clear-coat sheen and a whisper of
+    panel curvature, which is what stops 200 cars reading as 200 flat chips."""
+    S = p.size
+    base = (238, 239, 241)
+    p.rect(0, 0, S - 1, S - 1, base, shine=55)
+    # Metallic fleck. Authored at 3 px so it survives the first mip.
+    for _ in range(2600):
+        x = int(lcg.f() * S)
+        y = int(lcg.f() * S)
+        s = 1 + int(lcg.f() * 3)
+        k = 0.93 + 0.13 * lcg.f()
+        p.rect(x, y, x + s, y + s, shade(base, k), shine=None)
+    # Panel curvature: a soft bright sweep across the upper third and a darker
+    # sill. Deliberately weak (a few per cent) — the cell lands on roofs, doors
+    # and bonnets alike and must not read as a baked light direction.
+    for i in range(S // 3):
+        t = i / float(S // 3)
+        p.over(0, i, S - 1, i, (255, 255, 255), int(26 * (1.0 - t)))
+    for i in range(S // 5):
+        t = i / float(S // 5)
+        p.over(0, S - 1 - i, S - 1, S - 1 - i, (0, 0, 0), int(30 * (1.0 - t)))
+    # Clear-coat highlight: one soft diagonal wedge.
+    for i in range(S):
+        w = int(S * 0.16)
+        x0 = int(S * 0.10) + int(i * 0.55)
+        p.over(x0, i, x0 + w, i, (255, 255, 255), 16)
+
+
+def veh_glass(p: Page, lcg: Lcg) -> None:
+    """Glazing with the reflection BAKED IN: sky down the top, the dark cabin
+    below it, one horizontal sweep where the far side of the street lands. This
+    is what a car has instead of a reflection probe — §2.11 gates the one probe
+    the game may own to High and to the city at large."""
+    S = p.size
+    # Deliberately NOT a bright sky: the shine mask already drives a low
+    # roughness, and at 0.64 luma the first draft turned a raked windscreen into
+    # a silver wedge every time the sun caught it. The gradient has to read as
+    # glass at 30 m, not as chrome.
+    sky = (92, 108, 128)
+    deep = (16, 20, 28)
+    p.vgrad(0, 0, S - 1, S - 1, sky, deep, shine=235)
+    # Horizon sweep — the buildings opposite, as one soft band.
+    p.rect(0, int(S * 0.34), S - 1, int(S * 0.44), (48, 58, 70), shine=240)
+    for i in range(10):
+        p.over(0, int(S * 0.44) + i, S - 1, int(S * 0.44) + i, (0, 0, 0),
+               int(60 * (1.0 - i / 10.0)))
+    # A diagonal sheen off the upper left, the same wedge the façade panes use.
+    # Weak: glass is an ALBEDO of about 0.08 in the real world and the shine mask
+    # is already buying it a low roughness. Two drafts of this cell were rejected
+    # for turning the raked screens into silver wedges — a car's glass has to
+    # read DARK from a 45° city camera or the whole fleet looks chromed.
+    for i in range(int(S * 0.62)):
+        t = i / (S * 0.62)
+        xa = int(S * (0.02 + 0.80 * t))
+        p.over(0, i, xa, i, (208, 226, 242), 30)
+    # Frit band along the bottom edge — the black ceramic border on a real
+    # screen, and the thing that stops the glass quad glowing at its sill.
+    p.rect(0, S - 26, S - 1, S - 1, (18, 22, 30), shine=200)
+    p.light_up(0, S - 1, S - 28, 6, 0.22)
+    for _ in range(24):
+        x = int(lcg.f() * S)
+        y = int(lcg.f() * S * 0.9)
+        w = 20 + int(lcg.f() * 90)
+        p.over(x, y, x + w, y + 1 + int(lcg.f() * 2), (255, 255, 255), 26)
+
+
+def veh_dark(p: Page, lcg: Lcg) -> None:
+    """Rubber and dark trim: tyre tread ribs, a sidewall ring and the grain of
+    moulded plastic. Authored near white for the same reason as the paint cell —
+    `VehicleMesh.TYRE` and `TRIM` are the colours, this is only the surface."""
+    S = p.size
+    base = (228, 228, 230)
+    p.rect(0, 0, S - 1, S - 1, base, shine=10)
+    # Tread ribs across the cell, with a shoulder either side.
+    for x in range(0, S, 26):
+        p.rect(x, 0, x + 15, S - 1, shade(base, 1.06), shine=8)
+        p.rect(x + 16, 0, x + 25, S - 1, shade(base, 0.70), shine=0)
+    p.rect(0, 0, S - 1, 22, shade(base, 0.84), shine=14)
+    p.rect(0, S - 23, S - 1, S - 1, shade(base, 0.84), shine=14)
+    p.shadow_down(0, S - 1, 23, 10, 0.34)
+    p.shadow_up(0, S - 1, S - 24, 10, 0.34)
+    for _ in range(700):
+        x = int(lcg.f() * S)
+        y = int(lcg.f() * S)
+        s = 1 + int(lcg.f() * 3)
+        p.rect(x, y, x + s, y + s, shade(base, 0.88 + 0.20 * lcg.f()), shine=None)
+
+
+def veh_livery(p: Page, lcg: Lcg) -> None:
+    """Department livery: a battenburg block band and an emblem roundel. VALUE
+    only and deliberately WORDLESS — the stripe is drawn light/dark and the
+    department's own colour arrives as the vertex tint, so police blue, fire
+    silver, ambulance red and utility amber all come off this one cell. Doc 12's
+    rule against baked text in a texture is why the emblem is a roundel and not
+    a badge with a name on it: it never has to be translated and it never turns
+    into three grey pixels of noise at 150 m."""
+    S = p.size
+    base = (242, 242, 244)
+    p.rect(0, 0, S - 1, S - 1, base, shine=45)
+    # Battenburg: two rows of blocks, offset, occupying the middle of the panel.
+    # The blocks are BIG — a livery cell is stretched across a 2 m door and a
+    # 4 m locker line alike, and at S/6 the first draft came out as a picket
+    # fence of thin bars that read as graffiti rather than as a service marking.
+    y0, y1 = int(S * 0.28), int(S * 0.72)
+    mid = (y0 + y1) // 2
+    block = S // 4
+    p.rect(0, y0, S - 1, y1, shade(base, 0.98), shine=50)
+    for row, ry0, ry1 in ((0, y0, mid - 1), (1, mid, y1)):
+        for i, x in enumerate(range(-block, S + block, block)):
+            xa = x + (block // 2 if row else 0)
+            if (i + row) % 2 == 0:
+                p.rect(xa, ry0, xa + block - 1, ry1, shade(base, 0.40), shine=30)
+    p.rect(0, y0 - 5, S - 1, y0 - 1, shade(base, 0.62), shine=30)
+    p.rect(0, y1 + 1, S - 1, y1 + 5, shade(base, 0.62), shine=30)
+    p.shadow_down(0, S - 1, y1 + 6, 9, 0.32)
+    # Emblem: a filled roundel inside a ring, a fifth along the panel. Crude on
+    # purpose — three concentric value steps is everything that survives to 150 m
+    # and everything a crest needs to read as a crest.
+    cx, cy, r = int(S * 0.20), (y0 + y1) // 2, int(S * 0.16)
+    for dy in range(-r, r + 1):
+        half = int((r * r - dy * dy) ** 0.5)
+        p.rect(cx - half, cy + dy, cx + half, cy + dy, shade(base, 1.10), shine=70)
+    r2 = int(r * 0.74)
+    for dy in range(-r2, r2 + 1):
+        half = int((r2 * r2 - dy * dy) ** 0.5)
+        p.rect(cx - half, cy + dy, cx + half, cy + dy, shade(base, 0.30), shine=30)
+    r3 = int(r * 0.44)
+    for dy in range(-r3, r3 + 1):
+        half = int((r3 * r3 - dy * dy) ** 0.5)
+        p.rect(cx - half, cy + dy, cx + half, cy + dy, shade(base, 1.16), shine=80)
+    # Reflective chevron tape, confined to the trailing fifth so it never
+    # crowds the battenburg blocks.
+    for i, x in enumerate(range(int(S * 0.80), S, 26)):
+        p.rect(x, y0 + 4, x + 12, y1 - 4, shade(base, 1.14 if i % 2 else 0.50),
+               shine=110)
+    for _ in range(40):
+        x = int(lcg.f() * S)
+        y = int(lcg.f() * S)
+        s = 3 + int(lcg.f() * 12)
+        p.over(x, y, x + s, y + s, (70, 66, 60), 16 + int(lcg.f() * 22))
+
+
+VEHICLE_CELLS = [
+    # (cell x, cell y, builder, base rgb, base shine, noise)
+    (0, 0, veh_paint, (238, 239, 241), 55, 0.014),
+    (1, 0, veh_glass, (94, 110, 128), 235, 0.010),
+    (0, 1, veh_dark, (228, 228, 230), 10, 0.022),
+    (1, 1, veh_livery, (242, 242, 244), 45, 0.014),
+]
+
+
+def build_vehicle_atlas() -> Image.Image:
+    """Each cell is authored as its OWN page and pasted, which is what makes it
+    seamless inside itself and independent of its neighbours — the atlas never
+    wraps across a cell boundary because no UV ever leaves its cell."""
+    out = Image.new("RGBA", (VEHICLE_PAGE, VEHICLE_PAGE))
+    for cx, cy, fn, base, shine, spk in VEHICLE_CELLS:
+        lcg = Lcg(SEED ^ name_seed("vehicle:%d,%d" % (cx, cy)))
+        p = Page(VEHICLE_CELL, base, shine)
+        fn(p, lcg)
+        p.noise(lcg, spk)
+        out.paste(p.image(), (cx * VEHICLE_CELL, cy * VEHICLE_CELL))
+    return out
+
+
 # ------------------------------------------------------ archetype -> surface
 #
 # Keyed by the archetype ids in game/meshes/generated/manifest.json. `family`
@@ -723,9 +1082,28 @@ def render_manifest(pages: dict) -> str:
         "note": ("facade pages are a seamless 2x2 grid of window bays; bay row "
                  "0 (ground floor) maps to the page's bottom half. RGB = albedo "
                  "with baked shading, A = shine/glass mask."),
+        "prop_tile_m": PROP_TILE_M,
+        "hoarding_panel_m": list(HOARDING_PANEL_M),
+        "prop_note": ("prop pages are tiled in METRES at prop_tile_m and are "
+                      "authored as near-neutral VALUE: the consumer's existing "
+                      "vertex/instance colour is still the colour. `hoarding` is "
+                      "the exception - it is ONE panel, u and v run 0..1 across "
+                      "it, so the hazard band sits at a fixed height."),
+        "vehicle_page_px": VEHICLE_PAGE,
+        "vehicle_cell_px": VEHICLE_CELL,
+        "vehicle_uv_inset": VEHICLE_UV_INSET,
+        "vehicle_cells": {"paint": [0, 0], "glass": [1, 0],
+                          "dark": [0, 1], "livery": [1, 1]},
+        "vehicle_note": ("UV2 on a vehicle body is cell + the face's own [0,1] "
+                         "coordinate, inset by vehicle_uv_inset. A cell is a "
+                         "MATERIAL, never a tile - no UV ever leaves its cell, "
+                         "which is what keeps a mip from bleeding the glass cell "
+                         "into a car door."),
         "facades": pages["facades"],
         "roofs": pages["roofs"],
         "grounds": pages["grounds"],
+        "props": pages["props"],
+        "vehicles": pages["vehicles"],
         "archetype_surface": ARCHETYPE_SURFACE,
         "family_surface": FAMILY_SURFACE,
     }
@@ -794,11 +1172,15 @@ def import_text(res_path: str) -> str:
 def generate() -> dict:
     """Everything the tool produces, as {file name: bytes}."""
     out = {}
-    pages = {"facades": {}, "roofs": {}, "grounds": {}}
+    pages = {"facades": {}, "roofs": {}, "grounds": {}, "props": {},
+             "vehicles": {}}
     groups = (
         ("facades", "facade_%s.png", sorted(FACADES), build_facade),
         ("roofs", "roof_%s.png", sorted(ROOFS), build_roof),
         ("grounds", "ground_%s.png", sorted(GROUNDS), build_ground),
+        ("props", "prop_%s.png", sorted(PROPS), build_prop),
+        ("vehicles", "vehicle_%s.png", ["atlas"],
+         lambda _name: build_vehicle_atlas()),
     )
     for key, pattern, names, builder in groups:
         for name in names:
@@ -864,6 +1246,8 @@ def main() -> int:
     print("  facades: %s" % ", ".join(sorted(FACADES)))
     print("  roofs:   %s" % ", ".join(sorted(ROOFS)))
     print("  grounds: %s" % ", ".join(sorted(GROUNDS)))
+    print("  props:   %s" % ", ".join(sorted(PROPS)))
+    print("  vehicles: atlas (%d px, %d px cells)" % (VEHICLE_PAGE, VEHICLE_CELL))
     print("  next:    ~/.local/bin/godot --headless --path . --import")
     return 0
 

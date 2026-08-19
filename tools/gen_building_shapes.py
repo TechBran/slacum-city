@@ -588,7 +588,12 @@ def build_document():
     data = build()
     return {
         "schema_version": 1,
-        "generator_version": 3,
+        # 4: the roof-prop UV2 surface flag (gen_graybox.gd UV2_ROOF_PLANAR).
+        # The massing in this file did not move, but the MESHES did, and this
+        # number is the only thing `gen_graybox.gd` checks before deciding a
+        # committed manifest is still up to date — bump it or a fresh clone
+        # keeps the meshes whose prop sides wear brick.
+        "generator_version": 4,
         "_owner": "doc 11 \u00a73.2 (rendering & performance). Generator input for tools/gen_graybox.gd.",
         "_generator": "tools/gen_building_shapes.py",
         "_roster_note": "The shipped roster is data/buildings.json's 12 archetypes (doc 02), not doc 11 \u00a72.14's 15-row placeholder table; doc11_id maps each shipped archetype onto the \u00a72.14 silhouette row it realises. Tri budgets, lod1_volume_keep_frac and the tall-archetype list are read from data/render.json \u00a78 'lod' and are never restated here.",

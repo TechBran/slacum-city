@@ -49,6 +49,12 @@ extends Node3D
 
 const EMERGENCY_KEY_BASE := 1_000_000
 
+## The procedural surface set (`tools/gen_textures.py`). Absent pages are not an
+## error: `tex_mix` falls to 0 and the flat-shaded layer that shipped before the
+## atlas comes back unchanged, which is what keeps a fresh clone bootable before
+## anyone has run the generator and `--import`.
+const TEXTURE_MANIFEST := "res://game/textures/generated/manifest.json"
+
 const CIV_KINDS := ["car", "van", "truck"]
 const EMERGENCY_MESHES := ["police", "fire", "ambulance", "utility"]
 
@@ -115,6 +121,9 @@ var _cone_material: ShaderMaterial
 var _beacons: Array = []            # OmniLight3D pool
 var _bar_a: Dictionary = {}         # mesh key -> Color
 var _bar_b: Dictionary = {}
+## `vehicle_atlas.png` and its 2x2 cell count, from the texture manifest.
+var _atlas: Texture2D = null
+var _atlas_cells := Vector2(2.0, 2.0)
 var _time := 0.0
 var _night := 0.0
 var _gm_per_s := 1.0
@@ -185,8 +194,37 @@ func setup(render_data: Dictionary = {}) -> void:
 	}
 	_read_presets(render_data)
 	_read_departments()
+	_load_atlas()
 	_build_layers(cfg)
 	_configured = true
+
+
+## The vehicle micro-atlas. One page for the whole fleet, so the traffic layer
+## still costs one texture unit however many body kinds it draws.
+func _load_atlas() -> void:
+	_atlas = null
+	if not ResourceLoader.exists(TEXTURE_MANIFEST):
+		return
+	var doc: Dictionary = StarterCityLoader.read_json(TEXTURE_MANIFEST)
+	var cells: Dictionary = doc.get("vehicle_cells", {})
+	if not cells.is_empty():
+		# The atlas is as wide/tall as the largest cell index plus one, read off
+		# the manifest rather than assumed, so a future 2x3 page needs no code.
+		var mx := 1.0
+		var my := 1.0
+		for name: String in cells:
+			var pair: Array = cells[name]
+			if pair.size() >= 2:
+				mx = maxf(mx, float(pair[0]) + 1.0)
+				my = maxf(my, float(pair[1]) + 1.0)
+		_atlas_cells = Vector2(mx, my)
+	var pages: Dictionary = doc.get("vehicles", {})
+	var entry: Dictionary = pages.get("atlas", {})
+	var path := String(entry.get("path", ""))
+	if path != "" and ResourceLoader.exists(path):
+		_atlas = load(path)
+	else:
+		push_warning("vehicle_view: no vehicle atlas, running flat-shaded")
 
 
 ## Preset swap from the settings sheet (doc 12 §2.13). Only the instance
@@ -616,6 +654,12 @@ func _build_layers(cfg: Dictionary) -> void:
 		layer.material.shader = shader
 		layer.material.set_shader_parameter("bar_hz", lightbar_hz)
 		layer.material.set_shader_parameter("bar_energy", lightbar_emission)
+		layer.material.set_shader_parameter("atlas_cells", _atlas_cells)
+		if _atlas != null:
+			layer.material.set_shader_parameter("body_tex", _atlas)
+			layer.material.set_shader_parameter("tex_mix", 1.0)
+		else:
+			layer.material.set_shader_parameter("tex_mix", 0.0)
 		if _bar_a.has(key):
 			layer.material.set_shader_parameter("bar_a_color", _bar_a[key])
 			layer.material.set_shader_parameter("bar_b_color", _bar_b[key])

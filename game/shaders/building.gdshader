@@ -241,14 +241,28 @@ void fragment() {
 	// per-instance-coherent, but the fetches stay out here regardless.)
 	float is_roof = step(0.5, abs(v_lnormal.y));
 	float has_uv2 = step(0.0, v_uv2.x);
+	// The gray-box's second UV2 sentinel (tools/gen_graybox.gd UV2_ROOF_PLANAR,
+	// (-1,-2)): "no window grid, and this is a ROOF surface". It marks every
+	// roof PROP and every gable — mech boxes, crowns, masts, aprons, gable ends
+	// — and it is the fix for the texture pass's open question 3. Without it a
+	// prop side fell through to the façade projection and a rooftop chiller came
+	// out clad in brick with a sash window sliced across it; a house's gable end
+	// grew half a window in the middle of the shingle. `is_roof` already catches
+	// their TOPS by normal; this catches their SIDES, which have no normal to
+	// tell them apart from a wall.
+	//
+	// The windowless data-centre walls keep (-1,-1) and keep the façade page,
+	// which is right: a blank composite cassette wall IS that building's façade,
+	// and `techpanel` is the page that draws it.
+	float prop_side = (1.0 - has_uv2) * step(v_uv2.y, -1.5) * (1.0 - is_roof);
+	float use_roof = max(is_roof, prop_side);
 	// Façade bay coordinate == the emissive cell coordinate, by construction.
 	vec2 bay_uv2 = v_uv2 * vec2(window_cols, window_rows);
-	// Surfaces the gray-box left without a window grid — gable ends, the
-	// windowless data-center walls, roof-prop sides — get a model-space planar
+	// Surfaces the gray-box left without a window grid get a model-space planar
 	// projection at the same bay size, so scale still matches.
 	float pick_z = step(abs(v_lnormal.z), abs(v_lnormal.x));
-	vec2 bay_planar = vec2(mix(v_local.x, v_local.z, pick_z) / bay_m.x,
-			v_local.y / bay_m.y);
+	float along_m = mix(v_local.x, v_local.z, pick_z);
+	vec2 bay_planar = vec2(along_m / bay_m.x, v_local.y / bay_m.y);
 	vec2 bay = mix(bay_planar, bay_uv2, has_uv2);
 	// variant shifts the façade by a whole bay: different neighbours, and the
 	// emissive-cell alignment survives exactly.
@@ -258,8 +272,14 @@ void fragment() {
 	// storefront page put shopfront glazing under the sign band.
 	vec4 facade_s = texture(facade_tex,
 			vec2(bay.x + bay_shift, 2.0 - bay.y) * 0.5);
-	vec4 roof_s = texture(roof_tex, v_local.xz / roof_tile_m);
-	vec4 surf = mix(facade_s, roof_s, is_roof);
+	// One roof fetch, two projections, chosen branchlessly: XZ for a deck, and
+	// (along, up) for a prop's flank. Still exactly TWO texture fetches on the
+	// whole building pass — a third sampler for prop sides would have cost the
+	// entire city a fetch to dress a handful of rooftop boxes.
+	vec2 roof_uv = mix(v_local.xz, vec2(along_m, -v_local.y), prop_side)
+			/ roof_tile_m;
+	vec4 roof_s = texture(roof_tex, roof_uv);
+	vec4 surf = mix(facade_s, roof_s, use_roof);
 	float shine = surf.a * tex_mix;
 	// ═════════ END texture pass ═══════════════════════════════════════════
 
