@@ -1072,6 +1072,12 @@ class Balanced extends Strategy:
 		if maintains:
 			if _set_civic_priorities(api):
 				return
+			# KNOWN LIMITATION (Wave-3 report, integration snippet 2): the
+			# repair-first early-return starves building once wear keeps the
+			# queue non-empty (~day 10+), so `balanced` banks instead of
+			# growing. Changing it re-tunes every balance gate — that rebalance
+			# is the top pass-3 item and belongs with the maintenance-pacing
+			# fit, not here.
 			if _repair_something(api):
 				return
 		var spare := api.balance() - reserve()
@@ -1291,7 +1297,10 @@ class Runner extends RefCounted:
 			api.hour = h
 			strategy.act(api, h)
 			if coarse:
-				sim.advance_coarse_hours(1)
+				# Coarse STEP, not a catch-up SESSION: is_catchup=true would put
+				# every run under doc 08's offline fairness rules and silence the
+				# Disaster Director structurally (the pass-2 blind spot).
+				sim.advance_coarse_hours(1, false)
 			else:
 				sim.advance_hours(1.0)
 			var settled := _drain(sim, events)

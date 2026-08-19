@@ -440,7 +440,7 @@ Sum `12.026`. `P(severe_thunderstorm | attempt) = 19.05%`; per hour `0.25 × 0.1
 
 These are **gates**, evaluated before any weighting. Numbers are Standard difficulty; `Difficulty.get("pressure","cooldown_mult")` scales all cooldowns.
 
-**F1 — Grace period.** No Director event until `city_age_days >= 3` AND `population >= 400`. Ambient weather and ambient incidents still run.
+**F1 — Grace period.** No Director event until `city_age_days >= 3` AND `population >= 400`. Ambient weather and ambient incidents still run. *Amended (Wave 3, 2026-08-19, doc 92 F-1 ruling): the population half is waived for FLOOR events — `data/director.json`'s `floor` block guarantees a size-independent trickle of minor / hazard-tier-1 / cheap (`tp_cost ≤ 10`) events after the age gate, so a small city still feels weather and pressure. Majors keep the full F1 gate.*
 
 **F2 — Class cooldown.** After a `major` event's *resolution* (all its spawned incidents cleared or expired): no new major for **2880 game-minutes** (2 game-days). After any `minor`: no new event of any class for **360 game-minutes** (6 game-hours).
 

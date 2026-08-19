@@ -223,20 +223,25 @@ func _build_ground() -> void:
 	road_node.name = "Roads"
 	road_node.multimesh = road_mm
 	ground_root.add_child(road_node)
-	# Water tiles.
-	var water_material := StandardMaterial3D.new()
-	water_material.albedo_color = Color(0.10, 0.20, 0.30)
-	water_material.roughness = 0.15
-	water_material.metallic = 0.2
+	# Water tiles: ONE animated material for the whole city (doc 11 §2.1.1).
+	# The wave field is world-space, so the quads read as one body.
+	var water_mm := MultiMesh.new()
+	water_mm.transform_format = MultiMesh.TRANSFORM_3D
+	var water_quad := PlaneMesh.new()
+	water_quad.size = Vector2(8.0, 8.0)
+	water_quad.material = GroundSurface.water()
+	water_mm.mesh = water_quad
+	water_mm.instance_count = loader.water_tiles.size()
+	var wi := 0
 	for pair in loader.water_tiles:
 		var tile := StarterCityLoader.core_to_global(int(pair[0]), int(pair[1]))
-		var water_plane := MeshInstance3D.new()
-		var water_mesh := PlaneMesh.new()
-		water_mesh.size = Vector2(8.0, 8.0)
-		water_plane.mesh = water_mesh
-		water_plane.material_override = water_material
-		water_plane.position = Vector3(tile.x * 8.0 + 4.0, 0.08, tile.y * 8.0 + 4.0)
-		ground_root.add_child(water_plane)
+		water_mm.set_instance_transform(wi, Transform3D(Basis.IDENTITY,
+				Vector3(tile.x * 8.0 + 4.0, 0.08, tile.y * 8.0 + 4.0)))
+		wi += 1
+	var water_node := MultiMeshInstance3D.new()
+	water_node.name = "Water"
+	water_node.multimesh = water_mm
+	ground_root.add_child(water_node)
 
 
 func _build_city_view(render_data: Dictionary) -> void:
@@ -569,6 +574,35 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 		if audio != null:
 			audio.set_sound_volume(root.settings_sheet.model.value_num("sound_volume"))
 	_wire_audio_ui(root)
+	# Onboarding (doc 12 S12): a fresh boot IS a new city — a loaded save's `ui`
+	# section resumes (or stays finished) by itself inside UIRoot.
+	root.set_onboarding_world_resolver(_coach_world_rect)
+	root.onboarding_action.connect(_on_coach_action)
+	root.start_onboarding({
+		"tutorial_lot_a": sim_host.sim.loader.resolve_tag("tutorial_lot_a")["tile_global"],
+		"tutorial_lot_b": sim_host.sim.loader.resolve_tag("tutorial_lot_b")["tile_global"],
+	})
+
+
+func _coach_world_rect(tag: String) -> Variant:
+	var tile: Vector2i = sim_host.sim.loader.resolve_tag(tag).get("tile_global",
+			Vector2i.ZERO)
+	var answer := camera_state.project_to_screen(
+			Vector3(tile.x * 8.0 + 4.0, 0.0, tile.y * 8.0 + 4.0),
+			Vector2(get_viewport().get_visible_rect().size))
+	return null if bool(answer["behind"]) else answer["position"]
+
+
+func _on_coach_action(action: StringName, payload: Dictionary) -> void:
+	match action:
+		&"focus_camera":
+			var tile: Vector2i = sim_host.sim.loader.resolve_tag(
+					str(payload["tag"]))["tile_global"]
+			camera_state.focus_on(Vector3(tile.x * 8.0, 0.0, tile.y * 8.0))
+		&"trigger_tutorial_incident":
+			sim_host.sim.trigger_tutorial_transformer_failure()
+		&"suppress_director", &"release_director":
+			pass            # doc 07's switch, when it exposes one
 
 
 ## `Callable(kind, id) -> Vector3` for the alerts centre: only the shell knows
@@ -854,6 +888,10 @@ func _process(delta: float) -> void:
 		vehicle_view.set_focus(camera_state.focus)
 		vehicle_view.refresh(delta, environment_controller.last_night,
 				0.0 if sim_host.paused else float(sim_host.speed))
+	if ui_root != null:
+		# The one onboarding observation the root cannot make for itself.
+		ui_root.feed_onboarding({"kind": "camera", "focus": camera_state.focus,
+				"zoom_t": camera_state.zoom_t})
 	if audio != null:
 		# doc 11 §2.15's renderer hooks share cue identities with the sim events,
 		# so feeding both sources still yields ONE thunk per blackout.

@@ -79,6 +79,8 @@ const CODE_TABLE := {
 	&"E_MAX_LEVEL": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	&"E_UNKNOWN_ARCHETYPE": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	&"E_UNKNOWN_BUILDING": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	&"E_NO_FEEDER": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	&"E_AUSTERITY": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	UNKNOWN_CODE: {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 }
 
