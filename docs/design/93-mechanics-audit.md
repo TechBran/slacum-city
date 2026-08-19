@@ -14,7 +14,15 @@ demolish, repair, prioritise, set taxes, buy land, or build roads. Wave 1
 (in flight) adds the systems that create PRESSURE (incidents, weather, water);
 this audit's work adds the VERBS that let the player answer it.
 
-## B. Command-layer gaps (sim, doc 02/04/03/09) — Wave 1.5, launching now
+## B. Command-layer gaps (sim, doc 02/04/03/09) — ✅ SHIPPED (Wave 1.5, 2026-08-18)
+
+All six verbs live in `sim/city_sim.gd` with preview support, ordered reason
+codes, and save-round-trip tests (`tests/test_player_verbs.gd`). Priority
+classes are doc 04's (CRITICAL|ESSENTIAL|STANDARD|DISCRETIONARY). Open
+rulings tracked from the delivery report: transformer L1–L3 vs doc 04 §6's
+L1–L4 cut; `feeder_tap_radius_tiles: 8` wants a doc 04 ruling;
+`data/grid_components.json` folds into `data/power.json` when a power agent
+owns it; `cmd_buy_block` auto-develops by default.
 
 | Verb | Spec | Why it matters |
 |---|---|---|
