@@ -448,7 +448,12 @@ func test_section_version_key() -> void:
 	var net := RoadsTestRig.starter_network()
 	var section := net.save_section()
 	assert_true(section.has("section_version"))
-	assert_eq(int(section["section_version"]), 1)
+	# 1 → 2 (Wave 5): the id-keyed `edge_dynamics` / `c_day_sum` maps moved onto
+	# the edge's canonical tile key, and the graph's LABELLING now travels with
+	# the save. See `RoadNetwork.SECTION_VERSION` for why a rebuild cannot
+	# re-derive it once a road tile has ever been edited.
+	assert_eq(int(section["section_version"]), RoadNetwork.SECTION_VERSION)
+	assert_eq(RoadNetwork.SECTION_VERSION, 2)
 	assert_false(section.has("schema_version"),
 			"schema_version exists ONLY on doc 08's envelope")
 	var text := JSON.stringify(section)

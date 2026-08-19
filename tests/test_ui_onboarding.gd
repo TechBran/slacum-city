@@ -692,7 +692,7 @@ func test_the_sheet_lists_the_transformer_in_its_own_category() -> void:
 		if str(card["id"]) == "transformer":
 			transformer = card
 	assert_false(transformer.is_empty(), "the sheet offers a transformer")
-	assert_eq(str(transformer["category"]), BuildController.CATEGORY_GRID)
+	assert_eq(str(transformer["category"]), BuildController.CATEGORY_INFRASTRUCTURE)
 	assert_eq(int(transformer["level"]), 1, "L1 is what the roster ships")
 	assert_false(bool(transformer["locked"]), "no city level gates it")
 	assert_true(int(transformer["cost"]) > 0, "priced from data/economy.json")
@@ -700,12 +700,12 @@ func test_the_sheet_lists_the_transformer_in_its_own_category() -> void:
 	assert_true(int(transformer["service_radius_tiles"]) > 0)
 	assert_true(_cfg().has_string(str(transformer["name_key"])), "and it has a name (G-8)")
 	assert_true(_cfg().has_string(BuildController.category_tab_key(
-			BuildController.CATEGORY_GRID)), "the tab has copy too")
+			BuildController.CATEGORY_INFRASTRUCTURE)), "the tab has copy too")
 	# The grid tab sorts last: it is the tab you reach for once something said no.
 	assert_eq(BuildController.CATEGORY_ORDER[BuildController.CATEGORY_ORDER.size() - 1],
-			BuildController.CATEGORY_GRID)
+			BuildController.CATEGORY_INFRASTRUCTURE)
 	var last: Dictionary = cards[cards.size() - 1]
-	assert_eq(str(last["category"]), BuildController.CATEGORY_GRID)
+	assert_eq(str(last["category"]), BuildController.CATEGORY_INFRASTRUCTURE)
 
 
 func test_placing_a_transformer_is_what_answers_the_unserved_wall() -> void:

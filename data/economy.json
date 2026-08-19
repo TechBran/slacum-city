@@ -48,6 +48,17 @@
     "_demolish_note": "Same DEMOLITION_REFUND_FRACTION as buildings: STREET $450, AVENUE $1300 per tile."
   },
 
+  "water": {
+    "_note": "Sole water-asset price table (C-07, extended to doc 05's placement verbs the way RR-2 extended it to doc 10's). data/water.json carries no dollar in any form - only the dimensionless price_inputs ratios this block multiplies. Doc 05 owns capacity, kW, condition and work content; doc 03 owns every dollar.",
+    "_component_derivation": "No new ladder: a water component is priced off 2.13(a)'s build_cost_l1.water_plant = 45,000, which IS the L1 pump reference variant, through 2.3's own two curves. build(variant, L) = round(45000 * CAPITAL_VALUE_V[L] * price_inputs.variant_cost_ratio_l1[variant]) and upgrade(variant, L -> L+1) = round(upgrade_cost(water_plant, L) * the same ratio). L1: source_river 37,800 / treatment 120,150 / pump 45,000 / tank 59,850.",
+    "main_build_cost_per_tile": { "service": 286, "trunk": 804, "arterial": 2145 },
+    "_main_derivation": "A water main is a BURIED utility run, and 2.13(b) already prices exactly one of those: feeder class 1 at $110/tile overhead x UNDERGROUND_COST_MULT 2.6 = $286/tile. service is anchored there; trunk and arterial follow data/water.json price_inputs.main_cost_ratio_per_tile (2.81 / 7.5), which is what that ratio table exists for. Two independent cross-checks land on it: a 16-tile service segment (M_TIE's length in doc 09 2.9.6) is $4,576 of capital, so C-16 prices a total break at 4,576 x 1.00 x 0.85 = $3,890 against doc 05's DELETED main_break base_cost of $4,000; and a pump's capital is then 45,000 / 4,576 = 9.8x a service segment's, against doc 05 2.12's 'a pump's capital is ~11x a service main segment's'.",
+    "MAIN_REPAIR_CAPITAL_FRACTION": 1.00,
+    "_repair_basis_note": "Unlike a road tile (0.20 - repair re-buys the wearing course, not the excavation), a broken main is dug up and replaced in full, so its repair capital IS its build price. capital_value(main) = tiles * main_build_cost_per_tile[tier].",
+    "demolish_refund_fraction": 0.25,
+    "_demolish_note": "The same DEMOLITION_REFUND_FRACTION buildings, grid components and road tiles use."
+  },
+
   "expenses": {
     "_maint_condition_penalty_note": "HELD at 1.5, measured (doc 92 sec 13.4). building_maint is the single largest expense line in a grown city ($466.89/gh of $1,289.80 at 320 buildings), but isolated on the maintenance-pays A/B a move to 2.5 contributes only +$703 of a $5,874 gap (12%) while charging BOTH agents 8-16% more. COND_FLOOR alone flips the gate. Recorded so it is not re-litigated.",
     "BUILDING_MAINT_RATE": 0.00040, "MAINT_CONDITION_PENALTY": 1.5, "DEPT_LEVEL_GROWTH": 1.75,
@@ -191,7 +202,7 @@
     "STARTER_ROAD_REPAIR_PER_HOUR_AT_C_DAY_0": 147.22,
     "STARTER_ROAD_TILES": { "AVENUE": 540, "STREET": 243, "total": 783 },
     "PACING_ROUND2_K": 1.35200,
-    "_k_rounding_note": "PACING_ROUND2_K was derived against the ROUNDED $839 gross, so the founding sanity check (1.35200*373 - 20.65229*9 = 318.43) sits $0.35/gh below the ledger's directly computed 318.77. Re-deriving at (839.349412 - 334.706)/373 = 1.35293 would close it and move all 23 rows by ~0.3%; RR-13 did not ask for that and the model tolerance (test 27) is +/-20%. Recorded, not absorbed.",
+    "_k_rounding_note": "PACING_ROUND2_K was derived against the ROUNDED $839 gross AND against the pre-Wave-4 non-road expense (334.706, before doc 92 F-4 took $0.60 off E_grid), so the founding sanity check (1.35200*373 - 20.65229*9 = 318.43) sits $0.95/gh below the ledger's directly computed 319.37. Re-deriving at (839.349412 - 334.106)/373 = 1.35454 would close both and move all 23 rows by ~0.5%; RR-13 did not ask for that, no pass since has done it, and the model tolerance (test 27) is +/-20%. Recorded, not absorbed.",
     "PACING_K_PER_DISTRICT_VARIANT": 1.36378,
     "_k_per_district_note": "RR-18: the sensitivity constant for doc 09's tax-weighted f_stability 0.977524 (tax 744.34). Corrects Round 2's 1.36285, which reproduced from no consistent input set. NOT used by the shipped model, which uses the ruled 0.9722 path; unrounded arithmetic lands on 1.363799 and the ruled 1.36378 is published.",
     "PACING_ROAD_PER_DEVELOPED_BLOCK": 20.65229,

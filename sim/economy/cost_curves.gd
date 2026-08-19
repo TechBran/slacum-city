@@ -62,6 +62,9 @@ var _road_build_cost: Dictionary = {}
 var _road_upgrade_cost: Dictionary = {}
 var _grid_components: Dictionary = {}
 var _vehicles: Dictionary = {}
+var _water_main_cost: Dictionary = {}
+var _water_main_repair_capital_fraction: float = 1.0
+var _water_demolish_refund_fraction: float = 0.0
 
 
 func _init(building_economy: Dictionary, economy: Dictionary) -> void:
@@ -192,6 +195,58 @@ func grid_line_cost_per_tile(kind: String, conductor_class: int, underground: bo
 	return round_half_up(cost)
 
 
+## doc 03 §8 `water` — the price of one doc-05 component at `level`.
+##
+## There is no new ladder and no new table of magnitudes: a water component is
+## §2.13(a)'s `water_plant` anchor ($45,000, which IS doc 05's L1 pump reference
+## variant) walked up §2.3's own `capital_value()` curve and scaled by doc 05's
+## **dimensionless** `variant_cost_ratio_l1`. That ratio is the only thing doc 05
+## contributes, exactly as C-16 has it contributing only `damage_fraction` to a
+## repair — so it arrives as an ARGUMENT and this class still reads no file and
+## knows nothing about `data/water.json`.
+##
+## L1, at ratio: source_river 0.84 → $37,800 · treatment 2.67 → $120,150 ·
+## pump 1.00 → $45,000 · tank 1.33 → $59,850.
+func water_component_build_cost(variant_ratio: float, level: int = 1,
+		m_build: float = 1.0) -> int:
+	return round_half_up(float(capital_value(WATER_ANCHOR_TYPE, level))
+			* variant_ratio * m_build)
+
+
+## The same anchor through §2.3's `upgrade_cost()` — the step `L → L+1`.
+func water_component_upgrade_cost(variant_ratio: float, from_level: int,
+		m_build: float = 1.0) -> int:
+	return round_half_up(float(upgrade_cost(WATER_ANCHOR_TYPE, from_level))
+			* variant_ratio * m_build)
+
+
+## §2.5's repair capital for a component: its build price at the level standing.
+func capital_value_water_component(variant_ratio: float, level: int) -> int:
+	return water_component_build_cost(variant_ratio, level, 1.0)
+
+
+## doc 03 §8 `water.main_build_cost_per_tile` — service $286, trunk $804,
+## arterial $2,145 (see that block's `_main_derivation`).
+func water_main_cost_per_tile(tier: String, m_build: float = 1.0) -> int:
+	return round_half_up(float(_water_main_cost.get(tier, 0)) * m_build)
+
+
+## §2.5's repair capital for a main: a break is dug up and replaced in full, so
+## `MAIN_REPAIR_CAPITAL_FRACTION` is 1.00 — unlike a road tile's 0.20.
+func capital_value_water_main(tier: String, tiles: int) -> int:
+	return round_half_up(float(_water_main_cost.get(tier, 0)) * float(tiles)
+			* _water_main_repair_capital_fraction)
+
+
+## §2.3's demolition refund, at doc 03 §8 `water.demolish_refund_fraction`.
+func water_demolition_refund(capital: int) -> int:
+	return round_half_up(float(capital) * _water_demolish_refund_fraction)
+
+
+## The §2.13(a) archetype every water price is anchored on.
+const WATER_ANCHOR_TYPE := "water_plant"
+
+
 ## doc 03 §2.5 / §2.13(d) — STREET $360, AVENUE $1,040.
 func capital_value_road(road_class: String) -> int:
 	return round_half_up(float(_road_build_cost.get(road_class, 0))
@@ -312,6 +367,12 @@ func _load(building_economy: Dictionary, economy: Dictionary) -> void:
 	_contractor_surcharge = float(expenses.get("CONTRACTOR_SURCHARGE", 0.0))
 	_grid_components = expenses.get("grid_components", {})
 	_vehicles = expenses.get("vehicles", {})
+	var water: Dictionary = economy.get("water", {})
+	_water_main_cost = water.get("main_build_cost_per_tile", {})
+	_water_main_repair_capital_fraction = float(
+			water.get("MAIN_REPAIR_CAPITAL_FRACTION", 1.0))
+	_water_demolish_refund_fraction = float(
+			water.get("demolish_refund_fraction", _demolition_refund_fraction))
 	_road_repair_capital_fraction = float(roads.get("ROAD_REPAIR_CAPITAL_FRACTION", 0.0))
 	_road_demolish_refund_fraction = float(roads.get("demolish_refund_fraction", 0.0))
 	_road_build_cost = roads.get("build_cost_per_tile", {})

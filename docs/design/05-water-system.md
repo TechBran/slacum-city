@@ -677,6 +677,23 @@ Doc 12 ships **five build cards** for `water_facility`, one per variant (C-35), 
 
 **Deferred (Phase 2+), data present but gated by `feature_flags`:** freeze damage & insulation (ship the math, gate on winter weather); contamination beyond the flag + happiness penalty; `booster` variant, `source` subtype `well`, `arterial` mains, facility levels 4–5; `water_pump_truck` temporary supply, `water_heavy_truck`, `water_flood_response`; `water_restrictions` policy and `overhaul_node`; explicit hydrant placement, per-hydrant flow ratings, player-drawn pressure districts, drought/source depletion; sewage (never — spec §52).
 
+### 6.1 The player verbs, as shipped (Wave 5)
+
+This doc's `cmd_*` methods existed on `WaterSystem` from Wave 1 and nothing above them could reach one — the water system was a thing that happened *to* the player. It is now a thing they build. `sim/city_sim.gd` exposes four:
+
+| verb | what it does |
+|---|---|
+| `cmd_place_water_component(kind, tile, level, preview)` | `source` (river) · `treatment` · `pump` · `tank`, at the levels §6's roster offers. **One command builds three things**, because they have never been separable: doc 02's `water_facility` SHELL (the building that decays, is maintained, is billed and is what doc 04 energises), this doc's NODE hosted on that shell's `power_ref` — exactly as `WTR-1` hosts three — and a `service` LATERAL from the nearest live main, because §2.2's connectivity is physical and a component sharing no tile with the network is its own dead zone. |
+| `cmd_place_water_main(tiles, tier, preview)` | `service` and `trunk`. Reach, so the network can grow toward new ground ahead of the components that will sit on it. |
+| `cmd_upgrade_water_component(node, preview)` | one level, gated on doc 04's power headroom (×1.15, the same margin doc 02 §2.11's upgrade check uses) — which is where the player meets the cascade from the supply side rather than the failure side. |
+| `cmd_isolate_water_main` / `cmd_restore_water_main` | §2.12's tactical pair, surfaced verbatim. Neither is priced: the crew time is this doc's work content and no capital changes hands. |
+
+**Check order** (first blocker is the reason code, the full list rides in `payload.blockers`, and `preview = true` quotes without charging): `E_UNKNOWN_COMPONENT` → `E_VARIANT_LOCKED` → `E_LEVEL_UNAVAILABLE` → `E_OUT_OF_BOUNDS` → `E_NOT_OWNED` → `E_NOT_DEVELOPED` → `E_CITY_LEVEL` → `E_FOOTPRINT` → `E_NO_WATER` → `E_NO_MAIN` → `E_UNSERVED` → `E_FUNDS` / `E_AUSTERITY`.
+
+**The roster is data, not code.** `data/water.json` gains a `placeable` block (which variants, at which levels, sited how) and a `placement` block (`main_tap_radius_tiles` 8, mirroring doc 04's feeder tap radius at the same value and for the same reason — half a 16×16 land block). Neither carries a dollar or a capacity: footprints are the `components[variant][L]` columns already here, and **every price is doc 03's**, read at runtime from `data/economy.json`'s new `water` block. That block adds no new ladder either — a component is §2.13(a)'s `water_plant` anchor ($45,000, which IS this doc's L1 pump reference variant) walked up §2.3's own `capital_value()` / `upgrade_cost()` curves and scaled by this doc's dimensionless `variant_cost_ratio_l1`, exactly as C-16 has this doc contributing only `damage_fraction` to a repair. L1: source_river $37,800 · treatment $120,150 · pump $45,000 · tank $59,850.
+
+**A node is born `offline_manual` and commissioned when its shell finishes.** §2.5's `is_live()` already refuses to count it, so a pump cannot pump while its building is a hole in the ground — and demolishing the shell retires the node and its own lateral, for the same reason doc 06's stations take their units with them.
+
 ---
 
 ## 7. Test Plan (headless, `tests/sim/water/`)

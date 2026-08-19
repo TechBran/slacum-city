@@ -60,6 +60,16 @@ const KNOWN_VERBS: Array[String] = [
 	"cmd_place_building", "cmd_upgrade_building", "cmd_repair_building",
 	"cmd_demolish_building", "cmd_buy_block", "cmd_start_development",
 	"cmd_set_tax_level", "cmd_set_priority", "cmd_place_grid_component",
+	# Wave 5's infrastructure verbs. They are PROBED but not yet driven by any
+	# strategy: roads arrive stamped with doc 09's block template and water
+	# arrives with doc 09's authored topology, so neither is on the critical
+	# path of a 21-game-day run. A strategy that lays its own street grid or
+	# builds a second pump station is the next pass's measurement — recording
+	# them here is what makes their absence from the report visible rather than
+	# silent.
+	"cmd_place_road", "cmd_upgrade_road", "cmd_demolish_road",
+	"cmd_place_water_component", "cmd_place_water_main",
+	"cmd_upgrade_water_component",
 ]
 
 
@@ -635,11 +645,18 @@ class Api extends RefCounted:
 		return result
 
 	## Doc 93 §B's headline verb ("THE game"). `cmd_place_grid_component(kind,
-	## tile, level = 1, preview = false)` — the harness only ever buys L1, which
-	## is the rung the `E_UNSERVED` wall is actually priced against.
-	func place_grid_component(kind: String, tile: Vector2i) -> Dictionary:
-		var result := _optional("cmd_place_grid_component", 2, [kind, tile],
-				"%s@%d,%d" % [kind, tile.x, tile.y])
+	## tile, level = 1, preview = false)`.
+	##
+	## `level` defaults to 1 — the rung the `E_UNSERVED` wall is priced against —
+	## but it is a PARAMETER because the roster offers L1–L3 and the choice is a
+	## real one: doc 04 §8's ladder gives 50 / 150 / 400 kW for doc 03 §2.13(b)'s
+	## $500 / $1,100 / $2,800, i.e. **0.100 / 0.136 / 0.143 kW per dollar**, so L1
+	## is the WORST rung on the ladder and the only one whose rating does not
+	## cover the ground its own service radius claims. Doc 92 F-11 measured what
+	## buying only L1 costs (see `Balanced.GRID_LEVEL`).
+	func place_grid_component(kind: String, tile: Vector2i, level: int = 1) -> Dictionary:
+		var result := _optional("cmd_place_grid_component", 3, [kind, tile, level],
+				"%s L%d@%d,%d" % [kind, level, tile.x, tile.y])
 		if bool(result["ok"]):
 			grid_placed += 1
 			grid_spend += int((result["payload"] as Dictionary).get("cost", 0))
@@ -1154,10 +1171,80 @@ class Balanced extends Strategy:
 	## queue.
 	const MAINT_PURSE_DAYS := 7.0
 	const CIVIC_PRIORITY := "ESSENTIAL"
-	## A transformer only when the served ground has actually run out — a
-	## competent player reacts to the wall, they do not pre-buy against it the
-	## way `infrastructure_first` does.
-	const GRID_COOLDOWN := 8
+
+	## **Grid ahead of growth (doc 92 pass-3 F-11, ruled Wave 5).**
+	##
+	## Pass 3's rule was reactive: buy ONE transformer when `candidate_site` has
+	## nothing left, on an 8-game-hour cooldown. F-11 measured what that costs a
+	## builder placing ~15 buildings a game-day — at 50 game-days, seed 1337, the
+	## agent bought **one** transformer in the whole run, logged **1,215
+	## `E_NO_SITE`** refusals, and spent two thirds of all building-time dark.
+	##
+	## Two things were wrong with it and they compound:
+	##
+	## 1. **The trigger was the wrong question.** It asked "is there a served 1×1
+	##    tile anywhere in the city", which a founding core of 452 served tiles
+	##    answers `yes` long after the block the agent is actually building on has
+	##    run dry — and long after a freshly developed block, which doc 09 §2.3
+	##    hands over with a utility corridor and *no transformer*, has 169 tiles
+	##    that all answer `E_UNSERVED`.
+	## 2. **It fired after the wall, not before it.** One tap per 8 game-hours is
+	##    0.125 transformers/gh against 0.6 buildings/gh; an L1 tap opens at most
+	##    49 tiles, so the rule could not keep up even if it never missed.
+	##
+	## The rule is now the one `infrastructure_first` has always used and the one
+	## the ruling asks for: **every owned+READY block keeps `GRID_LEAD_TILES`
+	## served, buildable, empty tiles**, checked per block (`grid_shortfall_tile`
+	## early-outs the moment a block is comfortable), and the tap goes in before
+	## the ground runs out. It is still a competent player, not an optimal one:
+	## the lead is a buffer of a game-day or two of building, not a lit map.
+	##
+	## **40 is DERIVED from this agent's own build rate, not swept.** It builds
+	## 12–15 buildings a game-day (~0.6/gh, measured), and a lead has to survive
+	## the gap between the moment a block drops below it and the moment a tap is
+	## both affordable and sited — several game-hours at the `GRID_COOLDOWN`
+	## below, and longer whenever the operating reserve is tight. 40 tiles is
+	## **~2.5 game-days of building**, and one purchase more than restores it: an
+	## L1 tap opens ≤ 49 tiles at Chebyshev 3, an L2 ≤ 81 at Chebyshev 4. Smaller
+	## leads are not wrong, they are just tighter; `infrastructure_first` runs 24
+	## and is the deliberately more cautious pole.
+	const GRID_LEAD_TILES := 40
+	## Short, because the check is cheap and a new block needs several taps in a
+	## row. Pass 3's 8 was sized for a rule that fired once per wall.
+	const GRID_COOLDOWN := 2
+	## A tap plus its lateral is order $1k (doc 03 §2.13(b)), so this is the
+	## working balance below which even that waits for the operating reserve.
+	const GRID_ATTEMPT_FLOOR := 2_000
+
+	## **Which RUNG of the transformer ladder** (doc 92 F-11's second half).
+	##
+	## Lead alone was not enough, and the measurement says why. With
+	## `GRID_LEAD_TILES` live the agent bought 43 L1 taps over 50 game-days and
+	## still ran **62 % dark**, because an L1 transformer is doc 04 §8's
+	## **50 kW** — and its own service radius is Chebyshev 3, a 49-tile patch. A
+	## patch that size fills with ~15 kW of houses and stores per 5 tiles, so the
+	## tap saturates at roughly a third of the ground it is allowed to serve, and
+	## the surplus is SHED. Measured at day 30 of that run: 37 transformers, 11
+	## of them over 100 %, worst **94 kW on a 50 kW rating (1.89×)**.
+	##
+	## L2 is the rung that matches the radius: **150 kW for $1,100** against L1's
+	## 50 kW for $500 — 3× the capacity for 2.2× the price, and the only rung
+	## whose rating a radius-4 patch cannot trivially exceed. A competent player
+	## reads the ladder once and buys the rung that fits; this agent does the same.
+	## Measured, 50 game-days, seed 1337 (lead 40 throughout):
+	##
+	## | rung | dark share, 50 gd | buildings | transformers | grid spend |
+	## |---|---|---|---|---|
+	## | L1 | 62.1 % | 804 | 43 | $36,790 |
+	## | **L2** | **54.9 %** | 772 | 31 | $46,750 |
+	##
+	## At 50 game-days L2 buys a much healthier fleet for slightly fewer taps —
+	## and the dark share barely moves, because by then the city is past a
+	## ceiling neither rung can lift: doc 09's two class-1 feeders, 2,400 kW
+	## total, which the demand crosses at ~410 buildings. See doc 92 §17.3 and
+	## `tests/test_balance_gates.gd` gate 18b. Inside the 21-game-day pacing
+	## horizon the rung is decisive: **8.70 % dark against pass 3's 25.72 %**.
+	const GRID_LEVEL := 2
 
 	## KNOB 1 — maintenance. `disaster_neglect` sets this false and changes
 	## nothing else: no repair, no priority class, no transformer. Everything it
@@ -1353,8 +1440,8 @@ class Balanced extends Strategy:
 		var spare := api.balance() - reserve()
 		if spare <= 0:
 			return
-		# 0b. Buy the transformer the wall is asking for.
-		if maintains and _unwall(api, hour, spare):
+		# 0b. Keep the grid ahead of the building, not behind it (F-11).
+		if maintains and _lead_grid(api, hour, spare):
 			return
 		# 1. Civic: one on every city level, plus a station roster sized to the
 		#    city (see `_civic_shortfall`).
@@ -1428,20 +1515,29 @@ class Balanced extends Strategy:
 			touched = bool(api.set_priority(String(id), CIVIC_PRIORITY)["ok"]) or touched
 		return touched
 
-	## The reactive half of the grid verb: when there is no served site left for
-	## the archetype this agent wants, buy the tap that opens the most ground.
-	func _unwall(api: Api, hour: int, spare: int) -> bool:
+	## Grid ahead of growth — see `GRID_LEAD_TILES` for the F-11 measurement this
+	## replaces. Two triggers, in the order that matters:
+	##
+	## 1. **A block with no grid at all.** Doc 09 §2.3 hands a developed block
+	##    over with a utility corridor to its centre and no transformer, so all
+	##    169 of its buildable tiles answer `E_UNSERVED` until the player buys the
+	##    tap. `grid_shortfall_tile` finds it first because it scans blocks in
+	##    sorted id order and that block has zero served tiles.
+	## 2. **The served stock running down** anywhere else, before the wall.
+	##
+	## Still `E_NO_VERB`-safe and still budget-gated: this agent buys grid out of
+	## the same surplus everything else comes out of, so a city that cannot pay
+	## its payroll does not buy copper either.
+	func _lead_grid(api: Api, hour: int, spare: int) -> bool:
 		if not api.has_verb("cmd_place_grid_component"):
 			return false
-		if hour - _grid_hour < GRID_COOLDOWN or spare <= 0:
+		if hour - _grid_hour < GRID_COOLDOWN or spare < GRID_ATTEMPT_FLOOR:
 			return false
-		if api.candidate_site(Vector2i.ONE).x >= 0:
-			return false  # served ground still available; nothing to unwall
-		var tile := api.best_transformer_tile()
+		var tile := api.grid_shortfall_tile(GRID_LEAD_TILES)
 		if tile.x < 0:
 			return false
 		_grid_hour = hour
-		return bool(api.place_grid_component("transformer", tile)["ok"])
+		return bool(api.place_grid_component("transformer", tile, GRID_LEVEL)["ok"])
 
 	## The densest affordable row inside `categories` — same ranking as greedy,
 	## but only ever spent out of the surplus above the reserve.

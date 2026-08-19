@@ -146,8 +146,10 @@ H=60 → 1.00 (neutral), H=100 → 1.20, H=20 → 0.80.
 **f_condition.** Building condition `C ∈ [0,1]`, owned by **doc 02** (rescaled to `[0,1]` per report 98 C-14; damage that moves it comes from docs 06 and 07).
 
 ```
-f_condition = COND_FLOOR + (1 - COND_FLOOR) × C,   COND_FLOOR = 0.55
+f_condition = COND_FLOOR + (1 - COND_FLOOR) × C,   COND_FLOOR = 0.40
 ```
+
+> **`COND_FLOOR` 0.55 → 0.40** *(doc 92 §13.3, ruled Wave 4; the doc edit doc 92 §16 held is applied here)*. The floor is not a taste setting — it sets **the payback period of a repair**. At 0.55 a repair bought its price back in ≈19 game-days of recovered revenue, which is outside the pacing horizon §2.12 is written against, and doc 92 pass-2 F-2 could not measure maintenance paying for itself at all; at 0.40 the payback is ≈14 game-days and the maintaining agent overtakes the neglecting one inside 21. **`f_condition(1.0) = 1.0` at every floor, so no founding anchor moves** — §2.12's ledger is untouched. What moves is the two worked examples below, and `tests/test_economy.gd` carries the new literals with the arithmetic in a comment.
 
 **tax_policy_factor.** The player sets a citywide rate `r` on a slider, `[0.04, 0.16]`, default `0.09`.
 
@@ -188,9 +190,9 @@ R_actual_city    = max( Σ R_b , REV_FLOOR_FRACTION × R_potential_city )
 ```
 f_stability = 0.25 + 0.75 × 0.82^0.70 = 0.25 + 0.75 × 0.8703 = 0.9027
 f_happiness = 1.0 + 0.5 × (68-60)/100 = 1.040
-f_condition = 0.55 + 0.45 × 0.95 = 0.9775
+f_condition = 0.40 + 0.60 × 0.95 = 0.9700
 
-R = 26 × 1.0 × 1.0 × 1.0 × 1.0 × 0.9027 × 1.040 × 0.9775 = 23.86  →  $24/gh  ($576/game-day)
+R = 26 × 1.0 × 1.0 × 1.0 × 1.0 × 0.9027 × 1.040 × 0.9700 = 23.68  →  $24/gh  ($568/game-day)
 ```
 
 #### Worked example B — the same house during a 40-minute outage
@@ -202,9 +204,9 @@ f_power     = 0.35 + 0.65 × 0.333 = 0.5667
 f_water     = 0.45 + 0.55 × 0.50  = 0.7250
 f_stability = 0.25 + 0.75 × 0.61^0.70 = 0.7806
 f_happiness = 1.010
-f_condition = 0.9775
+f_condition = 0.9700
 
-R = 26 × 0.5667 × 0.7250 × 1.0 × 0.7806 × 1.010 × 0.9775 = 8.23  →  $8/gh
+R = 26 × 0.5667 × 0.7250 × 1.0 × 0.7806 × 1.010 × 0.9700 = 8.17  →  $8/gh
 ```
 
 **66% revenue loss in one hour from one transformer**, before counting the lost power tariff (§2.4) and the repair bill. This delta is what the *Foregone Revenue* line in the budget panel reports (§2.6).
@@ -311,12 +313,14 @@ E_grid = Σ_nodes  node_rated_MVA × GRID_MAINT_PER_MW_HOUR (4.0) × (1 + ASSET_
 ```
 plant      1 × plant_gas L1, 8.0 MW        → 8.000 × 5.0          = $40.000/gh
 substation 1 × SUB-A L1, 6.0 MVA           → 6.000 × 4.0 × 1.0    = $24.000/gh
-transformers 13 × L1 (0.05) + 9 × L2 (0.15) + 1 × L3 (0.40) = 2.40 MVA
-                                            → 2.400 × 4.0 × 1.0   =  $9.600/gh
+transformers 7 × L1 (0.05) + 10 × L2 (0.15) + 1 × L3 (0.40) = 2.25 MVA
+                                            → 2.250 × 4.0 × 1.0   =  $9.000/gh
 lines      147 feeder + 30 transmission = 177 tiles × 8 m = 1.416 km
                                             → 1.416 × 0.9 × 1.0   =  $1.274/gh
-                                                          E_grid  = $74.874 → $74.9/gh
+                                                          E_grid  = $74.274 → $74.3/gh
 ```
+
+> **The transformer term, restated on the 18-node roster** *(doc 92 §14.1, Wave 4)*. Doc 92 F-4 thinned doc 09 §2.9.5's founding fleet from 23 nodes to **18** — the five deleted sites' streetlights, signals and customers re-home onto the nearest survivor, so the LOAD is conserved and only the rated PLATE falls, `2.40 → 2.25 MVA`. This line falls with it by `0.15 × 4.0 = $0.60/gh`; every other term is untouched. Test 37's band (`74.9 ± 0.5`, harmonised with doc 04's test 24 under RR-18) needs re-centring on **`74.3 ± 0.5`** when doc 04's owner next touches it — `tests/test_economy.gd` already asserts the new figure.
 
 *Round 2 correction (report 98 RR-6, verification 97 finding F-02).* This doc previously priced the same plant at **$73/gh** against an assumed **14 × L1 + 9 × L2 = 2.05 MVA over 110 feeder tiles (0.88 km)**. Doc 09 §2.9.5 publishes the real fleet — **13 × L1 + 9 × L2 + 1 × L3 = 2.40 MVA** (the water works needs an L3 for its 132 kW site load, per C-35) and **177 line tiles = 1.416 km** — so the correct figure is **$74.87/gh**. The **±$1 tolerance in doc 04's test 24 fails against $73**; the expectation moves to **`74.9 ± 0.5`** (report 98 RR-18 harmonises the band on both sides — doc 04's test 24 and this doc's test 37 now carry the identical `$74.9 ± 0.5/gh`; the old $73 sits **1.874** below the centre, well outside `[74.4, 75.4]`, so the figure was wrong rather than merely rounded). This doc's §9 item 6c assumption about doc 04's transformer mix is now **closed** — doc 09 published the mix and this doc reads it.
 
@@ -785,18 +789,20 @@ EXPENSES
   building maintenance   68,600 capital x 0.00040 x 1.0              =   27.440
   departments            26 + 30 + 20 (staffing only) + 20          =   96.000
   fleet                  2x7 + 12 + 9 + 9 + 14                      =   58.000
-  E_grid                 40.000 + 24.000 + 9.600 + 1.274            =   74.874
+  E_grid                 40.000 + 24.000 + 9.000 + 1.274            =   74.274
   generation fuel                                    (held - see below)  57.000
   vehicle fuel                                       (held - see below)   6.000
   E_water                0.334 + 1.058 + 14.000                     =   15.392
   routine road repair    150.667 + 35.204   (c_day 0.35, x 1.2625)  =  185.871
   debt service                                                      =    0.000
-                                                    TOTAL EXPENSE    =  520.577 $/gh
+                                                    TOTAL EXPENSE    =  519.977 $/gh
 
-NET  =  839.349 - 520.577  =  +318.77 $/gh  ->  +$319/gh  =  +$7,650/game-day
+NET  =  839.349 - 519.977  =  +319.37 $/gh  ->  +$319/gh  =  +$7,665/game-day
 ```
 
-**The net line, from unrounded components on both sides (report 98 RR-18).** Round 2 subtracted an unrounded expense total from a *rounded* $839 gross, which is the one arithmetic sin this pass will not repeat. Revenue: `740.291412 + 93 + 3.058 + 3 = 839.349412` (tax = `686 × 0.9722 × 1.110 = 686 × 1.079142`). Expense: `27.44 + 96 + 58 + 74.874 + 57 + 6 + 15.392 + 185.870566 = 520.576566`. Net: `839.349412 − 520.576566 = ` **318.772846 $/gh**, displayed as **+$319/gh** and **+$7,650.55/game-day**. Nothing here is rounded until the last step.
+> **`E_grid` $74.874 → $74.274/gh, and the net with it** *(doc 92 §14.1, ruled Wave 4; the doc edit doc 92 §16 held is applied here)*. Doc 92 F-4 thinned `data/starter_city.json`'s founding transformer roster **23 → 18 nodes**. That is **0.15 MVA** of rated plate off the inventory (`2.40 → 7×0.05 + 10×0.15 + 1×0.40 = 2.25`), and this section bills $4.00/MVA-gh on the inventory, so the transformer term falls by exactly `0.15 × 4.0 = $0.60/gh` — `9.600 → 9.000`. The plant, the substation and the 1.416 km of line are untouched, and so is every revenue line. **Net: `839.349412 − 519.976566 = 319.372846 $/gh`**, displayed as **+$319/gh** and **+$7,664.95/game-day**; the rounded headline figure does not move. `data/economy.json`'s `pacing_guardrails` and `tests/test_economy.gd` carry the re-stamped pair, and doc 93 §E2 carries the shift table.
+
+**The net line, from unrounded components on both sides (report 98 RR-18).** Round 2 subtracted an unrounded expense total from a *rounded* $839 gross, which is the one arithmetic sin this pass will not repeat. Revenue: `740.291412 + 93 + 3.058 + 3 = 839.349412` (tax = `686 × 0.9722 × 1.110 = 686 × 1.079142`). Expense: `27.44 + 96 + 58 + 74.274 + 57 + 6 + 15.392 + 185.870566 = 519.976566`. Net: `839.349412 − 519.976566 = ` **319.372846 $/gh**, displayed as **+$319/gh** and **+$7,664.95/game-day**. Nothing here is rounded until the last step. *(The `E_grid` term is the Wave-4 18-node roster — see the note under the ledger.)*
 
 **Progression of this line across the four passes:** expense `306 → 347 → 482 → 521`; net `+414 → +373 → +357 → +319`. Round 2's four moves nearly cancelled; Round 3 moves exactly one line:
 
@@ -813,6 +819,10 @@ expense   roads      +147.22   (new line, at the c_day 0 floor)
 ROUND 2 -> ROUND 3   (the road line moves onto doc 10's operating point, RR-13)
 expense   roads       +38.65   (185.87 - 147.22, i.e. x 1.2625) expense  482 -> 521  (+39)
                                                                 NET     +357 -> +319 (-38)
+
+ROUND 3 -> WAVE 4    (doc 92 F-4 thins the transformer roster 23 -> 18)
+expense   E_grid       -0.60   (74.274 - 74.874, i.e. -0.15 MVA) expense  521 -> 520  (-1)
+                                                                NET     +318.77 -> +319.37
 ```
 
 **Two revenue lines and one expense line are still held, and this doc will not invent them.** `power tariff 93` and `generation fuel 57` both imply a starter delivered/generated load of ~1.5 MWh/gh. Doc 09 now publishes the **402.0 kW building nameplate** and the **783.3 kW night peak**, but the 24-hour **delivered** MWh depends on the 24-hour mean of doc 01's `streetlight_load` channel (on 19:00–07:00, so nowhere near 1.000) and on doc 04's loss model — and doc 04 owes exactly that restatement under **RR-10**. The two figures sit on opposite sides of the ledger and move together, so holding them shifts net by less than the pair's own uncertainty. `vehicle fuel 6` waits on doc 06's `vehicle_km_this_hour`. See §9 item 6b.
@@ -828,7 +838,7 @@ flow           = net_r3 x (gh for a play row | effective earning hours for an aw
 treasury_end   = treasury_start + flow + grants - one_off_spend
 ```
 
-`334.706` is the total **non-road** expense at founding; `K` is what one dollar of Round-1 net becomes once the tax uplift and the utility corrections are applied at constant city shape. **`K` is untouched by RR-13** — it is the *non-road* proportional term, and the road line was deliberately factored out of it precisely so a re-priced road line moves one constant and not twenty-three rows' worth of revenue. Sanity check at founding: `1.35200 × 373 − 20.65229 × 9 = 504.296 − 185.871 = ` **318.43**, against the ledger's directly computed **318.77** — a **$0.35/gh (0.11 %)** gap, inherited from `K` having been derived against the rounded `$839` gross rather than `$839.349`. Re-deriving `K` at `(839.349 − 334.706)/373 = 1.35293` would close it and move every row by ~+0.3 %; **RR-13 did not ask for that and this pass does not do it**, because the model's own tolerance (test 27, ±20 %) is 180× the error and churning 23 rows for 0.1 % is how a pacing table stops being auditable. The gap is recorded here and in §8 rather than silently absorbed.
+`334.706` is the total **non-road** expense at founding; `K` is what one dollar of Round-1 net becomes once the tax uplift and the utility corrections are applied at constant city shape. **`K` is untouched by RR-13** — it is the *non-road* proportional term, and the road line was deliberately factored out of it precisely so a re-priced road line moves one constant and not twenty-three rows' worth of revenue. Sanity check at founding: `1.35200 × 373 − 20.65229 × 9 = 504.296 − 185.871 = ` **318.43**, against the ledger's directly computed **319.37** — a **$0.95/gh (0.30 %)** gap of which $0.35 is inherited from `K` having been derived against the rounded `$839` gross rather than `$839.349`, and $0.60 is Wave 4's `E_grid` restatement (`334.706` is likewise still the pre-restatement non-road total). Re-deriving `K` at `(839.349 − 334.106)/373 = 1.35454` would close both and move every row by ~+0.5 %; **RR-13 did not ask for that and no pass since has done it**, because the model's own tolerance (test 27, ±20 %) is 66× the error and churning 23 rows for 0.3 % is how a pacing table stops being auditable. The gap is recorded here and in §8 rather than silently absorbed.
 
 `blocks_developed` counts blocks whose `road_install` phase has completed: **9** at founding, **10** from S3 (block 2 finishes development), **11** from S6 (the marsh bill lands), **12** from S11 (waterfront), **13** at S12 (4th block). **One-off spends are unchanged** — the block template stamp is billed once, by the `road_install` development phase (§2.8), and never a second time by the per-tile ladder.
 
@@ -1265,7 +1275,7 @@ Headless, `tests/sim/economy/`, run via `godot --headless --path . -s res://test
 34. `test_grid_cost_rescale` — regenerate §2.13(b) from doc 04's capacity ladder with `GRID_COST_SCALE = 0.125` / `PLANT_COST_SCALE = 1/3` and the stated rounding rule; diff against committed data. Assert the two ruled anchors exactly: `substation L1 == 15000`, `plant_gas L1 == 60000`.
 35. `test_vehicle_ratio_preservation` — assert `fire_engine.purchase == round(1.60 × patrol_car.purchase)` exactly, and that the five doc-06 MVP types are strictly ordered patrol < water < utility < construction < engine (the ratios C-07 preserved). Assert every `upkeep_per_gh` lies in `[0.00050, 0.00115] × purchase` (upper bound widened from 0.0011 so `construction_crew`'s 0.113 % passes — verification 97 §2.2).
 36. `test_starter_fleet_line` — the doc-09 starter roster prices to **$58/gh** standby, matching §2.12's fleet line.
-37. `test_e_grid_starter_inventory` — feed **doc 09 §2.9.5's** starter inventory (8.0 MW plant, 6.0 MVA substation, **2.40 MVA** of transformers = 13×L1 + 9×L2 + 1×L3, **1.416 km** of line = 177 tiles × 8 m, all condition 1.0) to `ExpenseLedger`; assert **`E_grid == 74.9 ± 0.5 $/gh`** and that no flat per-component upkeep is read from `data/power.json` (C-12). *Recomputed under RR-6 from the stale 2.05 MVA / 0.88 km / $73 set; the tolerance is **±0.5 on both sides** under RR-18, matching doc 04 test 24 exactly — the two tests assert the identical band on the identical inventory, and the derivation `40.000 + 24.000 + 9.600 + 1.274 = 74.874` sits 0.026 inside the centre.*
+37. `test_e_grid_starter_inventory` — feed **doc 09 §2.9.5's** starter inventory (8.0 MW plant, 6.0 MVA substation, **2.25 MVA** of transformers = 7×L1 + 10×L2 + 1×L3, **1.416 km** of line = 177 tiles × 8 m, all condition 1.0) to `ExpenseLedger`; assert **`E_grid == 74.3 ± 0.5 $/gh`** and that no flat per-component upkeep is read from `data/power.json` (C-12). *Recomputed under RR-6 from the stale 2.05 MVA / 0.88 km / $73 set, then **re-centred by Wave 4's F-4 roster thinning** (23 → 18 nodes, 2.40 → 2.25 MVA); the tolerance stays **±0.5 on both sides** under RR-18 and doc 04 test 24 should move with it, since the two tests assert the identical band on the identical inventory. The derivation `40.000 + 24.000 + 9.000 + 1.274 = 74.274` sits 0.026 inside the new centre — the same 0.026 the old pair had, because only the transformer term moved.*
 38. `test_repair_price_single_source` — for one asset of each kind (building, transformer, feeder, water main, **road tile**, vehicle), assert the charged repair equals `capital_value × damage_fraction × 0.85 × M_repair` and that the supplying doc contributed only `damage_fraction` (C-16). For the road tile, assert `capital_value == build_price × 0.20` (STREET 360, AVENUE 1,040).
 39. `test_difficulty_file_schema` — `data/difficulty.json` loads; all four sections × four presets present; an injected fifth section and an injected nested value each raise a load error (§3.4 rules 1–3).
 
@@ -1302,7 +1312,7 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
     "OCCUPANCY_RAMP_HOURS": 36,
     "_stability_note": "S is [0,1] from doc 09 (C-56). f_stability = STAB_FLOOR + (1-STAB_FLOOR) * S^STAB_EXP. No /100.",
     "STAB_FLOOR": 0.25, "STAB_EXP": 0.70,
-    "HAPPY_SLOPE": 0.50, "HAPPY_FACTOR_MIN": 0.75, "HAPPY_FACTOR_MAX": 1.25, "COND_FLOOR": 0.55,
+    "HAPPY_SLOPE": 0.50, "HAPPY_FACTOR_MIN": 0.75, "HAPPY_FACTOR_MAX": 1.25, "COND_FLOOR": 0.40,
     "_tax_yield_note": "DESCRIPTIVE ONLY (RR-5). The published base_tax_by_level rows in data/buildings.json and the $686/gh starter anchor are normative; this map documents why the L1 rows have the shape they do and is checked by test 7 as a +/-6% drift guard, never as an equality. Max drift today is 4.76% (store, office).",
     "TAX_YIELD": { "residential": 0.0100, "commercial": 0.0105, "industrial": 0.0095, "tech": 0.0117 },
     "TAX_YIELD_DRIFT_TOLERANCE": 0.06,
@@ -1463,8 +1473,10 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
     "STARTER_GROSS_REVENUE_PER_HOUR": 839,
     "STARTER_GROSS_REVENUE_PER_HOUR_EXACT": 839.349412,
     "STARTER_EXPENSE_PER_HOUR": 521, "STARTER_NET_PER_HOUR": 319,
-    "STARTER_EXPENSE_PER_HOUR_EXACT": 520.576566, "STARTER_NET_PER_HOUR_EXACT": 318.772846,
-    "STARTER_E_GRID_PER_HOUR": 74.87,
+    "_exact_pair_note": "The _EXACT pair is the AS-INTEGRATED ledger doc 93 sec E2 owns (live doc-05/doc-06/doc-10 inventories, and the fleet-billing ruling), NOT this doc's sec 2.12 arithmetic. The unsuffixed 521/319 are this doc's own published round figures and do not move; tests/test_balance_gates.gd gates 1-2 hold the sim to the _EXACT pair and tests/test_economy.gd holds this doc to its own.",
+    "STARTER_EXPENSE_PER_HOUR_EXACT": 504.176677, "STARTER_NET_PER_HOUR_EXACT": 337.047860,
+    "STARTER_FIRST_GAME_DAY_NET_EXACT": 8004.047,
+    "STARTER_E_GRID_PER_HOUR": 74.27,
     "STARTER_E_GRID_TEST_TOLERANCE": 0.5,
     "STARTER_E_WATER_PER_HOUR": 15.39,
     "STARTER_DEPARTMENTS_PER_HOUR": 96,
@@ -1475,7 +1487,7 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
     "STARTER_ROAD_REPAIR_PER_HOUR_AT_C_DAY_0": 147.22,
     "STARTER_ROAD_TILES": { "AVENUE": 540, "STREET": 243, "total": 783 },
     "PACING_ROUND2_K": 1.35200,
-    "_k_rounding_note": "PACING_ROUND2_K was derived against the ROUNDED $839 gross, so the founding sanity check (1.35200*373 - 20.65229*9 = 318.43) sits $0.35/gh below the ledger's directly computed 318.77. Re-deriving at (839.349412 - 334.706)/373 = 1.35293 would close it and move all 23 rows by ~0.3%; RR-13 did not ask for that and the model tolerance (test 27) is +/-20%. Recorded, not absorbed.",
+    "_k_rounding_note": "PACING_ROUND2_K was derived against the ROUNDED $839 gross AND against the pre-Wave-4 non-road expense (334.706, before F-4 took $0.60 off E_grid), so the founding sanity check (1.35200*373 - 20.65229*9 = 318.43) sits $0.95/gh below the ledger's directly computed 319.37. Re-deriving at (839.349412 - 334.106)/373 = 1.35454 would close both and move all 23 rows by ~0.5%; RR-13 did not ask for that, no pass since has done it, and the model tolerance (test 27) is +/-20%. Recorded, not absorbed.",
     "PACING_K_PER_DISTRICT_VARIANT": 1.36378,
     "_k_per_district_note": "RR-18: the sensitivity constant for doc 09's tax-weighted f_stability 0.977524 (tax 744.34). Corrects Round 2's 1.36285, which reproduced from no consistent input set. NOT used by the shipped model, which uses the ruled 0.9722 path; unrounded arithmetic lands on 1.363799 and the ruled 1.36378 is published.",
     "PACING_ROAD_PER_DEVELOPED_BLOCK": 20.65229,

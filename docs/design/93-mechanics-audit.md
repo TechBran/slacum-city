@@ -33,6 +33,34 @@ owns it; `cmd_buy_block` auto-develops by default.
 | `cmd_set_tax_level(level)` | doc 03 | TAX_LEVEL_GROWTH curve exists; the knob is unreachable. |
 | `cmd_buy_block(block_id)` | doc 09 | `DevelopmentController` develops ring blocks; no purchase verb → city cannot grow outward. |
 
+## B2. The infrastructure verbs — ✅ SHIPPED (Wave 5, 2026-08-19)
+
+§A's verdict said the player "can only ever ADD houses to a grid someone else
+built". Wave 1.5 answered the power half. Wave 5 answers the other two: the
+player now lays, upgrades and rips up ROADS, and builds, extends and upgrades
+the WATER system. All of it goes through `sim/city_sim.gd` with preview support,
+the owning doc's reason codes in the owning doc's order, doc 03 billing through
+the same construction path buildings use, and save-round-trip tests
+(`tests/test_infra_verbs.gd`).
+
+| Verb | Spec | Why it matters |
+|---|---|---|
+| `cmd_place_road(tiles, road_class)` | doc 10 §2.13 | The city's own streets. Priced per tile by doc 03 §2.13(d); tiles enter the grid immediately at condition 0.10 behind a `construction_new` closure, so the corridor is visible while the crew works. |
+| `cmd_upgrade_road(tiles)` | doc 10 §2.13 | `STREET → AVENUE`, which is also how a player answers doc 02's L4/L5 `E_AVENUE` gate on an interior block. |
+| `cmd_demolish_road(tiles)` | doc 10 §2.13 | Refunded at the class each tile actually carries, and **refused** if it would leave a building with no road beside it. |
+| the block road template stamp | doc 09 §2.9.1 | Not a verb — the gap behind them. A developed ring block used to arrive with no roads at all; it now arrives with doc 09's 87-tile template and 169 buildable tiles. |
+| `cmd_place_water_component(kind, tile)` | doc 05 §6 | One command builds the doc-02 shell, the doc-05 node it hosts and the service lateral that joins it to the network — the three things that have never been separable. |
+| `cmd_place_water_main(tiles, tier)` | doc 05 §6 | Reach. Connectivity in doc 05 is physical (shared tiles), so a main is how the network grows toward new ground. |
+| `cmd_upgrade_water_component(node)` | doc 05 §6 | Capacity, priced on doc 03 §2.3's own upgrade curve, gated by doc 04's power headroom — which is where the player meets the cascade from the supply side. |
+| `cmd_isolate_water_main` / `cmd_restore_water_main` | doc 05 §2.12 | The tactical pair: trade a neighbourhood's taps for the fire's hydrants. |
+
+**Still unshipped, and now the binding constraint** (Wave-5 measurement, doc 92
+F-11): doc 04 §4's `place_power_component` for anything but the transformer, and
+`route_feeder`. The whole city's load runs through the two class-1 feeders doc 09
+§2.9.5 authored — **2 × 1,200 kW** — and no verb can add or upgrade one. A
+well-played city reaches that ceiling around 600 buildings and everything past it
+is shed. See doc 92's Wave-5 pass for the measurement and the named constants.
+
 ## C. Feedback gaps (game/ui) — Wave 2, after Wave 1 merges
 
 1. **City-level moments** — `city_level_changed` + grants exist and are silent.
@@ -168,6 +196,57 @@ preserved, as this section has said from the start; only the inventory changed.
   the repair THRESHOLD, not the rate — see doc 92 §13.
 - **The founding transformer roster is 18 nodes, not 23** (doc 92 F-4). See the
   re-anchor table above.
+
+**Binding from Wave 5 (the infrastructure verbs, 2026-08-19):**
+
+- **The hour-48 `E_UNSERVED` goal is RETIRED.** Doc 92 §14.1 and gate 10 chased a
+  target — *the player's first `E_UNSERVED` should land inside the first two
+  game-days, so `cmd_place_grid_component` is taught early* — and doc 92 proved
+  it geometrically unreachable: hour 48 at the measured fill rate needs 35–80
+  served vacant tiles, doc 09's own siting rule (every one of 34 authored
+  building origins within Chebyshev 3 of a transformer, spread across all nine
+  core blocks) has a set-cover floor of 16–17 nodes, and 18 radius-3/4/5 patches
+  already union to **452** of the core's 1,429 vacant lots. **452 is the floor**,
+  and neither a grid edit nor a READY-block trim reaches 80.
+  **The ruling: the wall is money-paced by design and that is correct.** A
+  founding city nets ~$340/gh against $1,200 a house, so the fastest builder in
+  the study converts income into floorspace at ~0.35 buildings/gh; the ground
+  outlasts the money by a wide margin and always will. Teaching the transformer
+  by starving the player of LAND would be teaching it with a fake shortage.
+  **The early beat is the first infrastructure DECISION, not the first refusal:**
+  a transformer bought *ahead* of growth — because a block the player just
+  developed arrives with a utility corridor and no tap, so all 169 of its
+  buildable tiles answer `E_UNSERVED` the moment it turns READY. That is a
+  purchase the player makes in their first game-week, it is legible, and it is
+  the thing doc 93 §A called "THE game". `tests/test_balance_gates.gd` gate 10
+  re-anchors onto it and stops asserting an hour.
+- **`min_city_level` is enforced at placement** (doc 92 pass-1 F-7, ruled).
+  `cmd_place_building` answers `E_CITY_LEVEL` below the archetype's
+  `min_city_level`, as `cmd_upgrade_building` always has. The build sheet's lock
+  glyph is no longer a courtesy the sim declines to keep. `apartment` L1 needs
+  city level 1, so a founding city opens on houses and stores — that is the
+  design. Every scripted strategy in `tools/playtest.gd` already filtered on the
+  UI's rule (`Api.buildable`), so the pacing curves do not move; gate 14 stops
+  pinning today's behaviour and asserts the refusal.
+- **A developed land block now arrives with roads.** Doc 09 §2.9.1's 87-tile
+  template (60 boundary → AVENUE, 27 collector → STREET) is stamped at the
+  `ROAD_INSTALL` development phase, which had never shipped, so a ring block used
+  to reach READY with **no roads at all** — 256 placeable tiles, none of them
+  with road access, on a map whose revenue formula multiplies by `f_road`. A
+  stamped block is doc 09's published **169 buildable tiles**, and the road-repair
+  line grows with the network exactly as doc 03 §2.12's per-block term intends.
+  The stamp books no money: doc 03 §2.8's `road_install` phase price pays for it
+  once (doc 10 §2.3's no-double-billing rule).
+- **`save.roads` is `section_version` 2.** `edge_dynamics` and `c_day_sum` moved
+  off edge-id keys onto the edge's canonical tile key, and the graph's LABELLING
+  (edge ids, node ids, polyline orientation and both allocators) now travels with
+  the save. The version-1 note claimed edge ids were "stable across
+  rebuild-from-blocks"; that was vacuously true only while nothing could edit a
+  road tile. It is not true in general — a live graph reaches its ids through doc
+  10 §2.5's incremental retrace, a loaded one through `rebuild_all()` — and the
+  first player-placed road made save→load→advance identity fail one game-hour
+  later. A version-1 section still loads; its two id-keyed maps are dropped
+  rather than mis-applied.
 
 Also binding from the same pass: **mode-invariance is per-system, not
 whole-hash** — doc 06 §2.6 sanctions Poisson-count differences per step size,

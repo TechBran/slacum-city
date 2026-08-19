@@ -649,35 +649,36 @@ All polylines run in road right-of-way and are axis-aligned segment by segment.
 
 **Transformer sizing rule** *(generalized from the old flat "> 35 kW ⇒ L2")*: a transformer is authored at **the smallest level whose capacity leaves ≥ 30 % headroom over its t0 night load** — `night_load ≤ TRANSFORMER_HEADROOM_FRAC (0.70) × capacity_kw`. The old rule was the same rule stated only for L1 (`0.70 × 50 = 35 kW`); writing it as a fraction makes it hold at every level, and it is the reason the water works now needs an L3. The 30 % margin is sized against doc 04's heat-wave stack: at 40 °C the CIV/RES load multiplier reaches ~1.48 while transformer capacity derates to 0.92, so a transformer at 70 % nominal is the largest that survives a heat wave without the player touching it.
 
-Twenty-three transformers, sited on road tiles so that **every building origin is within 3 tiles of one** (doc 04's L1 service radius). Streetlights and signals attach to their nearest transformer with no radius limit (doc 04 §2.3), which is why transformers with no building customers still carry real load.
+**Eighteen transformers** *(doc 92 §14.1 F-4, ruled Wave 4; the doc edit doc 92 §16 held is applied here)*, sited on road tiles so that **every building origin is within 3 tiles of one** (doc 04's L1 service radius). Streetlights and signals attach to their nearest transformer with no radius limit (doc 04 §2.3), which is why transformers with no building customers still carry real load.
+
+> **23 → 18: what F-4 changed and what it did not.** Doc 92 measured the founding roster against the placement pacing it is supposed to create and found five nodes the map does not need: **`T-05`, `T-08`, `T-16`, `T-21` and `T-22` are deleted.** Their streetlights, signals and building customers re-home onto the nearest surviving transformer — doc 04 §2.3 attaches distributed sinks with **no radius limit** — so **the LOAD is conserved and only its distribution moves**. `T-03`, `T-04`, `T-07`, `T-12`, `T-13`, `T-14`, `T-15`, `T-17`, `T-19`, `T-20` and `T-23` re-load accordingly, and four of them (`T-19`, `T-20` among them) step up a level under the sizing rule above rather than run past 70 %. What DOES fall is the rated PLATE — `2.40 → 2.25 MVA` — which is $0.60/gh off doc 03 §2.4's `E_grid` and nothing else. The set-cover argument behind the floor is in `tests/test_balance_gates.gd` gate 10: those 34 authored building origins are spread across all nine core blocks, a cover of them needs 16–17 nodes, and 18 is the roster that also keeps `tutorial_lot_b` served and `tutorial_lot_a` exactly one tap away.
+
+Loads below are **metered off the running sim at 20:00**, not hand-derived, so they include doc 05's live node roster (see the basis note under the table).
 
 | id | tile | feeder | level | cap kW | night load kW | %cap | streetlights | signals | building customers |
 |---|---|---|---|---|---|---|---|---|---|
-| T-01 | (0,0) | F_NORTH | L1 | 50 | 15.1 | 30 % | 7 | 1 | `YARD-1` |
-| T-02 | (8,0) | F_NORTH | L2 | 150 | 35.5 | 24 % | 8 | 1 | 1 apartment |
-| T-03 | (27,0) | F_NORTH | L1 | 50 | 10.9 | 22 % | 6 | 0 | 2 houses |
-| T-04 | (35,0) | F_NORTH | L2 | 150 | 60.4 | 40 % | 48 | 6 | `FIRE-1`, 3 houses |
-| T-05 | (31,1) | F_NORTH | L1 | 50 | 12.9 | 26 % | 30 | 4 | — |
-| T-06 | (7,2) | F_NORTH | L1 | 50 | 18.6 | 37 % | 14 | 1 | 3 houses |
-| T-07 | (16,3) | F_NORTH | L2 | 150 | 52.4 | 35 % | 17 | 2 | 1 apartment, 3 houses |
-| T-08 | (23,3) | F_NORTH | L1 | 50 | 12.6 | 25 % | 20 | 2 | 1 house |
+| T-01 | (0,0) | F_NORTH | L1 | 50 | 15.6 | 31 % | 7 | 1 | `YARD-1` |
+| T-02 | (8,0) | F_NORTH | L2 | 150 | 36.8 | 25 % | 8 | 1 | 1 apartment |
+| T-03 | (27,0) | F_NORTH | L1 | 50 | 29.3 | 59 % | 36 | 5 | 3 houses |
+| T-04 | (35,0) | F_NORTH | L2 | 150 | 65.4 | 44 % | 56 | 7 | `FIRE-1`, 3 houses |
+| T-06 | (7,2) | F_NORTH | L1 | 50 | 19.2 | 38 % | 14 | 1 | 3 houses |
+| T-07 | (16,3) | F_NORTH | L2 | 150 | 56.0 | 37 % | 22 | 2 | 1 apartment, 3 houses |
 | T-09 | (15,5) | F_NORTH | L1 | 50 | 7.5 | 15 % | 18 | 2 | — |
-| T-10 | (0,7) | F_NORTH | L1 | 50 | 9.9 | 20 % | 14 | 1 | 1 house |
-| T-11 | (7,14) | F_NORTH | L1 | 50 | 21.2 | 42 % | 32 | 2 | 2 houses |
-| T-12 | (18,15) | F_NORTH | L2 | 150 | 44.7 | 30 % | 33 | 4 | 3 stores |
-| T-13 | (26,15) | F_NORTH | L2 | 150 | 60.1 | 40 % | 25 | 2 | `OFF-1`, 1 store |
-| T-14 | (31,17) | F_SOUTH | L2 | 150 | 37.3 | 25 % | 91 | 9 | `SUB-A` (0 kW) |
-| T-15 | (0,20) | F_SOUTH | **L3** | 400 | 135.1 | 34 % | 19 | 3 | **`WTR-1` — the water works** |
-| T-16 | (15,21) | F_SOUTH | L1 | 50 | 10.3 | 21 % | 26 | 2 | — |
-| T-17 | (23,21) | F_SOUTH | L2 | 150 | 40.8 | 27 % | 23 | 1 | 1 apartment |
-| T-18 | (0,24) | F_SOUTH | L1 | 50 | 7.8 | 16 % | 7 | 1 | `WTR-2` (tank, 5 kW) |
-| T-19 | (3,31) | F_SOUTH | L1 | 50 | 21.2 | 42 % | 32 | 2 | 2 houses |
-| T-20 | (19,31) | F_SOUTH | L1 | 50 | 33.6 | 67 % | 49 | 3 | 1 store, 1 house |
-| T-21 | (0,33) | F_SOUTH | L2 | 150 | 43.7 | 29 % | 46 | 6 | `POL-1` |
-| T-22 | (15,33) | F_SOUTH | L1 | 50 | 31.3 | 63 % | 74 | 9 | — |
-| T-23 | (39,37) | F_SOUTH | L2 | 150 | 60.6 | 40 % | 144 | 17 | `PLANT-1` (0 kW site service) |
+| T-10 | (0,7) | F_NORTH | L1 | 50 | 10.1 | 20 % | 14 | 1 | 1 house |
+| T-11 | (7,14) | F_NORTH | L1 | 50 | 21.5 | 43 % | 32 | 2 | 2 houses |
+| T-12 | (18,15) | F_NORTH | L2 | 150 | 51.8 | 35 % | 48 | 5 | 3 stores |
+| T-13 | (26,15) | F_NORTH | L2 | 150 | 62.9 | 42 % | 27 | 2 | `OFF-1`, 1 store |
+| T-14 | (31,17) | F_SOUTH | L2 | 150 | 38.6 | 26 % | 95 | 9 | `SUB-A` (0 kW) |
+| T-15 | (0,20) | F_SOUTH | **L3** | 400 | 140.3 | 35 % | 20 | 3 | **`WTR-1` — the water works** |
+| T-17 | (23,21) | F_SOUTH | L2 | 150 | 44.4 | 30 % | 28 | 2 | 1 apartment |
+| T-18 | (0,24) | F_SOUTH | L1 | 50 | 8.0 | 16 % | 7 | 1 | `WTR-2` (tank, 5 kW) |
+| T-19 | (3,31) | F_SOUTH | L2 | 150 | 74.7 | 50 % | 99 | 10 | `POL-1`, 2 houses |
+| T-20 | (19,31) | F_SOUTH | L2 | 150 | 58.3 | 39 % | 106 | 10 | 1 store, 1 house |
+| T-23 | (39,37) | F_SOUTH | L2 | 150 | 61.3 | 41 % | 146 | 17 | `PLANT-1` (0 kW site service) |
 
-**Fleet: 13 × L1 + 9 × L2 + 1 × L3**, `rated_mva = 13×0.05 + 9×0.15 + 1×0.40 = 0.65 + 1.35 + 0.40 = **2.40**` published to doc 04 and thence to doc 03's `E_grid`.
+**Fleet: 7 × L1 + 10 × L2 + 1 × L3**, `rated_mva = 7×0.05 + 10×0.15 + 1×0.40 = 0.35 + 1.50 + 0.40 = **2.25**` published to doc 04 and thence to doc 03's `E_grid`. Every surviving node still sits inside the sizing rule's 70 % headroom, worst case `T-03` at 59 %.
+
+**Basis note — 783.4 kW published, 801.7 kW metered.** This doc's own arithmetic gives a 20:00 system peak of **783.4 kW**, split `F_NORTH 365.8 / F_SOUTH 417.6` — that is the figure `data/world.json`'s `starter` block carries and `tests/test_starter_city.gd` asserts, and it is computed against the per-variant L1 constants doc 05 published for the water works. The **running sim meters 801.7 kW** (`F_NORTH 376.0 / F_SOUTH 425.7`) because doc 05's LIVE node roster is ~+18.4 kW over those constants. Both numbers are correct at their own layer, the gap is a doc-05 inventory difference rather than a disagreement about this city, and **doc 93 §E2 owns the shift table** — this doc publishes the first and the sim meters the second.
 
 Two C-35 consequences are visible in that table and both are the ruling working as intended. **`WTR-2` drops from an L2 to the smallest transformer in the city**, because a gravity tank draws 5 kW of telemetry and cathodic protection, not the flat 60 kW doc 02 used to assign every `water_facility`. **`WTR-1` climbs to the only L3**, because the intake, the package treatment plant and the duty pump together draw 132 kW — and that is the correct shape: the water works is the single largest, most critical load in the starter city and it should look like it on the overlay.
 
@@ -1145,7 +1146,7 @@ Doc numbers below are the **canonical on-disk numbering** (report 98 Ruling Zero
 | **01 Time & ticks** | `ctx.channels.construction_rate` (**every development work unit multiplies it** — C-29), `EVERY_SECOND` / `EVERY_HOUR` / `EVERY_DAY` cadences, `ctx.catchup_index` and `OfflinePolicy.band_for()` for the coarse path, `sim_time_minutes` for building age | nothing (this doc authors no curve and no timer template) |
 | **02 Buildings & construction** | footprints, `population` / `jobs` **capacity**, `condition ∈ [0,1]`, `state` + `STATE_OCCUPANCY`, `fire_load`, `power_demand_kw`, `water_demand`, `coverage_police/fire`; the §2.10 crew-hour timing model; the `water_facility` variant list | `block_of(tile)`, `district_id` of a tile, buildable/vacant tile set, parcel geometry, road-adjacency legality, tile-occupancy arbitration; **`city_level` for `E_CITY_LEVEL` and `min_city_level`**; **`occupancy[id]` / `job_fill[id]`** (G-1); land-development jobs submitted into `ConstructionQueue` (G-2) |
 | **03 Economy, taxes & land** | the canonical `land_price()` (§2.7), the six `PHASE_BASE` costs + `terrain_phase_mult` (§2.8), treasury debits, `tax_rate`, `happiness_tax_delta = −(r − 0.09) × 220`, `growth_rate_multiplier = 1 − (r − 0.09) × 8.0`, **`attractiveness_tax_factor(r)` (§2.10.2a, amendment T-1)** | the full input bundle of §2.4; `dev_terrain`, `d`, `n`, `risk_index`, `prestige`, `blocks_owned`; **`occ_b` per building**, **district `stability ∈ [0,1]`**, **`city_stability`**, **city `happiness ∈ [0,100]`**, **`city_level`**. **The starter city delivers exactly $686/gh gross base tax against `STARTER_GROSS_TAX_PER_HOUR 686 ± 5 %`** |
-| **04 Electrical grid** | component capacities/levels/radii, outage state, **`block_dark` per block**, `power_availability_hour(b)` | starter topology (§2.9.5) with exact tile polylines, **23 transformer sites (13 L1 / 9 L2 / 1 L3, `rated_mva` 2.40)**, **177 line tiles = 1.42 km**, 783 road tiles and 81 intersections as distributed-sink counts, `wind`/`wildfire` per block for doc 06's storm rolls, `block_of(tile)` for crew routing; **`district_dark` derived from their `block_dark`** (C-38) |
+| **04 Electrical grid** | component capacities/levels/radii, outage state, **`block_dark` per block**, `power_availability_hour(b)` | starter topology (§2.9.5) with exact tile polylines, **18 transformer sites (7 L1 / 10 L2 / 1 L3, `rated_mva` 2.25)**, **177 line tiles = 1.42 km**, 783 road tiles and 81 intersections as distributed-sink counts, `wind`/`wildfire` per block for doc 06's storm rolls, `block_of(tile)` for crew routing; **`district_dark` derived from their `block_dark`** (C-38) |
 | **05 Water system** | pressure, zone state, tank level, per-variant `base_kw` / capacity / `coverage_frac`, `water_service_factor_hour(b)` | starter topology (§2.9.6) with the `source`/`treatment`/`pump`/`tank` variant split, 9 hydrant tiles, Mill Pond as the `source`, **`elev_m(tile)`** (block-flat), `is_developed(tile)`, `block_of(tile)`; `WTR-1`'s power dependency on `F_SOUTH` |
 | **06 Incidents, dispatch & fleets** | `crime_index`, `fire_risk` per district, station/vehicle definitions, crew roster and rates, `destroy_allowed()` participation | **`stability ∈ [0,1]` per district** (§2.6) for `f_stab`, `city_level` for vehicle unlocks, station sites, hydrant sites, `block_of(tile)`, the land-development phase→crew-type mapping (G-2) |
 | **07 Weather & Disaster Director** | storm intensity, `wind_kph`, `precip01`, `weather_build_mult` via `get_effect()` | `elevation_band ∈ {LOW,MID,HIGH}` per block (**answers their open question 8: block-granular, 128 m**), `drain_rate_mm_h` per block, `flood_risk` and the full `env_risk` profile; **`city_stability`** and `districts.apply_stability(id, d)` — they never write a city scalar directly (C-56) |
@@ -1421,7 +1422,7 @@ Constants read from elsewhere and **never restated here**: `happiness_tax_delta`
 
 Six of the seven conflicts this section used to raise are **closed by rulings and applied above**. They are listed here with their disposition rather than deleted, so the audit trail survives:
 
-1. **~~Utility upkeep ~25× apart; the starter city is insolvent~~** — **CLOSED by C-12.** Doc 03's expense *formula* is authoritative and doc 04's flat `upkeep_per_gh` column is deleted. This doc's job is to supply the inventory, which it now does exactly: `plant_capacity_mw 8.0`, `rated_mva 6.0` (substation) + **2.40** (23 transformers), **`line_km 1.42`**, all at `condition 1.0`. The ruling's sanity check landed at ≈$73/gh against $32 assumed — 2.3×, not 25×.
+1. **~~Utility upkeep ~25× apart; the starter city is insolvent~~** — **CLOSED by C-12.** Doc 03's expense *formula* is authoritative and doc 04's flat `upkeep_per_gh` column is deleted. This doc's job is to supply the inventory, which it now does exactly: `plant_capacity_mw 8.0`, `rated_mva 6.0` (substation) + **2.25** (18 transformers, doc 92 F-4), **`line_km 1.42`**, all at `condition 1.0`. The ruling's sanity check landed at ≈$73/gh against $32 assumed — 2.3×, not 25×.
 2. **~~$686 is unreachable with doc 03's own mix~~** — **CLOSED by C-10 + C-11**, and the root cause was mine: I evaluated the mix against doc 02's tax rows, which C-10 deleted. Against doc 03's rows, `18×12 + 5×26 + 3×70 + 1×130 = 686` exactly. The 28/8/6/1 rebuild is withdrawn (§2.9).
 3. **~~Doc 03's pacing table assumes blocks this world cannot contain~~** — **CLOSED by C-18.** The 7×7 world stands (it is sized for the vertical slice and for doc 11's chunk budgets); doc 03 rewrites its worked example E and S5 beat against `B_0_6` (A7), marsh, d = 3, ERI 0.443 ⇒ **$6,700**, which is this doc's actual cheapest block. 9×9 is a Phase 2 option.
 4. **~~Archetype naming and the flat 60 kW `water_facility`~~** — **CLOSED by C-30 + C-35.** `power_facility` is doc 02's building shell and `plant_gas` is doc 04's component kind; both names are correct at their own layer. `water_facility` now carries a `variant` field, and the gravity tank draws **5.0 kW**, not 60 — applied throughout §2.9.6.

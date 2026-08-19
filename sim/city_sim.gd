@@ -194,9 +194,15 @@ func _boot_water() -> void:
 		return grid.is_powered(power_ref)
 	WaterBoot.attach_buildings(water, loader)
 	water.rebuild_zones()
-	# Doc 05 owns the per-variant kW at every level, so the site loads
-	# doc 02 meters come from the live nodes, not the boot-time L1 table.
-	# (Sorted iteration — float addition order is persisted state.)
+	_refresh_water_kw()
+
+
+## Doc 05 owns the per-variant kW at every level, so the site loads doc 02
+## meters come from the LIVE nodes, not a boot-time L1 table. Rebuilt whenever
+## the node roster changes — at boot, after a load, and after every placement or
+## upgrade — because a player-placed pump's draw exists nowhere else.
+## (Sorted iteration — float addition order is persisted state.)
+func _refresh_water_kw() -> void:
 	_water_kw_by_building.clear()
 	var node_ids := water.nodes.keys()
 	node_ids.sort()
@@ -721,6 +727,10 @@ func restore_state(raw_body: Dictionary) -> void:
 		_block_dark_weights[id] = int(live.stats.get("population", 0)) \
 				+ int(live.stats.get("jobs", 0))
 	water.deserialize(body.get("water", {}))
+	# The site loads are DERIVED from the node roster, and a player-placed pump
+	# exists only in the water section — so they are rebuilt here rather than
+	# carried, exactly as `_block_dark_weights` is above.
+	_refresh_water_kw()
 	_director_links.clear()
 	for key in body.get("director_links", {}):
 		_director_links[int(key)] = int(body["director_links"][key])
@@ -782,6 +792,17 @@ func _population_inputs() -> Array:
 
 ## Place a new building (doc 02 §2.12 place path). Charges doc 03's cost,
 ## reserves tiles, submits the construction job. Level-1 only (LOCKED rule).
+##
+## **`min_city_level` is ENFORCED here** (doc 92 pass-1 F-7, ruled Wave 5). It
+## was a UI courtesy: `ui/build_controller.gd` drew the lock glyph and refused to
+## enter placement mode, but the command underneath said yes, so anything that
+## reached `CitySim` directly — a script, a replayed command, a test — could
+## found a city on apartments at city level 0. The gate now lives where
+## `cmd_upgrade_building`'s has always lived, answers the same `E_CITY_LEVEL`,
+## and is checked BEFORE the money so a locked card never quotes a price it
+## cannot take. Every scripted strategy in `tools/playtest.gd` already filtered
+## on the UI's rule (`Api.buildable`), so the pacing curves do not move — see the
+## Wave-5 delivery report for the re-measurement.
 func cmd_place_building(archetype: String, origin: Vector2i, variant: String = "") -> Dictionary:
 	if not catalog.has(archetype):
 		return CommandQueue.fail(&"E_UNKNOWN_ARCHETYPE")
@@ -790,6 +811,11 @@ func cmd_place_building(archetype: String, origin: Vector2i, variant: String = "
 		return CommandQueue.fail(&"E_NOT_OWNED")
 	if not block.is_ready():
 		return CommandQueue.fail(&"E_NOT_DEVELOPED")
+	var required_level := int(catalog.stats(archetype, 1).get("min_city_level", 0))
+	if progression.city_level < required_level:
+		return CommandQueue.fail(&"E_CITY_LEVEL", {"blockers": [&"E_CITY_LEVEL"],
+				"required_level": required_level, "city_level": progression.city_level,
+				"archetype": archetype})
 	var stats: Dictionary = catalog.stats(archetype, 1)
 	var foot: Array = stats.get("footprint", [1, 1])
 	var size := Vector2i(int(foot[0]), int(foot[1]))
@@ -1012,6 +1038,652 @@ func _reattach_unserved() -> Array:
 	return adopted
 
 
+# ------------------------------------------- doc 05 §6 water-component verbs
+
+## Node id suffixes, so a placed site reads like the authored ones
+## (`WTR-1-PMP`): doc 09 §2.9.6's convention, applied to player sites.
+const WATER_NODE_SUFFIX := {
+	"source": "SRC", "treatment": "TRT", "pump": "PMP", "tank": "TNK",
+	"booster": "BST",
+}
+
+
+## Place a doc-05 water component (§6's MVP roster: `source` river, `treatment`,
+## `pump`, `tank`). One command builds three things that always go together and
+## have never been separable in this project:
+##
+##   1. doc 02's `water_facility` **shell** — the building that decays, is
+##      maintained, is billed and is the thing doc 04 energises;
+##   2. doc 05's **node** — the intake / skid / pump / tank itself, hosted on
+##      that shell's `power_ref`, exactly as `WTR-1` hosts three of them;
+##   3. a `service` **lateral main** from the nearest live main to the site,
+##      because §2.2's connectivity is physical: a component that shares no tile
+##      with the network is its own dead pressure zone.
+##
+## Checks run in this order; the FIRST blocker is the reason code and the full
+## list rides in `payload.blockers` (`preview = true` quotes without charging):
+##
+##   1 E_UNKNOWN_COMPONENT  kind is not in `data/water.json` `placeable`
+##   2 E_VARIANT_LOCKED     the variant is behind a `feature_flags` gate
+##   3 E_LEVEL_UNAVAILABLE  level outside that kind's `placeable_levels`
+##   4 E_OUT_OF_BOUNDS      tile off the 112×112 world
+##   5 E_NOT_OWNED          the tile's land block is not owned
+##   6 E_NOT_DEVELOPED      the block has not reached READY
+##   7 E_CITY_LEVEL         below the shell's `min_city_level` at this level
+##   8 E_FOOTPRINT          the doc-05 footprint does not fit
+##   9 E_NO_WATER           a river intake with no water tile touching it
+##  10 E_NO_MAIN            no live main within `main_tap_radius_tiles`
+##  11 E_UNSERVED           no transformer reaches the site (doc 04 §2.1)
+##  12 E_FUNDS / E_AUSTERITY
+##
+## Price is doc 03 §8 `water`: the component at its level, plus the lateral it
+## takes to reach the tap, per tile at the `service` main price. Nothing is
+## charged on a preview or on any failure.
+##
+## The node is born `offline_manual` and goes live when the shell's construction
+## job completes — a pump that pumps before it is built would be a supply the
+## player never paid the build time for.
+func cmd_place_water_component(kind: String, tile: Vector2i, level: int = 1,
+		preview: bool = false) -> Dictionary:
+	var rules := water.data.placeable_rules(kind)
+	if rules.is_empty():
+		return CommandQueue.fail(&"E_UNKNOWN_COMPONENT",
+				{"blockers": [&"E_UNKNOWN_COMPONENT"]})
+	var variant := StringName(kind)
+	var subtype := String(rules.get("subtype", ""))
+	if _water_variant_locked(kind, subtype):
+		return CommandQueue.fail(&"E_VARIANT_LOCKED", {"blockers": [&"E_VARIANT_LOCKED"]})
+	var levels: Array = []
+	for entry in (rules.get("placeable_levels", []) as Array):
+		levels.append(int(entry))
+	if not levels.has(level):
+		return CommandQueue.fail(&"E_LEVEL_UNAVAILABLE",
+				{"blockers": [&"E_LEVEL_UNAVAILABLE"], "placeable_levels": levels})
+	if not TileGrid.in_bounds(tile.x, tile.y):
+		return CommandQueue.fail(&"E_OUT_OF_BOUNDS", {"blockers": [&"E_OUT_OF_BOUNDS"]})
+
+	var blockers: Array = []
+	var block := world.block_of_tile(tile.x, tile.y)
+	if bool(water.data.placement_value("requires_block_owned", true)) \
+			and (block == null or not block.is_owned()):
+		blockers.append(&"E_NOT_OWNED")
+	elif bool(water.data.placement_value("requires_block_ready", true)) \
+			and not block.is_ready():
+		blockers.append(&"E_NOT_DEVELOPED")
+	var shell_stats: Dictionary = catalog.stats(WATER_SHELL_ARCHETYPE, level)
+	if progression.city_level < int(shell_stats.get("min_city_level", 0)):
+		blockers.append(&"E_CITY_LEVEL")
+	var size := water.data.footprint_of(variant, level, subtype)
+	if not world.grid.can_place(tile, size):
+		blockers.append(&"E_FOOTPRINT")
+	if bool(rules.get("requires_water_adjacent", false)) and not _touches_water(tile, size):
+		blockers.append(&"E_NO_WATER")
+	var radius := int(water.data.placement_value("main_tap_radius_tiles", 8))
+	var tap := water.nearest_main_tile(tile, radius)
+	var lateral: Array = []
+	var tier := String(water.data.placement_value("lateral_tier", "service"))
+	var m_build := float(treasury.difficulty().get("M_build", 1.0))
+	var cost := econ_curves.water_component_build_cost(
+			water.data.variant_cost_ratio(variant, subtype), level, m_build)
+	if tap.is_empty():
+		blockers.append(&"E_NO_MAIN")
+	else:
+		lateral = WaterSystem.lateral_tiles(tap["tap_tile"], tile)
+		cost += lateral.size() * econ_curves.water_main_cost_per_tile(tier, m_build)
+	if not grid.would_serve(tile):
+		blockers.append(&"E_UNSERVED")
+	if treasury.balance < cost:
+		blockers.append(&"E_FUNDS")
+
+	var quote := {"blockers": blockers, "cost": cost, "level": level,
+			"footprint": [size.x, size.y], "lateral_tiles": lateral.size(),
+			"main": String(tap.get("edge", "")), "tap_distance": int(tap.get("distance", -1)),
+			"kw_required": water.data.kw_required(variant, level, subtype)}
+	if not blockers.is_empty():
+		return CommandQueue.fail(blockers[0], quote)
+	if preview:
+		return CommandQueue.ok(quote)
+
+	var paid := treasury.spend(cost, &"construction")
+	if not bool(paid["ok"]):
+		quote["blockers"] = [_spend_reason(paid)]
+		return CommandQueue.fail(_spend_reason(paid), quote)
+
+	# 1. The doc 02 shell.
+	var grid_id := _next_building_grid_id()
+	var sim_id := "P-%03d" % grid_id
+	var b := Building.new(grid_id, StringName(WATER_SHELL_ARCHETYPE), tile, variant)
+	b.stats = shell_stats
+	b.level = level
+	b.built_at_minutes = clock.sim_time_minutes()
+	world.grid.stamp_building(grid_id, tile, size)
+	buildings[sim_id] = b
+	_building_records[sim_id] = {"id": sim_id, "grid_id": grid_id,
+			"type": WATER_SHELL_ARCHETYPE, "block": block.id, "footprint": size,
+			"origin_global": tile}
+	_block_dark_weights[sim_id] = int(shell_stats.get("population", 0)) \
+			+ int(shell_stats.get("jobs", 0))
+	var job_id := construction.submit(&"build", sim_id,
+			float(shell_stats.get("build_time_hours", 12.0)), &"construction_crew",
+			{"sim_id": sim_id, "cost": cost})
+	construction.assign_crew(job_id, "YARD-CREW-1")
+	b.start_construction()
+	# A water site is doc 04 §2.4 CRITICAL, as the authored ones are.
+	grid.attach_building(sim_id, tile, &"CRITICAL", block.id)
+	water.attach_building(sim_id, tile, WATER_SHELL_ARCHETYPE)
+
+	# 2. The doc 05 node, held offline until the shell finishes.
+	var node_id := "%s-%s" % [sim_id, String(WATER_NODE_SUFFIX.get(kind, "NOD"))]
+	water.cmd_place_water_node(node_id, kind, tile, {
+		"level": level, "subtype": subtype, "power_ref": sim_id,
+		"state": "offline_manual",
+	})
+	# 3. The lateral that joins it to the network (§2.2: connectivity is tiles).
+	# Named off the shell so `_retire_water_nodes` can find it again.
+	var main_id := ""
+	if not lateral.is_empty():
+		main_id = "%s-LAT" % sim_id
+		var path: Array = [tap["tap_tile"]]
+		path.append_array(lateral)
+		water.cmd_place_main(main_id, path, tier)
+	water.rebuild_zones()
+	_refresh_water_kw()
+	_refresh_road_density()
+	bus.emit(&"water_component_placed", {"sim_id": sim_id, "building": grid_id,
+			"node": node_id, "kind": kind, "level": level, "cost": cost,
+			"tile": [tile.x, tile.y], "main": main_id,
+			"lateral_tiles": lateral.size()})
+	stats_add(&"water_components_placed")
+	quote["sim_id"] = sim_id
+	quote["node"] = node_id
+	quote["job_id"] = job_id
+	quote["main"] = main_id
+	return CommandQueue.ok(quote)
+
+
+## Doc 02's shell for every doc-05 variant (`data/buildings.json` names doc 05's
+## component table as the source of its per-variant footprint).
+const WATER_SHELL_ARCHETYPE := "water_facility"
+
+
+## Doc 05 §6's deferred roster, read off `feature_flags` rather than re-listed:
+## `booster` and the `well` source subtype are Phase-2, data present and gated.
+func _water_variant_locked(kind: String, subtype: String) -> bool:
+	if kind == "booster":
+		return not water.data.flag("boosters_enabled")
+	if kind == "source" and subtype == "well":
+		return not water.data.flag("source_well_enabled")
+	return false
+
+
+## Doc 05 §2.1: a river intake has to touch the river. Orthogonal adjacency to
+## the footprint, against doc 09's `FLAG_WATER`.
+func _touches_water(origin: Vector2i, size: Vector2i) -> bool:
+	for z in range(origin.y - 1, origin.y + size.y + 1):
+		for x in range(origin.x - 1, origin.x + size.x + 1):
+			var inside_x := x >= origin.x and x < origin.x + size.x
+			var inside_z := z >= origin.y and z < origin.y + size.y
+			if inside_x and inside_z:
+				continue
+			if (inside_x or inside_z) and TileGrid.in_bounds(x, z) \
+					and world.grid.has_flag(x, z, TileGrid.FLAG_WATER):
+				return true
+	return false
+
+
+## Lay a length of main by hand (doc 05 §6's `service` / `trunk` tiers). Order:
+##
+##   1 E_UNKNOWN_TIER    not a tier in `data/water.json` `mains`
+##   2 E_TIER_LOCKED     `arterial`, which is behind `levels_4_5_enabled`
+##   3 E_NO_TILES        fewer than two tiles
+##   4 E_OUT_OF_BOUNDS   any tile off the world
+##   5 E_NOT_DEVELOPED   any tile on land that is not owned and READY
+##   6 E_MAIN_OVERLAP    a tile PAST the first already carries another main
+##   7 E_NOT_CONNECTED   the run does not START on a main or a facility node
+##   8 E_FUNDS / E_AUSTERITY
+##
+## Price is doc 03 §8 `water.main_build_cost_per_tile[tier]` × tiles laid.
+func cmd_place_water_main(tiles: Array, tier: String = "service",
+		preview: bool = false) -> Dictionary:
+	if not water.data.mains.has(tier):
+		return CommandQueue.fail(&"E_UNKNOWN_TIER", {"blockers": [&"E_UNKNOWN_TIER"]})
+	if tier == "arterial" and not water.data.flag("levels_4_5_enabled"):
+		return CommandQueue.fail(&"E_TIER_LOCKED", {"blockers": [&"E_TIER_LOCKED"]})
+	var path := _tile_list(tiles)
+	if path.size() < 2:
+		return CommandQueue.fail(&"E_NO_TILES", {"blockers": [&"E_NO_TILES"]})
+	var blockers: Array = []
+	for entry in path:
+		var t: Vector2i = entry
+		if not TileGrid.in_bounds(t.x, t.y):
+			blockers.append(&"E_OUT_OF_BOUNDS")
+			break
+		var block := world.block_of_tile(t.x, t.y)
+		if block == null or not block.is_owned() or not block.is_ready():
+			blockers.append(&"E_NOT_DEVELOPED")
+			break
+	# The FIRST tile is the tap — it is allowed, and expected, to sit on an
+	# existing main. Every tile after it must be clear: two mains sharing a run
+	# of tiles is one main with two ids as far as §2.2's union-find is concerned,
+	# and doc 03 would have billed the player for both.
+	var clash := water.first_occupied_main_tile(path.slice(1))
+	if clash.x >= 0:
+		blockers.append(&"E_MAIN_OVERLAP")
+	# §2.2 connectivity is physical: the run has to START on the network, at a
+	# main tile or at a facility's own terminal tile.
+	var connected: bool = not water.nearest_main_tile(path[0], 0).is_empty() \
+			or water.node_at_tile(path[0]) != ""
+	if not connected:
+		blockers.append(&"E_NOT_CONNECTED")
+	var cost := path.size() * econ_curves.water_main_cost_per_tile(tier,
+			float(treasury.difficulty().get("M_build", 1.0)))
+	if treasury.balance < cost:
+		blockers.append(&"E_FUNDS")
+	var quote := {"blockers": blockers, "cost": cost, "tiles": path.size(),
+			"tier": tier, "capacity_m3h": water.data.main_capacity(tier)}
+	if not blockers.is_empty():
+		return CommandQueue.fail(blockers[0], quote)
+	if preview:
+		return CommandQueue.ok(quote)
+
+	var paid := treasury.spend(cost, &"construction", "water main")
+	if not bool(paid["ok"]):
+		quote["blockers"] = [_spend_reason(paid)]
+		return CommandQueue.fail(_spend_reason(paid), quote)
+	var main_id := water.next_main_id("PMN")
+	var placed: Dictionary = water.cmd_place_main(main_id, path, tier)
+	if not bool(placed["ok"]):
+		treasury.credit(cost, &"construction", "water main refused")
+		quote["blockers"] = [placed["reason_code"]]
+		return CommandQueue.fail(StringName(String(placed["reason_code"])), quote)
+	water.rebuild_zones()
+	bus.emit(&"water_main_placed", {"main": main_id, "tier": tier,
+			"tiles": path.size(), "cost": cost})
+	stats_add(&"water_mains_placed")
+	quote["main"] = main_id
+	return CommandQueue.ok(quote)
+
+
+## Upgrade a placed or authored water component one level (doc 05 §6). Order:
+##
+##   1 E_UNKNOWN_NODE     no such node id
+##   2 E_NOT_UPGRADEABLE  a junction has no level
+##   3 E_MAX_LEVEL        past level 5, or past 3 while `levels_4_5_enabled`
+##                        is off (doc 05's own gate)
+##   4 E_LEVEL_UNAVAILABLE the roster does not offer the next level
+##   5 E_POWER_HEADROOM   doc 04 cannot carry the extra kW (×1.15, as doc 02's
+##                        own upgrade check does)
+##   6 E_FUNDS / E_AUSTERITY
+##
+## Price is doc 03 §2.3's `upgrade_cost()` on the `water_plant` anchor, scaled by
+## doc 05's variant ratio — the same curve every building upgrade rides.
+func cmd_upgrade_water_component(node_id: String, preview: bool = false) -> Dictionary:
+	var node: WaterNode = water.nodes.get(node_id)
+	if node == null:
+		return CommandQueue.fail(&"E_UNKNOWN_NODE", {"blockers": [&"E_UNKNOWN_NODE"]})
+	if node.variant == &"junction":
+		return CommandQueue.fail(&"E_NOT_UPGRADEABLE", {"blockers": [&"E_NOT_UPGRADEABLE"]})
+	var next_level := node.level + 1
+	var blockers: Array = []
+	if next_level > 5 or (next_level >= 4 and not water.data.flag("levels_4_5_enabled")):
+		blockers.append(&"E_MAX_LEVEL")
+	var rules := water.data.placeable_rules(String(node.variant))
+	var levels: Array = []
+	for entry in (rules.get("placeable_levels", []) as Array):
+		levels.append(int(entry))
+	if not levels.is_empty() and not levels.has(next_level) and blockers.is_empty():
+		blockers.append(&"E_LEVEL_UNAVAILABLE")
+	var delta_kw := water.data.kw_required(node.variant, next_level, node.subtype) \
+			- water.data.kw_required(node.variant, node.level, node.subtype)
+	var headroom := grid.can_upgrade_power(node.power_ref, delta_kw * 1.15)
+	if not bool(headroom["ok"]):
+		blockers.append(&"E_POWER_HEADROOM")
+	var cost := econ_curves.water_component_upgrade_cost(
+			water.data.variant_cost_ratio(node.variant, node.subtype), node.level,
+			float(treasury.difficulty().get("M_build", 1.0)))
+	if treasury.balance < cost:
+		blockers.append(&"E_FUNDS")
+	var quote := {"blockers": blockers, "cost": cost, "node": node_id,
+			"to_level": next_level, "delta_kw": delta_kw,
+			"deficit_kw": headroom.get("deficit_kw", 0.0)}
+	if not blockers.is_empty():
+		return CommandQueue.fail(blockers[0], quote)
+	if preview:
+		return CommandQueue.ok(quote)
+
+	var paid := treasury.spend(cost, &"construction")
+	if not bool(paid["ok"]):
+		quote["blockers"] = [_spend_reason(paid)]
+		return CommandQueue.fail(_spend_reason(paid), quote)
+	var upgraded: Dictionary = water.cmd_upgrade_water_node(node_id)
+	if not bool(upgraded["ok"]):
+		treasury.credit(cost, &"construction", "water upgrade refused")
+		quote["blockers"] = [upgraded["reason_code"]]
+		return CommandQueue.fail(StringName(String(upgraded["reason_code"])), quote)
+	water.rebuild_zones()
+	_refresh_water_kw()
+	bus.emit(&"water_component_upgraded", {"node": node_id, "level": next_level,
+			"cost": cost, "kw_required": upgraded["payload"]["kw_required"]})
+	stats_add(&"water_components_upgraded")
+	return CommandQueue.ok(quote)
+
+
+## §2.12's tactical pair, surfaced verbatim: isolating a main trades a
+## neighbourhood's taps for the fire's hydrants. Doc 03 prices neither — the
+## crew time is doc 05's work content, and no capital changes hands.
+func cmd_isolate_water_main(edge_id: String) -> Dictionary:
+	var result: Dictionary = water.cmd_isolate_main(edge_id)
+	if bool(result["ok"]):
+		water.rebuild_zones()
+	return result
+
+
+func cmd_restore_water_main(edge_id: String) -> Dictionary:
+	var result: Dictionary = water.cmd_restore_main(edge_id)
+	if bool(result["ok"]):
+		water.rebuild_zones()
+	return result
+
+
+# ------------------------------------------------ doc 10 §2.13 road placement
+
+## Doc 10 §2.3's class names, as `data/economy.json`'s `roads` block keys them.
+const ROAD_CLASS_NAMES := {
+	TileGrid.ROAD_STREET: "STREET", TileGrid.ROAD_AVENUE: "AVENUE",
+}
+## Doc 10 §2.13 rule 5: a road job goes to doc 02's queue, and this is the same
+## MVP crew binding every other job in the project gets until doc 06 owns crews.
+const ROAD_JOB_CREW := "YARD-CREW-1"
+
+
+## Build road tiles (doc 10 §2.13). Doc 10 owns the geometry and the reason
+## codes; doc 03 owns every dollar; this coordinator joins them and is the only
+## place a road command can move money.
+##
+## Checks run in this order; the FIRST blocker is the reason code and the full
+## list rides in `payload.blockers` (`preview = true` quotes without charging):
+##
+##   1 E_UNKNOWN_ROAD_CLASS  not STREET (1) or AVENUE (2)
+##   2 E_NO_TILES            empty tile list
+##   3 doc 10 §2.13's own validation, in `query_road_preview`'s order —
+##     E_OUT_OF_BOUNDS · E_WATER · E_FOOTPRINT · E_NOT_DEVELOPED ·
+##     E_NOT_CONNECTED (the new set touches no existing road tile)
+##   4 E_ALREADY_ROAD        every tile already carries the class asked for
+##   5 E_FUNDS / E_AUSTERITY treasury below the quote, or doc 03 §2.10 layer 2
+##
+## Price is doc 03 §2.13(d)'s per-tile build price for the class, times the
+## number of tiles that are actually FRESH — a run that overlaps three tiles of
+## existing street is billed for what it lays, not for what the player dragged
+## over. Nothing is charged on a preview or on any failure.
+func cmd_place_road(tiles: Array, road_class: int, preview: bool = false) -> Dictionary:
+	if not ROAD_CLASS_NAMES.has(road_class):
+		return CommandQueue.fail(&"E_UNKNOWN_ROAD_CLASS",
+				{"blockers": [&"E_UNKNOWN_ROAD_CLASS"], "road_class": road_class})
+	var wanted := _tile_list(tiles)
+	if wanted.is_empty():
+		return CommandQueue.fail(&"E_NO_TILES", {"blockers": [&"E_NO_TILES"]})
+	var road_preview: Dictionary = roads.query_road_preview(wanted, road_class)
+	var fresh: Array = road_preview["tiles"]
+	var blockers: Array = (road_preview["reasons"] as Array).duplicate()
+	if blockers.is_empty() and fresh.is_empty():
+		blockers.append(&"E_ALREADY_ROAD")
+	var class_name_of := String(ROAD_CLASS_NAMES[road_class])
+	var cost := fresh.size() * econ_curves.road_build_cost(class_name_of,
+			float(treasury.difficulty().get("M_build", 1.0)))
+	if treasury.balance < cost:
+		blockers.append(&"E_FUNDS")
+	var quote := {"blockers": blockers, "cost": cost, "tiles": fresh.size(),
+			"road_class": road_class, "class_name": class_name_of,
+			"crew_hours": float(road_preview["crew_hours"]),
+			"work_units": int(road_preview["work_units"])}
+	if not blockers.is_empty():
+		return CommandQueue.fail(blockers[0], quote)
+	if preview:
+		return CommandQueue.ok(quote)
+
+	var paid := treasury.spend(cost, &"construction", "road build")
+	if not bool(paid["ok"]):
+		quote["blockers"] = [_spend_reason(paid)]
+		return CommandQueue.fail(_spend_reason(paid), quote)
+	# Doc 10 stamps the tiles, opens the `construction_new` closure and submits
+	# the job; the cost travels in the payload so the queue's own §2.10 refund
+	# table has something to refund against.
+	var result: Dictionary = roads.cmd_road_build(fresh, road_class, cost)
+	if not bool(result["ok"]):
+		# Unreachable — doc 10 re-runs the preview it just handed us — but a
+		# refused command must never keep the money.
+		treasury.credit(cost, &"construction", "road build refused")
+		quote["blockers"] = [result["reason_code"]]
+		return CommandQueue.fail(StringName(String(result["reason_code"])), quote)
+	construction.assign_crew(int(result["payload"]["job_id"]), ROAD_JOB_CREW)
+	quote["job_id"] = int(result["payload"]["job_id"])
+	bus.emit(&"road_build_started", {"tiles": fresh.size(), "road_class": road_class,
+			"class_name": class_name_of, "cost": cost, "job_id": quote["job_id"]})
+	stats_add(&"road_tiles_built")
+	return CommandQueue.ok(quote)
+
+
+## Upgrade STREET tiles to AVENUE (doc 10 §2.13). Order of checks:
+##
+##   1 E_NO_TILES             empty tile list
+##   2 E_NO_ELIGIBLE_TILES    no tile in the set is a STREET free of any closure
+##                            other than `construction_work` (doc 10's rule)
+##   3 E_FUNDS / E_AUSTERITY
+##
+## Price is doc 03 §2.13(d)'s `STREET → AVENUE` per-tile upgrade, over the
+## ELIGIBLE tiles only. Condition is preserved by doc 10 (§2.13), so this buys
+## capacity and the `E_AVENUE` gate, never a repair.
+func cmd_upgrade_road(tiles: Array, preview: bool = false) -> Dictionary:
+	var wanted := _tile_list(tiles)
+	if wanted.is_empty():
+		return CommandQueue.fail(&"E_NO_TILES", {"blockers": [&"E_NO_TILES"]})
+	var road_preview: Dictionary = roads.query_upgrade_preview(wanted)
+	var eligible: Array = road_preview["tiles"]
+	var blockers: Array = (road_preview["reasons"] as Array).duplicate()
+	var cost := eligible.size() * econ_curves.road_upgrade_cost("STREET_TO_AVENUE",
+			float(treasury.difficulty().get("M_build", 1.0)))
+	if treasury.balance < cost:
+		blockers.append(&"E_FUNDS")
+	var quote := {"blockers": blockers, "cost": cost, "tiles": eligible.size(),
+			"crew_hours": float(road_preview["crew_hours"]),
+			"work_units": int(road_preview["work_units"])}
+	if not blockers.is_empty():
+		return CommandQueue.fail(blockers[0], quote)
+	if preview:
+		return CommandQueue.ok(quote)
+
+	var paid := treasury.spend(cost, &"construction", "road upgrade")
+	if not bool(paid["ok"]):
+		quote["blockers"] = [_spend_reason(paid)]
+		return CommandQueue.fail(_spend_reason(paid), quote)
+	var result: Dictionary = roads.cmd_road_upgrade(eligible, cost)
+	if not bool(result["ok"]):
+		treasury.credit(cost, &"construction", "road upgrade refused")
+		quote["blockers"] = [result["reason_code"]]
+		return CommandQueue.fail(StringName(String(result["reason_code"])), quote)
+	construction.assign_crew(int(result["payload"]["job_id"]), ROAD_JOB_CREW)
+	quote["job_id"] = int(result["payload"]["job_id"])
+	bus.emit(&"road_upgrade_started", {"tiles": eligible.size(), "cost": cost,
+			"job_id": quote["job_id"]})
+	stats_add(&"road_tiles_upgraded")
+	return CommandQueue.ok(quote)
+
+
+## Demolish road tiles (doc 10 §2.13). Order of checks:
+##
+##   1 E_NO_TILES       empty tile list
+##   2 E_NOT_ROAD       no tile in the set is a road tile
+##   3 E_WOULD_ORPHAN   a standing building would be left with no road access
+##
+## Refund is doc 03 §2.13(d)'s `DEMOLITION_REFUND_FRACTION × build price` per
+## tile, at the class each tile actually carries (STREET $450 · AVENUE $1,300) —
+## so ripping up an avenue you upgraded returns the avenue's refund, not the
+## street's. Demolition is instant: doc 10 §2.13 files no job for it.
+func cmd_demolish_road(tiles: Array, preview: bool = false) -> Dictionary:
+	var wanted := _tile_list(tiles)
+	if wanted.is_empty():
+		return CommandQueue.fail(&"E_NO_TILES", {"blockers": [&"E_NO_TILES"]})
+	var road_preview: Dictionary = roads.query_demolish_preview(wanted)
+	var victims: Array = road_preview["tiles"]
+	if victims.is_empty():
+		return CommandQueue.fail(&"E_NOT_ROAD", {"blockers": [&"E_NOT_ROAD"]})
+	var refund := 0
+	var by_class := {}
+	for entry in victims:
+		var t: Vector2i = entry
+		var name_of := String(ROAD_CLASS_NAMES.get(world.grid.road_class_at(t.x, t.y), "STREET"))
+		refund += econ_curves.road_demolish_refund(name_of)
+		by_class[name_of] = int(by_class.get(name_of, 0)) + 1
+	var quote := {"blockers": [], "refund": refund, "tiles": victims.size(),
+			"by_class": by_class}
+	# Doc 02 owns the access list; doc 10 owns the rule and the reason code
+	# (§2.13: "rejected if, after removal, any building's access tile would have
+	# no adjacent road tile"). This coordinator supplies the list, one tile per
+	# building near the removed set, chosen so doc 10's per-tile test reproduces
+	# doc 02's per-BUILDING one: a survivor contributes a tile that keeps its
+	# road, an orphan contributes the tile that loses it.
+	var access_tiles := _road_access_tiles(victims)
+	if preview:
+		var dry: Dictionary = roads.query_demolish_orphan(victims, access_tiles)
+		if not bool(dry["ok"]):
+			quote["blockers"] = [&"E_WOULD_ORPHAN"]
+			quote["access_tile"] = dry["access_tile"]
+			return CommandQueue.fail(&"E_WOULD_ORPHAN", quote)
+		return CommandQueue.ok(quote)
+
+	var result: Dictionary = roads.cmd_road_demolish(victims, access_tiles)
+	if not bool(result["ok"]):
+		quote["blockers"] = [result["reason_code"]]
+		quote.merge(result.get("payload", {}), true)
+		return CommandQueue.fail(StringName(String(result["reason_code"])), quote)
+	# `TileGrid.set_road` clears BUILDABLE when a tile is paved and does not put
+	# it back when the pavement goes (doc 09 §2.2 owns the flag, doc 10 owns the
+	# class), so the ground a demolition frees is re-opened here — otherwise
+	# ripping up a road would sterilise the tile for the life of the city.
+	for entry in victims:
+		var t: Vector2i = entry
+		var block := world.block_of_tile(t.x, t.y)
+		if block == null or not block.is_ready():
+			continue
+		if world.grid.has_flag(t.x, t.y, TileGrid.FLAG_WATER) \
+				or world.grid.has_flag(t.x, t.y, TileGrid.FLAG_BLOCKED) \
+				or world.grid.has_flag(t.x, t.y, TileGrid.FLAG_OCCUPIED):
+			continue
+		world.grid.set_flag(t.x, t.y, TileGrid.FLAG_BUILDABLE)
+	if refund > 0:
+		treasury.credit(refund, &"construction", "road demolition")
+	bus.emit(&"road_demolished", {"tiles": victims.size(), "refund": refund,
+			"by_class": by_class.duplicate()})
+	stats_add(&"road_tiles_demolished")
+	return CommandQueue.ok(quote)
+
+
+## Accepts `Vector2i`, `[x, z]` pairs and `Vector2`, so a UI drag, a saved
+## selection and a test fixture can all speak the same verb. Order is the
+## caller's, minus duplicates — a water main is a PATH, so this may not sort.
+static func _tile_list(raw: Array) -> Array:
+	var out: Array = []
+	var seen := {}
+	for entry in raw:
+		var tile := Vector2i.ZERO
+		var parsed := true
+		match typeof(entry):
+			TYPE_VECTOR2I:
+				tile = entry
+			TYPE_VECTOR2:
+				tile = Vector2i(entry)
+			TYPE_ARRAY:
+				var pair: Array = entry
+				parsed = pair.size() >= 2
+				if parsed:
+					tile = Vector2i(int(pair[0]), int(pair[1]))
+			_:
+				parsed = false
+		# An OUT-OF-BOUNDS tile is kept, not dropped: the commands raise
+		# `E_OUT_OF_BOUNDS` for it, and silently swallowing it here would answer
+		# a bad selection with `E_NO_TILES` — a different, misleading refusal.
+		if not parsed or seen.has(tile):
+			continue
+		seen[tile] = true
+		out.append(tile)
+	return out
+
+
+## One representative access tile per building whose road access the removal set
+## could touch. Doc 09 §2.9.1's placement rule is per BUILDING — "every building
+## footprint must be orthogonally adjacent to at least one road tile" — so a
+## building survives if ANY footprint tile keeps a neighbour road. The tile
+## contributed is therefore the one that answers doc 10's per-tile test with the
+## building's own verdict.
+func _road_access_tiles(victims: Array) -> Array:
+	var removing := {}
+	for entry in victims:
+		removing[entry] = true
+	var out: Array = []
+	for sim_id in _sorted(buildings):
+		var record: Dictionary = _building_records.get(sim_id, {})
+		if record.is_empty():
+			continue
+		var origin: Vector2i = record.get("origin_global", record.get("origin", Vector2i.ZERO))
+		var footprint: Vector2i = record.get("footprint", Vector2i.ONE)
+		if not _footprint_near(origin, footprint, removing):
+			continue
+		var survivor := Vector2i(-1, -1)
+		var doomed := Vector2i(-1, -1)
+		for z in range(origin.y, origin.y + footprint.y):
+			for x in range(origin.x, origin.x + footprint.x):
+				var tile := Vector2i(x, z)
+				for d in RoadGraph.DIRS:
+					var q: Vector2i = tile + d
+					if not TileGrid.in_bounds(q.x, q.y):
+						continue
+					if world.grid.road_class_at(q.x, q.y) == TileGrid.ROAD_NONE:
+						continue
+					if removing.has(q):
+						if doomed.x < 0:
+							doomed = tile
+					elif survivor.x < 0:
+						survivor = tile
+		if survivor.x >= 0:
+			out.append(survivor)
+		elif doomed.x >= 0:
+			out.append(doomed)
+	return out
+
+
+## Cheap pre-filter for `_road_access_tiles` (doc 10 §2.13: "evaluate only
+## buildings whose access tile is within 2 tiles of the removed set").
+static func _footprint_near(origin: Vector2i, footprint: Vector2i,
+		removing: Dictionary) -> bool:
+	for tile in removing:
+		var t: Vector2i = tile
+		if t.x >= origin.x - 2 and t.x <= origin.x + footprint.x + 1 \
+				and t.y >= origin.y - 2 and t.y <= origin.y + footprint.y + 1:
+			return true
+	return false
+
+
+## Doc 09 §2.3 phase 4, `ROAD_INSTALL` — "road template stamped (§2.9.1)". Doc 09
+## §2.9.1 owns the template and doc 10 §2.3 owns the class mapping, so the whole
+## of this coordinator's job is to hand doc 10 the block that just finished its
+## road phase. It is here rather than in `DevelopmentController` for the same
+## reason `_extend_utility_corridor` is: the pipeline is world-effect-only and
+## may not reach into the tile grid or another doc's system (doc 09 §2.3).
+##
+## Doc 03 §2.8 has already charged the phase — the stamp books nothing (doc 10
+## §2.3's no-double-billing rule).
+func _stamp_block_roads(block_id: String) -> void:
+	var block := world.block(block_id)
+	if block == null:
+		return
+	var stamped: Dictionary = roads.stamp_block_template(block.grid)
+	if (stamped["tiles"] as Array).is_empty():
+		return
+	bus.emit(&"block_roads_stamped", {"block": block_id,
+			"tiles": (stamped["tiles"] as Array).size(),
+			"avenue": int(stamped["avenue"]), "street": int(stamped["street"])})
+
+
 # --------------------------------------------------- doc 02 §2.12 demolition
 
 ## Demolish a building (doc 02 §2.12). Order of checks:
@@ -1064,6 +1736,10 @@ func cmd_demolish_building(sim_id: String, preview: bool = false) -> Dictionary:
 	world.grid.remove_building(b.id, b.origin, footprint)
 	grid.detach_building(sim_id)
 	water.detach_building(sim_id)
+	# A demolished water site takes its doc-05 nodes with it, for the same reason
+	# a demolished station takes its units: the shell IS the node's power_ref, and
+	# an orphaned pump would keep supplying a city from a building that is gone.
+	_retire_water_nodes(sim_id)
 	# A demolished station takes its units with it (doc 06 §2.11): the roster has
 	# to shrink for the same reason it has to grow (doc 92 F-3).
 	if FLEET_STATION_ARCHETYPES.has(b.archetype):
@@ -1472,8 +2148,10 @@ func _extend_utility_corridor(block_id: String) -> void:
 
 ## Doc 03 §2.8 phase 6, `final_development` — "block becomes buildable". Doc 09
 ## §2.2 gates placement on `count_buildable`, so READY has to open the ground.
-## Water, blocked and already-occupied tiles keep their own flags; road tiles
-## are doc 10's template stamp and are untouched here.
+## Water, blocked and already-occupied tiles keep their own flags; ROAD tiles are
+## doc 10's template stamp — laid two phases earlier by `_stamp_block_roads` —
+## and are skipped, which is what makes `count_buildable` report doc 09 §2.9.1's
+## **169 buildable tiles on a clean block** rather than all 256.
 func _open_block_for_building(block_id: String) -> void:
 	var block := world.block(block_id)
 	if block == null:
@@ -1482,7 +2160,8 @@ func _open_block_for_building(block_id: String) -> void:
 	for z in range(origin.y, origin.y + TileGrid.TILES_PER_BLOCK):
 		for x in range(origin.x, origin.x + TileGrid.TILES_PER_BLOCK):
 			if world.grid.has_flag(x, z, TileGrid.FLAG_WATER) \
-					or world.grid.has_flag(x, z, TileGrid.FLAG_BLOCKED):
+					or world.grid.has_flag(x, z, TileGrid.FLAG_BLOCKED) \
+					or world.grid.has_flag(x, z, TileGrid.FLAG_ROAD):
 				continue
 			world.grid.set_flag(x, z, TileGrid.FLAG_BUILDABLE)
 
@@ -1605,11 +2284,58 @@ func on_construction_completed(job: Dictionary) -> void:
 	b.stats = catalog.stats(String(b.archetype), b.level)
 	_block_dark_weights[sim_id] = int(b.stats.get("population", 0)) + int(b.stats.get("jobs", 0))
 	_sync_station_fleet(sim_id, b)
+	_commission_water_nodes(sim_id)
 	for event in done["payload"]["events"]:
 		var out: Dictionary = event.duplicate()
 		out["sim_id"] = sim_id
 		out["level"] = b.level
 		bus.emit(StringName(String(out["type"])), out)
+
+
+## The demolition half of `_commission_water_nodes`: every node hosted on this
+## shell leaves the graph, and any main whose only reason to exist was reaching
+## it goes with it. Zones are rebuilt once, at the end.
+func _retire_water_nodes(sim_id: String) -> Array:
+	var retired: Array = []
+	for node_id in _sorted(water.nodes):
+		if (water.nodes[node_id] as WaterNode).power_ref != sim_id:
+			continue
+		retired.append(String(node_id))
+	if retired.is_empty():
+		return retired
+	for node_id in retired:
+		water.remove_node(String(node_id))
+	# A main is a pipe, not a promise: one whose endpoint node is gone still
+	# carries water for whatever else it touches, so mains are left standing.
+	# Only the site's own lateral (`<sim_id>` prefixed) goes.
+	for edge_id in _sorted(water.edges):
+		if String(edge_id).begins_with(sim_id + "-"):
+			water.remove_main(String(edge_id))
+	water.rebuild_zones()
+	_refresh_water_kw()
+	bus.emit(&"water_component_retired", {"sim_id": sim_id, "nodes": retired})
+	return retired
+
+
+## A water shell just finished, so the doc-05 node it hosts comes out of
+## `offline_manual` and starts supplying. This is the seam doc 02 §2.12's state
+## table and doc 05 §2.5's `is_live()` meet at: the building is what takes the
+## construction time, the node is what pumps, and a node that pumped while its
+## shell was a hole in the ground would be free supply.
+func _commission_water_nodes(sim_id: String) -> void:
+	var commissioned: Array = []
+	for node_id in _sorted(water.nodes):
+		var n: WaterNode = water.nodes[node_id]
+		if n.power_ref != sim_id or n.state != &"offline_manual":
+			continue
+		n.state = &"ok"
+		commissioned.append(String(node_id))
+	if commissioned.is_empty():
+		return
+	water.topology_dirty = true
+	water.rebuild_zones()
+	bus.emit(&"water_component_commissioned", {"sim_id": sim_id,
+			"nodes": commissioned})
 
 
 ## A station shell just finished (a new build, or an upgrade to level L+1), so
@@ -2115,8 +2841,11 @@ class ReportPhaseSystem extends SimSystem:
 			# tile flags (doc 09 §2.3 keeps the pipeline world-effect-only).
 			match String(event["type"]):
 				"development_phase_completed":
-					if String(event.get("phase", "")) == "UTILITY_CORRIDOR":
-						sim._extend_utility_corridor(String(event["block"]))
+					match String(event.get("phase", "")):
+						"ROAD_INSTALL":
+							sim._stamp_block_roads(String(event["block"]))
+						"UTILITY_CORRIDOR":
+							sim._extend_utility_corridor(String(event["block"]))
 				"block_ready":
 					sim._open_block_for_building(String(event["block"]))
 			sim.bus.emit(StringName(String(event["type"])), event)

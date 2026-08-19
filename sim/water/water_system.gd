@@ -942,6 +942,93 @@ func damage_fraction(severity: float, frozen: bool = false) -> float:
 	return failure_model.damage_fraction(severity, frozen)
 
 
+# --------------------------------------------------- §6 placement (siting)
+
+## The nearest LIVE main tile to `tile`, within `max_radius` Chebyshev, or `{}`.
+## Connectivity in this doc is physical — two entities are joined when they
+## share a tile (§2.2) — so this is the whole of "can a new site reach the
+## network": run a lateral from the tile this returns to the site, and the
+## union-find joins them on the next `rebuild_zones()`.
+##
+## Deterministic: edges in sorted id order, tiles in path order, and the key
+## `[distance, tile]` breaks every tie the same way on every machine.
+func nearest_main_tile(tile: Vector2i, max_radius: int) -> Dictionary:
+	var best: Dictionary = {}
+	var best_key: Array = [999999, 999999, 999999]
+	for edge_id in _edge_order():
+		var main: WaterEdge = edges[edge_id]
+		if not main.is_live():
+			continue
+		for entry in main.path:
+			var t: Vector2i = entry
+			var d: int = maxi(absi(tile.x - t.x), absi(tile.y - t.y))
+			if d > max_radius:
+				continue
+			var key: Array = [d, t.y, t.x]
+			if key < best_key:
+				best_key = key
+				best = {"edge": String(edge_id), "tap_tile": t, "distance": d,
+						"tier": main.tier}
+	return best
+
+
+## The tile run a lateral takes from `from` to `to`, EXCLUSIVE of `from` and
+## inclusive of `to` — the same diagonal-then-straight shape doc 04 §2.1's
+## feeder lateral uses, so a water lateral and a power lateral of the same span
+## are the same number of tiles and the two prices stay comparable.
+static func lateral_tiles(from: Vector2i, to: Vector2i) -> Array:
+	var out: Array = []
+	var cursor := from
+	while cursor != to:
+		cursor.x += signi(to.x - cursor.x)
+		cursor.y += signi(to.y - cursor.y)
+		out.append(cursor)
+	return out
+
+
+## The facility or junction whose terminal tile is `tile`, or "".
+func node_at_tile(tile: Vector2i) -> String:
+	for node_id in _node_order():
+		if (nodes[node_id] as WaterNode).tile == tile:
+			return String(node_id)
+	return ""
+
+
+## Player component ids are `<PREFIX>-NNN`, numbered above every id the system
+## already carries so a reload can never collide with an authored node.
+func next_node_id(prefix: String) -> String:
+	var highest := 0
+	for node_id in _node_order():
+		var id := String(node_id)
+		if id.begins_with(prefix + "-"):
+			highest = maxi(highest, id.substr(prefix.length() + 1).to_int())
+	return "%s-%03d" % [prefix, highest + 1]
+
+
+func next_main_id(prefix: String) -> String:
+	var highest := 0
+	for edge_id in _edge_order():
+		var id := String(edge_id)
+		if id.begins_with(prefix + "-"):
+			highest = maxi(highest, id.substr(prefix.length() + 1).to_int())
+	return "%s-%03d" % [prefix, highest + 1]
+
+
+## §2.1: a main's tiles may not double up on a live main's tiles except at the
+## junction it taps. Returns the first offending tile, or (−1, −1).
+func first_occupied_main_tile(tiles: Array, ignore_edge: String = "") -> Vector2i:
+	var claimed: Dictionary = {}
+	for edge_id in _edge_order():
+		if String(edge_id) == ignore_edge:
+			continue
+		for entry in (edges[edge_id] as WaterEdge).path:
+			claimed[entry] = true
+	for entry in tiles:
+		if claimed.has(entry):
+			return entry
+	return Vector2i(-1, -1)
+
+
 # ------------------------------------------------------------- player verbs
 
 func cmd_place_water_node(node_id: String, variant: String, tile: Vector2i,
