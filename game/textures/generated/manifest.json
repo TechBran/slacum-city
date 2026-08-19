@@ -1,0 +1,147 @@
+{
+	"generator": "tools/gen_textures.py",
+	"generator_version": 1,
+	"seed": 20260818,
+	"bay_px": 256,
+	"page_px": 512,
+	"bay_m": [
+		3.2,
+		3.5
+	],
+	"roof_tile_m": 4.0,
+	"note": "facade pages are a seamless 2x2 grid of window bays; bay row 0 (ground floor) maps to the page's bottom half. RGB = albedo with baked shading, A = shine/glass mask.",
+	"facades": {
+		"brick": {
+			"path": "res://game/textures/generated/facade_brick.png",
+			"sha256": "dd04fb3065e21d598146c2989344018e067398a5e7ac486582896ad750cd0024"
+		},
+		"civic": {
+			"path": "res://game/textures/generated/facade_civic.png",
+			"sha256": "9bf10b5846aa95c528ec5e6d803b1759e91c7923fe991c2ff4c1ee81a6885d48"
+		},
+		"clapboard": {
+			"path": "res://game/textures/generated/facade_clapboard.png",
+			"sha256": "5f17b0806a3ba1a216572aea09e8020736d5ea495a82709b59faca40c17a8320"
+		},
+		"curtain": {
+			"path": "res://game/textures/generated/facade_curtain.png",
+			"sha256": "9e0f47673ae5804618c837ef0599346e5ea585de8ecdb0d4c1cfd36fba7c9015"
+		},
+		"storefront": {
+			"path": "res://game/textures/generated/facade_storefront.png",
+			"sha256": "7d13b25f4f42abb519052159a6d008833f0372320a3947f412ae3a971e3c5911"
+		},
+		"techpanel": {
+			"path": "res://game/textures/generated/facade_techpanel.png",
+			"sha256": "7792870ea4576966cbb2a847ef4ef35e009e91e196c131a84b9e0a22d8df6808"
+		},
+		"tower": {
+			"path": "res://game/textures/generated/facade_tower.png",
+			"sha256": "e1a9bdf14ea6fd3c2204ade934c4ab5d1e43087ff42d15d6d83be4753089552a"
+		},
+		"utility": {
+			"path": "res://game/textures/generated/facade_utility.png",
+			"sha256": "999db7cfa9de320fb2c01e5fa563f6883123a09fe5bfd466adc8bf0dd2d28e28"
+		}
+	},
+	"roofs": {
+		"gravel": {
+			"path": "res://game/textures/generated/roof_gravel.png",
+			"sha256": "a760a44ebb77fda67c7da86feceb23e685ae9930d2a8a0a72e1f1c69e9c914f2"
+		},
+		"mech": {
+			"path": "res://game/textures/generated/roof_mech.png",
+			"sha256": "5e2f0be35b2998f40acfcf29427c1591900912c51e976a808e80d9746d6765b8"
+		},
+		"metal": {
+			"path": "res://game/textures/generated/roof_metal.png",
+			"sha256": "2223105797d39fe2db46c064ccda64bd52218b6ab64b58dc212eb3a22b5ccd76"
+		},
+		"shingle": {
+			"path": "res://game/textures/generated/roof_shingle.png",
+			"sha256": "260e7a66cc9cebfd3b19bc0eb000253edb266dc7e4d27fad2133c5f214db7868"
+		}
+	},
+	"grounds": {
+		"asphalt": {
+			"path": "res://game/textures/generated/ground_asphalt.png",
+			"sha256": "7a9ce075bde3341c3173c8e3d5ee1ac6dbcd23b6a854de977ab91fef22a8afd0"
+		},
+		"pavement": {
+			"path": "res://game/textures/generated/ground_pavement.png",
+			"sha256": "eefe20b97a9242a5bfddb3d62eecafb653c82d29718bc3ea098ac7de8ea54977"
+		}
+	},
+	"archetype_surface": {
+		"apartment": {
+			"facade": "brick",
+			"roof": "gravel"
+		},
+		"construction_yard": {
+			"facade": "utility",
+			"roof": "metal"
+		},
+		"data_center": {
+			"facade": "techpanel",
+			"roof": "metal"
+		},
+		"fire_station": {
+			"facade": "civic",
+			"roof": "gravel"
+		},
+		"high_rise": {
+			"facade": "tower",
+			"roof": "mech"
+		},
+		"house": {
+			"facade": "clapboard",
+			"roof": "shingle"
+		},
+		"office": {
+			"facade": "curtain",
+			"roof": "mech"
+		},
+		"police_station": {
+			"facade": "civic",
+			"roof": "gravel"
+		},
+		"power_facility": {
+			"facade": "utility",
+			"roof": "metal"
+		},
+		"store": {
+			"facade": "storefront",
+			"roof": "gravel"
+		},
+		"substation": {
+			"facade": "utility",
+			"roof": "metal"
+		},
+		"water_facility": {
+			"facade": "utility",
+			"roof": "metal"
+		}
+	},
+	"family_surface": {
+		"civic": {
+			"facade": "civic",
+			"roof": "gravel"
+		},
+		"commercial": {
+			"facade": "curtain",
+			"roof": "mech"
+		},
+		"industrial": {
+			"facade": "utility",
+			"roof": "metal"
+		},
+		"residential": {
+			"facade": "brick",
+			"roof": "gravel"
+		},
+		"tech": {
+			"facade": "techpanel",
+			"roof": "metal"
+		}
+	}
+}

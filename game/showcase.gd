@@ -97,9 +97,10 @@ func _build_ground() -> void:
 	var ground := MeshInstance3D.new()
 	var mesh := PlaneMesh.new()
 	mesh.size = Vector2(span + 4000.0, span + 4000.0)
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.155, 0.16, 0.165)
-	material.roughness = 0.92
+	# Textured ground (tools/gen_textures.py); falls back to the flat tint when
+	# the pages are absent.
+	var material := GroundSurface.material("pavement", mesh.size,
+			Color(0.62, 0.63, 0.64))
 	mesh.material = material
 	ground.mesh = mesh
 	ground.position = Vector3(span * 0.5, -0.02, span * 0.5)
@@ -109,9 +110,8 @@ func _build_ground() -> void:
 	road_mm.transform_format = MultiMesh.TRANSFORM_3D
 	var strip := BoxMesh.new()
 	strip.size = Vector3(span, 0.06, 10.0)
-	var road_material := StandardMaterial3D.new()
-	road_material.albedo_color = Color(0.075, 0.078, 0.085)
-	road_material.roughness = 0.8
+	var road_material := GroundSurface.material("asphalt",
+			Vector2(strip.size.x, strip.size.z), Color(0.52, 0.53, 0.56), 0.80)
 	strip.material = road_material
 	road_mm.mesh = strip
 	road_mm.instance_count = (CHUNKS + 1) * 2
