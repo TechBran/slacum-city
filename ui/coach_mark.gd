@@ -93,6 +93,10 @@ func setup(cfg: UIConfig = null) -> void:
 			UIConfig.get_num(defaults, "text_scale", 1.0),
 			bool(defaults.get("larger_touch_targets", false))))
 	_spacing = UIConfig.get_num(layout, "touch_spacing_min_dp", 8.0)
+	# §2.17's 240 dp cap is a cap on *line length*, so it scales with the type it
+	# is capping (A2). Left fixed, a 130 % text scale puts `Skip tutorial` and
+	# `GOT IT` into a box that fits neither.
+	_bubble_w *= maxf(1.0, UIConfig.get_num(defaults, "text_scale", 1.0))
 	name = "CoachMark"
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -130,15 +134,16 @@ func _build() -> void:
 	row.add_theme_constant_override(&"separation", int(_spacing))
 	body.add_child(row)
 
-	# `Skip tutorial` is the longest label in the bubble and the one that may never
-	# be abbreviated (§2.17 names it verbatim), so it gets the width its copy
-	# needs — 2.4 × the touch floor — and does not clip. A card step shows Skip +
+	# None of the three may be abbreviated: §2.17 names `Skip tutorial` verbatim,
+	# and `GOT I` is not a word. The `Vector2(…, _touch_min)` each one carries is
+	# an A3 **touch floor**, not a measurement of its copy — `UIWidgets.button()`
+	# no longer clips, so the button's own minimum is the wider of the two and the
+	# row asks the bubble for the width the words need. A card step shows Skip +
 	# GOT IT and a coach step shows Skip + `Show me`; never all three, which is
-	# what keeps the row inside the 240 dp cap.
+	# what keeps the row inside the (scaled) 240 dp cap.
 	_skip = UIWidgets.button("Skip", UIWidgets.t(config, "ui_coach_skip", "Skip tutorial"),
 			UIWidgets.t(config, "ui_coach_skip", "Skip tutorial"),
 			Vector2(_touch_min * 2.4, _touch_min), &"GhostButton")
-	_skip.clip_text = false
 	_skip.pressed.connect(func() -> void: skip_pressed.emit())
 	row.add_child(_skip)
 
@@ -226,7 +231,16 @@ func _to_local_rect(global: Rect2) -> Rect2:
 func _layout_bubble() -> void:
 	if _bubble == null:
 		return
-	var width := minf(_bubble_w, maxf(_touch_min * 2.0, size.x - _gap * 2.0))
+	# Measure the button row before the sentence: the sentence's width is derived
+	# from the bubble's, so leaving it set would make the measurement circular.
+	if _text != null:
+		_text.custom_minimum_size.x = 0.0
+	var room := maxf(_touch_min * 2.0, size.x - _gap * 2.0)
+	# The 240 dp cap, widened to whatever `Skip tutorial` + `GOT IT` actually
+	# measure, and then bounded by the display. A cap is a preference; a button
+	# that has lost its last letter is a defect.
+	var width := clampf(_bubble.get_combined_minimum_size().x,
+			minf(_bubble_w, room), room)
 	if _text != null:
 		_text.custom_minimum_size.x = width - _spacing * 2.0
 	_bubble.custom_minimum_size.x = width

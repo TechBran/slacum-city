@@ -90,7 +90,7 @@
       {"type": "PowerComponentTripped", "notify_id": "component_tripped", "class": "p2",
        "state": "warning", "key": "component", "args": {"component": "component", "time": "@time"}},
       {"type": "LoadShedStarted", "notify_id": "load_shed", "class": "p1", "state": "critical",
-       "args": {"kw": "shed_kw", "time": "@time"}},
+       "args": {"kw": "@number:shed_kw", "time": "@time"}},
       {"type": "credit_line_engaged", "notify_id": "treasury_low", "class": "p1", "state": "warning",
        "args": {"balance": "@money:balance", "time": "@time"}},
       {"type": "credit_limit_reached", "notify_id": "treasury_critical", "class": "p1",

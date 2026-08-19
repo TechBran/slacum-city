@@ -127,7 +127,9 @@ func test_string_table_key_conventions() -> void:
 	var cfg := _cfg()
 	var table := cfg.strings_data()
 	var key_re := RegEx.new()
-	key_re.compile("^(ui_[a-z0-9_]+|n_[a-z0-9_]+_(title|body))$")
+	# `_one` / `_plural` are the two plural satellites of doc 12 delta D-10; they
+	# hang off a base key rather than naming a screen element of their own.
+	key_re.compile("^(ui_[a-z0-9_]+|n_[a-z0-9_]+_(title|body)(_one|_plural)?)$")
 	var ui_keys := 0
 	for key: String in table:
 		if key.begins_with("_") or key == "schema_version":
@@ -159,8 +161,8 @@ func test_requirement_templates_cover_all_thirteen_codes() -> void:
 
 func test_string_lookup_and_missing_key_behaviour() -> void:
 	var cfg := _cfg()
-	assert_eq(cfg.t("ui_hud_build_fab"), "BUILD")
-	assert_eq(cfg.t("ui_placement_issues", {"n": 2}), "2 issues")
+	assert_eq(cfg.t("ui_build_open"), "BUILD")
+	assert_eq(cfg.t("ui_drawer_count", {"n": 2}), "2 active")
 	assert_eq(cfg.t("ui_drawer_held"), "HELD")
 	# A missing key returns the key itself (never a silent blank) — doc 12 test 21
 	# turns that into a build failure once every screen is authored.

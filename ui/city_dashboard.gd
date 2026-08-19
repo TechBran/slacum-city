@@ -102,6 +102,9 @@ func _build_static() -> void:
 		_scrim.color = UIWidgets.scrim_color(self, SCRIM_ALPHA)
 	if _title != null:
 		_title.text = UIWidgets.t(config, "ui_dashboard_title")
+		# Authored with `clip_text` in the scene, which reports a one-pixel minimum
+		# and lets the ✕ beside it claim the whole header row.
+		UIWidgets.elide(_title, _touch_min * 2.0)
 	if _close != null:
 		_close.theme_type_variation = &"GhostButton"
 		_close.focus_mode = Control.FOCUS_NONE
@@ -368,17 +371,21 @@ func _build_economy(view: Dictionary) -> void:
 		_content.add_child(_build_ledger("Expenses",
 				UIWidgets.t(config, "ui_budget_expense_title"),
 				ledger["expenses"] as Array))
-	var totals := HBoxContainer.new()
+	# Three bare figures side by side — `$14K  $8,630  Net +$128K/d` — asked the
+	# reader to remember which was which and to notice that one of them was per
+	# day, and the row was 3 dp wider than a 360 dp phone. They are now three more
+	# lines in the ledger's own shape: name on the left, figure on the right, same
+	# unit as everything above them.
+	var totals := VBoxContainer.new()
 	totals.name = "Totals"
 	totals.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	totals.add_theme_constant_override(&"separation", int(_spacing))
-	totals.add_child(UIWidgets.label("Gross", str(ledger["gross_text"])))
-	totals.add_child(UIWidgets.label("Expense", str(ledger["expense_text"])))
-	var net := UIWidgets.label("Net", UIWidgets.t_args(config, "ui_budget_net",
-			{"amount": str(ledger["net_text"])}))
-	UIWidgets.paint_state(self, net, ledger["net_state"])
-	totals.add_child(net)
-	totals.add_child(_gutter())
+	totals.add_child(_total_line("Gross", "ui_budget_total_revenue",
+			str(ledger["gross_text"]), &""))
+	totals.add_child(_total_line("Expense", "ui_budget_total_expenses",
+			str(ledger["expense_text"]), &""))
+	totals.add_child(_total_line("Net", "ui_budget_total_net",
+			str(ledger["net_text"]), ledger["net_state"]))
 	_content.add_child(totals)
 
 
@@ -416,12 +423,15 @@ func _build_tax() -> VBoxContainer:
 	up.pressed.connect(_on_tax_step.bind(1))
 	row.add_child(up)
 
+	# APPLY on its own line. `− 9% level 6 of 13 + APPLY` is 322 dp of content on
+	# one line; a 412 dp phone has 388 dp of panel, and the rate — the number the
+	# stepper exists to change — was the part that lost.
 	_tax_apply = UIWidgets.button("TaxApply",
 			UIWidgets.t(config, "ui_budget_tax_apply"),
 			UIWidgets.t(config, "ui_budget_tax_apply"),
 			Vector2(maxf(_touch_min * 2.0, 96.0), _touch_min), &"PrimaryFAB")
 	_tax_apply.pressed.connect(_on_tax_apply)
-	row.add_child(_tax_apply)
+	box.add_child(_tax_apply)
 
 	var preview_box := VBoxContainer.new()
 	preview_box.name = "Preview"
@@ -457,6 +467,25 @@ func _build_ledger(node_name: String, title: String, lines: Array) -> VBoxContai
 	return box
 
 
+## One summary line, in the same shape as a ledger line so the eye reads straight
+## down the column of figures.
+func _total_line(node_name: String, label_key: String, amount: String,
+		state: StringName) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.name = node_name
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_theme_constant_override(&"separation", int(_spacing))
+	var label := UIWidgets.elide(UIWidgets.label("Label",
+			UIWidgets.t(config, label_key)), _touch_min) as Label
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(label)
+	var value := _fixed(UIWidgets.label("Amount", amount))
+	UIWidgets.paint_state(self, value, state)
+	row.add_child(value)
+	row.add_child(_gutter())
+	return row
+
+
 ## A fixed strip that keeps a right-aligned number off the scrollbar. The rows
 ## here are not inside a Button, so they have no content margin of their own.
 func _gutter() -> Control:
@@ -467,10 +496,8 @@ func _gutter() -> Control:
 	return pad
 
 
-## See `IncidentDrawer._fixed`: a clipping `Label` reports zero minimum width and
-## collapses beside an EXPAND_FILL sibling.
+## See `IncidentDrawer._fixed`: pins a value column to its own measured width.
 static func _fixed(label: Label) -> Label:
-	label.clip_text = false
 	label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	return label
 
@@ -546,9 +573,14 @@ func row_button(row_id: String) -> Button:
 	return _row_buttons.get(row_id, null)
 
 
+## The stepper's three keys plus APPLY, which sits on the tax block's second line
+## rather than in the stepper row (see `_build_tax`).
 func tax_button(node_name: String) -> Button:
-	return _content.get_node_or_null("Tax/Stepper/" + node_name) as Button \
-			if _content != null else null
+	if _content == null:
+		return null
+	var button := _content.get_node_or_null("Tax/Stepper/" + node_name) as Button
+	return button if button != null \
+			else _content.get_node_or_null("Tax/" + node_name) as Button
 
 
 func tax_rate_text() -> String:

@@ -73,6 +73,9 @@ func _build_static() -> void:
 		_scrim.color = UIWidgets.scrim_color(self, SCRIM_ALPHA)
 	if _title != null:
 		_title.text = UIWidgets.t(config, "ui_settings_title")
+		# Authored with `clip_text` in the scene, which reports a one-pixel minimum
+		# and lets the ✕ beside it claim the whole header row.
+		UIWidgets.elide(_title, _touch_min * 2.0)
 	if _close != null:
 		_close.theme_type_variation = &"GhostButton"
 		_close.focus_mode = Control.FOCUS_NONE
@@ -103,7 +106,12 @@ func _build_rows() -> void:
 	_refresh_values()
 
 
-func _build_row(row: Dictionary) -> HBoxContainer:
+## One 48 dp target per row: name on the left, current value on the right. A row
+## that also has something to explain gets a second **line**, not a third column
+## — the sound row's note was wedged between the two and wrapped to four lines,
+## which made one row three times the height of its neighbours and read as a
+## layout fault rather than as a note.
+func _build_row(row: Dictionary) -> Container:
 	var key := str(row["key"])
 	var line := HBoxContainer.new()
 	line.name = "Row_" + key
@@ -122,13 +130,18 @@ func _build_row(row: Dictionary) -> HBoxContainer:
 
 	# The sound row stores a level for an audio stack that lands later; say so on
 	# the row rather than shipping a control that silently does nothing (A14).
-	if key == "sound_volume":
-		var hint := UIWidgets.label("Hint",
-				UIWidgets.t(config, "ui_settings_sound_hint"), &"", true)
-		hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		line.add_child(hint)
-		line.move_child(hint, 1)
-	return line
+	if key != "sound_volume":
+		return line
+	var stack := VBoxContainer.new()
+	stack.name = "Row_" + key
+	line.name = "Line"
+	stack.add_theme_constant_override(&"separation", 0)
+	stack.add_child(line)
+	var hint := UIWidgets.label("Hint",
+			UIWidgets.t(config, "ui_settings_sound_hint"), &"LegendRow", true)
+	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stack.add_child(hint)
+	return stack
 
 
 func _build_about() -> void:

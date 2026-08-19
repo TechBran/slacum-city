@@ -69,7 +69,9 @@ func setup(cfg: UIConfig = null, p_model: OverlayModel = null) -> void:
 	_spacing = UIConfig.get_num(config.layout(), "touch_spacing_min_dp", 8.0)
 	_longpress_ms = UIConfig.get_num(config.gestures(), "longpress_ms", 450.0)
 	_bind_nodes()
+	_wrap_body_in_scroller()
 	_build_button()
+	_build_title()
 	_build_chips()
 	close()
 	# `_apply_active` builds the legend for whatever the active mode is — on a
@@ -84,12 +86,17 @@ func _ready() -> void:
 		setup(UIRoot.config_from(self))
 
 
+## `setup()` may run twice (`UIRoot` then a shell that injects its own model), so
+## the body is looked up where the scroller put it first and in its authored slot
+## second — see `_wrap_body_in_scroller()`.
 func _bind_nodes() -> void:
 	_button = get_node_or_null("Button") as Button
 	_strip = get_node_or_null("Strip") as PanelContainer
-	_chips_box = get_node_or_null("Strip/Body/Chips") as GridContainer
-	_legend_box = get_node_or_null("Strip/Body/Legend") as VBoxContainer
-	_notice = get_node_or_null("Strip/Body/Notice") as Label
+	var body := "Strip/Scroll/Body" if get_node_or_null("Strip/Scroll") != null \
+			else "Strip/Body"
+	_chips_box = get_node_or_null(body + "/Chips") as GridContainer
+	_legend_box = get_node_or_null(body + "/Legend") as VBoxContainer
+	_notice = get_node_or_null(body + "/Notice") as Label
 
 
 # ---------------------------------------------------------------------------
@@ -105,12 +112,29 @@ func _build_button() -> void:
 	_button.custom_minimum_size = Vector2(d, d)
 	_button.text = OVERLAY_GLYPH
 	_button.tooltip_text = UIWidgets.t(config, "ui_overlay_button")  # A15
+	# Second slot of §2.3's rail stack — see `UIWidgets.rail_slot`.
+	UIWidgets.place_in_rail(_button, 1, config.layout(), _touch_min)
 	if not _button.pressed.is_connected(_on_button_pressed):
 		_button.pressed.connect(_on_button_pressed)
 	if not _button.button_down.is_connected(_on_button_down):
 		_button.button_down.connect(_on_button_down)
 	if not _button.button_up.is_connected(_on_button_up):
 		_button.button_up.connect(_on_button_up)
+
+
+## The strip's own heading. It went up with a grid of chips and a `Legend` block
+## under them, so the *chips* were the only unlabelled thing on it — `ui_overlay_title`
+## was authored for this and had never been placed.
+func _build_title() -> void:
+	if _chips_box == null:
+		return
+	var body := _chips_box.get_parent() as Control
+	if body == null or body.get_node_or_null("Title") != null:
+		return
+	var title := UIWidgets.label("Title", UIWidgets.t(config, "ui_overlay_title"),
+			&"LegendRow")
+	body.add_child(title)
+	body.move_child(title, 0)
 
 
 func _build_chips() -> void:
@@ -140,7 +164,41 @@ func _build_chips() -> void:
 		# A14 wants the reason *said*. The chip stays tappable and answers in words.
 		button.pressed.connect(_on_chip_pressed.bind(mode))
 		_chips_box.add_child(button)
+		# `strip_chip_dp` is a guess about how wide a mode name is; `Power` with its
+		# selected ✓ needs 80 dp of the 64 the file offers, and `Traffic` and
+		# `Water` need 67 and 66. Measure the widest state the chip can be in — the
+		# selected one — so the strip neither clips nor reflows on selection.
+		var selected_text := "%s %s" % [CHECK_GLYPH, label]
+		button.text = selected_text
+		UIWidgets.fit_width(button)
+		button.text = label
 		_chip_buttons[mode] = button
+
+
+## Puts the strip's whole body in a scroller.
+##
+## The strip is anchored to the bottom of the display and grows **upward** with
+## `grow_vertical = BEGIN`, and a `Control` can never be laid out below its own
+## minimum size — so on a short landscape box (the doc's own 880 × 400 reference)
+## a title, three rows of chips and a five-row legend simply pushed the `Off` chip
+## off the top of the screen, and no amount of moving the offsets could stop it.
+## A scroller's minimum height is its own, not its content's, so the strip can be
+## clamped to the room it has and the content scrolls inside it.
+func _wrap_body_in_scroller() -> void:
+	if _strip == null or _chips_box == null:
+		return
+	var body := _chips_box.get_parent() as Control
+	if body == null or body.get_parent() is ScrollContainer:
+		return
+	var scroll := ScrollContainer.new()
+	scroll.name = "Scroll"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.custom_minimum_size = Vector2(0.0, _touch_min)
+	_strip.remove_child(body)
+	body.owner = null
+	scroll.add_child(body)
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_strip.add_child(scroll)
 
 
 ## The legend for one mode. `row_id` is the state token for the four-state
@@ -184,8 +242,42 @@ func is_open() -> bool:
 func open() -> void:
 	if _strip != null:
 		_strip.visible = true
+		_clamp_strip()
 	_set_notice("")
 	strip_toggled.emit(true)
+
+
+## Sizes the strip to the room it has: its content's height, capped at
+## `layout.legend_max_h_dp` and at whatever is left above the overlay button.
+func _clamp_strip() -> void:
+	if _strip == null or size.y <= 1.0:
+		return
+	var scroll := _strip.get_node_or_null("Scroll") as ScrollContainer
+	if scroll == null:
+		return
+	var body := scroll.get_child(0) as Control if scroll.get_child_count() > 0 else null
+	var content := body.get_combined_minimum_size().y if body != null else _touch_min
+	# The top bar owns the other end of this column, so the strip's room stops
+	# below it — on a 400 dp landscape box the strip reached the chips and its
+	# `Power` chip shared a tap target with the grid-health chip.
+	var top_bar := get_parent().get_node_or_null("TopBar") as Control
+	var reserved := top_bar.get_combined_minimum_size().y if top_bar != null \
+			else UIConfig.get_num(config.layout(), "top_bar_h_dp", 48.0)
+	var available := size.y + _strip.offset_bottom - reserved - _spacing * 2.0
+	var wanted := minf(content,
+			UIConfig.get_num(config.layout(), "legend_max_h_dp", 180.0) * 2.0)
+	var height := maxf(_touch_min, minf(wanted, available))
+	scroll.custom_minimum_size.y = height
+	_strip.offset_top = _strip.offset_bottom - _strip.get_combined_minimum_size().y
+	# The strip sits beside the button that raises it, and that button widens with
+	# the type — at 130 % it reached 3 dp *into* the strip's authored left edge and
+	# shared a tap target with the `Water` chip.
+	if _button != null:
+		var width := _strip.offset_right - _strip.offset_left
+		_strip.offset_left = _button.offset_left \
+				+ maxf(_button.size.x, _button.custom_minimum_size.x) + _spacing
+		_strip.offset_right = _strip.offset_left + maxf(width,
+				_strip.get_combined_minimum_size().x)
 
 
 func close() -> void:
@@ -337,6 +429,15 @@ func _on_button_pressed() -> void:
 
 
 func _process(_delta: float) -> void:
+	# Godot processes any script that defines `_process`, including before this
+	# screen has been set up.
+	if config == null or _button == null:
+		return
+	# Second slot of §2.3's rail stack, re-solved because the button's height is
+	# only knowable once the theme and the layout have both run.
+	UIWidgets.place_in_rail(_button, 1, config.layout(), _touch_min)
+	if is_open():
+		_clamp_strip()
 	if _pressed_at_ms < 0.0 or _suppress_next_press:
 		return
 	if float(Time.get_ticks_msec()) - _pressed_at_ms < _longpress_ms:

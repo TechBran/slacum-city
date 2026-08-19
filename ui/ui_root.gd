@@ -845,7 +845,51 @@ func _recompute_layout() -> void:
 		breakpoint_changed.emit(bp)
 
 
+## Replaces `DisplayServer.get_display_safe_area()` when it is set. A desktop
+## display server answers that call with the *screen's* work area — origin at the
+## developer's dock, size of the whole monitor — which is not a phone's cutout and
+## which shifted every rectangle `tools/ui_preview.gd` measures by the width of
+## whatever panel happened to be open. Harnesses and tests set a device box here;
+## the game never touches it.
+var safe_area_override := Rect2i()
+
+
+## Lays the whole deck out at a device box **without a rendered frame**.
+##
+## Godot queues a `Container`'s re-sort through the message queue, and a headless
+## run — `tests/run_tests.gd` does everything inside `_initialize()` — never
+## flushes one, so every `Control` in a mounted scene keeps a size of zero. That
+## makes the defects this pass is about (text that does not fit, targets that
+## collide, a bar that runs off the edge) invisible to the suite. This drives the
+## same two notifications the engine would, top down, so `tests/test_ui_audit.gd`
+## can measure the deck at four widths in the same second.
+##
+## Not used by the game: `main.tscn` gets frames.
+func force_layout(box: Vector2i) -> void:
+	safe_area_override = Rect2i(Vector2i.ZERO, box)
+	if safe_area == null:
+		return
+	_recompute_layout()
+	safe_area.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	safe_area.size = Vector2(box)
+	UIRoot.sort_tree(safe_area)
+
+
+## One layout pass over a subtree, in tree order. Public so a harness can re-run
+## it after opening a screen.
+static func sort_tree(node: Node) -> void:
+	var control := node as Control
+	if control != null:
+		control.notification(Control.NOTIFICATION_RESIZED)
+	if node is Container:
+		node.notification(Container.NOTIFICATION_SORT_CHILDREN)
+	for child in node.get_children():
+		UIRoot.sort_tree(child)
+
+
 func _safe_area_rect() -> Rect2i:
+	if safe_area_override.size.x > 0 and safe_area_override.size.y > 0:
+		return safe_area_override
 	var rect := DisplayServer.get_display_safe_area()
 	if rect.size.x <= 0 or rect.size.y <= 0:
 		var window := get_window()

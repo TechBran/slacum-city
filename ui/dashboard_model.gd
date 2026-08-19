@@ -205,7 +205,7 @@ func _row(row_id: String, snapshot: Dictionary, chips: Dictionary) -> Dictionary
 			# that the ×100 conversion happens once, at the point of display.
 			var happiness := float(snapshot.get("happiness", -1.0))
 			value_text = HudModel.NO_DATA if happiness < 0.0 \
-					else "%d%%" % _hud.stability_percent(happiness)
+					else HudModel.percent_text(float(_hud.stability_percent(happiness)))
 			state = _hud.stability_state(happiness) if happiness >= 0.0 \
 					else HudModel.STATE_OFFLINE
 			state_glyph = _hud.state_glyph(state)
@@ -269,7 +269,5 @@ func _axis_text(row_id: String, value: float, signed_value: bool = false) -> Str
 			return (HudModel.PLUS + HudModel.pop(rounded)) if signed_value and rounded > 0 \
 					else HudModel.pop(rounded)
 		"happiness", "stability", "grid", "water":
-			var percent := int(round(value * 100.0))
-			var sign_text := HudModel.PLUS if signed_value and percent > 0 else ""
-			return "%s%d%%" % [sign_text, percent]
+			return HudModel.percent_text(value * 100.0, signed_value)
 	return BudgetModel.signed(value, 0) if signed_value else str(int(round(value)))

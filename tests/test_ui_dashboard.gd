@@ -349,7 +349,12 @@ func test_the_bus_event_alone_still_gives_the_three_totals() -> void:
 	assert_true(bool(ledger["has_data"]))
 	assert_false(bool(ledger["has_breakdown"]), "and the view knows to hide the lines")
 	assert_almost_eq(float(ledger["net"]), 5030.0, 0.0001)
-	assert_eq(str(ledger["net_text"]), HudModel.rate_per_day(5030.0))
+	# Doc 12 delta D-18: the total line reports the settled **hour**, like the
+	# lines above it. A per-day net beside a per-hour gross and a per-hour expense
+	# is a unit error, not a summary — the per-day reading is still published, as
+	# `net_per_day_text`, for the chip that wants it.
+	assert_eq(str(ledger["net_text"]), HudModel.money_signed(5030))
+	assert_eq(str(ledger["net_per_day_text"]), HudModel.rate_per_day(5030.0))
 	assert_eq(ledger["net_state"], HudModel.STATE_NORMAL)
 
 

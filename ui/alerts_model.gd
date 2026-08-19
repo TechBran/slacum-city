@@ -39,6 +39,10 @@ const ARG_COUNT := "@count"
 const ARG_TIME := "@time"
 const ARG_ID := "@id"
 const ARG_MONEY_PREFIX := "@money:"
+## A sim quantity that is a float and a *reading*: thousands-grouped, no decimal
+## tail. Without it `shed_kw` reached the table as `1840.0` and the banner read
+## `1840.0 kW dropped` — a float's `str()`, not a number a player recognises.
+const ARG_NUMBER_PREFIX := "@number:"
 
 const COALESCE_NOTIFY_ID := "notify_id"
 const COALESCE_KEY := "key"
@@ -261,6 +265,10 @@ func _args(entry: Dictionary, rule: Dictionary) -> Dictionary:
 			var money_key := source.substr(ARG_MONEY_PREFIX.length())
 			if payload.has(money_key):
 				out[name] = HudModel.money(int(payload[money_key]))
+		elif source.begins_with(ARG_NUMBER_PREFIX):
+			var number_key := source.substr(ARG_NUMBER_PREFIX.length())
+			if payload.has(number_key):
+				out[name] = HudModel.pop(int(round(float(payload[number_key]))))
 		elif payload.has(source):
 			out[name] = payload[source]
 	return out

@@ -1,0 +1,253 @@
+extends SimTest
+## The screen sweep, as a test (doc 12 §2.1's breakpoints, A1/A2's "no clipped
+## text", A3's touch floor).
+##
+## Every defect this file guards against was found by eye, on a phone-sized
+## screenshot, after the deck had been green for three waves — because the whole
+## suite ran at the 880 dp reference box and every screen fits at 880 dp. The
+## three that mattered:
+##
+##   * the top bar's minimum width exceeded a 412 dp display, so `grow_horizontal
+##     = BOTH` centred the overflow and pushed the ☰ button — the only way into
+##     the pause menu — off the right edge;
+##   * the build sheet's seven category tabs made the sheet 768 dp wide, which
+##     put `GRID` and the ✕ off screen, and GRID is where the tutorial sends the
+##     player in step 6;
+##   * a `Label` with `clip_text` reports a minimum width of one pixel, so the
+##     dashboard's axis figures and the economy tab's totals were laid out one
+##     pixel wide and simply were not there.
+##
+## All three are **minimum-size** facts, which is what makes them testable without
+## a rendered frame: a headless run never flushes a `Container`'s queued sort, so
+## `size` is zero everywhere, but `get_combined_minimum_size()` and the theme are
+## both live. `tools/ui_preview.gd --audit` is the pixel-accurate companion pass;
+## this is the one that runs in the suite.
+
+## Compact phone, common phone, Fold inner display, and the doc's own landscape
+## reference box. Every surface has to fit every one of them.
+const BOXES: Array[Vector2i] = [
+	Vector2i(360, 800), Vector2i(412, 915), Vector2i(794, 924), Vector2i(880, 400),
+]
+
+## Node paths, from the safe area, of every surface that occupies the full width
+## of the display when it is up.
+const SURFACES: Array[String] = [
+	"HUDLayer/TopBar",
+	"HUDLayer/AlertStack",
+	"HUDLayer/OverlayRail/Strip",
+	"PanelLayer/AlertsCenter/Panel",
+	"PanelLayer/IncidentDrawer/Panel",
+	"PanelLayer/BuildingPanel/Panel",
+	"SheetLayer/BuildSheet/Sheet",
+	"SheetLayer/BuildSheet/PlacementBar",
+	"SheetLayer/UnitPicker/Sheet",
+	"ModalLayer/CityDashboard/Panel",
+	"ModalLayer/SettingsSheet/Panel",
+	"ModalLayer/SaveLoadSheet/Panel",
+	"ModalLayer/PauseMenu/Panel",
+	"CoachLayer/Onboarding/CoachMark/Bubble",
+]
+
+
+func _tree() -> SceneTree:
+	return Engine.get_main_loop() as SceneTree
+
+
+## Mounts the deck with every screen open at once. Nothing here is a state a
+## player reaches — the point is to measure every surface in one pass, and a
+## surface's minimum width does not depend on which of its siblings is up.
+func _mount(text_scale: float = 1.0, larger_targets: bool = false,
+		panel: String = "drawer") -> UIRoot:
+	var packed: PackedScene = load("res://game/ui/ui_root.tscn")
+	var root: UIRoot = packed.instantiate()
+	root.apply_content_scale = false
+	# Injected before the scene enters the tree: every screen reads the two A2/A3
+	# settings once, in its own `setup()`.
+	root.config = UIConfig.load_from_files()
+	var defaults: Dictionary = root.config.ui_data()["defaults"]
+	defaults["text_scale"] = text_scale
+	defaults["larger_touch_targets"] = larger_targets
+	_tree().root.add_child(root)
+	root.initialize()
+	_populate(root, panel)
+	return root
+
+
+func _unmount(root: UIRoot) -> void:
+	_tree().root.remove_child(root)
+	root.free()
+
+
+func _populate(root: UIRoot, panel: String = "drawer") -> void:
+	root.hud.refresh(_snapshot())
+	root.ingest_service({"power01": 0.41, "water01": 0.22})
+	root.refresh_incidents([_incident_row()], 24.0)
+	root.set_unit_provider(func(_id: int) -> Array:
+		return [{"id": 1, "dept": "fire", "kind": "engine", "eta_gs": 48.0,
+				"state": "IDLE"},
+			{"id": 4, "dept": "police", "kind": "patrol_car", "eta_gs": -1.0,
+				"state": "REFIT", "frees_in_gs": 420.0}])
+	root.sample_history({"hour": 1, "treasury": 8_420_000.0, "population": 182_904.0,
+			"net_per_hour": 5750.0, "happiness": 0.64, "stability": 0.71,
+			"power01": 0.93, "water01": 0.71})
+	root.feed_settlement({"hour": 1,
+			"revenue": {"tax": 12480.0, "power_tariff": 940.0, "gross": 13420.0},
+			"expenses": {"building_maint": 4120.0, "departments": 2260.0,
+					"total": 6380.0},
+			"net": 7040.0})
+	root.alerts_center.set_clock(372, 2)
+	root.alerts_center.feed_batch([
+		{"type": "BlockDarkChanged", "block_id": "Harbour", "block_dark": true},
+		{"type": "PowerComponentFailed", "component": "T-04", "cause": "overload"},
+	])
+	# Every surface up at once, plus the tutorial's first card, so the walk sees
+	# the coach bubble's buttons too. `PanelLayer` allows exactly one open surface
+	# (`UIWidgets.close_siblings`), so which of the three that is comes in.
+	root.incident_drawer.open()
+	root.unit_picker.open_for(root.incident_drawer.model.row(31))
+	root.build_sheet.open()
+	root.overlay_rail.open()
+	root.city_dashboard.open(DashboardModel.TAB_ECONOMY)
+	root.settings_sheet.open()
+	root.save_load_sheet.open()
+	root.pause_menu.open()
+	root.start_onboarding({"tutorial_lot_a": Vector2i(43, 40)})
+	match panel:
+		"alerts":
+			root.alerts_center.open()
+		"building":
+			var sim := CitySim.boot_from_files()
+			var building_panel := root.safe_area.get_node_or_null(
+					"PanelLayer/BuildingPanel") as BuildingPanel
+			building_panel.setup(root.config, BuildController.new(sim))
+			var ids := sim.buildings.keys()
+			ids.sort()
+			building_panel.show_building(str(ids[0]))
+		_:
+			root.incident_drawer.open()
+
+
+static func _snapshot() -> Dictionary:
+	return {"population": 182904, "treasury": -1_240_000, "net_per_hour": -8200.0,
+			"stability": 0.18, "happiness": 0.31,
+			"incidents": {"count": 14, "worst_tier": 5},
+			"clock": {"minute_of_day": 372, "day_index": 2}, "speed": 1,
+			"paused": false}
+
+
+static func _incident_row() -> Dictionary:
+	return {"id": 31, "type": "structure_fire", "subtype": "", "tier": 4,
+			"severity": 4.6, "status": "ASSIGNED", "pos": [12, 20],
+			"district_id": "Harbour", "wait_min": 47.0, "assigned": [7],
+			"assist_ratio": 0.0, "progress": 0.2, "escalation_eta_min": 12.0,
+			"priority": 100.0, "pinned": false, "seen": false, "unreachable": false,
+			"notification_priority": 2}
+
+
+# ===========================================================================
+# Widths
+# ===========================================================================
+
+func test_every_surface_fits_every_supported_display() -> void:
+	for box: Vector2i in BOXES:
+		var root := _mount()
+		root.hud.set_width_dp(float(box.x))
+		root.hud.refresh(_snapshot())
+		for path: String in SURFACES:
+			var surface := root.safe_area.get_node_or_null(path) as Control
+			assert_ne(surface, null, "%s is in the scene" % path)
+			if surface == null:
+				continue
+			var wanted := surface.get_combined_minimum_size().x
+			assert_true(wanted <= float(box.x),
+					"%s needs %d dp on a %d dp display" % [path, int(wanted), box.x])
+		_unmount(root)
+
+
+func test_every_surface_fits_the_narrowest_display_at_130_percent_text() -> void:
+	# A2: the text-size setting may not push a control off the screen. The coach
+	# bubble is the one that used to — its 240 dp cap was a constant, so `GOT IT`
+	# lost its last letter as soon as the type grew.
+	var root := _mount(1.3, true)
+	root.hud.set_width_dp(360.0)
+	root.hud.refresh(_snapshot())
+	for path: String in SURFACES:
+		var surface := root.safe_area.get_node_or_null(path) as Control
+		if surface == null:
+			continue
+		var wanted := surface.get_combined_minimum_size().x
+		assert_true(wanted <= 360.0,
+				"%s needs %d dp at 130 %% text on a 360 dp display"
+				% [path, int(wanted)])
+	_unmount(root)
+
+
+# ===========================================================================
+# Copy in the tree
+# ===========================================================================
+
+func test_no_screen_shows_a_raw_key_or_an_unfilled_placeholder() -> void:
+	for panel: String in ["drawer", "alerts", "building"]:
+		var root := _mount(1.0, false, panel)
+		var findings := UIAudit.walk_frame_free(root.safe_area)
+		assert_eq(UIAudit.format(findings, ""), "  clean",
+				"every visible label resolved its copy (%s open)" % panel)
+		_unmount(root)
+
+
+func test_nothing_clips_without_a_width_to_clip_within() -> void:
+	# The `unbounded_clip` rule, stated once: a Control that may shorten its own
+	# text reports a minimum width of 0 (Button) or 1 (Label), so beside an
+	# `EXPAND_FILL` sibling it is erased rather than shortened. `UIWidgets.elide()`
+	# is the way to say "this may shorten", and it supplies the floor.
+	for scale: float in [1.0, 1.3]:
+		var root := _mount(scale)
+		var findings := UIAudit.only(UIAudit.walk(root.safe_area, 0.0, Rect2()),
+				[UIAudit.KIND_UNBOUNDED_CLIP])
+		assert_eq(UIAudit.format(findings, ""), "  clean",
+				"no unbounded clipping at %d %% text" % int(scale * 100.0))
+		_unmount(root)
+
+
+func test_every_target_names_itself() -> void:
+	# A15: a Button with no `tooltip_text` has no accessibility name.
+	for panel: String in ["drawer", "alerts", "building"]:
+		var root := _mount(1.0, false, panel)
+		var findings := UIAudit.only(UIAudit.walk(root.safe_area, 0.0, Rect2()),
+				[UIAudit.KIND_NO_TOOLTIP])
+		assert_eq(UIAudit.format(findings, ""), "  clean", "%s open" % panel)
+		_unmount(root)
+
+
+# ===========================================================================
+# The solvers the widths depend on
+# ===========================================================================
+
+func test_a_side_panel_takes_the_whole_phone_rather_than_leaving_a_ribbon() -> void:
+	# 412 dp of display and a 364 dp panel left 48 dp of half-drawn HUD chip down
+	# the left edge, which reads as a rendering fault rather than as a panel.
+	assert_almost_eq(UIWidgets.side_panel_width(412.0, 364.0, 0.34, 260.0, 340.0, 48.0),
+			412.0, 0.001)
+	assert_almost_eq(UIWidgets.side_panel_width(880.0, 300.0, 0.34, 260.0, 340.0, 48.0),
+			300.0, 0.001, "a wide display keeps the doc's ratio")
+	assert_almost_eq(UIWidgets.side_panel_width(880.0, 320.0, 0.34, 260.0, 340.0, 48.0),
+			320.0, 0.001, "and never squeezes its own contents")
+
+
+func test_the_top_bar_reserves_the_clock_column_on_every_row() -> void:
+	# `HudModel._pack_rows` gives row 0 `avail` and every wrapped row the whole
+	# bar. The scene has to actually be that shape, or row 1 is solved against a
+	# width the container will not give it — which is how the ☰ button ended up
+	# off screen. The clock and the menu therefore live *inside* row 0.
+	var root := _mount()
+	root.hud.set_width_dp(412.0)
+	root.hud.refresh(_snapshot())
+	var row0 := root.safe_area.get_node_or_null(
+			"HUDLayer/TopBar/Chips/Row0") as Control
+	assert_ne(row0, null)
+	if row0 != null:
+		assert_ne(row0.get_node_or_null("ClockChip"), null,
+				"the clock shares row 0 with the chips")
+		assert_ne(row0.get_node_or_null("MenuButton"), null,
+				"and so does the pause-menu button")
+	_unmount(root)

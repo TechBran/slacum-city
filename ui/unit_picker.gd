@@ -77,6 +77,9 @@ func _build_static() -> void:
 				UIConfig.get_num(config.layout(), "unit_picker_h_dp", 240.0))
 	if _title != null:
 		_title.text = UIWidgets.t(config, "ui_picker_title")
+		# See `AlertsCenter`: the scene's `clip_text` alone would let the ✕ beside
+		# it claim the whole header.
+		UIWidgets.elide(_title, _touch_min * 2.0)
 	if _close != null:
 		_close.theme_type_variation = &"GhostButton"
 		_close.focus_mode = Control.FOCUS_NONE
@@ -114,9 +117,12 @@ func is_open() -> bool:
 ## The one entry point: an `IncidentModel` row, straight off the drawer.
 func open_for(incident_row: Dictionary) -> void:
 	model.open_for(incident_row)
-	UIWidgets.close_siblings(self)
+	# Visible *before* the siblings are told to close: `BuildSheet.close()` decides
+	# whether to put its FAB back by asking whether anything else on this layer is
+	# open, and the honest answer at that moment is "yes, this sheet".
 	if _sheet != null:
 		_sheet.visible = true
+	UIWidgets.close_siblings(self)
 	_refresh()
 	sheet_toggled.emit(true)
 
@@ -159,10 +165,13 @@ func _refresh_list() -> void:
 		_rows[int(row["id"])] = button
 
 
-## §2.6 step 3's five columns folded into one 56 dp target: glyph + name, the
-## bold ETA, the status word and the eligibility tag. An ineligible unit is
-## rendered (so the player learns why it cannot go) and disabled (so it cannot
-## be tapped by accident).
+## §2.6 step 3's five columns, folded into a 56 dp target as **two lines** rather
+## than four columns. Four columns on a 412 dp phone left the unit's own name
+## 47 px of a 73 px word — and the name is what the player is choosing between.
+## Line 1 is the choice (name + ETA), line 2 is the qualifier (status + tag), and
+## every one of them keeps its full text. An ineligible unit is rendered (so the
+## player learns why it cannot go) and disabled (so it cannot be tapped by
+## accident).
 func _build_row(row: Dictionary) -> Button:
 	var unit_id := int(row["id"])
 	var eta_text := str(row["eta_text"])
@@ -172,15 +181,20 @@ func _build_row(row: Dictionary) -> Button:
 	button.disabled = not bool(row["eligible"])
 	button.pressed.connect(_on_row_pressed.bind(unit_id))
 
-	var line := HBoxContainer.new()
-	line.name = "Body"
-	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	line.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var body := VBoxContainer.new()
+	body.name = "Body"
+	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	body.set_anchors_preset(Control.PRESET_FULL_RECT)
 	# Inside the row, not on its edge: the sheet's scrollbar lives there.
-	line.offset_left = _spacing
-	line.offset_right = -_spacing
+	body.offset_left = _spacing
+	body.offset_right = -_spacing
+	button.add_child(body)
+
+	var line := HBoxContainer.new()
+	line.name = "Head"
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	line.add_theme_constant_override(&"separation", int(_spacing))
-	button.add_child(line)
+	body.add_child(line)
 
 	var name_label := UIWidgets.label("Name",
 			("%s %s" % [str(row["dept_glyph"]), str(row["name"])]).strip_edges())
@@ -193,17 +207,23 @@ func _build_row(row: Dictionary) -> Button:
 	var eta := _fixed(UIWidgets.label("Eta", eta_text))
 	eta.theme_type_variation = &"StatChip"
 	line.add_child(eta)
-	line.add_child(_fixed(UIWidgets.label("Status", str(row["state_text"]))))
-	var tag := _fixed(UIWidgets.label("Tag", str(row["tag_text"])))
+
+	var sub := HBoxContainer.new()
+	sub.name = "Sub"
+	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sub.add_theme_constant_override(&"separation", int(_spacing))
+	body.add_child(sub)
+	var status := UIWidgets.label("Status", str(row["state_text"]), &"LegendRow")
+	status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sub.add_child(status)
+	var tag := _fixed(UIWidgets.label("Tag", str(row["tag_text"]), &"LegendRow"))
 	UIWidgets.paint_state(self, tag, row["state_token"])
-	line.add_child(tag)
+	sub.add_child(tag)
 	return button
 
 
-## See `IncidentDrawer._fixed`: a clipping `Label` reports zero minimum width and
-## collapses beside an EXPAND_FILL sibling.
+## Pins a value column to its own width so a flexible sibling cannot claim it.
 static func _fixed(label: Label) -> Label:
-	label.clip_text = false
 	label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	return label
 

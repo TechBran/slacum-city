@@ -246,6 +246,37 @@ static func money(amount: int) -> String:
 	return "%s$%s" % [sign_text, compact_magnitude(digits)]
 
 
+## `money` for a **column**, not a chip: always thousands-grouped, never rounded
+## to three significant digits. `money()`'s ladder is right where the width is
+## fixed and the magnitude is what matters (a 104 dp chip reading `$8.42M`), and
+## wrong in a ledger, where `$12.5K` sits directly above `$4,120` and the reader
+## has to convert one of them before the column means anything.
+static func money_exact(amount: int) -> String:
+	var parts := _split_sign(amount)
+	return "%s$%s" % [str(parts["sign"]), group_digits(str(parts["digits"]))]
+
+
+## The same, with an explicit `+` on a gain — for a figure whose *direction* is
+## the reading (a net line, a delta).
+static func money_signed(amount: int) -> String:
+	var text := money_exact(amount)
+	return text if amount < 0 else PLUS + text
+
+
+## `percent(pct)` — a whole-number percentage, `—` for "no reading", and the
+## project's U+2212 MINUS on a negative (§2.4). One function rather than five
+## `"%d%%"` format strings: the chart axis was rendering `-3%` with an ASCII
+## hyphen directly under a treasury figure rendering `−$1.2M` with the real minus
+## sign, in the same column of the same panel.
+static func percent_text(pct: float, signed_value: bool = false) -> String:
+	if pct < 0.0 and not signed_value:
+		return NO_DATA
+	var whole := int(round(pct))
+	if whole < 0:
+		return "%s%d%%" % [MINUS, -whole]
+	return "%s%d%%" % [PLUS if signed_value and whole > 0 else "", whole]
+
+
 ## `rate(per_game_hour)` — per day (`value * 24`), `+`/`−` prefix, `/d` suffix.
 ## Doc 12 test 14: `rate(5750) == "+$138K/d"`.
 static func rate_per_day(per_game_hour: float) -> String:
@@ -544,14 +575,9 @@ func solve_top_bar(width_dp: float, clock_w_dp: float = -1.0,
 		var packed := _pack_rows(order, modes, gap, min_widths, avail, avail_rest,
 				max_rows)
 		while not (packed["leftover"] as Array).is_empty():
-			var hidden := false
-			for i in range(order.size() - 1, never_hidden - 1, -1):
-				if modes[order[i]] != MODE_HIDDEN:
-					modes[order[i]] = MODE_HIDDEN
-					hidden = true
-					break
-			if not hidden:
-				break  # P1–P4 stay, even if they overflow: the doc's final `break`.
+			if not _hide_lowest(order, modes, never_hidden) \
+					and not _hide_lowest(order, modes, 1):
+				break
 			iterations += 1
 			packed = _pack_rows(order, modes, gap, min_widths, avail, avail_rest, max_rows)
 		rows = packed["rows"]
@@ -563,13 +589,8 @@ func solve_top_bar(width_dp: float, clock_w_dp: float = -1.0,
 	elif need > avail:
 		# --- hide phase (§2.4, single-row behaviour) -----------------------
 		while need > avail:
-			var hidden := false
-			for i in range(order.size() - 1, never_hidden - 1, -1):
-				if modes[order[i]] == MODE_COMPACT:
-					modes[order[i]] = MODE_HIDDEN
-					hidden = true
-					break
-			if not hidden:
+			if not _hide_lowest(order, modes, never_hidden) \
+					and not _hide_lowest(order, modes, 1):
 				break
 			iterations += 1
 			need = _top_bar_need(order, modes, gap, min_widths)
@@ -593,6 +614,29 @@ func solve_top_bar(width_dp: float, clock_w_dp: float = -1.0,
 		"need": need,
 		"iterations": iterations,
 	}
+
+
+## Hides the lowest-priority chip at or after `floor_index`, and says whether it
+## found one.
+##
+## Called twice per round: once with §2.4's `chip_never_hidden_count`, and — only
+## when that leaves nothing to give up — once with `1`, which lets P2–P4 go too.
+##
+## **Why the never-hidden list can be broken.** §2.4 keeps the first four chips
+## on screen unconditionally, and on the reference box they always fit. At 130 %
+## text with larger touch targets on a 360 dp phone, four chips plus the clock
+## chip physically cannot: the previous `break` here left the bar solved wider
+## than the display, `grow_horizontal = BOTH` centred the overflow, and the
+## treasury chip went off the left edge while the ☰ button — the only way into the
+## pause menu — went off the right. A1 (nothing clips) and A3 (every target is
+## reachable) outrank the never-hidden list, and a hidden chip is not lost: every
+## one of them is a row in the dashboard, one tap away (§2.10).
+static func _hide_lowest(order: Array, modes: Dictionary, floor_index: int) -> bool:
+	for i in range(order.size() - 1, maxi(0, floor_index) - 1, -1):
+		if modes[order[i]] != MODE_HIDDEN:
+			modes[order[i]] = MODE_HIDDEN
+			return true
+	return false
 
 
 ## Effective width of one chip: the doc's budget, widened to whatever the view
@@ -764,7 +808,7 @@ func _chip(chip_id: String, text_full: String, text_compact: String,
 
 
 static func _percent_text(pct: float) -> String:
-	return NO_DATA if pct < 0.0 else "%d%%" % int(round(pct))
+	return percent_text(pct)
 
 
 static func _incident_block(raw: Variant) -> Dictionary:
