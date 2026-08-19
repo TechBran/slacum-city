@@ -52,6 +52,9 @@ var _touch_min := 48.0
 var _spacing := 8.0
 var _row_h := 72.0
 var _drawer_w := 300.0
+## The tab's A3 floor. Its drawn width is `max(this, widest line)` and is
+## re-solved on every refresh, so a count that shrinks gives the width back.
+var _handle_floor_w := 48.0
 
 
 func setup(cfg: UIConfig = null, p_model: IncidentModel = null) -> void:
@@ -87,7 +90,9 @@ func _bind_nodes() -> void:
 	_panel = get_node_or_null("Panel") as PanelContainer
 	_title = get_node_or_null("Panel/Body/Header/Title") as Label
 	_close = get_node_or_null("Panel/Body/Header/Close") as Button
-	_sort_box = get_node_or_null("Panel/Body/Sort") as HBoxContainer
+	_sort_box = get_node_or_null("Panel/Body/SortScroll/Sort") as HBoxContainer
+	if _sort_box == null:
+		_sort_box = get_node_or_null("Panel/Body/Sort") as HBoxContainer
 	_empty = get_node_or_null("Panel/Body/Empty") as Label
 	_list = get_node_or_null("Panel/Body/Scroll/List") as VBoxContainer
 
@@ -100,18 +105,21 @@ func _build_static() -> void:
 		# A3 wins over the doc's 44 dp handle width, the same way it wins over the
 		# 44 dp banner height in the HUD: a target below 48 dp is not shippable.
 		#
-		# The handle is a *tab*, so its width is fixed and its text wraps down it —
-		# without `autowrap_mode` a Button's minimum width is its whole text, and
-		# `▤ 4 T4` would push a 48 dp tab out to 84 and collide with the alerts
-		# chip that shares this edge (§2.15). Clipping instead would eat the
-		# worst-tier digit, which is the one thing on the handle that must survive.
+		# The handle is a *tab*: fixed width, text stacked down it. It used to get
+		# there with `AUTOWRAP_WORD` over a space-joined `▤ 4 T4`, which wraps at
+		# the width the button *has* — 48 dp minus 30 dp of StatChip padding, i.e.
+		# 18 dp — so the tier line was laid out as `T4` and drawn as `T`. The digit
+		# it lost is the one thing on the handle that must survive.
+		#
+		# The three tokens are therefore newline-joined (see `_refresh_handle`), so
+		# the line breaks are ours rather than the wrapper's, and the tab is widened
+		# to whatever the widest of them measures.
 		_handle.theme_type_variation = &"StatChip"
 		_handle.focus_mode = Control.FOCUS_NONE
 		_handle.clip_text = false
-		# WORD, not WORD_SMART: smart wrapping is allowed to break inside a word,
-		# and `T4` split across two lines is not a tier.
-		_handle.autowrap_mode = TextServer.AUTOWRAP_WORD
-		_handle.custom_minimum_size = Vector2(maxf(float(handle[0]), _touch_min),
+		_handle.autowrap_mode = TextServer.AUTOWRAP_OFF
+		_handle_floor_w = maxf(float(handle[0]), _touch_min)
+		_handle.custom_minimum_size = Vector2(_handle_floor_w,
 				maxf(float(handle[1]), _touch_min))
 		_handle.tooltip_text = UIWidgets.t(config, "ui_drawer_handle")
 		if not _handle.pressed.is_connected(toggle):
@@ -120,6 +128,9 @@ func _build_static() -> void:
 		_panel.custom_minimum_size = Vector2(_drawer_w, 0.0)
 	if _title != null:
 		_title.text = UIWidgets.t(config, "ui_drawer_title")
+		# See `AlertsCenter`: the scene's `clip_text` alone would let the ✕ beside
+		# it claim the whole header.
+		UIWidgets.elide(_title, _touch_min * 2.0)
 	if _close != null:
 		_close.theme_type_variation = &"GhostButton"
 		_close.focus_mode = Control.FOCUS_NONE
@@ -134,11 +145,37 @@ func _build_static() -> void:
 		_list.add_theme_constant_override(&"separation", int(_spacing))
 
 
+## The segmented control scrolls sideways, like the build sheet's category row.
+## `Priority · Nearest · Newest · Unassigned` is 528 dp of words at 130 % text and
+## the panel is 412 dp wide, so two of the four segments were laid out off the
+## left edge of the screen — and the sort words are what the player reads to know
+## which order the list is in (A1).
+func _wrap_sort_in_scroller() -> void:
+	if _sort_box == null or _sort_box.get_parent() is ScrollContainer:
+		return
+	var body := _sort_box.get_parent() as Control
+	if body == null:
+		return
+	var slot := _sort_box.get_index()
+	var scroll := ScrollContainer.new()
+	scroll.name = "SortScroll"
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.custom_minimum_size = Vector2(_touch_min, _touch_min)
+	body.remove_child(_sort_box)
+	_sort_box.owner = null
+	scroll.add_child(_sort_box)
+	_sort_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_child(scroll)
+	body.move_child(scroll, slot)
+
+
 ## §2.6's segmented control: `Priority | Nearest | Newest | Unassigned`, one
 ## 48 dp target each, the list order it produces owned by the model.
 func _build_sort() -> void:
 	if _sort_box == null:
 		return
+	_wrap_sort_in_scroller()
 	UIWidgets.clear_children(_sort_box)
 	_sort_buttons.clear()
 	_sort_box.add_theme_constant_override(&"separation", int(_spacing))
@@ -227,6 +264,20 @@ func toggle() -> void:
 		open()
 
 
+## The tab shares the right edge with every other `PanelLayer` surface, and the
+## drawer is the last child of that layer, so it draws **on top**: with the alerts
+## feed open, a 48 × 160 dp bookmark floated over two of its rows with a tap
+## target on top of theirs. `UIWidgets.close_siblings()` already guarantees one
+## surface at a time; this extends that guarantee to the handle.
+func set_handle_visible(value: bool) -> void:
+	if _handle != null:
+		_handle.visible = value
+
+
+func handle_is_visible() -> bool:
+	return _handle != null and _handle.visible
+
+
 ## The shell asks for this to size `HudModel.marker_rect()` — a pin must never
 ## end up behind an open drawer (§2.15).
 func drawer_width_dp() -> float:
@@ -241,8 +292,25 @@ func refresh() -> void:
 	_refresh_handle()
 	if not is_open():
 		return
+	_apply_panel_width()
 	_paint_sort()
 	_refresh_list()
+
+
+## Re-solves the panel's width against the display it is actually on. Anchored to
+## the right edge with `grow_horizontal = BEGIN`, so the offset is the width.
+func _apply_panel_width() -> void:
+	if _panel == null or size.x <= 1.0:
+		return
+	var layout := config.layout()
+	var width := UIWidgets.side_panel_width(size.x,
+			_panel.get_combined_minimum_size().x,
+			UIConfig.get_num(layout, "drawer_w_ratio", 0.34),
+			UIConfig.get_num(layout, "drawer_w_min_dp", 260.0),
+			UIConfig.get_num(layout, "drawer_w_max_dp", 340.0),
+			_touch_min)
+	_drawer_w = width
+	_panel.offset_left = -width
 
 
 ## The collapsed handle: count, worst-tier digit, and the 1.2 Hz pulse §2.6 asks
@@ -253,11 +321,17 @@ func _refresh_handle() -> void:
 		return
 	var view := model.handle_view()
 	var digit := str(view["digit"])
-	_handle.text = "%s %s%s" % [HANDLE_GLYPH, str(view["text"]),
-			(" T" + digit) if digit != "" else ""]
+	var lines: PackedStringArray = [HANDLE_GLYPH, str(view["text"])]
+	if digit != "":
+		lines.append("T" + digit)
+	_handle.text = "\n".join(lines)
 	_handle.tooltip_text = str(view["tooltip"])
 	_handle.set_meta("pulse", bool(view["pulse"]))
 	UIWidgets.paint_state(self, _handle, view["state"])
+	# The tab is as wide as its widest line plus the chip's padding; a `T5` and a
+	# three-digit count both have to fit, and neither may be clipped.
+	_handle.custom_minimum_size.x = maxf(_handle_floor_w,
+			UIWidgets.needed_width(_handle))
 
 
 func _paint_sort() -> void:
@@ -392,6 +466,11 @@ func _build_actions(row: Dictionary) -> HBoxContainer:
 func _process(delta: float) -> void:
 	if _handle == null:
 		return
+	# Polled rather than wired: `BuildingPanel` and `AlertsCenter` are siblings
+	# with no shared `opened` signal, and the drawer is the one that has to yield.
+	# Its own panel counts: on a 400 dp-tall landscape box the tab sat on two of
+	# the rows it had just opened, and the panel carries its own ✕.
+	set_handle_visible(not is_open() and not UIWidgets.any_sibling_open(self))
 	if _reduce_motion or not bool(_handle.get_meta("pulse", false)):
 		_handle.modulate.a = 1.0    # A8: a pulse is motion
 		return
@@ -458,12 +537,9 @@ func _on_sort_pressed(order: StringName) -> void:
 # Helpers
 # ---------------------------------------------------------------------------
 
-## `UIWidgets.label()` clips by default, and a clipping `Label` reports a minimum
-## width of **zero** — which in an `HBoxContainer` next to an EXPAND_FILL sibling
-## collapses it to nothing. Anything that has to be read beside a flexible column
-## goes through here.
+## Pins a value column to its own measured width, so an `EXPAND_FILL` sibling
+## takes the slack instead of taking the column.
 static func _fixed(label: Label) -> Label:
-	label.clip_text = false
 	label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	return label
 

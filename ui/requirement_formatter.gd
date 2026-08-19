@@ -183,8 +183,10 @@ static func water_m3h(m3h: Variant) -> String:
 	return "%s m³/h" % _trim(String.num(float(m3h), 2))
 
 
+## Same convention as every other percentage in the deck (`HudModel`'s
+## NumberFormat): one place decides how a percent looks.
 static func percent(fraction: Variant) -> String:
-	return "%d%%" % int(round(clampf(float(fraction), 0.0, 1.0) * 100.0))
+	return HudModel.percent_text(clampf(float(fraction), 0.0, 1.0) * 100.0)
 
 
 static func tiles(count: Variant) -> String:

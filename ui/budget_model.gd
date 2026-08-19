@@ -297,9 +297,16 @@ func breakdown() -> Dictionary:
 		"gross": gross,
 		"expense": expense,
 		"net": net,
-		"gross_text": HudModel.money(int(round(gross))),
-		"expense_text": HudModel.money(int(round(expense))),
-		"net_text": HudModel.rate_per_day(net),
+		# One column, one convention. `HudModel.money()`'s three-significant-digit
+		# ladder is right on a fixed-width chip and wrong here: it printed the tax
+		# line as `$12.5K` directly above `$4,120` of building upkeep, so the two
+		# biggest numbers on the screen could not be compared without arithmetic.
+		# And the total line is the *settled hour*, like every line above it — a
+		# per-day net beside two per-hour figures is a unit error, not a summary.
+		"gross_text": HudModel.money_exact(int(round(gross))),
+		"expense_text": HudModel.money_exact(int(round(expense))),
+		"net_text": HudModel.money_signed(int(round(net))),
+		"net_per_day_text": HudModel.rate_per_day(net),
 		"net_state": HudModel.STATE_NORMAL if net >= 0.0 else HudModel.STATE_WARNING,
 	}
 
@@ -310,6 +317,6 @@ func _line(side: String, key: String, amount: float) -> Dictionary:
 		"side": side,
 		"amount": amount,
 		"label": UIWidgets.t(_cfg, "ui_budget_%s_%s" % [side, key]),
-		"text": HudModel.money(int(round(amount))),
+		"text": HudModel.money_exact(int(round(amount))),
 		"per_day_text": HudModel.rate_per_day(amount),
 	}

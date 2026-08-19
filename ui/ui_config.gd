@@ -23,6 +23,14 @@ const RENDER_JSON_PATH := "res://data/render.json"
 ## Projection keys that belong to doc 11 and must never appear in ui.json.camera.
 const PROJECTION_KEYS := ["fov_deg", "near_m", "far_m"]
 
+## Plural variant of a template, chosen when its count argument is exactly 1.
+const PLURAL_ONE_SUFFIX := "_one"
+## Names the argument a `_one` variant switches on, for a template that carries
+## more than one number. Absent means "the template's only number".
+const PLURAL_ARG_SUFFIX := "_plural"
+## `plural_count()` when no count resolves — the base (plural) form wins.
+const NO_COUNT := -0x7FFFFFFF
+
 var errors: PackedStringArray = []
 
 var _ui: Dictionary = {}
@@ -116,14 +124,85 @@ func palette(variant: String = "default") -> Dictionary:
 ## String-table lookup (doc 12 §3.1 `Str.t`). `{named}` placeholders only.
 ## A missing key returns the key itself — doc 12 test 21 turns that into a
 ## failure rather than letting a blank label ship.
+##
+## Plurals (doc 12 §3.1's known defect, `1 blocks are dark`): a key may carry a
+## `<key>_one` variant, and this picks it when the template's count argument is
+## exactly 1. English needs two forms and no more — 0 and 2 and 17 all take the
+## base key, which is why the base is written in the plural.
 func t(key: String, args: Dictionary = {}) -> String:
-	var value: Variant = _strings.get(key, null)
-	if not (value is String):
+	if not has_string(key):
 		return key
-	var text: String = value
+	var text := template(key, args)
 	for name: String in args:
 		text = text.replace("{%s}" % name, str(args[name]))
 	return text
+
+
+## Which of `key` / `key_one` a call renders, before substitution. `""` means the
+## table has no such key. Public because the plural rule is a **data** rule and
+## `tests/test_ui_strings.gd` checks the table against it directly.
+func template(key: String, args: Dictionary = {}) -> String:
+	var value: Variant = _strings.get(key, null)
+	if not (value is String):
+		return ""
+	var base: String = value
+	var one: Variant = _strings.get(key + PLURAL_ONE_SUFFIX, null)
+	if not (one is String) or args.is_empty():
+		return base
+	return one if plural_count(key, base, args) == 1 else base
+
+
+## The number a `_one` variant switches on.
+##
+## Normally there is nothing to decide: the template carries exactly one
+## numeric-valued placeholder and that is the count (`{count} blocks are dark`).
+## A template that carries several — `Day {day} · {n} days passed` — names its
+## selector in a sibling `<key>_plural` entry, because guessing which of two
+## numbers governs the noun is how a plural rule quietly starts lying.
+## `NO_COUNT` means "no rule fired"; the caller keeps the plural form, which is
+## the safe answer for every count except one.
+func plural_count(key: String, base_template: String, args: Dictionary) -> int:
+	var declared: Variant = _strings.get(key + PLURAL_ARG_SUFFIX, null)
+	if declared is String:
+		return UIConfig.as_count(args.get(declared, null))
+	var found := NO_COUNT
+	for name: String in UIConfig.placeholders(base_template):
+		var value := UIConfig.as_count(args.get(name, null))
+		if value == NO_COUNT:
+			continue
+		if found != NO_COUNT:
+			return NO_COUNT     # ambiguous, and the file did not say
+		found = value
+	return found
+
+
+## The `{named}` placeholders of a template, in order, without repeats.
+static func placeholders(text: String) -> PackedStringArray:
+	var out: PackedStringArray = []
+	var regex := RegEx.new()
+	regex.compile("\\{([a-z_][a-z0-9_]*)\\}")
+	for match in regex.search_all(text):
+		var name := match.get_string(1)
+		if not out.has(name):
+			out.append(name)
+	return out
+
+
+## A count, from whatever the caller passed. `RequirementFormatter` stringifies
+## every argument before it reaches the table, so `"3"` has to count as 3 — and
+## `"$8,420"` and `"Harbour"` have to count as nothing.
+static func as_count(value: Variant) -> int:
+	if value is int:
+		return value
+	if value is float:
+		return int(round(value as float))
+	if value is String:
+		var text: String = (value as String).strip_edges()
+		if text.is_valid_int():
+			return text.to_int()
+		if text.is_valid_float():
+			return int(round(text.to_float()))
+	return NO_COUNT
 
 
 func has_string(key: String) -> bool:

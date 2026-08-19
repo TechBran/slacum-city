@@ -126,11 +126,11 @@ func test_topbar_no_collapse_at_reference_width() -> void:
 
 func test_topbar_p1_to_p4_are_never_hidden() -> void:
 	# doc 12 test 10: "P1–P4 never HIDDEN at any width ≥ 480; deterministic,
-	# ≤ 14 iterations." Asserted here every 10 dp down to 200 dp, which is well
-	# below the 640 dp guaranteed-safe minimum.
+	# ≤ 14 iterations." Asserted from 480 dp up, which is the width the doc states
+	# it for; below that see the test underneath.
 	var model := _model()
 	var never_hidden := ["treasury", "incidents", "grid", "water"]
-	var width := 200.0
+	var width := 480.0
 	while width <= 1200.0:
 		var solved := model.solve_top_bar(width)
 		var modes: Dictionary = solved["modes"]
@@ -139,6 +139,25 @@ func test_topbar_p1_to_p4_are_never_hidden() -> void:
 					"%s survives at W=%d" % [chip_id, int(width)])
 		assert_true(int(solved["iterations"]) <= 14,
 				"≤ 14 iterations at W=%d" % int(width))
+		width += 10.0
+
+
+func test_below_480_the_bar_hides_rather_than_overflowing() -> void:
+	# Doc 12 delta D-19 (Wave-4 UX sweep). §2.4's never-hidden floor holds at
+	# every width the doc states it for, but a 200 dp budget cannot carry four
+	# chips plus the clock column at any text scale — and the old `break` left the
+	# solver reporting a bar wider than the display, which `grow_horizontal =
+	# BOTH` then centred, pushing the treasury chip off the left edge and the ☰
+	# button off the right. A1 (nothing clips) and A3 (every target is reachable)
+	# win: chips keep dropping, lowest priority first, down to the treasury.
+	var model := _model()
+	var width := 200.0
+	while width < 480.0:
+		var solved := model.solve_top_bar(width, -1.0, {}, 2)
+		assert_true(float(solved["need"]) <= float(solved["avail_rest"]),
+				"the solved bar fits the display at W=%d" % int(width))
+		assert_ne((solved["modes"] as Dictionary)["treasury"], HudModel.MODE_HIDDEN,
+				"the treasury chip is the last one standing at W=%d" % int(width))
 		width += 10.0
 
 
@@ -676,8 +695,9 @@ func test_hud_scene_refresh_binds_the_snapshot() -> void:
 			"the tier digit is the primary redundancy channel (A5)")
 	assert_true(hud.chip_button("grid").text.contains(HudModel.NO_DATA),
 			"no grid reading published yet")
-	var clock := scene["root"].get_node("SafeArea/HUDLayer/TopBar/ClockChip") as Button
-	assert_eq(clock.text, "06:12")
+	# Through the HUD, not by node path: the clock chip and the ☰ button move into
+	# top-bar row 0 at bring-up (doc 12 delta D-12).
+	assert_eq(hud.clock_chip().text, "06:12")
 	var speed_button := scene["root"].get_node(
 			"SafeArea/HUDLayer/LeftRail/SpeedButton") as Button
 	assert_eq(speed_button.text, "2×", "the face shows the current multiplier")

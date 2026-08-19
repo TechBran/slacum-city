@@ -92,7 +92,13 @@ func setup(cfg: UIConfig = null, hud_model: HudModel = null) -> void:
 
 func _ready() -> void:
 	if model == null:
-		setup()
+		# The root's parse, not a second one. `UIRoot._enter_tree` loads the config
+		# before any child's `_ready()` precisely so the deck shares it — and a
+		# screen that re-parses does not merely waste the file read, it misses
+		# whatever the shell injected. That is how the speed rail ended up solving
+		# its 48 dp touch floor while the overlay button beside it solved a 56 dp
+		# one, and the two stacked on top of each other at 130 % text.
+		setup(UIRoot.config_from(self))
 
 
 ## Immediate rather than deferred: `setup()` may be called twice (once by an
@@ -115,6 +121,7 @@ func _bind_nodes() -> void:
 
 
 func _rebuild() -> void:
+	_adopt_trailing_block()
 	_build_chips()
 	_build_clock()
 	_build_menu_button()
@@ -122,6 +129,45 @@ func _rebuild() -> void:
 	_build_alert_rows()
 	if not _last_snapshot.is_empty():
 		refresh(_last_snapshot)
+
+
+## Moves the clock chip and the ☰ button **into the chip rows**, out of the
+## top-bar HBox they are authored beside.
+##
+## `HudModel._pack_rows` is written against "row 0 shares its line with the clock
+## chip; every wrapped row below spans the whole bar". The scene's original shape
+## — `TopBar[ Chips(VBox) | Spacer | Clock | Menu ]` — cannot express that: the
+## `Chips` column is one column, so its width is the width of its **widest** row,
+## and a second row solved against the full bar made `TopBar`'s minimum ~200 dp
+## wider than a 412 dp phone. `grow_horizontal = BOTH` then centred the overflow,
+## which pushed the treasury chip off the left edge and the ☰ button — the only
+## way into the pause menu — off the right. Two rows, both bounded by `avail`,
+## would fit the chips but waste the whole clock column on row 1.
+##
+## So the view is made to match the model instead: the clock and the menu become
+## the tail of row 0, and every wrapped row genuinely does span the bar.
+func _adopt_trailing_block() -> void:
+	if _top_bar == null:
+		return
+	# The authored spacer between the chips and the clock has no job once the
+	# clock lives inside a row — and left in place it would still claim the bar.
+	var spacer := _top_bar.get_node_or_null("Spacer") as Control
+	if spacer != null:
+		spacer.visible = false
+		spacer.custom_minimum_size = Vector2.ZERO
+	if _chips_box != null:
+		_chips_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+
+## Re-parents a node without freeing it, and without leaving it parented to a row
+## `_apply_rows` is about to free.
+static func _detach(node: Node) -> void:
+	if node == null or node.get_parent() == null:
+		return
+	node.get_parent().remove_child(node)
+	# A node moved out of its authored slot keeps a stale `owner`, which Godot
+	# warns about on every re-flow; these are code-placed from here on.
+	node.owner = null
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +243,10 @@ func _build_speed_rail() -> void:
 	_speed_button.focus_mode = Control.FOCUS_NONE
 	_speed_button.custom_minimum_size = button_size
 	_speed_button.tooltip_text = _text("ui_hud_speed", "Game speed")
+	# Third slot of §2.3's rail stack, solved rather than authored — see
+	# `UIWidgets.rail_slot`.
+	UIWidgets.place_in_rail(_speed_button.get_parent() as Control, 2,
+			config.layout(), _touch_min)
 	if not _speed_button.pressed.is_connected(_on_speed_button_pressed):
 		_speed_button.pressed.connect(_on_speed_button_pressed)
 
@@ -233,7 +283,10 @@ func _build_alert_rows() -> void:
 		panel.name = "Alert%d" % i
 		panel.theme_type_variation = &"AlertBanner"
 		# A3 wins over the doc's 44 dp banner height: the row carries a tap target.
-		panel.custom_minimum_size = Vector2(float(alert_dp[0]),
+		# The 400 dp width is a *maximum*, not a demand — a 412 dp phone has 404 dp
+		# of safe area, and 400 plus the panel's own margins put the banner's VIEW
+		# button off the right edge of the screen.
+		panel.custom_minimum_size = Vector2(_banner_width_dp(float(alert_dp[0])),
 				maxf(float(alert_dp[1]), _touch_min))
 		panel.visible = false
 		var row := HBoxContainer.new()
@@ -247,7 +300,9 @@ func _build_alert_rows() -> void:
 		title.name = "Title"
 		title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		title.clip_text = true
+		# The one line on the banner allowed to run long, so it is the one that
+		# shortens — with an ellipsis, and never below a readable floor.
+		UIWidgets.elide(title, _touch_min * 2.0)
 		row.add_child(title)
 		var view := Button.new()
 		view.name = "View"
@@ -281,6 +336,9 @@ func refresh(snapshot: Dictionary) -> void:
 	_apply_rows((view["top_bar"] as Dictionary)["rows"] as Array)
 	_apply_clock(view["clock"])
 	_apply_speed(view["speed"])
+	if _speed_button != null:
+		UIWidgets.place_in_rail(_speed_button.get_parent() as Control, 2,
+				config.layout(), _touch_min)
 	_render_alerts(_now_s())
 
 
@@ -317,13 +375,17 @@ func _width_dp() -> float:
 
 ## The clock chip and the menu button share row 0 with the stat chips, so both
 ## come out of the chips' budget (§2.4's `avail = W - clock_w - 16`).
+##
+## Three chip gaps, not one: row 0 ends `… chip │ spacer │ clock │ menu`, and an
+## `HBoxContainer` puts its separation between every pair. Under-reserving them
+## is how a bar that solves to exactly `avail` still overflows by 18 dp.
 func _clock_width_dp() -> float:
 	var clock_w := UIConfig.get_num(config.layout(), "clock_chip_w_dp", 132.0)
 	if _clock_chip != null:
 		clock_w = maxf(clock_w, _clock_chip.custom_minimum_size.x)
 	if _menu_button != null and _menu_button.visible:
-		clock_w += _menu_button.custom_minimum_size.x + _chip_gap
-	return clock_w
+		clock_w += _menu_button.custom_minimum_size.x
+	return clock_w + _chip_gap * 3.0
 
 
 ## What each chip's text actually needs, in dp, for both collapse modes. The
@@ -384,6 +446,10 @@ func _apply_chips(chips: Array) -> void:
 ## Re-parents the chips into the rows the solver produced. Hidden chips stay in
 ## row 0 as invisible children — a container skips those, and keeping them in
 ## the tree means no chip is ever an orphan waiting to be freed.
+##
+## Row 0 always ends with a spacer, the clock chip and the ☰ button, which is the
+## line `HudModel.solve_top_bar` reserves `clock_w` on. Both are detached first:
+## a row that is about to be freed must never still own them.
 func _apply_rows(rows: Array) -> void:
 	if _chips_box == null:
 		return
@@ -392,9 +458,16 @@ func _apply_rows(rows: Array) -> void:
 		return
 	_row_signature = signature
 	for chip_id: Variant in _chips:
-		var button: Button = _chips[chip_id]
-		if button.get_parent() != null:
-			button.get_parent().remove_child(button)
+		CityHUD._detach(_chips[chip_id] as Button)
+	CityHUD._detach(_clock_chip)
+	CityHUD._detach(_menu_button)
+	# The spacer is rebuilt each pass, so the previous one has to go or row 0
+	# grows by 8 dp of nothing on every reflow.
+	for i in _chips_box.get_child_count():
+		var stale := _chips_box.get_child(i).get_node_or_null("ClockGap")
+		if stale != null:
+			stale.get_parent().remove_child(stale)
+			stale.free()
 	var wanted := maxi(1, rows.size())
 	while _chips_box.get_child_count() < wanted:
 		_chips_box.add_child(_new_chip_row(_chips_box.get_child_count()))
@@ -415,11 +488,24 @@ func _apply_rows(rows: Array) -> void:
 	for chip_id: Variant in _chips:
 		if not placed.has(str(chip_id)):
 			first_row.add_child(_chips[chip_id] as Button)
+	first_row.add_child(UIWidgets.spacer("ClockGap"))
+	if _clock_chip != null:
+		first_row.add_child(_clock_chip)
+	if _menu_button != null:
+		first_row.add_child(_menu_button)
 	_reposition_alert_stack()
 
 
+## How wide a banner may actually be: the doc's figure, or the room the display
+## has, whichever is smaller.
+func _banner_width_dp(doc_w: float) -> float:
+	return maxf(_touch_min, minf(doc_w, _width_dp() - _spacing * 2.0))
+
+
 ## The banner stack sits under the top bar (§2.3); when the bar wraps to two rows
-## the banners follow it down instead of landing on top of the chips.
+## the banners follow it down instead of landing on top of the chips. Its width
+## is re-solved here too, because the bar and the stack share one display and the
+## stack is centre-anchored with hard offsets in the scene.
 func _reposition_alert_stack() -> void:
 	if _alert_stack == null or _top_bar == null:
 		return
@@ -428,6 +514,14 @@ func _reposition_alert_stack() -> void:
 	var height := _alert_stack.offset_bottom - _alert_stack.offset_top
 	_alert_stack.offset_top = bar_h + _spacing
 	_alert_stack.offset_bottom = _alert_stack.offset_top + maxf(height, 0.0)
+	var raw: Variant = config.layout().get("alert_dp", [400, 44])
+	var doc_w: float = float((raw as Array)[0]) if raw is Array \
+			and (raw as Array).size() >= 2 else 400.0
+	var half := _banner_width_dp(doc_w) * 0.5
+	_alert_stack.offset_left = -half
+	_alert_stack.offset_right = half
+	for row: Dictionary in _alert_rows:
+		(row["panel"] as PanelContainer).custom_minimum_size.x = half * 2.0
 
 
 func _chip_text(chip: Dictionary, text: String) -> String:
@@ -608,6 +702,12 @@ func menu_button() -> Button:
 	return _menu_button
 
 
+## Both of these move into top-bar row 0 at bring-up (see `_adopt_trailing_block`),
+## so nothing outside this file should reach them by node path.
+func clock_chip() -> Button:
+	return _clock_chip
+
+
 ## Which top-bar row each visible chip landed on — what the layout tests assert
 ## against, and what a screenshot harness prints.
 func chip_rows() -> Array:
@@ -621,7 +721,9 @@ func chip_rows() -> Array:
 		var ids: Array[String] = []
 		for child in row.get_children():
 			var button := child as Button
-			if button != null and button.visible:
+			# Row 0 also carries the clock chip and the ☰ button (they share its
+			# line, §2.4's `clock_w`); neither is a *reading*.
+			if button != null and button.visible and str(button.name).begins_with("Chip_"):
 				ids.append(str(button.name).trim_prefix("Chip_"))
 		out.append(ids)
 	return out

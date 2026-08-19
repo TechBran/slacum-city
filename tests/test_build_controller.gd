@@ -600,14 +600,15 @@ func test_card_tap_raises_the_placement_bar_and_place_commits() -> void:
 	var bar := mounted["root"].get_node("SafeArea/SheetLayer/BuildSheet/PlacementBar") as Control
 	var confirm := mounted["root"].get_node(
 			"SafeArea/SheetLayer/BuildSheet/PlacementBar/Row/Confirm") as Button
-	var issue := mounted["root"].get_node(
-			"SafeArea/SheetLayer/BuildSheet/PlacementBar/Row/Issue") as Label
 	assert_true(bar.visible)
 
 	# A blocked lot disables PLACE and says why in words (A14).
 	sheet.move_ghost(Vector3(8 * 8.0 + 4.0, 0.0, 8 * 8.0 + 4.0))
 	assert_true(confirm.disabled, "BLOCKED disables the commit button")
-	assert_true(issue.text.length() > 0, "the bar names the reason")
+	# Read through the sheet, not by node path: the bar's two lines are stacked
+	# into a `Copy` box at bring-up (doc 12 delta D-17).
+	assert_true(sheet.placement_issue_text().length() > 0,
+			"the bar names the reason")
 
 	# A good lot enables it, and only the button commits.
 	var origin := _serviceable_vacant_tile(sim)

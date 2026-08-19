@@ -18,6 +18,8 @@ signal fix_requested(fix_target: Dictionary)    ## `Fix this →` on a blocker r
 const PALETTE_TYPE := "Palette"
 ## §2.9's `L1 L2 ▮L3▮ L4 L5` level pips — glyphs, not copy (A5 redundancy).
 const PIP_ON := "▮"
+## Every panel in the deck closes with this glyph and names itself in the tooltip.
+const CLOSE_GLYPH := "✕"
 
 var config: UIConfig
 var controller: BuildController
@@ -58,7 +60,8 @@ func setup(cfg: UIConfig = null, p_controller: BuildController = null) -> void:
 
 func _ready() -> void:
 	if config == null:
-		setup()
+		# The root's parse, not a second one — see `CityHUD._ready()`.
+		setup(UIRoot.config_from(self))
 
 
 func _bind_nodes() -> void:
@@ -91,8 +94,12 @@ func _build_static() -> void:
 		_close.theme_type_variation = &"GhostButton"
 		_close.focus_mode = Control.FOCUS_NONE
 		_close.custom_minimum_size = Vector2(_touch_min, _touch_min)
-		_close.text = _text("ui_building_close", "Close")
-		_close.tooltip_text = _close.text
+		# The glyph, with the word in the tooltip — the shape every other close in
+		# the deck uses (alerts, drawer, picker, saves, dashboard). This one was
+		# the odd one out: a 48 dp square target rendering the word `Close`, which
+		# reads as a different control from the ✕ on the panel beside it.
+		_close.text = CLOSE_GLYPH
+		_close.tooltip_text = _text("ui_building_close", "Close")
 		if not _close.pressed.is_connected(close):
 			_close.pressed.connect(close)
 	if _upgrade_button != null:
@@ -160,10 +167,30 @@ func view() -> Dictionary:
 	return _view
 
 
+## The right-edge column, solved against the display it is on — see
+## `UIWidgets.side_panel_width`. A checklist row is a whole sentence, so this
+## panel is the one most likely to want the full width of a phone.
+func _apply_panel_width() -> void:
+	if _panel == null or size.x <= 1.0:
+		return
+	var layout := config.layout()
+	var width := UIWidgets.side_panel_width(size.x,
+			_panel.get_combined_minimum_size().x,
+			UIConfig.get_num(layout, "drawer_w_ratio", 0.34),
+			UIConfig.get_num(layout, "side_panel_w_dp", 300.0),
+			UIConfig.get_num(layout, "drawer_w_max_dp", 340.0),
+			_touch_min)
+	_panel.offset_left = -width
+
+
 func _render(v: Dictionary) -> void:
+	_apply_panel_width()
 	if _title != null:
 		_title.text = _text(str(v["name_key"]), str(v["name_fallback"]))
 		_title.tooltip_text = _title.text
+		# See `AlertsCenter`: the scene's `clip_text` alone would let the ✕ beside
+		# it claim the whole header.
+		UIWidgets.elide(_title, _touch_min * 2.0)
 	if _level != null:
 		_level.text = "%s  %s" % [BuildingPanel.level_pips(int(v["level"]),
 				int(v["max_level"])), _text(str(v["state_key"]), String(v["state"]))]

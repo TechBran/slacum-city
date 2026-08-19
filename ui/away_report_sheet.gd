@@ -75,6 +75,9 @@ func _build_static() -> void:
 		_scrim.color = UIWidgets.scrim_color(self, SCRIM_ALPHA)
 	if _title != null:
 		_title.text = UIWidgets.t(config, "ui_away_header")
+		# Authored with `clip_text` in the scene, which reports a one-pixel minimum
+		# and lets the ✕ beside it claim the whole header row.
+		UIWidgets.elide(_title, _touch_min * 2.0)
 	for button: Button in [_close, _dismiss]:
 		if button == null:
 			continue

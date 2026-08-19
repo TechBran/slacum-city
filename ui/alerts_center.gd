@@ -39,6 +39,7 @@ var _row_titles: Dictionary = {} # alert id -> Label (repainted in place on read
 var _touch_min := 48.0
 var _spacing := 8.0
 var _row_h := 72.0
+var _chip_w := 72.0
 var _last_unread := -1
 
 
@@ -80,8 +81,8 @@ func _build_static() -> void:
 	if _chip != null:
 		_chip.theme_type_variation = &"StatChip"
 		_chip.focus_mode = Control.FOCUS_NONE
-		_chip.custom_minimum_size = Vector2(
-				maxf(UIConfig.get_num(alerts, "chip_w_dp", 72.0), _touch_min), _touch_min)
+		_chip_w = maxf(UIConfig.get_num(alerts, "chip_w_dp", 72.0), _touch_min)
+		_chip.custom_minimum_size = Vector2(_chip_w, _touch_min)
 		_chip.tooltip_text = UIWidgets.t(config, "ui_alerts_chip")  # A15
 		if not _chip.pressed.is_connected(toggle):
 			_chip.pressed.connect(toggle)
@@ -90,6 +91,10 @@ func _build_static() -> void:
 				UIConfig.get_num(alerts, "panel_w_dp", 300.0), 0.0)
 	if _title != null:
 		_title.text = UIWidgets.t(config, "ui_alerts_title")
+		# Authored with `clip_text` in the scene, which reports a one-pixel minimum
+		# and collapses beside the two header buttons. It may shorten — but only
+		# down to a floor.
+		UIWidgets.elide(_title, _touch_min * 2.0)
 	if _mark_all != null:
 		_mark_all.theme_type_variation = &"GhostButton"
 		_mark_all.focus_mode = Control.FOCUS_NONE
@@ -153,6 +158,11 @@ func open() -> void:
 	UIWidgets.close_siblings(self)  # one panel at a time on PanelLayer
 	if _panel != null:
 		_panel.visible = true
+	# The chip and the feed share the right edge, and the chip draws over the
+	# panel — it was covering the newest row, which is the row the player opened
+	# the feed to read. The panel carries its own ✕, so nothing is lost.
+	if _chip != null:
+		_chip.visible = false
 	refresh()
 	panel_toggled.emit(true)
 
@@ -160,6 +170,8 @@ func open() -> void:
 func close() -> void:
 	if _panel != null:
 		_panel.visible = false
+	if _chip != null:
+		_chip.visible = true
 	panel_toggled.emit(false)
 
 
@@ -178,7 +190,70 @@ func refresh() -> void:
 	_refresh_chip()
 	if not is_open():
 		return
+	_apply_panel_width()
 	_refresh_list()
+
+
+## The feed shares the right edge — and the width solver — with the incident
+## drawer: never narrower than its own rows, and full width once the strip left
+## beside it is too thin to show anything but a sliver of a HUD chip.
+func _apply_panel_width() -> void:
+	if _panel == null or size.x <= 1.0:
+		return
+	var layout := config.layout()
+	var width := UIWidgets.side_panel_width(size.x,
+			_panel.get_combined_minimum_size().x,
+			UIConfig.get_num(layout, "drawer_w_ratio", 0.34),
+			UIConfig.get_num(config.section("alerts"), "panel_w_dp", 300.0),
+			UIConfig.get_num(layout, "drawer_w_max_dp", 340.0),
+			_touch_min)
+	_panel.offset_left = -width
+
+
+## The chip is an edge affordance on `PanelLayer`, like the drawer's handle, and
+## the layer allows one open surface at a time. On a short landscape box it was
+## landing on the open drawer's rows with a tap target over theirs; polled here
+## because `BuildingPanel` and `IncidentDrawer` have no shared `opened` signal.
+func _process(_delta: float) -> void:
+	_fit_rows()
+	if _chip == null or is_open():
+		return
+	_chip.visible = not UIWidgets.any_sibling_open(self)
+	# The chip and the drawer's handle share the bottom-right corner, and both
+	# widen with the text scale: at 130 % the scene's authored offsets put the
+	# chip 3800 px² *inside* the handle. The chip is the one that moves, because
+	# the handle is pinned to the edge it is a tab on.
+	var handle := get_parent().get_node_or_null("IncidentDrawer/Handle") as Control
+	# The handle's laid-out width, not its declared minimum: it widens itself to
+	# whatever its count and tier line measure, and that is only true after a
+	# layout pass.
+	var reserved := (maxf(handle.custom_minimum_size.x, handle.size.x) + _spacing) \
+			if handle != null and handle.visible else 0.0
+	_chip.offset_right = -reserved
+	_chip.offset_left = _chip.offset_right \
+			- maxf(_chip_w, _chip.get_combined_minimum_size().x)
+
+
+## Grows each row to the height its own copy needs.
+##
+## The row is a Button and its three lines are an **anchored** child, so they
+## contribute nothing to the Button's minimum: a two-line body simply pushed the
+## timestamp out of the fixed 72 dp row, and half the feed had no time on it. An
+## autowrapped Label only knows its height once it knows its width, so this is
+## polled rather than computed at build time — it settles on the first frame the
+## panel is open and then costs a cached lookup per row.
+func _fit_rows() -> void:
+	if not is_open() or _list == null:
+		return
+	for child in _list.get_children():
+		var row := child as Button
+		if row == null:
+			continue
+		var body := row.get_node_or_null("Body") as Control
+		if body == null:
+			continue
+		row.custom_minimum_size.y = maxf(_row_h,
+				body.get_combined_minimum_size().y + _spacing)
 
 
 func _refresh_chip() -> void:

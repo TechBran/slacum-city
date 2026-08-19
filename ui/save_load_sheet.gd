@@ -83,6 +83,9 @@ func _build_static() -> void:
 		_scrim.color = UIWidgets.scrim_color(self, SCRIM_ALPHA)
 	if _title != null:
 		_title.text = UIWidgets.t(config, "ui_saves_title")
+		# Authored with `clip_text` in the scene, which reports a one-pixel minimum
+		# and lets the ✕ beside it claim the whole header row.
+		UIWidgets.elide(_title, _touch_min * 2.0)
 	if _close != null:
 		_close.theme_type_variation = &"GhostButton"
 		_close.focus_mode = Control.FOCUS_NONE
@@ -156,6 +159,11 @@ func _update_slot(row: Dictionary) -> void:
 			button.disabled = not bool(row[pair[1]])
 
 
+## Two lines, not one. `SAVE | LOAD | DELETE` are three ~80 dp targets, and on a
+## 412 dp phone they left the slot's own name 18 px to live in — `Autosave`,
+## `Slot 1` and `Empty` were all invisible while three buttons sat beside them.
+## Stacking the actions under the description gives each half the full width, and
+## the 88 dp row already has the height for it.
 func _build_slot(row: Dictionary) -> PanelContainer:
 	var slot := int(row["slot"])
 	var panel := PanelContainer.new()
@@ -163,7 +171,7 @@ func _build_slot(row: Dictionary) -> PanelContainer:
 	panel.theme_type_variation = &"DrawerRow"
 	panel.custom_minimum_size = Vector2(0.0, _row_h)
 
-	var line := HBoxContainer.new()
+	var line := VBoxContainer.new()
 	line.name = "Row"
 	line.add_theme_constant_override(&"separation", int(_spacing))
 	panel.add_child(line)
@@ -175,18 +183,25 @@ func _build_slot(row: Dictionary) -> PanelContainer:
 	line.add_child(info)
 	var title := UIWidgets.label("Title", str(row["title"]))
 	info.add_child(title)
-	var summary := UIWidgets.label("Summary", str(row["summary"]))
+	# The summary carries a day, a population and a treasury figure, so it is the
+	# one line here long enough to need an ellipsis on a narrow display.
+	var summary := UIWidgets.elide(UIWidgets.label("Summary", str(row["summary"])),
+			_touch_min * 2.0) as Label
 	info.add_child(summary)
 	var saved := UIWidgets.label("Saved", str(row["saved_text"]))
 	saved.visible = str(row["saved_text"]) != ""
 	info.add_child(saved)
 	_slot_labels[slot] = {"title": title, "summary": summary, "saved": saved}
 
-	line.add_child(_action_button(SaveSlotsModel.ACTION_SAVE, slot, "ui_saves_save",
+	var actions := HBoxContainer.new()
+	actions.name = "Actions"
+	actions.add_theme_constant_override(&"separation", int(_spacing))
+	line.add_child(actions)
+	actions.add_child(_action_button(SaveSlotsModel.ACTION_SAVE, slot, "ui_saves_save",
 			bool(row["can_save"]), &"PrimaryFAB", str(row["title"])))
-	line.add_child(_action_button(SaveSlotsModel.ACTION_LOAD, slot, "ui_saves_load",
+	actions.add_child(_action_button(SaveSlotsModel.ACTION_LOAD, slot, "ui_saves_load",
 			bool(row["can_load"]), &"GhostButton", str(row["title"])))
-	line.add_child(_action_button(SaveSlotsModel.ACTION_DELETE, slot, "ui_saves_delete",
+	actions.add_child(_action_button(SaveSlotsModel.ACTION_DELETE, slot, "ui_saves_delete",
 			bool(row["can_delete"]), &"DangerButton", str(row["title"])))
 	return panel
 
