@@ -109,6 +109,8 @@ func _ready() -> void:
 			var p := String(arg).trim_prefix("--focus=").split(",")
 			if p.size() == 2:
 				camera_state.set_focus(Vector3(float(p[0]), 0.0, float(p[1])))
+		elif String(arg) == "--tutorial-incident":
+			sim_host.sim.trigger_tutorial_transformer_failure()
 
 
 func _build_environment(render_data: Dictionary) -> void:
@@ -657,6 +659,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		match (event as InputEventKey).keycode:
 			KEY_B: _trigger_blackout_demo(true)
 			KEY_N: _trigger_blackout_demo(false)
+			KEY_T:
+				# Milestone 3's arc: the tutorial transformer cooks, the block
+				# darkens, dispatch sends a utility truck, repair relights it.
+				var incident := sim_host.sim.trigger_tutorial_transformer_failure()
+				print("[tutorial] transformer incident: ",
+						incident.id if incident != null else "none")
 	var viewport_size := Vector2(get_viewport().get_visible_rect().size)
 	if event is InputEventMouseButton:
 		var button := event as InputEventMouseButton
