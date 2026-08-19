@@ -74,36 +74,9 @@
     "traffic_refresh_game_minutes": 1
   },
   "alerts": {
-    "_comment": "The §2.15 alerts centre: the persistent feed behind the banner stack. Class and surface come from in_app_alerts above (C-71/C-72) — this block only says which sim event becomes which notification, and it is a STAND-IN for doc 08's data/notifications.json event->class map. When that file lands it REPLACES `events` wholesale; the two are never merged.",
+    "_comment": "The §2.15 alerts centre: PRESENTATION ONLY. `events` is DELETED (2026-08-19) — the stand-in event→notification map moved wholesale to doc 08's data/notifications.json, which owns classes, priorities, budgets and quiet hours (report C-71) and is what ui/alerts_model.gd now reads. Class and surface still come from in_app_alerts above (C-71/C-72). Nothing in this block decides what the player is told; it decides how wide the panel is.",
     "max_entries": 50, "row_h_dp": 72, "panel_w_dp": 300, "chip_w_dp": 72,
-    "unread_badge_max": 99, "coalesce_window_s": 300,
-    "events": [
-      {"type": "BlockDarkChanged", "match": {"block_dark": true}, "notify_id": "outage_major",
-       "class": "p1", "state": "critical", "key": "block_id", "coalesce_by": "notify_id",
-       "args": {"count": "@count", "district": "block_id", "time": "@time"}},
-      {"type": "BlockDarkChanged", "match": {"block_dark": false}, "notify_id": "power_restored",
-       "class": "p2", "state": "normal", "key": "block_id", "coalesce_by": "notify_id",
-       "args": {"district": "block_id", "time": "@time"}},
-      {"type": "PowerComponentFailed", "notify_id": "component_failed", "class": "p1",
-       "state": "critical", "key": "component",
-       "args": {"component": "component", "cause": "cause", "time": "@time"}},
-      {"type": "PowerComponentTripped", "notify_id": "component_tripped", "class": "p2",
-       "state": "warning", "key": "component", "args": {"component": "component", "time": "@time"}},
-      {"type": "LoadShedStarted", "notify_id": "load_shed", "class": "p1", "state": "critical",
-       "args": {"kw": "@number:shed_kw", "time": "@time"}},
-      {"type": "credit_line_engaged", "notify_id": "treasury_low", "class": "p1", "state": "warning",
-       "args": {"balance": "@money:balance", "time": "@time"}},
-      {"type": "credit_limit_reached", "notify_id": "treasury_critical", "class": "p1",
-       "state": "critical", "args": {"balance": "@money:balance", "time": "@time"}},
-      {"type": "austerity_entered", "notify_id": "austerity", "class": "p2", "state": "warning",
-       "args": {"time": "@time"}},
-      {"type": "city_level_changed", "notify_id": "city_level_up", "class": "p2", "state": "normal",
-       "args": {"level": "level"}},
-      {"type": "building_completed", "notify_id": "construction_complete", "class": "p3",
-       "state": "normal", "key": "building", "coalesce_by": "notify_id", "args": {"level": "level"}},
-      {"type": "block_ready", "notify_id": "land_developed", "class": "p3", "state": "normal",
-       "key": "block_id", "args": {"block": "block_id"}}
-    ]
+    "unread_badge_max": 99, "coalesce_window_s": 300
   },
   "event_log": {
     "_comment": "S13 (doc 12) — the city's HISTORY. The alerts centre above is a to-do list that coalesces and is marked read; this is the ledger behind it: one row per event, newest first, filtered by category, never coalesced and never persisted (§3.2 keeps no feed in the save — a resumed city starts its log from the resume). Copy resolves the SAME `n_<notify_id>_title`/`_body` keys the alerts centre and doc 13's pushes use, so a line in the log and the push that woke the player can never drift (G-8). `category` is the only thing this table adds that `alerts.events` does not have, and it is the whole filter strip.",

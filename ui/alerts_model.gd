@@ -9,12 +9,23 @@ extends RefCounted
 ## upstream has to know this class exists, and this class never holds a sim
 ## reference, so it stays headless.
 ##
-## Which event becomes which notification is **data**
-## (`data/ui.json.alerts.events`, a stand-in for doc 08's event→class map — see
-## that block's comment). Copy is data too: every row resolves
-## `n_<notify_id>_title` / `n_<notify_id>_body` from `data/strings.en.json`, the
-## same keys doc 13 renders for a push, so an in-app row and its push can never
-## drift (G-8). Nothing in this file is authored English.
+## Which event becomes which notification is **data**, and as of 2026-08-19 that
+## data is **`data/notifications.json`** — doc 08's file, owned solely by doc 08
+## (report C-71). The stand-in list in `data/ui.json.alerts.events` was deleted
+## wholesale, as that block's own comment always said it would be; `ui.json`
+## keeps presentation (row height, panel width, badge cap) and doc 12's
+## foreground `in_app_alerts` gate, and nothing else about alerts.
+##
+## Only the *source* changed. `NotificationConfig.alert_rules()` hands back the
+## same flat rule shape this class has always matched on — a binding merged with
+## its event row's class and state — so `feed()` below is untouched, and the one
+## thing that is now impossible is the in-app feed and a push disagreeing about
+## what class an event is.
+##
+## Copy is data too: every row resolves `n_<notify_id>_title` /
+## `n_<notify_id>_body` from `data/strings.en.json`, the same keys doc 13
+## renders for a push, so an in-app row and its push can never drift (G-8).
+## Nothing in this file is authored English.
 ##
 ## Two behaviours worth naming:
 ##   * **Coalescing.** A repeat of an alert the player has not read yet
@@ -51,6 +62,7 @@ const _DEFAULT_MAX_ENTRIES := 50
 const _DEFAULT_BADGE_MAX := 99
 
 var _cfg: UIConfig
+var _notifications: NotificationConfig
 var _alerts: Dictionary = {}
 var _state_glyphs: Dictionary = {}
 var _rules: Array = []
@@ -62,18 +74,50 @@ var _day_index := 0
 var _locator := Callable()
 
 
-func _init(cfg: UIConfig = null) -> void:
+## `notifications` is doc 08's table. Left null it is loaded from
+## `data/notifications.json` once per process and shared — the file is a few
+## kilobytes of rules that never change at runtime, and every screen that builds
+## an `AlertsModel` (the alerts centre, `tools/ui_preview.gd`, a test) would
+## otherwise re-parse it. Pass one explicitly to drive the model off a fixture.
+func _init(cfg: UIConfig = null, notifications: NotificationConfig = null) -> void:
 	if cfg == null:
 		return
 	_cfg = cfg
+	_notifications = notifications if notifications != null else AlertsModel.notification_table()
 	_alerts = cfg.section("alerts")
 	_state_glyphs = cfg.section("state_glyphs")
-	var raw: Variant = _alerts.get("events", [])
-	_rules = raw if raw is Array else []
+	_rules = _notifications.alert_rules()
+
+
+static var _shared_notifications: NotificationConfig = null
+
+
+## The process-wide notification table. `reload_notification_table()` exists for
+## a test that wants the file re-read after editing it, and for nothing else.
+static func notification_table() -> NotificationConfig:
+	if _shared_notifications == null:
+		_shared_notifications = NotificationConfig.load_from_files()
+	return _shared_notifications
+
+
+static func reload_notification_table() -> NotificationConfig:
+	_shared_notifications = null
+	return notification_table()
 
 
 static func load_from_files() -> AlertsModel:
 	return AlertsModel.new(UIConfig.load_from_files())
+
+
+## Non-fatal load problems from `data/notifications.json` — a binding naming an
+## unknown notify_id, a missing file. Empty is the healthy answer, and
+## `tests/test_notifications.gd` is where it becomes loud.
+func notification_errors() -> PackedStringArray:
+	return _notifications.errors if _notifications != null else PackedStringArray()
+
+
+func notifications() -> NotificationConfig:
+	return _notifications
 
 
 ## `Callable(kind: StringName, id: Variant) -> Variant` returning a `Vector3`
@@ -126,7 +170,13 @@ func feed(event: Dictionary) -> Dictionary:
 		"identity": identity,
 		"event_type": str(event.get("type", "")),
 		"notify_id": notify_id,
+		# `class` is doc 12's surface key (p1/p2/p3, `data/ui.json.in_app_alerts`);
+		# `push_class` is doc 08's own name for the same decision. Both, because
+		# they are two budgets and a row that only carried one of them would be
+		# the exact confusion report C-72 exists to prevent.
 		"class": str(rule.get("class", "p3")),
+		"push_class": str(rule.get("push_class", "P3_routine")),
+		"severity": int(rule.get("severity", 0)),
 		"state": StringName(str(rule.get("state", String(HudModel.STATE_NORMAL)))),
 		"entity_kind": key_name,
 		"entity_id": key_value,

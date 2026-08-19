@@ -242,9 +242,18 @@ static func _alert_events() -> Array:
 		{"type": "PowerComponentTripped", "component": "F-12"},
 		{"type": "LoadShedStarted", "shed_kw": 1840.0},
 		{"type": "credit_line_engaged", "balance": -240000},
-		{"type": "city_level_changed", "level": 3},
+		# `from`/`to` and `block` are what sim/ actually emits — the deleted
+		# stand-in table read `level` and `block_id`, so these two rows rendered
+		# an EMPTY title in the preview and in the game alike.
+		{"type": "city_level_changed", "from": 2, "to": 3},
 		{"type": "building_completed", "building": 7, "level": 2},
-		{"type": "block_ready", "block_id": "B-14"},
+		{"type": "block_ready", "block": "B-14"},
+		# NOT extended past eight rows, though doc 08's table now wires ~14 more
+		# shapes: at 412x915 the alerts list already overlaps the incident-drawer
+		# handle and the event-log chip from its FIRST row (a pre-existing
+		# `overlapping_targets` finding at HEAD, in ui/alerts_center.gd's panel
+		# geometry, not in this fixture). Adding rows only deepens somebody
+		# else's defect; `tests/test_notifications.gd` covers the new shapes.
 	]
 
 
@@ -436,7 +445,7 @@ func _away_input(elapsed_s: float, with_unresolved: bool) -> Dictionary:
 			{"type": "building_completed", "building": 1, "level": 2},
 			{"type": "building_completed", "building": 2, "level": 3},
 			{"type": "building_completed", "building": 3, "level": 2},
-			{"type": "city_level_changed", "level": 3},
+			{"type": "city_level_changed", "from": 2, "to": 3},
 		],
 		"unresolved": unresolved,
 	}

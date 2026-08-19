@@ -50,6 +50,12 @@ const BACK_AUTOSAVE_MIN_INTERVAL_S := 5.0
 var save_service: SaveService
 ## The live sim. Only ever handed to `SaveService`; never read here.
 var sim: Object
+## doc 08 §2.13's notification planner, optional. When set, the pause sequence
+## runs its scheduling pass (`plan_for_background`) and the resume sequence
+## cancels and re-plans — the two moments the doc names, and the only two places
+## in the game where a notification's *timing* is decided. Left null everywhere
+## it is not wired, which is desktop and the headless runner.
+var notification_router: NotificationRouter
 ## Injectable clocks (tests drive them; production uses `Time`).
 ## `wall` returns unix seconds, `mono` returns monotonic seconds.
 var wall_clock: Callable = func() -> float: return Time.get_unix_time_from_system()
@@ -138,7 +144,13 @@ func _on_paused() -> void:
 	if native != null and native.is_available():
 		_paused_realtime_ms = native.elapsed_realtime_ms()
 		_paused_boot_id = native.boot_id()
-	paused.emit(_autosave())
+	var saved := _autosave()
+	# After the save, never before: doc 08 §2.13's pass schedules from fire times
+	# "already in the save wherever possible", and a plan made against a city
+	# that was then not committed would be a plan for a future that never was.
+	if notification_router != null:
+		notification_router.plan_for_background()
+	paused.emit(saved)
 
 
 func _on_resumed() -> void:
@@ -152,6 +164,12 @@ func _on_resumed() -> void:
 	_paused_realtime_ms = -1
 	_paused_boot_id = ""
 	last_elapsed_wall_s = elapsed
+	# doc 08 §2.13: on resume every pending alarm is cancelled and re-planned —
+	# the catch-up about to run has replaced the future they were scheduled
+	# against. Done BEFORE `resumed` so nothing the catch-up emits is cancelled
+	# by a step that was supposed to precede it.
+	if notification_router != null:
+		notification_router.replan_after_resume()
 	resumed.emit(elapsed)
 
 

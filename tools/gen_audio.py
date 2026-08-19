@@ -60,7 +60,12 @@ SR_FULL = 44100
 SR_HALF = 22050
 SR = SR_FULL          # the rate currently being built; `main()` sets it per asset
 BIT_DEPTH = 16
-TOTAL_BUDGET_BYTES = 4 * 1024 * 1024
+# Raised 4.0 -> 4.5 MiB by the Audio-2 ruling that also relaxed the under-8 s
+# loop brief. The extra half-megabyte is spent entirely on loop LENGTH (7.5 ->
+# 12 s on the three atmospheric beds) plus the storm wind bed, and it is paid
+# for in part by filing `siren_pass` at the half rate — its top partial is the
+# 7th of a 960 Hz wail (6.7 kHz), which sits a long way inside 11 kHz.
+TOTAL_BUDGET_BYTES = 4608 * 1024
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OUT = os.path.join(os.path.dirname(HERE), "game", "audio", "generated")
@@ -170,6 +175,38 @@ def lfo(t: np.ndarray, seconds: float, cycles: int, phase: float = 0.0) -> np.nd
 
 def dc_kill(x: np.ndarray) -> np.ndarray:
     return x - x.mean()
+
+
+# The four cycle counts every bed modulates on, and the phases that go with
+# them. Both halves are load-bearing and both were chosen against a *judged*
+# defect, not a guess:
+#
+# **No one-cycle term.** The first pass used cycles (1, 3, 5, 7) with the
+# one-cycle LFO carrying half the depth. That gives each buffer exactly one big
+# swell, always at the same place — and a swell at a fixed place is a LANDMARK.
+# A seamless loop with a landmark still reads as a loop: the judging pass heard
+# "the initial gust at the start of each loop acts as a clear marker for the
+# start of the pattern" on the beds built that way, which is the criticism that
+# actually matters once the seam itself is clean. Starting at two cycles and
+# weighting the four terms comparably leaves an envelope that wanders instead of
+# breathing, with no single gesture long enough to be recognised.
+#
+# **Phases put t=0 in the MIDDLE of the swing.** Searched, not picked: these
+# four put the composite at -0.016 of a ±0.82 range at t=0 — dead centre. The
+# loop point therefore lands on an ordinary moment rather than on the crest, so
+# there is nothing distinctive happening at the one instant a listener has been
+# trained by every other game to listen for.
+WANDER_CYCLES = (2, 3, 5, 7)
+WANDER_WEIGHTS = (0.34, 0.27, 0.22, 0.17)
+WANDER_PHASES = (4.1333, 1.6658, 5.9090, 0.4949)
+
+
+def wander(t: np.ndarray, seconds: float) -> np.ndarray:
+    """Landmark-free slow modulation, roughly ±0.8, exactly periodic over `t`."""
+    out = np.zeros_like(t)
+    for cycles, weight, phase in zip(WANDER_CYCLES, WANDER_WEIGHTS, WANDER_PHASES):
+        out += weight * lfo(t, seconds, cycles, phase)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -351,8 +388,23 @@ def build_thunder_rumble() -> np.ndarray:
 
 ## Every bed's modulation uses COPRIME cycle counts (1, 3, 5, 7…). Their least
 ## common multiple is the whole buffer, so the texture never repeats *inside* the
-## loop and the ear has nothing shorter than 7.5 s to lock onto.
-LOOP_SECONDS = 7.5
+## loop and the ear has nothing shorter than the whole buffer to lock onto.
+##
+## **12 s, not 7.5** (Audio-2 ruling). 7.5 s was chosen against a 4 MB budget and
+## an "under 8 s" brief; both were relaxed, and the honest truth is that a
+## seamless loop is still a loop — the ear locks onto the *gust pattern*, not
+## onto a click. 12 s pushes the shortest recognisable gesture (the one-cycle
+## LFO) past the ~8 s window in which a listener reliably matches two textures,
+## and it is the single highest-value place the extra bytes could go.
+LOOP_SECONDS = 12.0
+## The storm bed is deliberately NOT `LOOP_SECONDS`. It plays *underneath* the
+## wind bed, and 10 against 12 is coprime in seconds: the pair realigns only
+## every 60 s, so a storm that lasts a minute never repeats the same combination
+## twice. Two loops of the same length would have been one 12 s loop with extra
+## steps.
+STORM_LOOP_SECONDS = 10.0
+## Rain droplets per second of buffer. See `build_rain_loop`.
+DROPS_PER_SECOND = 40.0 / 7.5
 
 
 def build_rain_loop() -> np.ndarray:
@@ -361,10 +413,13 @@ def build_rain_loop() -> np.ndarray:
     n, t = times(seconds)
     hiss = circ_noise(n, "rain/hiss",
                       lambda f: hp(f, 380, 1) * lp(f, 7500, 1) * (1.0 + 0.7 * bp(f, 2400, 1.5)))
-    wash = circ_noise(n, "rain/wash", lambda f: bp(f, 300, 1.3) * lp(f, 900, 2))
-    body = 0.85 * hiss + 0.40 * wash
-    body *= (1.0 + 0.10 * lfo(t, seconds, 1) + 0.07 * lfo(t, seconds, 3, 1.3)
-             + 0.05 * lfo(t, seconds, 7, 0.4))
+    # The road wash was judged "a little woolly in the lower mids" at bp(300)
+    # ×0.40. Moved up to 420 Hz and trimmed to 0.27: the weight is still there —
+    # rain on tarmac is not all sizzle — but the 200-400 Hz band it was piling
+    # into now belongs to the storm bed, which is the layer that should own it.
+    wash = circ_noise(n, "rain/wash", lambda f: bp(f, 420, 1.15) * lp(f, 1150, 2))
+    body = 0.85 * hiss + 0.27 * wash
+    body *= 1.0 + 0.16 * wander(t, seconds)
     # Droplets, stamped modulo the buffer so one near the end wraps cleanly, and
     # placed by STRATIFIED sampling: one per 1/count slot, jittered inside it.
     # Uniform draws clump, and a clump that happens to land near t=0 is heard as
@@ -373,7 +428,9 @@ def build_rain_loop() -> np.ndarray:
     # the seam, so there is nothing periodic for the ear to lock onto.
     drop_rng = rng("rain/drops")
     kn, kt = times(0.012)
-    count = 40
+    # Density, not count: 5.33 droplets a second was the level judged right at
+    # 7.5 s, and a longer buffer must sound identical, not rainier.
+    count = int(round(DROPS_PER_SECOND * seconds))
     for i in range(count):
         kernel = (np.fft.irfft(np.fft.rfft(rng("rain/drop%d" % i).standard_normal(kn))
                                * bp(bins(kn), 3200 * (0.7 + 0.6 * drop_rng.random()), 0.9), kn)
@@ -389,12 +446,57 @@ def build_wind_loop() -> np.ndarray:
     n, t = times(seconds)
     band = circ_noise(n, "wind/band", lambda f: bp(f, 430, 1.5) * lp(f, 1800, 2))
     low = circ_noise(n, "wind/low", lambda f: lp(f, 160, 2))
-    gust = 0.55 + 0.45 * (0.52 * lfo(t, seconds, 1) + 0.30 * lfo(t, seconds, 3, 0.9)
-                          + 0.18 * lfo(t, seconds, 5, 2.1))
-    gust = np.clip(gust, 0.12, 1.0)
+    gust = np.clip(0.58 + 0.52 * wander(t, seconds), 0.12, 1.0)
     whistle = (np.sin(2 * np.pi * bin_lock(1180.0, seconds) * t)
                * (0.5 + 0.5 * lfo(t, seconds, 7, 0.4)))
     body = (0.9 * band + 0.5 * low) * gust + 0.035 * whistle * gust
+    return dc_kill(body)
+
+
+def build_storm_wind() -> np.ndarray:
+    """The bed that goes UNDER the wind bed once a storm is really blowing.
+
+    `wind_loop` is wind heard in the open: a mid band that gusts. What a storm
+    adds is not more of that — it is *pressure*. Three things this bed has that
+    the plain wind bed deliberately does not:
+
+    * **A sub-100 Hz buffet.** Filed at 22.05 kHz precisely because there is
+      nothing above 2 kHz in it worth a byte.
+    * **Slow, deep gusting.** The envelope swings 0.18 -> 1.0 (against the wind
+      bed's 0.12 -> 1.0 on a much flatter shape) and rides one, two and three
+      cycles per buffer, so the surges are ten-second events rather than the
+      wind bed's per-second flutter. Layered on top of a bed whose gusts are
+      already moving, that is what reads as weather rather than as noise.
+    * **Rattle.** Sparse, stratified band-noise taps — sheet metal and loose
+      fittings answering the gusts — stamped modulo the buffer and *amplitude-
+      keyed to the gust envelope*, so they only happen when the wind is up.
+
+    Layering rather than replacing is the point: at full storm both beds run,
+    and the crossfade the mix does is between "windy" and "windy plus weight".
+    """
+    seconds = STORM_LOOP_SECONDS
+    n, t = times(seconds)
+    buffet = circ_noise(n, "storm/buffet", lambda f: lp(f, 78, 2) * hp(f, 22, 1))
+    roar = circ_noise(n, "storm/roar", lambda f: bp(f, 240, 1.7) * lp(f, 1100, 2))
+    # Spray: wind-driven water off roofs and road. It is only ~9% of the level,
+    # but it is the layer that keeps the bed from being a pure sub — and it is
+    # what makes the rattles below read as part of the texture rather than as
+    # isolated transients on an otherwise glassy buffer.
+    spray = circ_noise(n, "storm/spray", lambda f: bp(f, 1500, 1.7) * lp(f, 4200, 2))
+    gust = np.clip(0.56 + 0.56 * wander(t, seconds), 0.18, 1.0)
+    body = (1.00 * buffet + 0.46 * roar) * gust + 0.30 * spray * gust ** 2
+    rattle_rng = rng("storm/rattles")
+    kn, kt = times(0.055)
+    count = 9
+    for i in range(count):
+        fc = 900.0 * (0.75 + 0.7 * float(rattle_rng.random()))
+        noise = np.fft.irfft(np.fft.rfft(rng("storm/rattle%d" % i).standard_normal(kn))
+                             * bp(bins(kn), fc, 0.8), kn)
+        kernel = noise * ad(kt, 0.0012, 0.011)
+        at = (i + float(rattle_rng.random())) * seconds / count
+        # Keyed to the gust: a rattle in a lull would read as a foley mistake.
+        strength = float(np.interp(at, t, gust))
+        stamp(body, at, kernel, 0.16 * strength ** 2)
     return dc_kill(body)
 
 
@@ -410,11 +512,10 @@ def build_amb_city_day() -> np.ndarray:
                          lambda f: hp(f, 50, 2) * lp(f, 950, 1.3) * (1.0 + 0.45 * bp(f, 175, 1.0)))
     air = circ_noise(n, "amb_day/air", lambda f: bp(f, 2600, 1.7))
     body = 0.95 * traffic + 0.055 * air
-    for freq, amp, cyc in ((92.0, 0.030, 1), (138.0, 0.022, 3), (207.0, 0.014, 5)):
+    for freq, amp, cyc in ((92.0, 0.030, 2), (138.0, 0.022, 3), (207.0, 0.014, 5)):
         f = bin_lock(freq, seconds)
         body += amp * np.sin(2 * np.pi * f * t) * (0.6 + 0.4 * lfo(t, seconds, cyc, 0.7))
-    body *= (1.0 + 0.09 * lfo(t, seconds, 1, 0.2) + 0.05 * lfo(t, seconds, 3, 1.7)
-             + 0.04 * lfo(t, seconds, 7, 2.6))
+    body *= 1.0 + 0.13 * wander(t, seconds)
     return dc_kill(body)
 
 
@@ -430,7 +531,7 @@ def build_amb_city_night() -> np.ndarray:
     body += 0.045 * np.sin(2 * np.pi * mains * t) + 0.014 * np.sin(2 * np.pi * 2 * mains * t)
     body += (0.010 * np.sin(2 * np.pi * bin_lock(330.0, seconds) * t)
              * (0.5 + 0.5 * lfo(t, seconds, 3)))
-    body *= 1.0 + 0.07 * lfo(t, seconds, 1, 2.2) + 0.04 * lfo(t, seconds, 5, 0.8)
+    body *= 1.0 + 0.09 * wander(t, seconds)
     return dc_kill(body)
 
 
@@ -558,14 +659,22 @@ SPECS = [
     ("relight_hum",        build_relight_hum,        0.70, False, SR_HALF),
     ("thunder_crack",      build_thunder_crack,      0.92, False, SR_FULL),
     ("thunder_rumble",     build_thunder_rumble,     0.74, False, SR_HALF),
+    # rain_loop stays at the FULL rate: measured, 6.0% of its energy sits in the
+    # top band at 22.05 kHz, because rain genuinely *is* hiss out past 7 kHz.
+    # Halving its rate would have bought 0.5 MB by dulling the one asset whose
+    # whole character is brightness.
     ("rain_loop",          build_rain_loop,          0.52, True,  SR_FULL),
     ("wind_loop",          build_wind_loop,          0.46, True,  SR_HALF),
+    ("storm_wind",         build_storm_wind,         0.58, True,  SR_HALF),
     ("amb_city_day",       build_amb_city_day,       0.40, True,  SR_HALF),
     ("amb_city_night",     build_amb_city_night,     0.30, True,  SR_HALF),
+    # 6 s, deliberately, while the atmospheric beds went to 12: a crane loop is
+    # SUPPOSED to be periodic — that is what makes it read as machinery — so the
+    # extra bytes would buy nothing an ear could use.
     ("site_loop",          build_site_loop,          0.44, True,  SR_HALF),
     ("alert_low",          build_alert_low,          0.50, False, SR_HALF),
     ("alert_high",         build_alert_high,         0.68, False, SR_FULL),
-    ("siren_pass",         build_siren_pass,         0.64, False, SR_FULL),
+    ("siren_pass",         build_siren_pass,         0.64, False, SR_HALF),
     ("level_fanfare",      build_level_fanfare,      0.58, False, SR_FULL),
 ]
 

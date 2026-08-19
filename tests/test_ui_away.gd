@@ -80,8 +80,13 @@ func test_a_notable_event_shows_the_report_however_short_the_absence() -> void:
 	var loud := _input(10.0, [{"type": "BlockDarkChanged", "block_id": "B2",
 			"block_dark": true}])
 	assert_true(model.should_show(loud), "a P1 outage is")
-	var mid := _input(10.0, [{"type": "city_level_changed", "level": 3}])
-	assert_true(model.should_show(mid), "and so is a P2")
+	# doc 08's table (not the deleted ui.json stand-in): a level-up is P3 — it is
+	# good news, and good news does not open a modal. A broken main is P2.
+	var promotion := _input(10.0, [{"type": "city_level_changed", "from": 2, "to": 3}])
+	assert_false(model.should_show(promotion), "a level-up is welcome, not urgent")
+	var mid := _input(10.0, [{"type": "water_main_break", "edge": "M-12",
+			"severity": 0.6, "damage_fraction": 0.4}])
+	assert_true(model.should_show(mid), "and a P2 water main break is")
 
 
 func test_classification_comes_from_the_alerts_table_not_a_second_opinion() -> void:
@@ -89,8 +94,14 @@ func test_classification_comes_from_the_alerts_table_not_a_second_opinion() -> v
 	assert_eq(model.event_class({"type": "BlockDarkChanged", "block_id": "B2",
 			"block_dark": true}), AwayModel.CLASS_P1)
 	assert_eq(model.event_class({"type": "BlockDarkChanged", "block_id": "B2",
-			"block_dark": false}), AwayModel.CLASS_P2,
+			"block_dark": false}), AwayModel.CLASS_P3,
 			"the same event type, the other rule — the table's `match` decides")
+	# …and the class is doc 08's now, not the deleted stand-in's: power coming
+	# BACK is `P3_routine`, because a problem that has already ended is not a
+	# thing the away report needs to put in front of anybody.
+	assert_eq(model.event_class({"type": "PowerComponentFailed", "component": "T-04",
+			"cause": "overload"}), AwayModel.CLASS_P2,
+			"a failed transformer still is")
 	assert_eq(model.event_class({"type": "building_completed", "building": 1,
 			"level": 2}), AwayModel.CLASS_P3)
 	assert_eq(model.event_class({"type": "job_started"}), AwayModel.CLASS_P3,
@@ -218,7 +229,12 @@ func test_the_timeline_groups_by_type_and_ranks_the_worst_class_first() -> void:
 	for i in 9:
 		digest.append({"type": "building_completed", "building": i, "level": 2})
 	digest.append({"type": "BlockDarkChanged", "block_id": "B2", "block_dark": true})
-	digest.append({"type": "city_level_changed", "level": 3})
+	# A P2, so the three rows are one of each class and the ranking is what is
+	# being measured rather than a tie-break. (`city_level_changed` used to sit
+	# here; doc 08's table files a level-up as P3, which made it a tie with the
+	# completions and the assertion below meaningless.)
+	digest.append({"type": "PowerComponentFailed", "component": "T-04",
+			"cause": "overload"})
 	var timeline: Dictionary = model.build(_input(3000.0, digest))["timeline"]
 	var rows: Array = timeline["rows"]
 	assert_eq(rows.size(), 3, "nine completions are one line, not nine")

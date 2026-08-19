@@ -10,7 +10,22 @@
 		"bed_stop_below": 0.0008,
 		"duck_attack_s": 0.06,
 		"duck_release_s": 1.10,
-		"rng_seed": 20250819
+		"rng_seed": 20250819,
+
+		"_comment_count_gain": "Audio-2 ruling: a citywide blackout is LOUDER than one dark block. A rule that dedups by cue folds N events into one cue and carries the fold's `count`; `count_gain` turns that count into dB, `per_doubling_db` at a time, capped. A rule opts in with `\"count_gain\": true` (this default) or with its own object. `max_db` is the ruling's ceiling and tests/test_audio_model.gd holds it to +4 dB — twelve dark blocks is 3.58 doublings ≙ 5.7 dB uncapped, so the cap is what is actually doing the work, and that is the point: the difference between one block and the city is legible, and no fold can ever run away.",
+		"count_gain": {"per_doubling_db": 1.60, "max_db": 4.00},
+
+		"_comment_muffle": "Interior muffle (doc 12 sheets/panels). When a sheet or panel covers more than `threshold01` of the screen the player is INSIDE something, and the city should be heard through it: an AudioEffectLowPassFilter on the Ambient bus alone, sliding from `open_hz` to `covered_hz` and trimming `covered_db`. The SFX and UI buses are untouched — a confirmation blip is in the room with the player, not out of the window. `ramp_s` is longer than the sheet's own animation so the mix settles after the panel rather than racing it.",
+		"muffle": {
+			"bus": "Ambient",
+			"threshold01": 0.50,
+			"full01": 0.92,
+			"open_hz": 20500.0,
+			"covered_hz": 900.0,
+			"covered_db": -4.5,
+			"resonance": 0.62,
+			"ramp_s": 0.28
+		}
 	},
 
 	"buses": [
@@ -42,6 +57,22 @@
 			["unit_id", "unit"]
 		],
 		"default_attenuation": {"ref_m": 90.0, "max_m": 1400.0, "curve": "inverse"}
+	},
+
+	"sirens": {
+		"_comment": "MOVING sirens (Audio-2 ruling; doc 11 §2.15 listed `vehicle_state.siren` as not-wired precisely because it needed this). Doc 10's feed is ~1,400 events per game hour, so the deliverable is the THROTTLE, not the emitter: at most `max_sources` sirens are ever audible, chosen nearest-first, and the choice is sticky so a unit does not pop in and out while two vehicles trade places a metre at a time. The doppler stays baked into `siren_pass` — nothing here pitch-shifts anything; a moving unit simply re-triggers its pass AT ITS CURRENT POSITION every `retrigger_s`, so distance and direction come out of the ordinary attenuation.",
+		"_hysteresis": "Three separate mechanisms, because a single radius pops three different ways. (1) `enter_m` < `exit_m`: a source has to come closer to win a slot than it has to stay to keep one. (2) `takeover_margin_m`: a waiting source only displaces an audible one when it is that many metres CLOSER, so two units running the same street never trade the slot back and forth. (3) `min_hold_s`: once a source is audible it keeps its slot for at least this long no matter what, which bounds how often the audible set can change at all.",
+		"cue": "siren_pass",
+		"max_sources": 2,
+		"enter_m": 420.0,
+		"exit_m": 640.0,
+		"takeover_margin_m": 90.0,
+		"min_hold_s": 4.00,
+		"retrigger_s": 3.30,
+		"ttl_s": 6.00,
+		"_comment_statuses": "doc 06 §2.11's fleet FSM: a unit RESPONDING is running hot. ON_SCENE keeps its lightbar (doc 11 §2.12) but not its siren — a parked engine at a fire is not wailing — and RETURNING goes quiet. This list is the only place audio names a doc 06 status.",
+		"siren_statuses": ["RESPONDING"],
+		"attenuation": {"ref_m": 120.0, "max_m": 900.0, "curve": "inverse"}
 	},
 
 	"cues": {
@@ -88,17 +119,22 @@
 			"attenuation": {"ref_m": 110.0, "max_m": 1100.0, "curve": "inverse"}},
 
 		{"_comment": "Power. BlockDarkChanged is the sim's truth; render_blackout_started / render_relight_started are doc 11 §2.15's renderer hooks for the same beat. Both are mapped on purpose — they share a cue identity, so a shell that feeds both event sources still gets exactly one thunk per blackout."},
+		{"_comment_count_gain": "These four are exactly what `count_gain` was ruled for: the fold is the whole point of the cue, and its `count` is how much of the city just went dark. One block is the authored level; the cap lands at eight blocks and never moves again."},
 		{"type": "BlockDarkChanged", "match": {"block_dark": true}, "cue": "blackout_whomp",
 			"key": "block_id", "dedup_by": "cue", "dedup_s": 0.40, "cooldown_s": 2.50,
+			"count_gain": true,
 			"attenuation": {"ref_m": 350.0, "max_m": 5000.0, "curve": "inverse"}},
 		{"type": "BlockDarkChanged", "match": {"block_dark": false}, "cue": "relight_hum",
 			"key": "block_id", "dedup_by": "cue", "dedup_s": 0.40, "cooldown_s": 2.50,
+			"count_gain": true,
 			"attenuation": {"ref_m": 350.0, "max_m": 5000.0, "curve": "inverse"}},
 		{"type": "render_blackout_started", "cue": "blackout_whomp",
 			"key": "block_id", "dedup_by": "cue", "dedup_s": 0.40, "cooldown_s": 2.50,
+			"count_gain": true,
 			"attenuation": {"ref_m": 350.0, "max_m": 5000.0, "curve": "inverse"}},
 		{"type": "render_relight_started", "cue": "relight_hum",
 			"key": "block_id", "dedup_by": "cue", "dedup_s": 0.40, "cooldown_s": 2.50,
+			"count_gain": true,
 			"attenuation": {"ref_m": 350.0, "max_m": 5000.0, "curve": "inverse"}},
 
 		{"_comment": "Lightning. `speed_of_sound` turns the metres into the delay behind the flash; the near rule fires the crack, everything further away smears into the rumble. Both carry world_pos already, so no locator is involved."},
@@ -106,10 +142,12 @@
 			"cue": "thunder_crack", "speed_of_sound": true,
 			"gain_from": "magnitude", "gain_range_db": [-4.0, 2.0],
 			"dedup_by": "cue", "dedup_s": 0.30, "cooldown_s": 0.35,
+			"count_gain": {"per_doubling_db": 1.10, "max_db": 2.20},
 			"attenuation": {"ref_m": 200.0, "max_m": 5000.0, "curve": "inverse"}},
 		{"type": "lightning_strike", "cue": "thunder_rumble", "speed_of_sound": true,
 			"gain_from": "magnitude", "gain_range_db": [-5.0, 2.0],
 			"dedup_by": "cue", "dedup_s": 0.30, "cooldown_s": 0.35,
+			"count_gain": {"per_doubling_db": 1.10, "max_db": 2.20},
 			"attenuation": {"ref_m": 400.0, "max_m": 6000.0, "curve": "inverse"}},
 
 		{"_comment": "Incidents. doc 08's notification class decides the sting: P1 critical gets the urgent one, everything else the routine one."},
@@ -118,11 +156,12 @@
 			"dedup_s": 0.30, "cooldown_s": 3.00, "attenuation": {"curve": "none"}},
 		{"type": "incident_created", "cue": "alert_low", "key": "incident_id",
 			"dedup_by": "cue", "dedup_s": 0.35, "cooldown_s": 5.00,
+			"count_gain": {"per_doubling_db": 1.20, "max_db": 2.40},
 			"attenuation": {"ref_m": 260.0, "max_m": 2200.0, "curve": "inverse"}},
 
-		{"_comment": "Dispatch. unit_dispatched carries no position, so the incident's tile — remembered from incident_created — places the siren; the pass-by fade is authored into the asset, and distance only sets its level."},
+		{"_comment": "Dispatch — the DEPARTURE beat. unit_dispatched carries no position, so the incident's tile (remembered from incident_created) places it; the pass-by fade and the doppler are authored into the asset, and distance only sets the level. Everything after the departure belongs to the `sirens` throttle above, which takes over at the unit's real position: `key_prefix` puts this rule on the throttle's own identity (`siren_pass/u7`), so the two can never sound the same unit twice at the station door."},
 		{"type": "unit_dispatched", "cue": "siren_pass", "key": "unit_id",
-			"dedup_by": "key", "dedup_s": 0.20, "cooldown_s": 6.00,
+			"key_prefix": "u", "dedup_by": "key", "dedup_s": 0.20, "cooldown_s": 6.00,
 			"attenuation": {"ref_m": 120.0, "max_m": 900.0, "curve": "inverse"}},
 
 		{"type": "city_level_changed", "cue": "level_fanfare",
@@ -131,7 +170,7 @@
 	],
 
 	"beds": {
-		"_comment": "Looping ambience. `source` names the computation in AudioEvents: `day`/`night` cross-fade on the shell's night01, `precip` follows weather_changed.precip01, `wind` maps wind_kph into 0..1, `sites` follows how many construction sites are live and how far the nearest one is. Each bed's gain is lerped over mix.bed_ramp_s and the player is stopped outright below mix.bed_stop_below, so a silent bed costs nothing.",
+		"_comment": "Looping ambience. `source` names the computation in AudioEvents: `day`/`night` cross-fade on the shell's night01, `precip` follows weather_changed.precip01, `wind` maps wind_kph into 0..1, `storm` is the two of them together, `sites` follows how many construction sites are live and how far the nearest one is. Each bed's gain is lerped over mix.bed_ramp_s and the player is stopped outright below mix.bed_stop_below, so a silent bed costs nothing.",
 
 		"city_day": {"stream": "amb_city_day", "bus": "Ambient", "gain_db": -5.0,
 			"source": "day", "floor": 0.0},
@@ -142,6 +181,11 @@
 		"wind": {"stream": "wind_loop", "bus": "Ambient", "gain_db": -9.0,
 			"source": "wind", "min_kph": 16.0, "max_kph": 78.0, "exponent": 1.20,
 			"pitch_at_max": 1.14},
+		"_comment_storm": "The storm bed goes UNDER the wind bed, never instead of it: `storm_wind` is sub-100 Hz buffet, roar and rattle, and the wind bed is still what carries the gusting mid. It needs BOTH inputs — `min_kph` for wind and `min_precip01` for rain — because a dry gale is a gale and a still downpour is a downpour, and only the two together are a storm. `precip_weight` is how much of the level rain is allowed to carry once the wind gate is open. It comes up on `exponent` 1.6 so a merely blustery afternoon stays under it.",
+		"storm": {"stream": "storm_wind", "bus": "Ambient", "gain_db": -7.0,
+			"source": "storm", "min_kph": 34.0, "max_kph": 92.0,
+			"min_precip01": 0.10, "precip_weight": 0.45, "exponent": 1.60,
+			"pitch_at_max": 1.05},
 		"site": {"stream": "site_loop", "bus": "Ambient", "gain_db": -13.0,
 			"source": "sites", "ref_count": 3.0, "ttl_s": 600.0,
 			"attenuation": {"ref_m": 60.0, "max_m": 420.0, "curve": "inverse"}}
