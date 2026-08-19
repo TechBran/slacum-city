@@ -20,7 +20,9 @@
     "marker_tap_dp": 48, "marker_visual_dp": 32, "marker_cluster_dp": 40, "marker_rect_inset_dp": [12, 60, 12, 70],
     "thumb_pivot_inset_dp": 28, "thumb_frequent_r_dp": 110, "thumb_occasional_r_dp": 165,
     "touch_target_min_dp": 48, "touch_target_large_dp": 56, "touch_spacing_min_dp": 8,
-    "sheet_anim_s": 0.22, "drawer_anim_s": 0.22, "coach_cutout_anim_s": 0.20, "hold_to_confirm_ms": 800
+    "sheet_anim_s": 0.22, "drawer_anim_s": 0.22, "coach_cutout_anim_s": 0.20, "hold_to_confirm_ms": 800,
+    "_top_bar_max_rows": "§2.4's collapse solver hides P5-P7 once demotion runs out. On a near-square display (Fold inner, 2160x1856) the four never-hidden chips plus a measured value string still overflow one 48 dp row, and A1/A2 forbid clipping — so the bar wraps to a second row BEFORE anything is hidden. 1 restores the doc's single-row behaviour exactly.",
+    "top_bar_max_rows": 2
   },
   "type_scale_dp": {"display": 28, "title": 20, "body": 14, "label": 12, "numeric": 16},
   "text_scale_options": [0.85, 1.0, 1.15, 1.30, 1.50],
@@ -42,8 +44,67 @@
   "overlay": {
     "modes": ["none", "power", "water", "police", "fire", "traffic"],
     "desaturate": 0.25, "exposure": 0.70, "transition_s": 0.18,
-    "strip_chip_dp": [64, 56], "strip_x_offset_dp": 80,
-    "outage_fill_alpha": 0.25, "coverage_disc_alpha": 0.18, "flow_dash_speed_m_s": 14.0, "heat_bin_m": 32.0
+    "strip_chip_dp": [64, 56], "strip_x_offset_dp": 80, "strip_columns": 2,
+    "outage_fill_alpha": 0.25, "coverage_disc_alpha": 0.18, "flow_dash_speed_m_s": 14.0, "heat_bin_m": 32.0,
+    "_enabled_modes": "An overlay ships enabled only once the sim behind it publishes an OverlayQuery (doc 12 §4.4). POWER is live (doc 04); WATER/POLICE/FIRE/TRAFFIC stay listed, greyed and tooltip-explained (A14: every blocked action states its reason in words) until docs 05/06/10 land — never hidden, so the player learns the shape of the console once.",
+    "enabled_modes": ["none", "power"],
+    "_shader_global": "doc 11 reads the active overlay from this project shader global; its value is the mode's INDEX INTO overlay.modes above (none 0, power 1, water 2, police 3, fire 4, traffic 5). The int is written by ui/overlay_rail.gd and by nothing else; the per-instance 2-bit overlay_state that the building shader tints with is doc 11's and is never set from here (C-64).",
+    "shader_global": "sc_overlay_mode",
+    "legend_states": ["normal", "warning", "critical", "offline"]
+  },
+  "alerts": {
+    "_comment": "The §2.15 alerts centre: the persistent feed behind the banner stack. Class and surface come from in_app_alerts above (C-71/C-72) — this block only says which sim event becomes which notification, and it is a STAND-IN for doc 08's data/notifications.json event->class map. When that file lands it REPLACES `events` wholesale; the two are never merged.",
+    "max_entries": 50, "row_h_dp": 72, "panel_w_dp": 300, "chip_w_dp": 72,
+    "unread_badge_max": 99, "coalesce_window_s": 300,
+    "events": [
+      {"type": "BlockDarkChanged", "match": {"block_dark": true}, "notify_id": "outage_major",
+       "class": "p1", "state": "critical", "key": "block_id", "coalesce_by": "notify_id",
+       "args": {"count": "@count", "district": "block_id", "time": "@time"}},
+      {"type": "BlockDarkChanged", "match": {"block_dark": false}, "notify_id": "power_restored",
+       "class": "p2", "state": "normal", "key": "block_id", "coalesce_by": "notify_id",
+       "args": {"district": "block_id", "time": "@time"}},
+      {"type": "PowerComponentFailed", "notify_id": "component_failed", "class": "p1",
+       "state": "critical", "key": "component",
+       "args": {"component": "component", "cause": "cause", "time": "@time"}},
+      {"type": "PowerComponentTripped", "notify_id": "component_tripped", "class": "p2",
+       "state": "warning", "key": "component", "args": {"component": "component", "time": "@time"}},
+      {"type": "LoadShedStarted", "notify_id": "load_shed", "class": "p1", "state": "critical",
+       "args": {"kw": "shed_kw", "time": "@time"}},
+      {"type": "credit_line_engaged", "notify_id": "treasury_low", "class": "p1", "state": "warning",
+       "args": {"balance": "@money:balance", "time": "@time"}},
+      {"type": "credit_limit_reached", "notify_id": "treasury_critical", "class": "p1",
+       "state": "critical", "args": {"balance": "@money:balance", "time": "@time"}},
+      {"type": "austerity_entered", "notify_id": "austerity", "class": "p2", "state": "warning",
+       "args": {"time": "@time"}},
+      {"type": "city_level_changed", "notify_id": "city_level_up", "class": "p2", "state": "normal",
+       "args": {"level": "level"}},
+      {"type": "building_completed", "notify_id": "construction_complete", "class": "p3",
+       "state": "normal", "key": "building", "coalesce_by": "notify_id", "args": {"level": "level"}},
+      {"type": "block_ready", "notify_id": "land_developed", "class": "p3", "state": "normal",
+       "key": "block_id", "args": {"block": "block_id"}}
+    ]
+  },
+  "settings": {
+    "_comment": "S9 (doc 12 §2.13), Phase-1 pages only. Every row is data so the sheet holds no option list and no default; `options_from`/`default_from` resolve against data/render.json (doc 11 owns the graphics presets) and this file's own `defaults` block.",
+    "rows": [
+      {"key": "graphics", "kind": "choice", "options_from": "render_presets", "default_from": "defaults.graphics"},
+      {"key": "autosave_interval_min", "kind": "choice", "options": [0, 5, 15, 30], "default": 5},
+      {"key": "sound_volume", "kind": "slider", "min": 0.0, "max": 1.0, "step": 0.1, "default": 0.8},
+      {"key": "reduce_motion", "kind": "toggle", "default_from": "defaults.reduce_motion"},
+      {"key": "larger_touch_targets", "kind": "toggle", "default_from": "defaults.larger_touch_targets"},
+      {"key": "in_app_banners", "kind": "toggle", "default": true},
+      {"key": "text_scale", "kind": "choice", "options_from": "text_scale_options", "default_from": "defaults.text_scale"}
+    ],
+    "device_scoped_keys": ["graphics", "text_scale", "reduce_motion", "larger_touch_targets", "sound_volume"],
+    "settings_file": "user://settings.cfg"
+  },
+  "save_slots": {
+    "_comment": "S0/S9 Data & Saves. game/save_service.gd owns the files and the meta shape {slot, saved_at_unix, day_index, population, treasury}; this block owns only how many slots the player sees and which one autosave owns.",
+    "count": 3, "row_h_dp": 88, "autosave_slot": 0, "date_format": "{date} {time}"
+  },
+  "pause_menu": {
+    "_comment": "Single-scene game: QUIT saves first and then closes the app, so `quit` is an intent the shell fulfils, never a bare get_tree().quit() from a view.",
+    "actions": ["resume", "save", "settings", "quit"], "button_w_dp": 220
   },
   "camera": {
     "_comment": "Interaction range only (C-63). Projection constants fov_deg/near_m/far_m live in data/render.json (doc 11) and are read from there; they must never be added to this block.",

@@ -1,9 +1,14 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://ui/ui_root.gd" id="1_uiroot"]
 [ext_resource type="Script" path="res://ui/hud.gd" id="2_hud"]
 [ext_resource type="Script" path="res://ui/build_sheet.gd" id="3_buildsheet"]
 [ext_resource type="Script" path="res://ui/building_panel.gd" id="4_buildingpanel"]
+[ext_resource type="Script" path="res://ui/overlay_rail.gd" id="5_overlayrail"]
+[ext_resource type="Script" path="res://ui/alerts_center.gd" id="6_alertscenter"]
+[ext_resource type="Script" path="res://ui/settings_sheet.gd" id="7_settingssheet"]
+[ext_resource type="Script" path="res://ui/save_load_sheet.gd" id="8_saveloadsheet"]
+[ext_resource type="Script" path="res://ui/pause_menu.gd" id="9_pausemenu"]
 
 [node name="UIRoot" type="CanvasLayer"]
 layer = 10
@@ -34,7 +39,11 @@ offset_bottom = 48.0
 grow_horizontal = 2
 mouse_filter = 2
 
-[node name="Chips" type="HBoxContainer" parent="SafeArea/HUDLayer/TopBar"]
+[node name="Chips" type="VBoxContainer" parent="SafeArea/HUDLayer/TopBar"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="Row0" type="HBoxContainer" parent="SafeArea/HUDLayer/TopBar/Chips"]
 layout_mode = 2
 mouse_filter = 2
 
@@ -46,18 +55,27 @@ mouse_filter = 2
 [node name="ClockChip" type="Button" parent="SafeArea/HUDLayer/TopBar"]
 custom_minimum_size = Vector2(132, 48)
 layout_mode = 2
+size_flags_vertical = 0
 tooltip_text = "City clock"
 theme_type_variation = &"StatChip"
+
+[node name="MenuButton" type="Button" parent="SafeArea/HUDLayer/TopBar"]
+custom_minimum_size = Vector2(48, 48)
+layout_mode = 2
+size_flags_vertical = 0
+text = "☰"
+tooltip_text = "Pause menu"
+theme_type_variation = &"RailButton"
 
 [node name="LeftRail" type="VBoxContainer" parent="SafeArea/HUDLayer"]
 layout_mode = 1
 anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
-offset_left = 12.0
+offset_left = 16.0
 offset_top = -204.0
-offset_right = 76.0
-offset_bottom = -12.0
+offset_right = 72.0
+offset_bottom = -148.0
 grow_vertical = 0
 mouse_filter = 2
 alignment = 2
@@ -83,6 +101,60 @@ offset_left = -80.0
 grow_horizontal = 0
 grow_vertical = 2
 mouse_filter = 2
+
+[node name="OverlayRail" type="Control" parent="SafeArea/HUDLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("5_overlayrail")
+
+[node name="Button" type="Button" parent="SafeArea/HUDLayer/OverlayRail"]
+custom_minimum_size = Vector2(56, 56)
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = -140.0
+offset_right = 72.0
+offset_bottom = -84.0
+grow_vertical = 0
+text = "◈"
+tooltip_text = "Data overlays"
+theme_type_variation = &"RailButton"
+
+[node name="Strip" type="PanelContainer" parent="SafeArea/HUDLayer/OverlayRail"]
+visible = false
+custom_minimum_size = Vector2(200, 0)
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 92.0
+offset_top = -260.0
+offset_right = 292.0
+offset_bottom = -84.0
+grow_vertical = 0
+theme_type_variation = &"SheetPanel"
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/HUDLayer/OverlayRail/Strip"]
+layout_mode = 2
+
+[node name="Chips" type="GridContainer" parent="SafeArea/HUDLayer/OverlayRail/Strip/Body"]
+layout_mode = 2
+columns = 2
+
+[node name="Notice" type="Label" parent="SafeArea/HUDLayer/OverlayRail/Strip/Body"]
+visible = false
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="Legend" type="VBoxContainer" parent="SafeArea/HUDLayer/OverlayRail/Strip/Body"]
+layout_mode = 2
 
 [node name="AlertStack" type="VBoxContainer" parent="SafeArea/HUDLayer"]
 layout_mode = 1
@@ -172,6 +244,85 @@ custom_minimum_size = Vector2(96, 48)
 layout_mode = 2
 tooltip_text = "UPGRADE"
 theme_type_variation = &"PrimaryFAB"
+
+[node name="AlertsCenter" type="Control" parent="SafeArea/PanelLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("6_alertscenter")
+
+[node name="Chip" type="Button" parent="SafeArea/PanelLayer/AlertsCenter"]
+custom_minimum_size = Vector2(72, 48)
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -84.0
+offset_top = -140.0
+offset_right = -12.0
+offset_bottom = -92.0
+grow_horizontal = 0
+grow_vertical = 0
+text = "⚠"
+tooltip_text = "Alerts"
+theme_type_variation = &"StatChip"
+
+[node name="Panel" type="PanelContainer" parent="SafeArea/PanelLayer/AlertsCenter"]
+visible = false
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 1
+anchors_preset = 11
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -300.0
+offset_top = 56.0
+grow_horizontal = 0
+grow_vertical = 2
+theme_type_variation = &"SidePanel"
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/PanelLayer/AlertsCenter/Panel"]
+layout_mode = 2
+
+[node name="Header" type="HBoxContainer" parent="SafeArea/PanelLayer/AlertsCenter/Panel/Body"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="SafeArea/PanelLayer/AlertsCenter/Panel/Body/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+clip_text = true
+
+[node name="MarkAll" type="Button" parent="SafeArea/PanelLayer/AlertsCenter/Panel/Body/Header"]
+custom_minimum_size = Vector2(96, 48)
+layout_mode = 2
+tooltip_text = "Mark all read"
+theme_type_variation = &"GhostButton"
+
+[node name="Close" type="Button" parent="SafeArea/PanelLayer/AlertsCenter/Panel/Body/Header"]
+custom_minimum_size = Vector2(48, 48)
+layout_mode = 2
+text = "✕"
+tooltip_text = "Close alerts"
+theme_type_variation = &"GhostButton"
+
+[node name="Empty" type="Label" parent="SafeArea/PanelLayer/AlertsCenter/Panel/Body"]
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="Scroll" type="ScrollContainer" parent="SafeArea/PanelLayer/AlertsCenter/Panel/Body"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="List" type="VBoxContainer" parent="SafeArea/PanelLayer/AlertsCenter/Panel/Body/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
 
 [node name="SheetLayer" type="Control" parent="SafeArea"]
 layout_mode = 2
@@ -269,6 +420,214 @@ theme_type_variation = &"PrimaryFAB"
 [node name="ModalLayer" type="Control" parent="SafeArea"]
 layout_mode = 2
 mouse_filter = 2
+
+[node name="SettingsSheet" type="Control" parent="SafeArea/ModalLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("7_settingssheet")
+
+[node name="Scrim" type="ColorRect" parent="SafeArea/ModalLayer/SettingsSheet"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="Panel" type="PanelContainer" parent="SafeArea/ModalLayer/SettingsSheet"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 24.0
+offset_top = 24.0
+offset_right = -24.0
+offset_bottom = -24.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_type_variation = &"SheetPanel"
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/ModalLayer/SettingsSheet/Panel"]
+layout_mode = 2
+
+[node name="Header" type="HBoxContainer" parent="SafeArea/ModalLayer/SettingsSheet/Panel/Body"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="SafeArea/ModalLayer/SettingsSheet/Panel/Body/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+clip_text = true
+
+[node name="Close" type="Button" parent="SafeArea/ModalLayer/SettingsSheet/Panel/Body/Header"]
+custom_minimum_size = Vector2(48, 48)
+layout_mode = 2
+text = "✕"
+tooltip_text = "Close settings"
+theme_type_variation = &"GhostButton"
+
+[node name="Scroll" type="ScrollContainer" parent="SafeArea/ModalLayer/SettingsSheet/Panel/Body"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="Rows" type="VBoxContainer" parent="SafeArea/ModalLayer/SettingsSheet/Panel/Body/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="About" type="VBoxContainer" parent="SafeArea/ModalLayer/SettingsSheet/Panel/Body"]
+layout_mode = 2
+
+[node name="Saves" type="Button" parent="SafeArea/ModalLayer/SettingsSheet/Panel/Body"]
+custom_minimum_size = Vector2(144, 48)
+layout_mode = 2
+text = "MANAGE SAVES"
+tooltip_text = "MANAGE SAVES"
+theme_type_variation = &"PrimaryFAB"
+
+[node name="SaveLoadSheet" type="Control" parent="SafeArea/ModalLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("8_saveloadsheet")
+
+[node name="Scrim" type="ColorRect" parent="SafeArea/ModalLayer/SaveLoadSheet"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="Panel" type="PanelContainer" parent="SafeArea/ModalLayer/SaveLoadSheet"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 24.0
+offset_top = 24.0
+offset_right = -24.0
+offset_bottom = -24.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_type_variation = &"SheetPanel"
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/ModalLayer/SaveLoadSheet/Panel"]
+layout_mode = 2
+
+[node name="Header" type="HBoxContainer" parent="SafeArea/ModalLayer/SaveLoadSheet/Panel/Body"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="SafeArea/ModalLayer/SaveLoadSheet/Panel/Body/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+clip_text = true
+
+[node name="Close" type="Button" parent="SafeArea/ModalLayer/SaveLoadSheet/Panel/Body/Header"]
+custom_minimum_size = Vector2(48, 48)
+layout_mode = 2
+text = "✕"
+tooltip_text = "Close saves"
+theme_type_variation = &"GhostButton"
+
+[node name="Scroll" type="ScrollContainer" parent="SafeArea/ModalLayer/SaveLoadSheet/Panel/Body"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="Slots" type="VBoxContainer" parent="SafeArea/ModalLayer/SaveLoadSheet/Panel/Body/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Message" type="Label" parent="SafeArea/ModalLayer/SaveLoadSheet/Panel/Body"]
+visible = false
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="Confirm" type="HBoxContainer" parent="SafeArea/ModalLayer/SaveLoadSheet/Panel/Body"]
+visible = false
+layout_mode = 2
+
+[node name="Prompt" type="Label" parent="SafeArea/ModalLayer/SaveLoadSheet/Panel/Body/Confirm"]
+layout_mode = 2
+size_flags_horizontal = 3
+autowrap_mode = 3
+
+[node name="Yes" type="Button" parent="SafeArea/ModalLayer/SaveLoadSheet/Panel/Body/Confirm"]
+custom_minimum_size = Vector2(72, 48)
+layout_mode = 2
+text = "YES"
+tooltip_text = "YES"
+theme_type_variation = &"DangerButton"
+
+[node name="No" type="Button" parent="SafeArea/ModalLayer/SaveLoadSheet/Panel/Body/Confirm"]
+custom_minimum_size = Vector2(72, 48)
+layout_mode = 2
+text = "NO"
+tooltip_text = "NO"
+theme_type_variation = &"GhostButton"
+
+[node name="PauseMenu" type="Control" parent="SafeArea/ModalLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("9_pausemenu")
+
+[node name="Scrim" type="ColorRect" parent="SafeArea/ModalLayer/PauseMenu"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="Panel" type="PanelContainer" parent="SafeArea/ModalLayer/PauseMenu"]
+visible = false
+custom_minimum_size = Vector2(260, 0)
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -130.0
+offset_top = -140.0
+offset_right = 130.0
+offset_bottom = 140.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_type_variation = &"SheetPanel"
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/ModalLayer/PauseMenu/Panel"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="SafeArea/ModalLayer/PauseMenu/Panel/Body"]
+layout_mode = 2
+horizontal_alignment = 1
+
+[node name="Buttons" type="VBoxContainer" parent="SafeArea/ModalLayer/PauseMenu/Panel/Body"]
+layout_mode = 2
+size_flags_vertical = 3
 
 [node name="CoachLayer" type="Control" parent="SafeArea"]
 layout_mode = 2

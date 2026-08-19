@@ -1,18 +1,23 @@
 class_name UIRoot
 extends CanvasLayer
 ## The UI scaffold of doc 12 §4.1 — SafeArea, the layer stack, the Android back
-## stack, and the one Theme. Deliberately empty of content: P1-32 fills
-## `HUDLayer` and friends, this is the frame those screens hang on.
+## stack, the one Theme, and the switchboard the screens hang off.
 ##
 ##     UIRoot (CanvasLayer, layer=10)
 ##     └── SafeArea (MarginContainer)
 ##         ├── MarkerLayer (Control, PASS)   projected world pins + selection ring
-##         ├── HUDLayer    (Control, IGNORE) TopBar / LeftRail / RightRail / AlertStack
-##         ├── PanelLayer  (Control, IGNORE) BuildingPanel, LandPanel, IncidentDrawer
-##         ├── SheetLayer  (Control, IGNORE) BuildSheet, UnitPickerSheet, PlacementBar
-##         ├── ModalLayer  (Control, STOP when populated)
+##         ├── HUDLayer    (CityHUD, IGNORE) TopBar / LeftRail / OverlayRail / AlertStack
+##         ├── PanelLayer  (Control, IGNORE) BuildingPanel, AlertsCenter, (LandPanel…)
+##         ├── SheetLayer  (Control, IGNORE) BuildSheet, PlacementBar, (UnitPicker…)
+##         ├── ModalLayer  (Control, STOP when populated) SettingsSheet, SaveLoadSheet,
+##         │                                              PauseMenu
 ##         └── CoachLayer  (Control, STOP when hard-gated)
 ##     └── ToastLayer (CanvasLayer, layer=20)
+##
+## The screens own their own logic; this class only brings them up with one
+## shared `UIConfig`, routes the few cross-screen intents (HUD ☰ → pause menu,
+## pause menu → settings / saves) and **re-emits** everything the shell needs on
+## its own signals, so `game/main.gd` connects to one object rather than six.
 ##
 ## Container `Control`s are `mouse_filter = IGNORE`; only leaf widgets and modal
 ## scrims are `STOP`. That is what guarantees an unconsumed touch falls through
@@ -50,6 +55,17 @@ signal back_requested(action: StringName)
 signal breakpoint_changed(bp: Breakpoint)
 signal safe_area_changed(rect: Rect2i)
 
+## Re-emitted from the screens below, so `game/main.gd` connects to one object
+## instead of six. Nothing here decides anything — the root is a switchboard.
+signal overlay_changed(mode: StringName, index: int)   ## → doc 11 render mode
+signal focus_requested(world_pos: Vector3)             ## alert tap → camera jump
+signal settings_changed(key: StringName, value: Variant)
+signal save_slot_action(action: StringName, slot: int, result: Dictionary)
+signal save_loaded(slot: int)                          ## the sim was replaced
+signal pause_intent(paused: bool)                      ## → `set_paused` (doc 01)
+signal quit_requested                                  ## save, then close the app
+signal alerts_unread_changed(count: int)
+
 @export var apply_content_scale: bool = true
 
 var config: UIConfig
@@ -64,6 +80,15 @@ var modal_layer: Control
 var coach_layer: Control
 var toast_layer: CanvasLayer
 
+## The screens this scaffold carries. Bound in `_bind_nodes()`; any of them may
+## be null in a trimmed scene, and every call site here checks.
+var hud: CityHUD
+var overlay_rail: OverlayRail
+var alerts_center: AlertsCenter
+var settings_sheet: SettingsSheet
+var save_load_sheet: SaveLoadSheet
+var pause_menu: PauseMenu
+
 var current_breakpoint: Breakpoint = Breakpoint.REGULAR
 var drawer_w_dp: int = 300
 
@@ -74,8 +99,28 @@ var selected_entity_id := ""
 var _last_back_ms := -1.0e9
 
 
+## Config is loaded here rather than in `_ready()` because a parent's
+## `_enter_tree` runs *before* its children's: by the time a screen's `_ready()`
+## fires it can call `UIRoot.config_from(self)` and share this one parse instead
+## of opening `data/ui.json` five more times.
+func _enter_tree() -> void:
+	_load_config()
+
+
 func _ready() -> void:
 	initialize()
+
+
+## Walks up to the owning `UIRoot` and returns its parsed config, or null if
+## there is none yet — in which case the caller loads its own.
+static func config_from(node: Node) -> UIConfig:
+	var current: Node = node.get_parent() if node != null else null
+	while current != null:
+		var root := current as UIRoot
+		if root != null and root.config != null:
+			return root.config
+		current = current.get_parent()
+	return null
 
 
 ## Bring-up, split out of `_ready()` and idempotent: a headless test never
@@ -85,17 +130,23 @@ func _ready() -> void:
 func initialize() -> void:
 	layer = CANVAS_LAYER_UI
 	_bind_nodes()
-	if config == null:
-		config = UIConfig.load_from_files()
-		if not config.is_valid():
-			for message: String in config.errors:
-				push_error("UIRoot: %s" % message)
+	_load_config()
 	_apply_content_scale()
 	rebuild_theme()
 	_recompute_layout()
+	bring_up_screens()
 	var window := get_window()
 	if window != null and not window.size_changed.is_connected(_recompute_layout):
 		window.size_changed.connect(_recompute_layout)
+
+
+func _load_config() -> void:
+	if config != null:
+		return
+	config = UIConfig.load_from_files()
+	if not config.is_valid():
+		for message: String in config.errors:
+			push_error("UIRoot: %s" % message)
 
 
 func _bind_nodes() -> void:
@@ -109,6 +160,156 @@ func _bind_nodes() -> void:
 	modal_layer = safe_area.get_node_or_null("ModalLayer") as Control
 	coach_layer = safe_area.get_node_or_null("CoachLayer") as Control
 	toast_layer = get_node_or_null("ToastLayer") as CanvasLayer
+
+	hud = hud_layer as CityHUD
+	overlay_rail = safe_area.get_node_or_null("HUDLayer/OverlayRail") as OverlayRail
+	alerts_center = safe_area.get_node_or_null("PanelLayer/AlertsCenter") as AlertsCenter
+	settings_sheet = safe_area.get_node_or_null("ModalLayer/SettingsSheet") as SettingsSheet
+	save_load_sheet = safe_area.get_node_or_null("ModalLayer/SaveLoadSheet") as SaveLoadSheet
+	pause_menu = safe_area.get_node_or_null("ModalLayer/PauseMenu") as PauseMenu
+
+
+# ---------------------------------------------------------------------------
+# Screens — one bring-up, one switchboard (doc 12 §4.1)
+# ---------------------------------------------------------------------------
+
+## Sets up every screen this scaffold owns with the shared config and wires the
+## cross-screen routes. Idempotent: a screen that already has a config keeps it,
+## and every connection is guarded, so `game/main.gd` may call it again after
+## injecting its own models.
+func bring_up_screens() -> void:
+	if hud != null and hud.model == null:
+		hud.setup(config)
+	if overlay_rail != null and overlay_rail.model == null:
+		overlay_rail.setup(config)
+	if alerts_center != null and alerts_center.model == null:
+		alerts_center.setup(config)
+	if settings_sheet != null and settings_sheet.model == null:
+		settings_sheet.setup(config)
+	if save_load_sheet != null and save_load_sheet.model == null:
+		save_load_sheet.setup(config)
+	if pause_menu != null and pause_menu.config == null:
+		pause_menu.setup(config)
+	_connect_screens()
+
+
+func _connect_screens() -> void:
+	if hud != null:
+		_connect(hud.menu_requested, _on_menu_requested)
+	if overlay_rail != null:
+		_connect(overlay_rail.overlay_changed, _on_overlay_changed)
+	if alerts_center != null:
+		_connect(alerts_center.focus_requested, _on_focus_requested)
+		_connect(alerts_center.unread_changed, _on_unread_changed)
+	if settings_sheet != null:
+		_connect(settings_sheet.settings_changed, _on_settings_changed)
+		_connect(settings_sheet.saves_requested, _on_saves_requested)
+	if save_load_sheet != null:
+		_connect(save_load_sheet.slot_action, _on_slot_action)
+		_connect(save_load_sheet.loaded, _on_save_loaded)
+	if pause_menu != null:
+		_connect(pause_menu.settings_requested, _on_settings_requested)
+		_connect(pause_menu.save_requested, _on_saves_requested)
+		_connect(pause_menu.pause_intent, _on_pause_intent)
+		_connect(pause_menu.quit_requested, _on_quit_requested)
+
+
+static func _connect(source: Signal, target: Callable) -> void:
+	if not source.is_connected(target):
+		source.connect(target)
+
+
+func _on_menu_requested() -> void:
+	if pause_menu != null:
+		pause_menu.toggle()
+
+
+func _on_overlay_changed(mode: StringName, index: int) -> void:
+	overlay_changed.emit(mode, index)
+
+
+func _on_focus_requested(world_pos: Vector3) -> void:
+	focus_requested.emit(world_pos)
+
+
+func _on_unread_changed(count: int) -> void:
+	alerts_unread_changed.emit(count)
+
+
+func _on_settings_changed(key: StringName, value: Variant) -> void:
+	settings_changed.emit(key, value)
+
+
+func _on_settings_requested() -> void:
+	if settings_sheet != null:
+		settings_sheet.open()
+
+
+func _on_saves_requested() -> void:
+	if save_load_sheet != null:
+		save_load_sheet.open()
+
+
+func _on_slot_action(action: StringName, slot: int, result: Dictionary) -> void:
+	save_slot_action.emit(action, slot, result)
+
+
+func _on_save_loaded(slot: int) -> void:
+	save_loaded.emit(slot)
+
+
+func _on_pause_intent(paused: bool) -> void:
+	pause_intent.emit(paused)
+
+
+func _on_quit_requested() -> void:
+	quit_requested.emit()
+
+
+## Binds `game/save_service.gd` (and the live sim it captures) to the save
+## screen. Both stay `Object`: `ui/` never depends on either type.
+func bind_save_service(service: Object, sim: Object = null) -> void:
+	if save_load_sheet != null:
+		save_load_sheet.bind_service(service, sim)
+
+
+## Pipes one `SimEventBus.drain()` batch into the alerts feed. The shell calls
+## this from its tick handler; nothing else in `ui/` sees a sim event.
+func feed_events(batch: Array) -> void:
+	if alerts_center != null:
+		alerts_center.feed_batch(batch)
+
+
+func set_sim_clock(minute_of_day: int, day_index: int = 0) -> void:
+	if alerts_center != null:
+		alerts_center.set_clock(minute_of_day, day_index)
+
+
+## `Callable(kind: StringName, id: Variant) -> Vector3` — how an alert's entity
+## id becomes a camera target. Supplied by the shell, which owns the map.
+func set_alert_locator(locator: Callable) -> void:
+	if alerts_center != null:
+		alerts_center.set_locator(locator)
+
+
+## The `ui` save section this scaffold owns today (doc 12 §3.2): the overlay
+## choice and the settings block. The camera, selection and onboarding keys join
+## it as those systems land.
+func capture_ui_state() -> Dictionary:
+	var out: Dictionary = {"section_version": 1}
+	if overlay_rail != null:
+		out.merge(overlay_rail.capture_state(), true)
+	if settings_sheet != null:
+		out["settings"] = settings_sheet.capture_state()
+	return out
+
+
+func restore_ui_state(state: Dictionary) -> void:
+	if overlay_rail != null:
+		overlay_rail.restore_state(state)
+	if settings_sheet != null:
+		var block: Variant = state.get("settings", {})
+		settings_sheet.apply_state(block if block is Dictionary else {})
 
 
 ## doc 12 §2.1: `Control` coordinates are dp on every device, matching Android's
