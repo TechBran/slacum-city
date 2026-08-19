@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://ui/ui_root.gd" id="1_uiroot"]
+[ext_resource type="Script" path="res://ui/hud.gd" id="2_hud"]
 
 [node name="UIRoot" type="CanvasLayer"]
 layer = 10
@@ -21,6 +22,7 @@ mouse_filter = 1
 [node name="HUDLayer" type="Control" parent="SafeArea"]
 layout_mode = 2
 mouse_filter = 2
+script = ExtResource("2_hud")
 
 [node name="TopBar" type="HBoxContainer" parent="SafeArea/HUDLayer"]
 layout_mode = 1
@@ -29,6 +31,21 @@ anchor_right = 1.0
 offset_bottom = 48.0
 grow_horizontal = 2
 mouse_filter = 2
+
+[node name="Chips" type="HBoxContainer" parent="SafeArea/HUDLayer/TopBar"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="Spacer" type="Control" parent="SafeArea/HUDLayer/TopBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="ClockChip" type="Button" parent="SafeArea/HUDLayer/TopBar"]
+custom_minimum_size = Vector2(132, 48)
+layout_mode = 2
+tooltip_text = "City clock"
+theme_type_variation = &"StatChip"
 
 [node name="LeftRail" type="VBoxContainer" parent="SafeArea/HUDLayer"]
 layout_mode = 1
@@ -41,6 +58,18 @@ offset_right = 76.0
 offset_bottom = -12.0
 grow_vertical = 0
 mouse_filter = 2
+alignment = 2
+
+[node name="SpeedOptions" type="VBoxContainer" parent="SafeArea/HUDLayer/LeftRail"]
+visible = false
+layout_mode = 2
+mouse_filter = 2
+
+[node name="SpeedButton" type="Button" parent="SafeArea/HUDLayer/LeftRail"]
+custom_minimum_size = Vector2(56, 56)
+layout_mode = 2
+tooltip_text = "Game speed"
+theme_type_variation = &"RailButton"
 
 [node name="RightRail" type="Control" parent="SafeArea/HUDLayer"]
 layout_mode = 1

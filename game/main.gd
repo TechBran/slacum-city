@@ -7,6 +7,10 @@ extends Node3D
 ## `--screenshot=<path>` (user arg after `--`): renders ~2 s then saves a
 ## PNG and quits — used for visual bring-up review.
 
+## HUD snapshot cadence: doc 12 §2.4 classes the chips "read-only + rare", and
+## once a real second is already far more often than a player can read them.
+const HUD_REFRESH_S := 1.0
+
 var sim_host: SimHost
 var render_model: RenderStateModel
 var city_view: CityView
@@ -14,10 +18,15 @@ var streetlights: StreetlightView
 var environment_controller: EnvironmentController
 var camera_rig: CameraRig
 var camera_state: CameraState
+var hud: CityHUD
 var _screenshot_path := ""
 var _screenshot_timer := 0.0
 var _blackout_at := -1.0
 var _shot_at := 2.0
+var _hud_timer := 0.0
+## Last `economy_hour_settled.net` (doc 03, dollars per game-hour). The net
+## income chip renders it per day through `NumberFormat.rate()` (doc 12 §2.4).
+var _hud_net_per_hour := 0.0
 
 
 func _ready() -> void:
@@ -40,7 +49,9 @@ func _ready() -> void:
 
 	var ui_scene: PackedScene = load("res://game/ui/ui_root.tscn")
 	if ui_scene != null:
-		add_child(ui_scene.instantiate())
+		var ui_root := ui_scene.instantiate()
+		add_child(ui_root)
+		_wire_hud(ui_root)
 
 	for arg in OS.get_cmdline_user_args():
 		if String(arg).begins_with("--screenshot="):
@@ -241,8 +252,69 @@ func _trigger_blackout_demo(active: bool) -> void:
 		sim_host.sim.grid.force_close("F_SOUTH")
 
 
+# ---------------------------------------------------------------------------
+# HUD (doc 12 §2.3/§2.11) — the UI reads snapshots and issues commands, never
+# the reverse (constitution §3). `CityHUD` gets plain data; the only things
+# travelling back are the speed and pause intents.
+# ---------------------------------------------------------------------------
+
+func _wire_hud(ui_root: Node) -> void:
+	hud = ui_root.get_node_or_null("SafeArea/HUDLayer") as CityHUD
+	if hud == null:
+		return
+	hud.speed_selected.connect(_on_hud_speed_selected)
+	hud.pause_toggled.connect(_on_hud_pause_toggled)
+	sim_host.ticked.connect(_on_sim_ticked)
+	_refresh_hud()
+
+
+## doc 03 settles the economy on the game-hour boundary; the chip shows the last
+## settled hour rather than a partial one.
+func _on_sim_ticked(batch: Array) -> void:
+	for event: Variant in batch:
+		var data: Dictionary = event
+		if StringName(data.get("type", &"")) == &"economy_hour_settled":
+			_hud_net_per_hour = float(data.get("net", 0.0))
+
+
+func _refresh_hud() -> void:
+	if hud == null or sim_host.sim == null:
+		return
+	var sim := sim_host.sim
+	hud.refresh({
+		"population": sim.population.city_population,
+		"treasury": sim.treasury.balance,
+		"net_per_hour": _hud_net_per_hour,
+		"stability": sim.districts.city_stability,
+		"happiness": sim.happiness.happiness,
+		"clock": {
+			"minute_of_day": sim.clock.minute_of_day(),
+			"day_index": sim.clock.day_index(),
+		},
+		# doc 06's incident system is not in the slice yet, and docs 04/05 do not
+		# publish a city-wide grid/water health figure; those chips read "—"
+		# (OFFLINE) rather than showing an invented number.
+		"incidents": 0,
+		"speed": sim_host.speed,
+		"paused": sim_host.paused,
+	})
+
+
+func _on_hud_speed_selected(multiplier: int) -> void:
+	sim_host.speed = multiplier
+	sim_host.paused = false
+
+
+func _on_hud_pause_toggled(paused: bool) -> void:
+	sim_host.paused = paused
+
+
 func _process(delta: float) -> void:
 	var hour := sim_host.hour_of_day_float()
+	_hud_timer += delta
+	if _hud_timer >= HUD_REFRESH_S:
+		_hud_timer = 0.0
+		_refresh_hud()
 	environment_controller.apply(hour, delta)
 	city_view.refresh(delta, hour, camera_rig.camera.global_position)
 	streetlights.refresh()
