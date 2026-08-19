@@ -54,6 +54,7 @@ var _hud_timer := 0.0
 ## Last `economy_hour_settled.net` (doc 03, dollars per game-hour). The net
 ## income chip renders it per day through `NumberFormat.rate()` (doc 12 §2.4).
 var _hud_net_per_hour := 0.0
+var _last_overlay_minute := -1
 
 
 func _ready() -> void:
@@ -497,16 +498,22 @@ func _refresh_hud() -> void:
 		"speed": sim_host.speed,
 		"paused": sim_host.paused,
 	})
-	# The live overlay is refreshed at HUD cadence — 1 Hz is one game-minute at
-	# 1×, which is exactly doc 10's snapshot rebuild rate — and ONLY the live
-	# one: a channel nobody is looking at is republished on the hour instead.
+	# The live overlay refreshes on GAME-MINUTE boundaries (doc 10 rebuilds the
+	# snapshot per game-minute; HUD's 1 Hz reads stale at 3×) — and ONLY the
+	# live one: a channel nobody is looking at is republished on the hour.
 	var active_overlay: StringName = ui_root.overlay_rail.active_mode() \
 			if ui_root != null and ui_root.overlay_rail != null \
 			else OverlayModel.MODE_NONE
-	if active_overlay == OverlayModel.MODE_WATER:
-		_feed_water_overlay()
-	elif active_overlay == OverlayModel.MODE_TRAFFIC:
-		_feed_traffic_overlay()
+	var sim_minute: int = sim.clock.tick_index / GameClock.TICKS_PER_MINUTE
+	var interval := maxi(1, int(float(ui_root.overlay_rail.model
+			.traffic_render_opts().get("traffic_refresh_game_minutes", 1.0)))) \
+			if ui_root != null and ui_root.overlay_rail != null else 1
+	if sim_minute != _last_overlay_minute and sim_minute % interval == 0:
+		_last_overlay_minute = sim_minute
+		if active_overlay == OverlayModel.MODE_WATER:
+			_feed_water_overlay()
+		elif active_overlay == OverlayModel.MODE_TRAFFIC:
+			_feed_traffic_overlay()
 	if ui_root != null:
 		ui_root.refresh_incidents(sim.incidents.snapshot(), sim.incidents.now_h)
 		ui_root.set_incident_reference(camera_state.focus)
