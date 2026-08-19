@@ -6,6 +6,8 @@ extends Node3D
 ## whole mirror re-uploads each frame; the model's budgeted flush path is
 ## exercised by its own tests and takes over with the streaming pass.
 
+const TEXTURE_MANIFEST := "res://game/textures/generated/manifest.json"
+
 var model: RenderStateModel
 var _manifest_by_key: Dictionary = {}  # "archetype:level:lod" -> manifest entry
 var _bucket_nodes: Dictionary = {}  # bucket key -> MultiMeshInstance3D
@@ -13,6 +15,12 @@ var _shader: Shader
 var _window_colors: Dictionary = {}
 var _window_nits: float = 3.2
 var _day_gate: float = 0.06
+# --- procedural surface set (tools/gen_textures.py) ------------------------
+var _surface_by_archetype: Dictionary = {}  # archetype -> {facade, roof}
+var _surface_by_family: Dictionary = {}     # family    -> {facade, roof}
+var _textures: Dictionary = {}              # "facade:brick" -> Texture2D
+var _roof_tile_m: float = 4.0
+var _bay_m := Vector2(3.2, 3.5)
 
 
 func setup(p_model: RenderStateModel, render_data: Dictionary) -> void:
@@ -25,7 +33,56 @@ func setup(p_model: RenderStateModel, render_data: Dictionary) -> void:
 	_window_colors = emissive.get("window_color", {})
 	_window_nits = float(emissive.get("window_nits", 3.2))
 	_day_gate = float(emissive.get("day_gate", 0.06))
+	_load_textures()
 	_rebuild()
+
+
+## Procedural facade/roof pages, doc 11 §2.14's gray-box dressed. Absent pages
+## are not an error: the shader's `tex_mix` falls to 0 and the untextured
+## gray-box comes back unchanged, so a clone that has not run
+## `tools/gen_textures.py` + `--import` still boots.
+func _load_textures() -> void:
+	if not ResourceLoader.exists(TEXTURE_MANIFEST):
+		push_warning("city_view: no texture manifest, running untextured")
+		return
+	var tex: Dictionary = StarterCityLoader.read_json(TEXTURE_MANIFEST)
+	_roof_tile_m = float(tex.get("roof_tile_m", 4.0))
+	var bay: Array = tex.get("bay_m", [3.2, 3.5])
+	_bay_m = Vector2(float(bay[0]), float(bay[1]))
+	_surface_by_archetype = tex.get("archetype_surface", {})
+	_surface_by_family = tex.get("family_surface", {})
+	for group in ["facades", "roofs"]:
+		var pages: Dictionary = tex.get(group, {})
+		var kind := "facade" if group == "facades" else "roof"
+		for name in pages:
+			var path := String((pages[name] as Dictionary).get("path", ""))
+			if path == "" or not ResourceLoader.exists(path):
+				push_warning("city_view: missing texture page %s" % path)
+				continue
+			_textures["%s:%s" % [kind, name]] = load(path)
+
+
+## Which pages an archetype wears; falls back to its family, then to nothing.
+func _surface_for(archetype: String, family: String) -> Dictionary:
+	if _surface_by_archetype.has(archetype):
+		return _surface_by_archetype[archetype]
+	if _surface_by_family.has(family):
+		return _surface_by_family[family]
+	return {}
+
+
+func _apply_surface(material: ShaderMaterial, archetype: String, family: String) -> void:
+	var surface := _surface_for(archetype, family)
+	var facade: Texture2D = _textures.get("facade:%s" % surface.get("facade", ""))
+	var roof: Texture2D = _textures.get("roof:%s" % surface.get("roof", ""))
+	if facade == null or roof == null:
+		material.set_shader_parameter("tex_mix", 0.0)
+		return
+	material.set_shader_parameter("facade_tex", facade)
+	material.set_shader_parameter("roof_tex", roof)
+	material.set_shader_parameter("roof_tile_m", _roof_tile_m)
+	material.set_shader_parameter("bay_m", _bay_m)
+	material.set_shader_parameter("tex_mix", 1.0)
 
 
 func _rebuild() -> void:
@@ -68,6 +125,7 @@ func _ensure_bucket_node(bucket: RenderStateModel.Bucket) -> void:
 			Color(String(_window_colors.get(family, "#FFCE8A"))))
 	material.set_shader_parameter("window_nits", _window_nits)
 	material.set_shader_parameter("day_gate", _day_gate)
+	_apply_surface(material, bucket.archetype, family)
 	mm.mesh = mesh
 	node.multimesh = mm
 	node.material_override = material
