@@ -337,7 +337,21 @@ func capture_state() -> Dictionary:
 		"buildings": _serialize_buildings(),
 		"treasury": treasury.serialize(),
 		"stats": stats.serialize(),
+		"placed_records": _serialize_placed_records(),
 	}
+
+
+## Player-placed buildings have no authored loader record — persist theirs.
+func _serialize_placed_records() -> Array:
+	var out: Array = []
+	for sim_id in _sorted(_building_records):
+		var record: Dictionary = _building_records[sim_id]
+		if String(sim_id).begins_with("P-"):
+			out.append({"id": sim_id, "grid_id": int(record["grid_id"]),
+					"type": String(record["type"]), "block": String(record["block"]),
+					"footprint": [record["footprint"].x, record["footprint"].y],
+					"origin": [record["origin_global"].x, record["origin_global"].y]})
+	return out
 
 
 func restore_state(raw_body: Dictionary) -> void:
@@ -360,6 +374,14 @@ func restore_state(raw_body: Dictionary) -> void:
 		var block := world.block(String(saved.get("id", "")))
 		if block != null:
 			block.apply_save(saved)
+	for record in body.get("placed_records", []):
+		var sim_id := String(record["id"])
+		var footprint := Vector2i(int(record["footprint"][0]), int(record["footprint"][1]))
+		var origin := Vector2i(int(record["origin"][0]), int(record["origin"][1]))
+		_building_records[sim_id] = {"id": sim_id, "grid_id": int(record["grid_id"]),
+				"type": String(record["type"]), "block": String(record["block"]),
+				"footprint": footprint, "origin_global": origin}
+		world.grid.stamp_building(int(record["grid_id"]), origin, footprint)
 	buildings.clear()
 	for record in body.get("buildings", []):
 		var b := Building.deserialize(record)
@@ -410,6 +432,139 @@ func _population_inputs() -> Array:
 			"age_hours": 48.0,  # authored starter age ≥ ramp horizon
 		})
 	return out
+
+
+# ------------------------------------------------------- player commands
+
+## Place a new building (doc 02 §2.12 place path). Charges doc 03's cost,
+## reserves tiles, submits the construction job. Level-1 only (LOCKED rule).
+func cmd_place_building(archetype: String, origin: Vector2i, variant: String = "") -> Dictionary:
+	if not catalog.has(archetype):
+		return CommandQueue.fail(&"E_UNKNOWN_ARCHETYPE")
+	var block := world.block_of_tile(origin.x, origin.y)
+	if block == null or not block.is_owned():
+		return CommandQueue.fail(&"E_NOT_OWNED")
+	if not block.is_ready():
+		return CommandQueue.fail(&"E_NOT_DEVELOPED")
+	var stats: Dictionary = catalog.stats(archetype, 1)
+	var foot: Array = stats.get("footprint", [1, 1])
+	var size := Vector2i(int(foot[0]), int(foot[1]))
+	if not world.grid.can_place(origin, size):
+		return CommandQueue.fail(&"E_FOOTPRINT")
+	if not grid.would_serve(origin):
+		# Doc 04 §2.1: unservable placements are blocked; the fix is a
+		# transformer (grid-component placement is the Phase-1 command).
+		return CommandQueue.fail(&"E_UNSERVED")
+	var cost := econ_curves.build_cost(archetype)
+	if treasury.balance < cost:
+		# Construction never auto-borrows; the credit ladder is for crises.
+		return CommandQueue.fail(&"E_FUNDS", {"cost": cost, "balance": treasury.balance})
+	treasury.spend(cost, &"construction")
+	var grid_id := _next_building_grid_id()
+	var sim_id := "P-%03d" % grid_id
+	var b := Building.new(grid_id, StringName(archetype), origin, StringName(variant))
+	b.stats = stats
+	b.built_at_minutes = clock.sim_time_minutes()
+	world.grid.stamp_building(grid_id, origin, size)
+	buildings[sim_id] = b
+	_building_records[sim_id] = {"id": sim_id, "grid_id": grid_id, "type": archetype,
+			"block": block.id, "footprint": size, "origin_global": origin}
+	_block_dark_weights[sim_id] = int(stats.get("population", 0)) + int(stats.get("jobs", 0))
+	var job_id := construction.submit(&"build", sim_id,
+			float(stats.get("build_time_hours", 4.0)), &"construction_crew",
+			{"sim_id": sim_id})
+	# MVP crew binding: doc 06 owns real crews (P1-15); until then every job
+	# gets the yard crew so construction progresses.
+	construction.assign_crew(job_id, "YARD-CREW-1")
+	b.start_construction()
+	grid.attach_building(sim_id, origin, &"STANDARD", block.id)
+	bus.emit(&"building_placed_sim", {"building": grid_id, "sim_id": sim_id,
+			"archetype": archetype, "cost": cost})
+	stats_add(&"buildings_built")
+	return CommandQueue.ok({"sim_id": sim_id, "cost": cost, "job_id": job_id})
+
+
+## The doc 02 §2.11 upgrade gate. Checks run in the documented order and the
+## FIRST blocker returns (the UI shows the full checklist via preview=true).
+func cmd_upgrade_building(sim_id: String, preview: bool = false) -> Dictionary:
+	var b: Building = buildings.get(sim_id)
+	if b == null:
+		return CommandQueue.fail(&"E_UNKNOWN_BUILDING")
+	var blockers: Array = []
+	if b.state != &"active":
+		blockers.append(&"E_STATE")
+	if b.level >= 5:
+		blockers.append(&"E_MAX_LEVEL")
+	if b.condition < Building.MIN_CONDITION_TO_UPGRADE:
+		blockers.append(&"E_CONDITION")
+	var next_level: int = mini(b.level + 1, 5)
+	var next_stats: Dictionary = catalog.stats(String(b.archetype), next_level)
+	if progression.city_level < int(next_stats.get("min_city_level", 0)):
+		blockers.append(&"E_CITY_LEVEL")
+	var cost := econ_curves.upgrade_cost(String(b.archetype), b.level)
+	if treasury.balance < cost:
+		blockers.append(&"E_FUNDS")
+	var delta_kw := float(next_stats.get("power_demand_kw", 0.0)) \
+			- float(b.stats.get("power_demand_kw", 0.0))
+	var headroom := grid.can_upgrade_power(sim_id, delta_kw * 1.15)
+	if not bool(headroom["ok"]):
+		blockers.append(&"E_POWER_HEADROOM")
+	# E_WATER_HEADROOM / coverage checks join when docs 05 / 02-coverage land.
+	if next_level >= 4 and not _avenue_within(b.origin, 4):
+		blockers.append(&"E_AVENUE")
+	if preview or not blockers.is_empty():
+		var result := CommandQueue.ok({"blockers": blockers, "cost": cost,
+				"deficit_kw": headroom.get("deficit_kw", 0.0)}) if blockers.is_empty() \
+				else CommandQueue.fail(blockers[0], {"blockers": blockers, "cost": cost,
+				"deficit_kw": headroom.get("deficit_kw", 0.0)})
+		if preview or not blockers.is_empty():
+			return result
+	treasury.spend(cost, &"construction")
+	b.start_upgrade()
+	var job_id := construction.submit(&"upgrade", sim_id,
+			float(next_stats.get("upgrade_time_hours", 4.0)), &"construction_crew",
+			{"sim_id": sim_id})
+	construction.assign_crew(job_id, "YARD-CREW-1")
+	bus.emit(&"upgrade_started_sim", {"sim_id": sim_id, "to_level": next_level, "cost": cost})
+	return CommandQueue.ok({"job_id": job_id, "cost": cost, "to_level": next_level})
+
+
+func _avenue_within(origin: Vector2i, radius: int) -> bool:
+	for z in range(origin.y - radius, origin.y + radius + 1):
+		for x in range(origin.x - radius, origin.x + radius + 1):
+			if TileGrid.in_bounds(x, z) \
+					and world.grid.road_class_at(x, z) == TileGrid.ROAD_AVENUE:
+				return true
+	return false
+
+
+func _next_building_grid_id() -> int:
+	var highest := 0
+	for id in buildings:
+		highest = maxi(highest, (buildings[id] as Building).id)
+	return highest + 1
+
+
+func stats_add(counter: StringName) -> void:
+	stats.add(String(counter))
+
+
+## Route a completed construction job to its building (build or upgrade).
+func on_construction_completed(job: Dictionary) -> void:
+	var sim_id := String(job.get("payload", {}).get("sim_id", ""))
+	var b: Building = buildings.get(sim_id)
+	if b == null:
+		return
+	var done := b.complete_construction()
+	if not bool(done["ok"]):
+		return
+	b.stats = catalog.stats(String(b.archetype), b.level)
+	_block_dark_weights[sim_id] = int(b.stats.get("population", 0)) + int(b.stats.get("jobs", 0))
+	for event in done["payload"]["events"]:
+		var out: Dictionary = event.duplicate()
+		out["sim_id"] = sim_id
+		out["level"] = b.level
+		bus.emit(StringName(String(out["type"])), out)
 
 
 ## Assemble the §2.2/§2.4 settlement inputs from live sim state (held
@@ -538,7 +693,8 @@ class WorkPhaseSystem extends SimSystem:
 	func advance_fine(ctx: TimeContext) -> void:
 		sim.work.advance(ctx)
 		for job in sim.construction.advance(ctx):
-			sim.development.on_job_completed(job)
+			if not sim.development.on_job_completed(job):
+				sim.on_construction_completed(job)
 	func advance_coarse(ctx: TimeContext) -> void:
 		advance_fine(ctx)
 

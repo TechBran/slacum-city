@@ -163,6 +163,20 @@ func attachment_of(building_id: String) -> String:
 	return _attachments.get(building_id, "")
 
 
+## Placement probe (doc 04 §2.1: no transformer in range ⇒ UNSERVED, and the
+## placement UI blocks it). No side effects.
+func would_serve(tile: Vector2i) -> bool:
+	for id in _order:
+		var c: Dictionary = _components[id]
+		if c["kind"] != &"transformer" or c["state"] == &"FAILED":
+			continue
+		var t: Vector2i = c["tile"]
+		if maxf(absf(tile.x - t.x), absf(tile.y - t.y)) \
+				<= float(TRANSFORMER_SERVICE_RADIUS[int(c["level"]) - 1]):
+			return true
+	return false
+
+
 # ------------------------------------------------------------------ the tick
 
 ## demands: {building_id: demand_kw} (doc 02 publishes composed demand).
