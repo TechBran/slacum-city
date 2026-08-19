@@ -93,6 +93,26 @@ func building(id: String) -> Dictionary:
 	}
 
 
+## Six fields instead of `building()`'s twelve. The fire generator asks for the
+## whole roster on every sub-step, and the six it drops are the expensive half
+## (catalog stats, occupancy, the crime weight). Same values, same order, same
+## keys as the base composes — just without the ones nobody reads here.
+func fire_candidate_rows() -> Array:
+	var out: Array = []
+	for building_id in building_ids():
+		var id := String(building_id)
+		var b: Building = sim.buildings[id]
+		out.append({
+			"id": id,
+			"state": String(b.state),
+			"condition": b.condition,
+			"fire_ignition_per_hour": float(b.stats.get("fire_ignition_per_hour", 0.0)),
+			"powered": sim.grid.is_powered(id),
+			"district_id": district_of_tile(b.origin),
+		})
+	return out
+
+
 func buildings_within_m(tile: Vector2i, radius_m: float, exclude_id: String = "") -> Array:
 	var radius_tiles := radius_m / METRES_PER_TILE
 	var out: Array = []
@@ -197,19 +217,48 @@ func apply_population_loss(building_id: String, fraction: float) -> void:
 ## node list stands in. Swap this one body for `power.components_of_kind()`
 ## when doc 04 exposes it — nothing else changes.
 func power_transformers() -> Array:
+	# The downstream roll-up is built ONCE here (one pass over the roster)
+	# instead of once per transformer inside power_component(): the traffic /
+	# transformer generator calls this every integrator sub-step, and the naive
+	# shape was 2·N_transformers full building scans per call.
+	var downstream := _downstream_index()
 	var out: Array = []
 	for node in sim.loader.power_nodes_of_kind("transformer"):
-		var row := power_component(String(node.get("id", "")))
+		var row := _power_component(String(node.get("id", "")), downstream)
 		if not row.is_empty():
 			out.append(row)
 	return out
 
 
+## Same nodes, same order, same filter as `power_transformers()` — four fields
+## instead of eleven, and no downstream roll-up at all.
+func power_transformer_rates() -> Array:
+	var out: Array = []
+	for node in sim.loader.power_nodes_of_kind("transformer"):
+		var id := String(node.get("id", ""))
+		var c: Dictionary = sim.grid.component(id)
+		if c.is_empty():
+			continue
+		var capacity: float = maxf(1.0, sim.grid.cap_eff(id, 22.0))
+		out.append({
+			"id": id,
+			"load_ratio": float(c.get("load_kw", 0.0)) / capacity,
+			"condition": float(c.get("condition", 1.0)),
+			"temp_c": 22.0 + float(c.get("theta_c", 0.0)),
+		})
+	return out
+
+
 func power_component(id: String) -> Dictionary:
+	return _power_component(id, _downstream_index())
+
+
+func _power_component(id: String, downstream: Dictionary) -> Dictionary:
 	var c: Dictionary = sim.grid.component(id)
 	if c.is_empty():
 		return {}
 	var capacity: float = maxf(1.0, sim.grid.cap_eff(id, 22.0))
+	var roll: Dictionary = downstream.get(id, EMPTY_DOWNSTREAM)
 	return {
 		"id": id, "kind": String(c.get("kind", "")),
 		"tile": c.get("tile", Vector2i.ZERO),
@@ -218,29 +267,45 @@ func power_component(id: String) -> Dictionary:
 		"temp_c": 22.0 + float(c.get("theta_c", 0.0)),
 		"state": String(c.get("state", "OK")),
 		"redundancy": false,  # doc 04's tie table is not exposed per-node yet
-		"customers_downstream": power_customers_downstream(id),
-		"critical_downstream": _has_critical_downstream(id),
+		"customers_downstream": int(roll["count"]),
+		"critical_downstream": bool(roll["critical"]),
 		"underground": bool(c.get("underground", false)),
 	}
 
 
+const EMPTY_DOWNSTREAM := {"count": 0, "critical": false}
+
+## {attachment_id: {count, critical}} in ONE pass over the roster. Order is
+## irrelevant — a count and an OR are both commutative — so this deliberately
+## skips the keys().sort() that `building_ids()` pays for.
+func _downstream_index() -> Dictionary:
+	var out: Dictionary = {}
+	for building_id in sim.buildings:
+		var attachment: String = sim.grid.attachment_of(String(building_id))
+		if attachment == "":
+			continue
+		var existing: Variant = out.get(attachment)  # no `{}` default: it would
+		var roll: Dictionary                        # allocate on every hit too
+		if existing == null:
+			roll = {"count": 0, "critical": false}
+			out[attachment] = roll
+		else:
+			roll = existing
+		roll["count"] = int(roll["count"]) + 1
+		if not bool(roll["critical"]):
+			var b: Building = sim.buildings[building_id]
+			if b.archetype == &"water_facility" or b.archetype == &"fire_station" \
+					or b.archetype == &"police_station":
+				roll["critical"] = true
+	return out
+
+
 func power_customers_downstream(id: String) -> int:
 	var count := 0
-	for building_id in building_ids():
+	for building_id in sim.buildings:
 		if sim.grid.attachment_of(String(building_id)) == id:
 			count += 1
 	return count
-
-
-func _has_critical_downstream(id: String) -> bool:
-	for building_id in building_ids():
-		if sim.grid.attachment_of(String(building_id)) != id:
-			continue
-		var b: Building = sim.buildings[building_id]
-		if b.archetype == &"water_facility" or b.archetype == &"fire_station" \
-				or b.archetype == &"police_station":
-			return true
-	return false
 
 
 func power_feeder_load_shed(_id: String, _fraction: float) -> void:

@@ -153,38 +153,57 @@ func rebalance() -> void:
 func _allocate_targets() -> Dictionary:
 	var shares: Dictionary = {}
 	var total := 0.0
-	for edge_id in graph.edge_ids_sorted():
-		var record: Dictionary = graph.edge(edge_id)
+	var density_k := tun.civ_density_k
+	for edge_id in graph.edge_ids_ref():
+		var record: Dictionary = graph.edge_or_null(edge_id)
 		if not _eligible(record):
 			continue
-		var share := tun.civ_density_k * float(record["congestion"]) \
+		var share := density_k * float(record["congestion"]) \
 				* float(record["length_m"]) / 100.0
 		if share <= 0.0:
 			continue
 		shares[edge_id] = share
 		total += share
 	var wanted := clampi(roundi(total), 0, global_cap())
+	var max_per_edge := tun.civ_max_cars_per_edge
 	var out: Dictionary = {}
 	var assigned := 0
-	var remainders: Array = []
+	# Parallel packed columns rather than one small Dictionary per edge: this
+	# runs every game-minute over every eligible edge, and the remainder table
+	# was the single biggest allocator in the feed.
+	var remainder_ids := PackedInt32Array()
+	var remainder_fracs := PackedFloat64Array()
 	for edge_id in _sorted_keys(shares):
 		var share := float(shares[edge_id])
-		var whole := clampi(int(share), 0, tun.civ_max_cars_per_edge)
+		var whole := clampi(int(share), 0, max_per_edge)
 		out[edge_id] = whole
 		assigned += whole
-		remainders.append({"edge_id": edge_id, "frac": share - float(int(share))})
-	remainders.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		if absf(float(a["frac"]) - float(b["frac"])) > 1e-9:
-			return float(a["frac"]) > float(b["frac"])
-		return int(a["edge_id"]) < int(b["edge_id"]))
+		remainder_ids.append(int(edge_id))
+		remainder_fracs.append(share - float(int(share)))
+	if assigned >= wanted:
+		# The whole-number pass already met the target, so the largest-remainder
+		# loop below cannot run — and the sort that only feeds it is dead work.
+		return out
+	# Sorting an index permutation with the comparator the row array used gives
+	# the identical order: the sort sees the same comparison answers in the same
+	# positions (which matters, because the 1e-9 tolerance below is not a strict
+	# weak ordering and the algorithm's own path is part of the result).
+	var order: Array[int] = []
+	order.resize(remainder_ids.size())
+	for i in remainder_ids.size():
+		order[i] = i
+	order.sort_custom(func(a: int, b: int) -> bool:
+		if absf(remainder_fracs[a] - remainder_fracs[b]) > 1e-9:
+			return remainder_fracs[a] > remainder_fracs[b]
+		return remainder_ids[a] < remainder_ids[b])
 	var pass_count := 0
-	while assigned < wanted and pass_count < tun.civ_max_cars_per_edge:
+	while assigned < wanted and pass_count < max_per_edge:
 		var progressed := false
-		for entry in remainders:
+		for slot in order:
 			if assigned >= wanted:
 				break
-			var edge_id := int(entry["edge_id"])
-			if int(out[edge_id]) >= tun.civ_max_cars_per_edge:
+			var edge_id := remainder_ids[slot]
+			if int(out[edge_id]) >= max_per_edge:
 				continue
 			out[edge_id] = int(out[edge_id]) + 1
 			assigned += 1

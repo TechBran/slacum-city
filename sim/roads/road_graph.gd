@@ -637,6 +637,14 @@ func edge(edge_id: int) -> Dictionary:
 	return _edges.get(edge_id, {})
 
 
+## The live edge record, or `null` when there is no such edge. `edge()` returns
+## a FRESH empty dictionary on a miss — allocated on every call, hit or miss,
+## because the `{}` default is built before the lookup runs — which the sweeps
+## that touch every edge every minute cannot afford.
+func edge_or_null(edge_id: int) -> Variant:
+	return _edges.get(edge_id)
+
+
 func has_edge(edge_id: int) -> bool:
 	return _edges.has(edge_id)
 
@@ -649,6 +657,20 @@ func node_ids_sorted() -> Array[int]:
 func edge_ids_sorted() -> Array[int]:
 	_settle_order()
 	return _edge_order.duplicate()
+
+
+## The ascending id orders WITHOUT the defensive copy the `_sorted()` accessors
+## make. STRICTLY read-only, and never held across a graph edit — for the
+## per-tick sweeps inside sim/roads/ that only iterate. Everything outside this
+## directory gets the copy.
+func edge_ids_ref() -> Array[int]:
+	_settle_order()
+	return _edge_order
+
+
+func node_ids_ref() -> Array[int]:
+	_settle_order()
+	return _node_order
 
 
 func _settle_order() -> void:
@@ -741,7 +763,7 @@ func other_node(edge_id: int, node_id: int) -> int:
 ## lag. `powered_of` is `power.is_tile_powered(tile) -> bool`.
 func refresh_signal_power(powered_of: Callable) -> int:
 	var changed := 0
-	for node_id in node_ids_sorted():
+	for node_id in node_ids_ref():   # EVERY_TICK: no defensive copy of the order
 		var record: Dictionary = _nodes[node_id]
 		if not bool(record["signalised"]):
 			record["powered"] = true
@@ -777,17 +799,54 @@ func dark_signal_endpoints(edge_id: int) -> int:
 	var record: Dictionary = _edges.get(edge_id, {})
 	if record.is_empty():
 		return 0
-	var count := 0
-	var seen: Dictionary = {}
-	for node_key in ["node_a", "node_b"]:
-		var node_id := int(record[node_key])
-		if node_id < 0 or seen.has(node_id) or not _nodes.has(node_id):
-			continue
-		seen[node_id] = true
+	# Unrolled over the two endpoints (a loop edge counts its node once), so a
+	# per-tick caller pays no Array and no Dictionary for the dedupe.
+	var node_a := int(record["node_a"])
+	var node_b := int(record["node_b"])
+	var count := _dark_at(node_a)
+	if node_b != node_a:
+		count += _dark_at(node_b)
+	return count
+
+
+func _dark_at(node_id: int) -> int:
+	if node_id < 0:
+		return 0
+	var n: Dictionary = _nodes.get(node_id, {})
+	if n.is_empty():
+		return 0
+	return 1 if (bool(n["signalised"]) and not bool(n["powered"])) else 0
+
+
+## The dark signalised nodes as a membership set {node_id: true}. Empty when
+## every signal is lit, which is the normal case — a caller that needs the flag
+## for many edges asks once instead of probing the node table twice per edge.
+func dark_signal_node_ids() -> Dictionary:
+	var out: Dictionary = {}
+	for node_id in _nodes:
 		var n: Dictionary = _nodes[node_id]
 		if bool(n["signalised"]) and not bool(n["powered"]):
-			count += 1
-	return count
+			out[node_id] = true
+	return out
+
+
+## The inverse of `dark_signal_endpoints` over the WHOLE graph: {edge_id: count}
+## for every edge with at least one dark signalised endpoint, and `{}` — the
+## normal case, all signals lit — without touching a single edge.
+##
+## Built by walking the dark NODES and their incident-edge lists, which
+## `_attach_edge_to_node` keeps as the exact deduped inverse of each edge's
+## (node_a, node_b). So this agrees edge-for-edge with asking
+## `dark_signal_endpoints` about all E edges, at O(dark nodes) instead.
+func dark_signal_counts_by_edge() -> Dictionary:
+	var out: Dictionary = {}
+	for node_id in _nodes:
+		var n: Dictionary = _nodes[node_id]
+		if not bool(n["signalised"]) or bool(n["powered"]):
+			continue
+		for edge_id in n["edge_ids"]:
+			out[edge_id] = int(out.get(edge_id, 0)) + 1
+	return out
 
 
 ## Edges within `hops` graph hops of `edge_id`, keyed edge_id -> hop count

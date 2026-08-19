@@ -106,7 +106,9 @@ func _advance(ctx: TimeContext, dt_min: float, render_events: bool) -> void:
 		_enter_segment(segment, render_events)
 	if cell.active:
 		cell.advance(dt_min)
-	flood.integrate(dt_min / 60.0, get_precip_mm_h())
+	# `segment` is already in hand; asking `get_precip_mm_h()` would re-scan the
+	# timeline for the same row twice more (state, then intensity).
+	flood.integrate(dt_min / 60.0, _effect_of(segment, "precip_mm_h"))
 	for event in flood.drain_events():
 		_events.append(event)
 	_apply_modifiers()
@@ -166,11 +168,20 @@ func state_at(gmin: int) -> Dictionary:
 ## silent 1.0, because a silently-neutral weather multiplier is a bug that
 ## survives every test.
 func get_effect(channel: String) -> float:
+	return _effect_of(timeline.segment_at(now_min), channel)
+
+
+## `get_effect` against a segment the caller already resolved. Same lookup, same
+## error, same NAN — it just does not re-scan the timeline twice to rediscover
+## the state and intensity the caller is holding.
+func _effect_of(segment: Dictionary, channel: String) -> float:
 	var canonical := WeatherTables.canonical_channel(channel)
 	if canonical == "":
 		push_error("WeatherSystem.get_effect: unknown channel '%s'" % channel)
 		return NAN
-	return tables.effect(get_state(), canonical, get_intensity())
+	var state := String(segment["state"]) if not segment.is_empty() else "CLEAR"
+	var intensity := float(segment["intensity"]) if not segment.is_empty() else 0.0
+	return tables.effect(state, canonical, intensity)
 
 
 func get_wind_kph() -> float:
@@ -185,9 +196,12 @@ func get_precip_mm_h() -> float:
 ## Every other channel stays a step function, because sim math needs step
 ## semantics for coarse/fine parity; only the renderer needs the ramp.
 func get_precip01() -> float:
+	return _precip01_of(timeline.segment_at(now_min))
+
+
+func _precip01_of(segment: Dictionary) -> float:
 	var scale := maxf(0.001, tables.precip01_scale_mm_h)
-	var here := clampf(get_precip_mm_h() / scale, 0.0, 1.0)
-	var segment := timeline.segment_at(now_min)
+	var here := clampf(_effect_of(segment, "precip_mm_h") / scale, 0.0, 1.0)
 	if segment.is_empty():
 		return here
 	var crossfade_gs := tables.segment_crossfade_gs
@@ -329,8 +343,11 @@ func emit_event(event_type: StringName, payload: Dictionary) -> void:
 ## ships as `weather_state` (and `weather_type`, unchanged in value) — the only
 ## rename in the payload.
 func _maybe_emit_weather_changed(force: bool) -> void:
-	var precip01 := get_precip01()
-	var wind := get_wind_kph()
+	# One timeline resolve for both gate values — this runs every tick and the
+	# gate almost always closes, so the scans it used to do were pure overhead.
+	var segment := timeline.segment_at(now_min)
+	var precip01 := _precip01_of(segment)
+	var wind := _effect_of(segment, "wind_kph")
 	if not force \
 			and absf(precip01 - _last_emitted_precip01) < PRECIP01_EMIT_EPSILON \
 			and absf(wind - _last_emitted_wind) < WIND_EMIT_EPSILON_KPH:
@@ -368,10 +385,24 @@ func wind_heading_deg() -> float:
 ## writes into another system's numbers. Pushed only when a value actually
 ## changes, so the scheduler's per-hour channel cache is not invalidated every
 ## tick (ModifierStack.revision is the cache key).
+## The pushed multipliers are a pure function of the CURRENT SEGMENT's (state,
+## intensity), and both are constant for that segment's whole life — so once a
+## segment's mults have been settled, every later tick inside it recomputed the
+## identical dictionary only to throw it away at `_mults_equal`. The id of the
+## segment those mults were settled for is remembered instead. Transient and
+## derived: `_enter_segment` and `deserialize` both clear `_last_mults`, which
+## re-opens the gate, so a loaded game re-settles on its first tick exactly as
+## it did before.
+var _mults_settled_segment_id: int = -1
+
+
 func _apply_modifiers() -> void:
 	if _modifiers == null:
 		return
+	if _mults_settled_segment_id == _current_segment_id and not _last_mults.is_empty():
+		return
 	var mults := modifier_mults()
+	_mults_settled_segment_id = _current_segment_id
 	if _mults_equal(mults, _last_mults):
 		return
 	_last_mults = mults.duplicate()
@@ -379,11 +410,12 @@ func _apply_modifiers() -> void:
 
 
 func modifier_mults() -> Dictionary:
+	var segment := timeline.segment_at(now_min)
 	var out := {}
 	for channel in WeatherTables.CHANNELS:
 		if not tables.modifier_channels.has(channel):
 			continue
-		var value := get_effect(channel)
+		var value := _effect_of(segment, channel)
 		for target in tables.modifier_channels[channel]:
 			out[String(target)] = float(out.get(String(target), 1.0)) * value
 	return out
