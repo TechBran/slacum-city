@@ -77,19 +77,41 @@ func test_overlay_is_one_uniform_branch_and_mode_zero_is_untouched() -> void:
 
 
 func test_overlay_desaturates_the_world_in_every_mode() -> void:
-	# Modes 2–5 have no data behind them yet (doc 12 §4.4). They still have to
-	# LOOK like an overlay, or the player reads the toggle as broken.
+	# POLICE and FIRE have no data behind them yet, and TRAFFIC's data is on the
+	# ROADS, not on the buildings (doc 12 §4.4). All three still have to LOOK
+	# like an overlay here, or the player reads the toggle as broken.
 	var src := _src(BUILDING)
 	var guard := src.find("if (sc_overlay_mode > 0) {")
-	var power := src.find("if (sc_overlay_mode == 1) {")
-	assert_true(guard >= 0 and power > guard, "POWER is nested inside the guard")
-	var shared := src.substr(guard, power - guard)
+	var per_building := src.find("if (sc_overlay_mode == OVERLAY_MODE_POWER")
+	assert_true(guard >= 0 and per_building > guard,
+			"the per-building overlays are nested inside the guard")
+	var shared := src.substr(guard, per_building - guard)
 	assert_true(shared.contains("overlay_desaturate"),
-			"the de-emphasis is outside the POWER branch")
+			"the de-emphasis is outside the per-building branch")
 	assert_true(shared.contains("overlay_emission_mult"),
 			"and so is the emissive pull-down")
 	assert_true(_src(GROUND).contains("sc_overlay_mode"),
 			"the ground greys back too, or only the buildings look overlaid")
+
+
+func test_power_and_water_share_one_state_decoder() -> void:
+	# doc 12 §2.5 modes 1 and 2 differ ONLY in how the 0..3 state was derived:
+	# POWER reads the emissive ladder on top of the packed bits, WATER reads the
+	# bits `RenderStateModel.set_overlay_channel` mapped doc 05's factor into.
+	# One `overlay_paint()` decodes both, so the two cannot drift visually.
+	var src := _src(BUILDING)
+	assert_true(src.contains("vec4 overlay_paint(float state, out float emit_amt)"),
+			"there is exactly one state → hue/blend/emission decoder")
+	assert_true(src.contains("const int OVERLAY_MODE_POWER = 1;"))
+	assert_true(src.contains("const int OVERLAY_MODE_WATER = 2;"))
+	# The power-only correction stays inside its own branch: WATER must not have
+	# its state raised by a building that happens to be dark.
+	var per_building := src.find("if (sc_overlay_mode == OVERLAY_MODE_POWER")
+	var power_only := src.find("if (sc_overlay_mode == OVERLAY_MODE_POWER) {")
+	assert_true(power_only > per_building,
+			"the emissive-ladder read is nested one level deeper than the shared paint")
+	assert_true(src.find("float emit_amt;") > power_only,
+			"and the shared paint runs after it, on whichever state won")
 
 
 func test_overlay_carries_motion_as_well_as_hue() -> void:

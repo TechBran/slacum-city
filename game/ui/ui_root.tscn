@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3]
+[gd_scene load_steps=16 format=3]
 
 [ext_resource type="Script" path="res://ui/ui_root.gd" id="1_uiroot"]
 [ext_resource type="Script" path="res://ui/hud.gd" id="2_hud"]
@@ -14,6 +14,7 @@
 [ext_resource type="Script" path="res://ui/city_dashboard.gd" id="12_citydashboard"]
 [ext_resource type="Script" path="res://ui/away_report_sheet.gd" id="13_awayreport"]
 [ext_resource type="Script" path="res://ui/onboarding_flow.gd" id="14_onboarding"]
+[ext_resource type="Script" path="res://ui/event_log.gd" id="15_eventlog"]
 
 [node name="UIRoot" type="CanvasLayer"]
 layer = 10
@@ -134,14 +135,14 @@ theme_type_variation = &"RailButton"
 
 [node name="Strip" type="PanelContainer" parent="SafeArea/HUDLayer/OverlayRail"]
 visible = false
-custom_minimum_size = Vector2(200, 0)
+custom_minimum_size = Vector2(248, 0)
 layout_mode = 1
 anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 92.0
-offset_top = -260.0
-offset_right = 292.0
+offset_top = -300.0
+offset_right = 340.0
 offset_bottom = -84.0
 grow_vertical = 0
 theme_type_variation = &"SheetPanel"
@@ -401,6 +402,87 @@ size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
 [node name="List" type="VBoxContainer" parent="SafeArea/PanelLayer/IncidentDrawer/Panel/Body/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="EventLog" type="Control" parent="SafeArea/PanelLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("15_eventlog")
+
+[node name="Chip" type="Button" parent="SafeArea/PanelLayer/EventLog"]
+custom_minimum_size = Vector2(72, 48)
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -128.0
+offset_top = -196.0
+offset_right = -56.0
+offset_bottom = -148.0
+grow_horizontal = 0
+grow_vertical = 0
+text = "≡"
+tooltip_text = "Event log"
+theme_type_variation = &"StatChip"
+
+[node name="Panel" type="PanelContainer" parent="SafeArea/PanelLayer/EventLog"]
+visible = false
+custom_minimum_size = Vector2(320, 0)
+layout_mode = 1
+anchors_preset = 11
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -320.0
+offset_top = 56.0
+grow_horizontal = 0
+grow_vertical = 2
+theme_type_variation = &"SidePanel"
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/PanelLayer/EventLog/Panel"]
+layout_mode = 2
+
+[node name="Header" type="HBoxContainer" parent="SafeArea/PanelLayer/EventLog/Panel/Body"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="SafeArea/PanelLayer/EventLog/Panel/Body/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+clip_text = true
+
+[node name="Close" type="Button" parent="SafeArea/PanelLayer/EventLog/Panel/Body/Header"]
+custom_minimum_size = Vector2(48, 48)
+layout_mode = 2
+text = "✕"
+tooltip_text = "Close event log"
+theme_type_variation = &"GhostButton"
+
+[node name="FilterScroll" type="ScrollContainer" parent="SafeArea/PanelLayer/EventLog/Panel/Body"]
+custom_minimum_size = Vector2(0, 56)
+layout_mode = 2
+vertical_scroll_mode = 0
+
+[node name="Filters" type="HBoxContainer" parent="SafeArea/PanelLayer/EventLog/Panel/Body/FilterScroll"]
+layout_mode = 2
+
+[node name="Empty" type="Label" parent="SafeArea/PanelLayer/EventLog/Panel/Body"]
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="Scroll" type="ScrollContainer" parent="SafeArea/PanelLayer/EventLog/Panel/Body"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="List" type="VBoxContainer" parent="SafeArea/PanelLayer/EventLog/Panel/Body/Scroll"]
 layout_mode = 2
 size_flags_horizontal = 3
 

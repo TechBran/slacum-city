@@ -129,6 +129,15 @@ uniform float power_dark_lo = 0.10;
 uniform float power_dark_hi = 0.17;
 uniform float power_weak_lo = 0.30;
 uniform float power_weak_hi = 0.42;
+// WATER mode reads the SAME 2-bit `overlay_state` (C-64) — no second channel,
+// no extra packing bit. `RenderStateModel.set_overlay_channel(&"water", …)`
+// maps doc 05's per-building service factor onto those two bits while mode 2
+// is active and restores each building's own state on the way out, so the two
+// modes are one decoder here and the buffer layout §2.6 fixes never moved.
+// A mode with no channel published simply shows every building NORMAL under
+// the grey wash, which is what "this system has nothing to say" looks like.
+const int OVERLAY_MODE_POWER = 1;
+const int OVERLAY_MODE_WATER = 2;
 // ═════════ END overlay pass ═══════════════════════════════════════════════
 
 // `flat`, and it is load-bearing. INSTANCE_CUSTOM is constant over an
@@ -163,6 +172,32 @@ float stage_of(float packed) {
 // 0 NORMAL, 1 WARNING, 2 CRITICAL, 3 OFFLINE.
 float overlay_of(float packed) {
 	return clamp(floor(packed / 112.0), 0.0, 3.0);
+}
+
+// One state 0..3 → the hue it wears, the albedo blend weight, and (through
+// `emit_amt`) how much light it carries of its own. Shared by every
+// per-building overlay so POWER and WATER cannot drift apart visually: the
+// only thing that differs between them is how the state was DERIVED.
+//
+// Motion is part of the answer, not decoration (doc 12 §2.5, constitution §11:
+// colour is never load-bearing). CRITICAL pulses at 1.2 Hz, OFFLINE breathes
+// slowly at 0.35 Hz, and the two lower states hold still.
+vec4 overlay_paint(float state, out float emit_amt) {
+	vec3 tint = overlay_normal_color;
+	tint = mix(tint, overlay_warning_color, step(0.5, state));
+	tint = mix(tint, overlay_critical_color, step(1.5, state));
+	tint = mix(tint, overlay_offline_color, step(2.5, state));
+	float is_data = step(0.5, state);
+	float hz = mix(overlay_critical_hz, overlay_offline_hz, step(2.5, state));
+	float pulse01 = 0.5 + 0.5 * sin(sc_time * 6.283185 * hz);
+	float pulse_amt = step(1.5, state) * 0.35 * pulse01;
+	float blend = mix(overlay_normal_blend, overlay_data_blend, is_data)
+			* (1.0 - pulse_amt);
+	// A dark building emits nothing, so the state has to carry its own light or
+	// the overlay is unreadable at night — which is exactly when a blackout or a
+	// dry main is being diagnosed.
+	emit_amt = overlay_state_emission * is_data * (0.65 + 0.35 * pulse01);
+	return vec4(tint, blend);
 }
 
 void vertex() {
@@ -308,37 +343,27 @@ void fragment() {
 		float luma = dot(ALBEDO, vec3(0.2126, 0.7152, 0.0722));
 		ALBEDO = mix(ALBEDO, vec3(luma), overlay_desaturate);
 		EMISSION *= overlay_emission_mult;
-		if (sc_overlay_mode == 1) {
-			// POWER. Severity is the worse of the packed overlay_state (doc
-			// 11 owns it: damage → WARNING, destroyed → OFFLINE) and the
-			// service state read off the emissive ladder. `max` is correct
-			// because 0..3 IS the severity order.
-			float e_raw = v_custom.r;
-			float dark = 1.0 - smoothstep(power_dark_lo, power_dark_hi, e_raw);
-			float weak = (1.0 - dark)
-					* (1.0 - smoothstep(power_weak_lo, power_weak_hi, e_raw));
-			float from_power = dark * 3.0 + weak * 1.0;
-			float state = max(overlay_of(packed), from_power);
-			// Pick the hue by state without four branches.
-			vec3 tint = overlay_normal_color;
-			tint = mix(tint, overlay_warning_color, step(0.5, state));
-			tint = mix(tint, overlay_critical_color, step(1.5, state));
-			tint = mix(tint, overlay_offline_color, step(2.5, state));
-			float is_data = step(0.5, state);
-			// Motion, so colour is never load-bearing (doc 12 §2.5): CRITICAL
-			// pulses at 1.2 Hz, OFFLINE breathes slowly at 0.35 Hz, and the
-			// two lower states hold still.
-			float hz = mix(overlay_critical_hz, overlay_offline_hz, step(2.5, state));
-			float pulse01 = 0.5 + 0.5 * sin(sc_time * 6.283185 * hz);
-			float pulse_amt = step(1.5, state) * 0.35 * pulse01;
-			float blend = mix(overlay_normal_blend, overlay_data_blend, is_data)
-					* (1.0 - pulse_amt);
-			ALBEDO = mix(ALBEDO, tint, blend);
-			// A dark building emits nothing, so the state has to carry its own
-			// light or the overlay is unreadable at night — which is exactly
-			// when a blackout is being diagnosed.
-			EMISSION += tint * (overlay_state_emission * is_data
-					* (0.65 + 0.35 * pulse01));
+		if (sc_overlay_mode == OVERLAY_MODE_POWER
+				|| sc_overlay_mode == OVERLAY_MODE_WATER) {
+			// Both per-building overlays start from the packed 2-bit state
+			// (doc 11 owns it: damage → WARNING, destroyed → OFFLINE; under
+			// WATER, RenderStateModel has mapped doc 05's service factor onto
+			// those same two bits and saved each building's own value).
+			float state = overlay_of(packed);
+			if (sc_overlay_mode == OVERLAY_MODE_POWER) {
+				// POWER also reads the service state off the emissive ladder
+				// and takes the WORSE of the two. `max` is correct because
+				// 0..3 IS the severity order.
+				float e_raw = v_custom.r;
+				float dark = 1.0 - smoothstep(power_dark_lo, power_dark_hi, e_raw);
+				float weak = (1.0 - dark)
+						* (1.0 - smoothstep(power_weak_lo, power_weak_hi, e_raw));
+				state = max(state, dark * 3.0 + weak * 1.0);
+			}
+			float emit_amt;
+			vec4 paint = overlay_paint(state, emit_amt);
+			ALBEDO = mix(ALBEDO, paint.rgb, paint.w);
+			EMISSION += paint.rgb * emit_amt;
 		}
 	}
 	// ═════════ END overlay pass ═══════════════════════════════════════════

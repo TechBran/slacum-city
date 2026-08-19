@@ -29,6 +29,9 @@ var building_panel: BuildingPanel
 var ghost_view: GhostView
 var construction_view: ConstructionSiteView
 var vehicle_view: VehicleView
+## doc 12 §2.5 mode 5. Congestion is per road EDGE, so it is the one overlay
+## that cannot ride the packed per-building state and gets its own MultiMesh.
+var road_overlay: RoadOverlayView
 var audio: AudioService
 var save_service: SaveService
 var _before_snapshot: Dictionary = {}   # captured on pause for the away report
@@ -130,8 +133,7 @@ func _ready() -> void:
 		elif String(arg).begins_with("--lightning-at="):
 			_lightning_at = float(String(arg).trim_prefix("--lightning-at="))
 		elif String(arg).begins_with("--overlay="):
-			RenderingServer.global_shader_parameter_set("sc_overlay_mode",
-					int(String(arg).trim_prefix("--overlay=")))
+			_select_overlay(int(String(arg).trim_prefix("--overlay=")))
 		elif String(arg).begins_with("--focus="):
 			var p := String(arg).trim_prefix("--focus=").split(",")
 			if p.size() == 2:
@@ -463,6 +465,9 @@ func _on_hour_settled(data: Dictionary) -> void:
 	var power01 := HudModel.mean01(power)
 	var water01 := HudModel.mean01(sim.water.service_factors())
 	ui_root.ingest_service({"power01": power01, "water01": water01})
+	# §2.5 mode 2. The chips take the city-wide MEAN; the overlay wants to know
+	# WHICH taps are dry, which is a different question and a different feed.
+	_feed_water_overlay()
 	ui_root.sample_history({
 		"hour": sim.clock.sim_time_minutes() / 60,
 		"population": float(sim.population.city_population),
@@ -492,6 +497,16 @@ func _refresh_hud() -> void:
 		"speed": sim_host.speed,
 		"paused": sim_host.paused,
 	})
+	# The live overlay is refreshed at HUD cadence — 1 Hz is one game-minute at
+	# 1×, which is exactly doc 10's snapshot rebuild rate — and ONLY the live
+	# one: a channel nobody is looking at is republished on the hour instead.
+	var active_overlay: StringName = ui_root.overlay_rail.active_mode() \
+			if ui_root != null and ui_root.overlay_rail != null \
+			else OverlayModel.MODE_NONE
+	if active_overlay == OverlayModel.MODE_WATER:
+		_feed_water_overlay()
+	elif active_overlay == OverlayModel.MODE_TRAFFIC:
+		_feed_traffic_overlay()
 	if ui_root != null:
 		ui_root.refresh_incidents(sim.incidents.snapshot(), sim.incidents.now_h)
 		ui_root.set_incident_reference(camera_state.focus)
@@ -556,6 +571,7 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 		return
 	root.set_alert_locator(_alert_world_pos)
 	root.focus_requested.connect(_on_ui_focus_requested)
+	_wire_overlays(root)
 	root.pause_intent.connect(_on_hud_pause_toggled)     # doc 01 owns `paused`
 	root.quit_requested.connect(_on_ui_quit_requested)
 	root.settings_changed.connect(_on_ui_setting_changed)
@@ -582,6 +598,90 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 		"tutorial_lot_a": sim_host.sim.loader.resolve_tag("tutorial_lot_a")["tile_global"],
 		"tutorial_lot_b": sim_host.sim.loader.resolve_tag("tutorial_lot_b")["tile_global"],
 	})
+
+
+# ---------------------------------------------------------------------------
+# Data overlays (doc 12 §2.5 modes 2 and 5)
+#
+# The rail owns which overlay is live and writes doc 11's `sc_overlay_mode`; the
+# shell owns the DATA, because only the shell holds the sim. Two feeds, both of
+# them plain dictionaries, neither of which any `ui/` or `game/render/` file
+# could build for itself:
+#
+#   * WATER is per BUILDING and rides the two `overlay_state` bits doc 11
+#     already packs (C-64) — `RenderStateModel.set_overlay_channel` maps it in
+#     while mode 2 is up and restores every building's own state on the way out.
+#   * TRAFFIC is per road EDGE and cannot ride those bits at all, so it is a
+#     second translucent MultiMesh over the road slabs, built from doc 10's
+#     `TrafficSnapshot` and visible only in mode 5.
+# ---------------------------------------------------------------------------
+
+## Dev arg `--overlay=<index>`: goes through the RAIL rather than straight at
+## the shader global, so the data feeds and the road overlay come up with it and
+## the screenshot shows the overlay a player would see, not a grey city.
+func _select_overlay(index: int) -> void:
+	if ui_root == null or ui_root.overlay_rail == null:
+		RenderingServer.global_shader_parameter_set("sc_overlay_mode", index)
+		return
+	var modes := ui_root.overlay_rail.model.modes()
+	if index >= 0 and index < modes.size():
+		ui_root.overlay_rail.select(modes[index])
+
+
+func _wire_overlays(root: UIRoot) -> void:
+	var cfg: UIConfig = root.config if root.config != null else UIConfig.load_from_files()
+	var overlay_model: OverlayModel = root.overlay_rail.model \
+			if root.overlay_rail != null else null
+	road_overlay = RoadOverlayView.new()
+	road_overlay.name = "RoadOverlay"
+	add_child(road_overlay)
+	var variant := "default"
+	if root.settings_sheet != null:
+		variant = str(root.settings_sheet.model.value("colorblind"))
+	road_overlay.setup(cfg, overlay_model, 8.0, variant)
+	root.overlay_changed.connect(_on_overlay_changed)
+	# Publish both channels once at boot so the first tap on a chip is a
+	# repaint and not a wait for the next settled hour.
+	_feed_water_overlay()
+	_feed_traffic_overlay()
+
+
+func _on_overlay_changed(mode: StringName, _index: int) -> void:
+	if mode == OverlayModel.MODE_WATER:
+		_feed_water_overlay()
+	elif mode == OverlayModel.MODE_TRAFFIC:
+		_feed_traffic_overlay()
+	if city_view != null:
+		city_view.set_overlay_mode(mode, camera_rig.camera.global_position)
+	if road_overlay != null:
+		road_overlay.set_overlay_mode(mode)
+
+
+## Doc 05's per-building reading, through §2.5's authored bands. `pressure` and
+## not `service_factors()` on purpose: the settled hourly factor is the right
+## number for a BILL and the wrong one for a map — a main that breaks at 08:05
+## has to turn its block red at 08:05, not at 09:00.
+func _feed_water_overlay() -> void:
+	if render_model == null or ui_root == null or ui_root.overlay_rail == null:
+		return
+	var overlay_model := ui_root.overlay_rail.model
+	var sim := sim_host.sim
+	var states: Dictionary = {}
+	for sim_id: String in sim.buildings:
+		var render_id := _render_id(sim_id)
+		if render_id < 0:
+			continue
+		states[render_id] = overlay_model.water_state(
+				float(sim.water.get_water_service(sim_id).get("pressure", 1.0)))
+	render_model.set_overlay_channel(OverlayModel.MODE_WATER, states)
+
+
+## Doc 10 rebuilds `snapshot` every game-minute and each row already carries its
+## band, so this is a read and a repaint — no classification, no graph walk.
+func _feed_traffic_overlay() -> void:
+	if road_overlay == null or sim_host.sim.roads == null:
+		return
+	road_overlay.apply_edges(sim_host.sim.roads.snapshot.visible_edges)
 
 
 func _coach_world_rect(tag: String) -> Variant:
@@ -661,6 +761,12 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 				audio.set_sound_volume(model.value_num("sound_volume"))
 		&"text_scale", &"larger_touch_targets":
 			ui_root.rebuild_theme(model.theme_opts())
+		&"colorblind":
+			# The traffic bands borrow the legend's hues, so the map has to
+			# follow the palette the theme just switched to.
+			ui_root.rebuild_theme(model.theme_opts())
+			if road_overlay != null:
+				road_overlay.set_palette_variant(str(model.value("colorblind")))
 		_:
 			pass   # reduce_motion / in_app_banners are read where used
 

@@ -73,6 +73,25 @@ var _animating: Array = []        # ids, insertion-ordered
 var _out_events: Array = []
 var _suppress_events: bool = false
 
+# --------------------------------------------------- overlay channels (§2.5)
+#
+# Doc 12 §2.5's overlays past POWER are per-building READS of a system that is
+# not the emissive ladder: WATER is doc 05's service factor, and the ones after
+# it will be their own. Rather than grow a channel in the instance buffer per
+# system — 2 bits are all §2.6 packs and C-64 fixes that — each system pushes a
+# whole `{render_id: state}` table here and it is MAPPED ONTO `overlay_state`
+# only while its mode is the active one. Exiting the mode restores every
+# building's own state exactly, so the damage/destroyed states doc 11 owns
+# survive a round trip through any overlay.
+#
+# `_overlay_base` is what makes that true: while a channel is applied it holds
+# the pre-overlay value for every id the channel touched, and every OTHER write
+# to `overlay_state` (events, snapshots) is routed through `_write_overlay` so
+# it lands on the base instead of being clobbered on exit.
+var _overlay_channels: Dictionary = {}   # StringName mode -> {int id: int state}
+var _overlay_base: Dictionary = {}       # int id -> int, only while overridden
+var _overlay_mode: StringName = &"none"
+
 var time_s: float = 0.0           # model clock, advanced only by advance()
 var hour: float = 21.0            # game hour, 0..24 (art input, §2.7.1)
 
@@ -339,6 +358,12 @@ func add_building(view: Dictionary) -> BuildingRec:
 	var block := _block_rec(rec.block_id, rec.chunk)
 	block.buildings.append(id)
 	_alloc_slot(rec)
+	# A building placed while an overlay is up joins it immediately rather than
+	# waiting for the next publish — a fresh lot that reads NORMAL under the
+	# water overlay when it has no water yet is a lie the player would act on.
+	var live: Variant = _overlay_channels.get(_overlay_mode, {})
+	if live is Dictionary and (live as Dictionary).has(id):
+		_apply_overlay_table({id: int((live as Dictionary)[id])})
 	return rec
 
 
@@ -352,7 +377,110 @@ func remove_building(id: int) -> void:
 	var block := _block_rec(rec.block_id, rec.chunk)
 	block.buildings.erase(id)
 	_animating.erase(id)
+	_overlay_base.erase(id)
 	_recs.erase(id)
+
+
+# ------------------------------------------------- overlay channels (§2.5)
+
+## Publish one overlay's per-building states: `{render_id: 0..3}`, the same four
+## `OVERLAY_*` values doc 11 packs. Additive by construction — a system that has
+## not published leaves the buildings alone — and idempotent, so the shell can
+## call it every hour with the whole city.
+##
+## Only the ACTIVE mode's channel is on screen; the rest are held and applied
+## the moment the player selects them, which is what makes switching overlays a
+## repaint rather than a round trip to the sim.
+func set_overlay_channel(mode: StringName, states: Dictionary) -> int:
+	var table: Dictionary = {}
+	for key: Variant in states:
+		table[int(key)] = clampi(int(states[key]), OVERLAY_NORMAL, OVERLAY_OFFLINE)
+	_overlay_channels[mode] = table
+	if mode != _overlay_mode:
+		return table.size()
+	# Live: re-point the override at the new table. Ids that dropped out of it
+	# go back to their own state; ids that joined save theirs first.
+	_restore_overlay_base(table)
+	_apply_overlay_table(table)
+	return table.size()
+
+
+func clear_overlay_channel(mode: StringName) -> void:
+	if mode == _overlay_mode:
+		_restore_overlay_base({})
+	_overlay_channels.erase(mode)
+
+
+func overlay_channel(mode: StringName) -> Dictionary:
+	var table: Variant = _overlay_channels.get(mode, {})
+	return (table as Dictionary).duplicate() if table is Dictionary else {}
+
+
+func overlay_mode() -> StringName:
+	return _overlay_mode
+
+
+## The rail's `overlay_changed` lands here. Leaving a mode restores every
+## building's own `overlay_state` byte for byte; entering one applies that
+## mode's channel if it has published, and is a no-op if it has not.
+func set_overlay_mode(mode: StringName) -> void:
+	if mode == _overlay_mode:
+		return
+	_overlay_mode = mode
+	var raw: Variant = _overlay_channels.get(mode, {})
+	var table: Dictionary = raw if raw is Dictionary else {}
+	_restore_overlay_base(table)
+	_apply_overlay_table(table)
+
+
+## The value a building would carry with no overlay applied — its own state.
+func base_overlay_state(id: int) -> int:
+	if _overlay_base.has(id):
+		return int(_overlay_base[id])
+	var rec: BuildingRec = _recs.get(id)
+	return rec.overlay_state if rec != null else OVERLAY_NORMAL
+
+
+## Writes a building's OWN overlay state. While a channel is overriding that
+## building the write lands on the saved base, so a fire that breaks out during
+## a water overlay is still there when the player turns the overlay off.
+func _write_overlay(rec: BuildingRec, value: int) -> void:
+	var clamped := clampi(value, OVERLAY_NORMAL, OVERLAY_OFFLINE)
+	if _overlay_base.has(rec.id):
+		_overlay_base[rec.id] = clamped
+		return
+	rec.overlay_state = clamped
+	_mark_dirty(rec)
+
+
+## Puts back every override that `keep` does not carry forward.
+func _restore_overlay_base(keep: Dictionary) -> void:
+	var ids: Array = _overlay_base.keys()
+	ids.sort()
+	for id: int in ids:
+		if keep.has(id):
+			continue
+		var rec: BuildingRec = _recs.get(id)
+		if rec != null:
+			rec.overlay_state = int(_overlay_base[id])
+			_mark_dirty(rec)
+		_overlay_base.erase(id)
+
+
+func _apply_overlay_table(table: Dictionary) -> void:
+	var ids: Array = table.keys()
+	ids.sort()
+	for id: int in ids:
+		var rec: BuildingRec = _recs.get(id)
+		if rec == null:
+			continue
+		if not _overlay_base.has(id):
+			_overlay_base[id] = rec.overlay_state
+		var state := int(table[id])
+		if rec.overlay_state == state:
+			continue
+		rec.overlay_state = state
+		_mark_dirty(rec)
 
 
 func add_streetlight(id: int, block_id: Variant, world_pos: Vector3) -> StreetlightRec:
@@ -975,15 +1103,15 @@ func apply_event(e: Dictionary) -> void:
 					rec2.damage = clampf(float(e["damage"]), 0.0, 1.0)
 				if e.has("condition"):
 					rec2.condition = clampf(float(e["condition"]), 0.0, 1.0)
-				rec2.overlay_state = OVERLAY_WARNING if rec2.overlay_state == OVERLAY_NORMAL \
-						else rec2.overlay_state
+				if base_overlay_state(rec2.id) == OVERLAY_NORMAL:
+					_write_overlay(rec2, OVERLAY_WARNING)
 				_retarget(rec2)
 		&"building_destroyed":
 			var rec3 := _rec_of(e.get("building", e.get("building_id", -1)))
 			if rec3 != null:
 				rec3.damage = 1.0
 				rec3.powered = false
-				rec3.overlay_state = OVERLAY_OFFLINE
+				_write_overlay(rec3, OVERLAY_OFFLINE)
 				_retarget(rec3)
 		&"building_completed", &"building_upgraded":
 			var rec4 := _rec_of(e.get("building", e.get("building_id", -1)))
@@ -993,7 +1121,7 @@ func apply_event(e: Dictionary) -> void:
 					_rebucket(rec4, new_level)
 				rec4.stage = 0
 				rec4.damage = float(e.get("damage", rec4.damage))
-				rec4.overlay_state = OVERLAY_NORMAL
+				_write_overlay(rec4, OVERLAY_NORMAL)
 				_retarget(rec4)
 		&"building_construction_stage":
 			var rec5 := _rec_of(e.get("building", e.get("building_id", -1)))
@@ -1048,7 +1176,7 @@ func apply_snapshot(snap: Dictionary) -> void:
 		if view.has("construction_stage"):
 			rec.stage = int(view["construction_stage"])
 		if view.has("overlay_state"):
-			rec.overlay_state = int(view["overlay_state"])
+			_write_overlay(rec, int(view["overlay_state"]))
 	for v in snap.get("blocks", []) as Array:
 		var bv: Dictionary = v
 		var b := _block_rec(bv.get("block_id", 0))

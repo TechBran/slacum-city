@@ -475,6 +475,23 @@ func _upload_all() -> void:
 			far_node.visible = false
 
 
+## Doc 12 §2.5's `overlay_changed`, forwarded into the model and flushed at
+## once. The flush matters: the rail writes `sc_overlay_mode` the same frame,
+## and without it a PAUSED city would grey out with the previous overlay's
+## states still in the instance buffer until something else made a record
+## dirty. One call, and the buffer the shader reads already carries the mode
+## the player just chose.
+##
+## `camera_pos` only orders the flush (nearest chunks first); passing
+## `Vector3.ZERO` is harmless because the budget below is effectively infinite.
+func set_overlay_mode(mode: StringName, camera_pos: Vector3 = Vector3.ZERO) -> void:
+	if model == null:
+		return
+	model.set_overlay_mode(mode)
+	model.flush_dirty(camera_pos, 1000000)
+	_upload_all()
+
+
 func refresh(delta: float, hour: float, camera_pos: Vector3 = Vector3.ZERO) -> void:
 	model.set_hour(hour)
 	model.advance(delta)
