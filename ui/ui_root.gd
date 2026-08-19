@@ -7,10 +7,12 @@ extends CanvasLayer
 ##     └── SafeArea (MarginContainer)
 ##         ├── MarkerLayer (Control, PASS)   projected world pins + selection ring
 ##         ├── HUDLayer    (CityHUD, IGNORE) TopBar / LeftRail / OverlayRail / AlertStack
-##         ├── PanelLayer  (Control, IGNORE) BuildingPanel, AlertsCenter, (LandPanel…)
-##         ├── SheetLayer  (Control, IGNORE) BuildSheet, PlacementBar, (UnitPicker…)
+##         ├── PanelLayer  (Control, IGNORE) BuildingPanel, AlertsCenter,
+##         │                                  IncidentDrawer, (LandPanel…)
+##         ├── SheetLayer  (Control, IGNORE) BuildSheet, PlacementBar, UnitPicker
 ##         ├── ModalLayer  (Control, STOP when populated) SettingsSheet, SaveLoadSheet,
-##         │                                              PauseMenu
+##         │                                              PauseMenu, CityDashboard,
+##         │                                              AwayReport
 ##         └── CoachLayer  (Control, STOP when hard-gated)
 ##     └── ToastLayer (CanvasLayer, layer=20)
 ##
@@ -66,6 +68,16 @@ signal pause_intent(paused: bool)                      ## → `set_paused` (doc 
 signal quit_requested                                  ## save, then close the app
 signal alerts_unread_changed(count: int)
 
+## Wave-2 screens (S6/S7/S8/S11). Same contract: the root decides nothing, it
+## routes the intent and re-emits it once, so `game/main.gd` still connects to
+## one object.
+signal dispatch_requested(unit_id: int, incident_id: int)   ## → cmd_dispatch_unit
+signal incident_action(action: StringName, incident_id: int, value: Variant)
+signal handle_now_requested(incident_id: int)          ## away report → the incident
+signal tax_applied(level: int, rate: float)            ## the sim already applied it
+signal deeplink_requested(target: String)              ## dashboard row → overlay/…
+signal away_dismissed
+
 @export var apply_content_scale: bool = true
 
 var config: UIConfig
@@ -88,6 +100,10 @@ var alerts_center: AlertsCenter
 var settings_sheet: SettingsSheet
 var save_load_sheet: SaveLoadSheet
 var pause_menu: PauseMenu
+var incident_drawer: IncidentDrawer
+var unit_picker: UnitPickerSheet
+var city_dashboard: CityDashboard
+var away_report: AwayReportSheet
 
 var current_breakpoint: Breakpoint = Breakpoint.REGULAR
 var drawer_w_dp: int = 300
@@ -167,6 +183,12 @@ func _bind_nodes() -> void:
 	settings_sheet = safe_area.get_node_or_null("ModalLayer/SettingsSheet") as SettingsSheet
 	save_load_sheet = safe_area.get_node_or_null("ModalLayer/SaveLoadSheet") as SaveLoadSheet
 	pause_menu = safe_area.get_node_or_null("ModalLayer/PauseMenu") as PauseMenu
+	incident_drawer = safe_area.get_node_or_null(
+			"PanelLayer/IncidentDrawer") as IncidentDrawer
+	unit_picker = safe_area.get_node_or_null("SheetLayer/UnitPicker") as UnitPickerSheet
+	city_dashboard = safe_area.get_node_or_null(
+			"ModalLayer/CityDashboard") as CityDashboard
+	away_report = safe_area.get_node_or_null("ModalLayer/AwayReport") as AwayReportSheet
 
 
 # ---------------------------------------------------------------------------
@@ -190,12 +212,34 @@ func bring_up_screens() -> void:
 		save_load_sheet.setup(config)
 	if pause_menu != null and pause_menu.config == null:
 		pause_menu.setup(config)
+	if incident_drawer != null and incident_drawer.model == null:
+		incident_drawer.setup(config)
+	if unit_picker != null and unit_picker.model == null:
+		unit_picker.setup(config)
+	if city_dashboard != null and city_dashboard.model == null:
+		city_dashboard.setup(config)
+	if away_report != null and away_report.model == null:
+		away_report.setup(config)
 	_connect_screens()
 
 
 func _connect_screens() -> void:
 	if hud != null:
 		_connect(hud.menu_requested, _on_menu_requested)
+		_connect(hud.chip_activated, _on_chip_activated)
+	if incident_drawer != null:
+		_connect(incident_drawer.focus_requested, _on_focus_requested)
+		_connect(incident_drawer.dispatch_requested, _on_assign_requested)
+		_connect(incident_drawer.acknowledge_requested, _on_acknowledge_requested)
+		_connect(incident_drawer.pin_requested, _on_pin_requested)
+	if unit_picker != null:
+		_connect(unit_picker.dispatch_requested, _on_dispatch_requested)
+	if city_dashboard != null:
+		_connect(city_dashboard.deeplink_requested, _on_deeplink_requested)
+		_connect(city_dashboard.tax_applied, _on_tax_applied)
+	if away_report != null:
+		_connect(away_report.handle_now_requested, _on_handle_now_requested)
+		_connect(away_report.dismissed, _on_away_dismissed)
 	if overlay_rail != null:
 		_connect(overlay_rail.overlay_changed, _on_overlay_changed)
 	if alerts_center != null:
@@ -266,6 +310,75 @@ func _on_quit_requested() -> void:
 	quit_requested.emit()
 
 
+# ---------------------------------------------------------------------------
+# Wave-2 routes (S6 → S7, HUD chip → S8, S11 → S6)
+# ---------------------------------------------------------------------------
+
+## §2.4's chip is "read-only + rare" and its one action is §2.10's: open the
+## dashboard on that vital's band.
+func _on_chip_activated(chip_id: StringName) -> void:
+	if city_dashboard != null:
+		city_dashboard.open_for_chip(chip_id)
+
+
+## §2.6's ASSIGN. The drawer knows the incident, the picker knows the units, and
+## the root is the only thing that knows both exist.
+func _on_assign_requested(incident_id: int) -> void:
+	if unit_picker == null or incident_drawer == null:
+		return
+	var row := incident_drawer.model.row(incident_id)
+	if row.is_empty():
+		return
+	unit_picker.open_for(row)
+
+
+func _on_dispatch_requested(unit_id: int, incident_id: int) -> void:
+	dispatch_requested.emit(unit_id, incident_id)
+
+
+func _on_acknowledge_requested(incident_id: int) -> void:
+	incident_action.emit(&"acknowledge", incident_id, true)
+
+
+func _on_pin_requested(incident_id: int, pinned: bool) -> void:
+	incident_action.emit(&"pin", incident_id, pinned)
+
+
+## §2.10's deep links. `drawer` is a cross-screen route the root can serve on its
+## own; an overlay is the shell's, because only the shell owns the render mode.
+func _on_deeplink_requested(target: String) -> void:
+	if target == "drawer":
+		if city_dashboard != null:
+			city_dashboard.close()
+		if incident_drawer != null:
+			incident_drawer.open()
+		return
+	deeplink_requested.emit(target)
+
+
+func _on_tax_applied(level: int, rate: float) -> void:
+	tax_applied.emit(level, rate)
+
+
+## §2.12: HANDLE NOW "dismisses the report, jumps the camera, opens the drawer and
+## preselects the incident". The sheet dismissed itself; the other three are here,
+## except the camera jump, which is one `focus_requested` the shell already
+## listens to.
+func _on_handle_now_requested(incident_id: int) -> void:
+	if incident_drawer != null:
+		incident_drawer.open()
+		var payload := incident_drawer.model.focus_payload(incident_id)
+		incident_drawer.model.select(incident_id)
+		incident_drawer.refresh()
+		if not payload.is_empty() and bool(payload["has_focus"]):
+			focus_requested.emit(payload["world_pos"] as Vector3)
+	handle_now_requested.emit(incident_id)
+
+
+func _on_away_dismissed() -> void:
+	away_dismissed.emit()
+
+
 ## Binds `game/save_service.gd` (and the live sim it captures) to the save
 ## screen. Both stay `Object`: `ui/` never depends on either type.
 func bind_save_service(service: Object, sim: Object = null) -> void:
@@ -273,11 +386,14 @@ func bind_save_service(service: Object, sim: Object = null) -> void:
 		save_load_sheet.bind_service(service, sim)
 
 
-## Pipes one `SimEventBus.drain()` batch into the alerts feed. The shell calls
-## this from its tick handler; nothing else in `ui/` sees a sim event.
+## Pipes one `SimEventBus.drain()` batch into the two feeds that eat sim events —
+## the alerts centre (§2.15) and the incident drawer (§2.6). The shell calls this
+## once from its tick handler; nothing else in `ui/` sees a sim event.
 func feed_events(batch: Array) -> void:
 	if alerts_center != null:
 		alerts_center.feed_batch(batch)
+	if incident_drawer != null:
+		incident_drawer.feed_batch(batch)
 
 
 func set_sim_clock(minute_of_day: int, day_index: int = 0) -> void:
@@ -290,6 +406,87 @@ func set_sim_clock(minute_of_day: int, day_index: int = 0) -> void:
 func set_alert_locator(locator: Callable) -> void:
 	if alerts_center != null:
 		alerts_center.set_locator(locator)
+
+
+# ---------------------------------------------------------------------------
+# Wave-2 shell seams. Every one of these takes plain data or an injected
+# Callable: `ui/` still holds no sim reference, and `game/main.gd` still talks to
+# one object.
+# ---------------------------------------------------------------------------
+
+## Doc 06's `IncidentSystem.snapshot()` and its clock (game-hours). One call per
+## HUD refresh keeps the escalation countdowns moving; without it the drawer
+## still lists everything the events created, just without a clock.
+func refresh_incidents(snapshot_rows: Array, now_h: float = -1.0) -> void:
+	if incident_drawer == null:
+		return
+	if now_h >= 0.0:
+		incident_drawer.set_now_h(now_h)
+	incident_drawer.refresh_from(snapshot_rows)
+
+
+## `Callable(kind: StringName, id) -> Vector3`, called as `(&"tile", Vector2i)`.
+## The same shape `set_alert_locator` takes, so one shell function serves both.
+func set_incident_locator(locator: Callable) -> void:
+	if incident_drawer != null:
+		incident_drawer.set_locator(locator)
+
+
+## Where the drawer's `Nearest` sort measures from — the camera focus.
+func set_incident_reference(world_pos: Vector3) -> void:
+	if incident_drawer != null:
+		incident_drawer.set_reference(world_pos)
+
+
+## `Callable(incident_id: int) -> Array[Dictionary]` — see `UnitPickerModel` for
+## the row shape.
+func set_unit_provider(provider: Callable) -> void:
+	if unit_picker != null:
+		unit_picker.set_provider(provider)
+
+
+## The shell's verdict on a `dispatch_requested`. Returns the toast copy.
+func report_dispatch_result(unit_id: int, ok: bool) -> String:
+	return unit_picker.report_result(unit_id, ok) if unit_picker != null else ""
+
+
+## `CitySim.cmd_set_tax_level` itself plus the detent it sits on.
+func bind_tax(command: Callable, level: int, level_count: int, rate: float) -> void:
+	if city_dashboard != null:
+		city_dashboard.bind_tax(command, level, level_count, rate)
+
+
+## Doc 03's settle snapshot, or the `economy_hour_settled` bus event.
+func feed_settlement(snapshot: Dictionary) -> void:
+	if city_dashboard != null:
+		city_dashboard.feed_settlement(snapshot)
+
+
+## One settled game-hour into the dashboard's ring (§2.10's sparklines).
+func sample_history(row: Dictionary) -> void:
+	if city_dashboard != null:
+		city_dashboard.sample(row)
+
+
+## The same plain snapshot `CityHUD.refresh()` takes, for the dashboard's bands.
+func refresh_dashboard(snapshot: Dictionary) -> void:
+	if city_dashboard != null:
+		city_dashboard.refresh(snapshot)
+
+
+## `{power01, water01}` on `[0, 1]` for the ⚡/💧 chips (§2.4 P3/P4) and for the
+## dashboard bands that show the same two readings.
+func ingest_service(snapshot: Dictionary) -> void:
+	if hud != null:
+		hud.ingest_service(snapshot)
+	if city_dashboard != null:
+		city_dashboard.ingest_service(snapshot)
+
+
+## The resume handshake (§2.12). Returns `""` when the report opened, and the
+## toast copy when the absence was too short and too quiet for a modal.
+func present_away_report(input: Dictionary) -> String:
+	return away_report.present(input) if away_report != null else ""
 
 
 ## The `ui` save section this scaffold owns today (doc 12 §3.2): the overlay

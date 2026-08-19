@@ -1,0 +1,315 @@
+class_name BudgetModel
+extends RefCounted
+## The dashboard's Economy tab (doc 12 §2.10): the tax detent and the ledger of
+## the hour that just settled.
+##
+## **Tax.** Doc 03 owns the ladder and `CitySim.cmd_set_tax_level(level, preview)`
+## owns the arithmetic, including the preview: called with `preview = true` it
+## computes the whole consequence — rate, `happiness_delta`, `growth_multiplier`
+## — *and changes nothing*, and it reports `E_TAX_COOLDOWN` with
+## `hours_remaining` when doc 03's cooldown is still running. So this class does
+## not model tax at all; it holds one injected `Callable` with that exact
+## signature, calls it with `preview = true` for every step of the stepper, and
+## with `preview = false` only when the player presses APPLY. The UI therefore
+## cannot show a number the sim would not produce (§4.4: "the UI never predicts
+## success").
+##
+## **Ledger.** `feed_settlement()` takes doc 03's hourly settle snapshot verbatim
+## — `{revenue: {...}, expenses: {...}, net}` — and turns it into two ordered
+## lists of `{key, label, amount, text}`. It also accepts the smaller
+## `economy_hour_settled` **bus event** (`{gross, expense, net}`), which is what
+## the shell can wire without touching `sim/`: that gives the three totals and no
+## breakdown, and `has_breakdown()` says which of the two arrived.
+##
+## No copy and no threshold is authored here: line labels resolve
+## `ui_budget_revenue_<key>` / `ui_budget_expense_<key>` from
+## `data/strings.en.json`, and which keys exist in which order is
+## `data/ui.json.budget`.
+
+const REASON_OK := &""
+const REASON_NO_COMMAND := &"E_NO_COMMAND"
+
+const _DEFAULT_REVENUE_KEYS: Array[String] = ["tax", "power_tariff", "water_tariff",
+		"fines"]
+const _DEFAULT_EXPENSE_KEYS: Array[String] = ["building_maint", "departments", "fleet",
+		"vehicle_fuel", "grid", "generation_fuel", "water", "roads_repair", "debt"]
+
+var _cfg: UIConfig
+var _budget: Dictionary = {}
+var _command := Callable()
+
+var _level := 0
+var _level_count := 1
+var _rate := 0.0
+var _pending := -1
+
+var _settlement: Dictionary = {}
+var _has_breakdown := false
+
+
+func _init(cfg: UIConfig = null) -> void:
+	if cfg == null:
+		return
+	_cfg = cfg
+	_budget = cfg.section("budget")
+
+
+static func load_from_files() -> BudgetModel:
+	return BudgetModel.new(UIConfig.load_from_files())
+
+
+## `Callable(level: int, preview: bool) -> Dictionary` — `CitySim.cmd_set_tax_level`
+## itself, handed over by the shell. Its result is `CommandQueue`'s
+## `{ok, reason_code, payload}`.
+func set_tax_command(command: Callable) -> void:
+	_command = command
+
+
+## The sim's current detent: `sim.tax_level()`, `sim.tax_level_count()`,
+## `sim.tax_rate`. Called every time the shell refreshes the dashboard, so a tax
+## change made anywhere else lands here too.
+func set_tax_state(level: int, level_count: int, rate: float) -> void:
+	_level_count = maxi(1, level_count)
+	_level = clampi(level, 0, _level_count - 1)
+	_rate = rate
+	if _pending < 0 or _pending >= _level_count:
+		_pending = _level
+
+
+func level() -> int:
+	return _level
+
+
+func level_count() -> int:
+	return _level_count
+
+
+func rate() -> float:
+	return _rate
+
+
+## The detent the stepper is sitting on, which is the committed one until the
+## player moves it.
+func pending_level() -> int:
+	return _pending
+
+
+# ---------------------------------------------------------------------------
+# Tax stepper — preview first, always
+# ---------------------------------------------------------------------------
+
+## Move the stepper by `delta` detents (clamped to the ladder) and return the
+## preview for where it landed. Nothing is committed.
+func step(delta: int) -> Dictionary:
+	_pending = clampi(_pending + delta, 0, _level_count - 1)
+	return preview(_pending)
+
+
+func set_pending_level(level_value: int) -> Dictionary:
+	_pending = clampi(level_value, 0, _level_count - 1)
+	return preview(_pending)
+
+
+## `cmd_set_tax_level(level, true)` rendered. Works whether the command said ok
+## (a legal move) or failed (`E_TAX_LEVEL_RANGE`, `E_TAX_COOLDOWN`) — a refused
+## move still previews its numbers, and the note says in words why the APPLY
+## button is off (A14).
+func preview(level_value: int) -> Dictionary:
+	if not _command.is_valid():
+		return _view({}, false, REASON_NO_COMMAND, level_value)
+	var result: Variant = _command.call(level_value, true)
+	if not (result is Dictionary):
+		return _view({}, false, REASON_NO_COMMAND, level_value)
+	var record: Dictionary = result
+	var payload: Variant = record.get("payload", {})
+	return _view(payload if payload is Dictionary else {},
+			bool(record.get("ok", false)),
+			StringName(str(record.get("reason_code", ""))), level_value)
+
+
+## Commit the stepper. Returns the same view shape with `applied` set, and
+## re-syncs `level`/`rate` from the payload on success so the caller does not
+## have to read the sim back.
+func apply() -> Dictionary:
+	if not _command.is_valid():
+		var blocked := _view({}, false, REASON_NO_COMMAND, _pending)
+		blocked["applied"] = false
+		return blocked
+	var result: Variant = _command.call(_pending, false)
+	var record: Dictionary = result if result is Dictionary else {}
+	var payload: Variant = record.get("payload", {})
+	var ok := bool(record.get("ok", false))
+	var view := _view(payload if payload is Dictionary else {}, ok,
+			StringName(str(record.get("reason_code", ""))), _pending)
+	view["applied"] = ok
+	if ok:
+		_level = int(view["level"])
+		_rate = float(view["rate"])
+		_pending = _level
+	return view
+
+
+func _view(payload: Dictionary, ok: bool, reason: StringName,
+		level_value: int) -> Dictionary:
+	var rate_value := float(payload.get("rate", _rate))
+	var happiness := float(payload.get("happiness_delta", 0.0))
+	var growth := float(payload.get("growth_multiplier", 1.0))
+	var changed := bool(payload.get("changed", level_value != _level))
+	var view := {
+		"ok": ok,
+		"reason": reason,
+		"level": int(payload.get("level", level_value)),
+		"level_count": _level_count,
+		"rate": rate_value,
+		"previous_rate": float(payload.get("previous_rate", _rate)),
+		"happiness_delta": happiness,
+		"growth_multiplier": growth,
+		"changed": changed,
+		"can_apply": ok and changed,
+		"rate_text": BudgetModel.rate_text(rate_value),
+		"level_text": UIWidgets.t_args(_cfg, "ui_budget_tax_level",
+				{"level": int(payload.get("level", level_value)) + 1,
+						"count": _level_count}),
+		"happiness_text": UIWidgets.t_args(_cfg, "ui_budget_preview_happiness",
+				{"delta": BudgetModel.signed(happiness, 1)}),
+		"growth_text": UIWidgets.t_args(_cfg, "ui_budget_preview_growth",
+				{"mult": "%.2f" % growth}),
+		"happiness_state": BudgetModel.delta_state(happiness),
+		"growth_state": BudgetModel.delta_state(growth - 1.0),
+		"applied": false,
+	}
+	view["note"] = _note(view, payload, reason)
+	return view
+
+
+func _note(view: Dictionary, payload: Dictionary, reason: StringName) -> String:
+	if reason == &"E_TAX_COOLDOWN":
+		return UIWidgets.t_args(_cfg, "ui_budget_cooldown",
+				{"hours": int(payload.get("hours_remaining", 0))})
+	if reason == REASON_NO_COMMAND:
+		return UIWidgets.t(_cfg, "ui_budget_unavailable")
+	if reason == &"E_TAX_LEVEL_RANGE":
+		return UIWidgets.t(_cfg, "ui_budget_out_of_range")
+	if not bool(view["changed"]):
+		return UIWidgets.t(_cfg, "ui_budget_unchanged")
+	return ""
+
+
+## `0.09` → `9%`, `0.095` → `9.5%` — doc 03 states the rate in basis points, so
+## one decimal is the most a detent can ever need.
+static func rate_text(rate_value: float) -> String:
+	var percent := rate_value * 100.0
+	var text := "%.1f" % percent
+	if text.ends_with(".0"):
+		text = text.substr(0, text.length() - 2)
+	return text + "%"
+
+
+## The HUD's own minus sign (§2.4 renders U+2212, not a hyphen).
+static func signed(value: float, decimals: int = 0) -> String:
+	var magnitude := String.num(absf(value), maxi(0, decimals))
+	if value < 0.0:
+		return HudModel.MINUS + magnitude
+	return HudModel.PLUS + magnitude
+
+
+static func delta_state(delta: float) -> StringName:
+	if delta > 0.0:
+		return HudModel.STATE_NORMAL
+	if delta < 0.0:
+		return HudModel.STATE_WARNING
+	return HudModel.STATE_OFFLINE
+
+
+# ---------------------------------------------------------------------------
+# The settled hour
+# ---------------------------------------------------------------------------
+
+## Doc 03's settle snapshot, or the `economy_hour_settled` bus event. Both are
+## accepted because the shell can reach the second one today (it is on the bus)
+## and the first only once the coordinator publishes it.
+func feed_settlement(snapshot: Dictionary) -> void:
+	if snapshot.is_empty():
+		return
+	_settlement = snapshot.duplicate(true)
+	_has_breakdown = (snapshot.get("revenue", null) is Dictionary) \
+			and (snapshot.get("expenses", null) is Dictionary)
+
+
+func has_settlement() -> bool:
+	return not _settlement.is_empty()
+
+
+func has_breakdown() -> bool:
+	return _has_breakdown
+
+
+func revenue_keys() -> Array[String]:
+	return _keys("revenue_keys", _DEFAULT_REVENUE_KEYS)
+
+
+func expense_keys() -> Array[String]:
+	return _keys("expense_keys", _DEFAULT_EXPENSE_KEYS)
+
+
+func _keys(field: String, fallback: Array[String]) -> Array[String]:
+	var raw: Variant = _budget.get(field, [])
+	if not (raw is Array) or (raw as Array).is_empty():
+		return fallback.duplicate()
+	var out: Array[String] = []
+	for value: Variant in (raw as Array):
+		out.append(str(value))
+	return out
+
+
+## `{revenue: [...], expenses: [...], gross, expense, net, ...}` — the whole
+## Economy ledger, ready to bind. Lines whose amount is zero are dropped: an
+## expense the city does not have is not a row that says `$0`.
+func breakdown() -> Dictionary:
+	var gross := 0.0
+	var expense := 0.0
+	var net := 0.0
+	var revenue_rows: Array[Dictionary] = []
+	var expense_rows: Array[Dictionary] = []
+	if _has_breakdown:
+		var revenue: Dictionary = _settlement["revenue"]
+		var expenses: Dictionary = _settlement["expenses"]
+		gross = float(revenue.get("gross", 0.0))
+		expense = float(expenses.get("total", 0.0))
+		for key: String in revenue_keys():
+			var amount := float(revenue.get(key, 0.0))
+			if not is_zero_approx(amount):
+				revenue_rows.append(_line("revenue", key, amount))
+		for key: String in expense_keys():
+			var amount := float(expenses.get(key, 0.0))
+			if not is_zero_approx(amount):
+				expense_rows.append(_line("expense", key, amount))
+	else:
+		gross = float(_settlement.get("gross", 0.0))
+		expense = float(_settlement.get("expense", 0.0))
+	net = float(_settlement.get("net", gross - expense))
+	return {
+		"has_data": has_settlement(),
+		"has_breakdown": _has_breakdown,
+		"hour": int(_settlement.get("hour", 0)),
+		"revenue": revenue_rows,
+		"expenses": expense_rows,
+		"gross": gross,
+		"expense": expense,
+		"net": net,
+		"gross_text": HudModel.money(int(round(gross))),
+		"expense_text": HudModel.money(int(round(expense))),
+		"net_text": HudModel.rate_per_day(net),
+		"net_state": HudModel.STATE_NORMAL if net >= 0.0 else HudModel.STATE_WARNING,
+	}
+
+
+func _line(side: String, key: String, amount: float) -> Dictionary:
+	return {
+		"key": key,
+		"side": side,
+		"amount": amount,
+		"label": UIWidgets.t(_cfg, "ui_budget_%s_%s" % [side, key]),
+		"text": HudModel.money(int(round(amount))),
+		"per_day_text": HudModel.rate_per_day(amount),
+	}

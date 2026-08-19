@@ -284,6 +284,18 @@ func refresh(snapshot: Dictionary) -> void:
 	_render_alerts(_now_s())
 
 
+## The ⚡ and 💧 chips' readings, `{power01, water01}` on `[0, 1]` (doc 12 §2.4
+## P3/P4). Separate from `refresh()` because docs 04/05 settle them on the
+## game-hour boundary while the HUD repaints several times a second — the shell
+## calls this once an hour and `refresh()` picks the stored reading up.
+func ingest_service(snapshot: Dictionary) -> void:
+	if model == null:
+		return
+	model.ingest_service(snapshot)
+	if not _last_snapshot.is_empty():
+		refresh(_last_snapshot)
+
+
 ## Overrides the measured layout width (dp). The tests and the screenshot
 ## harness use it to solve the top bar for a device box — a Fold's near-square
 ## inner display, say — without opening a window that size.

@@ -1,0 +1,495 @@
+class_name IncidentDrawer
+extends Control
+## The incident drawer (doc 12 §2.6, S6): the handle that always says how bad it
+## is, and the list behind it.
+##
+## Shape follows §2.6 rather than a generic bottom sheet, because the rest of the
+## console is already built for it: `data/ui.json.layout` carries
+## `drawer_handle_dp [44,160]`, `drawer_handle_center_from_bottom_dp 140` and the
+## `drawer_w = clamp(0.34·W, 260, 340)` solver that `UIRoot.drawer_width_dp()`
+## implements, and `HudModel.marker_rect(drawer_w, drawer_open)` already reserves
+## the right edge so a world pin never hides behind an open drawer. A drawer
+## anywhere else would orphan four tunables and a solver.
+##
+## It lives on `PanelLayer` next to `BuildingPanel` and `AlertsCenter`, which is
+## what makes "one 300 dp surface on the right at a time" fall out of
+## `UIWidgets.close_siblings()` for free.
+##
+## Every value is `IncidentModel`'s; this file decides only which pixels they
+## become. Tapping a row focuses the camera and selects the incident (§2.6: "Row
+## tap anywhere but ASSIGN → focus_on and selects the incident; the drawer stays
+## open"), and expands it to the three actions the sim has commands for —
+## ASSIGN (which raises the unit picker), acknowledge and pin.
+
+signal focus_requested(world_pos: Vector3)          ## row tap → camera jump
+signal incident_selected(incident_id: int)
+signal dispatch_requested(incident_id: int)         ## ASSIGN → S7 unit picker
+signal acknowledge_requested(incident_id: int)      ## → cmd_acknowledge_incident
+signal pin_requested(incident_id: int, pinned: bool) ## → cmd_pin_incident
+signal drawer_toggled(open: bool)
+
+const HANDLE_GLYPH := "▤"
+
+var config: UIConfig
+var model: IncidentModel
+
+var _handle: Button
+var _panel: PanelContainer
+var _title: Label
+var _close: Button
+var _sort_box: HBoxContainer
+var _empty: Label
+var _list: VBoxContainer
+
+var _sort_buttons: Dictionary = {}   # StringName order -> Button
+var _rows: Dictionary = {}           # incident id:int -> Button
+var _actions: Dictionary = {}        # incident id:int -> HBoxContainer
+var _expanded := 0
+var _pulse_phase := 0.0
+var _pulse_hz := 1.2
+var _reduce_motion := false
+var _touch_min := 48.0
+var _spacing := 8.0
+var _row_h := 72.0
+var _drawer_w := 300.0
+
+
+func setup(cfg: UIConfig = null, p_model: IncidentModel = null) -> void:
+	if cfg != null:
+		config = cfg
+	if config == null:
+		config = UIConfig.load_from_files()
+	model = p_model if p_model != null else IncidentModel.new(config)
+	var defaults := config.section("defaults")
+	_touch_min = float(ThemeBuilder.touch_min_dp(config,
+			UIConfig.get_num(defaults, "text_scale", 1.0),
+			bool(defaults.get("larger_touch_targets", false))))
+	_reduce_motion = bool(defaults.get("reduce_motion", false))
+	_pulse_hz = UIConfig.get_num(config.section("state_pulse_hz"), "critical", 1.2)
+	var layout := config.layout()
+	_spacing = UIConfig.get_num(layout, "touch_spacing_min_dp", 8.0)
+	_row_h = maxf(UIConfig.get_num(layout, "drawer_row_h_dp", 72.0), _touch_min)
+	_drawer_w = maxf(UIConfig.get_num(layout, "drawer_w_min_dp", 260.0), _touch_min)
+	_bind_nodes()
+	_build_static()
+	_build_sort()
+	close()
+	refresh()
+
+
+func _ready() -> void:
+	if model == null:
+		setup(UIRoot.config_from(self))
+
+
+func _bind_nodes() -> void:
+	_handle = get_node_or_null("Handle") as Button
+	_panel = get_node_or_null("Panel") as PanelContainer
+	_title = get_node_or_null("Panel/Body/Header/Title") as Label
+	_close = get_node_or_null("Panel/Body/Header/Close") as Button
+	_sort_box = get_node_or_null("Panel/Body/Sort") as HBoxContainer
+	_empty = get_node_or_null("Panel/Body/Empty") as Label
+	_list = get_node_or_null("Panel/Body/Scroll/List") as VBoxContainer
+
+
+func _build_static() -> void:
+	var layout := config.layout()
+	if _handle != null:
+		var raw: Variant = layout.get("drawer_handle_dp", [44, 160])
+		var handle: Array = raw if raw is Array and (raw as Array).size() >= 2 else [44, 160]
+		# A3 wins over the doc's 44 dp handle width, the same way it wins over the
+		# 44 dp banner height in the HUD: a target below 48 dp is not shippable.
+		#
+		# The handle is a *tab*, so its width is fixed and its text wraps down it —
+		# without `autowrap_mode` a Button's minimum width is its whole text, and
+		# `▤ 4 T4` would push a 48 dp tab out to 84 and collide with the alerts
+		# chip that shares this edge (§2.15). Clipping instead would eat the
+		# worst-tier digit, which is the one thing on the handle that must survive.
+		_handle.theme_type_variation = &"StatChip"
+		_handle.focus_mode = Control.FOCUS_NONE
+		_handle.clip_text = false
+		# WORD, not WORD_SMART: smart wrapping is allowed to break inside a word,
+		# and `T4` split across two lines is not a tier.
+		_handle.autowrap_mode = TextServer.AUTOWRAP_WORD
+		_handle.custom_minimum_size = Vector2(maxf(float(handle[0]), _touch_min),
+				maxf(float(handle[1]), _touch_min))
+		_handle.tooltip_text = UIWidgets.t(config, "ui_drawer_handle")
+		if not _handle.pressed.is_connected(toggle):
+			_handle.pressed.connect(toggle)
+	if _panel != null:
+		_panel.custom_minimum_size = Vector2(_drawer_w, 0.0)
+	if _title != null:
+		_title.text = UIWidgets.t(config, "ui_drawer_title")
+	if _close != null:
+		_close.theme_type_variation = &"GhostButton"
+		_close.focus_mode = Control.FOCUS_NONE
+		_close.custom_minimum_size = Vector2(_touch_min, _touch_min)
+		_close.text = "✕"
+		_close.tooltip_text = UIWidgets.t(config, "ui_drawer_close")
+		if not _close.pressed.is_connected(close):
+			_close.pressed.connect(close)
+	if _empty != null:
+		_empty.text = UIWidgets.t(config, "ui_drawer_empty")
+	if _list != null:
+		_list.add_theme_constant_override(&"separation", int(_spacing))
+
+
+## §2.6's segmented control: `Priority | Nearest | Newest | Unassigned`, one
+## 48 dp target each, the list order it produces owned by the model.
+func _build_sort() -> void:
+	if _sort_box == null:
+		return
+	UIWidgets.clear_children(_sort_box)
+	_sort_buttons.clear()
+	_sort_box.add_theme_constant_override(&"separation", int(_spacing))
+	for order: StringName in model.sort_orders():
+		var text := UIWidgets.t(config, "ui_drawer_sort_%s" % String(order))
+		# Four segments across `drawer_w`, each still ≥ 48 dp (A3) — the sort words
+		# are what the player reads to know which order they are in, so they may
+		# not clip (A1).
+		var button := UIWidgets.button("Sort_" + String(order), text, text,
+				Vector2(maxf(_touch_min,
+						(_drawer_w - _spacing * 5.0) / float(maxi(1,
+								model.sort_orders().size()))), _touch_min),
+				&"TabButton")
+		button.clip_text = false
+		button.toggle_mode = true
+		button.pressed.connect(_on_sort_pressed.bind(order))
+		_sort_box.add_child(button)
+		_sort_buttons[order] = button
+	_paint_sort()
+
+
+# ---------------------------------------------------------------------------
+# Ingest — the shell pipes the sim bus and doc 06's snapshot straight in
+# ---------------------------------------------------------------------------
+
+func feed(event: Dictionary) -> Dictionary:
+	var row := model.feed(event)
+	if not row.is_empty():
+		refresh()
+	return row
+
+
+func feed_batch(events: Array) -> Array[Dictionary]:
+	var made := model.feed_batch(events)
+	if not made.is_empty():
+		refresh()
+	return made
+
+
+## Doc 06's `IncidentSystem.snapshot()`. Called on the HUD's own cadence, which
+## is what keeps the escalation clocks moving.
+func refresh_from(snapshot_rows: Array) -> void:
+	model.refresh(snapshot_rows)
+	refresh()
+
+
+func set_now_h(now_h: float) -> void:
+	model.set_now_h(now_h)
+
+
+func set_locator(locator: Callable) -> void:
+	model.set_locator(locator)
+
+
+func set_reference(world_pos: Vector3) -> void:
+	model.set_reference(world_pos)
+
+
+# ---------------------------------------------------------------------------
+# Open / close
+# ---------------------------------------------------------------------------
+
+func is_open() -> bool:
+	return _panel != null and _panel.visible
+
+
+func open() -> void:
+	UIWidgets.close_siblings(self)
+	if _panel != null:
+		_panel.visible = true
+	refresh()
+	drawer_toggled.emit(true)
+
+
+func close() -> void:
+	if _panel != null:
+		_panel.visible = false
+	_expanded = 0
+	drawer_toggled.emit(false)
+
+
+func toggle() -> void:
+	if is_open():
+		close()
+	else:
+		open()
+
+
+## The shell asks for this to size `HudModel.marker_rect()` — a pin must never
+## end up behind an open drawer (§2.15).
+func drawer_width_dp() -> float:
+	return _drawer_w
+
+
+# ---------------------------------------------------------------------------
+# Rendering
+# ---------------------------------------------------------------------------
+
+func refresh() -> void:
+	_refresh_handle()
+	if not is_open():
+		return
+	_paint_sort()
+	_refresh_list()
+
+
+## The collapsed handle: count, worst-tier digit, and the 1.2 Hz pulse §2.6 asks
+## for while any T4/T5 is unassigned (driven in `_process`, suppressed by A8's
+## reduce-motion the same way the HUD chips are).
+func _refresh_handle() -> void:
+	if _handle == null:
+		return
+	var view := model.handle_view()
+	var digit := str(view["digit"])
+	_handle.text = "%s %s%s" % [HANDLE_GLYPH, str(view["text"]),
+			(" T" + digit) if digit != "" else ""]
+	_handle.tooltip_text = str(view["tooltip"])
+	_handle.set_meta("pulse", bool(view["pulse"]))
+	UIWidgets.paint_state(self, _handle, view["state"])
+
+
+func _paint_sort() -> void:
+	for order: Variant in _sort_buttons:
+		var button: Button = _sort_buttons[order]
+		var selected: bool = order == model.sort_order()
+		button.set_pressed_no_signal(selected)
+		UIWidgets.paint_state(self, button,
+				HudModel.STATE_NORMAL if selected else &"")
+
+
+func _refresh_list() -> void:
+	if _list == null:
+		return
+	UIWidgets.clear_children(_list)
+	_rows.clear()
+	_actions.clear()
+	var rows := model.rows()
+	if _empty != null:
+		_empty.visible = rows.is_empty()
+	for row: Dictionary in rows:
+		_list.add_child(_build_row(row))
+
+
+## §2.6's row: severity badge with the tier digit, title, where, the escalation
+## bar with its countdown, and — once expanded — the three actions. The whole
+## 72 dp band is one tap target; the actions live *below* it rather than inside
+## it, because a Button inside a Button cannot be hit.
+func _build_row(row: Dictionary) -> VBoxContainer:
+	var incident_id := int(row["id"])
+	var holder := VBoxContainer.new()
+	holder.name = "Incident_%d" % incident_id
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_theme_constant_override(&"separation", int(_spacing))
+
+	var tooltip := "%s — %s" % [str(row["title"]),
+			UIWidgets.t(config, "ui_drawer_focus")] if bool(row["has_focus"]) \
+			else str(row["title"])
+	var button := UIWidgets.button("Row_%d" % incident_id, "", tooltip,
+			Vector2(_touch_min, _row_h), &"DrawerRow")
+	button.pressed.connect(_on_row_pressed.bind(incident_id))
+	holder.add_child(button)
+	_rows[incident_id] = button
+
+	var body := HBoxContainer.new()
+	body.name = "Body"
+	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	body.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# Inside the row, not on its edge: the drawer's scrollbar lives there.
+	body.offset_left = _spacing
+	body.offset_right = -_spacing
+	body.add_theme_constant_override(&"separation", int(_spacing))
+	button.add_child(body)
+
+	# A5: the tier DIGIT is the primary channel, the glyph reinforces it, and the
+	# colour is third. The badge is readable in greyscale on its own.
+	var badge := _fixed(UIWidgets.label("Badge", "T%d %s" % [int(row["tier"]),
+			str(row["tier_pips"])]))
+	UIWidgets.paint_state(self, badge, row["state"])
+	body.add_child(badge)
+
+	var lines := VBoxContainer.new()
+	lines.name = "Lines"
+	lines.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lines.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_child(lines)
+
+	var head := UIWidgets.label("Title", ("%s %s %s" % [str(row["glyph"]),
+			str(row["title"]), str(row["state_glyph"])]).strip_edges())
+	UIWidgets.paint_state(self, head, row["state"])
+	lines.add_child(head)
+	lines.add_child(UIWidgets.label("Where", str(row["subtitle"])))
+
+	var clock := HBoxContainer.new()
+	clock.name = "Clock"
+	clock.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	clock.add_theme_constant_override(&"separation", int(_spacing))
+	lines.add_child(clock)
+	var bar := MeterBar.new()
+	bar.name = "Escalation"
+	bar.custom_minimum_size = Vector2(_touch_min, maxf(4.0, _spacing / 2.0))
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bar.set_value(float(row["escalation01"]), row["escalation_state"], bool(row["held"]))
+	clock.add_child(bar)
+	var eta := _fixed(UIWidgets.label("Eta", str(row["escalation_text"])))
+	UIWidgets.paint_state(self, eta, row["escalation_state"])
+	clock.add_child(eta)
+	clock.add_child(_fixed(UIWidgets.label("Age", str(row["age_text"]))))
+
+	var actions := _build_actions(row)
+	actions.visible = incident_id == _expanded
+	holder.add_child(actions)
+	_actions[incident_id] = actions
+	return holder
+
+
+func _build_actions(row: Dictionary) -> HBoxContainer:
+	var incident_id := int(row["id"])
+	var bar := HBoxContainer.new()
+	bar.name = "Actions"
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.add_theme_constant_override(&"separation", int(_spacing))
+
+	var assign_text := UIWidgets.t(config, "ui_drawer_assign")
+	var assign := UIWidgets.button("Assign_%d" % incident_id, assign_text, assign_text,
+			Vector2(maxf(_touch_min * 2.0, 96.0), _touch_min), &"PrimaryFAB")
+	assign.pressed.connect(_on_assign_pressed.bind(incident_id))
+	bar.add_child(assign)
+
+	var ack_text := UIWidgets.t(config, "ui_drawer_acknowledge")
+	var ack := UIWidgets.button("Ack_%d" % incident_id, ack_text, ack_text,
+			Vector2(maxf(_touch_min * 1.5, 72.0), _touch_min), &"GhostButton")
+	ack.clip_text = false
+	ack.disabled = bool(row["acknowledged"])
+	ack.pressed.connect(_on_ack_pressed.bind(incident_id))
+	bar.add_child(ack)
+
+	var pinned := bool(row["pinned"])
+	var pin_text := UIWidgets.t(config,
+			"ui_drawer_unpin" if pinned else "ui_drawer_pin")
+	var pin := UIWidgets.button("Pin_%d" % incident_id, pin_text, pin_text,
+			Vector2(maxf(_touch_min * 1.5, 72.0), _touch_min), &"GhostButton")
+	pin.clip_text = false
+	pin.pressed.connect(_on_pin_pressed.bind(incident_id))
+	bar.add_child(pin)
+	return bar
+
+
+## §2.6's 1.2 Hz handle pulse. Both tunables are read once in `setup()`, not here:
+## `UIConfig.section()` allocates, and this runs every frame.
+func _process(delta: float) -> void:
+	if _handle == null:
+		return
+	if _reduce_motion or not bool(_handle.get_meta("pulse", false)):
+		_handle.modulate.a = 1.0    # A8: a pulse is motion
+		return
+	_pulse_phase = fmod(_pulse_phase + delta * _pulse_hz, 1.0)
+	_handle.modulate.a = 0.65 + 0.35 * (0.5 + 0.5 * cos(TAU * _pulse_phase))
+
+
+# ---------------------------------------------------------------------------
+# Input
+# ---------------------------------------------------------------------------
+
+## §2.6: the row tap focuses the camera **and** selects, and expands the row to
+## its actions. It never dispatches — that is one more deliberate tap.
+func _on_row_pressed(incident_id: int) -> void:
+	_expanded = 0 if _expanded == incident_id else incident_id
+	model.select(incident_id if _expanded != 0 else 0)
+	for key: Variant in _actions:
+		(_actions[key] as HBoxContainer).visible = int(key) == _expanded
+	incident_selected.emit(incident_id)
+	var payload := model.focus_payload(incident_id)
+	if payload.is_empty() or not bool(payload["has_focus"]):
+		return
+	focus_requested.emit(payload["world_pos"] as Vector3)
+
+
+func _on_assign_pressed(incident_id: int) -> void:
+	dispatch_requested.emit(incident_id)
+
+
+## Both action handlers repaint **in place** and never call `refresh()`. Rebuilding
+## the list here would free the very Button that is emitting `pressed`, which is an
+## engine error — the same trap `AlertsCenter._repaint_rows` documents. The next
+## `refresh_from()` redraws them from the sim's word anyway.
+func _on_ack_pressed(incident_id: int) -> void:
+	model.set_acknowledged(incident_id, true)
+	var button := action_button("Ack", incident_id)
+	if button != null:
+		button.disabled = true
+	_refresh_handle()
+	acknowledge_requested.emit(incident_id)
+
+
+## PIN toggles, so the target is read from the model at press time rather than
+## bound at build time — that way the button never has to be re-connected while
+## it is emitting.
+func _on_pin_pressed(incident_id: int) -> void:
+	var pinned := not bool(model.row(incident_id).get("pinned", false))
+	model.set_pinned(incident_id, pinned)
+	var button := action_button("Pin", incident_id)
+	if button != null:
+		button.text = UIWidgets.t(config,
+				"ui_drawer_unpin" if pinned else "ui_drawer_pin")
+		button.tooltip_text = button.text
+	_refresh_handle()
+	pin_requested.emit(incident_id, pinned)
+
+
+func _on_sort_pressed(order: StringName) -> void:
+	model.set_sort_order(order)
+	refresh()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+## `UIWidgets.label()` clips by default, and a clipping `Label` reports a minimum
+## width of **zero** — which in an `HBoxContainer` next to an EXPAND_FILL sibling
+## collapses it to nothing. Anything that has to be read beside a flexible column
+## goes through here.
+static func _fixed(label: Label) -> Label:
+	label.clip_text = false
+	label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	return label
+
+
+func handle_button() -> Button:
+	return _handle
+
+
+func row_button(incident_id: int) -> Button:
+	return _rows.get(incident_id, null)
+
+
+func action_button(prefix: String, incident_id: int) -> Button:
+	var actions: HBoxContainer = _actions.get(incident_id, null)
+	if actions == null:
+		return null
+	return actions.get_node_or_null("%s_%d" % [prefix, incident_id]) as Button
+
+
+func sort_button(order: StringName) -> Button:
+	return _sort_buttons.get(order, null)
+
+
+func expanded_id() -> int:
+	return _expanded
+
+
+func count() -> int:
+	return model.size() if model != null else 0
