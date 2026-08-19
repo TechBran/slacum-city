@@ -98,6 +98,9 @@ var _prev_block_dark: Dictionary = {}  # block id -> bool
 var _last_construction_stage: Dictionary = {}  # sim_id -> stage 1..6
 var _last_expense_hour: float = 1.0            # DirectorInputs.daily_opex source
 var _director_links: Dictionary = {}           # incident id -> director event_uid
+## The last settled hour, verbatim (doc 12's budget breakdown reads it).
+## Derived: not captured, refilled on the first settled hour after a load.
+var last_settlement: Dictionary = {}
 var _strike_roster: Array = []
 var _strike_roster_min: int = -1
 var boot_errors: PackedStringArray = []
@@ -268,8 +271,25 @@ func _refresh_road_density() -> void:
 ## Doc 04 publishes power state only; doc 10 turns it into delay + congestion
 ## (G-6). Implemented here because CitySim owns the cross-doc seams.
 func _is_tile_powered(tile: Vector2i) -> bool:
+	var cached: Variant = _transformer_cover.get(tile)
+	if cached == null:
+		cached = _transformer_covering(tile)
+		_transformer_cover[tile] = cached
+	var best := String(cached)
+	return true if best == "" else grid.is_energized(best)   # uncovered ⇒ lit
+
+
+## tile -> covering authored transformer id ("" = uncovered). Doc 10 asks this
+## question once per signalised intersection EVERY tick, and the answer depends
+## only on `loader.power`, which is written once at boot and never again — so it
+## is memoised. DERIVED state: it is not captured, not saved, and a loaded game
+## refills it from the same loader data on its first tick.
+var _transformer_cover: Dictionary = {}
+
+
+func _transformer_covering(tile: Vector2i) -> String:
 	var best := ""
-	var best_key := [999999.0, ""]
+	var best_dist := 999999.0
 	for node in loader.power.get("nodes", []):
 		if String(node["kind"]) != "transformer":
 			continue
@@ -277,11 +297,13 @@ func _is_tile_powered(tile: Vector2i) -> bool:
 		var dist := maxf(absf(tile.x - t.x), absf(tile.y - t.y))
 		if dist > float(PowerGrid.TRANSFORMER_SERVICE_RADIUS[int(node.get("level", 1)) - 1]):
 			continue
-		var key := [dist, String(node["id"])]
-		if key < best_key:
-			best_key = key
-			best = String(node["id"])
-	return true if best == "" else grid.is_energized(best)   # uncovered ⇒ lit
+		# The [dist, id] tuple ordering the scan used, unpacked: nearer wins,
+		# ties break on the lower id.
+		var id := String(node["id"])
+		if dist < best_dist or (dist == best_dist and id < best):
+			best_dist = dist
+			best = id
+	return best
 
 
 func _district_of_tile(tile: Vector2i) -> String:
@@ -1839,6 +1861,7 @@ class HourlyPhaseSystem extends SimSystem:
 		var availability := sim.grid.settle_hour()
 		sim.districts.recompute_slow(1.0)
 		var settled := sim.economy.settle_hour(sim.build_settlement_inputs(ctx, availability))
+		sim.last_settlement = settled
 		sim._last_expense_hour = float(
 				(settled.get("expenses", {}) as Dictionary).get("total", sim._last_expense_hour))
 		# doc 03 §2.2: the tax rate is not only a revenue scalar — it slows

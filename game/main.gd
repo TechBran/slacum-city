@@ -16,6 +16,7 @@ var render_model: RenderStateModel
 var city_view: CityView
 var streetlights: StreetlightView
 var environment_controller: EnvironmentController
+var weather_fx: WeatherFX
 var camera_rig: CameraRig
 var camera_state: CameraState
 var touch_input: TouchInput
@@ -27,7 +28,10 @@ var build_sheet: BuildSheet
 var building_panel: BuildingPanel
 var ghost_view: GhostView
 var construction_view: ConstructionSiteView
+var vehicle_view: VehicleView
+var audio: AudioService
 var save_service: SaveService
+var _before_snapshot: Dictionary = {}   # captured on pause for the away report
 var android_lifecycle: AndroidLifecycle
 var _autosave_interval_s := 0.0
 var _autosave_timer := 0.0
@@ -41,6 +45,7 @@ var _tap_max_ms := 220.0
 var _screenshot_path := ""
 var _screenshot_timer := 0.0
 var _blackout_at := -1.0
+var _lightning_at := -1.0
 var _shot_at := 2.0
 var _hud_timer := 0.0
 ## Last `economy_hour_settled.net` (doc 03, dollars per game-hour). The net
@@ -62,6 +67,15 @@ func _ready() -> void:
 	add_child(android_lifecycle)
 	android_lifecycle.setup(save_service, sim_host.sim)
 	android_lifecycle.resumed.connect(_on_app_resumed)
+	android_lifecycle.paused.connect(_on_app_paused)
+
+	audio = AudioService.new()
+	audio.name = "AudioService"
+	add_child(audio)
+	audio.setup()
+	audio.set_locator(_alert_world_pos)
+	android_lifecycle.focus_changed.connect(
+			func(has_focus: bool) -> void: audio.set_muted(not has_focus))
 
 	_build_environment(render_data)
 	_build_ground()
@@ -105,12 +119,27 @@ func _ready() -> void:
 			sim_host.sim.grid.force_open(String(arg).trim_prefix("--cut-feeder="))
 		elif String(arg).begins_with("--place="):
 			_place_demo(String(arg).trim_prefix("--place="))
+		elif String(arg).begins_with("--rain="):
+			weather_fx.pin_weather("RAIN",
+					float(String(arg).trim_prefix("--rain=")), 0.6, Vector2(3.2, 1.4))
+		elif String(arg).begins_with("--storm="):
+			weather_fx.pin_weather("THUNDERSTORM",
+					float(String(arg).trim_prefix("--storm=")), 0.9, Vector2(6.0, 2.5))
+		elif String(arg).begins_with("--wet="):
+			weather_fx.wetness = float(String(arg).trim_prefix("--wet="))
+		elif String(arg).begins_with("--lightning-at="):
+			_lightning_at = float(String(arg).trim_prefix("--lightning-at="))
+		elif String(arg).begins_with("--overlay="):
+			RenderingServer.global_shader_parameter_set("sc_overlay_mode",
+					int(String(arg).trim_prefix("--overlay=")))
 		elif String(arg).begins_with("--focus="):
 			var p := String(arg).trim_prefix("--focus=").split(",")
 			if p.size() == 2:
 				camera_state.set_focus(Vector3(float(p[0]), 0.0, float(p[1])))
 		elif String(arg) == "--tutorial-incident":
-			sim_host.sim.trigger_tutorial_transformer_failure()
+			var inc := sim_host.sim.trigger_tutorial_transformer_failure()
+			if inc != null:
+				camera_state.set_focus(Vector3(inc.tile.x * 8.0, 0.0, inc.tile.y * 8.0))
 
 
 func _build_environment(render_data: Dictionary) -> void:
@@ -142,6 +171,14 @@ func _build_environment(render_data: Dictionary) -> void:
 	environment_controller.sun_path = sun.get_path()
 	environment_controller.moon_path = moon.get_path()
 	environment_controller.setup(render_data)
+
+	# doc 11 §2.9: rain, splashes, wetness and the lightning flash. It pushes
+	# the storm scalars into EnvironmentController, which owns every write to
+	# the sky/sun/fog, and writes sc_wetness / sc_wind / sc_lightning itself.
+	weather_fx = WeatherFX.new()
+	weather_fx.name = "WeatherFX"
+	add_child(weather_fx)
+	weather_fx.setup(render_data, environment_controller)
 
 
 func _build_ground() -> void:
@@ -234,6 +271,10 @@ func _build_city_view(render_data: Dictionary) -> void:
 	streetlights.name = "Streetlights"
 	add_child(streetlights)
 	streetlights.setup(render_model, render_data, lamps)
+	vehicle_view = VehicleView.new()
+	vehicle_view.name = "Vehicles"
+	add_child(vehicle_view)
+	vehicle_view.setup(render_data)
 	construction_view = ConstructionSiteView.new()
 	construction_view.name = "ConstructionSites"
 	add_child(construction_view)
@@ -292,10 +333,18 @@ func _on_sim_batch(batch: Array) -> void:
 		ui_root.set_sim_clock(sim_host.sim.clock.minute_of_day(),
 				sim_host.sim.clock.day_index())
 		ui_root.feed_events(batch)
+	if weather_fx != null:
+		weather_fx.feed_events(batch)   # doc 07's weather_changed / lightning_strike
+	if vehicle_view != null:
+		vehicle_view.apply_events(batch)
+		# Idempotent fleet pose sync — per TICK batch, never per frame.
+		vehicle_view.apply_unit_states(sim_host.sim.incidents.vehicle_states())
+	if audio != null:
+		audio.feed_batch(batch)
 	var translated: Array = []
 	for event in batch:
 		match StringName(String(event["type"])):
-			&"BlockDarkChanged":
+			&"BlockDarkChanged", &"StreetlightsChanged":
 				translated.append(event)
 			&"building_placed_sim":
 				var view := _building_view(String(event.get("sim_id", "")))
@@ -388,6 +437,36 @@ func _on_sim_ticked(batch: Array) -> void:
 		var data: Dictionary = event
 		if StringName(data.get("type", &"")) == &"economy_hour_settled":
 			_hud_net_per_hour = float(data.get("net", 0.0))
+			_on_hour_settled(data)
+
+
+## Hourly UI feeds (doc 12 §2.4/§2.10): service chips, history samples, budget.
+func _on_hour_settled(data: Dictionary) -> void:
+	if ui_root == null:
+		return
+	var sim := sim_host.sim
+	var settlement: Dictionary = sim.last_settlement if not sim.last_settlement.is_empty() \
+			else data
+	ui_root.feed_settlement(settlement)
+	var unserved: Dictionary = {}
+	for id: String in sim.grid.unserved_building_ids():
+		unserved[id] = true
+	var power: Dictionary = {}
+	for sim_id: String in sim.buildings:
+		power[sim_id] = 0.0 if unserved.has(sim_id) \
+				else sim.grid.power_availability_hour(sim_id)
+	var power01 := HudModel.mean01(power)
+	var water01 := HudModel.mean01(sim.water.service_factors())
+	ui_root.ingest_service({"power01": power01, "water01": water01})
+	ui_root.sample_history({
+		"hour": sim.clock.sim_time_minutes() / 60,
+		"population": float(sim.population.city_population),
+		"treasury": float(sim.treasury.balance),
+		"net_per_hour": _hud_net_per_hour,
+		"happiness": sim.happiness.happiness,
+		"stability": sim.districts.city_stability,
+		"power01": power01, "water01": water01,
+	})
 
 
 func _refresh_hud() -> void:
@@ -404,13 +483,20 @@ func _refresh_hud() -> void:
 			"minute_of_day": sim.clock.minute_of_day(),
 			"day_index": sim.clock.day_index(),
 		},
-		# doc 06's incident system is not in the slice yet, and docs 04/05 do not
-		# publish a city-wide grid/water health figure; those chips read "—"
-		# (OFFLINE) rather than showing an invented number.
-		"incidents": 0,
+		"incidents": sim.incidents.active_count(),
 		"speed": sim_host.speed,
 		"paused": sim_host.paused,
 	})
+	if ui_root != null:
+		ui_root.refresh_incidents(sim.incidents.snapshot(), sim.incidents.now_h)
+		ui_root.set_incident_reference(camera_state.focus)
+		ui_root.refresh_dashboard({
+			"population": sim.population.city_population,
+			"treasury": sim.treasury.balance,
+			"net_per_hour": _hud_net_per_hour,
+			"stability": sim.districts.city_stability,
+			"happiness": sim.happiness.happiness,
+		})
 
 
 # ---------------------------------------------------------------------------
@@ -469,16 +555,29 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 	root.quit_requested.connect(_on_ui_quit_requested)
 	root.settings_changed.connect(_on_ui_setting_changed)
 	root.save_loaded.connect(_on_ui_save_loaded)
+	root.set_incident_locator(_alert_world_pos)
+	root.set_unit_provider(_dispatchable_units)
+	root.dispatch_requested.connect(_on_ui_dispatch)
+	root.incident_action.connect(_on_ui_incident_action)
+	root.deeplink_requested.connect(_on_ui_deeplink)
+	root.bind_tax(sim_host.sim.cmd_set_tax_level, sim_host.sim.tax_level(),
+			sim_host.sim.tax_level_count(), sim_host.sim.tax_rate)
 	if save_service != null:
 		root.bind_save_service(save_service, sim_host.sim)
 	if root.settings_sheet != null:
 		_autosave_interval_s = root.settings_sheet.model.autosave_interval_s()
+		if audio != null:
+			audio.set_sound_volume(root.settings_sheet.model.value_num("sound_volume"))
+	_wire_audio_ui(root)
 
 
 ## `Callable(kind, id) -> Vector3` for the alerts centre: only the shell knows
 ## where an entity id sits in metres. `null` means "no jump affordance".
 func _alert_world_pos(kind: StringName, id: Variant) -> Variant:
 	var tile_m := 8.0
+	if kind == &"tile":
+		var t: Vector2i = id
+		return Vector3(t.x * 8.0 + 4.0, 0.0, t.y * 8.0 + 4.0)
 	if kind == &"block_id":
 		var block: LandBlock = sim_host.sim.world.block(str(id))
 		if block == null:
@@ -509,18 +608,114 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 	match key:
 		&"graphics":
 			render_model.set_preset(str(model.value("graphics")))
+			if vehicle_view != null:
+				vehicle_view.set_preset(str(model.value("graphics")),
+						StarterCityLoader.read_json("res://data/render.json"))
 		&"autosave_interval_min":
 			_autosave_interval_s = model.autosave_interval_s()
 			_autosave_timer = 0.0
+		&"sound_volume":
+			if audio != null:
+				audio.set_sound_volume(model.value_num("sound_volume"))
 		&"text_scale", &"larger_touch_targets":
 			ui_root.rebuild_theme(model.theme_opts())
 		_:
-			pass   # reduce_motion / in_app_banners / sound are read where used
+			pass   # reduce_motion / in_app_banners are read where used
 
 
 func _on_ui_save_loaded(_slot: int) -> void:
-	# The sim was replaced in place; re-seed anything that cached from it.
+	# The sim was replaced in place; re-seed anything that cached from it —
+	# and don't carry the old city's thunder into the new one.
+	if audio != null:
+		audio.reset()
 	_refresh_hud()
+
+
+func _on_ui_dispatch(unit_id: int, incident_id: int) -> void:
+	var r := sim_host.sim.cmd_dispatch_unit(unit_id, incident_id)
+	ui_root.report_dispatch_result(unit_id, bool(r["ok"]))
+
+
+func _on_ui_incident_action(action: StringName, incident_id: int, value: Variant) -> void:
+	if action == &"pin":
+		sim_host.sim.cmd_pin_incident(incident_id, bool(value))
+	elif action == &"acknowledge":
+		sim_host.sim.cmd_acknowledge_incident(incident_id)
+
+
+func _on_ui_deeplink(target: String) -> void:
+	if target.begins_with("overlay/") and ui_root.overlay_rail != null:
+		ui_root.overlay_rail.select_mode(StringName(target.trim_prefix("overlay/")))
+
+
+## Unit rows for the picker (doc 12 §2.6 step 4): ETA-ranked, capability-aware.
+func _dispatchable_units(incident_id: int) -> Array:
+	var sim := sim_host.sim
+	var inc: Incident = sim.incidents.incident(incident_id)
+	if inc == null:
+		return []
+	var primary := String(sim.incidents.catalog.type_row(inc.type, inc.subtype)
+			.get("primary_role", ""))
+	var out: Array = []
+	for uid: int in sim.incidents.fleet.unit_ids():
+		var u: Vehicle = sim.incidents.fleet.unit(uid)
+		var eta: float = sim.incidents.fleet.eta_h(u, inc.tile)
+		out.append({
+			"id": u.id, "dept": u.department, "kind": u.type, "state": u.status,
+			"eta_gs": -1.0 if is_inf(eta) else eta * 3600.0,
+			"eligible": u.is_dispatchable_now(),
+			"required": u.has_capability_for(primary),
+			"incident_id": u.incident_id,
+			"frees_in_gs": maxf(0.0, u.refit_until_h - sim.incidents.now_h) * 3600.0
+					if u.status == Vehicle.REFIT else -1.0,
+		})
+	return out
+
+
+## The UI emits INTENT and never a sound; the shell is where an intent becomes
+## a cue, so no ui/ file knows audio exists.
+func _wire_audio_ui(root: UIRoot) -> void:
+	if audio == null:
+		return
+	var tap := func(_a = null, _b = null) -> void: audio.ui_cue(AudioService.UI_TAP)
+	var deny := func(_a = null, _b = null) -> void: audio.ui_cue(AudioService.UI_DENY)
+	if hud != null:
+		hud.speed_selected.connect(tap)
+		hud.pause_toggled.connect(tap)
+		if hud.has_signal("menu_requested"):
+			hud.menu_requested.connect(tap)
+	if build_sheet != null:
+		build_sheet.placement_started.connect(tap)
+	if building_panel != null:
+		building_panel.closed.connect(tap)
+		building_panel.upgraded.connect(_on_audio_result)
+	if root.overlay_rail != null:
+		root.overlay_rail.overlay_changed.connect(tap)
+		root.overlay_rail.overlay_refused.connect(deny)
+	if root.alerts_center != null:
+		root.alerts_center.panel_toggled.connect(tap)
+	if root.pause_menu != null:
+		root.pause_menu.menu_toggled.connect(tap)
+	if root.settings_sheet != null:
+		root.settings_sheet.sheet_toggled.connect(tap)
+	if root.save_load_sheet != null:
+		root.save_load_sheet.slot_action.connect(
+				func(_action: StringName, _slot: int, result: Dictionary) -> void:
+					_on_audio_result(result))
+
+
+func _on_audio_result(result: Dictionary) -> void:
+	audio.ui_cue(AudioService.UI_CONFIRM if bool(result.get("ok", false))
+			else AudioService.UI_DENY)
+
+
+func _on_app_paused(_saved: bool) -> void:
+	var sim := sim_host.sim
+	_before_snapshot = {"treasury": sim.treasury.balance,
+			"population": sim.population.city_population,
+			"day_index": sim.clock.day_index(),
+			"stability": sim.districts.city_stability,
+			"happiness": sim.happiness.happiness}
 
 
 ## doc 13 §2.3: the shell measures, the sim decides. The 12 real-hour cap and
@@ -530,6 +725,26 @@ func _on_app_resumed(elapsed_wall_s: float) -> void:
 		sim_host.sim.scheduler.advance_fine_n(mini(int(elapsed_wall_s * 4.0), 240))
 	else:
 		sim_host.sim.advance_coarse_hours(int(elapsed_wall_s / 60.0))
+	var offline_batch: Array = sim_host.sim.bus.drain()
+	_on_sim_batch(offline_batch)
+	if ui_root == null or _before_snapshot.is_empty() or elapsed_wall_s < 60.0:
+		return
+	var sim := sim_host.sim
+	var toast := ui_root.present_away_report({
+		"elapsed_wall_s": elapsed_wall_s,
+		"elapsed_game_minutes": elapsed_wall_s,      # 1 real s = 1 game min at 1x
+		"before": _before_snapshot,
+		"after": {"treasury": sim.treasury.balance,
+				"population": sim.population.city_population,
+				"day_index": sim.clock.day_index(),
+				"stability": sim.districts.city_stability,
+				"happiness": sim.happiness.happiness},
+		"events_digest": offline_batch,
+		"unresolved": ui_root.incident_drawer.model.rows() \
+				if ui_root.incident_drawer != null else [],
+	})
+	if toast != "" and hud != null:
+		hud.push_alert({"class": "p3", "title": toast})
 
 
 func _on_placement_started(_archetype: String, _variant: String) -> void:
@@ -546,6 +761,10 @@ func _on_placement_changed() -> void:
 
 
 func _on_placement_committed(result: Dictionary) -> void:
+	# Success is announced by building_placed_sim → the purchase cue; only the
+	# refusal needs a blip here.
+	if audio != null and not bool(result.get("ok", false)):
+		audio.ui_cue(AudioService.UI_DENY)
 	_on_placement_changed()
 	if bool(result.get("ok", false)):
 		# The sim charged and stamped; the HUD's treasury chip follows on the
@@ -625,19 +844,34 @@ func _process(delta: float) -> void:
 	if _hud_timer >= HUD_REFRESH_S:
 		_hud_timer = 0.0
 		_refresh_hud()
+	if weather_fx != null:
+		weather_fx.refresh(delta, camera_state.focus)
 	environment_controller.apply(hour, delta)
 	city_view.refresh(delta, hour, camera_rig.camera.global_position)
 	if construction_view != null:
 		construction_view.refresh(delta, environment_controller.last_night)
+	if vehicle_view != null:
+		vehicle_view.set_focus(camera_state.focus)
+		vehicle_view.refresh(delta, environment_controller.last_night,
+				0.0 if sim_host.paused else float(sim_host.speed))
+	if audio != null:
+		# doc 11 §2.15's renderer hooks share cue identities with the sim events,
+		# so feeding both sources still yields ONE thunk per blackout.
+		audio.feed_batch(render_model.drain_render_events())
+		audio.update_audio(delta, camera_rig.camera.global_position,
+				environment_controller.last_night)
 	if _autosave_interval_s > 0.0 and save_service != null:
 		_autosave_timer += delta
 		if _autosave_timer >= _autosave_interval_s:
 			_autosave_timer = 0.0
 			save_service.autosave(sim_host.sim)
-	streetlights.refresh()
+	streetlights.refresh(weather_fx.wetness if weather_fx != null else -1.0)
 	if _blackout_at >= 0.0 and _screenshot_timer >= _blackout_at:
 		_trigger_blackout_demo(true)
 		_blackout_at = -1.0
+	if _lightning_at >= 0.0 and _screenshot_timer >= _lightning_at:
+		weather_fx.strike(0.9)
+		_lightning_at = -1.0
 	if _screenshot_path != "":
 		_screenshot_timer += delta
 		if _screenshot_timer > _shot_at:
