@@ -1236,6 +1236,22 @@ func trigger_tutorial_transformer_failure() -> Incident:
 	return incidents.spawn_scripted_from_tag(loader, "transformer_fail")
 
 
+## The other half of the same hook (doc 12 §2.17): while the coach marks are up,
+## nothing else may go wrong. `seconds_gs` is GAME seconds — the shell converts
+## the tutorial's real-time budget with its own `SimHost.GAME_MS_PER_REAL_MS`,
+## because the sim owns no wall clock (constitution §4). Calls extend the hold
+## rather than replacing it. Doc 07's own F5 suppression is untouched.
+func suppress_director(seconds_gs: float) -> void:
+	if director != null:
+		director.suppress(seconds_gs)
+
+
+## Tutorial finished or skipped — the Director may schedule again.
+func release_director() -> void:
+	if director != null:
+		director.release()
+
+
 func tax_level_count() -> int:
 	var t := _tax_ladder()
 	return (int(t[1]) - int(t[0])) / int(t[2]) + 1
@@ -1625,9 +1641,16 @@ func _sync_station_fleet(sim_id: String, b: Building) -> void:
 ##   weather_decay_mult doc 07's `condition_decay_mult`, × doc 03 §2.10 layer 2's
 ##                     `AUSTERITY_DECAY_MULT` while austerity is engaged
 ##
-## No RNG is drawn here: decay is a deterministic integration, so wiring it moves
-## no stochastic stream and the save→load→advance identity is untouched.
-func apply_hourly_decay(dt_h: float, availability: Dictionary) -> void:
+## Decay itself draws no RNG — it is a deterministic integration. The one
+## stochastic thing on this path is doc 02 §2.6's LAST dead branch, the
+## structural-failure roll: a `damaged` building below condition 0.10 fails at
+## 0.02/gh on the `failures` stream, in sorted id order, and the draw happens
+## only for the handful of buildings that qualify. `destroy_allowed` is doc 08
+## C-47: during offline catch-up the roll is not TAKEN (rather than taken and
+## refused), so an absence cannot silently consume the stream, and the rot the
+## player comes back to is still standing where they can see it.
+func apply_hourly_decay(dt_h: float, availability: Dictionary,
+		destroy_allowed: bool = true) -> void:
 	if dt_h <= 0.0:
 		return
 	var weather_mult := weather.get_effect("condition_decay_mult")
@@ -1635,13 +1658,17 @@ func apply_hourly_decay(dt_h: float, availability: Dictionary) -> void:
 		weather_mult = 1.0
 	weather_mult *= treasury.austerity_decay_mult()
 	var overload := _overload_excess_by_component()
+	var now_minutes := clock.sim_time_minutes()
 	for id in _sorted(buildings):
 		var b: Building = buildings[id]
 		if not b.decays():
 			continue
 		var excess := float(overload.get(grid.attachment_of(String(id)), 0.0))
-		for event in b.apply_decay(dt_h, excess,
-				float(availability.get(id, 1.0)), weather_mult):
+		var events: Array = b.apply_decay(dt_h, excess,
+				float(availability.get(id, 1.0)), weather_mult)
+		if destroy_allowed:
+			events.append_array(b.roll_structural_failure(rng, dt_h, now_minutes))
+		for event in events:
 			var out: Dictionary = event.duplicate()
 			out["sim_id"] = id
 			out["condition"] = b.condition
@@ -2026,7 +2053,7 @@ class HourlyPhaseSystem extends SimSystem:
 		# Wear runs BEFORE the settlement, so the hour that was lived at the old
 		# condition is billed at the new one — the same ordering doc 03 §2.4's
 		# MAINT_CONDITION_PENALTY assumes, and the reason neglect costs money.
-		sim.apply_hourly_decay(1.0, availability)
+		sim.apply_hourly_decay(1.0, availability, not ctx.is_catchup)
 		sim.districts.recompute_slow(1.0)
 		var settled := sim.economy.settle_hour(sim.build_settlement_inputs(ctx, availability))
 		sim.last_settlement = settled
@@ -2034,11 +2061,18 @@ class HourlyPhaseSystem extends SimSystem:
 		sim._last_expense_hour = float(
 				(settled.get("expenses", {}) as Dictionary).get("total", sim._last_expense_hour))
 		# doc 03 §2.2: the tax rate is not only a revenue scalar — it slows
-		# growth and shifts the happiness target, which is the whole reason the
-		# knob is interesting. Both terms are exactly 0 / 1.0 at TAX_RATE_BASE.
+		# growth, shifts the happiness target AND lowers the attractiveness
+		# ceiling doc 09 relaxes toward (amendment T-1, the half that lets the
+		# slider cost a HEALTHY city people). All three are exactly 0 / 1.0 at
+		# TAX_RATE_BASE. Population reads the happiness of the hour just lived
+		# and happiness then relaxes on the aggregates population just produced:
+		# one hour of lag, deliberately, because happiness consumes
+		# `employment_balance` and the cycle has to be cut somewhere.
 		var result := sim.population.advance(sim._population_inputs(), 1.0,
 				sim.districts.city_stability,
-				sim.economy.growth_rate_multiplier(sim.tax_rate))
+				sim.economy.growth_rate_multiplier(sim.tax_rate),
+				sim.happiness.happiness,
+				sim.economy.attractiveness_tax_factor(sim.tax_rate))
 		sim._rollup_district_population()
 		sim.happiness.advance(1.0, sim.districts.city_stability, 1.0,
 				sim.population.employment_balance(), 1.0,

@@ -548,8 +548,12 @@ func report_dispatch_result(unit_id: int, ok: bool) -> String:
 #                 camera_state.focus_on(Vector3(tile.x * 8.0, 0.0, tile.y * 8.0))
 #             &"trigger_tutorial_incident":
 #                 sim.trigger_tutorial_transformer_failure()
-#             &"suppress_director", &"release_director":
-#                 pass            # doc 07's switch, when it exposes one
+#             &"suppress_director":
+#                 # §2.17's budget is REAL seconds, doc 07's hold is game time.
+#                 sim.suppress_director(float(payload.get("seconds", 300.0))
+#                         * SimHost.GAME_MS_PER_REAL_MS)
+#             &"release_director":
+#                 sim.release_director()
 #
 #     # --- world tag → screen rectangle for the cutout -----------------------
 #     func _coach_world_rect(tag: String) -> Variant:

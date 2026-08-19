@@ -89,6 +89,23 @@ func growth_rate_multiplier(rate: float) -> float:
 			* float(_tax.get("TAX_RATE_GROWTH_COEFF", 0.0))
 
 
+## §2.2 third coupling (doc 92 F-5 / doc 09 amendment T-1): the attractiveness
+## CEILING the current rate buys. `growth_rate_multiplier` scales how FAST doc
+## 09's `A_city` relaxes; this scales WHAT IT RELAXES TOWARD, which is the half
+## that can actually cost a healthy city people.
+##
+## Priced off `happiness_tax_delta` rather than off the rate a second time — the
+## slider is converted to happiness points ONCE, here, and doc 09 spends those
+## points on the one scale it already has (report 98's no-double-count rule
+## applied to a coupling instead of to a price). Only the punitive half counts:
+## `min(0, Δ)`, so cutting tax buys a faster refill (that IS the growth
+## multiplier) and never an attractiveness ceiling above the stability one.
+## Returns 1.0 at and below `TAX_RATE_BASE`; doc 09 clamps it onto [0.25, 1.00].
+func attractiveness_tax_factor(rate: float) -> float:
+	return 1.0 + float(_tax.get("TAX_RATE_ATTRACT_PULL", 0.0)) \
+			* minf(0.0, happiness_tax_delta(rate)) / 100.0
+
+
 func tax_rate_change_allowed(hour: int, last_changed_hour: int) -> bool:
 	if last_changed_hour < 0:
 		return true

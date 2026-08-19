@@ -42,6 +42,9 @@ var history: Array = []  # ring of 32
 var target_immunity: Dictionary = {}  # ref -> until_min (F4 soft)
 var target_hard_exclude: Dictionary = {}  # ref -> until_min (F4 hard)
 var suppression: Dictionary = {"active": false, "reasons": [], "since_min": -1, "clear_at_min": -1}
+## Scripted suppression — the tutorial's hold (doc 12 §2.17), distinct from F5's
+## earned one above so neither can clear the other. `-1` means "not held".
+var suppress_until_min: int = -1
 var recovery_mode: Dictionary = {"active": false, "until_min": -1}
 var scheduled: Array = []
 var active_events: Dictionary = {}  # event_uid -> row
@@ -71,6 +74,39 @@ func attach(p_weather: WeatherSystem, p_sink: IncidentRequestSink,
 
 
 # ------------------------------------------------------ commands (doc 07 §4)
+
+## Scripted suppression for the onboarding flow (doc 12 §2.17: "lifts
+## suppression after 300 s"). `seconds_gs` is GAME seconds, so the hold is a
+## game-minute deadline like every other gate in this file and it survives
+## save/load, pause and time acceleration identically. Calls EXTEND, never
+## shorten: two overlapping tutorial steps cannot uncover each other.
+##
+## This is not F5. F5 is earned — the city is in trouble and the Director backs
+## off — and it must stay observable while the tutorial is talking, so the two
+## live in separate fields and `tick_hour` honours both.
+func suppress(seconds_gs: float) -> void:
+	if seconds_gs <= 0.0:
+		return
+	var until := _now_min + int(ceil(seconds_gs / 60.0))
+	suppress_until_min = maxi(suppress_until_min, until)
+	_emit(&"director_scripted_suppression", {"active": true, "minute": _now_min,
+			"until_min": suppress_until_min})
+
+
+## Ends the scripted hold now (tutorial finished or skipped). F5's own
+## suppression, if the city has earned it, is untouched.
+func release() -> void:
+	if suppress_until_min < 0:
+		return
+	suppress_until_min = -1
+	_emit(&"director_scripted_suppression", {"active": false, "minute": _now_min})
+
+
+## True while the scripted hold is in force. Evaluated against the last hourly
+## tick's clock, which is the only clock this class has.
+func scripted_suppression_active() -> bool:
+	return suppress_until_min >= 0 and _now_min < suppress_until_min
+
 
 ## `storm_prep_action(action_id, target)` — available T−90 → T−20 only
 ## (§2.7.7). All optional: a city that does nothing is still playable, just
@@ -251,6 +287,8 @@ func tick_hour(inputs: DirectorInputs, ctx: TimeContext) -> void:
 		return  # F9: TP is frozen and nothing is scheduled
 	if bool(suppression["active"]):
 		return  # F5
+	if scripted_suppression_active():
+		return  # doc 12 §2.17 — the tutorial is holding the floor
 	_try_schedule(inputs, ctx, p)
 
 
@@ -709,6 +747,7 @@ func drain_events() -> Array:
 func get_debug_state() -> Dictionary:
 	return {"tp_pool": tp_pool, "P": _last_p, "difficulty": difficulty,
 			"suppressed": bool(suppression["active"]),
+			"scripted_suppressed": scripted_suppression_active(),
 			"recovery": bool(recovery_mode["active"]),
 			"scheduled": scheduled.size(), "active": active_events.size()}
 
@@ -761,6 +800,7 @@ func serialize() -> Dictionary:
 		"target_immunity": immunity,
 		"target_hard_exclude": hard,
 		"suppression": suppression.duplicate(true),
+		"suppress_until_min": suppress_until_min,
 		"recovery_mode": recovery_mode.duplicate(true),
 		"scheduled": scheduled.duplicate(true),
 		"active_events": actives,
@@ -809,6 +849,7 @@ func deserialize(data: Dictionary) -> void:
 			"reasons": raw_suppression.get("reasons", []),
 			"since_min": int(raw_suppression.get("since_min", -1)),
 			"clear_at_min": int(raw_suppression.get("clear_at_min", -1))}
+	suppress_until_min = int(data.get("suppress_until_min", -1))
 	var raw_recovery: Dictionary = data.get("recovery_mode", {"active": false, "until_min": -1})
 	recovery_mode = {"active": bool(raw_recovery.get("active", false)),
 			"until_min": int(raw_recovery.get("until_min", -1))}

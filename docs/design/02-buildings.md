@@ -382,6 +382,8 @@ Thresholds and effects (all rescaled by ÷100):
 
 `fire_condition_mult = 1 + 1.5 × (1 − condition)^1.5` — now natively on `[0,1]`: `C=1.00 → 1.00`, `C=0.50 → 1.53`, `C=0.00 → 2.50`.
 
+**Structural failure, as shipped (Wave 4).** `Building.roll_structural_failure` is called once per settled game-hour from `CitySim.apply_hourly_decay`, immediately after `apply_decay` and in the same sorted-id loop, on the **`failures`** RNG stream (constitution §5 — no new stream was minted for it; `failures` is the one doc 02's damage already owns). It rolls only for buildings that are `damaged` **and** below `structural_failure_threshold 0.10`, so a healthy city draws nothing and the stream advances only where the city is already rotting. It emits doc 02's own `building_destroyed` with `cause = structural_failure`; the destroyed building stays in the registry at `STATE_OCCUPANCY 0.00` exactly as a burned-down one does, so population, revenue and the rebuild grace window all follow the existing path. **Offline:** during a catch-up the roll is not *taken* rather than taken and refused (doc 08 C-47 / report 98 — an absence may not silently consume the stream, and the rot must still be standing where the returning player can see it).
+
 **Repair / maintenance.** This doc supplies a **`damage_fraction ∈ [0,1]` and crew-hours only**; doc 03 prices it *(report 98 C-16)*.
 
 ```

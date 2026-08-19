@@ -155,9 +155,20 @@ f_condition = COND_FLOOR + (1 - COND_FLOOR) × C,   COND_FLOOR = 0.55
 tax_policy_factor = r / TAX_RATE_BASE,   TAX_RATE_BASE = 0.09
 ```
 
-The cost is paid in doc 09: `happiness_tax_delta = -(r - 0.09) × 220` happiness points, and `growth_rate_multiplier = 1 - (r - 0.09) × 3.5`. At r=0.16 revenue is ×1.778 but happiness drops 15.4 points and population growth drops 24.5% — a short-term lever with a long-term bill. Rate changes are limited to once per `TAX_RATE_COOLDOWN_HOURS = 48` gh to stop yo-yo exploitation.
+The cost is paid in doc 09, on **three** channels:
 
-**As shipped (Wave 1.5, audit doc 93 §B).** The slider has detents: **`cmd_set_tax_level(level, preview)`** walks `TAX_RATE_MIN … TAX_RATE_MAX` in `TAX_RATE_STEP` (new in §8, **0.01**) increments — 13 levels, with **level 5 landing exactly on `TAX_RATE_BASE`** — and the ladder is computed in basis points so no detent can drift off its authored rate through float arithmetic. Codes are `E_TAX_LEVEL_RANGE` then `E_TAX_COOLDOWN` (whose payload carries `hours_remaining`); re-selecting the level already in force is a free no-op that starts **no** cooldown, so the UI need not special-case it. All three couplings are live: the policy factor scales revenue here, and `happiness_tax_delta` / `growth_rate_multiplier` are passed into doc 09's happiness target and attractiveness relaxation at the hourly settlement — both exactly neutral at the base rate, so the shipped starter city is unaffected. *(The audit's phrase "the `TAX_LEVEL_GROWTH` curve exists" conflated two constants: `TAX_LEVEL_GROWTH 2.15` is `base_tax` growth per **building** level and has nothing to do with the tax rate.)*
+```
+happiness_tax_delta       = -(r - 0.09) × TAX_RATE_HAPPINESS_COEFF (220)      # doc 09 §2.10.3, H_target
+growth_rate_multiplier    = 1 - (r - 0.09) × TAX_RATE_GROWTH_COEFF  (8.0)     # doc 09 §2.10.2, relaxation RATE
+attractiveness_tax_factor = 1 + TAX_RATE_ATTRACT_PULL (1.30) × min(0, happiness_tax_delta) / 100
+                                                                              # doc 09 §2.10.2a, relaxation TARGET
+```
+
+At r = 0.16 revenue is ×1.778, happiness drops 15.4 points, attractiveness relaxes 56 % slower **and** toward a ceiling of 0.7998 instead of 1.00 — a short-term lever with a long-term bill. Rate changes are limited to once per `TAX_RATE_COOLDOWN_HOURS = 48` gh to stop yo-yo exploitation.
+
+**The third channel is new (doc 09 amendment T-1) and it is the one that bites.** Doc 92 pass-2 F-5 moved `TAX_RATE_GROWTH_COEFF` 3.5 → 8.0 to make the top detent cost "a city later", and it cost nothing: the multiplier scales `(A_target − A_city)`, and doc 09's `A_target` saturates at 1.00 for any `city_stability ≥ 0.85`, so in a healthy city it multiplied zero. `attractiveness_tax_factor` prices the slider into the **target** instead of the rate. It is deliberately built on `happiness_tax_delta` rather than on `r` a second time: the rate is converted to happiness points once, here, and doc 09 spends those points on the one attractiveness scale it has — the same no-double-count discipline report 98 C-07/C-08 apply to prices, applied to a coupling. `min(0, ·)` keeps it one-sided: below the base rate the factor is exactly 1.0, because a tax cut buys a **faster refill** (that IS `growth_rate_multiplier`, 1.40× at the bottom detent) and never an attractiveness ceiling above the stability one. Doc 09 owns the mapping and composes its three ceilings with `min`, so an overtaxed city is never billed twice for the same discontent.
+
+**As shipped (Wave 1.5, audit doc 93 §B).** The slider has detents: **`cmd_set_tax_level(level, preview)`** walks `TAX_RATE_MIN … TAX_RATE_MAX` in `TAX_RATE_STEP` (new in §8, **0.01**) increments — 13 levels, with **level 5 landing exactly on `TAX_RATE_BASE`** — and the ladder is computed in basis points so no detent can drift off its authored rate through float arithmetic. Codes are `E_TAX_LEVEL_RANGE` then `E_TAX_COOLDOWN` (whose payload carries `hours_remaining`); re-selecting the level already in force is a free no-op that starts **no** cooldown, so the UI need not special-case it. All **four** couplings are live: the policy factor scales revenue here, and `happiness_tax_delta` / `growth_rate_multiplier` / `attractiveness_tax_factor` are passed into doc 09's happiness target, attractiveness relaxation rate and attractiveness ceiling at the hourly settlement — all exactly neutral (0 / 1.0 / 1.0) at the base rate, so the shipped starter city is unaffected and the founding ledger does not move. *(The audit's phrase "the `TAX_LEVEL_GROWTH` curve exists" conflated two constants: `TAX_LEVEL_GROWTH 2.15` is `base_tax` growth per **building** level and has nothing to do with the tax rate.)*
 
 **M_rev[difficulty]** — §2.9.
 
@@ -1163,7 +1174,7 @@ All in `sim/economy/`, `RefCounted` only, no `Node`, no engine singletons (const
 | **06 Incidents / Fleet** | vehicle purchase / upkeep / `active_mult` / `dispatch_cost` / resale (§2.13c); austerity breakdown multiplier; `repair_cost()` in place of `cost_materials` |
 | **07 Weather / Director** | `repair_cost(asset, damage_fraction)` — doc 07 quotes no repair totals and owns no `repair_cost_mult` (C-16, C-17) |
 | **08 Persistence / Offline** | the `"economy"` save section and its hourly ring buffer; **`band.yield_mult`** populated from §2.11's exponential taper (C-20) |
-| **09 Map / Land / Population** | `LandMarket.price_for_block()`, `development_phase_cost()`; `happiness_tax_delta = -(r - 0.09) × 220`; `growth_rate_multiplier = 1 - (r - 0.09) × 3.5`; austerity flag |
+| **09 Map / Land / Population** | `LandMarket.price_for_block()`, `development_phase_cost()`; `happiness_tax_delta = -(r - 0.09) × 220`; `growth_rate_multiplier = 1 - (r - 0.09) × 8.0`; **`attractiveness_tax_factor(r) = 1 + 1.30 × min(0, happiness_tax_delta)/100`** (doc 09 §2.10.2a, T-1); austerity flag |
 | **10 Roads** | the **§2.13(d) per-tile road price ladder** (STREET/AVENUE build, upgrade, demolish refund, repair `capital_value` basis) — doc 10 holds no price column (RR-2); job pricing through `Treasury.spend()`; `repair_cost(tile, damage_fraction)`; **no standing upkeep is billed or billable** |
 | **12 UI** | `BudgetSnapshot`, `net_display`, foregone-by-cause breakdown, Resilience Index, land TCO estimate |
 | **All** | **`data/difficulty.json`** and `Difficulty.get(section, key)` (C-17) — including `M_rev / M_exp / M_land / M_dev / M_build / M_repair`. No other doc defines, loads or duplicates a difficulty scalar. |
@@ -1283,7 +1294,9 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
 
   "tax": {
     "TAX_LEVEL_GROWTH": 2.15, "TAX_RATE_BASE": 0.09, "TAX_RATE_MIN": 0.04, "TAX_RATE_MAX": 0.16,
-    "TAX_RATE_COOLDOWN_HOURS": 48, "TAX_RATE_HAPPINESS_COEFF": 220.0, "TAX_RATE_GROWTH_COEFF": 3.5,
+    "TAX_RATE_COOLDOWN_HOURS": 48, "TAX_RATE_HAPPINESS_COEFF": 220.0, "TAX_RATE_GROWTH_COEFF": 8.0,
+    "TAX_RATE_ATTRACT_PULL": 1.30,
+    "_attract_pull_note": "doc 09 amendment T-1. attractiveness_tax_factor(r) = 1 + 1.30 * min(0, happiness_tax_delta(r)) / 100 — the attractiveness CEILING the rate buys, where TAX_RATE_GROWTH_COEFF buys only the RATE at which doc 09 walks toward it. 1.0 at and below TAX_RATE_BASE; 0.7998 at TAX_RATE_MAX. Priced off happiness_tax_delta so the rate is read once in the coupling.",
     "_tax_level_note": "The player knob of §2.2 is the RATE r, bounded by TAX_RATE_MIN/MAX. cmd_set_tax_level exposes it as the discrete ladder MIN, MIN+STEP, ... , MAX so the UI has detents; 13 levels, and level 5 lands exactly on TAX_RATE_BASE. The ladder is computed in basis points so no float drift can move a detent off its authored rate. This is the tax RATE ladder and is unrelated to TAX_LEVEL_GROWTH, which is base_tax growth per BUILDING level.",
     "TAX_RATE_STEP": 0.01,
     "OCCUPANCY_RAMP_HOURS": 36,

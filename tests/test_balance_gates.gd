@@ -49,6 +49,8 @@ const SHORT_DAYS := 10
 ## the same run and a 21-game-day `disaster_neglect` run is the most expensive
 ## thing here.
 var _runs: Dictionary = {}
+## Same idea for gate 12 / 12b's controlled tax pair, which is not a strategy run.
+var _tax_runs: Dictionary = {}
 
 
 func _run(strategy: String, days: int = LONG_DAYS, seed_value: int = GATE_SEED) -> Dictionary:
@@ -265,63 +267,132 @@ func test_gate_09_dispatcher_rarely_gives_up() -> void:
 ## micro-experiments for. Here both cities get the SAME build plan on the SAME
 ## tiles from the same seed, and the ONLY difference is the detent.
 ##
-## **AND THE FINDING THIS GATE EXISTS TO PIN.** The ruled coefficient is in force
-## — `growth_rate_multiplier(TAX_RATE_MAX)` is 0.44, exactly as ruled — but in a
-## HEALTHY city it multiplies zero, so max tax costs no population at all. Doc 03
-## publishes the multiplier into `PopulationSystem.advance`, where it scales the
-## RELAXATION of `attractiveness` toward `attractiveness_target(stability)`:
+## **THE FINDING THIS GATE WAS WRITTEN AGAINST, AND ITS FIX.** Pass 2 shipped the
+## ruled coefficient — `growth_rate_multiplier(TAX_RATE_MAX)` is 0.44 — and it
+## bit nothing, because doc 03 publishes the multiplier into
+## `PopulationSystem.advance` where it scales only the RELAXATION RATE:
 ##
 ##     attractiveness += (target − attractiveness) × (1 − exp(−dt·mult/τ))
 ##
-## `attractiveness_target(s) = clamp((s − 0.35) / 0.50, 0.25, 1.0)`, which is
-## **1.0 for any stability ≥ 0.85**, and a founding city starts at attractiveness
-## 1.0. `target − attractiveness` is therefore 0 and the multiplier has nothing to
-## scale: a controlled pair at detent 5 and detent 12 ends 2, 3, 5, 7, 10 and 14
-## game-days with **the same 224 people** and only the treasury differs. The knob
-## bites exactly where the city is already hurt — it slows RECOVERY from a
-## stability hit — which is a defensible design, but it is not the "money now
-## versus a city later" tradeoff doc 92 F-5 costed the ruling against, and no
-## value of `TAX_RATE_GROWTH_COEFF` can make it one. Recorded for pass 3.
+## `attractiveness_target(s) = clamp((s − 0.35)/0.50, 0.25, 1.0)` is **1.0 for any
+## stability ≥ 0.85** and a founding city starts AT 1.0, so `target −
+## attractiveness` was 0 and the multiplier scaled zero: this same controlled pair
+## used to end 2, 3, 5, 7, 10 and 14 game-days with **the same 224 people**, and
+## only the treasury moved. No value of `TAX_RATE_GROWTH_COEFF` could fix that,
+## because the rate lever cannot move a city that is already where it is going.
 ##
-## So the gate asserts both halves honestly: the coefficient is in force, it does
-## bite on a city that has something to recover, and it does NOT bite on a healthy
-## one — the last of which is the assertion that will fail, loudly, on the day
-## someone reroutes the lever through `attractiveness_target`.
+## **Doc 09 amendment T-1** adds the missing half: the TARGET is now the most
+## binding of three ceilings — stability, lived happiness, and the tax bill —
+## `min(A_stab(S), A_happy(H), attractiveness_tax_factor(r))`, where the tax
+## factor is priced off `happiness_tax_delta` so the slider is read exactly once
+## in the whole coupling. The top detent's −15.4 happiness points become a 0.7998
+## attractiveness ceiling, the city relaxes DOWN to it, and the slider finally
+## costs residents instead of a decimal. Measured, seed 1337, same pair:
+##
+## | game-day | detent 5 pop / treasury | detent 12 pop / treasury |
+## |---|---|---|
+## | 1 | 224 / $13,485 | 198 / $26,896 |
+## | 3 | 224 / $38,470 | 182 / $69,652 |
+## | 7 | 224 / $86,415 | **179** / $147,073 |
+## | 21 | 222 / $211,882 | **177** / $359,430 |
+##
+## This gate holds the two halves of the lever — the RATE half (a hurt city
+## recovers slower) and the TARGET half (a healthy city shrinks) — and gate 12b
+## holds doc 92 F-5's actual threshold.
 func test_gate_12_max_tax_costs_a_city() -> void:
 	var economy := CitySim.boot_from_files(GATE_SEED).economy
 	assert_almost_eq(economy.growth_rate_multiplier(0.16), 0.44, 1e-9,
 			"1 − (0.16 − 0.09) × 8.0 — the ruled coefficient")
 	assert_almost_eq(economy.happiness_tax_delta(0.16), -15.4, 1e-9, "unchanged")
+	# T-1's third coupling: the same −15.4 points, spent on doc 09's scale.
+	assert_almost_eq(economy.attractiveness_tax_factor(0.16), 0.7998, 1e-9,
+			"1 + 1.30 × (−15.4)/100 — the ceiling the top detent buys")
+	assert_almost_eq(economy.attractiveness_tax_factor(0.09), 1.0, 1e-9,
+			"exactly neutral at TAX_RATE_BASE — the founding city may not move")
+	assert_almost_eq(economy.attractiveness_tax_factor(0.04), 1.0, 1e-9,
+			"and the bottom detent buys a faster refill, not a higher ceiling")
+	assert_almost_eq(PopulationSystem.attractiveness_target(0.9475, 82.0, 1.0), 1.0, 1e-9,
+			"doc 09 §2.10.2's t0 worked value survives T-1 unchanged")
+	assert_almost_eq(PopulationSystem.attractiveness_target(0.60, 82.0, 1.0), 0.50, 1e-9,
+			"and so does its F_SOUTH exodus example")
 
-	# Where the lever CAN bite: a city recovering from a stability hit.
+	# The RATE half: a city with something to recover recovers slower.
 	const DAYS := 3
-	var base := _tax_pair_city(5, DAYS, 0.50)
-	var maxed := _tax_pair_city(12, DAYS, 0.50)
+	var hurt_base := _tax_pair_city(5, DAYS, 0.50)
+	var hurt_max := _tax_pair_city(12, DAYS, 0.50)
+	assert_eq(int(hurt_base["buildings"]), int(hurt_max["buildings"]),
+			"the controlled pair must build identically")
+	assert_true(int(hurt_max["treasury"]) > int(hurt_base["treasury"]),
+			"the top detent still earns more money")
+	assert_true(int(hurt_max["population"]) < int(hurt_base["population"]),
+			"max tax must slow a recovering city: %d people against %d"
+					% [int(hurt_max["population"]), int(hurt_base["population"])])
+
+	# The TARGET half — the assertion that used to read `==`. A HEALTHY city, no
+	# stability hit, nothing to recover: the detent alone must move population,
+	# and it must have moved inside one game-week.
+	var base := _tax_pair_city(5, LONG_DAYS, -1.0)
+	var maxed := _tax_pair_city(12, LONG_DAYS, -1.0)
+	var base_7 := int((base["population_by_day"] as Array)[6])
+	var maxed_7 := int((maxed["population_by_day"] as Array)[6])
+	assert_true(maxed_7 <= int(float(base_7) * 0.95),
+			"seven game-days at the top detent cost a healthy city nothing: "
+			+ "%d people against %d. TAX_RATE_ATTRACT_PULL is the lever."
+					% [maxed_7, base_7])
+	assert_true(int(maxed["treasury"]) > int(base["treasury"]),
+			"...while the revenue side of the same detent is still worth more")
+
+
+## GATE 12b — doc 92 F-5's ACTUAL threshold, the one pass 2 could not reach:
+## squeezing the tax slider must TRAIL on population over the report's own
+## 21-game-day horizon, not merely cost a decimal of happiness.
+##
+## Measured on a controlled PAIR rather than on `tax_squeezer` vs `balanced` out
+## of the shared matrix, deliberately and for two reasons. (1) Two scripted
+## agents earn different money and therefore build different cities, so the
+## population column confounds the detent with the build plan — doc 92 §6/§7
+## built its micro-experiments for exactly this. (2) The matrix rows are the
+## balance-fit work's to retune; a gate that reads them fails whenever someone
+## else's tuning lands. This pair is self-contained: same seed, same tiles, same
+## build order, one field different.
+##
+## Threshold: ≥ 10 % fewer people (measured 20.3 %) while still ahead on cash
+## (measured 1.70×). Both directions matter — a detent that costs population AND
+## money is not a tradeoff, it is a trap.
+##
+## The shared matrix agrees, for the record and not as an assertion — 21
+## game-days, seed 1337, coarse: `balanced` $480,480 / 811 people / H 71.9
+## against `tax_squeezer` $1,133,515 / **747** people / H 64.9.
+func test_gate_12b_tax_squeezing_trails_on_population() -> void:
+	var base := _tax_pair_city(5, LONG_DAYS, -1.0)
+	var maxed := _tax_pair_city(12, LONG_DAYS, -1.0)
 	assert_eq(int(base["buildings"]), int(maxed["buildings"]),
 			"the controlled pair must build identically")
-	assert_true(int(maxed["treasury"]) > int(base["treasury"]),
-			"the top detent still earns more money")
-	assert_true(int(maxed["population"]) < int(base["population"]),
-			"max tax must slow a recovering city: %d people against %d"
-					% [int(maxed["population"]), int(base["population"])])
-
-	# Where it CANNOT: a healthy city is pinned at the attractiveness ceiling.
-	var healthy_base := _tax_pair_city(5, DAYS, -1.0)
-	var healthy_max := _tax_pair_city(12, DAYS, -1.0)
-	assert_eq(int(healthy_max["population"]), int(healthy_base["population"]),
-			"TAX_RATE_GROWTH_COEFF now bites a healthy city — the lever has been "
-			+ "rerouted past attractiveness_target, and this gate wants doc 92 "
-			+ "F-5's real threshold (tax_squeezer trails balanced on population)")
-	assert_true(int(healthy_max["treasury"]) > int(healthy_base["treasury"]) * 2,
-			"...while the revenue side of the same detent is worth roughly double")
+	var base_pop := int(base["population"])
+	var maxed_pop := int(maxed["population"])
+	assert_true(maxed_pop <= int(float(base_pop) * 0.90),
+			"the tax squeezer ends %d game-days with %d people against %d — "
+					% [LONG_DAYS, maxed_pop, base_pop]
+			+ "doc 92 F-5 wants money-now versus a-city-later, and this is the gate")
+	assert_true(int(maxed["treasury"]) > int(float(base["treasury"]) * 1.25),
+			"and the money half must still be worth taking: $%d against $%d"
+					% [int(maxed["treasury"]), int(base["treasury"])])
+	# The mechanism, not just the outcome: it is the CEILING that moved.
+	assert_true(float(maxed["attractiveness"]) < float(base["attractiveness"]) - 0.15,
+			"population fell for some other reason than attractiveness: %.4f vs %.4f"
+					% [float(maxed["attractiveness"]), float(base["attractiveness"])])
 
 
-## Boot a city, hold `detent` from game-hour 0, fill the same 40 served tiles
-## with houses in the same row-major order, and run. Everything but the detent is
+## Boot a city, hold `detent` from game-hour 0, fill the same served tiles with
+## houses in the same row-major order, and run. Everything but the detent is
 ## identical between the two calls, including the RNG seed.
 ## `attractiveness` < 0 leaves the founding value (1.0) alone; a value in (0,1]
 ## knocks the city down so the growth multiplier has something to scale.
-static func _tax_pair_city(detent: int, days: int, attractiveness: float) -> Dictionary:
+## Cached: gates 12 and 12b read the same 21-game-day pair.
+func _tax_pair_city(detent: int, days: int, attractiveness: float) -> Dictionary:
+	var key := "%d/%d/%.4f" % [detent, days, attractiveness]
+	if _tax_runs.has(key):
+		return _tax_runs[key]
 	var sim := CitySim.boot_from_files(GATE_SEED)
 	sim.cmd_set_tax_level(detent)
 	if attractiveness > 0.0:
@@ -335,10 +406,18 @@ static func _tax_pair_city(detent: int, days: int, attractiveness: float) -> Dic
 				break
 			if bool(sim.cmd_place_building("house", Vector2i(x, z))["ok"]):
 				built += 1
-	for _h in days * 24:
-		sim.advance_coarse_hours(1, false)
-	return {"treasury": sim.treasury.balance, "population": sim.population.city_population,
+	var population_by_day: Array = []
+	for _d in days:
+		for _h in 24:
+			sim.advance_coarse_hours(1, false)
+		population_by_day.append(sim.population.city_population)
+	var out := {"treasury": sim.treasury.balance,
+			"population": sim.population.city_population,
+			"population_by_day": population_by_day,
+			"attractiveness": sim.population.attractiveness,
 			"buildings": built, "happiness": sim.happiness.happiness}
+	_tax_runs[key] = out
+	return out
 
 
 # ================================================= 13 the recovery ladder (F-7)
