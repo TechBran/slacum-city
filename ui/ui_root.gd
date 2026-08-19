@@ -78,6 +78,14 @@ signal tax_applied(level: int, rate: float)            ## the sim already applie
 signal deeplink_requested(target: String)              ## dashboard row → overlay/…
 signal away_dismissed
 
+## Wave-3 screen (S12). The coach layer asks for the two things only the shell
+## can do — move the camera, cook the tutorial transformer — and says when the
+## tutorial ends. Everything the root can serve itself (open a sheet, open the
+## drawer) it serves before re-emitting, so a shell that connects nothing still
+## gets a tutorial that walks its own UI steps.
+signal onboarding_action(action: StringName, payload: Dictionary)
+signal onboarding_finished(skipped: bool)
+
 @export var apply_content_scale: bool = true
 
 var config: UIConfig
@@ -104,6 +112,8 @@ var incident_drawer: IncidentDrawer
 var unit_picker: UnitPickerSheet
 var city_dashboard: CityDashboard
 var away_report: AwayReportSheet
+var build_sheet: BuildSheet
+var onboarding: OnboardingFlow
 
 var current_breakpoint: Breakpoint = Breakpoint.REGULAR
 var drawer_w_dp: int = 300
@@ -113,6 +123,12 @@ var placement_active := false
 var selected_entity_id := ""
 
 var _last_back_ms := -1.0e9
+
+## What the ghost was over when the player pressed PLACE. `BuildController`
+## clears itself on a successful commit, so the observation the onboarding model
+## needs (which archetype, which tile) has to be remembered one signal earlier.
+var _pending_place: Dictionary = {}
+var _last_build_category := ""
 
 
 ## Config is loaded here rather than in `_ready()` because a parent's
@@ -189,6 +205,8 @@ func _bind_nodes() -> void:
 	city_dashboard = safe_area.get_node_or_null(
 			"ModalLayer/CityDashboard") as CityDashboard
 	away_report = safe_area.get_node_or_null("ModalLayer/AwayReport") as AwayReportSheet
+	build_sheet = safe_area.get_node_or_null("SheetLayer/BuildSheet") as BuildSheet
+	onboarding = safe_area.get_node_or_null("CoachLayer/Onboarding") as OnboardingFlow
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +238,15 @@ func bring_up_screens() -> void:
 		city_dashboard.setup(config)
 	if away_report != null and away_report.model == null:
 		away_report.setup(config)
+	# The build sheet is brought up with the shared config like every other
+	# screen, but WITHOUT a controller: `game/main.gd` owns that and calls
+	# `setup(cfg, controller)` again once it has one (the call is idempotent). The
+	# root does this because `_ready()` never fires in a headless mount — the same
+	# reason `initialize()` exists — and a sheet with no config cannot even open.
+	if build_sheet != null and build_sheet.config == null:
+		build_sheet.setup(config)
+	if onboarding != null and onboarding.model == null:
+		onboarding.setup(config)
 	_connect_screens()
 
 
@@ -256,6 +283,18 @@ func _connect_screens() -> void:
 		_connect(pause_menu.save_requested, _on_saves_requested)
 		_connect(pause_menu.pause_intent, _on_pause_intent)
 		_connect(pause_menu.quit_requested, _on_quit_requested)
+	# S12's observations. Every one of these is a signal the screens already
+	# emitted for their own reasons; the onboarding model is a new listener, not
+	# a new event source (doc 12 §2.17 — the tutorial watches, it never drives).
+	if build_sheet != null:
+		_connect(build_sheet.sheet_toggled, _on_build_sheet_toggled)
+		_connect(build_sheet.placement_changed, _on_build_placement_changed)
+		_connect(build_sheet.placement_committed, _on_build_placement_committed)
+	if incident_drawer != null:
+		_connect(incident_drawer.drawer_toggled, _on_drawer_toggled)
+	if onboarding != null:
+		_connect(onboarding.action_requested, _on_onboarding_action)
+		_connect(onboarding.finished, _on_onboarding_finished)
 
 
 static func _connect(source: Signal, target: Callable) -> void:
@@ -280,8 +319,26 @@ func _on_unread_changed(count: int) -> void:
 	alerts_unread_changed.emit(count)
 
 
+## S12's reset (doc 12 §2.17). `replay_tutorial` is a door, not a preference:
+## switching it on forgets the tutorial, starts it again and switches itself back
+## off, so the row can never persist as a permanent "on".
+const SETTING_REPLAY_TUTORIAL := &"replay_tutorial"
+
+
 func _on_settings_changed(key: StringName, value: Variant) -> void:
+	if key == SETTING_REPLAY_TUTORIAL and bool(value):
+		_replay_tutorial()
 	settings_changed.emit(key, value)
+
+
+func _replay_tutorial() -> void:
+	reset_onboarding()
+	if settings_sheet != null:
+		settings_sheet.close()
+		var block := settings_sheet.capture_state()
+		block[String(SETTING_REPLAY_TUTORIAL)] = false
+		settings_sheet.apply_state(block)
+	start_onboarding()
 
 
 func _on_settings_requested() -> void:
@@ -386,14 +443,23 @@ func bind_save_service(service: Object, sim: Object = null) -> void:
 		save_load_sheet.bind_service(service, sim)
 
 
-## Pipes one `SimEventBus.drain()` batch into the two feeds that eat sim events —
-## the alerts centre (§2.15) and the incident drawer (§2.6). The shell calls this
-## once from its tick handler; nothing else in `ui/` sees a sim event.
+## Pipes one `SimEventBus.drain()` batch into the feeds that eat sim events —
+## the alerts centre (§2.15), the incident drawer (§2.6) and, while it is
+## running, the onboarding step machine (§2.17). The shell calls this once from
+## its tick handler; nothing else in `ui/` sees a sim event.
 func feed_events(batch: Array) -> void:
 	if alerts_center != null:
 		alerts_center.feed_batch(batch)
 	if incident_drawer != null:
 		incident_drawer.feed_batch(batch)
+	if onboarding == null or not onboarding.is_active():
+		return
+	for entry: Variant in batch:
+		if not (entry is Dictionary):
+			continue
+		var event: Dictionary = entry
+		onboarding.feed({"kind": OnboardingModel.OBS_SIM_EVENT,
+				"event": str(event.get("type", "")), "payload": event})
 
 
 func set_sim_clock(minute_of_day: int, day_index: int = 0) -> void:
@@ -447,7 +513,189 @@ func set_unit_provider(provider: Callable) -> void:
 
 ## The shell's verdict on a `dispatch_requested`. Returns the toast copy.
 func report_dispatch_result(unit_id: int, ok: bool) -> String:
+	feed_onboarding({"kind": OnboardingModel.OBS_COMMAND, "command": "dispatch_unit",
+			"ok": ok, "unit_id": unit_id})
 	return unit_picker.report_result(unit_id, ok) if unit_picker != null else ""
+
+
+# ---------------------------------------------------------------------------
+# S12 — the onboarding seam (doc 12 §2.17)
+#
+# Four calls and two signals, all of them optional. `game/main.gd` wires it in
+# `_wire_ui_screens()` and its `_process`; nothing else changes:
+#
+#     # --- bring-up, after the other screens are bound -----------------------
+#     var sim := sim_host.sim
+#     root.set_onboarding_world_resolver(_coach_world_rect)
+#     root.onboarding_action.connect(_on_coach_action)
+#     if _is_new_city:                       # never on a loaded save: the `ui`
+#         root.start_onboarding({            # section resumes that one itself
+#             "tutorial_lot_a": sim.loader.resolve_tag("tutorial_lot_a")["tile_global"],
+#             "tutorial_lot_b": sim.loader.resolve_tag("tutorial_lot_b")["tile_global"],
+#         })
+#
+#     # --- per frame: the only observation the root cannot make for itself ---
+#     func _process(_dt: float) -> void:
+#         ui_root.feed_onboarding({"kind": "camera", "focus": camera_state.focus,
+#                 "zoom_t": camera_state.zoom_t})
+#
+#     # --- the two requests only the shell can serve -------------------------
+#     func _on_coach_action(action: StringName, payload: Dictionary) -> void:
+#         match action:
+#             &"focus_camera":
+#                 var tile: Vector2i = sim.loader.resolve_tag(
+#                         str(payload["tag"]))["tile_global"]
+#                 camera_state.focus_on(Vector3(tile.x * 8.0, 0.0, tile.y * 8.0))
+#             &"trigger_tutorial_incident":
+#                 sim.trigger_tutorial_transformer_failure()
+#             &"suppress_director", &"release_director":
+#                 pass            # doc 07's switch, when it exposes one
+#
+#     # --- world tag → screen rectangle for the cutout -----------------------
+#     func _coach_world_rect(tag: String) -> Variant:
+#         var tile: Vector2i = sim.loader.resolve_tag(tag).get("tile_global",
+#                 Vector2i.ZERO)
+#         var answer := camera_state.project_to_screen(
+#                 Vector3(tile.x * 8.0 + 4.0, 0.0, tile.y * 8.0 + 4.0),
+#                 Vector2(get_viewport().get_visible_rect().size))
+#         return null if bool(answer["behind"]) else answer["position"]
+#
+# `tools/onboarding_preview.gd` is a working copy of exactly this wiring, over
+# `game/main.tscn`, and is how the coach marks were screenshotted.
+#
+# Sim events, the build sheet, the incident drawer and the dispatch verdict all
+# feed themselves through calls `game/main.gd` already makes (`feed_events`,
+# `report_dispatch_result`) — there is nothing to add for those.
+# ---------------------------------------------------------------------------
+
+## Starts the scripted first fifteen minutes. `regions` maps the doc 09 §2.9.7
+## tutorial tags the step table names to world tiles, e.g.
+##
+##     ui_root.start_onboarding({
+##         "tutorial_lot_a": sim.loader.resolve_tag("tutorial_lot_a")["tile_global"],
+##         "tutorial_lot_b": sim.loader.resolve_tag("tutorial_lot_b")["tile_global"]})
+##
+## Returns false when there is no coach layer, or when this city has already been
+## through the tutorial — §2.17's "never shows again once done".
+func start_onboarding(regions: Dictionary = {}) -> bool:
+	if onboarding == null:
+		return false
+	return onboarding.start(regions)
+
+
+## One observation into the step machine; see `OnboardingModel` for the shapes.
+## Safe to call always — it is a no-op when the tutorial is not running, which is
+## what lets the shell feed the camera every frame without a guard of its own.
+func feed_onboarding(observation: Dictionary) -> bool:
+	if onboarding == null or not onboarding.is_active():
+		return false
+	return onboarding.feed(observation)
+
+
+## How a world tag becomes a screen rectangle for the cutout:
+## `Callable(tag: String) -> Variant` returning a `Rect2`, a `Vector2` screen
+## point, or null. Only the shell can project world → screen (doc 11 owns the
+## camera), so only the shell supplies this.
+func set_onboarding_world_resolver(resolver: Callable) -> void:
+	if onboarding != null:
+		onboarding.set_world_resolver(resolver)
+
+
+func onboarding_active() -> bool:
+	return onboarding != null and onboarding.is_active()
+
+
+## Settings ▸ Replay tutorial, and the shell's own "start a new city" path.
+func reset_onboarding() -> void:
+	if onboarding != null:
+		onboarding.reset()
+
+
+## The root serves what it owns and re-emits everything else. `focus_camera` and
+## `trigger_tutorial_incident` are the shell's, because `ui/` holds no sim and no
+## camera; the three menu actions are the root's, because it is the only object
+## that knows all the screens exist (§4.1).
+func _on_onboarding_action(action: StringName, payload: Dictionary) -> void:
+	match action:
+		OnboardingModel.ACTION_OPEN_BUILD_SHEET:
+			if build_sheet != null and not build_sheet.is_open():
+				build_sheet.open()
+		OnboardingModel.ACTION_OPEN_BUILD_CATEGORY:
+			if build_sheet != null:
+				if not build_sheet.is_open():
+					build_sheet.open()
+				build_sheet.select_category(str(payload.get("category", "")))
+		OnboardingModel.ACTION_OPEN_INCIDENT_DRAWER:
+			if incident_drawer != null and not incident_drawer.is_open():
+				incident_drawer.open()
+	onboarding_action.emit(action, payload)
+
+
+func _on_onboarding_finished(was_skipped: bool) -> void:
+	onboarding_finished.emit(was_skipped)
+
+
+func _on_build_sheet_toggled(open: bool) -> void:
+	if not open:
+		return
+	feed_onboarding({"kind": OnboardingModel.OBS_UI_OPENED,
+			"path": OnboardingFlow.SCREEN_BUILD_SHEET})
+
+
+func _on_drawer_toggled(open: bool) -> void:
+	if not open:
+		return
+	feed_onboarding({"kind": OnboardingModel.OBS_UI_OPENED,
+			"path": OnboardingFlow.SCREEN_INCIDENT_DRAWER})
+
+
+## Every ghost move. Two observations come out of it: what the preflight said
+## (§2.17's `E_UNSERVED` wall is a *verdict*, never a refused command — the PLACE
+## button is disabled before the player can press it), and a memo of what is
+## about to be placed, for the commit below.
+func _on_build_placement_changed() -> void:
+	if build_sheet == null or build_sheet.controller == null:
+		return
+	var controller := build_sheet.controller
+	if not controller.is_placing() or not controller.has_origin:
+		return
+	_pending_place = {
+		"archetype": controller.archetype,
+		"component_kind": controller.component_kind,
+		"tile": controller.origin,
+	}
+	var verdict := controller.verdict()
+	var code := str(verdict.get("code", ""))
+	if code != "":
+		feed_onboarding({"kind": OnboardingModel.OBS_VERDICT, "code": code,
+				"tile": controller.origin})
+
+
+func _on_build_placement_committed(result: Dictionary) -> void:
+	var kind := str(_pending_place.get("component_kind", ""))
+	feed_onboarding({
+		"kind": OnboardingModel.OBS_COMMAND,
+		"command": "place_grid_component" if kind != "" else "place_building",
+		"ok": bool(result.get("ok", false)),
+		"archetype": str(_pending_place.get("archetype", "")),
+		"tile": _pending_place.get("tile", Vector2i.ZERO),
+	})
+
+
+## The one thing the coach layer cannot learn from a signal: the build sheet has
+## no `category_changed`, and §2.17's `unserved_wall` step lets a player who
+## works out the fix on their own skip ahead by opening the GRID tab. Polled only
+## while the tutorial is running, and never otherwise.
+func _process(_delta: float) -> void:
+	if onboarding == null or not onboarding.is_active() or build_sheet == null:
+		return
+	var category := build_sheet.active_category() if build_sheet.is_open() else ""
+	if category == _last_build_category:
+		return
+	_last_build_category = category
+	if category != "":
+		feed_onboarding({"kind": OnboardingModel.OBS_UI_OPENED,
+				"path": OnboardingFlow.SCREEN_BUILD_CATEGORY + category})
 
 
 ## `CitySim.cmd_set_tax_level` itself plus the detent it sits on.
@@ -490,14 +738,16 @@ func present_away_report(input: Dictionary) -> String:
 
 
 ## The `ui` save section this scaffold owns today (doc 12 §3.2): the overlay
-## choice and the settings block. The camera, selection and onboarding keys join
-## it as those systems land.
+## choice, the settings block and — since S12 landed — the onboarding block. The
+## camera and selection keys join them as those systems land.
 func capture_ui_state() -> Dictionary:
 	var out: Dictionary = {"section_version": 1}
 	if overlay_rail != null:
 		out.merge(overlay_rail.capture_state(), true)
 	if settings_sheet != null:
 		out["settings"] = settings_sheet.capture_state()
+	if onboarding != null:
+		out["onboarding"] = onboarding.capture_state()
 	return out
 
 
@@ -507,6 +757,9 @@ func restore_ui_state(state: Dictionary) -> void:
 	if settings_sheet != null:
 		var block: Variant = state.get("settings", {})
 		settings_sheet.apply_state(block if block is Dictionary else {})
+	if onboarding != null:
+		var coach: Variant = state.get("onboarding", {})
+		onboarding.restore_state(coach if coach is Dictionary else {})
 
 
 ## doc 12 §2.1: `Control` coordinates are dp on every device, matching Android's

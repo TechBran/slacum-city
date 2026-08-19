@@ -30,19 +30,36 @@ static func _serviceable_vacant_tile(sim: CitySim, size: Vector2i = Vector2i.ONE
 # ===========================================================================
 
 func test_card_list_covers_the_twelve_archetypes() -> void:
+	# Doc 12 §2.17's tutorial needs the answer to `E_UNSERVED` on the same sheet,
+	# so the list is now the twelve buildings PLUS doc 04 §2.1's placeable grid
+	# roster. `component_kind` is what tells the two apart — and which command a
+	# card's tap ends up in.
 	var sim := _sim()
-	var cards := _controller(sim).cards()
-	assert_eq(cards.size(), BuildingCatalog.ARCHETYPE_COUNT, "spec §43.2 MVP roster")
+	var controller := _controller(sim)
+	var cards := controller.cards()
+	assert_eq(cards.size(),
+			BuildingCatalog.ARCHETYPE_COUNT + controller.grid_kinds().size(),
+			"spec §43.2 MVP roster + doc 04's placeable components")
 	var seen: Array[String] = []
+	var buildings := 0
 	for card: Dictionary in cards:
 		assert_false(seen.has(str(card["archetype"])), "one card per archetype")
 		seen.append(str(card["archetype"]))
 		assert_true(int(card["cost"]) > 0, "%s quotes a build cost" % card["archetype"])
-		assert_eq(int(card["cost"]), sim.econ_curves.build_cost(str(card["archetype"])),
-				"cost is read from the economy table, never authored in the UI")
+		if str(card["component_kind"]) == "":
+			buildings += 1
+			assert_eq(int(card["cost"]), sim.econ_curves.build_cost(str(card["archetype"])),
+					"cost is read from the economy table, never authored in the UI")
+		else:
+			assert_eq(int(card["cost"]), sim.econ_curves.grid_build_cost(
+					str(card["component_kind"]), int(card["level"]),
+					float(sim.treasury.difficulty().get("M_build", 1.0))),
+					"and a component's comes from the same table, doc 03 §2.13(b)")
 		assert_true((card["footprint"] as Vector2i).x >= 1)
 		assert_true(str(card["name_key"]).begins_with("ui_build_card_"), "G-8 key")
+	assert_eq(buildings, BuildingCatalog.ARCHETYPE_COUNT)
 	assert_true(seen.has("house") and seen.has("water_facility"))
+	assert_true(seen.has("transformer"), "the card that answers E_UNSERVED")
 
 
 func test_card_names_and_tabs_resolve_from_the_string_table() -> void:
@@ -503,7 +520,8 @@ func test_scene_carries_the_build_sheet_and_building_panel() -> void:
 	assert_ne(panel, null, "SafeArea/PanelLayer/BuildingPanel is wired")
 	assert_false(sheet.is_open(), "the sheet starts closed behind the FAB")
 	assert_false(panel.is_open())
-	assert_eq(sheet.cards().size(), BuildingCatalog.ARCHETYPE_COUNT)
+	assert_eq(sheet.cards().size(),
+			BuildingCatalog.ARCHETYPE_COUNT + sheet.controller.grid_kinds().size())
 	sheet.open()
 	assert_true(sheet.is_open())
 	assert_ne(sheet.card_button("house"), null, "the residential tab lists House")

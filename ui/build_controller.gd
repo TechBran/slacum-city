@@ -36,6 +36,15 @@ const VERDICT_BLOCKED := &"blocked"
 const TILE_M_DEFAULT := 8.0
 const WORLD_JSON_PATH := "res://data/world.json"
 
+## Doc 04 §2.1's placement roster (`data/grid_components.json`). The sheet lists
+## these beside the buildings because to the player they are one verb — "put a
+## thing on a tile" — and because `E_UNSERVED` is unanswerable without them.
+const GRID_JSON_PATH := "res://data/grid_components.json"
+const CATEGORY_GRID := "grid"
+## The tutorial (doc 12 §2.17) and Wave 1.5 both ship exactly L1; the level a
+## card offers is data (`placeable_levels`), never a constant here.
+const GRID_CARD_LEVEL := 1
+
 ## Doc 02's upgrade gate, in the order `CitySim.cmd_upgrade_building` runs it.
 ## The checklist shows every row, passing ones included (doc 12 §2.9 item 5).
 const UPGRADE_CHECKS: Array[StringName] = [
@@ -50,9 +59,10 @@ const AVENUE_RADIUS_TILES := 4
 ## "beyond the search"; purely a display figure for the `{have}` parameter.
 const AVENUE_SEARCH_TILES := 16
 
-## Sheet ordering: category first (the doc's tab order), then cost.
+## Sheet ordering: category first (the doc's tab order), then cost. `grid` is
+## last because it is the tab you go to once something else has already said no.
 const CATEGORY_ORDER: Array[String] = [
-	"residential", "commercial", "industrial", "service", "utility",
+	"residential", "commercial", "industrial", "service", "utility", CATEGORY_GRID,
 ]
 
 ## The four coverage tiles of doc 12 §2.9 item 4.
@@ -73,8 +83,13 @@ var variant := ""
 var origin := Vector2i.ZERO
 var size := Vector2i.ONE
 var has_origin := false
+## Set while the ghost is a grid component rather than a building; it is the
+## `kind` of `cmd_place_grid_component` and "" for every building.
+var component_kind := ""
+var component_level := GRID_CARD_LEVEL
 
 var _verdict: Dictionary = {}
+var _grid_placeable: Dictionary = {}
 
 
 func _init(p_sim: CitySim = null, p_formatter: RequirementFormatter = null,
@@ -82,6 +97,7 @@ func _init(p_sim: CitySim = null, p_formatter: RequirementFormatter = null,
 	sim = p_sim
 	formatter = p_formatter if p_formatter != null else RequirementFormatter.load_from_files()
 	tile_m = p_tile_m if p_tile_m > 0.0 else BuildController.load_tile_m()
+	_grid_placeable = BuildController.load_grid_placeable()
 
 
 ## `data/world.json.world.tile_meters`, mirroring `CameraState._apply_world()`.
@@ -97,6 +113,20 @@ static func load_tile_m() -> float:
 	return UIConfig.get_num(world, "tile_meters", TILE_M_DEFAULT)
 
 
+## `data/grid_components.json.placeable` — doc 04 §2.1's roster, verbatim. The
+## file carries no prices and no capacities by design (its own `_price_note`), so
+## everything the card quotes past the footprint is read from the economy tables
+## and from `cmd_place_grid_component`'s own preview.
+static func load_grid_placeable() -> Dictionary:
+	if not FileAccess.file_exists(GRID_JSON_PATH):
+		return {}
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(GRID_JSON_PATH))
+	if not (parsed is Dictionary):
+		return {}
+	var placeable: Variant = (parsed as Dictionary).get("placeable", {})
+	return placeable if placeable is Dictionary else {}
+
+
 # ===========================================================================
 # Build sheet cards (doc 12 §2.7)
 # ===========================================================================
@@ -110,8 +140,82 @@ func cards() -> Array[Dictionary]:
 		return out
 	for id: Variant in sim.catalog.archetypes():
 		out.append(card(String(id)))
+	for kind: Variant in grid_kinds():
+		out.append(grid_card(String(kind)))
 	out.sort_custom(BuildController._card_less)
 	return out
+
+
+## The placeable grid kinds, sorted so the sheet is deterministic.
+func grid_kinds() -> Array[String]:
+	var out: Array[String] = []
+	for key: Variant in _grid_placeable:
+		out.append(str(key))
+	out.sort()
+	return out
+
+
+func is_grid_kind(id: String) -> bool:
+	return _grid_placeable.has(id)
+
+
+func grid_rules(kind: String) -> Dictionary:
+	var raw: Variant = _grid_placeable.get(kind, {})
+	return raw if raw is Dictionary else {}
+
+
+## Lowest level the roster offers for a kind — the one the card places.
+func grid_level(kind: String) -> int:
+	var levels: Array = grid_rules(kind).get("placeable_levels", [])
+	var lowest := GRID_CARD_LEVEL
+	var found := false
+	for entry: Variant in levels:
+		var level := int(entry)
+		if not found or level < lowest:
+			lowest = level
+			found = true
+	return lowest
+
+
+## A grid component's card. Same shape as a building's so `ui/build_sheet.gd`
+## renders one list — plus `component_kind`, which is how the sheet's tap ends up
+## in `cmd_place_grid_component` instead of `cmd_place_building`.
+func grid_card(kind: String) -> Dictionary:
+	var rules := grid_rules(kind)
+	var level := grid_level(kind)
+	var foot := int(rules.get("footprint_tiles", 1))
+	var cost := 0
+	if sim != null:
+		cost = sim.econ_curves.grid_build_cost(kind, level,
+				float(sim.treasury.difficulty().get("M_build", 1.0)))
+	var radii: Array = rules.get("service_radius_tiles", [])
+	var radius := 0
+	if level - 1 >= 0 and level - 1 < radii.size():
+		radius = int(radii[level - 1])
+	return {
+		"id": kind,
+		"archetype": kind,
+		"variant": "",
+		"component_kind": kind,
+		"level": level,
+		"category": CATEGORY_GRID,
+		"name_key": BuildController.card_name_key(kind),
+		"name_fallback": kind.capitalize(),
+		"cost": cost,
+		"cost_text": RequirementFormatter.money(cost),
+		"footprint": Vector2i(foot, foot),
+		"power_kw": 0.0,
+		# A transformer has no demand — what the micro row must say about it is
+		# what it *serves*. The sheet renders `power_text` verbatim, so the
+		# sentence is resolved here, from the string table (G-8).
+		"power_text": _t("ui_build_card_grid_micro", {"radius": radius},
+				RequirementFormatter.tiles(radius)),
+		"water_demand": 0.0,
+		"min_city_level": 0,
+		"locked": false,
+		"affordable": sim == null or sim.treasury.balance >= cost,
+		"service_radius_tiles": radius,
+	}
 
 
 func card(p_archetype: String, p_variant: String = "") -> Dictionary:
@@ -124,6 +228,8 @@ func card(p_archetype: String, p_variant: String = "") -> Dictionary:
 		"id": p_archetype if p_variant == "" else "%s_%s" % [p_archetype, p_variant],
 		"archetype": p_archetype,
 		"variant": p_variant,
+		# Empty here, the kind on a grid card: one card shape, two commands.
+		"component_kind": "",
 		"category": sim.catalog.category(p_archetype),
 		"name_key": BuildController.card_name_key(p_archetype, p_variant),
 		"name_fallback": str(sim.catalog.archetype_info(p_archetype).get("name", p_archetype)),
@@ -141,6 +247,15 @@ func card(p_archetype: String, p_variant: String = "") -> Dictionary:
 
 ## G-8 key for a card's display name; `water_facility` variants keep the
 ## `ui_build_card_water_facility_<variant>` keys the string table already owns.
+## `data/strings.en.json` through the formatter's config — the controller resolves
+## the few sentences that belong to a card's *data* rather than to its layout.
+func _t(key: String, args: Dictionary, fallback: String) -> String:
+	var cfg: UIConfig = formatter.config if formatter != null else null
+	if cfg != null and cfg.has_string(key):
+		return cfg.t(key, args)
+	return fallback
+
+
 static func card_name_key(p_archetype: String, p_variant: String = "") -> String:
 	if p_variant == "":
 		return "ui_build_card_%s" % p_archetype
@@ -174,6 +289,8 @@ func is_placing() -> bool:
 ## it and the sheet shows the unlock condition instead (§2.7). Returns a
 ## `CommandQueue`-shaped `{ok, reason_code, payload}`.
 func enter(p_archetype: String, p_variant: String = "") -> Dictionary:
+	if is_grid_kind(p_archetype):
+		return enter_component(p_archetype)
 	if sim == null or not sim.catalog.has(p_archetype):
 		cancel()
 		return CommandQueue.fail(&"E_UNKNOWN_ARCHETYPE", {"archetype": p_archetype})
@@ -189,6 +306,8 @@ func enter(p_archetype: String, p_variant: String = "") -> Dictionary:
 	state = STATE_PLACING
 	archetype = p_archetype
 	variant = p_variant
+	component_kind = ""
+	component_level = GRID_CARD_LEVEL
 	size = Vector2i(int(foot[0]), int(foot[1]))
 	origin = Vector2i.ZERO
 	has_origin = false
@@ -196,11 +315,50 @@ func enter(p_archetype: String, p_variant: String = "") -> Dictionary:
 	return CommandQueue.ok({"archetype": p_archetype, "variant": p_variant, "size": size})
 
 
+## Placement mode for a grid component (doc 04 §2.1). Same state machine, same
+## bar, same ghost — the only difference is which command the confirm button
+## reaches, which is why `is_placing()` never has to be asked what it is placing.
+func enter_component(kind: String, level: int = -1) -> Dictionary:
+	if sim == null or not is_grid_kind(kind):
+		cancel()
+		return CommandQueue.fail(&"E_UNKNOWN_COMPONENT", {"archetype": kind})
+	var rules := grid_rules(kind)
+	var wanted := level if level > 0 else grid_level(kind)
+	var levels: Array = rules.get("placeable_levels", [])
+	var allowed := false
+	for entry: Variant in levels:
+		if int(entry) == wanted:
+			allowed = true
+			break
+	if not allowed:
+		cancel()
+		return CommandQueue.fail(&"E_LEVEL_UNAVAILABLE",
+				{"archetype": kind, "level": wanted})
+	var foot := int(rules.get("footprint_tiles", 1))
+	state = STATE_PLACING
+	archetype = kind
+	variant = ""
+	component_kind = kind
+	component_level = wanted
+	size = Vector2i(foot, foot)
+	origin = Vector2i.ZERO
+	has_origin = false
+	_verdict = {}
+	return CommandQueue.ok({"archetype": kind, "component_kind": kind,
+			"level": wanted, "size": size})
+
+
+func is_placing_component() -> bool:
+	return is_placing() and component_kind != ""
+
+
 ## Leaves placement mode. Idempotent — the Android back stack calls it blind.
 func cancel() -> void:
 	state = STATE_IDLE
 	archetype = ""
 	variant = ""
+	component_kind = ""
+	component_level = GRID_CARD_LEVEL
 	size = Vector2i.ONE
 	origin = Vector2i.ZERO
 	has_origin = false
@@ -254,6 +412,8 @@ static func footprint_centre(p_origin: Vector2i, p_size: Vector2i,
 func evaluate(p_origin: Vector2i) -> Dictionary:
 	if sim == null or archetype == "":
 		return _blocked(&"E_UNKNOWN_ARCHETYPE", {"archetype": archetype})
+	if component_kind != "":
+		return evaluate_component(p_origin)
 	if not sim.catalog.has(archetype):
 		return _blocked(&"E_UNKNOWN_ARCHETYPE", {"archetype": archetype})
 	var block: LandBlock = sim.world.block_of_tile(p_origin.x, p_origin.y)
@@ -276,6 +436,24 @@ func evaluate(p_origin: Vector2i) -> Dictionary:
 		"failure": {},
 		"params": {"cost": cost, "balance": sim.treasury.balance, "tile": p_origin},
 	}
+
+
+## The grid component's preflight. It does not re-implement doc 04's eight
+## checks: it *asks* — `cmd_place_grid_component(preview = true)` runs the real
+## order, charges nothing and returns the quote, so the ghost's verdict and the
+## command's answer are the same code path rather than two copies of one rule.
+func evaluate_component(p_origin: Vector2i) -> Dictionary:
+	var preview := sim.cmd_place_grid_component(component_kind, p_origin,
+			component_level, true)
+	var payload: Dictionary = preview.get("payload", {})
+	var params: Dictionary = {"tile": p_origin, "archetype": component_kind}
+	params.merge(payload, true)
+	if bool(preview["ok"]):
+		params["balance"] = sim.treasury.balance
+		return {"verdict": VERDICT_VALID, "code": &"", "failure": {}, "params": params}
+	if payload.has("cost"):
+		params["balance"] = sim.treasury.balance
+	return _blocked(StringName(str(preview["reason_code"])), params)
 
 
 func _blocked(code: StringName, params: Dictionary) -> Dictionary:
@@ -314,8 +492,25 @@ func confirm() -> Dictionary:
 		"archetype": archetype,
 		"origin": origin,
 		"variant": variant,
-		"cost": sim.econ_curves.build_cost(archetype),
+		"component_kind": component_kind,
+		"level": component_level,
+		"cost": placement_cost(),
 	})
+
+
+## What the confirm button is about to spend. A building's cost is the archetype
+## table's; a grid component's is the preview's quote, because it includes the
+## feeder lateral the placement will have to build (doc 04 §2.1 / doc 03 §2.13b).
+func placement_cost() -> int:
+	if sim == null or archetype == "":
+		return 0
+	if component_kind == "":
+		return sim.econ_curves.build_cost(archetype)
+	var params: Variant = _verdict.get("params", {})
+	if params is Dictionary and (params as Dictionary).has("cost"):
+		return int((params as Dictionary)["cost"])
+	return sim.econ_curves.grid_build_cost(component_kind, component_level,
+			float(sim.treasury.difficulty().get("M_build", 1.0)))
 
 
 ## Submit the confirmed placement through `CitySim` and leave placement mode on
@@ -325,8 +520,13 @@ func commit() -> Dictionary:
 	if not bool(args["ok"]):
 		return args
 	var payload: Dictionary = args["payload"]
-	var result := sim.cmd_place_building(str(payload["archetype"]),
-			payload["origin"], str(payload["variant"]))
+	var result: Dictionary
+	if str(payload.get("component_kind", "")) != "":
+		result = sim.cmd_place_grid_component(str(payload["component_kind"]),
+				payload["origin"], int(payload["level"]))
+	else:
+		result = sim.cmd_place_building(str(payload["archetype"]),
+				payload["origin"], str(payload["variant"]))
 	if bool(result["ok"]):
 		cancel()
 	return result
@@ -356,11 +556,12 @@ func ghost() -> Dictionary:
 ## What `ui/build_sheet.gd`'s placement bar binds.
 func placement_view() -> Dictionary:
 	var failure: Dictionary = _verdict.get("failure", {})
-	var cost := sim.econ_curves.build_cost(archetype) if is_placing() and sim != null else 0
+	var cost := placement_cost() if is_placing() else 0
 	return {
 		"active": is_placing(),
 		"archetype": archetype,
 		"variant": variant,
+		"component_kind": component_kind,
 		"name_key": BuildController.card_name_key(archetype, variant),
 		"cost": cost,
 		"cost_text": RequirementFormatter.money(cost),
