@@ -475,10 +475,10 @@ static func route_between(from: Vector2i, to: Vector2i) -> Array:
 ##   * an ORPHAN (no parent — its feeder was demolished) ranks first, then the
 ##     hottest current parent, then the nearest, then the id;
 ##   * a transformer transfers only while it leaves the new feeder at or below
-##     `TIE_CLEAN_R` (0.95 — §2.9's own "clean transfer" bound) **and** its
-##     current parent is running hotter than the new feeder would be after the
-##     move. The second clause is what stops a new circuit from stripping a
-##     healthy one; the first is what stops it from immediately tripping itself.
+##     `ADOPTION_MAX_R` **and** its current parent is running hotter than the new
+##     feeder would be after the move. The second clause is what stops a new
+##     circuit from stripping a healthy one; the first is what stops it from
+##     being handed straight back over its own rating.
 ##
 ## Loads are last tick's (Pass A recomputes next tick), which is exactly the
 ## number the player is looking at when they draw the line.
@@ -516,7 +516,11 @@ func adoption_plan(route: Array, capacity_kw: float, condition: float,
 		if c["kind"] != &"transformer" or c["state"] == &"FAILED":
 			continue
 		var parent := String(c["parent"])
-		if parent == feeder_id:
+		# Already ours ⇒ nothing to transfer. Guarded on a NAMED feeder, because
+		# `feeder_id` is "" while quoting a run that does not exist yet and an
+		# ORPHAN also carries "" — dropping those would make the quote say
+		# "adopts 0" for exactly the case the rule exists to serve.
+		if feeder_id != "" and parent == feeder_id:
 			continue
 		var tile: Vector2i = c["tile"]
 		var distance := 999999
@@ -605,7 +609,9 @@ func building_adoption_plan(tile: Vector2i, service_radius: int, capacity_kw: fl
 	var candidates: Array = []
 	for building_id in _sorted_keys(_attachments):
 		var host := String(_attachments[building_id])
-		if host == transformer_id or not _components.has(host):
+		# Same guard as `adoption_plan`: "" means "quoting a node that does not
+		# exist yet", not "already attached to it".
+		if (transformer_id != "" and host == transformer_id) or not _components.has(host):
 			continue
 		if not origins.has(building_id):
 			continue
