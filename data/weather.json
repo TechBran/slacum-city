@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "horizon_min": 1440,
+  "quantize_min": 15,
+  "diurnal_amp_c": 6.0,
+  "diurnal_peak_min_of_day": 900,
+  "precip01_scale_mm_h": 35.0,
+  "segment_crossfade_gs": 60,
+  "seasons": {
+    "_calendar_note": "days_per_season and seasons_per_year live in data/time.json (doc 01, report 98 C-28). This doc indexes ctx.season_index and derives nothing.",
+    "order": ["SPRING", "SUMMER", "AUTUMN", "WINTER"],
+    "table": {
+      "SPRING": {"temp_base_c": 16.0, "transition_mult": {"CLEAR": 1.0, "CLOUDY": 1.0, "RAIN": 1.2, "HEAVY_RAIN": 1.0, "THUNDERSTORM": 1.0, "HEAT_WAVE": 0.2}},
+      "SUMMER": {"temp_base_c": 26.0, "transition_mult": {"CLEAR": 1.0, "CLOUDY": 1.0, "RAIN": 0.9, "HEAVY_RAIN": 1.1, "THUNDERSTORM": 1.4, "HEAT_WAVE": 1.6}},
+      "AUTUMN": {"temp_base_c": 14.0, "transition_mult": {"CLEAR": 1.0, "CLOUDY": 1.0, "RAIN": 1.3, "HEAVY_RAIN": 1.2, "THUNDERSTORM": 0.8, "HEAT_WAVE": 0.3}},
+      "WINTER": {"temp_base_c": 4.0, "transition_mult": {"CLEAR": 1.0, "CLOUDY": 1.3, "RAIN": 1.1, "HEAVY_RAIN": 1.0, "THUNDERSTORM": 0.3, "HEAT_WAVE": 0.0}}
+    }
+  },
+  "transitions": {
+    "CLEAR": {"CLOUDY": 0.72, "RAIN": 0.14, "HEAVY_RAIN": 0.03, "THUNDERSTORM": 0.04, "HEAT_WAVE": 0.07},
+    "CLOUDY": {"CLEAR": 0.45, "RAIN": 0.35, "HEAVY_RAIN": 0.08, "THUNDERSTORM": 0.1, "HEAT_WAVE": 0.02},
+    "RAIN": {"CLEAR": 0.15, "CLOUDY": 0.45, "HEAVY_RAIN": 0.28, "THUNDERSTORM": 0.12},
+    "HEAVY_RAIN": {"CLOUDY": 0.4, "RAIN": 0.35, "THUNDERSTORM": 0.25},
+    "THUNDERSTORM": {"CLEAR": 0.05, "CLOUDY": 0.3, "RAIN": 0.35, "HEAVY_RAIN": 0.3},
+    "HEAT_WAVE": {"CLEAR": 0.55, "CLOUDY": 0.25, "THUNDERSTORM": 0.2}
+  },
+  "transformer_heat": {"ref_temp_c": 20.0, "per_degree": 0.04, "clamp": [0.7, 2.4]},
+  "states": {
+    "CLEAR": {"dur_min": 180, "dur_max": 720, "intensity_gamma": 1.0, "effects": {"power_load_mult": [1.0, 1.03], "water_demand_mult": [1.0, 1.05], "road_speed_mult": [1.0, 1.0], "fire_spread_mult": [1.0, 1.1], "fire_escalation_mult": [1.0, 1.0], "fire_ignition_mult": [1.0, 1.0], "incident_crime_mult": [1.0, 1.0], "incident_traffic_mult": [1.0, 1.0], "incident_utility_mult": [1.0, 1.0], "line_failure_rate_mult": [1.0, 1.0], "outage_health_risk_mult": [1.0, 1.0], "solar_output_mult": [1.0, 1.0], "construction_speed_mult": [1.0, 1.0], "condition_decay_mult": [1.0, 1.0], "wind_kph": [5, 15], "precip_mm_h": [0, 0], "temp_offset_c": [1, 3]}},
+    "CLOUDY": {"dur_min": 120, "dur_max": 480, "intensity_gamma": 1.0, "effects": {"power_load_mult": [0.98, 0.98], "water_demand_mult": [0.98, 0.98], "road_speed_mult": [1.0, 1.0], "fire_spread_mult": [0.95, 0.95], "fire_escalation_mult": [1.0, 1.0], "fire_ignition_mult": [0.95, 0.95], "incident_crime_mult": [1.0, 1.0], "incident_traffic_mult": [1.02, 1.02], "incident_utility_mult": [1.0, 1.0], "line_failure_rate_mult": [1.0, 1.0], "outage_health_risk_mult": [1.0, 1.0], "solar_output_mult": [0.55, 0.55], "construction_speed_mult": [1.0, 1.0], "condition_decay_mult": [1.0, 1.0], "wind_kph": [8, 20], "precip_mm_h": [0, 0], "temp_offset_c": [-1, -2]}},
+    "RAIN": {"dur_min": 60, "dur_max": 240, "intensity_gamma": 1.0, "effects": {"power_load_mult": [1.02, 1.05], "water_demand_mult": [0.94, 0.9], "road_speed_mult": [0.9, 0.84], "fire_spread_mult": [0.7, 0.55], "fire_escalation_mult": [0.8, 0.8], "fire_ignition_mult": [0.88, 0.8], "incident_crime_mult": [0.88, 0.82], "incident_traffic_mult": [1.25, 1.45], "incident_utility_mult": [1.05, 1.1], "line_failure_rate_mult": [1.1, 1.25], "outage_health_risk_mult": [1.0, 1.0], "solar_output_mult": [0.32, 0.24], "construction_speed_mult": [0.92, 0.86], "condition_decay_mult": [1.1, 1.2], "wind_kph": [10, 25], "precip_mm_h": [2, 6], "temp_offset_c": [-2, -4]}},
+    "HEAVY_RAIN": {"dur_min": 30, "dur_max": 120, "intensity_gamma": 1.2, "effects": {"power_load_mult": [1.05, 1.1], "water_demand_mult": [0.9, 0.85], "road_speed_mult": [0.78, 0.62], "fire_spread_mult": [0.5, 0.35], "fire_escalation_mult": [0.8, 0.8], "fire_ignition_mult": [0.78, 0.7], "incident_crime_mult": [0.78, 0.7], "incident_traffic_mult": [1.6, 2.0], "incident_utility_mult": [1.25, 1.6], "line_failure_rate_mult": [1.4, 1.9], "outage_health_risk_mult": [1.05, 1.1], "solar_output_mult": [0.18, 0.12], "construction_speed_mult": [0.72, 0.55], "condition_decay_mult": [1.25, 1.4], "wind_kph": [15, 40], "precip_mm_h": [8, 20], "temp_offset_c": [-3, -6]}},
+    "THUNDERSTORM": {"dur_min": 45, "dur_max": 150, "intensity_gamma": 1.6, "effects": {"power_load_mult": [1.06, 1.14], "water_demand_mult": [0.9, 0.85], "road_speed_mult": [0.72, 0.55], "fire_spread_mult": [0.6, 0.45], "fire_escalation_mult": [0.8, 0.8], "fire_ignition_mult": [1.8, 3.0], "incident_crime_mult": [0.82, 0.75], "incident_traffic_mult": [1.8, 2.3], "incident_utility_mult": [2.0, 3.5], "line_failure_rate_mult": [2.5, 6.0], "outage_health_risk_mult": [1.05, 1.1], "solar_output_mult": [0.14, 0.08], "construction_speed_mult": [0.45, 0.25], "condition_decay_mult": [1.4, 1.8], "wind_kph": [30, 85], "precip_mm_h": [12, 35], "temp_offset_c": [-3, -7]}},
+    "HEAT_WAVE": {"dur_min": 1440, "dur_max": 4320, "intensity_gamma": 0.8, "effects": {"power_load_mult": [1.25, 1.55], "water_demand_mult": [1.3, 1.6], "road_speed_mult": [0.99, 0.97], "fire_spread_mult": [1.35, 1.7], "fire_escalation_mult": [1.25, 1.25], "fire_ignition_mult": [1.3, 1.6], "incident_crime_mult": [1.15, 1.35], "incident_traffic_mult": [1.0, 1.05], "incident_utility_mult": [1.4, 1.9], "line_failure_rate_mult": [1.05, 1.1], "outage_health_risk_mult": [2.0, 3.5], "solar_output_mult": [1.05, 1.05], "construction_speed_mult": [0.88, 0.78], "condition_decay_mult": [1.2, 1.4], "wind_kph": [3, 12], "precip_mm_h": [0, 0], "temp_offset_c": [7, 14]}}
+  },
+  "modifier_channels": {
+    "_note": "Wiring only, no new balance: which doc-01 day-curve channels each §2.2 effect channel multiplies into via ModifierStack source kind 'weather'. The multiplier VALUES are §2.2's; this table only says where they land.",
+    "power_load_mult": ["power_demand_residential", "power_demand_commercial", "power_demand_industrial", "power_demand_civic", "power_demand_datacenter"],
+    "water_demand_mult": ["water_demand_residential", "water_demand_commercial"],
+    "incident_crime_mult": ["crime_rate"],
+    "construction_speed_mult": ["construction_rate"]
+  },
+  "storm_cell": {"radius_min_tiles": 48, "radius_frac_of_city": 0.6, "speed_tiles_per_min": [1.6, 3.2]},
+  "flood": {
+    "drain_rate_mm_h": 40.0,
+    "runoff_concentration": {"LOW": 6.0, "MID": 1.0, "HIGH": 0.4},
+    "max_depth_mm": 900,
+    "thresholds": [
+      {"depth_mm": 0, "road_speed_mult": 1.0, "label": "dry"},
+      {"depth_mm": 40, "road_speed_mult": 0.75, "label": "nuisance"},
+      {"depth_mm": 100, "road_speed_mult": 0.45, "label": "standing_water", "stall_incident_p_10min": 0.04},
+      {"depth_mm": 200, "road_speed_mult": 0.15, "label": "flooded", "civilian_closed": true, "asset_trip_p_10min": 0.3},
+      {"depth_mm": 350, "road_speed_mult": 0.0, "label": "impassable", "remove_edge": true, "asset_forced_offline": true, "asset_condition_delta": -0.15}
+    ]
+  },
+  "forecast": {
+    "base_accuracy": 0.97,
+    "accuracy_decay": 0.42,
+    "clamp": [0.5, 0.99],
+    "refresh_min": 60,
+    "station_bonus": 0.0,
+    "intensity_noise_base": 0.06,
+    "intensity_noise_lead": 0.1,
+    "time_jitter_base_min": 10,
+    "time_jitter_lead_min": 40,
+    "no_invent_severe_below_lead_min": 180,
+    "confusion": {"CLEAR": {"CLOUDY": 1.0}, "CLOUDY": {"CLEAR": 0.5, "RAIN": 0.5}, "RAIN": {"CLOUDY": 0.45, "HEAVY_RAIN": 0.35, "THUNDERSTORM": 0.2}, "HEAVY_RAIN": {"RAIN": 0.55, "THUNDERSTORM": 0.45}, "THUNDERSTORM": {"HEAVY_RAIN": 0.6, "RAIN": 0.4}, "HEAT_WAVE": {"CLEAR": 0.7, "CLOUDY": 0.3}},
+    "ui_bands": [{"max_lead_min": 360, "mode": "exact"}, {"max_lead_min": 720, "mode": "window"}, {"max_lead_min": 1440, "mode": "probability"}]
+  }
+}
