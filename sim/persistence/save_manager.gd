@@ -62,10 +62,36 @@ func registered_keys() -> Array[StringName]:
 ## commit point"), so the shell puts its slot header there: that is what keeps
 ## `SaveService.list_slots()` costing a few hundred bytes per slot instead of a
 ## decompress-and-parse of a whole city.
+##
+## **This is [capture_save] then [commit_save], in one call, on one thread.** It
+## is what a caller that does not care wants, and it is what the whole test
+## suite drives. The split below is for the caller that does care.
 func request_save(reason: String, sim_time_minutes: int, real_unix: int,
 		entry_extra: Dictionary = {}) -> Dictionary:
-	var manifest := read_manifest()
-	var generation: int = int(manifest.get("next_generation", 1))
+	return commit_save(capture_save(reason, sim_time_minutes, real_unix, entry_extra))
+
+
+## THE HALF THAT MUST NOT LEAVE THE MAIN THREAD (report 98 RR-44).
+##
+## It walks the registered sections and calls `serialize()` on each, which for
+## the city section is `CitySim.canonical_capture()` — a read of LIVE simulation
+## state, and the whole reason a save is deterministic. Run it beside a tick and
+## the capture is of a city that never existed. Everything downstream of it is
+## bytes.
+##
+## The returned dictionary is self-contained: nothing in it aliases the sim, the
+## sections, or this manager's own state, so it may be handed to another thread
+## and read there while the game carries on.
+##
+## **It is also the EXPENSIVE half, which is not what the split was expected to
+## find.** On the 1,500-building benchmark city a save is 148.7 ms and this is
+## 96.3 of it — `CitySim.canonical_capture()` walking the roster and floating
+## every number into `"~f~%08x%08x"` costs nearly twice what stringifying,
+## digesting, compressing and writing the result does. So threading the write
+## buys a third of the save, not the seven-eighths a reading of doc 08 would
+## predict, and the next lever on this path is the capture itself.
+func capture_save(reason: String, sim_time_minutes: int, real_unix: int,
+		entry_extra: Dictionary = {}) -> Dictionary:
 	var body := {
 		"schema_version": CURRENT_SCHEMA_VERSION,
 		"sim_time_minutes": sim_time_minutes,
@@ -74,6 +100,31 @@ func request_save(reason: String, sim_time_minutes: int, real_unix: int,
 		var data := section.serialize()
 		data["section_version"] = section.section_version()
 		body[String(section.section_key())] = data
+	return {
+		"body": body, "reason": reason, "sim_time_minutes": sim_time_minutes,
+		"real_unix": real_unix, "entry_extra": entry_extra.duplicate(true),
+	}
+
+
+## THE HALF THAT SHOULD: stringify, digest, envelope, zstd write, manifest
+## commit, retention, sweep. It reads the manifest itself — the generation
+## number is a property of the SLOT and not of the moment the capture was taken
+## — and it touches no section, no sim and no shared mutable state but the slot
+## directory this manager owns. Safe on a `WorkerThreadPool` task provided only
+## one runs per slot at a time, which is `SaveService`'s job to guarantee.
+##
+## On the benchmark city this is **52.4 ms of a 148.7 ms save** (measured,
+## `tools/profile_save.gd`), and on the founding city 4.8 of 16.5. Off the main
+## thread it is the difference between an autosave the player sees and one they
+## do not — but it is a third of the save and not most of it; see `capture_save`.
+func commit_save(capture: Dictionary) -> Dictionary:
+	var reason := String(capture["reason"])
+	var sim_time_minutes := int(capture["sim_time_minutes"])
+	var real_unix := int(capture["real_unix"])
+	var entry_extra: Dictionary = capture["entry_extra"]
+	var body: Dictionary = capture["body"]
+	var manifest := read_manifest()
+	var generation: int = int(manifest.get("next_generation", 1))
 	var body_text := JSON.stringify(body, "", true, true)
 	var digest := _sha256(body_text)
 	# Envelope assembled by string concatenation so the hashed bytes are

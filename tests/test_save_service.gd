@@ -631,3 +631,213 @@ class VersionedSim extends RefCounted:
 		migrated_from = from_version
 		data["_migrated"] = true
 		return data
+
+
+# ═══════════ ASYNC WRITES (doc 13 §2.2, report 98 RR-44) ═══════════════════
+#
+# The write half may leave the main thread; the CAPTURE half may not, and the
+# PAUSE path may not leave it either — doc 13 §2.2 gives the process no promise
+# that it survives the callback, and a dispatched write is not a committed one.
+# Everything below is one of those three claims, or the recovery contract that
+# has to keep holding while a write is in flight.
+#
+# These tests never enter a SceneTree, so `_process` never runs and
+# `flush_writes()` is the only settle path — which is deliberate: it is the same
+# path the pause sequence and every slot reader take, so exercising it here
+# exercises the one that matters.
+
+func _async_service() -> SaveService:
+	var service := _fresh_service()
+	service.async_writes = true
+	return service
+
+
+func test_an_async_save_round_trips_bit_identically() -> void:
+	var service := _async_service()
+	var sim := CitySim.boot_from_files(4242)
+	sim.advance_hours(3.0)
+	var before := sim.state_hash()
+	var announced: Array = []
+	service.saved.connect(func(m: Dictionary) -> void: announced.append(m))
+
+	var meta := service.save_slot(sim, 1)
+	assert_false(meta.is_empty(), "the header comes back at once: " + service.last_error)
+	assert_eq(announced.size(), 0, "…and `saved` has NOT fired yet")
+
+	service.flush_writes()
+	assert_false(service.write_pending(), "the queue is empty after a flush")
+	assert_eq(announced.size(), 1, "`saved` fires exactly once, on the main thread")
+
+	var restored := CitySim.boot_from_files(4242)
+	assert_true(service.load_slot(restored, 1), "load_slot: " + service.last_error)
+	assert_eq(restored.state_hash(), before, "a threaded write is a lossless one")
+	service.free()
+
+
+func test_the_pause_path_commits_before_it_returns() -> void:
+	# Doc 13 §2.2 step 2: Android may kill the process the moment the pause
+	# callback returns, so `pause` is in SYNC_REASONS and stays there. This test
+	# is the guard on that list — a reason quietly moved out of it would show up
+	# nowhere else until a player lost a city.
+	var service := _async_service()
+	var sim := CitySim.boot_from_files(99)
+	sim.advance_hours(1.0)
+	# A slot each, so the assertion is "this reason committed" and not "some
+	# earlier reason left a manifest lying about".
+	for i in SaveService.SYNC_REASONS.size():
+		var reason := String(SaveService.SYNC_REASONS[i])
+		var slot := 1 + i
+		var meta := service.save_slot(sim, slot, reason)
+		assert_false(meta.is_empty(), "%s saved: %s" % [reason, service.last_error])
+		assert_false(service.write_pending(),
+				"`%s` left nothing queued" % reason)
+		assert_true(FileAccess.file_exists(service.slot_dir(slot) + "/manifest.json"),
+				"`%s` committed the manifest before returning" % reason)
+	assert_eq(service.last_error, "", "and none of them failed")
+	service.free()
+
+
+func test_back_to_back_async_saves_serialise() -> void:
+	# The concurrent-save stress. `commit_save` reads the generation number out
+	# of the manifest, so two commits in flight at once would race for it; the
+	# contract is that a second request settles the first. Six saves with no
+	# flush between them must therefore produce six generations in order, and the
+	# newest must load.
+	var service := _async_service()
+	var sim := CitySim.boot_from_files(77)
+	# An Array, not an int: a GDScript lambda captures a local by VALUE, so a
+	# counter incremented inside one never reaches the enclosing scope.
+	var announced: Array = []
+	service.saved.connect(func(_m: Dictionary) -> void: announced.append(1))
+	var stamps: Array[int] = []
+	for i in 6:
+		sim.advance_hours(0.5)
+		var meta := service.save_slot(sim, 3, "manual")
+		assert_false(meta.is_empty(), "save %d: %s" % [i, service.last_error])
+		stamps.append(int(meta["sim_time_minutes"]))
+		assert_true(service.write_pending() or i == 0,
+				"save %d is queued rather than blocking" % i)
+	service.flush_writes()
+	assert_eq(announced.size(), 6,
+			"six writes, six signals, none lost and none doubled")
+
+	var manifest := service.manager_for(3).read_manifest()
+	assert_eq(int(manifest["next_generation"]), 7, "six generations were numbered 1..6")
+	assert_eq(int(manifest["active"]["sim_time_minutes"]), stamps[5],
+			"the ACTIVE generation is the last city that was captured")
+	var restored := CitySim.boot_from_files(77)
+	assert_true(service.load_slot(restored, 3), "…and it loads: " + service.last_error)
+	assert_eq(restored.state_hash(), sim.state_hash(), "as the city that was saved")
+	service.free()
+
+
+func test_every_slot_reader_settles_the_queue_first() -> void:
+	# Nothing in the codebase may observe a half-written ladder, so each reader
+	# flushes on the way in. Without that, `list_slots()` a frame after an
+	# autosave would report the generation BEFORE it.
+	var service := _async_service()
+	var sim := CitySim.boot_from_files(5150)
+	sim.advance_hours(2.0)
+	service.save_slot(sim, 4, "manual")
+	assert_true(service.write_pending(), "the write is queued")
+	var listed := service.list_slots()
+	assert_false(service.write_pending(), "list_slots() settled it")
+	var found := false
+	for meta: Dictionary in listed:
+		if int(meta.get("slot", -1)) == 4:
+			found = true
+			assert_eq(int(meta["sim_time_minutes"]), sim.clock.sim_time_minutes(),
+					"and reported the city that was just captured")
+	assert_true(found, "the freshly written slot is in the listing")
+
+	service.save_slot(sim, 4, "manual")
+	assert_true(service.has_slot(4), "has_slot() settles it too")
+	assert_false(service.write_pending(), "…and leaves nothing behind")
+	service.free()
+
+
+func test_a_kill_before_the_rename_leaves_the_previous_city_active() -> void:
+	# The write is `.tmp` then rename, and the manifest rename is the commit
+	# point (doc 08 §2.5). A process killed between the two therefore leaves an
+	# orphan and the PREVIOUS generation still active — which must still load,
+	# and the orphan must be swept rather than accumulate.
+	var service := _fresh_service()
+	var sim := CitySim.boot_from_files(31337)
+	sim.advance_hours(2.0)
+	service.save_slot(sim, 5, "manual")
+	var good := sim.state_hash()
+
+	# The kill: a half-written generation file with no manifest entry.
+	var orphan := service.slot_dir(5) + "/gen_000009.sav.tmp"
+	var half := FileAccess.open(orphan, FileAccess.WRITE)
+	half.store_string("{\"schema_version\":1,\"body_sha")
+	half = null
+	assert_true(FileAccess.file_exists(orphan), "the torn write is on disk")
+
+	var restored := CitySim.boot_from_files(31337)
+	assert_true(service.load_slot(restored, 5),
+			"the committed city still loads: " + service.last_error)
+	assert_eq(restored.state_hash(), good, "…unchanged by the torn write beside it")
+	assert_false(service.last_load_recovered,
+			"and it is the ACTIVE generation, not a recovery")
+	service.free()
+
+
+func test_a_torn_active_generation_is_quarantined_and_the_ladder_recovers() -> void:
+	# The other kill: the generation renamed, the manifest committed, and the
+	# bytes are wrong anyway (a flash that lied about its flush). Doc 08 §2.9's
+	# gate must refuse it, MOVE it to quarantine so the next boot does not pay
+	# for it again, and hand back the generation behind it.
+	var service := _fresh_service()
+	var sim := CitySim.boot_from_files(2718)
+	sim.advance_hours(1.5)
+	service.save_slot(sim, 6, "manual")
+	var first := sim.state_hash()
+	var first_minutes := sim.clock.sim_time_minutes()
+	sim.advance_hours(1.5)
+	service.save_slot(sim, 6, "manual")
+	var torn_file := service.slot_path(6).get_file()
+	_tamper_active_generation(service, 6)
+
+	var restored := CitySim.boot_from_files(2718)
+	assert_true(service.load_slot(restored, 6),
+			"the ladder recovers: " + service.last_error)
+	assert_true(service.last_load_recovered, "…and says so")
+	assert_eq(restored.state_hash(), first, "the generation behind it is the city")
+	assert_true(service.last_load_lost_minutes > 0,
+			"and the player is told how much time it cost (%d minutes)"
+			% service.last_load_lost_minutes)
+	assert_eq(restored.clock.sim_time_minutes(), first_minutes,
+			"which is the difference between the two captures")
+	assert_true(FileAccess.file_exists(
+			service.slot_dir(6) + "/quarantine/bad_" + torn_file),
+			"the torn generation was moved to quarantine, not left in the walk")
+	service.free()
+
+
+func test_a_queued_write_survives_the_service_leaving_the_tree() -> void:
+	# A process that ends with a write still queued is a lost save. `free()`
+	# runs NOTIFICATION_PREDELETE, which flushes — so even a shell that forgets
+	# cannot drop one.
+	var service := _async_service()
+	var sim := CitySim.boot_from_files(8080)
+	sim.advance_hours(1.0)
+	var meta := service.save_slot(sim, 7, "manual")
+	assert_false(meta.is_empty(), "queued: " + service.last_error)
+	assert_true(service.write_pending(), "…and still in flight")
+	service.free()
+
+	var reader := _reopen_service()
+	var restored := CitySim.boot_from_files(8080)
+	assert_true(reader.load_slot(restored, 7),
+			"the queued write landed anyway: " + reader.last_error)
+	assert_eq(restored.state_hash(), sim.state_hash(), "whole and correct")
+	reader.free()
+
+
+## A second service over the SAME directory, without the wipe `_fresh_service`
+## does — for reading back what another instance wrote.
+func _reopen_service() -> SaveService:
+	var service := SaveService.new()
+	service.base_dir = TEST_DIR
+	return service

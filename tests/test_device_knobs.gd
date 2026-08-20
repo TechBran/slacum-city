@@ -104,8 +104,12 @@ func test_the_shader_carries_the_uniform_the_file_authors() -> void:
 	var text := FileAccess.get_file_as_string(path)
 	assert_true(text.contains("uniform int detail"),
 			"road_surface.gdshader declares the `detail` uniform")
-	assert_true(text.contains("if (detail >= 1)"),
-			"rung 0 drops the zebra loop")
+	assert_true(text.contains("if (detail >= 1 && cw_mask > 0.5)"),
+			"rung 0 drops the zebra loop — and since RR-42 the same gate also "
+			+ "early-outs on the crosswalk mask, so a NON-JUNCTION tile does "
+			+ "not pay for a loop that would paint nothing. Both halves are "
+			+ "asserted together on purpose: dropping either one silently "
+			+ "costs 61-69 % of the zebra term back")
 	assert_true(text.contains("if (detail >= 2)"),
 			"rung 1 drops the wear terms")
 

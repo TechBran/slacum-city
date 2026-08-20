@@ -646,3 +646,169 @@ func test_a_re_route_moves_the_gate_with_it() -> void:
 	assert_eq(hoard.gate_side_of(92), 2, "…and its gate followed the signal")
 	hoard.free()
 	plant.free()
+
+
+# ═══════════════════ 6: the pose cache (doc 11 §2.16b, RR-42) ═══════════════
+#
+# The cache's WHOLE contract is that it changes nothing: the same sites at the
+# same game-minutes emit the same poses, field for field, bit for bit, with it
+# on and with it off. Everything below is that one claim, from three angles —
+# a long scripted timeline, the two events that must invalidate it, and the
+# tuning the schedule constants are derived from.
+
+## `count` lots one tile off a road, walked in ascending tile order so the same
+## lots come up on every run and both arms get the same city.
+static func _lots_next_to_road(net: RoadNetwork, count: int) -> Array:
+	var out: Array = []
+	var seen: Dictionary = {}
+	for t: Vector2i in net.graph.road_tiles_sorted():
+		if out.size() >= count:
+			break
+		for step: Vector2i in [Vector2i(0, 1), Vector2i(1, 0), Vector2i(0, -1),
+				Vector2i(-1, 0)]:
+			var lot := t + step
+			if out.size() >= count or net.graph.is_road_tile(lot) or seen.has(lot):
+				continue
+			if lot.x < 1 or lot.y < 1:
+				continue
+			seen[lot] = true
+			out.append(Vector3(float(lot.x) * 8.0 + 4.0, 0.0, float(lot.y) * 8.0 + 4.0))
+	return out
+
+
+## Every field of every emitted pose, in emission order, as one comparable
+## value. `Array` equality in GDScript is element-wise and recursive and every
+## leaf here is a float-valued struct — so `==` on two of these is the bit
+## identity the cache promises, not an approximation of it.
+static func _pose_stream(activity: ConstructionActivity) -> Array:
+	var counts: Array = [activity.truck_used, activity.rig_used, activity.heap_used,
+			activity.stack_used, activity.barrier_used]
+	var pools: Array = [activity.truck_poses, activity.rig_poses,
+			activity.heap_poses, activity.stack_poses, activity.barrier_poses]
+	var out: Array = [counts]
+	for p in pools.size():
+		var pool: Array = pools[p]
+		for i in int(counts[p]):
+			var pose: ConstructionActivity.Pose = pool[i]
+			out.append([pose.origin, pose.basis, pose.custom, pose.tint])
+	return out
+
+
+func test_the_pose_cache_streams_bit_identical_poses_over_a_random_timeline() -> void:
+	# One SCRIPT, replayed on both arms: same sites, same game-minutes, same
+	# stage changes, same focus gate. A difference in the two streams can
+	# therefore only be the cache.
+	#
+	# The focus gate is in the script on purpose. It is what makes a site sit a
+	# pass out and come back to find the pool slice it used to own handed to
+	# somebody else — the one way a slice-index cache can be wrong that no
+	# amount of steady-state running would ever show.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 90210
+	var script: Array = []
+	var gm := 900.0
+	for step in 700:
+		gm += rng.randf_range(0.004, 0.9)
+		script.append({
+			"gm": gm,
+			# A stage change every so often — the pile datum, the machine count
+			# and the barricade run all move with it.
+			"stage": [rng.randi_range(0, 11), rng.randi_range(1, 6)] \
+					if rng.randf() < 0.05 else [],
+			"focus": Vector3(rng.randf_range(0.0, 600.0), 0.0,
+					rng.randf_range(0.0, 600.0)),
+			"radius": rng.randf_range(60.0, 900.0),
+		})
+
+	var streams: Array = []
+	for cache: bool in [false, true]:
+		var net := RoadsTestRig.starter_network()
+		var view := _view(net)
+		var lots := _lots_next_to_road(net, 12)
+		for i in lots.size():
+			view.add_site(700 + i, lots[i], Vector2i(1, 1), 12.0 + float(i))
+			view.set_stage(700 + i, 1 + (i % 6))
+		_settle(view, 30)
+		view.activity.pose_cache = cache
+		view.activity.invalidate_pose_cache()
+		var stream: Array = []
+		for entry: Dictionary in script:
+			var change: Array = entry["stage"]
+			if not change.is_empty():
+				view.set_stage(700 + int(change[0]), int(change[1]))
+			view.activity.refresh(float(entry["gm"]), entry["focus"],
+					float(entry["radius"]))
+			stream.append(_pose_stream(view.activity))
+		streams.append(stream)
+		view.free()
+
+	assert_eq(int(streams[0].size()), int(streams[1].size()),
+			"both arms ran the whole script")
+	var first_bad := -1
+	for i in int(streams[0].size()):
+		if streams[0][i] != streams[1][i]:
+			first_bad = i
+			break
+	assert_eq(first_bad, -1,
+			"cached and uncached pose streams agree on every one of %d frames"
+			% int(streams[0].size()))
+
+
+func test_a_re_route_and_a_stage_change_both_drop_the_pose_cache() -> void:
+	# The two events that move a cached pose without moving the clock. If either
+	# failed to invalidate, this is the shape the bug would take: a site whose
+	# yard and barricades are still drawn against the frontage it used to have.
+	var net := RoadsTestRig.starter_network()
+	var warm := _view(net)
+	var cold := _view(RoadsTestRig.starter_network())
+	var lots := _lots_next_to_road(net, 4)
+	for view: ConstructionVehicleView in [warm, cold]:
+		for i in lots.size():
+			view.add_site(760 + i, lots[i], Vector2i(1, 1), 18.0)
+		_settle(view, 20)
+	cold.activity.pose_cache = false
+	for gm: float in [900.0, 900.02, 900.04]:
+		warm.activity.refresh(gm)
+		cold.activity.refresh(gm)
+	warm.set_stage(761, 5)
+	cold.set_stage(761, 5)
+	warm.activity.refresh(900.06)
+	cold.activity.refresh(900.06)
+	assert_eq(_pose_stream(warm.activity), _pose_stream(cold.activity),
+			"a stage change re-derives the site")
+	# A road edit drops the routes; a cached yard must not survive one.
+	warm.activity.clear_route(762)
+	cold.activity.clear_route(762)
+	warm.activity.set_route(762, Vector2i(-1, -1), Vector2i(-1, -1), [], [])
+	cold.activity.set_route(762, Vector2i(-1, -1), Vector2i(-1, -1), [], [])
+	warm.activity.refresh(900.08)
+	cold.activity.refresh(900.08)
+	assert_eq(_pose_stream(warm.activity), _pose_stream(cold.activity),
+			"a re-route re-derives the site")
+	warm.free()
+	cold.free()
+
+
+func test_the_schedule_constants_survive_a_reconfigure() -> void:
+	# `_reprice` settles the leg, the round trip and the trip window off the
+	# route, once. `configure()` moves the tuning they are derived FROM, so a
+	# site that already has a route has to be re-priced — otherwise a preview
+	# harness that retunes live would drive lorries on yesterday's schedule.
+	var net := RoadsTestRig.starter_network()
+	var view := _view(net)
+	var lots := _lots_next_to_road(net, 1)
+	view.add_site(770, lots[0], Vector2i(1, 1), 20.0)
+	_settle(view, 20)
+	var site: ConstructionActivity.Site = view.activity.sites[770]
+	assert_true(site.has_route(), "the site resolved a route")
+	var before := view.activity.leg_gm(site)
+	assert_true(before > 0.0, "…of non-zero length")
+	var cfg: Dictionary = (_render_data().get("construction_vehicles", {}) as Dictionary).duplicate()
+	cfg["truck_speed_mpgm"] = view.activity.truck_speed_mpgm * 2.0
+	view.activity.configure(cfg, view.activity.tile_m)
+	assert_almost_eq(view.activity.leg_gm(site), before * 0.5, 0.0001,
+			"a lorry twice as fast takes half as long")
+	assert_almost_eq(view.activity.trip_gm(site),
+			view.activity.leg_gm(site) * 2.0 + view.activity.dump_gm, 0.0001,
+			"and the round trip follows it")
+	view.free()

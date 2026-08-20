@@ -106,8 +106,11 @@ uniform float crosswalk_inset = 0.35;
 //                 including the zebra. This is the cheapest cut that does not
 //                 change what the street MEANS.
 //   0  −ZEBRA   — also drops the four-leg crossing loop (the only loop in the
-//                 file, and the only place fwidth() is taken four times over).
-//                 Crossings stop being painted; the carriageway still reads.
+//                 file). Crossings stop being painted; the carriageway still
+//                 reads. Since the junction early-out below, this rung buys far
+//                 less than it did: the loop no longer runs on the ~90 % of
+//                 carriageway tiles that are not junctions, so the ladder at Z0
+//                 is 0.092 ms instead of 0.153 (doc 11 §2.13, RR-42).
 //
 // Measured cost per level: doc 11 §2.13, "The asphalt fragment ladder".
 uniform int detail = 2;
@@ -303,25 +306,70 @@ void fragment() {
 	// it, clipped to the carriageway so no bar climbs a footway. The whole
 	// block — the four leg frames as well as the loop — sits inside the rung,
 	// so `detail == 0` does not pay to build the arrays it will not read.
+	//
+	// ── the junction early-out (doc 11 §2.1.2 and §2.13, report 98 RR-42) ──
+	// This loop was the most expensive thing in the file — 0.107–0.109 ms at
+	// the Z0 pose, 2.4× every wear term put together — and it paints on
+	// JUNCTION tiles only, which are a small minority of the carriageway.
+	// `cw_mask` is decoded out of `v_pack.b`, which is `flat`: constant across
+	// a primitive, and a derivative quad never spans two primitives, so the
+	// four fragments of a quad always agree on this test. The branch is
+	// therefore QUAD-UNIFORM, which is the scope the derivative rules are
+	// written at — `detail` is a uniform, `cw_mask > 0.5` is per-instance, and
+	// the conjunction is uniform over every quad that ever executes it. A tile
+	// whose mask is zero produces `zebra = 0.0` either way: `leg[i]` is 0 on
+	// every leg, every other factor is finite and in [0, 1], and `max(0, 0·x)`
+	// is `0`.
+	//
+	// ── and the eight derivatives are four ─────────────────────────────────
+	// Legs 0/2 differ only in the SIGN of the perpendicular coordinate and
+	// legs 1/3 likewise, and `fwidth(-x) == fwidth(x)` bit-for-bit: IEEE
+	// negation is exact, `(-a) - (-b)` is exactly `-(a - b)`, and `abs` is
+	// exact, so `|dFdx| + |dFdy|` cannot move. The eight calls are therefore
+	// four DISTINCT values, taken once at the top of the block and looked up
+	// per leg.
+	//
+	// ── what is NOT done here, and why ─────────────────────────────────────
+	// The same argument says legs 0 and 2 share their `dashes()` call and
+	// their carriageway clip outright, and 1 and 3 likewise: four `dashes()`
+	// could be two. **That version was written, measured and rejected.** At
+	// the Z0 pose — the one where a same-build control run is byte-identical,
+	// so the instrument has no noise floor at all — folding the shared terms
+	// out moved 1 pixel of 2,073,600 at hour 21 and 4 at hour 13, at rungs 1
+	// and 2 and never at rung 0. It is the pour-joint scar below in a second
+	// place: an algebraically-exact regrouping is not a codegen-exact one, and
+	// this file's contract is the picture, not the algebra. The hoist below
+	// keeps every surviving expression as the same operations on the same
+	// floats in the same order, and IS byte-identical at Z0.
 	float zebra = 0.0;
 	float outer = half_tile - crosswalk_inset;
 	float inner = outer - crosswalk_depth;
-	if (detail >= 1) {
+	if (detail >= 1 && cw_mask > 0.5) {
+		float aa_lx = max(fwidth(v_local.x) * 0.75, 0.0008);
+		float aa_ly = max(fwidth(v_local.y) * 0.75, 0.0008);
+		float aa_wx = max(fwidth(v_world.x) * 0.75, 0.0008);
+		float aa_wy = max(fwidth(v_world.y) * 0.75, 0.0008);
 		float perp[4];
 		float par_local[4];
 		float par_world[4];
+		float aa_perp[4];
+		float aa_par[4];
 		float leg[4];
 		perp[0] = -v_local.y; par_local[0] = v_local.x; par_world[0] = v_world.x;
 		perp[1] = v_local.x;  par_local[1] = v_local.y; par_world[1] = v_world.y;
 		perp[2] = v_local.y;  par_local[2] = v_local.x; par_world[2] = v_world.x;
 		perp[3] = -v_local.x; par_local[3] = v_local.y; par_world[3] = v_world.y;
+		aa_perp[0] = aa_ly; aa_par[0] = aa_wx;
+		aa_perp[1] = aa_lx; aa_par[1] = aa_wy;
+		aa_perp[2] = aa_ly; aa_par[2] = aa_wx;
+		aa_perp[3] = aa_lx; aa_par[3] = aa_wy;
 		leg[0] = floor(mod(cw_mask, 2.0));
 		leg[1] = floor(mod(cw_mask * 0.5, 2.0));
 		leg[2] = floor(mod(cw_mask * 0.25, 2.0));
 		leg[3] = floor(mod(cw_mask * 0.125, 2.0));
 		for (int i = 0; i < 4; i++) {
-			float aa_p = max(fwidth(perp[i]) * 0.75, 0.0008);
-			float aa_q = max(fwidth(par_world[i]) * 0.75, 0.0008);
+			float aa_p = aa_perp[i];
+			float aa_q = aa_par[i];
 			float in_band = smoothstep(inner - aa_p, inner + aa_p, perp[i])
 					* (1.0 - smoothstep(outer - aa_p, outer + aa_p, perp[i]));
 			float in_road = 1.0 - smoothstep(half_tile - sw - aa_p, half_tile - sw + aa_p,

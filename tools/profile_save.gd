@@ -22,7 +22,19 @@ extends SceneTree
 ##   --repeats=N      timed pairs, best-of reported as well as the mean (5)
 ##   --advance=H      game-hours to advance before saving, so the save carries a
 ##                    lived-in city rather than a freshly-booted one (0)
+##   --async          drive `SaveService.async_writes` — the write half on a
+##                    `WorkerThreadPool` task, the capture still on this thread.
+##                    The `main` column is then what the FRAME pays and the
+##                    `write` column is what the worker did with it; run it
+##                    against the same city without the flag and the two columns
+##                    are the A/B behind report 98 RR-44.
 ##   --quiet          table only
+##
+## The table splits BOTH operations, because the two halves have different
+## futures: a save is capture (main thread, determinism) + write (bytes), and a
+## load is read (bytes: decompress, parse, digest, gate) + restore (main thread,
+## rebuilds the live city). Doc 08 §2.14's streaming design is costed against
+## the load split.
 
 const CITY_DEFAULT := "res://data/starter_city.json"
 const SCRATCH_DIR := "user://profile_save"
@@ -53,8 +65,13 @@ func _initialize() -> void:
 	service.log_io = false          # this file IS the report; the line would double it
 	root.add_child(service)
 
+	service.async_writes = bool(opts["async"])
+
 	var saves := PackedFloat64Array()
+	var writes := PackedFloat64Array()
 	var loads := PackedFloat64Array()
+	var reads := PackedFloat64Array()
+	var restores := PackedFloat64Array()
 	var bytes := 0
 	var repeats := int(opts["repeats"])
 	for i in repeats:
@@ -63,23 +80,38 @@ func _initialize() -> void:
 			printerr("profile_save: save failed — " + service.last_error)
 			break
 		saves.append(service.last_save_ms)
+		# The write has to have LANDED before the next line reads the slot; the
+		# flush is what the `write` column measures on the async arm, and it is
+		# also what every slot reader does on its own way in.
+		service.flush_writes()
+		writes.append(service.last_write_ms)
 		bytes = maxi(bytes, _dir_bytes(service.slot_dir(1)))
 		if not service.load_slot(sim, 1):
 			printerr("profile_save: load failed — " + service.last_error)
 			break
 		loads.append(service.last_load_ms)
+		reads.append(service.last_load_read_ms)
+		restores.append(service.last_load_restore_ms)
 
 	if not bool(opts["quiet"]):
 		print("profile_save: %s — %d buildings, +%.0f game-hours, %d repeats" % [
 				city_path, sim.buildings.size(), hours, repeats])
 	print("")
-	print("=== SAVE / LOAD COST — %s ===" % city_path.get_file())
-	print("  %-8s %10s %10s %10s %12s" % ["op", "best ms", "mean ms", "worst ms", "slot bytes"])
-	print("  " + "-".repeat(56))
-	_row("save", saves, bytes)
+	print("=== SAVE / LOAD COST — %s%s ===" % [city_path.get_file(),
+			"  (async writes)" if bool(opts["async"]) else ""])
+	print("  %-16s %10s %10s %10s %12s"
+			% ["op", "best ms", "mean ms", "worst ms", "slot bytes"])
+	print("  " + "-".repeat(64))
+	_row("save (caller)", saves, bytes)
+	_row("  write half", writes, bytes)
 	_row("load", loads, bytes)
+	_row("  read half", reads, bytes)
+	_row("  restore half", restores, bytes)
 	print("  The slot is a doc 08 generation LADDER, so `slot bytes` is every")
 	print("  generation on disk, not the size of one save.")
+	print("  `save (caller)` is what the CALLING THREAD paid. With --async that is")
+	print("  the capture alone and `write half` is the worker's; without it, the")
+	print("  first is the sum of both.")
 
 	_remove_tree(SCRATCH_DIR)
 	quit(0)
@@ -87,14 +119,14 @@ func _initialize() -> void:
 
 func _row(name: String, values: PackedFloat64Array, bytes: int) -> void:
 	if values.is_empty():
-		print("  %-8s %10s" % [name, "no samples"])
+		print("  %-16s %10s" % [name, "no samples"])
 		return
 	var sorted := values.duplicate()
 	sorted.sort()
 	var total := 0.0
 	for v in sorted:
 		total += v
-	print("  %-8s %10.2f %10.2f %10.2f %12d" % [name, sorted[0],
+	print("  %-16s %10.2f %10.2f %10.2f %12d" % [name, sorted[0],
 			total / float(sorted.size()), sorted[sorted.size() - 1], bytes])
 
 
@@ -136,11 +168,14 @@ static func _remove_tree(path: String) -> void:
 
 
 func _parse(argv: PackedStringArray) -> Dictionary:
-	var opts := {"city": CITY_DEFAULT, "repeats": 5, "advance": 0.0, "quiet": false}
+	var opts := {"city": CITY_DEFAULT, "repeats": 5, "advance": 0.0,
+			"quiet": false, "async": false}
 	for raw in argv:
 		var arg := String(raw)
 		if arg == "--quiet":
 			opts["quiet"] = true
+		elif arg == "--async":
+			opts["async"] = true
 		elif arg.begins_with("--city="):
 			opts["city"] = arg.substr(7)
 		elif arg.begins_with("--repeats="):

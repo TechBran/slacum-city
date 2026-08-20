@@ -81,7 +81,9 @@ Roads were one MultiMesh of untextured 8 m slabs. The playtest verdict on the Fo
 
 **Everything painted is a fragment, not a mesh.** Centre lines, lane dividers, edge lines, zebra crossings, tile seams, wheel-path polish, patch mottle and kerb grime are all computed in `road_surface.gdshader` from **world metres**, so a dash phase crosses a tile boundary with no seam to align and a 15 cm line stays 15 cm at Z0 and antialiases itself at Z2 through `fwidth`. `dashes()` carries an explicit band limit — past Nyquist it fades to the pattern's duty cycle, because a `fract()` sampled sub-period crawls. **Corrected 2026-08-20 (§2.13's Fold pass): that term is what keeps the CROSSINGS still, not the lane lines.** Measured against §2.5's own Z2 geometry, the ground footprint at that pose is 0.245 m/px at the bottom of the frame and 0.535 m/px at the top, so the 8 m lane dash and the 6 m centre dash are sampled at 33→15 and 24→11 pixels per period — 5× to 16× above Nyquist, held still by `band()`'s smoothstep, with the band limit contributing 5–23 %. The pattern that genuinely needs it is the **0.85 m crosswalk ladder**, at 3.5→1.6 px per period, where the mix correctly reaches 1.0. The claim that the lane lines would shimmer without the band limit is retired; the fragment ladder in §2.13 also prices what the whole file costs.
 
-**The fragment ladder.** `road_surface.gdshader` carries a `detail` uniform — 2 everything, 1 drops the wear terms, 0 also drops the four-leg zebra loop — authored as `road_surface.detail` with a `presets.*.road_detail` ceiling per tier. It is a device escape hatch and NOT a governor rung; §2.13 has the measurement (the zebra loop alone is 2.4× every wear term put together) and the ruling.
+**The fragment ladder.** `road_surface.gdshader` carries a `detail` uniform — 2 everything, 1 drops the wear terms, 0 also drops the four-leg zebra loop — authored as `road_surface.detail` with a `presets.*.road_detail` ceiling per tier. It is a device escape hatch and NOT a governor rung; §2.13 has the measurement (the zebra loop alone was 2.4× every wear term put together) and the ruling.
+
+**The junction early-out (2026-08-20, RR-42).** That zebra loop ran on **every carriageway tile** and painted on junction tiles only. It now early-outs on `cw_mask`, which is already in the per-instance `.b` channel — and because `v_pack` is `flat`, the test is constant across a primitive and a derivative quad never spans two primitives, so `detail >= 1 && cw_mask > 0.5` is **quad-uniform**: taking `fwidth()` inside it is legal for exactly the reason taking it inside a `detail` branch is. The eight `fwidth()` calls inside the loop are also four, because legs 0/2 and 1/3 differ only in the sign of their perpendicular coordinate and `fwidth(-x) == fwidth(x)` bit-for-bit. **The loop's cost falls 61–69 %**, byte-identical at Z0; §2.13 has the arms and the rejected further step.
 
 **Per-instance contract** (roads are their own bucket; §2.6's stride-448 packing is the BUILDING bucket's and does not apply):
 
@@ -1620,6 +1622,265 @@ shell's whole scenario vocabulary is `--resume`, `--title`, `--zoom=`,
 `--shot-at=`. That vocabulary is enough for all six questions, which is why the
 runbook drives the installed build with it instead of asking for a new one.
 
+#### The performance ladder — four named levers, measured (2026-08-20)
+
+The Fold session and the render follow-ups left four levers with a name and a
+number against each. This is what taking them cost and bought. Every arm below
+is **interleaved within its round** — before, after, before, after, in one
+session on one machine — because a shared workstation's absolute millisecond is
+not a result and a round-paired delta is.
+
+##### 1. The zebra loop — the junction early-out (§2.1.2, RR-42)
+
+The Fold session's headline finding was the split, not the total: `road_surface
+.gdshader`'s four-leg crossing loop cost **0.107–0.109 ms at the Z0 pose, 2.4×
+every wear term put together**, and it painted only on junction tiles. The named
+fix was to hoist the eight `fwidth()` calls and early-out on the crosswalk mask,
+which is already in the per-instance `.b` channel.
+
+`cw_mask` decodes out of `v_pack`, which is `flat` — constant across a primitive,
+and a derivative quad never spans two primitives — so `detail >= 1 && cw_mask >
+0.5` is **quad-uniform**, which is the scope the derivative rules are written at.
+The eight `fwidth()` calls are four distinct values, because legs 0/2 and 1/3
+differ only in the sign of their perpendicular coordinate and `fwidth(-x) ==
+fwidth(x)` bit-for-bit.
+
+Founding city, camera on the Grand/Slacum junction, 1920×1080 Balanced, 90
+warm-up + 300 measured frames, `RenderingServer`'s own GPU time, three
+interleaved rounds:
+
+| pose | hour | rung | before (3 rounds) | after (3 rounds) | Δ |
+|---|---|---|---|---|---|
+| Z0 | 21 | 2 | 1.5115 1.5221 1.5295 | 1.4745 1.4579 1.4694 | **−0.0537** |
+| Z0 | 21 | 1 | 1.4867 1.4693 1.4948 | 1.3971 1.4186 1.4177 | **−0.0725** |
+| Z0 | 21 | 0 | 1.3624 1.3691 1.3724 | 1.3663 1.3718 1.3887 | +0.0076 |
+| Z0 | 13 | 2 | 1.8358 1.8601 1.8539 | 1.7718 1.7927 1.7980 | **−0.0624** |
+| Z0 | 13 | 1 | 1.8020 1.7952 1.8030 | 1.7310 1.7368 1.7343 | **−0.0660** |
+| Z0 | 13 | 0 | 1.6824 1.6935 1.6955 | 1.6894 1.6935 1.6909 | +0.0008 |
+| Z1 | 13 | 2 | 1.4508 1.4688 1.4759 | 1.4166 1.4259 1.4304 | **−0.0409** |
+| Z2 | 21 | 2 | 0.9825 0.9848 1.0017 | 0.9804 0.9547 0.9736 | −0.0201 |
+
+**Rung 0 is the control and it is the noise floor.** The zebra block never runs
+there, so the two arms are the same program; they agree to +0.0008 at hour 13 and
++0.0076 at hour 21, and the rung-1 and rung-2 arms do not overlap in either
+lighting.
+
+**The zebra term itself — `rung 1 − rung 0`, which is what the loop costs:**
+
+| pose | hour | before | after | change |
+|---|---|---|---|---|
+| Z0 | 21 | 0.1156 | 0.0355 | **−69 %** |
+| Z0 | 13 | 0.1096 | 0.0427 | **−61 %** |
+
+The brief asked for the ladder's rung-2 cost to be halved. It is cut by 61–69 %,
+and the whole ladder (`rung 2 − rung 0`) falls from 0.153 to 0.092 ms at Z0/21.
+
+**Pixel identity, proved the way RR-33 proved it, and the same scar reappeared.**
+Z0 is the pose where a same-build control run is **byte-identical**, so it is the
+only pose with no noise floor at all; Z1 and Z2 differ on 2–421 pixels between
+two runs of the *same* build (§2.6's `near_flicker`), and nothing measured there
+is a result. At Z0, at rungs 2, 1 and 0, at hours 21 and 13: **0 of 2,073,600
+pixels differ.**
+
+It took two attempts, exactly as the ladder did. The first version also folded
+the shared terms out — legs 0 and 2 provably share their `dashes()` call and
+their carriageway clip, and `max(a,b)·k ≡ max(a·k, b·k)` for `k ≥ 0` because
+correctly-rounded multiplication is monotone. Algebraically exact; **1 pixel of
+2,073,600 moved at hour 21 and 4 at hour 13, at rungs 1 and 2 and never at rung
+0**, which places it in the zebra block beyond argument. An algebraically-exact
+regrouping is not a codegen-exact one. The shipped form hoists the derivatives
+and adds the branch, and leaves every surviving expression as the same
+operations on the same floats in the same order. `road_surface.gdshader` records
+the rejected version and why.
+
+##### 2. The construction layer's poses — a cache with an exact key (§2.16, RR-42)
+
+RR-32 split `ConstructionVehicleView`'s 0.53 ms at 20 sites into **0.32 ms of
+pose computation and 0.09 ms of upload** and named the pose half as the next
+lever. `tools/profile_construction.gd` is the instrument for it — headless, real
+`RoadNetwork` off `data/starter_city.json`, real `ConstructionVehicleView`, and
+**both arms in one process alternating inside each round**, which is the only way
+a sub-millisecond GDScript delta on a shared machine is a measurement.
+
+Most of what a site emits is not a function of the clock at all. A barricade run
+is fixed by the frontage and the stage; a heap by `delivered` and the stage; a
+machine's transform and livery by the frontage. Only the excavator's joint
+channels and the lorries animate. And the `Pose` objects are POOLED — so when a
+site's slice of a pool has not moved and none of the facts behind those poses
+has changed, the objects in that slice already carry exactly the floats this
+frame would write. **Skipping is declining to write the same bits twice.**
+
+Three keys, each written in exactly one place: `layout_serial` (bumped by
+`_lay_out_fittings` and `_lay_out_barriers`, which every re-route and every stage
+change passes through), `stage`, and `delivered`. A site that did not emit on the
+immediately preceding pass re-emits unconditionally, because the pool slice it
+owned may have been handed to another site while `radius` or `limit` gated it
+out — which is the one way a slice-index cache can be wrong and the one no amount
+of steady-state running would show.
+
+Two changes ride with it and are worth as much as half the cache: the schedule's
+three derived numbers (`leg`, the round trip, the trip window) are settled once
+per route in `_reprice` instead of by four nested function calls per site per
+frame, and `dig_pose` reads two `PackedFloat64Array` columns instead of an Array
+of Arrays.
+
+`ConstructionActivity.refresh()`, 1,500 frames per arm, three interleaved rounds:
+
+| sites | HEAD | branch, cache off | branch, cache on | vs HEAD |
+|---|---|---|---|---|
+| 20 | 0.2158 0.2195 0.2179 | 0.1888 0.1902 0.1890 | **0.0959 0.0974 0.0960** | **−55.7 %** |
+| 28 (`max_sites`) | 0.3030 0.3058 0.3046 | 0.2667 0.2678 0.2695 | **0.1343 0.1354 0.1373** | **−55.4 %** |
+
+**0.096 ms at 20 sites against the 0.10 ms target.** HEAD's own two columns are
+the control — it has no cache, so both arms run the same code and agree to
+−0.0 %/−0.7 %, which is this instrument's noise floor.
+
+**Confirmed end to end in the shipped harness**, where the number also carries
+`_service_routes` and the MultiMesh upload the headless instrument leaves out —
+`tools/profile_frame.gd --sites=20`, Z1, hour 13, 60 + 300 frames, three
+interleaved rounds:
+
+| round | before | after |
+|---|---|---|
+| 1 | 0.357 ms (p95 0.363) | **0.211** (p95 0.217) |
+| 2 | 0.354 (0.363) | **0.215** (0.222) |
+| 3 | 0.352 (0.360) | **0.212** (0.221) |
+
+**0.354 → 0.213 ms, −40 %**, arms nowhere near overlapping. The whole layer at
+20 sites now costs less than half what RR-32's upload-optimised pass left it at
+(0.447 ms at this pose), against §2.16's 0.8 ms budget. `max_sites` was not
+re-measured in this harness — the headless instrument reports 0.136 ms of pose
+work there, so the layer's own budget is not the question it was.
+
+**The contract is bit identity, and it is a property test rather than a claim.**
+`tests/test_construction_living.gd` replays one scripted 700-frame timeline —
+irregular game-minute steps, stage changes at 5 % of frames, a focus gate that
+walks the city so sites drop out of the pass and come back — on a cached and an
+uncached view, and compares every field of every emitted pose. The profiler
+carries the same check as `--verify`.
+
+##### 3. The congestion pass — the dirty set that cannot exist, and the one that can (doc 10 §9.3 C-3, doc 91 D-15, RR-43)
+
+The brief was to build the dirty-set form of `roads_congestion`: only edges whose
+inputs changed recompute, with unchanged inputs producing bit-identical output.
+**The measurement says the skippable set is empty, and it is a one-line census
+rather than an argument:**
+
+```
+THE DIRTY SET'S CENSUS
+edges whose c_e moved on the last full pass: 3092 of 3092
+```
+
+`hour` is an input to **every** edge on **every** pass, through
+`D_tod(district, hour)`, and the smoother `c ← c + (c_raw − c)·α` never lands on
+its target. So an ordinary pass moves every edge in the graph, a skip-list has
+nothing to skip, and a dirty set that skipped an edge whose closures and
+condition had not changed would not be an optimisation — it would be a different
+simulation, and the hash would say so. **The skip-edges form is refused, and the
+census is `CongestionModel.last_moved`, printed by `tools/profile_congestion.gd`
+so the refusal stays checkable.**
+
+What DOES hold still between passes is each edge's road CLASS and DISTRICT — and
+those two are the whole of `c_raw`'s shared factor, `K_base(class) · D_tod
+(district, hour)`. **That is the dirty set this pass can have:** the (class,
+district) pairs are resolved once per graph, priced once per pass, and the
+per-edge loop reads an index. The key is exact — `district_id` is written only by
+`RoadNetwork._assign_districts` and `road_class` only where an edge record is
+built, and both are followed by `_refresh_all_edge_state`, which invalidates.
+Association is preserved to the term: `K · demand · dens · evt` binds left to
+right, so `kd = K · demand` then `kd · dens · evt` is the same float.
+
+Three more whole-graph sweeps went with it, all exact:
+
+* **`mean_congestion()` folded into the pass.** It walked every edge a SECOND
+  time immediately after the pass had written every one of them. The sum is now
+  taken inside the loop, over the same ids in the same ascending order. Only the
+  whole-graph caller may read it; the dirty-set callers in `step()` hand in a
+  handful of ids and their mean is over edges the pass never looked at.
+* **The district roster memoised on `graph_version`.** `_congestion_env()` swept
+  every edge with a `String()` per edge to collect a dozen distinct district ids.
+  The WEIGHTS are still fetched fresh every pass — doc 09's land use moves under
+  the roster without moving the roster.
+* **`dark_signal_counts_by_edge()` early-outs on a maintained count.** Its own doc
+  comment claimed O(dark nodes) and it was O(all nodes): 0.28 ms of a 7.76 ms
+  pass, taken once a game-minute whether or not a single signal was dark.
+  `refresh_signal_power` already visits every node every tick, so the count falls
+  out of it for nothing.
+
+`tools/profile_congestion.gd`, benchmark city, 3,092 edges, 2,024 nodes, 60
+game-minutes:
+
+| piece | before | after |
+|---|---|---|
+| tick 0 `RoadNetwork.full_pass` | 7.7568 ms | **3.5902 ms (−53.7 %)** |
+| tick 1 `TrafficSnapshot.rebuild` | 5.8748 | 5.5065 |
+| tick 2 `TrafficFeed.rebalance` | 8.2395 | 8.3975 |
+| `mean_congestion` on its own | 0.7486 | 0.7520 (no longer called) |
+| `dark_signal_counts_by_edge` | 0.2793 | **0.0002** |
+
+End to end, `tools/profile_sim.gd`, three interleaved rounds against HEAD:
+
+| city | measure | before | after | Δ |
+|---|---|---|---|---|
+| bench | `roads_congestion` ms/tick | 5.320 5.224 5.072 | 4.169 4.157 4.055 | **−20.7 %** |
+| bench | fine tick ms | 17.646 17.293 16.671 | 16.287 16.253 15.636 | **−6.7 %** |
+| bench | coarse step ms | 210.7 206.8 207.0 | 202.5 202.8 203.3 | −2.5 % |
+| starter | `roads_congestion` ms/tick | 0.867 0.872 0.881 | 0.666 0.670 0.669 | **−23.5 %** |
+| starter | fine tick ms | 1.798 1.792 1.814 | 1.587 1.598 1.592 | **−11.6 %** |
+| starter | coarse step ms | 9.472 9.290 9.412 | 8.179 8.221 8.130 | **−12.9 %** |
+
+No arm overlaps. **Hash-neutral on both cities, coarse and fine** —
+`tools/profile_sim.gd --baseline` reports HASH OK on all four hashes. D-15's fine
+tick moves 17.2 → 16.1 ms against its 8 ms target; `roads_congestion` is no
+longer the largest term on the bench city's fine tick, `power` is.
+
+##### 4. Async saves — and the half that turned out to matter (doc 08 §2.14, RR-44)
+
+RR-37 measured the shipped save path at 138 ms to save and 456 ms to load the
+benchmark city, synchronously, on the main thread, and filed the synchronous
+write as the fault. `SaveManager` now splits into `capture_save` (walks the
+sections, calls `CitySim.canonical_capture()` — a read of LIVE sim state, and
+the whole reason a save is deterministic) and `commit_save` (stringify, digest,
+envelope, zstd write, manifest, retention, sweep — bytes only, and safe on a
+worker). `SaveService.async_writes` hands the second to `WorkerThreadPool`.
+
+**The split is not where the brief expected it, and that is the finding.**
+`tools/profile_save.gd` now reports both halves of both operations:
+
+| city | op | sync | async | note |
+|---|---|---|---|---|
+| bench (1,500) | save, caller pays | **148.72 ms** | **97.54 ms** | −34.4 % |
+| bench | of which the write half | 52.44 | 38.70 (on the worker) | |
+| bench | load | 483.86 | 490.28 | unchanged, and see below |
+| bench | of which read (decompress, parse, digest, gate) | **35.22** | 37.24 | 7 % |
+| bench | of which `restore_state` | **442.56** | 446.95 | **91 %** |
+| founding +6 h | save, caller pays | **16.54** | **11.99** | −27.5 % |
+| founding | of which the write half | 4.81 | 5.31 | |
+| founding | load / read / restore | 52.13 / 3.35 / 48.40 | | restore is **93 %** |
+
+Two consequences, and the second is a refusal:
+
+1. **Threading the write buys a third of the save, not seven-eighths.** The
+   capture is 96 of the benchmark city's 149 ms — `canonical_capture()` walking
+   the roster and floating every number into `"~f~%08x%08x"` costs nearly twice
+   what stringifying, digesting, compressing and writing the result does. It is
+   worth taking; the NEXT lever on this path is the capture, not the file.
+2. **Streaming the load is not worth building.** 91 % of a 484 ms load is
+   `restore_state`, which rebuilds the live city and can no more leave the main
+   thread than the capture can. A threaded reader would move 35 ms of 484 — 7 %,
+   for a background thread, a progress model and a re-entrancy contract on the
+   load gate. Costed and refused in doc 08 §2.14.
+
+**What does not move.** The capture, always. And the whole of the PAUSE path:
+doc 13 §2.2 gives the process no promise it survives the callback, so
+`SaveService.SYNC_REASONS` — `pause`, `quit`, `pre_migration`, `pre_catchup` —
+commit before the call returns. `AndroidLifecycle` already tags its lifecycle
+save `pause`, so it is synchronous whether or not the shell ever sets
+`async_writes`. Every reader of a slot flushes the queue on the way in, so
+nothing in the codebase can observe a half-written ladder, and
+`NOTIFICATION_PREDELETE` / `EXIT_TREE` flush too, so a process that ends with a
+write queued still lands it.
+
 #### Device matrix
 
 | Tier | Representative devices | GPU | Preset | Target |
@@ -1849,6 +2110,57 @@ Four defects came out of that pass and out of nothing else: the pale livery, the
 **Deliberately not built.** No dust plume behind a lorry and no exhaust: both are particle systems, both are a second draw call each, and neither survives the 0.8 ms line at twenty sites. No workers on foot — a 1.7 m biped at Z1 is nine pixels tall and would cost a sixth MultiMesh to be a smudge; the machines are the read. No per-site OmniLight for the beacon — §2.10's rule (block granularity, not instance granularity) applies here exactly as it does to streetlights, and the emissive sweep in the shader is what the beacon is.
 
 ---
+
+#### 2.16b The pose cache — what a site emits when nothing about it has moved (2026-08-20)
+
+RR-32's instrumented split put **0.32 ms of the layer's 0.53 ms at 20 sites in
+`ConstructionActivity`**, deriving every barricade bay, every heap and every
+machine's standing transform sixty times a second for values that had not moved.
+Most of what a site emits is not a function of the clock at all: a barricade run
+is fixed by the frontage and the stage, a heap by `delivered` and the stage, a
+machine's transform and livery by the frontage. **Only the excavator's joint
+channels and the lorries animate.**
+
+So the emitters cache, and the cache is exact rather than approximate. The `Pose`
+objects are POOLED and never reallocated (that pooling is why the layer's
+per-frame cost was in "trig-free territory" to begin with), so when a site's
+slice of a pool has not moved and none of the facts behind those poses has
+changed, the objects in that slice are **already carrying exactly the floats this
+frame would write**. Skipping is declining to write the same bits twice, not
+substituting an older value for a newer one — which is why the contract can be
+BIT identity and why `pose_cache = false` is a property rather than a build flag:
+it is the A/B arm the property test and the profiler both drive.
+
+Three keys, each with exactly one writer:
+
+* **`Site.layout_serial`** — bumped by `_lay_out_fittings` and
+  `_lay_out_barriers`, which between them are the only places anything a cached
+  pose reads is written. Every re-route and every stage change passes through one
+  of them.
+* **`Site.stage`** — the pile datum (`stage_base`), the machine count and the
+  barricade run all move with it.
+* **`Site.delivered`** — the yard's high-water mark. `delivered_at()` is still
+  evaluated **every frame**, because it feeds that mark and skipping it would let
+  a re-route lower a count the uncached path would have held. What the cache
+  skips is the expensive half: three `slot_count` pairs, a `sqrt`, a scaled basis
+  and four `Color` constructions for heaps that have not moved a millimetre.
+
+And one rule that is not obvious and is the only way a slice-index cache can be
+wrong: **a site that did not emit on the immediately preceding pass re-emits
+unconditionally.** `radius` and `limit` gate sites out of a pass, and the slots a
+gated-out site used to own may have been handed to another site while it sat
+there. A steady-state run would never show it; the property test's walking focus
+gate does.
+
+Two changes ride with the cache and are worth about half of it. The schedule's
+three derived numbers — the leg, the round trip and the trip window — are settled
+once per route in `_reprice` instead of by four NESTED function calls per site
+per frame (`_trip_window` called `leg_gm` called `has_route`), which at
+`max_sites` was thousands of GDScript calls a second re-deriving a constant. And
+`dig_pose` reads two `PackedFloat64Array` columns built from the authored
+`DIG_KEYS` table instead of unboxing a Variant per element out of an Array of
+Arrays. Both are the same floats in the same order; §2.13's table has the
+measurement.
 
 ## 3. Data Schema
 
@@ -2158,6 +2470,8 @@ These read two or more files and fail the build when a sibling doc's data drifts
 33. **Budget and purity.** The layer is exactly **5** MultiMeshes. Two independently constructed views, given the same sites and the same game-minute, produce byte-identical counts, origins and joint channels — nothing may depend on frame history, allocation order or a wall clock. A site with no road inside the snap radius reports `frontage_ok == false` and draws nothing, without throwing on the way.
 34. **The hash gate (§2.16).** Six game-hours of a real `CitySim`, with 240 `route_tiles()` lookups interleaved at the hour boundaries — twenty sites' worth of out-and-back legs, every hour — must leave `state_hash()` **bit-identical** to a clean run. This is the test that keeps a renderer feature from moving the simulation through the route planner's LRU.
 35. **The gate faces the street (§2.16, 2026-08-20).** Given a lot one tile south of a corridor, `ConstructionVehicleView.frontage_side()` answers −Z, `ConstructionSiteView.add_site(..., side)` opens the gate on that run, and the two layers name the same face for the same site. A caller that omits the argument gets **exactly** `int(hash01(id, 7) · 4) % 4` for five different ids — the pre-frontage picture, unchanged. `site_frontage_changed` fires **once** when a site's frontage resolves, not again while it is settled, and `set_gate_side` moves the gate (and the skip standing in it) when it does.
+
+36. **The pose cache is bit-identical (§2.16b, 2026-08-20).** One scripted 700-frame timeline — irregular game-minute steps, a stage change at 5 % of frames, and a focus gate that walks the city so sites drop out of a pass and come back — replayed on a cached and an uncached view, comparing **every field of every emitted pose**. The focus gate is in the script on purpose: it is the only way a site loses its slice of a pose pool to another site, which is the one way a slice-index cache can be wrong and the one no amount of steady-state running would ever show. Two narrower tests pin the invalidation events (a stage change and a re-route each re-derive the site against a from-cold view) and one pins `_reprice` (a `configure()` that doubles `truck_speed_mpgm` halves the leg for a site that already has a route). `tools/profile_construction.gd --verify` runs the same comparison at profiling scale.
 
 ### 7.2c Headless — the incremental street rebuild (`tests/test_road_incremental.gd`, §2.1.2a)
 
