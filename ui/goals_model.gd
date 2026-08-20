@@ -190,7 +190,11 @@ func unlocked_upgrade_level(level: int) -> int:
 	var best := 0
 	for raw: Variant in sim.catalog.archetypes():
 		var archetype := String(raw)
-		for building_level in range(2, 6):
+		# From rung 2 to the archetype's OWN top rung — five for the civic and
+		# utility shells, six for doc 02 §2.14's growth stock. A fixed `6` here
+		# would have made the tower tier invisible on the very card that is
+		# supposed to announce it.
+		for building_level in range(2, sim.catalog.max_level_of(archetype) + 1):
 			var stats: Dictionary = sim.catalog.stats(archetype, building_level)
 			if int(stats.get("min_city_level", -1)) == level:
 				best = building_level if best == 0 else mini(best, building_level)

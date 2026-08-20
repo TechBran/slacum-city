@@ -23,7 +23,11 @@ const GOALS_PATH := "res://data/goals.json"
 ## own `_verbs` note, and doc 92 §17.6 for the three sim verbs with no surface.
 const PLAYER_REACHABLE_KINDS: Array[String] = [
 	"build_archetype", "place_grid_component", "place_water_component",
-	"upgrade_building", "buy_block", "develop_block", "set_tax_rate",
+	# `upgrade_to_level` rides the same building-panel button as
+	# `upgrade_building` — it counts the same command, filtered by the rung
+	# the upgrade reaches — so if one is reachable the other is.
+	"upgrade_building", "upgrade_to_level", "buy_block", "develop_block",
+	"set_tax_rate",
 	"resolve_incidents", "reach_population", "reach_happiness",
 	"reach_stability", "reach_treasury", "survive_no_abandonment",
 ]

@@ -24,7 +24,7 @@ const DATA_PATH := "res://data/progression.json"
 ## the game still has a ladder rather than none. Keep it equal to the file's own
 ## rows — `tests/test_balance_gates.gd::test_gate_20_*` asserts the two agree, so
 ## a drift is a failure and not a surprise.
-const CITY_LEVEL_POP_FALLBACK: Array[int] = [0, 200, 700, 1600, 3600, 8000]
+const CITY_LEVEL_POP_FALLBACK: Array[int] = [0, 200, 700, 1600, 3600, 8000, 18000]
 
 ## Process-wide, because the ladder is authored data that cannot change while the
 ## game runs. Handed out read-only so a caller cannot edit the shared copy.

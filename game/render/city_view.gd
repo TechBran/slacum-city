@@ -71,11 +71,15 @@ const POWER_WEAK_HI := 0.42
 ## only decoder that had to change, from a `clamp` to a `mod` — an exact
 ## identity on every value §2.6's packing can produce (0..447).
 ##
-## Max packed value `447 + 448·5 = 2687`, exact in f32 with 21 bits to spare.
+## Max packed value `447 + 448·6 = 3135`, exact in f32 with 20 bits to spare.
 const PACK_LEVEL_STRIDE := 448.0
-## Levels the gray-box authors (§2.14). An atlas carries a SUBSET of these —
-## whichever the chunk holds — but the level TAG is always the absolute level.
-const LEVEL_MAX := 5
+## The tallest level the gray-box authors (§2.14) — six since doc 02 §2.14's
+## tower tier, and five for the archetypes that did not grow one. An atlas
+## carries a SUBSET of these — whichever the chunk holds — but the level TAG is
+## always the absolute level. `building.gdshader` tags vertices `level/8` in an
+## 8-bit channel, so 8 is the hard ceiling; the shader's `level_build_height`
+## array is sized `LEVEL_MAX + 1` and the two must move together.
+const LEVEL_MAX := 6
 
 var model: RenderStateModel
 ## Doc 11 §2.5 tier swapping. Off puts every chunk back on its LOD0 buckets,
@@ -483,7 +487,7 @@ func _atlas_for(archetype: String, mask: int) -> Mesh:
 		norms.append_array(src_n)
 		uv1.append_array(src_uv1)
 		# The window grid is a per-MESH uniform in the un-merged path
-		# (`window_cols` / `window_rows`) and five meshes cannot share one. It is
+		# (`window_cols` / `window_rows`) and several meshes cannot share one. It is
 		# baked into UV2 instead — `uv2 * (cols, rows)` — and the material sets
 		# both uniforms to 1.0, so the shader's `floor(v_uv2 * vec2(cols, rows))`
 		# lands on exactly the same cell it lands on today and §2.6's
@@ -498,10 +502,12 @@ func _atlas_for(archetype: String, mask: int) -> Mesh:
 		for i in src_uv2.size():
 			var w: Vector2 = src_uv2[i]
 			uv2.append(w if w.x < 0.0 else Vector2(w.x * cols_n, w.y * rows_n))
-		# `.a` is the level tag. `level / 8` is exact through the 8-bit vertex
-		# colour channel for 1..5 (1/8 → 32/255 → ×8 = 1.004 → round 1), and the
-		# shader rounds, so the format Godot picks for ARRAY_COLOR cannot break
-		# it. `.rgb` is the baked AO, copied untouched.
+		# `.a` is the level tag. `level / 8` survives the 8-bit vertex colour
+		# channel for 1..6 (1/8 → 32/255 → ×8 = 1.004 → round 1; 6/8 → 191/255 →
+		# ×8 = 5.992 → round 6), and the shader rounds, so the format Godot picks
+		# for ARRAY_COLOR cannot break it. Eight is where the division stops being
+		# safe and that is the ceiling LEVEL_MAX may never cross. `.rgb` is the
+		# baked AO, copied untouched.
 		var tag := float(level) / 8.0
 		for i in src_c.size():
 			var c: Color = src_c[i]
@@ -525,7 +531,7 @@ func _atlas_for(archetype: String, mask: int) -> Mesh:
 	return out
 
 
-## An archetype's five level heights, indexed by level (0 unused) — the
+## An archetype's level heights, indexed by level (0 unused) — the
 ## `level_build_height[]` uniform. Read from the manifest, not from whichever
 ## atlas happened to be built first: the material is shared across every level
 ## mask, so this table must be the whole ladder regardless of mask.
@@ -535,6 +541,9 @@ func atlas_heights(archetype: String) -> PackedFloat32Array:
 	var heights := PackedFloat32Array()
 	heights.resize(LEVEL_MAX + 1)
 	for level in range(1, LEVEL_MAX + 1):
+		# A level this archetype does not author (a level-6 police station) keeps
+		# the placeholder height. Nothing indexes it: no bucket at that level
+		# survives `_fold`, so no instance ever packs it.
 		var entry: Dictionary = _manifest_by_key.get("%s:%d:%d" % [archetype, level, atlas_lod], {})
 		heights[level] = maxf(float(entry.get("height_m", 10.0)), 0.001)
 	_atlas_heights[archetype] = heights
@@ -633,7 +642,8 @@ func _upload_medium(chunk: Vector2i) -> Dictionary:
 		merged[arch] = true
 		# An EMPTY bucket contributes no level — one the model has kept alive
 		# after its last building came down must not drag that level's triangles
-		# back into the atlas. Neither does a bucket outside 1..5: that has no
+		# back into the atlas. Neither does a bucket outside 1..LEVEL_MAX, or a
+		# level the archetype does not author (a level-6 police station): that has no
 		# authored mesh at ANY tier (`_ensure_bucket_node` warns and draws
 		# nothing), so folding it in would only pad the buffer with instances no
 		# vertex tag can match.

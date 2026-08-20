@@ -535,6 +535,30 @@ Six decisions worth recording:
    retune of any of the three moves this card with it and cannot leave it lying.
    `data/ui.json.goals.max_reward_rows` caps it so a rich rung cannot push the
    objectives off a 360 dp display.
+
+   **Wave 10 is the proof that it reads.** Doc 02 §2.14 added a sixth building
+   rung and doc 09 §2.11 a seventh city level; **not one line of this sheet's
+   copy was touched**, and the cards moved anyway:
+
+   | city level | reward card, before Wave 10 | reward card, after |
+   |---|---|---|
+   | 3 | High-Rise · Upgrades to level 4 | *unchanged* |
+   | 4 | Data Center · Upgrades to level 5 | *unchanged rows*, but the rung now also opens `house` and `store` L6 |
+   | **5** | **empty — "Nothing new to build"** | **Upgrades to level 6** |
+   | **6** | *did not exist* | **"Nothing new to build. The city is yours to run."** |
+
+   The last row is not a regression and it is not the hole level 5 had. Rung 6
+   is the TOP of doc 09 §2.11's ladder, so there is nothing above it to unlock,
+   and `ui_goals_reward_none` is the graduation sentence this sheet has always
+   used for exactly that state — the same copy decision 6 makes on the finished
+   card. What made level 5's empty card a defect was that it sat in the MIDDLE
+   of a ladder that went on without it. (There is no land line on it either;
+   doc 09 §2.8.3 is the arithmetic that says why there is no ring 3 to gate.)
+
+   The one code change the sheet needed was a bound: `unlocked_upgrade_level`
+   scanned rungs `2..5` with a literal, and now scans to each archetype's OWN
+   top rung, which is 5 or 6 (doc 02 §2.14). A literal there would have made the
+   tower tier invisible on the very card that announces it.
 4. **The backstop is shown, greyed.** §2.11's population rung is the other route
    up (doc 09 §2.14.1), and hiding it would make the sheet look like a gate when
    it is a shortcut.

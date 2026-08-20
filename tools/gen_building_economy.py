@@ -55,6 +55,22 @@ from typing import Any, Dict, List, Optional
 getcontext().prec = 60
 
 LEVELS = 5
+## The sixth rung (doc 02 s2.14 / doc 92 s23). Doc 03 s2.2's money table is a
+## per-LEVEL ladder on the same two constants, so the sixth rung of the six
+## archetypes that grew one is `base_tax_l1 x 2.15^5`, `build_cost_l1 x V(6)` and
+## a fifth `upgrade_cost` step `build_cost_l1 x 1.45 x 2.55^4` -- the curve
+## extended, not re-fitted. Doc 03's ids, not doc 02's: `highrise_res` is doc
+## 02's `high_rise`. `factory` and `highrise_com` have no doc-02 archetype to
+## carry a sixth rung FOR, and the civic/utility rows stop at five with their
+## doc-02 counterparts.
+TOP_LEVELS = 6
+SIXTH_LEVEL_ARCHETYPES = ["house", "store", "apartment", "office",
+                          "highrise_res", "data_center"]
+
+
+def levels_of(archetype: str) -> int:
+    return TOP_LEVELS if archetype in SIXTH_LEVEL_ARCHETYPES else LEVELS
+
 
 FAILURES: List[str] = []
 
@@ -77,7 +93,13 @@ UPG_COEFF = D("1.45")
 UPG_GROWTH = D("2.55")
 
 # doc 03 s8 `upgrades.CAPITAL_VALUE_V` -- the published 3-dp vector.
-CAPITAL_VALUE_V = [D("1.000"), D("2.450"), D("6.147"), D("15.576"), D("39.620")]
+CAPITAL_VALUE_V = [D("1.000"), D("2.450"), D("6.147"), D("15.576"), D("39.620"),
+                   D("100.929")]
+# V(6) is NEW (doc 92 s23.4) and it is the only cell of the vector this project
+# ever placed itself, so it is placed by the rule the other five claim rather
+# than by judgement: the closed form gives V(6) = 100.9287528125 exactly, and
+# half-up at 3 dp is 100.929. The two earlier cells that disagree with their own
+# closed form (V3, V5) are doc 03's and are left exactly as published.
 
 CAPITAL_VALUE_NOTE = (
     "doc 03 s2.3 states BOTH the closed form V(L) = 1 + (UPG_COEFF/(UPG_GROWTH-1))"
@@ -116,21 +138,21 @@ ARCHETYPE_ORDER = [
 
 MONEY_TABLE: Dict[str, Dict[str, Any]] = {
     "house":             {"class": "residential", "build_cost_l1": 1200,
-                          "base_tax": [12, 26, 55, 119, 256]},
+                          "base_tax": [12, 26, 55, 119, 256, 551]},
     "store":             {"class": "commercial", "build_cost_l1": 2600,
-                          "base_tax": [26, 56, 120, 258, 556]},
+                          "base_tax": [26, 56, 120, 258, 556, 1194]},
     "apartment":         {"class": "residential", "build_cost_l1": 7000,
-                          "base_tax": [70, 151, 324, 696, 1496]},
+                          "base_tax": [70, 151, 324, 696, 1496, 3216]},
     "office":            {"class": "commercial", "build_cost_l1": 13000,
-                          "base_tax": [130, 280, 601, 1292, 2778]},
+                          "base_tax": [130, 280, 601, 1292, 2778, 5972]},
     "factory":           {"class": "industrial", "build_cost_l1": 22000,
                           "base_tax": [210, 452, 971, 2087, 4487]},
     "highrise_res":      {"class": "residential", "build_cost_l1": 26000,
-                          "base_tax": [260, 559, 1202, 2584, 5555]},
+                          "base_tax": [260, 559, 1202, 2584, 5555, 11944]},
     "highrise_com":      {"class": "commercial", "build_cost_l1": 40000,
                           "base_tax": [420, 903, 1941, 4174, 8974]},
     "data_center":       {"class": "tech", "build_cost_l1": 180000,
-                          "base_tax": [2100, 4515, 9707, 20870, 44871]},
+                          "base_tax": [2100, 4515, 9707, 20870, 44871, 96474]},
     "construction_yard": {"class": "civic", "build_cost_l1": 16000,
                           "base_tax": [0, 0, 0, 0, 0]},
     "substation":        {"class": "utility", "build_cost_l1": 15000,
@@ -182,11 +204,12 @@ MISMATCH_NOTE = (
 
 PUBLISHED_UPGRADE_STEPS = {
     # doc 03 s2.3 "House example" and s3.2's schema sample.
-    "house": [1740, 4437, 11314, 28852],
+    # The fifth step is the sixth rung's (doc 92 s23.4): 1,200 x 1.45 x 2.55^4.
+    "house": [1740, 4437, 11314, 28852, 73572],
 }
 PUBLISHED_CAPITAL_VALUES = {
     # doc 03 s3.2's schema sample (and s2.3's "L5 capital value 47,544").
-    "house": [1200, 2940, 7376, 18691, 47544],
+    "house": [1200, 2940, 7376, 18691, 47544, 121115],
 }
 # Single published capital cells stated elsewhere in the project.
 PUBLISHED_CAPITAL_CELLS = [
@@ -194,7 +217,8 @@ PUBLISHED_CAPITAL_CELLS = [
     ("house", 3, 7376, "doc 02 s2.2 payback worked check (1,200 x 6.147)"),
     ("apartment", 3, 43029, "doc 02 s2.6 repair worked example (7,000 x 6.147)"),
 ]
-PUBLISHED_STEP_MULTIPLIERS = [D("1.45"), D("3.6975"), D("9.4286"), D("24.0429")]
+PUBLISHED_STEP_MULTIPLIERS = [D("1.45"), D("3.6975"), D("9.4286"), D("24.0429"),
+                             D("61.3096")]
 
 # doc 03 s2.12 / C-11: the starter anchor the whole pacing model hangs on.
 STARTER_ANCHOR_MIX = [("house", 1, 18), ("store", 1, 5), ("apartment", 1, 3), ("office", 1, 1)]
@@ -205,22 +229,22 @@ STARTER_ANCHOR_TOTAL = 686
 # 4. Generation
 # ==========================================================================
 
-def gen_base_tax(base_tax_l1: int) -> List[int]:
-    return [r(D(base_tax_l1) * TAX_LEVEL_GROWTH ** (L - 1)) for L in range(1, LEVELS + 1)]
+def gen_base_tax(base_tax_l1: int, top: int = LEVELS) -> List[int]:
+    return [r(D(base_tax_l1) * TAX_LEVEL_GROWTH ** (L - 1)) for L in range(1, top + 1)]
 
 
-def gen_upgrade_steps(build_cost_l1: int) -> List[int]:
-    return [r(D(build_cost_l1) * UPG_COEFF * UPG_GROWTH ** (L - 1)) for L in range(1, LEVELS)]
+def gen_upgrade_steps(build_cost_l1: int, top: int = LEVELS) -> List[int]:
+    return [r(D(build_cost_l1) * UPG_COEFF * UPG_GROWTH ** (L - 1)) for L in range(1, top)]
 
 
-def gen_capital_values(build_cost_l1: int) -> List[int]:
-    return [r(D(build_cost_l1) * v) for v in CAPITAL_VALUE_V]
+def gen_capital_values(build_cost_l1: int, top: int = LEVELS) -> List[int]:
+    return [r(D(build_cost_l1) * v) for v in CAPITAL_VALUE_V[:top]]
 
 
-def exact_capital_values(build_cost_l1: int) -> List[int]:
+def exact_capital_values(build_cost_l1: int, top: int = LEVELS) -> List[int]:
     coefficient = UPG_COEFF / (UPG_GROWTH - 1)
     return [r(D(build_cost_l1) * (D(1) + coefficient * (UPG_GROWTH ** (L - 1) - 1)))
-            for L in range(1, LEVELS + 1)]
+            for L in range(1, top + 1)]
 
 
 def build_document() -> Dict[str, Any]:
@@ -241,9 +265,14 @@ def build_document() -> Dict[str, Any]:
         cost = int(row["build_cost_l1"])
         published_tax = list(row["base_tax"])
         klass = row["class"]
+        top = levels_of(archetype)
+        if len(published_tax) != top:
+            fail("%s: money table has %d base_tax rows, ladder is %d"
+                 % (archetype, len(published_tax), top))
+            continue
 
-        generated_tax = gen_base_tax(published_tax[0])
-        for level in range(1, LEVELS + 1):
+        generated_tax = gen_base_tax(published_tax[0], top)
+        for level in range(1, top + 1):
             generated = generated_tax[level - 1]
             published = published_tax[level - 1]
             if generated == published:
@@ -264,15 +293,15 @@ def build_document() -> Dict[str, Any]:
                           " +/-$1 tolerance on generated cells instead.",
             })
 
-        upgrade_steps = gen_upgrade_steps(cost)
+        upgrade_steps = gen_upgrade_steps(cost, top)
         if archetype in PUBLISHED_UPGRADE_STEPS:
             if upgrade_steps != PUBLISHED_UPGRADE_STEPS[archetype]:
                 fail("%s upgrade_cost_by_step: published %s, curve %s"
                      % (archetype, PUBLISHED_UPGRADE_STEPS[archetype], upgrade_steps))
 
-        capital_values = gen_capital_values(cost)
-        exact = exact_capital_values(cost)
-        for level in range(1, LEVELS + 1):
+        capital_values = gen_capital_values(cost, top)
+        exact = exact_capital_values(cost, top)
+        for level in range(1, top + 1):
             if capital_values[level - 1] == exact[level - 1]:
                 continue
             closed_form_deltas.append(abs(capital_values[level - 1] - exact[level - 1]))
@@ -366,12 +395,18 @@ def build_document() -> Dict[str, Any]:
                               "upgrade_cost_by_step", "capital_value_by_level"],
             "archetype_count": len(ARCHETYPE_ORDER),
             "levels_per_archetype": LEVELS,
+            "top_levels_per_archetype": TOP_LEVELS,
+            "levels_by_archetype": {a: levels_of(a) for a in ARCHETYPE_ORDER},
             "archetype_order": list(ARCHETYPE_ORDER),
             "curves": {
                 "TAX_LEVEL_GROWTH": str(TAX_LEVEL_GROWTH),
                 "UPG_COEFF": str(UPG_COEFF),
                 "UPG_GROWTH": str(UPG_GROWTH),
                 "CAPITAL_VALUE_V": [str(v) for v in CAPITAL_VALUE_V],
+                "_v6_note": "V(6) = 100.929 is NEW (doc 92 s23.4): the closed form gives"
+                            " 100.9287528125 exactly and half-up at 3 dp is 100.929. It is"
+                            " the only cell of this vector the project placed itself, and it"
+                            " is placed by the rule the other five claim.",
                 "rounding": "half-up, once per cell (doc 03 s2.8)",
             },
             "_file_placement_note": MISMATCH_NOTE,
@@ -507,8 +542,9 @@ def main() -> int:
 
     overrides = document["generated"]["published_cell_overrides"]
     print("gen_building_economy: wrote %s" % path)
-    print("  %d archetypes x %d levels, grown from doc 03 s2.2's money table"
-          % (len(ARCHETYPE_ORDER), LEVELS))
+    print("  %d archetypes (%d of them six-level) = %d rows, grown from doc 03 s2.2's"
+          " money table" % (len(ARCHETYPE_ORDER), len(SIXTH_LEVEL_ARCHETYPES),
+                            sum(levels_of(a) for a in ARCHETYPE_ORDER)))
     print("  starter anchor: $%d/gh (18 house + 5 store + 3 apartment + 1 office, all L1)"
           % document["generated"]["starter_anchor"]["gross_base_tax_per_hour"])
     print("  %d published cell(s) that the curve does not reproduce exactly:" % len(overrides))

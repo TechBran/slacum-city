@@ -102,8 +102,14 @@ var _draw_calls := 0
 var _gpu_ms_sum := 0.0
 var _cpu_ms_sum := 0.0
 
+## `[archetype, min_level, max_level, weight]` per ring. **Downtown reaches the
+## sixth rung** (doc 02 §2.14's tower tier): a `high_rise` L6 is 290 m to the
+## parapet and it is the tallest thing the game can build, so the ring that is
+## supposed to read as downtown is the ring that has to show it. A level this
+## archetype does not author is skipped by the manifest lookup below rather than
+## faked, so widening a range here can never invent a building.
 var _ring_mix := {
-	0: [["high_rise", 3, 5, 4.0], ["office", 4, 5, 2.5], ["apartment", 4, 5, 1.0]],
+	0: [["high_rise", 4, 6, 4.0], ["office", 5, 6, 2.5], ["apartment", 5, 6, 1.0]],
 	1: [["office", 2, 4, 2.0], ["apartment", 3, 5, 2.5], ["data_center", 2, 4, 1.2],
 		["store", 2, 3, 1.5], ["high_rise", 1, 3, 0.8]],
 	2: [["house", 1, 3, 3.0], ["apartment", 1, 3, 2.0], ["store", 1, 2, 1.5],

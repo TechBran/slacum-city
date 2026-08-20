@@ -912,7 +912,10 @@ func building_view(sim_id: String) -> Dictionary:
 		"name_fallback": str(sim.catalog.archetype_info(type_id).get("name", type_id)),
 		"category": sim.catalog.category(type_id),
 		"level": b.level,
-		"max_level": sim.catalog.max_level(),
+		# The ARCHETYPE's own ladder height (doc 02 §2.14), not the roster's
+		# tallest: a police station's level strip must not draw a sixth pip it
+		# can never light.
+		"max_level": sim.catalog.max_level_of(type_id),
 		"state": b.state,
 		"state_key": "ui_building_state_%s" % String(b.state),
 		"condition": b.condition,
@@ -990,7 +993,8 @@ func upgrade_view(sim_id: String) -> Dictionary:
 	var b: Building = sim.buildings[sim_id]
 	# Mirrors `CitySim.cmd_upgrade_building` exactly, `level == 0` (a build still
 	# in progress) included, so the row numbers describe the gate that actually ran.
-	var next_level: int = mini(b.level + 1, sim.catalog.max_level())
+	var top_level: int = sim.catalog.max_level_of(String(b.archetype))
+	var next_level: int = mini(b.level + 1, top_level)
 	var cost := int(payload.get("cost", 0))
 	var checks := _checks_for(b, next_level)
 	var rows := formatter.checklist(checks, blockers,
@@ -998,7 +1002,7 @@ func upgrade_view(sim_id: String) -> Dictionary:
 			_check_params(sim_id, b, next_level, payload))
 	var blocked_by := RequirementFormatter.first_blocker(rows)
 	return {
-		"available": b.level < sim.catalog.max_level(),
+		"available": b.level < top_level,
 		"ok": blockers.is_empty(),
 		"to_level": next_level,
 		"cost": cost,
@@ -1034,7 +1038,8 @@ func _check_params(sim_id: String, b: Building, next_level: int,
 	return {
 		&"E_STATE": {"state": String(b.state), "required_state": "active",
 				"fix_target_id": sim_id},
-		&"E_MAX_LEVEL": {"level": b.level, "max_level": sim.catalog.max_level()},
+		&"E_MAX_LEVEL": {"level": b.level,
+				"max_level": sim.catalog.max_level_of(String(b.archetype))},
 		&"E_CONDITION": {"condition": b.condition,
 				"min_condition": Building.MIN_CONDITION_TO_UPGRADE,
 				"fix_target_id": sim_id},

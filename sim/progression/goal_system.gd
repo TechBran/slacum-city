@@ -54,6 +54,18 @@ const EVENT_KINDS: Dictionary = {
 			"match_field": "", "match_key": "", "amount": "tiles"},
 	&"upgrade_building": {"event": &"upgrade_started_sim",
 			"match_field": "", "match_key": "", "amount": ""},
+	# The same event, filtered by how far up the ladder the upgrade goes.
+	# `min_field` is a NUMERIC floor rather than a string equality, because
+	# "reach the tower tier" has to count an upgrade to the top rung and not an
+	# upgrade to some particular rung: doc 02 §2.14 gives six of the twelve
+	# archetypes a level 6 and the rest five, so a row asking for `to_level 6`
+	# would be unanswerable by a police station and a row asking for equality
+	# would refuse a player who went further. `>=` is the only reading that
+	# survives an archetype-shaped ladder. Doc 09 §2.14's cost rule holds: this
+	# is still one dictionary lookup and one comparison per event.
+	&"upgrade_to_level": {"event": &"upgrade_started_sim",
+			"match_field": "", "match_key": "", "amount": "",
+			"min_field": "to_level", "min_key": "to_level"},
 	&"repair_buildings": {"event": &"repair_started_sim",
 			"match_field": "", "match_key": "", "amount": ""},
 	&"resolve_incidents": {"event": &"incident_resolved",
@@ -238,6 +250,13 @@ func observe(event: Dictionary) -> void:
 		var match_field := str(spec["match_field"])
 		if match_field != "" and str(event.get(match_field, "")) \
 				!= str(obj.get(str(spec["match_key"]), "")):
+			continue
+		# Numeric floor, for the kinds that filter on how FAR an event went
+		# rather than on what it named. An event missing the field cannot clear
+		# a floor above zero, which is the safe direction.
+		var min_field := str(spec.get("min_field", ""))
+		if min_field != "" and float(event.get(min_field, 0.0)) \
+				< float(obj.get(str(spec["min_key"]), 0.0)):
 			continue
 		var amount_field := str(spec["amount"])
 		var amount := int(event.get(amount_field, 0)) if amount_field != "" else 1

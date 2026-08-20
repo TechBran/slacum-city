@@ -118,7 +118,14 @@ func test_02_coverage() -> void:
 	for a_v in archetypes:
 		var a: Dictionary = a_v
 		assert_true(roster.has(String(a["id"])), "%s exists in data/buildings.json" % a["id"])
-		assert_eq((a["levels"] as Array).size(), 5, "%s has 5 levels" % a["id"])
+		# The shapes file and the stat table must agree on how tall this
+		# archetype's ladder is (doc 02 §2.14: five, or six for the growth
+		# stock). A mesh set with a level the stat table has no row for is a
+		# building the player can never place.
+		var want: int = (roster[String(a["id"])]["levels"] as Array).size()
+		assert_eq((a["levels"] as Array).size(), want,
+				"%s: shapes and data/buildings.json agree on the ladder height" % a["id"])
+		assert_true(want == 5 or want == 6, "%s ladder is 5 or 6 rungs" % a["id"])
 	assert_eq(roster.size(), archetypes.size(), "every shipped archetype has a shape")
 
 	var seen: Dictionary = {}
@@ -136,13 +143,19 @@ func test_02_coverage() -> void:
 		var mesh: ArrayMesh = load(String(e["path"]))
 		assert_true(mesh != null, "%s loads as an ArrayMesh" % e["path"])
 	assert_true(far_seen, "the shared FAR unit box is generated")
+	var rows := 0
 	for a_v2 in archetypes:
 		var a2: Dictionary = a_v2
-		for lv in range(1, 6):
+		var top: int = (a2["levels"] as Array).size()
+		rows += top
+		for lv in range(1, top + 1):
 			for lod in [0, 1]:
 				assert_true(seen.has("%s_%d_%d" % [a2["id"], lv, lod]),
 						"%s L%d lod%d in the manifest" % [a2["id"], lv, lod])
-	assert_eq(_entries().size(), 12 * 5 * 2 + 1, "12 x 5 x 2 + the shared FAR box")
+		assert_false(seen.has("%s_%d_0" % [a2["id"], top + 1]),
+				"%s has no mesh above its own top rung" % a2["id"])
+	assert_eq(rows, 66, "66 authored rows (six archetypes carry an L6)")
+	assert_eq(_entries().size(), rows * 2 + 1, "66 x 2 + the shared FAR box")
 
 
 # ---------------------------------------------------------- 3 — height formula
@@ -364,18 +377,24 @@ func test_07_silhouette_descriptor_uniqueness() -> void:
 		assert_true(value < (1 << 24), "%s descriptor fits in 24 bits" % arch)
 		desc["%s_%d" % [arch, int(e["level"])]] = value
 
-	for lv in range(1, 6):
+	# Compared over the levels both archetypes HAVE: with a mixed ladder (doc 02
+	# §2.14) a police station has no L6 to be confused with an apartment's.
+	for lv in range(1, 7):
 		for i in archetypes.size():
 			for j in range(i + 1, archetypes.size()):
 				var a := String(archetypes[i])
 				var b := String(archetypes[j])
+				if not (desc.has("%s_%d" % [a, lv]) and desc.has("%s_%d" % [b, lv])):
+					continue
 				var d := _popcount(int(desc["%s_%d" % [a, lv]]) ^ int(desc["%s_%d" % [b, lv]]))
 				assert_true(d >= 4,
 						"L%d %s vs %s Hamming %d >= 4" % [lv, a, b, d])
 	for arch_v in archetypes:
 		var arch2 := String(arch_v)
-		for l1 in range(1, 6):
-			for l2 in range(l1 + 1, 6):
+		for l1 in range(1, 7):
+			for l2 in range(l1 + 1, 7):
+				if not (desc.has("%s_%d" % [arch2, l1]) and desc.has("%s_%d" % [arch2, l2])):
+					continue
 				var d2 := _popcount(int(desc["%s_%d" % [arch2, l1]])
 						^ int(desc["%s_%d" % [arch2, l2]]))
 				assert_true(d2 >= 2,

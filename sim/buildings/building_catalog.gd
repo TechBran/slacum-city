@@ -8,11 +8,23 @@ extends RefCounted
 ## Every loader invariant of doc 02 §3.1 is checked at construction and the
 ## failures are collected in `errors` rather than raised, mirroring DayCurveSet.
 ##
-## The tables themselves are GENERATED — `tools/gen_buildings.py` grows all 60
+## The tables themselves are GENERATED — `tools/gen_buildings.py` grows all 66
 ## rows from `building_rules.json`'s normative `seed_rows` (report 98 RR-8).
 ## Nothing here recomputes a curve; the ladders are table-generation-time only.
+##
+## **The ladder is not the same height for every archetype** (doc 02 §2.14, doc
+## 92 §23). Core Design Rule 5 read "five levels each"; it now reads *five for
+## every archetype, six for the growth stock* — the six revenue-producing
+## archetypes `building_rules.sixth_level_archetypes` names. The other six stop
+## at five because their level ladders are not doc 02's alone: `water_facility`
+## is doc 05's per-variant component table and the two stations are doc 06's
+## `capacity_per_station_level`, and both of those publish five rows. So
+## [max_level] is the tallest ladder in the roster and [max_level_of] is the one
+## a caller holding an archetype actually wants; asking the wrong one is how a
+## build panel offers a police station a sixth rung that does not exist.
 
-const LEVELS_PER_ARCHETYPE := 5  # Core Design Rule 5
+const LEVELS_PER_ARCHETYPE := 5  # the floor: every archetype has at least these
+const TOP_LEVELS_PER_ARCHETYPE := 6  # the ceiling: the growth stock's sixth rung
 const ARCHETYPE_COUNT := 12  # spec §43.2 MVP roster
 const DECAY_SCALE_GUARD := 0.01  # doc 02 §3.1: fails loudly on the old [0,100] scale
 const WATER_ARCHETYPE := "water_facility"
@@ -28,7 +40,7 @@ const FORBIDDEN_KEYS := [
 	"burn_hours", "condition_loss_per_hour", "required_fire_units", "spread_radius_tiles",
 ]
 
-## Doc 02 §2.3 columns that must exist on every one of the 60 rows.
+## Doc 02 §2.3 columns that must exist on every one of the 66 rows.
 const REQUIRED_LEVEL_KEYS := [
 	"level", "footprint", "population", "jobs", "power_demand_kw", "water_demand",
 	"build_time_hours", "decay_per_hour", "fire_ignition_per_hour", "fire_load",
@@ -60,9 +72,9 @@ const CONDITION_SCALE_KEYS := [
 const REQUIRED_RULE_KEYS := [
 	"schema_version", "growth_classes", "demand_growth_invariant", "shared_curves",
 	"water_facility_variants", "water_facility_reference_variant", "coverage_ladder",
-	"min_city_level_by_level", "safety_coverage_factor", "condition", "fire",
-	"construction", "headroom_safety", "avenue_gate", "state_modifiers",
-	"seed_rows", "rounding",
+	"min_city_level_by_level", "sixth_level_archetypes", "safety_coverage_factor",
+	"condition", "fire", "construction", "headroom_safety", "avenue_gate",
+	"state_modifiers", "seed_rows", "rounding",
 ]
 
 var errors: PackedStringArray = []
@@ -71,7 +83,12 @@ var _archetypes: Dictionary = {}  # id -> {name, category, tax_class, growth_cla
 var _levels: Dictionary = {}  # id -> Array[Dictionary], index 0 == level 1
 var _rules: Dictionary = {}
 var _ids: Array = []
-var _levels_per_archetype: int = LEVELS_PER_ARCHETYPE
+## archetype -> how many rows its ladder has. Declared by the generated file's
+## `generated.levels_by_archetype`; an archetype the map does not name falls back
+## to the five-rung floor, which is the shape every archetype had before doc 92
+## §23 and is therefore the safe degrade.
+var _levels_by_archetype: Dictionary = {}
+var _top_levels: int = LEVELS_PER_ARCHETYPE
 var _schema_version: int = 0
 
 
@@ -112,8 +129,24 @@ func has(archetype: String) -> bool:
 	return _archetypes.has(archetype)
 
 
+## The tallest ladder in the roster. This is the right question for a display
+## that has to size a level strip once, and the WRONG one for "may this building
+## upgrade?" — that is [max_level_of].
 func max_level() -> int:
-	return _levels_per_archetype
+	return _top_levels
+
+
+## How many rungs `archetype`'s own ladder has (doc 02 §2.14). An unknown
+## archetype answers the five-rung floor rather than 0, so a caller that already
+## failed to find the archetype does not also divide by zero.
+func max_level_of(archetype: String) -> int:
+	var rows: Array = _levels.get(archetype, [])
+	return rows.size() if not rows.is_empty() else LEVELS_PER_ARCHETYPE
+
+
+## True when `archetype` is at the top of its own ladder at `level`.
+func is_top_level(archetype: String, level: int) -> bool:
+	return level >= max_level_of(archetype)
 
 
 ## The doc 02 §2.3 row for one archetype at one level (1-based). Read-only;
@@ -127,7 +160,8 @@ func stats(archetype: String, level: int) -> Dictionary:
 	return rows[level - 1]
 
 
-## All five rows for one archetype, ascending. Read-only.
+## Every row for one archetype, ascending — five, or six for the growth stock.
+## Read-only.
 func levels(archetype: String) -> Array:
 	return _levels.get(archetype, [])
 
@@ -182,9 +216,10 @@ func cross_check_water_footprints(water_data: Dictionary) -> PackedStringArray:
 		problems.append("data/water.json has no components.%s to cross-check" % reference)
 		return problems
 	var per_level: Array = components[reference]
-	if per_level.size() != _levels_per_archetype:
+	var want := max_level_of(WATER_ARCHETYPE)
+	if per_level.size() != want:
 		problems.append("data/water.json components.%s has %d levels, expected %d"
-				% [reference, per_level.size(), _levels_per_archetype])
+				% [reference, per_level.size(), want])
 		return problems
 	# Doc 05 §3.1 ships `components` as COLUMN-ORDERED rows zipped through
 	# `_component_columns`; a plain {footprint_w, footprint_h} row is also
@@ -232,12 +267,16 @@ func _load(buildings_data: Dictionary, rules_data: Dictionary) -> void:
 			errors.append("buildings: schema_version %d must be >= 1" % _schema_version)
 
 	var meta: Dictionary = buildings_data.get("generated", {})
-	if meta.has("levels_per_archetype"):
-		_levels_per_archetype = int(meta["levels_per_archetype"])
-	if _levels_per_archetype != LEVELS_PER_ARCHETYPE:
-		errors.append("buildings: levels_per_archetype %d, Core Rule 5 requires %d"
-				% [_levels_per_archetype, LEVELS_PER_ARCHETYPE])
-		_levels_per_archetype = LEVELS_PER_ARCHETYPE
+	var floor_levels := int(meta.get("levels_per_archetype", LEVELS_PER_ARCHETYPE))
+	if floor_levels != LEVELS_PER_ARCHETYPE:
+		errors.append("buildings: levels_per_archetype %d, the floor is %d"
+				% [floor_levels, LEVELS_PER_ARCHETYPE])
+	_top_levels = int(meta.get("top_levels_per_archetype", LEVELS_PER_ARCHETYPE))
+	if _top_levels < LEVELS_PER_ARCHETYPE or _top_levels > TOP_LEVELS_PER_ARCHETYPE:
+		errors.append("buildings: top_levels_per_archetype %d is outside [%d, %d]"
+				% [_top_levels, LEVELS_PER_ARCHETYPE, TOP_LEVELS_PER_ARCHETYPE])
+		_top_levels = LEVELS_PER_ARCHETYPE
+	_levels_by_archetype = meta.get("levels_by_archetype", {})
 
 	var raw: Dictionary = buildings_data.get("archetypes", {})
 	if raw.is_empty():
@@ -308,10 +347,24 @@ func _load_archetype(archetype: String, entry: Dictionary) -> void:
 			errors.append("%s: footprints_are_reference_variant_only must be true (RR-8)"
 					% archetype)
 
+	# How tall this archetype's ladder is DECLARED to be, and the two invariants
+	# that make the declaration trustworthy: it is inside [5, 6], and the sixth
+	# rung exists exactly where `building_rules.sixth_level_archetypes` says.
+	var declared := int(_levels_by_archetype.get(archetype, LEVELS_PER_ARCHETYPE))
+	var sixth: Array = _rules.get("sixth_level_archetypes", [])
+	var wants_sixth := sixth.has(archetype)
+	if declared != (TOP_LEVELS_PER_ARCHETYPE if wants_sixth else LEVELS_PER_ARCHETYPE):
+		errors.append("%s: levels_by_archetype says %d, sixth_level_archetypes says %s"
+				% [archetype, declared, "6" if wants_sixth else "5"])
+		declared = TOP_LEVELS_PER_ARCHETYPE if wants_sixth else LEVELS_PER_ARCHETYPE
+	if declared > _top_levels:
+		errors.append("%s: %d levels exceeds top_levels_per_archetype %d"
+				% [archetype, declared, _top_levels])
+
 	var rows: Variant = entry.get("levels", [])
-	if not (rows is Array) or (rows as Array).size() != _levels_per_archetype:
+	if not (rows is Array) or (rows as Array).size() != declared:
 		errors.append("%s: expected %d levels, got %s"
-				% [archetype, _levels_per_archetype,
+				% [archetype, declared,
 				str((rows as Array).size()) if rows is Array else "non-array"])
 		return
 
@@ -325,7 +378,7 @@ func _load_archetype(archetype: String, entry: Dictionary) -> void:
 		if not (row is Dictionary):
 			errors.append("%s L%d: level entry is not an object" % [archetype, level_no])
 			return
-		var clean := _load_level(archetype, level_no, row, wants_radius)
+		var clean := _load_level(archetype, level_no, row, wants_radius, declared)
 		if not previous.is_empty():
 			_check_monotonic(archetype, level_no, previous, clean)
 		previous = clean
@@ -339,7 +392,7 @@ func _load_archetype(archetype: String, entry: Dictionary) -> void:
 
 
 func _load_level(archetype: String, level_no: int, row: Dictionary,
-		wants_radius: bool) -> Dictionary:
+		wants_radius: bool, top_level: int) -> Dictionary:
 	var clean := {}
 	for key in FORBIDDEN_KEYS:
 		if row.has(key):
@@ -388,8 +441,10 @@ func _load_level(archetype: String, level_no: int, row: Dictionary,
 		size.make_read_only()
 		clean["footprint"] = size
 
-	# `upgrade_time_hours` present on 1..4, absent on 5 (doc 02 §3.1).
-	var is_top := level_no == _levels_per_archetype
+	# `upgrade_time_hours` present on every rung but this archetype's LAST one
+	# (doc 02 §3.1). The last one is 5 or 6 depending on the ladder, so the check
+	# is against the archetype's own height and never against a constant.
+	var is_top := level_no == top_level
 	var has_upgrade := row.has("upgrade_time_hours")
 	if has_upgrade == is_top:
 		errors.append("%s L%d: upgrade_time_hours must be %s"

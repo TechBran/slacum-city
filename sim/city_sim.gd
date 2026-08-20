@@ -499,6 +499,7 @@ func _boot_buildings() -> void:
 		b.state = &"active"
 		b.condition = 1.0
 		b.stats = catalog.stats(String(archetype), b.level)
+		b.max_level = catalog.max_level_of(String(archetype))
 		buildings[id] = b
 		_building_records[id] = record
 	_invalidate_roster()
@@ -967,6 +968,7 @@ func restore_state(raw_body: Dictionary) -> void:
 		if id == "":
 			continue
 		b.stats = catalog.stats(String(b.archetype), maxi(b.level, 1))
+		b.max_level = catalog.max_level_of(String(b.archetype))
 		buildings[id] = b
 	_invalidate_roster()
 	# Block-dark weights are derived from the live roster, so rebuild rather than
@@ -1190,6 +1192,7 @@ func cmd_place_building(archetype: String, origin: Vector2i, variant: String = "
 	var sim_id := "P-%03d" % grid_id
 	var b := Building.new(grid_id, StringName(archetype), origin, StringName(variant))
 	b.stats = stats
+	b.max_level = catalog.max_level_of(archetype)
 	b.built_at_minutes = clock.sim_time_minutes()
 	world.grid.stamp_building(grid_id, origin, size)
 	buildings[sim_id] = b
@@ -1222,11 +1225,15 @@ func cmd_upgrade_building(sim_id: String, preview: bool = false) -> Dictionary:
 	var blockers: Array = []
 	if b.state != &"active":
 		blockers.append(&"E_STATE")
-	if b.level >= 5:
+	# The top of the ladder is the ARCHETYPE's own top (doc 02 §2.14): five for
+	# the civic and utility shells, six for the growth stock. A literal 5 here
+	# would refuse the tower tier the whole of doc 92 §23 exists to unlock.
+	var top_level: int = catalog.max_level_of(String(b.archetype))
+	if b.level >= top_level:
 		blockers.append(&"E_MAX_LEVEL")
 	if b.condition < Building.MIN_CONDITION_TO_UPGRADE:
 		blockers.append(&"E_CONDITION")
-	var next_level: int = mini(b.level + 1, 5)
+	var next_level: int = mini(b.level + 1, top_level)
 	var next_stats: Dictionary = catalog.stats(String(b.archetype), next_level)
 	if progression.city_level < int(next_stats.get("min_city_level", 0)):
 		blockers.append(&"E_CITY_LEVEL")
@@ -1256,8 +1263,17 @@ func cmd_upgrade_building(sim_id: String, preview: bool = false) -> Dictionary:
 		return CommandQueue.fail(_spend_reason(paid), {"blockers": [_spend_reason(paid)],
 				"cost": cost, "balance": treasury.balance})
 	b.start_upgrade()
+	# The top row of a ladder carries no `upgrade_time_hours` — it has no next
+	# level to price. Before the sixth rung existed that meant the LAST step of
+	# every ladder ran on the bare 4.0-hour literal, which is doc 02's number for
+	# nothing at all; a 227-game-hour high-rise would have grown its tower in an
+	# afternoon. The row BELOW is where doc 02 §2.2 stores the price of the step
+	# `L → L+1`, so that is the fallback. Every step that already had a figure
+	# still reads exactly the figure it read.
+	var upgrade_hours := float(next_stats.get("upgrade_time_hours",
+			b.stats.get("upgrade_time_hours", 4.0)))
 	var job_id := construction.submit(&"upgrade", sim_id,
-			float(next_stats.get("upgrade_time_hours", 4.0)), &"construction_crew",
+			upgrade_hours, &"construction_crew",
 			{"sim_id": sim_id, "cost": cost})
 	construction.assign_crew(job_id, "YARD-CREW-1")
 	bus.emit(&"upgrade_started_sim", {"sim_id": sim_id, "to_level": next_level, "cost": cost})
@@ -1908,6 +1924,7 @@ func cmd_place_water_component(kind: String, tile: Vector2i, level: int = 1,
 	var sim_id := "P-%03d" % grid_id
 	var b := Building.new(grid_id, StringName(WATER_SHELL_ARCHETYPE), tile, variant)
 	b.stats = shell_stats
+	b.max_level = catalog.max_level_of(WATER_SHELL_ARCHETYPE)
 	b.level = level
 	b.built_at_minutes = clock.sim_time_minutes()
 	world.grid.stamp_building(grid_id, tile, size)
@@ -3041,6 +3058,7 @@ func on_construction_completed(job: Dictionary) -> void:
 	if not bool(done["ok"]):
 		return
 	b.stats = catalog.stats(String(b.archetype), b.level)
+	b.max_level = catalog.max_level_of(String(b.archetype))
 	_block_dark_weights[sim_id] = int(b.stats.get("population", 0)) + int(b.stats.get("jobs", 0))
 	_sync_station_fleet(sim_id, b)
 	_commission_water_nodes(sim_id)

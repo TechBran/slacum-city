@@ -34,7 +34,8 @@
     "_demand_growth_note": "RR-7: the requirement is an EXCLUSIVE FLOOR, not an equality. Every doc-02 growth class must satisfy k_dem > REQUIRED_MIN_DEMAND_LEVEL_GROWTH. Doc 02 is the authority on the values (2.35 steady / 2.45 standard / 2.55 vertical, C-13). The old REQUIRED_DEMAND_LEVEL_GROWTH: 2.35 equality constant is DELETED - it rejected 9 of 12 archetypes.",
     "REQUIRED_MIN_DEMAND_LEVEL_GROWTH": 2.15,
     "REQUIRED_MIN_DEMAND_LEVEL_GROWTH_EXCLUSIVE": true,
-    "CAPITAL_VALUE_V": [1.000, 2.450, 6.147, 15.576, 39.620]
+    "_v6_note": "The sixth cell is NEW (doc 92 §23.4, the level-6 tower tier). It is the only cell of this vector this project ever placed itself and it is placed by the rule the other five claim: the closed form V(6) = 1 + (1.45/1.55)(2.55^5 − 1) = 100.9287528125 exactly, half-up at 3 dp = 100.929. Six of doc 02's twelve archetypes have a level 6; the other six never index past 5 and cannot see this cell.",
+    "CAPITAL_VALUE_V": [1.000, 2.450, 6.147, 15.576, 39.620, 100.929]
   },
 
   "roads": {
