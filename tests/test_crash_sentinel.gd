@@ -8,12 +8,18 @@ extends SimTest
 ## save the shell offers.
 ##
 ## That answer is only worth having if there is more than one save to choose
-## from, which is why these two features are one test file. `SaveService`
-## alternates its autosave between slot 0 and slot 7, so the newest is never the
-## only copy: the failure the rotation defends against is not a torn file (the
-## atomic rename already makes that impossible) but a **complete** file written
-## seconds before the process died — structurally perfect, and holding whatever
-## went wrong.
+## from, which is why these two features are one test file. The failure being
+## defended against is not a torn file — the atomic rename already makes that
+## impossible — but a **complete** file written seconds before the process died:
+## structurally perfect, and holding whatever went wrong.
+##
+## `SaveService` used to answer that with a two-slot rotation (slot 0 and a
+## shadow at slot 7). It answers it with doc 08 §2.7's generation ladder now:
+## one autosave slot holding up to six digest-verified generations spread across
+## 30 minutes / 6 hours / 24 hours / 7 days, walked in order by the load gate.
+## Same guarantee, five deep instead of one, and with a checksum proving the
+## fallback was ever whole. The sentinel's seam is unchanged — it still asks
+## `last_good_autosave_slot()` and gets a slot index back.
 ##
 ## Nothing here touches a real player profile: every path is under
 ## `user://test_crash/`.
@@ -23,17 +29,29 @@ const LOGS_DIR := "user://test_crash/logs"
 const SAVE_DIR := "user://test_crash/slots"
 
 
+## Listing first, deleting second: removing entries inside a `list_dir_begin()`
+## walk skips the ones after them, and a slot that survives a wipe is a test
+## running on the previous test's city.
 static func _wipe(path: String) -> void:
 	var dir := DirAccess.open(path)
 	if dir == null:
 		return
+	var files: Array[String] = []
+	var dirs: Array[String] = []
 	dir.list_dir_begin()
 	var entry := dir.get_next()
 	while entry != "":
-		if not dir.current_is_dir():
-			DirAccess.remove_absolute(path + "/" + entry)
+		if dir.current_is_dir():
+			dirs.append(entry)
+		else:
+			files.append(entry)
 		entry = dir.get_next()
 	dir.list_dir_end()
+	for child in files:
+		DirAccess.remove_absolute(path + "/" + child)
+	for child in dirs:
+		_wipe(path + "/" + child)
+		DirAccess.remove_absolute(path + "/" + child)
 
 
 func _sentinel(at_unix: float = 1_800_000_000.0) -> CrashSentinel:
@@ -143,48 +161,63 @@ func test_breadcrumbs_are_a_bounded_ring() -> void:
 
 
 # ===========================================================================
-# The autosave rotation
+# The autosave ladder
 # ===========================================================================
 
-func test_the_autosave_alternates_between_two_slots() -> void:
+## Flip a byte inside a slot's active generation so the digest no longer matches
+## — a save that is complete, listed, and wrong.
+static func _ruin_active(service: SaveService, slot: int) -> void:
+	var path := service.slot_path(slot)
+	var file := FileAccess.open_compressed(path, FileAccess.READ,
+			FileAccess.COMPRESSION_ZSTD)
+	var text := file.get_as_text()
+	file = null
+	var out := FileAccess.open_compressed(path, FileAccess.WRITE,
+			FileAccess.COMPRESSION_ZSTD)
+	out.store_string(text.replace("\"sim_time_minutes\":", "\"sim_time_minutez\":"))
+	out = null
+
+
+func test_the_autosave_keeps_the_generation_behind_it() -> void:
 	_fresh()
 	var service := _fresh_service()
 	var sim := CitySim.boot_from_files(31)
 	assert_eq(service.next_autosave_slot(), SaveService.AUTOSAVE_SLOT,
-			"the first autosave lands on the primary slot")
+			"one autosave slot — the depth is inside it now")
 	service.autosave(sim)
 	assert_eq(service.last_autosave_slot, SaveService.AUTOSAVE_SLOT)
-	assert_eq(service.next_autosave_slot(), SaveService.AUTOSAVE_SHADOW_SLOT,
-			"the second lands on the shadow, because it is the older of the two")
+	sim.advance_hours(1.0)
 	service.autosave(sim)
-	assert_eq(service.last_autosave_slot, SaveService.AUTOSAVE_SHADOW_SLOT)
-	assert_true(service.has_slot(SaveService.AUTOSAVE_SLOT))
-	assert_true(service.has_slot(SaveService.AUTOSAVE_SHADOW_SLOT))
-	assert_true(SaveService.AUTOSAVE_SHADOW_SLOT
-			>= UIConfig.load_from_files().section("save_slots").get("count", 3),
-			"the shadow sits outside every slot the player can see")
+	assert_eq(service.next_autosave_slot(), SaveService.AUTOSAVE_SLOT)
+	var manifest := service.manager_for(SaveService.AUTOSAVE_SLOT).read_manifest()
+	assert_eq(String(manifest["active"]["reason"]), "autosave")
+	assert_true((manifest["history"] as Array).size() >= 1,
+			"the previous city is still committed and still referenced")
+	# The shadow used to have to live outside the player's visible slots. The
+	# ladder lives inside slot 0, so every slot the UI shows is the player's.
+	assert_true(SaveService.AUTOSAVE_SLOT
+			< int(UIConfig.load_from_files().section("save_slots").get("count", 3)),
+			"the autosave slot is the one the save screen labels 'Autosave'")
 
 
 func test_a_ruined_newest_autosave_cannot_eat_the_city() -> void:
-	# The failure this whole rotation exists for: the newest save is complete,
-	# parseable by the header reader, and wrong. One slot could not survive it.
+	# The failure this whole mechanism exists for: the newest save is complete,
+	# parseable by the header reader, and wrong. One GENERATION could not
+	# survive it; the ladder behind it can.
 	_fresh()
 	var service := _fresh_service()
 	var sim := CitySim.boot_from_files(77)
-	service.autosave(sim)                        # slot 0 — the good one
+	service.autosave(sim)                        # generation 1 — the good one
 	var good_hash := sim.state_hash()
 	sim.advance_hours(2.0)
-	service.autosave(sim)                        # slot 7 — about to be ruined
-	var victim := service.slot_path(SaveService.AUTOSAVE_SHADOW_SLOT)
-	var file := FileAccess.open(victim, FileAccess.WRITE)
-	file.store_string("{\"format\":1,\"meta\":{\"slot\":7,\"saved_at_unix\":9999999999},\"ui\":{},\"state\":")
-	file = null                                   # truncated mid-write
+	service.autosave(sim)                        # generation 2 — about to be ruined
+	_ruin_active(service, SaveService.AUTOSAVE_SLOT)
 
 	assert_eq(service.last_good_autosave_slot(), SaveService.AUTOSAVE_SLOT,
-			"the health check reads the whole file, not the cheap header")
+			"the health check verifies the digest, not the cheap header")
 	var restored := CitySim.boot_from_files(77)
 	assert_eq(service.load_latest(restored), SaveService.AUTOSAVE_SLOT,
-			"a launch falls through the damaged newest save to the one behind it")
+			"a launch falls through the damaged newest generation to the one behind it")
 	assert_eq(restored.state_hash(), good_hash, "…and the city is the older city")
 
 
@@ -196,15 +229,18 @@ func test_the_sentinel_points_at_the_last_good_save() -> void:
 	sim.advance_hours(1.0)
 	service.autosave(sim)
 	var sentinel := _sentinel()
-	assert_eq(sentinel.recovery_slot(service), SaveService.AUTOSAVE_SHADOW_SLOT,
-			"both halves load, so the newest is the right offer")
-
-	var file := FileAccess.open(service.slot_path(SaveService.AUTOSAVE_SHADOW_SLOT),
-			FileAccess.WRITE)
-	file.store_string("not json at all")
-	file = null
 	assert_eq(sentinel.recovery_slot(service), SaveService.AUTOSAVE_SLOT,
-			"…and when it does not, the other half is")
+			"the ladder loads, so the autosave slot is the right offer")
+
+	# Nothing in the autosave slot survives: the sentinel falls back to the
+	# newest save of any kind rather than to nothing.
+	_wipe(service.slot_dir(SaveService.AUTOSAVE_SLOT))
+	DirAccess.remove_absolute(service.slot_dir(SaveService.AUTOSAVE_SLOT))
+	assert_eq(sentinel.recovery_slot(service), -1,
+			"…and with no save at all, there is nothing to offer")
+	service.save_slot(sim, 2)
+	assert_eq(sentinel.recovery_slot(service), 2,
+			"…falling back to `latest_slot()` once a manual save exists")
 
 
 func test_a_health_check_is_not_a_failed_load() -> void:
@@ -219,8 +255,8 @@ func test_a_health_check_is_not_a_failed_load() -> void:
 	service.failed.connect(func(_slot: int, reason: String) -> void:
 		reported.append(reason))
 	assert_eq(service.last_good_autosave_slot(), SaveService.AUTOSAVE_SLOT)
-	assert_eq(service.next_autosave_slot(), SaveService.AUTOSAVE_SHADOW_SLOT)
-	assert_eq(str(reported), "[]", "the missing shadow slot is not an error")
+	assert_eq(service.next_autosave_slot(), SaveService.AUTOSAVE_SLOT)
+	assert_eq(str(reported), "[]", "a probe is not an error")
 	assert_eq(service.last_error, "")
 
 

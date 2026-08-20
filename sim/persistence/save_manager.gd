@@ -10,37 +10,61 @@ extends RefCounted
 
 const CURRENT_SCHEMA_VERSION: int = 1
 const MANIFEST_VERSION: int = 1
-const QUARANTINE_CAP: int = 3
 ## Envelope migration ladder (doc 08 §2.8): {from_version: Callable}.
 const LADDER: Dictionary = {}
 
 ## Retention slot age thresholds in real seconds relative to the active save
-## (doc 08 §2.7): B newest other, then C/D/E/F progressively older.
+## (doc 08 §2.7): B newest other, then C/D/E/F progressively older. This is the
+## fallback only — the live values come from `data/persistence.json` through
+## [policy], which is what lets the ladder be retuned without a code change.
 const RETENTION_SLOT_MIN_AGE_S: Array[int] = [0, 1800, 21600, 86400, 604800]
 
 var base_dir: String
+## Doc 08 §8's `save` block. Never null: `SavePolicy.load_from_files()` falls
+## back to documented defaults rather than refusing, because a missing tunable
+## file may not be the reason a city cannot be written.
+var policy: SavePolicy
 var _sections: Array[SaveSection] = []
 var repair_notes: PackedStringArray = []
 
 
-func _init(p_base_dir: String = "user://saves/slot0") -> void:
+func _init(p_base_dir: String = "user://saves/slot0", p_policy: SavePolicy = null) -> void:
 	base_dir = p_base_dir
+	policy = p_policy if p_policy != null else SavePolicy.load_from_files()
 	DirAccess.make_dir_recursive_absolute(base_dir + "/quarantine")
 
 
 func register_section(section: SaveSection) -> void:
 	assert(section.section_key() != &"", "section needs a key")
+	for existing in _sections:
+		if existing.section_key() == section.section_key():
+			_sections.erase(existing)
+			break
 	_sections.append(section)
 	_sections.sort_custom(func(a: SaveSection, b: SaveSection) -> bool:
 		return String(a.section_key()) < String(b.section_key()))
+
+
+func registered_keys() -> Array[StringName]:
+	var out: Array[StringName] = []
+	for section in _sections:
+		out.append(section.section_key())
+	return out
 
 
 # ---------------------------------------------------------------- save path
 
 ## Snapshot every registered section and commit a new generation.
 ## `real_unix` is injected by the shell; `reason` per doc 08 §2.7.
-func request_save(reason: String, sim_time_minutes: int, real_unix: int) -> Dictionary:
-	var manifest := _read_manifest()
+##
+## `entry_extra` is merged into the manifest's `active` record. The manifest is
+## the one file a load screen may read (doc 08 §2.5 — "tiny; its rename is the
+## commit point"), so the shell puts its slot header there: that is what keeps
+## `SaveService.list_slots()` costing a few hundred bytes per slot instead of a
+## decompress-and-parse of a whole city.
+func request_save(reason: String, sim_time_minutes: int, real_unix: int,
+		entry_extra: Dictionary = {}) -> Dictionary:
+	var manifest := read_manifest()
 	var generation: int = int(manifest.get("next_generation", 1))
 	var body := {
 		"schema_version": CURRENT_SCHEMA_VERSION,
@@ -66,6 +90,8 @@ func request_save(reason: String, sim_time_minutes: int, real_unix: int) -> Dict
 		"real_unix": real_unix, "reason": reason,
 		"bytes": envelope_text.length(),
 	}
+	for extra_key: Variant in entry_extra:
+		entry[extra_key] = entry_extra[extra_key]
 	var history: Array = manifest.get("history", [])
 	if manifest.has("active"):
 		history.push_front(manifest["active"])
@@ -88,12 +114,9 @@ func request_save(reason: String, sim_time_minutes: int, real_unix: int) -> Dict
 
 # ---------------------------------------------------------------- load path
 
-## Walk the candidate order with the 7-check gate (doc 08 §2.9).
-## Returns {ok, payload:{body, file, recovered, lost_minutes}} or failure.
-func load_newest() -> Dictionary:
-	repair_notes.clear()
-	var manifest := _read_manifest()
-	var high_water: int = int(manifest.get("high_water_sim_minutes", 0))
+## Doc 08 §2.9's candidate order: `manifest.active` → `manifest.history[…]` →
+## `pinned.pre_catchup` → `pinned.pre_migration` → a directory scan.
+func _candidate_order(manifest: Dictionary) -> Array[String]:
 	var candidates: Array[String] = []
 	if manifest.has("active"):
 		candidates.append(String(manifest["active"]["file"]))
@@ -106,6 +129,47 @@ func load_newest() -> Dictionary:
 	for file_name in _scan_generations():
 		if not candidates.has(file_name):
 			candidates.append(file_name)
+	return candidates
+
+
+## Does this slot hold a generation that would actually load? The health check
+## behind the crash sentinel's question, and it is deliberately SIDE-EFFECT
+## FREE: it does not quarantine, does not deserialize into the sections, and
+## does not touch `repair_notes`. Asking whether a save is good may not damage
+## it, and a damaged checkpoint found by a health check is an expected finding,
+## not a failed load.
+##
+## Returns {ok, file, sim_time_minutes, recovered} — `recovered` true when the
+## answer is something other than `manifest.active`.
+func peek_newest() -> Dictionary:
+	var manifest := read_manifest()
+	var high_water: int = int(manifest.get("high_water_sim_minutes", 0))
+	# `_validate_candidate` notes structural repairs as it goes; a probe must
+	# leave the real load's notes exactly as it found them.
+	var saved_notes := repair_notes.duplicate()
+	var answer := {"ok": false, "file": "", "sim_time_minutes": 0, "recovered": false}
+	for file_name in _candidate_order(manifest):
+		var result := _validate_candidate(file_name, high_water)
+		if bool(result["ok"]):
+			var body: Dictionary = result["body"]
+			answer = {
+				"ok": true, "file": file_name,
+				"sim_time_minutes": int(body.get("sim_time_minutes", 0)),
+				"recovered": manifest.has("active")
+						and String(manifest["active"]["file"]) != file_name,
+			}
+			break
+	repair_notes = saved_notes
+	return answer
+
+
+## Walk the candidate order with the 7-check gate (doc 08 §2.9).
+## Returns {ok, payload:{body, file, recovered, lost_minutes}} or failure.
+func load_newest() -> Dictionary:
+	repair_notes.clear()
+	var manifest := read_manifest()
+	var high_water: int = int(manifest.get("high_water_sim_minutes", 0))
+	var candidates := _candidate_order(manifest)
 
 	var failures: Array = []
 	for file_name in candidates:
@@ -142,7 +206,7 @@ func _validate_candidate(file_name: String, high_water: int) -> Dictionary:
 		return {"ok": false, "reason": "unreadable"}
 	var text := file.get_as_text()
 	file = null
-	var envelope: Variant = JSON.parse_string(text)
+	var envelope: Variant = _parse_quiet(text)
 	if not (envelope is Dictionary) or not envelope.has_all(["schema_version", "body_sha256", "body"]):
 		return {"ok": false, "reason": "bad_envelope"}
 	# Check 3: the hashed bytes are the embedded bytes — re-extract the body
@@ -205,7 +269,9 @@ func _apply_retention(manifest: Dictionary) -> void:
 		return int(a["real_unix"]) > int(b["real_unix"]))
 	var kept: Array = []
 	var used_files: Array[String] = [String(active["file"])]
-	for min_age in RETENTION_SLOT_MIN_AGE_S:
+	var ladder: Array[int] = policy.history_slot_min_age_s if policy != null \
+			else RETENTION_SLOT_MIN_AGE_S
+	for min_age in ladder:
 		for entry in history:
 			var entry_file: String = String(entry["file"])
 			if used_files.has(entry_file):
@@ -243,7 +309,8 @@ func _quarantine(file_name: String) -> void:
 			entry = dir.get_next()
 		dir.list_dir_end()
 	existing.sort()
-	while existing.size() >= QUARANTINE_CAP:
+	var cap: int = policy.quarantine_max_files if policy != null else 3
+	while existing.size() >= cap:
 		DirAccess.remove_absolute(quarantine_dir + "/" + existing.pop_front())
 	DirAccess.rename_absolute(base_dir + "/" + file_name, quarantine_dir + "/bad_" + file_name)
 
@@ -267,12 +334,33 @@ func _scan_generations() -> Array[String]:
 	return out
 
 
-func _read_manifest() -> Dictionary:
+## True when a generation has been committed here (the manifest names an
+## active). Cheaper than [peek_newest] and answers a different question: this
+## one is "is there a save", that one is "is there a save that loads".
+func has_active_generation() -> bool:
+	return read_manifest().has("active")
+
+
+## The committed manifest, or {} when this slot has never been written. Public
+## because it is doc 08 §2.5's cheap header — a load screen reads it instead of
+## a city — and because it is the only readable record of what a slot holds
+## once the generations are compressed.
+func read_manifest() -> Dictionary:
 	var file := FileAccess.open(base_dir + "/manifest.json", FileAccess.READ)
 	if file == null:
 		return {}
-	var parsed: Variant = JSON.parse_string(file.get_as_text())
+	var parsed: Variant = _parse_quiet(file.get_as_text())
 	return parsed if parsed is Dictionary else {}
+
+
+## A damaged save is an expected outcome on this path, not an engine fault, so
+## it must not push an error the way `JSON.parse_string()` does — the load gate
+## exists precisely to meet malformed input calmly.
+static func _parse_quiet(text: String) -> Variant:
+	var json := JSON.new()
+	if json.parse(text) != OK:
+		return null
+	return json.data
 
 
 func _write_manifest_atomic(manifest: Dictionary) -> bool:

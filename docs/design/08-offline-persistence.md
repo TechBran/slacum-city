@@ -114,6 +114,26 @@ This doc adds only two things:
 
 ### 2.5 Save file layout on disk
 
+> ### Shipped 2026-08-19 — the unification
+>
+> Until this date the project had **two save formats and one game**. `SaveManager` implemented everything below — generation files, the manifest commit, digests, retention, quarantine, the §2.9 gate, the §2.8 ladders — and was reachable from nowhere: `game/save_service.gd` wrote its own flat `{"format":1,"meta":{…},"ui":{…},"state":{…}}` file per slot. Doc 91 §8 marked six rows PARTIAL for that one reason. `SaveService`'s five-method API is unchanged; its storage half is now `SaveManager`.
+>
+> **The layout as shipped.** A player-facing slot IS a slot directory, so the ladder applies per slot rather than only to a notional slot 0:
+>
+> ```
+> user://saves/slot_0/manifest.json      # autosave slot
+> user://saves/slot_0/gen_000042.sav
+> user://saves/slot_0/quarantine/…
+> user://saves/slot_3/…                  # a player's manual save, same shape
+> user://saves/slot_3.json               # format 1, read-only, still loads
+> ```
+>
+> **The header moved into `manifest.json`, and that is a strengthening.** `SaveService` put `meta` in its file's first bytes so a load screen could list slots without deserializing a city. Inside a doc-08 envelope it cannot: §2.6's body is `sort_keys = true` by law, which is what makes the digest meaningful, and sorted keys put the city section ahead of `meta`. The manifest is the natural home — this section already calls it "tiny; its rename is the commit point" — so `manifest.active` carries a `meta` field holding the shell's header (`slot`, `saved_at_unix`, `day_index`, `population`, `treasury`, plus `format` / `save_reason` / `sim_time_minutes` / `app_version`). It is a few hundred uncompressed bytes per slot, it is committed by the same rename as the generation, and unlike the old brace-scan it survives a body that is corrupt **and** unparseable. The old scan is kept for one case only: a manifest with no header, where the service decompresses the active generation and brace-matches `meta` out of it rather than hiding the slot.
+>
+> **Envelope `schema_version` is 1, not §8's 7.** Seven was an illustration written when this doc imagined a shipped history to have laddered through. No generation file has ever existed on a device, so there is nothing to migrate and v1 is the honest number. `data/persistence.json.save.current_schema_version` repeats it for documentation and `tests/test_save_manager.gd` asserts the two agree — a tripwire, never a source, because the ladder that has to agree with the number is code.
+>
+> **`debug_plain_mirror` ships `false`.** §2.5 asks debug builds to emit a plain `.json` beside each generation. The mirror is not written yet; the tunable exists and is off. What it would buy — a save you can read in an editor — is already available through the format-1 fixture and `JSON.stringify` in a test, and a second copy of every save on a phone is a cost with no reader. Flagged as owed, not silently dropped.
+
 ```
 user://saves/slot0/
   manifest.json        # tiny; its rename is the commit point
@@ -183,6 +203,27 @@ A crash anywhere before step 6 leaves the previous save active plus one orphan, 
 
 **Retention** — at most **6 unpinned + 2 pinned** (~8 × 120 KB ≈ 1 MB). Slots filled greedily newest-first, one generation per slot: **A** active · **B** newest other · **C** newest ≥ 30 real min older than A · **D** ≥ 6 real h · **E** ≥ 24 real h · **F** ≥ 7 real days. Dense recent protection plus a week-deep escape hatch against a bug that corrupts state slowly.
 
+> ### Shipped 2026-08-19 — the ladder subsumes doc 13's autosave shadow
+>
+> **Ruling: the two-slot autosave rotation is retired, and this ladder replaces it.** Doc 13 §2.11 had `SaveService` alternate its autosave between slot 0 and a shadow at slot 7, because "one slot cannot survive a save that is structurally perfect and semantically wrong, written moments before the process died." That reasoning is exactly right and this section answers it strictly better:
+>
+> | | two-slot shadow | ladder (A–F) |
+> |---|---|---|
+> | fallbacks | 1 | up to 5 |
+> | age spread of the fallback | one autosave interval | 0 / 30 min / 6 h / 24 h / 7 days |
+> | fallback verified before it is offered | no — a full parse only | yes — SHA-256 of the body (§2.9 check 3) |
+> | commit point | file rename | manifest rename, after the generation is durable |
+> | bad candidate | overwritten next rotation | quarantined, never deleted |
+> | cost | slot 7 unusable by the player | none |
+>
+> A shadow is a ladder two deep with no checksum, so it is subsumed on every axis. `AUTOSAVE_SHADOW_SLOT` is deleted, the autosave always lands on slot 0, and slot 7 is a player slot again.
+>
+> **One thing outlives it: the files.** A phone upgrading from a build that alternated has a format-1 save in slot 7, and it is the *newer* half half the time. `LEGACY_AUTOSAVE_SHADOW_SLOT` is kept for exactly that read — never written, consulted only when the ladder is empty — so an upgrading player's first unclean launch does not cost them the autosave interval the rotation existed to save. It stops mattering the moment the first post-upgrade autosave commits generation 1.
+>
+> **The crash-sentinel contract is unchanged and still answered.** `CrashSentinel.recovery_slot()` asks `SaveService.last_good_autosave_slot()` and gets a slot index; it now means "the autosave slot, when anything in its ladder passes the §2.9 gate", and −1 otherwise, at which point the sentinel falls back to `latest_slot()` exactly as before. The probe behind it is **side-effect free by contract**: it does not quarantine, does not deserialize, and emits no `failed` signal, because a damaged checkpoint found by a health check is an expected finding and not an error to put in front of a player. `SaveManager.peek_newest()` is that probe.
+>
+> **Reason strings ride the manifest.** Every entry carries §2.7's `reason`, so `pre_migration` and `pre_catchup` pin from the shell as specified; `SaveService.save_slot(sim, slot, reason)` takes it as an optional third argument (default `manual`), and `autosave()` passes `autosave`. Doc 13's pause step becomes `save_slot(sim, 0, "pause")` when the lifecycle node is rewired — see the doc 13 integration note.
+
 ### 2.8 Versioning & migration
 
 **Two levels, both required** (the sibling docs already assume per-section versions):
@@ -234,6 +275,16 @@ static func _v3_to_v4(b: Dictionary) -> Dictionary:
 **Retired content ids** are remapped after migration via `data/id_remap.json`. An id with no mapping does **not** delete the entity: it is flagged `"orphan": true`, skipped by every tick, drawn as rubble, and listed in a **Save Repair** panel offering a one-tap 100%-of-build-cost refund. Non-destructive by construction.
 
 **Downgrade.** `schema_version > CURRENT` (sideloaded older APK) ⇒ the loader **refuses and does not touch the file**, then offers the newest retained generation at or below CURRENT: *"This city was saved by a newer version. Update the app to continue."*
+
+> ### Shipped 2026-08-19 — format 1 → format 2, the one migration that has real users
+>
+> The ladder above is for envelope versions that have all existed inside this format. There is one migration that crosses formats, and it is the only one with saves on a device behind it: `game/save_service.gd`'s flat `{"format":1,"meta":{…},"ui":{…},"state":{…}}` file, written into `user://saves/slot_N.json` by every build up to this one.
+>
+> **It is read, never rewritten.** `SaveService.load_slot()` picks a reader per slot: a generation ladder if `slot_N/manifest.json` exists, the format-1 file otherwise. The gate a format-1 file gets is the one it can pass — it has no digest and no generation — so: the envelope parses, `format ≤ 2` (a file from a newer build is refused under the downgrade rule above rather than half-read into a city), and `state` is a dictionary. The file is then left **exactly as found**. That is deliberate: an untouched pre-upgrade file is its own `pre_migration` checkpoint (§2.7) at zero cost and zero risk, and rewriting a player's save during a load is a write nobody asked for at the least convenient moment. The next save to that slot writes generation 1 beside it, the ladder wins from then on, and `delete_slot` removes both so "delete this city" cannot leave the pre-upgrade city behind for the next launch to resume.
+>
+> **The fixture is a real file, and it is never regenerated.** `tests/fixtures/legacy_slot_format1.json` is a byte-for-byte capture of a format-1 write produced by the shipped code *before* this change — a seed-4242 city, five hours in, one player-placed house, `ui.onboarding.finished = true`. `tests/test_save_migration.gd` installs it into a slot and asserts the loaded city is identical to what a longhand format-1 reader produces from the same bytes, and stays identical after both advance three hours. The comparison is against a reference reader rather than a recorded hash on purpose: a hard-coded hash fails whenever the sim legitimately changes shape and is then "fixed" by re-recording it, which is how a migration test quietly stops testing.
+>
+> **Section ladders reach the sim body through a hook, not a fork.** The registry in §3.1 has twenty owners; Milestone 1 has one `capture_state()`. `sim/persistence/dict_section.gd` is the `SaveSection` contract backed by a payload its owner holds, and the shell registers three of them — `meta`, `city`, `ui`. `city.section_version` comes from `sim.save_section_version()` when the sim exposes one and is 1 otherwise, and its ladder is `sim.migrate_save_section(data, from)`, both duck-typed so `sim/city_sim.gd` can grow them on its own schedule. As systems split out of `city` they register their own sections and this adapter loses a key, with no change to the manager above it or the shell beside it.
 
 ### 2.9 Load & corruption recovery
 
@@ -369,6 +420,19 @@ Two design constraints this doc imposes for the budget's sake:
 - **Main-thread sliced catch-up — no threading (report C-22).** The `WorkerThreadPool` branch and `async_threshold_hours` are **deleted**. Sim state is single-owner `RefCounted` (constitution §3), and threading it to save a load screen is an unforced determinism and lifecycle risk on a platform that can kill the process mid-task. Catch-up of any length runs on the main thread through doc 01's `advance_coarse_sliced(max_ms) -> bool`, called once per frame with `slice_budget_ms = 12`, behind doc 13's animated veil; `steps_done()` / `steps_total()` drive a determinate progress bar and this doc keeps emitting `catchup_progress` every `progress_emit_every_hours = 8`. Worst case at the 72-hour floor and 55 ms/hour: 3,960 ms of work ⇒ ~330 frames ⇒ ~5.5 s of veil at 60 fps, animated and progress-bared rather than frozen.
 
 Save-side budgets: snapshot ≤ 25 ms · encode+write ≤ 120 ms · file ≤ 250 KB · full load incl. verification ≤ 400 ms.
+
+> ### Measured 2026-08-19 — the save-side budgets, as shipped
+>
+> Desktop (the dev box), single-threaded through `SaveService.save_slot` → `SaveManager.request_save`: snapshot, stringify, SHA-256, zstd, generation rename and manifest commit all on one thread, since §2.6's encode worker is not built yet. The figure to compare against is therefore the **combined** 25 + 120 = 145 ms, not either half.
+>
+> | City | body as plain JSON | generation on disk | save | load (incl. §2.9 gate) | `list_slots()` | `last_good_autosave_slot()` |
+> |---|---|---|---|---|---|---|
+> | starter + 5 h, 34 buildings | 166,774 B | **28,998 B** (17.4 %) | 16.1 ms | 50.5 ms | 0.26 ms | 0.07 ms |
+> | `bench_city`, 1,500 buildings | 1,278,827 B | **130,432 B** (10.2 %) | 126.4 ms | 257.4 ms | 0.57 ms | 0.22 ms |
+>
+> Every budget holds at the benchmark city: 130 KB against the 250 KB file cap, 126 ms against the 145 ms combined write budget, 257 ms against the 400 ms load budget. Re-measure on the Fold 6 before treating the two right-hand columns as headroom.
+>
+> **Compression paid for the ladder outright.** The old format wrote 1.28 MB per slot for `bench_city`; six retained generations of the new one are 780 KB. Deeper history, less disk. The `list_slots()` column is the manifest header (§2.5) doing its job — a load screen showing three slots costs under 2 ms and never decompresses a city.
 
 ### 2.13 Notification policy (spec §22) — sole owner (report C-71)
 
@@ -643,6 +707,18 @@ report C-04 withdrew this doc's `platform/` proposal, see §9):
   IClockSource now_unix() · IFileSink write/rename/list/delete · INotificationSink schedule/cancel/channels
 ```
 
+> ### Shipped 2026-08-19 — what is actually under `sim/persistence/`
+>
+> ```
+> sim/persistence/save_manager.gd    envelope · atomic write · manifest commit · retention ·
+>                                    quarantine · candidate walk · peek_newest() (side-effect-free probe)
+> sim/persistence/save_section.gd    the §3.1 contract, unchanged
+> sim/persistence/dict_section.gd    the contract backed by a payload its owner holds (§2.8's note)
+> sim/persistence/save_policy.gd     `data/persistence.json`.save, parsed once, injected into both writers
+> ```
+>
+> `SaveEncoder`, `SaveMigrator`, `SaveValidator` and `CheckpointPolicy` are **methods on `SaveManager`, not classes**. Four collaborators for one 350-line file whose only caller is the shell would be four indirections nobody reads; they split out when a second caller or a second policy exists. The behaviour each names is present and tested. `IFileSink` is likewise still `FileAccess` directly — the C-04 injection point arrives with doc 13's phase 2, and is the one seam in this list that is genuinely owed rather than deliberately collapsed.
+
 **Commands handled:** `save_now`, `acknowledge_report`, `restore_checkpoint(generation)`, `set_reserve_treasury(v)`, `set_notification_class_enabled(class, bool)`, `set_quiet_hours(start, end, enabled, allow_critical)`, `set_reengagement_enabled(bool)`.
 
 **Events emitted:** `save_started`, `save_written`, `save_failed`, `save_recovered`, `save_repaired`, `migration_applied`, `catchup_progress`, `catchup_capped`, `report_ready`, `report_acknowledged`, `notification_scheduled`, `notification_suppressed`, `policy_blocked`.
@@ -745,11 +821,27 @@ Headless: `godot --headless --path "…" -s res://tests/run_tests.gd`.
 34. `test_catchup_perf_24h` — 24 game-hours < **2,000 ms** (design expectation 0.66–1.32 s per §2.12).
 35. `test_catchup_perf_cap` — `max_coarse_hours` game-hours complete within `max_coarse_hours × measured_coarse_ms` and < **2,500 ms**, *except* when the 72-hour floor is in force, where the budget is deliberately exceeded (§2.12) and the assertion is instead ≤ 4,500 ms.
 36. `test_snapshot_perf` < 25 ms (also proves doc 13's 250 ms pause budget is met by the snapshot alone) · `test_encode_write_perf` < 120 ms and < 250 KB · `test_load_perf` < 400 ms.
-37. `test_bench_city_fixture_valid` — doc 09's generated `tests/fixtures/bench_city.json` loads under the current registry and passes `validate_structural()` with zero fatal repairs, so doc 11's on-device gates cannot silently stop running against a stale fixture (report G-7).
+37. `test_bench_city_fixture_valid` — **amended 2026-08-19; see the ruling below.** Doc 09's generated `tests/fixtures/bench_city.json` is validated as a **BOOT file**: it parses, its `schema_version` tracks `data/starter_city.json`'s (the loader's data-file version, *not* the save envelope's), and it boots a `CitySim` clean at 1,500 buildings. The save-schema half of report G-7 is then covered by putting the booted city **through** the save path — `save_slot` → `load_slot` → identical `state_hash()`, with zero structural repairs — so doc 11's on-device gates cannot silently stop running against a stale fixture, and a save-schema drift is caught on 1,500 buildings rather than on the starter city's 35. Lives in `tests/test_save_migration.gd`; the boot-file legs are also asserted by `tests/test_bench_city.gd` (doc 11 test 26).
+
+> ### Ruling — `bench_city.json` is a boot file, not a save body (flagged Wave 6, settled here)
+>
+> The original wording asked the fixture to "load under the current registry and pass `validate_structural()`". It cannot, and it must not be made to. The file is in `data/starter_city.json`'s shape — `world`, `blocks`, `buildings` with `origin`/`size`/`level`, roads — and it is consumed by `StarterCityLoader`. A save body is §3.1's twenty-four-key section registry with `rng_streams`, `sim_time_minutes` and a per-section `section_version`. They are two different schemas with two different owners and two different version counters; feeding one to the other's loader would assert only that they disagree, and would fail the moment either one moved for reasons of its own. Doc 09 §2.13 describes the fixture as a save file; **that is the error, and this ruling corrects it** — doc 09's §2.13 should read "boot file" wherever it says "save file".
+>
+> The requirement behind G-7 is not a schema check, it is a **tripwire against silence**: doc 11's performance gates are measured against this fixture, and a stale one makes every one of those numbers stop meaning anything without going red. That requirement is met by validating what the file actually is, and then by exercising the save path with the city it produces — which is a stronger test than the original, because a 1,500-building round-trip through `save_slot`/`load_slot` catches save-schema drift that a structural check on a static file never would.
 
 ---
 
 ## 8. Tunables
+
+> ### Shipped 2026-08-19 — `data/persistence.json` exists, `save` block only
+>
+> The file landed with the unification and carries the `save` block below, with three corrections the code forced and one thing deliberately left out.
+>
+> * **`current_schema_version` is 1, not 7** (§2.5's shipped note explains why), and a test asserts it equals `SaveManager.CURRENT_SCHEMA_VERSION`.
+> * **`slot_path` is a template** — `user://saves/slot_%d` — because a player-facing slot is now its own ladder rather than there being one notional `slot0`. `legacy_slot_file` (`user://saves/slot_%d.json`) is new and names the format-1 files still on devices.
+> * **`retention_slot_age_real_seconds` keeps its six entries, and the first is slot A's own age**, which is 0 by definition. `SavePolicy` publishes entries B..F as the history ladder and truncates it to `max_unpinned_generations − 1`, so shortening one tunable can never leave the other lying. `debug_plain_mirror` ships `false`.
+> * **The `offline`, `fairness` and `event_log` blocks are NOT in the file yet.** Their readers are doc 01's `CatchUpPlanner` (which reads `data/time.json`) and code that does not exist (`OfflinePolicy`, `OfflineGuard`, the event rings). Writing tunables that nothing reads is how a data file starts lying, so they arrive with their consumers. `sim/persistence/save_policy.gd` is the only reader of what is there, and both writers take a `SavePolicy` rather than reading the file themselves — which is what lets a test shorten the ladder without touching a disk.
+> * **`notifications.json.runtime` stays where it is.** §3.3 promised to move it here once this file existed. It reads better beside the classes it limits, and moving it is a change to a shipped, tested notification path for no behavioural gain; recorded as a deliberate non-move rather than an oversight.
 
 ```json
 // ===== data/persistence.json =====
@@ -928,5 +1020,18 @@ Every row below is a binding ruling from `98-consistency-report.md` §12 (doc 08
 | **C-68** | §4, §3.2, §5, §7 (23c) | The first post-catch-up snapshot carries **`is_resync: true`** as a contract field, so doc 11 snaps emissive state instead of replaying up to 30 game-days of relight sweeps. `meta.last_catchup.is_resync_emitted` makes it survive a kill between commit and first frame. |
 | **C-71** | §2.13, §2.13.1, §2.13.4, §3.3, §5 | This doc is **sole owner of notification policy** in `data/notifications.json`: four classes, event mapping, budgets, quiet hours, coalescing; **P4 ships disabled** (`mvp_enabled: false`, no channel). Doc 13 owns the platform and deletes its parallel rate limiter; doc 12 owns only in-app banners under `data/ui.json.in_app_alerts`. |
 | **R-15** | §2.2, §7 (15) | `M(H)` regenerated at the new cap: `M(H) = 1.00 × min(H,72) + 0.60 × clamp(H−72, 0, **648**)`; **`M(720) = 72 + 388.8 = 460.8`, `460.8 / 720 = ×0.64`**. Full table for H ∈ {24, 72, 240, 372, 480, 720}; test 15 expectations recomputed. |
+
+### Shipped after report 98 — the persistence unification (2026-08-19)
+
+| Where | What changed |
+|---|---|
+| §2.5 | The two save formats become one. `game/save_service.gd` keeps its five-method API and loses its storage half to `SaveManager`; a player slot is a generation directory (`user://saves/slot_N/`); the slot header moves from the file's first bytes into `manifest.active.meta`; envelope `schema_version` recorded as **1**, not §8's illustrative 7; `debug_plain_mirror` ships `false` and is flagged as owed. |
+| §2.7 | **Ruling: doc 13's two-slot autosave shadow is retired and this ladder subsumes it** — same guarantee, five fallbacks instead of one, each digest-verified, and slot 7 returned to the player. `SaveService.last_good_autosave_slot()` still answers, now via `SaveManager.peek_newest()`, a probe that is side-effect-free by contract. `save_slot(sim, slot, reason)` carries §2.7's reason, so `pre_migration` / `pre_catchup` pin from the shell. |
+| §2.8 | The **format-1 → format-2 reader** lands with a byte-for-byte fixture (`tests/fixtures/legacy_slot_format1.json`) captured from the shipped writer and never regenerated. Format-1 files are read, never rewritten, and stand as their own `pre_migration` checkpoint; they are also the ladder's last candidate. Section ladders reach the sim body through `sim.save_section_version()` / `sim.migrate_save_section()`, duck-typed, via `sim/persistence/dict_section.gd`. |
+| §2.9 | The seven-check gate, quarantine and repair notes are now on the path the app runs. `SaveService` surfaces two new failure reasons — `corrupt` and `downgrade` — plus `last_load_recovered` / `last_load_lost_minutes` / `repair_notes` for the recovery UX this section specifies. |
+| §2.12 | Save-side budgets **measured** on both cities; all four hold at the benchmark city. Compression cut a slot from 1.28 MB to 130 KB, so six retained generations cost less disk than one file of the old format. |
+| §4 | `sim/persistence/` as shipped: `save_manager.gd`, `save_section.gd`, `dict_section.gd`, `save_policy.gd`. `SaveEncoder` / `SaveMigrator` / `SaveValidator` / `CheckpointPolicy` are methods, not classes, deliberately. |
+| §7 (37) | **Ruling: `bench_city.json` is a BOOT file, not a save body** (Wave 6's flag, settled). The test validates it as one and then round-trips the city it produces through the save path — a stronger reading of report G-7 than the original. Doc 09 §2.13 should say "boot file" wherever it says "save file". |
+| §8 | `data/persistence.json` exists, `save` block only. `offline` / `fairness` / `event_log` arrive with their consumers rather than sitting unread. `notifications.json.runtime` deliberately stays put. |
 
 **Also applied, from rulings that name doc 08 outside the §12 worklist row:** **C-17** (`difficulty_offline_mult` moved out of `data/persistence.json` into doc 03's `data/difficulty.json`, authored here), **C-55** (this doc's offline Director invariants recorded as the outer clamp doc 07's F8 is tightened to), **C-72** (push budgets stated as distinct from doc 12's in-app rates), **C-25** (recorded as settled; this doc already used `section_version` and needed no rename), and **G-7** (new test 37: this doc validates doc 09's `bench_city.json` fixture against the current registry in CI).

@@ -26,10 +26,13 @@ extends RefCounted
 ## catch the GDScript half rather than to replace them.
 ##
 ## **What an unclean exit changes.** One thing, and only one: the shell is told
-## which save to offer. `SaveService` alternates its autosave between two slots
+## which save to offer. The autosave slot is a doc 08 §2.7 generation ladder
 ## precisely so a session that died mid-write cannot have eaten the only copy —
-## the older slot is always a complete, previously-verified city. [recovery_slot]
-## is that answer.
+## the generation behind the active one is always a complete, digest-verified
+## city, and there are up to five of them spread back a week. [recovery_slot]
+## is that answer. (Before the doc 08 unification the same guarantee came from
+## alternating between two slots; the ladder subsumed it, one deep to five, and
+## added the checksum that proves the fallback was ever whole.)
 
 const RUNTIME_DIR := "user://runtime"
 const LOGS_DIR := "user://logs"
@@ -99,9 +102,10 @@ func breadcrumbs() -> Array[Dictionary]:
 	return _breadcrumbs.duplicate()
 
 
-## Which save the shell should offer after an unclean exit: the newest autosave
-## that actually **loads**, which after a torn write is the other half of the
-## rotation. -1 when there is nothing to recover.
+## Which save the shell should offer after an unclean exit: the autosave slot
+## when anything in its generation ladder actually **loads**, and the newest
+## save of any kind when nothing there does. -1 when there is nothing to
+## recover.
 ##
 ## Duck-typed on purpose — this class knows the question, `SaveService` owns the
 ## files, and neither has to import the other.
