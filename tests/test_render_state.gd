@@ -753,8 +753,7 @@ func test_28_consumed_event_names_exist_on_the_emitter() -> void:
 	assert_true(m.queued_plan_count() > 0, "the live name plays the blackout")
 
 
-# ====================================================================
-
+# ===========================================================================
 # The wear feed (doc 12 §2.9 item 6's world-side "which one needs repair?")
 # ===========================================================================
 
@@ -796,7 +795,6 @@ func test_the_condition_feed_moves_soot_both_ways() -> void:
 	# shell's roster and the renderer's differ for a game-hour after a demolition.
 	m.ingest_conditions({999: 0.5})
 	assert_eq(m.building(999), null)
-=======
 # ---------------------------------------------- 28 — the streetlight lifecycle
 
 ## §2.10.1's open item 1. The model could ADD a streetlight and nothing else, so
