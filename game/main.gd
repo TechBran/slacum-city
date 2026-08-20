@@ -474,6 +474,16 @@ func _on_sim_batch(batch: Array) -> void:
 				if not view.is_empty():
 					translated.append({"type": &"building_placed", "view": view})
 					_add_construction_site(String(event.get("sim_id", "")))
+			&"water_component_placed":
+				# The pump/tank/treatment SHELL is a real doc-02 building
+				# (`cmd_place_water_component` step 1), but it announces itself
+				# on doc 05's own event — without this arm it never reached the
+				# renderer until the next relaunch re-read the roster, and the
+				# player watched their money buy a blank tile.
+				var water_view := _building_view(String(event.get("sim_id", "")))
+				if not water_view.is_empty():
+					translated.append({"type": &"building_placed", "view": water_view})
+					_add_construction_site(String(event.get("sim_id", "")))
 			&"upgrade_started_sim":
 				_add_construction_site(String(event.get("sim_id", "")))
 			&"building_construction_stage":
@@ -531,6 +541,19 @@ func _render_id_from_int(value: Variant) -> int:
 ## render add end-to-end.
 func _place_demo(archetype: String) -> void:
 	var sim := sim_host.sim
+	# A water kind routes through doc 05's verb, sited by its own preview —
+	# the water quote also needs a main within tap radius, which `would_serve`
+	# knows nothing about.
+	if not sim.water.data.placeable_rules(archetype).is_empty():
+		for z in range(32, 80):
+			for x in range(32, 80):
+				var spot := Vector2i(x, z)
+				if bool(sim.cmd_place_water_component(archetype, spot, 1, true).get("ok", false)):
+					print("[place-demo] ", archetype, " at ", spot, " -> ",
+							sim.cmd_place_water_component(archetype, spot))
+					return
+		print("[place-demo] no plumbable vacant lot found")
+		return
 	var foot: Array = sim.catalog.stats(archetype, 1).get("footprint", [1, 1])
 	var size := Vector2i(int(foot[0]), int(foot[1]))
 	for z in range(32, 80):

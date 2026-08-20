@@ -95,6 +95,7 @@ const OBSERVED_TYPES := [
 	"weather_changed",
 	"incident_created", "incident_resolved", "incident_closed",
 	"building_placed_sim", "building_construction_stage", "upgrade_started_sim",
+	"water_component_placed",
 	"building_completed", "building_destroyed", "building_demolished",
 	# The moving-siren feed. `vehicle_state` still takes a fast path before
 	# anything else runs (it can arrive in bulk); the other three are how a
@@ -662,7 +663,8 @@ func _remember(event: Dictionary, type_name: String, world_pos: Variant) -> void
 				_incident_pos[str(event["incident_id"])] = world_pos
 		"incident_resolved", "incident_closed":
 			_incident_pos.erase(str(event.get("incident_id", "")))
-		"building_placed_sim", "building_construction_stage", "upgrade_started_sim":
+		"building_placed_sim", "building_construction_stage", "upgrade_started_sim", \
+				"water_component_placed":
 			var key := _site_key(event)
 			if key != "":
 				_sites[key] = {
