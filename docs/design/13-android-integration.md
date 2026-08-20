@@ -741,6 +741,18 @@ Adds: release AAB, upload keystore + Play App Signing, store listing assets, Dat
 | D-14 | 16 KB alignment | `llvm-readelf -l` on every shipped `.so` → `Align 0x4000` |
 | D-15 | Long absence | Set device clock +3 days, relaunch → elapsed clamps to 12 real hours (720 coarse steps), catch-up sliced, no ANR (`dumpsys activity anr` clean), report renders and states the discarded surplus |
 | D-16 | Cold start | `am start -W` → `TotalTime` ≤ 4 000 ms on Tier B |
+| **D-17** | **Save and load, timed** | Three cold starts, five runs each, median `TotalTime`: **A** `--esa command_line_params "--,--title"` (no city load), **B** `"--,--resume"`, **C** `"--,--resume,--save-now"`. **`B − A` is the load, `C − B` is the save** — the difference cancels process start, Vulkan init and shader warm-up, which is what makes it work with no instrumentation in the build. Provisional (workstation, `tools/profile_save.gd`, the shipped `SaveService` path): founding city **14.4 ms save / 49.2 ms load**, 1,500-building city **138 ms / 456 ms**. Expect 2–3× on device. On a telemetry build, read `PERFIO` off logcat instead |
+| **D-18** | **Frame time and jank at the three poses, day and night** | Six runs: `--zoom=` 0.0 / 0.5 / 1.0 × hour 13 / hour 21, 60 s of `dumpsys gfxinfo … framestats` each. **Hour 13 is the shadow worst case and is the one that matters** — doc 11's whole measured record was taken at 21:00 with the sun down and an empty shadow pass, and daylight costs the benchmark city +142 draw calls at Z0. Gate: doc 11 §7.4's table, read against the DAY rows |
+| **D-19** | **Harness pre-flight** | Before D-17/D-18: confirm the launcher activity, confirm `--esa command_line_params "--,--zoom=1.0"` reaches the camera (a visible signal, not a log line), and confirm "Profile HWUI rendering" is OFF. `tools/device_runbook.md` §1 is the procedure and records why the incumbent `tools/bench_device.sh` invocation cannot work |
+
+**The runbook.** `tools/device_runbook.md` is the whole session as commands — the
+retry loop that gets a sleeping Fold back on the wire, the pre-flight, the six
+Wave-8 questions with their exact poses and expected columns, and a workstation
+provisional in every cell so a device number that disagrees is a finding rather
+than a surprise. It was written on 2026-08-20 during a 45-minute window in which
+the device never appeared (135 polls, zero endpoints), and it drives the
+**installed** build: the user's saves are in that app's private storage and there
+is no export path, so nothing in it installs, reinstalls or uninstalls anything.
 
 ### Device matrix
 
