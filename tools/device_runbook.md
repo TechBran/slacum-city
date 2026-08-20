@@ -144,6 +144,23 @@ integration snippet closes it for all three.
 (this branch) is the wiring; it needs `game/main.gd`'s integration snippet and a
 new build before any `PERF` row can be collected.
 
+> **Amended 2026-08-20, post-integration:** the wiring landed and then was
+> GATED behind the `--perf` user arg — pass it in `--esa command_line_params`
+> alongside the pose args, or no `PERF`/`PERFIO` row is emitted. Always-on it
+> cost every player session a per-frame `viewport_set_measure_render_time`
+> GPU timestamp query, which is the class of sync point that irritates mobile
+> drivers; it was withdrawn from plain launches while chasing intermittent
+> presentation-corruption bands on the Fold (horizontal glitch stripes crossing
+> world AND UI — swapchain-level, seen under FIFO vsync, so not a vsync miss).
+> While that investigation is open, §2's platform instruments remain the
+> corruption-safe capture path. Device driver facts recorded from the first
+> window: Android 16, Adreno 750 (SM8650 "pineapple"), Samsung stable
+> GameDriver AND a Qualcomm pre-release driver both installed — WHICH one the
+> game resolves to is unverified (the window closed mid-query); finish with
+> `settings get global updatable_driver_prerelease_opt_in_apps` and, if the
+> game is on the pre-release driver, move it to stable in Developer options →
+> Game driver preferences before blaming the engine.
+
 **Therefore §2 is written entirely against PLATFORM instruments** — `gfxinfo`,
 `SurfaceFlinger`, `meminfo`, `thermalservice`, `am start -W` — which work against
 the app as installed. §3 lists what the telemetry build adds.

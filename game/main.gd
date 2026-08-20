@@ -330,18 +330,21 @@ func _build_city_view(render_data: Dictionary) -> void:
 	add_child(vehicle_view)
 	vehicle_view.setup(render_data)
 	perf_governor = PerfGovernor.new(render_data, render_model.preset)
-	# doc 11 §2.13's Fold pass: the PERF line §7.4 documents has never been
-	# emitted, because nothing called PerfGovernor.perf_line(). This is that call.
-	perf_telemetry = PerfTelemetry.new(render_data)
-	perf_telemetry.set_viewport(get_viewport().get_viewport_rid())
-	perf_telemetry.set_census_source(func() -> Dictionary:
-			return render_model.tier_census())
-	perf_telemetry.set_instance_source(func() -> int:
-			return render_model.building_count())
-	# doc 13 §7 D-17: one PERFIO line per save/load, ^PERF-anchored so one
-	# logcat grep collects both halves.
-	if save_service != null:
-		save_service.log_io = true
+	# doc 11 §2.13's Fold pass: the PERF/PERFIO capture rig — measurement
+	# machinery, NOT a player feature, so it arms only under `--perf` (the
+	# device runbook passes it). Always-on it cost every session a per-frame
+	# GPU timestamp query (`viewport_set_measure_render_time`), which is
+	# exactly the class of sync point that irritates mobile drivers — filed
+	# while chasing intermittent presentation-corruption bands on the Fold.
+	if OS.get_cmdline_user_args().has("--perf"):
+		perf_telemetry = PerfTelemetry.new(render_data)
+		perf_telemetry.set_viewport(get_viewport().get_viewport_rid())
+		perf_telemetry.set_census_source(func() -> Dictionary:
+				return render_model.tier_census())
+		perf_telemetry.set_instance_source(func() -> int:
+				return render_model.building_count())
+		if save_service != null:
+			save_service.log_io = true
 	# Boot-time presets: a phone that auto-detected into Performance used to come
 	# up with Balanced counts on every per-layer view until the player touched
 	# the settings row. Seed them all from the resolved preset once, here.
