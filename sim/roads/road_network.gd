@@ -62,6 +62,9 @@ var _events: Array = []
 ## Cached so doc 12's unit picker can call estimate_eta_practical ~40 times in
 ## one frame without an O(edges) scan per call.
 var _mean_congestion: float = 0.0
+## `_district_roster()`'s answer and the `graph_version` it belongs to.
+var _district_roster_cache: PackedStringArray = PackedStringArray()
+var _district_roster_version: int = -1
 var _default_profile: RouteProfile = null
 ## Doc 06's `traffic_accident` candidate roster (§2.6(e)), rebuilt only when the
 ## GRAPH changes and re-read only when a number ON it changes. See
@@ -194,7 +197,11 @@ func full_pass(ctx: TimeContext) -> void:
 		congestion.recompute(graph.edge_ids_ref(),
 				_stamp_inputs(env, hour, _dt_minutes(ctx), false),
 				raw_sink if share_raw else null, true)
-		_mean_congestion = congestion.mean_congestion()
+		# The pass has just walked every edge in ascending id order and
+		# written every value; `mean_congestion()` would walk them again to
+		# add the same floats in the same order. This is that number, taken
+		# from the sweep that already had it.
+		_mean_congestion = congestion.last_pass_mean()
 	# One c_day sample per GAME-HOUR in both modes — sampling c_raw (not the
 	# smoothed c) at the same 24 points is what makes daily condition decay
 	# bit-identical online and offline (doc 06's mode-invariance guarantee).
@@ -299,6 +306,28 @@ func _weather_state() -> String:
 	return weather_state
 
 
+## The distinct district ids the graph's edges carry, FIRST-SEEN order, memoised
+## on `graph_version` and dropped by `_refresh_all_edge_state`.
+##
+## Building this used to be an O(edges) sweep with a `String()` per edge inside
+## `_congestion_env`, taken once per game-minute for an answer that changes only
+## when the graph or the district map does. The WEIGHTS are still fetched fresh
+## every pass — a handful of `_profile_weights` calls, because doc 09's land use
+## moves under the roster without moving the roster.
+func _district_roster() -> PackedStringArray:
+	if _district_roster_version == graph.graph_version:
+		return _district_roster_cache
+	_district_roster_version = graph.graph_version
+	_district_roster_cache = PackedStringArray()
+	var seen: Dictionary = {}
+	for edge_id in graph.edge_ids_ref():
+		var district := String(graph.edge(edge_id).get("district_id", ""))
+		if not seen.has(district):
+			seen[district] = true
+			_district_roster_cache.append(district)
+	return _district_roster_cache
+
+
 func _profile_weights(district_id: String) -> Dictionary:
 	if profile_weights_of.is_valid():
 		var weights: Dictionary = profile_weights_of.call(district_id)
@@ -315,10 +344,8 @@ func _profile_weights(district_id: String) -> Dictionary:
 func _congestion_env() -> Dictionary:
 	var wx := tun.weather_row(weather_state)
 	var weights: Dictionary = {}
-	for edge_id in graph.edge_ids_ref():
-		var district := String(graph.edge(edge_id).get("district_id", ""))
-		if not weights.has(district):
-			weights[district] = _profile_weights(district)
+	for district in _district_roster():
+		weights[district] = _profile_weights(district)
 	var causes: Dictionary = {}
 	for edge_id in _sorted_keys(_edge_closure):
 		var closure: Dictionary = _closures.get(int(_edge_closure[edge_id]), {})
@@ -453,6 +480,12 @@ func _refresh_all_edge_state() -> void:
 	for edge_id in graph.edge_ids_sorted():
 		_refresh_edge_state(edge_id)
 	_assign_districts()
+	# `_assign_districts` is the only writer of `district_id`, and an edge
+	# record is built with its `road_class` — so this is the ONE place the
+	# congestion pass's (class, district) table can go stale, and the one place
+	# the district roster below can.
+	congestion.invalidate_profiles()
+	_district_roster_version = -1
 
 
 func _refresh_edge_state(edge_id: int) -> void:

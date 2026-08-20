@@ -732,7 +732,7 @@ Two sim-side consequences ride with it, both pure optimisations in `sim/roads/ro
 ### RR-32 — One-buffer MultiMesh uploads are a 2× REGRESSION in GDScript, and the layer's frame was never in the uploads (render follow-ups, 2026-08-20)
 The construction branch filed "replace the ~200 `set_instance_*` triples per frame with one `multimesh_set_buffer` per layer" as **the named lever for Fold headroom**. It was measured on the real renderer before it was implemented (`tools/profile_mm_upload.gd`, 600 measured frames a side): per 200 instances a frame the three per-instance setters cost **0.031 ms** and packing the same rows into a `PackedFloat32Array` costs **0.061 ms**, with the `mm.buffer =` write itself **0.003 ms**; at 2,000 instances it is **0.307 ms against 0.662**, and whole-frame wall time agrees (0.518 vs 0.863 ms). **Ruling: the premise is refuted and the setters stay.** `set_instance_transform` is one binding call around a C++ memcpy of twelve floats; packing the same row is twelve scripted array writes plus the basis reads to feed them, and the server-side write is nearly free either way — the cost was never the RenderingServer, it was GDScript.
 
-The instrumented split says the same thing louder: of `ConstructionVehicleView`'s 0.53 ms layer CPU at `--sites=20`, **0.32 ms is pose computation and 0.09 ms is the upload**. The pass therefore took the reductions that were actually there — per-instance work repeated for values that cannot change — and measured them: `_upload` **0.088 → 0.049 ms** on the construction layer, `VehicleView._upload` **0.194 → 0.158 ms** at the Balanced cap, layer CPU **0.506 / 0.512 / 0.484 → 0.453 / 0.447 / 0.456 ms** at Z0 / Z1 / Z2, draw calls unmoved. **The one place the packed buffer IS right is `RoadSurfaceView`** — a per-EDIT path, where the array kept between passes is what makes RR-31's byte-identity contract checkable on a `--headless` run at all (the DUMMY driver stores no instance data). The general lesson for this codebase: **a per-frame path in GDScript should prefer the engine's own per-element setters; reach for a packed buffer when the BYTES are the deliverable, not when the frame is.**
+The instrumented split says the same thing louder: of `ConstructionVehicleView`'s 0.53 ms layer CPU at `--sites=20`, **0.32 ms is pose computation and 0.09 ms is the upload**. The pass therefore took the reductions that were actually there — per-instance work repeated for values that cannot change — and measured them: `_upload` **0.088 → 0.049 ms** on the construction layer, `VehicleView._upload` **0.194 → 0.158 ms** at the Balanced cap, layer CPU **0.506 / 0.512 / 0.484 → 0.453 / 0.447 / 0.456 ms** at Z0 / Z1 / Z2, draw calls unmoved. **The one place the packed buffer IS right is `RoadSurfaceView`** — a per-EDIT path, where the array kept between passes is what makes RR-31's byte-identity contract checkable on a `--headless` run at all (the DUMMY driver stores no instance data). The general lesson for this codebase: **a per-frame path in GDScript should prefer the engine's own per-element setters; reach for a packed buffer when the BYTES are the deliverable, not when the frame is.** *(The 0.32 ms pose half named as the next lever here was taken in Wave 10 — see RR-38(c): 0.354 → 0.213 ms for the whole layer at 20 sites.)*
 
 ---
 
@@ -754,3 +754,166 @@ Two instrument faults, found before any Wave-8 question could be asked. **(a) Th
 
 ### RR-37 — Save and load are synchronous, and nobody had measured them (doc 08 §2.7, doc 11 §2.13, doc 13 §2.9)
 `tools/profile_save.gd` is new and drives the **shipped** path — `SaveService.save_slot` / `load_slot`, the calls the lifecycle makes — rather than a harness path. Headless workstation, best of 7 / best of 5: the founding city (34 buildings) saves in **13.9–14.8 ms** and loads in **48.5–50.0 ms**; the 1,500-building benchmark saves in **120–154 ms** and loads in **429–483 ms**. **A load of the founding city is three frames at 60 Hz on a workstation and a save is most of one; on the benchmark city a load is half a second, synchronously, on the main thread.** Two consequences are published rather than fixed, because neither belongs to a render branch: doc 08's autosave lands a **visible hitch** as soon as a city is a few hundred buildings — the cadence is not the problem, the synchronous write is — and **doc 13 §2.9's ANR arithmetic budgets the catch-up without budgeting the LOAD in front of it**, which on the benchmark city is 0.46 s before a single coarse step runs. Doc 13 §7 gains **D-17**, which gets the same two numbers off an uninstrumented device as a difference of `am start -W` cold starts (`--title` / `--resume` / `--resume --save-now`), so the measurement does not wait on a new build. Expect the Fold at 2–3× the workstation on both columns; that factor is the multiplier every other provisional in the runbook leans on, and confirming it is the first thing the next session should do.
+
+---
+
+## 21. WAVE 10 — the performance ladder (binding)
+
+*Four levers, each already named and priced by an earlier session, taken and
+re-measured. Every arm is interleaved WITHIN its round on one machine, because a
+shared workstation's absolute millisecond is not a result. Two of the four
+returned a finding that contradicts the brief that asked for them, and both are
+recorded as the ruling rather than buried in the win.*
+
+### RR-38 — The zebra loop gets a junction early-out, the pose layer gets an exact cache, and BOTH proved that an algebraic identity is not a codegen identity (doc 11 §2.1.2, §2.16, §2.13)
+
+**(a) The street.** RR-33 priced `road_surface.gdshader`'s four-leg crossing loop
+at **0.107–0.109 ms at Z0, 2.4× every wear term put together**, painting only on
+junction tiles, and named the fix: hoist the eight `fwidth()` calls, early-out on
+the crosswalk mask. **Ruling: taken. `detail >= 1 && cw_mask > 0.5`.** `cw_mask`
+decodes out of `v_pack`, which is `flat` — constant across a primitive, and a
+derivative quad never spans two primitives — so the branch is **quad-uniform**,
+which is the scope the derivative rules are written at, and `fwidth()` inside it
+is legal for the same reason it is legal inside a `detail` branch. The eight
+calls are four distinct values: legs 0/2 and 1/3 differ only in the sign of their
+perpendicular coordinate and `fwidth(-x) == fwidth(x)` bit-for-bit. Measured,
+founding city, Grand/Slacum junction, 1920×1080 Balanced, 90 + 300 frames, three
+interleaved rounds: **the zebra term (`rung 1 − rung 0`) falls 0.1156 → 0.0355 ms
+at Z0/21 (−69 %) and 0.1096 → 0.0427 at Z0/13 (−61 %)**, against a rung-0
+control — the same program in both arms — that agrees to +0.0008 and +0.0076.
+The brief asked for a halving.
+
+**(b) The scar, in a second place.** RR-33's first attempt failed pixel identity
+by regrouping `1 + patch + seed` into `(1 + seed)(1 + patch)`. This one failed
+the same way. Legs 0 and 2 provably share their `dashes()` call and their
+carriageway clip, and `max(a,b)·k ≡ max(a·k, b·k)` for `k ≥ 0` because
+correctly-rounded multiplication is monotone — algebraically exact, and it moved
+**1 pixel of 2,073,600 at hour 21 and 4 at hour 13, at rungs 1 and 2 and never at
+rung 0**, which places the difference inside the zebra block beyond argument.
+**Ruling: the fold is rejected and the shader records why.** The shipped form
+hoists the derivatives and adds the branch and changes no expression, and is
+**byte-identical at Z0 at every rung and both hours** — Z0 being the only pose
+where a same-build control run is itself byte-identical, so the only pose with no
+noise floor. **General: in this file the contract is the PICTURE, not the
+algebra, and the only safe transformation is one that leaves every surviving
+expression as the same operations on the same floats in the same order.**
+
+**(c) The site poses.** RR-32 split the construction layer's 0.53 ms at 20 sites
+into 0.32 ms of pose computation and 0.09 of upload. **Ruling requested and
+GRANTED: `ConstructionActivity` may cache poses, keyed off discrete facts,
+provided the cached stream is BIT-IDENTICAL to the uncached one.** It is exact by
+construction rather than by tolerance: the `Pose` objects are pooled and never
+reallocated, so a site whose slice of a pool has not moved and none of whose
+facts have changed is already carrying the floats this frame would write, and
+skipping is declining to write the same bits twice. Three keys, each with exactly
+one writer — `layout_serial` (bumped by `_lay_out_fittings` and
+`_lay_out_barriers`, which every re-route and every stage change passes through),
+`stage`, `delivered` — plus one rule that is easy to miss and is the only way a
+slice-index cache can be wrong: **a site that did not emit on the immediately
+preceding pass re-emits unconditionally**, because `radius` or `limit` may have
+handed its slots to somebody else while it sat out. Measured with
+`tools/profile_construction.gd` (headless, real network, both arms in ONE process
+alternating inside each round): **0.2179 → 0.0964 ms at 20 sites (−55.7 %) and
+0.3046 → 0.1357 at `max_sites` 28 (−55.4 %)**, against a 0.10 ms target, with
+HEAD's own two columns agreeing to −0.0 %/−0.7 % as the noise floor. Confirmed
+end to end in the shipped harness, where the figure also carries `_service_routes`
+and the upload: `tools/profile_frame.gd --sites=20` reports **0.354 → 0.213 ms
+(−40 %)** at Z1/hour 13 over three interleaved rounds, arms nowhere near
+overlapping. The contract
+is a property test over a scripted 700-frame timeline with irregular steps, stage
+changes and a walking focus gate, comparing every field of every pose.
+
+### RR-39 — A dirty-set congestion pass CANNOT skip an edge, and the census is the proof (doc 10 §2.10, §9.3 C-3, doc 91 D-15, doc 11 §2.13)
+
+Doc 11 §2.13 named "a dirty-set congestion pass" as one of two honest next steps
+for the fine tick. **Ruling: the skip-edges form is REFUSED, and the reason is a
+measurement rather than an argument — `3,092 of 3,092` edges move on an ordinary
+pass on the benchmark city.** `hour` reaches every edge through `D_tod(district,
+hour)` and the smoother `c ← c + (c_raw − c)·α` never lands on its target, so the
+skippable set is empty and always will be. An implementation that skipped an edge
+whose closures and condition had not changed would not be an optimisation; it
+would be a different simulation, and the state hash would say so. The census is
+`CongestionModel.last_moved` and `tools/profile_congestion.gd` prints it, so the
+refusal stays checkable rather than becoming folklore.
+
+**What IS a dirty set here, and it is taken.** Each edge's road CLASS and
+DISTRICT hold still between passes, and those two are the whole of `c_raw`'s
+shared factor `K_base(class) · D_tod(district, hour)`. The (class, district)
+pairs are resolved once per graph and priced once per pass; the per-edge loop
+reads an index. The key is exact: `district_id` is written only by
+`RoadNetwork._assign_districts` and `road_class` only where an edge record is
+built, and both are followed by `_refresh_all_edge_state`, which invalidates the
+table; `graph_version` is carried as well. Association is preserved to the term —
+`K · demand · dens · evt` binds left to right, so `kd = K · demand` then
+`kd · dens · evt` is the same float, which is RR-38(b) applied to arithmetic
+instead of to a shader. Three whole-graph sweeps go with it, all exact:
+`mean_congestion()` folded into the pass that has just written every value it
+would sum (same ids, same ascending order, same additions — and the DIRTY-set
+callers still take the second sweep, because their id list is not the graph); the
+district roster memoised on `graph_version` (the WEIGHTS are still fetched fresh
+every pass, because doc 09's land use moves under the roster without moving it);
+and `dark_signal_counts_by_edge()` early-outing on a count `refresh_signal_power`
+maintains for nothing — **its own doc comment claimed O(dark nodes) and it was
+O(all nodes)**, 0.28 ms a game-minute for an answer that is `{}` whenever every
+signal is lit.
+
+Measured: **`RoadNetwork.full_pass` 7.7568 → 3.5902 ms per game-minute (−53.7 %)**
+on the benchmark city; `roads_congestion` **5.205 → 4.127 ms/tick (−20.7 %)** and
+the fine tick **17.20 → 16.06 (−6.7 %)**; on the starter city `roads_congestion`
+**0.873 → 0.668 (−23.5 %)**, fine tick **1.801 → 1.592 (−11.6 %)** and the coarse
+step **9.39 → 8.18 (−12.9 %)**. Three interleaved rounds against HEAD, no arm
+overlapping. **Hash-neutral on both cities, coarse and fine.** D-15 narrows
+again: `roads_congestion` is no longer the largest term on the bench city's fine
+tick.
+
+### RR-40 — The write half leaves the main thread; the LOAD cannot, and the save's expensive half was never the write (doc 08 §2.7, §2.14, doc 13 §2.2)
+
+RR-37 measured save and load as synchronous and named the synchronous write as
+the fault. **Ruling: `SaveManager` splits into `capture_save` (main thread — it
+reads LIVE sim state and is the whole reason a save is deterministic) and
+`commit_save` (bytes only), and `SaveService.async_writes` hands the second to
+`WorkerThreadPool`.** The API keeps its shape: `save_slot` still returns the meta
+dictionary at once, because the header is built from the capture and not from the
+file, and `saved` still fires exactly once per successful write — later, and on
+the main thread. Every reader of a slot flushes the queue on the way in, so
+nothing in the codebase can observe a half-written ladder;
+`NOTIFICATION_PREDELETE` / `EXIT_TREE` flush too, so a process that ends with a
+write queued still lands it. **One write in flight per service**, because
+`commit_save` reads the generation number out of the manifest and two commits
+would race for it; a second request settles the first.
+
+**`SYNC_REASONS` is normative: `pause`, `quit`, `pre_migration`, `pre_catchup`
+commit before the call returns.** Doc 13 §2.2 gives the process no promise that
+it survives the pause callback, and a dispatched write is not a committed one.
+`AndroidLifecycle` already tags its lifecycle save `pause`, so that path is
+synchronous whether or not the shell ever sets `async_writes`; `game/main.gd`'s
+two quit paths need the reason `"quit"` and that is an integration snippet, not a
+change made here.
+
+**Two findings that contradict the brief.** `tools/profile_save.gd` now reports
+both halves of both operations, and:
+
+1. **The save's expensive half was never the write.** Of the benchmark city's
+   148.7 ms save, the write is **52.4 ms** and the capture is **96.3** —
+   `canonical_capture()` walking the roster and floating every number into
+   `"~f~%08x%08x"` costs nearly twice what stringifying, digesting, compressing
+   and writing the result does. Threading the write takes the caller's cost
+   **148.72 → 97.54 ms** on the benchmark city and **16.54 → 11.99** on the
+   founding one: a third off, not the seven-eighths the framing implied. Worth
+   taking; the next lever on this path is the capture.
+2. **Streaming the load is costed and REFUSED.** Its split is **35.2 ms of
+   reading** (decompress, parse, SHA-256, the seven-check gate, section
+   deserialize) against **442.6 ms of `restore_state`**, which rebuilds the live
+   city and can no more leave the main thread than the capture can. A threaded
+   reader would move **7 % of a 484 ms load** in exchange for a background
+   thread, a progress model and a re-entrancy contract on the load gate. Doc 08
+   §2.14 carries the design and the arithmetic so the next person to want it can
+   see it was priced. **Re-open only if `restore_state` itself is chunked** —
+   that is the load's real lever, and it is doc 08's call, not a render branch's.
+
+The recovery contract holds through all of it, and it is tested rather than
+asserted: a kill BEFORE the generation rename leaves an orphan `.tmp` and the
+previous city still active and still loading; a torn ACTIVE generation is refused
+by the digest gate, MOVED to quarantine so the next boot does not pay for it
+again, and the generation behind it comes back with `last_load_lost_minutes` set
+to the difference between the two captures.

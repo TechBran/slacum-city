@@ -603,6 +603,105 @@ Master switch, one switch per class, quiet-hours start/end, critical-bypass swit
 
 ---
 
+
+### 2.14 The write is threaded; the LOAD is costed and refused (report 98 RR-40, 2026-08-20)
+
+§2.12's budget is about the *offline catch-up*. This section is about the two
+operations either side of it, which nobody had measured until RR-37 and which are
+both on the main thread.
+
+#### 2.14.1 The split, and where the cost actually is
+
+`SaveManager` divides into two halves with different obligations:
+
+* **`capture_save`** — walks the registered sections and calls `serialize()` on
+  each, which for the city section is `CitySim.canonical_capture()`. This is a
+  read of LIVE simulation state and it is the whole reason a save is
+  deterministic. Run it beside a tick and the capture is of a city that never
+  existed. **It must not leave the main thread, ever.**
+* **`commit_save`** — `JSON.stringify`, SHA-256, the envelope concatenation, the
+  atomic zstd write, the manifest commit, retention and sweep. It touches no
+  section, no sim and no shared mutable state but the slot directory. **It may.**
+
+`tools/profile_save.gd` reports both halves of both operations. Workstation,
+headless, best of 7:
+
+| city | operation | total | half A | half B |
+|---|---|---|---|---|
+| founding (34 bldg, +6 h) | save | 16.54 ms | capture **11.73** | write **4.81** |
+| founding | load | 52.13 ms | read **3.35** | restore **48.40** |
+| benchmark (1,500 bldg) | save | 148.72 ms | capture **96.28** | write **52.44** |
+| benchmark | load | 483.86 ms | read **35.22** | restore **442.56** |
+
+**Two things in that table are not what the framing predicted, and both are
+rulings rather than notes.**
+
+#### 2.14.2 The write is threaded — and it is a third of the save, not most of it
+
+`SaveService.async_writes` hands `commit_save` to a `WorkerThreadPool` task.
+Measured caller cost: **148.72 → 97.54 ms** on the benchmark city and
+**16.54 → 11.99** on the founding one. That is real and worth taking — a
+benchmark-city autosave stops being six frames of hitch and becomes four — but
+the capture is **65 %** of the save and the write is 35 %. `canonical_capture()`
+walking the roster and floating every number into `"~f~%08x%08x"` costs nearly
+twice what stringifying, digesting, compressing and writing the result does.
+**The next lever on the save path is the capture, not the file**, and it is a
+sim-side one: a section registry that captured incrementally, or a float codec
+cheaper than a two-word hex string, would move the larger half.
+
+The API keeps its shape. `save_slot` still returns the meta dictionary at once —
+the header is built from the capture, not from the file — and `saved` still fires
+exactly once per successful write, later and on the main thread. Every reader of
+a slot (`load_slot`, `list_slots`, `delete_slot`, `has_slot`, `latest_slot`,
+`slot_path`, `last_good_autosave_slot`, `manager_for`) flushes the queue on the
+way in, so nothing can observe a half-written ladder, and
+`NOTIFICATION_PREDELETE` / `EXIT_TREE` flush too, so a process that ends with a
+write queued still lands it. **One write in flight per service**, because
+`commit_save` reads the generation number out of the manifest and two commits
+would race for it; a second request settles the first.
+
+**`SYNC_REASONS` is normative and short:** `pause`, `quit`, `pre_migration`,
+`pre_catchup`. Doc 13 §2.2 gives the process no promise that it survives the
+pause callback, so a dispatched write is not a committed one there; and a pinned
+checkpoint taken immediately before something destructive is not a pin until it
+has landed. `AndroidLifecycle` already tags its lifecycle save `pause`, so that
+path is synchronous whether or not the shell ever enables threading.
+
+#### 2.14.3 Streaming the load — the design, and why it is not built
+
+The obvious symmetry is to thread the load the same way: read, decompress, parse,
+digest and gate on a worker while a progress bar draws, then restore on the main
+thread. **It buys 7 %.**
+
+A load is `read` + `restore`, and on the benchmark city that is **35.2 ms +
+442.6 ms** (the ~6 ms the two halves leave short of the 483.9 total is the
+wrapper around them — the ladder probe, the section registration and the
+signal). The read half is genuinely pure — `FileAccess.open_compressed`,
+`get_as_text`, `JSON.parse`, `HashingContext`, the seven-check gate and
+`DictSection.deserialize` all touch nothing but the bytes — so it *could* be
+threaded, and threading all of it would take a 484 ms load to 449 ms. The restore
+half is `CitySim.restore_state`, which rebuilds the live city: rosters, grids,
+graphs, RNG streams. It can no more leave the main thread than the capture can.
+
+**Ruling: not built.** The cost is a background thread, a progress model the UI
+has to render against, a re-entrancy contract on the load gate (which today
+quarantines and writes `repair_notes` as it walks), and a second code path
+through the most safety-critical function in the game — for 7 % of one operation
+that happens at most a few times a session. The instrument is in the tree
+(`SaveService.last_load_read_ms` / `last_load_restore_ms`, and
+`tools/profile_save.gd`'s split columns) so the number can be re-checked on a
+device rather than re-argued.
+
+**Re-open only if `restore_state` itself becomes chunked.** That is the load's
+real lever: a restore that could yield between sections would let a loading
+screen animate, which is what a player actually notices, and it would make the
+read half's 35 ms worth threading as well because the two would then overlap.
+That is a doc 08 / doc 01 change and it wants its own wave.
+
+**And doc 13 §2.9's ANR arithmetic still does not budget this.** A benchmark-city
+resume pays 484 ms of load before a single coarse step of catch-up runs, and
+threading the write does not touch that number. RR-37 filed it; it remains filed.
+
 ## 3. Data Schema
 
 ### 3.1 Save body — top level and section registry

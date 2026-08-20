@@ -28,6 +28,34 @@ extends RefCounted
 ## stage began, and it is what makes the yard READ — see `pile_fill`. Both are
 ## render-side derivations of published state and neither is persisted.
 ##
+## THE POSE CACHE (report 98 RR-32's open q1, ruled RR-38).
+## RR-32's instrumented split put **0.32 ms of a 0.53 ms layer at 20 sites in
+## this file** — every barricade bay, every heap and every machine's standing
+## transform rebuilt sixty times a second for values that had not moved. Most of
+## what a site emits is not a function of the clock at all: a barricade run is
+## fixed by the frontage and the stage, a heap by `delivered` and the stage, a
+## machine's transform and livery by the frontage. Only the excavator's joint
+## channels and the lorries actually animate.
+##
+## So the emitters CACHE, and the cache is exact rather than approximate: the
+## `Pose` objects are POOLED and never reallocated, so when a site's slice of a
+## pool has not moved and none of the facts behind those poses has changed, the
+## objects in that slice are already carrying exactly the floats this frame
+## would write. Skipping is declining to write the same bits twice, not
+## substituting an older value for a newer one — which is why
+## `tests/test_construction_living.gd` can assert BIT-IDENTICAL pose streams
+## between a cached and an uncached run over the same timeline, and why
+## `pose_cache = false` is a property rather than a build flag (it is the A/B
+## arm `tools/profile_construction.gd` drives).
+##
+## Three facts key it, all of them discrete and all of them written in exactly
+## one place each: `Site.layout_serial` (bumped by `_lay_out_fittings` and
+## `_lay_out_barriers` — every re-route and every stage change passes through
+## one of them), `Site.stage`, and `Site.delivered`. A site that did not emit on
+## the immediately preceding pass re-emits unconditionally, because the pool
+## slice it used to own may have been handed to another site while it was gated
+## out by `radius` or `limit`.
+##
 ## WHERE THE WORK HAPPENS. The lot itself is not available: doc 11 §5's massing
 ## is at full FOOTPRINT from placement (the stage clamp is vertical only), so
 ## the ground inside the property line is under the building from stage 1. The
@@ -129,8 +157,16 @@ var barrier_used := 0
 var focus := Vector3.ZERO
 var focus_radius := 0.0
 
+## The pose cache (see the class docs). On in the game; the A/B arm turns it off
+## and the property test runs both arms over one timeline.
+var pose_cache := true
+
 var _id_cache: Array = []
 var _ids_dirty := true
+## Monotone `refresh` counter. A site may only serve a pool slice from the cache
+## when it emitted on the pass immediately before this one — otherwise the slots
+## it used to own may since have been written by a different site.
+var _pass := 0
 
 
 class Pose extends RefCounted:
@@ -186,6 +222,12 @@ class Site extends RefCounted:
 	## barricades, when the stage changes — never per frame. This is most of
 	## what keeps the layer's per-frame cost in trig-free territory.
 	var rig_xform: Array[Transform3D] = []
+	## The machine's livery and its place in the dig cycle, both fixed the moment
+	## the frontage is: `Color(paint, hash)` and `hash01(id, 83 + 11i)`. Held here
+	## rather than re-derived per frame — a `Color` construction and an integer
+	## hash per machine per frame is 2,400 of each a second at `max_sites`.
+	var rig_tint: Array[Color] = []
+	var rig_phase_off: Array[float] = []
 	var pile_origin: Array[Vector3] = []
 	var pile_yaw: Array[Basis] = []
 	var barrier_xform: Array[Transform3D] = []
@@ -194,8 +236,53 @@ class Site extends RefCounted:
 	## along `along` — the datum the plant is stood clear of.
 	var stop_u := 0.0
 
+	# ── the pose cache's keys and bookkeeping (see the class docs) ───────────
+	## Bumped by `_lay_out_fittings` and `_lay_out_barriers`, which between them
+	## are the only two places anything a cached pose reads is written.
+	var layout_serial := 0
+	## The `refresh` pass this site last emitted on. A gap means the pool slices
+	## it owned may belong to somebody else now.
+	var cache_pass := -1
+	var cache_barrier_first := 0
+	var cache_barrier_n := 0
+	var cache_barrier_layout := -1
+	var cache_heap_first := 0
+	var cache_heap_n := 0
+	var cache_stack_first := 0
+	var cache_stack_n := 0
+	var cache_pile_layout := -1
+	var cache_pile_stage := -1
+	var cache_pile_delivered := -1.0
+	var cache_rig_first := 0
+	var cache_rig_n := -1
+	var cache_rig_layout := -1
+	## A four-slot ring of `(trip index, livery)` — a lorry's tint is fixed for
+	## the whole of its run and at most `MAX_TRUCKS_PER_SITE` runs are live.
+	var truck_tint_k: PackedInt64Array = PackedInt64Array([-1, -1, -1, -1])
+	var truck_tint: Array[Color] = [Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE]
+
+	## What the ROUTE fixes: whether there is one, and the three schedule
+	## numbers derived from its length. Written only by
+	## `ConstructionActivity._reprice`.
+	var routed := false
+	var leg_min := 0.0
+	var trip_min := 0.0
+	var trip_window := 1
+
 	func has_route() -> bool:
-		return to_site.size() >= 2 and route_m > 0.5
+		return routed
+
+	## Everything the cache keys off, dropped. Called when a site is registered
+	## and by `invalidate_pose_cache`.
+	func drop_pose_cache() -> void:
+		cache_pass = -1
+		cache_barrier_layout = -1
+		cache_pile_layout = -1
+		cache_pile_stage = -1
+		cache_pile_delivered = -1.0
+		cache_rig_layout = -1
+		cache_rig_n = -1
+		truck_tint_k = PackedInt64Array([-1, -1, -1, -1])
 
 
 # -------------------------------------------------------------- public API
@@ -216,6 +303,11 @@ func configure(cfg: Dictionary, world_tile_m: float = 8.0) -> void:
 	rig_out_m = _num(cfg, "rig_out_m", rig_out_m)
 	road_top = _num(cfg, "road_top_m", road_top)
 	lane_offset = _num(cfg, "lane_offset_m", lane_offset)
+	# The schedule numbers are derived from this tuning, so a re-`configure`
+	# after sites exist has to re-derive them. Nothing in the shell does that
+	# today; a preview harness that retunes live is exactly why it is here.
+	for id: int in sites:
+		_reprice(sites[id])
 
 
 ## Register a site. `world_pos` is the lot CENTRE at ground level — the same
@@ -234,9 +326,20 @@ func add_site(id: int, world_pos: Vector3, footprint: Vector2i,
 	site.period_gm = delivery_period_gm * lerpf(0.78, 1.26, hash01(id, 47))
 	site.offset_gm = hash01(id, 59) * site.period_gm
 	site.paint = _plant_paint(id)
+	site.drop_pose_cache()
+	_reprice(site)
 	sites[id] = site
 	_ids_dirty = true
 	return site
+
+
+## Force every site to re-derive every pose on the next `refresh`. Nothing in
+## the game needs it — the cache invalidates itself off `layout_serial`, the
+## stage and `delivered` — but the A/B arm and the property test both want to
+## start each arm from the same cold state.
+func invalidate_pose_cache() -> void:
+	for id: int in sites:
+		(sites[id] as Site).drop_pose_cache()
 
 
 func set_stage(id: int, stage: int) -> void:
@@ -303,6 +406,7 @@ func set_route(id: int, road_tile: Vector2i, depot_tile: Vector2i,
 	if site.to_site.size() >= 1 and site.frontage_ok:
 		site.stop_u = (site.to_site[site.to_site.size() - 1] - site.edge) \
 				.dot(site.along)
+	_reprice(site)
 	_lay_out_fittings(site)
 
 
@@ -316,6 +420,7 @@ func clear_route(id: int) -> void:
 	site.to_depot = PackedVector3Array()
 	site.to_depot_cum = PackedFloat32Array()
 	site.route_m = 0.0
+	_reprice(site)
 
 
 ## Rebuild every pose array for game-minute `gm`. Sites beyond `radius` of
@@ -331,6 +436,7 @@ func refresh(gm: float, p_focus := Vector3.ZERO, radius := 0.0,
 	heap_used = 0
 	stack_used = 0
 	barrier_used = 0
+	_pass += 1
 	var drawn := 0
 	for id: int in _ids():
 		if limit > 0 and drawn >= limit:
@@ -343,9 +449,13 @@ func refresh(gm: float, p_focus := Vector3.ZERO, radius := 0.0,
 		if not site.frontage_ok:
 			continue
 		drawn += 1
-		_emit_barriers(site)
-		_emit_piles(site, gm)
-		_emit_rigs(site, gm)
+		# A site may only serve any pool slice from the cache when it emitted on
+		# the pass immediately before this one — see the class docs.
+		var warm := pose_cache and site.cache_pass == _pass - 1
+		site.cache_pass = _pass
+		_emit_barriers(site, warm)
+		_emit_piles(site, gm, warm)
+		_emit_rigs(site, gm, warm)
 		_emit_trucks(site, gm)
 
 
@@ -361,18 +471,33 @@ func _ids() -> Array:
 
 
 # ------------------------------------------------------------ the schedule
+#
+# The three numbers below are functions of `route_m` and the tuning, and NOTHING
+# ELSE — so they are settled the moment a route is, in `_reprice`, and read out
+# of the site after that. They used to be four function calls a frame apiece,
+# nested (`_trip_window` called `leg_gm` called `has_route`), and at `max_sites`
+# that alone was thousands of GDScript calls a second re-deriving a constant.
+# The expressions are unchanged, which is what keeps the pose stream identical.
+
+## Everything the ROUTE fixes about the schedule. Called wherever `route_m`, the
+## polylines or the tuning move — `set_route`, `clear_route`, `add_site` and
+## `configure` — and nowhere else, because nowhere else writes them.
+func _reprice(site: Site) -> void:
+	site.routed = site.to_site.size() >= 2 and site.route_m > 0.5
+	site.leg_min = site.route_m / maxf(truck_speed_mpgm, 0.5) if site.routed else 0.0
+	site.trip_min = site.leg_min * 2.0 + dump_gm if site.routed else 0.0
+	var span := site.leg_min + dump_gm
+	site.trip_window = clampi(int(ceil(span / maxf(site.period_gm, 0.001))) + 1, 1, 24)
+
 
 ## One full delivery round trip, in game-minutes: out, dump, home.
 func trip_gm(site: Site) -> float:
-	if not site.has_route():
-		return 0.0
-	var leg := site.route_m / maxf(truck_speed_mpgm, 0.5)
-	return leg * 2.0 + dump_gm
+	return site.trip_min
 
 
 ## Game-minutes the outbound leg takes.
 func leg_gm(site: Site) -> float:
-	return site.route_m / maxf(truck_speed_mpgm, 0.5) if site.has_route() else 0.0
+	return site.leg_min
 
 
 ## Deliveries completed by `gm`, as a CONTINUOUS number: the integer count plus
@@ -380,18 +505,21 @@ func leg_gm(site: Site) -> float:
 ## is up instead of snapping when it comes down. Non-decreasing in `gm` at a
 ## fixed route, which is the invariant the pile test pins.
 func delivered_at(site: Site, gm: float) -> float:
-	if not site.has_route():
+	if not site.routed:
 		return site.delivered
-	var leg := leg_gm(site)
+	var leg := site.leg_min
 	var newest := _newest_trip(site, gm)
 	if newest < 0:
 		return 0.0
 	# Trips older than this have certainly finished draining; only the window
-	# still in flight has to be summed.
-	var first := maxi(0, newest - _trip_window(site))
+	# still in flight has to be summed. A `while` rather than `for k in range()`:
+	# this runs once per site per frame and `range()` builds an Array to do it.
+	var first := maxi(0, newest - site.trip_window)
 	var total := float(first)
-	for k in range(first, newest + 1):
+	var k := first
+	while k <= newest:
 		total += _drain(gm - _depart_gm(site, k) - leg)
+		k += 1
 	return total
 
 
@@ -406,10 +534,9 @@ func _depart_gm(site: Site, k: int) -> float:
 
 ## How many consecutive trips can be in flight at once — the round trip divided
 ## by the cadence, plus one for the partial. Capped so a pathological route
-## cannot turn a per-frame loop into a per-frame problem.
+## cannot turn a per-frame loop into a per-frame problem. Derived in `_reprice`.
 func _trip_window(site: Site) -> int:
-	var span := leg_gm(site) + dump_gm
-	return clampi(int(ceil(span / maxf(site.period_gm, 0.001))) + 1, 1, 24)
+	return site.trip_window
 
 
 ## Fraction of a load that has left the bed `t` game-minutes into a dump. Zero
@@ -461,33 +588,40 @@ func excavator_count(site: Site) -> int:
 ## site whose route is long enough to overlap three trips would be a site whose
 ## depot is on the far side of the map.
 func truck_count(site: Site, gm: float) -> int:
-	if not site.has_route():
+	if not site.routed:
 		return 0
-	var total := trip_gm(site)
+	var total := site.trip_min
 	var newest := _newest_trip(site, gm)
 	if newest < 0:
 		return 0
 	var n := 0
-	for k in range(maxi(0, newest - _trip_window(site)), newest + 1):
+	var k := maxi(0, newest - site.trip_window)
+	while k <= newest:
 		var t := gm - _depart_gm(site, k)
 		if t >= 0.0 and t <= total:
 			n += 1
+		k += 1
 	return mini(n, MAX_TRUCKS_PER_SITE)
 
 
 # --------------------------------------------------------------- emitters
 
 func _emit_trucks(site: Site, gm: float) -> void:
-	if not site.has_route():
+	if not site.routed:
 		return
-	var total := trip_gm(site)
-	var leg := leg_gm(site)
+	var total := site.trip_min
+	var leg := site.leg_min
 	var hauling_out := site.stage >= CLEANUP_STAGE
 	var newest := _newest_trip(site, gm)
 	if newest < 0:
 		return
 	var live := 0
-	for k in range(maxi(0, newest - _trip_window(site)), newest + 1):
+	# `while` rather than `for k in range()`: this is a per-frame path and
+	# `range()` allocates an Array to walk two or three integers.
+	var cursor := maxi(0, newest - site.trip_window)
+	while cursor <= newest:
+		var k := cursor
+		cursor += 1
 		var t := gm - _depart_gm(site, k)
 		if t < 0.0 or t > total:
 			continue
@@ -529,28 +663,62 @@ func _emit_trucks(site: Site, gm: float) -> void:
 		# (bed tilt, load fill, lamp, unused). The lamp channel is the view's
 		# to set once it knows the night factor.
 		pose.custom = Color(tilt, loaded, 0.0, 0.0)
-		pose.tint = Color(site.paint.r, site.paint.g, site.paint.b,
-				hash01(site.id * 131 + k, 71))
+		# The livery is fixed for the whole of a run, so it is built once per
+		# trip and read out of a four-slot ring after that. Same `Color`, same
+		# bits — `hash01` is integer arithmetic and `site.paint` does not move.
+		var ring := k & 3
+		if site.truck_tint_k[ring] != k:
+			site.truck_tint_k[ring] = k
+			site.truck_tint[ring] = Color(site.paint.r, site.paint.g, site.paint.b,
+					hash01(site.id * 131 + k, 71))
+		pose.tint = site.truck_tint[ring]
 
 
-func _emit_rigs(site: Site, gm: float) -> void:
+## The machines. Their transforms and liveries are fixed by the frontage; only
+## the four joint channels move, so a warm site writes one field per machine
+## instead of four.
+func _emit_rigs(site: Site, gm: float, warm: bool = false) -> void:
 	var count := mini(excavator_count(site), site.rig_xform.size())
+	var stable := warm and site.cache_rig_layout == site.layout_serial \
+			and site.cache_rig_first == rig_used and site.cache_rig_n == count
+	if not stable:
+		site.cache_rig_layout = site.layout_serial
+		site.cache_rig_first = rig_used
+		site.cache_rig_n = count
 	for i in count:
 		var pose := _take(rig_poses, rig_used)
 		rig_used += 1
-		var xform: Transform3D = site.rig_xform[i]
-		pose.origin = xform.origin
-		pose.basis = xform.basis
+		if not stable:
+			var xform: Transform3D = site.rig_xform[i]
+			pose.origin = xform.origin
+			pose.basis = xform.basis
+			pose.tint = site.rig_tint[i]
 		# Two machines on one lot are never in the same part of the cycle.
-		var phase := fposmod(gm / dig_cycle_gm + hash01(site.id, 83 + i * 11), 1.0)
+		var phase := fposmod(gm / dig_cycle_gm + site.rig_phase_off[i], 1.0)
 		pose.custom = dig_pose(phase)
-		pose.tint = Color(site.paint.r, site.paint.g, site.paint.b,
-				hash01(site.id + i * 977, 29))
 
 
-func _emit_piles(site: Site, gm: float) -> void:
+## The yard. `delivered_at` is still evaluated every frame — it is a two-or-three
+## term sum and it feeds a HIGH-WATER MARK, so skipping it would let a re-route
+## lower a count that the uncached path would have held. What the cache skips is
+## the expensive half: three `slot_count` pairs, a `sqrt`, a scaled basis and
+## four `Color` constructions for heaps that have not moved a millimetre.
+func _emit_piles(site: Site, gm: float, warm: bool = false) -> void:
 	var delivered := delivered_at(site, gm)
 	site.delivered = maxf(site.delivered, delivered)
+	if warm and site.cache_pile_layout == site.layout_serial \
+			and site.cache_pile_stage == site.stage \
+			and site.cache_pile_delivered == site.delivered \
+			and site.cache_heap_first == heap_used \
+			and site.cache_stack_first == stack_used:
+		heap_used += site.cache_heap_n
+		stack_used += site.cache_stack_n
+		return
+	site.cache_pile_layout = site.layout_serial
+	site.cache_pile_stage = site.stage
+	site.cache_pile_delivered = site.delivered
+	site.cache_heap_first = heap_used
+	site.cache_stack_first = stack_used
 	for slot in PILE_SLOTS:
 		var fill := pile_fill(site, slot, site.delivered)
 		if fill <= 0.02:
@@ -574,11 +742,25 @@ func _emit_piles(site: Site, gm: float) -> void:
 				else (ConstructionRigMesh.GRAVEL if slot == 1 else ConstructionRigMesh.REBAR)
 		pose.tint = Color(tint.r, tint.g, tint.b, 1.0)
 		pose.custom = Color(float(slot), fill, 0.0, 0.0)
+	site.cache_heap_n = heap_used - site.cache_heap_first
+	site.cache_stack_n = stack_used - site.cache_stack_first
 
 
-func _emit_barriers(site: Site) -> void:
+## The barricade run. NOTHING in it is a function of the clock — the frontage
+## fixes the bay transforms and the stage fixes how many are lifted — so a warm
+## site whose slice of the pool has not moved writes nothing at all. At
+## `max_sites` this is the largest single saving in the file: a dozen bays a site
+## is 240 pose writes a frame that were re-deriving a constant.
+func _emit_barriers(site: Site, warm: bool = false) -> void:
 	if site.barrier_stage != site.stage:
 		_lay_out_barriers(site)
+	if warm and site.cache_barrier_layout == site.layout_serial \
+			and site.cache_barrier_first == barrier_used:
+		barrier_used += site.cache_barrier_n
+		return
+	site.cache_barrier_layout = site.layout_serial
+	site.cache_barrier_first = barrier_used
+	site.cache_barrier_n = site.barrier_xform.size()
 	for i in site.barrier_xform.size():
 		var pose := _take(barrier_poses, barrier_used)
 		barrier_used += 1
@@ -593,6 +775,7 @@ func _emit_barriers(site: Site) -> void:
 ## and on a re-route, never per frame.
 func _lay_out_barriers(site: Site) -> void:
 	site.barrier_stage = site.stage
+	site.layout_serial += 1
 	site.barrier_xform.clear()
 	if not site.frontage_ok:
 		return
@@ -641,24 +824,45 @@ const DIG_KEYS := [
 ]
 
 
+## `DIG_KEYS` flattened into two packed columns — the phases, and the four joint
+## channels row-major. The table above is the AUTHORED form and stays the one a
+## person edits; this is the same doubles in a layout the interpreter can read
+## without unboxing a Variant per element, which matters because `dig_pose` runs
+## once per excavator per frame and `max_sites` is 28. Built on first use, from
+## the table, so the two cannot drift.
+static var _dig_t := PackedFloat64Array()
+static var _dig_c := PackedFloat64Array()
+
+
+static func _dig_columns() -> void:
+	if not _dig_t.is_empty():
+		return
+	for row: Array in DIG_KEYS:
+		_dig_t.append(float(row[0]))
+		for j in range(1, 5):
+			_dig_c.append(float(row[j]))
+
+
 ## The four normalised joint channels at cycle phase `p` (0…1), smoothstepped
 ## between keyframes so the machine eases into and out of every move.
 static func dig_pose(p: float) -> Color:
+	_dig_columns()
 	var t := fposmod(p, 1.0)
-	for i in range(DIG_KEYS.size() - 1):
-		var a: Array = DIG_KEYS[i]
-		var b: Array = DIG_KEYS[i + 1]
-		var t0 := float(a[0])
-		var t1 := float(b[0])
+	var last := DIG_KEYS.size() - 1
+	for i in last:
+		var t1 := _dig_t[i + 1]
 		if t > t1:
 			continue
+		var t0 := _dig_t[i]
 		var w := smoothstep(0.0, 1.0, (t - t0) / maxf(t1 - t0, 0.0001))
-		return Color(lerpf(float(a[1]), float(b[1]), w),
-				lerpf(float(a[2]), float(b[2]), w),
-				lerpf(float(a[3]), float(b[3]), w),
-				lerpf(float(a[4]), float(b[4]), w))
-	var last: Array = DIG_KEYS[DIG_KEYS.size() - 1]
-	return Color(float(last[1]), float(last[2]), float(last[3]), float(last[4]))
+		var a := i * 4
+		var b := a + 4
+		return Color(lerpf(_dig_c[a], _dig_c[b], w),
+				lerpf(_dig_c[a + 1], _dig_c[b + 1], w),
+				lerpf(_dig_c[a + 2], _dig_c[b + 2], w),
+				lerpf(_dig_c[a + 3], _dig_c[b + 3], w))
+	var tail := last * 4
+	return Color(_dig_c[tail], _dig_c[tail + 1], _dig_c[tail + 2], _dig_c[tail + 3])
 
 
 # ------------------------------------------------------------- the streets
@@ -790,6 +994,8 @@ func _frame_frontage(site: Site) -> void:
 ## clock moves the bucket and the heap's height, not the ground under them.
 func _lay_out_fittings(site: Site) -> void:
 	site.rig_xform.clear()
+	site.rig_tint.clear()
+	site.rig_phase_off.clear()
 	for i in 2:
 		# Machines stand off the kerb at 44° to the property line: square to the
 		# street would block both lanes, square to the lot would put the tracks
@@ -815,6 +1021,11 @@ func _lay_out_fittings(site: Site) -> void:
 		origin.y = road_top
 		site.rig_xform.append(Transform3D(Basis.from_euler(Vector3(0.0,
 				-atan2(forward.z, forward.x), 0.0)), origin))
+		# Both of these are functions of (id, i) alone, so they belong here
+		# rather than in the emitter that used to rebuild them per frame.
+		site.rig_tint.append(Color(site.paint.r, site.paint.g, site.paint.b,
+				hash01(site.id + i * 977, 29)))
+		site.rig_phase_off.append(hash01(site.id, 83 + i * 11))
 	site.pile_origin.clear()
 	site.pile_yaw.clear()
 	for slot in PILE_SLOTS:
@@ -829,6 +1040,7 @@ func _lay_out_fittings(site: Site) -> void:
 				hash01(site.id, 137 + slot) * TAU, 0.0)))
 	# The barricade run depends on the stage too; force a rebuild.
 	site.barrier_stage = -1
+	site.layout_serial += 1
 
 
 ## Grow a pose pool on demand and hand back slot `index`. Pools never shrink:

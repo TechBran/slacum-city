@@ -87,11 +87,25 @@ const META_SECTION_VERSION := 1
 ## setter clears it.
 var _managers: Dictionary = {}
 
+## The in-flight write, or -1. Declared up here for the same reason `_managers`
+## is: [base_dir]'s setter calls [flush_writes], which reads this, and a
+## member declared after the property it is read from is not yet initialised
+## when a caller assigns that property.
+##
+## At most ONE write is in flight per service. `commit_save` reads the
+## generation number out of the manifest, so two concurrent commits to one slot
+## would race for it; a second request settles the first, which costs the caller
+## the tail of a write that was already most of the way done and never costs a
+## save.
+var _task_id: int = -1
+
 ## Where slots live. Overridable so tests never touch a real player profile.
 ## Assigning it drops every cached slot manager, because the managers are bound
 ## to paths under the old root.
 var base_dir: String = SAVE_DIR:
 	set(value):
+		# A queued write holds a manager bound to a path under the OLD root.
+		flush_writes()
 		base_dir = value
 		_managers.clear()
 ## Optional: the shell registers a Callable returning the UI save section
@@ -126,14 +140,31 @@ var repair_notes: PackedStringArray = []
 ## Doc 08 §8's `save` block. Injectable so a test can shorten the ladder.
 var policy: SavePolicy = SavePolicy.load_from_files()
 
-## Wall milliseconds the last `save_slot` / `load_slot` took, end to end —
+## Wall milliseconds the last `save_slot` / `load_slot` cost THE CALLER —
 ## capture, envelope, digest, compress, write, manifest for a save; candidate
 ## walk, digest, decompress, migrate, restore for a load. Doc 13 §7's D-17 asks
 ## for these ON DEVICE and there was no instrument for it: the numbers doc 08
 ## quotes are workstation numbers taken from a test harness, and a phone's
 ## flash and a phone's CPU are the two things they cannot stand in for.
+##
+## With [async_writes] on, `last_save_ms` is the MAIN-THREAD half only — the
+## capture — because that is what the frame budget actually pays. What the write
+## itself cost, wherever it ran, is [last_write_ms].
 var last_save_ms: float = 0.0
 var last_load_ms: float = 0.0
+## Wall milliseconds the envelope/digest/compress/write/manifest half took. Set
+## by both paths, so a synchronous save reports the same split an asynchronous
+## one does and the two are comparable.
+var last_write_ms: float = 0.0
+## The load's two halves, because they have very different futures. `read` is
+## the candidate walk — open, zstd-decompress, parse, SHA-256, the seven-check
+## gate, section deserialize — and every byte of it is pure: it touches no sim
+## and could in principle run on a worker while a loading screen draws.
+## `restore` is `CitySim.restore_state`, which rebuilds the live city and cannot
+## leave the main thread for the same reason the capture cannot. Doc 08 §2.14
+## costs the streaming design against this split.
+var last_load_read_ms: float = 0.0
+var last_load_restore_ms: float = 0.0
 ## Emit one `PERFIO` line per save/load, in the same shape doc 11 §7.4's `PERF`
 ## line uses so ONE logcat grep collects both halves of a device capture.
 ##
@@ -145,9 +176,108 @@ var last_load_ms: float = 0.0
 ## nothing else does.
 var log_io: bool = false
 
+# ------------------------------------------------------------- async writes
+#
+# **Why (report 98 RR-40).** `tools/profile_save.gd` measured the shipped path
+# at **149 ms to save and 484 ms to load** the 1,500-building benchmark city, on
+# a workstation, on the main thread — and the Fold is expected at 2–3× that. Doc
+# 08's autosave therefore lands as a visible hitch on any city a player has
+# grown. The cadence is not the problem; the fact that the write is synchronous
+# is. `SaveManager` now splits into `capture_save` (main thread, reads the live
+# sim) and `commit_save` (bytes only), and this is the half that hands the
+# second one to `WorkerThreadPool`.
+#
+# **The split is not where it was expected to be, and the measurement says so.**
+# Of the 149 ms save, the write half is **52 ms** and the capture is **96** —
+# `canonical_capture()` is the expensive one, not the envelope. Threading the
+# write therefore takes the caller's cost from **148.7 ms to 97.5** on the
+# benchmark city and 16.5 to 12.0 on the founding one: a third off, not the
+# seven-eighths the doc's framing implies. It is worth taking, and the next
+# lever on this path is the capture, not the file.
+#
+# **And the LOAD is not threadable at all.** Its split is 35 ms of reading
+# (decompress, parse, digest, the seven-check gate) against **443 ms of
+# `restore_state`**, which rebuilds the live city and can no more leave the main
+# thread than the capture can. A streaming loader would move 7 % of a 484 ms
+# load. The costed design and the refusal are in doc 08 §2.14.
+#
+# **What does NOT move.** The capture, always. And the whole of the PAUSE path:
+# doc 13 §2.2 says the save must COMMIT before Android may kill the process, and
+# a dispatched write is not a committed one. So [SYNC_REASONS] names the
+# checkpoint reasons that finish before the call returns, and `pause` is the
+# first of them. `AndroidLifecycle` already tags its lifecycle save `pause`, so
+# it is synchronous whether or not the shell ever sets [async_writes].
+#
+# **The API does not change shape.** `save_slot` still returns the meta
+# dictionary the moment it has one — the header is built from the capture, not
+# from the file — and `saved` still fires exactly once per successful write,
+# just later. Every reader of a slot ([load_slot], [list_slots], [delete_slot],
+# [has_slot], [latest_slot], [slot_path], [last_good_autosave_slot]) flushes
+# first, so nothing in the codebase can observe a half-written ladder.
+
+## Turn the write half over to a worker thread. **Off by default**: a service
+## that writes files should not start a thread because it was constructed, the
+## suite drives thousands of saves through it, and the shell is the thing that
+## knows whether there is a frame to protect. One line in `game/main.gd`.
+var async_writes: bool = false
+
+## Checkpoint reasons whose write must COMMIT before `save_slot` returns.
+## `pause` is doc 13 §2.2's — the process may be killed the instant the
+## callback returns. `quit` is the same contract on the desktop and task-close
+## paths. `pre_migration` and `pre_catchup` are pinned generations taken
+## immediately before something destructive, and a pin that has not landed is
+## not a pin.
+const SYNC_REASONS: PackedStringArray = ["pause", "quit", "pre_migration", "pre_catchup"]
+
+## Everything `_settle_write` needs, written on the main thread before the task
+## is queued and read after it completes. Never touched while the task runs.
+var _write_slot: int = -1
+var _write_reason: String = ""
+var _write_meta: Dictionary = {}
+var _write_capture: Dictionary = {}
+var _write_manager: SaveManager = null
+## The worker's answer. Written by the task, read only after
+## `is_task_completed` / `wait_for_task_completion`, both of which are the
+## happens-before edge that makes the read safe.
+var _write_result: Dictionary = {}
+var _write_usec: int = 0
+
 
 func _ready() -> void:
 	_ensure_dir()
+	set_process(false)
+
+
+## Signals must land on the main thread, so a completed write is picked up here
+## rather than announced from the worker. Processing is armed only while a task
+## is in flight — an idle `SaveService` costs the frame nothing.
+func _process(_delta: float) -> void:
+	if _task_id < 0:
+		set_process(false)
+		return
+	if WorkerThreadPool.is_task_completed(_task_id):
+		_settle_write()
+
+
+## Block until the in-flight write has committed and its signal has fired.
+## Called before every read of a slot, by the pause path, and on the way out of
+## the tree — a process that ends with a write still queued is a lost save.
+func flush_writes() -> void:
+	if _task_id < 0:
+		return
+	WorkerThreadPool.wait_for_task_completion(_task_id)
+	_settle_write()
+
+
+## True while a write is queued or running.
+func write_pending() -> bool:
+	return _task_id >= 0
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_EXIT_TREE or what == NOTIFICATION_PREDELETE \
+			or what == NOTIFICATION_WM_CLOSE_REQUEST:
+		flush_writes()
 
 
 ## Doc 11 §7.4's log shape, for the I/O half. One line, `^PERF`-anchored so
@@ -164,8 +294,10 @@ func _log_io(kind: String, slot: int, reason: String, ms: float, ok: bool) -> vo
 	if dir != null:
 		for name in dir.get_files():
 			bytes += _file_size(path.path_join(name))
-	print("PERFIO kind=%s slot=%d reason=%s ms=%.1f bytes=%d ok=%d"
-			% [kind, slot, reason, ms, bytes, 1 if ok else 0])
+	print(("PERFIO kind=%s slot=%d reason=%s ms=%.1f write_ms=%.1f read_ms=%.1f "
+			+ "restore_ms=%.1f async=%d bytes=%d ok=%d")
+			% [kind, slot, reason, ms, last_write_ms, last_load_read_ms,
+			last_load_restore_ms, 1 if async_writes else 0, bytes, 1 if ok else 0])
 
 
 static func _file_size(path: String) -> int:
@@ -196,7 +328,11 @@ func save_slot(sim: Object, slot: int, reason: String = "manual") -> Dictionary:
 	var t0 := Time.get_ticks_usec()
 	var meta := _save_slot(sim, slot, reason)
 	last_save_ms = float(Time.get_ticks_usec() - t0) * 0.001
-	_log_io("save", slot, reason, last_save_ms, not meta.is_empty())
+	# A DISPATCHED write logs from `_settle_write`, when there is an outcome to
+	# report. Logging here would print a save that has not happened yet, and a
+	# byte count of the generation before it.
+	if not write_pending():
+		_log_io("save", slot, reason, last_save_ms, not meta.is_empty())
 	return meta
 
 
@@ -207,6 +343,9 @@ func _save_slot(sim: Object, slot: int, reason: String) -> Dictionary:
 		return _fail_dict(slot, "no_state")
 	if not _ensure_dir():
 		return _fail_dict(slot, "no_dir")
+	# One write in flight per service. A second request settles the first, so
+	# the manifest's generation counter is only ever read by one thread.
+	flush_writes()
 
 	var meta := _meta_of(sim, slot, reason)
 	var manager := _manager(slot)
@@ -226,14 +365,70 @@ func _save_slot(sim: Object, slot: int, reason: String) -> Dictionary:
 
 	# The header rides the manifest (see the class docs): one small
 	# uncompressed file per slot is what keeps `list_slots()` cheap.
-	var result := manager.request_save(reason, _sim_time_minutes(sim),
+	var capture := manager.capture_save(reason, _sim_time_minutes(sim),
 			int(meta["saved_at_unix"]), {"meta": meta.duplicate()})
-	if not bool(result["ok"]):
+	if async_writes and not SYNC_REASONS.has(reason):
+		_write_slot = slot
+		_write_reason = reason
+		_write_meta = meta
+		_write_capture = capture
+		# The manager is resolved HERE, not on the worker: `_managers` is a
+		# dictionary the main thread may rewrite (`base_dir`, `delete_slot`), and
+		# a worker reading it while it moves is the one race this design has.
+		_write_manager = manager
+		_write_result = {}
+		_write_usec = 0
+		_task_id = WorkerThreadPool.add_task(_run_write, false,
+				"SaveService write slot %d" % slot)
+		set_process(true)
+		# The header is built from the capture, not from the file, so the caller
+		# gets its answer now and the `saved` signal follows the commit.
+		last_error = ""
+		return meta
+	var t0 := Time.get_ticks_usec()
+	var result := manager.commit_save(capture)
+	last_write_ms = float(Time.get_ticks_usec() - t0) * 0.001
+	return _finish_write(slot, result, meta)
+
+
+## Runs on a `WorkerThreadPool` thread. Everything it touches was fixed before
+## the task was queued: the capture is self-contained, the manager's sections
+## are not read by `commit_save`, and no other write to this slot can be in
+## flight. It emits nothing — signals are the main thread's, in `_settle_write`.
+func _run_write() -> void:
+	var t0 := Time.get_ticks_usec()
+	_write_result = _write_manager.commit_save(_write_capture)
+	_write_usec = Time.get_ticks_usec() - t0
+
+
+## Back on the main thread, once the task has completed.
+func _settle_write() -> void:
+	_task_id = -1
+	set_process(false)
+	var result := _write_result
+	var meta := _write_meta
+	var slot := _write_slot
+	last_write_ms = float(_write_usec) * 0.001
+	_write_capture = {}
+	_write_result = {}
+	_write_meta = {}
+	_write_manager = null
+	_write_slot = -1
+	_log_io("save", slot, _write_reason, last_save_ms, bool(result.get("ok", false)))
+	_write_reason = ""
+	_finish_write(slot, result, meta)
+
+
+## The one place a write's outcome becomes a signal, whichever thread produced
+## it — so a synchronous save and an asynchronous one are indistinguishable to
+## everything that listens.
+func _finish_write(slot: int, result: Dictionary, meta: Dictionary) -> Dictionary:
+	if not bool(result.get("ok", false)):
 		# The generation write and the manifest commit fail differently, and the
 		# difference matters: a failed generation wrote nothing, a failed
 		# manifest left an orphan and the PREVIOUS save still active.
 		return _fail_dict(slot,
-				"rename_failed" if result["reason_code"] == &"E_MANIFEST_WRITE"
+				"rename_failed" if result.get("reason_code", &"") == &"E_MANIFEST_WRITE"
 				else "write_failed")
 	last_error = ""
 	saved.emit(meta)
@@ -278,6 +473,7 @@ func next_autosave_slot() -> int:
 ## `failed` signal, because a damaged checkpoint found by a health check is an
 ## expected finding and not an error to put in front of a player.
 func last_good_autosave_slot() -> int:
+	flush_writes()
 	if _has_ladder(AUTOSAVE_SLOT) \
 			and bool(_manager(AUTOSAVE_SLOT).peek_newest()["ok"]):
 		return AUTOSAVE_SLOT
@@ -321,6 +517,7 @@ func last_good_autosave_slot() -> int:
 ## Timed by a wrapper for the same reason `save_slot` is: five returns, and the
 ## recovery paths are the slow ones.
 func load_slot(sim: Object, slot: int) -> bool:
+	flush_writes()
 	var t0 := Time.get_ticks_usec()
 	var ok := _load_slot(sim, slot)
 	last_load_ms = float(Time.get_ticks_usec() - t0) * 0.001
@@ -366,7 +563,10 @@ func _load_ladder(sim: Object, slot: int, report_failure: bool = true) -> bool:
 	manager.register_section(ui)
 	manager.register_section(meta_section)
 
+	var read_t0 := Time.get_ticks_usec()
 	var result := manager.load_newest()
+	last_load_read_ms = float(Time.get_ticks_usec() - read_t0) * 0.001
+	last_load_restore_ms = 0.0
 	if not bool(result["ok"]):
 		_refuse(slot, _reason_for(result), report_failure)
 		return false
@@ -377,7 +577,9 @@ func _load_ladder(sim: Object, slot: int, report_failure: bool = true) -> bool:
 		_refuse(slot, "no_state", report_failure)
 		return false
 
+	var restore_t0 := Time.get_ticks_usec()
 	sim.call("restore_state", city.restored)
+	last_load_restore_ms = float(Time.get_ticks_usec() - restore_t0) * 0.001
 	last_loaded_ui = {} if ui.restored_is_empty() else ui.restored
 	var payload: Dictionary = result["payload"]
 	last_load_recovered = bool(payload["recovered"])
@@ -457,6 +659,7 @@ func load_latest(sim: Object) -> int:
 ## Every occupied slot's meta, ascending by slot index. Reads one manifest per
 ## slot — a few hundred bytes — never a city.
 func list_slots() -> Array[Dictionary]:
+	flush_writes()
 	var out: Array[Dictionary] = []
 	for slot in MAX_SLOTS:
 		var meta := _slot_meta(slot)
@@ -468,6 +671,7 @@ func list_slots() -> Array[Dictionary]:
 ## Remove a slot: the generation ladder, its quarantine, the legacy file, and
 ## any temp orphaned by a kill mid-write. Returns true if the slot is gone.
 func delete_slot(slot: int) -> bool:
+	flush_writes()
 	if not _valid_slot(slot):
 		_fail_dict(slot, "invalid_slot")
 		return false
@@ -486,6 +690,7 @@ func delete_slot(slot: int) -> bool:
 
 ## True if the slot holds a save — a committed generation or a legacy file.
 func has_slot(slot: int) -> bool:
+	flush_writes()
 	return _valid_slot(slot) \
 			and (_has_ladder(slot) or FileAccess.file_exists(_legacy_path(slot)))
 
@@ -495,6 +700,7 @@ func has_slot(slot: int) -> bool:
 ## legacy path (which may not exist) when the slot is empty. Consumers that
 ## want a byte count or a path to show want this one.
 func slot_path(slot: int) -> String:
+	flush_writes()
 	var active := _active_generation_file(slot)
 	if active != "":
 		return "%s/%s" % [_slot_dir(slot), active]
@@ -510,6 +716,7 @@ func slot_dir(slot: int) -> String:
 ## and `repair_notes` are what a recovery dialog needs. The five-method API
 ## above is what everything else should use.
 func manager_for(slot: int) -> SaveManager:
+	flush_writes()
 	return _manager(slot) if _valid_slot(slot) else null
 
 

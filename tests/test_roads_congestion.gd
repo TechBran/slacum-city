@@ -255,3 +255,111 @@ func test_settlement_inputs_feed_doc03() -> void:
 			0.0090, 1e-9)
 	assert_true(inputs.has("c_day") and inputs.has("wx_wear_day"))
 	assert_almost_eq(float(inputs["wx_wear_day"]), 0.0, 1e-9, "clear weather, no wear")
+
+
+# ══════════ the dirty set, and the two sweeps that went with it (RR-39) ═════
+
+func test_a_dirty_set_has_nothing_to_skip_because_every_edge_moves() -> void:
+	# **The census, as a permanent statement of the finding.** A dirty-set
+	# congestion pass may skip an edge only where the full sweep would have left
+	# it unchanged. `hour` is an input to every edge on every pass through
+	# `D_tod`, and the smoother never lands on its target — so an ordinary pass
+	# moves EVERY edge, the skippable set is empty, and an implementation that
+	# skipped anyway would be a different simulation rather than a faster one.
+	# If this test ever goes green with a number below the edge count, the
+	# refusal in doc 10 §9.3 C-3 is re-openable; until then it is settled.
+	var net := RoadsTestRig.starter_network()
+	var edges := net.graph.edge_ids_ref().size()
+	assert_true(edges > 0, "the starter city has a road graph")
+	for minute in 6:
+		var ctx := RoadsTestRig.context(minute * GameClock.TICKS_PER_MINUTE,
+				8.0 + float(minute) / 60.0)
+		net.full_pass(ctx)
+		assert_eq(net.congestion.last_moved, edges,
+				"game-minute %d moved every edge in the graph" % minute)
+
+
+func test_the_pass_carries_its_own_mean_and_it_is_the_second_sweep_s_answer() -> void:
+	# `full_pass` used to walk every edge a second time to average what it had
+	# just written. The sum is taken inside the loop now — same ids, same
+	# ascending order, same additions — so the two must agree EXACTLY and not
+	# approximately. A tolerance here would hide the only way this can be wrong.
+	var net := RoadsTestRig.starter_network()
+	for minute in 4:
+		var ctx := RoadsTestRig.context(minute * GameClock.TICKS_PER_MINUTE,
+				14.0 + float(minute) / 60.0)
+		net.full_pass(ctx)
+		assert_eq(net.congestion.last_pass_mean(), net.congestion.mean_congestion(),
+				"the folded mean IS the sweep's answer at minute %d" % minute)
+		assert_eq(net.congestion.last_pass_count, net.graph.edge_ids_ref().size(),
+				"…over the whole graph")
+
+
+func test_the_profile_table_prices_c_raw_exactly_as_the_single_edge_path_does() -> void:
+	# The (class, district) table is the dirty set this pass CAN have: the
+	# shared factor `K_base(class) · D_tod(district, hour)` is resolved once per
+	# pair instead of once per edge. `c_raw()` — the single-edge entry, which
+	# does not use the table — must return the identical float, because the
+	# association is preserved to the term.
+	var net := RoadsTestRig.network_with(RoadsTestRig.merge(
+			RoadsTestRig.line(Vector2i(0, 10), Vector2i(20, 10), AVENUE),
+			RoadsTestRig.line(Vector2i(10, 0), Vector2i(10, 20), STREET)))
+	var ctx := RoadsTestRig.context(GameClock.TICKS_PER_MINUTE, 17.5)
+	net.full_pass(ctx)
+	# The batch path's own answers, collected through the daily sampler's sink.
+	var inputs := net._congestion_inputs(17.5, 1.0, true)
+	var sink: Dictionary = {}
+	net.congestion.accumulate_c_raw(net.graph.edge_ids_ref(), inputs, sink)
+	assert_false(sink.is_empty(), "the batch path priced something")
+	for edge_id: int in net.graph.edge_ids_ref():
+		assert_eq(float(sink[edge_id]), net.congestion.c_raw(edge_id, inputs),
+				"edge %d prices the same either way" % edge_id)
+
+
+func test_the_profile_table_follows_a_graph_edit() -> void:
+	# The table's key is exact only because `_refresh_all_edge_state` — the one
+	# writer of `district_id`, and the pass every edge build runs through —
+	# invalidates it. A road laid across the corridor changes a tile's class, and
+	# the congestion values must follow it rather than a stale slot.
+	var net := RoadsTestRig.network_with(
+			RoadsTestRig.line(Vector2i(0, 10), Vector2i(20, 10), STREET))
+	var ctx := RoadsTestRig.context(GameClock.TICKS_PER_MINUTE, 17.5)
+	net.full_pass(ctx)
+	var before := net.congestion.mean_congestion()
+	# Upgrade the whole corridor to an avenue: same tiles, same ids where the
+	# graph can keep them, a different `road_class` and a different K_base.
+	for x in range(0, 21):
+		net.edit_tile(Vector2i(x, 10), AVENUE)
+	net.step(RoadsTestRig.context(GameClock.TICKS_PER_MINUTE, 17.5))
+	for minute in 30:
+		net.full_pass(RoadsTestRig.context((minute + 2) * GameClock.TICKS_PER_MINUTE, 17.5))
+	assert_ne(net.congestion.mean_congestion(), before,
+			"an avenue carries a different K_base and the pass saw it")
+	# And the single-edge path, which never reads the table, agrees with it.
+	var inputs := net._congestion_inputs(17.5, 1.0, true)
+	var sink: Dictionary = {}
+	net.congestion.accumulate_c_raw(net.graph.edge_ids_ref(), inputs, sink)
+	for edge_id: int in net.graph.edge_ids_ref():
+		assert_eq(float(sink[edge_id]), net.congestion.c_raw(edge_id, inputs),
+				"edge %d still prices the same either way after the edit" % edge_id)
+
+
+func test_the_dark_signal_sweep_is_skipped_only_when_nothing_is_dark() -> void:
+	# `dark_signal_counts_by_edge()` is an O(nodes) walk taken once a game-minute
+	# by the congestion pass. It early-outs on a count `refresh_signal_power`
+	# maintains for nothing — and the early-out must never hide a dark signal, so
+	# the count is reset to "unknown" whenever a node's signalised verdict moves.
+	var net := RoadsTestRig.network_with(RoadsTestRig.merge(
+			RoadsTestRig.line(Vector2i(0, 10), Vector2i(20, 10), AVENUE),
+			RoadsTestRig.line(Vector2i(10, 0), Vector2i(10, 20), AVENUE)))
+	assert_eq(net.graph.dark_signals, -1, "unknown until a power refresh runs")
+	assert_eq(net.graph.refresh_signal_power(func(_t: Vector2i) -> bool: return true), 0,
+			"everything lit changes nothing")
+	assert_eq(net.graph.dark_signals, 0, "…and the count says so")
+	assert_true(net.graph.dark_signal_counts_by_edge().is_empty(),
+			"so the sweep is skipped and the answer is empty")
+	# Now black out the junction and the sweep has to run again.
+	net.graph.refresh_signal_power(func(_t: Vector2i) -> bool: return false)
+	assert_true(net.graph.dark_signals > 0, "a dark signalised node was counted")
+	assert_false(net.graph.dark_signal_counts_by_edge().is_empty(),
+			"and the edges around it are reported")

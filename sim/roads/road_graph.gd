@@ -23,6 +23,11 @@ var grid: TileGrid
 var tun: RoadTunables
 
 var graph_version: int = 0
+## Signalised nodes currently UNPOWERED, counted by [refresh_signal_power] —
+## which is the only writer of `powered` and already visits every node. -1 until
+## that has run once, which reads as "unknown" and makes the two dark-signal
+## queries do their sweep rather than trust a count they have not been given.
+var dark_signals: int = -1
 ## Instrumented: tiles walked by the last rebuild pass (doc 10 test 6 asserts it).
 var last_retraced_tiles: int = 0
 ## True while a budgeted rebuild still has work queued; route-cache reuse is
@@ -559,6 +564,11 @@ func _refresh_node_meta(node_ids: Array) -> void:
 		var t: Vector2i = record["tile"]
 		record["degree"] = _road_neighbours(t).size()
 		record["signalised"] = _compute_signalised(record)
+	# A node that just changed its signalised verdict has not been through
+	# `refresh_signal_power` yet, so the dark count it maintains is no longer
+	# authoritative. -1 reads as "unknown" and puts the two dark-signal queries
+	# back on their sweep until the next tick settles it.
+	dark_signals = -1
 
 
 ## `signalised = degree ≥ 3 AND (any incident edge is AVENUE OR degree ≥ 4)`,
@@ -1032,6 +1042,7 @@ func other_node(edge_id: int, node_id: int) -> int:
 ## lag. `powered_of` is `power.is_tile_powered(tile) -> bool`.
 func refresh_signal_power(powered_of: Callable) -> int:
 	var changed := 0
+	var dark := 0
 	for node_id in node_ids_ref():   # EVERY_TICK: no defensive copy of the order
 		var record: Dictionary = _nodes[node_id]
 		if not bool(record["signalised"]):
@@ -1043,6 +1054,13 @@ func refresh_signal_power(powered_of: Callable) -> int:
 		if bool(record["powered"]) != powered:
 			record["powered"] = powered
 			changed += 1
+		if not powered:
+			dark += 1
+	# This loop is the only place `powered` moves and it visits every node, so
+	# the count falls out of it for nothing. `dark_signal_counts_by_edge` and
+	# `dark_signal_node_ids` read it to answer "{}" without a sweep, which is
+	# the normal case and is taken once a game-minute by the congestion pass.
+	dark_signals = dark
 	return changed
 
 
@@ -1092,6 +1110,8 @@ func _dark_at(node_id: int) -> int:
 ## for many edges asks once instead of probing the node table twice per edge.
 func dark_signal_node_ids() -> Dictionary:
 	var out: Dictionary = {}
+	if dark_signals == 0:
+		return out
 	for node_id in _nodes:
 		var n: Dictionary = _nodes[node_id]
 		if bool(n["signalised"]) and not bool(n["powered"]):
@@ -1109,6 +1129,8 @@ func dark_signal_node_ids() -> Dictionary:
 ## `dark_signal_endpoints` about all E edges, at O(dark nodes) instead.
 func dark_signal_counts_by_edge() -> Dictionary:
 	var out: Dictionary = {}
+	if dark_signals == 0:
+		return out
 	for node_id in _nodes:
 		var n: Dictionary = _nodes[node_id]
 		if not bool(n["signalised"]) or bool(n["powered"]):

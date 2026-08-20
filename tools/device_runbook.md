@@ -672,6 +672,17 @@ save, ≈ 100–150 ms load; a 1,500-building city ≈ 0.3–0.5 s save, ≈ 0.9
 load. **Confirm or refute that factor first** — it is the multiplier every other
 provisional number in this file leans on.
 
+> **Amended 2026-08-20 (report 98 RR-40).** Both operations are now split by the
+> instrument, and the split is the finding: a benchmark-city **save is 148.7 ms
+> of which the WRITE is only 52.4** — `canonical_capture()` is the expensive
+> half — and a **load is 483.9 ms of which `restore_state` is 442.6**, i.e.
+> 91 %. `SaveService.async_writes` moves the write to a worker and takes the
+> caller's cost to **97.5 ms**; `PERFIO` now carries `write_ms`, `read_ms`,
+> `restore_ms` and `async`, so a device capture reports all four columns
+> directly instead of by difference. **On device, ask for the RESTORE column
+> first**: if the Fold's 2–3× factor holds it is 0.9–1.3 s of main-thread work
+> in front of doc 13 §2.9's catch-up, and nothing in this branch touches it.
+
 ### Extras worth taking while the device is up
 
 ```bash
@@ -735,7 +746,7 @@ flag vocabulary in §1.3 before it can be run at all.
 | `presets.balanced.road_detail` | **2** | the ladder is 10.1 % of the Z0 GPU pass and the Fold is a flagship | a Fold Z0 GPU pass over ~11 ms with the street a visible share of it |
 | `presets.high.road_detail` | **2** | as above | as above |
 | `presets.performance.road_detail` | **1** *(provisional — held after the device pass)* | drops the wear terms only — every line of paint, including the crossings, survives; a tier-C part at `render_scale` 0.70 resolves an 11 m hash mottle as noise, and tier-C ALU:bandwidth is far worse than this workstation's. The Fold adds a reason to hold it: the frame is fragment-bound (`gpu_est` 7.0–12.6 ms vs `cpu` 0.5–0.8 ms) at a 2.90 MP render target, 3.14× what the ladder was measured at | a tier-C measurement showing the wear terms below 1 % of its GPU pass — then raise it to 2. **The Fold is tier A and auto-detected into `balanced`, so it cannot fire this condition; tier C is still unmeasured** |
-| **the ladder's shape** *(new, 2026-08-20)* | — | rung 1 buys only ~29 % of the ladder: the workstation split prices the zebra loop at 2.4× every wear term combined, and rung 1 keeps the zebra. Rung 0 buys the other 71 % and deletes the crossings | nothing — this is a note that the ladder is the wrong lever. **The lever to build is an optimised zebra** (hoist the eight `fwidth()` calls, early-out on non-junction tiles), which would buy the expensive 71 % with no visual change |
+| **the ladder's shape** *(new, 2026-08-20)* | — | rung 1 buys only ~29 % of the ladder: the workstation split prices the zebra loop at 2.4× every wear term combined, and rung 1 keeps the zebra. Rung 0 buys the other 71 % and deletes the crossings | nothing — this is a note that the ladder is the wrong lever. ~~**The lever to build is an optimised zebra**~~ **BUILT, 2026-08-20 (report 98 RR-38).** The eight `fwidth()` calls are four and the block early-outs on `cw_mask` — a `flat` varying, so the branch is quad-uniform. **The zebra term falls 0.1156 → 0.0355 ms at Z0/21 (−69 %) and 0.1096 → 0.0427 at Z0/13 (−61 %)**, byte-identical at Z0 at every rung and both hours. The ladder now costs 0.092 ms at Z0/21 instead of 0.153, and `presets.performance.road_detail` has that much less to buy |
 | `road_detail` as a governor rung | **not taken** | 0.15 ms saved against a street that changes appearance mid-pan | nothing short of a device that cannot hold 30 fps at rung 1 |
 | `construction_vehicles.max_sites` | **28, unchanged** | 0–3 sites is the real load and costs 0.105 ms (§Q4) | a tier-C device measuring over 1.5 ms at 28 sites — then a `presets.performance.construction_sites` row, not a governor rung |
 
