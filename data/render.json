@@ -263,6 +263,16 @@
                 "_cast_shadows": "OFF by default, i.e. on mobile (report 98 / vehicle q5). A vehicle layer's custom AABB is world-sized -- it has to be, because instances are written straight into the MultiMesh buffer and never update the auto AABB -- so every body layer intersects EVERY directional shadow split and is re-drawn once per split whether or not a single car is inside it. At balanced (2 splits) that is 7 extra draw calls for shadows nobody can see from 87 m up; at high (4 splits) it is 14, which High can afford and does. The per-preset `vehicle_shadows` row below overrides this key.",
                 "cast_shadows": false },
 
+  "_construction_vehicles": "Doc 11 section 2.16, LIVING CONSTRUCTION: the plant and the deliveries that work a site while it is being built (ConstructionVehicleView). Separate from the `construction` block ConstructionSiteView reads, so the hoarding/crane pass and this one never contend for a key. Every schedule below is in GAME-MINUTES, so plant runs at the sim's speed and stops when the sim is paused. road_top_m and lane_offset_m are NOT here: this layer shares doc 10's `vehicles` numbers so a lorry keeps to the same lane as the cars behind it.",
+  "construction_vehicles": { "truck_speed_mpgm": 21.0, "delivery_period_gm": 46.0,
+                             "dump_gm": 4.2, "dig_cycle_gm": 7.0,
+                             "pile_per_delivery": 0.26, "pile_consume_per_stage": 0.30,
+                             "pile_max_m": 1.75, "pile_base_m": 2.60,
+                             "barrier_bay_m": 2.55, "barrier_out_m": 2.15,
+                             "pile_out_m": 0.95, "rig_out_m": 4.40,
+                             "beacon_hz": 1.35, "beacon_energy": 3.2, "lamp_energy": 2.2,
+                             "visible_radius_m": 520.0, "max_sites": 28 },
+
   "blob_shadow": { "enabled_presets": ["performance"], "y_m": 0.04,
                    "footprint_scale": 1.15, "alpha": 0.35, "night_fade": 0.6 },
 

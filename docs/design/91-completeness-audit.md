@@ -327,6 +327,7 @@ so a finished tutorial stays finished across a restart. **D-3 closed.**
 | 2.13 | Budgets, device matrix, **adaptive governor** | **PARTIAL** | three quality presets exist and are switchable from Settings; there is **no fps-driven governor** — grep for `governor` returns nothing. And with no benchmark city (doc 09 §2.13) the device matrix cannot be measured. |
 | 2.14 | Gray-box pipeline | SHIPPED | `tools/gen_graybox.gd` + `game/meshes/generated/manifest.json` |
 | 2.15 | Audio | SHIPPED | `game/audio/`; `test_audio_model.gd` |
+| 2.16 | LIVING CONSTRUCTION | **SHIPPED 2026-08-20** | `ConstructionRigMesh` + `construction_rig.gdshader` + `ConstructionActivity` + `ConstructionVehicleView`; `test_construction_living.gd` (3,835 asserts). Articulated plant and street-true deliveries for **+5 draw calls** and **0.46 ms** at 20 sites. Closes the "a site is a box that grows" gap left by the crane/hoarding pass. Renderer-local and hash-neutral — proved by an interleaved-lookup test, not by inspection. |
 
 ## 12. Doc 12 — UI/UX
 
