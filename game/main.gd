@@ -608,6 +608,12 @@ func _refresh_hud() -> void:
 		})
 		_feed_dashboard_tabs()
 		ui_root.refresh_land_panel()
+		# The goal chip and, while it is up, the sheet. Cheap — a five-row
+		# objective list and a six-rung strip — so it rides the same 1 Hz
+		# cadence every other reading does. This is also what re-seeds the chip
+		# after a save load: `_on_ui_save_loaded` calls `_refresh_hud()`, and
+		# `GoalsModel` holds the same `CitySim` instance the load restores into.
+		ui_root.refresh_goals()
 
 
 # ---------------------------------------------------------------------------
@@ -654,6 +660,15 @@ func _wire_build_ui(ui_instance: Node) -> void:
 		ui_root.land_purchased.connect(_on_land_changed)
 		ui_root.land_developed.connect(_on_land_changed)
 		ui_root.land_fix_requested.connect(_on_fix_requested)
+
+	# S14, the goals sheet (doc 12 §2.19). `UIRoot.bring_up_screens()` already
+	# brought it up with the shared config and NO model, exactly as it does the
+	# build sheet. This is the one thing only the shell can supply: a model over
+	# the live sim, plus the build controller the reward card reads its unlock
+	# table from. Idempotent.
+	if ui_root != null and ui_root.goals_sheet != null:
+		ui_root.goals_sheet.setup(cfg,
+				GoalsModel.new(sim_host.sim, cfg, build_controller))
 
 	if ui_root != null:
 		ui_root.back_requested.connect(_on_ui_back)
