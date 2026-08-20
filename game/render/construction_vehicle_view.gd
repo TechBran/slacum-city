@@ -44,6 +44,15 @@ extends Node3D
 ##   view.remove_site(id)                                   # on completion
 ##   view.refresh(delta, night, gm_per_s, game_minutes)     # every frame
 
+## Emitted when a site's STREET FRONTAGE lands or moves — on the frame its
+## route resolves, and again after a road edit re-routes it. `side` is
+## 0 = -Z, 1 = +X, 2 = +Z, 3 = -X, or -1 when no street is in reach.
+##
+## The shell wires this straight into `ConstructionSiteView.set_gate_side` so
+## the hoarding's gate turns to the same face this layer stands its plant on.
+## Without it the two layers agree one time in four (§2.16's filed open item 4).
+signal site_frontage_changed(id: int, side: int)
+
 const SHADER := "res://game/shaders/construction_rig.gdshader"
 
 const DEF_TILE_M := 8.0
@@ -300,11 +309,13 @@ func _requeue_all() -> void:
 
 func _resolve(id: int) -> void:
 	var site: ConstructionActivity.Site = activity.sites[id]
+	var was := frontage_side(id)
 	var road := _frontage_road(site)
 	if road.x < 0:
 		# No street within the snap radius: the site keeps its hoarding and its
 		# crane and gets no traffic. Nothing to draw is the honest answer.
 		activity.set_route(id, Vector2i(-1, -1), Vector2i(-1, -1), [], [])
+		_announce_frontage(id, was)
 		return
 	# Try the nearest few gateways in turn: the outermost tile of a road
 	# network can be a stub that shares no component with this site.
@@ -316,9 +327,17 @@ func _resolve(id: int) -> void:
 			continue
 		var home_tiles: Array = _roads.route_tiles(road, depot, _profile)
 		activity.set_route(id, road, depot, out_tiles, home_tiles)
+		_announce_frontage(id, was)
 		return
 	# Reachable street, no reachable depot: frontage and yard, no lorries.
 	activity.set_route(id, road, Vector2i(-1, -1), [], [])
+	_announce_frontage(id, was)
+
+
+func _announce_frontage(id: int, was: int) -> void:
+	var now := frontage_side(id)
+	if now != was:
+		site_frontage_changed.emit(id, now)
 
 
 ## The road tile this lot FRONTS ON: the nearest road found by walking straight
@@ -332,11 +351,51 @@ func _resolve(id: int) -> void:
 ## twelve metres along the kerb, past the lot's own corner, with the plant
 ## strung out after it. A frontage is a FACE, so the search has to be one.
 func _frontage_road(site: ConstructionActivity.Site) -> Vector2i:
-	var size := site.footprint
+	return _frontage_road_at(site.world_pos, site.footprint)
+
+
+## Which side of a lot fronts the street: **0 = -Z, 1 = +X, 2 = +Z, 3 = -X**,
+## or -1 when no street is within the snap radius. The same four indices
+## `ConstructionSiteView` numbers its hoarding runs with, deliberately.
+##
+## Two ways in. This one is a pure QUERY on a lot that need not be a site yet,
+## so the shell can ask it in the same breath it calls `add_site` on both layers
+## — the routes resolve two a frame and the hoarding cannot wait for them. The
+## `frontage_side(id)` overload below reads the site's own resolved frontage,
+## which is what the `site_frontage_changed` signal carries after a re-route.
+func frontage_side(world_pos: Variant, footprint_tiles: Vector2i = Vector2i.ONE) -> int:
+	_ensure_setup()
+	if world_pos is int:
+		var site: Variant = activity.sites.get(int(world_pos))
+		if site == null or not (site as ConstructionActivity.Site).frontage_ok:
+			return -1
+		return side_of_delta((site as ConstructionActivity.Site).out)
+	if _roads == null:
+		return -1
+	var lot: Vector3 = world_pos
+	var road := _frontage_road_at(lot, footprint_tiles)
+	if road.x < 0:
+		return -1
+	return side_of_delta(Vector3((float(road.x) + 0.5) * tile_m, 0.0,
+			(float(road.y) + 0.5) * tile_m) - lot)
+
+
+## The frontage frame's dominant-axis test, as a side index. Mirrors
+## `ConstructionActivity._frame_frontage` exactly, tie-break included: an
+## ambiguous delta resolves to +X, then +Z, which is what makes the two layers
+## agree on a lot that is dead square to its street.
+static func side_of_delta(d: Vector3) -> int:
+	if absf(d.x) >= absf(d.z):
+		return 3 if d.x < -0.0001 else 1
+	return 0 if d.z < -0.0001 else 2
+
+
+func _frontage_road_at(world_pos: Vector3, footprint_tiles: Vector2i) -> Vector2i:
+	var size := footprint_tiles
 	# `world_pos` is the lot centre, so the origin corner is exactly this.
 	var origin := Vector2i(
-			int(round((site.world_pos.x - float(size.x) * tile_m * 0.5) / tile_m)),
-			int(round((site.world_pos.z - float(size.y) * tile_m * 0.5) / tile_m)))
+			int(round((world_pos.x - float(size.x) * tile_m * 0.5) / tile_m)),
+			int(round((world_pos.z - float(size.y) * tile_m * 0.5) / tile_m)))
 	var radius := maxi(1, _roads.tun.snap_radius_tiles)
 	for step in range(1, radius + 1):
 		var best := Vector2i(-1, -1)
@@ -436,6 +495,17 @@ func _gateway_tiles() -> Array[Vector2i]:
 
 # ------------------------------------------------------------------ upload
 
+## Five buffers, rewritten from the activity model's pose arrays.
+##
+## Still three `set_instance_*` calls an instance and NOT one packed
+## `MultiMesh.buffer` write, and that is a measured decision: on this build the
+## setters cost 0.031 ms per 200 instances per frame against 0.064 ms to pack
+## the same rows in GDScript (0.307 vs 0.662 at 2,000), because each setter is
+## one binding call around a C++ memcpy while packing is twenty scripted float
+## writes, and the server-side write is ~0.003 ms either way. The A/B harness is
+## `tools/profile_mm_upload.gd` and the numbers are in the branch report. See
+## `RoadSurfaceView._upload` for the one place in this renderer where the packed
+## buffer IS the right tool — a per-EDIT path whose contract needs the bytes.
 func _upload() -> void:
 	var lamps := 0.0 if night_threshold <= 0.0 \
 			else clampf((_night - night_threshold) / 0.30, 0.0, 1.0)
@@ -453,23 +523,30 @@ func _upload() -> void:
 
 ## `lamp` >= 0 overwrites the pose's third custom channel — the tippers' head
 ## and tail lamps, which are the view's to gate on the night factor and not the
-## activity model's (it knows what time it is, not how dark it looks).
+## activity model's (it knows what time it is, not how dark it looks). The two
+## loops are one branch hoisted out of the body: only the tipper layer passes a
+## lamp, and testing it per instance was a branch per instance per frame.
 func _write(layer_v: Variant, poses: Array, used: int, lamp: float) -> void:
 	if layer_v == null:
 		return
 	var layer: Layer = layer_v
 	_ensure_capacity(layer, used)
-	var n := mini(used, layer.mm.instance_count)
-	for i in n:
-		var pose: ConstructionActivity.Pose = poses[i]
-		layer.mm.set_instance_transform(i, pose.transform())
-		layer.mm.set_instance_color(i, pose.tint)
-		if lamp >= 0.0:
-			layer.mm.set_instance_custom_data(i, Color(pose.custom.r, pose.custom.g,
-					lamp, pose.custom.a))
-		else:
-			layer.mm.set_instance_custom_data(i, pose.custom)
-	layer.mm.visible_instance_count = n
+	var mm := layer.mm
+	var n := mini(used, mm.instance_count)
+	if lamp >= 0.0:
+		for i in n:
+			var pose: ConstructionActivity.Pose = poses[i]
+			var c: Color = pose.custom
+			mm.set_instance_transform(i, Transform3D(pose.basis, pose.origin))
+			mm.set_instance_color(i, pose.tint)
+			mm.set_instance_custom_data(i, Color(c.r, c.g, lamp, c.a))
+	else:
+		for i in n:
+			var pose: ConstructionActivity.Pose = poses[i]
+			mm.set_instance_transform(i, Transform3D(pose.basis, pose.origin))
+			mm.set_instance_color(i, pose.tint)
+			mm.set_instance_custom_data(i, pose.custom)
+	mm.visible_instance_count = n
 
 
 func _ensure_capacity(layer: Layer, needed: int) -> void:

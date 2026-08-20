@@ -586,3 +586,87 @@ func test_17_a_repeat_rebuild_for_one_edit_is_free() -> void:
 	assert_eq(view.rebuild(grid, graph), 12, "the new tile is paved")
 	assert_eq(view.rebuild_passes, 3, "…by a pass the guard let through")
 	view.free()
+
+
+# ══════════════════ live lamps: §2.10.1's open item 1 ══════════════════════
+
+func test_18_a_road_edit_re_places_the_lamps_it_touched() -> void:
+	# Lamps were BOOT-TIME. A road the player laid got asphalt on the next frame
+	# and lamps on the next LOAD — the defect this closes.
+	var render := _render()
+	var rig := _rig(_line(Vector2i(20, 10), Vector2i(20, 40), TileGrid.ROAD_STREET))
+	var grid: TileGrid = rig["grid"]
+	var graph: RoadGraph = rig["graph"]
+	var model := RenderStateModel.new(render)
+	var view := StreetlightView.new()
+	view.setup(model, render, StreetlightPlacer.place(grid, graph, render))
+	var boot := view.lamp_count()
+	assert_true(boot >= 6, "the corridor is lit at boot (%d lamps)" % boot)
+	assert_eq(model.streetlight_count(), boot, "…and the model agrees")
+
+	# Extend the corridor: new lamps appear, and NOTHING already standing moves.
+	var before: Dictionary = {}
+	for y in range(10, 41):
+		for side in 4:
+			var id := view.lamp_id_at(Vector2i(20, y), side)
+			if id >= 0:
+				before[id] = view.anchor_of(id)["base"]
+	for y in range(41, 53):
+		grid.set_road(20, y, TileGrid.ROAD_STREET)
+		graph.apply_edits([Vector2i(20, y)])
+	var diff := view.replace_from(grid, graph)
+	assert_true(int(diff["added"]) > 0, "the new run got lamps (%d)" % diff["added"])
+	# The only lamp allowed to go is the old DEAD END's corner lamp: a cul-de-sac
+	# head carries two adjacent footways and takes a corner lamp, and once the
+	# corridor runs through it is an ordinary tile with two kerbs.
+	assert_true(int(diff["removed"]) <= 1,
+			"only the old cul-de-sac head was re-placed (%d retired)" % diff["removed"])
+	assert_true(view.lamp_count() > boot, "the city has more lamps than it did")
+	assert_eq(model.streetlight_count(), view.lamp_count(),
+			"the model roster matches the view's")
+	var held := 0
+	for id: int in before:
+		var anchor := view.anchor_of(id)
+		if anchor.is_empty():
+			continue
+		assert_eq(anchor["base"], before[id],
+				"lamp %d did not move, so its ramp did not restart" % id)
+		held += 1
+	assert_true(held >= boot - 1, "every lamp but the cul-de-sac head kept its id")
+
+	# Bulldoze the extension: the lamps on it retire, and the model stops
+	# ticking them.
+	for y in range(41, 53):
+		grid.set_road(20, y, TileGrid.ROAD_NONE)
+		graph.apply_edits([Vector2i(20, y)])
+	diff = view.replace_from(grid, graph)
+	assert_true(int(diff["removed"]) > 0, "the bulldozed run lost its lamps")
+	assert_eq(view.lamp_count(), boot, "the city is back to its founding count")
+	assert_eq(model.streetlight_count(), boot, "…and so is the model")
+	view.free()
+
+
+func test_18b_a_re_place_that_changes_nothing_touches_nothing() -> void:
+	# The shell calls this wherever it rebuilds the street surface, including for
+	# edits nowhere near a lamp. It has to be free, and it has to leave every id
+	# alone — a lamp that is re-created loses its `anim_phase` and its ramp.
+	var render := _render()
+	var rig := _rig(_line(Vector2i(30, 10), Vector2i(30, 30), TileGrid.ROAD_STREET))
+	var grid: TileGrid = rig["grid"]
+	var graph: RoadGraph = rig["graph"]
+	var model := RenderStateModel.new(render)
+	var view := StreetlightView.new()
+	var lamps := StreetlightPlacer.place(grid, graph, render)
+	view.setup(model, render, lamps)
+	# The boot pass adopts the placer's own numbering exactly, so no city that
+	# was already running has an `anim_phase` moved by this diff existing.
+	for raw: Variant in lamps:
+		var row: Dictionary = raw
+		assert_eq(view.lamp_id_at(row["tile"], int(row["side"])), int(row["id"]),
+				"boot numbering is the placer's own")
+	var diff := view.replace_from(grid, graph)
+	assert_eq(int(diff["added"]), 0, "nothing added")
+	assert_eq(int(diff["removed"]), 0, "nothing removed")
+	assert_eq(int(diff["moved"]), 0, "nothing moved")
+	assert_eq(int(diff["kept"]), view.lamp_count(), "every lamp kept")
+	view.free()

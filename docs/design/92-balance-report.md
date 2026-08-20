@@ -1723,7 +1723,7 @@ at founding) stop covering the demand — the water twin of §17.3's feeder ceil
 and the one the new verbs CAN answer.
 
 **Closed, Wave 10 (§23).** Both halves. The verbs now have PLAYER surfaces (doc
-12 §2.7's drag-path tab and §2.9 item 6's actions row, report 98 RR-26), and the
+12 §2.7's drag-path tab and §2.9 item 6's actions row, report 98 RR-30), and the
 `curriculum` agent DRIVES two of them because `data/goals.json` now asks it to —
 4 tiles of street at level 3, 2 repairs at level 4.
 
@@ -3396,7 +3396,7 @@ table that drives `tests/balance_gate_rig.gd` directly — the same instrument g
 
 Nothing in `sim/` and nothing priced. This pass is a **UI** pass: §17.6's
 infrastructure verbs and doc 12 §2.9 item 6's per-building verbs got the surfaces
-they never had (report 98 RR-26, doc 93 §G2). The only balance-visible artefact is
+they never had (report 98 RR-30, doc 93 §G2). The only balance-visible artefact is
 two new rows in `data/goals.json`, which the `curriculum` agent now drives:
 
 | row | level | kind | target | what it costs the agent |

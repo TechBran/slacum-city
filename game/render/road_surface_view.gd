@@ -46,6 +46,16 @@ extends Node3D
 ## `tests/test_road_surface.gd` pins them. In brief: `.r` neighbour mask,
 ## `.g` kerb mask, `.b` class + 2*pair + 16*crosswalk mask, `.a` wear seed.
 ##
+## ── `rebuild()` is a DIFF, not a pure function (§2.1.2a) ──────────────────
+## A full pass is 18.3 ms on the benchmark city and it fires every time the
+## player lays a road, so this view keeps last pass's classification and asks
+## only what changed: 19.7 -> 4.87 ms on the benchmark city, 4.76 -> 1.18 ms on
+## the founding one. The whole contract of a stateful diff is one sentence, and
+## `tests/test_road_incremental.gd` property-tests it over random edit
+## sequences: **after any sequence of edits both uploaded buffers are
+## byte-identical to a from-scratch rebuild of the same city.** `force` is the
+## pure function, and is what a sim swap takes.
+##
 ## Reads doc 10; mutates nothing. Zero RNG: the wear seed is a hash of the tile.
 
 const TILE_M := 8.0
@@ -71,6 +81,14 @@ var sidewalk_top_m := 0.25
 var sidewalk_w_street := 1.40
 var sidewalk_w_avenue := 1.05
 
+## The MultiMesh buffer strides this view uploads through. Verified against the
+## engine rather than assumed: `MultiMesh` packs TRANSFORM_3D as twelve floats
+## (basis ROWS interleaved with the origin), then four for `use_colors` and four
+## for `use_custom_data`, in that order. Asphalt carries custom data and no
+## colour; the footway carries neither.
+const ASPHALT_STRIDE := 16
+const WALK_STRIDE := 12
+
 var _asphalt: MultiMeshInstance3D
 var _sidewalk: MultiMeshInstance3D
 var _tiles: Array[Vector2i] = []
@@ -84,6 +102,44 @@ var _built_version: int = -1
 ## calls actually walked the city. `tests/test_road_surface.gd` asserts against
 ## it rather than trusting the guard.
 var rebuild_passes: int = 0
+## …and the same for the incremental path: how many passes took the diff, and
+## how many tiles the last one had to re-classify. A test that only checked the
+## OUTPUT would pass with the diff quietly falling back to a full sweep.
+var incremental_passes: int = 0
+var last_dirty_tiles: int = 0
+var last_pass_incremental: bool = false
+
+# ------------------------------------------------- the diff's memory (§2.1.2)
+#
+# `rebuild()` used to be a pure function of (grid, graph) and is now a STATEFUL
+# DIFF, because a full pass is 18.3 ms on the benchmark city and it fires on
+# every road the player lays. Everything below is last pass's answer, kept so
+# this pass can ask only what changed. `force` restores the pure-function
+# behaviour and is what a sim swap (a mid-session load) takes.
+#
+# The invariant the tests hold this to is exact and it is the whole contract:
+# **any sequence of edits leaves these buffers byte-identical to a from-scratch
+# rebuild of the same city.** `tests/test_road_incremental.gd` property-tests it
+# over random edit sequences on random cities.
+var _is_road: Dictionary = {}     # Vector2i -> pass stamp (membership + set test)
+var _cls_of: Dictionary = {}
+var _mask_of: Dictionary = {}
+var _kerb_of: Dictionary = {}
+var _pair_map: Dictionary = {}
+var _junction_map: Dictionary = {}
+var _pass_no: int = 0
+## Footway state, per bucket and per tile, so one tile's contribution can be
+## pulled out of a kerb run without re-walking the city.
+var _bucket: Dictionary = {}      # key -> {Vector2i tile: [lo, hi]}
+var _bucket_meta: Dictionary = {} # key -> {axis, fixed, w}
+var _bucket_out: Dictionary = {}  # key -> Array of run rows (the merged result)
+var _spans_of: Dictionary = {}    # Vector2i tile -> Array[int] of bucket keys
+var _corner_of: Dictionary = {}   # Vector2i tile -> Array of run rows
+var _corner_order: Array[Vector2i] = []
+var _corners_dirty := true
+## What was last handed to the RenderingServer, float for float.
+var _asphalt_buf := PackedFloat32Array()
+var _walk_buf := PackedFloat32Array()
 
 
 # ---------------------------------------------------------------------- setup
@@ -277,43 +333,177 @@ func rebuild(grid: TileGrid, graph: RoadGraph = null, force: bool = false) -> in
 		return _tiles.size()
 	_built_version = graph.graph_version if graph != null else -1
 	rebuild_passes += 1
+	# The diff needs a graph (it keys off `graph_version` and off the graph's own
+	# membership map) and a previous pass to diff against. `force` throws the
+	# memory away, which is what a swapped sim requires.
+	if force or graph == null or _is_road.is_empty():
+		_rebuild_full(grid, graph)
+	else:
+		_rebuild_incremental(grid, graph)
+	_upload()
+	return _tiles.size()
+
+
+## The original pass, unchanged in what it computes: classify the whole city and
+## write both buffers. Still the boot path, still what `force` takes, and still
+## the answer every incremental pass is checked against.
+func _rebuild_full(grid: TileGrid, graph: RoadGraph) -> void:
 	var facts := classify(grid, graph)
 	_tiles = facts["tiles"]
-	var cls_of: Dictionary = facts["cls"]
-	var mask_of: Dictionary = facts["mask"]
-	var kerb_of: Dictionary = facts["kerb"]
-	var pair_of: Dictionary = facts["pair"]
-	var junction: Dictionary = facts["junction"]
-
-	# Crosswalks. A leg only gets a zebra if what it leads to is NOT another
-	# junction tile — which is what stops a 2x2 avenue crossing from painting
-	# four zebras into its own middle.
-	var mm := _asphalt.multimesh
-	mm.instance_count = _tiles.size()
+	_cls_of = facts["cls"]
+	_mask_of = facts["mask"]
+	_kerb_of = facts["kerb"]
+	_pair_map = facts["pair"]
+	_junction_map = facts["junction"]
+	_pass_no += 1
+	_is_road = {}
 	_pack_of.clear()
 	_slot_of.clear()
-	var half := TILE_M * 0.5
-	var y := asphalt_top_m - asphalt_thickness_m * 0.5
 	for i in _tiles.size():
 		var t: Vector2i = _tiles[i]
-		var mask := int(mask_of[t])
-		var cw := 0
-		if bool(junction[t]):
-			for d in 4:
-				if (mask & BIT[d]) != 0 and not bool(junction.get(t + DIRS[d], false)):
-					cw |= BIT[d]
-		var cls_code := 1 if int(cls_of[t]) == TileGrid.ROAD_AVENUE else 0
-		var packed := float(cls_code) + 2.0 * float(pair_of[t]) + 16.0 * float(cw)
-		var data := Color(float(mask), float(kerb_of[t]), packed, _wear_seed(t))
-		mm.set_instance_transform(i, Transform3D(Basis.IDENTITY,
-				Vector3(float(t.x) * TILE_M + half, y, float(t.y) * TILE_M + half)))
-		mm.set_instance_custom_data(i, data)
-		_pack_of[t] = data
+		_is_road[t] = _pass_no
 		_slot_of[t] = i
-	_asphalt.custom_aabb = _cover(_tiles, -0.5, 1.0)
+	# Crosswalks. A leg only gets a zebra if what it leads to is NOT another
+	# junction tile — which is what stops a 2x2 avenue crossing from painting
+	# four zebras into its own middle. Its own loop because it reads the
+	# junction verdict of NEIGHBOURS, which the loop above is still deciding.
+	for t: Vector2i in _tiles:
+		_pack_of[t] = _pack_for(t)
+	_set_cover()
+	_full_sidewalks()
+	last_dirty_tiles = _tiles.size()
+	last_pass_incremental = false
 
-	_build_sidewalks(kerb_of, cls_of)
-	return _tiles.size()
+
+## An explicit cover on BOTH layers. `_cover` walks every road tile, so it is
+## re-taken only when the road layer's extent could have moved.
+func _set_cover() -> void:
+	var cover := _cover(_tiles, -0.5, 1.0)
+	_asphalt.custom_aabb = cover
+	_sidewalk.custom_aabb = cover
+
+
+## The four channels one tile uploads. Reads the persistent classification, so
+## the full and incremental paths cannot disagree about what a pack IS.
+func _pack_for(t: Vector2i) -> Color:
+	var mask := int(_mask_of[t])
+	var cw := 0
+	if bool(_junction_map[t]):
+		for d in 4:
+			if (mask & BIT[d]) != 0 and not bool(_junction_map.get(t + DIRS[d], false)):
+				cw |= BIT[d]
+	var cls_code := 1 if int(_cls_of[t]) == TileGrid.ROAD_AVENUE else 0
+	var packed := float(cls_code) + 2.0 * float(_pair_map[t]) + 16.0 * float(cw)
+	return Color(float(mask), float(_kerb_of[t]), packed, _wear_seed(t))
+
+
+## ── the dirty-tile path (§2.1.2's filed open question 2) ──────────────────
+##
+## A full pass is 18.3 ms on the benchmark city and it fires every time the
+## player lays a road, which is exactly when a frame must not be dropped. What
+## makes the diff possible is that every per-tile fact has a bounded dependency
+## radius, and they are worth stating because the expansion below IS them:
+##
+##   `mask` / `kerb`   read `is_road` at r1
+##   `pair`            reads `is_road` at r2 (the twin's own through-test) and
+##                     `cls` at r1
+##   `junction`        follows from `pair` and the degree, so r2 / r1
+##   the crosswalk mask reads `junction` at r1, so r3 / r2
+##
+## Manhattan **r = 3** therefore covers every fact that a single-tile change can
+## move, and the seeds are the tiles whose MEMBERSHIP or CLASS moved.
+##
+## Both seed sets are read straight off the graph rather than from
+## `road_graph_changed`'s `added_edges` / `removed_edges`, and that is a
+## measured decision, not laziness: `RoadGraph.apply_edits` excludes from
+## `added_edges` any edge it deleted and recreated with the SAME id and tile
+## list (its own id-stability rule), and an upgrade in place is exactly that
+## case — the edge keeps its id while `_edge_class` recomputes underneath it.
+## An edge-delta-seeded diff would silently miss every road upgrade. The two
+## sweeps that replace it are the O(N) floor of this pass and cost 1.0 ms
+## (`road_tiles_sorted`) + 2.9 ms (the class sweep) on the benchmark city.
+func _rebuild_incremental(grid: TileGrid, graph: RoadGraph) -> void:
+	_pass_no += 1
+	var new_tiles := _road_tiles(grid, graph)
+	var seeds: Array[Vector2i] = []
+
+	# 1. Membership, by stamp: one sweep finds the additions, and the removals
+	#    only cost a second sweep when the counts say there were some.
+	for raw: Variant in new_tiles:
+		var t: Vector2i = raw
+		if not _is_road.has(t):
+			seeds.append(t)
+		_is_road[t] = _pass_no
+	var removed: Array[Vector2i] = []
+	if _is_road.size() != new_tiles.size():
+		for raw: Variant in _is_road.keys():
+			if int(_is_road[raw]) != _pass_no:
+				removed.append(raw)
+		removed.sort()
+		for t: Vector2i in removed:
+			_is_road.erase(t)
+			seeds.append(t)
+	var membership_moved := not seeds.is_empty()
+
+	# 2. Class. See the note above for why this is a sweep and not a delta.
+	for raw: Variant in new_tiles:
+		var t: Vector2i = raw
+		var live := _class_of(grid, graph, t)
+		if int(_cls_of.get(t, -1)) != live:
+			_cls_of[t] = live
+			seeds.append(t)
+	for t: Vector2i in removed:
+		_cls_of.erase(t)
+		_mask_of.erase(t)
+		_kerb_of.erase(t)
+		_pair_map.erase(t)
+		_junction_map.erase(t)
+		_pack_of.erase(t)
+
+	# 3. Expand to the dependency ball and re-classify what is inside it.
+	var dirty: Dictionary = {}
+	for s: Vector2i in seeds:
+		for dz in range(-3, 4):
+			var span := 3 - absi(dz)
+			for dx in range(-span, span + 1):
+				dirty[s + Vector2i(dx, dz)] = true
+	var live_dirty: Array[Vector2i] = []
+	for raw: Variant in dirty:
+		var t: Vector2i = raw
+		if _is_road.has(t):
+			live_dirty.append(t)
+	for t: Vector2i in live_dirty:
+		var mask := 0
+		var kerb := 0
+		var degree := 0
+		for i in 4:
+			var q: Vector2i = t + DIRS[i]
+			if _is_road.has(q):
+				mask |= BIT[i]
+				degree += 1
+			elif not _is_water(grid, q):
+				kerb |= BIT[i]
+		_mask_of[t] = mask
+		_kerb_of[t] = kerb
+		var pair := _pair_of(_is_road, _cls_of, t) if degree >= 3 else PAIR_NONE
+		_pair_map[t] = pair
+		_junction_map[t] = pair == PAIR_NONE and degree >= 3
+	# The crosswalk mask reads the junction verdict of NEIGHBOURS, so it can only
+	# be settled once every dirty tile above has one.
+	for t: Vector2i in live_dirty:
+		_pack_of[t] = _pack_for(t)
+
+	if membership_moved:
+		_tiles = new_tiles
+		_slot_of.clear()
+		for i in _tiles.size():
+			_slot_of[_tiles[i]] = i
+		_set_cover()
+
+	_patch_sidewalks(live_dirty, removed)
+	incremental_passes += 1
+	last_dirty_tiles = live_dirty.size()
+	last_pass_incremental = true
 
 
 ## Everything both this view and `StreetlightPlacer` need to know about the road
@@ -501,106 +691,259 @@ static func _wear_seed(t: Vector2i) -> float:
 ## kerbed sides of one tile meet, both strips give up `w` and a `w × w` corner
 ## square fills the gap. Nothing ever overlaps, so no two footway tops are
 ## coplanar and there is no z-fighting to tune away.
-func _build_sidewalks(kerb_of: Dictionary, cls_of: Dictionary) -> void:
-	var runs: Dictionary = {}      # key -> Array of [lo, hi]
-	var meta: Dictionary = {}      # key -> {axis, fixed, w}
-	var corners: Array = []        # [Vector3 centre, w]
+func _full_sidewalks() -> void:
+	_bucket.clear()
+	_bucket_meta.clear()
+	_bucket_out.clear()
+	_spans_of.clear()
+	_corner_of.clear()
+	_corners_dirty = true
+	var touched: Dictionary = {}
 	for t: Vector2i in _tiles:
-		var kerb := int(kerb_of[t])
-		if kerb == 0:
-			continue
-		var w := sidewalk_width(int(cls_of[t]))
-		var x0 := float(t.x) * TILE_M
-		var z0 := float(t.y) * TILE_M
-		var x1 := x0 + TILE_M
-		var z1 := z0 + TILE_M
-		var hasN := (kerb & BIT[0]) != 0
-		var hasE := (kerb & BIT[1]) != 0
-		var hasS := (kerb & BIT[2]) != 0
-		var hasW := (kerb & BIT[3]) != 0
-		var x_lo := x0 + (w if hasW else 0.0)
-		var x_hi := x1 - (w if hasE else 0.0)
-		var z_lo := z0 + (w if hasN else 0.0)
-		var z_hi := z1 - (w if hasS else 0.0)
-		if hasN:
-			_add_run(runs, meta, "X", z0, w, x_lo, x_hi)
-		if hasS:
-			_add_run(runs, meta, "X", z1 - w, w, x_lo, x_hi)
-		if hasW:
-			_add_run(runs, meta, "Z", x0, w, z_lo, z_hi)
-		if hasE:
-			_add_run(runs, meta, "Z", x1 - w, w, z_lo, z_hi)
-		if hasN and hasW:
-			corners.append([Vector2(x0, z0), w])
-		if hasN and hasE:
-			corners.append([Vector2(x1 - w, z0), w])
-		if hasS and hasW:
-			corners.append([Vector2(x0, z1 - w), w])
-		if hasS and hasE:
-			corners.append([Vector2(x1 - w, z1 - w), w])
+		_insert_footways(t, touched)
+	for key: int in touched:
+		_merge_bucket(key)
+	_emit_runs()
 
-	_runs.clear()
-	var keys: Array = runs.keys()
-	keys.sort()
-	for key: int in keys:
-		var spans: Array = runs[key]
-		spans.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
-		var row: Dictionary = meta[key]
-		var cur: Array = []
-		for span: Array in spans:
-			if cur.is_empty():
-				cur = [span[0], span[1]]
-			elif span[0] <= cur[1] + 0.001:
-				cur[1] = maxf(cur[1], span[1])
-			else:
-				_emit_run(row, cur)
-				cur = [span[0], span[1]]
-		if not cur.is_empty():
-			_emit_run(row, cur)
-	for entry: Array in corners:
-		var at: Vector2 = entry[0]
-		var w := float(entry[1])
-		_runs.append({"axis": "C", "x": at.x, "z": at.y, "dx": w, "dz": w})
 
-	var mm := _sidewalk.multimesh
-	mm.instance_count = _runs.size()
-	var height := sidewalk_top_m + 0.02
-	for i in _runs.size():
-		var run: Dictionary = _runs[i]
-		var dx := float(run["dx"])
-		var dz := float(run["dz"])
-		mm.set_instance_transform(i, Transform3D(
-				Basis.IDENTITY.scaled(Vector3(dx, height, dz)),
-				Vector3(float(run["x"]) + dx * 0.5, sidewalk_top_m - height * 0.5,
-						float(run["z"]) + dz * 0.5)))
-	_sidewalk.custom_aabb = _cover(_tiles, -0.5, 1.0)
+## The same job for a handful of tiles. `dirty` are the tiles whose kerb mask or
+## class may have moved; `gone` are tiles that stopped being road. Only the
+## BUCKETS those tiles touch are re-merged — a 20-tile avenue kerb three blocks
+## away is not re-sorted because somebody paved a cul-de-sac.
+func _patch_sidewalks(dirty: Array[Vector2i], gone: Array[Vector2i]) -> void:
+	var touched: Dictionary = {}
+	for t: Vector2i in gone:
+		_remove_footways(t, touched)
+	for t: Vector2i in dirty:
+		_remove_footways(t, touched)
+		_insert_footways(t, touched)
+	for key: int in touched:
+		_merge_bucket(key)
+	_emit_runs()
+
+
+func _insert_footways(t: Vector2i, touched: Dictionary) -> void:
+	var kerb := int(_kerb_of.get(t, 0))
+	if kerb == 0:
+		return
+	var w := sidewalk_width(int(_cls_of[t]))
+	var x0 := float(t.x) * TILE_M
+	var z0 := float(t.y) * TILE_M
+	var x1 := x0 + TILE_M
+	var z1 := z0 + TILE_M
+	var hasN := (kerb & BIT[0]) != 0
+	var hasE := (kerb & BIT[1]) != 0
+	var hasS := (kerb & BIT[2]) != 0
+	var hasW := (kerb & BIT[3]) != 0
+	var x_lo := x0 + (w if hasW else 0.0)
+	var x_hi := x1 - (w if hasE else 0.0)
+	var z_lo := z0 + (w if hasN else 0.0)
+	var z_hi := z1 - (w if hasS else 0.0)
+	var keys: Array[int] = []
+	if hasN:
+		_add_run(keys, touched, t, "X", z0, w, x_lo, x_hi)
+	if hasS:
+		_add_run(keys, touched, t, "X", z1 - w, w, x_lo, x_hi)
+	if hasW:
+		_add_run(keys, touched, t, "Z", x0, w, z_lo, z_hi)
+	if hasE:
+		_add_run(keys, touched, t, "Z", x1 - w, w, z_lo, z_hi)
+	if not keys.is_empty():
+		_spans_of[t] = keys
+	var corners: Array = []
+	if hasN and hasW:
+		corners.append(_corner_row(x0, z0, w))
+	if hasN and hasE:
+		corners.append(_corner_row(x1 - w, z0, w))
+	if hasS and hasW:
+		corners.append(_corner_row(x0, z1 - w, w))
+	if hasS and hasE:
+		corners.append(_corner_row(x1 - w, z1 - w, w))
+	if not corners.is_empty():
+		_corner_of[t] = corners
+		_corners_dirty = true
+
+
+func _remove_footways(t: Vector2i, touched: Dictionary) -> void:
+	var keys: Variant = _spans_of.get(t)
+	if keys is Array:
+		for key: int in (keys as Array):
+			var entries: Variant = _bucket.get(key)
+			if entries is Dictionary:
+				(entries as Dictionary).erase(t)
+			touched[key] = true
+		_spans_of.erase(t)
+	if _corner_of.has(t):
+		_corner_of.erase(t)
+		_corners_dirty = true
+
+
+static func _corner_row(x: float, z: float, w: float) -> Dictionary:
+	return {"axis": "C", "x": x, "z": z, "dx": w, "dz": w}
 
 
 ## The bucket key is an INT, not a formatted string. Up to four of these run per
 ## road tile per rebuild and `"%s|%.3f|%.3f" %` was 3.1 ms of the benchmark
 ## city's rebuild on its own. Both coordinates are centimetre-quantised, which
 ## is three orders of magnitude finer than anything that can share a kerb line.
-func _add_run(runs: Dictionary, meta: Dictionary, axis: String, fixed: float,
-		w: float, lo: float, hi: float) -> void:
+##
+## A bucket holds `{tile: [lo, hi]}` rather than a bare list of spans, which is
+## what lets one tile's contribution be pulled back out later. One tile can
+## reach a given bucket at most once — a bucket is (axis, fixed, w) and a tile's
+## N and S strips sit `TILE_M - w` apart — so nothing is lost by keying on it.
+func _add_run(keys: Array[int], touched: Dictionary, t: Vector2i, axis: String,
+		fixed: float, w: float, lo: float, hi: float) -> void:
 	if hi - lo < 0.001:
 		return
 	var key := (0 if axis == "X" else 1) * 0x100000000 \
 			+ int(roundf(fixed * 100.0)) * 0x10000 + int(roundf(w * 100.0))
-	if not runs.has(key):
-		runs[key] = []
-		meta[key] = {"axis": axis, "fixed": fixed, "w": w}
-	(runs[key] as Array).append([lo, hi])
+	if not _bucket.has(key):
+		_bucket[key] = {}
+		_bucket_meta[key] = {"axis": axis, "fixed": fixed, "w": w}
+	(_bucket[key] as Dictionary)[t] = [lo, hi]
+	keys.append(key)
+	touched[key] = true
 
 
-func _emit_run(row: Dictionary, span: Array) -> void:
+## Sort one bucket's spans and weld the abutting ones. Sorting by `lo` is what
+## makes the result independent of the order the spans went in, which is what
+## makes an incremental pass and a from-scratch pass agree float for float.
+func _merge_bucket(key: int) -> void:
+	var entries: Variant = _bucket.get(key)
+	if not (entries is Dictionary) or (entries as Dictionary).is_empty():
+		_bucket.erase(key)
+		_bucket_meta.erase(key)
+		_bucket_out.erase(key)
+		return
+	var spans: Array = (entries as Dictionary).values()
+	spans.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+	var row: Dictionary = _bucket_meta[key]
+	var out: Array = []
+	var cur: Array = []
+	for span: Array in spans:
+		if cur.is_empty():
+			cur = [span[0], span[1]]
+		elif span[0] <= cur[1] + 0.001:
+			cur[1] = maxf(cur[1], span[1])
+		else:
+			out.append(_run_row(row, cur))
+			cur = [span[0], span[1]]
+	if not cur.is_empty():
+		out.append(_run_row(row, cur))
+	_bucket_out[key] = out
+
+
+## `_runs` in its published order: every merged kerb run in ascending bucket-key
+## order, then the corner squares in (y, x) tile order — which is `_tiles`'
+## order, so this is the order the pre-diff pass emitted and the shader-visible
+## instance layout does not move.
+func _emit_runs() -> void:
+	_runs.clear()
+	var keys: Array = _bucket_out.keys()
+	keys.sort()
+	for key: int in keys:
+		for row: Dictionary in (_bucket_out[key] as Array):
+			_runs.append(row)
+	if _corners_dirty:
+		_corner_order.clear()
+		var tiles: Array = _corner_of.keys()
+		tiles.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+			return a.y < b.y if a.y != b.y else a.x < b.x)
+		for t: Vector2i in tiles:
+			_corner_order.append(t)
+		_corners_dirty = false
+	for t: Vector2i in _corner_order:
+		for row: Dictionary in (_corner_of[t] as Array):
+			_runs.append(row)
+
+
+static func _run_row(row: Dictionary, span: Array) -> Dictionary:
 	var fixed := float(row["fixed"])
 	var w := float(row["w"])
 	if String(row["axis"]) == "X":
-		_runs.append({"axis": "X", "x": float(span[0]), "z": fixed,
-				"dx": float(span[1]) - float(span[0]), "dz": w})
-	else:
-		_runs.append({"axis": "Z", "x": fixed, "z": float(span[0]),
-				"dx": w, "dz": float(span[1]) - float(span[0])})
+		return {"axis": "X", "x": float(span[0]), "z": fixed,
+				"dx": float(span[1]) - float(span[0]), "dz": w}
+	return {"axis": "Z", "x": fixed, "z": float(span[0]),
+			"dx": w, "dz": float(span[1]) - float(span[0])}
+
+
+# -------------------------------------------------------------------- upload
+
+## ONE `MultiMesh.buffer` write per layer, from a PackedFloat32Array this view
+## keeps between passes.
+##
+## Note the deliberate asymmetry with the per-frame layers (`VehicleView`,
+## `ConstructionVehicleView`), which keep their per-instance setters: measured
+## on this build, `set_instance_transform` + `set_instance_color` +
+## `set_instance_custom_data` costs **0.031 ms per 200 instances** against
+## **0.064 ms** to pack the same 200 rows into a PackedFloat32Array in GDScript,
+## and the `mm.buffer =` write itself is 0.003 ms — the C++ setters win because
+## each is one binding call around a memcpy, while packing is twenty scripted
+## float writes. What the buffer buys HERE is not speed (it costs ~0.1 ms on the
+## benchmark city's 3,132 tiles) but the CONTRACT: this array is literally what
+## the server holds, so `tests/test_road_incremental.gd` can compare an
+## incremental pass against a from-scratch one byte for byte instead of
+## comparing a model of it.
+func _upload() -> void:
+	var n := _tiles.size()
+	var mm := _asphalt.multimesh
+	# Only when it MOVED: assigning `instance_count` reallocates the server-side
+	# buffer, and the common incremental pass (a class change, a crosswalk mask)
+	# leaves the tile count exactly where it was.
+	if mm.instance_count != n:
+		mm.instance_count = n
+	_asphalt_buf.resize(n * ASPHALT_STRIDE)
+	var half := TILE_M * 0.5
+	var y := asphalt_top_m - asphalt_thickness_m * 0.5
+	var o := 0
+	for t: Vector2i in _tiles:
+		var d: Color = _pack_of[t]
+		_asphalt_buf[o] = 1.0
+		_asphalt_buf[o + 1] = 0.0
+		_asphalt_buf[o + 2] = 0.0
+		_asphalt_buf[o + 3] = float(t.x) * TILE_M + half
+		_asphalt_buf[o + 4] = 0.0
+		_asphalt_buf[o + 5] = 1.0
+		_asphalt_buf[o + 6] = 0.0
+		_asphalt_buf[o + 7] = y
+		_asphalt_buf[o + 8] = 0.0
+		_asphalt_buf[o + 9] = 0.0
+		_asphalt_buf[o + 10] = 1.0
+		_asphalt_buf[o + 11] = float(t.y) * TILE_M + half
+		_asphalt_buf[o + 12] = d.r
+		_asphalt_buf[o + 13] = d.g
+		_asphalt_buf[o + 14] = d.b
+		_asphalt_buf[o + 15] = d.a
+		o += ASPHALT_STRIDE
+	if n > 0:
+		mm.buffer = _asphalt_buf
+
+	var walk := _sidewalk.multimesh
+	var runs := _runs.size()
+	if walk.instance_count != runs:
+		walk.instance_count = runs
+	_walk_buf.resize(runs * WALK_STRIDE)
+	var height := sidewalk_top_m + 0.02
+	var oy := sidewalk_top_m - height * 0.5
+	o = 0
+	for row: Dictionary in _runs:
+		var dx := float(row["dx"])
+		var dz := float(row["dz"])
+		_walk_buf[o] = dx
+		_walk_buf[o + 1] = 0.0
+		_walk_buf[o + 2] = 0.0
+		_walk_buf[o + 3] = float(row["x"]) + dx * 0.5
+		_walk_buf[o + 4] = 0.0
+		_walk_buf[o + 5] = height
+		_walk_buf[o + 6] = 0.0
+		_walk_buf[o + 7] = oy
+		_walk_buf[o + 8] = 0.0
+		_walk_buf[o + 9] = 0.0
+		_walk_buf[o + 10] = dz
+		_walk_buf[o + 11] = float(row["z"]) + dz * 0.5
+		o += WALK_STRIDE
+	if runs > 0:
+		walk.buffer = _walk_buf
 
 
 ## An explicit cover with headroom. Instance transforms do grow the automatic
@@ -653,6 +996,20 @@ func pack_of(tile: Vector2i) -> Color:
 ## The merged footway rows: `{axis: "X"|"Z"|"C", x, z, dx, dz}` in metres.
 func runs() -> Array:
 	return _runs.duplicate(true)
+
+
+## The exact float arrays last handed to the RenderingServer, asphalt and
+## footway. This is not a model of the upload — it IS the upload (`_upload`
+## writes these two arrays and then assigns them to `MultiMesh.buffer`), which
+## is what lets the incremental path be checked byte for byte against a
+## from-scratch one on a `--headless` run, where the server itself reads back
+## nothing.
+func asphalt_buffer() -> PackedFloat32Array:
+	return _asphalt_buf.duplicate()
+
+
+func sidewalk_buffer() -> PackedFloat32Array:
+	return _walk_buf.duplicate()
 
 
 func asphalt_node() -> MultiMeshInstance3D:

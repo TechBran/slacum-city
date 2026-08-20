@@ -56,7 +56,7 @@ the same construction path buildings use, and save-round-trip tests
 
 **Surfaced, Wave 10.** Every verb in the table above now has a door the player
 can touch — the build sheet's `Roads` tab and the two water-main cards, both
-driven by doc 12 §2.7's drag-path tool (report 98 RR-26, doc 93 §G2). The three
+driven by doc 12 §2.7's drag-path tool (report 98 RR-30, doc 93 §G2). The three
 per-building verbs `cmd_repair_building`, `cmd_set_priority` and
 `cmd_demolish_building` landed in the same wave, as §2.9 item 6's actions row.
 Still doorless from this table: `cmd_upgrade_water_component`,
@@ -508,7 +508,7 @@ This is a rule and not a note, because the failure mode is the worst one a
 tutorial has: the game ends its eleven-step onboarding by pointing at a checklist
 whose next item cannot be done.
 
-*What Wave 10 shipped* (report 98 RR-26, doc 12 §2.7 / §2.9 deltas D-28…D-36):
+*What Wave 10 shipped* (report 98 RR-30, doc 12 §2.7 / §2.9 deltas D-28…D-36):
 
 | Verb | Door |
 |---|---|

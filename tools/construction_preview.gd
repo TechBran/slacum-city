@@ -195,7 +195,14 @@ func _build() -> void:
 
 	var record: Dictionary = _sim._building_records[_sim_id_of(_target_id)]
 	var footprint: Vector2i = record["footprint"]
-	_site_view.add_site(_target_id, _target_pos, footprint, 22.0)
+	# doc 11 §2.16: the hoarding's gate takes the frontage the vehicle layer
+	# derives, so the coned-off lane and the gate are on the same face of the
+	# lot. Both halves of the seam the shell wires — the query up front, and the
+	# signal for a frontage that lands late or moves.
+	_plant.site_frontage_changed.connect(func(id: int, side: int) -> void:
+		_site_view.set_gate_side(id, side))
+	_site_view.add_site(_target_id, _target_pos, footprint, 22.0,
+			_plant.frontage_side(_target_pos, footprint))
 	_plant.add_site(_target_id, _target_pos, footprint, 22.0)
 	for _step in 8:
 		_plant.refresh(0.0, 0.0, 0.0)

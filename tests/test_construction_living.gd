@@ -568,3 +568,81 @@ func test_route_lookups_do_not_move_the_state_hash() -> void:
 	assert_eq(lookups, 240, "the probe actually ran")
 	assert_eq(live.state_hash(), expected,
 			"a renderer's route lookups leave the simulation bit-identical")
+
+
+# ----------------------------------------------- 6: the gate faces the street
+
+## §2.16's filed open item 4. `ConstructionSiteView` opened its gate on
+## `hash01(id, 7) % 4` while the vehicle layer stood its plant, its barricades
+## and its lorry stop on the REAL frontage — the two layers agreed one time in
+## four, and a player looking at a site saw a coned-off lane in front of a solid
+## hoarding panel with the gate round the back.
+func test_the_hoarding_gate_can_be_put_on_the_frontage() -> void:
+	var net := RoadsTestRig.network_with(RoadsTestRig.line(Vector2i(10, 20),
+			Vector2i(30, 20), RoadTunables.CLASS_STREET))
+	var plant := _view(net)
+	# A lot one tile SOUTH of the corridor, so its frontage is -Z (side 0).
+	var lot := Vector2i(20, 21)
+	var centre := Vector3(float(lot.x) * 8.0 + 4.0, 0.0, float(lot.y) * 8.0 + 4.0)
+	var side := plant.frontage_side(centre, Vector2i.ONE)
+	assert_eq(side, 0, "the street is to the -Z of the lot")
+	var hoard := ConstructionSiteView.new()
+	hoard.setup(_render_data())
+	hoard.add_site(88, centre, Vector2i.ONE, 24.0, side)
+	assert_eq(hoard.gate_side_of(88), side, "the gate went on the frontage")
+	# And the two layers now name the same face for the same site.
+	plant.add_site(88, centre, Vector2i.ONE, 24.0)
+	_settle(plant)
+	assert_eq(plant.frontage_side(88), hoard.gate_side_of(88),
+			"plant and hoarding agree on which way the site faces")
+	hoard.free()
+	plant.free()
+
+
+func test_the_gate_still_falls_back_to_the_hash_when_nobody_says() -> void:
+	# Every pre-frontage call site omits the argument, and must draw exactly
+	# what it drew before: `hash01(id, 7) % 4`.
+	var hoard := ConstructionSiteView.new()
+	hoard.setup(_render_data())
+	for raw: Variant in [3, 17, 41, 99, 250]:
+		var id := int(raw)
+		hoard.add_site(id, Vector3(200.0, 0.0, 200.0), Vector2i.ONE, 20.0)
+		var expected := int(ConstructionSiteView._hash01(id, 7) * 4.0) % 4
+		assert_eq(hoard.gate_side_of(id), expected,
+				"site %d keeps the hashed gate when no frontage is passed" % id)
+		hoard.remove_site(id)
+	hoard.free()
+
+
+func test_a_re_route_moves_the_gate_with_it() -> void:
+	# The route budget is two sites a frame, so the frontage can land AFTER the
+	# hoarding went up — and a road edit can move it later. The signal is what
+	# carries that across, and it must fire only when the side actually changes.
+	var net := RoadsTestRig.network_with(RoadsTestRig.line(Vector2i(10, 20),
+			Vector2i(30, 20), RoadTunables.CLASS_STREET))
+	var plant := _view(net)
+	var hoard := ConstructionSiteView.new()
+	hoard.setup(_render_data())
+	var seen: Array = []
+	plant.site_frontage_changed.connect(func(id: int, side: int) -> void:
+		seen.append([id, side])
+		hoard.set_gate_side(id, side))
+	var lot := Vector2i(20, 21)
+	var centre := Vector3(float(lot.x) * 8.0 + 4.0, 0.0, float(lot.y) * 8.0 + 4.0)
+	hoard.add_site(91, centre, Vector2i.ONE, 24.0)   # hashed, on purpose
+	plant.add_site(91, centre, Vector2i.ONE, 24.0)
+	_settle(plant)
+	assert_eq(seen.size(), 1, "the frontage was announced once")
+	assert_eq(hoard.gate_side_of(91), 0, "…and the gate turned to the street")
+	_settle(plant)
+	assert_eq(seen.size(), 1, "a settled site announces nothing further")
+	# A lot on the far side of the same corridor fronts it from the other face.
+	var lot2 := Vector2i(20, 19)
+	var centre2 := Vector3(float(lot2.x) * 8.0 + 4.0, 0.0, float(lot2.y) * 8.0 + 4.0)
+	hoard.add_site(92, centre2, Vector2i.ONE, 24.0)
+	plant.add_site(92, centre2, Vector2i.ONE, 24.0)
+	_settle(plant)
+	assert_eq(plant.frontage_side(92), 2, "this one's street is to the +Z")
+	assert_eq(hoard.gate_side_of(92), 2, "…and its gate followed the signal")
+	hoard.free()
+	plant.free()

@@ -468,6 +468,7 @@ func _make(key: int, mesh_key: String, vehicle_class: String) -> VehicleMotion:
 	v.fade_s = fade_s
 	v.teleport_m = teleport_m
 	v.phase = VehicleMotion.hash01(key, 37)
+	v.body_seed = VehicleMotion.hash01(key, 53)
 	_vehicles[key] = v
 	var layer: Layer = _layers[v.mesh_key]
 	layer.list.append(v)
@@ -517,6 +518,22 @@ func _department_of(type_id: String) -> String:
 ## Rewrite every visible instance. At the sim's own cap (90 civilians on
 ## Balanced plus a dozen units) this is a couple of hundred transform writes a
 ## frame — far cheaper than tracking slot churn across spawns and despawns.
+##
+## ── why this is still three `set_instance_*` calls and not one buffer ──────
+## The obvious optimisation is to pack a PackedFloat32Array CPU-side and upload
+## it with a single `MultiMesh.buffer` write, and it was tried and MEASURED
+## rather than assumed. On this engine build, per 200 instances per frame:
+##
+##   per-instance setters            0.031 ms
+##   pack the same rows in GDScript  0.064 ms   (+ 0.003 ms for `mm.buffer =`)
+##
+## and the ratio holds at 2,000 instances (0.307 ms against 0.662 ms). The
+## setters win because each is ONE binding call around a C++ memcpy, while
+## packing is twelve scripted float writes for the transform alone — and the
+## server-side write is nearly free either way, so there is no upload saving to
+## trade against it. `tools/profile_mm_upload.gd`'s A/B is in the branch report.
+## What the pass DID buy is below: everything in this loop that was being
+## recomputed per vehicle per frame and did not have to be.
 func _upload() -> void:
 	var cone_i := 0
 	var lit_min := 1.0 if night_threshold <= 0.0 else \
@@ -526,39 +543,53 @@ func _upload() -> void:
 	# placed this frame.
 	if _cone_mm != null:
 		_ensure_cone_capacity(_vehicles.size())
+	# The two cull radii, hoisted: `_cull_radius` was a method call per vehicle
+	# per frame to choose between two constants.
+	var culling := _has_focus and visible_radius > 0.0
+	var civ_r := visible_radius
+	var emerg_r := visible_radius * 2.2
+	var focus_x := _focus.x
+	var focus_z := _focus.z
 	for key: String in _layers:
 		var layer: Layer = _layers[key]
 		_ensure_capacity(layer, mini(layer.list.size(), layer.cap))
+		var mm := layer.mm
+		var cap := layer.cap
+		var nose := layer.nose
 		var used := 0
 		for entry: Variant in layer.list:
 			var v: VehicleMotion = entry
-			if used >= layer.cap:
+			if used >= cap:
 				break
 			if not v.seeded():
 				continue
 			var scale := VehicleMotion.smooth01(v.fade)
 			if scale <= 0.001:
 				continue
-			var radius := _cull_radius(v)
-			if radius > 0.0:
+			if culling:
+				var radius := civ_r if v.vehicle_class == "civilian" else emerg_r
 				var pos := v.position()
-				if Vector2(pos.x - _focus.x, pos.z - _focus.z).length() > radius:
+				var dx := pos.x - focus_x
+				var dz := pos.z - focus_z
+				# Squared compare: a `Vector2(...).length()` per vehicle per
+				# frame is a construction and a square root for a threshold test.
+				if dx * dx + dz * dz > radius * radius:
 					continue
 			var xform := v.transform(road_top, lane_offset, scale)
-			layer.mm.set_instance_transform(used, xform)
-			layer.mm.set_instance_color(used, v.paint)
+			mm.set_instance_transform(used, xform)
+			mm.set_instance_color(used, v.paint)
 			var lamps := lit_min if v.headlights else 0.0
 			var bar := v.phase if v.lightbar else -1.0
-			layer.mm.set_instance_custom_data(used,
-					Color(VehicleMotion.hash01(v.id, 53), lamps, bar, v.fade))
+			mm.set_instance_custom_data(used,
+					Color(v.body_seed, lamps, bar, v.fade))
 			used += 1
 			if lamps > 0.01 and _cone_mm != null and cone_i < _cone_mm.instance_count:
 				_cone_mm.set_instance_transform(cone_i,
-						xform.translated_local(Vector3(layer.nose, 0.0, 0.0)))
+						xform.translated_local(Vector3(nose, 0.0, 0.0)))
 				_cone_mm.set_instance_custom_data(cone_i,
 						Color(0.0, lamps, 0.0, v.fade))
 				cone_i += 1
-		layer.mm.visible_instance_count = used
+		mm.visible_instance_count = used
 		if layer.material != null:
 			layer.material.set_shader_parameter("anim_time", _time)
 			layer.material.set_shader_parameter("night_amt", _night)
@@ -570,6 +601,9 @@ func _upload() -> void:
 ## Emergency traffic is never distance-culled at the civilian radius — a unit
 ## crossing the far side of the city is exactly the thing doc 11 §1 calls "the
 ## alive read". Returning 0 means "do not cull".
+##
+## `_upload` inlines this rather than calling it per vehicle per frame; the rule
+## itself lives here, and the tests read it here.
 func _cull_radius(v: VehicleMotion) -> float:
 	if not _has_focus or visible_radius <= 0.0:
 		return 0.0

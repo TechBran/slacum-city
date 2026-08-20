@@ -625,9 +625,18 @@ func solve_top_bar(width_dp: float, clock_w_dp: float = -1.0,
 		# --- wrap phase: nothing is hidden while a row can still hold it ----
 		var packed := _pack_rows(order, modes, gap, min_widths, avail, avail_rest,
 				max_rows)
-		while not (packed["leftover"] as Array).is_empty():
+		# Two ways a packing can still be wrong, and the second one is what the
+		# goals wave filed: a chip that did not FIT anywhere (`leftover`), and a
+		# chip that was placed ALONE in a row it is wider than. `_pack_rows` gives
+		# an over-wide chip its own row rather than dropping it, so `leftover`
+		# empties while the bar is still 18 dp wider than the display — and the
+		# hide loop stopped there. Both conditions have to hold before the bar is
+		# solved.
+		while not (packed["leftover"] as Array).is_empty() \
+				or _rows_over_budget(packed, avail, avail_rest):
 			if not _hide_lowest(order, modes, never_hidden) \
-					and not _hide_lowest(order, modes, 1):
+					and not _hide_lowest(order, modes, 1) \
+					and not _hide_lowest(order, modes, 0):
 				break
 			iterations += 1
 			packed = _pack_rows(order, modes, gap, min_widths, avail, avail_rest, max_rows)
@@ -641,7 +650,8 @@ func solve_top_bar(width_dp: float, clock_w_dp: float = -1.0,
 		# --- hide phase (§2.4, single-row behaviour) -----------------------
 		while need > avail:
 			if not _hide_lowest(order, modes, never_hidden) \
-					and not _hide_lowest(order, modes, 1):
+					and not _hide_lowest(order, modes, 1) \
+					and not _hide_lowest(order, modes, 0):
 				break
 			iterations += 1
 			need = _top_bar_need(order, modes, gap, min_widths)
@@ -670,18 +680,34 @@ func solve_top_bar(width_dp: float, clock_w_dp: float = -1.0,
 ## Hides the lowest-priority chip at or after `floor_index`, and says whether it
 ## found one.
 ##
-## Called twice per round: once with §2.4's `chip_never_hidden_count`, and — only
-## when that leaves nothing to give up — once with `1`, which lets P2–P4 go too.
+## Called THREE times per round, each only when the one before found nothing:
+## §2.4's `chip_never_hidden_count`, then `1` (which lets P2–P4 go), then `0`
+## (which lets the treasury chip go too).
 ##
 ## **Why the never-hidden list can be broken.** §2.4 keeps the first four chips
 ## on screen unconditionally, and on the reference box they always fit. At 130 %
 ## text with larger touch targets on a 360 dp phone, four chips plus the clock
-## chip physically cannot: the previous `break` here left the bar solved wider
+## chip physically cannot: the original `break` here left the bar solved wider
 ## than the display, `grow_horizontal = BOTH` centred the overflow, and the
 ## treasury chip went off the left edge while the ☰ button — the only way into the
 ## pause menu — went off the right. A1 (nothing clips) and A3 (every target is
 ## reachable) outrank the never-hidden list, and a hidden chip is not lost: every
 ## one of them is a row in the dashboard, one tap away (§2.10).
+##
+## **Why the `1` floor was not enough, which is the goals wave's open question 4.**
+## It protects chip 0 unconditionally, so the last round always ended with the
+## treasury chip alone in a row that could not hold it — and at 360 dp / 130 % /
+## larger targets it cannot: the treasury chip measures **143 dp** against a row
+## budget of **103** (`360 − 241 clock+☰ column − 16 margin`), and it cannot be
+## demoted out of trouble either, because `$8.42M` is the compact string as well
+## as the full one, so FULL and COMPACT measure the same. The documented fallback
+## therefore hid six chips and still overflowed by 18 dp. The third floor is the
+## one that actually saves the bar: a top bar that is a clock and a ☰ is the
+## honest picture of a 360 dp display at 130 % text, and it is the only version
+## of it where the pause menu is reachable. It cannot fire while anything fits —
+## both callers only reach it with the row still over budget — so §2.4's
+## never-hidden prefix is untouched at every width the doc measures, and doc 12
+## test 10's `W = 880 keeps all chips FULL` is unaffected.
 static func _hide_lowest(order: Array, modes: Dictionary, floor_index: int) -> bool:
 	for i in range(order.size() - 1, maxi(0, floor_index) - 1, -1):
 		if modes[order[i]] != MODE_HIDDEN:
@@ -716,6 +742,18 @@ func _top_bar_need(order: Array, modes: Dictionary, gap: float,
 		total += _effective_width(chip_id, mode, min_widths)
 		count += 1
 	return total + gap * float(maxi(0, count - 1))
+
+
+## Does any packed row need more room than its own line has? Row 0 shares its
+## line with the clock column and gets `avail`; the wrapped rows get the whole
+## bar. The 0.001 dp slack is the same sub-pixel tolerance `UIAudit` allows.
+static func _rows_over_budget(packed: Dictionary, avail: float,
+		avail_rest: float) -> bool:
+	var widths: Array = packed["widths"]
+	for i in widths.size():
+		if float(widths[i]) > (avail if i == 0 else avail_rest) + 0.001:
+			return true
+	return false
 
 
 ## Greedy priority-order packing. Row 0 shares its line with the clock chip, so
