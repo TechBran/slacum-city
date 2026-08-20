@@ -299,6 +299,35 @@ static func _v3_to_v4(b: Dictionary) -> Dictionary:
 >
 > **One thing the epoch does repair, and it is not in the migrator.** Doc 04's component record carries a `tile`, and doc 06 uses it as the incident position for every `PowerComponentFailed`. `CitySim._boot_power` added plants, substations, feeders and transmission links with **no tile at all** — `data/starter_city.json` spells a substation's location `terminal`, not `tile` — so all four defaulted to the map origin and that value went into every save ever written. Chebyshev dispatch hid it; doc 10's router does not, because no street lies within snapping distance of (0, 0), so the incident is flagged `unreachable` and escalates to destruction unanswered. The boot path now reads both spellings, `PowerGrid._initial_tile` falls back to a line's own route head, and **`CitySim.restore_state` re-stamps authored power tiles from the boot file on every load** — boot geometry is not player state, so it is re-derived rather than trusted from the body, exactly as `_transformer_cover` already is. That is why the repair lives at the load seam and not on the ladder: §2.8's rules forbid a migrator from reading `data/`, and the authored terminal is in `data/`.
 
+> ### Shipped 2026-08-20 — `city.section_version` 2 → 3, doc 09 §2.14's goal curriculum
+>
+> The body gains **one key**, `goals`, and gains it additively: every other key is
+> byte-for-byte what v2 wrote. It carries the curriculum's counters — which
+> objectives are complete, how far the counted ones have got, and the highest
+> level the objective route has earned — and it is a save section rather than a UI
+> preference for one reason: those counters are sim state, and save → load →
+> advance has to stay bit-identical with a curriculum in flight
+> (`tests/test_goals_system.gd`).
+>
+> **What a v2 body cannot carry is the ANSWER.** A city played for thirty
+> game-days has no record of which objectives it met, because nothing was
+> counting, and reconstructing that depends on the whole restored city *and* on
+> `data/goals.json`. §2.8's rules forbid a migrator from reading `data/`, and the
+> migrator never sees the standing city either. So the ladder does the only honest
+> thing available to it: **`_v2_to_v3` marks the body** (`goals.bootstrap = true`)
+> and answers nothing, and `CitySim.restore_state` runs `GoalSystem.bootstrap`
+> **last**, once the city is up — every level at or below the city's own level
+> complete, the active level seeded from the observable residue of the event kinds
+> (houses standing, transformers placed, blocks owned), and everything with no
+> residue at zero. The event queue is then emptied, because a restore is not an
+> achievement: bootstrapping a level-4 city completes four levels' worth of
+> objectives and publishing those would greet a returning player with four
+> level-up toasts for work they did last week.
+>
+> This is the same shape as the Wave-8 power-tile repair above and for the same
+> reason: **the load seam is where an answer that needs `data/` and the whole city
+> belongs**; the ladder is where an answer that needs only the body belongs.
+
 ### 2.9 Load & corruption recovery
 
 Candidate order: `manifest.active` → `manifest.history[…]` → `pinned.pre_catchup` → `pinned.pre_migration` → directory scan sorted by embedded `sim_time_minutes` descending.

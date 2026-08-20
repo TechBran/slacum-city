@@ -68,6 +68,11 @@ func _satisfy_via(model: OnboardingModel, sink: Callable) -> bool:
 		"relight":
 			return bool(sink.call({"kind": "sim_event", "event": "incident_resolved",
 					"payload": {"incident_id": 1}}))
+		# Doc 09 §2.14's handoff. `any_of`, and this is the half a player who
+		# followed the pointer takes; `test_the_handoff_also_yields_to_an_ack`
+		# covers the other.
+		"next_goals":
+			return bool(sink.call({"kind": "ui_opened", "path": "goals_sheet"}))
 	return false
 
 
@@ -206,6 +211,20 @@ func test_the_unserved_wall_advances_on_the_verdict_not_a_command() -> void:
 			"tile": Vector2i(20, 20)}), "on some other tile it teaches nothing")
 	assert_true(model.feed({"kind": "verdict", "code": "E_UNSERVED", "tile": LOT_A}))
 	assert_eq(str(model.current()["id"]), "place_transformer")
+
+
+func test_the_handoff_also_yields_to_an_ack() -> void:
+	# Doc 09 §2.14's last step is `any_of`: opening the goals sheet is one way to
+	# finish the tutorial, and simply acknowledging the pointer is the other. A
+	# handoff that HELD the player until they tapped where it points would be a
+	# hard gate on the way out of a tutorial, which is the one place it must not be.
+	var model := _started()
+	_walk_to(model, "next_goals")
+	assert_eq(str(model.current()["id"]), "next_goals")
+	assert_false(model.feed({"kind": "ui_opened", "path": "build_sheet"}),
+			"some other screen is not the one it pointed at")
+	assert_true(model.feed({"kind": "ack"}))
+	assert_true(model.is_finished(), "and the tutorial is over")
 
 
 func test_the_unserved_wall_also_yields_to_a_player_who_worked_it_out() -> void:

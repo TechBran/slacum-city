@@ -439,6 +439,78 @@ that it no longer loses it.
 18-run matrix, before and after, and **all 27 balance gates pass with no
 threshold retuned** (doc 92 §21.3).
 
+## G. Wave-9 rulings — the goal curriculum (2026-08-20)
+
+### G1. Objectives ADVANCE the city level; the population ladder BACKSTOPS it
+
+**The finding.** Doc 09 §2.11's ladder is a population threshold and nothing
+else. A threshold is not a goal: the player was told *"Level 2"* by a toast and
+was never told what Level 3 costs, so the ladder was invisible and the first hour
+of the game had no arc past doc 12 §2.17's eleven-step tutorial. The player, in
+their own words after a Fold playtest: *"players know exactly what they need to
+accomplish to get to the next level, like build a certain building or do a
+certain task."*
+
+**The ruling.**
+
+```
+city_level = max( level_reached(city_population),  goals.earned_level )
+```
+
+Both routes go through one monotone writer, `ProgressionSystem.grant_level`.
+Completing doc 09 §2.14's objective list for level N grants level N; so does
+crossing doc 92 §19's population rung for it; neither can take a level back.
+
+**The alternative that was rejected, and why.** The obvious reading of the ask —
+*objectives REPLACE thresholds for levels 1–5* — was rejected on two counts, both
+measured rather than argued:
+
+1. **It would strand every player who does not read the sheet, and every agent
+   that cannot.** Three of the five curriculum levels ask for verbs no scripted
+   strategy in `tools/playtest.gd` drives (the tax slider, a police station, a
+   $45,000 water pump). Under pure replacement `balanced` stops at level 2 for
+   ever, which is *worse* than the ladder it replaced — and doc 92's whole matrix
+   would stop measuring the progression it was fitted on.
+2. **It would make the ladder retune unfalsifiable.** §19's rungs were fitted
+   against a measured population curve. Removing their only consumer for the
+   first five levels does not disprove the fit, it hides it.
+
+Under MAX both are answered: the taught route is genuinely faster (level 1 in 18
+game-hours against two game-days), the untaught route is exactly what it was, and
+`data/progression.json` did not move a single rung. Doc 92 §22.4 is the
+re-derivation; gates 20 and 21 are the pair that keeps both halves honest.
+
+**What it cost.** One gate threshold — gate 20's level-1 window, from `[2, 4]` to
+`[0, 2]`, because the lower bound existed to say *"an unlock has to be earned"*
+and the curriculum is a second way to earn it. Gate 21 asserts the earning
+directly. Nothing else in 27 gates moved.
+
+### G2. A curriculum may never ask for a verb the player cannot perform
+
+`cmd_place_road`, `cmd_place_water_main` and `cmd_repair_building` are shipped,
+tested sim verbs with **no UI surface** (doc 92 §17.6). `GoalSystem` therefore
+carries `stamp_road_tiles`, `place_water_main` and `repair_buildings` as
+evaluator kinds and **no level in `data/goals.json` uses one**.
+
+This is a rule and not a note, because the failure mode is the worst one a
+tutorial has: the game ends its eleven-step onboarding by pointing at a checklist
+whose next item cannot be done. `tests/test_goals_system.gd` holds the file to a
+whitelist of reachable kinds, so authoring one of the three is a test failure
+rather than a wall the player finds.
+
+### G3. The curriculum is five levels, and the sixth teaching beat is the tutorial
+
+The ask was *"the first five or six levels"*. Doc 09 §2.11's ladder has **five**
+rungs above the founding level, and a sixth would unlock nothing: every
+`min_city_level` in `data/buildings.json` tops out at 4 and every land block's at
+2, so a level-6 reward card would be empty. **A level whose reward card is empty
+is a number, not a goal.** The sixth beat is the one that already existed — doc 12
+§2.17's tutorial, which the sheet shows as level 0, complete, and which now hands
+the player to the goals chip on its way out.
+
+Adding a real rung 6 is a *content* decision (it needs something to pay out) and
+is logged as the top open question of this wave.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

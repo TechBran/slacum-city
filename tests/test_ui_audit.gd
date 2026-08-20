@@ -44,6 +44,7 @@ const SURFACES: Array[String] = [
 	"SheetLayer/BuildSheet/PlacementBar",
 	"SheetLayer/UnitPicker/Sheet",
 	"ModalLayer/CityDashboard/Panel",
+	"ModalLayer/GoalsSheet/Panel",
 	"ModalLayer/SettingsSheet/Panel",
 	"ModalLayer/SaveLoadSheet/Panel",
 	"ModalLayer/PauseMenu/Panel",
@@ -128,6 +129,20 @@ func _populate(root: UIRoot, panel: String = "drawer") -> void:
 	root.build_sheet.open()
 	root.overlay_rail.open()
 	root.city_dashboard.open(DashboardModel.TAB_ECONOMY)
+	# S14 is the one screen in the deck whose model reads a live sim, and an
+	# unpopulated goals sheet would be measured with no objective rows in it —
+	# i.e. measured at a width it never has in the game. It is given a founding
+	# city, which is the state its longest sentences are written for.
+	#
+	# The goal CHIP is deliberately not fed here: it is a top-bar chip, the top
+	# bar is already at its 360 dp / 130 % limit without it (see the
+	# `_hide_lowest` note in `HudModel`), and this file's surface checks are the
+	# ones that would have to change. The chip's own bar behaviour is swept from
+	# 480 to 1200 dp in `tests/test_ui_goals.gd` and photographed by
+	# `tools/ui_preview.gd --screen=hud --no-goal-chip` on both sides.
+	root.goals_sheet.setup(root.config,
+			GoalsModel.new(CitySim.boot_from_files(), root.config, null))
+	root.goals_sheet.open()
 	root.settings_sheet.open()
 	root.save_load_sheet.open()
 	root.pause_menu.open()

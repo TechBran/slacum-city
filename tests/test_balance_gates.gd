@@ -1403,10 +1403,116 @@ func test_gate_20_the_city_level_ladder_is_reachable() -> void:
 	assert_true(first_day_at.has(2), "a competent player never reached city level 2")
 	var level_1_day := int(first_day_at[1])
 	var level_2_day := int(first_day_at[2])
-	assert_true(level_1_day >= 2 and level_1_day <= 4,
-			("level 1 landed on game-day %d; the ruled window is game-days 2–4 "
-					+ "(measured 2 on all three doc 92 seeds)") % level_1_day)
+	# **RE-DERIVED, Wave 9 (doc 92 §22.3).** The lower bound on level 1 was
+	# "an unlock has to be earned to read as progression", and until doc 09
+	# §2.14 landed the only way to earn one was 56 more residents — game-day 2.
+	# The curriculum is a second way, and it is a HARDER one to reach by
+	# accident: four houses, a transformer, and 170 residents, all of which
+	# `balanced` does inside its first seventeen game-hours because those are
+	# the things a competent player does first. Measured on all three doc 92
+	# seeds: **game-day 1** (game-hour 17), against game-day 2 before. The rung
+	# is still earned — it is earned by a checklist instead of by a threshold,
+	# which is the whole point — so the window moves down to 0–2 rather than the
+	# gate being deleted. Gate 21 is the half that proves the checklist is what
+	# earned it.
+	assert_true(level_1_day <= 2,
+			("level 1 landed on game-day %d; the ruled window is game-days 0–2 "
+					+ "(measured 1 on all three doc 92 seeds — doc 09 §2.14's "
+					+ "level-1 objectives, not the population rung)") % level_1_day)
+	# UNCHANGED, and that is the finding worth recording: level 2 is still the
+	# population rung's, because `balanced` never completes level 2's objective
+	# list (it never touches the tax slider). Measured Wave 9, three seeds:
+	# game-days 9.75 / 9.79 / 10.25 against doc 92 §19.3's 11 — a shift of under
+	# a game-day, bought by unlocking apartments and offices 31 game-hours
+	# earlier, and comfortably inside the window that was already ruled.
 	assert_true(level_2_day >= 8 and level_2_day <= 14,
-			("level 2 landed on game-day %d; the ruled window is game-days 10–14 "
-					+ "(measured 11 on all three doc 92 seeds; the gate allows 8 so "
-					+ "a faster economy is a warning, not a break)") % level_2_day)
+			("level 2 landed on game-day %d; the ruled window is game-days 8–14 "
+					+ "(measured 10 on all three doc 92 seeds; still the "
+					+ "population backstop, not the curriculum)") % level_2_day)
+
+
+## GATE 21 — **doc 09 §2.14: the curriculum is COMPLETABLE, and paced.**
+##
+## Gate 20 measures the LADDER against `balanced`, the agent doc 92 §19 fitted it
+## on. This one measures the CURRICULUM against `curriculum`, the agent doc 92
+## §22 fits it on — a competent player who does the taught task and otherwise
+## plays exactly like `balanced`. They are different questions and they need
+## different agents: a player following a checklist is not the player who never
+## opens the sheet, and doc 93 §G1's ruling is that both must get somewhere.
+##
+## Three claims, measured over three seeds at 21 game-days (doc 92 §22.2):
+##
+##   1. **Every level completes** — not "the agent gets far", but all five, in
+##      order, inside the horizon this file already runs. A curriculum with an
+##      unreachable rung is worse than no curriculum: it is a promise the game
+##      cannot keep, and the tutorial hands the player straight to it.
+##   2. **Nothing waits on a verb the player does not have.** The completion is
+##      the proof, because `Curriculum` drives only commands the UI can issue.
+##   3. **The pacing is the session beat the player asked for**: level 1 inside
+##      the first game-day, level 3 inside six, the whole arc inside three
+##      game-weeks.
+##
+## Measured, seeds 1337 / 4242 / 9001 — the game-hour each level was earned:
+##
+## | level | 1337 | 4242 | 9001 | duration (game-hours) |
+## |---|---|---|---|---|
+## | 1 | 18 | 18 | 18 | 18 |
+## | 2 | 59 | 57 | 58 | 39–41 |
+## | 3 | 100 | 99 | 100 | 41–42 |
+## | 4 | 148 | 147 | 192 | 47–92 |
+## | 5 | 329 | 325 | 305 | 113–181 |
+func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
+	var top := GoalSystem.top_level()
+	assert_true(top >= 1, "there is a curriculum to complete")
+	for seed_value in MATRIX_SEEDS:
+		var doc := _run("curriculum", LONG_DAYS, int(seed_value))
+		var summary: Dictionary = doc["summary"]
+		assert_eq(int(summary["goal_level_end"]), top,
+				("seed %d finished %d of %d curriculum levels in %d game-days — "
+						+ "a rung the taught route cannot reach is a promise the "
+						+ "game cannot keep") % [int(seed_value),
+						int(summary["goal_level_end"]), top, LONG_DAYS])
+		assert_eq(int(summary["city_level_end"]), top,
+				"and the city level followed the objectives up (doc 93 §G1)")
+		# The one objective in the arc that costs five figures, and the first
+		# time any agent in this project has driven doc 05's placeable roster
+		# at all (doc 92 §17.6 recorded that none did).
+		assert_true(int(summary["water_placed"]) >= 1,
+				"seed %d never afforded its own water works" % int(seed_value))
+
+		var first_day_at: Dictionary = {}
+		for row_variant in (summary["day_rows"] as Array):
+			var row: Dictionary = row_variant
+			var level := int(row["goal_level"])
+			if not first_day_at.has(level):
+				first_day_at[level] = int(row["day"])
+		for level in range(1, top + 1):
+			assert_true(first_day_at.has(level),
+					"seed %d never earned curriculum level %d"
+							% [int(seed_value), level])
+		# **The pacing band, and why it is quoted in game-days.** One game-hour
+		# is one real minute at 1× (`SimHost.GAME_MS_PER_REAL_MS` is 60), so a
+		# game-day is a 24-minute session. Level 1 has to land inside the first
+		# of those, or the tutorial hands the player to a screen with nothing on
+		# it; measured at game-hour 18 on every seed, which is day 1.
+		assert_true(int(first_day_at[1]) <= 1,
+				("seed %d took %d game-days to teach the first level; the ruled "
+						+ "bound is 1 (measured game-hour 18 on all three seeds)")
+						% [int(seed_value), int(first_day_at[1])])
+		if top >= 3:
+			assert_true(int(first_day_at[3]) <= 6,
+					("seed %d took %d game-days to reach curriculum level 3; the "
+							+ "ruled bound is 6 (measured 4–5)")
+							% [int(seed_value), int(first_day_at[3])])
+		assert_true(int(first_day_at[top]) <= LONG_DAYS,
+				("seed %d finished the arc on game-day %d; the ruled bound is the "
+						+ "%d-game-day horizon (measured 12.7–13.7)")
+						% [int(seed_value), int(first_day_at[top]), LONG_DAYS])
+		# Monotone: a curriculum level, once earned, is never given back — the
+		# same promise doc 09 §2.11 makes about the city level itself.
+		var previous := 0
+		for row_variant in (summary["day_rows"] as Array):
+			var level := int((row_variant as Dictionary)["goal_level"])
+			assert_true(level >= previous,
+					"seed %d lost a curriculum level it had earned" % int(seed_value))
+			previous = level

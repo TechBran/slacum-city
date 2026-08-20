@@ -51,6 +51,11 @@ const HOURS_PER_DAY := 24
 const STRATEGY_IDS: Array[String] = [
 	"do_nothing", "greedy_growth", "infrastructure_first", "balanced",
 	"tax_squeezer", "disaster_neglect",
+	# Wave 9 — doc 09 §2.14's student. Last in the list, and deliberately not in
+	# `tests/balance_matrix.gd`'s default six: the matrix is doc 92's fitted
+	# sample and adding a seventh row to it would re-base every mean in the
+	# report. It is run by name, and by `test_balance_gates.gd` gate 21.
+	"curriculum",
 ]
 
 ## Verbs the harness knows how to drive. Present ones are used, absent ones are
@@ -268,6 +273,10 @@ class Api extends RefCounted:
 	var demolition_refund: int = 0
 	var blocks_bought: int = 0
 	var land_spend: int = 0
+	## Doc 05's placeable roster, driven for the first time by the `curriculum`
+	## agent (doc 92 §17.6 recorded that no strategy drove it).
+	var water_placed: int = 0
+	var water_spend: int = 0
 	var tax_changes: int = 0
 	var priority_sets: int = 0
 	## `cmd_place_building` answers `E_UNSERVED`: the wall a player without a
@@ -700,6 +709,52 @@ class Api extends RefCounted:
 			priority_sets += 1
 		return result
 
+	## How many candidate origins the water siting scan is willing to PRICE.
+	## Bounded for the same reason `TRANSFORMER_CANDIDATES` is: the tiles it does
+	## not reach are the tail of the same row-major order, so the cap costs
+	## coverage, never determinism.
+	const WATER_SITE_PREVIEWS := 96
+
+	## Doc 05's `cmd_place_water_component(kind, tile, level = 1, preview =
+	## false)`, with the site search the build sheet's ghost does for the player.
+	##
+	## This one has to PREVIEW rather than reason, and that is the interesting
+	## part: a water component needs owned + READY ground, a free footprint **and**
+	## a main inside `main_tap_radius_tiles`, and the third condition is doc 05's
+	## to answer — `nearest_main_tile` is not something a harness heuristic can
+	## reimplement without becoming a second, wrong copy of the rule. So the scan
+	## walks row-major inside sorted READY block ids and asks the command; first
+	## acceptance wins, which is the same tie-break every other search here uses.
+	func place_water_component(kind: String, level: int = 1) -> Dictionary:
+		if not has_verb("cmd_place_water_component"):
+			return _log("water", kind, CommandQueue.fail(&"E_NO_VERB"), {})
+		var rules: Dictionary = sim.water.data.placeable_rules(kind)
+		var size: Vector2i = sim.water.data.footprint_of(StringName(kind), level,
+				String(rules.get("subtype", "")))
+		var previews := 0
+		for block_id in _ready_blocks():
+			var block: LandBlock = sim.world.block(block_id)
+			var x0: int = block.grid.x * BLOCK_TILES
+			var z0: int = block.grid.y * BLOCK_TILES
+			for z in range(z0, z0 + BLOCK_TILES - size.y + 1):
+				for x in range(x0, x0 + BLOCK_TILES - size.x + 1):
+					var origin := Vector2i(x, z)
+					if not sim.world.grid.can_place(origin, size):
+						continue
+					previews += 1
+					if previews > WATER_SITE_PREVIEWS:
+						return _log("water", kind, CommandQueue.fail(&"E_NO_SITE"), {})
+					if not bool(sim.cmd_place_water_component(
+							kind, origin, level, true)["ok"]):
+						continue
+					var result: Dictionary = sim.cmd_place_water_component(
+							kind, origin, level, false)
+					if bool(result["ok"]):
+						water_placed += 1
+						water_spend += int((result["payload"] as Dictionary).get("cost", 0))
+					return _log("water", kind, result, {"origin": [origin.x, origin.y]})
+		return _log("water", kind, CommandQueue.fail(&"E_NO_SITE"), {})
+
 	## Doc 93 §B's headline verb ("THE game"). `cmd_place_grid_component(kind,
 	## tile, level = 1, preview = false)`.
 	##
@@ -818,10 +873,23 @@ class Api extends RefCounted:
 
 	## The same command's read-only quote. Costs no money and no log line — the
 	## price probe `Experiments.transformer_payback` reads the $ figure from here.
-	func grid_quote(kind: String, tile: Vector2i) -> Dictionary:
+	func grid_quote(kind: String, tile: Vector2i, level: int = 1) -> Dictionary:
 		if not has_verb("cmd_place_grid_component"):
 			return CommandQueue.fail(&"E_NO_VERB")
-		return sim.cmd_place_grid_component(kind, tile, 1, true)
+		return sim.cmd_place_grid_component(kind, tile, level, true)
+
+	## What a doc 05 component costs, without needing a tile to ask at. Doc 03
+	## prices it off the variant's cost ratio and the difficulty's `M_build`, and
+	## none of that depends on where it lands — which is what lets a saving agent
+	## price the purchase before it has found a site for it.
+	func water_quote(kind: String, level: int = 1) -> int:
+		if not has_verb("cmd_place_water_component"):
+			return 0
+		var rules: Dictionary = sim.water.data.placeable_rules(kind)
+		return sim.econ_curves.water_component_build_cost(
+				sim.water.data.variant_cost_ratio(StringName(kind),
+						String(rules.get("subtype", ""))),
+				level, float(sim.treasury.difficulty().get("M_build", 1.0)))
 
 	## Calls a verb only when its signature can accept what we pass: REQUIRED
 	## arity no greater than the argument count, and enough parameters in total.
@@ -1927,10 +1995,152 @@ class DisasterNeglect extends Balanced:
 		return "balanced, but never repairs, never prioritises, never buys grid"
 
 
+## **The student** — the agent doc 09 §2.14's curriculum is PACED against, and
+## the only one in this file that reads the goals sheet.
+##
+## Every other strategy here plays the city. This one plays the SHEET: once a
+## game-hour it looks at the active level's first unmet objective and spends its
+## one action on that, and only when the objective wants nothing a verb can give
+## does it fall through to `balanced`'s own ladder. It is therefore `balanced`
+## **plus a reading habit** — the same builder, the same reserve, the same
+## maintenance purse, following the instructions the game now prints.
+##
+## Two things it is deliberately NOT:
+##
+##   * it is not optimal — it takes the objective's action even when a better one
+##     exists, because that is what a player following a checklist does;
+##   * it is not a second measurement of the ladder — `balanced` remains the
+##     agent doc 92 §19's population rungs are fitted on, and this agent's job is
+##     to answer the different question doc 92 §22 asks: *how long does the
+##     taught route take?*
+class Curriculum extends Balanced:
+
+	## Objectives no verb can advance. Population and happiness are consequences,
+	## an endurance streak is time, a resolved incident is doc 06's to create, and
+	## a block finishes developing on doc 09's six-phase clock. The agent plays on
+	## and they arrive — which is exactly what the player does.
+	const PASSIVE_KINDS: Array[String] = [
+		"reach_population", "reach_happiness", "reach_stability", "reach_treasury",
+		"survive_no_abandonment", "resolve_incidents", "develop_block",
+	]
+
+	func id() -> String:
+		return "curriculum"
+
+	func describe() -> String:
+		return "balanced, plus the goals sheet: one action a game-hour on the " \
+				+ "active level's next objective"
+
+	## The price of the objective the agent is currently SAVING for, or 0. Added
+	## to [reserve] so the growth ladder cannot spend it.
+	##
+	## **This field is the whole agent.** Without it the student starves: a shop
+	## costs $2,600, a house costs $1,200, and `_grow` spends every surplus down
+	## to the reserve every game-hour — so the surplus never reaches $2,600 and
+	## the objective that asks for two shops is outbid by cheaper housing forever.
+	## Measured before this earmark existed, seed 1337: `l2_stores` completed at
+	## game-hour **206**, against game-hour 24 with it. A player saving for the
+	## thing the game just asked them to build stops buying the other thing, and
+	## `Balanced` already has the machinery for exactly that — the land fund.
+	var _goal_price: int = 0
+
+	func reserve() -> int:
+		return super() + _goal_price
+
+	func act(api: Api, hour: int) -> void:
+		_goal_price = 0
+		var wanted := _next_objective(api)
+		if not wanted.is_empty():
+			var price := _price_of(api, wanted)
+			if price > 0 and api.balance() - price < super.reserve():
+				_goal_price = price   # save for it; the growth ladder may not
+			elif _serve(api, wanted):
+				# The hour's ACTION is spent, but the two per-hour accruals are
+				# bookkeeping rather than actions — skipping them would make a
+				# studious agent quietly worse at maintenance than a lazy one.
+				if maintains:
+					_credit_maintenance(api)
+				_credit_land(api, hour)
+				return
+		super(api, hour)
+
+	## The active level's first unmet objective that a verb can advance.
+	func _next_objective(api: Api) -> Dictionary:
+		var view: Dictionary = api.sim.goals.view()
+		if bool(view.get("complete", true)):
+			return {}
+		for raw: Variant in (view["objectives"] as Array):
+			var obj: Dictionary = raw
+			if not bool(obj["done"]) and not PASSIVE_KINDS.has(str(obj["kind"])):
+				return obj
+		return {}
+
+	## What serving `obj` costs, or 0 when the answer is "nothing" or "unknown".
+	func _price_of(api: Api, obj: Dictionary) -> int:
+		match str(obj["kind"]):
+			"build_archetype":
+				return api.build_cost(str(obj["archetype"]))
+			"place_grid_component":
+				var tile := api.best_transformer_tile()
+				if tile.x < 0:
+					return 0
+				return int((api.grid_quote(str(obj["kind_id"]), tile, GRID_LEVEL)
+						.get("payload", {}) as Dictionary).get("cost", 0))
+			"upgrade_building":
+				var rows := api.upgrade_candidates()
+				return 0 if rows.is_empty() else int(rows[0]["cost"])
+			"buy_block":
+				var block := api.purchasable_block()
+				if block == "":
+					return 0
+				var quote := api.land_quote(block)
+				return int((quote.get("payload", {}) as Dictionary).get("price", 0))
+			"place_water_component":
+				return api.water_quote(str(obj["kind_id"]), 1)
+		return 0
+
+	func _serve(api: Api, obj: Dictionary) -> bool:
+		match str(obj["kind"]):
+			"build_archetype":
+				var archetype := str(obj["archetype"])
+				if api.min_city_level(archetype) > api.city_level():
+					return false
+				return bool(api.place(archetype)["ok"])
+			"place_grid_component":
+				var tile := api.best_transformer_tile()
+				if tile.x < 0:
+					return false
+				return bool(api.place_grid_component(
+						str(obj["kind_id"]), tile, GRID_LEVEL)["ok"])
+			"upgrade_building":
+				var rows := api.upgrade_candidates()
+				if rows.is_empty():
+					return false
+				return bool(api.upgrade(String(rows[0]["sim_id"]))["ok"])
+			"set_tax_rate":
+				# One detent up, which is the smallest real move the slider
+				# makes. The objective teaches that the slider EXISTS and that
+				# it has a price; pinning it to the top is `tax_squeezer`'s job.
+				var next := mini(api.tax_level() + 1, api.sim.tax_level_count() - 1)
+				if next == api.tax_level():
+					return false
+				return bool(api.set_tax_level(next).get("ok", false))
+			"buy_block":
+				var block := api.purchasable_block()
+				if block == "":
+					return false
+				return bool(api.buy_block(block).get("ok", false))
+			"place_water_component":
+				return bool(api.place_water_component(str(obj["kind_id"]), 1).get("ok", false))
+		return false
+
+
 class Factory extends RefCounted:
 
 	static func make(strategy_id: String) -> Strategy:
 		match strategy_id:
+			"curriculum":
+				return Curriculum.new()
 			"do_nothing":
 				return DoNothing.new()
 			"greedy_growth":
@@ -2053,6 +2263,11 @@ class Runner extends RefCounted:
 			"happiness": sim.happiness.happiness,
 			"stability": sim.districts.city_stability,
 			"city_level": sim.progression.city_level,
+			## Doc 09 §2.14. Separate from `city_level` on purpose: the two
+			## differ exactly when the population ladder is carrying a city the
+			## curriculum has not, which is the shape of doc 93 §G1's ruling and
+			## the thing a pacing report has to be able to see.
+			"goal_level": sim.goals.earned_level if sim.goals != null else 0,
 			"blackout_minutes": blackout_minutes,
 			"buildings": sim.buildings.size(),
 			"metered_buildings": metered,
@@ -2162,6 +2377,9 @@ class Runner extends RefCounted:
 			"stability_end": float(last["stability"]),
 			"stability_min": stability_min,
 			"city_level_end": int(last["city_level"]),
+			"goal_level_end": int(last.get("goal_level", 0)),
+			"water_placed": api.water_placed,
+			"water_spend": api.water_spend,
 			"blackout_minutes_total": blackout_total,
 			## Fraction of all building-time spent without power — the shape of
 			## `blackout_minutes_total` normalised by how big the city got.
@@ -2242,6 +2460,7 @@ class Runner extends RefCounted:
 				"happiness": float(s["happiness"]),
 				"stability": float(s["stability"]),
 				"city_level": int(s["city_level"]),
+				"goal_level": int(s.get("goal_level", 0)),
 				"blackout_minutes": blackout_sum,
 				"buildings": int(s["buildings"]),
 				"min_condition": float(s["min_condition"]),

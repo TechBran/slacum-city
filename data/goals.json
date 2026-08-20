@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "_doc": "doc 09 §2.14 / §8.3 — the teaching curriculum. One row per city level of doc 09 §2.11's ladder above the founding level, in play order. Read by `sim/progression/goal_system.gd`; every objective kind in it is a small pure evaluator in that file's EVENT_KINDS / STATE_KINDS tables, and a row naming a kind that file does not know is DROPPED at parse rather than crashing a city.",
+  "_ruling": "Objectives ADVANCE the level; they do not gate it (doc 93 §G1). `city_level = max(population_ladder, objectives_earned)`, so the doc 92 §19 population rungs stay underneath as a backstop for a player who ignores the sheet — and for every scripted agent in `tools/playtest.gd`, which is why the balance matrix still measures the ladder it was fitted on.",
+  "_verbs": "EVERY objective below is reachable from a surface the player can actually touch today: the build sheet (`cmd_place_building`, `cmd_place_grid_component`, `cmd_place_water_component`), the building panel (`cmd_upgrade_building`), the land panel (`cmd_buy_block` / `cmd_start_development`), the dashboard's tax slider (`cmd_set_tax_level`) and the incident drawer (`cmd_dispatch_unit`). `cmd_place_road`, `cmd_place_water_main` and `cmd_repair_building` are shipped sim verbs with NO UI PATH (doc 92 §17.6), so `stamp_road_tiles`, `place_water_main` and `repair_buildings` exist as evaluator kinds and are used by NO level: a curriculum row may never ask for a verb the player cannot perform. They become authorable the day those surfaces land.",
+  "_pacing": "Targets are FITTED, in doc 92 §22.3, against the `curriculum` agent — a competent player who does the taught task and otherwise plays like `balanced`. One game-hour is one real minute at 1x (`SimHost.GAME_MS_PER_REAL_MS` = 60), so the measured durations ARE the session beat: 18 / 39-41 / 41-42 / 47-92 / 113-181 game-hours for levels 1-5, a doubling cadence. Levels 1-3 sit inside the 10-40 game-hour band the ask names; 4 and 5 are longer and both overruns are priced in §22.3 (incident arrival for 4, doc 05's $45,000 cheapest pump for 5). Retuning a target here is a BALANCE change: measure it with the `curriculum` agent and re-derive §22.3 before you move it, and `tests/test_balance_gates.gd` gate 21 is what holds you to it.",
+  "levels": [
+    {
+      "level": 1,
+      "title_key": "ui_level_1_title",
+      "intent_key": "ui_level_1_intent",
+      "teaches_key": "ui_level_1_teaches",
+      "objectives": [
+        {"id": "l1_houses", "kind": "build_archetype", "archetype": "house",
+         "target": 4, "text_key": "ui_goal_l1_houses"},
+        {"id": "l1_transformer", "kind": "place_grid_component", "kind_id": "transformer",
+         "target": 1, "text_key": "ui_goal_l1_transformer"},
+        {"id": "l1_population", "kind": "reach_population",
+         "target": 170, "text_key": "ui_goal_l1_population"}
+      ]
+    },
+    {
+      "level": 2,
+      "title_key": "ui_level_2_title",
+      "intent_key": "ui_level_2_intent",
+      "teaches_key": "ui_level_2_teaches",
+      "objectives": [
+        {"id": "l2_stores", "kind": "build_archetype", "archetype": "store",
+         "target": 2, "text_key": "ui_goal_l2_stores"},
+        {"id": "l2_upgrade", "kind": "upgrade_building",
+         "target": 1, "text_key": "ui_goal_l2_upgrade"},
+        {"id": "l2_population", "kind": "reach_population",
+         "target": 210, "text_key": "ui_goal_l2_population"}
+      ]
+    },
+    {
+      "level": 3,
+      "title_key": "ui_level_3_title",
+      "intent_key": "ui_level_3_intent",
+      "teaches_key": "ui_level_3_teaches",
+      "objectives": [
+        {"id": "l3_apartment", "kind": "build_archetype", "archetype": "apartment",
+         "target": 1, "text_key": "ui_goal_l3_apartment"},
+        {"id": "l3_tax", "kind": "set_tax_rate",
+         "target": 1, "text_key": "ui_goal_l3_tax"},
+        {"id": "l3_happiness", "kind": "reach_happiness",
+         "target": 70, "text_key": "ui_goal_l3_happiness"},
+        {"id": "l3_population", "kind": "reach_population",
+         "target": 280, "text_key": "ui_goal_l3_population"}
+      ]
+    },
+    {
+      "level": 4,
+      "title_key": "ui_level_4_title",
+      "intent_key": "ui_level_4_intent",
+      "teaches_key": "ui_level_4_teaches",
+      "objectives": [
+        {"id": "l4_station", "kind": "build_archetype", "archetype": "police_station",
+         "target": 1, "text_key": "ui_goal_l4_station"},
+        {"id": "l4_incidents", "kind": "resolve_incidents",
+         "target": 2, "text_key": "ui_goal_l4_incidents"},
+        {"id": "l4_streak", "kind": "survive_no_abandonment",
+         "target": 24, "text_key": "ui_goal_l4_streak"},
+        {"id": "l4_population", "kind": "reach_population",
+         "target": 340, "text_key": "ui_goal_l4_population"}
+      ]
+    },
+    {
+      "level": 5,
+      "title_key": "ui_level_5_title",
+      "intent_key": "ui_level_5_intent",
+      "teaches_key": "ui_level_5_teaches",
+      "objectives": [
+        {"id": "l5_block", "kind": "buy_block",
+         "target": 1, "text_key": "ui_goal_l5_block"},
+        {"id": "l5_developed", "kind": "develop_block",
+         "target": 1, "text_key": "ui_goal_l5_developed"},
+        {"id": "l5_water", "kind": "place_water_component", "kind_id": "pump",
+         "target": 1, "text_key": "ui_goal_l5_water"},
+        {"id": "l5_population", "kind": "reach_population",
+         "target": 400, "text_key": "ui_goal_l5_population"}
+      ]
+    }
+  ]
+}

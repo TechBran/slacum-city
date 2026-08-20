@@ -988,6 +988,126 @@ The `bench` profile matches doc 11's stated contents exactly: 36 developed block
 
 The generator writes the fixture in the **`data/starter_city.json` boot shape**, not as a save body, so `CitySim.boot()` and the render harnesses can load it directly (`tools/profile_sim.gd --city=…`, `tools/profile_frame.gd --city=…`). Its `schema_version` is therefore the *data-file* version this doc's §3.1 defines, and it tracks `data/starter_city.json` rather than the save ladder. **Settled 2026-08-19:** the Wave-6 flag above is resolved in doc 08's favour and against this section's original wording — `tests/test_save_migration.gd::test_37_bench_city_is_a_boot_file_that_round_trips_the_save_path` asserts the fixture's `schema_version` equals `data/starter_city.json`'s, boots it clean at 1,500 buildings, and *then* puts the booted city through `save_slot` → `load_slot` with an identical `state_hash` and zero repair notes. That second leg is the one that catches a save-schema drift, and it catches it on 1,500 buildings rather than the starter city's 35 — a stronger reading of report G-7 than "validate the file against the save registry" ever was. Regeneration is a committed step: `python3 tools/gen_bench_city.py --profile bench`, run whenever the block schema or the road template changes.
 
+### 2.14 The goal curriculum — the ladder made visible (Wave 9)
+
+§2.11 gives the city a level and an event. It does not give the player a
+**goal**, and until Wave 9 nothing else did either: the ladder was a population
+threshold nobody could see, announced by one toast on the way past. The player's
+words after a Fold playtest are the finding —
+
+> *"players know exactly what they need to accomplish to get to the next level,
+> like build a certain building or do a certain task. The first five or six
+> levels should be all about teaching the users exactly how to play the game."*
+
+So each rung of §2.11's ladder now carries an **objective list**, authored in
+`data/goals.json` (§8.3) and evaluated by `sim/progression/goal_system.gd`.
+
+#### 2.14.1 The ruling — objectives ADVANCE the level, they do not gate it
+
+```
+city_level = max( level_reached(city_population),  goals.earned_level )
+```
+
+Both routes go through the one monotone writer, `ProgressionSystem.grant_level`.
+The consequences are the point:
+
+* a player who follows the sheet reaches level 1 in **18 game-hours** instead of
+  two game-days, because the objective list is a checklist and the threshold is
+  a wait;
+* a player who never opens the sheet still climbs doc 92 §19's fitted curve, and
+  so does every scripted agent in `tools/playtest.gd` — which is why the balance
+  matrix still measures the ladder it was fitted on (doc 92 §22.3);
+* **monotonicity is untouched.** Neither route can take a level back, and the
+  MAX of two monotone functions is monotone.
+
+The full ruling, with the alternative that was rejected, is doc 93 §G1.
+
+#### 2.14.2 The curriculum — five levels, one system each
+
+**Five, not the player's "five or six", and the reason is arithmetic:** §2.11's
+ladder has five rungs above the founding level, and a sixth rung would unlock
+nothing — every `min_city_level` in `data/buildings.json` tops out at 4 and every
+block's at 2. A level whose reward card is empty is a number, not a goal. The
+sixth teaching beat is the one that already existed: doc 12 §2.17's tutorial,
+which the sheet shows as **level 0, complete**, and which now hands the player
+here on its way out.
+
+| level | name | objectives | teaches | reward (READ, not authored) |
+|---|---|---|---|---|
+| **0** | Getting started | doc 12 §2.17's eleven steps | taps, a house, one emergency | — |
+| **1** | Homes and power | 4 houses · 1 transformer · 170 residents | the build sheet, and the `E_UNSERVED` wall a new lot hits without copper | Apartments, Offices, L2 upgrades |
+| **2** | Shops and upkeep | 2 shops · 1 upgrade · 210 residents | the commercial cards, and upgrading instead of sprawling | ring-2 land, L3 upgrades |
+| **3** | The budget | 1 apartment · set the tax rate · happiness 70 · 280 residents | doc 03's slider and what it costs in people | High-rise, `road_crew`, L4 upgrades |
+| **4** | When it goes wrong | 1 police station · 2 incidents resolved · 24 clean game-hours · 340 residents | coverage, the drawer, dispatch | Data centre, L5 upgrades |
+| **5** | Room to grow | buy a block · develop it · 1 water pump · 400 residents | doc 09's land pipeline and doc 05's first player-built works | the growth ladder itself |
+
+**Every objective is a verb the player can actually perform.** That is a hard
+rule, not a preference: `cmd_place_road`, `cmd_place_water_main` and
+`cmd_repair_building` are shipped sim verbs with **no UI surface** (doc 92
+§17.6), so their evaluator kinds exist and **no level uses them**. A curriculum
+row that asks for something the UI cannot do is a wall with no door, and the
+tutorial walks the player straight into it.
+
+#### 2.14.3 Objective kinds
+
+Each kind is a small pure evaluator in `GoalSystem`, and they come in three
+shapes:
+
+| shape | kinds | how it is measured |
+|---|---|---|
+| **event** | `build_archetype` · `place_grid_component` · `place_water_component` · `place_water_main` · `stamp_road_tiles` · `upgrade_building` · `repair_buildings` · `resolve_incidents` · `buy_block` · `develop_block` · `set_tax_rate` | counted off `SimEventBus`, from LEVEL ENTRY, on the command rather than on the thing finishing |
+| **state** | `reach_population` · `reach_happiness` · `reach_stability` · `reach_treasury` | one O(1) reading per game-hour |
+| **endurance** | `survive_no_abandonment` | game-hours in a row without `incident_abandoned` / `incident_failed` / `building_destroyed` |
+
+**Cost.** Evaluation is O(events), never O(buildings): the event kinds subscribe
+through `SimEventBus.observer` and consult only the ACTIVE level's handful of
+rows. The state kinds are read once a game-hour off four scalars the sim already
+keeps — which is the boundary of that table, and why a "power coverage ≥ 95 %"
+objective is not in it until doc 04 publishes a city-wide scalar.
+
+A counter ticks on the **command**, not on the completion: "Build 4 houses"
+lands when the fourth house is committed, not two game-hours later when its
+scaffolding comes down. A teaching counter that lags the tap teaches nothing.
+
+#### 2.14.4 Persistence and retroactive safety
+
+The curriculum is a block of the `city` save section (doc 08 §2.8), and
+`CitySim.SAVE_SECTION_VERSION` moves **2 → 3** for it. The body gains one key;
+every other key is byte-for-byte what v2 wrote.
+
+What a v2 save cannot carry is the ANSWER — a city played for thirty game-days
+has no record of which objectives it met, because nothing was counting. Doc 08
+§2.8 forbids a migrator from reading `data/`, and the answer depends on the whole
+restored city as well as on `data/goals.json`, so:
+
+1. `_v2_to_v3` **marks** the body (`goals.bootstrap = true`) and answers nothing;
+2. `CitySim.restore_state` runs `GoalSystem.bootstrap` **last**, once the city is
+   standing, under two rules:
+   * **every level at or below the city's own level is complete** — a player at
+     level 4 is never asked to build their first house;
+   * **the active level starts from what the city already HAS** — the observable
+     residue of the event kinds (houses standing, transformers placed, blocks
+     owned). A kind with no residue starts at zero, because a city cannot be
+     asked what it once did.
+3. the event queue is then **emptied**. A restore is not an achievement:
+   bootstrapping a level-4 city completes four levels' worth of objectives, and
+   publishing those would greet a returning player with four level-up toasts for
+   work they did last week.
+
+Save → load → advance stays bit-identical with a curriculum in flight
+(`tests/test_goals_system.gd`).
+
+#### 2.14.5 Events
+
+| event | payload | consumer |
+|---|---|---|
+| `goal_progress` | `{goal_id, level, current, target}` | doc 12 §2.19's chip pulse |
+| `goal_completed` | `{goal_id, level}` | the row that just landed, pulsed once |
+| `city_level_objectives_met` | `{level}` | the celebration toast |
+
+`city_level_changed` is unchanged and still fires from `grant_level`, whichever
+route earned it.
+
 ---
 
 ## 3. Data Schema
@@ -1071,7 +1191,7 @@ All tile coordinates in this file are **core-local** (add 32 for global); `block
 
 ### 3.2 Save-file sections
 
-This doc owns **five** sections of the canonical registry (report 98 §11): `world`, `districts`, `population`, `progression`, `stats`. **Every one carries `section_version`, never `schema_version`** *(report 98 C-25 — `schema_version` exists only on doc 08's envelope)*.
+This doc owns **six** sections of the canonical registry (report 98 §11): `world`, `districts`, `population`, `progression`, `goals`, `stats`. (`goals` is §2.14's, added in Wave 9; like the other five it rides Milestone 1's single `city` body until doc 08 §3.1's per-system split lands, and `CitySim.SAVE_SECTION_VERSION` 2 → 3 is the bump that carries it.) **Every one carries `section_version`, never `schema_version`** *(report 98 C-25 — `schema_version` exists only on doc 08's envelope)*.
 
 ```jsonc
 "world": {
@@ -1108,6 +1228,13 @@ This doc owns **five** sections of the canonical registry (report 98 §11): `wor
   "section_version": 1,
   "city_level": 0, "city_level_max": 0,
   "milestones": [ "first_land_purchase" ]
+},
+
+"goals": {                                      // §2.14, Wave 9
+  "version": 1,
+  "earned_level": 2,                            // highest level the OBJECTIVES earned
+  "done": [ "l1_houses", "l1_population", "l1_transformer" ],   // sorted; a set that hashes the same twice
+  "progress": { "l3_apartment": 0 }             // counted kinds only; state kinds are re-read
 },
 
 "stats": {
@@ -1433,6 +1560,55 @@ Only constants **owned by this doc**. Land price constants live in `data/economy
 **§2.10 population constants live in code**, beside the relaxation they belong to, not in `data/world.json`: `WORKFORCE_FRACTION 0.55`, `OCCUPANCY_RAMP_HOURS 36`, `ATTRACT_TAU_H 12`, `HAPPINESS_TAU_H 12`, and T-1's `ATTRACT_FLOOR 0.25` / `ATTRACT_HAPPINESS_REF 60` / `ATTRACT_HAPPINESS_PULL 1.30` (`sim/population/`). T-1's **tax-side** coefficient is doc 03's, in `data/economy.json → tax.TAX_RATE_ATTRACT_PULL`, because it is a price on the tax slider and doc 03 is the tax authority; it is authored to the same 1.30 as the happiness-side pull because both act on happiness points, and neither reads the other — a retune of one is a retune of one.
 
 Constants read from elsewhere and **never restated here**: `happiness_tax_delta`, `growth_rate_multiplier` and `attractiveness_tax_factor` coefficients (doc 03 §2.2 / §2.4), `HAPPY_SLOPE` / `f_happiness` clamps (doc 03), `STATE_OCCUPANCY` (doc 02 §2.12), `construction_rate` (doc 01 `data/time.json`), transformer capacities and streetlight/signal kW (doc 04 `data/power.json`), `fire_flow_per_engine_m3h` and every tank/pump rating (doc 05 `data/water.json`).
+
+### 8.3 `data/goals.json` — new, owned here (§2.14, Wave 9)
+
+The curriculum, and nothing else. One row per rung of §2.11's ladder above the
+founding level, in play order; every objective is a `{kind, target}` pair plus
+whatever that kind needs to identify itself.
+
+```json
+{
+  "schema_version": 1,
+  "levels": [
+    {
+      "level": 1,
+      "title_key": "ui_level_1_title",
+      "intent_key": "ui_level_1_intent",
+      "teaches_key": "ui_level_1_teaches",
+      "objectives": [
+        {"id": "l1_houses", "kind": "build_archetype", "archetype": "house",
+         "target": 4, "text_key": "ui_goal_l1_houses"},
+        {"id": "l1_transformer", "kind": "place_grid_component",
+         "kind_id": "transformer", "target": 1, "text_key": "ui_goal_l1_transformer"},
+        {"id": "l1_population", "kind": "reach_population",
+         "target": 170, "text_key": "ui_goal_l1_population"}
+      ]
+    }
+  ]
+}
+```
+
+| field | meaning |
+|---|---|
+| `level` | the §2.11 rung this list earns. Rows are sorted ascending at parse. |
+| `id` | unique across the whole file — it is the save key and the event payload |
+| `kind` | one of §2.14.3's evaluator kinds. **An unknown kind is DROPPED at parse**, not fatal: a curriculum that will not load must never cost a city. `tests/test_goals_system.gd` asserts authored count == parsed count, so a typo is loud in the suite rather than silent in the game. |
+| `archetype` / `kind_id` | what a `build_archetype` / component kind matches against. `kind_id` and not `kind`, because a row's `kind` is already its objective kind. |
+| `target` | the number the counter has to reach. Inclusive. |
+| `*_key` | `data/strings.en.json` keys (G-8). The objective text takes `{target}`, so a retune of the number retunes the sentence. |
+
+**Rules for editing it.**
+
+* **Only verbs the player can perform** (§2.14.2). Adding a `stamp_road_tiles`
+  row before doc 12 ships a road surface is a level nobody can finish.
+* **A retune of a target is a balance change** and belongs with a measurement:
+  doc 92 §22's `curriculum` agent is the instrument, and
+  `tests/test_balance_gates.gd::test_gate_21_*` is the gate.
+* **Objective ids are permanent.** They are save keys; renaming one silently
+  resets that objective for every city that had completed it.
+* **The file may be empty.** No rows means no curriculum, which is exactly the
+  game that shipped before Wave 9 — the population ladder alone.
 
 ---
 
