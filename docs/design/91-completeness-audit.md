@@ -156,6 +156,19 @@ ships placement of *one* component — the transformer — and that
 `place_tie` stay unplaceable until their commands land. That is honest, and it is
 still a gap: three quarters of doc 04's §4 verb list has no player.
 
+**Visibility gap — CLOSED 2026-08-20.** Every row above graded SHIPPED on the
+SIM, and until this date **none of doc 04's distribution end had any
+representation on screen.** A transformer is not a building (§2.1: one tile,
+`FLAG_OCCUPIED`, no footprint row), so nothing in the renderer was drawing one; a
+player could read an overlay tint and an Infrastructure row but could not see
+where the transformer serving their block stood, which buildings it fed, or that
+it was cooking. The grade was right and the game was still missing the object.
+Doc 11 §2.10b now draws the pads, the service drops and the distress, off two new
+read-only `PowerGrid` accessors and doc 04's own bands — `tests/test_power_infra.gd`,
++1 draw call at Z2, hash-neutral on both baseline cities. Worth recording as a
+class of gap this audit's per-§ grading cannot see: **a subsystem can be fully
+shipped and wholly invisible**, and the two facts do not contradict each other.
+
 ## 5. Doc 05 — Water
 
 | § | Subject | Grade | Pointer / gap |
