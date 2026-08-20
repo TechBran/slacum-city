@@ -46,6 +46,12 @@ var edge_id: int = -1
 var paint: Color = Color.WHITE
 ## 0..1 lightbar phase offset, so a convoy never strobes in lockstep (§2.12).
 var phase: float = 0.0
+## The body-tone seed the vehicle shader reads out of INSTANCE_CUSTOM `.r`.
+## A pure function of `id`, so it is computed ONCE on spawn rather than
+## re-hashed for every vehicle on every frame in `VehicleView._upload` — at the
+## Balanced cap that was a hundred-odd `hash01` calls a frame for a number that
+## cannot change.
+var body_seed: float = 0.0
 
 # -------------------------------------------------------------------- flags
 

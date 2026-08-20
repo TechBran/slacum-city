@@ -312,6 +312,7 @@ so a finished tutorial stays finished across a restart. **D-3 closed.**
 |---|---|---|---|
 | 2.1 | Scene architecture | SHIPPED | `game/main.gd` + `game/render/` |
 | 2.1.2 | The street — asphalt, markings, kerbs, footways | SHIPPED (2026-08-20) | `RoadSurfaceView` + `road_surface.gdshader` / `sidewalk.gdshader`, off doc 10's `RoadGraph`; `test_road_surface.gd`. Two draw calls city-wide, zero added texture memory. |
+| 2.1.2a | …and its rebuild is a **dirty-tile diff** | SHIPPED (2026-08-20) | Closes §2.1.2's open question 2, and it became urgent the wave a road-drawing tool shipped. **19.7 → 4.87 ms** on the benchmark city, **4.76 → 1.18 ms** on the founding one, picture identical to the instance. `tests/test_road_incremental.gd` property-tests the only contract a stateful diff can have — buffers byte-identical to a from-scratch rebuild after any edit sequence — over 40 × 12 random edits, 24 × 10 against water and the map edge, and a ten-tile drag through the founding city. Report RR-26. |
 | 2.2 | Chunk lifecycle & slots | SHIPPED | `CityView` chunk buckets with hysteresis |
 | 2.3 | Sim → render data flow | SHIPPED | `main._on_sim_batch` → `RenderStateModel` |
 | 2.4 | Global shader parameters | SHIPPED | `sc_overlay_mode`, `sc_wetness`, … |
@@ -322,12 +323,13 @@ so a finished tutorial stays finished across a restart. **D-3 closed.**
 | 2.9 | Weather VFX | SHIPPED | `WeatherFX`; `test_weather_fx.gd` |
 | 2.10 | Streetlights | SHIPPED | `StreetlightView`; `test_power_streetlights.gd` |
 | 2.10.1 | Lamp placement + the cobra head | SHIPPED (2026-08-20) | `StreetlightPlacer` + `CobraHeadMesh`. Replaces the `(x + z) % 4` parity rule that stood every pole in the carriageway; fixes STREET-1, the ground pool uploaded under the road slab. |
+| 2.10.1 | …and lamps are **live on a road edit**, not boot-time | SHIPPED (2026-08-20) | Closes §2.10.1's open question 1. `RenderStateModel.remove_streetlight` is the API that did not exist, `add_streetlight` is idempotent (its unconditional append put one id on a block roster twice — the double-stutter blackout hazard the streets branch filed), and `StreetlightView.apply_lamps` diffs on the PLACEMENT key so a lamp that did not move keeps its id, its `anim_phase` and whatever ramp it is in. `test_road_surface.gd` 18 / 18b, `test_render_state.gd` 19a. |
 | 2.11 | Overlay mechanism | SHIPPED | `RenderStateModel.set_overlay_channel` |
 | 2.12 | Vehicles | SHIPPED | `VehicleView` + `VehicleMotion` |
 | 2.13 | Budgets, device matrix, **adaptive governor** | **PARTIAL** | three quality presets exist and are switchable from Settings; there is **no fps-driven governor** — grep for `governor` returns nothing. And with no benchmark city (doc 09 §2.13) the device matrix cannot be measured. |
 | 2.14 | Gray-box pipeline | SHIPPED | `tools/gen_graybox.gd` + `game/meshes/generated/manifest.json` |
 | 2.15 | Audio | SHIPPED | `game/audio/`; `test_audio_model.gd` |
-| 2.16 | LIVING CONSTRUCTION | **SHIPPED 2026-08-20** | `ConstructionRigMesh` + `construction_rig.gdshader` + `ConstructionActivity` + `ConstructionVehicleView`; `test_construction_living.gd` (3,835 asserts). Articulated plant and street-true deliveries for **+5 draw calls** and **0.46 ms** at 20 sites. Closes the "a site is a box that grows" gap left by the crane/hoarding pass. Renderer-local and hash-neutral — proved by an interleaved-lookup test, not by inspection. |
+| 2.16 | LIVING CONSTRUCTION | **SHIPPED 2026-08-20** | `ConstructionRigMesh` + `construction_rig.gdshader` + `ConstructionActivity` + `ConstructionVehicleView`; `test_construction_living.gd` (3,835 asserts). Articulated plant and street-true deliveries for **+5 draw calls** and **0.46 ms** at 20 sites. Closes the "a site is a box that grows" gap left by the crane/hoarding pass. Renderer-local and hash-neutral — proved by an interleaved-lookup test, not by inspection. **Follow-up 2026-08-20:** the hoarding gate now faces the street (§2.16's open question 4) — `add_site` takes an optional frontage side and `site_frontage_changed` carries a late or moved one across, so the two construction layers stop disagreeing three times in four. And §2.16's open question 1, "one-buffer uploads", is **refused with a measurement** (report RR-27): the packed path is 2× slower than the per-instance setters in GDScript at every scale, and the layer's frame was in pose computation, not in uploads. The reductions that were there were taken instead — `_upload` 0.088 → 0.049 ms, layer CPU 0.51 → 0.45 ms. |
 
 ## 12. Doc 12 — UI/UX
 

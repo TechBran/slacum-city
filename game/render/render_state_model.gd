@@ -520,8 +520,29 @@ func _apply_overlay_table(table: Dictionary) -> void:
 		_mark_dirty(rec)
 
 
+## Register a lamp, or MOVE one that is already registered.
+##
+## Idempotent by construction, and that is the point rather than a nicety.
+## `BlockRec.streetlights` is the list §2.7.2's go-dark stagger and §2.7.3's
+## relight sweep iterate, and it used to be appended to unconditionally: calling
+## this twice for one id put the id in the block TWICE, so every ramp that block
+## drove ran the lamp's envelope through `_advance_streetlight` a second time in
+## the same frame and the blackout stuttered — the double-stutter the streets
+## branch filed. Re-registering now updates the record in place and, when the
+## lamp changed block, moves the single list entry across.
 func add_streetlight(id: int, block_id: Variant, world_pos: Vector3) -> StreetlightRec:
-	var rec := StreetlightRec.new()
+	var rec: StreetlightRec = _streetlights.get(id)
+	if rec != null:
+		if rec.block_id != block_id:
+			var old: BlockRec = _blocks.get(rec.block_id)
+			if old != null:
+				old.streetlights.erase(id)
+			rec.block_id = block_id
+			_block_rec(block_id, chunk_of(world_pos)).streetlights.append(id)
+		rec.world_pos = world_pos
+		rec.chunk = chunk_of(world_pos)
+		return rec
+	rec = StreetlightRec.new()
 	rec.id = id
 	rec.block_id = block_id
 	rec.world_pos = world_pos
@@ -530,6 +551,37 @@ func add_streetlight(id: int, block_id: Variant, world_pos: Vector3) -> Streetli
 	_streetlights[id] = rec
 	_block_rec(block_id, rec.chunk).streetlights.append(id)
 	return rec
+
+
+## Retire a lamp: the record stops being ticked by `advance()` and its id leaves
+## the block roster, so nothing downstream can reach a lamp that is no longer
+## drawn. Unknown ids are ignored, which is what makes a re-place pass a plain
+## set difference at the call site.
+##
+## Used by the live re-place on a road edit (`StreetlightView.apply_lamps`) —
+## before it existed a player who bulldozed a street left the lamp ramping in
+## the model for the rest of the session, and its id in `BlockRec.streetlights`
+## for the rest of the session's blackouts.
+func remove_streetlight(id: int) -> bool:
+	var rec: StreetlightRec = _streetlights.get(id)
+	if rec == null:
+		return false
+	var b: BlockRec = _blocks.get(rec.block_id)
+	if b != null:
+		b.streetlights.erase(id)
+	_streetlights.erase(id)
+	return true
+
+
+func streetlight_count() -> int:
+	return _streetlights.size()
+
+
+## The lamp ids this block darkens with, in registration order. Exposed because
+## the duplicate-id hazard above is invisible from `streetlight_count()`.
+func block_streetlight_ids(block_id: Variant) -> Array:
+	var b: BlockRec = _blocks.get(block_id)
+	return [] if b == null else b.streetlights.duplicate()
 
 
 func building(id: int) -> BuildingRec:

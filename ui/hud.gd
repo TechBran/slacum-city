@@ -415,10 +415,24 @@ func _width_dp() -> float:
 func _clock_width_dp() -> float:
 	var clock_w := UIConfig.get_num(config.layout(), "clock_chip_w_dp", 132.0)
 	if _clock_chip != null:
-		clock_w = maxf(clock_w, _clock_chip.custom_minimum_size.x)
+		clock_w = maxf(clock_w, _widest(_clock_chip))
 	if _menu_button != null and _menu_button.visible:
-		clock_w += _menu_button.custom_minimum_size.x
+		clock_w += _widest(_menu_button)
 	return clock_w + _chip_gap * 3.0
+
+
+## What a Control will ACTUALLY take, not what we asked it for.
+## `custom_minimum_size` is a floor; a themed `Button` adds its stylebox's
+## content margins and its own text on top, and at 130 % text with larger touch
+## targets the ☰ measures 85 dp against the 48–64 it was asked for. Reserving
+## the request instead of the result is how the solver could hand row 0 a
+## budget the row could not keep: the bar solved 18 dp wider than the display,
+## `grow_horizontal = BOTH` centred the overflow, and the treasury chip left the
+## screen on one side while the ☰ — the only way into the pause menu — left it
+## on the other. Measured at 360 dp / 130 % / larger targets before the fix:
+## treasury at x = −9, ☰ ending at 369 of 360.
+static func _widest(control: Control) -> float:
+	return maxf(control.custom_minimum_size.x, control.get_combined_minimum_size().x)
 
 
 ## What each chip's text actually needs, in dp, for both collapse modes. The

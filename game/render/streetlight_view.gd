@@ -16,6 +16,11 @@ extends Node3D
 ##   the ground pool rides over the FOOTWAY instead of 4 cm under the road
 ##   (report RR-24 / STREET-1). Both are placement, not calibration: energies,
 ##   radii, ramps and the day gate are untouched.
+##
+## §2.10.1's open item 1 is closed here: lamps are no longer BOOT-TIME. See
+## `apply_lamps()` — a road edit re-places the city's lamps as a set difference
+## on the placement key, so the street the player just laid lights up on the
+## same frame its asphalt appears, and no lamp that did not move loses its ramp.
 
 ## Fallback lamp height for a call site that carries no `road_surface.lamp`
 ## block. The live number is `head_offset.y`, read off `CobraHeadMesh`.
@@ -30,6 +35,9 @@ const SMEAR_MIN_WETNESS := 0.05
 var model: RenderStateModel
 ## `road_surface.lamp` — the cobra-head dimensions and where the glow hangs.
 var lamp_cfg: Dictionary = {}
+## The whole `data/render.json`, kept so `replace_from()` can re-run the placer
+## without the shell having to hold it a second time.
+var render_json: Dictionary = {}
 ## Local-frame offset from the pole base to the luminaire centre. Every glowing
 ## element hangs off THIS, not off the top of the mast, which is the difference
 ## between a lamp that lights the road and a stick with a halo on it.
@@ -38,6 +46,16 @@ var head_offset := Vector3(0.0, LAMP_HEIGHT, 0.0)
 ## the carriageway — see `_pool_y`.
 var pool_y := 0.255
 var _yaw_of: Dictionary = {}             # lamp id -> radians
+## Placement key (`StreetlightPlacer.key_of`) -> lamp id, and the counter new
+## lamps are numbered from. This pair is what makes a re-place a DIFF: a lamp
+## that is still where it was keeps its id, so it keeps its `anim_phase` and
+## whatever ramp it is in the middle of, and the player sees the street they
+## just laid light up without the rest of the city blinking.
+var _key_to_id: Dictionary = {}
+var _chunk_of_lamp: Dictionary = {}      # lamp id -> Vector2i
+var _next_id: int = 100000
+## Census of the last `apply_lamps` call: `{added, removed, moved, kept}`.
+var last_diff: Dictionary = {"added": 0, "removed": 0, "moved": 0, "kept": 0}
 ## lamp id -> {base, head, pool, yaw}. The same Vector3s that go into the
 ## MultiMesh, kept script-side: `--headless` runs on the DUMMY rendering driver
 ## and `MultiMesh.get_instance_transform` reads back identity there, so a
@@ -68,6 +86,7 @@ var wetness: float = 0.0
 ## omits it gets arm-along-+X, which is what every pre-cobra caller drew.
 func setup(p_model: RenderStateModel, render_data: Dictionary, lamps: Array) -> void:
 	model = p_model
+	render_json = render_data
 	var cfg: Dictionary = render_data.get("streetlights", {})
 	_lamp_color = Color(String(cfg.get("lamp_color", "#FFD9A0")))
 	_lamp_quad_m = float(cfg.get("lamp_billboard_m", 1.6))
@@ -83,17 +102,134 @@ func setup(p_model: RenderStateModel, render_data: Dictionary, lamps: Array) -> 
 	pool_y = _pool_y(road)
 	var weather: Dictionary = render_data.get("weather", {})
 	_smear_alpha = float(weather.get("wet_smear_alpha", 0.35))
-	for lamp in lamps:
-		var pos: Vector3 = lamp["pos"]
-		_yaw_of[int(lamp["id"])] = float(lamp.get("yaw", 0.0))
-		var rec := model.add_streetlight(int(lamp["id"]), lamp["block_id"], pos)
-		var chunk: Vector2i = rec.chunk
-		if not _lamp_ids_by_chunk.has(chunk):
-			_lamp_ids_by_chunk[chunk] = []
-		(_lamp_ids_by_chunk[chunk] as Array).append(int(lamp["id"]))
-	for chunk in _lamp_ids_by_chunk:
-		_build_chunk(chunk)
+	apply_lamps(lamps)
+
+
+## Re-place the city's lamps against a fresh `StreetlightPlacer.place()` result.
+##
+## This is the whole of doc 11 §2.10.1's open item 1. Lamps were BOOT-TIME: a
+## road the player laid got asphalt on the next frame and lamps on the next
+## LOAD, because there was no way to retire a record — `RenderStateModel` could
+## add a streetlight and nothing else. Now the pass is a set difference on the
+## PLACEMENT key (`tile + kerb side`, never the ordinal id):
+##
+##   * a key that is in the new placement and not the old is a NEW lamp, numbered
+##     from the same monotone counter the boot pass used;
+##   * a key in the old and not the new is retired through
+##     `RenderStateModel.remove_streetlight`, which is the API that did not exist;
+##   * a key in both KEEPS ITS ID, so `anim_phase`, the lit ramp and the block
+##     stutter it is in the middle of all survive the edit. That is why the key
+##     is the placement and not the row's ordinal: `place()` numbers its rows in
+##     (y, x, side) order, so one new tile at the top-left renumbers every lamp
+##     below it, and an id-keyed diff would retire and re-create the whole city.
+##
+## Only the chunks whose roster or geometry actually changed are re-uploaded.
+## Returns `last_diff`.
+func apply_lamps(lamps: Array) -> Dictionary:
+	var want: Dictionary = {}
+	var order: Array[int] = []
+	for raw: Variant in lamps:
+		var row: Dictionary = raw
+		var key := int(row["key"]) if row.has("key") else \
+				StreetlightPlacer.key_of(row.get("tile", Vector2i.ZERO),
+						int(row.get("side", 0)))
+		if want.has(key):
+			continue   # two lamps on one kerb is not a placement this view draws
+		want[key] = row
+		order.append(key)
+	# First call: adopt the placer's own numbering, so a booted city is
+	# numbered exactly as it was before this diff existed and no `anim_phase`
+	# in the game moves. `place()` emits its rows in the same order.
+	if _key_to_id.is_empty() and not lamps.is_empty():
+		_next_id = int((lamps[0] as Dictionary).get("id", _next_id))
+
+	var dirty: Dictionary = {}     # Vector2i chunk -> true
+	var diff := {"added": 0, "removed": 0, "moved": 0, "kept": 0}
+
+	var stale: Array[int] = []
+	for key: int in _key_to_id:
+		if not want.has(key):
+			stale.append(key)
+	stale.sort()
+	for key: int in stale:
+		var id := int(_key_to_id[key])
+		var chunk: Vector2i = _chunk_of_lamp.get(id, Vector2i.ZERO)
+		var ids: Variant = _lamp_ids_by_chunk.get(chunk)
+		if ids is Array:
+			(ids as Array).erase(id)
+			dirty[chunk] = true
+		model.remove_streetlight(id)
+		_key_to_id.erase(key)
+		_chunk_of_lamp.erase(id)
+		_yaw_of.erase(id)
+		_anchor_of.erase(id)
+		diff["removed"] = int(diff["removed"]) + 1
+
+	for key: int in order:
+		var row: Dictionary = want[key]
+		var pos: Vector3 = row["pos"]
+		var yaw := float(row.get("yaw", 0.0))
+		var fresh := not _key_to_id.has(key)
+		var id := 0
+		if fresh:
+			id = _next_id
+			_next_id += 1
+			_key_to_id[key] = id
+			diff["added"] = int(diff["added"]) + 1
+		else:
+			id = int(_key_to_id[key])
+			var old: RenderStateModel.StreetlightRec = model.streetlight(id)
+			if old != null and old.world_pos.is_equal_approx(pos) \
+					and is_equal_approx(float(_yaw_of.get(id, 0.0)), yaw):
+				diff["kept"] = int(diff["kept"]) + 1
+				continue
+			diff["moved"] = int(diff["moved"]) + 1
+		_yaw_of[id] = yaw
+		var rec := model.add_streetlight(id, row["block_id"], pos)
+		var was: Variant = _chunk_of_lamp.get(id)
+		if was != null and Vector2i(was) != rec.chunk:
+			var ids: Variant = _lamp_ids_by_chunk.get(Vector2i(was))
+			if ids is Array:
+				(ids as Array).erase(id)
+			dirty[Vector2i(was)] = true
+		if was == null or Vector2i(was) != rec.chunk:
+			if not _lamp_ids_by_chunk.has(rec.chunk):
+				_lamp_ids_by_chunk[rec.chunk] = []
+			var list: Array = _lamp_ids_by_chunk[rec.chunk]
+			list.append(id)
+			list.sort()
+			_chunk_of_lamp[id] = rec.chunk
+		dirty[rec.chunk] = true
+
+	var coords: Array = dirty.keys()
+	coords.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return a.y < b.y if a.y != b.y else a.x < b.x)
+	for chunk: Vector2i in coords:
+		_sync_chunk(chunk)
+	last_diff = diff
 	refresh()
+	return diff
+
+
+## Re-run the placer over the live road layer and diff the result in. This is
+## the one call the shell makes wherever it rebuilds the road surface, and it is
+## safe to call for an edit that moved no lamp: the diff comes back all `kept`
+## and not one buffer is touched.
+func replace_from(grid: TileGrid, graph: RoadGraph,
+		block_of: Callable = Callable()) -> Dictionary:
+	if model == null:
+		return last_diff
+	return apply_lamps(StreetlightPlacer.place(grid, graph, render_json, block_of))
+
+
+## How many lamps this view is drawing.
+func lamp_count() -> int:
+	return _key_to_id.size()
+
+
+## The lamp id standing on `tile`'s `side` kerb, or -1.
+func lamp_id_at(tile: Vector2i, side: int) -> int:
+	return int(_key_to_id.get(StreetlightPlacer.key_of(tile, side), -1))
 
 
 ## ── the pool that was buried (report STREET-1) ────────────────────────────
@@ -110,6 +246,44 @@ func _pool_y(road: Dictionary) -> float:
 	var top := float(road.get("asphalt_top_m", 0.10)) \
 			+ float(road.get("kerb_height_m", 0.15))
 	return top + float((road.get("lamp", {}) as Dictionary).get("pool_lift_m", 0.005))
+
+
+## Bring one chunk's four buffers in line with its lamp roster, building the
+## nodes on first use and RESIZING them afterwards. Re-entrant on purpose: a
+## road edit re-places the lamps in the chunks it touched and nowhere else, so
+## this runs for one or two chunks out of the 49 and the rest of the city is
+## not re-uploaded at all.
+func _sync_chunk(chunk: Vector2i) -> void:
+	var ids: Array = _lamp_ids_by_chunk.get(chunk, [])
+	if ids.is_empty():
+		_free_chunk(chunk)
+		return
+	if not _lamp_nodes.has(chunk):
+		_build_chunk(chunk)
+		return
+	var nodes: Dictionary = _lamp_nodes[chunk]
+	var count := ids.size()
+	# Raising `instance_count` clears the buffer, which is why every instance is
+	# rewritten below rather than patched.
+	for key: String in ["lamp", "pool", "smear", "pole"]:
+		(nodes[key] as MultiMesh).instance_count = count
+	_write_chunk(ids, nodes["lamp"], nodes["pool"], nodes["smear"], nodes["pole"])
+
+
+func _free_chunk(chunk: Vector2i) -> void:
+	_lamp_ids_by_chunk.erase(chunk)
+	if not _lamp_nodes.has(chunk):
+		return
+	var nodes: Dictionary = _lamp_nodes[chunk]
+	for key: String in ["lamp_node", "pool_node", "smear_node", "pole_node"]:
+		var node: MultiMeshInstance3D = nodes[key]
+		if node == null:
+			continue
+		if node.get_parent() == self:
+			remove_child(node)
+		_smear_nodes.erase(node)
+		node.queue_free()
+	_lamp_nodes.erase(chunk)
 
 
 func _build_chunk(chunk: Vector2i) -> void:
@@ -187,11 +361,19 @@ func _build_chunk(chunk: Vector2i) -> void:
 	pole_node.custom_aabb = aabb
 	add_child(pole_node)
 
+	_write_chunk(ids, lamp_mm, pool_mm, smear_mm, pole_mm)
+	_lamp_nodes[chunk] = {"lamp": lamp_mm, "pool": pool_mm, "smear": smear_mm,
+			"pole": pole_mm, "lamp_node": lamp_node, "pool_node": pool_node,
+			"smear_node": smear_node, "pole_node": pole_node}
+
+
+func _write_chunk(ids: Array, lamp_mm: MultiMesh, pool_mm: MultiMesh,
+		smear_mm: MultiMesh, pole_mm: MultiMesh) -> void:
 	# The smear spans road → lamp, so its quad is stretched off the 1.6 m
 	# billboard: narrower across, LAMP_HEIGHT tall.
 	var smear_basis := Basis.IDENTITY.scaled(
 			Vector3(0.55, head_offset.y / maxf(0.01, _lamp_quad_m), 1.0))
-	for i in count:
+	for i in ids.size():
 		var lamp_id := int(ids[i])
 		var rec: RenderStateModel.StreetlightRec = model.streetlight(lamp_id)
 		var base: Vector3 = rec.world_pos
@@ -210,7 +392,6 @@ func _build_chunk(chunk: Vector2i) -> void:
 		# base weathering lands at grade wherever the lamp is placed.
 		pole_mm.set_instance_transform(i, Transform3D(basis, base))
 		_anchor_of[lamp_id] = {"base": base, "head": head, "pool": under, "yaw": yaw}
-	_lamp_nodes[chunk] = {"lamp": lamp_mm, "pool": pool_mm, "smear": smear_mm}
 
 
 ## The pole. `CobraHeadMesh` owns the geometry — mast, arm and luminaire — and

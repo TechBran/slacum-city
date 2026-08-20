@@ -208,6 +208,13 @@ Edits are **batched per SimTick**. A tick's edit set `E` (tiles added, removed, 
 
 **Budget:** `REBUILD_TILE_BUDGET = 2048` retraced tiles per tick. If exceeded, the remainder of the dirty set carries to the next tick; the graph stays *valid* throughout (only the not-yet-retraced region keeps its previous, still-consistent edges), and `graph_dirty = true` suppresses route-cache reuse for edges in the pending set.
 
+**Two accessor notes, added 2026-08-20 (report RR-26), both pure optimisations with no behaviour behind them.** They are recorded here rather than left as folklore because both are on the per-tick path.
+
+* **`road_tiles_sorted()` is memoised on `graph_version`.** The key is exact, not approximate: `_road_tiles` is written in exactly two places — `rebuild_all` and the membership re-read at the top of `apply_edits` — and both bump the version before returning, so no call can observe a stale answer. Callers still get a **copy**, so the accessor's semantics are unchanged and the cache cannot be mutated from outside. This is called four times a tick inside `sim/roads/` and once per road edit by doc 11's street rebuild.
+* **`_sorted_tiles` sorts a packed integer key, not a `sort_custom` lambda.** Every comparison in a `sort_custom` is a scripted call: **3.44 ms** for the benchmark city's 3,132 tiles once a few edits have shuffled the dictionary's key order (0.99 ms straight after a boot, when the keys already are in order — which is why it never looked expensive). A tile's (y, x) order is exactly the order of `y·SIZE + x`, so the comparison goes to `PackedInt32Array.sort()` instead: **0.29 ms**, ordering identical by construction. The out-of-bounds fallback to the comparator is load-bearing rather than defensive — step 1 above sorts the **caller's** edit list, and a tile outside the grid must still sort the way it always did instead of folding onto another row.
+
+Both were proved hash-neutral on the starter city and on `tests/fixtures/bench_city.json`, coarse and fine.
+
 **Worked example B-2 — remove the hub.** Delete `(2,2)` from B-1. `dirty_tiles = {(2,2),(2,1),(1,2),(3,2),(2,3)}`; all 4 edges are dirty and deleted; N1 is deleted. `(2,1),(1,2),(3,2),(2,3)` all become `d=1` → new nodes. Retrace produces 4 edges of 2 tiles each (`length_m = 8`). Tiles retraced: **8**. Components go from 1 → 4. Any vehicle holding one of the 4 old edge ids receives `route_invalidated`.
 
 ### 2.6 Cost function

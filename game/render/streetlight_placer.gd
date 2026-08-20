@@ -58,10 +58,21 @@ const PAIR_NONE := 0
 const TILE_M := 8.0
 
 
+## The PLACEMENT identity of a lamp: its tile and the kerb it stands on, packed
+## into one int. Deliberately not the row's `id`, which is an ordinal — insert
+## one road tile at the top-left of the city and every ordinal below it shifts,
+## so a re-place keyed on ids would retire and re-create every lamp in the city
+## for one edit, restarting `anim_phase` and every ramp with it. `tile + side`
+## does not move when a lamp somewhere else appears, which is what lets
+## `StreetlightView.apply_lamps` keep stable lamps stable.
+static func key_of(tile: Vector2i, side: int) -> int:
+	return (tile.y * TileGrid.SIZE + tile.x) * 4 + posmod(side, 4)
+
+
 ## `block_of` maps a tile to a `LandBlock` (pass `world.block_of_tile`); it only
 ## decides which block a lamp darkens with, and an invalid Callable simply
-## leaves `block_id` empty. Rows are `{id, block_id, tile, side, corner, pos,
-## yaw}` and `pos` is the pole BASE — on the footway, at kerb height.
+## leaves `block_id` empty. Rows are `{id, key, block_id, tile, side, corner,
+## pos, yaw}` and `pos` is the pole BASE — on the footway, at kerb height.
 static func place(grid: TileGrid, graph: RoadGraph, render_data: Dictionary,
 		block_of: Callable = Callable(), first_id: int = 100000) -> Array:
 	var cfg: Dictionary = render_data.get("road_surface", {})
@@ -186,8 +197,8 @@ static func place(grid: TileGrid, graph: RoadGraph, render_data: Dictionary,
 			var block: Variant = block_of.call(t.x, t.y)
 			if block != null:
 				block_id = String(block.id)
-		out.append({"id": next_id, "block_id": block_id, "tile": t, "side": side,
-				"corner": is_corner, "pos": pos, "yaw": yaw})
+		out.append({"id": next_id, "key": key_of(t, side), "block_id": block_id,
+				"tile": t, "side": side, "corner": is_corner, "pos": pos, "yaw": yaw})
 		next_id += 1
 	return out
 

@@ -207,13 +207,23 @@ func setup(render_data: Dictionary = {}) -> void:
 ## `footprint_tiles` the lot size in 8 m tiles, `height_m` the finished
 ## building's height — at or above `crane_min_height_m` the site gets a tower
 ## crane, below it a ring of scaffolding poles.
+## `gate_side` (0 = -Z, 1 = +X, 2 = +Z, 3 = -X) is the lot face that fronts the
+## STREET. Optional, and omitting it keeps the hash this view has always used —
+## but the two construction layers then disagree about where the site's front
+## is, which is the defect §2.16 filed: the vehicle layer derives the frontage
+## from the real road (`ConstructionVehicleView.frontage_side`) and stands its
+## plant, its barricades and its lorry stop there, while the hoarding opened its
+## gate on `hash01(id, 7) % 4` — a one-in-four chance of agreeing. Pass the
+## frontage and the gate, the skip standing in it, the coned-off lane and the
+## delivery all read as one site.
 func add_site(id: int, world_pos: Vector3, footprint_tiles: Vector2i,
-		height_m: float) -> void:
+		height_m: float, gate_side: int = -1) -> void:
 	_ensure_setup()
 	if _sites.has(id):
 		remove_site(id)
 	var site := Site.new()
 	site.id = id
+	site.gate_side_override = gate_side if gate_side >= 0 and gate_side < 4 else -1
 	site.world_pos = world_pos
 	site.footprint = Vector2i(maxi(footprint_tiles.x, 1), maxi(footprint_tiles.y, 1))
 	site.height_m = maxf(height_m, 0.0)
@@ -248,6 +258,42 @@ func set_stage(id: int, stage: int) -> void:
 	_build_structure(site)
 	_build_clutter(site)
 	_animate(site)
+
+
+## Turn the gate to face the street after the fact. The vehicle layer resolves a
+## site's frontage against doc 10's live network, and that answer can arrive
+## AFTER the hoarding went up (the route budget is two sites a frame) or move
+## later (a road edit re-routes the site). Idempotent, and a no-op when the gate
+## is already on that side, so the shell can call it from the signal without
+## thinking about it.
+func set_gate_side(id: int, side: int) -> void:
+	var site: Site = _sites.get(id)
+	if site == null:
+		return
+	var wanted := side if side >= 0 and side < 4 else -1
+	if wanted == site.gate_side_override:
+		return
+	site.gate_side_override = wanted
+	_build_fence(site)
+	# The skip straddles the hoarding line IN the gate, so the yard has to move
+	# with it or a bin ends up parked against a solid panel.
+	_build_clutter(site)
+
+
+## Which hoarding run carries the gate. The hash is the fallback, not the rule:
+## it is what a caller that cannot say where the street is still gets, and it is
+## what every pre-frontage call site drew.
+func _gate_side(site: Site) -> int:
+	if site.gate_side_override >= 0:
+		return site.gate_side_override
+	return int(_hash01(site.id, 7) * 4.0) % 4
+
+
+## The hoarding run the gate is standing on, 0..3. Tests and the profiler read
+## it; -1 for an unknown site.
+func gate_side_of(id: int) -> int:
+	var site: Site = _sites.get(id)
+	return -1 if site == null else _gate_side(site)
 
 
 ## Completion (or demolition): every prop goes.
@@ -370,7 +416,7 @@ func _build_fence(site: Site) -> void:
 	for run: Dictionary in runs:
 		panel_total += int(run["count"])
 		post_total += int(run["count"])
-	var gate_side := int(_hash01(site.id, 7) * 4.0) % 4
+	var gate_side := _gate_side(site)
 	var gate_index := int(runs[gate_side]["count"]) / 2
 
 	var panel_mm := MultiMesh.new()
@@ -809,6 +855,10 @@ class Site extends RefCounted:
 	var gate_yaw := 0.0
 	var gate_len := 2.0
 	var gate_out := Vector3.FORWARD
+	## Which of the four hoarding runs carries the gate: 0 = -Z, 1 = +X,
+	## 2 = +Z, 3 = -X. -1 means "nobody said", and the hash picks (see
+	## `_gate_side`).
+	var gate_side_override := -1
 	var mast_h := 0.0
 	var jib_len := 0.0
 	var hook_span := 6.0

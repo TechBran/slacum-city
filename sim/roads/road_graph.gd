@@ -45,6 +45,10 @@ var _pending_dirty: Array[Vector2i] = []
 ## Id order is kept lazily: appends mark it dirty and the sorted accessors
 ## resolve it once. Sorting on every create was ~40% of a full rebuild.
 var _order_dirty: bool = false
+## `road_tiles_sorted()`'s answer, and the `graph_version` it belongs to. See
+## the accessor for why this is memoised and why the version is a sound key.
+var _tiles_sorted: Array = []
+var _tiles_sorted_version: int = -1
 var _components: Dictionary = {}  # component_id -> Array[int] node ids
 var _component_count: int = 0
 ## Components are relabelled LAZILY: an edit marks them dirty and the first
@@ -267,8 +271,27 @@ func road_tile_count() -> int:
 	return _road_tiles.size()
 
 
+## Every road tile in (y, x) order — the scan order the whole project agrees on.
+##
+## MEMOISED on `graph_version`, and the key is exact rather than approximate:
+## `_road_tiles` is written in exactly two places (`rebuild_all` and the
+## membership re-read at the top of `apply_edits`), both of which bump
+## `graph_version` before they return, and nothing calls this between the write
+## and the bump. Callers still get a COPY, so the cache cannot be mutated from
+## outside and the semantics of this accessor have not moved.
+##
+## Why it is worth caching: the sort is `sort_custom` with a GDScript lambda, so
+## every comparison is a scripted call. On the benchmark city's 3,132 tiles that
+## is **3.44 ms** once the dictionary's key order has been shuffled by a few
+## edits (0.99 ms straight after a boot, when the keys are already in order —
+## which is why it never looked expensive). This is called four times per tick
+## inside `road_network.gd` and once per road edit by the renderer's street
+## rebuild; the copy that replaces it is 0.17 ms.
 func road_tiles_sorted() -> Array:
-	return _sorted_tiles(_road_tiles.keys())
+	if _tiles_sorted_version != graph_version:
+		_tiles_sorted = _sorted_tiles(_road_tiles.keys())
+		_tiles_sorted_version = graph_version
+	return _tiles_sorted.duplicate()
 
 
 func road_tile_counts() -> Dictionary:
@@ -1138,7 +1161,40 @@ static func _tiles_key(tiles: Array) -> String:
 	return fwd if fwd <= rev else rev
 
 
+## (y, x) order, via a packed integer key rather than `sort_custom`.
+##
+## `sort_custom` calls a GDScript lambda for every comparison, which on the
+## benchmark city's 3,132 road tiles is **3.44 ms** — the single largest term in
+## the renderer's street rebuild and four calls a tick inside this directory.
+## A tile's (y, x) order is exactly the order of `y·SIZE + x`, so the comparison
+## can be handed to `PackedInt32Array.sort()`, which is one C++ sort over plain
+## ints: **0.29 ms** for the same city, ordering identical by construction.
+##
+## The out-of-bounds fallback is not defensive padding: `apply_edits` sorts its
+## dirty set, and the edit list it is handed is the caller's, so a tile outside
+## the grid must still sort the way it always did rather than fold onto another
+## row.
 static func _sorted_tiles(tiles: Array) -> Array:
+	var n := tiles.size()
+	var keys := PackedInt32Array()
+	keys.resize(n)
+	var i := 0
+	for raw: Variant in tiles:
+		var t: Vector2i = raw
+		if t.x < 0 or t.x >= TileGrid.SIZE or t.y < 0 or t.y >= TileGrid.SIZE:
+			return _sorted_tiles_compared(tiles)
+		keys[i] = t.y * TileGrid.SIZE + t.x
+		i += 1
+	keys.sort()
+	var out: Array = []
+	out.resize(n)
+	for j in n:
+		var key := keys[j]
+		out[j] = Vector2i(key % TileGrid.SIZE, key / TileGrid.SIZE)
+	return out
+
+
+static func _sorted_tiles_compared(tiles: Array) -> Array:
 	var out: Array = tiles.duplicate()
 	out.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
 		if a.y != b.y:

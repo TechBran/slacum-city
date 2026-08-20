@@ -105,6 +105,53 @@ Roads were one MultiMesh of untextured 8 m slabs. The playtest verdict on the Fo
 
 **Night** (report NIGHT-1, unchanged calibration): the carriageway inherits the ROAD row of `data/render.json.ground` verbatim (`road_night_albedo_lift` 0.34, `road_night_glow` 0.048, `night_glow_wet_mult` 0.55). The footway takes its own row between terrain and road (0.30 / 0.042) and just under the road's on purpose. Matching the terrain leaves a black gap either side of a lit carriageway — measured at the first draft's 0.22 / 0.030, where the footway read darker than the lot behind it at 03:00. Matching the road erases the kerb line, which is the edge this whole pass exists to draw. **The gap between the two is the read.** Paint takes a third: `marking_night_glow` 0.075, which is the **retroreflective** read, and at 03:00 it is the strongest single cue that a dark band is a STREET.
 
+#### 2.1.2a `rebuild()` is a dirty-tile diff — **shipped 2026-08-20** (closes §2.1.2's open question 2)
+
+The pass above shipped as a pure function of (grid, graph): every call re-classified all 3,132 road tiles of the benchmark city, re-bucketed every kerb run and rewrote both buffers, for **18.3 ms** — and it fires on **every road the player lays**, which is precisely the frame that must not be dropped. Another branch this wave is shipping a road-drawing tool, so a per-tile drag is now the common case and not the exotic one.
+
+`rebuild()` is therefore a **stateful diff** with one contract, and the contract is exact: *after any sequence of edits, both uploaded buffers are byte-identical to a from-scratch rebuild of the same city.* `force` restores the pure-function behaviour and is what a sim swap (a mid-session load) takes.
+
+**Every per-tile fact has a bounded dependency radius, and the diff IS that arithmetic:**
+
+| fact | reads |
+|---|---|
+| `mask` / `kerb` | `is_road` at r1 |
+| `pair` | `is_road` at r2 (the twin's own through-test), `cls` at r1 |
+| `junction` | `pair` + degree, so r2 / r1 |
+| crosswalk mask | `junction` at r1, so **r3** / r2 |
+
+Manhattan **r = 3** covers everything a single-tile change can move, and the seeds are the tiles whose MEMBERSHIP or CLASS moved. One edit on the benchmark city re-classifies **12 tiles of 3,132**.
+
+**Why the seeds are read off the graph and not off `road_graph_changed`'s `added_edges` / `removed_edges`, which is what the open question proposed.** Two independent reasons, both measured rather than argued:
+
+* `RoadGraph.apply_edits` **excludes from `added_edges` any edge it deleted and recreated with the same id and tile list** — its own §2.5 edge-id stability rule. An upgrade in place is exactly that case.
+* A tile that belongs to more than one edge — every junction box — takes its class from the **grid**, and no edge delta can report a grid-class change at all. `tests/test_road_incremental.gd` test 04 stands a solid 5×5 of street, upgrades the middle tile, and asserts that `apply_edits` returns two empty lists while the tile's class channel moves.
+
+So the diff pays an O(N) floor of two sweeps — membership by pass-stamp, then class — and does everything else dirty-only.
+
+**Measured by `tools/profile_road_rebuild.gd`, debug headless, best of 15, one tile laid on a settled city:**
+
+| | founding city (783 road tiles) | benchmark city (3,132) |
+|---|---|---|
+| full pass (`force`, and the boot path) | 4.76 ms | 19.7 ms |
+| **incremental pass** | **1.18 ms** | **4.87 ms** |
+| a 10-tile drag, one rebuild per tile | 12.4 ms total (1.24 ms/tile) | 49.9 ms total (4.99 ms/tile) |
+
+**4.0× on both cities**, and the picture is unchanged to the instance: 3,132 asphalt tiles, **576 footway runs**, 469 lamps on the benchmark city before and after.
+
+Two things fell out of the measurement and are worth recording because they are not in this doc's own code:
+
+* **`RoadGraph._sorted_tiles` was the largest single term.** It is `sort_custom` with a GDScript lambda, so every comparison is a scripted call: **3.44 ms** for 3,132 tiles once a few edits have shuffled the dictionary's key order (0.99 ms straight after a boot, when the keys are already in order — which is why it never looked expensive). A tile's (y, x) order is exactly the order of `y·SIZE + x`, so the comparison now goes to `PackedInt32Array.sort()`: **0.29 ms**, ordering identical by construction, with an out-of-bounds fallback to the comparator because `apply_edits` sorts a caller-supplied edit list. It is called four times a tick inside `sim/roads/` as well.
+* **`road_tiles_sorted()` is memoised on `graph_version`**, which is an exact key: `_road_tiles` is written in exactly two places and both bump the version before returning. Callers still get a copy.
+
+Both are hash-neutral and proved so on both cities (report RR-26).
+
+**The footway buckets are kept, not rebuilt.** A bucket is `(axis, fixed_z_or_x, width)` and holds `{tile: [lo, hi]}` rather than a bare span list, which is what lets one tile's contribution be pulled back out; a tile can reach a given bucket at most once (its N and S strips sit `TILE_M − w` apart), so nothing is lost by keying on it. Only the buckets a dirty tile touches are re-sorted and re-merged. Merging by `lo` is what makes the result independent of insertion order — and therefore makes an incremental pass and a from-scratch pass agree float for float.
+
+**The road layer uploads through one `MultiMesh.buffer` write per layer, and it is the only layer in this renderer that does.** Not for speed — packing 3,132 rows in GDScript costs ~0.1 ms more than the per-instance setters — but for the CONTRACT: the `PackedFloat32Array` this view keeps between passes *is* what the server holds, so `tests/test_road_incremental.gd` compares an incremental pass against a from-scratch one **byte for byte** on a `--headless` run, where the server itself reads back nothing (the DUMMY driver stores no instance data and `MultiMesh.buffer` comes back empty). The stride is verified against the engine rather than assumed: TRANSFORM_3D is twelve floats — basis **rows** interleaved with the origin — then four for `use_colors`, then four for `use_custom_data`. Asphalt is stride 16, the footway 12.
+
+The property tests are the deliverable, not the decoration: **40 random edit sequences × 12 edits on a grid city, 24 × 10 against water and the map edge, and the founding city under a ten-tile drag**, every intermediate state compared.
+
 ### 2.2 Chunk lifecycle and slot allocation
 
 States `UNLOADED → SIM_ONLY → FAR → MEDIUM → NEAR` and back. `SIM_ONLY` = sim owns the block, zero scene nodes. Promotion to `FAR` builds the `ChunkView`, ground mesh, `MM_far`, `MM_lamp`; promotion to `MEDIUM`/`NEAR` allocates per-archetype MultiMeshes and props.
@@ -555,6 +602,13 @@ A parity test over the raw tile grid. It honours the 32 m figure above only on a
 Founding city: **130 lamps**, 4 of them corner lamps, against the parity rule's **207** — 37 % fewer poles, all of them on a kerb, all of them facing a carriageway. Benchmark city: **469** against 828.
 
 **The mesh.** `CobraHeadMesh` builds one ArrayMesh every lamp in the city shares: a mast standing on its own origin (so the baked grime ramp lands at the footway wherever it is placed), the 0.30 m base collar, a four-segment arm swept as a quarter-ellipse that leaves the mast vertically and arrives over the carriageway horizontal, and a tapered luminaire with a pale lens on its underside. **76 triangles** against the old stick's 34, paid once on the shared mesh; the arm is baked along local **+X** and each instance yaws it toward its own roadway. Founding city total: 9,880 pole triangles, against the parity rule's 207 x 34 = 7,038 — 40 % more triangles for 37 % fewer poles.
+
+**Lamps are LIVE, not boot-time — shipped 2026-08-20** (closes this section's open question 1). A road the player laid used to get asphalt on the next frame and lamps on the next LOAD, because `RenderStateModel` could ADD a streetlight and nothing else: there was no way to retire a record, so a bulldozed lamp kept ramping for the rest of the session and kept its id in `BlockRec.streetlights` for the rest of the session's blackouts. Two halves:
+
+* **`RenderStateModel.remove_streetlight(id)`** retires the record and takes the id off the block roster. `add_streetlight` is now idempotent as well, and that is the point rather than a nicety: it appended to `BlockRec.streetlights` unconditionally, so re-registering one id put it in the roster **twice** and every ramp that block drove — §2.7.2's go-dark stagger, §2.7.3's relight sweep, the terminal envelope fold — hit that lamp twice in the same frame. A live re-place pass re-registers lamps by construction, so that double-stutter is the defect that would otherwise have shipped WITH this feature.
+* **`StreetlightView.apply_lamps()`** diffs a fresh `StreetlightPlacer.place()` against the live set. The identity is the **placement key** — `tile + kerb side`, packed by `StreetlightPlacer.key_of` — and never the row's ordinal id, because `place()` numbers its rows in (y, x, side) order: one new tile at the top-left renumbers every lamp below it, so an id-keyed diff would retire and re-create the whole city for one edit, restarting every `anim_phase` and every ramp in it. A key in both sets **keeps its id**. Only the chunks whose roster or geometry moved are re-uploaded; a re-place that changes nothing returns all-`kept` and touches no buffer.
+
+The boot pass adopts the placer's own numbering exactly (it allocates from the same base in the same order), so no city that was already running has an `anim_phase` moved by the diff existing. Measured on a 30-tile corridor extended by twelve tiles: the new run is lit, **every standing lamp keeps its id and its position**, and the one lamp that is legitimately re-placed is the old cul-de-sac head — a dead end carries two adjacent footways and takes a corner lamp; once the corridor runs through it is an ordinary two-kerb tile.
 
 **STREET-1 — the pool that was buried.** `pool_y_m` was **0.06** and the road slab's top is **0.10**: every ground pool in the game failed the depth test against the carriageway it was lighting, and what survived was the ring of it that spilled onto the block either side. A doughnut of light around a dark road is a large part of why a lamp read as a stick. The disc now rides just over the **footway** — the highest surface under a lamp — so one pool covers kerb, gutter and both lanes, and the billboard, the pool and the wet smear all hang off the **luminaire**, out at the end of the arm, instead of off the top of the mast. The 0.155 m the disc floats above the asphalt is invisible: at Z0's 34° of pitch that is 0.23 m of parallax across a 16 m disc with no hard edge anywhere in it.
 
@@ -1008,6 +1062,35 @@ And the pass is idempotent per edit: `rebuild` records the `graph_version` it dr
 
 **Texture memory: zero added.** Both shaders sample the existing `ground_asphalt` and `ground_pavement` pages through the resource cache, and every mark, joint, patch and stain on top of them is procedural. Against the 8 MB budget the brief set, the pass spends 0.
 
+*(The 18.30 / 4.41 ms rebuild figures above are the pure-function pass and are still what `force` and the boot path cost. §2.1.2a's dirty-tile diff replaced the per-edit path: **1.18 ms** on the founding city, **4.87 ms** on the benchmark one.)*
+
+#### One-buffer uploads: the premise is refuted, and here is the A/B (2026-08-20)
+
+The construction branch filed "replace the ~200 `set_instance_*` triples per frame with one `multimesh_set_buffer` per layer" as **the named lever for Fold headroom**. It was measured before it was implemented, and it is not a lever: on this build it is a **2× regression**, at every scale.
+
+`tools/profile_mm_upload.gd` writes the same 200 instances every frame for 600 measured frames on the real (Vulkan / Forward Mobile) renderer, once with the three per-instance setters and once by packing a `PackedFloat32Array` and assigning `MultiMesh.buffer`:
+
+| instances / frame | per-instance setters | pack in GDScript | `mm.buffer =` | one-buffer total |
+|---|---|---|---|---|
+| 200 | **0.031 ms** | 0.061 ms | 0.003 ms | 0.064 ms |
+| 2,000 | **0.307 ms** | 0.634 ms | 0.028 ms | 0.662 ms |
+
+Whole-frame wall time agrees at the scale where the difference is above noise: 2,000 instances is **0.518 ms/frame** with the setters and **0.863 ms** with the buffer, and the 0.345 ms gap is exactly the upload block's.
+
+**Why, and it is not surprising once measured.** `set_instance_transform` is ONE binding call around a C++ memcpy of twelve floats; packing the same row is twelve scripted `PackedFloat32Array` writes plus the basis-row reads to feed them, and then the same again for colour and custom data. The server-side write is ~0.003 ms either way, so there is no upload saving to trade against the scripting cost. The premise assumed the cost was the RenderingServer; the cost is GDScript.
+
+**And the uploads were not where the layer's frame went anyway.** Instrumented on the bench city with `--sites=20` (201 instances across five buffers):
+
+| | before | after |
+|---|---|---|
+| `_service_routes` | 0.001 ms | 0.001 ms |
+| `ConstructionActivity.refresh` (pose computation) | 0.316 ms | 0.310 ms |
+| `_upload` | 0.088 ms | **0.049 ms** |
+
+So the pass kept the setters and took the reductions that were actually there — the per-instance work that did not have to be repeated. `ConstructionVehicleView._write` hoists the lamp branch out of the loop, caches the `MultiMesh` reference and builds the `Transform3D` inline instead of through `Pose.transform()`; `VehicleView._upload` caches the per-vehicle body-tone hash on spawn (it was `hash01(id, 53)` per vehicle per frame for a number that cannot change), hoists the two cull radii out of a per-vehicle method call, and compares squared distances instead of constructing a `Vector2` and taking its root. Measured at the Balanced cap (90 civilians + 12 units): `VehicleView._upload` **0.194 → 0.158 ms/frame**. `tools/profile_frame.gd --sites=20`'s layer-CPU column moves **0.506 / 0.512 / 0.484 → 0.453 / 0.447 / 0.456 ms** at Z0 / Z1 / Z2; draw calls (100 / 118 / 201) are unmoved.
+
+**The one place the packed buffer IS the right tool is `RoadSurfaceView`** (§2.1.2a), and the reason is not speed: it is a per-EDIT path whose contract needs the bytes, and the array it keeps between passes is what makes an incremental rebuild checkable against a from-scratch one on a headless run.
+
 #### Device matrix
 
 | Tier | Representative devices | GPU | Preset | Target |
@@ -1143,6 +1226,8 @@ Four changes, three of them from the Audio-2 ruling and one from the same pass's
 **The defect this closes.** Until this pass a building under construction *grew*. §2.6's vertex stage clamps every vertex to `build_height_m · stage/6`, so the massing rose a sixth at a time and §2.15's site bed ticked, and that was the whole read: a box got taller. `ConstructionSiteView` (the crane/hoarding pass) fenced the lot and stood a tower crane over it, which fixed the *silhouette* and left the *story* untold. Nothing on the lot was ever being **done** by anybody. This section is the other half: **plant that works, lorries that arrive on real streets, and a yard that fills and empties.**
 
 **Where the work happens, and why it is not on the lot.** The stage clamp is VERTICAL only — the footprint is at full size from placement, so from stage 1 the ground inside the property line is under the building. The work zone is therefore the site's **street frontage**, and since the starter city authors no separate footway tile, the property line IS the kerb: the zone is the near half of the 8 m road tile in front of the lot. Stock against the hoarding at 0.95 m out, the barricade run on the lane line at 2.15 m, the plant straddling it at 4.40 m with the boom reaching back over the fence. That is a coned-off lane, which is exactly what an urban infill site takes.
+
+**The hoarding gate faces the street too — shipped 2026-08-20** (closes this section's open question 4). The frontage below is the real road; `ConstructionSiteView` opened its gate on `hash01(id, 7) % 4`, so the two layers agreed **one time in four**, and what a player saw at the other three was a coned-off lane, a heap of aggregate and a lorry standing in front of a solid hoarding panel with the gate round the back. One seam closes it: `ConstructionSiteView.add_site` takes an optional `gate_side` (0 = −Z, 1 = +X, 2 = +Z, 3 = −X — the same four indices it already numbers its hoarding runs with), `ConstructionVehicleView.frontage_side()` publishes the answer as a pure query on a lot that need not be a site yet, and a `site_frontage_changed` signal carries a late or moved frontage into `set_gate_side`. The signal is needed and not belt-and-braces: routes resolve **two sites a frame**, so the frontage regularly lands after the hoarding went up, and a road edit can move it later. Omitting the argument keeps the hash exactly, which is what every pre-frontage call site draws.
 
 The frontage is derived from the ROAD, not from `ConstructionSiteView`'s hoarding gate — the road is published sim state, so nothing can disagree about which way the street is, and this layer needs no coupling to the crane pass at all. It is derived by **walking straight out from each of the lot's four faces**, nearest step first and, within a step, the probe closest to the middle of the face. `RoadGraph.nearest_road_tile` is the wrong tool and it took a screenshot to see why: it answers *Chebyshev*-nearest, so a corner lot with roads on two sides is handed the **diagonal** tile between them. The frontage frame still reads the right side by dominant axis, but the lorry's stop lands twelve metres along the kerb, past the lot's own corner, with the plant strung out after it. A frontage is a face, so the search has to be one. A lot with no street inside the graph's snap radius gets no activity and says so (`Site.frontage_ok == false`).
 
@@ -1478,6 +1563,7 @@ holds the preset switch. The governor deliberately reaches into none of them.
     ***Z2's tolerance is asymmetric `+3 / −0` rather than ±10% or ±2***, because the residual spread is grid alignment, not measurement noise, and 16 is the **minimum** of that spread: the view axis landing on a column boundary rather than a column centre can add at most one column to each of the three rows, giving the hard band `16 … 19` (159 … 182 calls). Fewer than 16 chunks at Z2 is not a favourable alignment — it is a culling bug, and the test must fail on it.
 
     Also assert **zero NEAR chunks at Z2** (the shadow pass must be empty — it is what makes the densest pose affordable), **exactly three occupied chunk rows at Z2** (the phantom-row regression guard: assert no chunk with nearest-edge `r ≥ 436` m is tier-assigned at Z2), **that every row's column count equals `⌈W_far_of_row/128⌉` at the best alignment** (the RR-14 rounding guard: row B must resolve to 5 columns, never 6, when the view axis is placed on a column centre), and that no pose exceeds its preset's `draw_call_budget` on Performance or High. **This is the budget regression test** and it runs on every commit.
+19a. **The streetlight lifecycle (§2.10.1, 2026-08-20).** `remove_streetlight` retires the record and takes the id off `BlockRec.streetlights`; an unknown id is a no-op; the retired lamp reads exactly 0 through a block go-dark that the surviving lamp ramps through, which is the proof it is no longer TICKED. And the hazard the re-place pass would otherwise have shipped: registering one id three times leaves **one** record and **one** roster entry, keeps the lamp's `anim_phase`, moves its position, and — when the block changes — leaves exactly one roster carrying it. The duplicate is invisible to a count and visible only as a lamp whose blackout stutters twice.
 19b. **LOD-distance rule:** tier assignment uses the chunk's ground-plane AABB. Place a 217 m `res_highrise` in the chunk directly under the Z2 camera and assert the chunk still tiers **MEDIUM** — the building-inclusive AABB would give `sqrt(52² + (370.8−217)²) = 162 m` and wrongly promote it to NEAR, re-arming the shadow pass at max zoom.
 
 19c. **The MEDIUM bucket merge (`tests/test_render_merge.gd`, doc 91 D-14).** Twenty tests over §2.6's merge, in six groups:
@@ -1497,7 +1583,9 @@ holds the preset switch. The governor deliberately reaches into none of them.
 2. **A kerb down the middle of a 16 m avenue** (test 04) — the dual-carriageway pairing, including the mis-classed crossing tile that broke it.
 3. **A lamp in a traffic lane** (test 12) — every pole in the founding city stands on a footway, on a side that carries one, inside the kerb; test 13 that its arm points at the roadway.
 
-Also pinned: the two files' shared N/E/S/W wire format (01), that the carriageway's top surface is still y = 0.10 where the vehicle layer expects it (02), footway run merging (06) and that no two footway boxes overlap in plan (07), water taking no kerb (08), that the pass never mutates the graph and is byte-identical across two builds (09), the corridor pitch and kerb alternation (10), the dual-carriageway stagger (11), the corner rule and the junction guarantee (14, 14b), the cobra head's 76 triangles and overhang (15), and STREET-1's pool clearing the carriageway and hanging off the luminaire (16).
+Also pinned: the two files' shared N/E/S/W wire format (01), that the carriageway's top surface is still y = 0.10 where the vehicle layer expects it (02), footway run merging (06) and that no two footway boxes overlap in plan (07), water taking no kerb (08), that the pass never mutates the graph and is byte-identical across two builds (09), the corridor pitch and kerb alternation (10), the dual-carriageway stagger (11), the corner rule and the junction guarantee (14, 14b), the cobra head's 76 triangles and overhang (15), STREET-1's pool clearing the carriageway and hanging off the luminaire (16), and the repeat-rebuild guard (17).
+
+**18 and 18b — the live re-place (§2.10.1, 2026-08-20).** Extending a lit corridor by twelve tiles adds lamps, retires only the old cul-de-sac head's corner lamp, and leaves **every other lamp's id and position untouched** — the assertion that says a road edit does not restart the whole city's ramps. The model's roster is checked to match the view's on both sides of the edit. 18b pins the two properties the shell depends on: a re-place that changes nothing reports all-`kept` and touches no buffer, and the boot pass numbers its lamps **exactly** as `StreetlightPlacer.place()` does, so the diff existing moved no `anim_phase` in any city that was already running.
 
 **Note for anyone extending it:** `--headless` runs on the DUMMY rendering driver, where `MultiMesh.get_instance_transform` reads back identity whatever was uploaded. Both views publish their computed placements script-side (`RoadSurfaceView.pack_of/runs/asphalt_origin_y`, `StreetlightView.anchor_of`) for exactly this reason; asserting against the MultiMesh directly silently passes.
 
@@ -1535,6 +1623,19 @@ These read two or more files and fail the build when a sibling doc's data drifts
 32b. **The frontage is a FACE (regression).** A 2×2 lot tucked into the corner of two streets, where the diagonal road tile is exactly as Chebyshev-near as the two face tiles, must front on one of the FACE tiles and never on the diagonal, and the lorry's stop must land inside the frontage (`|stop_u| ≤ half_frontage`). This is the defect a screenshot found and no assertion could have: the wrong tile still produces a valid frontage frame, a valid route and a lorry that drives real streets — it just parks past the lot's own corner with the plant strung out after it. Also covered: `set_depots()` overrides the outer-ring default and every lorry then leaves from a named tile.
 33. **Budget and purity.** The layer is exactly **5** MultiMeshes. Two independently constructed views, given the same sites and the same game-minute, produce byte-identical counts, origins and joint channels — nothing may depend on frame history, allocation order or a wall clock. A site with no road inside the snap radius reports `frontage_ok == false` and draws nothing, without throwing on the way.
 34. **The hash gate (§2.16).** Six game-hours of a real `CitySim`, with 240 `route_tiles()` lookups interleaved at the hour boundaries — twenty sites' worth of out-and-back legs, every hour — must leave `state_hash()` **bit-identical** to a clean run. This is the test that keeps a renderer feature from moving the simulation through the route planner's LRU.
+35. **The gate faces the street (§2.16, 2026-08-20).** Given a lot one tile south of a corridor, `ConstructionVehicleView.frontage_side()` answers −Z, `ConstructionSiteView.add_site(..., side)` opens the gate on that run, and the two layers name the same face for the same site. A caller that omits the argument gets **exactly** `int(hash01(id, 7) · 4) % 4` for five different ids — the pre-frontage picture, unchanged. `site_frontage_changed` fires **once** when a site's frontage resolves, not again while it is settled, and `set_gate_side` moves the gate (and the skip standing in it) when it does.
+
+### 7.2c Headless — the incremental street rebuild (`tests/test_road_incremental.gd`, §2.1.2a)
+
+Seven tests over `RoadSurfaceView`'s stateful diff. The contract is one sentence — *after any sequence of edits, both uploaded buffers are byte-identical to a from-scratch rebuild of the same city* — and five of the seven are property tests, because the defect shape here is a dependency radius one tile too small and nothing but a lot of random edits on a lot of random cities finds that.
+
+01. **The diff runs, and it is a diff.** The boot pass is full; the next pass is incremental and says so; one edit re-classifies fewer than 25 tiles (the Manhattan r=3 ball) of the city's 3,132.
+02. **`force` throws the memory away** — a mid-session load must not diff against a city that no longer exists — and the result still matches a fresh rebuild.
+03. **Five hand-picked shapes**, one per dependency the radii were derived for: a new stub, a tile that closes a junction, an in-place class upgrade, a bulldoze, and a bulldoze that splits a corridor.
+04. **The class sweep is load-bearing.** A solid 5×5 of street, middle tile upgraded: `apply_edits` returns two empty lists (every edge came back with its own id — doc 10 §2.5's stability rule) while the tile's class channel moves, because a multi-edge tile takes its class from the GRID. This is the test that would go red if somebody replaced the sweep with an `added_edges` seed.
+05. **40 sequences × 12 random edits** on a grid city with a live dual carriageway; every one of the 480 intermediate states compared byte for byte.
+06. **24 sequences × 10 random edits against water and the map edge**, where the kerb mask is decided by two different rules (`_is_water` kerbs an off-map neighbour on purpose) and an off-by-one shows up as a footway that stops one tile short.
+07. **The founding city under a ten-tile drag**, one rebuild per tile — the way the road-drawing tool will feed it.
 
 ### 7.4 On-device — `tools/bench_flythrough.gd` + adb
 

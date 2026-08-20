@@ -150,15 +150,39 @@ func test_below_480_the_bar_hides_rather_than_overflowing() -> void:
 	# BOTH` then centred, pushing the treasury chip off the left edge and the ☰
 	# button off the right. A1 (nothing clips) and A3 (every target is reachable)
 	# win: chips keep dropping, lowest priority first, down to the treasury.
+	#
+	# EXTENDED by the render follow-ups wave (doc 12 D-13b): "down to the
+	# treasury" was one rung short of solving it. `need <= avail_rest` — which is
+	# what this test used to check — compares the widest row against the WHOLE
+	# bar, and row 0 does not get the whole bar: it shares its line with the clock
+	# column. Below ~212 dp the treasury chip alone is wider than row 0's budget,
+	# so the old solver kept it, reported a bar that "fits", and overflowed the
+	# display by 20 dp anyway. Every row is now checked against ITS OWN line, and
+	# the treasury chip is asserted to survive exactly where there is room for it.
 	var model := _model()
+	var compact_w := model.chip_width_dp("treasury", HudModel.MODE_COMPACT)
+	var kept := 0
+	var dropped := 0
 	var width := 200.0
 	while width < 480.0:
 		var solved := model.solve_top_bar(width, -1.0, {}, 2)
-		assert_true(float(solved["need"]) <= float(solved["avail_rest"]),
-				"the solved bar fits the display at W=%d" % int(width))
-		assert_ne((solved["modes"] as Dictionary)["treasury"], HudModel.MODE_HIDDEN,
-				"the treasury chip is the last one standing at W=%d" % int(width))
+		var widths: Array = solved["row_widths"]
+		for i in widths.size():
+			var limit := float(solved["avail"]) if i == 0 else float(solved["avail_rest"])
+			assert_true(float(widths[i]) <= limit + 0.001,
+					"row %d fits its own line at W=%d (%.1f of %.1f)"
+					% [i, int(width), float(widths[i]), limit])
+		var hidden: bool = (solved["modes"] as Dictionary)["treasury"] == HudModel.MODE_HIDDEN
+		if float(solved["avail"]) >= compact_w:
+			assert_false(hidden,
+					"the treasury chip is the last one standing at W=%d" % int(width))
+			kept += 1
+		else:
+			dropped += 1
 		width += 10.0
+	assert_true(kept > 20, "most of the band still keeps the treasury chip (%d)" % kept)
+	assert_true(dropped > 0,
+			"…and the band that cannot hold it at all is covered too (%d)" % dropped)
 
 
 func test_topbar_hides_lowest_priority_first() -> void:

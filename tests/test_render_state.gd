@@ -751,3 +751,55 @@ func test_28_consumed_event_names_exist_on_the_emitter() -> void:
 	m.apply_event({"type": &"BlockDarkChanged", "block_id": 88, "block_dark": true,
 			"powered_fraction": 0.0})
 	assert_true(m.queued_plan_count() > 0, "the live name plays the blackout")
+
+
+# ---------------------------------------------- 28 — the streetlight lifecycle
+
+## §2.10.1's open item 1. The model could ADD a streetlight and nothing else, so
+## a lamp the player bulldozed kept ramping for the rest of the session and kept
+## its id in `BlockRec.streetlights` for the rest of the session's blackouts.
+func test_28_a_retired_streetlight_stops_being_ticked() -> void:
+	var m := _model()
+	m.add_streetlight(500, 7, Vector3(10.0, 0.0, 10.0))
+	m.add_streetlight(501, 7, Vector3(18.0, 0.0, 10.0))
+	assert_eq(m.streetlight_count(), 2)
+	assert_eq(m.block_streetlight_ids(7), [500, 501], "both are on the block roster")
+
+	assert_true(m.remove_streetlight(500), "the lamp retires")
+	assert_false(m.remove_streetlight(500), "…once, and an unknown id is a no-op")
+	assert_eq(m.streetlight_count(), 1)
+	assert_eq(m.block_streetlight_ids(7), [501], "…and leaves the block roster")
+	assert_true(m.streetlight(500) == null, "the record is gone")
+
+	# The proof that it stopped being TICKED: darken the block and advance. A
+	# retired lamp's record would still ramp if `advance()` could reach it.
+	m.apply_event({"type": &"StreetlightsChanged", "block_id": 7, "lit": false})
+	_advance_to(m, 2.0)
+	assert_almost_eq(m.streetlight_out(501), 0.0, 1e-3, "the live lamp went dark")
+	assert_almost_eq(m.streetlight_out(500), 0.0, 1e-9,
+			"and the retired one reads zero rather than a stale ramp")
+
+
+## THE DOUBLE-STUTTER HAZARD the streets branch filed by name. `add_streetlight`
+## appended to `BlockRec.streetlights` unconditionally, so re-registering one id
+## put it in the block's roster TWICE — and every blackout, relight and stagger
+## the block drove then hit that lamp twice in the same frame. A live re-place
+## pass re-registers lamps by construction, so this is the defect that would
+## have shipped with it.
+func test_28b_re_registering_a_streetlight_never_duplicates_it() -> void:
+	var m := _model()
+	m.add_streetlight(600, 3, Vector3(10.0, 0.0, 10.0))
+	var phase := m.streetlight(600).anim_phase
+	m.add_streetlight(600, 3, Vector3(10.0, 0.0, 10.0))
+	m.add_streetlight(600, 3, Vector3(26.0, 0.0, 10.0))
+	assert_eq(m.streetlight_count(), 1, "one id is one lamp")
+	assert_eq(m.block_streetlight_ids(3), [600], "…and one roster entry")
+	assert_eq(m.streetlight(600).world_pos, Vector3(26.0, 0.0, 10.0),
+			"re-registering MOVES the lamp")
+	assert_almost_eq(m.streetlight(600).anim_phase, phase, 1e-9,
+			"…and keeps its phase, so a road edit does not restart every ramp")
+
+	# Moved to another block: exactly one roster carries it.
+	m.add_streetlight(600, 4, Vector3(300.0, 0.0, 10.0))
+	assert_eq(m.block_streetlight_ids(3), [], "the old block let it go")
+	assert_eq(m.block_streetlight_ids(4), [600], "the new block has it once")
