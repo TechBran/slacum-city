@@ -40,6 +40,10 @@ const Rig := preload("res://tests/balance_gate_rig.gd")
 const ECONOMY_DATA := "res://data/economy.json"
 
 const GATE_SEED := 1337
+## The three seeds doc 92's strategy matrix is run on. A gate whose RULING was
+## fitted on the matrix has to be measured on the matrix — see gate 12c, which
+## was not, and which a single seed's noise tripped in Wave 8.
+const MATRIX_SEEDS: Array[int] = [1337, 4242, 9001]
 ## Doc 92's own horizon, for the gates whose thresholds it quotes there.
 const LONG_DAYS := 21
 ## The cheaper horizon for the gates that only need a shape, not a threshold.
@@ -62,6 +66,16 @@ func _run(strategy: String, days: int = LONG_DAYS, seed_value: int = GATE_SEED) 
 
 func _summary(strategy: String, days: int = LONG_DAYS) -> Dictionary:
 	return _run(strategy, days)["summary"]
+
+
+## The mean of one summary column over [MATRIX_SEEDS] — doc 92's own matrix
+## sample. Three runs instead of one, for the gates whose thresholds were fitted
+## on three.
+func _matrix_mean(strategy: String, key: String, days: int = LONG_DAYS) -> float:
+	var total := 0.0
+	for seed_value in MATRIX_SEEDS:
+		total += float(_run(strategy, days, int(seed_value))["summary"][key])
+	return total / float(MATRIX_SEEDS.size())
 
 
 static func _pacing() -> Dictionary:
@@ -633,27 +647,46 @@ func test_gate_12b_tax_squeezing_trails_on_population() -> void:
 ## with no gate is a ruling that rots. The thresholds are the ruled ones (8 points,
 ## 10 %) rather than the measured ones (23 points, 14.7 %), so ordinary drift does
 ## not trip it; only a change that gives the slider back its free lunch does.
+##
+## **WAVE-8 SAMPLE FIX — three seeds, not one, and no threshold moved.** This gate
+## ran on `GATE_SEED` alone while the ruling above was fitted on the **3-seed
+## matrix**, and a population ratio on one seed is not a stable statistic: the
+## Wave-8 sub-step guard resamples the RNG without touching tax, and seed 1337
+## alone went from 15.5 % trailing to **8.0 %** — a fail — while the sample the
+## ruling was actually fitted on went from 15.5 % to **16.9 %**, i.e. further
+## inside the threshold. Measured, 21 game-days:
+##
+## | | balanced pop | tax_squeezer pop | trailing by |
+## |---|---|---|---|
+## | seed 1337 alone, before Wave 8 | 1,440 | 1,163 | 19.2 % |
+## | seed 1337 alone, after | 1,285 | 1,182 | **8.0 % — FAILS** |
+## | 3-seed matrix mean, before | 1,388 | 1,173 | 15.5 % |
+## | **3-seed matrix mean, after** | **1,379** | **1,146** | **16.9 % — passes** |
+##
+## Both readings are honest; only one of them is the ruling's. The fix is the
+## SAMPLE, not the threshold — 10 %, 8 points and "value created still ahead" are
+## the ruled numbers and are untouched. It costs four extra 21-game-day runs.
 func test_gate_12c_the_tax_slider_is_not_a_free_lunch_for_a_real_agent() -> void:
-	var balanced := _summary("balanced")
-	var squeezer := _summary("tax_squeezer")
-	var base_pop := int(balanced["population_end"])
-	var maxed_pop := int(squeezer["population_end"])
-	assert_true(maxed_pop <= int(float(base_pop) * 0.90),
-			"tax_squeezer ends %d game-days with %d people against balanced's %d — "
-					% [LONG_DAYS, maxed_pop, base_pop]
-			+ "the ruling wants it trailing by at least 10 %")
-	var gap := float(balanced["happiness_end"]) - float(squeezer["happiness_end"])
+	var base_pop := _matrix_mean("balanced", "population_end")
+	var maxed_pop := _matrix_mean("tax_squeezer", "population_end")
+	assert_true(maxed_pop <= base_pop * 0.90,
+			("tax_squeezer ends %d game-days with %.0f people against balanced's "
+					+ "%.0f (means of doc 92's %d matrix seeds) — the ruling wants "
+					+ "it trailing by at least 10 %%")
+					% [LONG_DAYS, maxed_pop, base_pop, MATRIX_SEEDS.size()])
+	var gap := _matrix_mean("balanced", "happiness_end") \
+			- _matrix_mean("tax_squeezer", "happiness_end")
 	assert_true(gap >= 8.0,
-			"the pinned slider costs only %.1f happiness points over %d game-days "
-					% [gap, LONG_DAYS]
-			+ "(%.1f against %.1f)"
-					% [float(squeezer["happiness_end"]), float(balanced["happiness_end"])])
+			"the pinned slider costs only %.1f happiness points over %d game-days"
+					% [gap, LONG_DAYS])
 	# The other direction of the same ruling: it must still be a tradeoff. An
 	# agent that squeezes and ends poorer has no reason to squeeze, and the
 	# slider would be dead data with an extra step.
-	assert_true(float(squeezer["value_created"]) > float(balanced["value_created"]),
-			"squeezing must still buy something: $%d of value against $%d"
-					% [int(squeezer["value_created"]), int(balanced["value_created"])])
+	assert_true(_matrix_mean("tax_squeezer", "value_created")
+					> _matrix_mean("balanced", "value_created"),
+			"squeezing must still buy something: $%.0f of value against $%.0f"
+					% [_matrix_mean("tax_squeezer", "value_created"),
+					_matrix_mean("balanced", "value_created")])
 
 
 ## Boot a city, hold `detent` from game-hour 0, fill the same served tiles with

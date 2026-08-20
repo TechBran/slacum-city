@@ -406,6 +406,33 @@ sanctioned parity. Save→load→advance identity remains EXACT and whole-hash �
 that doctrine is untouched (and Wave-1 integration hardened it: negative-double
 encoding, traffic-feed/congestion/density/day-accumulator persistence).
 
+## E3. Wave-8 rules epoch — the sub-step guard, the substation at the origin,
+## and the router that is measured but not wired (2026-08-20)
+
+Three things happened to the incident loop in one branch, because all three move
+state hashes and doc 08 §2.8's section bump had to happen once. Full rulings in
+report 98 §16 (RR-21/22/23); balance in doc 92 §21; performance in doc 11 §2.13's
+Wave-8 subsection.
+
+| | what | evidence |
+|---|---|---|
+| **Shipped** | `IncidentSystem._next_discontinuity_h()` skips the fire-spread breakpoint when no `structure_fire` is live (audit 91 D-15 proposal 1) | integrator sub-steps **12.00 → 1.25 per coarse hour** on the starter city, **20.67 → 10.50** on the benchmark city; starter coarse step **−24 to −27 %**, every interleaved round; fine tick flat |
+| **Shipped** | doc 04's component `tile` is filled from the authored `terminal` for plants and substations, from the route head for lines, and re-stamped from the boot file on every load | every substation failure used to raise its incident at **(0, 0)**; with the router wired that made `balanced` seed 1337's 50-game-day dark share **61.8 %** instead of **6.25 %** |
+| **Shipped** | `CitySim.SAVE_SECTION_VERSION` 1 → 2, identity migrator, v1 bodies still load bit-identically | `tests/test_save_migration.gd` — four properties, including that the ladder is *walked* and not merely present |
+| **HELD** | doc 10's router as doc 06's ETA authority | seam complete and tested; wiring it makes a rotting city's incident backlog unbounded (`greedy_growth` seed 4242: **12.6 s → > 20 min**) because doc 06 §2.10 has no terminal rule for an incident nobody can answer |
+
+**The anchors in §E2 do not move.** Nothing in this epoch touches a price, a
+rate, a capacity or a curve: the founding first-hour net, the first-day net, the
+`E_grid` line and the night peak are all byte-identical, and balance gates 1, 2
+and 2b — which hold them to ±1 % — pass unchanged. What moves is the RNG draw
+sequence on a coarse hour and, for a city that has lost its substation, the fact
+that it no longer loses it.
+
+**The identity-level balance rows do not move either.** `balanced` beats
+`do_nothing` **5.5× on value created** and **9.6× on population** on the
+18-run matrix, before and after, and **all 27 balance gates pass with no
+threshold retuned** (doc 92 §21.3).
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

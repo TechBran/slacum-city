@@ -1737,6 +1737,15 @@ beat — 2–4 ambient incidents per game-week at starter scale, scaling smoothl
 `do_nothing` city must still survive it; a neglected one meets its fires
 sooner.**
 
+> **The band in that sentence is SUPERSEDED. It is now 5–8/game-week — see
+> §18.7 (2026-08-20), which measures it and rules it.** The 2–4 was fitted in
+> Wave 6 while two of doc 06's six generators had no candidate source at all;
+> both landed in Wave 7 and the city has measured above the band ever since,
+> with the floor switched entirely off. Everything else in the ruling — the
+> survival clause, the gradient clause, the `max()` shape — is unchanged and
+> holds at the measured rate. The rest of §18 is left exactly as it was written,
+> because it is the record of how the band got there.
+
 ### 18.1 What the founding city actually generates, and why
 
 Every doc 06 §2.6 generator is priced **per asset** — per 1,000 residents, per
@@ -1909,6 +1918,13 @@ The ruling's second clause holds without a single constant spent on it, because
 the floor is a `max()` and neglect raises the natural rate straight through it.
 This document's own six agents, 21 game-days × 3 seeds each:
 
+> **This table was re-measured on 2026-08-20 and four of its six rows were
+> wrong — see the replacement immediately below.** It is kept because the
+> *ordering* it asserts survived, and because the way it was wrong is worth
+> recording: the rates were computed per seed and the counts summed across
+> seeds, so the two halves of every row are in different units. `balanced` at
+> **45.8/game-week** is the clearest tell — it is roughly 3× the true figure.
+
 | strategy | incidents / game-week | of which fires | failed | what it does differently |
 |---|---|---|---|---|
 | `do_nothing` | 3.11 | 5 | 0 | nothing — the floor IS its rate |
@@ -1917,6 +1933,41 @@ This document's own six agents, 21 game-days × 3 seeds each:
 | `tax_squeezer` | 99.3 | 27 | 13 | `balanced` with the slider pinned: more city, more of everything |
 | `disaster_neglect` | 107.2 | **70** | **106** | `balanced` with `maintains = false`: **3.5× the fires and 26× the failures of the agent it is otherwise identical to** |
 | `greedy_growth` | 148.1 | **105** | **298** | never repairs, never buys grid, never sets a priority class |
+
+**Re-measured, Wave 8 (2026-08-20), one command and one unit.** `tools/pacing_ab.gd`
+now takes a comma list of strategies and prints this table itself, so the row and
+the measurement are the same text:
+
+```
+~/.local/bin/godot --headless --path . -s res://tools/pacing_ab.gd -- \
+    seeds=1337,4242,9001 days=21 label=w8 strategy=do_nothing,greedy_growth,\
+    infrastructure_first,balanced,tax_squeezer,disaster_neglect
+```
+
+**Units, stated once because the old table did not have any:** the rate is
+`total incidents created ÷ (seeds × game-days) × 7`; the fire, failure and
+destroyed columns are RAW TOTALS over the whole 63-game-day sample. Both arms
+were run in the same session, the "before" one against a pristine `git show
+HEAD:` copy of the pre-Wave-8 tree:
+
+| strategy | before | **after** | of which fires | failed | destroyed | mean treasury |
+|---|---|---|---|---|---|---|
+| `do_nothing` | 5.33 | **5.78** | 2 | 0 | 0 | $165,636 |
+| `infrastructure_first` | 6.56 | **6.78** | 2 | 0 | 0 | $24,099 |
+| `balanced` | 13.11 | **14.11** | 17 | 0 | 0 | $68,725 |
+| `tax_squeezer` | 14.22 | **15.00** | 21 | 0 | 0 | $80,847 |
+| `disaster_neglect` | 139.44 | **128.67** | **83** | **158** | 0 | $62,220 |
+| `greedy_growth` | 168.89 | **184.78** | **115** | **321** | 0 | $128,540 |
+
+**The gradient the ruling asked for is intact and is an order of magnitude, not
+a nudge.** A maintained city runs at 14/game-week and loses nothing;
+`disaster_neglect` — the SAME agent with `maintains = false` — runs at 129 and
+fails 158 incidents; `greedy_growth`, which also never buys grid, runs at 185 and
+fails 321. The two floor-bound agents sit at 5.8 and 6.8, inside §18.7's re-ruled
+5–8 band. **The Wave-8 shift is 2–9 % on every row and it is a different RNG
+draw, not a different process** — the fire-spread sub-step guard changes which
+draws the generators take, not their rates; §18.7's 336-game-day A/B pins the
+control at 6.62 → 6.54 per game-week, a fifth of a standard deviation.
 
 `disaster_neglect` differs from `balanced` in exactly one field
 (`tests/test_playtest_harness.gd` asserts the `is Balanced` relationship and that
@@ -2005,6 +2056,93 @@ doc 06 credits `reward_base` on resolve. The dispatch loop is now a **daily**
 beat rather than a weekly one. Gate 19 is retuned to the measurement and says so
 in its own docstring; **the band itself needs a ruling** — see the Wave-7
 delivery report's open question 1.
+
+### 18.7 Wave 8 — the band is re-ruled at the measured rate, **5–8 / game-week**
+
+*2026-08-20. §18.6 left gate 19 asserting one band and this section ruling
+another. That is the thing being closed here, and it is closed by moving the
+RULING, not the generators.*
+
+**The A/B this ruling rests on.** `tools/pacing_ab.gd`, doc 92 §18.6's own
+methodology to the letter — 12 seeds × 28 game-days of `do_nothing` per arm, 336
+game-days each — run on a pristine copy of the pre-change tree and on the Wave-8
+tree in the same session:
+
+| ambient / game-week | floor **OFF** (§18.6) | pre-Wave-8 | **Wave 8** |
+|---|---|---|---|
+| `crime` | 0.35 | 0.73 | **0.71** |
+| `structure_fire` | 0.69 | 0.56 | **0.56** |
+| `transformer_failure` | 0.81 | 1.08 | **1.02** |
+| `water_main_break` | 0.58 | 0.60 | **0.75** |
+| `traffic_accident` | 3.58 | 3.60 | **3.35** |
+| `storm_damage` | 0.04 | 0.04 | **0.02** |
+| **total** | **6.06** | **6.62** | **6.42** |
+| resolved / created | 291 / 291 | 318 / 318 | **308 / 308** |
+| failed · abandoned · destroyed | 0 · 0 · 0 | 0 · 0 · 0 | **0 · 0 · 0** |
+| treasury, 28 gd, mean | $193,627 | $194,847 | **$191,077** |
+
+**The pre-Wave-8 column reproduces §18.6 to the digit** — every channel, the
+total, the 318/318 and the $194,847. That is the control this table needs: the
+rig is measuring the same process §18.6 measured, so the Wave-8 column is the
+only news in it.
+
+**The total did not move: 6.62 → 6.42, −3.0 %.** Over 336 game-days that is 318
+counts against 308, and Poisson σ on 318 is 17.8 — **0.56 of a standard
+deviation**. The fire-spread sub-step guard changes *which* draws the generators
+take on a coarse hour, never their rates, and the per-channel column is exactly
+what a resample of the same processes looks like: five channels within 6 % and
+`water_main_break` up 0.60 → 0.75, which is 1.3 σ on its own 29 counts and needs
+no explanation beyond the resample. `structure_fire` lands on the same 27 counts
+on both sides — the same integer twice, as it did in §18.3, and for the same
+reason (a Poisson draw at that λ consumes one `randf()` whether it returns 0 or
+1). **The floor is untouched and the process is the process.**
+
+**The ruling.** Doc 92 §18's ruled band of **2–4 ambient incidents per game-week
+at starter scale is retired and replaced by 5–8**, measured. Three reasons, in
+order of weight:
+
+1. **The old band was ruled against a third of the generator surface being
+   disconnected.** §18.3 fitted 2–4 in Wave 6, when `IncidentWorld.water_mains()`
+   and `road_intersections()` were base-class stubs returning `[]`. Both landed
+   in Wave 7 (§18.2's D-14 / D-15). A band fitted to three live channels is not
+   evidence about five.
+2. **It is not reachable, and the floor is not the reason.** Switched entirely
+   OFF the city runs at **6.06**/game-week; the floor's whole leverage is
+   0.5/game-week and a `max()` cannot subtract. Reaching 4 would mean cutting
+   `traffic_per_intersection` about 6.5×, and §18.6 already showed that the
+   starter city measures **0.515 accidents/game-day against doc 06 §2.6(e)'s own
+   worked intent of 0.687** — i.e. the shipped rate is already *below* doc 06's
+   specification. Retuning it would make the game quieter than its own design
+   document in order to satisfy a stale fit. **That is backwards, and it is the
+   edit this pass declines to make.**
+3. **Every testable clause of the original ruling holds at the measured rate.**
+   The ruling was *"the small-city floor should make the dispatch loop a weekly
+   beat; a `do_nothing` city must still survive it; a neglected one meets its
+   fires sooner."* Survival: 0 failed, 0 abandoned, 0 destroyed over 336
+   game-days, treasury up on 12 of 12 seeds. Gradient: §18.4's re-measured table
+   above spans **5.78 → 184.8/game-week** across the six agents, with 0 failures
+   on the two floor-bound rows and 321 on the agent that never repairs. What the
+   numbers contradict is only the word *weekly* — the loop is a **daily beat with
+   a weekly floor under it**, and that is what the band now says.
+
+**Band width, derived.** The centre is the measurement, 6.4–6.6/game-week. Gate 19
+samples 5 seeds × 21 game-days = 105 game-days, so its expectation is ≈ 98 counts
+with σ ≈ 9.9, i.e. ±0.70/game-week at 1σ. A band of 5–8 is −1.5/+1.5 around the
+centre — **2.1 σ on gate 19's own sample** — wide enough that Poisson noise on a
+real session cannot fail it and narrow enough to catch the regressions that
+matter: a floor switched off lands at 6.06 (inside, deliberately — the floor is
+insurance, not the rate), **either adapter disconnected lands below 4**, and a
+1.5× generation runaway lands at 9.8. Gate 19's executable bounds are the same
+band in counts: **62 ≤ created ≤ 132 over 105 game-days = 4.13–8.80/game-week**,
+one notch wider on each side than the ruling so the gate fails after the ruling
+does, not before it.
+
+**What does NOT move.** `data/incidents.json` `ambient_floor` is untouched:
+`enabled` true, `per_day` still sums to **0.40**, still split
+0.14 / 0.08 / 0.08 / 0.06 / 0.04 across the five channels with a live candidate
+source, `grace_days` 2.0. No `generator_base_rates` row moves. §18.5's three
+"not the instrument" entries all still stand. This ruling changes one sentence in
+a design document and zero bytes of data.
 
 ---
 
@@ -2320,3 +2458,97 @@ the 100 clamp — so in practice the bottom detent buys what it always bought (a
 1.40× faster refill through `TAX_RATE_GROWTH_COEFF`) plus a slightly higher
 `f_happiness`. Whether that is now too generous is a question for a pass that
 gives an agent a reason to cut tax; no strategy in this study ever has.
+
+---
+
+## 21. Pass 7 — the sub-step guard, the substation that was never there, and the router that is not wired yet (Wave 8)
+
+*2026-08-20. The one hash-moving branch of the wave. Two rule changes were
+costed and pre-approved; one shipped, one is held with its measurement, and a
+third change — a defect the held one exposed — shipped because it had to.*
+
+### 21.1 What moved, and what it cost
+
+| change | shipped? | why |
+|---|---|---|
+| **Fire-spread sub-step breakpoint made conditional** on a live `structure_fire` (audit 91 D-15 proposal 1) | **yes** | the integrator split every 1/12 game-hour whether or not anything was burning; a quiet starter hour now takes **1.25 sub-steps instead of 12.00** |
+| **Doc 04 component `tile` defaulting to (0, 0)** for plants, substations, feeders and transmission links | **yes — a defect fix** | doc 06 uses that field as the incident position; every substation failure in the shipped game was raised at the map corner |
+| **`CitySim.SAVE_SECTION_VERSION` 1 → 2** with an identity migrator | **yes** | the two above change RNG consumption, so a v1 body advanced under v2 rules is not the city v1 would have produced (doc 08 §2.8) |
+| **Doc 10's router wired into dispatch** (doc 06 §2.10) | **HELD** | the seam is complete and tested; wiring it makes a rotting city's incident backlog unbounded — doc 06 §2.10's Wave-8 note has the measurement and the two rulings it waits on |
+
+### 21.2 The matrix — 18 of 18, 21 game-days, before and after
+
+`tests/balance_matrix.gd -- days=21`, six strategies × three seeds, means. The
+"before" column is a pristine `git show HEAD:` copy of the pre-Wave-8 tree, run
+in the same session:
+
+| strategy | treasury | value created | population | incidents created | dark % | min condition |
+|---|---|---|---|---|---|---|
+| `do_nothing` | 163,908 → **165,636** | 163,908 → **165,636** | 143 → **144** | 16.0 → **17.3** | 0.17 → **0.04** | 0.471 → **0.512** |
+| `greedy_growth` | 96,075 → **128,540** | 962,271 → **1,018,323** | 1,877 → **1,760** | 506.7 → **554.3** | 44.9 → **38.1** | 0.358 → **0.394** |
+| `infrastructure_first` | 12,416 → **24,099** | 134,416 → **140,499** | 230 → **232** | 19.7 → **20.3** | 0.27 → **0.51** | 0.890 → **0.890** |
+| `balanced` | 79,908 → **68,725** | 898,561 → **904,358** | 1,388 → **1,379** | 39.3 → **42.3** | 0.05 → **0.24** | 0.797 → **0.797** |
+| `tax_squeezer` | 67,530 → **80,847** | 1,215,860 → **1,210,361** | 1,173 → **1,146** | 42.7 → **45.0** | 0.05 → **0.07** | 0.797 → **0.797** |
+| `disaster_neglect` | 58,948 → **62,220** | 1,062,422 → **1,022,657** | 1,466 → **1,448** | 418.3 → **386.0** | 27.5 → **27.2** | 0.388 → **0.453** |
+
+**The identity-level rows do not move.** `balanced` beats `do_nothing` **5.5× on
+value created** (898,561 / 163,908 before, 904,358 / 165,636 after — the same
+figure to two significant places) and **9.6× on population**. Every gate that
+ranks the six agents against each other reads the same order it read before.
+
+**Everything that DID move is one RNG draw sequence away from where it was.**
+The sub-step guard changes *which* draws the generators take on a coarse hour,
+never their rates, so a 21-game-day run resamples the same processes: value
+created moves 0.5 % on `balanced`, 0.4 % on `tax_squeezer`, and the treasury
+column — which is the residual of a spend-everything agent and doc 92 §3 warned
+about from the first pass — moves up to 14 %. `infrastructure_first`'s treasury
+doubling (12,416 → 24,099) is the same effect on the smallest denominator in the
+table: it is an agent that ends three game-weeks with under $25,000, so two
+fewer transformer failures is a 94 % swing.
+
+**Nothing failed and nothing was abandoned** on any of the eighteen runs, on
+either side. `incident_abandoned` is 0.0 across the board, which is gate 9's
+column.
+
+### 21.3 All 27 balance gates pass, unchanged
+
+No gate threshold was retuned in this pass, and none needed to be. That is the
+non-obvious result, because the branch was pre-approved to move gates: **it
+turned out the only thing that had to move was a defect.** Gates 18 and 18b —
+the two that measure whether a competent player keeps the city lit — did break
+under the router, at **16.7 % dark over 21 game-days against a 15 % target** and
+**61.8 % over 50 game-days against a 20 % bound**, and the cause was not
+lighting, balance or routing. It was `SUB-A` raising its failure incident at
+tile (0, 0):
+
+| `balanced`, seed 1337, 50 game-days | with the (0,0) defect | fixed |
+|---|---|---|
+| dark share | **61.84 %** | **6.25 %** |
+| feeders routed | 2 | 2 |
+| balance gates failing | 18, 18b, 4, 12c, 19 | **none** |
+
+A straight-line ETA reaches the map corner, so the defect was invisible for as
+long as dispatch measured distance in straight lines; the router flags the
+incident `unreachable`, nobody is sent, and it escalates to destruction, taking
+the substation and everything downstream of it. The fix is in doc 08 §2.8's
+2026-08-20 note; `tests/test_incidents_routes.gd` and `tests/test_power_grid.gd`
+now assert that **no power component stands at the origin and every one of them
+has a street within snapping distance**.
+
+### 21.4 What this pass did not do
+
+- **It did not move the ambient floor.** `data/incidents.json` is untouched:
+  `per_day` still sums to 0.40 across the same five channels. §18.7 re-rules the
+  BAND from 2–4 to 5–8 per game-week; that is a sentence in a design document
+  and zero bytes of data.
+- **It did not retune `traffic_per_intersection`.** §18.7 carries the reasoning:
+  the starter city already measures **below** doc 06 §2.6(e)'s own worked
+  intent, and cutting it 6.5× to satisfy a band fitted while two generators were
+  dead is the wrong way round.
+- **It did not touch a single gate threshold.** The 27 gates in
+  `tests/test_balance_gates.gd` are byte-identical to Wave 7's.
+- **It did not wire the router**, and doc 06 §2.10's Wave-8 note says why in
+  full. The seam, the four published inputs, doc 10 §2.14's rank-then-quote
+  contract and the boot order are all in place; what is missing is a doc 06
+  ruling on what happens to an incident nobody can answer, and doc 10's
+  hierarchical routing.

@@ -760,6 +760,46 @@ Where the coarse hour went, per phase (ms/step):
 
 **The fine tick is still over a frame, and finishing it needs a cadence decision, not more micro-optimization.** Its remaining cost is the per-tick half: `water` 4.1 ms, `power` 3.7, `roads` 2.1 — every one of them O(buildings) on every SimTick — plus `roads_congestion`, which is a per-GAME-MINUTE pass the table amortizes across four ticks. Read un-amortized, the shape is spiky rather than flat: an ordinary tick is ≈ 10.8 ms, the tick that carries the minute pass is ≈ 37 ms, and the tick that carries the settled hour is ≈ 70 ms. Three cadence proposals are costed in doc 91 D-15; none of them is in this change, because each one moves a number the balance gates are written against. The first was measured, not estimated: making the fire-spread breakpoint conditional on a live `structure_fire` takes the integrator from **15.7 to 5.1 sub-steps per coarse hour**, `incidents` from 54.8 to **28.0 ms**, and the coarse step from 133.8 to **104.8 ms** (12 h catch-up 1.26 s) — and changes both state hashes, which is exactly why it is a proposal.
 
+##### Wave-8 sub-step pass — D-15 proposal 1 taken, and what the router would have cost
+
+*2026-08-20. The Wave-7 table above ends by costing three cadence proposals and taking none of them. **Proposal 1 is taken here.** The change it was expected to ship beside — doc 06's dispatch pricing ETAs through doc 10's router — was wired, measured, and held; the last part of this subsection is that measurement, because it is the reason doc 11's fine-tick problem now has a second consumer waiting on it.*
+
+**Method.** Interleaved A/B, three rounds on the starter city and three on the bench, alternating arms *within* each round, against a pristine copy of the pre-change tree built with `git show HEAD:` rather than a stash — two directories, so neither arm can disturb the other. `tools/profile_sim.gd --repeats=2`, debug headless, on a workstation carrying other work; the round-paired ratios are what this table claims.
+
+| | starter (34 buildings) | | bench (1,500) | |
+|---|---|---|---|---|
+| | before | after | before | after |
+| coarse step, round 1 | 8.58 ms | **6.28 ms** (−26.8 %) | 159.7 ms | **127.7 ms** (−20.1 %) |
+| coarse step, round 2 | 8.56 ms | **6.32 ms** (−26.2 %) | 153.0 ms | **119.7 ms** (−21.8 %) |
+| coarse step, round 3 | 8.23 ms | **6.26 ms** (−23.9 %) | 154.1 ms | **122.0 ms** (−20.9 %) |
+| **mean ratio** | | **−25.6 %** | | **−20.9 %** |
+| 12 h catch-up (best round) | 0.099 s | **0.075 s** | 1.836 s | **1.437 s** — inside the 2 s budget with 28 % to spare |
+| fine tick (best round) | 1.757 ms | **1.808 ms** | 17.95 ms | **17.86 ms** |
+| fine tick, round-paired mean | | **+1.4 %** | | **+0.5 %** — noise (+1.3 / −0.5 / +0.7) |
+| **integrator sub-steps / coarse hour** | **12.00** | **1.25** | **20.67** | **8.75** |
+| integrator sub-steps / fine tick | 0.25 | 0.25 | 0.27 | 0.27 |
+
+**The sub-step column is the entire story, and the fine-tick row is why the fine tick could not move.** The guard removes a breakpoint that fired on a 1/12-game-hour grid whether or not anything was burning, so a *quiet* starter hour now takes **one** sub-step instead of twelve. A fine tick is 15 game-seconds and already took at most one sub-step; there was nothing there to remove, and the measurement agrees to within a per cent — exactly as D-15 predicted.
+
+Where the coarse hour went, per phase (ms/step, best round):
+
+| phase | starter before → after | bench before → after | what changed |
+|---|---|---|---|
+| `incidents` | 4.00 → **1.60** (−60 %) | 78.79 → **47.10** (−40 %) | −10.75 sub-steps per coarse hour on the starter, −11.9 on the bench |
+| `water` | 0.110 → 0.420 | 5.6 → 4.7 | not a code change: the incident mix resampled, and a live `water_main_break` is water work. It moves in opposite directions on the two cities for the same reason |
+| everything else | within ±3 % | within ±3 % | untouched |
+
+**`max_coarse_hours` is unchanged at 312.** Doc 01 §2.10 derives it from the measured coarse step on the starter city; `tests/test_perf_governor.gd` reports **6.21 ms/step** on this branch against 6.25 before, both of which floor to the same 312-hour cap. The guard does not buy catch-up headroom on the starter city because there was none to buy — it buys it on the benchmark city, where the 12 h catch-up falls from 1.84 s to 1.44 s.
+
+##### What the router would have cost — measured, and held (doc 06 §2.10)
+
+Doc 06 §2.10's ETA seam was wired in this branch, measured, and taken back out; doc 06's own Wave-8 note carries the ruling. Two numbers belong here because they are doc 11's:
+
+* **A route quote is ≈ 5 ms** on the benchmark city and the route cache cannot amortise it — half the key is a responding unit's tile, which changes every tile it drives. **Raising `route_cache_size` 256 → 4096 changed the hit and miss counts by nothing at all**: the misses are new pairs, not evictions. Doc 10 §2.14's rank-then-quote contract (rank on the O(1) estimate, quote the top 3) takes the incident phase from **211 ms to 55 ms per coarse hour** and planner misses from **589 to 197 per 24 coarse hours** — necessary, and not sufficient.
+* **The pre-change tree makes ZERO route-planner calls** over 24 coarse hours on the benchmark city — zero hits, zero misses, an empty cache — while the whole fleet drives to incidents. Doc 10's router was built, tested and shipped, and until this branch nothing in dispatch had ever asked it a question.
+
+The blocker is not doc 11's, but it lands on doc 11's table: with the router wired, doc 92's `greedy_growth` agent goes from **12.6 s for a 21-game-day run to over twenty minutes**, because a rotting city's incidents stop clearing doc 06's `MAX_ACCEPTABLE_COST` and the backlog is unbounded. Doc 10's own routing test already reports *"median P0 expansions 1154 vs trigger 800 → hierarchical routing REQUIRED"*, and that is the work that makes a 5 ms quote affordable inside a per-sub-step loop.
+
 **Frame cost** — `tools/profile_frame.gd`, 1920×1080, Balanced, hour 21:00 (the emissive/glow worst case), 60 warm-up frames discarded, 240 measured. **Dev workstation, NVIDIA RTX 2000 Ada, Forward+ — this is not a phone and not the Mobile renderer.** It is a *relative* measurement: the draw-call and chunk columns are platform-independent and are the ones the budget is written against; the millisecond columns are here to show where the cost sits, not to claim a device result.
 
 | pose | mean ms | p95 ms | RS cpu | RS gpu | draw calls | +UI | budget | bucket nodes | NEAR | MED | FAR |

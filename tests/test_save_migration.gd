@@ -287,6 +287,180 @@ func test_an_upgrading_phone_still_finds_the_shadow_it_arrived_with() -> void:
 	service.free()
 
 
+# ============================ the city section's own ladder: v1 → v2 (Wave 8)
+#
+# Doc 08 §2.8 gives every SECTION a version independent of the envelope's. The
+# `city` section moved to **2** when dispatch ETAs became street-true and the
+# fire-spread breakpoint became conditional (doc 08 §2.8's dated note, and
+# `CitySim.SAVE_SECTION_VERSION`'s own docstring). Both changes alter what the
+# binary does NEXT with a body; neither adds, removes or renames a field.
+#
+# That makes this the awkward migration to test, and the interesting one: a
+# shape migration announces itself the moment a key is missing, whereas an
+# identity migrator that is silently never called looks exactly like one that
+# ran. So the tests below check the LADDER WAS WALKED, not merely that the city
+# came back.
+
+
+## Rewrite the newest generation in `slot` with the `city` section stamped at
+## `version`, reproducing `SaveManager.request_save`'s envelope byte for byte:
+## the body is re-stringified with the same flags, the digest is taken over that
+## exact text, and the envelope is concatenated so the hashed bytes ARE the
+## embedded bytes (doc 08 §2.6 step 3). Anything less and the load gate would
+## reject the file for a bad digest and the test would pass for the wrong reason.
+func _restamp_city_section(service: SaveService, slot: int, version: int) -> void:
+	var manager := service.manager_for(slot)
+	var file_name := String((manager.read_manifest()["active"] as Dictionary)["file"])
+	var path := service.slot_dir(slot) + "/" + file_name
+	var reader := FileAccess.open_compressed(path, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+	assert_true(reader != null, "the generation just written is readable")
+	var envelope: Dictionary = JSON.parse_string(reader.get_as_text())
+	reader = null
+	var body: Dictionary = envelope["body"]
+	var city: Dictionary = body[String(SaveService.CITY_SECTION)]
+	assert_eq(int(city["section_version"]), CitySim.SAVE_SECTION_VERSION,
+			"the writer stamped the section it claims to be on")
+	city["section_version"] = version
+	var body_text := JSON.stringify(body, "", true, true)
+	var text := "{\"schema_version\":%d,\"body_sha256\":\"%s\",\"body\":%s}" % [
+			int(envelope["schema_version"]), _sha256_of(body_text), body_text]
+	var out := FileAccess.open_compressed(path, FileAccess.WRITE, FileAccess.COMPRESSION_ZSTD)
+	out.store_string(text)
+	out.flush()
+	out = null
+
+
+static func _sha256_of(text: String) -> String:
+	var ctx := HashingContext.new()
+	ctx.start(HashingContext.HASH_SHA256)
+	ctx.update(text.to_utf8_buffer())
+	return ctx.finish().hex_encode()
+
+
+func test_the_city_section_is_on_rung_two() -> void:
+	# The constant, the published accessor and the bytes on disk must agree.
+	# A bump that lands in only two of the three is how a save silently keeps
+	# claiming to be something it is not.
+	assert_eq(CitySim.SAVE_SECTION_VERSION, 2,
+			"the Wave-8 routing / sub-step epoch is rung 2 (doc 08 §2.8)")
+	var sim := CitySim.boot_from_files(4242)
+	assert_eq(sim.save_section_version(), CitySim.SAVE_SECTION_VERSION)
+	var service := _fresh_service()
+	service.save_slot(sim, TARGET_SLOT)
+	var manager := service.manager_for(TARGET_SLOT)
+	var file_name := String((manager.read_manifest()["active"] as Dictionary)["file"])
+	var reader := FileAccess.open_compressed(
+			service.slot_dir(TARGET_SLOT) + "/" + file_name,
+			FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+	var envelope: Dictionary = JSON.parse_string(reader.get_as_text())
+	reader = null
+	assert_eq(int(((envelope["body"] as Dictionary)[String(SaveService.CITY_SECTION)]
+			as Dictionary)["section_version"]), 2,
+			"the file on disk carries the rung, not just the class")
+	service.free()
+
+
+func test_a_v1_city_section_still_loads_and_is_the_same_city() -> void:
+	# The player's side of the epoch. Because v2 changed no shape, a v1 body IS
+	# the bytes v2 writes — so restamping the section version is a faithful
+	# forgery of a save from the previous build, and the whole city has to come
+	# back out of it: every building, every dollar, every RNG stream.
+	var service := _fresh_service()
+	var sim := CitySim.boot_from_files(4242)
+	sim.advance_hours(2.0)
+	var expected := sim.state_hash()
+	service.save_slot(sim, TARGET_SLOT)
+	_restamp_city_section(service, TARGET_SLOT, 1)
+
+	var restored := CitySim.boot_from_files(4242)
+	assert_true(service.load_slot(restored, TARGET_SLOT),
+			"a pre-epoch save opens: " + service.last_error)
+	assert_eq(restored.state_hash(), expected,
+			"…and it is the same city, to the bit")
+	assert_eq(str(service.repair_notes), str(PackedStringArray()),
+			"with no structural repairs — v1 and v2 are the same shape")
+	# And it is a LIVE city under the NEW rules: two instances that both arrived
+	# from a v1 body advance together. (They cannot match a v1 binary — that is
+	# what the epoch records — but they must match each other, which is what
+	# save/load identity means.)
+	var twin := CitySim.boot_from_files(4242)
+	assert_true(service.load_slot(twin, TARGET_SLOT))
+	restored.advance_hours(3.0)
+	twin.advance_hours(3.0)
+	assert_eq(restored.state_hash(), twin.state_hash(),
+			"save → load → advance is identical within the v2 rules")
+	service.free()
+
+
+func test_the_v1_body_goes_through_the_migrator_rather_than_around_it() -> void:
+	# The identity-migrator trap: `restore_state` would have produced the right
+	# city whether or not the ladder ran, so "the city came back" proves nothing
+	# about the ladder. This asserts the call itself, on a probe registered under
+	# the city key, and then asserts the real migrator's contract separately.
+	var service := _fresh_service()
+	var sim := CitySim.boot_from_files(4242)
+	service.save_slot(sim, TARGET_SLOT)
+	_restamp_city_section(service, TARGET_SLOT, 1)
+	var probe := LadderProbe.new()
+	assert_true(service.load_slot(probe, TARGET_SLOT), service.last_error)
+	assert_eq(probe.migrated_from, 1,
+			"the section ladder was walked from the rung the file claims")
+	assert_true(probe.restored.has("clock"), "and the body arrived intact")
+	service.free()
+
+
+func test_the_v1_to_v2_migrator_is_total_and_is_the_identity() -> void:
+	# Doc 08 §2.8's rules on the real thing. TOTAL: it may not fail, whatever it
+	# is handed — an empty body, a body from a version that does not exist, a
+	# body already on the current rung. IDENTITY: v2 marks a rules epoch, not a
+	# shape change, so a v1 body must come out with exactly the keys and exactly
+	# the values it went in with. A migrator that quietly "fixed" something here
+	# would be rewriting the player's city on load.
+	var sim := CitySim.boot_from_files(4242)
+	sim.advance_hours(1.0)
+	var body := sim.canonical_capture()
+	var keys_before := body.keys().size()
+	var migrated := sim.migrate_save_section(body, 1)
+	assert_eq(migrated.keys().size(), keys_before, "no key was added or dropped")
+	assert_eq(JSON.stringify(migrated, "", true, true),
+			JSON.stringify(body, "", true, true),
+			"v1 → v2 is the identity function, byte for byte")
+	# Totality, on the three inputs a real ladder meets. Compared field by field
+	# rather than with `==`, because Dictionary equality is not the assertion
+	# this test wants to be relying on.
+	assert_true(sim.migrate_save_section({}, 1).is_empty(),
+			"an empty body migrates to an empty body rather than failing")
+	assert_eq(int(sim.migrate_save_section({"a": 1}, 2).get("a", 0)), 1,
+			"a body already on the current rung is left alone")
+	assert_eq(sim.migrate_save_section({"a": 1}, 2).keys().size(), 1)
+	assert_eq(int(sim.migrate_save_section({"a": 1}, 7).get("a", 0)), 1,
+			"a body from the future is not mangled on the way past")
+	# And a body restored through the migrator is the body itself.
+	var restored := CitySim.boot_from_files(4242)
+	restored.restore_state(sim.migrate_save_section(sim.canonical_capture(), 1))
+	assert_eq(restored.state_hash(), sim.state_hash())
+
+
+## Registered under the `city` key like `CitySim` is, but it records the ladder
+## call instead of being a city. Same duck-typed contract `SaveService` reads.
+class LadderProbe extends RefCounted:
+	var restored: Dictionary = {}
+	var migrated_from: int = -1
+
+	func canonical_capture() -> Dictionary:
+		return {"clock": {"tick": 0}}
+
+	func restore_state(body: Dictionary) -> void:
+		restored = body
+
+	func save_section_version() -> int:
+		return CitySim.SAVE_SECTION_VERSION
+
+	func migrate_save_section(data: Dictionary, from_version: int) -> Dictionary:
+		migrated_from = from_version
+		return data
+
+
 # --------------------------------------------------- doc 08 §7 test 37 (G-7)
 
 func test_37_bench_city_is_a_boot_file_that_round_trips_the_save_path() -> void:

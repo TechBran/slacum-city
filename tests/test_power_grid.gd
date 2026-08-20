@@ -610,3 +610,64 @@ func test_worst_rows_read_the_derated_capacity() -> void:
 	# whole point of publishing the derated ratio rather than the nameplate one.
 	assert_true(float(grid.worst_transformer(45.0)["load_ratio"])
 			> float(transformer["load_ratio"]))
+
+
+# ============================ where a component IS (Wave 8, doc 08 §2.8's note)
+#
+# `tile` is doc 04's record, but doc 06 reads it as the INCIDENT POSITION for
+# every `PowerComponentFailed`. It used to default to the map origin for any
+# component added without one, and `CitySim._boot_power` added plants,
+# substations, feeders and transmission links exactly that way — so every
+# substation failure in the shipped game raised an incident at (0, 0). It went
+# unnoticed for as long as dispatch measured distance in straight lines.
+
+func test_a_component_with_a_route_and_no_tile_sits_at_its_route_head() -> void:
+	var grid := PowerGrid.new()
+	grid.add_component("s_1", &"substation", {"level": 3, "tile": Vector2i(32, 18)})
+	grid.add_component("f_n", &"feeder", {"conductor_class": 2, "parent": "s_1",
+			"route": [[32, 18], [32, 19], [33, 19]]})
+	assert_eq(grid.component("f_n")["tile"], Vector2i(32, 18),
+			"a line begins where its run begins, not at the map origin")
+	# An explicit tile always wins over the route.
+	grid.add_component("f_s", &"feeder", {"conductor_class": 2, "parent": "s_1",
+			"route": [[40, 40]], "tile": Vector2i(7, 7)})
+	assert_eq(grid.component("f_s")["tile"], Vector2i(7, 7))
+
+
+func test_the_origin_is_no_longer_a_silent_default() -> void:
+	# The one case left at (0, 0) is a component with neither a tile nor a route,
+	# which nothing in the shipped boot path produces. Pinned so that if one ever
+	# appears it is a deliberate decision and not a rediscovery of this bug.
+	var grid := PowerGrid.new()
+	grid.add_component("orphan", &"substation", {"level": 1})
+	assert_eq(grid.component("orphan")["tile"], Vector2i.ZERO)
+
+
+func test_a_legacy_body_has_its_line_tiles_repaired_on_load() -> void:
+	# Bodies written before this rule carry (0, 0) for every line component.
+	# `deserialize` applies the same rule the writer would apply today, rather
+	# than restoring a location doc 06 cannot dispatch to.
+	var grid := PowerGrid.new()
+	grid.add_component("s_1", &"substation", {"level": 3, "tile": Vector2i(32, 18)})
+	grid.add_component("f_n", &"feeder", {"conductor_class": 2, "parent": "s_1",
+			"route": [[32, 18], [32, 19]]})
+	var body := grid.serialize()
+	for row in body["components"]:
+		(row as Dictionary)["tile"] = [0, 0]      # what a pre-Wave-8 save holds
+	var restored := PowerGrid.new()
+	restored.deserialize(body)
+	assert_eq(restored.component("f_n")["tile"], Vector2i(32, 18),
+			"the feeder is back on its own run")
+	assert_eq(restored.component("s_1")["tile"], Vector2i.ZERO,
+			"a terminal component has no route to be repaired from — "
+			+ "`CitySim.restore_state` re-stamps those from the authored file")
+
+
+func test_a_component_tile_can_be_restamped_but_never_moves_in_a_tick() -> void:
+	var grid := _rig()
+	grid.set_component_tile("s_1", Vector2i(32, 18))
+	assert_eq(grid.component("s_1")["tile"], Vector2i(32, 18))
+	grid.set_component_tile("does_not_exist", Vector2i(1, 1))   # total, no crash
+	var before: Vector2i = grid.component("t_7")["tile"]
+	_tick(grid, {"b": 100.0}, {}, {}, null, 4)
+	assert_eq(grid.component("t_7")["tile"], before, "the tick never moves a node")

@@ -591,16 +591,20 @@ func test_a_pinned_checkpoint_is_never_swept() -> void:
 
 func test_the_sim_body_is_a_versioned_section_with_a_ladder() -> void:
 	# Doc 08 §2.8: `section_version` inside every section, with its own ladder.
-	# `sim/city_sim.gd` grows `save_section_version()` / `migrate_save_section()`
-	# when it splits into the §3.1 registry; until then the shell supplies
-	# version 1 and the hook is proven against a stand-in that answers both.
+	# `sim/city_sim.gd` now answers both hooks itself, so this test asserts the
+	# SHELL's half — that whatever rung the sim writes, a reader one rung further
+	# on is handed the body through `migrate_section` rather than around it.
+	# Written relative to `CitySim.SAVE_SECTION_VERSION` rather than against the
+	# literals 1 and 2 so the next epoch bump does not break a test about the
+	# plumbing (it broke this one once, which is why it reads this way).
 	var service := _fresh_service()
 	var sim := CitySim.boot_from_files(707)
 	service.save_slot(sim, 1)
 	var probe := VersionedSim.new()
-	probe.version = 2
-	assert_true(service.load_slot(probe, 1), "a v1 body loads into a v2 reader")
-	assert_eq(probe.migrated_from, 1, "…through the section ladder, not around it")
+	probe.version = CitySim.SAVE_SECTION_VERSION + 1
+	assert_true(service.load_slot(probe, 1), "a body one rung down loads into a newer reader")
+	assert_eq(probe.migrated_from, CitySim.SAVE_SECTION_VERSION,
+			"…through the section ladder, not around it")
 	assert_true(bool(probe.restored.get("_migrated", false)))
 	assert_true(probe.restored.has("clock"), "and the body itself arrived intact")
 	service.free()

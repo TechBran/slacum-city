@@ -23,6 +23,37 @@ var stats: Dictionary = {
 
 var _events: Array = []
 
+## Top-K candidate buffer for §2.10's rank-then-quote pass, GROWN AND NEVER
+## SHRUNK and never longer than `_rank_cap`. Three parallel arrays rather than
+## an array of dictionaries, for one measured reason: the assignment scan is
+## `open_incidents × capable_units` on EVERY integrator sub-step, and a city in
+## collapse runs it with forty-odd open incidents at six hundred sub-steps a
+## game-day. One Dictionary allocated per candidate there is a quarter of a
+## million allocations per game-day, which is the same shape of mistake the
+## traffic generator's scratch buffer exists to avoid (`IncidentSystem`).
+var _rank_units: Array = []
+var _rank_penalty: PackedFloat64Array = PackedFloat64Array()
+var _rank_score: PackedFloat64Array = PackedFloat64Array()
+var _rank_used: int = 0
+var _rank_cap: int = 0
+
+## incident id -> the `travel.access_epoch()` at which every capable unit's route
+## to it came back `INF`. **Reachability is a fact about the ROAD NETWORK, not
+## about where the trucks happen to be standing**: doc 10 answers it by comparing
+## road-graph components, and a unit cannot leave its own component without a
+## route out of it. So an incident that nothing could reach stays unreachable
+## until a road is built, repaired, collapsed, closed or reopened — every one of
+## which moves `access_epoch()`. Until then, re-pricing it is provably wasted
+## work, and on a rotting city it is the difference between a bounded assignment
+## pass and one that re-runs a full A\* sweep for hundreds of unanswerable
+## incidents on every integrator sub-step.
+##
+## Derived, not saved: a loaded city simply re-discovers it on the first pass.
+## The whole set is dropped the moment the epoch moves, which is also what keeps
+## it from growing: it can never hold more than the live roster.
+var _unreachable_at_epoch: Dictionary = {}
+var _unreachable_epoch: int = -1
+
 
 func _init(p_catalog: IncidentCatalog, p_fleet: FleetSystem, p_policy: DispatchPolicy,
 		p_world: IncidentWorld, p_travel: TravelTimeProvider) -> void:
@@ -161,9 +192,48 @@ func assign_tick(incidents: Array, now_h: float) -> void:
 		return a.id < b.id)
 
 	var assignments_made := 0
+	# **THE ROUTE-QUOTE ALLOWANCE FOR THIS PASS.** §2.10 has always capped
+	# ASSIGNMENTS per tick at 16; it never needed to cap the work of *looking*,
+	# because a Chebyshev ETA is arithmetic. Under doc 10's router a quote is an
+	# A\* (~5 ms), and the loop below walks the WHOLE queue — an incident that
+	# finds no unit inside `MAX_ACCEPTABLE_COST` does not increment
+	# `assignments_made`, so it never reaches the `break` above, and it pays for
+	# another three quotes on the next sub-step, and the next.
+	#
+	# The allowance is `max_assignments × dispatch_candidates`: exactly enough
+	# quotes to make every assignment this tick is permitted to make, and not one
+	# more. The queue is priority-sorted, so the budget is spent on the most
+	# urgent incidents, and one it could not afford this sub-step keeps its place
+	# and gains priority from `w_wait` while it waits. **Zero means unlimited**,
+	# which is what doc 06's own stand-in provider answers, so a city with no
+	# street network behaves exactly as it always did — every tie-break included.
+	#
+	# **It is necessary and it is not sufficient, and that is measured.** With
+	# the router wired, doc 92's `greedy_growth` agent at seed 4242 goes from
+	# 12.6 s for a 21-game-day run to over twenty minutes, and this allowance
+	# does not move it — because the cost is not the quoting. Real ETAs across a
+	# collapsed, flood-closed network push `eta + penalties` past
+	# `MAX_ACCEPTABLE_COST`, incidents stop being answered at all, and §2.10 has
+	# no terminal rule for one nobody can answer, so the open roster grows without
+	# bound and everything that is O(open) grows with it. That is the reason
+	# `CitySim` still constructs doc 06's stand-in; see its comment at the seam.
+	var quote_budget_per_need := travel.dispatch_candidates()
+	var quote_allowance := max_assignments * quote_budget_per_need
+	var access_epoch := travel.access_epoch()
+	if access_epoch != _unreachable_epoch:
+		_unreachable_epoch = access_epoch
+		_unreachable_at_epoch.clear()
 	for incident in queue:
 		if assignments_made >= max_assignments:
 			break
+		if quote_budget_per_need > 0 and quote_allowance <= 0:
+			break
+		# Nothing can have reached it since the roads last moved — see
+		# `_unreachable_at_epoch`. Skipping BEFORE `unmet_needs` is the point:
+		# that call walks the fleet too.
+		if incident.unreachable \
+				and int(_unreachable_at_epoch.get(incident.id, -1)) == access_epoch:
+			continue
 		var damage_estimate: float = system.expected_damage_fraction(incident)
 		for need in unmet_needs(incident):
 			if assignments_made >= max_assignments:
@@ -174,6 +244,26 @@ func assign_tick(incidents: Array, now_h: float) -> void:
 			var any_candidate := false
 			var any_allowed := false
 			var any_reachable := false
+			# **RANK, THEN QUOTE** (doc 10 §2.14, adopted here because doc 10's
+			# router is now what answers `eta_h`). A real quote is an A\* — ~5 ms
+			# on the benchmark city — and the route cache cannot amortise it,
+			# because half the key is a responding unit's tile and that changes
+			# every tile it drives. `dispatch_candidates()` is 0 for a provider
+			# whose quote is arithmetic, and the loop below then behaves exactly
+			# as it did before doc 10 was wired in, tie-breaks included.
+			#
+			# **Nothing in the ranking walk may touch the road graph.** The walk
+			# is `open_incidents × capable_units` per sub-step and a collapsing
+			# city runs it hundreds of times a game-day; `estimate_eta_practical`
+			# is arithmetic, and the reachability screen — which is two ring
+			# searches — is deferred to the quote pass, where it runs at most
+			# `_rank_cap` times instead of once per candidate.
+			var quote_budget := quote_budget_per_need
+			if quote_budget > 0:
+				quote_budget = mini(quote_budget, quote_allowance)
+				if quote_budget <= 0:
+					break
+			_rank_reset(quote_budget)
 			# Read-only walk of the fleet's own ascending order — see
 			# `FleetSystem.unit_ids_ref`. Nothing in this loop adds or removes a
 			# unit; `_assign` runs after it, on the winner.
@@ -201,30 +291,122 @@ func assign_tick(incidents: Array, now_h: float) -> void:
 						damage_estimate):
 					continue
 				any_allowed = true
-				var eta := fleet.eta_h(u, incident.tile)
-				if is_inf(eta):
-					continue
-				any_reachable = true
-				var cost := eta * 60.0
+				# The three penalties are part of the ORDERING, so the ranking
+				# pass has to carry them or it would rank on a different number
+				# from the one the winner is chosen on.
+				var penalty := 0.0
 				if u.status == Vehicle.RESPONDING:
-					cost += reassign_penalty
+					penalty += reassign_penalty
 				if policy.breaks_reserve(u, fleet):
-					cost += reserve_penalty
-				cost += role_fit_penalty * (1.0 - u.role_fit(role))
-				if cost < best_cost - 1e-9 or (absf(cost - best_cost) <= 1e-9 and best != null and u.id < best.id):
-					best_cost = cost
-					best = u
+					penalty += reserve_penalty
+				penalty += role_fit_penalty * (1.0 - u.role_fit(role))
+				if quote_budget <= 0:
+					var eta := fleet.eta_h(u, incident.tile)
+					if is_inf(eta):
+						continue
+					any_reachable = true
+					var cost := eta * 60.0 + penalty
+					if cost < best_cost - 1e-9 or (absf(cost - best_cost) <= 1e-9 and best != null and u.id < best.id):
+						best_cost = cost
+						best = u
+					continue
+				var estimate := fleet.estimate_h(u, incident.tile)
+				if is_inf(estimate):
+					continue
+				_rank_offer(u, penalty, estimate * 60.0 + penalty)
+			if quote_budget > 0 and _rank_used > 0:
+				var quoted := 0
+				for i in _rank_used:
+					var u2: Vehicle = _rank_units[i]
+					# Cheap screen first: a unit in another road component can
+					# never win, and finding that out must not cost a search.
+					if not fleet.maybe_reachable(u2, incident.tile):
+						continue
+					var eta2 := fleet.eta_h(u2, incident.tile)
+					if is_inf(eta2):
+						# The screen was conservative and this route really is
+						# cut. It cost a quote and bought no candidate, so it
+						# does not spend the budget — otherwise a city with one
+						# severed block would report "unreachable" for incidents
+						# that three other trucks can reach. `_rank_cap` is what
+						# stops that generosity from becoming a full fleet sweep.
+						continue
+					any_reachable = true
+					var cost2 := eta2 * 60.0 + _rank_penalty[i]
+					if cost2 < best_cost - 1e-9 or (absf(cost2 - best_cost) <= 1e-9 and best != null and u2.id < best.id):
+						best_cost = cost2
+						best = u2
+					quoted += 1
+					if quoted >= quote_budget:
+						break
+				quote_allowance -= quoted
 			if best != null and best_cost <= max_cost:
 				_assign(best, incident, role, now_h, false)
 				assignments_made += 1
 				incident.context.erase("blocked_reason")
+				incident.unreachable = false
+				_unreachable_at_epoch.erase(incident.id)
 			elif any_candidate and any_allowed and not any_reachable:
 				# Doc 10 says there is no route: that is a different problem for
 				# the player than "no truck is free", and the UI says so.
 				incident.unreachable = true
+				_unreachable_at_epoch[incident.id] = access_epoch
 				_emit_blocked(incident, "dispatch_blocked_unreachable", role)
 			else:
 				_emit_blocked(incident, "dispatch_blocked_no_units", role)
+
+
+# ------------------------------------------------ the top-K candidate buffer
+#
+# `quote_budget` candidates get a real route quote, but the buffer keeps
+# **four times** that many, because a quote can come back `INF` (a hard closure
+# the O(1) component screen cannot see) and a candidate that bought nothing must
+# not spend the budget. Four is the smallest multiple that makes "all of them
+# are cut but a fifth truck could have got there" a case this loop can be wrong
+# about — and it can only be wrong in the direction of reporting `unreachable`
+# for an incident four separately-ranked units all failed to reach, on a road
+# graph where the component test already said they were connected. The cap is
+# what keeps a severed city from paying a full-fleet A\* sweep per sub-step.
+
+
+func _rank_reset(quote_budget: int) -> void:
+	_rank_used = 0
+	_rank_cap = maxi(1, quote_budget * 4)
+
+
+## Offer one candidate. Keeps the buffer sorted ascending on `(score, unit id)`
+## — the SAME tie-break the winner selection uses, so ranking can never impose
+## an ordering the quoted pass would not have chosen itself — and drops the
+## worst entry once the cap is reached. No allocation after warm-up.
+func _rank_offer(unit: Vehicle, penalty: float, score: float) -> void:
+	var slot := _rank_used
+	while slot > 0:
+		var prev := slot - 1
+		var prev_score := _rank_score[prev]
+		if prev_score < score - 1e-9:
+			break
+		if absf(prev_score - score) <= 1e-9 and int((_rank_units[prev] as Vehicle).id) < unit.id:
+			break
+		slot = prev
+	if slot >= _rank_cap:
+		return                      # worse than everything already kept
+	# Grow to hold one more, up to the cap.
+	var target := mini(_rank_cap, _rank_used + 1)
+	while _rank_units.size() < target:
+		_rank_units.append(null)
+		_rank_penalty.append(0.0)
+		_rank_score.append(0.0)
+	# Shift the tail down one place; the entry falling off the end is dropped.
+	var i := target - 1
+	while i > slot:
+		_rank_units[i] = _rank_units[i - 1]
+		_rank_penalty[i] = _rank_penalty[i - 1]
+		_rank_score[i] = _rank_score[i - 1]
+		i -= 1
+	_rank_units[slot] = unit
+	_rank_penalty[slot] = penalty
+	_rank_score[slot] = score
+	_rank_used = target
 
 
 ## Primary role until the requirement is met, then the catalog's support roles,

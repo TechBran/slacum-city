@@ -211,3 +211,200 @@ func test_dispatch_over_the_road_network_drives_streets() -> void:
 	fleet.advance_to(u.arrive_at_h)
 	assert_eq(u.status, Vehicle.ON_SCENE)
 	assert_eq(u.tile, target, "and it is on scene, on time")
+
+
+# ================================= the seam, and why it is not plugged in yet
+#
+# Everything above proves the provider WORKS. What the shipped `CitySim` does
+# with it is a separate question, and the answer is deliberate: **it still
+# constructs `IncidentSystem` with doc 06's Chebyshev stand-in.** Wave 8 wired
+# the router, measured it, and took the wiring back out — see `CitySim`'s own
+# comment at the seam for the measurement, and the Wave-8 delivery report's open
+# questions 1 and 2 for the two rulings it waits on.
+#
+# These tests hold BOTH halves so neither can drift: the seam is complete and
+# ready, and the shipped city is honest about not using it. The day the ruling
+# lands, `test_the_stand_in_is_still_what_the_shipped_sim_holds` fails, which is
+# exactly when somebody should be reading this block.
+
+func test_boot_puts_roads_before_incidents() -> void:
+	# The ordering constraint the wiring rests on, landed ahead of the wiring:
+	# incidents cannot be handed a router that does not exist yet, and roads is a
+	# leaf with respect to incidents, so the swap costs nothing and is done.
+	var sim := CitySim.boot_from_files(1337)
+	assert_eq(str(sim.boot_errors), str(PackedStringArray()), "boots clean in the new order")
+	assert_true(sim.roads != null and sim.incidents != null)
+	assert_true(sim.incidents.fleet.size() > 0, "and the fleet still populated")
+
+
+func test_the_stand_in_is_still_what_the_shipped_sim_holds() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	assert_false(sim.incidents.travel is RoadTravelTimeProvider,
+			"the router is wired — if that is intentional, this test and "
+			+ "`CitySim`'s comment at the seam both need rewriting, and the "
+			+ "collapse case in doc 92 §21 needs re-measuring first")
+	# …and the whole fleet still agrees on one provider, whichever it is.
+	assert_true(sim.incidents.fleet.travel == sim.incidents.travel)
+	assert_true(sim.incidents.dispatch.travel == sim.incidents.travel)
+
+
+func test_the_router_drops_into_the_seam_with_no_other_change() -> void:
+	# The one line, exercised. If this ever stops compiling or stops producing a
+	# live dispatcher, the seam has rotted while nobody was using it — which is
+	# precisely how it got two waves out of date the first time.
+	var sim := CitySim.boot_from_files(1337)
+	var wired := IncidentSystem.new(IncidentCatalog.load_from_files(),
+			CityIncidentWorld.new(sim, IncidentCatalog.load_from_files()),
+			RngStreams.new(1337), sim.roads.travel_time_provider())
+	assert_true(wired.travel is RoadTravelTimeProvider)
+	assert_true((wired.travel as RoadTravelTimeProvider).network == sim.roads)
+	assert_true(wired.fleet.travel == wired.travel, "one provider, both consumers")
+	assert_true(wired.dispatch.travel == wired.travel)
+	assert_eq(wired.travel.dispatch_candidates(),
+			sim.roads.dispatch_candidates(),
+			"and doc 10's quote budget reaches doc 06 through the seam")
+
+
+## The number the wiring would move: an ETA becomes a street distance, not a
+## diagonal. The starter city's stations and its far corner are a real L, so the
+## router's answer must be strictly longer than the crow-flies model's.
+func test_etas_are_street_true_not_chebyshev() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var router := sim.roads.travel_time_provider()
+	var from := Vector2i(39, 32)
+	var to := Vector2i(47, 48)
+	var profile := {"speed_mpgm": 32.0}
+	var chebyshev := TravelTimeProvider.new().travel_gs(from, to, profile)
+	var street: int = router.travel_gs(from, to, profile)
+	assert_true(street < TravelTimeProvider.UNREACHABLE_GS, "the corner is reachable")
+	assert_true(street > chebyshev,
+			("a street route (%d game-s) must cost more than the diagonal it "
+					+ "replaced (%d game-s)") % [street, chebyshev])
+
+
+## Doc 10 §7 publishes FOUR things to doc 06, and when this class landed only one
+## of them was overridden — so a provider that knew every street still answered
+## doc 06's other three questions with the pre-router constants. All four are
+## implemented now, whatever `CitySim` chooses to construct.
+func test_the_other_three_published_inputs_are_live() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var provider := sim.roads.travel_time_provider()
+	var on_street := Vector2i(39, 32)
+	assert_almost_eq(provider.access_quality(on_street),
+			sim.roads.access_quality(on_street), 1e-12,
+			"access_quality is doc 10's, unrescaled (C-61)")
+	# Off the map there is no street at all, and the answers degrade to the
+	# pre-router defaults rather than to nonsense.
+	var nowhere := Vector2i(-40, -40)
+	assert_almost_eq(provider.access_quality(nowhere), 0.0, 1e-12)
+	assert_almost_eq(provider.congestion_index(nowhere), 0.0, 1e-12)
+	assert_almost_eq(provider.condition_hazard_mult(nowhere), 1.0, 1e-12)
+	# On a street they are the edge's own numbers.
+	var edge_id := sim.roads.edge_at_position(on_street)
+	assert_true(edge_id >= 0, "the station tile snaps to a street")
+	assert_almost_eq(provider.congestion_index(on_street),
+			sim.roads.congestion_index(edge_id), 1e-12)
+	assert_almost_eq(provider.condition_hazard_mult(on_street),
+			sim.roads.condition_hazard_mult(edge_id), 1e-12)
+
+
+## And they are not decorative: a collapsed street degrades doc 06's response
+## through `access_factor`'s knee. This is the whole reason doc 06 asks doc 10
+## the question at all.
+func test_a_ruined_street_degrades_the_response_it_serves() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var router := sim.roads.travel_time_provider()
+	var tile := Vector2i(39, 32)
+	var before := router.access_quality(tile)
+	assert_true(before >= 0.60,
+			"the founding city's own fire station is well served (%.3f)" % before)
+	# Ruin every road tile within snapping distance of the station.
+	for dz in range(-6, 7):
+		for dx in range(-6, 7):
+			var t := Vector2i(tile.x + dx, tile.y + dz)
+			if sim.roads.graph.is_road_tile(t):
+				sim.roads.set_condition(t, 0.0)
+	var after := router.access_quality(tile)
+	assert_true(after < 0.60,
+			("a collapsed street must fall through doc 06's 0.60 knee; "
+					+ "measured %.3f") % after)
+	assert_true(after < before, "and it must fall, not merely differ")
+
+
+# ------------------- every power component has a place a truck can drive to
+
+## **The defect real routing exposed.** `data/starter_city.json` spells a
+## substation's and a plant's location `terminal`, not `tile`, so
+## `CitySim._boot_power` added both with no location and doc 04's record
+## defaulted to (0, 0). Doc 06 uses that record as the incident position, and
+## the map corner has no street within snapping distance — so the router
+## correctly answered `unreachable`, no unit was ever sent, and the failure
+## escalated to destruction. Measured on the doc 92 rig, `balanced` seed 1337:
+## one such failure on game-day 17 took the 50-game-day dark share from 8.7 % to
+## 61.8 % and broke balance gates 18 and 18b.
+func test_every_power_component_stands_somewhere_a_unit_can_reach() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	for id in sim.grid.component_ids():
+		var component: Dictionary = sim.grid.component(String(id))
+		var tile: Vector2i = component["tile"]
+		assert_ne(tile, Vector2i.ZERO,
+				"power component %s (%s) is parked at the map origin"
+						% [String(id), String(component["kind"])])
+		assert_true(sim.roads.graph.nearest_road_tile(tile).x >= 0,
+				"no street within snapping distance of %s at %s — doc 06 cannot "
+						% [String(id), str(tile)] + "dispatch to it")
+
+
+## And the authored terminals are the authored terminals, not something derived.
+func test_the_authored_terminals_are_where_doc_09_put_them() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	assert_eq(sim.grid.component("SUB-A")["tile"],
+			StarterCityLoader.core_to_global(32, 18),
+			"doc 09 §2.9.5 puts SUB-A's terminal here, and it is where a "
+			+ "substation failure is answered")
+	assert_eq(sim.grid.component("PLANT-1")["tile"],
+			StarterCityLoader.core_to_global(39, 41))
+
+
+## A save written before the fix carries (0, 0); a load must not restore it,
+## because a boot-authored terminal is boot data and not player state.
+func test_a_legacy_body_does_not_move_the_substation_back_to_the_origin() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var body := sim.canonical_capture()
+	var grid_body: Dictionary = body["grid"]
+	var touched := 0
+	for row_variant in (grid_body["components"] as Array):
+		var row: Dictionary = row_variant
+		if String(row["id"]) == "SUB-A" or String(row["id"]) == "PLANT-1":
+			row["tile"] = [0, 0]
+			touched += 1
+	assert_eq(touched, 2, "the fixture forged both terminal components")
+	var restored := CitySim.boot_from_files(1337)
+	restored.restore_state(body)
+	assert_eq(restored.grid.component("SUB-A")["tile"],
+			StarterCityLoader.core_to_global(32, 18),
+			"the authored terminal is re-stamped on load")
+	assert_eq(restored.grid.component("PLANT-1")["tile"],
+			StarterCityLoader.core_to_global(39, 41))
+
+
+## The consequence, end to end: fail the substation and a unit is actually sent.
+func test_a_substation_failure_is_dispatchable() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var inc := sim.incidents.spawn_scripted_component_failure("SUB-A", 2.0,
+			{"source": "test"})
+	assert_true(inc != null, "the failure raised an incident")
+	assert_eq(inc.tile, StarterCityLoader.core_to_global(32, 18),
+			"…at the substation, not at the map origin")
+	# The half that matters for the defect: doc 10 can find a route to where the
+	# incident actually is. At (0, 0) it could not, and this is the assertion
+	# that will fail the day somebody drops the terminal tile again.
+	var router := sim.roads.travel_time_provider()
+	var station := Vector2i(39, 32)      # the founding fire station
+	assert_true(router.travel_gs(station, inc.tile) < TravelTimeProvider.UNREACHABLE_GS,
+			"no street route from the fire station to the substation")
+	for _h in 3:
+		sim.advance_coarse_hours(1, false)
+	assert_false(inc.unreachable, "dispatch could not reach it")
+	assert_true(inc.assigned.size() > 0 or inc.is_terminal(),
+			"a unit was sent (or the incident was already answered and closed)")
