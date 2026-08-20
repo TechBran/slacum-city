@@ -62,3 +62,8 @@ build/store/
 # On-device benchmark artefacts (tools/bench_device.sh): logcat CSVs, framestats,
 # meminfo, thermal traces. Measurements of one run on one phone, never source.
 build/bench/
+# `tests/run_tests.gd`'s own header tells a concurrent run to point
+# XDG_DATA_HOME at a private directory, because `user://` is keyed on the
+# project name and every worktree shares it. This is where that directory
+# lands when the instruction is followed literally from a worktree root.
+.xdg/

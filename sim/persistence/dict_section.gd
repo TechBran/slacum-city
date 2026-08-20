@@ -23,6 +23,11 @@ var version: int = 1
 var payload: Dictionary = {}
 ## What `deserialize()` received, already migrated to [version].
 var restored: Dictionary = {}
+## Optional `func(data: Dictionary) -> Dictionary` run by `commit_save()` on the
+## WRITE thread — see `SaveSection.finalize` for the two rules it must obey. The
+## city section installs `CitySim.encode_captured` here, which is what takes the
+## float canonicalisation off the frame.
+var finalizer: Callable = Callable()
 ## Optional `func(data: Dictionary, from_version: int) -> Dictionary`. Doc 08
 ## §2.8's rules apply to whatever is installed here: TOTAL (may not fail —
 ## missing input means a documented default), additive-first, and it must never
@@ -53,6 +58,21 @@ func section_version() -> int:
 ## is exactly the 25 ms budget doc 08 §2.6 is trying to protect.
 func serialize() -> Dictionary:
 	return payload.duplicate()
+
+
+func needs_finalize() -> bool:
+	return finalizer.is_valid()
+
+
+## A finalizer that returns something other than a Dictionary is treated as "no
+## finalization happened", for the same reason [migrate_section] treats a broken
+## migrator that way: a section's own bug may cost it its canonical form, but it
+## may not cost the player the city.
+func finalize(data: Dictionary) -> Dictionary:
+	if not finalizer.is_valid():
+		return data
+	var out: Variant = finalizer.call(data)
+	return out if out is Dictionary else data
 
 
 func deserialize(data: Dictionary) -> void:

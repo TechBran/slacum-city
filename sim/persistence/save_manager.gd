@@ -83,46 +83,69 @@ func request_save(reason: String, sim_time_minutes: int, real_unix: int,
 ## sections, or this manager's own state, so it may be handed to another thread
 ## and read there while the game carries on.
 ##
-## **It is also the EXPENSIVE half, which is not what the split was expected to
-## find.** On the 1,500-building benchmark city a save is 148.7 ms and this is
-## 96.3 of it — `CitySim.canonical_capture()` walking the roster and floating
-## every number into `"~f~%08x%08x"` costs nearly twice what stringifying,
-## digesting, compressing and writing the result does. So threading the write
-## buys a third of the save, not the seven-eighths a reading of doc 08 would
-## predict, and the next lever on this path is the capture itself.
+## **It WAS also the expensive half, which is not what the split was expected to
+## find** (Wave 10): a 148.7 ms save was 96.3 ms of capture and 52.4 of write,
+## because `CitySim.canonical_capture()` walked the roster and floated every
+## number into `"~f~%08x%08x"` on this thread. Wave 12 took that walk off it. The
+## capture is now `serialize()` — a read of live state and nothing else — and the
+## canonicalisation rides `SaveSection.finalize()` into `commit_save` below.
+##
+## Measured on the benchmark city, best of 7: **85.4 ms → 39.2 ms of caller
+## time**, with the bytes on disk byte-for-byte what they were.
 func capture_save(reason: String, sim_time_minutes: int, real_unix: int,
 		entry_extra: Dictionary = {}) -> Dictionary:
 	var body := {
 		"schema_version": CURRENT_SCHEMA_VERSION,
 		"sim_time_minutes": sim_time_minutes,
 	}
+	# The sections that still owe the capture a second half. Held as objects
+	# rather than Callables so a section's `finalize` stays overridable, and
+	# resolved HERE rather than in `commit_save` for the same reason the manager
+	# itself is: `_sections` is a list the main thread may rewrite between the
+	# capture and the write, and a worker walking it while it moves is a race.
+	var pending: Array[SaveSection] = []
 	for section in _sections:
 		var data := section.serialize()
 		data["section_version"] = section.section_version()
 		body[String(section.section_key())] = data
+		if section.needs_finalize():
+			pending.append(section)
 	return {
 		"body": body, "reason": reason, "sim_time_minutes": sim_time_minutes,
 		"real_unix": real_unix, "entry_extra": entry_extra.duplicate(true),
+		"finalize": pending,
 	}
 
 
-## THE HALF THAT SHOULD: stringify, digest, envelope, zstd write, manifest
+## THE HALF THAT SHOULD: finalize, stringify, digest, envelope, zstd write, manifest
 ## commit, retention, sweep. It reads the manifest itself — the generation
 ## number is a property of the SLOT and not of the moment the capture was taken
 ## — and it touches no section, no sim and no shared mutable state but the slot
 ## directory this manager owns. Safe on a `WorkerThreadPool` task provided only
 ## one runs per slot at a time, which is `SaveService`'s job to guarantee.
 ##
-## On the benchmark city this is **52.4 ms of a 148.7 ms save** (measured,
-## `tools/profile_save.gd`), and on the founding city 4.8 of 16.5. Off the main
-## thread it is the difference between an autosave the player sees and one they
-## do not — but it is a third of the save and not most of it; see `capture_save`.
+## It also runs each section's [SaveSection.finalize] — the bytes-only tail of
+## its `serialize()` — which is how `CitySim`'s float canonicalisation ended up
+## here rather than on the frame. A finalizer that read the sim would be a race;
+## the contract on `SaveSection.finalize` forbids it in as many words.
+##
+## On the benchmark city this is **61.5 ms of a 106.4 ms synchronous save**
+## (measured, `tools/profile_save.gd --repeats=7`) — 36 of them the finalize that
+## used to be the caller's — and on the founding city 6.1 of 11.2. Off the main
+## thread it is the
+## difference between an autosave the player sees and one they do not, and after
+## Wave 12 it is now MOST of the save rather than a third of it, which is the
+## right way round: it is the half that can leave.
 func commit_save(capture: Dictionary) -> Dictionary:
 	var reason := String(capture["reason"])
 	var sim_time_minutes := int(capture["sim_time_minutes"])
 	var real_unix := int(capture["real_unix"])
 	var entry_extra: Dictionary = capture["entry_extra"]
 	var body: Dictionary = capture["body"]
+	for section: SaveSection in capture.get("finalize", []):
+		var key := String(section.section_key())
+		if body.has(key):
+			body[key] = section.finalize(body[key])
 	var manifest := read_manifest()
 	var generation: int = int(manifest.get("next_generation", 1))
 	var body_text := JSON.stringify(body, "", true, true)
