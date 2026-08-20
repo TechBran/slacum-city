@@ -1,27 +1,62 @@
 extends SimTest
-## Doc 13 §2.2: the shell's slot layer and the Android lifecycle router.
+## Doc 13 §2.2's slot API over doc 08 §2.5–§2.9's storage.
 ##
 ## The load-bearing claim is that a slot round-trip is LOSSLESS — save, load
 ## into a fresh sim, and both instances must keep producing the same
 ## `state_hash()` when advanced (constitution §5). Everything else here is
 ## file-system hygiene: atomic commit, temp cleanup, listing, deletion.
+##
+## Every behavioural assertion below predates the unification and is unchanged
+## by it — the UI and the session-restore flow depend on exactly these answers.
+## What did change is how a test damages a save: a slot is a generation
+## directory now, so "corrupt the file" means "corrupt the generation", and the
+## failure it produces is `corrupt` (a save that did not survive its digest)
+## rather than `bad_json` (a file that is not a save at all).
 
 
 ## Tests never write to `user://saves` — that is a real player's profile.
 const TEST_DIR := "user://test_saves/slots"
 
 
+## Empty a directory, subdirectories and all. The listing is taken in full
+## before anything is removed — deleting inside a `list_dir_begin()` walk skips
+## entries, and a test that starts on somebody else's leftovers is worse than
+## no test at all.
 static func _wipe(path: String) -> void:
 	var dir := DirAccess.open(path)
 	if dir == null:
 		return
+	var files: Array[String] = []
+	var dirs: Array[String] = []
 	dir.list_dir_begin()
 	var entry := dir.get_next()
 	while entry != "":
-		if not dir.current_is_dir():
-			DirAccess.remove_absolute(path + "/" + entry)
+		if dir.current_is_dir():
+			dirs.append(entry)
+		else:
+			files.append(entry)
 		entry = dir.get_next()
 	dir.list_dir_end()
+	for child in files:
+		DirAccess.remove_absolute(path + "/" + child)
+	for child in dirs:
+		_wipe(path + "/" + child)
+		DirAccess.remove_absolute(path + "/" + child)
+
+
+## Flip a byte inside the active generation's body so the SHA-256 no longer
+## matches — doc 08 §2.9 check 3, reached through the shell.
+static func _tamper_active_generation(service: SaveService, slot: int) -> void:
+	var path := service.slot_path(slot)
+	var file := FileAccess.open_compressed(path, FileAccess.READ,
+			FileAccess.COMPRESSION_ZSTD)
+	var text := file.get_as_text()
+	file = null
+	text = text.replace("\"sim_time_minutes\":", "\"sim_time_minutez\":")
+	var out := FileAccess.open_compressed(path, FileAccess.WRITE,
+			FileAccess.COMPRESSION_ZSTD)
+	out.store_string(text)
+	out = null
 
 
 func _fresh_service() -> SaveService:
@@ -113,20 +148,13 @@ func test_list_and_delete_slots() -> void:
 
 
 func test_list_slots_reads_only_the_header() -> void:
-	# `list_slots()` must not deserialize a city. Proven by handing it a file
-	# whose state is unparseable garbage: the meta still lists.
+	# `list_slots()` must not deserialize a city. Proven by ruining the body and
+	# listing anyway: the header lives in `manifest.json`, which the ruined
+	# generation cannot take with it.
 	var service := _fresh_service()
 	var sim := CitySim.boot_from_files(11)
 	service.save_slot(sim, 4)
-	var path := service.slot_path(4)
-	var file := FileAccess.open(path, FileAccess.READ)
-	var text := file.get_as_text()
-	file = null
-	var cut := text.find("\"state\":")
-	var truncated := text.substr(0, cut) + "\"state\":{ TRUNCATED"
-	var out := FileAccess.open(path, FileAccess.WRITE)
-	out.store_string(truncated)
-	out = null
+	_tamper_active_generation(service, 4)
 
 	var slots := service.list_slots()
 	assert_eq(slots.size(), 1, "header survives a corrupt body")
@@ -136,8 +164,77 @@ func test_list_slots_reads_only_the_header() -> void:
 	var victim := CitySim.boot_from_files(11)
 	var hash_before := victim.state_hash()
 	assert_false(service.load_slot(victim, 4))
-	assert_eq(service.last_error, "bad_json")
+	assert_eq(service.last_error, "corrupt",
+			"the digest caught it — this is a save that did not survive, not a stray file")
 	assert_eq(victim.state_hash(), hash_before, "a failed load changes nothing")
+	assert_true(FileAccess.file_exists(
+			service.slot_dir(4) + "/quarantine/bad_gen_000001.sav"),
+			"doc 08 §2.9: quarantined, never deleted, so a support path exists")
+	service.free()
+
+
+func test_delete_takes_the_quarantine_with_it() -> void:
+	# `delete_slot` removes a tree, and a slot that has quarantined anything has
+	# a subdirectory in it. A partial removal is the worst failure this method
+	# has: "delete this city" would leave a city behind for the next launch to
+	# resume.
+	var service := _fresh_service()
+	var sim := CitySim.boot_from_files(909)
+	service.save_slot(sim, 1)
+	_tamper_active_generation(service, 1)
+	assert_false(service.load_slot(CitySim.boot_from_files(909), 1))
+	assert_true(FileAccess.file_exists(
+			service.slot_dir(1) + "/quarantine/bad_gen_000001.sav"),
+			"there is now a subdirectory with a file in it")
+
+	assert_true(service.delete_slot(1))
+	assert_false(DirAccess.dir_exists_absolute(service.slot_dir(1)),
+			"the whole tree went, quarantine included")
+	assert_eq(service.list_slots().size(), 0)
+	service.free()
+
+
+func test_the_header_is_a_cache_and_the_body_is_the_record() -> void:
+	# `manifest.active.meta` is where a load screen reads the header from, but it
+	# is a CACHE of the `meta` save section, not the only copy. Strip it from the
+	# manifest — a hand-edit, or a manifest from a build that predates the
+	# convention — and the slot must still list, by paying for the decompress.
+	var service := _fresh_service()
+	var sim := CitySim.boot_from_files(808)
+	sim.advance_hours(2.0)
+	service.save_slot(sim, 5)
+	var path := service.slot_dir(5) + "/manifest.json"
+	var manifest: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
+	(manifest["active"] as Dictionary).erase("meta")
+	var out := FileAccess.open(path, FileAccess.WRITE)
+	out.store_string(JSON.stringify(manifest, "", true))
+	out = null
+
+	var slots := service.list_slots()
+	assert_eq(slots.size(), 1, "the slot did not vanish with its cache")
+	assert_eq(int(slots[0]["slot"]), 5)
+	assert_eq(int(slots[0]["treasury"]), sim.treasury.balance,
+			"…and the header came back off the `meta` section in the body")
+	assert_eq(int(slots[0]["day_index"]), sim.clock.day_index())
+	assert_eq(int(slots[0]["saved_at_unix"]),
+			int((manifest["active"] as Dictionary)["real_unix"]),
+			"with the stamp taken from the manifest entry it was cached beside")
+	service.free()
+
+
+func test_a_torn_file_is_still_reported_as_unparseable() -> void:
+	# The other half of the failure taxonomy: `bad_json` is what the shell says
+	# when the bytes are not a save envelope at all, and the UI copy for the two
+	# cases is different.
+	var service := _fresh_service()
+	var sim := CitySim.boot_from_files(11)
+	service.save_slot(sim, 4)
+	var out := FileAccess.open_compressed(service.slot_path(4),
+			FileAccess.WRITE, FileAccess.COMPRESSION_ZSTD)
+	out.store_string("{\"schema_version\":1,\"body_sha256\":")   # torn
+	out = null
+	assert_false(service.load_slot(CitySim.boot_from_files(11), 4))
+	assert_eq(service.last_error, "bad_json")
 	service.free()
 
 
@@ -342,8 +439,8 @@ func test_latest_slot_and_load_latest_resume_the_newest_save() -> void:
 	sim.advance_hours(1.0)
 	# `saved_at_unix` has 1 s resolution; stamp the autosave newer explicitly.
 	service.autosave(sim)                           # newest: the autosave
-	var meta := service._read_meta(0)
-	assert_true(int(meta["saved_at_unix"]) >= int(service._read_meta(3)["saved_at_unix"]))
+	var meta := service._slot_meta(0)
+	assert_true(int(meta["saved_at_unix"]) >= int(service._slot_meta(3)["saved_at_unix"]))
 	var restored := CitySim.boot_from_files(777)
 	var slot := service.load_latest(restored)
 	assert_eq(slot, 0, "the autosave was newest")
@@ -373,3 +470,160 @@ func test_ui_section_rides_the_envelope() -> void:
 	bare.save_slot(sim, 2)
 	assert_true(bare.load_slot(restored, 2))
 	assert_eq(bare.last_loaded_ui, {}, "no provider -> empty ui section, never an error")
+
+
+# =========================================================== doc 08 underneath
+# The unification's whole point: the generation ladder, the digest gate, the
+# retention policy and the section ladders are now on the path the app runs,
+# not beside it. Each test below is a doc 08 §2.x row that doc 91 §8 marked
+# PARTIAL for one reason — it was written, tested, and unreachable.
+
+func test_a_slot_is_a_generation_ladder() -> void:
+	# Doc 08 §2.5/§2.6: the manifest rename is the commit point, and the
+	# previous generation is still on disk and still referenced.
+	var service := _fresh_service()
+	var sim := CitySim.boot_from_files(202)
+	service.save_slot(sim, 1)
+	sim.advance_hours(1.0)
+	service.save_slot(sim, 1)
+	var manifest := service.manager_for(1).read_manifest()
+	assert_eq(String(manifest["active"]["file"]), "gen_000002.sav")
+	assert_eq(int(manifest["manifest_version"]), SaveManager.MANIFEST_VERSION)
+	assert_eq((manifest["history"] as Array).size(), 1, "generation 1 retained")
+	assert_true(FileAccess.file_exists(service.slot_dir(1) + "/gen_000001.sav"))
+	assert_eq(String(manifest["active"]["reason"]), "manual")
+	assert_true(int(manifest["active"]["bytes"]) > 0)
+	assert_eq(int(manifest["high_water_sim_minutes"]), sim.clock.sim_time_minutes())
+	service.free()
+
+
+func test_a_ruined_generation_falls_through_to_the_one_behind_it() -> void:
+	# This is the failure the two-slot autosave shadow existed for, answered by
+	# doc 08 §2.7's ladder instead: the newest save is complete, listed, and
+	# wrong, and the city that comes back is the one before it.
+	var service := _fresh_service()
+	var sim := CitySim.boot_from_files(303)
+	service.autosave(sim)
+	var good_hash := sim.state_hash()
+	sim.advance_hours(2.0)
+	service.autosave(sim)
+	_tamper_active_generation(service, SaveService.AUTOSAVE_SLOT)
+
+	assert_eq(service.last_good_autosave_slot(), SaveService.AUTOSAVE_SLOT,
+			"the probe walks the ladder, so the slot still answers")
+	var restored := CitySim.boot_from_files(303)
+	assert_true(service.load_slot(restored, SaveService.AUTOSAVE_SLOT))
+	assert_eq(restored.state_hash(), good_hash, "…and the city is the older city")
+	assert_true(service.last_load_recovered, "doc 08 §2.9: this was a recovery")
+	assert_true(service.last_load_lost_minutes > 0,
+			"and it says how much play it cost (%d min)" % service.last_load_lost_minutes)
+	service.free()
+
+
+func test_the_probe_never_damages_what_it_inspects() -> void:
+	# `last_good_autosave_slot()` reads files that are EXPECTED to be damaged.
+	# Quarantining one as a side effect of asking would turn a health check into
+	# a destructive act.
+	var service := _fresh_service()
+	var sim := CitySim.boot_from_files(404)
+	service.autosave(sim)
+	sim.advance_hours(1.0)
+	service.autosave(sim)
+	_tamper_active_generation(service, SaveService.AUTOSAVE_SLOT)
+	var reported: Array[String] = []
+	service.failed.connect(func(_slot: int, reason: String) -> void:
+		reported.append(reason))
+
+	assert_eq(service.last_good_autosave_slot(), SaveService.AUTOSAVE_SLOT)
+	assert_eq(str(reported), "[]", "a health check is not a failed load")
+	assert_eq(service.last_error, "")
+	assert_true(FileAccess.file_exists(service.slot_dir(0) + "/gen_000002.sav"),
+			"the damaged generation is still exactly where it was")
+	assert_false(FileAccess.file_exists(
+			service.slot_dir(0) + "/quarantine/bad_gen_000002.sav"),
+			"nothing quarantined by a question")
+	service.free()
+
+
+func test_retention_comes_from_data_and_bounds_the_slot() -> void:
+	# Doc 08 §2.7 / §8: at most `max_unpinned_generations` on disk, and the
+	# count is a tunable rather than a constant inside the writer.
+	var service := _fresh_service()
+	assert_eq(service.policy.max_unpinned_generations, 6,
+			"data/persistence.json's documented count")
+	assert_eq(service.policy.history_slot_min_age_s.size(),
+			service.policy.max_unpinned_generations - 1,
+			"the ladder is exactly as deep as the count allows (A is the active)")
+	var sim := CitySim.boot_from_files(505)
+	for i in 9:
+		service.save_slot(sim, 2)
+	var generations := 0
+	var dir := DirAccess.open(service.slot_dir(2))
+	dir.list_dir_begin()
+	var entry := dir.get_next()
+	while entry != "":
+		if not dir.current_is_dir() and entry.begins_with("gen_"):
+			generations += 1
+		entry = dir.get_next()
+	dir.list_dir_end()
+	assert_true(generations <= service.policy.max_unpinned_generations,
+			"nine saves, %d generations kept" % generations)
+	assert_true(service.load_slot(CitySim.boot_from_files(505), 2),
+			"and the slot still loads afterwards")
+	service.free()
+
+
+func test_a_pinned_checkpoint_is_never_swept() -> void:
+	# Doc 08 §2.7: `pre_migration` and `pre_catchup` are pinned, which is what
+	# makes a migration or a catch-up commit reversible.
+	var service := _fresh_service()
+	var sim := CitySim.boot_from_files(606)
+	service.save_slot(sim, 1, "pre_catchup")
+	for i in 8:
+		sim.advance_hours(1.0)
+		service.save_slot(sim, 1, "autosave")
+	var manifest := service.manager_for(1).read_manifest()
+	assert_eq(String((manifest["pinned"] as Dictionary)["pre_catchup"]), "gen_000001.sav")
+	assert_true(FileAccess.file_exists(service.slot_dir(1) + "/gen_000001.sav"),
+			"eight autosaves later the pin is still on disk")
+	service.free()
+
+
+func test_the_sim_body_is_a_versioned_section_with_a_ladder() -> void:
+	# Doc 08 §2.8: `section_version` inside every section, with its own ladder.
+	# `sim/city_sim.gd` grows `save_section_version()` / `migrate_save_section()`
+	# when it splits into the §3.1 registry; until then the shell supplies
+	# version 1 and the hook is proven against a stand-in that answers both.
+	var service := _fresh_service()
+	var sim := CitySim.boot_from_files(707)
+	service.save_slot(sim, 1)
+	var probe := VersionedSim.new()
+	probe.version = 2
+	assert_true(service.load_slot(probe, 1), "a v1 body loads into a v2 reader")
+	assert_eq(probe.migrated_from, 1, "…through the section ladder, not around it")
+	assert_true(bool(probe.restored.get("_migrated", false)))
+	assert_true(probe.restored.has("clock"), "and the body itself arrived intact")
+	service.free()
+
+
+## A stand-in for the sim's half of the section contract: it answers
+## `canonical_capture` / `restore_state` the way `CitySim` does and adds the two
+## ladder methods `SaveService` duck-types for.
+class VersionedSim extends RefCounted:
+	var version: int = 1
+	var restored: Dictionary = {}
+	var migrated_from: int = -1
+
+	func canonical_capture() -> Dictionary:
+		return {"clock": {"tick": 4}}
+
+	func restore_state(body: Dictionary) -> void:
+		restored = body
+
+	func save_section_version() -> int:
+		return version
+
+	func migrate_save_section(data: Dictionary, from_version: int) -> Dictionary:
+		migrated_from = from_version
+		data["_migrated"] = true
+		return data

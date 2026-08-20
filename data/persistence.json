@@ -1,0 +1,34 @@
+{
+	"_comment": "doc 08 §8 — the save half of the persistence tunables, owned by doc 08. Landed 2026-08-19 with the SaveService/SaveManager unification: before it, the retention ladder and the quarantine cap were constants inside `sim/persistence/save_manager.gd` and the shell's slot layer had no policy at all. `sim/persistence/save_policy.gd` is the only reader; `SaveManager` and `game/save_service.gd` both take a `SavePolicy` rather than reading this file themselves, so a test can hand either one a hand-built policy without touching the disk.",
+
+	"schema_version": 1,
+
+	"save": {
+		"_comment_version": "`current_schema_version` is the ENVELOPE version (doc 08 §2.8), and it is 1, not §8's illustrative 7: no generation file has ever shipped, so there is no history to have laddered through. It is duplicated here for documentation and asserted equal to `SaveManager.CURRENT_SCHEMA_VERSION` by `tests/test_save_manager.gd` — a tripwire, never a source. The ladder itself is code (`SaveManager.LADDER`), because a migration step is a function.",
+		"current_schema_version": 1,
+
+		"_comment_paths": "`slot_path` is a TEMPLATE now that the shell's player-facing slots each own a generation ladder: `%d` is the slot index. Doc 08 §2.5's `user://saves/slot0/` is the same shape with the index spelled out. `device_settings_path` is device-scoped and NEVER migrated (report C-03).",
+		"slot_path": "user://saves/slot_%d",
+		"device_settings_path": "user://settings.cfg",
+		"legacy_slot_file": "user://saves/slot_%d.json",
+
+		"compression": "zstd",
+		"debug_plain_mirror": false,
+
+		"autosave_interval_real_seconds": 300,
+		"snapshot_budget_ms": 25,
+		"encode_write_budget_ms": 120,
+		"load_budget_ms": 400,
+		"blocking_save_wait_ms": 400,
+
+		"_comment_retention": "Doc 08 §2.7: at most 6 unpinned + 2 pinned. The age array has SIX entries because slot A is the active generation itself (age 0 by definition); `SaveManager` consumes entries B..F as the minimum real-seconds age each history slot must clear. B newest-other · C ≥30 min · D ≥6 h · E ≥24 h · F ≥7 days. Shortening the array shortens the ladder; it may never be longer than `max_unpinned_generations`.",
+		"max_unpinned_generations": 6,
+		"max_pinned_generations": 2,
+		"retention_slot_age_real_seconds": [0, 0, 1800, 21600, 86400, 604800],
+
+		"premigration_keep_launches": 3,
+		"quarantine_max_files": 3,
+		"repair_threshold_frac": 0.02,
+		"max_entities_sane": 200000
+	}
+}

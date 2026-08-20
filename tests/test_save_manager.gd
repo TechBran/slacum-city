@@ -205,7 +205,7 @@ func test_retention_ladder() -> void:
 	for i in times.size():
 		section.payload = {"treasury": (i + 1) * 100}
 		manager.request_save("autosave", (i + 1) * 100, times[i])
-	var manifest: Dictionary = manager._read_manifest()
+	var manifest: Dictionary = manager.read_manifest()
 	assert_eq(String(manifest["active"]["file"]), "gen_000008.sav")
 	var kept_files: Array = []
 	for entry in manifest["history"]:
@@ -216,6 +216,93 @@ func test_retention_ladder() -> void:
 	assert_false(FileAccess.file_exists(manager.base_dir + "/gen_000005.sav"), "swept")
 	assert_false(FileAccess.file_exists(manager.base_dir + "/gen_000006.sav"), "swept")
 	assert_true(FileAccess.file_exists(manager.base_dir + "/gen_000001.sav"), "week-deep slot kept")
+
+
+func test_the_retention_ladder_is_data_not_code() -> void:
+	# Doc 08 §8. The ladder used to be a `const` in this file, which is how the
+	# project ended up with two writers disagreeing about how many saves to keep.
+	var policy := SavePolicy.load_from_files()
+	assert_true(policy.is_valid(), "data/persistence.json parses (%s)" % str(policy.errors))
+	assert_eq(policy.max_unpinned_generations, 6, "doc 08 §2.7: 6 unpinned")
+	assert_eq(policy.max_pinned_generations, 2, "…and 2 pinned")
+	assert_eq(str(policy.history_slot_min_age_s), str(SaveManager.RETENTION_SLOT_MIN_AGE_S),
+			"the data ladder and the code fallback say the same thing")
+	assert_eq(policy.current_schema_version, SaveManager.CURRENT_SCHEMA_VERSION,
+			"the documented envelope version matches the one this build writes — "
+			+ "a tripwire, because the ladder that has to agree with it is code")
+
+	# A shorter ladder keeps fewer generations, with no code change.
+	var short_policy := SavePolicy.from_dict({"save": {
+		"max_unpinned_generations": 2,
+		"retention_slot_age_real_seconds": [0, 0],
+	}})
+	assert_eq(short_policy.history_slot_min_age_s.size(), 1)
+	var manager := SaveManager.new("user://test_saves/shortladder", short_policy)
+	_wipe(manager.base_dir)
+	manager = SaveManager.new("user://test_saves/shortladder", short_policy)
+	var section := FakeSection.new(&"economy")
+	manager.register_section(section)
+	for i in 5:
+		manager.request_save("autosave", (i + 1) * 10, 1_600_000 + i * 10)
+	assert_eq((manager.read_manifest()["history"] as Array).size(), 1,
+			"active + one history entry, because that is what the data said")
+
+
+func test_a_missing_policy_file_falls_back_to_documented_defaults() -> void:
+	# A tunable file that will not parse may not be the reason a city cannot be
+	# written. It is a reported condition, not a refusal.
+	var policy := SavePolicy.load_from_files("res://data/definitely_not_here.json", true)
+	assert_false(policy.is_valid())
+	assert_eq(policy.max_unpinned_generations, 6, "defaults are the doc's numbers")
+	assert_eq(str(policy.history_slot_min_age_s), str(SaveManager.RETENTION_SLOT_MIN_AGE_S))
+	# …and the cache is untouched by the probe above.
+	assert_true(SavePolicy.load_from_files().is_valid())
+
+
+func test_peek_is_the_load_gate_without_the_side_effects() -> void:
+	var manager := _fresh("peek")
+	var section := FakeSection.new(&"economy")
+	section.payload = {"treasury": 10}
+	manager.register_section(section)
+	assert_false(bool(manager.peek_newest()["ok"]), "nothing saved yet")
+	manager.request_save("autosave", 100, 1_600_000)
+	section.payload = {"treasury": 20}
+	manager.request_save("autosave", 200, 1_600_300)
+
+	var peeked := manager.peek_newest()
+	assert_true(bool(peeked["ok"]))
+	assert_eq(String(peeked["file"]), "gen_000002.sav")
+	assert_false(bool(peeked["recovered"]))
+	assert_eq(int(peeked["sim_time_minutes"]), 200)
+
+	# Ruin the active generation and ask again: the answer moves back a
+	# generation, and the ruined file is neither quarantined nor deleted.
+	var path := manager.base_dir + "/gen_000002.sav"
+	var file := FileAccess.open_compressed(path, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+	var text := file.get_as_text()
+	file = null
+	var out := FileAccess.open_compressed(path, FileAccess.WRITE, FileAccess.COMPRESSION_ZSTD)
+	out.store_string(text.replace("\"treasury\":20", "\"treasury\":99"))
+	out = null
+	var again := manager.peek_newest()
+	assert_true(bool(again["ok"]))
+	assert_eq(String(again["file"]), "gen_000001.sav")
+	assert_true(bool(again["recovered"]), "this would be a recovery, and it says so")
+	assert_true(FileAccess.file_exists(path), "asking did not move the damaged file")
+	assert_false(FileAccess.file_exists(manager.base_dir + "/quarantine/bad_gen_000002.sav"))
+	assert_eq(str(manager.repair_notes), str(PackedStringArray()),
+			"and it left no notes behind either")
+
+
+func test_registering_a_section_twice_replaces_it() -> void:
+	# The shell rebuilds its sections on every save and every load, because the
+	# payload is new each time. Appending them would grow the registry without
+	# bound and stringify the same key repeatedly.
+	var manager := _fresh("rereg")
+	manager.register_section(FakeSection.new(&"economy"))
+	manager.register_section(FakeSection.new(&"economy"))
+	manager.register_section(FakeSection.new(&"power"))
+	assert_eq(str(manager.registered_keys()), str([&"economy", &"power"] as Array[StringName]))
 
 
 func test_high_water_check() -> void:
