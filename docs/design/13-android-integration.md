@@ -741,9 +741,11 @@ Adds: release AAB, upload keystore + Play App Signing, store listing assets, Dat
 | D-14 | 16 KB alignment | `llvm-readelf -l` on every shipped `.so` → `Align 0x4000` |
 | D-15 | Long absence | Set device clock +3 days, relaunch → elapsed clamps to 12 real hours (720 coarse steps), catch-up sliced, no ANR (`dumpsys activity anr` clean), report renders and states the discarded surplus |
 | D-16 | Cold start | `am start -W` → `TotalTime` ≤ 4 000 ms on Tier B |
-| **D-17** | **Save and load, timed** | Three cold starts, five runs each, median `TotalTime`: **A** `--esa command_line_params "--,--title"` (no city load), **B** `"--,--resume"`, **C** `"--,--resume,--save-now"`. **`B − A` is the load, `C − B` is the save** — the difference cancels process start, Vulkan init and shader warm-up, which is what makes it work with no instrumentation in the build. Provisional (workstation, `tools/profile_save.gd`, the shipped `SaveService` path): founding city **14.4 ms save / 49.2 ms load**, 1,500-building city **138 ms / 456 ms**. Expect 2–3× on device. On a telemetry build, read `PERFIO` off logcat instead |
+| **D-17** | **Save and load, timed** | Three cold starts, five runs each, median `TotalTime`: **A** `--esa command_line_params "--,--title"` (no city load), **B** `"--,--resume"`, **C** `"--,--resume,--save-now"`. **`B − A` is the load, `C − B` is the save** — the difference cancels process start, Vulkan init and shader warm-up, which is what makes it work with no instrumentation in the build. Provisional (workstation, `tools/profile_save.gd`, the shipped `SaveService` path): founding city **14.4 ms save / 49.2 ms load**, 1,500-building city **138 ms / 456 ms**. Expect 2–3× on device. On a telemetry build, read `PERFIO` off logcat instead. **NOT RUN 2026-08-20 — blocked twice over:** the three arms are selected by arguments and no argument arrives (D-20), and the `PERFIO` fallback could not cover the LOAD either, because `game/main.gd` set `save_service.log_io` inside `_build_city_view()` (~line 344) while the boot load runs at ~line 133. **The flag now moves to `SaveService` construction**, so the next build times the load — which is the one number §2.9's ANR arithmetic has never had |
 | **D-18** | **Frame time and jank at the three poses, day and night** | Six runs: `--zoom=` 0.0 / 0.5 / 1.0 × hour 13 / hour 21, 60 s of `dumpsys gfxinfo … framestats` each. **Hour 13 is the shadow worst case and is the one that matters** — doc 11's whole measured record was taken at 21:00 with the sun down and an empty shadow pass, and daylight costs the benchmark city +142 draw calls at Z0. Gate: doc 11 §7.4's table, read against the DAY rows |
 | **D-19** | **Harness pre-flight** | Before D-17/D-18: confirm the launcher activity, confirm `--esa command_line_params "--,--zoom=1.0"` reaches the camera (a visible signal, not a log line), and confirm "Profile HWUI rendering" is OFF. `tools/device_runbook.md` §1 is the procedure and records why the incumbent `tools/bench_device.sh` invocation cannot work |
+| **D-20** | **Make `--esa command_line_params` reach the game** *(new, blocks D-17 and D-18)* | **RUN 2026-08-20 and FAILED.** Arguments do not reach `OS.get_cmdline_user_args()` on this export template: two runs at `--zoom=0.0` / `--zoom=0.5` produced byte-identical `dc`/`prim` sequences, and `--rain=1.0,--overlay=2` came up clear with no overlay. The city still loads on every launch — through `CrashSentinel`'s recovery branch, because `am force-stop` registers as an unclean exit — which is what disguises the fault. `GodotAppLauncher` is an `activity-alias` for `.GodotApp`, so the extra should forward; where it is dropped is not established. **Until this passes, D-17 and D-18 cannot be run at all** |
+| **D-21** | **Replace `gfxinfo` with the `PERF` line everywhere** *(new)* | **`dumpsys gfxinfo` measures nothing on this app** — every `framestats` read returned `Total frames rendered: 0` and the `4950ms` sentinel, because Godot renders through a `SurfaceView` and never touches HWUI. Verified 2026-08-20. D-18's "60 s of `dumpsys gfxinfo … framestats`" is unrunnable as written; `adb logcat -s godot:V \| grep '^PERF'` is the replacement and carries `dc`, `prim`, `vram` and the chunk census besides |
 
 **The runbook.** `tools/device_runbook.md` is the whole session as commands — the
 retry loop that gets a sleeping Fold back on the wire, the pre-flight, the six
@@ -754,6 +756,17 @@ the device never appeared (135 polls, zero endpoints), and it drives the
 **installed** build: the user's saves are in that app's private storage and there
 is no export path, so nothing in it installs, reinstalls or uninstalls anything.
 
+**It was then run, the same day.** The file now opens with a box recording what
+it got wrong — the launcher activity name, the argument delivery (D-20) and the
+whole of its `gfxinfo` instrumentation (D-21) — and its Fold columns are filled
+in or explicitly left as em-dashes. Results in doc 11 §2.13, "Fold 6 measured";
+raw captures in `tools/device_results/`. **Add one line to the top of the next
+session's checklist:** back the saves up with `adb exec-out run-as
+com.slacumcity.game tar czf - -C /data/data/com.slacumcity.game/files saves`
+before the first launch. The generational ladder keeps three entries, and a
+dozen relaunches rotate the player's pre-session city off the device — this
+session's backup is the only surviving copy of the city as it stood at 14:00.
+
 ### Device matrix
 
 | Tier | Representative | Android | Purpose | Perf target |
@@ -763,6 +776,18 @@ is no export path, so nothing in it installs, reinstalls or uninstalls anything.
 | C — min spec | Any Adreno 610 / Mali-G52, 4 GB RAM | 10 (API 29) | minSdk floor, Vulkan baseline, worst case | 30 fps Performance |
 | D — OEM hostile | Any Samsung One UI + any Xiaomi MIUI | any | Process-killer and autostart-restriction behaviour for D-02…D-05 | n/a |
 | E — emulator | `system-images;android-37;google_apis;x86_64` | 37 | Lifecycle, permissions, notification logic in CI. **Never** for perf | n/a |
+
+**Tier A has a real device against it as of 2026-08-20, and it did not meet the
+row.** Galaxy Z Fold 6 (Adreno 750, Android 16, inner panel **1856 × 2160 at
+120 Hz**) auto-detected into **Balanced, not High**, and on the player's own
+70-building city it held 60.6–96.6 fps ungoverned but fell to **53.8 fps with
+the governor four rungs down** on the more expensive captures. The tier's "60 fps
+High" target is therefore **unverified and looks optimistic**: the frame is
+GPU-bound on fragments at a 2.90 MP render target (`render_scale` 0.85), with the
+CPU at 0.5–0.8 ms of its 4 ms budget. Note also that this row's "Pixel 9 /
+Galaxy S24 class" representative is a **1080p-class** phone; a 4 MP foldable is a
+materially harder tier-A device and the matrix does not currently distinguish
+them. Doc 11 §2.13 has the numbers.
 
 Axes to cross: {A, B, C} × {permission granted, denied} × {battery saver on, off}. D-tier runs only the lifecycle/notification subset.
 

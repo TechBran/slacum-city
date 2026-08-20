@@ -85,6 +85,14 @@ func _ready() -> void:
 
 	save_service = SaveService.new()
 	save_service.name = "SaveService"
+	# doc 13 §7 D-17: one PERFIO line per save/load, ^PERF-anchored so one logcat
+	# grep collects both halves. Set HERE, at construction, and not beside the
+	# PerfTelemetry wiring in _build_city_view() — the Fold 6 session of
+	# 2026-08-20 found that the boot LOAD runs well before _build_city_view(),
+	# so a flag set there can only ever time SAVES; the load in front of the
+	# catch-up is the one doc 13 §2.9's ANR arithmetic is missing. Gated: the
+	# capture rig is not a player feature.
+	save_service.log_io = _perf_capture_armed()
 	add_child(save_service)
 	android_lifecycle = AndroidLifecycle.new()
 	android_lifecycle.name = "AndroidLifecycle"
@@ -330,21 +338,21 @@ func _build_city_view(render_data: Dictionary) -> void:
 	add_child(vehicle_view)
 	vehicle_view.setup(render_data)
 	perf_governor = PerfGovernor.new(render_data, render_model.preset)
-	# doc 11 §2.13's Fold pass: the PERF/PERFIO capture rig — measurement
-	# machinery, NOT a player feature, so it arms only under `--perf` (the
-	# device runbook passes it). Always-on it cost every session a per-frame
-	# GPU timestamp query (`viewport_set_measure_render_time`), which is
-	# exactly the class of sync point that irritates mobile drivers — filed
-	# while chasing intermittent presentation-corruption bands on the Fold.
-	if OS.get_cmdline_user_args().has("--perf"):
+	# doc 11 §2.13's Fold pass: the PERF capture rig — measurement machinery,
+	# NOT a player feature, so it arms only when `_perf_capture_armed()`.
+	# Always-on it cost every session a per-frame GPU timestamp query
+	# (`viewport_set_measure_render_time`), exactly the class of driver sync
+	# point filed while chasing the Fold's presentation-corruption bands.
+	# (`save_service.log_io` arms at construction, under the same check — the
+	# boot LOAD runs long before this line, and it is the one doc 13 §2.9's
+	# ANR arithmetic is missing.)
+	if _perf_capture_armed():
 		perf_telemetry = PerfTelemetry.new(render_data)
 		perf_telemetry.set_viewport(get_viewport().get_viewport_rid())
 		perf_telemetry.set_census_source(func() -> Dictionary:
 				return render_model.tier_census())
 		perf_telemetry.set_instance_source(func() -> int:
 				return render_model.building_count())
-		if save_service != null:
-			save_service.log_io = true
 	# Boot-time presets: a phone that auto-detected into Performance used to come
 	# up with Balanced counts on every per-layer view until the player touched
 	# the settings row. Seed them all from the resolved preset once, here.
@@ -542,6 +550,17 @@ func _render_id_from_int(value: Variant) -> int:
 ## Dev arg `--place=<archetype>`: buy one building on the first serviceable
 ## vacant core lot, exactly as a player tap would — verifies the incremental
 ## render add end-to-end.
+## The PERF/PERFIO capture rig's arming switch. `--perf` works on desktop;
+## on device the export template drops `--esa command_line_params` on the floor
+## (doc 13 D-20), so the runbook arms it with a flag FILE instead:
+##   adb shell run-as com.slacumcity.game touch files/perf_capture.flag
+## (debug builds only — which is what every measured build is). Delete the file
+## to disarm; a player never has either.
+static func _perf_capture_armed() -> bool:
+	return OS.get_cmdline_user_args().has("--perf") \
+			or FileAccess.file_exists("user://perf_capture.flag")
+
+
 func _place_demo(archetype: String) -> void:
 	var sim := sim_host.sim
 	# A water kind routes through doc 05's verb, sited by its own preview —

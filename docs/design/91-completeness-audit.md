@@ -59,6 +59,15 @@ instance). They are counted in the tally like any other row.
 and §2.13 stay PARTIAL on S10 (**S0 shipped in Wave 7** — `ui/title_screen.gd`). Everything below the count table is as
 written at `6d8c2b1` unless a row says otherwise.*
 
+*Fold 6 device pass (2026-08-20): **doc 13's row is unchanged at 5 / 3 / 5**, and
+that is the finding, not an omission. Five of its rows were re-examined against a
+real device (§13) and every one kept its grade — what changed is that they are
+now graded on `dumpsys` evidence instead of on code-reading, and §2.7 is sharper
+than "ABSENT": `POST_NOTIFICATIONS` ships in the release path and is **missing
+from the debug APK under test**. §2.8 gained real evidence (the governor was seen
+stepping on device) and still holds PARTIAL, because no thermal step-down was
+exercised and battery was never measured.*
+
 *Wave-7 revision (2026-08-19), seven rows and one grade retired. Doc 08 §2.2,
 §2.5, §2.7, §2.8, §2.9 and doc 01 §2.10 moved PARTIAL → SHIPPED on the
 persistence unification and the `CatchUpPlanner` resume wiring; doc 02 §2.4 moved
@@ -389,6 +398,42 @@ so a finished tutorial stays finished across a restart. **D-3 closed.**
 > which `tools/profile_save.gd` measures at **49 ms on the founding city and
 > 456 ms on the 1,500-building benchmark, on a workstation** (doc 11 §2.13).
 > The re-grade is unblocked the moment a device answers.
+>
+> **A device answered on 2026-08-20, and four of the five rows are now graded on
+> evidence rather than on code-reading.** Galaxy Z Fold 6, Android 16, the
+> installed debug build (`versionCode` 400, `minSdk` 29, **`targetSdk` 36**,
+> `arm64-v8a`, `DEBUGGABLE`). The instruments were `dumpsys package`,
+> `dumpsys notification` and the game's own `PERF` line; the session is written
+> up in doc 11 §2.13 ("Fold 6 measured") and the raw captures are in
+> `tools/device_results/`. Two device facts do most of the work:
+>
+> * **`dumpsys package com.slacumcity.game` lists no requested permissions at
+>   all** — the `runtime permissions:` block is empty and there is no declared
+>   permission section. `POST_NOTIFICATIONS` *is* declared, in
+>   `android/plugins/slacum_native/src/main/AndroidManifest.xml`, and
+>   `tools/make_release.sh` adds it — **but neither reaches the debug APK the
+>   team actually tests on.** That is a sharper finding than "ABSENT": the
+>   permission surface exists in the release path and is missing from the build
+>   under test, so the permission flow cannot execute on the device anyone is
+>   holding.
+> * **`dumpsys notification` shows `AppSettings: com.slacumcity.game (10755)`
+>   with zero notification channels registered**, after a dozen launches. No
+>   channel has ever been created on this device.
+>
+> One row moves in the other direction. **2.8 is upgraded**, because the thermal
+> ladder was observed *consuming* a real signal: the `PERF` line reported
+> `thermal=0` and then `thermal=1` (NONE → LIGHT) pushed through
+> `AndroidNative.thermal_status_changed`, and the governor was seen stepping its
+> ladder (`knob` 0 → 4) in the foreground. `SlacumNative` is therefore alive and
+> feeding the governor on device, which is exactly what "nothing consumes the
+> thermal ladder" said was missing. The frames were **not** thermally limited —
+> `thermal_zone0` sat at 45.7–49.6 °C and drifted *down* — so the ladder was
+> responding to frame time, not to heat, and the heat half of the row is still
+> unproven. **2.9 stays PARTIAL and gains a device number it did not want:**
+> the boot LOAD still cannot be timed on device, because `game/main.gd` set
+> `save_service.log_io` ~211 lines *after* the load it was meant to time. Fixed
+> in this branch; it needs a build. **2.12 keeps its grade** but `targetSdk` 36
+> is now confirmed on the installed artefact.
 
 | § | Subject | Grade | Pointer / gap |
 |---|---|---|---|
@@ -396,11 +441,11 @@ so a finished tutorial stays finished across a restart. **D-3 closed.**
 | 2.1 | Catch-up on resume, not background sim | SHIPPED | the architecture is right |
 | 2.2 | Lifecycle state machine | SHIPPED | `AndroidLifecycle`; `test_android_native.gd` |
 | 2.3 | Measuring elapsed real time | SHIPPED | wall/monotonic cross-check + `elapsedRealtime` ceiling |
-| 2.4 | **Notification scheduling** | **ABSENT** | no scheduler, no `AlarmManager` bridge, no code path |
-| 2.5 | **Notification platform** | **ABSENT** | no channels, no ids, no delivery |
-| 2.6 | `SlacumNative` plugin | PARTIAL | ships `elapsedRealtime`, `boot_id`, thermal status, sustained performance — the doc's notification and permission surface is not in it |
-| 2.7 | Permissions | **ABSENT** | `POST_NOTIFICATIONS` is neither declared nor requested |
-| 2.8 | Battery, frame pacing, thermal | PARTIAL | thermal status is forwarded and audio mutes on focus loss; **nothing consumes the thermal ladder** to drop a preset or cap fps |
+| 2.4 | **Notification scheduling** | **ABSENT** *(device-confirmed 2026-08-20)* | no scheduler, no `AlarmManager` bridge, no code path — and `dumpsys notification` shows the app holding **zero channels** on a real device after a dozen launches |
+| 2.5 | **Notification platform** | **ABSENT** *(device-confirmed 2026-08-20)* | no channels, no ids, no delivery; confirmed against `dumpsys notification` on the Fold 6 |
+| 2.6 | `SlacumNative` plugin | PARTIAL → **PARTIAL, working** *(device-confirmed)* | `elapsedRealtime`, `boot_id`, thermal status and sustained performance are **live on device** — `PERF` reported `thermal` 0 → 1 from `AndroidNative.thermal_status_changed`. The doc's notification and permission surface is still not in it |
+| 2.7 | Permissions | **ABSENT in the build under test** *(device-confirmed)* | `POST_NOTIFICATIONS` **is** declared in the plugin manifest and added by `tools/make_release.sh`, but `dumpsys package` on the installed **debug** APK lists **no requested permissions at all** — so the permission flow cannot run on the build anyone is testing |
+| 2.8 | Battery, frame pacing, thermal | PARTIAL *(evidence upgraded, grade held)* | ~~nothing consumes the thermal ladder~~ is **retired**: the governor was observed stepping on device (`knob` 0 → 4 in the foreground, `preset=balanced`, doc 11 §2.13), and `SlacumNative` fed it a real `thermal` 0 → 1. Still PARTIAL, and deliberately: the Fold never left `thermal=1` / 45.7–49.6 °C and was **cooling**, so **no thermal step-down was ever exercised**, and battery (D-07) was not measured at all |
 | 2.9 | Long catch-up without an ANR | PARTIAL | measured at 1.04 s for 43 coarse hours (soak §14.2). ~~The resume path is **D-1**, so the measurement is of the planner, not of the shipped call~~ — **D-1 closed 2026-08-19**, and the shell now makes the same `CatchUpPlanner.plan()` call the measurement was taken against. Still PARTIAL because the number is a workstation number: no on-device ANR run has happened (doc 13 §7 D-15). |
 | 2.10 | Export pipeline | SHIPPED | `export_presets.cfg`, gradle v0.3.x |
 | 2.11 | Crash reporting | **ABSENT** | nothing |

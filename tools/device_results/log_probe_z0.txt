@@ -1,0 +1,16 @@
+--------- beginning of main
+08-20 14:01:50.790 12832 12865 I godot   : Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+08-20 14:01:50.847 12832 12865 I godot   : Vulkan 1.3.128 - Forward Mobile - Using Device #0: Qualcomm - Adreno (TM) 750
+08-20 14:01:51.037 12832 12865 I godot   : 
+08-20 14:01:52.939 12832 12865 E godot   : WARNING: [crash] unclean exit #2; breadcrumb user://logs/incident_1787248912.json
+08-20 14:01:52.939 12832 12865 E godot   :    at: push_warning (core/variant/variant_utility.cpp:1033)
+08-20 14:01:52.939 12832 12865 E godot   :    GDScript backtrace (most recent call first):
+08-20 14:01:52.939 12832 12865 E godot   :        [0] _ready (res://game/main.gd:130)
+08-20 14:01:56.447 12832 12865 I godot   : PERF t=2.0 fps=88.7 p95=58.0 cpu=0.5 gpu_est=6.1 dc=140 prim=124968 vram=144 static_mem=137 chunks=9 near=4 inst=70 lights=0 preset=balanced knob=0 thermal=0
+08-20 14:01:58.452 12832 12865 I godot   : PERF t=4.0 fps=109.9 p95=14.7 cpu=0.6 gpu_est=6.0 dc=141 prim=125052 vram=144 static_mem=137 chunks=9 near=4 inst=70 lights=0 preset=balanced knob=0 thermal=0
+08-20 14:02:00.460 12832 12865 I godot   : PERF t=6.0 fps=110.0 p95=12.6 cpu=0.5 gpu_est=6.1 dc=141 prim=124802 vram=144 static_mem=137 chunks=9 near=4 inst=70 lights=0 preset=balanced knob=0 thermal=0
+08-20 14:02:02.469 12832 12865 I godot   : PERF t=8.0 fps=107.5 p95=13.9 cpu=0.5 gpu_est=6.0 dc=141 prim=124802 vram=144 static_mem=137 chunks=9 near=4 inst=70 lights=0 preset=balanced knob=0 thermal=0
+08-20 14:02:04.485 12832 12865 I godot   : PERF t=10.0 fps=102.2 p95=14.5 cpu=0.5 gpu_est=6.5 dc=141 prim=124734 vram=144 static_mem=137 chunks=9 near=4 inst=70 lights=0 preset=balanced knob=0 thermal=0
+08-20 14:02:06.642 12832 12865 I godot   : PERF t=12.0 fps=58.0 p95=35.4 cpu=0.7 gpu_est=7.3 dc=141 prim=125058 vram=144 static_mem=138 chunks=9 near=4 inst=70 lights=0 preset=balanced knob=0 thermal=0
+08-20 14:02:08.653 12832 12865 I godot   : PERF t=14.0 fps=109.0 p95=11.8 cpu=0.5 gpu_est=7.0 dc=141 prim=125062 vram=144 static_mem=138 chunks=9 near=4 inst=70 lights=0 preset=balanced knob=0 thermal=0
+08-20 14:02:10.646 12832 12865 I godot   : PERF t=16.1 fps=96.6 p95=14.1 cpu=0.5 gpu_est=7.0 dc=141 prim=125144 vram=144 static_mem=138 chunks=9 near=4 inst=70 lights=0 preset=balanced knob=0 thermal=0

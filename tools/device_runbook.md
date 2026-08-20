@@ -1,11 +1,56 @@
 # The Fold 6 runbook — the six Wave-8 device questions, as commands
 
-**Status: the device did not appear.** This file was written on 2026-08-20 during
-a 45-minute window in which `adb` was polled every 20 seconds — 135 attempts,
-`adb mdns services` re-run on each one, zero endpoints advertised, zero devices
-authorised. Everything below is therefore a **runbook, not a result**: it is the
-session that was prepared and could not be run, written so that whoever next has
-the Fold on the wire spends the window measuring instead of working out how.
+> ## RUN ONCE, 2026-08-20 — read this box before you use anything below
+>
+> **The device appeared and the session ran.** Results are in doc 11 §2.13,
+> "Fold 6 measured"; raw captures are in `tools/device_results/`. The window was
+> about 20 minutes and ended when the user picked the phone up.
+>
+> **Three things in this runbook are WRONG against the shipped build. Fix them
+> before the next session or lose the window the same way.**
+>
+> 1. **§1.1 — the launcher activity is `com.godot.game.GodotAppLauncher`**, an
+>    `activity-alias` for `.GodotApp`. Not `com.godot.game.GodotApp`, which is
+>    what §1.1 and `tools/bench_device.sh` say. `am start` on the old name fails.
+> 2. **§1.2 — `--esa command_line_params` DOES NOT REACH
+>    `OS.get_cmdline_user_args()` on this export template.** Verified twice: two
+>    runs at `--zoom=0.0` and `--zoom=0.5` produced byte-identical `dc`/`prim`
+>    sequences, and a run carrying `--rain=1.0,--overlay=2` came up in clear
+>    weather with no overlay. **The entire §2 scenario vocabulary is therefore
+>    unavailable**, and with it the pose matrix, the hour control and `--save-now`.
+>    The city still loads on every launch, which is what disguises the fault —
+>    but it loads through `CrashSentinel`'s recovery branch, because
+>    `am force-stop` registers as an unclean exit, **not** through `--resume`.
+>    *Do the §1.2 probe first and believe it.*
+> 3. **§2 — `dumpsys gfxinfo` MEASURES NOTHING on this app.** Every `framestats`
+>    read returned `Total frames rendered: 0` and every percentile came back as
+>    the sentinel `4950ms`, because Godot renders through a `SurfaceView` and
+>    never touches HWUI. **All of §2's instrumentation is void.** Use the `PERF`
+>    line instead — it works, it is in the shipped build, and it carries `dc`,
+>    `prim`, `vram` and the chunk census that `gfxinfo` never had.
+>
+> **What §1.5 says is out of date in the good direction:** the `PERF` line *is*
+> emitted by the installed build (`game/render/perf_telemetry.gd` is wired in
+> `game/main.gd`), so `adb logcat -s godot:V | grep '^PERF'` is the instrument
+> for everything below. `PERFIO` on **save** works; `PERFIO` on **load** could
+> not, because `log_io` was set ~211 lines after the boot load — fixed in this
+> branch, needs a build.
+>
+> **Two rules the session learned the expensive way.** *Back up the saves before
+> the first launch* — `adb exec-out run-as com.slacumcity.game tar czf - -C
+> /data/data/com.slacumcity.game/files saves > saves_backup.tgz` — because the
+> generational ladder keeps three entries and a dozen relaunches rotate the
+> player's pre-session city off the device. And *prefer one long foreground hold
+> to many short launches*: each relaunch resumes the save and runs the sim, and
+> this session cost the player ~12 sim-hours and ~$46K of treasury.
+
+**Status when written: the device did not appear.** This file was written on
+2026-08-20 during a 45-minute window in which `adb` was polled every 20 seconds —
+135 attempts, `adb mdns services` re-run on each one, zero endpoints advertised,
+zero devices authorised. Everything below was therefore a **runbook, not a
+result**: the session that was prepared and could not be run, written so that
+whoever next had the Fold on the wire spent the window measuring instead of
+working out how. It served that purpose, and the box above is what it cost.
 
 Every table has a **provisional** column already filled in from the workstation
 (NVIDIA RTX 2000 Ada, Godot **Forward Mobile** — the same renderer the phone
@@ -145,8 +190,11 @@ integration snippet closes it for all three.
 new build before any `PERF` row can be collected.
 
 > **Amended 2026-08-20, post-integration:** the wiring landed and then was
-> GATED behind the `--perf` user arg — pass it in `--esa command_line_params`
-> alongside the pose args, or no `PERF`/`PERFIO` row is emitted. Always-on it
+> GATED behind `_perf_capture_armed()`: the `--perf` user arg on DESKTOP, or —
+> because D-20 means no arg ever reaches the game on device — the flag file
+>   `adb shell run-as com.slacumcity.game touch files/perf_capture.flag`
+> (delete it to disarm; debug builds only). Without one of the two, no
+> `PERF`/`PERFIO` row is emitted. Always-on it
 > cost every player session a per-frame `viewport_set_measure_render_time`
 > GPU timestamp query, which is the class of sync point that irritates mobile
 > drivers; it was withdrawn from plain launches while chasing intermittent
@@ -285,18 +333,41 @@ different GPU and are a shape, not a target.
 
 | city | pose | hour | mean ms (desk) | p95 ms (desk) | dc | dc+UI | budget | **Fold p50** | **Fold p95** | **Fold jank%** |
 |---|---|---|---|---|---|---|---|---|---|---|
-| founding (34 bldg) | Z0 | 21 | 1.77 | 1.85 | 31 | 56 | 320 | | | |
-| founding | Z1 | 21 | 1.24 | 1.39 | 42 | 67 | 320 | | | |
-| founding | Z2 | 21 | 1.19 | 1.39 | 80 | 105 | 320 | | | |
-| founding | Z0 | **13** | 2.16 | 2.38 | **69** | 94 | 320 | | | |
-| founding | Z1 | **13** | 1.48 | 1.52 | **80** | 105 | 320 | | | |
-| founding | Z2 | **13** | 1.33 | 1.39 | 80 | 105 | 320 | | | |
-| bench (1,500) | Z0 | 21 | 12.43 | 12.50 | 95 | 120 | 320 | | | |
-| bench | Z1 | 21 | 12.40 | 14.27 | 113 | 138 | 320 | | | |
-| bench | Z2 | 21 | 12.08 | 12.96 | 196 | 221 | 320 | | | |
-| bench | Z0 | **13** | 13.02 | 13.33 | **237** | **262** | 320 | | | |
-| bench | Z1 | **13** | 12.83 | 13.33 | **233** | **258** | 320 | | | |
-| bench | Z2 | **13** | 13.72 | 14.82 | 196 | 221 | 320 | | | |
+| founding (34 bldg) | Z0 | 21 | 1.77 | 1.85 | 31 | 56 | 320 | — | — | — |
+| founding | Z1 | 21 | 1.24 | 1.39 | 42 | 67 | 320 | — | — | — |
+| founding | Z2 | 21 | 1.19 | 1.39 | 80 | 105 | 320 | — | — | — |
+| founding | Z0 | **13** | 2.16 | 2.38 | **69** | 94 | 320 | — | — | — |
+| founding | Z1 | **13** | 1.48 | 1.52 | **80** | 105 | 320 | — | — | — |
+| founding | Z2 | **13** | 1.33 | 1.39 | 80 | 105 | 320 | — | — | — |
+| bench (1,500) | Z0 | 21 | 12.43 | 12.50 | 95 | 120 | 320 | — | — | — |
+| bench | Z1 | 21 | 12.40 | 14.27 | 113 | 138 | 320 | — | — | — |
+| bench | Z2 | 21 | 12.08 | 12.96 | 196 | 221 | 320 | — | — | — |
+| bench | Z0 | **13** | 13.02 | 13.33 | **237** | **262** | 320 | — | — | — |
+| bench | Z1 | **13** | 12.83 | 13.33 | **233** | **258** | 320 | — | — | — |
+| bench | Z2 | **13** | 13.72 | 14.82 | 196 | 221 | 320 | — | — | — |
+
+**Every Fold column above is an em-dash and stays one.** The pose matrix needs
+`--zoom` and `--advance-hours`, and neither argument reaches the game (see the
+box at the top). The jank column additionally needs `gfxinfo`, which measures
+nothing here. **What the session got instead is one pose, and it is not a row in
+this table** — it is the player's own 70-building city at whatever camera the
+save restored, on the 1856×2160 inner screen, Balanced, `render_scale` 0.85:
+
+| what | Fold 6 measured (steady state, `PERF` line) |
+|---|---|
+| ungoverned frame | **60.6–96.6 fps**, p95 **14.1–21.4 ms** |
+| governed (`knob`=4) frame | **53.8 fps**, p95 **26.8 ms** |
+| GPU (`gpu_est`) | **7.0–12.6 ms** |
+| CPU | **0.50–0.80 ms** against a 4 ms budget |
+| draw calls | **141–189 of 320** — 41–56 % headroom |
+| primitives | ~125,000 |
+| `vram` / process PSS | 144–167 MB / **1.01 GB** (Graphics 501 MB) |
+| chunks / near / inst | 9 / 4 / 70 |
+| thermal | status 1 (LIGHT), zone0 45.7–49.6 °C and **falling** |
+
+The one number that transfers to this table is the **draw-call column**, and it
+is the one the budget is written against: 141–189 against 320 on a real device,
+with the frame GPU-bound and the CPU at a fifth of its budget.
 
 **Read the bold rows before anything else.** Every measured frame-cost table in
 doc 11 §2.13 was taken at hour 21, and at 21:00 the sun is below the horizon and
@@ -659,11 +730,12 @@ flag vocabulary in §1.3 before it can be run at all.
 
 | knob | shipped value | basis | overturned by |
 |---|---|---|---|
-| `power_infra.pad_shadows` | **true** | +1 draw call of 320, GPU delta negative on the low-noise instrument (§Q3) | a daylight Z0/Z1 Fold pose within 5 % of the draw-call budget |
+| `power_infra.pad_shadows` | **true — CONFIRMED on device 2026-08-20** | +1 draw call of 320, GPU delta negative on the low-noise instrument (§Q3); the Fold measured **141–189 of 320** and is fragment-bound, not submission-bound | ~~a daylight Z0/Z1 Fold pose within 5 % of the draw-call budget~~ — tested at the one reachable pose and missed by an order of magnitude. Re-open only if a true Z0 daylight pose (needs the argument fix) lands within 5 % |
 | `road_surface.detail` | **2** | the project ceiling; rung 2 is pixel-identical to the pre-ladder shader (0 of 2,073,600 pixels differ at Z0) | nothing — this is the authored look |
 | `presets.balanced.road_detail` | **2** | the ladder is 10.1 % of the Z0 GPU pass and the Fold is a flagship | a Fold Z0 GPU pass over ~11 ms with the street a visible share of it |
 | `presets.high.road_detail` | **2** | as above | as above |
-| `presets.performance.road_detail` | **1** *(provisional)* | drops the wear terms only — every line of paint, including the crossings, survives; a tier-C part at `render_scale` 0.70 resolves an 11 m hash mottle as noise, and tier-C ALU:bandwidth is far worse than this workstation's | a tier-C measurement showing the wear terms below 1 % of its GPU pass — then raise it to 2 |
+| `presets.performance.road_detail` | **1** *(provisional — held after the device pass)* | drops the wear terms only — every line of paint, including the crossings, survives; a tier-C part at `render_scale` 0.70 resolves an 11 m hash mottle as noise, and tier-C ALU:bandwidth is far worse than this workstation's. The Fold adds a reason to hold it: the frame is fragment-bound (`gpu_est` 7.0–12.6 ms vs `cpu` 0.5–0.8 ms) at a 2.90 MP render target, 3.14× what the ladder was measured at | a tier-C measurement showing the wear terms below 1 % of its GPU pass — then raise it to 2. **The Fold is tier A and auto-detected into `balanced`, so it cannot fire this condition; tier C is still unmeasured** |
+| **the ladder's shape** *(new, 2026-08-20)* | — | rung 1 buys only ~29 % of the ladder: the workstation split prices the zebra loop at 2.4× every wear term combined, and rung 1 keeps the zebra. Rung 0 buys the other 71 % and deletes the crossings | nothing — this is a note that the ladder is the wrong lever. **The lever to build is an optimised zebra** (hoist the eight `fwidth()` calls, early-out on non-junction tiles), which would buy the expensive 71 % with no visual change |
 | `road_detail` as a governor rung | **not taken** | 0.15 ms saved against a street that changes appearance mid-pan | nothing short of a device that cannot hold 30 fps at rung 1 |
 | `construction_vehicles.max_sites` | **28, unchanged** | 0–3 sites is the real load and costs 0.105 ms (§Q4) | a tier-C device measuring over 1.5 ms at 28 sites — then a `presets.performance.construction_sites` row, not a governor rung |
 
@@ -671,16 +743,28 @@ flag vocabulary in §1.3 before it can be run at all.
 
 ## 5. Session checklist
 
-- [ ] device on the wire, `stay_on_while_plugged_in` set
-- [ ] §1.1 activity name confirmed
-- [ ] §1.2 `--esa command_line_params` probe: does `--zoom=1.0` reach the camera?
-- [ ] §1.4 graphics row read off `settings.cfg`, and forced through the sheet once
-- [ ] HWUI profiling OFF, animation scales 0
-- [ ] Q1 six poses captured (`fs_z*_h*.txt`)
-- [ ] Q3 draw-call count read at a daylight Z0 pose
-- [ ] Q6 A/B/C cold starts, five each
-- [ ] 20-minute thermal + meminfo + batterystats
-- [ ] `screenrecord` of a Z2 pan for the dash eyeball
-- [ ] doc 11 §2.13's "Fold 6 measured" table filled in
-- [ ] doc 91 §13's five stale rows re-graded
-- [ ] **app NOT uninstalled**
+Marked up as run on 2026-08-20. `[x]` done, `[~]` partial, `[ ]` not reached.
+
+- [x] device on the wire, `stay_on_while_plugged_in` set *(and restored to
+      `stayon false` + animation scales 1 at the end)*
+- [x] **saves backed up before the first launch** — add this line to the top of
+      any future checklist; it is the only reason the pre-session city survives
+- [x] §1.1 activity name confirmed — **it is `GodotAppLauncher`, not `GodotApp`**
+- [x] §1.2 `--esa command_line_params` probe — **FAILED. Arguments do not reach
+      the game.** This is what capped the session; everything `[ ]` below is
+      downstream of it
+- [x] §1.4 graphics row read off `settings.cfg` — **no such file exists**; the
+      preset was auto-detected and `PERF` reported `preset=balanced`. Could not
+      be forced through the settings sheet (that needs UI driving, not args)
+- [x] animation scales 0 *(HWUI profiling irrelevant — `gfxinfo` sees nothing)*
+- [ ] Q1 six poses — **not possible**, needs `--zoom` / `--advance-hours`
+- [~] Q3 draw-call count — read at the one available pose, not at a daylight Z0.
+      141–189 of 320; the pad-shadow ruling is confirmed by a wide margin
+- [ ] Q6 A/B/C cold starts — **not possible**, needs `--title` / `--resume` /
+      `--save-now` to select the arm
+- [~] thermal + meminfo captured; **batterystats not taken**, and the soak was
+      not foreground-verified for its whole length
+- [ ] `screenrecord` of a Z2 pan for the dash eyeball — needs a Z2 pose
+- [~] doc 11 §2.13's "Fold 6 measured" — written, with the pose matrix left open
+- [x] doc 91 §13's stale rows re-graded on device evidence
+- [x] **app NOT uninstalled**, no save deleted, no data cleared
