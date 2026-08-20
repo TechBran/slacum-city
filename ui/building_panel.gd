@@ -19,6 +19,10 @@ signal fix_requested(fix_target: Dictionary)    ## `Fix this →` on a blocker r
 signal repaired(result: Dictionary)             ## `cmd_repair_building` answered
 signal priority_set(result: Dictionary)         ## `cmd_set_priority` answered
 signal demolished(sim_id: String, result: Dictionary)  ## `cmd_demolish_building`
+## Doc 05 §6's node ladder (doc 93 §J1). A water shell hosts one or more doc-05
+## nodes and each has a capacity to buy; this fires with the sim's own answer,
+## exactly as `upgraded` does for the doc-02 shell above it.
+signal water_upgraded(node_id: String, result: Dictionary)
 
 const PALETTE_TYPE := "Palette"
 ## §2.9's `L1 L2 ▮L3▮ L4 L5` level pips — glyphs, not copy (A5 redundancy).
@@ -46,6 +50,9 @@ var _upgrade_button: Button
 
 ## §2.9 item 6's actions row, built in code below `UpgradeButton`.
 var _actions: VBoxContainer
+## Doc 05 §6's node block, built in code below the actions row.
+var _water: VBoxContainer
+var _water_rows: Dictionary = {}   # node id -> Button
 var _repair_button: Button
 var _repair_note: Label
 var _priority_row: HBoxContainer
@@ -169,6 +176,8 @@ func _build_actions() -> void:
 		_priority_row = existing.get_node_or_null("Priority") as HBoxContainer
 		_demolish_button = existing.get_node_or_null("Demolish") as Button
 		_demolish_note = existing.get_node_or_null("DemolishNote") as Label
+		_water = body.get_node_or_null("WaterNodes") as VBoxContainer
+		_water_rows.clear()
 		return
 	_actions = VBoxContainer.new()
 	_actions.name = "Actions"
@@ -201,6 +210,17 @@ func _build_actions() -> void:
 	_actions.add_child(_demolish_button)
 	_demolish_note = UIWidgets.label("DemolishNote", "", &"LegendRow", true)
 	_actions.add_child(_demolish_note)
+
+	# Doc 05 §6's node block. BELOW the actions row and not inside it: the three
+	# actions above act on the doc-02 SHELL, and this acts on the doc-05 nodes
+	# the shell hosts — a different asset with a different ladder, which is
+	# exactly why doc 93 §J1 ruled it a block of its own rather than a fourth
+	# button on that row.
+	_water = VBoxContainer.new()
+	_water.name = "WaterNodes"
+	_water.add_theme_constant_override(&"separation", int(_spacing))
+	_water.visible = false
+	body.add_child(_water)
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +306,7 @@ func _render(v: Dictionary) -> void:
 	_render_coverage(v)
 	_render_upgrade(v)
 	_render_actions(v)
+	_render_water(v.get("water", {}))
 
 
 ## `L1 L2 ▮L3▮ L4 L5` (§2.9), the doc's row verbatim: only the current level is
@@ -520,6 +541,92 @@ func _render_demolish(demolish: Dictionary) -> void:
 	_apply_state_color(_demolish_note, &"")
 
 
+## Doc 05 §6's node ladder, one row per node the shell hosts (doc 93 §J1). Drawn
+## only for a building that hosts one — every other panel in the city is exactly
+## as it was — and each row is a level strip, a capacity line and one button that
+## quotes its own price. `WaterActions` computed every value from the verb's own
+## `preview = true`; this method decides only what is on screen.
+func _render_water(block: Dictionary) -> void:
+	if _water == null:
+		return
+	var available := bool(block.get("available", false))
+	_water.visible = available
+	BuildingPanel._clear_children(_water)
+	_water_rows.clear()
+	if not available:
+		return
+	var header := UIWidgets.label("WaterHeader",
+			_text("ui_water_nodes_title", ""))
+	_water.add_child(header)
+	for entry: Variant in (block.get("nodes", []) as Array):
+		_water.add_child(_build_water_row(entry))
+
+
+## One node: the level strip, what it draws and what state it is in, and — when
+## there is a rung left — a button that names its own price with the whole gate
+## under it.
+func _build_water_row(entry: Variant) -> VBoxContainer:
+	var node: Dictionary = entry
+	var node_id := str(node["node"])
+	var row := VBoxContainer.new()
+	row.name = "WaterNode_" + node_id
+	row.add_theme_constant_override(&"separation", int(_spacing))
+
+	# The same `L1 L2 ▮L3▮` strip the shell's header uses, so a node's level and a
+	# building's level are read the same way (A5: the digits carry it).
+	var title := UIWidgets.label("Title", "%s  %s" % [
+			_text(str(node["name_key"]), str(node["name_fallback"])),
+			BuildingPanel.level_pips(int(node["level"]), int(node["max_level"]))])
+	title.tooltip_text = node_id
+	row.add_child(title)
+
+	var micro := UIWidgets.label("Micro", _text_args("ui_water_node_micro",
+			{"kw": RequirementFormatter.power(node["kw"]),
+			"state": _text(str(node["state_key"]), str(node["state"]))},
+			RequirementFormatter.power(node["kw"])), &"LegendRow", true)
+	row.add_child(micro)
+
+	var upgrade: Dictionary = node["upgrade"]
+	if not bool(node.get("upgradeable", false)):
+		# A junction: doc 05 §2.1 makes it a place where mains meet, not a
+		# component, so it has no ladder — the row says so rather than showing a
+		# button that can only ever refuse.
+		row.add_child(UIWidgets.label("Note",
+				_text("ui_water_node_not_upgradeable", ""), &"LegendRow", true))
+		return row
+	if not bool(upgrade["available"]):
+		row.add_child(UIWidgets.label("Note",
+				_text("ui_water_node_max_level", ""), &"LegendRow", true))
+		return row
+
+	var label := _text_args("ui_water_node_upgrade",
+			{"cost": str(upgrade["cost_text"]), "level": int(upgrade["to_level"])},
+			str(upgrade["cost_text"]))
+	var button := UIWidgets.button("Upgrade_" + node_id, label, label,
+			Vector2(_touch_min * 2.0, _touch_min), &"GhostButton")
+	button.disabled = not bool(upgrade["ok"])
+	button.pressed.connect(_on_water_upgrade_pressed.bind(node_id))
+	row.add_child(button)
+	_water_rows[node_id] = button
+
+	# The whole gate, not just the first no — the same contract §2.9 item 5 makes
+	# for the shell's checklist one block up.
+	for check: Variant in (upgrade["checklist"] as Array):
+		row.add_child(_build_check_row(check))
+	return row
+
+
+func _on_water_upgrade_pressed(node_id: String) -> void:
+	if controller == null:
+		return
+	var result := controller.upgrade_water_node(node_id)
+	# Deferred for `_on_fix_pressed`'s reason: the button that fired this lives
+	# inside the block a refresh rebuilds, and freeing an emitter while its own
+	# signal is being emitted is a crash, not a redraw.
+	call_deferred("refresh")
+	water_upgraded.emit(node_id, result)
+
+
 func _on_demolish_down() -> void:
 	if _demolish_button == null or _demolish_button.disabled:
 		return
@@ -629,6 +736,12 @@ func _on_fix_pressed(fix_target: Dictionary) -> void:
 
 func upgrade_button() -> Button:
 	return _upgrade_button
+
+
+## The `UPGRADE` button of one doc-05 node's row, or null — the water twin of
+## `upgrade_button()` above, for a test or a coach mark that has to point at one.
+func water_upgrade_button(node_id: String) -> Button:
+	return _water_rows.get(node_id, null)
 
 
 func checklist_rows() -> Array[Node]:

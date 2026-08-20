@@ -1641,6 +1641,14 @@ func snapshot() -> Array:
 			"escalation_eta_min": eta_min, "priority": inc.priority_cache,
 			"pinned": inc.pinned, "seen": inc.seen, "unreachable": inc.unreachable,
 			"notification_priority": inc.notification_priority,
+			# What this incident is ABOUT, not just where it is. `incident_created`
+			# has always carried it; the snapshot did not, so a UI that came up on
+			# a loaded save — which replays no lifecycle event — knew the tier and
+			# the tile of a `water_main_break` and not which main. Doc 05 §2.12's
+			# isolate/restore pair needs the id, so the read-only view publishes
+			# what the event already published. Nothing is hashed here: the save is
+			# `canonical_capture()`, and this is a snapshot.
+			"target_ref": inc.target_ref.duplicate(true),
 		})
 	return out
 

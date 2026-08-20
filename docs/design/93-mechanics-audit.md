@@ -59,16 +59,26 @@ can touch — the build sheet's `Roads` tab and the two water-main cards, both
 driven by doc 12 §2.7's drag-path tool (report 98 RR-30, doc 93 §G2). The three
 per-building verbs `cmd_repair_building`, `cmd_set_priority` and
 `cmd_demolish_building` landed in the same wave, as §2.9 item 6's actions row.
-Still doorless from this table: `cmd_upgrade_water_component`,
-`cmd_isolate_water_main` and `cmd_restore_water_main`, which want a water-NODE
-panel that doc 12's screen map does not have.
 
-**Still unshipped, and now the binding constraint** (Wave-5 measurement, doc 92
-F-11): doc 04 §4's `place_power_component` for anything but the transformer, and
-`route_feeder`. The whole city's load runs through the two class-1 feeders doc 09
-§2.9.5 authored — **2 × 1,200 kW** — and no verb can add or upgrade one. A
-well-played city reaches that ceiling around 600 buildings and everything past it
-is shed. See doc 92's Wave-5 pass for the measurement and the named constants.
+**And the last three, Wave 11 — the table is now empty of doorless rows.**
+`cmd_upgrade_water_component` is a block on the building panel of the shell that
+hosts the node, `cmd_isolate_water_main` / `cmd_restore_water_main` are one
+control in two moods on the incident drawer's expanded row, and **no water-node
+panel was built**: §J1 rules that the two verbs belong to two different moments
+and that a screen hosting both would be a screen the player has to go and find
+mid-incident. §J2 puts doc 04 §4's `route_feeder` on the same drag-path tool as
+two cards, one per conductor class doc 04 §6 ships.
+
+**Doc 04 §4's `route_feeder` shipped in Wave 6** and reached the player in Wave
+11 (§J2). The Wave-5 measurement that made it the priority (doc 92 F-11) stands
+as written: the whole city's load ran through the two class-1 feeders doc 09
+§2.9.5 authored — **2 × 1,200 kW** — a well-played city crossed that around
+410 buildings, and everything past it was shed. **Doc 92 §17.3's three-item fix
+list is now complete on the first two items and the third is still ruled out**:
+the verb shipped (item 1, Wave 6), the `substation` / `power_facility` shells
+became their grid nodes (item 2, Wave 6, via `node_shells`), and no capacity
+constant moved (item 3). The whole loop was walked end to end on the founding
+city in Wave 11 — see §J2.
 
 ## C. Feedback gaps (game/ui) — Wave 2, after Wave 1 merges
 
@@ -686,6 +696,166 @@ and gate 21's horizon moves from 21 to 45 game-days with a ruled bound of 40.
 Levels 1–5 land inside the windows Wave 9 already ruled: **the arc got longer at
 the top, it did not get slower underneath**, and gate 21 now asserts level 5
 separately so that stays provable.
+
+## J. Wave-11 rulings — the last two verb families get their doors (2026-08-20)
+
+*Three questions this wave had to answer rather than defer. Two of them were
+filed by the Wave-9 and Wave-10 agents as "this is a balance change, not a UI
+change, and it wants its own pass"; the third had been an open row since doc 91
+§14.5.*
+
+### J1. There is no water-node panel, and there should not be one
+
+**Ruled.** Doc 05 §6.1 and §B2 above have carried the same sentence since Wave 5:
+`cmd_upgrade_water_component`, `cmd_isolate_water_main` and
+`cmd_restore_water_main` "want a water-NODE panel, which nothing in doc 12's
+screen map has yet". Doc 91 §14.5 D-4 carried the row. **The panel is not built.**
+
+The reason is that the three verbs are not one screen's worth of anything. They
+are two verbs at two moments, and the moments are what decide the surface:
+
+| verb | when the player wants it | where it now is |
+|---|---|---|
+| `cmd_upgrade_water_component` | standing in front of a site that is short of capacity, with money | **S5, the building panel of the shell that hosts the node** — a block below §2.9 item 6's actions row, one row per node, each priced by the verb's own `preview = true` |
+| `cmd_isolate_water_main` / `cmd_restore_water_main` | a main is open and a neighbourhood is losing pressure | **S6, the incident drawer's expanded row**, beside `ASSIGN`, on the one row that names a main |
+
+Three things follow, and each is the reason the ruling is a ruling and not a
+preference:
+
+1. **A water site is already a building, and it already has a panel.**
+   `cmd_place_water_component` builds three things at once (doc 05 §6.1): the
+   doc-02 `water_facility` SHELL, the doc-05 NODE hosted on that shell's
+   `power_ref`, and the lateral. The shell's panel is where the player already
+   goes to read the site's condition, buy its repair and set its shed tier. A
+   node ladder is another purchase against the same asset, so it goes under the
+   same header. **The block is a LIST, not a row**: `WTR-1` hosts a source, a
+   treatment train and a pump, and a panel that showed one of them would be
+   lying about the other two.
+
+2. **The shell's own `UPGRADE` and the node's are different purchases and are
+   drawn as such.** Doc 02's ladder buys floorspace and doc 05's buys supply.
+   They sit in two blocks with two headers rather than one button that would
+   have to pick.
+
+3. **Isolate/restore is not a panel verb at all.** Doc 05 §2.12 describes it as
+   trading a neighbourhood's taps for the fire's hydrants — a decision taken
+   under time pressure, about a MAIN. A main is not a thing the player can tap:
+   it has no footprint, no panel, and doc 12's screen map has never had a way to
+   select one. The only place a main is ever *named* to the player is doc 06's
+   `water_main_break`, whose `target_ref` is `{kind: "water_segment", id}` — so
+   the drawer row that is already telling them the main is open is where the
+   valve goes. It is **one control in two moods** (`ISOLATE` while the main is
+   live, `RESTORE` once it is valved out), because the two are never both
+   available and a dead second button would sit on a 300 dp row for the whole
+   life of the incident.
+
+**The trap this ruling has to answer, and does.** A player who isolates a main
+and then loses the row would have no way back to it. They cannot: doc 05's own
+repair path (`WaterSystem.set_segment_repaired`) sets `state` back to `ok`, and
+doc 06 calls it when the incident resolves. So the only mains reachable from the
+drawer are ones that un-valve themselves when the crew finishes.
+`tests/test_water_actions.gd` pins both halves.
+
+**No save-section bump.** Isolation is doc 05 state and `WaterEdge.serialize()`
+has carried `state` since Wave 1 — asserted, not assumed, by
+`test_an_isolated_main_survives_a_save_round_trip`.
+
+**One read-only sim change.** `IncidentSystem.snapshot()` now publishes
+`target_ref`, which `incident_created` has always carried. Without it a UI that
+came up on a loaded save — which replays no lifecycle event — knew a break's tier
+and tile but not which main it was about. The save is `canonical_capture()`, not
+the snapshot, so this moves no hash.
+
+### J2. `route_feeder` is a run card on the INFRASTRUCTURE tab, and its geometry is doc 04's assist
+
+**Ruled.** Doc 92 §25.7 deferred `cmd_route_feeder` with a precise reason: "it is
+a run verb and the drag-path tool would take it in an afternoon — and §17.3 names
+the 2 × 1,200 kW feeder ceiling as the late-game's binding constraint, so putting
+it on a card is a **balance** change". Both halves are done in this wave; the
+measurement is doc 92 §27. Three sub-rulings:
+
+1. **The tab is `infrastructure`, not `roads`.** Doc 12 §2.7 files a run card by
+   what it is made of, not by the tool that draws it. `PathTool` hosts road
+   classes AND water mains today, and the mains sit on `infrastructure` beside
+   the pumps they feed. A feeder belongs beside the transformer it roots, for
+   the same reason and by the same rule.
+
+2. **The class choice is two cards, not a picker.** `data/grid_components.json`
+   offers conductor classes 1 and 2 (class 3 is deferred in doc 04 §6 and is
+   refused with `E_CLASS_UNAVAILABLE`). Doc 12 §2.7 has no control for a per-card
+   enum, and `Street`/`Avenue` and `Water Main`/`Trunk Main` already spell
+   exactly this choice as two rows on one tab. `PathTool.available()` reads the
+   roster, so a class the command would refuse never gets a card.
+
+3. **A feeder run is drawn by doc 04 §4's assist, not by §2.7's L.** This is the
+   one place a run card does not use `l_path`, and the reason is measured:
+   `cmd_route_feeder` requires every tile to be on land that is owned and READY
+   (§2.1), and a straight Chebyshev line between two owned blocks routinely
+   crosses one the city does not own — doc 04 §4 records that as the whole of
+   seed 4242's late-game routing failure. `CitySim.suggest_feeder_route` (report
+   98 C-41) returns the shortest LEGAL run, which on doc 03 §2.13(b)'s per-tile
+   price is also the cheapest, and falls back to the straight line when no legal
+   run exists so the blocker the bar shows is still the honest one. The ghost
+   therefore draws exactly the tiles the commit will lay, which is the ghost's
+   standing contract.
+
+**What the founding city answers, and why that is the design.** Doc 09 §2.9.5
+gives SUB-A two feeder slots and fills both. So the player's first feeder run
+answers `E_NO_SLOT`, and the copy names the purchase: *"SUB-A has no spare feeder
+slot: 0 free of the 1 this run needs. Upgrade that substation, or build another
+one and start the run there."* `Fix this →` flies the camera to SUB-A.
+
+**And the loop that answer opens is complete**, which is checked rather than
+assumed, by a test on the founding city
+(`test_the_whole_feeder_loop_is_walkable_from_the_founding_city`): a `substation` card off
+the Utility tab costs **$15,000**, is commissioned as a grid node **9 game-hours**
+later by doc 04's `node_shells` mapping, and arrives with **2 free slots**; a
+7-tile class-2 run off its fence line then quotes **$1,470**, commits, and
+**adopts 6 transformers carrying 89.3 kW** off the circuit that was full. Two
+purchases, both priced by doc 03, and §2.9's transfer rule is what makes the
+second one relief rather than headroom for a city that does not exist yet.
+
+### J3. Road repair stays the automatic policy's job — `cmd_road_repair` is not a player verb
+
+**Ruled, and the row is closed.** `RoadNetwork.cmd_road_repair(tiles)` has had no
+`CitySim` wrapper since Wave 5 and doc 10 §2.13 recorded it as an open question
+(doc 91 §14.5, Wave-9 open q6). It stays that way, deliberately, and doc 10 now
+says so. Four reasons, in the order they bind:
+
+1. **Doc 10 already names the player's surface, and it is not this verb.** §2.12
+   makes road condition a *policy*: `auto_repair_threshold` (0 / 0.25 / 0.40 /
+   0.55) and `auto_repair_daily_cap` (default $25,000/game-day), which the doc
+   itself calls "a **player budget setting**, not a price". The player-facing
+   verb doc 10 authors is `set_auto_repair_policy`, not `road_repair`.
+
+2. **The policy picks better runs than a thumb can.** Once per game-day it groups
+   every tile below the threshold into contiguous runs and sorts them by
+   `(mean congestion desc, condition asc)`. A player sweeping a run has none of
+   that information: doc 12's overlay rail has no road-condition mode, so a
+   REPAIR card would be a blind sweep whose ghost could not say which tiles it
+   was billing for — which is exactly the contract §2.7's ghost has to keep, and
+   the reason `road_remove` dims the tiles it will not touch.
+
+3. **A manual verb would spend the same money outside the only cap on it.** Doc
+   03 prices both paths with the same C-16 formula, so a manual repair buys
+   nothing a policy repair does not. What it would add is a way around
+   `auto_repair_daily_cap` — the one thing holding road repair inside doc 03's
+   derived routine-repair expectation line (doc 10 §2.3's `0.28548`
+   tile-fractions/game-hour). A verb whose only new effect is to break a budget
+   is not a player verb.
+
+4. **The building panel's REPAIR is not a precedent.** A building is a discrete
+   asset the player taps and whose condition the panel already shows. A road tile
+   is neither.
+
+**What this leaves open, and it is a smaller question than the one it closes:**
+`cmd_set_auto_repair_policy` has no `CitySim` wrapper and no door either. It
+wants a settings-sheet row — doc 12 §2.13's sheet already has the `policy:
+"dispatch"` mechanism for exactly this shape (rows whose defaults come from a
+sim's own table and whose values go to a `cmd_set_*_policy`). Recommended, not
+built here, and ranked as this wave's second open question; doc 10 §9.4's
+question 5 ("auto-repair default: on or off?") is the same row and is folded into
+it.
 
 ## F. Explicitly deferred (unchanged from master plan)
 

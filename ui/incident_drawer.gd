@@ -20,6 +20,15 @@ extends Control
 ## tap anywhere but ASSIGN → focus_on and selects the incident; the drawer stays
 ## open"), and expands it to the three actions the sim has commands for —
 ## ASSIGN (which raises the unit picker), acknowledge and pin.
+##
+## **A fourth action appears on exactly one kind of row.** Doc 05 §2.12's
+## `isolate_main` / `restore_main` are a tactical trade — a neighbourhood's taps
+## for the fire's hydrants — against a MAIN, and a main is a thing the player
+## only ever meets as the target of a `water_main_break`. Doc 93 §J1 rules that
+## the pair belongs HERE, on the row that is already telling the player the main
+## is open, rather than on a water-node panel the screen map does not have and
+## the player would have to go and find mid-incident. It is drawn only when a
+## `WaterActions` is bound and the row names a segment the sim still has.
 
 signal focus_requested(world_pos: Vector3)          ## row tap → camera jump
 signal incident_selected(incident_id: int)
@@ -27,11 +36,19 @@ signal dispatch_requested(incident_id: int)         ## ASSIGN → S7 unit picker
 signal acknowledge_requested(incident_id: int)      ## → cmd_acknowledge_incident
 signal pin_requested(incident_id: int, pinned: bool) ## → cmd_pin_incident
 signal drawer_toggled(open: bool)
+## Doc 05 §2.12's pair, already issued. `action` is `&"isolate"` / `&"restore"`
+## and `result` is the sim's own `{ok, reason_code, payload}` — the shell re-reads
+## the city from it exactly as it does after a building-panel action.
+signal main_action_taken(incident_id: int, edge_id: String, action: StringName,
+		result: Dictionary)
 
 const HANDLE_GLYPH := "▤"
 
 var config: UIConfig
 var model: IncidentModel
+## Doc 05 §6's headless verb model, or `null` in a fixture mount. When it is
+## null the drawer is exactly the drawer it was — no button, no branch taken.
+var water: WaterActions
 
 var _handle: Button
 var _panel: PanelContainer
@@ -83,6 +100,12 @@ func setup(cfg: UIConfig = null, p_model: IncidentModel = null) -> void:
 func _ready() -> void:
 	if model == null:
 		setup(UIRoot.config_from(self))
+
+
+## Hands the drawer doc 05's node verbs. Idempotent, and safe to call before or
+## after `setup()` — the button is built per refresh, not per binding.
+func bind_water(actions: WaterActions) -> void:
+	water = actions
 
 
 func _bind_nodes() -> void:
@@ -458,7 +481,48 @@ func _build_actions(row: Dictionary) -> HBoxContainer:
 	pin.clip_text = false
 	pin.pressed.connect(_on_pin_pressed.bind(incident_id))
 	bar.add_child(pin)
+
+	# §2.12's pair, on the one row that has a main to act on. ISOLATE while the
+	# main is live, RESTORE once it is valved out — one control in two moods,
+	# because they are never both available and two buttons would put a dead one
+	# on a 300 dp row for the whole life of the incident.
+	var segment := _segment_view(row)
+	if bool(segment.get("exists", false)):
+		var valve := UIWidgets.button("Valve_%d" % incident_id,
+				_valve_label(bool(segment["can_isolate"])),
+				_valve_hint(bool(segment["can_isolate"]), segment),
+				Vector2(maxf(_touch_min * 1.5, 84.0), _touch_min), &"GhostButton")
+		valve.clip_text = false
+		valve.pressed.connect(_on_valve_pressed.bind(incident_id))
+		bar.add_child(valve)
 	return bar
+
+
+## The valve control's two moods, spelled out rather than assembled: G-8 wants
+## every key findable by a literal scan, and a key built with `+ "_hint"` is copy
+## the orphan check cannot see.
+func _valve_label(isolate: bool) -> String:
+	return UIWidgets.t(config, "ui_drawer_isolate") if isolate \
+			else UIWidgets.t(config, "ui_drawer_restore")
+
+
+func _valve_hint(isolate: bool, segment: Dictionary) -> String:
+	var args := {"main": str(segment.get("edge", "")),
+			"zone": str(segment.get("zone", ""))}
+	return UIWidgets.t_args(config, "ui_drawer_isolate_hint", args) if isolate \
+			else UIWidgets.t_args(config, "ui_drawer_restore_hint", args)
+
+
+## The main this row is about, or `{}`. Two guards and no guessing: a drawer with
+## no `WaterActions` bound never asks, and a row whose `target_ref` is not a
+## water segment has nothing to ask about.
+func _segment_view(row: Dictionary) -> Dictionary:
+	if water == null:
+		return {}
+	var edge_id := WaterActions.segment_of_row(row)
+	if edge_id == "":
+		return {}
+	return water.segment_view(edge_id)
 
 
 ## §2.6's 1.2 Hz handle pulse. Both tunables are read once in `setup()`, not here:
@@ -526,6 +590,27 @@ func _on_pin_pressed(incident_id: int) -> void:
 		button.tooltip_text = button.text
 	_refresh_handle()
 	pin_requested.emit(incident_id, pinned)
+
+
+## §2.12's trade, taken. Like `_on_ack_pressed` this repaints the button IN PLACE
+## rather than calling `refresh()`: rebuilding the list here would free the Button
+## that is emitting `pressed`. The label flips to the other mood on success,
+## which is also how the player sees that the valve moved.
+func _on_valve_pressed(incident_id: int) -> void:
+	var segment := _segment_view(model.row(incident_id))
+	if not bool(segment.get("exists", false)):
+		return
+	var edge_id := str(segment["edge"])
+	var isolate := bool(segment["can_isolate"])
+	var action: StringName = &"isolate" if isolate else &"restore"
+	var result := water.isolate(edge_id) if isolate else water.restore(edge_id)
+	var button := action_button("Valve", incident_id)
+	if button != null and bool(result["ok"]):
+		# The valve moved, so the control shows the OTHER mood — `isolate` is
+		# what it just did, and what is available now is its opposite.
+		button.text = _valve_label(not isolate)
+		button.tooltip_text = _valve_hint(not isolate, segment)
+	main_action_taken.emit(incident_id, edge_id, action, result)
 
 
 func _on_sort_pressed(order: StringName) -> void:

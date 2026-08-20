@@ -1314,7 +1314,7 @@ Consequently doc 03's test 33 (`build_cost` appears in no file but `data/economy
 2. **Should a vehicle already en route slow as a jam builds?** R-3 traded that away for doc 06's mode-invariance. If the overseer wants live degradation, doc 06's offline/online equivalence guarantee must be relaxed first.
 3. **Should avenues be two tiles wide?** One tile keeps the graph a clean 4-connected grid and the editor simple, but a one-tile "avenue" that merely renders wider may read as a cheat.
 4. **Should congestion have an economic effect?** Currently it costs only time. A commercial-output penalty in gridlocked districts would tie roads to doc 03 but risks double-punishing, since traffic already slows every service. Left out deliberately.
-5. **Auto-repair default: on or off?** Default is `threshold 0.40` (RR-3 scale), `cap $25,000/day`. On by default keeps the offline city healthy (spec §21.3, Risk 5) but hides road decay from new players. **Recommendation: off during onboarding, offered as a prompt after the first `road_condition_critical` event.**
+5. **Auto-repair default: on or off?** *(Wave 11 — `cmd_road_repair` is settled and is NOT a player verb; see §2.13's ruling and doc 93 §J3. What is still open is the DIAL, and with a dial this question stops being a permanent ruling.)* Default is `threshold 0.40` (RR-3 scale), `cap $25,000/day`. On by default keeps the offline city healthy (spec §21.3, Risk 5) but hides road decay from new players. **Recommendation: off during onboarding, offered as a prompt after the first `road_condition_critical` event.**
 6. **Should collapsed roads exist in MVP?** It is the most punishing road failure and can sever a station from a district. Kept because it makes maintenance matter, but it may need a grace mechanic (a free "temporary surface" at 30% speed) to avoid an unrecoverable single-corridor map.
 7. **Confirm the 4 ms/tick routing budget and the reference device** (assumed: 2022 Snapdragon 7-series, matching minSdk 29 / Vulkan baseline) as the values test 25 gates on.
 8. ~~**Who owns construction crews (X-1) and when does doc 09 land (X-2)?**~~ **CLOSED.** G-2 splits crews three ways and names doc 02's `ConstructionQueue` as the one API; doc 09 exists and owns the road template, land state, districts and `city_level`. Neither is a blocker any more.
@@ -1394,7 +1394,40 @@ own; the run ghost reads `road_class_at` per tile (O(1)) and draws an untouched
 tile at a third of the alpha, so a sweep across three tiles of existing street
 reads as *five billed of eight crossed* before the player commits.
 
-**What still has no door.** `RoadNetwork.cmd_road_repair(tiles)` exists on this
-system and has no `CitySim.cmd_*` wrapper, so there is no player verb to surface
-and none was invented; road condition is bought back by §2.12's automatic repair
-policy alone. Recorded as an open question rather than a gap in the tab.
+**`cmd_road_repair` is not a player verb, and that is now a ruling** (Wave 11,
+doc 93 §J3). `RoadNetwork.cmd_road_repair(tiles)` exists on this system, has no
+`CitySim.cmd_*` wrapper, and is **not getting one**: road condition is bought
+back by §2.12's automatic repair policy, and the player's control over it is that
+policy's two dials, not a fifth run card. The row is closed rather than carried.
+
+Four reasons, in the order they bind:
+
+1. **§2.12 already names the player's surface.** `auto_repair_threshold`
+   (0 / 0.25 / 0.40 / 0.55) and `auto_repair_daily_cap` (default $25,000 per
+   game-day) are, in this doc's own words, "a **player budget setting**, not a
+   price". The player-facing verb this doc authors is `set_auto_repair_policy`.
+2. **The policy picks better runs than a thumb can.** Once per game-day it groups
+   every tile below the threshold into contiguous runs and sorts them by
+   `(mean congestion desc, condition asc)`. A player has neither number in front
+   of them: doc 12's overlay rail has no road-condition mode, so a `Repair` card
+   would be a blind sweep whose ghost could not dim the tiles it is not billing
+   for — which is the contract §2.7's run ghost keeps for `Street`, `Widen` and
+   `Remove` alike.
+3. **It would spend the same money outside the only cap on it.** Doc 03 prices
+   both paths with the identical C-16 formula, so a manual repair buys nothing a
+   policy repair does not; what it adds is a way around `auto_repair_daily_cap`,
+   which is the one thing holding road repair inside doc 03's *derived* routine
+   road-repair expectation line (§2.3's `0.28548` tile-fractions/game-hour). A
+   verb whose only new effect is to break a budget is not a player verb.
+4. **The building panel's `REPAIR` is not a precedent.** Doc 02 §2.6's repair is
+   a purchase against a discrete asset the player taps and whose condition the
+   panel already shows. A road tile is neither.
+
+**What is still open is smaller, and is §9.4 question 5 restated.**
+`cmd_set_auto_repair_policy` has no `CitySim` wrapper and no door either, so the
+threshold and the cap ship at their defaults and a player cannot move them. It
+wants a settings-sheet row: doc 12 §2.13's sheet already carries the
+`policy: "dispatch"` mechanism for exactly this shape — rows whose defaults come
+from an owning system's table and whose values go to a `cmd_set_*_policy`.
+Recommended, and §9.4 question 5 ("auto-repair default: on or off?") is folded
+into it: with a dial, the default stops being a permanent ruling.

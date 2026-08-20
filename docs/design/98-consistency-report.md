@@ -754,3 +754,76 @@ Two instrument faults, found before any Wave-8 question could be asked. **(a) Th
 
 ### RR-37 — Save and load are synchronous, and nobody had measured them (doc 08 §2.7, doc 11 §2.13, doc 13 §2.9)
 `tools/profile_save.gd` is new and drives the **shipped** path — `SaveService.save_slot` / `load_slot`, the calls the lifecycle makes — rather than a harness path. Headless workstation, best of 7 / best of 5: the founding city (34 buildings) saves in **13.9–14.8 ms** and loads in **48.5–50.0 ms**; the 1,500-building benchmark saves in **120–154 ms** and loads in **429–483 ms**. **A load of the founding city is three frames at 60 Hz on a workstation and a save is most of one; on the benchmark city a load is half a second, synchronously, on the main thread.** Two consequences are published rather than fixed, because neither belongs to a render branch: doc 08's autosave lands a **visible hitch** as soon as a city is a few hundred buildings — the cadence is not the problem, the synchronous write is — and **doc 13 §2.9's ANR arithmetic budgets the catch-up without budgeting the LOAD in front of it**, which on the benchmark city is 0.46 s before a single coarse step runs. Doc 13 §7 gains **D-17**, which gets the same two numbers off an uninstrumented device as a difference of `am start -W` cold starts (`--title` / `--resume` / `--resume --save-now`), so the measurement does not wait on a new build. Expect the Fold at 2–3× the workstation on both columns; that factor is the multiplier every other provisional in the runbook leans on, and confirming it is the first thing the next session should do.
+
+
+### RR-38 — The verb table is empty of doorless rows, and the panel the last three asked for was not built (docs 04 §4, 05 §6.1, 10 §2.13, 12 §2.7/§2.9, 91 §14.5 D-4, 92 §27, 93 §J1–§J3)
+
+Three surfaces were outstanding after Wave 10 and every one of them had been
+deferred for a reason rather than missed. **All three are closed, and two of the
+three closures are rulings against building the screen that was asked for.**
+
+**(a) `cmd_route_feeder` is two cards on doc 12 §2.7's drag-path tool.** Doc 92
+§25.7 deferred it as a *balance* change — §17.3 names the 2 × 1,200 kW feeder
+ceiling as the late game's binding constraint — so it got the pass and the matrix
+it asked for (doc 92 §27), and the full **7 strategies × 3 seeds × 21 game-days**
+matrix is **byte-identical**, all 30 rows, diffed field by field. The reason is
+worth recording because it is not the obvious one: the verb has been *in* the
+matrix since Wave 6, driven by `Balanced` through the one-tap door the build
+sheet would use, so a UI pass cannot move a harness that never had a UI. Three
+sub-rulings sit under the card. The tab is **`infrastructure`, not `roads`** —
+§2.7 files a run card by what it is made of, and a feeder belongs beside the
+transformer it roots exactly as a main belongs beside the pump it feeds. The
+class choice is **two cards, not a picker**, read from
+`routable.feeder.conductor_classes` so a class this build does not ship never
+gets one. And it is the **only run card whose geometry is not §2.7's L**:
+`cmd_route_feeder` requires every tile owned and READY, a straight Chebyshev line
+between two owned blocks routinely crosses one the city does not own (doc 04 §4
+records that as the whole of seed 4242's late-game routing failure), so the run
+is filled by `suggest_feeder_route` — the C-41 assist — which returns the
+shortest LEGAL run and, on a per-tile price, therefore the cheapest. The ghost
+still draws exactly the tiles the commit will lay.
+
+**(b) There is no water-node panel, and there should not be one.** Doc 05 §6.1,
+doc 93 §B2 and doc 91 §14.5 **D-4** had all carried the same sentence since Wave
+5: `cmd_upgrade_water_component`, `cmd_isolate_water_main` and
+`cmd_restore_water_main` "want a water-NODE panel doc 12's screen map does not
+have". They do not. They are **two verbs at two moments**, and the moments decide
+the surface (doc 93 §J1): *upgrade* is a purchase against a standing asset, and
+the asset already has a panel — the doc-02 `water_facility` SHELL the node is
+hosted on — so it is a block there, as a **list**, because `WTR-1` hosts three
+nodes and a panel showing one would be lying about the other two. *Isolate and
+restore* is a trade taken under time pressure about a MAIN, and a main has no
+footprint, no panel and no way to be selected; the only place one is ever named
+to the player is doc 06's `water_main_break`, whose `target_ref` is
+`{kind: "water_segment", id}`, so the valve goes on the drawer row that is
+already telling them the main is open. **One control in two moods**, never two
+buttons, because the two are never both available. The trap — a main isolated and
+then orphaned — cannot happen: doc 05's own `set_segment_repaired` clears the
+flag and doc 06 calls it on resolve, so every main the drawer can valve out
+un-valves itself when the crew finishes. **And isolation already persisted**:
+`WaterEdge.serialize()` has carried `state` since Wave 1, so the surface needed
+**no save-section bump** — asserted by a test rather than assumed, because the
+ruling turns on it. D-4 is closed.
+
+**(c) `RoadNetwork.cmd_road_repair` is not a player verb, and the row is closed
+rather than carried.** Doc 10 §2.13 had recorded it as an open question since
+Wave 5. Doc 93 §J3 and doc 10 now rule it out, on four grounds that bind in
+order: §2.12 **already names the player's surface** and it is the *policy*
+(`auto_repair_threshold`, `auto_repair_daily_cap` — this doc's own words: "a
+player budget setting, not a price"); the policy picks better runs than a thumb
+can, sorting contiguous runs by `(mean congestion desc, condition asc)` against
+information doc 12 gives the player no overlay for; a manual verb would spend the
+same C-16 dollars **outside `auto_repair_daily_cap`**, which is the only thing
+holding road repair inside doc 03's derived routine-repair line; and doc 02's
+per-building `REPAIR` is not a precedent, because a building is a discrete asset
+the player taps and a road tile is not. What remains open is strictly smaller and
+is doc 10 §9.4 question 5 restated: **the policy's two dials have no door
+either**, and they want a settings row on the `policy:` mechanism doc 12 §2.13
+already ships for doc 06's dispatch policy.
+
+**The `sim/` cost of all three: eight lines.** `IncidentSystem.snapshot()` now
+publishes `target_ref` — a field `incident_created` has always carried — so a UI
+that comes up on a loaded save, which replays no lifecycle event, knows which
+main a break is about. The save is `canonical_capture()` and the snapshot is not
+hashed; `profile_sim --hash-only` is **bit-identical on both cities and both
+paths**, with the change reverted and re-applied.

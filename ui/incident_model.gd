@@ -211,6 +211,7 @@ func refresh(snapshot_rows: Array) -> void:
 			row["created_h"] = _now_h - float(record.get("wait_min", 0.0)) / _MINUTES_PER_HOUR
 		row["kind"] = str(record.get("type", row["kind"]))
 		row["subtype"] = str(record.get("subtype", row["subtype"]))
+		IncidentModel._apply_target(row, record.get("target_ref", null))
 		row["tier"] = int(record.get("tier", row["tier"]))
 		row["severity"] = float(record.get("severity", row["severity"]))
 		row["status"] = str(record.get("status", row["status"]))
@@ -251,6 +252,11 @@ func _row_for(incident_id: int, event: Dictionary) -> Dictionary:
 		"id": incident_id,
 		"kind": "",
 		"subtype": "",
+		# Doc 06's `target_ref`, split into two flat fields. It is what an action
+		# on a row acts ON — doc 05 §2.12's isolate/restore needs the main's id,
+		# and no other row field carries it.
+		"target_kind": "",
+		"target_id": "",
 		"tier": 1,
 		"severity": 1.0,
 		"status": "",
@@ -296,6 +302,7 @@ func _apply_created(row: Dictionary, event: Dictionary) -> void:
 	row["kind"] = str(event.get("incident_type",
 			event.get("type_id", event.get("kind", ""))))
 	row["subtype"] = str(event.get("subtype", ""))
+	IncidentModel._apply_target(row, event.get("target_ref", null))
 	row["severity"] = float(event.get("severity", 1.0))
 	row["tier"] = int(event.get("tier", HudModel.incident_tier(row["severity"])))
 	row["district"] = str(event.get("district_id", ""))
@@ -306,6 +313,17 @@ func _apply_created(row: Dictionary, event: Dictionary) -> void:
 	elif tile is Vector2i:
 		row["tile"] = tile
 	_resolve_focus(row)
+
+
+## `{kind, id}` → the row's two flat fields. A `null` (an event or a fixture that
+## does not carry one) leaves whatever the row already had, so a lifecycle event
+## after `incident_created` never blanks the target the create supplied.
+static func _apply_target(row: Dictionary, target: Variant) -> void:
+	if not (target is Dictionary):
+		return
+	var ref: Dictionary = target
+	row["target_kind"] = str(ref.get("kind", row["target_kind"]))
+	row["target_id"] = str(ref.get("id", row["target_id"]))
 
 
 func _add_unit(row: Dictionary, unit_id: int) -> void:

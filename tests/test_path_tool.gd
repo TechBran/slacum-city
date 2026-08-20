@@ -131,8 +131,9 @@ func test_every_card_quotes_a_price_read_from_the_economy_tables() -> void:
 	var sim := _sim()
 	var tool := _tool(sim)
 	var cards := tool.cards()
-	assert_eq(cards.size(), 6,
-			"four road verbs plus the two water-main tiers doc 05 offers today")
+	assert_eq(cards.size(), 8,
+			"four road verbs, the two water-main tiers doc 05 offers today, and "
+			+ "doc 04 §6's two conductor classes")
 	var m_build := float(sim.treasury.difficulty().get("M_build", 1.0))
 	var by_id: Dictionary = {}
 	for card: Dictionary in cards:
@@ -153,6 +154,14 @@ func test_every_card_quotes_a_price_read_from_the_economy_tables() -> void:
 			sim.econ_curves.water_main_cost_per_tile("service", m_build))
 	assert_eq(int((by_id["water_main_trunk"] as Dictionary)["cost"]),
 			sim.econ_curves.water_main_cost_per_tile("trunk", m_build))
+	# Doc 03 §2.13(b)'s `feeder.cost_per_tile_overhead`, one row per class.
+	for card_id: String in ["feeder_c1", "feeder_c2"]:
+		var card: Dictionary = by_id[card_id]
+		assert_eq(int(card["cost"]), CostCurves.round_half_up(
+				float(sim.econ_curves.grid_line_cost_per_tile("feeder",
+						int(card["conductor_class"]), false)) * m_build),
+				"%s reads doc 03's per-tile feeder price" % card_id)
+		assert_eq(str(card["path_verb"]), String(PathTool.VERB_FEEDER))
 	# The refund card is the odd one: it costs nothing and it always affords.
 	var remove: Dictionary = by_id["road_remove"]
 	assert_eq(int(remove["cost"]), 0)
@@ -166,6 +175,9 @@ func test_the_cards_land_on_the_two_tabs_doc_twelve_names() -> void:
 	for card: Dictionary in tool.cards():
 		var expected := PathTool.CATEGORY_ROADS if str(card["id"]).begins_with("road_") \
 				else PathTool.CATEGORY_INFRASTRUCTURE
+		# Doc 12 §2.7 files a run card by what it is made of, not by the tool
+		# that draws it: a feeder is infrastructure, beside the transformer it
+		# roots, exactly as a main is beside the pump it feeds.
 		assert_eq(str(card["category"]), expected,
 				"%s sits on the tab §2.7's table files it under" % card["id"])
 
@@ -414,6 +426,193 @@ static func _first_main_tile(sim: CitySim) -> Vector2i:
 			if not sim.water.nearest_main_tile(Vector2i(x, z), 0).is_empty():
 				return Vector2i(x, z)
 	return Vector2i(-1, -1)
+
+
+# ===========================================================================
+# 4b. Doc 04 §4's feeder — the run verb doc 92 §17.3 named and §25.7 deferred
+# ===========================================================================
+
+## The first tile of an authored feeder's route: a tile the run is allowed to
+## start on (§2.1 — a run branches a trunk or leaves a substation's fence line).
+static func _feeder_route_tile(sim: CitySim) -> Vector2i:
+	for entry: Variant in sim.grid.component_ids_of_kind(&"feeder"):
+		var route: Array = sim.grid.component(String(entry)).get("route", [])
+		if route.is_empty():
+			continue
+		var pair: Array = route[0]
+		return Vector2i(int(pair[0]), int(pair[1]))
+	return Vector2i(-1, -1)
+
+
+func test_the_roster_offers_exactly_the_classes_doc_04_ships() -> void:
+	var sim := _sim()
+	var tool := _tool(sim)
+	var classes := tool.conductor_classes()
+	assert_eq(str(classes), str([1, 2] as Array[int]),
+			"data/grid_components.json routable.feeder — class 3 is deferred there")
+	var offered: PackedStringArray = []
+	for card: Dictionary in tool.cards():
+		if StringName(str(card["path_verb"])) == PathTool.VERB_FEEDER:
+			offered.append(str(card["id"]))
+			assert_true(classes.has(int(card["conductor_class"])))
+	assert_eq(offered.size(), classes.size(),
+			"one card per class the command would accept, and no card it would not")
+	# The micro row is doc 04 §2.2's plate, read from `PowerGrid` and not authored.
+	assert_almost_eq(PathTool.feeder_capacity_kw(1), 1200.0, 0.001)
+	assert_almost_eq(PathTool.feeder_capacity_kw(2), 3000.0, 0.001)
+	assert_almost_eq(PathTool.feeder_capacity_kw(9), 0.0, 0.001,
+			"a class this build has no row for quotes nothing rather than crashing")
+
+
+func test_a_feeder_run_uses_doc_04s_assist_and_not_an_l() -> void:
+	# The one card whose geometry is the sim's. §2.1 refuses a tile on land the
+	# city does not own, so an L drawn across unbought ground would price a run
+	# the command will always refuse — the assist routes AROUND it.
+	var sim := _sim()
+	var tool := _tool(sim)
+	var start := _feeder_route_tile(sim)
+	assert_true(start.x >= 0, "doc 09 §2.9.5 authored two feeders to branch")
+	tool.enter("feeder_c2")
+	tool.move_to_tile(start)
+	tool.begin_run()
+	var head := start + Vector2i(5, 4)
+	tool.move_to_tile(head)
+	var expected: Array = sim.suggest_feeder_route(start, head)
+	assert_eq(str(tool.tiles()), str(expected),
+			"the ghost draws exactly the tiles the commit will lay")
+	for billed: bool in tool.billable_flags():
+		assert_true(billed, "doc 03 §2.13(b) bills every tile of a new feeder")
+
+
+func test_a_feeder_run_is_priced_and_committed_by_the_command_itself() -> void:
+	var sim := _sim()
+	sim.treasury.balance = 2_000_000
+	var tool := _tool(sim)
+	var start := _feeder_route_tile(sim)
+	tool.enter("feeder_c1")
+	tool.move_to_tile(start)
+	tool.begin_run()
+	tool.move_to_tile(start + Vector2i(4, 0))
+	var view := tool.placement_view()
+	assert_eq(int(view["tile_count"]), tool.tiles().size())
+	var preview := sim.cmd_route_feeder(tool.tiles(), 1, true)
+	if bool(preview["ok"]):
+		assert_eq(int(view["cost"]), int(preview["payload"]["cost"]),
+				"the bar shows the command's quote, never its own arithmetic")
+		var before := sim.treasury.balance
+		var feeders := sim.grid.component_ids_of_kind(&"feeder").size()
+		var done := tool.commit()
+		assert_true(bool(done["ok"]), str(done))
+		assert_eq(before - sim.treasury.balance, int(view["cost"]))
+		assert_eq(sim.grid.component_ids_of_kind(&"feeder").size(), feeders + 1,
+				"and the city has one more trunk than it did")
+		assert_true(tool.is_aiming(), "the tool re-arms for the next run")
+	else:
+		# Doc 09's two authored feeders may already hold SUB-A's slots. That is
+		# a REFUSAL the bar has to be able to spell, which is the other half of
+		# this door — asserted rather than skipped.
+		assert_eq(str(view["verdict"]), String(PathTool.VERDICT_BLOCKED))
+		var failure: Dictionary = view["failure"]
+		assert_false(str(failure["body"]).contains("{"), str(failure))
+
+
+func test_a_run_that_starts_off_the_network_is_refused_in_words() -> void:
+	var sim := _sim()
+	sim.treasury.balance = 2_000_000
+	var tool := _tool(sim)
+	tool.enter("feeder_c2")
+	# The far corner of the map: owned by nobody, touching no substation.
+	tool.move_to_tile(Vector2i(TileGrid.SIZE - 3, TileGrid.SIZE - 3))
+	tool.begin_run()
+	tool.move_to_tile(Vector2i(TileGrid.SIZE - 3, TileGrid.SIZE - 6))
+	assert_false(tool.can_confirm())
+	var failure: Dictionary = tool.placement_view()["failure"]
+	assert_false(failure.is_empty(), "the bar says which rule said no")
+	assert_true(RequirementFormatter.is_known(failure["code"]),
+			"%s has copy in data/strings.en.json" % str(failure["code"]))
+	assert_false(str(failure["body"]).contains("{"))
+
+
+func test_every_refusal_the_feeder_verb_can_raise_has_copy() -> void:
+	# Doc 04 §4's documented check order, end to end. A door is only a door if
+	# every `no` behind it is a sentence.
+	for code: StringName in [&"E_UNKNOWN_COMPONENT", &"E_CLASS_UNAVAILABLE",
+			&"E_NO_TILES", &"E_OUT_OF_BOUNDS", &"E_DISCONTINUOUS",
+			&"E_NOT_DEVELOPED", &"E_NOT_CONNECTED", &"E_NO_SLOT", &"E_FUNDS",
+			&"E_AUSTERITY"]:
+		assert_true(RequirementFormatter.is_known(code),
+				"%s is in the formatter's table" % code)
+
+
+func test_the_whole_feeder_loop_is_walkable_from_the_founding_city() -> void:
+	# The door is only a door if the refusal behind it opens onto something the
+	# player can buy. Doc 09 §2.9.5 fills both of SUB-A's §2.2 slots, so the
+	# FIRST run a player draws is refused `E_NO_SLOT` — and this walks the answer
+	# that refusal names, end to end, on the real starter city.
+	var sim := _sim()
+	sim.treasury.balance = 2_000_000
+	var tool := _tool(sim)
+	var formatter := RequirementFormatter.load_from_files()
+
+	# 1. The refusal, with the purchase named in words and a camera target.
+	tool.enter("feeder_c2")
+	tool.move_to_tile(_feeder_route_tile(sim))
+	tool.begin_run()
+	tool.move_to_tile(_feeder_route_tile(sim) + Vector2i(5, 4))
+	var refused: Dictionary = tool.placement_view()["failure"]
+	assert_eq(StringName(str(refused["code"])), &"E_NO_SLOT",
+			"the founding city has no spare slot, which is doc 04 §2.2 working")
+	assert_eq(str((refused["fix_target"] as Dictionary)["kind"]),
+			String(RequirementFormatter.FIX_BUILDING))
+	assert_ne(str((refused["fix_target"] as Dictionary)["id"]), "",
+			"`Fix this →` names the substation to go and look at")
+
+	# 2. Buy the substation the copy asks for — an ordinary build card.
+	var controller := BuildController.new(sim, formatter)
+	assert_true(bool(controller.enter("substation")["ok"]))
+	var spot := Vector2i(-1, -1)
+	for z in range(34, 78):
+		for x in range(34, 78):
+			var verdict := controller.evaluate(Vector2i(x, z))
+			if StringName(str(verdict.get("verdict", ""))) \
+					== BuildController.VERDICT_VALID:
+				spot = Vector2i(x, z)
+				break
+		if spot.x >= 0:
+			break
+	assert_true(spot.x >= 0, "the founding core has somewhere to put one")
+	controller.move_to_tile(spot)
+	var placed := controller.commit()
+	assert_true(bool(placed["ok"]), str(placed))
+	var sim_id := String(placed["payload"]["sim_id"])
+
+	# 3. It becomes a doc 04 node when the shell finishes (`node_shells`, Wave 6),
+	#    and it arrives with slots.
+	var commissioned := -1
+	for i in 40:
+		sim.advance_hours(1.0)
+		if sim.grid.has_component(sim_id):
+			commissioned = i + 1
+			break
+	assert_true(commissioned > 0, "the shell commissions as a grid node")
+	assert_true(int(sim.grid.feeder_slots(sim_id)["free"]) > 0,
+			"and the whole point of buying it is that it has room")
+
+	# 4. Route off its fence line. The run is legal, priced, and — the reason
+	#    doc 04 §2.9 calls this relief rather than headroom — it ADOPTS.
+	var b: Building = sim.buildings[sim_id]
+	tool.enter("feeder_c2")
+	tool.move_to_tile(b.origin)
+	tool.begin_run()
+	tool.move_to_tile(b.origin + Vector2i(6, 3))
+	assert_true(tool.can_confirm(), str(tool.verdict()))
+	var quoted := tool.run_cost()
+	var before := sim.treasury.balance
+	var done := tool.commit()
+	assert_true(bool(done["ok"]), str(done))
+	assert_eq(before - sim.treasury.balance, quoted, "the bar's number was the bill")
+	assert_true(int(done["payload"]["adopts"]) > 0,
+			"doc 04 §2.9: a new trunk takes load off the one that was full")
 
 
 # ===========================================================================

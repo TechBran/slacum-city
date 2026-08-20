@@ -1,11 +1,11 @@
 class_name PathTool
 extends RefCounted
-## Doc 12 §2.7's **drag-path placement**, headless. Roads and water mains are not
-## footprints: the player picks a start tile, sweeps to an end tile, and one
-## command lays the whole run. `BuildController` owns the footprint half of §2.7;
-## this class owns the run half, and `ui/build_sheet.gd` routes a card tap to
-## whichever of the two the card belongs to — so the sheet, the placement bar and
-## the Android back stack stay one code path for both.
+## Doc 12 §2.7's **drag-path placement**, headless. Roads, water mains and power
+## feeders are not footprints: the player picks a start tile, sweeps to an end
+## tile, and one command lays the whole run. `BuildController` owns §2.7's
+## footprint half and this class owns the run half; `ui/build_sheet.gd` routes a
+## card tap to whichever of the two the card belongs to — so the sheet, the
+## placement bar and the Android back stack stay one code path for both.
 ##
 ## Three responsibilities, and no fourth:
 ##
@@ -16,7 +16,8 @@ extends RefCounted
 ##      here (doc 12 §3.1 G-8).
 ##   2. **The geometry** — `l_path()`, doc 12 §2.7's "L-shaped (Manhattan,
 ##      longest-leg-first)" run: pure, static, and the reason a test can name
-##      tiles without a sim.
+##      tiles without a sim. One card family declares the other geometry doc 04
+##      §4 owns instead — see [constant GEOMETRY_ASSIST].
 ##   3. **The state machine** — `enter() → aim → begin_run() → draw → commit()`,
 ##      with the verdict recomputed on every move by *asking the sim*
 ##      (`preview = true`), exactly as `BuildController.evaluate_component` does.
@@ -47,6 +48,9 @@ const VERB_ROAD_BUILD := &"road_build"
 const VERB_ROAD_UPGRADE := &"road_upgrade"
 const VERB_ROAD_DEMOLISH := &"road_demolish"
 const VERB_WATER_MAIN := &"water_main"
+## Doc 04 §4's `route_feeder` — the run verb doc 92 §17.3 named as the late
+## game's binding constraint and §25.7 deliberately left doorless.
+const VERB_FEEDER := &"feeder"
 
 ## Doc 12 §2.7's own tab name for the run verbs ("Residential · Commercial ·
 ## Industrial · Civic · Utility · **Roads** · Land"). Water mains do NOT come
@@ -64,29 +68,65 @@ const ROAD_CLASS_NONE := 0
 const ROAD_CLASS_STREET := 1
 const ROAD_CLASS_AVENUE := 2
 
+## How a card turns two tiles into a run.
+##
+##   * `l` — doc 12 §2.7's L (Manhattan, longest leg first), the geometry every
+##     card shipped with. Roads and mains are laid where the thumb drew them.
+##   * `assist` — doc 04 §4's routing assist (report 98 C-41), i.e.
+##     `CitySim.suggest_feeder_route`. A feeder is the one run verb whose OWN
+##     rule (§2.1: every tile owned and READY) routinely refuses a straight L
+##     across a block the city has not bought — measured, that was the whole of
+##     seed 4242's late-game failure — and the assist returns the shortest LEGAL
+##     run, which on doc 03 §2.13(b)'s per-tile price is also the cheapest. The
+##     ghost then draws exactly the tiles the commit will lay, which is the
+##     ghost's contract; where no legal run exists the assist falls back to the
+##     straight line, so the blocker the bar reads is still the honest one.
+const GEOMETRY_L := &"l"
+const GEOMETRY_ASSIST := &"assist"
+
 ## The roster. **Structure only** — no price, no capacity, no copy. `min_tiles`
 ## is the shortest run the owning command accepts, and it is what decides whether
 ## a card can price its aim tile before a run exists: doc 10 quotes a single road
-## tile happily, doc 05 §6 refuses a main shorter than two.
+## tile happily, doc 05 §6 refuses a main shorter than two, doc 04 §4 the same.
+##
+## `conductor_class` is doc 04 §2.2's class integer and is 0 on every card that
+## is not a feeder — the roster's own answer to "does the verb expose a class?".
+## It does, and the answer is a CARD each rather than a picker: doc 12 §2.7 has
+## no control for a per-card enum, and `Street`/`Avenue` and `Water Main`/`Trunk
+## Main` already spell the same choice as two rows on the same tab.
 const CARDS: Array[Dictionary] = [
 	{"id": "road_street", "verb": VERB_ROAD_BUILD, "category": CATEGORY_ROADS,
 			"road_class": ROAD_CLASS_STREET, "tier": "", "min_tiles": 1,
-			"refunds": false},
+			"refunds": false, "conductor_class": 0, "geometry": GEOMETRY_L},
 	{"id": "road_avenue", "verb": VERB_ROAD_BUILD, "category": CATEGORY_ROADS,
 			"road_class": ROAD_CLASS_AVENUE, "tier": "", "min_tiles": 1,
-			"refunds": false},
+			"refunds": false, "conductor_class": 0, "geometry": GEOMETRY_L},
 	{"id": "road_widen", "verb": VERB_ROAD_UPGRADE, "category": CATEGORY_ROADS,
 			"road_class": ROAD_CLASS_AVENUE, "tier": "", "min_tiles": 1,
-			"refunds": false},
+			"refunds": false, "conductor_class": 0, "geometry": GEOMETRY_L},
 	{"id": "road_remove", "verb": VERB_ROAD_DEMOLISH, "category": CATEGORY_ROADS,
 			"road_class": ROAD_CLASS_NONE, "tier": "", "min_tiles": 1,
-			"refunds": true},
+			"refunds": true, "conductor_class": 0, "geometry": GEOMETRY_L},
 	{"id": "water_main_service", "verb": VERB_WATER_MAIN,
 			"category": CATEGORY_INFRASTRUCTURE, "road_class": ROAD_CLASS_NONE,
-			"tier": "service", "min_tiles": 2, "refunds": false},
+			"tier": "service", "min_tiles": 2, "refunds": false,
+			"conductor_class": 0, "geometry": GEOMETRY_L},
 	{"id": "water_main_trunk", "verb": VERB_WATER_MAIN,
 			"category": CATEGORY_INFRASTRUCTURE, "road_class": ROAD_CLASS_NONE,
-			"tier": "trunk", "min_tiles": 2, "refunds": false},
+			"tier": "trunk", "min_tiles": 2, "refunds": false,
+			"conductor_class": 0, "geometry": GEOMETRY_L},
+	# Doc 04 §4. `infrastructure` and not `roads`: doc 12 §2.7 files a run card
+	# by what it is made of, not by the tool that draws it — a feeder belongs
+	# beside the transformer it roots exactly as a main belongs beside the pump
+	# it feeds, and both are answers to a chip the HUD is already showing red.
+	{"id": "feeder_c1", "verb": VERB_FEEDER,
+			"category": CATEGORY_INFRASTRUCTURE, "road_class": ROAD_CLASS_NONE,
+			"tier": "", "min_tiles": 2, "refunds": false,
+			"conductor_class": 1, "geometry": GEOMETRY_ASSIST},
+	{"id": "feeder_c2", "verb": VERB_FEEDER,
+			"category": CATEGORY_INFRASTRUCTURE, "road_class": ROAD_CLASS_NONE,
+			"tier": "", "min_tiles": 2, "refunds": false,
+			"conductor_class": 2, "geometry": GEOMETRY_ASSIST},
 ]
 
 ## Doc 05's arterial tier sits behind `levels_4_5_enabled` and is therefore not
@@ -179,17 +219,44 @@ func cards() -> Array[Dictionary]:
 
 
 ## False when this build cannot offer the card at all — a tier behind doc 05's
-## `levels_4_5_enabled`, or one `data/water.json` no longer carries.
+## `levels_4_5_enabled`, one `data/water.json` no longer carries, or a conductor
+## class outside doc 04 §6's shipped roster. Same rule in all three cases: a card
+## the owning command would answer `E_*_LOCKED` / `E_CLASS_UNAVAILABLE` for is
+## not progression, it is noise.
 func available(id: String) -> bool:
 	var entry := PathTool.row(id)
 	if entry.is_empty() or sim == null:
 		return false
-	if StringName(str(entry["verb"])) != VERB_WATER_MAIN:
-		return true
-	var tier := str(entry["tier"])
-	if not sim.water.data.mains.has(tier):
-		return false
-	return not FLAG_LOCKED_TIERS.has(tier) or sim.water.data.flag("levels_4_5_enabled")
+	match StringName(str(entry["verb"])):
+		VERB_WATER_MAIN:
+			var tier := str(entry["tier"])
+			if not sim.water.data.mains.has(tier):
+				return false
+			return not FLAG_LOCKED_TIERS.has(tier) \
+					or sim.water.data.flag("levels_4_5_enabled")
+		VERB_FEEDER:
+			return conductor_classes().has(int(entry["conductor_class"]))
+	return true
+
+
+## Doc 04 §6's shipped conductor classes, from `data/grid_components.json`'s own
+## `routable.feeder.conductor_classes` through the sim — the same list
+## `cmd_route_feeder` checks `E_CLASS_UNAVAILABLE` against, so a card exists
+## exactly when the command would take it. Class 3 is deferred there and is
+## therefore absent here without this file knowing the number.
+func conductor_classes() -> Array[int]:
+	var out: Array[int] = []
+	if sim == null:
+		return out
+	var routable: Variant = sim.grid_rules.get("routable", {})
+	if not (routable is Dictionary):
+		return out
+	var feeder: Variant = (routable as Dictionary).get("feeder", {})
+	if not (feeder is Dictionary):
+		return out
+	for entry: Variant in ((feeder as Dictionary).get("conductor_classes", []) as Array):
+		out.append(int(entry))
+	return out
 
 
 func card(id: String) -> Dictionary:
@@ -205,6 +272,7 @@ func card(id: String) -> Dictionary:
 		"component_kind": "",
 		"component_domain": "",
 		"path_verb": String(entry["verb"]),
+		"conductor_class": int(entry["conductor_class"]),
 		"level": 1,
 		"category": str(entry["category"]),
 		"name_key": PathTool.card_name_key(id),
@@ -248,6 +316,16 @@ func per_tile_price(id: String) -> int:
 					PathTool.road_class_name(ROAD_CLASS_STREET))
 		VERB_WATER_MAIN:
 			return sim.econ_curves.water_main_cost_per_tile(str(entry["tier"]), m_build)
+		VERB_FEEDER:
+			# Doc 03 §2.13(b) `feeder.cost_per_tile_overhead` for the class —
+			# $110 class 1, $210 class 2. `cmd_route_feeder` applies `M_build` to
+			# the whole run rather than to each tile, so this is the same figure
+			# rounded one step earlier, exactly as `road_build_cost` rounds it.
+			# Undergrounding is deferred (doc 04 §6), so the flag is false and
+			# no card offers the multiplier.
+			return CostCurves.round_half_up(float(sim.econ_curves
+					.grid_line_cost_per_tile("feeder", int(entry["conductor_class"]), false))
+					* m_build)
 	return 0
 
 
@@ -270,14 +348,33 @@ func micro_text(id: String) -> String:
 	var entry := PathTool.row(id)
 	if entry.is_empty():
 		return ""
-	if StringName(str(entry["verb"])) == VERB_WATER_MAIN:
-		var capacity := 0.0
-		if sim != null:
-			capacity = sim.water.data.main_capacity(str(entry["tier"]))
-		return _t("ui_build_card_path_micro_main",
-				{"capacity": RequirementFormatter.water_m3h(capacity)},
-				RequirementFormatter.water_m3h(capacity))
+	match StringName(str(entry["verb"])):
+		VERB_WATER_MAIN:
+			var capacity := 0.0
+			if sim != null:
+				capacity = sim.water.data.main_capacity(str(entry["tier"]))
+			return _t("ui_build_card_path_micro_main",
+					{"capacity": RequirementFormatter.water_m3h(capacity)},
+					RequirementFormatter.water_m3h(capacity))
+		VERB_FEEDER:
+			# The decision on a feeder card is the CLASS, and the class is a
+			# capacity: doc 04 §2.2's 1,200 / 3,000 kW, read from `PowerGrid`
+			# rather than authored, so the card and §5.10's overlay quote the
+			# same plate.
+			var kw := PathTool.feeder_capacity_kw(int(entry["conductor_class"]))
+			return _t("ui_build_card_path_micro_feeder",
+					{"capacity": RequirementFormatter.power(kw)},
+					RequirementFormatter.power(kw))
 	return _t("ui_build_card_path_micro_%s" % id, {}, "")
+
+
+## Doc 04 §2.2's plate for a conductor class, or 0 for a class this build has no
+## row for. `PowerGrid.FEEDER_CAPACITY` is the one copy (`sim/`), and the roster
+## check in `available()` means the card list never reaches the fallback.
+static func feeder_capacity_kw(conductor_class: int) -> float:
+	if conductor_class < 1 or conductor_class > PowerGrid.FEEDER_CAPACITY.size():
+		return 0.0
+	return float(PowerGrid.FEEDER_CAPACITY[conductor_class - 1])
 
 
 static func road_class_name(road_class: int) -> String:
@@ -479,6 +576,12 @@ func _recompute() -> void:
 	params.merge(_quote, true)
 	if sim != null:
 		params["balance"] = sim.treasury.balance
+	# Where `Fix this →` should fly. The sim names the object its refusal is
+	# about — doc 04 §4's quote carries the `substation` whose §2.2 slot ladder
+	# said no — and choosing which of a payload's ids the camera chases is a UI
+	# decision, so it is made here and not in `sim/` (doc 12 §4.4).
+	if _quote.has("substation") and str(_quote["substation"]) != "":
+		params["fix_target_id"] = str(_quote["substation"])
 	if bool(preview["ok"]):
 		_verdict = {"verdict": VERDICT_VALID, "code": &"", "failure": {}, "params": params}
 		return
@@ -500,13 +603,28 @@ func _run_tiles() -> Array[Vector2i]:
 		return [] as Array[Vector2i]
 	if state == STATE_AIMING:
 		return [head] as Array[Vector2i]
-	var full := PathTool.l_path(anchor, head)
+	var full := _geometry_tiles()
 	if full.size() <= max_run_tiles:
 		return full
 	var clipped: Array[Vector2i] = []
 	for i in max_run_tiles:
 		clipped.append(full[i])
 	return clipped
+
+
+## The card's own geometry — see [constant GEOMETRY_L] / [constant
+## GEOMETRY_ASSIST]. The assist is the sim's (`suggest_feeder_route`, doc 04 §4 /
+## report 98 C-41): the UI does not own a second copy of the legality rule the
+## command will enforce, exactly as it does not own a second copy of the price.
+func _geometry_tiles() -> Array[Vector2i]:
+	var entry := PathTool.row(card_id)
+	if sim != null and not entry.is_empty() \
+			and StringName(str(entry.get("geometry", GEOMETRY_L))) == GEOMETRY_ASSIST:
+		var out: Array[Vector2i] = []
+		for value: Variant in sim.suggest_feeder_route(anchor, head):
+			out.append(value as Vector2i)
+		return out
+	return PathTool.l_path(anchor, head)
 
 
 func _issue(run: Array[Vector2i], preview: bool) -> Dictionary:
@@ -525,6 +643,8 @@ func _issue(run: Array[Vector2i], preview: bool) -> Dictionary:
 			return sim.cmd_demolish_road(raw, preview)
 		VERB_WATER_MAIN:
 			return sim.cmd_place_water_main(raw, str(entry["tier"]), preview)
+		VERB_FEEDER:
+			return sim.cmd_route_feeder(raw, int(entry["conductor_class"]), preview)
 	return CommandQueue.fail(&"E_UNKNOWN_COMPONENT", {"archetype": card_id})
 
 
@@ -588,7 +708,10 @@ func billable_flags() -> Array[bool]:
 			VERB_ROAD_DEMOLISH:
 				out.append(road_class != TileGrid.ROAD_NONE)
 			_:
-				# Doc 05 §6 bills every tile of a main, the tap included.
+				# Doc 05 §6 bills every tile of a main, the tap included, and
+					# doc 03 §2.13(b) bills every tile of a feeder for the same
+					# reason: both are a NEW component with a route of its own and
+					# `line_km` is published for all of it (report 98 C-12).
 				out.append(true)
 	return out
 
@@ -609,6 +732,7 @@ func placement_view() -> Dictionary:
 		"component_kind": "",
 		"component_domain": "",
 		"path_verb": str(entry.get("verb", "")),
+		"conductor_class": int(entry.get("conductor_class", 0)),
 		"name_key": PathTool.card_name_key(card_id),
 		"tile_count": _tiles.size() if state == STATE_DRAWING else 0,
 		"refunds": refunds,

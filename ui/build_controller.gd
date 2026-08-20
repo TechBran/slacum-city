@@ -109,6 +109,11 @@ var component_kind := ""
 var component_domain := ""
 var component_level := GRID_CARD_LEVEL
 
+## Doc 05 §6's node verbs (doc 93 §J1). Owned here rather than by the panel for
+## the same reason every other view model on this class is: the panel binds, this
+## computes, and `BuildingPanel` already holds exactly one controller.
+var water: WaterActions
+
 var _verdict: Dictionary = {}
 var _grid_placeable: Dictionary = {}
 var _water_placeable: Dictionary = {}
@@ -121,9 +126,10 @@ func _init(p_sim: CitySim = null, p_formatter: RequirementFormatter = null,
 	formatter = p_formatter if p_formatter != null else RequirementFormatter.load_from_files()
 	tile_m = p_tile_m if p_tile_m > 0.0 else BuildController.load_tile_m()
 	_grid_placeable = BuildController.load_grid_placeable()
-	var water := BuildController.load_water_placeable()
-	_water_placeable = water["placeable"]
-	_water_components = water["components"]
+	var water_roster := BuildController.load_water_placeable()
+	_water_placeable = water_roster["placeable"]
+	_water_components = water_roster["components"]
+	water = WaterActions.new(sim, formatter)
 
 
 ## `data/world.json.world.tile_meters`, mirroring `CameraState._apply_world()`.
@@ -431,20 +437,38 @@ static func category_tab_key(category: String) -> String:
 	return "ui_build_tab_%s" % category
 
 
-## Sheet order: category (the doc's tab order), then **buys before sells**, then
-## cost, then id.
+## Sheet order: category (the doc's tab order), then **things before runs**, then
+## **buys before sells**, then cost, then id.
 ##
-## The middle clause exists for exactly one card — `Remove`, doc 10 §2.13's road
-## demolition, which quotes a refund. Sorted on price alone it leads the ROADS
-## tab, because a card that pays $450 is the cheapest thing on it; and a tab
-## whose first card is the destructive one teaches the wrong verb first. The
-## rule is one sentence: **the sheet is a shop, and a card that pays is not a
-## cheap purchase — it is not a purchase.**
+## The two middle clauses are both about a price that is not comparable to the
+## price beside it.
+##
+## **Runs sort after footprints** because a run card's `cost` is a price PER
+## TILE and a footprint card's is a total, and §2.7's "then cost" was written
+## before either kind of run card existed. Sorted together, `Feeder` at $110 a
+## tile leads the INFRASTRUCTURE tab and `Transformer` at $500 falls to fourth —
+## on the tab a player is sent to by `E_UNSERVED`, whose answer IS the
+## transformer. Ordering by a number that means two different things is not an
+## ordering, so the two kinds are ordered separately and each is sorted by its
+## own price.
+##
+## **A card that pays sorts last** — exactly one card, `Remove`, doc 10 §2.13's
+## road demolition. Sorted on price alone it leads the ROADS tab, because a card
+## that pays $450 is the cheapest thing on it, and a tab whose first card is the
+## destructive one teaches the wrong verb first. The rule is one sentence: **the
+## sheet is a shop, and a card that pays is not a cheap purchase — it is not a
+## purchase.**
 static func _card_less(a: Dictionary, b: Dictionary) -> bool:
 	var ia := CATEGORY_ORDER.find(str(a["category"]))
 	var ib := CATEGORY_ORDER.find(str(b["category"]))
 	if ia != ib:
 		return ia < ib
+	# `path_verb` is what `PathTool` stamps on a run card and what no footprint
+	# card carries — the same discriminator `BuildSheet` routes a tap on.
+	var pa := str(a.get("path_verb", "")) != ""
+	var pb := str(b.get("path_verb", "")) != ""
+	if pa != pb:
+		return pb
 	var ra := bool(a.get("refunds", false))
 	var rb := bool(b.get("refunds", false))
 	if ra != rb:
@@ -960,6 +984,12 @@ func building_view(sim_id: String) -> Dictionary:
 		"coverage": _coverage(sim_id),
 		"upgrade": upgrade_view(sim_id),
 		"actions": actions_view(sim_id),
+		# Doc 05 §6's node ladder, for the one archetype that hosts one. A
+		# `water_facility` shell is a doc-02 building AND the host of one or
+		# more doc-05 nodes, and only the node has a capacity to buy — so the
+		# shell's own upgrade block above sells floorspace and this one sells
+		# supply. `available` is false everywhere else (doc 93 §J1).
+		"water": water.building_block(sim_id),
 	}
 
 
@@ -1100,6 +1130,15 @@ func demolish(sim_id: String) -> Dictionary:
 	if sim == null:
 		return CommandQueue.fail(&"E_UNKNOWN_BUILDING", {"sim_id": sim_id})
 	return sim.cmd_demolish_building(sim_id)
+
+
+## Doc 05 §6's node upgrade, from the same panel and through the same funnel.
+## The shell's `UPGRADE` button buys doc 02's next level; this buys doc 05's, on
+## one of the nodes that shell hosts.
+func upgrade_water_node(node_id: String) -> Dictionary:
+	if water == null:
+		return CommandQueue.fail(&"E_UNKNOWN_NODE", {"node": node_id})
+	return water.upgrade_node(node_id)
 
 
 static func _vital(id: String, label_key: String, value: String) -> Dictionary:
