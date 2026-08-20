@@ -3,6 +3,30 @@
 
 	"schema_version": 1,
 
+	"delivery": {
+		"_comment": "The ONE block in this file doc 13 owns (report C-71 draws the line at policy-vs-platform, and these are platform). No budget, no classes, no quiet hours — only how a decision that has already been made becomes an Android notification. `game/notifications/notification_scheduler.gd` and `native_notification_sink.gd` are the readers; doc 08's planner never looks at it.",
+
+		"_comment_ids": "Ids only have to be unique WITHIN a batch, because cancel_all() runs before every plan (doc 13 §2.5). 1000 up, one per accepted entry, reset on cancel — which is what makes the platform's persisted schedule trivially replaceable.",
+		"id_base": 1000,
+
+		"_comment_doze": "Alarms are inexact BY CHOICE: SCHEDULE_EXACT_ALARM/USE_EXACT_ALARM are Play-restricted to alarm-clock and calendar apps and requesting one risks the listing (doc 13 §2.6). Doze can therefore slip a fire by ~15 min, so anything with less lead than doze_slop_s + min_useful_lead_s would land after the thing it announces and is DROPPED rather than delivered late.",
+		"doze_slop_s": 900,
+		"min_useful_lead_s": 300,
+
+		"_comment_resume": "doc 08 §2.13: on resume every pending alarm is cancelled, because the catch-up has replaced the future they assumed. The tokens they spent come back with them unless they had already fired (notification_router.gd, replan_after_resume).",
+		"cancel_all_on_resume": true,
+
+		"_comment_channels": "Channel display names come from data/strings.en.json under this prefix + the lowercased class id (ui_notif_channel_p1_critical). A channel's name is fixed at creation FOREVER — Android will not let an app rename one after the player has seen it — so these strings are effectively part of the install.",
+		"channel_name_key_prefix": "ui_notif_channel_",
+
+		"_comment_offline": "Which events can be predicted at pause time, by predictability class (report C-23). `deterministic` = the fire tick is already derivable from the save (construction, land development); `forecast` = pre-rolled by the Director and committed to the save (weather warnings). Everything else is emergent, which needs a projection, and projection ships DISABLED (runtime.emergent_projection_enabled).",
+		"offline_sources": {
+			"construction_complete": "deterministic",
+			"land_developed": "deterministic",
+			"weather_warning": "forecast"
+		}
+	},
+
 	"classes": {
 		"_comment": "doc 08 §3.3's four-class model, canonical. `capacity` / `window_minutes` / `min_gap_minutes` are the PUSH budget and are the most conservative numbers in the project by intent (C-72): doc 12's in-app rates in data/ui.json are ~3x these and are a different quantity. `in_app_class` is the one-way map onto doc 12's p1/p2/p3 keys, so a class has one name here and doc 12's gate still keys off its own. P4 exists in schema and ships silent (`mvp_enabled: false`) so it cannot be bolted on later without a migration.",
 

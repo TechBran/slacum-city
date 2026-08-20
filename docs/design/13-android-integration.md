@@ -1085,6 +1085,287 @@ so **the permission set is empty in debug as well as release**. Two consequences
   reason to split the presets the way §3.4 always intended, and it is the only
   argument for doing so that this commit found.
 
+**Superseded by §11.2.** The debug APK still declares nothing of its own, but the
+plugin now ships §2.7's four permissions, so every build — debug, test APK and
+AAB alike — declares exactly those four. The gate is now an equality check rather
+than an emptiness check, and it runs on every release build.
+
+---
+
+## 11. As shipped — Milestone B: notifications, release signing, store assets
+
+Written from the commit that closed doc 91 §15 items 8 and 15. As in §10,
+everything below was **verified by running it**; where reality disagreed with the
+design, reality is recorded with the reason.
+
+### 11.1 `SlacumNative` v2 — the notification half exists now
+
+§10.6 listed the notification, permission and alarm surface as "not yet built".
+It is built. The plugin is now four Kotlin files (~700 lines):
+
+| File | What it is |
+|---|---|
+| `SlacumNative.kt` | the `@UsedByGodot` surface: time, thermal, permissions, channels, post/schedule/cancel, launch payload |
+| `NotificationCenter.kt` | channels, `AlarmManager`, the notification build, and `filesDir/notif_schedule.json` |
+| `AlarmReceiver.kt` | posts a scheduled notification **with the game process dead** — the entire point of the feature |
+| `BootReceiver.kt` | re-arms the schedule after a reboot, dropping whatever is already past |
+
+Six decisions worth recording, because each of them looks like a bug from the
+outside:
+
+1. **No `androidx`.** §2.6 specified `NotificationCompat` and a
+   `androidx.core:core-ktx` dependency in the `.gdap`. The framework's own
+   `Notification.Builder` + `NotificationChannel` cover everything this plugin
+   does at minSdk 29, so the dependency is gone and the `.gdap`'s `remote=[]` list
+   stays empty. One fewer version to keep in step with the engine's own androidx.
+2. **The alarm `PendingIntent` carries the id in its `data:` URI**, not only in
+   its extras. `PendingIntent` equality ignores extras entirely, so two alarms
+   that differ only by extras collapse into one and the second silently
+   overwrites the first. This is the single most common `AlarmManager` bug there
+   is, and the URI is what makes ids independent.
+3. **The tap intent is resolved through `getLaunchIntentForPackage`**, not by
+   naming `com.godot.game.GodotApp` as §2.6 wrote. The host activity is the
+   *template's* business; hardcoding it would break the day the template renames
+   it, and the package manager already knows the answer.
+4. **`notifications_enabled()` is the question that matters**, not
+   `permission_state()`. The per-app master switch exists on every API level and
+   no permission state reports it, so the shell asks both: the state drives the
+   prompt flow, `areNotificationsEnabled()` drives whether anything is posted.
+5. **`denied_permanent` is inferred**, because Android exposes no such state:
+   not granted + asked at least once + the system now declining to show a
+   rationale. The "asked at least once" bit lives in the plugin's own
+   `SharedPreferences`, since `shouldShowRequestPermissionRationale` is also
+   false *before* the first ask and reading it alone would report every fresh
+   install as permanently denied.
+6. **Both receivers are `exported="false"`.** Nothing outside the package has any
+   business firing a Slacum notification, and the system holds the alarm's
+   `PendingIntent` directly, which needs no export.
+
+### 11.2 The four permissions are real now
+
+The plugin's manifest declares `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`,
+`VIBRATE` and `WAKE_LOCK` — §2.7's list, exactly, and nothing else. Verified on
+the built artefacts rather than on the source:
+
+```
+$ aapt2 dump badging build/slacum-release.apk
+package: name='com.slacumcity.game' versionCode='400' versionName='0.4.0' compileSdkVersion='36'
+minSdkVersion:'29'   targetSdkVersion:'36'   native-code: 'arm64-v8a'
+uses-permission: name='android.permission.POST_NOTIFICATIONS'
+uses-permission: name='android.permission.RECEIVE_BOOT_COMPLETED'
+uses-permission: name='android.permission.VIBRATE'
+uses-permission: name='android.permission.WAKE_LOCK'
+```
+
+No `INTERNET`, which is what keeps the Play Data Safety form at "no data
+collected"; no `SCHEDULE_EXACT_ALARM` or `USE_EXACT_ALARM`, which is why every
+alarm is inexact and why the copy never states a time. `tests/test_release_plumbing.gd`
+holds the manifest to the same list without building anything, so the two halves
+of the gate fail in different places for the same reason.
+
+### 11.3 Offline scheduling: what the city can honestly promise
+
+`game/notifications/notification_scheduler.gd` implements §2.4's classes (a) and
+(b) and nothing else — class (c) projection ships disabled, as ruled.
+
+* **(a) deterministic completions.** Doc 01 §2.11's conversion,
+  `real_ms = (due_tick − now_tick) × 250`, lives here and nowhere else. Two
+  sources feed it: any `TimerService` entry flagged `notify_offline` (whose
+  `due_tick` is already absolute), and the construction queue.
+* **Construction needed a derivation §2.4 did not anticipate.** §2.4 assumed
+  `ConstructionQueue.pending_completions()` with a `completion_gmin` already in
+  it. There is no such field: a job carries *work units*, and its rate is crew ×
+  site multiplier × the `construction_rate` **day curve**. So the shell walks the
+  curve hour by hour, accumulating exactly as `ConstructionQueue.advance()` does,
+  and returns the tick the job crosses its requirement. `tests/test_android_notifications.gd`
+  asserts the prediction against the real queue actually running, which is the
+  only honest test of a derived time. A job with no crew returns "no date" rather
+  than a guess.
+* **(b) forecast hazards** come from `DisasterDirector.forecast_queue()`, which
+  doc 07 already pre-rolls and commits to the save — the hard dependency §5 named,
+  and it is met. Scheduled only at `confidence ≥ 0.80` and only with a positive
+  warning lead.
+* **Two guards drop things on purpose:** anything beyond `catchup.offline_cap_real_ms`
+  (the sim will not have reached that tick when the player returns) and anything
+  inside `doze_slop_s + min_useful_lead_s = 1 200 s` (it would arrive after the
+  event). Both are recorded in `last_drops` with a reason, so a missing
+  notification is explainable rather than mysterious.
+
+### 11.4 The budget rewind — spending tokens on a future that may not happen
+
+Doc 08 §2.13 says the plan is budgeted *at scheduling time*, with the buckets
+simulated forward. That is what `NotificationRouter.plan_offline()` does, and it
+raises a question the docs do not answer: what happens to those spent tokens when
+the player comes back in five minutes and every alarm is cancelled unfired?
+
+Answer, implemented in `replan_after_resume()`: the budget is **snapshotted**
+before the offline pass, and on resume the snapshot is restored and only the
+entries whose fire time has already passed are re-spent. A player who checks in
+constantly gets their whole budget back; one who stays away keeps the cost of the
+notifications they actually received. No delivery receipt is involved, which
+matters — the receipt only exists when the process happened to be alive when the
+alarm rang.
+
+That rewind exposed a real defect in `NotificationBudget.deserialize()`: it
+*merged* `last_class_min` / `last_key_min` instead of replacing them, so a restore
+left stamps from the discarded timeline behind and would have muted the next real
+notification of that key for its whole cooldown. It replaces now. The same bug
+would have bitten a checkpoint rollback, which is doc 08's own use of that method.
+
+### 11.5 Release signing, end to end
+
+`tools/make_release.sh` builds the AAB and the release APK and verifies both.
+Signing is env-only (`GODOT_ANDROID_KEYSTORE_RELEASE_PATH` / `_USER` /
+`_PASSWORD`); the script refuses to run without them, refuses a keystore that
+lives inside the repository, and opens the keystore with `keytool` before it
+builds anything so a wrong password fails in two seconds rather than after two
+Gradle builds.
+
+A **real** upload keystore now exists at
+`~/.local/share/godot/keystores/release.keystore` (4096-bit RSA, 30 years,
+PKCS#12, alias `slacum-upload`, mode 600), created by `--init-keystore`. The
+passphrase is in the environment and in a password manager and **nowhere in this
+repository** — there is no `.env`, no `secrets.sh`, and 4.7.2's preset has no
+keystore field to leak through in the first place (§10.2). We enrol in Play App
+Signing, so this is the *upload* key: losing it is a support ticket, not the end
+of the listing.
+
+Verified output of one run:
+
+| | AAB | release APK |
+|---|---|---|
+| size | 31 084 058 B (30 MiB) | 82 398 019 B (79 MiB) |
+| version | 0.4.0 / 400 | 0.4.0 / 400 |
+| min / target SDK | 29 / 36 | 29 / 36 |
+| ABI | `arm64-v8a` | `arm64-v8a` |
+| permissions | 4 | 4 |
+| signature | jar verified, `slacum-upload` | APK Signature Scheme v2, `CN=Slacum City` |
+| 16 KB alignment | 2 `.so`, every LOAD `0x4000` | 2 `.so`, every LOAD `0x4000` |
+
+Three corrections to §2.10, all found by running it:
+
+1. **`aapt2` cannot read an AAB at all** — `dump badging`, `dump permissions` and
+   `dump xmltree` all answer `could not identify format of APK`, because every
+   `dump` subcommand expects a *binary* manifest inside an APK and an AAB carries
+   aapt2's **protobuf** encoding. Google's answer is `bundletool`, a 60 MB jar
+   that is not in the SDK. `tools/aab_badging.py` reads the protobuf directly
+   (150 lines, no dependency, four field numbers from `Resources.proto`) and is
+   what the permission gate uses for the bundle.
+2. **`jarsigner -verify` reports "jar is unsigned" on a correctly signed APK.**
+   Godot writes only an APK Signature Scheme v2/v3 block at minSdk 29 — v1 has
+   been optional since API 24 — so the APK needs `apksigner` and the AAB, which
+   is still plain jar-signed, needs `jarsigner`. Two formats, two verifiers.
+3. **`readelf -l` wraps program headers over two lines**, so the alignment check
+   needs `-W`; without it the check reads the wrong word and passes anything.
+
+**Not reproducible byte-for-byte**, and it is the signature's fault rather than
+the build's: two runs of the same tree produced an identical AAB
+(`f3edbace…9961` twice) and two different APKs (`9af9710c…bad6`, `afa31d99…fa62`),
+because the v2 signature block is timestamped. Recorded rather than chased.
+
+### 11.6 Crash sentinel and the two-slot autosave
+
+`game/crash_sentinel.gd` implements §2.11's local breadcrumb ring: a flag at
+launch, deleted by the pause sequence, and an `incident_<unix>.json` written when
+the next launch still finds it. No network, no SDK, no Data Safety impact —
+**the hook point for a future reporter is `breadcrumb_path()`** and it is
+documented in the class rather than built.
+
+The part §2.11 did not specify is what an unclean exit should *do*, and the
+answer needs somewhere to fall back to. `SaveService` now alternates the autosave
+between slot 0 and slot 7 (`AUTOSAVE_SHADOW_SLOT`), writing to whichever is
+older, so the newest autosave is never the only copy. The rotation is derived
+from the files' own timestamps rather than from a counter, because a counter is
+state that gets lost exactly when it matters. `last_good_autosave_slot()` then
+answers with the newest half that **fully parses** — a whole-file read, because
+after a crash the cheap header check is the wrong one — and `load_latest()` falls
+through a damaged newest save to the one behind it.
+
+What this defends against is not a torn file (the atomic rename already makes
+that impossible) but a *complete* one written seconds before the process died.
+Slot 7 rather than slot 1 because `data/ui.json.save_slots.count` is 3: the
+shadow sits outside every slot the player can see.
+
+### 11.7 S10, and what a settings row is allowed to write
+
+`data/ui.json.settings.rows` gains five toggles: the master switch, one per
+enabled class, and doc 08 §2.13.3's quiet-hours critical bypass. The row key **is**
+the class id lowercased (`P1_critical` → `notify_p1_critical`), so `data/ui.json`
+and `data/notifications.json` cannot drift; `NotificationRouter.apply_settings()`
+is the only writer and it writes to `NotificationBudget`, never to a second copy
+of the policy. All five are device-scoped (`user://settings.cfg`), per doc 08
+§2.13.4: a player who turned notifications off stays off across city deletion.
+
+P4 has no row, because it has no channel and the budget refuses to enable it.
+Doc 12 §2.13's "P3 routine off by default" is **superseded**: C-71 made doc 08
+sole owner of that answer and `data/notifications.json` says on.
+
+### 11.8 `data/notifications.json` gains a `delivery` block
+
+One block in doc 08's file is doc 13's (the policy/platform line, not a
+file/file line): ids (`id_base = 1000`), the Doze feasibility numbers
+(`doze_slop_s = 900`, `min_useful_lead_s = 300`), `cancel_all_on_resume`, the
+channel-name string prefix, and `offline_sources` — which events are predictable
+at pause time and by which class. No budget, no classes, no quiet hours.
+
+Channel *names* come from `data/strings.en.json` (`ui_notif_channel_<class>`),
+not from a second copy file: §3.1.1's `data/notifications_text.json` is
+**withdrawn** in favour of G-8's one string table, which is what doc 12 §5 already
+records doc 13 as rendering from. Two tables would let a push and its in-app row
+drift apart by one careless edit, and that is precisely what G-8 exists to stop.
+`NotificationText.clock_time_offenders()` is the test hook that keeps §2.6's "never
+state a time" rule enforceable rather than aspirational.
+
+### 11.9 Store assets
+
+`tools/gen_store_assets.py` produces the whole Play listing set, deterministically:
+
+* **icon 512×512** and **feature graphic 1024×500**, drawn from `tools/gen_icon.py`'s
+  authored skyline coordinate system — the feature graphic is the same mark and
+  the same lit window as the launcher icon and the boot splash, at a third crop;
+* **five screenshots × three form factors** (phone 1920×1080, 7" 2048×1152, 10"
+  2560×1440), landscape, re-rendered at each aspect rather than upscaled:
+  `night_skyline`, `dusk_skyline` and `night_storm` off `game/showcase.tscn` (the
+  scene that exists to be the frame the project is marketed on), plus
+  `power_overlay` and `first_run` off `game/main.tscn`, so the listing shows the
+  real HUD and not only the hero renders.
+
+Screenshots run under `xvfb-run` when there is no display, and every frame is
+checked for flatness before it is accepted — a black rectangle that exits 0 is
+the failure mode `--headless` produces and the one worth catching here rather
+than in the Play review queue. Output goes to `build/store/` and is gitignored:
+the generator is deterministic, so the repository keeps the recipe and the
+Console keeps the pixels.
+
+### 11.10 Still open after this commit
+
+* **Nothing consumes the thermal ladder** (§2.8) — `AndroidLifecycle` forwards
+  the status and no policy acts on it. Unchanged by this commit, still doc 11's.
+* **On-device verification** (§7's D-01…D-16) has not been run: this commit was
+  built and tested off-device by instruction. The alarm path in particular has
+  never fired on real hardware; `dumpsys alarm | grep slacumcity` after a pause is
+  the first thing to check on the Fold.
+* **`consume_launch_payload()` has no consumer.** The plugin captures a tap's
+  deeplink and emits `notification_opened`, and nothing in `game/main.gd` routes
+  it to the incident drawer or the overlay yet. That is a shell wiring change of
+  a few lines, and it is the difference between a notification that opens the
+  game and one that opens the *thing the notification was about*.
+* **`targetSdk` is 36, not §2.0/§2.12's 37**, for the reason §10.2 records: the
+  template pins `compileSdk 36`. Unchanged.
+* **The pause pass now posts in-session events, and that is a policy question.**
+  `NotificationRouter.plan_for_background()` flushes the queued in-session
+  candidates before it plans the offline future — doc 08 §2.13's shipped
+  behaviour, pinned by `tests/test_notifications.gd` §30. With an inert sink that
+  flush was free; with a live one it *posts*, immediately, as the app goes away,
+  and it spends tokens the offline plan then does not have. Two readings, and
+  this doc does not own the answer:
+  - **as shipped:** the player just backgrounded the app with a fire burning, and
+    a buzz on the way out is the point of the feature;
+  - **the alternative:** they were looking at the city when it happened and
+    already saw the in-app alert, so the push is the same news twice and the
+    token would be better spent on the storm at 03:00.
+  Recommend the overseer rules; the change is one line either way.
+
 ---
 
 ## Amendments applied (report 98)

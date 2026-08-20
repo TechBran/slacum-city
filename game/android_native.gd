@@ -20,14 +20,15 @@ extends RefCounted
 ##   only reports and forwards; what a status *means* for the frame cap and the
 ##   graphics preset is doc 11's.
 ##
-## A fourth capability is **declared and not implemented**: the notification
-## surface (`supports_notifications`, `ensure_channel`, `post_notification`,
-## `cancel_notifications`). Doc 08 §2.13 owns the *policy* and it ships now in
-## `game/notifications/`; doc 13 owns the *platform* and it is phase 2. Every one
-## of those four methods probes the singleton with `has_method` and degrades to
-## "no", so this file already describes the whole contract the Kotlin side has to
-## satisfy — see `game/notifications/native_notification_sink.gd`, which is the
-## seam's other half and is equally finished and equally inert.
+## A fourth capability **now ships**: the notification platform
+## (`supports_notifications`, `ensure_channel`, `post_notification`,
+## `schedule_notification`, `cancel_notifications`, the `POST_NOTIFICATIONS`
+## permission flow, the launch payload). Doc 08 §2.13 owns the *policy* and lives
+## in `game/notifications/`; doc 13 owns the *platform* and it is these methods
+## plus `android/plugins/slacum_native/`. Every one of them still probes the
+## singleton with `has_method` and degrades to "no", because the same GDScript
+## runs on desktop, in the headless runner, and on a prebuilt-template APK where
+## no plugin exists.
 ##
 ## Tests substitute the plugin by subclassing: override `is_available()` and the
 ## accessors, hand the instance to `AndroidLifecycle.native`, and no JNI is
@@ -36,6 +37,15 @@ extends RefCounted
 ## Forwarded from `PowerManager.addThermalStatusListener` — `THERMAL_STATUS_*`,
 ## 0 NONE … 6 SHUTDOWN. Never emitted off-device.
 signal thermal_status_changed(status: int)
+## The answer to `request_notification_permission()`. Always arrives exactly once
+## per request, including on API < 33 where no dialog can be shown.
+signal permission_result(granted: bool)
+## A scheduled notification fired while the process happened to be alive — a
+## delivery receipt for doc 13 §3.2's `delivered_log`, never a control signal.
+signal notification_delivered(id: int, key: String)
+## The player tapped a notification and it brought the app up. Payload is the
+## plan's deeplink (`incident/42`, `overlay/power`, …).
+signal notification_opened(payload: String)
 
 ## The Android singleton the plugin registers itself as.
 const SINGLETON_NAME := "SlacumNative"
@@ -43,6 +53,15 @@ const SINGLETON_NAME := "SlacumNative"
 const THERMAL_UNKNOWN := -1
 ## `PowerManager.THERMAL_STATUS_NONE`, for callers that want to name the floor.
 const THERMAL_NONE := 0
+
+## `POST_NOTIFICATIONS` states, exactly as the plugin spells them (doc 13 §2.7).
+const PERMISSION_GRANTED := "granted"
+const PERMISSION_DENIED := "denied"
+## Android has stopped showing the dialog; only system settings can change it now.
+const PERMISSION_DENIED_PERMANENT := "denied_permanent"
+const PERMISSION_NEVER_ASKED := "never_asked"
+## No runtime permission exists here — API < 33, or no plugin at all.
+const PERMISSION_UNSUPPORTED := "unsupported"
 
 static var _shared: AndroidNative = null
 
@@ -69,8 +88,20 @@ func attach() -> void:
 	if not Engine.has_singleton(SINGLETON_NAME):
 		return
 	_plugin = Engine.get_singleton(SINGLETON_NAME)
-	if _plugin != null and _plugin.has_signal("thermal_status_changed"):
-		_plugin.connect("thermal_status_changed", _on_thermal_status_changed)
+	if _plugin == null:
+		return
+	# Connected by name and only when the plugin declares them, so an older AAR
+	# beside a newer GDScript degrades to "that signal never fires" instead of
+	# throwing at bring-up.
+	for pair: Array in [
+			["thermal_status_changed", _on_thermal_status_changed],
+			["permission_result", _on_permission_result],
+			["notification_delivered", _on_notification_delivered],
+			["notification_opened", _on_notification_opened]]:
+		var signal_name: String = pair[0]
+		var handler: Callable = pair[1]
+		if _plugin.has_signal(signal_name):
+			_plugin.connect(signal_name, handler)
 
 
 func is_available() -> bool:
@@ -120,35 +151,61 @@ func set_sustained_performance(on: bool) -> void:
 	_plugin.set_sustained_performance(on)
 
 
-# ------------------------------------------------------ notifications (phase 2)
+# ----------------------------------------------------------- notifications
 
 ## True only on a build whose `SlacumNative` implements the notification
-## surface. It does not today, on any build — this is the probe that lets doc 08's
-## router be finished and correct while doc 13's platform half is still to come,
-## rather than the two having to land in the same change.
+## surface. Still a probe rather than a constant, because the same GDScript runs
+## on desktop, in the headless runner and on a prebuilt-template APK — and
+## because an engine upgrade that shipped a stale AAR would otherwise crash on
+## the first push instead of quietly falling back to "not delivered".
 func supports_notifications() -> bool:
 	return _plugin != null and _plugin.has_method("post_notification")
 
 
 ## One Android channel per enabled class, ids from `data/notifications.json`'s
-## class table. Channels are part of the install, not part of a notification: a
-## player who silences `slacum_routine` in Android's own settings has silenced
-## P3 for good, which is the point (spec §49).
-func ensure_channel(channel_id: String, importance: String, sound: bool,
-		vibrate: bool) -> bool:
+## class table and `name` from the string table. Channels are part of the
+## install, not part of a notification: a player who silences `slacum_routine` in
+## Android's own settings has silenced P3 for good, which is the point (spec §49)
+## — and it is also why the name can never be changed afterwards.
+func ensure_channel(channel_id: String, name: String, importance: String,
+		sound: bool, vibrate: bool) -> bool:
 	if _plugin == null or channel_id == "" or not _plugin.has_method("ensure_channel"):
 		return false
-	return bool(_plugin.ensure_channel(channel_id, importance, sound, vibrate))
+	return bool(_plugin.ensure_channel(channel_id, name, importance, sound, vibrate))
 
 
 ## Post or schedule one plan from `NotificationRouter`. A `fire_at_wall_ms` in
-## the future is an alarm (inexact `setWindow`, per doc 08 §2.13.4); absent or
+## the future is an alarm (inexact `setAndAllowWhileIdle`, doc 13 §2.6); absent or
 ## past means now. **No rate limiting on the far side** (report C-71) — the plan
 ## has already passed `NotificationBudget`.
 func post_notification(plan: Dictionary) -> bool:
 	if not supports_notifications():
 		return false
 	return bool(_plugin.post_notification(plan))
+
+
+## The id-shaped call, for a caller that has a moment rather than a plan.
+## `at_unix` is in **seconds**; a time already past posts immediately.
+func schedule_notification(id: int, title: String, body: String, at_unix: int,
+		priority: String = "routine") -> bool:
+	if _plugin == null or not _plugin.has_method("schedule_notification"):
+		return false
+	return bool(_plugin.schedule_notification(id, title, body, at_unix, priority))
+
+
+## Post right now. Only ever used by the shell's own diagnostics: an app in the
+## foreground shows an in-app alert (doc 12), never a notification (doc 13 §2.5).
+func show_notification(id: int, title: String, body: String,
+		priority: String = "routine") -> bool:
+	if _plugin == null or not _plugin.has_method("show_notification"):
+		return false
+	return bool(_plugin.show_notification(id, title, body, priority))
+
+
+func cancel_notification(id: int) -> bool:
+	if _plugin == null or not _plugin.has_method("cancel_notification"):
+		return false
+	return bool(_plugin.cancel_notification(id))
 
 
 ## Everything pending, dropped. doc 08 §2.13's resume step: the catch-up has
@@ -160,5 +217,77 @@ func cancel_notifications() -> int:
 	return int(_plugin.cancel_notifications())
 
 
+## The alarm ids the platform still holds, for a diagnostics screen and for the
+## on-device tests in doc 13 §7 (D-02 … D-04).
+func scheduled_ids() -> PackedInt32Array:
+	if _plugin == null or not _plugin.has_method("scheduled_ids"):
+		return PackedInt32Array()
+	var raw: Variant = _plugin.scheduled_ids()
+	var out := PackedInt32Array()
+	if raw is PackedInt32Array:
+		return raw
+	if raw is Array:
+		for value: Variant in (raw as Array):
+			out.append(int(value))
+	return out
+
+
+# ------------------------------------------------------------- permissions
+
+## Whether the system will actually show what we post. This is the only question
+## worth asking before scheduling: it covers the runtime permission AND the
+## per-app master switch, which exists on every API level and which no permission
+## state reports.
+func notifications_enabled() -> bool:
+	if _plugin == null or not _plugin.has_method("notifications_enabled"):
+		return false
+	return bool(_plugin.notifications_enabled())
+
+
+## One of the `PERMISSION_*` constants. Off-device this is `unsupported`, which
+## is the honest answer: there is no permission to hold.
+func permission_state() -> String:
+	if _plugin == null or not _plugin.has_method("permission_state"):
+		return PERMISSION_UNSUPPORTED
+	return String(_plugin.permission_state())
+
+
+## Show the system dialog; the answer arrives as `permission_result`. Returns
+## false when there is no plugin to ask, and emits nothing in that case — the
+## caller's state machine treats "no platform" and "denied" differently.
+func request_notification_permission() -> bool:
+	if _plugin == null or not _plugin.has_method("request_notification_permission"):
+		return false
+	_plugin.request_notification_permission()
+	return true
+
+
+## The only route left once Android has stopped showing the dialog.
+func open_app_notification_settings() -> bool:
+	if _plugin == null or not _plugin.has_method("open_app_notification_settings"):
+		return false
+	return bool(_plugin.open_app_notification_settings())
+
+
+## The deeplink the app was opened from, or "". Consuming clears it, so a stale
+## payload cannot deep-link the player into a three-day-old incident every launch.
+func consume_launch_payload() -> String:
+	if _plugin == null or not _plugin.has_method("consume_launch_payload"):
+		return ""
+	return String(_plugin.consume_launch_payload())
+
+
 func _on_thermal_status_changed(status: int) -> void:
 	thermal_status_changed.emit(status)
+
+
+func _on_permission_result(granted: bool) -> void:
+	permission_result.emit(granted)
+
+
+func _on_notification_delivered(id: int, key: String) -> void:
+	notification_delivered.emit(id, key)
+
+
+func _on_notification_opened(payload: String) -> void:
+	notification_opened.emit(payload)

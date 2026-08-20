@@ -45,7 +45,12 @@ android/plugins/slacum_native/local.properties
 .DS_Store
 *~
 *.tmp
+__pycache__/
 
 # Agent worktrees and session-local state
 .claude/
 build/playtest/
+# Store listing assets are GENERATED (tools/gen_store_assets.py) and are ~20 MB
+# of PNG per run. The generator is deterministic, so the repo keeps the recipe
+# and the Play Console keeps the pixels.
+build/store/

@@ -77,6 +77,11 @@ var last_anomaly: String = ""
 var last_cross_checked: bool = false
 ## Latest thermal reading, or `AndroidNative.THERMAL_UNKNOWN` if none has arrived.
 var last_thermal_status: int = AndroidNative.THERMAL_UNKNOWN
+## How many notification plans the last pause decided, and how many alarms the
+## last resume cancelled. Diagnostics for doc 13 §3.2, and what the on-device
+## smoke test asserts against `dumpsys alarm`.
+var last_planned: int = 0
+var last_cancelled: int = 0
 
 var _paused_wall: float = -1.0
 var _paused_mono: float = -1.0
@@ -148,15 +153,22 @@ func _on_paused() -> void:
 	# After the save, never before: doc 08 §2.13's pass schedules from fire times
 	# "already in the save wherever possible", and a plan made against a city
 	# that was then not committed would be a plan for a future that never was.
+	#
+	# The sim goes with it, because the plan is a *prediction*: construction that
+	# completes at a known tick, and the Director events that were pre-rolled into
+	# the save before the player left (doc 13 §2.4 classes (a) and (b)). Without a
+	# sim this degrades to flushing whatever was queued, which is what desktop and
+	# the headless runner do.
 	if notification_router != null:
-		notification_router.plan_for_background()
+		last_planned = notification_router.plan_for_background(sim, _paused_wall).size()
 	paused.emit(saved)
 
 
 func _on_resumed() -> void:
 	var elapsed := 0.0
+	var now_wall := _wall()
 	if _paused_wall >= 0.0:
-		elapsed = measure_elapsed(_wall(), _mono())
+		elapsed = measure_elapsed(now_wall, _mono())
 	else:
 		last_cross_checked = false
 	_paused_wall = -1.0
@@ -167,9 +179,10 @@ func _on_resumed() -> void:
 	# doc 08 §2.13: on resume every pending alarm is cancelled and re-planned —
 	# the catch-up about to run has replaced the future they were scheduled
 	# against. Done BEFORE `resumed` so nothing the catch-up emits is cancelled
-	# by a step that was supposed to precede it.
+	# by a step that was supposed to precede it. The wall clock goes with it so
+	# the budget can tell an alarm that rang from one that was cancelled first.
 	if notification_router != null:
-		notification_router.replan_after_resume()
+		last_cancelled = notification_router.replan_after_resume(now_wall)
 	resumed.emit(elapsed)
 
 

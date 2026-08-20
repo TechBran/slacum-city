@@ -882,21 +882,7 @@
 				"min": 0.0,
 				"max": 1.0,
 				"step": 0.1,
-				"default": 0.8,
-				"hint_key": "ui_settings_sound_hint"
-			},
-			{
-				"_comment": "§2.14. off / light / full, default light, durations in `haptics_ms` above. `reduce_motion` SUPPRESSES haptics without changing this row (A8: a vibration is motion), so switching reduce_motion back off restores the player's own choice.",
-				"key": "haptics",
-				"kind": "choice",
-				"options": [
-					"off",
-					"light",
-					"full"
-				],
-				"default_from": "defaults.haptics",
-				"value_text_from": "haptics",
-				"hint_key": "ui_settings_haptics_hint"
+				"default": 0.8
 			},
 			{
 				"key": "reduce_motion",
@@ -926,71 +912,31 @@
 				"default": false
 			},
 			{
-				"_comment": "§2.13's AUTO-RESPONSE block (doc 06 §2.12, doc 91 D-11). Every row below carries `policy: dispatch`: its default is read from data/dispatch.json.policy_defaults — doc 06's own file, never a second copy here — and its value is written with CitySim.cmd_set_dispatch_policy, which refuses any key DispatchPolicy does not carry. The keys are spelled exactly as the sim spells them, so a row can never address a policy that does not exist. The utility RESTORATION ORDER (a drag-reorder list) is deliberately absent: it is a list, not a 48 dp cycling target, and shipping it as one would be a control that lies about what it does.",
-				"key": "auto_dispatch_fire",
+				"_comment": "S10 (doc 12 §2.13) — the notification rows. These are a VIEW of doc 08's policy, not a second copy of it: the master switch and the three class switches write NotificationBudget through NotificationRouter.apply_settings(), and the row key IS the class id lowercased (P1_critical → notify_p1_critical) so data/ui.json and data/notifications.json cannot drift. P4_ambient has no row because it has no channel — doc 08 ships it disabled and the budget refuses to enable it, so a row would be a switch that does nothing. Defaults mirror data/notifications.json's `default_enabled`; doc 12 §2.13's 'P3 off by default' is superseded, because C-71 made doc 08 sole owner of that answer and doc 08 says on.",
+				"key": "notifications_enabled",
 				"kind": "toggle",
-				"policy": "dispatch",
-				"default_from": "dispatch.auto_dispatch_fire",
-				"hint_key": "ui_settings_auto_dispatch_fire_hint"
+				"default": true
 			},
 			{
-				"key": "auto_dispatch_police",
+				"key": "notify_p1_critical",
 				"kind": "toggle",
-				"policy": "dispatch",
-				"default_from": "dispatch.auto_dispatch_police",
-				"hint_key": "ui_settings_auto_dispatch_police_hint"
+				"default": true
 			},
 			{
-				"key": "auto_dispatch_utility",
+				"key": "notify_p2_important",
 				"kind": "toggle",
-				"policy": "dispatch",
-				"default_from": "dispatch.auto_dispatch_utility",
-				"hint_key": "ui_settings_auto_dispatch_utility_hint"
+				"default": true
 			},
 			{
-				"key": "auto_dispatch_water",
+				"key": "notify_p3_routine",
 				"kind": "toggle",
-				"policy": "dispatch",
-				"default_from": "dispatch.auto_dispatch_water",
-				"hint_key": "ui_settings_auto_dispatch_water_hint"
+				"default": true
 			},
 			{
-				"_comment": "§2.13's `reserve N fire engines`. The ladder is the control's, the default is doc 06's; 3 is the top because a reserve larger than a starter station's roster would refuse every fire.",
-				"key": "fire_reserve_units",
-				"kind": "choice",
-				"policy": "dispatch",
-				"options": [
-					0,
-					1,
-					2,
-					3
-				],
-				"default_from": "dispatch.fire_reserve_units",
-				"hint_key": "ui_settings_fire_reserve_units_hint"
-			},
-			{
-				"_comment": "§2.13's `auto-repair cost ceiling`, whose stated range is $0-$250K. A cycling row rather than a drag slider (A3), so the range is a ladder; doc 06's default sits on it.",
-				"key": "auto_repair_cost_cap",
-				"kind": "choice",
-				"policy": "dispatch",
-				"options": [
-					0,
-					5000,
-					25000,
-					100000,
-					250000
-				],
-				"default_from": "dispatch.auto_repair_cost_cap",
-				"value_format": "money",
-				"hint_key": "ui_settings_auto_repair_cost_cap_hint"
-			},
-			{
-				"_comment": "§2.13 phrases this one as `never spend emergency contractor funds (on)`. The ROW is phrased as the sim key instead — spending ON/OFF, not never-spend ON/OFF — because an inverted control is the single easiest settings bug to ship and the hardest for a player to notice.",
-				"key": "auto_spend_contractor",
+				"_comment": "doc 08 §2.13.3's explicit opt-in, default OFF: quiet hours otherwise defer even a P1 to the 08:00 summary. Informed rather than woken is the ship default, and this row is how a player who wants the 03:00 buzz asks for it.",
+				"key": "quiet_hours_allow_critical",
 				"kind": "toggle",
-				"policy": "dispatch",
-				"default_from": "dispatch.auto_spend_contractor",
-				"hint_key": "ui_settings_auto_spend_contractor_hint"
+				"default": false
 			}
 		],
 		"device_scoped_keys": [
@@ -999,7 +945,11 @@
 			"reduce_motion",
 			"larger_touch_targets",
 			"sound_volume",
-			"haptics"
+			"notifications_enabled",
+			"notify_p1_critical",
+			"notify_p2_important",
+			"notify_p3_routine",
+			"quiet_hours_allow_critical"
 		],
 		"settings_file": "user://settings.cfg"
 	},
