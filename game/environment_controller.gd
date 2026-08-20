@@ -144,8 +144,17 @@ func apply(hour: float, delta: float) -> void:
 		_moon.light_color = controller.moon_color
 		_moon.rotation_degrees = Vector3(-50.0, azimuth + 180.0, 0.0)
 	# ------------------------------------------------------------ ambient
+	# §2.8's deep-night ambient FLOOR. `ambient_light_color` is dead weight
+	# while `sky_contribution` is 1.0 (the sky IS the ambient), so the two are
+	# written together: as the contribution falls the authored moonlight colour
+	# fades in and gives the unlit geometry a blue-grey base the near-black
+	# night sky cannot supply. A storm keeps the floor — an overcast night is
+	# BRIGHTER at ground level, not darker — but the sky-driven half is cut.
+	_environment.ambient_light_color = s["ambient_color"]
+	_environment.ambient_light_sky_contribution = float(s["ambient_sky_contribution"])
+	var sky_cut := 1.0 - STORM_AMBIENT_CUT * storm * float(s["ambient_sky_contribution"])
 	_environment.ambient_light_energy = float(s["ambient_energy"]) \
-			* (1.0 - STORM_AMBIENT_CUT * storm) * (1.0 + _lightning_ambient_gain * flash)
+			* sky_cut * (1.0 + _lightning_ambient_gain * flash)
 	_environment.adjustment_saturation = float(s["saturation"]) \
 			* (1.0 - STORM_SATURATION_CUT * storm)
 	# ---------------------------------------------------------------- fog

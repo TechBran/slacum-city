@@ -95,3 +95,111 @@ func test_ambient_and_saturation_track_night() -> void:
 	assert_true(float(day["ambient_energy"]) > float(night["ambient_energy"]))
 	assert_true(float(day["saturation"]) > float(night["saturation"]),
 			"night desaturates toward monochrome (§2.8)")
+
+
+# ═══════════════════ the deep-night ambient floor (report NIGHT-1) ══════════
+#
+# The playtest bug these five guard: at 03:19 on an AMOLED panel the city
+# between the streetlights was OFF pixels. `ambient_energy_night` alone could
+# never fix it, because with AMBIENT_SOURCE_SKY the ambient COLOUR is the night
+# sky — authored near-black — so the energy was multiplying ~0.0024 of
+# radiance. The fix is a second ambient source with an authored colour, faded
+# in as `sky_contribution` falls.
+
+
+## Linear-light luminance of an sRGB colour — the number that decides whether a
+## surface is visible, not the 0..1 the hex string shows.
+func _linear_luma(c: Color) -> float:
+	return 0.2126 * DayNightController._srgb_to_linear(c.r) \
+			+ 0.7152 * DayNightController._srgb_to_linear(c.g) \
+			+ 0.0722 * DayNightController._srgb_to_linear(c.b)
+
+
+func test_noon_ambient_is_the_sky_and_only_the_sky() -> void:
+	var controller := _controller()
+	var day := controller.sample(12.0)
+	assert_almost_eq(float(day["ambient_sky_contribution"]),
+			controller.ambient_sky_contribution_day, 1e-6,
+			"the authored moonlight colour must not touch a noon frame")
+	assert_almost_eq(float(day["ambient_floor"]), 0.0, 1e-6,
+			"and the floor weight is zero there, so day is bit-identical")
+
+
+func test_deep_night_hands_the_ambient_to_the_authored_floor() -> void:
+	var controller := _controller()
+	var night := controller.sample(3.0)
+	assert_true(float(night["night"]) > 0.9, "03:00 is deep night")
+	assert_true(float(night["ambient_sky_contribution"]) < 0.25,
+			("deep night takes its ambient from the authored colour, not from a "
+			+ "sky that is authored near-black (%f)")
+			% float(night["ambient_sky_contribution"]))
+	var moonlight: Color = night["ambient_color"]
+	assert_true(moonlight.b > moonlight.r,
+			"the floor is MOONLIGHT — blue-grey. A neutral grey floor reads as "
+			+ "fog on the frame, which is the failure mode this replaces")
+	assert_true(_linear_luma(moonlight) > 0.03,
+			"and it has to be a colour with actual radiance in it (%f)"
+			% [_linear_luma(moonlight)])
+
+
+func test_the_floor_is_a_deep_night_effect_not_a_dusk_one() -> void:
+	# 18:30 is already night = 0.40 while the sky is still ORANGE. A LINEAR
+	# blend would push 40% of a blue floor into that frame and grey out the
+	# best-looking moment in the game; the authored gamma cuts it to 0.40² =
+	# 0.16, so dusk keeps its sky and 03:00 gets the floor.
+	var controller := _controller()
+	var dusk := controller.sample(18.5)
+	var night_at_dusk := float(dusk["night"])
+	assert_almost_eq(float(dusk["ambient_floor"]),
+			pow(night_at_dusk, controller.ambient_floor_gamma), 1e-6,
+			"the floor weight IS night ^ ambient_floor_gamma")
+	assert_true(controller.ambient_floor_gamma > 1.0, "…and the gamma bends it late")
+	assert_true(float(dusk["ambient_floor"]) < 0.5 * night_at_dusk,
+			"so dusk takes less than half of what a linear ramp would give it")
+	# Monotonic all the same: no hour between noon and midnight goes backwards.
+	var previous := -1.0
+	for hour in [12.0, 15.0, 18.0, 19.0, 20.0, 21.0, 23.0]:
+		var floor_w := float(controller.sample(float(hour))["ambient_floor"])
+		assert_true(floor_w >= previous - 1e-6,
+				"floor weight never dips on the way into night (%.1f h)" % hour)
+		previous = floor_w
+
+
+func test_the_night_floor_clears_the_black_point_it_was_authored_for() -> void:
+	# The measurable version of the playtest complaint. The irradiance an UNLIT
+	# façade receives at 03:00 is
+	#     ambient_energy_night × [(1 − c)·L(ambient_color_night) + c·L(sky)]
+	# with c = ambient_sky_contribution at that hour. Before this pass that was
+	# 0.10 × 0.0024 ≈ 0.00024 — an albedo-0.35 wall returned 8e-5 of linear
+	# light, which AgX's toe crushes to zero and an AMOLED panel renders as an
+	# OFF pixel. The floor has to clear 0.02 for a mid-grey façade to come back
+	# at roughly 0.09 sRGB, which is the dimmest value that survives the panel.
+	var controller := _controller()
+	var s := controller.sample(3.0)
+	var c := float(s["ambient_sky_contribution"])
+	var sky := 0.5 * (_linear_luma(s["sky_top"]) + _linear_luma(s["sky_horizon"]))
+	var irradiance := float(s["ambient_energy"]) \
+			* ((1.0 - c) * _linear_luma(controller.ambient_color_night) + c * sky)
+	assert_true(irradiance > 0.02,
+			("deep-night ambient irradiance %f must clear the AMOLED black "
+			+ "point — this is the number the 03:19 playtest shot failed on")
+			% irradiance)
+	# The moon carries the other half: without a directional term every façade
+	# is one flat value and a tower stops reading as two faces and a roof.
+	assert_true(controller.moon_energy > 0.2,
+			"the moon has to MODEL the geometry, not just tint it (%f)"
+			% controller.moon_energy)
+
+
+func test_the_floor_never_brightens_the_day_frame() -> void:
+	# The whole pass is allowed to change exactly one thing: night. Any hour
+	# with the sun up must keep the ambient it always had — sky only, at
+	# `ambient_energy_day`, with no authored colour mixed in.
+	var controller := _controller()
+	for hour in [7.0, 9.0, 12.0, 15.0, 17.0]:
+		var s := controller.sample(float(hour))
+		assert_true(float(s["ambient_floor"]) < 0.15,
+				"%.0f:00 takes almost none of the floor (%f)"
+				% [hour, float(s["ambient_floor"])])
+		assert_true(float(s["ambient_sky_contribution"]) > 0.85,
+				"%.0f:00 is still lit by its own sky" % [hour])

@@ -83,18 +83,49 @@ static func wet_constants() -> Dictionary:
 	return _wet.duplicate()
 
 
+## Which set of night-floor numbers a ground material takes (report NIGHT-1).
+## AUTO reads the page name — anything on the `road_page` is a road — which is
+## what `main.gd`'s direct `material("asphalt", …)` road strips need. TERRAIN
+## and ROAD are the explicit overrides: `block_material` forces TERRAIN because
+## district 3's ground is also authored on the asphalt page and a whole block
+## of it must not light up like a carriageway.
+enum { NIGHT_AUTO = -1, NIGHT_TERRAIN = 0, NIGHT_ROAD = 1 }
+
+## Doc 11 §2.8's night floor, as the ground shader's two uniforms. Defaults
+## mirror data/render.json so a stripped clone still gets a readable street.
+static func night_floor(is_road: bool) -> Dictionary:
+	_ensure_loaded()
+	var prefix := "road_night_" if is_road else "night_"
+	var lift_default := 0.34 if is_road else 0.10
+	var glow_default := 0.048 if is_road else 0.012
+	return {
+		"color": Color(String(_ground.get("night_color", "#6C88C4"))),
+		"albedo_lift": float(_ground.get(prefix + "albedo_lift", lift_default)),
+		"glow": float(_ground.get(prefix + "glow", glow_default)),
+	}
+
+
 ## `page_name` is "asphalt" or "pavement"; `world_size` is the metre extent the
 ## mesh's [0,1] UV spans, which is what sets the repeat count. `roughness` is
 ## the DRY roughness — §2.9 interpolates it toward `wet_roughness_wet` as
-## sc_wetness rises.
+## sc_wetness rises. `night_mode` picks which night-floor row to push; leave it
+## AUTO and the page name decides.
 static func material(page_name: String, world_size: Vector2, tint := Color.WHITE,
-		roughness := 0.92) -> Material:
+		roughness := 0.92, night_mode := NIGHT_AUTO) -> Material:
 	_ensure_loaded()
 	if _shader == null:
 		return _fallback(tint, roughness)
 	var mat := ShaderMaterial.new()
 	mat.shader = _shader
 	mat.set_shader_parameter("tint", tint)
+	var is_road := (page_name == String(_ground.get("road_page", "asphalt"))) \
+			if night_mode == NIGHT_AUTO else (night_mode == NIGHT_ROAD)
+	var night: Dictionary = night_floor(is_road)
+	mat.set_shader_parameter("night_color", night["color"])
+	mat.set_shader_parameter("night_albedo_lift", float(night["albedo_lift"]))
+	mat.set_shader_parameter("night_glow", float(night["glow"]))
+	mat.set_shader_parameter("night_glow_wet_mult",
+			float(_ground.get("night_glow_wet_mult", 0.55)))
 	mat.set_shader_parameter("dry_roughness", roughness)
 	mat.set_shader_parameter("dry_specular", 0.30)
 	mat.set_shader_parameter("wet_roughness", float(_wet["roughness_wet"]))
@@ -164,7 +195,7 @@ static func block_material(district_index: int, developed: bool,
 		var roughs: Array = _ground.get("district_roughness", [])
 		if i < roughs.size():
 			rough = float(roughs[i])
-	var mat := material(page, world_size, tint, rough)
+	var mat := material(page, world_size, tint, rough, NIGHT_TERRAIN)
 	_block_materials[key] = mat
 	return mat
 
@@ -175,7 +206,7 @@ static func road_material(world_size := Vector2(8.0, 8.0)) -> Material:
 	_ensure_loaded()
 	return material(String(_ground.get("road_page", "asphalt")), world_size,
 			Color(String(_ground.get("road_tint", "#57575F"))),
-			float(_ground.get("road_roughness", 0.85)))
+			float(_ground.get("road_roughness", 0.85)), NIGHT_ROAD)
 
 
 ## Doc 11 §2.1's third ground surface: animated water for the map's water
@@ -200,6 +231,7 @@ static func water() -> Material:
 	_set_color(mat, "shallow_color", "#1E4E5C")
 	_set_color(mat, "sky_color", "#6E93B4")
 	for key in ["night_mult", "fresnel_power", "fresnel_gain",
+			"night_sky_blend", "night_sky_gain", "night_glow",
 			"wave_scale_a_m", "wave_scale_b_m", "wave_speed_a", "wave_speed_b",
 			"wave_amp", "sparkle_gain", "sparkle_power", "rain_chop_gain",
 			"page_blend"]:

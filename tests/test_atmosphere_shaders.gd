@@ -13,6 +13,7 @@ const LAMP := "res://game/shaders/lamp.gdshader"
 const POOL := "res://game/shaders/light_pool.gdshader"
 const BUILDING := "res://game/shaders/building.gdshader"
 const GROUND := "res://game/shaders/ground.gdshader"
+const WATER_SHADER := "res://game/shaders/water.gdshader"
 
 
 func _src(path: String) -> String:
@@ -170,3 +171,122 @@ func test_a_clone_without_the_generated_pages_still_boots() -> void:
 	assert_true(mat != null, "still a material")
 	assert_almost_eq(float(mat.get_shader_parameter("has_page")), 0.0,
 			1e-9, "the shader falls back to the tint")
+
+
+# ---------------------------------------------------------- the night floor
+#
+# Report NIGHT-1. The 03:19 playtest shot on the Fold 6 was OFF pixels between
+# the streetlights: the street grid, every unlit façade and the canal all
+# resolved to 0. These guard the SURFACE half of the fix — the ambient/moon
+# half is in test_day_night.gd — and, just as importantly, they guard the
+# constraint: the floor is moonlight and citywide skyglow, so it may not grow
+# strong enough to erase the blackout ceremony the game is built on.
+
+
+## Default value of a `uniform float NAME = X;` line, as authored in the shader.
+func _uniform_default(src: String, name: String) -> float:
+	for line in src.split("\n"):
+		var text := String(line).strip_edges()
+		if text.begins_with("uniform float %s " % name) and text.contains("="):
+			return float(text.split("=")[1].replace(";", "").strip_edges())
+	return -1.0
+
+
+func test_the_ground_carries_a_night_floor_with_two_terms() -> void:
+	var src := _src(GROUND)
+	assert_true(src.contains("global uniform float sc_night;"),
+			"the ground reads the night ramp — before this pass it did not, "
+			+ "which is why a road could not know it was midnight")
+	# A lift on ALBEDO alone cannot rescue an unlit surface: albedo is a
+	# reflectance, and 0.34 × nothing is still nothing. The EMISSION term is
+	# the one that survives ambient going to zero, and it is not optional.
+	assert_true(src.contains("night_albedo_lift"),
+			"term 1: more of what light there is bounces back")
+	assert_true(src.contains("EMISSION = night_color * (night_glow * sc_night"),
+			"term 2: the skyglow floor, which does not depend on ambient at all")
+	assert_true(src.contains("night_glow_wet_mult"),
+			"a wet carriageway mirrors the skyglow away from the camera, so the "
+			+ "floor comes down as the §2.9 lamp smear takes over")
+
+
+func test_the_road_gets_a_bigger_night_floor_than_the_ground_it_crosses() -> void:
+	# The point of the pass is the GRID, not the brightness. Lifting both
+	# surfaces equally would brighten the frame without drawing the street
+	# network the player navigates by.
+	var road := GroundSurface.night_floor(true)
+	var terrain := GroundSurface.night_floor(false)
+	assert_true(float(road["albedo_lift"]) > float(terrain["albedo_lift"]),
+			"the carriageway lifts harder than the block interior")
+	assert_true(float(road["glow"]) > float(terrain["glow"]),
+			"…and carries more skyglow with it")
+	assert_true(float(terrain["glow"]) > 0.0,
+			"but the block ground still has a floor, or the city reads as lit "
+			+ "streets around 128 m holes")
+	var tint: Color = road["color"]
+	assert_true(tint.b > tint.r,
+			"the floor is spent in a COOL tint: a warm lift on asphalt reads as "
+			+ "daylight, and the frame stops being night")
+
+
+func test_the_road_row_follows_the_road_page_not_the_district_that_borrows_it() -> void:
+	# data/render.json's `district_pages` puts one district's GROUND on the
+	# asphalt page. Keying the night floor on the page name alone would light a
+	# whole 128 m block like a carriageway, so `block_material` forces the
+	# terrain row and only real road strips take the road one.
+	var road := GroundSurface.road_material(Vector2(8.0, 8.0)) as ShaderMaterial
+	var expected := GroundSurface.night_floor(true)
+	assert_almost_eq(float(road.get_shader_parameter("night_glow")),
+			float(expected["glow"]), 1e-6, "a road strip takes the road row")
+	var ground: Dictionary = StarterCityLoader.read_json(
+			"res://data/render.json").get("ground", {})
+	var pages: Array = ground.get("district_pages", [])
+	var asphalt_district := pages.find(String(ground.get("road_page", "asphalt")))
+	if asphalt_district >= 0:
+		var block := GroundSurface.block_material(asphalt_district, true) as ShaderMaterial
+		assert_almost_eq(float(block.get_shader_parameter("night_glow")),
+				float(GroundSurface.night_floor(false)["glow"]), 1e-6,
+				"a district that happens to be paved in asphalt is still GROUND")
+
+
+func test_the_night_floor_is_identity_by_day() -> void:
+	# sc_night is 0 at noon and every night term is written as a product with
+	# it, so the day frame the project already shipped is untouched — the same
+	# identity-at-zero discipline the wetness terms above carry.
+	for path in [GROUND, WATER_SHADER]:
+		var src := _src(path)
+		assert_true(src.contains("night_glow * sc_night"),
+				"%s's floor is a product with sc_night, so day is unchanged" % path)
+
+
+func test_the_canal_stops_being_a_hole_at_night() -> void:
+	var src := _src(WATER_SHADER)
+	assert_true(src.contains("global uniform vec3 sc_fog_tint;"),
+			"at night the fresnel term aims at the SAMPLED sky, not at the "
+			+ "authored daytime blue — that is what makes water read as a mirror")
+	assert_true(src.contains("night_glow_color * (night_glow * sc_night)"),
+			"plus the same skyglow floor the ground carries")
+	var water: Dictionary = StarterCityLoader.read_json(
+			"res://data/render.json").get("water_surface", {})
+	assert_true(float(water.get("night_mult", 0.0)) >= 0.45,
+			"0.34 on a #0F2937 body put the canal at (0, 0, 11) on the device")
+
+
+func test_the_lamp_pool_still_dies_with_its_block() -> void:
+	# THE CONSTRAINT. The ground's night floor is deliberately NOT
+	# blackout-aware — moonlight does not go out with a substation — so the
+	# contrast the ceremony needs comes from the lights that DO. The pool is the
+	# widest of them, and every fragment it draws is gated on the model's
+	# per-lamp ramp.
+	var src := _src(POOL)
+	assert_true(src.contains("v_lit = INSTANCE_CUSTOM.r;"),
+			"the pool rides the RenderStateModel's per-lamp ramp")
+	assert_true(src.contains("* v_gate"),
+			"and multiplies by it, so a dark block loses its whole street ribbon")
+	assert_true(src.contains("uniform float pool_scale"),
+			"the disc is widened in the vertex stage — no rebuilt mesh, no new AABB")
+	# Wide enough to cover a carriageway, capped short of turning the Z2
+	# skyline into bokeh (a pool is ~19 px of soft disc per metre of radius up
+	# there). The read between the poles is the ground's own floor, not this.
+	var scale := _uniform_default(src, "pool_scale")
+	assert_true(scale > 1.0, "wider than the 6 m disc that read as dots (%f)" % [scale])
+	assert_true(scale <= 2.0, "and not so wide the skyline is circles (%f)" % [scale])

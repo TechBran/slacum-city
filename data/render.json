@@ -67,16 +67,20 @@
     "civic":       [[0.0,0.40],[6.0,0.55],[9.0,0.95],[15.0,1.00],[19.0,0.70],[22.0,0.50]] },
 
   "daynight": {
+    "_night_floor": "Playtest 03:19 on the Fold 6 (report NIGHT-1): deep night rendered as an OFF panel -- the street grid, every unlit façade and every silhouette resolved to 0 between the lamp pools. The three night keys below were #050810/#080C18 sky over a 0.10 ambient energy applied to that same near-black sky, i.e. ~0.0003 of radiance reaching an unlit face. The fix is a FLOOR, not a flood, and it is spent in three places: (1) the night sky keys are lifted to a deep navy so the sky itself is a colour rather than a hole, (2) `ambient_color_night` + `ambient_sky_contribution_night` add an authored blue-grey moonlight ambient that does not depend on how dark the sky is, and (3) moon_energy carries enough directional light to MODEL the geometry, so a tower reads as two faces and a roof instead of one flat card. The blackout ceremony survives because none of the three touches the emissive windows, the lamp billboards or the ground pools: a dark block still loses 100% of its light and only keeps the moonlight every block has.",
     "keys": [
-      {"h":0.0, "sky_top":"#050810","sky_hor":"#0D1524","sun_e":0.05,"sun_c":"#7A90C0","sun_elev":-20,"fog":"#0E1420","night":1.00},
-      {"h":5.0, "sky_top":"#0A1024","sky_hor":"#1E2438","sun_e":0.10,"sun_c":"#6E82B4","sun_elev":-6, "fog":"#12182A","night":0.95},
+      {"h":0.0, "sky_top":"#0B1226","sky_hor":"#1A2440","sun_e":0.05,"sun_c":"#7A90C0","sun_elev":-20,"fog":"#151D30","night":1.00},
+      {"h":5.0, "sky_top":"#121A34","sky_hor":"#2A3350","sun_e":0.10,"sun_c":"#6E82B4","sun_elev":-6, "fog":"#1C2440","night":0.95},
       {"h":7.0, "sky_top":"#2A3C5E","sky_hor":"#C88A5A","sun_e":1.60,"sun_c":"#FFB070","sun_elev":8,  "fog":"#5A5A66","night":0.35},
       {"h":12.0,"sky_top":"#4A78B8","sky_hor":"#9FBEDC","sun_e":3.20,"sun_c":"#FFF4E2","sun_elev":62, "fog":"#8FA3B8","night":0.00},
       {"h":18.5,"sky_top":"#33406A","sky_hor":"#D07A48","sun_e":1.30,"sun_c":"#FF9050","sun_elev":6,  "fog":"#6E5E5E","night":0.40},
-      {"h":21.0,"sky_top":"#080C18","sky_hor":"#141C30","sun_e":0.06,"sun_c":"#7A90C0","sun_elev":-14,"fog":"#101624","night":1.00}
+      {"h":21.0,"sky_top":"#0E1528","sky_hor":"#202B48","sun_e":0.06,"sun_c":"#7A90C0","sun_elev":-14,"fog":"#172033","night":1.00}
     ],
-    "sun_azimuth_offset_deg": -90.0, "moon_energy": 0.09, "moon_color": "#8FA8D8",
-    "ambient_energy_day": 0.55, "ambient_energy_night": 0.10 },
+    "sun_azimuth_offset_deg": -90.0, "moon_energy": 0.34, "moon_color": "#8FA8D8",
+    "ambient_energy_day": 0.55, "ambient_energy_night": 0.50,
+    "ambient_color_night": "#3E5578",
+    "ambient_sky_contribution_day": 1.00, "ambient_sky_contribution_night": 0.12,
+    "ambient_floor_gamma": 2.0 },
 
   "environment": {
     "tonemap": "agx", "tonemap_exposure": 1.0, "tonemap_white": 6.0,
@@ -109,6 +113,7 @@
   "streetlights": { "lamp_billboard_m": 1.6, "lamp_color": "#FFD9A0",
                     "_pole": "POLE ART ONLY. The billboard / pool / omni system is tuned and the surface pass does not touch it. `pole_color` multiplies the galvanised prop page and the base-weathering ramp StreetlightView bakes into the pole's vertex colour, so it has to stay dark enough to silhouette against a lit pavement and light enough for the page's half-metre AO bands to survive the multiply.",
                     "pole_color": "#575E61",
+                    "_pool_scale": "`pool_radius_m` is the MESH radius StreetlightView builds (its POOL_RADIUS const). The drawn pool is that times light_pool.gdshader's `pool_scale`, which the shader owns because widening the disc is a vertex-stage scale on a buffer the view uploads once — no rebuild, no new AABB. At the shipped 1.35 the effective radius is 8.1 m against the 32 m streetlight_spacing_m: the pools no longer quite touch, but each one now covers the full width of an 8 m carriageway plus its kerbs, so the avenue reads as a dotted line on a lit road instead of as isolated circles in black (report NIGHT-1). It stops there because at Z2 a pool is ~19 px of soft disc per metre of radius and a wider one turns the marketed skyline into bokeh; the continuous half of the street read is the ground's own night floor above. Wetness still adds its own +50% on top.",
                     "pool_radius_m": 6.0, "pool_y_m": 0.06,
                     "pool_wet_radius_gain": 0.5, "pool_wet_energy_gain": 0.6,
                     "omni_range_m": 14.0, "omni_energy": 1.6, "omni_attenuation": 1.6,
@@ -123,6 +128,10 @@
     "developed_tint": "#858785", "developed_roughness": 0.90,
     "undeveloped_tint": "#66805C", "undeveloped_roughness": 1.00,
     "road_page": "asphalt", "road_tint": "#57575F", "road_roughness": 0.85,
+    "_night_floor": "report NIGHT-1. `night_color` is the cool skyglow tint both terms are spent in — a sodium-and-window blue-grey, not white, so a lifted street still reads as NIGHT. `*_albedo_lift` raises the surface's reflectance so the moonlight ambient actually bounces off it; `*_glow` is a small emission, the scattered city light a real street sits under, and it is the term that survives ambient going to zero. The ROAD row is roughly twice the terrain's: that ratio is the whole point, because a flat lift on both would brighten the frame without drawing the GRID. Wet roads take `night_glow_wet_mult` of the glow — a wet carriageway mirrors the skyglow away from the camera and the §2.9 lamp smear becomes the read instead.",
+    "night_color": "#6C88C4", "night_glow_wet_mult": 0.55,
+    "night_albedo_lift": 0.10, "night_glow": 0.012,
+    "road_night_albedo_lift": 0.34, "road_night_glow": 0.048,
     "_tone_calibration": "Measured on the showcase's four-quadrant ground at 120 m, hour 13. The first draft (#8E9089/#98948E/#7C8A8C/#8C8378) was invisible across the avenue: four greys a few per cent apart, which is a tone nobody can name. These keep the SAME luma band (every one within 0.06 of developed_tint's 0.527, so no district reads as brighter ground) and spend the difference on HUE instead - cool slate, warm limestone, green-grey, oiled brown. That is the split the eye actually resolves at 80-200 m, and it stays a trim: put any two side by side against a road and they are still one city.",
     "district_tones": ["#8A8F92", "#9A9488", "#86908A", "#8E877E"],
     "district_pages": ["pavement", "pavement", "pavement", "asphalt"],
@@ -131,8 +140,9 @@
   "water_surface": {
     "_owner": "doc 11 §2.1's third ground surface. main.gd builds the water tiles; GroundSurface.water() builds the material for them. Animated in the shader, never in script: a MultiMeshInstance3D of 15 quads cannot afford a per-frame CPU touch, and sc_time is already published for the window flicker.",
     "_no_reflections": "There is deliberately NO reflection probe here, at any preset. §2.11 gates the ONE probe the game may own to High and to the city at large; a second probe for a canal would double the cost of the feature that is already flagged for on-device validation. The sky read is a fresnel-weighted tint toward `sky_color`, which costs one dot product and lands within a few percent of a probe at these viewing angles.",
+    "_night": "report NIGHT-1. 0.34 on top of a #0F2937 body put the canal at (0,0,11) — a black hole through the middle of the showcase. 0.50 plus the shader's night sky read (the fresnel term retargets onto `sc_fog_tint`) puts it back where a canal at night belongs: darker than the pavement either side of it, lighter than the sky, and still the coolest surface in the frame.",
     "deep_color": "#0F2937", "shallow_color": "#1A4553", "sky_color": "#6E93B4",
-    "night_mult": 0.34, "fresnel_power": 3.6, "fresnel_gain": 0.44,
+    "night_mult": 0.50, "fresnel_power": 3.6, "fresnel_gain": 0.44,
     "wave_scale_a_m": 7.5, "wave_scale_b_m": 2.6,
     "wave_speed_a": 0.035, "wave_speed_b": 0.11,
     "wave_dir_a": [1.0, 0.32], "wave_dir_b": [-0.55, 1.0],

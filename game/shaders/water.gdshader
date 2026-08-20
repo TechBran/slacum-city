@@ -24,6 +24,17 @@
 // everyone knows and nobody can name), `sc_night` darkens the body, and
 // `sc_overlay_mode` greys it back with every other surface so an overlay does
 // not leave one glowing blue rectangle in the middle of a desaturated city.
+//
+// The night floor (report NIGHT-1) reaches the canal too, and it has to: with
+// `night_mult` alone the body resolved to (0, 0, 11) on the Fold 6 — a hole
+// cut through the middle of the showcase that read as missing geometry, not as
+// water. Water is the ONE surface where the fix is nearly free and nearly
+// physical, because a canal at night genuinely is a mirror of the sky: the
+// fresnel term is retargeted from the authored daytime `sky_color` onto
+// `sc_fog_tint` (the sampled night sky/fog colour EnvironmentController is
+// already publishing), and a small `night_glow` stands in for the skyglow the
+// surface scatters back. So the canal reads as a dark blue ribbon with the
+// lamps smeared down it, which is what the eye expects, instead of a void.
 shader_type spatial;
 render_mode cull_back, depth_draw_opaque;
 
@@ -31,13 +42,21 @@ global uniform float sc_time;
 global uniform float sc_night;
 global uniform float sc_wetness;
 global uniform int sc_overlay_mode;
+global uniform vec3 sc_fog_tint;
 
 uniform vec3 deep_color: source_color = vec3(0.071, 0.188, 0.247);
 uniform vec3 shallow_color: source_color = vec3(0.118, 0.306, 0.361);
 uniform vec3 sky_color: source_color = vec3(0.431, 0.576, 0.706);
-uniform float night_mult = 0.34;
+uniform float night_mult = 0.50;
 uniform float fresnel_power = 3.4;
 uniform float fresnel_gain = 0.55;
+// At full night the fresnel term aims at the sampled sky instead of the
+// authored daytime blue, lifted by `night_sky_gain` because `sc_fog_tint` is
+// the FOG colour — a depth-integrated value, darker than the sky it came from.
+uniform float night_sky_blend = 0.75;
+uniform float night_sky_gain = 2.4;
+uniform vec3 night_glow_color: source_color = vec3(0.42, 0.53, 0.72);
+uniform float night_glow = 0.016;
 
 // Two octaves. A is the swell — long, slow, nearly cross-current; B is the
 // ripple — short, quicker, running the other way. Two headings is what stops
@@ -126,16 +145,19 @@ void fragment() {
 	// colour; at a grazing angle it becomes the sky. `VIEW` is the fragment →
 	// camera vector in view space, which is exactly what this needs.
 	float f = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), fresnel_power);
-	ALBEDO = mix(body, sky_color, clamp(f * fresnel_gain, 0.0, 1.0));
-	// Night: the body darkens, the sky term darkens with it. Water at midnight
-	// under a #080C18 sky is not blue, it is almost black with a rim.
+	vec3 sky = mix(sky_color, sc_fog_tint * night_sky_gain,
+			sc_night * night_sky_blend);
+	ALBEDO = mix(body, sky, clamp(f * fresnel_gain, 0.0, 1.0));
+	// Night: the body darkens, but only to `night_mult`, and the surface keeps
+	// the skyglow floor below. Water at midnight is not blue — it is a dark
+	// blue-grey mirror, which is a colour, and it is not black.
 	ALBEDO *= mix(1.0, night_mult, sc_night);
 
 	// Sun glints on the crests. Squeezed hard so it is a scatter of points, not
 	// a sheen, and pulled down by rain along with the roughness.
 	float crest = pow(clamp(swell, 0.0, 1.0), sparkle_power);
 	float glint = crest * sparkle_gain * (1.0 - sc_night) * (1.0 - 0.85 * sc_wetness);
-	EMISSION = sky_color * glint;
+	EMISSION = sky_color * glint + night_glow_color * (night_glow * sc_night);
 
 	ROUGHNESS = clamp(base_roughness + 0.55 * sc_wetness, 0.0, 1.0);
 	SPECULAR = base_specular * (1.0 - 0.35 * sc_wetness);
