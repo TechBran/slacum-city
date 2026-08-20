@@ -44,6 +44,20 @@ extends SceneTree
 ##                      and — with `--shots` — the one the "no visible pop"
 ##                      claim is checked with, since the two runs differ in
 ##                      nothing else.
+##   --sites=N          stand N LIVING CONSTRUCTION sites (doc 11 §2.16) on the
+##                      N buildings nearest the city centre and drive
+##                      `ConstructionVehicleView` every frame, so the layer's
+##                      draw-call and frame cost can be A/B'd against
+##                      `--sites=0`. It deliberately does NOT build
+##                      `ConstructionSiteView`'s hoarding and cranes: those are
+##                      four nodes per site and would bury the figure this flag
+##                      exists to read.
+##   --site-stage=S     stage 1..6 every `--sites` site is held at (default 2)
+##   --site-gm=M        game-minute the construction layer's clock is wound to
+##                      before the measured frames (default 900 — a dozen
+##                      delivery cadences, so the yards are full and lorries
+##                      are on the road; measuring a cold layer would measure
+##                      the cheap case and call it the budget)
 ##   --quiet            table only
 ##
 ## The first pose absorbs shader compilation and the first MultiMesh uploads,
@@ -72,6 +86,8 @@ var _model: RenderStateModel
 var _city_view: CityView
 var _streetlights: StreetlightView
 var _vehicles: VehicleView
+var _construction: ConstructionVehicleView
+var _construction_usec := 0
 var _env: EnvironmentController
 var _camera_state: CameraState
 var _camera_rig: CameraRig
@@ -194,6 +210,14 @@ func _build_scene() -> void:
 	_vehicles.setup(_render_data)
 	_vehicles.set_preset(String(_opts["preset"]), _render_data)
 
+	if int(_opts["sites"]) > 0:
+		_construction = ConstructionVehicleView.new()
+		stage.add_child(_construction)
+		_construction.setup(_render_data)
+		_construction.set_preset(String(_opts["preset"]), _render_data)
+		_construction.set_road_network(_sim.roads)
+		_stand_up_sites(int(_opts["sites"]), int(_opts["site_stage"]))
+
 	# --- camera -----------------------------------------------------------
 	_camera_state = CameraState.load_from_files()
 	# `D_MAX_eff` is derived from the owned-land AABB (doc 12 §2.16), so a rig
@@ -216,6 +240,40 @@ func _build_scene() -> void:
 	_camera_rig = CameraRig.new()
 	stage.add_child(_camera_rig)
 	_camera_rig.setup(_camera_state, _render_data)
+
+
+## The N buildings nearest the city centre, turned into construction sites.
+## Nearest-first so the sites land inside the camera's own focus and the
+## measurement is of a layer that is actually being DRAWN.
+func _stand_up_sites(count: int, stage_index: int) -> void:
+	var centre_tile: Array = (_sim.loader.world_header.get(
+			"city_center_tile", [56, 56]) as Array)
+	var centre := Vector3(float(centre_tile[0]) * 8.0, 0.0, float(centre_tile[1]) * 8.0)
+	var rows: Array = []
+	for id in _sim.buildings.keys():
+		var b: Building = _sim.buildings[String(id)]
+		var record: Dictionary = _sim._building_records[String(id)]
+		var size: Vector2i = record["footprint"]
+		var pos := Vector3(b.origin.x * 8.0 + size.x * 4.0, 0.0,
+				b.origin.y * 8.0 + size.y * 4.0)
+		rows.append({"id": b.id, "pos": pos, "size": size,
+				"d": pos.distance_to(centre)})
+	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if absf(float(a["d"]) - float(b["d"])) > 0.01:
+			return float(a["d"]) < float(b["d"])
+		return int(a["id"]) < int(b["id"]))
+	for i in mini(count, rows.size()):
+		var row: Dictionary = rows[i]
+		_construction.add_site(int(row["id"]), row["pos"], row["size"], 18.0)
+		_construction.set_stage(int(row["id"]), stage_index)
+	# Resolve every route before the first measured frame: the A* is a boot
+	# cost, not a frame cost, and budgeting it as one would be a lie.
+	for _step in count:
+		_construction.refresh(0.0, 0.0, 0.0)
+	# Then wind the layer's clock forward past a dozen delivery cadences, so the
+	# measured frames have full yards and lorries on the road. A cold layer
+	# would measure the cheap case and call it the budget.
+	_construction.set_game_minutes(float(_opts["site_gm"]))
 
 
 func _build_ground(stage: Node3D) -> void:
@@ -347,6 +405,17 @@ func _process(delta: float) -> bool:
 	_streetlights.refresh()
 	_vehicles.set_focus(_camera_state.focus)
 	_vehicles.refresh(delta, _env.last_night, 1.0)
+	# The construction layer is timed on the main thread rather than inferred
+	# from the frame delta: `frame_ms` on this harness is presentation-bound on
+	# a fast desktop (mean and p95 both sit on the refresh interval), so a
+	# sub-millisecond layer is invisible in it. `Time` is a TOOL read — nothing
+	# in `sim/` or `game/render/` touches a wall clock.
+	_construction_usec = 0
+	if _construction != null:
+		var t0 := Time.get_ticks_usec()
+		_construction.set_focus(_camera_state.focus)
+		_construction.refresh(delta, _env.last_night, 1.0)
+		_construction_usec = Time.get_ticks_usec() - t0
 
 	_frames_seen += 1
 	if _frames_seen > int(_opts["warmup"]):
@@ -359,6 +428,7 @@ func _process(delta: float) -> bool:
 					Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
 			"primitives": int(Performance.get_monitor(
 					Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)),
+			"construction_usec": _construction_usec,
 		})
 	if _samples.size() < int(_opts["frames"]):
 		return false
@@ -397,12 +467,15 @@ func _summarise(pose_key: String) -> Dictionary:
 	var gpu := 0.0
 	var draw_calls := 0
 	var primitives := 0
+	var cons := PackedFloat64Array()
 	for s: Dictionary in _samples:
 		frame.append(float(s["frame_ms"]))
 		cpu += float(s["cpu_ms"])
 		gpu += float(s["gpu_ms"])
 		draw_calls = maxi(draw_calls, int(s["draw_calls"]))
 		primitives = maxi(primitives, int(s["primitives"]))
+		cons.append(float(s["construction_usec"]) * 0.001)
+	cons.sort()
 	var n := maxi(1, frame.size())
 	frame.sort()
 	var census: Dictionary = _model.tier_census()
@@ -432,7 +505,25 @@ func _summarise(pose_key: String) -> Dictionary:
 		"far": int(census.get("far", 0)),
 		"culled": int(census.get("culled", 0)),
 		"instances": _model.building_count(),
+		# Doc 11 §2.16's own budget line, measured rather than inferred.
+		"construction_mean_ms": _mean(cons),
+		"construction_p95_ms": 0.0 if cons.is_empty() \
+				else cons[clampi(int(ceil(0.95 * float(cons.size()))) - 1, 0,
+						cons.size() - 1)],
+		# The non-building draw calls: the term this harness can A/B reliably,
+		# because the chunk tier census wobbles between runs and the building
+		# buckets wobble with it.
+		"non_building_calls": draw_calls - int(split.get("bucket_calls", 0))
+				- int(split.get("merged_calls", 0)) - int(split.get("far_calls", 0)),
 	}
+
+
+func _non_building_rows() -> Array:
+	var out: Array = []
+	for row: Dictionary in _results:
+		var n := int(row["non_building_calls"])
+		out.append("%s %s" % [String(row["pose"]), "n/a" if n < 0 else str(n)])
+	return out
 
 
 static func _mean(values: PackedFloat64Array) -> float:
@@ -472,6 +563,27 @@ func _report() -> void:
 			_model.building_count(), int(preset_row.get("instance_budget", 0))])
 	print("  NOTE: the UI CanvasLayer is not built by this harness; `dc+ui` adds"
 			+ " §2.13's %d batched UI calls so the budget column compares." % UI_DRAW_CALLS)
+	# The A/B-able draw-call term: total minus the three building terms, whose
+	# chunk-tier census wobbles from run to run and swamps a +5 delta. It is
+	# only meaningful where the building terms ARE draw calls — i.e. at Z2,
+	# where `buck` is 0 and no bucket is re-drawn into a shadow split. At Z0/Z1
+	# the bucket count is nodes, not calls, and the subtraction goes negative;
+	# those poses are printed as `n/a` rather than as a wrong number.
+	print("  non-building draw calls (Z2 only, see _non_building_rows): "
+			+ ", ".join(_non_building_rows()))
+	if _construction != null:
+		var census: Dictionary = _construction.census()
+		print(("  LIVING CONSTRUCTION: %d sites at stage %d -> %d excavators,"
+				+ " %d lorries, %d heaps, %d stacks, %d barricade bays"
+				+ " (%d MultiMeshes, %d routes still queued)") % [
+				int(census["sites"]), int(_opts["site_stage"]),
+				int(census["excavator"]), int(census["tipper"]), int(census["heap"]),
+				int(census["stack"]), int(census["barrier"]),
+				_construction.layer_count(), int(census["pending_routes"])])
+		for row: Dictionary in _results:
+			print("    %s  layer CPU mean %.3f ms, p95 %.3f ms" % [
+					String(row["pose"]), float(row["construction_mean_ms"]),
+					float(row["construction_p95_ms"])])
 	var out := String(_opts["out"])
 	if out != "":
 		var f := FileAccess.open(out, FileAccess.WRITE)
@@ -497,6 +609,7 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 		"poses": ["z0", "z1", "z2"], "warmup": 90, "frames": 180,
 		"resolution": Vector2i(1920, 1080), "out": "", "quiet": false,
 		"shots": "", "no_merge": false, "atlas_lod": -1,
+		"sites": 0, "site_stage": 2, "site_gm": 900.0,
 	}
 	for raw in argv:
 		var arg := String(raw)
@@ -504,6 +617,12 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			opts["quiet"] = true
 		elif arg == "--no-merge":
 			opts["no_merge"] = true
+		elif arg.begins_with("--sites="):
+			opts["sites"] = maxi(0, int(arg.substr(8)))
+		elif arg.begins_with("--site-stage="):
+			opts["site_stage"] = clampi(int(arg.substr(13)), 1, 6)
+		elif arg.begins_with("--site-gm="):
+			opts["site_gm"] = maxf(0.0, float(arg.substr(10)))
 		elif arg.begins_with("--atlas-lod="):
 			opts["atlas_lod"] = int(arg.substr(12))
 		elif arg.begins_with("--shots="):

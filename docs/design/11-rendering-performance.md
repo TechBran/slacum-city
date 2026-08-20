@@ -679,6 +679,8 @@ overlays, if open                                 ≤6        ≤6           ≤
 
 `118 + 0 + 10 + 2 + 4 + 25 = 159`; with overlays `159 + 6 = 165`.
 
+**Plus §2.16's LIVING CONSTRUCTION layer: at most `+5` at every pose** (two machine MultiMeshes, two pile kinds, one barricade bay), measured on the benchmark city at 20 simultaneous sites. It does not grow with the site count, only with the kind count. It is *not* folded into the totals above because the derivation those totals belong to predates it; treated as a worst case, Z1 with the layer is `215 + 5 = 220` against 320, `226` with overlays, and headroom at Z1 falls from 31% to **29%**.
+
 **Headroom against 320: Z0 49%, Z1 31%, Z2 48%.** Every pose clears the budget. *(Z2 recomputed per report RR-14: `(320 − 165)/320 = 155/320 = 48.4%`. It was 45% at the 17-chunk figure, and 44% before RR-12 against the phantom-row total of 180.)*
 
 **Z2 across the grid-alignment band** — the same per-chunk costs at the band's endpoints, so the budget is checked at the worst alignment and not only at the representative one:
@@ -950,6 +952,97 @@ Four changes, three of them from the Audio-2 ruling and one from the same pass's
 **Assets.** The set is now **20 WAVs, 83.3 s, 4.54 MB** against the ruling's raised **4.5 MiB** budget (96.1%). The under-8 s loop brief is relaxed: the three atmospheric beds run **12 s** and the storm bed **10 s** — coprime in seconds, so the pair realigns only once a minute — while `site_loop` stays at 6 s because a crane loop is *supposed* to be periodic. `siren_pass` moved to 22.05 kHz (measured: 4.5e-6 of its energy in the top band) and `rain_loop` stayed at 44.1 kHz (measured: 6.0% at the half rate — rain genuinely is hiss past 7 kHz). The judging pass that came with the longer loops found a defect the seam metric could not: a one-cycle-per-buffer LFO gives every bed one swell at a fixed phase, and *a swell at a fixed place is a landmark* — a seamless loop with a landmark still reads as a loop. Every bed now modulates on coprime cycles (2, 3, 5, 7) with searched phases that put t=0 in the middle of the swing, and re-judging rated loop-point audibility 2/10 on both the rain and storm beds, down from "a clear marker for the start of the pattern".
 
 **Deliberately not hooks.** There is no per-window, per-streetlight or per-instance audio event — the same reason there are no per-building dynamic lights. Block granularity is the audio granularity, exactly as it is the blackout granularity (report C-38).
+
+### 2.16 LIVING CONSTRUCTION — plant, deliveries and the yard, **shipped 2026-08-20**
+
+**The defect this closes.** Until this pass a building under construction *grew*. §2.6's vertex stage clamps every vertex to `build_height_m · stage/6`, so the massing rose a sixth at a time and §2.15's site bed ticked, and that was the whole read: a box got taller. `ConstructionSiteView` (the crane/hoarding pass) fenced the lot and stood a tower crane over it, which fixed the *silhouette* and left the *story* untold. Nothing on the lot was ever being **done** by anybody. This section is the other half: **plant that works, lorries that arrive on real streets, and a yard that fills and empties.**
+
+**Where the work happens, and why it is not on the lot.** The stage clamp is VERTICAL only — the footprint is at full size from placement, so from stage 1 the ground inside the property line is under the building. The work zone is therefore the site's **street frontage**, and since the starter city authors no separate footway tile, the property line IS the kerb: the zone is the near half of the 8 m road tile in front of the lot. Stock against the hoarding at 0.95 m out, the barricade run on the lane line at 2.15 m, the plant straddling it at 4.40 m with the boom reaching back over the fence. That is a coned-off lane, which is exactly what an urban infill site takes.
+
+The frontage is derived from the ROAD, not from `ConstructionSiteView`'s hoarding gate — the road is published sim state, so nothing can disagree about which way the street is, and this layer needs no coupling to the crane pass at all. It is derived by **walking straight out from each of the lot's four faces**, nearest step first and, within a step, the probe closest to the middle of the face. `RoadGraph.nearest_road_tile` is the wrong tool and it took a screenshot to see why: it answers *Chebyshev*-nearest, so a corner lot with roads on two sides is handed the **diagonal** tile between them. The frontage frame still reads the right side by dominant axis, but the lorry's stop lands twelve metres along the kerb, past the lot's own corner, with the plant strung out after it. A frontage is a face, so the search has to be one. A lot with no street inside the graph's snap radius gets no activity and says so (`Site.frontage_ok == false`).
+
+**The lorry stops in front of the lot, not wherever the lane offset lands it.** Both route ends are pinned to the middle of the frontage tile. Left on the lane offset, a run ends on whichever side the *final approach* made "right" — half the time the far side of the street, facing away from the site it is delivering to, and never twice in the same place, which also means the plant cannot be laid out around it. Pinned, the stop is 4.0 m out from the property line: clear of the barricades at 2.15, square to the site, and the same every time. The two machines are then stood off the STOP — `stop_u ± (0.55·half_frontage + 6.5 m)` — rather than off the middle of the frontage, which is what stops a machine being parked inside the lorry about a third of the time.
+
+**What ships.** All new files; nothing under `sim/` was touched.
+
+| file | role |
+|---|---|
+| `game/render/construction_rig_mesh.gd` (`ConstructionRigMesh`) | the bodies. Excavator **440 tris**, tipper **432**, heap **27**, bundle stack **108**, barricade bay **240**. Same gray-box language and clockwise winding as `VehicleMesh` |
+| `game/shaders/construction_rig.gdshader` | the joint chain, walked in the **vertex** stage |
+| `game/render/construction_activity.gd` (`ConstructionActivity`) | the story. `RefCounted`, Node-free, clock-injected: stage + game-minute in, poses out |
+| `game/render/construction_vehicle_view.gd` (`ConstructionVehicleView`) | the hands. Five MultiMeshes, the route queue, the distance gate |
+| `data/render.json` → `construction_vehicles` | the tunables. A separate block from `construction`, so the crane pass and this one can never contend for a key |
+| `tests/test_construction_living.gd` | 3,835 assertions, including the hash gate below |
+| `tools/construction_preview.gd` | eye-level screenshots of one site, stage by stage, day and night — the harness this section's art decisions were judged with |
+
+**Articulation without bones — the one idea in the pass.** A machine that reads as a machine moves at its *joints*. The two obvious ways to get that are a `Skeleton3D` per machine (a Node per bone, per machine — unaffordable at twenty sites) or one MultiMesh per part (five draw calls for one excavator, ten for the pair). This takes the third road: **the mesh carries its joint index per vertex in `UV2.x`, the chain's rest pivots are uniforms, and the per-instance joint ANGLES ride `INSTANCE_CUSTOM`.** The vertex stage walks the chain innermost-first:
+
+```
+p = VERTEX
+if (j ≥ 4)  p = R₄·(p − P₄) + P₄       bucket curl
+if (j ≥ 3)  p = R₃·(p − P₃) + P₃       arm
+if (j ≥ 2)  p = R₂·(p − P₂) + P₂       boom
+if (j ≥ 1)  p = R₁·(p − P₁) + P₁       slew (about +Y; every other joint is +Z)
+```
+
+Rotating about each joint's **rest** pivot and then applying the joint below it is exactly `M₁·M₂·M₃·M₄·p`, i.e. real forward kinematics — which is why the pivots are constants and the CPU writes four floats per machine per frame and nothing else. The normal takes the same product. `UV2.y` is the surface code (steel / stock / glass / beacon / lamp); the two prop pages are fetched **unconditionally** in the fragment stage and selected by code, so there is no `texture()` inside divergent control flow. `rig_mode` is a uniform, so the tipper's re-reading of channels 2 and 3 as *load fill* and *lamp intensity* is uniform control flow, not divergence.
+
+**The result: one draw call per machine kind.** Twenty excavators with independent slew, boom, arm and bucket angles cost **one** call; the tipper's bed tilt and draining load cost **one** more.
+
+**The beat the player is meant to read.** Everything below is a pure function of `(building id, stage, game-minute)`; the id is hashed for variation and there is no sim RNG anywhere in it.
+
+| stage | excavators | lorries | yard |
+|---|---|---|---|
+| 1–2 | **2**, digging the frontage | arrive **loaded**, bed up, tip, leave empty | heaps grow with every delivery |
+| 3–4 | **1** | as above | grow, but a stage this far along has already eaten more of it |
+| 5–6 | **0** | arrive **empty**, are loaded with the bed DOWN, leave with the spoil | heaps come down; barricades lifted to half the run at 5, one token bay at 6 |
+
+A trip is `depart → drive the route → stand and exchange a load → drive home → despawn`, once per hashed cadence (`delivery_period_gm` 46 game-minutes ±25% per site, phase also hashed, so a street of sites never runs a convoy). Delivering, the bed goes up fast, holds while the load drains, and comes down; the heap grows *during the hold*, so the material visibly moves from the bed to the ground rather than teleporting when the bed drops. Hauling spoil out the bed stays **down** — the load growing in it is the motion, and a tipper that raises its bed to be filled is a lie anyone who has stood on a site reads straight away. Piles rotate through three slots (sand, gravel, bundled steel), and a heap's base widens with `√fill` while its height grows linearly — how a tipped load actually behaves.
+
+**The yard is measured from the START OF THE CURRENT STAGE, and that is not a detail.** The obvious model — a running delivery total minus a fixed per-stage offset — saturates and dies: a site fed for a game-day has delivered thirty loads, every slot pins at 1.0, and the heaps never move again for the rest of the build, which is the exact opposite of the read the pass exists for. Resetting the datum on every stage change gives the beat instead: **the stage consumes the yard, and the next round of deliveries rebuilds it**, with the `pile_consume_per_stage` term making each rebuild smaller than the last so a topping-out site has a clear kerb. `Site.stage_base` is that datum; like `Site.delivered` it is render-side and unpersisted.
+
+**Plant liveries are all four saturated, on purpose.** Plant hire really does field white and grey machines, and the first pass had a pale grey in the table. Over a near-neutral steel page it produced a machine the player could not pick out of a grey street at all — the site read as rubble. "Construction is high-visibility" is worth more here than the catalogue's full range. For the same reason `body_metallic` is **0.08** and not the crane's 0.28: metallic kills diffuse, and at 0.22 a mid-green machine in full sun came out pale sea-green next to a crane that was frankly yellow.
+
+**Street-true, at doc 10's own lane offset.** Routes come from `RoadNetwork.route_tiles(depot, site, RouteProfile.construction(21))` — the same call doc 06's fleet drives on, so a lorry and an ambulance obey the same closures and the same graph. Tile centres are pushed `lane_offset_m` (1.85, read from the `vehicles` block so this layer keeps to the same lane as the cars behind it) to the RIGHT of the centreline along the mitre of each corner, then Chaikin-cut **twice**, which turns a 90° junction into a turn rather than a pivot. The return leg is built from the reversed tile list, so out and back pass on opposite lanes. `tests/test_construction_living.gd` samples the whole run every 2 m and asserts every sample stands on a tile the road graph owns.
+
+**Where the material comes from.** The default depot set is the **outer ring of the road network** — the road tiles at the extreme of its extent, i.e. where the streets leave the built city — subsampled to at most 12 and chosen from the nearest 4 by a hash of the building id. That is the honest answer while the player has no industry: material arrives from off-map. `ConstructionVehicleView.set_depots()` takes an explicit tile list, so a later pass that wants deliveries to leave the player's own industrial roster changes one call in the shell and nothing here.
+
+**Renderer-local, and hash-neutral by construction.** No sim state, no sim RNG stream, no `sim/` edit, nothing persisted. The clock is **game-minutes**, integrated between ticks and re-synced to `GameClock.game_seconds()` whenever the shell offers it, so 3× speed drives the plant three times as fast, pause parks every lorry exactly where it stands, and a load or a catch-up puts the layer where the save says it is. The one piece of retained state is `Site.delivered`, a render-side high-water mark that keeps the delivery count monotone across a re-route — a heap that shrank because the street network changed would be a lie the player cannot account for.
+
+**The hash gate, and why it needed one.** This layer reads `route_tiles()` off the LIVE network, and `route_tiles` goes through `RoutePlanner.quote()`, which touches the planner's LRU. An eviction the *renderer* caused could in principle force a later sim quote to re-run A* instead of re-pricing a cached entry — and `_finish`'s `best_total` and `_price_route`'s re-sum are different summation orders of the same edge costs. `tests/test_construction_living.gd::test_route_lookups_do_not_move_the_state_hash` interleaves 240 lookups (twenty sites' worth of out-and-back legs, every game hour for six hours) into a running `CitySim` and compares `state_hash()` against a clean run. It matches. The same probe was run at 960 lookups over 24 h on the starter city and 1,440 over 24 h on the benchmark city (3,132 road tiles) before the layer was written; both matched. If a future planner change ever makes a renderer read observable, that test goes red rather than a screenshot three waves later.
+
+**Budgets, measured.** `tools/profile_frame.gd --sites=N --site-stage=S --site-gm=M` stands N sites on the N buildings nearest the city centre, winds the layer's clock past a dozen cadences so the yards are FULL, and times the layer's own `refresh()` on the main thread with `Time.get_ticks_usec()`. It is timed rather than inferred because this harness's `frame_ms` is presentation-bound on a fast desktop — mean and p95 both sit on the refresh interval, and a sub-millisecond layer is invisible in it.
+
+Bench city (1,500 buildings), preset balanced, hour 21, 1920×1080, 240 measured frames after 90 warm-up, 20 sites at stage 2 → **40 excavators, 24 lorries, 40 heaps, 20 stacks, 78 barricade bays = 202 instances**:
+
+| | `--sites=0` | `--sites=20` | delta | budget |
+|---|---|---|---|---|
+| Z2 non-building draw calls | 79 | **84** | **+5** | ≤ +12 |
+| Z2 primitives | 198,090 | 260,338 | +62,248 | — |
+| Z1 layer CPU, mean | — | **0.460 ms** | — | < 0.8 ms |
+| Z1 layer CPU, p95 | — | **0.536 ms** | — | — |
+| Z2 layer CPU, mean / p95 | — | 0.448 / 0.485 ms | — | — |
+
+The draw-call column is the **non-building** term (total minus the three building terms) because the chunk-tier census wobbles between runs of the harness by ±1 chunk and swamps a +5 delta; it is only meaningful at Z2, where `buck` is 0 and no bucket is re-drawn into a shadow split. +5 is the structural answer as well as the measured one — five MultiMeshes, one per model kind — and it does not grow with the site count, only with the kind count. *(The measurement above is the loaded case, with all five buffers carrying instances. A city with no site under construction leaves all five at `visible_instance_count = 0`; that case was not separately measured, so 5 is quoted as the ceiling and not as a floor.)*
+
+**What the 0.46 ms is spent on, and what it is not.** Everything a FRONTAGE fixes — the two machines' standing transforms, each pile's position and yaw, the barricade run for the current stage — is computed once per route (and, for the barricades, once per stage) and copied thereafter. The clock moves the bucket, the bed, the lorry along its polyline and the heap's height; it does not move the ground under any of them. Caching that took the figure from 0.584 to 0.460 ms. What is left is dominated by the ~200 `set_instance_transform` / `_color` / `_custom_data` triples — the same per-instance upload path §2.12's traffic layer uses at a comparable count, so it is the incumbent cost, not a new one.
+
+**Shadows are OFF by default**, for the reason `vehicles.cast_shadows` already documents: instances are written straight into the buffer and never update the auto AABB, so the custom AABB is world-sized and every layer intersects EVERY split. The per-preset `vehicle_shadows` row overrides it, so High re-draws the plant into its four splits and Balanced and Performance do not.
+
+**How the picture was judged.** `tools/construction_preview.gd` parks a camera on the site's own frontage at doc 12's Z0 pose — the closest a player can ever get — and walks the six stages, giving each one its own run of deliveries so the yard has had time to fill:
+
+```bash
+~/.local/bin/godot --path "/home/bbx/Slacum City game" \
+  -s res://tools/construction_preview.gd -- --out=/tmp/site --stages=1,2,3,4,5,6 --hour=13
+~/.local/bin/godot --path "/home/bbx/Slacum City game" \
+  -s res://tools/construction_preview.gd -- --out=/tmp/site-night --stages=1,3,6 --hour=21.5
+~/.local/bin/godot --path "/home/bbx/Slacum City game" \
+  -s res://tools/construction_preview.gd -- --out=/tmp/sweep --sweep --frames=8
+```
+
+Four defects came out of that pass and out of nothing else: the pale livery, the metallic wash, the diagonal frontage tile, and a single barricade bay stretched across 24 m of kerb at stage 6 (the scale was being taken from the *reduced* bay count instead of the full run — one bay lifted has to look like one bay lifted). All four are fixed above; each is worth naming because none of them could fail a test.
+
+**Deliberately not built.** No dust plume behind a lorry and no exhaust: both are particle systems, both are a second draw call each, and neither survives the 0.8 ms line at twenty sites. No workers on foot — a 1.7 m biped at Z1 is nine pixels tall and would cost a sixth MultiMesh to be a smudge; the machines are the read. No per-site OmniLight for the beacon — §2.10's rule (block granularity, not instance granularity) applies here exactly as it does to streetlights, and the emissive sweep in the shader is what the beacon is.
 
 ---
 
@@ -1235,6 +1328,17 @@ These read two or more files and fail the build when a sibling doc's data drifts
 26. **Bench fixture contract (report G-7).** `tests/fixtures/bench_city.json` exists, parses, and carries the save-schema version the current migration ladder terminates at; every `archetype_id` in it resolves in `game/meshes/generated/manifest.json`. This doc **consumes** the fixture; doc 09 generates it via `tools/gen_bench_city.py`; doc 08 validates it against the save schema in CI. This test is the renderer's own tripwire so the §7.4 acceptance gates cannot silently stop running against a stale city.
 27. **Consumed-event names exist on the emitter (report RR-1).** For every event name in §4's *Events consumed* list that doc 04 owns — `BlockDarkChanged`, `BuildingPowerChanged`, `StreetlightsChanged`, `TrafficSignalPowerChanged`, `PowerRestored`, `AutoReclosedOK`, `AutoRecloseLockout`, `TotalBlackout`, `LoadShedStarted/Ended`, `RollingBlackoutRotated` — assert the name is present in the grid system's emitted-event registry, and assert **`DistrictDarkChanged` is subscribed by nothing**. This is the test whose absence let the C-38 rename land on doc 04's side only: doc 04's test 23 asserted it never emits the old name, doc 11's tests were fed synthetic events, and the dead wire between them was invisible to both suites. A subscription to a name no doc emits must fail the build, not fail silently at runtime.
 
+### 7.3c Headless — LIVING CONSTRUCTION (`tests/test_construction_living.gd`, §2.16)
+
+28. **Bodies.** Excavator ≤ 520 tris, tipper ≤ 480, each yard prop ≤ 260. The excavator carries geometry on **all five** joints and the tipper on exactly three (chassis, bed, load) — a mesh with a joint the shader's chain does not reach draws in pieces. Every vertex's `UV2.y` is one of the shader's five surface codes. The tipper's load is authored with its lowest vertex **exactly** on `TIP_LOAD_FLOOR_Y`, the plane the vertex stage squashes it to; if the two drift apart an empty bed shows its load sunk through the floor.
+29. **The dig loop closes.** `dig_pose(0) == dig_pose(1)` to 5e-4 on all four channels, and every channel stays inside `[0,1]` across the cycle — otherwise every excavator in the city snaps once every seven seconds, or a joint drives past its authored envelope.
+30. **Streets.** A polyline built from an L-shaped tile run gains points (the corner cut fired), has monotone cumulative length, sits on the road surface, and is offset **exactly** `lane_offset_m` to the right of the centreline on its opening leg; the reversed tile list lands on the *other* lane. `sample_polyline` clamps at both ends and reads heading 0 as +X.
+31. **The lifecycle.** On the starter network: a site finds its frontage (== the nearest road tile), resolves a depot and a route, and **every 2 m of that route stands on a tile the road graph owns**. One cadence produces exactly one lorry — absent before the departure, loaded with the bed down a quarter of the way out, standing at the end of the run with the bed up mid-dump, empty with the bed down on the way home, and **gone** between the trip's end and the next departure. Two sites get different cadences *and* different phases.
+32. **The yard.** Sampled 241 times across four cadences at a fixed stage: the delivery count never decreases and no pile ever shrinks. Then the *peak* fill reached during an identical nine-cadence stretch of game time is measured at each of the six stages, and each stage's peak is ≤ the one before, starting above 0.4 and ending at exactly zero — growth is deliveries, shrinkage is stages, and neither can masquerade as the other. Comparing instants rather than peaks would only measure where in a cadence each sample landed, which is why the window is the unit. Every stage change also has to leave the kerb cleared. Excavator count is monotonically non-increasing across the six stages, 2 at stage 1 and 0 at stage 6; the barricade run is several bays at stage 1 and exactly one at stage 6. At `CLEANUP_STAGE` the lorry arrives empty and leaves loaded.
+32b. **The frontage is a FACE (regression).** A 2×2 lot tucked into the corner of two streets, where the diagonal road tile is exactly as Chebyshev-near as the two face tiles, must front on one of the FACE tiles and never on the diagonal, and the lorry's stop must land inside the frontage (`|stop_u| ≤ half_frontage`). This is the defect a screenshot found and no assertion could have: the wrong tile still produces a valid frontage frame, a valid route and a lorry that drives real streets — it just parks past the lot's own corner with the plant strung out after it. Also covered: `set_depots()` overrides the outer-ring default and every lorry then leaves from a named tile.
+33. **Budget and purity.** The layer is exactly **5** MultiMeshes. Two independently constructed views, given the same sites and the same game-minute, produce byte-identical counts, origins and joint channels — nothing may depend on frame history, allocation order or a wall clock. A site with no road inside the snap radius reports `frontage_ok == false` and draws nothing, without throwing on the way.
+34. **The hash gate (§2.16).** Six game-hours of a real `CitySim`, with 240 `route_tiles()` lookups interleaved at the hour boundaries — twenty sites' worth of out-and-back legs, every hour — must leave `state_hash()` **bit-identical** to a clean run. This is the test that keeps a renderer feature from moving the simulation through the route planner's LRU.
+
 ### 7.4 On-device — `tools/bench_flythrough.gd` + adb
 
 A deterministic 90 s camera path over `tests/fixtures/bench_city.json` — **generated by doc 09 (`tools/gen_bench_city.py`, same generator family as the starter city), validated by doc 08 against the current save schema in CI, consumed here** (report G-7, ruled; former §9 open question 20 is closed). Contents **as shipped** (see §2.13's as-shipped table): a 7×7 world with a **6×6 developed core (36 blocks)**, **1,500 buildings** across L1–L5, 3,132 road tiles, ~780 streetlight props, and the civic roster that houses the emergency fleet. *(The pre-build figures were "~1,100 buildings" and an 8×8 world; the count moved to doc 91's 1,500 — the size this section's device matrix is written against — and the world stayed 7×7 because `TileGrid.BLOCKS` is 7. Doc 09 §2.13's profile table carries the same numbers.)* The device harness is `tools/bench_device.sh`, which drives the three scenarios below over adb and collects both our `PERF` lines and the platform's `gfxinfo`/`meminfo`/`thermalservice` output; it ships ready and **has not been run against a device yet**. Three scenarios:
@@ -1410,6 +1514,15 @@ Deep dives when a gate fails: **Android GPU Inspector** for Adreno/Mali counters
                 "lightbar_hz": 2.2, "lightbar_emission": 3.5,
                 "lightbar_red": "#FF2A22", "lightbar_blue": "#2A5CFF",
                 "interp_teleport_threshold_m": 40.0, "headlight_night_threshold": 0.15 },
+
+  "construction_vehicles": { "truck_speed_mpgm": 21.0, "delivery_period_gm": 46.0,
+                             "dump_gm": 4.2, "dig_cycle_gm": 7.0,
+                             "pile_per_delivery": 0.26, "pile_consume_per_stage": 0.30,
+                             "pile_max_m": 1.75, "pile_base_m": 2.60,
+                             "barrier_bay_m": 2.55, "barrier_out_m": 2.15,
+                             "pile_out_m": 0.95, "rig_out_m": 4.40,
+                             "beacon_hz": 1.35, "beacon_energy": 3.2, "lamp_energy": 2.2,
+                             "visible_radius_m": 520.0, "max_sites": 28 },
 
   "blob_shadow": { "enabled_presets": ["performance"], "y_m": 0.04,
                    "footprint_scale": 1.15, "alpha": 0.35, "night_fade": 0.6 },
