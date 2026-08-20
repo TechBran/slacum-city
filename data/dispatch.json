@@ -10,10 +10,11 @@
     "congestion_ref": 1.5, "crime_pop_ref": 6000, "crime_pop_w": 0.6, "crime_stability_w": 0.4
   },
   "route_profile_fields": ["speed_mpgm", "siren", "ignores_closures", "capabilities"],
+  "_assignment_note": "doc 06 §2.10 + report 98 RR-26 (Wave 9, 2026-08-20). max_acceptable_cost_min moved 90 -> 115: the 90 was fitted against a Chebyshev ETA stand-in, and doc 06 §1.1's Wave-8 measurement publishes the street-true distribution as +22-32% on the travel term, midpoint +27%, so 90 x 1.27 = 114.3 -> 115 at the file's 5-minute granularity. Same decision boundary, re-expressed in the metric that now measures it. unanswered_abandon_h is the terminal rule §2.10 owed: 24 game-hours - ONE GAME-DAY - with NOTHING committed to an incident ends it as ABANDONED. 24 is 1.77x the longest terminal path any ROW in data/incidents.json authors, and the binding row is a SUBTYPE: storm_damage/roof_damage reaches tier 5 at 11.574 gh on casual difficulty and then holds 2.0 gh, for 13.574. Every type's own on_fail therefore still fires first at every difficulty and every weather state, and the neglect-fatal identity is untouched.",
   "assignment": {
     "max_assignments_per_tick": 16, "reassign_threshold": 120, "reassign_penalty_min": 12,
-    "reserve_penalty_min": 45, "role_fit_penalty_min": 30, "max_acceptable_cost_min": 90,
-    "construction_preempt_priority": 400
+    "reserve_penalty_min": 45, "role_fit_penalty_min": 30, "max_acceptable_cost_min": 115,
+    "construction_preempt_priority": 400, "unanswered_abandon_h": 24.0
   },
   "policy_defaults": {
     "auto_dispatch_fire": true, "auto_dispatch_police": true,

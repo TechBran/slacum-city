@@ -246,9 +246,14 @@ func test_partial_progress_round_trips_to_the_number() -> void:
 			"2 of 4 houses is still 2 of 4 houses after a reload")
 
 
-func test_the_city_section_declares_version_three() -> void:
-	assert_eq(CitySim.SAVE_SECTION_VERSION, 3,
-			"doc 08 §2.8: the goals block is a shape change and says so")
+func test_the_city_section_carries_the_goals_block() -> void:
+	# The goals block arrived on rung 3 and the ladder has moved past it (Wave 9
+	# added rung 4, the routing/cadence epoch). What this test owns is that the
+	# BLOCK is in the body and that the rung is at least the one that added it —
+	# pinning the exact number here would make every future rung fail a goals
+	# test for no reason.
+	assert_true(CitySim.SAVE_SECTION_VERSION >= 3,
+			"doc 08 §2.8: the goals block arrived on rung 3")
 	assert_true(CitySim.boot_from_files().canonical_capture().has("goals"),
 			"and the body carries it")
 

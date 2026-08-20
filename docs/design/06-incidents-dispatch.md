@@ -69,6 +69,45 @@ Constitution §4: **1 real second = 1 game minute**; 1 game-hour = 60 real secon
 >
 > **What it means for C-70's invariant, stated plainly.** C-70 asserts that the worst mature-city response (39.1 gm) still beats tier 3 (39.3 gm), so "response degradation costs the player one tier, never the building". The 39.1 gm is a pure *travel* figure from doc 10 §2.6 example C, and on travel the invariant is safe with room to spare — even with the router the ETA maximum is 20.0 gm. On the *response* distribution it is not: with the router the p90 is 33–59 gm and the maximum 74.6 gm, so incidents would reach tier 3 before anyone arrives. **No building was lost to it in these runs** — zero failed and zero destroyed across all twelve, and all 27 balance gates pass — because tier 3 on most channels is a slower clock rather than a loss. The honest statement is that **C-70's invariant is a claim about travel time, and street-true ETAs add a queueing term that C-70 never modelled.** Re-ruling it needs either a bigger founding fleet or a queue-aware restatement of the band, and it is one of the two things §2.10's Wave-8 note holds the wiring for.
 
+> #### Restated as TWO bands — measured with the router SHIPPED (Wave 9, 2026-08-20)
+>
+> The Wave-8 note above ends by saying C-70's invariant is a claim about travel time and that response adds a queueing term C-70 never modelled. **That is now the specification, not a finding**: §1.1 publishes two bands, because the two quantities have different owners, different shapes and different failure modes.
+>
+> | | **BAND A — dispatch ETA** | **BAND B — response** |
+> |---|---|---|
+> | definition | `turnout_min + route_minutes` — the drive | incident created → first unit on scene |
+> | owner | **doc 10** (route) + §2.11 (`speed_mpgm`, turnout) | **doc 06** — it is a queue in front of a drive |
+> | what makes it worse | distance, congestion, weather, closures, condition | all of Band A, **plus every unit being busy** |
+> | the invariant | **C-70**: the worst mature-city drive (39.1 gm) still beats tier 3 (39.3 gm) | **none, and there never was one** |
+>
+> **Measured, both arms in one session on one machine** — `tools/profile_response.gd`, four agents × three seeds × 21 game-days, every `unit_dispatched.eta_h` and every `incident_resolved.response_min`, against a pristine `git stash` copy of the pre-wiring tree. Game-minutes.
+>
+> | | stand-in (Wave 8) | **router (shipped)** | |
+> |---|---|---|---|
+> | **Band A**, mean over all 2,400+ dispatches | 7.6 | **11.5** | +51 % |
+> | Band A, p90 | 11.9 | **18.4** | |
+> | Band A, max | 13.9 | **31.5** | |
+> | **Band A, `balanced` only** — mean / p90 / max | 6.0 – 6.1 / 9.5 – 10.2 / 11.6 – 13.6 | **7.3 – 8.6 / 13.2 – 14.0 / 16.3 – 20.1** | |
+> | **Band B**, mean | 37.8 | **41.5** | +10 % |
+> | Band B, p90 | 107.1 | **114.4** | +7 % |
+> | **Band B, `balanced` only** — mean / p90 | 12.6 – 14.6 / 39.5 – 42.4 | **13.0 – 20.9 / 43.0 – 61.4** | |
+> | resolved above tier 1, `balanced` | 21.4 – 26.8 % | **20.9 – 34.3 %** | |
+> | **`balanced`: failed · abandoned · destroyed** | **0 · 0 · 0** | **0 · 0 · 0** | |
+>
+> **Band A is bigger than Wave 8 predicted, and the extra is a bug fix.** Wave 8 measured +22–32 %; this measures +51 %. The difference is that the seam used to ignore the `RouteProfile` doc 06 hands it and price *every* vehicle at one fixed `emergency(32.0)` — so a fire engine (26 m/gm), a utility truck (24) and a construction crew (18) all arrived at a patrol car's speed. §2.11's own table is now what reaches doc 10, siren multiplier folded in, and the band is what the roster actually says.
+>
+> **C-70's invariant HOLDS, on Band A, which is the band it is about.** The measured maximum drive across twelve 21-game-day runs is **31.5 gm**, against the tier-3 boundary of **39.3 gm** — 20 % of margin on the worst single dispatch any agent produced, including two agents that never repair anything. `esc_base[structure_fire] = 2.20` needs no retune and test 23 is untouched.
+>
+> **Band B has no invariant, and the A/B is what proves it never had one.** `balanced`'s response p90 was **39.5 – 42.4 gm before the router** — already at or over the 39.3 gm tier-3 line — and is 43.0 – 61.4 gm after. Street-true routing moved it **+26 % on the mean of the three p90s**; it did not create the condition. A p90 is the fourth-worst of the ~40 incidents a competent city sees in three game-weeks, and every one of them resolved: **zero failed, zero abandoned, zero destroyed, in both arms, on all three seeds.**
+>
+> **The fleet-sizing consequence: NO retune, and here is the measurement that decides it.** The rung that would fix Band B is a bigger founding roster — doc 06 §2.11's `capacity_per_station_level` ladders, priced by doc 03 §2.13(c). It is not taken:
+>
+> 1. **The quantity that would justify it is zero.** A fleet rung buys buildings that would otherwise be lost. `balanced` loses none, in either arm, on any seed. So does `tax_squeezer`. The agents whose response really degrades — `greedy_growth` (Band B p90 109.6 – 135.4 gm) and `disaster_neglect` (83.5 – 115.5) — are the two that never repair and never buy grid, i.e. **the neglect-fatal identity working exactly as designed**, and a bigger fleet would blunt it.
+> 2. **It would be fixing something the router did not break.** Band B was over the tier-3 line before the wiring. Retuning the fleet in the wiring's name would attribute a pre-existing property of a queueing metric to a routing change.
+> 3. **Its blast radius is out of proportion to its evidence.** The founding roster is 8 units and gate 7 asserts it; the ladders feed doc 03's `E_fleet` line, which feeds the founding net that gates 1, 2 and 2b hold to ±1 %. That is three gates and an anchor moved on a metric that has not yet cost the player a building.
+>
+> **What WOULD justify the rung, stated so the next wave can test it rather than argue it:** `incident_failed` or `building_destroyed` becoming non-zero for `balanced` on any seed, or gate 8's open-incident mean rising above 3. Both are already measured every run.
+
 **This band is UNCHANGED by RR-15** *(report 98 §15).* §2.4's weather-keyed `heat_mult` / `rain_mult` constants moved to doc 07's `fire_escalation_mult` channel, but doc 07 **adopted them verbatim** (`CLEAR 1.00 · CLOUDY 1.00 · RAIN 0.80 · HEAVY_RAIN 0.80 · THUNDERSTORM 0.80 · HEAT_WAVE 1.25`, flat at every intensity — doc 07 §2.2.1), so every number above reproduces to the digit. The reference case is CLEAR, where the channel returns **1.00** and `esc_env = 1.250` exactly as before: tier 2 at **21.8 gm**, tier 3 at **39.3 gm** (`21.818 + 17.455 = 39.273`), tier 5 at **66.3 gm**. The 39.1 gm < 39.3 gm margin therefore stands at **0.2 gm**, unmoved, and `esc_base[structure_fire] = 2.20` needs no retune. Ownership moved; calibration did not.
 
 ---
@@ -110,12 +149,12 @@ Fields (spec §33 / §46 superset):
 | state | meaning | entry | exit |
 |---|---|---|---|
 | `NEW` | created this tick, not yet scored | generator | always → `QUEUED` at end of same tick |
-| `QUEUED` | scored, awaiting units | no assigned units | → `ASSIGNED` on assignment; → `ABANDONED` if `self_resolve` timer expires |
+| `QUEUED` | scored, awaiting units | no assigned units | → `ASSIGNED` on assignment; → `ABANDONED` if the `self_resolve` timer or §2.10.1's unanswered clock expires |
 | `ASSIGNED` | ≥1 unit assigned, none contributing on scene | assignment | → `ACTIVE` on arrival; → `QUEUED` if all units recalled/lost |
 | `ACTIVE` | ≥1 capability-matching unit on scene; `progress` accumulating | arrival of a primary-role unit | → `RESOLVED` at `progress ≥ 1`; → `ASSIGNED` if primary role leaves; → `FAILED` on terminal condition |
 | `RESOLVED` | success; rewards paid; units released | `progress ≥ 1.0` | terminal (removed after `KEEP_RESOLVED_MIN = 15` game-min for the UI/report) |
 | `FAILED` | terminal consequence fired (burn-down, transformer destroyed, main washout) | `on_fail` condition | terminal |
-| `ABANDONED` | self-resolved with no response; penalty applied | `self_resolve_h` elapsed in `QUEUED` at tier < `self_resolve_max_tier` | terminal |
+| `ABANDONED` | **the city never answered this**; the type's own penalty applied | `self_resolve_h` elapsed in `QUEUED` at tier < `self_resolve_max_tier`, **or `unanswered_h` reaches `UNANSWERED_ABANDON_H` (24 gh) with nothing committed — §2.10.1, RR-26** | terminal |
 
 **Only `ACTIVE` accumulates progress. `QUEUED` and `ASSIGNED` accumulate escalation at full rate; `ACTIVE` accumulates escalation at the suppressed rate.**
 
@@ -557,7 +596,7 @@ At 100 kph, `wind_factor = ((100−40)/30)² = 4.0` → `λ = 1.713500 /gh` → 
 | `water_main_break` | segment isolated: `pressure_ratio −0.15` in zone | zone pressure `−0.35`; **hydrant_factor in zone drops** → active fires suppress slower | road surface damaged → doc 10 `edge_speed_mult 0.5` on that segment | zone pressure `−0.60`; `stability −0.04` | held at T5 for 1.0 gh → `FAILED`: washout — road segment **closed** (doc 10), spawn `storm_damage/blocked_road`, zone pressure `−0.8` until repaired, `stability −0.06` |
 | `traffic_accident` | doc 10 `edge_speed_mult 0.6` on segment | segment `edge_speed_mult 0.3`; congestion propagates | segment **closed** (doc 10); `stability −0.01` | secondary collision: spawn 1 more `traffic_accident` on an adjacent edge | `ABANDONED` after `self_resolve_h`: segment closed for 1.0 gh, `confidence −0.01` |
 | `storm_damage/downed_power_line` | feeder capacity `−30%` | feeder **offline** | 25% chance to spawn `structure_fire` at nearest building | live-line hazard: adjacent edges closed | `FAILED` at T5 held 1.0 gh: feeder destroyed, treated as `transformer_failure` fail |
-| `storm_damage/blocked_road` | `edge_speed_mult 0.5` | segment closed | reroute pressure raises district congestion `+0.2` | — | `ABANDONED`: segment stays closed until a construction crew is dispatched manually |
+| `storm_damage/blocked_road` | `edge_speed_mult 0.5` | segment closed | reroute pressure raises district congestion `+0.2` | — | `ABANDONED`: segment stays closed until a construction crew is dispatched manually. **The T5 cell was aspirational until Wave 9** — this type authors no `on_fail` block at all, so before §2.10.1 an unanswered one sat at tier 5 for the rest of the city's life and the word ABANDONED never appeared. §2.10.1's clock is what makes this row true |
 | `storm_damage/roof_damage` | building `condition −0.05` | `condition −0.12`; water ingress; tax output ×0.7 | `condition −0.25` | — | `FAILED` at T5 held 2.0 gh: building condition floored at 0.2, requires a full **doc 02** repair project priced by **doc 03** |
 
 **Zone pressure on a main break (report 98 C-46).** Doc 06's **tiered** `zone_pressure_delta` in the `water_main_break` row above (`−0.15 / −0.35 / −0.60 / −0.80` at T2/T3/T4/T5) **stands and is authoritative** — a break that has been open for an hour must hurt more than one that just started, which a flat penalty cannot express. Doc 05's `break_pressure_penalty = 0.12 × severity` is retained there only as the fallback for breaks doc 06 does not own; in MVP there are none, so it never fires.
@@ -803,7 +842,7 @@ Runs each incident tick, after scoring. Deterministic: all iteration is over id-
                 + RESERVE_PENALTY (45)    if taking it breaks a station reserve (§2.12)
                 + ROLE_FIT_PENALTY (30) * (1 - unit.role_fit[need.role])
             if c < best_cost: best = unit; best_cost = c
-        if best != null and best_cost <= MAX_ACCEPTABLE_COST (90):
+        if best != null and best_cost <= MAX_ACCEPTABLE_COST (115 — §2.10.2, was 90):
             assign(best, inc); assignments_made += 1
 ```
 
@@ -843,7 +882,140 @@ profile = { speed_mpgm, siren: true, ignores_closures: false }
 > 1. **§2.10 owes a terminal rule.** An incident that no unit can reach within `MAX_ACCEPTABLE_COST`, on a road network that has not changed since the last time it was priced, is not "waiting" — it is unanswerable. Doc 06 already has `STATUS_ABANDONED` and an `incident_abandoned` event that balance gate 9 measures; what it does not have is the condition. Alternatively `MAX_ACCEPTABLE_COST` is re-fitted to street-true ETAs, which §1.1's Wave-8 measurement now supplies the distribution for.
 > 2. **Doc 10 owes hierarchical routing.** Its own performance test already reports *"median P0 expansions 1154 vs trigger 800 → hierarchical routing REQUIRED"* on a 2,134-edge graph, and a full quote measures **≈ 5 ms** on the benchmark city. Emergency profiles route at `epsilon_critical = 1.0` (admissible, unweighted) by design, which is 8× the expansions of the `epsilon_routine = 1.25` path — that is the right trade for an emergency vehicle and the wrong cost for a per-sub-step loop.
 >
+> **Both rulings landed in Wave 9 and the argument is in** — §2.10.1 and §2.10.2 below carry them, report 98 RR-26/RR-27 carry the rulings, and `CitySim._boot_incidents` now constructs `RoadTravelTimeProvider`. **Neither ruling is what closed the cliff, and the diagnosis above is wrong.** A four-arm ablation (doc 92 §23.3) puts `greedy_growth` seed 4242 at **> 600 s in this note's exact configuration** and at **11.2 s with one thing changed**: the seam honouring the `RouteProfile` §2.10 hands it. It had been pricing every trip on one fixed `emergency(32.0)` — no per-type speed and **no siren multiplier** — so a *responding* patrol car ran at 32 m/gm where §2.11 says `32 × 1.25 = 40`, **20 % slow, on the department that answers `crime` and `traffic_accident`**. One channel priced 20 % slow on a degrading network is enough to push `eta + penalties` past the cost cap and start the runaway. The terminal rule and the re-fitted cap shipped anyway, because they close a real gap — three catalog rows author no ending at all — and because a terminal rule a played city never reaches is exactly what a terminal rule should be: it fires **zero times** across doc 92's 18-run matrix.
+>
+> Ruling 2 above is the other one that did not survive contact with a measurement: **the ≈ 5 ms quote is a cross-city quote, and rank-then-quote never pays for one.** `tools/profile_routing.gd` — a new instrument that quotes the shape §2.10 really produces rather than six deliberately corner-to-corner routes — measures the shipped seam call on the benchmark city at **0.709 ms mean / 1.360 ms p90 / 46.6 expansions** at `epsilon_critical = 1.0`, against **2.862 ms / 6.365 ms / 206.2** for the same incidents with every station quoted. Hierarchical routing was built, measured and **not shipped**; see doc 10 §2.14's Wave-9 note for the arm-by-arm numbers and RR-27 for the ruling.
+>
 > **What the wiring DID find, and what was fixed because of it.** Doc 04's component record carries a `tile` and this section uses it as the incident position. `CitySim._boot_power` added plants, substations, feeders and transmission links with **no tile**, because `data/starter_city.json` spells a substation's location `terminal`; all four defaulted to **(0, 0)**. A straight-line ETA reaches the map corner, so every substation failure in the shipped game was answered and nobody noticed; the router finds no street within snapping distance of the corner and correctly flags the incident `unreachable`, after which it escalates unanswered to destruction. On the doc 92 rig, `balanced` seed 1337, one such failure on game-day 17 took the 50-game-day dark share from **8.7 % to 61.8 %** and broke balance gates 18 and 18b. **Fixed at the source** (doc 08 §2.8's 2026-08-20 note), and the fix is in this branch whether or not the router ever is.
+
+#### 2.10.1 The terminal rule — an incident nobody answers is ABANDONED (RR-26, Wave 9, 2026-08-20)
+
+The Wave-8 note above asked for this rule for the wrong reason and it is the
+right rule anyway. **Three ROWS of `data/incidents.json` author no ending at
+all** — `traffic_accident` and `storm_damage/blocked_road` above tier 2 (their
+`self_resolve_max_tier` is 2 and they carry no other condition), and bare
+`storm_damage`, which has no `on_fail` block whatsoever. Under the Chebyshev
+stand-in those were always answered and the gap was unreachable. Under
+street-true ETAs on a collapsed network they climb to tier 5 and stand there for
+the rest of the city's life, and everything that is O(open incidents) stands
+there with them. That is a hole in §2.10 whether or not it is the hole that held
+the wiring, and this is the rule that closes it.
+
+```
+UNANSWERED_ABANDON_H = 24.0                 # data/dispatch.json → assignment
+
+inc.unanswered_h += dt_h        while inc.assigned is EMPTY and inc is non-terminal
+inc.unanswered_h  = 0.0         the instant ANY unit is committed to it
+
+if inc.unanswered_h >= UNANSWERED_ABANDON_H:
+    run the type's on_fail.actions (if it authors any)
+    inc.status = STATUS_ABANDONED           # never FAILED — see below
+    emit incident_abandoned{…, reason: "unanswered", unanswered_h}
+```
+
+**The clock measures *nobody is coming*, not *this is taking a while*.** It runs
+only while the `assigned` set is empty — not assigned, not en route, not on scene
+— and it is zeroed by the first commitment, so a truck that turns up at minute
+1439 of a game-day-long wait resets it to zero and the incident is answered.
+That is deliberately a *weaker* condition than "no unit clears
+`MAX_ACCEPTABLE_COST` on an unchanged road network": it catches that case and it
+also catches "every truck in the city is busy for half a day", which is the same
+fact from the player's side and the one the Wave-8 backlog was actually made of.
+
+**It is checked LAST**, after every authored `on_fail`, and `T = 24` is derived
+so that ordering is guaranteed rather than hoped for.
+
+*The derivation.* An unanswered incident climbs one severity unit per tier at
+`esc_base · (1 + 0.25(tier−1)) · esc_env · difficulty` (§2.4), so the time from
+spawn to tier 5 is
+
+```
+t(1→5) = (1/1.00 + 1/1.25 + 1/1.50 + 1/1.75) / (esc_base · esc_env · difficulty)
+       = 3.038095 / (esc_base · esc_env · difficulty)      game-hours
+```
+
+and the row's own terminal hold follows it. Taking the **most forgiving** values
+a live game can produce — `difficulty = casual = 0.75`, and each row's `esc_env`
+at its floor (every doc-06 factor is ≥ 1 except `structure_fire`'s doc 07 weather
+channel, whose floor is 0.80) — and walking **every row in `data/incidents.json`,
+subtypes included**, gives:
+
+| row | `esc_base` | `esc_env` floor | t(1→5) at casual | terminal hold | **longest authored path** |
+|---|---|---|---|---|---|
+| `storm_damage/roof_damage` | 0.35 | 1.00 | 11.574 gh | `hold_tier 5, hold_h 2.0` | **13.574 gh** ← the longest |
+| `storm_damage/downed_power_line` | 0.40 | 1.00 | 10.127 gh | `hold_tier 5, hold_h 1.0` | 11.13 gh |
+| `transformer_failure` | 0.50 | 1.00 | 8.102 gh | `burn_timer 0.40` | 8.50 gh |
+| `water_main_break` | 0.60 | 1.00 | 6.751 gh | `hold_tier 5, hold_h 1.0` | 7.75 gh |
+| `crime` | 0.80 | 1.00 | 5.063 gh | `hold_tier 5, hold_h 1.0` | 6.06 gh |
+| `structure_fire` | 2.20 | 0.80 | 2.302 gh | `burn_timer 0.50` | 2.80 gh |
+| **`traffic_accident`** | 0.70 | 1.00 | — | **`self_resolve` only, and its `self_resolve_max_tier` is 2** | **∞** |
+| **`storm_damage/blocked_road`** | 0.30 | 1.00 | — | **same shape, same gap** | **∞** |
+| **`storm_damage` (no subtype)** | 0.40 | 1.00 | — | **no `on_fail` block at all** | **∞** |
+
+**The binding row is a SUBTYPE, and reading only the type rows is what makes this
+derivation easy to get wrong.** `storm_damage`'s base row authors no ending, so a
+first pass reads it as one of the unbounded ones and stops; two of its three
+subtypes author endings, and one of those — `roof_damage`, the slowest-escalating
+row in the whole catalog — is the longest terminal path in the game.
+
+**`T = 24` game-hours is 1.77× that 13.574 gh.** Every row that writes its own
+ending still reaches it first, at every difficulty and every weather state, so
+*the neglect-fatal identity is untouched*: an unanswered house fire still
+destroys its building at 2.80 gh in the kindest case and 1.61 gh in the reference
+one, and `do_nothing` still dies in about five weeks. The three `∞` rows are the
+ones this rule was written for, and they are what the Wave-8 backlog was made of
+— a wreck or a blocked road that escalates past tier 2 has no way out of the
+roster at all.
+
+**Twenty-four game-hours is also the game's own largest legible beat.** One
+game-day is what the WHILE YOU WERE AWAY digest, the daily report and doc 10's
+condition decay all run on, and *"nobody was sent to this for a whole day"* is a
+sentence a player can read off the event log without a tooltip.
+
+**The other direction: the backlog is now bounded, and by what.** An unanswered
+roster cannot grow past `arrival_rate × T`. At the worst arrival rate the doc 92
+matrix measures — `greedy_growth`, ~550 incidents in 21 game-days = 26.2/game-day
+— that ceiling is **26 open incidents**, against the 42-and-still-climbing that
+held the wiring, and inside §2.13's own worst-case accounting of ≤ 40 active.
+
+**Why ABANDONED and not FAILED.** `FAILED` is *the consequence landed*;
+`ABANDONED` is *the city never answered*, and §2.2 already reserves it for
+exactly that. Balance gate 9 measures the count, which is the point: a city that
+starts abandoning incidents is a city whose fleet has stopped covering it, and
+that is a number the player's difficulty curve should be able to see. A REFUSED
+action list leaves the incident live exactly as `_run_fail` does (C-47), and an
+incident carrying `fail_refused` **pauses** the clock rather than resetting it —
+the refusal exists so a returning player finds the building still burning, and
+abandoning it in their absence would delete the drama the refusal was written to
+keep.
+
+#### 2.10.2 `MAX_ACCEPTABLE_COST` is re-fitted 90 → 115 (RR-26)
+
+The 90 was fitted against the Chebyshev stand-in. §1.1's Wave-8 measurement
+publishes the street-true shift as **+22 – 32 %** on the dispatch-ETA term
+(mean 5.3–7.7 → 7.0–10.0 gm). The midpoint is **+27 %**, so
+
+```
+90 × 1.27 = 114.3  →  115      (data/dispatch.json rounds this column to 5s)
+```
+
+Same decision boundary, re-expressed in the metric that now measures it. **It is
+headroom, not a fix**: doc 92 §23.3's ablation runs the shipped tree at the old
+90 and reproduces every matrix column byte-for-byte, so nothing in the game
+currently sits between the two values. Both ends check out:
+
+* **Nothing legitimate is refused.** A perfect-fit unit that is not reassigned
+  and breaks no reserve carries zero penalty, so 115 admits an ETA of 115 gm.
+  §1.1 measures the street-true ETA **maximum** at 20.0 gm and doc 10 §2.6's
+  storm-plus-blackout worst case at 39.1 gm; 115 is roughly 3× that.
+* **The desperation stack still lands where it should.** Reassigned (12) +
+  reserve-breaking (45) + a 0.25-fit construction crew on a utility call
+  (30 × 0.75 = 22.5) = **79.5**, leaving **35.5 gm** of admissible ETA. That is
+  above §1.1's measured p90 (11.8 – 14.7 gm) and above its maximum, so the
+  desperate unit is admitted at every distance a measured city produces — and it
+  is refused past 35.5 gm, which is just under the **39.3 gm** tier-3 boundary on
+  an unattended house fire (§2.4). The cap now says the thing it should say:
+  *send it if it can get there before the tier the send was meant to prevent.*
 
 **Player manual override** (commands in §4):
 - `cmd_dispatch_unit(unit_id, incident_id)` — bypasses all scoring and all policy; sets `unit.manual_lock = true`. The auto-dispatcher will never reassign or recall a manually-locked unit. Lock clears when the unit returns to `IDLE`.
@@ -1280,6 +1452,13 @@ Headless tests (`tests/sim/incidents/`, `tests/sim/dispatch/`), all with injecte
 42. `test_spread_consumes_fire_spread_mult` *(**RR-15**)* — reproduce the §2.8 table on the fixed geometry (T3 apartment source, wooden house target 14 m downwind, 4 neighbours within 24 m), **with `wind_kph` supplied as a stub input at the table's rounded values (72.4 at intensity 0.77 etc.), exactly as test 41 does** — the exact lerp gives 72.35 and would miss the 1e-6 tolerance: `CLEAR` 0.50 → `rate == 0.362267 ± 1e-6` (p₁gh 30.4%), `HEAT_WAVE` 0.80 → `0.564251 ± 1e-6` (43.1%), `THUNDERSTORM` 0.3636 → `0.313651 ± 1e-6` (26.9%), `THUNDERSTORM` 0.77 → `0.341007 ± 1e-6` (28.9%). Assert `g_weather` is read from `get_effect("fire_spread_mult")` (not from `fire_escalation_mult` or a doc 06 constant), that it is applied **once per target evaluation and identically to every target of the same fire** (C-59), and that removing it from the product reproduces the pre-RR-15 `0.703833 /gh` at the reference storm — the regression this test exists to catch.
 43. `test_three_fire_channels_are_not_aliased` *(**RR-15**)* — instrument `get_effect()` and run one game-hour containing generation, escalation and a spread roll in `THUNDERSTORM` at intensity 0.77. Assert exactly three distinct fire channel names are requested, that each is read at its own site (`fire_ignition_mult` → `sim/incidents/` generation, `fire_escalation_mult` → escalation, `fire_spread_mult` → `fire_spread.gd`), and that their live values differ (`2.724 / 0.80 / 0.4845`) so no substitution can pass unnoticed. Also assert **wind is not double-counted**: `wind_kph` enters spread only through `g_wind`, and stubbing `fire_spread_mult` to 1.0 leaves `g_wind` unchanged.
 
+**Wave-9 rulings (RR-26):**
+44. `test_an_incident_nobody_answers_is_abandoned_after_a_game_day` — spawn a `traffic_accident` above `self_resolve_max_tier` in a world with no units at all, so the catalog offers it no ending of any kind. Assert `unanswered_abandon_h == 24.0`, that it terminates `ABANDONED` (never `FAILED`) at `24.0 ± 0.05` game-hours and not before, and that `abandoned_total` counts it. *(`tests/test_incidents_lifecycle.gd`.)*
+45. `test_the_clock_lands_on_the_same_game_second_online_and_offline` — the same incident driven by 1,560 `advance(1/60)` calls and by 26 `advance(1.0)` calls must abandon on the same game-second (±1/3600 gh). §2.10.1's boundary is a §2.1 discontinuity precisely so a coarse hour cannot step over it.
+46. `test_a_committed_unit_zeroes_the_clock` — after 20 unanswered game-hours, committing any unit must set `unanswered_h` to **zero**, not pause it; removing the unit again must give the incident the **full** window back rather than the remainder of the old one. This is what makes the rule mean *nobody is coming* rather than *this is slow*.
+47. `test_the_terminal_rule_never_pre_empts_an_authored_ending` — the invariant `T = 24` was derived for, checked at both ends of the catalog: an unanswered `structure_fire` still reaches its own `FAILED` and **destroys its building** (the neglect-fatal identity), and so does `storm_damage/roof_damage`, the slowest-escalating row in the file and the one that set the window. Both must terminate strictly inside 24 gh.
+48. `test_the_seam_honours_doc_06s_per_vehicle_speed` *(the defect that held the wiring for two waves)* — through `RoadTravelTimeProvider`, assert a quote at `speed_mpgm 18` costs strictly more than one at 32 on the same pair, that `{speed_mpgm: 26, siren: true, siren_mult: 1.25}` costs strictly less than `{speed_mpgm: 26}`, and that it equals a plain `{speed_mpgm: 32.5}` — one speed at the seam, with §2.11's siren product folded in by doc 06. *(`tests/test_incidents_routes.gd`.)*
+
 ---
 
 ## 8. Tunables
@@ -1448,8 +1627,8 @@ One document, three top-level keys — split into `data/incidents.json`, `data/v
                   "congestion_ref":1.5, "crime_pop_ref":6000, "crime_pop_w":0.6, "crime_stability_w":0.4 },
     "route_profile_fields": ["speed_mpgm", "siren", "ignores_closures", "capabilities"],
     "assignment": { "max_assignments_per_tick":16, "reassign_threshold":120, "reassign_penalty_min":12,
-                    "reserve_penalty_min":45, "role_fit_penalty_min":30, "max_acceptable_cost_min":90,
-                    "construction_preempt_priority":400 },
+                    "reserve_penalty_min":45, "role_fit_penalty_min":30, "max_acceptable_cost_min":115,
+                    "construction_preempt_priority":400, "unanswered_abandon_h":24.0 },
     "policy_defaults": { "auto_dispatch_fire":true, "auto_dispatch_police":true,
       "auto_dispatch_police_min_priority":150, "auto_dispatch_utility":true, "auto_dispatch_water":true,
       "auto_dispatch_construction":false,

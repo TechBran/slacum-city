@@ -30,6 +30,11 @@ extends RefCounted
 const EPSILON := 1e-6
 const MINUTES_PER_HOUR := 60.0
 
+## Doc 91 D-15 proposal 3: the per-building service ledger accumulates on the
+## GAME-MINUTE. One game-minute, in game-hours. A coarse step's `dt_h = 1.0`
+## clears it on the first call, so the offline path is untouched.
+const SERVICE_PERIOD_H := 1.0 / 60.0
+
 var data: WaterData
 var topology: WaterTopology
 var demand: WaterDemandCache
@@ -45,6 +50,11 @@ var terrain: Object = null
 var powered_provider: Callable = Callable()
 
 var now_minutes: float = 0.0
+## Game-hours of tick since the ledger last accumulated (doc 91 D-15 proposal 3).
+## **Persisted**, because it is up to one game-minute of service the ledger has
+## not been told about yet, and a save that dropped it would restore a city that
+## banks a different slice of that minute from the live one.
+var _service_pending_h: float = 0.0
 var topology_dirty: bool = true
 var demand_dirty: bool = false
 var maintenance_level: float = 1.0  # doc 03's maintenance budget, [0,1]
@@ -271,7 +281,24 @@ func advance(dt_h: float, channels: Dictionary = {}) -> void:
 	for z: PressureZone in topology.zones:
 		_solve_zone(z, dt_h, ch_res, ch_com, restriction)
 	_publish_edge_flows()
-	_accumulate_service(dt_h)
+	# **The per-building service ledger runs on the GAME-MINUTE, not the tick**
+	# (doc 91 D-15 proposal 3, taken Wave 9). `_accumulate_service` is the only
+	# O(buildings) pass in this function and the accumulator it feeds is
+	# dt-exact, so four 15-game-second slices and one 60-game-second slice settle
+	# the same hour — in value. They do not settle it in the same FLOAT, because
+	# the association of the sum changes, which is why this is a save-epoch
+	# change (`CitySim.SAVE_SECTION_VERSION` 4) and not a free one.
+	#
+	# **The un-banked remainder is SAVED, and that is not optional.** A save taken
+	# two ticks into a game-minute holds half a minute of service that the ledger
+	# has not been told about yet. Drop it and the restored city banks a different
+	# slice of that minute from the live one, and save → load → advance stops
+	# being bit-identical — which is the one thing this project does not trade.
+	# It is one additive float in the water section (doc 08 §2.8, rung 4).
+	_service_pending_h += dt_h
+	if _service_pending_h >= SERVICE_PERIOD_H - EPSILON:
+		_accumulate_service(_service_pending_h)
+		_service_pending_h = 0.0
 	_update_zone_notifications(dt_h)
 	now_minutes += dt_h * MINUTES_PER_HOUR
 
@@ -1266,6 +1293,10 @@ func serialize() -> Dictionary:
 	return {
 		"section_version": 2,
 		"now_minutes": now_minutes,
+		# Doc 91 D-15 proposal 3: the un-banked remainder of the current
+		# game-minute. Additive; a body without it restores at 0.0, which is
+		# exactly what a pre-Wave-9 save meant.
+		"service_pending_h": _service_pending_h,
 		"next_junction": _next_junction,
 		"nodes": node_records,
 		"edges": edge_records,
@@ -1298,6 +1329,7 @@ func deserialize(state: Dictionary) -> void:
 		var restored := WaterEdge.deserialize(record)
 		edges[restored.id] = restored
 	now_minutes = float(state.get("now_minutes", 0.0))
+	_service_pending_h = float(state.get("service_pending_h", 0.0))
 	_next_junction = int(state.get("next_junction", 1))
 	repairs.deserialize(state.get("jobs", {}))
 	demand.deserialize(state.get("demand", {}))

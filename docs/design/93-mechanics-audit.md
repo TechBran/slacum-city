@@ -511,6 +511,39 @@ the player to the goals chip on its way out.
 Adding a real rung 6 is a *content* decision (it needs something to pay out) and
 is logged as the top open question of this wave.
 
+## H. Wave-9 rulings — the router goes live, and the fine tick gets its cadence pass (2026-08-20)
+
+Four things landed in one branch, for the same reason Wave 8's three did: they
+all move state hashes and doc 08 §2.8's rung has to move once. Full rulings in
+report 98 §17 (RR-26/27/28); balance in doc 92 §23; performance in doc 11
+§2.13's Wave-9 subsection.
+
+| | what | evidence |
+|---|---|---|
+| **Shipped** | **Doc 06 §2.10's terminal rule.** An incident with nothing committed to it for 24 game-hours — one game-day — becomes ABANDONED | `T = 24` is 1.77× the longest terminal path any ROW in `data/incidents.json` authors, and the binding row is a SUBTYPE (`storm_damage/roof_damage`, 13.574 gh at casual), so every authored `on_fail` still fires first and the neglect-fatal identity is untouched. Three rows authored **no** ending at all — `traffic_accident` and `storm_damage/blocked_road` above tier 2, and bare `storm_damage` at any tier — and they were the whole of Wave 8's unbounded backlog |
+| **Shipped** | `max_acceptable_cost_min` **90 → 115**, re-fitted to street-true ETAs | `90 × 1.27`, the midpoint of doc 06 §1.1's measured +22–32 % shift. The full desperation stack leaves 35.5 gm of admissible ETA, just under §2.4's 39.3 gm tier-3 boundary |
+| **Shipped** | **Doc 10's router is doc 06's ETA authority.** `CitySim._boot_incidents` constructs `RoadTravelTimeProvider` | the pin test is inverted: a regression to the Chebyshev stand-in now fails loudly. A four-arm ablation (doc 92 §23.3) shows what actually held it for two waves: **the seam ignored doc 06's `RouteProfile`** and priced every vehicle at 32 m/gm with no siren multiplier, so a responding patrol car ran 20 % slow on the department that answers most of the ambient load. Honouring the profile takes `greedy_growth` seed 4242 from **> 600 s to 11.2 s** with nothing else changed |
+| **Shipped** | doc 91 D-15 **proposals 2 and 3** — the minute's roads work spread across the minute's four ticks; the power and water service ledgers banking per game-minute | doc 11 §2.13's Wave-9 table |
+| **NOT shipped** | **hierarchical routing** | built, measured, rejected: it cost 9 % more time for 1.7 % fewer expansions on the benchmark city. Doc 10 §2.14's trigger measures six corner-to-corner routes; §2.14's own rank-then-quote contract means dispatch never pays for one, and the shipped seam call measures **0.709 ms** against a 1.5 ms target (RR-27) |
+
+**Two defects the wave found, and one of them is the whole story.** (1)
+`RoadTravelTimeProvider` ignored the profile doc 06 hands it and priced every
+vehicle on one fixed `emergency(32.0)` — no per-type speed and no siren
+multiplier, so a *responding* patrol car ran at 32 m/gm where §2.11 says 40, and
+a construction crew at 32 where §2.11 says 18. **This, and not the missing
+terminal rule, is what held the wiring for two waves** (doc 92 §23.3's ablation).
+(2) `WaterServiceLedger.settle_hour` settled the
+founding hour — fired by the EVERY_HOUR cadence before a single game-second had
+been integrated — as a pressure factor of **0.0**, billing the starter city's
+first hour as if it had no water. Invisible while the ledger banked every
+SimTick; worth **$436** the moment it did not. Both are fixed at the source.
+
+**§E2's anchors do not move.** The founding first-hour net and the first-day net
+are unchanged and gates 1, 2 and 2b hold them to ±1 %. The water-ledger repair is
+what keeps them there: without it the cadence change would have cost the founding
+hour $436, which is a balance change nobody asked for wearing a performance
+change's clothes.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

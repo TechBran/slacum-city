@@ -257,37 +257,45 @@ func _boot_incidents() -> void:
 		boot_errors.append_array(incident_catalog.errors)
 	incident_world = CityIncidentWorld.new(self, incident_catalog)
 	# ---------------------------------------------------------------------
-	# **THE ONE LINE THAT IS NOT HERE, AND THE MEASUREMENT THAT KEPT IT OUT.**
+	# **THE LINE WAVE 8 HELD, AND WHAT WAS ACTUALLY WRONG WITH IT** (report 98
+	# RR-22 → RR-26/RR-27, Wave 9, 2026-08-20).
 	#
-	# Doc 06 §2.10 makes doc 10 authoritative for every dispatch ETA, and the
-	# object that does it exists and is tested (`RoadTravelTimeProvider`, and
-	# `tests/test_incidents_routes.gd`). Wiring it is exactly:
+	# Doc 06 §2.10 makes doc 10 authoritative for every dispatch ETA. Wave 8
+	# finished the seam and then took the argument back out, because on doc 92's
+	# `greedy_growth` agent at seed 4242 the 21-game-day run went from ~10 s with
+	# 0–4 open incidents to over twenty minutes with the open roster still
+	# climbing on game-day 18.
 	#
-	#     incidents = IncidentSystem.new(incident_catalog, incident_world, rng,
-	#             roads.travel_time_provider())
+	# **A four-arm ablation found the actual cause, and it was a defect right
+	# here at the seam.** `RoadTravelTimeProvider` ignored the `RouteProfile`
+	# doc 06 hands it and priced every trip on one fixed `emergency(32.0)` — no
+	# per-type speed and no siren multiplier. Doc 06 §2.11 gives a responding
+	# patrol car 32 × 1.25 = 40 m/gm; the seam quoted 32, i.e. 20 % slow, and
+	# police answer `crime` and `traffic_accident`, which are most of the ambient
+	# load. That alone pushed `eta + penalties` past `MAX_ACCEPTABLE_COST` for a
+	# whole channel on a degrading network. Honouring the profile takes the same
+	# run to 11.2 s with nothing else changed; report 98 RR-26 carries the arms.
 	#
-	# Wave 8 wired it, measured it, and took it out again. On doc 92's
-	# `greedy_growth` agent at seed 4242 — the stress agent that never repairs
-	# and never buys grid — the 21-game-day run goes from **12.6 s with 0–4 open
-	# incidents throughout** to **more than twenty minutes**, with the open
-	# roster at 42 on game-day 17 and still climbing through game-day 18. The
-	# cost is not the router: rank-then-quote, a per-pass quote allowance, an
-	# epoch-keyed skip for unreachable incidents, a memo on `access_factor` and a
-	# 16× route cache were each measured and each changed nothing at the cliff.
-	# What changes is that a rotting city's incidents stop being ANSWERED — real
-	# ETAs over a collapsed, flood-closed road network push `eta + penalties`
-	# past doc 06's `MAX_ACCEPTABLE_COST` of 90 — and doc 06 has no terminal rule
-	# for an incident nobody can reach, so the backlog grows without bound and
-	# the integrator's per-sub-step cost grows with it.
+	# The two rulings Wave 8 asked for shipped anyway, because they close a real
+	# gap and because a terminal rule a played city never reaches is exactly what
+	# a terminal rule should be:
 	#
-	# That is a ruling, not a bug fix: doc 06 §2.10 has to say what happens to an
-	# incident no unit can answer, and doc 10's own perf test already says
-	# hierarchical routing is REQUIRED at this graph size. Both are named in the
-	# delivery report's open questions 1 and 2. Everything on this side of the
-	# seam is ready for the day it is ruled — the boot order above is already the
-	# one the wiring needs, and the four published inputs, the O(1) ranking pass
-	# and the quote budget are all implemented and tested.
-	incidents = IncidentSystem.new(incident_catalog, incident_world, rng)
+	#   * **RR-26** — §2.10's terminal rule. ONE GAME-DAY with nothing
+	#     committed ends an incident as ABANDONED, which bounds the open roster
+	#     at the arrival rate times a game-day instead of at infinity. Three rows
+	#     of `data/incidents.json` author no ending at all, so before this the
+	#     bound really was infinity; the rule fires zero times across doc 92's
+	#     18-run matrix. `max_acceptable_cost_min` is re-fitted 90 → 115 against
+	#     the street-true ETA distribution doc 06 §1.1 publishes.
+	#   * **RR-27** — doc 10's hierarchical routing was built, measured and NOT
+	#     shipped: with §2.14's rank-then-quote the seam call measures 0.709 ms
+	#     on the benchmark city, and a landmark overlay made it 9 % slower.
+	#
+	# `_boot_roads()` runs ahead of this function so the router exists when the
+	# incident system is built; `tests/test_incidents_routes.gd` pins that this
+	# is the ROUTER and fails loudly if anything ever puts the stand-in back.
+	incidents = IncidentSystem.new(incident_catalog, incident_world, rng,
+			roads.travel_time_provider())
 	incidents.founding_offset_h = float(GameClock.FOUNDING_OFFSET_MINUTES) / 60.0
 	incidents.fleet.populate_from_stations(incident_world.station_rows())
 
@@ -677,19 +685,19 @@ func canonical_capture() -> Dictionary:
 ## Doc 08 §2.8: this body's own ladder position, independent of the envelope's
 ## `schema_version`. Bumping it IS "the city section changed shape".
 ##
-## **v2 — 2026-08-20, the routing / sub-step rules epoch (Wave 8).** The city
-## body's SHAPE is byte-for-byte what v1 wrote; not one key was added, removed or
-## renamed, and `_v1_to_v2` is the identity function on purpose. What moved is
-## the RULES that body is advanced under, in two places that both change RNG
-## consumption:
+## **v2 — 2026-08-20, the sub-step rules epoch (Wave 8).** The city body's SHAPE
+## is byte-for-byte what v1 wrote; not one key was added, removed or renamed, and
+## `_v1_to_v2` is the identity function on purpose. What moved is the RULES that
+## body is advanced under: the fire-spread breakpoint became conditional on a
+## live `structure_fire`, so a quiet hour is integrated in fewer, larger
+## sub-steps and the generators draw a different (statistically identical)
+## Poisson sequence.
 ##
-##   1. dispatch ETAs became street-true — `IncidentSystem` now holds doc 10's
-##      `RoadTravelTimeProvider` instead of doc 06's Chebyshev stand-in, so every
-##      `eta_gs` and therefore every arrival minute, every assignment ranking and
-##      every `unreachable` verdict is a different number;
-##   2. the fire-spread breakpoint is conditional on a live `structure_fire`, so
-##      a quiet hour is integrated in fewer, larger sub-steps and the generators
-##      draw a different (statistically identical) Poisson sequence.
+## *(This rung was originally written to claim the street-true dispatch ETAs as
+## well. It should not have: Wave 8 measured the wiring and took it back out, and
+## the stand-in shipped in v2. The claim is corrected here rather than left
+## standing, because a ladder that describes rules the binary did not have is
+## worse than no ladder. Street-true ETAs are v4's, below.)*
 ##
 ## **Why that is a version bump and not a free change.** Doc 08 §2.8's ladder is
 ## not only about shape. A v1 save is a promise about what the binary that wrote
@@ -718,7 +726,35 @@ func canonical_capture() -> Dictionary:
 ## `GoalSystem.bootstrap` then completes every level at or below the city's own
 ## level and initialises the active one from what the city already HAS — see its
 ## own docs for the two rules and why they are the kind ones.
-const SAVE_SECTION_VERSION := 3
+##
+## **v4 — 2026-08-20, THE ROUTING / CADENCE EPOCH (Wave 9).** Mostly a rules
+## rung, like v2: `_v3_to_v4` is the identity function and every key a v3 body
+## carries means what it meant. It is not *purely* a rules rung — the cadence
+## change below adds two additive keys, `power.service_pending_gs` and
+## `water.service_pending_h`, each the un-banked remainder of the current
+## game-minute; a v3 body has neither and restores both at zero, which is exactly
+## what a v3 body meant. Four rule changes land together, and every one of them
+## moves the numbers a v3 body would have produced next:
+##
+##   1. **Dispatch ETAs are street-true.** `IncidentSystem` holds doc 10's
+##      `RoadTravelTimeProvider` instead of doc 06's Chebyshev stand-in, so every
+##      `eta_gs`, every arrival minute, every assignment ranking and every
+##      `unreachable` verdict is a different number (report 98 RR-26).
+##   2. **Doc 06 §2.10 has a terminal rule.** An incident with nothing committed
+##      to it for `unanswered_abandon_h` (24 game-hours, one game-day) becomes ABANDONED, and
+##      `max_acceptable_cost_min` is re-fitted 90 → 115 against the street-true
+##      distribution. Incidents that used to stand at tier 5 for ever now end.
+##   3. **The minute's roads work is spread across the four ticks of the minute**
+##      (doc 91 D-15 proposal 2), which reorders draws inside the `traffic` RNG
+##      stream.
+##   4. **The power and water service ledgers accumulate per game-minute**
+##      (D-15 proposal 3): the settled hour is the same in value, not in float
+##      association, and the LIT/DARK hysteresis samples on a coarser grid.
+##
+## An identity migrator again: a v3 save opens with every building, dollar and
+## RNG stream exactly where it was left. What it does not get is the city v3
+## would have produced next — which is the whole reason the rung exists.
+const SAVE_SECTION_VERSION := 4
 
 
 func save_section_version() -> int:
@@ -735,6 +771,7 @@ func migrate_save_section(body: Dictionary, from_version: int) -> Dictionary:
 		match version:
 			1: body = _v1_to_v2(body)
 			2: body = _v2_to_v3(body)
+			3: body = _v3_to_v4(body)
 		version += 1
 	return body
 
@@ -762,6 +799,19 @@ static func _v2_to_v3(body: Dictionary) -> Dictionary:
 	if existing is Dictionary and (existing as Dictionary).has("earned_level"):
 		return body
 	body["goals"] = {"bootstrap": true}
+	return body
+
+
+## v3 → v4: **the identity function, and that is the whole migration.** The
+## routing / cadence epoch changes RULES, not shape (see `SAVE_SECTION_VERSION`),
+## so there is no field to add and no default to invent. In particular it does
+## NOT invent an `unanswered_h` for the incidents already in the body: doc 06
+## §2.10's clock measures *time since anything was last committed*, and a v3 body
+## records no such thing, so every restored incident starts its clock at zero and
+## gets a full game-day before the new rule can touch it. Inventing a
+## number here would abandon a returning player's incidents on the strength of a
+## guess, which is the opposite of what a migrator is for.
+static func _v3_to_v4(body: Dictionary) -> Dictionary:
 	return body
 
 

@@ -172,6 +172,7 @@ func _next_discontinuity_h() -> float:
 	if fleet_next < INF:
 		best = minf(best, maxf(0.0, fleet_next - now_h))
 	var dark := _dark_fraction(now_h, now_h + 1.0 / 3600.0)
+	var abandon_h := unanswered_abandon_h()
 	var fire_is_live := false
 	for incident_id in _order:
 		var inc: Incident = _active[incident_id]
@@ -201,6 +202,11 @@ func _next_discontinuity_h() -> float:
 		var self_resolve := _self_resolve_h(inc)
 		if self_resolve > 0.0 and inc.status == Incident.STATUS_QUEUED:
 			best = minf(best, maxf(0.0, inc.created_h + self_resolve - now_h))
+		# RR-26's abandonment boundary. A terminal condition that a coarse hour
+		# could step over is a terminal condition the online and offline paths
+		# would disagree about, so it is a discontinuity like every other one.
+		if abandon_h > 0.0 and _unanswered_clock_running(inc):
+			best = minf(best, maxf(0.0, abandon_h - inc.unanswered_h))
 	# THE FIRE-SPREAD BREAKPOINT, AND WHY IT IS CONDITIONAL (doc 91 D-15, taken
 	# Wave 8). `_roll_spread` walks the live roster looking for `structure_fire`
 	# on a 1/12-game-hour grid; splitting the integrator there when the roster
@@ -500,6 +506,34 @@ func _accumulate_terminal_timers(inc: Incident, dt_h: float, assist: float) -> v
 		inc.hold_h += dt_h
 	elif rule.has("hold_tier"):
 		inc.hold_h = 0.0
+	# Doc 06 §2.10's terminal rule (RR-26). The clock runs only while NOTHING is
+	# committed to the incident — no unit assigned, none en route, none on scene
+	# — and is zeroed the instant one is. It therefore measures the thing the
+	# rule is about (*nobody is coming*) rather than the thing it is not
+	# (*this is taking a while*).
+	if _unanswered_clock_running(inc):
+		inc.unanswered_h += dt_h
+	else:
+		inc.unanswered_h = 0.0
+
+
+## The clock is paused, not merely reset, while a `fail_refused` incident waits
+## for the player to come back (C-47). The refusal exists so the returning player
+## finds the building still burning; abandoning it in their absence would delete
+## exactly the drama the refusal was written to keep.
+func _unanswered_clock_running(inc: Incident) -> bool:
+	if not inc.assigned.is_empty():
+		return false
+	if bool(inc.context.get("fail_refused", false)):
+		return false
+	return not inc.is_terminal()
+
+
+## Game-hours of continuous non-answer after which an incident is ABANDONED.
+## Zero or absent disables the rule entirely, which is what every pre-RR-26 save
+## and every test fixture with no `assignment` block gets.
+func unanswered_abandon_h() -> float:
+	return float(catalog.assignment.get("unanswered_abandon_h", 0.0))
 
 
 func _fail_rule(inc: Incident) -> Dictionary:
@@ -584,6 +618,15 @@ func _check_terminal_conditions() -> void:
 			if window > 0.0 and inc.status == Incident.STATUS_QUEUED \
 					and now_h - inc.created_h >= window - EPS:
 				_run_fail(inc)
+				continue
+		# **Doc 06 §2.10's terminal rule for an incident no unit can answer**
+		# (RR-26). It is checked LAST on purpose: every authored `on_fail` above
+		# fires strictly sooner than this clock on every type that has one, so
+		# reaching here means the catalog wrote no ending for this incident and
+		# the city wrote none either.
+		var abandon_h := unanswered_abandon_h()
+		if abandon_h > 0.0 and inc.unanswered_h >= abandon_h - EPS:
+			_abandon_unanswered(inc)
 
 
 func _resolve(inc: Incident) -> void:
@@ -687,6 +730,40 @@ func _run_fail(inc: Incident) -> void:
 		_emit("incident_failed", {"incident_id": inc.id, "incident_type": inc.type,
 				"subtype": inc.subtype, "tier_peak": inc.tier_peak,
 				"target_ref": inc.target_ref.duplicate(true)})
+
+
+## **Doc 06 §2.10's terminal rule (RR-26): nobody came, and nobody was ever
+## going to.** The incident runs whatever consequence its type authored — a
+## wreck left in the road still closes the road, a downed line left down still
+## costs confidence — and then goes ABANDONED rather than FAILED, because
+## ABANDONED is the status doc 06 already reserves for *the city did not answer
+## this* and the one balance gate 9 measures.
+##
+## A type with no `on_fail` block at all (`storm_damage`) simply runs no actions
+## and still terminates: before this rule it escalated to tier 5 and stood there
+## for the rest of the city's life, which is what the Wave-8 measurement found at
+## the bottom of the unbounded backlog.
+##
+## A REFUSED action list leaves the incident live, exactly as `_run_fail` does
+## (C-47) — a consequence the world will not accept must not become a silent
+## terminal status.
+func _abandon_unanswered(inc: Incident) -> void:
+	var row := catalog.type_row(inc.type, inc.subtype)
+	var fail: Dictionary = row.get("on_fail", {})
+	var results := ops.run(inc, fail.get("actions", []))
+	for result in results:
+		if String((result as Dictionary).get("result", "")) == CascadeOps.REFUSED:
+			inc.context["fail_refused"] = true
+			return
+	inc.context.erase("fail_refused")
+	inc.status = Incident.STATUS_ABANDONED
+	inc.resolved_h = now_h
+	dispatch.record_outcome(inc, Incident.STATUS_ABANDONED,
+			float(row.get("target_response_min", 10.0)))
+	_emit("incident_abandoned", {"incident_id": inc.id, "incident_type": inc.type,
+			"subtype": inc.subtype, "tier_peak": inc.tier_peak,
+			"unanswered_h": inc.unanswered_h,
+			"reason": "unanswered", "target_ref": inc.target_ref.duplicate(true)})
 
 
 func _release_finished_units() -> void:

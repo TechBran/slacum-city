@@ -74,9 +74,24 @@ class StepSystem extends SimSystem:
 			emit.call(StringName(String(event["type"])), event)
 
 
-## EVERY_MINUTE: the full congestion pass across all edges, the c_day hourly
-## sample, and the TrafficSnapshot rebuild.
+## The minute's work, **spread across the four SimTicks of the game-minute**
+## (doc 91 D-15 proposal 2, taken Wave 9): the full congestion pass across all
+## edges + the c_day hourly sample, the `TrafficSnapshot` rebuild, and the
+## `TrafficFeed` rebalance. Each still runs exactly once per game-minute.
+##
+## The cadence is declared `EVERY_TICK` and the phase is chosen inside, rather
+## than registering three `EVERY_MINUTE` systems at offsets 0/1/2, because a
+## COARSE step's `tick_index` is hour-aligned — `(t − 1) % 4` is never 0 there —
+## so an offset system would simply never fire offline. Doing the selection here
+## keeps one system, one id in the profiler table, and one coarse call that does
+## the whole minute at once.
 class MinuteSystem extends SimSystem:
+	## Which tick of the game-minute carries which pass. Congestion goes first
+	## because the other two read what it wrote.
+	const PHASE_CONGESTION := 0
+	const PHASE_SNAPSHOT := 1
+	const PHASE_FEED := 2
+
 	var network: RoadNetwork
 
 	func _init(p_network: RoadNetwork) -> void:
@@ -89,11 +104,20 @@ class MinuteSystem extends SimSystem:
 		return Phase.ROADS
 
 	func cadence() -> int:
-		return Cadence.EVERY_MINUTE
+		return Cadence.EVERY_TICK
 
 	func advance_fine(ctx: TimeContext) -> void:
-		network.full_pass(ctx)
+		match ctx.tick_index % GameClock.TICKS_PER_MINUTE:
+			PHASE_CONGESTION:
+				network.full_pass(ctx)
+			PHASE_SNAPSHOT:
+				network.snapshot_pass()
+			PHASE_FEED:
+				network.feed_pass()
 
+	## Offline: one call for the whole game-hour. `full_pass` itself runs the
+	## snapshot in COARSE mode, so this is the same work in the same order it
+	## was before the split.
 	func advance_coarse(ctx: TimeContext) -> void:
 		network.full_pass(ctx)
 

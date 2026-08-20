@@ -210,14 +210,50 @@ func full_pass(ctx: TimeContext) -> void:
 		# offline. Using ctx.hour_midpoint here would sample h + 0.002 in a fine
 		# step and h + 0.5 in a coarse one, and the two modes would drift apart.
 		_sample_c_day(sample_hour, env, raw_sink)
-	snapshot.rebuild(_closures, congestion.epoch)
-	if ctx.mode == TimeContext.Mode.FINE:
-		feed.rebalance()
 	# `_mean_congestion` was taken from this pass and nothing since has written
 	# a congestion value (c_day sampling and the snapshot both only read), so
 	# this is the same number a second O(E) sweep would produce.
 	_emit(&"congestion_updated", {"epoch": congestion.epoch,
 			"mean": _mean_congestion})
+	if ctx.mode == TimeContext.Mode.COARSE:
+		# A coarse step is ONE call for a whole game-hour, so there are no four
+		# ticks to spread across: it does the minute's whole work here, exactly
+		# as it always did. `feed.rebalance()` stays out of it because the
+		# cosmetic layer has never run offline.
+		snapshot_pass()
+
+
+## **The minute's three passes, split across the four ticks of the minute**
+## (doc 91 D-15 proposal 2, taken Wave 9). `congestion.recompute` (above),
+## `TrafficSnapshot.rebuild` and `TrafficFeed.rebalance` were all billed to the
+## SAME SimTick, which is what made one tick in four cost three times what the
+## other three did. Each still runs once per game-minute and reads the same
+## inputs; they simply no longer land on one frame.
+##
+## The snapshot is render-facing and the feed is cosmetic (doc 10 §2.15: zero
+## simulation authority), so nothing in the sim reads either between the tick
+## that used to produce them and the tick that now does. What DOES move is the
+## traffic RNG stream: `feed.rebalance()` spawns on a different tick from
+## `feed.advance()`'s hops, so the draw order inside the `traffic` stream
+## changes. That is a save-epoch change and it is why this rides in the same
+## wave as the router (`CitySim.SAVE_SECTION_VERSION` 4).
+func snapshot_pass() -> void:
+	snapshot.rebuild(_closures, congestion.epoch)
+
+
+func feed_pass() -> void:
+	feed.rebalance()
+
+
+## Everything the game-minute owes, in one call. The SCHEDULER is what spreads
+## the three passes across the minute's four ticks (`RoadsPhaseSystems`); this is
+## for the coarse path — where there are no four ticks — and for a caller that
+## wants the minute's whole effect without caring which tick carries which part.
+func minute_pass(ctx: TimeContext) -> void:
+	full_pass(ctx)
+	if ctx.mode == TimeContext.Mode.FINE:
+		snapshot_pass()
+		feed_pass()
 
 
 ## EVERY_DAY — condition decay, L_dens refresh, auto-repair queueing.

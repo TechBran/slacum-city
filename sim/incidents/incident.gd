@@ -32,6 +32,11 @@ var status: String = STATUS_NEW
 var burn_timer_h: float = 0.0
 ## Time held at the terminal tier, for the `hold_tier` / `hold_h` fail rule.
 var hold_h: float = 0.0
+## Doc 06 §2.10's TERMINAL RULE for an incident nobody answers (RR-26).
+## Game-hours this incident has stood with no unit committed to it — not
+## assigned, not en route, not on scene. Reset to zero the instant anything is
+## committed, so it measures *unanswered*, never *unresolved*.
+var unanswered_h: float = 0.0
 var tier_peak: int = 1
 
 var created_h: float = 0.0
@@ -162,7 +167,8 @@ func serialize() -> Dictionary:
 		"target_ref": target_ref.duplicate(true),
 		"cluster_id": cluster_id, "parent_id": parent_id,
 		"severity": severity, "progress": progress, "status": status,
-		"burn_timer_h": burn_timer_h, "hold_h": hold_h, "tier_peak": tier_peak,
+		"burn_timer_h": burn_timer_h, "hold_h": hold_h,
+		"unanswered_h": unanswered_h, "tier_peak": tier_peak,
 		"created_h": created_h, "first_assign_h": first_assign_h,
 		"first_onscene_h": first_onscene_h, "resolved_h": resolved_h,
 		"created_min": int(round(created_h * 60.0)),
@@ -192,6 +198,7 @@ static func deserialize(data: Dictionary) -> Incident:
 	inc.status = String(data.get("status", STATUS_QUEUED))
 	inc.burn_timer_h = float(data.get("burn_timer_h", 0.0))
 	inc.hold_h = float(data.get("hold_h", 0.0))
+	inc.unanswered_h = float(data.get("unanswered_h", 0.0))
 	inc.tier_peak = int(data.get("tier_peak", 1))
 	inc.created_h = float(data.get("created_h", 0.0))
 	inc.first_assign_h = float(data.get("first_assign_h", -1.0))
