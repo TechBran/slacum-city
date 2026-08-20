@@ -606,12 +606,16 @@
 	"ui_settings_fire_reserve_units_hint": "Engines held back for the next call. The first engine on a fire is never held back.",
 	"ui_settings_haptics_hint": "Reduce motion silences haptics while it is on, without changing this.",
 	"ui_settings_open_saves": "MANAGE SAVES",
+<<<<<<< HEAD
 	"ui_settings_row_auto_dispatch_fire": "Auto-dispatch fire",
 	"ui_settings_row_auto_dispatch_police": "Auto-dispatch police",
 	"ui_settings_row_auto_dispatch_utility": "Auto-dispatch utility",
 	"ui_settings_row_auto_dispatch_water": "Auto-dispatch water",
 	"ui_settings_row_auto_repair_cost_cap": "Auto-repair ceiling",
 	"ui_settings_row_auto_spend_contractor": "Emergency contractors",
+=======
+	"ui_settings_row_auto_quality": "Auto quality",
+>>>>>>> worktree-wf_8dce7151-31e-5
 	"ui_settings_row_autosave_interval_min": "Autosave",
 	"ui_settings_row_fire_reserve_units": "Fire engines in reserve",
 	"ui_settings_row_graphics": "Graphics",

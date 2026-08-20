@@ -47,10 +47,21 @@ android/plugins/slacum_native/local.properties
 *.tmp
 __pycache__/
 
+# Python generators (`tools/gen_*.py`) import each other, so running one leaves
+# a bytecode cache beside them. The generators are source; the cache is not.
+tools/__pycache__/
+*.pyc
+
 # Agent worktrees and session-local state
 .claude/
 build/playtest/
+<<<<<<< HEAD
 # Store listing assets are GENERATED (tools/gen_store_assets.py) and are ~20 MB
 # of PNG per run. The generator is deterministic, so the repo keeps the recipe
 # and the Play Console keeps the pixels.
 build/store/
+=======
+# On-device benchmark artefacts (tools/bench_device.sh): logcat CSVs, framestats,
+# meminfo, thermal traces. Measurements of one run on one phone, never source.
+build/bench/
+>>>>>>> worktree-wf_8dce7151-31e-5

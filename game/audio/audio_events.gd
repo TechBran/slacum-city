@@ -70,8 +70,17 @@ const SOURCE_WIND := "wind"
 const SOURCE_STORM := "storm"
 const SOURCE_SITES := "sites"
 
-## doc 10's per-vehicle feed. Named because it is the one event type that
-## reaches `feed()` in bulk and must stay cheap — see `_feed_vehicle_state`.
+## A per-vehicle pose+siren record.
+##
+## **This no longer arrives from doc 10.** The civilian feed's firehose was
+## collapsed into one packed `traffic_snapshot` event per tick (doc 91 D-10's
+## bus diet) which carries no siren at all — civilians never sound one — and is
+## therefore not in `OBSERVED_TYPES`, so it costs this class exactly the one
+## `_interesting` probe in `feed()` and nothing more. The door below stays open
+## because the *shape* is doc 06's contract for a siren-carrying vehicle
+## (`IncidentSystem.vehicle_states()` rows, and this class's own tests feed it),
+## and because a bulk-arriving vehicle record must stay cheap either way — see
+## `_feed_vehicle_state`.
 const VEHICLE_STATE := "vehicle_state"
 ## Prefix for ids coming off doc 10's traffic feed, so a civilian vehicle 7 and a
 ## doc 06 unit 7 are two different siren sources.
@@ -87,9 +96,9 @@ const OBSERVED_TYPES := [
 	"incident_created", "incident_resolved", "incident_closed",
 	"building_placed_sim", "building_construction_stage", "upgrade_started_sim",
 	"building_completed", "building_destroyed", "building_demolished",
-	# The moving-siren feed. `vehicle_state` is doc 10's ~1,400-per-game-hour
-	# firehose and is handled by a fast path before anything else runs; the other
-	# three are how a siren source stops existing without waiting for its TTL.
+	# The moving-siren feed. `vehicle_state` still takes a fast path before
+	# anything else runs (it can arrive in bulk); the other three are how a
+	# siren source stops existing without waiting for its TTL.
 	VEHICLE_STATE, "vehicle_despawned", "unit_arrived", "unit_returned",
 ]
 
@@ -326,14 +335,18 @@ func _schedule(cue_id: String, cue_def: Dictionary, world_pos: Variant, placed: 
 # Moving sirens (Audio-2 ruling; doc 11 §2.15's `vehicle_state.siren`)
 # ---------------------------------------------------------------------------
 
-## doc 10's firehose, and the only event type in the set that arrives in bulk.
+## The one event type in the set that can arrive in bulk.
 ##
-## **What a civilian vehicle costs.** Two dictionary probes: `type` (already
-## paid by `feed`) and `siren`. Nothing else runs — no position resolve, no
-## locator call, no rule scan — because `_sirens.is_empty()` is true whenever no
-## siren is sounding anywhere, which is almost always, and a silent vehicle in a
-## city with no sirens has nothing to forget. That is the throttle's admission
-## price, and it is what makes it honest to have wired the feed at all.
+## **What a silent vehicle costs.** Two dictionary probes: `type` (already paid
+## by `feed`) and `siren`. Nothing else runs — no position resolve, no locator
+## call, no rule scan — because `_sirens.is_empty()` is true whenever no siren is
+## sounding anywhere, which is almost always, and a silent vehicle in a city with
+## no sirens has nothing to forget.
+##
+## Doc 10's civilian firehose used to land here and is now gone (doc 91 D-10):
+## it publishes one packed `traffic_snapshot` per tick, which this class does not
+## subscribe to. That deletes 256 probes per tick outright — the cheap path was
+## honest, but not taking it at all is cheaper.
 func _feed_vehicle_state(event: Dictionary) -> Dictionary:
 	var siren_on := bool(event.get("siren", false))
 	if not siren_on and _sirens.is_empty():

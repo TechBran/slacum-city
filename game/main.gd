@@ -34,6 +34,9 @@ var vehicle_view: VehicleView
 var road_overlay: RoadOverlayView
 var audio: AudioService
 var notification_router: NotificationRouter
+var crash_sentinel: CrashSentinel
+var permission_flow: PermissionFlow
+var perf_governor: PerfGovernor
 var save_service: SaveService
 var _before_snapshot: Dictionary = {}   # captured on pause for the away report
 var android_lifecycle: AndroidLifecycle
@@ -86,16 +89,29 @@ func _ready() -> void:
 	android_lifecycle.focus_changed.connect(
 			func(has_focus: bool) -> void: audio.set_muted(not has_focus))
 	notification_router = NotificationRouter.load_from_files()
-	notification_router.set_sink(NativeNotificationSink.new())  # inert until doc 13 phase 2
+	notification_router.set_sink(NativeNotificationSink.new())
 	android_lifecycle.notification_router = notification_router
+	permission_flow = PermissionFlow.new(android_lifecycle.native)
+	if android_lifecycle.native != null:
+		android_lifecycle.native.permission_result.connect(permission_flow.confirm)
+		android_lifecycle.native.notification_opened.connect(_on_notification_opened)
 
 	# Session restore (doc 08 §2.1): on a PLAIN launch — no dev args, which is
 	# every real device launch — the most recent save IS the city, restored
 	# BEFORE the views build so the world below is the player's progress, not
 	# the authored founding state. Dev/screenshot runs stay on the founding
-	# city for reproducibility unless they pass --resume.
+	# city for reproducibility unless they pass --resume. After an UNCLEAN
+	# exit (doc 13 §2.11) the crash sentinel picks the newest autosave half
+	# that actually PARSES rather than merely the newest.
+	crash_sentinel = CrashSentinel.new()
 	var user_args := OS.get_cmdline_user_args()
-	if user_args.is_empty() or user_args.has("--resume"):
+	if crash_sentinel.boot():
+		var recovery_slot := crash_sentinel.recovery_slot(save_service)
+		if recovery_slot >= 0 and save_service.load_slot(sim_host.sim, recovery_slot):
+			_resumed_slot = recovery_slot
+		push_warning("[crash] unclean exit #%d; breadcrumb %s"
+				% [crash_sentinel.unclean_exits, crash_sentinel.breadcrumb_path()])
+	elif user_args.is_empty() or user_args.has("--resume"):
 		_resumed_slot = save_service.load_latest(sim_host.sim)
 
 	_build_environment(render_data)
@@ -560,6 +576,7 @@ func _refresh_hud() -> void:
 			"happiness": sim.happiness.happiness,
 		})
 		_feed_dashboard_tabs()
+		ui_root.refresh_land_panel()
 
 
 # ---------------------------------------------------------------------------
@@ -600,6 +617,12 @@ func _wire_build_ui(ui_instance: Node) -> void:
 		building_panel.closed.connect(_on_building_panel_closed)
 		building_panel.upgraded.connect(_on_building_upgraded)
 		building_panel.fix_requested.connect(_on_fix_requested)
+	if ui_root != null and ui_root.land_panel != null:
+		ui_root.land_panel.setup(cfg, LandPanelModel.new(sim_host.sim,
+				build_controller.formatter, cfg, build_controller.tile_m))
+		ui_root.land_purchased.connect(_on_land_changed)
+		ui_root.land_developed.connect(_on_land_changed)
+		ui_root.land_fix_requested.connect(_on_fix_requested)
 
 	if ui_root != null:
 		ui_root.back_requested.connect(_on_ui_back)
@@ -626,6 +649,11 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 	root.deeplink_requested.connect(_on_ui_deeplink)
 	root.bind_tax(sim_host.sim.cmd_set_tax_level, sim_host.sim.tax_level(),
 			sim_host.sim.tax_level_count(), sim_host.sim.tax_rate)
+	root.bind_dispatch_policy(sim_host.sim.cmd_set_dispatch_policy,
+			sim_host.sim.incidents.dispatch.policy.serialize())
+	# §2.13's level-up moment fires on a CHANGE; seed the level the city already
+	# has so a resumed save does not celebrate it a second time.
+	root.set_city_level(sim_host.sim.progression.city_level)
 	if save_service != null:
 		root.bind_save_service(save_service, sim_host.sim)
 	if root.settings_sheet != null:
@@ -1149,12 +1177,26 @@ func _on_building_upgraded(_result: Dictionary) -> void:
 	_refresh_hud()
 
 
+## A block was bought or entered development — the city just grew.
+func _on_land_changed(_block_id: String, _result: Dictionary) -> void:
+	_refresh_hud()
+
+
 ## §2.7's `Fix this →`: focus the blocking entity. Only the power path resolves
 ## to a placed entity today (docs 05/06/10 own the rest), so anything else is a
 ## no-op rather than a camera jump to nowhere.
 func _on_fix_requested(fix_target: Dictionary) -> void:
 	var id := str(fix_target.get("id", ""))
 	if id == "" or build_controller == null:
+		return
+	if StringName(str(fix_target.get("kind", ""))) == RequirementFormatter.FIX_BLOCK:
+		var block: LandBlock = sim_host.sim.world.block(id)
+		if block == null:
+			return
+		var centre: Vector2i = block.grid * TileGrid.TILES_PER_BLOCK \
+				+ Vector2i(TileGrid.TILES_PER_BLOCK / 2, TileGrid.TILES_PER_BLOCK / 2)
+		camera_state.focus_on(Vector3(float(centre.x) * build_controller.tile_m, 0.0,
+				float(centre.y) * build_controller.tile_m))
 		return
 	var b: Building = sim_host.sim.buildings.get(id)
 	if b == null:
@@ -1181,15 +1223,27 @@ func _handle_tap(screen_pos: Vector2, viewport_size: Vector2) -> void:
 		# A tap that reached the world missed every sheet control: dismiss.
 		build_sheet.close()
 		return
-	var sim_id := build_controller.sim_id_at_ground(ground)
-	if building_panel == null:
+	# doc 12 §2.8: one pick, three answers, decided in the controller so the two
+	# panels can never both claim a tap. `""` used to mean "deselect", which is
+	# the mechanical reason land was unreachable.
+	var pick := build_controller.pick_at_ground(ground)
+	if StringName(str(pick["kind"])) == BuildController.PICK_BUILDING \
+			and building_panel != null:
+		building_panel.show_building(str(pick["id"]))   # closes S4 (doc 12 D-27)
+		if ui_root != null:
+			ui_root.selected_entity_id = str(pick["id"])
 		return
-	if sim_id == "":
+	if StringName(str(pick["kind"])) == BuildController.PICK_BLOCK \
+			and ui_root != null and ui_root.show_land_block(str(pick["id"])):
+		if building_panel != null:
+			building_panel.close()
+		ui_root.selected_entity_id = ""
+		return
+	if building_panel != null:
 		building_panel.close()
-		return
-	building_panel.show_building(sim_id)
 	if ui_root != null:
-		ui_root.selected_entity_id = sim_id
+		ui_root.close_land_panel()
+		ui_root.selected_entity_id = ""
 
 
 func _on_touch_tapped(position: Vector2) -> void:

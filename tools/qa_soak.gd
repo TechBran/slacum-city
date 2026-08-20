@@ -193,6 +193,7 @@ var _verb_counts: Dictionary = {}      # verb -> {ok, refused, codes{}}
 var _failures: Array[String] = []
 var _notes: Array[String] = []
 var _events_by_type: Dictionary = {}
+var _pose_rows: int = 0
 var _storms := 0
 var _save_cycles: Array[Dictionary] = []
 var _pause_cycles: Array[Dictionary] = []
@@ -806,10 +807,18 @@ func _sanity(index: int) -> void:
 			break
 
 
+## Doc 91 D-10: a packed event is one event on the bus but many RECORDS, and a
+## before/after comparison that counted only events would flatter the diet by
+## construction. `_pose_rows` is the count of vehicle poses carried inside the
+## packed `traffic_snapshot` events — i.e. exactly the number of `vehicle_state`
+## events the same run would have put on the bus before the diet.
 func _count_events(batch: Array) -> void:
 	for event: Variant in batch:
-		var kind := String((event as Dictionary).get("type", ""))
+		var record: Dictionary = event
+		var kind := String(record.get("type", ""))
 		_events_by_type[kind] = int(_events_by_type.get(kind, 0)) + 1
+		if kind == String(TrafficSnapshot.VEHICLE_EVENT):
+			_pose_rows += TrafficSnapshot.vehicle_count(record)
 
 
 # ---------------------------------------------------------------------------
@@ -881,6 +890,10 @@ func _report(plan: Dictionary) -> Dictionary:
 		"events": {
 			"total": events_total,
 			"per_game_hour": float(events_total) / elapsed_game_hours,
+			# The bus diet's before/after, measured rather than argued.
+			"pose_rows": _pose_rows,
+			"total_before_diet": events_total - int(
+					_events_by_type.get(String(TrafficSnapshot.VEHICLE_EVENT), 0)) + _pose_rows,
 			"by_type": _events_by_type.duplicate(),
 			"top": _top_events(12),
 		},
@@ -942,6 +955,13 @@ func _print_report(report: Dictionary) -> void:
 					float(timing["drift_ratio"]), _opts.max_drift])
 	print("Bus        %d events, %.1f / game-hour, 0 residual after every drain"
 			% [int(events["total"]), float(events["per_game_hour"])])
+	var rows := int(events.get("pose_rows", 0))
+	if rows > 0:
+		var before := int(events["total_before_diet"])
+		print("Bus diet   %d packed poses in %d events; the pre-diet bus would have"
+				% [rows, int(_events_by_type.get(String(TrafficSnapshot.VEHICLE_EVENT), 0))]
+				+ " carried %d events (%.1fx)" % [before,
+						float(before) / maxf(1.0, float(int(events["total"])))])
 	print("City       buildings %d→%d   pop %d→%d   level %d"
 			% [int(city["buildings_first"]), int(city["buildings_last"]),
 					int(city["population_first"]), int(city["population_last"]),

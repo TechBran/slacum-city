@@ -970,12 +970,14 @@ storms_survived · disasters_survived
 | profile | world | developed core | buildings | districts | consumer |
 |---|---|---|---|---|---|
 | `starter` | 7×7 | 3×3 (9 blocks) | 34 | 4 | `data/starter_city.json` (shipped) |
-| `bench` *(default)* | 8×8 | **6×6 (36 blocks)** | **~1,100** across L1–L4 | 12 (36 blocks ÷ 3) | doc 11 §7.4's 90 s camera path |
+| `bench` *(default)* | **7×7** *(as shipped)* | **6×6 (36 blocks)** | **1,500** across L1–L5 | 12 (36 blocks ÷ 3) | doc 11 §7.4's 90 s camera path |
 | `reference` | 8×8 | 6×6 | 800 | 24 | doc 08 §2.12's coarse-step cost measurement |
 
-The `bench` profile matches doc 11's stated contents exactly: 36 developed blocks × 87 road tiles = **3,132 road tiles**, ~1,100 buildings, and the ~790 streetlight *props* doc 11 places at its own art-owned density (the electrical sink is one per road tile — doc 04 — and the two counts are deliberately different and must not be conflated). 20 emergency vehicles and a level mix weighted toward L2–L3 so LOD tiers are all exercised.
+The `bench` profile matches doc 11's stated contents exactly: 36 developed blocks × 87 road tiles = **3,132 road tiles**, 1,500 buildings, and the ~780 streetlight *props* doc 11 places at its own art-owned density (the electrical sink is one per road tile — doc 04 — and the two counts are deliberately different and must not be conflated). 20 emergency vehicles and a level mix weighted toward L2–L3 so LOD tiers are all exercised.
 
-The generator writes the fixture as a **save file**, not as authored world data, so doc 08's migration ladder applies to it and its `schema_version` moves with the ladder. Regeneration is a committed step: `python tools/gen_bench_city.py --profile bench --out tests/fixtures/bench_city.json`, run whenever the save schema version increments.
+**As shipped, two rows of this section moved and both are flagged.** (1) The world is **7×7**, not 8×8: `TileGrid.BLOCKS` is 7 and `StarterCityLoader` refuses anything but 49 block rows, so an 8×8 world is not reachable without a sim change nobody asked for. The 6×6 *developed core* — which is what every content figure here is sized against — is unchanged. (2) The building count is **1,500**, not ~1,100, because that is the size doc 11 §2.13's device matrix is written against (doc 91 D-8) and therefore the size the fixture has to be for the matrix to mean anything.
+
+The generator writes the fixture in the **`data/starter_city.json` boot shape**, not as a save body, so `CitySim.boot()` and the render harnesses can load it directly (`tools/profile_sim.gd --city=…`, `tools/profile_frame.gd --city=…`). Its `schema_version` is therefore the *data-file* version this doc's §3.1 defines, and it tracks `data/starter_city.json` rather than the save ladder. *(This section previously specified a save file so doc 08's ladder would apply; a save body cannot be booted, and the fixture's whole job is to be booted. Doc 08 test 37 should validate it as a boot file or be retired — flagged, not decided here.)* Regeneration is a committed step: `python3 tools/gen_bench_city.py --profile bench`, run whenever the block schema or the road template changes.
 
 ---
 
@@ -1410,7 +1412,7 @@ Only constants **owned by this doc**. Land price constants live in `data/economy
   "bench_city": {
     "profiles": {
       "starter":   { "size_blocks": [7,7], "core_blocks": [3,3], "buildings": 34,   "districts": 4 },
-      "bench":     { "size_blocks": [8,8], "core_blocks": [6,6], "buildings": 1100, "districts": 12 },
+      "bench":     { "size_blocks": [7,7], "core_blocks": [6,6], "buildings": 1500, "districts": 12 },
       "reference": { "size_blocks": [8,8], "core_blocks": [6,6], "buildings": 800,  "districts": 24 }
     },
     "default_profile": "bench",

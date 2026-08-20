@@ -1,10 +1,14 @@
 extends SimTest
 ## Doc 10 §2.15 — the cosmetic civilian traffic feed published as doc 11 §5's
-## `vehicle_spawned` / `vehicle_state` / `vehicle_despawned` stream.
+## `vehicle_spawned` / `traffic_snapshot` / `vehicle_despawned` stream.
 ##
 ## The three properties that matter to a renderer agent: the stream is
 ## DETERMINISTIC, it is CAPPED, and vehicles DESPAWN ON ARRIVAL. The fourth,
 ## which matters to everyone else, is that it has ZERO simulation authority.
+##
+## Motion rides ONE packed `traffic_snapshot` event per tick since doc 91 D-10's
+## bus diet; the determinism digest below therefore walks the packed columns
+## rather than a per-vehicle event, and asserts the same values it always did.
 
 const AVENUE := RoadTunables.CLASS_AVENUE
 const STREET := RoadTunables.CLASS_STREET
@@ -45,10 +49,15 @@ func _digest(events: Array) -> String:
 						int(event["edge_id"])])
 			&"vehicle_despawned":
 				parts.append("D%d:%s" % [int(event["id"]), String(event["reason"])])
-			&"vehicle_state":
-				var pos: Vector3 = event["pos"]
-				parts.append("U%d:%.4f,%.4f:%.4f:%.4f" % [int(event["id"]), pos.x, pos.z,
-						float(event["heading"]), float(event["speed"])])
+			TrafficSnapshot.VEHICLE_EVENT:
+				# Every row, in the packed order — the digest is deliberately
+				# stricter than the old one, which could not see the ORDER of
+				# the columns because each vehicle carried its own event.
+				for i in TrafficSnapshot.vehicle_count(event):
+					var row := TrafficSnapshot.vehicle_at(event, i)
+					var pos: Vector3 = row["pos"]
+					parts.append("U%d:%.4f,%.4f:%.4f:%.4f" % [int(row["id"]), pos.x, pos.z,
+							float(row["heading"]), float(row["speed"])])
 	return "|".join(parts)
 
 
@@ -57,8 +66,9 @@ func _digest(events: Array) -> String:
 func test_vehicle_event_stream_is_deterministic() -> void:
 	var first := _run_feed(_busy_network(1337), 12)
 	var second := _run_feed(_busy_network(1337), 12)
-	assert_true(first.size() > 200, "the feed actually produced a stream (%d events)"
-			% first.size())
+	assert_true(_digest(first).length() > 2000,
+			"the feed actually produced a stream (%d events, %d digest chars)"
+			% [first.size(), _digest(first).length()])
 	assert_eq(_digest(first), _digest(second),
 			"two runs of the same seed are byte-identical, down to position and heading")
 	var different := _run_feed(_busy_network(4242), 12)
@@ -168,9 +178,11 @@ func test_every_spawn_is_matched_by_a_despawn_or_a_live_vehicle() -> void:
 			&"vehicle_despawned":
 				assert_true(live.has(int(event["id"])), "despawn refers to a live vehicle")
 				live.erase(int(event["id"]))
-			&"vehicle_state":
-				assert_true(live.has(int(event["id"])),
-						"no state update for a vehicle that is not on screen")
+			TrafficSnapshot.VEHICLE_EVENT:
+				for i in TrafficSnapshot.vehicle_count(event):
+					assert_true(live.has(int((event[TrafficSnapshot.KEY_IDS]
+							as PackedInt32Array)[i])),
+							"no pose row for a vehicle that is not on screen")
 	assert_eq(live.size(), net.feed.vehicle_count(),
 			"the renderer's bookkeeping matches the sim's exactly")
 
@@ -198,11 +210,11 @@ func test_vehicles_leave_hard_blocked_edges() -> void:
 
 # ------------------------------------------------- doc 11 §5's consumption list
 
-func test_vehicle_state_shape_matches_doc11() -> void:
+func test_traffic_snapshot_shape_matches_doc11() -> void:
 	var net := _busy_network(77, 1.2)
 	var events := _run_feed(net, 4)
 	var checked_spawn := 0
-	var checked_state := 0
+	var checked_rows := 0
 	for event in events:
 		match event["type"]:
 			&"vehicle_spawned":
@@ -211,16 +223,67 @@ func test_vehicle_state_shape_matches_doc11() -> void:
 					assert_true(event.has(key), "vehicle_spawned carries %s" % key)
 				assert_true(event["pos"] is Vector3, "world-space metres on the XZ plane")
 				checked_spawn += 1
-			&"vehicle_state":
-				# Report 98 C-67: speed and heading are FIRST-CLASS fields, not
-				# derived — doc 11's Hermite interpolation needs a velocity term.
-				for key in ["id", "pos", "heading", "speed", "siren", "lightbar"]:
-					assert_true(event.has(key), "vehicle_state carries %s" % key)
-				assert_false(bool(event["siren"]), "civilians never run a siren")
-				assert_false(bool(event["lightbar"]), "or a lightbar")
-				assert_true(float(event["speed"]) > 0.0, "and are always moving")
-				checked_state += 1
-	assert_true(checked_spawn > 0 and checked_state > 0)
+			TrafficSnapshot.VEHICLE_EVENT:
+				# The columns are the contract. Arity first: a pose buffer that
+				# is not exactly `count * POSE_STRIDE` long is a renderer reading
+				# someone else's vehicle.
+				var count := TrafficSnapshot.vehicle_count(event)
+				assert_eq((event[TrafficSnapshot.KEY_IDS] as PackedInt32Array).size(), count,
+						"ids column")
+				assert_eq((event[TrafficSnapshot.KEY_EDGES] as PackedInt32Array).size(), count,
+						"edge_ids column")
+				assert_eq((event[TrafficSnapshot.KEY_KINDS] as PackedByteArray).size(), count,
+						"kinds column")
+				assert_eq((event[TrafficSnapshot.KEY_FLAGS] as PackedByteArray).size(), count,
+						"flags column")
+				assert_eq((event[TrafficSnapshot.KEY_POSE] as PackedFloat32Array).size(),
+						count * TrafficSnapshot.POSE_STRIDE, "pose buffer arity")
+				var previous := -1
+				for i in count:
+					var row := TrafficSnapshot.vehicle_at(event, i)
+					# Report 98 C-67: speed and heading are FIRST-CLASS fields,
+					# not derived — doc 11's Hermite blend needs a velocity term.
+					for key in ["id", "pos", "heading", "speed", "siren", "lightbar"]:
+						assert_true(row.has(key), "unpacked row carries %s" % key)
+					assert_false(bool(row["siren"]), "civilians never run a siren")
+					assert_false(bool(row["lightbar"]), "or a lightbar")
+					assert_true(float(row["speed"]) > 0.0, "and are always moving")
+					assert_true(int(row["id"]) > previous,
+							"rows are in ascending id — the feed's canonical order")
+					previous = int(row["id"])
+					checked_rows += 1
+	assert_true(checked_spawn > 0 and checked_rows > 0)
+
+
+## Doc 91 D-10, the measurement the diet exists for: motion is ONE event per
+## tick regardless of how many cars are on the road. Before the diet this run
+## put one event on the bus per vehicle per tick.
+func test_bus_volume_is_one_motion_event_per_tick() -> void:
+	var net := _busy_network(1337, 1.6)
+	net.feed.preset = "high"          # the widest cap, so the saving is visible
+	var minutes := 12
+	var events := _run_feed(net, minutes)
+	var ticks := minutes * 4
+	var motion := 0
+	var rows := 0
+	var identity := 0
+	for event in events:
+		if event["type"] == TrafficSnapshot.VEHICLE_EVENT:
+			motion += 1
+			rows += TrafficSnapshot.vehicle_count(event)
+		else:
+			identity += 1
+	assert_true(motion > 0 and motion <= ticks,
+			"at most one motion event per tick (%d over %d ticks)" % [motion, ticks])
+	assert_true(rows > motion * 20,
+			"...carrying real traffic: %d poses in %d events" % [rows, motion])
+	# The old shape would have put `rows` events on the bus; the new one puts
+	# `motion`. Anything under a 20x collapse means the feed has stopped filling.
+	assert_true(rows >= motion * 20,
+			"the collapse is at least 20x (%d poses -> %d events)" % [rows, motion])
+	assert_true(identity < rows / 4,
+			"spawn/despawn stay individual but are a minority of the stream (%d vs %d)"
+			% [identity, rows])
 
 
 func test_headlights_follow_the_clock() -> void:
