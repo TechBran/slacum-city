@@ -62,3 +62,9 @@ build/store/
 # On-device benchmark artefacts (tools/bench_device.sh): logcat CSVs, framestats,
 # meminfo, thermal traces. Measurements of one run on one phone, never source.
 build/bench/
+# The private `user://` a concurrent suite run needs. `tests/run_tests.gd`'s
+# header is explicit that two runs of the suite corrupt each other through the
+# shared `~/.local/share/godot/app_userdata/Slacum City`, and the fix is
+# `XDG_DATA_HOME=$PWD/.xdg`. That directory is save slots and settings for one
+# throwaway run and must never reach a commit.
+.xdg/

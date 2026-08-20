@@ -188,6 +188,8 @@ var _dispatch_command := Callable()
 var _dispatch_values: Dictionary = {}
 ## The city level the last batch reported, so §2.13's moment fires once.
 var _city_level := -1
+## Doc 07 §2.4's flood, once. See `_check_flood`.
+var _flood_toast_shown := false
 
 
 ## Config is loaded here rather than in `_ready()` because a parent's
@@ -781,6 +783,7 @@ func feed_events(batch: Array) -> void:
 		incident_drawer.feed_batch(batch)
 	_cue_events(raised)
 	_check_city_level(batch)
+	_check_flood(batch)
 	_check_goal_events(batch)
 	if onboarding == null or not onboarding.is_active():
 		return
@@ -846,6 +849,39 @@ func _check_city_level(batch: Array) -> void:
 		push_toast(UIWidgets.t_args(config, "ui_toast_city_level", {"level": level}),
 				HudModel.STATE_NORMAL)
 		city_level_changed.emit(level, unlocked)
+
+
+## Doc 07 §2.4's flood, the first time a player meets one (defect A91-D-26).
+##
+## The alerts centre and the log both carry every band crossing from here on;
+## this is the one line that says *look at the street*, and it fires **once per
+## session** for the same reason §2.13's level-up toast does: a storm crosses
+## the same band on twenty land blocks inside a minute, and twenty toasts is
+## twenty times nothing. `standing_water` is the floor — 100 mm is where doc 07
+## starts stalling vehicles — so the 40 mm nuisance band, which the renderer
+## draws and nothing narrates, never raises one.
+##
+## Guarded on a flag rather than on the event, so a replayed batch, a save
+## reload or a doubled feed cannot toast twice.
+const FLOOD_TOAST_BANDS := ["standing_water", "flooded", "impassable"]
+
+
+func _check_flood(batch: Array) -> void:
+	if _flood_toast_shown:
+		return
+	for entry: Variant in batch:
+		if not (entry is Dictionary):
+			continue
+		var event: Dictionary = entry
+		if StringName(str(event.get("type", ""))) != &"flood_level_changed":
+			continue
+		if not FLOOD_TOAST_BANDS.has(str(event.get("band", ""))):
+			continue
+		_flood_toast_shown = true
+		push_toast(UIWidgets.t_args(config, "ui_toast_flood",
+				{"depth": int(roundf(float(event.get("depth_mm", 0.0))))}),
+				HudModel.STATE_WARNING)
+		return
 
 
 ## S14 — the goals seam (doc 12 §2.19).
