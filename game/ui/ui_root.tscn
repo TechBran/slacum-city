@@ -1,4 +1,4 @@
-[gd_scene load_steps=18 format=3]
+[gd_scene load_steps=19 format=3]
 
 [ext_resource type="Script" path="res://ui/ui_root.gd" id="1_uiroot"]
 [ext_resource type="Script" path="res://ui/hud.gd" id="2_hud"]
@@ -17,6 +17,7 @@
 [ext_resource type="Script" path="res://ui/event_log.gd" id="15_eventlog"]
 [ext_resource type="Script" path="res://ui/land_panel.gd" id="16_landpanel"]
 [ext_resource type="Script" path="res://ui/toast_view.gd" id="17_toast"]
+[ext_resource type="Script" path="res://ui/title_screen.gd" id="18_title"]
 
 [node name="UIRoot" type="CanvasLayer"]
 layer = 10
@@ -741,6 +742,76 @@ horizontal_scroll_mode = 0
 [node name="List" type="VBoxContainer" parent="SafeArea/SheetLayer/UnitPicker/Sheet/Body/Scroll"]
 layout_mode = 2
 size_flags_horizontal = 3
+
+[node name="TitleLayer" type="Control" parent="SafeArea"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="TitleScreen" type="Control" parent="SafeArea/TitleLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("18_title")
+
+[node name="Center" type="CenterContainer" parent="SafeArea/TitleLayer/TitleScreen"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="Panel" type="PanelContainer" parent="SafeArea/TitleLayer/TitleScreen/Center"]
+visible = false
+layout_mode = 2
+theme_type_variation = &"SheetPanel"
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/TitleLayer/TitleScreen/Center/Panel"]
+layout_mode = 2
+
+[node name="Wordmark" type="Label" parent="SafeArea/TitleLayer/TitleScreen/Center/Panel/Body"]
+layout_mode = 2
+horizontal_alignment = 1
+
+[node name="Tagline" type="Label" parent="SafeArea/TitleLayer/TitleScreen/Center/Panel/Body"]
+layout_mode = 2
+autowrap_mode = 3
+horizontal_alignment = 1
+
+[node name="Meta" type="Label" parent="SafeArea/TitleLayer/TitleScreen/Center/Panel/Body"]
+layout_mode = 2
+autowrap_mode = 3
+horizontal_alignment = 1
+
+[node name="Saved" type="Label" parent="SafeArea/TitleLayer/TitleScreen/Center/Panel/Body"]
+visible = false
+layout_mode = 2
+autowrap_mode = 3
+horizontal_alignment = 1
+
+[node name="Buttons" type="VBoxContainer" parent="SafeArea/TitleLayer/TitleScreen/Center/Panel/Body"]
+layout_mode = 2
+
+[node name="Confirm" type="VBoxContainer" parent="SafeArea/TitleLayer/TitleScreen/Center/Panel/Body"]
+visible = false
+layout_mode = 2
+
+[node name="Prompt" type="Label" parent="SafeArea/TitleLayer/TitleScreen/Center/Panel/Body/Confirm"]
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="Note" type="Label" parent="SafeArea/TitleLayer/TitleScreen/Center/Panel/Body/Confirm"]
+visible = false
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="Actions" type="VBoxContainer" parent="SafeArea/TitleLayer/TitleScreen/Center/Panel/Body/Confirm"]
+layout_mode = 2
 
 [node name="ModalLayer" type="Control" parent="SafeArea"]
 layout_mode = 2

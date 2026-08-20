@@ -798,10 +798,10 @@ A_tax(Δ_tax)   = clamp( 1 + TAX_RATE_ATTRACT_PULL  × min(0, Δ_tax)           
 ATTRACT_HAPPINESS_REF  = 60      # this doc, sim/population/population_system.gd
 ATTRACT_HAPPINESS_PULL = 1.30    # this doc
 TAX_RATE_ATTRACT_PULL  = 1.30    # DOC 03, data/economy.json → tax
-Δ_tax = happiness_tax_delta = −(r − 0.09) × 220                          # doc 03 §2.2, unchanged
+Δ_tax = happiness_tax_delta = −(r − 0.09) × 360                          # doc 03 §2.2, coeff owned there
 ```
 
-**`min`, and not a product — this is the whole no-double-count rule.** The tax bill is *already* inside `H`: `happiness_tax_delta` is a term of `H_target` (§2.10.3), so twelve game-hours after a hike the happiness channel has absorbed it too. Multiplying `A_happy × A_tax` would bill the same discontent twice, and it compounds exactly where it should not: the shipped detent-12 city settles at `H = 57.9` *because of the tax*, so the product would deepen the ceiling from 0.7998 to 0.778 for the same 15.4 points, and the deeper it went the further `H` would fall. Taking the **minimum** bills it once, through whichever channel is currently harsher: the tax term is *immediate* (policy is instant), the happiness term is *lagged* (mood is not). Because both terms carry the same pull, the crossover has a one-line reading: **the happiness ceiling takes over exactly when `H` has fallen further below 60 than the tax bill itself** — at the top detent, below `60 − 15.4 = 44.6`. That is genuine misery, not the tax bill charged again. The rate is read exactly once in the entire coupling, by `happiness_tax_delta`; §2.10 never sees `tax_rate`.
+**`min`, and not a product — this is the whole no-double-count rule.** The tax bill is *already* inside `H`: `happiness_tax_delta` is a term of `H_target` (§2.10.3), so twelve game-hours after a hike the happiness channel has absorbed it too. Multiplying `A_happy × A_tax` would bill the same discontent twice, and it compounds exactly where it should not: the shipped detent-12 city settles at `H = 53.9` *because of the tax*, so the product would deepen the ceiling from 0.6724 to 0.619 for the same 25.2 points, and the deeper it went the further `H` would fall. Taking the **minimum** bills it once, through whichever channel is currently harsher: the tax term is *immediate* (policy is instant), the happiness term is *lagged* (mood is not). Because both terms carry the same pull, the crossover has a one-line reading: **the happiness ceiling takes over exactly when `H` has fallen further below 60 than the tax bill itself** — at the top detent, below `60 − 25.2 = 34.8` (the Wave-7 coefficient; the crossover moves with `TAX_RATE_HAPPINESS_COEFF` and with nothing else). That is genuine misery, not the tax bill charged again. The rate is read exactly once in the entire coupling, by `happiness_tax_delta`; §2.10 never sees `tax_rate`.
 
 **Why the reference is 60.** It is this doc's own `H` baseline (§2.10.3) and the pivot of doc 03's `f_happiness`, so *a perfectly average city is attractiveness-neutral exactly as it is revenue-neutral*. Above 60 the happiness ceiling is 1.00 — happiness can never lift `A_target` **above** the stability ceiling, only fail to drag it below. The same one-sided rule governs `A_tax` (`min(0, Δ_tax)`): cutting tax buys a 1.40× faster refill through `growth_rate_multiplier`, never a higher ceiling. Rate and target are different levers on purpose.
 
@@ -809,31 +809,38 @@ TAX_RATE_ATTRACT_PULL  = 1.30    # DOC 03, data/economy.json → tax
 
 | detent | `r` | `Δ_tax` | `A_tax` | equilibrium `H` | `A_happy` | **`A_target`** | equilibrium `occupied_population` |
 |---|---|---|---|---|---|---|---|
-| 0 | 0.04 | **+11.0** | 1.00 (`min(0, +11) = 0`) | 93.2 | 1.00 | **1.00** | 144 |
+| 0 | 0.04 | **+18.0** | 1.00 (`min(0, +18) = 0`) | 100.0 (clamped) | 1.00 | **1.00** | 144 |
 | 5 (base) | 0.09 | **0.0** | 1.00 | 82.2 | 1.00 | **1.00** | **144** |
-| 12 | 0.16 | **−15.4** | `1 + 1.30 × (−15.4)/100` = **0.7998** | 66.8 | 1.00 (66.8 > 60) | **0.7998** | 115 |
+| 12 | 0.16 | **−25.2** | `1 + 1.30 × (−25.2)/100` = **0.6724** | 57.0 | 0.961 (57.0 < 60) | **0.6724** | 97 |
 
-Detent 12 in full: `A_tax = 0.7998`; `A_happy(66.8) = 1.00` because the happiness channel has *not* been charged for the same 15.4 points; `A_stab = 1.00`; so `A_target = 0.7998`. `A_city` walks down to it with the rate multiplier `0.44`, i.e. an effective time constant of `12 / 0.44 = 27.3` game-hours — half the loss is gone by hour 19, and `occupied_population = 144 × 0.7998 = 115.2 → 115`. **Twenty-nine residents, the same order as the `F_SOUTH` multi-district blackout above**, for a revenue factor of ×1.778. That is the trade doc 92 F-5 costed the ruling against: money now, a smaller city later, and the two are legible against each other on the same screen.
+Detent 12 in full: `A_tax = 0.6724`; `A_happy(57.0) = 0.961`, which is *not* binding because the happiness channel has only been charged for the 3.0 points `H` sits below the reference and not for the 25.2 the tax cost; `A_stab = 1.00`; so `A_target = 0.6724`. `A_city` walks down to it with the rate multiplier `0.44`, i.e. an effective time constant of `12 / 0.44 = 27.3` game-hours — half the loss is gone by hour 19, and `occupied_population = 144 × 0.6724 = 96.8 → 97`. **Forty-seven residents, more than the `F_SOUTH` multi-district blackout above costs**, for a revenue factor of ×1.778. That is the trade doc 92 F-5 costed the ruling against: money now, a smaller city later, and the two are legible against each other on the same screen.
+
+**`TAX_RATE_HAPPINESS_COEFF` is 360 from Wave 7** (doc 92 §20, doc 93 §E2; it was 220 when this table was first written, giving −15.4 / 0.7998 / 115). Doc 03 owns the number and the reason; what matters here is that this doc's mapping is unchanged — the coefficient produces the points, §2.10.2a spends them once, and every value at and below `TAX_RATE_BASE` is identical to what it was.
 
 **Measured as integrated** (`tests/test_balance_gates.gd` gates 12 / 12b, seed 1337, a controlled pair — identical build plan, identical tiles, identical seed, one field different):
 
-| game-day | detent 5 population / treasury | detent 12 population / treasury |
+| game-day | detent 5 population | detent 12 population |
 |---|---|---|
-| 1 | 224 / $13,485 | 198 / $26,896 |
-| 3 | 224 / $38,470 | 182 / $69,652 |
-| 7 | 224 / $86,415 | **179** / $147,073 |
-| 21 | 222 / $211,882 | **177** / $359,430 |
+| 1 | 224 | 181 |
+| 3 | 224 | 156 |
+| 7 | 224 | **151** |
+| 21 | 219 | **151** |
 
-−20.3 % population for +69.6 % cash at three game-weeks, diverging inside the **first** game-day. The detent-12 city settles at `H = 57.9`, which is *below* the 60 reference — `A_happy = 0.973` — and still does not bind, because `A_tax = 0.7998` is harsher. That is the `min` doing its job in the shipped sim, not just on paper.
+**−31.1 % population for +25.8 % cash** at three game-weeks ($255,276 against $202,996), diverging inside the **first** game-day. The detent-12 city settles at `H = 53.9`, which is *below* the 60 reference — `A_happy = 0.921` — and still does not bind, because `A_tax = 0.6724` is harsher. That is the `min` doing its job in the shipped sim, not just on paper.
+
+*(At the pre-Wave-7 coefficient the same pair read 179 people and +71 % cash — −18.3 % population. The cash multiple fell because the residents the squeezed city no longer has were the ones paying the ×1.778 rate; the direction of the trade is unchanged and the size of it is now legible.)*
 
 And on the shared strategy matrix, where doc 92 F-5 originally measured "+46 % value created for a happiness number that changed nothing else" (`tools/playtest.gd`, 21 game-days, seed 1337, coarse):
 
 | strategy | treasury | value created | **population** | happiness |
 |---|---|---|---|---|
-| `balanced` | $480,480 | $847,620 | **811** | 71.9 |
-| `tax_squeezer` | $1,133,515 | $1,719,615 | **747** | 64.9 |
+| `balanced` | $78,704 | $878,217 | **1,342** | 74.6 |
+| `tax_squeezer`, coeff 220 | $133,122 | $1,787,852 | **1,918** | 73.0 |
+| `tax_squeezer`, coeff 360 | $96,249 | $1,182,823 | **1,145** | 51.6 |
 
-`tax_squeezer` now **trails on population** while leading on cash — F-5's threshold, met. The matrix is quoted here as corroboration only; the *gate* is the controlled pair above, because two scripted agents earn different money and therefore build different cities, and the population column of a strategy comparison confounds the detent with the build plan.
+*(Re-measured Wave 7 on `tests/balance_matrix.gd` — the same strategies run ONLINE on the coarse step, which is what `BalanceGateRig` fixed and what the older offline figures in this row could not see. Three seeds, 21 game-days.)*
+
+The middle row is why Wave 7 happened: with the grid buyable, the squeezed agent converted its ×1.778 revenue into **more city**, so it led on population as well as on money and the happiness deficit was 1.6 points. At the ruled coefficient it **trails on population by 14.7 %** while still creating 35 % more value — money now, a smaller city later, on the agent a player actually resembles. `tests/test_balance_gates.gd` gate 12c holds exactly this comparison; gates 12 and 12b hold the controlled pair above, because two scripted agents earn different money and therefore build different cities, and the population column of a strategy comparison confounds the detent with the build plan. Both readings are needed, which is why there are now three gates and not two.
 
 **Ordering.** `PopulationSystem.advance` reads the `H` of the game-hour just lived and `HappinessModel.advance` then relaxes on the aggregates population just produced (`employment_balance` is a §2.10.1 output and an §2.10.3 input). One game-hour of lag, deliberately: it cuts the cycle, it is the same on the fine and coarse paths, and every term is still a closed-form exponential in `dt_h`, so §5's "the 1 Hz and 1-game-hour paths agree exactly" survives T-1 intact.
 
@@ -868,7 +875,7 @@ H_target = 60
          +  8 × u( (service_uptime_day  − 0.97) / 0.03 )
          +  8 × u( (employment_balance  − 0.85) / 0.15 )
          +  6 × u( (condition_mean      − 0.85) / 0.15 )
-         + happiness_tax_delta                                  # doc 03: −(tax_rate − 0.09) × 220
+         + happiness_tax_delta                                  # doc 03: −(tax_rate − 0.09) × 360
 H(t+dt)  = H + (clamp(H_target, 0, 100) − H) × (1 − exp(−dt_h / HAPPINESS_TAU_H (12)))
 ```
 
@@ -878,7 +885,7 @@ H(t+dt)  = H + (clamp(H_target, 0, 100) − H) × (1 − exp(−dt_h / HAPPINESS
 | `service_uptime_day` | docs 04 + 05 | population-weighted mean over the trailing game-day of `0.6 × power_availability_hour(b) + 0.4 × water_service_factor_hour(b)` — the two time-weighted fractions report 98 C-37 required both docs to publish |
 | `employment_balance` | this doc §2.10.1 | `1 − |workforce − jobs_market| / max(workforce, jobs_market, 1)` — punishes both unemployment and unstaffed shops |
 | `condition_mean` | doc 02 | `population + jobs`-weighted mean building `condition ∈ [0,1]` (C-14 scale) |
-| `happiness_tax_delta` | doc 03 §2.4 | `−(tax_rate − 0.09) × 220`; 0 at the default rate, −15.4 at 16 % |
+| `happiness_tax_delta` | doc 03 §2.4 | `−(tax_rate − 0.09) × 360`; 0 at the default rate, −25.2 at 16 % |
 
 The 60 baseline is the pivot of doc 03's `f_happiness`, so a perfectly average city is revenue-neutral. The band is `[24, 96]` before the tax term, which leaves the 0.75/1.25 clamp reachable only through the tax slider — deliberate: happiness is a *slow* lever, not a second economy.
 
@@ -1151,7 +1158,7 @@ Doc numbers below are the **canonical on-disk numbering** (report 98 Ruling Zero
 |---|---|---|
 | **01 Time & ticks** | `ctx.channels.construction_rate` (**every development work unit multiplies it** — C-29), `EVERY_SECOND` / `EVERY_HOUR` / `EVERY_DAY` cadences, `ctx.catchup_index` and `OfflinePolicy.band_for()` for the coarse path, `sim_time_minutes` for building age | nothing (this doc authors no curve and no timer template) |
 | **02 Buildings & construction** | footprints, `population` / `jobs` **capacity**, `condition ∈ [0,1]`, `state` + `STATE_OCCUPANCY`, `fire_load`, `power_demand_kw`, `water_demand`, `coverage_police/fire`; the §2.10 crew-hour timing model; the `water_facility` variant list | `block_of(tile)`, `district_id` of a tile, buildable/vacant tile set, parcel geometry, road-adjacency legality, tile-occupancy arbitration; **`city_level` for `E_CITY_LEVEL` and `min_city_level`**; **`occupancy[id]` / `job_fill[id]`** (G-1); land-development jobs submitted into `ConstructionQueue` (G-2) |
-| **03 Economy, taxes & land** | the canonical `land_price()` (§2.7), the six `PHASE_BASE` costs + `terrain_phase_mult` (§2.8), treasury debits, `tax_rate`, `happiness_tax_delta = −(r − 0.09) × 220`, `growth_rate_multiplier = 1 − (r − 0.09) × 8.0`, **`attractiveness_tax_factor(r)` (§2.10.2a, amendment T-1)** | the full input bundle of §2.4; `dev_terrain`, `d`, `n`, `risk_index`, `prestige`, `blocks_owned`; **`occ_b` per building**, **district `stability ∈ [0,1]`**, **`city_stability`**, **city `happiness ∈ [0,100]`**, **`city_level`**. **The starter city delivers exactly $686/gh gross base tax against `STARTER_GROSS_TAX_PER_HOUR 686 ± 5 %`** |
+| **03 Economy, taxes & land** | the canonical `land_price()` (§2.7), the six `PHASE_BASE` costs + `terrain_phase_mult` (§2.8), treasury debits, `tax_rate`, `happiness_tax_delta = −(r − 0.09) × 360`, `growth_rate_multiplier = 1 − (r − 0.09) × 8.0`, **`attractiveness_tax_factor(r)` (§2.10.2a, amendment T-1)** | the full input bundle of §2.4; `dev_terrain`, `d`, `n`, `risk_index`, `prestige`, `blocks_owned`; **`occ_b` per building**, **district `stability ∈ [0,1]`**, **`city_stability`**, **city `happiness ∈ [0,100]`**, **`city_level`**. **The starter city delivers exactly $686/gh gross base tax against `STARTER_GROSS_TAX_PER_HOUR 686 ± 5 %`** |
 | **04 Electrical grid** | component capacities/levels/radii, outage state, **`block_dark` per block**, `power_availability_hour(b)` | starter topology (§2.9.5) with exact tile polylines, **18 transformer sites (7 L1 / 10 L2 / 1 L3, `rated_mva` 2.25)**, **177 line tiles = 1.42 km**, 783 road tiles and 81 intersections as distributed-sink counts, `wind`/`wildfire` per block for doc 06's storm rolls, `block_of(tile)` for crew routing; **`district_dark` derived from their `block_dark`** (C-38) |
 | **05 Water system** | pressure, zone state, tank level, per-variant `base_kw` / capacity / `coverage_frac`, `water_service_factor_hour(b)` | starter topology (§2.9.6) with the `source`/`treatment`/`pump`/`tank` variant split, 9 hydrant tiles, Mill Pond as the `source`, **`elev_m(tile)`** (block-flat), `is_developed(tile)`, `block_of(tile)`; `WTR-1`'s power dependency on `F_SOUTH` |
 | **06 Incidents, dispatch & fleets** | `crime_index`, `fire_risk` per district, station/vehicle definitions, crew roster and rates, `destroy_allowed()` participation | **`stability ∈ [0,1]` per district** (§2.6) for `f_stab`, `city_level` for vehicle unlocks, station sites, hydrant sites, `block_of(tile)`, the land-development phase→crew-type mapping (G-2) |
@@ -1219,7 +1226,7 @@ Headless: `tests/sim/world/test_world_map.gd`, `test_development.gd`, `test_dist
 30. Adding one `office` L1 (30 market jobs) drops `job_fill_city` to `clamp01(79.2 / 96) == 0.825`, and every commercial `occ_b` with it — the "build housing" pressure is a number.
 31. A fresh building's `occ_b` follows `0.35 + 0.65·age/36`, reaching exactly 1.00 at 36 gh and never exceeding it.
 32. With `city_stability` pinned to 0.60, `A_city` after 6 gh == **0.8033 ± 0.0005** and `occupied_population` == **116**; restoring stability to 0.95 returns `A_city` to ≥ 0.99 within 36 gh. Civic/utility buildings stay at `occ_b == STATE_OCCUPANCY[state]` throughout.
-33. `H` at t0 == **82.15 ± 0.05**; 3 gh into the §2.10.3 fault case == **79.86 ± 0.05**; at `tax_rate 0.16` the steady-state target drops by exactly **15.4** points via doc 03's `happiness_tax_delta`. `f_happiness` handed to doc 03 == `1.0 + 0.50 × (H − 60)/100`, clamped [0.75, 1.25].
+33. `H` at t0 == **82.15 ± 0.05**; 3 gh into the §2.10.3 fault case == **79.86 ± 0.05**; at `tax_rate 0.16` the steady-state target drops by exactly **25.2** points via doc 03's `happiness_tax_delta`. `f_happiness` handed to doc 03 == `1.0 + 0.50 × (H − 60)/100`, clamped [0.75, 1.25].
 34. `city_level` at t0 == **0**; crossing 250 population raises it to 1 and emits `city_level_changed{0,1}` exactly once; **dropping back to 200 population leaves `city_level == 1`** (monotone), and `city_level_max` round-trips through a save.
 35. Every `min_city_level` in `starter_city.json` is on the §2.11 ladder (0–5) and the 12 t0-purchasable blocks are all reachable at `city_level 0`.
 36. `stats.counters` are monotone: a 24-game-hour run with two blackouts and one land purchase increments `outage_events` by 2, `blocks_purchased` by 1, and never decrements anything; `peak_population` tracks the maximum, not the current.

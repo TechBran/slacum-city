@@ -254,9 +254,12 @@ func test_drawer_width_formula() -> void:
 
 func test_back_stack_order() -> void:
 	# ModalLayer -> SheetLayer -> PanelLayer -> placement cancel -> deselect ->
-	# "press back again to minimise".
-	var ctx := {"modal_open": true, "sheet_open": true, "panel_open": true,
-			"placement_active": true, "has_selection": true, "back_pressed_recently": true}
+	# "press back again to minimise". S0 is the one context that REMOVES rungs
+	# rather than adding one (`tests/test_ui_title.gd` holds that half); with the
+	# door shut the order below is doc 12 §2.2's, unchanged.
+	var ctx := {"modal_open": true, "title_open": false, "sheet_open": true,
+			"panel_open": true, "placement_active": true, "has_selection": true,
+			"back_pressed_recently": true}
 	assert_eq(UIRoot.resolve_back(ctx), UIRoot.BACK_CLOSE_MODAL)
 	ctx["modal_open"] = false
 	assert_eq(UIRoot.resolve_back(ctx), UIRoot.BACK_CLOSE_SHEET)
@@ -285,14 +288,15 @@ func test_ui_root_scene_structure() -> void:
 	for path: String in ["SafeArea", "SafeArea/MarkerLayer", "SafeArea/HUDLayer",
 			"SafeArea/HUDLayer/TopBar", "SafeArea/HUDLayer/LeftRail",
 			"SafeArea/HUDLayer/RightRail", "SafeArea/HUDLayer/AlertStack",
-			"SafeArea/PanelLayer", "SafeArea/SheetLayer", "SafeArea/ModalLayer",
+			"SafeArea/PanelLayer", "SafeArea/SheetLayer", "SafeArea/TitleLayer",
+			"SafeArea/TitleLayer/TitleScreen", "SafeArea/ModalLayer",
 			"SafeArea/CoachLayer", "ToastLayer"]:
 		assert_ne(root.get_node_or_null(path), null, "scaffold has %s" % path)
 	assert_true(root.get_node("SafeArea") is MarginContainer)
 	assert_eq((root.get_node("ToastLayer") as CanvasLayer).layer, UIRoot.CANVAS_LAYER_TOAST)
 	# Containers must not eat touches, or nothing reaches the camera.
 	for path: String in ["SafeArea/HUDLayer", "SafeArea/PanelLayer", "SafeArea/SheetLayer",
-			"SafeArea/ModalLayer", "SafeArea/CoachLayer"]:
+			"SafeArea/TitleLayer", "SafeArea/ModalLayer", "SafeArea/CoachLayer"]:
 		assert_eq((root.get_node(path) as Control).mouse_filter, Control.MOUSE_FILTER_IGNORE,
 				"%s is IGNORE" % path)
 	assert_eq((root.get_node("SafeArea/MarkerLayer") as Control).mouse_filter,

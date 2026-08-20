@@ -307,6 +307,95 @@ preserved, as this section has said from the start; only the inventory changed.
   whatever rows are loaded instead of pinning the rungs as literals; the rungs
   and their measured justification belong to gate 20.
 
+**Binding from Wave 7 (the tax ruling + S0, 2026-08-19):**
+
+- **`tax.TAX_RATE_HAPPINESS_COEFF` 220 → 360.** Wave 6 made the power grid
+  buyable, which gave `tax_squeezer` — `balanced` with the slider pinned to
+  `TAX_RATE_MAX` — somewhere to put its ×1.778 revenue. On the 21-game-day matrix
+  it stopped being merely *rich* and became **strictly dominant again**: +104 %
+  value created **and +43 % population** against `balanced`, for a happiness
+  deficit of 1.6 points. Doc 92 F-5's ruling ("money now versus a city later")
+  was therefore no longer true of the agent a player resembles, even though gate
+  12b's controlled pair still showed the detent costing 18 % of a *fixed* city.
+  Both readings were correct; they measure different things, and the one that
+  matters is the one with a build plan in it.
+
+  **The ruling: one key, because one key is all it takes.** All three couplings
+  doc 03 §2.2 publishes are denominated in the points `happiness_tax_delta`
+  produces — the happiness target directly, and `attractiveness_tax_factor`
+  through `TAX_RATE_ATTRACT_PULL` — so the coefficient moves the whole chain and
+  the rate is still read exactly once (report 98's no-double-count rule).
+  `TAX_RATE_GROWTH_COEFF`, `TAX_RATE_ATTRACT_PULL`, `TAX_RATE_MIN/MAX`,
+  `TAX_RATE_STEP` and every revenue term are untouched.
+
+  | at `TAX_RATE_MAX` | was | is |
+  |---|---|---|
+  | `happiness_tax_delta` | −15.4 | **−25.2** |
+  | `attractiveness_tax_factor` | 0.7998 | **0.6724** |
+  | `growth_rate_multiplier` | 0.44 | 0.44 |
+  | equilibrium `occupied_population` at t0 (doc 09 §2.10.2a) | 115 | **97** |
+
+  **Fitted on gate 12b's controlled pair, confirmed on the matrix** — the fit is
+  steep, which is why the value is 360 and not something rounder (3-seed matrix,
+  `tax_squeezer` against `balanced`, 21 game-days): at **340** the squeezer trails
+  by only 5.5 % on population, missing the ruled 10 %; at **400** it trails by
+  21 % but ends *poorer* than `balanced`, which is a trap and not a tradeoff; at
+  **360** it trails by **14.7 %** on population and **23.0** happiness points
+  while still creating **35 %** more value. Both halves of the ruling clear on all
+  three seeds.
+
+  **No anchor moves and no hash moves.** `happiness_tax_delta` is exactly 0 at
+  `TAX_RATE_BASE`, and nothing in the game runs at any other rate unless a player
+  moves the slider, so the founding ledger, doc 03's worked examples and every
+  `pacing_guardrails` figure are untouched. Verified rather than argued:
+  `tools/profile_sim.gd --baseline` prints **BEHAVIOUR UNCHANGED** for both the
+  starter city (`beb73b276c275ab8` / `2efcb1a8cbb3048c`) and
+  `tests/fixtures/bench_city.json` (`dec792975cd3ba89` / `31a0c6eb8c85a68e`).
+  Gates 12 and 12b are retuned with the new measurements (12b's cash threshold
+  1.25× → **1.15×**: the measured multiple fell from 1.710 to 1.258 *because the
+  residents the squeezed city no longer has were the ones paying the higher rate*,
+  and a gate whose margin is 0.6 % measures float noise); **gate 12c is new** and
+  holds the ruling's own statement — the matrix comparison — at the ruled
+  thresholds rather than the measured ones. Doc 92 §20.
+- **S0 exists (doc 12 §2.2's one screen with no node).** `ui/title_screen.gd` +
+  `ui/title_model.gd` on a new `SafeArea/TitleLayer`, which sits **above the city
+  deck and below `ModalLayer`** — the front door covers the HUD, the panels and
+  the sheets, and SETTINGS opened from the door covers the door. `UIRoot` gains
+  `present_title()` / `dismiss_title()` / `title_open()` / `refresh_title()` and
+  the three signals `title_continue(slot)` / `title_new_game(slot)` /
+  `title_settings`. Two invariants are load-bearing:
+  - **The door is absent unless the shell asks for it.** No `ui/` file opens it;
+    `bring_up_screens()` brings it up *closed* like every other screen. That is
+    what lets `tests/test_tutorial_flow.gd`, `tests/test_ui_audit.gd` and
+    `tools/ui_preview.gd` keep driving the same scene with no front door in the
+    way.
+  - **The door closes nothing by itself.** CONTINUE and NEW CITY are intents; only
+    the shell knows whether a restore succeeded, and a corrupt save must leave the
+    player looking at the door rather than at an empty city.
+- **NEW CITY may not silently orphan the old one, and the honest fix is not a
+  new `SaveService` method.** `SaveService`'s autosave **rotation**
+  (`AUTOSAVE_SLOT 0` + `AUTOSAVE_SHADOW_SLOT 7`, doc 13 §2.11) belongs to whatever
+  city is *live*; it has no idea a city was replaced, so a new city takes it over
+  and two autosave intervals later both halves hold the new city. `TitleModel`
+  therefore prices that rather than hiding it: `new_game_plan()` names the manual
+  saves that survive (doc 12's "name the save it will NOT delete"), says the
+  autosave is what a new city costs, and — when the outgoing city lives *only* in
+  the rotation — offers it the lowest free manual slot. The shell performs that
+  archive with three published calls and no new API: `load_slot` the old city into
+  the sim, `save_slot` it into the free slot, `restore_state` the founding capture
+  back, which is exact **because** save→load→advance identity is exact. When every
+  manual slot is full the plan says so and points at Settings ▸ Manage saves
+  instead of choosing one of the player's own saves to sacrifice.
+- **The back stack grows one context, not one rung.** `UIRoot.resolve_back` takes
+  `title_open`, and at the front door the city rungs (sheet, panel, placement,
+  selection) *cannot exist*, so back falls straight to doc 12 §2.2's two-press
+  minimise pair. `BACK_CLOSE_MODAL` still wins, or back at the settings sheet
+  opened from the title would quit the game.
+- **`type_scale_dp.display` finally has a reader.** `ThemeBuilder` gains a
+  `Wordmark` → `Label` type variation at that size; it is the game name on S0, and
+  it scales with A2's text setting like every other size in the theme rather than
+  being a per-node font override.
+
 Also binding from the same pass: **mode-invariance is per-system, not
 whole-hash** — doc 06 §2.6 sanctions Poisson-count differences per step size,
 doc 04 §2.12 sanctions one-step coarse thermal integration, and the cosmetic

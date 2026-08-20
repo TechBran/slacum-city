@@ -49,6 +49,7 @@ const SCREENS: Array[String] = [
 	"alerts", "alerts_empty",
 	"overlay", "overlay_police", "overlay_fire", "overlay_folded",
 	"settings", "saves", "pause",
+	"title", "title_fresh", "title_confirm",
 	"coach_welcome", "coach_place_house", "coach_dispatch", "coach_payoff",
 ]
 
@@ -56,6 +57,16 @@ const SCREENS: Array[String] = [
 ## whole point of this harness is to judge sizes — so every state gets a settle
 ## window before it is measured or photographed.
 const SETTLE_S := 0.12
+
+## S0's fixture profile: a city in the autosave rotation plus one manual save, so
+## CONTINUE carries a meta line and NEW CITY's confirmation has both a save to
+## name as kept and a free slot to offer.
+const _TITLE_SLOTS: Array = [
+	{"slot": 0, "saved_at_unix": 1755500000, "day_index": 12,
+			"population": 184291, "treasury": 8420000},
+	{"slot": 1, "saved_at_unix": 1755000000, "day_index": 3,
+			"population": 1204, "treasury": 42000},
+]
 
 var _screen := "drawer"
 var _path := ""
@@ -462,6 +473,12 @@ func _apply(screen: String) -> void:
 			_root.save_load_sheet.open()
 		"pause":
 			_root.pause_menu.open()
+		"title":
+			_title(_TITLE_SLOTS, false)
+		"title_fresh":
+			_title([], false)
+		"title_confirm":
+			_title(_TITLE_SLOTS, true)
 		_:
 			if screen.begins_with("coach_"):
 				_coach(screen.trim_prefix("coach_"))
@@ -483,6 +500,7 @@ func _close_everything() -> void:
 		_root.overlay_rail.select(OverlayModel.MODE_NONE)
 	if _root.onboarding != null:
 		_root.onboarding.reset()
+	_root.dismiss_title()
 	# Banners live for `alert_ttl_s`, which is longer than a settle window — one
 	# state's banners would otherwise photobomb the next four screens.
 	for alert: Dictionary in _root.hud.model.active_alerts(0.0):
@@ -490,6 +508,41 @@ func _close_everything() -> void:
 	_root.refresh_incidents(_incidents(), 24.0)
 	_root.hud.refresh(_snapshot())
 	_root.ingest_service({"power01": 0.93, "water01": 0.71})
+
+
+## S0 with a chosen profile behind it. The service is a stub for the same reason
+## every other fixture here is one: this harness photographs SCREENS, and a real
+## `SaveService` would photograph whatever happens to be in `user://saves`.
+class TitleSlots extends RefCounted:
+	var rows: Array = []
+
+	func list_slots() -> Array[Dictionary]:
+		var out: Array[Dictionary] = []
+		for raw: Variant in rows:
+			out.append((raw as Dictionary).duplicate())
+		return out
+
+	func latest_slot() -> int:
+		var best := -1
+		var best_at := -1
+		for raw: Variant in rows:
+			var row: Dictionary = raw
+			if int(row["saved_at_unix"]) > best_at:
+				best_at = int(row["saved_at_unix"])
+				best = int(row["slot"])
+		return best
+
+	func autosave_slots() -> Array[int]:
+		return [0, 7]
+
+
+func _title(slots: Array, confirming: bool) -> void:
+	var stub := TitleSlots.new()
+	stub.rows = slots
+	_root.title_screen.bind_service(stub)
+	_root.present_title()
+	if confirming:
+		_root.title_screen.action_button(TitleModel.ACTION_NEW_GAME).pressed.emit()
 
 
 ## Walks S12 to one step with the same observations the shell would produce, and

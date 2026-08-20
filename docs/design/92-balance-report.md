@@ -997,7 +997,7 @@ should *fail* today on purpose.
 | `incident_abandoned` per run, `balanced` | 59.0 | ≈ 0 (F-3) |
 | first `E_UNSERVED` for `greedy_growth` | game-hour 362 | < game-hour 48 once the founding grid is thinned (F-4) |
 | blocks bought by `balanced` in 21 game-days | 0.3 | ≥ 2 once the READY core is trimmed (F-8) |
-| `tax_squeezer` value vs `balanced` at d21 | +46 % | ≤ +10 % once `TAX_RATE_GROWTH_COEFF` is ruled (F-5) |
+| `tax_squeezer` value vs `balanced` at d21 | +46 % | ≤ +10 % once `TAX_RATE_GROWTH_COEFF` is ruled (F-5) — **superseded by §20**: value is the wrong column, because a richer agent *should* create more value. The Wave-7 ruling gates the **population** column instead (gate 12c: `tax_squeezer` trails by ≥ 10 %), and value at +35 % is what makes the detent still worth pulling. |
 | `credit_line_engaged` events on a run that ends negative | 0 | ≥ 1 (F-7) |
 | `cmd_place_building` on a locked archetype | succeeds | must return `E_CITY_LEVEL` (pass-1 F-7) |
 | offline/online value edge, 7 game-days | mean −3.7 % | \|Δ\| ≤ 5 % held once doc 04 §2.12's fidelity rule is implemented (F-9) |
@@ -1028,6 +1028,7 @@ should *fail* today on purpose.
 | **1** | 2026-08-18 | First harness pass. 24 runs (4 strategies × 3 seeds × 2 paths × 14 game-days) against a sim with two player verbs and no pressure systems. Findings F-1 … F-11. No `data/` change. |
 | **2** | 2026-08-19 | Post-Wave-1 integration. Strategies rewritten to use the full doc 93 §B verb set; `tax_squeezer` and `disaster_neglect` added as single-variable variants of `balanced`; two controlled micro-experiments added (transformer payback, tax ladder); schema → 2; `tests/test_playtest_harness.gd` grows six behavioural tests (909 suite tests green). 17 of 18 matrix runs (6 strategies × 3 seeds × 21 game-days, `tax_squeezer` seed 9001 excepted — §0) + a 90-game-day late curve + a paired 7-day fine/coarse set. Findings F-1 … F-10 restated from new data. No `data/` change. |
 | **3** | 2026-08-19 | **The maintenance fit** (Wave-4 rulings 1–5). `balanced` rebuilt as a two-ladder agent with a budget-gated maintenance line, a station roster and a land fund (§13.1); the maintenance pacing fitted against matrix runs — `REPAIR_THRESHOLD` 0.90 → **0.80**, `tax.COND_FLOOR` 0.55 → **0.40**, `decay_per_hour` and `MAINT_CONDITION_PENALTY` **held with the measurements** (§13.2–13.4); F-4's founding-grid thinning implemented, **23 → 18 transformers**, and its geometric floor established (§14.1); F-8 **declined with data** (§14.2); `Api.upgrade_candidates` bounded, closing pass-2 F-10's wall-clock finding (§13.5). **18 of 18** matrix runs at 21 game-days + a paired 50-game-day neglect A/B (§15). Gates 4, 5 and 10 retuned with their measurements; gate 4b added. |
+| **6** | 2026-08-19 | **The tax ruling** (Wave 7). `tax.TAX_RATE_HAPPINESS_COEFF` 220 → **360** — the one key that reprices all three of doc 03 §2.2's couplings, because Wave 6's buyable grid gave `tax_squeezer` somewhere to spend ×1.778 revenue and it became strictly dominant again (+104 % value **and +43 % population** for a 1.6-point happiness deficit). Fitted on gate 12b's controlled pair, confirmed on **18 of 18** matrix runs (§20.3–20.4). Gates 12 and 12b retuned with their measurements; **gate 12c added** to hold the ruling's own matrix statement. Save identity verified unchanged on both cities (§20.5). No other `data/` key moved. |
 
 ---
 
@@ -2102,3 +2103,162 @@ cliff — 56 % dark, minimum condition 0.000 — which was already true before t
 pass and is the feeder verb's problem, not the pacing floor's. Recorded here so
 that when the feeder verb lands, the day-50 population is re-measured against
 **2,274** and not against pass-3's number.
+
+
+---
+
+## 20. Pass 6 — the tax ruling (Wave 7)
+
+Everything in §20 is measured on the **online** coarse step through
+`tests/balance_matrix.gd` / `BalanceGateRig`, seeds 1337 / 4242 / 9001, 21
+game-days, and on gate 12b's controlled pair (seed 1337, identical build plan,
+identical tiles, one field different).
+
+### 20.1 The finding: Wave 6 handed `tax_squeezer` a spending problem
+
+Pass 2's F-5 ruled that the top tax detent must be **money now versus a city
+later**, and pass 2 + T-1 delivered it: at `TAX_RATE_HAPPINESS_COEFF 220` the
+controlled pair showed the detent costing **18.3 %** of a fixed city's
+population for **1.71×** the cash, and gate 12b held that.
+
+Wave 6 then made the power grid buyable. That is the missing half of the story,
+because `tax_squeezer` is `balanced` with one knob moved: it has 1.778× revenue
+and, before Wave 6, nowhere to put it. With feeders, substations and plants on
+the build sheet it converted the money into **more city**, and on the 21-game-day
+matrix it stopped merely being rich:
+
+| 21 game-days, 3-seed mean, coeff 220 | `balanced` | `tax_squeezer` | delta |
+|---|---|---|---|
+| value created | $878,217 | $1,787,852 | **+104 %** |
+| treasury | $78,704 | $133,122 | +69 % |
+| **population** | 1,342 | **1,918** | **+43 %** |
+| happiness | 74.6 | 73.0 | **−1.6** |
+| buildings placed | 219 | 249 | +14 % |
+| city level | 2 | **3** | +1 |
+
+**Strictly dominant again** — ahead on every column a player can see, for a
+happiness deficit inside seed noise. The controlled pair was *also* still true;
+the two measure different questions, and the one with a build plan in it is the
+one a player lives in.
+
+### 20.2 The ruling, and why it is one key
+
+The overseer's ruling: **raise `tax.TAX_RATE_HAPPINESS_COEFF` until the top
+detent costs a 21-game-day city ≥ 8 happiness points AND `tax_squeezer` trails
+`balanced` on population by ≥ 10 %.** Fit on the controlled-pair rig, confirm on
+the matrix.
+
+One key is enough because doc 03 §2.2's three couplings are **all denominated in
+the points `happiness_tax_delta` produces**:
+
+```
+happiness_tax_delta       = -(r - 0.09) × TAX_RATE_HAPPINESS_COEFF
+attractiveness_tax_factor = 1 + TAX_RATE_ATTRACT_PULL × min(0, happiness_tax_delta)/100
+growth_rate_multiplier    = 1 - (r - 0.09) × TAX_RATE_GROWTH_COEFF     ← untouched
+```
+
+so the coefficient moves the happiness target **and** doc 09's attractiveness
+ceiling, and the rate is still read exactly once in the whole chain (report 98's
+no-double-count rule). `TAX_RATE_ATTRACT_PULL`, `TAX_RATE_GROWTH_COEFF`,
+`TAX_RATE_MIN/MAX`, `TAX_RATE_STEP` and every revenue term are untouched.
+
+### 20.3 The fit — 360, and why not a rounder number
+
+The fit is **steep**, because population trails only once the attractiveness
+ceiling falls far enough that the squeezed agent's extra buildings stop paying
+for themselves. Measured on the matrix, `tax_squeezer` against `balanced`
+(3 seeds except where noted):
+
+| coeff | Δ at `TAX_RATE_MAX` | `A_tax` | population | happiness gap | value created | treasury |
+|---|---|---|---|---|---|---|
+| 220 (Wave 6) | −15.4 | 0.7998 | **+43 %** | 1.6 | +104 % | +69 % |
+| 300¹ | −21.0 | 0.7270 | +8.7 % | 18.6 | +61 % | +14 % |
+| 340 | −23.8 | 0.6906 | −5.5 % | 21.2 | +43 % | −3 % |
+| **360 (ruled)** | **−25.2** | **0.6724** | **−14.7 %** | **23.0** | **+35 %** | **+22 %** |
+| 400¹ | −28.0 | 0.6360 | −21 % | 20.4 | +31 % | −7 % |
+
+¹ seed 1337 only — the two bracketing probes.
+
+**340 misses the ruling** (−5.4 / −5.4 / −5.7 % across the three seeds, against a
+required 10 %). **400 overshoots into a trap**: the squeezer ends *poorer* than
+`balanced`, and a detent that costs population and money is not a tradeoff, it is
+a mistake the UI invites the player to make. **360 clears both halves on every
+seed** — −17.2 / −13.6 / −13.1 % population, 22.8 / 23.4 / 22.7 happiness points —
+and keeps the slider worth pulling at +35 % value created.
+
+### 20.4 The 18-run matrix at the ruled coefficient
+
+| strategy (3-seed mean) | treasury | value | net $/gh | pop | happy | stab | dark % | placed | upg | minC | open inc |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `do_nothing` | $162,083 | $162,083 | 262 | 141 | 83.1 | 0.9491 | 0.22 | 0 | 0 | 0.491 | 0.02 |
+| `greedy_growth` | $70,197 | $990,498 | 1,409 | 1,765 | 52.4 | 0.6964 | 38.07 | 123 | 34 | 0.454 | 1.56 |
+| `infrastructure_first` | $17,871 | $134,271 | 378 | 231 | 77.4 | 0.9714 | 0.23 | 27 | 0 | 0.890 | 0.01 |
+| `balanced` | $78,704 | $878,217 | 2,101 | 1,342 | 74.6 | 0.9406 | 0.07 | 219 | 133 | 0.798 | 0.03 |
+| **`tax_squeezer`** | $96,249 | $1,182,823 | 2,813 | **1,145** | **51.6** | 0.9662 | 0.07 | 248 | 159 | 0.797 | 0.02 |
+| `disaster_neglect` | $67,409 | $1,043,323 | 1,757 | 1,358 | 56.1 | 0.7732 | 25.21 | 278 | 144 | 0.364 | 0.93 |
+
+**18 of 18 complete.** `incident_abandoned` 0, `credit_line_engaged` 0 and
+`director_event_started` exactly 2 on every run, unchanged from §18/§19.
+
+**Four of the six rows are bit-identical to Wave 6, and that is the check that
+matters most.** `do_nothing`, `greedy_growth`, `infrastructure_first` and
+`disaster_neglect` never touch the slider, so `happiness_tax_delta` is 0 for all
+of them and the coefficient cannot reach them — measured, not assumed:
+`balanced` seed 1337 reads $91,906 / $853,126 / 1,364 / 74.7 at both
+coefficients, to the digit. **Only the agent that pulls the lever moved.**
+
+`tax_squeezer` is now the richest agent per building and the *fifth* largest city
+of six. It still out-earns `balanced` by 35 % on value created and 22 % on cash,
+and it now pays 23 happiness points and a fifth of its population for it. That is
+the trade F-5 asked for, on the agent a player resembles.
+
+### 20.5 Save identity, and why a balance retune is allowed to be free
+
+`happiness_tax_delta` is **exactly 0 at `TAX_RATE_BASE`**, and nothing in the
+game runs at any other rate unless a player moves the slider. So the founding
+ledger, doc 03's worked examples, `pacing_guardrails` and every anchor gates 1,
+2 and 2b hold are untouched *by construction* — and verified rather than argued:
+
+```
+tools/profile_sim.gd --baseline   starter city   HASH OK beb73b276c275ab8 / 2efcb1a8cbb3048c
+tools/profile_sim.gd --baseline   bench_city     HASH OK dec792975cd3ba89 / 31a0c6eb8c85a68e
+                                                 BEHAVIOUR UNCHANGED vs baseline
+```
+
+### 20.6 Gates
+
+- **Gate 12** — the coefficient's three published values retuned to −25.2 /
+  0.6724 / 0.44 (the growth multiplier is unchanged and stays asserted, because
+  the point of the row is that it did *not* move). Both halves of the lever hold:
+  the RATE half at 3 game-days (224 people / $33,058 against **148** / $40,842)
+  and the TARGET half at 7 (224 against **151**). A new assertion pins
+  `happiness_tax_delta(TAX_RATE_BASE) == 0`, which is the whole reason the retune
+  is hash-neutral.
+- **Gate 12b** — the controlled pair at 21 game-days: **31.1 % fewer people for
+  1.258× the cash** (was 18.3 % / 1.710×), attractiveness 0.6724 against 1.0000,
+  and a happiness gap of **18.77** points. Its cash threshold drops 1.25× →
+  **1.15×**: the measured multiple fell *because the residents the squeezed city
+  no longer has were the ones paying the higher rate*, and 1.25 now sits $1,531
+  under a measured 1.258 — a gate with a 0.6 % margin measures float noise, not
+  balance. A happiness assertion is added at the ruled floor of 8 points.
+- **Gate 12c, new** — the ruling's own statement, on the matrix rows: population
+  ≤ 90 % of `balanced`'s, happiness gap ≥ 8, and value created still ahead. Its
+  header states plainly that it reads two strategy rows and will therefore move
+  when someone else's tuning lands; the thresholds are the **ruled** ones and not
+  the measured ones, so ordinary drift does not trip it — only a change that gives
+  the slider back its free lunch does.
+
+### 20.7 What this pass did not do
+
+`TAX_RATE_ATTRACT_PULL` (1.30) is **held**. It is doc 09's coefficient, it is
+authored to the same value as `PopulationSystem.ATTRACT_HAPPINESS_PULL` on
+purpose, and moving it would have priced the tax bill differently from every
+other source of unhappiness — which is precisely the double-count T-1 exists to
+avoid. The whole ruling is one number in doc 03's own block.
+
+The **bottom** detent is unmeasured this pass. At coeff 360 a cut is worth +18.0
+happiness points instead of +11.0, which pushes a healthy city's `H_target` past
+the 100 clamp — so in practice the bottom detent buys what it always bought (a
+1.40× faster refill through `TAX_RATE_GROWTH_COEFF`) plus a slightly higher
+`f_happiness`. Whether that is now too generous is a question for a pass that
+gives an agent a reason to cut tax; no strategy in this study ever has.

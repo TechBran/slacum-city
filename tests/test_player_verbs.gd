@@ -884,8 +884,8 @@ func test_set_tax_level_effects() -> void:
 	assert_eq(sim.tax_rate, 0.16)
 	assert_eq(sim.tax_level(), 12)
 	# doc 03 §2.2's two couplings, exactly.
-	assert_almost_eq(float(result["payload"]["happiness_delta"]), -15.4, 1e-9,
-			"−(0.16 − 0.09) × 220")
+	assert_almost_eq(float(result["payload"]["happiness_delta"]), -25.2, 1e-9,
+			"−(0.16 − 0.09) × 360")
 	assert_almost_eq(float(result["payload"]["growth_multiplier"]), 0.44, 1e-9,
 			"1 − (0.16 − 0.09) × 8.0")
 	# And they reach the sim: happiness falls where the base rate held it.

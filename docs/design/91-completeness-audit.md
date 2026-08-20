@@ -56,7 +56,7 @@ instance). They are counted in the tally like any other row.
 | **Total** | **173** | **140** | **20** | **9** | **2** | **2** |
 
 *Wave-6 revision (2026-08-19): doc 12 §2.8 and §2.14 moved ABSENT → SHIPPED; §2.2
-and §2.13 stay PARTIAL on S0 and S10. Everything below the count table is as
+and §2.13 stay PARTIAL on S10 (**S0 shipped in Wave 7** — `ui/title_screen.gd`). Everything below the count table is as
 written at `6d8c2b1` unless a row says otherwise.*
 
 **81 % shipped.** Of the 31 rows that are not (two more are deferred by their own
@@ -297,7 +297,7 @@ settings do not survive an app restart. See **D-3**.
 | § | Subject | Grade | Pointer / gap |
 |---|---|---|---|
 | 2.1 | Units, breakpoints | SHIPPED | `UIRoot.breakpoint_for`; `test_ui_scaffold.gd` |
-| 2.2 | Screen map | **PARTIAL** | S1–S9, S11–S13 ship (**S4 landed Wave 6** — `PanelLayer/LandPanel` in `ui_root.tscn`). **S0 (boot/save-load screen) still has no node**; S10 has no rows. |
+| 2.2 | Screen map | **PARTIAL** | S0–S9, S11–S13 ship (**S4 landed Wave 6** — `PanelLayer/LandPanel`; **S0 landed Wave 7** — `TitleLayer/TitleScreen`, between `SheetLayer` and `ModalLayer`, opened only by `UIRoot.present_title()`). S10 has no rows. |
 | 2.3 | HUD layout | SHIPPED | `CityHUD`; `test_ui_topbar.gd` |
 | 2.4 | Stat chips | SHIPPED | `HudModel`; `test_hud_model.gd` |
 | 2.5 | Overlay system | SHIPPED (3 of the doc's modes) | power, water, traffic; `OverlayModel` lists and greys the rest |

@@ -39,6 +39,11 @@ const TYPE_VARIATIONS := {
 	"CoachBubble": "PanelContainer",
 	"ToastPanel": "PanelContainer",
 	"AlertBanner": "PanelContainer",
+	## S0's game name. The only consumer of `type_scale_dp.display`, which doc 12
+	## §4.3 has published since the first draft and which nothing read until the
+	## front door needed a wordmark. A variation rather than a per-node font
+	## override, so it scales with A2's text setting like every other size here.
+	"Wordmark": "Label",
 }
 
 ## Which entry of `type_scale_dp` each variation reads.
@@ -57,6 +62,7 @@ const VARIATION_TYPE_SCALE := {
 	"CoachBubble": "body",
 	"ToastPanel": "body",
 	"AlertBanner": "body",
+	"Wordmark": "display",
 }
 
 const CONSTANT_SCALE_HINTS := ["minimum_size", "margin", "separation"]
