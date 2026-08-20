@@ -540,9 +540,12 @@ func test_scene_carries_the_build_sheet_and_building_panel() -> void:
 	assert_ne(panel, null, "SafeArea/PanelLayer/BuildingPanel is wired")
 	assert_false(sheet.is_open(), "the sheet starts closed behind the FAB")
 	assert_false(panel.is_open())
+	# Three rosters now: the archetypes, the two component rosters, and the run
+	# cards `PathTool` supplies for doc 12 §2.7's drag-path verbs.
 	assert_eq(sheet.cards().size(), BuildingCatalog.ARCHETYPE_COUNT
 			+ sheet.controller.grid_kinds().size()
-			+ sheet.controller.water_kinds().size())
+			+ sheet.controller.water_kinds().size()
+			+ sheet.path.cards().size())
 	sheet.open()
 	assert_true(sheet.is_open())
 	assert_ne(sheet.card_button("house"), null, "the residential tab lists House")
@@ -552,6 +555,14 @@ func test_scene_carries_the_build_sheet_and_building_panel() -> void:
 	sheet.select_category(BuildController.CATEGORY_INFRASTRUCTURE)
 	assert_ne(sheet.card_button("transformer"), null, "grid and water share the tab")
 	assert_ne(sheet.card_button("water_facility_pump"), null)
+	assert_ne(sheet.card_button("water_main_service"), null,
+			"doc 12 §2.7 files the water main under Utility with the pumps it feeds")
+	sheet.select_category(PathTool.CATEGORY_ROADS)
+	assert_ne(sheet.card_button("road_street"), null, "the ROADS tab exists and lists Street")
+	assert_ne(sheet.card_button("road_avenue"), null)
+	assert_ne(sheet.card_button("road_widen"), null)
+	assert_ne(sheet.card_button("road_remove"), null)
+	assert_eq(sheet.card_button("house"), null, "and it lists only run cards")
 	_unmount(mounted)
 
 
@@ -719,3 +730,223 @@ func test_level_pips_read_exactly_as_the_doc_writes_them() -> void:
 	assert_eq(BuildingPanel.level_pips(1, 5), "▮L1▮ L2 L3 L4 L5")
 	assert_eq(BuildingPanel.level_pips(0, 5), "L1 L2 L3 L4 L5",
 			"a build in progress has no level yet")
+
+
+# ===========================================================================
+# §2.9 item 6 — the actions row (Wave 10). Repair / Priority / Demolish all
+# shipped as sim verbs with no door (doc 92 §17.6); these are the doors.
+# ===========================================================================
+
+func test_repair_is_absent_on_a_healthy_building_and_priced_on_a_worn_one() -> void:
+	var sim := _sim()
+	var controller := _controller(sim)
+	var b: Building = sim.buildings["H-001"]
+	b.condition = 1.0
+	var healthy: Dictionary = controller.actions_view("H-001")["repair"]
+	assert_false(bool(healthy["available"]),
+			"doc 02 §2.6 refuses E_NOT_DAMAGED, so there is no button to press")
+
+	b.condition = 0.60
+	var worn: Dictionary = controller.actions_view("H-001")["repair"]
+	assert_true(bool(worn["available"]))
+	assert_true(bool(worn["ok"]), "the founding treasury can afford one house repair")
+	assert_eq(int(worn["cost"]), sim.econ_curves.repair_cost_building("house",
+			maxi(b.level, 1), b.damage_fraction(),
+			float(sim.treasury.difficulty().get("M_repair", 1.0))),
+			"the price is doc 03 §2.5's, read through CostCurves")
+	assert_almost_eq(float(worn["condition"]), 0.60, 0.0001)
+	assert_almost_eq(float(worn["target"]), 1.0, 0.0001,
+			"an `active` building repairs back to new (doc 02 §2.12)")
+
+
+func test_the_panel_buys_the_repair_the_row_quoted() -> void:
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var panel: BuildingPanel = mounted["panel"]
+	(sim.buildings["H-001"] as Building).condition = 0.55
+	panel.show_building("H-001")
+	var quoted := int(((panel.view()["actions"] as Dictionary)["repair"]
+			as Dictionary)["cost"])
+	assert_true(quoted > 0)
+	var results: Array[Dictionary] = []
+	panel.repaired.connect(func(result: Dictionary) -> void: results.append(result))
+	var before := sim.treasury.balance
+	panel.request_repair()
+	assert_eq(results.size(), 1)
+	assert_true(bool(results[0]["ok"]), str(results[0]))
+	assert_eq(before - sim.treasury.balance, quoted,
+			"the panel charged exactly what it printed")
+	# The refreshed panel must show the job, not a second one to buy.
+	var after: Dictionary = (panel.view()["actions"] as Dictionary)["repair"]
+	assert_false(bool(after["ok"]), "doc 02 §2.6's E_JOB_IN_FLIGHT, in the panel")
+	assert_false((after["reason"] as Dictionary).is_empty(),
+			"and it says so in words rather than by a dead button")
+	_unmount(mounted)
+
+
+func test_fix_this_on_condition_buys_the_repair_rather_than_moving_the_camera() -> void:
+	# The row's fix target used to be the building the player already had open,
+	# so `Fix this →` focused the camera on the thing under their thumb and did
+	# nothing. `E_CONDITION`'s fix is a PURCHASE (RequirementFormatter.FIX_REPAIR).
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	sim.progression.city_level = 1
+	var mounted := _mount(sim)
+	var panel: BuildingPanel = mounted["panel"]
+	(sim.buildings["H-001"] as Building).condition = 0.40
+	panel.show_building("H-001")
+	var fix := panel.get_node_or_null(
+			"Panel/Scroll/Body/Checklist/Check_E_CONDITION/Fix") as Button
+	assert_ne(fix, null, "the blocker row still carries the affordance")
+	var routed: Array[Dictionary] = []
+	var repairs: Array[Dictionary] = []
+	panel.fix_requested.connect(func(t: Dictionary) -> void: routed.append(t))
+	panel.repaired.connect(func(result: Dictionary) -> void: repairs.append(result))
+	fix.pressed.emit()
+	assert_eq(routed.size(), 0, "nothing was handed to the camera router")
+	assert_eq(repairs.size(), 1, "a repair was bought instead")
+	assert_true(bool(repairs[0]["ok"]), str(repairs[0]))
+	_unmount(mounted)
+
+
+func test_priority_row_lists_doc_fours_classes_and_sets_one() -> void:
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var panel: BuildingPanel = mounted["panel"]
+	panel.show_building("H-001")
+	var priority: Dictionary = (panel.view()["actions"] as Dictionary)["priority"]
+	assert_true(bool(priority["available"]), "a served building carries a shed tier")
+	var classes: Array = sim.grid_rules["priority"]["classes"]
+	assert_eq((priority["classes"] as Array).size(), classes.size(),
+			"the row is doc 04's roster, not a list authored in ui/")
+	var results: Array[Dictionary] = []
+	panel.priority_set.connect(func(result: Dictionary) -> void: results.append(result))
+	var button := panel.get_node_or_null(
+			"Panel/Scroll/Body/Actions/Priority/Priority_CRITICAL") as Button
+	assert_ne(button, null, "one 48 dp target per class")
+	button.pressed.emit()
+	assert_eq(results.size(), 1)
+	assert_true(bool(results[0]["ok"]), str(results[0]))
+	assert_eq(String(sim.grid.priority_class_of("H-001")), "CRITICAL")
+	assert_eq(str(((panel.view()["actions"] as Dictionary)["priority"]
+			as Dictionary)["current"]), "CRITICAL",
+			"and the refreshed row reads the sim, not the tap")
+	_unmount(mounted)
+
+
+func test_demolish_quotes_its_refund_and_only_fires_on_a_full_hold() -> void:
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var panel: BuildingPanel = mounted["panel"]
+	panel.show_building("H-001")
+	var demolish: Dictionary = (panel.view()["actions"] as Dictionary)["demolish"]
+	assert_true(bool(demolish["available"]) and bool(demolish["ok"]))
+	var refund := int(demolish["refund"])
+	assert_eq(refund, int((sim.cmd_demolish_building("H-001", true)["payload"]
+			as Dictionary)["refund"]), "the panel quotes the command's own refund")
+
+	var fired: Array[String] = []
+	panel.demolished.connect(func(sim_id: String, _r: Dictionary) -> void:
+		fired.append(sim_id))
+	var button := panel.get_node_or_null("Panel/Scroll/Body/Actions/Demolish") as Button
+	assert_ne(button, null)
+	# Half a hold demolishes nothing — the one irreversible button in the deck.
+	button.button_down.emit()
+	panel._process(0.4)
+	assert_eq(fired.size(), 0, "800 ms means 800 ms")
+	assert_true(sim.buildings.has("H-001"))
+	button.button_up.emit()
+	assert_eq(fired.size(), 0, "and letting go early abandons it")
+
+	var before := sim.treasury.balance
+	button.button_down.emit()
+	panel._process(1.0)
+	assert_eq(fired.size(), 1, "a full hold fires exactly once")
+	assert_false(sim.buildings.has("H-001"), "and doc 02 §2.12 took the building")
+	assert_eq(sim.treasury.balance - before, refund, "at the refund it quoted")
+	assert_false(panel.is_open(), "the panel closes rather than describing a hole")
+	_unmount(mounted)
+
+
+# ===========================================================================
+# §2.7's run flow, through the sheet the player actually touches
+# ===========================================================================
+
+func test_a_run_card_enters_the_path_tool_and_the_bar_is_two_step() -> void:
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var sheet: BuildSheet = mounted["sheet"]
+	sheet.open()
+	sheet.select_category(PathTool.CATEGORY_ROADS)
+	sheet.card_button("road_street").pressed.emit()
+	assert_true(sheet.is_placing(), "the shell asks ONE question about placement")
+	assert_true(sheet.is_placing_path())
+	assert_false(sheet.controller.is_placing(),
+			"and the footprint machine stood down rather than running beside it")
+	assert_true(sheet.path.is_aiming())
+
+	var tile := _road_edge_tile(sim)
+	sheet.move_ghost(Vector3(float(tile.x) * 8.0 + 4.0, 0.0, float(tile.y) * 8.0 + 4.0))
+	assert_true(sheet.path.is_aiming(), "a ghost move is not a decision")
+	sheet.confirm_placement()   # START
+	assert_true(sheet.path.is_drawing(), "the primary button pinned the anchor")
+	assert_eq(sheet.path.anchor, tile)
+
+	# The left button is `↺` while drawing: it unpins rather than leaving.
+	sheet._on_bar_cancel()
+	assert_true(sheet.path.is_aiming())
+	assert_true(sheet.is_placing_path(), "still holding the card")
+	# …and CANCEL again from AIMING leaves for real.
+	sheet._on_bar_cancel()
+	assert_false(sheet.is_placing())
+	_unmount(mounted)
+
+
+func test_a_world_drag_draws_a_run_and_never_commits_on_finger_up() -> void:
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var sheet: BuildSheet = mounted["sheet"]
+	assert_false(sheet.begin_world_drag(Vector3.ZERO),
+			"with no run tool up the router declines and the camera pans")
+	sheet.open()
+	sheet.select_category(PathTool.CATEGORY_ROADS)
+	sheet.card_button("road_street").pressed.emit()
+
+	var tile := _road_edge_tile(sim)
+	assert_true(sheet.begin_world_drag(
+			Vector3(float(tile.x) * 8.0 + 4.0, 0.0, float(tile.y) * 8.0 + 4.0)),
+			"the router claims the stroke")
+	assert_true(sheet.path.is_drawing())
+	assert_eq(sheet.path.anchor, tile, "anchored on the finger-DOWN tile")
+	var head := tile + Vector2i(2, 0)
+	assert_true(sheet.update_world_drag(
+			Vector3(float(head.x) * 8.0 + 4.0, 0.0, float(head.y) * 8.0 + 4.0)))
+	assert_eq(sheet.path.tiles().size(), 3)
+	var before := sim.treasury.balance
+	assert_true(sheet.end_world_drag())
+	assert_eq(sim.treasury.balance, before,
+			"§2.7: placement is never committed on finger-up")
+	assert_true(sheet.path.is_drawing(), "the run stays, waiting for PLACE")
+	_unmount(mounted)
+
+
+## Free ground beside a road the founding city already built. Asked, never
+## named — doc 09's map is data.
+static func _road_edge_tile(sim: CitySim) -> Vector2i:
+	for z in TileGrid.SIZE:
+		for x in TileGrid.SIZE:
+			if sim.world.grid.road_class_at(x, z) == TileGrid.ROAD_NONE:
+				continue
+			for d: Vector2i in [Vector2i(1, 0), Vector2i(0, 1),
+					Vector2i(-1, 0), Vector2i(0, -1)]:
+				var q := Vector2i(x, z) + d
+				if not TileGrid.in_bounds(q.x, q.y):
+					continue
+				if sim.world.grid.road_class_at(q.x, q.y) != TileGrid.ROAD_NONE:
+					continue
+				if not sim.world.grid.can_place(q, Vector2i.ONE):
+					continue
+				var block := sim.world.block_of_tile(q.x, q.y)
+				if block != null and block.is_ready():
+					return q
+	return Vector2i(56, 56)

@@ -30,6 +30,14 @@ const PLAYER_REACHABLE_KINDS: Array[String] = [
 	"set_tax_rate",
 	"resolve_incidents", "reach_population", "reach_happiness",
 	"reach_stability", "reach_treasury", "survive_no_abandonment",
+	# --- Wave 10: the three doors doc 92 §17.6 recorded as missing.
+	# `stamp_road_tiles` reaches `cmd_place_road` through the build sheet's
+	# ROADS tab and `ui/path_tool.gd`'s drag-path flow (doc 12 §2.7);
+	# `place_water_main` reaches `cmd_place_water_main` through the same tool on
+	# the infrastructure tab; `repair_buildings` reaches `cmd_repair_building`
+	# through the building panel's actions row (doc 12 §2.9 item 6) and through
+	# the upgrade checklist's `Fix this →` on `E_CONDITION`.
+	"stamp_road_tiles", "place_water_main", "repair_buildings",
 ]
 
 
@@ -92,16 +100,39 @@ func test_every_objective_names_a_kind_the_evaluator_knows() -> void:
 
 
 func test_every_objective_is_a_verb_the_player_can_reach() -> void:
-	# The rule doc 09 §2.14 is written around: a curriculum may never ask for
-	# something the UI cannot do. `cmd_place_road`, `cmd_place_water_main` and
-	# `cmd_repair_building` have no surface (doc 92 §17.6), so their kinds exist
-	# as evaluators and may not appear in a level.
+	# The rule doc 09 §2.14 is written around, and doc 93 §G2 states: a
+	# curriculum may never ask for something the UI cannot do. Wave 10 opened
+	# the last three doors (§G2's amendment), so the whitelist is now the full
+	# evaluator table — which is exactly why the SECOND assertion below matters
+	# more than this one from here on.
 	for entry: Variant in GoalSystem.levels():
 		for raw: Variant in ((entry as Dictionary)["objectives"] as Array):
 			var obj: Dictionary = raw
 			assert_true(PLAYER_REACHABLE_KINDS.has(String(obj["kind"])),
 					"%s uses `%s`, which no UI surface can perform"
 							% [obj["id"], obj["kind"]])
+
+
+func test_every_evaluator_kind_is_accounted_for_by_a_surface() -> void:
+	# The gate that keeps §G2 alive now that every shipped kind is reachable.
+	# A new evaluator kind added to `GoalSystem` without a door does not fail
+	# the whitelist above — nothing authors it yet — so it fails HERE instead:
+	# `PLAYER_REACHABLE_KINDS` is the list of kinds a surface exists for, and a
+	# kind missing from it is a verb somebody wrote an evaluator for and never
+	# gave the player. That is the wall with no door, one wave earlier.
+	var kinds: Array[String] = []
+	for kind: Variant in GoalSystem.EVENT_KINDS:
+		kinds.append(String(kind))
+	for kind: Variant in GoalSystem.STATE_KINDS:
+		kinds.append(String(kind))
+	kinds.append(String(GoalSystem.KIND_SURVIVE))
+	for kind: String in kinds:
+		assert_true(PLAYER_REACHABLE_KINDS.has(kind),
+				("`%s` is an evaluator kind with no player surface. Either ship "
+						+ "the surface and list it here, or delete the evaluator "
+						+ "— doc 93 §G2.") % kind)
+	assert_eq(PLAYER_REACHABLE_KINDS.size(), kinds.size(),
+			"and the whitelist names no kind the evaluator does not have")
 
 
 func test_every_objective_has_copy_and_a_unique_id() -> void:

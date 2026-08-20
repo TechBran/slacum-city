@@ -1180,7 +1180,9 @@
 		"validity_tint_alpha": 0.35,
 		"revalidate_hz": 10,
 		"max_issue_chips": 3,
-		"commit_requires_button": true
+		"commit_requires_button": true,
+		"_max_run_tiles": "§2.7's drag-path tools (roads, water mains) commit ONE run as ONE command and ONE bill, so a stroke has to have an end. 48 tiles is three land blocks of frontage — long enough that no ordinary street or main is two commands, short enough that a thumb sliding off the display quotes $86,400 of street rather than $250,000 of avenue. It is a safety rail on the GESTURE and not a rule about roads: the player commits and sweeps again. `PathTool` truncates the far end of the L at this length, so the preview is always exactly the run the commit lays.",
+		"max_run_tiles": 48
 	},
 	"thresholds": {
 		"grid_normal_pct": 95,

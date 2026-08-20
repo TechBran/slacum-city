@@ -1706,7 +1706,7 @@ lit city catches fire less.
 and `director_event_started` is exactly 2 on every one — pass-2 F-3's cascade and
 F-1's silent Director stay closed at every city size this matrix reaches.
 
-### 17.6 The infrastructure verbs are shipped but not yet DRIVEN
+### 17.6 The infrastructure verbs are shipped but not yet DRIVEN — ✅ closed by §23 (Wave 10)
 
 `cmd_place_road` / `cmd_upgrade_road` / `cmd_demolish_road` and
 `cmd_place_water_component` / `cmd_place_water_main` /
@@ -1721,6 +1721,29 @@ against the template's, at doc 03 §2.13(d)'s 17–52× piece-rate premium; and 
 what city size does the authored water topology (one pump, 40 m³/h, 7.2× headroom
 at founding) stop covering the demand — the water twin of §17.3's feeder ceiling,
 and the one the new verbs CAN answer.
+
+**Closed, Wave 10 (§23).** Both halves. The verbs now have PLAYER surfaces (doc
+12 §2.7's drag-path tab and §2.9 item 6's actions row, report 98 RR-26), and the
+`curriculum` agent DRIVES two of them because `data/goals.json` now asks it to —
+4 tiles of street at level 3, 2 repairs at level 4.
+
+**The first named measurement, answered.** A player-laid **4-tile** street run
+bills **$7,200**, measured identically on all three seeds. Doc 09's block
+template is 87 tiles (60 AVENUE + 27 STREET) and doc 03 charges the whole stamp
+once, inside the `road_install` development phase, at a base of **$7,500** —
+**$86.21/tile**. So the piece rate is **$1,800/tile against $86.21/tile = 20.9×**
+for a street and **60.3×** for an avenue, which is the 17–52× band §2.13(d) was
+described by, sitting a little above it because `road_install`'s distance
+coefficient (0.16 × block distance) is excluded from the base term and lifts the
+template's per-tile rate for a far block. **Four tiles of hand-laid street cost
+96 % of what doc 03 charges to stamp all 87 of a block's.** That is the whole
+economic argument for developing land rather than paving it, and it is now a
+number rather than a prediction.
+
+The second measurement (at what city size does the authored water topology stop
+covering demand) is still open: the `curriculum` agent finishes its 21-game-day
+arc with zero main tiles laid, which is doc 93 §G4's ruling and not yet the
+measurement.
 
 ---
 
@@ -3361,3 +3384,143 @@ draws 0.0, and every ordering §15.1 checks intact.
   append.
 - **It did not put `curriculum` in the default matrix.** §22.2 still stands, and
   §24.14's matrix is the six-strategy one this document has always published.
+
+## 25. Pass 9 — the player surfaces, and what the curriculum costs once they exist (Wave 10)
+
+*2026-08-20. Same rig, same seeds, same summariser. New this pass:
+`tools/measure_curriculum.gd`, a one-command reproduction of §22.3's arrival
+table that drives `tests/balance_gate_rig.gd` directly — the same instrument gate
+21 reads, so a number here and a number in the gate cannot drift apart.*
+
+### 25.1 What moved
+
+Nothing in `sim/` and nothing priced. This pass is a **UI** pass: §17.6's
+infrastructure verbs and doc 12 §2.9 item 6's per-building verbs got the surfaces
+they never had (report 98 RR-26, doc 93 §G2). The only balance-visible artefact is
+two new rows in `data/goals.json`, which the `curriculum` agent now drives:
+
+| row | level | kind | target | what it costs the agent |
+|---|---|---|---|---|
+| `l3_streets` | 3 | `stamp_road_tiles` | 4 | $7,200 of doc 03 §2.13(d) street, saved for as one earmark |
+| `l4_repairs` | 4 | `repair_buildings` | 2 | nothing it was not already spending — `Balanced` maintains |
+
+`data/progression.json`, `data/economy.json`, `data/incidents.json` and every
+other tunable file are **untouched**.
+
+### 25.2 The identity that matters
+
+The re-arc is a curriculum change and must therefore be invisible to every agent
+that does not read the sheet. Measured directly rather than argued:
+
+| check | before | after |
+|---|---|---|
+| `balanced` 21-game-day `state_hash`, seed 1337 | `83498723b2c4bb68…` | `83498723b2c4bb68…` |
+| seed 4242 | `ed94ed96788d9fdc…` | `ed94ed96788d9fdc…` |
+| seed 9001 | `05cf6db59d107edc…` | `05cf6db59d107edc…` |
+| `profile_sim` starter, coarse 24 h | `2231df7517a1c0b2…` | `2231df7517a1c0b2…` |
+| `profile_sim` starter, fine 2 h | `bffdf583288551cf…` | `bffdf583288551cf…` |
+| `profile_sim` bench_city, coarse 24 h | `a06e7d43f8187e2b…` | `a06e7d43f8187e2b…` |
+| `profile_sim` bench_city, fine 2 h | `224a900d09211b7f…` | `224a900d09211b7f…` |
+
+Bit-identical on all seven. The curriculum reaches the sim only through
+`GoalSystem`, whose `progress` / `done` dictionaries gain a key only when an
+event or a reconcile touches the ACTIVE level — and the two new rows sit on
+levels 3 and 4, which no hash-bearing run reaches.
+
+### 25.3 The arrival table, re-measured
+
+`tools/measure_curriculum.gd --days=21`, seeds 1337 / 4242 / 9001, both sides of
+the change on the same instrument. The game-hour each curriculum level was
+earned:
+
+| level | before | after | duration before → after |
+|---|---|---|---|
+| 1 | 13 / 13 / 14 | 13 / 13 / 14 | 13–14 → **13–14** |
+| 2 | 51 / 54 / 55 | 51 / 54 / 55 | 38–41 → **38–41** |
+| 3 | 97 / 98 / 103 | 111 / 115 / 119 | 44–48 → **60–64** |
+| 4 | 153 / 150 / 192 | 175 / 179 / 192 | 52–89 → **64–73** |
+| 5 | 345 / 351 / 312 | 371 / 362 / 351 | 120–201 → **159–196** |
+
+Verb counters at the end of the run, after: `road_tiles_built` 4 / 4 / 4 for
+`road_spend` $7,200 on every seed; `repaired` 57 / 57 / 61; `water_placed` 1 / 1 /
+1; `tax_changes` 1 / 1 / 1. All five levels complete on all three seeds, which is
+gate 21's first claim.
+
+**Levels 1 and 2 do not move at all**, which is the shape the change should have:
+the rows landed on 3 and 4 and `GoalSystem` only ever walks the active level.
+
+### 25.4 Why `l3_streets` is 4 tiles and not 6 — the fit
+
+The target was measured at both values against the same three seeds:
+
+| target | price | L3 earned (game-hours) | L3 duration | L3 game-day |
+|---|---|---|---|---|
+| 4 | $7,200 | 111 / 115 / 119 | 60–64 | 4 / 4 / 4 |
+| 6 | $10,800 | 119 / 123 / 122 | 67–69 | 4 / 5 / 5 |
+
+Both pass gate 21. **4 is ruled**, on two counts:
+
+1. **It is the smaller regression against §22's own band.** §22.3 asks levels 1–3
+   to sit inside a 10–40 game-hour beat. Level 3 was already outside it at 44–48
+   *before* this pass; 4 tiles takes it to 60–64 (+33 % over the pre-pass value),
+   6 tiles to 67–69 (+46 %). Neither meets the band and the band is not re-ruled
+   here — but a lesson that costs a third more is a lesson, and one that costs
+   half as much again starts to be a toll.
+2. **It still teaches the whole verb.** Four tiles is an L with a corner in it, so
+   the sweep, the corner rule and the per-tile bill are all exercised; the run is
+   also small enough to sit inside one block's frontage, which is where a player's
+   first street belongs.
+
+**The 14–16 game-hour cost is real and it is the point.** `l3_streets` is the
+first objective in the arc the player has to *save* for on top of the level's
+other work: `Curriculum` earmarks the whole run price at once, because doc 10 bills
+a run as one command and an agent that saved one tile's worth would start a run it
+could not finish. That earmark is what the extra hours are.
+
+### 25.5 Gate 21 — re-derived, not re-fitted
+
+Gate 21's three day bounds are **unchanged**, and every one of them is now quoted
+against a measurement taken on both sides:
+
+| bound | ruled | measured before | measured after | margin after |
+|---|---|---|---|---|
+| level 1 inside game-day 1 | ≤ 1 | day 0 (h 13–14) | day 0 (h 13–14) | 1 day |
+| level 3 inside game-day 6 | ≤ 6 | day 4–5 | day 4 | 2 days |
+| the arc inside the horizon | ≤ 21 | day 13.0–14.6 | day 14.6–15.5 | 5.5 days |
+
+Two assertions were **added** rather than moved: `road_tiles_built >= 1` and
+`repaired >= 2`, the twins of §22.5's `water_placed >= 1`. They exist for the same
+reason: they are what would catch a curriculum row whose verb had quietly lost its
+door again, because the agent drives `cmd_place_road` and `cmd_repair_building`
+only because an objective asks for them.
+
+**All 28 balance gates pass**, unchanged in every other threshold.
+
+### 25.6 A correction to §22.3's published table
+
+§22.3 records the arrival hours as `18 / 59 / 100 / 148 / 329`. **That table does
+not reproduce at this fork**, on either side of the Wave-10 change: measured at
+HEAD before touching `data/goals.json`, the same agent on the same rig and the
+same three seeds lands at `13 / 51 / 97 / 153 / 345`. Gate 21's day bounds all
+held through the drift, which is why it went unnoticed — a shift of five game-hours
+at level 1 is a shift of zero game-days. The likely cause is the Wave-8 rules epoch
+(doc 93 §E3) moving underneath a table recorded in Wave 9; it was not re-derived
+here because doing so would fold a pre-existing drift into a UI pass's
+measurement. **§25.3's before/after pair is the number to trust**: one instrument,
+one fork, both sides.
+
+### 25.7 What this pass did not do
+
+- **It did not add a water-main curriculum row**, even though the verb now has a
+  door. Doc 05 §6 already laterals every placed pump onto the network, so at
+  level 5 the taught action connects itself; the agent finishes the arc with zero
+  main tiles laid. Ruled in doc 93 §G4.
+- **It did not surface `cmd_route_feeder`.** It is a run verb and the drag-path
+  tool would take it in an afternoon — and §17.3 names the 2 × 1,200 kW feeder
+  ceiling as the late-game's binding constraint, so putting it on a card is a
+  **balance** change and wants its own pass and its own matrix.
+- **It did not retune a price.** Every figure the new surfaces quote is read from
+  `data/economy.json` through `CostCurves` at the moment it is shown.
+- **It did not re-rule §22.3's 10–40 game-hour band**, which level 3 was already
+  outside before this pass. Flagged in §25.4 as the open question that owns it.
+

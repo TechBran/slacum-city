@@ -38,9 +38,10 @@ const DEFAULT_SIZE := Vector2i(880, 400)
 ## in `_apply()`.
 const SCREENS: Array[String] = [
 	"hud", "hud_banners", "hud_critical",
-	"build", "build_grid", "build_locked",
+	"build", "build_grid", "build_locked", "build_roads",
 	"placement_ok", "placement_blocked",
-	"building", "building_blocked",
+	"path_aiming", "path_ok", "path_blocked", "path_refund",
+	"building", "building_blocked", "building_repairable",
 	"land_buy", "land_blocked", "land_developing",
 	"drawer", "drawer_empty", "drawer_expanded",
 	"picker", "picker_empty",
@@ -401,10 +402,27 @@ func _apply(screen: String) -> void:
 		"build_locked":
 			_root.build_sheet.open()
 			_root.build_sheet.select_category("commercial")
+		"build_roads":
+			# §2.7's ROADS tab: four run cards, each quoting a per-tile price.
+			_root.build_sheet.open()
+			_root.build_sheet.select_category(PathTool.CATEGORY_ROADS)
 		"placement_ok":
 			_place_ghost(true)
 		"placement_blocked":
 			_place_ghost(false)
+		"path_aiming":
+			# Step one of the two-step run flow: the card is held, the ghost is
+			# hunting, and the bar's primary button reads START.
+			_run_ghost("road_street", false, false)
+		"path_ok":
+			_run_ghost("road_street", true, false)
+		"path_blocked":
+			# A run that touches no existing road — doc 10's E_NOT_CONNECTED, in
+			# the formatter's words, with PLACE dead.
+			_run_ghost("road_street", true, true)
+		"path_refund":
+			# The one card in the deck whose money goes the other way.
+			_run_ghost("road_remove", true, false)
 		"building":
 			if _building_panel != null:
 				_building_panel.show_building(_first_building())
@@ -412,6 +430,14 @@ func _apply(screen: String) -> void:
 			if _building_panel != null:
 				var b: Building = _sim.buildings[_first_building()]
 				b.condition = 0.35
+				_building_panel.show_building(_first_building())
+		"building_repairable":
+			# §2.9 item 6's actions row with everything live: a repair to buy, a
+			# shed tier to pick, and a demolition to hold for.
+			if _building_panel != null:
+				var worn: Building = _sim.buildings[_first_building()]
+				worn.condition = 0.72
+				_sim.treasury.balance = 500_000
 				_building_panel.show_building(_first_building())
 		"land_buy":
 			# The city can afford it: the panel's happy face, with the primary
@@ -693,6 +719,74 @@ func _place_ghost(want_valid: bool) -> void:
 	card.pressed.emit()
 	var tile := _valid_tile(sheet.controller) if want_valid else _occupied_tile()
 	sheet.move_ghost(Vector3(float(tile.x) * 8.0 + 4.0, 0.0, float(tile.y) * 8.0 + 4.0))
+
+
+## Drives §2.7's drag-path tool to one of its three bar states. `started` pins
+## the anchor (the bar flips from START to PLACE); `lonely` puts the run where
+## doc 10 refuses it. The tiles are ASKED for, never named — doc 09's starter
+## city is data and it may move.
+func _run_ghost(card_id: String, started: bool, lonely: bool) -> void:
+	var sheet := _root.build_sheet
+	sheet.open()
+	sheet.select_category(str(PathTool.row(card_id)["category"]))
+	var card := sheet.card_button(card_id)
+	if card == null:
+		return
+	card.pressed.emit()
+	var tile := Vector2i(TileGrid.SIZE - 2, TileGrid.SIZE - 2) if lonely \
+			else _road_edge_tile()
+	sheet.move_ghost(Vector3(float(tile.x) * 8.0 + 4.0, 0.0, float(tile.y) * 8.0 + 4.0))
+	if not started:
+		return
+	sheet.confirm_placement()   # START: pins the anchor
+	var head := tile + _run_direction(tile, 3) * 3
+	sheet.move_ghost(Vector3(float(head.x) * 8.0 + 4.0, 0.0, float(head.y) * 8.0 + 4.0))
+
+
+## The first of the four axes along which `length` more tiles are layable, so
+## `path_ok` photographs a VALID run rather than whichever direction happened to
+## hit a footprint. Falls back to +X, which is what a blocked state looks like.
+func _run_direction(from: Vector2i, length: int) -> Vector2i:
+	var grid := _sim.world.grid
+	for d: Vector2i in [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]:
+		var clear := true
+		for step in range(1, length + 1):
+			var q := from + d * step
+			if not TileGrid.in_bounds(q.x, q.y) \
+					or grid.road_class_at(q.x, q.y) != TileGrid.ROAD_NONE \
+					or not grid.can_place(q, Vector2i.ONE):
+				clear = false
+				break
+		if clear:
+			return d
+	return Vector2i(1, 0)
+
+
+## A tile a run can legally start from: for a build card, free ground beside an
+## existing road; for the remove card, a road tile.
+func _road_edge_tile() -> Vector2i:
+	var grid := _sim.world.grid
+	for z in TileGrid.SIZE:
+		for x in TileGrid.SIZE:
+			if grid.road_class_at(x, z) == TileGrid.ROAD_NONE:
+				continue
+			var here := Vector2i(x, z)
+			if _root.build_sheet.path != null \
+					and _root.build_sheet.path.card_id == "road_remove":
+				return here
+			for d: Vector2i in [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0),
+					Vector2i(0, -1)]:
+				var q := here + d
+				if not TileGrid.in_bounds(q.x, q.y):
+					continue
+				if grid.road_class_at(q.x, q.y) != TileGrid.ROAD_NONE:
+					continue
+				if not grid.can_place(q, Vector2i.ONE):
+					continue
+				var block := _sim.world.block_of_tile(q.x, q.y)
+				if block != null and block.is_ready():
+					return q
+	return Vector2i(56, 56)
 
 
 ## The first block doc 09's starter city leaves for sale. Asked rather than

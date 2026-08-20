@@ -277,6 +277,12 @@ class Api extends RefCounted:
 	## agent (doc 92 §17.6 recorded that no strategy drove it).
 	var water_placed: int = 0
 	var water_spend: int = 0
+	## Doc 10 §2.13's `cmd_place_road`, driven for the first time by the Wave-10
+	## curriculum — the other half of §17.6's gap. Counted in TILES, not in
+	## commands: a run is one tap and N bills, and the bill is the interesting
+	## number (doc 03 §2.13(d)'s 17–52× piece-rate premium over the template).
+	var road_tiles_built: int = 0
+	var road_spend: int = 0
 	var tax_changes: int = 0
 	var priority_sets: int = 0
 	## `cmd_place_building` answers `E_UNSERVED`: the wall a player without a
@@ -689,6 +695,91 @@ class Api extends RefCounted:
 		if bool(result["ok"]):
 			repaired += 1
 			repair_spend += int((result["payload"] as Dictionary).get("cost", 0))
+		return result
+
+	# --- doc 10 §2.13's road verbs, through the door the ROADS tab opens -----
+
+	## The run the player's thumb would draw: `tiles` fresh tiles starting beside
+	## a road the city already has, inside a block that is owned and READY.
+	##
+	## Same shape as `candidate_site()` — the HARNESS finds the ground, the
+	## strategy names only how much of it it wants — and the same determinism
+	## rule: sorted block ids, row-major inside each, first fit. It mirrors what
+	## `ui/path_tool.gd` makes the player do (anchor beside the network, sweep a
+	## straight leg), because a measurement of a verb has to measure the door the
+	## verb actually has.
+	func road_run(tiles: int) -> Array[Vector2i]:
+		var wanted := maxi(1, tiles)
+		for block_id in _ready_blocks():
+			var block: LandBlock = sim.world.block(block_id)
+			var x0: int = block.grid.x * BLOCK_TILES
+			var z0: int = block.grid.y * BLOCK_TILES
+			for z in range(z0, z0 + BLOCK_TILES):
+				for x in range(x0, x0 + BLOCK_TILES):
+					var start := Vector2i(x, z)
+					if not _road_layable(start) or not _touches_road(start):
+						continue
+					for step: Vector2i in [Vector2i(1, 0), Vector2i(0, 1)]:
+						var run: Array[Vector2i] = []
+						var at := start
+						while run.size() < wanted and _road_layable(at):
+							run.append(at)
+							at += step
+						if run.size() == wanted:
+							return run
+		return [] as Array[Vector2i]
+
+	## Free ground a road tile may be stamped on: in bounds, not already paved,
+	## not occupied, and on land doc 09 says is buildable.
+	func _road_layable(tile: Vector2i) -> bool:
+		if not TileGrid.in_bounds(tile.x, tile.y):
+			return false
+		if sim.world.grid.road_class_at(tile.x, tile.y) != TileGrid.ROAD_NONE:
+			return false
+		if not sim.world.grid.can_place(tile, Vector2i.ONE):
+			return false
+		var block := sim.world.block_of_tile(tile.x, tile.y)
+		return block != null and block.is_owned() and block.is_ready()
+
+	## Doc 10 §2.13's `E_NOT_CONNECTED` in one read: does this tile sit beside
+	## pavement the city already owns?
+	func _touches_road(tile: Vector2i) -> bool:
+		for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var q := tile + d
+			if TileGrid.in_bounds(q.x, q.y) \
+					and sim.world.grid.road_class_at(q.x, q.y) != TileGrid.ROAD_NONE:
+				return true
+		return false
+
+	## What laying `tiles` of street would cost, off `cmd_place_road`'s own
+	## preview. `0` when there is nowhere to lay it — an agent saving for a run
+	## it cannot site would save for ever.
+	func road_quote(tiles: int, road_class: int = TileGrid.ROAD_STREET) -> int:
+		if not has_verb("cmd_place_road"):
+			return 0
+		var run := road_run(tiles)
+		if run.is_empty():
+			return 0
+		var raw: Array = []
+		for tile: Vector2i in run:
+			raw.append(tile)
+		var quote: Dictionary = sim.cmd_place_road(raw, road_class, true)
+		return int((quote.get("payload", {}) as Dictionary).get("cost", 0))
+
+	func place_road(tiles: int, road_class: int = TileGrid.ROAD_STREET) -> Dictionary:
+		var run := road_run(tiles)
+		if run.is_empty():
+			return _log("place_road", "%d tiles" % tiles,
+					CommandQueue.fail(&"E_NO_SITE"), {})
+		var raw: Array = []
+		for tile: Vector2i in run:
+			raw.append(tile)
+		var result := _optional("cmd_place_road", 2, [raw, road_class],
+				"%d tiles @%d,%d" % [run.size(), run[0].x, run[0].y])
+		if bool(result["ok"]):
+			var payload: Dictionary = result["payload"]
+			road_tiles_built += int(payload.get("tiles", run.size()))
+			road_spend += int(payload.get("cost", 0))
 		return result
 
 	## What one repair would cost, read straight off `cmd_repair_building`'s own
@@ -2199,6 +2290,14 @@ class Curriculum extends Balanced:
 				return int((quote.get("payload", {}) as Dictionary).get("price", 0))
 			"place_water_component":
 				return api.water_quote(str(obj["kind_id"]), 1)
+			"stamp_road_tiles":
+				# The WHOLE run, because doc 10 lays it as one command and one
+				# bill: an agent that earmarked one tile's price would start a
+				# run it could not finish paying for.
+				return api.road_quote(_road_tiles_wanted(api, obj))
+			"repair_buildings":
+				var worst := api.maintenance_queue(1.0)
+				return 0 if worst.is_empty() else api.repair_quote(String(worst[0]["sim_id"]))
 		return 0
 
 	func _serve(api: Api, obj: Dictionary) -> bool:
@@ -2252,7 +2351,23 @@ class Curriculum extends Balanced:
 				return bool(api.buy_block(block).get("ok", false))
 			"place_water_component":
 				return bool(api.place_water_component(str(obj["kind_id"]), 1).get("ok", false))
+			"stamp_road_tiles":
+				# One run, the length the objective still needs. Doc 10 bills the
+				# FRESH tiles, so a run that overlaps nothing is billed in full —
+				# which is the decision the objective is teaching.
+				return bool(api.place_road(_road_tiles_wanted(api, obj)).get("ok", false))
+			"repair_buildings":
+				var worst := api.maintenance_queue(1.0)
+				if worst.is_empty():
+					return false
+				return bool(api.repair(String(worst[0]["sim_id"])).get("ok", false))
 		return false
+
+	## How much of a road objective is left to lay, floored at one tile. The
+	## agent lays the REMAINDER in one run rather than the whole target, so a
+	## partially-met objective is finished rather than restarted.
+	static func _road_tiles_wanted(_api: Api, obj: Dictionary) -> int:
+		return maxi(1, int(ceil(float(obj["target"]) - float(obj["current"]))))
 
 
 class Factory extends RefCounted:
@@ -2500,6 +2615,10 @@ class Runner extends RefCounted:
 			"goal_level_end": int(last.get("goal_level", 0)),
 			"water_placed": api.water_placed,
 			"water_spend": api.water_spend,
+			## Doc 92 §17.6's other half: the tiles a strategy laid ITSELF,
+			## separate from doc 09's block template, and what they cost.
+			"road_tiles_built": api.road_tiles_built,
+			"road_spend": api.road_spend,
 			"blackout_minutes_total": blackout_total,
 			## Fraction of all building-time spent without power — the shape of
 			## `blackout_minutes_total` normalised by how big the city got.

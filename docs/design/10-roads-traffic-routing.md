@@ -1358,3 +1358,36 @@ Rulings addressed to doc 10 by the adversarial verification pass (docs 96/97). R
 **Numbers that moved (Round 2).** `condition field 0..100 → 0.0..1.0` · `street base decay 0.90 pts/gd → 0.0090 /gd` · `avenue base decay 0.60 pts/gd → 0.0060 /gd` · `street quiet decay 1.14 pts/day → 0.011363 /day` · `street busy+snow decay 2.59 pts/day → 0.02592 /day` · `avenue busy decay 1.00 pts/day → 0.00996 /day` · `COND_ACC_K 0.004 → 0.40` · `COND_ACC threshold 75 → 0.75` · `damage deltas −8 / −15 / −4 / −6 / −40 → −0.08 / −0.15 / −0.04 / −0.06 / −0.40` · `tier bounds 75 / 50 / 25 / 20 → 0.75 / 0.50 / 0.25 / 0.20` · `auto-repair thresholds [0,25,40,55] → [0, 0.25, 0.40, 0.55]` · `under-construction seed 10 → 0.10` · `job_completed result 100 → 1.0` · `condition_accum example 0.42 → 0.0042` · `street build cost $1,800 → doc 03` · `avenue build cost $5,200 → doc 03` · `street→avenue upgrade $4,000/tile → doc 03` · `street upkeep $2.20/tile/gd → deleted (none)` · `avenue upkeep $6.00/tile/gd → deleted (none)` · `demolish refund 15% → doc 03` · `ROAD_REPAIR_COST_BASE $600 → doc 03 (C-16)` · `block replacement cost $360,600 → doc 03` · `block upkeep $419.40/gd → deleted (none)` · `core upkeep $157.28/gh → deleted (none)` · `12-tile repair price $4,320 → doc 03 quotes it` · `— → block baseline decay 0.6030 tile-fractions/gd` · `— → core repair accrual 0.28548 tile-fractions/gh`.
 
 **Numbers that did not move under Round 2, and why.** `F_cond` at every tier (1.000 / 1.038 / 1.150 / 1.338 / 1.588), `condition_hazard_mult` at every sample (1.26 / 1.08 / 1.00), the ~88-game-day street decay life, worked example C's totals (39.105 / 24.219 / 79.92 gm), worked example F's work (2.52 ch = 252 work units) and its three wall times (3.13 / 4.48 / 4.20 gh), the block template's 97.5 crew-hours and 9,750 work units, and the COLLAPSED rebuild work (50 / 140 work units) are all unchanged: RR-3's rescale is exact by construction, and RR-2 removed prices without touching a single work or physics constant.
+
+---
+
+## 11. The player's road tools (Wave 10, 2026-08-20)
+
+§2.13's three verbs shipped in Wave 5 and **no UI could reach one** (doc 92
+§17.6). They are now the build sheet's `Roads` tab, and this section records the
+UI contract they are driven under so a retune of the physics above can be
+checked against the surface below.
+
+| Card | Verb | What the bar quotes |
+|---|---|---|
+| `Street` | `cmd_place_road(tiles, CLASS_STREET)` | doc 03 §2.13(d)'s per-tile build price on the card face; the **fresh**-tile total once a run is drawn. |
+| `Avenue` | `cmd_place_road(tiles, CLASS_AVENUE)` | same, at the avenue price. |
+| `Widen` | `cmd_upgrade_road(tiles)` | `STREET_TO_AVENUE` per eligible tile. |
+| `Remove` | `cmd_demolish_road(tiles)` | the **refund**, at the class each tile actually carries. |
+
+**The run is an L, Manhattan, longest leg first** (doc 12 §2.7), ordered from the
+anchor, capped at `data/ui.json.placement.max_run_tiles` = 48 by truncating the
+far end so the preview is always exactly the run the commit lays. Every verdict
+is the command's own `preview = true` answer, run at the ghost's revalidation
+rate — the UI re-implements none of §2.13's checks and cannot disagree with them.
+
+**The ghost dims what it is not being billed for.** §2.13 keeps build, upgrade
+and demolish as three verbs and each passes silently over the tiles the other two
+own; the run ghost reads `road_class_at` per tile (O(1)) and draws an untouched
+tile at a third of the alpha, so a sweep across three tiles of existing street
+reads as *five billed of eight crossed* before the player commits.
+
+**What still has no door.** `RoadNetwork.cmd_road_repair(tiles)` exists on this
+system and has no `CitySim.cmd_*` wrapper, so there is no player verb to surface
+and none was invented; road condition is bought back by §2.12's automatic repair
+policy alone. Recorded as an open question rather than a gap in the tab.

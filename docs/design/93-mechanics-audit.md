@@ -54,6 +54,15 @@ the same construction path buildings use, and save-round-trip tests
 | `cmd_upgrade_water_component(node)` | doc 05 §6 | Capacity, priced on doc 03 §2.3's own upgrade curve, gated by doc 04's power headroom — which is where the player meets the cascade from the supply side. |
 | `cmd_isolate_water_main` / `cmd_restore_water_main` | doc 05 §2.12 | The tactical pair: trade a neighbourhood's taps for the fire's hydrants. |
 
+**Surfaced, Wave 10.** Every verb in the table above now has a door the player
+can touch — the build sheet's `Roads` tab and the two water-main cards, both
+driven by doc 12 §2.7's drag-path tool (report 98 RR-26, doc 93 §G2). The three
+per-building verbs `cmd_repair_building`, `cmd_set_priority` and
+`cmd_demolish_building` landed in the same wave, as §2.9 item 6's actions row.
+Still doorless from this table: `cmd_upgrade_water_component`,
+`cmd_isolate_water_main` and `cmd_restore_water_main`, which want a water-NODE
+panel that doc 12's screen map does not have.
+
 **Still unshipped, and now the binding constraint** (Wave-5 measurement, doc 92
 F-11): doc 04 §4's `place_power_component` for anything but the transformer, and
 `route_feeder`. The whole city's load runs through the two class-1 feeders doc 09
@@ -487,16 +496,59 @@ directly. Nothing else in 27 gates moved.
 
 ### G2. A curriculum may never ask for a verb the player cannot perform
 
-`cmd_place_road`, `cmd_place_water_main` and `cmd_repair_building` are shipped,
-tested sim verbs with **no UI surface** (doc 92 §17.6). `GoalSystem` therefore
-carries `stamp_road_tiles`, `place_water_main` and `repair_buildings` as
-evaluator kinds and **no level in `data/goals.json` uses one**.
+**✅ THE DOORS EXIST (Wave 10, 2026-08-20).** The rule stands; the three verbs it
+was blocking do not need it any more.
+
+*The finding, as written in Wave 9.* `cmd_place_road`, `cmd_place_water_main` and
+`cmd_repair_building` were shipped, tested sim verbs with **no UI surface** (doc
+92 §17.6). `GoalSystem` carried `stamp_road_tiles`, `place_water_main` and
+`repair_buildings` as evaluator kinds and no level in `data/goals.json` used one.
 
 This is a rule and not a note, because the failure mode is the worst one a
 tutorial has: the game ends its eleven-step onboarding by pointing at a checklist
-whose next item cannot be done. `tests/test_goals_system.gd` holds the file to a
-whitelist of reachable kinds, so authoring one of the three is a test failure
-rather than a wall the player finds.
+whose next item cannot be done.
+
+*What Wave 10 shipped* (report 98 RR-26, doc 12 §2.7 / §2.9 deltas D-28…D-36):
+
+| Verb | Door |
+|---|---|
+| `cmd_place_road` | build sheet ▸ **ROADS** tab ▸ `Street` / `Avenue`, drag-path |
+| `cmd_upgrade_road` | ROADS ▸ `Widen` |
+| `cmd_demolish_road` | ROADS ▸ `Remove` (quotes a refund) |
+| `cmd_place_water_main` | infrastructure ▸ `Water Main` / `Trunk Main`, drag-path |
+| `cmd_repair_building` | building panel ▸ actions row, **and** the upgrade checklist's `Fix this →` on `E_CONDITION` |
+| `cmd_set_priority` | building panel ▸ actions row (doc 04 §2.4's four tiers) |
+| `cmd_demolish_building` | building panel ▸ actions row, hold-to-confirm |
+
+*The rule's teeth moved with it.* `tests/test_goals_system.gd`'s whitelist is now
+the **full** evaluator table, so it can no longer catch the failure it was written
+for on its own. A second assertion took over the job:
+`test_every_evaluator_kind_is_accounted_for_by_a_surface` walks
+`GoalSystem.EVENT_KINDS ∪ STATE_KINDS ∪ KIND_SURVIVE` and fails on any kind the
+whitelist does not name. An evaluator written without a door now fails a test one
+wave *earlier* than a goal row that names it — which is where the rule wanted to
+be all along.
+
+### G4. `place_water_main` stays reachable and unused (Wave 10)
+
+The curriculum gained `l3_streets` (4 tiles of street) and `l4_repairs` (2
+repairs) the day their doors landed, and it did **not** gain a water-main row
+even though `place_water_main` is now performable.
+
+**The reason is pedagogical and it is measured.** Doc 05 §6's
+`cmd_place_water_component` already runs a `service` lateral from the nearest live
+main to every pump the player places — so at level 5, where the curriculum
+teaches water, the taught action *already* connects itself and a main objective
+would teach reach the city does not yet need. The `curriculum` agent confirms it:
+across three seeds × 21 game-days it completes L5's $45,000 pump with **zero**
+main tiles laid and doc 05's authored topology still covering the demand (doc 92
+§23.3). A row asking for a main there would be busywork with a $286/tile price on
+it.
+
+The row becomes worth authoring the wave the water topology stops covering a
+grown city — doc 92 §17.6's second named measurement, still open. Until then the
+verb has a door, the evaluator has a surface, and the curriculum has a reason not
+to use it.
 
 ### G3. The curriculum is five levels, and the sixth teaching beat is the tutorial
 

@@ -1475,7 +1475,19 @@ func test_gate_20_the_city_level_ladder_is_reachable() -> void:
 ## it did not get slower underneath, and level 5 is asserted separately so that
 ## stays provable rather than assumed.
 ##
-## Measured, seeds 1337 / 4242 / 9001 — the game-hour each level was earned:
+## **RE-MEASURED, Wave 10 (doc 92 §23.3).** `data/goals.json` gained two rows —
+## `l3_streets` (4 tiles of doc 10 street) and `l4_repairs` (2 repairs) — the day
+## the drag-path tool and the building panel's actions row gave those verbs a
+## door (doc 93 §G2's amendment). Both sides of the change were measured on the
+## same instrument, `tools/measure_curriculum.gd`, which drives this file's own
+## `BalanceGateRig`; the game-hour each level was earned:
+##
+##
+## MERGED (Wave 9 integration): the two tables below were measured on sibling
+## branches — the first with the level-6 rung and no street/repair rows, the
+## second with the street/repair re-arc and no level 6 — and BOTH predate the
+## routing epoch (doc 93 §H) landing beside them. The combined-tree measurement
+## is the one the assertions below are held against; doc 92 §25.3 carries it.
 ##
 ## | level | 1337 | 4242 | 9001 | duration (game-hours) |
 ## |---|---|---|---|---|
@@ -1492,6 +1504,28 @@ func test_gate_20_the_city_level_ladder_is_reachable() -> void:
 ## saving beat with a copper purchase in the middle of it. Doc 92 §24.8 is the
 ## measurement and §24.9 the ruling; the graduation level is allowed to be the
 ## longest, and this one is the top of the ladder.
+##
+## | level | before (1337/4242/9001) | after | duration before → after |
+## |---|---|---|---|
+## | 1 | 13 / 13 / 14 | 13 / 13 / 14 | 13–14 → 13–14 (untouched) |
+## | 2 | 51 / 54 / 55 | 51 / 54 / 55 | 38–41 → 38–41 (untouched) |
+## | 3 | 97 / 98 / 103 | 111 / 115 / 119 | 44–48 → 60–64 |
+## | 4 | 153 / 150 / 192 | 175 / 179 / 192 | 52–89 → 64–73 |
+## | 5 | 345 / 351 / 312 | 371 / 362 / 351 | 120–201 → 159–196 |
+##
+## Levels 1 and 2 are **bit-identical**, which is the shape the change should
+## have: the rows landed on 3 and 4. Level 3 costs 14–16 game-hours more, and
+## that is the price of $7,200 of street on a treasury that is still thin —
+## `l3_streets` is the first objective in the arc the player has to SAVE for
+## twice over, because `Curriculum` earmarks the whole run (doc 10 bills a run as
+## one command). The day bounds below did not have to move: level 3 still lands
+## on game-day 4 on every seed against a ruled bound of 6, and the arc still
+## finishes on game-day 14–16 against the 21-game-day horizon.
+##
+## The `18 / 59 / 100 / 148 / 329` table this docstring carried before did not
+## reproduce at this fork on either side of the change; it was recorded a wave
+## earlier and the Wave-8 rules epoch (doc 93 §E3) moved underneath it. The
+## before/after pair above is measured, at this fork, with one instrument.
 func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 	var top := GoalSystem.top_level()
 	assert_true(top >= 1, "there is a curriculum to complete")
@@ -1510,6 +1544,14 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 		# at all (doc 92 §17.6 recorded that none did).
 		assert_true(int(summary["water_placed"]) >= 1,
 				"seed %d never afforded its own water works" % int(seed_value))
+		# §17.6's other half, closed in Wave 10: the taught route now lays its
+		# own streets. This is the assertion that would catch a curriculum row
+		# whose verb has quietly lost its door again — the agent drives
+		# `cmd_place_road` only because an objective asks for it.
+		assert_true(int(summary["road_tiles_built"]) >= 1,
+				"seed %d never laid a road tile of its own" % int(seed_value))
+		assert_true(int(summary["repaired"]) >= 2,
+				"seed %d never bought a repair" % int(seed_value))
 
 		var first_day_at: Dictionary = {}
 		for row_variant in (summary["day_rows"] as Array):
@@ -1531,15 +1573,21 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 		# is one real minute at 1× (`SimHost.GAME_MS_PER_REAL_MS` is 60), so a
 		# game-day is a 24-minute session. Level 1 has to land inside the first
 		# of those, or the tutorial hands the player to a screen with nothing on
-		# it; measured at game-hour 18 on every seed, which is day 1.
+		# it; measured at game-hour 13–14 on every seed, which is day 0, and
+		# untouched by the Wave-10 re-arc.
 		assert_true(int(first_day_at[1]) <= 1,
 				("seed %d took %d game-days to teach the first level; the ruled "
-						+ "bound is 1 (measured game-hour 18 on all three seeds)")
+						+ "bound is 1 (measured game-hour 13–14 on all three seeds)")
 						% [int(seed_value), int(first_day_at[1])])
 		if top >= 3:
+			# HELD at 6 through the Wave-10 re-arc. Level 3 gained the street
+			# row and moved from game-hour 97–103 to 111–119; both sides land on
+			# game-day 4, so the bound is measured with two days of margin on
+			# each side and is not re-fitted to the newer number.
 			assert_true(int(first_day_at[3]) <= 6,
 					("seed %d took %d game-days to reach curriculum level 3; the "
-							+ "ruled bound is 6 (measured 4–5)")
+							+ "ruled bound is 6 (measured 4 on all three seeds "
+							+ "after the Wave-10 re-arc, 4–5 before it)")
 							% [int(seed_value), int(first_day_at[3])])
 		# **The fifth level still lands inside the old horizon**, and asserting it
 		# separately is what keeps the re-fit honest: the arc got longer at the

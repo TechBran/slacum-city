@@ -14,12 +14,21 @@ extends Control
 signal closed
 signal upgraded(result: Dictionary)             ## `upgrade_building` answered
 signal fix_requested(fix_target: Dictionary)    ## `Fix this →` on a blocker row
+## §2.9 item 6's three verbs. Each carries the sim's own `{ok, reason_code,
+## payload}` so the shell can re-read the city rather than guess what moved.
+signal repaired(result: Dictionary)             ## `cmd_repair_building` answered
+signal priority_set(result: Dictionary)         ## `cmd_set_priority` answered
+signal demolished(sim_id: String, result: Dictionary)  ## `cmd_demolish_building`
 
 const PALETTE_TYPE := "Palette"
 ## §2.9's `L1 L2 ▮L3▮ L4 L5` level pips — glyphs, not copy (A5 redundancy).
 const PIP_ON := "▮"
 ## Every panel in the deck closes with this glyph and names itself in the tooltip.
 const CLOSE_GLYPH := "✕"
+## §2.9 item 6: `Demolish` is hold-to-confirm, because it is the one button in
+## the deck that cannot be undone. The window is `data/ui.json.layout`'s, with
+## the doc's own 800 ms as the floor if the key is missing.
+const HOLD_TO_CONFIRM_MS_DEFAULT := 800.0
 
 var config: UIConfig
 var controller: BuildController
@@ -35,10 +44,24 @@ var _upgrade_note: Label
 var _checklist: VBoxContainer
 var _upgrade_button: Button
 
+## §2.9 item 6's actions row, built in code below `UpgradeButton`.
+var _actions: VBoxContainer
+var _repair_button: Button
+var _repair_note: Label
+var _priority_row: HBoxContainer
+var _priority_note: Label
+var _demolish_button: Button
+var _demolish_note: Label
+
 var _sim_id := ""
 var _touch_min := 48.0
 var _spacing := 8.0
 var _view: Dictionary = {}
+var _hold_ms := HOLD_TO_CONFIRM_MS_DEFAULT
+## Seconds the demolish button has been held, and the label it is overwriting
+## while it counts. `< 0` when nothing is being held.
+var _hold_elapsed := -1.0
+var _priority_buttons: Dictionary = {}   # class name -> Button
 
 
 func setup(cfg: UIConfig = null, p_controller: BuildController = null) -> void:
@@ -53,6 +76,8 @@ func setup(cfg: UIConfig = null, p_controller: BuildController = null) -> void:
 			UIConfig.get_num(defaults, "text_scale", 1.0),
 			bool(defaults.get("larger_touch_targets", false))))
 	_spacing = UIConfig.get_num(config.layout(), "touch_spacing_min_dp", 8.0)
+	_hold_ms = maxf(1.0, UIConfig.get_num(config.layout(), "hold_to_confirm_ms",
+			HOLD_TO_CONFIRM_MS_DEFAULT))
 	_bind_nodes()
 	_build_static()
 	close()
@@ -118,6 +143,64 @@ func _build_static() -> void:
 			grid.add_theme_constant_override(&"h_separation", int(_spacing))
 	if _checklist != null:
 		_checklist.add_theme_constant_override(&"separation", int(_spacing))
+	_build_actions()
+
+
+## §2.9 item 6 — `Repair` · `Priority` · `Demolish`, built in code (doc 12 test
+## 19: no `theme_override_*` in a scene file) and appended below the upgrade
+## block, which is the order the doc lists them in.
+##
+## Idempotent: `setup()` runs twice in the real shell, once from
+## `UIRoot.bring_up_screens()` and once from `game/main.gd`.
+func _build_actions() -> void:
+	if _upgrade_button == null:
+		return
+	var body := _upgrade_button.get_parent() as Control
+	if body == null:
+		return
+	var existing := body.get_node_or_null("Actions") as VBoxContainer
+	if existing != null:
+		# Second `setup()` pass: re-bind rather than rebuild, exactly as
+		# `_bind_nodes()` re-binds the authored half.
+		_actions = existing
+		_repair_button = existing.get_node_or_null("Repair") as Button
+		_repair_note = existing.get_node_or_null("RepairNote") as Label
+		_priority_note = existing.get_node_or_null("PriorityNote") as Label
+		_priority_row = existing.get_node_or_null("Priority") as HBoxContainer
+		_demolish_button = existing.get_node_or_null("Demolish") as Button
+		_demolish_note = existing.get_node_or_null("DemolishNote") as Label
+		return
+	_actions = VBoxContainer.new()
+	_actions.name = "Actions"
+	_actions.add_theme_constant_override(&"separation", int(_spacing))
+	body.add_child(_actions)
+
+	_repair_button = UIWidgets.button("Repair", _text("ui_building_repair", "REPAIR"),
+			_text("ui_building_repair", "REPAIR"),
+			Vector2(_touch_min * 2.0, _touch_min), &"GhostButton")
+	_repair_button.pressed.connect(request_repair)
+	_actions.add_child(_repair_button)
+	_repair_note = UIWidgets.label("RepairNote", "", &"LegendRow", true)
+	_actions.add_child(_repair_note)
+
+	_priority_note = UIWidgets.label("PriorityNote", "", &"LegendRow", true)
+	_actions.add_child(_priority_note)
+	_priority_row = HBoxContainer.new()
+	_priority_row.name = "Priority"
+	_priority_row.add_theme_constant_override(&"separation", int(_spacing))
+	_actions.add_child(_priority_row)
+
+	_demolish_button = UIWidgets.button("Demolish",
+			_text("ui_building_demolish", "DEMOLISH"),
+			_text("ui_building_demolish_hint", "Hold to confirm"),
+			Vector2(_touch_min * 2.0, _touch_min), &"DangerButton")
+	# Hold-to-confirm, so this is press/release rather than `pressed` — the one
+	# button in the deck that cannot be undone must not fire on a mis-tap.
+	_demolish_button.button_down.connect(_on_demolish_down)
+	_demolish_button.button_up.connect(_on_demolish_up)
+	_actions.add_child(_demolish_button)
+	_demolish_note = UIWidgets.label("DemolishNote", "", &"LegendRow", true)
+	_actions.add_child(_demolish_note)
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +285,7 @@ func _render(v: Dictionary) -> void:
 	_render_vitals(v)
 	_render_coverage(v)
 	_render_upgrade(v)
+	_render_actions(v)
 
 
 ## `L1 L2 ▮L3▮ L4 L5` (§2.9), the doc's row verbatim: only the current level is
@@ -323,6 +407,158 @@ func _build_check_row(entry: Variant) -> HBoxContainer:
 
 
 # ---------------------------------------------------------------------------
+# §2.9 item 6 — the actions row
+# ---------------------------------------------------------------------------
+
+## `Repair` · `Priority` · `Demolish`. Every value comes from
+## `BuildController.actions_view()`, which asks the three commands themselves
+## with `preview = true`; this method decides only what is on screen.
+func _render_actions(v: Dictionary) -> void:
+	if _actions == null:
+		return
+	var actions: Dictionary = v.get("actions", {})
+	_render_repair(actions.get("repair", {}))
+	_render_priority(actions.get("priority", {}))
+	_render_demolish(actions.get("demolish", {}))
+
+
+## The repair affordance. It is **only drawn when there is something to buy** —
+## doc 02 §2.6 refuses `E_NOT_DAMAGED` at condition 1.00 — and when it is drawn
+## it always names the price and where the condition will land, because "repair"
+## with no number is a button, not a decision.
+func _render_repair(repair: Dictionary) -> void:
+	if _repair_button == null or _repair_note == null:
+		return
+	var available := bool(repair.get("available", false))
+	_repair_button.visible = available
+	_repair_note.visible = available
+	if not available:
+		return
+	_repair_button.text = _text_args("ui_building_repair_cost",
+			{"cost": str(repair["cost_text"])}, _text("ui_building_repair", "REPAIR"))
+	_repair_button.tooltip_text = _repair_button.text
+	_repair_button.disabled = not bool(repair["ok"])
+	var reason: Dictionary = repair.get("reason", {})
+	if not reason.is_empty():
+		_repair_note.text = str(reason["body"])
+		_apply_state_color(_repair_note, StringName(str(reason["state"])))
+		_repair_note.tooltip_text = _repair_note.text
+		return
+	# `85 % → 100 %`: the condition it is at and the condition doc 02 §2.12's
+	# repair target will actually restore it to, which is 0.85 and not 1.00 once
+	# a building has been DAMAGED rather than merely worn.
+	_repair_note.text = _text_args("ui_building_repair_note",
+			{"from": str(repair["condition_text"]), "to": str(repair["target_text"])},
+			"%s → %s" % [str(repair["condition_text"]), str(repair["target_text"])])
+	_repair_note.tooltip_text = _repair_note.text
+	_apply_state_color(_repair_note, &"")
+
+
+## Doc 04 §2.4's shed tier, as a segmented row — one 48 dp target per class, the
+## live one painted the way every other "this one is selected" control in the
+## deck is (`BuildSheet.select_category`, the drawer's sort segments).
+func _render_priority(priority: Dictionary) -> void:
+	if _priority_row == null or _priority_note == null:
+		return
+	var available := bool(priority.get("available", false))
+	_priority_row.visible = available
+	_priority_note.visible = available
+	if not available:
+		BuildingPanel._clear_children(_priority_row)
+		_priority_buttons.clear()
+		return
+	_priority_note.text = _text("ui_building_priority_title", "")
+	_priority_note.tooltip_text = _priority_note.text
+	var classes: Array = priority.get("classes", [])
+	var current := str(priority.get("current", ""))
+	if _priority_buttons.size() != classes.size():
+		BuildingPanel._clear_children(_priority_row)
+		_priority_buttons.clear()
+		for entry: Variant in classes:
+			var priority_class := str(entry)
+			var label := _text(BuildController.priority_key(priority_class),
+					priority_class.capitalize())
+			var button := UIWidgets.button("Priority_" + priority_class, label, label,
+					Vector2(_touch_min, _touch_min), &"TabButton")
+			button.toggle_mode = true
+			button.pressed.connect(_on_priority_pressed.bind(priority_class))
+			_priority_row.add_child(button)
+			_priority_buttons[priority_class] = button
+	for id: Variant in _priority_buttons:
+		var button: Button = _priority_buttons[id]
+		var selected := str(id) == current
+		button.set_pressed_no_signal(selected)
+		UIWidgets.paint_state(self, button, HudModel.STATE_NORMAL if selected else &"")
+
+
+## §2.9 item 6's hold-to-confirm. The refund is quoted before the hold starts,
+## broken out into what the standing capital returns and what the construction
+## queue gives back on a job it is cancelling — those are two different pieces of
+## news and a player about to lose a half-built tower should read both.
+func _render_demolish(demolish: Dictionary) -> void:
+	if _demolish_button == null or _demolish_note == null:
+		return
+	var available := bool(demolish.get("available", false))
+	_demolish_button.visible = available
+	_demolish_note.visible = available
+	if not available:
+		return
+	_demolish_button.disabled = not bool(demolish["ok"])
+	_demolish_button.text = _text("ui_building_demolish", "DEMOLISH")
+	_demolish_button.tooltip_text = _text("ui_building_demolish_hint", "Hold to confirm")
+	var reason: Dictionary = demolish.get("reason", {})
+	if not reason.is_empty():
+		_demolish_note.text = str(reason["body"])
+		_apply_state_color(_demolish_note, StringName(str(reason["state"])))
+		_demolish_note.tooltip_text = _demolish_note.text
+		return
+	var key := "ui_building_demolish_note_jobs" if int(demolish["cancelled_jobs"]) > 0 \
+			else "ui_building_demolish_note"
+	_demolish_note.text = _text_args(key, {"refund": str(demolish["refund_text"]),
+			"jobs": int(demolish["cancelled_jobs"])}, str(demolish["refund_text"]))
+	_demolish_note.tooltip_text = _demolish_note.text
+	_apply_state_color(_demolish_note, &"")
+
+
+func _on_demolish_down() -> void:
+	if _demolish_button == null or _demolish_button.disabled:
+		return
+	_hold_elapsed = 0.0
+	set_process(true)
+
+
+func _on_demolish_up() -> void:
+	if _hold_elapsed >= 0.0:
+		# Released early: the hold is abandoned and the label goes back to the
+		# word. A partial hold demolishes nothing and says nothing.
+		_hold_elapsed = -1.0
+		_render_demolish((_view.get("actions", {}) as Dictionary).get("demolish", {}))
+	set_process(false)
+
+
+## Counts the hold out and fires once. Runs only while a finger is down, which is
+## why `set_process` is toggled rather than left on — a panel that is not being
+## held has nothing to advance.
+func _process(delta: float) -> void:
+	if _hold_elapsed < 0.0 or _demolish_button == null:
+		set_process(false)
+		return
+	_hold_elapsed += delta * 1000.0
+	var fraction := clampf(_hold_elapsed / _hold_ms, 0.0, 1.0)
+	if fraction < 1.0:
+		# The button counts itself down, so the hold is visible on the control
+		# being held rather than somewhere else on the panel (A5: the progress is
+		# in the label, not only in a colour).
+		_demolish_button.text = _text_args("ui_building_demolish_holding",
+				{"percent": HudModel.percent_text(fraction * 100.0)},
+				_text("ui_building_demolish", "DEMOLISH"))
+		return
+	_hold_elapsed = -1.0
+	set_process(false)
+	request_demolish()
+
+
+# ---------------------------------------------------------------------------
 # Actions
 # ---------------------------------------------------------------------------
 
@@ -336,7 +572,54 @@ func request_upgrade() -> void:
 	upgraded.emit(result)
 
 
+func request_repair() -> void:
+	if controller == null or _sim_id == "":
+		return
+	var result := controller.repair(_sim_id)
+	refresh()
+	repaired.emit(result)
+
+
+func _on_priority_pressed(priority_class: String) -> void:
+	if controller == null or _sim_id == "":
+		return
+	var result := controller.set_priority(_sim_id, priority_class)
+	refresh()
+	priority_set.emit(result)
+
+
+## The hold landed. The panel CLOSES on success, because the thing it was
+## describing is gone and a stale panel over an empty lot is worse than no panel.
+func request_demolish() -> void:
+	if controller == null or _sim_id == "":
+		return
+	var target := _sim_id
+	var result := controller.demolish(target)
+	if bool(result["ok"]):
+		close()
+	else:
+		refresh()
+	demolished.emit(target, result)
+
+
+## `Fix this →`. `E_CONDITION` is answered HERE rather than by the shell: its fix
+## target is the building the player already has open, so focusing the camera on
+## it — which is all the shell can do — moves nothing. The row's remedy is a
+## repair, so the row buys one.
 func _on_fix_pressed(fix_target: Dictionary) -> void:
+	if StringName(str(fix_target.get("kind", ""))) == RequirementFormatter.FIX_REPAIR:
+		if controller == null or _sim_id == "":
+			return
+		# **Not `request_repair()`.** The button that fired this lives INSIDE the
+		# checklist, and a refresh rebuilds the checklist — which frees the
+		# emitter while its own signal is still being emitted ("Object was freed
+		# or unreferenced while a signal is being emitted from it"). The command
+		# runs now, because that is what the player asked for; the re-render
+		# waits for the frame to finish.
+		var result := controller.repair(_sim_id)
+		call_deferred("refresh")
+		repaired.emit(result)
+		return
 	fix_requested.emit(fix_target)
 
 
