@@ -3,13 +3,19 @@ extends SceneTree
 ## edit loop. `tests/run_tests.gd` is still the suite of record.
 ##
 ##   godot --headless --path . -s res://tools/run_one.gd -- test_ui_incidents.gd
+##
+## Takes the gate's two guarantees, because a scratch runner that lies is worse
+## than no scratch runner: `user://` is per-process (`UserDirIsolation`), and a
+## method that ran without asserting anything is a failure (`SimTest.end_test`).
 
 func _initialize() -> void:
+	var isolation := UserDirIsolation.new().begin()
 	var files: Array[String] = []
 	for a in OS.get_cmdline_user_args():
 		files.append(String(a))
 	var total := 0
 	var failures: Array[String] = []
+	var silent: Array[String] = []
 	for file in files:
 		var script: GDScript = load("res://tests/" + file)
 		if script == null or not script.can_instantiate():
@@ -25,8 +31,14 @@ func _initialize() -> void:
 			total += 1
 			suite.begin_test("%s::%s" % [file, n])
 			suite.call(n)
+			suite.end_test()
 		failures.append_array(suite.failures())
-	print("tests: %d  failed: %d" % [total, failures.size()])
+		silent.append_array(suite.silent())
+	print("tests: %d  failed: %d  silent: %d" % [total, failures.size(), silent.size()])
 	for f in failures:
 		printerr("FAIL " + f)
-	quit(1 if not failures.is_empty() else 0)
+	for n in silent:
+		printerr("SILENT " + n + " — ran without asserting anything")
+	var ok := failures.is_empty() and silent.is_empty()
+	isolation.end()
+	quit(0 if ok else 1)

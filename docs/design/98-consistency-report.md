@@ -1059,3 +1059,216 @@ The asset test is the shape the other three should take, and its own first run i
 **Consequential and general: the three `D-nn` id spaces are ended.** Doc 91, doc 12's delta table and doc 13 §7's device matrix all number defects `D-nn` in unrelated sequences, which has already forced one renumbering (2026-08-19, the second `D-14`/`D-15` collision in two waves). From this date **doc 91 files `A91-D-nn`**, and the number CONTINUES doc 91's own sequence rather than restarting — the Wave-10 rows are `A91-D-19` … `A91-D-28`, because `A91-D-01` sitting beside `D-1` would be the same ambiguity in a new coat. Existing rows keep their ids, because renaming them would break every cross-reference in `docs/` and in code comments a third time. Doc 12 and doc 13 should take `A12-D-nn` and `A13-D-nn` when they next file. **Reading rule: an unprefixed `D-nn` belongs to whichever document you found it in.**
 
 **And one thing this ruling explicitly does not do.** It does not re-open any balance number. The re-audit changed no `sim/`, no `data/`, no `game/`: `tools/profile_sim.gd --hash-only` reports `18e70625e633c254…` / `4c3c52cdb4c5a3cc…` on the founding city and `d6b2509c179987d3…` / `bf8dc7282758843b…` on the benchmark city at `a892315`, before and after, and the 28 gates are untouched. **A91-D-19 is the one finding with a balance consequence and it is a statement about coverage, not about tuning**: every figure doc 92 has ever published was measured on `standard`, because `standard` is the only preset the code can reach.
+
+---
+
+## 24. WAVE 12 — the ledger closes (binding)
+
+*Five debts that every wave filed and no branch owned. Docs, tools and tests
+only: `sim/`, `data/` and `game/` are untouched, and `tools/profile_sim.gd
+--hash-only` reports `18e70625e633c254…` / `4c3c52cdb4c5a3cc…` on the founding
+city and `d6b2509c179987d3…` / `bf8dc7282758843b…` on the benchmark city, before
+and after.*
+
+### RR-48 — A digest published from a branch is a statement about that branch; quote the fork or quote the merge (doc 92 §24.12, §25.2, §27.3)
+
+Doc 92 §24.12 and §25.2 published four `profile_sim` digests each and **none of
+them reproduces on the integrated tree**. §27.3 caught that, could not pay it,
+and filed it. Paid here at `28b9550`, and the diagnosis is not "somebody
+mistyped": both sections forked from `85e25aa`, both measured correctly *there*,
+and `85e25aa` returns exactly the digests they publish — starter
+`2231df75…` / `bffdf583…`, bench `a06e7d43…` / `224a900d…`. The identity
+ARGUMENTS in both sections are unaffected; only the absolute values are a
+branch's.
+
+The mover is one commit, found by `--hash-only` along the first-parent chain:
+**all four move at `1b2852b`**, the Wave-9 routing-enablement merge (branch
+`d66a0e5`, which self-declares `CitySim.SAVE_SECTION_VERSION` 4). The starter
+pair has not moved through the six integrations since — including the
+upgrade-timing fix, which is §27.3's own point measured over a longer arc: the
+identity pass issues no player command, so a change to what a command costs
+cannot reach it. The bench pair moves once more, at `675226e`, whose own branch
+report published its digests as unmoved against ITS base — **two branches each
+hash-neutral against `85e25aa` composed into a move on the merged tree.**
+
+**Ruling: a digest is only a baseline if the commit it was taken at is named
+beside it, and a hash-neutrality claim made on a branch does not survive the
+merge unless it is re-taken there.** Any section quoting a `state_hash` names its
+fork. Any wave that publishes "unchanged" from a branch owes the integrator a
+re-take, and the integrator is entitled to treat an unnamed digest as unverified.
+`tools/profile_sim.gd --hash-only` is seconds of wall clock; there is no excuse
+proportional to the cost.
+
+### RR-49 — A per-channel row in the 336-game-day ambient arm is a SAMPLE, not a rate (doc 92 §18.6, §18.7, §18.8, §27.7)
+
+§27.7 filed `water_main_break`'s 0.60 → 0.75 → 0.90/game-week as *"2.6 σ across
+two waves"* and asked for a dedicated arm. It got one (doc 92 §18.8), and both
+halves of the filing were answered:
+
+* **The move is one commit.** Seven full arms — `8b36323`, `64390c5`, `85e25aa`,
+  `d66a0e5`, `1b2852b`, `a892315`, `28b9550`, 12 seeds × 28 game-days each —
+  put 36 counts on every tree up to `85e25aa` and 43 on every tree from
+  `d66a0e5`. `d66a0e5` has a single parent, so the A/B either side of it is one
+  commit, and it moves **every** channel (total 308 → 321), not just water.
+  A negative control settles which half of it: `d66a0e5` with
+  `data/dispatch.json` rolled back to `85e25aa`'s — reverting
+  `max_acceptable_cost_min` 90 → 115 and the new `unanswered_abandon_h: 24.0` —
+  returns 43 / 321 / $191,595, **byte-identical to the shipped commit.** The
+  dispatch retune is not the cause; the code epoch is.
+* **It is not a rate change.** The same arm at HEAD on two more 12-seed blocks
+  disjoint from the canonical one returns `water_main_break` **29 and 27** —
+  0.60 and 0.56/game-week, one of them §18.6's own number, on the tree that
+  "drifted" to 0.90. The whole reported drift sits inside the arm's sampling
+  spread.
+
+**And the statistic was wrong.** §27.7 divided the difference by the Poisson σ of
+one of the two counts. For two independent counts over equal exposure the
+denominator is `√(n₁+n₂)`: the "2.6 σ" is **1.65 σ**, `36 → 43` is **0.79 σ**, and
+the total's `308 → 321` is **0.52 σ**.
+
+**Ruling, and it is about the instrument rather than the channel: 12 seeds × 28
+game-days is correctly sized for the TOTAL and under-powered for any single
+channel.** ~33 `water_main_break` arrivals put 1 σ at ±0.15/game-week, a sixth of
+its own mean. A pass that wants to rule on one channel quadruples the exposure
+first (48 seeds, or 112 game-days); until then a per-channel row in §18.6,
+§18.7 or §27.7 is read as a sample and never quoted as a rate.
+`data/incidents.json` is untouched and §18.7's 5–8 band stands on all three
+blocks (6.17 / 6.50 / 6.69).
+
+### RR-50 — A test method that never asserts is a FAILURE, and a test runner owns its own `user://` (doc 00, `tests/run_tests.gd`)
+
+Two agents in two waves filed the same pair of faults and neither is a bug in any
+subsystem. `user://` is keyed on `application/config/name`, which every worktree
+shares, so two suites running side by side write the same
+`~/.local/share/godot/app_userdata/Slacum City/saves` — and on 2026-08-20 an
+agent watched a **green** run in which
+`test_save_service.gd::test_a_pinned_checkpoint_is_never_swept` was killed
+mid-method by a manifest key a sibling had swept. A GDScript runtime error does
+not throw: it prints, unwinds the one function it happened in, and returns to the
+caller. So the aborted method contributed **no assert and no failure**, and from
+the runner's seat looked exactly like a pass.
+
+Both halves are closed **inside the runner**, because "remember the environment
+variable" is not a fix:
+
+* **`user://` is moved to a per-process directory in `_initialize()`** by
+  `tests/user_dir_isolation.gd`, which **all three runners** use — the gate
+  (`tests/run_tests.gd`) and both inner-loop runners (`tools/run_one_test.gd`,
+  `tools/run_one.gd`), because the inner loop is exactly where a sibling run
+  collides with you. Two mechanisms, both re-read by `OS.get_user_data_dir()` on
+  every call — measured on 4.7.2, which is what makes them usable after boot:
+  `application/config/use_custom_user_dir` + `custom_user_dir_name` (every
+  platform, supplies the per-process NAME) and `XDG_DATA_HOME` (Linux/BSD, moves
+  the ROOT into the temp dir). Godot creates the user directory exactly once, at
+  boot, so the new one is `make_dir_recursive_absolute`d — without that every
+  `FileAccess.open("user://…", WRITE)` returns `ERR_FILE_CANT_OPEN`, which is a
+  worse failure than the collision it replaces. An inherited `XDG_DATA_HOME` is
+  honoured as the root and still gets a private child underneath, so the old
+  hand-isolated invocation keeps working and becomes safe against itself.
+  `tools/run_suite.sh` is a convenience, not a requirement.
+* **`SimTest.begin_test` / `end_test` read the assert counter on both sides of
+  every method**, and one that did not move it is named in `silent()`. The runner
+  refuses to print ALL TESTS PASSED while that list is non-empty.
+
+**It found two on its first run, which is the argument for it.**
+`test_power_grid.gd::test_relay_trip_timing` was a comment and a bare `pass`
+deferring to a test that **does not exist and never has**; deleted, with its §2.5
+arithmetic moved into `test_relay_on_feeder`, which does check it.
+`test_ui_strings.gd::test_every_notification_placeholder_has_a_supplier` read
+`data/ui.json.alerts.events`, which has never existed — the rows are under
+`event_log` — so `supplied` stayed empty, every key hit a `continue` and the
+method made **zero assertions** while counting as a passing test. One word fixed
+it and the file now runs 201 asserts.
+
+**Ruling: a test that makes no assertion is a failing test.** The guard is
+covered by `tests/test_runner_guard.gd`, which drives
+`tests/fixtures/aborting_suite.gd` — a fixture that aborts on a missing key on
+purpose — with the same three calls the runner makes, and asserts that the abort,
+the early return and the honest control are told apart.
+
+**Both halves were proved in ONE experiment, and it is the experiment the fault
+deserves: two full suites, same worktree, at the same time.**
+
+| | suite A (clean tree) | suite B (one aborting `test_*.gd` added) |
+|---|---|---|
+| files / tests | 112 / 1,965 | 113 / 1,967 |
+| asserts | 508,216 | 508,215 |
+| failed | 0 | 0 |
+| **silent** | **0** | **1** — `test_aborts_on_a_missing_key`, named |
+| verdict | `ALL TESTS PASSED` | `NOT PASSED: 1 test method(s) never asserted` |
+| exit | 0 | 1 |
+| `grep -c "ALL TESTS PASSED"` | 1 | **0** |
+| `user://` | `/tmp/slacum-suite/slacum-suite-209697` | `/tmp/slacum-suite/slacum-suite-210402` |
+
+Different directories, neither touching `~/.local/share`, both correct — which
+is what the pre-Wave-12 pair of runs could not have produced. **`failed: 0` is
+no longer sufficient for green; `failed: 0` AND `silent: 0` is.**
+
+*(One consequence of adding a `class_name` script: it is only global after the
+project has been imported, so `tools/run_suite.sh` imports when the class cache
+is missing or older than any `.gd` under `sim/ game/ ui/ tests/ tools/` — warm,
+that is one `find`; the CI workflow already had the same step.)*
+
+### RR-51 — A setup script that unzips over the tree must reapply the tree's patches, and the patch set was never empty (doc 13 §2.10, §9 item 4, §10.1)
+
+Doc 13 §2.10 says every template edit lives in `tools/android_patches/*.patch`
+and is reapplied after the unzip, and doc 13 §10.1 recorded the reapply step as
+unnecessary because "the patch set is empty (as designed)". **It was not empty.**
+`tools/setup_android.sh` runs `unzip -o`, which overwrites every committed file
+the template carries, and a file-by-file comparison against 4.7.2 gives the exact
+size of the problem: **34 tracked files under `android/build/` are also in the
+zip, 33 are byte-identical, and one is ours** —
+`android/build/res/values/themes.xml`, holding §2's dark
+`android:windowBackground` and the removal of a dangling
+`@drawable/splash_branding_image` reference. Running the setup script on a
+working clone reverted both and the next debug build flashed white.
+
+Written, and verified in a worktree in three steps: a bare `unzip -o` leaves
+`git status` reporting the file modified with exactly those two hunks; the patch
+restores it byte for byte; a full `setup_android.sh` run — 215 MB unzip plus a
+`BUILD SUCCESSFUL` Kotlin plugin build — leaves `git status --porcelain android/`
+**empty**, with no `.rej` and no `.orig`. And the exporter does not undo it:
+`--export-debug "Android"` completes and the file is unchanged afterwards,
+despite its own header claiming to be "auto-generated during export".
+
+**Ruling: `--forward` alone is not idempotence, and a patch that will not apply
+is a STOP.** The reapply loop checks `patch --reverse --dry-run` first and skips
+an already-applied patch rather than leaving a `.rej`; a patch that applies
+neither way aborts the script with the file named, because that is a Godot
+upgrade having moved the lines and a build whose theme is nobody's intent is
+worse than no build. **The general rule: a script that overwrites source from an
+external archive owns the diff between the archive and the tree, and "the design
+goal is to keep it empty" is a goal, not a measurement** — measure it, in the
+script or in the doc, or it drifts silently.
+
+### RR-52 — A device harness whose vocabulary the shell does not parse is not a harness (doc 11 §7.4, §2.13, `tools/device_runbook.md` §1.1–§1.3, §3)
+
+`tools/bench_device.sh` shipped in Wave 6 and was never run. The Fold session
+found three reasons it could not be: it hard-coded `com.godot.game.GodotApp`
+(the launcher is `GodotAppLauncher`), it launched with `--es cmdline` (Godot's
+launcher reads a string ARRAY extra, and the engine's own list is only what
+follows a literal `--`), and its whole scenario vocabulary —
+`--bench=S1|S2|S3`, `--preset=`, `--city=` — **is parsed by nothing in
+`game/main.gd`.** The runbook recorded all three and the script kept them for two
+waves, because a document that describes a broken tool is not a fixed tool.
+
+Rewritten against the runbook. The activity is resolved live; every launch
+carries **both** correct extra forms, since `game/dev_args.gd` merges and
+de-duplicates them and a duplicated `--advance-hours=4` would otherwise advance
+the city eight hours; `--bench=` is gone and doc 11 §7.4's S1/S2/S3 survive as
+`--scenario=`, re-expressed in flags the shell parses. `--hour=H` is the script's
+own shorthand and is resolved to `--advance-hours=DELTA` against a `--now=H` read
+off the HUD, re-based after every pose — because `--advance-hours` is a delta and
+the runbook names getting that wrong as the easiest way to measure dusk twice.
+
+**Ruling: a harness that cannot reach its device ships a self-test that proves
+everything else.** `--self-test` runs 20 checks with no device: the flag
+vocabulary against `game/main.gd`'s own parse table, the hour arithmetic
+including the day wrap and the re-base, the pose and scenario tables, both launch
+forms, and both summarisers against known answers. It earned its place while
+being written by catching three real bugs, one of which would have silently
+ruined every capture — a comma-separated pose list set `IFS` globally,
+`resolve_hours` splits on whitespace, and every pose therefore launched with the
+unresolved `--hour=` and was captured at whatever hour the save held. **The
+device half remains unverified and the script says so in its own summary rather
+than in a document nobody opens.**

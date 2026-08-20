@@ -77,19 +77,25 @@ func test_safe_at_rated_load() -> void:
 	assert_almost_eq(float(grid.component("t_7")["theta_c"]), 55.0, 1.0)
 
 
-func test_relay_trip_timing() -> void:
-	# §2.5: feeder at r = 1.30 → t_trip = 120/(1.69−1) = 174 gs.
-	var grid := _rig()
-	grid.attach_building("b", Vector2i(10, 10))
-	# Feeder class 2 cap 3,000; r 1.30 → load 3,900 (transformer L3 would burn
-	# first at that load, so give t_7 slack by using t_8 (L4, cap 1000)… use a
-	# direct big load on t_8: 3,900 → t_8 r = 3.9 ⇒ instant burnout. Instead
-	# spread across both transformers below their ceilings won't reach 3,900.
-	# So: test the relay on the SUBSTATION (L3 cap 30,000, k_trip 90):
-	# r = 1.30 → t_trip = 90×0.75… §2.5: substation times are 0.75× feeder's.
-	pass  # covered structurally in test_relay_on_feeder_with_l5_transformers
-
-
+## Doc 04 §2.5's relay curve, on the geometry that can actually express it.
+##
+## **This used to be two methods and one of them was empty.** A
+## `test_relay_trip_timing` sat above this one holding the §2.5 arithmetic, a
+## paragraph of working-out about why `_rig()`'s transformers burn before its
+## feeder relay picks up, and a bare `pass` deferring to
+## "test_relay_on_feeder_with_l5_transformers" — **a test that does not exist and
+## never has**. It asserted nothing and counted as a passing test for eight
+## waves, until `tests/run_tests.gd` learned to fail a method that never asserts.
+## Deleted, with its arithmetic kept here where it is checked:
+##
+##   feeder class 1, cap 1,200 kW; r = 1.30 at 1,560 kW; k_trip 120
+##   t_trip = 120 / (r² − 1) = 120 / (1.69 − 1) = **174 gs**, quantized to the
+##   15-gs tick as 180, which is what the assertion below reads.
+##
+## The `_rig()` geometry cannot ask the question — a class-2 feeder needs
+## 3,900 kW to reach r = 1.30 and its L3/L4 transformers cook long before that —
+## which is why this test builds its own grid with an L5 transformer under a
+## class-1 feeder, and why the deleted method never found a way to run.
 func test_relay_on_feeder() -> void:
 	var grid := PowerGrid.new()
 	grid.add_component("plant", &"plant_gas", {"level": 3})

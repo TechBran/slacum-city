@@ -62,3 +62,11 @@ build/store/
 # On-device benchmark artefacts (tools/bench_device.sh): logcat CSVs, framestats,
 # meminfo, thermal traces. Measurements of one run on one phone, never source.
 build/bench/
+
+# Hand-made XDG isolation roots. `tests/run_tests.gd` moves `user://` to a
+# per-process temp directory by itself now (report 98 RR-50), so these should not
+# appear any more — the pattern stays because the old
+# `XDG_DATA_HOME=$PWD/.xdg` invocation is still in agent muscle memory and a
+# 40 MB save tree is not something to commit by accident.
+.xdg/
+.xdg-*/

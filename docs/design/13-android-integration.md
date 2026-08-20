@@ -433,7 +433,7 @@ godot --headless --path "$P" --install-android-build-template
 #   echo "4.7.2.stable" > android/.build_version
 ```
 
-`.gitignore` currently excludes `android/build/`. **That must change** — with a custom template it is source. Narrow it to `android/build/.gradle/`, `android/build/build/`, `android/build/local.properties` (§9). Reinstalling the template (a Godot upgrade forces this) overwrites the directory, so every edit lives as a patch in `tools/android_patches/*.patch`, reapplied by `tools/reinstall_android_template.sh`. **Design goal: keep that patch set empty** — the plugin owns its own manifest entries, so no template edit is currently needed.
+`.gitignore` currently excludes `android/build/`. **That must change** — with a custom template it is source. Narrow it to `android/build/.gradle/`, `android/build/build/`, `android/build/local.properties` (§9). Reinstalling the template (a Godot upgrade forces this) overwrites the directory, so every edit lives as a patch in `tools/android_patches/*.patch`, reapplied by `tools/reinstall_android_template.sh`. ~~**Design goal: keep that patch set empty** — the plugin owns its own manifest entries, so no template edit is currently needed.~~ **The patch set is ONE patch, not zero (2026-08-20): `res/values/themes.xml` carries §2's dark `android:windowBackground` and the removal of a dangling splash-branding drawable reference. `tools/setup_android.sh` reapplies every `tools/android_patches/*.patch` after the unzip; §10.1 has the measurement and the verification.**
 
 **Signing.** No secret ever enters `export_presets.cfg` (which is committed). Godot 4.2+ reads keystores from the environment:
 
@@ -924,6 +924,48 @@ script: `tools/setup_android.sh` does that job, because the patch set is empty
 (as designed) and re-unzipping the template is therefore the whole procedure. The
 moment a patch exists, it goes to `tools/android_patches/*.patch` and that script
 grows a reapply step — the hook is documented in its header.
+
+> **CORRECTED 2026-08-20 (Wave 12). The patch set was NEVER empty, and the
+> reapply step the paragraph above defers has been written.** `unzip -o
+> android_source.zip` overwrites every committed file the template also carries,
+> and a file-by-file comparison against the 4.7.2 template settles the size of
+> it: **of the 34 tracked files under `android/build/` that the zip carries, 33
+> are byte-identical and exactly one is ours** —
+> `android/build/res/values/themes.xml`. It holds two deviations, both §2's:
+> `android:windowBackground` `#050a13` on `GodotAppMainTheme` (the fourth surface
+> in the no-white-flash chain, after the export preset's
+> `screen/background_color`, `project.godot`'s `boot_splash/bg_color` and the 3D
+> clear colour), and the removal of `android:windowSplashScreenBrandingImage`,
+> which points at a `@drawable/splash_branding_image` that neither this project
+> nor the template ships.
+>
+> So running `tools/setup_android.sh` on a working clone silently reverted the
+> dark window background and the next debug build flashed white on launch. That
+> is the shell-polish branch's deviation 5, and it is closed:
+> `tools/android_patches/0001-themes-dark-window-background.patch` is the patch,
+> and `setup_android.sh` applies every `tools/android_patches/*.patch` with
+> `patch -p1 --forward` immediately after the unzip and before the plugin build.
+> A patch that already applies in REVERSE is skipped rather than re-run, so the
+> script is idempotent; a patch that applies **neither** way is a hard stop with
+> the file named, which is the whole reason to ship a patch rather than a copy of
+> the file — a Godot upgrade that moves those lines has to be noticed.
+>
+> **Verified end to end in a worktree, 2026-08-20**, in three steps, all
+> reproducible: (1) a bare `unzip -o` of just that file leaves
+> `git status --porcelain android/build/res/values/themes.xml` reporting ` M` and
+> the diff is exactly the two hunks; (2) the patch step restores it **byte for
+> byte** — `git status` empty; (3) a full `tools/setup_android.sh` run
+> (215 MB unzip + Kotlin plugin build, `BUILD SUCCESSFUL`) leaves
+> `git status --porcelain android/` **completely empty**, with no `.rej` and no
+> `.orig` anywhere under `android/build/`.
+>
+> **And the exporter does not undo it.** `themes.xml`'s own header says it is
+> "auto-generated during export", which would make the patch pointless at build
+> time. Measured: `godot --headless --export-debug "Android"` completes (the
+> gradle log shows it passing `--background_color #050a13` to the splash), and
+> the file is **unchanged afterwards** — `diff` empty, `git status` empty. The
+> exporter writes `res/drawable/` and `res/mipmap*/` (both `.gitignore`d) and
+> leaves `res/values/themes.xml` alone on this template.
 
 ### 10.2 `export_presets.cfg` — the real 4.7.2 key set (closes §9.13)
 
