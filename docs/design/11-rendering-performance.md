@@ -535,7 +535,6 @@ One streetlight every 32 m (4 tiles) along road polylines from doc 10. With doc 
 
 Godot Mobile caps omni lights per object (default 8). With ≤ 20 omnis spread over 90 m at 14 m range, no building is touched by more than ~4. Verified in the on-device checklist (§7.4).
 
-<<<<<<< HEAD
 #### 2.10.1 Where the lamps go, and what they look like (`streetlight_placer.gd`, `cobra_head_mesh.gd`) — **shipped 2026-08-20**
 
 The placement rule this replaces was one line in the scene root:
@@ -558,7 +557,7 @@ Founding city: **130 lamps**, 4 of them corner lamps, against the parity rule's 
 **The mesh.** `CobraHeadMesh` builds one ArrayMesh every lamp in the city shares: a mast standing on its own origin (so the baked grime ramp lands at the footway wherever it is placed), the 0.30 m base collar, a four-segment arm swept as a quarter-ellipse that leaves the mast vertically and arrives over the carriageway horizontal, and a tapered luminaire with a pale lens on its underside. **76 triangles** against the old stick's 34, paid once on the shared mesh; the arm is baked along local **+X** and each instance yaws it toward its own roadway. Founding city total: 9,880 pole triangles, against the parity rule's 207 x 34 = 7,038 — 40 % more triangles for 37 % fewer poles.
 
 **STREET-1 — the pool that was buried.** `pool_y_m` was **0.06** and the road slab's top is **0.10**: every ground pool in the game failed the depth test against the carriageway it was lighting, and what survived was the ring of it that spilled onto the block either side. A doughnut of light around a dark road is a large part of why a lamp read as a stick. The disc now rides just over the **footway** — the highest surface under a lamp — so one pool covers kerb, gutter and both lanes, and the billboard, the pool and the wet smear all hang off the **luminaire**, out at the end of the arm, instead of off the top of the mast. The 0.155 m the disc floats above the asphalt is invisible: at Z0's 34° of pitch that is 0.23 m of parallax across a 16 m disc with no hard edge anywhere in it.
-=======
+
 ### 2.10b The distribution layer — pads, service drops and distress, **shipped 2026-08-20**
 
 Doc 04 has owned plants, substations, feeders, transformers and per-building service since Wave 1. Until this pass **none of the distribution end of it rendered.** A player could read an overlay tint and an Infrastructure row, but could not see where the transformer serving their block stood, could not see which buildings it fed, and could not see it cook. The two grid nodes that ARE buildings — `substation` and `power_facility` (report 98 C-30) — have been drawn by `CityView` since Wave 6 and are untouched here; a transformer is **not** a building (doc 04 §2.1: one tile, `FLAG_OCCUPIED`, no footprint row), which is exactly why nothing was drawing it.
@@ -611,7 +610,6 @@ One instance is one **whole span**: a flat 8-segment strip that `power_wire.gdsh
 **A settled city uploads nothing.** Every animation here — the fin flicker, the smoke loop, the overlay pulse — is a shader function of `sc_time`, so `PowerInfraModel.take_dirty()` returns false and not one `set_instance_custom_data` runs while no ramp is moving. That is what lets the pad buffer be city-wide with no write budget behind it (§2.2's `writes_per_frame` is the building layer's).
 
 **Two scars worth keeping.** `VIEWPORT_SIZE` and `PROJECTION_MATRIX[1][1]` both COMPILE in a spatial **vertex** shader and neither carries a usable value there on Forward Mobile: their product measured as zero, took the shader's own `max(1.0, …)` guard, and widened every service drop to about 130 m of near-opaque black — the entire screen washed out at any close zoom. The screen-space term is now `2·tan(fov_y/2)/height` computed on the CPU from doc 11's own authored FOV (`PowerInfraView._sync_viewport_h`), with `wire_max_radius_m` 0.30 standing behind it as a hard metre ceiling so no future plumbing mistake can repaint the screen. `tests/test_power_infra.gd` locks both.
->>>>>>> worktree-wf_fbb709c5-edd-3
 
 ### 2.11 Overlay mechanism (doc 12 owns content)
 
