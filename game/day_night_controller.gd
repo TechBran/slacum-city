@@ -15,6 +15,22 @@ var ambient_energy_day: float = 1.0
 var ambient_energy_night: float = 0.25
 var moon_energy: float = 0.0
 var moon_color: Color = Color.WHITE
+## Deep-night ambient FLOOR (§2.8, night-readability pass). With
+## `AMBIENT_SOURCE_SKY` the ambient colour IS the night sky, which is authored
+## near-black — so `ambient_energy_night` multiplies ~0.003 of radiance and
+## every unlit face resolves to 0 on an AMOLED panel. The floor is a second
+## ambient source: an authored blue-grey moonlight colour that the environment
+## crossfades IN as `sky_contribution` falls, so the night ground and the unlit
+## façades sit on a readable moonlit base instead of on the sky's black.
+##
+## The crossfade rides `night ^ ambient_floor_gamma`, NOT `night`: at 18:30
+## night is already 0.40 and a linear blend would push a sixth of the authored
+## blue into a sky that is still orange. Squared, dusk gets 0.16 of it and the
+## floor is a DEEP-night effect, which is the hour the players cannot read.
+var ambient_color_night: Color = Color(1.0, 1.0, 1.0)
+var ambient_sky_contribution_day: float = 1.0
+var ambient_sky_contribution_night: float = 1.0
+var ambient_floor_gamma: float = 2.0
 var fog_profiles: Dictionary = {}
 var fog_crossfade_s: float = 4.0
 var saturation_day: float = 1.05
@@ -34,6 +50,12 @@ func load_from(render_data: Dictionary) -> bool:
 	ambient_energy_night = float(daynight.get("ambient_energy_night", 0.25))
 	moon_energy = float(daynight.get("moon_energy", 0.0))
 	moon_color = Color(String(daynight.get("moon_color", "#ffffff")))
+	ambient_color_night = Color(String(daynight.get("ambient_color_night", "#ffffff")))
+	ambient_sky_contribution_day = float(
+			daynight.get("ambient_sky_contribution_day", 1.0))
+	ambient_sky_contribution_night = float(
+			daynight.get("ambient_sky_contribution_night", 1.0))
+	ambient_floor_gamma = maxf(1.0, float(daynight.get("ambient_floor_gamma", 2.0)))
 	var environment: Dictionary = render_data.get("environment", {})
 	fog_profiles = environment.get("fog", {})
 	fog_crossfade_s = float(environment.get("fog_crossfade_s", 4.0))
@@ -61,6 +83,7 @@ func sample(hour: float) -> Dictionary:
 	if next_h > prev_h:
 		t = (hour - prev_h) / (next_h - prev_h)
 	var night := lerpf(float(prev["night"]), float(next["night"]), t)
+	var floor_w := pow(night, ambient_floor_gamma)
 	return {
 		"sky_top": oklab_lerp(Color(String(prev["sky_top"])), Color(String(next["sky_top"])), t),
 		"sky_horizon": oklab_lerp(Color(String(prev["sky_hor"])), Color(String(next["sky_hor"])), t),
@@ -71,6 +94,10 @@ func sample(hour: float) -> Dictionary:
 		"fog_tint": oklab_lerp(Color(String(prev["fog"])), Color(String(next["fog"])), t),
 		"night": night,
 		"ambient_energy": lerpf(ambient_energy_day, ambient_energy_night, night),
+		"ambient_color": ambient_color_night,
+		"ambient_sky_contribution": lerpf(ambient_sky_contribution_day,
+				ambient_sky_contribution_night, floor_w),
+		"ambient_floor": floor_w,
 		"saturation": lerpf(saturation_day, saturation_night, night),
 	}
 
