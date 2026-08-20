@@ -93,6 +93,11 @@ func _ready() -> void:
 	# catch-up is the one doc 13 §2.9's ANR arithmetic is missing. Gated: the
 	# capture rig is not a player feature.
 	save_service.log_io = _perf_capture_armed()
+	# doc 08 §2.14 / RR-44: the ENVELOPE half of a save goes to a worker thread.
+	# The capture stays here — it reads live sim state — and so does the whole
+	# pause path, which `SaveService.SYNC_REASONS` pins. Measured 148.7 -> 97.5 ms
+	# of main-thread cost on the 1,500-building city.
+	save_service.async_writes = true
 	add_child(save_service)
 	android_lifecycle = AndroidLifecycle.new()
 	android_lifecycle.name = "AndroidLifecycle"
@@ -124,7 +129,10 @@ func _ready() -> void:
 	# exit (doc 13 §2.11) the crash sentinel picks the newest autosave half
 	# that actually PARSES rather than merely the newest.
 	crash_sentinel = CrashSentinel.new()
-	var user_args := OS.get_cmdline_user_args()
+	# doc 13 D-20: on device the export template drops `--esa command_line_params`
+	# before `OS` ever sees it, so `DevArgs` merges the plugin's reading of the
+	# launching Intent with the engine's list. Off device the two are identical.
+	var user_args := DevArgs.user_args()
 	var unclean := crash_sentinel.boot()
 	# The title door opens on every clean player launch (doc 12 §2.19). Crash
 	# recovery and --resume dev runs skip it and load directly; the door's own
@@ -176,7 +184,7 @@ func _ready() -> void:
 	# and pans the camera otherwise.
 	touch_input.world_drag_router = _route_world_drag
 
-	for arg in OS.get_cmdline_user_args():
+	for arg in DevArgs.user_args():
 		if String(arg).begins_with("--screenshot="):
 			_screenshot_path = String(arg).trim_prefix("--screenshot=")
 		elif String(arg).begins_with("--advance-hours="):
@@ -458,7 +466,9 @@ func _on_sim_batch(batch: Array) -> void:
 				# Player roads and stamped ring blocks would otherwise be
 				# invisible until restart — the street surface is built at boot.
 				_rebuild_road_multimesh()
-			&"grid_component_placed", &"building_placed_sim", &"building_removed":
+			&"grid_component_placed", &"grid_feeder_routed", \
+					&"grid_node_commissioned", &"grid_node_retired", \
+					&"building_placed_sim", &"building_removed":
 				# doc 11 §2.10b: the pad/wire topology moved. A flag only; the
 				# rebuild lands on the next `sync` and is a no-op if the grid's
 				# shape turns out to be what it already was.
@@ -550,14 +560,16 @@ func _render_id_from_int(value: Variant) -> int:
 ## Dev arg `--place=<archetype>`: buy one building on the first serviceable
 ## vacant core lot, exactly as a player tap would — verifies the incremental
 ## render add end-to-end.
-## The PERF/PERFIO capture rig's arming switch. `--perf` works on desktop;
-## on device the export template drops `--esa command_line_params` on the floor
-## (doc 13 D-20), so the runbook arms it with a flag FILE instead:
+## The PERF/PERFIO capture rig's arming switch. `--perf` works on desktop and,
+## since doc 13 D-20 landed, on device too:
+##   adb shell am start -n $PKG/$ACT --es args "--resume --perf"
+## The flag FILE stays as the route for a session that wants the capture armed
+## across relaunches without repeating the argument:
 ##   adb shell run-as com.slacumcity.game touch files/perf_capture.flag
 ## (debug builds only — which is what every measured build is). Delete the file
 ## to disarm; a player never has either.
 static func _perf_capture_armed() -> bool:
-	return OS.get_cmdline_user_args().has("--perf") \
+	return DevArgs.user_args().has("--perf") \
 			or FileAccess.file_exists("user://perf_capture.flag")
 
 
@@ -748,6 +760,8 @@ func _wire_build_ui(ui_instance: Node) -> void:
 			"SafeArea/SheetLayer/BuildSheet") as BuildSheet
 	if build_sheet != null:
 		build_sheet.setup(cfg, build_controller)
+	if ui_root != null:
+		ui_root.bind_water_actions(build_controller.water)
 		build_sheet.placement_started.connect(_on_placement_started)
 		build_sheet.placement_changed.connect(_on_placement_changed)
 		build_sheet.placement_committed.connect(_on_placement_committed)
@@ -764,6 +778,9 @@ func _wire_build_ui(ui_instance: Node) -> void:
 		building_panel.repaired.connect(_on_building_action)
 		building_panel.priority_set.connect(_on_building_action)
 		building_panel.demolished.connect(_on_building_demolished)
+		# doc 05 §6's node ladder (doc 93 §J1). Two args, so not `_on_building_action`.
+		building_panel.water_upgraded.connect(
+				func(_node_id: String, _result: Dictionary) -> void: _refresh_hud())
 	if ui_root != null and ui_root.land_panel != null:
 		ui_root.land_panel.setup(cfg, LandPanelModel.new(sim_host.sim,
 				build_controller.formatter, cfg, build_controller.tile_m))
@@ -802,6 +819,10 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 	root.set_unit_provider(_dispatchable_units)
 	root.dispatch_requested.connect(_on_ui_dispatch)
 	root.incident_action.connect(_on_ui_incident_action)
+	# doc 05 §2.12's valve — already issued by the drawer; the shell only re-reads.
+	root.water_main_action.connect(
+			func(_id: int, _edge: String, _action: StringName, _r: Dictionary) -> void:
+				_feed_water_overlay())
 	root.deeplink_requested.connect(_on_ui_deeplink)
 	root.bind_tax(sim_host.sim.cmd_set_tax_level, sim_host.sim.tax_level(),
 			sim_host.sim.tax_level_count(), sim_host.sim.tax_rate)
@@ -1087,7 +1108,7 @@ func _on_ui_focus_requested(world_pos: Vector3) -> void:
 func _on_ui_quit_requested() -> void:
 	# Single-scene game: quit means save, then close. The view only asks.
 	if save_service != null:
-		save_service.autosave(sim_host.sim)
+		save_service.autosave(sim_host.sim, "quit")
 		if save_service.last_error == "" and crash_sentinel != null:
 			crash_sentinel.mark_clean_exit()
 	get_tree().quit()
@@ -1101,7 +1122,7 @@ func _notification(what: int) -> void:
 	# only world held is the founding city and committing it would overwrite
 	# the player's autosave.
 	if save_service != null and sim_host != null and not _title_up:
-		save_service.autosave(sim_host.sim)
+		save_service.autosave(sim_host.sim, "quit")
 		if save_service.last_error == "" and crash_sentinel != null:
 			crash_sentinel.mark_clean_exit()
 
