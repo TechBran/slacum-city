@@ -26,9 +26,26 @@ const PALETTE_TYPE := "Palette"
 ## tooltip (`AlertsCenter`, `IncidentDrawer`, `UnitPickerSheet`, `SaveLoadSheet`);
 ## the sheet reads its name from `ui_build_close` like they do.
 const CLOSE_GLYPH := "✕"
+## §2.7 reserves the bar's third slot for the footprint tools' rotation (`↻`). A
+## run has no rotation, and every run has a start — so on a run tool the LEFT
+## button carries that verb instead of gaining a fourth control: while a run is
+## being drawn it reads `↺` and unpins the anchor, and once the anchor is unpinned
+## it goes back to reading CANCEL.
+##
+## **Why not a fourth button.** The bar is 56 dp of a 360 dp display, and at A2's
+## 130 % text with A3's larger targets its four controls measure 139 + 73 + 73 +
+## 119 = 404 dp — `tools/ui_preview.gd --audit --strict` puts CANCEL 43 dp off
+## the left edge and PLACE 44 dp off the right. Three controls measure 265 dp and
+## fit with 95 dp to spare. A control the player cannot reach is worse than a
+## control they have to press twice.
+const RESTART_GLYPH := "↺"
 
 var config: UIConfig
 var controller: BuildController
+## The run half of §2.7 (roads, water mains). Built here rather than inside
+## `BuildController` so the dependency runs one way — `PathTool` reads
+## `BuildController`'s tile maths and its verdict ladder, and nothing reads back.
+var path: PathTool
 var model: HudModel
 ## Set by `UIRoot`. Doc 12 §2.14: a commit taps, a refusal buzzes, a ghost that
 ## snaps to a new tile ticks. Never `Input.vibrate_handheld` from here.
@@ -44,6 +61,8 @@ var _bar_cancel: Button
 var _bar_title: Label
 var _bar_issue: Label
 var _bar_confirm: Button
+## True while a world drag is drawing a run — see `begin_world_drag()`.
+var _drag_drawing := false
 
 var _cards: Array[Dictionary] = []
 var _tab_buttons: Dictionary = {}   # category -> Button
@@ -76,6 +95,8 @@ func setup(cfg: UIConfig = null, p_controller: BuildController = null) -> void:
 		config = UIConfig.load_from_files()
 	if p_controller != null:
 		controller = p_controller
+	if controller != null and (path == null or path.sim != controller.sim):
+		path = PathTool.new(controller.sim, controller.formatter, controller.tile_m)
 	model = HudModel.new(config)
 	var defaults := config.section("defaults")
 	_text_scale = maxf(1.0, UIConfig.get_num(defaults, "text_scale", 1.0))
@@ -170,8 +191,8 @@ func _build_static() -> void:
 		_bar_cancel.custom_minimum_size = Vector2(_touch_min, _touch_min)
 		_bar_cancel.text = _text("ui_placement_cancel", "CANCEL")
 		_bar_cancel.tooltip_text = _bar_cancel.text
-		if not _bar_cancel.pressed.is_connected(cancel_placement):
-			_bar_cancel.pressed.connect(cancel_placement)
+		if not _bar_cancel.pressed.is_connected(_on_bar_cancel):
+			_bar_cancel.pressed.connect(_on_bar_cancel)
 	if _bar_confirm != null:
 		_bar_confirm.theme_type_variation = &"PrimaryFAB"
 		_bar_confirm.focus_mode = Control.FOCUS_NONE
@@ -272,8 +293,17 @@ func _wrap_tabs_in_scroller() -> void:
 
 
 ## Cards + category tabs, rebuilt whenever the city level changes a lock state.
+##
+## Two rosters, one list: `BuildController` supplies every card that stamps a
+## FOOTPRINT and `PathTool` supplies every card that draws a RUN. They are merged
+## before the sort so `roads` takes its place in `CATEGORY_ORDER` beside the
+## others and the sheet cannot tell which object built a row.
 func rebuild_cards() -> void:
 	_cards = controller.cards() if controller != null else ([] as Array[Dictionary])
+	if path != null:
+		for entry: Dictionary in path.cards():
+			_cards.append(entry)
+		_cards.sort_custom(BuildController._card_less)
 	_build_tabs()
 	_build_cards()
 
@@ -402,9 +432,15 @@ func _build_card(card: Dictionary, card_size: Vector2) -> Button:
 	body.add_child(cost)
 
 	var foot: Vector2i = card["footprint"]
-	var micro := UIWidgets.label("Micro", _text_args("ui_build_card_micro",
-			{"kw": str(card["power_text"]), "w": foot.x, "h": foot.y},
-			"%s %dx%d" % [card["power_text"], foot.x, foot.y]))
+	# A run card has no footprint to show — it is one tile wide and as long as
+	# the player drags — so its micro row is whatever `PathTool` put there (a
+	# main's capacity, a road verb's one-line note) and never `▦1×1`, which
+	# would be a true number that teaches the wrong thing.
+	var micro_text := str(card["power_text"]) if str(card.get("path_verb", "")) != "" \
+			else _text_args("ui_build_card_micro",
+					{"kw": str(card["power_text"]), "w": foot.x, "h": foot.y},
+					"%s %dx%d" % [card["power_text"], foot.x, foot.y])
+	var micro := UIWidgets.label("Micro", micro_text)
 	body.add_child(micro)
 
 	if bool(card["locked"]):
@@ -567,7 +603,17 @@ func _on_tab_pressed(category: String) -> void:
 func _on_card_pressed(archetype: String, variant: String) -> void:
 	if controller == null:
 		return
-	var entered := controller.enter(archetype, variant)
+	# One tap, two tools. A run card enters `PathTool`; everything else enters
+	# the footprint state machine, and only one of the two is ever active — the
+	# loser is cancelled here so `is_placing()` can never answer for both.
+	var is_run := path != null and PathTool.is_path_id(archetype)
+	var entered := path.enter(archetype) if is_run \
+			else controller.enter(archetype, variant)
+	if bool(entered["ok"]):
+		if is_run:
+			controller.cancel()
+		elif path != null:
+			path.cancel()
 	if not bool(entered["ok"]):
 		# §2.7: a locked card explains its unlock condition instead of placing.
 		var failure := controller.formatter.format(entered["reason_code"], entered["payload"])
@@ -584,22 +630,73 @@ func _on_card_pressed(archetype: String, variant: String) -> void:
 ## Ground point from `CameraState.screen_to_ground()` — the ghost follows and
 ## the verdict is recomputed (§2.7 re-evaluates while dragging).
 func move_ghost(ground_point: Vector3) -> void:
+	if is_placing_path():
+		path.move_to_ground(ground_point)
+		_cue_ghost_at(path.head, StringName(str(path.verdict().get("verdict", ""))))
+		_refresh_bar()
+		placement_changed.emit()
+		return
 	if controller == null or not controller.is_placing():
 		return
 	controller.move_to_ground(ground_point)
-	_cue_ghost()
+	_cue_ghost_at(controller.origin,
+			StringName(str(controller.verdict().get("verdict", ""))))
 	_refresh_bar()
 	placement_changed.emit()
+
+
+# ---------------------------------------------------------------------------
+# Drag-to-draw (doc 12 §2.7's drag-path). The tap flow above works with no shell
+# change at all; this is the accelerator, and it is driven from
+# `game/touch_input.gd`'s world-drag router (and the desktop mouse path) so the
+# same stroke that would have panned the camera draws the run instead.
+#
+# Every one of these returns whether it CONSUMED the stroke, so the router can
+# fall through to `CameraState.begin_pan()` when no run tool is up.
+# ---------------------------------------------------------------------------
+
+## Finger down on the world. Pins the anchor and starts drawing.
+func begin_world_drag(ground_point: Vector3) -> bool:
+	if not is_placing_path():
+		return false
+	var tile := BuildController.tile_at(ground_point, path.tile_m)
+	path.begin_run(tile)
+	_drag_drawing = true
+	_cue_ghost_at(tile, StringName(str(path.verdict().get("verdict", ""))))
+	_refresh_bar()
+	placement_changed.emit()
+	return true
+
+
+## Finger moving. Extends the free end; the verdict follows at the move rate.
+func update_world_drag(ground_point: Vector3) -> bool:
+	if not _drag_drawing or not is_placing_path():
+		return false
+	move_ghost(ground_point)
+	return true
+
+
+## Finger up. The run STAYS — §2.7's "placement is never committed on finger-up"
+## is the whole reason this tool exists in two steps — and `PLACE` commits it.
+func end_world_drag() -> bool:
+	if not _drag_drawing:
+		return false
+	_drag_drawing = false
+	_refresh_bar()
+	placement_changed.emit()
+	return true
+
+
+func is_drag_drawing() -> bool:
+	return _drag_drawing
 
 
 ## §2.14's two placement cues, fired on a *change* rather than on every
 ## revalidation: the ghost is re-evaluated at 10 Hz (§2.7), and a device that
 ## buzzes ten times a second while a thumb is moving is a fault, not feedback.
-func _cue_ghost() -> void:
-	var origin := controller.origin
-	var verdict := StringName(str(controller.verdict().get("verdict", "")))
-	if origin != _last_ghost_origin:
-		_last_ghost_origin = origin
+func _cue_ghost_at(tile: Vector2i, verdict: StringName) -> void:
+	if tile != _last_ghost_origin:
+		_last_ghost_origin = tile
 		_cue(Haptics.CUE_SNAP_TILE)
 	if verdict == BuildController.VERDICT_BLOCKED and verdict != _last_verdict:
 		_cue(Haptics.CUE_BLOCKED)
@@ -612,7 +709,35 @@ func _cue(cue: StringName) -> void:
 
 
 ## §2.7: "Placement is never committed on finger-up" — only this button commits.
+##
+## On a run tool the same button carries the two-step flow: `START` pins the
+## anchor, `PLACE` lays the run. See `PathTool`'s header for why the anchor
+## cannot be inferred from a ghost move.
 func confirm_placement() -> void:
+	if is_placing_path():
+		if path.is_aiming():
+			path.begin_run()
+			_set_notice("")
+			_cue(Haptics.CUE_BUTTON)
+			_refresh_bar()
+			placement_changed.emit()
+			return
+		var run := path.commit()
+		if bool(run["ok"]):
+			_set_notice("")
+			_cue(Haptics.CUE_BUTTON)
+		else:
+			var run_failure := controller.formatter.format(run["reason_code"],
+					run.get("payload", {}))
+			_set_notice(str(run_failure["body"]))
+			_cue(Haptics.CUE_BLOCKED)
+		_drag_drawing = false
+		_last_ghost_origin = Vector2i(-1, -1)
+		_last_verdict = &""
+		_refresh_bar()
+		placement_committed.emit(run)
+		placement_changed.emit()
+		return
 	if controller == null or not controller.is_placing():
 		return
 	var result := controller.commit()
@@ -630,42 +755,107 @@ func confirm_placement() -> void:
 	placement_changed.emit()
 
 
+## The bar's left button. One control, two verbs — see `RESTART_GLYPH`:
+##
+##   * while a run is being DRAWN it is `↺` and unpins the anchor, so the player
+##     can move the start of the run without losing the card;
+##   * everywhere else it is CANCEL and leaves placement mode.
+##
+## Hardware BACK keeps its own contract — `UIRoot.BACK_CANCEL_PLACEMENT` reaches
+## `cancel_placement()` and LEAVES, at every step. That asymmetry is deliberate:
+## back is how a player gets out, and a back that only half-worked while a run
+## was half-drawn would be the worst kind of surprise on a device whose back
+## gesture is a swipe from the edge of the screen the run is being drawn across.
+func _on_bar_cancel() -> void:
+	if is_placing_path() and path.is_drawing():
+		restart_run()
+		return
+	cancel_placement()
+
+
+## Unpin the anchor without dropping the card.
+func restart_run() -> void:
+	if not is_placing_path():
+		return
+	path.reset_run()
+	_drag_drawing = false
+	_cue(Haptics.CUE_BUTTON)
+	_refresh_bar()
+	placement_changed.emit()
+
+
 func cancel_placement() -> void:
 	if controller == null:
 		return
 	controller.cancel()
+	if path != null:
+		path.cancel()
+	_drag_drawing = false
 	_refresh_bar()
 	placement_cancelled.emit()
 	placement_changed.emit()
 
 
+## True while EITHER tool holds the world's taps — the shell asks this one
+## question and never has to know which of the two answered it.
 func is_placing() -> bool:
-	return controller != null and controller.is_placing()
+	return (controller != null and controller.is_placing()) or is_placing_path()
+
+
+func is_placing_path() -> bool:
+	return path != null and path.is_active()
+
+
+## What `game/ui/path_ghost_view.gd` binds, or `{visible: false}` when no run
+## tool is up. Exposed so the shell reads one accessor instead of reaching into
+## the tool.
+func path_ghost() -> Dictionary:
+	return path.ghost() if is_placing_path() else {"visible": false}
 
 
 func _refresh_bar() -> void:
 	if _bar == null or controller == null:
 		return
-	var view := controller.placement_view()
+	var is_run := is_placing_path()
+	var view := path.placement_view() if is_run else controller.placement_view()
 	var active := bool(view["active"])
 	_bar.visible = active
 	if _fab != null:
 		_fab.visible = not active and not is_open()
 	if not active:
 		return
+	# The left button's two verbs (see `_on_bar_cancel`). A glyph while it means
+	# "move the start", the word while it means "leave" — and the spoken name is
+	# in the tooltip either way (A15).
+	var drawing := is_run and str(view["mode"]) == String(PathTool.STATE_DRAWING)
+	if _bar_cancel != null:
+		_bar_cancel.text = RESTART_GLYPH if drawing else _text("ui_placement_cancel", "CANCEL")
+		_bar_cancel.tooltip_text = _text("ui_path_restart", "Move the start") if drawing \
+				else _text("ui_placement_cancel", "CANCEL")
 	var name_text := _text(str(view["name_key"]), str(view["archetype"]))
 	if _bar_title != null:
-		_bar_title.text = _text_args("ui_placement_summary",
-				{"name": name_text, "cost": str(view["cost_text"])},
-				"%s %s" % [name_text, str(view["cost_text"])])
+		_bar_title.text = _run_summary(view, name_text) if is_run \
+				else _text_args("ui_placement_summary",
+						{"name": name_text, "cost": str(view["cost_text"])},
+						"%s %s" % [name_text, str(view["cost_text"])])
 		_bar_title.tooltip_text = _bar_title.text
 	if _bar_confirm != null:
-		_bar_confirm.disabled = not bool(view["can_confirm"])
+		if is_run:
+			var aiming := str(view["mode"]) == String(PathTool.STATE_AIMING)
+			_bar_confirm.text = _text("ui_path_start", "START") if aiming \
+					else _text("ui_placement_confirm", "PLACE")
+			_bar_confirm.tooltip_text = _bar_confirm.text
+			_bar_confirm.disabled = not bool(view["can_start"]) if aiming \
+					else not bool(view["can_confirm"])
+		else:
+			_bar_confirm.text = _text("ui_placement_confirm", "PLACE")
+			_bar_confirm.tooltip_text = _bar_confirm.text
+			_bar_confirm.disabled = not bool(view["can_confirm"])
 	if _bar_issue == null:
 		return
 	var failure: Dictionary = view["failure"]
 	if failure.is_empty():
-		_bar_issue.text = _text("ui_placement_ready", "")
+		_bar_issue.text = _run_hint(view) if is_run else _text("ui_placement_ready", "")
 		_bar_issue.tooltip_text = _bar_issue.text
 		_apply_state_color(_bar_issue, HudModel.STATE_NORMAL)
 		return
@@ -682,6 +872,35 @@ func _refresh_bar() -> void:
 	_bar_issue.text = ("%s %s" % [glyph, str(failure["title"])]).strip_edges()
 	_bar_issue.tooltip_text = str(failure["body"])
 	_apply_state_color(_bar_issue, state)
+
+
+## The run bar's first line. While aiming it is the card and its per-tile price;
+## while drawing it is the card, the segment count and what the whole run costs —
+## §2.7's "live cost and segment count in the bar", verbatim. A refund card gets
+## its own key so the money reads `+$3,600` and not `$3,600`.
+func _run_summary(view: Dictionary, name_text: String) -> String:
+	# A run the command will not touch a tile of quotes **zero** — doc 10 bills
+	# the FRESH tiles and there are none, because every tile is undeveloped land
+	# or is already paved. `$0` beside a refusal reads as "free", so the bar
+	# falls back to the per-tile price: a true number the player can act on,
+	# with the blocker line beside it saying why the total is not that yet.
+	if str(view["mode"]) == String(PathTool.STATE_AIMING) or int(view["cost"]) == 0:
+		return _text_args("ui_path_summary_aiming",
+				{"name": name_text, "cost": str(view["per_tile_text"])},
+				"%s %s" % [name_text, str(view["per_tile_text"])])
+	var key := "ui_path_summary_refund" if bool(view["refunds"]) else "ui_path_summary"
+	return _text_args(key, {"name": name_text, "tiles": int(view["tile_count"]),
+			"cost": str(view["cost_text"])},
+			"%s %d %s" % [name_text, int(view["tile_count"]), str(view["cost_text"])])
+
+
+## The run bar's second line when nothing is wrong: what the button will do next.
+## A tool with a two-step confirm has to say which step it is on, or the player
+## presses `START` expecting a road.
+func _run_hint(view: Dictionary) -> String:
+	if str(view["mode"]) == String(PathTool.STATE_AIMING):
+		return _text("ui_path_hint_aiming", "")
+	return _text("ui_path_hint_drawing", "")
 
 
 func _set_notice(text: String) -> void:

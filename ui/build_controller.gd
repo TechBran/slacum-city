@@ -71,11 +71,17 @@ const AVENUE_RADIUS_TILES := 4
 const AVENUE_SEARCH_TILES := 16
 
 ## Sheet ordering: category first (the doc's tab order), then cost.
-## `infrastructure` is last because it is the tab you go to once something else
-## has already said no.
+## `infrastructure` is last-but-one and `roads` is last for the same reason: they
+## are the tabs you go to once something else has already said no —
+## `E_UNSERVED` / `E_NO_MAIN` send you to one, `NO_ROAD` / `E_AVENUE` /
+## `E_NOT_CONNECTED` send you to the other.
+##
+## `roads` is `PathTool.CATEGORY_ROADS` and is spelled as a literal here for the
+## same reason it is spelled as a literal there: `PathTool` depends on this file
+## and this file may not depend back. `tests/test_path_tool.gd` asserts the pair.
 const CATEGORY_ORDER: Array[String] = [
 	"residential", "commercial", "industrial", "service", "utility",
-	CATEGORY_INFRASTRUCTURE,
+	CATEGORY_INFRASTRUCTURE, "roads",
 ]
 
 ## The four coverage tiles of doc 12 §2.9 item 4.
@@ -425,11 +431,24 @@ static func category_tab_key(category: String) -> String:
 	return "ui_build_tab_%s" % category
 
 
+## Sheet order: category (the doc's tab order), then **buys before sells**, then
+## cost, then id.
+##
+## The middle clause exists for exactly one card — `Remove`, doc 10 §2.13's road
+## demolition, which quotes a refund. Sorted on price alone it leads the ROADS
+## tab, because a card that pays $450 is the cheapest thing on it; and a tab
+## whose first card is the destructive one teaches the wrong verb first. The
+## rule is one sentence: **the sheet is a shop, and a card that pays is not a
+## cheap purchase — it is not a purchase.**
 static func _card_less(a: Dictionary, b: Dictionary) -> bool:
 	var ia := CATEGORY_ORDER.find(str(a["category"]))
 	var ib := CATEGORY_ORDER.find(str(b["category"]))
 	if ia != ib:
 		return ia < ib
+	var ra := bool(a.get("refunds", false))
+	var rb := bool(b.get("refunds", false))
+	if ra != rb:
+		return rb
 	if int(a["cost"]) != int(b["cost"]):
 		return int(a["cost"]) < int(b["cost"])
 	return str(a["id"]) < str(b["id"])
@@ -937,7 +956,147 @@ func building_view(sim_id: String) -> Dictionary:
 		],
 		"coverage": _coverage(sim_id),
 		"upgrade": upgrade_view(sim_id),
+		"actions": actions_view(sim_id),
 	}
+
+
+# ---------------------------------------------------------------------------
+# §2.9 item 6 — the ACTIONS row: `Repair` · `Priority` · `Demolish`
+#
+# All three verbs shipped in Wave 1.5 / Wave 5 and none of them had a door
+# (doc 92 §17.6). Same contract as the upgrade block above: the sim's own
+# `preview = true` answers the question and this file only shapes the answer, so
+# a button is never enabled on a rule this file believes and the sim does not.
+# ---------------------------------------------------------------------------
+
+func actions_view(sim_id: String) -> Dictionary:
+	return {
+		"repair": repair_view(sim_id),
+		"priority": priority_view(sim_id),
+		"demolish": demolish_view(sim_id),
+	}
+
+
+## Doc 02 §2.6's repair, priced by doc 03 §2.5. `available` is what decides
+## whether the row is DRAWN at all, and it is the sim's own answer: the command
+## refuses `E_NOT_DAMAGED` at condition 1.00, so a building with nothing to buy
+## has no button.
+##
+## Doc 12 §2.9 item 6 writes the threshold as "condition < 90 %". This ships it
+## at *any* damage instead, because doc 02's own gate for an upgrade is
+## `MIN_CONDITION_TO_UPGRADE` and a player held at 85 % by that gate must be able
+## to answer it — a repair affordance that hides above 90 % would hide exactly
+## when the checklist starts asking for it. Recorded as a delta in doc 12.
+func repair_view(sim_id: String) -> Dictionary:
+	if sim == null or not sim.buildings.has(sim_id):
+		return {"available": false, "ok": false, "cost": 0,
+				"cost_text": RequirementFormatter.money(0), "reason": {}}
+	var b: Building = sim.buildings[sim_id]
+	var preview := sim.cmd_repair_building(sim_id, true)
+	var payload: Dictionary = preview.get("payload", {})
+	var code := StringName(str(preview.get("reason_code", &"")))
+	var ok := bool(preview["ok"])
+	# `E_NOT_DAMAGED` is not a refusal the player has to read — it is the normal
+	# state of a healthy building, and the row simply is not there.
+	var nothing_to_buy := not ok and code == &"E_NOT_DAMAGED"
+	var cost := int(payload.get("cost", 0))
+	var reason: Dictionary = {}
+	if not ok and not nothing_to_buy:
+		reason = formatter.format(code, {"cost": cost, "balance": sim.treasury.balance,
+				"condition": b.condition, "state": String(b.state),
+				"required_state": "active", "sim_id": sim_id})
+	return {
+		"available": not nothing_to_buy,
+		"ok": ok,
+		"cost": cost,
+		"cost_text": RequirementFormatter.money(cost),
+		"condition": b.condition,
+		"condition_text": RequirementFormatter.percent(b.condition),
+		"damage_fraction": float(payload.get("damage_fraction", b.damage_fraction())),
+		"target": float(payload.get("repair_target", 1.0)),
+		"target_text": RequirementFormatter.percent(payload.get("repair_target", 1.0)),
+		"crew_hours": float(payload.get("crew_hours", 0.0)),
+		"reason": reason,
+	}
+
+
+## Doc 04 §2.4's shed tier. The classes are doc 04's own roster
+## (`data/grid_components.json.priority.classes`), read through the sim so this
+## file authors no ladder; `available` is false for a building the grid has no
+## service record for, which is the same `E_UNSERVED` the command raises.
+func priority_view(sim_id: String) -> Dictionary:
+	var out := {"available": false, "classes": [] as Array[String], "current": "",
+			"current_key": ""}
+	if sim == null or not sim.buildings.has(sim_id):
+		return out
+	var priority: Dictionary = sim.grid_rules.get("priority", {})
+	var classes: Array[String] = []
+	for entry: Variant in (priority.get("classes", []) as Array):
+		classes.append(str(entry))
+	if classes.is_empty():
+		return out
+	var current := String(sim.grid.priority_class_of(sim_id))
+	out["classes"] = classes
+	out["current"] = current
+	out["current_key"] = BuildController.priority_key(current)
+	# A building with no grid service record cannot carry a class: doc 04 keeps
+	# the tier ON the service record, which is exactly what the shed score reads.
+	out["available"] = sim.grid.attachment_of(sim_id) != ""
+	return out
+
+
+static func priority_key(priority_class: String) -> String:
+	return "ui_building_priority_%s" % priority_class.to_lower()
+
+
+## Doc 02 §2.12's demolition, refunded by doc 03 §2.3 + the construction queue's
+## own §2.10 fraction on anything still in flight. Always `available` — the
+## refusal (`on_fire`, `destroyed`) is a sentence the player should read rather
+## than a button that vanishes, because both states are ones they are looking at.
+func demolish_view(sim_id: String) -> Dictionary:
+	if sim == null or not sim.buildings.has(sim_id):
+		return {"available": false, "ok": false, "refund": 0,
+				"refund_text": RequirementFormatter.money(0), "reason": {}}
+	var preview := sim.cmd_demolish_building(sim_id, true)
+	var payload: Dictionary = preview.get("payload", {})
+	var ok := bool(preview["ok"])
+	var refund := int(payload.get("refund", 0))
+	var reason: Dictionary = {}
+	if not ok:
+		var b: Building = sim.buildings[sim_id]
+		reason = formatter.format(preview["reason_code"],
+				{"state": String(b.state), "required_state": "active",
+				"sim_id": sim_id})
+	return {
+		"available": true,
+		"ok": ok,
+		"refund": refund,
+		"refund_text": RequirementFormatter.money(refund),
+		"capital_refund": int(payload.get("capital_refund", 0)),
+		"job_refund": int(payload.get("job_refund", 0)),
+		"cancelled_jobs": (payload.get("cancelled_jobs", []) as Array).size(),
+		"reason": reason,
+	}
+
+
+## The three commands, issued for real (doc 12 §4.4). The panel refreshes from
+## whatever the sim answers; it never predicts.
+func repair(sim_id: String) -> Dictionary:
+	if sim == null:
+		return CommandQueue.fail(&"E_UNKNOWN_BUILDING", {"sim_id": sim_id})
+	return sim.cmd_repair_building(sim_id)
+
+
+func set_priority(sim_id: String, priority_class: String) -> Dictionary:
+	if sim == null:
+		return CommandQueue.fail(&"E_UNKNOWN_BUILDING", {"sim_id": sim_id})
+	return sim.cmd_set_priority(sim_id, priority_class)
+
+
+func demolish(sim_id: String) -> Dictionary:
+	if sim == null:
+		return CommandQueue.fail(&"E_UNKNOWN_BUILDING", {"sim_id": sim_id})
+	return sim.cmd_demolish_building(sim_id)
 
 
 static func _vital(id: String, label_key: String, value: String) -> Dictionary:

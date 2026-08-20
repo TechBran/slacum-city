@@ -379,8 +379,14 @@ func add_building(view: Dictionary) -> BuildingRec:
 	rec.powered = bool(view.get("powered", true))
 	rec.has_backup_power = bool(view.get("has_backup_power", false))
 	rec.priority_load = bool(view.get("priority_load", false))
-	rec.damage = float(view.get("damage", 0.0))
 	rec.condition = float(view.get("condition", 1.0))
+	# Doc 02 §2.6: damage IS `1 − condition`. A view that supplies a condition
+	# and no damage used to spawn at soot 0 whatever shape the building was in,
+	# so `building.gdshader`'s soot ramp and the `damage_dim_gain` on the
+	# emissive were dead channels on every worn building in the city — which is
+	# the whole "which one needs repair?" cue (doc 12 §2.9 item 6).
+	rec.damage = float(view.get("damage",
+			clampf(1.0 - rec.condition, 0.0, 1.0)))
 	rec.stage = int(view.get("construction_stage", 0))
 	rec.overlay_state = int(view.get("overlay_state", OVERLAY_NORMAL))
 	rec.variant = variant_of(id)
@@ -1136,10 +1142,16 @@ func apply_event(e: Dictionary) -> void:
 		&"building_damaged", &"building_damage_changed":
 			var rec2 := _rec_of(e.get("building", e.get("building_id", -1)))
 			if rec2 != null:
-				if e.has("damage"):
-					rec2.damage = clampf(float(e["damage"]), 0.0, 1.0)
 				if e.has("condition"):
 					rec2.condition = clampf(float(e["condition"]), 0.0, 1.0)
+				# Doc 02 §2.6's decay transition carries `{building, cause}` and
+				# nothing else — the sim owns the numbers and does not repeat
+				# them in an event. So a bare `building_damaged` derives its
+				# soot from the condition this model is holding rather than
+				# leaving the channel at zero on a building that just went
+				# `damaged`, which is what made the state invisible in the world.
+				rec2.damage = clampf(float(e["damage"]), 0.0, 1.0) if e.has("damage") \
+						else clampf(1.0 - rec2.condition, 0.0, 1.0)
 				if base_overlay_state(rec2.id) == OVERLAY_NORMAL:
 					_write_overlay(rec2, OVERLAY_WARNING)
 				_retarget(rec2)
@@ -1204,10 +1216,15 @@ func apply_snapshot(snap: Dictionary) -> void:
 			rec.powered = bool(view["powered"])
 		if view.has("has_backup_power"):
 			rec.has_backup_power = bool(view["has_backup_power"])
-		if view.has("damage"):
-			rec.damage = float(view["damage"])
 		if view.has("condition"):
 			rec.condition = float(view["condition"])
+		# Same derivation as `add_building`: a feed that publishes conditions
+		# and no damage still lights the soot channel, so wear is visible on
+		# the building rather than only inside the building panel.
+		if view.has("damage"):
+			rec.damage = clampf(float(view["damage"]), 0.0, 1.0)
+		elif view.has("condition"):
+			rec.damage = clampf(1.0 - float(view["condition"]), 0.0, 1.0)
 		if view.has("occ_b"):
 			rec.occ_b = float(view["occ_b"])
 		if view.has("construction_stage"):
@@ -1229,6 +1246,34 @@ func apply_snapshot(snap: Dictionary) -> void:
 
 ## Full resync: snap every value to steady state and drop queued ceremony.
 ## Also used on save load, chunk build and preset change (§2.3).
+## **The wear feed** (doc 12 §2.9 item 6's world-side cue). `rows` is
+## `{render_id: condition}` — the cheapest possible shape, because the shell
+## already walks the building roster once a game-hour and this rides that walk.
+##
+## Condition is the only reading a repair changes that the renderer can show, and
+## it is the reading that answers *which building needs one*: doc 02 §2.6 decays
+## it continuously and fires exactly ONE event (`building_damaged`, at the
+## auto-damage threshold), so an event-only renderer sees a building go from
+## pristine to `damaged` in one step and shows nothing in between. Feeding the
+## condition instead makes `building.gdshader`'s soot ramp and the
+## `damage_dim_gain` on the emissive read as continuous wear, and washes both
+## clean the game-hour after a repair completes.
+##
+## Skips a building whose condition has not moved, so a healthy city costs one
+## float compare each and marks nothing dirty.
+func ingest_conditions(rows: Dictionary) -> void:
+	for key: Variant in rows:
+		var rec := _rec_of(key)
+		if rec == null:
+			continue
+		var condition := clampf(float(rows[key]), 0.0, 1.0)
+		if is_equal_approx(rec.condition, condition):
+			continue
+		rec.condition = condition
+		rec.damage = clampf(1.0 - condition, 0.0, 1.0)
+		_retarget(rec)
+
+
 func resync_snap() -> void:
 	for id in _recs:
 		var rec: BuildingRec = _recs[id]

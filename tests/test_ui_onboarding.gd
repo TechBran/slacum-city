@@ -720,9 +720,16 @@ func test_the_sheet_lists_the_transformer_in_its_own_category() -> void:
 	assert_true(_cfg().has_string(str(transformer["name_key"])), "and it has a name (G-8)")
 	assert_true(_cfg().has_string(BuildController.category_tab_key(
 			BuildController.CATEGORY_INFRASTRUCTURE)), "the tab has copy too")
-	# The grid tab sorts last: it is the tab you reach for once something said no.
-	assert_eq(BuildController.CATEGORY_ORDER[BuildController.CATEGORY_ORDER.size() - 1],
-			BuildController.CATEGORY_INFRASTRUCTURE)
+	# The grid tab sorts after every tab that offers a BUILDING: it is the tab
+	# you reach for once something else said no. Since Wave 10 exactly one tab
+	# sorts after it, `roads`, and for the same reason — `NO_ROAD` / `E_AVENUE` /
+	# `E_NOT_CONNECTED` are the refusals that send you there (doc 12 §2.7).
+	var order := BuildController.CATEGORY_ORDER
+	assert_eq(order[order.size() - 1], PathTool.CATEGORY_ROADS)
+	assert_eq(order[order.size() - 2], BuildController.CATEGORY_INFRASTRUCTURE)
+	# `BuildController.cards()` is the footprint roster alone — the run cards
+	# come from `PathTool` and the build sheet merges the two — so the last card
+	# HERE is still an infrastructure one.
 	var last: Dictionary = cards[cards.size() - 1]
 	assert_eq(str(last["category"]), BuildController.CATEGORY_INFRASTRUCTURE)
 

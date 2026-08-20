@@ -751,3 +751,47 @@ func test_28_consumed_event_names_exist_on_the_emitter() -> void:
 	m.apply_event({"type": &"BlockDarkChanged", "block_id": 88, "block_dark": true,
 			"powered_fraction": 0.0})
 	assert_true(m.queued_plan_count() > 0, "the live name plays the blackout")
+
+
+# ===========================================================================
+# The wear feed (doc 12 §2.9 item 6's world-side "which one needs repair?")
+# ===========================================================================
+
+func test_a_view_with_a_condition_and_no_damage_spawns_with_soot() -> void:
+	# Doc 02 §2.6: damage IS `1 − condition`. `game/main.gd._building_view()`
+	# publishes the condition and no damage, so a worn building used to spawn at
+	# soot 0 and `building.gdshader`'s ramp was a dead channel.
+	var m := _model(21.0)
+	m.add_building(_view(1, Vector3(8, 0, 8), 0, {"condition": 0.40}))
+	assert_almost_eq(m.building(1).damage, 0.60, 1e-6,
+			"the soot channel is derived rather than defaulted to clean")
+	m.add_building(_view(2, Vector3(24, 0, 8), 0,
+			{"condition": 0.40, "damage": 0.10}))
+	assert_almost_eq(m.building(2).damage, 0.10, 1e-6,
+			"and an explicit damage still wins — the derivation is a fallback")
+
+
+func test_a_bare_damaged_event_derives_its_soot_from_the_condition_held() -> void:
+	# Doc 02 §2.6's decay transition carries `{building, cause}` and no numbers.
+	var m := _model(21.0)
+	m.add_building(_view(1, Vector3(8, 0, 8), 0, {"condition": 0.55}))
+	m.apply_event({"type": &"building_damaged", "building": 1, "cause": &"decay"})
+	assert_almost_eq(m.building(1).damage, 0.45, 1e-6)
+	assert_eq(m.building(1).overlay_state, RenderStateModel.OVERLAY_WARNING,
+			"and the §2.5 overlay still says so without relying on the soot")
+
+
+func test_the_condition_feed_moves_soot_both_ways() -> void:
+	var m := _model(21.0)
+	m.add_building(_view(1, Vector3(8, 0, 8), 0, {"condition": 1.0}))
+	m.add_building(_view(2, Vector3(24, 0, 8), 0, {"condition": 1.0}))
+	m.ingest_conditions({1: 0.30})
+	assert_almost_eq(m.building(1).damage, 0.70, 1e-6, "wear darkens it")
+	assert_almost_eq(m.building(2).damage, 0.0, 1e-6, "and only the one that moved")
+	# …and a repair washes it clean again, which is the other half of the loop.
+	m.ingest_conditions({1: 1.0})
+	assert_almost_eq(m.building(1).damage, 0.0, 1e-6)
+	# An id the renderer does not carry is ignored rather than crashing: the
+	# shell's roster and the renderer's differ for a game-hour after a demolition.
+	m.ingest_conditions({999: 0.5})
+	assert_eq(m.building(999), null)

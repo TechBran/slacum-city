@@ -40,6 +40,13 @@ const FIX_TILE := &"tile"
 const FIX_DISTRICT := &"district"
 ## C-62: `E_AVENUE` is the one requirement whose fix target is a ROAD SEGMENT.
 const FIX_ROAD_SEGMENT := &"road_segment"
+## `E_CONDITION`'s fix is not a place, it is a PURCHASE. Every other kind here
+## answers "where do I go?"; this one answers "what do I buy?", and the building
+## panel performs it in place rather than emitting it to the camera router —
+## focusing the camera on the building the player already has open moves nothing,
+## which is what `Fix this →` did on this row before doc 02 §2.6's repair had a
+## door (doc 92 §17.6).
+const FIX_REPAIR := &"repair"
 
 const KEY_PREFIX := "ui_requirement_"
 const TITLE_SUFFIX := "_title"
@@ -75,7 +82,7 @@ const CODE_TABLE := {
 	&"E_AVENUE": {"severity": SEVERITY_BLOCKED, "fix": FIX_ROAD_SEGMENT},
 	&"E_UNSERVED": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
 	&"E_STATE": {"severity": SEVERITY_BLOCKED, "fix": FIX_BUILDING},
-	&"E_CONDITION": {"severity": SEVERITY_BLOCKED, "fix": FIX_BUILDING},
+	&"E_CONDITION": {"severity": SEVERITY_BLOCKED, "fix": FIX_REPAIR},
 	&"E_MAX_LEVEL": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	&"E_UNKNOWN_ARCHETYPE": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	&"E_UNKNOWN_BUILDING": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
@@ -103,6 +110,14 @@ const CODE_TABLE := {
 	&"E_NOT_ROAD": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
 	&"E_NO_ELIGIBLE_TILES": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
 	&"E_WOULD_ORPHAN": {"severity": SEVERITY_BLOCKED, "fix": FIX_ROAD_SEGMENT},
+	# --- Wave 10: the building panel's ACTIONS row (doc 12 §2.9 item 6). Doc
+	# 02 §2.6's repair, doc 04 §2.4's shed tier and doc 02 §2.12's demolition
+	# all shipped without a surface; these are the three refusals the row can
+	# now put in front of a player. Two of them are INFO rather than BLOCKED,
+	# because "it is already being repaired" is news, not a fault.
+	&"E_NOT_DAMAGED": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
+	&"E_JOB_IN_FLIGHT": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
+	&"E_UNKNOWN_PRIORITY": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	# --- Wave 6: doc 09 §2.5's land verbs, surfaced by S4 (doc 12 §2.8).
 	# `WorldMap.purchase_allowed` raises the first three and
 	# `CitySim.cmd_start_development` the fourth; two of them are INFO rather
@@ -417,6 +432,15 @@ func _args_for(name: StringName, p: Dictionary) -> Dictionary:
 					RequirementFormatter.percent(p.get("condition", 0.0))))
 			args["need"] = str(p.get("need",
 					RequirementFormatter.percent(p.get("min_condition", 0.0))))
+		&"E_NOT_DAMAGED":
+			# The building's own condition, in the same percent every other
+			# condition reading in the deck uses.
+			args["have"] = str(p.get("have",
+					RequirementFormatter.percent(p.get("condition", 1.0))))
+			args["need"] = str(p.get("need", ""))
+		&"E_UNKNOWN_PRIORITY":
+			args["have"] = str(p.get("have", p.get("priority_class", "")))
+			args["need"] = str(p.get("need", ""))
 		&"E_MAX_LEVEL":
 			args["have"] = str(p.get("have", int(p.get("level", 0))))
 			args["need"] = str(p.get("need", int(p.get("max_level", 0))))
