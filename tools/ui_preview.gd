@@ -40,10 +40,10 @@ const SCREENS: Array[String] = [
 	"hud", "hud_banners", "hud_critical",
 	"build", "build_grid", "build_locked", "build_roads",
 	"placement_ok", "placement_blocked",
-	"path_aiming", "path_ok", "path_blocked", "path_refund",
-	"building", "building_blocked", "building_repairable",
+	"path_aiming", "path_ok", "path_blocked", "path_refund", "path_feeder",
+	"building", "building_blocked", "building_repairable", "building_water",
 	"land_buy", "land_blocked", "land_developing",
-	"drawer", "drawer_empty", "drawer_expanded",
+	"drawer", "drawer_empty", "drawer_expanded", "drawer_water",
 	"picker", "picker_empty",
 	"dashboard", "economy", "infrastructure", "response",
 	"away", "away_short",
@@ -326,13 +326,68 @@ static func _snapshot() -> Dictionary:
 	}
 
 
-static func _incidents() -> Array:
+## The drawer fixture. Not static any more: the `water_main_break` row names a
+## main the LIVE sim actually has, because doc 05 §2.12's valve is drawn from
+## `target_ref` and a made-up edge id would photograph a row without one.
+func _incidents() -> Array:
+	var water_break := _incident(35, "water_main_break", 2.4, "Riverside",
+			[4, 9], -1.0, 1.2, 8.0)
+	water_break["target_ref"] = {"kind": "water_segment", "id": _first_main()}
 	return [
 		_incident(31, "structure_fire", 4.6, "Harbour", [7], 12.0, 0.0, 47.0),
 		_incident(28, "transformer_failure", 3.2, "Old Town", [], 96.0, 0.0, 118.0),
-		_incident(35, "water_main_break", 2.4, "Riverside", [4, 9], -1.0, 1.2, 8.0),
+		water_break,
 		_incident(12, "crime", 1.6, "Docks", [], 210.0, 0.0, 340.0),
 	]
+
+
+## The first main in the starter city's own topology, sorted.
+func _first_main() -> String:
+	if _sim == null:
+		return ""
+	var ids := _sim.water.edges.keys()
+	ids.sort()
+	return str(ids[0]) if not ids.is_empty() else ""
+
+
+## The first `water_facility` shell — the one building in the city whose panel
+## carries doc 05 §6's node block.
+func _water_shell() -> String:
+	var keys := _sim.buildings.keys()
+	keys.sort()
+	for key: Variant in keys:
+		if String((_sim.buildings[key] as Building).archetype) == "water_facility":
+			return str(key)
+	return _first_building()
+
+
+## `path_feeder`'s run. §2.1 makes a feeder start ON the network, so the anchor
+## is the first tile of an authored feeder's route and the head is four tiles
+## along it — the sim's assist fills in the rest.
+func _feeder_ghost() -> void:
+	var sheet := _root.build_sheet
+	sheet.open()
+	sheet.select_category(BuildController.CATEGORY_INFRASTRUCTURE)
+	var card := sheet.card_button("feeder_c2")
+	if card == null:
+		return
+	card.pressed.emit()
+	var anchor := _feeder_anchor()
+	sheet.move_ghost(Vector3(float(anchor.x) * 8.0 + 4.0, 0.0,
+			float(anchor.y) * 8.0 + 4.0))
+	sheet.confirm_placement()   # START: pins the anchor
+	var head := anchor + _run_direction(anchor, 4) * 4
+	sheet.move_ghost(Vector3(float(head.x) * 8.0 + 4.0, 0.0, float(head.y) * 8.0 + 4.0))
+
+
+func _feeder_anchor() -> Vector2i:
+	for id: Variant in _sim.grid.component_ids_of_kind(&"feeder"):
+		var route: Array = _sim.grid.component(String(id)).get("route", [])
+		if route.is_empty():
+			continue
+		var pair: Array = route[0]
+		return Vector2i(int(pair[0]), int(pair[1]))
+	return _occupied_tile()
 
 
 static func _incident(id: int, type_id: String, severity: float, where: String,
@@ -423,6 +478,13 @@ func _apply(screen: String) -> void:
 		"path_refund":
 			# The one card in the deck whose money goes the other way.
 			_run_ghost("road_remove", true, false)
+		"path_feeder":
+			# Doc 04 §4's run verb, drawn from the network it has to start on.
+			# Its geometry is the C-41 assist rather than an L, so this is also
+			# the state that photographs a run the player did not draw tile by
+			# tile — and the bar's longest sentence, `E_NO_SLOT`, when doc 09's
+			# two authored feeders have already taken SUB-A's slots.
+			_feeder_ghost()
 		"building":
 			if _building_panel != null:
 				_building_panel.show_building(_first_building())
@@ -439,6 +501,13 @@ func _apply(screen: String) -> void:
 				worn.condition = 0.72
 				_sim.treasury.balance = 500_000
 				_building_panel.show_building(_first_building())
+		"building_water":
+			# Doc 05 §6's node block: a `water_facility` shell with its own
+			# ladder rows under the doc-02 one. `WTR-1` hosts three nodes, which
+			# is the widest this block ever gets.
+			if _building_panel != null:
+				_sim.treasury.balance = 500_000
+				_building_panel.show_building(_water_shell())
 		"land_buy":
 			# The city can afford it: the panel's happy face, with the primary
 			# button live and no blocker rows under it.
@@ -466,6 +535,11 @@ func _apply(screen: String) -> void:
 		"drawer_expanded":
 			_root.incident_drawer.open()
 			_root.incident_drawer.row_button(31).pressed.emit()
+		"drawer_water":
+			# The one row that carries a fourth action: doc 05 §2.12's valve, on
+			# a `water_main_break` whose target the sim still has.
+			_root.incident_drawer.open()
+			_root.incident_drawer.row_button(35).pressed.emit()
 		"picker":
 			_root.incident_drawer.open()
 			_root.incident_drawer.row_button(31).pressed.emit()

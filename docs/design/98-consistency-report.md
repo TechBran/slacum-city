@@ -790,3 +790,76 @@ Wave-9's road-UI open question 4: curriculum level 3 measures **59–64 game-hou
 `cmd_place_water_component` builds a real doc-02 building (its own step 1) but announces it on doc 05's `water_component_placed` rather than on `building_placed_sim`. That is the same shape as the pump-station render bug fixed on 2026-08-20 — the shell was invisible until relaunch because `game/main.gd`'s translator only knew the doc-02 event — and it had a second instance nobody had looked for: `data/audio.json`'s cue table maps `building_placed_sim` to `purchase` and had **no row for water at all**. `water_component_placed` was in `AudioEvents.OBSERVED_TYPES`, so the construction-site bed followed the pump and the crane could be heard working on it, and the confirmation blip at the moment of purchase never played. **The most expensive single purchase in the game — doc 05's $45,000 pump, the whole of curriculum level 5 — was the one purchase that made no sound.**
 
 **Ruling: every event that creates a Building must be checked against BOTH tables — the renderer's translator and the audio cue map — and doc 11 §2.15's wired set gets a row per EVENT, not per concept.** The fix is one rule in `data/audio.json` carrying the same cue, key, dedup and cooldown as the building row (`attenuation: none`, because a purchase confirmation is the player's own action and is always crisp), one row in doc 11 §2.15's table, and one entry in `tests/test_audio_model.gd`'s event→cue map so the next silent verb fails a test instead of shipping. **Unverified on device:** this is a workstation reading of the cue path, not the lead's ears on a Fold 6 — the cue resolves, the rule matches and the test asserts the mapping, but nobody has heard it.
+
+
+### RR-41 — The verb table is empty of doorless rows, and the panel the last three asked for was not built (docs 04 §4, 05 §6.1, 10 §2.13, 12 §2.7/§2.9, 91 §14.5 D-4, 92 §27, 93 §J1–§J3)
+
+Three surfaces were outstanding after Wave 10 and every one of them had been
+deferred for a reason rather than missed. **All three are closed, and two of the
+three closures are rulings against building the screen that was asked for.**
+
+**(a) `cmd_route_feeder` is two cards on doc 12 §2.7's drag-path tool.** Doc 92
+§25.7 deferred it as a *balance* change — §17.3 names the 2 × 1,200 kW feeder
+ceiling as the late game's binding constraint — so it got the pass and the matrix
+it asked for (doc 92 §27), and the full **7 strategies × 3 seeds × 21 game-days**
+matrix is **byte-identical**, all 30 rows, diffed field by field. The reason is
+worth recording because it is not the obvious one: the verb has been *in* the
+matrix since Wave 6, driven by `Balanced` through the one-tap door the build
+sheet would use, so a UI pass cannot move a harness that never had a UI. Three
+sub-rulings sit under the card. The tab is **`infrastructure`, not `roads`** —
+§2.7 files a run card by what it is made of, and a feeder belongs beside the
+transformer it roots exactly as a main belongs beside the pump it feeds. The
+class choice is **two cards, not a picker**, read from
+`routable.feeder.conductor_classes` so a class this build does not ship never
+gets one. And it is the **only run card whose geometry is not §2.7's L**:
+`cmd_route_feeder` requires every tile owned and READY, a straight Chebyshev line
+between two owned blocks routinely crosses one the city does not own (doc 04 §4
+records that as the whole of seed 4242's late-game routing failure), so the run
+is filled by `suggest_feeder_route` — the C-41 assist — which returns the
+shortest LEGAL run and, on a per-tile price, therefore the cheapest. The ghost
+still draws exactly the tiles the commit will lay.
+
+**(b) There is no water-node panel, and there should not be one.** Doc 05 §6.1,
+doc 93 §B2 and doc 91 §14.5 **D-4** had all carried the same sentence since Wave
+5: `cmd_upgrade_water_component`, `cmd_isolate_water_main` and
+`cmd_restore_water_main` "want a water-NODE panel doc 12's screen map does not
+have". They do not. They are **two verbs at two moments**, and the moments decide
+the surface (doc 93 §J1): *upgrade* is a purchase against a standing asset, and
+the asset already has a panel — the doc-02 `water_facility` SHELL the node is
+hosted on — so it is a block there, as a **list**, because `WTR-1` hosts three
+nodes and a panel showing one would be lying about the other two. *Isolate and
+restore* is a trade taken under time pressure about a MAIN, and a main has no
+footprint, no panel and no way to be selected; the only place one is ever named
+to the player is doc 06's `water_main_break`, whose `target_ref` is
+`{kind: "water_segment", id}`, so the valve goes on the drawer row that is
+already telling them the main is open. **One control in two moods**, never two
+buttons, because the two are never both available. The trap — a main isolated and
+then orphaned — cannot happen: doc 05's own `set_segment_repaired` clears the
+flag and doc 06 calls it on resolve, so every main the drawer can valve out
+un-valves itself when the crew finishes. **And isolation already persisted**:
+`WaterEdge.serialize()` has carried `state` since Wave 1, so the surface needed
+**no save-section bump** — asserted by a test rather than assumed, because the
+ruling turns on it. D-4 is closed.
+
+**(c) `RoadNetwork.cmd_road_repair` is not a player verb, and the row is closed
+rather than carried.** Doc 10 §2.13 had recorded it as an open question since
+Wave 5. Doc 93 §J3 and doc 10 now rule it out, on four grounds that bind in
+order: §2.12 **already names the player's surface** and it is the *policy*
+(`auto_repair_threshold`, `auto_repair_daily_cap` — this doc's own words: "a
+player budget setting, not a price"); the policy picks better runs than a thumb
+can, sorting contiguous runs by `(mean congestion desc, condition asc)` against
+information doc 12 gives the player no overlay for; a manual verb would spend the
+same C-16 dollars **outside `auto_repair_daily_cap`**, which is the only thing
+holding road repair inside doc 03's derived routine-repair line; and doc 02's
+per-building `REPAIR` is not a precedent, because a building is a discrete asset
+the player taps and a road tile is not. What remains open is strictly smaller and
+is doc 10 §9.4 question 5 restated: **the policy's two dials have no door
+either**, and they want a settings row on the `policy:` mechanism doc 12 §2.13
+already ships for doc 06's dispatch policy.
+
+**The `sim/` cost of all three: eight lines.** `IncidentSystem.snapshot()` now
+publishes `target_ref` — a field `incident_created` has always carried — so a UI
+that comes up on a loaded save, which replays no lifecycle event, knows which
+main a break is about. The save is `canonical_capture()` and the snapshot is not
+hashed; `profile_sim --hash-only` is **bit-identical on both cities and both
+paths**, with the change reverted and re-applied.

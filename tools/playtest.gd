@@ -75,10 +75,11 @@ const KNOWN_VERBS: Array[String] = [
 	"cmd_place_road", "cmd_upgrade_road", "cmd_demolish_road",
 	"cmd_place_water_component", "cmd_place_water_main",
 	"cmd_upgrade_water_component",
-	# Wave 6's doc 04 §4 `route_feeder`. Recorded here so its presence shows in
-	# the report; `Balanced` drives it through the one-tap
-	# `cmd_place_grid_component("feeder", …)` door, which is the one the build
-	# sheet will use, so the harness measures the path the player takes.
+	# Wave 6's doc 04 §4 `route_feeder`. `Balanced` drives it through the one-tap
+	# `cmd_place_grid_component("feeder", …)` door; Wave 11 gave the verb a real
+	# card on doc 12 §2.7's drag-path tool (doc 93 §J2) and `InfrastructureFirst`
+	# now drives it too, because an agent whose whole thesis is "bones before
+	# income" cannot watch the tap and ignore the trunk it hangs off.
 	"cmd_route_feeder",
 ]
 
@@ -1361,17 +1362,39 @@ class InfrastructureFirst extends Strategy:
 	## never builds anything, which measures the land price and nothing else.
 	const BUILDINGS_PER_BLOCK := 24
 
+	# --- Wave 11: the TRUNK, which is a different decision from the tap -------
+	##
+	## Doc 92 §17.3 measured the ceiling no transformer rung can lift: every kW
+	## the city draws runs through doc 09 §2.9.5's two class-1 feeders, and the
+	## demand crosses them at ~410 buildings. `Balanced` has watched that number
+	## since Wave 6; this agent did not, which made "infrastructure first" a
+	## claim about taps only. Doc 93 §J2 gave `route_feeder` a card on the build
+	## sheet, so the brief and the door now agree and the rule is here.
+	##
+	## **Every constant is `Balanced`'s, deliberately.** The trigger is doc 04
+	## §5.10's WARNING band — the only authored statement in the project of how
+	## loaded is too loaded — and the class, the cooldown and the floor are the
+	## figures §17.3's follow-up fitted. Two agents watching one number with two
+	## thresholds would make the matrix unreadable.
+	const FEEDER_RELIEF_RATIO := PowerGrid.OVERLAY_WARNING_R
+	const FEEDER_CLASS := 2
+	const FEEDER_COOLDOWN := 6
+	const FEEDER_ATTEMPT_FLOOR := 10_000
+
 	var _grid_attempt_hour: int = -1000
 	var _land_attempt_hour: int = -1000
+	var _feeder_hour: int = -1000
 
 	func id() -> String:
 		return "infrastructure_first"
 
 	func describe() -> String:
-		return "repairs, buys grid ahead of growth and land ahead of both"
+		return "repairs, buys trunk and grid ahead of growth and land ahead of both"
 
 	func act(api: Api, hour: int) -> void:
 		if _repair_something(api):
+			return
+		if _relieve_trunk(api, hour):
 			return
 		if _extend_grid(api, hour):
 			return
@@ -1417,6 +1440,35 @@ class InfrastructureFirst extends Strategy:
 			return false
 		_grid_attempt_hour = hour
 		return bool(api.place_grid_component("transformer", tile)["ok"])
+
+	## Doc 04 §4's `route_feeder`, ahead of the tap for the same reason the tap is
+	## ahead of the building: a saturated trunk makes every transformer behind it
+	## useless, and §2.5's relay opens at r = 1.05.
+	##
+	## **When every slot is full this rule does nothing, on purpose.** The answer
+	## to a full substation is doc 04 §2.2's ladder — a $15,000 substation, or an
+	## upgrade of the one that is there — and since Wave 6 a completed
+	## `substation` shell IS its grid node (doc 04's `node_shells`), so the civic
+	## ladder below can already buy the fix on its own schedule. `Balanced` has a
+	## dedicated stand-down for the starved state (`_trunk_starved`, which holds
+	## its land fund); this agent has no land fund to hold, so it simply falls
+	## through to its next rung rather than growing a second savings rule.
+	func _relieve_trunk(api: Api, hour: int) -> bool:
+		if not api.has_verb("cmd_place_grid_component"):
+			return false
+		if api.feeder_peak_ratio() < FEEDER_RELIEF_RATIO:
+			return false
+		if hour - _feeder_hour < FEEDER_COOLDOWN:
+			return false
+		if not api.has_feeder_slot():
+			return false
+		if api.balance() < RESERVE + FEEDER_ATTEMPT_FLOOR:
+			return false
+		var target := api.hot_feeder_target()
+		if target.x < 0:
+			return false
+		_feeder_hour = hour
+		return bool(api.route_feeder(target, FEEDER_CLASS)["ok"])
 
 	## Doc 09 §2.5 + §2.3. Three outcomes: finish paying for a block already
 	## bought but never started, buy the next one, or declare that the treasury

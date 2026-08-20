@@ -84,6 +84,11 @@ signal alerts_unread_changed(count: int)
 ## one object.
 signal dispatch_requested(unit_id: int, incident_id: int)   ## → cmd_dispatch_unit
 signal incident_action(action: StringName, incident_id: int, value: Variant)
+## Doc 05 §2.12's tactical pair, ALREADY ISSUED by the drawer (doc 93 §J1) — the
+## same contract S4's `land_purchased` keeps. The shell listens only to re-read
+## the city; nothing downstream has to run the command.
+signal water_main_action(incident_id: int, edge_id: String, action: StringName,
+		result: Dictionary)
 signal handle_now_requested(incident_id: int)          ## away report → the incident
 signal tax_applied(level: int, rate: float)            ## the sim already applied it
 signal deeplink_requested(target: String)              ## dashboard row → overlay/…
@@ -348,6 +353,7 @@ func _connect_screens() -> void:
 		_connect(incident_drawer.dispatch_requested, _on_assign_requested)
 		_connect(incident_drawer.acknowledge_requested, _on_acknowledge_requested)
 		_connect(incident_drawer.pin_requested, _on_pin_requested)
+		_connect(incident_drawer.main_action_taken, _on_main_action_taken)
 	if unit_picker != null:
 		_connect(unit_picker.dispatch_requested, _on_dispatch_requested)
 	if city_dashboard != null:
@@ -560,6 +566,11 @@ func _on_acknowledge_requested(incident_id: int) -> void:
 
 func _on_pin_requested(incident_id: int, pinned: bool) -> void:
 	incident_action.emit(&"pin", incident_id, pinned)
+
+
+func _on_main_action_taken(incident_id: int, edge_id: String, action: StringName,
+		result: Dictionary) -> void:
+	water_main_action.emit(incident_id, edge_id, action, result)
 
 
 ## §2.10's deep links. `drawer` is a cross-screen route the root can serve on its
@@ -1003,9 +1014,35 @@ func set_alert_locator(locator: Callable) -> void:
 func refresh_incidents(snapshot_rows: Array, now_h: float = -1.0) -> void:
 	if incident_drawer == null:
 		return
+	_resolve_water_actions()
 	if now_h >= 0.0:
 		incident_drawer.set_now_h(now_h)
 	incident_drawer.refresh_from(snapshot_rows)
+
+
+## Hands the drawer doc 05 §2.12's isolate/restore pair (doc 93 §J1). The shell
+## may call this explicitly; it does not have to, because `_resolve_water_actions`
+## below finds the same object on its own.
+func bind_water_actions(actions: WaterActions) -> void:
+	if incident_drawer != null:
+		incident_drawer.bind_water(actions)
+
+
+## The drawer's water binding, resolved from the build sheet's controller.
+##
+## `bring_up_screens()` builds every screen against one shared `UIConfig` and no
+## sim; the shell builds the `BuildController` afterwards and hands it to the
+## build sheet. Rather than add a second shell call for one binding, the root
+## takes the object the sheet is already holding, the first time it feeds a
+## snapshot — the root is a switchboard and this is a wire, not a decision. A
+## shell that binds explicitly wins; a fixture mount with no build sheet stays
+## exactly as it was, and the drawer simply draws no valve.
+func _resolve_water_actions() -> void:
+	if incident_drawer == null or incident_drawer.water != null:
+		return
+	if build_sheet == null or build_sheet.controller == null:
+		return
+	incident_drawer.bind_water(build_sheet.controller.water)
 
 
 ## `Callable(kind: StringName, id) -> Vector3`, called as `(&"tile", Vector2i)`.

@@ -126,6 +126,18 @@ const CODE_TABLE := {
 	&"E_ALREADY_OWNED": {"severity": SEVERITY_INFO, "fix": FIX_BLOCK},
 	&"E_UNKNOWN_BLOCK": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	&"E_ALREADY_DEVELOPING": {"severity": SEVERITY_INFO, "fix": FIX_BLOCK},
+	# --- Wave 11: doc 04 §4's `route_feeder` on the drag-path tool, and doc 05
+	# §6's node verbs on S5 / S6. Every one of these is a refusal the two new
+	# surfaces can now put in front of a player and none had copy. `E_NO_SLOT`
+	# is the interesting one: its fix is a BUILDING (doc 04 §2.2's ladder — buy
+	# or upgrade the substation), so it routes the camera like `POWER_CAPACITY`.
+	&"E_CLASS_UNAVAILABLE": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	&"E_DISCONTINUOUS": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	&"E_NO_SLOT": {"severity": SEVERITY_BLOCKED, "fix": FIX_BUILDING},
+	&"E_UNKNOWN_NODE": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	&"E_NOT_UPGRADEABLE": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
+	&"E_UNKNOWN_MAIN": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	&"E_NOT_ISOLATED": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	UNKNOWN_CODE: {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 }
 
@@ -447,6 +459,23 @@ func _args_for(name: StringName, p: Dictionary) -> Dictionary:
 		&"E_UNKNOWN_ARCHETYPE":
 			args["have"] = str(p.get("have", p.get("archetype", "")))
 			args["need"] = str(p.get("need", ""))
+		&"E_CLASS_UNAVAILABLE":
+			args["have"] = str(p.get("have", int(p.get("conductor_class", 0))))
+			args["need"] = str(p.get("need", ", ".join(
+					RequirementFormatter._as_strings(p.get("conductor_classes", [])))))
+		&"E_DISCONTINUOUS":
+			args["have"] = str(p.get("have", _tile_text(p)))
+			args["need"] = str(p.get("need", ""))
+		&"E_NO_SLOT":
+			# Doc 04 §2.2's 2/3/4/6/8 slot ladder, at the substation the run
+			# would have rooted on. `at` is that substation, which is also the
+			# `Fix this →` target.
+			args["at"] = str(p.get("at", p.get("substation", "")))
+			args["have"] = str(p.get("have", int(p.get("feeder_slots_free", 0))))
+			args["need"] = str(p.get("need", 1))
+		&"E_UNKNOWN_NODE", &"E_UNKNOWN_MAIN", &"E_NOT_ISOLATED", &"E_NOT_UPGRADEABLE":
+			args["have"] = str(p.get("have", p.get("node", p.get("edge", ""))))
+			args["need"] = str(p.get("need", ""))
 		&"E_UNKNOWN_BUILDING":
 			args["have"] = str(p.get("have", p.get("sim_id", "")))
 			args["need"] = str(p.get("need", ""))
@@ -468,6 +497,16 @@ func _args_for(name: StringName, p: Dictionary) -> Dictionary:
 	if p.has("balance"):
 		args["balance"] = RequirementFormatter.money(p["balance"])
 	return args
+
+
+## An `Array` of anything → the strings a `{need}` list is joined from. Used by
+## `E_CLASS_UNAVAILABLE`, whose payload names the roster it refused against.
+static func _as_strings(raw: Variant) -> PackedStringArray:
+	var out: PackedStringArray = []
+	if raw is Array:
+		for entry: Variant in (raw as Array):
+			out.append(str(entry))
+	return out
 
 
 static func _tile_text(p: Dictionary) -> String:

@@ -566,6 +566,54 @@ func test_scene_carries_the_build_sheet_and_building_panel() -> void:
 	_unmount(mounted)
 
 
+func test_a_tab_lists_footprints_before_runs_and_sells_last() -> void:
+	# §2.7's "then cost" was written before a run card existed, and a run's
+	# `cost` is a price PER TILE. Sorted together, `Feeder` at $110 a tile leads
+	# the tab a player reaches by `E_UNSERVED` and `Transformer` — the answer to
+	# that very refusal — falls to fourth. So the two kinds sort separately.
+	var sim := CitySim.boot_from_files()
+	var formatter := RequirementFormatter.load_from_files()
+	var controller := BuildController.new(sim, formatter)
+	var cards: Array[Dictionary] = controller.cards()
+	cards.append_array(PathTool.new(sim, formatter).cards())
+	cards.sort_custom(BuildController._card_less)
+	var by_tab: Dictionary = {}
+	for card: Dictionary in cards:
+		var tab := str(card["category"])
+		var rows: Array = by_tab.get(tab, [])
+		rows.append(card)
+		by_tab[tab] = rows
+	assert_true(by_tab.has(BuildController.CATEGORY_INFRASTRUCTURE))
+	var infra: Array = by_tab[BuildController.CATEGORY_INFRASTRUCTURE]
+	assert_eq(str((infra[0] as Dictionary)["id"]), "transformer",
+			"doc 93 §A: `cmd_place_grid_component` is THE game, so it leads its tab")
+	for tab: Variant in by_tab:
+		var seen_run := false
+		# One running price per KIND, because the two kinds' prices are not the
+		# same quantity — which is the whole reason they are sorted apart.
+		var cheapest: Dictionary = {"footprint": -1, "run": -1}
+		for entry: Variant in (by_tab[tab] as Array):
+			var card: Dictionary = entry
+			var is_run := str(card.get("path_verb", "")) != ""
+			if is_run:
+				seen_run = true
+			else:
+				assert_false(seen_run,
+						"%s: no footprint card after a run card" % card["id"])
+			if bool(card.get("refunds", false)):
+				continue  # the card that PAYS is checked below, not here
+			# …and within each kind the sheet is still a shop, cheapest first.
+			var key := "run" if is_run else "footprint"
+			assert_true(int(card["cost"]) >= int(cheapest[key]),
+					"%s: %d after %d" % [card["id"], int(card["cost"]),
+					int(cheapest[key])])
+			cheapest[key] = int(card["cost"])
+		if str(tab) == PathTool.CATEGORY_ROADS:
+			var last: Dictionary = (by_tab[tab] as Array)[-1]
+			assert_true(bool(last.get("refunds", false)),
+					"the card that PAYS is last on its tab, never first")
+
+
 func test_persistent_screens_do_not_jam_the_back_stack() -> void:
 	# The scaffold's back stack pops "whatever is on the layer"; a persistent
 	# screen has to report its own open state or BACK would close the FAB.

@@ -1597,7 +1597,15 @@ the 50-game-day run ends at **54.9 %**.
 
 **And no verb answers it.** `data/grid_components.json`'s `placeable` roster ships
 exactly one kind. So the late-game ceiling is not a balance constant at all — it
-is a command-layer gap, and the fixes are named in this order:
+is a command-layer gap, and the fixes are named in this order.
+
+> **Status, as of Wave 11.** Item 1 shipped in Wave 6 (`cmd_route_feeder`, both
+> doors) and reached the player in Wave 11 as two build-sheet cards (§27, doc 93
+> §J2). Item 2 shipped in Wave 6 as doc 04's `node_shells` mapping — a completed
+> `substation` shell IS its grid node, with slots. Item 3 was correctly ruled out
+> and no capacity constant has moved. §27.4 walks all of it end to end on the
+> founding city: **$16,470 and 9 game-hours**.
+
 
 1. **Ship a feeder verb.** Doc 04 §4's `route_feeder` / `place_power_component`
    for `feeder`, and add `feeder` and `substation` to the placeable roster. Doc
@@ -3543,7 +3551,9 @@ one fork, both sides.
 - **It did not surface `cmd_route_feeder`.** It is a run verb and the drag-path
   tool would take it in an afternoon — and §17.3 names the 2 × 1,200 kW feeder
   ceiling as the late-game's binding constraint, so putting it on a card is a
-  **balance** change and wants its own pass and its own matrix.
+  **balance** change and wants its own pass and its own matrix. *(It got both in
+  Wave 11 — §27. The matrix did not move, for a reason §27.3 measures rather
+  than assumes.)*
 - **It did not retune a price.** Every figure the new surfaces quote is read from
   `data/economy.json` through `CostCurves` at the moment it is shown.
 - **It did not re-rule §22.3's 10–40 game-hour band**, which level 3 was already
@@ -3938,3 +3948,163 @@ restatement of the epoch, not a re-fit of anything.
   three-strategy, 150-game-day job and it belongs to whichever pass next needs
   the horizon rather than to this one.
 - **It did not chase `water_main_break`.** §27.7 files it.
+
+
+---
+
+## 28. Pass 10 — the feeder gets a card, and what that costs the matrix (Wave 11)
+
+*2026-08-20. Same rig, same seeds, same summariser. This is the pass §25.7 asked
+for by name: "putting `cmd_route_feeder` on a card is a **balance** change and
+wants its own pass and its own matrix". It has one, and the answer is that it
+costs the matrix nothing — which is a measurement and not an assumption, because
+the reason it costs nothing is not the reason anyone would have guessed.*
+
+### 28.1 What moved
+
+Nothing in `sim/` that a save can see, and no tunable file at all. The whole
+`sim/` diff is **eight lines** in `sim/incidents/incident_system.gd`, publishing
+`target_ref` on `snapshot()` — a field `incident_created` has always carried, and
+which doc 05 §2.12's isolate/restore surface needs so a UI that came up on a
+loaded save knows which main a break is about. The save is `canonical_capture()`;
+the snapshot is not hashed.
+
+Everything else is `ui/`, `tests/`, `tools/` and copy:
+
+| what | where |
+|---|---|
+| `cmd_route_feeder` reaches the drag-path tool as **two cards** on the `infrastructure` tab — `Feeder` (class 1) and `Heavy Feeder` (class 2) | `ui/path_tool.gd`, doc 93 §J2, doc 12 D-37/D-38 |
+| `cmd_upgrade_water_component` reaches S5, as a node block on the building panel of the shell that hosts it | `ui/water_actions.gd` + `ui/building_panel.gd`, doc 93 §J1, doc 12 D-41 |
+| `cmd_isolate_water_main` / `cmd_restore_water_main` reach S6, as one control in two moods on the drawer row that names the main | `ui/incident_drawer.gd`, doc 93 §J1, doc 12 D-42 |
+| `InfrastructureFirst` learns the trunk, on `Balanced`'s own trigger | `tools/playtest.gd` |
+| `RoadNetwork.cmd_road_repair` is ruled **not a player verb** and its row is closed | doc 93 §J3, doc 10 §2.13 |
+| A tab lists **footprints before runs** — a run's `cost` is a price PER TILE, and sorted against totals `Feeder` at $110/tile led the tab a player reaches by `E_UNSERVED` while `Transformer` fell to fourth | `ui/build_controller.gd`, doc 12 D-45 |
+
+`data/goals.json` is **untouched**, so gate 21 is not re-measured here — the
+curriculum arc of §26 stands exactly as published.
+
+### 28.2 The matrix — 7 strategies × 3 seeds × 21 game-days, before and after
+
+`tests/balance_matrix.gd`, both sides of the whole change, `curriculum` included:
+
+| strategy (mean of 3 seeds) | treasury | value | net $/gh | pop | happy | stab | dark % | placed | upg | minC | open inc |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `do_nothing` | 165,302 | 165,302 | 266 | 144 | 82.4 | 0.9487 | 0.04 | 0 | 0 | 0.512 | 0.04 |
+| `greedy_growth` | 69,006 | 952,192 | 1,354 | 1,736 | 53.0 | 0.7053 | 39.10 | 122 | 28 | 0.307 | 1.81 |
+| `infrastructure_first` | 23,947 | 140,347 | 384 | 230 | 76.9 | 0.9705 | 0.35 | 27 | 0 | 0.890 | 0.05 |
+| `balanced` | 76,310 | 892,823 | 2,121 | 1,363 | 74.5 | 0.9424 | 0.10 | 220 | 133 | 0.797 | 0.10 |
+| `tax_squeezer` | 89,969 | 1,220,899 | 2,884 | 1,155 | 54.8 | 0.9744 | 0.47 | 253 | 155 | 0.797 | 0.09 |
+| `disaster_neglect` | 56,518 | 962,752 | 1,649 | 1,273 | 55.8 | 0.7591 | 29.01 | 280 | 141 | 0.388 | 1.14 |
+| `curriculum` | 39,811 | 319,176 | 967 | 554 | 69.5 | 0.9243 | 0.88 | 70 | 33 | 0.789 | 0.12 |
+
+**One table, not two.** All 30 rows — 21 per-run rows and the 7 means and the
+header — are **byte-identical before and after**, diffed field by field rather
+than eyeballed. Nothing in the F-11 / late-game columns moved, and no gate is
+re-fitted, because none is even nudged.
+
+### 28.3 Why it did not move, which is the interesting half
+
+Two independent reasons, and it matters that they are independent:
+
+1. **The verb was already in the matrix.** `cmd_route_feeder` shipped in Wave 6
+   and `Balanced` has driven it since (§17.3's follow-up), through the one-tap
+   `cmd_place_grid_component("feeder", …)` door — deliberately the door the
+   build sheet would use. So the *balance* of a city that widens its trunk was
+   measured five waves ago; Wave 11 changes **who can reach the verb**, not what
+   the verb does. A UI pass cannot move a harness that never had a UI.
+
+2. **The one harness change is armed and never fires inside any horizon this
+   report uses.** `InfrastructureFirst` now watches the trunk on the same doc 04
+   §5.10 WARNING band `Balanced` watches. Measured at **45** game-days — twice
+   the pacing horizon — with `feeder_peak_ratio_end` read off the live grid:
+
+   | strategy | seed | buildings | hottest feeder at day 45 | feeders routed | feeder spend |
+   |---|---|---|---|---|---|
+   | `infrastructure_first` | 1337 | 28 | **0.4384** | 0 | $0 |
+   | `infrastructure_first` | 4242 | 28 | **0.4361** | 0 | $0 |
+   | `infrastructure_first` | 9001 | 28 | **0.5582** | 0 | $0 |
+   | `balanced` | 1337 | 576 | 0.3047 | 11 | $38,010 |
+   | `balanced` | 4242 | 548 | 0.3685 | 10 | $42,630 |
+   | `balanced` | 9001 | 583 | 0.5509 | 10 | $55,020 |
+
+   `infrastructure_first` ends 45 game-days with **28 buildings**: it is the
+   agent that buys bones and barely grows, so its hottest circuit sits at
+   0.44–0.56 against a 0.75 trigger and the rule correctly does nothing. Its
+   whole 45-game-day matrix row is byte-identical with and without the rule,
+   which was checked rather than argued. `Balanced`'s three rows are the control
+   that says the rule is not dead code: on the SAME trigger, at 548–583
+   buildings, it buys 10–11 trunks for $38k–$55k and holds the peak at 0.30–0.55
+   — i.e. under the band it fires at, which is the whole point of buying at
+   WARNING rather than at CRITICAL.
+
+**The honest reading:** the trunk rule is insurance on `infrastructure_first`,
+not a behaviour change, and it is in because the agent's brief says "grid ahead
+of growth" and a grid claim that covers the tap and not the trunk it hangs off is
+a claim about half the grid. Filed here so the next reader does not re-discover
+an idle rule and think it broken.
+
+### 28.4 The player's loop, walked end to end
+
+Doc 92 §17.3 named three fixes for the late-game ceiling. Two shipped in Wave 6
+and the third was ruled out; Wave 11 is the first pass where a **player** can
+walk them, so the walk was measured on the founding city
+(`tests/test_path_tool.gd::test_the_whole_feeder_loop_is_walkable_from_the_founding_city`):
+
+| step | what the player does | what the city answers |
+|---|---|---|
+| 1 | draws a class-2 run off `F_NORTH`'s first tile | `E_NO_SLOT` — doc 09 §2.9.5 fills both of SUB-A's §2.2 slots — with the purchase named in words and `Fix this →` pointed at SUB-A |
+| 2 | buys a `substation` card, Utility tab | **$15,000**, read from `CostCurves.build_cost` — the figure §17.3's own fix list already named |
+| 3 | waits | commissioned as a doc-04 node **9 game-hours** later (`node_shells`, Wave 6), arriving with **2 free slots** |
+| 4 | draws a 7-tile class-2 run off its fence line | **$1,470** at doc 03 §2.13(b)'s $210/tile, and it **adopts 6 transformers carrying 89.3 kW** off the circuit that was full |
+
+That last cell is doc 04 §2.9's transfer rule, and it is what makes the second
+purchase *relief for the city that exists* rather than headroom for one that does
+not. **$16,470 and 9 game-hours** is the whole price of answering the ceiling
+§17.3 measured, and it is now reachable without a scripted agent.
+
+### 28.5 Hashes — neutral on both cities, both paths
+
+`tools/profile_sim.gd --hash-only`, at this fork and with the eight-line
+`snapshot()` change reverted and re-applied:
+
+| city | path | before | after |
+|---|---|---|---|
+| starter | coarse 24 h | `18e70625e633c254…` | `18e70625e633c254…` |
+| starter | fine 2.0 h | `4c3c52cdb4c5a3cc…` | `4c3c52cdb4c5a3cc…` |
+| `bench_city` | coarse 24 h | `d6b2509c179987d3…` | `d6b2509c179987d3…` |
+| `bench_city` | fine 2.0 h | `bf8dc72827588430…` | `bf8dc72827588430…` |
+
+Bit-identical on all four. This pass is **hash-neutral by construction**: the
+surfaces are `ui/`, the one `sim/` edit is read-only, and no `data/` file the sim
+reads was touched.
+
+### 28.6 Gates
+
+All 28 balance gates pass, unchanged in every threshold. **No gate was re-fitted
+and none needed to be** — §28.2's matrix is identical, so there is nothing to
+re-derive. Gate 18b's feeder-ceiling pin and gate 21's curriculum bounds are both
+untouched.
+
+### 28.7 What this pass did not do
+
+- **It did not add a curriculum row for the feeder.** The temptation is obvious —
+  the trunk is the late game's binding constraint and the curriculum teaches
+  verbs. But doc 92 §22's arc is fitted to what a level-1-to-6 city can reach,
+  and the founding city answers a feeder run with `E_NO_SLOT` until the player
+  has bought a **second substation** — a $15,000 purchase plus a 9-game-hour
+  build, on top of the run itself. Measured against §25.4's own standard ("a
+  lesson that costs a third more is a lesson, and one that costs half as much
+  again starts to be a toll"), that is a toll. The verb is also not *needed*
+  inside the arc: `curriculum` ends 21 game-days at 70 buildings and 0.88 % dark,
+  nowhere near §17.3's ~410-building crossing. Ruled: no row, and `data/goals.json`
+  is untouched so gate 21 is not re-measured.
+- **It did not surface `cmd_set_auto_repair_policy`.** Doc 93 §J3 rules road
+  repair the policy's job, which makes the policy's two dials the thing that
+  wants a door — and they are still doorless, so the threshold and the cap ship
+  at their defaults. It is a settings-sheet row on a mechanism doc 12 §2.13
+  already has (`policy: "dispatch"`), and it is this wave's ranked open question.
+- **It did not retune a price.** Every figure the three new surfaces quote is read
+  from `data/economy.json` through `CostCurves`, or from the owning command's own
+  `preview = true`, at the moment it is shown.
+- **It did not re-measure the curriculum.** `data/goals.json` did not move, and
+  §26's combined-tree table stands.

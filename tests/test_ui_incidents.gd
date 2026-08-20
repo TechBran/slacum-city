@@ -688,3 +688,115 @@ func test_the_root_pipes_one_batch_and_one_snapshot_into_both_feeds() -> void:
 			10.0)
 	assert_almost_eq(float(drawer.model.row(7)["eta_min"]), 18.0, 0.0001)
 	_unmount(mounted)
+
+
+# ===========================================================================
+# Doc 05 §2.12's valve — the fourth action, on the one row that has a main
+# ===========================================================================
+
+func test_a_row_carries_the_target_the_sim_named() -> void:
+	var model := _model()
+	var created := Fixtures.created(9, 9.0, 2.4)
+	created["target_ref"] = {"kind": "water_segment", "id": "M_TIE"}
+	model.feed(created)
+	assert_eq(str(model.row(9)["target_kind"]), "water_segment")
+	assert_eq(str(model.row(9)["target_id"]), "M_TIE")
+	# A later lifecycle event carries no target and must not blank the one the
+	# create supplied.
+	model.feed({"type": "incident_tier_changed", "incident_id": 9, "tier": 3})
+	assert_eq(str(model.row(9)["target_id"]), "M_TIE")
+	# And a row born from a snapshot alone — a save loaded mid-incident — gets
+	# it from `IncidentSystem.snapshot()`.
+	var fresh := _model()
+	var snap := Fixtures.snapshot_row(9, "water_main_break", 2.4)
+	snap["target_ref"] = {"kind": "water_segment", "id": "M_TIE"}
+	fresh.refresh([snap])
+	assert_eq(str(fresh.row(9)["target_id"]), "M_TIE")
+
+
+func test_the_valve_appears_only_on_a_row_with_a_main_behind_it() -> void:
+	var mounted := _mount()
+	var drawer: IncidentDrawer = mounted["drawer"]
+	var sim := CitySim.boot_from_files()
+	drawer.bind_water(WaterActions.new(sim, RequirementFormatter.load_from_files()))
+	var fire := Fixtures.snapshot_row(7, "structure_fire", 3.4)
+	fire["target_ref"] = {"kind": "building", "id": "R-1"}
+	var leak := Fixtures.snapshot_row(9, "water_main_break", 2.4)
+	leak["target_ref"] = {"kind": "water_segment", "id": "M_TIE"}
+	var ghost := Fixtures.snapshot_row(11, "water_main_break", 2.4)
+	ghost["target_ref"] = {"kind": "water_segment", "id": "NO-SUCH-MAIN"}
+	drawer.refresh_from([fire, leak, ghost])
+	drawer.open()
+	assert_eq(drawer.action_button("Valve", 7), null,
+			"a fire's target is a building — there is no valve to turn")
+	assert_eq(drawer.action_button("Valve", 11), null,
+			"and a main the sim does not have draws no button either")
+	var valve := drawer.action_button("Valve", 9)
+	assert_ne(valve, null, "§2.12's pair, beside ASSIGN")
+	assert_eq(valve.text, UIWidgets.t(drawer.config, "ui_drawer_isolate"))
+	assert_true(valve.tooltip_text.contains("M_TIE"), "A15: it names the main")
+	assert_false(valve.tooltip_text.contains("{"))
+	_unmount(mounted)
+
+
+func test_an_unbound_drawer_is_exactly_the_drawer_it_was() -> void:
+	# No `WaterActions` — a fixture mount, or a shell that never built a
+	# controller. The row is the three actions it has always had.
+	var mounted := _mount()
+	var drawer: IncidentDrawer = mounted["drawer"]
+	var leak := Fixtures.snapshot_row(9, "water_main_break", 2.4)
+	leak["target_ref"] = {"kind": "water_segment", "id": "M_TIE"}
+	drawer.refresh_from([leak])
+	drawer.open()
+	assert_eq(drawer.action_button("Valve", 9), null)
+	assert_ne(drawer.action_button("Assign", 9), null)
+	_unmount(mounted)
+
+
+func test_pressing_the_valve_runs_the_command_and_flips_the_control() -> void:
+	var mounted := _mount()
+	var drawer: IncidentDrawer = mounted["drawer"]
+	var sim := CitySim.boot_from_files()
+	drawer.bind_water(WaterActions.new(sim, RequirementFormatter.load_from_files()))
+	var leak := Fixtures.snapshot_row(9, "water_main_break", 2.4)
+	leak["target_ref"] = {"kind": "water_segment", "id": "M_TIE"}
+	drawer.refresh_from([leak])
+	drawer.open()
+	var seen: Array[Dictionary] = []
+	drawer.main_action_taken.connect(
+			func(incident_id: int, edge_id: String, action: StringName,
+					result: Dictionary) -> void:
+				seen.append({"incident": incident_id, "edge": edge_id,
+						"action": String(action), "ok": bool(result["ok"])}))
+	drawer.action_button("Valve", 9).pressed.emit()
+	assert_eq(String((sim.water.edges["M_TIE"] as WaterEdge).state), "isolated",
+			"the real command ran (doc 12 §4.4)")
+	assert_eq(seen.size(), 1)
+	assert_eq(str(seen[0]["action"]), "isolate")
+	assert_eq(str(seen[0]["edge"]), "M_TIE")
+	assert_true(bool(seen[0]["ok"]))
+	# The control now offers the other half of the pair, in place — the list is
+	# NOT rebuilt, because that would free the Button that is emitting.
+	var valve := drawer.action_button("Valve", 9)
+	assert_eq(valve.text, UIWidgets.t(drawer.config, "ui_drawer_restore"))
+	valve.pressed.emit()
+	assert_eq(String((sim.water.edges["M_TIE"] as WaterEdge).state), "ok")
+	assert_eq(str(seen[1]["action"]), "restore")
+	_unmount(mounted)
+
+
+func test_the_root_resolves_the_water_binding_from_the_build_sheet() -> void:
+	# The shell builds the `BuildController` after `bring_up_screens()`, so the
+	# root takes doc 05's verb model off the sheet the first time it feeds a
+	# snapshot rather than asking `game/main.gd` for a second binding call.
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	var drawer: IncidentDrawer = mounted["drawer"]
+	assert_eq(drawer.water, null, "nothing is bound before the shell arrives")
+	var sim := CitySim.boot_from_files()
+	root.build_sheet.setup(root.config,
+			BuildController.new(sim, RequirementFormatter.load_from_files()))
+	root.refresh_incidents([], 10.0)
+	assert_ne(drawer.water, null, "and the drawer has it after one refresh")
+	assert_eq(drawer.water, root.build_sheet.controller.water)
+	_unmount(mounted)
