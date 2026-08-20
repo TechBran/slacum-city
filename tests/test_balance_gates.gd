@@ -460,26 +460,52 @@ func test_gate_09_dispatcher_rarely_gives_up() -> void:
 ## attractiveness ceiling, the city relaxes DOWN to it, and the slider finally
 ## costs residents instead of a decimal. Measured, seed 1337, same pair:
 ##
-## | game-day | detent 5 pop / treasury | detent 12 pop / treasury |
-## |---|---|---|
-## | 1 | 224 / $13,485 | 198 / $26,896 |
-## | 3 | 224 / $38,470 | 182 / $69,652 |
-## | 7 | 224 / $86,415 | **179** / $147,073 |
-## | 21 | 222 / $211,882 | **177** / $359,430 |
+## | game-day | detent 5 pop | detent 12 pop, coeff 220 | detent 12 pop, coeff 360 |
+## |---|---|---|---|
+## | 1 | 224 | 198 | **181** |
+## | 3 | 224 | 182 | **156** |
+## | 7 | 224 | **179** | **151** |
+## | 21 | 219 | **179** | **151** |
 ##
 ## This gate holds the two halves of the lever — the RATE half (a hurt city
-## recovers slower) and the TARGET half (a healthy city shrinks) — and gate 12b
-## holds doc 92 F-5's actual threshold.
+## recovers slower) and the TARGET half (a healthy city shrinks) — gate 12b holds
+## doc 92 F-5's threshold on the controlled pair, and gate 12c holds the lead's
+## Wave-7 ruling on the strategy matrix, which is where the dominance was still
+## visible after Wave 6.
+##
+## **WAVE-7 RETUNE — `tax.TAX_RATE_HAPPINESS_COEFF` 220 → 360 (doc 92 §20).**
+## Wave 6 made the grid buyable, which handed `tax_squeezer` somewhere to spend
+## its money: on the matrix it ended 21 game-days with **+104 % value created**
+## and **+43 % population** against `balanced`, for a happiness deficit of
+## **1.6 points**. The lever from T-1 was working — it was simply priced too
+## cheaply, because every one of its three couplings is denominated in the
+## happiness points `happiness_tax_delta` produces. One number therefore moves
+## all three, which is why the ruling names one key:
+##
+## | at `TAX_RATE_MAX` | coeff 220 | coeff 360 |
+## |---|---|---|
+## | `happiness_tax_delta` | −15.4 | **−25.2** |
+## | `attractiveness_tax_factor` | 0.7998 | **0.6724** |
+## | `growth_rate_multiplier` | 0.44 | 0.44 (untouched) |
+##
+## Nothing at or below `TAX_RATE_BASE` moves: the delta is 0 at 0.09 by
+## construction, so **every founding anchor, every save hash and every gate that
+## does not touch the slider is bit-identical** — verified with
+## `tools/profile_sim.gd --baseline`.
 func test_gate_12_max_tax_costs_a_city() -> void:
 	var economy := CitySim.boot_from_files(GATE_SEED).economy
 	assert_almost_eq(economy.growth_rate_multiplier(0.16), 0.44, 1e-9,
-			"1 − (0.16 − 0.09) × 8.0 — the ruled coefficient")
-	assert_almost_eq(economy.happiness_tax_delta(0.16), -15.4, 1e-9, "unchanged")
-	# T-1's third coupling: the same −15.4 points, spent on doc 09's scale.
-	assert_almost_eq(economy.attractiveness_tax_factor(0.16), 0.7998, 1e-9,
-			"1 + 1.30 × (−15.4)/100 — the ceiling the top detent buys")
+			"1 − (0.16 − 0.09) × 8.0 — the ruled coefficient, untouched by Wave 7")
+	assert_almost_eq(economy.happiness_tax_delta(0.16), -25.2, 1e-9,
+			"−(0.16 − 0.09) × 360 — the Wave-7 price of the top detent")
+	# T-1's third coupling: the same −25.2 points, spent on doc 09's scale.
+	assert_almost_eq(economy.attractiveness_tax_factor(0.16), 0.6724, 1e-9,
+			"1 + 1.30 × (−25.2)/100 — the ceiling the top detent buys")
 	assert_almost_eq(economy.attractiveness_tax_factor(0.09), 1.0, 1e-9,
 			"exactly neutral at TAX_RATE_BASE — the founding city may not move")
+	assert_almost_eq(economy.happiness_tax_delta(0.09), 0.0, 1e-9,
+			"...and neutral on the happiness side too, which is what makes the "
+			+ "retune save-identity-neutral: nothing runs at any other rate by default")
 	assert_almost_eq(economy.attractiveness_tax_factor(0.04), 1.0, 1e-9,
 			"and the bottom detent buys a faster refill, not a higher ceiling")
 	assert_almost_eq(PopulationSystem.attractiveness_target(0.9475, 82.0, 1.0), 1.0, 1e-9,
@@ -488,6 +514,8 @@ func test_gate_12_max_tax_costs_a_city() -> void:
 			"and so does its F_SOUTH exodus example")
 
 	# The RATE half: a city with something to recover recovers slower.
+	# Measured at coeff 360, 3 game-days: 224 people / $33,058 against
+	# **148** people / $40,842.
 	const DAYS := 3
 	var hurt_base := _tax_pair_city(5, DAYS, 0.50)
 	var hurt_max := _tax_pair_city(12, DAYS, 0.50)
@@ -506,6 +534,7 @@ func test_gate_12_max_tax_costs_a_city() -> void:
 	var maxed := _tax_pair_city(12, LONG_DAYS, -1.0)
 	var base_7 := int((base["population_by_day"] as Array)[6])
 	var maxed_7 := int((maxed["population_by_day"] as Array)[6])
+	# Measured at coeff 360: 151 against 224, a 32.6 % gap by game-day 7.
 	assert_true(maxed_7 <= int(float(base_7) * 0.95),
 			"seven game-days at the top detent cost a healthy city nothing: "
 			+ "%d people against %d. TAX_RATE_ATTRACT_PULL is the lever."
@@ -527,13 +556,21 @@ func test_gate_12_max_tax_costs_a_city() -> void:
 ## else's tuning lands. This pair is self-contained: same seed, same tiles, same
 ## build order, one field different.
 ##
-## Threshold: ≥ 10 % fewer people (measured 20.3 %) while still ahead on cash
-## (measured 1.70×). Both directions matter — a detent that costs population AND
-## money is not a tradeoff, it is a trap.
+## Threshold: ≥ 10 % fewer people while still ahead on cash. Both directions
+## matter — a detent that costs population AND money is not a tradeoff, it is a
+## trap.
 ##
-## The shared matrix agrees, for the record and not as an assertion — 21
-## game-days, seed 1337, coarse: `balanced` $480,480 / 811 people / H 71.9
-## against `tax_squeezer` $1,133,515 / **747** people / H 64.9.
+## **WAVE-7 MEASUREMENTS (coeff 360, 21 game-days, seed 1337).** 219 people /
+## $202,996 / H 72.67 / A 1.0000 at detent 5, against **151** people / $255,276 /
+## H 53.90 / A 0.6724 at detent 12: **31.1 % fewer people for 1.258× the cash**.
+##
+## The cash multiple is what MOVED, and it moved for the right reason: at coeff
+## 220 the pair read 18.3 % / 1.710×, and the extra people the squeezed city no
+## longer has are the ones who were paying the 1.778× rate. Which is why the cash
+## threshold below is 1.15× and not the old 1.25× — 1.25 now sits $1,531 under a
+## measured 1.258 and would fail on a seed, and a gate whose margin is 0.6 % is
+## measuring float noise rather than balance. The ruled direction (money now, a
+## smaller city later) is unchanged and comfortably held.
 func test_gate_12b_tax_squeezing_trails_on_population() -> void:
 	var base := _tax_pair_city(5, LONG_DAYS, -1.0)
 	var maxed := _tax_pair_city(12, LONG_DAYS, -1.0)
@@ -545,13 +582,78 @@ func test_gate_12b_tax_squeezing_trails_on_population() -> void:
 			"the tax squeezer ends %d game-days with %d people against %d — "
 					% [LONG_DAYS, maxed_pop, base_pop]
 			+ "doc 92 F-5 wants money-now versus a-city-later, and this is the gate")
-	assert_true(int(maxed["treasury"]) > int(float(base["treasury"]) * 1.25),
+	assert_true(int(maxed["treasury"]) > int(float(base["treasury"]) * 1.15),
 			"and the money half must still be worth taking: $%d against $%d"
 					% [int(maxed["treasury"]), int(base["treasury"])])
 	# The mechanism, not just the outcome: it is the CEILING that moved.
 	assert_true(float(maxed["attractiveness"]) < float(base["attractiveness"]) - 0.15,
 			"population fell for some other reason than attractiveness: %.4f vs %.4f"
 					% [float(maxed["attractiveness"]), float(base["attractiveness"])])
+	# And the happiness half of the lead's Wave-7 ruling, on the same pair:
+	# 72.67 against 53.90, a gap of 18.77 points against a ruled floor of 8.
+	assert_true(float(base["happiness"]) - float(maxed["happiness"]) >= 8.0,
+			"the top detent costs a 21-game-day city only %.2f happiness points"
+					% [float(base["happiness"]) - float(maxed["happiness"])])
+
+
+## GATE 12c — **the lead's Wave-7 ruling, on the agent that actually plays.**
+##
+## Gates 12 and 12b measure a controlled pair, deliberately: it isolates the
+## detent from the build plan. That isolation is also its blind spot. Wave 6 made
+## the grid buyable, and a `tax_squeezer` with 1.778× revenue and somewhere to
+## spend it out-BUILT `balanced` by enough to end 21 game-days with **more**
+## people than the agent that never touched the slider — +43 % — even while the
+## pair below showed the detent costing 18 % of a fixed city. Both readings were
+## true; only one of them is what a player experiences.
+##
+## The ruling: raise `tax.TAX_RATE_HAPPINESS_COEFF` until the top detent costs a
+## 21-game-day city **≥ 8 happiness points** and `tax_squeezer` **trails
+## `balanced` on population by ≥ 10 %**. Fitted on the pair rig above, confirmed
+## here and on the full matrix.
+##
+## The fit is steep, which is why 360 and not a rounder number — measured on the
+## 3-seed matrix, `tax_squeezer` against `balanced` at 21 game-days:
+##
+## | coeff | population | happiness gap | value created | treasury |
+## |---|---|---|---|---|
+## | 220 (Wave 6) | **+43 %** | 1.6 | +104 % | +69 % |
+## | 340 | −5.5 % | 21.2 | +43 % | −3 % |
+## | **360 (ruled)** | **−14.7 %** | **23.0** | **+35 %** | **+22 %** |
+## | 400 | −21 % | 20.4 | +31 % | −7 % |
+##
+## 340 misses the population threshold on all three seeds; 400 overshoots it and
+## takes the money half below `balanced`, which is a trap rather than a tradeoff.
+## 360 clears both halves of the ruling on every seed and keeps the slider worth
+## pulling. Seed 1337, the one this gate runs: 1,129 people / H 51.9 / $1,186,191
+## of value against 1,364 / 74.7 / $853,126.
+##
+## **This gate reads two matrix rows, which gate 12b's header warns against**, and
+## the warning still stands — it will move when someone else's tuning lands. It is
+## here anyway because the ruling is *stated* about those two rows, and a ruling
+## with no gate is a ruling that rots. The thresholds are the ruled ones (8 points,
+## 10 %) rather than the measured ones (23 points, 14.7 %), so ordinary drift does
+## not trip it; only a change that gives the slider back its free lunch does.
+func test_gate_12c_the_tax_slider_is_not_a_free_lunch_for_a_real_agent() -> void:
+	var balanced := _summary("balanced")
+	var squeezer := _summary("tax_squeezer")
+	var base_pop := int(balanced["population_end"])
+	var maxed_pop := int(squeezer["population_end"])
+	assert_true(maxed_pop <= int(float(base_pop) * 0.90),
+			"tax_squeezer ends %d game-days with %d people against balanced's %d — "
+					% [LONG_DAYS, maxed_pop, base_pop]
+			+ "the ruling wants it trailing by at least 10 %")
+	var gap := float(balanced["happiness_end"]) - float(squeezer["happiness_end"])
+	assert_true(gap >= 8.0,
+			"the pinned slider costs only %.1f happiness points over %d game-days "
+					% [gap, LONG_DAYS]
+			+ "(%.1f against %.1f)"
+					% [float(squeezer["happiness_end"]), float(balanced["happiness_end"])])
+	# The other direction of the same ruling: it must still be a tradeoff. An
+	# agent that squeezes and ends poorer has no reason to squeeze, and the
+	# slider would be dead data with an extra step.
+	assert_true(float(squeezer["value_created"]) > float(balanced["value_created"]),
+			"squeezing must still buy something: $%d of value against $%d"
+					% [int(squeezer["value_created"]), int(balanced["value_created"])])
 
 
 ## Boot a city, hold `detent` from game-hour 0, fill the same served tiles with

@@ -48,7 +48,25 @@ const SURFACES: Array[String] = [
 	"ModalLayer/SaveLoadSheet/Panel",
 	"ModalLayer/PauseMenu/Panel",
 	"CoachLayer/Onboarding/CoachMark/Bubble",
+	# S0. The one surface a player meets before anything else, and the one that
+	# carries the longest single sentence in the deck (the "no free slot" line),
+	# so it is the one most likely to blow a 360 dp box.
+	"TitleLayer/TitleScreen/Center/Panel",
 ]
+
+
+## The read-only half of `game/save_service.gd` that S0 talks to. One occupied
+## autosave, so the front door has a city to offer and a confirmation to price.
+class SlotStub extends RefCounted:
+	func list_slots() -> Array[Dictionary]:
+		return [{"slot": 0, "saved_at_unix": 1755500000, "day_index": 12,
+				"population": 184291, "treasury": 8420000}]
+
+	func latest_slot() -> int:
+		return 0
+
+	func autosave_slots() -> Array[int]:
+		return [0, 7]
 
 
 func _tree() -> SceneTree:
@@ -114,6 +132,11 @@ func _populate(root: UIRoot, panel: String = "drawer") -> void:
 	root.save_load_sheet.open()
 	root.pause_menu.open()
 	root.start_onboarding({"tutorial_lot_a": Vector2i(43, 40)})
+	# S0, with a save behind it so CONTINUE carries a real meta line rather than
+	# the empty one. Only the title's own service is bound — the save sheet keeps
+	# the state the other checks in this file were written against.
+	root.title_screen.bind_service(SlotStub.new())
+	root.present_title()
 	match panel:
 		"alerts":
 			root.alerts_center.open()

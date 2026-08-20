@@ -160,13 +160,15 @@ tax_policy_factor = r / TAX_RATE_BASE,   TAX_RATE_BASE = 0.09
 The cost is paid in doc 09, on **three** channels:
 
 ```
-happiness_tax_delta       = -(r - 0.09) × TAX_RATE_HAPPINESS_COEFF (220)      # doc 09 §2.10.3, H_target
+happiness_tax_delta       = -(r - 0.09) × TAX_RATE_HAPPINESS_COEFF (360)      # doc 09 §2.10.3, H_target
 growth_rate_multiplier    = 1 - (r - 0.09) × TAX_RATE_GROWTH_COEFF  (8.0)     # doc 09 §2.10.2, relaxation RATE
 attractiveness_tax_factor = 1 + TAX_RATE_ATTRACT_PULL (1.30) × min(0, happiness_tax_delta) / 100
                                                                               # doc 09 §2.10.2a, relaxation TARGET
 ```
 
-At r = 0.16 revenue is ×1.778, happiness drops 15.4 points, attractiveness relaxes 56 % slower **and** toward a ceiling of 0.7998 instead of 1.00 — a short-term lever with a long-term bill. Rate changes are limited to once per `TAX_RATE_COOLDOWN_HOURS = 48` gh to stop yo-yo exploitation.
+At r = 0.16 revenue is ×1.778, happiness drops 25.2 points, attractiveness relaxes 56 % slower **and** toward a ceiling of 0.6724 instead of 1.00 — a short-term lever with a long-term bill. Rate changes are limited to once per `TAX_RATE_COOLDOWN_HOURS = 48` gh to stop yo-yo exploitation.
+
+**`TAX_RATE_HAPPINESS_COEFF` is 360, not the 220 this section shipped with (Wave-7 ruling; doc 92 §20, doc 93 §E2).** Wave 6 made the power grid buyable, which handed the ×1.778 revenue somewhere to go: on doc 92's own 21-game-day matrix the pinned-slider agent ended **ahead of `balanced` on population as well as on money** (+43 % people, +104 % value created) for a happiness deficit of 1.6 points — strictly dominant, which is exactly what F-5 ruled against. Because all three channels above are denominated in the points `happiness_tax_delta` produces, **one coefficient moves the whole coupling**, and the rate is still read exactly once. The retune is *anchor-neutral by construction*: the delta is 0 at `TAX_RATE_BASE`, so no founding figure in this document changes and both state hashes are bit-identical (`tools/profile_sim.gd --baseline`). What changes is only what the player buys at the other detents.
 
 **The third channel is new (doc 09 amendment T-1) and it is the one that bites.** Doc 92 pass-2 F-5 moved `TAX_RATE_GROWTH_COEFF` 3.5 → 8.0 to make the top detent cost "a city later", and it cost nothing: the multiplier scales `(A_target − A_city)`, and doc 09's `A_target` saturates at 1.00 for any `city_stability ≥ 0.85`, so in a healthy city it multiplied zero. `attractiveness_tax_factor` prices the slider into the **target** instead of the rate. It is deliberately built on `happiness_tax_delta` rather than on `r` a second time: the rate is converted to happiness points once, here, and doc 09 spends those points on the one attractiveness scale it has — the same no-double-count discipline report 98 C-07/C-08 apply to prices, applied to a coupling. `min(0, ·)` keeps it one-sided: below the base rate the factor is exactly 1.0, because a tax cut buys a **faster refill** (that IS `growth_rate_multiplier`, 1.40× at the bottom detent) and never an attractiveness ceiling above the stability one. Doc 09 owns the mapping and composes its three ceilings with `min`, so an overtaxed city is never billed twice for the same discontent.
 
@@ -1184,7 +1186,7 @@ All in `sim/economy/`, `RefCounted` only, no `Node`, no engine singletons (const
 | **06 Incidents / Fleet** | vehicle purchase / upkeep / `active_mult` / `dispatch_cost` / resale (§2.13c); austerity breakdown multiplier; `repair_cost()` in place of `cost_materials` |
 | **07 Weather / Director** | `repair_cost(asset, damage_fraction)` — doc 07 quotes no repair totals and owns no `repair_cost_mult` (C-16, C-17) |
 | **08 Persistence / Offline** | the `"economy"` save section and its hourly ring buffer; **`band.yield_mult`** populated from §2.11's exponential taper (C-20) |
-| **09 Map / Land / Population** | `LandMarket.price_for_block()`, `development_phase_cost()`; `happiness_tax_delta = -(r - 0.09) × 220`; `growth_rate_multiplier = 1 - (r - 0.09) × 8.0`; **`attractiveness_tax_factor(r) = 1 + 1.30 × min(0, happiness_tax_delta)/100`** (doc 09 §2.10.2a, T-1); austerity flag |
+| **09 Map / Land / Population** | `LandMarket.price_for_block()`, `development_phase_cost()`; `happiness_tax_delta = -(r - 0.09) × 360`; `growth_rate_multiplier = 1 - (r - 0.09) × 8.0`; **`attractiveness_tax_factor(r) = 1 + 1.30 × min(0, happiness_tax_delta)/100`** (doc 09 §2.10.2a, T-1); austerity flag |
 | **10 Roads** | the **§2.13(d) per-tile road price ladder** (STREET/AVENUE build, upgrade, demolish refund, repair `capital_value` basis) — doc 10 holds no price column (RR-2); job pricing through `Treasury.spend()`; `repair_cost(tile, damage_fraction)`; **no standing upkeep is billed or billable** |
 | **12 UI** | `BudgetSnapshot`, `net_display`, foregone-by-cause breakdown, Resilience Index, land TCO estimate |
 | **All** | **`data/difficulty.json`** and `Difficulty.get(section, key)` (C-17) — including `M_rev / M_exp / M_land / M_dev / M_build / M_repair`. No other doc defines, loads or duplicates a difficulty scalar. |
@@ -1304,9 +1306,9 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
 
   "tax": {
     "TAX_LEVEL_GROWTH": 2.15, "TAX_RATE_BASE": 0.09, "TAX_RATE_MIN": 0.04, "TAX_RATE_MAX": 0.16,
-    "TAX_RATE_COOLDOWN_HOURS": 48, "TAX_RATE_HAPPINESS_COEFF": 220.0, "TAX_RATE_GROWTH_COEFF": 8.0,
+    "TAX_RATE_COOLDOWN_HOURS": 48, "TAX_RATE_HAPPINESS_COEFF": 360.0, "TAX_RATE_GROWTH_COEFF": 8.0,
     "TAX_RATE_ATTRACT_PULL": 1.30,
-    "_attract_pull_note": "doc 09 amendment T-1. attractiveness_tax_factor(r) = 1 + 1.30 * min(0, happiness_tax_delta(r)) / 100 — the attractiveness CEILING the rate buys, where TAX_RATE_GROWTH_COEFF buys only the RATE at which doc 09 walks toward it. 1.0 at and below TAX_RATE_BASE; 0.7998 at TAX_RATE_MAX. Priced off happiness_tax_delta so the rate is read once in the coupling.",
+    "_attract_pull_note": "doc 09 amendment T-1. attractiveness_tax_factor(r) = 1 + 1.30 * min(0, happiness_tax_delta(r)) / 100 — the attractiveness CEILING the rate buys, where TAX_RATE_GROWTH_COEFF buys only the RATE at which doc 09 walks toward it. 1.0 at and below TAX_RATE_BASE; 0.6724 at TAX_RATE_MAX (coeff 360). Priced off happiness_tax_delta so the rate is read once in the coupling.",
     "_tax_level_note": "The player knob of §2.2 is the RATE r, bounded by TAX_RATE_MIN/MAX. cmd_set_tax_level exposes it as the discrete ladder MIN, MIN+STEP, ... , MAX so the UI has detents; 13 levels, and level 5 lands exactly on TAX_RATE_BASE. The ladder is computed in basis points so no float drift can move a detent off its authored rate. This is the tax RATE ladder and is unrelated to TAX_LEVEL_GROWTH, which is base_tax growth per BUILDING level.",
     "TAX_RATE_STEP": 0.01,
     "OCCUPANCY_RAMP_HOURS": 36,

@@ -10,11 +10,17 @@ extends CanvasLayer
 ##         ├── PanelLayer  (Control, IGNORE) BuildingPanel, AlertsCenter,
 ##         │                                  IncidentDrawer, (LandPanel…)
 ##         ├── SheetLayer  (Control, IGNORE) BuildSheet, PlacementBar, UnitPicker
+##         ├── TitleLayer  (Control, STOP while the front door is up) TitleScreen
 ##         ├── ModalLayer  (Control, STOP when populated) SettingsSheet, SaveLoadSheet,
 ##         │                                              PauseMenu, CityDashboard,
 ##         │                                              AwayReport
 ##         └── CoachLayer  (Control, STOP when hard-gated)
 ##     └── ToastLayer (CanvasLayer, layer=20)
+##
+## `TitleLayer` sits **above the city deck and below the modals**, which is what
+## S0 actually is: the front door covers the HUD, the panels and the sheets, and
+## SETTINGS opened *from* the door covers the door. It is also the one screen
+## this class never opens on its own — see `present_title()`.
 ##
 ## The screens own their own logic; this class only brings them up with one
 ## shared `UIConfig`, routes the few cross-screen intents (HUD ☰ → pause menu,
@@ -46,6 +52,10 @@ enum Breakpoint { COMPACT, REGULAR, WIDE }
 
 ## Back-stack verdicts, in doc 12 §2.2 priority order.
 const BACK_CLOSE_MODAL := &"close_modal"
+## S0 is up. Not a rung of its own — it *removes* rungs: there is no city behind
+## the front door, so sheet / panel / placement / selection cannot exist and back
+## goes straight to the minimise pair. A modal opened FROM the title (S9) still
+## wins, which is why this sits below `BACK_CLOSE_MODAL` and not above it.
 const BACK_CLOSE_SHEET := &"close_sheet"
 const BACK_CLOSE_PANEL := &"close_panel"
 const BACK_CANCEL_PLACEMENT := &"cancel_placement"
@@ -96,6 +106,19 @@ signal land_fix_requested(fix_target: Dictionary)
 ## that knows it before the alert row does.
 signal city_level_changed(level: int, unlocked: PackedStringArray)
 
+## S0 (doc 12 §2.2). The front door's three intents. The root serves what it owns
+## — `title_settings` opens S9 over the title before re-emitting — and leaves the
+## other two to the shell, because only the shell holds the sim and the save
+## service. **Nothing here dismisses the title**: a restore that fails must leave
+## the player looking at the door, so `dismiss_title()` is the shell's call.
+signal title_continue(slot: int)
+## `slot` is the slot the OUTGOING city was preserved into, or −1 when nothing
+## was preserved (`TitleModel.confirm_new_game`). It is NOT the new city's home:
+## the autosave rotation is always the live city's, which is the whole reason the
+## confirmation exists.
+signal title_new_game(slot: int)
+signal title_settings
+
 @export var apply_content_scale: bool = true
 
 var config: UIConfig
@@ -108,6 +131,7 @@ var panel_layer: Control
 var sheet_layer: Control
 var modal_layer: Control
 var coach_layer: Control
+var title_layer: Control
 var toast_layer: CanvasLayer
 
 ## The screens this scaffold carries. Bound in `_bind_nodes()`; any of them may
@@ -127,6 +151,9 @@ var build_sheet: BuildSheet
 var onboarding: OnboardingFlow
 var land_panel: LandPanel
 var toast_view: ToastView
+## S0. Present in every mount and **closed in every one of them** — only
+## `present_title()` opens it, and only `game/main.gd` calls that.
+var title_screen: TitleScreen
 
 ## Doc 12 §2.14's one vibrator. Owned here because three screens fire cues and
 ## two settings rows gate them; a per-screen instance would be a per-screen
@@ -218,6 +245,7 @@ func _bind_nodes() -> void:
 	sheet_layer = safe_area.get_node_or_null("SheetLayer") as Control
 	modal_layer = safe_area.get_node_or_null("ModalLayer") as Control
 	coach_layer = safe_area.get_node_or_null("CoachLayer") as Control
+	title_layer = safe_area.get_node_or_null("TitleLayer") as Control
 	toast_layer = get_node_or_null("ToastLayer") as CanvasLayer
 
 	hud = hud_layer as CityHUD
@@ -236,6 +264,7 @@ func _bind_nodes() -> void:
 	build_sheet = safe_area.get_node_or_null("SheetLayer/BuildSheet") as BuildSheet
 	onboarding = safe_area.get_node_or_null("CoachLayer/Onboarding") as OnboardingFlow
 	land_panel = safe_area.get_node_or_null("PanelLayer/LandPanel") as LandPanel
+	title_screen = safe_area.get_node_or_null("TitleLayer/TitleScreen") as TitleScreen
 	toast_view = get_node_or_null("ToastLayer/ToastAnchor/Toast") as ToastView
 
 
@@ -285,6 +314,12 @@ func bring_up_screens() -> void:
 		land_panel.setup(config)
 	if toast_view != null and toast_view.config == null:
 		toast_view.setup(config)
+	# S0 comes up like everything else — with the shared config, and CLOSED. A
+	# headless mount that never calls `present_title()` therefore never sees a
+	# front door, which is the contract `tests/test_tutorial_flow.gd` and
+	# `tools/ui_preview.gd` depend on.
+	if title_screen != null and title_screen.config == null:
+		title_screen.setup(config)
 	# §2.14: the two screens that fire their own cues share the root's one gate.
 	# The other three cues (dispatch, escalate, relight) are events rather than
 	# taps, so they are fired here, where the sim batch arrives.
@@ -348,6 +383,10 @@ func _connect_screens() -> void:
 		_connect(land_panel.fix_requested, _on_land_fix_requested)
 	if hud != null:
 		_connect(hud.toast_requested, _on_toast_requested)
+	if title_screen != null:
+		_connect(title_screen.continue_requested, _on_title_continue)
+		_connect(title_screen.new_game_requested, _on_title_new_game)
+		_connect(title_screen.settings_requested, _on_title_settings)
 
 
 static func _connect(source: Signal, target: Callable) -> void:
@@ -546,11 +585,151 @@ func _on_away_dismissed() -> void:
 	away_dismissed.emit()
 
 
-## Binds `game/save_service.gd` (and the live sim it captures) to the save
-## screen. Both stay `Object`: `ui/` never depends on either type.
+## Binds `game/save_service.gd` (and the live sim it captures) to the two screens
+## that read slots — S9's save sheet, which also writes them, and S0's front
+## door, which only ever reads. Both stay `Object`: `ui/` never depends on either
+## type.
 func bind_save_service(service: Object, sim: Object = null) -> void:
 	if save_load_sheet != null:
 		save_load_sheet.bind_service(service, sim)
+	if title_screen != null:
+		title_screen.bind_service(service)
+
+
+# ---------------------------------------------------------------------------
+# S0 — the front door (doc 12 §2.2)
+#
+# Four calls and three signals. The root owns the *routing* and nothing else: it
+# opens S9 over the title for `title_settings`, because it is the only object
+# that knows both screens exist (§4.1), and it re-emits the other two because
+# only `game/main.gd` holds the sim, the save service and the boot order.
+#
+# `game/main.gd`, in full — three edits.
+#
+#     # --- (1) `_ready()`: the door comes first on a PLAIN launch -------------
+#     crash_sentinel = CrashSentinel.new()
+#     var user_args := OS.get_cmdline_user_args()
+#     var unclean := crash_sentinel.boot()      # ONE call: it writes a breadcrumb
+#     # Every real device launch has no user args and gets the door. Dev and
+#     # screenshot runs go straight to the city so nothing that scripts this
+#     # shell has to learn a new step; `--title` asks for it explicitly, and a
+#     # crash recovery skips it because the player is owed their city, not a menu.
+#     _want_title = not unclean and not user_args.has("--resume") \
+#             and (user_args.is_empty() or user_args.has("--title"))
+#     if unclean:
+#         ...                                   # unchanged
+#     elif not _want_title and (user_args.is_empty() or user_args.has("--resume")):
+#         _resumed_slot = save_service.load_latest(sim_host.sim)
+#
+#     # --- (2) `_wire_ui_screens()` tail: onboarding moves behind NEW CITY ----
+#     root.set_onboarding_world_resolver(_coach_world_rect)   # unchanged
+#     root.onboarding_action.connect(_on_coach_action)        # unchanged
+#     var tutorial_regions := {...}                           # unchanged
+#     if root.onboarding != null and root.onboarding.model != null:
+#         root.onboarding.model.set_regions(tutorial_regions)
+#     if _want_title:
+#         root.title_continue.connect(_on_title_continue)
+#         root.title_new_game.connect(_on_title_new_game)
+#         sim_host.paused = true          # the city does not run behind the door
+#         root.present_title()
+#     elif _resumed_slot < 0:
+#         root.start_onboarding(tutorial_regions)
+#
+#     # --- (3) the two handlers ----------------------------------------------
+#     func _on_title_continue(slot: int) -> void:
+#         var ok := slot >= 0 and save_service.load_slot(sim_host.sim, slot)
+#         if not ok:
+#             ok = save_service.load_latest(sim_host.sim) >= 0
+#         if not ok:
+#             # The one case the door has to survive: a corrupt save leaves the
+#             # player looking at the door, not at an empty city.
+#             ui_root.push_toast(UIWidgets.t(ui_root.config, "ui_saves_failed"),
+#                     HudModel.STATE_CRITICAL)
+#             ui_root.refresh_title()
+#             return
+#         _resumed_slot = slot
+#         _on_ui_save_loaded(slot)        # re-seeds every view from the new sim
+#         ui_root.set_city_level(sim_host.sim.progression.city_level)
+#         ui_root.dismiss_title()
+#         sim_host.paused = false
+#
+#     ## `slot` is where the OUTGOING city was preserved, or −1. The archive is
+#     ## three published SaveService calls and no new API, and it is EXACT because
+#     ## save→load→advance identity is exact (doc 93 §E2): capture the founding
+#     ## city this boot already built, restore the old one over it, write that to
+#     ## the free slot, then put the founding city back.
+#     func _on_title_new_game(slot: int) -> void:
+#         if slot >= 0:
+#             var founding: Dictionary = sim_host.sim.canonical_capture()
+#             var from := save_service.latest_slot()
+#             if from >= 0 and save_service.load_slot(sim_host.sim, from):
+#                 save_service.save_slot(sim_host.sim, slot)
+#             sim_host.sim.restore_state(founding)
+#             _resync_world_views()
+#         _resumed_slot = -1
+#         ui_root.dismiss_title()
+#         sim_host.paused = false
+#         ui_root.start_onboarding({
+#             "tutorial_lot_a": sim_host.sim.loader.resolve_tag("tutorial_lot_a")["tile_global"],
+#             "tutorial_lot_b": sim_host.sim.loader.resolve_tag("tutorial_lot_b")["tile_global"]})
+#         # The new city owns the autosave rotation from here; stake it now so a
+#         # kill before the first interval does not lose the founding.
+#         save_service.autosave(sim_host.sim)
+#
+# `title_settings` needs no shell handler at all: the root has already opened the
+# settings sheet by the time it fires.
+#
+# `tools/flow_test.gd` and `tools/onboarding_preview.gd` instantiate
+# `game/main.tscn` as a CHILD of their own scene and pass their own user args, so
+# the rule above already keeps the door out of their way — except on a bare run
+# with no args, where one `_ui.dismiss_title()` in their `_arm()` settles it.
+# `tests/test_tutorial_flow.gd` and `tools/ui_preview.gd` mount `ui_root.tscn`
+# directly and never call `present_title()`, so they cannot see one at all.
+# ---------------------------------------------------------------------------
+
+## Raises the front door. The ONLY way it ever appears — no `ui/` file calls
+## this, so a mount that does not ask for a title does not get one. Returns false
+## when the scene carries no title screen (a trimmed deck).
+func present_title() -> bool:
+	if title_screen == null:
+		return false
+	title_screen.open()
+	return true
+
+
+## Puts it away. The shell's call, and deliberately not the view's: only the
+## shell knows whether the restore behind CONTINUE actually succeeded, and a
+## failed one has to leave the player looking at the door.
+func dismiss_title() -> void:
+	if title_screen != null:
+		title_screen.close()
+
+
+func title_open() -> bool:
+	return title_screen != null and title_screen.is_open()
+
+
+## Re-reads the slots behind CONTINUE. Cheap — `list_slots()` reads headers — so
+## the shell may call it after any save.
+func refresh_title() -> void:
+	if title_screen != null:
+		title_screen.refresh()
+
+
+func _on_title_continue(slot: int) -> void:
+	title_continue.emit(slot)
+
+
+func _on_title_new_game(slot: int) -> void:
+	# A new city has never seen the tutorial, whatever the previous one did.
+	reset_onboarding()
+	title_new_game.emit(slot)
+
+
+func _on_title_settings() -> void:
+	if settings_sheet != null:
+		settings_sheet.open()
+	title_settings.emit()
 
 
 ## Pipes one `SimEventBus.drain()` batch into the feeds that eat sim events —
@@ -1198,11 +1377,20 @@ static func drawer_width_dp(width_dp: float, layout: Dictionary) -> int:
 # ---------------------------------------------------------------------------
 
 ## Pure resolver so the order is testable without a scene tree. `ctx` keys:
-## `modal_open`, `sheet_open`, `panel_open`, `placement_active`, `has_selection`,
-## `back_pressed_recently`.
+## `modal_open`, `title_open`, `sheet_open`, `panel_open`, `placement_active`,
+## `has_selection`, `back_pressed_recently`.
+##
+## `title_open` is the one entry that removes rungs rather than adding one. At
+## the front door there is no city: no sheet can be up, no panel, no placement
+## and no selection, so back means "leave the app" and takes the same two-press
+## minimise pair it takes in an idle city. A modal opened FROM the title — S9 is
+## the only one — still closes first, which is why the check sits second.
 static func resolve_back(ctx: Dictionary) -> StringName:
 	if bool(ctx.get("modal_open", false)):
 		return BACK_CLOSE_MODAL
+	if bool(ctx.get("title_open", false)):
+		return BACK_MINIMISE if bool(ctx.get("back_pressed_recently", false)) \
+				else BACK_PROMPT_MINIMISE
 	if bool(ctx.get("sheet_open", false)):
 		return BACK_CLOSE_SHEET
 	if bool(ctx.get("panel_open", false)):
@@ -1219,6 +1407,7 @@ static func resolve_back(ctx: Dictionary) -> StringName:
 func back_context(now_ms: float) -> Dictionary:
 	return {
 		"modal_open": _has_open_child(modal_layer),
+		"title_open": title_open(),
 		"sheet_open": _has_open_child(sheet_layer),
 		"panel_open": _has_open_child(panel_layer),
 		"placement_active": placement_active,

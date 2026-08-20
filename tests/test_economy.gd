@@ -255,7 +255,12 @@ func test_occupancy_ramp_and_tax_policy() -> void:
 	assert_almost_eq(system.occupancy_ramp_cap(18.0), 0.675)
 	assert_almost_eq(system.tax_policy_factor(0.09), 1.0)
 	assert_almost_eq(system.tax_policy_factor(0.16), 1.7778, 0.0001, "×1.778 at the top")
-	assert_almost_eq(system.happiness_tax_delta(0.16), -15.4, 0.001)
+	# TAX_RATE_HAPPINESS_COEFF 360 (Wave-7 ruling, doc 92 §20): −(0.16 − 0.09)×360.
+	# 0 at TAX_RATE_BASE by construction, which is why the retune moved no anchor.
+	assert_almost_eq(system.happiness_tax_delta(0.16), -25.2, 0.001)
+	assert_almost_eq(system.happiness_tax_delta(0.09), 0.0, 1e-9)
+	assert_almost_eq(system.happiness_tax_delta(0.04), 18.0, 0.001,
+			"and a cut is a gift, on the same scale")
 	# TAX_RATE_GROWTH_COEFF 8.0 (doc 92 F-5 ruling): the top detent halves growth.
 	assert_almost_eq(system.growth_rate_multiplier(0.16), 0.44, 0.001)
 	assert_almost_eq(system.growth_rate_multiplier(0.04), 1.40, 0.001)

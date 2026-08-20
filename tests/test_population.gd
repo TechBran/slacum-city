@@ -59,7 +59,7 @@ func test_attractiveness_target_composes_three_ceilings() -> void:
 			"stability binds — the F_SOUTH exodus, unchanged by T-1")
 	assert_almost_eq(PopulationSystem.attractiveness_target(0.9475, 40.0, 1.0),
 			1.0 - 1.30 * 20.0 / 100.0, 1e-9, "happiness binds")
-	assert_almost_eq(PopulationSystem.attractiveness_target(0.9475, 100.0, 0.7998), 0.7998, 1e-9,
+	assert_almost_eq(PopulationSystem.attractiveness_target(0.9475, 100.0, 0.6724), 0.6724, 1e-9,
 			"the tax bill binds")
 	# Above the reference, happiness cannot LIFT the ceiling past stability.
 	assert_almost_eq(PopulationSystem.happiness_ceiling(96.0), 1.0, 1e-9)
@@ -72,22 +72,25 @@ func test_attractiveness_target_composes_three_ceilings() -> void:
 ## is already a term of `H_target`, so multiplying the two channels would bill it
 ## twice. Both terms carry the same pull, so the crossover reads in one line:
 ## happiness takes over when `H` has fallen further below 60 than the tax bill
-## itself — at the top detent, below `60 − 15.4 = 44.6`.
+## itself — at the top detent, below `60 − 25.2 = 34.8` (Wave-7 coefficient; the
+## crossover moves with `TAX_RATE_HAPPINESS_COEFF` and nothing else does).
 func test_tax_and_happiness_ceilings_never_stack() -> void:
-	const TOP_FACTOR := 0.7998  # attractiveness_tax_factor(0.16)
+	const TOP_FACTOR := 0.6724  # attractiveness_tax_factor(0.16), coeff 360
 	# An overtaxed but otherwise-fine city: the tax term binds, alone.
-	assert_almost_eq(PopulationSystem.attractiveness_target(0.9475, 66.75, TOP_FACTOR),
-			TOP_FACTOR, 1e-9, "H is 66.75 BECAUSE of the tax; it may not be charged again")
+	assert_almost_eq(PopulationSystem.attractiveness_target(0.9475, 53.9, TOP_FACTOR),
+			TOP_FACTOR, 1e-9, "H is 53.9 BECAUSE of the tax; it may not be charged again")
 	# Push it past the crossover and the happiness term takes over — still once.
-	var miserable := PopulationSystem.attractiveness_target(0.9475, 40.0, TOP_FACTOR)
-	assert_almost_eq(miserable, PopulationSystem.happiness_ceiling(40.0), 1e-9)
+	# 40 was past it at coeff 220 and is not any more: the tax bill itself is now
+	# harsher than a 20-point mood, which is the crossover moving, not a bug.
+	assert_almost_eq(PopulationSystem.attractiveness_target(0.9475, 40.0, TOP_FACTOR),
+			TOP_FACTOR, 1e-9, "40 is above the 34.8 crossover")
+	var miserable := PopulationSystem.attractiveness_target(0.9475, 20.0, TOP_FACTOR)
+	assert_almost_eq(miserable, PopulationSystem.happiness_ceiling(20.0), 1e-9)
 	assert_true(miserable < TOP_FACTOR, "genuine misery is harsher than the tax bill")
 	# And the product — what T-1 deliberately did NOT do. The gate-12b city
-	# settles at H 57.9 with the same tax bill in force; `min` leaves the ceiling
-	# at 0.7998, a product would push it to 0.778 for the same 15.4 points.
-	assert_almost_eq(PopulationSystem.attractiveness_target(0.9475, 57.9, TOP_FACTOR),
-			TOP_FACTOR, 1e-9)
-	assert_true(PopulationSystem.happiness_ceiling(57.9) * TOP_FACTOR < TOP_FACTOR - 0.02,
+	# settles at H 53.9 with the same tax bill in force; `min` leaves the ceiling
+	# at 0.6724, a product would push it to 0.619 for the same 25.2 points.
+	assert_true(PopulationSystem.happiness_ceiling(53.9) * TOP_FACTOR < TOP_FACTOR - 0.02,
 			"a product would double-bill the same discontent")
 
 
@@ -97,8 +100,8 @@ func test_attractiveness_tax_factor_detents() -> void:
 	assert_almost_eq(economy.attractiveness_tax_factor(0.09), 1.0, 1e-9, "base detent")
 	assert_almost_eq(economy.attractiveness_tax_factor(0.04), 1.0, 1e-9,
 			"a tax CUT buys a faster refill, never a higher ceiling")
-	assert_almost_eq(economy.attractiveness_tax_factor(0.16), 0.7998, 1e-9,
-			"1 + 1.30 × (−15.4)/100")
+	assert_almost_eq(economy.attractiveness_tax_factor(0.16), 0.6724, 1e-9,
+			"1 + 1.30 × (−25.2)/100")
 	# The founding city may not move at the base detent — the anchor T-1 protects.
 	var pop := PopulationSystem.new()
 	pop.advance(starter_buildings(), 24.0, 0.9475, 1.0, 82.0,
@@ -106,16 +109,16 @@ func test_attractiveness_tax_factor_detents() -> void:
 	assert_almost_eq(pop.attractiveness, 1.0, 1e-9)
 	assert_eq(int(pop.advance(starter_buildings(), 0.001, 0.9475, 1.0, 82.0,
 			1.0)["city_population"]), 144)
-	# And at the top detent it walks down to 0.7998 — 144 people become 115.
+	# And at the top detent it walks down to 0.6724 — 144 people become 97.
 	var squeezed := PopulationSystem.new()
 	var result := {}
 	for _h in 24 * 7:
 		result = squeezed.advance(starter_buildings(), 1.0, 0.9475,
 				economy.growth_rate_multiplier(0.16), 66.75,
 				economy.attractiveness_tax_factor(0.16))
-	assert_almost_eq(squeezed.attractiveness, 0.7998, 0.001)
-	assert_eq(int(result["city_population"]), 115)
-	assert_almost_eq(float(result["attractiveness_target"]), 0.7998, 1e-9)
+	assert_almost_eq(squeezed.attractiveness, 0.6724, 0.001)
+	assert_eq(int(result["city_population"]), 97)
+	assert_almost_eq(float(result["attractiveness_target"]), 0.6724, 1e-9)
 
 
 func test_exodus_relaxation_worked_value() -> void:
