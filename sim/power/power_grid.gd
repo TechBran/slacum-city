@@ -140,7 +140,7 @@ func add_component(id: String, kind: StringName, opts: Dictionary = {}) -> Dicti
 		"id": id, "kind": kind, "level": level,
 		"conductor_class": int(opts.get("conductor_class", 1)),
 		"parent": String(opts.get("parent", "")),
-		"tile": opts.get("tile", Vector2i.ZERO),
+		"tile": _initial_tile(opts),
 		"route": opts.get("route", []),
 		"state": &"OK", "condition": float(opts.get("condition", 1.0)),
 		"theta_c": 0.0, "trip_accum": 0.0, "reclose_attempts": 0,
@@ -238,6 +238,14 @@ func has_component(id: String) -> bool:
 	return _components.has(id)
 
 
+## Move a component's recorded location. Used by the boot owner to re-stamp
+## AUTHORED geometry after a load (see `CitySim._restamp_authored_power_tiles`);
+## nothing in the tick ever calls it, because a component does not move.
+func set_component_tile(id: String, tile: Vector2i) -> void:
+	if _components.has(id):
+		(_components[id] as Dictionary)["tile"] = tile
+
+
 ## Every component id, in the sorted order every pass iterates.
 func component_ids() -> Array:
 	return _order.duplicate()
@@ -258,6 +266,33 @@ static func route_tile(entry: Variant) -> Vector2i:
 		return entry
 	var pair: Array = entry
 	return Vector2i(int(pair[0]), int(pair[1]))
+
+
+## WHERE A COMPONENT IS. Explicit when the caller has a tile; otherwise the head
+## of the component's own route, which is where a line begins and where a crew
+## would be sent.
+##
+## **This used to default to the map origin, and it was a live defect** (Wave 8).
+## `tile` is doc 04's record but doc 06 reads it as the INCIDENT POSITION for
+## every `PowerComponentFailed`, and `CitySim._boot_power` added plants,
+## substations, feeders and transmission links with no `tile` at all — the
+## authored file spells a substation's location `terminal`, not `tile`. Every
+## substation failure in the shipped game therefore raised an incident at
+## **(0, 0)**. Chebyshev dispatch hid it (the corner is far, but a straight line
+## reaches anything); doc 10's router does not, because there is no street within
+## snapping distance of the corner, so `route_minutes` answers INF, the incident
+## is flagged `unreachable`, no unit is ever sent, and it escalates to
+## destruction. Measured on the doc 92 rig: one such failure on `balanced` seed
+## 1337 destroyed a substation on game-day 17 and took the city's dark share
+## from 8.7 % to 61.8 % over 50 game-days (balance gates 18 and 18b).
+static func _initial_tile(opts: Dictionary) -> Vector2i:
+	var explicit: Variant = opts.get("tile")
+	if explicit is Vector2i:
+		return explicit
+	var route: Array = opts.get("route", [])
+	if not route.is_empty():
+		return route_tile(route[0])
+	return Vector2i.ZERO
 
 
 func add_tie(id: String, a: String, b: String, mode: StringName = &"MANUAL") -> void:
@@ -1532,6 +1567,15 @@ func deserialize(data: Dictionary) -> void:
 		var component: Dictionary = c
 		if component["tile"] is Array:
 			component["tile"] = Vector2i(int(component["tile"][0]), int(component["tile"][1]))
+		# A body written before `_initial_tile` existed carries (0, 0) for every
+		# line component. Repair it the way the writer would today — same rule,
+		# same source — rather than restoring a location doc 06 cannot dispatch
+		# to. Terminal components (plants, substations) have no route of their
+		# own; `CitySim.restore_state` re-stamps those from the authored file,
+		# which is where their position has always come from.
+		if component["tile"] == Vector2i.ZERO \
+				and not (component.get("route", []) as Array).is_empty():
+			component["tile"] = route_tile((component["route"] as Array)[0])
 		component["kind"] = StringName(String(component["kind"]))
 		component["state"] = StringName(String(component["state"]))
 		_components[String(component["id"])] = component

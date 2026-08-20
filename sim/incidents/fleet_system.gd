@@ -216,6 +216,23 @@ func eta_h(u: Vehicle, target: Vector2i) -> float:
 	return float(gs) / 3600.0
 
 
+## The O(1) RANKING estimate of the same trip (doc 10 §2.14). Never authoritative
+## for an arrival — `eta_h` is the only answer to *when* — and used solely to
+## decide which candidates are worth a real quote. Identical to `eta_h` on a
+## provider with no street network.
+func estimate_h(u: Vehicle, target: Vector2i) -> float:
+	var gs := travel.estimate_eta_gs(u.tile, target, u.route_profile(true), u.turnout_min)
+	if gs >= TravelTimeProvider.UNREACHABLE_GS:
+		return INF
+	return float(gs) / 3600.0
+
+
+## The cheap reachability screen, again from doc 10 §2.14. Conservative: it may
+## admit a unit whose real quote comes back unreachable, never hide one.
+func maybe_reachable(u: Vehicle, target: Vector2i) -> bool:
+	return travel.is_reachable_estimate(u.tile, target, u.route_profile(true))
+
+
 func dispatch(u: Vehicle, incident_id: int, target: Vector2i, role: String,
 		manual: bool = false) -> bool:
 	var eta := eta_h(u, target)

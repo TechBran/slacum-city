@@ -50,6 +50,8 @@ var _condition_accum: Dictionary = {}  # "bx,bz" -> {local_index: residual}
 var _pending_edits: Array[Vector2i] = []
 var _density_sources: Array = []  # [{tile: Vector2i, pj: float}]
 var _station_components: Dictionary = {}  # component_id -> true
+## Bumped by `set_station_components`; a term of `access_epoch()`.
+var _station_component_epoch: int = 0
 var _c_day_sum: Dictionary = {}  # edge_id -> Σ c_raw over this game-day's hourly samples
 var _c_day_samples: int = 0
 var _wx_wear_day: float = 0.0
@@ -475,6 +477,7 @@ func set_station_components(component_ids: Array) -> void:
 	_station_components.clear()
 	for component_id in component_ids:
 		_station_components[int(component_id)] = true
+	_station_component_epoch += 1   # `access_quality` reads this set (§5.2)
 
 
 # ------------------------------------------------------------------- editing
@@ -792,6 +795,29 @@ func is_reachable(a: Vector2i, b: Vector2i, prof: RouteProfile) -> bool:
 	return planner.is_reachable(a, b, prof)
 
 
+## §2.14's `DISPATCH_CANDIDATES` — how many units doc 06 should full-route after
+## ranking on the O(1) estimate. Published from the tunable rather than as a
+## constant so the budget and the number that spends it move together.
+func dispatch_candidates() -> int:
+	return tun.dispatch_candidates
+
+
+## A counter that changes whenever `access_quality(pos)` could answer
+## differently, and never otherwise. It reads the graph version (a road built or
+## removed), the condition epoch (a tile collapsed or was repaired), the closure
+## epoch (a cause opened or expired) and the station-component roster — which is
+## §5.2's complete input list for that function and nothing else.
+##
+## Published because doc 06 asks the question per INCIDENT per integrator
+## sub-step and the answer is a ring search plus an avenue-gate rect scan;
+## without a key to memoise on, a city in collapse pays that ~250-lookup scan
+## a quarter of a million times a game-day. Consumers must treat it as opaque:
+## the only guarantee is *different value ⇒ possibly different answer*.
+func access_epoch() -> int:
+	return graph.graph_version + _condition_epoch + planner.closure_epoch \
+			+ _station_component_epoch
+
+
 func nearest_node(pos: Vector2i) -> int:
 	return graph.nearest_node(pos)
 
@@ -810,6 +836,38 @@ func congestion_index(edge_id: int) -> float:
 func condition_hazard_mult(edge_id: int) -> float:
 	return RoadCosts.condition_hazard_mult(float(graph.edge(edge_id).get("condition", 1.0)),
 			tun.hazard_condition_coeff, tun.hazard_condition_threshold)
+
+
+## Doc 06 asks its questions about a TILE — an incident has a position, never an
+## edge id — and doc 10 stores congestion and condition per EDGE. The join is the
+## one `access_quality` already makes: snap to the nearest road tile inside
+## `snap_radius_tiles`, then read the edge that tile belongs to. Published here
+## rather than open-coded in `RoadTravelTimeProvider` so all three answers doc 06
+## reads at one position (`access_quality`, `congestion_index`,
+## `condition_hazard_mult`) describe the SAME piece of street by construction.
+## −1 means "no street within snapping distance".
+func edge_at_position(pos: Vector2i) -> int:
+	var road := graph.nearest_road_tile(pos, tun.snap_radius_tiles)
+	if road.x < 0:
+		return -1
+	return graph.edge_at(road)
+
+
+## Congestion at a POSITION, on doc 06's `c ∈ [0,2]` scale. 0.0 when no street is
+## within snapping distance: an incident in the middle of a field has no traffic
+## on it, which is both the honest answer and the pre-router default, so a city
+## with no roads at all reads exactly as it did before doc 10 was wired in.
+func congestion_index_at(pos: Vector2i) -> float:
+	var edge_id := edge_at_position(pos)
+	return 0.0 if edge_id < 0 else congestion_index(edge_id)
+
+
+## `condition_hazard_mult` at a POSITION (doc 10 §2.11, on the [0,1] condition
+## scale of RR-3). 1.00 — a pristine road — when there is no street to be in bad
+## repair, again matching the pre-router default exactly.
+func condition_hazard_mult_at(pos: Vector2i) -> float:
+	var edge_id := edge_at_position(pos)
+	return 1.0 if edge_id < 0 else condition_hazard_mult(edge_id)
 
 
 ## Doc 03's C-16 argument (RR-2). Doc 10 supplies the fraction; doc 03 every dollar.

@@ -62,6 +62,12 @@ var _traffic_used: int = 0
 var _traffic_weight_total: float = -1.0   # < 0 ⇒ never built
 var _traffic_epoch: int = -1
 
+## `access_factor`'s memo: tile -> factor, valid for one `travel.access_epoch()`.
+## Derived, never serialized, never hashed — see `access_factor` for why it
+## exists and why the memo is exact rather than approximate.
+var _access_cache: Dictionary = {}
+var _access_epoch: int = -1
+
 var _active: Dictionary = {}  # id -> Incident
 var _order: Array = []  # ascending incident ids
 var _recent: Array = []  # terminal incidents, kept KEEP_RESOLVED_MIN game-min
@@ -166,10 +172,13 @@ func _next_discontinuity_h() -> float:
 	if fleet_next < INF:
 		best = minf(best, maxf(0.0, fleet_next - now_h))
 	var dark := _dark_fraction(now_h, now_h + 1.0 / 3600.0)
+	var fire_is_live := false
 	for incident_id in _order:
 		var inc: Incident = _active[incident_id]
 		if inc.is_terminal():
 			continue
+		if inc.type == "structure_fire":
+			fire_is_live = true
 		var assist := assist_ratio(inc)
 		var d_severity := escalation_rate(inc, dark) * maxf(0.0, 1.0 - assist)
 		if inc.is_active() and assist >= 1.0:
@@ -192,14 +201,28 @@ func _next_discontinuity_h() -> float:
 		var self_resolve := _self_resolve_h(inc)
 		if self_resolve > 0.0 and inc.status == Incident.STATUS_QUEUED:
 			best = minf(best, maxf(0.0, inc.created_h + self_resolve - now_h))
-	# NOTE (doc 91 D-15): this breakpoint fires on the fire-spread grid — every
-	# 1/12 game-hour — whether or not anything is burning, and it is what sets
-	# the integrator's sub-step count (15.7 per coarse hour on the benchmark
-	# city). Making it conditional on a live `structure_fire` measures at 5.1
-	# sub-steps and takes the coarse step from 133.8 ms to 104.8 ms, but it
-	# changes RNG consumption and therefore breaks save identity — so it is a
-	# costed proposal in D-15, not a change.
-	best = minf(best, maxf(0.0, _spread_next_h - now_h))
+	# THE FIRE-SPREAD BREAKPOINT, AND WHY IT IS CONDITIONAL (doc 91 D-15, taken
+	# Wave 8). `_roll_spread` walks the live roster looking for `structure_fire`
+	# on a 1/12-game-hour grid; splitting the integrator there when the roster
+	# holds no fire buys a roll that provably cannot do anything, and it was what
+	# set the sub-step count — the single largest term in the coarse step.
+	#
+	# **It is not a fidelity trade, because `_roll_spread` re-anchors its own
+	# grid.** The roll is a HAZARD RATE over a fixed `interval`, and the function
+	# that consumes it sets `_spread_next_h = now_h + interval` every time it
+	# runs — including the runs that find nothing to roll for. So while no fire
+	# is live the grid simply rides along at the end of whatever sub-step the
+	# other discontinuities produced, and the instant one ignites the NEXT roll
+	# still lands a full `interval` after it. A fire never gets an extra roll,
+	# never waits longer for its first one, and the `exp(-rate)` identity that
+	# makes fine and coarse steps agree (doc 06 §2.8) is untouched.
+	#
+	# What DOES change is RNG consumption on quiet hours: the generators are
+	# sampled once per sub-step, so fewer sub-steps means fewer, larger Poisson
+	# draws over the same λ. Same process, different draw sequence — which is a
+	# save-contract break, and why `SAVE_SECTION_VERSION` is 2.
+	if fire_is_live:
+		best = minf(best, maxf(0.0, _spread_next_h - now_h))
 	best = minf(best, _next_daynight_boundary_h())
 	var weather_next := world.next_weather_boundary_h()
 	if weather_next < INF:
@@ -353,11 +376,32 @@ static func _support_bonus(row: Dictionary, role: String) -> float:
 ## through the district scalar, which is now the real C-51 number instead of the
 ## 0.5 stub. `globals.access_police_bonus` stays unread and is reported as a
 ## data/doc redundancy rather than being quietly spent.
+## **Memoised per tile, keyed on doc 10's `access_epoch()`.** Not an
+## optimisation of the formula — of its CALL COUNT. `_effective_rate` reads this
+## for every unit on every incident, `coverage` and `_representative_contribution`
+## read it again, and all of that runs on every integrator sub-step; doc 10's
+## answer is a ring search plus an avenue-gate rect scan, roughly 250 grid
+## lookups. A city in collapse — forty open incidents, six hundred sub-steps a
+## game-day — was paying that a quarter of a million times a game-day.
+##
+## The memo is EXACT, not approximate: doc 10 publishes `access_epoch()` as
+## "changes whenever `access_quality` could answer differently and never
+## otherwise", so a hit is the value a call would have returned. It is derived
+## state — not captured, not saved, not hashed — and it repopulates from the
+## same inputs after a load, so it cannot move a state hash.
 func access_factor(inc: Incident) -> float:
+	var epoch := travel.access_epoch()
+	if epoch != _access_epoch:
+		_access_epoch = epoch
+		_access_cache.clear()
+	var cached: Variant = _access_cache.get(inc.tile)
+	if cached != null:
+		return float(cached)
 	var quality := travel.access_quality(inc.tile)
-	if quality < catalog.global_value("access_degraded_knee", 0.60):
-		return catalog.global_value("access_degraded_mult", 0.75)
-	return 1.0
+	var factor := catalog.global_value("access_degraded_mult", 0.75) \
+			if quality < catalog.global_value("access_degraded_knee", 0.60) else 1.0
+	_access_cache[inc.tile] = factor
+	return factor
 
 
 func assist_ratio(inc: Incident) -> float:

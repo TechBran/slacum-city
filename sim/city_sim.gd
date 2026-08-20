@@ -193,8 +193,16 @@ func boot(seed_value: int, time_data: Dictionary, starter_data: Dictionary,
 	_boot_power()
 	_boot_water()
 	_boot_districts()
-	_boot_incidents()
+	# ROADS BEFORE INCIDENTS (Wave 8). Doc 06 §2.10 makes doc 10 authoritative
+	# for every dispatch ETA, so `_boot_incidents` has to be able to hand the
+	# incident system a road router — which means the router must already exist.
+	# The dependency is one-way: `_boot_roads` reads the grid, the districts, the
+	# building roster and the cost curves, and nothing at all from incidents, so
+	# the swap costs nothing. RNG is unperturbed by the reorder because the two
+	# subsystems draw from DIFFERENT named streams (`traffic` and `incidents`,
+	# constitution §5) and neither draws during boot.
 	_boot_roads()
+	_boot_incidents()
 	_boot_weather()
 	_check_grid_rules()
 	_register_systems()
@@ -238,6 +246,37 @@ func _boot_incidents() -> void:
 	if not incident_catalog.is_valid():
 		boot_errors.append_array(incident_catalog.errors)
 	incident_world = CityIncidentWorld.new(self, incident_catalog)
+	# ---------------------------------------------------------------------
+	# **THE ONE LINE THAT IS NOT HERE, AND THE MEASUREMENT THAT KEPT IT OUT.**
+	#
+	# Doc 06 §2.10 makes doc 10 authoritative for every dispatch ETA, and the
+	# object that does it exists and is tested (`RoadTravelTimeProvider`, and
+	# `tests/test_incidents_routes.gd`). Wiring it is exactly:
+	#
+	#     incidents = IncidentSystem.new(incident_catalog, incident_world, rng,
+	#             roads.travel_time_provider())
+	#
+	# Wave 8 wired it, measured it, and took it out again. On doc 92's
+	# `greedy_growth` agent at seed 4242 — the stress agent that never repairs
+	# and never buys grid — the 21-game-day run goes from **12.6 s with 0–4 open
+	# incidents throughout** to **more than twenty minutes**, with the open
+	# roster at 42 on game-day 17 and still climbing through game-day 18. The
+	# cost is not the router: rank-then-quote, a per-pass quote allowance, an
+	# epoch-keyed skip for unreachable incidents, a memo on `access_factor` and a
+	# 16× route cache were each measured and each changed nothing at the cliff.
+	# What changes is that a rotting city's incidents stop being ANSWERED — real
+	# ETAs over a collapsed, flood-closed road network push `eta + penalties`
+	# past doc 06's `MAX_ACCEPTABLE_COST` of 90 — and doc 06 has no terminal rule
+	# for an incident nobody can reach, so the backlog grows without bound and
+	# the integrator's per-sub-step cost grows with it.
+	#
+	# That is a ruling, not a bug fix: doc 06 §2.10 has to say what happens to an
+	# incident no unit can answer, and doc 10's own perf test already says
+	# hierarchical routing is REQUIRED at this graph size. Both are named in the
+	# delivery report's open questions 1 and 2. Everything on this side of the
+	# seam is ready for the day it is ruled — the boot order above is already the
+	# one the wiring needs, and the four published inputs, the O(1) ranking pass
+	# and the quote budget are all implemented and tested.
 	incidents = IncidentSystem.new(incident_catalog, incident_world, rng)
 	incidents.founding_offset_h = float(GameClock.FOUNDING_OFFSET_MINUTES) / 60.0
 	incidents.fleet.populate_from_stations(incident_world.station_rows())
@@ -462,16 +501,20 @@ func _boot_power() -> void:
 	for node in loader.power.get("nodes", []):
 		var kind := String(node["kind"])
 		var opts := {"level": int(node.get("level", 1))}
+		# EVERY authored node gets its authored location, terminal kinds
+		# included. See `_authored_power_node_tile` — a plant and a substation
+		# spell it `terminal`, and reading only `tile` left both of them at the
+		# map origin, which doc 06 then used as the incident position.
+		var tile := _authored_power_node_tile(node)
+		if tile.x >= 0:
+			opts["tile"] = tile
 		match kind:
 			"plant_gas":
 				grid.add_component(String(node["id"]), &"plant_gas", opts)
 			"substation":
 				grid.add_component(String(node["id"]), &"substation", opts)
 			"transformer":
-				var tile: Vector2i = StarterCityLoader.core_to_global(
-						int(node["tile"][0]), int(node["tile"][1]))
 				opts["parent"] = String(node["feeder"])
-				opts["tile"] = tile
 				grid.add_component(String(node["id"]), &"transformer", opts)
 	for line in loader.power.get("lines", []):
 		var kind := String(line["kind"])
@@ -501,6 +544,43 @@ func _boot_power() -> void:
 				String(_building_records[id].get("block", "")))
 		if attached == "":
 			boot_errors.append("building %s has no transformer in range" % id)
+
+
+## An authored power node's GLOBAL tile, or (-1, -1) when the row carries no
+## location at all. `data/starter_city.json` spells a transformer's position
+## `tile` and a plant's or substation's `terminal` — the same fact under two
+## names, because a terminal is the fence-line tile a feeder leaves from (doc 09
+## §2.9.5) — and this is the one place that knows both spellings.
+static func _authored_power_node_tile(row: Dictionary) -> Vector2i:
+	var raw: Variant = row.get("tile", null)
+	if raw == null:
+		raw = row.get("terminal", null)
+	if raw is Array and (raw as Array).size() == 2:
+		return StarterCityLoader.core_to_global(int(raw[0]), int(raw[1]))
+	return Vector2i(-1, -1)
+
+
+## Re-stamp every AUTHORED power component's location from the boot file after a
+## load. Boot geometry is not player state: a substation's terminal tile comes
+## from `data/starter_city.json` and cannot change in play, so it is re-derived
+## rather than trusted from the body — the same rule `_transformer_cover`
+## follows, and for the same reason.
+##
+## It also repairs the Wave-8 defect for saves that already exist. Before
+## `PowerGrid._initial_tile`, plants and substations were added with no tile and
+## defaulted to (0, 0); that value went into every save, and restoring it would
+## put doc 06's incident for a substation failure in the map corner where doc
+## 10's router can find no street. Player-placed components are not in the
+## authored list and are never touched.
+func _restamp_authored_power_tiles() -> void:
+	for node in loader.power.get("nodes", []):
+		var row: Dictionary = node
+		var id := String(row.get("id", ""))
+		if id == "" or not grid.has_component(id):
+			continue
+		var tile := _authored_power_node_tile(row)
+		if tile.x >= 0:
+			grid.set_component_tile(id, tile)
 
 
 func _boot_districts() -> void:
@@ -586,7 +666,36 @@ func canonical_capture() -> Dictionary:
 
 ## Doc 08 §2.8: this body's own ladder position, independent of the envelope's
 ## `schema_version`. Bumping it IS "the city section changed shape".
-const SAVE_SECTION_VERSION := 1
+##
+## **v2 — 2026-08-20, the routing / sub-step rules epoch (Wave 8).** The city
+## body's SHAPE is byte-for-byte what v1 wrote; not one key was added, removed or
+## renamed, and `_v1_to_v2` is the identity function on purpose. What moved is
+## the RULES that body is advanced under, in two places that both change RNG
+## consumption:
+##
+##   1. dispatch ETAs became street-true — `IncidentSystem` now holds doc 10's
+##      `RoadTravelTimeProvider` instead of doc 06's Chebyshev stand-in, so every
+##      `eta_gs` and therefore every arrival minute, every assignment ranking and
+##      every `unreachable` verdict is a different number;
+##   2. the fire-spread breakpoint is conditional on a live `structure_fire`, so
+##      a quiet hour is integrated in fewer, larger sub-steps and the generators
+##      draw a different (statistically identical) Poisson sequence.
+##
+## **Why that is a version bump and not a free change.** Doc 08 §2.8's ladder is
+## not only about shape. A v1 save is a promise about what the binary that wrote
+## it would have done next; advancing it under v2 rules produces a city that v1
+## would not have produced, and a player who saves in v1 and loads in v2 sees a
+## different fire, a different truck and a different arrival time. The bump is
+## how that is recorded honestly. It does NOT cost the player anything: an
+## identity migrator means every v1 save still loads, with every building, dollar
+## and RNG stream exactly where it was left (`tests/test_save_migration.gd`).
+##
+## The alternative — leaving it at 1 — was rejected because it would make the
+## ladder's own claim false. `section_version` is the only field a future
+## migrator can key on, and a save written under the old dispatch rules is
+## exactly the kind of thing a future rule change will need to recognise. A
+## version that never moves when the rules move cannot be that key.
+const SAVE_SECTION_VERSION := 2
 
 
 func save_section_version() -> int:
@@ -600,8 +709,19 @@ func save_section_version() -> int:
 func migrate_save_section(body: Dictionary, from_version: int) -> Dictionary:
 	var version := from_version
 	while version < SAVE_SECTION_VERSION:
-		# match version: 1: body = _v1_to_v2(body)
+		match version:
+			1: body = _v1_to_v2(body)
 		version += 1
+	return body
+
+
+## v1 → v2: **the identity function, and that is the whole migration.** The
+## epoch marks a rules change, not a shape change (see `SAVE_SECTION_VERSION`),
+## so there is no field to add and no default to invent. Written out as a named
+## step rather than an empty `while` body because the ladder is a record: the
+## next person to read it needs to see that v1 was considered and deliberately
+## left alone, not that a rung was skipped.
+static func _v1_to_v2(body: Dictionary) -> Dictionary:
 	return body
 
 
@@ -730,6 +850,7 @@ func restore_state(raw_body: Dictionary) -> void:
 	clock.deserialize(body.get("clock", {}))
 	rng.deserialize(body.get("rng", {}))
 	grid.deserialize(body.get("grid", {}))
+	_restamp_authored_power_tiles()
 	districts.deserialize(body.get("districts", {}))
 	population.deserialize(body.get("population", {}))
 	happiness.deserialize(body.get("happiness", {}))

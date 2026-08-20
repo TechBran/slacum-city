@@ -71,10 +71,53 @@ func is_reachable(from: Vector2i, to: Vector2i, profile: Dictionary = {}) -> boo
 	return travel_gs(from, to, profile) < UNREACHABLE_GS
 
 
+# ------------------------------------------------ ranking before quoting
+#
+# Doc 10 §2.14 publishes a two-step contract to doc 06 because a real route is a
+# search and an estimate is arithmetic: *"rank every candidate unit with
+# `estimate_eta_practical` (O(1) …), then call `route_minutes` for only the top
+# `DISPATCH_CANDIDATES = 3`."* §2.10's assignment loop reads exactly these three
+# methods to obey it. **On THIS class all three degrade to the exact answer**, so
+# a provider with no street network ranks and quotes identically and every doc 06
+# test written before doc 10 still measures what it measured.
+
+
+## How many candidates the assignment loop may pay a REAL quote for after
+## ranking. **0 means "quote everyone"** — the honest answer for a provider whose
+## quote is arithmetic, and the reason this seam does not change the pre-router
+## ranking by so much as a tie-break.
+func dispatch_candidates() -> int:
+	return 0
+
+
+## The O(1) ranking estimate: same units as [eta_gs], same turnout, no search.
+## Identical to `eta_gs` here, because there is nothing cheaper to be.
+func estimate_eta_gs(from: Vector2i, to: Vector2i, profile: Dictionary = {},
+		turnout_min: float = 0.0) -> int:
+	return eta_gs(from, to, profile, turnout_min)
+
+
+## The cheap half of reachability, used to drop hopeless candidates BEFORE the
+## quote budget is spent. It may answer `true` for a route that a real quote
+## later refuses (doc 10 §4: the component test is class-aware only for hard
+## blocks) — which is why the assignment loop still decides `unreachable` on a
+## real quote and never on this.
+func is_reachable_estimate(from: Vector2i, to: Vector2i, profile: Dictionary = {}) -> bool:
+	return is_reachable(from, to, profile)
+
+
 ## Doc 10 §2.11's road-access quality at a position, ∈ [0,1]. 1.0 until the
 ## router lands; §2.4's `access_factor` reads it and nothing else.
 func access_quality(_tile: Vector2i) -> float:
 	return 1.0
+
+
+## A counter that changes whenever [access_quality] could answer differently and
+## never otherwise, so doc 06 can memoise the answer per tile instead of paying
+## doc 10's ring search once per incident per integrator sub-step. **0 forever**
+## here, which is correct: this class's `access_quality` is a constant.
+func access_epoch() -> int:
+	return 0
 
 
 ## Doc 10's per-edge congestion, ∈ [0,2]. Zero until the router lands.
