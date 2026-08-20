@@ -5,8 +5,9 @@ extends SceneTree
 ## other half: **what does a FRAME cost, at each of §2.5's three camera poses,
 ## on a real city?** It boots a `CitySim` from a city file (doc 09 §2.13's
 ## benchmark fixture by default), assembles the same render stack `game/main.gd`
-## assembles — `RenderStateModel` + `CityView` + `StreetlightView` +
-## `VehicleView` + `EnvironmentController` + `CameraRig` — parks the camera at
+## assembles — `RenderStateModel` + `CityView` + `RoadSurfaceView` +
+## `StreetlightView` + `VehicleView` + `EnvironmentController` + `CameraRig`,
+## with the lamps placed by `StreetlightPlacer` — parks the camera at
 ## Z0 / Z1 / Z2 in turn, and reports CPU render time, GPU render time, draw
 ## calls, primitives and the chunk-tier census at each.
 ##
@@ -33,6 +34,9 @@ extends SceneTree
 ##   --resolution=WxH   render size                        (default 1920x1080)
 ##   --out=FILE         write the run as JSON
 ##   --shots=DIR        save one PNG per pose into DIR (`<pose>.png`)
+##   --focus=TX,TZ      aim the poses at this TILE instead of the city centre
+##                      (Z0 sits 18 m off the focus, and the authored centre can
+##                      put that camera inside a tower)
 ##   --atlas-lod=N      cut the merged MEDIUM atlas from LOD N instead of
 ##                      `CityView.atlas_lod`. 0 keeps the un-merged tier's
 ##                      picture exactly; 1 is §2.5's ladder and costs the
@@ -70,6 +74,7 @@ var _render_data: Dictionary = {}
 var _sim: CitySim
 var _model: RenderStateModel
 var _city_view: CityView
+var _roads: RoadSurfaceView
 var _streetlights: StreetlightView
 var _vehicles: VehicleView
 var _env: EnvironmentController
@@ -174,17 +179,13 @@ func _build_scene() -> void:
 	stage.add_child(_city_view)
 	_city_view.setup(_model, _render_data)
 
-	# doc 11 §2.10's art density: one lamp every 4th road tile (32 m), which is
-	# deliberately NOT doc 04's one-per-road-tile electrical sink.
-	var lamps: Array = []
-	var lamp_id := 100000
-	for z in TileGrid.SIZE:
-		for x in TileGrid.SIZE:
-			if _sim.world.grid.has_flag(x, z, TileGrid.FLAG_ROAD) and (x + z) % 4 == 0:
-				var block := _sim.world.block_of_tile(x, z)
-				lamps.append({"id": lamp_id, "block_id": block.id if block != null else "",
-						"pos": Vector3(x * 8.0 + 4.0, 0.0, z * 8.0 + 4.0)})
-				lamp_id += 1
+	# doc 11 §2.10's art density, off the road graph: one lamp every
+	# `road_surface.lamp.spacing_tiles` along a corridor, standing ON the kerb
+	# and facing the carriageway. Deliberately NOT doc 04's one-per-road-tile
+	# electrical sink.
+	var lamps := StreetlightPlacer.place(_sim.world.grid,
+			_sim.roads.graph if _sim.roads != null else null, _render_data,
+			_sim.world.block_of_tile)
 	_streetlights = StreetlightView.new()
 	stage.add_child(_streetlights)
 	_streetlights.setup(_model, _render_data, lamps)
@@ -212,7 +213,11 @@ func _build_scene() -> void:
 	if min_xz.x < INF:
 		_camera_state.set_owned_land_aabb(min_xz, max_xz)
 	var centre: Array = (_sim.loader.world_header.get("city_center_tile", [56, 56]) as Array)
-	_camera_state.set_focus(Vector3(float(centre[0]) * 8.0, 0.0, float(centre[1]) * 8.0))
+	var focus := Vector3(float(centre[0]) * 8.0, 0.0, float(centre[1]) * 8.0)
+	var wanted: Vector2 = _opts["focus"]
+	if wanted.x >= 0.0:
+		focus = Vector3(wanted.x * 8.0, 0.0, wanted.y * 8.0)
+	_camera_state.set_focus(focus)
 	_camera_rig = CameraRig.new()
 	stage.add_child(_camera_rig)
 	_camera_rig.setup(_camera_state, _render_data)
@@ -236,26 +241,13 @@ func _build_ground(stage: Node3D) -> void:
 		plane.position = Vector3(block.grid.x * 128.0 + 64.0, 0.0, block.grid.y * 128.0 + 64.0)
 		ground.add_child(plane)
 
-	var road_mm := MultiMesh.new()
-	road_mm.transform_format = MultiMesh.TRANSFORM_3D
-	var road_mesh := BoxMesh.new()
-	road_mesh.size = Vector3(8.0, 0.1, 8.0)
-	road_mesh.material = GroundSurface.material("asphalt", Vector2(8.0, 8.0),
-			Color(0.34, 0.34, 0.38), 0.85)
-	road_mm.mesh = road_mesh
-	var tiles: Array[Vector2i] = []
-	for z in TileGrid.SIZE:
-		for x in TileGrid.SIZE:
-			if _sim.world.grid.has_flag(x, z, TileGrid.FLAG_ROAD):
-				tiles.append(Vector2i(x, z))
-	road_mm.instance_count = tiles.size()
-	for i in tiles.size():
-		road_mm.set_instance_transform(i, Transform3D(Basis.IDENTITY,
-				Vector3(tiles[i].x * 8.0 + 4.0, 0.05, tiles[i].y * 8.0 + 4.0)))
-	var road_node := MultiMeshInstance3D.new()
-	road_node.name = "Roads"
-	road_node.multimesh = road_mm
-	ground.add_child(road_node)
+	# doc 11 §2.1.2's street: asphalt, markings, kerbs and footways off the road
+	# GRAPH. Two draw calls city-wide, which is what the `dc` column has to see.
+	_roads = RoadSurfaceView.new()
+	_roads.name = "RoadSurface"
+	ground.add_child(_roads)
+	_roads.setup(_render_data)
+	_roads.rebuild(_sim.world.grid, _sim.roads.graph if _sim.roads != null else null)
 
 	var water_mm := MultiMesh.new()
 	water_mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -497,6 +489,7 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 		"poses": ["z0", "z1", "z2"], "warmup": 90, "frames": 180,
 		"resolution": Vector2i(1920, 1080), "out": "", "quiet": false,
 		"shots": "", "no_merge": false, "atlas_lod": -1,
+		"focus": Vector2(-1.0, -1.0),
 	}
 	for raw in argv:
 		var arg := String(raw)
@@ -508,6 +501,15 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			opts["atlas_lod"] = int(arg.substr(12))
 		elif arg.begins_with("--shots="):
 			opts["shots"] = arg.substr(8)
+		elif arg.begins_with("--focus="):
+			# TILE coordinates. Z0 parks 18 m off the focus, so the default city
+			# centre can put the camera INSIDE a tower; aiming at a junction is
+			# the only way to review the street surface at that pose.
+			var f := arg.substr(8).split(",")
+			if f.size() != 2:
+				opts["error"] = "--focus wants tile_x,tile_z"
+			else:
+				opts["focus"] = Vector2(float(f[0]), float(f[1]))
 		elif arg.begins_with("--city="):
 			opts["city"] = arg.substr(7)
 		elif arg.begins_with("--preset="):

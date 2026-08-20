@@ -73,6 +73,38 @@ Two scrolling value-noise octaves at different scales, speeds and headings (7.5 
 
 **Nothing animates on the CPU.** `sc_time` is already published for the window flicker; the water reads it. A `MultiMeshInstance3D` of water quads is touched once, at build time.
 
+#### 2.1.2 The street (`game/render/road_surface_view.gd`, `road_surface.gdshader`, `sidewalk.gdshader`) — **shipped 2026-08-20**
+
+Roads were one MultiMesh of untextured 8 m slabs. The playtest verdict on the Fold was exact and is worth quoting, because every decision below answers a clause of it: *"more like a real street, two lanes, black asphalt, yellow dividing line in the middle, a sidewalk. The street lights need to be in real places, on the side of the streets — they just look like sticks popping out of the ground."*
+
+**Two draw calls, city-wide.** `MM_road_asphalt` (one 8 m slab per road tile, 12 tris) and `MM_sidewalk` (kerb runs and corner squares, unit boxes scaled per instance). Deliberately NOT per-chunk, which is the convention everywhere else in this doc: the world is 7×7 chunks, road runs along every chunk boundary so all 49 hold some, and at Z2 every one is on screen — per-chunk buckets would be **98 calls against 71 of headroom**. Measured on the benchmark city, Z2 Balanced: **194 → 195** (`dc+ui` 219 → 220 of 320). The vertex bill instead: **+20,490 primitives at Z2, +8,696 at Z0**, and the whole road layer of the founding city is 9,396 asphalt triangles + 1,836 footway triangles.
+
+**Everything painted is a fragment, not a mesh.** Centre lines, lane dividers, edge lines, zebra crossings, tile seams, wheel-path polish, patch mottle and kerb grime are all computed in `road_surface.gdshader` from **world metres**, so a dash phase crosses a tile boundary with no seam to align and a 15 cm line stays 15 cm at Z0 and antialiases itself at Z2 through `fwidth`. `dashes()` carries an explicit band limit — past Nyquist it fades to the pattern's duty cycle, because a `fract()` sampled sub-period crawls and the marketed skyline frame would shimmer along every lane line.
+
+**Per-instance contract** (roads are their own bucket; §2.6's stride-448 packing is the BUILDING bucket's and does not apply):
+
+| channel | meaning |
+|---|---|
+| `.r` | neighbour mask, N=1 E=2 S=4 W=8, from the road GRAPH's tile membership |
+| `.g` | kerb mask, same bits: which sides carry a footway (also the gutter/edge-line mask) |
+| `.b` | `cls + 2·pair + 16·crosswalk_mask` — see below |
+| `.a` | per-tile wear seed on [0,1), a **hash of the tile**, never a stream draw |
+
+**Why the graph and not the tile grid.** Three reads come out wrong from per-tile guesswork:
+
+* **Class** is the graph EDGE's (`RoadGraph._edge_class`, the slowest class on the segment), not the tile's, so the line painted is the class the router charges for.
+* **Junctions.** No centre line crosses a junction box, and a zebra is painted on a leg only when the tile it leads to is *not* itself a junction — which is what stops a 2×2 avenue crossing painting four ladders of white bars into its own middle.
+* **Dual carriageways.** `data/starter_city.json` lays Slacum Ave down as **x = 15 AND x = 16**: 336 of the founding city's 783 road tiles are one half of a two-tile avenue. A naive degree test calls every one of them a junction and the city loses every centre line it has. `_pair_of` resolves the twin first — the corridor runs through on an axis, exactly one lateral neighbour is road of the same class, and that neighbour runs through too — and each half then paints its own footway on the OUTER side, one solid yellow just inside the shared edge (the two halves together are the double yellow), a dashed white divider between its two same-direction lanes, and a white edge line at its kerb.
+  * Measured, and load-bearing: the class test applies to the LATERAL neighbour only, never along the corridor. `StarterCityLoader` stamps its road list in order and the last writer wins, so every avenue-meets-street crossing tile ends up classed STREET; with a class test along the corridor too, that one mis-classed tile broke the pairing of the avenue tile either side of it, turning them into junction boxes and painting zebras across a through carriageway — **sixteen times over in the founding city.**
+
+**Geometry, in metres.** Tile 8.0; carriageway top y = **0.10** (unchanged — `VehicleView.DEF_ROAD_TOP_M` and the traffic overlay's 0.16 both key off it); kerb 0.15, so the footway walks at y = 0.25. A street spends 2 × 1.40 m on footway and 5.20 m on two 2.60 m lanes; a single-tile avenue 2 × 1.05 m and two 2.95 m lanes; a two-tile avenue half carries 1.05 m outside and 6.95 m of carriageway (two 3.475 m lanes).
+
+**Footways merge into runs.** A tile emits at most four strips and four corner squares; strips abutting along the same kerb line are welded into one instance, so a 20-tile avenue kerb is ONE box. Founding city: **153 instances for 783 road tiles** (149 strips + 4 corner squares) where the unmerged form is ~1,500. Where two kerbed sides of one tile meet, both strips give up `w` and a `w × w` corner square fills the gap — so nothing overlaps, no two footway tops are coplanar, and there is no z-fighting to tune away (`tests/test_road_surface.gd` test 07 asserts it exhaustively).
+
+**Zero new texture memory.** Both shaders sample the existing generated `ground_asphalt` / `ground_pavement` pages through `load()`, which is resource-cached, so they share the textures `GroundSurface` already has resident. Everything else — wear, patches, seams, wheel paths, joints, and every line of paint — is procedural.
+
+**Night** (report NIGHT-1, unchanged calibration): the carriageway inherits the ROAD row of `data/render.json.ground` verbatim (`road_night_albedo_lift` 0.34, `road_night_glow` 0.048, `night_glow_wet_mult` 0.55). The footway takes its own row between terrain and road (0.30 / 0.042) and just under the road's on purpose. Matching the terrain leaves a black gap either side of a lit carriageway — measured at the first draft's 0.22 / 0.030, where the footway read darker than the lot behind it at 03:00. Matching the road erases the kerb line, which is the edge this whole pass exists to draw. **The gap between the two is the read.** Paint takes a third: `marking_night_glow` 0.075, which is the **retroreflective** read, and at 03:00 it is the strongest single cue that a dark band is a STREET.
+
 ### 2.2 Chunk lifecycle and slot allocation
 
 States `UNLOADED → SIM_ONLY → FAR → MEDIUM → NEAR` and back. `SIM_ONLY` = sim owns the block, zero scene nodes. Promotion to `FAR` builds the `ChunkView`, ground mesh, `MM_far`, `MM_lamp`; promotion to `MEDIUM`/`NEAR` allocates per-archetype MultiMeshes and props.
@@ -488,7 +520,7 @@ Five property writes per frame for 0.30 s. No fullscreen white quad: a lighting-
 
 One streetlight every 32 m (4 tiles) along road polylines from doc 10. With doc 09's ~87 road tiles per developed block that is **~22 streetlights per chunk**. Lit state is **not** inferred by the renderer: doc 04 emits `StreetlightsChanged(block_id, lit)` per land block, and every streetlight in that chunk shares that one boolean, ramped through the §2.7 envelopes. Four instances across MultiMeshes:
 
-1. `MM_pole` — 6-tri cylinder + arm, lit material, NEAR/MEDIUM only.
+1. `MM_pole` — the cobra head, lit material, NEAR/MEDIUM only. See §2.10.1.
 2. `MM_lamp` — 1.6 m billboard, unshaded additive, `EMISSION = lamp_color · emissive_scale · sc_night`. **The only part rendered at FAR**, and what makes a lit street readable from 900 m.
 3. `MM_pool` — downward disc, radius 6 m at `y = 0.06`, unshaded additive with radial falloff. Radius `6·(1 + 0.5·sc_wetness)`, energy `×(1 + 0.6·sc_wetness)`. **This fake light pool replaces the dynamic light for 95% of streetlights.**
 4. `MM_wetsmear` — mirrored copy of (2).
@@ -502,6 +534,29 @@ One streetlight every 32 m (4 tiles) along road polylines from doc 10. With doc 
 | High | 20 | 90 m | 6 |
 
 Godot Mobile caps omni lights per object (default 8). With ≤ 20 omnis spread over 90 m at 14 m range, no building is touched by more than ~4. Verified in the on-device checklist (§7.4).
+
+#### 2.10.1 Where the lamps go, and what they look like (`streetlight_placer.gd`, `cobra_head_mesh.gd`) — **shipped 2026-08-20**
+
+The placement rule this replaces was one line in the scene root:
+
+```gdscript
+if world.grid.has_flag(x, z, TileGrid.FLAG_ROAD) and (x + z) % 4 == 0:
+```
+
+A parity test over the raw tile grid. It honours the 32 m figure above only on average, it stipples lamps along a **diagonal** across the whole city, it stands every pole in the **middle of the carriageway** — on a 16 m avenue, in the middle of four lanes — and it cannot say which way a lamp faces, because it never asked what a road was. Hence *"sticks popping out of the ground"*.
+
+`StreetlightPlacer.place()` reads **the same `RoadSurfaceView.classify()` the carriageway is drawn from**, so a lamp can never disagree with the kerb it is standing on. Four rules, all deterministic and RNG-free (the output is a pure function of the tile grid and the graph, ordered by (y, x, side); doc 00 §5's hashes cannot move):
+
+1. **Corridor lamps** every `spacing_tiles` = 4 (**32 m**, the authored `world.streetlight_spacing_m`), phase taken off the tile index along the corridor axis rather than off a per-edge counter — doc 10 contracts a corridor into as many edges as it has junctions, so a per-edge counter restarts at every cross street and the pitch visibly stutters through a grid city.
+2. **Alternating kerbs**, swapping every lamp. If the chosen side carries no footway the other is taken; if neither does, the lamp is **skipped** rather than planted in a traffic lane.
+3. **Dual carriageways stagger**: each half lights every `2 × spacing` offset by `spacing` from its twin, so a 16 m avenue is lit from alternating kerbs at the single-carriageway pitch — which is how a real arterial is lit.
+4. **Corners**, where a tile carries two adjacent footways (a bend, a cul-de-sac head). Explicitly *not* "a lamp on each corner of a junction": a one-tile junction has three or four road neighbours and so **at most one kerb**, no corner to stand a pole on, and standing one in the box anyway is the exact defect this pass removes. A **junction guarantee** covers the gap instead — any box left with no lamp within `spacing_tiles` gets one forced onto its first kerbed approach. Measured on the founding city: 51 of 53 boxes were already covered; the two that were not are the avenue-meets-avenue crossings at (63,48) and (48,63), the two widest expanses of asphalt on the map, dark because both crossing corridors put their nearest lamp a full stagger period away.
+
+Founding city: **130 lamps**, 4 of them corner lamps, against the parity rule's **207** — 37 % fewer poles, all of them on a kerb, all of them facing a carriageway. Benchmark city: **469** against 828.
+
+**The mesh.** `CobraHeadMesh` builds one ArrayMesh every lamp in the city shares: a mast standing on its own origin (so the baked grime ramp lands at the footway wherever it is placed), the 0.30 m base collar, a four-segment arm swept as a quarter-ellipse that leaves the mast vertically and arrives over the carriageway horizontal, and a tapered luminaire with a pale lens on its underside. **76 triangles** against the old stick's 34, paid once on the shared mesh; the arm is baked along local **+X** and each instance yaws it toward its own roadway. Founding city total: 9,880 pole triangles, against the parity rule's 207 x 34 = 7,038 — 40 % more triangles for 37 % fewer poles.
+
+**STREET-1 — the pool that was buried.** `pool_y_m` was **0.06** and the road slab's top is **0.10**: every ground pool in the game failed the depth test against the carriageway it was lighting, and what survived was the ring of it that spilled onto the block either side. A doughnut of light around a dark road is a large part of why a lamp read as a stick. The disc now rides just over the **footway** — the highest surface under a lamp — so one pool covers kerb, gutter and both lanes, and the billboard, the pool and the wet smear all hang off the **luminaire**, out at the end of the arm, instead of off the top of the mast. The 0.155 m the disc floats above the asphalt is invisible: at Z0's 34° of pitch that is 0.23 m of parallax across a 16 m disc with no hard edge anywhere in it.
 
 ### 2.11 Overlay mechanism (doc 12 owns content)
 
@@ -658,6 +713,8 @@ area   = 0.5 · (16.1 + 53.9) · 33.1 = 1,159 m² = 0.07 land blocks
 At Z0 the camera sees one seventh of one hundredth of a chunk's worth of ground; the footprint straddles at most **4 chunks, all NEAR** (distances 12.5–41.6 m).
 
 **Per-chunk draw calls** (unchanged by the camera ruling): NEAR = 8 building buckets + 2 ground/road + 3 props = **13**; MEDIUM = 6 + 2 + 2 = **10**; FAR = 1 + 1 + 1 = **3**. Performance adds 1 blob-shadow call per NEAR/MEDIUM chunk.
+
+*The `road` half of the per-chunk `ground/road` term is no longer per chunk: §2.1.2 draws the whole city's carriageway and footway in **two** calls, not `2 × chunks`. The model above is therefore conservative by roughly one call per visible chunk — 16 at Z2 — and is left as written because a budget that over-counts is the safe direction and every table below is a measurement, not this derivation.*
 
 *The MEDIUM figure is now measured at **5.94** on the benchmark city (as-shipped, below) — the merge in §2.6 is what made this line true rather than optimistic by 1.7×. The NEAR figure is still an assumption and still measures 16.4; see the residual note under the as-shipped table.*
 
@@ -860,6 +917,39 @@ Z1 worst case, 6 NEAR chunks (near_chunk_max, Balanced)
 **3.05× less traffic on the bus**, and the 44,153 dictionaries became 6,699 events of five packed buffers. Save identity is unchanged and proved rather than asserted: `tools/profile_sim.gd --hash-only --baseline=…` reports `BEHAVIOUR UNCHANGED` on both the starter and the bench city, on both the fine and the coarse path. The bus is not persisted (`SimEventBus` keeps no history), so this was true by construction; the baseline check is what makes it checked.
 
 **The governor, as shipped.** `game/render/perf_governor.gd` implements the ladder and the holds above and doc 13 §2.8's thermal policy, as a model with no Node and no engine singleton — which is what lets `tests/test_perf_governor.gd` drive the 5 s and 30 s holds in microseconds. Settings row `auto_quality` ("Auto quality", `data/ui.json`), **default on**, device-scoped. Two behaviours worth stating because they are choices, not consequences: switching the row **off freezes the knobs where they stand** rather than restoring the preset (a quality *jump* is the one thing a manual-control switch must not cause), and a preset the *player* picks resets the ladder and clears a latched drop, because their choice outranks the governor's.
+
+#### The street pass — what it cost, measured (2026-08-20)
+
+§2.1.2 and §2.10.1. Same harness, same benchmark city, same 21:00 pose set, 60 warm-up frames and 120 measured, on the same workstation, before and after in one session.
+
+| pose | draw calls | **+UI** | budget | primitives | RS gpu |
+|---|---|---|---|---|---|
+| Z0 `D 18 / 34°` | 92 → **93** | 117 → **118** | 320 | 52,602 → **61,298** | 0.63 → 0.77 |
+| Z1 `D 86.9 / 48°` | 111 → **112** | 136 → **137** | 320 | 77,536 → **87,364** | 2.06 → 1.74 |
+| **Z2 `D 420 / 62°`** | 194 → **195** | 219 → **220** | **320** | 209,546 → **230,036** | 2.38 → 2.83 |
+
+**One draw call, everywhere.** The slab MultiMesh the pass replaces already cost one; the asphalt still costs one and the footway is the second. Nothing else in the frame moved: markings, gutters, wear, crosswalks and the kerb lip are all fragment work inside the asphalt call, and the lamps kept the same four per-chunk buffers they already had (there are now **469 of them instead of 828** on the benchmark city, because the placement rule stopped stippling a diagonal). **Z2 sits at 220 of 320 — 31.2% headroom**, against a brief that allowed spending to ~290.
+
+**The bill is in vertices, and it is small.** +20,490 primitives at Z2 (+9.8%), +8,696 at Z0. On the founding city the whole road layer is 9,396 asphalt triangles (783 tiles × 12) + 1,836 footway triangles (153 merged instances × 12) + 9,880 pole triangles (130 × 76) = **21,112 triangles for every street in the city**.
+
+**The rebuild cost, and where it is worse than what it replaces.** `RoadSurfaceView.rebuild()` runs on `road_graph_changed` / `block_roads_stamped`, i.e. every time the player lays road. Debug headless, best of 15:
+
+| | founding city (783 road tiles) | benchmark city (3,132) |
+|---|---|---|
+| `RoadGraph.road_tiles_sorted` | 0.20 ms | 1.05 ms |
+| `RoadSurfaceView.classify` | 2.66 ms | 11.28 ms |
+| **`rebuild` total** | **4.41 ms** | **18.30 ms** |
+| *the grid sweep the old rebuild opened with* | *7.78 ms* | *7.90 ms* |
+
+On the city a player actually starts in this is **faster than what shipped** — the old `_rebuild_road_multimesh` swept all 12,544 grid cells through `has_flag`, a method call with a bounds assert apiece, and that sweep alone is 7.8 ms. On the 1,500-building benchmark it is 2.3× slower, which is a real regression and is filed as an open question (the fix is a dirty-tile incremental path, not more micro-optimisation). Three things are already taken:
+
+* membership comes from the graph's own map rather than a grid sweep (7.6 ms on the founding city), which is safe mid-edit because `RoadGraph.apply_edits` re-reads tile membership up front and budgets only the edge TRACING;
+* `_pair_of` is skipped on any tile with fewer than three legs — a dual carriageway cannot have fewer (3.4 ms on the benchmark city);
+* the footway run buckets key on an int, not on `"%s|%.3f|%.3f" %` (3.1 ms on the benchmark city).
+
+And the pass is idempotent per edit: `rebuild` records the `graph_version` it drew and returns immediately for a repeat, because one player edit fires **two** events the shell rebuilds from.
+
+**Texture memory: zero added.** Both shaders sample the existing `ground_asphalt` and `ground_pavement` pages through the resource cache, and every mark, joint, patch and stain on top of them is procedural. Against the 8 MB budget the brief set, the pass spends 0.
 
 #### Device matrix
 
@@ -1251,6 +1341,18 @@ holds the preset switch. The governor deliberately reaches into none of them.
   * **§2.5's MEDIUM row.** Every merged node has `cast_shadow = OFF`, `near_flicker = 0`, `level_atlas = 1` and `window_cols = 1`; two chunks drawing the same archetype share **one** `ShaderMaterial`. And the shader source contract: `level_atlas` defaults to 0, the gate is branchless (`step(0.5, level_atlas)`), `overlay_of` wraps rather than clamps, and nothing in the file `discard`s.
   * **The mask at runtime** — the only mutable state the merged tier has, and the one whose failure is silent. A chunk that GAINS a level swaps to the wider atlas (without the swap the new building draws nothing and reports nothing), still on one draw call, with each instance carrying its own level; a chunk that LOSES one swaps back to the narrower atlas, so a demolished level stops submitting triangles; and a chunk that loses its last building submits **zero** calls — neither the merged node nor the emptied per-level bucket behind it.
 
+### 7.2b Headless — the street (`tests/test_road_surface.gd`)
+
+17 tests over `RoadSurfaceView`, `StreetlightPlacer` and `CobraHeadMesh`, on fixture road graphs and on the founding city. Every one is an INVARIANT of the picture rather than a snapshot of it — dash length, gutter width and tints live in `data/render.json` and are deliberately not asserted, because moving them is art and moving these is a bug. The three that would actually break the player's read:
+
+1. **A centre line through a junction box** (tests 03, 05) — the whole reason the pass reads the graph is that a 4-way looks like a 4-way, and that a leg is only zebra'd when what it leads to is not another junction tile.
+2. **A kerb down the middle of a 16 m avenue** (test 04) — the dual-carriageway pairing, including the mis-classed crossing tile that broke it.
+3. **A lamp in a traffic lane** (test 12) — every pole in the founding city stands on a footway, on a side that carries one, inside the kerb; test 13 that its arm points at the roadway.
+
+Also pinned: the two files' shared N/E/S/W wire format (01), that the carriageway's top surface is still y = 0.10 where the vehicle layer expects it (02), footway run merging (06) and that no two footway boxes overlap in plan (07), water taking no kerb (08), that the pass never mutates the graph and is byte-identical across two builds (09), the corridor pitch and kerb alternation (10), the dual-carriageway stagger (11), the corner rule and the junction guarantee (14, 14b), the cobra head's 76 triangles and overhang (15), and STREET-1's pool clearing the carriageway and hanging off the luminaire (16).
+
+**Note for anyone extending it:** `--headless` runs on the DUMMY rendering driver, where `MultiMesh.get_instance_transform` reads back identity whatever was uploaded. Both views publish their computed placements script-side (`RoadSurfaceView.pack_of/runs/asphalt_origin_y`, `StreetlightView.anchor_of`) for exactly this reason; asserting against the MultiMesh directly silently passes.
+
 ### 7.3 Headless — weather / day-night
 
 20. **Wetness integrator:** `precip01 = 1.0` for 60 s → `sc_wetness ≥ 0.90`; then `precip01 = 0` for 300 s → `≤ 0.05`; monotonic within each phase. Also assert continuity: stepping `precip01` through doc 07's segment-boundary lerp produces no `|Δ sc_wetness|` above `delta/tau` in any frame — the C-58 guarantee the renderer depends on.
@@ -1443,7 +1545,37 @@ Deep dives when a gate fails: **Android GPU Inspector** for Adreno/Mali counters
                     "omni_range_m": 14.0, "omni_energy": 1.6, "omni_attenuation": 1.6,
                     "omni_shadows": false, "omni_distance_fade_begin_m": 55.0,
                     "omni_distance_fade_len_m": 15.0,
-                    "pool_rebind_hz": 4.0, "pool_crossfade_s": 0.25 },
+                    "pool_rebind_hz": 4.0, "pool_crossfade_s": 0.25,
+                    "_pool_y_superseded": "STREET-1: pool_y_m 0.06 sat UNDER the carriageway's 0.10 top and every pool in the game was depth-buried by the road it was lighting. StreetlightView now takes its height from road_surface.asphalt_top_m + kerb_height_m + lamp.pool_lift_m. This row is kept for a clone with no road_surface block." },
+
+  "road_surface": { "_owner": "doc 11 §2.1.2 + §2.10.1. RoadSurfaceView reads this block; StreetlightPlacer reads its `lamp` sub-block. Nothing here duplicates the `ground` block's night floor — the carriageway inherits the ROAD row from there.",
+                    "asphalt_top_m": 0.10, "asphalt_thickness_m": 0.10, "kerb_height_m": 0.15,
+                    "sidewalk_width_street_m": 1.40, "sidewalk_width_avenue_m": 1.05,
+                    "page": "asphalt", "tint": "#57575F", "roughness": 0.85,
+                    "sidewalk_page": "pavement", "sidewalk_tint": "#A6A69D",
+                    "sidewalk_roughness": 0.93, "sidewalk_kerb_tint": "#96958C",
+                    "sidewalk_joint_period_m": 1.20, "sidewalk_joint_darken": 0.30,
+                    "sidewalk_kerb_dark": 0.72, "sidewalk_kerb_edge_gain": 0.16,
+                    "sidewalk_night_albedo_lift": 0.30, "sidewalk_night_glow": 0.042,
+                    "line_yellow": "#E3B637", "line_white": "#C6C6BD",
+                    "centre_line_w_m": 0.16, "double_gap_m": 0.12, "edge_line_w_m": 0.12,
+                    "edge_line_inset_m": 0.28,
+                    "dash_mark_m": 2.40, "dash_gap_m": 3.60,
+                    "lane_dash_mark_m": 3.00, "lane_dash_gap_m": 5.00,
+                    "dead_end_stop_m": 2.50,
+                    "marking_night_glow": 0.075, "marking_roughness": 0.62,
+                    "marking_wear_loss": 0.35,
+                    "crosswalk_bar_m": 0.45, "crosswalk_period_m": 0.85,
+                    "crosswalk_depth_m": 1.35, "crosswalk_inset_m": 0.35,
+                    "patch_gain": 0.16, "patch_scale_m": 11.0, "seam_darken": 0.16,
+                    "wheel_path_gain": 0.10, "wheel_path_w_m": 0.95,
+                    "gutter_m": 0.55, "gutter_darken": 0.22, "wear_tile_gain": 0.07,
+                    "lamp": { "spacing_tiles": 4, "corner_lamps": true,
+                              "pole_curb_frac": 0.50, "mast_height_m": 7.60,
+                              "arm_reach_m": 2.20, "arm_rise_m": 0.75, "head_height_m": 8.35,
+                              "head_length_m": 1.05, "head_width_m": 0.40,
+                              "head_height_back_m": 0.24, "head_height_front_m": 0.16,
+                              "pole_width_m": 0.20, "pool_lift_m": 0.005 } },
 
   "vehicles": { "civ_spawn_per_m": 0.0222, "civ_visible_radius_m": 420.0,
                 "civ_body_tris_max": 90, "emergency_body_tris_max": 180,
