@@ -64,6 +64,16 @@ extends SceneTree
 ##                      four nodes per site and would bury the figure this flag
 ##                      exists to read.
 ##   --site-stage=S     stage 1..6 every `--sites` site is held at (default 2)
+##   --pad-shadows=0|1  whether the transformer pad buffer casts into the sun's
+##                      shadow pass (default: whatever `data/render.json`'s
+##                      `power_infra.pad_shadows` says). The A/B behind that
+##                      knob's shipped default — the two runs differ in nothing
+##                      else, so the `rs gpu` delta IS the pad shadow pass.
+##   --road-detail=N    force `road_surface.gdshader`'s fragment ladder to rung
+##                      N (2 full, 1 no wear, 0 also no zebra) instead of the
+##                      preset's ceiling. The A/B behind the asphalt fragment
+##                      cost: same geometry, same draw calls, same everything
+##                      but the fragment program.
 ##   --site-gm=M        game-minute the construction layer's clock is wound to
 ##                      before the measured frames (default 900 — a dozen
 ##                      delivery cadences, so the yards are full and lorries
@@ -110,6 +120,10 @@ var _height_of: Dictionary = {}
 ## sim's, so the smoke/spark buffer can be measured without cooking the sim.
 var _forced_rows: Array = []
 
+## What the viewport actually came up at, as opposed to what `--resolution`
+## asked for. Set on the first frame by `_verify_resolution`.
+var _measured_resolution := Vector2i.ZERO
+
 var _order: Array = []
 var _pose_index := 0
 var _frames_seen := 0
@@ -145,7 +159,18 @@ func _initialize() -> void:
 		for message in _sim.boot_errors:
 			printerr("profile_frame: boot error: " + String(message))
 
+	# `--resolution` has to go through the DISPLAY SERVER, not through `root.size`
+	# alone. Setting the root Window's `size` in `_initialize` is silently undone
+	# by the window that `[display] window/size/viewport_*` already created, so
+	# every millisecond ever printed by this harness before 2026-08-20 was
+	# measured at the project's 1280×720 while the header said 1920×1080 —
+	# checked by dumping `--shots` and reading the PNG's dimensions, which came
+	# back 1280×720 whatever `--resolution` asked for. Both calls are made, and
+	# `_verify_resolution` on the first measured frame refuses to print a number
+	# under a resolution it did not get.
 	var size: Vector2i = _opts["resolution"]
+	if DisplayServer.get_name() != "headless":
+		DisplayServer.window_set_size(size)
 	root.size = size
 	# `measure_render_time` is what makes the CPU/GPU columns real rather than
 	# an estimate off the frame delta — without it the server returns 0.
@@ -236,6 +261,8 @@ func _build_scene() -> void:
 				return float(_height_of.get("%s:%d" % [archetype, level], 10.0)))
 		_power_infra.set_road_probe(PowerInfraFeed.road_probe(_sim.world))
 		_power_infra.sync(_sim, 0.0, Vector3.ZERO)
+		if int(_opts["pad_shadows"]) >= 0:
+			_power_infra.set_pad_shadows(int(_opts["pad_shadows"]) == 1)
 		_force_distress(float(_opts["power_distress"]))
 	if int(_opts["sites"]) > 0:
 		_construction = ConstructionVehicleView.new()
@@ -271,6 +298,21 @@ func _build_scene() -> void:
 	_camera_rig = CameraRig.new()
 	stage.add_child(_camera_rig)
 	_camera_rig.setup(_camera_state, _render_data)
+
+
+## The resolution the frame is ACTUALLY being rendered at, read back off the
+## live viewport once the window is up. A fill-rate measurement whose pixel
+## count is wrong is not a conservative measurement, it is a wrong one — so this
+## says so loudly rather than letting the header's `--resolution` stand in for a
+## size the window refused.
+func _verify_resolution() -> void:
+	var wanted: Vector2i = _opts["resolution"]
+	var live: Vector2i = root.get_visible_rect().size
+	_measured_resolution = live
+	if live != wanted:
+		printerr(("profile_frame: asked for %dx%d, the viewport is %dx%d — every ms"
+				+ " column below is at the SECOND number") % [
+				wanted.x, wanted.y, live.x, live.y])
 
 
 ## `--power-distress=F`: push the first `F` of the transformer roster (sorted, so
@@ -354,6 +396,13 @@ func _build_ground(stage: Node3D) -> void:
 	_roads.name = "RoadSurface"
 	ground.add_child(_roads)
 	_roads.setup(_render_data)
+	_roads.set_preset(String(_opts["preset"]), _render_data)
+	if int(_opts["road_detail"]) >= 0:
+		# Raise the ceiling first: `set_detail` clamps to it by contract, so a
+		# harness asking for rung 2 on a preset capped at 1 must move the cap or
+		# it would silently measure rung 1 and print "2".
+		_roads.detail_ceiling = clampi(int(_opts["road_detail"]), 0, 2)
+		_roads.set_detail(int(_opts["road_detail"]))
 	_roads.rebuild(_sim.world.grid, _sim.roads.graph if _sim.roads != null else null)
 
 	var water_mm := MultiMesh.new()
@@ -433,6 +482,7 @@ func _process(delta: float) -> bool:
 		# only `get_path()`-addressable once the window's tree is live, and
 		# `EnvironmentController` resolves its sun/sky by NodePath.
 		_build_scene()
+		_verify_resolution()
 		_order = _opts["poses"]
 		_apply_pose(0)
 		_started = true
@@ -592,8 +642,19 @@ func _report() -> void:
 			.get(String(_opts["preset"]), {})
 	var budget := int(preset_row.get("draw_call_budget", 320))
 	print("")
-	print("=== FRAME COST — %s, preset %s, hour %.1f ===" % [
-			String(_opts["city"]).get_file(), String(_opts["preset"]), float(_opts["hour"])])
+	var pad_shadow_state := "n/a"
+	if _power_infra != null:
+		# -1 means "whatever the JSON says", so the line reports the JSON rather
+		# than assuming the shipped default is the one under test.
+		var wanted := int(_opts["pad_shadows"])
+		var live := wanted == 1 if wanted >= 0 else bool(
+				(_render_data.get("power_infra", {}) as Dictionary).get("pad_shadows", true))
+		pad_shadow_state = "on" if live else "off"
+	print(("=== FRAME COST — %s, preset %s, hour %.1f, %dx%d, road detail %d,"
+			+ " pad shadows %s ===") % [
+			String(_opts["city"]).get_file(), String(_opts["preset"]), float(_opts["hour"]),
+			_measured_resolution.x, _measured_resolution.y,
+			_roads.detail if _roads != null else -1, pad_shadow_state])
 	var header := "  %-22s %8s %8s %8s %8s %6s %6s %6s %5s %5s %5s %5s %5s %5s %9s" % [
 			"pose", "mean ms", "p95 ms", "rs cpu", "rs gpu", "dc", "dc+ui",
 			"budget", "buck", "merg", "far#", "near", "med", "far", "prims"]
@@ -652,7 +713,9 @@ func _report() -> void:
 		f.store_string(JSON.stringify({
 			"city": String(_opts["city"]), "preset": String(_opts["preset"]),
 			"hour": float(_opts["hour"]), "buildings": _sim.buildings.size(),
-			"resolution": [(_opts["resolution"] as Vector2i).x,
+			"road_detail": _roads.detail if _roads != null else -1,
+			"resolution": [_measured_resolution.x, _measured_resolution.y],
+			"resolution_asked": [(_opts["resolution"] as Vector2i).x,
 					(_opts["resolution"] as Vector2i).y],
 			"poses": _results,
 		}, "  ", true, true))
@@ -671,6 +734,7 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 		"focus": Vector2(-1.0, -1.0),
 		"no_power_infra": false, "power_distress": 0.0,
 		"sites": 0, "site_stage": 2, "site_gm": 900.0,
+		"pad_shadows": -1, "road_detail": -1,
 	}
 	for raw in argv:
 		var arg := String(raw)
@@ -682,6 +746,10 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			opts["no_power_infra"] = true
 		elif arg.begins_with("--power-distress="):
 			opts["power_distress"] = clampf(float(arg.substr(17)), 0.0, 1.0)
+		elif arg.begins_with("--pad-shadows="):
+			opts["pad_shadows"] = clampi(int(arg.substr(14)), 0, 1)
+		elif arg.begins_with("--road-detail="):
+			opts["road_detail"] = clampi(int(arg.substr(14)), 0, 2)
 		elif arg.begins_with("--sites="):
 			opts["sites"] = maxi(0, int(arg.substr(8)))
 		elif arg.begins_with("--site-stage="):

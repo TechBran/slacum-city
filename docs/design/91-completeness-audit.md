@@ -364,6 +364,29 @@ so a finished tutorial stays finished across a restart. **D-3 closed.**
 > five rows, plus a device — **so it is filed rather than guessed at**, and the
 > count table above still carries the old grades. Nothing in this table should be
 > quoted as current until that pass happens.
+>
+> **STILL FLAGGED after the Fold-6 attempt (2026-08-20).** A session was opened
+> to take exactly this pass. `adb` was polled every 20 seconds for 45 minutes —
+> 135 attempts, `adb mdns services` re-run on each, **zero endpoints advertised
+> and zero devices authorised** — so all five rows keep their stale grades and
+> this note keeps its warning. What the attempt *did* establish without a phone
+> is that two of the instruments the re-grade needs do not work:
+> `PerfGovernor.perf_line()` is called by nothing, so doc 11 §7.4's
+> `grep '^PERF'` collects an empty CSV, and `tools/bench_device.sh` launches with
+> the wrong `am` extra (`--es` for a string-ARRAY parameter, and without the
+> literal `--` that `OS.get_cmdline_user_args()` requires) and with three
+> scenario flags — `--bench=`, `--preset=`, `--city=` — that `game/main.gd` does
+> not parse at all. Both faults are recorded in doc 11 §2.13's Fold pass;
+> `game/render/perf_telemetry.gd` is the first fix, and
+> **`tools/device_runbook.md`** is the session rewritten against the flag
+> vocabulary the shipped shell actually has, so the next window is spent
+> measuring rather than debugging the harness. Row **2.8** in particular now has
+> a live consumer to check — the governor's thermal ladder shipped in Wave 6 —
+> and row **2.9** gains a number it did not have: the resume path's ANR
+> arithmetic budgets the catch-up and does not budget the LOAD in front of it,
+> which `tools/profile_save.gd` measures at **49 ms on the founding city and
+> 456 ms on the 1,500-building benchmark, on a workstation** (doc 11 §2.13).
+> The re-grade is unblocked the moment a device answers.
 
 | § | Subject | Grade | Pointer / gap |
 |---|---|---|---|

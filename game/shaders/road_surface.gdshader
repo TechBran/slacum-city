@@ -92,6 +92,26 @@ uniform float crosswalk_period = 0.85;
 uniform float crosswalk_depth = 1.35;
 uniform float crosswalk_inset = 0.35;
 
+// ── the detail ladder ────────────────────────────────────────────────────
+// `detail` is a UNIFORM, so every branch on it below is uniform control flow —
+// one scalar decision for the whole draw, not per-fragment divergence, and the
+// `fwidth()` calls inside those branches are therefore taken in uniform flow,
+// which is the case the derivative rules allow. Authored in `data/render.json`
+// (`road_surface.detail`, and per preset via `presets.*.road_detail`); the
+// governor may lower it and never raise it above the preset's value.
+//
+//   2  FULL     — everything this file can draw. The shipped look.
+//   1  −WEAR    — drops the 11 m hash mottle, the pour joint, the wheel-path
+//                 polish and the kerb grime. Every line of PAINT survives,
+//                 including the zebra. This is the cheapest cut that does not
+//                 change what the street MEANS.
+//   0  −ZEBRA   — also drops the four-leg crossing loop (the only loop in the
+//                 file, and the only place fwidth() is taken four times over).
+//                 Crossings stop being painted; the carriageway still reads.
+//
+// Measured cost per level: doc 11 §2.13, "The asphalt fragment ladder".
+uniform int detail = 2;
+
 // ── wear ─────────────────────────────────────────────────────────────────
 uniform float patch_gain = 0.16;
 uniform float patch_scale_m = 11.0;
@@ -280,31 +300,36 @@ void fragment() {
 			* (1.0 - is_junction);
 
 	// Zebra: bars run WITH the traffic on the leg they cross and repeat across
-	// it, clipped to the carriageway so no bar climbs a footway.
-	float perp[4];
-	float par_local[4];
-	float par_world[4];
-	float leg[4];
-	perp[0] = -v_local.y; par_local[0] = v_local.x; par_world[0] = v_world.x;
-	perp[1] = v_local.x;  par_local[1] = v_local.y; par_world[1] = v_world.y;
-	perp[2] = v_local.y;  par_local[2] = v_local.x; par_world[2] = v_world.x;
-	perp[3] = -v_local.x; par_local[3] = v_local.y; par_world[3] = v_world.y;
-	leg[0] = floor(mod(cw_mask, 2.0));
-	leg[1] = floor(mod(cw_mask * 0.5, 2.0));
-	leg[2] = floor(mod(cw_mask * 0.25, 2.0));
-	leg[3] = floor(mod(cw_mask * 0.125, 2.0));
+	// it, clipped to the carriageway so no bar climbs a footway. The whole
+	// block — the four leg frames as well as the loop — sits inside the rung,
+	// so `detail == 0` does not pay to build the arrays it will not read.
 	float zebra = 0.0;
 	float outer = half_tile - crosswalk_inset;
 	float inner = outer - crosswalk_depth;
-	for (int i = 0; i < 4; i++) {
-		float aa_p = max(fwidth(perp[i]) * 0.75, 0.0008);
-		float aa_q = max(fwidth(par_world[i]) * 0.75, 0.0008);
-		float in_band = smoothstep(inner - aa_p, inner + aa_p, perp[i])
-				* (1.0 - smoothstep(outer - aa_p, outer + aa_p, perp[i]));
-		float in_road = 1.0 - smoothstep(half_tile - sw - aa_p, half_tile - sw + aa_p,
-				abs(par_local[i]));
-		float bars = dashes(par_world[i], crosswalk_bar, crosswalk_period - crosswalk_bar, aa_q);
-		zebra = max(zebra, leg[i] * in_band * in_road * bars);
+	if (detail >= 1) {
+		float perp[4];
+		float par_local[4];
+		float par_world[4];
+		float leg[4];
+		perp[0] = -v_local.y; par_local[0] = v_local.x; par_world[0] = v_world.x;
+		perp[1] = v_local.x;  par_local[1] = v_local.y; par_world[1] = v_world.y;
+		perp[2] = v_local.y;  par_local[2] = v_local.x; par_world[2] = v_world.x;
+		perp[3] = -v_local.x; par_local[3] = v_local.y; par_world[3] = v_world.y;
+		leg[0] = floor(mod(cw_mask, 2.0));
+		leg[1] = floor(mod(cw_mask * 0.5, 2.0));
+		leg[2] = floor(mod(cw_mask * 0.25, 2.0));
+		leg[3] = floor(mod(cw_mask * 0.125, 2.0));
+		for (int i = 0; i < 4; i++) {
+			float aa_p = max(fwidth(perp[i]) * 0.75, 0.0008);
+			float aa_q = max(fwidth(par_world[i]) * 0.75, 0.0008);
+			float in_band = smoothstep(inner - aa_p, inner + aa_p, perp[i])
+					* (1.0 - smoothstep(outer - aa_p, outer + aa_p, perp[i]));
+			float in_road = 1.0 - smoothstep(half_tile - sw - aa_p, half_tile - sw + aa_p,
+					abs(par_local[i]));
+			float bars = dashes(par_world[i], crosswalk_bar, crosswalk_period - crosswalk_bar,
+					aa_q);
+			zebra = max(zebra, leg[i] * in_band * in_road * bars);
+		}
 	}
 
 	float white = max(max(lane_div, edge_line), zebra);
@@ -314,36 +339,51 @@ void fragment() {
 	vec3 surface = texture(page, v_world / max(page_tile_m, 0.01)).rgb;
 	vec3 albedo = tint * mix(vec3(1.0), surface, has_page);
 
-	// Cuts and patches: an 11 m mottle plus a per-tile trim, so two pours that
-	// share a seam are never the same grey.
-	float patch = vnoise(v_world / max(patch_scale_m, 0.01));
-	albedo *= 1.0 + (patch - 0.5) * patch_gain + (wear_seed - 0.5) * wear_tile_gain;
+	// Everything from here to the paint is WEAR, and it is the `detail >= 2`
+	// rung: the hash mottle, the pour joint, the wheel-path polish and the kerb
+	// grime. The per-tile trim (`wear_seed`) stays at every rung — it is a
+	// varying already in hand and one multiply, so cutting it would buy nothing
+	// and would make two adjacent pours the same grey, which is the one wear cue
+	// that is visible at Z2.
+	float wheel = 0.0;
+	// Cuts and patches: an 11 m mottle, so two pours that share a seam are never
+	// the same grey. The mottle and the per-tile trim are folded into ONE
+	// multiply, exactly as they were before the ladder existed — writing them as
+	// two multiplies would introduce the cross term `patch·seed` and move every
+	// asphalt pixel by up to 4/255, which is what the A/B caught.
+	float patch_term = 0.0;
+	if (detail >= 2) {
+		patch_term = (vnoise(v_world / max(patch_scale_m, 0.01)) - 0.5) * patch_gain;
+	}
+	albedo *= 1.0 + patch_term + (wear_seed - 0.5) * wear_tile_gain;
+	if (detail >= 2) {
+		// The pour joint at every 8 m tile line.
+		vec2 seam_d = abs(fract(v_world / tile_m + 0.5) - 0.5) * tile_m;
+		float seam_aa = max(fwidth(v_world.x) * 0.75, 0.0008);
+		float seam = max(band(seam_d.x, 0.05, seam_aa), band(seam_d.y, 0.05, seam_aa));
+		albedo *= 1.0 - seam * seam_darken * v_up;
 
-	// The pour joint at every 8 m tile line.
-	vec2 seam_d = abs(fract(v_world / tile_m + 0.5) - 0.5) * tile_m;
-	float seam_aa = max(fwidth(v_world.x) * 0.75, 0.0008);
-	float seam = max(band(seam_d.x, 0.05, seam_aa), band(seam_d.y, 0.05, seam_aa));
-	albedo *= 1.0 - seam * seam_darken * v_up;
+		// Polished tracks down each lane. `carr_*` is the carriageway this tile
+		// actually owns — a paired half owns everything from the shared edge to
+		// its one kerb, so both of its lanes sit on the same side of the twin
+		// line. `lane_c ± lane_half` are the two lane centres; one broad band
+		// each reads as traffic polish at every zoom and costs two `band()`
+		// calls.
+		float carr_hi = mix(half_tile - sw, half_tile, is_pair * step(0.0, twin_sign));
+		float carr_lo = mix(-(half_tile - sw), -half_tile, is_pair * step(twin_sign, 0.0));
+		float lane_c = (carr_hi + carr_lo) * 0.5;
+		float lane_half = (carr_hi - carr_lo) * 0.25;
+		wheel = band(abs(across - lane_c) - lane_half, wheel_path_w * 0.5, aa_across)
+				* (1.0 - is_junction);
+		albedo *= 1.0 - wheel * wheel_path_gain * v_up;
 
-	// Polished tracks down each lane. `carr_*` is the carriageway this tile
-	// actually owns — a paired half owns everything from the shared edge to its
-	// one kerb, so both of its lanes sit on the same side of the twin line.
-	// `lane_c ± lane_half` are the two lane centres; one broad band each reads
-	// as traffic polish at every zoom and costs two `band()` calls.
-	float carr_hi = mix(half_tile - sw, half_tile, is_pair * step(0.0, twin_sign));
-	float carr_lo = mix(-(half_tile - sw), -half_tile, is_pair * step(twin_sign, 0.0));
-	float lane_c = (carr_hi + carr_lo) * 0.5;
-	float lane_half = (carr_hi - carr_lo) * 0.25;
-	float wheel = band(abs(across - lane_c) - lane_half, wheel_path_w * 0.5, aa_across)
-			* (1.0 - is_junction);
-	albedo *= 1.0 - wheel * wheel_path_gain * v_up;
-
-	// Grime against the kerb.
-	float gut_at = half_tile - sw;
-	float gutter = max(
-			smoothstep(gut_at - gutter_m, gut_at, across) * kerb_pos,
-			smoothstep(gut_at - gutter_m, gut_at, -across) * kerb_neg);
-	albedo *= 1.0 - gutter * gutter_darken * v_up;
+		// Grime against the kerb.
+		float gut_at = half_tile - sw;
+		float gutter = max(
+				smoothstep(gut_at - gutter_m, gut_at, across) * kerb_pos,
+				smoothstep(gut_at - gutter_m, gut_at, -across) * kerb_neg);
+		albedo *= 1.0 - gutter * gutter_darken * v_up;
+	}
 
 	// ── paint on top ──────────────────────────────────────────────────────
 	// Paint wears out of the wheel tracks first, which is the difference

@@ -126,6 +126,9 @@ func setup(render_data: Dictionary, height_of := Callable()) -> void:
 	_base_puffs_per_pad = model.puffs_per_pad
 	_build_pads()
 	_build_smoke()
+	# Authored, not assumed: `power_infra.pad_shadows` in `data/render.json`. The
+	# number behind the shipped default is doc 11 §2.13's pad-shadow A/B.
+	set_pad_shadows(bool(_cfg.get("pad_shadows", true)))
 
 
 ## The shell's one hook for "the grid's SHAPE changed" — a transformer placed or

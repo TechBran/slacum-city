@@ -71,6 +71,16 @@ var sidewalk_top_m := 0.25
 var sidewalk_w_street := 1.40
 var sidewalk_w_avenue := 1.05
 
+## The asphalt shader's fragment ladder (`road_surface.gdshader`'s `detail`
+## uniform): 2 FULL, 1 drops the wear terms, 0 also drops the zebra loop. This is
+## the CEILING the preset authorises — `set_detail()` may lower the live value
+## and may never raise it above this. Set from `data/render.json`
+## (`presets.<name>.road_detail`, falling back to `road_surface.detail`) by
+## `set_preset()`, which the shell calls the same way it calls `VehicleView`'s.
+var detail_ceiling: int = 2
+## What is actually in the material right now. Never above `detail_ceiling`.
+var detail: int = 2
+
 var _asphalt: MultiMeshInstance3D
 var _sidewalk: MultiMeshInstance3D
 var _tiles: Array[Vector2i] = []
@@ -98,7 +108,30 @@ func setup(render_data: Dictionary) -> void:
 	sidewalk_top_m = asphalt_top_m + kerb_h
 	sidewalk_w_street = float(cfg.get("sidewalk_width_street_m", 1.40))
 	sidewalk_w_avenue = float(cfg.get("sidewalk_width_avenue_m", 1.05))
+	detail_ceiling = clampi(int(cfg.get("detail", 2)), 0, 2)
+	detail = detail_ceiling
 	_build_nodes(render_data)
+
+
+## The preset's ceiling for the fragment ladder, read the same way
+## `VehicleView.set_preset` reads its own rows. A preset without a `road_detail`
+## row keeps `road_surface.detail`, so adding the row is opt-in per preset.
+func set_preset(preset: String, render_data: Dictionary) -> void:
+	var row: Dictionary = (render_data.get("presets", {}) as Dictionary).get(preset, {})
+	detail_ceiling = clampi(int(row.get("road_detail", cfg.get("detail", 2))), 0, 2)
+	set_detail(detail_ceiling)
+
+
+## Lower (or restore) the live rung. Clamped to `detail_ceiling` so the governor
+## can only ever spend quality, never invent it — the same one-way contract
+## `PerfGovernor` has with every other knob.
+func set_detail(level: int) -> void:
+	var wanted := clampi(level, 0, detail_ceiling)
+	if wanted == detail:
+		return
+	detail = wanted
+	if _asphalt != null and _asphalt.material_override is ShaderMaterial:
+		(_asphalt.material_override as ShaderMaterial).set_shader_parameter("detail", detail)
 
 
 ## Metres of footway the tile's class carries on each kerbed side.
@@ -171,6 +204,7 @@ func _road_material(render_data: Dictionary) -> Material:
 			mat.set_shader_parameter(key, float(cfg[json_key]))
 	mat.set_shader_parameter("line_yellow", Color(String(cfg.get("line_yellow", "#E3B637"))))
 	mat.set_shader_parameter("line_white", Color(String(cfg.get("line_white", "#D6D6CE"))))
+	mat.set_shader_parameter("detail", detail_ceiling)
 	return mat
 
 

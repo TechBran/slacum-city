@@ -126,9 +126,55 @@ var repair_notes: PackedStringArray = []
 ## Doc 08 §8's `save` block. Injectable so a test can shorten the ladder.
 var policy: SavePolicy = SavePolicy.load_from_files()
 
+## Wall milliseconds the last `save_slot` / `load_slot` took, end to end —
+## capture, envelope, digest, compress, write, manifest for a save; candidate
+## walk, digest, decompress, migrate, restore for a load. Doc 13 §7's D-17 asks
+## for these ON DEVICE and there was no instrument for it: the numbers doc 08
+## quotes are workstation numbers taken from a test harness, and a phone's
+## flash and a phone's CPU are the two things they cannot stand in for.
+var last_save_ms: float = 0.0
+var last_load_ms: float = 0.0
+## Emit one `PERFIO` line per save/load, in the same shape doc 11 §7.4's `PERF`
+## line uses so ONE logcat grep collects both halves of a device capture.
+##
+## **Off by default, and that is deliberate.** A service whose job is writing
+## files should not print on every call: the suite drives thousands of saves and
+## would drown its own runner, and the line costs a directory listing it should
+## not pay for in a test. The shell turns it on — one line in `game/main.gd`,
+## in the branch report's integration snippet — so a device build logs and
+## nothing else does.
+var log_io: bool = false
+
 
 func _ready() -> void:
 	_ensure_dir()
+
+
+## Doc 11 §7.4's log shape, for the I/O half. One line, `^PERF`-anchored so
+## `tools/bench_device.sh`'s existing logcat filter picks it up, and shaped as
+## `key=value` tokens so the same parser reads it — its `p95` lookup fails on
+## this line and the row is skipped, which is the behaviour we want: the CSV
+## keeps the frame rows clean and the I/O rows are still in the capture.
+func _log_io(kind: String, slot: int, reason: String, ms: float, ok: bool) -> void:
+	if not log_io:
+		return
+	var bytes := 0
+	var path := _slot_dir(slot)
+	var dir := DirAccess.open(path)
+	if dir != null:
+		for name in dir.get_files():
+			bytes += _file_size(path.path_join(name))
+	print("PERFIO kind=%s slot=%d reason=%s ms=%.1f bytes=%d ok=%d"
+			% [kind, slot, reason, ms, bytes, 1 if ok else 0])
+
+
+static func _file_size(path: String) -> int:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return 0
+	var n := int(f.get_length())
+	f.close()
+	return n
 
 
 # ----------------------------------------------------------------- save path
@@ -141,7 +187,20 @@ func _ready() -> void:
 ## `manual` from the save screen, `autosave` from the timer, `pause`/`quit`
 ## from the lifecycle. `pre_migration` and `pre_catchup` additionally PIN the
 ## generation, which is why they are never swept.
+##
+## The body is `_save_slot`; this wrapper exists ONLY to time it. Wrapping is
+## what makes the figure honest — `_save_slot` has seven early returns and a
+## stopwatch threaded through them would have missed most of the failure paths,
+## which are exactly the ones a slow phone shows up on first.
 func save_slot(sim: Object, slot: int, reason: String = "manual") -> Dictionary:
+	var t0 := Time.get_ticks_usec()
+	var meta := _save_slot(sim, slot, reason)
+	last_save_ms = float(Time.get_ticks_usec() - t0) * 0.001
+	_log_io("save", slot, reason, last_save_ms, not meta.is_empty())
+	return meta
+
+
+func _save_slot(sim: Object, slot: int, reason: String) -> Dictionary:
 	if not _valid_slot(slot):
 		return _fail_dict(slot, "invalid_slot")
 	if sim == null or not sim.has_method("canonical_capture"):
@@ -258,7 +317,18 @@ func last_good_autosave_slot() -> int:
 ## predates every generation. The difference for a player whose ladder is
 ## somehow entirely unreadable is "your city is gone" versus "your city is back
 ## to before the update", and it costs one `file_exists` to offer.
+##
+## Timed by a wrapper for the same reason `save_slot` is: five returns, and the
+## recovery paths are the slow ones.
 func load_slot(sim: Object, slot: int) -> bool:
+	var t0 := Time.get_ticks_usec()
+	var ok := _load_slot(sim, slot)
+	last_load_ms = float(Time.get_ticks_usec() - t0) * 0.001
+	_log_io("load", slot, "slot", last_load_ms, ok)
+	return ok
+
+
+func _load_slot(sim: Object, slot: int) -> bool:
 	if not _valid_slot(slot):
 		_fail_dict(slot, "invalid_slot")
 		return false

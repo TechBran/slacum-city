@@ -79,7 +79,9 @@ Roads were one MultiMesh of untextured 8 m slabs. The playtest verdict on the Fo
 
 **Two draw calls, city-wide.** `MM_road_asphalt` (one 8 m slab per road tile, 12 tris) and `MM_sidewalk` (kerb runs and corner squares, unit boxes scaled per instance). Deliberately NOT per-chunk, which is the convention everywhere else in this doc: the world is 7×7 chunks, road runs along every chunk boundary so all 49 hold some, and at Z2 every one is on screen — per-chunk buckets would be **98 calls against 71 of headroom**. Measured on the benchmark city, Z2 Balanced: **194 → 195** (`dc+ui` 219 → 220 of 320). The vertex bill instead: **+20,490 primitives at Z2, +8,696 at Z0**, and the whole road layer of the founding city is 9,396 asphalt triangles + 1,836 footway triangles.
 
-**Everything painted is a fragment, not a mesh.** Centre lines, lane dividers, edge lines, zebra crossings, tile seams, wheel-path polish, patch mottle and kerb grime are all computed in `road_surface.gdshader` from **world metres**, so a dash phase crosses a tile boundary with no seam to align and a 15 cm line stays 15 cm at Z0 and antialiases itself at Z2 through `fwidth`. `dashes()` carries an explicit band limit — past Nyquist it fades to the pattern's duty cycle, because a `fract()` sampled sub-period crawls and the marketed skyline frame would shimmer along every lane line.
+**Everything painted is a fragment, not a mesh.** Centre lines, lane dividers, edge lines, zebra crossings, tile seams, wheel-path polish, patch mottle and kerb grime are all computed in `road_surface.gdshader` from **world metres**, so a dash phase crosses a tile boundary with no seam to align and a 15 cm line stays 15 cm at Z0 and antialiases itself at Z2 through `fwidth`. `dashes()` carries an explicit band limit — past Nyquist it fades to the pattern's duty cycle, because a `fract()` sampled sub-period crawls. **Corrected 2026-08-20 (§2.13's Fold pass): that term is what keeps the CROSSINGS still, not the lane lines.** Measured against §2.5's own Z2 geometry, the ground footprint at that pose is 0.245 m/px at the bottom of the frame and 0.535 m/px at the top, so the 8 m lane dash and the 6 m centre dash are sampled at 33→15 and 24→11 pixels per period — 5× to 16× above Nyquist, held still by `band()`'s smoothstep, with the band limit contributing 5–23 %. The pattern that genuinely needs it is the **0.85 m crosswalk ladder**, at 3.5→1.6 px per period, where the mix correctly reaches 1.0. The claim that the lane lines would shimmer without the band limit is retired; the fragment ladder in §2.13 also prices what the whole file costs.
+
+**The fragment ladder.** `road_surface.gdshader` carries a `detail` uniform — 2 everything, 1 drops the wear terms, 0 also drops the four-leg zebra loop — authored as `road_surface.detail` with a `presets.*.road_detail` ceiling per tier. It is a device escape hatch and NOT a governor rung; §2.13 has the measurement (the zebra loop alone is 2.4× every wear term put together) and the ruling.
 
 **Per-instance contract** (roads are their own bucket; §2.6's stride-448 packing is the BUILDING bucket's and does not apply):
 
@@ -591,13 +593,13 @@ One instance is one **whole span**: a flat 8-segment strip that `power_wire.gdsh
 
 **Draw-call shape — why this layer is not bucketed per chunk.** §2.13 budgets it at +10 calls at Z2, and Z2 has 16 chunks in view (the derivation below), so a per-chunk pad bucket would spend 16 calls on 144 cabinets before a single wire was drawn. The layer is bucketed by what its elements actually need instead:
 
-* **Pads: one MultiMesh for the whole city.** 144 instances × 204 tris = 29,376 triangles, under a third of one bench chunk's buildings, and one call at every zoom. There is nothing worth culling — the buffer is smaller than the cull test's own bookkeeping. It is the one place this layer trades primitives for calls, and the measurement below says the trade is free.
+* **Pads: one MultiMesh for the whole city.** 144 instances × 204 tris = 29,376 triangles, under a third of one bench chunk's buildings, and one call at every zoom. There is nothing worth culling — the buffer is smaller than the cull test's own bookkeeping. It is the one place this layer trades primitives for calls, and the measurement below says the trade is free. **Shadow casting is authored, not hard-coded** (`power_infra.pad_shadows`, default `true`): §2.13's Fold pass prices it at **+1 draw call in the sun's shadow pass and no measurable GPU time on 144 cabinets in full sun**, and it cannot be priced at all at hour 21 — the sun is below the horizon there and the pass is empty, which is how the first attempt at the measurement came back as noise.
 * **Wires: one MultiMesh per chunk, submitted only when close.**
 * **Distress: one MultiMesh, smoke and sparks together, hidden when idle.**
 
 **The wire gate is the Z1 camera height, not a taste call.** `wire_fade_end_m` = 58 m is BOTH the shader's fade-out distance and the CPU-side bucket gate, so a bucket is dropped only once every wire in it is already zero-width and the gate cannot be seen switching. 58 is chosen because §2.5's Z1 pose is D 86.9 m at 48°, i.e. the camera sits `86.9·sin 48° = 64.6` m above grade and **nothing on the ground is within 58 m of it**. The brief was "visible when you look, never noisy at Z1+", and that is that sentence as a number: at Z0 (camera 10.1 m up, 14.9 m back) every wire in view is inside `wire_fade_begin_m` 26 m and fully drawn; by Z1 the layer is not merely faint but zero buckets submitted. 58 also sits comfortably inside §2.5's 150 m NEAR boundary, so "wires are a NEAR element" holds by construction rather than by mirroring the tier table into a second place.
 
-**Measured — `tools/profile_frame.gd`, bench city (1,500 buildings, 144 transformers), 1920×1080, Balanced, hour 21, 120 frames after 60 warm-up. The A/B is `--no-power-infra`, so the two runs differ in nothing else.**
+**Measured — `tools/profile_frame.gd`, bench city (1,500 buildings, 144 transformers), 1920×1080, Balanced, hour 21, 120 frames after 60 warm-up. The A/B is `--no-power-infra`, so the two runs differ in nothing else.** *(§2.13's Fold pass, report RR-28: this table's GPU column was in fact rendered at **1280×720** — the harness silently ignored `--resolution` until 2026-08-20 — and hour 21 has the sun below the horizon, so it does not price the pad SHADOW at all. The draw-call and wire-bucket columns stand as written; §2.13's daylight pad-shadow A/B is the shadow number.)*
 
 | pose | draw calls without | with, grid healthy | with, **all 144 SEVERE** | wire buckets | GPU ms without → with |
 |---|---|---|---|---|---|
@@ -914,7 +916,7 @@ Doc 06 §2.10's ETA seam was wired in this branch, measured, and taken back out;
 
 The blocker is not doc 11's, but it lands on doc 11's table: with the router wired, doc 92's `greedy_growth` agent goes from **12.6 s for a 21-game-day run to over twenty minutes**, because a rotting city's incidents stop clearing doc 06's `MAX_ACCEPTABLE_COST` and the backlog is unbounded. Doc 10's own routing test already reports *"median P0 expansions 1154 vs trigger 800 → hierarchical routing REQUIRED"*, and that is the work that makes a 5 ms quote affordable inside a per-sub-step loop.
 
-**Frame cost** — `tools/profile_frame.gd`, 1920×1080, Balanced, hour 21:00 (the emissive/glow worst case), 60 warm-up frames discarded, 240 measured. **Dev workstation, NVIDIA RTX 2000 Ada, Forward+ — this is not a phone and not the Mobile renderer.** It is a *relative* measurement: the draw-call and chunk columns are platform-independent and are the ones the budget is written against; the millisecond columns are here to show where the cost sits, not to claim a device result.
+**Frame cost** — `tools/profile_frame.gd`, Balanced, hour 21:00 (the emissive/glow worst case), 60 warm-up frames discarded, 240 measured. *(Labelled 1920×1080; actually rendered at **1280×720**, and taken with the sun down so the shadow pass is empty — §2.13's Fold pass and report RR-28. The draw-call, chunk and primitive columns stand; the ms columns are 720p night figures.)* **Dev workstation, NVIDIA RTX 2000 Ada, Forward+ — this is not a phone and not the Mobile renderer.** It is a *relative* measurement: the draw-call and chunk columns are platform-independent and are the ones the budget is written against; the millisecond columns are here to show where the cost sits, not to claim a device result.
 
 | pose | mean ms | p95 ms | RS cpu | RS gpu | draw calls | +UI | budget | bucket nodes | NEAR | MED | FAR |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -979,6 +981,8 @@ Z1 worst case, 6 NEAR chunks (near_chunk_max, Balanced)
 
 §2.1.2 and §2.10.1. Same harness, same benchmark city, same 21:00 pose set, 60 warm-up frames and 120 measured, on the same workstation, before and after in one session.
 
+*(Labelled 1920×1080; rendered at 1280×720, and at hour 21 with an empty shadow pass — report RR-28. Draw calls and primitives stand; the GPU column is a 720p night figure.)*
+
 | pose | draw calls | **+UI** | budget | primitives | RS gpu |
 |---|---|---|---|---|---|
 | Z0 `D 18 / 34°` | 92 → **93** | 117 → **118** | 320 | 52,602 → **61,298** | 0.63 → 0.77 |
@@ -1007,6 +1011,320 @@ On the city a player actually starts in this is **faster than what shipped** —
 And the pass is idempotent per edit: `rebuild` records the `graph_version` it drew and returns immediately for a repeat, because one player edit fires **two** events the shell rebuilds from.
 
 **Texture memory: zero added.** Both shaders sample the existing `ground_asphalt` and `ground_pavement` pages through the resource cache, and every mark, joint, patch and stain on top of them is procedural. Against the 8 MB budget the brief set, the pass spends 0.
+
+#### The Fold 6 pass — what was asked, what was measured, and on what (2026-08-20)
+
+Wave 8 filed six questions that only a phone can answer. **The phone did not
+appear.** `adb` was polled every 20 s for 45 minutes — 135 attempts, `adb mdns
+services` re-run on each, zero endpoints advertised — so what follows is the
+workstation half of each answer plus the runbook that takes the other half:
+**`tools/device_runbook.md`**, which carries the exact `adb` commands, the exact
+poses, and every table below with an empty `Fold 6` column beside the
+provisional one. **Nothing in this subsection is a device number, and the two
+knob defaults it sets say so in `data/render.json`.**
+
+**Method, and what it does and does not claim.** Every A/B below is interleaved
+*within* each round — both arms measured back to back, three or four rounds — on
+a workstation that was carrying other Godot work for part of the session (four
+engine processes at 100 % CPU at one point). That is the same convention the
+Wave-7 and Wave-8 tables above use and for the same reason: **absolute
+milliseconds drift with machine load and the round-paired DELTA does not.** Where
+an arm's spread is quoted, it is the actual min..max across rounds, and a delta
+smaller than that spread is reported as "below the noise floor" rather than as a
+number. The draw-call, chunk-census and primitive columns are exact and repeat to
+the digit.
+
+Two things were found before a single question could be asked, and both matter
+more than the answers.
+
+**1. The harness was rendering at 1280×720 while every table said 1920×1080.**
+`tools/profile_frame.gd` set `root.size` in `_initialize`, which the window
+created from `[display] window/size/viewport_*` silently overrides. Caught by
+dumping `--shots` and reading the PNG header: 1280×720 whatever `--resolution`
+asked for. **Every millisecond column in this section published before today was
+measured at 0.44× the pixels it claims** (`1280·720 / 1920·1080 = 0.444`).
+**The record corroborates itself**: the bucket-merge subsection above reports
+"Z0 and Z1 are BIT-IDENTICAL, **0 of 921,600 pixels** differing" — and 921,600 is
+1280 × 720. The true pixel count was printed beside the wrong resolution label
+for a year and nobody read the two together. The draw-call, chunk and primitive
+columns are unaffected — they are resolution-independent, and they are the ones
+the budget is written against — but the ms columns are not comparable with
+anything after this date. The fix goes through `DisplayServer.window_set_size`
+and `_verify_resolution()` now reads the live viewport back and refuses to print
+a number under a resolution it did not get.
+
+**2. Every measured frame in this section was taken at hour 21, and at 21:00 the
+sun is down.** The shadow pass in all of them is empty. Measured at hour 13 on
+the same build, same city, same poses:
+
+| city | pose | dc at hour 21 | dc at **hour 13** | Δ | +UI vs the 320 budget | headroom |
+|---|---|---|---|---|---|---|
+| founding | Z0 | 31 | **69** | +38 | 94 | 70.6 % |
+| founding | Z1 | 42 | **80** | +38 | 105 | 67.2 % |
+| founding | Z2 | 80 | 80 | **0** | 105 | 67.2 % |
+| bench | Z0 | 95 | **237** | **+142** | **262** | **18.1 %** |
+| bench | Z1 | 113 | **233** | +120 | **258** | 19.4 % |
+| bench | Z2 | 196 | 196 | **0** | 221 | 30.9 % |
+
+**The 31.6 % headroom this section advertises at Z2 is a night figure, and the
+tightest daylight pose has 18.1 %.** Nothing is over budget and no conclusion in
+this section is overturned — but the margin the doc quotes is roughly twice the
+margin the game has at noon. **Read carefully which pose moved:** the street
+pass's headline "220 of 320" is a **Z2** figure and daylight barely touches it
+(221), because Z2 has no shadow pass to fill. What daylight costs is **Z0 and
+Z1**, the two poses this section has never published a headroom figure for —
+120 → 262 and 138 → 258 — and Z0 is now the tightest pose in the game at 18.1 %,
+a title Z2 has held in every table above. Every future frame table in this
+section must state its hour.
+
+**The chunk census is identical day and night** — bench Z0 is 12 NEAR / 24 MEDIUM
+/ 0 FAR at both hours, Z1 is 8 / 28 / 0, Z2 is 0 / 16 / 20 — so the whole delta
+is the shadow pass and nothing else moved. That makes it divisible: **142 extra
+calls over 12 NEAR chunks × 2 splits is 5.92 per chunk per split, and 120 over
+8 × 2 is 7.50.**
+
+**That closes half of D-16 with a number instead of an argument.** §2.13's Z1
+worst case costs the shadow pass at `6 × 16.4 buckets × 2 splits = 197` calls,
+using the measured 16.4 per-(chunk, archetype, level) buckets the un-merged NEAR
+tier allocates. The daylight measurement says the shadow pass actually submits
+**5.9–7.5 per chunk per split** — a quarter of that — because the split frustum
+culls most of a NEAR chunk's buckets before they are drawn. D-16's arithmetic is
+not merely pessimistic in the abstract; it is **2.2× pessimistic against a
+measured sunlit frame**, which is the evidence the "take it the first time a
+device measurement puts a close-zoom pose near 320" test was waiting for. Z0 in
+daylight is the closest any pose has come, and it is at 262.
+
+The same table **confirms two standing claims by measurement for the first
+time**: Z2 is genuinely the shadow-free pose — its draw-call count is **identical
+at hour 13 and at hour 21, to the digit, on both cities** (196 on the bench, 80
+on the founding), because no NEAR chunk exists there and `shadow_max_m` 150 m is
+well below the 370.8 m camera — and the founding city tracks the benchmark
+city's shape at a tenth of the scale.
+
+##### The asphalt fragment ladder (streets q3)
+
+`road_surface.gdshader` gains a `detail` uniform — **2** everything, **1** drops
+the wear terms (the 11 m hash mottle, the pour joint, the wheel-path polish, the
+kerb grime) and keeps every line of paint including the crossings, **0** also
+drops the four-leg zebra loop. Every branch on it is on a UNIFORM, so it is one
+scalar decision per draw and the `fwidth()` calls inside those branches are taken
+in uniform control flow. `data/render.json` → `road_surface.detail` is the
+project ceiling, `presets.*.road_detail` the per-tier one,
+`RoadSurfaceView.set_detail()` the live rung, and it may only ever be lowered.
+
+Founding city, camera on the Grand/Slacum junction so the carriageway fills the
+Z0 frame, `RenderingServer`'s own GPU time, three interleaved rounds per arm,
+1920×1080, Balanced, 90 warm-up + 300 measured:
+
+| pose | hour | rung 2 | rung 1 | rung 0 | wear (2→1) | zebra (1→0) | ladder (2→0) | ladder as % of the pose's GPU |
+|---|---|---|---|---|---|---|---|---|
+| Z0 | 21 | 1.5176 | 1.4730 | 1.3637 | 0.0446 | **0.1093** | 0.1539 | **10.1 %** |
+| Z1 | 21 | 1.1181 | 1.1136 | 1.0832 | 0.0045 | 0.0304 | 0.0348 | 3.1 % |
+| Z2 | 21 | 0.9929 | 0.9899 | 0.9677 | 0.0030 | 0.0222 | 0.0252 | 2.5 % |
+| Z0 | 13 | 1.8584 | 1.8030 | 1.6956 | 0.0554 | **0.1074** | 0.1628 | 8.8 % |
+
+The arms do not overlap at Z0 in either lighting (rung 2 spans 1.5134–1.5223,
+rung 1 1.4652–1.4827, rung 0 1.3505–1.3765 at hour 21), so the deltas are
+signal, not spread.
+
+**The finding is the split, not the total: the zebra loop costs 2.4× every wear
+term put together**, and it paints only on junction tiles. It is the one place in
+the file where `fwidth()` is taken eight times and `dashes()` four times inside a
+loop, and it is the term to reach for first if a device ever needs the street to
+be cheaper.
+
+**Ruling: the ladder is a per-preset ceiling and a device escape hatch, NOT a
+governor rung.** Balanced and High take rung 2; Performance takes rung 1
+(provisional, marked as such in `data/render.json`) because a tier-C part at
+`render_scale` 0.70 resolves an 11 m hash mottle as noise and its ALU:bandwidth
+ratio is far worse than this workstation's. Rung 0 is shipped by no preset,
+because losing the crossings changes what the street MEANS. It is not on
+`governor.knobs` because 0.15 ms does not pay for a street that changes
+appearance mid-pan — every existing rung degrades *fidelity*, and this one would
+degrade the *drawing*.
+
+**Rung 2 is the shipped look, proved rather than asserted.** 1920×1080 captures
+one shader apart, against `git show HEAD:` of the pre-ladder file: **Z0 differs
+on 0 of 2,073,600 pixels**, Z1 on 15 and Z2 on 30 — against a same-build control
+run that differs on 0 / 4 / 29, i.e. the residual is §2.6's own `near_flicker`
+sampled a frame apart and nothing of the road at all. The first attempt did NOT
+achieve this: hoisting the per-tile wear trim out of the branch turned
+`1 + patch + seed` into `(1 + seed)(1 + patch)` and moved 1,756 Z0 pixels by up
+to 4/255. The cross term is now folded back into one multiply and the comment in
+the shader says why.
+
+**Do the band-limited dashes hold still at Z2?** Answered from the geometry, and
+the derivation reproduces §2.5's own numbers so it is checkable. At Z2 the camera
+is `420·sin 62° = 370.83` m up and the 40° vertical FOV spans 42°–82° below
+horizontal, putting the near ground edge at `370.83/tan 82° = 52.1` m and the far
+at `370.83/tan 42° = 411.8` m — this section's own `r_near` and `r_far`. The
+per-pixel ground footprint over 1080 rows is `(h/sin²θ)·(40°/1080)`: **0.245 m/px
+at the bottom of the frame, 0.535 m/px at the top.**
+
+| pattern | period | px per period at Z2 | `dashes()` band-limit mix |
+|---|---|---|---|
+| lane divider | 8.00 m | 33 → 15 | 0.05 → 0.17 |
+| centre dash | 6.00 m | 24 → 11 | 0.06 → 0.23 |
+| crosswalk ladder | 0.85 m | 3.5 → **1.6** | 0.45 → **1.00** |
+
+*The two right-hand columns are on deliberately different bases and both are
+right: pixels-per-period is the footprint along the dash's own axis (0.245 →
+0.535 m/px), while the mix is `clamp(0.75·fwidth·2/period)` and GLSL's `fwidth`
+SUMS both screen partials, so its worst case at this pose is 0.535 + 0.374 =
+0.909 m/px for a carriageway crossing the view. The mix column is therefore the
+pessimistic one, which is the direction an anti-aliasing claim should err in.*
+
+`dashes()` reaches a full duty-cycle fade at `aa ≥ period/2`, i.e.
+`fwidth ≥ period/1.5` = **5.33 m/px** for the lane dash — ten times the worst
+per-pixel footprint anywhere in a Z2 frame, and six times the worst `fwidth`. **So the lane and centre dashes at Z2 are
+sampled 5×–16× above Nyquist and cannot crawl, and what holds them still is
+`band()`'s own smoothstep rather than the band limit.** The band limit is doing
+real work on exactly one pattern — the 0.85 m crosswalk ladder, at or below two
+pixels per period at the top of the frame, where it correctly reaches 1.0.
+**§2.1.2's sentence "`dashes()` carries an explicit band limit — past Nyquist it
+fades to the pattern's duty cycle, because a `fract()` sampled sub-period crawls
+and the marketed skyline frame would shimmer along every lane line" is true of
+the CROSSINGS and not of the lane lines**, and is corrected there. **Checked with the eye as well as the arithmetic.** A Z2 dolly along Slacum Ave,
+eight 1920×1080 frames at 1 m steps — one full 8 m lane-dash period, so a
+crawling pattern would visibly reshuffle across the set — was captured through
+`tools/profile_frame.gd --poses=z2 --focus= --shots=` and flipped through. The
+dashes **translate**: identical mark length and spacing in every frame, at every
+depth in the frame, with no beat. The crossings at the junction boxes read as
+solid white squares at this zoom rather than as bars, which is the band limit
+reaching 1.0 on the 0.85 m ladder — the table's prediction, visible.
+
+Foldable
+sensitivity: the footprint scales as `1080 / rendered_rows`, so **unfolded**
+(2160×1856 panel, landscape height 1856, `render_scale` 0.85 → ~1578 rows) every
+margin improves by **0.68×**, and **folded** (2376×968 cover → ~823 rows) it
+worsens by **1.31×** and the lane dash is 25→11 px/period, still 5× above
+Nyquist. Neither screen aliases; the cover screen is the one to check first.
+
+##### The pad shadow A/B (power q6)
+
+`PowerInfraView.set_pad_shadows()` existed and had never been priced. **It cannot
+be priced at night** — the first attempt was run at hour 21, where the sun is
+below the horizon and there is no shadow pass for the pads to be in, and it
+measured nothing. Both arms below are hour 13, four interleaved rounds each.
+
+| city | pads | pose | dc with | dc without | Δ dc | GPU with | GPU without | Δ GPU | instrument spread |
+|---|---|---|---|---|---|---|---|---|---|
+| founding | 18 | Z0 | 69 | 68 | **+1** | 2.0641 | 2.0680 | −0.0039 | ±0.011 |
+| founding | 18 | Z1 | 80 | 79 | **+1** | 1.4034 | 1.4088 | −0.0054 | ±0.013 |
+| founding | 18 | Z2 | 80 | 80 | **0** | 1.1710 | 1.1541 | +0.0170 | ±0.035 |
+| bench | 144 | Z0 | 237 | 236 | **+1** | 2.2780 | 2.2433 | +0.0347 | ±0.28 |
+| bench | 144 | Z1 | 233 | 232 | **+1** | 3.2518 | 3.0258 | +0.2260 | ±0.46 |
+| bench | 144 | Z2 | 196 | 196 | **0** | 3.0507 | 2.9658 | +0.0848 | ±0.28 |
+
+**The price is exactly one draw call at the two poses that have a shadow pass at
+all, and zero at Z2** — the pad buffer is one city-wide MultiMesh under one
+custom AABB, so it is submitted whole, once, and the count does not grow with the
+roster. On the founding city, where the instrument's own spread is ±0.011 ms, the
+GPU delta is **negative in two of three poses**: there is no cost to find. On the
+benchmark city the spread is 40× worse and the largest arm difference (+0.226 ms
+at Z1, 7 % of that pose's GPU pass) is an **upper bound**, not a measurement.
+
+**Ruling: `power_infra.pad_shadows: true`**, authored in `data/render.json` and
+read by `PowerInfraView.setup()` instead of hard-coded in `_build_pads()`. One
+draw call of 320 is 0.3 %; turning it off costs the read the layer exists for.
+Revisit only if a Fold daylight Z0/Z1 pose lands within 5 % of the budget.
+
+##### The construction layer at real site counts (construction q1/q2)
+
+| city | sites | layer CPU mean (Z1) | p95 | draw calls | §2.16 budget |
+|---|---|---|---|---|---|
+| founding | 0 | layer not built | — | 42 | — |
+| founding | 1 | **0.045 ms** | 0.055 | 47 (**+5**) | 0.8 ms |
+| founding | 2 | **0.081 ms** | 0.085 | 47 (+5) | 0.8 ms |
+| founding | 3 | **0.105 ms** | 0.112 | 47 (+5) | 0.8 ms |
+| founding | 28 (`max_sites`) | **0.549 ms** | 0.590 | 47 (+5) | 0.8 ms |
+| bench | 20 | 0.539 ms | 0.567 | +5 | 0.8 ms |
+| bench | 28 (`max_sites`) | **0.728 ms** | **0.767** (0.818 at Z2) | +5 | 0.8 ms |
+
+1. **At the counts the founding city actually runs the layer is free.** 0–3
+   simultaneous sites is 0.000–0.105 ms — at most **2.6 % of Balanced's 4 ms CPU
+   budget**. §2.16's 1.5–1.9 ms estimate at 20 sites was 3× pessimistic; the
+   measured slope is **0.020 ms/site** on the founding city, 0.026 on the bench.
+2. **The +5 draw calls are now measured from a true zero.** §2.16 could only
+   quote 5 as a ceiling because the no-site case had never been run; 0 sites is
+   42 calls and 1 site is 47, so five is the whole layer — one MultiMesh per model
+   kind — and it does not move between 1 and 28 sites. §2.16's parenthetical is
+   closed.
+3. **At the shipped ceiling the layer is at its own budget line on a
+   workstation.** 28 sites on the bench city is 0.728 ms mean / 0.818 ms p95
+   against an authored 0.8 ms that was written against 20 sites, not against
+   `max_sites`.
+
+**Ruling on the governor knob: no.** A rung that lowered `max_sites` would only
+fire on a city with twenty-plus simultaneous sites — a *player action*, not a
+device condition — and what it buys (0.6 ms) is bought by taking half the working
+sites in view still, mid-pan. Every existing rung degrades fidelity; this one
+would degrade content, and the governor's contract does not reach there.
+`max_sites` stays 28 and `construction_vehicle_view.gd`'s ruling that the site
+ceiling is an art call stands. **Filed, not taken:** a
+`presets.performance.construction_sites` row of 12 (0.31 ms here) would sit
+beside `civ_cars` and `emergency_nodes`, which cap exactly this kind of
+population per tier; overturning another branch's stated ruling wants the tier-C
+number this session did not get.
+
+##### Wires and the pad super-block (power q2) — closed without a change
+
+Asked as *"only if numbers say primitives hurt on Vulkan mobile"*. They do not.
+The pad buffer is a flat **+29,376 primitives** and **+1 draw call**, and a
+per-chunk super-block would spend 16 calls at Z2 to cull a buffer smaller than
+the cull test's own bookkeeping. The wire buckets measure **0 at Z1 and 0 at Z2**
+on both cities, because `wire_fade_end_m` 58 m is below the Z1 camera height of
+64.6 m and the layer gates itself out before distance could matter — there is
+nothing for a fade change to buy. Re-open only if a Fold `PERF` line ever shows
+`prim` climbing while `dc` holds and the frame is late at the same time.
+
+##### Save and load — the number nobody had (Wave-7 persistence)
+
+`tools/profile_save.gd` is new and drives the **shipped** path —
+`SaveService.save_slot` / `load_slot`, the calls the lifecycle makes — into a
+scratch directory it creates and removes. Headless, best of 7 (founding) and
+best of 5 (bench):
+
+| city | save best / mean / worst | load best / mean / worst | slot bytes (whole ladder) |
+|---|---|---|---|
+| founding (34 buildings) | 13.9 / 14.4 / 14.8 ms | **48.5 / 49.2 / 50.0 ms** | 42,359 |
+| bench (1,500 buildings) | 119.9 / 138.5 / 154.2 ms | **428.8 / 455.6 / 482.9 ms** | 263,027 |
+
+**A load of the founding city is three frames at 60 Hz on a workstation, and a
+save is most of one.** On the 1,500-building city a load is 0.46 s and a save is
+0.14 s, synchronously, on the main thread. Two consequences that are not this
+doc's to fix but are this doc's to publish: doc 08's autosave lands a **visible
+hitch** as soon as a city is a few hundred buildings — the cadence is fine, the
+synchronous write is not — and doc 13 §2.9's ANR arithmetic budgets the catch-up
+without budgeting the **load in front of it**, which on the bench city is half a
+second before a single coarse step runs. `SaveService.last_save_ms` /
+`last_load_ms` and the `PERFIO` log line are the instruments; the device half is
+`tools/device_runbook.md` §Q6, which gets the same numbers out of the installed
+build as a difference of `am start -W` cold starts.
+
+##### And the telemetry §7.4 assumes exists, did not
+
+`PerfGovernor.perf_line()` shipped in Wave 6 with a test on its shape. **Nothing
+ever called it.** §7.4 documents `adb logcat -s godot:V | grep '^PERF'` as the
+on-device instrument and `tools/bench_device.sh` is built on it, so a device
+session against the shipped build collects an empty CSV and the harness's own
+summariser prints "NO PERF LINES". `game/render/perf_telemetry.gd` is the
+wiring — `RefCounted`, clock-injected, engine-facing, deliberately a separate
+file so `PerfGovernor` stays the Node-free model its microsecond tests need. It
+takes three lines in `game/main.gd` and it is not applied here, because
+`game/main.gd` belongs to the lead.
+
+`tools/bench_device.sh` has two further faults that a device session would have
+found the hard way, both readable in `game/main.gd` rather than guessable:
+`--es cmdline` is the wrong `am` flag (Godot's launcher reads a string ARRAY
+extra, and `OS.get_cmdline_user_args()` returns only what follows a literal
+`--`, so the extra must be `--esa command_line_params "--,…"`), and
+**`--bench=S1|S2|S3`, `--preset=` and `--city=` are parsed by nothing** — the
+shell's whole scenario vocabulary is `--resume`, `--title`, `--zoom=`,
+`--focus=`, `--advance-hours=`, `--overlay=`, `--rain=`, `--storm=`, `--wet=`,
+`--blackout`, `--cut-feeder=`, `--place=`, `--save-now`, `--screenshot=` and
+`--shot-at=`. That vocabulary is enough for all six questions, which is why the
+runbook drives the installed build with it instead of asking for a new one.
 
 #### Device matrix
 
@@ -1198,7 +1516,7 @@ A trip is `depart → drive the route → stand and exchange a load → drive ho
 
 **Budgets, measured.** `tools/profile_frame.gd --sites=N --site-stage=S --site-gm=M` stands N sites on the N buildings nearest the city centre, winds the layer's clock past a dozen cadences so the yards are FULL, and times the layer's own `refresh()` on the main thread with `Time.get_ticks_usec()`. It is timed rather than inferred because this harness's `frame_ms` is presentation-bound on a fast desktop — mean and p95 both sit on the refresh interval, and a sub-millisecond layer is invisible in it.
 
-Bench city (1,500 buildings), preset balanced, hour 21, 1920×1080, 240 measured frames after 90 warm-up, 20 sites at stage 2 → **40 excavators, 24 lorries, 40 heaps, 20 stacks, 78 barricade bays = 202 instances**:
+Bench city (1,500 buildings), preset balanced, hour 21, 240 measured frames after 90 warm-up, 20 sites at stage 2 → **40 excavators, 24 lorries, 40 heaps, 20 stacks, 78 barricade bays = 202 instances** *(labelled 1920×1080, rendered at 1280×720 — report RR-28; the layer-CPU column is main-thread GDScript and is resolution-independent, so it stands, and §2.13's Fold pass re-measures it at true 1080p across the whole site range anyway)*:
 
 | | `--sites=0` | `--sites=20` | delta | budget |
 |---|---|---|---|---|
@@ -1208,7 +1526,7 @@ Bench city (1,500 buildings), preset balanced, hour 21, 1920×1080, 240 measured
 | Z1 layer CPU, p95 | — | **0.536 ms** | — | — |
 | Z2 layer CPU, mean / p95 | — | 0.448 / 0.485 ms | — | — |
 
-The draw-call column is the **non-building** term (total minus the three building terms) because the chunk-tier census wobbles between runs of the harness by ±1 chunk and swamps a +5 delta; it is only meaningful at Z2, where `buck` is 0 and no bucket is re-drawn into a shadow split. +5 is the structural answer as well as the measured one — five MultiMeshes, one per model kind — and it does not grow with the site count, only with the kind count. *(The measurement above is the loaded case, with all five buffers carrying instances. A city with no site under construction leaves all five at `visible_instance_count = 0`; that case was not separately measured, so 5 is quoted as the ceiling and not as a floor.)*
+The draw-call column is the **non-building** term (total minus the three building terms) because the chunk-tier census wobbles between runs of the harness by ±1 chunk and swamps a +5 delta; it is only meaningful at Z2, where `buck` is 0 and no bucket is re-drawn into a shadow split. +5 is the structural answer as well as the measured one — five MultiMeshes, one per model kind — and it does not grow with the site count, only with the kind count. *(The measurement above is the loaded case, with all five buffers carrying instances. A city with no site under construction leaves all five at `visible_instance_count = 0`; that case was not separately measured, so 5 is quoted as the ceiling and not as a floor.)* **Closed 2026-08-20 by §2.13's Fold pass:** the no-site case is now measured — 0 sites is 42 draw calls at Z1 on the founding city and 1 site is 47 — so five is the whole layer, from a true zero, and it does not move between 1 and 28 sites. **The same pass replaces the 1.5–1.9 ms estimate with a measurement and it was 3× pessimistic:** 0.020 ms/site on the founding city (0.045 at 1 site, 0.105 at 3 — which is the range the founding city actually runs) and 0.026 on the bench, putting `max_sites` 28 at **0.728 ms mean / 0.818 ms p95** against the 0.8 ms budget this section wrote against 20 sites. The governor does **not** get a `max_sites` rung; §2.13 carries the ruling and the alternative that was filed rather than taken.
 
 **What the 0.46 ms is spent on, and what it is not.** Everything a FRONTAGE fixes — the two machines' standing transforms, each pile's position and yaw, the barricade run for the current stage — is computed once per route (and, for the barricades, once per stage) and copied thereafter. The clock moves the bucket, the bed, the lorry along its polyline and the heap's height; it does not move the ground under any of them. Caching that took the figure from 0.584 to 0.460 ms. What is left is dominated by the ~200 `set_instance_transform` / `_color` / `_custom_data` triples — the same per-instance upload path §2.12's traffic layer uses at a comparable count, so it is the incumbent cost, not a new one.
 
@@ -1538,7 +1856,25 @@ These read two or more files and fail the build when a sibling doc's data drifts
 
 ### 7.4 On-device — `tools/bench_flythrough.gd` + adb
 
-A deterministic 90 s camera path over `tests/fixtures/bench_city.json` — **generated by doc 09 (`tools/gen_bench_city.py`, same generator family as the starter city), validated by doc 08 against the current save schema in CI, consumed here** (report G-7, ruled; former §9 open question 20 is closed). Contents **as shipped** (see §2.13's as-shipped table): a 7×7 world with a **6×6 developed core (36 blocks)**, **1,500 buildings** across L1–L5, 3,132 road tiles, ~780 streetlight props, and the civic roster that houses the emergency fleet. *(The pre-build figures were "~1,100 buildings" and an 8×8 world; the count moved to doc 91's 1,500 — the size this section's device matrix is written against — and the world stayed 7×7 because `TileGrid.BLOCKS` is 7. Doc 09 §2.13's profile table carries the same numbers.)* The device harness is `tools/bench_device.sh`, which drives the three scenarios below over adb and collects both our `PERF` lines and the platform's `gfxinfo`/`meminfo`/`thermalservice` output; it ships ready and **has not been run against a device yet**. Three scenarios:
+A deterministic 90 s camera path over `tests/fixtures/bench_city.json` — **generated by doc 09 (`tools/gen_bench_city.py`, same generator family as the starter city), validated by doc 08 against the current save schema in CI, consumed here** (report G-7, ruled; former §9 open question 20 is closed). Contents **as shipped** (see §2.13's as-shipped table): a 7×7 world with a **6×6 developed core (36 blocks)**, **1,500 buildings** across L1–L5, 3,132 road tiles, ~780 streetlight props, and the civic roster that houses the emergency fleet. *(The pre-build figures were "~1,100 buildings" and an 8×8 world; the count moved to doc 91's 1,500 — the size this section's device matrix is written against — and the world stayed 7×7 because `TileGrid.BLOCKS` is 7. Doc 09 §2.13's profile table carries the same numbers.)* The device harness is `tools/bench_device.sh`, which drives the three scenarios below over adb and collects both our `PERF` lines and the platform's `gfxinfo`/`meminfo`/`thermalservice` output; it ships ready and **has not been run against a device yet**.
+
+> **It also cannot work as written, and §2.13's Fold pass says why (2026-08-20).**
+> Three faults, all readable in `game/main.gd` rather than discoverable only with
+> a phone on the cable: (a) `PerfGovernor.perf_line()` is **called by nothing**,
+> so `grep '^PERF'` returns an empty CSV — `game/render/perf_telemetry.gd` is the
+> wiring and it needs `game/main.gd`'s snippet; (b) `--es cmdline` is the wrong
+> `am` flag — Godot's Android launcher reads a string ARRAY extra and
+> `OS.get_cmdline_user_args()` returns only what follows a literal `--`, so the
+> form is `--esa command_line_params "--,…"`; (c) **`--bench=S1|S2|S3`,
+> `--preset=` and `--city=` are parsed by nothing.** The shell's actual scenario
+> vocabulary is `--resume`, `--title`, `--zoom=`, `--focus=`, `--advance-hours=`,
+> `--overlay=`, `--rain=`, `--storm=`, `--wet=`, `--blackout`, `--cut-feeder=`,
+> `--place=`, `--save-now`, `--screenshot=` and `--shot-at=` — which is enough
+> for every question below. **`tools/device_runbook.md` is the session written
+> against that vocabulary**, drives the INSTALLED build, and carries each table
+> here with an empty device column beside a workstation provisional.
+
+Three scenarios:
 
 - **S1** — 12:00 clear (worst case for shadows + draw calls)
 - **S2** — 20:00 clear (worst case for emissives + glow)
@@ -1708,6 +2044,7 @@ Deep dives when a gate fails: **Android GPU Inspector** for Adreno/Mali counters
                     "_pool_y_superseded": "STREET-1: pool_y_m 0.06 sat UNDER the carriageway's 0.10 top and every pool in the game was depth-buried by the road it was lighting. StreetlightView now takes its height from road_surface.asphalt_top_m + kerb_height_m + lamp.pool_lift_m. This row is kept for a clone with no road_surface block." },
 
   "road_surface": { "_owner": "doc 11 §2.1.2 + §2.10.1. RoadSurfaceView reads this block; StreetlightPlacer reads its `lamp` sub-block. Nothing here duplicates the `ground` block's night floor — the carriageway inherits the ROAD row from there.",
+                    "detail": 2,
                     "asphalt_top_m": 0.10, "asphalt_thickness_m": 0.10, "kerb_height_m": 0.15,
                     "sidewalk_width_street_m": 1.40, "sidewalk_width_avenue_m": 1.05,
                     "page": "asphalt", "tint": "#57575F", "roughness": 0.85,
@@ -1766,6 +2103,7 @@ Deep dives when a gate fails: **Android GPU Inspector** for Adreno/Mali counters
       "shadows":false, "shadow_splits":0, "shadow_atlas":0, "shadow_max_m":0.0,
       "rain":1500, "splash":0, "snow":1200, "turbulence":false,
       "civ_cars":64, "civ_vans":20, "civ_trucks":12, "civ_headlights":96, "emergency_nodes":12,
+      "road_detail":1,
       "glow_levels":[3,4], "glow_intensity":0.75, "glow_strength":1.00, "glow_bloom":0.03,
       "glow_blend":"screen", "glow_hdr_threshold_day":1.10, "glow_hdr_threshold_night":0.85,
       "glow_hdr_scale":1.6, "reflection_probe":false, "moon":false, "env_adjustments":false,

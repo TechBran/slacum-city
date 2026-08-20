@@ -178,7 +178,10 @@
 
     "_polling": "Render seconds. The topology pass walks every attached building (1,500 on the bench city) and runs only when the grid's shape moved; the state poll is 144 rows and is what a smoking transformer needs. PowerInfraFeed.signature() catches a roster that grew or shrank on the next state poll, and the shell can force a rebuild the same frame with note_topology_changed().",
     "state_poll_s": 0.25,
-    "topology_poll_s": 5.0
+    "topology_poll_s": 5.0,
+
+    "_pad_shadows": "Whether the city-wide pad buffer casts into the sun's shadow pass. ON, and priced rather than assumed (doc 11 §2.13, 'The pad shadow A/B'): 144 cabinets are 29,376 triangles into a shadow pass the buildings already fill with ~100,000, and the measured cost is inside run-to-run noise at every pose on both cities. Turning it off is not free in the other direction — a 1.5 m cabinet with no contact shadow at Z0 reads as a decal printed on the pavement — so the default is the one that costs nothing and looks right. PowerInfraView.set_pad_shadows() is the A/B and the escape hatch; the governor does NOT own this knob, and only a device that fails a shadow-bound gate should ever be shipped with it false.",
+    "pad_shadows": true
   },
 
   "ground": {
@@ -200,6 +203,8 @@
   "road_surface": {
     "_owner": "doc 11 §2.1.2 — the REAL STREET pass. `RoadSurfaceView` reads this block and nothing else does; `StreetlightPlacer` reads the `lamp` sub-block. The `ground` block above still owns the block interiors and the night floor the road inherits (`road_night_*`), which is why nothing here duplicates those numbers.",
     "_geometry": "One tile is 8 m. A single-tile street spends 2 x 1.40 m on kerb-and-footway and the remaining 5.20 m on two 2.60 m lanes. A single-tile avenue spends 2 x 1.05 m and gets two 2.95 m lanes. The starter city's avenues are TWO tiles wide (data/starter_city.json lays Slacum Ave down as x=15 AND x=16), so each half carries its own 1.05 m footway on the OUTER side only and 6.95 m of carriageway: two 3.475 m lanes running the same way, a white dashed lane divider between them, and half of the double-yellow at the shared edge. That is the whole reason `pair` exists in the packing below - per-tile guesswork would have drawn a centre line down the middle of each half and put a kerb in the middle of a 16 m avenue.",
+    "_detail": "road_surface.gdshader's fragment ladder, measured in doc 11 §2.13 ('The asphalt fragment ladder'). 2 FULL — every line, joint, patch, wheel track and zebra this file can draw. 1 drops the WEAR terms (the 11 m hash mottle, the pour joint, the wheel-path polish, the kerb grime) and keeps every line of paint including the crossings. 0 also drops the four-leg zebra loop. `detail` is the project-wide ceiling; a preset may lower it with its own `road_detail` row, and RoadSurfaceView.set_detail() may lower the LIVE rung below that and never above. It is authored as a device escape hatch, not as a governor rung: the ladder is not in governor.knobs because the measured saving does not pay for a street that changes appearance mid-pan (doc 11 §2.13's ruling).",
+    "detail": 2,
     "asphalt_top_m": 0.10, "asphalt_thickness_m": 0.10,
     "kerb_height_m": 0.15,
     "sidewalk_width_street_m": 1.40, "sidewalk_width_avenue_m": 1.05,
@@ -288,7 +293,7 @@
       "shadows":false, "shadow_splits":0, "shadow_atlas":0, "shadow_max_m":0.0,
       "rain":1500, "splash":0, "snow":1200, "turbulence":false,
       "civ_cars":64, "civ_vans":20, "civ_trucks":12, "civ_headlights":96, "emergency_nodes":12,
-      "vehicle_shadows":false,
+      "vehicle_shadows":false, "road_detail":1,
       "glow_levels":[3,4], "glow_intensity":0.75, "glow_strength":1.00, "glow_bloom":0.03,
       "glow_blend":"screen", "glow_hdr_threshold_day":1.10, "glow_hdr_threshold_night":0.85,
       "glow_hdr_scale":1.6, "reflection_probe":false, "moon":false, "env_adjustments":false,
@@ -301,7 +306,7 @@
       "shadows":true, "shadow_splits":2, "shadow_atlas":2048, "shadow_max_m":150.0,
       "rain":4000, "splash":600, "snow":3000, "turbulence":false,
       "civ_cars":160, "civ_vans":60, "civ_trucks":36, "civ_headlights":256, "emergency_nodes":20,
-      "vehicle_shadows":false,
+      "vehicle_shadows":false, "road_detail":2,
       "glow_levels":[2,3,4], "glow_intensity":0.90, "glow_strength":1.00, "glow_bloom":0.05,
       "glow_blend":"screen", "glow_hdr_threshold_day":1.05, "glow_hdr_threshold_night":0.78,
       "glow_hdr_scale":2.0, "reflection_probe":false, "moon":true, "env_adjustments":true,
@@ -314,7 +319,7 @@
       "shadows":true, "shadow_splits":4, "shadow_atlas":4096, "shadow_max_m":180.0,
       "rain":9000, "splash":1600, "snow":6000, "turbulence":true,
       "civ_cars":320, "civ_vans":120, "civ_trucks":72, "civ_headlights":512, "emergency_nodes":28,
-      "vehicle_shadows":true,
+      "vehicle_shadows":true, "road_detail":2,
       "glow_levels":[1,2,3,4,5], "glow_intensity":1.00, "glow_strength":1.05, "glow_bloom":0.07,
       "glow_blend":"screen", "glow_hdr_threshold_day":1.00, "glow_hdr_threshold_night":0.75,
       "glow_hdr_scale":2.2, "reflection_probe":true, "probe_size_m":[256,120,256],
