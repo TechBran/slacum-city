@@ -148,6 +148,8 @@ Three reference poses, used by every worked example and by test 19:
 | **FAR** | `420 < d ≤ 1200` | shared unit box, 12 tris, one MM per chunk | lamp only | no | window *bands*, no per-window hash |
 | **CULLED** | `d > 1200` | torn down to `SIM_ONLY` | — | — | — |
 
+**MEDIUM draws LOD0, not the LOD1 this table specifies** (doc 91 D-14, 2026-08-19). A measured, reversible departure, not an oversight: §2.6's bucket-merge paragraph carries the A/B and the reasoning, and `CityView.atlas_lod` is the one-line switch. In short — §2.14's LOD1 rule drops decor (ledges, sign bands, chamfers), and on a mid-rise commercial block those bands are what the building reads as at 374–412 m, so the LOD1 tier dims exactly the blocks a player scans for a blackout. The rest of this row — no shadows, per-window hash, no flicker — is applied, and was not before the merge.
+
 **Hysteresis:** upgrade at `edge − 20 m`, downgrade at `edge + 20 m`, at most one tier change per `lod_dwell_s = 0.5 s`.
 
 **Only NEAR chunks cast shadows** (`cast_shadow = OFF` on all MEDIUM/FAR MultiMeshes), `directional_shadow_max_distance = 180 m`. Biggest single draw-call saving in the design.
@@ -221,7 +223,54 @@ EMISSION      = window_colors[family] * lit * vary
 
 **The swap is the model's decision, not the renderer's.** `CityView.refresh` calls `RenderStateModel.update_chunk_tiers` with the camera it is already given and reads `chunk_tier` — so the far tier inherits §2.5's 20 m hysteresis and 0.5 s dwell unchanged, and cannot flicker at a band edge. `CityView.lod_enabled = false` restores the pre-tier renderer (every chunk at LOD0) for A/B work.
 
-**Materials.** Material lives on the generated `ArrayMesh` surface, shared across levels and chunks: **2 `Shader` resources total** (building, far), instanced as 15 archetypes × 5 levels × 2 LODs = 150 `ShaderMaterial`s differing only in uniforms (`window_cols/rows/color`). Two pipeline states for the entire city — the number that matters on tiled mobile GPUs. Gate: `RENDER_TOTAL_SHADER_COMPILES_IN_FRAME == 0` after warm-up.
+**The MEDIUM tier is one MultiMesh per (chunk, ARCHETYPE), not per (chunk, archetype, LEVEL)** — doc 91 D-14, shipped 2026-08-19. This paragraph is the bucketing rule; the per-level bucket above it still describes NEAR.
+
+The bucket-per-level rule was written against an assumed ~6 `archetype:level` combinations per chunk. The benchmark city measured **16.4**, because a real block holds five archetypes at four levels, and Z2 went over the Balanced draw-call budget on it (352 against 320). The counting is in §2.13's as-shipped table; this is the fix.
+
+```
+                        buckets   nodes   per chunk
+per (chunk, arch, level)    591     591       16.42     ← was
+per (chunk, archetype)      591     221        6.14     ← is
+```
+
+`6.14` is not a target that was aimed at. It is what the bench city's own archetype mix produces, and it lands on §2.13's assumed 6 — so the derivation below is now *true as written* rather than optimistic by 1.7×.
+
+**One MultiMesh cannot hold several meshes, so it holds one mesh that contains them.** `CityView` concatenates the archetype's level meshes into a single `ArrayMesh` at load, tagging every vertex with the level it came from in **`COLOR.a`** — the one vertex channel the gray-box leaves free (`MeshBuf._push` writes `Color(ao, ao, ao, 1.0)` and the shader reads `.rgb` only). The instance says which level it is, and the vertex stage collapses every vertex of every other level onto the instance origin, where the triangles have zero area and the rasteriser drops them before a fragment exists. No `discard`, no depth write, early-Z intact.
+
+**The level rides in `.b`, at stride 448, and that number is the whole design.** `INSTANCE_CUSTOM` has exactly four channels and this section spends all four; there is no fifth to add. `.b` already carries an integer, and `448 = 16 · 28` with `28 ≡ 0 (mod 7)`, so adding `448·level`:
+
+| decoder | before | after `+448·level` |
+|---|---|---|
+| `variant = mod(p, 16)` | 0–15 | **unchanged** (448 ≡ 0 mod 16) |
+| `stage = mod(floor(p/16), 7)` | 0–6 | **unchanged** (28 ≡ 0 mod 7) |
+| `overlay = floor(p/112)` | 0–3 | needs `mod(…, 4)` in place of `clamp(…, 0, 3)` |
+| `level = floor(p/448)` | — | 1–5 |
+
+The `overlay_of` change is an exact identity on every value this section can pack (0–447 → `floor(p/112)` is already 0–3, where `clamp` and `mod 4` agree), so nothing that existed before moved. Maximum packed value `447 + 448·5 = 2687`, exact in f32. `tests/test_render_merge.gd` checks all 448 combinations × 5 levels rather than arguing the arithmetic.
+
+**Everything except `.b` is the mirror, byte for byte.** The merged buffer is built by folding the chunk's bucket mirrors with one `memcpy` each and then adding the level to one float per instance — the same guarantee the FAR tier makes, so a chunk crossing into MEDIUM mid-blackout carries its exact emissive ramp, damage and construction stage across the swap. `.a` stays `anim_phase`, which is why a construction site keeps its work-light phase at this tier (the FAR buffer, which has no sites, is the only buffer that repurposes `.a`).
+
+**The atlas is cut per LEVEL SET, not per archetype, and this is the design's real cost.** The vertex shader runs over every level *in the mesh*, not just the instance's, so the atlas submits triangles it will never draw. Instance-weighted over the whole bench city, against the 100,674 building triangles the un-merged tier submits:
+
+| atlas contents | building triangles | vs un-merged |
+|---|---|---|
+| all five levels | 578,834 | 5.75× |
+| **the levels the chunk holds** | **397,700** | **3.95×** ← shipped |
+| the same, cut from LOD1 | 127,856 | 1.27× ← what `atlas_lod = 1` would buy |
+
+The mask is what buys the middle row, and it comes out of the same histogram that motivated the merge: the 591 buckets fall into 221 groups, **2.67 levels per group, not five**. The `ArrayMesh` is therefore keyed by `(archetype, 5-bit level mask, lod)`, so a chunk holding L1 and L3 of `house` submits two levels rather than five. The level TAG stays absolute (1–5) so the mask is invisible to the shader; a mask changes only when a building is built, upgraded or demolished, and that is when the node's mesh is swapped, never per frame.
+
+**3.95× the triangles for 0.41× the building draw calls.** That is the trade, stated plainly, and the measurement below says it is the right way round: at Z2 the whole frame goes 100,906 → 209,546 primitives (2.08×, diluted by the roads and by the unchanged FAR tier) and **the GPU column does not move — 2.44 → 2.38 ms** against a 13 ms Balanced budget. The triangles bought back are degenerate: transformed once, dropped at the rasteriser, never shaded. The draw-call budget, meanwhile, is the one this doc publishes and the one the bench city broke. It remains the largest cost this design carries, and it is why `atlas_lod = 1` is worth having the day §2.14's LOD1 authoring can pay for it.
+
+**Two more per-mesh uniforms had to stop being per-mesh.** `window_cols`/`window_rows` are baked into UV2 at atlas-build time (`UV2 × (cols, rows)`, uniforms set to 1.0), which lands `floor(UV2 · (cols, rows))` on exactly the same cell and leaves `lit = step(1 − e, h)` untouched; the `(-1,-1)` and `(-1,-2)` sentinels are copied verbatim, because scaling them would flip `has_uv2` and light a windowless data-centre wall. `build_height_m` becomes `level_build_height[6]`, indexed by the same absolute level, so the construction clamp still cuts each instance at its own height.
+
+**LOD0 at MEDIUM, and §2.5's table says LOD1. Measured, and deliberately not taken yet.** Both were A/B-rendered on the bench city with the merge as the only other variable (`tools/profile_frame.gd --atlas-lod=`). The LOD1 atlas is better on triangles (1.27× against 3.95×) and identical on draw calls — but §2.14's LOD1 rule *drops decor: balcony ledges, sign bands, chamfers*, and on a mid-rise commercial block those pale horizontal bands **are** what the building reads as at 374–412 m. Blocks that show as banded structure at LOD0 come out as flat dark boxes: a visible pop at the 150 m boundary, dimming exactly the blocks a player scans for a blackout. D-14 is a draw-call defect and the merge closes it at either LOD, so the LOD that keeps the picture wins. `CityView.atlas_lod` flips to 1 the day §2.14's LOD1 authoring keeps a mid-rise's banding; the renderer side is written and tested for it.
+
+**§2.5's other two MEDIUM rules are now actually applied.** The merged node is a new node, so it takes `cast_shadow = OFF` (the un-merged path left MEDIUM casting and got away with it only because a MEDIUM chunk is past `directional_shadow_max_distance` anyway — §2.13's "shadow, NEAR only" arithmetic is now true by construction rather than by luck) and `near_flicker = 0`. That flicker is the one deliberate pixel difference between the merged tier and the un-merged one: at ≥150 m a lit cell no longer takes a 25% dip on the 1.5% of cells the flicker hash picks, which is what §2.5's table always said MEDIUM should look like.
+
+**NEAR is untouched, and its half of D-14 is still open.** NEAR keeps one LOD0 MultiMesh per (chunk, archetype, level) — measured at the same 16.4 per chunk against §2.13's assumed 8 — because no measured pose fails on it (Z1, the sizing pose, measures 136 calls with UI against 320) and because the NEAR tier is the one the player inspects. The same atlas would close it at LOD0 with no visual change; see §2.13's residual note.
+
+**Materials.** Material lives on the generated `ArrayMesh` surface, shared across levels and chunks: **2 `Shader` resources total** (building, far), instanced as 15 archetypes × 5 levels × 2 LODs = 150 `ShaderMaterial`s differing only in uniforms (`window_cols/rows/color`). Two pipeline states for the entire city — the number that matters on tiled mobile GPUs. Gate: `RENDER_TOTAL_SHADER_COMPILES_IN_FRAME == 0` after warm-up. The merged MEDIUM tier needs **one material per archetype for the whole city**, not one per bucket: with the grid in UV2 and the heights in an array, nothing left in its uniform set varies by chunk or by level.
 
 `window_color` per family: residential `#FFCE8A` (warm tungsten), commercial `#CFE6FF` (cool office), industrial `#BFD0C8` (sodium-green), tech `#7FF0D0` (cyan, data center), civic `#E8F0FF` (clinical white).
 
@@ -610,6 +659,8 @@ At Z0 the camera sees one seventh of one hundredth of a chunk's worth of ground;
 
 **Per-chunk draw calls** (unchanged by the camera ruling): NEAR = 8 building buckets + 2 ground/road + 3 props = **13**; MEDIUM = 6 + 2 + 2 = **10**; FAR = 1 + 1 + 1 = **3**. Performance adds 1 blob-shadow call per NEAR/MEDIUM chunk.
 
+*The MEDIUM figure is now measured at **5.94** on the benchmark city (as-shipped, below) — the merge in §2.6 is what made this line true rather than optimistic by 1.7×. The NEAR figure is still an assumption and still measures 16.4; see the residual note under the as-shipped table.*
+
 **Balanced budget at each pose** (budget 320, 2 shadow splits):
 
 ```
@@ -722,9 +773,42 @@ Where the coarse hour went, per phase (ms/step):
 
 Three results, in order of how much they matter:
 
-1. **Z2 is over the Balanced draw-call budget: 352 against 320.** Not by a rounding error, and not for the reason §2.13's derivation would predict. The derivation's per-chunk cost model (8 building buckets NEAR, 6 MEDIUM) assumes a chunk holds about six distinct `archetype:level` combinations. The bench city's mix gives **591 bucket nodes across 36 chunks — 16.4 per chunk**, because a real block holds five archetypes at four levels rather than one archetype at one. Every §2.13 conclusion that rests on "10 calls per MEDIUM chunk" is optimistic by roughly 1.7× on a mixed city. *The fix is bucket merging (one MultiMesh per chunk per LOD, with the mesh selected by instance custom data) and it is not in this change; it is filed as a defect against §2.6.* Note that **the empty Z2 shadow pass survives intact** — 0 NEAR chunks, exactly as §2.13 claims, and that claim is what keeps the number at 352 rather than several hundred more.
+1. **Z2 is over the Balanced draw-call budget: 352 against 320.** Not by a rounding error, and not for the reason §2.13's derivation would predict. The derivation's per-chunk cost model (8 building buckets NEAR, 6 MEDIUM) assumes a chunk holds about six distinct `archetype:level` combinations. The bench city's mix gives **591 bucket nodes across 36 chunks — 16.4 per chunk**, because a real block holds five archetypes at four levels rather than one archetype at one. Every §2.13 conclusion that rests on "10 calls per MEDIUM chunk" is optimistic by roughly 1.7× on a mixed city. *The fix is bucket merging (one MultiMesh per chunk per LOD, with the mesh selected by instance custom data) and it is not in this change; it is filed as a defect against §2.6.* **Closed 2026-08-19 — the next subsection is the fix and its measurement.** Note that **the empty Z2 shadow pass survives intact** — 0 NEAR chunks, exactly as §2.13 claims, and that claim is what keeps the number at 352 rather than several hundred more.
 2. **The frame is main-thread bound, not GPU bound, and it scales with the city.** 0.96 ms per frame on 34 buildings against 11.64 ms on 1,500, while the GPU column moves only 0.83 → 2.67 ms. `CityView.refresh` flushes every dirty instance unbudgeted (`flush_dirty(camera_pos, 1000000)`), re-tiers every chunk, and walks all 591 bucket nodes on every frame. §2.2's `multimesh_instance_writes_per_frame = 2000` budget is authored but not enforced by the bring-up path.
 3. **The instance budget is comfortable.** 1,500 resident instances against a 7,000 Balanced budget, 100,906 primitives at the densest pose. Nothing in §2.13's instance or VRAM arithmetic is threatened.
+
+#### The bucket merge — result 1, measured and closed (2026-08-19)
+
+Doc 91 D-14. §2.6 now carries the bucketing rule and the reasoning; this is the number it produced. Same harness, same city, same 21:00 pose set, 90 warm-up frames and 240 measured, `--no-merge` against the default — one flag between the two columns and nothing else.
+
+| pose | draw calls | **+UI** | budget | buckets → merged + far | NEAR | MED | FAR | primitives | RS cpu | RS gpu |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Z0 `D 18 / 34°` | 92 → **92** | 117 → **117** | 320 | 591 → 197 + 149 | 12 | 24 | 0 | 52,602 → 52,602 | 0.10 → 0.10 | 0.61 → 0.63 |
+| Z1 `D 86.9 / 48°` | 133 → **111** | 158 → **136** | 320 | 591 → 132 + 173 | 8 | 28 | 0 | 59,850 → 77,536 | 0.10 → 0.10 | 1.94 → 2.06 |
+| **Z2 `D 420 / 62°`** | **327 → 194** | **352 → 219** | **320** | 259 + 20 → 0 + 95 + 20 | **0** | 16 | 20 | 100,906 → 209,546 | 0.18 → 0.12 | 2.44 → 2.38 |
+| *starter city, Z2* | 78 → **78** | 103 → **103** | 320 | 15 + 1 → 15 + 1 | 0 | 8 | 1 | 18,954 → 18,954 | 0.05 → 0.05 | 0.44 → 0.44 |
+
+**Z2 is inside the budget: 219 against 320, 31.6% headroom** (it was −10% over). The 16 MEDIUM chunks cost **95 building calls — 5.94 per chunk**, against the 6 the worked example above assumes. *§2.13's per-chunk model was never wrong; the renderer was.* Nothing in the derivation had to be retuned to make it true.
+
+Four things this table says that the headline does not:
+
+* **The starter city is unchanged in every column, including the picture.** It holds at most one level of an archetype per chunk, so there is nothing to merge and the merge finds nothing — 78 calls and 18,954 primitives either way. That is the strongest correctness signal in the table: the merged path and the un-merged path agree exactly where they must.
+* **Z0 does not move.** Its draw-call and primitive columns are identical to the digit, so the frustum culled every one of its 24 MEDIUM chunks at `D = 18`; only the 12 NEAR chunks reach the GPU, and NEAR is not merged. The bucket column still falls (591 → 346 nodes flagged visible) because the merge is per-chunk work, not per-frustum work.
+* **Primitives go up 2.08× at Z2, and the GPU column does not move** (2.44 → 2.38 ms). That is the trade the merge makes and it is the right way round: the extra triangles are degenerate — transformed once, dropped at the rasteriser, never shaded — the draw-call budget is the one this section publishes and the one the bench city broke, and there is no primitive budget to break. §2.6 has the instance-weighted triangle table behind it, and why the level mask is what keeps the merged tier at 3.95× rather than 5.75×.
+* **`RS cpu` at Z2 falls 30%** (0.18 → 0.12 ms). Fewer nodes is less per-frame walking, which is the same term result 2 above is about.
+* **And the picture is the same picture — measured, not asserted.** 1920×1080 A/B captures through `--shots`, one flag apart: **Z0 and Z1 are BIT-IDENTICAL**, 0 of 921,600 pixels differing. Z2 differs on **0.63% of pixels by at most 18/255** (mean 0.03/255), which is the deliberate `near_flicker = 0` on the MEDIUM tier and nothing else — §2.5's own rule, applied for the first time. The blackout and the POWER overlay were captured the same way through `game/showcase.gd --no-merge`: **0.006%** and **0.27%** of pixels differ respectively — the OFFLINE state's own 0.35 Hz breathe, sampled a frame apart, plus the same flicker term. The dark half stays dark and the OFFLINE wash still paints it.
+
+**What is still open, and it is not small.** NEAR still allocates one MultiMesh per (chunk, archetype, level) and still measures **16.4 per chunk** against this section's assumed 8 — the other half of D-14, filed as doc 91 **D-16**. Re-run the Z1 worst-case arithmetic above with the measured number instead of the assumed one and it does *not* clear the budget:
+
+```
+Z1 worst case, 6 NEAR chunks (near_chunk_max, Balanced)
+  opaque   6 × (16.4 buckets + 2 ground/road + 3 props)  = 128
+  shadow   6 ×  16.4 × 2 splits                          = 197     ← the term
+  vehicles + weather + sky + UI                          =  41
+                                                    TOTAL  366  vs  320
+```
+
+**The shadow pass is where it bites**, because §2.13 costs every NEAR bucket once per split. What keeps the shipped frame well inside the budget is the frustum: the bench city at Z1 measures **136 with UI**, 8 NEAR chunks, because nothing like six full dense chunks is ever simultaneously inside a 95 m-deep footprint. So this is a *derivation* that fails and a *measurement* that passes — the opposite of D-14, where both failed together, and the reason this is filed Low rather than fixed here. The fix is not a design either: the LOD0 level atlas that closes MEDIUM is pixel-exact and already shipping, so extending it to NEAR is the same switch plus a `near_flicker = 1` material. Take it the first time a **device** measurement puts a close-zoom pose near 320 — or the first time a pose is found that really does hold six dense NEAR chunks.
 
 **Bus volume** — `tools/qa_soak.gd`, 0.25 real-hour session on the starter city, before and after the D-10 diet:
 
@@ -1117,6 +1201,15 @@ holds the preset switch. The governor deliberately reaches into none of them.
 
     Also assert **zero NEAR chunks at Z2** (the shadow pass must be empty — it is what makes the densest pose affordable), **exactly three occupied chunk rows at Z2** (the phantom-row regression guard: assert no chunk with nearest-edge `r ≥ 436` m is tier-assigned at Z2), **that every row's column count equals `⌈W_far_of_row/128⌉` at the best alignment** (the RR-14 rounding guard: row B must resolve to 5 columns, never 6, when the view axis is placed on a column centre), and that no pose exceeds its preset's `draw_call_budget` on Performance or High. **This is the budget regression test** and it runs on every commit.
 19b. **LOD-distance rule:** tier assignment uses the chunk's ground-plane AABB. Place a 217 m `res_highrise` in the chunk directly under the Z2 camera and assert the chunk still tiers **MEDIUM** — the building-inclusive AABB would give `sqrt(52² + (370.8−217)²) = 162 m` and wrongly promote it to NEAR, re-arming the shadow pass at max zoom.
+
+19c. **The MEDIUM bucket merge (`tests/test_render_merge.gd`, doc 91 D-14).** Twenty tests over §2.6's merge, in six groups:
+
+  * **The packing cannot move.** All 448 combinations of `(variant, stage, overlay_state)` crossed with all five levels: `mod(p,16)`, `mod(floor(p/16),7)` and `mod(floor(p/112),4)` must return exactly what they returned before `+448·level` was added, and `floor(p/448)` must return the level. Plus the bound: `447 + 448·5 = 2687 < 2²⁴`, so the whole space is exact in the f32 the channel actually is. **This is the test that makes 448 a fact instead of an argument**, and any future field added to `.b` has to come back through it.
+  * **The merge merges.** A MEDIUM chunk holding six `(archetype, level)` buckets over two archetypes submits **two** MultiMeshes; the per-level nodes go dark; `medium_merge_enabled = false` brings all six back; a NEAR chunk is untouched either way.
+  * **The merged buffer is the mirror.** Float-by-float against `RenderStateModel`'s own bucket mirrors — every channel identical, `.b` differing by exactly `448·level`. Plus the blackout carry-over (a merged instance's `.r` is the model's ramp, copied not derived) and the overlay decode (one OFFLINE building inside a merged buffer still reads OFFLINE, and its neighbours still read NORMAL).
+  * **The atlas.** `COLOR.a` decodes to the levels the mask asked for and to no others; a one-level mask is the level's own mesh vertex for vertex (so a chunk with one level pays nothing for the merge); UV2 façades are scaled by `(cols, rows)` and the `(-1,-1)` / `(-1,-2)` sentinels are copied verbatim — checked specifically on `data_center`, whose `cols = 0` would multiply a sentinel to `(0,0)` and light a blank wall; `level_build_height[]` matches the manifest per level.
+  * **§2.5's MEDIUM row.** Every merged node has `cast_shadow = OFF`, `near_flicker = 0`, `level_atlas = 1` and `window_cols = 1`; two chunks drawing the same archetype share **one** `ShaderMaterial`. And the shader source contract: `level_atlas` defaults to 0, the gate is branchless (`step(0.5, level_atlas)`), `overlay_of` wraps rather than clamps, and nothing in the file `discard`s.
+  * **The mask at runtime** — the only mutable state the merged tier has, and the one whose failure is silent. A chunk that GAINS a level swaps to the wider atlas (without the swap the new building draws nothing and reports nothing), still on one draw call, with each instance carrying its own level; a chunk that LOSES one swaps back to the narrower atlas, so a demolished level stops submitting triangles; and a chunk that loses its last building submits **zero** calls — neither the merged node nor the emptied per-level bucket behind it.
 
 ### 7.3 Headless — weather / day-night
 

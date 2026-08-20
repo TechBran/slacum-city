@@ -32,6 +32,18 @@ extends SceneTree
 ##   --frames=N         frames measured per pose           (default 180)
 ##   --resolution=WxH   render size                        (default 1920x1080)
 ##   --out=FILE         write the run as JSON
+##   --shots=DIR        save one PNG per pose into DIR (`<pose>.png`)
+##   --atlas-lod=N      cut the merged MEDIUM atlas from LOD N instead of
+##                      `CityView.atlas_lod`. 0 keeps the un-merged tier's
+##                      picture exactly; 1 is §2.5's ladder and costs the
+##                      commercial banding — the A/B behind that ruling.
+##   --no-merge         draw the pre-D-14 renderer: one MultiMesh per
+##                      (chunk, archetype, level) at MEDIUM, instead of the
+##                      merged per-archetype atlas. The A/B switch the
+##                      §2.13 as-shipped table's before column is measured with,
+##                      and — with `--shots` — the one the "no visible pop"
+##                      claim is checked with, since the two runs differ in
+##                      nothing else.
 ##   --quiet            table only
 ##
 ## The first pose absorbs shader compilation and the first MultiMesh uploads,
@@ -156,6 +168,9 @@ func _build_scene() -> void:
 	for id in _sim.buildings.keys():
 		_model.add_building(_building_view(String(id)))
 	_city_view = CityView.new()
+	_city_view.medium_merge_enabled = not bool(_opts["no_merge"])
+	if int(_opts["atlas_lod"]) >= 0:
+		_city_view.atlas_lod = int(_opts["atlas_lod"])
 	stage.add_child(_city_view)
 	_city_view.setup(_model, _render_data)
 
@@ -295,10 +310,20 @@ func _apply_pose(index: int) -> void:
 		printerr(("profile_frame: pose %s wanted zoom_t %.2f but the rig clamped to %.2f "
 				+ "(D_MAX_eff) — this measurement is NOT at the published pose")
 				% [key, wanted, _camera_state.zoom_t])
-	# A pose jump re-tiers every chunk. `lod_dwell_s` would otherwise spread that
-	# over half a second and the warm-up would be measuring the transition; the
-	# warm-up frames below are what absorb it.
 	_camera_rig.camera.global_transform = _camera_state.camera_transform()
+	# A pose jump re-tiers every chunk, and §2.5 allows at most ONE tier step per
+	# `lod_dwell_s`. Leaving that to the warm-up frames is a bug in this harness,
+	# not a conservative choice: on the starter city a frame is 0.8 ms, so 90
+	# warm-up frames are 72 ms of model time against a 500 ms dwell and the pose
+	# is MEASURED MID-TRANSITION — which is how a Z2 row came out "9 NEAR chunks"
+	# at a camera 370 m up, where §2.5 says no chunk can be NEAR at all.
+	#
+	# So the ladder is walked here instead, explicitly: four steps of a full
+	# dwell, which is one more than the deepest legal transition (NEAR → MEDIUM →
+	# FAR → CULLED). The measured frames then all sit in the steady state, which
+	# is what the table claims to report, on a fast city and a slow one alike.
+	for _step in 4:
+		_model.update_chunk_tiers(_camera_rig.camera.global_position, _model.lod_dwell_s)
 
 
 func _process(delta: float) -> bool:
@@ -338,12 +363,32 @@ func _process(delta: float) -> bool:
 	if _samples.size() < int(_opts["frames"]):
 		return false
 
+	_capture(String(_order[_pose_index]))
 	_results.append(_summarise(String(_order[_pose_index])))
 	if _pose_index + 1 < _order.size():
 		_apply_pose(_pose_index + 1)
 		return false
 	_report()
 	return true
+
+
+## The measured frame, as a picture. Taken AFTER the last sample of a pose, so
+## what lands on disk is the settled steady state the row above it reports —
+## the same frame, not a neighbouring one.
+func _capture(pose_key: String) -> void:
+	var dir := String(_opts["shots"])
+	if dir == "":
+		return
+	DirAccess.make_dir_recursive_absolute(dir)
+	var image := root.get_texture().get_image()
+	if image == null:
+		printerr("profile_frame: no viewport image to capture")
+		return
+	var path := dir.path_join("%s.png" % pose_key)
+	if image.save_png(path) != OK:
+		printerr("profile_frame: cannot write " + path)
+	elif not bool(_opts["quiet"]):
+		print("wrote " + path)
 
 
 func _summarise(pose_key: String) -> Dictionary:
@@ -361,6 +406,7 @@ func _summarise(pose_key: String) -> Dictionary:
 	var n := maxi(1, frame.size())
 	frame.sort()
 	var census: Dictionary = _model.tier_census()
+	var split: Dictionary = _city_view.perf_stats()
 	return {
 		"pose": pose_key,
 		"label": String((POSES[pose_key] as Dictionary)["label"]),
@@ -373,6 +419,12 @@ func _summarise(pose_key: String) -> Dictionary:
 		"draw_calls_with_ui": draw_calls + UI_DRAW_CALLS,
 		"primitives": primitives,
 		"bucket_nodes_visible": _city_view.building_draw_calls(),
+		# D-14's whole question is WHERE the building calls come from, so the
+		# three kinds are reported apart: per-(archetype, level) LOD0 buckets,
+		# merged per-archetype MEDIUM nodes, and the shared FAR box per chunk.
+		"bucket_calls": int(split.get("bucket_calls", 0)),
+		"merged_calls": int(split.get("merged_calls", 0)),
+		"far_calls": int(split.get("far_calls", 0)),
 		"chunks": int(census.get("near", 0)) + int(census.get("medium", 0))
 				+ int(census.get("far", 0)),
 		"near": int(census.get("near", 0)),
@@ -399,16 +451,17 @@ func _report() -> void:
 	print("")
 	print("=== FRAME COST — %s, preset %s, hour %.1f ===" % [
 			String(_opts["city"]).get_file(), String(_opts["preset"]), float(_opts["hour"])])
-	var header := "  %-22s %8s %8s %8s %8s %6s %6s %6s %6s %5s %5s %5s %9s" % [
+	var header := "  %-22s %8s %8s %8s %8s %6s %6s %6s %5s %5s %5s %5s %5s %5s %9s" % [
 			"pose", "mean ms", "p95 ms", "rs cpu", "rs gpu", "dc", "dc+ui",
-			"budget", "bucket", "near", "med", "far", "prims"]
+			"budget", "buck", "merg", "far#", "near", "med", "far", "prims"]
 	print(header)
 	print("  " + "-".repeat(header.length()))
 	for row: Dictionary in _results:
-		print("  %-22s %8.2f %8.2f %8.3f %8.3f %6d %6d %6d %6d %5d %5d %5d %9d" % [
+		print("  %-22s %8.2f %8.2f %8.3f %8.3f %6d %6d %6d %5d %5d %5d %5d %5d %5d %9d" % [
 				String(row["label"]), float(row["frame_mean_ms"]), float(row["frame_p95_ms"]),
 				float(row["cpu_ms"]), float(row["gpu_ms"]), int(row["draw_calls"]),
-				int(row["draw_calls_with_ui"]), budget, int(row["bucket_nodes_visible"]),
+				int(row["draw_calls_with_ui"]), budget, int(row["bucket_calls"]),
+				int(row["merged_calls"]), int(row["far_calls"]),
 				int(row["near"]), int(row["medium"]), int(row["far"]),
 				int(row["primitives"])])
 	print("  `rs cpu` / `rs gpu` are the RenderingServer's own measured times for"
@@ -443,11 +496,18 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 		"city": CITY_DEFAULT, "preset": "balanced", "hour": 21.0,
 		"poses": ["z0", "z1", "z2"], "warmup": 90, "frames": 180,
 		"resolution": Vector2i(1920, 1080), "out": "", "quiet": false,
+		"shots": "", "no_merge": false, "atlas_lod": -1,
 	}
 	for raw in argv:
 		var arg := String(raw)
 		if arg == "--quiet":
 			opts["quiet"] = true
+		elif arg == "--no-merge":
+			opts["no_merge"] = true
+		elif arg.begins_with("--atlas-lod="):
+			opts["atlas_lod"] = int(arg.substr(12))
+		elif arg.begins_with("--shots="):
+			opts["shots"] = arg.substr(8)
 		elif arg.begins_with("--city="):
 			opts["city"] = arg.substr(7)
 		elif arg.begins_with("--preset="):
