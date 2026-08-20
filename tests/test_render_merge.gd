@@ -105,12 +105,18 @@ func test_the_level_stride_leaves_every_locked_field_where_it_was() -> void:
 
 
 func test_the_packed_maximum_is_exact_in_a_float() -> void:
-	# 447 + 448·5 = 2687. A MultiMesh custom-data channel is an f32 and integers
-	# below 2^24 are exact in one, so the decoders above are exact too — this is
-	# the bound that says so out loud.
+	# 447 + 448·6 = 3135, since doc 02 §2.14's tower tier took LEVEL_MAX to 6.
+	# A MultiMesh custom-data channel is an f32 and integers below 2^24 are exact
+	# in one, so the decoders above are exact too — this is the bound that says
+	# so out loud, and 2^24 is 5,354× the headroom it needs.
 	var top: float = RenderStateModel.pack_state(15, 6, 3) \
 			+ CityView.PACK_LEVEL_STRIDE * float(CityView.LEVEL_MAX)
-	assert_almost_eq(top, 2687.0, 1e-9, "the largest value the merge can pack")
+	assert_almost_eq(top, 3135.0, 1e-9, "the largest value the merge can pack")
+	assert_true(top < 16777216.0, "and it is exact in an f32")
+	# `COLOR.a = level / 8` is the vertex tag, and 8 is the hard ceiling: a
+	# seventh rung is fine, a ninth is not representable.
+	assert_true(CityView.LEVEL_MAX <= 8,
+			"the level tag is level/8 through an 8-bit channel")
 	assert_true(top < 16777216.0, "…and it is inside f32's exact-integer range")
 
 
@@ -410,8 +416,9 @@ func test_the_building_shader_gate_is_an_identity_when_the_atlas_is_off() -> voi
 	assert_ne(src, "", "the building shader is on disk")
 	assert_true(src.contains("uniform float level_atlas = 0.0;"),
 			"OFF is the default, so every existing material is untouched")
-	assert_true(src.contains("uniform float level_build_height[6];"),
-			"five heights plus the unused 0 slot")
+	assert_true(src.contains("uniform float level_build_height[%d];"
+				% (CityView.LEVEL_MAX + 1)),
+			"one height per level plus the unused 0 slot")
 	assert_true(src.contains("step(0.5, level_atlas)"),
 			"the gate is branchless and multiplied out at 0 — no divergence, and "
 			+ "no path where the NEAR tier pays for a feature it does not use")

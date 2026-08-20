@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "generator_version": 4,
+ "generator_version": 5,
  "_owner": "doc 11 \u00a73.2 (rendering & performance). Generator input for tools/gen_graybox.gd.",
  "_generator": "tools/gen_building_shapes.py",
  "_roster_note": "The shipped roster is data/buildings.json's 12 archetypes (doc 02), not doc 11 \u00a72.14's 15-row placeholder table; doc11_id maps each shipped archetype onto the \u00a72.14 silhouette row it realises. Tri budgets, lod1_volume_keep_frac and the tall-archetype list are read from data/render.json \u00a78 'lod' and are never restated here.",
@@ -20,13 +20,14 @@
   "roof_prop_contact_m": 0.5
  },
  "level_markers": {
-  "_rule": "Cumulative per doc 11 \u00a72.14: L1 none; L2 +1 rooftop box; L3 +setback at 60% height (authored in blocks); L4 +crown band + 2 masts; L5 +spire with blinking red aviation beacon. Sizes are proportional to the top block so a house does not grow a skyscraper mast.",
+  "_rule": "Cumulative per doc 11 \u00a72.14: L1 none; L2 +1 rooftop box; L3 +setback at 60% height (authored in blocks); L4 +crown band + 2 masts; L5 +spire with blinking red aviation beacon; L6 +crown setback, one further inset storey beneath the spire (authored in blocks, like L3). Sizes are proportional to the top block so a house does not grow a skyscraper mast. L6 exists on the six archetypes of doc 02 \u00a72.12's growth stock only, and it is a BLOCK rather than a prop because mast_count and prop_count are both already saturated at L5 \u2014 a sixth rung made of more props would move no bit of the \u00a72.14 silhouette descriptor at all.",
   "sequence": [
    "none",
    "rooftop_box",
    "setback",
    "crown_band_plus_masts",
-   "spire_beacon"
+   "spire_beacon",
+   "crown_setback"
   ],
   "rooftop_box": {
    "from_level": 2,
@@ -63,6 +64,11 @@
    "height_max_m": 14.0,
    "beacon_m": 0.6,
    "beacon_blink_hz": 0.5
+  },
+  "crown_setback": {
+   "from_level": 6,
+   "authored_in": "blocks",
+   "_note": "one further inset storey beneath the L5 spire"
   }
  },
  "lod1": {
@@ -144,6 +150,7 @@
    "family": "residential",
    "roof_signature": "gable_prism",
    "footprint_tiles_by_level": [
+    [1, 1],
     [1, 1],
     [1, 1],
     [1, 1],
@@ -376,6 +383,61 @@
        "overhang": true
       }
      ]
+    },
+    {
+     "level": 6,
+     "floors": 4,
+     "footprint_tiles": [1, 1],
+     "level_marker": "crown_setback",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [0.9, 0.9],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.13, 0.13],
+       "size_t": [0.74, 0.74],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.21, 0.21],
+       "size_t": [0.58, 0.58],
+       "base_floor": 3,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "gable",
+       "pos_t": [0.21, 0.21],
+       "size_t": [0.58, 0.58],
+       "base_m": 14.0,
+       "height_m": 4.0,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [0.68, 0.12],
+       "size_t": [0.16, 0.16],
+       "base_m": 14.0,
+       "height_m": 1.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 0.3],
+       "size_t": [0.35, 0.4],
+       "base_m": 2.6,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
     }
    ]
   },
@@ -385,6 +447,7 @@
    "family": "residential",
    "roof_signature": "flat_stair_boxes",
    "footprint_tiles_by_level": [
+    [2, 2],
     [2, 2],
     [2, 2],
     [2, 2],
@@ -639,6 +702,69 @@
        "height_m": 3.0
       }
      ]
+    },
+    {
+     "level": 6,
+     "floors": 13,
+     "footprint_tiles": [2, 2],
+     "level_marker": "crown_setback",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 7,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.25, 0.25],
+       "size_t": [1.5, 1.5],
+       "base_floor": 7,
+       "floors": 4,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.45, 0.45],
+       "size_t": [1.1, 1.1],
+       "base_floor": 11,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 7.0,
+       "height_m": 0.4,
+       "window": "none",
+       "decor": true,
+       "overhang": true
+      },
+      {
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 14.0,
+       "height_m": 0.4,
+       "window": "none",
+       "decor": true,
+       "overhang": true
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [0.25, 0.25],
+       "size_t": [0.45, 0.45],
+       "base_m": 45.5,
+       "height_m": 3.0
+      },
+      {
+       "type": "box",
+       "pos_t": [1.3, 1.3],
+       "size_t": [0.45, 0.45],
+       "base_m": 45.5,
+       "height_m": 3.0
+      }
+     ]
     }
    ]
   },
@@ -650,6 +776,7 @@
    "footprint_tiles_by_level": [
     [1, 1],
     [1, 1],
+    [2, 2],
     [2, 2],
     [2, 2],
     [2, 2]
@@ -947,6 +1074,80 @@
        "height_m": 0.0
       }
      ]
+    },
+    {
+     "level": 6,
+     "floors": 5,
+     "footprint_tiles": [2, 2],
+     "level_marker": "crown_setback",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 2,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.3, 0.3],
+       "size_t": [1.4, 1.4],
+       "base_floor": 2,
+       "floors": 1,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.55, 0.55],
+       "size_t": [0.9, 0.9],
+       "base_floor": 3,
+       "floors": 1,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.8, 0.8],
+       "size_t": [0.4, 0.4],
+       "base_floor": 4,
+       "floors": 1,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "sign_band",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 0.18],
+       "base_m": 17.5,
+       "height_m": 1.1
+      },
+      {
+       "type": "sign_band",
+       "pos_t": [0.0, 1.82],
+       "size_t": [2.0, 0.18],
+       "base_m": 17.5,
+       "height_m": 1.1
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.45],
+       "size_t": [2.0, 0.55],
+       "base_m": 3.0,
+       "height_m": 0.35,
+       "overhang": true
+      },
+      {
+       "type": "box",
+       "pos_t": [1.1, 0.3],
+       "size_t": [0.3, 0.3],
+       "base_m": 17.5,
+       "height_m": 2.0
+      },
+      {
+       "type": "pad",
+       "pos_t": [0.0, 1.5],
+       "size_t": [2.0, 0.5],
+       "base_m": 0.05,
+       "height_m": 0.0
+      }
+     ]
     }
    ]
   },
@@ -956,6 +1157,7 @@
    "family": "commercial",
    "roof_signature": "hvac_cluster",
    "footprint_tiles_by_level": [
+    [2, 2],
     [2, 2],
     [2, 2],
     [2, 2],
@@ -1213,6 +1415,66 @@
        "overhang": true
       }
      ]
+    },
+    {
+     "level": 6,
+     "floors": 25,
+     "footprint_tiles": [2, 2],
+     "level_marker": "crown_setback",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 14,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.2, 0.2],
+       "size_t": [1.6, 1.6],
+       "base_floor": 14,
+       "floors": 7,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.4, 0.4],
+       "size_t": [1.2, 1.2],
+       "base_floor": 21,
+       "floors": 4,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "box",
+       "pos_t": [0.55, 0.55],
+       "size_t": [0.4, 0.35],
+       "base_m": 87.5,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [1.05, 0.6],
+       "size_t": [0.35, 0.3],
+       "base_m": 87.5,
+       "height_m": 1.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.65, 1.15],
+       "size_t": [0.5, 0.3],
+       "base_m": 87.5,
+       "height_m": 1.9
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.55],
+       "size_t": [2.0, 0.45],
+       "base_m": 4.2,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
     }
    ]
   },
@@ -1222,6 +1484,7 @@
    "family": "residential",
    "roof_signature": "setback_tower_mast",
    "footprint_tiles_by_level": [
+    [2, 2],
     [2, 2],
     [2, 2],
     [2, 2],
@@ -1461,6 +1724,68 @@
        "overhang": true
       }
      ]
+    },
+    {
+     "level": 6,
+     "floors": 78,
+     "footprint_tiles": [2, 2],
+     "level_marker": "crown_setback",
+     "blocks": [
+      {
+       "pos_t": [0.05, 0.05],
+       "size_t": [1.9, 1.9],
+       "base_floor": 0,
+       "floors": 39,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.25, 0.25],
+       "size_t": [1.5, 1.5],
+       "base_floor": 39,
+       "floors": 21,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.45, 0.45],
+       "size_t": [1.1, 1.1],
+       "base_floor": 60,
+       "floors": 12,
+       "window": "grid"
+      },
+      {
+       "pos_t": [0.6, 0.6],
+       "size_t": [0.8, 0.8],
+       "base_floor": 72,
+       "floors": 6,
+       "window": "grid"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "mast",
+       "pos_t": [1.0, 1.0],
+       "base_m": 273.0,
+       "height_m": 17.16,
+       "width_m": 0.5,
+       "signature": true,
+       "lod1": true
+      },
+      {
+       "type": "box",
+       "pos_t": [0.7, 0.7],
+       "size_t": [0.35, 0.35],
+       "base_m": 273.0,
+       "height_m": 2.6
+      },
+      {
+       "type": "box",
+       "pos_t": [0.0, 1.55],
+       "size_t": [2.0, 0.45],
+       "base_m": 4.2,
+       "height_m": 0.35,
+       "overhang": true
+      }
+     ]
     }
    ]
   },
@@ -1470,6 +1795,7 @@
    "family": "tech",
    "roof_signature": "chiller_bank",
    "footprint_tiles_by_level": [
+    [2, 2],
     [2, 2],
     [2, 2],
     [2, 2],
@@ -1792,6 +2118,80 @@
        "pos_t": [1.12, 1.12],
        "size_t": [0.36, 0.32],
        "base_m": 14.0,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      }
+     ]
+    },
+    {
+     "level": 6,
+     "floors": 5,
+     "footprint_tiles": [2, 2],
+     "level_marker": "crown_setback",
+     "blocks": [
+      {
+       "pos_t": [0.15, 0.15],
+       "size_t": [1.7, 1.7],
+       "base_floor": 0,
+       "floors": 3,
+       "window": "none"
+      },
+      {
+       "pos_t": [0.3, 0.3],
+       "size_t": [1.4, 1.4],
+       "base_floor": 3,
+       "floors": 1,
+       "window": "none"
+      },
+      {
+       "pos_t": [0.45, 0.45],
+       "size_t": [1.1, 1.1],
+       "base_floor": 4,
+       "floors": 1,
+       "window": "none"
+      }
+     ],
+     "roof_props": [
+      {
+       "type": "fence",
+       "pos_t": [0.0, 0.0],
+       "size_t": [2.0, 2.0],
+       "base_m": 0.0,
+       "height_m": 2.2
+      },
+      {
+       "type": "box",
+       "pos_t": [0.57, 0.57],
+       "size_t": [0.36, 0.32],
+       "base_m": 17.5,
+       "height_m": 1.8,
+       "lod1": true,
+       "signature": true
+      },
+      {
+       "type": "box",
+       "pos_t": [1.12, 0.57],
+       "size_t": [0.36, 0.32],
+       "base_m": 17.5,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      },
+      {
+       "type": "box",
+       "pos_t": [0.57, 1.12],
+       "size_t": [0.36, 0.32],
+       "base_m": 17.5,
+       "height_m": 1.8,
+       "lod1": false,
+       "signature": false
+      },
+      {
+       "type": "box",
+       "pos_t": [1.12, 1.12],
+       "size_t": [0.36, 0.32],
+       "base_m": 17.5,
        "height_m": 1.8,
        "lod1": false,
        "signature": false

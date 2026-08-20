@@ -32,6 +32,13 @@ var level_at_destruction: int = 0
 ## Stats row for the CURRENT level, supplied by BuildingCatalog via the
 ## coordinator on every level change. Keys per data/buildings.json.
 var stats: Dictionary = {}
+## How many rungs THIS archetype's ladder has (doc 02 §2.14): five for the civic
+## and utility shells, six for the growth stock. A `Building` holds no catalog,
+## so the coordinator stamps it beside `stats`. The default is the five-rung
+## floor every archetype had before doc 92 §24 — a fixture that never sets it
+## gets exactly the behaviour it had, and a building that somehow escapes the
+## stamp is under-upgradable rather than infinitely upgradable.
+var max_level: int = 5
 
 
 func _init(p_id: int = 0, p_archetype: StringName = &"", p_origin := Vector2i.ZERO,
@@ -48,6 +55,12 @@ func is_new_build() -> bool:
 
 func is_upgrade_in_progress() -> bool:
 	return state == &"under_construction" and level >= 1
+
+
+## At the top of THIS archetype's ladder (doc 02 §2.14) — five rungs for the
+## civic and utility shells, six for the growth stock.
+func is_at_top_level() -> bool:
+	return level >= maxi(max_level, 1)
 
 
 # ------------------------------------------------- per-state modifiers (§2.12)
@@ -190,7 +203,7 @@ func complete_construction() -> Dictionary:
 func start_upgrade() -> Dictionary:
 	if state != &"active":
 		return CommandQueue.fail(&"E_STATE")
-	if level >= 5:
+	if is_at_top_level():
 		return CommandQueue.fail(&"E_MAX_LEVEL")
 	if condition < MIN_CONDITION_TO_UPGRADE:
 		return CommandQueue.fail(&"E_CONDITION")

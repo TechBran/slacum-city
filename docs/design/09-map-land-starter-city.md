@@ -402,6 +402,44 @@ Also authored per terrain: `vegetation_density` flat 0.35 / waterfront 0.45 / hi
 
 **Price spread check.** Ring 1 spans **$7,600** (`B_5_5` F6, industrial edge, no AVENUE) to **$16,700** (`B_5_3` F4, ridge-adjacent hills on SR-14) — a 2.2× range. Ring 2 spans **$6,700** (marsh and Foundry) to **$14,800** (`steep` ridge on SR-14). Cheap always means dirty, wet, or off the road network; expensive always means safe, high, or connected. The single dearest thing you can buy at t0 is high ground with a highway on it, and it is also the most expensive to grade — spec §7.2's "High Ground" tradeoff, intact.
 
+#### 2.8.3 Ring 3 — DECLINED, with the arithmetic
+
+> **Wave 10 asked for a ring-3 land tier gated at `city_level` 4+, so the two
+> top rungs of §2.11's ladder would pay out in land as well as in buildings.
+> It cannot be built on this board, and the reason is geometry rather than
+> pricing.**
+
+The world is **7 × 7 blocks** with a **3 × 3** core (§2.8.1). The rings around
+that core are exhaustive and there are exactly two of them:
+
+| ring | the shell it is | blocks | check |
+|---|---|---|---|
+| core | 3 × 3 | 9 | — |
+| **1** | 5 × 5 − 3 × 3 | **16** | opens at `city_level` 0 |
+| **2** | 7 × 7 − 5 × 5 | **24** | opens at `city_level` 1–2 |
+| | | **49** | = 7 × 7, the whole board |
+
+9 + 16 + 24 = 49. **There is no land left.** A ring 3 is the 9 × 9 shell —
+another 32 blocks — and buying it means `world.size_blocks` 7 → 9, a 112 × 112
+tile grid becoming 144 × 144, every block id in `data/starter_city.json`
+re-based, the committed `bench_city.json` fixture regenerated, doc 03 §2.7's
+`blocks_owned` escalation re-anchored off a 9-block core into a 40-block one, and
+every `world_map` / `tile_grid` / starter-city test re-fitted. That is a *world*
+change, not a land tier, and it is nobody's to make inside a content wave.
+
+**Nor is re-gating existing land an option.** Ring 2 currently opens at
+`city_level` 1–2. Raising any of those to 4 would take purchasability away from a
+city that already has it, which is precisely what §2.11's monotonicity promise
+forbids — *"a level, once earned, survives any disaster"* is worth nothing if the
+thing the level unlocked can be moved out of reach afterwards.
+
+**So the two top rungs pay out in buildings only**, and doc 02 §2.14's split
+carries the whole load: city level 4 opens the `steady` class's sixth rung
+(`house`, `store` — the stock a city has dozens of) and city level 5 opens the
+tower tier (`apartment`, `office`, `high_rise`, `data_center`). Recorded here so
+that the day the board grows, ring 3 has a price sheet waiting for it: §2.8.2's
+formula is unchanged and would apply to the 9 × 9 shell unmodified.
+
 ### 2.9 The Starter City
 
 > **Rebuilt to report 98 C-11.** The pre-amendment manifest was 28 house / 8 store / 6 apartment / 1 office, chosen to hit doc 03's $686/gh anchor **against doc 02's tax rows — which C-10 deleted.** Against doc 03's rows (the only surviving tax table) that mix yields $1,094/gh, 59 % over target, while the mix doc 03 always named yields the anchor exactly. **The manifest reverts to 18 house / 5 store / 3 apartment / 1 office (all L1) plus the six civic/utility sites.** The road template, block geometry, utility topology and tag registry are unchanged; population, jobs, power and water all re-derive below (recomputation R-16).
@@ -911,11 +949,31 @@ A one-feeder fault costs 2.1 happiness points and 1 % of revenue in three hours 
 
 Doc 02 proposed the population ladder and nothing owned it. Adopted here, and **RETUNED against measurement by doc 92 §19** (audit 91 D-7). `data/progression.json` — the file this section has always named, and which doc 92 §19 is the pass that finally wrote it:
 
-| `city_level` | 0 | 1 | 2 | 3 | 4 | 5 |
-|---|---|---|---|---|---|---|
-| min city population | **0** | **200** | **700** | **1,600** | **3,600** | **8,000** |
-| *doc 02's original proposal* | 0 | 250 | 1,000 | 4,000 | 12,000 | 30,000 |
-| `balanced` reaches it on game-day | t0 | **2** | **11** | **23** | *unfitted* | *unfitted* |
+| `city_level` | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|---|
+| min city population | **0** | **200** | **700** | **1,600** | **3,600** | **8,000** | **18,000** |
+| *doc 02's original proposal* | 0 | 250 | 1,000 | 4,000 | 12,000 | 30,000 | — |
+| `balanced` reaches it on game-day | t0 | **2** | **11** | **23** | *unfitted* | *unfitted* | *unfitted* |
+
+**Rung 6 was added Wave 10** (doc 92 §24.6). It is an APPEND — no rung below it
+moved by a single resident, and appending above the top rung cannot un-earn a
+level in any existing save. Its placement is §19.2's own recipe applied one rung
+further rather than a new fit: rungs 2–5 settle at a flat 2.25× (1,600 → 3,600 is
+exactly that, 3,600 → 8,000 is 2.22 after rounding to two significant figures),
+so **8,000 × 2.25 = 18,000**. Like rungs 4 and 5 it is honest extrapolation and
+labelled as such — the highest population this study has ever measured is 7,923
+(doc 92 §22.3.1, seed 1337 at game-day 70), which clears rung 5 and not rung 6.
+**Why a sixth rung exists at all is content, not curve.** Before Wave 10 city
+level 5 unlocked *nothing whatsoever* and a sixth would have unlocked less; it
+now unlocks doc 02 §2.14's tower tier, and §2.14.2's curriculum has a sixth row
+that teaches it.
+
+That 18,000 is **inside what this engine can represent** is measured, even though
+no PLAYED city has reached it: §2.13's benchmark fixture — 1,500 buildings — settles
+at **35,411 residents**, which is rung 6 with room to spare, and it is the reason
+that fixture's two identity hashes move under this rung (doc 92 §24.12's A/B). What
+stops a played city from getting there is doc 92 pass-3 F-11's power ceiling, not
+the rung, which is the same thing that stops it reaching rungs 4 and 5.
 
 The proposal predated every measurement in doc 92 and four of its six rungs were unreachable by anything the game can do: the fastest builder in the study peaks at 1,872 residents over 90 game-days and the competent player ends fifty game-days at 2,710, so a 12-game-day city sat at level 0 and refused 376 upgrades with `E_CITY_LEVEL`. The rungs above are placed on doc 92 §19.1's measured `balanced` population curve at game-days that roughly double; levels 4 and 5 are placed by the ~2.25× ratio the fitted rungs settle into rather than by fit, because nothing has yet produced 3,600 residents — that is doc 92 pass-3 F-11's power ceiling, and they get a real fit when the feeder verb lands.
 
@@ -932,8 +990,8 @@ At t0 `city_population = 144 ⇒ city_level = 0`. Level 1 arrives at 200 residen
 
 | Consumer | Gate |
 |---|---|
-| **02 Buildings** | `E_CITY_LEVEL` — `city_level >= min_city_level(L+1)` for every upgrade; and `min_city` per archetype for placement |
-| **09 this doc** | block `min_city_level` for `PURCHASABLE` (§2.5, §2.8.2) — ring 1 at 0, SR-served ring 2 at 1, the rest of ring 2 at 2 |
+| **02 Buildings** | `E_CITY_LEVEL` — `city_level >= min_city_level(L+1)` for every upgrade; and `min_city` per archetype for placement. **Since Wave 10 that tops out at 5, not 4**: doc 02 §2.14's sixth rung opens at city level 4 for the `steady` class and 5 for the towers |
+| **09 this doc** | block `min_city_level` for `PURCHASABLE` (§2.5, §2.8.2) — ring 1 at 0, SR-served ring 2 at 1, the rest of ring 2 at 2. **There is no ring 3 to gate at 4+, and there cannot be one on this board — see §2.8.3** |
 | **06 Incidents & fleets** | vehicle and station-tier unlocks |
 | **10 Roads** | the `road_crew` unlock |
 | **12 UI** | build-card availability and the progression panel |
@@ -1022,15 +1080,19 @@ The consequences are the point:
 
 The full ruling, with the alternative that was rejected, is doc 93 §G1.
 
-#### 2.14.2 The curriculum — five levels, one system each
+#### 2.14.2 The curriculum — six levels, one system each
 
-**Five, not the player's "five or six", and the reason is arithmetic:** §2.11's
-ladder has five rungs above the founding level, and a sixth rung would unlock
-nothing — every `min_city_level` in `data/buildings.json` tops out at 4 and every
-block's at 2. A level whose reward card is empty is a number, not a goal. The
-sixth teaching beat is the one that already existed: doc 12 §2.17's tutorial,
-which the sheet shows as **level 0, complete**, and which now hands the player
-here on its way out.
+> **Six since Wave 10.** It was five, and the reason was arithmetic: §2.11's
+> ladder had five rungs above the founding level and a sixth would have unlocked
+> nothing — every `min_city_level` in `data/buildings.json` topped out at 4 and
+> every block's at 2, so a level-6 reward card would have been empty, and *a
+> level whose reward card is empty is a number, not a goal* (ruling 93 §G3).
+> **That test is unchanged; what changed is that the card is no longer empty.**
+> Doc 02 §2.14's tower tier gates the sixth rung of `apartment`, `office`,
+> `high_rise` and `data_center` at city level 5, so rung 5 pays out for the first
+> time and rung 6 has somewhere to go (ruling 93 §G6). Level **0** is still doc
+> 12 §2.17's tutorial, which the sheet shows as complete and which hands the
+> player here on its way out.
 
 | level | name | objectives | teaches | reward (READ, not authored) |
 |---|---|---|---|---|
@@ -1040,6 +1102,7 @@ here on its way out.
 | **3** | The budget | 1 apartment · set the tax rate · happiness 70 · 280 residents | doc 03's slider and what it costs in people | High-rise, `road_crew`, L4 upgrades |
 | **4** | When it goes wrong | 1 police station · 2 incidents resolved · 24 clean game-hours · 340 residents | coverage, the drawer, dispatch | Data centre, L5 upgrades |
 | **5** | Room to grow | buy a block · develop it · 1 water pump · 400 residents | doc 09's land pipeline and doc 05's first player-built works | the growth ladder itself |
+| **6** | Up, not out | 1 high-rise · take one building to level 6 · 900 residents | doc 02 §2.14's tower tier, and the power a tall building drinks | the top of the ladder |
 
 **Every objective is a verb the player can actually perform.** That is a hard
 rule, not a preference: `cmd_place_road`, `cmd_place_water_main` and
@@ -1055,7 +1118,7 @@ shapes:
 
 | shape | kinds | how it is measured |
 |---|---|---|
-| **event** | `build_archetype` · `place_grid_component` · `place_water_component` · `place_water_main` · `stamp_road_tiles` · `upgrade_building` · `repair_buildings` · `resolve_incidents` · `buy_block` · `develop_block` · `set_tax_rate` | counted off `SimEventBus`, from LEVEL ENTRY, on the command rather than on the thing finishing |
+| **event** | `build_archetype` · `place_grid_component` · `place_water_component` · `place_water_main` · `stamp_road_tiles` · `upgrade_building` · **`upgrade_to_level`** · `repair_buildings` · `resolve_incidents` · `buy_block` · `develop_block` · `set_tax_rate` | counted off `SimEventBus`, from LEVEL ENTRY, on the command rather than on the thing finishing |
 | **state** | `reach_population` · `reach_happiness` · `reach_stability` · `reach_treasury` | one O(1) reading per game-hour |
 | **endurance** | `survive_no_abandonment` | game-hours in a row without `incident_abandoned` / `incident_failed` / `building_destroyed` |
 
@@ -1068,6 +1131,8 @@ objective is not in it until doc 04 publishes a city-wide scalar.
 A counter ticks on the **command**, not on the completion: "Build 4 houses"
 lands when the fourth house is committed, not two game-hours later when its
 scaffolding comes down. A teaching counter that lags the tap teaches nothing.
+
+**`upgrade_to_level` is the one kind that filters NUMERICALLY** (Wave 10). It reads the same `upgrade_started_sim` event `upgrade_building` reads and additionally requires `to_level >= ` the row's own `to_level`. The comparison is `>=` and not `==` because doc 02 §2.14's ladder is archetype-shaped — six archetypes have a level 6 and six do not — so an equality row would refuse a player who went further and a per-archetype row would be unanswerable by a police station. It costs one extra dictionary lookup and one comparison per event, so the cost rule above still holds.
 
 #### 2.14.4 Persistence and retroactive safety
 
@@ -1357,7 +1422,7 @@ Headless: `tests/sim/world/test_world_map.gd`, `test_development.gd`, `test_dist
 32. With `city_stability` pinned to 0.60, `A_city` after 6 gh == **0.8033 ± 0.0005** and `occupied_population` == **116**; restoring stability to 0.95 returns `A_city` to ≥ 0.99 within 36 gh. Civic/utility buildings stay at `occ_b == STATE_OCCUPANCY[state]` throughout.
 33. `H` at t0 == **82.15 ± 0.05**; 3 gh into the §2.10.3 fault case == **79.86 ± 0.05**; at `tax_rate 0.16` the steady-state target drops by exactly **25.2** points via doc 03's `happiness_tax_delta`. `f_happiness` handed to doc 03 == `1.0 + 0.50 × (H − 60)/100`, clamped [0.75, 1.25].
 34. `city_level` at t0 == **0**; crossing 250 population raises it to 1 and emits `city_level_changed{0,1}` exactly once; **dropping back to 200 population leaves `city_level == 1`** (monotone), and `city_level_max` round-trips through a save.
-35. Every `min_city_level` in `starter_city.json` is on the §2.11 ladder (0–5) and the 12 t0-purchasable blocks are all reachable at `city_level 0`.
+35. Every `min_city_level` in `starter_city.json` is on the §2.11 ladder (0–6 since Wave 10; the authored rows still use 0–2 and §2.8.3 says why there is no ring 3 to gate higher) and the 12 t0-purchasable blocks are all reachable at `city_level 0`.
 36. `stats.counters` are monotone: a 24-game-hour run with two blackouts and one land purchase increments `outage_events` by 2, `blocks_purchased` by 1, and never decrements anything; `peak_population` tracks the maximum, not the current.
 
 **Save and fixtures**

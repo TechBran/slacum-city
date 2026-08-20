@@ -55,7 +55,9 @@ uniform float day_gate = 0.06;
 // NOR `mod(floor(p/16), 7)` (stage) by a single ulp — the two decoders that
 // mirror `RenderStateModel` and must not move. Only `overlay_of` needed the
 // `clamp` swapped for a `mod`, and that is an exact identity on every value
-// §2.6 can produce. Max packed value 447 + 448·5 = 2687, exact in f32.
+// §2.6 can produce. Max packed value 447 + 448·6 = 3135, exact in f32 (the
+// tower tier of doc 02 §2.14 took the top level from 5 to 6; `COLOR.a` is
+// `level/8`, so 8 is the hard ceiling and 6 is inside it with room to spare).
 //
 // **Exact identity at `level_atlas = 0`.** The gate is branchless, so its
 // arithmetic still executes, but every term of it is multiplied out: `want`
@@ -67,10 +69,12 @@ uniform float day_gate = 0.06;
 // for the A/B behind that.
 uniform float level_atlas = 0.0;
 uniform float level_stride = 448.0;
-// The five levels' own `height_m`, indexed 1..5 (0 unused). Replaces
-// `build_height_m` while the atlas is on, because one merged mesh carries five
-// heights and the construction clamp needs the instance's own.
-uniform float level_build_height[6];
+// Each level's own `height_m`, indexed 1..6 (0 unused). Replaces
+// `build_height_m` while the atlas is on, because one merged mesh carries every
+// level's height and the construction clamp needs the instance's own. Sized
+// `CityView.LEVEL_MAX + 1`; an archetype with only five rungs simply leaves
+// index 6 at zero, and no instance of it ever asks for it.
+uniform float level_build_height[7];
 // ═════════ END level-atlas pass ═══════════════════════════════════════════
 
 // ------------------------------------------------ construction (stage 1..6)
@@ -263,7 +267,7 @@ void vertex() {
 	// and VERTEX is multiplied by nothing.
 	float want = floor(INSTANCE_CUSTOM.b / level_stride) * step(0.5, level_atlas);
 	float bh = mix(build_height_m,
-			level_build_height[int(clamp(want, 0.0, 5.0))], step(0.5, level_atlas));
+			level_build_height[int(clamp(want, 0.0, 6.0))], step(0.5, level_atlas));
 	// A vertex belonging to any other level collapses onto the instance origin.
 	// Zero-area triangles are discarded by the rasteriser before a single
 	// fragment exists — no `discard`, no depth write, early-Z intact, and the

@@ -48,6 +48,14 @@ const MATRIX_SEEDS: Array[int] = [1337, 4242, 9001]
 const LONG_DAYS := 21
 ## The cheaper horizon for the gates that only need a shape, not a threshold.
 const SHORT_DAYS := 10
+## Gate 21's own horizon, and the ONLY gate that does not run on `LONG_DAYS`.
+## Doc 92 §24.9: the curriculum grew a sixth level and it is a long one — the
+## tower rung is measured at 435–478 game-hours against level 5's 113–181 —
+## so a 21-game-day window can no longer contain the arc it is asked to prove
+## completable. 45 days is the horizon; the RULED BOUND on the top level is
+## 40 game-days, against a measurement of 31.1 / 33.5 / 34.3.
+const CURRICULUM_DAYS := 45
+const CURRICULUM_TOP_LEVEL_DAYS := 40
 
 ## One run per (strategy, days, seed) across the whole file: several gates read
 ## the same run and a 21-game-day `disaster_neglect` run is the most expensive
@@ -1371,7 +1379,12 @@ func test_gate_19_ambient_incidents_are_a_weekly_beat() -> void:
 ## game-day **11**.
 func test_gate_20_the_city_level_ladder_is_reachable() -> void:
 	var ladder := ProgressionSystem.city_level_pop()
-	assert_eq(ladder.size(), 6, "doc 09 §2.11: six rungs, 0–5")
+	# **RE-FITTED, Wave 10 (doc 92 §24.6).** Six rungs became seven. The rung
+	# is an APPEND — 18,000 above 8,000 — placed by §19.2's own 2.25× recipe
+	# one step further, and nothing below it moved. The count is asserted
+	# rather than bounded because a ladder that grows by accident is exactly
+	# the kind of change this gate exists to catch.
+	assert_eq(ladder.size(), 7, "doc 09 §2.11: seven rungs, 0–6")
 	assert_eq(ladder[0], 0, "the founding city is level 0 by construction")
 	for i in range(1, ladder.size()):
 		assert_true(ladder[i] > ladder[i - 1],
@@ -1449,29 +1462,47 @@ func test_gate_20_the_city_level_ladder_is_reachable() -> void:
 ##   2. **Nothing waits on a verb the player does not have.** The completion is
 ##      the proof, because `Curriculum` drives only commands the UI can issue.
 ##   3. **The pacing is the session beat the player asked for**: level 1 inside
-##      the first game-day, level 3 inside six, the whole arc inside three
-##      game-weeks.
+##      the first game-day, level 3 inside six, level 5 inside three game-weeks,
+##      and the whole arc inside `CURRICULUM_TOP_LEVEL_DAYS`.
+##
+## **RE-FITTED, Wave 10 (doc 92 §24.9).** The curriculum grew a sixth level and
+## the horizon grew with it. Claim 1 and claim 2 are UNCHANGED in substance —
+## every level completes, in order, on every seed — but 21 game-days no longer
+## contains the arc, so the run is `CURRICULUM_DAYS` (45) and the top level's
+## ruled bound is `CURRICULUM_TOP_LEVEL_DAYS` (40). Claim 3's early bounds did
+## NOT move: level 1 is still inside the first game-day, level 3 inside six, and
+## level 5 still inside the old 21-day horizon — the arc got longer at the top,
+## it did not get slower underneath, and level 5 is asserted separately so that
+## stays provable rather than assumed.
 ##
 ## Measured, seeds 1337 / 4242 / 9001 — the game-hour each level was earned:
 ##
 ## | level | 1337 | 4242 | 9001 | duration (game-hours) |
 ## |---|---|---|---|---|
-## | 1 | 18 | 18 | 18 | 18 |
-## | 2 | 59 | 57 | 58 | 39–41 |
-## | 3 | 100 | 99 | 100 | 41–42 |
-## | 4 | 148 | 147 | 192 | 47–92 |
-## | 5 | 329 | 325 | 305 | 113–181 |
+## | 1 | 13 | 13 | 14 | 13–14 |
+## | 2 | 51 | 54 | 55 | 38–41 |
+## | 3 | 97 | 98 | 103 | 44–48 |
+## | 4 | 153 | 150 | 192 | 52–89 |
+## | 5 | 345 | 351 | 312 | 120–201 |
+## | **6** | **823** | **803** | **747** | **435–478** |
+##
+## Level 6 is ~2.9× level 5 rather than the ~2× the first five settle into, and
+## the reason is measured rather than guessed: the sixth rung of a `house` is
+## worth **124 kW** on a step whose whole cost is $73,572, so the level is a
+## saving beat with a copper purchase in the middle of it. Doc 92 §24.8 is the
+## measurement and §24.9 the ruling; the graduation level is allowed to be the
+## longest, and this one is the top of the ladder.
 func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 	var top := GoalSystem.top_level()
 	assert_true(top >= 1, "there is a curriculum to complete")
 	for seed_value in MATRIX_SEEDS:
-		var doc := _run("curriculum", LONG_DAYS, int(seed_value))
+		var doc := _run("curriculum", CURRICULUM_DAYS, int(seed_value))
 		var summary: Dictionary = doc["summary"]
 		assert_eq(int(summary["goal_level_end"]), top,
 				("seed %d finished %d of %d curriculum levels in %d game-days — "
 						+ "a rung the taught route cannot reach is a promise the "
 						+ "game cannot keep") % [int(seed_value),
-						int(summary["goal_level_end"]), top, LONG_DAYS])
+						int(summary["goal_level_end"]), top, CURRICULUM_DAYS])
 		assert_eq(int(summary["city_level_end"]), top,
 				"and the city level followed the objectives up (doc 93 §G1)")
 		# The one objective in the arc that costs five figures, and the first
@@ -1486,10 +1517,16 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 			var level := int(row["goal_level"])
 			if not first_day_at.has(level):
 				first_day_at[level] = int(row["day"])
+		var missing := 0
 		for level in range(1, top + 1):
-			assert_true(first_day_at.has(level),
-					"seed %d never earned curriculum level %d"
-							% [int(seed_value), level])
+			if not first_day_at.has(level):
+				missing += 1
+				_fail("seed %d never earned curriculum level %d"
+						% [int(seed_value), level])
+		# Every bound below indexes `first_day_at`; a missing rung has already
+		# been reported and reading it would crash the run instead of failing it.
+		if missing > 0:
+			continue
 		# **The pacing band, and why it is quoted in game-days.** One game-hour
 		# is one real minute at 1× (`SimHost.GAME_MS_PER_REAL_MS` is 60), so a
 		# game-day is a 24-minute session. Level 1 has to land inside the first
@@ -1504,10 +1541,21 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 					("seed %d took %d game-days to reach curriculum level 3; the "
 							+ "ruled bound is 6 (measured 4–5)")
 							% [int(seed_value), int(first_day_at[3])])
-		assert_true(int(first_day_at[top]) <= LONG_DAYS,
-				("seed %d finished the arc on game-day %d; the ruled bound is the "
-						+ "%d-game-day horizon (measured 12.7–13.7)")
-						% [int(seed_value), int(first_day_at[top]), LONG_DAYS])
+		# **The fifth level still lands inside the old horizon**, and asserting it
+		# separately is what keeps the re-fit honest: the arc got longer at the
+		# TOP, it did not get slower underneath (measured 14.4 / 14.6 / 13.0
+		# game-days on seeds 1337 / 4242 / 9001, against Wave 9's 12.7–13.7 arc —
+		# the same window, one level earlier in it).
+		if top >= 5:
+			assert_true(int(first_day_at[5]) <= LONG_DAYS,
+					("seed %d reached curriculum level 5 on game-day %d; the ruled "
+							+ "bound is still Wave 9's %d-game-day horizon")
+							% [int(seed_value), int(first_day_at[5]), LONG_DAYS])
+		assert_true(int(first_day_at[top]) <= CURRICULUM_TOP_LEVEL_DAYS,
+				("seed %d finished the arc on game-day %d; the ruled bound is %d "
+						+ "game-days (measured 31.1 / 33.5 / 34.3 — doc 92 §24.9)")
+						% [int(seed_value), int(first_day_at[top]),
+						CURRICULUM_TOP_LEVEL_DAYS])
 		# Monotone: a curriculum level, once earned, is never given back — the
 		# same promise doc 09 §2.11 makes about the city level itself.
 		var previous := 0

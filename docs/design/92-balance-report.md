@@ -2955,3 +2955,409 @@ at a different minute, on a different sub-step, with a different traffic spawn
 order. That is exactly what doc 08 §2.8's rung 4 exists to record. Save → load →
 advance stays bit-identical **within** the new rules on both cities and both
 paths, which is the property that actually protects the player.
+
+
+---
+
+## 24. Pass 9 — the top of the ladder (Wave 10)
+
+§22.7 closed with the reason there was no sixth curriculum level: *"the ladder
+has five rungs above the founding level and a sixth would unlock nothing. Adding
+one is a content decision and it needs something to pay out."*
+
+This pass is that content decision. It is a **CONTENT** pass, not a retune: not
+one shipped cell of any table moved. Everything below is an APPEND — a sixth
+building rung, a seventh city level, a sixth curriculum row — and the two things
+that did change (one agent habit, one `upgrade_time_hours` fallback) are named
+and measured in §24.8 and §24.11.
+
+### 24.1 The hollow ceiling, measured
+
+| rung | build cards it unlocks | building rungs it opens | land blocks it opens | reward card |
+|---|---|---|---|---|
+| city level 1 | Apartment, Office | L2 | 4 | full |
+| city level 2 | — | L3 | 20 | 2 rows |
+| city level 3 | High-Rise | L4 | 0 | 2 rows |
+| city level 4 | Data Center | L5 | 0 | 2 rows |
+| **city level 5** | **—** | **—** | **0** | **EMPTY** |
+
+Every `min_city_level` in `data/buildings.json` topped out at 4 and every block's
+at 2, so the fifth rung of the ladder the game spends five curriculum levels
+teaching paid **nothing at all**, and `GoalsModel.reward(5)` returned
+`{empty: true}` — the sheet's "Nothing new to build" card, shown as a *reward*.
+
+### 24.2 What was added, and where the line is
+
+**Six of the twelve archetypes gained a sixth level** (doc 02 §2.14) — the
+revenue-producing ones, `house` / `store` / `apartment` / `office` / `high_rise` /
+`data_center`. The other six stop at five, and that boundary is arithmetic, not
+taste: `water_facility`'s per-variant ladders are doc 05's `data/water.json`
+(five rows × five variants, behind that doc's own `levels_4_5_enabled` flag), and
+station fleet capacity is doc 06's `capacity_per_station_level` (five rows,
+locked by C-50). Extending either is those docs' pass, and doing it from here
+would have been a content wave quietly editing two other systems' balance tables.
+
+The **coverage ladder's sixth rung repeats its fifth** (0.80 fire / 0.75 police),
+for the same reason from the other end: §2.9's requirements are a demand ON the
+service stock, the service stock did not gain a rung, and pricing the tower tier
+against coverage the player has no verb to buy would be a wall with no door. The
+two ×1.25 archetypes were already saturated at `max_requirement` 0.95 at L5, so
+their cells are identical either way.
+
+### 24.3 The reward-pacing ruling — where each sixth rung opens
+
+The ask was `min_city_level` 4 **or** 5, spread so both top rungs pay out. The
+split is by GROWTH CLASS, which is data
+(`building_rules.min_city_level_by_growth_class`) and not a per-archetype
+whitelist:
+
+| class | archetypes | L6 opens at | why |
+|---|---|---|---|
+| `steady` | `house`, `store` | **city level 4** | the small-lot stock a city owns dozens of; a modest capacity bump, earned at the rung that used to be the last real one |
+| `standard` / `vertical` | `apartment`, `office`, `high_rise`, `data_center` | **city level 5** | the tower tier proper, and the thing the empty rung now pays out |
+
+The override may touch the sixth rung and nothing else, and
+`gen_buildings.py::verify_invariants` fails the build if it does — rungs 1–5
+shipped, and a city that has already earned them may never be told it has not.
+
+Reward cards, before → after (all READ, no copy authored — doc 12 §2.19 rule 3):
+
+| city level | before | after |
+|---|---|---|
+| 4 | Data Center · Upgrades to level 5 | *same two rows*, and the rung now also opens `house` + `store` L6 |
+| **5** | **empty** | **Upgrades to level 6** |
+| 6 | *did not exist* | the graduation card — nothing above the top rung to unlock, which is a different thing from a hole in the middle of one |
+
+### 24.4 The fit — the sixth row is the fifth row's curve, one step further
+
+`value(6) = round_rule(seed × k^5)`, the §2.2 family at `e = 5`, ladders applied
+once, half-up at every tie. No new fit, no hand-placed cell, no whitelist;
+`tools/gen_buildings.py` regenerates and diffs all **66** rows.
+
+| archetype | pop L5 → L6 | kW L5 → L6 | WU L5 → L6 | build h | k_out / k_dem |
+|---|---|---|---|---|---|
+| `house` | 23 → **36** | 91 → **215** | 2.4 → **5.7** | 7.5 → **11.0** | 1.55 / 2.35 |
+| `store` | jobs 35 → **54** | 275 → **645** | 3.9 → **9.2** | 11.5 → **16.0** | 1.55 / 2.35 |
+| `apartment` | 281 → **520** | 795 → **1,940** | 17.5 → **42.5** | 35 → **54** | 1.85 / 2.45 |
+| `office` | jobs 351 → **650** | 1,260 → **3,090** | 11.5 → **28.0** | 46 → **72** | 1.85 / 2.45 |
+| `high_rise` | 1,167 → **2,450** | 3,810 → **9,700** | 54 → **138** | 134 → **227** | 2.10 / 2.55 |
+| `data_center` | jobs 233 → **490** | 16,900 → **43,150** | 135 → **345** | 167 → **284** | 2.10 / 2.55 |
+
+**The money columns** (doc 03's, generated by `tools/gen_building_economy.py`):
+`base_tax(6) = base_tax_l1 × 2.15^5`, `upgrade_cost(5→6) = build_cost_l1 × 1.45 ×
+2.55^4`, `capital_value(6) = build_cost_l1 × V(6)`.
+
+`V(6)` is **the only cell of `CAPITAL_VALUE_V` this project has ever placed
+itself**, so it is placed by the rule the other five claim rather than by
+judgement: the closed form gives
+
+```
+V(6) = 1 + (1.45 / 1.55) × (2.55^5 − 1) = 100.9287528125     exactly
+     → half-up at 3 dp                  = 100.929
+```
+
+| archetype | tax/gh L6 | upgrade L5→L6 | capital value L6 |
+|---|---|---|---|
+| `house` | $551 | **$73,572** | $121,115 |
+| `store` | $1,194 | $159,405 | $262,415 |
+| `apartment` | $3,216 | $429,167 | $706,503 |
+| `office` | $5,972 | $797,025 | $1,312,077 |
+| `high_rise` | $11,944 | $1,594,050 | $2,624,154 |
+| `data_center` | $96,474 | $11,035,734 | $18,167,220 |
+
+**The L5 rows gained an `upgrade_time_hours`** they never had, because they never
+had a next level to price: house 7.0, store 10.5, apartment 35, office 47,
+high_rise 148, data_center 185, each `0.65 × build_time(6)` off the ROUNDED
+build-time cell exactly as §2.2 has always specified.
+
+### 24.5 The meshes — through the same pipeline, and the L1–L5 hashes prove it
+
+`tools/gen_building_shapes.py` → `data/building_shapes.json` →
+`tools/gen_graybox.gd` → `game/meshes/generated/`. Twelve new `.res` files (six
+archetypes × two LODs); the manifest went **121 → 133** entries and **not one
+existing mesh hash moved** — the diff is twelve new files and a manifest header.
+
+| archetype L6 | floors | height* | LOD0 tris | budget | silhouette |
+|---|---|---|---|---|---|
+| `house` | 4 | 19.9 m | 108 | 320 | `0x4837C8` |
+| `store` | 5 | 23.4 m | 134 | 320 | `0x56FFD9` |
+| `apartment` | 13 | 55.2 m | 124 | 320 | `0x8A57C9` |
+| `office` | 25 | 103.8 m | 122 | 320 | `0xBC97C9` |
+| `high_rise` | 78 | **290.2 m** | 116 | 420 | `0xFF1FC9` |
+| `data_center` | 5 | 23.4 m | 128 | 320 | `0x5677E5` |
+
+\* the mesh AABB, spire and beacon included. Doc 02 §2.14 and doc 11 §2.14 quote the PARAPET — `floors × 3.5 m` — which for `high_rise` L6 is 273 m against the 290.2 m the mesh occupies.
+
+**The sixth level marker had to be a BLOCK, not a prop, and that is arithmetic.**
+Doc 11 §2.14's 24-bit silhouette descriptor saturates `mast_count` at 3 (the L4
+crown's two masts plus the L5 spire) and `prop_count` at 7 on every one of the
+six by L5 — so a sixth rung built out of *more props* moves **not one bit** of the
+descriptor and doc 11 §7.1 test 7's "≥ 2 Hamming between levels of one archetype"
+fails on the spot. The marker is a **crown setback**: one further inset storey
+beneath the spire, which moves `setback_count` and `height_bucket` together and
+reads at 400 m as the only thing the rung means — *this one went up again*.
+
+Every budget and Hamming distance is re-verified by the generator before a byte
+is written, and again by `tests/test_graybox_gen.gd` against the committed
+manifest, now over a MIXED ladder (a police station has no L6 to be confused
+with an apartment's, so the sweep compares only levels both archetypes have).
+
+The shader's level atlas took the ceiling with it: `COLOR.a = level/8` is exact
+through the 8-bit vertex-colour channel at 6/8 = 0.75 (191/255 × 8 = 5.992 →
+rounds to 6), the packed maximum goes `447 + 448·5 = 2,687` → `447 + 448·6 =
+3,135` — still 5,354× inside f32's exact-integer range — and
+`level_build_height[]` is sized `LEVEL_MAX + 1`. **Eight is the hard ceiling** and
+`tests/test_render_merge.gd` now asserts it out loud.
+
+### 24.6 The seventh rung of the population ladder
+
+`[0, 200, 700, 1600, 3600, 8000]` → `[0, 200, 700, 1600, 3600, 8000, **18000**]`.
+
+An APPEND. No rung below it moved, and appending above the top rung cannot
+un-earn a level in any save. The placement is **§19.2's own recipe one step
+further**, not a new fit: rungs 2–5 settle at a flat 2.25× (1,600 → 3,600 is
+exactly that; 3,600 → 8,000 is 2.22 after rounding to two significant figures),
+so 8,000 × 2.25 = **18,000** exactly, and it renders at the same two significant
+figures as the rungs beneath it.
+
+Like rungs 4 and 5 it is **honest extrapolation and labelled as such**. The
+highest population this study has ever measured is 7,923 (§22.3.1, seed 1337 at
+game-day 70), which clears rung 5 and not rung 6; the `curriculum` agent ends
+this pass's 45-game-day runs at 2,338 / 2,736 / 3,257. The population route to
+rung 6 is the BACKSTOP (ruling 93 §G1); the curriculum is the route that is
+measured, and §24.9 measures it.
+
+### 24.7 The sixth curriculum row
+
+```
+level 6 — "Up, not out"
+  l6_high_rise    build_archetype high_rise  × 1
+  l6_tower        upgrade_to_level ≥ 6       × 1
+  l6_population   reach_population           900
+```
+
+`upgrade_to_level` is a new objective kind and the first one in the table that
+filters an event NUMERICALLY (`to_level >= 6`) instead of by name. `>=` and not
+`==` is forced by the mixed ladder: an equality row would refuse a player who
+went further, and a per-archetype row would be unanswerable by a police station.
+It rides the same building-panel button `upgrade_building` already rides, so
+ruling 93 §G2 — *a curriculum may never ask for a verb the player cannot
+perform* — is satisfied by construction.
+
+`l6_high_rise` is the row that pays off an old debt: `high_rise` unlocks at city
+level 3 and **no curriculum level had ever mentioned it**.
+
+### 24.8 The finding — the tower tier is a POWER purchase, and the student had to be told
+
+The first three-seed run of the new level did not complete on two of three seeds
+at **45 game-days**, and the reason is worth the section:
+
+| seed | level 6 earned | L5 houses standing | upgrade gate says |
+|---|---|---|---|
+| 1337 | game-hour 1,056 | — | — |
+| 4242 | **never** | 25 | `E_POWER_HEADROOM` × **25 of 25** |
+| 9001 | **never** | 32 | `E_POWER_HEADROOM` × **32 of 32** |
+
+Every single level-5 house in both cities was refused for power, and the
+arithmetic is doc 02 §8's on purpose: `k_dem` 2.35 against `TAX_LEVEL_GROWTH`
+2.15 is the rule that **every upgrade is less utility-efficient than the last**,
+so a `house` goes 91 kW → 215 kW across that one step — more than the whole
+150 kW capacity of the level-2 transformers `Balanced` places by habit.
+
+**This is not a balance failure; it is the agent failing to read.** The refusal
+names its own fix, `PowerGrid.can_upgrade_power` fails on the local
+transformer/feeder/substation path rather than on any city-wide ceiling, and a
+level-3 transformer costs **$2,800** against a **$73,572** upgrade. `Curriculum`
+now does what the panel tells the player to do: when the top rung is refused for
+power, it buys copper *at the building that was refused*, sized to the rung
+(`Api.transformer_level_for`, the smallest doc 04 §2.2 rung that carries
+`kW × 1.15 / 0.90`). That is one new habit on one agent, it fires only on the
+`upgrade_to_level` kind, and levels 1–5 are byte-identical across the change —
+every L1–L5 game-hour in §24.9's table is the same on all three seeds before and
+after it.
+
+**Recorded for doc 04.** With the feeder verb still unlanded (F-11), the tower
+tier is affordable but *fiddly*: the player must notice the power refusal and buy
+a transformer for it. That is a legible loop and the UI already says so
+(`E_POWER_HEADROOM` renders the deficit in kW with a fix target), but it is the
+first content in the game that requires it, and it is the strongest argument yet
+for doc 04's feeder verb.
+
+### 24.9 The curriculum's pacing, re-measured — 3 seeds × 45 game-days
+
+Online coarse step, `BalanceGateRig`, the same instrument gate 21 uses.
+
+| level | 1337 | 4242 | 9001 | duration (game-hours) | Wave 9 |
+|---|---|---|---|---|---|
+| 1 | 13 | 13 | 14 | **13–14** | 18 |
+| 2 | 51 | 54 | 55 | **38–41** | 39–41 |
+| 3 | 97 | 98 | 103 | **44–48** | 41–42 |
+| 4 | 153 | 150 | 192 | **52–89** | 47–92 |
+| 5 | 345 | 351 | 312 | **120–201** | 113–181 |
+| **6** | **823** | **803** | **747** | **435–478** | *did not exist* |
+| whole arc | 34.3 d | 33.5 d | 31.1 d | **31.1–34.3 game-days** | 12.7–13.7 |
+
+Levels 1–5 sit inside Wave 9's measured windows on every seed — the arc got
+longer at the TOP, it did not get slower underneath. Level 6 is **~2.9×** level 5
+rather than the ~2× the first five settle into, and §24.8 is why: it is a saving
+beat for a $73,572 upgrade with a copper purchase in the middle of it. The
+graduation level is allowed to be the longest and this one is the top of the
+ladder.
+
+End state at 45 game-days, and the row that matters — **`house` L6 × 1 on every
+seed**: the tower tier exists in a played city, not only in a table.
+
+| seed | population | treasury | city level | the L6 building |
+|---|---|---|---|---|
+| 1337 | 2,338 | $143,930 | 6 | `house` L6 |
+| 4242 | 2,736 | $105,645 | 6 | `house` L6 |
+| 9001 | 3,257 | $122,011 | 6 | `house` L6 |
+
+### 24.10 Gates
+
+* **Gate 20 — RE-FIT, one line.** `ladder.size()` 6 → **7**. The ladder is an
+  append and the count is asserted rather than bounded, because a ladder that
+  grows by accident is exactly what this gate exists to catch. Every other claim
+  in it — ascending, file agrees with the fallback const, t0 below rung 1,
+  `balanced` at rungs 1 and 2 inside their ruled windows — is **unchanged and
+  still passes**.
+* **Gate 21 — RE-FIT, the horizon.** Claims 1 and 2 are unchanged in substance
+  (every level completes, in order, on every seed) but 21 game-days no longer
+  contains a six-level arc, so the run is **45 game-days** and the ruled bound on
+  the top level is **40** against a measurement of 31.1 / 33.5 / 34.3. Claim 3's
+  early bounds did **not** move — level 1 inside the first game-day, level 3
+  inside six — and **level 5 is now asserted separately against the old 21-day
+  horizon**, so "the arc got longer at the top and not underneath" stays provable
+  rather than assumed.
+* **The other 26 gates are untouched, and green.**
+
+### 24.11 What moved that was not content
+
+Two code changes are not appends and both are named here rather than buried:
+
+1. **`cmd_upgrade_building`'s `upgrade_time_hours` fallback.** The top row of a
+   ladder carries no `upgrade_time_hours`, and the sim read the NEXT level's row,
+   so the **last step of every ladder** ran on a bare `4.0`-hour literal — a
+   number doc 02 authors for nothing at all. A 227-game-hour high-rise would have
+   grown its tower in an afternoon. The fallback is now the row BELOW, which is
+   where doc 02 §2.2 stores the price of the step `L → L+1`. **Every step that
+   already had a figure still reads exactly the figure it read**; only the final
+   step of each ladder moved, and it moved from a placeholder onto the doc's own
+   number. (The underlying off-by-one — the sim reads row `L+1` where doc 02
+   stores the step on row `L` — is REPORTED, NOT FIXED: fixing it changes every
+   upgrade duration in the game and that is a balance pass, not a content one.)
+2. **`Curriculum`'s copper habit** — §24.8, fires only on `upgrade_to_level`.
+
+### 24.12 Hashes — the starter city does not move, and the bench city moves through EXACTLY ONE KEY
+
+`tools/profile_sim.gd --hash-only`, both cities, both paths:
+
+| city / path | before | after |
+|---|---|---|
+| starter, coarse 24 h | `2231df75…` | **`2231df75…` — identical** |
+| starter, fine 2.0 h | `bffdf583…` | **`bffdf583…` — identical** |
+| bench, coarse 24 h | `8816d28f…` → `a06e7d43…` (Wave 9) | **`8b4e0079…` — MOVED** |
+| bench, fine 2.0 h | `1781a977…` → `224a900d…` (Wave 9) | **`aea5370b…` — MOVED** |
+
+Full digests, after:
+
+```
+starter coarse 24h  2231df7517a1c0b2cd97de31e6f715f5cf3e530d709be6fbe3f560598f99452d   (unchanged)
+starter fine  2.0h  bffdf583288551cf539dca333a8b6fcb9080b095e5a6af8683192a5a3b0c14c8   (unchanged)
+bench   coarse 24h  8b4e0079bfc5a8076e9c4a5ab80245d4a679a5928c1478cf6683323e0c100b53
+bench   fine  2.0h  aea5370b3a25de02d3e51f6ad86d224363f463ca2305b52b55505a80882a35f3
+```
+
+**The mover is the seventh population rung, and that is proved rather than
+argued.** Two A/B arms on the same tree, changing one key at a time:
+
+| arm | bench coarse 24 h |
+|---|---|
+| shipped | `8b4e0079…` |
+| shipped, `data/goals.json`'s level-6 row deleted | `8b4e0079…` — **no effect** |
+| shipped, `city_level_population_thresholds` back to six rungs | **`a06e7d43…` — the Wave 9 baseline, byte for byte** |
+
+And the mechanism, measured: the benchmark fixture is a 1,500-building stress
+city that settles at **35,411 residents** in its first 24 game-hours. Against a
+six-rung ladder that is city level 5; against a seven-rung one it is **city level
+6**, so the `progression` save section carries a different `city_level`,
+`city_level_max` and one more `city_level_N` milestone. Nothing else in the body
+differs — no RNG stream is drawn, no rule changed, and the city that produced the
+hash is the same city.
+
+**The starter city is untouched at 144 residents**, which is the useful half of
+the pair: the sixth building rung, the `upgrade_time_hours` column the L5 rows
+gained, `Building.max_level` (derived at load, never serialized), the L6 meshes
+and the level-6 curriculum row are ALL hash-neutral. Every table change is an
+append at index 6 of a ladder no ordinary city is near, and the identity pass
+commands no upgrades at all, so §24.11's fallback cannot fire either.
+
+**`tools/profile_sim.gd`'s committed baselines therefore need exactly one
+refresh — the bench city's two — and this branch does not make it.** Baseline
+churn this wave belongs to the routing branch (that was the brief); the two
+digests above are published here so the lead can reconcile at merge without
+re-running anything.
+
+### 24.13 The frame — the Z2 budget did not move by a single primitive
+
+`tools/profile_frame.gd`, bench city, preset `balanced`, hour 21, 1920×1080,
+30 warm-up + 60 measured frames:
+
+| | before | after | budget |
+|---|---|---|---|
+| Z2 draw calls | 191 | **191** | 320 |
+| draw calls + UI | 216 | **216** | 320 |
+| merged MEDIUM buckets | 89 | **89** | — |
+| chunk tiers (near/med/far) | 0 / 15 / 21 | **0 / 15 / 21** | — |
+| primitives | 237,076 | **237,076** | — |
+
+Unchanged to the last primitive, and mechanically it could not be otherwise: the
+bench city holds no level-6 building, `CityView._fold` drops any bucket at a
+level outside `1..LEVEL_MAX` *or* one the archetype does not author, and an atlas
+is cut from the level MASK the chunk actually holds. Twelve new meshes on disk
+that nothing instantiates cost the frame nothing. (`mean ms` moved 10.84 → 11.87
+between the two runs; that is run-to-run noise on a shared GPU, and the four
+structural columns above are the ones the budget is written against.)
+
+### 24.14 The matrix — 18 of 18, and not one row moved
+
+`tests/balance_matrix.gd -- days=21`, six strategies × three seeds, means, against
+§22.4.1's published column:
+
+| strategy | §22.4.1 (Wave 9) | Wave 10 | delta |
+|---|---|---|---|
+| `do_nothing` | 165,636 / 165,636 / 144 | **165,636 / 165,636 / 144** | — |
+| `greedy_growth` | 128,540 / 1,018,323 / 1,760 | **128,540 / 1,018,323 / 1,760** | — |
+| `infrastructure_first` | 24,099 / 140,499 / 232 | **24,099 / 140,499 / 232** | — |
+| `balanced` | 68,725 / 904,358 / 1,379 | **68,725 / 904,358 / 1,379** | — |
+| `tax_squeezer` | 95,800 / 1,215,613 / 1,182 | **95,800 / 1,215,613 / 1,182** | — |
+| `disaster_neglect` | 62,220 / 1,022,657 / 1,448 | **62,220 / 1,022,657 / 1,448** | — |
+
+*(treasury / value created / population.)*
+
+**All six rows are byte-identical**, and the reason is the shape of the content:
+the highest city level any of the six reaches at 21 game-days is **3**
+(`greedy_growth` and `disaster_neglect`), and the sixth building rung opens at
+city level 4 at the earliest. Nothing in the matrix can see the new tier, so
+nothing in the matrix moved — which is also why §24.9's `curriculum` run is the
+only instrument that could measure this pass at all.
+
+The four supporting columns are unmoved too: `incident_abandoned` **0.0 across
+all eighteen runs** (gate 9's column), Director events 2.0 on every row, credit
+draws 0.0, and every ordering §15.1 checks intact.
+
+### 24.15 What this pass did not do
+
+- **It did not build a ring-3 land tier.** It cannot be built on this board and
+  doc 09 §2.8.3 is the arithmetic: the 7 × 7 world is 9 core + 16 ring-1 +
+  24 ring-2 = 49 blocks, exactly. A ring 3 is the 9 × 9 shell, which is a WORLD
+  change — every block id, the bench fixture, doc 03's `blocks_owned` anchor —
+  and re-gating existing ring-2 land upward would take purchasability away from a
+  city that already has it, which §2.11's monotonicity promise forbids.
+- **It did not extend `water_facility`, the two stations or the two grid shells.**
+  §24.2 — those ladders are docs 05 and 06's.
+- **It did not fix the `upgrade_time_hours` off-by-one.** §24.11 — reported.
+- **It did not re-tune one shipped cell.** Every table change in this pass is an
+  append.
+- **It did not put `curriculum` in the default matrix.** §22.2 still stands, and
+  §24.14's matrix is the six-strategy one this document has always published.

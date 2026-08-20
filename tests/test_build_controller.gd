@@ -351,7 +351,13 @@ func test_building_view_reports_live_stats() -> void:
 	var view := _controller(sim).building_view("H-001")
 	assert_true(bool(view["exists"]))
 	assert_eq(str(view["archetype"]), "house")
-	assert_eq(int(view["max_level"]), 5, "Core Design Rule 5")
+	assert_eq(int(view["max_level"]), 6,
+			"a house carries doc 02 §2.14's sixth rung")
+	# And an archetype that does NOT is not offered one.
+	var station := _controller(sim).building_view("F-001")
+	if bool(station.get("exists", false)):
+		assert_eq(int(station["max_level"]), 5,
+				"the fire station's ladder still stops at five")
 	assert_eq((view["vitals"] as Array).size(), 6, "§2.9's 2×3 vitals grid")
 	assert_eq((view["coverage"] as Array).size(), 4, "Power/Water/Police/Fire tiles")
 	var power_tile: Dictionary = (view["coverage"] as Array)[0]

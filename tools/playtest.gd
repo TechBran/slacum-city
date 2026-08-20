@@ -622,7 +622,7 @@ class Api extends RefCounted:
 		for id in _sorted(sim.buildings):
 			var sim_id := String(id)
 			var b: Building = sim.buildings[sim_id]
-			if b.state != &"active" or b.level >= 5:
+			if b.state != &"active" or b.level >= b.max_level:
 				continue
 			var archetype := String(b.archetype)
 			if not categories.is_empty() and not categories.has(sim.catalog.category(archetype)):
@@ -643,6 +643,44 @@ class Api extends RefCounted:
 			if out.size() >= UPGRADE_LIMIT:
 				break
 		return out
+
+	## The building CLOSEST to the top of its own ladder that can upgrade right
+	## now, highest level first, cost then id as tie-breaks. `{}` when none can.
+	##
+	## [upgrade_candidates] ranks the other way — cheapest first — and that is
+	## right for an agent buying capacity by the dollar, but it is exactly wrong
+	## for the doc 09 §2.14 objective "take a building all the way to level 6":
+	## the cheapest upgrade in a city of a hundred houses is always another
+	## L1 → L2, so an agent chasing the top rung on the cheap list never leaves
+	## the bottom one. This ranks on PROGRESS instead, which is what a player
+	## following that instruction does — they pick the tall one and keep going.
+	func top_upgrade_candidate() -> Dictionary:
+		if not has_verb("cmd_upgrade_building"):
+			return {}
+		var m_build := float(sim.treasury.difficulty().get("M_build", 1.0))
+		var ranked: Array[Dictionary] = []
+		for id in _sorted(sim.buildings):
+			var sim_id := String(id)
+			var b: Building = sim.buildings[sim_id]
+			if b.state != &"active" or b.level >= b.max_level:
+				continue
+			ranked.append({"sim_id": sim_id, "archetype": String(b.archetype),
+					"level": b.level, "top": b.max_level,
+					"cost": sim.econ_curves.upgrade_cost(String(b.archetype), b.level, m_build)})
+		ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			if int(a["level"]) != int(b["level"]):
+				return int(a["level"]) > int(b["level"])
+			if int(a["cost"]) != int(b["cost"]):
+				return int(a["cost"]) < int(b["cost"])
+			return String(a["sim_id"]) < String(b["sim_id"]))
+		for i in mini(ranked.size(), UPGRADE_SCAN):
+			var row: Dictionary = ranked[i]
+			var preview := upgrade_preview(String(row["sim_id"]))
+			if not bool(preview["ok"]):
+				continue
+			row["cost"] = int(preview["payload"].get("cost", row["cost"]))
+			return row
+		return {}
 
 	# --- the doc 93 §B verbs ------------------------------------------------
 
@@ -845,6 +883,64 @@ class Api extends RefCounted:
 				var tile := centre + Vector2i(dx, dz)
 				if tile == centre:
 					continue
+				var quote: Dictionary = sim.cmd_place_grid_component(
+						"transformer", tile, level, true)
+				if not bool(quote["ok"]):
+					continue
+				if float((quote["payload"] as Dictionary).get("relieved_kw", 0.0)) <= 0.0:
+					continue
+				return tile
+		return Vector2i(-1, -1)
+
+	## The first building that is ONE RUNG SHORT of its own top level and whose
+	## upgrade the doc 02 §2.11 gate refuses for POWER, with the tile it stands on
+	## and the transformer level that would carry it. `{}` when there is none.
+	##
+	## **Why this exists** (doc 92 §24.8). Doc 02 §2.14's sixth rung is the first
+	## content in the game whose demand curve outruns the copper a competent agent
+	## buys by habit: a `house` goes 91 kW → 215 kW across that one step, which is
+	## more than the whole 150 kW capacity of the level-2 transformers `Balanced`
+	## places. Measured over 45 game-days on three seeds, EVERY level-5 house in
+	## the city was refused `E_POWER_HEADROOM` and the tower objective never
+	## completed. That is not a balance failure — `k_dem > TAX_LEVEL_GROWTH` is
+	## doc 02 §8's deliberate rule that every upgrade is less utility-efficient
+	## than the last — it is the agent failing to do the obvious thing the refusal
+	## is telling it to do, which is buy copper at the building that was refused.
+	func power_blocked_top_rung() -> Dictionary:
+		if not has_verb("cmd_upgrade_building"):
+			return {}
+		for id in Api._sorted(sim.buildings):
+			var sim_id := String(id)
+			var b: Building = sim.buildings[sim_id]
+			if b.state != &"active" or b.level < 1 or b.level != b.max_level - 1:
+				continue
+			var preview: Dictionary = sim.cmd_upgrade_building(sim_id, true)
+			var blockers: Array = (preview.get("payload", {}) as Dictionary).get("blockers", [])
+			if blockers.is_empty() or String(blockers[0]) != "E_POWER_HEADROOM":
+				continue
+			var next_stats: Dictionary = sim.catalog.stats(String(b.archetype), b.level + 1)
+			return {"sim_id": sim_id, "tile": b.origin,
+					"transformer_level": Api.transformer_level_for(
+							float(next_stats.get("power_demand_kw", 0.0)))}
+		return {}
+
+	## The smallest doc 04 §2.2 transformer rung that can carry `kw` and still sit
+	## under the 90 % headroom `PowerGrid.can_upgrade_power` demands. Clamped to
+	## the top rung: buying too small is a wasted $500, buying nothing is a wall.
+	static func transformer_level_for(kw: float) -> int:
+		var ladder: Array = PowerGrid.CAPACITY[&"transformer"]
+		var want := kw * 1.15 / 0.90
+		for i in ladder.size():
+			if float(ladder[i]) >= want:
+				return i + 1
+		return ladder.size()
+
+	## `relief_spot`, aimed at ONE building instead of at the hottest transformer
+	## in the city. Same ring scan, same `relieved_kw > 0` gate, same determinism.
+	func relief_spot_near(centre: Vector2i, level: int, radius: int) -> Vector2i:
+		for dz in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				var tile := centre + Vector2i(dx, dz)
 				var quote: Dictionary = sim.cmd_place_grid_component(
 						"transformer", tile, level, true)
 				if not bool(quote["ok"]):
@@ -2089,6 +2185,12 @@ class Curriculum extends Balanced:
 			"upgrade_building":
 				var rows := api.upgrade_candidates()
 				return 0 if rows.is_empty() else int(rows[0]["cost"])
+			"upgrade_to_level":
+				# The price of the NEXT step toward the top, not of the whole climb:
+				# the objective is served one rung at a time and the earmark only has
+				# to protect the rung the agent is buying this game-hour.
+				var top := api.top_upgrade_candidate()
+				return 0 if top.is_empty() else int(top["cost"])
 			"buy_block":
 				var block := api.purchasable_block()
 				if block == "":
@@ -2117,6 +2219,24 @@ class Curriculum extends Balanced:
 				if rows.is_empty():
 					return false
 				return bool(api.upgrade(String(rows[0]["sim_id"]))["ok"])
+			"upgrade_to_level":
+				var top := api.top_upgrade_candidate()
+				if not top.is_empty():
+					return bool(api.upgrade(String(top["sim_id"]))["ok"])
+				# Nothing cleared the gate. Doc 92 §24.8: on the sixth rung the
+				# reason is POWER — the step is worth 124 kW on a house and 1,145
+				# on an apartment — and the answer to a power refusal is copper at
+				# the building that was refused, which is exactly what the panel
+				# tells the player. $2,800 for a level-3 transformer against a
+				# $73,572 upgrade: the agent is not being clever, it is reading.
+				var blocked := api.power_blocked_top_rung()
+				if blocked.is_empty():
+					return false
+				var level := int(blocked["transformer_level"])
+				var tile := api.relief_spot_near(blocked["tile"], level, HOTSPOT_RADIUS)
+				if tile.x < 0:
+					return false
+				return bool(api.place_grid_component("transformer", tile, level)["ok"])
 			"set_tax_rate":
 				# One detent up, which is the smallest real move the slider
 				# makes. The objective teaches that the slider EXISTS and that

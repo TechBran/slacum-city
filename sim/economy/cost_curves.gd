@@ -17,7 +17,12 @@ extends RefCounted
 ## Loader invariants are collected in `errors` rather than raised, mirroring
 ## `BuildingCatalog` and `DayCurveSet`.
 
+## Doc 03 §2.2's ladder floor. Six of the fourteen money rows grew a SIXTH rung
+## with doc 02's growth stock (doc 92 §24) and the rest stop here, so this is the
+## minimum a row may carry and never the number of cells to read: `_validate_row`
+## takes the height off the row itself.
 const LEVELS_PER_ARCHETYPE := 5
+const TOP_LEVELS_PER_ARCHETYPE := 6
 const GENERATED_CELL_TOLERANCE := 1  # doc 03 §7 test 8: ±$1 (RR-5 locks 3 cells)
 
 ## doc 03 rounds half-up everywhere (§2.8's own note: 7,187.5 → 7,188). Binary
@@ -379,9 +384,10 @@ func _load(building_economy: Dictionary, economy: Dictionary) -> void:
 	_road_upgrade_cost = roads.get("upgrade_cost_per_tile", {})
 	_land_resale_fraction = float(land.get("LAND_RESALE_FRACTION", 0.0))
 
-	if _capital_value_v.size() != LEVELS_PER_ARCHETYPE:
-		errors.append("economy.json upgrades.CAPITAL_VALUE_V must carry %d levels"
-				% LEVELS_PER_ARCHETYPE)
+	if _capital_value_v.size() < LEVELS_PER_ARCHETYPE \
+			or _capital_value_v.size() > TOP_LEVELS_PER_ARCHETYPE:
+		errors.append("economy.json upgrades.CAPITAL_VALUE_V carries %d levels, expected %d–%d"
+				% [_capital_value_v.size(), LEVELS_PER_ARCHETYPE, TOP_LEVELS_PER_ARCHETYPE])
 	if _repair_cost_per_capital <= 0.0:
 		errors.append("economy.json expenses.REPAIR_COST_PER_CAPITAL missing")
 
@@ -409,20 +415,30 @@ func _validate_row(id: String, row: Dictionary) -> void:
 	var taxes: Array = row.get("base_tax_by_level", [])
 	var steps: Array = row.get("upgrade_cost_by_step", [])
 	var capitals: Array = row.get("capital_value_by_level", [])
-	if taxes.size() != LEVELS_PER_ARCHETYPE:
-		errors.append("%s: base_tax_by_level must carry %d levels" % [id, LEVELS_PER_ARCHETYPE])
+	# How tall this archetype's money ladder is. Six of doc 03's fourteen rows
+	# gained a sixth rung with doc 02's growth stock (doc 92 §24); the rest still
+	# stop at five, so the height is READ off the row rather than assumed, and it
+	# is the same number in all three columns or the row is malformed.
+	var levels: int = taxes.size()
+	if levels < LEVELS_PER_ARCHETYPE or levels > TOP_LEVELS_PER_ARCHETYPE:
+		errors.append("%s: base_tax_by_level carries %d levels, expected %d–%d"
+				% [id, levels, LEVELS_PER_ARCHETYPE, TOP_LEVELS_PER_ARCHETYPE])
 		return
-	if capitals.size() != LEVELS_PER_ARCHETYPE:
-		errors.append("%s: capital_value_by_level must carry %d levels"
-				% [id, LEVELS_PER_ARCHETYPE])
+	if capitals.size() != levels:
+		errors.append("%s: capital_value_by_level carries %d levels, base_tax carries %d"
+				% [id, capitals.size(), levels])
 		return
-	if steps.size() != LEVELS_PER_ARCHETYPE - 1:
-		errors.append("%s: upgrade_cost_by_step must carry %d steps"
-				% [id, LEVELS_PER_ARCHETYPE - 1])
+	if steps.size() != levels - 1:
+		errors.append("%s: upgrade_cost_by_step must carry %d steps, carries %d"
+				% [id, levels - 1, steps.size()])
+		return
+	if levels > _capital_value_v.size():
+		errors.append("%s: %d levels but economy.json CAPITAL_VALUE_V carries %d"
+				% [id, levels, _capital_value_v.size()])
 		return
 	if not REVENUE_CLASSES.has(String(row.get("class", ""))) and base_tax_l1 != 0.0:
 		errors.append("%s: civic/utility archetypes carry base_tax 0 (doc 03 §2.2)" % id)
-	for level in range(1, LEVELS_PER_ARCHETYPE + 1):
+	for level in range(1, levels + 1):
 		var expected_tax := round_half_up(base_tax_l1 * pow(_tax_level_growth, level - 1))
 		if absi(int(taxes[level - 1]) - expected_tax) > GENERATED_CELL_TOLERANCE:
 			errors.append("%s base_tax L%d: %d vs curve %d (>±$%d)"
@@ -432,7 +448,7 @@ func _validate_row(id: String, row: Dictionary) -> void:
 			errors.append("%s capital_value L%d: %d vs curve %d (>±$%d)"
 					% [id, level, int(capitals[level - 1]), expected_capital,
 					GENERATED_CELL_TOLERANCE])
-	for step in range(1, LEVELS_PER_ARCHETYPE):
+	for step in range(1, levels):
 		var expected_step := round_half_up(cost * _upg_coeff * pow(_upg_growth, step - 1))
 		if absi(int(steps[step - 1]) - expected_step) > GENERATED_CELL_TOLERANCE:
 			errors.append("%s upgrade_cost step %d: %d vs curve %d (>±$%d)"

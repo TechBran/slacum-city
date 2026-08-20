@@ -29,7 +29,14 @@ const SEED_DIGITS := {
 const K_DIGITS := 2  # every multiplier in §2.2 is authored at 2 dp
 const UPGRADE_FACTOR_DIGITS := 2
 const BUILD_TIME_DIGITS := 1  # build_time cells are multiples of 0.5
-const LEVEL_COUNT := 5  # Core Design Rule 5
+## Core Design Rule 5, as amended by doc 92 §24: five rungs for every
+## archetype, six for the growth stock. `LEVEL_COUNT` is the FLOOR;
+## `_levels_of()` is the height of one archetype's own ladder.
+const LEVEL_COUNT := 5
+const TOP_LEVEL_COUNT := 6
+const SIXTH_LEVEL_ARCHETYPES := [
+	"house", "apartment", "store", "office", "high_rise", "data_center",
+]
 const COVERAGE_DIGITS := 2  # the ladder and the archetype multiplier are both 2 dp
 
 ## Report 98 RR-19: doc 02 published four cells that violated its own §2.2
@@ -110,6 +117,11 @@ func _catalog() -> BuildingCatalog:
 # Exact scaled-integer decimal helpers (half-up, no binary-float ties)
 # --------------------------------------------------------------------------
 
+## The height of one archetype's own ladder (doc 02 §2.14).
+static func _levels_of(archetype: String) -> int:
+	return TOP_LEVEL_COUNT if SIXTH_LEVEL_ARCHETYPES.has(archetype) else LEVEL_COUNT
+
+
 static func _ipow(base: int, exponent: int) -> int:
 	var result := 1
 	for _i in exponent:
@@ -176,6 +188,16 @@ func _curve_step(seed: float, seed_field: String, k: float, level: int, step: fl
 # Regeneration of one published cell from the seed rows (doc 02 §2.2)
 # --------------------------------------------------------------------------
 
+## The `min_city_level` ladder for one growth class — the base ladder unless
+## `min_city_level_by_growth_class` overrides it (doc 92 §24.3: the `steady`
+## class opens its sixth rung a city level earlier than the towers do).
+static func _city_ladder(rules: Dictionary, growth_class: String) -> Array:
+	var overrides: Dictionary = rules.get("min_city_level_by_growth_class", {})
+	if overrides.has(growth_class):
+		return overrides[growth_class]
+	return rules["min_city_level_by_level"]
+
+
 func _expected_row(rules: Dictionary, archetype: String, level: int) -> Dictionary:
 	var seed: Dictionary = rules["seed_rows"][archetype]
 	var growth: Dictionary = rules["growth_classes"][String(seed["class"])]
@@ -206,7 +228,7 @@ func _expected_row(rules: Dictionary, archetype: String, level: int) -> Dictiona
 		"crime_weight": _curve_step(float(seed["crime"]), "crime",
 				float(shared["k_crime"]), level, float(derived["crime_weight"])),
 		"min_city_level": float(maxi(int(seed["min_city"]),
-				int(rules["min_city_level_by_level"][level - 1]))),
+				int(_city_ladder(rules, String(seed["class"]))[level - 1]))),
 	}
 
 	var requirement_step := _step_parts(float(derived["coverage_requirement"]))
@@ -223,7 +245,7 @@ func _expected_row(rules: Dictionary, archetype: String, level: int) -> Dictiona
 
 	# upgrade_time(L->L+1) = build_time(L+1) x 0.65, from the ROUNDED build_time
 	# cell (doc 02 §2.2; the raw-product reading misses 3 of the 48 cells).
-	if level < LEVEL_COUNT:
+	if level < _levels_of(archetype):
 		var next_build := _curve_ladder(float(seed["time_h"]), "time_h", k_time, level + 1,
 				ladders["time_h"])
 		var factor := float(shared["upgrade_time_factor"])
@@ -238,12 +260,12 @@ func _expected_row(rules: Dictionary, archetype: String, level: int) -> Dictiona
 # (a) The diff test — doc 02 §7 test 2
 # --------------------------------------------------------------------------
 
-func test_curve_consistency_all_60_rows() -> void:
+func test_curve_consistency_all_66_rows() -> void:
 	var catalog := _catalog()
 	var rules := _rules_data()
 	var checked := 0
 	for archetype in ARCHETYPES:
-		for level in range(1, 6):
+		for level in range(1, _levels_of(archetype) + 1):
 			var shipped := catalog.stats(archetype, level)
 			assert_false(shipped.is_empty(), "%s L%d must exist" % [archetype, level])
 			var expected := _expected_row(rules, archetype, level)
@@ -259,7 +281,7 @@ func test_curve_consistency_all_60_rows() -> void:
 				assert_almost_eq(float(shipped[column]), want, EPS,
 						"%s L%d %s regenerated from seed_rows" % [archetype, level, column])
 				checked += 1
-	assert_true(checked >= 60 * 12, "swept every generated cell, got %d" % checked)
+	assert_true(checked >= 66 * 12, "swept every generated cell, got %d" % checked)
 
 
 func test_rr19_corrected_cells_follow_the_rules() -> void:
@@ -387,10 +409,10 @@ func test_signature_published_cells() -> void:
 
 
 func test_fire_load_doubles_every_level() -> void:
-	# Doc 02 §7 test 24: k_fire_load = 2.00 for all 60 rows.
+	# Doc 02 §7 test 24: k_fire_load = 2.00 for all 66 rows.
 	var catalog := _catalog()
 	for archetype in ARCHETYPES:
-		for level in range(2, 6):
+		for level in range(2, _levels_of(archetype) + 1):
 			assert_eq(catalog.stats(archetype, level)["fire_load"],
 					int(catalog.stats(archetype, level - 1)["fire_load"]) * 2,
 					"%s L%d fire_load doubles" % [archetype, level])
@@ -445,7 +467,8 @@ func test_k_dem_ordering_holds_in_the_shipped_table() -> void:
 func test_catalog_loads() -> void:
 	var catalog := _catalog()
 	assert_eq(catalog.archetypes().size(), 12, "spec §43.2: 12 MVP archetypes")
-	assert_eq(catalog.max_level(), 5, "Core Design Rule 5: five levels each")
+	assert_eq(catalog.max_level(), 6,
+			"Core Design Rule 5 as amended (doc 92 §24): the tallest ladder is six")
 	assert_eq(catalog.schema_version(), 1, "buildings.json schema_version")
 	var sorted_ids := ARCHETYPES.duplicate()
 	sorted_ids.sort()
@@ -455,11 +478,18 @@ func test_catalog_loads() -> void:
 		assert_eq(String(listed[i]), String(sorted_ids[i]), "archetypes() is sorted")
 	for archetype in ARCHETYPES:
 		assert_true(catalog.has(archetype), "has(%s)" % archetype)
-		assert_eq(catalog.levels(archetype).size(), 5, "%s has 5 levels" % archetype)
-		for level in range(1, 6):
+		var top := _levels_of(archetype)
+		assert_eq(catalog.levels(archetype).size(), top,
+				"%s has %d levels" % [archetype, top])
+		assert_eq(catalog.max_level_of(archetype), top,
+				"%s: max_level_of agrees with the row count" % archetype)
+		for level in range(1, top + 1):
 			assert_eq(catalog.stats(archetype, level)["level"], level,
 					"%s levels are ascending" % archetype)
-		assert_true(catalog.stats(archetype, 6).is_empty(), "%s has no L6" % archetype)
+			assert_eq(catalog.is_top_level(archetype, level), level == top,
+					"%s L%d is_top_level" % [archetype, level])
+		assert_true(catalog.stats(archetype, top + 1).is_empty(),
+				"%s has no L%d" % [archetype, top + 1])
 		assert_true(catalog.stats(archetype, 0).is_empty(), "%s has no L0" % archetype)
 	assert_false(catalog.has("stadium"), "deferred archetypes are absent")
 	assert_true(catalog.stats("stadium", 1).is_empty(), "unknown archetype -> {}")
@@ -478,11 +508,12 @@ func test_every_published_column_is_present() -> void:
 		for key in ["name", "category", "tax_class", "growth_class", "produces"]:
 			assert_true(info.has(key) and not str(info[key]).is_empty(),
 					"%s carries %s" % [archetype, key])
-		for level in range(1, 6):
+		var top := _levels_of(archetype)
+		for level in range(1, top + 1):
 			var row := catalog.stats(archetype, level)
 			for column in required:
 				assert_true(row.has(column), "%s L%d carries %s" % [archetype, level, column])
-			assert_eq(row.has("upgrade_time_hours"), level < 5,
+			assert_eq(row.has("upgrade_time_hours"), level < top,
 					"%s L%d upgrade_time_hours presence" % [archetype, level])
 			assert_eq(row.has("coverage_radius_tiles"), radius_archetypes.has(archetype),
 					"%s L%d coverage_radius_tiles presence" % [archetype, level])
@@ -550,7 +581,7 @@ func test_footprint_and_city_level_growth_schedule() -> void:
 			"water_facility": 5}
 	var growth_steps := {}
 	for archetype in ARCHETYPES:
-		for level in range(2, 6):
+		for level in range(2, _levels_of(archetype) + 1):
 			var before: Array = catalog.stats(archetype, level - 1)["footprint"]
 			var after: Array = catalog.stats(archetype, level)["footprint"]
 			assert_true(int(after[0]) >= int(before[0]) and int(after[1]) >= int(before[1]),
@@ -573,7 +604,8 @@ func test_rules_blocks_present() -> void:
 	for block in ["growth_classes", "shared_curves", "coverage_ladder", "condition",
 			"fire", "construction", "state_modifiers", "seed_rows", "rounding",
 			"headroom_safety", "avenue_gate", "safety_coverage_factor",
-			"min_city_level_by_level", "water_facility_variants"]:
+			"min_city_level_by_level", "min_city_level_by_growth_class",
+			"sixth_level_archetypes", "water_facility_variants"]:
 		assert_true(rules.has(block), "building_rules carries §8 block '%s'" % block)
 	# §2.12 STATE_* tables: eight rows, each with the four modifier channels.
 	var states: Dictionary = rules["state_modifiers"]
@@ -710,12 +742,31 @@ func test_malformed_fixtures_rejected() -> void:
 	_expect_rejected("only 11 archetypes", data, _rules_data())
 
 	data = _buildings_data()
-	(data["archetypes"]["house"]["levels"] as Array).remove_at(4)
-	_expect_rejected("house has 4 levels", data, _rules_data())
+	(data["archetypes"]["house"]["levels"] as Array).remove_at(5)
+	_expect_rejected("house has 5 levels but is declared six-level", data, _rules_data())
 
 	data = _buildings_data()
-	data["archetypes"]["house"]["levels"][4]["upgrade_time_hours"] = 3.0
-	_expect_rejected("upgrade_time_hours at level 5", data, _rules_data())
+	(data["archetypes"]["police_station"]["levels"] as Array).remove_at(4)
+	_expect_rejected("police_station has 4 levels", data, _rules_data())
+
+	# Doc 92 §24.2: the sixth rung exists exactly where the rules say it does.
+	# A ladder that grew a row the rules did not sanction is a schema break,
+	# not a content addition — the mesh set and the money table would not know.
+	data = _buildings_data()
+	var sixth: Dictionary = (data["archetypes"]["house"]["levels"] as Array)[5]
+	var smuggled: Dictionary = sixth.duplicate()
+	smuggled["level"] = 6
+	(data["archetypes"]["police_station"]["levels"] as Array).append(smuggled)
+	data["generated"]["levels_by_archetype"]["police_station"] = 6
+	_expect_rejected("a sixth rung the rules do not sanction", data, _rules_data())
+
+	data = _buildings_data()
+	data["archetypes"]["house"]["levels"][5]["upgrade_time_hours"] = 3.0
+	_expect_rejected("upgrade_time_hours at the top level", data, _rules_data())
+
+	data = _buildings_data()
+	data["archetypes"]["house"]["levels"][4].erase("upgrade_time_hours")
+	_expect_rejected("upgrade_time_hours missing below the top level", data, _rules_data())
 
 	data = _buildings_data()
 	data["archetypes"]["house"]["levels"][2].erase("upgrade_time_hours")

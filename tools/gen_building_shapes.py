@@ -114,6 +114,21 @@ MK = {
     "spire": {"from_level": 5, "width_m": 0.6, "height_frac": 0.18,
               "height_min_m": 4.5, "height_max_m": 14.0, "beacon_m": 0.6,
               "beacon_blink_hz": 0.5},
+    # L6, the tower tier (doc 92 s23.5). AUTHORED IN BLOCKS, like the L3 setback
+    # and unlike the four above -- there is an entry here so the emitted
+    # `level_markers` block documents all six rungs, and `marker_props` does not
+    # read it.
+    #
+    # It has to be a block and not a prop, and that is arithmetic rather than
+    # taste: by L5 `mast_count` has saturated at 3 (crown's two plus the spire)
+    # and `prop_count` at 7 on every one of the six archetypes, so a sixth rung
+    # built out of MORE PROPS moves not one bit of the 24-bit silhouette
+    # descriptor, and doc 11 s7.1 test 7's ">= 2 Hamming between levels of one
+    # archetype" fails. A further inset storey moves `setback_count` AND
+    # `height_bucket`/`aspect_bucket`, and at 400 m it reads as the only thing
+    # the sixth rung means: this one went up again.
+    "crown_setback": {"from_level": 6, "authored_in": "blocks",
+                      "_note": "one further inset storey beneath the L5 spire"},
 }
 LOD1_KEEP = 0.15
 
@@ -291,21 +306,41 @@ def canopy(x, z, w, d, base_m, thickness=0.35):
     return {"type": "box", "pos_t": [R(x), R(z)], "size_t": [R(w), R(d)],
             "base_m": R(base_m), "height_m": thickness, "overhang": True}
 
-MARKERS = ["none", "rooftop_box", "setback", "crown_band_plus_masts", "spire_beacon"]
+MARKERS = ["none", "rooftop_box", "setback", "crown_band_plus_masts", "spire_beacon",
+           "crown_setback"]
+
+## Doc 02 s2.14 / doc 92 s23: six archetypes carry a sixth rung, the rest five.
+## The roster is duplicated from `data/building_rules.json.sixth_level_archetypes`
+## rather than read, because this generator reads nothing from disk by design —
+## `validate()` cross-checks it against the committed `data/buildings.json` so
+## the duplication cannot rot silently.
+SIXTH_LEVEL_ARCHETYPES = ["house", "apartment", "store", "office", "high_rise",
+                          "data_center"]
+
+
+def levels_of(archetype):
+    return 6 if archetype in SIXTH_LEVEL_ARCHETYPES else 5
 
 # ------------------------------------------------------------- archetypes
 
 def a_house(lv, fx, fz):
-    F = [1, 2, 2, 3, 3][lv - 1]
-    ridge = [2.0, 2.4, 2.8, 3.2, 3.6][lv - 1]
+    F = [1, 2, 2, 3, 3, 4][lv - 1]
+    ridge = [2.0, 2.4, 2.8, 3.2, 3.6, 4.0][lv - 1]
     blocks = []
     if lv < 3:
         blocks.append(blk(0.05, 0.05, 0.9, 0.9, 0, F))
         top_h, tx, tz, tw, td = F * FLOOR, 0.05, 0.05, 0.9, 0.9
-    else:
+    elif lv < 6:
         blocks.append(blk(0.05, 0.05, 0.9, 0.9, 0, F - 1))
         blocks.append(blk(0.15, 0.15, 0.7, 0.7, F - 1, 1))
         top_h, tx, tz, tw, td = F * FLOOR, 0.15, 0.15, 0.7, 0.7
+    else:
+        # L6 walk-up: the 1x1 lot's last rung goes up, not out -- two inset
+        # storeys under a steeper gable.
+        blocks.append(blk(0.05, 0.05, 0.9, 0.9, 0, F - 2))
+        blocks.append(blk(0.13, 0.13, 0.74, 0.74, F - 2, 1))
+        blocks.append(blk(0.21, 0.21, 0.58, 0.58, F - 1, 1))
+        top_h, tx, tz, tw, td = F * FLOOR, 0.21, 0.21, 0.58, 0.58
     props = [
         gable(tx, tz, tw, td, top_h, ridge, signature=True, lod1=True),
         box(0.68, 0.12, 0.16, 0.16, top_h, 1.6),                      # chimney
@@ -315,16 +350,24 @@ def a_house(lv, fx, fz):
 
 
 def a_apartment(lv, fx, fz):
-    F = [3, 4, 6, 8, 10][lv - 1]
+    F = [3, 4, 6, 8, 10, 13][lv - 1]
     blocks = []
     if lv < 3:
         blocks.append(blk(0.05, 0.05, 1.9, 1.9, 0, F))
         top_h, tx, tz, tw, td = F * FLOOR, 0.05, 0.05, 1.9, 1.9
-    else:
+    elif lv < 6:
         lower = int(round(F * 0.65))
         blocks.append(blk(0.05, 0.05, 1.9, 1.9, 0, lower))
         blocks.append(blk(0.25, 0.25, 1.5, 1.5, lower, F - lower))
         top_h, tx, tz, tw, td = F * FLOOR, 0.25, 0.25, 1.5, 1.5
+    else:
+        # L6 residential tower: podium, shoulder, crown.
+        b1 = int(round(F * 0.55))
+        b2 = int(round(F * 0.28))
+        blocks.append(blk(0.05, 0.05, 1.9, 1.9, 0, b1))
+        blocks.append(blk(0.25, 0.25, 1.5, 1.5, b1, b2))
+        blocks.append(blk(0.45, 0.45, 1.1, 1.1, b1 + b2, F - b1 - b2))
+        top_h, tx, tz, tw, td = F * FLOOR, 0.45, 0.45, 1.1, 1.1
     # balcony ledge bands every 2 floors (2 authored bands, decor)
     for k in (2, 4):
         if k < F:
@@ -338,7 +381,7 @@ def a_apartment(lv, fx, fz):
 
 
 def a_store(lv, fx, fz):
-    F = [1, 2, 3, 3, 4][lv - 1]
+    F = [1, 2, 3, 3, 4, 5][lv - 1]
     s = float(fx)
     blocks = []
     if lv < 3:
@@ -349,12 +392,19 @@ def a_store(lv, fx, fz):
         blocks.append(blk(0.05, 0.05, s - 0.1, s - 0.1, 0, lower))
         blocks.append(blk(0.3, 0.3, s - 0.6, s - 0.6, lower, F - lower))
         top_h, tx, tz, tw, td = F * FLOOR, 0.3, 0.3, s - 0.6, s - 0.6
-    else:
+    elif lv < 6:
         # L5 department store: stepped upper floors (two setbacks)
         blocks.append(blk(0.05, 0.05, s - 0.1, s - 0.1, 0, F - 2))
         blocks.append(blk(0.3, 0.3, s - 0.6, s - 0.6, F - 2, 1))
         blocks.append(blk(0.55, 0.55, s - 1.1, s - 1.1, F - 1, 1))
         top_h, tx, tz, tw, td = F * FLOOR, 0.55, 0.55, s - 1.1, s - 1.1
+    else:
+        # L6 galleria: a third step, and the ziggurat is the signature.
+        blocks.append(blk(0.05, 0.05, s - 0.1, s - 0.1, 0, F - 3))
+        blocks.append(blk(0.3, 0.3, s - 0.6, s - 0.6, F - 3, 1))
+        blocks.append(blk(0.55, 0.55, s - 1.1, s - 1.1, F - 2, 1))
+        blocks.append(blk(0.8, 0.8, s - 1.6, s - 1.6, F - 1, 1))
+        top_h, tx, tz, tw, td = F * FLOOR, 0.8, 0.8, s - 1.6, s - 1.6
     props = [
         band(0.0, 0.0, s, 0.18, F * FLOOR, 1.1),                   # parapet sign band
         band(0.0, s - 0.18, s, 0.18, F * FLOOR, 1.1),
@@ -366,16 +416,24 @@ def a_store(lv, fx, fz):
 
 
 def a_office(lv, fx, fz):
-    F = [4, 6, 9, 13, 18][lv - 1]
+    F = [4, 6, 9, 13, 18, 25][lv - 1]
     blocks = []
     if lv < 3:
         blocks.append(blk(0.05, 0.05, 1.9, 1.9, 0, F))
         top_h, tx, tz, tw, td = F * FLOOR, 0.05, 0.05, 1.9, 1.9
-    else:
+    elif lv < 6:
         lower = int(round(F * 0.65))
         blocks.append(blk(0.05, 0.05, 1.9, 1.9, 0, lower))
         blocks.append(blk(0.2, 0.2, 1.6, 1.6, lower, F - lower))
         top_h, tx, tz, tw, td = F * FLOOR, 0.2, 0.2, 1.6, 1.6
+    else:
+        # L6 headquarters: a second setback and a slab crown.
+        b1 = int(round(F * 0.55))
+        b2 = int(round(F * 0.28))
+        blocks.append(blk(0.05, 0.05, 1.9, 1.9, 0, b1))
+        blocks.append(blk(0.2, 0.2, 1.6, 1.6, b1, b2))
+        blocks.append(blk(0.4, 0.4, 1.2, 1.2, b1 + b2, F - b1 - b2))
+        top_h, tx, tz, tw, td = F * FLOOR, 0.4, 0.4, 1.2, 1.2
     props = [
         box(tx + 0.15, tz + 0.15, 0.4, 0.35, top_h, 2.2),
         box(tx + 0.65, tz + 0.2, 0.35, 0.3, top_h, 1.6),
@@ -386,7 +444,7 @@ def a_office(lv, fx, fz):
 
 
 def a_high_rise(lv, fx, fz):
-    F = [12, 24, 36, 48, 62][lv - 1]
+    F = [12, 24, 36, 48, 62, 78][lv - 1]
     blocks = []
     if lv < 3:
         blocks.append(blk(0.05, 0.05, 1.9, 1.9, 0, F))
@@ -396,13 +454,24 @@ def a_high_rise(lv, fx, fz):
         blocks.append(blk(0.05, 0.05, 1.9, 1.9, 0, lower))
         blocks.append(blk(0.25, 0.25, 1.5, 1.5, lower, F - lower))
         top_h, tx, tz, tw, td = F * FLOOR, 0.25, 0.25, 1.5, 1.5
-    else:
+    elif lv < 6:
         b1 = int(round(F * 0.55))
         b2 = int(round(F * 0.30))
         blocks.append(blk(0.05, 0.05, 1.9, 1.9, 0, b1))
         blocks.append(blk(0.25, 0.25, 1.5, 1.5, b1, b2))
         blocks.append(blk(0.45, 0.45, 1.1, 1.1, b1 + b2, F - b1 - b2))
         top_h, tx, tz, tw, td = F * FLOOR, 0.45, 0.45, 1.1, 1.1
+    else:
+        # L6 landmark tower: four stages, 273 m to the parapet. The tallest
+        # thing the game can build, and the skyline the flagship bar is for.
+        b1 = int(round(F * 0.50))
+        b2 = int(round(F * 0.27))
+        b3 = int(round(F * 0.15))
+        blocks.append(blk(0.05, 0.05, 1.9, 1.9, 0, b1))
+        blocks.append(blk(0.25, 0.25, 1.5, 1.5, b1, b2))
+        blocks.append(blk(0.45, 0.45, 1.1, 1.1, b1 + b2, b3))
+        blocks.append(blk(0.6, 0.6, 0.8, 0.8, b1 + b2 + b3, F - b1 - b2 - b3))
+        top_h, tx, tz, tw, td = F * FLOOR, 0.6, 0.6, 0.8, 0.8
     props = [
         mast(tx + tw * 0.5, tz + td * 0.5, top_h, max(8.0, F * 0.22), 0.5,
              signature=True, lod1=True),
@@ -413,15 +482,21 @@ def a_high_rise(lv, fx, fz):
 
 
 def a_data_center(lv, fx, fz):
-    F = [2, 2, 3, 3, 4][lv - 1]
+    F = [2, 2, 3, 3, 4, 5][lv - 1]
     blocks = []
     if lv < 3:
         blocks.append(blk(0.15, 0.15, 1.7, 1.7, 0, F, window="none"))
         top_h, tx, tz, tw, td = F * FLOOR, 0.15, 0.15, 1.7, 1.7
-    else:
+    elif lv < 6:
         blocks.append(blk(0.15, 0.15, 1.7, 1.7, 0, F - 1, window="none"))
         blocks.append(blk(0.35, 0.35, 1.3, 1.3, F - 1, 1, window="none"))
         top_h, tx, tz, tw, td = F * FLOOR, 0.35, 0.35, 1.3, 1.3
+    else:
+        # L6 hyperscale hall: a second blank deck for the extra chiller bank.
+        blocks.append(blk(0.15, 0.15, 1.7, 1.7, 0, F - 2, window="none"))
+        blocks.append(blk(0.3, 0.3, 1.4, 1.4, F - 2, 1, window="none"))
+        blocks.append(blk(0.45, 0.45, 1.1, 1.1, F - 1, 1, window="none"))
+        top_h, tx, tz, tw, td = F * FLOOR, 0.45, 0.45, 1.1, 1.1
     props = [fence(0.0, 0.0, 2.0, 2.0, 2.2)]
     for i in range(4):                                    # chiller bank
         cx = tx + 0.12 + (i % 2) * (tw * 0.5)
@@ -539,17 +614,17 @@ def a_yard(lv, fx, fz):
 
 ARCHETYPES = [
     ("house",             "res_house",       "residential", "gable_prism",
-     [[1, 1]] * 5, a_house,      [1, 2, 2, 3, 3]),
+     [[1, 1]] * 6, a_house,      [1, 2, 2, 3, 3, 4]),
     ("apartment",         "res_apartment",   "residential", "flat_stair_boxes",
-     [[2, 2]] * 5, a_apartment,  [3, 4, 6, 8, 10]),
+     [[2, 2]] * 6, a_apartment,  [3, 4, 6, 8, 10, 13]),
     ("store",             "com_retail",      "commercial",  "parapet_sign_band",
-     [[1, 1], [1, 1], [2, 2], [2, 2], [2, 2]], a_store, [1, 2, 3, 3, 4]),
+     [[1, 1], [1, 1], [2, 2], [2, 2], [2, 2], [2, 2]], a_store, [1, 2, 3, 3, 4, 5]),
     ("office",            "com_office",      "commercial",  "hvac_cluster",
-     [[2, 2]] * 5, a_office,     [4, 6, 9, 13, 18]),
+     [[2, 2]] * 6, a_office,     [4, 6, 9, 13, 18, 25]),
     ("high_rise",         "res_highrise",    "residential", "setback_tower_mast",
-     [[2, 2]] * 5, a_high_rise,  [12, 24, 36, 48, 62]),
+     [[2, 2]] * 6, a_high_rise,  [12, 24, 36, 48, 62, 78]),
     ("data_center",       "tech_datacenter", "tech",        "chiller_bank",
-     [[2, 2]] * 5, a_data_center, [2, 2, 3, 3, 4]),
+     [[2, 2]] * 6, a_data_center, [2, 2, 3, 3, 4, 5]),
     ("police_station",    "civ_police",      "civic",       "antenna_mast",
      [[2, 2]] * 5, a_police,     [1, 2, 2, 3, 3]),
     ("fire_station",      "civ_fire",        "civic",       "hose_tower",
@@ -569,7 +644,7 @@ def build():
     out = []
     for aid, doc11, family, sig, foots, fn, floors in ARCHETYPES:
         levels = []
-        for lv in range(1, 6):
+        for lv in range(1, levels_of(aid) + 1):
             fx, fz = foots[lv - 1]
             blocks, props = fn(lv, fx, fz)
             levels.append({"level": lv, "floors": floors[lv - 1],
@@ -593,7 +668,11 @@ def build_document():
         # number is the only thing `gen_graybox.gd` checks before deciding a
         # committed manifest is still up to date — bump it or a fresh clone
         # keeps the meshes whose prop sides wear brick.
-        "generator_version": 4,
+        # 5: the sixth rung (doc 02 s2.14 / doc 92 s23). Six archetypes gained an
+        # L6 level; NOTHING below L6 moved by a millimetre, so every committed
+        # L1-L5 mesh hash is byte-identical across the bump and the manifest only
+        # grows.
+        "generator_version": 5,
         "_owner": "doc 11 \u00a73.2 (rendering & performance). Generator input for tools/gen_graybox.gd.",
         "_generator": "tools/gen_building_shapes.py",
         "_roster_note": "The shipped roster is data/buildings.json's 12 archetypes (doc 02), not doc 11 \u00a72.14's 15-row placeholder table; doc11_id maps each shipped archetype onto the \u00a72.14 silhouette row it realises. Tri budgets, lod1_volume_keep_frac and the tall-archetype list are read from data/render.json \u00a78 'lod' and are never restated here.",
@@ -610,12 +689,13 @@ def build_document():
             "roof_prop_contact": 0.65, "roof_prop_contact_m": 0.5,
         },
         "level_markers": {
-            "_rule": "Cumulative per doc 11 \u00a72.14: L1 none; L2 +1 rooftop box; L3 +setback at 60% height (authored in blocks); L4 +crown band + 2 masts; L5 +spire with blinking red aviation beacon. Sizes are proportional to the top block so a house does not grow a skyscraper mast.",
+            "_rule": "Cumulative per doc 11 \u00a72.14: L1 none; L2 +1 rooftop box; L3 +setback at 60% height (authored in blocks); L4 +crown band + 2 masts; L5 +spire with blinking red aviation beacon; L6 +crown setback, one further inset storey beneath the spire (authored in blocks, like L3). Sizes are proportional to the top block so a house does not grow a skyscraper mast. L6 exists on the six archetypes of doc 02 \u00a72.12's growth stock only, and it is a BLOCK rather than a prop because mast_count and prop_count are both already saturated at L5 \u2014 a sixth rung made of more props would move no bit of the \u00a72.14 silhouette descriptor at all.",
             "sequence": MARKERS,
             "rooftop_box": MK["rooftop_box"],
             "crown_band": MK["crown_band"],
             "masts": MK["masts"],
             "spire": MK["spire"],
+            "crown_setback": MK["crown_setback"],
         },
         "lod1": {
             "_rule": "doc 11 \u00a72.14: keep blocks with volume >= lod.lod1_volume_keep_frac of total (data/render.json), drop decor (balcony ledges, sign bands, chamfers), replace roof_props with one AABB box UNLESS the archetype's signature props are flagged lod1 -- those are kept instead, because they are the silhouette that preserves archetype readability at 400 m. The 3 m AO band split is dropped at LOD1.",
@@ -680,16 +760,31 @@ def validate(doc, render_path):
                 failures.append("%s is not taller than the level below" % key)
             prev_h = h
     ids = [a["id"] for a in doc["archetypes"]]
-    for lv in range(1, 6):
-        for x, y in itertools.combinations(ids, 2):
+    # Cross-archetype at EQUAL level, over the levels both archetypes have: with
+    # a mixed ladder (doc 02 s2.14) a police station has no L6 to compare
+    # against, and pretending it does would compare it with itself.
+    for lv in range(1, 7):
+        present = [a for a in ids if (a, lv) in desc]
+        for x, y in itertools.combinations(present, 2):
             d = popcount(desc[(x, lv)] ^ desc[(y, lv)])
             if d < 4:
                 failures.append("L%d %s vs %s silhouette Hamming %d < 4" % (lv, x, y, d))
     for a in ids:
-        for l1, l2 in itertools.combinations(range(1, 6), 2):
+        for l1, l2 in itertools.combinations(range(1, levels_of(a) + 1), 2):
             d = popcount(desc[(a, l1)] ^ desc[(a, l2)])
             if d < 2:
                 failures.append("%s L%d vs L%d silhouette Hamming %d < 2" % (a, l1, l2, d))
+    # The roster this generator duplicates must equal doc 02's own (RR-8's
+    # single-source rule): the shapes file cannot author a level the stat table
+    # has no row for, or `gen_graybox.gd` writes a mesh nothing can place.
+    buildings_path = os.path.join(os.path.dirname(render_path), "buildings.json")
+    if os.path.exists(buildings_path):
+        rows = json.load(open(buildings_path))["archetypes"]
+        for a in ids:
+            want = len(rows.get(a, {}).get("levels", []))
+            if want and want != levels_of(a):
+                failures.append("%s: shapes author %d levels, data/buildings.json has %d"
+                                % (a, levels_of(a), want))
     return failures
 
 
@@ -726,8 +821,9 @@ def main():
     with open(path, "w") as f:
         f.write(text)
     print("gen_building_shapes: wrote %s" % path)
-    print("  12 archetypes x 5 levels; every tri budget and silhouette "
-          "Hamming distance verified")
+    print("  %d archetypes, %d rows (six archetypes carry the L6 tower tier); "
+          "every tri budget and silhouette Hamming distance verified"
+          % (len(ARCHETYPES), sum(levels_of(a[0]) for a in ARCHETYPES)))
     return 0
 
 
