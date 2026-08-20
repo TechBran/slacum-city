@@ -85,6 +85,14 @@ func _ready() -> void:
 
 	save_service = SaveService.new()
 	save_service.name = "SaveService"
+	# doc 13 §7 D-17: one PERFIO line per save/load, ^PERF-anchored so one logcat
+	# grep collects both halves. This is set HERE, at construction, and not beside
+	# the PerfTelemetry wiring in _build_city_view() — the Fold 6 session of
+	# 2026-08-20 found that the boot LOAD runs at line ~133, well before
+	# _build_city_view() is reached, so a flag set there can only ever time
+	# SAVES. The one measurement doc 13 §2.9's ANR arithmetic is missing is the
+	# load in front of the catch-up, and that is exactly the one that was silent.
+	save_service.log_io = true
 	add_child(save_service)
 	android_lifecycle = AndroidLifecycle.new()
 	android_lifecycle.name = "AndroidLifecycle"
@@ -338,10 +346,7 @@ func _build_city_view(render_data: Dictionary) -> void:
 			return render_model.tier_census())
 	perf_telemetry.set_instance_source(func() -> int:
 			return render_model.building_count())
-	# doc 13 §7 D-17: one PERFIO line per save/load, ^PERF-anchored so one
-	# logcat grep collects both halves.
-	if save_service != null:
-		save_service.log_io = true
+	# (`save_service.log_io` is set at construction, above — see the note there.)
 	# Boot-time presets: a phone that auto-detected into Performance used to come
 	# up with Balanced counts on every per-layer view until the player touched
 	# the settings row. Seed them all from the resolved preset once, here.

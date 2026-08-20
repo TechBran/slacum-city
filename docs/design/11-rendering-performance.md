@@ -1142,6 +1142,181 @@ poses, and every table below with an empty `Fold 6` column beside the
 provisional one. **Nothing in this subsection is a device number, and the two
 knob defaults it sets say so in `data/render.json`.**
 
+> **Superseded in part on 2026-08-20 — the phone did appear.** See
+> **"Fold 6 measured"** immediately below. Every workstation number in the rest
+> of this subsection still stands as written, and the sentence above ("nothing
+> in this subsection is a device number") is true of *this* subsection and no
+> longer true of the section as a whole. The device session did **not** manage
+> to separate the three zoom poses — the reason is a harness fault, it is
+> written up below, and the pose matrix is still open.
+
+##### Fold 6 measured — the 2026-08-20 device session
+
+**Device.** Galaxy Z Fold 6, Android 16, `adb` over wireless debugging.
+**Qualcomm Adreno 750, Vulkan 1.3.128, Godot "Forward Mobile"** — the renderer
+this document is written against. Inner display **1856 × 2160 at 120 Hz**;
+`targetSdk` 36, `minSdk` 29, `arm64-v8a`, debug-signed `versionCode` 400.
+
+**The screen is the headline context and it changes how every ms column above
+should be read.** The inner panel is **4,008,960 pixels — 2.07× the 1920×1080
+every table in this section claims, and 4.35× the 1280×720 those tables were
+actually rendered at** (report RR-28, above). Balanced then applies
+`render_scale` 0.85, so the real render target is **1836 × 1578 = 2.90 MP**:
+**1.40× the resolution this section claims and 3.14× the resolution it actually
+measured.** That 3.14× is the number to carry into any fragment argument, and
+the fragment ladders in §2.1.2 are the first thing it lands on. `render_scale`
+is also the governor's first rung, which is why a Fold frame that is late
+degrades resolution before it degrades anything the player would name.
+
+**The city measured is the player's own save**, not a fixture: 70 buildings,
+population 255, day 22, treasury $93.5K, preset `balanced` (auto-detected — no
+`settings.cfg` existed, so the graphics row had never been touched).
+The instrument is the `PERF` line from `game/render/perf_telemetry.gd`, which
+**works, and is now the only frame instrument that does** (see the `gfxinfo`
+note below). Steady state = lines at `t ≥ 12 s`, after shader warm-up and after
+the city has finished streaming in.
+
+| run | fps (med) | p95 ms | cpu ms | gpu_est ms | dc med/max | prim | vram MB | chunks | near | inst | knob |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| ungoverned A | 96.6 | 14.1 | 0.50 | 7.0 | 141 / 141 | 125,062 | 144 | 9 | 4 | 70 | 0 |
+| ungoverned B | 72.7 | 16.9 | 0.60 | 8.2 | 142 / 142 | 125,184 | 144 | 9 | 4 | 70 | 0 |
+| ungoverned C | 71.8 | 16.8 | 0.60 | 8.2 | 142 / 142 | 125,184 | 144 | 9 | 4 | 70 | 0 |
+| ungoverned D | 63.0 | 19.8 | 0.70 | 9.9 | 142 / 142 | 125,184 | 144 | 9 | 4 | 70 | 0 |
+| ungoverned E | 60.6 | 21.4 | 0.65 | 10.0 | 161 / 189 | 124,975 | 167 | 9 | 4 | 70 | 0 |
+| governed F | 53.8 | 26.8 | 0.80 | 12.6 | 143 / 160 | 116,880 | 144 | 9 | 4 | 70 | 4 |
+| governed G | 53.9 | 26.8 | 0.75 | 11.1 | 142 / 142 | 125,184 | 144 | 9 | 4 | 70 | 4 |
+
+Rows A–G were taken between 14:02 and 14:07 with the game in the foreground —
+verified by screenshot, and with the phone untouched between the reset and the
+read. **They are the trustworthy half of this session.**
+
+**Four findings, in the order they matter.**
+
+**1. The draw-call budget is not the constraint on this device, and that
+settles the pad-shadow question.** `dc` sits at **141–189 against §2.13's 320**
+— 41 % to 56 % headroom, at every capture, including the ones where the frame
+was late. The frame is **GPU-bound on fragments, not on submission**: `cpu` is
+**0.5–1.2 ms** against Balanced's 4 ms CPU budget (13–30 % of it) while
+`gpu_est` is 7.0–13.9 ms against a 16.7 ms frame. Nothing in the draw-call
+column is close to the ceiling that the pad-shadow ruling was made revisitable
+against.
+
+**2. The governor fires on this device, in the foreground, on a 70-building
+city — and that much is clean.** Rows F and G reached `knob = 4` (the whole
+non-latching ladder: `render_scale`, `particle_ratio`, `far_cull_m`,
+`street_lights`) and still measured **p95 26.8 ms against Balanced's 16.7 ms
+budget**. §2.13's device matrix puts the Fold in the top tier and budgets it at
+60 fps; on the two daylight-ish captures that budget was met only *after* the
+governor had spent its ladder. Two candidate causes, neither separated by this
+session: the 4 MP panel (a `render_scale` question) and the shadow pass.
+
+> **A longer run appeared to drive the full ladder — `knob` to 15 and a latched
+> preset drop to `performance` at ~30 fps — and it is NOT reported as a result,
+> because the app was not reliably in the foreground for it.** The user picked
+> the phone up partway through; a screenshot timed against the tail of that run
+> shows another app on top while `PERF` lines were still being emitted. A Godot
+> `SurfaceView` that keeps ticking while something else is composited in front
+> of it is not a frame measurement, and the numbers it produced (`gpu_est`
+> *rising* from 11 ms to 18 ms *after* the preset drop, which is backwards for a
+> degradation step) look exactly like what a background/DVFS-parked app
+> produces. **The raw capture is kept at `tools/device_results/log_sustained.txt`
+> and is labelled contaminated.** Whether the ladder really runs to a latched
+> preset drop on this device in normal play is *the* open question this session
+> leaves, and it wants a foreground-verified 20-minute soak.
+
+**3. Thermal and memory.** `thermal` reported 0 then 1 (NONE → LIGHT) and
+`thermal_zone0` sat at **45.7–49.6 °C and drifted DOWN** across the sampled
+window, so **nothing in this session is a thermally throttled measurement** and
+§7.4's 20-minute thermal gate is not what is limiting these frames. That much
+holds regardless of foreground state. Memory is the surprise: process
+**PSS ≈ 1.01 GB**, RSS 890 MB, **Graphics 501 MB**, swap PSS 238 MB — against a
+renderer-reported `vram` of only 144–167 MB. The gap between the renderer's own
+counter and the process total is the thing to chase; 501 MB of graphics memory
+for 70 buildings is a 4 MP framebuffer set (shadow atlas, glow chain, MSAA
+targets), not city content. **No leak was observed** — PSS moved 1,013,065 →
+1,014,041 KB over the sampled window, i.e. flat. *(Sampled during the same
+period as the contaminated run above; a process's PSS does not depend on who is
+composited on top, so it is reported, but the 20-minute leak gate in §7.4 still
+wants a clean session.)*
+
+**4. `near` is 4 and `chunks` is 9 at every zoom the session could reach**, so
+the census columns above are one pose repeated, not a tier sweep. That is the
+harness fault, next.
+
+**What this session could NOT measure, and why — three harness faults.**
+
+**(a) `--esa command_line_params` does not reach `OS.get_cmdline_user_args()` on
+this export template.** This is the fault that cost the pose matrix, and the
+runbook's §1.2 pre-flight is the check that catches it. The evidence is not an
+absence — it is a positive identity: two runs launched with `--zoom=0.0` and
+`--zoom=0.5` produced **byte-identical `dc` and `prim` sequences at matching
+timestamps** (140, 141, 141, 141, 141, 141, 141, 141, 142 … and 124,968 /
+125,052 / 124,802 / 124,802 / 124,734 …), which is the same deterministic frame
+sequence and not a similar one. A screenshot at `--zoom=0.0` shows a mid-zoom
+street view, not the 18 m Z0 pose. **Confirmed a second time with the loudest
+non-destructive flag in the vocabulary**: a launch carrying
+`--rain=1.0,--overlay=2` came up in clear weather with no overlay selected.
+The city still loads on every launch — but it
+loads through `CrashSentinel`'s recovery branch (`am force-stop` counts as an
+unclean exit, so `unclean` is true and `_want_title` is false), **not** through
+`--resume`, which is why the app appeared to be honouring its arguments.
+`GodotAppLauncher` is an `activity-alias` for `.GodotApp`, so the extra should
+forward; where it is being dropped is not yet established. **Until this is
+fixed, no per-pose device number can be taken at all**, and §2.13's pose matrix
+stays open.
+
+> **⚠ Cross-branch interaction the lead must resolve before merging.** A
+> concurrent branch is gating the `PERF`/`PERFIO` wiring behind a **`--perf`
+> user argument** (to avoid a per-frame
+> `viewport_set_measure_render_time` timestamp query in player sessions — a
+> sound motive). **On this export template that gate makes the telemetry
+> unreachable on device**, because user arguments do not arrive at all: fault
+> (a) above. The two changes are individually reasonable and jointly fatal —
+> the only frame instrument that works on this app would be switched off by a
+> flag that cannot be delivered. If the query really must not ship to players,
+> gate it on `OS.is_debug_build()` or a `settings.cfg` row — something that does
+> not travel through `--esa command_line_params` — **or land the argument fix
+> (doc 13 D-20) first.** Every number in this subsection was taken on an
+> ungated build.
+
+**(b) `dumpsys gfxinfo` measures nothing on this app.** Every `framestats` read
+returned **`Total frames rendered: 0`** and every percentile came back as the
+sentinel `4950ms`. Godot renders through a `SurfaceView`, which does not go
+through HWUI, so the platform's frame instrument never sees the game.
+**The whole of `tools/device_runbook.md` §2 is written against `gfxinfo` and
+that half of the runbook is void.** The `PERF` line is the replacement and it is
+strictly better — it carries `dc`, `prim`, `vram` and the chunk census, which
+`gfxinfo` never had.
+
+**(c) The boot LOAD cannot emit its `PERFIO` line on the installed build.**
+`game/main.gd` set `save_service.log_io = true` inside `_build_city_view()`
+(line ~344), and the boot load runs at line ~133 — **211 lines earlier**. So the
+flag was always false for the one call doc 13 §2.9's ANR arithmetic is missing.
+`--save-now` *would* have timed a save (the argument loop runs after
+`_build_city_view()`), but fault (a) means no argument arrives. **Fixed in this
+branch** by setting `log_io` at `SaveService` construction; it needs a new build
+to take effect, and then Q6 is one launch rather than a differential.
+
+**Deliverables 1 and 3 are therefore partial and are marked so**: the three-pose
+day/night table cannot be filled from this session, and no `PERFIO` save or load
+timing was obtained on device. What replaced them is the single-pose steady
+state above, which is a real measurement of the player's real city and is the
+first frame data this project has from the target device.
+
+**A cost this session charged to the player, recorded because it should inform
+how the next one is run.** Every launch resumes the newest save and the sim then
+runs — 20–35 s of wall clock per capture, plus doc 08's offline catch-up in
+front of it. Across ~15 launches the player's city advanced from
+`sim_time_minutes` 32,272 to 33,000 (**day 22 → 23, about 12 sim-hours**) and
+its treasury fell **$93,526 → $47,051** to upkeep. Nothing was lost — population
+held at 255 → 254 and the save is intact — but the generational ladder keeps
+only three entries, so **the pre-session generations rotated off the device** and
+survive only in the session's own backup. Two rules for the next device session,
+both cheap: **take a `run-as … tar` copy of `files/saves` before the first
+launch** (this one did, which is the only reason the pre-session state exists),
+and **prefer one long foreground hold over many short launches** — the relaunch
+is what costs the player, not the measurement.
+
 **Method, and what it does and does not claim.** Every A/B below is interleaved
 *within* each round — both arms measured back to back, three or four rounds — on
 a workstation that was carrying other Godot work for part of the session (four
