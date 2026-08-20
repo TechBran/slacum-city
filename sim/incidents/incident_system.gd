@@ -36,6 +36,11 @@ var next_id: int = 1
 var next_cluster_id: int = 1
 var generation_enabled: bool = true
 var substep_guard_blown: int = 0
+## Sub-steps integrated since boot. Pure observability for tools/profile_sim.gd
+## — nothing reads it, it is not serialized and it is not hashed — but the cost
+## of this system is `substeps × roster`, and a perf claim about it that cannot
+## quote the first factor is a guess.
+var substeps_taken: int = 0
 var offline_hours_elapsed: float = 0.0
 
 var _active: Dictionary = {}  # id -> Incident
@@ -91,6 +96,7 @@ func advance_to(t_end_h: float) -> void:
 
 
 func _integrate(dt_h: float, t_end_h: float) -> void:
+	substeps_taken += 1
 	var dark := _dark_fraction(now_h, t_end_h)
 	# --- 1. linear integration; every rate is constant over dt by construction.
 	for incident_id in _order:
@@ -167,6 +173,13 @@ func _next_discontinuity_h() -> float:
 		var self_resolve := _self_resolve_h(inc)
 		if self_resolve > 0.0 and inc.status == Incident.STATUS_QUEUED:
 			best = minf(best, maxf(0.0, inc.created_h + self_resolve - now_h))
+	# NOTE (doc 91 D-15): this breakpoint fires on the fire-spread grid — every
+	# 1/12 game-hour — whether or not anything is burning, and it is what sets
+	# the integrator's sub-step count (15.7 per coarse hour on the benchmark
+	# city). Making it conditional on a live `structure_fire` measures at 5.1
+	# sub-steps and takes the coarse step from 133.8 ms to 104.8 ms, but it
+	# changes RNG consumption and therefore breaks save identity — so it is a
+	# costed proposal in D-15, not a change.
 	best = minf(best, maxf(0.0, _spread_next_h - now_h))
 	best = minf(best, _next_daynight_boundary_h())
 	var weather_next := world.next_weather_boundary_h()
@@ -819,8 +832,48 @@ static func _state_eligible(state: String) -> float:
 			or state == "destroyed" or state == "planned" else 1.0
 
 
+## The rate is stated ONCE, in `_structure_fire_rates`, and asked for twice.
+##
+## The Poisson draw needs only Σλ; only the pick needs the per-candidate table.
+## A sub-step that ignites nothing is the overwhelming majority, so the sum is
+## taken with `collect = false` and the table is asked for only when the draw
+## comes back positive. At 1,500 buildings and a dozen sub-steps a game-hour
+## that is 18,000 candidate rows an hour a quiet city no longer builds.
+##
+## The second ask re-reads the same roster and re-evaluates the same expression
+## in the same order — `_poisson` only draws, and nothing between the two touches
+## roster state — so its `total` is the one already drawn against and every
+## `lambda` is bit-for-bit what a single pass produced.
 func _generate_structure_fire(dt_h: float, damper: float) -> void:
 	var stream := catalog.stream_for("structure_fire")
+	var total := float(_structure_fire_rates(dt_h, false)["total"])
+	var count := _poisson(_ambient_rate(total, "structure_fire", dt_h) * damper, stream)
+	if count <= 0:
+		return
+	var table := _structure_fire_rates(dt_h, true)
+	var pick_ids: PackedStringArray = table["id"]
+	var pick_lambdas: PackedFloat64Array = table["lambda"]
+	for i in count:
+		var picked := _weighted_pick_packed(pick_ids, pick_lambdas, total, stream)
+		if picked == "":
+			continue
+		var b2 := world.building(picked)
+		spawn("structure_fire", "", b2.get("tile", Vector2i.ZERO),
+				{"kind": "building", "id": picked}, -1.0,
+				{"source": "generator", "archetype": b2.get("archetype", ""),
+				"level": b2.get("level", 1)})
+
+
+## Doc 06 §2.6's per-building ignition rate over the whole roster:
+## `{total, id, lambda}`. `collect` decides only whether the two candidate
+## columns are filled; the arithmetic, the iteration order and the sum are the
+## same either way, which is what lets the caller ask for the sum alone.
+##
+## The roster arrives as six parallel columns rather than 1,500 six-key
+## dictionaries (`IncidentWorld.fire_candidate_columns`): this loop reads six
+## fields per building on every integrator sub-step, and the Dictionary form
+## charged it a hash lookup for each one.
+func _structure_fire_rates(dt_h: float, collect: bool) -> Dictionary:
 	var f_weather := world.weather_effect(catalog.weather_channel_for("structure_fire"))
 	var base := float(catalog.generator_base_rates.get("structure_fire_global_scalar", 0.40))
 	# Hoisted out of the roster loop: these are constants for the whole
@@ -829,24 +882,26 @@ func _generate_structure_fire(dt_h: float, damper: float) -> void:
 	var knee := catalog.factor("fire", "arson_stability_knee", 0.35)
 	var arson_k := catalog.factor("fire", "arson_k", 2.0)
 	var stability_by_district: Dictionary = {}
-	var candidates: Array = []
+	var columns := world.fire_candidate_columns()
+	var ids: PackedStringArray = columns["id"]
+	var states: Array = columns["state"]
+	var conditions: PackedFloat64Array = columns["condition"]
+	var ignitions: PackedFloat64Array = columns["fire_ignition_per_hour"]
+	var powered: PackedByteArray = columns["powered"]
+	var districts: PackedStringArray = columns["district_id"]
+	var pick_ids := PackedStringArray()
+	var pick_lambdas := PackedFloat64Array()
 	var total := 0.0
-	# ONE row per building per sub-step: this loop used to ask `building()` for
-	# the same building three times over, and `fire_candidate_rows()` carries
-	# only the six fields it actually reads.
-	for row in world.fire_candidate_rows():
-		var b: Dictionary = row
-		var id := String(b["id"])
-		var state_mult := IncidentWorld.state_fire_mult_of(b)
+	for i in ids.size():
+		var state_mult := IncidentWorld.state_fire_mult_value(states[i])
 		if state_mult <= 0.0:
 			continue
-		var p_ignite := float(b.get("fire_ignition_per_hour", 0.0)) \
-				* IncidentWorld.fire_condition_mult_of(b) * state_mult
+		var p_ignite := ignitions[i] \
+				* IncidentWorld.fire_condition_mult_value(conditions[i]) * state_mult
 		if p_ignite <= 0.0:
 			continue
-		var f_power := 1.0 + unpowered_mult \
-				* (0.0 if bool(b.get("powered", true)) else 1.0)
-		var district_id := String(b.get("district_id", ""))
+		var f_power := 1.0 + unpowered_mult * (0.0 if powered[i] != 0 else 1.0)
+		var district_id := districts[i]
 		if not stability_by_district.has(district_id):
 			stability_by_district[district_id] = clampf(
 					float(world.district(district_id).get("stability", 1.0)), 0.0, 1.0)
@@ -856,18 +911,11 @@ func _generate_structure_fire(dt_h: float, damper: float) -> void:
 		var lam := base * p_ignite * dt_h * f_power * f_weather * f_arson
 		if lam <= 0.0:
 			continue
-		candidates.append({"id": id, "lambda": lam})
 		total += lam
-	var count := _poisson(_ambient_rate(total, "structure_fire", dt_h) * damper, stream)
-	for i in count:
-		var picked := String(_weighted_pick(candidates, total, stream))
-		if picked == "":
-			continue
-		var b2 := world.building(picked)
-		spawn("structure_fire", "", b2.get("tile", Vector2i.ZERO),
-				{"kind": "building", "id": picked}, -1.0,
-				{"source": "generator", "archetype": b2.get("archetype", ""),
-				"level": b2.get("level", 1)})
+		if collect:
+			pick_ids.append(ids[i])
+			pick_lambdas.append(lam)
+	return {"total": total, "id": pick_ids, "lambda": pick_lambdas}
 
 
 func _generate_transformer(dt_h: float, damper: float) -> void:
@@ -1095,6 +1143,23 @@ func _poisson(lam: float, stream: String) -> int:
 func _weighted_pick(candidates: Array, total: float, stream: String) -> String:
 	var picked := _weighted_pick_row(candidates, total, stream)
 	return String(picked.get("id", ""))
+
+
+## Packed-column twin of `_weighted_pick`, for the structure-fire generator's
+## candidate table. Same draw from the same stream, the same cumulative walk in
+## the same order, the same last-element fallback — it is the Array-of-
+## dictionaries form with the dictionaries taken out.
+func _weighted_pick_packed(ids: PackedStringArray, lambdas: PackedFloat64Array,
+		total: float, stream: String) -> String:
+	if ids.is_empty() or total <= 0.0:
+		return ""
+	var roll := rng.stream(stream).randf() * total
+	var cumulative := 0.0
+	for i in ids.size():
+		cumulative += lambdas[i]
+		if roll < cumulative:
+			return ids[i]
+	return ids[ids.size() - 1]
 
 
 func _weighted_pick_row(candidates: Array, total: float, stream: String) -> Dictionary:

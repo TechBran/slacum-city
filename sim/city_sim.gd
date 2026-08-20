@@ -88,6 +88,24 @@ var tax_rate: float = 0.09
 var tax_rate_changed_hour: int = -1
 
 var buildings: Dictionary = {}  # building id string -> Building
+## The ascending building-id order EVERY roster walk iterates in, cached.
+##
+## Ascending id order is load-bearing — most of these walks are float sums, and
+## summing the same values in a different order is not guaranteed to be the same
+## number — but re-deriving it is `keys() + sort()` over the whole roster, and at
+## 1,500 buildings the districts phase alone paid for twelve of them per step.
+## Purely DERIVED: never captured, never restored, rebuilt on demand, and
+## invalidated by the four places the roster can change (`_invalidate_roster`).
+## Callers iterate it read-only; nothing here hands out a mutable roster.
+var _roster_ids: Array = []
+var _roster_dirty: bool = true
+## Bumped by `_invalidate_roster()`. Sibling systems that keep a per-building
+## derived table (doc 06's fire-candidate rows) key it on this rather than
+## rebuilding per sub-step. Derived: never captured, never restored.
+var roster_revision: int = 0
+## Derived, revision-keyed building id -> district id (see `district_of_building`).
+var _district_of_building: Dictionary = {}
+var _district_of_building_key := Vector2i(-1, -1)
 var _building_records: Dictionary = {}  # id -> starter record (block, tags…)
 ## AUTHORED buildings removed by cmd_demolish_building, keyed by sim_id, so a
 ## reload does not resurrect the tile reservation the loader re-stamps on every
@@ -278,7 +296,7 @@ func _boot_context() -> TimeContext:
 
 func _refresh_road_density() -> void:
 	var sources: Array = []
-	for id in _sorted(buildings):
+	for id in roster_ids():
 		var b: Building = buildings[id]
 		sources.append({"tile": b.origin,
 				"pj": float(int(b.stats.get("population", 0)) + int(b.stats.get("jobs", 0)))})
@@ -347,7 +365,7 @@ func _route_lightning(ctx: TimeContext) -> void:
 func build_director_inputs() -> DirectorInputs:
 	var dark := 0
 	var total := 0
-	for id in _sorted(buildings):
+	for id in roster_ids():
 		total += 1
 		if not grid.is_powered(String(id)):
 			dark += 1
@@ -434,6 +452,7 @@ func _boot_buildings() -> void:
 		b.stats = catalog.stats(String(archetype), b.level)
 		buildings[id] = b
 		_building_records[id] = record
+	_invalidate_roster()
 	# Water-site kW loads are derived from the LIVE water nodes in _boot_water,
 	# which runs right after _boot_power — doc 05 owns per-variant kW now.
 
@@ -473,7 +492,7 @@ func _boot_power() -> void:
 			grid.add_component(String(line["id"]), &"feeder",
 					{"conductor_class": int(line.get("class", 1)), "parent": String(line["from"]),
 					"route": route, "underground": not bool(line.get("overhead", true))})
-	for id in _sorted(buildings):
+	for id in roster_ids():
 		var b: Building = buildings[id]
 		if b.archetype == &"substation":
 			continue  # no service draw (doc 04 §2.3)
@@ -493,7 +512,7 @@ func _boot_districts() -> void:
 	for d in loader.districts:
 		for block_id in d.get("blocks", []):
 			_block_to_district[String(block_id)] = String(d["id"])
-	for id in _sorted(buildings):
+	for id in roster_ids():
 		var b: Building = buildings[id]
 		_block_dark_weights[id] = int(b.stats.get("population", 0)) + int(b.stats.get("jobs", 0))
 	# The city is born already inhabited: aggregates are live from tick 0, so
@@ -509,16 +528,25 @@ func _boot_districts() -> void:
 ## weather multiplier is 1.0 in the clear-sky stub.
 func compose_demands(ctx: TimeContext) -> Dictionary:
 	var demands := {}
-	for id in _sorted(buildings):
+	# The channel a building draws on is a function of its ARCHETYPE, and there
+	# are a handful of archetypes against 1,500 buildings — so the channel name
+	# is resolved (and its curve value read) once per archetype instead of once
+	# per building per tick. Same float in the same place in the same product.
+	var channel_value_by_archetype: Dictionary = {}
+	for id in roster_ids():
 		var b: Building = buildings[id]
 		if b.archetype == &"substation":
 			continue
 		var base := float(b.stats.get("power_demand_kw", 0.0))
 		if b.archetype == &"water_facility":
 			base = float(_water_kw_by_building.get(id, base))
-		var channel := String(DEMAND_CLASS_CHANNEL.get(b.archetype, "power_demand_civic"))
+		var channel_value: Variant = channel_value_by_archetype.get(b.archetype)
+		if channel_value == null:
+			var channel := String(DEMAND_CLASS_CHANNEL.get(b.archetype, "power_demand_civic"))
+			channel_value = float(ctx.channels[channel])
+			channel_value_by_archetype[b.archetype] = channel_value
 		var occ := population.occ_of(id)
-		demands[id] = base * b.power_demand_mult() * float(ctx.channels[channel]) * occ
+		demands[id] = base * b.power_demand_mult() * float(channel_value) * occ
 	return demands
 
 
@@ -745,6 +773,7 @@ func restore_state(raw_body: Dictionary) -> void:
 		_grid_id_high_water = maxi(_grid_id_high_water,
 				int(_removed_records[sim_id]["grid_id"]))
 	buildings.clear()
+	_invalidate_roster()
 	for record in body.get("buildings", []):
 		var b := Building.deserialize(record)
 		var id := ""
@@ -756,10 +785,11 @@ func restore_state(raw_body: Dictionary) -> void:
 			continue
 		b.stats = catalog.stats(String(b.archetype), maxi(b.level, 1))
 		buildings[id] = b
+	_invalidate_roster()
 	# Block-dark weights are derived from the live roster, so rebuild rather than
 	# carry: a demolished building must not keep voting on its block's darkness.
 	_block_dark_weights.clear()
-	for id in _sorted(buildings):
+	for id in roster_ids():
 		var live: Building = buildings[id]
 		_block_dark_weights[id] = int(live.stats.get("population", 0)) \
 				+ int(live.stats.get("jobs", 0))
@@ -803,16 +833,25 @@ func _serialize_director_links() -> Dictionary:
 
 func _serialize_buildings() -> Array:
 	var out: Array = []
-	for id in _sorted(buildings):
+	for id in roster_ids():
 		out.append((buildings[id] as Building).serialize())
 	return out
 
 
 func _population_inputs() -> Array:
 	var out: Array = []
-	for id in _sorted(buildings):
+	# Category is a function of archetype, and there are a handful of archetypes
+	# against 1,500 buildings — so the catalog is asked (and the archetype
+	# converted to a String) once per archetype per settled hour, not once per
+	# building.
+	var category_by_archetype: Dictionary = {}
+	for id in roster_ids():
 		var b: Building = buildings[id]
-		var category := catalog.category(String(b.archetype))
+		var found: Variant = category_by_archetype.get(b.archetype)
+		if found == null:
+			found = catalog.category(String(b.archetype))
+			category_by_archetype[b.archetype] = found
+		var category: String = found
 		out.append({
 			"id": id,
 			"population": int(b.stats.get("population", 0)),
@@ -879,6 +918,7 @@ func cmd_place_building(archetype: String, origin: Vector2i, variant: String = "
 	b.built_at_minutes = clock.sim_time_minutes()
 	world.grid.stamp_building(grid_id, origin, size)
 	buildings[sim_id] = b
+	_invalidate_roster()
 	_building_records[sim_id] = {"id": sim_id, "grid_id": grid_id, "type": archetype,
 			"block": block.id, "footprint": size, "origin_global": origin}
 	_block_dark_weights[sim_id] = int(stats.get("population", 0)) + int(stats.get("jobs", 0))
@@ -1248,7 +1288,7 @@ func _route_line(kind: String, tile: Vector2i, conductor_class: int,
 		# have different prices ($15,000 for a new substation, an upgrade job
 		# for a bigger one) and only one of them is a mistake.
 		var blocked: StringName = &"E_NOT_CONNECTED"
-		for sim_id in _sorted(buildings):
+		for sim_id in roster_ids():
 			if grid.has_component(String(sim_id)) \
 					and String(grid.component(String(sim_id))["kind"]) == "substation":
 				blocked = &"E_NO_SLOT"
@@ -1340,7 +1380,7 @@ func _feeder_route_tile_legal(tile: Vector2i) -> bool:
 func _best_feeder_source_for(target: Vector2i) -> Vector2i:
 	var best := Vector2i(-1, -1)
 	var best_key := [999999, ""]
-	for sim_id in _sorted(buildings):
+	for sim_id in roster_ids():
 		if not grid.has_component(String(sim_id)):
 			continue
 		if String(grid.component(String(sim_id))["kind"]) != "substation":
@@ -1377,7 +1417,7 @@ func _best_feeder_source_for(target: Vector2i) -> Vector2i:
 ## away sat with both slots empty.
 func _feeder_source(tile: Vector2i, pad_radius: int) -> Dictionary:
 	var candidates: Array = []
-	for sim_id in _sorted(buildings):
+	for sim_id in roster_ids():
 		if not grid.has_component(String(sim_id)):
 			continue
 		if String(grid.component(String(sim_id))["kind"]) != "substation":
@@ -1597,6 +1637,7 @@ func cmd_place_water_component(kind: String, tile: Vector2i, level: int = 1,
 	b.built_at_minutes = clock.sim_time_minutes()
 	world.grid.stamp_building(grid_id, tile, size)
 	buildings[sim_id] = b
+	_invalidate_roster()
 	_building_records[sim_id] = {"id": sim_id, "grid_id": grid_id,
 			"type": WATER_SHELL_ARCHETYPE, "block": block.id, "footprint": size,
 			"origin_global": tile}
@@ -2059,7 +2100,7 @@ func _road_access_tiles(victims: Array) -> Array:
 	for entry in victims:
 		removing[entry] = true
 	var out: Array = []
-	for sim_id in _sorted(buildings):
+	for sim_id in roster_ids():
 		var record: Dictionary = _building_records.get(sim_id, {})
 		if record.is_empty():
 			continue
@@ -2193,6 +2234,7 @@ func cmd_demolish_building(sim_id: String, preview: bool = false) -> Dictionary:
 					"units": (retired["units"] as Array).duplicate(),
 					"fleet_size": incidents.fleet.size()})
 	buildings.erase(sim_id)
+	_invalidate_roster()
 	_building_records.erase(sim_id)
 	_block_dark_weights.erase(sim_id)
 	_last_construction_stage.erase(sim_id)
@@ -2829,7 +2871,7 @@ func apply_hourly_decay(dt_h: float, availability: Dictionary,
 	weather_mult *= treasury.austerity_decay_mult()
 	var overload := _overload_excess_by_component()
 	var now_minutes := clock.sim_time_minutes()
-	for id in _sorted(buildings):
+	for id in roster_ids():
 		var b: Building = buildings[id]
 		if not b.decays():
 			continue
@@ -2909,10 +2951,10 @@ func build_settlement_inputs(ctx: TimeContext, availability: Dictionary) -> Dict
 	var stations: Array = []
 	var has_pump := false
 	var water_service := water.service_factors()
-	for id in _sorted(buildings):
+	var district_by_id := district_of_building()
+	for id in roster_ids():
 		var b: Building = buildings[id]
-		var district_id: String = _block_to_district.get(
-				String(_building_records[id].get("block", "")), "")
+		var district_id: String = district_by_id[id]
 		var stability := 1.0
 		if district_id != "":
 			stability = float(districts.district(district_id).get("stability", 1.0))
@@ -2958,27 +3000,42 @@ func build_settlement_inputs(ctx: TimeContext, availability: Dictionary) -> Dict
 	}
 
 
-func _district_service_ratio(district_id: String) -> float:
-	var served := 0.0
-	var total := 0.0
-	for id in _sorted(buildings):
-		var block := String(_building_records[id].get("block", ""))
-		if _block_to_district.get(block, "") != district_id:
+## Every district's served/demanded power ratio in ONE roster pass.
+##
+## This replaced a per-district `_district_service_ratio(id)` that walked the
+## WHOLE roster each time it was asked, and the districts phase asks for all of
+## them on every step — twelve full walks of a 1,500-building roster, sixty
+## times a game-hour on the fine path. Each district's sum still accumulates
+## over the same ascending-id subsequence with the same summands, so every ratio
+## is bit-identical to what the per-district walk produced; only the number of
+## walks changed.
+func _district_service_ratios() -> Dictionary:
+	var served: Dictionary = {}
+	var total: Dictionary = {}
+	var district_by_id := district_of_building()
+	for id in roster_ids():
+		var district_id: String = district_by_id[id]
+		if district_id == "":
 			continue
 		var demand := float(_last_demands.get(id, 0.0))
-		total += demand
+		total[district_id] = float(total.get(district_id, 0.0)) + demand
 		if grid.is_powered(id):
-			served += demand
-	return served / total if total > 0.0 else 1.0
+			served[district_id] = float(served.get(district_id, 0.0)) + demand
+	var out: Dictionary = {}
+	for district_id in total:
+		var denominator: float = total[district_id]
+		out[district_id] = float(served.get(district_id, 0.0)) / denominator \
+				if denominator > 0.0 else 1.0
+	return out
 
 
 func _rollup_district_population() -> void:
 	var district_pop := {}
 	var district_jobs := {}
-	for id in _sorted(buildings):
+	var district_by_id := district_of_building()
+	for id in roster_ids():
 		var b: Building = buildings[id]
-		var block := String(_building_records[id].get("block", ""))
-		var district_id: String = _block_to_district.get(block, "")
+		var district_id: String = district_by_id[id]
 		if district_id == "":
 			continue
 		district_pop[district_id] = float(district_pop.get(district_id, 0.0)) \
@@ -3007,7 +3064,7 @@ func _register_systems() -> void:
 
 func compose_water_demands() -> Dictionary:
 	var out: Dictionary = {}
-	for id in _sorted(buildings):
+	for id in roster_ids():
 		var b: Building = buildings[id]
 		out[id] = float(b.stats.get("water_demand", 0.0)) * b.water_demand_mult()
 	return out
@@ -3198,14 +3255,18 @@ class DistrictPhaseSystem extends SimSystem:
 	func phase() -> int: return Phase.DISTRICTS
 	func cadence() -> int: return Cadence.EVERY_MINUTE
 	func advance_fine(_ctx: TimeContext) -> void:
-		for district_id in sim.districts.district_ids_sorted():
-			sim.districts.update_power_reliability(district_id,
-					sim._district_service_ratio(district_id), 1.0 / 60.0)
-			sim.districts.recompute_fast(district_id)
+		_run(1.0 / 60.0)
 	func advance_coarse(_ctx: TimeContext) -> void:
+		_run(1.0)
+	## One roster pass for every district's ratio, then the per-district update
+	## in the same sorted order as before. Neither `update_power_reliability` nor
+	## `recompute_fast` touches grid power, demands or the roster, so hoisting the
+	## measurement out of the loop reads exactly the same city each district did.
+	func _run(dt_h: float) -> void:
+		var ratios := sim._district_service_ratios()
 		for district_id in sim.districts.district_ids_sorted():
 			sim.districts.update_power_reliability(district_id,
-					sim._district_service_ratio(district_id), 1.0)
+					float(ratios.get(district_id, 1.0)), dt_h)
 			sim.districts.recompute_fast(district_id)
 
 
@@ -3315,3 +3376,41 @@ static func _sorted(dict: Dictionary) -> Array:
 	var keys := dict.keys()
 	keys.sort()
 	return keys
+
+
+## Every building id, ascending — the one iteration order the roster walks use.
+## Same Array every call until the roster changes, so callers MUST NOT mutate it
+## (none do; `_sorted(buildings)` handed out a private copy and this hands out
+## the shared one, which is the whole point).
+func roster_ids() -> Array:
+	if _roster_dirty:
+		_roster_ids = _sorted(buildings)
+		_roster_dirty = false
+	return _roster_ids
+
+
+## Called by the four places `buildings` gains or loses a key: boot, restore,
+## placement (both the ordinary and the water-shell path) and demolition.
+func _invalidate_roster() -> void:
+	_roster_dirty = true
+	roster_revision += 1
+
+
+## building id -> district id (empty for a building on no district's block).
+##
+## `_block_to_district[_building_records[id].block]` is a two-hop lookup that
+## three per-step roster walks each did per building — the districts phase alone
+## sixty times a game-hour. A building's block never moves, so the answer changes
+## only when the roster changes or when a block changes district, and both carry
+## a revision counter. Derived: never captured, rebuilt on the next ask.
+func district_of_building() -> Dictionary:
+	var key := Vector2i(roster_revision, districts.membership_revision)
+	if key == _district_of_building_key:
+		return _district_of_building
+	var out: Dictionary = {}
+	for id in roster_ids():
+		out[id] = String(_block_to_district.get(
+				String(_building_records[id].get("block", "")), ""))
+	_district_of_building = out
+	_district_of_building_key = key
+	return out

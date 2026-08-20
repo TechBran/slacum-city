@@ -102,6 +102,13 @@ var _children: Dictionary = {}  # id -> sorted child ids
 var _ties: Dictionary = {}  # tie id -> {a, b, mode, closed, pending_close_gs}
 var _attachments: Dictionary = {}  # building_id -> transformer id
 var _service: Dictionary = {}  # building_id -> service record
+## The ascending order every `_service` walk iterates in, cached. Six sweeps
+## read it and three of them run every tick, so at 1,500 buildings this was
+## three full key sorts per tick for an order that only changes when a building
+## joins or leaves the grid. Derived: never serialized, rebuilt on demand, and
+## invalidated by `attach_building` / `detach_building` / `deserialize`.
+var _service_order: Array = []
+var _service_order_dirty: bool = true
 var _last_trip_gs: int = -1000000
 var _last_trip_component: String = ""
 var _events: Array = []
@@ -286,6 +293,7 @@ func attach_building(building_id: String, tile: Vector2i,
 			"served_kwh": 0.0, "demanded_kwh": 0.0, "availability_prev_hour": 1.0,
 			"priority_class": priority_class, "block_id": block_id,
 		}
+		_service_order_dirty = true
 	return best
 
 
@@ -300,6 +308,7 @@ func detach_building(building_id: String) -> bool:
 	var had: bool = _attachments.has(building_id) or _service.has(building_id)
 	_attachments.erase(building_id)
 	_service.erase(building_id)
+	_service_order_dirty = true
 	return had
 
 
@@ -321,7 +330,7 @@ func priority_class_of(building_id: String) -> StringName:
 ## orphans a newly placed transformer may be able to adopt.
 func unserved_building_ids() -> Array:
 	var out: Array = []
-	for building_id in _sorted_keys(_service):
+	for building_id in _service_ids():
 		if String(_attachments.get(building_id, "")) == "":
 			out.append(building_id)
 	return out
@@ -1108,14 +1117,15 @@ func _pass_d_energize() -> void:
 ## coarse paths (report 98 E2 mode-invariance).
 func _emit_streetlight_changes() -> void:
 	var lit_by_block: Dictionary = {}
-	for building_id in _sorted_keys(_service):
+	# See `_update_service`: one pass over the components instead of three
+	# lookups per building, on a sweep that runs every energization pass.
+	var energized := _energized_flags()
+	for building_id in _service_ids():
 		var block: String = _service[building_id].get("block_id", "")
 		if block == "":
 			continue
 		var transformer_id: String = _attachments.get(building_id, "")
-		var lit: bool = transformer_id != "" \
-				and _components.has(transformer_id) \
-				and bool(_components[transformer_id]["energized"])
+		var lit: bool = transformer_id != "" and bool(energized.get(transformer_id, false))
 		lit_by_block[block] = bool(lit_by_block.get(block, false)) or lit
 	for block in _sorted_keys(lit_by_block):
 		var lit: bool = lit_by_block[block]
@@ -1245,12 +1255,15 @@ func n1_headroom_kw(feeder_id: String, t_ambient: float = 25.0) -> float:
 
 func _update_service(dt_gs: int, demands: Dictionary) -> void:
 	var dt_gh := float(dt_gs) / 3600.0
-	for building_id in _sorted_keys(_service):
+	# Components are hundreds and buildings are thousands, so "is my transformer
+	# energized" is answered once per component instead of twice per building.
+	var energized := _energized_flags()
+	for building_id in _service_ids():
 		var record: Dictionary = _service[building_id]
 		var demand := float(demands.get(building_id, 0.0))
 		var transformer_id: String = _attachments.get(building_id, "")
 		var served := 0.0
-		if transformer_id != "" and bool(_components[transformer_id]["energized"]):
+		if transformer_id != "" and bool(energized.get(transformer_id, false)):
 			served = demand
 		record["served_kwh"] = float(record["served_kwh"]) + served * dt_gh
 		record["demanded_kwh"] = float(record["demanded_kwh"]) + demand * dt_gh
@@ -1274,7 +1287,7 @@ func _update_service(dt_gs: int, demands: Dictionary) -> void:
 ## Game-hour boundary, before doc 03 settles (report 98 C-37).
 func settle_hour() -> Dictionary:
 	var out := {}
-	for building_id in _sorted_keys(_service):
+	for building_id in _service_ids():
 		var record: Dictionary = _service[building_id]
 		var availability := 1.0
 		if float(record["demanded_kwh"]) > 0.0:
@@ -1290,8 +1303,18 @@ func power_availability_hour(building_id: String) -> float:
 	return float(_service.get(building_id, {}).get("availability_prev_hour", 1.0))
 
 
+## The single most-asked question in the sim: doc 06's fire generator asks it for
+## every building on every integrator sub-step, and doc 09's district service
+## ratio asks it for every building every step. The `{}` default in the old
+## one-liner was BUILT BEFORE THE LOOKUP RAN — an empty Dictionary allocated on
+## every call, hit or miss. The answer is unchanged, including the "a building
+## the grid has never heard of counts as lit" branch that fell out of
+## `{}.get("state", &"LIT")`.
 func is_powered(building_id: String) -> bool:
-	return _service.get(building_id, {}).get("state", &"LIT") == &"LIT"
+	var record: Variant = _service.get(building_id)
+	if record == null:
+		return true
+	return (record as Dictionary).get("state", &"LIT") == &"LIT"
 
 
 ## Weighted dark fraction per block; ≥60% ⇒ block_dark (report 98 C-38).
@@ -1299,7 +1322,7 @@ func is_powered(building_id: String) -> bool:
 func block_dark_fractions(weights: Dictionary) -> Dictionary:
 	var dark: Dictionary = {}
 	var total: Dictionary = {}
-	for building_id in _sorted_keys(_service):
+	for building_id in _service_ids():
 		var record: Dictionary = _service[building_id]
 		var block: String = record.get("block_id", "")
 		if block == "":
@@ -1493,7 +1516,7 @@ func serialize() -> Dictionary:
 	for tie_id in _sorted_keys(_ties):
 		ties.append((_ties[tie_id] as Dictionary).duplicate(true))
 	var service := {}
-	for building_id in _sorted_keys(_service):
+	for building_id in _service_ids():
 		service[building_id] = (_service[building_id] as Dictionary).duplicate(true)
 	return {"section_version": 1, "now_gs": now_gs, "components": components,
 			"ties": ties, "attachments": _attachments.duplicate(),
@@ -1521,6 +1544,7 @@ func deserialize(data: Dictionary) -> void:
 		_ties[String(record["id"])] = record
 	_attachments = data.get("attachments", {})
 	_service.clear()
+	_service_order_dirty = true
 	for building_id in data.get("service", {}):
 		var record: Dictionary = data["service"][building_id]
 		record["state"] = StringName(String(record["state"]))
@@ -1545,3 +1569,21 @@ static func _sorted_keys(dict: Dictionary) -> Array:
 	var keys := dict.keys()
 	keys.sort()
 	return keys
+
+
+## {component_id: energized} for the whole roster, built once per sweep. Order
+## is irrelevant — it is a lookup table, not a sum.
+func _energized_flags() -> Dictionary:
+	var out: Dictionary = {}
+	for component_id in _components:
+		out[component_id] = bool((_components[component_id] as Dictionary)["energized"])
+	return out
+
+
+## Ascending building ids over `_service`. Read-only for every caller; none of
+## the six sweeps adds or removes a service record while iterating.
+func _service_ids() -> Array:
+	if _service_order_dirty:
+		_service_order = _sorted_keys(_service)
+		_service_order_dirty = false
+	return _service_order

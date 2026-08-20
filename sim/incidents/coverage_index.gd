@@ -144,6 +144,13 @@ func station_contribution(row: Dictionary, pos: Vector2) -> float:
 	if radius <= 0.0:
 		return 0.0
 	var distance := (pos - (row["centroid"] as Vector2)).length()
+	# Out of range is decided WITHOUT the pow: at `distance >= radius` the term
+	# `pow(distance/radius, e)` is >= 1 for every positive exponent, so `falloff`
+	# was always going to clamp to zero and take the branch below. Most of the
+	# city is out of range of most stations, and the district figures ask this
+	# question 2·(buildings × stations) times a game-hour.
+	if distance >= radius and falloff_exponent > 0.0:
+		return 0.0
 	var falloff := clampf(1.0 - pow(distance / radius, falloff_exponent), 0.0, 1.0)
 	if falloff <= 0.0:
 		return 0.0
@@ -153,8 +160,31 @@ func station_contribution(row: Dictionary, pos: Vector2) -> float:
 
 
 ## `coverage_police(pos)` / `coverage_fire(pos)` — both ∈ [0,1].
+##
+## The same walk `explain()` makes, minus the five-key reasons dictionary and
+## the `best_id` string it fills in: every district's hourly coverage figure is
+## the MEAN over its buildings, so this runs twice per building per game-hour
+## and the reasons were allocated 3,000 times an hour for nobody. `explain()` is
+## still the one place the formula is written down for a reader — this is the
+## same three lines with the bookkeeping removed, and both must stay in step.
 func coverage(kind: StringName, pos: Vector2) -> float:
-	return float(explain(kind, pos)["coverage"])
+	var bucket: Variant = _by_kind.get(kind, [])
+	var rows: Array = bucket if bucket is Array else []
+	var best := 0.0
+	var overlapping := 0
+	for raw: Variant in rows:
+		var row: Dictionary = raw
+		var c := station_contribution(row, pos)
+		if c >= redundancy_min:
+			overlapping += 1
+		if c > best:
+			best = c
+	# Parenthesised exactly as `explain()` associates it: `best + (k·n − k)` is
+	# not `(best + k·n) − k` in binary, and this number is hashed.
+	var redundancy := redundancy_bonus * float(overlapping) - redundancy_bonus
+	if overlapping <= 0:
+		redundancy = 0.0
+	return clampf(best + redundancy, 0.0, 1.0)
 
 
 func coverage_at_tile(kind: StringName, tile: Vector2i) -> float:

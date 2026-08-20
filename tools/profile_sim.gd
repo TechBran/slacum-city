@@ -195,11 +195,12 @@ func _time_fine(seed_value: int, ticks: int, profiled: bool) -> Dictionary:
 	_reset()
 	if profiled:
 		_attach(sim.scheduler)
+	var substeps_before: int = sim.incidents.substeps_taken
 	var t0 := Time.get_ticks_usec()
 	sim.scheduler.advance_fine_n(ticks)
 	var wall := Time.get_ticks_usec() - t0
 	_detach(sim.scheduler)
-	return _run_record(wall, ticks)
+	return _run_record(wall, ticks, sim.incidents.substeps_taken - substeps_before)
 
 
 func _time_coarse(seed_value: int, hours: int, profiled: bool) -> Dictionary:
@@ -207,18 +208,20 @@ func _time_coarse(seed_value: int, hours: int, profiled: bool) -> Dictionary:
 	_reset()
 	if profiled:
 		_attach(sim.scheduler)
+	var substeps_before: int = sim.incidents.substeps_taken
 	var t0 := Time.get_ticks_usec()
 	sim.advance_coarse_hours(hours)
 	var wall := Time.get_ticks_usec() - t0
 	_detach(sim.scheduler)
-	return _run_record(wall, hours)
+	return _run_record(wall, hours, sim.incidents.substeps_taken - substeps_before)
 
 
-func _run_record(wall_usec: int, steps: int) -> Dictionary:
+func _run_record(wall_usec: int, steps: int, substeps: int) -> Dictionary:
 	var systems: Dictionary = {}
 	for id in _usec:
 		systems[String(id)] = {"usec": int(_usec[id]), "calls": int(_calls[id])}
-	return {"wall_usec": wall_usec, "steps": steps, "systems": systems}
+	return {"wall_usec": wall_usec, "steps": steps, "systems": systems,
+			"incident_substeps": substeps}
 
 
 func _attach(scheduler: TickScheduler) -> void:
@@ -280,6 +283,15 @@ func _print_headline(fine: Dictionary, coarse: Dictionary) -> void:
 			float(fine["wall_usec"]) / 1000.0 / fine_steps * GameClock.TICKS_PER_HOUR])
 	print("  12h catch-up  %8.3f s          (doc 01 budget: 2 s)" % [
 			float(coarse["wall_usec"]) / 1e6 / coarse_steps * 12.0])
+	# The incident phase costs `sub-steps × roster`, and only one of those two
+	# factors shows up in the table. Doc 06 §2.13's integrator splits each step at
+	# every discontinuity, so this is the multiplier the `incidents` row is
+	# already paying — and the number any proposal to change its cadence has to
+	# quote (the fire-spread roll alone puts a breakpoint every 1/12 game-hour,
+	# whether or not anything is on fire).
+	print("  incident sub-steps  %6.2f /coarse hour   %6.2f /fine tick" % [
+			float(coarse.get("incident_substeps", 0)) / coarse_steps,
+			float(fine.get("incident_substeps", 0)) / fine_steps])
 
 
 func _print_table(title: String, run: Dictionary, was: Dictionary) -> void:

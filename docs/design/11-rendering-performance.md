@@ -684,6 +684,31 @@ Everything above this line was **arithmetic**. Doc 91 §2.13 filed that as D-8: 
 
 The fine tick's largest terms on the bench city are `roads_congestion` 5.17 ms, `water` 4.39, `power` 3.99, `roads` 2.50; the coarse step's are `incidents` 135.07 ms (52%) and `hourly` 62.03 (24%). **This is the headline finding of the exercise and it is a sim finding, not a render one:** at 1,500 buildings one SimTick costs 22 ms of a 250 ms tick period, which is fine for throughput but lands as a 22 ms spike on the frame it runs — over the whole 16.7 ms frame on its own. Doc 13 §2.9's catch-up arithmetic also has to be re-read against 259 ms/step: the 720-step cap is 186 s of veil, not the 39.6 s worst case that table contemplates, so `max_coarse_hours` (doc 08, report C-21's `ceil(2000 / measured_ms)`) resolves to **7** on this city.
 
+##### Wave-7 scaling pass — what the roster sweeps cost, measured (doc 91 D-15)
+
+The table above is the *pre-optimization* record and stays as written; it is what filed D-15. The pass that answered it changed no rule, no cadence and no tunable — `tools/profile_sim.gd --baseline` reports identical `state_hash` for both the fine and the coarse path on both cities — and cut the coarse step by 42 %.
+
+Measurements are interleaved A/B in one session on the same workstation (baseline stashed and restored between runs), best of 2, debug headless. Absolute numbers drift a few per cent with machine load; the *ratio* is what this table claims.
+
+| | starter (34 buildings) | | bench (1,500) | |
+|---|---|---|---|---|
+| | before | after | before | after |
+| coarse step (1 game-hour) | 8.10 ms | **6.28 ms** (−22 %) | 238.6 ms | **132.8 ms** (−44 %) |
+| 12 h catch-up (doc 01 budget 2 s) | 0.097 s | **0.076 s** | 2.86 s | **1.59 s** — inside budget |
+| fine tick (1 SimTick) | 1.590 ms | **1.511 ms** (−5 %) | 21.80 ms | **17.49 ms** (−20 %) |
+
+Where the coarse hour went, per phase (ms/step):
+
+| phase | before | after | what changed |
+|---|---|---|---|
+| `incidents` | 124.8 | **54.8** | the fire generator reads six packed columns instead of 1,500 six-key dictionaries; the candidate table is built only on the sub-steps that actually ignite something; `district_of_tile` and the coverage field's district means are memoised per building |
+| `hourly` | 62.1 | **34.8** | the avenue gate behind `access_quality` is one array-row scan instead of 81 `road_class_at` calls; the roster order, the district lookup, the demand channel and the building category are all resolved once instead of per building |
+| `districts` | 9.43 | **1.31** | every district's power-service ratio comes out of ONE roster pass instead of one pass per district |
+| `roads_congestion` | 13.18 | 12.99 | unchanged work (see below) |
+| everything else | 30.0 | 29.9 | unchanged |
+
+**The fine tick is still over a frame, and finishing it needs a cadence decision, not more micro-optimization.** Its remaining cost is the per-tick half: `water` 4.1 ms, `power` 3.7, `roads` 2.1 — every one of them O(buildings) on every SimTick — plus `roads_congestion`, which is a per-GAME-MINUTE pass the table amortizes across four ticks. Read un-amortized, the shape is spiky rather than flat: an ordinary tick is ≈ 10.8 ms, the tick that carries the minute pass is ≈ 37 ms, and the tick that carries the settled hour is ≈ 70 ms. Three cadence proposals are costed in doc 91 D-15; none of them is in this change, because each one moves a number the balance gates are written against. The first was measured, not estimated: making the fire-spread breakpoint conditional on a live `structure_fire` takes the integrator from **15.7 to 5.1 sub-steps per coarse hour**, `incidents` from 54.8 to **28.0 ms**, and the coarse step from 133.8 to **104.8 ms** (12 h catch-up 1.26 s) — and changes both state hashes, which is exactly why it is a proposal.
+
 **Frame cost** — `tools/profile_frame.gd`, 1920×1080, Balanced, hour 21:00 (the emissive/glow worst case), 60 warm-up frames discarded, 240 measured. **Dev workstation, NVIDIA RTX 2000 Ada, Forward+ — this is not a phone and not the Mobile renderer.** It is a *relative* measurement: the draw-call and chunk columns are platform-independent and are the ones the budget is written against; the millisecond columns are here to show where the cost sits, not to claim a device result.
 
 | pose | mean ms | p95 ms | RS cpu | RS gpu | draw calls | +UI | budget | bucket nodes | NEAR | MED | FAR |

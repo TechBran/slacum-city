@@ -175,9 +175,11 @@ func full_pass(ctx: TimeContext) -> void:
 	var raw_sink: Dictionary = {}
 	var share_raw := hour == sample_hour
 	if not graph.edge_ids_ref().is_empty():   # `_recompute_congestion`'s guard
+		# `edge_ids_ref()` is the graph's own ascending order, so the pass skips
+		# re-sorting three thousand ids it was handed sorted.
 		congestion.recompute(graph.edge_ids_ref(),
 				_stamp_inputs(env, hour, _dt_minutes(ctx), false),
-				raw_sink if share_raw else null)
+				raw_sink if share_raw else null, true)
 		_mean_congestion = congestion.mean_congestion()
 	# One c_day sample per GAME-HOUR in both modes — sampling c_raw (not the
 	# smoothed c) at the same 24 points is what makes daily condition decay
@@ -901,14 +903,12 @@ func has_road_access(tile: Vector2i) -> bool:
 
 ## The lookup behind doc 02's upgrade check #13 `E_AVENUE` (C-62). Doc 10 does
 ## NOT evaluate the gate, format its message, or store its result.
+## Same square window, same answer, one call instead of (2r+1)² — see
+## `TileGrid.has_road_class_in_rect`. The two `range()` arrays this used to
+## allocate per invocation are gone with it.
 func has_class_within(tile: Vector2i, road_class: int, radius: int) -> bool:
-	for dz in range(-radius, radius + 1):
-		for dx in range(-radius, radius + 1):
-			var x := tile.x + dx
-			var z := tile.y + dz
-			if TileGrid.in_bounds(x, z) and grid.road_class_at(x, z) == road_class:
-				return true
-	return false
+	return grid.has_road_class_in_rect(tile.x - radius, tile.y - radius,
+			tile.x + radius, tile.y + radius, road_class)
 
 
 ## Doc 07's evacuation / Director scoring input (§5.2).
