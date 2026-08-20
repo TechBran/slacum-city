@@ -38,6 +38,41 @@ uniform vec3 soot_color: source_color = vec3(0.278, 0.263, 0.239);
 uniform float near_flicker = 1.0;
 uniform float day_gate = 0.06;
 
+// ═════════ BEGIN level-atlas pass — the MEDIUM bucket merge (doc 91 D-14) ══
+// §2.6 used to allocate one MultiMesh per (chunk, archetype, LEVEL), which the
+// bench city measured at 16.4 buckets per chunk against the 6 §2.13 models.
+// The MEDIUM tier now draws one MultiMesh per (chunk, ARCHETYPE): the mesh is
+// that archetype's level meshes — the ones the chunk actually holds — packed
+// into one ArrayMesh, every vertex tagged with the level it came from in
+// `COLOR.a` (level/8, which survives the 8-bit vertex-colour channel exactly),
+// and every instance saying which level it IS in the packed `.b` channel,
+// above §2.6's fields.
+//
+// **Why `.b` and why 448.** INSTANCE_CUSTOM has exactly four channels and §2.6
+// spends all four; there is no fifth to add. `.b` already carries an integer
+// (`variant + 16·stage + 112·overlay`, max 447) and `448 = 16 · 28` with
+// `28 ≡ 0 (mod 7)`, so adding `448·level` moves NEITHER `mod(p, 16)` (variant)
+// NOR `mod(floor(p/16), 7)` (stage) by a single ulp — the two decoders that
+// mirror `RenderStateModel` and must not move. Only `overlay_of` needed the
+// `clamp` swapped for a `mod`, and that is an exact identity on every value
+// §2.6 can produce. Max packed value 447 + 448·5 = 2687, exact in f32.
+//
+// **Exact identity at `level_atlas = 0`.** The gate is branchless, so its
+// arithmetic still executes, but every term of it is multiplied out: `want`
+// is 0, `VERTEX` is multiplied by exactly 1.0, and `bh` is the `build_height_m`
+// uniform it always was. Whatever `COLOR.a` holds cannot reach the output — so
+// the NEAR tier, which is not merged, renders byte for byte what it rendered
+// before this pass existed. `CityView` turns the gate on for MEDIUM only, and
+// cuts that atlas from LOD0 rather than §2.5's LOD1 — see `CityView.atlas_lod`
+// for the A/B behind that.
+uniform float level_atlas = 0.0;
+uniform float level_stride = 448.0;
+// The five levels' own `height_m`, indexed 1..5 (0 unused). Replaces
+// `build_height_m` while the atlas is on, because one merged mesh carries five
+// heights and the construction clamp needs the instance's own.
+uniform float level_build_height[6];
+// ═════════ END level-atlas pass ═══════════════════════════════════════════
+
 // ------------------------------------------------ construction (stage 1..6)
 // `build_height_m` is the mesh's own `height_m` from the gray-box manifest,
 // pushed per bucket by CityView; everything else is art with a default here and
@@ -159,6 +194,12 @@ varying vec2 v_uv2;
 varying vec4 v_color;
 // .x = clamped model-space height, .y = perimeter coord, .z = normal.y
 varying vec3 v_build;
+// The construction cut plane, carried rather than recomputed: with the level
+// atlas on, `build_height_m` is per LEVEL and only the vertex stage knows which
+// level this instance is. `flat`, like `v_custom`, and at `level_atlas = 0` it
+// is `build_height_m * stage / 6` — the exact expression the fragment used to
+// compute for itself, same operands in the same order.
+varying flat float v_cut;
 // ═════════ BEGIN texture pass — model-space varyings ══════════════════════
 varying vec3 v_local;    // model-space position: metres, y = 0 at the pad
 varying vec3 v_lnormal;  // model-space normal: picks the projection plane
@@ -177,8 +218,13 @@ float stage_of(float packed) {
 
 // The 2-bit overlay_state doc 12 §2.5 / report C-64 pack at stride 112:
 // 0 NORMAL, 1 WARNING, 2 CRITICAL, 3 OFFLINE.
+//
+// `mod(…, 4.0)` rather than `clamp(…, 0.0, 3.0)`: on every value §2.6 can pack
+// (0..447) `floor(packed / 112.0)` is already 0..3, so the two are the same
+// expression — but the level-atlas pass adds `448·level` on top, and a clamp
+// would read every merged instance as OFFLINE. The 112 stride does not move.
 float overlay_of(float packed) {
-	return clamp(floor(packed / 112.0), 0.0, 3.0);
+	return mod(floor(packed / 112.0), 4.0);
 }
 
 // One state 0..3 → the hue it wears, the albedo blend weight, and (through
@@ -211,10 +257,24 @@ void vertex() {
 	v_custom = INSTANCE_CUSTOM;
 	v_uv2 = UV2;
 	v_color = COLOR;
+	// ═════════ BEGIN level-atlas pass ═════════════════════════════════════
+	// Branchless and per-instance-coherent. `want` is 0 in every buffer
+	// RenderStateModel writes, so with the atlas off `bh` is `build_height_m`
+	// and VERTEX is multiplied by nothing.
+	float want = floor(INSTANCE_CUSTOM.b / level_stride) * step(0.5, level_atlas);
+	float bh = mix(build_height_m,
+			level_build_height[int(clamp(want, 0.0, 5.0))], step(0.5, level_atlas));
+	// A vertex belonging to any other level collapses onto the instance origin.
+	// Zero-area triangles are discarded by the rasteriser before a single
+	// fragment exists — no `discard`, no depth write, early-Z intact, and the
+	// vertex shader is the only stage that pays for the levels not drawn.
+	VERTEX *= mix(1.0, step(abs(round(COLOR.a * 8.0) - want), 0.5),
+			step(0.5, level_atlas));
+	// ═════════ END level-atlas pass ═══════════════════════════════════════
 	float stage = stage_of(INSTANCE_CUSTOM.b);
 	// stage 0 -> cut = 1e9, i.e. no clamp at all and no vertex moved.
-	float cut = build_height_m * stage * (1.0 / 6.0)
-			+ (1.0 - step(0.5, stage)) * 1.0e9;
+	v_cut = bh * stage * (1.0 / 6.0);
+	float cut = v_cut + (1.0 - step(0.5, stage)) * 1.0e9;
 	// A roof or deck pressed onto the pour plane has to shade as the flat slab
 	// it now is; a wall cut by the same plane keeps its own normal. A collapsed
 	// overhang UNDERSIDE would land coplanar with its own top face, so it sinks
@@ -325,7 +385,7 @@ void fragment() {
 		SPECULAR = mix(wall_specular, glass_specular, shine);
 	} else {
 		// ------------------------------------------ site: stage/6 poured
-		float cut = build_height_m * stage * (1.0 / 6.0);
+		float cut = v_cut;
 		float y = v_build.x;
 		// Decks (slabs, and the roofs pressed onto the pour plane) take the
 		// fresh-pour tone and carry neither form lines nor scaffold: flat and

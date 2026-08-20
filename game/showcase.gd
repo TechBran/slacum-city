@@ -34,6 +34,8 @@ extends Node3D
 ##   --blackout-at=<s>     cut the eastern half at that time
 ##   --preset=<name>       performance | balanced | high
 ##   --no-lod              draw every chunk at LOD0 (the pre-far-tier renderer)
+##   --no-merge            un-merge the MEDIUM tier: one MultiMesh per
+##                         (chunk, archetype, level), the pre-D-14 renderer
 ##   --stats               print the frame-time / draw-call summary
 
 const CHUNKS := 6  # 6×6 chunks = 768 m square
@@ -79,6 +81,7 @@ var _storm := ""
 var _precip := 0.0
 var _stats := false
 var _lod := true
+var _merge := true
 var _camera: Camera3D
 var _frames := 0
 var _frame_ms_sum := 0.0
@@ -170,6 +173,8 @@ func _parse_args() -> void:
 			_preset = s.trim_prefix("--preset=")
 		elif s == "--no-lod":
 			_lod = false
+		elif s == "--no-merge":
+			_merge = false
 		elif s == "--stats":
 			_stats = true
 
@@ -381,6 +386,7 @@ func _build_city(render_data: Dictionary) -> void:
 	add_child(city_view)
 	city_view.setup(render_model, render_data)
 	city_view.lod_enabled = _lod
+	city_view.medium_merge_enabled = _merge
 	_build_sites(render_data, site_records)
 	_build_streetlights(render_data)
 
@@ -564,5 +570,8 @@ func _report() -> void:
 	print("stats tiers near=%d medium=%d far=%d culled=%d unset=%d far_nodes=%d" % [
 			tiers[0], tiers[1], tiers[2], tiers[3], tiers[-1],
 			city_view.far_chunk_count()])
-	print("stats building_draw_calls=%d lod_enabled=%s" % [
-			city_view.building_draw_calls(), city_view.lod_enabled])
+	var split := city_view.perf_stats()
+	print("stats building_draw_calls=%d lod_enabled=%s merge=%s bucket=%d merged=%d far=%d" % [
+			city_view.building_draw_calls(), city_view.lod_enabled,
+			city_view.medium_merge_enabled, int(split.get("bucket_calls", 0)),
+			int(split.get("merged_calls", 0)), int(split.get("far_calls", 0))])
