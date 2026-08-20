@@ -28,7 +28,11 @@ var build_sheet: BuildSheet
 var building_panel: BuildingPanel
 var ghost_view: GhostView
 var construction_view: ConstructionSiteView
+var construction_plant: ConstructionVehicleView   # doc 11 §2.16: plant + deliveries
 var vehicle_view: VehicleView
+## doc 11 §2.10b's distribution layer: transformer pads, service drops and the
+## distress plume. Reads the grid on its own schedule, writes nothing back.
+var power_infra: PowerInfraView
 ## doc 12 §2.5 mode 5. Congestion is per road EDGE, so it is the one overlay
 ## that cannot ride the packed per-building state and gets its own MultiMesh.
 var road_overlay: RoadOverlayView
@@ -63,7 +67,7 @@ var _resumed_slot := -1   # >= 0 when this session restored a save at boot
 var _want_title := false  # clean player launch → the title door owns the load
 var _title_up := false    # true while the door is showing; gates saves + catch-up
 var _render_data: Dictionary = {}
-var _road_node: MultiMeshInstance3D
+var road_surface: RoadSurfaceView
 
 
 func _ready() -> void:
@@ -254,29 +258,15 @@ func _build_ground() -> void:
 		plane.material_override = developed if block.is_ready() else undeveloped
 		plane.position = Vector3(block.grid.x * 128.0 + 64.0, 0.0, block.grid.y * 128.0 + 64.0)
 		ground_root.add_child(plane)
-	# Roads as one MultiMesh of flat slabs.
-	var road_mm := MultiMesh.new()
-	road_mm.transform_format = MultiMesh.TRANSFORM_3D
-	var road_mesh := BoxMesh.new()
-	road_mesh.size = Vector3(8.0, 0.1, 8.0)
-	var road_material := GroundSurface.material("asphalt", Vector2(8.0, 8.0),
-			Color(0.34, 0.34, 0.38), 0.85)
-	road_mesh.material = road_material
-	road_mm.mesh = road_mesh
-	var road_tiles: Array[Vector2i] = []
-	for z in TileGrid.SIZE:
-		for x in TileGrid.SIZE:
-			if world.grid.has_flag(x, z, TileGrid.FLAG_ROAD):
-				road_tiles.append(Vector2i(x, z))
-	road_mm.instance_count = road_tiles.size()
-	for i in road_tiles.size():
-		road_mm.set_instance_transform(i, Transform3D(Basis.IDENTITY,
-				Vector3(road_tiles[i].x * 8.0 + 4.0, 0.05, road_tiles[i].y * 8.0 + 4.0)))
-	var road_node := MultiMeshInstance3D.new()
-	road_node.name = "Roads"
-	road_node.multimesh = road_mm
-	ground_root.add_child(road_node)
-	_road_node = road_node
+	# doc 11 §2.1.2: asphalt, lane markings, kerbs and footways, off doc 10's
+	# road graph. Two draw calls city-wide — the slab MultiMesh this replaces
+	# was one, and every line of paint is fragment work inside the first of them.
+	road_surface = RoadSurfaceView.new()
+	road_surface.name = "RoadSurface"
+	ground_root.add_child(road_surface)
+	road_surface.setup(_render_data)
+	road_surface.rebuild(world.grid,
+			sim_host.sim.roads.graph if sim_host.sim.roads != null else null)
 	# Water tiles: ONE animated material for the whole city (doc 11 §2.1.1).
 	# The wave field is world-space, so the quads read as one body.
 	var water_mm := MultiMesh.new()
@@ -314,18 +304,14 @@ func _build_city_view(render_data: Dictionary) -> void:
 	add_child(city_view)
 	city_view.setup(render_model, render_data)
 	sim_host.ticked.connect(_on_sim_batch)
-	# Streetlights: one every 4th road tile (32 m), doc 11 §2.10.
-	var lamps: Array = []
-	var next_lamp_id := 100000
-	var world := sim_host.sim.world
-	for z in TileGrid.SIZE:
-		for x in TileGrid.SIZE:
-			if world.grid.has_flag(x, z, TileGrid.FLAG_ROAD) and (x + z) % 4 == 0:
-				var block := world.block_of_tile(x, z)
-				lamps.append({"id": next_lamp_id,
-						"block_id": block.id if block != null else "",
-						"pos": Vector3(x * 8.0 + 4.0, 0.0, z * 8.0 + 4.0)})
-				next_lamp_id += 1
+	# doc 11 §2.10.1: lamps on the KERB at `road_surface.lamp.spacing_tiles`
+	# (4 tiles = the authored 32 m), alternating sides down a corridor,
+	# staggered across a dual carriageway, arm over the carriageway. The
+	# `(x + z) % 4 == 0` parity test this replaces stipples a diagonal across
+	# the city and stands every pole in the middle of the road.
+	var lamps := StreetlightPlacer.place(sim_host.sim.world.grid,
+			sim_host.sim.roads.graph if sim_host.sim.roads != null else null,
+			render_data, sim_host.sim.world.block_of_tile)
 	streetlights = StreetlightView.new()
 	streetlights.name = "Streetlights"
 	add_child(streetlights)
@@ -340,6 +326,22 @@ func _build_city_view(render_data: Dictionary) -> void:
 	construction_view.name = "ConstructionSites"
 	add_child(construction_view)
 	construction_view.setup(render_data)
+	# doc 11 §2.16: plant, deliveries and the yard. Same three site calls the
+	# hoarding view takes; the road network is the one extra thing it needs.
+	construction_plant = ConstructionVehicleView.new()
+	construction_plant.name = "ConstructionPlant"
+	add_child(construction_plant)
+	construction_plant.setup(render_data)
+	construction_plant.set_road_network(sim_host.sim.roads)
+	# doc 11 §2.10b — the visible power grid. The height lookup is the mesh
+	# manifest's (a service drop lands on the eave, not on the roof); the road
+	# probe is doc 10's tile flags, which turn each cabinet's doors to the street.
+	power_infra = PowerInfraView.new()
+	power_infra.name = "PowerInfra"
+	add_child(power_infra)
+	power_infra.setup(render_data, func(archetype: StringName, level: int) -> float:
+			return float(_height_of.get("%s:%d" % [archetype, level], 10.0)))
+	power_infra.set_road_probe(PowerInfraFeed.road_probe(sim_host.sim.world))
 	for id in sim_host.sim.buildings.keys():
 		if (sim_host.sim.buildings[id] as Building).state == &"under_construction":
 			_add_construction_site(String(id))
@@ -383,6 +385,8 @@ func _add_construction_site(sim_id: String) -> void:
 	var target_level := maxi(b.pending_level, maxi(b.level, 1))
 	var height := float(_height_of.get("%s:%d" % [b.archetype, target_level], 10.0))
 	construction_view.add_site(b.id, center, size, height)
+	if construction_plant != null:
+		construction_plant.add_site(b.id, center, size, height)
 
 
 ## Sim → render event bridge: translate string building ids to render ids and
@@ -400,8 +404,14 @@ func _on_sim_batch(batch: Array) -> void:
 		match StringName(String(event.get("type", ""))):
 			&"road_graph_changed", &"block_roads_stamped":
 				# Player roads and stamped ring blocks would otherwise be
-				# invisible until restart — the slab MultiMesh is built at boot.
+				# invisible until restart — the street surface is built at boot.
 				_rebuild_road_multimesh()
+			&"grid_component_placed", &"building_placed_sim", &"building_removed":
+				# doc 11 §2.10b: the pad/wire topology moved. A flag only; the
+				# rebuild lands on the next `sync` and is a no-op if the grid's
+				# shape turns out to be what it already was.
+				if power_infra != null:
+					power_infra.note_topology_changed()
 	if vehicle_view != null:
 		vehicle_view.apply_events(batch)
 		# Idempotent fleet pose sync — per TICK batch, never per frame.
@@ -427,9 +437,12 @@ func _on_sim_batch(batch: Array) -> void:
 				_add_construction_site(String(event.get("sim_id", "")))
 			&"building_construction_stage":
 				translated.append(event)  # already carries the int render id
+				var stage_rid := int(event.get("building", -1))
+				var stage_no := int(event.get("stage", 1))
 				if construction_view != null:
-					construction_view.set_stage(int(event.get("building", -1)),
-							int(event.get("stage", 1)))
+					construction_view.set_stage(stage_rid, stage_no)
+				if construction_plant != null:
+					construction_plant.set_stage(stage_rid, stage_no)
 			&"BuildingPowerChanged":
 				var rid := _render_id(String(event.get("building", "")))
 				if rid >= 0:
@@ -441,9 +454,11 @@ func _on_sim_batch(batch: Array) -> void:
 					var out: Dictionary = event.duplicate()
 					out["building"] = rid2
 					translated.append(out)
-					if StringName(String(event["type"])) == &"building_completed" \
-							and construction_view != null:
-						construction_view.remove_site(rid2)
+					if StringName(String(event["type"])) == &"building_completed":
+						if construction_view != null:
+							construction_view.remove_site(rid2)
+						if construction_plant != null:
+							construction_plant.remove_site(rid2)
 			&"PowerRestored":
 				pass  # per-block relights arrive via BlockDarkChanged(false)
 			_:
@@ -974,6 +989,9 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 			if vehicle_view != null:
 				vehicle_view.set_preset(str(model.value("graphics")),
 						StarterCityLoader.read_json("res://data/render.json"))
+			if construction_plant != null:
+				construction_plant.set_preset(str(model.value("graphics")),
+						StarterCityLoader.read_json("res://data/render.json"))
 			if perf_governor != null:
 				# A player's preset choice clears the ladder and any latched drop.
 				perf_governor.reset(str(model.value("graphics")))
@@ -1055,22 +1073,16 @@ func _on_title_new_game(slot: int) -> void:
 	save_service.autosave(sim_host.sim)   # stake the rotation for the new city
 
 
-## Re-scan the tile grid for FLAG_ROAD and rebuild the slab MultiMesh — fired
-## on `road_graph_changed` / `block_roads_stamped` and after a mid-session load.
+## Re-read the road layer and rewrite the street surface — fired on
+## `road_graph_changed` / `block_roads_stamped` and after a mid-session load.
+## The view guards itself on `RoadGraph.graph_version`, so the two events one
+## player edit fires cost ONE pass. Streetlights are not re-placed here (they
+## are boot-time, as they always were — doc 11 §2.10.1's open item).
 func _rebuild_road_multimesh() -> void:
-	if _road_node == null or _road_node.multimesh == null:
+	if road_surface == null:
 		return
-	var world := sim_host.sim.world
-	var road_tiles: Array[Vector2i] = []
-	for z in TileGrid.SIZE:
-		for x in TileGrid.SIZE:
-			if world.grid.has_flag(x, z, TileGrid.FLAG_ROAD):
-				road_tiles.append(Vector2i(x, z))
-	var mm := _road_node.multimesh
-	mm.instance_count = road_tiles.size()
-	for i in road_tiles.size():
-		mm.set_instance_transform(i, Transform3D(Basis.IDENTITY,
-				Vector3(road_tiles[i].x * 8.0 + 4.0, 0.05, road_tiles[i].y * 8.0 + 4.0)))
+	road_surface.rebuild(sim_host.sim.world.grid,
+			sim_host.sim.roads.graph if sim_host.sim.roads != null else null)
 
 
 ## Rebuild every world view from the (just-replaced) sim. The render model's
@@ -1094,12 +1106,19 @@ func _resync_world_views() -> void:
 	for rid: int in render_ids:
 		render_model.add_building(_building_view(live[rid]))
 	render_model.resync_snap()
+	if construction_plant != null:
+		construction_plant.clear()
+		construction_plant.set_road_network(sim.roads)
 	if construction_view != null:
 		construction_view.clear()
 		for sim_id: String in sim.buildings:
 			if (sim.buildings[sim_id] as Building).state == &"under_construction":
 				_add_construction_site(String(sim_id))
-	_rebuild_road_multimesh()
+	# `true`: a loaded save swaps the CitySim for a fresh object whose graph's
+	# `graph_version` could collide with the old one's — force the repack.
+	if road_surface != null:
+		road_surface.rebuild(sim.world.grid,
+				sim.roads.graph if sim.roads != null else null, true)
 	# The vehicle layer keys off a live event stream; the cheapest correct
 	# resync is a fresh view (its whole state rebuilds within a game-minute).
 	if vehicle_view != null:
@@ -1108,6 +1127,10 @@ func _resync_world_views() -> void:
 		vehicle_view.name = "Vehicles"
 		add_child(vehicle_view)
 		vehicle_view.setup(_render_data)
+	# doc 11 §2.10b: a loaded save is a different grid. One flag; the rebuild
+	# lands on the next frame's `sync`.
+	if power_infra != null:
+		power_infra.note_topology_changed()
 
 
 func _on_ui_dispatch(unit_id: int, incident_id: int) -> void:
@@ -1390,6 +1413,18 @@ func _process(delta: float) -> void:
 	city_view.refresh(delta, hour, camera_rig.camera.global_position)
 	if construction_view != null:
 		construction_view.refresh(delta, environment_controller.last_night)
+	# doc 11 §2.16. `gm_per_s` is the sim speed — 0 while paused, which parks
+	# every lorry exactly where it stands. `game_minutes` pins the layer to the
+	# save's own clock, so a load or a catch-up puts it where the save says.
+	if construction_plant != null:
+		construction_plant.set_focus(camera_state.focus)
+		construction_plant.refresh(delta, environment_controller.last_night,
+				0.0 if sim_host.paused else float(sim_host.speed),
+				float(sim_host.sim.clock.game_seconds()) / 60.0)
+	if power_infra != null:
+		# One call: it owns its own poll schedules (state 4 Hz, topology 0.2 Hz
+		# plus the event hook above) and its own wire gating off the camera.
+		power_infra.sync(sim_host.sim, delta, camera_rig.camera.global_position)
 	if vehicle_view != null:
 		vehicle_view.set_focus(camera_state.focus)
 		vehicle_view.refresh(delta, environment_controller.last_night,
@@ -1409,10 +1444,14 @@ func _process(delta: float) -> void:
 		if perf_governor.update(delta):
 			var knobs := perf_governor.knobs()
 			city_view.apply_governor(knobs)
+			if power_infra != null:
+				power_infra.apply_governor(knobs)   # `particle_ratio` only
 			Engine.max_fps = perf_governor.target_fps()          # doc 13 §2.8
 			if String(knobs["preset"]) != render_model.preset:   # a latched drop
 				render_model.set_preset(String(knobs["preset"]))
 				vehicle_view.set_preset(String(knobs["preset"]), _render_data)
+				if construction_plant != null:
+					construction_plant.set_preset(String(knobs["preset"]), _render_data)
 			if audio != null:
 				audio.feed_batch(perf_governor.drain_events())   # telemetry cue
 	if _autosave_interval_s > 0.0 and save_service != null:
