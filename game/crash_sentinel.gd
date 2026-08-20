@@ -86,6 +86,13 @@ func mark_clean_exit() -> void:
 		DirAccess.remove_absolute(flag)
 
 
+## Re-arm after a resume: [mark_clean_exit] deleted the flag while the app sat
+## paused with its city committed. From the moment play resumes, a kill is an
+## unclean exit again, so the flag goes back down.
+func arm() -> void:
+	_write_flag()
+
+
 ## One line of context for the next incident file. Ring-buffered, so a long
 ## session costs a fixed amount of memory.
 func note(kind: String, detail: Variant = null) -> void:

@@ -584,6 +584,27 @@ func canonical_capture() -> Dictionary:
 	return _encode_floats(capture_state())
 
 
+## Doc 08 §2.8: this body's own ladder position, independent of the envelope's
+## `schema_version`. Bumping it IS "the city section changed shape".
+const SAVE_SECTION_VERSION := 1
+
+
+func save_section_version() -> int:
+	return SAVE_SECTION_VERSION
+
+
+## Doc 08 §2.8's rules: TOTAL (never fails — missing input means a documented
+## default), additive-first (a removed field is ignored for one version before
+## it is dropped), and it NEVER reads `data/`, because the tables will have
+## moved on by the time an old save arrives.
+func migrate_save_section(body: Dictionary, from_version: int) -> Dictionary:
+	var version := from_version
+	while version < SAVE_SECTION_VERSION:
+		# match version: 1: body = _v1_to_v2(body)
+		version += 1
+	return body
+
+
 static func _encode_floats(value: Variant) -> Variant:
 	match typeof(value):
 		TYPE_FLOAT:

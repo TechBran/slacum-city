@@ -60,6 +60,8 @@ var _hud_timer := 0.0
 var _hud_net_per_hour := 0.0
 var _last_overlay_minute := -1
 var _resumed_slot := -1   # >= 0 when this session restored a save at boot
+var _want_title := false  # clean player launch → the title door owns the load
+var _title_up := false    # true while the door is showing; gates saves + catch-up
 var _render_data: Dictionary = {}
 var _road_node: MultiMeshInstance3D
 
@@ -105,14 +107,26 @@ func _ready() -> void:
 	# that actually PARSES rather than merely the newest.
 	crash_sentinel = CrashSentinel.new()
 	var user_args := OS.get_cmdline_user_args()
-	if crash_sentinel.boot():
+	var unclean := crash_sentinel.boot()
+	# The title door opens on every clean player launch (doc 12 §2.19). Crash
+	# recovery and --resume dev runs skip it and load directly; the door's own
+	# CONTINUE is what performs the load on the plain path.
+	_want_title = not unclean and not user_args.has("--resume") \
+			and (user_args.is_empty() or user_args.has("--title"))
+	if unclean:
 		var recovery_slot := crash_sentinel.recovery_slot(save_service)
 		if recovery_slot >= 0 and save_service.load_slot(sim_host.sim, recovery_slot):
 			_resumed_slot = recovery_slot
 		push_warning("[crash] unclean exit #%d; breadcrumb %s"
 				% [crash_sentinel.unclean_exits, crash_sentinel.breadcrumb_path()])
-	elif user_args.is_empty() or user_args.has("--resume"):
+	elif not _want_title and (user_args.is_empty() or user_args.has("--resume")):
 		_resumed_slot = save_service.load_latest(sim_host.sim)
+	if _resumed_slot >= 0 and save_service.last_load_recovered:
+		# Doc 08 §2.9's recovery UX: say what generation the ladder fell back to.
+		push_warning("[save] recovered from a checkpoint; %d sim-minutes lost%s"
+				% [save_service.last_load_lost_minutes,
+				"" if save_service.repair_notes.is_empty()
+				else " (%d repairs)" % save_service.repair_notes.size()])
 
 	_build_environment(render_data)
 	_build_ground()
@@ -680,7 +694,19 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 	}
 	if root.onboarding != null and root.onboarding.model != null:
 		root.onboarding.model.set_regions(tutorial_regions)
-	if _resumed_slot < 0:
+	if _want_title:
+		# The title door (doc 12 §2.19): the world idles paused underneath; the
+		# shell loads/founds only when the door says so. Lifecycle saves stand
+		# down too — the founding city under the door must never be committed
+		# over the player's autosave.
+		root.title_continue.connect(_on_title_continue)
+		root.title_new_game.connect(_on_title_new_game)
+		sim_host.paused = true
+		_title_up = true
+		if android_lifecycle != null:
+			android_lifecycle.save_enabled = false
+		root.present_title()
+	elif _resumed_slot < 0:
 		root.start_onboarding(tutorial_regions)
 
 
@@ -922,7 +948,22 @@ func _on_ui_quit_requested() -> void:
 	# Single-scene game: quit means save, then close. The view only asks.
 	if save_service != null:
 		save_service.autosave(sim_host.sim)
+		if save_service.last_error == "" and crash_sentinel != null:
+			crash_sentinel.mark_clean_exit()
 	get_tree().quit()
+
+
+func _notification(what: int) -> void:
+	if what != NOTIFICATION_WM_CLOSE_REQUEST:
+		return
+	# Desktop window close (and Android task close): same contract as the quit
+	# menu — commit, then mark clean. Skipped under the title door, where the
+	# only world held is the founding city and committing it would overwrite
+	# the player's autosave.
+	if save_service != null and sim_host != null and not _title_up:
+		save_service.autosave(sim_host.sim)
+		if save_service.last_error == "" and crash_sentinel != null:
+			crash_sentinel.mark_clean_exit()
 
 
 func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
@@ -971,6 +1012,47 @@ func _on_ui_save_loaded(_slot: int) -> void:
 	if ui_root != null:
 		ui_root.restore_ui_state(save_service.last_loaded_ui)
 	_refresh_hud()
+
+
+func _on_title_continue(slot: int) -> void:
+	var ok := slot >= 0 and save_service.load_slot(sim_host.sim, slot)
+	if not ok:
+		ok = save_service.load_latest(sim_host.sim) >= 0
+	if not ok:
+		ui_root.push_toast(UIWidgets.t(ui_root.config, "ui_saves_failed"),
+				HudModel.STATE_CRITICAL)
+		ui_root.refresh_title()
+		return   # the door survives a corrupt save
+	_resumed_slot = slot
+	_on_ui_save_loaded(slot)
+	ui_root.set_city_level(sim_host.sim.progression.city_level)
+	ui_root.dismiss_title()
+	sim_host.paused = false
+	_title_up = false
+	if android_lifecycle != null:
+		android_lifecycle.save_enabled = true
+
+
+func _on_title_new_game(slot: int) -> void:
+	# `slot` is where the OLD city goes (the door's replace/archive ruling), or
+	# -1 when there is nothing worth keeping.
+	if slot >= 0:
+		var founding: Dictionary = sim_host.sim.canonical_capture()
+		var from := save_service.latest_slot()
+		if from >= 0 and save_service.load_slot(sim_host.sim, from):
+			save_service.save_slot(sim_host.sim, slot)
+		sim_host.sim.restore_state(founding)
+		_resync_world_views()
+	_resumed_slot = -1
+	ui_root.dismiss_title()
+	sim_host.paused = false
+	_title_up = false
+	if android_lifecycle != null:
+		android_lifecycle.save_enabled = true
+	ui_root.start_onboarding({
+		"tutorial_lot_a": sim_host.sim.loader.resolve_tag("tutorial_lot_a")["tile_global"],
+		"tutorial_lot_b": sim_host.sim.loader.resolve_tag("tutorial_lot_b")["tile_global"]})
+	save_service.autosave(sim_host.sim)   # stake the rotation for the new city
 
 
 ## Re-scan the tile grid for FLAG_ROAD and rebuild the slab MultiMesh — fired
@@ -1122,7 +1204,13 @@ func _on_audio_result(result: Dictionary) -> void:
 			else AudioService.UI_DENY)
 
 
-func _on_app_paused(_saved: bool) -> void:
+func _on_app_paused(saved: bool) -> void:
+	# The pause save committed the city, so a kill from here on is a CLEAN exit
+	# (doc 13 §2.11 — the flag comes back down in `_on_app_resumed`). Without
+	# this, every launch ever made was "unclean" and the recovery path was the
+	# only door into the game.
+	if saved and crash_sentinel != null:
+		crash_sentinel.mark_clean_exit()
 	var sim := sim_host.sim
 	_before_snapshot = {"treasury": sim.treasury.balance,
 			"population": sim.population.city_population,
@@ -1136,6 +1224,10 @@ func _on_app_paused(_saved: bool) -> void:
 ## `advance_coarse_n`'s hour-alignment contract on 239 of 240 tick offsets
 ## (doc 91 D-1); the planner emits segments that always land on boundaries.
 func _on_app_resumed(elapsed_wall_s: float) -> void:
+	if crash_sentinel != null:
+		crash_sentinel.arm()
+	if _title_up:
+		return   # the title door is up; nothing underneath is owed catch-up
 	var sim := sim_host.sim
 	var plan: Dictionary = CatchUpPlanner.plan(int(elapsed_wall_s * 1000.0),
 			sim.clock.residual_game_ms, sim.clock.tick_index)
@@ -1342,6 +1434,8 @@ func _process(delta: float) -> void:
 			image.save_png(_screenshot_path)
 			print("screenshot saved: ", _screenshot_path,
 					" render_buildings=", render_model.building_count())
+			if crash_sentinel != null:
+				crash_sentinel.mark_clean_exit()  # dev exits are not crashes
 			get_tree().quit()
 
 

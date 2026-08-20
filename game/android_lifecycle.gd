@@ -50,6 +50,10 @@ const BACK_AUTOSAVE_MIN_INTERVAL_S := 5.0
 var save_service: SaveService
 ## The live sim. Only ever handed to `SaveService`; never read here.
 var sim: Object
+## False while the shell holds a world that must never be committed — today
+## that is the title door, where the founding city idles underneath and a
+## lifecycle save would overwrite the player's newest autosave with it.
+var save_enabled: bool = true
 ## doc 08 §2.13's notification planner, optional. When set, the pause sequence
 ## runs its scheduling pass (`plan_for_background`) and the resume sequence
 ## cancels and re-plans — the two moments the doc names, and the only two places
@@ -254,9 +258,11 @@ func _on_thermal_status_changed(status: int) -> void:
 
 
 func _autosave() -> bool:
-	if save_service == null or sim == null:
+	if save_service == null or sim == null or not save_enabled:
 		return false
-	save_service.autosave(sim)
+	# Doc 13 §2.2 step 3: lifecycle saves are `pause`-class, and the reason
+	# rides `manifest.active.reason` so the ladder can tell them apart.
+	save_service.autosave(sim, "pause")
 	return save_service.last_error == ""
 
 

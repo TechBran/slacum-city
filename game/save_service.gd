@@ -190,8 +190,8 @@ func save_slot(sim: Object, slot: int, reason: String = "manual") -> Dictionary:
 ## exit that ate this write falls through to the generation before it, which is
 ## what the two-slot shadow used to buy at a quarter of the depth and with no
 ## digest to prove the fallback was ever whole.
-func autosave(sim: Object) -> void:
-	var meta := save_slot(sim, AUTOSAVE_SLOT, "autosave")
+func autosave(sim: Object, reason: String = "autosave") -> void:
+	var meta := save_slot(sim, AUTOSAVE_SLOT, reason)
 	if not meta.is_empty():
 		last_autosave_unix = int(meta["saved_at_unix"])
 		last_autosave_slot = AUTOSAVE_SLOT
