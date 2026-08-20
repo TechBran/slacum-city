@@ -21,6 +21,10 @@ signal speed_selected(multiplier: int)          ## → `set_speed` (doc 01)
 signal pause_toggled(paused: bool)              ## → `set_paused` (doc 01)
 signal alert_activated(alert_id: String)        ## banner tap → jump + select
 signal menu_requested                           ## → the pause menu on ModalLayer
+## §2.13's gate degraded a banner it could not afford into a toast (§2.15).
+## `UIRoot` draws it on `ToastLayer`; without this the degraded alert was
+## budgeted, recorded and then shown to nobody.
+signal toast_requested(text: String, state: StringName)
 
 const PALETTE_TYPE := "Palette"
 const REFERENCE_WIDTH_DP := 880.0
@@ -596,6 +600,12 @@ func push_alert(alert: Dictionary, now_s: float = -1.0) -> Dictionary:
 	var stamp := now_s if now_s >= 0.0 else _now_s()
 	var verdict := model.submit_alert(stamp, alert)
 	_render_alerts(stamp)  # the same clock, or the new banner prunes on arrival
+	if StringName(str(verdict.get("surface", ""))) == HudModel.SURFACE_TOAST:
+		var toast := model.active_toast(stamp)
+		if not toast.is_empty():
+			toast_requested.emit(str(toast["title"]),
+					HudModel.STATE_CRITICAL if str(toast["class"]) == "p1"
+					else HudModel.STATE_WARNING)
 	return verdict
 
 

@@ -103,6 +103,14 @@ const CODE_TABLE := {
 	&"E_NOT_ROAD": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
 	&"E_NO_ELIGIBLE_TILES": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
 	&"E_WOULD_ORPHAN": {"severity": SEVERITY_BLOCKED, "fix": FIX_ROAD_SEGMENT},
+	# --- Wave 6: doc 09 §2.5's land verbs, surfaced by S4 (doc 12 §2.8).
+	# `WorldMap.purchase_allowed` raises the first three and
+	# `CitySim.cmd_start_development` the fourth; two of them are INFO rather
+	# than BLOCKED, because "you already own this" is an answer, not a fault.
+	&"E_NOT_ADJACENT": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	&"E_ALREADY_OWNED": {"severity": SEVERITY_INFO, "fix": FIX_BLOCK},
+	&"E_UNKNOWN_BLOCK": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	&"E_ALREADY_DEVELOPING": {"severity": SEVERITY_INFO, "fix": FIX_BLOCK},
 	UNKNOWN_CODE: {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 }
 
@@ -418,6 +426,14 @@ func _args_for(name: StringName, p: Dictionary) -> Dictionary:
 		&"E_UNKNOWN_BUILDING":
 			args["have"] = str(p.get("have", p.get("sim_id", "")))
 			args["need"] = str(p.get("need", ""))
+		&"E_NOT_ADJACENT", &"E_ALREADY_OWNED", &"E_UNKNOWN_BLOCK", &"E_ALREADY_DEVELOPING":
+			# The land family names a BLOCK, and a block's player-facing name is
+			# its label (`B4`), not its id (`B_1_3`) — `at` carries whichever the
+			# caller supplied, preferring the label.
+			args["at"] = str(p.get("at", p.get("block_label", p.get("block", ""))))
+			args["have"] = str(p.get("have", args["at"]))
+			args["need"] = str(p.get("need", ""))
+			args["phase"] = str(p.get("phase", p.get("state", "")))
 		_:
 			args["have"] = str(p.get("have", ""))
 			args["need"] = str(p.get("need", ""))

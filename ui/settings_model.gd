@@ -23,6 +23,15 @@ const KIND_SLIDER := &"slider"
 const SOURCE_RENDER_PRESETS := "render_presets"
 const SOURCE_TEXT_SCALE := "text_scale_options"
 
+## A row may declare that it writes another document's state rather than a UI
+## preference. `policy: "dispatch"` marks §2.13's auto-response rows: their
+## defaults come from doc 06's `data/dispatch.json.policy_defaults` and their
+## values go to `CitySim.cmd_set_dispatch_policy`, so `data/ui.json` describes
+## the *control* and never the number behind it (D-11).
+const POLICY_DISPATCH := "dispatch"
+const DEFAULT_FROM_DEFAULTS := "defaults."
+const DEFAULT_FROM_DISPATCH := "dispatch."
+
 ## Fallback preset order if `data/render.json` is absent (doc 11 authors it).
 const _DEFAULT_PRESETS := ["performance", "balanced", "high"]
 const _EPSILON := 0.0005
@@ -85,6 +94,22 @@ func kind(key: String) -> StringName:
 	return StringName(str(_row_def(key).get("kind", String(KIND_TOGGLE))))
 
 
+## `""` for a plain UI preference, `POLICY_DISPATCH` for one of §2.13's
+## auto-response rows. `UIRoot` reads this to decide where a change goes.
+func policy_of(key: String) -> String:
+	return str(_row_def(key).get("policy", ""))
+
+
+## Every row that writes `policy`, in sheet order — the set `UIRoot` seeds from
+## the live sim on bind, so a saved city's policies win over a data default.
+func policy_keys(policy: String) -> Array[String]:
+	var out: Array[String] = []
+	for key: String in keys():
+		if policy_of(key) == policy:
+			out.append(key)
+	return out
+
+
 ## The option list for a `choice` row, resolved through `options_from` when the
 ## row does not carry one inline.
 func options(key: String) -> Array:
@@ -126,10 +151,16 @@ func _default_for(row: Dictionary) -> Variant:
 	if row.has("default"):
 		return row["default"]
 	var from := str(row.get("default_from", ""))
-	if from.begins_with("defaults."):
-		var name := from.substr("defaults.".length())
+	if from.begins_with(DEFAULT_FROM_DEFAULTS):
+		var name := from.substr(DEFAULT_FROM_DEFAULTS.length())
 		if _defaults.has(name):
 			return _defaults[name]
+	elif from.begins_with(DEFAULT_FROM_DISPATCH):
+		# Doc 06 owns the number; this row owns only the control that shows it.
+		var policy: Dictionary = _cfg.dispatch_policy_defaults() if _cfg != null else {}
+		var name := from.substr(DEFAULT_FROM_DISPATCH.length())
+		if policy.has(name):
+			return policy[name]
 	var key := str(row.get("key", ""))
 	var choices := options(key)
 	if not choices.is_empty():
@@ -273,6 +304,8 @@ func rows() -> Array[Dictionary]:
 			"max": UIConfig.get_num(row, "max", 1.0),
 			"step": UIConfig.get_num(row, "step", 0.1),
 			"device_scoped": device_scoped_keys().has(key),
+			"policy": policy_of(key),
+			"hint_key": str(row.get("hint_key", "")),
 		})
 	return out
 
@@ -294,6 +327,16 @@ func value_text(key: String) -> String:
 		return _t_args("ui_settings_value_autosave_min", {"n": minutes})
 	if key == "graphics":
 		return _t("ui_settings_value_graphics_%s" % str(value(key)))
+	# §2.14's three-way row and §2.13's money ladder are the two families whose
+	# value is a *word* or a *sum* rather than the stored value; both say so in
+	# `data/ui.json` (`value_text_from` / `value_format`) rather than by key name,
+	# so a new row of either shape needs no branch here.
+	var row := _row_def(key)
+	var family := str(row.get("value_text_from", ""))
+	if family != "":
+		return _t("ui_settings_value_%s_%s" % [family, str(value(key))])
+	if str(row.get("value_format", "")) == "money":
+		return HudModel.money_exact(int(round(value_num(key))))
 	return str(value(key))
 
 

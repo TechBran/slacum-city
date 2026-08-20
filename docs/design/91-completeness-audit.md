@@ -51,12 +51,16 @@ instance). They are counted in the tally like any other row.
 | 09 Map, land, starter city | 13 | 12 | 0 | 1 | 0 | 0 |
 | 10 Roads & traffic | 15 | 13 | 2 | 0 | 0 | 0 |
 | 11 Rendering & performance | 15 | 14 | 1 | 0 | 0 | 0 |
-| 12 UI/UX | 18 | 14 | 2 | 2 | 0 | 0 |
+| 12 UI/UX | 18 | 16 | 2 | 0 | 0 | 0 |
 | 13 Android | 13 | 5 | 3 | 5 | 0 | 0 |
-| **Total** | **173** | **138** | **20** | **11** | **2** | **2** |
+| **Total** | **173** | **140** | **20** | **9** | **2** | **2** |
 
-**80 % shipped.** Of the 33 rows that are not (two more are deferred by their own
-docs, which is not a gap), the weight sits in three places:
+*Wave-6 revision (2026-08-19): doc 12 §2.8 and §2.14 moved ABSENT → SHIPPED; §2.2
+and §2.13 stay PARTIAL on S0 and S10. Everything below the count table is as
+written at `6d8c2b1` unless a row says otherwise.*
+
+**81 % shipped.** Of the 31 rows that are not (two more are deferred by their own
+docs, which is not a gap), the weight sits in two places:
 
 * **The Android platform layer** — doc 13's notifications, permissions, signing
   and store assets: 5 ABSENT rows, and the only ones on the critical path to a
@@ -65,9 +69,10 @@ docs, which is not a gap), the weight sits in three places:
   migration and corruption gate are *written and tested* in
   `sim/persistence/save_manager.gd` and reachable from nowhere; the shell uses a
   simpler second format instead. 6 PARTIAL rows, one root cause.
-* **Player verbs for infrastructure** — water, roads and land are fully
-  simulated and cannot be touched. Not one line of new simulation is needed for
-  any of them; they need a `cmd_*` re-export and a card.
+* ~~**Player verbs for infrastructure**~~ — **closed.** Water landed in Wave 5B,
+  roads in 5A, land in Wave 6 (S4). Exactly as predicted, not one line of new
+  simulation was needed for any of the three: a `cmd_*` re-export, a card, and
+  in land's case a panel and a tap seam.
 
 ---
 
@@ -292,19 +297,19 @@ settings do not survive an app restart. See **D-3**.
 | § | Subject | Grade | Pointer / gap |
 |---|---|---|---|
 | 2.1 | Units, breakpoints | SHIPPED | `UIRoot.breakpoint_for`; `test_ui_scaffold.gd` |
-| 2.2 | Screen map | **PARTIAL** | S1–S3, S5–S9, S11–S13 ship. **S0 (boot/save-load screen) and S4 (land purchase panel) have no node in `ui_root.tscn`**; S10 has no rows. |
+| 2.2 | Screen map | **PARTIAL** | S1–S9, S11–S13 ship (**S4 landed Wave 6** — `PanelLayer/LandPanel` in `ui_root.tscn`). **S0 (boot/save-load screen) still has no node**; S10 has no rows. |
 | 2.3 | HUD layout | SHIPPED | `CityHUD`; `test_ui_topbar.gd` |
 | 2.4 | Stat chips | SHIPPED | `HudModel`; `test_hud_model.gd` |
 | 2.5 | Overlay system | SHIPPED (3 of the doc's modes) | power, water, traffic; `OverlayModel` lists and greys the rest |
 | 2.6 | Incident drawer & dispatch UX | SHIPPED | `IncidentDrawer` + `UnitPickerSheet`; `test_ui_incidents.gd` |
 | 2.7 | Build menu, placement, requirements | SHIPPED | `BuildSheet` + `BuildController` + `RequirementFormatter` |
-| 2.8 | **Land purchase flow (S4)** | **ABSENT** | `CitySim.cmd_buy_block` / `cmd_start_development` exist and are tested; **no `ui/` file references either**. Land can only be bought by a script. See **D-5**. |
+| 2.8 | **Land purchase flow (S4)** | SHIPPED | `ui/land_panel.gd` + `ui/land_panel_model.gd`; entered by `BuildController.pick_at_ground()`; `tests/test_ui_land.gd` (26 tests) drives price, refusals, PURCHASE → DEVELOP and the six-phase list over a real `CitySim`. **One line in `game/main.gd` makes it reachable** — `_handle_tap` must call `pick_at_ground` instead of `sim_id_at_ground` (doc 12 Wave-6 D-21); until the lead lands it, S4 is a screen with no door. |
 | 2.9 | Building panel (S5) | SHIPPED | `BuildingPanel`; upgrade checklist live. Its four coverage tiles list police and fire, which nothing computes (doc 02 §2.9). |
 | 2.10 | City dashboard (S8) | SHIPPED | `CityDashboard`; `test_ui_dashboard.gd` |
 | 2.11 | Pause & speed | SHIPPED | HUD rail + `PauseMenu` |
 | 2.12 | WHILE YOU WERE AWAY (S11) | SHIPPED | `AwayReportSheet`; `test_ui_away.gd` |
-| 2.13 | Settings (S9) & **notification settings (S10)** | PARTIAL | eight settings rows ship; `data/ui.json.settings.rows` has **no notification rows at all** |
-| 2.14 | Haptics | **ABSENT** | `data/ui.json` carries `haptics_ms`; no `ui/` or `game/` file calls a vibrator |
+| 2.13 | Settings (S9) & **notification settings (S10)** | PARTIAL | **sixteen** rows ship — the original eight plus §2.14's `haptics` and §2.13's seven auto-response policies (D-11 closed; defaults from doc 06's `data/dispatch.json`, values through `UIRoot.bind_dispatch_policy` → `cmd_set_dispatch_policy`). `data/ui.json.settings.rows` still has **no notification rows at all**, and the utility restoration *order* is still a list with no control |
+| 2.14 | Haptics | SHIPPED | `ui/haptics.gd` — the one vibrator call site; seven cues off `data/ui.json.haptics_ms`, fired by `BuildSheet`, `LandPanel` and `UIRoot.feed_events`/`report_dispatch_result`. `reduce_motion` suppresses it (A8) without clearing the row. `tests/test_ui_haptics.gd` |
 | 2.15 | Alerts, toasts, world markers | SHIPPED | `AlertsCenter`; `test_ui_alerts.gd` |
 | 2.16 | Touch camera controls | SHIPPED | `TouchInput` → `GestureRecognizer` → `CameraState`; `test_gestures.gd` |
 | 2.17 | **Onboarding, eleven steps** | SHIPPED | `OnboardingModel` + `OnboardingFlow`; now driven end to end by `tests/test_tutorial_flow.gd` and `tools/flow_test.gd`. Two structural risks found — **D-2**, **D-3**. |
@@ -432,13 +437,13 @@ Filed, not fixed — these live in files this branch does not own.
 | **D-2** | **High** | Tutorial step 9 (`dispatch`) can become unsatisfiable. The auto-dispatcher takes the scripted transformer job **within the first game-minute** and resolves it at **+62 game-minutes** — 62 real seconds at 1×. A player who takes longer than that to open the drawer and tap ASSIGN finds the incident terminal, every `cmd_dispatch_unit` refused `E_UNKNOWN_INCIDENT`, and the step has no `autohelp` and no `any_of` fallback. The flow then only ends via *Skip tutorial*. Measured by `tests/test_tutorial_flow.gd::test_scripted_incident_leaves_a_usable_dispatch_window`. Cheapest fix: an `any_of` on step 9 that also accepts `sim_event incident_resolved`. |
 | **D-3** | **High** | `UIRoot.capture_ui_state()` / `restore_ui_state()` are complete and tested and **called by nothing outside `tests/`**. `SaveService` persists only `sim.canonical_capture()`. Consequence: the tutorial's finished flag, the settings and the overlay choice **do not survive an app restart** — a returning player is shown the tutorial again, contradicting doc 12 §2.17's "never shows again once done". One line in `SaveService.save_slot` and one in `load_slot`. |
 | **D-4** | **High** | Doc 05's ten `WaterSystem.cmd_*` are not re-exported by `CitySim`, so no build card can exist. The water simulation is fully built and entirely unplayable. |
-| **D-5** | **High** | Two more verb surfaces with no player: **roads** (`RoadNetwork.edit_tile` exists; no `cmd_*`, no card — doc 10 §2.13) and **land** (`cmd_buy_block` / `cmd_start_development` exist and are tested; no S4 panel — doc 12 §2.8). Land is the more serious of the two: the city cannot grow past its founding blocks by any player action. |
+| **D-5** | ~~High~~ **Closed (Wave 5A + 6)** | Two more verb surfaces with no player: **roads** (closed Wave 5A) and **land** (closed Wave 6 — S4 ships as `ui/land_panel.gd`, entered by `BuildController.pick_at_ground`; `cmd_buy_block` is called with `auto_develop = false` so doc 12 §2.8's PURCHASE → DEVELOP is two taps, as written). The `game/main.gd` `_handle_tap → pick_at_ground` routing landed in the Wave-6 integration. |
 | **D-6** | ~~Medium~~ **CLOSED** (Wave 6) | Incident pressure at starter-city scale is ~1 per 6 game-days (2 in 287 game-hours). Consistent with doc 02's ignition rates, but it means the drawer, the picker, the fleet and doc 06's whole escalation ladder are almost never seen. Either the rates want a floor at small city sizes, or the Director wants a "something must happen" pacing rule. — **Answered by the first of those: `data/incidents.json` `ambient_floor`, a per-channel `max()`, no `generator_base_rates` row moved. 1.88 → 3.04 ambient incidents/game-week, measured over 336 game-days on each side of the boolean. Doc 92 §18; gate 19.** The true rate was 1.88/week, not the 0.5/week this row reads — 287 game-hours is a 12-game-day sample of a 0.27/day process, so part of the number above is Poisson noise. The finding survives the correction; the measurement did not. |
 | **D-7** | ~~Medium~~ **CLOSED** (Wave 6) | The soak's city never left **city level 0** in 12 game-days, so every one of 376 upgrade attempts was refused `E_CITY_LEVEL`. Doc 09 §2.11's thresholds are not reachable by a player who is not optimising, which locks out doc 02 §2.10–2.11 entirely. — **Worse than this row knew: `balanced` ended FIFTY game-days at level 2, and four of the six rungs were unreachable by anything the game can do. Ladder retuned onto doc 92's measured curves and moved into `data/progression.json`: level 1 on game-day 2, level 2 on 11, level 3 on 23. Doc 92 §19; gate 20.** |
 | **D-8** | Medium | No benchmark city fixture (doc 09 §2.13's `tools/gen_bench_city.py` does not exist). Doc 11 §2.13's device matrix and budgets are written against a city size nothing can produce, so none of them has ever been measured. |
 | **D-9** | Medium | Every `CitySim` ever constructed is retained forever — **199 objects per reload measured in-run, 208 per boot measured in isolation** (boot six, release five, the count never falls). Cause: `CitySim._register_systems()` registers twelve phase adapters that each hold a strong `sim: CitySim`, and `sim` holds the scheduler — a reference cycle, and `sim/` is RefCounted-only with no cycle collector. Harmless in the shipped shell (one sim, loads restore in place) and the reason every tool and test run leaks. It becomes a real leak the moment a "New game" or "load into a fresh sim" path appears. Fix: a `CitySim.dispose()` that clears the scheduler's registry, or `WeakRef` in the adapters. |
 | **D-10** | Low | `vehicle_state` is **80 %** of all bus traffic (326,745 of 408,979 events over 287 game-hours). Every one is a Dictionary allocated in `sim/`, drained in `game/`, and used only to pose a cosmetic mesh. On a phone this is the single largest per-tick allocation in the game. Worth a packed array or a pull-based snapshot. |
-| **D-11** | Low | `DispatchPolicy` has no UI, so `auto_dispatch_*` is stuck at its default. Exposing it in Settings would also give D-2 a second escape hatch. |
+| **D-11** | ~~Low~~ **Closed (Wave 6)** | `DispatchPolicy` now has seven S9 rows (`policy: "dispatch"` in `data/ui.json.settings.rows`), defaulting from doc 06's own `data/dispatch.json.policy_defaults` and writing through `cmd_set_dispatch_policy`. The **city's** policy seeds the rows on bind and beats a restored `ui.settings` copy, because the policy lives in the city's save and not the UI's. |
 | **D-12** | **High** | **The Wave-4 "zero defects across five device boxes" result has regressed.** Re-running `tools/ui_preview.gd --screen=all --audit --strict` finds `overlapping_targets` on `PanelLayer/EventLog/Chip` at **412×915** (2 states), **880×400** (3 states) and **1280×720** (3 states) — the alerts list, the incident drawer's rows and the building panel's `Fix this →` all put a tap target over it. Exit code 1 at every box. Root cause is exact and the fix is already written elsewhere: `ui/alerts_center.gd:221` polls `_chip.visible = not UIWidgets.any_sibling_open(self)` in `_process` — the comment above it says it was added for *this* defect — and `ui/event_log.gd` has no `_process` and never stands its chip down. S13 landed in the same wave as the sweep and did not inherit the fix. |
 | **D-13** | Low | `tests/test_ui_audit.gd::BOXES` covers 360×800, 412×915, 794×924 and 880×400 — **not the project's own `window/size/viewport` of 1280×720**, which is what every screenshot harness and every desktop run renders at. Adding it would have caught D-12 in the suite. |
 | **D-14** | Medium | **Doc 06's `water_main_break` generator has no candidate source.** `IncidentWorld.water_mains()` returns `[]` (`sim/incidents/incident_world.gd:243`) and `CityIncidentWorld` does not override it, so the generator has been scanning an empty array since it was written and produces **exactly zero** at every city size, independent of any rate. Doc 05's `WaterSystem` publishes every field the row wants (`{id, tile, length_km, condition, pressure_ratio, utilization, freeze_stress, zone}`); this is an adapter join, not a balance number. Found while measuring D-6 — doc 92 §18.2. |
@@ -456,7 +461,7 @@ Ranked by *player-visible harm per hour of work*, not by size.
 | **2** | **Persist the `ui` block** | one line each in `SaveService.save_slot` / `load_slot`; without it a returning player is shown the tutorial again, which is the first thing any tester will report | D-3 |
 | **3** | **Give step 9 an `any_of` fallback** | a table row in `data/ui.json`, no code; today a slow player can wedge the tutorial permanently with no way out but Skip | D-2 |
 | **4** | **Stand the event-log chip down when a sibling opens** | five lines copied from `ui/alerts_center.gd:221`; today it takes taps meant for the alerts list and the drawer at three of four device boxes. Add 1280×720 to `test_ui_audit.gd::BOXES` in the same commit | D-12, D-13 |
-| **5** | **Land purchase flow (S4) end to end** | the sim, the pricing and the development pipeline are all built and tested; the city cannot grow without a panel. Highest ratio of shipped-sim to missing-UI in the tree | D-5, and unblocks D-7 |
+| **5** | ~~**Land purchase flow (S4) end to end**~~ **DONE (Wave 6)** | `ui/land_panel*.gd`, the `pick_at_ground` seam, four new refusal codes with copy, `tests/test_ui_land.gd`. Outstanding: one `game/main.gd` tap-handler line | D-5, and unblocks D-7 |
 | **6** | **Water verbs through `CitySim` + build cards** | doc 05 is one of the largest subsystems in the game and is currently scenery | D-4 |
 | **7** | **Road build/upgrade/demolish verbs** | same shape as (5); also the prerequisite for doc 10 §2.13 and for making congestion actionable | D-5 |
 | **8** | **Android notifications (doc 13 §2.4/2.5/2.7 + doc 08 §2.13)** | the entire retention loop of a session-based mobile game. Needs `POST_NOTIFICATIONS`, a channel, an `AlarmManager` bridge in `SlacumNative`, S10's settings rows, and doc 01 §2.11's pre-scheduling to be hooked up | doc 13 §2.4/2.5/2.7, doc 08 §2.13, doc 12 §2.13 |
@@ -467,7 +472,7 @@ Ranked by *player-visible harm per hour of work*, not by size.
 | **13** | **`CitySim.dispose()`** | 210 objects per abandoned sim; cheap now, load-bearing the moment a New Game button exists | D-9 |
 | **14** | **`vehicle_state` traffic diet** | 80 % of the event bus for cosmetics; a packed snapshot would pay for itself on the Fold's mid-power cores | D-10 |
 | **15** | **Release plumbing: signing, store assets, crash reporting** | none of it is hard, all of it is on the critical path to a build anyone outside this repo can install | doc 13 §2.11/2.12 |
-| **16** | **Haptics + dispatch-policy settings rows** | two small UX rows that close doc 12 §2.14 and D-11 | doc 12 §2.14, D-11 |
+| **16** | ~~**Haptics + dispatch-policy settings rows**~~ **DONE (Wave 6)** | `ui/haptics.gd` (one vibrator call site, `reduce_motion`-suppressed), seven `policy: "dispatch"` rows, plus the toast surface and the city-level unlock reveal that §2.13's progression payoff needed | doc 12 §2.14, §2.13, D-11 |
 
 The first four are, together, well under a day's work, and they are the four
 that make the game's first ten minutes, its second launch and its tap targets

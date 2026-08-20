@@ -52,6 +52,42 @@ func progress(job_id: int) -> float:
 	return float(int(j["work_units"])) / maxf(1.0, float(int(j["required_work_units"])))
 
 
+## Work units this job earns per game-hour at its current crewing — `advance()`'s
+## own product, expressed per hour instead of per step, so a quoted ETA and the
+## exact integer accumulator can never disagree. `construction_rate` is doc 01's
+## channel value (1.0 = unmodified). Zero while the job has no crew.
+##
+## Read-only and float: this is the *presentation* of the accumulator (doc 12
+## §2.8's ETA line), never a second accumulator. Nothing in the tick path calls it.
+func units_per_game_hour(job_id: int, construction_rate: float = 1.0) -> float:
+	var j: Dictionary = _jobs.get(job_id, {})
+	if j.is_empty():
+		return 0.0
+	var crews: Dictionary = j["assigned_crews"]
+	var crew_permille := 0
+	for crew_id: Variant in crews:
+		crew_permille += int(crews[crew_id])
+	var eff_permille := roundi(maxf(0.0, construction_rate) * 1000.0)
+	var per_game_second := float(crew_permille) * float(int(j["site_mult_permille"])) \
+			* float(eff_permille)
+	var seconds_per_hour := float(GameClock.TICKS_PER_HOUR * GameClock.GAME_SECONDS_PER_TICK)
+	return per_game_second * seconds_per_hour / float(UNIT_DENOMINATOR)
+
+
+## Game-minutes until this job completes at its current crewing; `-1.0` when the
+## job is unknown or nothing is working it (which is a state the panel says out
+## loud rather than rendering as `0:00`).
+func eta_game_minutes(job_id: int, construction_rate: float = 1.0) -> float:
+	var j: Dictionary = _jobs.get(job_id, {})
+	if j.is_empty():
+		return -1.0
+	var rate := units_per_game_hour(job_id, construction_rate)
+	if rate <= 0.0:
+		return -1.0
+	var remaining := maxi(0, int(j["required_work_units"]) - int(j["work_units"]))
+	return float(remaining) / rate * 60.0
+
+
 ## Every live job in ascending job_id order — the deterministic read path for
 ## observers (progress pulses, UI listings) that must never touch _jobs.
 func active_jobs() -> Array[Dictionary]:
