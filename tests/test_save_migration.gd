@@ -337,12 +337,12 @@ static func _sha256_of(text: String) -> String:
 	return ctx.finish().hex_encode()
 
 
-func test_the_city_section_is_on_rung_four() -> void:
+func test_the_city_section_is_on_rung_five() -> void:
 	# The constant, the published accessor and the bytes on disk must agree.
 	# A bump that lands in only two of the three is how a save silently keeps
 	# claiming to be something it is not.
-	assert_eq(CitySim.SAVE_SECTION_VERSION, 4,
-			"Wave 9's routing/cadence epoch is rung 4 (doc 08 §2.8, report 98 RR-26)")
+	assert_eq(CitySim.SAVE_SECTION_VERSION, 5,
+			"the upgrade-timing epoch is rung 5 (doc 08 §2.8, report 98 RR-38)")
 	var sim := CitySim.boot_from_files(4242)
 	assert_eq(sim.save_section_version(), CitySim.SAVE_SECTION_VERSION)
 	var service := _fresh_service()
@@ -417,8 +417,10 @@ func test_the_city_section_ladder_is_total_and_additive_only() -> void:
 	#
 	# **ADDITIVE-FIRST**: v1 → v2 marks a rules epoch and is the identity; v2 → v3
 	# (Wave 9, doc 09 §2.14.4) adds **exactly one** key, `goals`, and touches
-	# nothing else. A migrator that quietly "fixed" something here would be
-	# rewriting the player's city on load, and neither rung does.
+	# nothing else; v3 → v4 (the routing/cadence epoch) and v4 → v5 (the
+	# upgrade-timing epoch) are rules rungs and identities again. A migrator that
+	# quietly "fixed" something here would be rewriting the player's city on
+	# load, and no rung on this ladder does.
 	var sim := CitySim.boot_from_files(4242)
 	sim.advance_hours(1.0)
 	var body := sim.canonical_capture()
@@ -448,9 +450,17 @@ func test_the_city_section_ladder_is_total_and_additive_only() -> void:
 	assert_eq(empty.keys().size(), 1,
 			"an empty body migrates rather than failing, and gains only the marker")
 	assert_true(empty.has("goals"))
-	assert_eq(int(sim.migrate_save_section({"a": 1}, 3).get("a", 0)), 1,
+	assert_eq(int(sim.migrate_save_section({"a": 1},
+			CitySim.SAVE_SECTION_VERSION).get("a", 0)), 1,
 			"a body already on the current rung is left alone")
-	assert_eq(sim.migrate_save_section({"a": 1}, 3).keys().size(), 1)
+	assert_eq(sim.migrate_save_section({"a": 1},
+			CitySim.SAVE_SECTION_VERSION).keys().size(), 1)
+	# …and the rungs ABOVE v3 are identities, so a body that only ever sees them
+	# comes out byte-identical however many of them it walks. This is the
+	# assertion that would catch a v4 → v5 (or later) rung that quietly started
+	# inventing a key: the goals marker is the ONLY thing this ladder may add.
+	assert_eq(sim.migrate_save_section({"a": 1}, 4).keys().size(), 1,
+			"v4 → v5 is the identity: the upgrade-timing epoch adds no key")
 	assert_eq(int(sim.migrate_save_section({"a": 1}, 7).get("a", 0)), 1,
 			"a body from the future is not mangled on the way past")
 	# And a body restored through the migrator is the body itself.

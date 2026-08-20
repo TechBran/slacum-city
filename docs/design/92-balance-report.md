@@ -2632,6 +2632,31 @@ every mean in it.
 
 ### 22.3 The curriculum's own pacing — measured, 3 seeds × 21 game-days
 
+> ### ⚠ HISTORICAL — superseded twice over. Do not quote a number from this subsection.
+>
+> **The table below does not reproduce, and its ruling has been retired.**
+>
+> * **The numbers.** §25.6 recorded that `18 / 59 / 100 / 148 / 329` does not
+>   reproduce on either side of the Wave-10 re-arc; the Wave-8 rules epoch (doc
+>   93 §E3) moved underneath a table recorded in Wave 9. The live arrival table
+>   is **§27.4's**, measured on the post-fix tree with
+>   `tools/measure_curriculum.gd --days=45`, and gate 21's docstring carries the
+>   same table verbatim.
+> * **The ruling.** The *"levels 1–3 land inside the 10–40 game-hour band"*
+>   sentence below is retired by **§27.5**, which replaces one band with three
+>   tiers — opening (levels 1–2) ≤ 45 game-hours, middle (levels 3–4) ≤ 90, and
+>   the finale bounded in game-DAYS and not hours.
+> * **And it contradicted its own table.** The claim reads "levels 1–3 land
+>   inside the 10–40 game-hour band"; the row above it prints level 2 at
+>   **39 – 41**. A 41 is not inside a band that stops at 40, and level 2 has
+>   measured 39–41 on every tree since. §27.5 is where that one hour is finally
+>   paid for.
+>
+> The subsection is kept, unedited below this box, because §22.3.1's 50-game-day
+> pair and the *shape* argument (a doubling cadence, the priced overruns at
+> levels 4 and 5) are still the reasoning the arc was built on, and a deleted
+> derivation is a derivation nobody can check.
+
 Game-hour each level was earned. One game-hour is one real minute at 1×
 (`SimHost.GAME_MS_PER_REAL_MS` = 60), so the right-hand column is the session beat
 the player asked for.
@@ -3557,3 +3582,359 @@ which is exactly what §25.1 predicted the surface would do.
 
 End-state hashes for the record (seed → `state_hash`): 1337 `1fe8ec39a8aba2bb…`,
 4242 `30b7e1b983613dbb…`, 9001 `8cfb6719923bc92b…`.
+
+> **SUPERSEDED by §27.4 (2026-08-20, the upgrade-timing fix).** This table is the
+> integration baseline and it reproduces exactly — `tools/measure_curriculum.gd
+> --days=45` on the pre-fix tree returns every arrival hour and all three hashes
+> above, to the digit, which is the control §27 was measured against. It is not
+> the LIVE table: report 98 RR-38 moved `cmd_upgrade_building` onto doc 02's own
+> row and every curriculum hash with it. **§27.4 is the arrival table to quote**,
+> and gate 21's docstring carries it. The three hashes above are now the *before*
+> column of §27.3.
+
+
+---
+
+## 27. Pass 10 — the upgrade-timing fix, and the curriculum band it forces a ruling on (2026-08-20)
+
+*Same rig, same seeds, same summariser. This is the **one hash-moving balance
+pass** of its wave: it changes a single read in `sim/city_sim.gd` and every
+number downstream of an upgrade completion moves with it. Report 98 **RR-38** is
+the ruling; `CitySim.SAVE_SECTION_VERSION` moves 4 → 5 with an identity
+migrator.*
+
+### 27.1 What moved — one read, one row
+
+```gdscript
+- var upgrade_hours := float(next_stats.get("upgrade_time_hours",
+-         b.stats.get("upgrade_time_hours", 4.0)))
++ var upgrade_hours := float(b.stats.get("upgrade_time_hours",
++         next_stats.get("upgrade_time_hours", 4.0)))
+```
+
+Doc 02 §2.2 prices the step `L → L+1` on the row it starts **from**:
+`upgrade_time_hours(L) = 0.65 × build_time(L + 1)`, which is why
+`BuildingCatalog` requires the column on every row below the top and forbids it
+on the top row (`tests/test_building_catalog.gd` asserts both). The command read
+the row it was upgrading **to**, so every upgrade in the game was billed the
+*next* rung's duration. Reported as RR-29(h) in Wave 10 and deliberately left
+standing there, because fixing it is a balance pass and that was a content one.
+
+**The only other line of `sim/` that moved is the save rung** —
+`SAVE_SECTION_VERSION` 4 → 5 and its identity `_v4_to_v5` — **and nothing was
+priced.** `data/buildings.json` is untouched: every figure below is a cell doc 02
+already authored, now read by the step it was authored for.
+
+### 27.2 What the defect cost, ladder by ladder
+
+Crew-hours per step, before → after. The generator's rule is visible in the
+diagonal: each step now reads the cell the step above used to read.
+
+| archetype | L1→2 | L2→3 | L3→4 | L4→5 | L5→6 | full climb |
+|---|---|---|---|---|---|---|
+| `house` | 2.5 → **2.0** | 3.5 → **2.5** | 5.0 → **3.5** | 7.0 → **5.0** | 7.0 → 7.0 | 25.0 → **20.0** (−20.0 %) |
+| `store` | 4.0 → **2.5** | 5.0 → **4.0** | 7.5 → **5.0** | 10.5 → **7.5** | 10.5 → 10.5 | 37.5 → **29.5** (−21.3 %) |
+| `apartment` | 9.5 → **6.0** | 14.5 → **9.5** | 23 → **14.5** | 35 → **23** | 35 → 35 | 117 → **88** (−24.8 %) |
+| `office` | 12.5 → **8.0** | 19.5 → **12.5** | 30 → **19.5** | 47 → **30** | 47 → 47 | 156 → **117** (−25.0 %) |
+| `high_rise` | 30 → **17.5** | 51 → **30** | 87 → **51** | 148 → **87** | 148 → 148 | 464 → **333.5** (−28.1 %) |
+| `data_center` | 38 → **22** | 64 → **38** | 109 → **64** | 185 → **109** | 185 → 185 | 581 → **418** (−28.1 %) |
+| `police_station` | 15.5 → **10.0** | 24 → **15.5** | 38 → **24** | 38 → 38 | — | 115.5 → **87.5** (−24.2 %) |
+| `fire_station` | 15.5 → **10.0** | 24 → **15.5** | 38 → **24** | 38 → 38 | — | 115.5 → **87.5** (−24.2 %) |
+| `power_facility` | 34 → **20** | 57 → **34** | 98 → **57** | 98 → 98 | — | 287 → **209** (−27.2 %) |
+| `substation` | 12.5 → **8.0** | 19.5 → **12.5** | 30 → **19.5** | 30 → 30 | — | 92.0 → **70.0** (−23.9 %) |
+| `water_facility` | 19.0 → **12.0** | 29 → **19.0** | 45 → **29** | 45 → 45 | — | 138 → **105** (−23.9 %) |
+| `construction_yard` | 12.5 → **9.0** | 17.5 → **12.5** | 25 → **17.5** | 25 → 25 | — | 80.0 → **64.0** (−20.0 %) |
+
+**The last step of every ladder does not move, and that is not luck.** The top
+row carries no `upgrade_time_hours`, so the old code's `next_stats.get()` missed
+and fell through to exactly the cell the new code reads first — RR-29(h) changed
+that fallback in Wave 10 and it has been correct since. The defect was therefore
+never the *whole* ladder: it was every step except the last one, which is why a
+`high_rise` L4→L5 was billed 148 crew-hours for a step doc 02 prices at 87 while
+its L5→L6 was billed the 148 it is actually worth.
+
+**A full climb is 20–28 % faster**, and the deep ladders gain most because the
+curve is steepest there.
+
+### 27.3 Hashes — where they move, and where they provably cannot
+
+**`tools/profile_sim.gd` does not move on either city or either path.**
+
+| digest | before | after |
+|---|---|---|
+| starter, coarse 24 h | `18e70625e633c254…` | `18e70625e633c254…` |
+| starter, fine 2 h | `4c3c52cdb4c5a3cc…` | `4c3c52cdb4c5a3cc…` |
+| `bench_city`, coarse 24 h | `d6b2509c179987d3…` | `d6b2509c179987d3…` |
+| `bench_city`, fine 2 h | `bf8dc7282758843b…` | `bf8dc7282758843b…` |
+
+`--baseline` prints **HASH OK** on all four and **BEHAVIOUR UNCHANGED**. That is
+not an accident and it is not evidence the fix is inert: `profile_sim`'s identity
+pass boots a city and advances it, and **nobody in it ever issues
+`cmd_upgrade_building`**. A digest taken with no player in the loop cannot see a
+change to what a player's command costs. **This pass needs no baseline refresh.**
+
+> **A standing debt this pass did not create and cannot pay: none of §24.12's or
+> §25.2's four published digests reproduce at this fork.** Both sections were
+> written on Wave-10 sibling branches and quote starter `2231df75…` /
+> `bffdf583…` and bench `8b4e0079…` / `aea5370b…`. HEAD returns starter
+> `18e70625…` / `4c3c52cd…` and bench `d6b2509c…` / `bf8dc728…` **before this
+> branch touches anything** — the Wave-9 integration merge and the two commits
+> after it moved them, and no pass has re-published since. The four digests in
+> the table above are measured at this fork on both sides of the fix, so they are
+> a valid *identity* result whatever the absolute values are; but **the absolute
+> values in §24.12 and §25.2 are stale and should be re-published by whoever owns
+> the next integration**, not inferred from either.
+
+**The agent runs move, and those are the ones that hold the evidence.** End-state
+`state_hash` after 45 game-days of the `curriculum` agent:
+
+| seed | before | after |
+|---|---|---|
+| 1337 | `1fe8ec39a8aba2bb…` | `2c5d58763b6e4aa0…` |
+| 4242 | `30b7e1b983613dbb…` | `407248a87fe3269a…` |
+| 9001 | `8cfb6719923bc92b…` | `9838ef64bcd48b7b…` |
+
+All three move, which is what a rules epoch is for: a construction job that
+finishes on a different game-hour re-seeds every draw downstream of it. Full
+digests, after (`tools/measure_curriculum.gd --days=45`):
+
+```
+curriculum 45 gd  1337  2c5d58763b6e4aa02d5d8870098af7b9d6ceaea216153156abf0dc2856582ec1
+curriculum 45 gd  4242  407248a87fe3269ab3e201bc1bc21bd07b01c7d431edbc2968b59a8722ad5a1e
+curriculum 45 gd  9001  9838ef64bcd48b7b6d3cadff6dd877700c22cacec394055e33ec2c8334171cd1
+
+profile_sim starter coarse 24h  18e70625e633c25477e4358f7c7ff2aca58eac396052e4f4c3d9ef6637431772  (unchanged)
+profile_sim starter fine  2.0h  4c3c52cdb4c5a3ccc1c6cd2f093fab2feb8b66f50eefcabd4051c90b478cf319  (unchanged)
+profile_sim bench   coarse 24h  d6b2509c179987d3d8994087936f3049d923edc32b016d02145b4f7b3ec6dddb  (unchanged)
+profile_sim bench   fine  2.0h  bf8dc7282758843b01fb2172726a631db9108c5662e6c3e754bb877ca398a31e  (unchanged)
+```
+
+**Two of the seven matrix strategies are bit-identical, and the reason is the
+control this pass needed.** `do_nothing` and `infrastructure_first` both report
+`upg` **0** over 21 game-days — neither ever issues the command — and both
+reproduce every column of §27.6's table to the printed digit on both sides.
+That is a measured proof that the change reaches the sim through exactly one
+door, and it is also what licenses §27.7: the ambient-pacing arm is a
+`do_nothing` arm, so this pass cannot have touched it.
+
+### 27.4 The arc, re-measured — `tools/measure_curriculum.gd --days=45`
+
+Seeds 1337 / 4242 / 9001, the game-hour each curriculum level was earned:
+
+| level | 1337 | 4242 | 9001 | duration | pre-fix duration |
+|---|---|---|---|---|---|
+| 1 | 13 | 13 | 14 | 13–14 | 13–14 |
+| 2 | 52 | 54 | 55 | 39–41 | 39–41 |
+| 3 | 111 | 115 | 119 | 59–64 | 59–64 |
+| 4 | 176 | 179 | 192 | 64–73 | 65–73 |
+| 5 | 371 | 358 | 361 | 169–195 | 169–190 |
+| 6 | 827 | 852 | 866 | 456–505 | 472–510 |
+
+All six levels complete on all three seeds. Verb counters after:
+`road_tiles_built` 4 / 4 / 4 for `road_spend` $7,200; `water_placed` 1 / 1 / 1;
+`tax_changes` 1 / 1 / 1; `repaired` 186 / 204 / 210.
+
+**Levels 1, 2 and 3 do not move by a single game-hour.** That is the shape a
+faster upgrade should have this early in the arc. The opening's objectives are
+*place*, *set-a-rate* and *reach-population* gates, and the one upgrade the sheet
+asks for is `l2_upgrade` at target **1** — a single first-rung step, whose
+cheapest form is a `house` L1→L2 going 2.5 crew-hours to 2.0. At the doc 01
+`construction_rate` channel's 0.804 mean that is a wall-clock difference of
+**0.6 game-hours**, which lands inside the same hourly sample the arrival table
+is built from. The saving only becomes visible where the steps are deep, and the
+arc does not take a deep step until after level 3.
+
+**From level 4 up the arrivals move in BOTH directions**, and that is the honest
+read of the result: seed 1337's finale comes **49 game-hours sooner** (876 → 827)
+while 4242's comes **23 later** (829 → 852) and 9001's **18 later** (848 → 866).
+Two of three got slower and the spread narrowed (472–510 → 456–505), which is
+what a resample looks like and not what a speed-up looks like. A faster upgrade is not
+uniformly a faster arc — it re-times a completion, which re-seeds the draws after
+it, and the arc's late levels are gated on saving and on incident arrival rather
+than on construction. Every duration stays inside the seed spread it already had,
+and the ruled bounds hold with margin: level 3 on game-day 4 (bound 6), level 5
+on day 14.9–15.5 (bound 21), the arc on day **34.5–36.1** (bound 40).
+
+**The prediction that did not come true, recorded as such.** This pass was
+briefed expecting the faster upgrades to *improve* curriculum arrivals. They do
+not, materially: the arc's total is 34.5–36.5 game-days before and 34.5–36.1
+after. The fix is worth making because it makes the game do what its own design
+document says, not because it buys pacing — and a pass that quietly dropped the
+prediction it failed would be worth less than one that prints it.
+
+### 27.5 The ruling — §22's 10–40 band is retired, and the two arms that say the objectives are not the problem
+
+Wave-9's road-UI open question 4 asked whether level 3, at 59–64 game-hours
+against §22.3's ruled 10–40 band, should be fixed by **re-ruling the band** or by
+**shedding an objective**. It is decided here with measurement, and the
+measurement is unambiguous.
+
+**The ablation, three arms, one instrument** (`measure_curriculum --days=12`,
+same three seeds, the only difference between arms being `l3_streets`):
+
+| arm | `road_spend` | L3 earned (game-hours) | L3 duration | inside 10–40? |
+|---|---|---|---|---|
+| **4 tiles (shipped)** | $7,200 | 111 / 115 / 119 | **59–64** | no |
+| 2 tiles | $3,600 | 103 / 106 / 106 | **51–52** | no |
+| row deleted entirely | $0 | 97 / 98 / 103 | **44–48** | **no** |
+
+**Deleting the whole objective does not reach the band.** Halving it buys 8–12
+game-hours and removing it buys 15–16, and the floor that leaves is 44 — still
+10 % over a ceiling of 40. Whatever is putting level 3 outside the band, it is
+not the street row: the row is the *smaller* half of the overrun. (The deleted
+arm reproduces §25.3's pre-row column — `97 / 98 / 103` — to the digit, on a
+different tree and one instrument later, which is the control this ablation
+needed.)
+
+**And the band contradicted its own table on the day it was written.** §22.3
+claims "levels 1–3 land inside the 10–40 game-hour band"; the row above the
+sentence prints level 2 at **39 – 41**. Level 2 has measured 39–41 on every tree
+since, including this one. A ceiling that a shipped, deliberately-tuned,
+never-retuned level has always been one hour over is a ceiling in the wrong
+place.
+
+**Ruled: one band becomes three tiers.**
+
+| tier | levels | beat | measured here |
+|---|---|---|---|
+| **opening** | 1–2 | ≤ **45** game-hours | 13–14, 39–41 |
+| **middle** | 3–4 | ≤ **90** game-hours | 59–64, 64–73 |
+| **finale** | 5–6 | no hour band; game-**days** only | day 14.9–15.5, day 34.5–36.1 |
+
+The three reasons, in order of weight:
+
+1. **A game-hour is a minute of ATTENTION only while the app is open, and this
+   game is built not to require that.** §22.3's "≈ minutes at 1×" column is what
+   made 10–40 feel like a session length, and it is true for a player sitting at
+   1× with the screen on. Doc 08's offline catch-up is the other half of the
+   product: a 60-game-hour level is two overnight closes and a handful of short
+   sittings, not an hour in a chair. The band was measuring a session length the
+   design does not ask anyone to serve.
+2. **A doubling cadence cannot fit three levels in a fixed window, and §22.3
+   named the cadence itself.** "Each level costs about twice the last" and "levels
+   1–3 sit inside 10–40" cannot both be true unless level 1 is at the floor and
+   level 3 at the ceiling — which is exactly the corner §22.3's own numbers were
+   painted into (18 → 41). Every subsequent pass that added anything to the arc
+   was going to break it. Two did.
+3. **The alternative was measured and cannot deliver.** The table above.
+
+**What the opening band still protects, and why it keeps a ceiling.** The claim
+worth keeping is not "every level is short"; it is *a player who has not yet
+decided to keep the game must not be made to wait*. That is levels 1 and 2, and
+it is asserted: gate 21 now carries `CURRICULUM_OPENING_BEAT_H` (45) and
+`CURRICULUM_MIDDLE_BEAT_H` (90) as executable ceilings on the first four levels'
+durations, so this ruling is a test and not a sentence — which is the thing §18.6
+had to be told twice.
+
+**Level 4's ceiling is the same number and claims less**, and the gate says so in
+its own docstring. Level 4's duration is an incident *wait* (`l4_incidents`
+resolve-2, against gate 19's ruled 5–8 ambient per game-week), so its spread is
+Poisson and §25.3 has measured it as wide as **89** game-hours on a slow seed. 90
+is one game-hour above that historical worst case: a runaway detector, not a fit.
+Neither tier asserts a FLOOR, because a level that got faster is not something
+this gate can tell apart from an improvement.
+
+**`data/goals.json` is not touched by this ruling.** `l3_streets` stays at 4
+tiles, for §25.4's reason, which the ablation strengthens rather than weakens:
+four tiles is an L with a corner in it, so the drag tool's sweep, its Manhattan
+corner rule and its per-tile bill are all exercised, and a 2-tile target is a
+straight line that teaches the sweep and nothing else. Buying 8–12 game-hours by
+deleting the only corner in the curriculum is not a trade this document makes.
+
+### 27.6 The matrix — 21 of 21, 21 game-days, before and after
+
+Seven strategies × three seeds. Means over the three seeds; `do_nothing` and
+`infrastructure_first` are bit-identical and are printed once.
+
+| strategy | treasury | value | pop | happy | stab | dark % | placed | upg | minC |
+|---|---|---|---|---|---|---|---|---|---|
+| `do_nothing` (unmoved) | 165,302 | 165,302 | 144 | 82.4 | 0.9487 | 0.04 | 0 | 0 | 0.512 |
+| `infrastructure_first` (unmoved) | 23,947 | 140,347 | 230 | 76.9 | 0.9705 | 0.35 | 27 | 0 | 0.890 |
+| `greedy_growth` | 69,006 → **65,962** | 952,192 → **954,523** | 1,736 → **1,771** | 53.0 → **52.6** | 0.7053 → **0.6666** | 39.10 → **39.98** | 122 → **122** | 28 → **30** | 0.307 → **0.381** |
+| `balanced` | 76,310 → **75,399** | 892,823 → **895,852** | 1,363 → **1,351** | 74.5 → **74.8** | 0.9424 → **0.9465** | 0.10 → **0.11** | 220 → **224** | 133 → **131** | 0.797 → **0.797** |
+| `tax_squeezer` | 89,969 → **97,631** | 1,220,899 → **1,213,981** | 1,155 → **1,168** | 54.8 → **52.3** | 0.9744 → **0.9692** | 0.47 → **0.18** | 253 → **251** | 155 → **155** | 0.797 → **0.797** |
+| `disaster_neglect` | 56,518 → **55,932** | 962,752 → **971,942** | 1,273 → **1,394** | 55.8 → **57.3** | 0.7591 → **0.7844** | 29.01 → **28.61** | 280 → **289** | 141 → **133** | 0.388 → **0.389** |
+| `curriculum` | 39,811 → **38,421** | 319,176 → **316,376** | 554 → **551** | 69.5 → **70.0** | 0.9243 → **0.9327** | 0.88 → **0.80** | 70 → **70** | 33 → **32** | 0.789 → **0.790** |
+
+**Every ordering §15.1 names ranks the same on both sides of the fix**, and no
+mean moves further than the seed spread it already had. `balanced` still beats
+`do_nothing` 5.4× on value created, 9.4× on population and 0.797 against 0.512 on
+worst condition while holding less idle cash; `disaster_neglect` still builds the
+same city as `balanced` and rots it (0.389 against 0.797); `tax_squeezer` still
+leads on value created (+35 %) and pays for it in happiness (52.3 against 74.8).
+*(§15.1's own "+13 % population" sub-claim for `tax_squeezer` does not reproduce
+on either side — 1,155 before and 1,168 after, against `balanced`'s 1,363 and
+1,351 — so it was already inverted at this fork and is not something this pass
+moved. It is noted here rather than corrected in §15, which is a pass-3 record.)*
+
+The largest single move is `tax_squeezer`'s treasury (+8.5 %) against a pre-fix
+seed spread on that same column of $69,565–$101,369 — i.e. inside it.
+`disaster_neglect` gains 9.5 % of population and 0.025 of stability, which is the
+shape a faster upgrade should have on the agent that places the most and
+maintains the least: the same placement budget buys finished buildings sooner.
+
+**Two rows are worth naming.** `greedy_growth`'s `min_condition` mean improves
+0.307 → 0.381 and its `incident_abandoned` count falls 2.3 → 0.0 (seed 9001 had 7
+and now has 0). A step that ties up the yard crew for a quarter less time frees
+it sooner, and the agent that never buys a repair is the one that notices when a
+crew comes free. Neither is a threshold this document fits anything to and
+neither is asserted; they are recorded because they are the mechanism showing up
+where you would predict it.
+
+### 27.7 The ambient arm, re-run — and it is not this pass's to move
+
+§18.6's methodology to the letter, on the post-fix tree: `tools/pacing_ab.gd`,
+12 seeds × 28 game-days of `do_nothing`, 336 game-days.
+
+| ambient / game-week | §18.6 floor OFF | §18.6 floor ON | §18.7 Wave 8 | **post-fix (here)** |
+|---|---|---|---|---|
+| `crime` | 0.35 | 0.73 | 0.71 | **0.69** |
+| `structure_fire` | 0.69 | 0.56 | 0.56 | **0.54** |
+| `transformer_failure` | 0.81 | 1.08 | 1.02 | **1.08** |
+| `water_main_break` | 0.58 | 0.60 | 0.75 | **0.90** |
+| `traffic_accident` | 3.58 | 3.60 | 3.35 | **3.46** |
+| `storm_damage` | 0.04 | 0.04 | 0.02 | **0.02** |
+| **total** | **6.06** | **6.62** | **6.42** | **6.69** |
+| created | 291 | 318 | 308 | **321** |
+| failed · abandoned · destroyed | 0 · 0 · 0 | 0 · 0 · 0 | 0 · 0 · 0 | **0 · 0 · 0** |
+| treasury, 28 gd, mean | $193,627 | $194,847 | $191,077 | **$191,595** |
+
+**The standing number does not move: 6.42 → 6.69 is 13 counts on 308, and Poisson
+σ there is 17.5 — 0.74 σ.** §18.7's ruled band of **5–8 ambient per game-week
+stands**, comfortably, and gate 19's executable bounds are untouched.
+
+**And whatever drift there is, this pass did not cause it.** The arm is a
+`do_nothing` arm; §27.3 measures `do_nothing` as bit-identical across the fix on
+all three matrix seeds, and its `upg` counter is 0. The one channel that has
+moved more than a σ since Wave 8 — `water_main_break`, 0.60 → 0.75 → 0.90, which
+is 2.6 σ on its own counts across two waves — belongs to the Wave-9 integration
+(§26) that landed between §18.7 and this fork and has never had this arm run on
+it. **Filed as an open question rather than absorbed here**, because a channel
+that has drifted 50 % across two waves deserves its own arm rather than a
+footnote in a pass about upgrade durations.
+
+### 27.8 Gates
+
+All 28 balance gates pass. **No threshold moved.** Gate 21 gains two executable
+ceilings (`CURRICULUM_OPENING_BEAT_H` 45, `CURRICULUM_MIDDLE_BEAT_H` 90) and a
+re-measured docstring table; its four ruled day bounds — level 1 ≤ 1, level 3 ≤
+6, level 5 ≤ 21, arc ≤ 40 — are unchanged and hold with margins of 1 / 2 / 5.5 /
+3.9 game-days. Gate 19's incident bounds are unchanged and §27.7 is why.
+Outside the gate file, `tests/test_save_migration.gd`'s rung assertion moves
+4 → 5 with the constant and gains one identity check on the new rung — a
+restatement of the epoch, not a re-fit of anything.
+
+### 27.9 What this pass did not do
+
+- **It did not retune a price or a duration.** Every crew-hour figure in §27.2 is
+  a cell doc 02 authored; the pass changed which step reads which cell.
+- **It did not re-price the construction jobs in an existing save.**
+  `_v4_to_v5` is the identity function and `ConstructionQueue` persists
+  `required_crew_hours` per job, so an upgrade in flight across the update
+  finishes on the bill it was quoted. Doc 08 §2.8's rung carries the reasoning.
+- **It did not touch `data/goals.json`.** §27.5 rules the band, not the sheet.
+- **It did not re-run the 50-game-day pair** (§15.2 / §19.5). Every strategy that
+  upgrades has moved, so that table is stale — but re-running it is a
+  three-strategy, 150-game-day job and it belongs to whichever pass next needs
+  the horizon rather than to this one.
+- **It did not chase `water_main_break`.** §27.7 files it.

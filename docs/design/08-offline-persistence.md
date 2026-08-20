@@ -378,6 +378,50 @@ static func _v3_to_v4(b: Dictionary) -> Dictionary:
 > (`tools/profile_sim.gd --baseline`). What it does not get is the city v3 would
 > have produced next, and that is exactly what the rung records.
 
+> ### Shipped 2026-08-20 — `city.section_version` 4 → 5, **the upgrade-timing epoch**
+>
+> The smallest rung this ladder has and the clearest illustration of why it is a
+> ladder about *rules* rather than about *shape*: **one read moved by one row**,
+> and no key on either side of the migration means anything different.
+>
+> `CitySim.cmd_upgrade_building` read `upgrade_time_hours` from the row of the
+> level being upgraded **to**. Doc 02 §2.2 stores the price of the step `L → L+1`
+> on the row upgraded **from** (`upgrade_time_hours(L) = 0.65 ×
+> build_time(L + 1)`), which is why `BuildingCatalog` requires the column on
+> every row below the top and forbids it on the top row. Every upgrade in the
+> game except the last step of a ladder therefore ran **one rung's duration too
+> slow** — a `house` L4→L5 was billed 7.0 crew-hours for a step doc 02 prices at
+> 5.0, a `high_rise` L4→L5 was billed 148 for 87. Reported as RR-29(h), ruled and
+> fixed as report 98 **RR-38**.
+>
+> `CitySim._v4_to_v5` is **the identity function**. There is no field to add, no
+> default to invent, and — deliberately — **no re-pricing of the construction
+> jobs already in the body**. `ConstructionQueue` serialises
+> `required_crew_hours` and `required_work_units` per job, so an upgrade in
+> flight when the player updates finishes on the bill it was quoted, and the
+> correction reaches them on the next upgrade they buy. Re-pricing a paid-for job
+> downward mid-flight would be a gift and upward would be a theft; leaving it
+> alone is the only one of the three that is a *record*.
+>
+> **What the rung actually records**, and why it is not free even though the
+> migrator is: a v4 body advanced under v5 rules produces a city v4 would never
+> have produced. Every upgrade the player starts after the update completes
+> sooner, so construction completion minutes shift, and everything downstream of
+> a completion minute — population, demand, revenue, the RNG draws taken on the
+> tick a building lands — shifts with it. Measured: the `curriculum` agent's
+> 45-game-day end-state hash moves on **all three** of doc 92's seeds.
+>
+> **`tools/profile_sim.gd` is byte-identical on both cities and both paths, and
+> that is a fact about the instrument rather than about the rung.** Its identity
+> pass boots a city and advances it; nobody in it ever issues
+> `cmd_upgrade_building`, so a digest taken with no player in the loop cannot see
+> a change to what a player's command costs. Save → load → advance stays
+> bit-identical *within* the v5 rules, which is what `--baseline` proves and what
+> §2.7's contract asks for. Doc 92 §27.3 carries the full hash ledger, including
+> the two matrix agents that never upgrade and reproduce every column to the
+> printed digit — the control that says this epoch reaches the sim through
+> exactly one command.
+
 ### 2.9 Load & corruption recovery
 
 Candidate order: `manifest.active` → `manifest.history[…]` → `pinned.pre_catchup` → `pinned.pre_migration` → directory scan sorted by embedded `sim_time_minutes` descending.

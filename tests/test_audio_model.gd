@@ -167,8 +167,15 @@ func test_03_every_asset_imports_and_the_beds_carry_their_loop() -> void:
 # ===========================================================================
 
 func test_04_every_wired_sim_event_reaches_its_cue() -> void:
+	# `water_component_placed` is here for the same reason the pump was invisible
+	# until 2026-08-20: doc 05's placement announces itself on its OWN event, so
+	# every table keyed on `building_placed_sim` has to name it a second time or
+	# it silently opts out. It was in `OBSERVED_TYPES` (the crane loop follows the
+	# site) and in no cue rule at all — the $45,000 purchase the curriculum builds
+	# a whole level around was the one purchase in the game that made no sound.
 	var expected := {
 		"building_placed_sim": "purchase",
+		"water_component_placed": "purchase",
 		"building_construction_stage": "construct_stage",
 		"building_completed": "construct_complete",
 		"city_level_changed": "level_fanfare",

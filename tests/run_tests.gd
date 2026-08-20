@@ -2,6 +2,25 @@ extends SceneTree
 ## Headless test runner. Usage:
 ##   godot --headless --path "/home/bbx/Slacum City game" -s res://tests/run_tests.gd
 ## Discovers tests/test_*.gd, runs every test_* method, exits 0 on success / 1 on failure.
+##
+## **TWO RUNS OF THIS FILE AT ONCE CORRUPT EACH OTHER, WHATEVER DIRECTORY THEY ARE
+## LAUNCHED FROM.** `user://` is keyed on `application/config/name`, which every
+## worktree and every checkout of this project shares, so two agents running the
+## suite in two worktrees both write
+## `~/.local/share/godot/app_userdata/Slacum City/saves` — and the save-service
+## tests write real generations into real slots. Measured 2026-08-20: with a
+## sibling suite running, `test_save_service.gd` fails
+## `test_a_ruined_generation_falls_through_to_the_one_behind_it` and *aborts*
+## `test_a_pinned_checkpoint_is_never_swept` on a missing manifest key — and an
+## aborted method contributes no assert and no failure, so the run can still
+## print ALL TESTS PASSED with a test that never ran. **Give a concurrent run its
+## own user directory:**
+##
+##   XDG_DATA_HOME=<private dir> godot --headless --path <worktree>
+##       --script tests/run_tests.gd
+##
+## Godot's `OS.get_data_path()` reads `XDG_DATA_HOME` on Linux, so that one
+## variable isolates `user://` completely. Same file, same 24 tests, 0 failures.
 
 const TESTS_DIR := "res://tests"
 
