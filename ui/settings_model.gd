@@ -22,6 +22,11 @@ const KIND_SLIDER := &"slider"
 
 const SOURCE_RENDER_PRESETS := "render_presets"
 const SOURCE_TEXT_SCALE := "text_scale_options"
+## Doc 10's own ladder for the road auto-repair threshold. Resolved against
+## `data/roads.json.condition.auto_repair_thresholds` rather than authored here,
+## because `RoadNetwork.cmd_set_auto_repair_policy` answers `E_BAD_THRESHOLD` for
+## anything off it — a row offering a rung the sim refuses is a control that lies.
+const SOURCE_ROAD_THRESHOLDS := "road_auto_repair_thresholds"
 
 ## A row may declare that it writes another document's state rather than a UI
 ## preference. `policy: "dispatch"` marks §2.13's auto-response rows: their
@@ -29,8 +34,18 @@ const SOURCE_TEXT_SCALE := "text_scale_options"
 ## values go to `CitySim.cmd_set_dispatch_policy`, so `data/ui.json` describes
 ## the *control* and never the number behind it (D-11).
 const POLICY_DISPATCH := "dispatch"
+## `policy: "roads"` marks doc 10 §2.13's automatic-repair dials. Doc 93 §J3 and
+## doc 10 rule road condition the auto-repair policy's job rather than a per-tile
+## player verb, which leaves the policy itself as the only thing the player may
+## touch — the two dials `RoadNetwork.cmd_set_auto_repair_policy` takes.
+##
+## They differ from the dispatch family in ONE way that matters: the command
+## takes **both** dials at once, so a row change writes the pair, never the field
+## it changed. `UIRoot._write_road_policy` is where that pairing lives.
+const POLICY_ROADS := "roads"
 const DEFAULT_FROM_DEFAULTS := "defaults."
 const DEFAULT_FROM_DISPATCH := "dispatch."
+const DEFAULT_FROM_ROADS := "roads."
 
 ## Fallback preset order if `data/render.json` is absent (doc 11 authors it).
 const _DEFAULT_PRESETS := ["performance", "balanced", "high"]
@@ -95,7 +110,8 @@ func kind(key: String) -> StringName:
 
 
 ## `""` for a plain UI preference, `POLICY_DISPATCH` for one of §2.13's
-## auto-response rows. `UIRoot` reads this to decide where a change goes.
+## auto-response rows, `POLICY_ROADS` for doc 10's two auto-repair dials.
+## `UIRoot` reads this to decide where a change goes.
 func policy_of(key: String) -> String:
 	return str(_row_def(key).get("policy", ""))
 
@@ -123,7 +139,18 @@ func options(key: String) -> Array:
 		SOURCE_TEXT_SCALE:
 			var raw: Variant = _cfg.ui_data().get("text_scale_options", []) if _cfg != null else []
 			return (raw as Array).duplicate() if raw is Array else []
+		SOURCE_ROAD_THRESHOLDS:
+			return road_auto_repair_thresholds()
 	return []
+
+
+## Doc 10's own ladder, in doc 10's own order. `0` is on it and means OFF — the
+## sim's `_queue_auto_repairs` returns early at `threshold <= 0`, so the row's
+## first rung is a real state and not a missing value.
+func road_auto_repair_thresholds() -> Array:
+	var condition: Dictionary = _cfg.road_condition() if _cfg != null else {}
+	var raw: Variant = condition.get("auto_repair_thresholds", null)
+	return (raw as Array).duplicate() if raw is Array else []
 
 
 ## Doc 11's presets, ordered cheapest-first by `render_scale` so the choice row
@@ -161,6 +188,12 @@ func _default_for(row: Dictionary) -> Variant:
 		var name := from.substr(DEFAULT_FROM_DISPATCH.length())
 		if policy.has(name):
 			return policy[name]
+	elif from.begins_with(DEFAULT_FROM_ROADS):
+		# Doc 10 owns these two, on the same terms.
+		var condition: Dictionary = _cfg.road_condition() if _cfg != null else {}
+		var name := from.substr(DEFAULT_FROM_ROADS.length())
+		if condition.has(name):
+			return condition[name]
 	var key := str(row.get("key", ""))
 	var choices := options(key)
 	if not choices.is_empty():
@@ -335,8 +368,18 @@ func value_text(key: String) -> String:
 	var family := str(row.get("value_text_from", ""))
 	if family != "":
 		return _t("ui_settings_value_%s_%s" % [family, str(value(key))])
-	if str(row.get("value_format", "")) == "money":
-		return HudModel.money_exact(int(round(value_num(key))))
+	# A ladder whose bottom rung is a STATE rather than a quantity says so in
+	# data: `$0` and `0 %` are both true and neither says "this is switched off",
+	# which is what the bottom of doc 10's two dials actually means.
+	var zero_key := str(row.get("zero_key", ""))
+	if zero_key != "" and is_zero_approx(value_num(key)):
+		return _t(zero_key)
+	match str(row.get("value_format", "")):
+		"money":
+			return HudModel.money_exact(int(round(value_num(key))))
+		"percent":
+			return _t_args("ui_settings_value_percent",
+					{"n": int(round(value_num(key) * 100.0))})
 	return str(value(key))
 
 

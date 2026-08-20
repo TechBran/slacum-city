@@ -800,3 +800,134 @@ func test_the_root_resolves_the_water_binding_from_the_build_sheet() -> void:
 	assert_ne(drawer.water, null, "and the drawer has it after one refresh")
 	assert_eq(drawer.water, root.build_sheet.controller.water)
 	_unmount(mounted)
+
+
+# ===========================================================================
+# Recall — doc 06 §2.11's verb, doc 12 §2.6's unit chips (doc 91 A91-D-24)
+# ===========================================================================
+
+func test_no_recall_chip_until_a_shell_wires_the_command() -> void:
+	# The same contract the valve has (D-43): an affordance that cannot issue its
+	# command is worse than no affordance, so an unbound drawer draws none.
+	var mounted := _mount()
+	var drawer: IncidentDrawer = mounted["drawer"]
+	drawer.refresh_from([Fixtures.snapshot_row(7, "structure_fire", 3.4, [12, 4])])
+	drawer.open()
+	drawer.row_button(7).pressed.emit()
+	assert_false(drawer.recall_enabled())
+	assert_eq(drawer.recall_button(7, 12), null)
+	assert_ne(drawer.action_button("Assign", 7), null, "everything else is unchanged")
+	_unmount(mounted)
+
+
+func test_one_chip_per_assigned_unit_and_none_on_an_empty_row() -> void:
+	var mounted := _mount()
+	var drawer: IncidentDrawer = mounted["drawer"]
+	drawer.set_recall_enabled(true)
+	drawer.refresh_from([
+		Fixtures.snapshot_row(7, "structure_fire", 3.4, [12, 4]),
+		Fixtures.snapshot_row(9, "crime", 1.4),
+	])
+	drawer.open()
+	drawer.row_button(7).pressed.emit()
+	assert_ne(drawer.recall_button(7, 4), null)
+	assert_ne(drawer.recall_button(7, 12), null)
+	assert_eq(drawer.recall_button(9, 4), null, "no units on it, no chips")
+	var chip := drawer.recall_button(7, 12)
+	assert_true(chip.tooltip_text.contains("12"), "A15: the chip names its unit")
+	assert_false(chip.tooltip_text.contains("{"), "and fills its template")
+	assert_true(chip.text.contains("12"))
+	_unmount(mounted)
+
+
+func test_a_chip_asks_the_shell_and_stands_down_until_it_answers() -> void:
+	var mounted := _mount()
+	var drawer: IncidentDrawer = mounted["drawer"]
+	drawer.set_recall_enabled(true)
+	var asked: Array = []
+	drawer.recall_requested.connect(func(unit_id: int, incident_id: int) -> void:
+		asked.append([unit_id, incident_id]))
+	drawer.refresh_from([Fixtures.snapshot_row(7, "structure_fire", 3.4, [12])])
+	drawer.open()
+	drawer.row_button(7).pressed.emit()
+	drawer.recall_button(7, 12).pressed.emit()
+	assert_eq(asked, [[12, 7]], "the screen issues no command (§4.4)")
+	assert_true(drawer.recall_button(7, 12).disabled,
+			"a second tap cannot ask twice while the shell is answering")
+	drawer.report_recall(12, 7)
+	assert_false((drawer.model.row(7)["assigned"] as Array).has(12),
+			"the row lets the unit go the moment the sim accepts")
+	# A refusal puts the control back — the unit is still out there.
+	drawer.refresh_from([Fixtures.snapshot_row(7, "structure_fire", 3.4, [12])])
+	drawer.row_button(7).pressed.emit()
+	drawer.recall_button(7, 12).pressed.emit()
+	drawer.report_recall(12, 7, false)
+	assert_false(drawer.recall_button(7, 12).disabled)
+	assert_true((drawer.model.row(7)["assigned"] as Array).has(12))
+	_unmount(mounted)
+
+
+func test_the_root_runs_the_recall_and_says_what_the_sim_said() -> void:
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	var drawer: IncidentDrawer = mounted["drawer"]
+	var calls: Array[int] = []
+	root.bind_recall(func(unit_id: int) -> Dictionary:
+		calls.append(unit_id)
+		return CommandQueue.ok({"unit_id": unit_id}))
+	assert_true(drawer.recall_enabled(), "binding the command draws the chips")
+	var actions: Array = []
+	root.incident_action.connect(
+		func(action: StringName, incident_id: int, value: Variant) -> void:
+			actions.append([String(action), incident_id, value]))
+	root.refresh_incidents([Fixtures.snapshot_row(7, "structure_fire", 3.4, [12])], 10.0)
+	drawer.open()
+	drawer.row_button(7).pressed.emit()
+	drawer.recall_button(7, 12).pressed.emit()
+	assert_eq(calls, [12] as Array[int])
+	assert_eq(actions, [["recall", 7, 12]])
+	assert_true(root.toast_view.text().contains("12"),
+			"and the toast names it: '%s'" % root.toast_view.text())
+	_unmount(mounted)
+
+
+func test_a_refused_recall_reaches_the_player_in_words() -> void:
+	# A14: every blocked action states its reason. The sentence is §2.7's
+	# formatter over doc 06's own refusal, not copy authored in the screen.
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	var drawer: IncidentDrawer = mounted["drawer"]
+	root.bind_recall(func(_unit_id: int) -> Dictionary:
+		return CommandQueue.fail(&"E_UNIT_NOT_DEPLOYED", {"status": "REFIT"}))
+	root.refresh_incidents([Fixtures.snapshot_row(7, "structure_fire", 3.4, [12])], 10.0)
+	drawer.open()
+	drawer.row_button(7).pressed.emit()
+	drawer.recall_button(7, 12).pressed.emit()
+	var text := root.toast_view.text()
+	assert_true(text.contains("REFIT"),
+			"the sim's own status word, in the sentence: '%s'" % text)
+	assert_false(text.contains("{"), "and every argument was supplied")
+	assert_true((drawer.model.row(7)["assigned"] as Array).has(12),
+			"a refusal changes nothing about the row")
+	_unmount(mounted)
+
+
+func test_the_actions_row_wraps_rather_than_widening_the_drawer() -> void:
+	# D-47's lesson, one screen over: ASSIGN + ACK + PIN plus one chip per
+	# assigned unit is more than a 260 dp panel can lay out in a line, and an
+	# `HBox` would have asked its parent for the sum.
+	var mounted := _mount()
+	var drawer: IncidentDrawer = mounted["drawer"]
+	drawer.set_recall_enabled(true)
+	drawer.refresh_from([Fixtures.snapshot_row(7, "structure_fire", 3.4,
+			[1, 2, 3, 4, 5, 6])])
+	drawer.open()
+	drawer.row_button(7).pressed.emit()
+	var actions := drawer.recall_button(7, 1).get_parent() as Control
+	assert_true(actions is HFlowContainer, "the row is a flow, not a box")
+	assert_true(actions.get_combined_minimum_size().x
+			<= drawer.drawer_width_dp() + 1.0,
+			"and it never asks for more width than the drawer has: %d vs %d"
+			% [int(actions.get_combined_minimum_size().x),
+					int(drawer.drawer_width_dp())])
+	_unmount(mounted)

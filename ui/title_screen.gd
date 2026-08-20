@@ -45,6 +45,8 @@ var config: UIConfig
 var model: TitleModel
 
 var _panel: PanelContainer
+var _body: VBoxContainer
+var _scroll: ScrollContainer
 var _wordmark: Label
 var _tagline: Label
 var _meta: Label
@@ -89,6 +91,9 @@ func setup(cfg: UIConfig = null, p_model: TitleModel = null) -> void:
 	close()
 	if not resized.is_connected(queue_redraw):
 		resized.connect(queue_redraw)
+	if not resized.is_connected(_apply_card_box):
+		resized.connect(_apply_card_box)
+	set_process(true)
 
 
 func _ready() -> void:
@@ -96,17 +101,26 @@ func _ready() -> void:
 		setup(UIRoot.config_from(self))
 
 
+## The card's body may be inside the scroller `_build_static()` puts it in
+## (see there), so every path below is resolved from the body rather than from
+## the panel — `setup()` can run twice and the second pass must find the same
+## nodes the first one did.
 func _bind_nodes() -> void:
 	_panel = get_node_or_null("Center/Panel") as PanelContainer
-	_wordmark = get_node_or_null("Center/Panel/Body/Wordmark") as Label
-	_tagline = get_node_or_null("Center/Panel/Body/Tagline") as Label
-	_meta = get_node_or_null("Center/Panel/Body/Meta") as Label
-	_saved = get_node_or_null("Center/Panel/Body/Saved") as Label
-	_buttons_box = get_node_or_null("Center/Panel/Body/Buttons") as VBoxContainer
-	_confirm_box = get_node_or_null("Center/Panel/Body/Confirm") as VBoxContainer
-	_prompt = get_node_or_null("Center/Panel/Body/Confirm/Prompt") as Label
-	_note = get_node_or_null("Center/Panel/Body/Confirm/Note") as Label
-	_confirm_actions = get_node_or_null("Center/Panel/Body/Confirm/Actions") as VBoxContainer
+	_body = get_node_or_null("Center/Panel/Scroll/Body") as VBoxContainer
+	if _body == null:
+		_body = get_node_or_null("Center/Panel/Body") as VBoxContainer
+	if _body == null:
+		return
+	_wordmark = _body.get_node_or_null("Wordmark") as Label
+	_tagline = _body.get_node_or_null("Tagline") as Label
+	_meta = _body.get_node_or_null("Meta") as Label
+	_saved = _body.get_node_or_null("Saved") as Label
+	_buttons_box = _body.get_node_or_null("Buttons") as VBoxContainer
+	_confirm_box = _body.get_node_or_null("Confirm") as VBoxContainer
+	_prompt = _body.get_node_or_null("Confirm/Prompt") as Label
+	_note = _body.get_node_or_null("Confirm/Note") as Label
+	_confirm_actions = _body.get_node_or_null("Confirm/Actions") as VBoxContainer
 
 
 func _load_paint(title_cfg: Dictionary) -> void:
@@ -132,6 +146,40 @@ func _build_static() -> void:
 	for box: VBoxContainer in [_buttons_box, _confirm_box, _confirm_actions]:
 		if box != null:
 			box.add_theme_constant_override(&"separation", int(_spacing))
+	# The front door is a CENTRED card in a `CenterContainer`, which lays a child
+	# out at exactly its minimum size — and a minimum taller than the viewport
+	# hangs off both ends of it. Three stacked 96 dp buttons under a wordmark, a
+	# tagline and two meta lines are 449 dp of card on a 400 dp display, which put
+	# `SETTINGS` at y 353 … 449 and the confirmation's `CANCEL` at y 430 … 526
+	# (A91-D-22 / A91-D-29's family). The body scrolls instead, and
+	# `_apply_card_box()` caps the card at what the display can show.
+	if _body != null:
+		_scroll = UIWidgets.wrap_in_scroller(_body, "Scroll")
+	_apply_card_box()
+
+
+## Re-solved every frame the door is up, for one reason: `_show_confirm()` swaps
+## a three-button column for a prompt plus a three-button column, and a container
+## re-sorts on the NEXT idle pass — so the box solved inside the handler is
+## measured against the layout that is going away. The front door is on screen
+## for a few seconds at boot and nothing else is; this costs one minimum-size
+## query per frame of that.
+func _process(_delta: float) -> void:
+	if _open:
+		_apply_card_box()
+
+
+## What the card may be, against the display it is on. `Center` fills this
+## Control, so `size` is the box; the wish is what the body would like.
+func _apply_card_box() -> void:
+	if _panel == null or _body == null or size.y <= 1.0:
+		return
+	var content := _body.get_combined_minimum_size().y
+	var box := _panel.get_theme_stylebox(&"panel")
+	if box != null:
+		content += box.content_margin_top + box.content_margin_bottom
+	_panel.custom_minimum_size.y = UIWidgets.card_height(size.y, content,
+			_spacing, _touch_min)
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +265,7 @@ func _show_confirm(plan: Dictionary) -> void:
 	_confirm_box.visible = true
 	if _buttons_box != null:
 		_buttons_box.visible = false
+	_apply_card_box()
 
 
 func _hide_confirm() -> void:
@@ -224,6 +273,7 @@ func _hide_confirm() -> void:
 		_confirm_box.visible = false
 	if _buttons_box != null:
 		_buttons_box.visible = true
+	_apply_card_box()
 
 
 func confirm_visible() -> bool:
@@ -278,6 +328,7 @@ func open() -> void:
 	refresh()
 	_hide_confirm()
 	_set_visible(true)
+	_apply_card_box()
 	title_toggled.emit(true)
 
 

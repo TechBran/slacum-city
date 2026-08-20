@@ -132,6 +132,111 @@ func test_value_text_resolves_every_row_from_the_string_table() -> void:
 				"%s leaves no placeholder" % row["key"])
 
 
+# ===========================================================================
+# Doc 10 §2.13's automatic road repair (feeder-water open q1, doc 93 §J3)
+# ===========================================================================
+
+func test_the_road_dials_read_doc10s_own_ladder_and_default() -> void:
+	var cfg := _cfg()
+	var model := SettingsModel.new(cfg)
+	var condition := cfg.road_condition()
+	assert_false(condition.is_empty(), "data/roads.json reached the UI layer")
+	assert_eq(model.policy_of("auto_repair_threshold"), SettingsModel.POLICY_ROADS)
+	assert_eq(model.policy_of("auto_repair_daily_cap"), SettingsModel.POLICY_ROADS)
+	assert_eq(model.policy_of("auto_repair_cost_cap"), SettingsModel.POLICY_DISPATCH,
+			"doc 06's dispatch ceiling is a DIFFERENT row and stays where it was")
+	# The ladder is `RoadNetwork.cmd_set_auto_repair_policy`'s own allow-list, so
+	# the control can never offer a rung the command answers E_BAD_THRESHOLD for.
+	assert_eq(str(model.options("auto_repair_threshold")),
+			str(condition["auto_repair_thresholds"]))
+	assert_almost_eq(model.value_num("auto_repair_threshold"),
+			float(condition["auto_repair_default_threshold"]), 0.0001)
+	assert_almost_eq(model.value_num("auto_repair_daily_cap"),
+			float(condition["auto_repair_default_daily_cap"]), 0.0001)
+	var on_ladder := false
+	for rung: Variant in model.options("auto_repair_daily_cap"):
+		on_ladder = on_ladder or is_equal_approx(float(rung),
+				float(condition["auto_repair_default_daily_cap"]))
+	assert_true(on_ladder,
+			"and the default sits ON the cap ladder rather than beside it: %s"
+			% str(model.options("auto_repair_daily_cap")))
+
+
+func test_the_road_dials_read_as_words_a_player_can_act_on() -> void:
+	var model := SettingsModel.new(_cfg())
+	model.set_value("auto_repair_threshold", 0.55)
+	assert_eq(model.value_text("auto_repair_threshold"), "55%")
+	model.set_value("auto_repair_threshold", 0)
+	assert_eq(model.value_text("auto_repair_threshold"), "Never",
+			"the bottom rung is a state, not a quantity")
+	model.set_value("auto_repair_daily_cap", 25000)
+	assert_eq(model.value_text("auto_repair_daily_cap"),
+			HudModel.money_exact(25000))
+	model.set_value("auto_repair_daily_cap", 0)
+	assert_eq(model.value_text("auto_repair_daily_cap"), "No budget")
+
+
+const _ROAD_SEED := {"auto_repair_threshold": 0.40, "auto_repair_daily_cap": 25000}
+
+
+func test_a_road_row_writes_the_pair_the_command_takes() -> void:
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	var calls: Array = []
+	var spy := func(threshold: float, cap: int) -> Dictionary:
+		calls.append([threshold, cap])
+		return CommandQueue.ok({"threshold": threshold, "daily_cap": cap})
+	root.bind_road_policy(spy, _ROAD_SEED)
+	assert_eq(calls.size(), 0, "seeding a row is not a command")
+	root.settings_sheet.value_button("auto_repair_threshold").pressed.emit()
+	assert_eq(calls.size(), 1, "one tap, one command")
+	assert_almost_eq(float((calls[0] as Array)[0]), 0.55, 0.0001,
+			"the rung after 0.40 on doc 10's ladder")
+	assert_eq(int((calls[0] as Array)[1]), 25000,
+			"and the OTHER dial rides along unchanged — the command takes both")
+	root.settings_sheet.value_button("auto_repair_daily_cap").pressed.emit()
+	assert_almost_eq(float((calls[1] as Array)[0]), 0.55, 0.0001,
+			"the threshold the player just chose is what the second call carries")
+	assert_eq(int((calls[1] as Array)[1]), 75000)
+	_unmount(mounted)
+
+
+func test_a_refused_dial_puts_the_row_back_and_says_why() -> void:
+	# A14 again: the sim rules, and its refusal is the formatter's sentence.
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	var refuse := func(_threshold: float, _cap: int) -> Dictionary:
+		return CommandQueue.fail(&"E_BAD_THRESHOLD",
+				{"allowed": [0, 0.25, 0.4, 0.55]})
+	root.bind_road_policy(refuse, _ROAD_SEED)
+	root.settings_sheet.value_button("auto_repair_threshold").pressed.emit()
+	assert_almost_eq(root.settings_sheet.model.value_num("auto_repair_threshold"),
+			0.40, 0.0001, "the row shows what the city actually holds")
+	var text := root.toast_view.text()
+	assert_true(text.contains("55"),
+			"the sentence names the rung it refused: '%s'" % text)
+	assert_false(text.contains("{"))
+	_unmount(mounted)
+
+
+func test_the_live_city_takes_the_dial_end_to_end() -> void:
+	# The whole wire, over a real `CitySim`: the row moves, the command runs, and
+	# `RoadNetwork` holds the new policy.
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	var sim := CitySim.boot_from_files()
+	root.bind_road_policy(sim.cmd_set_auto_repair_policy, sim.auto_repair_policy())
+	assert_almost_eq(sim.roads.auto_repair_threshold, 0.40, 0.0001)
+	root.settings_sheet.value_button("auto_repair_threshold").pressed.emit()
+	assert_almost_eq(sim.roads.auto_repair_threshold, 0.55, 0.0001,
+			"doc 10's dial moved because a player tapped a settings row")
+	assert_eq(sim.roads.auto_repair_daily_cap, 25000, "the cap is untouched")
+	root.settings_sheet.value_button("auto_repair_daily_cap").pressed.emit()
+	assert_eq(sim.roads.auto_repair_daily_cap, 75000)
+	assert_almost_eq(sim.roads.auto_repair_threshold, 0.55, 0.0001)
+	_unmount(mounted)
+
+
 func test_settings_round_trip_and_the_migration_policy() -> void:
 	# §3.2: "unknown settings keys are dropped, missing keys take defaults from
 	# data/ui.json — a settings change must never invalidate a city."

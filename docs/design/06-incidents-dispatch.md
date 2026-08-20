@@ -1019,7 +1019,7 @@ currently sits between the two values. Both ends check out:
 
 **Player manual override** (commands in §4):
 - `cmd_dispatch_unit(unit_id, incident_id)` — bypasses all scoring and all policy; sets `unit.manual_lock = true`. The auto-dispatcher will never reassign or recall a manually-locked unit. Lock clears when the unit returns to `IDLE`.
-- `cmd_recall_unit(unit_id)` — unit → `RETURNING`, releases its contribution immediately.
+- `cmd_recall_unit(unit_id)` — unit → `RETURNING`, releases its contribution immediately. **Only a unit that is OUT can be turned around** *(Wave 12, doc 91 A91-D-24)*: `RESPONDING` and `ON_SCENE` are the two states this verb accepts, and every other one is `E_UNIT_NOT_DEPLOYED` carrying the status it refused for. `FleetSystem.recall()` had always no-opped on `IDLE` and `OFFLINE`, so the command answered `ok` for doing nothing — invisible while the verb had no caller, and a lie the moment doc 12 §2.6's unit chips became one. `RETURNING` is refused on the same grounds: the unit is already coming home.
 - `cmd_pin_incident(incident_id, bool)` — adds `PIN_BONUS 500` to priority; survives save/load.
 - `cmd_set_policy(key, value)` — §2.12.
 Manual commands are applied **before** the auto-dispatcher runs in the same tick, so the player always wins the tie.
@@ -1413,7 +1413,7 @@ Headless tests (`tests/sim/incidents/`, `tests/sim/dispatch/`), all with injecte
 11. `test_nearest_unit_assignment` — three stations, one incident; assert the minimum-`eta` unit is chosen; add congestion on the near route and assert the choice flips.
 12. `test_no_units_queues` — 5 incidents, 1 unit: exactly one is `ASSIGNED`, four stay `QUEUED`, all four escalate, `dispatch_blocked_no_units` emitted.
 13. `test_reassignment_threshold` — a unit en route to a 300-priority incident is pulled by a 430-priority one (Δ=130 ≥ 120) but not by a 400-priority one (Δ=100).
-14. `test_manual_lock` — manually dispatched unit is never reassigned even by a tier-5 fire; `cmd_recall_unit` releases it.
+14. `test_manual_lock` — manually dispatched unit is never reassigned even by a tier-5 fire; `cmd_recall_unit` releases it, and a **second** recall of the same unit is refused with `E_UNIT_NOT_DEPLOYED` naming `RETURNING` rather than answering `ok` for a no-op (Wave 12).
 15. `test_fire_reserve` — with `fire_reserve_units=1` and 2 engines, a tier-2 fire takes one engine only; a tier-4 fire takes both.
 16. `test_construction_preempt` — a crew on a build job is preempted only above priority 400.
 17. `test_unreachable` — close every route to an incident: `route_minutes == INF`, no assignment, `dispatch_blocked_unreachable` emitted, incident still escalates.

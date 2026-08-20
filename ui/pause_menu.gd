@@ -34,6 +34,7 @@ var _panel: PanelContainer
 var _title: Label
 var _buttons_box: VBoxContainer
 
+var _scroll: ScrollContainer
 var _buttons: Dictionary = {}   # StringName action -> Button
 var _touch_min := 48.0
 var _spacing := 8.0
@@ -53,6 +54,7 @@ func setup(cfg: UIConfig = null) -> void:
 	_build_static()
 	_build_buttons()
 	close()
+	set_process(true)
 
 
 func _ready() -> void:
@@ -64,7 +66,13 @@ func _bind_nodes() -> void:
 	_scrim = get_node_or_null("Scrim") as ColorRect
 	_panel = get_node_or_null("Panel") as PanelContainer
 	_title = get_node_or_null("Panel/Body/Title") as Label
-	_buttons_box = get_node_or_null("Panel/Body/Buttons") as VBoxContainer
+	# Both paths, because `setup()` may run twice (an injecting owner, then
+	# `_ready()`) and the second pass finds the list already inside the scroller
+	# `_build_static()` put it in — the same two-address bind the incident
+	# drawer's sort strip makes.
+	_buttons_box = get_node_or_null("Panel/Body/Scroll/Buttons") as VBoxContainer
+	if _buttons_box == null:
+		_buttons_box = get_node_or_null("Panel/Body/Buttons") as VBoxContainer
 
 
 func _build_static() -> void:
@@ -74,6 +82,41 @@ func _build_static() -> void:
 		_title.text = UIWidgets.t(config, "ui_pause_title")
 	if _buttons_box != null:
 		_buttons_box.add_theme_constant_override(&"separation", int(_spacing))
+		# Four 96 dp targets and their separations are 408 dp of card on a 400 dp
+		# display: the menu grew through both edges of the viewport and `SAVE &
+		# QUIT` — the one action a player cannot reach any other way — laid out at
+		# y 324 … 420 (A91-D-22's family, at 880 × 400 / 130 % / larger targets).
+		# The list scrolls instead, and `_apply_card_box()` caps the card.
+		_scroll = UIWidgets.wrap_in_scroller(_buttons_box, "Scroll")
+
+
+## The card is centre-anchored with `grow_vertical = BOTH`, so its own minimum is
+## what decides its height and a minimum bigger than the display overflows in
+## both directions. This solves the height the display can actually show: the
+## content's wish, capped, applied as the anchored box.
+func _apply_card_box() -> void:
+	if _panel == null or size.y <= 1.0:
+		return
+	var content := 0.0
+	if _title != null:
+		content += _title.get_combined_minimum_size().y + _spacing
+	if _buttons_box != null:
+		content += _buttons_box.get_combined_minimum_size().y
+	# The panel's own padding, which its stylebox owns and only it knows.
+	var box := _panel.get_theme_stylebox(&"panel")
+	if box != null:
+		content += box.content_margin_top + box.content_margin_bottom
+	var height := UIWidgets.card_height(size.y, content, _spacing, _touch_min)
+	_panel.offset_top = -height * 0.5
+	_panel.offset_bottom = height * 0.5
+
+
+## Cheap and idempotent: the pause menu is the one screen that can be opened at
+## any window size and never re-laid out afterwards, and a rotation while it is
+## up is exactly when the card would overflow.
+func _process(_delta: float) -> void:
+	if is_open():
+		_apply_card_box()
 
 
 func _build_buttons() -> void:
@@ -129,6 +172,7 @@ func is_open() -> bool:
 func open() -> void:
 	UIWidgets.close_siblings(self)
 	_set_visible(true)
+	_apply_card_box()
 	menu_toggled.emit(true)
 	pause_intent.emit(true)
 

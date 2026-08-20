@@ -2444,6 +2444,25 @@ func cmd_demolish_road(tiles: Array, preview: bool = false) -> Dictionary:
 	return CommandQueue.ok(quote)
 
 
+## Doc 10 §2.13's automatic-repair policy — the pair, because `RoadNetwork` takes
+## the pair. The wrapper exists for the same reason every other one here does:
+## a shell binds `CitySim`, never a subsystem, and doc 91 §17's matrix counted
+## this verb doorless partly *because* it had no wrapper to bind.
+##
+## Free: doc 03 prices no policy change. The SPEND it moves is `_queue_auto_repairs`'s,
+## a day at a time, against doc 03's own quotes.
+func cmd_set_auto_repair_policy(threshold: float, daily_cap: int) -> Dictionary:
+	return roads.cmd_set_auto_repair_policy(threshold, daily_cap)
+
+
+## What the two dials currently hold — what a shell seeds S9's rows from. The
+## keys are the settings ROWS' keys (doc 12 §2.13), because that is the only
+## thing this dictionary is for.
+func auto_repair_policy() -> Dictionary:
+	return {"auto_repair_threshold": roads.auto_repair_threshold,
+			"auto_repair_daily_cap": roads.auto_repair_daily_cap}
+
+
 ## Accepts `Vector2i`, `[x, z]` pairs and `Vector2`, so a UI drag, a saved
 ## selection and a test fixture can all speak the same verb. Order is the
 ## caller's, minus duplicates — a water main is a PATH, so this may not sort.

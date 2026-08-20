@@ -138,6 +138,13 @@ const CODE_TABLE := {
 	&"E_NOT_UPGRADEABLE": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	&"E_UNKNOWN_MAIN": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	&"E_NOT_ISOLATED": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
+	# --- Wave 12: doc 06 §2.11's recall (A91-D-24) and doc 10 §2.13's
+	# auto-repair dials. `E_UNIT_NOT_DEPLOYED` is INFO for the same reason
+	# `E_NOT_ISOLATED` is: "that unit is already home" is news about the world,
+	# not a fault in what the player asked for.
+	&"E_UNIT_NOT_DEPLOYED": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
+	&"E_UNKNOWN_UNIT": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	&"E_BAD_THRESHOLD": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	UNKNOWN_CODE: {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 }
 
@@ -479,6 +486,20 @@ func _args_for(name: StringName, p: Dictionary) -> Dictionary:
 		&"E_UNKNOWN_BUILDING":
 			args["have"] = str(p.get("have", p.get("sim_id", "")))
 			args["need"] = str(p.get("need", ""))
+		&"E_UNIT_NOT_DEPLOYED", &"E_UNKNOWN_UNIT":
+			# Doc 06's `Vehicle` status string verbatim — the same vocabulary the
+			# unit picker sorts on, so a rename on either side is a copy hole
+			# rather than a silent mis-sentence.
+			args["have"] = str(p.get("have", p.get("status", "")))
+			args["need"] = str(p.get("need", ""))
+			args["unit"] = str(p.get("unit", p.get("unit_id", "")))
+		&"E_BAD_THRESHOLD":
+			# Doc 10's own ladder, as percentages, because that is what the row
+			# offers: `0 %, 25 %, 40 %, 55 %`.
+			args["have"] = str(p.get("have",
+					RequirementFormatter.percent(p.get("threshold", 0.0))))
+			args["need"] = str(p.get("need", ", ".join(
+					RequirementFormatter._as_percents(p.get("allowed", [])))))
 		&"E_NOT_ADJACENT", &"E_ALREADY_OWNED", &"E_UNKNOWN_BLOCK", &"E_ALREADY_DEVELOPING":
 			# The land family names a BLOCK, and a block's player-facing name is
 			# its label (`B4`), not its id (`B_1_3`) — `at` carries whichever the
@@ -506,6 +527,16 @@ static func _as_strings(raw: Variant) -> PackedStringArray:
 	if raw is Array:
 		for entry: Variant in (raw as Array):
 			out.append(str(entry))
+	return out
+
+
+## The same, for a list of `[0, 1]` fractions a refusal names — doc 10's
+## `auto_repair_thresholds` is the one, and a player reads `40 %`, never `0.4`.
+static func _as_percents(raw: Variant) -> PackedStringArray:
+	var out: PackedStringArray = []
+	if raw is Array:
+		for entry: Variant in (raw as Array):
+			out.append(RequirementFormatter.percent(entry))
 	return out
 
 

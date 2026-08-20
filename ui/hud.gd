@@ -28,8 +28,15 @@ signal toast_requested(text: String, state: StringName)
 
 const PALETTE_TYPE := "Palette"
 const REFERENCE_WIDTH_DP := 880.0
+const REFERENCE_HEIGHT_DP := 400.0
 const ALERT_REFRESH_S := 0.2
 const MENU_GLYPH := "☰"
+## §2.3's left rail is three slots — BUILD FAB (0), overlays (1), speed (2) — and
+## the top one is what the top bar has to clear. The three live in three files
+## (`ui/build_sheet.gd`, `ui/overlay_rail.gd`, here) and share `rail_slot()`'s
+## arithmetic; this is the only place that needs to know how tall the whole
+## stack is.
+const RAIL_TOP_INDEX := 2
 
 var config: UIConfig
 var model: HudModel
@@ -345,8 +352,18 @@ func refresh(snapshot: Dictionary) -> void:
 		return
 	_speed = int(snapshot.get("speed", _speed))
 	_paused = bool(snapshot.get("paused", _paused))
-	var view := model.build_view(snapshot, _width_dp(), _clock_width_dp(),
-			_measure_chips(snapshot), _max_rows)
+	# The vertical solve first, because both of its answers change the width the
+	# horizontal one gets (A91-D-23). Neither depends on the chip set, so there is
+	# no loop here: the row height is what one chip measures and the rail reserve
+	# is `rail_slot()`'s own arithmetic.
+	var row_h := _row_height_dp()
+	var rail_top := _rail_top_dp()
+	var inset := HudModel.top_bar_left_inset(row_h, _spacing, rail_top,
+			_rail_column_w_dp())
+	_apply_top_bar_inset(inset)
+	var view := model.build_view(snapshot, _width_dp() - inset, _clock_width_dp(),
+			_measure_chips(snapshot), _max_rows,
+			maxf(row_h, rail_top - _spacing), row_h)
 	_apply_chips(view["chips"])
 	_apply_rows((view["top_bar"] as Dictionary)["rows"] as Array)
 	_apply_clock(view["clock"])
@@ -404,6 +421,67 @@ func _width_dp() -> float:
 		var parent := get_parent() as Control
 		w = parent.size.x if parent != null else 0.0
 	return w if w > 1.0 else REFERENCE_WIDTH_DP
+
+
+## The safe area's height, on the same terms as `_width_dp()`. `set_width_dp()`
+## overrides the width only; the harness sets a real window, so the height is
+## always measured.
+func _height_dp() -> float:
+	var h := size.y
+	if h <= 1.0:
+		var parent := get_parent() as Control
+		h = parent.size.y if parent != null else 0.0
+	return h if h > 1.0 else REFERENCE_HEIGHT_DP
+
+
+## What one bar row measures — the tallest chip, because they share a theme and a
+## font class and the row is as tall as its tallest child. Never below A3's
+## floor, and never zero: an unmeasured bar still reserves a row.
+func _row_height_dp() -> float:
+	var tallest := _touch_min
+	for chip_id: Variant in _chips:
+		var button: Button = _chips[chip_id]
+		if button == null or not button.visible:
+			continue
+		tallest = maxf(tallest, button.get_combined_minimum_size().y)
+	if _clock_chip != null:
+		tallest = maxf(tallest, _clock_chip.get_combined_minimum_size().y)
+	return tallest
+
+
+## Where §2.3's left rail begins, measured down from the top of the safe area.
+## The whole stack, not this screen's slot: the top bar has to clear the highest
+## one, and `UIWidgets.rail_slot()` is the arithmetic all three placers share.
+func _rail_top_dp() -> float:
+	var rail := _speed_button.get_parent() as Control if _speed_button != null else null
+	var measured := 0.0
+	if rail != null:
+		measured = maxf(rail.get_combined_minimum_size().y, rail.size.y)
+	var slot := UIWidgets.rail_slot(RAIL_TOP_INDEX, config.layout(), _touch_min,
+			measured)
+	return _height_dp() - float(slot["bottom"]) - float(slot["height"])
+
+
+## How wide the rail column is, from the left edge of the safe area: the rail's
+## own left offset plus what its widest control measures. The rail is authored at
+## a fixed offset and the buttons grow with the type, so both halves are read
+## rather than assumed.
+func _rail_column_w_dp() -> float:
+	var rail := _speed_button.get_parent() as Control if _speed_button != null else null
+	if rail == null:
+		return UIConfig.get_num(config.layout(), "rail_margin_dp", 12.0) \
+				+ maxf(UIConfig.get_num(config.layout(), "rail_button_d_dp", 56.0),
+						_touch_min)
+	return maxf(0.0, rail.offset_left) \
+			+ maxf(rail.get_combined_minimum_size().x, rail.size.x)
+
+
+## Steps the whole bar right of the rail column, or puts it back. Idempotent —
+## `refresh()` runs several times a second and a container re-sort is not free.
+func _apply_top_bar_inset(inset: float) -> void:
+	if _top_bar == null or is_equal_approx(_top_bar.offset_left, inset):
+		return
+	_top_bar.offset_left = inset
 
 
 ## The clock chip and the menu button share row 0 with the stat chips, so both

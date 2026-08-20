@@ -186,6 +186,11 @@ var _last_build_category := ""
 ## Doc 06's policy wire — see `bind_dispatch_policy`.
 var _dispatch_command := Callable()
 var _dispatch_values: Dictionary = {}
+## Doc 10's auto-repair wire — see `bind_road_policy`.
+var _road_command := Callable()
+var _road_values: Dictionary = {}
+## Doc 06 §2.11's recall wire — see `bind_recall`.
+var _recall_command := Callable()
 ## The city level the last batch reported, so §2.13's moment fires once.
 var _city_level := -1
 
@@ -354,6 +359,7 @@ func _connect_screens() -> void:
 		_connect(incident_drawer.acknowledge_requested, _on_acknowledge_requested)
 		_connect(incident_drawer.pin_requested, _on_pin_requested)
 		_connect(incident_drawer.main_action_taken, _on_main_action_taken)
+		_connect(incident_drawer.recall_requested, _on_recall_requested)
 	if unit_picker != null:
 		_connect(unit_picker.dispatch_requested, _on_dispatch_requested)
 	if city_dashboard != null:
@@ -443,6 +449,7 @@ func _on_settings_changed(key: StringName, value: Variant) -> void:
 	if haptics != null:
 		haptics.apply_setting(key, value)
 	_write_dispatch_policy(key, value)
+	_write_road_policy(key, value)
 	settings_changed.emit(key, value)
 
 
@@ -489,6 +496,113 @@ func _write_dispatch_policy(key: StringName, value: Variant) -> void:
 ## into a save, and what `tests/test_ui_land.gd` asserts against the sim.
 func dispatch_policy_values() -> Dictionary:
 	return _dispatch_values.duplicate()
+
+
+# ---------------------------------------------------------------------------
+# Automatic road repair (doc 10 §2.13, doc 93 §J3, feeder-water open q1)
+#
+# The same wire as the dispatch one above with a single difference:
+# `cmd_set_auto_repair_policy(threshold, daily_cap)` takes the PAIR, so a change
+# to either row writes both. That is the command's shape, not a UI choice — the
+# policy is one decision with two numbers in it.
+# ---------------------------------------------------------------------------
+
+const ROAD_KEY_THRESHOLD := "auto_repair_threshold"
+const ROAD_KEY_DAILY_CAP := "auto_repair_daily_cap"
+
+## `Callable(threshold: float, daily_cap: int) -> Dictionary` — the shell hands
+## over `CitySim.cmd_set_auto_repair_policy`. `values` is the live policy
+## (`RoadNetwork.auto_repair_threshold` / `auto_repair_daily_cap`), which wins
+## over the data defaults and over a restored `ui.settings` block for exactly the
+## reason the dispatch block gives: the policy lives in the city's save.
+func bind_road_policy(command: Callable, values: Dictionary = {}) -> void:
+	_road_command = command
+	_road_values = values.duplicate()
+	_seed_road_rows()
+
+
+func _seed_road_rows() -> void:
+	if settings_sheet == null or settings_sheet.model == null or _road_values.is_empty():
+		return
+	for key: String in settings_sheet.model.policy_keys(SettingsModel.POLICY_ROADS):
+		if _road_values.has(key):
+			settings_sheet.model.set_value(key, _road_values[key])
+	settings_sheet.refresh_values()
+
+
+## Writes the PAIR. A row that moved to a rung the command refuses is put back to
+## what the sim still holds, so the control can never read a value the city does
+## not have (the `E_BAD_THRESHOLD` case; the refusal itself is the sheet's).
+func _write_road_policy(key: StringName, value: Variant) -> void:
+	if settings_sheet == null or settings_sheet.model == null:
+		return
+	if settings_sheet.model.policy_of(String(key)) != SettingsModel.POLICY_ROADS:
+		return
+	var model := settings_sheet.model
+	var wanted := {
+		ROAD_KEY_THRESHOLD: model.value_num(ROAD_KEY_THRESHOLD),
+		ROAD_KEY_DAILY_CAP: int(round(model.value_num(ROAD_KEY_DAILY_CAP))),
+	}
+	wanted[String(key)] = value
+	if not _road_command.is_valid():
+		_road_values = wanted
+		return
+	var result: Dictionary = _road_command.call(float(wanted[ROAD_KEY_THRESHOLD]),
+			int(wanted[ROAD_KEY_DAILY_CAP]))
+	if not bool(result.get("ok", false)):
+		for name: String in [ROAD_KEY_THRESHOLD, ROAD_KEY_DAILY_CAP]:
+			if _road_values.has(name):
+				model.set_value(name, _road_values[name])
+		settings_sheet.refresh_values()
+		push_toast(_refusal_text(result), HudModel.STATE_WARNING)
+		return
+	_road_values = wanted
+
+
+## The road policy as the rows currently read it — what a shell writes back.
+func road_policy_values() -> Dictionary:
+	return _road_values.duplicate()
+
+
+# ---------------------------------------------------------------------------
+# Recall (doc 06 §2.11, doc 12 §2.6, doc 91 A91-D-24)
+# ---------------------------------------------------------------------------
+
+## `Callable(unit_id: int) -> Dictionary` — the shell hands over
+## `CitySim.cmd_recall_unit`. Without it the drawer draws no recall chip at all,
+## exactly as it draws no valve without a `WaterActions` (D-43).
+func bind_recall(command: Callable) -> void:
+	_recall_command = command
+	if incident_drawer != null:
+		incident_drawer.set_recall_enabled(command.is_valid())
+
+
+## The drawer asked; the sim rules. A refusal is the formatter's sentence in a
+## toast (A14) and the chip stays where it is — the unit is still out.
+func _on_recall_requested(unit_id: int, incident_id: int) -> void:
+	if not _recall_command.is_valid():
+		return
+	var result: Dictionary = _recall_command.call(unit_id)
+	var ok := bool(result.get("ok", false))
+	if incident_drawer != null:
+		# Both ways: on `ok` the row lets the unit go, and on a refusal the chip
+		# comes back live — a control the player tapped and that did nothing must
+		# not stay dead until the next refresh.
+		incident_drawer.report_recall(unit_id, incident_id, ok)
+	if ok:
+		push_toast(UIWidgets.t_args(config, "ui_drawer_recalled", {"unit": unit_id}))
+	else:
+		push_toast(_refusal_text(result), HudModel.STATE_WARNING)
+	incident_action.emit(&"recall", incident_id, unit_id)
+
+
+## One sim verdict → one sentence, through §2.7's formatter (A14). Used by every
+## door on this root that issues a command itself rather than handing it up.
+## `body` already carries `{remedy}` interpolated, which is why the toast is one
+## string and not two.
+func _refusal_text(result: Dictionary) -> String:
+	var row := RequirementFormatter.new(config).from_result(result)
+	return str(row.get("body", "")) if not row.is_empty() else ""
 
 
 func _replay_tutorial() -> void:

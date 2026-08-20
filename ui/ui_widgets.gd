@@ -133,6 +133,56 @@ static func fit_width(control: Control) -> float:
 	return control.custom_minimum_size.x
 
 
+## Re-parents `control` into a `ScrollContainer` in its own slot, keeping its
+## place among its siblings. Idempotent — a control already inside one is left
+## alone, so a `setup()` that runs twice does not nest two scrollers.
+##
+## **The short-viewport half of the goals-sheet pattern.** S9, S8 and S14 are
+## full-rect modals with a scroller inside, so their content can outgrow the
+## display without leaving it. S0 and the pause menu are CENTRED cards, and a
+## centred card whose minimum height exceeds the viewport grows through both
+## edges: at 880 × 400 with 130 % text the pause menu's `SAVE & QUIT` laid out at
+## y 324 … 420 of a 400 dp box, and the title screen's `SETTINGS` and `CANCEL`
+## did the same. Wrapping the card's body is what lets `card_height()` cap it.
+static func wrap_in_scroller(control: Control, node_name: String,
+		vertical: bool = true) -> ScrollContainer:
+	if control == null:
+		return null
+	var existing := control.get_parent() as ScrollContainer
+	if existing != null:
+		return existing
+	var host := control.get_parent() as Control
+	if host == null:
+		return null
+	var slot := control.get_index()
+	var scroll := ScrollContainer.new()
+	scroll.name = node_name
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO if vertical \
+			else ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED if vertical \
+			else ScrollContainer.SCROLL_MODE_AUTO
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	host.remove_child(control)
+	control.owner = null
+	scroll.add_child(control)
+	control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	host.add_child(scroll)
+	host.move_child(scroll, slot)
+	return scroll
+
+
+## How tall a centred card may be: what it wants, capped at what the display can
+## show with `margin` above and below, floored at `floor_h` so a card is never
+## smaller than one tap target. `host_h <= 1` (an unlaid-out mount) returns the
+## wish unchanged rather than guessing.
+static func card_height(host_h: float, content_h: float, margin: float,
+		floor_h: float) -> float:
+	if host_h <= 1.0:
+		return content_h
+	return clampf(content_h, floor_h, maxf(floor_h, host_h - margin * 2.0))
+
+
 static func spacer(node_name: String = "Spacer") -> Control:
 	var out := Control.new()
 	out.name = node_name

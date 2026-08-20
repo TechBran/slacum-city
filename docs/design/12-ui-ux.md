@@ -144,6 +144,42 @@ COMPACT (need 786 against avail 732) and still shows every reading on one row;
 at 1,280 dp everything is FULL. Both are asserted in
 `tests/test_ui_goals.gd`.
 
+**The solver has a SECOND axis, and it is why D-1's wrap is safe on a short
+display** *(Wave 12, doc 91 A91-D-23)*. The algorithm above solves width and has
+no opinion about how tall its answer is. At 880 × 400 dp — this document's own
+reference box — with 130 % text and larger touch targets a chip measures
+**100 dp**, two rows plus their separation is **208**, and the bar ran from
+y 4 to y 212 of a 392 dp safe area, straight through the top slot of §2.3's left
+rail at y 89. That is **156 `overlapping_targets` findings across the whole
+deck**, every state, at one box.
+
+So `solve_top_bar` takes a height budget and a row height and reserves
+`row_h` per wrapped row:
+
+```
+rows_fit  = max(1, floor((budget + gap) / (row_h + gap)))     # never zero
+max_rows  = min(layout.top_bar_max_rows, rows_fit)
+```
+
+and everything the rows can no longer hold goes down §2.4's existing ladder —
+demote, then hide, then the D-13b floors. A budget of `< 0` is *unbounded* and
+reproduces the solver above exactly, which is what every model-level test asks
+for. The view's budget is the room above the rail: `H − rail_reserve − 8`, where
+`rail_reserve` is `UIWidgets.rail_slot()`'s own arithmetic for the highest of
+§2.3's three slots.
+
+**And the bar yields the rail's COLUMN when even one row will not clear it.**
+The budget alone cannot save that box, because the arithmetic has no answer:
+`100 (one row) + 8 + 12 (rail margin) + 3 × 93 (rail slots) + 2 × 8 (rail gaps)`
+= **407 dp against 392 of safe area**. One of the two has to move. It is the bar:
+§2.3 classes the rail's three controls *frequent* and *occasional* and pins them
+to the thumb, while the top bar is *rare*, edge-anchored, and merely has to be
+legible. So `HudModel.top_bar_left_inset()` steps the whole bar right of the rail
+column — `rail_column_w + 8`, **113 dp** at that box — whenever
+`row_h + 8 > rail_top`. It returns **0 at every supported box at 100 %**, so the
+reference layout does not move, and doc 12 test 10's *"W = 880 keeps all chips
+FULL"* is asserted against the vertical solve as well as the horizontal one.
+
 Number formatting (`NumberFormat`, pure): `money(n)` → `$8,420` below 10K, `$842K` below 10⁶, `$8.42M` below 10⁹, else `$8.42B`, always 3 significant digits above 10K and negatives as `−$1.2M`; `rate(per_game_hour)` displays per day as `value * 24` with a `+`/`−` prefix and `/d` suffix; `eta(sec)` is `m:ss` under an hour and `h:mm` above; `pop(n)` is thousands-grouped with `,`.
 
 ### 2.5 Overlay system (spec §26)
@@ -205,6 +241,8 @@ unassigned incidents sort before assigned ones of equal tier
 Severity badge 40 × 40 dp = fill colour + **tier digit** + glyph. Doc 06 makes `severity` a continuous float in `[1.0, 5.0]` with `tier = clamp(floor(severity), 1, 5)`; the UI shows the tier digit everywhere and never a float — that digit is the primary redundancy channel, making a marker readable with zero colour vision. The **escalation bar** is doc 06's "clock the player can read": `fill = severity − tier` (fraction of the way to the next tier), countdown
 `t_next_tier_h = (tier + 1 − severity) / (esc_rate · max(0, 1 − assist_ratio))`.
 When `assist_ratio ≥ 1` the denominator is 0: the bar freezes, turns NORMAL green, its glyph becomes `●` and the label reads **`HELD`** — the clearest possible signal that enough units are on scene. Below 25 % of remaining time (or under 0.25 tiers to go) the bar takes CRITICAL styling. Tier badges carry their own glyph set for A5 redundancy — `T1 ▪`, `T2 ▴`, `T3 ▴▴`, `T4 ◆`, `T5 ✶` (pulsing ring at 1.2 Hz) — over `palette.tier1…tier5`; the digit alone is sufficient, the glyph and colour are reinforcement. Assigned units render as 24 dp chips replacing the ASSIGN button (tap → `Recall`). Row tap anywhere but ASSIGN → `camera.focus_on(incident.pos, dist=90 m)` **and** selects the incident (pin gets the SELECTED ring); the drawer stays open.
+
+**The unit chips ship in Wave 12, with two deviations and a reason for each** *(doc 91 A91-D-24 — `cmd_recall_unit` had no caller anywhere in the repository)*. They are **48 dp**, not 24, because A3 outranks a dimension; and they live in the actions row **beside** ASSIGN rather than replacing it, because a `Button` inside a `Button` cannot be hit (which is why the actions row is below the 72 dp band at all) and because sending a *second* unit to a fire that already has one is a verb doc 06 supports and a player wants. A chip exists exactly when doc 06 §2.11 allows a recall and needs no second query to know it: a row's `assigned` list *is* the sim's `inc.assigned` map, which only ever holds units that were dispatched and not yet released. The sim still rules — the chip stands down on tap, `CitySim.cmd_recall_unit` answers, and a refusal comes back as §2.7's formatter sentence in a toast (A14). The actions row became an `HFlowContainer` in the same change, for D-47's reason one screen over — with one difference worth stating, because it changes the reference box: the drawer is `clamp(0.34·W, 260, 340)` dp **whatever the display is**, so there is no width at which the sum fits. At 100 % a water row's four controls already measure 348 dp against a 300 dp panel, and `_apply_panel_width` answered that by *widening the drawer*. The row now wraps downward instead, which is the axis the drawer already scrolls on, and the drawer keeps the width this section gives it.
 
 **Assign-unit flow** (spec requirement: tap incident → unit picker sorted by ETA):
 
@@ -318,6 +356,7 @@ Layout, top to bottom: **(1) Header** `WHILE YOU WERE AWAY` + `6h 14m of city ti
 
 - *Gameplay:* difficulty (Casual/Standard/Hard, spec §35 — changing mid-city warns and is one-way downward), `auto_speed_reset_on_critical`, camera rotation mode (`free / snap45 / snap90 / locked`, default `snap45`), invert pan (off), follow dispatched unit (on), confirm before demolish (on).
 - *Auto-response policies* (spec §21.3) live on the Response dashboard tab and are mirrored here: auto-dispatch nearest fire unit (on), auto-dispatch police for tier ≥ T3 (on), utility restoration priority list (drag-reorder: Hospital → Water → Fire station → Residential → Commercial → Industrial), reserve N fire engines (default 1), auto-repair cost ceiling (default $25,000, slider $0–$250K), never spend emergency contractor funds (on).
+- *Automatic road repair* (doc 10 §2.13, doc 93 §J3 — **Wave 12**): `Repair roads below` (condition threshold) and `Road repair budget` (daily cap). Two rows, one `policy: "roads"` family, and the mechanism is the dispatch family's with **one** difference that belongs to the command rather than to this screen: `RoadNetwork.cmd_set_auto_repair_policy(threshold, daily_cap)` takes the pair, so a change to either row writes both. The threshold row's ladder is doc 10's own `auto_repair_thresholds`, read through `UIConfig.road_condition()` — a control may not offer a rung whose command answers `E_BAD_THRESHOLD`. Both bottom rungs are STATES rather than quantities (`Never`, `No budget`), which is what the new row field `zero_key` is for: `$0` and `0 %` are both true and neither says *switched off*. This is the only player say over road condition, because doc 93 §J3 rules the per-tile repair verb the policy's job.
 
 **S10 notification settings** (spec §22, §49 "clear notification controls"): master push toggle (on); per-priority toggles over doc 08's four classes — **P1 Critical** on with sound+vibrate, **P2 Important** on and silent, **P3 Routine** **off** by default, **P4** present but disabled and greyed with the reason `Not in this build`; doc 08's per-event-type list (18 types, grouped by system, each showing its class); quiet hours; digest mode; and one control this doc actually owns — **in-app banners** (on, independent of push).
 
@@ -503,9 +542,14 @@ exit 0 five times, which also closes doc 91's D-12 and D-13. Re-run at **`--text
 
 | Cause | Boxes | Scale of it | Filed |
 |---|---|---|---|
-| The right-edge chip column does not re-flow: `AlertsCenter/Chip`, `EventLog/Chip` and `IncidentDrawer/Handle` overlap each other once A3 inflates them to 89 × 100 px | **all five** | 36 of 49 states, 73 findings per box | A91-D-21 |
-| Controls land **outside the viewport** — `SettingsSheet/…/Close "✕"` and `SaveLoadSheet/…/Close "✕"` at 360×800, `PauseMenu/…/SAVE & QUIT` and `TitleScreen/…/START NEW` at 880×400 | 360×800, 880×400 | 9 findings | A91-D-22 |
-| The HUD top bar does not yield to the rails: `LeftRail/SpeedButton` and `OverlayRail/Button` over `TopBar/Chips/Row` | 880×400 — §2.3's own reference box — and worse at 640×340 | **all 49 states**, 147 findings | A91-D-23 |
+| The right-edge chip column does not re-flow: `AlertsCenter/Chip`, `EventLog/Chip` and `IncidentDrawer/Handle` overlap each other once A3 inflates them to 89 × 100 px | **all five** | 36 of 49 states, 73 findings per box | A91-D-21 — **fixed by D-46** |
+| Controls land **outside the viewport** — `SettingsSheet/…/Close "✕"` and `SaveLoadSheet/…/Close "✕"` at 360×800, `PauseMenu/…/SAVE & QUIT` and `TitleScreen/…/START NEW` at 880×400 | 360×800, 880×400 | 9 findings | A91-D-22 — **fixed by D-47 (the sheets) and D-52 (the two centred cards)** |
+| The HUD top bar does not yield to the rails: `LeftRail/SpeedButton` and `OverlayRail/Button` over `TopBar/Chips/Row` | 880×400 — §2.3's own reference box — and worse at 640×340 | **all 49 states**, 147 findings | A91-D-23 — **fixed by D-51** |
+
+**All three are closed as of Wave 12** and the sweep is zero findings at all five
+boxes on both settings; the numbers above are kept as the filing, not as a
+current state. The paragraph below about 640 × 340 still stands — that box is
+A91-D-29 and nothing has measured it since.
 
 The second row is the one that matters most for A3 specifically: **a player who
 turns large touch targets on, on a 360 dp phone, cannot close the settings sheet
@@ -647,6 +691,8 @@ in a running city with nothing to aim at.
 
 Two files this doc used to claim and no longer does: `data/notifications.json` is **doc 08's** (push classes, event→class mapping, budgets, quiet hours — C-71) and the camera's projection constants live in **doc 11's** `data/render.json` (C-63). Neither is duplicated here.
 
+**Three files this doc READS and never writes**, all for the same reason and all through `UIConfig`: a settings row that carries `policy:` must default to what the owning system actually boots with, and offer only the rungs that system will accept. `data/render.json` supplies the graphics presets, `data/dispatch.json.policy_defaults` supplies §2.13's auto-response defaults (D-11), and — Wave 12 — `data/roads.json.condition` supplies the auto-repair threshold **ladder** as well as both defaults (D-50). Absence of any of the three is not an error here; the rows fall back to their own `default`. A second copy of any of those numbers in `data/ui.json` would be a bug, and is what these accessors exist to prevent.
+
 **`data/strings.en.json` (G-8).** One flat string table, **English only in MVP** — no plural rules, no gender, no RTL, no runtime locale switch; the file exists so that no display copy is ever compiled into a `.tscn` or a `.gd`, which is the precondition for localisation later, not localisation itself. Two key families, both mandatory:
 
 | Key form | Used by | Example |
@@ -776,7 +822,8 @@ All commands go through one funnel: `SimBridge.submit(cmd: Dictionary) -> Comman
 | Land panel `PURCHASE` | `buy_land` | `{block_id}` | 03 economy | inline reason on the button |
 | Land panel `DEVELOP` | `start_development_phase` | `{block_id, phase}` | 03 cost / 09 phase→crew mapping | inline reason |
 | Unit picker row / `AUTO` | `dispatch_unit` | `{unit_id, incident_id}` | 06 dispatch | sheet inline error + haptic |
-| Unit chip `RECALL` / toast UNDO | `recall_unit` | `{unit_id}` | 06 | toast |
+| Unit chip `RECALL` / toast UNDO | `recall_unit` | `{unit_id}` | 06 | toast — §2.7's formatter over `E_UNIT_NOT_DEPLOYED` / `E_UNKNOWN_UNIT`. **The chip ships in Wave 12 (D-48); the toast UNDO does not** — §2.6 step 4's five-second undo wants a toast that carries an action, which `ToastView` has no shape for |
+| Settings row `Repair roads below` / `Road repair budget` | `set_auto_repair_policy` | `{threshold, daily_cap}` — **the pair**, always | 10 roads | toast over `E_BAD_THRESHOLD`, and the row goes back to what the city holds |
 | Unit picker `Queue anyway` | `queue_incident` | `{incident_id}` | 06 | toast |
 | Drawer row swipe → `Acknowledge` | `acknowledge_incident` | `{incident_id}` | 06 incidents | — |
 | Speed control | `set_speed` | `{multiplier: 1\|2\|3}` | 01 time | — |
@@ -887,7 +934,7 @@ Headless (`tests/ui/`), no scene tree — these exercise `ui/logic/` classes wit
 7. **`test_camera_momentum_decay`** — from 60 m/s, coast distance 10.0 ± 0.2 m, stopped within 1.0 s; a new touch zeroes velocity in the same frame.
 8. **`test_camera_bounds_rubberband`** — over-bound drag displaces 0.35×; the spring settles within 0.40 s with ≤ 1 % overshoot.
 9. **`test_camera_rotation_snap`** — 37° → 45°, 68° → 90°; `free` never snaps; `locked` ignores twist entirely.
-10. **`test_topbar_collapse`** — the §2.4 worked example (W=640) reproduces exactly; W=880 keeps all chips FULL; P1–P4 never HIDDEN at any width ≥ 480; deterministic, ≤ 14 iterations. **Strengthened by D-13b:** the below-480 sweep now checks **every packed row against its own line** (row 0 gets `avail`, wrapped rows get `avail_rest`) instead of the widest row against the whole bar, which is what let a 20 dp overflow report as fitting; the treasury chip is asserted to survive exactly where row 0 has room for it, and to be droppable where it does not. `W = 880 keeps all chips FULL` is untouched — the third hide tier cannot fire while anything fits.
+10. **`test_topbar_collapse`** — the §2.4 worked example (W=640) reproduces exactly; W=880 keeps all chips FULL; P1–P4 never HIDDEN at any width ≥ 480; deterministic, ≤ 14 iterations. **Strengthened by D-13b:** the below-480 sweep now checks **every packed row against its own line** (row 0 gets `avail`, wrapped rows get `avail_rest`) instead of the widest row against the whole bar, which is what let a 20 dp overflow report as fitting; the treasury chip is asserted to survive exactly where row 0 has room for it, and to be droppable where it does not. `W = 880 keeps all chips FULL` is untouched — the third hide tier cannot fire while anything fits. **Strengthened again by D-51 (Wave 12):** the solver's second axis gets its own five tests — `rows_within` reserves one row of height per wrapped row and never returns zero, an unbounded budget is byte-for-byte the doc's own solver, a 100 dp budget at the reference box gives one row with P1 still on it, `top_bar_left_inset()` is 0 whenever the bar clears §2.3's rail and `rail_column_w + 8` when it does not, and `W = 880 keeps all chips FULL` is re-asserted *against the vertical solve* rather than beside it.
 11. **`test_incident_sort`** — T5-unassigned ≺ T5-assigned ≺ T4; ties order by `t_next_tier_h` (HELD incidents last within their tier) then `waiting_s`; strict weak ordering under a 1000-list fuzz.
 11b. **`test_escalation_readout`** — `t_next_tier_h` matches doc 06's worked example (tier-3 fire, `assist_ratio = 0.626` → escalation at 37 % rate); `assist_ratio ≥ 1` yields the `HELD` state with a frozen bar and NORMAL styling, never a divide-by-zero.
 12. **`test_unit_picker_sort`** — ETA ascending; `Available` outranks `Returning` at equal ETA; `INELIGIBLE` last; `AUTO` == `rows[0]`.
@@ -1275,3 +1322,45 @@ row solved against a bar that is only 392 dp tall), and 6 are the title screen's
 button row, the pause menu's `SAVE & QUIT` and an alert banner's `VIEW` running
 off the bottom. Both are §2.4's and §2.19's to answer and are recorded here as
 the next wave's work, not fixed by this one.
+
+### Wave-12 deltas — the last doors, and the last accessibility corner (2026-08-20)
+
+Two shipped sim verbs had no player surface at all (doc 91 A91-D-24, doc 10
+§2.13's open question), and the 130 % sweep had one box left that was not clean
+(A91-D-21's siblings A91-D-22 and A91-D-23). Both halves are closed here. The
+deck stands at **52** named states, and the sweep is **zero findings at all
+five boxes on both accessibility settings** for the first time.
+
+| # | Delta | Where | Why |
+|---|---|---|---|
+| D-48 | **§2.6's assigned-unit chips ship, so `cmd_recall_unit` has a door.** One 48 dp chip per unit in the drawer's actions row, tapping it emits `recall_requested(unit_id, incident_id)`; `UIRoot.bind_recall()` is the one wire and without it the chips are not drawn. The actions row became an `HFlowContainer` in the same change. | §2.6, doc 06 §2.11 | Doc 91 A91-D-24: `CitySim.cmd_recall_unit` had **zero callers anywhere in the repository** — not a door, not a harness, not even a test, because the one test that exercises recall calls `DispatchSystem` directly. A player who sent an engine to the wrong fire could not take it back, and the two-line wrapper that would let them was already written. |
+| D-49 | **A recall that cannot happen is refused, in words.** `DispatchSystem.cmd_recall_unit` accepts `RESPONDING` and `ON_SCENE` and answers `E_UNIT_NOT_DEPLOYED` (carrying the status) for everything else; `RequirementFormatter` gained that code plus `E_UNKNOWN_UNIT` and `E_BAD_THRESHOLD`. | doc 06 §2.11, §2.7 | `FleetSystem.recall()` had always no-opped on `IDLE`/`OFFLINE`, so the command answered `ok` for doing nothing. Invisible while the verb had no caller; a lie the moment it had one. |
+| D-50 | **§2.13 grows doc 10's two auto-repair dials** (`policy: "roads"`), and `CitySim` grows the wrapper they bind to. The threshold ladder is `data/roads.json`'s own; a change writes the PAIR. New row field `zero_key` for a ladder whose bottom rung is a state. | §2.13, doc 10 §2.13, doc 93 §J3 | The last doorless verb after D-48. Doc 93 §J3 rules road condition the *policy's* job rather than a per-tile verb, which makes these two dials the entire player say over it — and doc 10's own §9.4 question 5 asked for a dial precisely so the default would stop being a permanent ruling. |
+| D-51 | **§2.4's solver has a second axis.** `solve_top_bar` takes a height budget and a row height and reserves one row of height per wrapped row; `HudModel.top_bar_left_inset()` steps the bar right of §2.3's rail column when even one row will not clear it. Both pure, both headless-tested; an unbounded budget reproduces the old solver exactly. | §2.4, D-1, A91-D-23 | The bar solved width and had no opinion about height. At 880 × 400 / 130 % / larger targets two 100 dp rows ran to y 212 through a rail that starts at y 89: **156 `overlapping_targets` findings, every state, at this document's own reference box.** The arithmetic has no answer that keeps both in the column (407 dp wanted, 392 available), so the bar yields — it is the *rare* affordance and the rail carries the frequent ones. |
+| D-52 | **A centred card never outgrows the display.** `UIWidgets.wrap_in_scroller()` + `UIWidgets.card_height()`, applied to S0's panel and the pause menu: the body scrolls and the card is capped at `H − 2 × 8`. | §2.2, §2.11, A91-D-22/D-29 | The full-rect modals (S8/S9/S14) already had the scroller pattern; the two CENTRED cards did not, and a `CenterContainer` lays a child out at exactly its minimum — so a 449 dp card on a 400 dp box hung off both ends. `SETTINGS` at y 353…449, the confirmation's `CANCEL` at y 430…526, `SAVE & QUIT` at y 324…420. |
+| D-53 | **The sweep instrument gained `--rects=SUBSTRING`** and two bindings it was missing (`bind_recall`, `bind_road_policy`). | tools | An overlap finding names two rects; *fixing* one needs the rects of everything else in that column, which only a laid-out tree has. And a preview that does not bind what `game/main.gd` binds photographs a deck the shipped game does not have. |
+
+**Preview states added** (`tools/ui_preview.gd`): none — D-48's chips ride
+`drawer_expanded` and `drawer_water`, whose fixture incidents already carry
+assigned units, and D-50's rows ride `settings`.
+
+**Measured, whole-deck, before → after** (`--screen=all --audit`, every finding
+of every kind, 52 states per cell):
+
+| box | 100 % | 130 % + larger targets |
+|---|---|---|
+| 360 × 800 | 0 → 0 | 0 → 0 |
+| 412 × 915 | 0 → 0 | 0 → 0 |
+| 794 × 924 (Fold inner) | 0 → 0 | 0 → 0 |
+| 880 × 400 (reference) | 0 → 0 | **162 → 0** |
+| 1280 × 720 | 0 → 0 | 0 → 0 |
+
+The 162 are the 153 the Wave-11 note recorded plus the two states the deck has
+gained since: 156 top-bar overlaps (`Chip_water` 102, `Chip_treasury` 52,
+`Chip_grid` 2) and the same 6 offscreen controls. **The Wave-11 note's
+characterisation of those 147 was wrong and is corrected here**: they are not
+chips overlapping *each other* between wrapped rows — the rows are a
+`VBoxContainer` and cannot — they are chips overlapping `LeftRail/SpeedButton`
+and `OverlayRail/Button`, which is what A91-D-23 filed and what D-51 fixes. **A2 and A3 are now green at every box the
+project tests.** What is still not measured is A2's own stated geometry — 150 %
+at 640 × 340 — which is A91-D-29 and is not this wave's.

@@ -1004,6 +1004,34 @@
 				"hint_key": "ui_settings_auto_spend_contractor_hint"
 			},
 			{
+				"_comment": "Doc 10 §2.13's AUTOMATIC ROAD REPAIR, the pair `RoadNetwork.cmd_set_auto_repair_policy` takes. Doc 93 §J3 rules road condition the policy's job rather than a per-tile player verb, which makes these two dials the whole of the player's say over it. Both carry `policy: roads`: the ladder and the default are read from data/roads.json.condition — doc 10's own file, never a second copy here — and a change writes the PAIR, because the command takes both at once. The threshold ladder is the sim's own `auto_repair_thresholds`, so a rung the command would answer E_BAD_THRESHOLD for can never appear on the control.",
+				"key": "auto_repair_threshold",
+				"kind": "choice",
+				"policy": "roads",
+				"options_from": "road_auto_repair_thresholds",
+				"default_from": "roads.auto_repair_default_threshold",
+				"value_format": "percent",
+				"zero_key": "ui_settings_value_auto_repair_off",
+				"hint_key": "ui_settings_auto_repair_threshold_hint"
+			},
+			{
+				"_comment": "The daily spend cap, a cycling ladder rather than a drag slider (A3). $25,000 is doc 10's own `auto_repair_default_daily_cap` and sits on the ladder; $0 is `no automatic repair spending at all` and is why the row carries a `zero_key`.",
+				"key": "auto_repair_daily_cap",
+				"kind": "choice",
+				"policy": "roads",
+				"options": [
+					0,
+					10000,
+					25000,
+					75000,
+					200000
+				],
+				"default_from": "roads.auto_repair_default_daily_cap",
+				"value_format": "money",
+				"zero_key": "ui_settings_value_auto_repair_no_budget",
+				"hint_key": "ui_settings_auto_repair_daily_cap_hint"
+			},
+			{
 				"_comment": "Doc 11 §2.13's adaptive governor (game/render/perf_governor.gd). ON by default: the preset above is a ceiling the player picks, and this decides whether the game is allowed to spend less than it under load or thermal pressure. Switching it OFF freezes the knobs where they stand rather than snapping them back to the preset -- a quality JUMP at the moment the player asks for manual control is the one thing the toggle must not do. Device-scoped, like the preset it modulates.",
 				"key": "auto_quality",
 				"kind": "toggle",

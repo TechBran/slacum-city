@@ -441,6 +441,32 @@ func test_auto_repair_respects_cap() -> void:
 			"only the four authored thresholds are selectable")
 
 
+func test_both_dials_are_levers_and_each_can_stop_the_spend_on_its_own() -> void:
+	# Wave 12: the two dials got a settings row (doc 12 D-50), so what each of
+	# them DOES has to be a gate rather than a claim. Roads worn to 0.30: a
+	# threshold below that queues nothing, one above it queues; and a $0 budget
+	# stops the same city that a $25,000 one repairs.
+	var tiles: Dictionary = {}
+	for z in [10, 20]:
+		RoadsTestRig.merge(tiles, RoadsTestRig.line(Vector2i(0, z), Vector2i(30, z), STREET))
+	for arm: Array in [[0.25, 25000, false], [0.40, 25000, true],
+			[0.55, 25000, true], [0.55, 0, false], [0.0, 25000, false]]:
+		var net := RoadsTestRig.network_with(tiles)
+		_wired(net)
+		assert_true(bool(net.cmd_set_auto_repair_policy(float(arm[0]),
+				int(arm[1]))["ok"]), "%s is on doc 10's ladder" % str(arm[0]))
+		for z in [10, 20]:
+			for x in range(0, 31):
+				net.set_condition(Vector2i(x, z), 0.30)
+		var queued := net._queue_auto_repairs().size()
+		if bool(arm[2]):
+			assert_true(queued > 0,
+					"threshold %s / cap %d sends a crew" % [str(arm[0]), int(arm[1])])
+		else:
+			assert_eq(queued, 0,
+					"threshold %s / cap %d sends nobody" % [str(arm[0]), int(arm[1])])
+
+
 # ------------------------------------------------------------------ persistence
 
 func test_section_version_key() -> void:

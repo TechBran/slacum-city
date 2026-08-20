@@ -101,6 +101,16 @@ const _DEFAULT_TOAST_TTL := 2.5
 const _DEFAULT_CLUSTER_DP := 40.0
 const _DEFAULT_MARKER_INSETS := [12.0, 60.0, 12.0, 70.0]
 const _DEFAULT_TOP_BAR_MARGIN := 16.0  ## 8 dp each side (§2.4 `avail` formula)
+## The vertical separation between wrapped bar rows, when `data/ui.json` has no
+## `touch_spacing_min_dp` — A4's floor, which is what the view's `VBoxContainer`
+## puts there.
+const _DEFAULT_ROW_GAP := 8.0
+## A wrap ceiling the row budget can never exceed. `top_bar_max_rows` is the
+## real cap; this only bounds `rows_within`'s loop for an unbounded budget.
+const _MAX_TOP_BAR_ROWS := 8
+## Sub-pixel slack, matching `UIAudit.EPSILON_PX`'s reason: a themed stylebox
+## rounds to whole dp and a container distributes leftovers.
+const _ROW_EPSILON := 0.001
 const _SECONDS_PER_HOUR := 3600.0
 const _HOURS_PER_DAY := 24.0
 
@@ -578,11 +588,26 @@ func state_glyph(state: StringName) -> String:
 ## whole top bar and four of its seven readings. Chips are only hidden once even
 ## the last row is full.
 ##
+## **`height_dp` / `row_h_dp` are the vertical half of the same solve, and they
+## are why D-1's wrap is safe on a short display.** The width solver had no
+## opinion about how tall the answer was: at 880 × 400 with 130 % text and larger
+## touch targets a chip measures 100 dp, two rows plus their separation is 208,
+## and the bar ran from y 4 to y 212 of a 392 dp safe area — through the top slot
+## of §2.3's left rail, which starts at y 89. That is `A91-D-23`, and it is
+## **156 `overlapping_targets` findings across the whole deck** at that one box.
+## So the bar now reserves `row_h_dp` per row against `height_dp` and wraps only
+## into rows it actually has: `height_dp < 0` is "unbounded", which is the
+## doc's own behaviour and what every model-level test asks for.
+##
 ## `clock_w_dp < 0` takes `layout.clock_chip_w_dp`. Returns
-## `{modes, order, visible, rows, row_widths, wrapped, avail, need, iterations}` —
-## pure, deterministic, and bounded at 7 demotions + 3 hides.
+## `{modes, order, visible, rows, row_widths, wrapped, avail, need, iterations,
+## rows_fit, bar_h}` — pure, deterministic, and bounded at 7 demotions + 3 hides.
 func solve_top_bar(width_dp: float, clock_w_dp: float = -1.0,
-		min_widths: Dictionary = {}, max_rows: int = 1) -> Dictionary:
+		min_widths: Dictionary = {}, max_rows: int = 1,
+		height_dp: float = -1.0, row_h_dp: float = 0.0) -> Dictionary:
+	var rows_fit := HudModel.rows_within(height_dp, row_h_dp,
+			UIConfig.get_num(_layout, "touch_spacing_min_dp", _DEFAULT_ROW_GAP))
+	max_rows = mini(maxi(1, max_rows), rows_fit)
 	var order := chip_order()
 	var gap := UIConfig.get_num(_layout, "chip_gap_dp", _DEFAULT_CHIP_GAP)
 	var clock_w := clock_w_dp if clock_w_dp >= 0.0 \
@@ -663,6 +688,7 @@ func solve_top_bar(width_dp: float, clock_w_dp: float = -1.0,
 	if not wrapped:
 		rows = [visible.duplicate()]
 		row_widths = [need]
+	var gap_v := UIConfig.get_num(_layout, "touch_spacing_min_dp", _DEFAULT_ROW_GAP)
 	return {
 		"modes": modes,
 		"order": order,
@@ -674,7 +700,64 @@ func solve_top_bar(width_dp: float, clock_w_dp: float = -1.0,
 		"avail_rest": avail_rest,
 		"need": need,
 		"iterations": iterations,
+		# The vertical answer, for the view that has to place everything under it.
+		"rows_fit": rows_fit,
+		"bar_h": HudModel.bar_height(rows.size(), row_h_dp, gap_v),
 	}
+
+
+## How tall a bar of `count` rows is. One place, so the alert stack under it and
+## the solver above it can never disagree by a separation.
+static func bar_height(count: int, row_h_dp: float, gap_dp: float) -> float:
+	var n := maxi(0, count)
+	if n == 0 or row_h_dp <= 0.0:
+		return 0.0
+	return float(n) * row_h_dp + float(n - 1) * gap_dp
+
+
+## How many rows of `row_h_dp` fit in `budget_dp`, separated by `gap_dp`.
+##
+## **Never zero.** A display too short for even one row still has a top bar —
+## §2.4's own ladder answers that case by demoting and then hiding chips, and a
+## bar with nothing in it is still the clock and the ☰, which is the only way
+## into the pause menu (D-13b's third hide floor). `budget_dp < 0` is unbounded
+## and returns the cap, so the doc's single-row and Fold-inner behaviours are
+## byte-identical to what they were.
+static func rows_within(budget_dp: float, row_h_dp: float,
+		gap_dp: float) -> int:
+	if budget_dp < 0.0 or row_h_dp <= 0.0:
+		return _MAX_TOP_BAR_ROWS
+	var n := 1
+	while n < _MAX_TOP_BAR_ROWS \
+			and bar_height(n + 1, row_h_dp, gap_dp) <= budget_dp + _ROW_EPSILON:
+		n += 1
+	return n
+
+
+## How far right the bar starts, so it does not sit on §2.3's left rail.
+##
+## The second half of A91-D-23, and the half a row budget cannot fix: at
+## 880 × 400 / 130 % / larger targets **one** row is already 100 dp tall against
+## a rail whose top slot begins at 89, and the arithmetic has no answer —
+## 100 (bar) + 8 (separation) + 12 (rail margin) + 3 × 93 (rail slots) + 2 × 8
+## (rail gaps) = 407 dp against 392 of safe area. One of the two has to move, and
+## it is the bar: the rail carries BUILD, the overlays and the speed control,
+## all of which §2.3 classes *frequent* or *occasional* and pins to the thumb,
+## while the top bar is *rare* and edge-anchored and merely has to be legible.
+##
+## So when the bar's own first row would reach the rail's top slot, the bar
+## starts to the RIGHT of the rail column instead of on top of it. The chips it
+## can no longer afford are demoted and then hidden by §2.4's existing ladder,
+## and every one of them is a row in the dashboard one tap away (§2.10).
+## `0.0` everywhere the bar clears the rail on its own, which is every supported
+## box at 100 % — the reference layout does not move.
+static func top_bar_left_inset(row_h_dp: float, spacing_dp: float,
+		rail_top_dp: float, rail_column_w_dp: float) -> float:
+	if rail_top_dp <= 0.0 or rail_column_w_dp <= 0.0:
+		return 0.0
+	if row_h_dp + spacing_dp <= rail_top_dp:
+		return 0.0
+	return rail_column_w_dp + spacing_dp
 
 
 ## Hides the lowest-priority chip at or after `floor_index`, and says whether it
@@ -811,10 +894,12 @@ func _pack_rows(order: Array, modes: Dictionary, gap: float, min_widths: Diction
 ##   clock:int minutes | {minute_of_day, day_index} · speed:int · paused:bool
 func build_view(snapshot: Dictionary, width_dp: float,
 		clock_w_dp: float = -1.0, min_widths: Dictionary = {},
-		max_rows: int = 1) -> Dictionary:
+		max_rows: int = 1, height_dp: float = -1.0,
+		row_h_dp: float = 0.0) -> Dictionary:
 	var balance := int(snapshot.get("treasury", 0))
 	var net_per_hour := float(snapshot.get("net_per_hour", 0.0))
-	var solve := solve_top_bar(width_dp, clock_w_dp, min_widths, max_rows)
+	var solve := solve_top_bar(width_dp, clock_w_dp, min_widths, max_rows,
+			height_dp, row_h_dp)
 	var values := chip_values(snapshot)
 	var chips: Array[Dictionary] = []
 	for chip_id: String in solve["order"]:

@@ -21,6 +21,10 @@ func _initialize() -> void:
 	var days := 21
 	var strategies: Array = DEFAULT_STRATEGIES.duplicate()
 	var seeds: Array = [1337, 4242, 9001]
+	# Doc 10 §2.13's auto-repair dials, for the arm of the matrix that turns them.
+	# Absent means the sim's own defaults, which is the control run and the run
+	# every published table in doc 92 is.
+	var road_policy: Dictionary = {}
 	for raw in OS.get_cmdline_user_args():
 		var arg := String(raw)
 		var split := arg.find("=")
@@ -39,13 +43,20 @@ func _initialize() -> void:
 				seeds = []
 				for p in value.split(",", false):
 					seeds.append(int(p))
+			"auto_repair":
+				road_policy["auto_repair_threshold"] = float(value)
+			"auto_repair_cap":
+				road_policy["auto_repair_daily_cap"] = int(value)
+	if not road_policy.is_empty():
+		print("auto-repair policy: %s" % str(road_policy))
 	print("| strategy | seed | treasury | value | net $/gh | pop | happy | stab | lvl | dark % | placed | upg | minC | open inc | abandoned | dir ev | credit | wall s |")
 	print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
 	var agg := {}
 	for strategy in strategies:
 		for seed_value in seeds:
 			var t0 := Time.get_ticks_msec()
-			var doc := BalanceGateRig.run(String(strategy), int(seed_value), days)
+			var doc := BalanceGateRig.run(String(strategy), int(seed_value), days,
+					road_policy)
 			var s: Dictionary = doc["summary"]
 			var wall := float(Time.get_ticks_msec() - t0) / 1000.0
 			print("| %s | %d | %d | %d | %.0f | %d | %.1f | %.4f | %d | %.2f | %d | %d | %.3f | %.2f | %d | %d | %d | %.1f |" % [

@@ -1777,6 +1777,12 @@ maintenance trio). If both landed, four of these five rows close and the count
 becomes **22 of 23**, with `cmd_recall_unit` the last one standing — **re-take
 this table from the merged tree rather than trusting this snapshot.**
 
+**Re-taken, Wave 12: the count is 23 of 23.** All four in-flight rows landed, and
+`cmd_recall_unit` got the drawer chip doc 12 §2.6 always specified (D-48). The
+"one test that exercises recall calls `DispatchSystem` directly" clause is also
+retired: `tests/test_ui_incidents.gd` now drives the `CitySim` wrapper through
+the whole chain, success path and refusal path both.
+
 **Seven more verbs have no `CitySim` wrapper at all** and are therefore
 unreachable by any shell however many cards get built: `RoadNetwork`'s
 `cmd_road_repair` and `cmd_set_auto_repair_policy`, and `WaterSystem`'s
@@ -1785,7 +1791,9 @@ unreachable by any shell however many cards get built: `RoadNetwork`'s
 surfaces rather than convenience ones — `cmd_set_water_restrictions` is doc 05's
 demand-management lever and `cmd_set_auto_repair_policy` is doc 10's spend cap —
 so a pass that gives them doors is a pass that wants a matrix, exactly as
-`cmd_route_feeder` does.
+`cmd_route_feeder` does. **`cmd_set_auto_repair_policy` got both in Wave 12 —
+the wrapper, the door and the matrix — and §29 is the pass.** The other six rows
+stand as written.
 
 **The goal side is complete and that is worth stating plainly**: every one of the
 fourteen `kind` values `data/goals.json` uses resolves to an evaluator in
@@ -4151,3 +4159,130 @@ untouched.
   `preview = true`, at the moment it is shown.
 - **It did not re-measure the curriculum.** `data/goals.json` did not move, and
   §26's combined-tree table stands.
+
+---
+
+## 29. Pass 11 — the auto-repair dial, and a control run that means something (Wave 12)
+
+§28.7 closed with a promise: *"it did not surface `cmd_set_auto_repair_policy`
+… it is this wave's ranked open question."* It is surfaced here — a `CitySim`
+wrapper and two settings rows (doc 12 D-50) — and it is the first door this
+project has shipped whose whole purpose is to **spend money on the player's
+behalf**. That makes the measurement question sharper than the last four passes':
+the matrix must be byte-identical with the dial at its defaults, *and* the dial
+must be shown to bite, or "byte-identical" only means the wire was never
+connected.
+
+Both are measured below, and the second one is where the interesting number is.
+
+### 29.1 What moved
+
+| # | Change | Where |
+|---|---|---|
+| 1 | `CitySim.cmd_set_auto_repair_policy(threshold, daily_cap)` + `auto_repair_policy()` | `sim/city_sim.gd` |
+| 2 | Two S9 rows, `policy: "roads"`, ladder and defaults read from `data/roads.json.condition` | `data/ui.json`, `ui/settings_model.gd`, `ui/ui_root.gd` |
+| 3 | `DispatchSystem.cmd_recall_unit` refuses a unit that is not `RESPONDING`/`ON_SCENE` | `sim/incidents/dispatch_system.gd` |
+| 4 | `BalanceGateRig.run()` takes an optional `road_policy`; `tests/balance_matrix.gd` takes `auto_repair=` / `auto_repair_cap=` | `tests/` |
+
+Nothing else in `sim/` moved. Item 3 is a refusal on a verb **no sim path calls**
+(§17.6's matrix filed it as having no caller at all until this wave), which is why
+it cannot move a hash — and §29.4 measures that rather than asserting it.
+
+### 29.2 The matrix — 7 strategies × 3 seeds × 21 game-days, three arms
+
+`tests/balance_matrix.gd`, `days=21`, `seeds=1337,4242,9001`, `curriculum`
+included. Three runs: HEAD before the change, the control (this tree, dials at
+`data/roads.json`'s own `0.40 / $25,000`), and two arms.
+
+| arm | vs HEAD |
+|---|---|
+| **control** — dials untouched | **all 21 per-run rows and all 7 means byte-identical**, every game-state column; the only differing field anywhere is the `wall s` timing column |
+| **off** — `auto_repair=0` | **byte-identical to the control** |
+| **max** — `auto_repair=0.55 auto_repair_cap=200000` | **byte-identical to the control** |
+
+**All three arms agreeing is not a null result — it is a horizon result, and the
+horizon is measurable.** The founding city's roads do not reach the threshold
+band inside 21 game-days:
+
+| game-day | min road condition | tiles < 0.40 | tiles < 0.55 |
+|---|---|---|---|
+| 7 | 0.9384 | 0 | 0 |
+| 14 | 0.8666 | 0 | 0 |
+| 21 | 0.7947 | 0 | 0 |
+| 45 | 0.5484 | 0 | 14 |
+
+(783 road tiles, seed 1337, unattended.) At day 21 the worst tile in the city is
+**0.7947**, which is twice the default threshold — so no arm of the dial has
+anything to queue, and the three tables coincide for the same reason a fire
+alarm and a disconnected fire alarm sound the same in a room that is not on
+fire. Note also that at day **45** the *default* dial still has nothing to do
+and only a raised threshold would bite: `0.55` is the first rung that sees those
+14 tiles.
+
+**So the lever is measured where it can act.** Same city, same seed, a
+contiguous 24-tile run worn to condition `0.30`, four game-days of online coarse
+advance:
+
+| threshold | daily cap | worn tiles still below it at the end | repair tiles finished | treasury delta |
+|---|---|---|---|---|
+| 0.00 (off) | $25,000 | 24 | 0 | +32,262 |
+| 0.25 | $25,000 | 24 | 0 | +32,262 |
+| **0.40 (default)** | $25,000 | **0** | **24** | **+32,081** |
+| 0.55 | $25,000 | 0 | 24 | +32,081 |
+| 0.55 | $200,000 | 0 | 24 | +32,081 |
+| 0.55 | **$0** | 24 | 0 | +32,262 |
+
+Both dials are levers and **either one alone stops the spend**: a threshold under
+the wear level queues nothing, and a $0 budget stops the same city a $25,000
+budget repairs. The 181 the repair costs is doc 03's C-16 quote for 24 street
+tiles at `damage_fraction = 0.70`, priced at the moment the job is submitted —
+this document authors none of it. The three rows that repair are
+`tests/test_roads_network.gd::test_both_dials_are_levers_and_each_can_stop_the_spend_on_its_own`,
+so the claim is a gate rather than a paragraph.
+
+### 29.3 What this says about the default, and about §9.4 question 5
+
+Doc 10 §9.4 question 5 asked whether auto-repair should default on or off. The
+table above answers it in the only way that was ever going to hold: **at the
+default the policy is dormant for the whole of a 21-game-day city and does not
+wake until roads pass 0.40**, which on an unattended founding city is somewhere
+past day 45. It is not a tax on the early game; it is insurance that costs
+nothing until it is needed. And because it is now a dial, the answer stops being
+a permanent ruling — a player who wants roads held at 55 % can pay for it, and
+one who wants the city to never spend a cent without asking can set the budget to
+zero.
+
+**No gate is re-fitted and none is nudged.** The 28 balance gates run on the
+control tree, which is byte-identical to HEAD.
+
+### 29.4 Hashes — neutral on both cities, both paths
+
+`tools/profile_sim.gd --hash-only`, baseline recorded on HEAD with the two `sim/`
+edits reverted, then re-run with them applied:
+
+| city | path | verdict |
+|---|---|---|
+| `data/starter_city.json` | coarse 24 h | `HASH OK 18e70625e633c254` |
+| `data/starter_city.json` | fine 2.0 h | `HASH OK 4c3c52cdb4c5a3cc` |
+| `tests/fixtures/bench_city.json` | coarse 24 h | `HASH OK d6b2509c179987d3` |
+| `tests/fixtures/bench_city.json` | fine 2.0 h | `HASH OK bf8dc7282758843b` |
+
+`BEHAVIOUR UNCHANGED vs baseline` on both. The reason is structural rather than
+lucky: the wrapper is new and unreferenced by any tick, and the recall refusal is
+on a command no tick path calls.
+
+### 29.5 What this pass did not do
+
+- **It did not move a default.** `auto_repair_default_threshold` stays `0.40` and
+  `auto_repair_default_daily_cap` stays `$25,000` — doc 10 authors both and §29.2
+  gives no reason to touch either.
+- **It did not give `cmd_road_repair` a card.** Doc 93 §J3's ruling stands and
+  §29.2 strengthens it: the per-tile verb's only new effect would be a way around
+  the daily cap, and the cap is now something a player can *set*, which makes
+  going round it worse rather than better.
+- **It did not add a road-condition column to the matrix.** `minC` there is
+  BUILDING condition (`tools/playtest.gd:2533`), which is worth knowing when
+  reading §29.2's tables — the road-side numbers above come from the road network
+  directly.
+- **It did not re-measure the curriculum or any price.** `data/goals.json` and
+  `data/economy.json` did not move.

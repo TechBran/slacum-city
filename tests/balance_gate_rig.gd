@@ -28,8 +28,22 @@ const HOURS_PER_DAY := 24
 
 ## One run of one strategy, online, on the coarse step. Returns the same
 ## document shape `Playtest.Runner.run_one` does, minus the file write.
-static func run(strategy_id: String, seed_value: int, days: int) -> Dictionary:
+##
+## **`road_policy` is the one knob a caller may turn**, and it exists because doc
+## 10 §2.13's automatic repair got a settings dial (feeder-water open q1) and a
+## dial that MOVES SPEND has to be measured moving it. `{}` — every existing
+## caller — leaves `RoadNetwork` on `data/roads.json`'s own defaults, so the
+## control arm of the matrix is the matrix this report has always published.
+## Keys: `auto_repair_threshold: float`, `auto_repair_daily_cap: int`.
+static func run(strategy_id: String, seed_value: int, days: int,
+		road_policy: Dictionary = {}) -> Dictionary:
 	var sim := CitySim.boot_from_files(seed_value)
+	if not road_policy.is_empty():
+		sim.cmd_set_auto_repair_policy(
+				float(road_policy.get("auto_repair_threshold",
+						sim.roads.auto_repair_threshold)),
+				int(road_policy.get("auto_repair_daily_cap",
+						sim.roads.auto_repair_daily_cap)))
 	var strategy := Playtest.Factory.make(strategy_id)
 	var api := Playtest.Api.new(sim)
 	var samples: Array[Dictionary] = []

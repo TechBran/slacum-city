@@ -545,10 +545,18 @@ func cmd_dispatch_unit(unit_id: int, incident_id: int, now_h: float) -> Dictiona
 	return CommandQueue.ok({"unit_id": unit_id, "incident_id": incident_id, "role": role})
 
 
+## §2.11's verb: turn a unit around. Only a unit that is actually OUT can be
+## turned around — `FleetSystem.recall` already no-ops on `IDLE` and `OFFLINE`,
+## and a command that answers `ok` for a no-op is a door that lies to the player
+## who just tapped it (doc 91 A91-D-24 gave this verb its first caller). `REFIT`
+## and `RETURNING` are refusals for the same reason: the unit is already on its
+## way home or already home and out of service.
 func cmd_recall_unit(unit_id: int) -> Dictionary:
 	var u: Vehicle = fleet.unit(unit_id)
 	if u == null:
 		return CommandQueue.fail(&"E_UNKNOWN_UNIT")
+	if u.status != Vehicle.RESPONDING and u.status != Vehicle.ON_SCENE:
+		return CommandQueue.fail(&"E_UNIT_NOT_DEPLOYED", {"status": u.status})
 	var inc: Incident = system.incident(u.incident_id)
 	if inc != null:
 		inc.assigned.erase(u.id)

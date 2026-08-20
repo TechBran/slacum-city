@@ -1059,3 +1059,92 @@ The asset test is the shape the other three should take, and its own first run i
 **Consequential and general: the three `D-nn` id spaces are ended.** Doc 91, doc 12's delta table and doc 13 §7's device matrix all number defects `D-nn` in unrelated sequences, which has already forced one renumbering (2026-08-19, the second `D-14`/`D-15` collision in two waves). From this date **doc 91 files `A91-D-nn`**, and the number CONTINUES doc 91's own sequence rather than restarting — the Wave-10 rows are `A91-D-19` … `A91-D-28`, because `A91-D-01` sitting beside `D-1` would be the same ambiguity in a new coat. Existing rows keep their ids, because renaming them would break every cross-reference in `docs/` and in code comments a third time. Doc 12 and doc 13 should take `A12-D-nn` and `A13-D-nn` when they next file. **Reading rule: an unprefixed `D-nn` belongs to whichever document you found it in.**
 
 **And one thing this ruling explicitly does not do.** It does not re-open any balance number. The re-audit changed no `sim/`, no `data/`, no `game/`: `tools/profile_sim.gd --hash-only` reports `18e70625e633c254…` / `4c3c52cdb4c5a3cc…` on the founding city and `d6b2509c179987d3…` / `bf8dc7282758843b…` on the benchmark city at `a892315`, before and after, and the 28 gates are untouched. **A91-D-19 is the one finding with a balance consequence and it is a statement about coverage, not about tuning**: every figure doc 92 has ever published was measured on `standard`, because `standard` is the only preset the code can reach.
+
+---
+
+## 24. WAVE 12 — the last doors, and the last accessibility corner (binding)
+
+### RR-48 — A door that cannot be reached is a missing feature; a door whose command says `ok` for doing nothing is a worse one (docs 06 §2.11, 10 §2.13, 12 §2.4/§2.6/§2.13/§2.18, 91 A91-D-21/22/23/24, 92 §29, 93 §J3)
+
+Four findings closed together because they are the same shape twice over: a
+**verb with no surface**, and a **surface that does not survive the two
+accessibility settings §2.18 calls release gates.**
+
+**(a) The last two doorless verbs.** `cmd_recall_unit` had *zero callers anywhere
+in the repository* (A91-D-24) — not a shell, not a harness, not even a test,
+because the one test that exercises recall reached past the `CitySim` wrapper and
+called `DispatchSystem` directly. `cmd_set_auto_repair_policy` had no wrapper at
+all (doc 91 §17.2). Both now have the door their own doc had already specified:
+doc 12 §2.6's assigned-unit chips for the first, doc 12 §2.13's `policy:` row
+family for the second. **Ruling: a verb doc 06 or doc 10 calls a *player* verb
+gets a door in the wave that notices it has none, and the door is the one the UI
+doc already drew** — §2.6 has described those chips since the first draft, and
+building something else instead would have been a second design where a first one
+already existed. Two deviations from §2.6's words are recorded rather than
+silently taken: the chips are 48 dp not 24 (A3 outranks a dimension) and they sit
+beside ASSIGN rather than replacing it (a `Button` inside a `Button` cannot be
+hit, and sending a second unit is a verb doc 06 supports).
+
+**(b) And wiring the verb exposed that the command was lying.**
+`FleetSystem.recall()` has always no-opped on `IDLE` and `OFFLINE`, so
+`cmd_recall_unit` answered `ok` for doing nothing. Harmless while nobody called
+it; a door that reports success and moves no truck the moment somebody did.
+**Ruling: a command reachable from a surface must refuse what it cannot do, by
+code, with the state it refused for in the payload** — `E_UNIT_NOT_DEPLOYED`
+carrying `status`, so §2.7's formatter can put doc 06's own vocabulary in front
+of the player. This is the general form of the D-35 lesson: the affordance is not
+finished when it issues the command, it is finished when the refusal is a
+sentence.
+
+**(c) A control that MOVES SPEND needs a control run, and a control run needs a
+horizon.** The auto-repair dial is the first door whose purpose is to spend money
+without asking. The 7 × 3 × 21 matrix is **byte-identical** with the dial in
+place at its defaults — and byte-identical at `auto_repair=0` and at
+`0.55 / $200,000` as well, which on its own proves nothing at all. Doc 92 §29.2
+therefore measures *why*: the founding city's worst road tile is **0.7947** at
+game-day 21 and **0.5484** at day 45, so no arm of the dial has anything to queue
+inside the horizon the matrix uses. The lever is then measured where it can act —
+24 tiles worn to 0.30, four game-days — and both dials are shown to gate the
+spend independently (threshold 0.25: nothing; 0.40: 24 tiles, $181; cap $0:
+nothing). **Ruling: "the matrix did not move" is only a finding when the same
+pass also shows what would have moved it.** An unmoved table with no such
+measurement beside it is indistinguishable from a wire that was never connected.
+
+**(d) A layout solver that has only one axis will eventually be asked about the
+other.** §2.4's collapse solver has budgeted chip WIDTH since the first draft and
+D-1 taught it to wrap. Nothing taught it how tall the answer was, so at 880 × 400
+— doc 12 §2.3's own reference box — with 130 % text and larger targets the bar ran
+two 100 dp rows to y 212 of a 392 dp safe area, straight through the left rail:
+**156 `overlapping_targets` findings, every state, one box** (A91-D-23). The
+budget alone could not close it, because one row is already 100 dp against a rail
+top at 89 and the column wants 407 dp of 392. **Ruling: when two solved stacks
+cannot share a column, the one §2.3 classes *rare* yields to the ones it classes
+*frequent*** — the bar steps right of the rail column and §2.4's existing
+demote-then-hide ladder absorbs the width. The property that made it safe to
+land is D-46's property: at 100 % text with 48 dp targets the inset is **0 at
+every supported box**, so no screenshot in the repo moves.
+
+**(e) And the centred cards got the pattern the full-screen sheets already had.**
+RR-45(b) fixed sheets that grew WIDER than the phone. S0 and the pause menu fail
+the same way on the other axis and for a different reason: they are cards in a
+`CenterContainer`, which lays a child out at exactly its minimum, so a 449 dp
+card on a 400 dp box hangs off both ends and `SAVE & QUIT`, `SETTINGS` and the
+new-city confirmation's `CANCEL` were all below the fold. **Ruling: a card is
+capped at what the display can show and its body scrolls** — `UIWidgets.card_height()`
++ `wrap_in_scroller()`, the goals-sheet pattern applied to a card that is not
+full-screen.
+
+**Measured, whole deck, after:** `tools/ui_preview.gd --screen=all --audit` over
+**52 states × 5 boxes × 2 accessibility settings = 520 state-sweeps, 0 findings
+of any kind.** A2 at 130 % and A3 are green at every box the project tests for
+the first time. A2's own box — 150 % at 640 × 340 — remains A91-D-29 and remains
+unmeasured; this wave did not touch it and does not claim it.
+
+**One process note, and it cost an hour.** `git stash` is **shared across
+worktrees** — `refs/stash` lives in the common git directory, not the per-worktree
+one — so a stash pushed in one agent's worktree can be popped in another's. It
+happened here: a sibling's stash was popped into this worktree between a push and
+a pop. It was recovered byte-identically (re-pushed, contents diffed against the
+working tree before and after) and the stack order restored, but **a
+worktree-isolated agent must not use `git stash` at all**: save a patch with
+`git diff > file`, `git checkout --` the paths, and `git apply` to restore.

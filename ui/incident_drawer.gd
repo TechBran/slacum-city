@@ -41,6 +41,10 @@ signal drawer_toggled(open: bool)
 ## the city from it exactly as it does after a building-panel action.
 signal main_action_taken(incident_id: int, edge_id: String, action: StringName,
 		result: Dictionary)
+## Doc 06 §2.11's recall verb, doc 12 §2.6's "assigned units render as chips …
+## (tap → `Recall`)". The chip says WHICH unit; the shell issues
+## `CitySim.cmd_recall_unit` and answers through `report_recall()`.
+signal recall_requested(unit_id: int, incident_id: int)
 
 const HANDLE_GLYPH := "▤"
 
@@ -60,8 +64,12 @@ var _list: VBoxContainer
 
 var _sort_buttons: Dictionary = {}   # StringName order -> Button
 var _rows: Dictionary = {}           # incident id:int -> Button
-var _actions: Dictionary = {}        # incident id:int -> HBoxContainer
+var _actions: Dictionary = {}        # incident id:int -> Container
 var _expanded := 0
+## Doc 06 §2.11's verb is only a door when a shell has wired it. Without one the
+## chips are not drawn at all, on the same terms as the valve (D-43): a control
+## that cannot issue its command is worse than no control.
+var _recall_enabled := false
 var _pulse_phase := 0.0
 var _pulse_hz := 1.2
 var _reduce_motion := false
@@ -106,6 +114,19 @@ func _ready() -> void:
 ## after `setup()` — the button is built per refresh, not per binding.
 func bind_water(actions: WaterActions) -> void:
 	water = actions
+
+
+## `UIRoot.bind_recall()` calls this. Idempotent, and safe before or after
+## `setup()` — the chips are built per refresh, not per binding.
+func set_recall_enabled(value: bool) -> void:
+	if _recall_enabled == value:
+		return
+	_recall_enabled = value
+	refresh()
+
+
+func recall_enabled() -> bool:
+	return _recall_enabled
 
 
 func _bind_nodes() -> void:
@@ -320,6 +341,8 @@ func drawer_width_dp() -> float:
 # ---------------------------------------------------------------------------
 
 func refresh() -> void:
+	if model == null:
+		return    # a binding that arrived before `setup()` — see `set_recall_enabled`
 	_refresh_handle()
 	if not is_open():
 		return
@@ -465,12 +488,24 @@ func _build_row(row: Dictionary) -> VBoxContainer:
 	return holder
 
 
-func _build_actions(row: Dictionary) -> HBoxContainer:
+## **An `HFlowContainer`, not an `HBox` (D-47's lesson, one screen over).** The
+## row was three controls when it was written; it is four on a water break and
+## four plus one chip per assigned unit now, and an `HBox` asks its parent for
+## the SUM of those. The drawer is `clamp(0.34·W, 260, 340)` dp wide **whatever
+## the display is**, so unlike the sheets there is no box where the sum fits: at
+## 100 % the four controls of a water row already measure 348 dp against a 300 dp
+## panel, and `_apply_panel_width` answered that by *widening the drawer*, one
+## affordance at a time, until it ate the city view behind it. A flow container
+## asks for its widest child and wraps the rest onto a second line instead, so
+## the drawer keeps the width §2.6 gives it and the row grows downward — which is
+## the axis a drawer already scrolls on.
+func _build_actions(row: Dictionary) -> HFlowContainer:
 	var incident_id := int(row["id"])
-	var bar := HBoxContainer.new()
+	var bar := HFlowContainer.new()
 	bar.name = "Actions"
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar.add_theme_constant_override(&"separation", int(_spacing))
+	bar.add_theme_constant_override(&"h_separation", int(_spacing))
+	bar.add_theme_constant_override(&"v_separation", int(_spacing))
 
 	var assign_text := UIWidgets.t(config, "ui_drawer_assign")
 	var assign := UIWidgets.button("Assign_%d" % incident_id, assign_text, assign_text,
@@ -508,7 +543,32 @@ func _build_actions(row: Dictionary) -> HBoxContainer:
 		valve.clip_text = false
 		valve.pressed.connect(_on_valve_pressed.bind(incident_id))
 		bar.add_child(valve)
+
+	# §2.6's assigned-unit chips. The doc puts them ON the 72 dp band, "replacing
+	# the ASSIGN button"; they are in the actions row instead, beside an ASSIGN
+	# that stays live, for the same two reasons the actions row itself is below
+	# the band: a Button inside a Button cannot be hit, and sending a SECOND unit
+	# to a fire that already has one is a verb doc 06 supports and a player wants.
+	#
+	# A row's `assigned` list is the sim's own `inc.assigned` map, which only ever
+	# holds units that were dispatched and have not been released — so a chip
+	# exists exactly when doc 06 §2.11 allows a recall, and the legality question
+	# needs no second query. The sim still rules: `report_recall()` draws whatever
+	# the command answered.
+	if _recall_enabled:
+		for value: Variant in (row["assigned"] as Array):
+			bar.add_child(_build_recall_chip(incident_id, int(value)))
 	return bar
+
+
+func _build_recall_chip(incident_id: int, unit_id: int) -> Button:
+	var label := UIWidgets.t_args(config, "ui_drawer_recall", {"unit": unit_id})
+	var chip := UIWidgets.button("Recall_%d_%d" % [incident_id, unit_id], label,
+			UIWidgets.t_args(config, "ui_drawer_recall_hint", {"unit": unit_id}),
+			Vector2(maxf(_touch_min * 1.5, 72.0), _touch_min), &"GhostButton")
+	chip.clip_text = false
+	chip.pressed.connect(_on_recall_pressed.bind(incident_id, unit_id))
+	return chip
 
 
 ## The valve control's two moods, spelled out rather than assembled: G-8 wants
@@ -567,12 +627,36 @@ func _on_row_pressed(incident_id: int) -> void:
 	_expanded = 0 if _expanded == incident_id else incident_id
 	model.select(incident_id if _expanded != 0 else 0)
 	for key: Variant in _actions:
-		(_actions[key] as HBoxContainer).visible = int(key) == _expanded
+		(_actions[key] as Container).visible = int(key) == _expanded
 	incident_selected.emit(incident_id)
 	var payload := model.focus_payload(incident_id)
 	if payload.is_empty() or not bool(payload["has_focus"]):
 		return
 	focus_requested.emit(payload["world_pos"] as Vector3)
+
+
+## Doc 06 §2.11's verb, asked. Like ACK and PIN this never calls `refresh()` —
+## rebuilding the list here would free the Button that is emitting `pressed`.
+## The chip is stood down in place so the player cannot tap it twice while the
+## shell is still answering; `report_recall()` decides whether it comes back.
+func _on_recall_pressed(incident_id: int, unit_id: int) -> void:
+	var chip := recall_button(incident_id, unit_id)
+	if chip != null:
+		chip.disabled = true
+	recall_requested.emit(unit_id, incident_id)
+
+
+## The shell's answer to a `recall_requested`. On success the model drops the
+## unit and the chip goes with it on the next refresh; on a refusal the chip
+## comes back live, because the unit is still out there.
+func report_recall(unit_id: int, incident_id: int, ok: bool = true) -> void:
+	if not ok:
+		var chip := recall_button(incident_id, unit_id)
+		if chip != null:
+			chip.disabled = false
+		return
+	model.drop_unit(incident_id, unit_id)
+	_refresh_handle()
 
 
 func _on_assign_pressed(incident_id: int) -> void:
@@ -653,10 +737,18 @@ func row_button(incident_id: int) -> Button:
 
 
 func action_button(prefix: String, incident_id: int) -> Button:
-	var actions: HBoxContainer = _actions.get(incident_id, null)
+	var actions: Container = _actions.get(incident_id, null)
 	if actions == null:
 		return null
 	return actions.get_node_or_null("%s_%d" % [prefix, incident_id]) as Button
+
+
+## The recall chip for one unit on one incident, or `null`.
+func recall_button(incident_id: int, unit_id: int) -> Button:
+	var actions: Container = _actions.get(incident_id, null)
+	if actions == null:
+		return null
+	return actions.get_node_or_null("Recall_%d_%d" % [incident_id, unit_id]) as Button
 
 
 func sort_button(order: StringName) -> Button:

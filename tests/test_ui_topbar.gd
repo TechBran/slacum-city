@@ -165,6 +165,67 @@ func test_data_asks_for_two_rows() -> void:
 
 
 # ===========================================================================
+# The vertical half of the same solve (A91-D-23)
+# ===========================================================================
+
+func test_rows_within_reserves_the_height_a_row_actually_takes() -> void:
+	# 100 dp rows, 8 dp apart: one needs 100, two need 208, three need 316.
+	assert_eq(HudModel.rows_within(99.0, 100.0, 8.0), 1, "never zero rows")
+	assert_eq(HudModel.rows_within(100.0, 100.0, 8.0), 1)
+	assert_eq(HudModel.rows_within(207.0, 100.0, 8.0), 1, "8 dp short of two")
+	assert_eq(HudModel.rows_within(208.0, 100.0, 8.0), 2)
+	assert_eq(HudModel.rows_within(316.0, 100.0, 8.0), 3)
+	assert_eq(HudModel.bar_height(2, 100.0, 8.0), 208.0)
+	assert_eq(HudModel.bar_height(0, 100.0, 8.0), 0.0)
+
+
+func test_an_unbounded_budget_is_the_docs_own_solver() -> void:
+	var model := _model()
+	var bounded := model.solve_top_bar(480.0, 132.0, {}, 2, -1.0, 0.0)
+	var plain := model.solve_top_bar(480.0, 132.0, {}, 2)
+	assert_eq(str(bounded["rows"]), str(plain["rows"]),
+			"height_dp < 0 changes nothing — every model test above still holds")
+	assert_eq(int(plain["rows_fit"]), 8, "the cap, not a measurement")
+
+
+func test_a_short_display_gets_one_row_and_the_ladder_takes_the_rest() -> void:
+	# 880 × 400 at 130 % text with larger targets: the bar has 85 dp above §2.3's
+	# left rail and one chip measures 100. Two rows would run to y 212 through a
+	# rail that starts at 89, which is A91-D-23 — 156 findings across the deck.
+	var model := _model()
+	var solved := model.solve_top_bar(880.0, 249.0, {}, 2, 100.0, 100.0)
+	assert_eq(int(solved["rows_fit"]), 1, "one 100 dp row is all 100 dp holds")
+	assert_eq((solved["rows"] as Array).size(), 1)
+	assert_false(bool(solved["wrapped"]))
+	assert_almost_eq(float(solved["bar_h"]), 100.0, 0.001)
+	var modes: Dictionary = solved["modes"]
+	assert_ne(modes["treasury"], HudModel.MODE_HIDDEN,
+			"§2.4's ladder absorbs what the row cannot hold — P1 is still there")
+
+
+func test_the_bar_steps_out_of_the_rail_column_only_when_it_has_to() -> void:
+	# The rail's top slot at 176 dp down (880 × 400, 100 %): a 53 dp row clears it.
+	assert_eq(HudModel.top_bar_left_inset(53.0, 8.0, 176.0, 105.0), 0.0,
+			"the reference box does not move")
+	# The same box at 130 % with larger targets: 100 + 8 > 85, so it steps right.
+	assert_eq(HudModel.top_bar_left_inset(100.0, 8.0, 85.0, 105.0), 113.0)
+	# A rail that has not been laid out yet cannot push anything.
+	assert_eq(HudModel.top_bar_left_inset(100.0, 8.0, 0.0, 105.0), 0.0)
+	assert_eq(HudModel.top_bar_left_inset(100.0, 8.0, 85.0, 0.0), 0.0)
+
+
+func test_the_reference_box_still_keeps_every_chip_at_100_percent() -> void:
+	# Doc 12 test 10's claim, re-asserted against the vertical solve: at 880 dp
+	# with the doc's own budgets nothing is hidden and nothing is demoted.
+	var model := _model()
+	var solved := model.solve_top_bar(880.0, 132.0, {}, 2, 400.0, 48.0)
+	for chip_id: String in model.chip_order():
+		assert_eq((solved["modes"] as Dictionary)[chip_id], HudModel.MODE_FULL,
+				"%s stays FULL at W = 880" % chip_id)
+	assert_eq((solved["rows"] as Array).size(), 1, "and on one row")
+
+
+# ===========================================================================
 # The mounted HUD at real device boxes
 # ===========================================================================
 
