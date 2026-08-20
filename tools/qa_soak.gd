@@ -691,20 +691,31 @@ func _slot_bytes(service: SaveService, slot: int) -> int:
 ## **The divergence this harness was written to expose is closed** (2026-08-19,
 ## Wave 7, doc 91 D-1): `game/main.gd._on_app_resumed` now plans the resume
 ## through the same call and walks the same segments, so the soak and the shell
-## take the identical path. The `_note()` below still fires on any off-hour
-## pause and its text still describes the OLD shell; it is left as-is because
-## changing what this instrument reports is a behaviour change, not a comment —
-## flagged for whoever owns the next soak pass.
+## take the identical path.
+##
+## **What the `_note()` below now checks (rewritten Wave 9, 2026-08-20).** It
+## used to describe the pre-`CatchUpPlanner` shell and claim the shell resumed on
+## an unaligned tick — a sentence that had been false since D-1 closed, so an
+## instrument whose whole job is to report surprises was reporting a stale one on
+## every off-hour pause. The condition it fires on is still worth keeping, but it
+## means something else: an off-hour pause is the case where the planner has to
+## do real work — a head-align fine segment, then coarse hours, then a fine tail,
+## then a residual carry — and it is therefore the case where a resume bug would
+## show. The note now records that this cycle exercised that path, with the
+## residual it started from, so a reader of the report can tell an aligned cycle
+## (which proves almost nothing) from an unaligned one (which proves the ladder).
 func _pause_cycle(index: int) -> void:
 	var before := {"treasury": _sim.treasury.balance,
 			"population": _sim.population.city_population,
 			"day": _sim.clock.day_index()}
 	if _sim.clock.tick_index % GameClock.TICKS_PER_HOUR != 0:
-		_note("resume path: game/main.gd calls advance_coarse_hours() on a "
-				+ "tick_index that is not hour-aligned (%d %% %d = %d); doc 01 §2.10's "
-				% [_sim.clock.tick_index, GameClock.TICKS_PER_HOUR,
-						_sim.clock.tick_index % GameClock.TICKS_PER_HOUR]
-				+ "CatchUpPlanner head-align is what this harness uses instead")
+		_note("resume path: cycle paused %d/%d ticks into a game-hour, so this "
+				% [_sim.clock.tick_index % GameClock.TICKS_PER_HOUR,
+						GameClock.TICKS_PER_HOUR]
+				+ "cycle exercised CatchUpPlanner's full ladder — head-align, "
+				+ "coarse hours, fine tail, residual carry — which is the same "
+				+ "call game/main.gd._on_app_resumed makes (doc 91 D-1, closed "
+				+ "2026-08-19). An hour-aligned pause would skip the head-align.")
 
 	var rows: Array[Dictionary] = []
 	for elapsed_real_s: float in [30.0, 45.0 * 60.0]:

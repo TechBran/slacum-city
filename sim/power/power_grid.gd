@@ -45,6 +45,11 @@ const DARK_SUSTAIN_GS := 20
 const LIT_THRESHOLD := 0.55
 const LIT_SUSTAIN_GS := 10
 
+## Doc 91 D-15 proposal 3: the per-building service pass runs on the GAME-MINUTE.
+## One game-minute in game-seconds; a coarse step (`dt_gs = 3600`) clears it on
+## the first call, so the offline path runs exactly as it always did.
+const SERVICE_PERIOD_GS := 60
+
 const PRIORITY_WEIGHT := {&"CRITICAL": 1000.0, &"ESSENTIAL": 40.0, &"STANDARD": 8.0, &"DISCRETIONARY": 1.0}
 const ROLLING_SHED_PERIOD_GM := 30
 const PRIORITY_OVERRIDE_BONUS := 500.0
@@ -89,6 +94,11 @@ const LIGHTNING_P_BASE := 0.55
 const LIGHTNING_ARRESTER_FACTOR := 0.22
 
 var now_gs: int = 0
+## Game-seconds of tick since the per-building service pass last ran (doc 91
+## D-15 proposal 3). **Persisted**: it is up to one game-minute of service the
+## ledger has not been told about yet, and a save that dropped it would restore
+## a city that banks a different slice of that minute from the live one.
+var _service_pending_gs: int = 0
 var next_component_index: int = 1
 var topology_dirty: bool = true
 var system_demand_kw: float = 0.0
@@ -754,7 +764,27 @@ func tick(dt_gs: int, demands: Dictionary, distributed: Dictionary,
 	_pass_c_thermal(dt_gs, weather, rng)
 	if topology_dirty:
 		_pass_d_energize()
-	_update_service(dt_gs, demands)
+	# **The per-building service ledger runs on the GAME-MINUTE, not the tick**
+	# (doc 91 D-15 proposal 3, taken Wave 9). Passes A–D are O(components) —
+	# hundreds — and this one is O(buildings) — thousands; it is the whole reason
+	# `power` was 3.8 ms on every SimTick of the benchmark city. The kWh
+	# accumulator is dt-exact, so sixty 15-game-second slices and fifteen
+	# 60-game-second ones settle the same hour in VALUE. They do not settle it in
+	# the same float, and the LIT/DARK hysteresis below now samples on a
+	# game-minute grid rather than a 15-game-second one, so a transition can land
+	# up to 45 game-seconds later than it did. Both are why this is a save-epoch
+	# change (`CitySim.SAVE_SECTION_VERSION` 4).
+	#
+	# **The un-banked remainder is SAVED, and that is not optional.** A save taken
+	# two ticks into a game-minute holds half a minute of service the ledger has
+	# not been told about. Drop it and the restored city banks a different slice
+	# of that minute from the live one, and save → load → advance stops being
+	# bit-identical — the one thing this project does not trade. It is one
+	# additive int in the power section (doc 08 §2.8, rung 4).
+	_service_pending_gs += dt_gs
+	if _service_pending_gs >= SERVICE_PERIOD_GS:
+		_update_service(_service_pending_gs, demands)
+		_service_pending_gs = 0
 
 
 func drain_events() -> Array:
@@ -1591,6 +1621,10 @@ func serialize() -> Dictionary:
 	return {"section_version": 1, "now_gs": now_gs, "components": components,
 			"ties": ties, "attachments": _attachments.duplicate(),
 			"service": service, "shed_feeders": shed_feeders.duplicate(),
+			# Doc 91 D-15 proposal 3: the un-banked remainder of the current
+			# game-minute. Additive; a body without it restores at 0, which is
+			# exactly what a pre-Wave-9 save meant.
+			"service_pending_gs": _service_pending_gs,
 			"shed_rotation_next_gs": shed_rotation_next_gs}
 
 
@@ -1631,6 +1665,7 @@ func deserialize(data: Dictionary) -> void:
 		record["priority_class"] = StringName(String(record["priority_class"]))
 		_service[building_id] = record
 	now_gs = int(data.get("now_gs", 0))
+	_service_pending_gs = int(data.get("service_pending_gs", 0))
 	shed_feeders = data.get("shed_feeders", [])
 	shed_rotation_next_gs = int(data.get("shed_rotation_next_gs", 0))
 	topology_dirty = true

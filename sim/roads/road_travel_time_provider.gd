@@ -15,7 +15,19 @@ extends TravelTimeProvider
 ## here, at the seam, so neither side changes its convention.
 
 var network: RoadNetwork
+## The profile every call falls back to — doc 12's unit picker and doc 06's
+## turnout-free `estimate_gs` both ask without one.
 var profile: RouteProfile
+
+## `speed_mpgm` (bucketed) -> the RouteProfile object that carries it. Doc 06
+## hands its profile across the seam as a DICTIONARY of primitives (C-49's four
+## fields); doc 10 prices with a RouteProfile OBJECT, and `RoutePlanner._prep`
+## caches its per-query constants on that object's identity. Building a fresh
+## profile per call would therefore invalidate the planner's constant cache on
+## every single quote — so the objects are kept, one per distinct speed, and
+## reused. The map is tiny by construction: doc 06's whole roster is five
+## vehicle types.
+var _profile_by_speed: Dictionary = {}
 
 
 func _init(p_network: RoadNetwork, p_profile: RouteProfile) -> void:
@@ -23,20 +35,56 @@ func _init(p_network: RoadNetwork, p_profile: RouteProfile) -> void:
 	profile = p_profile
 
 
+## **Doc 06's profile is honoured, not ignored** (doc 06 §2.10's `eta_minutes`),
+## and this is the defect that held the wiring for two waves.
+##
+## Until Wave 9 this class priced every trip on one fixed `emergency(32.0)` — no
+## per-type speed and, decisively, **no siren multiplier**. Doc 06 §2.11 gives a
+## RESPONDING patrol car `32 × 1.25 = 40 m/gm`; the seam quoted **32**, i.e.
+## 20 % slow, on the department that answers `crime` and `traffic_accident` —
+## most of doc 06's ambient load. One channel priced 20 % slow on a degrading
+## network is enough to push `eta + penalties` past `MAX_ACCEPTABLE_COST` and
+## start the unbounded backlog RR-22 held the router for. A construction crew
+## went the other way, quoted at 32 where §2.11 says 18. Report 98 RR-26 carries
+## the four-arm ablation: `greedy_growth` seed 4242 goes from **> 600 s to
+## 11.2 s** on this change alone.
+##
+## `speed_mpgm` and the siren multiplier are doc 06's to author (§2.11) and doc
+## 10's to consume; the route CLASS stays this object's, because doc 10 owns the
+## privilege triple.
+func _profile_for(route_profile: Dictionary) -> RouteProfile:
+	if route_profile.is_empty():
+		return profile
+	var speed := float(route_profile.get("speed_mpgm", profile.speed_mpgm))
+	if bool(route_profile.get("siren", false)):
+		speed *= float(route_profile.get("siren_mult", 1.0))
+	if speed <= 0.0:
+		return profile
+	var key := roundi(speed * 1000.0)
+	var cached: Variant = _profile_by_speed.get(key)
+	if cached != null:
+		return cached
+	var built := RouteProfile.new(speed, profile.route_class,
+			bool(route_profile.get("ignores_closures", profile.ignores_closures)),
+			profile.priority)
+	_profile_by_speed[key] = built
+	return built
+
+
 func travel_gs(from: Vector2i, to: Vector2i, route_profile: Dictionary = {}) -> int:
 	if network == null:
 		return super.travel_gs(from, to, route_profile)
-	var gs := network.travel_gs_for(from, to, profile)
+	var gs := network.travel_gs_for(from, to, _profile_for(route_profile))
 	return UNREACHABLE_GS if gs < 0 else gs
 
 
 ## The street polyline for the SAME route `travel_gs` just priced: both go
 ## through `planner.quote()`, so they come out of one cache entry and the shape
 ## and the duration can never describe two different trips.
-func route_tiles(from: Vector2i, to: Vector2i, _route_profile: Dictionary = {}) -> Array:
+func route_tiles(from: Vector2i, to: Vector2i, route_profile: Dictionary = {}) -> Array:
 	if network == null:
 		return []
-	return network.route_tiles(from, to, profile)
+	return network.route_tiles(from, to, _profile_for(route_profile))
 
 
 ## The turnout-free form of `estimate_eta_gs`, kept because doc 12's unit picker
@@ -63,11 +111,11 @@ func dispatch_candidates() -> int:
 	return 0 if network == null else network.dispatch_candidates()
 
 
-func estimate_eta_gs(from: Vector2i, to: Vector2i, _route_profile: Dictionary = {},
+func estimate_eta_gs(from: Vector2i, to: Vector2i, route_profile: Dictionary = {},
 		turnout_min: float = 0.0) -> int:
 	if network == null:
-		return super.estimate_eta_gs(from, to, _route_profile, turnout_min)
-	var minutes := network.estimate_eta_practical(from, to, profile)
+		return super.estimate_eta_gs(from, to, route_profile, turnout_min)
+	var minutes := network.estimate_eta_practical(from, to, _profile_for(route_profile))
 	if is_inf(minutes):
 		return UNREACHABLE_GS
 	return int(round(turnout_min * float(GAME_SECONDS_PER_GAME_MINUTE))) \
@@ -82,7 +130,7 @@ func is_reachable_estimate(from: Vector2i, to: Vector2i,
 		route_profile: Dictionary = {}) -> bool:
 	if network == null:
 		return super.is_reachable_estimate(from, to, route_profile)
-	return network.is_reachable(from, to, profile)
+	return network.is_reachable(from, to, _profile_for(route_profile))
 
 
 # ------------------------------------------- the other three published inputs

@@ -187,6 +187,141 @@ func test_self_resolve_abandoned() -> void:
 	assert_eq(penalty, 1, "the −0.10 stability penalty applied once")
 
 
+# ================================ §2.10.1 — the terminal rule (report 98 RR-26)
+#
+# Before Wave 9 three ROWS of `data/incidents.json` authored NO ending at all: a
+# `traffic_accident` and a `storm_damage/blocked_road` above tier 2 have left
+# their `self_resolve` window behind (`self_resolve_max_tier` is 2) and have no
+# other condition, and bare `storm_damage` has no `on_fail` block whatsoever.
+# All three used to climb to tier 5 and stand there for the rest of the city's
+# life, which is what made doc 10's router unaffordable — the open roster, and
+# everything O(open), grew without bound. These four tests hold the rule, its
+# mode invariance, and the two things it must NOT do.
+
+
+## The window is one GAME-DAY, and it is derived (§2.10.1): 1.77× the longest
+## terminal path any row authors, which is the subtype `storm_damage/roof_damage`
+## at 13.574 gh on casual difficulty.
+func test_an_incident_nobody_answers_is_abandoned_after_a_game_day() -> void:
+	var world := _world()
+	world.add_building("B1", "house", 1, Vector2i(3, 3), "D1")
+	var system := _system(world)
+	assert_almost_eq(system.unanswered_abandon_h(), 24.0, 1e-9,
+			"data/dispatch.json carries the ruled window")
+	# Above `self_resolve_max_tier`, so the catalog offers this incident no
+	# ending of any kind. Before RR-26 it stayed on the roster for ever.
+	var inc := system.spawn("traffic_accident", "", Vector2i(3, 3), {}, 3.0, {}, "D1")
+	assert_true(inc.tier() > 2, "spawned past the self-resolve window")
+	for hour in 26:
+		system.advance_to(float(hour + 1))
+		if inc.is_terminal():
+			break
+	assert_eq(inc.status, Incident.STATUS_ABANDONED,
+			"an incident nobody can answer ends (§2.10.1)")
+	assert_true(inc.resolved_h >= 24.0 - 1e-6 and inc.resolved_h <= 24.05,
+			"…at the ruled game-day, not before (%f)" % inc.resolved_h)
+	# ≥ 1 rather than == 1: §2.7's tier-4 row spawns a secondary collision, and
+	# the child has the same gap in the catalog, so it is abandoned too. That is
+	# the rule working on both of them, not a double count on one.
+	assert_true(int(system.dispatch.stats["abandoned_total"]) >= 1,
+			"counted as abandoned (%d)" % int(system.dispatch.stats["abandoned_total"]))
+	assert_eq(int(system.dispatch.stats["failed_total"]), 0,
+			"ABANDONED, never FAILED — §2.2 reserves the two words for two things")
+
+
+func test_the_clock_lands_on_the_same_game_second_online_and_offline() -> void:
+	# Mode invariance (§2.1): the boundary is a discontinuity, so a coarse hour
+	# cannot step over it and the two paths must agree to the game-second.
+	var fine_world := _world()
+	fine_world.add_building("B1", "house", 1, Vector2i(3, 3), "D1")
+	var fine := _system(fine_world)
+	var fine_inc := fine.spawn("traffic_accident", "", Vector2i(3, 3), {}, 3.0, {}, "D1")
+	for minute in 26 * 60:
+		fine.advance_to(float(minute + 1) / 60.0)
+		if fine_inc.is_terminal():
+			break
+	var coarse_world := _world()
+	coarse_world.add_building("B1", "house", 1, Vector2i(3, 3), "D1")
+	var coarse := _system(coarse_world)
+	var coarse_inc := coarse.spawn("traffic_accident", "", Vector2i(3, 3), {}, 3.0, {}, "D1")
+	for hour in 26:
+		coarse.advance(1.0)
+		if coarse_inc.is_terminal():
+			break
+	assert_eq(coarse_inc.status, fine_inc.status)
+	assert_almost_eq(coarse_inc.resolved_h, fine_inc.resolved_h, 1.0 / 3600.0,
+			"the offline path abandons on the same game-second the online one does")
+
+
+func test_a_committed_unit_zeroes_the_clock() -> void:
+	# The rule measures NOBODY IS COMING, not THIS IS SLOW. Committing a unit
+	# must RESET the clock, not merely pause it.
+	var world := _world()
+	world.add_building("B1", "house", 1, Vector2i(3, 3), "D1")
+	var system := _system(world)
+	var inc := system.spawn("traffic_accident", "", Vector2i(3, 3), {}, 3.0, {}, "D1")
+	for hour in 20:
+		system.advance_to(float(hour + 1))
+	assert_almost_eq(inc.unanswered_h, 20.0, 0.05, "twenty game-hours of nobody")
+	assert_false(inc.is_terminal(), "and not yet abandoned")
+	# Committing anything at all is what the rule is about.
+	inc.assigned[1] = {"role": "police", "state": Vehicle.RESPONDING,
+			"eta_h": 20.1, "manual": false}
+	system.advance_to(20.5)
+	assert_almost_eq(inc.unanswered_h, 0.0, 1e-9, "one commitment zeroes the clock")
+	assert_false(inc.is_terminal(), "and the incident is emphatically not abandoned")
+	# Take it away again and the incident gets the FULL window back, not the
+	# remainder of the old one.
+	inc.assigned.clear()
+	for hour in 23:
+		system.advance_to(21.0 + float(hour))
+	assert_false(inc.is_terminal(),
+			"23 game-hours since the unit left is not yet a game-day")
+	system.advance_to(45.0)
+	assert_eq(inc.status, Incident.STATUS_ABANDONED, "…and a game-day is")
+
+
+## THE INVARIANT THE WINDOW WAS DERIVED FOR: every row that authors its own
+## ending still reaches it FIRST, so the neglect-fatal identity is untouched.
+## Two rows are checked — the shortest authored path and the LONGEST, which is
+## the one that decided the window.
+func test_the_terminal_rule_never_pre_empts_an_authored_ending() -> void:
+	# The shortest and most important: an unanswered fire destroys its building.
+	var world := _world()
+	world.add_building("B1", "house", 2, Vector2i(3, 3), "D1")
+	world.allow_destroy = true
+	var system := _system(world)
+	var inc := system.spawn("structure_fire", "", Vector2i(3, 3),
+			{"kind": "building", "id": "B1"}, 1.0, {}, "D1")
+	for minute in 26 * 60:
+		system.advance_to(float(minute + 1) / 60.0)
+		if inc.is_terminal():
+			break
+	assert_eq(inc.status, Incident.STATUS_FAILED,
+			"an unanswered fire still DESTROYS its building — it does not get "
+			+ "quietly abandoned a game-day later")
+	assert_eq(world.destroyed.size(), 1, "the building is gone, which is the point")
+	assert_true(inc.resolved_h < 24.0,
+			"and it happened well inside the abandonment window (%f gh)" % inc.resolved_h)
+
+	# The LONGEST authored path in the catalog, and the row that set T = 24:
+	# `storm_damage/roof_damage` holds tier 5 for 2.0 gh before it fails.
+	var slow_world := _world()
+	slow_world.add_building("B2", "house", 2, Vector2i(9, 9), "D1")
+	var slow := _system(slow_world)
+	var slow_inc := slow.spawn("storm_damage", "roof_damage", Vector2i(9, 9),
+			{"kind": "building", "id": "B2"}, 1.0, {}, "D1")
+	for minute in 26 * 60:
+		slow.advance_to(float(minute + 1) / 60.0)
+		if slow_inc.is_terminal():
+			break
+	assert_eq(slow_inc.status, Incident.STATUS_FAILED,
+			"the slowest-escalating row in the catalog still reaches its OWN "
+			+ "ending first — this is the row the window was fitted against")
+	assert_true(slow_inc.resolved_h < 24.0,
+			"…inside the window (%f gh against 24)" % slow_inc.resolved_h)
+
+
 ## Doc 06 §7 test 18 — the transformer cascade is declarative data: shed at
 ## tier 2, feeder offline at tier 3, and neither fires twice.
 func test_cascade_tier_entries_are_data() -> void:

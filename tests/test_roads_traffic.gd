@@ -334,7 +334,7 @@ func test_feed_has_zero_simulation_authority() -> void:
 		for net in [with_cars, without]:
 			net.step(ctx)
 			if tick % 4 == 0:
-				net.full_pass(ctx)
+				net.minute_pass(ctx)
 	assert_true(with_cars.feed.vehicle_count() > 0, "one of them really did run cars")
 	assert_eq(without.feed.vehicle_count(), 0)
 	for edge_id in with_cars.graph.edge_ids_sorted():
@@ -387,7 +387,7 @@ func test_no_cosmetic_traffic_in_coarse_steps() -> void:
 func test_traffic_snapshot_for_the_renderer() -> void:
 	var net := _busy_network(66, 0.8)
 	net.add_closure([Vector2i(24, 12)], "accident_minor", 0.6, 90)
-	net.full_pass(RoadsTestRig.context(4, 17.6))
+	net.minute_pass(RoadsTestRig.context(4, 17.6))
 	var snapshot := net.snapshot
 	assert_eq(snapshot.visible_edges.size(), net.graph.edge_count())
 	assert_eq(snapshot.active_closures.size(), 1)

@@ -61,6 +61,20 @@ func settle_hour() -> Dictionary:
 	var out: Dictionary = {}
 	for building_id in _sorted(_accum):
 		var record: Dictionary = _accum[building_id]
+		# **An hour with no elapsed time has nothing to settle** (Wave 9). The
+		# founding tick fires the EVERY_HOUR cadence before a single game-second
+		# has been integrated, and `w_accum_h / max(elapsed_h, EPSILON)` turned
+		# that into a settled pressure factor of **0.0** — a whole founding hour
+		# billed as if the city had no water at all. It was invisible while the
+		# ledger accumulated on every SimTick, because the tick-0 pass had
+		# already banked 15 game-seconds of real pressure by the time the hourly
+		# system ran; the moment the ledger moved to a game-minute cadence (doc
+		# 91 D-15 proposal 3) the founding hour banked nothing and the defect
+		# cost the starter city $436 of its first hour. Skipping the row leaves
+		# the documented default in place — 1.0 for a building that has not
+		# settled an hour yet — which is what this class's own header promises.
+		if float(record["elapsed_h"]) <= EPSILON:
+			continue
 		var elapsed := maxf(float(record["elapsed_h"]), EPSILON)
 		var pressure_factor := clampf(float(record["w_accum_h"]) / elapsed, 0.0, 1.0)
 		var demanded := float(record["demanded_m3"])

@@ -31,7 +31,13 @@ func test_phase_systems_register_at_p08() -> void:
 		assert_eq(int(system.phase()), SimSystem.Phase.ROADS,
 				"every roads system sits in P08, between WATER and VEHICLES")
 	assert_eq(int(systems[0].cadence()), SimSystem.Cadence.EVERY_TICK)
-	assert_eq(int(systems[1].cadence()), SimSystem.Cadence.EVERY_MINUTE)
+	# `roads_congestion` declares EVERY_TICK and picks its pass from
+	# `tick_index % 4` (doc 91 D-15 proposal 2, Wave 9): the minute's three
+	# passes are spread across the four ticks of the minute so no single frame
+	# carries all of them. It cannot be three EVERY_MINUTE systems at offsets
+	# 0/1/2, because a COARSE step's tick_index is hour-aligned and an offset
+	# system would never fire offline — see the class comment.
+	assert_eq(int(systems[1].cadence()), SimSystem.Cadence.EVERY_TICK)
 	assert_eq(int(systems[2].cadence()), SimSystem.Cadence.EVERY_DAY)
 	# Ids sort into the order the cadences must run in.
 	var ids := [String(systems[0].system_id()), String(systems[1].system_id()),

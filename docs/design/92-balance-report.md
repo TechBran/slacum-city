@@ -2784,3 +2784,174 @@ same city with zero structural repairs (`tests/test_save_migration.gd`).
   founding level and a sixth would unlock nothing (doc 09 §2.14.2). Adding one is
   a *content* decision and it needs something to pay out.
 - **It did not put `curriculum` in the default matrix.** See §22.2.
+
+---
+
+## 23. Pass 9 — the router goes live, the terminal rule lands, and the fine tick gets its cadence pass (Wave 9)
+
+*2026-08-20. The one hash-moving branch of the wave, and the one that finally
+spends RR-22's held wiring. Everything below is measured on a workstation
+carrying three other agents' test suites; every before/after pair was taken in
+the SAME session, arms alternated, against a `git stash` copy of the pre-change
+tree, because a cross-session ratio on this machine would be noise dressed as a
+result.*
+
+### 23.1 What moved
+
+| change | why |
+|---|---|
+| **Doc 10's router is doc 06's ETA authority** (report 98 RR-26) | RR-22 held it for two waves on a measurement — `greedy_growth` seed 4242 going from ~10 s to over twenty minutes with the open roster still climbing. §23.3's ablation finds the cause: **the seam ignored doc 06's `RouteProfile`** and priced every vehicle at a patrol car's 32 m/gm with no siren multiplier, i.e. the police channel 20 % slow |
+| **§2.10's terminal rule**: 24 game-hours — one game-day — with nothing committed ⇒ ABANDONED | three rows in `data/incidents.json` authored **no ending at all** — `traffic_accident` and `storm_damage/blocked_road` above tier 2, and bare `storm_damage` at any tier — so an unanswered one stood at tier 5 for the rest of the city's life |
+| **`max_acceptable_cost_min` 90 → 115** | re-fitted at `90 × 1.27`, the midpoint of doc 06 §1.1's measured street-true ETA shift |
+| **The seam honours doc 06's per-vehicle speed** | **this is the fix that closed RR-22's cliff** (§23.3). It priced every truck at one fixed `emergency(32.0)`: a responding patrol car was 20 % slow, a construction crew 78 % fast |
+| **`WaterServiceLedger.settle_hour` no longer settles a zero-length hour** | the founding hour settled at pressure factor **0.0**, billing the starter city's first hour as if it had no water — **$436** of that hour, invisible until the ledger's cadence changed |
+| **Audit 91 D-15 proposals 2 and 3** — the minute's roads work spread across the minute's four ticks; power and water service ledgers banking per game-minute | doc 11 §2.13's Wave-9 table |
+| **`CitySim.SAVE_SECTION_VERSION` 3 → 4** with an identity migrator and two additive keys | all of the above change what a v3 body would have produced next (doc 08 §2.8) |
+
+### 23.2 The matrix — 18 of 18, 21 game-days, before and after
+
+`tests/balance_matrix.gd -- days=21`, six strategies × three seeds, means. Same
+session, `git stash` for the before arm:
+
+| strategy | treasury | value created | population | dark % | min condition | open inc | **abandoned** |
+|---|---|---|---|---|---|---|---|
+| `do_nothing` | 165,636 → **165,302** | 165,636 → **165,302** | 144 → **144** | 0.04 → **0.04** | 0.512 → **0.512** | 0.04 → **0.04** | 0.0 → **0.0** |
+| `greedy_growth` | 128,540 → **69,006** | 1,018,323 → **952,192** | 1,760 → **1,736** | 38.11 → **39.10** | 0.394 → **0.307** | 1.74 → **1.81** | 0.0 → **2.3** |
+| `infrastructure_first` | 24,099 → **23,947** | 140,499 → **140,347** | 232 → **230** | 0.51 → **0.35** | 0.890 → **0.890** | 0.05 → **0.05** | 0.0 → **0.0** |
+| `balanced` | 68,725 → **76,310** | 904,358 → **892,823** | 1,379 → **1,363** | 0.24 → **0.10** | 0.797 → **0.797** | 0.10 → **0.10** | 0.0 → **0.0** |
+| `tax_squeezer` | 95,800 → **89,969** | 1,215,613 → **1,220,899** | 1,182 → **1,155** | 0.09 → **0.47** | 0.797 → **0.797** | 0.10 → **0.09** | 0.0 → **0.0** |
+| `disaster_neglect` | 62,220 → **56,518** | 1,022,657 → **962,752** | 1,448 → **1,273** | 27.22 → **29.01** | 0.453 → **0.388** | 1.14 → **1.14** | 0.0 → **0.0** |
+
+**The identity rows hold.** `balanced` beats `do_nothing` **5.40× on value
+created** (892,823 / 165,302) and **9.5× on population** (1,363 / 144); before the
+change those were 5.46× and 9.6×. Every gate that ranks the six agents against
+each other reads the same order.
+
+**The two agents that fall are the two that should.** `greedy_growth` loses 46 %
+of its treasury and 22 % of its minimum condition, and `disaster_neglect` loses
+6 % of value created and 12 % of population. Both never repair and never buy
+grid, so both spend the run on a network that is genuinely collapsing — and
+street-true routing is the first version of this game in which *a collapsed
+network costs you the response*. That is the feature, measured. The three agents
+that maintain their city (`balanced`, `tax_squeezer`, `infrastructure_first`) move
+by ≤ 1.3 % on value created.
+
+**Abandonment appears for the first time, and it is NOT the new terminal rule.**
+`incident_abandoned` is **0.0 on five of six strategies** and **2.3 on
+`greedy_growth`** — seven incidents across three 21-game-day runs on the one
+agent that lets its city rot, out of ~1,650 created. Gate 9's column
+(`balanced`) is **0**. The seven come from the **pre-existing `self_resolve`
+path**: a `traffic_accident` self-resolves to ABANDONED if it is still QUEUED
+after one game-hour at tier ≤ 2, and a street-true wait on a collapsing network
+is the first thing in this game that has ever been long enough to reach it.
+§23.3 verifies that with an on/off A/B — turning the new rule off reproduces all
+seven and every other column byte-for-byte. **Nothing in the matrix reaches the
+one-game-day clock**, which is what a terminal rule should be able to say.
+
+### 23.3 Wall clock — RR-22's cliff, closed, and a four-arm ablation that says why
+
+`greedy_growth`, seed 4242, 21 game-days, every arm in one session:
+
+| arm | wall clock |
+|---|---|
+| stand-in (pre-wiring HEAD) | **9.4 s** |
+| **RR-22's exact configuration** — router wired, seam pricing every vehicle on one fixed `emergency(32.0)`, cost cap 90, no terminal rule | **> 600 s, killed** (RR-22 reported > 20 min, roster 42 and climbing on day 18) |
+| the same, with **only** the per-vehicle profile honoured at the seam | **11.2 s** |
+| + the terminal rule at 24 gh | **11.6 s** |
+| **shipped** (+ cost cap 115) | **11.6 – 12.1 s** |
+
+**The cliff was a defect at the seam, not a missing rule.** `RoadTravelTimeProvider`
+ignored the `RouteProfile` doc 06 hands it and priced every trip on one fixed
+`emergency(32.0)` — no per-type speed and **no siren multiplier**. Doc 06 §2.11
+gives a responding patrol car `32 × 1.25 = 40 m/gm`; the seam quoted **32**, 20 %
+slow, on the department that answers `crime` and `traffic_accident` — the bulk of
+the ambient load (§18.7). One channel priced 20 % slow on a degrading network is
+enough to push `eta + penalties` past the cost cap and start the runaway.
+
+All 18 runs complete. The requirement was "the same order of magnitude"; it is
+**1.24×**, and the open-incident mean went *down* (1.81 → 1.68).
+
+**The terminal rule fires zero times in the whole matrix, and that is verified
+rather than assumed.** An on/off A/B (`unanswered_abandon_h` 24 → 0) reproduces
+every column byte-for-byte on every strategy, including `greedy_growth` seed
+9001's seven abandonments — which come from the **pre-existing `self_resolve`
+path**, made reachable for the first time because a street-true wait can exceed
+`traffic_accident`'s one-game-hour window while the incident is still QUEUED. The
+new rule is a safety net over the three catalog rows that author no ending at
+all; a played city never reaches it, which is what a terminal rule is for.
+
+### 23.4 The response bands — doc 06 §1.1 restated, and the fleet ruling
+
+`tools/profile_response.gd` (new), four agents × three seeds × 21 game-days,
+every `unit_dispatched.eta_h` and every `incident_resolved.response_min`, both
+arms in one session. The full table and the ruling are in **doc 06 §1.1**; the
+result in one line each:
+
+* **Band A (dispatch ETA) grows +51 % and stays inside its own invariant.** Max
+  drive 13.9 → **31.5 gm** against the 39.3 gm tier-3 boundary. C-70 holds with
+  20 % of margin, and the reason the growth is larger than Wave 8's +22–32 % is
+  the per-vehicle-speed fix, not the router.
+* **Band B (response) grows +7 – 10 % and never had an invariant.** `balanced`'s
+  p90 was **39.5 – 42.4 gm before the wiring** — already at the tier-3 line — and
+  is 43.0 – 61.4 after.
+* **No fleet retune.** Zero failed, zero abandoned, zero destroyed for `balanced`
+  in **both** arms on all three seeds. The rung would move gate 7's founding
+  roster, doc 03's `E_fleet` line and the founding-net anchor gates 1/2/2b hold
+  to ±1 %, on the strength of a metric that has not yet cost the player a
+  building. The trigger that would justify it is written down in doc 06 §1.1.
+
+### 23.5 §22.4.1's `tax_squeezer` row, checked
+
+The Wave-9 goals pass recorded `tax_squeezer` moving **+18.5 % treasury, +0.4 %
+value created, +3.1 % population** on the curriculum A/B and explained it as
+apartments unlocking 31 game-hours earlier. **The explanation survives, and the
+asymmetry between the three columns is the evidence for it rather than a problem
+with it.** An apartment bought at hour 17 instead of game-day 2 adds one
+building's capital value — which is why `value created` barely moves — but it
+adds its *residents* for 31 extra game-hours, and `tax_squeezer` holds
+`TAX_RATE_MAX` from hour 0, so those residents are converted to **revenue** at
+the highest rate in the game. Cash is the column that compounds; capital is not.
+The +3.1 % population is the mechanism showing through. Two checks confirm it is
+not an artefact: the A/B arm with `data/goals.json`'s `levels` emptied reproduces
+Wave 8's row exactly, and `balanced` — which sees the identical unlock and cannot
+afford to use it any earlier — does not move by a dollar. **No action.**
+*(§23.2's own `tax_squeezer` row moves again, by −6.1 % treasury, for the
+unrelated reason every row in that table moves: a different RNG draw sequence.)*
+
+### 23.6 Gates
+
+**All 28 balance gates pass, and not one threshold was retuned.** That is the
+non-obvious result on a branch that was pre-approved to move them. The two it was
+expected to move are **gate 8** (open-incident mean ≤ 3 for `balanced`: measured
+**0.10**) and **gate 9** (`incident_abandoned` ≤ 2 for `balanced`: measured
+**0**) — the terminal rule was derived to be unreachable by a city that is being
+played, and the matrix says it is. Gates 1, 2 and 2b — the founding-net anchors
+held to ±1 % — survive only because the water-ledger repair in §23.1 landed with
+the cadence change; without it the founding hour would have billed a **0.0**
+water term and gate 1 would have failed by $436.
+
+**One number outside the gates sits on its own boundary: `max_coarse_hours`.**
+`tests/test_milestone1.gd` derives it from its own reading of the starter city's
+coarse step, and this branch was measured **twice in one session** — **6.42 ms →
+288** on a loaded run and **6.07 ms → 312** on the full-suite run twenty minutes
+later. Wave 8 measured 6.21 → 312. The rule steps at exactly `measured_ms =
+6.410`, so a 5.5 % spread straddles it and a shared workstation has more than
+that in it. Doc 01 §2.10 carries the derivation; the test asserts only the C-21
+floor of 72, so nothing breaks on either side.
+
+### 23.7 Hashes — all four move, and that is the point
+
+| city / path | v3 (before) | **v4 (after)** |
+|---|---|---|
+| starter, coarse 24 h | `2231df75…` | **`18e70625…`** |
+| starter, fine 2 h | `bffdf583…` | **`4c3c52cd…`** |
+| bench, coarse 24 h | `a06e7d43…` | **`f1c2e250…`** |
+| bench, fine 2 h | `224a900d…` | **`9d08c381…`** |
+
+Unlike §22.6 there is no "with the new key erased" column, and there cannot be:
+this rung changes *rules*, not shape, so there is no key to erase. Four rule
+changes move every draw sequence that follows them — a different truck answers,
+at a different minute, on a different sub-step, with a different traffic spawn
+order. That is exactly what doc 08 §2.8's rung 4 exists to record. Save → load →
+advance stays bit-identical **within** the new rules on both cities and both
+paths, which is the property that actually protects the player.

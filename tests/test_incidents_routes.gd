@@ -213,19 +213,17 @@ func test_dispatch_over_the_road_network_drives_streets() -> void:
 	assert_eq(u.tile, target, "and it is on scene, on time")
 
 
-# ================================= the seam, and why it is not plugged in yet
+# ===================================== the seam, and the fact that it is LIVE
 #
-# Everything above proves the provider WORKS. What the shipped `CitySim` does
-# with it is a separate question, and the answer is deliberate: **it still
-# constructs `IncidentSystem` with doc 06's Chebyshev stand-in.** Wave 8 wired
-# the router, measured it, and took the wiring back out — see `CitySim`'s own
-# comment at the seam for the measurement, and the Wave-8 delivery report's open
-# questions 1 and 2 for the two rulings it waits on.
+# Everything above proves the provider works. This block pins what the shipped
+# `CitySim` does with it, and since Wave 9 the answer is: **it constructs the
+# ROUTER** (report 98 RR-26 / RR-27). Wave 8 held the wiring because doc 06 had
+# no terminal rule for an incident nobody can answer and a full A\* quote was
+# ~5 ms; both are ruled and both shipped, and `CitySim`'s comment at the seam
+# carries the history.
 #
-# These tests hold BOTH halves so neither can drift: the seam is complete and
-# ready, and the shipped city is honest about not using it. The day the ruling
-# lands, `test_the_stand_in_is_still_what_the_shipped_sim_holds` fails, which is
-# exactly when somebody should be reading this block.
+# The pin is inverted rather than deleted, so a regression to the Chebyshev
+# stand-in fails LOUDLY instead of quietly making every ETA a diagonal again.
 
 func test_boot_puts_roads_before_incidents() -> void:
 	# The ordering constraint the wiring rests on, landed ahead of the wiring:
@@ -237,15 +235,47 @@ func test_boot_puts_roads_before_incidents() -> void:
 	assert_true(sim.incidents.fleet.size() > 0, "and the fleet still populated")
 
 
-func test_the_stand_in_is_still_what_the_shipped_sim_holds() -> void:
+func test_the_router_is_what_the_shipped_sim_holds() -> void:
 	var sim := CitySim.boot_from_files(1337)
-	assert_false(sim.incidents.travel is RoadTravelTimeProvider,
-			"the router is wired — if that is intentional, this test and "
-			+ "`CitySim`'s comment at the seam both need rewriting, and the "
-			+ "collapse case in doc 92 §21 needs re-measuring first")
-	# …and the whole fleet still agrees on one provider, whichever it is.
+	assert_true(sim.incidents.travel is RoadTravelTimeProvider,
+			"the shipped sim must price dispatch on doc 10's router (RR-26/RR-27) "
+			+ "— a fall back to the Chebyshev stand-in makes every ETA a "
+			+ "diagonal again and silently un-does doc 06 §2.10")
+	assert_true((sim.incidents.travel as RoadTravelTimeProvider).network == sim.roads,
+			"and on THIS city's road network, not a detached one")
+	# …and the whole fleet agrees on one provider.
 	assert_true(sim.incidents.fleet.travel == sim.incidents.travel)
 	assert_true(sim.incidents.dispatch.travel == sim.incidents.travel)
+	# Doc 10's quote budget reaches doc 06 through the seam, so §2.10's
+	# rank-then-quote pass is really bounded rather than nominally bounded.
+	assert_eq(sim.incidents.travel.dispatch_candidates(), sim.roads.dispatch_candidates())
+	assert_true(sim.incidents.travel.dispatch_candidates() > 0,
+			"0 means `quote everyone`, which is the stand-in's answer")
+
+
+## Doc 06 §2.11 gives every vehicle type its own `speed_mpgm`, and §2.10's
+## `eta_minutes` passes it across the seam. Until Wave 9 this class ignored the
+## dictionary and priced every trip on one fixed profile, so a fire engine (26)
+## and a construction crew (18) were both quoted at a patrol car's 32.
+func test_the_seam_honours_doc_06s_per_vehicle_speed() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var router := sim.roads.travel_time_provider()
+	var from := Vector2i(39, 32)
+	var to := Vector2i(47, 48)
+	var fast: int = router.travel_gs(from, to, {"speed_mpgm": 32.0})
+	var slow: int = router.travel_gs(from, to, {"speed_mpgm": 18.0})
+	assert_true(fast < TravelTimeProvider.UNREACHABLE_GS and slow < TravelTimeProvider.UNREACHABLE_GS)
+	assert_true(slow > fast,
+			"a construction crew at 18 m/gm cannot arrive when a patrol car at 32 does "
+			+ "(%d vs %d game-s)" % [slow, fast])
+	# The same trip with the siren folded in is faster again, and it is the
+	# PRODUCT doc 06 authors that reaches doc 10, not two separate multipliers.
+	var siren: int = router.travel_gs(from, to,
+			{"speed_mpgm": 26.0, "siren": true, "siren_mult": 1.25})
+	var plain: int = router.travel_gs(from, to, {"speed_mpgm": 26.0})
+	assert_true(siren < plain, "the siren buys time (%d vs %d game-s)" % [siren, plain])
+	assert_eq(siren, router.travel_gs(from, to, {"speed_mpgm": 32.5}),
+			"26 × 1.25 = 32.5 and there is only one speed at the seam")
 
 
 func test_the_router_drops_into_the_seam_with_no_other_change() -> void:

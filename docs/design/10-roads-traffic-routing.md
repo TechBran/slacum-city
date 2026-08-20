@@ -623,6 +623,38 @@ DETOUR_FACTOR = 1.25
 
 **Hierarchical routing — deferred, with a trigger.** Post-MVP design: an abstract graph whose nodes are the road tiles crossing land-block boundaries, with intra-block all-pairs distances precomputed per block and invalidated per block on edit; A* runs on the abstract graph and refines only the first and last blocks. **Enable when**: median expansions per emergency route > 800 **or** road tiles > 8,000 **or** measured routing cost > 4 ms/tick on the reference device. Until then the contracted-graph A* is measured, not assumed, by the perf test in §7.
 
+> #### Measured 2026-08-20 — the trigger fires on a workload dispatch never pays, and hierarchical routing is NOT required (Wave 9, report 98 RR-27)
+>
+> `tests/test_roads_integration.gd` has printed *"median P0 expansions 1154 vs trigger 800 → hierarchical routing REQUIRED"* since the reference map existed, and doc 06 §2.10's wiring was held for two waves partly on the strength of it. **The trigger is measuring six deliberately corner-to-corner routes, and §2.14's own rank-then-quote contract means no dispatch quote is ever one of those.** `tools/profile_routing.gd` is the instrument that measures the shape doc 06 really produces: boot a city, age it, rank every station on `estimate_eta_practical`, and time `travel_gs_for` — the seam call, cache and re-price and rounding included — for the nearest `DISPATCH_CANDIDATES = 3`.
+>
+> Benchmark city (3,132 road tiles, 2,024 nodes, 3,092 edges), aged 120 game-hours so condition, congestion and closures are live, cold cache, `epsilon_critical = 1.0`, 60 incidents:
+>
+> | per quote | rank-then-quote (nearest 3) | quote every station (16) |
+> |---|---|---|
+> | mean | **0.709 ms** | 2.862 ms |
+> | median | 0.556 ms | 2.179 ms |
+> | p90 | **1.360 ms** | 6.365 ms |
+> | max | 4.254 ms | 13.033 ms |
+> | expansions | **46.6** | 206.2 |
+> | **per incident** | **2.13 ms** | 45.8 ms |
+>
+> Ranking does not merely buy fewer quotes, it buys **cheaper** ones: it picks the near stations, and a near route is a small search. Twenty-one times less work per incident, and the mean quote is **seven times** cheaper than the ≈ 5 ms the Wave-8 note recorded — because that 5 ms was a cross-city miss.
+>
+> **The landmark (ALT) overlay was built, measured and not shipped.** A speed-independent lower-bound metric (`length_m / road_class_mult`, which every doc §2.6 multiplier can only raise), four farthest-point landmarks, one Dijkstra each, rebuilt only when the graph's shape grows — provably admissible, so the search returns the identical optimum. It does, and the measurement says it is not worth its own arithmetic:
+>
+> | arm (bench city, ranked quotes) | expansions | quote mean | mean route |
+> |---|---|---|---|
+> | no overlay | 46.6 | **0.696 ms** | 5.008170 gm |
+> | ALT overlay | 45.8 (−1.7 %) | 0.758 ms (**+9 %**) | 5.008170 gm |
+>
+> and on the reference map the same overlay cut expansions 6,921 → 5,534 (−20 %) while taking 110.8 → 141.6 ms (+28 %). **The reason is structural, and it is why the block abstraction sketched above would not have helped either.** Slacum City's road network is a block grid, so `manhattan_m / (speed · class_mult_max)` is already within a few per cent of the true cost; the expansions are not heuristic slack, they are a **plateau** of nodes that all share the optimal `f`, and no sharper *admissible* heuristic can remove a plateau. Only a weighting can.
+>
+> **The epsilon policy, stated.** `epsilon_critical` **stays 1.0**. It is right for a fire engine's own route — an admissible, unweighted A\* whose answer is the arrival time §4 guarantee 1 promises — and the reason it is now also *affordable* inside §2.10's per-sub-step loop is that rank-then-quote bounds both the count (≤ `MAX_ASSIGNMENTS_PER_TICK × DISPATCH_CANDIDATES` per pass) and the length of what is quoted. For the record, weighting is the lever that would work if it were ever needed: the same 180 ranked quotes at `epsilon_routine = 1.25` cost **0.476 ms** (−32 %) at 29.2 expansions (−37 %) and lengthen the mean quoted route by **0.025 %** — 1.2 game-seconds on a 5 gm trip.
+>
+> **What remains.** (a) The **tail**, not the mean: p90 1.36 ms and max 4.25 ms are cold-cache misses to an incident with no station near it, and the honest mitigation for those is a station, not a router. (b) The trigger in §8 still reads `hierarchical_trigger_median_expansions: 800` against the six-corner-route metric; the tunable is **unchanged** so the historical series stays comparable, but the reading below is the one that decides anything. (c) None of this is measured on device — every number here is a debug headless workstation number (§9.3 C-3's ladder ends at GDExtension for exactly that reason).
+>
+> **The re-stated trigger.** Build hierarchical routing when **the mean rank-then-quote seam call on the benchmark city exceeds 1.5 ms**, or when `road_tiles > 8,000`, or when measured routing cost exceeds 4 ms/tick on the reference device. The first clause is the one this wave supplies a number for: **0.709 ms, 47 % of budget**.
+
 ### 2.15 Cosmetic civilian traffic
 
 **Zero simulation authority.** Civilian cars exist only in `game/`, are never saved, never affect congestion, never collide, and never appear in any sim query. Turning them off changes nothing except the picture. They use a renderer-local RNG, **not** a sim RNG stream, so they cannot perturb determinism.
@@ -846,6 +878,15 @@ route_invalidated(ticket_ids: PackedInt32Array, reason: int)   # CLOSURE | GRAPH
 > **§2.14's budget was not decorative and this is the measurement that proves it.** On doc 09 §2.13's benchmark city — 3,132 road tiles, a 70-unit fleet — a cache miss is **≈ 5 ms**, and the route cache cannot absorb dispatch traffic because half the key is a responding unit's tile, which changes every tile it drives. **Raising `route_cache_size` 256 → 4096 changed the hit and miss counts by nothing at all** (measured, same run, same seed): the misses are new pairs, not evictions, and no cache can help. Quoting every capable unit cost doc 06's incident phase **211 ms per coarse game-hour** against doc 01's 166 ms whole-step budget; rank-then-quote takes it to **55 ms** at **197 planner misses per 24 coarse hours instead of 589**. The number `DISPATCH_CANDIDATES = 3` has been in §2.14's tunable table since this document was written; Wave 8 is the first wave anything spent it.
 >
 > **And §2.14's other warning is now a blocker, not a note.** `tests/test_roads_routing.gd` reports *"median P0 expansions 1154 vs trigger 800 → hierarchical routing REQUIRED"* on a 2,134-edge graph, and the same six cross-city routes cost **110.02 ms at `epsilon_critical = 1.0`** against **16.88 ms at `epsilon_routine = 1.25`**. Emergency profiles route at `epsilon = 1.0` by design — an admissible, unweighted A\*, which is the right answer for a fire engine and the wrong cost for a loop that runs on every integrator sub-step. **Hierarchical routing is the thing that unblocks doc 06 §2.10's wiring**, and it is doc 10's to build.
+>
+> #### DOC 06 IS NOW A LIVE CONSUMER (Wave 9, 2026-08-20 — report 98 RR-26/RR-27)
+>
+> `CitySim._boot_incidents` constructs `RoadTravelTimeProvider`; `tests/test_incidents_routes.gd::test_the_router_is_what_the_shipped_sim_holds` pins it, so a regression to the Chebyshev stand-in fails loudly. Two corrections ride with the wiring:
+>
+> * **The paragraph above was right about the seam and wrong about the fix.** Hierarchical routing was built, measured and not shipped: with rank-then-quote the shipped seam call measures **0.709 ms mean / 1.360 ms p90** on the benchmark city at `epsilon_critical = 1.0`, and a landmark overlay made it 9 % *slower*. §2.14's Wave-9 note carries the arms. What actually unblocked doc 06 was **the second bullet below** — a defect at this seam, not the router's price and not the missing terminal rule (doc 92 §23.3's four-arm ablation).
+> * **The profile crosses the seam now, and this is what closed RR-22's cliff.** `RoadTravelTimeProvider` used to ignore the `RouteProfile` dictionary doc 06 hands it and price every trip on one fixed `emergency(32.0)` object — no per-type speed and **no siren multiplier**, so a *responding* patrol car was quoted at 32 m/gm where doc 06 §2.11 says `32 × 1.25 = 40`, 20 % slow, on the department that answers most of doc 06's ambient load. `greedy_growth` seed 4242 goes from **> 600 s to 11.2 s** on that change alone. It now builds one `RouteProfile` per distinct speed — siren multiplier folded in by doc 06, as §2.11 there specifies — and caches them, because `RoutePlanner._prep` keys its per-query constant cache on profile identity and a fresh object per call would invalidate it on every quote. The route CLASS stays doc 10's.
+
+
 | **07 — Weather & Disaster Director** | which districts are cut off, for evacuation and Director scoring | `components_summary() -> [{component_id, tile_count, has_station: bool}]` |
 | **11 — Rendering & performance** | polylines and per-edge visual state; civilian traffic density | `TrafficSnapshot.visible_edges`, `path_ready` polylines, `overlay_mode` colour bands (4 states, matching doc 11's 2-bit packing) |
 | **12 — UI/UX, camera input & onboarding** | traffic overlay, build preview, closure list, cheap unit-picker ETAs | `TrafficSnapshot`, `query_road_preview`, `estimate_eta_practical` |

@@ -914,6 +914,40 @@ Doc 06 §2.10's ETA seam was wired in this branch, measured, and taken back out;
 
 The blocker is not doc 11's, but it lands on doc 11's table: with the router wired, doc 92's `greedy_growth` agent goes from **12.6 s for a 21-game-day run to over twenty minutes**, because a rotting city's incidents stop clearing doc 06's `MAX_ACCEPTABLE_COST` and the backlog is unbounded. Doc 10's own routing test already reports *"median P0 expansions 1154 vs trigger 800 → hierarchical routing REQUIRED"*, and that is the work that makes a 5 ms quote affordable inside a per-sub-step loop.
 
+##### Wave-9 cadence pass — D-15 proposals 2 and 3 taken, and what the shipped router actually costs
+
+*2026-08-20. The router is wired (doc 06 §2.10, report 98 RR-26) and the fine tick's two remaining cadence proposals are taken (RR-28). Both arms of every pair below were run in the SAME session with the pre-change tree restored by `git stash`, on a workstation carrying three other agents' test suites — which is why the pairs are stated as pairs and the absolute numbers are not comparable with the Wave-8 table above.*
+
+| bench city (1,500 buildings) | before | after | |
+|---|---|---|---|
+| **fine tick** | 19.145 ms | **18.011 ms** | **−5.9 %** |
+| ├ `water` | 4.100 | **2.451** | **−40.2 %** — D-15 proposal 3 |
+| ├ `power` | 3.744 | **3.210** | **−14.3 %** — D-15 proposal 3 |
+| ├ `roads_congestion` | 5.013 (0.25 calls/tick) | 5.449 (**1.00 calls/tick**) | amortized flat; the PEAK is what moved — see below |
+| ├ `incidents` | 2.650 | 2.911 | +9.8 % — real quotes in the assignment pass |
+| └ `roads` / `report` | 2.155 / 0.738 | 2.315 / 0.925 | within this session's noise |
+| **coarse step** | 126.41 ms | **189.96 ms** | **+50.3 %** |
+| └ `incidents` | 49.54 | **110.61** | +123 % |
+| **integrator sub-steps / coarse hour** | 8.75 | **14.54** | +66 % |
+| **12 h catch-up** | 1.517 s | **2.280 s** | doc 01 budget 2 s — **breached by 14 %** |
+
+| starter city (34 buildings) — the REFERENCE city | before | after | |
+|---|---|---|---|
+| **coarse step** | 6.353 ms | **6.690 ms** | +5.3 %, inside this session's noise |
+| **fine tick** | 1.842 ms | **1.817 ms** | −1.4 % |
+| **12 h catch-up** | 0.076 s | **0.080 s** | 4 % of budget |
+| integrator sub-steps / coarse hour | 1.25 | 1.25 | unmoved |
+
+**Proposal 2 does not change the amortized column and was never going to.** The minute's three passes — `congestion.recompute`, `TrafficSnapshot.rebuild`, `TrafficFeed.rebalance` — still each run once per game-minute; what changed is that they run on ticks 0, 1 and 2 of the minute instead of all three on tick 0. The profiler reports a mean over all ticks, so the mean is flat by construction and the `calls/step` column moving 0.25 → 1.00 is the whole visible signature. **The number it moves is the worst tick, which the profiler does not report**: before, one SimTick in four carried all three passes and the other three carried none; now the largest single pass a frame can carry is the congestion sweep alone. That is a frame-pacing win, not a throughput win, and it is what D-15 proposal 2 asked for in those words.
+
+**Proposal 3 is the throughput win, and it is worth 2.2 ms of the fine tick.** `PowerGrid._update_service` and `WaterSystem._accumulate_service` are the only O(buildings) passes in their phases; banking them once per game-minute instead of four times cuts `water` by 40 % and `power` by 14 %. The un-banked remainder is persisted in both sections, because a save taken two ticks into a game-minute otherwise restores a city that banks a different slice of that minute from the live one, and save → load → advance would stop being bit-identical.
+
+**The fine tick lands at 18.0 ms against D-15's 8 ms target, and what remains is not a cadence problem.** After this pass the tick is `roads_congestion` 5.4 (a real O(edges) sweep, once a game-minute), `power` 3.2, `incidents` 2.9, `roads` 2.3, `water` 2.5. Nothing left in it is a *frequency* mistake — every one of those is genuine work at a defensible cadence — so the next honest step is either fewer edges/buildings touched per sweep (a dirty-set congestion pass) or GDExtension, which is where doc 10 §9.3 C-3's ladder already ends.
+
+**The coarse step is where the router is paid for, and it breaches a budget.** The incident phase more than doubles: a real A\* quote replaces arithmetic in the assignment loop, and — the larger term — the integrator takes **66 % more sub-steps**, because street-true arrival times are all distinct where Chebyshev ones collided on a grid, so `fleet.next_event_h()` produces far more breakpoints. On the **reference** city, which is what doc 01 §2.10's `max_coarse_hours` and doc 08's cap are derived from, the coarse step is flat and the cap does not move. On the **benchmark** city the 12 h catch-up goes 1.52 → 2.28 s, 14 % over doc 01's 2 s target for a 1,500-building stress fixture. It is reported rather than papered over, and the cheapest lever if it has to come down is naming arrival times on the SimTick grid (they are already whole game-seconds; quantising to 15 would collapse most of the extra breakpoints) — a fidelity decision doc 06 owns, not a performance one doc 11 can take.
+
+**The router's own price, measured on the workload dispatch really produces.** `tools/profile_routing.gd`, benchmark city aged 120 game-hours, cold cache, `epsilon_critical = 1.0`, doc 10 §2.14's rank-then-quote with `DISPATCH_CANDIDATES = 3`: **0.709 ms mean / 0.556 median / 1.360 p90 / 4.254 max, 46.6 expansions.** Quoting every station instead costs **2.862 / 2.179 / 6.365 / 13.033 ms at 206.2 expansions** — 21× more work per incident. The **≈ 5 ms** figure in the Wave-8 subsection above is a *cross-city* quote and rank-then-quote never pays for one; hierarchical routing was built, measured and rejected (report 98 RR-27).
+
 **Frame cost** — `tools/profile_frame.gd`, 1920×1080, Balanced, hour 21:00 (the emissive/glow worst case), 60 warm-up frames discarded, 240 measured. **Dev workstation, NVIDIA RTX 2000 Ada, Forward+ — this is not a phone and not the Mobile renderer.** It is a *relative* measurement: the draw-call and chunk columns are platform-independent and are the ones the budget is written against; the millisecond columns are here to show where the cost sits, not to claim a device result.
 
 | pose | mean ms | p95 ms | RS cpu | RS gpu | draw calls | +UI | budget | bucket nodes | NEAR | MED | FAR |

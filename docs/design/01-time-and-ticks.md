@@ -377,6 +377,18 @@ Worked out across the plausible measurement range, so the shape of the rule is v
 
 The full 720-hour cap is therefore reachable only at `measured_ms ≤ 2.77`; anything at or above doc 08's 4 ms threshold caps catch-up below the C-19 bound and the surplus is discarded and reported.
 
+> **Measured 2026-08-20 (Wave 9) — the cap does not move, and the stress fixture does.** Doc 06 §2.10's dispatch now prices every ETA through doc 10's router (report 98 RR-26), which more than doubles the incident phase of a coarse step and takes **66 % more integrator sub-steps**, because street-true arrival times are all distinct where the Chebyshev stand-in's collided on a grid. Interleaved A/B, same session, `git stash` for the before arm:
+>
+> | | **reference city** (starter, 34 buildings) | benchmark city (1,500) |
+> |---|---|---|
+> | coarse step | 6.353 → **6.690 ms** (+5.3 %, inside session noise) | 126.41 → **189.96 ms** |
+> | 12 h catch-up | 0.076 → **0.080 s** | 1.517 → **2.280 s** |
+> | sub-steps / coarse hour | 1.25 → **1.25** | 8.75 → **14.54** |
+>
+> **`max_coarse_hours` sits on a knife-edge, and this wave measured both sides of it in one session.** `tests/test_milestone1.gd` derives the cap from its own reading of the starter city's coarse step, and this branch was measured twice: **6.42 ms → 288** on a loaded run and **6.07 ms → 312** on the full-suite run twenty minutes later. Wave 8 measured 6.21 → 312. **The boundary is at exactly `measured_ms = 6.410`** (`floor(2000 / m / 24) × 24` steps there), so a 5.5 % spread in the measurement straddles it — and a workstation carrying three other agents' test suites has more than that in it. The honest statement is *the cap sits on the 312/288 boundary and the rule reports whichever side the device lands on*, not *the cap moved*. Nothing breaks either way: the test asserts only the C-21 floor of 72, doc 08 owns the constant, and 288 game-hours is still twelve game-days of creditable absence.
+>
+> What *is* unambiguously out of budget is the **benchmark** figure: 2.28 s against the 2 s target on a 1,500-building stress fixture, 14 % over, filed in audit 91's narrowed D-15 with the cheapest lever named (quantising arrival times onto the SimTick grid — they are already whole game-seconds, and 15 would collapse most of the extra breakpoints). It is doc 06's fidelity call, not doc 01's budget to relax.
+
 The fine ticks in worked example B (38 + 162 + 40 = **240** ticks) cost `240 × 1.2 ms = 288 ms` at the §2.12 fine-tick average — a real and non-trivial share of the catch-up budget, and larger than the whole coarse body was assumed to be under the retired 0.6 ms line.
 
 **Catch-up runs on the main thread, sliced (report 98 C-22).** There is no `WorkerThreadPool` branch: sim state is single-owner `RefCounted` (constitution §3), and threading it to save a load screen is an unforced determinism and lifecycle risk on a platform that can kill the process mid-task. The scheduler therefore exposes `advance_coarse_sliced(max_ms) -> bool` (§4), which the app shell pumps behind an animated veil until it returns `true`, emitting `time.catchup_progress` from `steps_done()` / `steps_total()`. Doc 13 owns the per-frame slice budget (12 ms) and the veil; doc 08 owns the progress-event contract.

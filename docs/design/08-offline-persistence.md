@@ -288,10 +288,11 @@ static func _v3_to_v4(b: Dictionary) -> Dictionary:
 
 > ### Shipped 2026-08-20 — `city.section_version` 1 → 2, the routing / sub-step rules epoch
 >
-> The first bump of a section version in this project, and it is the awkward kind: **the city section's SHAPE did not change.** Not one key was added, removed or renamed, and `CitySim._v1_to_v2` is the identity function. What changed is the rules a body is advanced *under*, in two places that both alter RNG consumption:
+> The first bump of a section version in this project, and it is the awkward kind: **the city section's SHAPE did not change.** Not one key was added, removed or renamed, and `CitySim._v1_to_v2` is the identity function. What changed is the rules a body is advanced *under*:
 >
-> 1. **Dispatch ETAs became street-true.** `CitySim.boot()` now constructs `IncidentSystem` with `roads.travel_time_provider()`, so doc 06 §2.10's `eta_minutes` is doc 10's `route_minutes` instead of the Chebyshev stand-in that shipped in its place. Every arrival minute, every assignment ranking and every `unreachable` verdict is a different number.
-> 2. **The fire-spread breakpoint became conditional** on a live `structure_fire` (doc 91 D-15). A quiet game-hour is integrated in fewer, larger sub-steps, and the generators therefore draw a different — statistically identical — Poisson sequence.
+> 1. **The fire-spread breakpoint became conditional** on a live `structure_fire` (doc 91 D-15). A quiet game-hour is integrated in fewer, larger sub-steps, and the generators therefore draw a different — statistically identical — Poisson sequence.
+>
+> **Corrected 2026-08-20 (Wave 9).** This note originally listed a second item — *"dispatch ETAs became street-true"* — and it should not have. Wave 8 wired the router, measured an unbounded incident backlog and took the wiring back out, so **the Chebyshev stand-in is what v2 actually shipped**. Street-true ETAs are **v4**'s, below. The correction is made here rather than left standing because a ladder that describes rules the binary did not have is worse than no ladder: `section_version` is the key a future migrator reads to know which rules a body was last advanced under, and it has to be true.
 >
 > **Why that is a version bump at all.** §2.8's ladder is usually read as being about shape, and on shape alone this change would be free. It is not free, because a save is a promise about what the binary that wrote it would do *next*. Advance a v1 body under v2 rules and you get a city v1 would never have produced: a different truck answers, at a different minute, and the fire spreads or does not on a different draw. A player who saves under one build and loads under the other sees that, and `section_version` is the only field a future migrator can key on to know which set of rules a body was last advanced under. A version that does not move when the rules move cannot be that key.
 >
@@ -327,6 +328,55 @@ static func _v3_to_v4(b: Dictionary) -> Dictionary:
 > This is the same shape as the Wave-8 power-tile repair above and for the same
 > reason: **the load seam is where an answer that needs `data/` and the whole city
 > belongs**; the ladder is where an answer that needs only the body belongs.
+
+> ### Shipped 2026-08-20 — `city.section_version` 3 → 4, **the routing / cadence epoch**
+>
+> Mostly a rules rung, like v2: `CitySim._v3_to_v4` is the identity function and
+> every key a v3 body carries means exactly what it meant. It is not *purely* one
+> — item 4 below adds two **additive** keys, `power.service_pending_gs` and
+> `water.service_pending_h`, each holding the un-banked remainder of the current
+> game-minute; a v3 body has neither and restores both at zero, which is precisely
+> what a v3 body meant. Four changes land together, and every one of them alters
+> what a v3 body would have produced *next* — which is the only thing §2.8's
+> ladder is for.
+>
+> 1. **Dispatch ETAs are street-true.** `CitySim._boot_incidents` constructs
+>    `IncidentSystem` with `roads.travel_time_provider()`, so doc 06 §2.10's
+>    `eta_minutes` is doc 10's `route_minutes` and not the Chebyshev stand-in.
+>    Every arrival minute, every assignment ranking and every `unreachable`
+>    verdict is a different number. *(This is the item the v2 note above claimed
+>    and did not have; see the correction there.)*
+> 2. **Doc 06 §2.10 has a terminal rule** (report 98 RR-26). An incident with
+>    nothing committed to it for 24 game-hours becomes ABANDONED, and
+>    `max_acceptable_cost_min` is re-fitted 90 → 115. Incidents that used to
+>    stand at tier 5 for the rest of the city's life now end.
+> 3. **The minute's roads work is spread across the four ticks of the minute**
+>    (doc 91 D-15 proposal 2), which reorders draws inside the `traffic` RNG
+>    stream.
+> 4. **The power and water service ledgers bank per game-minute** (D-15 proposal
+>    3). The accumulators are dt-exact, so the settled hour is the same in value
+>    and not in float association, and `PowerGrid`'s LIT/DARK hysteresis now
+>    samples on a game-minute grid instead of a 15-game-second one. The un-banked
+>    remainder is persisted (the two additive keys above) rather than dropped,
+>    because a save taken two ticks into a game-minute holds half a minute of
+>    service the ledger has not been told about, and a restore that lost it would
+>    bank a different slice of that minute from the live city — save → load →
+>    advance would stop being bit-identical, which is not a trade this project
+>    makes for a cadence win.
+>
+> **What the migrator deliberately does NOT invent.** Doc 06's new clock measures
+> *game-hours since anything was last committed to this incident*, and a v3 body
+> records no such thing. Every restored incident therefore starts at zero and gets
+> a full game-day before the rule can touch it. The alternative —
+> back-dating the clock from `created_h` — would abandon a returning player's
+> incidents on the strength of a guess, on the first tick after the update, which
+> is the opposite of what a migrator is for.
+>
+> **It still costs the player nothing structurally.** A v3 save opens with every
+> building, dollar and RNG stream where it was left, and save → load → advance is
+> bit-identical *within* the new rules on both cities and both paths
+> (`tools/profile_sim.gd --baseline`). What it does not get is the city v3 would
+> have produced next, and that is exactly what the rung records.
 
 ### 2.9 Load & corruption recovery
 
