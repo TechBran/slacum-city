@@ -61,6 +61,18 @@ var _events: Array = []
 ## one frame without an O(edges) scan per call.
 var _mean_congestion: float = 0.0
 var _default_profile: RouteProfile = null
+## Doc 06's `traffic_accident` candidate roster (§2.6(e)), rebuilt only when the
+## GRAPH changes and re-read only when a number ON it changes. See
+## `intersections()`.
+var _intersection_rows: Array = []
+var _intersection_graph_version: int = -1
+var _intersection_congestion_epoch: int = -1
+var _intersection_condition_epoch: int = -1
+## Bumped by every per-tile condition write. Congestion and signal power both
+## already carry an epoch of their own (a signal flipping dirties every edge and
+## therefore re-prices congestion); road CONDITION does not, and it is the third
+## input `intersections()` reads.
+var _condition_epoch: int = 0
 
 ## Shared read-only miss value for `tile_edges` lookups in hot sweeps, so the
 ## miss path does not allocate a fresh Array per tile.
@@ -494,6 +506,7 @@ func set_condition(tile: Vector2i, value: float) -> void:
 	var clamped := clampf(value, 0.0, 1.0)
 	var previous := float(_condition.get(tile, 1.0))
 	_condition[tile] = clamped
+	_condition_epoch += 1
 	if clamped <= 0.0 and previous > 0.0:
 		_flags[tile] = int(_flags.get(tile, 0)) | FLAG_COLLAPSED
 		_emit(&"road_collapsed", {"tile": tile,
@@ -812,6 +825,118 @@ func road_tile_counts() -> Dictionary:
 
 func signalised_intersections(district_id: String = "") -> Array:
 	return graph.signalised_intersections(district_id, district_of_tile)
+
+
+## EVERY intersection doc 06 §2.6(e) may put an accident on — degree ≥ 3, signal
+## or no signal — with the five inputs its rate function reads
+## (`{id, tile, congestion_index, signalised, signal_powered,
+## condition_hazard_mult}`). `signalised_intersections()` above answers a
+## different question (doc 06's `dark_frac`, which is a share of the SIGNALLED
+## population) and deliberately drops the unsignalised majority; the accident
+## generator prices those at `f_signal = 1.60` and needs them.
+##
+## **Both per-node scalars are the MAX over the node's incident edges, not the
+## mean** — doc 06 §2.6(e) rules that for `condition_hazard_mult` in as many
+## words ("the collision happens on the worst approach"), and `congestion_index`
+## takes the same reading for the same reason: a queue backed up on one approach
+## of a four-way is what the accident happens in, and averaging it against three
+## empty approaches would hide it.
+##
+## **The returned rows are REUSED between calls, and re-read only when something
+## on them moved.** Doc 06's generator scans this roster on every integrator
+## sub-step — up to 64 of them in one game-hour with live incidents — while its
+## three volatile columns change at most once per tick: congestion is repriced by
+## the congestion pass (which also covers a signal losing power, since that
+## dirties every edge), and road condition is written by repairs and the daily
+## decay. So the row dictionaries are built once per `graph_version` and refilled
+## once per (congestion epoch, condition epoch); a sub-step that changed nothing
+## pays one integer comparison for the whole roster. Measured on the starter
+## city's 389 junctions: the naive form took the whole coarse step from 7.99 ms
+## to 22.90 ms, this cache and doc 06's per-node weight split bring it to
+## 10.46 ms (audit 91 D-15's cost half).
+##
+## A caller that needs a row to outlive the next call duplicates it; nothing in
+## doc 06 does — it reads the row it picked before returning to the loop. Same
+## contract as `power_transformer_rates()`, one allocation cheaper.
+func intersections() -> Array:
+	if _intersection_graph_version != graph.graph_version:
+		_rebuild_intersections()
+	elif _intersection_congestion_epoch == congestion.epoch \
+			and _intersection_condition_epoch == _condition_epoch:
+		return _intersection_rows
+	_intersection_congestion_epoch = congestion.epoch
+	_intersection_condition_epoch = _condition_epoch
+	var coeff := tun.hazard_condition_coeff
+	var threshold := tun.hazard_condition_threshold
+	for entry in _intersection_rows:
+		var row: Dictionary = entry
+		var worst_congestion := 0.0
+		var worst_hazard := 1.0
+		for edge_entry in row["_edges"]:
+			var record: Dictionary = edge_entry
+			worst_congestion = maxf(worst_congestion,
+					congestion.congestion_of(int(record["id"])))
+			worst_hazard = maxf(worst_hazard, RoadCosts.condition_hazard_mult(
+					float(record.get("condition", 1.0)), coeff, threshold))
+		row["congestion_index"] = worst_congestion
+		row["condition_hazard_mult"] = worst_hazard
+		# `powered` is maintained on the node record by `refresh_signal_power`
+		# (doc 04's G-6 feed) and is forced true on an unsignalised node, which is
+		# also what doc 06 wants: no signal cannot be a DARK signal.
+		row["signal_powered"] = bool((row["_node"] as Dictionary).get("powered", true))
+	return _intersection_rows
+
+
+## One monotonic tag over everything `intersections()` reads — the graph, the
+## congestion snapshot and the per-tile condition. All three only ever increase,
+## so the sum changes exactly when one of them does and never collides. Doc 06
+## keeps the per-node half of its accident hazard between integrator sub-steps
+## and rebuilds it when this moves.
+func intersections_epoch() -> int:
+	return graph.graph_version + congestion.epoch + _condition_epoch
+
+
+## The static half. `_node` / `_edges` hold the LIVE graph records — every
+## structural change to either goes through `rebuild_all()` or `apply_edits()`,
+## and both bump `graph_version`, which is this cache's key — so the per-call
+## refresh above reads today's condition and today's signal power without a
+## single dictionary lookup into the graph.
+func _rebuild_intersections() -> void:
+	_intersection_rows = []
+	for node_id in graph.node_ids_sorted():
+		var record: Dictionary = graph.node(node_id)
+		if int(record.get("degree", 0)) < 3:
+			continue
+		var edge_records: Array = []
+		for edge_id in record["edge_ids"]:
+			var edge_record: Variant = graph.edge_or_null(int(edge_id))
+			if edge_record != null:
+				edge_records.append(edge_record)
+		_intersection_rows.append({
+			"id": str(node_id), "node_id": node_id, "tile": record["tile"],
+			"signalised": bool(record["signalised"]),
+			"signal_powered": bool(record["powered"]),
+			"congestion_index": 0.0, "condition_hazard_mult": 1.0,
+			"_node": record, "_edges": edge_records,
+		})
+	_intersection_graph_version = graph.graph_version
+	# Force the volatile half to be filled by the caller that triggered this.
+	_intersection_congestion_epoch = -1
+	_intersection_condition_epoch = -1
+
+
+## The tile polyline doc 06 drives a vehicle along (§2.8 / doc 06 §2.11). The
+## SAME route `route_minutes()` priced — it comes out of the same planner cache
+## entry — so the duration and the path can never disagree. Empty when there is
+## no route; doc 06 then falls back to the straight segment it has always used.
+##
+## Duplicated on the way out: the planner's cache entry is shared and re-priced
+## in place, and a vehicle holds its polyline for the whole trip.
+func route_tiles(a: Vector2i, b: Vector2i, prof: RouteProfile = null) -> Array:
+	var result := planner.quote(a, b, prof if prof != null else default_profile())
+	if not bool(result.get("ok", false)):
+		return []
+	return (result.get("tiles", []) as Array).duplicate()
 
 
 ## Doc 06 computes `dark_frac` from `signalised_intersections`; this is the same

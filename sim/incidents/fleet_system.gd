@@ -226,12 +226,16 @@ func dispatch(u: Vehicle, incident_id: int, target: Vector2i, role: String,
 	u.status = Vehicle.RESPONDING
 	u.incident_id = incident_id
 	u.role = role
-	u.route = [u.tile, target]
+	u.route = _polyline(u.tile, target, u.route_profile(true))
 	u.route_progress = 0.0
+	u.route_segment = 0
+	u.route_s_m = 0.0
 	u.depart_h = now_h
 	u.arrive_at_h = now_h + eta
 	u.manual_lock = manual
-	u.speed = u.effective_speed()
+	# One call writes speed, heading and the segment cursor from the route that
+	# was just installed, instead of three fields set three different ways.
+	u.update_motion(now_h)
 	_emit("unit_dispatched", {"unit_id": u.id, "unit_type": u.type,
 			"incident_id": incident_id, "role": role, "eta_h": eta, "manual": manual})
 	return true
@@ -267,11 +271,35 @@ func _send_home(u: Vehicle) -> void:
 	if gs >= TravelTimeProvider.UNREACHABLE_GS:
 		gs = 0
 	u.status = Vehicle.RETURNING
-	u.route = [u.tile, u.home_tile]
+	u.route = _polyline(u.tile, u.home_tile, u.route_profile(false))
 	u.route_progress = 0.0
+	u.route_segment = 0
+	u.route_s_m = 0.0
 	u.depart_h = now_h
 	u.arrive_at_h = now_h + float(gs) / 3600.0
-	u.speed = u.effective_speed()
+	u.update_motion(now_h)
+
+
+## The tiles a unit drives between two points. Doc 10's router answers with a
+## STREET polyline; a provider that has no street network answers `[]` and the
+## unit keeps the two-point route doc 06 has always used, so this is the one
+## place the two eras differ.
+##
+## Two guards, both of them about not trusting a foreign answer with the unit's
+## position: a polyline that does not START where the unit is standing or does
+## not END on the target would teleport it, so it is rejected. (The router snaps
+## both endpoints to the nearest road tile — a station set back from the kerb is
+## the normal case, not an error — and doc 06 owns the two tiles that matter.)
+func _polyline(from: Vector2i, to: Vector2i, profile: Dictionary) -> Array:
+	var tiles: Array = travel.route_tiles(from, to, profile)
+	if tiles.size() < 2:
+		return [from, to]
+	var out: Array = tiles.duplicate()
+	if out[0] != from:
+		out.insert(0, from)
+	if out[out.size() - 1] != to:
+		out.append(to)
+	return out
 
 
 ## Next FSM discontinuity in absolute game-hours, or INF.

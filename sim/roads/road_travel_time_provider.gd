@@ -30,6 +30,15 @@ func travel_gs(from: Vector2i, to: Vector2i, route_profile: Dictionary = {}) -> 
 	return UNREACHABLE_GS if gs < 0 else gs
 
 
+## The street polyline for the SAME route `travel_gs` just priced: both go
+## through `planner.quote()`, so they come out of one cache entry and the shape
+## and the duration can never describe two different trips.
+func route_tiles(from: Vector2i, to: Vector2i, _route_profile: Dictionary = {}) -> Array:
+	if network == null:
+		return []
+	return network.route_tiles(from, to, profile)
+
+
 ## Convenience for doc 06's ranking pass: O(1), no search, never over-estimates.
 func estimate_gs(from: Vector2i, to: Vector2i) -> int:
 	if network == null:

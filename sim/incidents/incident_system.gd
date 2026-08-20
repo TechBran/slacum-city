@@ -43,6 +43,25 @@ var substep_guard_blown: int = 0
 var substeps_taken: int = 0
 var offline_hours_elapsed: float = 0.0
 
+## Scratch for `_generate_traffic`'s candidate weights, GROWN AND NEVER SHRUNK.
+##
+## Alone among the six generators, the traffic scan has a candidate set the size
+## of the road GRAPH — the starter city hands it 389 junctions, and doc 09 stamps
+## that grid before the player has built anything, so it is large from game-hour
+## zero. It ran on every integrator sub-step, and the integrator takes up to
+## `max_substeps_per_hour` (64) of them in an hour with live incidents: connecting
+## D-15's candidate source took the starter city's whole coarse step from
+## **7.99 ms to 22.90 ms**. Two caches bought it back to **10.46 ms** — doc 10's
+## per-roster-epoch row cache (`RoadNetwork.intersections()`) and the per-node
+## weight split above, of which this buffer is the storage. Not sim state: it is
+## written and read inside this file, keyed by a roster epoch, and nothing
+## outside ever sees it. (The other five scans are per-district, per-building or
+## per-node and stay two orders of magnitude smaller — see open question 5.)
+var _traffic_scratch: Array = []
+var _traffic_used: int = 0
+var _traffic_weight_total: float = -1.0   # < 0 ⇒ never built
+var _traffic_epoch: int = -1
+
 var _active: Dictionary = {}  # id -> Incident
 var _order: Array = []  # ascending incident ids
 var _recent: Array = []  # terminal incidents, kept KEEP_RESOLVED_MIN game-min
@@ -551,8 +570,12 @@ func _apply_resolution_effects(inc: Incident, row: Dictionary) -> void:
 			_emit("power_restored_by_repair", {"incident_id": inc.id,
 					"component": inc.target_component_id()})
 		"water_main_break":
-			world.water_set_segment_broken(String(inc.target_ref.get("id", "")), 0.0)
-			world.water_zone_pressure_delta(String(inc.context.get("zone", "")), 0.0)
+			var segment := String(inc.target_ref.get("id", ""))
+			# Order matters: the zone/segment penalty is released first, because
+			# repairing the segment is also what clears doc 05's own hold on it.
+			world.water_zone_pressure_delta(String(inc.context.get("zone", "")),
+					0.0, segment)
+			world.water_set_segment_broken(segment, 0.0)
 		"storm_damage":
 			if inc.subtype == "downed_power_line":
 				world.power_restore_component(inc.target_component_id())
@@ -1008,38 +1031,34 @@ func _generate_water_main(dt_h: float, damper: float) -> void:
 		if inc != null:
 			inc.context["zone"] = String(row2.get("zone", ""))
 			inc.context["pressure_ratio"] = float(row2.get("pressure_ratio", 1.0))
-			world.water_set_segment_broken(String(picked.get("id", "")), inc.severity)
+			world.water_set_segment_broken(String(picked.get("id", "")), inc.severity,
+					"incident:%d" % inc.id)
 
 
+## Doc 06 §2.6(e), split along the line the arithmetic already had in it:
+##
+##     λ_node = R_acc_base · f_flow · f_signal · f_road_cond      per NODE
+##     λ      = λ_node · dt_h · f_weather · f_dark                city-wide
+##
+## The first line moves only when doc 10's roster does — a congestion re-price, a
+## repaired approach, a signal losing power, a road built — and the second is one
+## scalar the whole city shares (weather and night are global, C-59). So the
+## per-node half is built once per roster epoch and the sub-step multiplies
+## through it, instead of every sub-step re-deriving ~400 identical numbers.
+## Same product, same candidate weights, same one `randf()` per spawn.
 func _generate_traffic(dt_h: float, dark_frac: float, damper: float) -> void:
 	var stream := catalog.stream_for("traffic_accident")
 	var f_weather := world.weather_effect(catalog.weather_channel_for("traffic_accident"))
-	var base := float(catalog.generator_base_rates.get("traffic_per_intersection", 0.0020))
-	var clamp_row: Array = catalog.factors.get("traffic", {}).get("flow_clamp", [0.05, 2.0])
-	var candidates: Array = []
-	var total := 0.0
-	for node in world.road_intersections():
-		var row: Dictionary = node
-		var congestion := clampf(float(row.get("congestion_index", 0.0)),
-				float(clamp_row[0]), float(clamp_row[1]))
-		var f_flow := pow(congestion, catalog.factor("traffic", "flow_exp", 1.5))
-		var f_signal := catalog.factor("traffic", "unsignalised", 1.6)
-		if bool(row.get("signalised", false)):
-			f_signal = catalog.factor("traffic", "signal_powered", 1.0) \
-					if bool(row.get("signal_powered", true)) \
-					else catalog.factor("traffic", "signal_unpowered", 3.0)
-		var f_dark := 1.0 + catalog.factor("traffic", "dark_k", 0.25) * dark_frac
-		# Doc 10 owns condition_hazard_mult; doc 06 does not rescale it (C-48).
-		var f_road := float(row.get("condition_hazard_mult",
-				travel.condition_hazard_mult(row.get("tile", Vector2i.ZERO))))
-		var lam := base * dt_h * f_flow * f_signal * f_weather * f_dark * f_road
-		if lam <= 0.0:
-			continue
-		candidates.append({"id": String(row.get("id", "")), "lambda": lam, "row": row})
-		total += lam
+	# `f_dark` has no per-candidate term at all: night is city-wide (C-59).
+	var f_dark := 1.0 + catalog.factor("traffic", "dark_k", 0.25) * dark_frac
+	_refresh_traffic_weights()
+	if _traffic_used == 0:
+		return
+	var total := _traffic_weight_total * dt_h * f_weather * f_dark
 	var count := _poisson(_ambient_rate(total, "traffic_accident", dt_h) * damper, stream)
 	for i in count:
-		var picked := _weighted_pick_row(candidates, total, stream)
+		var picked := _weighted_pick_row(_traffic_scratch, _traffic_weight_total,
+				stream, _traffic_used)
 		if picked.is_empty():
 			continue
 		var row2: Dictionary = picked.get("row", {})
@@ -1049,6 +1068,58 @@ func _generate_traffic(dt_h: float, dark_frac: float, damper: float) -> void:
 		if inc != null:
 			inc.context["congestion_index"] = float(row2.get("congestion_index", 0.0))
 			inc.context["signal_powered"] = bool(row2.get("signal_powered", true))
+
+
+## The per-node half of §2.6(e), rebuilt only when doc 10 says the roster moved.
+## A world that cannot answer that returns `-1` from `road_intersections_epoch()`
+## and every call rebuilds, which is the pre-cache behaviour exactly — so a test
+## stub is never cached wrongly.
+func _refresh_traffic_weights() -> void:
+	var epoch := world.road_intersections_epoch()
+	if epoch >= 0 and epoch == _traffic_epoch and _traffic_weight_total >= 0.0:
+		return
+	_traffic_epoch = epoch
+	var base := float(catalog.generator_base_rates.get("traffic_per_intersection", 0.0020))
+	var clamp_row: Array = catalog.factors.get("traffic", {}).get("flow_clamp", [0.05, 2.0])
+	var clamp_lo := float(clamp_row[0])
+	var clamp_hi := float(clamp_row[1])
+	var flow_exp := catalog.factor("traffic", "flow_exp", 1.5)
+	var k_unsignalised := catalog.factor("traffic", "unsignalised", 1.6)
+	var k_signal_powered := catalog.factor("traffic", "signal_powered", 1.0)
+	var k_signal_unpowered := catalog.factor("traffic", "signal_unpowered", 3.0)
+	var used := 0
+	var total := 0.0
+	for node in world.road_intersections():
+		var row: Dictionary = node
+		var congestion := clampf(float(row.get("congestion_index", 0.0)),
+				clamp_lo, clamp_hi)
+		var f_flow := pow(congestion, flow_exp)
+		var f_signal := k_unsignalised
+		if bool(row.get("signalised", false)):
+			f_signal = k_signal_powered if bool(row.get("signal_powered", true)) \
+					else k_signal_unpowered
+		# Doc 10 owns condition_hazard_mult; doc 06 does not rescale it (C-48).
+		# NOT `row.get(key, travel.condition_hazard_mult(tile))`: GDScript builds
+		# the default BEFORE the lookup, so the fallback used to fire on every
+		# candidate even when the adapter supplies the column.
+		var f_road := float(row["condition_hazard_mult"]) \
+				if row.has("condition_hazard_mult") \
+				else travel.condition_hazard_mult(row.get("tile", Vector2i.ZERO))
+		var weight := base * f_flow * f_signal * f_road
+		if weight <= 0.0:
+			continue
+		if used < _traffic_scratch.size():
+			var slot: Dictionary = _traffic_scratch[used]
+			slot["id"] = String(row.get("id", ""))
+			slot["lambda"] = weight
+			slot["row"] = row
+		else:
+			_traffic_scratch.append({"id": String(row.get("id", "")),
+					"lambda": weight, "row": row})
+		used += 1
+		total += weight
+	_traffic_used = used
+	_traffic_weight_total = total
 
 
 func _generate_storm(dt_h: float, damper: float) -> void:
@@ -1162,16 +1233,22 @@ func _weighted_pick_packed(ids: PackedStringArray, lambdas: PackedFloat64Array,
 	return ids[ids.size() - 1]
 
 
-func _weighted_pick_row(candidates: Array, total: float, stream: String) -> Dictionary:
-	if candidates.is_empty() or total <= 0.0:
+## `count < 0` means "the whole array". A caller that fills a REUSED scratch
+## buffer passes how much of it it filled, so the buffer never has to be resized
+## and the rows in it are never reallocated (see `_traffic_scratch`).
+func _weighted_pick_row(candidates: Array, total: float, stream: String,
+		count: int = -1) -> Dictionary:
+	var size := candidates.size() if count < 0 else mini(count, candidates.size())
+	if size <= 0 or total <= 0.0:
 		return {}
 	var roll := rng.stream(stream).randf() * total
 	var cumulative := 0.0
-	for candidate in candidates:
-		cumulative += float((candidate as Dictionary)["lambda"])
+	for i in size:
+		var candidate: Dictionary = candidates[i]
+		cumulative += float(candidate["lambda"])
 		if roll < cumulative:
 			return candidate
-	return candidates[candidates.size() - 1]
+	return candidates[size - 1]
 
 
 func roll_unit(stream: String) -> float:

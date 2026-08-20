@@ -1947,6 +1947,64 @@ Three things this pass deliberately did not move, each with its reason:
   disaster twice, and a neighbourhood having two burglaries in a game-week is not
   unfair — it is a neighbourhood.
 
+### 18.6 Wave 7 — the re-derivation §18.2 asked for, and the band it breaks
+
+*2026-08-19, one wave later. §18.2 filed D-14 and D-15 and said: "when they land,
+§18.3's budget is re-derived across five channels rather than three, and the two
+new rows come out of the three existing ones." They have landed
+(`sim/incidents/city_incident_world.gd`). This is the re-derivation, on the same
+rig, the same twelve seeds and the same 28 game-days of `do_nothing` — and it
+does not fit inside the ruled band.*
+
+| ambient / game-week | floor **OFF** | floor **ON** (5-channel, shipped) | floor ON (old 3-channel split) |
+|---|---|---|---|
+| `crime` | 0.35 | **0.73** | 1.19 |
+| `structure_fire` | 0.69 | **0.56** | 0.67 |
+| `transformer_failure` | 0.81 | **1.08** | 1.23 |
+| `water_main_break` | 0.58 | **0.60** | 0.56 |
+| `traffic_accident` | 3.58 | **3.60** | 3.60 |
+| `storm_damage` | 0.04 | **0.04** | 0.04 |
+| **total** | **6.06** | **6.62** | **7.29** |
+| resolved / created | 291 / 291 | **318 / 318** | 350 / 350 |
+| failed · abandoned · destroyed | 0 · 0 · 0 | **0 · 0 · 0** | 0 · 0 · 0 |
+| treasury, 28 gd, mean | $193,627 | **$194,847** | $189,772 |
+
+**The three-channel columns reproduce §18.3.** Its 3.04/game-week against 3.09
+here for the same three channels, on different seeds — so the rig is measuring
+the same process it measured a wave ago, and the new rows are the only news.
+
+**The budget did not move; the split did.** `per_day` still sums to 0.40, as
+§18.2 ruled: `0.20 / 0.10 / 0.10` → `0.14 / 0.08 / 0.08 / 0.06 / 0.04`. Crime
+keeps the largest share for §18.3's reason and halves because the loop now has
+five channels feeding it. `traffic_accident` takes the **smallest**, and the
+reason is the finding below.
+
+**The 2–4/game-week band is not reachable, and the floor is not why.** Switched
+entirely OFF the city runs at 6.06 — the floor's whole leverage is 0.56/game-week
+and a `max()` cannot subtract. `traffic_accident` alone is 3.58, and that is doc
+06 §2.6(e) working exactly as written: **doc 09 stamps a road grid of 389
+junctions before the player has built anything**, so the one generator whose
+asset base is not player-built is at full size from game-hour zero, while the
+other five scale with 34 buildings and 144 residents. §18.1's opening sentence —
+*"every generator is priced per asset, so its λ is proportional to what the
+player has already built"* — has exactly one exception, and it is the channel
+that was dead when that sentence was written.
+
+Nor is the per-node rate too high: doc 06 §2.6(e)'s own worked example intends
+**0.687 accidents/game-day** for a 20-intersection city, and the starter city
+measures **0.515** — *below* doc 06's stated intent. Bringing the total inside
+2–4 would mean cutting `traffic_per_intersection` about 6.5× and invalidating all
+four of §2.6(e)'s worked examples, to make the shipped game quieter than its own
+specification. **That is not a retune this pass will make on its own authority.**
+
+What the ruling's testable clauses say is that the loop is healthy at the new
+rate: 318 of 318 resolved, nothing failed, nothing abandoned, nothing destroyed,
+and the control city banks **more** than it did with two generators dead, because
+doc 06 credits `reward_base` on resolve. The dispatch loop is now a **daily**
+beat rather than a weekly one. Gate 19 is retuned to the measurement and says so
+in its own docstring; **the band itself needs a ruling** — see the Wave-7
+delivery report's open question 1.
+
 ---
 
 ## 19. Pass 5 — progression pacing (audit 91 D-7)

@@ -303,11 +303,22 @@ func water_mains() -> Array:
 	return []
 
 
-func water_set_segment_broken(_id: String, _severity: float) -> void:
+## `severity <= 0` means REPAIRED — §2.7's resolution effect calls this verb with
+## zero rather than owning a second one. `incident_id` is the doc 06 incident
+## that now holds the segment; doc 05 keys its held pressure penalty by it and
+## releases the segment when it clears (`WaterEdge.owning_incident`).
+func water_set_segment_broken(_id: String, _severity: float,
+		_incident_id: String = "") -> void:
 	pass
 
 
-func water_zone_pressure_delta(_zone: String, _delta: float) -> void:
+## §2.5's tiered −0.15 / −0.35 / −0.60 / −0.80. `segment_id` names the main the
+## incident owns, when it owns one: doc 05 §2.8 holds the magnitude ON that
+## segment and drops it when the segment is repaired, which is what keeps a
+## FAILED break from parking a permanent penalty on a zone nobody can reach.
+## Empty `segment_id` is the zone-wide form (a break with no identified main).
+func water_zone_pressure_delta(_zone: String, _delta: float,
+		_segment_id: String = "") -> void:
 	pass
 
 
@@ -358,15 +369,34 @@ func next_weather_boundary_h() -> float:
 
 ## Intersections for the traffic_accident generator:
 ## {id, tile, congestion_index, signalised, signal_powered, condition_hazard_mult}
+##
+## Scanned on every integrator sub-step, like `power_transformer_rates()`, and
+## like that one the rows an adapter returns may be REUSED between calls: read
+## the row you picked before returning to the loop, or duplicate it.
 func road_intersections() -> Array:
 	return []
+
+
+## Monotonic tag over everything `road_intersections()` publishes. Doc 06 keeps
+## the PER-NODE half of its accident hazard — `f_flow · f_signal · f_road_cond`,
+## which moves only when the road graph, the congestion snapshot or a road's
+## condition does — between integrator sub-steps, and rebuilds it when this
+## changes. **`-1` means "unknown, assume it changed"**, which is the default, so
+## a world that says nothing is never cached wrongly; a world that can answer
+## turns 64 full rescans of a game-hour into one.
+func road_intersections_epoch() -> int:
+	return -1
 
 
 func road_set_edge_speed_mult(_tile: Vector2i, _mult: float) -> void:
 	pass
 
 
-func road_close_edge(_tile: Vector2i, _duration_h: float) -> void:
+## `cause` names the doc 06 INCIDENT (its type, or a subtype for the closure
+## incidents doc 07 stages); the adapter maps it onto doc 10's closure-cause
+## table, which owns the dominance order and the expiry. `duration_h <= 0` hands
+## the expiry to that table.
+func road_close_edge(_tile: Vector2i, _duration_h: float, _cause: String = "") -> void:
 	pass
 
 

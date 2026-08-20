@@ -138,6 +138,60 @@ func test_multipliers_published_to_doc06() -> void:
 	assert_almost_eq(system.failure_model.pump_load_mult(1.00), 2.5, 0.001)
 
 
+## **The two columns doc 06 was missing (audit 91 D-14).** Its candidate row
+## wants a POSITION and a ZONE; both were already inside this class and neither
+## was published, which is half of why `water_main_break` generated zero.
+func test_mains_publish_a_tile_and_a_zone() -> void:
+	var system := _rig()
+	system.advance(DT, H13)
+	var row: Dictionary = system.mains()[0]
+	assert_true(row.has("tile"), "doc 06's break has to happen somewhere")
+	assert_true(row.has("zone_key"), "and §2.8's pressure delta is a zone effect")
+	var main: WaterEdge = system.edge("M1")
+	assert_true(main.path.has(row["tile"]), "the tile lies on the main")
+	# The MIDPOINT, not an endpoint: an endpoint tile is shared with the
+	# adjoining segment, so two mains breaking would report one position.
+	assert_eq(row["tile"], main.path[main.path.size() / 2])
+	assert_eq(String(row["zone_key"]), system.topology.zone_of("M1").zone_key)
+
+
+## Doc 06's tiered pressure delta is held ON the owning segment and released when
+## the main is repaired, so a break that FAILS cannot leave a zone permanently
+## depressurised with nothing alive to clear it.
+func test_incident_pressure_is_held_on_the_segment() -> void:
+	var system := _rig()
+	system.advance(DT, H13)
+	var breaks_before := int(system.stats["breaks_total"])
+	system.set_segment_broken("M1", 0.5, "incident:3")
+	system.set_incident_pressure("M1", -0.60)
+	assert_almost_eq(system.edge("M1").incident_pressure_penalty, 0.60, 1e-9,
+			"stored as a magnitude — no negative float enters the save section")
+	assert_eq(int(system.stats["breaks_total"]), breaks_before + 1,
+			"escalating a tier re-states the magnitude; it does not re-count the break")
+	system.set_incident_pressure("M1", -0.80)
+	assert_eq(int(system.stats["breaks_total"]), breaks_before + 1)
+	system.set_segment_repaired("M1")
+	assert_almost_eq(system.edge("M1").incident_pressure_penalty, 0.0, 1e-9)
+	assert_eq(system.edge("M1").owning_incident, "")
+	system.set_incident_pressure("NOPE", -0.5)  # unknown id is a no-op, not a crash
+
+
+## Who rolls the main break is a fact about the PROGRAM, not about the city, so
+## loading a save written before doc 06's adapter existed can only ever ADD the
+## claim (C-46).
+func test_external_main_breaks_is_a_latch_across_a_load() -> void:
+	var system := _rig()
+	system.advance(DT, H13)
+	system.external_main_breaks = true
+	var state := system.serialize()
+	(state["environment"] as Dictionary)["external_main_breaks"] = false
+	system.deserialize(state)
+	assert_true(system.external_main_breaks,
+			"an old save must not switch this system's fallback back on")
+	var fresh := _rig()
+	assert_false(fresh.external_main_breaks, "and a standalone doc 05 still rolls its own")
+
+
 func test_age_and_weather_multipliers() -> void:
 	var model := WaterFailureModel.new(_data())
 	assert_almost_eq(model.age_mult(0.0), 1.0, 0.001)

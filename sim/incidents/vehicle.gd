@@ -27,8 +27,21 @@ var speed: float = 0.0
 var heading: float = 0.0
 var status: String = IDLE
 var incident_id: int = 0
-var route: Array = []  # [Vector2i, …] — two nodes until doc 10's polyline lands
+## The tiles this unit drives, in order, `route[0]` = where it left from and
+## `route[-1]` = where it is going. Doc 10's router fills it with a STREET
+## polyline (`TravelTimeProvider.route_tiles`); with no router, or when the
+## router has no path, it is the two endpoints and the motion below degrades to
+## the straight line it has always been.
+var route: Array = []
 var route_progress: float = 0.0
+## Which segment of `route` the unit is on (`route[i] → route[i+1]`) and how far
+## into it, in metres. Both are DERIVED from `route_progress`, and both are
+## persisted anyway — doc 11 §2.12's Hermite blend reads a pose every tick and a
+## reload that recomputed them would put the vehicle back at the segment
+## boundary for one frame. `serialize()` carries them; `update_motion()` is the
+## only writer.
+var route_segment: int = 0
+var route_s_m: float = 0.0
 var depart_h: float = 0.0
 var arrive_at_h: float = -1.0
 var manual_lock: bool = false
@@ -112,9 +125,44 @@ func effective_speed() -> float:
 
 # ------------------------------------------------------------- movement
 
-## Place the unit along its route for the current time. Straight-line between
-## the two route nodes until doc 10 hands over a real polyline; `speed` and
-## `heading` are written every call so doc 11 never has to guess (C-67).
+const METRES_PER_TILE := 8.0
+
+
+## Arc length of `route` in metres, tile centre to tile centre.
+func route_length_m() -> float:
+	var total := 0.0
+	for i in range(1, route.size()):
+		var a: Vector2i = route[i - 1]
+		var b: Vector2i = route[i]
+		total += Vector2(float(b.x - a.x), float(b.y - a.y)).length()
+	return total * METRES_PER_TILE
+
+
+## Place the unit along its route for the current time, segment by segment.
+##
+## **The reconciliation (doc 10's answer is still the arrival time).** `depart_h`
+## and `arrive_at_h` are set once at dispatch from
+## `TravelTimeProvider.eta_gs()` — turnout, road classes, congestion, weather and
+## closures all already inside it — and this method never touches them. What the
+## polyline changes is only WHERE the unit is at each moment in between:
+## distance along the route is carried at a CONSTANT fraction of arc length,
+##
+##     s(t) = route_length_m × (t − depart_h) / (arrive_at_h − depart_h)
+##
+## so `s(depart_h) = 0`, `s(arrive_at_h) = route_length_m`, and the trip takes
+## exactly the number of game-seconds doc 10 quoted whether the route is two
+## tiles or two hundred. A longer path through real streets is therefore driven
+## FASTER, not for longer — which is the correct reading, because doc 10 priced
+## that path and not the diagonal: the straight line was always the wrong
+## picture of the same duration, never a different duration.
+##
+## `speed` is the REALISED metres per game-minute (C-67 — "at the last sim
+## update"), i.e. `route_length_m / span_minutes`, not the nominal cruise speed.
+## Doc 11 §2.12 dead-reckons `pos + dir(heading) × speed` between the 4 Hz
+## snapshots, so a nominal figure would have every unit overshoot its own pose
+## and be yanked back on the next tick. `heading` is the bearing of the segment
+## the unit is ON, which is the visible point of the whole change: vehicles now
+## turn corners.
 func update_motion(now_h: float) -> void:
 	if status != RESPONDING and status != RETURNING:
 		speed = 0.0
@@ -126,15 +174,33 @@ func update_motion(now_h: float) -> void:
 		return
 	var span := arrive_at_h - depart_h
 	route_progress = clampf((now_h - depart_h) / span, 0.0, 1.0)
-	var from: Vector2i = route[0]
-	var to: Vector2i = route[route.size() - 1]
-	var delta := Vector2(float(to.x - from.x), float(to.y - from.y))
-	if delta.length_squared() > 0.0:
-		heading = atan2(delta.y, delta.x)
-	speed = effective_speed()
-	tile = Vector2i(
-			int(round(float(from.x) + delta.x * route_progress)),
-			int(round(float(from.y) + delta.y * route_progress)))
+	var length_m := route_length_m()
+	speed = length_m / (span * 60.0)
+	var target_m := length_m * route_progress
+	var walked_m := 0.0
+	var index := 0
+	# Walk from the head every call: the route is short (a starter-city response
+	# is tens of tiles), the arithmetic is exact rather than accumulated, and a
+	# resumed save with no cursor lands in the same place as a live tick would.
+	while index < route.size() - 1:
+		var a: Vector2i = route[index]
+		var b: Vector2i = route[index + 1]
+		var segment_m := Vector2(float(b.x - a.x), float(b.y - a.y)).length() * METRES_PER_TILE
+		if walked_m + segment_m >= target_m or index == route.size() - 2:
+			var into := target_m - walked_m
+			var fraction := clampf(into / segment_m, 0.0, 1.0) if segment_m > 0.0 else 0.0
+			if b != a:
+				heading = atan2(float(b.y - a.y), float(b.x - a.x))
+			tile = Vector2i(
+					int(round(float(a.x) + float(b.x - a.x) * fraction)),
+					int(round(float(a.y) + float(b.y - a.y) * fraction)))
+			route_segment = index
+			route_s_m = clampf(into, 0.0, segment_m)
+			return
+		walked_m += segment_m
+		index += 1
+	route_segment = maxi(0, route.size() - 2)
+	route_s_m = 0.0
 
 
 ## Doc 11's per-tick snapshot record (§4). `speed` and `heading` are explicit.
@@ -158,6 +224,7 @@ func serialize() -> Dictionary:
 		"home_tile": [home_tile.x, home_tile.y], "pos": [tile.x, tile.y],
 		"speed": speed, "heading": heading, "status": status,
 		"incident_id": incident_id, "route": route_rows,
+		"route_segment": route_segment, "route_s_m": route_s_m,
 		"route_progress": route_progress, "depart_h": depart_h,
 		"arrive_at_h": arrive_at_h, "manual_lock": manual_lock,
 		"refit_until_h": refit_until_h, "construction_job_id": construction_job_id,
@@ -182,6 +249,8 @@ static func deserialize(data: Dictionary, row: Dictionary) -> Vehicle:
 	unit.route.clear()
 	for node in data.get("route", []):
 		unit.route.append(Vector2i(int(node[0]), int(node[1])))
+	unit.route_segment = int(data.get("route_segment", 0))
+	unit.route_s_m = float(data.get("route_s_m", 0.0))
 	unit.route_progress = float(data.get("route_progress", 0.0))
 	unit.depart_h = float(data.get("depart_h", 0.0))
 	unit.arrive_at_h = float(data.get("arrive_at_h", -1.0))

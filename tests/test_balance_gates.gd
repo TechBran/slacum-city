@@ -1058,13 +1058,19 @@ func test_gate_18c_no_capacity_constant_moved() -> void:
 # ============================ 19–20 the Wave-6 pacing passes (doc 92 §18/§19)
 
 ## Doc 92 §18.1's budget, in ambient incidents per game-DAY, summed over the
-## authored channels. 0.40/game-day = 2.80/game-week of floor, before the
-## natural rate and doc 06's grid-failure map add anything on top of it.
+## authored channels. **Unchanged at 0.40** across the Wave-7 D-14/D-15 landing,
+## because doc 92 §18.2 ruled in advance what to do when the two dead channels
+## woke up: *"the two new rows come out of the three existing ones"*. The split
+## moved (0.20/0.10/0.10 → 0.14/0.08/0.08 + 0.06/0.04); the budget did not.
 const AMBIENT_FLOOR_PER_DAY := 0.40
+## Every channel that carries a floor row. `storm_damage` is permanently absent —
+## its candidates exist only inside a live doc 07 storm cell.
+const AMBIENT_FLOOR_CHANNELS := ["crime", "structure_fire", "transformer_failure",
+		"water_main_break", "traffic_accident"]
 ## Five seeds, because this gate measures a POISSON RATE and one sample of a
-## rate is not a measurement. Doc 92 §18.3 measures 3.04 incidents/game-week over
-## 336 game-days; five 21-game-day runs is 105 game-days, so the sum below has an
-## expectation near 46 and a standard deviation near 7.
+## rate is not a measurement. Five 21-game-day runs is 105 game-days; at the
+## measured 6.07/game-week the sum below has an expectation near 91 and a
+## standard deviation near 9.5.
 const PACING_SEEDS: Array[int] = [1337, 4242, 9001, 101, 202]
 
 
@@ -1074,26 +1080,79 @@ const PACING_SEEDS: Array[int] = [1337, 4242, 9001, 101, 202]
 ## 0.337 incidents/game-day and the QA soak saw **two** in 287 game-hours: the
 ## drawer, the picker, the fleet and the whole five-tier escalation ladder were
 ## scenery. `data/incidents.json` `ambient_floor` puts a size-independent floor
-## under three of the six channels as a `max()` — exactly the instrument doc 07
-## §8 already uses for the Director's threat points — and doc 92 §18.3 measures
-## the result at **3.04 ambient incidents per game-week** over 336 game-days of
-## `do_nothing`.
+## under every channel with a live candidate source as a `max()` — exactly the
+## instrument doc 07 §8 already uses for the Director's threat points — and doc
+## 92 §18.3 measured the result at **3.04 ambient incidents per game-week** over
+## 336 game-days of `do_nothing`, with two of the six generators still dead. See
+## the Wave-7 retune note below for what happened when they woke up.
 ##
 ## The gate has two halves because the finding has two halves.
 ##
 ## **The budget** is asserted exactly, off the data file: a floor edited to zero,
-## disabled, or handed a fourth channel with no candidate source fails here
-## rather than silently in a report six weeks later.
+## disabled, or handed a channel with no candidate source fails here rather than
+## silently in a report six weeks later.
 ##
 ## **The delivery** is asserted as a rate over five seeds, in a band wide enough
-## that Poisson noise cannot fail it and narrow enough that the two regressions
-## that matter cannot pass it — the floor going dark (pre-floor, five runs would
-## land near 10) and the floor running away (a 3× lands above 130).
+## that Poisson noise cannot fail it and narrow enough that the regressions that
+## matter cannot pass it.
 ##
 ## **And the control city must still survive it.** Doc 92 §18's ruling in full is
 ## "a do_nothing city still survives; a neglected one meets its fires sooner".
 ## The starter roster answers every one: zero failed, zero abandoned, nothing
 ## destroyed, treasury still climbing.
+##
+## ---------------------------------------------------------------------------
+## **WAVE-7 RETUNE — the two silent generators woke up (audit 91 D-14 / D-15).**
+##
+## When this gate was written, `IncidentWorld.water_mains()` and
+## `road_intersections()` were base-class stubs returning `[]` and
+## `CityIncidentWorld` overrode neither, so two of doc 06 §2.6's six generators
+## produced **exactly zero at every city size** — and this gate asserted their
+## absence, in as many words, so that it would fail the day they landed. It has.
+##
+## Three things move, and the third is a ruling this gate cannot make on its own.
+##
+## 1. **The budget assertion does not move.** Doc 92 §18.2 said what to do:
+##    *"the two new rows come out of the three existing ones"*. `per_day` still
+##    sums to 0.40; the split is now 0.14 / 0.08 / 0.08 / 0.06 / 0.04.
+## 2. **The two `assert_false`s become `assert_true`s.** A floor row for these
+##    channels was dead data while their candidate source was empty; it is live
+##    data now, and its absence would be the regression.
+## 3. **The delivery band moves from 2–4 to 6–7 ambient incidents per game-week,
+##    and the floor is not what put it there.** Measured, 12 seeds × 28 game-days
+##    of `do_nothing` per arm, the same A/B shape doc 92 §18.3 used:
+##
+##    | /game-week | floor OFF | floor ON (5-channel) | floor ON (old 3-channel) |
+##    |---|---|---|---|
+##    | crime | 0.35 | 0.73 | 1.19 |
+##    | structure_fire | 0.69 | 0.56 | 0.67 |
+##    | transformer_failure | 0.81 | 1.08 | 1.23 |
+##    | **water_main_break** | **0.58** | **0.60** | 0.56 |
+##    | **traffic_accident** | **3.58** | **3.60** | 3.60 |
+##    | storm_damage | 0.04 | 0.04 | 0.04 |
+##    | **TOTAL** | **6.06** | **6.62** | **7.29** |
+##
+##    The three-channel columns reproduce doc 92 §18.3 to within noise (its 3.04
+##    against 3.09 here on different seeds), so the rig is measuring the same
+##    thing it did. **The whole leverage of the floor is 0.56/game-week.** Even
+##    switched entirely OFF the city runs at 6.06, because `traffic_accident`
+##    alone is 3.58 — and that is doc 06 §2.6(e) working exactly as written:
+##    doc 09 stamps a road grid of **389 junctions** before the player has built
+##    anything, so the one generator whose asset base is not player-built is
+##    large from game-hour zero. Doc 06's own worked example intends **0.687
+##    accidents/game-day** for a 20-intersection city; the starter city measures
+##    **0.515**, i.e. *below* doc 06's stated intent. No floor can subtract, so
+##    the 2–4 band is unreachable without cutting `traffic_per_intersection`
+##    ~6.5× and invalidating doc 06 §2.6(e)'s four worked examples.
+##
+##    **The band is therefore re-derived from the measurement, not defended.**
+##    The ruling doc 92 §18 made — *"the dispatch loop is a weekly beat; a
+##    do_nothing city still survives it"* — holds on every clause it can be
+##    tested on: 318/318 resolved, 0 failed, 0 abandoned, 0 destroyed, and the
+##    treasury higher on all twelve seeds than it was with two dead generators
+##    ($194,847 against $189,772). What changed is the arithmetic behind "2–4",
+##    which was measured when a third of the generator surface was disconnected.
+##    See the delivery report's open question 1.
 func test_gate_19_ambient_incidents_are_a_weekly_beat() -> void:
 	var floor_block: Dictionary = (StarterCityLoader.read_json(
 			"res://data/incidents.json").get("ambient_floor", {}) as Dictionary)
@@ -1105,23 +1164,29 @@ func test_gate_19_ambient_incidents_are_a_weekly_beat() -> void:
 	assert_almost_eq(budget, AMBIENT_FLOOR_PER_DAY, 1e-9,
 			"doc 92 §18.1 budgets %.2f ambient incidents/game-day; the file sums to %.4f"
 					% [AMBIENT_FLOOR_PER_DAY, budget])
-	# A floor cannot invent a target, so a row for a channel whose candidate
-	# source is an empty stub is dead data (doc 92 §18.2, D-14 / D-15).
-	assert_false(per_day.has("water_main_break"),
-			"IncidentWorld.water_mains() is still a stub returning [] — D-14")
-	assert_false(per_day.has("traffic_accident"),
-			"IncidentWorld.road_intersections() is still a stub returning [] — D-15")
+	# Five rows now, one per channel with a live candidate source. The two that
+	# were absent were absent because a floor cannot invent a target and theirs
+	# was an empty stub (D-14 / D-15); both adapters landed in Wave 7.
+	for channel in AMBIENT_FLOOR_CHANNELS:
+		assert_true(per_day.has(channel),
+				"`%s` has a live candidate source and no floor row" % channel)
+	assert_eq(per_day.size(), AMBIENT_FLOOR_CHANNELS.size(),
+			"an unexpected channel carries a floor row: %s" % str(per_day.keys()))
 	assert_false(per_day.has("storm_damage"),
 			"storm damage is not ambient — its candidates need a live doc 07 cell")
 
 	var created := 0
 	var failed := 0
 	var abandoned := 0
+	var by_channel: Dictionary = {}
 	for seed_value in PACING_SEEDS:
 		var run := _run("do_nothing", LONG_DAYS, seed_value)
 		created += Rig.event_count(run, "incident_created")
 		failed += Rig.event_count(run, "incident_failed")
 		abandoned += Rig.event_count(run, "incident_abandoned")
+		for channel in AMBIENT_FLOOR_CHANNELS:
+			by_channel[channel] = int(by_channel.get(channel, 0)) \
+					+ Rig.event_count(run, "incident_created:" + channel)
 		var summary: Dictionary = run["summary"]
 		assert_eq(int(summary["destroyed_end"]), 0,
 				"the control city lost a building to the ambient floor on seed %d"
@@ -1130,11 +1195,21 @@ func test_gate_19_ambient_incidents_are_a_weekly_beat() -> void:
 				"the control city stopped banking money on seed %d" % seed_value)
 	var game_days := PACING_SEEDS.size() * LONG_DAYS
 	var per_week := float(created) / float(game_days) * 7.0
-	assert_true(created >= 25,
-			"%d incidents over %d game-days is %.2f per game-week — the floor is dark"
-					% [created, game_days, per_week])
-	assert_true(created <= 110,
-			"%d incidents over %d game-days is %.2f per game-week — the floor ran away"
+	# **Every channel must actually fire.** This is the half of the gate that D-14
+	# and D-15 would have caught: a generator scanning an empty array produces a
+	# clean zero and no error anywhere, and it did so for months.
+	for channel in AMBIENT_FLOOR_CHANNELS:
+		assert_true(int(by_channel[channel]) > 0,
+				"`%s` produced ZERO over %d game-days — its candidate source is "
+				% [channel, game_days] + "empty again (the D-14 / D-15 shape)")
+	# Measured 91 over these exact 105 game-days (6.07/game-week); Poisson σ ≈ 9.5.
+	# The floor going dark lands near 63 and disconnecting either adapter lands
+	# below 50, so the lower bound catches both; a 1.5× runaway lands at 137.
+	assert_true(created >= 62,
+			"%d incidents over %d game-days is %.2f per game-week — a channel has "
+			% [created, game_days, per_week] + "gone quiet")
+	assert_true(created <= 132,
+			"%d incidents over %d game-days is %.2f per game-week — generation ran away"
 					% [created, game_days, per_week])
 	assert_eq(failed, 0, "a do_nothing city must survive its own pacing floor")
 	assert_eq(abandoned, 0, "the starter roster answered every one of them")
