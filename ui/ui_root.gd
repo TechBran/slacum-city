@@ -141,6 +141,10 @@ var overlay_rail: OverlayRail
 var alerts_center: AlertsCenter
 var event_log: EventLog
 var settings_sheet: SettingsSheet
+## S14 (doc 12 §2.19). Brought up with the shared config like every other
+## screen and with NO model — `game/main.gd` owns the sim, so it calls
+## `setup(cfg, GoalsModel.new(sim, cfg, controller))` once it has one.
+var goals_sheet: GoalsSheet
 var save_load_sheet: SaveLoadSheet
 var pause_menu: PauseMenu
 var incident_drawer: IncidentDrawer
@@ -253,6 +257,7 @@ func _bind_nodes() -> void:
 	alerts_center = safe_area.get_node_or_null("PanelLayer/AlertsCenter") as AlertsCenter
 	event_log = safe_area.get_node_or_null("PanelLayer/EventLog") as EventLog
 	settings_sheet = safe_area.get_node_or_null("ModalLayer/SettingsSheet") as SettingsSheet
+	goals_sheet = safe_area.get_node_or_null("ModalLayer/GoalsSheet") as GoalsSheet
 	save_load_sheet = safe_area.get_node_or_null("ModalLayer/SaveLoadSheet") as SaveLoadSheet
 	pause_menu = safe_area.get_node_or_null("ModalLayer/PauseMenu") as PauseMenu
 	incident_drawer = safe_area.get_node_or_null(
@@ -287,6 +292,10 @@ func bring_up_screens() -> void:
 		event_log.setup(config)
 	if settings_sheet != null and settings_sheet.model == null:
 		settings_sheet.setup(config)
+	# S14 comes up with the config alone and no model, for the same reason the
+	# build sheet does: `game/main.gd` owns the sim, and `setup()` is idempotent.
+	if goals_sheet != null and goals_sheet.config == null:
+		goals_sheet.setup(config)
 	if save_load_sheet != null and save_load_sheet.model == null:
 		save_load_sheet.setup(config)
 	if pause_menu != null and pause_menu.config == null:
@@ -381,6 +390,8 @@ func _connect_screens() -> void:
 		_connect(land_panel.purchased, _on_land_purchased)
 		_connect(land_panel.developed, _on_land_developed)
 		_connect(land_panel.fix_requested, _on_land_fix_requested)
+	if goals_sheet != null:
+		_connect(goals_sheet.sheet_toggled, _on_goals_sheet_toggled)
 	if hud != null:
 		_connect(hud.toast_requested, _on_toast_requested)
 	if title_screen != null:
@@ -516,7 +527,14 @@ func _on_quit_requested() -> void:
 
 ## §2.4's chip is "read-only + rare" and its one action is §2.10's: open the
 ## dashboard on that vital's band.
+##
+## The goal chip is the ONE exception, and it is an exception on purpose: it is
+## not a reading of a vital, it is the entry to S14, and the dashboard has no
+## band to scroll to for it (doc 12 §2.19).
 func _on_chip_activated(chip_id: StringName) -> void:
+	if chip_id == StringName(HudModel.CHIP_GOALS):
+		open_goals()
+		return
 	if city_dashboard != null:
 		city_dashboard.open_for_chip(chip_id)
 
@@ -748,6 +766,7 @@ func feed_events(batch: Array) -> void:
 		incident_drawer.feed_batch(batch)
 	_cue_events(raised)
 	_check_city_level(batch)
+	_check_goal_events(batch)
 	if onboarding == null or not onboarding.is_active():
 		return
 	for entry: Variant in batch:
@@ -812,6 +831,87 @@ func _check_city_level(batch: Array) -> void:
 		push_toast(UIWidgets.t_args(config, "ui_toast_city_level", {"level": level}),
 				HudModel.STATE_NORMAL)
 		city_level_changed.emit(level, unlocked)
+
+
+## S14 — the goals seam (doc 12 §2.19).
+##
+## Four calls, and only the first is mandatory. `game/main.gd` hands the sheet a
+## `GoalsModel` once, then calls `refresh_goals()` on its HUD cadence; everything
+## else — the chip, the pulse, the level-up toast — happens here, off the sim
+## batch this root is already being fed.
+##
+##     # --- bring-up, beside the build sheet's -----------------------------
+##     root.goals_sheet.setup(root.config,
+##             GoalsModel.new(sim_host.sim, root.config, build_controller))
+##
+##     # --- on the HUD cadence ---------------------------------------------
+##     ui_root.refresh_goals()
+##
+## Nothing to connect: `feed_events` already sees `goal_progress`,
+## `goal_completed` and `city_level_objectives_met`, and the chip tap is routed
+## by `_on_chip_activated`.
+signal goal_level_reached(level: int, title: String)
+
+
+## Re-reads the curriculum into the chip and, when it is up, the sheet.
+## Cheap — a five-row objective list — so the shell may call it every frame.
+func refresh_goals() -> void:
+	if goals_sheet == null or goals_sheet.model == null:
+		return
+	if hud != null and hud.model != null:
+		hud.model.ingest_goals(goals_sheet.model.chip_view())
+		hud.rebuild_chips()
+	if goals_sheet.is_open():
+		goals_sheet.refresh()
+
+
+func open_goals() -> void:
+	if goals_sheet != null:
+		goals_sheet.open()
+
+
+func close_goals() -> void:
+	if goals_sheet != null:
+		goals_sheet.close()
+
+
+func goals_open() -> bool:
+	return goals_sheet != null and goals_sheet.is_open()
+
+
+func _on_goals_sheet_toggled(open: bool) -> void:
+	if not open:
+		return
+	feed_onboarding({"kind": OnboardingModel.OBS_UI_OPENED,
+			"path": OnboardingFlow.SCREEN_GOALS_SHEET})
+
+
+## Doc 09 §2.14's moments, read off the same batch everything else is.
+##
+## `goal_completed` pulses the row that just landed; `city_level_objectives_met`
+## is the celebration — a toast naming the level and what it is called, and the
+## sheet already knows what it unlocked because the reward card is a READ.
+## Guarded on nothing: the sim emits each of these exactly once.
+func _check_goal_events(batch: Array) -> void:
+	if goals_sheet == null:
+		return
+	for entry: Variant in batch:
+		if not (entry is Dictionary):
+			continue
+		var event: Dictionary = entry
+		match StringName(str(event.get("type", ""))):
+			&"goal_completed":
+				goals_sheet.celebrate(str(event.get("goal_id", "")))
+			&"city_level_objectives_met":
+				var level := int(event.get("level", 0))
+				var title := ""
+				if goals_sheet.model != null:
+					title = str(goals_sheet.model.level_preview(level).get("title", ""))
+				push_toast(UIWidgets.t_args(config, "ui_toast_goal_level",
+						{"level": level, "title": title}, ""), HudModel.STATE_NORMAL)
+				if haptics != null:
+					haptics.fire(Haptics.CUE_POWER_RESTORED)
+				goal_level_reached.emit(level, title)
 
 
 ## The city level this root believes the city is at; `-1` before the first

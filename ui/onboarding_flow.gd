@@ -25,6 +25,9 @@ signal finished(skipped: bool)
 ## and `UIRoot` feed these names; nothing here knows a node path for them.
 const SCREEN_BUILD_SHEET := "build_sheet"
 const SCREEN_INCIDENT_DRAWER := "incident_drawer"
+## S14. The handoff step (`next_goals`) is satisfied by opening it — doc 09
+## §2.14's "here is what to do next", which is what the tutorial ends on now.
+const SCREEN_GOALS_SHEET := "goals_sheet"
 const SCREEN_BUILD_CATEGORY := "build_category_"
 
 const TARGET_UI := "ui"

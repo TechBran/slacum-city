@@ -337,12 +337,12 @@ static func _sha256_of(text: String) -> String:
 	return ctx.finish().hex_encode()
 
 
-func test_the_city_section_is_on_rung_two() -> void:
+func test_the_city_section_is_on_rung_three() -> void:
 	# The constant, the published accessor and the bytes on disk must agree.
 	# A bump that lands in only two of the three is how a save silently keeps
 	# claiming to be something it is not.
-	assert_eq(CitySim.SAVE_SECTION_VERSION, 2,
-			"the Wave-8 routing / sub-step epoch is rung 2 (doc 08 §2.8)")
+	assert_eq(CitySim.SAVE_SECTION_VERSION, 3,
+			"Wave 9's goal curriculum is rung 3 (doc 08 §2.8, doc 09 §2.14.4)")
 	var sim := CitySim.boot_from_files(4242)
 	assert_eq(sim.save_section_version(), CitySim.SAVE_SECTION_VERSION)
 	var service := _fresh_service()
@@ -355,7 +355,7 @@ func test_the_city_section_is_on_rung_two() -> void:
 	var envelope: Dictionary = JSON.parse_string(reader.get_as_text())
 	reader = null
 	assert_eq(int(((envelope["body"] as Dictionary)[String(SaveService.CITY_SECTION)]
-			as Dictionary)["section_version"]), 2,
+			as Dictionary)["section_version"]), CitySim.SAVE_SECTION_VERSION,
 			"the file on disk carries the rung, not just the class")
 	service.free()
 
@@ -409,30 +409,48 @@ func test_the_v1_body_goes_through_the_migrator_rather_than_around_it() -> void:
 	service.free()
 
 
-func test_the_v1_to_v2_migrator_is_total_and_is_the_identity() -> void:
-	# Doc 08 §2.8's rules on the real thing. TOTAL: it may not fail, whatever it
-	# is handed — an empty body, a body from a version that does not exist, a
-	# body already on the current rung. IDENTITY: v2 marks a rules epoch, not a
-	# shape change, so a v1 body must come out with exactly the keys and exactly
-	# the values it went in with. A migrator that quietly "fixed" something here
-	# would be rewriting the player's city on load.
+func test_the_city_section_ladder_is_total_and_additive_only() -> void:
+	# Doc 08 §2.8's rules on the real thing.
+	#
+	# **TOTAL**: it may not fail, whatever it is handed — an empty body, a body
+	# from a version that does not exist, a body already on the current rung.
+	#
+	# **ADDITIVE-FIRST**: v1 → v2 marks a rules epoch and is the identity; v2 → v3
+	# (Wave 9, doc 09 §2.14.4) adds **exactly one** key, `goals`, and touches
+	# nothing else. A migrator that quietly "fixed" something here would be
+	# rewriting the player's city on load, and neither rung does.
 	var sim := CitySim.boot_from_files(4242)
 	sim.advance_hours(1.0)
 	var body := sim.canonical_capture()
 	var keys_before := body.keys().size()
+	# A body written by THIS build already carries its `goals` block, so the whole
+	# ladder is the identity on it — which is the property that matters for a
+	# restamped-v1 forgery of a save from the previous build.
 	var migrated := sim.migrate_save_section(body, 1)
 	assert_eq(migrated.keys().size(), keys_before, "no key was added or dropped")
 	assert_eq(JSON.stringify(migrated, "", true, true),
 			JSON.stringify(body, "", true, true),
-			"v1 → v2 is the identity function, byte for byte")
-	# Totality, on the three inputs a real ladder meets. Compared field by field
-	# rather than with `==`, because Dictionary equality is not the assertion
-	# this test wants to be relying on.
-	assert_true(sim.migrate_save_section({}, 1).is_empty(),
-			"an empty body migrates to an empty body rather than failing")
-	assert_eq(int(sim.migrate_save_section({"a": 1}, 2).get("a", 0)), 1,
+			"the ladder is the identity on a body that is already whole")
+	# A genuine v2 body has no `goals` block at all, and the rung adds one — the
+	# MARKER, never an answer: doc 08 §2.8 forbids a migrator from reading
+	# `data/`, and the curriculum lives in `data/goals.json`.
+	var v2_body := sim.canonical_capture()
+	v2_body.erase("goals")
+	var lifted := sim.migrate_save_section(v2_body, 2)
+	assert_eq(lifted.keys().size(), keys_before,
+			"v2 → v3 adds exactly the one key it removed")
+	assert_true(bool((lifted["goals"] as Dictionary).get("bootstrap", false)),
+			"and what it adds is the bootstrap marker, not a fabricated answer")
+	# Totality, on the inputs a real ladder meets. Compared field by field rather
+	# than with `==`, because Dictionary equality is not the assertion this test
+	# wants to be relying on.
+	var empty := sim.migrate_save_section({}, 1)
+	assert_eq(empty.keys().size(), 1,
+			"an empty body migrates rather than failing, and gains only the marker")
+	assert_true(empty.has("goals"))
+	assert_eq(int(sim.migrate_save_section({"a": 1}, 3).get("a", 0)), 1,
 			"a body already on the current rung is left alone")
-	assert_eq(sim.migrate_save_section({"a": 1}, 2).keys().size(), 1)
+	assert_eq(sim.migrate_save_section({"a": 1}, 3).keys().size(), 1)
 	assert_eq(int(sim.migrate_save_section({"a": 1}, 7).get("a", 0)), 1,
 			"a body from the future is not mangled on the way past")
 	# And a body restored through the migrator is the body itself.

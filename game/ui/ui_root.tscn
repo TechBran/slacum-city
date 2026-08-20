@@ -1,4 +1,4 @@
-[gd_scene load_steps=19 format=3]
+[gd_scene load_steps=20 format=3]
 
 [ext_resource type="Script" path="res://ui/ui_root.gd" id="1_uiroot"]
 [ext_resource type="Script" path="res://ui/hud.gd" id="2_hud"]
@@ -18,6 +18,7 @@
 [ext_resource type="Script" path="res://ui/land_panel.gd" id="16_landpanel"]
 [ext_resource type="Script" path="res://ui/toast_view.gd" id="17_toast"]
 [ext_resource type="Script" path="res://ui/title_screen.gd" id="18_title"]
+[ext_resource type="Script" path="res://ui/goals_sheet.gd" id="19_goalssheet"]
 
 [node name="UIRoot" type="CanvasLayer"]
 layer = 10
@@ -816,6 +817,67 @@ layout_mode = 2
 [node name="ModalLayer" type="Control" parent="SafeArea"]
 layout_mode = 2
 mouse_filter = 2
+
+[node name="GoalsSheet" type="Control" parent="SafeArea/ModalLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("19_goalssheet")
+
+[node name="Scrim" type="ColorRect" parent="SafeArea/ModalLayer/GoalsSheet"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="Panel" type="PanelContainer" parent="SafeArea/ModalLayer/GoalsSheet"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = 16.0
+offset_right = -16.0
+offset_bottom = -16.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_type_variation = &"SheetPanel"
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/ModalLayer/GoalsSheet/Panel"]
+layout_mode = 2
+
+[node name="Header" type="HBoxContainer" parent="SafeArea/ModalLayer/GoalsSheet/Panel/Body"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="SafeArea/ModalLayer/GoalsSheet/Panel/Body/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+clip_text = true
+
+[node name="Close" type="Button" parent="SafeArea/ModalLayer/GoalsSheet/Panel/Body/Header"]
+custom_minimum_size = Vector2(48, 48)
+layout_mode = 2
+text = "✕"
+tooltip_text = "Close goals"
+theme_type_variation = &"GhostButton"
+
+[node name="Scroll" type="ScrollContainer" parent="SafeArea/ModalLayer/GoalsSheet/Panel/Body"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="Content" type="VBoxContainer" parent="SafeArea/ModalLayer/GoalsSheet/Panel/Body/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
 
 [node name="SettingsSheet" type="Control" parent="SafeArea/ModalLayer"]
 layout_mode = 1

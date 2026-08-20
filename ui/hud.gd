@@ -58,6 +58,8 @@ var _pulse_hz := 1.2
 var _pulse_phase := 0.0
 var _alert_timer := 0.0
 var _row_signature := ""
+## The chip ORDER the buttons were last built for — see `rebuild_chips`.
+var _chip_order_signature := ""
 ## Layout width in dp. `< 0` means "measure the tree"; the tests and the
 ## screenshot harness set it explicitly so a headless run can exercise a Fold's
 ## near-square box without a window.
@@ -184,6 +186,15 @@ static func _detach(node: Node) -> void:
 func _build_chips() -> void:
 	if _chips_box == null:
 		return
+	# Once `_apply_rows` has run, the clock chip and the ☰ button live inside a
+	# chip ROW (see `_adopt_trailing_block`) — and the rows below are about to be
+	# freed. Park them back on the top bar first: a rebuild of the chip set must
+	# not take the only way into the pause menu with it.
+	for node: Control in [_clock_chip, _menu_button]:
+		if node != null and node.get_parent() != null and node.get_parent() != _top_bar:
+			CityHUD._detach(node)
+			if _top_bar != null:
+				_top_bar.add_child(node)
 	_clear_children(_chips_box)
 	_chips.clear()
 	_row_signature = ""
@@ -354,6 +365,24 @@ func ingest_service(snapshot: Dictionary) -> void:
 	if model == null:
 		return
 	model.ingest_service(snapshot)
+	if not _last_snapshot.is_empty():
+		refresh(_last_snapshot)
+
+
+## Re-builds the chip buttons when the chip SET changes.
+##
+## Every §2.4 chip is fixed at bring-up except one: S14's goal chip is present
+## while doc 09 §2.14's curriculum is unfinished and RETIRES when it is done, so
+## the button roster is no longer a constant. Guarded on the order itself, so the
+## shell may call this on its HUD cadence and pay one string compare for it.
+func rebuild_chips() -> void:
+	if model == null or _chips_box == null:
+		return
+	var signature := str(model.chip_order())
+	if signature == _chip_order_signature:
+		return
+	_chip_order_signature = signature
+	_build_chips()
 	if not _last_snapshot.is_empty():
 		refresh(_last_snapshot)
 

@@ -23,6 +23,10 @@ extends SimTest
 
 const SOURCE_DIRS: Array[String] = ["res://ui", "res://game"]
 const STRINGS_PATH := "res://data/strings.en.json"
+## Data files besides `data/ui.json` that NAME copy through `*_key` fields.
+## `data/goals.json` (doc 09 §8.3) is the first: the curriculum's level titles
+## and objective sentences live there, and nothing in `ui/` spells one out.
+const DATA_KEY_FILES: Array[String] = ["res://data/goals.json"]
 
 ## Lookup idioms. A `ui_*` literal on a line that carries one of these is a
 ## string-table key; one anywhere else is an audio cue id, an observation kind or
@@ -250,6 +254,12 @@ func _referenced_keys() -> PackedStringArray:
 				if not out.has(key):
 					out.append(key)
 	_collect_data_keys(UIConfig.load_from_files().ui_data(), out)
+	# `data/goals.json` names copy the same way (doc 09 §8.3): every curriculum
+	# level and every objective carries `*_key` fields and no GDScript source
+	# ever spells one out. Without this the whole `ui_goal_*` / `ui_level_*`
+	# family reads as orphaned and the orphan check would delete live copy.
+	for path: String in DATA_KEY_FILES:
+		_collect_data_keys(StarterCityLoader.read_json(path), out)
 	return out
 
 

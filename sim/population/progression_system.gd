@@ -8,6 +8,12 @@ extends RefCounted
 ## balance number in the game that could not be retuned without a code edit —
 ## and audit 91 D-7 is what that cost: a 12-game-day city that never left level 0
 ## and refused 376 upgrades with `E_CITY_LEVEL`.
+##
+## **Since Wave 9 the ladder is not the only route up.** Doc 09 §2.14's goal
+## curriculum earns levels by completed objectives, and the city level is the
+## MAXIMUM of the two (`city_level = max(level_reached(population),
+## goals.earned_level)`, ruling 93 §G1). Both routes go through `grant_level`,
+## which is what keeps monotonicity a property of one function.
 
 ## Doc 09 §8.2's file. Read once per process and cached: it is authored data,
 ## it does not change while the game runs, and `level_reached` is static because
@@ -55,17 +61,38 @@ static func level_reached(city_population: int) -> int:
 ## Returns events to emit: [{type, from, to}] for a level change plus any
 ## milestone events. Level never decreases.
 func update(city_population: int) -> Array:
-	var events: Array = []
-	var reached := level_reached(city_population)
-	if reached > city_level:
-		events.append({"type": &"city_level_changed", "from": city_level, "to": reached})
-		for level in range(city_level + 1, reached + 1):
-			events.append_array(grant("city_level_%d" % level))
-		city_level = reached
+	var events: Array = grant_level(level_reached(city_population))
 	if city_population >= 1000:
 		events.append_array(grant("population_1k"))
 	if city_population >= 10000:
 		events.append_array(grant("population_10k"))
+	return events
+
+
+## Raise the city to `level` if it is not there already, with the same events an
+## ordinary population crossing produces. The one write path onto `city_level`,
+## and monotone by construction — a smaller argument is a no-op.
+##
+## **Why it is public (doc 09 §2.14, ruling 93 §G1).** The population ladder is
+## no longer the only route up. `GoalSystem` earns levels by completed
+## objectives, and the city level is the MAXIMUM of the two:
+##
+##     city_level = max(level_reached(population), goals.earned_level)
+##
+## Both routes go through here, so "a level, once earned, survives any disaster"
+## stays a property of one function rather than a convention two callers keep.
+## The argument is clamped to the ladder's own height: a curriculum with more
+## rows than `data/progression.json` has rungs cannot invent a level that
+## nothing in the game unlocks.
+func grant_level(level: int) -> Array:
+	var events: Array = []
+	var reached := mini(level, city_level_pop().size() - 1)
+	if reached <= city_level:
+		return events
+	events.append({"type": &"city_level_changed", "from": city_level, "to": reached})
+	for step in range(city_level + 1, reached + 1):
+		events.append_array(grant("city_level_%d" % step))
+	city_level = reached
 	return events
 
 

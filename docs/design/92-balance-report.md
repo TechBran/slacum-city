@@ -2554,3 +2554,233 @@ has a street within snapping distance**.
   contract and the boot order are all in place; what is missing is a doc 06
   ruling on what happens to an incident nobody can answer, and doc 10's
   hierarchical routing.
+
+---
+
+## 22. Pass 8 — the goal curriculum, and what it costs the ladder (Wave 9)
+
+Doc 09 §2.14 makes the city level something a player can *aim at* instead of
+something that happens to them. That is a UX change with a balance bill, and this
+pass is the bill.
+
+### 22.1 What moved
+
+| | before | after |
+|---|---|---|
+| routes to a city level | population threshold | `max(population threshold, completed objectives)` |
+| `balanced` reaches level 1 | game-day **2** | game-day **1** (game-hour 17) |
+| `balanced` reaches level 2 | game-day **11** | game-day **9.75 – 10.25** |
+| `balanced` reaches level 3 | game-day **23** | game-day **22.3 – 24.1** |
+| `data/progression.json` | `[0, 200, 700, 1600, 3600, 8000]` | **unchanged** |
+| gate thresholds moved | — | **one**: gate 20's level-1 window |
+
+**No balance number was retuned.** The ladder file is byte-identical, §19's fit
+stands, and the only reason anything moved at all is that a second, faster route
+to the same rungs now exists. On the 21-game-day matrix that route moves
+**one row of six** — `tax_squeezer`, the only agent rich enough to spend the
+earlier unlock — and §22.4.1 is the A/B that says so.
+
+### 22.2 The instrument — `curriculum`, a new agent
+
+`tools/playtest.gd` gains a seventh strategy. It is `balanced` **plus a reading
+habit**: once a game-hour it looks at the active level's first unmet objective and
+spends its one action on that, and otherwise plays exactly as `balanced` does —
+same reserve, same maintenance purse, same land fund, same grid rules.
+
+One field in it is load-bearing and worth the paragraph. `_goal_price` earmarks
+the price of the objective the agent is saving for and adds it to `reserve()`, so
+the growth ladder cannot spend it. Without it the agent **starves**: a shop costs
+$2,600, a house costs $1,200, `_grow` spends every surplus down to the reserve
+every game-hour, so the surplus never reaches $2,600 and "build two shops" is
+outbid by cheaper housing for ever. Measured, seed 1337:
+
+| | `l2_stores` completed | level 5 reached |
+|---|---|---|
+| without the earmark | game-hour **206** | game-hour 347 |
+| **with it** | game-hour **30** | game-hour **329** |
+
+A player saving for the thing the game just asked them to build stops buying the
+other thing, and `Balanced` already had the machinery for exactly that — the land
+fund.
+
+It is deliberately **not** in `tests/balance_matrix.gd`'s default six. That matrix
+is this document's fitted sample and adding a seventh row to it would re-base
+every mean in it.
+
+### 22.3 The curriculum's own pacing — measured, 3 seeds × 21 game-days
+
+Game-hour each level was earned. One game-hour is one real minute at 1×
+(`SimHost.GAME_MS_PER_REAL_MS` = 60), so the right-hand column is the session beat
+the player asked for.
+
+| level | 1337 | 4242 | 9001 | duration (game-hours) | ≈ minutes at 1× |
+|---|---|---|---|---|---|
+| 1 — Homes and power | 18 | 18 | 18 | **18** | 18 |
+| 2 — Shops and upkeep | 59 | 57 | 58 | **39 – 41** | ~40 |
+| 3 — The budget | 100 | 99 | 100 | **41 – 42** | ~41 |
+| 4 — When it goes wrong | 148 | 147 | 192 | **47 – 92** | 47–92 |
+| 5 — Room to grow | 329 | 325 | 305 | **113 – 181** | 113–181 |
+| **whole arc** | **329** | **325** | **305** | **12.7 – 13.7 game-days** | ~5.4 h |
+
+**The shape is a doubling cadence**, the same one §19.2 fitted the population
+rungs to: each level costs about twice the last. Levels 1–3 land inside the
+10–40 game-hour band the ruling asks for. Levels 4 and 5 exceed it, and both
+overruns are *priced*, not accidental:
+
+* **Level 4's spread (47 → 92)** is incident arrival. §18.7's ruled ambient band
+  is 5–8 incidents per game-week, so "resolve 2" is a wait of 24–70 game-hours
+  depending on where the Poisson lands; seed 9001 drew the slow tail. This is the
+  one objective in the arc whose duration the player cannot shorten by playing
+  better, which is exactly why it is priced at two and not three.
+* **Level 5's 113–181** is the first five-figure purchase in the game. Doc 05's
+  cheapest placeable component is a **$45,000** pump against a treasury that is
+  $25,000 at t0; saving for it while also buying and developing a block is what
+  the level costs. It is the graduation level and it is allowed to be the longest
+  — and it is the reason the arc is quoted at 13 game-days rather than at 5.
+
+**What the arc replaces.** Before Wave 9 a competent player reached level 3 on
+game-day 23 (§19.3) and levels 4 and 5 were outside the fifty-game-day measured
+window entirely. The curriculum puts all five inside two game-weeks, with a
+printed list at every step.
+
+#### 22.3.1 Past the horizon — the 50-game-day pair, and a result worth recording
+
+§15.2's pair, re-run with the student in it. Three seeds, 50 game-days:
+
+| | `balanced` | `curriculum` |
+|---|---|---|
+| treasury | 113,994 – 151,030 | **213,186 – 549,042** |
+| value created | 2,896,670 – 3,209,725 | **3,666,842 – 3,901,502** |
+| population | **4,583 – 5,358** | 3,908 – 4,425 |
+| happiness | 68.8 – 75.8 | **82.4 – 84.7** |
+| min condition | 0.686 – 0.752 | **0.768 – 0.785** |
+| dark share | 1.67 – 14.3 % | **1.28 – 7.9 %** |
+| city level | 4 | **5** |
+
+**Following the goals produces a smaller, richer, healthier city, and it is the
+only agent in this study that has ever finished the ladder.** It trails on
+population by 10–20 %, which is the honest price of the two objectives that buy
+nothing immediate — a block of land and a $45,000 pump — and it leads on every
+other column, because those two purchases are exactly what a growth-only agent
+defers until its ground and its water run out. At 70 game-days on seed 1337 the
+gap has become a lead on population as well (7,923 against 7,037) with value
+created 47 % higher.
+
+That is not a claim about the curriculum being *optimal play*; it is a
+measurement that the taught route is a **good** route, which is the least a game
+owes a player who does what it asks.
+
+### 22.4 What the curriculum costs `balanced` — the re-derivation gate 20 asked for
+
+The question that matters for this document: does a second route to the ladder
+invalidate §19's fit? Measured, three seeds, 30 game-days:
+
+| | §19.3 (Wave 6) | Wave 9 | delta |
+|---|---|---|---|
+| level 1 | day 2, all seeds | **day 1**, all seeds (game-hour 17) | −1 day |
+| level 2 | day 11, all seeds | **day 9.75 / 9.79 / 10.25** | −0.75 to −1.25 days |
+| level 3 | day 23 (50-day run) | **day 24.1 / 22.9 / 22.3** | ±1 day |
+
+**Level 1 moved because `balanced` completes level 1's objectives.** Four houses,
+a transformer and 170 residents are the things a competent builder does first, so
+it does them by game-hour 17 without being asked. That is the curriculum working
+as designed rather than a leak: the rung is still *earned*, by a checklist instead
+of by a wait, and gate 21 is the half of the pair that proves the checklist is
+what earned it.
+
+**Level 2 did NOT move to the curriculum**, and that is the finding of this pass.
+`balanced` never touches the tax slider and never finishes level 2's list before
+the population rung arrives, so its level 2 and level 3 are still §19's
+thresholds — landing under a game-day earlier because apartments and offices
+unlocked 31 game-hours sooner. Every rung in that table is inside the window that
+was already ruled.
+
+**Gate 20 is re-derived on one line.** Its level-1 window was `[2, 4]`, and the
+lower bound was there because *"an unlock has to be earned to read as
+progression"*. The curriculum is a second way to earn it, so the window becomes
+`[0, 2]` and the earning is asserted by gate 21 instead. Its level-2 window
+`[8, 14]` is **unchanged** and still passes on all three seeds.
+
+### 22.4.1 The matrix, and the one row the curriculum moves — an A/B
+
+`tests/balance_matrix.gd -- days=21`, six strategies × three seeds, means, against
+§21.2's published column. The A/B arm is the same tree with `data/goals.json`'s
+`levels` array **emptied**, which is the documented degrade (§8.3: no rows means
+no curriculum, i.e. exactly the game that shipped before this wave) — so the two
+columns differ in the curriculum and in nothing else.
+
+| strategy | §21.2 (Wave 8) | curriculum OFF | curriculum ON |
+|---|---|---|---|
+| `do_nothing` | 165,636 / 165,636 / 144 | — | **165,636 / 165,636 / 144** |
+| `greedy_growth` | 128,540 / 1,018,323 / 1,760 | — | **128,540 / 1,018,323 / 1,760** |
+| `infrastructure_first` | 24,099 / 140,499 / 232 | — | **24,099 / 140,499 / 232** |
+| `balanced` | 68,725 / 904,358 / 1,379 | 68,725 / 904,358 / 1,379 | **68,725 / 904,358 / 1,379** |
+| `tax_squeezer` | 80,847 / 1,210,361 / 1,146 | 80,847 / 1,210,361 / 1,146 | **95,800 / 1,215,613 / 1,182** |
+| `disaster_neglect` | 62,220 / 1,022,657 / 1,448 | — | **62,220 / 1,022,657 / 1,448** |
+
+*(treasury / value created / population.)*
+
+**Five of six rows are byte-identical to Wave 8's**, and the A/B arm reproduces
+Wave 8 exactly on the two it was run against — so the degrade path is not a
+claim, it is a measurement.
+
+**`tax_squeezer` is the one row that moves, and the reason is the interesting
+part.** Both it and `balanced` now reach level 1 on game-hour 17 instead of
+game-day 2, so apartments and offices unlock 31 game-hours earlier for both. Only
+`tax_squeezer` can *act* on that: it holds `TAX_RATE_MAX` from hour 0, so it is
+the only agent in the study with the cash to buy a $7,000 apartment when the card
+appears rather than a $1,200 house. `balanced` sees the same unlock, cannot
+afford to use it any sooner than it did before, and its curve does not move by a
+dollar. The result is +18.5 % treasury, +0.4 % value created and +3.1 %
+population on an agent doc 92 §20 already rules is trading happiness for money —
+which is a *smaller* effect than the RNG resample §21.2 documents for the same
+column, and in the direction the unlock was always meant to have.
+
+**Nothing failed and nothing was abandoned** on any of the twenty-one runs
+(`incident_abandoned` 0.0 across the board, which is gate 9's column), and the
+`curriculum` agent's own row — 51,857 / 372,124 / 742, **city level 5 on all
+three seeds** — is the only one in the table that finishes the ladder.
+
+### 22.5 Gates
+
+* **Gate 20** — one threshold re-derived (above); level 2's window untouched.
+* **Gate 21, new** — the curriculum is COMPLETABLE and paced: all five levels, in
+  order, on all three seeds, inside 21 game-days, with level 1 inside the first
+  game-day and level 3 inside six; the curriculum level is monotone; and the agent
+  affords its own water works.
+* **The other 26 gates are byte-identical.**
+
+### 22.6 Hashes — the movement is one key, and that is provable
+
+The `city` save body gains `goals`, so **every state hash moves** on both cities
+and both paths. A moved hash is normally the thing this project is most afraid
+of, so it is not left as an assertion:
+
+| city / path | before | after | with `goals` erased |
+|---|---|---|---|
+| starter, coarse 24 h | `5f2ea15f…` | `2231df75…` | **`5f2ea15f…`** |
+| starter, fine 2 h | `50d995a6…` | `bffdf583…` | **`50d995a6…`** |
+| bench, coarse 24 h | `8816d28f…` | `a06e7d43…` | **`8816d28f…`** |
+| bench, fine 2 h | `1781a977…` | `224a900d…` | **`1781a977…`** |
+
+Hash the same bodies with the one new key removed and **all four reproduce the
+pre-change baseline byte for byte**. The curriculum draws no RNG, runs no
+sub-step, and changes no rule; what moved is the size of the body, which is what
+doc 08 §2.8's rung 3 records.
+
+Save → load → advance stays bit-identical *with a curriculum in flight*
+(`tests/test_goals_system.gd`), and a restamped-v1 generation still opens to the
+same city with zero structural repairs (`tests/test_save_migration.gd`).
+
+### 22.7 What this pass did not do
+
+- **It did not retune `data/progression.json`.** Not one rung moved.
+- **It did not author a road or water-main objective.** `cmd_place_road`,
+  `cmd_place_water_main` and `cmd_repair_building` have no UI surface (§17.6), so
+  their evaluator kinds exist and no level uses them. The day those surfaces land
+  is the day the curriculum can teach traffic and maintenance, and it is a row in
+  `data/goals.json` plus its copy — no code.
+- **It did not add a sixth curriculum level.** The ladder has five rungs above the
+  founding level and a sixth would unlock nothing (doc 09 §2.14.2). Adding one is
+  a *content* decision and it needs something to pay out.
+- **It did not put `curriculum` in the default matrix.** See §22.2.

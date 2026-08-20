@@ -36,7 +36,8 @@
 			"water": 80,
 			"population": 104,
 			"net_income": 96,
-			"stability": 112
+			"stability": 112,
+			"goals": 104
 		},
 		"chip_widths_compact_dp": {
 			"treasury": 72,
@@ -45,7 +46,8 @@
 			"water": 56,
 			"population": 64,
 			"net_income": 64,
-			"stability": 64
+			"stability": 64,
+			"goals": 56
 		},
 		"fab_d_dp": 64,
 		"rail_button_d_dp": 56,
@@ -106,7 +108,14 @@
 		"_unlock_pulse_s": "§2.13's progression payoff: how long a build card that a new city level just unlocked pulses for, once. A8 suppresses it entirely under reduce_motion — the toast still announces the level.",
 		"unlock_pulse_s": 1.2,
 		"_top_bar_max_rows": "§2.4's collapse solver hides P5-P7 once demotion runs out. On a near-square display (Fold inner, 2160x1856) the four never-hidden chips plus a measured value string still overflow one 48 dp row, and A1/A2 forbid clipping — so the bar wraps to a second row BEFORE anything is hidden. 1 restores the doc's single-row behaviour exactly.",
-		"top_bar_max_rows": 2
+		"top_bar_max_rows": 2,
+		"_goal_chip_index": "S14 (doc 09 §2.14, doc 12 §2.19). Where HudModel inserts the goal chip into `chip_priority` while the curriculum is unfinished. 1 puts it immediately after the treasury — the reading a goal most often costs money against — and inside §2.4's never-hidden prefix, which the solver widens by one to compensate. The chip is deliberately NOT a row of `chip_priority`, because it RETIRES when the curriculum is done: a teaching surface may not cost the reference layout a permanent demotion.",
+		"goal_chip_index": 1
+	},
+	"goals": {
+		"_comment": "S14 (doc 12 §2.19) — the goals SHEET's own tunables. The curriculum itself is data/goals.json (doc 09 §8.3) and nothing about it lives here.",
+		"_max_reward_rows": "How many unlock lines the reward card prints before it stops. The lines are READ — build cards, the upgrade tier, land — so a rung that happens to open nine things would otherwise push the objectives off a 360 dp display.",
+		"max_reward_rows": 4
 	},
 	"type_scale_dp": {
 		"display": 28,
@@ -1415,6 +1424,29 @@
 				"text_key": "ui_coach_payoff",
 				"advance": {
 					"kind": "ack"
+				}
+			},
+			{
+				"_comment": "The handoff (doc 09 §2.14). The tutorial used to end here and leave the player in a running city with nothing to aim at; this step points at the one surface that always knows what to do next. SOFT, and satisfied by either opening the sheet or acknowledging the card — a player who has understood does not need to be made to tap.",
+				"id": "next_goals",
+				"kind": "coach",
+				"gate": "soft",
+				"text_key": "ui_coach_goals",
+				"target": {
+					"kind": "ui",
+					"path": "SafeArea/HUDLayer/TopBar/Chips/Row0/Chip_goals"
+				},
+				"advance": {
+					"kind": "any_of",
+					"conditions": [
+						{
+							"kind": "ui_opened",
+							"path": "goals_sheet"
+						},
+						{
+							"kind": "ack"
+						}
+					]
 				}
 			}
 		]

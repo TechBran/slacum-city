@@ -473,7 +473,12 @@ func test_option_defaults_and_errors() -> void:
 	assert_eq(defaults.days, 21, "doc 92 pass 2's default horizon")
 	assert_eq(defaults.mode, "fine", "the default is the path the player plays")
 	assert_eq((defaults.seeds as Array).size(), 3, "3+ seeds per strategy")
-	assert_eq((defaults.strategies as Array).size(), 6)
+	# Seven since Wave 9: doc 92 §22's `curriculum`, the student the goal
+	# curriculum is paced against. It joins `STRATEGY_IDS` — and therefore a
+	# no-argument `tools/playtest.gd` run — but deliberately NOT
+	# `tests/balance_matrix.gd`'s default six, which is doc 92's fitted sample.
+	assert_eq((defaults.strategies as Array).size(), 7)
+	assert_true((defaults.strategies as Array).has("curriculum"))
 	assert_eq(defaults.experiment, "", "the matrix runs unless one is named")
 	var bad := Playtest.Options.parse(PackedStringArray([
 			"--nonsense", "--mode=warp", "--strategies=cheat",

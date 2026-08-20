@@ -46,6 +46,7 @@ Drawer width formula: `drawer_w = clamp(round(0.34 * W), 260, 340)`.
 | S11 | **WHILE YOU WERE AWAY** | `AwayReport` | full-screen modal | resume, see 2.12 | Dismiss / Handle now |
 | S12 | Onboarding coach layer | `CoachLayer` | overlay above all | new save | step 11 done / skip |
 | S13 | Event log | `EventLogModal` | full-screen modal | Away report ▸ See all | back |
+| S14 | **Goals** | `GoalsSheet` | full-screen modal | the goal chip (§2.4), or the tutorial's last step | back |
 
 Android **Back** is a stack: `ModalLayer` → `SheetLayer` → `PanelLayer` → placement cancel → deselect → "Press back again to minimise" (2 s window). Handled in one place: `UIRoot._notification(NOTIFICATION_WM_GO_BACK_REQUEST)`. **S0 removes rungs rather than adding one**: while the title is up there is no city behind it, so the four middle rungs cannot apply and back goes straight to the minimise pair — but `ModalLayer` still wins, or back at the settings sheet opened from the title would quit the game.
 
@@ -119,6 +120,27 @@ Worked example, W = 640 (COMPACT), clock_w = 100 → avail = 524.
 FULL widths P1..P7 = 104+64+80+80+104+96+112 = 640 + gaps 36 = 676 > 524.
 Demote P7→64 (628), P6→64 (596), P5→64 (556), P4→56 (532), P3→56 (508 ≤ 524 ✓).
 Result: all seven chips visible, P3–P7 compact. Net income and Stability keep their icon + numeric value at 64 dp; nothing is hidden at 640 dp.
+
+**The eighth chip, and why it is not in the table above (Wave 9).** §2.19's goal
+chip — `◎ L2 · 2/3` — rides the same bar and the same solver, but it is **not a
+row of `layout.chip_priority`**. The seven above are permanent instruments; the
+goal chip is a teaching surface that RETIRES the moment doc 09 §2.14's
+curriculum is finished. Making it a permanent row would cost the reference
+layout a demotion for the whole life of every city, including the ones it can no
+longer teach anything, and this section's own claim — *"W = 880 keeps all chips
+FULL"* — would stop being true for everybody.
+
+So `HudModel` inserts it at `layout.goal_chip_index` (1, immediately after the
+treasury) **while `goals_visible`**, and widens §2.4's never-hidden prefix by one
+so the same four readings stay protected. Its widths are 104 / 56 (`◎ L2 · 2/3`
+full, `2/3` compact — the compact form keeps the fraction, because the fraction
+is what moves). Its tap is the one exception to "tap opens S8": it opens S14,
+because there is no dashboard band for a goal.
+
+With the chip up the reference box demotes the two lowest-priority chips to
+COMPACT (need 786 against avail 732) and still shows every reading on one row;
+at 1,280 dp everything is FULL. Both are asserted in
+`tests/test_ui_goals.gd`.
 
 Number formatting (`NumberFormat`, pure): `money(n)` → `$8,420` below 10K, `$842K` below 10⁶, `$8.42M` below 10⁹, else `$8.42B`, always 3 significant digits above 10K and negatives as `−$1.2M`; `rate(per_game_hour)` displays per day as `value * 24` with a `+`/`−` prefix and `/d` suffix; `eta(sec)` is `m:ss` under an hour and `h:mm` above; `pop(n)` is thousands-grouped with `,`.
 
@@ -466,6 +488,73 @@ This script is the thesis statement of the game in 90 seconds: one component fai
 | A14 | No colour-only errors | every blocked action states its reason in words (§2.7 formatter) | copy review |
 | A15 | Screen reader labels | every interactive Control sets `tooltip_text` used as the accessibility name | tree walk asserts non-empty |
 
+### 2.19 S14 — the goals sheet (Wave 9)
+
+Doc 09 §2.14 gives every city level an objective list. This is where the player
+reads it, and after the HUD it is the screen they open most.
+
+**Entry.** §2.4's goal chip, and nothing else. It is a full-screen modal on
+`ModalLayer` with the S9 contract: the scrim is the only `STOP` control while it
+is up, Android BACK closes it first (§2.2), and opening it closes its siblings.
+
+**Layout**, top to bottom, all built in code from `GoalsModel`'s plain data:
+
+```
+ ┌──────────────────────────────────────────┐
+ │ Goals                                  ✕ │   header
+ ├──────────────────────────────────────────┤
+ │  L3   The budget                         │   badge (display type) + name
+ │  Every building you own costs money…     │   one sentence of intent
+ │  Teaches: apartments, the tax slider…    │   one sentence of scope, muted
+ │  ▓▓▓▓▓▓░░░░░░            2 of 4 done     │   the level bar
+ ├──────────────────────────────────────────┤
+ │  ✓  Build an apartment block             │
+ │  ○  Set the tax rate                 0/1 │   mark · sentence · bar · counter
+ │  ○  Get happiness to 70        ▓▓▓░ 66/70│
+ │  Or grow to 1,600 residents — the level  │   the §2.11 backstop, greyed
+ │  arrives either way.                     │
+ ├──────────────────────────────────────────┤
+ │  REACHING LEVEL 4 UNLOCKS                │   the payoff, in its own card
+ │   · High-rise · Upgrades to level 4      │
+ │   · 6 more blocks to buy                 │
+ │  Then: When it goes wrong                │   the next level, named
+ │  ✓0  ✓1  ✓2  ○3  ○4  ○5                  │   the arc, as a strip
+ └──────────────────────────────────────────┘
+```
+
+Six decisions worth recording:
+
+1. **The counter is a fraction, right-aligned**, so the eye runs down a column
+   of numbers rather than hunting for each one at the end of its line. A
+   finished row shows a tick and **no** counter — `1/1` is noise.
+2. **The mark is a glyph, not a colour** (A5): `✓` / `○`, with the palette's
+   state colour as the redundant channel.
+3. **The reward card is READ, never authored.** "Level 3 unlocks High-rises" is
+   `min_city_level` on doc 02's build card, the building level doc 02's upgrade
+   ladder opens at that rung, and the count of doc 09 blocks gated on it. A
+   retune of any of the three moves this card with it and cannot leave it lying.
+   `data/ui.json.goals.max_reward_rows` caps it so a rich rung cannot push the
+   objectives off a 360 dp display.
+4. **The backstop is shown, greyed.** §2.11's population rung is the other route
+   up (doc 09 §2.14.1), and hiding it would make the sheet look like a gate when
+   it is a shortcut.
+5. **The strip starts at level 0** — doc 12 §2.17's tutorial. A strip that starts
+   at 1 reads as though the player has not begun.
+6. **The finished state is a payoff card, not an empty list**: badge, a sentence
+   naming what they ran, and the strip full of ticks. The chip is gone from the
+   bar by then.
+
+**Moments.** `goal_completed` pulses the row that landed for
+`layout.unlock_pulse_s`, once, and A8 suppresses the motion entirely under
+`reduce_motion` — the tick and the toast still say what happened.
+`city_level_objectives_met` raises §2.15's toast (`ui_toast_goal_level`) and
+§2.14's `power_restored` haptic cue.
+
+**The handoff.** §2.17's tutorial gains a twelfth step, `next_goals`: a soft
+coach mark on the goal chip, satisfied by opening this sheet **or** by
+acknowledging the card. The tutorial used to end at `payoff` and leave the player
+in a running city with nothing to aim at.
+
 ---
 
 ## 3. Data Schema
@@ -733,6 +822,8 @@ Headless (`tests/ui/`), no scene tree — these exercise `ui/logic/` classes wit
 21. **`test_string_table`** (G-8) — every `Str.t()` key referenced anywhere in `ui/**` exists in `data/strings.en.json`; every key matches `^(ui_[a-z0-9_]+|n_[a-z0-9_]+_(title|body))$`; every `n_<event>_*` event id exists in doc 08's event→class map and vice versa (no orphan copy, no uncopied event); no value contains a positional `%s`; no `.tscn` or `.gd` under `ui/` carries a literal display string (lint walk, same pass as test 19).
 22. **`test_build_card_variants`** (C-35) — the Utility tab emits exactly the eight cards of §2.7; the five `water_facility` cards produce payloads differing only in `variant`; every non-`water_facility` card omits `variant` entirely; a card's micro-row values equal the archetype table's row for that variant (no hardcoded kW).
 23. **`test_onboarding_no_manual_collection`** (C-59) — step 5 is `review_ledger`, completes on the Economy tab being open ≥ 2 s, and the step machine exposes no `collect_revenue` path; the string `manual_collection` appears nowhere in `ui/` or `data/`.
+
+24. **`test_ui_goals`** (§2.19, Wave 9) — the chip reads `L<level> · <done>/<total>` and **retires** when doc 09 §2.14's curriculum is finished; the bar is untouched until a curriculum is fed (test 10's `W = 880 keeps all chips FULL` still holds for a HUD with no goals model), and with the chip up P1–P4 *and the chip itself* survive every width from 480 to 1200 dp; every objective row resolves its copy and reads as a fraction, in the units the population chip uses; the reward card equals the set of build cards whose `min_city_level` is exactly that rung; a finished objective shows a tick and no counter; the row set rebuilds when a level lands; tapping the chip opens S14 and not S8; and `city_level_objectives_met` raises the toast. The sheet is swept by `tools/ui_preview.gd --screen=goals|goals_late|goals_done` at all five device boxes, at 100 % and at 130 % + larger targets, with zero findings of its own.
 
 Manual/device checklist (not automated): thumb-reach on a 6.1" and a 6.8" device, notch/cutout safe area on a punch-hole and a notched device, one-handed reachability of jump-to-worst, 150 % text scale at 640 dp, and the step-9 relight moment reading as a payoff.
 

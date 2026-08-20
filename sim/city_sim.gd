@@ -37,6 +37,9 @@ var districts: DistrictRegistry
 var population: PopulationSystem
 var happiness: HappinessModel
 var progression: ProgressionSystem
+## Doc 09 §2.14's teaching curriculum. Subscribes to `bus` rather than scanning,
+## and earns city levels through `progression.grant_level` — see `GoalSystem`.
+var goals: GoalSystem
 var stats: StatsRecorder
 var grid: PowerGrid
 var catalog: BuildingCatalog
@@ -178,6 +181,13 @@ func boot(seed_value: int, time_data: Dictionary, starter_data: Dictionary,
 	happiness = HappinessModel.new()
 	happiness.happiness = float(loader.population.get("happiness", 82.0))
 	progression = ProgressionSystem.new()
+	goals = GoalSystem.new()
+	# Doc 09 §2.14's one subscription. Installed here rather than in a phase
+	# system because a player command lands BETWEEN ticks — `cmd_place_building`
+	# emits `building_placed_sim` from the command thread of control, and a
+	# counter that only looked at events during a tick would miss the tap that
+	# caused it until the next one.
+	bus.observer = goals.observe
 	stats = StatsRecorder.new()
 	econ_curves = CostCurves.new(
 			StarterCityLoader.read_json("res://data/building_economy.json"),
@@ -695,7 +705,20 @@ func canonical_capture() -> Dictionary:
 ## migrator can key on, and a save written under the old dispatch rules is
 ## exactly the kind of thing a future rule change will need to recognise. A
 ## version that never moves when the rules move cannot be that key.
-const SAVE_SECTION_VERSION := 2
+##
+## **v3 — 2026-08-20, doc 09 §2.14's goal curriculum (Wave 9).** The body gains
+## ONE key, `goals`, and gains it additively: every other key is byte-for-byte
+## what v2 wrote. What it costs a v2 save is not a field, it is an ANSWER — a
+## city that has been played for thirty game-days has no record of which
+## objectives it met, because nothing was counting. `_v2_to_v3` therefore does
+## the only honest thing a migrator can do here: it stamps the body
+## `goals.bootstrap = true` and leaves the answer to `restore_state`, which is
+## the first place that can see the whole restored city (doc 08 §2.8 forbids a
+## migrator from reading `data/`, and the curriculum lives in `data/goals.json`).
+## `GoalSystem.bootstrap` then completes every level at or below the city's own
+## level and initialises the active one from what the city already HAS — see its
+## own docs for the two rules and why they are the kind ones.
+const SAVE_SECTION_VERSION := 3
 
 
 func save_section_version() -> int:
@@ -711,6 +734,7 @@ func migrate_save_section(body: Dictionary, from_version: int) -> Dictionary:
 	while version < SAVE_SECTION_VERSION:
 		match version:
 			1: body = _v1_to_v2(body)
+			2: body = _v2_to_v3(body)
 		version += 1
 	return body
 
@@ -722,6 +746,22 @@ func migrate_save_section(body: Dictionary, from_version: int) -> Dictionary:
 ## next person to read it needs to see that v1 was considered and deliberately
 ## left alone, not that a rung was skipped.
 static func _v1_to_v2(body: Dictionary) -> Dictionary:
+	return body
+
+
+## v2 → v3: **mark, do not answer.** Doc 08 §2.8's migrator contract is TOTAL and
+## may not read `data/`, and the answer this migration needs — which of doc 09
+## §2.14's objectives a thirty-game-day city has already met — is a function of
+## the whole restored city *and* of `data/goals.json`. Neither is visible from
+## here. So the body is stamped with the one bit `restore_state` needs, and a
+## save that somehow already carries a real `goals` block (there is no such save
+## today, but a hand-edited one is not this function's business to lose) is left
+## exactly as it is.
+static func _v2_to_v3(body: Dictionary) -> Dictionary:
+	var existing: Variant = body.get("goals", null)
+	if existing is Dictionary and (existing as Dictionary).has("earned_level"):
+		return body
+	body["goals"] = {"bootstrap": true}
 	return body
 
 
@@ -792,6 +832,7 @@ func capture_state() -> Dictionary:
 		"population": population.serialize(),
 		"happiness": happiness.serialize(),
 		"progression": progression.serialize(),
+		"goals": goals.serialize(),
 		"world_blocks": world.serialize_blocks(),
 		"timers": timers.serialize(),
 		"work": work.serialize(),
@@ -950,6 +991,98 @@ func restore_state(raw_body: Dictionary) -> void:
 	weather.deserialize(body.get("weather", {}))
 	director.deserialize(body.get("director", {}))
 	_refresh_road_density()
+	_restore_goals(body)
+
+
+## Doc 09 §2.14's half of the load, and it runs LAST on purpose: both branches
+## read the city that the lines above have just finished standing up.
+##
+##   * a v3 body carries the counters verbatim — save → load → advance stays
+##     bit-identical, which is what makes the goals section a save section and
+##     not a UI preference;
+##   * a v2 body carries `_v2_to_v3`'s marker instead, and the curriculum is
+##     BOOTSTRAPPED from the city itself.
+##
+## Either way the queue is emptied afterwards. A restore is not an achievement:
+## bootstrapping a level-4 city completes four levels' worth of objectives, and
+## publishing those would greet a returning player with four level-up toasts for
+## work they did last week.
+func _restore_goals(body: Dictionary) -> void:
+	var raw: Variant = body.get("goals", {})
+	var block: Dictionary = raw if raw is Dictionary else {}
+	if block.has("earned_level"):
+		goals.deserialize(block)
+		goals.reconcile(goal_state_view())
+	else:
+		goals.bootstrap(progression.city_level, goal_residue_counts(), goal_state_view())
+	goals.drain_events()
+
+
+## Publishes a `ProgressionSystem` event batch and keeps doc 09 §2.3's
+## purchasable set in step with the level those events may have moved.
+##
+## `WorldMap.refresh_purchasable` has always been documented as running "after
+## any purchase or city-level change", and only the purchase half was ever
+## wired — so a city that levelled up without buying anything went on showing
+## LOCKED on the ring-2 blocks it had just earned until the player happened to
+## buy something else. It is called HERE, at the moment the level moves, rather
+## than from a per-tick "has it changed?" guard, because a guard would refresh
+## on the first tick after a load and a live instance would not: that is a
+## save → load → advance divergence, and identity is not worth a tidier call
+## site.
+func publish_progression(events: Array) -> void:
+	for event: Variant in events:
+		var type := StringName(String((event as Dictionary)["type"]))
+		bus.emit(type, event)
+		if type == &"city_level_changed":
+			world.refresh_purchasable(progression.city_level)
+
+
+## The O(1) scalars `GoalSystem.STATE_KINDS` reads, once a game-hour.
+func goal_state_view() -> Dictionary:
+	return {
+		"population": float(population.city_population),
+		"happiness": happiness.happiness,
+		"stability": districts.city_stability,
+		"treasury": float(treasury.balance),
+	}
+
+
+## What the city can still SEE of the event kinds — the retroactive-safety input
+## to `GoalSystem.bootstrap`, and the one roster walk this system ever does.
+##
+## It runs once, on the load of a save written before the curriculum existed, and
+## it gathers only the keys the curriculum actually asks for
+## (`GoalSystem.residue_keys()`), so a curriculum with no `build_archetype` row
+## costs no walk at all.
+func goal_residue_counts() -> Dictionary:
+	var wanted := GoalSystem.residue_keys()
+	var out: Dictionary = {}
+	for key in wanted:
+		out[key] = 0
+	if wanted.is_empty():
+		return out
+	for id in roster_ids():
+		var key := "archetype:" + String((buildings[id] as Building).archetype)
+		if out.has(key):
+			out[key] = int(out[key]) + 1
+	for component_id in grid.component_ids():
+		var key := "grid:" + String(grid.component(String(component_id)).get("kind", ""))
+		if out.has(key):
+			out[key] = int(out[key]) + 1
+	for node_id in _sorted(water.nodes):
+		var key := "water:" + String((water.nodes[node_id] as WaterNode).variant)
+		if out.has(key):
+			out[key] = int(out[key]) + 1
+	if out.has("blocks_owned"):
+		out["blocks_owned"] = world.owned_count()
+	if out.has("blocks_ready"):
+		var ready_count := 0
+		for block_id in world.block_ids_sorted():
+			if (world.block(block_id) as LandBlock).is_ready():
+				ready_count += 1
+		out["blocks_ready"] = ready_count
+	return out
 
 
 ## Deterministic digest of the full sim state (Milestone 1 criterion 4).
@@ -3450,8 +3583,13 @@ class HourlyPhaseSystem extends SimSystem:
 		sim.happiness.advance(1.0, sim.districts.city_stability, 1.0,
 				sim.population.employment_balance(), 1.0,
 				sim.economy.happiness_tax_delta(sim.tax_rate))
-		for event in sim.progression.update(int(result["city_population"])):
-			sim.bus.emit(StringName(String(event["type"])), event)
+		# Doc 09 §2.14's per-hour reconcile, on the population this hour just
+		# produced. It reads four scalars and it is the ONLY state reading the
+		# curriculum ever takes — the event kinds counted themselves as they
+		# happened. The level it may have earned is granted in the REPORT phase
+		# of this same tick, which is where every other goal event is published.
+		sim.goals.reconcile(sim.goal_state_view())
+		sim.publish_progression(sim.progression.update(int(result["city_population"])))
 		for event in sim.economy.drain_events():
 			sim.bus.emit(StringName(String(event["type"])), event)
 	func advance_coarse(ctx: TimeContext) -> void:
@@ -3498,6 +3636,17 @@ class ReportPhaseSystem extends SimSystem:
 			sim.bus.emit(StringName(String(event["type"])), event)
 		for event in sim.events.drain_events():
 			sim.bus.emit(StringName(String(event["type"])), event)
+		# Doc 09 §2.14. LAST of the republishers, because every emit above may
+		# have moved a counter through `SimEventBus.observer` and this is the
+		# publication of what those moves came to. Anything the drain itself
+		# provokes lands on the next tick, which is the honest place for it: a
+		# goal completed BY a goal event is not a thing the curriculum has.
+		for event in sim.goals.drain_events():
+			sim.bus.emit(StringName(String(event["type"])), event)
+		# Objectives ADVANCE the level (doc 93 §G1); the population ladder in
+		# `progression.update` is the other route, and `grant_level` is monotone,
+		# so whichever arrives first wins and neither can take a level back.
+		sim.publish_progression(sim.progression.grant_level(sim.goals.earned_level))
 		# Block-dark transitions (report 98 C-38): the renderer's blackout /
 		# relight ceremony is driven by these, never by direct calls.
 		var fractions := sim.grid.block_dark_fractions(sim._block_dark_weights)

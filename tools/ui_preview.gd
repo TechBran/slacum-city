@@ -48,6 +48,7 @@ const SCREENS: Array[String] = [
 	"away", "away_short",
 	"alerts", "alerts_empty",
 	"overlay", "overlay_police", "overlay_fire", "overlay_folded",
+	"goals", "goals_late", "goals_done",
 	"settings", "saves", "pause",
 	"title", "title_fresh", "title_confirm",
 	"coach_welcome", "coach_place_house", "coach_dispatch", "coach_payoff",
@@ -83,6 +84,11 @@ var _findings := 0
 var _queue: PackedStringArray = []
 var _text_scale := 1.0
 var _large_targets := false
+## `--no-goal-chip`: suppress S14's top-bar chip for this run. The A/B half of a
+## finding — a top-bar defect that is present with and without it is the bar's,
+## not the chip's, and doc 91 D-12's lesson is that "it was already broken" has
+## to be MEASURED rather than assumed.
+var _no_goal_chip := false
 
 
 func _ready() -> void:
@@ -100,6 +106,8 @@ func _ready() -> void:
 			_text_scale = float(text.trim_prefix("--text-scale="))
 		elif text == "--large-targets":
 			_large_targets = true
+		elif text == "--no-goal-chip":
+			_no_goal_chip = true
 		elif text == "--audit":
 			_audit = true
 		elif text == "--strict":
@@ -162,6 +170,12 @@ func _mount() -> void:
 				_controller.formatter, _root.config, _controller.tile_m))
 	if _root.build_sheet != null:
 		_root.build_sheet.setup(_root.config, _controller)
+	# S14. Same wiring `game/main.gd` does: the sheet gets the shared config and a
+	# model over the live fixture sim, so the reward card is READ from the real
+	# build-card table rather than from a fixture that could drift from it.
+	if _root.goals_sheet != null:
+		_root.goals_sheet.setup(_root.config,
+				GoalsModel.new(_sim, _root.config, _controller))
 	_populate()
 
 
@@ -218,6 +232,12 @@ func _populate() -> void:
 	_root.feed_infrastructure(_infrastructure())
 	_root.feed_response(_response())
 	_root.refresh_dashboard(snapshot)
+	# S14's chip rides every screen in this sweep, not just the goals ones: it is
+	# a top-bar chip, so it changes the bar's solve at every device box and has to
+	# be measured there. `--no-goal-chip` takes it back out, which is how a
+	# finding is attributed to the chip rather than to the bar it landed on.
+	if not _no_goal_chip:
+		_root.refresh_goals()
 	for mode: StringName in [OverlayModel.MODE_POLICE, OverlayModel.MODE_FIRE]:
 		_root.feed_overlay_summary(mode, _coverage_summary())
 
@@ -467,6 +487,18 @@ func _apply(screen: String) -> void:
 		"overlay_folded":
 			_root.overlay_rail.select(OverlayModel.MODE_FIRE)
 			_root.overlay_rail.legend_card().toggle_button().pressed.emit()
+		"goals":
+			# Level 1 with one objective landed — the state a player is in for
+			# their first session, and the one the copy is written for.
+			_goals_at(0, 1)
+		"goals_late":
+			# Level 5's four objectives with two of them landed: the widest the
+			# sheet ever gets, and where its reward card is longest.
+			_goals_at(4, 2)
+		"goals_done":
+			# The curriculum finished. The chip has left the bar and the sheet is
+			# a payoff card — the one state with no objective rows at all.
+			_goals_at(5, 0)
 		"settings":
 			_root.settings_sheet.open()
 		"saves":
@@ -508,6 +540,34 @@ func _close_everything() -> void:
 	_root.refresh_incidents(_incidents(), 24.0)
 	_root.hud.refresh(_snapshot())
 	_root.ingest_service({"power01": 0.93, "water01": 0.71})
+
+
+## Drives the fixture sim's curriculum to a named state and opens S14.
+##
+## `earned` levels are marked complete and `landed` objectives of the level after
+## them are ticked — straight into `GoalSystem`'s own state rather than through a
+## fixture dictionary, because the sheet's job is to render what the SIM says and
+## a fixture would let the two disagree without anybody noticing.
+func _goals_at(earned: int, landed: int) -> void:
+	var goals: GoalSystem = _sim.goals
+	goals.earned_level = earned
+	goals.done.clear()
+	goals.progress.clear()
+	for raw: Variant in GoalSystem.levels():
+		var row: Dictionary = raw
+		if int(row["level"]) > earned:
+			continue
+		for entry: Variant in (row["objectives"] as Array):
+			goals.done[str((entry as Dictionary)["id"])] = true
+	var active := goals.active_level()
+	if active != GoalSystem.LEVEL_COMPLETE:
+		var objectives: Array = GoalSystem.level_row(active)["objectives"]
+		for i in mini(landed, objectives.size()):
+			goals.done[str((objectives[i] as Dictionary)["id"])] = true
+	goals.reconcile(_sim.goal_state_view())
+	goals.drain_events()
+	_root.refresh_goals()
+	_root.open_goals()
 
 
 ## S0 with a chosen profile behind it. The service is a stub for the same reason

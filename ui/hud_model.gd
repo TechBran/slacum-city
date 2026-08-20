@@ -64,6 +64,9 @@ const NO_DATA := "—"
 const CHIP_GLYPHS := {
 	"treasury": "", "incidents": "⚠", "grid": "⚡", "water": "💧",
 	"population": "👥", "net_income": "", "stability": "",
+	# S14's goal chip carries its own level number, so the glyph is the *kind* of
+	# thing it is — a target — and never the value.
+	"goals": "◎",
 }
 
 const STABILITY_HIGH := &"high"
@@ -84,7 +87,7 @@ const STABILITY_WORDS := {
 const CHIP_LABELS := {
 	"treasury": "Treasury", "incidents": "Active incidents", "grid": "Grid health",
 	"water": "Water health", "population": "Population", "net_income": "Net income",
-	"stability": "Stability",
+	"stability": "Stability", "goals": "Level and goals",
 }
 
 const _DEFAULT_CHIP_PRIORITY := ["treasury", "incidents", "grid", "water",
@@ -389,9 +392,51 @@ static func chip_label_key(chip_id: String) -> String:
 	return "ui_hud_chip_%s" % chip_id
 
 
+## Doc 09 §2.14's goal chip (S14). It is NOT a row of `layout.chip_priority`,
+## and that is deliberate: §2.4's seven readings are permanent instruments and
+## this one is a **teaching surface that retires**. It appears while the
+## curriculum is unfinished and leaves when it is done, which is why it is a
+## flag rather than a table row — a chip in the priority list would cost the
+## reference layout a demotion for the whole life of the city, and doc 12 test
+## 10's "W=880 keeps all chips FULL" would stop being true for everyone,
+## including the players it can no longer teach anything.
+##
+## `layout.goal_chip_index` places it (1 by default: immediately after the
+## treasury, which is the reading a goal most often costs money against).
+const _DEFAULT_GOAL_CHIP_INDEX := 1
+const CHIP_GOALS := "goals"
+## What `GoalsModel` puts between the level and the fraction. The compact form
+## splits on it, so the two files have to agree about one character.
+const GOAL_CHIP_SEPARATOR := "·"
+
+## Set by the shell each refresh through `ingest_goals`; false restores §2.4's
+## seven-chip bar exactly.
+var goals_visible := false
+
+
+## `{visible, text, label}` from `GoalsModel.chip_view()`. Held rather than
+## passed through the snapshot because doc 09 §2.14 settles the curriculum on the
+## game-hour boundary while the HUD repaints several times a second — the same
+## split `ingest_service` makes for the ⚡/💧 readings.
+var _goals_chip: Dictionary = {}
+
+
+func ingest_goals(chip: Dictionary) -> void:
+	_goals_chip = chip.duplicate()
+	goals_visible = bool(chip.get("visible", false))
+
+
+func goal_chip_index() -> int:
+	return UIConfig.get_int(_layout, "goal_chip_index", _DEFAULT_GOAL_CHIP_INDEX)
+
+
 func chip_order() -> Array:
 	var priority: Variant = _layout.get("chip_priority", _DEFAULT_CHIP_PRIORITY)
-	return priority.duplicate() if priority is Array else _DEFAULT_CHIP_PRIORITY.duplicate()
+	var order: Array = priority.duplicate() if priority is Array \
+			else _DEFAULT_CHIP_PRIORITY.duplicate()
+	if goals_visible and not order.has(CHIP_GOALS):
+		order.insert(clampi(goal_chip_index(), 0, order.size()), CHIP_GOALS)
+	return order
 
 
 ## How many rows the top bar may wrap to before it starts hiding chips
@@ -544,6 +589,12 @@ func solve_top_bar(width_dp: float, clock_w_dp: float = -1.0,
 			else UIConfig.get_num(_layout, "clock_chip_w_dp", _DEFAULT_CLOCK_W)
 	var never_hidden := UIConfig.get_int(_layout, "chip_never_hidden_count",
 			_DEFAULT_NEVER_HIDDEN)
+	# The goal chip lands INSIDE the protected prefix, so the prefix grows by one
+	# to keep the same four readings in it. Without this, inserting at index 1
+	# would quietly push the water chip out of §2.4's never-hidden set — a
+	# teaching aid may not cost the player a permanent instrument.
+	if goals_visible and goal_chip_index() < never_hidden:
+		never_hidden += 1
 	var avail := width_dp - clock_w - _DEFAULT_TOP_BAR_MARGIN
 	var avail_rest := width_dp - _DEFAULT_TOP_BAR_MARGIN
 
@@ -785,6 +836,14 @@ func chip_values(snapshot: Dictionary) -> Dictionary:
 				"%s %d" % [STABILITY_WORDS[String(band)], stability_pct],
 				str(stability_pct), stability_state(stability01)),
 	}
+	if goals_visible:
+		var goal_text := str(_goals_chip.get("text", ""))
+		# The compact form drops the level and keeps the fraction: the level is
+		# also on the goals sheet one tap away, the fraction is the thing that
+		# moves, and §2.4's compact mode exists to keep what moves.
+		var compact := goal_text.get_slice(GOAL_CHIP_SEPARATOR, 1).strip_edges()
+		out[CHIP_GOALS] = _chip(CHIP_GOALS, goal_text,
+				compact if compact != "" else goal_text, STATE_NORMAL)
 	(out["incidents"] as Dictionary)["badge_tier"] = badge
 	(out["grid"] as Dictionary)["pulse"] = health_pulses(grid_pct, "grid")
 	(out["water"] as Dictionary)["pulse"] = health_pulses(water_pct, "water")

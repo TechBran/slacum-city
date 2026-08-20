@@ -36,9 +36,13 @@ extends SimTest
 const SEED := 1337
 ## The eleven ids of `data/ui.json.onboarding.steps`, in order. Asserted against
 ## the file so a renumbering breaks here rather than silently skipping a beat.
+## Wave 9 appends a twelfth: doc 09 §2.14's handoff. The tutorial used to end at
+## `payoff` and leave the player in a running city with nothing to aim at;
+## `next_goals` points at the goals chip on the way out.
 const STEP_IDS: Array[String] = [
 	"welcome", "look_around", "open_build", "place_house", "unserved_wall",
 	"place_transformer", "blackout", "open_drawer", "dispatch", "relight", "payoff",
+	"next_goals",
 ]
 ## `blackout`'s `on_enter.delay_s` is 6 real seconds; the flow accumulates it out
 ## of `tick` observations, so the test feeds them in 0.1 s slices like a 10 Hz
@@ -319,11 +323,19 @@ func test_full_tutorial_through_the_real_ui() -> void:
 	# --- 11. payoff ---------------------------------------------------------
 	var payoff_ack := rig.root.onboarding.mark().ack_button()
 	payoff_ack.pressed.emit()
+	assert_true(rig.root.onboarding_active(),
+			"the payoff hands off rather than ending — doc 09 §2.14")
+	assert_eq(rig.step_id(), "next_goals", "and it hands off to the goals chip")
+
+	# --- 12. next_goals -----------------------------------------------------
+	# Either half of the step's `any_of` finishes it; this is the one the player
+	# who understood takes.
+	rig.root.open_goals()
 	assert_false(rig.root.onboarding_active(), "the flow is over")
 	assert_true(rig.root.onboarding.is_finished(), "and finished, not skipped")
 	assert_false(rig.root.onboarding.model.skipped, "the player played it")
 	assert_eq(rig.root.onboarding.model.completed_ids(), STEP_IDS,
-			"all eleven steps completed, in order")
+			"all twelve steps completed, in order")
 	assert_true(rig.actions.has(&"release_director"),
 			"and the director hold was lifted on the way out")
 
