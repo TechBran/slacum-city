@@ -3524,3 +3524,36 @@ one fork, both sides.
 - **It did not re-rule §22.3's 10–40 game-hour band**, which level 3 was already
   outside before this pass. Flagged in §25.4 as the open question that owns it.
 
+
+---
+
+## 26. Wave-9 integration — the combined tree, measured once (2026-08-20)
+
+Passes 23, 24 and 25 were built on sibling branches: the router + cadence epoch
+(§23), the level-6 rung (§24) and the player surfaces + curriculum re-arc (§25)
+each measured its own effect against the fork point, and none saw the others.
+This section is the one measurement taken after all three merged, on the same
+instrument (`tools/measure_curriculum.gd --days=45`, seeds 1337 / 4242 / 9001).
+
+| level | 1337 | 4242 | 9001 | duration (game-hours) |
+|---|---|---|---|---|
+| 1 | 13 | 13 | 14 | 13–14 |
+| 2 | 52 | 54 | 55 | 39–41 |
+| 3 | 111 | 115 | 119 | 59–64 |
+| 4 | 176 | 181 | 192 | 65–73 |
+| 5 | 366 | 357 | 361 | 169–190 |
+| 6 | 876 | 829 | 848 | 472–510 |
+
+All six levels complete on all three seeds. Against the sibling tables: levels
+1–4 sit within a game-hour or two of §25.3's re-arc row (the routing epoch under
+them moved arrivals by less than the seed spread), and the finale lands at game-
+day **34.5–36.5** against §24.9's 31.1–34.3 — the ~1.5-game-day difference is
+the street and repair spending the re-arc added, priced in §25.3. Gate 21's
+ruled bounds (level 3 ≤ day 6, level 5 ≤ day 21, arc ≤ day 40) hold on the
+combined tree with margins of 2 / 5.7 / 3.5 game-days; its docstring carries
+this table verbatim. `repaired` runs 198–220 over 45 game-days now that the
+actions row exists — repair went from a taught two-count to a standing habit,
+which is exactly what §25.1 predicted the surface would do.
+
+End-state hashes for the record (seed → `state_hash`): 1337 `1fe8ec39a8aba2bb…`,
+4242 `30b7e1b983613dbb…`, 9001 `8cfb6719923bc92b…`.

@@ -1486,8 +1486,25 @@ func test_gate_20_the_city_level_ladder_is_reachable() -> void:
 ## MERGED (Wave 9 integration): the two tables below were measured on sibling
 ## branches — the first with the level-6 rung and no street/repair rows, the
 ## second with the street/repair re-arc and no level 6 — and BOTH predate the
-## routing epoch (doc 93 §H) landing beside them. The combined-tree measurement
-## is the one the assertions below are held against; doc 92 §25.3 carries it.
+## routing epoch (doc 93 §H) landing beside them. The COMBINED tree (all three
+## at once) measures, on the same instrument (`tools/measure_curriculum.gd
+## --days=45`, seeds 1337/4242/9001):
+##
+## | level | 1337 | 4242 | 9001 | duration (game-hours) |
+## |---|---|---|---|---|
+## | 1 | 13 | 13 | 14 | 13–14 |
+## | 2 | 52 | 54 | 55 | 39–41 |
+## | 3 | 111 | 115 | 119 | 59–64 |
+## | 4 | 176 | 181 | 192 | 65–73 |
+## | 5 | 366 | 357 | 361 | 169–190 |
+## | 6 | 876 | 829 | 848 | 472–510 |
+##
+## Every claim below is held against THIS table: level 3 on game-day 4 on all
+## seeds (bound 6), level 5 on day 14.9–15.3 (bound 21), the arc done on day
+## 34.5–36.5 (bound 40). The street/repair rows cost the finale ~1.5 game-days
+## against the level-6 branch's own 31.1–34.3 — the two features price each
+## other, and the margins hold. `repaired` is 198–220 across 45 game-days now
+## that the actions row exists, against 57–61 over 21 on the sibling branch.
 ##
 ## | level | 1337 | 4242 | 9001 | duration (game-hours) |
 ## |---|---|---|---|---|
@@ -1601,7 +1618,7 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 							% [int(seed_value), int(first_day_at[5]), LONG_DAYS])
 		assert_true(int(first_day_at[top]) <= CURRICULUM_TOP_LEVEL_DAYS,
 				("seed %d finished the arc on game-day %d; the ruled bound is %d "
-						+ "game-days (measured 31.1 / 33.5 / 34.3 — doc 92 §24.9)")
+						+ "game-days (measured 34.5-36.5 on the merged tree — doc 92 §24.9)")
 						% [int(seed_value), int(first_day_at[top]),
 						CURRICULUM_TOP_LEVEL_DAYS])
 		# Monotone: a curriculum level, once earned, is never given back — the

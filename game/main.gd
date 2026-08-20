@@ -27,6 +27,9 @@ var build_controller: BuildController
 var build_sheet: BuildSheet
 var building_panel: BuildingPanel
 var ghost_view: GhostView
+## doc 12 §2.7's RUN ghost (roads, water mains). The box ghost's twin; see
+## `ui/path_ghost_view.gd`.
+var path_ghost_view: PathGhostView
 var construction_view: ConstructionSiteView
 var construction_plant: ConstructionVehicleView   # doc 11 §2.16: plant + deliveries
 var vehicle_view: VehicleView
@@ -68,6 +71,9 @@ var _want_title := false  # clean player launch → the title door owns the load
 var _title_up := false    # true while the door is showing; gates saves + catch-up
 var _render_data: Dictionary = {}
 var road_surface: RoadSurfaceView
+## doc 11 §7.4's PERF line — emitted by this, because nothing ever called
+## `PerfGovernor.perf_line()`. See `game/render/perf_telemetry.gd`.
+var perf_telemetry: PerfTelemetry
 
 
 func _ready() -> void:
@@ -158,6 +164,9 @@ func _ready() -> void:
 	touch_input.setup(camera_state, ui_root.config if ui_root != null else null)
 	touch_input.tapped.connect(_on_touch_tapped)
 	touch_input.long_pressed.connect(_on_touch_tapped)
+	# doc 12 §2.7: a single-finger stroke DRAWS a run while a run tool is up
+	# and pans the camera otherwise.
+	touch_input.world_drag_router = _route_world_drag
 
 	for arg in OS.get_cmdline_user_args():
 		if String(arg).begins_with("--screenshot="):
@@ -321,6 +330,24 @@ func _build_city_view(render_data: Dictionary) -> void:
 	add_child(vehicle_view)
 	vehicle_view.setup(render_data)
 	perf_governor = PerfGovernor.new(render_data, render_model.preset)
+	# doc 11 §2.13's Fold pass: the PERF line §7.4 documents has never been
+	# emitted, because nothing called PerfGovernor.perf_line(). This is that call.
+	perf_telemetry = PerfTelemetry.new(render_data)
+	perf_telemetry.set_viewport(get_viewport().get_viewport_rid())
+	perf_telemetry.set_census_source(func() -> Dictionary:
+			return render_model.tier_census())
+	perf_telemetry.set_instance_source(func() -> int:
+			return render_model.building_count())
+	# doc 13 §7 D-17: one PERFIO line per save/load, ^PERF-anchored so one
+	# logcat grep collects both halves.
+	if save_service != null:
+		save_service.log_io = true
+	# Boot-time presets: a phone that auto-detected into Performance used to come
+	# up with Balanced counts on every per-layer view until the player touched
+	# the settings row. Seed them all from the resolved preset once, here.
+	if road_surface != null:
+		road_surface.set_preset(render_model.preset, render_data)
+	vehicle_view.set_preset(render_model.preset, render_data)
 	android_lifecycle.thermal_status_changed.connect(perf_governor.set_thermal_status)
 	construction_view = ConstructionSiteView.new()
 	construction_view.name = "ConstructionSites"
@@ -332,7 +359,15 @@ func _build_city_view(render_data: Dictionary) -> void:
 	construction_plant.name = "ConstructionPlant"
 	add_child(construction_plant)
 	construction_plant.setup(render_data)
+	construction_plant.set_preset(render_model.preset, render_data)
 	construction_plant.set_road_network(sim_host.sim.roads)
+	# Routes resolve two sites a frame, so a site's frontage can land AFTER its
+	# hoarding went up — and a road edit can move it later. This is the wire
+	# that turns the gate when it does (doc 11 §2.16).
+	construction_plant.site_frontage_changed.connect(
+			func(id: int, side: int) -> void:
+				if construction_view != null:
+					construction_view.set_gate_side(id, side))
 	# doc 11 §2.10b — the visible power grid. The height lookup is the mesh
 	# manifest's (a service drop lands on the eave, not on the roof); the road
 	# probe is doc 10's tile flags, which turn each cabinet's doors to the street.
@@ -384,7 +419,13 @@ func _add_construction_site(sim_id: String) -> void:
 			b.origin.y * 8.0 + size.y * 4.0)
 	var target_level := maxi(b.pending_level, maxi(b.level, 1))
 	var height := float(_height_of.get("%s:%d" % [b.archetype, target_level], 10.0))
-	construction_view.add_site(b.id, center, size, height)
+	# doc 11 §2.16: the hoarding's gate takes the frontage the vehicle layer
+	# derives off doc 10's live network, so the gate, the skip standing in it
+	# and the coned-off lane are all on the same face of the lot.
+	var gate_side := -1
+	if construction_plant != null:
+		gate_side = construction_plant.frontage_side(center, size)
+	construction_view.add_site(b.id, center, size, height, gate_side)
 	if construction_plant != null:
 		construction_plant.add_site(b.id, center, size, height)
 
@@ -448,6 +489,15 @@ func _on_sim_batch(batch: Array) -> void:
 				if rid >= 0:
 					translated.append({"type": &"BuildingPowerChanged",
 							"building": rid, "state": event.get("state", &"LIT")})
+			&"building_removed":
+				# The payload's `building` is already the render id; without this
+				# the mesh survives its own demolition.
+				translated.append(event)
+				var gone := int(event.get("building", -1))
+				if construction_view != null:
+					construction_view.remove_site(gone)
+				if construction_plant != null:
+					construction_plant.remove_site(gone)
 			&"building_damaged", &"building_destroyed", &"building_completed":
 				var rid2 := _render_id_from_int(event.get("building", -1))
 				if rid2 >= 0:
@@ -539,9 +589,16 @@ func _on_hour_settled(data: Dictionary) -> void:
 	for id: String in sim.grid.unserved_building_ids():
 		unserved[id] = true
 	var power: Dictionary = {}
+	var conditions: Dictionary = {}
 	for sim_id: String in sim.buildings:
 		power[sim_id] = 0.0 if unserved.has(sim_id) \
 				else sim.grid.power_availability_hour(sim_id)
+		# doc 12 §2.9 item 6's world-side cue: condition → the renderer's damage
+		# channel, so wear is visible on the building and a repair washes it off.
+		conditions[(sim.buildings[sim_id] as Building).id] = \
+				(sim.buildings[sim_id] as Building).condition
+	if render_model != null:
+		render_model.ingest_conditions(conditions)
 	var power01 := HudModel.mean01(power)
 	var water01 := HudModel.mean01(sim.water.service_factors())
 	ui_root.ingest_service({"power01": power01, "water01": water01})
@@ -637,6 +694,10 @@ func _wire_build_ui(ui_instance: Node) -> void:
 	ghost_view.name = "PlacementGhost"
 	add_child(ghost_view)
 	ghost_view.setup(cfg, build_controller.tile_m)
+	path_ghost_view = PathGhostView.new()
+	path_ghost_view.name = "PathGhost"
+	add_child(path_ghost_view)
+	path_ghost_view.setup(cfg, build_controller.tile_m)
 
 	build_sheet = ui_instance.get_node_or_null(
 			"SafeArea/SheetLayer/BuildSheet") as BuildSheet
@@ -654,6 +715,10 @@ func _wire_build_ui(ui_instance: Node) -> void:
 		building_panel.closed.connect(_on_building_panel_closed)
 		building_panel.upgraded.connect(_on_building_upgraded)
 		building_panel.fix_requested.connect(_on_fix_requested)
+		# doc 12 §2.9 item 6: the three actions the panel performs.
+		building_panel.repaired.connect(_on_building_action)
+		building_panel.priority_set.connect(_on_building_action)
+		building_panel.demolished.connect(_on_building_demolished)
 	if ui_root != null and ui_root.land_panel != null:
 		ui_root.land_panel.setup(cfg, LandPanelModel.new(sim_host.sim,
 				build_controller.formatter, cfg, build_controller.tile_m))
@@ -1007,6 +1072,9 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 			if construction_plant != null:
 				construction_plant.set_preset(str(model.value("graphics")),
 						StarterCityLoader.read_json("res://data/render.json"))
+			if road_surface != null:
+				road_surface.set_preset(str(model.value("graphics")),
+						StarterCityLoader.read_json("res://data/render.json"))
 			if perf_governor != null:
 				# A player's preset choice clears the ladder and any latched drop.
 				perf_governor.reset(str(model.value("graphics")))
@@ -1096,8 +1164,14 @@ func _on_title_new_game(slot: int) -> void:
 func _rebuild_road_multimesh() -> void:
 	if road_surface == null:
 		return
-	road_surface.rebuild(sim_host.sim.world.grid,
-			sim_host.sim.roads.graph if sim_host.sim.roads != null else null)
+	var graph: RoadGraph = sim_host.sim.roads.graph if sim_host.sim.roads != null else null
+	road_surface.rebuild(sim_host.sim.world.grid, graph)
+	# The lamps follow the asphalt on the SAME frame (doc 11 §2.10.1). The
+	# re-place is a set difference on the placement key, so a lamp that did not
+	# move keeps its id, its `anim_phase` and whatever ramp it is in.
+	if streetlights != null:
+		streetlights.replace_from(sim_host.sim.world.grid, graph,
+				sim_host.sim.world.block_of_tile)
 
 
 ## Rebuild every world view from the (just-replaced) sim. The render model's
@@ -1146,6 +1220,13 @@ func _resync_world_views() -> void:
 	# lands on the next frame's `sync`.
 	if power_infra != null:
 		power_infra.note_topology_changed()
+	# A loaded save is a different city, and the lamps were never resynced:
+	# `apply_lamps` is a set difference, so this retires the city that is gone
+	# and lights the one that arrived in one pass.
+	if streetlights != null:
+		streetlights.replace_from(sim.world.grid,
+				sim.roads.graph if sim.roads != null else null,
+				sim.world.block_of_tile)
 
 
 func _on_ui_dispatch(unit_id: int, incident_id: int) -> void:
@@ -1308,8 +1389,32 @@ func _on_placement_started(_archetype: String, _variant: String) -> void:
 func _on_placement_changed() -> void:
 	if ghost_view != null and build_controller != null:
 		ghost_view.apply(build_controller.ghost())
-	if ui_root != null and build_controller != null:
-		ui_root.placement_active = build_controller.is_placing()
+	# doc 12 §2.7: the run ghost. `BuildSheet.path_ghost()` answers
+	# `{visible: false}` whenever no run tool is up.
+	if path_ghost_view != null and build_sheet != null:
+		path_ghost_view.apply(build_sheet.path_ghost())
+	if ui_root != null:
+		# ONE question about placement, for both tools — without this the back
+		# stack has no `cancel_placement` rung while a run is being drawn.
+		ui_root.placement_active = build_sheet.is_placing() if build_sheet != null \
+				else (build_controller != null and build_controller.is_placing())
+
+
+## `TouchInput.world_drag_router`: hand a single-finger stroke to the build
+## sheet's run tool, or decline and let the camera have it.
+func _route_world_drag(phase: StringName, position: Vector2) -> bool:
+	if build_sheet == null or camera_state == null:
+		return false
+	var ground := camera_state.screen_to_ground(position,
+			Vector2(get_viewport().get_visible_rect().size))
+	match phase:
+		TouchInput.PHASE_BEGIN:
+			return build_sheet.begin_world_drag(ground)
+		TouchInput.PHASE_UPDATE:
+			return build_sheet.update_world_drag(ground)
+		TouchInput.PHASE_END:
+			return build_sheet.end_world_drag()
+	return false
 
 
 func _on_placement_committed(result: Dictionary) -> void:
@@ -1331,6 +1436,20 @@ func _on_building_panel_closed() -> void:
 
 
 func _on_building_upgraded(_result: Dictionary) -> void:
+	_refresh_hud()
+
+
+## §2.9 item 6's repair / priority: the city moved, so the chips do.
+func _on_building_action(_result: Dictionary) -> void:
+	_refresh_hud()
+
+
+## A demolition takes the building out of the world as well as out of the sim.
+## The renderer is told by `building_removed` on the bus; this only has to drop
+## the selection and re-read the chips.
+func _on_building_demolished(_sim_id: String, result: Dictionary) -> void:
+	if bool(result.get("ok", false)) and ui_root != null:
+		ui_root.selected_entity_id = ""
 	_refresh_hud()
 
 
@@ -1456,6 +1575,8 @@ func _process(delta: float) -> void:
 				environment_controller.last_night)
 	if perf_governor != null:
 		perf_governor.submit_frame(delta * 1000.0)
+		if perf_telemetry != null:
+			perf_telemetry.tick(delta, perf_governor)
 		if perf_governor.update(delta):
 			var knobs := perf_governor.knobs()
 			city_view.apply_governor(knobs)
@@ -1467,6 +1588,8 @@ func _process(delta: float) -> void:
 				vehicle_view.set_preset(String(knobs["preset"]), _render_data)
 				if construction_plant != null:
 					construction_plant.set_preset(String(knobs["preset"]), _render_data)
+				if road_surface != null:
+					road_surface.set_preset(String(knobs["preset"]), _render_data)
 			if audio != null:
 				audio.feed_batch(perf_governor.drain_events())   # telemetry cue
 	if _autosave_interval_s > 0.0 and save_service != null:
@@ -1524,6 +1647,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				_tap_candidate = true
 				camera_state.begin_pan(button.position, viewport_size)
 			else:
+				# §2.7: a stroke that was drawing a run ends without committing.
+				if build_sheet != null and build_sheet.is_drag_drawing():
+					build_sheet.end_world_drag()
 				camera_state.end_pan()
 				# doc 12 §2.16: ≤8 dp of travel in ≤220 ms is a TAP, not a pan —
 				# and a tap is what selects a building or moves the ghost.
@@ -1536,8 +1662,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		if motion.button_mask & MOUSE_BUTTON_MASK_LEFT:
 			if motion.position.distance_to(_tap_origin) > _tap_slop_dp:
 				_tap_candidate = false
-			camera_state.update_pan(motion.position, viewport_size,
-					get_process_delta_time())
+			# §2.7: while a run tool is up the drag DRAWS. Anchored on the press
+			# point, so the run starts under the finger.
+			if build_sheet != null and build_sheet.is_placing_path():
+				if not build_sheet.is_drag_drawing():
+					build_sheet.begin_world_drag(camera_state.screen_to_ground(
+							_tap_origin, viewport_size))
+				build_sheet.update_world_drag(camera_state.screen_to_ground(
+						motion.position, viewport_size))
+			else:
+				camera_state.update_pan(motion.position, viewport_size,
+						get_process_delta_time())
 		elif build_sheet != null and build_sheet.is_placing():
 			# Hover keeps the ghost under the pointer; the verdict is recomputed
 			# on every move (§2.7) and only PLACE ever commits it.
