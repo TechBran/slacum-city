@@ -866,7 +866,7 @@ paths**, with the change reverted and re-applied.
 
 ---
 
-## 21. WAVE 10 — the performance ladder (binding)
+## 22. WAVE 10 — the performance ladder (binding)
 
 *Four levers, each already named and priced by an earlier session, taken and
 re-measured. Every arm is interleaved WITHIN its round on one machine, because a
@@ -1035,7 +1035,7 @@ Two pre-existing sweep failures, both invisible at 100 % text and together worth
 
 ---
 
-## 21. WAVE 10 — the completeness re-audit (binding)
+## 23. WAVE 10 — the completeness re-audit (binding)
 
 ### RR-47 — A coverage claim is a JOIN, and every join in this project gets a test or an id (doc 91 Part II, doc 92 §17.6.1)
 
