@@ -4,19 +4,23 @@ extends Node3D
 ## for poles, lamp billboards, ground light pools and the §2.9 wet smears. Lit
 ## state comes from the RenderStateModel's per-lamp ramps (blackout-aware);
 ## this view only uploads. The OmniLight pool arrives with the perf pass.
+##
+## §2.10.1 changed two things about the geometry and nothing about the tuned
+## billboard/pool/smear system above them:
+##
+## * the pole is `CobraHeadMesh` — mast, arm and luminaire — and every instance
+##   YAWS it toward its own carriageway, from the `yaw` `StreetlightPlacer`
+##   supplies. A row with no `yaw` gets arm-along-+X, which is what every
+##   pre-cobra caller drew.
+## * the glow rig hangs off the **luminaire**, out at the end of the arm, and
+##   the ground pool rides over the FOOTWAY instead of 4 cm under the road
+##   (report RR-21 / STREET-1). Both are placement, not calibration: energies,
+##   radii, ramps and the day gate are untouched.
 
+## Fallback lamp height for a call site that carries no `road_surface.lamp`
+## block. The live number is `head_offset.y`, read off `CobraHeadMesh`.
 const LAMP_HEIGHT := 8.2
-const POLE_HEIGHT := 8.0
-const POLE_WIDTH := 0.22
 const POOL_RADIUS := 6.0
-## Base weathering, baked into the pole's vertex colour. `POLE_GRIME_M` is how
-## far up the shaft the road grime reaches and `POLE_GRIME_FLOOR` how dark it
-## gets at grade; the collar sits under all of it and is dirtier still.
-const POLE_GRIME_M := 2.4
-const POLE_GRIME_FLOOR := 0.52
-const POLE_COLLAR_M := 0.30
-const POLE_COLLAR_SCALE := 1.55
-const POLE_COLLAR_GRIME := 0.86
 const POLE_ROUGHNESS := 0.58
 const POLE_METALLIC := 0.30
 ## Below this the smear buffer is not drawn at all (doc 11 §2.9 #2: "dry
@@ -24,6 +28,21 @@ const POLE_METALLIC := 0.30
 const SMEAR_MIN_WETNESS := 0.05
 
 var model: RenderStateModel
+## `road_surface.lamp` — the cobra-head dimensions and where the glow hangs.
+var lamp_cfg: Dictionary = {}
+## Local-frame offset from the pole base to the luminaire centre. Every glowing
+## element hangs off THIS, not off the top of the mast, which is the difference
+## between a lamp that lights the road and a stick with a halo on it.
+var head_offset := Vector3(0.0, LAMP_HEIGHT, 0.0)
+## The height the ground pool is uploaded at. Above the footway, which is above
+## the carriageway — see `_pool_y`.
+var pool_y := 0.255
+var _yaw_of: Dictionary = {}             # lamp id -> radians
+## lamp id -> {base, head, pool, yaw}. The same Vector3s that go into the
+## MultiMesh, kept script-side: `--headless` runs on the DUMMY rendering driver
+## and `MultiMesh.get_instance_transform` reads back identity there, so a
+## headless test can only check what the view publishes.
+var _anchor_of: Dictionary = {}
 var _lamp_ids_by_chunk: Dictionary = {}  # Vector2i -> Array[int]
 var _lamp_nodes: Dictionary = {}  # Vector2i -> {lamp, pool, smear}
 var _smear_nodes: Array[MultiMeshInstance3D] = []
@@ -43,6 +62,10 @@ var _smear_visible := false
 var wetness: float = 0.0
 
 
+## `lamps` rows need `id`, `block_id` and `pos` (the pole BASE). `yaw` is
+## optional and is the direction the cobra arm reaches in — `StreetlightPlacer`
+## supplies it so every lamp leans over its own carriageway; a call site that
+## omits it gets arm-along-+X, which is what every pre-cobra caller drew.
 func setup(p_model: RenderStateModel, render_data: Dictionary, lamps: Array) -> void:
 	model = p_model
 	var cfg: Dictionary = render_data.get("streetlights", {})
@@ -54,10 +77,15 @@ func setup(p_model: RenderStateModel, render_data: Dictionary, lamps: Array) -> 
 	if Color.html_is_valid(pole_hex):
 		_pole_tint = Color(pole_hex)
 	_pole_mesh_cache = null
+	var road: Dictionary = render_data.get("road_surface", {})
+	lamp_cfg = road.get("lamp", {})
+	head_offset = CobraHeadMesh.head_offset(lamp_cfg)
+	pool_y = _pool_y(road)
 	var weather: Dictionary = render_data.get("weather", {})
 	_smear_alpha = float(weather.get("wet_smear_alpha", 0.35))
 	for lamp in lamps:
 		var pos: Vector3 = lamp["pos"]
+		_yaw_of[int(lamp["id"])] = float(lamp.get("yaw", 0.0))
 		var rec := model.add_streetlight(int(lamp["id"]), lamp["block_id"], pos)
 		var chunk: Vector2i = rec.chunk
 		if not _lamp_ids_by_chunk.has(chunk):
@@ -66,6 +94,22 @@ func setup(p_model: RenderStateModel, render_data: Dictionary, lamps: Array) -> 
 	for chunk in _lamp_ids_by_chunk:
 		_build_chunk(chunk)
 	refresh()
+
+
+## ── the pool that was buried (report STREET-1) ────────────────────────────
+## `pool_y_m` was 0.06 and the road slab's TOP is 0.10, so every ground pool in
+## the game failed the depth test against the carriageway it was lighting. What
+## survived was the ring of it that spilled onto the block either side — a
+## doughnut of light around a dark road, which is a large part of why a lamp
+## read as "a stick popping out of the ground". The disc now rides just over the
+## FOOTWAY, the highest surface under a lamp, so one pool covers kerb, gutter
+## and both lanes. The 0.155 m it floats above the asphalt is invisible: at Z0's
+## 34 degrees of pitch that is 0.23 m of parallax across a 16 m disc with no
+## hard edge anywhere in it.
+func _pool_y(road: Dictionary) -> float:
+	var top := float(road.get("asphalt_top_m", 0.10)) \
+			+ float(road.get("kerb_height_m", 0.15))
+	return top + float((road.get("lamp", {}) as Dictionary).get("pool_lift_m", 0.005))
 
 
 func _build_chunk(chunk: Vector2i) -> void:
@@ -146,117 +190,52 @@ func _build_chunk(chunk: Vector2i) -> void:
 	# The smear spans road → lamp, so its quad is stretched off the 1.6 m
 	# billboard: narrower across, LAMP_HEIGHT tall.
 	var smear_basis := Basis.IDENTITY.scaled(
-			Vector3(0.55, LAMP_HEIGHT / maxf(0.01, _lamp_quad_m), 1.0))
+			Vector3(0.55, head_offset.y / maxf(0.01, _lamp_quad_m), 1.0))
 	for i in count:
-		var rec: RenderStateModel.StreetlightRec = model.streetlight(int(ids[i]))
+		var lamp_id := int(ids[i])
+		var rec: RenderStateModel.StreetlightRec = model.streetlight(lamp_id)
 		var base: Vector3 = rec.world_pos
-		lamp_mm.set_instance_transform(i, Transform3D(Basis.IDENTITY,
-				base + Vector3(0.0, LAMP_HEIGHT, 0.0)))
-		pool_mm.set_instance_transform(i, Transform3D(Basis.IDENTITY,
-				base + Vector3(0.0, 0.07, 0.0)))
+		# The arm reaches over the roadway, so the whole glow rig — billboard,
+		# ground pool and wet smear — hangs off the LUMINAIRE, out at the end of
+		# the arm, and not off the mast it is bolted to.
+		var yaw := float(_yaw_of.get(lamp_id, 0.0))
+		var basis := Basis.from_euler(Vector3(0.0, yaw, 0.0))
+		var head: Vector3 = base + basis * head_offset
+		var under := Vector3(head.x, maxf(base.y, pool_y), head.z)
+		lamp_mm.set_instance_transform(i, Transform3D(Basis.IDENTITY, head))
+		pool_mm.set_instance_transform(i, Transform3D(Basis.IDENTITY, under))
 		smear_mm.set_instance_transform(i, Transform3D(smear_basis,
-				base + Vector3(0.0, LAMP_HEIGHT * 0.5 + 0.06, 0.0)))
-		# The pole mesh stands ON its origin (y = 0 at the pavement), so the
-		# baked base weathering lands at grade wherever the lamp is placed.
-		pole_mm.set_instance_transform(i, Transform3D(Basis.IDENTITY, base))
+				Vector3(head.x, under.y + head_offset.y * 0.5, head.z)))
+		# The pole mesh stands ON its origin (y = 0 at the footway), so the baked
+		# base weathering lands at grade wherever the lamp is placed.
+		pole_mm.set_instance_transform(i, Transform3D(basis, base))
+		_anchor_of[lamp_id] = {"base": base, "head": head, "pool": under, "yaw": yaw}
 	_lamp_nodes[chunk] = {"lamp": lamp_mm, "pool": pool_mm, "smear": smear_mm}
 
 
-## The pole, textured (`tools/gen_textures.py` `prop_steel`, tiled in metres by
-## `PropSurface`). Three things earn their triangles over the BoxMesh this
-## replaces:
+## The pole. `CobraHeadMesh` owns the geometry — mast, arm and luminaire — and
+## this owns the material it wears: `tools/gen_textures.py`'s galvanised
+## `prop_steel` page, tiled in METRES so a 0.14 m arm section and an 8 m mast
+## carry the same grain, over the base-weathering ramp the builder bakes into
+## vertex colour.
 ##
-## * **A base collar.** One 0.30 m skirt at grade. It is the single cheapest
-##   thing that makes a vertical stick read as a lamp POST rather than as a
-##   fence pale, and it is on the one mesh every lamp in the city shares.
-## * **Baked base weathering** in vertex colour, in three lifts up the shaft.
-##   Splash, road grime and the tide line a kerbside post always carries — and
-##   the reason this is vertex colour rather than a fourth page is that the page
-##   is TILED: any weathering authored into it would repeat every 2 m up the
-##   pole and read as a barber's pole.
-## * **UV in metres**, so `prop_steel`'s half-metre AO bands land at half-metre
-##   intervals up a real 8 m post.
-##
-## Total 34 triangles against the box's 12 — paid once on ONE shared mesh,
-## instanced per chunk, and still an order of magnitude under anything else on
-## screen.
+## ONE ArrayMesh for every lamp in the city; each instance yaws it toward its
+## own carriageway (`StreetlightPlacer` supplies the angle). 76 triangles
+## against the old stick's 34, paid once on the shared mesh.
 func _pole_mesh() -> ArrayMesh:
 	if _pole_mesh_cache != null:
 		return _pole_mesh_cache
-	var half := POLE_WIDTH * 0.5
-	var tile := maxf(PropSurface.tile_m(), 0.01)
-	var verts := PackedVector3Array()
-	var norms := PackedVector3Array()
-	var cols := PackedColorArray()
-	var uvs := PackedVector2Array()
-	var idx := PackedInt32Array()
-
-	# The two lambdas below WRITE into the Packed arrays above. That works
-	# because a GDScript lambda's capture of a local shares storage with the
-	# enclosing scope, and `tests/test_prop_textures.gd` asserts the resulting
-	# geometry (38 triangles standing on y = 0 and reaching POLE_HEIGHT) rather
-	# than trusting it — if the capture ever stopped writing through, the mesh
-	# would come out empty and that test fails loudly.
-	var push := func(p: Vector3, n: Vector3, grime: float) -> int:
-		verts.push_back(p)
-		norms.push_back(n)
-		var k := lerpf(POLE_GRIME_FLOOR, 1.0,
-				clampf(p.y / maxf(POLE_GRIME_M, 0.01), 0.0, 1.0)) * grime
-		cols.push_back(Color(k, k, k, 1.0))
-		# Metres along the face and up the shaft: the page's own pitch.
-		var u := (p.z if absf(n.x) >= absf(n.z) else p.x) / tile
-		uvs.push_back(Vector2(u, -p.y / tile))
-		return verts.size() - 1
-	var quad := func(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3,
-			n: Vector3, grime: float) -> void:
-		var i0: int = push.call(p0, n, grime)
-		var i1: int = push.call(p1, n, grime)
-		var i2: int = push.call(p2, n, grime)
-		var i3: int = push.call(p3, n, grime)
-		# Godot front faces are CLOCKWISE — the same rule gen_graybox.gd and
-		# ConstructionSiteView.PropMesh follow.
-		for tri: Array in [[i0, i2, i1], [i0, i3, i2]]:
-			idx.append_array(PackedInt32Array(tri))
-
-	# Shaft, in three lifts so the grime ramp has vertices to sit on.
-	var lifts := [0.0, POLE_GRIME_M * 0.5, POLE_GRIME_M, POLE_HEIGHT]
-	var sides := [Vector3(0, 0, 1), Vector3(0, 0, -1), Vector3(1, 0, 0),
-			Vector3(-1, 0, 0)]
-	for n: Vector3 in sides:
-		var out := n * half
-		var side := Vector3(n.z, 0.0, -n.x) * half
-		for li in lifts.size() - 1:
-			var y0 := float(lifts[li])
-			var y1 := float(lifts[li + 1])
-			quad.call(out - side + Vector3(0.0, y0, 0.0),
-					out + side + Vector3(0.0, y0, 0.0),
-					out + side + Vector3(0.0, y1, 0.0),
-					out - side + Vector3(0.0, y1, 0.0), n, 1.0)
-	# Base collar: a wider skirt at grade, and the cap that closes the shaft.
-	var ch := POLE_COLLAR_M
-	var cw := half * POLE_COLLAR_SCALE
-	for n: Vector3 in sides:
-		var out := n * cw
-		var side := Vector3(n.z, 0.0, -n.x) * cw
-		quad.call(out - side, out + side, out + side + Vector3(0.0, ch, 0.0),
-				out - side + Vector3(0.0, ch, 0.0), n, POLE_COLLAR_GRIME)
-	quad.call(Vector3(-half, POLE_HEIGHT, -half), Vector3(-half, POLE_HEIGHT, half),
-			Vector3(half, POLE_HEIGHT, half), Vector3(half, POLE_HEIGHT, -half),
-			Vector3.UP, 1.0)
-
-	var arrays := []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = verts
-	arrays[Mesh.ARRAY_NORMAL] = norms
-	arrays[Mesh.ARRAY_COLOR] = cols
-	arrays[Mesh.ARRAY_TEX_UV] = uvs
-	arrays[Mesh.ARRAY_INDEX] = idx
-	var mesh := ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mesh := CobraHeadMesh.build(lamp_cfg)
 	mesh.surface_set_material(0, PropSurface.material("steel",
 			POLE_ROUGHNESS, POLE_METALLIC, _pole_tint))
 	_pole_mesh_cache = mesh
 	return mesh
+
+
+## Where one lamp's mast, luminaire and ground pool were placed:
+## `{base, head, pool, yaw}`. See `_anchor_of` for why this exists.
+func anchor_of(lamp_id: int) -> Dictionary:
+	return (_anchor_of.get(lamp_id, {}) as Dictionary).duplicate()
 
 
 ## Upload per-lamp lit ramps (model.advance already ran this frame). Pass

@@ -277,6 +277,7 @@ settings do not survive an app restart. See **D-3**.
 | § | Subject | Grade | Pointer / gap |
 |---|---|---|---|
 | 2.1 | Scene architecture | SHIPPED | `game/main.gd` + `game/render/` |
+| 2.1.2 | The street — asphalt, markings, kerbs, footways | SHIPPED (2026-08-20) | `RoadSurfaceView` + `road_surface.gdshader` / `sidewalk.gdshader`, off doc 10's `RoadGraph`; `test_road_surface.gd`. Two draw calls city-wide, zero added texture memory. |
 | 2.2 | Chunk lifecycle & slots | SHIPPED | `CityView` chunk buckets with hysteresis |
 | 2.3 | Sim → render data flow | SHIPPED | `main._on_sim_batch` → `RenderStateModel` |
 | 2.4 | Global shader parameters | SHIPPED | `sc_overlay_mode`, `sc_wetness`, … |
@@ -286,6 +287,7 @@ settings do not survive an app restart. See **D-3**.
 | 2.8 | Sky, day/night, fog, glow | SHIPPED | `EnvironmentController` |
 | 2.9 | Weather VFX | SHIPPED | `WeatherFX`; `test_weather_fx.gd` |
 | 2.10 | Streetlights | SHIPPED | `StreetlightView`; `test_power_streetlights.gd` |
+| 2.10.1 | Lamp placement + the cobra head | SHIPPED (2026-08-20) | `StreetlightPlacer` + `CobraHeadMesh`. Replaces the `(x + z) % 4` parity rule that stood every pole in the carriageway; fixes STREET-1, the ground pool uploaded under the road slab. |
 | 2.11 | Overlay mechanism | SHIPPED | `RenderStateModel.set_overlay_channel` |
 | 2.12 | Vehicles | SHIPPED | `VehicleView` + `VehicleMotion` |
 | 2.13 | Budgets, device matrix, **adaptive governor** | **PARTIAL** | three quality presets exist and are switchable from Settings; there is **no fps-driven governor** — grep for `governor` returns nothing. And with no benchmark city (doc 09 §2.13) the device matrix cannot be measured. |

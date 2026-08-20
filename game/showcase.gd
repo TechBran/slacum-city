@@ -12,6 +12,13 @@ extends Node3D
 ## band tier, the animated water, weather + wetness + lightning, streetlights,
 ## construction shells and props, and the vehicle layer.
 ##
+## The STREET pass (doc 11 §2.1.2 / §2.10.1) is why this scene now carries a
+## real `TileGrid` and a real `RoadGraph`: the carriageway, its markings, its
+## footways and its lamps are all a reading of the graph, so a synthetic ladder
+## of road strips could not show any of them. `--rain=0.9 --hour=21` is the pose
+## the pass is worth judging at — wet asphalt under a cobra head is the single
+## biggest thing it changed.
+##
 ## The surface pass added three things that had nowhere else to be judged:
 ## the ground is built as one 128 m plane per chunk with the four DISTRICT
 ## tones quartered across the grid (doc 09's `color_index`, which the showcase
@@ -57,11 +64,16 @@ const OVERLAY_MODES := ["none", "power", "water", "police", "fire", "traffic"]
 
 var render_model: RenderStateModel
 var city_view: CityView
+var road_surface: RoadSurfaceView
 var streetlights: StreetlightView
 var sites: ConstructionSiteView
 var vehicles: VehicleView
 var weather: WeatherFX
 var environment_controller: EnvironmentController
+
+## The synthetic street network the surface and the lamps are both read from.
+var _road_grid: TileGrid
+var _road_graph: RoadGraph
 
 var _screenshot_path := ""
 var _hour := 21.0
@@ -105,7 +117,7 @@ func _ready() -> void:
 	_parse_args()
 	var render_data: Dictionary = StarterCityLoader.read_json("res://data/render.json")
 	_build_environment(render_data)
-	_build_ground()
+	_build_ground(render_data)
 	_build_water()
 	_build_city(render_data)
 	_build_weather(render_data)
@@ -227,7 +239,7 @@ func _build_environment(render_data: Dictionary) -> void:
 	environment_controller.far_cull_m = 2400.0  # cinematic scene, no cull pressure
 
 
-func _build_ground() -> void:
+func _build_ground(render_data: Dictionary) -> void:
 	# The hinterland: one big plane under everything, at the undeveloped tone, so
 	# the city reads as a built patch inside unbought land rather than as a
 	# floating slab.
@@ -259,24 +271,38 @@ func _build_ground() -> void:
 			plane.mesh = block
 			plane.position = Vector3(cx * 128.0 + 64.0, 0.0, cz * 128.0 + 64.0)
 			add_child(plane)
-	# Avenue grid on chunk boundaries.
-	var road_mm := MultiMesh.new()
-	road_mm.transform_format = MultiMesh.TRANSFORM_3D
-	var strip := BoxMesh.new()
-	strip.size = Vector3(SPAN, 0.06, 10.0)
-	strip.material = GroundSurface.road_material(
-			Vector2(strip.size.x, strip.size.z))
-	road_mm.mesh = strip
-	road_mm.instance_count = (CHUNKS + 1) * 2
+	# ── the street grid (doc 11 §2.1.2) ───────────────────────────────────
+	# Was two dozen 10 m untextured strips laid across the chunk boundaries.
+	# It is now a real tile grid with a real `RoadGraph` over it, so the showcase
+	# judges the thing that ships: asphalt with wear, a centre line that knows
+	# its class, kerbs, footways, zebra crossings at every junction, and lamps
+	# standing on the kerb facing the carriageway.
+	#
+	# One tile per boundary line, never two: `_build_city` parcels tiles 1..15 of
+	# every chunk and a 3-tile footprint at local offset 13 reaches tile 15, so
+	# a second carriageway lane there would be built through. The two-tile dual
+	# carriageway is the starter city's shape and is covered by
+	# `tests/test_road_surface.gd` instead. Boundaries ALTERNATE class so both
+	# centre-line styles — the street's dashed single and the avenue's solid
+	# double — are in one frame.
+	_road_grid = TileGrid.new()
+	for z in CHUNKS * 16:
+		for x in CHUNKS * 16:
+			if _is_water(x, z):
+				_road_grid.set_flag(x, z, TileGrid.FLAG_WATER)
 	for i in CHUNKS + 1:
-		road_mm.set_instance_transform(i, Transform3D(Basis.IDENTITY,
-				Vector3(SPAN * 0.5, 0.0, i * 128.0)))
-		road_mm.set_instance_transform(CHUNKS + 1 + i, Transform3D(
-				Basis.from_euler(Vector3(0.0, PI * 0.5, 0.0)),
-				Vector3(i * 128.0, 0.0, SPAN * 0.5)))
-	var roads := MultiMeshInstance3D.new()
-	roads.multimesh = road_mm
-	add_child(roads)
+		var line := mini(i * 16, CHUNKS * 16 - 1)
+		var road_class := TileGrid.ROAD_AVENUE if i % 2 == 0 else TileGrid.ROAD_STREET
+		for t in CHUNKS * 16:
+			_road_grid.set_road(t, line, road_class)
+			_road_grid.set_road(line, t, road_class)
+	_road_graph = RoadGraph.new(_road_grid, RoadTunables.from_file("res://data/roads.json"))
+	_road_graph.rebuild_all()
+	road_surface = RoadSurfaceView.new()
+	road_surface.name = "RoadSurface"
+	add_child(road_surface)
+	road_surface.setup(render_data)
+	road_surface.rebuild(_road_grid, _road_graph)
 
 
 ## Is this tile in the canal? The building placer and the water mesh read the
@@ -418,22 +444,18 @@ func _build_sites(render_data: Dictionary, records: Array) -> void:
 				float(r[3]), int(r[4]), sites.has_crane(int(r[0]))])
 
 
+## Off the road GRAPH, exactly as the game does it — on the kerb, at the
+## authored pitch, arm over the carriageway. The hand-laid two-per-boundary
+## ladder this replaces stood every pole 6 m off the centre line in open
+## carriageway and pointed all of them the same way.
 func _build_streetlights(render_data: Dictionary) -> void:
-	var lamps: Array = []
-	var next_id := 100000
-	for i in CHUNKS + 1:
-		var line := i * 128.0
-		var along := 16.0
-		while along < SPAN:
-			var chunk_a := mini(int(along / 128.0), CHUNKS - 1)
-			var chunk_l := mini(i, CHUNKS - 1)
-			lamps.append({"id": next_id, "block_id": "C_%d_%d" % [chunk_a, chunk_l],
-					"pos": Vector3(along, 0.0, line - 6.0)})
-			next_id += 1
-			lamps.append({"id": next_id, "block_id": "C_%d_%d" % [chunk_l, chunk_a],
-					"pos": Vector3(line + 6.0, 0.0, along)})
-			next_id += 1
-			along += 32.0
+	var lamps := StreetlightPlacer.place(_road_grid, _road_graph, render_data,
+			func(x: int, z: int) -> Variant:
+				return null, 100000)
+	for lamp: Dictionary in lamps:
+		var t: Vector2i = lamp["tile"]
+		lamp["block_id"] = "C_%d_%d" % [mini(t.x / 16, CHUNKS - 1),
+				mini(t.y / 16, CHUNKS - 1)]
 	streetlights = StreetlightView.new()
 	add_child(streetlights)
 	streetlights.setup(render_model, render_data, lamps)

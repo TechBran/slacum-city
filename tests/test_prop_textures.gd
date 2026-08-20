@@ -186,7 +186,7 @@ func test_08_the_pole_carries_baked_base_weathering() -> void:
 	for i in verts.size():
 		if verts[i].y < 0.01:
 			lowest = minf(lowest, cols[i].r)
-		if verts[i].y > StreetlightView.POLE_HEIGHT - 0.01:
+		if verts[i].y > CobraHeadMesh.GRIME_M + 0.01:
 			highest = maxf(highest, cols[i].r)
 	assert_true(lowest < highest,
 			"grade %f must be dirtier than the head %f" % [lowest, highest])
@@ -214,17 +214,22 @@ func test_09_the_pole_stands_on_its_origin_and_wears_the_steel_page() -> void:
 	for p: Vector3 in verts:
 		lowest = minf(lowest, p.y)
 		top = maxf(top, p.y)
-	assert_true(verts.size() > 0,
-			"the pole mesh is not empty — the builder's lambdas write through")
-	assert_eq(mesh.surface_get_arrays(0)[Mesh.ARRAY_INDEX].size() / 3, 34,
-			"the pole is 34 triangles: 12 shaft quads, a 4-quad collar and a cap")
+	assert_true(verts.size() > 0, "the pole mesh is not empty")
+	assert_eq(mesh.surface_get_arrays(0)[Mesh.ARRAY_INDEX].size() / 3, 76,
+			"the cobra head is 76 triangles: 12 mast quads, a 4-quad collar, "
+			+ "16 arm quads and a 6-quad luminaire")
 	assert_almost_eq(lowest, 0.0, 1e-4,
-			"the pole rests on y=0 so the grime lands at the pavement")
-	assert_almost_eq(top, StreetlightView.POLE_HEIGHT, 1e-4, "…and reaches the lamp")
-	# The instance transform must therefore be the lamp base itself, not a
-	# half-height offset (which is what a centred BoxMesh needed).
-	var xform := pole.multimesh.get_instance_transform(0)
-	assert_almost_eq(xform.origin.y, 0.0, 1e-4, "the instance sits at grade")
+			"the mast rests on y=0 so the grime lands at the footway")
+	var lamp_cfg: Dictionary = (_render()["road_surface"] as Dictionary)["lamp"]
+	assert_true(top >= float(lamp_cfg["head_height_m"]),
+			"…and reaches the luminaire at %.2f m" % top)
+	# The instance transform is the lamp BASE — the mesh stands on its own
+	# origin, which is what puts the baked grime at grade wherever it is placed.
+	# (Read back from the view's own record: a `--headless` run is on the DUMMY
+	# rendering driver and `get_instance_transform` returns identity there.)
+	var anchor := view.anchor_of(1)
+	assert_almost_eq(float((anchor["base"] as Vector3).y), 0.0, 1e-4,
+			"the instance sits at grade")
 	var mat := mesh.surface_get_material(0) as StandardMaterial3D
 	assert_true(mat != null and mat.albedo_texture != null,
 			"the pole samples the galvanised page")
