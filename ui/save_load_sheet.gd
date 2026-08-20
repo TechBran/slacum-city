@@ -193,9 +193,17 @@ func _build_slot(row: Dictionary) -> PanelContainer:
 	info.add_child(saved)
 	_slot_labels[slot] = {"title": title, "summary": summary, "saved": saved}
 
-	var actions := HBoxContainer.new()
+	# `SAVE · LOAD · DELETE` measure 110 + 120 + 134 dp at 130 % text with larger
+	# targets, so an `HBox` asked for 380 dp of row, the slot list asked the
+	# scroller for it, and a `grow_horizontal = BOTH` sheet then centred 420 dp on
+	# a 360 dp phone with its ✕ 20 dp off the right edge. Three peers with no
+	# left-to-right meaning are exactly what a flow container is for: it asks for
+	# its widest child (134 dp) and wraps DELETE onto a second line when the row
+	# is narrow, while a wide box still lays all three side by side (D-38).
+	var actions := HFlowContainer.new()
 	actions.name = "Actions"
-	actions.add_theme_constant_override(&"separation", int(_spacing))
+	actions.add_theme_constant_override(&"h_separation", int(_spacing))
+	actions.add_theme_constant_override(&"v_separation", int(_spacing))
 	line.add_child(actions)
 	actions.add_child(_action_button(SaveSlotsModel.ACTION_SAVE, slot, "ui_saves_save",
 			bool(row["can_save"]), &"PrimaryFAB", str(row["title"])))

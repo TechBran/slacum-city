@@ -285,6 +285,10 @@ fun is_power_save_mode(): Boolean; fun battery_percent(): Int; fun is_charging()
 fun display_refresh_hz(): Int; fun set_sustained_performance(on: Boolean)
 // launch payload ("" if not opened from a notification)
 fun consume_launch_payload(): String
+// launch ARGUMENTS (D-20) — the Intent's `command_line_params` string array and
+// its `args` string, verbatim, because the export template drops both before
+// `OS.get_cmdline_user_args()` sees them. `game/dev_args.gd` owns the merge.
+fun launch_args(): Array<String>
 // signals: permission_result(Boolean), thermal_status_changed(Int), notification_opened(String)
 
 // schedule_notification request dictionary:
@@ -743,8 +747,8 @@ Adds: release AAB, upload keystore + Play App Signing, store listing assets, Dat
 | D-16 | Cold start | `am start -W` → `TotalTime` ≤ 4 000 ms on Tier B |
 | **D-17** | **Save and load, timed** | Three cold starts, five runs each, median `TotalTime`: **A** `--esa command_line_params "--,--title"` (no city load), **B** `"--,--resume"`, **C** `"--,--resume,--save-now"`. **`B − A` is the load, `C − B` is the save** — the difference cancels process start, Vulkan init and shader warm-up, which is what makes it work with no instrumentation in the build. Provisional (workstation, `tools/profile_save.gd`, the shipped `SaveService` path): founding city **14.4 ms save / 49.2 ms load**, 1,500-building city **138 ms / 456 ms**. Expect 2–3× on device. On a telemetry build, read `PERFIO` off logcat instead. **NOT RUN 2026-08-20 — blocked twice over:** the three arms are selected by arguments and no argument arrives (D-20), and the `PERFIO` fallback could not cover the LOAD either, because `game/main.gd` set `save_service.log_io` inside `_build_city_view()` (~line 344) while the boot load runs at ~line 133. **The flag now moves to `SaveService` construction**, so the next build times the load — which is the one number §2.9's ANR arithmetic has never had |
 | **D-18** | **Frame time and jank at the three poses, day and night** | Six runs: `--zoom=` 0.0 / 0.5 / 1.0 × hour 13 / hour 21, 60 s of `dumpsys gfxinfo … framestats` each. **Hour 13 is the shadow worst case and is the one that matters** — doc 11's whole measured record was taken at 21:00 with the sun down and an empty shadow pass, and daylight costs the benchmark city +142 draw calls at Z0. Gate: doc 11 §7.4's table, read against the DAY rows |
-| **D-19** | **Harness pre-flight** | Before D-17/D-18: confirm the launcher activity, confirm `--esa command_line_params "--,--zoom=1.0"` reaches the camera (a visible signal, not a log line), and confirm "Profile HWUI rendering" is OFF. `tools/device_runbook.md` §1 is the procedure and records why the incumbent `tools/bench_device.sh` invocation cannot work |
-| **D-20** | **Make `--esa command_line_params` reach the game** *(new, blocks D-17 and D-18)* | **RUN 2026-08-20 and FAILED.** Arguments do not reach `OS.get_cmdline_user_args()` on this export template: two runs at `--zoom=0.0` / `--zoom=0.5` produced byte-identical `dc`/`prim` sequences, and `--rain=1.0,--overlay=2` came up clear with no overlay. The city still loads on every launch — through `CrashSentinel`'s recovery branch, because `am force-stop` registers as an unclean exit — which is what disguises the fault. `GodotAppLauncher` is an `activity-alias` for `.GodotApp`, so the extra should forward; where it is dropped is not established. **Until this passes, D-17 and D-18 cannot be run at all** |
+| **D-19** | **Harness pre-flight** | Before D-17/D-18: confirm the launcher activity (`com.godot.game.GodotAppLauncher`), confirm `--esa command_line_params "--,--zoom=1.0"` reaches the camera (a visible signal, not a log line — D-20's fix makes this the pass/fail that unblocks the pose matrix), and confirm "Profile HWUI rendering" is OFF. `tools/device_runbook.md` §1 is the procedure and records why the incumbent `tools/bench_device.sh` invocation cannot work |
+| **D-20** | **Make `--esa command_line_params` reach the game** *(blocked D-17 and D-18)* | **FAILED 2026-08-20, FIXED the same day — re-run to confirm on device.** *The finding:* arguments do not reach `OS.get_cmdline_user_args()` on this export template — two runs at `--zoom=0.0` / `--zoom=0.5` produced byte-identical `dc`/`prim` sequences, and `--rain=1.0,--overlay=2` came up clear with no overlay. The city still loaded on every launch, through `CrashSentinel`'s recovery branch (`am force-stop` registers as an unclean exit), which is what disguised the fault. *The fix, and why it is where it is:* the extra is on the Intent — `GodotAppLauncher` is an `activity-alias` for `.GodotApp` and Android forwards extras across an alias — so the loss is inside the template's own command-line plumbing, which we do not patch (doc 13 §10.5: the patch set under `android/build/` is kept empty on purpose). **`SlacumNative.launch_args()` reads the Intent extras in Kotlin**, where they demonstrably survive, and **`game/dev_args.gd` merges that list with `OS.get_cmdline_user_args()`**, de-duplicating so a future engine fix cannot make `--advance-hours=4` count twice. Two extras are accepted: `--esa command_line_params "--,--resume,--zoom=1.0"` (Godot's own form, separator included) and `--es args "--resume --zoom=1.0"` (the one with no syntax to get wrong). Consumers read `DevArgs.user_args()`. **Verified off device:** `tests/test_dev_args.gd` (10 cases), `launch_args()` present in the exported APK's `classes.dex`, `aapt2` badging clean, debug APK 89.2 MB and signed. **The device half is the §1.2 probe: `--zoom=1.0` must visibly put the camera at the Z2 stop** |
 | **D-21** | **Replace `gfxinfo` with the `PERF` line everywhere** *(new)* | **`dumpsys gfxinfo` measures nothing on this app** — every `framestats` read returned `Total frames rendered: 0` and the `4950ms` sentinel, because Godot renders through a `SurfaceView` and never touches HWUI. Verified 2026-08-20. D-18's "60 s of `dumpsys gfxinfo … framestats`" is unrunnable as written; `adb logcat -s godot:V \| grep '^PERF'` is the replacement and carries `dc`, `prim`, `vram` and the chunk census besides |
 
 **The runbook.** `tools/device_runbook.md` is the whole session as commands — the
@@ -1048,7 +1052,17 @@ fun thermal_status(): Int                    // PowerManager.getCurrentThermalSt
 fun is_sustained_performance_supported(): Boolean
 fun set_sustained_performance(on: Boolean)
 // signal thermal_status_changed(Int)        // addThermalStatusListener, push
+fun launch_args(): Array<String>             // D-20; Intent extras, verbatim
 ```
+
+**`launch_args()` is not in §2.6's original surface** — it exists because D-20
+found that nothing else could get an argument into the game on device. It reads
+`command_line_params` (string array) and `args` (string, whitespace-split) off
+`activity.intent`, appends them in that order, and does **not** strip them: unlike
+a notification deeplink, a dev argument is *supposed* to survive a rotation and to
+answer the same way each of the three times `game/main.gd` asks. Everything about
+what an argument MEANS stays in `game/dev_args.gd` and `game/main.gd`, which is
+the same boundary the rest of this plugin keeps.
 
 **Not yet built:** every notification, permission and alarm method
 (`schedule_notification`, `cancel_*`, `scheduled_ids`, `notifications_enabled`,

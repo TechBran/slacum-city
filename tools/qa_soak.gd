@@ -205,7 +205,10 @@ var _priority_classes: Array[String] = []
 
 
 func _initialize() -> void:
-	_opts = Options.parse(OS.get_cmdline_user_args())
+	# `DevArgs.user_args()` rather than `OS` directly (doc 13 D-20): identical
+	# headless, and the one list that also works when this harness is driven from
+	# `adb` on a build where the export template eats the command line.
+	_opts = Options.parse(DevArgs.user_args())
 	if not _opts.errors.is_empty():
 		for message in _opts.errors:
 			printerr("qa_soak: " + message)

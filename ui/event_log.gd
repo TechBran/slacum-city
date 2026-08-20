@@ -68,12 +68,21 @@ func _ready() -> void:
 		setup(UIRoot.config_from(self))
 
 
+## The SECOND rung of the bottom-right rail (`UIWidgets.solve_corner_rail`): the
+## history chip sits above the alerts chip, which sits beside the drawer's tab.
+## The log is the least urgent of the three — you open it to read what already
+## happened — so it takes the rung furthest from the thumb (§2.3).
+func corner_rail_entry() -> Dictionary:
+	return {"control": _chip, "index": 2}
+
+
 ## Same corner discipline as AlertsCenter (doc 91 D-12): the chip yields to any
 ## other PanelLayer surface so two edge affordances never overlap.
 func _process(_delta: float) -> void:
 	if _chip == null or is_open():
 		return
 	_chip.visible = not UIWidgets.any_sibling_open(self)
+	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min)
 
 
 func _bind_nodes() -> void:
@@ -220,6 +229,7 @@ func _refresh_chip() -> void:
 	var total := model.size()
 	_chip.tooltip_text = UIWidgets.t(config, "ui_event_log_chip") if total <= 0 \
 			else UIWidgets.t_args(config, "ui_event_log_count", {"n": total})
+	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min)
 
 
 func _refresh_filters() -> void:

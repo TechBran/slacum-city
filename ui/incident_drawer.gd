@@ -278,6 +278,14 @@ func handle_is_visible() -> bool:
 	return _handle != null and _handle.visible
 
 
+## The tab of the bottom-right rail (`UIWidgets.solve_corner_rail`). Index 0 is
+## the affordance that KEEPS the edge: the handle is a bookmark on the display's
+## border and reads as one only there, so the chips that share the corner stack
+## in the column beside it rather than the other way round (D-16).
+func corner_rail_entry() -> Dictionary:
+	return {"control": _handle, "index": 0}
+
+
 ## The shell asks for this to size `HudModel.marker_rect()` — a pin must never
 ## end up behind an open drawer (§2.15).
 func drawer_width_dp() -> float:
@@ -332,6 +340,11 @@ func _refresh_handle() -> void:
 	# three-digit count both have to fit, and neither may be clipped.
 	_handle.custom_minimum_size.x = maxf(_handle_floor_w,
 			UIWidgets.needed_width(_handle))
+	# The column the tab just claimed is the column the alerts and event-log chips
+	# have to keep out of, and the tab's width is only knowable here — so the tab
+	# is what re-solves the rail, on the frame the count changes rather than on
+	# the one after it (D-16, `UIWidgets.solve_corner_rail`).
+	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min)
 
 
 func _paint_sort() -> void:
@@ -471,6 +484,8 @@ func _process(delta: float) -> void:
 	# Its own panel counts: on a 400 dp-tall landscape box the tab sat on two of
 	# the rows it had just opened, and the panel carries its own ✕.
 	set_handle_visible(not is_open() and not UIWidgets.any_sibling_open(self))
+	# A tab that has stood down frees its column; the chips beside it take it.
+	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min)
 	if _reduce_motion or not bool(_handle.get_meta("pulse", false)):
 		_handle.modulate.a = 1.0    # A8: a pulse is motion
 		return

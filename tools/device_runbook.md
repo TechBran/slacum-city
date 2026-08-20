@@ -12,16 +12,23 @@
 > 1. **§1.1 — the launcher activity is `com.godot.game.GodotAppLauncher`**, an
 >    `activity-alias` for `.GodotApp`. Not `com.godot.game.GodotApp`, which is
 >    what §1.1 and `tools/bench_device.sh` say. `am start` on the old name fails.
-> 2. **§1.2 — `--esa command_line_params` DOES NOT REACH
->    `OS.get_cmdline_user_args()` on this export template.** Verified twice: two
->    runs at `--zoom=0.0` and `--zoom=0.5` produced byte-identical `dc`/`prim`
->    sequences, and a run carrying `--rain=1.0,--overlay=2` came up in clear
->    weather with no overlay. **The entire §2 scenario vocabulary is therefore
->    unavailable**, and with it the pose matrix, the hour control and `--save-now`.
->    The city still loads on every launch, which is what disguises the fault —
->    but it loads through `CrashSentinel`'s recovery branch, because
->    `am force-stop` registers as an unclean exit, **not** through `--resume`.
->    *Do the §1.2 probe first and believe it.*
+> 2. **§1.2 — `--esa command_line_params` DID NOT REACH
+>    `OS.get_cmdline_user_args()` on this export template, and is now FIXED in
+>    the plugin.** The finding stands and is worth reading before you trust
+>    anything below: two runs at `--zoom=0.0` and `--zoom=0.5` produced
+>    byte-identical `dc`/`prim` sequences, and a run carrying
+>    `--rain=1.0,--overlay=2` came up in clear weather with no overlay. The city
+>    still loads on every launch, which is what disguises the fault — but it
+>    loads through `CrashSentinel`'s recovery branch, because `am force-stop`
+>    registers as an unclean exit, **not** through `--resume`.
+>
+>    **The fix (doc 13 D-20) is `SlacumNative.launch_args()`**: the Kotlin plugin
+>    reads the launching Intent's extras itself and `game/dev_args.gd` merges
+>    them with the engine's list, so every consumer sees one list. **It needs a
+>    NEW BUILD — the installed APK does not have it.** Until you have installed a
+>    build from this branch or later, §2's scenario vocabulary is still
+>    unavailable and the pose matrix is still undrivable. §1.2 is now the
+>    procedure for confirming the fix, and it is still the first thing you run.
 > 3. **§2 — `dumpsys gfxinfo` MEASURES NOTHING on this app.** Every `framestats`
 >    read returned `Total frames rendered: 0` and every percentile came back as
 >    the sentinel `4950ms`, because Godot renders through a `SurfaceView` and
@@ -115,27 +122,69 @@ adb shell cmd package resolve-activity --brief com.slacumcity.game | tail -1
 export-template change moves it and the script fails with a bare "Activity not
 started" that reads like a crash.
 
-### 1.2 How arguments reach the game — **the old form is wrong**
+### 1.2 How arguments reach the game — **do this probe first**
 
-`tools/bench_device.sh` launches with `--es cmdline "…"`. Two problems, both
-readable in the source rather than guessed at:
+`tools/bench_device.sh` launches with `--es cmdline "…"`, which is wrong three
+ways over. All three are readable in the source rather than guessed at:
 
 * Godot's Android launcher reads a **string ARRAY** extra, so `--es` (a single
   string) is the wrong `am` flag; `--esa` is the one that produces an array.
-* `game/main.gd` parses `OS.get_cmdline_user_args()`, which returns only what
-  follows a literal `--`. The extra must therefore CARRY the separator.
-
-So the form to verify is:
+* `game/main.gd` parses the merged dev-argument list, whose engine half returns
+  only what follows a literal `--`. The extra must therefore CARRY the separator.
+* **And on this export template the extra never arrived at all** — doc 13 D-20.
+  `SlacumNative.launch_args()` now reads it off the Intent in Kotlin and
+  `game/dev_args.gd` merges it with `OS.get_cmdline_user_args()`, which is what
+  makes everything in §2 drivable. That fix ships in the AAR, so **it is only in
+  the app once you have installed a build that contains it** — and only once
+  `game/main.gd`'s own argument loop reads `DevArgs.user_args()` rather than
+  `OS.get_cmdline_user_args()` directly. Both halves or neither: the plugin can
+  deliver the list, but the shell has to be the thing that reads it. Confirm
+  before the session, not during it:
 
 ```bash
-adb shell am start -n com.slacumcity.game/com.godot.game.GodotApp \
+grep -n 'DevArgs.user_args\|OS.get_cmdline_user_args' game/main.gd
+```
+
+  Three `OS.` hits and no `DevArgs` means the shell half has not landed and the
+  probe below will fail no matter how good the AAR is.
+
+Two forms work, and they are equivalent. Godot's own:
+
+```bash
+adb shell am start -n com.slacumcity.game/com.godot.game.GodotAppLauncher \
   --esa command_line_params "--,--resume,--zoom=1.0"
 ```
+
+and the one with no comma syntax and no separator to forget, which is the one to
+reach for when a scenario has quoting in it:
+
+```bash
+adb shell am start -n com.slacumcity.game/com.godot.game.GodotAppLauncher \
+  --es args "--resume --zoom=1.0"
+```
+
+Pass both if you like: the merge de-duplicates, so an argument that arrives twice
+is applied once. (That is not tidiness — `--advance-hours=4` counted twice would
+run the city eight hours forward before the first frame.)
 
 **Verify it with a visible signal, not with a log line.** `--zoom=1.0` puts the
 camera at the Z2 stop; if the app comes up at the default mid-zoom, the arguments
 did not arrive and every scenario below has to be driven by hand instead. Do this
 check FIRST — it decides which half of §2 you can run.
+
+The plugin also says so in logcat, which is the second opinion when the camera
+answer is ambiguous:
+
+```bash
+adb logcat -c && adb shell am start -n com.slacumcity.game/com.godot.game.GodotAppLauncher \
+  --es args "--resume --zoom=1.0"
+adb logcat -d -s SlacumNative:I | grep 'launch args'
+```
+
+A line reading `launch args: [--resume, --zoom=1.0]` means the Kotlin side has
+them. If that line is present and the camera still does not move, the fault is in
+`game/main.gd`'s arg loop, not in delivery — which is a different bug and a much
+easier one.
 
 ### 1.3 `--bench=S1|S2|S3` does not exist
 
@@ -190,8 +239,15 @@ integration snippet closes it for all three.
 new build before any `PERF` row can be collected.
 
 > **Amended 2026-08-20, post-integration:** the wiring landed and then was
-> GATED behind `_perf_capture_armed()`: the `--perf` user arg on DESKTOP, or —
-> because D-20 means no arg ever reaches the game on device — the flag file
+> GATED behind `_perf_capture_armed()`, which accepts either of two arming
+> switches. **`--perf` reaches the device once D-20's fix is in the build AND
+> `_perf_capture_armed()` reads the merged list** (`DevArgs.user_args()` — one
+> line in `game/main.gd`, which is the lead's; the branch report carries the
+> snippet). With both,
+>   `adb shell am start -n $PKG/$ACT --es args "--resume --perf"`
+> arms the capture the way it does on the workstation. Until then — and as the
+> belt-and-braces route for a session that wants the capture armed across
+> relaunches without repeating the argument — use the flag file
 >   `adb shell run-as com.slacumcity.game touch files/perf_capture.flag`
 > (delete it to disarm; debug builds only). Without one of the two, no
 > `PERF`/`PERFIO` row is emitted. Always-on it
@@ -221,7 +277,7 @@ Common preamble for every run:
 
 ```bash
 PKG=com.slacumcity.game
-ACT=com.godot.game.GodotApp
+ACT=com.godot.game.GodotAppLauncher   # the activity-alias; `.GodotApp` fails (§1.1)
 adb shell settings put global window_animation_scale 0
 adb shell settings put global transition_animation_scale 0
 # Developer options → "Profile HWUI rendering" MUST be OFF (not "bars on screen"),
@@ -721,8 +777,9 @@ direct, and all three need `game/main.gd`'s integration snippet plus one
    directly measurable on the phone rather than extrapolated.
 
 `tools/bench_device.sh` also needs its `--es cmdline` corrected to
-`--esa command_line_params "--,…"` and its `--bench=` scenarios replaced with the
-flag vocabulary in §1.3 before it can be run at all.
+`--esa command_line_params "--,…"` (or the simpler `--es args "…"`, which the
+plugin now also reads) and its `--bench=` scenarios replaced with the flag
+vocabulary in §1.3 before it can be run at all.
 
 ---
 
@@ -752,7 +809,9 @@ Marked up as run on 2026-08-20. `[x]` done, `[~]` partial, `[ ]` not reached.
 - [x] §1.1 activity name confirmed — **it is `GodotAppLauncher`, not `GodotApp`**
 - [x] §1.2 `--esa command_line_params` probe — **FAILED. Arguments do not reach
       the game.** This is what capped the session; everything `[ ]` below is
-      downstream of it
+      downstream of it. **Fixed since, in the plugin (doc 13 D-20) — re-run the
+      probe against a build from that branch or later before you conclude
+      anything from the `[ ]` rows**
 - [x] §1.4 graphics row read off `settings.cfg` — **no such file exists**; the
       preset was auto-detected and `PERF` reported `preset=balanced`. Could not
       be forced through the settings sheet (that needs UI driving, not args)

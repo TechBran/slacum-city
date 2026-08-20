@@ -81,6 +81,8 @@ Exact geometry (all inside `SafeArea`, origin top-left, H = safe height, W = saf
 | Speed button | (16, H−204, 56, 56) | occasional |
 | Jump-to-worst | (W−72, H−72, 56, 56) | **frequent** |
 | Drawer handle | (W−44, H−220, 44, 160) | **frequent** |
+| Alerts chip | (W−128, H−140, 72, 48) — rung 1 of the corner rail (D-37) | frequent |
+| Event-log chip | (W−128, H−196, 72, 48) — rung 2 of the corner rail (D-37) | occasional |
 | Alert banner stack | (W/2−200, 56, 400, 44 each, max 2) | notification |
 | Toast | (W/2−160, H−60, 320, 40) | notification |
 
@@ -853,6 +855,8 @@ Headless (`tests/ui/`), no scene tree — these exercise `ui/logic/` classes wit
 
 26. **`test_build_controller`'s actions block** (§2.9 item 6, Wave 10) — the repair row is absent at condition 1.00 and priced by doc 03 §2.5 below it, the panel charges exactly what it printed and then shows `E_JOB_IN_FLIGHT` in words; `Fix this →` on `E_CONDITION` buys the repair and hands the camera router nothing; the priority row is doc 04's own class roster and a tap moves the sim's shed tier; `DEMOLISH` fires on a full 800 ms hold and on nothing shorter, credits the quoted refund, and closes the panel. The run flow is asserted through the sheet the player touches: one `is_placing()` for both tools, the two-step bar, and a world drag that draws without committing on finger-up.
 
+27. **`test_ui_audit`'s corner-rail and sheet-wrap block** (D-37/D-38, Wave 11) — `UIWidgets.corner_slot()` reproduces the scene's authored offsets at 100 % text with 48 dp targets (alerts bottom 92, event log bottom 148, both 48 tall) and keeps exactly one `rail_gap_dp` of clear air between two 100 dp chips at 130 % with larger targets, with both chips clear of the column the tab reserved; all three affordances actually answer `corner_rail_entry()` with the index the rail expects (an affordance that forgets it is one the solver cannot see, and it lands back on top of its neighbour with nothing failing); and every settings row and every save-slot action group is a `FlowContainer`, so a row that does not fit wraps instead of widening its sheet. The geometry half is asserted on the **solver**, not on measured pixels, because a headless run has no text metrics — the pixel-accurate pass is `tools/ui_preview.gd --screen=all --audit`, whose whole-deck score is now **zero findings at 360×800, 412×915, 794×924 and 1280×720, at 100 % and at 130 % + larger targets**.
+
 Manual/device checklist (not automated): thumb-reach on a 6.1" and a 6.8" device, notch/cutout safe area on a punch-hole and a notched device, one-handed reachability of jump-to-worst, 150 % text scale at 640 dp, and the step-9 relight moment reading as a payoff.
 
 ---
@@ -1150,3 +1154,36 @@ player surface**: `cmd_place_road`, `cmd_place_water_main` and
 `path_ok`, `path_blocked`, `path_refund`, `building_repairable`. All six are
 clean under `--audit --strict` at 360×800, 412×915, 794×924, 880×400 and
 1280×720, and carry no finding of their own at 130 % text with larger targets.
+
+### Wave-11 deltas — the bottom-right corner, and the two sheets that outgrew the phone (2026-08-20)
+
+Both of these had been in every `--audit` sweep since the accessibility settings
+were first swept, and both are the same shape of bug D-13b was: **a container
+asked for more width than the display has, and `grow_horizontal = BOTH` centred
+the overflow rather than clipping it.** The sweep that found them is
+`tools/ui_preview.gd --screen=all --audit` at each supported box, run twice —
+once at 100 % text and once at 130 % with larger touch targets.
+
+| # | Delta | Where | Why |
+|---|---|---|---|
+| D-37 | **The bottom-right corner is a solved rail, not three authored offset pairs.** `UIWidgets.corner_slot()` / `UIWidgets.solve_corner_rail()`, the mirror of D-13's left-hand `rail_slot()`. The incident drawer's **handle is the tab and keeps the edge** (D-16's priority, made explicit: it is a bookmark on the display's border and reads as one only there); the alerts chip takes the first rung of the column beside it and the event-log chip the second, each slot as tall as the chips measure and `rail_gap_dp` apart. Membership is duck-typed like `close_siblings()` — a screen joins by answering `corner_rail_entry()` with `{control, index}` — so a hidden affordance is skipped and the ones above it close the gap. New tunable `layout.corner_rail_margin_dp` (92). | §2.3, §2.6, D-16 | Three affordances, three files, three hard-coded offset pairs sized for a 48 dp target. At 130 % text with larger targets the chips measure **100 dp** tall against a 56 dp pitch and the handle **94 dp** wide against a 56 dp reserve, so the alerts chip covered **1 848 px²** of the event-log chip (**3 872 px²** on the first frame, before the old per-frame reposition had run) and the handle covered **2 736 px²** of the log chip. That is **73 `overlapping_targets` findings on every box — 360, 412, 794, 880 and 1280 alike — across 36 of the 50 preview screens**: every screen where the HUD is behind whatever is open. At 100 % with 48 dp targets the solver reproduces the scene's authored offsets *exactly* (−92 / −140 / −56 / −128 and −148 / −196), which is why the reference box did not move. |
+| D-38 | **A sheet row wraps rather than widening its sheet.** The settings row and the save slot's action group are `HFlowContainer`s, not `HBox`es. A flow container asks for its **widest child**; an `HBox` asks for the **sum**, and a full-screen modal on `ModalLayer` grows *both ways* from its anchored rect when its minimum exceeds it. | §2.2, §2.13, D-11/D-17 | `Emergency contractors` (201 dp) beside its value chip (183 dp) made a **392 dp** settings row → a 400 dp row list → a **420 dp sheet** centred on a 360 dp phone at x = −20, so the sheet's own ✕ ended at **380 dp of 360** and `MANAGE SAVES` was laid out 400 dp wide starting 20 dp off the left edge. The save sheet reached the same 420 dp by a different road: `SAVE · LOAD · DELETE` measure 110 + 120 + 134 = **380 dp** of `HBox`. Wrapping costs nothing at the reference box — at 880 dp both rows still lay out on one line with the label expanding and the value flush right — and it is the only fix that scales, because the widths are the player's text-size setting and will keep growing. |
+
+**Measured, whole-deck, before → after** (`--screen=all --audit`, every finding
+of every kind, 50 screens per cell):
+
+| box | 100 % | 130 % + larger targets |
+|---|---|---|
+| 360 × 800 | 0 → 0 | **76 → 0** |
+| 412 × 915 | 0 → 0 | **73 → 0** |
+| 794 × 924 (Fold inner) | 0 → 0 | **73 → 0** |
+| 880 × 400 (reference) | 0 → 0 | 226 → **153** |
+| 1280 × 720 | 0 → 0 | **73 → 0** |
+
+The 153 that remain are all on the 400 dp-**tall** landscape box and none of them
+is a corner-rail or sheet finding: 147 are top-bar chips overlapping between
+wrapped rows (`Chip_water` 96, `Chip_treasury` 49, `Chip_grid` 2 — D-1's second
+row solved against a bar that is only 392 dp tall), and 6 are the title screen's
+button row, the pause menu's `SAVE & QUIT` and an alert banner's `VIEW` running
+off the bottom. Both are §2.4's and §2.19's to answer and are recorded here as
+the next wave's work, not fixed by this one.

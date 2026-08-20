@@ -20,6 +20,12 @@ extends RefCounted
 ##   only reports and forwards; what a status *means* for the frame cap and the
 ##   graphics preset is doc 11's.
 ##
+## * **`launch_args()`** — doc 13 D-20. The export template drops
+##   `--esa command_line_params` on the floor, so the plugin reads the launching
+##   Intent's extras itself and `DevArgs` merges the answer with
+##   `OS.get_cmdline_user_args()`. Without it no dev argument reaches the game on
+##   device and the runbook's whole scenario vocabulary is unreachable.
+##
 ## A fourth capability **now ships**: the notification platform
 ## (`supports_notifications`, `ensure_channel`, `post_notification`,
 ## `schedule_notification`, `cancel_notifications`, the `POST_NOTIFICATIONS`
@@ -123,6 +129,30 @@ func boot_id() -> String:
 	if _plugin == null:
 		return ""
 	return String(_plugin.boot_id())
+
+
+# ------------------------------------------------------------ launch args
+
+## The dev/QA arguments the launching Intent carried, verbatim (doc 13 D-20).
+##
+## `OS.get_cmdline_user_args()` answers `[]` on this export template no matter
+## what `am start --esa command_line_params` was given, so the plugin reads the
+## Intent extras itself and hands the list over here. **Nothing calls this
+## directly** — `DevArgs.user_args()` merges it with the engine's own list and is
+## the only list a consumer should read.
+##
+## Empty off-device, on a plugin-less build, and on every real player launch.
+func launch_args() -> PackedStringArray:
+	if _plugin == null or not _plugin.has_method("launch_args"):
+		return PackedStringArray()
+	var out := PackedStringArray()
+	var raw: Variant = _plugin.launch_args()
+	if raw is PackedStringArray:
+		return raw
+	if raw is Array:
+		for value: Variant in (raw as Array):
+			out.append(String(value))
+	return out
 
 
 # ------------------------------------------------------------------ thermal

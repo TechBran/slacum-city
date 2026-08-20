@@ -46,6 +46,11 @@ import java.io.File
  *     reporting and a route into system settings for the permanently-denied case.
  *     The *when* is GDScript's (`game/notifications/permission_flow.gd`); this side
  *     only knows how to ask and how to report what the system said.
+ *  5. **Launch arguments** (doc 13 D-20) — [launch_args] hands GDScript whatever
+ *     the launching Intent actually carried, because the export template does not
+ *     forward `--esa command_line_params` into `OS.get_cmdline_user_args()` on
+ *     this build. Reading the extra is a *how*; what an argument MEANS stays in
+ *     `game/dev_args.gd` and `game/main.gd`.
  */
 class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 
@@ -64,6 +69,21 @@ class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 
 		/** Randomised per boot by the kernel, world-readable, no permission needed. */
 		private const val BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
+
+		/**
+		 * The string-ARRAY extra Godot's own Android launcher is documented to read
+		 * as the process command line, and the one `adb shell am start --esa` puts
+		 * there. We read it a second time, from the Intent, because on this export
+		 * template it never reaches `OS.get_cmdline_user_args()` (doc 13 D-20).
+		 */
+		private const val EXTRA_COMMAND_LINE = "command_line_params"
+
+		/**
+		 * A plain string extra, for the `adb` invocation nobody gets wrong:
+		 * `--es args "--resume --zoom=1.0"`. Split on whitespace here because that
+		 * is marshalling, not meaning.
+		 */
+		private const val EXTRA_ARGS = "args"
 
 		/** Returned by every accessor that has no platform answer to give. */
 		private const val UNKNOWN_STATUS = -1
@@ -120,6 +140,10 @@ class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 	/** Set when the app was launched (or resumed) from a notification tap. */
 	private var launchPayload: String = ""
 
+	/** Whatever the launching Intent carried as dev arguments (doc 13 D-20). */
+	@Volatile
+	private var launchArgs: List<String> = emptyList()
+
 	override fun getPluginName(): String = PLUGIN_NAME
 
 	override fun getPluginSignals(): MutableSet<SignalInfo> = mutableSetOf(
@@ -134,6 +158,7 @@ class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 		live = this
 		registerThermalListener()
 		captureLaunchPayload()
+		captureLaunchArgs()
 	}
 
 	override fun onMainResume() {
@@ -141,6 +166,7 @@ class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 		// A tap while the process is alive arrives as a new intent on the launcher
 		// activity; re-reading it here is the only hook a GodotPlugin is given.
 		captureLaunchPayload()
+		captureLaunchArgs()
 	}
 
 	override fun onMainDestroy() {
@@ -162,6 +188,41 @@ class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 	/** Kernel boot id, or `""` if it could not be read (then skip the cross-check). */
 	@UsedByGodot
 	fun boot_id(): String = cachedBootId
+
+	// ---------------------------------------------------------- launch args
+
+	/**
+	 * The dev/QA arguments the launching Intent carried, **verbatim** — including
+	 * the literal `--` separator if the caller supplied one. `game/dev_args.gd`
+	 * merges this with `OS.get_cmdline_user_args()` and applies Godot's own
+	 * "everything after `--`" convention; deciding what an argument means is not
+	 * this file's business.
+	 *
+	 * Two extras are read, in this order, and both are appended:
+	 *
+	 *  * `command_line_params` — a string ARRAY, which is what
+	 *    `adb shell am start … --esa command_line_params "--,--resume,--zoom=1.0"`
+	 *    produces and what Godot's launcher is documented to consume. On this
+	 *    export template it never reaches `OS.get_cmdline_user_args()` (doc 13
+	 *    D-20), which is the whole reason this method exists;
+	 *  * `args` — a single string, split on whitespace, for
+	 *    `--es args "--resume --zoom=1.0"`. The comma-separated array form is the
+	 *    one every session has got wrong at least once; this one has no syntax to
+	 *    get wrong.
+	 *
+	 * Non-consuming and idempotent: `game/main.gd` asks more than once, and a
+	 * dev argument is not a deep link — replaying `--zoom=1.0` after a rotation is
+	 * the *correct* answer, where replaying a three-day-old incident is not.
+	 * Returns an empty array on a plain player launch, which is every launch that
+	 * did not come from `adb`.
+	 */
+	@UsedByGodot
+	fun launch_args(): Array<String> {
+		if (launchArgs.isEmpty()) {
+			captureLaunchArgs()
+		}
+		return launchArgs.toTypedArray()
+	}
 
 	// --------------------------------------------------------------- thermal
 
@@ -447,6 +508,41 @@ class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 		} catch (e: Exception) {
 			Log.w(TAG, "open signal refused: ${e.message}")
 		}
+	}
+
+	/**
+	 * Reads both argument extras off the current Intent. Unlike
+	 * [captureLaunchPayload] this does **not** strip them: the Intent is sticky,
+	 * and a sticky dev argument is a feature — the same `am start` line has to
+	 * survive a rotation and a `launch_args()` call from more than one place in
+	 * `game/main.gd`. An Intent carrying nothing leaves the previous answer alone,
+	 * so a resume cannot erase the arguments the launch arrived with.
+	 */
+	private fun captureLaunchArgs() {
+		val intent = activity?.intent ?: return
+		val collected = ArrayList<String>()
+		try {
+			intent.getStringArrayExtra(EXTRA_COMMAND_LINE)?.forEach { value ->
+				if (value != null && value.isNotEmpty()) {
+					collected.add(value)
+				}
+			}
+			intent.getStringExtra(EXTRA_ARGS)?.split(' ', '\t', '\n')?.forEach { value ->
+				val trimmed = value.trim()
+				if (trimmed.isNotEmpty()) {
+					collected.add(trimmed)
+				}
+			}
+		} catch (e: Exception) {
+			// A malformed extra from `adb` must not take the launch down with it.
+			Log.w(TAG, "launch args unreadable: ${e.message}")
+			return
+		}
+		if (collected.isEmpty()) {
+			return
+		}
+		launchArgs = collected
+		Log.i(TAG, "launch args: $collected")
 	}
 
 	private fun emitPermissionResult(granted: Boolean) {
