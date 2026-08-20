@@ -686,9 +686,15 @@ func _slot_bytes(service: SaveService, slot: int) -> int:
 ##
 ## Driven through `CatchUpPlanner.plan()` — head-align, coarse hours, mid-fine,
 ## fine tail, residual carry — because that is the schedule doc 01 §2.10
-## specifies and `TickScheduler.advance_coarse_n` asserts on. It is deliberately
-## NOT what `game/main.gd._on_app_resumed` does today; see the note below, which
-## the soak files every run so the divergence cannot go quiet.
+## specifies and `TickScheduler.advance_coarse_n` asserts on.
+##
+## **The divergence this harness was written to expose is closed** (2026-08-19,
+## Wave 7, doc 91 D-1): `game/main.gd._on_app_resumed` now plans the resume
+## through the same call and walks the same segments, so the soak and the shell
+## take the identical path. The `_note()` below still fires on any off-hour
+## pause and its text still describes the OLD shell; it is left as-is because
+## changing what this instrument reports is a behaviour change, not a comment —
+## flagged for whoever owns the next soak pass.
 func _pause_cycle(index: int) -> void:
 	var before := {"treasury": _sim.treasury.balance,
 			"population": _sim.population.city_population,

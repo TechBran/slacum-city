@@ -222,8 +222,12 @@ func test_a_city_already_in_a_manual_slot_needs_no_rescue() -> void:
 
 
 func test_the_shadow_half_is_asked_for_rather_than_assumed() -> void:
-	# `AUTOSAVE_SHADOW_SLOT` sits OUTSIDE every slot the player can see, so
-	# `data/ui.json` cannot name it and the model has to ask the service.
+	# An autosave slot sits OUTSIDE every slot the player can see, so
+	# `data/ui.json` cannot name it and the model has to ask the service. The
+	# stub still publishes two, because the CONTRACT is "whatever the service
+	# lists", not "one" — doc 08 §2.7 retired the real second slot in Wave 7 and
+	# the shipped `SaveService.autosave_slots()` now answers `[0]`, but a model
+	# that hard-codes that is a model that breaks the next time the answer moves.
 	var model := _model(SlotStub.new())
 	assert_eq(str(model.rotation_slots()), str(ROTATION))
 	assert_eq(str(model.manual_slots()), "[1, 2]", "3 visible slots, 0 is the autosave")

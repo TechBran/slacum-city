@@ -1,5 +1,7 @@
 extends SimTest
-## **Audit 91 D-14 / D-15, made executable.**
+## **Audit 91 D-17 / D-18, made executable** (filed as D-14 / D-15; renumbered
+## 2026-08-19 — doc 91's defect table carried two D-14/D-15 pairs and the
+## performance pair keeps the original ids).
 ##
 ## `IncidentWorld.water_mains()` and `IncidentWorld.road_intersections()` were
 ## base-class stubs returning `[]`, and `CityIncidentWorld` overrode NEITHER — so
@@ -21,7 +23,7 @@ func _sim() -> CitySim:
 	return CitySim.boot_from_files(1337)
 
 
-# ============================================================ D-14 — the mains
+# ============================================================ D-17 — the mains
 
 ## Every field doc 06 §2.6(d) reads, on every candidate, from the live doc 05
 ## system. The starter city's authored topology (doc 09 §2.9.6) is 13 mains.
@@ -29,7 +31,7 @@ func test_water_mains_join_is_doc06_shaped() -> void:
 	var sim := _sim()
 	var rows := sim.incident_world.water_mains()
 	assert_true(rows.size() > 0,
-			"D-14: CityIncidentWorld.water_mains() is still returning [] — the "
+			"D-17: CityIncidentWorld.water_mains() is still returning [] — the "
 			+ "water_main_break generator has no candidate source")
 	var total_km := 0.0
 	for entry in rows:
@@ -126,7 +128,7 @@ func test_freeze_flag_comes_from_doc05_not_a_doc06_guess() -> void:
 			"doc 05 §2.9's feature flag is the only answer (MVP: false)")
 
 
-# ==================================================== D-15 — the intersections
+# ==================================================== D-18 — the intersections
 
 ## Every field doc 06 §2.6(e) reads, on every candidate, from the live doc 10
 ## graph — including the unsignalised nodes `signalised_intersections()` drops
@@ -135,7 +137,7 @@ func test_road_intersections_join_is_doc06_shaped() -> void:
 	var sim := _sim()
 	var rows := sim.incident_world.road_intersections()
 	assert_true(rows.size() > 0,
-			"D-15: CityIncidentWorld.road_intersections() is still returning [] — "
+			"D-18: CityIncidentWorld.road_intersections() is still returning [] — "
 			+ "the traffic_accident generator has no candidate source")
 	var signalled := 0
 	for entry in rows:
@@ -266,7 +268,7 @@ func test_closure_cause_follows_the_incident() -> void:
 # ============================== the consequence ladder, on a stub (doc 06 §3.1)
 
 ## `data/incidents.json` gives `traffic_accident` four `on_tier_enter` rows and
-## an `on_fail`, and until D-15 landed **none of them had ever executed** — the
+## an `on_fail`, and until D-18 landed **none of them had ever executed** — the
 ## incident that fires them could not be generated. Same shape as doc 06 §7 test
 ## 20 for the transformer ladder.
 func _stub() -> IncidentTestWorld:

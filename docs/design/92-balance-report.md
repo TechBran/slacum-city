@@ -1798,7 +1798,9 @@ It also works on the **instantaneous** rate rather than the daily mean, which is
 worth stating because it is why the three channels respond so differently in
 §18.3: the floor fills a channel's troughs without touching its peaks.
 
-### 18.2 Two of the six generators have no candidate source at all — D-14 / D-15
+### 18.2 Two of the six generators have no candidate source at all — D-17 / D-18
+
+*(Filed as D-14 / D-15; **renumbered to D-17 / D-18 on 2026-08-19** — doc 91's defect table had two D-14/D-15 pairs, and the performance pair keeps the original ids. See doc 91 §14.5's renumbering note. Closed by Wave 7; see §18.6.)*
 
 `water_main_break` and `traffic_accident` generate **exactly zero** in the
 shipped city, at every city size, for a reason that is not a rate:
@@ -1820,7 +1822,7 @@ five: **a floor row for a channel with no candidate source is dead data**, which
 is the thing report 98 spent itself deleting, so none is authored and
 `test_gate_19` asserts their absence.
 
-Filed as **D-14** (water) and **D-15** (traffic). Both are adapter work in
+Filed as **D-17** (water) and **D-18** (traffic). Both are adapter work in
 `sim/incidents/city_incident_world.gd` and both need a schema join, not a number.
 Doc 06 already documents exactly what it wants, and both subsystems already
 publish every field:
@@ -1950,7 +1952,7 @@ Three things this pass deliberately did not move, each with its reason:
 
 ### 18.6 Wave 7 — the re-derivation §18.2 asked for, and the band it breaks
 
-*2026-08-19, one wave later. §18.2 filed D-14 and D-15 and said: "when they land,
+*2026-08-19, one wave later. §18.2 filed D-17 and D-18 (then numbered D-14 / D-15) and said: "when they land,
 §18.3's budget is re-derived across five channels rather than three, and the two
 new rows come out of the three existing ones." They have landed
 (`sim/incidents/city_incident_world.gd`). This is the re-derivation, on the same

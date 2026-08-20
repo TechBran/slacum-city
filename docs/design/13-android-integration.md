@@ -1263,7 +1263,13 @@ the build's: two runs of the same tree produced an identical AAB
 (`f3edbace…9961` twice) and two different APKs (`9af9710c…bad6`, `afa31d99…fa62`),
 because the v2 signature block is timestamped. Recorded rather than chased.
 
-### 11.6 Crash sentinel and the two-slot autosave
+### 11.6 Crash sentinel, and what an unclean exit falls back to
+
+*Rewritten 2026-08-19 (Wave 7). This section specified a two-slot autosave
+rotation — slot 0 alternating with a shadow at slot 7 — and **doc 08 §2.7's
+ruling retired it** ("the ladder subsumes doc 13's autosave shadow"). What
+follows is what `game/save_service.gd` and `sim/persistence/save_manager.gd`
+actually do.*
 
 `game/crash_sentinel.gd` implements §2.11's local breadcrumb ring: a flag at
 launch, deleted by the pause sequence, and an `incident_<unix>.json` written when
@@ -1272,19 +1278,44 @@ the next launch still finds it. No network, no SDK, no Data Safety impact —
 documented in the class rather than built.
 
 The part §2.11 did not specify is what an unclean exit should *do*, and the
-answer needs somewhere to fall back to. `SaveService` now alternates the autosave
-between slot 0 and slot 7 (`AUTOSAVE_SHADOW_SLOT`), writing to whichever is
-older, so the newest autosave is never the only copy. The rotation is derived
-from the files' own timestamps rather than from a counter, because a counter is
-state that gets lost exactly when it matters. `last_good_autosave_slot()` then
-answers with the newest half that **fully parses** — a whole-file read, because
-after a crash the cheap header check is the wrong one — and `load_latest()` falls
-through a damaged newest save to the one behind it.
+answer needs somewhere to fall back to. Four rules answer it.
 
-What this defends against is not a torn file (the atomic rename already makes
-that impossible) but a *complete* one written seconds before the process died.
-Slot 7 rather than slot 1 because `data/ui.json.save_slots.count` is 3: the
-shadow sits outside every slot the player can see.
+**Every autosave lands on slot 0.** `SaveService.autosave()` is
+`save_slot(sim, AUTOSAVE_SLOT, "autosave")` and nothing else; `next_autosave_slot()`
+returns `0` unconditionally and `autosave_slots()` is a one-element array, kept
+as an array only because callers iterate it. **Slot 7 is a player slot again.**
+
+**The depth moved inside the slot.** A slot is a doc 08 generation ladder —
+`user://saves/slot_0/gen_000042.sav` beside a `manifest.json` whose rename is the
+commit point — retaining at most **6 unpinned + 2 pinned** generations, the five
+fallbacks spread across **0 / 30 min / 6 h / 24 h / 7 days**
+(`data/persistence.json.save`, read through `sim/persistence/save_policy.gd`, so
+the ladder is retunable without a code change). An unclean exit that ate the
+newest write falls through to the generation behind it and to four more behind
+that, where the rotation bought exactly one fallback.
+
+**And the fallback is verified before it is offered.** `last_good_autosave_slot()`
+runs doc 08 §2.9's candidate walk — decompress, envelope parse, SHA-256 of the
+body, version range, structural check — rather than the whole-file parse the
+rotation used. It is a **probe**: nothing is quarantined, nothing is
+deserialized, and no `failed` signal is emitted, because a damaged checkpoint
+found by a health check is an expected finding and not an error to put in front
+of a player. `CrashSentinel.recovery_slot()` asks it first and falls back to
+`latest_slot()`, exactly as this section always specified.
+
+**One thing outlives the rotation: the files.** A phone upgrading from a build
+that alternated still has a format-1 `user://saves/slot_7.json` on disk, and it
+is the *newer* half half the time. `SaveService.LEGACY_AUTOSAVE_SHADOW_SLOT = 7`
+is kept for that read alone — never written again, consulted only when the ladder
+is empty — so an upgrading player's first unclean launch does not cost them the
+interval the rotation existed to save. It stops mattering the moment the first
+post-upgrade autosave commits generation 1.
+`tests/test_save_migration.gd::test_an_upgrading_phone_still_finds_the_shadow_it_arrived_with`
+holds that path open.
+
+What this defends against is unchanged, and it is the reason any of it exists:
+not a torn file (the atomic rename already makes that impossible) but a
+*complete* one written seconds before the process died.
 
 ### 11.7 S10, and what a settings row is allowed to write
 

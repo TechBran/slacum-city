@@ -853,7 +853,7 @@ func signalised_intersections(district_id: String = "") -> Array:
 ## pays one integer comparison for the whole roster. Measured on the starter
 ## city's 389 junctions: the naive form took the whole coarse step from 7.99 ms
 ## to 22.90 ms, this cache and doc 06's per-node weight split bring it to
-## 10.46 ms (audit 91 D-15's cost half).
+## 10.46 ms (audit 91 D-18's cost half).
 ##
 ## A caller that needs a row to outlive the next call duplicates it; nothing in
 ## doc 06 does — it reads the row it picked before returning to the loop. Same

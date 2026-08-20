@@ -61,7 +61,7 @@ func _init(p_sim, p_catalog: IncidentCatalog) -> void:
 	# `external_main_breaks` is false, precisely so it is playable before doc 06
 	# has a candidate source; the moment THIS adapter exists, `water_mains()`
 	# answers and doc 06 owns the roll. One writer, one owner, and the file that
-	# supplies the candidates is the one that claims them. (Audit 91 D-14 left
+	# supplies the candidates is the one that claims them. (Audit 91 D-17 left
 	# both sides believing the other was rolling: doc 06 scanned an empty array
 	# and doc 05's fallback never stood down.)
 	if sim != null and sim.water != null:
@@ -623,7 +623,7 @@ func hydrant_pressure_ratio(_tile: Vector2i) -> float:
 	return default_hydrant_ratio
 
 
-## **Audit 91 D-14, closed.** `WaterSystem.mains()` publishes every hazard input
+## **Audit 91 D-17, closed.** `WaterSystem.mains()` publishes every hazard input
 ## doc 06 §2.6(d) reads; this is the rename between the two vocabularies
 ## (`segment_id` → `id`, `zone_key` → `zone`) and the eligibility filter, and
 ## nothing else. No number is authored here — that was the whole finding.
@@ -696,7 +696,7 @@ func water_freeze_enabled() -> bool:
 
 # ------------------------------------------------------------------ doc 10
 
-## **Audit 91 D-15, closed.** Doc 10's `RoadNetwork.intersections()` already
+## **Audit 91 D-18, closed.** Doc 10's `RoadNetwork.intersections()` already
 ## answers in doc 06's five columns; this is the join and the id cast, and — like
 ## `water_mains()` above — it authors no number.
 ##
