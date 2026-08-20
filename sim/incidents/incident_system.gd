@@ -700,6 +700,35 @@ func load_damper() -> float:
 	return damper
 
 
+## Doc 92 §18 — the small-city ambient floor (audit 91 D-6).
+##
+## Every doc 06 §2.6 generator is PER ASSET, so its λ is proportional to what the
+## player has already built; a founding city therefore generates almost nothing
+## and the dispatch half of the game never starts. This is the same instrument
+## doc 07 §8 already uses for the Director's threat points — a size-independent
+## floor expressed as a `max()` — applied one channel at a time:
+##
+##     λ_used = max(λ_natural, floor_per_hour(type) × dt_h)
+##
+## Three properties, all of them the reason it is a max() and not an addend:
+##
+## 1. **Continuous.** A channel whose own inventory out-generates its floor never
+##    sees it, and the handover happens at exactly one city size with no cliff
+##    and no branch. There is no "small city" mode.
+## 2. **Never invents a target.** `λ_natural <= 0` means the channel scanned and
+##    found no eligible candidate — no district with residents, no unbroken main,
+##    no storm cell — and the floor stays out. It changes how OFTEN, never WHERE.
+## 3. **Still dampened.** The caller multiplies by `damper`, so an overwhelmed
+##    fleet and doc 08's beyond-72-hour offline damper both still apply, and a
+##    difficulty's `generation_mult` still scales it.
+func _ambient_rate(natural: float, type_id: String, dt_h: float) -> float:
+	if natural <= 0.0 or not catalog.ambient_floor_enabled:
+		return natural
+	if now_h < catalog.ambient_floor_grace_h:
+		return natural
+	return maxf(natural, catalog.ambient_floor_per_hour(type_id) * dt_h)
+
+
 func _generate(dt_h: float, dark_frac: float) -> void:
 	if not generation_enabled:
 		return
@@ -748,7 +777,7 @@ func _generate_crime(dt_h: float, dark_frac: float, damper: float) -> void:
 			continue
 		candidates.append({"id": String(district_id), "lambda": lam})
 		total += lam
-	var count := _poisson(total * damper, stream)
+	var count := _poisson(_ambient_rate(total, "crime", dt_h) * damper, stream)
 	for i in count:
 		var district_id2 := String(_weighted_pick(candidates, total, stream))
 		if district_id2 == "":
@@ -829,7 +858,7 @@ func _generate_structure_fire(dt_h: float, damper: float) -> void:
 			continue
 		candidates.append({"id": id, "lambda": lam})
 		total += lam
-	var count := _poisson(total * damper, stream)
+	var count := _poisson(_ambient_rate(total, "structure_fire", dt_h) * damper, stream)
 	for i in count:
 		var picked := String(_weighted_pick(candidates, total, stream))
 		if picked == "":
@@ -870,7 +899,7 @@ func _generate_transformer(dt_h: float, damper: float) -> void:
 			continue
 		candidates.append({"id": String(row.get("id", "")), "lambda": lam, "row": row})
 		total += lam
-	var count := _poisson(total * damper, stream)
+	var count := _poisson(_ambient_rate(total, "transformer_failure", dt_h) * damper, stream)
 	if count > 0:
 		# Only a sub-step that actually spawns needs the FULL component rows
 		# `spawn_component_incident` reads (kind, tile, the downstream roll-up).
@@ -919,7 +948,7 @@ func _generate_water_main(dt_h: float, damper: float) -> void:
 			continue
 		candidates.append({"id": String(row.get("id", "")), "lambda": lam, "row": row})
 		total += lam
-	var count := _poisson(total * damper, stream)
+	var count := _poisson(_ambient_rate(total, "water_main_break", dt_h) * damper, stream)
 	for i in count:
 		var picked := _weighted_pick_row(candidates, total, stream)
 		if picked.is_empty():
@@ -960,7 +989,7 @@ func _generate_traffic(dt_h: float, dark_frac: float, damper: float) -> void:
 			continue
 		candidates.append({"id": String(row.get("id", "")), "lambda": lam, "row": row})
 		total += lam
-	var count := _poisson(total * damper, stream)
+	var count := _poisson(_ambient_rate(total, "traffic_accident", dt_h) * damper, stream)
 	for i in count:
 		var picked := _weighted_pick_row(candidates, total, stream)
 		if picked.is_empty():
@@ -1005,6 +1034,10 @@ func _generate_storm(dt_h: float, damper: float) -> void:
 			continue
 		candidates.append({"id": String(row.get("id", "")), "lambda": lam, "row": row})
 		total += lam
+	# No `_ambient_rate` here, deliberately: storm damage is not ambient. Its
+	# candidates exist only inside a live doc 07 storm cell, and while one is
+	# overhead the player has plenty to answer — doc 92 §18 authors no floor row
+	# for it, so a call here would be a no-op that reads like a rule.
 	var count := _poisson(total * damper, stream)
 	for i in count:
 		var picked := _weighted_pick_row(candidates, total, stream)

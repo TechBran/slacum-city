@@ -1045,9 +1045,158 @@ func test_gate_18c_no_capacity_constant_moved() -> void:
 	var placeable := BuildController.load_grid_placeable()
 	assert_eq(placeable.size(), 1)
 	assert_true(placeable.has("transformer"))
+	assert_false(placeable.has("feeder"),
+			"feeders are ROUTABLE (a line, like roads), never a placeable node")
 	assert_false(placeable.has("substation"),
 			"a substation is a building and must never appear on the grid roster")
 	# The two shells doc 02 sells are now doc 04 nodes — the id is the seam.
 	assert_true(sim.catalog.has("substation") and sim.catalog.has("power_facility"))
 	assert_true(sim.grid.has_component("SUB-A") and sim.grid.has_component("PLANT-1"),
 			"the authored shell and its node already share one id")
+
+
+# ============================ 19–20 the Wave-6 pacing passes (doc 92 §18/§19)
+
+## Doc 92 §18.1's budget, in ambient incidents per game-DAY, summed over the
+## authored channels. 0.40/game-day = 2.80/game-week of floor, before the
+## natural rate and doc 06's grid-failure map add anything on top of it.
+const AMBIENT_FLOOR_PER_DAY := 0.40
+## Five seeds, because this gate measures a POISSON RATE and one sample of a
+## rate is not a measurement. Doc 92 §18.3 measures 3.04 incidents/game-week over
+## 336 game-days; five 21-game-day runs is 105 game-days, so the sum below has an
+## expectation near 46 and a standard deviation near 7.
+const PACING_SEEDS: Array[int] = [1337, 4242, 9001, 101, 202]
+
+
+## GATE 19 — **doc 92 §18 / audit 91 D-6: the dispatch loop is a weekly beat.**
+##
+## Every doc 06 §2.6 generator is priced PER ASSET, so a founding city generated
+## 0.337 incidents/game-day and the QA soak saw **two** in 287 game-hours: the
+## drawer, the picker, the fleet and the whole five-tier escalation ladder were
+## scenery. `data/incidents.json` `ambient_floor` puts a size-independent floor
+## under three of the six channels as a `max()` — exactly the instrument doc 07
+## §8 already uses for the Director's threat points — and doc 92 §18.3 measures
+## the result at **3.04 ambient incidents per game-week** over 336 game-days of
+## `do_nothing`.
+##
+## The gate has two halves because the finding has two halves.
+##
+## **The budget** is asserted exactly, off the data file: a floor edited to zero,
+## disabled, or handed a fourth channel with no candidate source fails here
+## rather than silently in a report six weeks later.
+##
+## **The delivery** is asserted as a rate over five seeds, in a band wide enough
+## that Poisson noise cannot fail it and narrow enough that the two regressions
+## that matter cannot pass it — the floor going dark (pre-floor, five runs would
+## land near 10) and the floor running away (a 3× lands above 130).
+##
+## **And the control city must still survive it.** Doc 92 §18's ruling in full is
+## "a do_nothing city still survives; a neglected one meets its fires sooner".
+## The starter roster answers every one: zero failed, zero abandoned, nothing
+## destroyed, treasury still climbing.
+func test_gate_19_ambient_incidents_are_a_weekly_beat() -> void:
+	var floor_block: Dictionary = (StarterCityLoader.read_json(
+			"res://data/incidents.json").get("ambient_floor", {}) as Dictionary)
+	assert_true(bool(floor_block.get("enabled", false)), "the ambient floor is on")
+	var per_day: Dictionary = floor_block.get("per_day", {})
+	var budget := 0.0
+	for channel in per_day:
+		budget += float(per_day[channel])
+	assert_almost_eq(budget, AMBIENT_FLOOR_PER_DAY, 1e-9,
+			"doc 92 §18.1 budgets %.2f ambient incidents/game-day; the file sums to %.4f"
+					% [AMBIENT_FLOOR_PER_DAY, budget])
+	# A floor cannot invent a target, so a row for a channel whose candidate
+	# source is an empty stub is dead data (doc 92 §18.2, D-14 / D-15).
+	assert_false(per_day.has("water_main_break"),
+			"IncidentWorld.water_mains() is still a stub returning [] — D-14")
+	assert_false(per_day.has("traffic_accident"),
+			"IncidentWorld.road_intersections() is still a stub returning [] — D-15")
+	assert_false(per_day.has("storm_damage"),
+			"storm damage is not ambient — its candidates need a live doc 07 cell")
+
+	var created := 0
+	var failed := 0
+	var abandoned := 0
+	for seed_value in PACING_SEEDS:
+		var run := _run("do_nothing", LONG_DAYS, seed_value)
+		created += Rig.event_count(run, "incident_created")
+		failed += Rig.event_count(run, "incident_failed")
+		abandoned += Rig.event_count(run, "incident_abandoned")
+		var summary: Dictionary = run["summary"]
+		assert_eq(int(summary["destroyed_end"]), 0,
+				"the control city lost a building to the ambient floor on seed %d"
+						% seed_value)
+		assert_true(int(summary["treasury_end"]) > int(summary["treasury_start"]),
+				"the control city stopped banking money on seed %d" % seed_value)
+	var game_days := PACING_SEEDS.size() * LONG_DAYS
+	var per_week := float(created) / float(game_days) * 7.0
+	assert_true(created >= 25,
+			"%d incidents over %d game-days is %.2f per game-week — the floor is dark"
+					% [created, game_days, per_week])
+	assert_true(created <= 110,
+			"%d incidents over %d game-days is %.2f per game-week — the floor ran away"
+					% [created, game_days, per_week])
+	assert_eq(failed, 0, "a do_nothing city must survive its own pacing floor")
+	assert_eq(abandoned, 0, "the starter roster answered every one of them")
+
+
+## GATE 20 — **doc 92 §19 / audit 91 D-7: the level ladder is reachable.**
+##
+## The old ladder `[0, 250, 1000, 4000, 12000, 30000]` was adopted verbatim from
+## a doc 02 proposal that predated every measurement in doc 92, and the
+## measurements are damning: the QA soak's city sat at **level 0 for 12
+## game-days and refused 376 upgrades** with `E_CITY_LEVEL`; `balanced` ended
+## **fifty** game-days still at level 2; doc 92 §8's 90-game-day run peaks at
+## 1,872 residents. Four of the six rungs were unreachable by anything the game
+## can currently do, so most of doc 02 §2.10–2.11's upgrade ladder had no door.
+##
+## `data/progression.json` re-places the rungs on doc 92 §19.1's measured
+## `balanced` curve. This gate holds the two beats the ruling names, on the agent
+## the ruling is written against, and holds them as WINDOWS rather than
+## equalities: a rung that arrives too early fails as surely as one that never
+## arrives, because an unlock has to be earned to read as progression.
+##
+## Measured, all three doc 92 seeds: level 1 on game-day **2**, level 2 on
+## game-day **11**.
+func test_gate_20_the_city_level_ladder_is_reachable() -> void:
+	var ladder := ProgressionSystem.city_level_pop()
+	assert_eq(ladder.size(), 6, "doc 09 §2.11: six rungs, 0–5")
+	assert_eq(ladder[0], 0, "the founding city is level 0 by construction")
+	for i in range(1, ladder.size()):
+		assert_true(ladder[i] > ladder[i - 1],
+				"the ladder must ascend: rung %d is %d, rung %d is %d"
+						% [i - 1, ladder[i - 1], i, ladder[i]])
+	# The file is the authority; the const is a missing-file degrade, and a drift
+	# between the two is how a retune silently half-lands.
+	var file_rows: Array = (StarterCityLoader.read_json("res://data/progression.json")
+			.get("city_level_population_thresholds", []) as Array)
+	assert_eq(file_rows.size(), ladder.size(),
+			"data/progression.json and ProgressionSystem disagree on rung count")
+	for i in ladder.size():
+		assert_eq(int(file_rows[i]), ladder[i],
+				"rung %d: data/progression.json says %d, the loaded ladder says %d"
+						% [i, int(file_rows[i]), ladder[i]])
+	# t0 sits BELOW rung 1, which is what keeps gate 14's `E_CITY_LEVEL` refusal
+	# — and the tutorial's first locked build card — real.
+	assert_true(CitySim.boot_from_files(GATE_SEED).population.city_population < ladder[1],
+			"the founding city already clears rung 1; nothing is left to unlock")
+
+	var day_rows: Array = _summary("balanced")["day_rows"]
+	var first_day_at: Dictionary = {}
+	for row_variant in day_rows:
+		var row: Dictionary = row_variant
+		var level := int(row["city_level"])
+		if not first_day_at.has(level):
+			first_day_at[level] = int(row["day"])
+	assert_true(first_day_at.has(1), "a competent player never reached city level 1")
+	assert_true(first_day_at.has(2), "a competent player never reached city level 2")
+	var level_1_day := int(first_day_at[1])
+	var level_2_day := int(first_day_at[2])
+	assert_true(level_1_day >= 2 and level_1_day <= 4,
+			("level 1 landed on game-day %d; the ruled window is game-days 2–4 "
+					+ "(measured 2 on all three doc 92 seeds)") % level_1_day)
+	assert_true(level_2_day >= 8 and level_2_day <= 14,
+			("level 2 landed on game-day %d; the ruled window is game-days 10–14 "
+					+ "(measured 11 on all three doc 92 seeds; the gate allows 8 so "
+					+ "a faster economy is a warning, not a break)") % level_2_day)
+>>>>>>> worktree-wf_8dce7151-31e-3

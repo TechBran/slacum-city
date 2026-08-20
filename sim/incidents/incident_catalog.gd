@@ -33,6 +33,11 @@ var globals: Dictionary = {}
 var factors: Dictionary = {}
 var generator_base_rates: Dictionary = {}
 var generator_order: Array = []
+## doc 92 §18 — the small-city ambient floor. `enabled` off restores the
+## pre-Wave-6 per-asset-only rates exactly.
+var ambient_floor_enabled: bool = false
+var ambient_floor_grace_h: float = 0.0
+var _ambient_floor_per_h: Dictionary = {}  # type_id -> incidents per game-hour
 var rng_streams: Dictionary = {}
 var weather_channels: Dictionary = {}
 var fire_weather_channels: Dictionary = {}
@@ -123,6 +128,14 @@ func factor(group: String, key: String, fallback: float = 0.0) -> float:
 	if typeof(block) != TYPE_DICTIONARY:
 		return fallback
 	return float((block as Dictionary).get(key, fallback))
+
+
+## doc 92 §18. The floor rate for one generator channel, in incidents per
+## game-hour, or 0.0 for a channel with no authored row (storm_damage). The
+## caller multiplies by its own sub-step dt_h and takes the max() against the
+## channel's natural λ, so this is a rate and never a count.
+func ambient_floor_per_hour(type_id: String) -> float:
+	return float(_ambient_floor_per_h.get(type_id, 0.0))
 
 
 func stream_for(type_id: String) -> String:
@@ -246,6 +259,33 @@ func _load_incidents(data: Dictionary) -> void:
 	_type_ids.sort()
 	if generator_order.is_empty():
 		generator_order = _parent_types.duplicate()
+	# Last: it validates its rows against `generator_order`, which is only final
+	# once the fallback above has had its say.
+	_load_ambient_floor(data.get("ambient_floor", {}))
+
+
+## doc 92 §18. Authored per game-DAY because that is the unit the pacing budget
+## is written in ("3 ambient incidents per game-week"); stored per game-HOUR
+## because that is the unit the integrator's sub-steps are in. A row naming a
+## channel that is not in `generator_order` is an authoring mistake and is
+## reported rather than silently ignored.
+func _load_ambient_floor(block: Dictionary) -> void:
+	_ambient_floor_per_h = {}
+	ambient_floor_enabled = bool(block.get("enabled", false))
+	ambient_floor_grace_h = maxf(0.0, float(block.get("grace_days", 0.0))) * 24.0
+	var per_day: Dictionary = block.get("per_day", {})
+	var channels := per_day.keys()
+	channels.sort()
+	for type_id in channels:
+		var name := String(type_id)
+		if not generator_order.has(name):
+			errors.append("ambient_floor.per_day names `%s`, which is not a generator" % name)
+			continue
+		var rate := float(per_day[type_id])
+		if rate < 0.0:
+			errors.append("ambient_floor.per_day.%s is negative" % name)
+			continue
+		_ambient_floor_per_h[name] = rate / 24.0
 
 
 func _load_vehicles(data: Dictionary) -> void:

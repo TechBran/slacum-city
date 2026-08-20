@@ -555,11 +555,12 @@ Doc 04 computes `upgrade_headroom_kw` across the whole serving path (transformer
 `delta_water = 2.9 − 1.2 = **1.7 m³/h**`; required zone headroom `1.7 × 1.10 = **1.87 m³/h**` — that one passes comfortably, because after the C-34 rescale a single L1 pump serves roughly 2,000 residents.
 Player options when doc 04 reports only 37 kW of headroom, all legitimate: upgrade the serving substation, add a transformer, build a second feed to the block, or repair the derated asset. This is spec §9.4's "This forces the player to upgrade infrastructure before vertically expanding the city," implemented.
 
-**City level thresholds** are **doc 09's** (report 98 G-1); this doc's proposed ladder was adopted verbatim and now lives in `data/progression.json`:
+**City level thresholds** are **doc 09's** (report 98 G-1); this doc's proposed ladder was adopted there and **retuned against measurement by doc 92 §19** (audit 91 D-7 — four of the six proposed rungs were unreachable by anything the game can do). It lives in `data/progression.json`; doc 09 §2.11 is the statement of record and the row below is a read-only copy:
 
 | city_level | 0 | 1 | 2 | 3 | 4 | 5 |
 |---|---|---|---|---|---|---|
-| min city population | 0 | 250 | 1,000 | 4,000 | 12,000 | 30,000 |
+| min city population | 0 | **200** | **700** | **1,600** | **3,600** | **8,000** |
+| *this doc's original proposal* | 0 | 250 | 1,000 | 4,000 | 12,000 | 30,000 |
 
 ### 2.12 Building state machine
 

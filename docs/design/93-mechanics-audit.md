@@ -248,6 +248,65 @@ preserved, as this section has said from the start; only the inventory changed.
   later. A version-1 section still loads; its two id-keyed maps are dropped
   rather than mis-applied.
 
+**Binding from Wave 6 (the pacing passes, doc 92 §18/§19, 2026-08-19):**
+
+- **`data/incidents.json` gains an `ambient_floor` block** — a size-independent
+  minimum on doc 06 §2.6's generation, per channel, expressed as
+  `λ = max(λ_natural, floor_per_hour × dt_h)` inside the existing
+  `_poisson(… × damper)`. It is the same instrument doc 07 §8's Director floor
+  already is, applied to the other half of the pressure system, and it is a floor
+  in every sense: **no `generator_base_rates` row moved**, a channel that
+  out-generates its floor never sees it, and a channel with no eligible candidate
+  this sub-step stays at zero. `grace_days 2.0` keeps the founding day and the one
+  after quiet so the tutorial's scripted transformer is still the first incident a
+  new player meets. Measured A/B over 336 game-days on each side, twelve seeds,
+  one boolean apart: **1.88 → 3.04 ambient incidents per game-week** at starter
+  scale, 146 of 146 resolved, zero failed, zero abandoned, nothing destroyed, and
+  the control city ends **richer** (+1.2 %) because doc 06 credits `reward_base`
+  on resolve. Doc 92 §18.
+- **Two of doc 06's six generators have no candidate source — D-14 / D-15.**
+  `IncidentWorld.water_mains()` and `IncidentWorld.road_intersections()` are still
+  the base-class stubs returning `[]` and `CityIncidentWorld` overrides neither,
+  so `water_main_break` and `traffic_accident` generate exactly zero at every city
+  size, independent of any rate. That is why the floor carries three channels and
+  not five: a floor row for a channel with no candidate source is dead data.
+  Doc 92 §18.2 names the row shape each generator wants and which subsystem
+  already publishes every field.
+- **Doc 09 §2.11's city-level ladder is RETUNED and now lives in
+  `data/progression.json`.** Report 98 G-1 named that file and nobody ever wrote
+  it, so the ladder was a `const` in `sim/population/progression_system.gd` — the
+  one balance number in the game that could not be retuned without a code edit.
+  The shift table, and what each rung is worth in game-days on doc 92 §2's
+  `balanced` agent:
+
+  | city level | 0 | 1 | 2 | 3 | 4 | 5 |
+  |---|---|---|---|---|---|---|
+  | min city population, **was** | 0 | 250 | 1,000 | 4,000 | 12,000 | 30,000 |
+  | min city population, **is** | 0 | **200** | **700** | **1,600** | **3,600** | **8,000** |
+  | `balanced` reaches it on game-day | t0 | **2** | **11** | **23** | *unfitted* | *unfitted* |
+  | reachable before? | — | day 4 | day 17 | **never in 50** | **never** | **never** |
+
+  The old rows were adopted verbatim from a doc 02 *proposal* that predated every
+  measurement in doc 92, and four of the six were unreachable by anything the game
+  can do: doc 92 §8's 90-game-day run peaks at 1,872 residents and `balanced` ends
+  fifty game-days at 2,710, so doc 02 §2.10–2.11's whole upgrade ladder — every L4
+  and L5 rung, `high_rise`, `data_center`, doc 10's `road_crew` — sat behind a door
+  with no key, which is audit 91 D-7's 376 refused upgrades. Levels 4 and 5 are
+  placed by the ratio the fitted rungs settle into (~2.25×) rather than by fit,
+  because no strategy in doc 92 has ever produced 3,600 residents; that is pass-3
+  F-11's power ceiling and they get a real fit when the feeder verb lands.
+  **Monotonicity is untouched** — a retune downward can only grant a level, never
+  take one back, and `city_level_max` still wins on load. **t0 is still below rung
+  1** (144 against 200), so gate 14's `E_CITY_LEVEL` refusal, the Wave-5
+  `min_city_level` ruling and the tutorial's first locked build card all still
+  bite. `ProgressionSystem.CITY_LEVEL_POP_FALLBACK` is a missing-file degrade and
+  **not a mirror**; gate 20 asserts the two agree.
+- **Gates 19 and 20** hold both rulings — the pacing budget off the data file plus
+  a five-seed rate band, and the ladder's shape plus the two ruled unlock windows.
+  `tests/test_population.gd` now asserts the ladder's *arithmetic* against
+  whatever rows are loaded instead of pinning the rungs as literals; the rungs
+  and their measured justification belong to gate 20.
+
 Also binding from the same pass: **mode-invariance is per-system, not
 whole-hash** — doc 06 §2.6 sanctions Poisson-count differences per step size,
 doc 04 §2.12 sanctions one-step coarse thermal integration, and the cosmetic
