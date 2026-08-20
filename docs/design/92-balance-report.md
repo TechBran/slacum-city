@@ -1753,6 +1753,49 @@ covering demand) is still open: the `curriculum` agent finishes its 21-game-day
 arc with zero main tiles laid, which is doc 93 §G4's ruling and not yet the
 measurement.
 
+#### 17.6.1 The verb matrix — re-taken at `a892315` (Wave-10 re-audit, 2026-08-20)
+
+This subsection used to be a paragraph and a promise. It is a table now, because
+the Wave-10 completeness re-audit (doc 91 §17) walked **every** `func cmd_*`
+under `sim/` against three questions — does it have a **player door**, does a
+**playtest strategy** drive it, and is there a **goal-kind evaluator** that can
+teach it — and the answer is not uniform enough to summarise in prose.
+
+**`CitySim` re-exports 23 verbs. Eighteen have a door.**
+
+| Doorless verb | Playtest | Goal kind | State at this fork |
+|---|---|---|---|
+| `cmd_route_feeder` | probed; driven through the one-tap `cmd_place_grid_component("feeder", …)` door | — | §25.7 ruled it a **balance** change, not a UI one: §17.3's 2 × 1,200 kW feeder ceiling is the late game's binding constraint, so putting it on a card wants its own pass and its own matrix |
+| `cmd_upgrade_water_component` | probed, never driven | — | wants the water-NODE panel doc 12's screen map does not have |
+| `cmd_isolate_water_main` | **no caller at all** | — | same panel |
+| `cmd_restore_water_main` | **no caller at all** | — | same panel |
+| `cmd_recall_unit` | **no caller at all** — and the one test that exercises recall calls `DispatchSystem` directly, bypassing the wrapper | — | doc 06 §2.11 lists it as a player verb; doc 91 **A91-D-24** |
+
+**In flight when this table was taken.** Two sibling agents in the same wave were
+building doors for the first two families (`cmd_route_feeder`, and the water
+maintenance trio). If both landed, four of these five rows close and the count
+becomes **22 of 23**, with `cmd_recall_unit` the last one standing — **re-take
+this table from the merged tree rather than trusting this snapshot.**
+
+**Seven more verbs have no `CitySim` wrapper at all** and are therefore
+unreachable by any shell however many cards get built: `RoadNetwork`'s
+`cmd_road_repair` and `cmd_set_auto_repair_policy`, and `WaterSystem`'s
+`cmd_remove_main`, `cmd_overhaul_node`, `cmd_set_water_restrictions`,
+`cmd_set_water_policy` and `cmd_deploy_pump_truck`. Two of those are *balance*
+surfaces rather than convenience ones — `cmd_set_water_restrictions` is doc 05's
+demand-management lever and `cmd_set_auto_repair_policy` is doc 10's spend cap —
+so a pass that gives them doors is a pass that wants a matrix, exactly as
+`cmd_route_feeder` does.
+
+**The goal side is complete and that is worth stating plainly**: every one of the
+fourteen `kind` values `data/goals.json` uses resolves to an evaluator in
+`sim/progression/goal_system.gd`, and no curriculum row is unteachable. Three of
+the seventeen implemented kinds are authored and unused — `place_water_main`
+(deliberate, doc 93 §G4), `reach_stability` and `reach_treasury`. The last two
+are free levers a future pacing pass can reach for without writing any code, and
+naming them here is the point of the audit: doc 09 §2.14's ladder is not limited
+by what the evaluator can measure.
+
 ---
 
 ## 18. Pass 5 — incident pacing (audit 91 D-6)

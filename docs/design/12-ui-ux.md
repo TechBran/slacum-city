@@ -490,6 +490,60 @@ This script is the thesis statement of the game in 90 seconds: one component fai
 | A14 | No colour-only errors | every blocked action states its reason in words (§2.7 formatter) | copy review |
 | A15 | Screen reader labels | every interactive Control sets `tooltip_text` used as the accessibility name | tree walk asserts non-empty |
 
+**A2 and A3 are swept together for the first time at 2026-08-20, at more than one
+box and on both axes, and they fail (doc 91 §19).** The instrument is the one this section
+already implies: `tools/ui_preview.gd --screen=all --audit --strict` over all 49
+named states, at the five device boxes `tests/test_ui_audit.gd` already knows —
+360×800, 412×915, 794×924, 880×400, 1280×720 — and then at a sixth this document
+names and nothing tests (see below). (Those 49 cover fourteen of §2.2's fifteen
+screens: **S13's panel has no preview state**, doc 91 A91-D-28.) At **100 % text
+and default targets it is clean at all five** — 245 state-sweeps, zero findings,
+exit 0 five times, which also closes doc 91's D-12 and D-13. Re-run at **`--text-scale=1.3
+--large-targets`** it **exits 1 at every box**, with three distinct causes:
+
+| Cause | Boxes | Scale of it | Filed |
+|---|---|---|---|
+| The right-edge chip column does not re-flow: `AlertsCenter/Chip`, `EventLog/Chip` and `IncidentDrawer/Handle` overlap each other once A3 inflates them to 89 × 100 px | **all five** | 36 of 49 states, 73 findings per box | A91-D-21 |
+| Controls land **outside the viewport** — `SettingsSheet/…/Close "✕"` and `SaveLoadSheet/…/Close "✕"` at 360×800, `PauseMenu/…/SAVE & QUIT` and `TitleScreen/…/START NEW` at 880×400 | 360×800, 880×400 | 9 findings | A91-D-22 |
+| The HUD top bar does not yield to the rails: `LeftRail/SpeedButton` and `OverlayRail/Button` over `TopBar/Chips/Row` | 880×400 — §2.3's own reference box — and worse at 640×340 | **all 49 states**, 147 findings | A91-D-23 |
+
+The second row is the one that matters most for A3 specifically: **a player who
+turns large touch targets on, on a 360 dp phone, cannot close the settings sheet
+with its button** (Android Back still works, which is the only reason it is not a
+hard lock), and a new player on a folded Fold cannot press START NEW.
+
+**The gate exists and is the wrong shape.** The suite is not blind to A2:
+`tests/test_ui_audit.gd::test_every_surface_fits_the_narrowest_display_at_130_percent_text`
+mounts the deck at `(1.3, true)` and asserts
+`get_combined_minimum_size().x <= 360.0` over the `SURFACES` list. That is **one
+axis, one box, and full-width panels only** — and every failure above is an
+overlap or a Y-axis overflow, which a width check on one display cannot express.
+Widening it to loop `BOXES` (plus 640 × 340) and to carry `UIAudit`'s overlap and
+offscreen checks is ranked first-equal in doc 91 §20.2.
+
+**A2's own geometry — 640 × 340 dp — is `data/ui.json.layout.min_safe_box_dp`,
+this document's declared floor, and it is in no `BOXES` list in this repository.
+It was measured for the first time on 2026-08-20. Both results are bad:**
+
+* **At 100 %** the box is *not* clean, which is the only base-scale layout defect
+  this audit found: `TitleLayer/TitleScreen/…/Confirm_cancel "CANCEL"` lays out at
+  y 318.5 with height 96 against a 340-tall viewport — **26 dp off the bottom, at
+  default text scale, with large targets off.** It is the CANCEL half of "start a
+  new city and lose this one?". Filed as doc 91 **A91-D-29**.
+* **At 150 % + `larger_touch_targets`** — the exact wording of A2's pass
+  criterion — **all 49 states are dirty**, with 228 overlaps and **72 offscreen**
+  findings. `HUDLayer/LeftRail/SpeedButton` lays out at **y −70 … 56 against a
+  340-tall box in every state** — 70 of its 126 dp clipped off the top, leaving a
+  56 dp sliver of a control A3 requires to be 56 dp. A10 ("pause + 1× / 2× / 3×
+  always reachable in ≤ 2 taps") is therefore standing on a half-clipped target
+  as a *consequence* of A2 failing, which is the argument for treating these rows
+  as one gate rather than fifteen independent ones.
+
+The five 130 % sweeps in the table above are a **lower bound**. Fix the layout
+against 150 % / 640 × 340 rather than against 130 %, and add that box to
+`tests/test_ui_audit.gd::BOXES` in the same commit — otherwise the gate passes
+and the requirement still is not met.
+
 ### 2.19 S14 — the goals sheet (Wave 9)
 
 Doc 09 §2.14 gives every city level an objective list. This is where the player

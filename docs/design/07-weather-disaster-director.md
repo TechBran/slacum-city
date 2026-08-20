@@ -267,6 +267,10 @@ Flood depth multiplies with the weather-wide `road_speed_mult`: a flooded tile d
 
 For consumers that want a scalar rather than a band: `flood_saturation(tile) = clamp(depth_mm / 350.0, 0, 1)` (0 = dry, 1 = impassable). `flood_saturation_city` is the area-weighted mean over LOW tiles. Roads (doc 10) uses this for its ground-condition term.
 
+> **THE SIM HALF SHIPS AND THE PLAYER NEVER SEES IT (verified 2026-08-20, doc 91 A91-D-26).** `sim/weather/flood_field.gd` is live, not a stub — a two-real-hour soak logged **460 `flood_level_changed`** and 92 `road_closed_flood`, and doc 10's closures fire off it correctly. But `flood_level_changed` is consumed by **nothing**: `game/render/weather_fx.gd:305` matches exactly three types (`weather_changed`, `lightning_strike`, `lightning_flash_cosmetic`), `game/main.gd`'s `_on_sim_batch` translator has no arm for it, and it appears in neither `data/ui.json.event_log.events` nor `data/notifications.json.bindings`. **Standing water is integrated continuously and is never drawn, never announced and never logged.** The only way a player learns a tile flooded is indirectly, through `road_closed_flood` — which *is* wired to both the notification router and the event log, and which only fires at the 350 mm band. The three bands below it are invisible.
+>
+> This is doc 04's "a subsystem can be fully shipped and wholly invisible" gap, in doc 07. The cheapest fix is a `flood_level_changed` arm in `WeatherFX` that raises the existing `sc_wetness` global on the affected tiles, or a per-tile channel on the ground surface; doc 91 §20.2 sizes it M and ranks it eighth.
+
 ### 2.5 Forecast system
 
 The forecast reads the committed timeline and degrades it as a function of lead time. Because the timeline is committed, forecasts *converge* toward truth rather than jittering.

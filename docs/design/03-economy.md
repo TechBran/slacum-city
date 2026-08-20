@@ -609,6 +609,10 @@ Difficulty changes *pressure*, not health bars.
 
 Difficulty may be raised at any time. Lowering it is permitted at any time but sets `save.assisted = true` permanently (excludes the city from any future leaderboard, spec §35). Multipliers apply from the moment of change; already-accrued treasury is untouched.
 
+> **IMPLEMENTATION STATUS — none of this section ships (verified 2026-08-20, doc 91 A91-D-19).** `data/difficulty.json` **is not in the tree**; `sim/economy/difficulty.gd`, the loader rule 3 names, is not either. What runs is `Treasury.DIFFICULTY_STANDARD` (`sim/economy/treasury.gd:32`) — a twelve-key dictionary compiled into the class, holding exactly the `standard` column of the table above — and `sim/city_sim.gd:197` constructs `Treasury.new(econ_curves.economy_data())` **with no difficulty argument**, so `_difficulty` is that dictionary on every boot and the `casual` / `hard` / `crisis` columns are unreachable by any code path. Rule 2 is also unmet in the other direction: `data/director.json` still holds the `pressure` rows behind `DisasterDirector.tables.difficulty_fallback()`, `data/incidents.json` still holds `escalation` behind `IncidentWorld.difficulty_escalation_mult()`, and `data/economy.json:166` carries a `_difficulty_note` announcing a move to a file nobody wrote. `save.assisted` appears nowhere in the tree, and there is no `cmd_set_difficulty` and no settings row.
+>
+> **The consequence worth writing down: every number doc 92 has ever measured was measured on `standard`, because `standard` is the only preset the code can reach.** That is a statement about coverage, not about tuning — no figure in doc 92 is wrong, three quarters of this section's surface is simply unmeasured. The cheapest honest step is not the whole section: write `data/difficulty.json` with the four rows already tabulated here, add the loader, pass it at `city_sim.gd:197`, and leave the selection UI for a later wave. That alone makes the other three columns reachable by a test.
+
 ### 2.10 Anti-bankruptcy floor (spec §37)
 
 **There is no game over and no paid rescue.** Recovery is a five-layer ladder, all free.
