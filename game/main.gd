@@ -320,6 +320,8 @@ func _build_city_view(render_data: Dictionary) -> void:
 	vehicle_view.name = "Vehicles"
 	add_child(vehicle_view)
 	vehicle_view.setup(render_data)
+	perf_governor = PerfGovernor.new(render_data, render_model.preset)
+	android_lifecycle.thermal_status_changed.connect(perf_governor.set_thermal_status)
 	construction_view = ConstructionSiteView.new()
 	construction_view.name = "ConstructionSites"
 	add_child(construction_view)
@@ -931,9 +933,18 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 			if vehicle_view != null:
 				vehicle_view.set_preset(str(model.value("graphics")),
 						StarterCityLoader.read_json("res://data/render.json"))
+			if perf_governor != null:
+				# A player's preset choice clears the ladder and any latched drop.
+				perf_governor.reset(str(model.value("graphics")))
 		&"autosave_interval_min":
 			_autosave_interval_s = model.autosave_interval_s()
 			_autosave_timer = 0.0
+		&"notifications_enabled", &"notify_p1_critical", &"notify_p2_important", \
+		&"notify_p3_routine", &"quiet_hours_allow_critical":
+			notification_router.apply_settings(model.capture_state())
+		&"auto_quality":
+			if perf_governor != null:
+				perf_governor.enabled = bool(model.value("auto_quality"))
 		&"sound_volume":
 			if audio != null:
 				audio.set_sound_volume(model.value_num("sound_volume"))
@@ -1032,6 +1043,22 @@ func _on_ui_incident_action(action: StringName, incident_id: int, value: Variant
 func _on_ui_deeplink(target: String) -> void:
 	if target.begins_with("overlay/") and ui_root.overlay_rail != null:
 		ui_root.overlay_rail.select_mode(StringName(target.trim_prefix("overlay/")))
+
+
+## A notification tap (doc 13 §2.5): route its payload to the thing it was
+## about. Payload forms: `incident/42`, `building/B-7`, `overlay/power`, `report`.
+func _on_notification_opened(payload: String) -> void:
+	if payload.begins_with("overlay/"):
+		_on_ui_deeplink(payload)
+	elif payload.begins_with("incident/") and ui_root != null:
+		if ui_root.incident_drawer != null:
+			ui_root.incident_drawer.open()
+	elif payload.begins_with("building/"):
+		var pos: Variant = _alert_world_pos(&"building", payload.trim_prefix("building/"))
+		if pos is Vector3:
+			camera_state.focus_on(pos)
+	elif payload == "report" and ui_root != null and ui_root.away_report != null:
+		ui_root.away_report.open()
 
 
 ## Unit rows for the picker (doc 12 §2.6 step 4): ETA-ranked, capability-aware.
@@ -1285,6 +1312,17 @@ func _process(delta: float) -> void:
 		audio.feed_batch(render_model.drain_render_events())
 		audio.update_audio(delta, camera_rig.camera.global_position,
 				environment_controller.last_night)
+	if perf_governor != null:
+		perf_governor.submit_frame(delta * 1000.0)
+		if perf_governor.update(delta):
+			var knobs := perf_governor.knobs()
+			city_view.apply_governor(knobs)
+			Engine.max_fps = perf_governor.target_fps()          # doc 13 §2.8
+			if String(knobs["preset"]) != render_model.preset:   # a latched drop
+				render_model.set_preset(String(knobs["preset"]))
+				vehicle_view.set_preset(String(knobs["preset"]), _render_data)
+			if audio != null:
+				audio.feed_batch(perf_governor.drain_events())   # telemetry cue
 	if _autosave_interval_s > 0.0 and save_service != null:
 		_autosave_timer += delta
 		if _autosave_timer >= _autosave_interval_s:

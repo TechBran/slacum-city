@@ -1199,4 +1199,3 @@ func test_gate_20_the_city_level_ladder_is_reachable() -> void:
 			("level 2 landed on game-day %d; the ruled window is game-days 10–14 "
 					+ "(measured 11 on all three doc 92 seeds; the gate allows 8 so "
 					+ "a faster economy is a warning, not a break)") % level_2_day)
->>>>>>> worktree-wf_8dce7151-31e-3
