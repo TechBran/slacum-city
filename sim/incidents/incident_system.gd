@@ -50,7 +50,7 @@ var offline_hours_elapsed: float = 0.0
 ## that grid before the player has built anything, so it is large from game-hour
 ## zero. It ran on every integrator sub-step, and the integrator takes up to
 ## `max_substeps_per_hour` (64) of them in an hour with live incidents: connecting
-## D-15's candidate source took the starter city's whole coarse step from
+## D-18's candidate source took the starter city's whole coarse step from
 ## **7.99 ms to 22.90 ms**. Two caches bought it back to **10.46 ms** — doc 10's
 ## per-roster-epoch row cache (`RoadNetwork.intersections()`) and the per-node
 ## weight split above, of which this buffer is the storage. Not sim state: it is

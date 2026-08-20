@@ -138,7 +138,7 @@ func test_multipliers_published_to_doc06() -> void:
 	assert_almost_eq(system.failure_model.pump_load_mult(1.00), 2.5, 0.001)
 
 
-## **The two columns doc 06 was missing (audit 91 D-14).** Its candidate row
+## **The two columns doc 06 was missing (audit 91 D-17, filed as D-14).** Its candidate row
 ## wants a POSITION and a ZONE; both were already inside this class and neither
 ## was published, which is half of why `water_main_break` generated zero.
 func test_mains_publish_a_tile_and_a_zone() -> void:

@@ -15,24 +15,30 @@ extends RefCounted
 ## THE SLOT RULING — why NEW CITY is not just "boot a fresh sim"
 ## ---------------------------------------------------------------------------
 ##
-## `SaveService` gives the LIVE city an autosave **rotation**: every autosave
-## lands on whichever of `AUTOSAVE_SLOT` / `AUTOSAVE_SHADOW_SLOT` is older, so an
-## unclean exit still leaves one complete city behind (doc 13 §2.11). That
-## rotation belongs to whatever city is running — it has no idea a city was
-## replaced. So a new city takes it over, and two autosave intervals later BOTH
-## halves hold the new city. There is no flag, no per-city slot family and no
-## API on `SaveService` that can prevent that, and inventing one here would be a
-## `ui/` file legislating about files.
+## `SaveService` gives the LIVE city an autosave **slot**: every autosave lands
+## on `AUTOSAVE_SLOT`, and an unclean exit still leaves a complete city behind
+## because that slot is a doc 08 §2.7 generation ladder, five digest-verified
+## fallbacks deep. *(Comment updated 2026-08-19: this used to describe a two-slot
+## rotation alternating with `AUTOSAVE_SHADOW_SLOT`; doc 08 §2.7 retired it and
+## doc 13 §11.6 now records the ladder. **The ruling below is unaffected** — only
+## the mechanism it prices changed, and `rotation_slots()` keeps its name because
+## it is a published method, now answering with one slot.)*
+##
+## That slot belongs to whatever city is running — it has no idea a city was
+## replaced. So a new city takes it over, and a few autosaves later every
+## generation in the ladder holds the new city. There is no flag, no per-city
+## slot family and no API on `SaveService` that can prevent that, and inventing
+## one here would be a `ui/` file legislating about files.
 ##
 ## What follows from that is the design, and it is stated rather than hidden:
 ##
-##   * **A manual slot is the only durable home.** Slots outside the rotation
+##   * **A manual slot is the only durable home.** Slots outside the autosave
 ##     (`1 …` up to `save_slots.count`) are never written except by the player.
 ##     `plan.kept` lists the occupied ones by name — doc 12's "name the save it
 ##     will NOT delete".
 ##   * **The autosave is what a new city costs.** `plan.replaced` says so in
 ##     words rather than letting the player discover it two intervals later.
-##   * **A city that lives only in the rotation is offered a home first.**
+##   * **A city that lives only in the autosave is offered a home first.**
 ##     `plan.archive_from` is the slot holding it and `plan.archive_to` is the
 ##     lowest free manual slot; the confirm then offers KEEP & START NEW beside
 ##     START NEW. The shell performs that with three published calls and no new
@@ -115,11 +121,13 @@ func autosave_slot() -> int:
 	return UIConfig.get_int(_slots_cfg, "autosave_slot", 0)
 
 
-## The slots `SaveService`'s autosave alternates between, ascending. Asked of the
-## service, because the shadow half deliberately sits OUTSIDE every slot the
-## player can see and `data/ui.json` therefore does not name it. A service that
-## does not publish the pair is treated as having one autosave slot, which is
-## the conservative reading — it can only ever over-report what survives.
+## The slots `SaveService` autosaves into, ascending — one slot since doc 08
+## §2.7's ladder retired the two-slot rotation, but still ASKED of the service
+## rather than read from `data/ui.json`, because an autosave slot deliberately
+## sits OUTSIDE every slot the player can see and the config therefore does not
+## name it. A service that publishes no list is treated as having one autosave
+## slot, which is the conservative reading — it can only ever over-report what
+## survives. The name is kept for compatibility with its callers.
 func rotation_slots() -> Array[int]:
 	var out: Array[int] = []
 	if _service != null and _service.has_method("autosave_slots"):

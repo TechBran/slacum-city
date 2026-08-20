@@ -264,14 +264,17 @@ preserved, as this section has said from the start; only the inventory changed.
   scale, 146 of 146 resolved, zero failed, zero abandoned, nothing destroyed, and
   the control city ends **richer** (+1.2 %) because doc 06 credits `reward_base`
   on resolve. Doc 92 §18.
-- **Two of doc 06's six generators have no candidate source — D-14 / D-15.**
-  `IncidentWorld.water_mains()` and `IncidentWorld.road_intersections()` are still
-  the base-class stubs returning `[]` and `CityIncidentWorld` overrides neither,
-  so `water_main_break` and `traffic_accident` generate exactly zero at every city
-  size, independent of any rate. That is why the floor carries three channels and
-  not five: a floor row for a channel with no candidate source is dead data.
-  Doc 92 §18.2 names the row shape each generator wants and which subsystem
-  already publishes every field.
+- ~~**Two of doc 06's six generators have no candidate source — D-14 / D-15.**~~
+  **CLOSED 2026-08-19 (Wave 7); the pair is renumbered D-17 / D-18** (doc 91's
+  defect table carried two D-14/D-15 pairs and the performance pair keeps the
+  original ids — see doc 91 §14.5's renumbering note). `CityIncidentWorld` now
+  overrides both stubs: `water_mains()` joins doc 05's `WaterSystem.mains()` and
+  `road_intersections()` joins doc 10's `RoadNetwork.intersections()`, so
+  `water_main_break` and `traffic_accident` generate for the first time —
+  **0.00 → 0.60** and **0.00 → 3.60 per game-week** at starter scale. The floor
+  carries **five** rows now, not three, and the traffic rate takes the ambient
+  total past doc 92 §18's ruled 2–4/game-week band. Doc 92 §18.6 is the
+  re-derivation; `tests/test_incident_world_join.gd` is the proof.
 - **Doc 09 §2.11's city-level ladder is RETUNED and now lives in
   `data/progression.json`.** Report 98 G-1 named that file and nobody ever wrote
   it, so the ladder was a `const` in `sim/population/progression_system.gd` — the
@@ -373,14 +376,17 @@ preserved, as this section has said from the start; only the inventory changed.
     the shell knows whether a restore succeeded, and a corrupt save must leave the
     player looking at the door rather than at an empty city.
 - **NEW CITY may not silently orphan the old one, and the honest fix is not a
-  new `SaveService` method.** `SaveService`'s autosave **rotation**
-  (`AUTOSAVE_SLOT 0` + `AUTOSAVE_SHADOW_SLOT 7`, doc 13 §2.11) belongs to whatever
-  city is *live*; it has no idea a city was replaced, so a new city takes it over
-  and two autosave intervals later both halves hold the new city. `TitleModel`
+  new `SaveService` method.** *(Restated 2026-08-19: doc 08 §2.7 retired the
+  two-slot rotation this bullet was written against — every autosave lands on
+  `AUTOSAVE_SLOT 0` and the depth comes from that slot's generation ladder. **The
+  ruling is unchanged and so is its reasoning**; only the mechanism it prices is.)*
+  The autosave **slot** belongs to whatever city is *live*; it has no idea a city
+  was replaced, so a new city takes it over and a few autosaves later every
+  generation in the ladder holds the new city. `TitleModel`
   therefore prices that rather than hiding it: `new_game_plan()` names the manual
   saves that survive (doc 12's "name the save it will NOT delete"), says the
   autosave is what a new city costs, and — when the outgoing city lives *only* in
-  the rotation — offers it the lowest free manual slot. The shell performs that
+  the autosave slot — offers it the lowest free manual slot. The shell performs that
   archive with three published calls and no new API: `load_slot` the old city into
   the sim, `save_slot` it into the free slot, `restore_state` the founding capture
   back, which is exact **because** save→load→advance identity is exact. When every

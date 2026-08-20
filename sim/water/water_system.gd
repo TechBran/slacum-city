@@ -803,7 +803,7 @@ func can_upgrade_water(building_id: String, delta_water_m3h: float) -> Dictionar
 ## §2.9 / C-46: the candidate set AND the three hazard multipliers doc 06
 ## multiplies into its own `water_main_break` rate. Doc 06 owns the roll.
 ##
-## **`tile` and `zone_key` are additive (Wave 7, audit 91 D-14).** Doc 06's
+## **`tile` and `zone_key` are additive (Wave 7, audit 91 D-17).** Doc 06's
 ## candidate row wants a POSITION (the break has to be somewhere on the map, and
 ## its incident carries a tile) and the ZONE the segment belongs to (§2.8's
 ## tiered pressure delta is a zone effect). Both were already inside this class —
@@ -1325,7 +1325,7 @@ func deserialize(state: Dictionary) -> void:
 	# A LATCH, not a restore. Who rolls the main break is a fact about the
 	# program that is running — whether a doc 06 `IncidentSystem` is wired in at
 	# all — and not a fact about this city. A save written before doc 06's
-	# adapter existed (audit 91 D-14) carries `false`, and honouring it would
+	# adapter existed (audit 91 D-17) carries `false`, and honouring it would
 	# switch doc 05's standalone fallback back ON underneath a running incident
 	# engine, so both would roll. Loading can only ever ADD the claim.
 	external_main_breaks = external_main_breaks \

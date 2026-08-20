@@ -1193,7 +1193,7 @@ func test_gate_18c_no_capacity_constant_moved() -> void:
 # ============================ 19–20 the Wave-6 pacing passes (doc 92 §18/§19)
 
 ## Doc 92 §18.1's budget, in ambient incidents per game-DAY, summed over the
-## authored channels. **Unchanged at 0.40** across the Wave-7 D-14/D-15 landing,
+## authored channels. **Unchanged at 0.40** across the Wave-7 D-17/D-18 landing,
 ## because doc 92 §18.2 ruled in advance what to do when the two dead channels
 ## woke up: *"the two new rows come out of the three existing ones"*. The split
 ## moved (0.20/0.10/0.10 → 0.14/0.08/0.08 + 0.06/0.04); the budget did not.
@@ -1237,7 +1237,8 @@ const PACING_SEEDS: Array[int] = [1337, 4242, 9001, 101, 202]
 ## destroyed, treasury still climbing.
 ##
 ## ---------------------------------------------------------------------------
-## **WAVE-7 RETUNE — the two silent generators woke up (audit 91 D-14 / D-15).**
+## **WAVE-7 RETUNE — the two silent generators woke up (audit 91 D-17 / D-18,
+## filed as D-14 / D-15 and renumbered 2026-08-19).**
 ##
 ## When this gate was written, `IncidentWorld.water_mains()` and
 ## `road_intersections()` were base-class stubs returning `[]` and
@@ -1301,7 +1302,7 @@ func test_gate_19_ambient_incidents_are_a_weekly_beat() -> void:
 					% [AMBIENT_FLOOR_PER_DAY, budget])
 	# Five rows now, one per channel with a live candidate source. The two that
 	# were absent were absent because a floor cannot invent a target and theirs
-	# was an empty stub (D-14 / D-15); both adapters landed in Wave 7.
+	# was an empty stub (D-17 / D-18); both adapters landed in Wave 7.
 	for channel in AMBIENT_FLOOR_CHANNELS:
 		assert_true(per_day.has(channel),
 				"`%s` has a live candidate source and no floor row" % channel)
@@ -1330,13 +1331,13 @@ func test_gate_19_ambient_incidents_are_a_weekly_beat() -> void:
 				"the control city stopped banking money on seed %d" % seed_value)
 	var game_days := PACING_SEEDS.size() * LONG_DAYS
 	var per_week := float(created) / float(game_days) * 7.0
-	# **Every channel must actually fire.** This is the half of the gate that D-14
-	# and D-15 would have caught: a generator scanning an empty array produces a
+	# **Every channel must actually fire.** This is the half of the gate that D-17
+	# and D-18 would have caught: a generator scanning an empty array produces a
 	# clean zero and no error anywhere, and it did so for months.
 	for channel in AMBIENT_FLOOR_CHANNELS:
 		assert_true(int(by_channel[channel]) > 0,
 				"`%s` produced ZERO over %d game-days — its candidate source is "
-				% [channel, game_days] + "empty again (the D-14 / D-15 shape)")
+				% [channel, game_days] + "empty again (the D-17 / D-18 shape)")
 	# Measured 91 over these exact 105 game-days (6.07/game-week); Poisson σ ≈ 9.5.
 	# The floor going dark lands near 63 and disconnecting either adapter lands
 	# below 50, so the lower bound catches both; a 1.5× runaway lands at 137.

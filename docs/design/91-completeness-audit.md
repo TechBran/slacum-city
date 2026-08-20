@@ -33,42 +33,53 @@ instance). They are counted in the tally like any other row.
 | **SHIPPED** | implemented, reachable in play, covered by a test |
 | **PARTIAL** | implemented in part — or implemented in `sim/` but **not reachable by a player**, which for a game is the same thing |
 | **ABSENT** | no implementation |
-| **IN FLIGHT** | landing in a sibling Wave-5 branch, verified absent from this tree |
+| **IN FLIGHT** | landing in a sibling Wave-5 branch, verified absent from this tree — **retired 2026-08-19**, zero rows carry it; the two that did are re-graded against the tree they landed in |
 | **DEFERRED** | the doc itself defers it (not a gap) |
 
 ### The count
 
 | Doc | Rows | SHIPPED | PARTIAL | ABSENT | IN FLIGHT | DEFERRED |
 |---|---|---|---|---|---|---|
-| 01 Time & ticks | 12 | 10 | 1 | 1 | 0 | 0 |
-| 02 Buildings | 13 | 11 | 0 | 0 | 2 | 0 |
+| 01 Time & ticks | 12 | 11 | 0 | 1 | 0 | 0 |
+| 02 Buildings | 13 | 12 | 1 | 0 | 0 | 0 |
 | 03 Economy | 13 | 13 | 0 | 0 | 0 | 0 |
 | 04 Power grid | 13 | 11 | 1 | 0 | 0 | 1 |
 | 05 Water | 15 | 12 | 2 | 0 | 0 | 1 |
 | 06 Incidents & dispatch | 13 | 11 | 2 | 0 | 0 | 0 |
 | 07 Weather & director | 7 | 7 | 0 | 0 | 0 | 0 |
-| 08 Offline & persistence | 13 | 5 | 6 | 2 | 0 | 0 |
+| 08 Offline & persistence | 13 | 10 | 1 | 2 | 0 | 0 |
 | 09 Map, land, starter city | 13 | 12 | 0 | 1 | 0 | 0 |
 | 10 Roads & traffic | 15 | 13 | 2 | 0 | 0 | 0 |
 | 11 Rendering & performance | 15 | 14 | 1 | 0 | 0 | 0 |
 | 12 UI/UX | 18 | 16 | 2 | 0 | 0 | 0 |
 | 13 Android | 13 | 5 | 3 | 5 | 0 | 0 |
-| **Total** | **173** | **140** | **20** | **9** | **2** | **2** |
+| **Total** | **173** | **147** | **15** | **9** | **0** | **2** |
 
 *Wave-6 revision (2026-08-19): doc 12 §2.8 and §2.14 moved ABSENT → SHIPPED; §2.2
 and §2.13 stay PARTIAL on S10 (**S0 shipped in Wave 7** — `ui/title_screen.gd`). Everything below the count table is as
 written at `6d8c2b1` unless a row says otherwise.*
 
-**81 % shipped.** Of the 31 rows that are not (two more are deferred by their own
-docs, which is not a gap), the weight sits in two places:
+*Wave-7 revision (2026-08-19), seven rows and one grade retired. Doc 08 §2.2,
+§2.5, §2.7, §2.8, §2.9 and doc 01 §2.10 moved PARTIAL → SHIPPED on the
+persistence unification and the `CatchUpPlanner` resume wiring; doc 02 §2.4 moved
+IN FLIGHT → SHIPPED and §2.9 IN FLIGHT → PARTIAL, which empties the **IN FLIGHT**
+column — the sibling Wave-5 branches it named have all landed or been re-graded
+against the tree, so the grade has no rows left and no further use. Each moved
+row carries its own dated note; nothing was moved without a named file and a
+named test.*
+
+**85 % shipped** (147 of 173, up from 140). Of the 26 rows that are not (two more
+are deferred by their own docs, which is not a gap), the weight sits in one place
+now rather than two:
 
 * **The Android platform layer** — doc 13's notifications, permissions, signing
   and store assets: 5 ABSENT rows, and the only ones on the critical path to a
   build a stranger can install.
-* **Persistence under the shell** — doc 08's generation ladder, retention,
-  migration and corruption gate are *written and tested* in
-  `sim/persistence/save_manager.gd` and reachable from nowhere; the shell uses a
-  simpler second format instead. 6 PARTIAL rows, one root cause.
+* ~~**Persistence under the shell**~~ — **closed 2026-08-19.** Doc 08's generation
+  ladder, retention, migration and corruption gate are no longer reachable from
+  nowhere: `game/save_service.gd` is a thin slot API over `SaveManager`, the
+  second format is read-only legacy, and the five PARTIAL rows this bullet
+  counted are SHIPPED. §8 carries the row-by-row evidence.
 * ~~**Player verbs for infrastructure**~~ — **closed.** Water landed in Wave 5B,
   roads in 5A, land in Wave 6 (S4). Exactly as predicted, not one line of new
   simulation was needed for any of the three: a `cmd_*` re-export, a card, and
@@ -89,8 +100,8 @@ docs, which is not a gap), the weight sits in two places:
 | 2.7 | Timers vs work units | SHIPPED | `timer_service.gd`, `work_service.gd`; `test_timer_work.gd` |
 | 2.8 | Scheduled events | SHIPPED | `sim/time/scheduled_events.gd` |
 | 2.9 | Pause and speed | SHIPPED | `SimHost` accumulator + `CityHUD` speed rail |
-| 2.10 | Offline catch-up planner | **PARTIAL** | `CatchUpPlanner.plan()` is complete and tested — and **called by nothing outside `tests/`**. `game/main.gd:875` resumes with a raw `advance_coarse_hours()`, skipping the grace window, the 12-hour cap, the head-align and the residual carry. See **D-1**. |
-| 2.11 | Notification pre-scheduling | ABSENT (platform half) | `scheduled_events.gd` carries the `notify` flags per phase; nothing turns one into an OS notification. Counted under doc 13 §2.4 rather than twice. |
+| 2.10 | Offline catch-up planner | ~~PARTIAL~~ **SHIPPED 2026-08-19** | `main.gd._on_app_resumed` (line 1232) calls `CatchUpPlanner.plan()` and walks its segments, so the grace window, the 12-hour cap, the head-align and the residual carry all apply on the path the app actually runs. **D-1 closed.** |
+| 2.11 | Notification pre-scheduling | ABSENT (platform half) | `scheduled_events.gd` carries the `notify` flags per phase; `game/notifications/notification_scheduler.gd` now turns the deterministic ones into a plan, but the OS half is still doc 13 §2.4's, and this row is counted there rather than twice. |
 | 2.12 | Performance budget | SHIPPED | `tools/profile_sim.gd` per-phase table + `--baseline` identity gate |
 
 ## 2. Doc 02 — Buildings
@@ -100,12 +111,12 @@ docs, which is not a gap), the weight sits in two places:
 | 2.1 | Roster & taxonomy | SHIPPED | `BuildingCatalog.ARCHETYPE_COUNT` = 12; `test_building_catalog.gd` |
 | 2.2 | Curve family | SHIPPED | `data/buildings.json` generated by `tools/gen_buildings.py`; catalog validates every cell |
 | 2.3 | Full stat tables | SHIPPED | 60 rows validated at boot; `test_building_catalog.gd` |
-| 2.4 | Coverage reach table | **IN FLIGHT** | the `coverage_radius_tiles` column is authored and schema-checked, but no system reads it. Police/fire coverage ships in a sibling Wave-5 branch. |
+| 2.4 | Coverage reach table | ~~IN FLIGHT~~ **SHIPPED 2026-08-19** | the sibling branch landed. `sim/incidents/coverage_index.gd` is §2.9's formula verbatim and `sim/incidents/city_incident_world.gd:188` reads `coverage_radius_tiles` off the catalog to build its station rows; 12 tests in `tests/test_coverage.gd`, anchored on the doc's own worked example E6 at radius 23. |
 | 2.5 | Runtime outputs | SHIPPED | `Building` publishes population/jobs/demand; consumed by `PopulationSystem`, `PowerGrid`, `WaterSystem` |
 | 2.6 | Condition & decay | SHIPPED | `Building.decay` + `CitySim.apply_hourly_decay`; `test_building.gd` |
 | 2.7 | Fire ignition | SHIPPED | ignition rates in the catalog, dynamics in `sim/incidents/fire_spread.gd` |
 | 2.8 | Crime attractiveness | SHIPPED | `crime_weight` column feeds doc 06 generation |
-| 2.9 | Service coverage | **IN FLIGHT** | power and water coverage are live (`PowerGrid.would_serve`, `WaterSystem.service_factors`). `req_fire_coverage` / `req_police_coverage` / `safety_coverage_factor` are read **only** by the catalog's own schema validator — grep confirms zero consumers. Sibling branch. |
+| 2.9 | Service coverage | ~~IN FLIGHT~~ **PARTIAL** | *(re-graded 2026-08-19)* The field itself ships: `CoverageIndex` + `CityIncidentWorld.coverage_police/coverage_fire`, consumed by doc 06's crime generation (`IncidentSystem`, `× (1 + 0.15 · coverage_police)`) and rendered by the POLICE/FIRE overlays, which read `req_police_coverage` / `req_fire_coverage` per building (`main.gd:832`). **Two consumers are still missing**, and grep is the proof: `safety_coverage_factor` is read only by the catalog validator and one test, and §2.9's upgrade gates `E_FIRE_COVERAGE` / `E_POLICE_COVERAGE` do not exist anywhere in the tree — so falling below a requirement costs a player nothing yet. |
 | 2.10 | Construction & upgrade timing | SHIPPED | `ConstructionQueue`; `test_construction_stages.gd` |
 | 2.11 | Upgrade preconditions | SHIPPED | `BuildController.UPGRADE_CHECKS` + `CitySim.cmd_upgrade_building` |
 | 2.12 | Building state machine | SHIPPED | eight states in `Building`; `test_building.gd` |
@@ -211,28 +222,38 @@ still a gap: three quarters of doc 04's §4 verb list has no player.
 The weakest document in the tree, and the one whose gaps are invisible from
 inside the game.
 
+*Re-graded 2026-08-19 (Wave 7). Five rows moved PARTIAL → SHIPPED and three more
+had their pointers corrected, almost all for the same reason: the unification
+landed and `game/save_service.gd` now rides `sim/persistence/save_manager.gd`
+instead of a second format of its own. The pre-unification grades are struck
+rather than deleted, because the audit's value is the record of what was actually
+wrong.*
+
 | § | Subject | Grade | Pointer / gap |
 |---|---|---|---|
 | 2.1 | Division of labour with doc 01 | SHIPPED | respected in `CitySim` |
-| 2.2 | Fidelity bands / cap policy | **PARTIAL** | `CatchUpPlanner` implements the 12-hour cap and the grace window; the shell never calls it (**D-1**), so on device neither applies |
-| 2.3 | Anti-frustration invariants | **PARTIAL** | asserted in `tests/test_catchup_planner.gd` against the planner, not against the path the app actually runs |
+| 2.2 | Fidelity bands / cap policy | ~~PARTIAL~~ **SHIPPED 2026-08-19** | `main.gd._on_app_resumed` (line 1232) plans the resume through `CatchUpPlanner.plan()` and walks its segments, so the 12-hour cap, the two-minute grace and the residual carry all apply on device. **D-1 closed.** |
+| 2.3 | Anti-frustration invariants | ~~PARTIAL~~ **PARTIAL — narrower** | `tests/test_catchup_planner.gd` and `tests/test_qa_soak.gd::test_planned_resume_advances_a_live_city_from_any_tick` now assert against the same planner call the shell makes, so the divergence the row was filed for is gone. What is still untested is `main.gd`'s own body — no headless test drives `_on_app_resumed`. |
 | 2.4 | Auto-response during catch-up | SHIPPED | `IncidentWorld.offline` |
-| 2.5 | Save file layout | **PARTIAL** | `SaveManager` writes doc 08's generation layout; the shipped shell uses `game/save_service.gd`'s one-file-per-slot layout instead. Two save formats, one game. |
-| 2.6 | Atomic write protocol | SHIPPED | both writers do temp + rename |
-| 2.7 | Checkpoint cadence & rotation | **PARTIAL** | `SaveManager._apply_retention` / `_sweep` are complete; unreachable from the shell |
-| 2.8 | Versioning & migration | PARTIAL | `SaveManager._migrate` exists; `SaveService` has a flat `FORMAT_VERSION` and no migration |
-| 2.9 | Load & corruption recovery | PARTIAL | `SaveManager.load_newest` + `_quarantine` are the real gate; `SaveService.load_slot` merely refuses bad JSON |
+| 2.5 | Save file layout | ~~PARTIAL~~ **SHIPPED 2026-08-19** | One format. `SaveService.save_slot` builds three `DictSection`s and commits them through `SaveManager.request_save`; a slot is `user://saves/slot_N/{manifest.json, gen_%06d.sav, quarantine/}`. `tests/test_save_service.gd::test_a_slot_is_a_generation_ladder`. |
+| 2.6 | Atomic write protocol | SHIPPED | ~~both writers~~ **the one writer** does temp + rename — `SaveManager._write_compressed_atomic` / `_write_manifest_atomic`, the manifest rename being the commit point |
+| 2.7 | Checkpoint cadence & rotation | ~~PARTIAL~~ **SHIPPED 2026-08-19** | `_apply_retention` / `_sweep` run on every shell save, off `data/persistence.json.save` through `SavePolicy` (6 unpinned + 2 pinned; 0/30 min/6 h/24 h/7 d). `save_slot(sim, slot, reason)` carries §2.7's reason, so `pre_migration` / `pre_catchup` pin from the shell. `test_retention_comes_from_data_and_bounds_the_slot`, `test_a_pinned_checkpoint_is_never_swept`. |
+| 2.8 | Versioning & migration | ~~PARTIAL~~ **SHIPPED 2026-08-19** | Both levels. Envelope: `SaveManager.CURRENT_SCHEMA_VERSION` + `LADDER`; section: `DictSection.section_version()` with the sim's own `migrate_save_section` hook. Format 1 → 2 is a real migration with a real fixture — `tests/test_save_migration.gd` runs nine tests against `tests/fixtures/legacy_slot_format1.json`, a byte-for-byte capture of a pre-change write that is never regenerated. |
+| 2.9 | Load & corruption recovery | ~~PARTIAL~~ **SHIPPED 2026-08-19** | `SaveService.load_slot` is the §2.9 gate: candidate walk, SHA-256, version range, structural repair, quarantine, then the format-1 file as a last pinned candidate. `last_load_recovered` / `last_load_lost_minutes` / `repair_notes` carry the "you lost about N minutes" figure back to the UI. `test_a_ruined_generation_falls_through_to_the_one_behind_it`, `test_delete_takes_the_quarantine_with_it`. |
 | 2.10 | Event history rings | **ABSENT** | `ui/event_log_model.gd` keeps a session-lifetime ring in memory; nothing persists it, so the log is empty on every launch |
 | 2.11 | WHILE YOU WERE AWAY report | SHIPPED | `AwayModel` + `AwayReportSheet`, driven from `main.gd._on_app_resumed` |
 | 2.12 | Performance budget | SHIPPED | soak: a 45-minute absence catches up in **1.04 s** (43 coarse hours) |
-| 2.13 | Notification policy | **ABSENT** | no notification code anywhere; see doc 13 §2.4/2.5 |
+| 2.13 | Notification policy | **ABSENT** | Still absent, but for a narrower reason than when this row was written: `game/notifications/` now schedules, routes and budgets, and `NotificationBudget.serialize()` / `deserialize()` are the save section this row wants — **no shell code registers them**, so token ledgers, cooldown keys and quiet-hours state reset on every launch. Doc 13 §2.4/2.5 is the platform half. |
 
-**And the one nobody has noticed:** `UIRoot.capture_ui_state()` /
-`restore_ui_state()` implement doc 12 §3.2's `ui` block — overlay choice,
-settings, and the onboarding block — and **no shell code calls either**
-(grep: only `tests/`). `SaveService.save_slot` persists `sim.canonical_capture()`
-and nothing else. The tutorial-finished flag, the player's overlay and their
-settings do not survive an app restart. See **D-3**.
+~~**And the one nobody has noticed:**~~ **Closed 2026-08-19.** `UIRoot.capture_ui_state()`
+/ `restore_ui_state()` implement doc 12 §3.2's `ui` block — overlay choice,
+settings, and the onboarding block — and the shell now wires both ends:
+`main.gd:683` assigns `save_service.ui_provider = root.capture_ui_state`, and
+`main.gd:685` / `main.gd:1013` apply `save_service.last_loaded_ui` once the UI
+exists. The section rides the envelope beside `city`
+(`tests/test_save_service.gd::test_ui_section_rides_the_envelope`) and survives
+the format change (`tests/test_save_migration.gd::test_the_ui_section_survives_the_format_change`),
+so a finished tutorial stays finished across a restart. **D-3 closed.**
 
 ## 9. Doc 09 — Map, land, starter city
 
@@ -303,8 +324,8 @@ settings do not survive an app restart. See **D-3**.
 | 2.5 | Overlay system | SHIPPED (3 of the doc's modes) | power, water, traffic; `OverlayModel` lists and greys the rest |
 | 2.6 | Incident drawer & dispatch UX | SHIPPED | `IncidentDrawer` + `UnitPickerSheet`; `test_ui_incidents.gd` |
 | 2.7 | Build menu, placement, requirements | SHIPPED | `BuildSheet` + `BuildController` + `RequirementFormatter` |
-| 2.8 | **Land purchase flow (S4)** | SHIPPED | `ui/land_panel.gd` + `ui/land_panel_model.gd`; entered by `BuildController.pick_at_ground()`; `tests/test_ui_land.gd` (26 tests) drives price, refusals, PURCHASE → DEVELOP and the six-phase list over a real `CitySim`. **One line in `game/main.gd` makes it reachable** — `_handle_tap` must call `pick_at_ground` instead of `sim_id_at_ground` (doc 12 Wave-6 D-21); until the lead lands it, S4 is a screen with no door. |
-| 2.9 | Building panel (S5) | SHIPPED | `BuildingPanel`; upgrade checklist live. Its four coverage tiles list police and fire, which nothing computes (doc 02 §2.9). |
+| 2.8 | **Land purchase flow (S4)** | SHIPPED | `ui/land_panel.gd` + `ui/land_panel_model.gd`; entered by `BuildController.pick_at_ground()`; `tests/test_ui_land.gd` (26 tests) drives price, refusals, PURCHASE → DEVELOP and the six-phase list over a real `CitySim`. ~~One line in `game/main.gd` makes it reachable~~ — **landed 2026-08-19**: `main.gd:1348` calls `build_controller.pick_at_ground(ground)` and `sim_id_at_ground` is gone from the tap path (doc 12 Wave-6 D-21). S4 has its door. |
+| 2.9 | Building panel (S5) | SHIPPED | `BuildingPanel`; upgrade checklist live. ~~Its four coverage tiles list police and fire, which nothing computes~~ — **closed 2026-08-19**: `CoverageIndex` computes both and `CityIncidentWorld.coverage_police/coverage_fire` publish them (doc 02 §2.4/§2.9). What the tiles still cannot show is a *consequence*, because §2.9's `E_FIRE_COVERAGE` / `E_POLICE_COVERAGE` upgrade gates are not implemented. |
 | 2.10 | City dashboard (S8) | SHIPPED | `CityDashboard`; `test_ui_dashboard.gd` |
 | 2.11 | Pause & speed | SHIPPED | HUD rail + `PauseMenu` |
 | 2.12 | WHILE YOU WERE AWAY (S11) | SHIPPED | `AwayReportSheet`; `test_ui_away.gd` |
@@ -312,10 +333,21 @@ settings do not survive an app restart. See **D-3**.
 | 2.14 | Haptics | SHIPPED | `ui/haptics.gd` — the one vibrator call site; seven cues off `data/ui.json.haptics_ms`, fired by `BuildSheet`, `LandPanel` and `UIRoot.feed_events`/`report_dispatch_result`. `reduce_motion` suppresses it (A8) without clearing the row. `tests/test_ui_haptics.gd` |
 | 2.15 | Alerts, toasts, world markers | SHIPPED | `AlertsCenter`; `test_ui_alerts.gd` |
 | 2.16 | Touch camera controls | SHIPPED | `TouchInput` → `GestureRecognizer` → `CameraState`; `test_gestures.gd` |
-| 2.17 | **Onboarding, eleven steps** | SHIPPED | `OnboardingModel` + `OnboardingFlow`; now driven end to end by `tests/test_tutorial_flow.gd` and `tools/flow_test.gd`. Two structural risks found — **D-2**, **D-3**. |
+| 2.17 | **Onboarding, eleven steps** | SHIPPED | `OnboardingModel` + `OnboardingFlow`; now driven end to end by `tests/test_tutorial_flow.gd` and `tools/flow_test.gd`. Two structural risks found — **D-2** (open) and **D-3** (**closed 2026-08-19**: the `ui` block now persists, so a finished tutorial stays finished across a restart). |
 | 2.18 | Accessibility checklist | SHIPPED (one regression) | `ui/ui_audit.gd` + `tools/ui_preview.gd --audit --strict`. Re-run for this audit at four boxes: **the sweep's zero-defect result no longer holds** — S13's event-log chip overlaps its siblings at 412×915, 880×400 and 1280×720. See **D-12**. |
 
 ## 13. Doc 13 — Android integration
+
+> **Stale, and deliberately not re-graded here (2026-08-19).** Every row below is
+> as measured at `6d8c2b1`, and an Android wave has landed since: `game/notifications/`
+> (scheduler, router, budget, text, native sink), `game/notifications/permission_flow.gd`,
+> `game/crash_sentinel.gd`, `POST_NOTIFICATIONS` in `tools/make_release.sh` and
+> `tests/test_release_plumbing.gd`, and doc 13's own §11 recording the build,
+> signing and permission verification it ran. Re-grading §2.4–§2.7, §2.11 and
+> §2.12 needs the same read-the-code-then-find-the-test pass §0 specifies, on
+> five rows, plus a device — **so it is filed rather than guessed at**, and the
+> count table above still carries the old grades. Nothing in this table should be
+> quoted as current until that pass happens.
 
 | § | Subject | Grade | Pointer / gap |
 |---|---|---|---|
@@ -328,7 +360,7 @@ settings do not survive an app restart. See **D-3**.
 | 2.6 | `SlacumNative` plugin | PARTIAL | ships `elapsedRealtime`, `boot_id`, thermal status, sustained performance — the doc's notification and permission surface is not in it |
 | 2.7 | Permissions | **ABSENT** | `POST_NOTIFICATIONS` is neither declared nor requested |
 | 2.8 | Battery, frame pacing, thermal | PARTIAL | thermal status is forwarded and audio mutes on focus loss; **nothing consumes the thermal ladder** to drop a preset or cap fps |
-| 2.9 | Long catch-up without an ANR | PARTIAL | measured at 1.04 s for 43 coarse hours (soak §14.2), so the risk is small — but the resume path is **D-1**, so the measurement is of the planner, not of the shipped call |
+| 2.9 | Long catch-up without an ANR | PARTIAL | measured at 1.04 s for 43 coarse hours (soak §14.2). ~~The resume path is **D-1**, so the measurement is of the planner, not of the shipped call~~ — **D-1 closed 2026-08-19**, and the shell now makes the same `CatchUpPlanner.plan()` call the measurement was taken against. Still PARTIAL because the number is a workstation number: no on-device ANR run has happened (doc 13 §7 D-15). |
 | 2.10 | Export pipeline | SHIPPED | `export_presets.cfg`, gradle v0.3.x |
 | 2.11 | Crash reporting | **ABSENT** | nothing |
 | 2.12 | Play Store readiness | **ABSENT** | `export_presets.cfg` has **no keystore, no signing config**; no store listing assets, no privacy policy, no data-safety form |
@@ -431,11 +463,19 @@ default 1280×720 viewport.
 
 Filed, not fixed — these live in files this branch does not own.
 
+**Renumbering, 2026-08-19:** two waves filed a `D-14`/`D-15` pair each and the ids
+collided. The **performance** pair (draw calls, sim step cost) keeps **D-14/D-15**;
+the **generator** pair (`water_main_break` and `traffic_accident` having no
+candidate source, both fixed in Wave 7) becomes **D-17/D-18**, in that order. Every
+cross-reference in `docs/` and in code comments was moved with them. Doc 12's own
+`D-14…D-18` delta table and doc 13 §7's `D-01…D-16` device matrix are separate
+id spaces and are untouched.
+
 | # | Severity | Defect |
 |---|---|---|
-| **D-1** | **High** | `game/main.gd:875` resumes with `sim.advance_coarse_hours(int(elapsed/60))`. `TickScheduler.advance_coarse_n` asserts an hour-aligned `tick_index`; a resume from any of the other 239 tick offsets **trips the assertion in a debug build** and, in a release build where `assert` is stripped, fires hourly cadences off-boundary — the exact thing doc 01 §2.4 exists to prevent. It also skips the two-minute grace, the 12-hour cap and the residual carry. `CatchUpPlanner.plan()` already does all four and is called by nothing. `tests/test_qa_soak.gd::test_planned_resume_advances_a_live_city_from_any_tick` is a green, ready-made harness for the fix — it drives a live city from offsets 0, 1, 137 and 239. |
+| **D-1** | ~~High~~ **FIXED 2026-08-19 (Wave 7)** | **Closed:** `main.gd._on_app_resumed` now calls `CatchUpPlanner.plan(elapsed_ms, residual_game_ms, tick_index)` and walks its segments (`advance_coarse_hours` for `coarse`, `scheduler.advance_fine_n` otherwise), then writes back `new_residual_game_ms` — so every segment lands hour-aligned, and the 12-hour cap, the two-minute grace and the residual carry all apply on device. `tests/test_qa_soak.gd::test_planned_resume_advances_a_live_city_from_any_tick` drives the same call from offsets 0, 1, 137 and 239. Original filing: ~~`game/main.gd:875` resumes with `sim.advance_coarse_hours(int(elapsed/60))`. `TickScheduler.advance_coarse_n` asserts an hour-aligned `tick_index`; a resume from any of the other 239 tick offsets **trips the assertion in a debug build** and, in a release build where `assert` is stripped, fires hourly cadences off-boundary — the exact thing doc 01 §2.4 exists to prevent. It also skips the two-minute grace, the 12-hour cap and the residual carry. `CatchUpPlanner.plan()` already does all four and is called by nothing.~~ |
 | **D-2** | **High** | Tutorial step 9 (`dispatch`) can become unsatisfiable. The auto-dispatcher takes the scripted transformer job **within the first game-minute** and resolves it at **+62 game-minutes** — 62 real seconds at 1×. A player who takes longer than that to open the drawer and tap ASSIGN finds the incident terminal, every `cmd_dispatch_unit` refused `E_UNKNOWN_INCIDENT`, and the step has no `autohelp` and no `any_of` fallback. The flow then only ends via *Skip tutorial*. Measured by `tests/test_tutorial_flow.gd::test_scripted_incident_leaves_a_usable_dispatch_window`. Cheapest fix: an `any_of` on step 9 that also accepts `sim_event incident_resolved`. |
-| **D-3** | **High** | `UIRoot.capture_ui_state()` / `restore_ui_state()` are complete and tested and **called by nothing outside `tests/`**. `SaveService` persists only `sim.canonical_capture()`. Consequence: the tutorial's finished flag, the settings and the overlay choice **do not survive an app restart** — a returning player is shown the tutorial again, contradicting doc 12 §2.17's "never shows again once done". One line in `SaveService.save_slot` and one in `load_slot`. |
+| **D-3** | ~~High~~ **FIXED 2026-08-19 (Wave 7)** | **Closed, and it cost the two lines this row predicted.** `SaveService` grew a `ui_provider: Callable` and a `last_loaded_ui: Dictionary`; `main.gd:683` assigns `save_service.ui_provider = root.capture_ui_state`, and `main.gd:685` / `main.gd:1013` apply `last_loaded_ui` once the UI exists (a boot restore happens before there is a UI to restore into, which is why the value is held rather than pushed). The `ui` section rides the envelope beside `city` and survives the format-1 migration: `tests/test_save_service.gd::test_ui_section_rides_the_envelope`, `tests/test_save_migration.gd::test_the_ui_section_survives_the_format_change`. Original filing: ~~`UIRoot.capture_ui_state()` / `restore_ui_state()` are complete and tested and **called by nothing outside `tests/`**. `SaveService` persists only `sim.canonical_capture()`. Consequence: the tutorial's finished flag, the settings and the overlay choice **do not survive an app restart** — a returning player is shown the tutorial again, contradicting doc 12 §2.17's "never shows again once done".~~ |
 | **D-4** | **High** | Doc 05's ten `WaterSystem.cmd_*` are not re-exported by `CitySim`, so no build card can exist. The water simulation is fully built and entirely unplayable. |
 | **D-5** | ~~High~~ **Closed (Wave 5A + 6)** | Two more verb surfaces with no player: **roads** (closed Wave 5A) and **land** (closed Wave 6 — S4 ships as `ui/land_panel.gd`, entered by `BuildController.pick_at_ground`; `cmd_buy_block` is called with `auto_develop = false` so doc 12 §2.8's PURCHASE → DEVELOP is two taps, as written). The `game/main.gd` `_handle_tap → pick_at_ground` routing landed in the Wave-6 integration. |
 | **D-6** | ~~Medium~~ **CLOSED** (Wave 6) | Incident pressure at starter-city scale is ~1 per 6 game-days (2 in 287 game-hours). Consistent with doc 02's ignition rates, but it means the drawer, the picker, the fleet and doc 06's whole escalation ladder are almost never seen. Either the rates want a floor at small city sizes, or the Director wants a "something must happen" pacing rule. — **Answered by the first of those: `data/incidents.json` `ambient_floor`, a per-channel `max()`, no `generator_base_rates` row moved. 1.88 → 3.04 ambient incidents/game-week, measured over 336 game-days on each side of the boolean. Doc 92 §18; gate 19.** The true rate was 1.88/week, not the 0.5/week this row reads — 287 game-hours is a 12-game-day sample of a 0.27/day process, so part of the number above is Poisson noise. The finding survives the correction; the measurement did not. |
@@ -449,8 +489,8 @@ Filed, not fixed — these live in files this branch does not own.
 | **D-16** | Low | **The NEAR half of D-14 — a derivation that fails against a measurement that passes.** `CityView` still allocates one MultiMesh per `(chunk, archetype, level)` for NEAR chunks: **16.4 per chunk measured, against §2.13's assumed 8**. Re-run §2.13's Z1 worst case (6 NEAR chunks, the Balanced `near_chunk_max`) with the measured number and it lands at **366 against 320** — `6 × 16.4 × 2 splits = 197` of that is the shadow pass alone, because §2.13 costs every NEAR bucket once per split. But the bench city at Z1 **measures 136 with UI**, because the frustum at `D = 86.9` never actually holds six full dense chunks. Filed Low for exactly that reason, and unlike D-14 (where derivation and measurement failed together) there is nothing here to fix today. The fix is a switch, not a design: the LOD0 level atlas that closes MEDIUM is pixel-exact and already shipping, so extending it to NEAR is `medium_merge_enabled`'s twin plus a `near_flicker = 1` material. Take it the first time a **device** measurement puts a close-zoom pose near the budget, or the first time a pose is found that really does hold six dense NEAR chunks. Doc 11 §2.13, "What is still open". |
 | **D-15** | ~~High~~ **COARSE PATH FIXED (Wave 7) · SUB-STEP GUARD TAKEN (Wave 8) · fine path OPEN (Medium)** | ~~The sim step does not scale to the benchmark city.~~ Originally: **22.00 ms per fine tick** and **259.18 ms per coarse step** on `tests/fixtures/bench_city.json`, with the 12 h catch-up at 3.11 s against doc 01's 2 s budget. **The Wave-7 scaling pass closed the coarse half** — interleaved A/B, same session, same workstation, baseline stashed and restored between runs: coarse step **238.6 → 132.8 ms (−44 %)**, **12 h catch-up 2.86 → 1.59 s, inside the 2 s budget**, fine tick 21.80 → 17.49 ms (−20 %). Starter city, same pass: coarse 8.10 → 6.28 ms, fine 1.590 → 1.511 ms. No rule, cadence or tunable moved: `tools/profile_sim.gd --baseline` reports identical `state_hash` on both paths on both cities, and the 26 balance gates are untouched. The wins were all the same shape — *stop re-deriving per building what is constant across the roster*: a cached ascending roster order (`CitySim.roster_ids`), one roster pass for all twelve district service ratios instead of twelve, a columnar fire-candidate seam with the candidate table built only on sub-steps that ignite, memoised building→district, an array-row avenue-gate scan, and `PowerGrid.is_powered` no longer allocating an empty Dictionary per call. Per-phase before/after in doc 11 §2.13's Wave-7 table. **What is left is the fine tick**, and it is no longer a micro-optimization problem: `water` 4.4 ms, `power` 3.8 and `roads` 2.3 are O(buildings) on EVERY SimTick, and `roads_congestion` is a per-game-minute pass the amortized column hides (un-amortized: ordinary tick ≈ 11 ms, minute tick ≈ 38 ms, settled-hour tick ≈ 73 ms). Three costed cadence proposals, none of them taken because each moves a number the gates are written against: **(1) measured, not estimated** — drop the fire-spread breakpoint from `IncidentSystem._next_discontinuity_h()` (line 176) when no `structure_fire` is live. It fires on a 1/12-game-hour grid whether or not anything is burning and is what sets the sub-step count. With the guard in place: **15.7 → 5.1 sub-steps per coarse hour, `incidents` 54.8 → 28.0 ms, coarse step 133.8 → 104.8 ms, 12 h catch-up 1.61 → 1.26 s**; the fine tick does not move (it takes one sub-step per game-minute either way). Both state hashes change, so it needs a save-version bump and a balance-matrix re-run; **(2)** halve the `roads_congestion` cadence, or split its three passes (`congestion.recompute` 4.2 ms, `TrafficSnapshot.rebuild` 4.2, `TrafficFeed.rebalance` 7.1 per game-minute) across the four ticks of the minute so no single frame carries all of it; **(3)** accumulate the per-building power and water service ledgers per game-minute at dt = 1 min instead of per tick at dt = 15 s — the accumulators are already dt-exact, so the hour they settle is unchanged in value but not in float rounding. All three change RNG consumption or float association and therefore break save identity against existing saves. **PROPOSAL 1 IS TAKEN — Wave 8, 2026-08-20.** `IncidentSystem._next_discontinuity_h()` skips the fire-spread breakpoint when the live roster holds no `structure_fire`. Interleaved A/B, three rounds, alternating arms within each round, against a pristine `git show HEAD:` copy rather than a stash: **integrator sub-steps per coarse hour 12.00 → 1.25 on the starter city and 20.67 → 8.75 on the bench city**; **coarse step −25.6 % on the starter (8.58 → 6.28, 8.56 → 6.32, 8.23 → 6.26 ms — every round) and −20.9 % on the bench (159.7 → 127.7, 153.0 → 119.7, 154.1 → 122.0 ms)**; **`incidents` 4.00 → 1.60 ms on the starter and 78.8 → 47.1 ms on the bench**; **12 h catch-up 1.836 → 1.437 s on the bench city, inside doc 01's 2 s budget with 28 % to spare**; **fine tick flat** (+1.4 % starter, +0.5 % bench, both inside this session's noise) — exactly as predicted, because a fine tick already takes at most one sub-step. The predicted figures in this row were 15.7 → 5.1 sub-steps and 133.8 → 104.8 ms: the direction and the mechanism are confirmed, the magnitudes are not comparable because the Wave-8 bench city runs a different incident mix (20.67 sub-steps/hour at HEAD, not 15.7). `max_coarse_hours` is unchanged at 312 — `tests/test_perf_governor.gd` measures 6.21 ms/step against 6.25 before, and both floor to the same cap. **Proposals 2 and 3 are untouched and the fine path with them**, and it now has a second consumer waiting on it: doc 06 §2.10's router seam is complete but its wiring is HELD, because a ~5 ms A\* quote cannot live inside a per-sub-step assignment loop and doc 10's own test already reports *"median P0 expansions 1154 vs trigger 800 → hierarchical routing REQUIRED"*. Full per-phase tables and the router's own measurement in doc 11 §2.13's Wave-8 subsections. |
 | **D-13** | Low | `tests/test_ui_audit.gd::BOXES` covers 360×800, 412×915, 794×924 and 880×400 — **not the project's own `window/size/viewport` of 1280×720**, which is what every screenshot harness and every desktop run renders at. Adding it would have caught D-12 in the suite. |
-| **D-14** | ~~Medium~~ **FIXED 2026-08-19 (Wave 7)** | ~~Doc 06's `water_main_break` generator has no candidate source.~~ `CityIncidentWorld.water_mains()` now joins doc 05's `WaterSystem.mains()` into doc 06's row (`segment_id` → `id`, plus the additive `tile` / `zone_key` columns doc 05 was already holding), filtered to `ok` segments. **C-46 is closed in the same place**: the adapter that supplies the candidates sets `external_main_breaks`, so doc 05's standalone fallback stands down instead of both sides rolling — and the load path latches it, because who rolls is a fact about the program and not about the city. Measured, 12 seeds × 28 game-days of `do_nothing`: **0.00 → 0.60 water_main_break/game-week**, 0 failed. `tests/test_incident_world_join.gd`, `tests/test_water_failures.gd`. |
-| **D-15** | ~~Medium~~ **FIXED 2026-08-19 (Wave 7)** | ~~Doc 06's `traffic_accident` generator has no candidate source.~~ `RoadNetwork.intersections()` publishes every degree-≥3 junction with doc 06 §2.6(e)'s five inputs — both per-node scalars the MAX over incident edges, which is doc 06's own "the collision happens on the worst approach" — and `CityIncidentWorld.road_intersections()` joins it. The write half landed too: `road_close_edge` / `road_set_edge_speed_mult` resolve doc 06's TILE to doc 10's worst EDGE and map the incident onto doc 10's closure-cause table, so the T2/T3/T4 consequence rows and the `on_fail` closure fire for the first time. Measured: **0.00 → 3.60 traffic_accident/game-week** at starter scale (389 junctions), which is *below* doc 06 §2.6(e)'s own worked intent of 0.687/game-day — **and it takes the ambient total past doc 92 §18's ruled 2–4/game-week band, which no floor can subtract from. See gate 19's Wave-7 note and the delivery report's open question 1.** |
+| **D-17** *(filed as D-14; renumbered 2026-08-19)* | ~~Medium~~ **FIXED 2026-08-19 (Wave 7)** | ~~Doc 06's `water_main_break` generator has no candidate source.~~ `CityIncidentWorld.water_mains()` now joins doc 05's `WaterSystem.mains()` into doc 06's row (`segment_id` → `id`, plus the additive `tile` / `zone_key` columns doc 05 was already holding), filtered to `ok` segments. **C-46 is closed in the same place**: the adapter that supplies the candidates sets `external_main_breaks`, so doc 05's standalone fallback stands down instead of both sides rolling — and the load path latches it, because who rolls is a fact about the program and not about the city. Measured, 12 seeds × 28 game-days of `do_nothing`: **0.00 → 0.60 water_main_break/game-week**, 0 failed. `tests/test_incident_world_join.gd`, `tests/test_water_failures.gd`. |
+| **D-18** *(filed as D-15; renumbered 2026-08-19)* | ~~Medium~~ **FIXED 2026-08-19 (Wave 7)** | ~~Doc 06's `traffic_accident` generator has no candidate source.~~ `RoadNetwork.intersections()` publishes every degree-≥3 junction with doc 06 §2.6(e)'s five inputs — both per-node scalars the MAX over incident edges, which is doc 06's own "the collision happens on the worst approach" — and `CityIncidentWorld.road_intersections()` joins it. The write half landed too: `road_close_edge` / `road_set_edge_speed_mult` resolve doc 06's TILE to doc 10's worst EDGE and map the incident onto doc 10's closure-cause table, so the T2/T3/T4 consequence rows and the `on_fail` closure fire for the first time. Measured: **0.00 → 3.60 traffic_accident/game-week** at starter scale (389 junctions), which is *below* doc 06 §2.6(e)'s own worked intent of 0.687/game-day — **and it takes the ambient total past doc 92 §18's ruled 2–4/game-week band, which no floor can subtract from. See gate 19's Wave-7 note and the delivery report's open question 1.** |
 
 ---
 
@@ -460,8 +500,8 @@ Ranked by *player-visible harm per hour of work*, not by size.
 
 | # | Work | Why it is here | Fixes |
 |---|---|---|---|
-| **1** | **Wire the resume path through `CatchUpPlanner`** | one function call; today a resume from 239 of 240 tick offsets is a debug crash and a release correctness bug on the one platform we ship to | D-1 |
-| **2** | **Persist the `ui` block** | one line each in `SaveService.save_slot` / `load_slot`; without it a returning player is shown the tutorial again, which is the first thing any tester will report | D-3 |
+| ~~**1**~~ | ~~**Wire the resume path through `CatchUpPlanner`**~~ **DONE 2026-08-19 (Wave 7)** | `main.gd._on_app_resumed` plans the resume and walks the segments; every one lands hour-aligned, and the cap, the grace window and the residual carry apply on device | D-1 ✔ |
+| ~~**2**~~ | ~~**Persist the `ui` block**~~ **DONE 2026-08-19 (Wave 7)** | `SaveService.ui_provider` / `last_loaded_ui`, wired at `main.gd:683` and applied at `main.gd:685` / `1013`; the finished tutorial stays finished across a restart | D-3 ✔ |
 | **3** | **Give step 9 an `any_of` fallback** | a table row in `data/ui.json`, no code; today a slow player can wedge the tutorial permanently with no way out but Skip | D-2 |
 | **4** | **Stand the event-log chip down when a sibling opens** | five lines copied from `ui/alerts_center.gd:221`; today it takes taps meant for the alerts list and the drawer at three of four device boxes. Add 1280×720 to `test_ui_audit.gd::BOXES` in the same commit | D-12, D-13 |
 | **5** | ~~**Land purchase flow (S4) end to end**~~ **DONE (Wave 6)** | `ui/land_panel*.gd`, the `pick_at_ground` seam, four new refusal codes with copy, `tests/test_ui_land.gd`. Outstanding: one `game/main.gd` tap-handler line | D-5, and unblocks D-7 |
@@ -470,7 +510,7 @@ Ranked by *player-visible harm per hour of work*, not by size.
 | **8** | **Android notifications (doc 13 §2.4/2.5/2.7 + doc 08 §2.13)** | the entire retention loop of a session-based mobile game. Needs `POST_NOTIFICATIONS`, a channel, an `AlarmManager` bridge in `SlacumNative`, S10's settings rows, and doc 01 §2.11's pre-scheduling to be hooked up | doc 13 §2.4/2.5/2.7, doc 08 §2.13, doc 12 §2.13 |
 | **9** | **Police/fire coverage** (already in flight) | `req_police_coverage` / `req_fire_coverage` are authored, validated and read by nobody; the building panel already shows the tiles | doc 02 §2.4/2.9 |
 | **10** | **Benchmark city fixture + a measured device matrix** | doc 11's budgets are unverified claims until a 1,500-building city exists. Pairs naturally with the adaptive governor and the thermal ladder, neither of which can be tuned without it | D-8, doc 11 §2.13, doc 13 §2.8 |
-| ~~**11**~~ | ~~**Incident pacing pass**~~ — **DONE** (Wave 6, doc 92 §18) | `data/incidents.json` `ambient_floor`: a per-channel `max()` under doc 06 §2.6's generation, no `generator_base_rates` row moved. Measured A/B, 336 game-days each side, 12 seeds: **1.88 → 3.04 ambient incidents/game-week** at starter scale, 100 % resolved, 0 failed, 0 destroyed. It also found **D-14/D-15**. | D-6 |
+| ~~**11**~~ | ~~**Incident pacing pass**~~ — **DONE** (Wave 6, doc 92 §18) | `data/incidents.json` `ambient_floor`: a per-channel `max()` under doc 06 §2.6's generation, no `generator_base_rates` row moved. Measured A/B, 336 game-days each side, 12 seeds: **1.88 → 3.04 ambient incidents/game-week** at starter scale, 100 % resolved, 0 failed, 0 destroyed. It also found **D-17/D-18** (filed then as D-14/D-15). | D-6 |
 | ~~**12**~~ | ~~**Progression pacing pass**~~ — **DONE** (Wave 6, doc 92 §19) | doc 09 §2.11's ladder retuned onto doc 92's measured curves and moved into `data/progression.json` (doc 09 §8.2's file, never previously written): `250/1000/4000/12000/30000` → **`200/700/1600/3600/8000`**. `balanced` now reaches level 1 on game-day **2**, level 2 on **11**, level 3 on **23** — where level 3 was previously unreachable in fifty. | D-7 |
 | ~~**10**~~ | ~~Benchmark city fixture + a measured device matrix~~ **DONE 2026-08-19** | The fixture, both profilers, the adaptive governor and the thermal ladder all ship. The matrix is measured and **failed in two places** — the successor work was **D-14** (bucket merging, **done the same day**: Z2 352 → 219 with UI, doc 11 §2.6/§2.13) and **D-15** (sim step cost, still open) | D-8 ✔, doc 11 §2.13 ✔, doc 13 §2.8 ✔ |
 | **11** | **Incident pacing pass** | a small-city floor or a Director pacing rule so the dispatch loop is part of the game rather than a rare event | D-6 |
@@ -484,3 +524,6 @@ The first four are, together, well under a day's work, and they are the four
 that make the game's first ten minutes, its second launch and its tap targets
 correct. Everything from (5)–(7) is the same shape of work repeated: subsystems
 that are fully simulated and completely untouchable.
+
+*2026-08-19: (1) and (2) are done — the second launch is correct. (3) and (4)
+are still open and are still the cheapest player-visible wins in this table.*

@@ -2,7 +2,7 @@ extends SceneTree
 ## Doc 92 §18's ambient-pacing A/B, as a re-runnable instrument.
 ##
 ## Doc 92 pass 5 measured the incident MIX by hand and wrote the numbers into
-## §18.3; the Wave-7 D-14/D-15 landing had to re-derive the same table across
+## §18.3; the Wave-7 D-17/D-18 landing had to re-derive the same table across
 ## five live channels instead of three, and gate 19's band is set from it. This
 ## is the thing that produced both, so the next person to move a floor row does
 ## not have to rebuild the harness first.

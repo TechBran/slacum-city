@@ -446,7 +446,7 @@ func test_budget_exhaustion_returns_an_estimate_not_garbage() -> void:
 # ------------------------------------------------- doc 06's two new queries
 
 ## `intersections()` — the roster doc 06 §2.6(e) puts accidents on (audit 91
-## D-15). Every degree-≥3 node, signalised or not, with the five inputs its rate
+## D-18). Every degree-≥3 node, signalised or not, with the five inputs its rate
 ## function reads. `signalised_intersections()` answers a different question and
 ## drops the unsignalised majority, which is why doc 06 could not use it.
 func test_intersection_roster_covers_every_junction() -> void:
