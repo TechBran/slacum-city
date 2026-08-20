@@ -210,6 +210,14 @@ func _apply_panel_width() -> void:
 	_panel.offset_left = -width
 
 
+## D-16, one corner over: the chip is the FIRST rung of the bottom-right rail
+## (`UIWidgets.solve_corner_rail`), above the drawer's handle in the column
+## beside it and below the event log's chip. The tab keeps the edge; the chips
+## yield it and stack.
+func corner_rail_entry() -> Dictionary:
+	return {"control": _chip, "index": 1}
+
+
 ## The chip is an edge affordance on `PanelLayer`, like the drawer's handle, and
 ## the layer allows one open surface at a time. On a short landscape box it was
 ## landing on the open drawer's rows with a tap target over theirs; polled here
@@ -219,19 +227,9 @@ func _process(_delta: float) -> void:
 	if _chip == null or is_open():
 		return
 	_chip.visible = not UIWidgets.any_sibling_open(self)
-	# The chip and the drawer's handle share the bottom-right corner, and both
-	# widen with the text scale: at 130 % the scene's authored offsets put the
-	# chip 3800 px² *inside* the handle. The chip is the one that moves, because
-	# the handle is pinned to the edge it is a tab on.
-	var handle := get_parent().get_node_or_null("IncidentDrawer/Handle") as Control
-	# The handle's laid-out width, not its declared minimum: it widens itself to
-	# whatever its count and tier line measure, and that is only true after a
-	# layout pass.
-	var reserved := (maxf(handle.custom_minimum_size.x, handle.size.x) + _spacing) \
-			if handle != null and handle.visible else 0.0
-	_chip.offset_right = -reserved
-	_chip.offset_left = _chip.offset_right \
-			- maxf(_chip_w, _chip.get_combined_minimum_size().x)
+	# One affordance standing down re-packs the column, so the rail is re-solved
+	# from here rather than only when this screen refreshes.
+	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min)
 
 
 ## Grows each row to the height its own copy needs.
@@ -265,6 +263,9 @@ func _refresh_chip() -> void:
 	_chip.tooltip_text = UIWidgets.t(config, "ui_alerts_chip") if count <= 0 \
 			else UIWidgets.t_args(config, "ui_alerts_unread", {"n": count})
 	UIWidgets.paint_state(self, _chip, _worst_unread_state())
+	# `⚠ 8` is 17 dp wider than `⚠`, and the chip grows leftward out of a column
+	# the rail owns — so the badge changing is a re-solve, not just a repaint.
+	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min)
 	if count != _last_unread:
 		_last_unread = count
 		unread_changed.emit(count)

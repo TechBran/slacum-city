@@ -111,11 +111,22 @@ func _build_rows() -> void:
 ## — the sound row's note was wedged between the two and wrapped to four lines,
 ## which made one row three times the height of its neighbours and read as a
 ## layout fault rather than as a note.
+##
+## **The line is an `HFlowContainer`, not an `HBox` (D-47).** An `HBox` asks for
+## the sum of its children, so `Emergency contractors` (201 dp) beside its value
+## chip (183 dp) made the row 392 dp; the row list made the scroller that wide,
+## the scroller made the sheet that wide, and a `grow_horizontal = BOTH` panel
+## then centred 420 dp of sheet on a 360 dp phone and put its own ✕ 20 dp off the
+## right edge. A flow container asks for its WIDEST CHILD and drops the value
+## onto a second line when the two do not fit, so the row costs 201 dp and the
+## reference box is unchanged — at 880 dp both still sit on one line, with the
+## label expanding and the value flush right exactly as before.
 func _build_row(row: Dictionary) -> Container:
 	var key := str(row["key"])
-	var line := HBoxContainer.new()
+	var line := HFlowContainer.new()
 	line.name = "Row_" + key
-	line.add_theme_constant_override(&"separation", int(_spacing))
+	line.add_theme_constant_override(&"h_separation", int(_spacing))
+	line.add_theme_constant_override(&"v_separation", int(_spacing))
 
 	var label := UIWidgets.label("Label", UIWidgets.t(config, str(row["label_key"])))
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL

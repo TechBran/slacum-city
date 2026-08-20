@@ -151,7 +151,10 @@ func _ready() -> void:
 
 
 func _parse_args() -> void:
-	for arg in OS.get_cmdline_user_args():
+	# `DevArgs`, not `OS`: this scene is exportable and gets posed from `adb`, and
+	# the export template drops `--esa command_line_params` (doc 13 D-20). Off
+	# device the merged list IS `OS.get_cmdline_user_args()`.
+	for arg in DevArgs.user_args():
 		var s := String(arg)
 		if s.begins_with("--screenshot="):
 			_screenshot_path = s.trim_prefix("--screenshot=")

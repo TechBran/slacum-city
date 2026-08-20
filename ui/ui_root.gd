@@ -637,7 +637,11 @@ func bind_save_service(service: Object, sim: Object = null) -> void:
 #
 #     # --- (1) `_ready()`: the door comes first on a PLAIN launch -------------
 #     crash_sentinel = CrashSentinel.new()
-#     var user_args := OS.get_cmdline_user_args()
+#     # `DevArgs.user_args()`, not `OS.` — doc 13 D-20: on device the export
+#     # template drops `--esa command_line_params` before `OS` ever sees it, and
+#     # `DevArgs` merges the plugin's reading of the launching Intent with the
+#     # engine's list. Off device the two answers are identical.
+#     var user_args := DevArgs.user_args()
 #     var unclean := crash_sentinel.boot()      # ONE call: it writes a breadcrumb
 #     # Every real device launch has no user args and gets the door. Dev and
 #     # screenshot runs go straight to the city so nothing that scripts this

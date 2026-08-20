@@ -293,6 +293,85 @@ func test_a_side_panel_takes_the_whole_phone_rather_than_leaving_a_ribbon() -> v
 			320.0, 0.001, "and never squeezes its own contents")
 
 
+func test_the_bottom_right_corner_is_a_rail_and_not_a_pile() -> void:
+	# Three affordances share that corner — the drawer's tab, the alerts chip and
+	# the event-log chip — and each used to carry a hard-coded offset pair sized
+	# for a 48 dp target. At 130 % text with larger targets the chips measure
+	# 100 dp tall and the tab 94 dp wide, and the pile-up was worth 73 findings a
+	# box across 37 of 50 screens.
+	var layout := UIConfig.load_from_files().layout()
+
+	# At the authored scale the solver must reproduce the scene byte-for-byte, or
+	# every screenshot in the repo moves for a bug that is not on any of them.
+	var alerts := UIWidgets.corner_slot(1, layout, 48.0, 48.0, 56.0)
+	assert_almost_eq(float(alerts["bottom"]), 92.0, 0.001)
+	assert_almost_eq(float(alerts["height"]), 48.0, 0.001)
+	var log_chip := UIWidgets.corner_slot(2, layout, 48.0, 48.0, 56.0)
+	assert_almost_eq(float(log_chip["bottom"]), 148.0, 0.001,
+			"the second chip clears the first by rail_gap_dp")
+
+	# And at 130 % with larger targets the gap has to hold at the measured
+	# height, which is the whole point of solving it rather than authoring it.
+	var big_first := UIWidgets.corner_slot(1, layout, 56.0, 100.0, 102.0)
+	var big_second := UIWidgets.corner_slot(2, layout, 56.0, 100.0, 102.0)
+	assert_almost_eq(float(big_first["height"]), 100.0, 0.001)
+	assert_almost_eq(float(big_second["bottom"])
+			- (float(big_first["bottom"]) + float(big_first["height"])), 8.0, 0.001,
+			"one rail_gap_dp of clear air between two 100 dp chips")
+	assert_almost_eq(float(big_second["right"]), 102.0, 0.001,
+			"and both keep out of the column the tab reserved")
+
+
+func test_the_corner_rail_is_solved_from_the_scene_not_from_its_offsets() -> void:
+	# The three files must actually join the rail: an affordance that forgets its
+	# `corner_rail_entry()` is one the solver cannot see, and it lands back on top
+	# of its neighbour with nothing failing.
+	var root := _mount(1.3, true)
+	var drawer := root.safe_area.get_node_or_null(
+			"PanelLayer/IncidentDrawer") as IncidentDrawer
+	var alerts := root.safe_area.get_node_or_null(
+			"PanelLayer/AlertsCenter") as AlertsCenter
+	var log_screen := root.safe_area.get_node_or_null(
+			"PanelLayer/EventLog") as EventLog
+	assert_eq(int(drawer.corner_rail_entry().get("index", -1)), 0,
+			"the drawer's handle is the tab, and the tab keeps the edge")
+	assert_eq(int(alerts.corner_rail_entry().get("index", -1)), 1)
+	assert_eq(int(log_screen.corner_rail_entry().get("index", -1)), 2)
+	for entry: Dictionary in [drawer.corner_rail_entry(),
+			alerts.corner_rail_entry(), log_screen.corner_rail_entry()]:
+		assert_ne(entry.get("control"), null,
+				"every rail entry names a Control the solver can place")
+	_unmount(root)
+
+
+func test_a_sheet_row_wraps_rather_than_widening_its_sheet() -> void:
+	# D-47. An `HBox` asks for the sum of its children, so one 201 dp label beside
+	# one 183 dp value chip made a 392 dp row, a 420 dp sheet and a ✕ 20 dp off
+	# the right edge of a 360 dp phone. A flow container asks for its widest child
+	# and drops the tail onto a second line. Asserted structurally because a
+	# headless run has no text metrics to measure the collapse with.
+	var root := _mount(1.3, true)
+	var rows := root.safe_area.get_node_or_null(
+			"ModalLayer/SettingsSheet/Panel/Body/Scroll/Rows") as VBoxContainer
+	assert_ne(rows, null)
+	assert_true(rows.get_child_count() > 0, "the settings sheet built its rows")
+	for child in rows.get_children():
+		var line: Node = child
+		if not (line is FlowContainer):
+			line = child.get_node_or_null("Line")
+		assert_true(line is FlowContainer,
+				"settings row %s wraps its value onto a second line" % child.name)
+	var slots := root.safe_area.get_node_or_null(
+			"ModalLayer/SaveLoadSheet/Panel/Body/Scroll/Slots") as VBoxContainer
+	assert_ne(slots, null)
+	assert_true(slots.get_child_count() > 0, "the save sheet built its slots")
+	for slot in slots.get_children():
+		assert_true(slot.get_node_or_null("Row/Actions") is FlowContainer,
+				"%s wraps SAVE · LOAD · DELETE rather than widening the sheet"
+				% slot.name)
+	_unmount(root)
+
+
 func test_the_top_bar_reserves_the_clock_column_on_every_row() -> void:
 	# `HudModel._pack_rows` gives row 0 `avail` and every wrapped row the whole
 	# bar. The scene has to actually be that shape, or row 1 is solved against a

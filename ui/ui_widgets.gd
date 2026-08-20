@@ -258,6 +258,89 @@ static func place_in_rail(control: Control, index: int, layout: Dictionary,
 	control.offset_top = control.offset_bottom - float(slot["height"])
 
 
+## Where one of the bottom-RIGHT corner affordances sits — the mirror of
+## `rail_slot()` for the other thumb (doc 12 §2.3's drawer handle, the alerts
+## chip and the event-log chip).
+##
+## `index` 0 is the **tab** (the incident drawer's handle): it is the bookmark on
+## the edge, so it keeps the edge and this function never moves it. `index` 1 and
+## up are the chips, stacked bottom-first in the column *beside* the tab, each in
+## a slot as tall as it measures. `measured_h` is what the chip in this slot
+## actually needs; `reserved_w` is the column the tab has taken.
+##
+## Returns `{bottom, height, right}` in dp, all measured inward from the safe
+## area's bottom-right corner. At 100 % text with 48 dp targets it reproduces the
+## scene's authored offsets exactly (alerts −92/−140/−56/−128, event log
+## −148/−196), which is why the reference box does not move.
+static func corner_slot(index: int, layout: Dictionary, touch_min: float,
+		measured_h: float = 0.0, reserved_w: float = 0.0) -> Dictionary:
+	var margin := UIConfig.get_num(layout, "corner_rail_margin_dp", 92.0)
+	var gap := UIConfig.get_num(layout, "rail_gap_dp", 8.0)
+	var pitch := maxf(touch_min, measured_h)
+	return {"bottom": margin + float(maxi(0, index - 1)) * (pitch + gap),
+			"height": pitch, "right": reserved_w}
+
+
+## Solves the whole bottom-right corner in one pass and applies it.
+##
+## Three edge affordances claim that corner — the incident drawer's handle, the
+## alerts chip and the event-log chip — on the same layer, from three different
+## files, each with a hard-coded offset pair sized for a 48 dp target. At 130 %
+## text with larger targets those chips measure 100 dp tall against a 56 dp pitch
+## and the handle 94 dp wide against a 56 dp reserve, so the alerts chip covered
+## 1 848 px² of the event-log chip and the handle covered 2 736 px² of it:
+## D-16's collision, one corner over, and worth 73 `overlapping_targets` findings
+## on every supported box. Solving the stack from the same tunables in all three
+## places is what keeps it a stack when the type grows.
+##
+## Duck-typed like `close_siblings()`: a sibling joins the rail by answering
+## `corner_rail_entry()` with `{"control": Control, "index": int}`. A hidden
+## affordance is skipped and the ones above it close the gap, so an affordance
+## that has stood down (D-16) costs the others nothing.
+static func solve_corner_rail(node: Node, layout: Dictionary,
+		touch_min: float) -> void:
+	var parent := node.get_parent() if node != null else null
+	if parent == null:
+		return
+	var tab: Control = null
+	var chips: Array[Dictionary] = []
+	for child in parent.get_children():
+		if not child.has_method("corner_rail_entry"):
+			continue
+		var entry: Dictionary = child.call("corner_rail_entry")
+		var control := entry.get("control") as Control
+		if control == null or not control.visible:
+			continue
+		if int(entry.get("index", 0)) <= 0:
+			tab = control
+		else:
+			chips.append({"control": control, "index": int(entry["index"])})
+	chips.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a["index"]) < int(b["index"]))
+	var gap := UIConfig.get_num(layout, "rail_gap_dp", 8.0)
+	# The tab's own measured width, not its declared floor: it widens itself to
+	# whatever its count and tier line need, and only the combined minimum knows.
+	var reserved := 0.0 if tab == null \
+			else maxf(tab.custom_minimum_size.x,
+					tab.get_combined_minimum_size().x) + gap
+	# One pitch for the whole column, like `rail_slot()`: the chips share a theme
+	# and a font class, so the tallest of them is the pitch all of them keep and
+	# the stack stays evenly spaced when the type grows.
+	var pitch := touch_min
+	for chip: Dictionary in chips:
+		pitch = maxf(pitch, (chip["control"] as Control).get_combined_minimum_size().y)
+	var slot_index := 1
+	for chip: Dictionary in chips:
+		var control: Control = chip["control"]
+		var slot := corner_slot(slot_index, layout, touch_min, pitch, reserved)
+		control.offset_bottom = -float(slot["bottom"])
+		control.offset_top = control.offset_bottom - float(slot["height"])
+		control.offset_right = -float(slot["right"])
+		control.offset_left = control.offset_right \
+				- maxf(touch_min, control.get_combined_minimum_size().x)
+		slot_index += 1
+
+
 ## Is any sibling screen open? The read-only half of `close_siblings()`, for a
 ## screen that has a second surface (a handle, a chip) which also has to yield
 ## the edge it shares.

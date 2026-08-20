@@ -53,6 +53,8 @@
 		"rail_button_d_dp": 56,
 		"rail_gap_dp": 8,
 		"rail_margin_dp": 12,
+		"_corner_rail_margin_dp": "D-46. The bottom-right rail is the mirror of the left one: the incident drawer's handle is the tab and keeps the edge, and the alerts chip then the event-log chip stack in the column beside it, `rail_gap_dp` apart, each slot as tall as the chips measure. This is where the LOWEST chip's bottom edge sits, measured up from the safe area. 92 reproduces the scene's authored offsets exactly at 100 % text with 48 dp targets, so the reference box does not move.",
+		"corner_rail_margin_dp": 92,
 		"drawer_w_ratio": 0.34,
 		"drawer_w_min_dp": 260,
 		"drawer_w_max_dp": 340,
