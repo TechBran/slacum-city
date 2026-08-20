@@ -802,6 +802,16 @@ func can_upgrade_water(building_id: String, delta_water_m3h: float) -> Dictionar
 
 ## §2.9 / C-46: the candidate set AND the three hazard multipliers doc 06
 ## multiplies into its own `water_main_break` rate. Doc 06 owns the roll.
+##
+## **`tile` and `zone_key` are additive (Wave 7, audit 91 D-14).** Doc 06's
+## candidate row wants a POSITION (the break has to be somewhere on the map, and
+## its incident carries a tile) and the ZONE the segment belongs to (§2.8's
+## tiered pressure delta is a zone effect). Both were already inside this class —
+## `WaterEdge.path` and `topology.zone_of()`, the latter already resolved on the
+## line above for `pressure_ratio` — and neither costs a lookup that this method
+## was not already paying. The join into doc 06's vocabulary (`segment_id` → `id`,
+## `zone_key` → `zone`) stays in `CityIncidentWorld`, where every other
+## cross-document rename lives.
 func mains() -> Array:
 	var out: Array = []
 	for edge_id in _edge_order():
@@ -820,8 +830,34 @@ func mains() -> Array:
 			"freeze_mult": failure_model.freeze_mult(main.freeze_stress),
 			"break_rate_mult": data.main_break_rate_mult(main.tier),
 			"state": String(main.state),
+			"tile": main_tile(main),
+			"zone_key": z.zone_key if z != null else "",
 		})
 	return out
+
+
+## The tile a break on this main happens ON. The MIDPOINT of the run, not an
+## endpoint: an endpoint tile is shared with the adjoining segment (and with a
+## facility node), so two different mains breaking would report the same
+## position and the map would show one incident where there are two. Integer
+## division, so the answer is the same tile on every platform and after a save.
+static func main_tile(main: WaterEdge) -> Vector2i:
+	if main.path.is_empty():
+		return Vector2i.ZERO
+	return main.path[main.path.size() / 2]
+
+
+## Doc 06's tiered `zone_pressure_delta` (−0.15 / −0.35 / −0.60 / −0.80) applied
+## to the segment its incident OWNS — §2.8 and `WaterEdge`'s own header say this
+## is where the magnitude lives, and `_solve_zone` only reads it while
+## `owning_incident` is set. Separate from `set_segment_broken` because
+## escalation re-states the magnitude on every tier and must not re-count the
+## break in `stats.breaks_total`.
+func set_incident_pressure(edge_id: String, magnitude: float) -> void:
+	var main: WaterEdge = edges.get(edge_id)
+	if main == null:
+		return
+	main.incident_pressure_penalty = absf(magnitude)
 
 
 ## Doc 03's `E_water` inputs and the water tariff basis (§5.3). Never a dollar.
@@ -1286,7 +1322,14 @@ func deserialize(state: Dictionary) -> void:
 	auto_dispatch_water = bool(policy.get("auto_dispatch_water", true))
 	var environment: Dictionary = state.get("environment", {})
 	maintenance_level = float(environment.get("maintenance_level", 1.0))
-	external_main_breaks = bool(environment.get("external_main_breaks", false))
+	# A LATCH, not a restore. Who rolls the main break is a fact about the
+	# program that is running — whether a doc 06 `IncidentSystem` is wired in at
+	# all — and not a fact about this city. A save written before doc 06's
+	# adapter existed (audit 91 D-14) carries `false`, and honouring it would
+	# switch doc 05's standalone fallback back ON underneath a running incident
+	# engine, so both would roll. Loading can only ever ADD the claim.
+	external_main_breaks = external_main_breaks \
+			or bool(environment.get("external_main_breaks", false))
 	var accum: Dictionary = state.get("hour_accum", {})
 	_delivered_m3_hour = float(accum.get("delivered_m3", 0.0))
 	_treated_m3_hour = float(accum.get("treated_m3", 0.0))

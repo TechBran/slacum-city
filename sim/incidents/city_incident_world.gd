@@ -44,6 +44,15 @@ var pending_population_losses: Array = []
 func _init(p_sim, p_catalog: IncidentCatalog) -> void:
 	sim = p_sim
 	catalog = p_catalog
+	# **C-46, closed here and only here.** Doc 05 rolls its own main breaks while
+	# `external_main_breaks` is false, precisely so it is playable before doc 06
+	# has a candidate source; the moment THIS adapter exists, `water_mains()`
+	# answers and doc 06 owns the roll. One writer, one owner, and the file that
+	# supplies the candidates is the one that claims them. (Audit 91 D-14 left
+	# both sides believing the other was rolling: doc 06 scanned an empty array
+	# and doc 05's fallback never stood down.)
+	if sim != null and sim.water != null:
+		sim.water.external_main_breaks = true
 
 
 ## Every station shell doc 02 owns, as `FleetSystem.populate_from_stations`
@@ -538,6 +547,170 @@ func power_exposed_components() -> Array:
 
 func hydrant_pressure_ratio(_tile: Vector2i) -> float:
 	return default_hydrant_ratio
+
+
+## **Audit 91 D-14, closed.** `WaterSystem.mains()` publishes every hazard input
+## doc 06 §2.6(d) reads; this is the rename between the two vocabularies
+## (`segment_id` → `id`, `zone_key` → `zone`) and the eligibility filter, and
+## nothing else. No number is authored here — that was the whole finding.
+##
+## **Which segments are candidates.** `ok` only. A `broken` main is already the
+## target of a live incident and a second break on it would be a duplicate the
+## player cannot act on separately; an `isolated` one has been valved out of the
+## live graph and carries no water to burst. Doc 06's `_ambient_rate` composes
+## correctly with this: a city whose every main is broken scans, finds nothing,
+## and the pacing floor stays out rather than inventing a target (doc 92 §18.1
+## property 2).
+func water_mains() -> Array:
+	var out: Array = []
+	for segment in sim.water.mains():
+		var row: Dictionary = segment
+		if String(row.get("state", "ok")) != "ok":
+			continue
+		out.append({
+			"id": String(row["segment_id"]),
+			"tile": row.get("tile", Vector2i.ZERO),
+			"length_km": float(row.get("length_km", 0.0)),
+			"condition": float(row.get("condition", 1.0)),
+			"pressure_ratio": float(row.get("pressure_ratio", 1.0)),
+			"utilization": float(row.get("utilization", 0.0)),
+			"freeze_stress": float(row.get("freeze_stress", 0.0)),
+			"zone": String(row.get("zone_key", "")),
+		})
+	return out
+
+
+## `severity <= 0` is the seam's word for REPAIRED (doc 06 §2.7 calls this verb
+## with zero on resolve rather than owning a second one), and doc 05 has the two
+## verbs the two meanings want.
+func water_set_segment_broken(id: String, severity: float,
+		incident_id: String = "") -> void:
+	if sim.water.edge(id) == null:
+		return
+	if severity <= 0.0:
+		sim.water.set_segment_repaired(id)
+	else:
+		sim.water.set_segment_broken(id, severity, incident_id)
+
+
+func water_zone_pressure_delta(zone: String, delta: float,
+		segment_id: String = "") -> void:
+	# With an owning main, doc 05 §2.8 holds the magnitude ON the segment and
+	# releases it when the segment is repaired — so a break that FAILS cannot
+	# leave a zone permanently depressurised with nothing left to clear it.
+	if segment_id != "" and sim.water.edge(segment_id) != null:
+		sim.water.set_incident_pressure(segment_id, delta)
+		return
+	if zone == "":
+		return
+	if absf(delta) <= 0.0:
+		sim.water.clear_zone_pressure_delta(zone, ZONE_HOLD_KEY)
+	else:
+		sim.water.zone_pressure_delta(zone, ZONE_HOLD_KEY, delta)
+
+
+## Doc 06 does not carry an incident id across this verb, and it does not need
+## to: the zone-wide form only exists for a break with no identified main, of
+## which there is at most one shape in the game. One key, cleared by the same
+## verb with a zero delta.
+const ZONE_HOLD_KEY := "doc06_zone"
+
+
+func water_freeze_enabled() -> bool:
+	return bool(sim.water.data.flag("freeze_enabled"))
+
+
+# ------------------------------------------------------------------ doc 10
+
+## **Audit 91 D-15, closed.** Doc 10's `RoadNetwork.intersections()` already
+## answers in doc 06's five columns; this is the join and the id cast, and — like
+## `water_mains()` above — it authors no number.
+##
+## The rows are doc 10's live cache and are REUSED between calls, which is the
+## contract `road_intersections()` documents and what keeps a 389-node starter
+## city off the allocator on all sixty of an hour's sub-steps.
+func road_intersections() -> Array:
+	var rows: Array = sim.roads.intersections()
+	return rows
+
+
+## Doc 10 can say cheaply whether anything on that roster moved, so doc 06 keeps
+## its per-node hazard weights across sub-steps instead of rescanning the whole
+## road graph sixty times a game-hour.
+func road_intersections_epoch() -> int:
+	return int(sim.roads.intersections_epoch())
+
+
+## Doc 06's escalation tiers slow a segment down (`edge_speed_mult 0.6 / 0.3 /
+## 0.5`) and doc 06 restores it with `1.0` on resolve. The override also carries
+## its own expiry, taken from doc 10's own closure table rather than authored
+## here, so an ABANDONED accident cannot leave a street permanently slow with
+## nothing left alive to lift it.
+func road_set_edge_speed_mult(tile: Vector2i, mult: float) -> void:
+	var edge_id := _worst_edge_at(tile)
+	if edge_id < 0:
+		return
+	var until: int = -1
+	if mult < 1.0:
+		until = int(sim.roads.sim_minute) + _incident_override_gm()
+	sim.roads.set_edge_speed_mult(edge_id, mult, until)
+
+
+## `duration_h <= 0` means "doc 10 decides", which is what its `auto_expire_gm`
+## column is for — the two `edge_close` rows that pass no duration
+## (`traffic_accident` T4, `storm_damage/blocked_road` T3) are exactly the two
+## that want the cause's own clock.
+func road_close_edge(tile: Vector2i, duration_h: float, cause: String = "") -> void:
+	var edge_id := _worst_edge_at(tile)
+	if edge_id < 0:
+		return
+	var until: int = -1
+	if duration_h > 0.0:
+		until = int(sim.roads.sim_minute) + int(round(duration_h * 60.0))
+	sim.roads.close_edge(edge_id, _closure_cause(cause), until)
+
+
+## Doc 06 names an incident; doc 10 names a closure CAUSE, with its own
+## dominance order, per-route-class multipliers and expiry. This is the map, and
+## every row on the right is doc 10's — doc 10 §5's interface table already
+## pairs a main break with `flood_shallow` and debris with `debris`.
+const CLOSURE_CAUSE_BY_INCIDENT := {
+	"traffic_accident": "accident_major",
+	"water_main_break": "flood_shallow",
+	"storm_damage": "debris",
+	"blocked_road": "debris",
+}
+
+
+func _closure_cause(key: String) -> String:
+	return String(CLOSURE_CAUSE_BY_INCIDENT.get(key, "debris"))
+
+
+## Doc 06 addresses a TILE; doc 10 closes an EDGE. At a mid-block tile there is
+## one candidate. At an intersection there are three or four, and doc 06 §2.6(e)
+## has already ruled which one the incident is on — "the collision happens on the
+## worst approach" — so the same reading picks the segment that gets closed.
+## Ties break on the lowest edge id, which is stable across a save (§2.5's
+## edge-id stability rule).
+func _worst_edge_at(tile: Vector2i) -> int:
+	var edge_ids: Array = sim.roads.graph.edges_at(tile)
+	if edge_ids.is_empty():
+		return -1
+	var best := -1
+	var best_congestion := -1.0
+	for edge_id: int in edge_ids:
+		var c: float = sim.roads.congestion_index(edge_id)
+		if c > best_congestion:
+			best_congestion = c
+			best = edge_id
+	return best
+
+
+## Doc 10's own expiry for an accident closure, reused as the expiry of doc 06's
+## speed override so no constant is authored on this side of the seam.
+func _incident_override_gm() -> int:
+	var row: Dictionary = sim.roads.tun.cause_row("accident_major")
+	return maxi(1, int(row.get("auto_expire_gm", 240)))
 
 
 # ------------------------------------------------------------------ doc 03

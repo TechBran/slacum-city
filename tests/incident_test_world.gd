@@ -261,12 +261,15 @@ func water_mains() -> Array:
 	return mains
 
 
-func water_set_segment_broken(id: String, severity: float) -> void:
-	zone_pressure.append({"segment": id, "severity": severity})
+func water_set_segment_broken(id: String, severity: float,
+		incident_id: String = "") -> void:
+	zone_pressure.append({"segment": id, "severity": severity,
+			"incident_id": incident_id})
 
 
-func water_zone_pressure_delta(zone: String, delta: float) -> void:
-	zone_pressure.append({"zone": zone, "delta": delta})
+func water_zone_pressure_delta(zone: String, delta: float,
+		segment_id: String = "") -> void:
+	zone_pressure.append({"zone": zone, "delta": delta, "segment": segment_id})
 
 
 func water_freeze_enabled() -> bool:
@@ -314,8 +317,8 @@ func road_set_edge_speed_mult(tile: Vector2i, mult: float) -> void:
 	edge_speed.append({"tile": tile, "mult": mult})
 
 
-func road_close_edge(tile: Vector2i, duration_h: float) -> void:
-	edge_closed.append({"tile": tile, "duration_h": duration_h})
+func road_close_edge(tile: Vector2i, duration_h: float, cause: String = "") -> void:
+	edge_closed.append({"tile": tile, "duration_h": duration_h, "cause": cause})
 
 
 # --- doc 03 ----------------------------------------------------------------

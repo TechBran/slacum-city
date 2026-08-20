@@ -441,3 +441,98 @@ func test_budget_exhaustion_returns_an_estimate_not_garbage() -> void:
 	var optimistic := net.estimate_eta(Vector2i(1, 1), Vector2i(35, 35), prof)
 	assert_almost_eq(minutes, optimistic * net.tun.detour_factor, 1e-6,
 			"the admissible estimate x DETOUR_FACTOR")
+
+
+# ------------------------------------------------- doc 06's two new queries
+
+## `intersections()` — the roster doc 06 §2.6(e) puts accidents on (audit 91
+## D-15). Every degree-≥3 node, signalised or not, with the five inputs its rate
+## function reads. `signalised_intersections()` answers a different question and
+## drops the unsignalised majority, which is why doc 06 could not use it.
+func test_intersection_roster_covers_every_junction() -> void:
+	var net := _lattice()
+	var rows := net.intersections()
+	var expected := 0
+	for node_id in net.graph.node_ids_sorted():
+		if int(net.graph.node(int(node_id))["degree"]) >= 3:
+			expected += 1
+	assert_eq(rows.size(), expected, "one row per junction, no more and no fewer")
+	assert_true(rows.size() > net.signalised_intersections().size(),
+			"the unsignalised majority is IN — doc 06 prices them at f_signal 1.60")
+	for entry in rows:
+		var row: Dictionary = entry
+		for key in ["id", "tile", "congestion_index", "signalised",
+				"signal_powered", "condition_hazard_mult"]:
+			assert_true(row.has(key), "missing `%s`" % key)
+		assert_eq(int(row["node_id"]), net.graph.node_at(row["tile"]))
+
+
+## Doc 06 §2.6(e): "the collision happens on the worst approach". MAX over the
+## node's incident edges, for both scalars — not the mean.
+func test_intersection_scalars_are_the_worst_approach() -> void:
+	var net := _lattice()
+	_randomise(net, 4242)
+	var differed := 0
+	for entry in net.intersections():
+		var row: Dictionary = entry
+		var record: Dictionary = net.graph.node(int(row["node_id"]))
+		var worst_c := 0.0
+		var worst_h := 1.0
+		var mean_c := 0.0
+		for edge_id in record["edge_ids"]:
+			worst_c = maxf(worst_c, net.congestion_index(int(edge_id)))
+			worst_h = maxf(worst_h, net.condition_hazard_mult(int(edge_id)))
+			mean_c += net.congestion_index(int(edge_id))
+		mean_c /= maxf(1.0, float((record["edge_ids"] as Array).size()))
+		assert_almost_eq(float(row["congestion_index"]), worst_c, 1e-9)
+		assert_almost_eq(float(row["condition_hazard_mult"]), worst_h, 1e-9)
+		if worst_c > mean_c + 1e-6:
+			differed += 1
+	assert_true(differed > 0,
+			"at least one node's worst approach differs from its mean, so the "
+			+ "assertions above are not vacuously true on a uniform lattice")
+
+
+## `route_tiles()` and `route_minutes()` come out of ONE planner cache entry, so
+## the shape doc 06 drives and the duration doc 06 bills can never disagree.
+func test_route_tiles_is_the_route_that_was_priced() -> void:
+	var net := _lattice()
+	var prof := RouteProfile.emergency(32.0, 0)
+	var a := Vector2i(0, 0)
+	var b := Vector2i(36, 36)
+	var minutes := net.route_minutes(a, b, prof)
+	var tiles := net.route_tiles(a, b, prof)
+	assert_false(is_inf(minutes))
+	assert_true(tiles.size() >= 2, "a polyline, not a pair of endpoints")
+	assert_eq(tiles[0], a)
+	assert_eq(tiles[tiles.size() - 1], b)
+	for i in tiles.size():
+		assert_true(net.graph.is_road_tile(tiles[i]), "every tile is a road tile")
+		if i > 0:
+			var d: Vector2i = tiles[i] - tiles[i - 1]
+			assert_eq(maxi(absi(d.x), absi(d.y)), 1, "contiguous at step %d" % i)
+	# Manhattan on a lattice: the street route is strictly longer than the
+	# diagonal the old vehicle motion drew.
+	assert_true(tiles.size() - 1 > maxi(absi(b.x - a.x), absi(b.y - a.y)),
+			"the straight line was under-drawing this trip")
+	# The caller may keep it: the cache entry is re-priced in place, the answer
+	# is a copy.
+	var kept := tiles.size()
+	tiles.append(Vector2i(-1, -1))
+	assert_eq(net.route_tiles(a, b, prof).size(), kept,
+			"the planner's cache was not scribbled on")
+	assert_eq(net.route_tiles(a, Vector2i(500, 500), prof).size(), 0,
+			"no route, no polyline")
+
+
+## The provider doc 06 holds carries the polyline through the same seam it
+## already carries the duration through.
+func test_travel_provider_publishes_the_polyline() -> void:
+	var net := _lattice()
+	var provider := net.travel_time_provider(RouteProfile.emergency(32.0, 0))
+	var tiles := provider.route_tiles(Vector2i(0, 0), Vector2i(36, 36))
+	assert_true(tiles.size() > 2)
+	assert_eq(tiles, net.route_tiles(Vector2i(0, 0), Vector2i(36, 36),
+			RouteProfile.emergency(32.0, 0)))
+	assert_eq(TravelTimeProvider.new().route_tiles(Vector2i(0, 0), Vector2i(1, 1)).size(),
+			0, "the pre-doc-10 provider still says it has no street network")

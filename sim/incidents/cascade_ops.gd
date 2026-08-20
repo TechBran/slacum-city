@@ -90,13 +90,18 @@ func run_one(inc: Incident, action: Dictionary) -> Dictionary:
 			return _feeder_destroy(inc, action)
 		"zone_pressure_delta":
 			world.water_zone_pressure_delta(String(inc.context.get("zone", "")),
-					float(action.get("value", 0.0)))
+					float(action.get("value", 0.0)), inc.target_segment_id())
 			return {"op": op, "result": DONE}
 		"edge_speed_mult":
 			world.road_set_edge_speed_mult(inc.tile, float(action.get("value", 1.0)))
 			return {"op": op, "result": DONE}
 		"edge_close":
-			world.road_close_edge(inc.tile, float(action.get("duration_h", 0.0)))
+			# The cause is the incident, unless the row names one: doc 10's
+			# closure table prices a flooded street and a wrecked one
+			# differently, and only doc 06 knows which this is.
+			world.road_close_edge(inc.tile, float(action.get("duration_h", 0.0)),
+					String(action.get("cause",
+							inc.subtype if inc.subtype != "" else inc.type)))
 			return {"op": op, "result": DONE}
 		"population_delta":
 			var building_id2 := inc.target_building_id()

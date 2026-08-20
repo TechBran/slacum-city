@@ -46,6 +46,18 @@ func travel_gs(from: Vector2i, to: Vector2i, profile: Dictionary = {}) -> int:
 	return int(round(metres / speed * float(GAME_SECONDS_PER_GAME_MINUTE)))
 
 
+## The STREETS the vehicle drives, as a tile polyline from `from` to `to`
+## inclusive (doc 06 §2.11 / doc 10 §2.8). EMPTY means "this provider knows no
+## street network" — doc 06 then paces the trip along the straight segment it has
+## always used, which is the pre-doc-10 behaviour exactly.
+##
+## The polyline never carries a DURATION. `travel_gs()` above is still the only
+## answer to "when does it arrive"; this is the same trip's shape, and doc 06
+## distributes the one over the other (`Vehicle.update_motion`).
+func route_tiles(_from: Vector2i, _to: Vector2i, _profile: Dictionary = {}) -> Array:
+	return []
+
+
 ## Turnout + travel, the number §2.10's cost function ranks on.
 func eta_gs(from: Vector2i, to: Vector2i, profile: Dictionary = {},
 		turnout_min: float = 0.0) -> int:

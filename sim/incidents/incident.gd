@@ -132,6 +132,15 @@ func target_component_id() -> String:
 	return ""
 
 
+## Doc 05's main this incident holds, or "" — the `water_segment` twin of the
+## two above. Doc 06's tiered pressure delta is a ZONE effect that doc 05 parks
+## on the owning SEGMENT, so the cascade verb has to name it.
+func target_segment_id() -> String:
+	if String(target_ref.get("kind", "")) == "water_segment":
+		return String(target_ref.get("id", ""))
+	return ""
+
+
 # ------------------------------------------------------------- persistence
 
 func serialize() -> Dictionary:
