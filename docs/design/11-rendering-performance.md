@@ -1729,6 +1729,7 @@ Level identity = height + a **cumulative** marker: L1 none; L2 +1 rooftop box; L
 | `incident_created` | doc 06 | `alert_high` when `notification_priority == 1`, else `alert_low` | doc 08's notification class picks the sting |
 | `unit_dispatched` | doc 06 | `siren_pass` | placed at the incident it is answering (the payload carries no position); the pass-by fade and doppler are in the asset |
 | `building_placed_sim` | doc 02 | `purchase` | the player's own confirmation — distance `none`, always crisp |
+| `water_component_placed` | doc 05 | `purchase` | the same confirmation on doc 05's own event — a pump/tank/treatment shell is a doc-02 building that announces itself elsewhere, so it needs its own row or it opts out silently *(added 2026-08-20; it was observed for the site bed and mapped to no cue, so the $45,000 purchase the curriculum builds a level around was the one purchase in the game that made no sound)* |
 | `building_construction_stage` | doc 02 | `construct_stage` tick + the `site` bed | the bed follows how many sites are live and how near the closest is |
 | `building_completed` | doc 02 | `construct_complete` | and the site bed loses one source |
 | `city_level_changed` | doc 02 | `level_fanfare` | 2 s, 20 s cooldown |

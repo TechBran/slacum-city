@@ -755,7 +755,27 @@ func canonical_capture() -> Dictionary:
 ## An identity migrator again: a v3 save opens with every building, dollar and
 ## RNG stream exactly where it was left. What it does not get is the city v3
 ## would have produced next — which is the whole reason the rung exists.
-const SAVE_SECTION_VERSION := 4
+##
+## **v5 — 2026-08-20, THE UPGRADE-TIMING EPOCH.** The smallest rules rung this
+## ladder has: `cmd_upgrade_building` read `upgrade_time_hours` from the row
+## being upgraded TO, and doc 02 §2.2 stores the price of the step `L → L+1` on
+## the row upgraded FROM (report 98 RR-29(h), ruled in RR-38). Every upgrade in
+## the game except the last step of a ladder therefore ran one rung's duration
+## too slow — a `house` L4→L5 was billed 7.0 crew-hours for a step doc 02 prices
+## at 5.0, a `high_rise` L4→L5 was billed 148 for 87. `_v4_to_v5` is the identity
+## function: no key means anything different and no default is invented,
+## including for the jobs already on the construction queue. **An upgrade in
+## flight keeps the duration it was quoted** — `ConstructionQueue` stores
+## `required_crew_hours` per job, so a v4 body's in-flight jobs finish on the
+## old bill and only the NEXT upgrade the player buys is priced correctly. That
+## is the kind reading: re-pricing a job the player already paid for, downward,
+## mid-flight would be a gift; re-pricing it upward would be a theft; leaving it
+## alone is the only one of the three that is a *record*.
+##
+## The rung exists for the epoch rule and nothing else: the binary now does
+## something different with the same body, so the version that names the rules
+## has to move.
+const SAVE_SECTION_VERSION := 5
 
 
 func save_section_version() -> int:
@@ -773,6 +793,7 @@ func migrate_save_section(body: Dictionary, from_version: int) -> Dictionary:
 			1: body = _v1_to_v2(body)
 			2: body = _v2_to_v3(body)
 			3: body = _v3_to_v4(body)
+			4: body = _v4_to_v5(body)
 		version += 1
 	return body
 
@@ -813,6 +834,19 @@ static func _v2_to_v3(body: Dictionary) -> Dictionary:
 ## number here would abandon a returning player's incidents on the strength of a
 ## guess, which is the opposite of what a migrator is for.
 static func _v3_to_v4(body: Dictionary) -> Dictionary:
+	return body
+
+
+## v4 → v5: **the identity function, and that is the whole migration.** The
+## upgrade-timing epoch changes one READ in `cmd_upgrade_building` (see
+## `SAVE_SECTION_VERSION`), so there is no field to add and no default to
+## invent. In particular it does NOT re-price the construction jobs already in
+## the body: `ConstructionQueue` serialises `required_crew_hours` and
+## `required_work_units` per job, so an upgrade in flight finishes on the bill it
+## was quoted and the correction reaches the player on the next upgrade they
+## buy. Re-pricing a paid-for job downward mid-flight would be a gift and upward
+## would be a theft; leaving it is the only one of the three that is a record.
+static func _v4_to_v5(body: Dictionary) -> Dictionary:
 	return body
 
 
@@ -1313,15 +1347,25 @@ func cmd_upgrade_building(sim_id: String, preview: bool = false) -> Dictionary:
 		return CommandQueue.fail(_spend_reason(paid), {"blockers": [_spend_reason(paid)],
 				"cost": cost, "balance": treasury.balance})
 	b.start_upgrade()
-	# The top row of a ladder carries no `upgrade_time_hours` — it has no next
-	# level to price. Before the sixth rung existed that meant the LAST step of
-	# every ladder ran on the bare 4.0-hour literal, which is doc 02's number for
-	# nothing at all; a 227-game-hour high-rise would have grown its tower in an
-	# afternoon. The row BELOW is where doc 02 §2.2 stores the price of the step
-	# `L → L+1`, so that is the fallback. Every step that already had a figure
-	# still reads exactly the figure it read.
-	var upgrade_hours := float(next_stats.get("upgrade_time_hours",
-			b.stats.get("upgrade_time_hours", 4.0)))
+	# **The price of a step is stored on the row it starts FROM.** Doc 02 §2.2:
+	# `upgrade_time_hours(L) = 0.65 × build_time(L + 1)`, which is the cost of
+	# `L → L+1` — so the row being upgraded FROM is the one to read, and
+	# `BuildingCatalog` enforces exactly that shape (every row below the top
+	# carries the column; the top row, which prices nothing, must not).
+	#
+	# This read used to start at `next_stats`, the row upgraded TO, and charged
+	# every step in the game the NEXT rung's duration — one rung too slow, all
+	# the way up every ladder (report 98 RR-29(h), fixed in RR-38). The one step
+	# that was already right is the LAST one: the top row carries no column, so
+	# the fallback caught it and it read this same cell. Every other step gets
+	# faster, and by its own authored figure: a `house` L1→L2 is 2.5 → 2.0
+	# crew-hours, L4→L5 is 7.0 → 5.0, and a `high_rise` L4→L5 is 148 → 87.
+	#
+	# The fallbacks below are for a hand-edited table only — the catalog rejects
+	# a roster that is missing the cell at load — and they keep the read TOTAL
+	# rather than crashing a command on a data fault.
+	var upgrade_hours := float(b.stats.get("upgrade_time_hours",
+			next_stats.get("upgrade_time_hours", 4.0)))
 	var job_id := construction.submit(&"upgrade", sim_id,
 			upgrade_hours, &"construction_crew",
 			{"sim_id": sim_id, "cost": cost})

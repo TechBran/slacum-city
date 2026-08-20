@@ -110,6 +110,11 @@
 			"dedup_by": "cue", "dedup_s": 0.08, "cooldown_s": 0.12,
 			"attenuation": {"curve": "none"}},
 
+		{"_comment": "A pump, tank or treatment works is a doc-02 building that announces itself on doc 05's own event (`cmd_place_water_component` step 1), so it was in OBSERVED_TYPES for the crane loop and in nothing else -- the most expensive purchase in the curriculum was the one purchase in the game that made no sound. Same cue, same key, same numbers as the row above, because it is the same beat: the player spent money and a footprint appeared."},
+		{"type": "water_component_placed", "cue": "purchase", "key": "sim_id",
+			"dedup_by": "cue", "dedup_s": 0.08, "cooldown_s": 0.12,
+			"attenuation": {"curve": "none"}},
+
 		{"type": "building_construction_stage", "cue": "construct_stage", "key": "building",
 			"dedup_by": "cue", "dedup_s": 0.20, "cooldown_s": 0.55,
 			"attenuation": {"ref_m": 70.0, "max_m": 520.0, "curve": "inverse"}},

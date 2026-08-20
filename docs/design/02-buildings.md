@@ -496,6 +496,16 @@ margin                  = 0.627424 − 0.60                   = 0.027
 
 `build_time_hours` and `upgrade_time_hours` are **crew-hours**, not wall-clock. Progress runs through doc 01's exact integer `WorkService` accumulator (§2.13).
 
+> **`upgrade_time_hours` is read off the row the step starts FROM.** §2.2 makes
+> the cell on row `L` the price of `L → L+1` (`0.65 × build_time(L + 1)`), which
+> is why `BuildingCatalog` requires it on every row below the top and forbids it
+> on the top row. `CitySim.cmd_upgrade_building` read the row upgraded *to* until
+> 2026-08-20 and billed every step in the game one rung too slow — worked example
+> **E3 below is the tell**: it prices an office L4→L5 at **30** crew-hours, the L4
+> cell, and the shipped binary charged the L5 cell's **47**. Report 98 RR-38 is
+> the fix and the ruling; doc 92 §27.2 is the full ladder-by-ladder delta. E3's
+> arithmetic below is unchanged and now describes what the game does.
+
 ```
 crew_power   = Σ over assigned crews of crew_rate           (base 1.0; doc 06 defines specialist rates)
 site_mult    = weather.get_effect("build_mult")             ← doc 07, no constant authored here

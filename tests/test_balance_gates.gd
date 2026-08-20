@@ -56,6 +56,27 @@ const SHORT_DAYS := 10
 ## 40 game-days, against a measurement of 31.1 / 33.5 / 34.3.
 const CURRICULUM_DAYS := 45
 const CURRICULUM_TOP_LEVEL_DAYS := 40
+## **The three-tier beat (doc 92 §27.5).** §22's ruled 10–40 game-hour band was
+## written for "levels 1–3" of a five-level arc, before the street tool, before
+## the sixth rung and before the Wave-8 rules epoch. It is retired and replaced
+## by two bands and a horizon: the OPENING (levels 1–2) gets **45** game-hours,
+## because that is the claim the old band was really making — a player who has
+## not decided to keep the game must not be made to wait; the MIDDLE (levels 3–4)
+## gets **90**, a session and a bit; and levels 5–6 get no hour band at all and
+## are bounded in game-DAYS by `LONG_DAYS` and `CURRICULUM_TOP_LEVEL_DAYS` above,
+## because a level whose cost is a five-figure purchase is a saving beat and not
+## a sitting.
+##
+## **45 and not 40, and the old table is why.** Level 2 measures 39–41 game-hours
+## and has measured 39–41 since doc 92 §22.3 first published it — under a claim,
+## in that same subsection, that "levels 1–3 land inside the 10–40 game-hour
+## band". The table printed 41 on the line above the sentence. A ceiling a
+## shipped, unchanged, deliberately-tuned level has always been one hour over is
+## a ceiling in the wrong place, so it moves to the measurement plus a notch.
+## Both numbers are ceilings and neither is a fit: measured 13–14 / 39–41 at the
+## opening and 59–64 / 64–73 in the middle.
+const CURRICULUM_OPENING_BEAT_H := 45
+const CURRICULUM_MIDDLE_BEAT_H := 90
 
 ## One run per (strategy, days, seed) across the whole file: several gates read
 ## the same run and a 21-game-day `disaster_neglect` run is the most expensive
@@ -1480,15 +1501,45 @@ func test_gate_20_the_city_level_ladder_is_reachable() -> void:
 ## the drag-path tool and the building panel's actions row gave those verbs a
 ## door (doc 93 §G2's amendment). Both sides of the change were measured on the
 ## same instrument, `tools/measure_curriculum.gd`, which drives this file's own
-## `BalanceGateRig`; the game-hour each level was earned:
+## `BalanceGateRig`; that A/B is table **(c)** in the historical block below.
 ##
+## **RE-MEASURED, the upgrade-timing fix (doc 92 §27.4, report 98 RR-38).**
+## `cmd_upgrade_building` was reading `upgrade_time_hours` from the row upgraded
+## TO, where doc 02 §2.2 stores the step `L → L+1` on the row upgraded FROM, so
+## every upgrade in the game except the last step of a ladder ran one rung's
+## duration too slow. The fix moves every hash a curriculum run produces. The
+## table below is the measurement it moved them to — same instrument
+## (`tools/measure_curriculum.gd --days=45`, seeds 1337/4242/9001), the arrival
+## game-hour of each level, with the pre-fix column beside it:
 ##
-## MERGED (Wave 9 integration): the two tables below were measured on sibling
-## branches — the first with the level-6 rung and no street/repair rows, the
-## second with the street/repair re-arc and no level 6 — and BOTH predate the
-## routing epoch (doc 93 §H) landing beside them. The COMBINED tree (all three
-## at once) measures, on the same instrument (`tools/measure_curriculum.gd
-## --days=45`, seeds 1337/4242/9001):
+## | level | 1337 | 4242 | 9001 | duration (game-hours) | pre-fix duration |
+## |---|---|---|---|---|---|
+## | 1 | 13 | 13 | 14 | 13–14 | 13–14 |
+## | 2 | 52 | 54 | 55 | 39–41 | 39–41 |
+## | 3 | 111 | 115 | 119 | 59–64 | 59–64 |
+## | 4 | 176 | 179 | 192 | 64–73 | 65–73 |
+## | 5 | 371 | 358 | 361 | 169–195 | 169–190 |
+## | 6 | 827 | 852 | 866 | 456–505 | 472–510 |
+##
+## **Levels 1, 2 and 3 do not move by a single game-hour**, which is the shape a
+## faster upgrade should have this early: the arc's opening is gated on placing
+## and on population, not on a rung completing. From level 4 up the arrivals move
+## by a few game-hours in BOTH directions — seed 1337's finale comes in 49 hours
+## sooner, seed 9001's 18 hours later — because a completion landing on a
+## different hour re-seeds every downstream draw. The durations are inside the
+## seed spread on every level and the ruled bounds all hold with margin.
+##
+## Every claim below is held against THIS table: level 3 on game-day 4 on all
+## seeds (bound 6), level 5 on day 14.9–15.5 (bound 21), the arc done on day
+## 34.5–36.1 (bound 40). `repaired` is 186–210 across 45 game-days.
+##
+## --- HISTORICAL BELOW THIS LINE. Everything from here down is the record of how
+## the arc got to the table above, kept because a superseded measurement is what
+## makes the next one checkable. Do not hold a claim against any of it.
+##
+## **(a) The Wave-9 integration table** — the combined tree (routing epoch +
+## level-6 rung + street/repair re-arc), which is the PRE-FIX column of the table
+## above and reproduces exactly on the pre-fix tree:
 ##
 ## | level | 1337 | 4242 | 9001 | duration (game-hours) |
 ## |---|---|---|---|---|
@@ -1499,12 +1550,8 @@ func test_gate_20_the_city_level_ladder_is_reachable() -> void:
 ## | 5 | 366 | 357 | 361 | 169–190 |
 ## | 6 | 876 | 829 | 848 | 472–510 |
 ##
-## Every claim below is held against THIS table: level 3 on game-day 4 on all
-## seeds (bound 6), level 5 on day 14.9–15.3 (bound 21), the arc done on day
-## 34.5–36.5 (bound 40). The street/repair rows cost the finale ~1.5 game-days
-## against the level-6 branch's own 31.1–34.3 — the two features price each
-## other, and the margins hold. `repaired` is 198–220 across 45 game-days now
-## that the actions row exists, against 57–61 over 21 on the sibling branch.
+## **(b) The level-6 sibling branch**, measured before the street/repair re-arc
+## and before the routing epoch landed beside it:
 ##
 ## | level | 1337 | 4242 | 9001 | duration (game-hours) |
 ## |---|---|---|---|---|
@@ -1521,6 +1568,9 @@ func test_gate_20_the_city_level_ladder_is_reachable() -> void:
 ## saving beat with a copper purchase in the middle of it. Doc 92 §24.8 is the
 ## measurement and §24.9 the ruling; the graduation level is allowed to be the
 ## longest, and this one is the top of the ladder.
+##
+## **(c) The street/repair re-arc's own A/B**, measured on the other sibling
+## branch (no level 6, no routing epoch):
 ##
 ## | level | before (1337/4242/9001) | after | duration before → after |
 ## |---|---|---|---|
@@ -1618,9 +1668,60 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 							% [int(seed_value), int(first_day_at[5]), LONG_DAYS])
 		assert_true(int(first_day_at[top]) <= CURRICULUM_TOP_LEVEL_DAYS,
 				("seed %d finished the arc on game-day %d; the ruled bound is %d "
-						+ "game-days (measured 34.5-36.5 on the merged tree — doc 92 §24.9)")
+						+ "game-days (measured 34.5-36.1 post-fix — doc 92 §27.4)")
 						% [int(seed_value), int(first_day_at[top]),
 						CURRICULUM_TOP_LEVEL_DAYS])
+		# **The three-tier beat, doc 92 §27.5.** The 10–40 game-hour band §22 ruled
+		# for "levels 1–3" is retired and replaced by an OPENING band (levels 1–2,
+		# up to `CURRICULUM_OPENING_BEAT_H`) and a MIDDLE band (levels 3–4, up to
+		# `CURRICULUM_MIDDLE_BEAT_H`). Only the CEILINGS are executable:
+		#
+		#   * The opening is what the old band was really protecting — a player who
+		#     has not yet decided to keep the game must not wait. Measured 13–14 and
+		#     39–41 game-hours, against a ceiling of 45 (see the constant for why the
+		#     ceiling is 45: level 2 has been one hour over 40 since §22.3).
+		#   * Level 3 measures 59–64, and doc 92 §27.5's two ablation arms say the
+		#     objectives are not why: halving `l3_streets` to 2 tiles buys 8–12
+		#     game-hours (51–52) and deleting the row outright buys 15–16 (44–48).
+		#     NEITHER reaches 40. The band was fitted to a pre-street-tool arc on a
+		#     pre-Wave-8 rules epoch, and the band is the thing that moves.
+		#   * **Level 4's ceiling is the same number and claims less**, and this says
+		#     so rather than pretending otherwise: its duration is an incident WAIT
+		#     (`l4_incidents` resolve-2 against gate 19's own ambient rate), so its
+		#     spread is Poisson and it has measured as wide as 89 game-hours on a
+		#     slow seed (doc 92 §25.3). 90 is one game-hour above that historical
+		#     worst case, which makes it a runaway detector and not a pacing fit.
+		#
+		# No FLOOR is asserted at either tier. A level that got faster is not a
+		# regression this gate can tell apart from an improvement, and the floor that
+		# does matter — that the arc happens at all, in order — is the completion
+		# assertion at the top of this test. What IS asserted below the ceiling is
+		# that the hour was measured at all: a ceiling on a beat computed from a
+		# sample stream that had lost `goal_level` would pass vacuously, which is the
+		# one way this addition could be worse than no addition.
+		var first_hour_at: Dictionary = {0: 0}
+		for sample_variant in (doc["samples"] as Array):
+			var sample: Dictionary = sample_variant
+			var sample_level := int(sample.get("goal_level", 0))
+			if sample_level > 0 and not first_hour_at.has(sample_level):
+				first_hour_at[sample_level] = int(sample["h"])
+		for level in range(1, mini(top, 4) + 1):
+			# The guard that stops a ceiling from passing VACUOUSLY. A sample stream
+			# that had lost `goal_level` would make every beat 0 − 0 and every
+			# assertion below hold on a curriculum nobody measured, which is the one
+			# way this addition could be worse than no addition at all.
+			assert_true(first_hour_at.has(level),
+					("seed %d: the sample stream carries the hour curriculum level %d "
+							+ "was earned") % [int(seed_value), level])
+			var beat := int(first_hour_at.get(level, 0)) \
+					- int(first_hour_at.get(level - 1, 0))
+			var ceiling := CURRICULUM_OPENING_BEAT_H if level <= 2 \
+					else CURRICULUM_MIDDLE_BEAT_H
+			assert_true(beat <= ceiling,
+					("seed %d spent %d game-hours on curriculum level %d; the ruled "
+							+ "%s beat tops out at %d (doc 92 §27.5)")
+							% [int(seed_value), beat, level,
+							"opening" if level <= 2 else "middle", ceiling])
 		# Monotone: a curriculum level, once earned, is never given back — the
 		# same promise doc 09 §2.11 makes about the city level itself.
 		var previous := 0

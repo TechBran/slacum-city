@@ -687,6 +687,42 @@ Levels 1–5 land inside the windows Wave 9 already ruled: **the arc got longer 
 the top, it did not get slower underneath**, and gate 21 now asserts level 5
 separately so that stays provable.
 
+## G7–G8. Wave-10 follow-up rulings — the upgrade clock and the curriculum beat (2026-08-20)
+
+### G7. An upgrade step is priced on the row it starts FROM, and the binary now agrees with doc 02's own worked example
+
+`CitySim.cmd_upgrade_building` read `upgrade_time_hours` from the row of the
+level being upgraded **to**; doc 02 §2.2 stores the step `L → L+1` on the row
+upgraded **from**, which is the shape `BuildingCatalog` validates at load (every
+row below the top carries the column, the top row must not). Every upgrade in the
+game except the last step of a ladder was therefore billed one rung too slow.
+Reported as report 98 RR-29(h) and fixed as **RR-38**, with
+`CitySim.SAVE_SECTION_VERSION` 4 → 5 and an identity migrator.
+
+**The tell was already in the design document.** Doc 02 §2.10's worked example E3
+prices an office **L4→L5** at *"`upgrade_time = 30 crew-hours`"* — which is the
+L4 row's cell. The shipped binary read the L5 row and billed 47. A worked example
+and the code it describes had disagreed by 57 % since the verb shipped, in a
+document that gets read on every balance pass, and the way it was finally caught
+was a reviewer following the *fallback* (RR-29(h)) rather than the value. **The
+general lesson: when a doc has a worked example, the cheapest possible test is to
+compute it from the shipped tables and assert the doc's number.**
+
+### G8. A teaching band is a claim about the OPENING, not about every level
+
+Doc 92 §22's *"levels 1–3 land inside a 10–40 game-hour band"* is retired for a
+three-tier beat — opening (levels 1–2) ≤ 45 game-hours, middle (levels 3–4) ≤ 90,
+finale (5–6) in game-days only — ruled in report 98 **RR-39** and derived in doc
+92 §27.5. The decisive measurement is an ablation: **deleting the level-3
+objective under suspicion entirely leaves level 3 at 44–48 game-hours, still over
+a ceiling of 40**, so the objective was never what put it outside the band. The
+band also printed a level at 41 one line under a sentence claiming everything was
+inside 40, and had done since it was written.
+
+**What survives is the claim worth keeping**: a player who has not yet decided to
+keep the game must not be made to wait. That is the opening, and gate 21 now
+asserts it in game-hours rather than leaving it to prose.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,
