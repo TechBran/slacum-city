@@ -150,6 +150,15 @@ func unit_ids() -> Array:
 	return _order.duplicate()
 
 
+## The same ascending order WITHOUT the defensive copy, for the sweeps inside
+## `sim/incidents/` that only iterate — the assignment pass walks the whole
+## roster once per unmet role per incident per sub-step, and a fresh Array on
+## each of those was the copy nobody read. Read-only; never hold it across a
+## roster change (a station being built or demolished).
+func unit_ids_ref() -> Array:
+	return _order
+
+
 func size() -> int:
 	return _order.size()
 

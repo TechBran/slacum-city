@@ -187,13 +187,24 @@ func compute_i_inc(closure_cause_by_edge: Dictionary) -> Dictionary:
 ## hour this pass ran at (every coarse step does), and c_raw is by far the
 ## expensive half — `dt_game_minutes` and `bypass_smoothing` only shape `alpha`,
 ## which is applied afterwards.
-func recompute(edge_ids: Array, inputs: Dictionary, raw_sink: Variant = null) -> int:
+##
+## `ids_ascending` is the caller promising that `edge_ids` is ALREADY in
+## ascending id order — which `RoadGraph.edge_ids_ref()` is by construction, and
+## which the every-game-minute full pass hands straight in. The defensive
+## duplicate-and-sort of three thousand ids that the promise skips is not free at
+## sixty passes a game-hour. Callers that pass a dirty SET (`dirty.keys()`) leave
+## it alone and still get sorted; the iteration order is unchanged either way,
+## which is what the float sums downstream depend on.
+func recompute(edge_ids: Array, inputs: Dictionary, raw_sink: Variant = null,
+		ids_ascending: bool = false) -> int:
 	var dt_gm := float(inputs.get("dt_game_minutes", 0.25))
 	var bypass := bool(inputs.get("bypass_smoothing", false))
 	var alpha := 1.0 if bypass else RoadCosts.smoothing_alpha(tun.smooth_per_game_minute, dt_gm)
 	var moved := 0
-	var sorted_ids: Array = edge_ids.duplicate()
-	sorted_ids.sort()
+	var sorted_ids: Array = edge_ids
+	if not ids_ascending:
+		sorted_ids = edge_ids.duplicate()
+		sorted_ids.sort()
 	# One `inputs` unpack for the whole pass instead of six lookups per edge.
 	var weights_by_district: Dictionary = inputs.get("weights", {})
 	var hour := float(inputs.get("hour", 12.0))

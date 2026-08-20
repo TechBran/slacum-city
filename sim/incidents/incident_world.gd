@@ -78,6 +78,49 @@ func fire_candidate_rows() -> Array:
 	return out
 
 
+## The SAME buildings in the SAME order as `fire_candidate_rows()`, as six
+## parallel columns instead of six-key dictionaries:
+##
+##     {id: PackedStringArray, state: Array, condition: PackedFloat64Array,
+##      fire_ignition_per_hour: PackedFloat64Array, powered: PackedByteArray,
+##      district_id: PackedStringArray}
+##
+## This is what the structure-fire generator actually reads, and it reads the
+## whole roster on every integrator sub-step: at 1,500 buildings the row form
+## spends most of its time in Dictionary lookups for six numbers that a column
+## hands over by index. A world with a cheaper way to fill the columns overrides
+## this; the default derives them from `fire_candidate_rows()` and is therefore
+## always correct for a world that only implements `building()`.
+func fire_candidate_columns() -> Dictionary:
+	var rows := fire_candidate_rows()
+	var count := rows.size()
+	var ids := PackedStringArray()
+	var states: Array = []
+	var conditions := PackedFloat64Array()
+	var ignitions := PackedFloat64Array()
+	var powered := PackedByteArray()
+	var districts := PackedStringArray()
+	ids.resize(count)
+	states.resize(count)
+	conditions.resize(count)
+	ignitions.resize(count)
+	powered.resize(count)
+	districts.resize(count)
+	for i in count:
+		var row: Dictionary = rows[i]
+		ids[i] = String(row.get("id", ""))
+		states[i] = row.get("state", "active")
+		conditions[i] = float(row.get("condition", 1.0))
+		ignitions[i] = float(row.get("fire_ignition_per_hour", 0.0))
+		powered[i] = 1 if bool(row.get("powered", true)) else 0
+		districts[i] = String(row.get("district_id", ""))
+	return {
+		"id": ids, "state": states, "condition": conditions,
+		"fire_ignition_per_hour": ignitions, "powered": powered,
+		"district_id": districts,
+	}
+
+
 ## Doc 02 §2.6: 1 + 1.5·(1 − condition)^1.5.
 func fire_condition_mult(id: String) -> float:
 	return fire_condition_mult_of(building(id))
@@ -95,17 +138,33 @@ func state_fire_mult(id: String) -> float:
 static func fire_condition_mult_of(row: Dictionary) -> float:
 	if row.is_empty():
 		return 1.0
-	return 1.0 + 1.5 * pow(1.0 - clampf(float(row.get("condition", 1.0)), 0.0, 1.0), 1.5)
+	return fire_condition_mult_value(float(row.get("condition", 1.0)))
 
 
 static func state_fire_mult_of(row: Dictionary) -> float:
 	if row.is_empty():
 		return 0.0
-	match String(row.get("state", "active")):
-		"under_construction": return 1.4
-		"damaged", "repairing": return 1.8
-		"active": return 1.0
-		_: return 0.0
+	return state_fire_mult_value(row.get("state", "active"))
+
+
+## Value-taking forms, for the columnar seam above — the row-taking twins are
+## these two plus their empty-row guards, so the two shapes cannot drift.
+static func fire_condition_mult_value(condition: float) -> float:
+	return 1.0 + 1.5 * pow(1.0 - clampf(condition, 0.0, 1.0), 1.5)
+
+
+## `state` is compared, not converted: doc 02 writes it as a StringName and a
+## String world writes it as a String, and Godot compares the two by content —
+## so neither caller pays a StringName→String allocation per building per
+## sub-step. Cases are mutually exclusive; the order is the old `match`'s.
+static func state_fire_mult_value(state: Variant) -> float:
+	if state == &"under_construction":
+		return 1.4
+	if state == &"damaged" or state == &"repairing":
+		return 1.8
+	if state == &"active":
+		return 1.0
+	return 0.0
 
 
 func apply_building_damage(_id: String, _fraction: float) -> void:

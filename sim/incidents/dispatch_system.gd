@@ -174,7 +174,10 @@ func assign_tick(incidents: Array, now_h: float) -> void:
 			var any_candidate := false
 			var any_allowed := false
 			var any_reachable := false
-			for unit_id in fleet.unit_ids():
+			# Read-only walk of the fleet's own ascending order — see
+			# `FleetSystem.unit_ids_ref`. Nothing in this loop adds or removes a
+			# unit; `_assign` runs after it, on the winner.
+			for unit_id in fleet.unit_ids_ref():
 				var u: Vehicle = fleet.unit(unit_id)
 				if not u.has_capability_for(role):
 					continue
@@ -274,7 +277,7 @@ func _emit_blocked(inc: Incident, event_type: String, role: String) -> void:
 ## What one more capable unit would add, used only to size the ask.
 func _representative_contribution(inc: Incident, role: String) -> float:
 	var best := 0.0
-	for unit_id in fleet.unit_ids():
+	for unit_id in fleet.unit_ids_ref():
 		var u: Vehicle = fleet.unit(unit_id)
 		if not u.has_capability_for(role):
 			continue

@@ -49,8 +49,14 @@ func detach_building(building_id: String) -> void:
 
 
 ## Doc 02 publishes `W_b` in m³/h. Only a CHANGED value touches the sums.
+## `set_demands()` calls this once per building per tick, so the `{}` default —
+## allocated before the lookup ran, on every call — was one empty Dictionary per
+## building per tick. Same two outcomes: no row ⇒ nothing to set.
 func set_demand(building_id: String, w_b: float) -> void:
-	var record: Dictionary = buildings.get(building_id, {})
+	var found: Variant = buildings.get(building_id)
+	if found == null:
+		return
+	var record: Dictionary = found
 	if record.is_empty():
 		return
 	if is_equal_approx(float(record["w_b"]), w_b):
@@ -71,8 +77,12 @@ func sorted_ids() -> Array:
 ## water has never been told about are ignored — attach comes first.
 func set_demands(demands: Dictionary) -> void:
 	for building_id in sorted_ids():
-		if demands.has(building_id):
-			set_demand(String(building_id), float(demands[building_id]))
+		# One lookup instead of `has` plus an index, on every building on every
+		# tick. `null` and "absent" are the same case here: doc 02 never
+		# publishes a null demand.
+		var value: Variant = demands.get(building_id)
+		if value != null:
+			set_demand(String(building_id), float(value))
 
 
 func demand_of(building_id: String) -> float:

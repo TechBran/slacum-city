@@ -19,6 +19,12 @@ var name_pool: Array = []
 var _districts: Dictionary = {}  # id -> district Dictionary
 var _next_index: int = 0
 var city_stability: float = 1.0
+## Bumped whenever a BLOCK changes hands — creation, auto-assignment, manual
+## reassignment, a restore. Nothing here reads it; it exists so a sibling that
+## memoises "which district is this tile in" (doc 06's generators ask per
+## sub-step, per building) can tell when its answer went stale. Derived, so it
+## is neither serialized nor hashed.
+var membership_revision: int = 0
 
 
 func _init(p_world: WorldMap, p_rng: RngStreams, p_name_pool: Array = []) -> void:
@@ -63,6 +69,7 @@ func create_district(block_ids: Array, name: String = "", forced_id: String = ""
 		"block_cooldowns": {},
 	}
 	_next_index += 1
+	membership_revision += 1
 	for block_id in block_ids:
 		var b := world.block(String(block_id))
 		if b != null:
@@ -104,6 +111,7 @@ func auto_assign(block_id: String) -> String:
 	if best != "":
 		(_districts[best]["blocks"] as Array).append(block_id)
 		b.district_id = best
+		membership_revision += 1
 		return best
 	return create_district([block_id])
 
@@ -139,6 +147,7 @@ func assign_block_to_district(block_id: String, district_id: String, now_minutes
 	var b := world.block(block_id)
 	if b != null:
 		b.district_id = district_id
+	membership_revision += 1
 	return CommandQueue.ok()
 
 
@@ -261,6 +270,7 @@ func serialize() -> Dictionary:
 
 func deserialize(data: Dictionary) -> void:
 	_districts.clear()
+	membership_revision += 1
 	for d in data.get("districts", []):
 		_districts[String(d["id"])] = d
 	city_stability = float(data.get("city_stability", 1.0))

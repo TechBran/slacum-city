@@ -143,9 +143,11 @@ func rebalance() -> void:
 		while ids.size() - index > target:
 			_despawn(int(ids[index]), "density")
 			index += 1
-	# 2. Fill deficits.
+	# 2. Fill deficits. `_allocate_targets` writes its keys in ascending edge-id
+	# order and the largest-remainder pass only ever bumps values on keys that
+	# are already there, so the Dictionary's own order IS the sorted order.
 	var cap := global_cap()
-	for edge_id in _sorted_keys(targets):
+	for edge_id in targets.keys():
 		var have: int = (_by_edge.get(edge_id, []) as Array).size()
 		for i in maxi(0, int(targets[edge_id]) - have):
 			if _vehicles.size() >= cap:
@@ -156,7 +158,12 @@ func rebalance() -> void:
 ## Largest-remainder allocation of the network-wide target across eligible
 ## edges. Ties break by ascending edge_id, so the result is reproducible.
 func _allocate_targets() -> Dictionary:
-	var shares: Dictionary = {}
+	# The share table is packed columns too, and for the same reason as the
+	# remainder table below: `edge_ids_ref()` is already ascending, so the
+	# Dictionary this used to fill existed only to be `keys()`-ed and re-sorted
+	# into the order it was written in. Same ids, same order, same shares.
+	var share_ids := PackedInt32Array()
+	var share_values := PackedFloat64Array()
 	var total := 0.0
 	var density_k := tun.civ_density_k
 	for edge_id in graph.edge_ids_ref():
@@ -167,7 +174,8 @@ func _allocate_targets() -> Dictionary:
 				* float(record["length_m"]) / 100.0
 		if share <= 0.0:
 			continue
-		shares[edge_id] = share
+		share_ids.append(int(edge_id))
+		share_values.append(share)
 		total += share
 	var wanted := clampi(roundi(total), 0, global_cap())
 	var max_per_edge := tun.civ_max_cars_per_edge
@@ -178,12 +186,13 @@ func _allocate_targets() -> Dictionary:
 	# was the single biggest allocator in the feed.
 	var remainder_ids := PackedInt32Array()
 	var remainder_fracs := PackedFloat64Array()
-	for edge_id in _sorted_keys(shares):
-		var share := float(shares[edge_id])
+	for i in share_ids.size():
+		var edge_id := share_ids[i]
+		var share := share_values[i]
 		var whole := clampi(int(share), 0, max_per_edge)
 		out[edge_id] = whole
 		assigned += whole
-		remainder_ids.append(int(edge_id))
+		remainder_ids.append(edge_id)
 		remainder_fracs.append(share - float(int(share)))
 	if assigned >= wanted:
 		# The whole-number pass already met the target, so the largest-remainder

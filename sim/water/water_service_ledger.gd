@@ -37,10 +37,16 @@ func forget(building_id: String) -> void:
 
 
 ## One tick's contribution. `delivered_ratio` is the zone's delivered/demand.
+## The whole roster comes through here on every SimTick, so the row is fetched
+## ONCE — `track()` + `_accum[id]` was a `has` and two more lookups for the same
+## row. Same row, same fields, created on first sight exactly as before.
 func accumulate(building_id: String, p_tile: float, demand_m3h: float,
 		delivered_ratio: float, dt_h: float) -> void:
-	track(building_id)
-	var record: Dictionary = _accum[building_id]
+	var found: Variant = _accum.get(building_id)
+	if found == null:
+		found = {"w_accum_h": 0.0, "elapsed_h": 0.0, "served_m3": 0.0, "demanded_m3": 0.0}
+		_accum[building_id] = found
+	var record: Dictionary = found
 	record["w_accum_h"] = float(record["w_accum_h"]) \
 			+ clampf(p_tile / maxf(nominal_pressure, EPSILON), 0.0, 1.0) * dt_h
 	record["elapsed_h"] = float(record["elapsed_h"]) + dt_h

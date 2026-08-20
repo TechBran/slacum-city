@@ -35,6 +35,19 @@ var coverage: CoverageIndex = null
 var _coverage_hour: int = -1
 var _district_coverage: Dictionary = {}  # district id -> {police, fire}
 
+## Doc 06's fire generator scans the whole roster on every integrator sub-step.
+## All of these are DERIVED and revision-keyed (see `fire_candidate_columns`):
+## never captured, never restored, rebuilt from live state on the next ask.
+var _fire_ids := PackedStringArray()
+var _fire_states: Array = []
+var _fire_condition := PackedFloat64Array()
+var _fire_ignition := PackedFloat64Array()
+var _fire_powered := PackedByteArray()
+var _fire_district := PackedStringArray()
+var _fire_revision: int = -1
+var _district_by_building_memo: Dictionary = {}
+var _district_memo_key := Vector2i(-1, -1)
+
 ## Recorded because CitySim has no city-confidence model yet — doc 06 supplies
 ## the delta, and the lead engineer wires it when doc 09's scalar exists.
 var pending_confidence_delta: float = 0.0
@@ -78,10 +91,12 @@ func now_minutes() -> int:
 
 # ----------------------------------------------------------- doc 02 buildings
 
+## The shell already keeps the roster in ascending id order and rebuilds it only
+## when a building is added or removed, so this is the same Array it hands its
+## own walks — read-only for every caller here, as it was when this method
+## re-sorted 1,500 keys on each of the integrator's sub-steps.
 func building_ids() -> Array:
-	var ids: Array = sim.buildings.keys()
-	ids.sort()
-	return ids
+	return sim.roster_ids()
 
 
 func building(id: String) -> Dictionary:
@@ -222,9 +237,10 @@ func _staffing(station_id: String, archetype: String, level: int) -> float:
 
 func _rebuild_district_coverage() -> void:
 	var totals: Dictionary = {}
+	var district_by_id := _district_by_building()
 	for building_id in building_ids():
 		var b: Building = sim.buildings[String(building_id)]
-		var district_id := district_of_tile(b.origin)
+		var district_id: String = district_by_id[String(building_id)]
 		if district_id == "":
 			continue
 		var row: Variant = totals.get(district_id)
@@ -255,33 +271,91 @@ func _rebuild_district_coverage() -> void:
 
 ## Six fields instead of `building()`'s twelve. The fire generator asks for the
 ## whole roster on every sub-step, and the six it drops are the expensive half
-## (catalog stats, occupancy, the crime weight). Same values, same order, same
-## keys as the base composes — just without the ones nobody reads here.
-func fire_candidate_rows() -> Array:
-	var out: Array = []
+## (catalog stats, occupancy, the crime weight).
+##
+## The COLUMNS are refilled, not rebuilt: at 1,500 buildings and a dozen
+## integrator sub-steps an hour, the row form allocated 18,000 six-key
+## dictionaries a game-hour and then charged the generator a Dictionary lookup
+## for each of the six numbers. The buffers are re-sized only when the roster
+## itself changes (`CitySim.roster_revision`), so they are derived state in the
+## same sense the water demand cache is — nothing here survives a save, and a
+## load re-derives them on the next ask. `IncidentSystem._generate_structure_fire`
+## is the only caller and keeps no reference past its own call.
+##
+## `state` stays a StringName here; `IncidentWorld.state_fire_mult_value`
+## compares rather than converts, so the roster costs no string allocations.
+func fire_candidate_columns() -> Dictionary:
+	var ids := building_ids()
+	var count := ids.size()
+	if _fire_revision != int(sim.roster_revision):
+		_fire_ids.resize(count)
+		_fire_states.resize(count)
+		_fire_condition.resize(count)
+		_fire_ignition.resize(count)
+		_fire_powered.resize(count)
+		_fire_district.resize(count)
+		for i in count:
+			_fire_ids[i] = String(ids[i])
+		_fire_revision = int(sim.roster_revision)
+	var district_by_id := _district_by_building()
+	for i in count:
+		var id: String = _fire_ids[i]
+		var b: Building = sim.buildings[id]
+		_fire_states[i] = b.state
+		_fire_condition[i] = b.condition
+		_fire_ignition[i] = float(b.stats.get("fire_ignition_per_hour", 0.0))
+		_fire_powered[i] = 1 if sim.grid.is_powered(id) else 0
+		_fire_district[i] = district_by_id[id]
+	return {
+		"id": _fire_ids, "state": _fire_states, "condition": _fire_condition,
+		"fire_ignition_per_hour": _fire_ignition, "powered": _fire_powered,
+		"district_id": _fire_district,
+	}
+
+
+## building id -> district id, memoised. A building's origin never moves, so the
+## answer can only change when the roster changes or when a BLOCK changes
+## district — both of which carry a revision counter. Same value
+## `district_of_tile(b.origin)` returns; only the number of `block_of_tile`
+## walks changed.
+func _district_by_building() -> Dictionary:
+	var key := Vector2i(int(sim.roster_revision), int(sim.districts.membership_revision))
+	if key == _district_memo_key:
+		return _district_by_building_memo
+	var out: Dictionary = {}
 	for building_id in building_ids():
 		var id := String(building_id)
-		var b: Building = sim.buildings[id]
-		out.append({
-			"id": id,
-			"state": String(b.state),
-			"condition": b.condition,
-			"fire_ignition_per_hour": float(b.stats.get("fire_ignition_per_hour", 0.0)),
-			"powered": sim.grid.is_powered(id),
-			"district_id": district_of_tile(b.origin),
-		})
+		out[id] = district_of_tile((sim.buildings[id] as Building).origin)
+	_district_by_building_memo = out
+	_district_memo_key = key
 	return out
 
 
+## Dispatch priority asks this per live incident per integrator sub-step, so at
+## 1,500 buildings it is one of doc 06's hottest sweeps.
+##
+## The square prefilter is EXACT, not approximate: `|dx| > radius` implies
+## `sqrt(dx² + dy²) > radius`, so every building it drops is one the distance
+## test below would have dropped anyway. Origins are integers, so the bound is
+## taken as an integer and the comparison never touches a float. What survives
+## is measured exactly as before — same `Vector2.length()`, same `<=`, same
+## boundary decisions — because a squared-distance rewrite would move the
+## boundary in the last bit and this membership feeds a float sum.
 func buildings_within_m(tile: Vector2i, radius_m: float, exclude_id: String = "") -> Array:
 	var radius_tiles := radius_m / METRES_PER_TILE
+	var bound := int(ceil(radius_tiles))
 	var out: Array = []
 	for id in building_ids():
+		var b: Building = sim.buildings[id]
+		var dx := b.origin.x - tile.x
+		if dx > bound or dx < -bound:
+			continue
+		var dy := b.origin.y - tile.y
+		if dy > bound or dy < -bound:
+			continue
 		if String(id) == exclude_id:
 			continue
-		var b: Building = sim.buildings[id]
-		var delta := Vector2(float(b.origin.x - tile.x), float(b.origin.y - tile.y))
-		if delta.length() <= radius_tiles:
+		if Vector2(float(dx), float(dy)).length() <= radius_tiles:
 			out.append(String(id))
 	return out
 

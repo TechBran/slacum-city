@@ -955,22 +955,31 @@ func nearest_road_tile(t: Vector2i, radius: int = -1) -> Vector2i:
 	if _is_road(t):
 		return t
 	var limit := radius if radius >= 0 else tun.snap_radius_tiles
-	for r in range(1, limit + 1):
+	# The tie-break is lexicographic on (y, x) and both coordinates are inside
+	# [0, TileGrid.SIZE), so `y * SIZE + x` orders exactly as the `[q.y, q.x]`
+	# array pair did — same winner, without allocating a two-element Array (and
+	# comparing it) for every road tile in every ring.
+	var r := 1
+	while r <= limit:
 		var best := Vector2i(-1, -1)
-		var best_key := [999, 999]
-		for dz in range(-r, r + 1):
-			for dx in range(-r, r + 1):
-				if maxi(absi(dx), absi(dz)) != r:
-					continue
+		var best_key := 0x7FFFFFFF
+		var dz := -r
+		while dz <= r:
+			var dx := -r
+			var step := 1 if absi(dz) == r else 2 * r
+			while dx <= r:
 				var q := Vector2i(t.x + dx, t.y + dz)
+				dx += step
 				if not _is_road(q):
 					continue
-				var key := [q.y, q.x]
+				var key := q.y * TileGrid.SIZE + q.x
 				if best.x < 0 or key < best_key:
 					best = q
 					best_key = key
+			dz += 1
 		if best.x >= 0:
 			return best
+		r += 1
 	return Vector2i(-1, -1)
 
 
