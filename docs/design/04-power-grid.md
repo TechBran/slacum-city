@@ -568,7 +568,7 @@ Keys: `version`, `components`, `upgrades`, `demand` (class map and weather coeff
 
 **Tick entry:** `PowerGrid.tick(dt_game_seconds: int, ctx: SimContext) -> void`, registered on the 4 Hz utilities cadence; `ctx` supplies `clock`, `channels`, `rng.failures`, `weather`, `buildings`, `event_bus`. **Hour entry:** `PowerGrid.settle_hour() -> void`, registered `EVERY_HOUR` ahead of doc 03, which finalizes availability and resets the accumulators.
 
-**Queries:** `is_powered(building_id)`, `power_output_multiplier(building_id)`, **`power_availability_hour(building_id) -> float`** (report 98 C-37), `can_upgrade_power(building_id, target_level)`, `n1_headroom_kw(feeder_id)`, `grid_inventory() -> {nodes, lines, plants}`, `storm_exposure(component_id)`, **`suggest_route_along_roads(from, to) -> PackedVector2Array`** (the C-41 assist — a query, never an action).
+**Queries:** `is_powered(building_id)`, `power_output_multiplier(building_id)`, **`power_availability_hour(building_id) -> float`** (report 98 C-37), `can_upgrade_power(building_id, target_level)`, `n1_headroom_kw(feeder_id)`, `grid_inventory() -> {nodes, lines, plants}`, `storm_exposure(component_id)`, **`suggest_route_along_roads(from, to) -> PackedVector2Array`** (the C-41 assist — a query, never an action), and the two the visible distribution layer added (§5.9, 2026-08-20): **`component_tile(id) -> Vector2i`** and **`attachment_map() -> {building_id: transformer_id}`** — both read-only, both allocating nothing the passes do not already hold, both ascending so two runs answer byte-identically.
 
 **Commands:** `place_power_component`, `upgrade_power_component`, `demolish_power_component`, `route_feeder`, `set_feeder_underground`, `place_tie`, `set_tie_mode`, `set_feeder_priority`, `manual_switch`, `request_reclose`, `buy_arrester`, `buy_flood_wall`, `place_backup_gen`, `request_preventive_maintenance`, `set_shed_policy`.
 
@@ -634,6 +634,14 @@ This is spec §9.4's *"Upgrade blocked: nearby electrical capacity insufficient"
 **5.8 doc 08 — Persistence & offline.** Doc 08 owns the save envelope, the offline band policy and `ctx.catchup_index`; this doc owns its `power` section and the coarse-step contract in §2.12.
 
 **5.9 doc 11 — Rendering.** Consumes `BlockDarkChanged`, `PowerRestored` (with `restore_order` and `powered_fraction`), `StreetlightsChanged` and the dark-tile mask for the blackout/relight signature. Doc 11 owns `momentary_outage_s`; see the coupling comment in §8 `protection`.
+
+**The DISTRIBUTION layer is drawn as of 2026-08-20 (doc 11 §2.10b).** Doc 11 now puts a pad-mounted transformer at every `transformer` component's tile, a catenary service drop from each pad to each building this doc has attached to it, and smoke / sparks / soot driven by §2.6's own bands. Nothing in this doc changed to allow it and nothing here is owned by the renderer:
+
+* Two **read-only** accessors were added — `component_tile(id)` (a `Vector2i` copy, so a renderer cannot write through into the graph) and `attachment_map()` (`{building_id: transformer_id}`, ascending, the whole service table at once instead of 1,500 `attachment_of` calls). Both allocate no component state, consume no RNG, and are covered by the `state_hash` baselines on the starter and bench cities.
+* Every number the renderer bands on is **read from here, never re-authored there**: §5.10's `NORMAL / WARNING / CRITICAL` ratios, §2.6's hazard knee `T_knee = 85 °C`, and the condition at which §2.6's `1 + 3(1−c)²` multiplier doubles. The "throwing sparks" band is *solved* from §2.6 (`hazard = 1.0 / game-hour ⇒ r = 1.399`), so retuning the thermal or hazard rows moves the visuals with them.
+* `state` outranks load in the renderer's mapping, exactly as it does here: a FAILED transformer with a stale ratio draws as charred, and an OPEN one draws as dark, whatever its last load number was.
+
+Doc 11 draws **no** substation and **no** plant of its own: report 98 C-30 makes both of those buildings, and `CityView` has drawn them since Wave 6.
 
 **5.10 doc 12 — UI & overlays.** Snapshot built at **1 Hz** (the overlay does not need tick fidelity), double-buffered so the renderer never reads a mutating array:
 ```json

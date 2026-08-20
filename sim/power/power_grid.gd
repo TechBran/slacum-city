@@ -1445,6 +1445,41 @@ func transformer_rows(t_ambient: float = 25.0) -> Array:
 	return out
 
 
+## The tile a component stands on, for a caller that has to DRAW it (doc 11's
+## distribution layer). Copied out rather than handed the live component, so a
+## renderer cannot write through into the graph; `Vector2i` is a value type, so
+## the copy is the return itself. `Vector2i.ZERO` for a line (`route`, not
+## `tile`) or an id the grid has never heard of — both of which a caller that
+## only ever asks about `component_ids_of_kind(&"transformer")` cannot hit.
+##
+## Read-only, consumes no RNG, allocates nothing: the whole cost of the visible
+## power layer on the sim side is this function and `attachment_map()` below.
+func component_tile(id: String) -> Vector2i:
+	var c: Dictionary = _components.get(id, {})
+	if c.is_empty():
+		return Vector2i.ZERO
+	var tile: Variant = c.get("tile", Vector2i.ZERO)
+	return tile if tile is Vector2i else Vector2i.ZERO
+
+
+## `{building_id: transformer_id}` for every attached building, ascending by
+## building id — the service graph, as a table, for the renderer that draws one
+## wire per row (doc 11's service drops).
+##
+## `attachment_of()` answers the same question one building at a time and is
+## what every sim caller uses; a renderer needs the WHOLE map once per roster
+## change, and asking it 1,500 times would be 1,500 Dictionary lookups for a
+## table the grid already holds. Sorted, because two runs that build the wire
+## buffer in different orders would upload different buffers from identical
+## state. UNSERVED buildings are absent, not empty-valued: no transformer, no
+## wire.
+func attachment_map() -> Dictionary:
+	var out: Dictionary = {}
+	for building_id in _sorted_keys(_attachments):
+		out[building_id] = String(_attachments[building_id])
+	return out
+
+
 func _row(id: String, c: Dictionary, t_ambient: float, customers: int) -> Dictionary:
 	var effective := cap_eff(id, t_ambient)
 	var load: float = float(c["load_kw"])

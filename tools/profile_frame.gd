@@ -41,6 +41,13 @@ extends SceneTree
 ##                      `CityView.atlas_lod`. 0 keeps the un-merged tier's
 ##                      picture exactly; 1 is §2.5's ladder and costs the
 ##                      commercial banding — the A/B behind that ruling.
+##   --no-power-infra   leave the visible power layer (`PowerInfraView`) out.
+##                      The A/B behind its §2.13 draw-call claim: the two runs
+##                      differ in nothing else, so the `dc` delta IS the layer.
+##   --power-distress=F force this fraction of the transformer roster into the
+##                      SEVERE band (0..1) before measuring, so the smoke and
+##                      spark buffer is exercised rather than assumed absent.
+##                      Render-side only — the sim is not touched.
 ##   --no-merge         draw the pre-D-14 renderer: one MultiMesh per
 ##                      (chunk, archetype, level) at MEDIUM, instead of the
 ##                      merged per-archetype atlas. The A/B switch the
@@ -80,7 +87,12 @@ var _vehicles: VehicleView
 var _env: EnvironmentController
 var _camera_state: CameraState
 var _camera_rig: CameraRig
+var _power_infra: PowerInfraView
 var _family_of: Dictionary = {}
+var _height_of: Dictionary = {}
+## Set by `--power-distress=`: the render rows the harness feeds instead of the
+## sim's, so the smoke/spark buffer can be measured without cooking the sim.
+var _forced_rows: Array = []
 
 var _order: Array = []
 var _pose_index := 0
@@ -170,6 +182,9 @@ func _build_scene() -> void:
 	var manifest: Dictionary = StarterCityLoader.read_json(MESH_MANIFEST)
 	for entry in manifest.get("meshes", []):
 		_family_of[String(entry["archetype"])] = String(entry.get("family", "residential"))
+		if int(entry.get("lod", 0)) == 0:
+			_height_of["%s:%d" % [entry["archetype"], int(entry["level"])]] = \
+					float(entry.get("height_m", 10.0))
 	for id in _sim.buildings.keys():
 		_model.add_building(_building_view(String(id)))
 	_city_view = CityView.new()
@@ -194,6 +209,18 @@ func _build_scene() -> void:
 	stage.add_child(_vehicles)
 	_vehicles.setup(_render_data)
 	_vehicles.set_preset(String(_opts["preset"]), _render_data)
+
+	# --- the visible power layer (doc 04's distribution end, drawn) --------
+	# Built exactly the way `game/main.gd` builds it, so the `dc` column below
+	# is the shipped shape and not a harness-only arrangement.
+	if not bool(_opts["no_power_infra"]):
+		_power_infra = PowerInfraView.new()
+		stage.add_child(_power_infra)
+		_power_infra.setup(_render_data, func(archetype: StringName, level: int) -> float:
+				return float(_height_of.get("%s:%d" % [archetype, level], 10.0)))
+		_power_infra.set_road_probe(PowerInfraFeed.road_probe(_sim.world))
+		_power_infra.sync(_sim, 0.0, Vector3.ZERO)
+		_force_distress(float(_opts["power_distress"]))
 
 	# --- camera -----------------------------------------------------------
 	_camera_state = CameraState.load_from_files()
@@ -221,6 +248,31 @@ func _build_scene() -> void:
 	_camera_rig = CameraRig.new()
 	stage.add_child(_camera_rig)
 	_camera_rig.setup(_camera_state, _render_data)
+
+
+## `--power-distress=F`: push the first `F` of the transformer roster (sorted, so
+## the choice is reproducible) into doc 04's SEVERE band, RENDER-SIDE ONLY. The
+## grid is not touched, no RNG is drawn and no state hash moves — the harness
+## simply hands `PowerInfraView` a different set of read-only rows, which is what
+## it would have got had those transformers actually been cooking.
+func _force_distress(fraction: float) -> void:
+	_forced_rows = []
+	if _power_infra == null or fraction <= 0.0:
+		return
+	var rows: Array = PowerInfraFeed.state(_sim)
+	var wanted := int(ceil(float(rows.size()) * fraction))
+	for i in rows.size():
+		var row: Dictionary = (rows[i] as Dictionary).duplicate()
+		if i < wanted:
+			row["state"] = "OK"
+			row["energized"] = true
+			row["load_ratio"] = PowerInfraModel.severe_ratio() + 0.25
+			row["temp_c"] = 130.0
+		_forced_rows.append(row)
+	_power_infra.apply_state(_forced_rows)
+	if not bool(_opts["quiet"]):
+		print("profile_frame: forced %d/%d transformers into SEVERE"
+				% [wanted, rows.size()])
 
 
 func _build_ground(stage: Node3D) -> void:
@@ -339,6 +391,11 @@ func _process(delta: float) -> bool:
 	_streetlights.refresh()
 	_vehicles.set_focus(_camera_state.focus)
 	_vehicles.refresh(delta, _env.last_night, 1.0)
+	if _power_infra != null:
+		# `refresh`, not `sync`: the harness holds the sim still, and re-polling
+		# a frozen grid every frame would measure the poll instead of the layer.
+		# `--power-distress` has already put the rows it wants in place.
+		_power_infra.refresh(delta, camera_pos)
 
 	_frames_seen += 1
 	if _frames_seen > int(_opts["warmup"]):
@@ -424,6 +481,12 @@ func _summarise(pose_key: String) -> Dictionary:
 		"far": int(census.get("far", 0)),
 		"culled": int(census.get("culled", 0)),
 		"instances": _model.building_count(),
+		# The visible power layer, counted the way it is budgeted: nodes
+		# SUBMITTED, not nodes allocated.
+		"power_calls": _power_infra.draw_calls() if _power_infra != null else 0,
+		"power_wire_buckets": _power_infra.visible_wire_bucket_count() \
+				if _power_infra != null else 0,
+		"power_puffs": _power_infra.live_puff_count() if _power_infra != null else 0,
 	}
 
 
@@ -462,6 +525,13 @@ func _report() -> void:
 			+ " present. On a large city that remainder is the frame.")
 	print("  instances resident %d   (preset instance_budget %d)" % [
 			_model.building_count(), int(preset_row.get("instance_budget", 0))])
+	if _power_infra != null:
+		var power_line := "  power layer (pads / wires / distress) per pose: "
+		for row: Dictionary in _results:
+			power_line += "%s %d dc (%d wire buckets, %d puffs)   " % [
+					String(row["pose"]), int(row["power_calls"]),
+					int(row["power_wire_buckets"]), int(row["power_puffs"])]
+		print(power_line)
 	print("  NOTE: the UI CanvasLayer is not built by this harness; `dc+ui` adds"
 			+ " §2.13's %d batched UI calls so the budget column compares." % UI_DRAW_CALLS)
 	var out := String(_opts["out"])
@@ -490,6 +560,7 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 		"resolution": Vector2i(1920, 1080), "out": "", "quiet": false,
 		"shots": "", "no_merge": false, "atlas_lod": -1,
 		"focus": Vector2(-1.0, -1.0),
+		"no_power_infra": false, "power_distress": 0.0,
 	}
 	for raw in argv:
 		var arg := String(raw)
@@ -497,6 +568,10 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			opts["quiet"] = true
 		elif arg == "--no-merge":
 			opts["no_merge"] = true
+		elif arg == "--no-power-infra":
+			opts["no_power_infra"] = true
+		elif arg.begins_with("--power-distress="):
+			opts["power_distress"] = clampf(float(arg.substr(17)), 0.0, 1.0)
 		elif arg.begins_with("--atlas-lod="):
 			opts["atlas_lod"] = int(arg.substr(12))
 		elif arg.begins_with("--shots="):

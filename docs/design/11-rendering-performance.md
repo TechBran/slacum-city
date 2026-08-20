@@ -535,6 +535,7 @@ One streetlight every 32 m (4 tiles) along road polylines from doc 10. With doc 
 
 Godot Mobile caps omni lights per object (default 8). With ≤ 20 omnis spread over 90 m at 14 m range, no building is touched by more than ~4. Verified in the on-device checklist (§7.4).
 
+<<<<<<< HEAD
 #### 2.10.1 Where the lamps go, and what they look like (`streetlight_placer.gd`, `cobra_head_mesh.gd`) — **shipped 2026-08-20**
 
 The placement rule this replaces was one line in the scene root:
@@ -557,6 +558,60 @@ Founding city: **130 lamps**, 4 of them corner lamps, against the parity rule's 
 **The mesh.** `CobraHeadMesh` builds one ArrayMesh every lamp in the city shares: a mast standing on its own origin (so the baked grime ramp lands at the footway wherever it is placed), the 0.30 m base collar, a four-segment arm swept as a quarter-ellipse that leaves the mast vertically and arrives over the carriageway horizontal, and a tapered luminaire with a pale lens on its underside. **76 triangles** against the old stick's 34, paid once on the shared mesh; the arm is baked along local **+X** and each instance yaws it toward its own roadway. Founding city total: 9,880 pole triangles, against the parity rule's 207 x 34 = 7,038 — 40 % more triangles for 37 % fewer poles.
 
 **STREET-1 — the pool that was buried.** `pool_y_m` was **0.06** and the road slab's top is **0.10**: every ground pool in the game failed the depth test against the carriageway it was lighting, and what survived was the ring of it that spilled onto the block either side. A doughnut of light around a dark road is a large part of why a lamp read as a stick. The disc now rides just over the **footway** — the highest surface under a lamp — so one pool covers kerb, gutter and both lanes, and the billboard, the pool and the wet smear all hang off the **luminaire**, out at the end of the arm, instead of off the top of the mast. The 0.155 m the disc floats above the asphalt is invisible: at Z0's 34° of pitch that is 0.23 m of parallax across a 16 m disc with no hard edge anywhere in it.
+=======
+### 2.10b The distribution layer — pads, service drops and distress, **shipped 2026-08-20**
+
+Doc 04 has owned plants, substations, feeders, transformers and per-building service since Wave 1. Until this pass **none of the distribution end of it rendered.** A player could read an overlay tint and an Infrastructure row, but could not see where the transformer serving their block stood, could not see which buildings it fed, and could not see it cook. The two grid nodes that ARE buildings — `substation` and `power_facility` (report 98 C-30) — have been drawn by `CityView` since Wave 6 and are untouched here; a transformer is **not** a building (doc 04 §2.1: one tile, `FLAG_OCCUPIED`, no footprint row), which is exactly why nothing was drawing it.
+
+Three elements, in `game/render/power_infra_{model,feed,view}.gd` and `game/shaders/power_{pad,wire,smoke}.gdshader`.
+
+**1. Pads.** A pad-mounted transformer at every `transformer` component's tile centre, at every zoom: concrete apron + lip, green-grey cabinet, overhanging lid, a proud radiator panel with end ribs on each flank, three HV bushings on the lid. **204 triangles on one shared mesh.** The seven fins inside each radiator panel are *shaded*, not modelled (`fin_pitch_m` 0.135) — geometry buys the silhouette, a periodic AO/roughness band buys the corrugation, and at Z0 one fin is ~3 px, which is the scale at which triangles cost and a groove term does not. Vertex `COLOR.a` carries `part / 8` (concrete / cabinet / lid / fin / porcelain), the same 8-bit round-trip trick §2.6's level atlas plays with `COLOR.a`; eight parts is the ceiling and a ninth would collide.
+
+**Orientation is doc 10's, not a hash.** The doors face the street: the four orthogonal neighbours are tested in the fixed order −Z, +X, +Z, −X and the first road tile wins, then the four diagonals, then a fixed yaw. A corner pad therefore resolves the same way on every run and after every load. A random spin would have been cheaper and is wrong — a randomly-turned cabinet in an otherwise aligned row is *more* conspicuous than an aligned one facing nowhere.
+
+**2. Service drops.** One catenary-sagged wire from each pad's LV riser to each building `PowerGrid.attachment_map()` says it feeds, landing on the point of the building's footprint rectangle nearest the riser, `service_clearance_m` off the wall, at `clamp(height − 0.90, 2.60, 5.20)` m. Deterministic from the footprint alone — no per-building authored anchor — which is what makes the same city draw the same wires after a load. An UNSERVED building has no row in the attachment map and therefore **no wire**, which is the honest picture.
+
+One instance is one **whole span**: a flat 8-segment strip that `power_wire.gdshader` turns into a camera-facing ribbon, 16 triangles, with the sag as a vertex function of `t` and a round cross-section (and its anti-aliasing) out of the fragment stage. The alternative — one instance per segment of a tessellated tube — was 8× the instances and 3× the triangles for a cable three pixels wide.
+
+**3. Distress, driven by doc 04's own state.** Bands, and the numbers behind them, are read from `PowerGrid` and never re-authored here:
+
+| band | condition | look |
+|---|---|---|
+| CLEAN | energized, `r <` `OVERLAY_WARNING_R` 0.75 | clean cabinet, no heat |
+| STRESSED | `r ≥ 0.75`, **or** winding past §2.6's hazard knee 85 °C, **or** `condition < 0.4226` | fins warm, soot from age |
+| TROUBLED | `r ≥` `OVERLAY_CRITICAL_R` 0.95 | wisp of smoke, fins glowing |
+| SEVERE | `r ≥ 1.399` | heavy plume + intermittent arcing |
+| DARK | OPEN or de-energized | nothing: no hum, no heat, no smoke |
+| FAILED | `state == FAILED` | charred, dead, a thin smoulder |
+
+**The SEVERE band is solved, not picked.** §2.6 gives `θ_ss = θ_rated·r²` and `hazard = h_cold + h_hot·stress³` per game-hour; setting hazard = 1.0/gh (odds-on to burn out inside the hour) and inverting gives `stress = ((1 − h_cold)/h_hot)^⅓` and `r = √((knee + span·stress − ambient)/θ_rated)`. With the shipped transformer row (θ_rated 55, knee 85, span 60, h_hot 2.00, h_cold 0.00012) at 25 °C that is **r = 1.399**. `PowerInfraModel.severe_ratio()` computes it at boot, so retuning doc 04 §2.6 moves the smoke with it and there is no second copy to forget. The worn line is the condition at which §2.6's `1 + 3(1−c)²` multiplier has **doubled**: `c = 1 − √⅓ = 0.4226`.
+
+**Smoke and sparks are one premultiplied-alpha MultiMesh, not particle nodes.** With `blend_premul_alpha` a fragment that writes ALBEDO and leaves ALPHA at 0 is purely additive (a spark) and one that writes `colour·a` with ALPHA = a blends normally (smoke) — two blend modes, one pipeline state, **one draw call however bad the city gets**, and the node is hidden outright while nothing is in trouble. A `GPUParticles3D` per troubled transformer would have been one node, one process callback and one draw call *each* on a layer whose whole budget is a couple of calls, and its state would be wall-clock driven, so two runs of the same save would not look the same. Every puff here is a pure function of `sc_time` and a per-instance phase derived from the component id (FNV-1a, mod 2²⁴ so the float is exact), which is also what makes it survive a save/load round trip.
+
+**The ramps are asymmetric on purpose.** `char_rise_s` 0.55 against `char_fall_s` 2.40: a failure is an EVENT and lands in half a second; a repair is a crew leaving and washes clean over a couple of time constants. The player asked to *see* the fix land, and a step change reads as a glitch.
+
+**Draw-call shape — why this layer is not bucketed per chunk.** §2.13 budgets it at +10 calls at Z2, and Z2 has 16 chunks in view (the derivation below), so a per-chunk pad bucket would spend 16 calls on 144 cabinets before a single wire was drawn. The layer is bucketed by what its elements actually need instead:
+
+* **Pads: one MultiMesh for the whole city.** 144 instances × 204 tris = 29,376 triangles, under a third of one bench chunk's buildings, and one call at every zoom. There is nothing worth culling — the buffer is smaller than the cull test's own bookkeeping. It is the one place this layer trades primitives for calls, and the measurement below says the trade is free.
+* **Wires: one MultiMesh per chunk, submitted only when close.**
+* **Distress: one MultiMesh, smoke and sparks together, hidden when idle.**
+
+**The wire gate is the Z1 camera height, not a taste call.** `wire_fade_end_m` = 58 m is BOTH the shader's fade-out distance and the CPU-side bucket gate, so a bucket is dropped only once every wire in it is already zero-width and the gate cannot be seen switching. 58 is chosen because §2.5's Z1 pose is D 86.9 m at 48°, i.e. the camera sits `86.9·sin 48° = 64.6` m above grade and **nothing on the ground is within 58 m of it**. The brief was "visible when you look, never noisy at Z1+", and that is that sentence as a number: at Z0 (camera 10.1 m up, 14.9 m back) every wire in view is inside `wire_fade_begin_m` 26 m and fully drawn; by Z1 the layer is not merely faint but zero buckets submitted. 58 also sits comfortably inside §2.5's 150 m NEAR boundary, so "wires are a NEAR element" holds by construction rather than by mirroring the tier table into a second place.
+
+**Measured — `tools/profile_frame.gd`, bench city (1,500 buildings, 144 transformers), 1920×1080, Balanced, hour 21, 120 frames after 60 warm-up. The A/B is `--no-power-infra`, so the two runs differ in nothing else.**
+
+| pose | draw calls without | with, grid healthy | with, **all 144 SEVERE** | wire buckets | GPU ms without → with |
+|---|---|---|---|---|---|
+| Z0 D 18 m | 92 | 94 | 94 | 4 | 0.635 → 0.656 |
+| Z1 D 86.9 m | 111 | 112 | 112 | **0** | 2.183 → 2.134 |
+| Z2 D 420 m | 194 | **195** | **196** | **0** | 3.092 → 3.033 |
+
+**+1 draw call at Z2 with a healthy grid, +2 with every transformer in the city on fire, against the +10 budget.** Primitives rise by a flat 29,376 at every pose (the pad buffer, which is not culled by design); the RenderingServer's own GPU column does not move outside run-to-run noise at any pose. Worst-case plume is `puff_cap` 132 billboards, spent worst-first — SEVERE before FAILED before TROUBLED, then by id — so a city with forty warm transformers and one on fire always spends its billboards on the fire. The governor's `particle_ratio` knob scales both `puff_cap` and `puffs_per_pad` and is the **only** knob that reaches this layer: a player on a thermally throttled phone still has to be able to see where their transformers are.
+
+**A settled city uploads nothing.** Every animation here — the fin flicker, the smoke loop, the overlay pulse — is a shader function of `sc_time`, so `PowerInfraModel.take_dirty()` returns false and not one `set_instance_custom_data` runs while no ramp is moving. That is what lets the pad buffer be city-wide with no write budget behind it (§2.2's `writes_per_frame` is the building layer's).
+
+**Two scars worth keeping.** `VIEWPORT_SIZE` and `PROJECTION_MATRIX[1][1]` both COMPILE in a spatial **vertex** shader and neither carries a usable value there on Forward Mobile: their product measured as zero, took the shader's own `max(1.0, …)` guard, and widened every service drop to about 130 m of near-opaque black — the entire screen washed out at any close zoom. The screen-space term is now `2·tan(fov_y/2)/height` computed on the CPU from doc 11's own authored FOV (`PowerInfraView._sync_viewport_h`), with `wire_max_radius_m` 0.30 standing behind it as a hard metre ceiling so no future plumbing mistake can repaint the screen. `tests/test_power_infra.gd` locks both.
+>>>>>>> worktree-wf_fbb709c5-edd-3
 
 ### 2.11 Overlay mechanism (doc 12 owns content)
 
@@ -569,6 +624,8 @@ EMISSION *= 0.40;
 ```
 
 Network lines (power feeders, water mains, congestion) draw as **one `ImmediateMesh` per overlay layer per 4×4-chunk super-block**: line strips, unshaded additive, `render_priority = 5`, no depth write, UV scrolled by `sc_time · flow_speed` where `flow_speed` is signed by real flow direction (spec §13.5 "animated power flow"). Rebuilt only on `network_topology_changed`; the animation itself is free. Budget ≤ 6 extra draw calls at any zoom.
+
+**Mode 1 (POWER) now lights the PHYSICAL network too, not only the building tints (§2.10b, shipped 2026-08-20).** `power_pad.gdshader` and `power_wire.gdshader` read the same `sc_overlay_mode` global, decode the overlay field with `mod(floor(packed / 112.0), 4.0)` — `building.gdshader`'s expression, character for character, over the same 112 stride — and wear `building.gdshader`'s palette and blend weights, so a pad and the building it feeds carry the same hue for the same state. Two things are POWER-specific: a pad carries an **emission floor** under the grey wash (a 1.5 m cabinet otherwise disappears into the road where a forty-metre lit façade does not), and a wire's minimum screen width is multiplied by `overlay_px_gain` 2.3, because the wire is the only thing on screen that says *which transformer feeds which building* and a 1.4 px dark thread says it to nobody. The wire's NEAR gate is unchanged in POWER mode — the overlay makes the drops thicker and brighter within the same 58 m, it does not extend them. Under WATER/POLICE/FIRE both surfaces desaturate and thin out with the rest of the world, because a pad is world, not that mode's data. The mode integer is only ever **read**; doc 12's rail owns writing it.
 
 ### 2.12 Vehicles
 
