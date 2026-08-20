@@ -57,6 +57,34 @@ const MAJOR_OUTAGE_FRACTION := 0.40
 
 const BLOCK_DARK_THRESHOLD := 0.60
 
+## The load ratio an ORPHANED transformer (its feeder demolished) reports to
+## `adoption_plan`'s ranking. It is a SORT KEY, never an electrical quantity: it
+## says "ahead of anything with a real parent", and a real parent cannot reach
+## it because §2.5's relay opens a feeder at r = 1.05. Finite rather than `INF`
+## so two orphans compare equal and fall through to the distance tie-break
+## instead of producing NaN.
+const ORPHAN_RATIO := 1.0e9
+
+## Doc 04 §5.10's overlay colour bands (`data/power.json` §8
+## `overlay.color_thresholds`), mirrored here because they are the only
+## AUTHORED "how loaded is too loaded" numbers in the doc and everything that
+## has to decide when to act should read them rather than pick its own:
+## `NORMAL` r < 0.75, `WARNING` 0.75 ≤ r < 0.95, `CRITICAL` r ≥ 0.95.
+const OVERLAY_WARNING_R := 0.75
+const OVERLAY_CRITICAL_R := 0.95
+
+## How full a PLANNED transfer is allowed to leave the receiving component.
+##
+## Not §2.9's `auto_transfer_max_r` (0.95, `TIE_CLEAN_R`), and the difference is
+## the point. 0.95 is the EMERGENCY bound: a trip has already happened, the load
+## is dark either way, and taking it at 95 % is better than leaving it out. A
+## player who has just paid for new copper is making a PLAN, and a plan that
+## fills brand-new plate to 95 % has bought nothing — measured on the 50-game-day
+## run, adoption at 0.95 handed every new feeder back at r = 1.51 within a
+## game-week of growth. A planned transfer therefore has to leave the receiving
+## component where §5.10's overlay still calls it NORMAL: **r < 0.75**.
+const ADOPTION_MAX_R := OVERLAY_WARNING_R
+
 const LIGHTNING_P_BASE := 0.55
 const LIGHTNING_ARRESTER_FACTOR := 0.22
 
@@ -126,6 +154,73 @@ func add_component(id: String, kind: StringName, opts: Dictionary = {}) -> Dicti
 	_order.sort()
 	topology_dirty = true
 	return component
+
+
+## Re-rate a component onto a new level (doc 04 §2.2's ladder). The only caller
+## is a **shell** that finished an upgrade: a `substation` / `power_facility`
+## building IS its grid node (report 98 C-30), so doc 02's L1→L2 job is what
+## moves 6,000 kW to 14,000 and two feeder slots to three. Feeders and
+## transmission lines are rated by conductor class, not level, and refuse.
+func set_level(id: String, level: int) -> bool:
+	if not _components.has(id):
+		return false
+	var c: Dictionary = _components[id]
+	var kind: StringName = c["kind"]
+	if not CAPACITY.has(kind):
+		return false
+	var rows: Array = CAPACITY[kind]
+	if level < 1 or level > rows.size():
+		return false
+	c["level"] = level
+	c["capacity_kw"] = float(rows[level - 1])
+	return true
+
+
+## Remove a component from the graph (doc 02 §2.12 demolition, applied to the
+## two grid nodes that are buildings).
+##
+## **Children are orphaned, not adopted.** A transformer whose feeder is gone
+## keeps its tile and its buildings and simply stops being energized — Pass D
+## only walks down from substation roots — which is the honest reading of doc 04
+## §2.1's radial tree and is recoverable: `cmd_route_feeder`'s adoption pass
+## (§2.9's transfer rule) picks orphans up first.
+##
+## **One cascade, and only one.** Removing a SUBSTATION removes the feeders it
+## roots, because §2.1 says a feeder belongs to exactly one substation at a time
+## and nothing in the MVP can re-root one — leaving them standing would leave
+## copper that can never be energized again and that doc 03 would keep billing
+## `line_km` for. Their transformers orphan as above.
+##
+## Returns every id removed, sorted — `id` plus whatever it cascaded to.
+func remove_component(id: String) -> Array:
+	if not _components.has(id):
+		return []
+	var removed: Array = [id]
+	if _components[id]["kind"] == &"substation":
+		for child_id in _order:
+			if _components[child_id]["kind"] == &"feeder" \
+					and String(_components[child_id]["parent"]) == id:
+				removed.append(String(child_id))
+	removed.sort()
+	for gone in removed:
+		for other_id in _order:
+			if String(_components[other_id]["parent"]) == gone:
+				_components[other_id]["parent"] = ""
+		if String(_last_trip_component) == gone:
+			_last_trip_component = ""
+		_components.erase(gone)
+		_order.erase(gone)
+		shed_feeders.erase(gone)
+	for building_id in _sorted_keys(_attachments):
+		if removed.has(String(_attachments[building_id])):
+			_attachments.erase(building_id)
+	for tie_id in _sorted_keys(_ties):
+		var tie: Dictionary = _ties[tie_id]
+		if removed.has(String(tie["a"])) or removed.has(String(tie["b"])):
+			_ties.erase(tie_id)
+	_children.clear()
+	topology_dirty = true
+	return removed
 
 
 func component(id: String) -> Dictionary:
@@ -292,6 +387,299 @@ func extend_route(id: String, tiles: Array) -> int:
 	for entry in tiles:
 		route.append(entry)
 	return tiles.size()
+
+
+# ------------------------------------------------ doc 04 §4 `route_feeder`
+
+## Doc 04 §2.2's `feeder_slots` ladder, read as a live budget:
+## `{total, used, free}` for one substation. A substation roots exactly as many
+## feeders as it has slots — L1 two, L5 eight — which is why the answer to a
+## saturated feeder pair is a substation and not just more copper.
+func feeder_slots(substation_id: String) -> Dictionary:
+	if not _components.has(substation_id) \
+			or _components[substation_id]["kind"] != &"substation":
+		return {"total": 0, "used": 0, "free": 0}
+	var total: int = SUBSTATION_FEEDER_SLOTS[int(_components[substation_id]["level"]) - 1]
+	var used := 0
+	for id in _order:
+		var c: Dictionary = _components[id]
+		if c["kind"] == &"feeder" and String(c["parent"]) == substation_id:
+			used += 1
+	return {"total": total, "used": used, "free": maxi(0, total - used)}
+
+
+## The feeder whose route passes through `tile`, or "" — the "start on an
+## existing trunk" half of §2.1 source connectivity. Sorted-id first match, so
+## two feeders sharing a tile resolve the same way on every run.
+func feeder_at_tile(tile: Vector2i) -> String:
+	var found := feeders_at_tile(tile)
+	return String(found[0]) if not found.is_empty() else ""
+
+
+## Every feeder whose route passes through `tile`, sorted. Two circuits sharing
+## a tile is normal once laterals fan out, and which one a new run branches from
+## decides which SUBSTATION roots it — so the caller gets the whole list and
+## picks the one with a free slot rather than being handed the lowest id.
+func feeders_at_tile(tile: Vector2i) -> Array:
+	var out: Array = []
+	for id in _order:
+		var c: Dictionary = _components[id]
+		if c["kind"] != &"feeder" or c["state"] == &"FAILED":
+			continue
+		for entry in (c["route"] as Array):
+			if route_tile(entry) == tile:
+				out.append(String(id))
+				break
+	return out
+
+
+## Path continuity (doc 04 §2.1: a feeder is a tile polyline, not a set of
+## tiles). Returns the index of the first tile that does not continue the run —
+## a repeat, a jump of more than one tile in either axis — or −1 when the whole
+## path is walkable. Chebyshev steps, i.e. the same geometry `lateral_tiles`
+## emits, so a suggested route is always a legal one.
+static func route_break_index(tiles: Array) -> int:
+	for i in range(1, tiles.size()):
+		var previous: Vector2i = tiles[i - 1]
+		var current: Vector2i = tiles[i]
+		var step := current - previous
+		if maxi(absi(step.x), absi(step.y)) != 1:
+			return i
+	return -1
+
+
+## The C-41 routing assist in its geometric form: the tile polyline from `from`
+## to `to`, inclusive of both. Doc 04 §4's `suggest_route_along_roads` is the
+## richer version (it prefers road tiles); this is the straight run the UI drags
+## by hand and the one a headless agent asks for.
+static func route_between(from: Vector2i, to: Vector2i) -> Array:
+	var out: Array = [from]
+	for entry in lateral_tiles(from, to):
+		out.append(Vector2i(int(entry[0]), int(entry[1])))
+	return out
+
+
+## §2.9's transfer rule, applied at the moment new copper is energized: the
+## transformers a freshly routed feeder picks up.
+##
+## This is what makes `route_feeder` relief rather than decoration. A new feeder
+## with no children carries nothing, and doc 04 ships no verb that re-parents an
+## existing transformer, so without this pass the only load a new circuit could
+## ever take is load that does not exist yet — and doc 92 §17.3's ceiling would
+## move for new districts while the built city stayed on the feeder that is
+## already at 104 %.
+##
+## The rule is §2.9's, not a new one:
+##   * candidates are transformers within `max_radius` (Chebyshev) of the new
+##     route, not FAILED, not already on this feeder;
+##   * an ORPHAN (no parent — its feeder was demolished) ranks first, then the
+##     hottest current parent, then the nearest, then the id;
+##   * a transformer transfers only while it leaves the new feeder at or below
+##     `ADOPTION_MAX_R` **and** its current parent is running hotter than the new
+##     feeder would be after the move. The second clause is what stops a new
+##     circuit from stripping a healthy one; the first is what stops it from
+##     being handed straight back over its own rating.
+##
+## Loads are last tick's (Pass A recomputes next tick), which is exactly the
+## number the player is looking at when they draw the line.
+func adopt_transformers(feeder_id: String, max_radius: int,
+		t_ambient: float = 25.0) -> Dictionary:
+	if not _components.has(feeder_id) or _components[feeder_id]["kind"] != &"feeder":
+		return {"adopted": [], "moved_kw": 0.0}
+	var feeder: Dictionary = _components[feeder_id]
+	var plan := adoption_plan(feeder["route"], float(feeder["capacity_kw"]),
+			float(feeder["condition"]), float(feeder["load_kw"]), feeder_id,
+			max_radius, t_ambient)
+	for id in (plan["adopted"] as Array):
+		_components[String(id)]["parent"] = feeder_id
+	if not (plan["adopted"] as Array).is_empty():
+		_children.clear()
+		topology_dirty = true
+	return plan
+
+
+## `adopt_transformers` without the graph: the same ranking and the same two
+## acceptance clauses, computed against a route and a rating rather than against
+## a live component, so `preview = true` can quote what a run would pick up
+## without adding one tick's worth of state. `feeder_id` is "" for a route that
+## does not exist yet.
+func adoption_plan(route: Array, capacity_kw: float, condition: float,
+		carried_kw: float, feeder_id: String, max_radius: int,
+		t_ambient: float = 25.0) -> Dictionary:
+	var amb_derate := clampf(1.0 - 0.008 * maxf(0.0, t_ambient - 30.0), 0.80, 1.0)
+	var effective := capacity_kw * (0.55 + 0.45 * condition) * amb_derate
+	var budget := ADOPTION_MAX_R * effective
+	var carried := carried_kw
+	var candidates: Array = []
+	for id in _order:
+		var c: Dictionary = _components[id]
+		if c["kind"] != &"transformer" or c["state"] == &"FAILED":
+			continue
+		var parent := String(c["parent"])
+		# Already ours ⇒ nothing to transfer. Guarded on a NAMED feeder, because
+		# `feeder_id` is "" while quoting a run that does not exist yet and an
+		# ORPHAN also carries "" — dropping those would make the quote say
+		# "adopts 0" for exactly the case the rule exists to serve.
+		if feeder_id != "" and parent == feeder_id:
+			continue
+		var tile: Vector2i = c["tile"]
+		var distance := 999999
+		for entry in route:
+			var t := route_tile(entry)
+			distance = mini(distance, maxi(absi(tile.x - t.x), absi(tile.y - t.y)))
+		if distance > max_radius:
+			continue
+		# An orphan reads as hotter than anything real: it is dark, and nothing
+		# else in the MVP will ever take it. A finite sentinel, not INF, so two
+		# orphans compare equal and fall through to the distance tie-break
+		# instead of hitting NaN.
+		var parent_ratio := ORPHAN_RATIO
+		if parent != "" and _components.has(parent):
+			parent_ratio = float(_components[parent]["load_kw"]) \
+					/ maxf(1.0, cap_eff(parent, t_ambient))
+		candidates.append({"id": String(id), "ratio": parent_ratio,
+				"distance": distance, "load": float(c["load_kw"])})
+	candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if absf(float(a["ratio"]) - float(b["ratio"])) > 1e-9:
+			return float(a["ratio"]) > float(b["ratio"])
+		if int(a["distance"]) != int(b["distance"]):
+			return int(a["distance"]) < int(b["distance"])
+		return String(a["id"]) < String(b["id"]))
+	var adopted: Array = []
+	var moved := 0.0
+	for entry in candidates:
+		var load := float(entry["load"])
+		if carried + load > budget:
+			continue
+		var projected := (carried + load) / maxf(1.0, effective)
+		if float(entry["ratio"]) <= projected:
+			continue
+		carried += load
+		moved += load
+		adopted.append(String(entry["id"]))
+	adopted.sort()
+	return {"adopted": adopted, "moved_kw": moved, "carried_kw": carried,
+			"effective_kw": effective}
+
+
+## Doc 04 §2.9's **parallel transformer**, made real: the buildings a newly
+## placed transformer takes off an overloaded neighbour.
+##
+## §2.9 sells "parallel transformer on one service group, each taking
+## `load × own_cap / Σ cap`" as redundancy the player can buy, but §2.1's
+## service attachment is only ever evaluated for a building that has NO
+## transformer — so before this, a second transformer next to a cooking one
+## adopted nothing and the player's money bought them nothing. Same class of gap
+## as the feeder verb, one level down the tree, and the same rule fixes it.
+##
+## Only TRANSFERS live here. A building with no transformer at all is
+## `attach_building`'s (and `_reattach_unserved`'s) business, and always was.
+##
+## Acceptance is §2.9's clean-transfer bound again: take a building only while
+## it leaves the new transformer at or below `TIE_CLEAN_R`, and only while its
+## current transformer is running hotter than the new one would be after the
+## move. `demands` is the last tick's per-building kW and `origins` their tiles —
+## both doc 02's, passed in rather than mirrored here, because the grid stores
+## neither and a second copy of a building's position is a second thing to keep
+## in step.
+func adopt_buildings(transformer_id: String, demands: Dictionary,
+		origins: Dictionary, t_ambient: float = 25.0) -> Dictionary:
+	if not _components.has(transformer_id) \
+			or _components[transformer_id]["kind"] != &"transformer":
+		return {"adopted": [], "moved_kw": 0.0}
+	var c: Dictionary = _components[transformer_id]
+	var plan := building_adoption_plan(c["tile"],
+			TRANSFORMER_SERVICE_RADIUS[int(c["level"]) - 1], float(c["capacity_kw"]),
+			float(c["condition"]), float(c["load_kw"]), transformer_id, demands,
+			origins, t_ambient)
+	for building_id in (plan["adopted"] as Array):
+		_attachments[String(building_id)] = transformer_id
+	return plan
+
+
+## `adopt_buildings` without the graph — the quote half, so a placement preview
+## can say what it would relieve without attaching anything.
+func building_adoption_plan(tile: Vector2i, service_radius: int, capacity_kw: float,
+		condition: float, carried_kw: float, transformer_id: String,
+		demands: Dictionary, origins: Dictionary, t_ambient: float = 25.0) -> Dictionary:
+	var amb_derate := clampf(1.0 - 0.008 * maxf(0.0, t_ambient - 30.0), 0.80, 1.0)
+	var effective := capacity_kw * (0.55 + 0.45 * condition) * amb_derate
+	var budget := ADOPTION_MAX_R * effective
+	var carried := carried_kw
+	var candidates: Array = []
+	for building_id in _sorted_keys(_attachments):
+		var host := String(_attachments[building_id])
+		# Same guard as `adoption_plan`: "" means "quoting a node that does not
+		# exist yet", not "already attached to it".
+		if (transformer_id != "" and host == transformer_id) or not _components.has(host):
+			continue
+		if not origins.has(building_id):
+			continue
+		var origin: Vector2i = origins[building_id]
+		var distance: int = maxi(absi(origin.x - tile.x), absi(origin.y - tile.y))
+		if distance > service_radius:
+			continue
+		candidates.append({"id": String(building_id), "distance": distance,
+				"load": float(demands.get(building_id, 0.0)),
+				"ratio": float(_components[host]["load_kw"])
+						/ maxf(1.0, cap_eff(host, t_ambient))})
+	candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if absf(float(a["ratio"]) - float(b["ratio"])) > 1e-9:
+			return float(a["ratio"]) > float(b["ratio"])
+		if int(a["distance"]) != int(b["distance"]):
+			return int(a["distance"]) < int(b["distance"])
+		return String(a["id"]) < String(b["id"]))
+	var adopted: Array = []
+	var moved := 0.0
+	for entry in candidates:
+		var load := float(entry["load"])
+		if carried + load > budget:
+			continue
+		var projected := (carried + load) / maxf(1.0, effective)
+		if float(entry["ratio"]) <= projected:
+			continue
+		carried += load
+		moved += load
+		adopted.append(String(entry["id"]))
+	adopted.sort()
+	return {"adopted": adopted, "moved_kw": moved, "carried_kw": carried,
+			"effective_kw": effective}
+
+
+## The hottest transformer in the city — the same row shape `worst_feeder`
+## publishes, one level down. A transformer has no protection (§2.5): past
+## r = 3.0 it burns out, and below that it just cooks, so this is the reading
+## that has to be watched rather than a relay that will act for you.
+func worst_transformer(t_ambient: float = 25.0) -> Dictionary:
+	var worst := {"id": "", "load_ratio": 0.0, "load_kw": 0.0, "capacity_kw": 0.0,
+			"tile": Vector2i.ZERO}
+	for id in _order:
+		var c: Dictionary = _components[id]
+		if c["kind"] != &"transformer" or c["state"] == &"FAILED":
+			continue
+		var ratio: float = float(c["load_kw"]) / maxf(1.0, cap_eff(String(id), t_ambient))
+		if ratio > float(worst["load_ratio"]):
+			worst = {"id": String(id), "load_ratio": ratio, "load_kw": float(c["load_kw"]),
+					"capacity_kw": float(c["capacity_kw"]), "tile": c["tile"]}
+	return worst
+
+
+## The hottest feeder in the city — `{id, load_ratio, load_kw, capacity_kw}`,
+## or an empty ratio-0 row when there is no feeder. Load ratio is against the
+## §2.5 derated capacity, i.e. the number the relay trips on, which is the whole
+## point of publishing it: doc 92 §17.3's ceiling is a feeder ratio and this is
+## the query that sees it coming.
+func worst_feeder(t_ambient: float = 25.0) -> Dictionary:
+	var worst := {"id": "", "load_ratio": 0.0, "load_kw": 0.0, "capacity_kw": 0.0}
+	for id in _order:
+		var c: Dictionary = _components[id]
+		if c["kind"] != &"feeder":
+			continue
+		var ratio: float = float(c["load_kw"]) / maxf(1.0, cap_eff(String(id), t_ambient))
+		if ratio > float(worst["load_ratio"]):
+			worst = {"id": String(id), "load_ratio": ratio,
+					"load_kw": float(c["load_kw"]), "capacity_kw": float(c["capacity_kw"])}
+	return worst
 
 
 ## Placement probe (doc 04 §2.1: no transformer in range ⇒ UNSERVED, and the

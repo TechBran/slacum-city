@@ -386,10 +386,40 @@ func _check_grid_rules() -> void:
 		if int(radii[i]) != int(PowerGrid.TRANSFORMER_SERVICE_RADIUS[i]):
 			boot_errors.append("grid_components.json: transformer service radius L%d %d != %d"
 					% [i + 1, int(radii[i]), int(PowerGrid.TRANSFORMER_SERVICE_RADIUS[i])])
+	# Same pattern for the two Wave-6 rosters: a conductor class the ladder does
+	# not rate, or a shell mapped onto a component kind that does not exist,
+	# would be a command that quotes a price for nothing.
+	for entry in (_routable_rules("feeder").get("conductor_classes", []) as Array):
+		var conductor_class := int(entry)
+		if conductor_class < 1 or conductor_class > PowerGrid.FEEDER_CAPACITY.size():
+			boot_errors.append("grid_components.json: feeder conductor class %d is unrated"
+					% conductor_class)
+	for archetype in _sorted(grid_rules.get("node_shells", {})):
+		if String(archetype).begins_with("_"):
+			continue
+		var kind := StringName(String(_node_shell_kind(String(archetype))))
+		if not PowerGrid.CAPACITY.has(kind):
+			boot_errors.append("grid_components.json: node shell %s -> unknown kind %s"
+					% [archetype, kind])
 
 
 func _placeable_rules(kind: String) -> Dictionary:
 	return (grid_rules.get("placeable", {}) as Dictionary).get(kind, {})
+
+
+## Doc 04 §4 `route_feeder`'s roster — the LINE components, priced per tile.
+func _routable_rules(kind: String) -> Dictionary:
+	var row: Variant = (grid_rules.get("routable", {}) as Dictionary).get(kind, {})
+	return row if row is Dictionary else {}
+
+
+## The grid component kind a doc-02 shell archetype IS (report 98 C-30), or ""
+## for every archetype that is only a building.
+func _node_shell_kind(archetype: String) -> String:
+	var row: Variant = (grid_rules.get("node_shells", {}) as Dictionary).get(archetype, {})
+	if not (row is Dictionary):
+		return ""
+	return String((row as Dictionary).get("component_kind", ""))
 
 
 func _boot_buildings() -> void:
@@ -692,14 +722,21 @@ func restore_state(raw_body: Dictionary) -> void:
 				"type": String(record["type"]), "block": String(record["block"]),
 				"footprint": footprint, "origin_global": origin}
 		world.grid.stamp_building(int(record["grid_id"]), origin, footprint)
-	# Player-placed grid components carry a one-tile reservation the loader knows
+	# Player-placed POINT components carry a one-tile reservation the loader knows
 	# nothing about; the power section is already restored, so re-stamp from it.
+	# Only the `placeable` roster reserves ground: a routed feeder is a polyline
+	# that blocks nothing and carries no `tile` (it would re-stamp (0,0)), and a
+	# substation or plant is a BUILDING whose footprint `placed_records` above
+	# already re-stamped (report 98 C-30).
 	for component_id in grid.component_ids():
 		var component: Dictionary = grid.component(component_id)
-		if bool(component.get("player_placed", false)):
-			var tile: Vector2i = component["tile"]
-			if TileGrid.in_bounds(tile.x, tile.y):
-				world.grid.set_flag(tile.x, tile.y, TileGrid.FLAG_OCCUPIED)
+		if not bool(component.get("player_placed", false)):
+			continue
+		if _placeable_rules(String(component["kind"])).is_empty():
+			continue
+		var tile: Vector2i = component["tile"]
+		if TileGrid.in_bounds(tile.x, tile.y):
+			world.grid.set_flag(tile.x, tile.y, TileGrid.FLAG_OCCUPIED)
 	var policy: Dictionary = body.get("policy", {})
 	tax_rate = float(policy.get("tax_rate", tax_rate))
 	tax_rate_changed_hour = int(policy.get("tax_rate_changed_hour", -1))
@@ -936,6 +973,13 @@ func cmd_upgrade_building(sim_id: String, preview: bool = false) -> Dictionary:
 ## Nothing is charged on a preview or on any failure.
 func cmd_place_grid_component(kind: String, tile: Vector2i, level: int = 1,
 		preview: bool = false) -> Dictionary:
+	# A LINE component is a polyline, not a tile, so `kind` routes here into doc
+	# 04 §4's own `route_feeder` with the C-41 assist filling the path: `tile` is
+	# the far end, `level` is the conductor class, and the source is chosen for
+	# the player exactly as the drag tool's snap would. `cmd_route_feeder` is the
+	# same command with the path supplied, and every blocker below is its.
+	if not _routable_rules(kind).is_empty():
+		return _route_line(kind, tile, level, preview)
 	var rules := _placeable_rules(kind)
 	if rules.is_empty():
 		return CommandQueue.fail(&"E_UNKNOWN_COMPONENT", {"blockers": [&"E_UNKNOWN_COMPONENT"]})
@@ -981,6 +1025,15 @@ func cmd_place_grid_component(kind: String, tile: Vector2i, level: int = 1,
 			"tap_distance": int(tap.get("distance", -1)),
 			"lateral_tiles": lateral.size(),
 			"service_radius_tiles": int(radii[level - 1])}
+	# Doc 04 §2.9's parallel transformer, quoted: what this placement would take
+	# off an overloaded neighbour. Computed against the ladder row rather than
+	# against a component, so a preview adds nothing to the graph.
+	var relief := grid.building_adoption_plan(tile, int(radii[level - 1]),
+			PowerGrid.CAPACITY[StringName(kind)][level - 1], 1.0, 0.0, "",
+			_last_demands, _building_origins(), _ambient_c()) if kind == "transformer" \
+			else {"adopted": [], "moved_kw": 0.0}
+	quote["relieves"] = (relief["adopted"] as Array).size()
+	quote["relieved_kw"] = float(relief["moved_kw"])
 	if not blockers.is_empty():
 		return CommandQueue.fail(blockers[0], quote)
 	if preview:
@@ -1003,13 +1056,35 @@ func cmd_place_grid_component(kind: String, tile: Vector2i, level: int = 1,
 	# the next tick's Pass D energizes it. Orphans adopt it now, not next tick,
 	# so `would_serve` and `cmd_place_building` agree within the same command.
 	var adopted := _reattach_unserved()
+	# …and the ALREADY-served buildings a cooking neighbour should hand over
+	# (doc 04 §2.9's parallel transformer). Without this, §2.1's attachment rule
+	# — only ever evaluated for a building with NO transformer — meant a second
+	# transformer beside an overloaded one adopted nothing, and the one purchase
+	# doc 04 sells as the answer to a hotspot bought the player nothing. Runs
+	# AFTER `_reattach_unserved` so an unserved building is attached by the rule
+	# that owns it, and a transfer never competes with a first attachment.
+	var relieved: Dictionary = grid.adopt_buildings(component_id, _last_demands,
+			_building_origins(), _ambient_c())
 	bus.emit(&"grid_component_placed", {"component": component_id, "kind": kind,
 			"level": level, "tile": [tile.x, tile.y], "feeder": String(tap["feeder"]),
-			"lateral_tiles": lateral.size(), "cost": cost, "adopted": adopted})
+			"lateral_tiles": lateral.size(), "cost": cost, "adopted": adopted,
+			"relieved": (relieved["adopted"] as Array).duplicate(),
+			"relieved_kw": float(relieved["moved_kw"])})
 	stats_add(&"grid_components_placed")
 	quote["component"] = component_id
 	quote["adopted"] = adopted
+	quote["relieves"] = (relieved["adopted"] as Array).size()
+	quote["relieved_kw"] = float(relieved["moved_kw"])
 	return CommandQueue.ok(quote)
+
+
+## `{sim_id: origin tile}` for every live building — doc 02's geometry, handed
+## to the grid for one adoption decision rather than mirrored inside it.
+func _building_origins() -> Dictionary:
+	var out := {}
+	for sim_id in buildings:
+		out[sim_id] = (buildings[sim_id] as Building).origin
+	return out
 
 
 ## Player component ids are `<PREFIX>-NNN`, numbered above every id the grid
@@ -1021,6 +1096,370 @@ func _next_component_id(kind: String) -> String:
 		if id.begins_with(prefix + "-"):
 			highest = maxi(highest, id.substr(prefix.length() + 1).to_int())
 	return "%s-%03d" % [prefix, highest + 1]
+
+
+# --------------------------------------------- doc 04 §4 `route_feeder`
+
+## Route a feeder (doc 04 §4's `route_feeder`, §2.1's tile polyline). The verb
+## doc 92 §17.3 named as the late-game's answer: the whole city ran through the
+## two class-1 feeders doc 09 §2.9.5 authored — 1,200 kW each, crossed at ~410
+## buildings — and no command could add a third.
+##
+## Checks run in this order; the FIRST blocker is the reason code and the full
+## list rides in `payload.blockers` (`preview = true` quotes without charging):
+##
+##   1 E_UNKNOWN_COMPONENT   kind is not in `routable`
+##   2 E_CLASS_UNAVAILABLE   conductor class outside that kind's roster
+##   3 E_NO_TILES            fewer than two tiles
+##   4 E_OUT_OF_BOUNDS       any tile off the 112×112 world
+##   5 E_DISCONTINUOUS       the path is not a walkable Chebyshev polyline
+##   6 E_NOT_DEVELOPED       any tile on land that is not owned and READY
+##   7 E_NOT_CONNECTED       the run does not START on the network (§2.1)
+##   8 E_NO_SLOT             the source substation has no free feeder slot
+##                           (§2.2's 2/3/4/6/8 ladder) — buy or upgrade one
+##   9 E_FUNDS / E_AUSTERITY
+##
+## Price is doc 03 §2.13(b)'s `feeder.cost_per_tile_overhead` for that class —
+## $110 class 1, $210 class 2 — charged on **every tile of the run**, which is
+## exactly the `line_km` doc 03 then bills `E_grid` on (report 98 C-12).
+## `M_build` applies (doc 03 §2.13: difficulty at spend time).
+##
+## On success the new feeder ADOPTS the transformers §2.9's transfer rule says
+## it should (see `PowerGrid.adopt_transformers`) — which is what makes this
+## relief for the city that already exists rather than headroom for the one that
+## does not yet.
+func cmd_route_feeder(tiles: Array, conductor_class: int = 2,
+		preview: bool = false) -> Dictionary:
+	var rules := _routable_rules("feeder")
+	if rules.is_empty():
+		return CommandQueue.fail(&"E_UNKNOWN_COMPONENT", {"blockers": [&"E_UNKNOWN_COMPONENT"]})
+	var classes: Array = []
+	for entry in (rules.get("conductor_classes", []) as Array):
+		classes.append(int(entry))
+	if not classes.has(conductor_class):
+		return CommandQueue.fail(&"E_CLASS_UNAVAILABLE",
+				{"blockers": [&"E_CLASS_UNAVAILABLE"], "conductor_classes": classes})
+	var path := _tile_list(tiles)
+	if path.size() < 2:
+		return CommandQueue.fail(&"E_NO_TILES", {"blockers": [&"E_NO_TILES"]})
+
+	var blockers: Array = []
+	for entry in path:
+		var t: Vector2i = entry
+		if not TileGrid.in_bounds(t.x, t.y):
+			blockers.append(&"E_OUT_OF_BOUNDS")
+			break
+	if blockers.is_empty() and PowerGrid.route_break_index(path) >= 0:
+		blockers.append(&"E_DISCONTINUOUS")
+	if blockers.is_empty() and bool(rules.get("requires_block_owned", true)):
+		for entry in path:
+			var t: Vector2i = entry
+			var block := world.block_of_tile(t.x, t.y)
+			if block == null or not block.is_owned() \
+					or (bool(rules.get("requires_block_ready", true)) and not block.is_ready()):
+				blockers.append(&"E_NOT_DEVELOPED")
+				break
+	# §2.1 source connectivity: the run starts on the network — on a trunk, or at
+	# a substation's fence line. Branching a trunk roots the new feeder on THAT
+	# trunk's substation, because §2.1's tree is two deep and a feeder's parent is
+	# always a substation.
+	var source := _feeder_source(path[0], int(rules.get("source_tap_radius_tiles", 1)))
+	var slots := {"total": 0, "used": 0, "free": 0}
+	if source.is_empty():
+		blockers.append(&"E_NOT_CONNECTED")
+	else:
+		slots = grid.feeder_slots(String(source["substation"]))
+		if int(slots["free"]) <= 0:
+			blockers.append(&"E_NO_SLOT")
+	# EVERY tile of the new run is billed, including the one it starts on. Unlike
+	# `cmd_place_grid_component`'s lateral — which EXTENDS an existing feeder's
+	# route and so only adds the tiles past the tap — this is a new component
+	# with a route of its own, and `grid_inventory()` publishes `line_km` for all
+	# of it. Billing `size() - 1` would have doc 03 charging `E_grid` forever on a
+	# tile of copper the player never bought (report 98 C-12).
+	var billed: int = path.size()
+	var cost := CostCurves.round_half_up(float(billed)
+			* float(econ_curves.grid_line_cost_per_tile("feeder", conductor_class, false))
+			* float(treasury.difficulty().get("M_build", 1.0)))
+	if treasury.balance < cost:
+		blockers.append(&"E_FUNDS")
+
+	var adoption_radius := int(_placeable_rules("transformer").get("feeder_tap_radius_tiles", 0))
+	var quote := {"blockers": blockers, "cost": cost, "tiles": path.size(),
+			"billed_tiles": billed, "conductor_class": conductor_class,
+			"capacity_kw": PowerGrid.FEEDER_CAPACITY[conductor_class - 1],
+			"source": String(source.get("kind", "")),
+			"substation": String(source.get("substation", "")),
+			"feeder_slots_free": int(slots["free"]),
+			"line_km": billed * 0.008}
+	if not blockers.is_empty():
+		return CommandQueue.fail(blockers[0], quote)
+	if preview:
+		# The quote names what the run would pick up, and computes it against a
+		# route rather than against a component, so nothing is added and nothing
+		# is dirtied: a preview that could not say "this takes 480 kW off
+		# F_SOUTH" would be quoting a price for an effect the player cannot see.
+		var dry: Dictionary = grid.adoption_plan(_route_payload(path),
+				PowerGrid.FEEDER_CAPACITY[conductor_class - 1], 1.0, 0.0, "",
+				adoption_radius, _ambient_c())
+		quote["adopts"] = (dry["adopted"] as Array).size()
+		quote["adopted_kw"] = float(dry["moved_kw"])
+		return CommandQueue.ok(quote)
+
+	var paid := treasury.spend(cost, &"construction", "feeder")
+	if not bool(paid["ok"]):
+		quote["blockers"] = [_spend_reason(paid)]
+		return CommandQueue.fail(_spend_reason(paid), quote)
+	var component_id := _next_component_id("feeder")
+	grid.add_component(component_id, &"feeder", {
+		"conductor_class": conductor_class, "parent": String(source["substation"]),
+		"route": _route_payload(path), "player_placed": true,
+		# §2.7.4: an overhead run is fully wind-exposed, which is what doc 06's
+		# storm generator reads. Undergrounding is deferred (doc 04 §6).
+		"weather_exposure": 1.0,
+	})
+	var adopted: Dictionary = grid.adopt_transformers(component_id, adoption_radius, _ambient_c())
+	bus.emit(&"grid_feeder_routed", {"component": component_id,
+			"conductor_class": conductor_class, "substation": String(source["substation"]),
+			"source": String(source["kind"]), "tiles": path.size(), "billed_tiles": billed,
+			"cost": cost, "adopted": (adopted["adopted"] as Array).duplicate(),
+			"adopted_kw": float(adopted["moved_kw"])})
+	stats_add(&"grid_feeders_routed")
+	quote["component"] = component_id
+	quote["adopts"] = (adopted["adopted"] as Array).size()
+	quote["adopted_kw"] = float(adopted["moved_kw"])
+	return CommandQueue.ok(quote)
+
+
+## `cmd_place_grid_component`'s one-tap path for a line component: pick the
+## source the drag tool would have snapped to, fill the polyline with the C-41
+## assist, and hand the result to the real verb. The source is the substation
+## with a FREE SLOT nearest the far end (id tie-break) — a substation that
+## cannot root another feeder is not a source at all, so the one-tap path
+## answers `E_NO_SLOT` only when NO substation in the city has room.
+func _route_line(kind: String, tile: Vector2i, conductor_class: int,
+		preview: bool) -> Dictionary:
+	if kind != "feeder":
+		return CommandQueue.fail(&"E_UNKNOWN_COMPONENT", {"blockers": [&"E_UNKNOWN_COMPONENT"]})
+	var start := _best_feeder_source_for(tile)
+	if start.x < 0:
+		# A city with substations but no room in any of them is the §2.2 slot
+		# ladder biting, not a disconnected map — say which, because the two
+		# have different prices ($15,000 for a new substation, an upgrade job
+		# for a bigger one) and only one of them is a mistake.
+		var blocked: StringName = &"E_NOT_CONNECTED"
+		for sim_id in _sorted(buildings):
+			if grid.has_component(String(sim_id)) \
+					and String(grid.component(String(sim_id))["kind"]) == "substation":
+				blocked = &"E_NO_SLOT"
+				break
+		return CommandQueue.fail(blocked, {"blockers": [blocked]})
+	return cmd_route_feeder(suggest_feeder_route(start, tile), conductor_class, preview)
+
+
+## Doc 04 §4's routing assist (report 98 C-41), and the reason the one-tap path
+## is usable at all: the shortest run of OWNED, DEVELOPED tiles from `from` to
+## `to`, both ends inclusive.
+##
+## A straight Chebyshev line between two owned blocks routinely crosses a block
+## the city does not own — measured, that was the whole of seed 4242's late-game
+## failure, where every routing attempt answered `E_NOT_DEVELOPED`, burnt the
+## rule's cooldown and never escalated to the substation the city actually
+## needed. Breadth-first over the tile grid in a fixed neighbour order, so the
+## path is the same on every run and is the CHEAPEST legal one (doc 03 §2.13(b)
+## prices a feeder per tile, so shortest is cheapest).
+##
+## Falls back to the straight line when no legal run exists, so the command
+## still returns the honest blocker with a path to show rather than nothing.
+## The road-PREFERRING form C-41 names (`suggest_route_along_roads`) is a
+## weighting on top of this and is not shipped; nothing here depends on it.
+const FEEDER_ROUTE_NEIGHBOURS: Array[Vector2i] = [
+	Vector2i(1, 0), Vector2i(1, 1), Vector2i(0, 1), Vector2i(-1, 1),
+	Vector2i(-1, 0), Vector2i(-1, -1), Vector2i(0, -1), Vector2i(1, -1),
+]
+
+
+func suggest_feeder_route(from: Vector2i, to: Vector2i) -> Array:
+	var straight := PowerGrid.route_between(from, to)
+	if not TileGrid.in_bounds(from.x, from.y) or not TileGrid.in_bounds(to.x, to.y):
+		return straight
+	var size := TileGrid.SIZE
+	var previous := PackedInt32Array()
+	previous.resize(size * size)
+	previous.fill(-1)
+	var start := from.y * size + from.x
+	var goal := to.y * size + to.x
+	previous[start] = start
+	var queue := PackedInt32Array([start])
+	var head := 0
+	while head < queue.size():
+		var current := queue[head]
+		head += 1
+		if current == goal:
+			break
+		var here := Vector2i(current % size, current / size)
+		for step in FEEDER_ROUTE_NEIGHBOURS:
+			var next := here + step
+			if not TileGrid.in_bounds(next.x, next.y):
+				continue
+			var index := next.y * size + next.x
+			if previous[index] >= 0:
+				continue
+			if not _feeder_route_tile_legal(next):
+				continue
+			previous[index] = current
+			queue.append(index)
+	if previous[goal] < 0:
+		return straight
+	var reversed_path: Array = []
+	var cursor := goal
+	while cursor != start:
+		reversed_path.append(Vector2i(cursor % size, cursor / size))
+		cursor = previous[cursor]
+	reversed_path.append(from)
+	reversed_path.reverse()
+	return reversed_path
+
+
+## `cmd_route_feeder`'s own §2.1 land rule, so the assist never suggests a run
+## the verb will refuse.
+func _feeder_route_tile_legal(tile: Vector2i) -> bool:
+	var rules := _routable_rules("feeder")
+	if not bool(rules.get("requires_block_owned", true)):
+		return true
+	var block := world.block_of_tile(tile.x, tile.y)
+	if block == null or not block.is_owned():
+		return false
+	return not bool(rules.get("requires_block_ready", true)) or block.is_ready()
+
+
+## The terminal tile of the substation with a free feeder slot nearest `target`.
+## Chebyshev on the shell's own footprint (report 98 C-30: the substation IS the
+## building), returning the footprint-adjacent tile on the target's side — which
+## is exactly where doc 09 §2.9.5 puts SUB-A's terminal.
+func _best_feeder_source_for(target: Vector2i) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_key := [999999, ""]
+	for sim_id in _sorted(buildings):
+		if not grid.has_component(String(sim_id)):
+			continue
+		if String(grid.component(String(sim_id))["kind"]) != "substation":
+			continue
+		if int(grid.feeder_slots(String(sim_id))["free"]) <= 0:
+			continue
+		var b: Building = buildings[sim_id]
+		var size: Vector2i = _building_records.get(sim_id, {}).get("footprint", Vector2i.ONE)
+		# The corner of the pad facing the target. Deliberately the pad tile
+		# itself and not one step out: a transformer standing right against the
+		# fence would otherwise make the suggested run a single tile, which is
+		# not a polyline and which `cmd_route_feeder` correctly refuses.
+		var terminal := Vector2i(clampi(target.x, b.origin.x, b.origin.x + size.x - 1),
+				clampi(target.y, b.origin.y, b.origin.y + size.y - 1))
+		var distance: int = maxi(absi(target.x - terminal.x), absi(target.y - terminal.y))
+		var key := [distance, String(sim_id)]
+		if key < best_key:
+			best_key = key
+			best = terminal
+	return best
+
+
+## §2.1 source connectivity, resolved: `{kind, substation, feeder}` for a run
+## starting at `tile`, or {} when that tile touches no network.
+##
+## The tile can touch several sources at once — doc 09 §2.9.5's own SUB-A
+## terminal is both the substation's fence line AND `F_NORTH`'s first route
+## tile — and they do not all have room. So every candidate is collected and the
+## **first with a free feeder slot wins**, pad before trunk (the pad is what the
+## assist aimed at) and trunks in sorted id order. Picking blind here was worth
+## measuring: preferring the trunk unconditionally rooted every attempted run on
+## whichever substation happened to own the copper underfoot, and on seed 4242
+## that answered `E_NO_SLOT` sixteen times while a player substation two tiles
+## away sat with both slots empty.
+func _feeder_source(tile: Vector2i, pad_radius: int) -> Dictionary:
+	var candidates: Array = []
+	for sim_id in _sorted(buildings):
+		if not grid.has_component(String(sim_id)):
+			continue
+		if String(grid.component(String(sim_id))["kind"]) != "substation":
+			continue
+		var b: Building = buildings[sim_id]
+		var size: Vector2i = _building_records.get(sim_id, {}).get("footprint", Vector2i.ONE)
+		var dx: int = maxi(b.origin.x - tile.x, tile.x - (b.origin.x + size.x - 1))
+		var dy: int = maxi(b.origin.y - tile.y, tile.y - (b.origin.y + size.y - 1))
+		if maxi(maxi(dx, 0), maxi(dy, 0)) <= pad_radius:
+			candidates.append({"kind": "substation", "feeder": "", "substation": String(sim_id)})
+	for feeder_id in grid.feeders_at_tile(tile):
+		var parent := String(grid.component(String(feeder_id))["parent"])
+		if parent != "":
+			candidates.append({"kind": "trunk", "feeder": String(feeder_id),
+					"substation": parent})
+	for candidate in candidates:
+		if int(grid.feeder_slots(String(candidate["substation"]))["free"]) > 0:
+			return candidate
+	return candidates[0] if not candidates.is_empty() else {}
+
+
+## Routes persist as [x, z] pairs (the JSON shape `PowerGrid.route_tile` reads).
+static func _route_payload(path: Array) -> Array:
+	var out: Array = []
+	for entry in path:
+		var t: Vector2i = entry
+		out.append([t.x, t.y])
+	return out
+
+
+## Doc 07's ambient, as the grid tick reads it — `cap_eff` derates with it, so an
+## adoption decision taken at 39 °C must use 39 °C.
+func _ambient_c() -> float:
+	return float(weather.env_for_grid().get("t_ambient_c", 25.0))
+
+
+# ------------------------------------ doc 04 §2.1 grid nodes that are BUILDINGS
+
+## A `substation` / `power_facility` shell just finished, so the grid node it IS
+## joins the graph (report 98 C-30: those two are buildings, and doc 09 §2.9.5
+## already authors the shell and the node under ONE id).
+##
+## Doc 92 §17.3 fix 2, and it is the same class of bug as pass-2 F-3's frozen
+## fleet: `cmd_place_building` sold a $15,000 substation and a $60,000 plant that
+## added no capacity and no generation at all. The seam is `_commission_water_nodes`'
+## — the building takes the construction time, the component is what carries
+## power, and a node that carried power while its shell was a hole in the ground
+## would be free capacity.
+##
+## Called for an UPGRADE too, where the component is re-rated rather than added:
+## doc 02's L1→L2 job on a substation is what buys 6,000 → 14,000 kW and the
+## third feeder slot doc 04 §2.2 gives it.
+func _commission_grid_node(sim_id: String, b: Building) -> void:
+	var kind := _node_shell_kind(String(b.archetype))
+	if kind == "":
+		return
+	var level := maxi(1, b.level)
+	if grid.has_component(sim_id):
+		if grid.set_level(sim_id, level):
+			bus.emit(&"grid_node_rerated", {"component": sim_id, "kind": kind,
+					"level": level,
+					"capacity_kw": float(grid.component(sim_id)["capacity_kw"])})
+		return
+	grid.add_component(sim_id, StringName(kind), {"level": level, "tile": b.origin,
+			"player_placed": true})
+	bus.emit(&"grid_node_commissioned", {"component": sim_id, "kind": kind,
+			"level": level, "tile": [b.origin.x, b.origin.y],
+			"capacity_kw": float(grid.component(sim_id)["capacity_kw"])})
+
+
+## The demolition half. A substation takes the feeders it roots with it (doc 04
+## §2.1: a feeder belongs to exactly one substation, and nothing in the MVP
+## re-roots one), and their transformers orphan — dark until new copper adopts
+## them. Returns the ids removed, sorted.
+func _retire_grid_node(sim_id: String) -> Array:
+	if not grid.has_component(sim_id):
+		return []
+	var removed := grid.remove_component(sim_id)
+	if removed.is_empty():
+		return removed
+	bus.emit(&"grid_node_retired", {"component": sim_id, "removed": removed.duplicate()})
+	return removed
 
 
 ## Re-run service attachment for every building the grid lists as unserved.
@@ -1740,6 +2179,9 @@ func cmd_demolish_building(sim_id: String, preview: bool = false) -> Dictionary:
 	# a demolished station takes its units: the shell IS the node's power_ref, and
 	# an orphaned pump would keep supplying a city from a building that is gone.
 	_retire_water_nodes(sim_id)
+	# …and a demolished substation or plant takes its grid node, for the same
+	# reason: the shell IS the node (doc 04 §2.1 / C-30).
+	_retire_grid_node(sim_id)
 	# A demolished station takes its units with it (doc 06 §2.11): the roster has
 	# to shrink for the same reason it has to grow (doc 92 F-3).
 	if FLEET_STATION_ARCHETYPES.has(b.archetype):
@@ -2285,6 +2727,8 @@ func on_construction_completed(job: Dictionary) -> void:
 	_block_dark_weights[sim_id] = int(b.stats.get("population", 0)) + int(b.stats.get("jobs", 0))
 	_sync_station_fleet(sim_id, b)
 	_commission_water_nodes(sim_id)
+	# doc 04 §2.1 / C-30: a finished substation or plant IS a grid node.
+	_commission_grid_node(sim_id, b)
 	for event in done["payload"]["events"]:
 		var out: Dictionary = event.duplicate()
 		out["sim_id"] = sim_id

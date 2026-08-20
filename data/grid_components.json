@@ -4,7 +4,8 @@
     "doc": "04 §2.1 / §2.2 — the PLACEMENT rules for player-placed grid components.",
     "_price_note": "This file contains NO prices and quotes none, not even in a comment (report 98 C-07: one table, one place). Every dollar the placement layer spends is read at runtime from data/economy.json expenses.grid_components, which is doc 03 §2.13(b).",
     "_capacity_note": "This file contains NO capacities, thermal constants or protection settings. Those are doc 04 §8's data/power.json; sim/power/power_grid.gd mirrors them inline until that file lands (the P0-01 pattern). service_radius_tiles below is repeated here ONLY so the placement layer has a data source, and CitySim asserts it equals PowerGrid.TRANSFORMER_SERVICE_RADIUS at boot.",
-    "_scope_note": "Doc 04 §4 lists place_power_component, upgrade_power_component, demolish_power_component, route_feeder, place_tie … . Wave 1.5 ships placement of the one component that unblocks E_UNSERVED: the transformer. Everything else stays unplaceable until its command lands."
+    "_scope_note": "Doc 04 §4 lists place_power_component, upgrade_power_component, demolish_power_component, route_feeder, place_tie … . Wave 1.5 shipped placement of the one component that unblocks E_UNSERVED: the transformer. Wave 6 adds route_feeder (see `routable` below) and makes the two grid nodes that are BUILDINGS real (see `node_shells`). place_tie, set_feeder_underground and the arrester/flood-wall upgrades stay unshipped.",
+    "_roster_split_note": "`placeable` is the POINT roster — one tile, one tap, one build-sheet card. `routable` is the LINE roster — a tile polyline priced per tile, the same shape doc 10's cmd_place_road and doc 05's cmd_place_water_main take, and like those it has no build-sheet card until doc 12 ships a drag tool. `node_shells` is neither: those components are placed by cmd_place_building because doc 04 §2.1 / report 98 C-30 says a substation and a plant ARE buildings."
   },
   "placeable": {
     "transformer": {
@@ -18,6 +19,22 @@
       "requires_block_owned": true,
       "requires_block_ready": true
     }
+  },
+  "routable": {
+    "feeder": {
+      "conductor_classes": [1, 2],
+      "_conductor_classes_note": "Doc 04 §6 MVP ships feeder class 1-2 overhead; class 3 (7,500 kW) is deferred there and is refused here with E_CLASS_UNAVAILABLE. The per-tile price of each class is doc 03 §2.13(b)'s expenses.grid_components.feeder.cost_per_tile_overhead — $110 / $210 / $400 — and the capacities are doc 04 §2.2's, mirrored in sim/power/power_grid.gd. CitySim asserts at boot that every class listed here exists in PowerGrid.FEEDER_CAPACITY (the P0-01 pattern).",
+      "source_tap_radius_tiles": 1,
+      "_source_tap_note": "Doc 04 §2.1: a feeder is rooted on exactly one substation. The run must therefore START on the network — on a tile of an existing feeder's route (branching a trunk), or within this radius of a substation building's footprint. 1 is the fence line, not a free parameter: doc 09 §2.9.5 authors SUB-A's pad at global (65,49)-(66,50) and starts BOTH authored feeders at the terminal tile (64,50), which is Chebyshev 1 from that pad, so the shipped topology is exactly reproducible by the player's own verb (tests assert this against data/starter_city.json rather than against this number).",
+      "requires_block_owned": true,
+      "requires_block_ready": true,
+      "_adoption_note": "The radius a newly routed feeder adopts transformers within is NOT a number of its own: it is `placeable.transformer.feeder_tap_radius_tiles` above, read at command time, because 'a transformer may tap a feeder 8 tiles away' and 'a feeder reaches transformers 8 tiles away' are the same physical statement. Adoption itself is doc 04 §2.9's transfer rule and its threshold is §8's redundancy.adoption_max_r (0.75 — §5.10's NORMAL band, deliberately NOT the 0.95 emergency auto-transfer bound), mirrored in PowerGrid.ADOPTION_MAX_R."
+    }
+  },
+  "node_shells": {
+    "_note": "Doc 04 §2.1 / report 98 C-30: transformers, feeders, transmission links, ties and backup generators are grid components; PLANTS AND SUBSTATIONS ARE BUILDINGS. So these two are not in `placeable` and never will be — they are placed by cmd_place_building, take their footprint from doc 02 §2.3, and the shell's sim_id IS its grid component's id (doc 09 §2.9.5 already authors it that way: the SUB-A building and the SUB-A substation node share one id). Completing the build adds the component; completing an upgrade re-rates it on doc 04 §2.2's ladder; demolishing the shell removes it. CitySim asserts at boot that every component_kind below exists in PowerGrid.CAPACITY.",
+    "substation": {"component_kind": "substation"},
+    "power_facility": {"component_kind": "plant_gas"}
   },
   "priority": {
     "classes": ["CRITICAL", "ESSENTIAL", "STANDARD", "DISCRETIONARY"],

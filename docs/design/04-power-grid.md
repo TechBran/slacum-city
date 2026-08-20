@@ -46,7 +46,7 @@ The grid is the load-bearing system of SLACUM CITY: the first thing the player b
 - **Service attachment.** A building attaches to the nearest transformer whose `service_radius_tiles` covers its origin tile, tie-broken by lowest load ratio. None in range ⇒ `UNSERVED` (never energized; placement UI blocks it).
 - **Transformers, feeders, transmission links, ties and backup generators are grid components, not buildings** (report 98 C-30). They are never placed through `place_building`, never appear in `data/buildings.json`, and carry no `footprint` — a transformer occupies exactly one tile as grid geometry. Plants and substations *are* buildings (`power_facility`, `substation` in doc 02) and take their **footprint from doc 02 §2.3**; this doc supplies only their electrical numbers.
 
-**Line routing is player-drawn** (report 98 C-41, closing this doc's former open question 9). Drag-path placement is the primary interaction — it is what makes undergrounding and storm exposure real decisions — with a **"route along roads" assist button** that fills the polyline automatically from the player's two endpoints. The player still confirms the filled path before it is committed, and may edit it tile by tile afterwards. `suggest_route_along_roads(from, to)` is a pure query (§4); it is never applied without a confirming command.
+**Line routing is player-drawn** (report 98 C-41, closing this doc's former open question 9; **shipped Wave 6 — see §4's "As shipped (Wave 6)"**, with the assist in its shortest-legal-run form and the drag UX still doc 12's). Drag-path placement is the primary interaction — it is what makes undergrounding and storm exposure real decisions — with a **"route along roads" assist button** that fills the polyline automatically from the player's two endpoints. The player still confirms the filled path before it is committed, and may edit it tile by tile afterwards. `suggest_route_along_roads(from, to)` is a pure query (§4); it is never applied without a confirming command.
 
 ### 2.2 Component stat ladders
 
@@ -344,6 +344,22 @@ The load-weighted city-wide mean of `n1_ok_fraction` is published as `power_resi
 
 **Redundancy the player can buy** (prices: doc 03 §2.13(b)): *tie switch* plus its connecting segment, modes MANUAL / AUTO / AGGRESSIVE; *parallel transformer* on one service group, each taking `load × own_cap / Σ cap` (two L4s carry 1,600 kW at r = 0.80 each); *dual-fed substation*, where losing one link caps intake at the survivor rather than zeroing it; *battery* (post-MVP) discharging into the pool during deficit and charging when `supply > demand × 1.15`.
 
+**Adoption — the planned transfer, as shipped (Wave 6).** The three bullets above all describe *new plate placed beside old plate*, and §2.1's attachment rule cannot deliver any of them: it is evaluated **only for a component with no parent**, so a second transformer beside a cooking one, or a second feeder into a saturated circuit, picked up nothing and the purchase this section sells bought the player nothing. That is fixed by applying this section's own transfer rule at the moment new plate is energized:
+
+```
+new feeder      adopts transformers within feeder_tap_radius_tiles of its route
+new transformer adopts buildings within its service_radius_tiles
+
+rank    orphans first (no parent — its feeder was demolished), then by
+        DESCENDING current-parent load ratio, then nearest, then id
+accept  while  carried + load ≤ adoption_max_r × cap_eff(new)
+          and  current_parent_r > (carried + load) / cap_eff(new)
+```
+
+`adoption_max_r` is **0.75**, and it is deliberately *not* `redundancy.auto_transfer_max_r` (0.95). 0.95 is the **emergency** bound: a trip has already happened, the load is dark either way, and taking it at 95 % beats leaving it out. Adoption is a **plan**, and a plan that fills brand-new plate to 95 % has bought nothing — measured on a 50-game-day run, adoption at 0.95 handed every new feeder back at `r = 1.51` within a game-week of growth. A planned transfer therefore has to leave the receiving component where §5.10's overlay still calls it **NORMAL**, `r < 0.75`. The second acceptance clause is what stops a new circuit from stripping a healthy one: a transfer that does not relieve anything is theft, not redundancy.
+
+The reverse case is the same rule read backwards: `remove_component` on a substation takes the feeders it roots (§2.1 — a feeder belongs to exactly one substation, and the MVP re-roots none) and **orphans** their transformers rather than deleting them. An orphan is dark, ranks first for adoption, and is therefore recoverable by exactly the verb that caused the problem — build a substation, route a feeder past it.
+
 ### 2.10 Backup generators — the one fuel model
 
 **This doc owns generator fuel and refuelling for every backup-capable sink in the project** (report 98 C-36), including doc 05's water nodes: doc 05's `backup_generator` fuel fields are deleted there and its generators are registered as `backup_gens` entries in this doc's save section. Buildings flagged `backup_capable` by doc 02 (hospital, data_center, water_facility, police_station, fire_station) may host one.
@@ -466,6 +482,34 @@ power_availability_hour = 71.5 / 130 = 0.55
 ```
 0.55 is exactly the figure doc 02 §2.5 and doc 03's cascade example assume — the same hour under the old boolean API reported `is_powered = true` (the building was lit when the hour ended) and doc 03's `f_power` would have seen no outage at all. Had the building been a hospital riding the outage on a generator instead, it would have accumulated `130 × 0.70` for 27 minutes and reported `0.865`.
 
+**WE-7 — the late-game ceiling, and where `route_feeder` moves it** (doc 92 §17.3 / pass-3 F-11; Wave 6). Doc 09 §2.9.5 authors **two class-1 feeders**, `F_NORTH` and `F_SOUTH`, and every kW the city draws passes through one of them:
+
+```
+authored feeder plate   2 × 1,200 kW                       = 2,400 kW nameplate
+cap_eff at cond 0.90, ambient 25 °C  (§2.5)
+                        2,400 × (0.55 + 0.45 × 0.90) × 1.0 = 2,292 kW
+peak draw per building, doc 92 §17.3's balanced city        ≈ 5.6 kW
+ceiling                 2,292 / 5.6                        ≈ 409 buildings
+```
+The 5.6 kW is the **peak-hour** mean over a mixed city, and it is doc 92's own number read backwards: §17.3 measures the crossing at ~410 buildings, and `2,292 / 410 = 5.59`. (Its day-30 row samples 428 buildings at 2,183 kW — 5.10 kW each — because the dump hour is not the 20:00 peak.) That crossing is the reason its 50-game-day run ended **54.6 % dark** on a city of 716 buildings. The plant was idle at 8 MW, the substation sat at 45 % of 6 MVA and the transformer fleet was under half loaded: **the trunk was the whole of it, and no command could widen it.**
+
+`route_feeder` at class 2 is 3,000 kW for doc 03 §2.13(b)'s $210/tile, and §2.2's `feeder_slots` is what paces it — an L1 substation roots **two** feeders and doc 09 fills both on game-hour zero, so the first purchase a growing city has to make is a **second substation** ($15,000, doc 03 §2.13(b)), which is then worth 2 × 3,000 kW of new trunk:
+
+```
+per substation added    2 × 3,000 kW                       = 6,000 kW nameplate
+                        × (0.55 + 0.45 × 1.00)             = 6,000 kW at cond 1.0
+buildings it carries    6,000 / 5.6                        ≈ 1,070
+```
+so the ceiling is no longer a number at all — it is a purchase, and every substation buys about another thousand buildings of trunk. Measured on the shipped verbs through `tests/balance_gate_rig.gd` (the online-coarse path the balance gates drive), `balanced`, 50 game-days, three seeds. Every column below is a field of the harness summary — `buildings_end`, `feeders_routed`, `substations_built`, `feeder_peak_ratio_end`, `unserved_share` — so the table is re-derivable, and `tests/test_balance_gates.gd` gate 18b re-measures the first row on every suite run:
+
+| seed | buildings | feeders routed | substations | worst feeder at the end | dark share |
+|---|---|---|---|---|---|
+| 1337 | 741 | 11 ($59,430) | 3 | 0.31 | **6.25 %** |
+| 4242 | 701 | 11 ($67,620) | 3 | 0.36 | **5.91 %** |
+| 9001 | 673 | 12 ($59,850) | 5 | 0.32 | **5.74 %** |
+
+**No anchor in this doc moved for that, and §7 test 24 is unchanged.** The authored starter inventory is untouched — Wave 6 adds no authored component and re-rates none, so `plant_capacity_mw 8.0`, `rated_mva 6.00 + 2.25`, `line_km 1.416` and doc 03's `E_grid = $74.3 ± 0.5/gh` all stand exactly as RR-6 and doc 92 §14.1 left them. Player-placed nodes and player-routed copper enter `grid_inventory()` the moment they are commissioned and doc 03 bills them from that hour, which is the whole point of C-12's contract: the eleven feeders in the first row above are **$59,430 of capital and a `line_km` line that grows with every tile of them**, not free capacity. The one figure this doc now publishes that it did not before is `redundancy.adoption_max_r`, and §2.9 derives it from §5.10's own overlay band rather than choosing it.
+
 ---
 
 ## 3. Data Schema
@@ -530,7 +574,24 @@ Keys: `version`, `components`, `upgrades`, `demand` (class map and weather coeff
 
 **As shipped (Wave 1.5, audit doc 93 §B).** `place_power_component` shipped on `CitySim` as **`cmd_place_grid_component(kind, tile, level, preview)`**, and it places the one component that unblocks `E_UNSERVED`: the transformer, at L1–L3. Its placement rules — placeable kinds and levels, the 1-tile footprint, the service-radius mirror of §2.2 and the **feeder tap radius** — live in `data/grid_components.json`, which carries no price and no capacity; boot asserts its service-radius column still equals this doc's (the P0-01 pattern). Checks run in the order `E_UNKNOWN_COMPONENT`, `E_LEVEL_UNAVAILABLE`, `E_OUT_OF_BOUNDS`, `E_NOT_OWNED`, `E_NOT_DEVELOPED`, `E_FOOTPRINT`, `E_NO_FEEDER`, `E_FUNDS`, first blocker wins, nothing charged unless the whole gate passes.
 
-Because **`route_feeder` has not shipped**, the §2.1 radial tree is closed by a *tap*: the new transformer parents to the nearest feeder whose route passes within `feeder_tap_radius_tiles` (Chebyshev, tie-broken by load ratio then id, exactly as service attachment is), and the lateral tiles that reach it are appended to that feeder's `route` and charged per tile at doc 03 §2.13(b)'s feeder price. So `line_km` — and therefore doc 03's `E_grid` — grows with every extension, and a transformer far from copper genuinely costs more. The radius is **8**, which is both half a land block (constitution §6) and the authored starter city's own worst transformer-to-feeder distance; §7 gains a test for each of those properties. Doc 03 §2.8's `utility_corridor` development phase runs a trunk to a newly developed block's **centre**, which is what puts the whole 16×16 block inside one tap radius. `set_feeder_priority` shipped per building instead, as doc 02's `cmd_set_priority`, writing this doc's §2.4 `priority_class` onto the service record.
+A transformer joins the §2.1 radial tree by a *tap*: it parents to the nearest feeder whose route passes within `feeder_tap_radius_tiles` (Chebyshev, tie-broken by load ratio then id, exactly as service attachment is), and the lateral tiles that reach it are appended to that feeder's `route` and charged per tile at doc 03 §2.13(b)'s feeder price. So `line_km` — and therefore doc 03's `E_grid` — grows with every extension, and a transformer far from copper genuinely costs more. The radius is **8**, which is both half a land block (constitution §6) and the authored starter city's own worst transformer-to-feeder distance; §7 gains a test for each of those properties. Doc 03 §2.8's `utility_corridor` development phase runs a trunk to a newly developed block's **centre**, which is what puts the whole 16×16 block inside one tap radius. `set_feeder_priority` shipped per building instead, as doc 02's `cmd_set_priority`, writing this doc's §2.4 `priority_class` onto the service record.
+
+**As shipped (Wave 6) — `route_feeder`, the two node shells, and adoption.** The three command-layer gaps doc 92 §17.3 named as the whole of the late-game ceiling are closed, and **no capacity, thermal, protection or shedding constant in §8 moved for any of it** (§2.13 WE-7 carries the measurement).
+
+**1. `route_feeder` shipped**, on `CitySim`, as two doors onto one command:
+
+- **`cmd_route_feeder(tiles, conductor_class, preview)`** — the polyline form. Checks run in the order `E_UNKNOWN_COMPONENT`, `E_CLASS_UNAVAILABLE`, `E_NO_TILES`, `E_OUT_OF_BOUNDS`, `E_DISCONTINUOUS`, `E_NOT_DEVELOPED`, `E_NOT_CONNECTED`, `E_NO_SLOT`, `E_FUNDS`; first blocker wins, nothing is charged unless the whole gate passes, and `preview = true` quotes the price, the `line_km`, the source substation, its remaining slots **and the transformers the run would adopt**. Doc 03 §2.13(b)'s per-tile price is charged on **every tile of the run**, which is exactly the `line_km` the C-12 inventory then publishes — unlike the transformer *lateral* above, which extends an existing route and so bills only the tiles past the tap.
+- **`cmd_place_grid_component("feeder", far_end, conductor_class, preview)`** — the one-tap form, which picks the source and fills the polyline with the C-41 assist (`suggest_feeder_route`, breadth-first over owned+READY tiles so the suggestion is always something the verb will accept) and then calls the above.
+
+Its roster lives in `data/grid_components.json` under a new **`routable`** key, kept separate from `placeable` because a line is not a point: `placeable` is the one-tile, one-tap, one-build-sheet-card roster, `routable` is priced per tile and drawn as a path, exactly as doc 10's `cmd_place_road` and doc 05's `cmd_place_water_main` are. Like those two it has **no build-sheet card** until doc 12 ships a drag tool; the verb is live and tested underneath. Boot asserts every listed conductor class is one §2.2 rates (the P0-01 pattern). §2.1 source connectivity resolves to a **substation with a free §2.2 slot**, preferring the pad the assist aimed at over a trunk underfoot, and `E_NO_SLOT` is the blocker that turns "I need more copper" into "I need another substation".
+
+**2. A `substation` / `power_facility` shell IS its grid node.** Report 98 C-30 says both are buildings, so neither will ever be in `placeable`; the mapping lives in `data/grid_components.json` under **`node_shells`**, and **the shell's building id is the component id** — doc 09 §2.9.5 already authors `SUB-A` and `PLANT-1` that way, so there is no back-reference to keep in step and authored and player nodes are one kind of thing. Completing the build adds the node at the shell's level, completing a doc-02 **upgrade** re-rates it on §2.2's ladder (an L1→L2 substation is what buys 6,000 → 14,000 kW *and* the third feeder slot), and demolishing the shell retires it with the cascade §2.9 describes. Boot asserts every mapped kind exists in §2.2's table.
+
+**3. Adoption** (§2.9) is what makes either purchase *relief* rather than headroom for buildings that do not exist yet, and it is also why a new transformer beside a cooking one is finally the fix §2.9 always advertised.
+
+**Coordinator events** (the `CitySim` bus, alongside the shipped `grid_component_placed`, not this doc's own component-failure stream): `grid_feeder_routed` `{component, conductor_class, substation, source, tiles, billed_tiles, cost, adopted, adopted_kw}`, `grid_node_commissioned` / `grid_node_rerated` `{component, kind, level, capacity_kw}`, `grid_node_retired` `{component, removed}`. `grid_component_placed` gains `relieved` and `relieved_kw`. Doc 11 and doc 12 consume none of them yet.
+
+**Still unshipped from the §4 list:** `place_tie` / `set_tie_mode` (the tie registry and `evaluate_tie_transfer` exist and are tested; no command sells one), `set_feeder_underground`, `buy_arrester`, `buy_flood_wall`, `place_backup_gen`, `request_preventive_maintenance`, `set_shed_policy`, and the road-**preferring** form of `suggest_route_along_roads` (the assist ships as shortest-legal-run; road weighting is a refinement nothing depends on).
 
 **Events:** `PowerComponentFailed`, `PowerComponentTripped`, `AutoReclosedOK`, `AutoRecloseLockout`, `PowerOutage`, `PowerRestored`, `MajorOutage`, `TotalBlackout`, `CascadeStep`, `TieTransferSuccess`, `TieTransferBlocked`, `LoadShedStarted`, `LoadShedEnded`, `RollingBlackoutRotated`, `BuildingPowerChanged`, `TrafficSignalPowerChanged`, `StreetlightsChanged`, **`BlockDarkChanged`** (renamed from `DistrictDarkChanged`, report 98 C-38), `BackupGenStarted`, `BackupGenFailed`, `SurgeAbsorbed`, `CapacityWarning`, `GenerationDeficit`, `FuelShortage`.
 
@@ -636,6 +697,17 @@ Color state: `NORMAL` r < 0.75; `WARNING` 0.75 ≤ r < 0.95; `CRITICAL` r ≥ 0.
 31. `test_priority_loads_survive_shedding` — the §2.4 payoff: same city, same 40 kW deficit, one `cmd_set_priority(…, CRITICAL)` on an F_NORTH load, and the blackout moves from F_NORTH to F_SOUTH.
 32. `test_grid_placement_determinism_and_save_roundtrip` — a placed transformer survives a save taken mid-construction, keeps its one-tile reservation, and two reloads of one capture stay bit-identical to the live sim across 8 further game-hours.
 
+**Wave 6 tests** — `route_feeder`, the node shells, adoption (`tests/test_power_grid.gd`, `tests/test_player_verbs.gd`, `tests/test_balance_gates.gd`, all shipped):
+
+33. `test_feeder_slots_are_the_2_3_4_6_8_ladder` / `test_route_continuity_is_a_walkable_polyline` / `test_feeder_at_tile_finds_the_trunk_to_branch` — §2.2's slot ladder is a live budget, `set_level` moves capacity with level and refuses a feeder, a route is a Chebyshev polyline (a jump and a repeat both fail), what the C-41 assist emits is always legal input to the verb, and a FAILED feeder is not something to root a new circuit on.
+34. `test_new_feeder_adopts_the_hottest_transformers_first` / `test_adoption_never_strips_a_healthy_neighbour` — §2.9's two acceptance clauses: the cooking transformer moves, the one at `r = 0.10` does not, and a worse-rated new node takes nothing from a better-rated old one.
+35. `test_adoption_leaves_new_copper_in_the_green_not_at_95_percent` — `adoption_max_r`: six 500 kW groups beside a fresh class-2 run yield **exactly four** transfers (`4 × 500 = 2,000 ≤ 0.75 × 3,000`; a fifth would be 2,500) and the run comes out at `r = 0.667`, NORMAL on §5.10's overlay.
+36. `test_parallel_transformer_takes_load_off_a_cooking_one` — §2.9's parallel transformer: an L3 at `r = 1.50` and a second L3 beside it both land on **0.75**, which is §2.13 WE-1's "split the group" fix, now purchasable.
+37. `test_remove_component_orphans_children_and_takes_the_circuits_it_roots` / `test_removing_a_transformer_detaches_its_buildings` — removing a substation returns `[feeder, substation]` sorted, orphans its transformers rather than deleting them, de-energizes them on the next tick, and leaves a recovery path a new feeder actually takes; removing a transformer leaves no dangling attachment and the next tick does not fault on the missing parent.
+38. `test_substation_shell_becomes_a_real_grid_node` / `test_plant_shell_generates_and_re_rates_on_upgrade` — a finished substation is a 6,000 kW node with two free slots and the authored `SUB-A` has none; a plant shell adds nothing while it is a hole in the ground, adds **8,000 kW** to `system_supply_kw` when it completes, and re-rates to **18,000** on the doc-02 L2 upgrade.
+39. `test_route_feeder_success_relieves_the_authored_pair` / `test_route_feeder_rejections` / `test_route_feeder_assist_stays_on_owned_ground` / `test_route_feeder_survives_save_roundtrip_and_is_deterministic` / `test_demolishing_a_substation_takes_its_circuits_and_leaves_a_way_back` — the whole verb: every reason code in §4's shipped order on its own case; the quote is the price (`billed_tiles × $210` at class 2, doc 03 §2.13(b)) and the preview charges nothing and adds nothing to the graph; `line_km` grows by exactly `tiles × 0.008`; the hot feeder's load measurably falls; every tile the assist suggests is owned and READY; and a routed feeder survives a save taken mid-construction with two reloads bit-identical across 8 further game-hours.
+40. `test_gate_18b_the_late_game_ceiling_is_lifted` / `test_gate_18c_no_capacity_constant_moved` — doc 92 pass-3 F-11's ruling, made executable: `balanced` ends a **50-game-day** city under **20 %** building-time dark (measured 6.25 / 5.91 / 5.74 % across three seeds, against Wave 5's 54.63 %), having bought trunk to get there, and every §2.2 capacity row plus the authored starter topology are asserted unchanged.
+
 ---
 
 ## 8. Tunables — `data/power.json`
@@ -705,7 +777,9 @@ Color state: `NORMAL` r < 0.75; `WARNING` 0.75 ≤ r < 0.95; `CRITICAL` r ≥ 0.
     "priority_override_bonus": 500, "rolling_shed_period_gm": 30, "major_outage_demand_frac": 0.40,
     "tie_break": ["shed_score_asc", "load_kw_desc", "component_id_asc"]
   },
-  "redundancy": {"transfer_delay_gs": 20, "auto_transfer_max_r": 0.95, "aggressive_transfer_max_r": 1.35, "cascade_window_gs": 60},
+  "redundancy": {"transfer_delay_gs": 20, "auto_transfer_max_r": 0.95, "aggressive_transfer_max_r": 1.35, "cascade_window_gs": 60,
+    "adoption_max_r": 0.75,
+    "_adoption_note": "§2.9 'Adoption — the planned transfer'. DERIVED, not chosen: it is overlay.color_thresholds.warning_r below, i.e. a planned transfer must leave the receiving component where §5.10's overlay still calls it NORMAL. It is deliberately NOT auto_transfer_max_r (0.95), which is the EMERGENCY bound for load that is already dark. Retune the two together only if §5.10's bands move."},
   "service": {
     "dark_threshold_frac": 0.35, "dark_hold_gs": 20, "lit_threshold_frac": 0.55, "lit_hold_gs": 10,
     "block_dark_frac": 0.60, "upgrade_gate_max_r": 0.90,
@@ -761,6 +835,7 @@ Color state: `NORMAL` r < 0.75; `WARNING` 0.75 ≤ r < 0.95; `CRITICAL` r ≥ 0.
 10. **Is `plant_gas` the only MVP generation?** Wind creates the best weather coupling — a storm kills wind output *while* doc 06 knocks down lines — at the cost of one more build menu in onboarding. Currently deferred; happy to promote wind into MVP if the thunderstorm slice wants more teeth.
 11. **Fuel as a resource or a cost line?** Currently pure money via doc 03's `FUEL_PRICE_PER_MWH`, with `FUEL_SHORTAGE` on treasury insolvency. Delivered-fuel stock (tanks, resupply convoys, blizzard delivery failure) is a richer crisis vector but a whole logistics subsystem. Deferred by default — confirm.
 12. **Should street lighting be separately switchable?** Today streetlights die with their transformer. A separate lighting circuit would let the player shed lighting to save residential load, paying a crime penalty to docs 06/09 — a genuinely interesting tradeoff, but one more concept in the overlay.
+14. **Is the L1 transformer rung worth keeping at 50 kW?** Doc 92 §17.3 fix 3 named `transformer` L1 — 50 kW against a Chebyshev-3, 49-tile service area — as the one rung in §2.2 whose capacity does not track its radius, and suggested ~90 kW. Wave 6 **did not move it**, and now has the measurement that says it does not have to: with §2.9's parallel transformer purchasable, a 50-game-day `balanced` city ends with **0 of 7 L1 and 0 of 131 L2 transformers past 100 %** and a worst-in-city ratio of 0.75–0.87, because the fix for a hotspot is now a second transformer rather than a bigger one. So this is a **legibility** question, not a capacity one: L1 is still 0.100 kW per dollar against L2's 0.136 and L3's 0.143, i.e. the worst rung on the ladder and one a reader of doc 03 §2.13(b) should skip. Options: (a) keep it, and let "the cheapest rung is the worst value" be a thing the player learns; (b) re-rate to ~90 kW so L1 is a sensible first buy; (c) delete it from the placement roster and start the player at L2. **Recommend (a) for now** — it is the only option that moves no number, and doc 92's own reason for naming it (the late-game ceiling) is gone.
 
 ---
 
