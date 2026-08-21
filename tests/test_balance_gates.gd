@@ -56,6 +56,22 @@ const SHORT_DAYS := 10
 ## 40 game-days, against a measurement of 31.1 / 33.5 / 34.3.
 const CURRICULUM_DAYS := 45
 const CURRICULUM_TOP_LEVEL_DAYS := 40
+## **Gate 32's two street horizons** (Wave 15, RR-86). Both are INSTRUMENT
+## parameters and neither is a balance number — the balance numbers they are
+## compared against live in `data/economy.json`.
+##
+## `CEILING_SAMPLE_HOURS` drives the SPAWNER only, four scalars per game-minute,
+## so 240 game-hours is ~14,400 cheap calls and ~135 offers — enough that one
+## unlucky `lost_valuables` cannot move the mean by more than a couple of per
+## cent. `tools/measure_street_yield.gd` takes the same measurement at 2,160
+## game-hours for the published table.
+##
+## `CEILING_ARC_DAYS` drives a whole city on the FINE path, which is ~60× the
+## coarse step: 3 game-days is ~30 s and ~41 offers. The published version is 21
+## game-days × 3 seeds in `tools/measure_street_arc.gd` (~21 minutes), which is a
+## tool's budget and not a gate's.
+const CEILING_SAMPLE_HOURS := 240
+const CEILING_ARC_DAYS := 3
 ## **The three-tier beat (doc 92 §27.5).** §22's ruled 10–40 game-hour band was
 ## written for "levels 1–3" of a five-level arc, before the street tool, before
 ## the sixth rung and before the Wave-8 rules epoch. It is retired and replaced
@@ -133,6 +149,31 @@ const CURRICULUM_TOP_LEVEL_DAYS := 40
 ## 38.2–38.8 against a ruled 40. It now finishes on **29.6 / 29.5 / 31.4**. The
 ## bound is a ruled design decision and is NOT re-cut downward to reclaim the
 ## tension; it is recorded that the tension is gone.
+##
+## ---------------------------------------------------------------------------
+## **WAVE-15 RULING — the bound is HELD at 40, and doc 92 §33.7's question 2 is
+## closed** (doc 92 §39.10).
+##
+## §33.7 asked for one of two things: re-rule the bound at 45, or re-cost the
+## arc's top level, because 1.2 game-days of margin meant *"the next thing that
+## slows the curriculum arc fails there, and the failure will look like that
+## change's fault rather than this one's."* **Neither, and the reason is that the
+## margin came back on its own.** Re-measured at this fork with the same
+## instrument, horizon and seeds (`tools/measure_curriculum.gd --days=45`), the
+## arrival table reproduces §36.4's post-money-pass numbers to the game-hour:
+##
+##   level 6 at game-hour **710 / 709 / 754** = game-day **29.58 / 29.54 / 31.42**
+##
+## against a ruled 40 — **8.58 game-days of margin**, seven times what §33.7 was
+## worried about. A bound is not re-ruled to make a number look comfortable, and
+## it is not re-ruled to make it look tight either; 40 is what the design decided
+## a graduation arc may cost, and the money pass is why the arc now fits inside
+## it with room. What §33.7 asked for was a ruling; the ruling is *hold*, and the
+## evidence is a measurement rather than a preference.
+##
+## *Level 6 remaining the longest rung by far (451–470 game-hours against level
+## 5's 111–152) is doc 92 §24.9's own ruling and is untouched here: the
+## graduation level is allowed to be the longest one.*
 const CURRICULUM_OPENING_BEAT_H := 58
 const CURRICULUM_MIDDLE_BEAT_H := 90
 
@@ -1341,7 +1382,58 @@ const AMBIENT_FLOOR_CHANNELS := ["crime", "structure_fire", "transformer_failure
 const PACING_SEEDS: Array[int] = [1337, 4242, 9001, 101, 202]
 
 
-## GATE 19 — **doc 92 §18 / audit 91 D-6: the dispatch loop is a weekly beat.**
+## GATE 19 — **doc 92 §18 / audit 91 D-6: the dispatch loop is a DAILY beat, and
+## one channel is most of it.**
+##
+## ---------------------------------------------------------------------------
+## **RE-TITLED, WAVE 15 — the beat is ruled, not re-fitted** (doc 92 §39.7,
+## report 98 RR-89; closes doc 92 §33.7's ranked question 1, open since Wave 13).
+##
+## The title said *weekly* because it was written when the measured rate was
+## **3.04 ambient incidents per game-week** and two of doc 06's six generators
+## were dead stubs. It is **9.73 per game-week** at this fork — 146 over the five
+## seeds × 21 game-days below — of which `traffic_accident` alone is 101, i.e.
+## **~0.96 per game-day**. A title claiming a weekly cadence over a number that
+## is one-a-day is the gate lying about its own measurement, and doc 92 §33.5
+## refused to hide it inside the band. So: the rate is ruled CORRECT and the
+## title is what moves.
+##
+## **Three reasons the rate stands, in the order they bind.**
+##
+## 1. **Nothing safety-critical is near its bound.** Zero failed, zero abandoned,
+##    zero destroyed, treasury climbing on every seed, and the 7×3×21 matrix's
+##    peak open roster is **2** against doc 06 §2.13(b)'s ceiling of **36**. A
+##    beat the fleet answers with 34 slots to spare is a beat, not a flood.
+## 2. **Cutting it would invalidate doc 06's own worked examples.** §2.6(e)
+##    intends **0.687 accidents/game-day for a 20-intersection city**; doc 09
+##    stamps **389 junctions** before the player has built anything, and the
+##    starter city measures 0.515/game-day in permanent sunshine — *below* doc
+##    06's stated per-intersection intent, not above it. The Wave-13 doubling is
+##    doc 07's weather reaching doc 10's congestion index (§33.5), which is two
+##    authored formulas meeting for the first time. The base rate is not the
+##    thing that is wrong, so the base rate is not the thing that moves.
+## 3. **AND THE FUN CALCULUS CHANGED UNDERNEATH THE QUESTION.** This is the half
+##    Wave 13 could not have ruled on. When §33.7 filed the question, a traffic
+##    accident was a pure COST: a dispatch that spent fuel and vehicle wear,
+##    resolved itself, and paid into a ledger line that did not exist. Since
+##    RR-78 it is INCOME — `dispatch_payout_base.traffic_accident = $300`, times
+##    tier, times the speed bonus, credited through `city_services` and named in
+##    the budget panel. At the measured 0.96/game-day and a tier-1 answer at
+##    target (`$450`) that is **~$430/game-day, ~$18/gh**, against a founding net
+##    of $506.05/gh: a fifth of a do_nothing city's early income arrives as
+##    accidents somebody answered.
+##
+##    **A once-a-day event that pays is a rhythm; a once-a-day event that only
+##    costs is attrition.** Same number, opposite reading. The honest form of the
+##    ruling is therefore that it would have been *"cut it"* in Wave 13 and is
+##    *"keep it"* in Wave 15 — and the thing that changed is not the generator.
+##
+## **What is NOT ruled here**, so nobody reads more into this than it says: the
+## *mix* is still lopsided (one channel of five carries 69 % of the count), and
+## a player who reads the drawer sees mostly fender-benders. That is doc 06's
+## §2.6 rate surface to balance across channels if it ever wants to, and it is a
+## different question from the one this gate asks, which is whether the loop
+## beats at all and whether the city survives it. Both: yes.
 ##
 ## Every doc 06 §2.6 generator is priced PER ASSET, so a founding city generated
 ## 0.337 incidents/game-day and the QA soak saw **two** in 287 game-hours: the
@@ -1415,7 +1507,9 @@ const PACING_SEEDS: Array[int] = [1337, 4242, 9001, 101, 202]
 ##
 ##    **The band is therefore re-derived from the measurement, not defended.**
 ##    The ruling doc 92 §18 made — *"the dispatch loop is a weekly beat; a
-##    do_nothing city still survives it"* — holds on every clause it can be
+##    do_nothing city still survives it"* — **its first clause is superseded by
+##    the Wave-15 re-title above; the second clause is the one that survived and
+##    the one every column below is about** — holds on every clause it can be
 ##    tested on: 318/318 resolved, 0 failed, 0 abandoned, 0 destroyed, and the
 ##    treasury higher on all twelve seeds than it was with two dead generators
 ##    ($194,847 against $189,772). What changed is the arithmetic behind "2–4",
@@ -1497,9 +1591,10 @@ func test_gate_19_ambient_incidents_are_a_weekly_beat() -> void:
 	# ones that say the city can still take it: zero failed, zero abandoned,
 	# nothing destroyed, treasury still climbing, and the 7×3×21 matrix's peak
 	# open roster UNMOVED at 2 for `do_nothing` against doc 06 §2.13(b)'s 36.
-	# *Whether ~0.96 traffic accidents per game-day is the intended dispatch beat
-	# is a balance question ranked in doc 92 §33.7 — it is not this gate's to
-	# answer, and this gate is not the place to hide it.*
+	# *~0.96 traffic accidents per game-day IS the intended dispatch beat, ruled
+	# in Wave 15 — see the re-title block at the top of this gate for the three
+	# reasons and for the one that only became true this wave (the layer's
+	# bounties made an accident income). Doc 92 §33.7's question 1 is closed.*
 	#
 	# The band keeps its old SHAPE (0.68× / 1.45× of measured, Poisson σ ≈ 12.1):
 	# the traffic channel going dark lands at 45 and the ambient floor going dark
@@ -2209,13 +2304,40 @@ func test_gate_31_a_payout_never_exceeds_the_damage_it_prevented() -> void:
 ## gate is the bound on the second half, so that collecting things can never grow
 ## into the only way to play.
 ##
-## Four of its five assertions read `data/economy.json` rather than a run,
-## deliberately: the street system's spawn table lives in a sibling branch's
-## file, and a contract that can only be checked by running two branches at once
-## is not a contract. Doc 03 owns every dollar in that feature (RR-77), so doc
-## 03's file is where the bound can be held.
+## ---------------------------------------------------------------------------
+## **RE-BUILT, WAVE 15 (doc 92 §39, report 98 RR-85 / RR-86).** The old version
+## of this gate read four numbers out of `data/economy.json` and multiplied two
+## of them, and its own header said why: *"the street system's spawn table lives
+## in a sibling branch's file, and a contract that can only be checked by running
+## two branches at once is not a contract."* **Both halves of that excuse are
+## gone.** The spawn table is in this tree, `data/street.json` no longer carries
+## a dollar (RR-85), and `tools/playtest.gd` has an agent that can actually
+## collect one (RR-86). So three of the five assertions become measurements, and
+## the two data numbers they replace turned out to be wrong in opposite
+## directions:
+##
+##   * `street_payout` was a **placeholder nothing read** — 180 / 120 / 150
+##     against live bands of 260+90 / 150+60 / 420+180. The gate was gating a
+##     dead column, which is the failure mode the single-source migration
+##     exists to end.
+##   * `STREET_MAX_RATE_PER_GAME_HOUR` was **0.45 against a table running at
+##     0.667** — a contract violated by 48 % since the day it was written, by a
+##     file no test could open.
+##
+## Nothing was retuned to fix either. See §39.3 for why the petty-crime ratio
+## holds once it is measured against a payout instead of against a base, and
+## §39.2 for why the 57 % ceiling is 35.9 % without a dollar moving.
+##
+## **What each assertion costs**, because two of them now run a sim and this
+## file's budget is real: (a)–(c) are file reads; (d) drives the SPAWNER ONLY for
+## `CEILING_SAMPLE_HOURS` game-hours (four scalars per game-minute, ~2 s); (f) is
+## a SHORT fine-path arc — `CEILING_ARC_DAYS` game-days on one seed — because the
+## fine path is ~60× the coarse step and the published 21-game-day version of the
+## same measurement lives in `tools/measure_street_arc.gd`, which doc 92 §39.5
+## quotes. A gate holds the claim; the tool holds the table.
 func test_gate_32_active_play_pays_more_and_idling_still_pays() -> void:
 	var services := _city_services()
+	var opening_net := float(_pacing()["STARTER_NET_PER_HOUR_EXACT"])
 
 	# (a) The dispatcher's premium is VISIBLE. 1.50 is doc 06's own
 	# `speed_bonus_max`; under 1.25 it stops reading as a raise at all.
@@ -2223,46 +2345,142 @@ func test_gate_32_active_play_pays_more_and_idling_still_pays() -> void:
 	assert_true(manual >= 1.25,
 			"a %.2f× dispatcher premium is not one a player would notice" % manual)
 
-	# (b) A TAPPED CROOK IS PETTY; A DISPATCHED CRIME IS THE REAL ONE. The
-	# ordering is the ruling; the ratio is what makes it read at a glance.
+	# (b) A TAPPED CROOK IS PETTY; A DISPATCHED CRIME IS THE REAL ONE.
+	#
+	# The ordering is the ruling; the ratio is what makes it read at a glance.
+	# **The denominator is the thing this wave fixed** (doc 92 §39.3):
+	# `dispatch_payout_base.crime` is 350, but nobody is ever paid 350 — doc 06
+	# multiplies it by tier and by a speed bonus before a dollar moves, and the
+	# crime a player actually watches resolve is doc 06's own reference case,
+	# tier 3 answered on target, which pays 350 × 1.70 × 1.00 = $595. Comparing a
+	# delivered street bounty to an undelivered dispatch BASE was the arithmetic
+	# error the placeholder table hid; it reads as "about half" against the
+	# payout, which is what the ruling always meant.
 	var street: Dictionary = services["street_payout"]
-	var petty := float(street["petty_crime"])
-	var dispatched := float((services["dispatch_payout_base"] as Dictionary)["crime"])
+	var petty := _street_mean_bounty(street, "petty_crime")
+	var dispatched := _dispatch_reference_payout(services, "crime")
 	assert_true(petty < dispatched,
-			"street petty_crime $%.0f must sit under dispatch crime $%.0f"
+			("a tapped crook's mean bounty $%.2f must sit under what a dispatched "
+					+ "crime pays at doc 06's own reference (tier 3, on target): $%.2f")
 					% [petty, dispatched])
 	assert_true(petty / dispatched <= 0.60,
-			"and it must read as about half, not as nearly the same: %.3f"
-					% (petty / dispatched))
+			("and it must read as about half, not as nearly the same: %.3f "
+					+ "($%.2f against $%.2f)") % [petty / dispatched, petty, dispatched])
 
-	# (c) THE INCOME-SHARE BAND. The worst a street system may pay is its maximum
-	# spawn rate times its most valuable opportunity, and that has to land inside
-	# the ruled 10–20 % against the opening's own income — `STARTER_NET_PER_HOUR_EXACT`,
-	# which is doc 03's founding anchor WITH the RR-78 grant in it, because that
-	# is the income the opening actually earns.
-	var most := 0.0
-	for key in street:
-		most = maxf(most, float(street[key]))
-	var worst_street := float(services["STREET_MAX_RATE_PER_GAME_HOUR"]) * most
-	var opening_net := float(_pacing()["STARTER_NET_PER_HOUR_EXACT"])
-	assert_true(worst_street <= 0.20 * opening_net,
-			("a street system running flat out would pay $%.2f/gh against an "
-					+ "opening net of $%.2f/gh (%.1f %%); the ruled ceiling is 20 %%")
-					% [worst_street, opening_net, 100.0 * worst_street / opening_net])
-	assert_true(worst_street >= 0.10 * opening_net,
-			("and it has to be worth doing: $%.2f/gh is %.1f %% of the opening's "
-					+ "income, under the ruled 10 %% floor")
-					% [worst_street, 100.0 * worst_street / opening_net])
+	# (c) THE RATE CONTRACT, AND IT IS FINALLY A CONTRACT. Both files are in this
+	# tree since RR-85, so the number doc 03 publishes can be checked against the
+	# table it constrains instead of multiplied by a placeholder. The spawn
+	# table's un-rejected Bernoulli rate is `1 / target_interval_h` — the most
+	# offers it can produce before `max_live`, `min_separation_tiles` and an
+	# empty kerb pool take their share — and it may not exceed doc 03's ceiling.
+	var spawn: Dictionary = StarterCityLoader.read_json(
+			"res://data/street.json").get("spawn", {})
+	var table_rate := 1.0 / maxf(0.000001, float(spawn["target_interval_h"]))
+	var ruled_rate := float(services["STREET_MAX_RATE_PER_GAME_HOUR"])
+	assert_true(table_rate <= ruled_rate,
+			("data/street.json spawns at up to %.4f offers/gh (target_interval_h "
+					+ "%.3f) against doc 03's ruled ceiling of %.4f")
+					% [table_rate, float(spawn["target_interval_h"]), ruled_rate])
 
-	# (d) AND EXACTLY ZERO WHEN IDLE. An opportunity nobody taps pays nobody.
+	# (d) THE CEILING, MEASURED — what the layer pays somebody who takes every
+	# single offer, as a share of the income the opening actually earns.
+	#
+	# This is doc 92 §35.3's ruling made executable. It measured 57 % against the
+	# PRE-money-pass founding net and asked for a retune to 35–40 %; the money
+	# pass moved the denominator instead (337.05 → 506.05/gh), and the same
+	# $181.65/gh ceiling is 35.9 % of it. Nothing in the street tables was
+	# retuned — see §39.2 — so this assertion is the one that would catch a
+	# future retune of either side, in either direction.
+	#
+	# The instrument is `OpportunitySystem.advance` at the phase adapter's own
+	# cadence, exactly as `tools/measure_street_yield.gd` drives it: the whole
+	# city is not ticked, because the ceiling is a property of the spawner and a
+	# game-hour of full advance costs ~1,000× a game-hour of this.
+	var ceiling := _street_ceiling_per_hour(GATE_SEED, CEILING_SAMPLE_HOURS)
+	var ceiling_share := ceiling / opening_net
+	var ceiling_max := float(services["STREET_CEILING_SHARE_MAX"])
+	assert_true(ceiling_share <= ceiling_max,
+			("a player who collected EVERY street offer would earn $%.2f/gh "
+					+ "against an opening net of $%.2f/gh (%.2f %%); doc 03's ruled "
+					+ "ceiling is %.0f %% (doc 92 §35.3 / §39.2)")
+					% [ceiling, opening_net, 100.0 * ceiling_share, 100.0 * ceiling_max])
+	# And it has to be worth crossing the map for. The floor is well clear of the
+	# measurement (35.9 %) because it is a "somebody deleted the layer" tripwire,
+	# not a fit — §35.3's own argument is that the crook and the dog carry the
+	# fiction and should not be tuned away to buy headroom.
+	assert_true(ceiling_share >= 0.15,
+			("the whole street layer is worth $%.2f/gh, %.2f %% of the opening's "
+					+ "income — at that share nobody would cross the map for it")
+					% [ceiling, 100.0 * ceiling_share])
+
+	# (e) AND EXACTLY ZERO WHEN IDLE — asserted as the written-down zero it is,
+	# and then MEASURED on an agent that never taps. `curriculum` is `collector`
+	# with the tap removed — `Collector extends Curriculum` and overrides exactly
+	# `tick_minute`, so they are the same builder — and a non-zero here would
+	# mean an opportunity paid somebody who did not take it.
 	assert_almost_eq(float(services["STREET_IDLE_SHARE"]), 0.0, 1e-9,
 			"an opportunity nobody taps must pay nobody")
 
-	# (e) The measured half. A played city's `city_services` line is a real share
-	# of its income and not a rounding error: measured on the curriculum agent at
-	# 21 game-days, three seeds, **4.83 / 5.21 / 5.76 %** of net from dispatch
-	# alone, before the street system lands. The band is wide on both sides
-	# because the street half will raise it and a seed must not flip it.
+	# (f) THE PLAYED SHARE, FROM A REAL RUN — the number doc 92 §35.3 had to
+	# derive from spawn telemetry because no agent could collect.
+	#
+	# `collector` is `curriculum` plus one tap per game-minute and nothing else,
+	# so its street income against its own settled net is the layer's share of a
+	# played city. It is a CEILING among played cities — the agent has no camera
+	# and no travel time — which is why the band's top is what this asserts and
+	# its floor is loose. The published 21-game-day, three-seed version is doc 92
+	# §39.5 via `tools/measure_street_arc.gd`; this arm is short because the fine
+	# path costs ~60× the coarse step and a gate is not a report.
+	var band: Array = services["STREET_PLAYED_SHARE_BAND"]
+	var idle_doc := Rig.run_fine("curriculum", GATE_SEED, CEILING_ARC_DAYS)
+	var played_doc := Rig.run_fine("collector", GATE_SEED, CEILING_ARC_DAYS)
+	var idle_summary: Dictionary = idle_doc["summary"]
+	var played: Dictionary = played_doc["summary"]
+	assert_eq(int(idle_summary["street_income"]), 0,
+			"an agent that never taps earned street money anyway")
+	assert_true(int(played["opportunities_collected"]) > 0,
+			("the collector took ZERO offers in %d game-days — the tap has lost "
+					+ "its door, or the spawner stopped drawing on the fine path")
+					% CEILING_ARC_DAYS)
+	# **The two published bounds must agree with each other**, checked here
+	# because they are authored in two places and read by two horizons: a played
+	# city's share may never be ruled above the ceiling on taking EVERY offer.
+	assert_true(float(band[1]) <= float(services["STREET_CEILING_SHARE_MAX"]),
+			("the played-share ceiling (%.0f %%) is above the collection ceiling "
+					+ "(%.0f %%), which is arithmetically impossible")
+					% [100.0 * float(band[1]),
+					100.0 * float(services["STREET_CEILING_SHARE_MAX"])])
+
+	# **The short arm is held against the CEILING, not against the band, and the
+	# horizon is why.** `STREET_PLAYED_SHARE_BAND` is ruled at 21 game-days
+	# (doc 92 §39.5); this arm runs 3, where the city is at its smallest and its
+	# net at its thinnest, so the share is structurally at its HIGHEST — measured
+	# **18.94 %** on seed 1337, against **11.88 %** on the same seed over the
+	# published 21-game-day horizon (doc 92 §39.5's own table). A
+	# gate that held a 21-day bound over a 3-day measurement would be asserting a
+	# number it is not measuring, and would sit one point from failing while
+	# saying something false about why. The tripwire that matters is the same one
+	# (d) uses: no share of a city's income, on any horizon, above the ruled
+	# collection ceiling.
+	var played_share := float(played["street_share_of_net"])
+	var ceiling_bound := float(services["STREET_CEILING_SHARE_MAX"])
+	assert_true(played_share <= ceiling_bound,
+			("street bounties are %.2f %% of a tapping city's net over its first "
+					+ "%d game-days — where the share is at its structural maximum "
+					+ "— against the ruled collection ceiling of %.0f %% (measured "
+					+ "18.94 %%; doc 92 §39.5)")
+					% [100.0 * played_share, CEILING_ARC_DAYS, 100.0 * ceiling_bound])
+	assert_true(played_share >= float(band[0]),
+			("street bounties are only %.2f %% of a tapping city's net; the ruled "
+					+ "floor is %.0f %% and under it the layer is not worth the "
+					+ "attention it asks for")
+					% [100.0 * played_share, 100.0 * float(band[0])])
+
+	# (g) The dispatch half, unchanged. A played city's `city_services` line is a
+	# real share of its income and not a rounding error: measured on the
+	# curriculum agent at 21 game-days, three seeds, **4.83 / 5.21 / 5.76 %** of
+	# net from dispatch alone. The band is wide on both sides because a seed must
+	# not flip it.
 	var total_net := 0.0
 	var total_services := 0.0
 	for seed_value in MATRIX_SEEDS:
@@ -2283,3 +2501,41 @@ func test_gate_32_active_play_pays_more_and_idling_still_pays() -> void:
 static func _city_services() -> Dictionary:
 	return (StarterCityLoader.read_json(ECONOMY_DATA).get("city_services", {})
 			as Dictionary)
+
+
+## The MEAN bounty of one street kind, `base + spread/2` — the figure doc 03
+## §2.5's rulings are stated against, because a band's mean is what a player
+## earns and its top is what a player remembers.
+static func _street_mean_bounty(street: Dictionary, kind: String) -> float:
+	var row: Dictionary = street[kind]
+	return float(row["base"]) + 0.5 * float(row.get("spread", 0.0))
+
+
+## What doc 06 actually pays for one incident type at its own REFERENCE case —
+## tier 3, answered on target — rather than the base nobody is ever paid:
+## `reward_base × (1 + tier_k·(3 − 1)) × 1.00`. The shape constants are doc 06's
+## (`data/incidents.json` `reward`), the dollar is doc 03's, which is the whole
+## split RR-78 drew.
+static func _dispatch_reference_payout(services: Dictionary, type_id: String) -> float:
+	var shape: Dictionary = StarterCityLoader.read_json(
+			"res://data/incidents.json").get("reward", {})
+	var base := float((services["dispatch_payout_base"] as Dictionary)[type_id])
+	return base * (1.0 + float(shape["tier_k"]) * 2.0)
+
+
+## Doc 06 §2.16's ceiling in $/game-hour: every offer the spawner produces over
+## `hours` game-hours, collected. Drives `OpportunitySystem.advance` at the phase
+## adapter's own cadence and nothing else — the same instrument
+## `tools/measure_street_yield.gd` uses, and pinned to the live cadence by
+## `tests/test_street_opportunities.gd::test_the_phase_adapter_is_wired_to_the_minute`.
+static func _street_ceiling_per_hour(seed_value: int, hours: int) -> float:
+	var sim := CitySim.boot_from_files(seed_value)
+	var minute_h := 1.0 / 60.0
+	var total := 0
+	for i in hours * 60:
+		sim.street.advance(float(i + 1) * minute_h, true)
+		for event in sim.street.drain_events():
+			if String(event["type"]) == "opportunity_spawned":
+				total += int(event["reward"])
+	sim.dispose()
+	return float(total) / float(maxi(1, hours))

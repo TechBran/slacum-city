@@ -1337,11 +1337,25 @@ an opportunity is an **offer the player may take**.
 | `loose_animal` | a kerb with residential frontage | 2.0–3.5 gh | $150 + $0–60 |
 | `lost_valuables` | any kerb, flat-weighted, rare (0.50) | 1.0–1.75 gh | $420 + $0–180 |
 
-Every number is authored in `data/street.json` and **every one of them is a
-placeholder**: the balance agent owns the fit, and the file is shaped so that a
-retune is a data edit. Rewards scale `× (1 + 0.20·(city_level − 1))`, frozen at
-spawn and carried on the row, so the preview, the commit and a save→load all
-quote the same dollars.
+**The `what it pays` column is NOT this doc's** *(Wave 15, report 98 RR-81)*. It
+is `data/economy.json`'s `city_services.street_payout`, and it is reproduced here
+for readability only — the same relationship §2.7's `reward_base` column has had
+with doc 03 since RR-78. `data/street.json` authors the kinds, the weights, the
+lifetimes, the coverage knee and the spawn cadence, and **carries no dollar at
+any depth**: `OpportunitySystem.FORBIDDEN_KEYS` refuses `reward` and
+`reward_city_level_k` on the way back in, so the boot fails rather than a second
+price table quietly reappearing. Doc 03 §2.5 answers *how much*; this doc answers
+*how often, where, and for how long*.
+
+Rewards scale `× (1 + STREET_REWARD_CITY_LEVEL_K·(city_level − 1))`, `k = 0.20`
+and also doc 03's, frozen at spawn and carried on the row so the preview, the
+commit and a save→load all quote the same dollars.
+
+**The bands are no longer placeholders.** Doc 92 §39 ruled them: the collection
+ceiling measures **$181.65/gh = 35.9 % of the opening's own net**, inside the
+35–40 % band §35.3 asked for, and **not one of the six numbers above moved to get
+there** — the money pass raised the denominator instead. What changed in Wave 15
+is which file they live in and that a gate can finally check them.
 
 **Placement is a kerb, and the kerb is the renderer's.** A candidate is a road
 tile with at least one orthogonal neighbour that is in bounds, not road and not
@@ -1811,7 +1825,7 @@ Headless tests (`tests/sim/incidents/`, `tests/sim/dispatch/`), all with injecte
 
 ## 8. Tunables
 
-One document, three top-level keys — split into `data/incidents.json`, `data/vehicles.json`, `data/dispatch.json` verbatim. **§2.16's opportunity layer adds a fourth file, `data/street.json`**, owned by this doc and authored entirely as placeholders: kinds, base weights, lifetime bands, reward base/spread, the police-coverage knee and the spawn cadence. It is deliberately shaped so a retune is a data edit and never a code edit — the balance agent owns the final values and doc 92 §35 is the hand-off, including the one number it has to rule on (a 57 %-of-founding-net collection ceiling, which that section argues belongs nearer 35–40 %).
+One document, three top-level keys — split into `data/incidents.json`, `data/vehicles.json`, `data/dispatch.json` verbatim. **§2.16's opportunity layer adds a fourth file, `data/street.json`**, owned by this doc: kinds, base weights, lifetime bands, the police-coverage knee and the spawn cadence. **It carries no reward column** *(Wave 15, report 98 RR-81)* — `reward` and `reward_city_level_k` moved to `data/economy.json`'s `city_services.street_payout` at the same values, and `OpportunitySystem.FORBIDDEN_KEYS` refuses them back exactly as `IncidentCatalog.FORBIDDEN_KEYS` refuses `reward_base`. Doc 92 §35 was the hand-off and doc 92 §39 is the ruling: the 57 %-of-founding-net ceiling §35.3 asked to see nearer 35–40 % measures **35.9 %** against the post-money-pass net, so the bands are HELD and the file's remaining numbers are ruled rather than placeholder.
 
 **Deleted by report 98, with where to look instead** — these keys are *removed*, not defaulted, not commented out:
 

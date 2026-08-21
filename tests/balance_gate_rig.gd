@@ -87,6 +87,62 @@ static func run(strategy_id: String, seed_value: int, days: int,
 	}
 
 
+## The same run on the FINE path, cut into game-minutes (RR-86).
+##
+## **Why a second entry point instead of a flag on the first**: the coarse `run`
+## above is what every gate and every doc 92 table is measured on, and it must
+## stay the cheapest thing this file can do. This one is ~60× slower per
+## game-day, and it exists for exactly one question — doc 06 §2.16's opportunity
+## layer, whose spawner draws NOTHING on the coarse step (report 98 RR-77(a)).
+## An agent that taps is only an agent here.
+##
+## The loop body is `Playtest.Runner`'s own (`advance_hour_by_minutes`), not a
+## copy: a gate and a report row have to be the same measurement, and a slice
+## that drifted between the two would make the gate's number unreproducible from
+## the tool the report quotes.
+##
+## `days` is small at every call site on purpose — see gate 32's own header for
+## the budget argument.
+static func run_fine(strategy_id: String, seed_value: int, days: int,
+		preset: String = Difficulty.DEFAULT_PRESET) -> Dictionary:
+	var sim := CitySim.boot_from_files(seed_value, preset)
+	var strategy := Playtest.Factory.make(strategy_id)
+	var api := Playtest.Api.new(sim)
+	var samples: Array[Dictionary] = []
+	var events: Dictionary = {}
+	var sliced: bool = strategy.wants_game_minutes()
+
+	sim.bus.drain()
+	samples.append(Playtest.Runner._sample(sim, 0, {}, 0.0))
+	for h in days * HOURS_PER_DAY:
+		api.hour = h
+		strategy.act(api, h)
+		if sliced:
+			Playtest.Runner.advance_hour_by_minutes(sim, strategy, api, h)
+		else:
+			sim.advance_hours(1.0)
+		var settled: Dictionary = Playtest.Runner._drain(sim, events)
+		var blackout: float = Playtest.Runner._blackout_minutes(sim)
+		var sample: Dictionary = Playtest.Runner._sample(sim, h + 1, settled, blackout)
+		samples.append(sample)
+		if strategy is Playtest.Balanced:
+			(strategy as Playtest.Balanced).note_expense(float(sample["expenses"]))
+
+	var opts := Playtest.Options.new()
+	opts.days = days
+	opts.mode = "fine"
+	opts.write_json = false
+	return {
+		"run": {"strategy": strategy_id, "seed": seed_value, "days": days,
+				"difficulty": sim.difficulty_preset(), "mode": "fine"},
+		"samples": samples,
+		"actions": api.actions,
+		"events": events,
+		"summary": Playtest.Runner._summarise(sim, api, samples, opts),
+		"state_hash": sim.state_hash(),
+	}
+
+
 static func event_count(doc: Dictionary, type_name: String) -> int:
 	return int((doc["events"] as Dictionary).get(type_name, 0))
 

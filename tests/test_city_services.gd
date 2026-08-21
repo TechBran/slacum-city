@@ -48,6 +48,66 @@ func test_no_payout_price_survives_in_doc_06s_data() -> void:
 				float(pair[1]), 1e-9, "doc 03 prices %s" % String(pair[0]))
 
 
+## RR-85, the same contract one file further out: doc 06 §2.16's data carries no
+## dollar either, the boot refuses one that comes back, and doc 03 carries the
+## bands the rows used to.
+##
+## **This is the guard that would have caught the bug it was written after.**
+## Until this wave `data/street.json` held the LIVE reward columns while
+## `city_services.street_payout` held a dead placeholder set beside them — one
+## feature, two price tables, and gate 32 was reading the one the game did not
+## pay out of. A test that only checked doc 03's numbers were *present* would
+## have passed on both days; this one checks that doc 06's are ABSENT, which is
+## the half that can tell them apart.
+func test_no_street_price_survives_in_doc_06s_data() -> void:
+	var data := StarterCityLoader.read_json("res://data/street.json")
+	for key in ["reward", "reward_city_level_k"]:
+		assert_false(_has_key_anywhere(data, key),
+				"data/street.json carries `%s` at no depth (RR-85)" % key)
+		assert_true(OpportunitySystem.FORBIDDEN_KEYS.has(key),
+				"and the spawner refuses `%s` at boot, not just in CI" % key)
+
+	# A price put back is a BOOT ERROR, at any depth — the same shape
+	# `IncidentCatalog` gives `reward_base`.
+	var smuggled := data.duplicate(true)
+	var kinds: Dictionary = smuggled["kinds"]
+	(kinds["petty_crime"] as Dictionary)["reward"] = {"base": 260, "spread": 90}
+	var refused := OpportunitySystem.new(smuggled)
+	assert_false(refused.errors.is_empty(),
+			"a street table that carries the price back must fail the boot")
+
+	# The spread version of the same guard: the scalar in the spawn block.
+	var smuggled_k := data.duplicate(true)
+	(smuggled_k["spawn"] as Dictionary)["reward_city_level_k"] = 0.20
+	assert_false(OpportunitySystem.new(smuggled_k).errors.is_empty(),
+			"and so must the level scalar, which is a term in a dollar formula")
+
+	# The shipped file itself is clean, and every kind it names is PRICED. An
+	# unpriced kind is a boot error too, because a crook worth $0 is a bug that
+	# looks exactly like a balance decision.
+	var curves := _curves()
+	var live := OpportunitySystem.new(data)
+	live.bind_payouts(curves)
+	assert_true(live.errors.is_empty(),
+			"the shipped pair boots clean: %s" % str(live.errors))
+	for row: Array in [["petty_crime", 260.0, 90.0], ["loose_animal", 150.0, 60.0],
+			["lost_valuables", 420.0, 180.0]]:
+		var kind := String(row[0])
+		assert_almost_eq(curves.street_payout_base(kind), float(row[1]), 1e-9,
+				"doc 03 prices %s's floor" % kind)
+		assert_almost_eq(curves.street_payout_spread(kind), float(row[2]), 1e-9,
+				"and %s's spread" % kind)
+	assert_almost_eq(curves.street_reward_city_level_k(), 0.20, 1e-9,
+			"and the level scalar that used to sit in the spawn block")
+
+	# A kind the price table does not know is refused rather than paid zero.
+	var orphan := data.duplicate(true)
+	var starved := OpportunitySystem.new(orphan)
+	starved.bind_payouts(CostCurves.new({}, {"city_services": {"street_payout": {}}}))
+	assert_false(starved.errors.is_empty(),
+			"a kind nobody prices must fail the boot, not spawn for nothing")
+
+
 ## The cash moves NOW — the player taps and the number changes — and the hour's
 ## settlement then names it on `revenue.city_services` **without banking it a
 ## second time**. The check that separates "reported" from "paid twice" is the

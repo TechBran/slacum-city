@@ -3146,3 +3146,268 @@ authorise must have a sensory surface at the moment it lands.
 **Applied:** doc 12 §2.21 and D-61 … D-64; doc 91 A91-D-37; doc 92 §38; doc 93
 §P; `data/ui.json.budget` (two keys plus the `_comment_side_revenue` note that
 states the retirement rule at the point of use).
+
+---
+
+## 35. WAVE 15 — the reward ledger settles (binding)
+
+*Balance fork. Five rulings, and the first four of them are the same shape: a
+number that was published, quoted in three documents, held by a test, and **not
+the number the game was using.** The fifth is a fix for a counter that answered
+zero for its whole life. Every determinism baseline below is bit-identical
+across the whole pass on the `standard` preset — see doc 92 §39.9 for the
+enumeration, and RR-87 for why the non-default presets deliberately move.*
+
+### RR-85 — One feature, two price tables, and the live one was not the one the gates read (docs 03 §2.5, 06 §2.16/§8, 92 §35/§39, `data/street.json`, `data/economy.json`)
+
+**The inconsistency.** RR-78 moved doc 06's `reward_base` into
+`data/economy.json` and wrote, in the same breath, that
+`data/street.json` *"still carries the LIVE reward columns this table is due to
+absorb"*. It did. So for one wave the project shipped **two price tables for one
+feature**:
+
+| | `data/street.json` (LIVE — what the game paid) | `data/economy.json` `street_payout` (what everything READ) |
+|---|---|---|
+| crook | `{base: 260, spread: 90}` → mean **$305** | `petty_crime: 180` |
+| animal | `{base: 150, spread: 60}` → mean **$180** | `stray_animal: 120` |
+| valuables | `{base: 420, spread: 180}` → mean **$510** | `abandoned_haul: 150` |
+
+Two of the three keys in doc 03's table **were not even live kind ids** —
+`stray_animal` and `abandoned_haul` name nothing in `data/street.json`, which
+authors `loose_animal` and `lost_valuables`. The table could not have been read
+by the spawner even if the spawner had tried.
+
+**What that cost, precisely.** Balance gate 32 read doc 03's table and asserted
+two things off it, and both assertions were true of the dead column and false of
+the live one:
+
+* *"a tapped crook is petty"* — `180 / 350 = 0.514`, comfortably under the ruled
+  0.60. The live mean is `305 / 350 = 0.871`, which is not "about half" by any
+  reading.
+* *"the income-share bound"* — `0.45 × 180 = $81.00/gh`, 16.0 % of the opening's
+  net. The live worst case is `0.45 × 600 = $270/gh`, 53 %.
+
+Neither number was ever a lie anybody told; both were the arithmetic of a
+placeholder that the wave which wrote it said out loud was a placeholder. The
+defect is structural and it is the one C-07 exists to prevent: **a price that
+lives in two files is a price nobody owns.**
+
+**Ruling.** *Doc 03 owns every dollar, and "owns" means the game reads it from
+there.* The bands move to `city_services.street_payout` **at the same values, to
+the dollar and to the spread**, `reward_city_level_k` moves with them as
+`STREET_REWARD_CITY_LEVEL_K` (it is a term in a dollar formula), and
+`OpportunitySystem.FORBIDDEN_KEYS` refuses `reward` and `reward_city_level_k`
+back at any depth — a boot error, not a fallback, exactly as
+`IncidentCatalog.FORBIDDEN_KEYS` refuses `reward_base`. A kind `data/street.json`
+names and `street_payout` does not price is a boot error too: a crook worth $0 is
+a bug that looks exactly like a balance decision.
+
+**The migration MOVED NO NUMBER, and the check that says so is the hash.** All
+four `profile_sim` baselines are bit-identical across it (doc 92 §39.9), and
+`tools/measure_street_yield.gd` reproduces its published table offer for offer —
+1,225 offers, mean bounty $320.29, ceiling $181.65/gh — off the new file pair.
+
+**The generalising half, because this is the fourth instance in four waves.**
+RR-69 (a correct system with no observable), RR-78 (two names for one dollar),
+RR-84 (a ledger whose rows did not explain its total), and now a gate holding a
+column the game does not read. The common failure is not duplication; it is that
+**every one of them passed its tests.** A test that asserts a published number is
+*present and well-shaped* cannot tell a live column from a dead one. The test
+that can is the one that asserts the other file is **empty** —
+`tests/test_city_services.gd::test_no_street_price_survives_in_doc_06s_data`
+checks absence, which is the half that discriminates, and it is written beside
+the RR-78 test that already did the same job for `reward_base`.
+
+**FOR SIBLINGS AND FOR THE MERGE — one key changes SHAPE, and it is the only
+thing in this pass that can break a branch that has not seen it.**
+`city_services.street_payout[kind]` was an `int` and is now
+`{base: int, spread: int}`, and its keys changed with it (`stray_animal` →
+`loose_animal`, `abandoned_haul` → `lost_valuables`, because the old two named
+nothing). Nothing under `ui/` or `game/` reads it at this fork — grepped — and
+the only consumers in the tree are `CostCurves.street_payout*` and balance gate
+32, both of which move with it. **A branch that reads it as a number gets a
+`Dictionary` and a silent 0**, so if a sibling has added a budget row, a build
+sheet hint or a tooltip against that key between this fork and the merge, it
+needs `street_payout_mean(kind)` (or `_base`/`_spread`) rather than a cast.
+`has_street_payout(kind)` exists so a caller can tell "priced at nothing" from
+"not priced" without guessing.
+
+**Applied:** `data/street.json` (three `reward` blocks and `spawn.reward_city_level_k`
+deleted; `_no_dollars` states the rule at the point of use); `data/economy.json`
+§2.5 (`street_payout` as bands, `STREET_REWARD_CITY_LEVEL_K`, and the three
+re-derived bounds of RR-86); `sim/street/opportunity_system.gd`
+(`FORBIDDEN_KEYS`, `errors`, `bind_payouts`, `_reward_for` reads `CostCurves`);
+`sim/economy/cost_curves.gd` (`street_payout_base` / `_spread` / `_mean`,
+`has_street_payout`, `street_reward_city_level_k`); `sim/city_sim.gd`
+(`_boot_street` binds the price table and drains its errors); doc 03 §2.5 and
+§2.13(e); doc 06 §2.16 and §8; doc 92 §39.1/§39.3; balance gate 32(b);
+`tests/test_city_services.gd`.
+
+### RR-86 — A bound nobody could measure is not a bound (docs 03 §2.5, 92 §35.3/§39, `tools/playtest.gd`, `tests/balance_gate_rig.gd`)
+
+**The inconsistency.** Three published numbers claimed to bound doc 06 §2.16's
+opportunity layer, and none of the three was ever compared against the layer:
+
+1. `STREET_MAX_RATE_PER_GAME_HOUR = 0.45` — "a contract the spawn table must
+   satisfy". The spawn table has run at `1 / 1.5 = 0.667` offers/gh since the day
+   the layer landed, i.e. **the contract was violated by 48 % from the moment it
+   was written**, and no test could see it because the two files lived in
+   different branches.
+2. *"the ruled band is 10–20 % of early-game income WHEN PLAYED"* — never
+   measured, because no agent in `tools/playtest.gd` could collect an
+   opportunity and every agent in the matrix runs the coarse path, where the
+   spawner deliberately draws nothing (RR-77(a)).
+3. Doc 92 §35.2's **57 % ceiling** — measured, but from spawn telemetry on a
+   founding city that never changes, against a founding net that the money pass
+   moved out from under it two sections later in the same document.
+
+**Ruling, in three parts.**
+
+1. **A contract is checked against the thing it constrains, or it is a
+   comment.** Both files are in one tree since RR-85, so gate 32(c) now reads
+   `data/street.json`'s `target_interval_h`, inverts it, and holds it against
+   doc 03's ceiling. The ceiling is re-derived to **0.70** — above the shipped
+   table's own 0.667, refusing any `target_interval_h` under 1.43, and stated as
+   a tripwire rather than a fit.
+2. **A ceiling is measured on the spawner; a share is measured on a played
+   city.** They are different claims and they get different numbers:
+   `STREET_CEILING_SHARE_MAX = 0.40` (every offer taken, against the opening's
+   own net) and `STREET_PLAYED_SHARE_BAND` (street income against the same run's
+   settled net, on an arc). The old single band conflated them, which is how a
+   "worst case" derivation ended up standing in for both.
+3. **THE INSTRUMENT IS PART OF THE RULING.** `tools/playtest.gd` gains
+   `collector` — `curriculum` plus one tap per game-minute and nothing else
+   changed, so the pair is controlled by construction — plus `Api.collect_nearby`
+   and an opt-in game-minute hook on `Strategy`. It is the project's first
+   FINE-path agent, because the layer only exists there. `BalanceGateRig.run_fine`
+   is the same loop for gates, sharing `Runner.advance_hour_by_minutes` rather
+   than copying it, so a gate and a report row stay the same measurement.
+
+**The slice is bit-identical to the hour it replaces**, and that is asserted on
+`state_hash()` rather than argued: `advance_hours(1.0)` is `advance_fine_n(240)`,
+`1.0/60.0` rounds to exactly 4 ticks, and `TickScheduler` carries no per-call
+state (`tests/test_playtest_harness.gd::test_slicing_an_hour_into_minutes_lands_on_the_same_city`).
+Without that property every collector measurement would be a measurement of a
+different city and the controlled pair would not be controlled.
+
+**What the ruling does NOT claim.** `collector` is a **ceiling agent**: no
+camera, no travel time, unbounded sweep radius, so every offer it is awake for is
+an offer it takes. Its share is the most the layer can pay somebody playing the
+curriculum, not a forecast of a session. Doc 92 §39.5 states that at the head of
+the table rather than in a footnote, because a ceiling quoted as an expectation
+is exactly the error §35.2 made.
+
+**Applied:** `tools/playtest.gd` (`NAMED_ONLY_STRATEGY_IDS`, `Collector`,
+`Api.collect_nearby` / `live_opportunities` / the five street summary columns,
+`Strategy.wants_game_minutes` / `tick_minute`, `Runner.advance_hour_by_minutes`);
+`tests/balance_gate_rig.gd` (`run_fine`); `tools/measure_street_arc.gd` (new);
+`data/economy.json` (`STREET_MAX_RATE_PER_GAME_HOUR` 0.45 → 0.70,
+`STREET_CEILING_SHARE_MAX`, `STREET_PLAYED_SHARE_BAND`); doc 03 §2.5; doc 92
+§39.2/§39.4/§39.5/§39.6; balance gate 32(c)–(f);
+`tests/test_playtest_harness.gd`.
+
+### RR-87 — A budget is a budget only if it is compared against the price (docs 03 §2.4, 10 §2.12/§9.4 q12, 92 §31/§34/§39.8, 93 §M1)
+
+**The inconsistency.** `CitySim` wired `RoadNetwork.repair_quote` as
+`econ_curves.repair_cost_road(road_class, damage_fraction)`, leaving C-16's
+`M_repair` at its 1.00 default. The quote's only consumer is the decision "how
+many contiguous runs fit inside `auto_repair_daily_cap`", and doc 10 §2.12 calls
+that cap *"a **player budget setting**, not a price"* — which was read for three
+waves as a reason quoting at nominal was fine. Doc 92 §31 measured what it
+actually meant: a `crisis` city's $25,000/game-day admitted **1.60×** more
+tile-fractions than repairing them costs, a `casual` city's **0.70×** fewer.
+Doc 92 §34 ranked it the document's top open number; doc 10 §9.4 item 12 held it
+open for doc 10's call.
+
+**Ruling.** *"A player budget setting, not a price" is the reason the multiplier
+must be there, not a reason it may be absent.* The cap is denominated in the
+player's dollars, so the settings row that reads **$25,000/day** has to buy
+$25,000/day of repairs on every preset. Quoting at nominal made one dial mean
+four different things and said so on none of them. `M_repair` now comes from the
+live preset, exactly as `cmd_repair_building` has always passed it, closing the
+other side of the seam doc 93 §M1 closed on the accrual line.
+
+**Hash-neutral on `standard`** — `M_repair` is exactly 1.00 there, the
+multiplication is the identity, and all four `profile_sim` baselines are
+bit-identical across the change. The preset arms move **by construction**: the
+cap admits `1 / M_repair` of the tile-fractions it used to.
+
+**Applied:** `sim/city_sim.gd` (`_boot_roads`'s `repair_quote` lambda); doc 10
+§9.4 item 12 (struck, with the ruling); doc 92 §39.8.
+
+### RR-88 — A counter that is always zero is worse than a counter that is missing (docs 03 §2.5, 08 §2.8, `sim/economy/treasury.gd`)
+
+**The defect.** `Treasury.credit_city_service(amount, source)` credits through
+`credit(amount, &"city_services", …)`, and `_note_lifetime` keys on the
+**category**. It has a `&"street"` arm. Nothing ever reached it. So
+`ledger_totals.lifetime_street` — doc 03 §2.5's own named row, the one
+`Treasury`'s docstring calls *"its OWN row on purpose"*, the one doc 08 §2.8's
+section rung 7 was cut for, the one
+`tests/test_street_opportunities.gd` asserts is **present in the save** — has
+read **zero on every city since the layer shipped.**
+
+The cash was never wrong: `credit()` moved the balance correctly, the hourly
+receipt book tallied correctly, and doc 03's `city_services` revenue line printed
+correctly. Only the lifetime row was dead.
+
+**Ruling.** A named counter answers questions. A missing one answers *"I don't
+know"*, which is honest; a permanently-zero one answers *"none"*, which is a
+false claim in a data structure the save carries forward forever. The tally is
+noted by SOURCE alongside the category credit. `dispatch` deliberately gets
+nothing here — `_note_lifetime` has no `&"incident"` arm, doc 91 A91-D-37 is the
+row that would build one, and inventing a key in `Treasury` would publish a
+counter doc 03 has not.
+
+**And the test that would have caught it is the one that checks the VALUE.** The
+existing tests asserted the key was in the serialised body and that the byte-
+identity property held with the key *erased*; both pass whether the counter
+counts or not. The new assertion is one line and compares it to the bounty.
+
+**Applied:** `sim/economy/treasury.gd` (`credit_city_service`); doc 03 §2.5;
+`tests/test_street_opportunities.gd`; `tests/test_playtest_harness.gd` (the
+harness's own tally and doc 03's row are asserted equal, which is what says the
+harness measures the game and not itself).
+
+### RR-89 — The same number is a rhythm or an attrition depending on whether it pays (docs 06 §2.6, 92 §18/§33.5/§33.7/§39.7, `tests/test_balance_gates.gd` gate 19)
+
+**The inconsistency.** Balance gate 19 is titled *"the dispatch loop is a
+**weekly** beat"* and has been since doc 92 §18 measured **3.04 ambient
+incidents per game-week**. It measures **9.73** at this fork — 146 over five
+seeds × 21 game-days — of which `traffic_accident` alone is 101, about **0.96 a
+game-day**. Doc 92 §33.5 refused to hide the doubling inside the band and §33.7
+ranked the ruling; it has been open since Wave 13.
+
+**Ruling: the rate is correct and the TITLE is what moves.** Three reasons, in
+the order they bind.
+
+1. **Nothing safety-critical is near its bound.** Zero failed, zero abandoned,
+   zero destroyed, treasury climbing on every seed, peak open roster **2**
+   against doc 06 §2.13(b)'s **36**.
+2. **Cutting it would invalidate doc 06's own worked examples.** §2.6(e) intends
+   0.687 accidents/game-day for a 20-intersection city; doc 09 stamps 389
+   junctions before the player builds anything, and the starter city measures
+   0.515/game-day in permanent sunshine — *below* doc 06's per-intersection
+   intent. The Wave-13 doubling is doc 07's weather reaching doc 10's congestion
+   index for the first time, i.e. two authored formulas meeting. The base rate is
+   not what is wrong, so the base rate is not what moves.
+3. **THE FUN CALCULUS CHANGED UNDERNEATH THE QUESTION, and this is the half
+   Wave 13 could not have ruled on.** When §33.7 filed it, a traffic accident was
+   a pure cost: fuel, vehicle wear, and a resolution that paid into a ledger line
+   which did not exist. Since RR-78 it is **income** — $300 × tier × speed,
+   credited through `city_services` and named in the budget panel. At 0.96/day
+   and a tier-1 answer at target ($450) that is **~$430/game-day, ~$18/gh**
+   against a founding net of $506.05/gh.
+
+**A once-a-day event that pays is a rhythm; a once-a-day event that only costs
+is attrition.** Same number, opposite reading. The honest form of this ruling is
+that it would have been *cut it* in Wave 13 and is *keep it* in Wave 15, and the
+thing that changed is not the generator — which is exactly why a pacing question
+should not be answered in the wave that discovers it.
+
+**What is NOT ruled:** the *mix* is lopsided (one channel of five carries 69 % of
+the count). That is doc 06 §2.6's rate surface to balance across channels if it
+ever wants to, and it is a different question from whether the loop beats and the
+city survives it. Both: yes.
+
+**Applied:** `tests/test_balance_gates.gd` gate 19 (re-titled, with the ruling
+and the superseded clause marked in the historical block); doc 92 §39.7.

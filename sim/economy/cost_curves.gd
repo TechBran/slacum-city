@@ -312,8 +312,45 @@ func moral_hazard_cap_fraction() -> float:
 	return float(city_services().get("MORAL_HAZARD_CAP_FRACTION", 1.0))
 
 
-func street_payout(kind: String) -> int:
-	return int((city_services().get("street_payout", {}) as Dictionary).get(kind, 0))
+## Doc 03 §2.5's bounty band for one doc 06 §2.16 opportunity kind, as
+## `{base, spread}` — the floor of the band and its width, both dollars.
+##
+## **This file is where the street layer's money lives** (report 98 RR-85).
+## `data/street.json` owns when a crook appears, where he stands and how long he
+## waits; it owns no dollar, and `OpportunitySystem.configure()` refuses a table
+## that carries one back — the same shape `IncidentCatalog` refuses `reward_base`
+## under RR-78. An unpriced kind answers an EMPTY dictionary rather than a zero,
+## so `has_street_payout()` can tell "priced at nothing" from "not priced", which
+## is the difference between a design choice and a missing row.
+func street_payout(kind: String) -> Dictionary:
+	var row: Variant = (city_services().get("street_payout", {}) as Dictionary).get(kind, null)
+	return (row as Dictionary) if row is Dictionary else {}
+
+
+func has_street_payout(kind: String) -> bool:
+	return not street_payout(kind).is_empty()
+
+
+func street_payout_base(kind: String) -> float:
+	return float(street_payout(kind).get("base", 0.0))
+
+
+func street_payout_spread(kind: String) -> float:
+	return maxf(0.0, float(street_payout(kind).get("spread", 0.0)))
+
+
+## The mean bounty of a kind, `base + spread/2`. The figure doc 03 §2.5's
+## rulings are stated against: a band's mean is what a player earns and its top
+## is what a player remembers.
+func street_payout_mean(kind: String) -> float:
+	return street_payout_base(kind) + 0.5 * street_payout_spread(kind)
+
+
+## `k` in `reward × (1 + k·(city_level − 1))`. Moved here from
+## `data/street.json`'s spawn block by RR-85 at the same value: it is a term in a
+## dollar formula, so it is this file's under C-07.
+func street_reward_city_level_k() -> float:
+	return float(city_services().get("STREET_REWARD_CITY_LEVEL_K", 0.0))
 
 
 func street_max_rate_per_game_hour() -> float:

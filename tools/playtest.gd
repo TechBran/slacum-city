@@ -16,7 +16,11 @@ extends SceneTree
 ##   --days=N            game-days per run                    (default 21)
 ##   --seeds=a,b,c       RNG seeds, one run each              (default 1337,4242,9001)
 ##   --strategies=a,b    do_nothing|greedy_growth|infrastructure_first|balanced|
-##                       tax_squeezer|disaster_neglect|all
+##                       tax_squeezer|disaster_neglect|curriculum|all
+##                       plus `collector` BY NAME ONLY (RR-86): it is the
+##                       curriculum agent with doc 06 §2.16's tap, it only works
+##                       at `--mode=fine`, and a 21-game-day run of it costs ~60x
+##                       a coarse one — see NAMED_ONLY_STRATEGY_IDS
 ##   --mode=fine|coarse  fine = the online 4 Hz path (what the player plays);
 ##                       coarse = doc 01's 1-game-hour offline catch-up path
 ##                                (~60x faster, and NOT the same city — see
@@ -47,6 +51,10 @@ const DEFAULT_DAYS := 21
 const DEFAULT_SEEDS: Array[int] = [1337, 4242, 9001]
 const DEFAULT_OUT_DIR := "res://build/playtest"
 const HOURS_PER_DAY := 24
+## `GameClock.TICKS_PER_HOUR / TICKS_PER_MINUTE` = 240/4. Named here because the
+## fine slice divides by it (`Runner.advance_hour_by_minutes`) and a slice that
+## did not land on a whole number of ticks would silently re-rate every agent.
+const MINUTES_PER_HOUR := 60
 
 ## Report order, not alphabetical: the control first, then the four players, then
 ## the two single-variable variants of `balanced` (see the class comments —
@@ -60,6 +68,20 @@ const STRATEGY_IDS: Array[String] = [
 	# sample and adding a seventh row to it would re-base every mean in the
 	# report. It is run by name, and by `test_balance_gates.gd` gate 21.
 	"curriculum",
+]
+
+## Strategies that exist, are runnable BY NAME, and are deliberately NOT in
+## `all` (RR-86).
+##
+## `collector` is the project's first FINE-PATH agent. Doc 06 §2.16's spawner
+## draws nothing on the coarse step — that is doc 08's offline-fairness rule
+## expressed where it is enforceable — so an agent that taps street opportunities
+## is only an agent at `--mode=fine`, where a 21-game-day run costs roughly sixty
+## times what the coarse matrix costs. Putting it in `all` would make the tool's
+## default run an hour long and would add an eighth row to a table doc 92 has
+## published seven of. It is run by name, and by `test_balance_gates.gd` gate 32.
+const NAMED_ONLY_STRATEGY_IDS: Array[String] = [
+	"collector",
 ]
 
 ## Verbs the harness knows how to drive. Present ones are used, absent ones are
@@ -85,6 +107,10 @@ const KNOWN_VERBS: Array[String] = [
 	# now drives it too, because an agent whose whole thesis is "bones before
 	# income" cannot watch the tap and ignore the trunk it hangs off.
 	"cmd_route_feeder",
+	# Wave 15 — doc 06 §2.16's tap. The first verb in this list that only exists
+	# on the FINE path: opportunities do not spawn during a coarse step, so a
+	# coarse agent that drove this would drive it against an empty roster forever.
+	"cmd_collect_opportunity",
 ]
 
 
@@ -217,9 +243,11 @@ class Options extends RefCounted:
 					else:
 						for part in value.split(",", false):
 							var name := String(part).strip_edges()
-							if not STRATEGY_IDS.has(name):
+							if not STRATEGY_IDS.has(name) \
+									and not NAMED_ONLY_STRATEGY_IDS.has(name):
 								opts.errors.append("unknown strategy '%s' (have %s)"
-										% [name, ", ".join(STRATEGY_IDS)])
+										% [name, ", ".join(STRATEGY_IDS
+												+ NAMED_ONLY_STRATEGY_IDS)])
 							else:
 								opts.strategies.append(name)
 				"mode":
@@ -312,6 +340,21 @@ class Api extends RefCounted:
 	## `cmd_place_building` answers `E_UNSERVED`: the wall a player without a
 	## transformer runs into. Counting it is the whole point of `greedy_growth`.
 	var unserved_walls: int = 0
+	# --- Wave 15: doc 06 §2.16's tap (RR-86) ---------------------------------
+	## Offers taken, and the dollars they paid. `street_income` is the ONLY
+	## number in this harness that measures the layer on an arc: doc 92 §35.2's
+	## ceiling was computed from spawn telemetry on a city that never changed,
+	## and a 21-game-day city changes on every axis the bounty formula reads —
+	## `city_level` scales the reward, the road graph grows the kerb pool, and a
+	## second police station moves the whole kind mix.
+	var opportunities_collected: int = 0
+	var street_income: int = 0
+	var street_missed: int = 0
+	## `city_level` -> `{"n": int, "dollars": int, "hours": int}`. Doc 92 §35.3's
+	## second-order question 4 in a column: is `STREET_REWARD_CITY_LEVEL_K` still
+	## paced against a level-4+ city, or does the layer outrun the city it scales
+	## with? The ceiling measurement could not ask — it never left level 0.
+	var street_by_level: Dictionary = {}
 
 	## verb name -> {"present": bool, "args": int, "required": int}
 	var verbs: Dictionary = {}
@@ -822,6 +865,53 @@ class Api extends RefCounted:
 	func last_net() -> float:
 		return float((sim.last_settlement.get("net", 0.0)))
 
+	# --- doc 06 §2.16: the tap (Wave 15, RR-86) ------------------------------
+
+	## Collect the NEAREST live street opportunity to `centre`, within
+	## `radius_m` ground metres, through the same funnel the shell's tap uses:
+	## `OpportunitySystem.opportunity_near()` picks the row and
+	## `cmd_collect_opportunity` takes the money. One tap, one offer — an agent
+	## that emptied the roster in a single call would be measuring a verb the
+	## player does not have.
+	##
+	## **`centre` is a TILE and `radius_m` is METRES**, because that is the pair
+	## the sim's own query takes (tile centres are `8 m` apart, constitution §6).
+	## The conversion is done here rather than at the call site so a strategy
+	## never has to know the tile size.
+	##
+	## Answers the command's own result, so `E_UNKNOWN_OPPORTUNITY` and
+	## `E_EXPIRED` land in the reason histogram exactly as a mistimed player tap
+	## would. `{}`-empty when nothing is in range: NOT logged, because "there was
+	## nothing to tap" is not an action a player took.
+	func collect_nearby(centre: Vector2i, radius_m: float) -> Dictionary:
+		if not has_verb("cmd_collect_opportunity") or sim.street == null:
+			return {}
+		var point := Vector3(float(centre.x) * 8.0 + 4.0, 0.0, float(centre.y) * 8.0 + 4.0)
+		var offer: Dictionary = sim.street.opportunity_near(point, radius_m)
+		if offer.is_empty():
+			return {}
+		var result: Dictionary = sim.cmd_collect_opportunity(int(offer["id"]))
+		_log("collect_opportunity", String(offer.get("kind", "")), result,
+				{"reward": int(offer.get("reward", 0))})
+		if not bool(result["ok"]):
+			street_missed += 1
+			return result
+		var reward := int((result["payload"] as Dictionary).get("reward", 0))
+		opportunities_collected += 1
+		street_income += reward
+		var level := sim.progression.city_level
+		var row: Dictionary = street_by_level.get(level, {"n": 0, "dollars": 0})
+		row["n"] = int(row["n"]) + 1
+		row["dollars"] = int(row["dollars"]) + reward
+		street_by_level[level] = row
+		return result
+
+	## How many offers are standing right now. Read-only and never logged — the
+	## collector uses it to skip the query entirely on the ~99 game-minutes in a
+	## hundred when the street is empty.
+	func live_opportunities() -> int:
+		return sim.street.live_count() if sim.street != null else 0
+
 	func demolish(sim_id: String) -> Dictionary:
 		var result := _optional("cmd_demolish_building", 1, [sim_id], sim_id)
 		if bool(result["ok"]):
@@ -1200,6 +1290,31 @@ class Strategy extends RefCounted:
 
 	## Called at the TOP of game-hour `hour` (0-based), before that hour runs.
 	func act(_api: Api, _hour: int) -> void:
+		pass
+
+	## **The game-minute hook, and the one thing in this harness that costs
+	## something to leave switched on** (RR-86).
+	##
+	## Every agent before Wave 15 acted once a game-hour, so `Runner` could
+	## advance the sim an hour at a time. Doc 06 §2.16's opportunities live for
+	## two to four game-hours and are drawn once a game-MINUTE, so an agent that
+	## taps has to be given the minute — and slicing the fine advance into sixty
+	## calls is sixty times the loop overhead for every agent that does not.
+	##
+	## So it is opt-in and `false` is the default: `Runner` slices only when the
+	## strategy asks. **The slice is bit-identical to the whole hour** —
+	## `advance_hours(1.0)` is `advance_fine_n(240)`, and sixty
+	## `advance_hours(1.0/60.0)` are sixty `advance_fine_n(4)` on the same tick
+	## loop — which `tests/test_playtest_harness.gd` asserts on the state hash
+	## rather than on this paragraph.
+	func wants_game_minutes() -> bool:
+		return false
+
+	## Called once per game-minute, after that minute's four fine ticks have run.
+	## `minute` counts from 0 at the start of the run. **Coarse runs never call
+	## it**: doc 06 §2.16's spawner draws nothing on the coarse step, so there
+	## would be nothing to answer and the call would only cost time.
+	func tick_minute(_api: Api, _minute: int) -> void:
 		pass
 
 
@@ -2490,12 +2605,80 @@ class Curriculum extends Balanced:
 		return maxi(1, int(ceil(float(obj["target"]) - float(obj["current"]))))
 
 
+## **The tapping agent** — `curriculum` plus doc 06 §2.16's tap, and the first
+## fine-path strategy in this file (RR-86, doc 92 §35.4 item 1).
+##
+## Doc 92 §35 had to rule on the opportunity layer's income share with no agent
+## that could collect one, so §35.2's ceiling was computed from SPAWN TELEMETRY
+## on a founding city that never changed: no city level, no second station, no
+## growing kerb pool, and no income to compare against but the founding hour's.
+## Every one of those moves on a real arc, and three of them move the bounty.
+## This agent is the instrument that closes it.
+##
+## ── what it is ────────────────────────────────────────────────────────────
+##
+## `curriculum` — the taught route, the agent gate 21 and doc 92 §36.4 are
+## measured on — **with one addition and nothing else changed**: once a
+## game-minute it taps the nearest live offer. It is the controlled pair doc 92
+## uses everywhere else, and its partner is `curriculum` itself on the same
+## seeds: any difference between the two rows is the street layer and nothing
+## else, because the builder underneath is the same object with the same reserve,
+## the same maintenance purse and the same checklist.
+##
+## ── what it is NOT, said plainly, because the number depends on it ────────
+##
+## **It is a CEILING agent.** It has no camera, no travel time and no attention
+## budget: `SWEEP_RADIUS_M` covers the whole 112-tile world, so every offer it is
+## awake for is an offer it takes. A human collects a fraction of that — doc 92
+## §35.3 costed the ceiling at twenty-four real minutes of uninterrupted
+## map-scrubbing per game-day. So `street_income` from this agent is the MOST the
+## layer can pay a player who is playing the curriculum, which is exactly the
+## bound doc 03 §2.5's `STREET_CEILING_SHARE_MAX` is written against, and it is
+## not a forecast of a session.
+##
+## **One tap per game-minute is a real bound and it is not the binding one.**
+## The spawner delivers about 0.57 offers per game-hour — roughly one tap in a
+## hundred minutes — so the agent is idle almost always and the cap never bites.
+## It is written as a cap anyway, because an agent that emptied the roster in one
+## call would be driving a verb the player does not have.
+class Collector extends Curriculum:
+	## Ground metres. The world is 112 tiles at 8 m (constitution §6), so its
+	## diagonal is ~1,267 m: this is deliberately unbounded, and the docstring
+	## above is where that choice is argued rather than hidden in a constant.
+	const SWEEP_RADIUS_M := 2000.0
+	## Tile the sweep measures "nearest" from — the centre of the world, so the
+	## tie-break between two simultaneous offers is a fixed, seed-independent
+	## geometry and not an accident of iteration order.
+	const SWEEP_CENTRE := Vector2i(TileGrid.SIZE / 2, TileGrid.SIZE / 2)
+
+	func id() -> String:
+		return "collector"
+
+	func describe() -> String:
+		return ("the curriculum agent plus doc 06 §2.16's tap: one street "
+				+ "opportunity per game-minute, unbounded radius — the CEILING "
+				+ "of the street layer on a played arc, not a session forecast")
+
+	func wants_game_minutes() -> bool:
+		return true
+
+	func tick_minute(api: Api, _minute: int) -> void:
+		# The cheap guard first. On ~99 game-minutes in a hundred the roster is
+		# empty, and `live_count()` is an array size against
+		# `opportunity_near()`'s distance sweep plus a command round-trip.
+		if api.live_opportunities() <= 0:
+			return
+		api.collect_nearby(SWEEP_CENTRE, SWEEP_RADIUS_M)
+
+
 class Factory extends RefCounted:
 
 	static func make(strategy_id: String) -> Strategy:
 		match strategy_id:
 			"curriculum":
 				return Curriculum.new()
+			"collector":
+				return Collector.new()
 			"do_nothing":
 				return DoNothing.new()
 			"greedy_growth":
@@ -2531,6 +2714,9 @@ class Runner extends RefCounted:
 		sim.bus.drain()
 		samples.append(_sample(sim, 0, {}, 0.0))
 
+		# Doc 06 §2.16's tap needs the game-minute, and only on the fine path
+		# (RR-86). `Strategy.wants_game_minutes` explains why this is opt-in.
+		var sliced := not coarse and strategy.wants_game_minutes()
 		for h in total_hours:
 			api.hour = h
 			strategy.act(api, h)
@@ -2539,6 +2725,8 @@ class Runner extends RefCounted:
 				# every run under doc 08's offline fairness rules and silence the
 				# Disaster Director structurally (the pass-2 blind spot).
 				sim.advance_coarse_hours(1, false)
+			elif sliced:
+				advance_hour_by_minutes(sim, strategy, api, h)
 			else:
 				sim.advance_hours(1.0)
 			var settled := _drain(sim, events)
@@ -2574,6 +2762,26 @@ class Runner extends RefCounted:
 		}
 		doc["digest"] = _digest(samples)
 		return doc
+
+	## ONE game-hour on the fine path, cut into sixty game-minutes with the
+	## strategy given the seam between them (RR-86).
+	##
+	## **This must be bit-identical to `sim.advance_hours(1.0)` for a strategy
+	## that does nothing in the seam**, and it is by construction rather than by
+	## luck: `advance_hours(x)` is `advance_fine_n(roundi(x × 240))`, `1.0/60.0`
+	## rounds to exactly 4 ticks, and `TickScheduler` carries no per-call state —
+	## so sixty calls of four ticks are the same 240 ticks in the same order.
+	## `tests/test_playtest_harness.gd` asserts it on `state_hash()`, on both a
+	## slicing and a non-slicing agent, because a slice that drifted would make
+	## every collector measurement a measurement of a different city.
+	##
+	## Shared with `BalanceGateRig`, which needs the identical loop: a gate and a
+	## report row have to be the same measurement (the rig's own header).
+	static func advance_hour_by_minutes(sim: CitySim, strategy: Strategy, api: Api,
+			hour: int) -> void:
+		for m in MINUTES_PER_HOUR:
+			sim.advance_hours(1.0 / float(MINUTES_PER_HOUR))
+			strategy.tick_minute(api, hour * MINUTES_PER_HOUR + m)
 
 	# --- sampling -----------------------------------------------------------
 
@@ -2788,6 +2996,19 @@ class Runner extends RefCounted:
 			"tax_changes": api.tax_changes,
 			"priority_sets": api.priority_sets,
 			"unserved_walls": api.unserved_walls,
+			# --- Wave 15: doc 06 §2.16's tap on an arc (RR-86) --------------
+			"opportunities_collected": api.opportunities_collected,
+			"street_income": api.street_income,
+			"street_missed": api.street_missed,
+			## THE NUMBER doc 92 §35.3 could not take: street bounties as a share
+			## of the same run's settled net. `0.0` for every agent that never
+			## taps, which is the "and exactly 0 when idle" half of doc 03 §2.5's
+			## ruling measured rather than asserted.
+			"street_share_of_net": float(api.street_income)
+					/ maxf(1.0, net_sum),
+			## `city_level` -> `{n, dollars}`. Doc 92 §35.3's question 4:
+			## `STREET_REWARD_CITY_LEVEL_K` against a level-4+ city.
+			"street_by_level": api.street_by_level.duplicate(true),
 			"tax_rate_end": float(last["tax_rate"]),
 			"tax_level_end": sim.tax_level(),
 			"blocks_owned_end": int(last["blocks_owned"]),

@@ -1887,6 +1887,98 @@ anything. Its one-shot flag persists; its coordinates deliberately do not,
 because a mark restored a day later would point at a street that emptied hours
 ago, and a mark that points at nothing is worse than a mark that centres.
 
+## P. Wave-15 rulings — the reward ledger settles, and four numbers that were never checked (2026-08-21)
+
+*Balance fork. The full arguments and the measurements are report 98 §35
+(RR-85 … RR-89) and doc 92 §39; what follows is what each one BINDS, in one line,
+because that is what a mechanics audit is for. **Four of the five have the same
+shape** — a published number, quoted in three documents, held by a passing test,
+and not the number the game was using — which is itself the finding U1 ends on.*
+
+### U1. A price that lives in two files is a price nobody owns (report 98 RR-85)
+
+**Binding:** C-07's currency monopoly is not satisfied by doc 03 *publishing* a
+price; it is satisfied by the game *reading* doc 03's price. The opportunity
+layer shipped with its live `{base, spread}` bands in `data/street.json` and a
+placeholder flat table in `data/economy.json` — **and two of the three keys in
+doc 03's table were not even live kind ids**, so the spawner could not have read
+it if it had tried. Every dollar the player earned came from the file the balance
+gates did not open.
+
+**The discriminating test is the one that checks ABSENCE.** A test asserting doc
+03's numbers are present and well-shaped passes identically whether the column is
+live or dead; a test asserting doc 06's file carries no price at any depth does
+not. Where a price moves between documents, the migration ships **both** halves —
+the destination's values and the source's refusal (`FORBIDDEN_KEYS`, a boot
+error) — or it has not moved anything, it has copied.
+
+**And a migration that moves no number must prove it with the hash.** All four
+`profile_sim` baselines are bit-identical across this one, which is the only
+evidence that separates "moved" from "retuned while nobody was looking".
+
+### U2. A ceiling and a share are different claims and may not share a bound (report 98 RR-86)
+
+**Binding:** *what a system pays a player who takes everything* and *what it pays
+a player who plays* are two measurements with two denominators, and one published
+band cannot hold both. The old `STREET_MAX_RATE_PER_GAME_HOUR × max(payout)`
+product tried: it was quoted as a worst case, compared against a founding hour,
+and then described as the band "when played". Split, they are
+`STREET_CEILING_SHARE_MAX` (spawner, founding net) and
+`STREET_PLAYED_SHARE_BAND` (a played arc, that arc's own net), and each is
+measured on the thing it is about.
+
+**The corollary that made it possible:** *a bound nobody can measure is not a
+bound.* `STREET_MAX_RATE_PER_GAME_HOUR = 0.45` was violated by the shipped spawn
+table by 48 % from the day it was written, and no test could see it because the
+table lived in a file the gate could not open. A contract is checked against the
+thing it constrains, in the same tree, or it is a comment.
+
+**And the instrument is part of the ruling.** A layer that only exists on the
+FINE path needs a fine-path agent before any claim about it is a measurement;
+`collector` is that agent, and the slice that makes it possible is asserted
+bit-identical to the hour it replaces rather than assumed to be.
+
+### U3. A budget setting is denominated in the player's dollars, so it is priced (report 98 RR-87)
+
+**Binding:** calling a dial *"a player budget setting, not a price"* is the reason
+its quote must carry the full price — including C-16's `M_repair` — not a reason
+it may quote at nominal. `auto_repair_daily_cap` reads *$25,000/day* on the
+settings sheet; it has to buy $25,000/day of repairs on every difficulty preset,
+and quoting at nominal made one dial mean four things and say so on none of them.
+
+**Hash-neutrality is what makes a fix like this shippable in a balance wave:**
+the default preset's multiplier is exactly 1.00, so the change is the identity
+there and the arms that move are precisely the ones the finding is about.
+
+### U4. A counter that is always zero is worse than a counter that is missing (report 98 RR-88)
+
+**Binding:** a named ledger row answers a question. A missing one answers *"I
+don't know"*; a permanently-zero one answers *"none"*, which is a false claim the
+save carries forward forever. `ledger_totals.lifetime_street` read zero on every
+city the layer ever ran on, because the credit was keyed on a CATEGORY and the
+counter on a SOURCE — while the cash, the receipt book and the printed revenue
+line were all correct, which is what let it survive a wave.
+
+**The test that discriminates is the one that checks the VALUE.** The existing
+tests asserted the key was in the serialised body, and asserted a byte-identity
+property with the key *erased*; both pass whether the counter counts or not.
+
+### U5. The same number is a rhythm or an attrition depending on whether it pays (report 98 RR-89)
+
+**Binding:** a pacing question may not be answered in the wave that discovers it,
+because the thing that decides it is often not the generator. `traffic_accident`
+at ~0.96/game-day was, in Wave 13, an event that cost fuel and vehicle wear and
+paid into a ledger line that did not exist — one a day, forever, for nothing.
+Since RR-78 the same event pays ~$450 and the budget panel names it. **Same rate,
+opposite reading**: the ruling would have been *cut it* then and is *keep it*
+now, and nothing about the incident changed.
+
+**The corollary for gates:** a gate whose TITLE states a cadence must be re-titled
+when the cadence is re-ruled. Gate 19 claimed a *weekly* beat over a measurement
+of 9.73/game-week for two waves; a title is an assertion, and the one place a
+gate must not be able to lie is about its own measurement.
+
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,
