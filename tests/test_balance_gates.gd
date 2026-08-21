@@ -450,7 +450,7 @@ func test_gate_04_maintenance_pays() -> void:
 			"wear must give the repair verb something to do")
 	assert_eq(int(neglected["repaired"]), 0, "the neglect knob is the only difference")
 	# **WAVE-15 RE-FIT: the money column moves from the STOCK to the FLOW**
-	# (doc 92 §35.5, report 98 RR-79). See the block comment above this test for
+	# (doc 92 §36.5, report 98 RR-79). See the block comment above this test for
 	# the whole derivation; the short version is that the money pass swapped
 	# which of the two money columns is contaminated, and the flow is the one the
 	# maintenance knob actually drives.
@@ -2492,7 +2492,7 @@ func test_gate_32_active_play_pays_more_and_idling_still_pays() -> void:
 	var share := total_services / maxf(1.0, total_net)
 	assert_true(share >= 0.02 and share <= 0.25,
 			("city services are %.2f %% of a played city's net over %d game-days; "
-					+ "measured 4.8–5.8 %% from dispatch alone (doc 92 §35.4)")
+					+ "measured 4.8–5.8 %% from dispatch alone (doc 92 §36.4)")
 					% [100.0 * share, LONG_DAYS])
 
 

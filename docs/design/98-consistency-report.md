@@ -707,13 +707,13 @@ Doc 93 §G3 refused a sixth curriculum level in Wave 9 with a test rather than a
 
 **(e) There is no ring-3 land tier, and there cannot be one on this board.** The 7 × 7 world is 9 core + 16 ring-1 + 24 ring-2 = **49 blocks, exactly**; ring 3 is the 9 × 9 shell, and buying it means `world.size_blocks` 7 → 9, a 144 × 144 tile grid, every block id re-based, the committed `bench_city.json` regenerated and doc 03 §2.7's `blocks_owned` escalation re-anchored — a *world* change, not a land tier. Re-gating existing ring-2 land upward is refused for the stronger reason: it would take purchasability away from a city that already has it. Doc 09 §2.8.3 carries the arithmetic; the two top rungs pay out in buildings only.
 
-**(f) Gates 20 and 21 are re-fitted; the other 26 are untouched.** Gate 20: `ladder.size()` 6 → 7, every other claim in it unchanged. Gate 21: the horizon moves 21 → **45 game-days** with a ruled bound of **40** on the top level, against a measurement of 31.1 / 33.5 / 34.3, and **level 5 is now asserted separately against the old 21-day horizon** so "the arc got longer at the top and not underneath" stays provable. Doc 92 §23.9 is the fit.
+**(f) Gates 20 and 21 are re-fitted; the other 26 are untouched.** Gate 20: `ladder.size()` 6 → 7, every other claim in it unchanged. Gate 21: the horizon moves 21 → **45 game-days** with a ruled bound of **40** on the top level, against a measurement of 31.1 / 33.5 / 34.3, and **level 5 is now asserted separately against the old 21-day horizon** so "the arc got longer at the top and not underneath" stays provable. Doc 92 §24.9 is the fit.
 
-**(g) Hashes: the starter city does not move; the bench city moves through exactly one key, and the A/B proves it.** Starter coarse/fine are byte-identical. The bench fixture settles at **35,411 residents**, which a seven-rung ladder reads as city level **6** where a six-rung one read 5, so its `progression` section carries a different level and one more milestone. Removing the L6 curriculum row changes nothing; putting the ladder back to six rungs reproduces the Wave-9 baseline byte for byte. The sixth building rung, the L6 meshes, the new `upgrade_time_hours` column and `Building.max_level` are all hash-neutral. **`tools/profile_sim.gd` needs exactly one baseline refresh — the bench city's two digests — and it is published in doc 92 §23.12 rather than made from this branch.**
+**(g) Hashes: the starter city does not move; the bench city moves through exactly one key, and the A/B proves it.** Starter coarse/fine are byte-identical. The bench fixture settles at **35,411 residents**, which a seven-rung ladder reads as city level **6** where a six-rung one read 5, so its `progression` section carries a different level and one more milestone. Removing the L6 curriculum row changes nothing; putting the ladder back to six rungs reproduces the Wave-9 baseline byte for byte. The sixth building rung, the L6 meshes, the new `upgrade_time_hours` column and `Building.max_level` are all hash-neutral. **`tools/profile_sim.gd` needs exactly one baseline refresh — the bench city's two digests — and it is published in doc 92 §24.12 rather than made from this branch.**
 
 **(h) One defect is REPORTED, NOT FIXED.** `CitySim.cmd_upgrade_building` reads `upgrade_time_hours` from the row of the level being upgraded TO, where doc 02 §2.2 stores the price of the step `L → L+1` on the row being upgraded FROM — so every upgrade in the game runs one rung's duration too slow, and the last step of every ladder (which has no such row) ran on a bare `4.0`-hour literal. This wave changes only the **fallback**, from that literal to the row below, so the final step reads doc 02's own number instead of a placeholder and every step that already had a figure is untouched. Fixing the off-by-one itself moves every upgrade duration in the game and is a balance pass, not a content one.
 
-**(i) The measured surprise, recorded for doc 04.** The first three-seed run of the new curriculum level failed on two of three seeds at 45 game-days, and the gate said `E_POWER_HEADROOM` on **every single** level-5 house in both cities (25 of 25, 32 of 32). That is doc 02 §8's `k_dem > TAX_LEVEL_GROWTH` working exactly as ruled — a `house` goes 91 kW → 215 kW across the sixth step, more than a whole level-2 transformer — and the fix is copper at the building that was refused, which a level-3 transformer supplies for $2,800 against a $73,572 upgrade. The `curriculum` agent now does it and all three seeds complete. **The tower tier is therefore affordable but fiddly while doc 04's feeder verb is unlanded** (doc 92 F-11): it is the first content in the game that requires the player to read a power refusal and act on it. Doc 92 §23.8 is the measurement.
+**(i) The measured surprise, recorded for doc 04.** The first three-seed run of the new curriculum level failed on two of three seeds at 45 game-days, and the gate said `E_POWER_HEADROOM` on **every single** level-5 house in both cities (25 of 25, 32 of 32). That is doc 02 §8's `k_dem > TAX_LEVEL_GROWTH` working exactly as ruled — a `house` goes 91 kW → 215 kW across the sixth step, more than a whole level-2 transformer — and the fix is copper at the building that was refused, which a level-3 transformer supplies for $2,800 against a $73,572 upgrade. The `curriculum` agent now does it and all three seeds complete. **The tower tier is therefore affordable but fiddly while doc 04's feeder verb is unlanded** (doc 92 F-11): it is the first content in the game that requires the player to read a power refusal and act on it. Doc 92 §24.8 is the measurement.
 
 ### RR-30 — Every shipped player verb gets a surface, and the drag-path tool is how the run verbs get theirs (Wave 10, 2026-08-20)
 
@@ -1266,7 +1266,7 @@ Filed as **A91-D-30 (High)**. It is not fixed here: this wave is hash-neutral by
 
 **Hash-neutrality of this wave, stated for the record.** `tools/profile_sim.gd --hash-only` before and after, both cities: founding `18e70625e633c254…` / `4c3c52cdb4c5a3cc…`, benchmark `d6b2509c179987d3…` / `bf8dc7282758843b…`. Unchanged.
 
-## 24. WAVE 11 — the flood gets drawn, and the event matrix gets a rule (binding)
+## 24b. WAVE 11 — the flood gets drawn, and the event matrix gets a rule (binding)
 
 ### RR-53 — Standing water is GEOMETRY, not a global; and an event that describes a player-visible state change needs a consumer or a written exemption (docs 07 §2.4, 11 §2.9b/§7.3e/§7.3f, 91 §18 + A91-D-26, 93 §L1)
 
@@ -1323,7 +1323,7 @@ Eleven types were wired in this pass and every one of them is an ASYMMETRY — a
 
 ---
 
-## 24. WAVE 12 — the last doors, and the last accessibility corner (binding)
+## 24c. WAVE 12 — the last doors, and the last accessibility corner (binding)
 
 ### RR-54 — A door that cannot be reached is a missing feature; a door whose command says `ok` for doing nothing is a worse one (docs 06 §2.11, 10 §2.13, 12 §2.4/§2.6/§2.13/§2.18, 91 A91-D-21/22/23/24, 92 §30, 93 §J3)
 
@@ -1919,9 +1919,9 @@ leaves half a graph untraced is not a failure mode worth being elegant about;
 `rebuild_all()`'s own one-slot path exercises that drain on every call, so it is
 never untested code.
 
-## 26. WAVE 13 — the incident cascade gets its ceiling (binding)
+## 26b. WAVE 13 — the incident cascade gets its ceiling (binding)
 
-### RR-62 — RR-26 bounded how long an incident LIVES; nothing bounded how many it MAKES (docs 06 §2.10.1/§2.13(b)/§3.1/§8, 92 §31, 93 §M1, 91 A91-D-31)
+### RR-62 — RR-26 bounded how long an incident LIVES; nothing bounded how many it MAKES (docs 06 §2.10.1/§2.13(b)/§3.1/§8, 92 §31, 93 §M1, 91 A91-D-35)
 
 **The defect.** `BalanceGateRig.run("do_nothing", 1337, 120, "crisis")` does not
 finish. From game-day **104** the open-incident roster multiplies by ~2.5–2.9
@@ -2015,7 +2015,7 @@ from game-day 160 it is what holds the roster at the ceiling on a dead `crisis`
 city, at 66–73 ms per game-hour against 5.8 ms quiet. Bounded, correct, and doc
 06's ranked open question.
 
-## 26. WAVE 12 — the difficulty follow-through (binding)
+## 26c. WAVE 12 — the difficulty follow-through (binding)
 
 ### RR-63 — One difficulty knob per ledger line, never two; and a summary-table row label does not outrank the two formulas that define the knob (docs 03 §2.4/§2.2/§2.9, 05 §9, 91 §17.2, 92 §29.2/§29.3/§29.5/§31, 93 §N1–§N4)
 
@@ -3144,7 +3144,9 @@ ruling that generalises it — a value transfer the player did not personally
 authorise must have a sensory surface at the moment it lands.
 
 **Applied:** doc 12 §2.21 and D-61 … D-64; doc 91 A91-D-37; doc 92 §38; doc 93
-§P; `data/ui.json.budget` (two keys plus the `_comment_side_revenue` note that
+**§T** *(this line read "§P" until 2026-08-21: the payday rulings are `T1`–`T3`
+and their section header carried a stale letter — see §35 / RR-85)*;
+`data/ui.json.budget` (two keys plus the `_comment_side_revenue` note that
 states the retirement rule at the point of use).
 
 ---
@@ -3641,3 +3643,126 @@ moved.
 (`seed_roster`), `tests/test_street_opportunities.gd` and
 `tests/test_street_life.gd` (five tests), doc 93 §V2. **`game/main.gd` is the
 lead's** — the one-line call is in the branch report's integration snippets.
+
+## 37. WAVE 14 MERGE — the ledger is re-derived, and the ids are made unique (binding)
+
+### RR-94 — A derived total is re-derived at the MERGE; a colliding id moves by a stated rule; and a sentence that names a command is re-RUN, never re-read (docs 91 §0/§17/§20.1b/§20.4/§20.6, 92, 93, 98 §24/§26)
+
+**RR-55 said a digest published from a branch is a statement about that branch.
+RR-76 said a derived total is not a source. Both were obeyed by all four Wave-14
+branches, and the tree still ended the wave with **three double-assigned ids**,
+**six doc-93 section headers carrying a letter none of their own rulings used**,
+**two doc-98 section numbers each assigned three times**, **nine bad
+cross-reference targets across sixteen references**, two count tables counting
+rows they had never printed, and a completion statement telling its reader to do
+work a sibling had already done.** None of that is a failure of the two rulings; it is the half of the
+problem they do not reach. RR-55 and RR-76 govern what a *branch* may publish.
+This ruling governs what a *merge* must do about it.
+
+**(a) The count is re-derived at the merge, from the documents, with the
+arithmetic printed.** Doc 91's basis is
+`grep -c "^### 2\.[0-9]"` per document (**184** across docs 01–13 at this fork),
+plus an **enumerated and now CLOSED** promotion list of four `####` rows (all
+doc 11's: §2.1.1, §2.1.2, §2.1.2a, §2.10.1), plus **two** enumerated
+cross-cutting `—` rows (both doc 05's, each printed twice in §5 and counted
+once). `184 + 4 + 2 = 190`. Graded: **172 SHIPPED / 15 PARTIAL / 1 ABSENT /
+2 DEFERRED**, and `172 + 15 + 1 + 2 = 190` is printed as a check rather than
+trusted. **172 of 190 — 90 %, or 91 % of the 188 non-deferred rows — is the
+project's single quotable figure and it supersedes the 170/188 RR-76 named.**
+
+**The promotion list is closed, and doc 03 §2.5a is why.** §2.5a (state grants,
+RR-79) is a genuinely shipped deliverable with its own constants, its own
+`assistance` revenue line and its own tests — and so are doc 11 §2.15.1 and
+§2.16b, doc 06 §2.6(z)/§2.10.1/§2.10.2/§2.13(b), and sixty more:
+`grep -c "^#### 2\."` over docs 01–13 returns **63**, of which four are already
+promoted, leaving fifty-nine with an equal claim. **No criterion admits
+§2.5a and excludes doc 07 §2.6.3 or doc 09 §2.9.4**, and a basis that grows by
+whichever sub-heading a wave felt proudest of is not a basis. Sub-headings are
+graded inside their parent row, whose pointer must name them. The four
+grandfathered rows stay because four waves of printed grades hang off them; they
+are a historical accident the table declines to repeat, and when §17 becomes a
+test the list should be deleted and the basis should be the bare `grep`.
+
+**(b) A colliding id stays with the row that CODE already points at; the row
+whose references are docs-only takes the next free number.** Three collisions
+existed at this merge and the rule resolves all three without a judgement call:
+
+| collision | keeps the id | why | moves to |
+|---|---|---|---|
+| `A91-D-31` ×2 (two Wave-13 siblings) | the sliced offline catch-up | named from `sim/time/catchup_cursor.gd`, `sim/city_sim.gd`, `tests/test_catchup_cursor.gd` | the incident-roster cascade → **`A91-D-35`**, the sequence's one unissued number |
+| `A91-D-33` ×2 (two Wave-15 siblings) | the opportunity layer | named from `tests/test_save_migration.gd:345` | the dispatch-ledger row → **`A91-D-38`** |
+| doc 93 `G4` ×2 | the `place_water_main` ruling | five doc references, and the Wave-10 block's own header claims the contiguous range `G4–G6` | the interloper → **`G9`** |
+
+A code comment is the reference hardest to keep true and the one a grep-driven
+reader trusts most, which is the whole of the reason. Where neither side has a
+code reference, the id stays with the block whose **header** claims a contiguous
+range. Both halves are mechanical, so the next collision costs a lookup rather
+than a debate.
+
+**(c) A section header is part of the id space, and a per-line merge `sed` does
+not know that.** The lead's Wave-13/14 merges renumbered rulings correctly and
+left their **section headers** behind, in six places in doc 93 — `## K.` heading
+`L1`, `## M.` heading `N1`–`N4`, `## O.` heading `P1`–`P2`, and three separate
+`## P.` headers over `R`, `S` and `T`. Doc 98 carried the same fault in its own
+numbering: **`## 24.` three times and `## 26.` three times.** Every live
+reference resolved to the first of each (checked one by one), so the first keeps
+its number and the later two take a `b`/`c` suffix — this document's own house
+style, established by RR-60b. **Fixed at this merge; the rule from here is that a
+renumbering `sed` must be run against `^#{2,4} ` as well as against the body.**
+
+**(d) Nine cross-reference targets were wrong across sixteen references — five
+dangling and four resolving to the WRONG section, which is worse.**
+**Dangling (9 references, 5 ids):** doc 92 `§23.8` / `§23.9` / `§23.12` — cited
+from §18 of this report, and the content is doc 92 **§24**'s Wave-10 pass; doc 92
+`§35.5` — from `tests/test_balance_gates.gd`, and §35 has no `.5` at all; and doc
+93 `§M3` — five references, and the ruling is **§N3**.
+**Resolving to the wrong section (7 references, 4 ids):** doc 92 `§35.2`,
+`§35.3`, `§35.4` and `§35.6` — every one a money-pass pointer that lands on the
+*opportunity layer's* section, because the money pass was drafted as §35 on its
+branch and merged as **§36**. **A dangling reference is a broken link; a reference that resolves to
+the wrong section is a lie with a footnote, and only a validator finds the
+second kind.** All are corrected — **and the validator that found them SHIPS, as
+`tools/check_doc_refs.py`**, rather than being described. It walks
+`docs/ sim/ ui/ game/ tests/ tools/ data/ .github/` and checks two things: that
+every `RR-nn`, `A91-D-nn`, `92 §<n>.<m>`, `93 §<letter>` and `98 §<n>` resolves
+to a header that defines it, **and that no header id is assigned twice** — which
+is the half that would have caught `A91-D-31`, `A91-D-33` and `G4` at the moment
+each was filed. At this merge: **2,517 references, all resolving, no id assigned
+twice, exit 0.** No dependencies, reads only, 163 lines. **It belongs in CI
+beside the suite**, and it fails closed: injecting four ids that do not
+exist — one per space — is reported as four `DANGLING` lines and exits 1.
+
+**(e) A sentence that names a command or a field must be RE-RUN, not re-read, at
+every merge.** Doc 91 §20.4's one-paragraph answer told its reader that doc 13
+*"needs one `export_presets.cfg` field"*. True at the fork it was written on;
+**false one commit later**, because a sibling branch of the same wave filled the
+field and RR-70 proved the field was never the root cause. For one wave the
+project's most-quotable sentence directed whoever read it to redo finished work.
+Two more of doc 91's PARTIAL evidence commands had gone stale the same way —
+`grep -rln _on_app_resumed tests/` now returns a file (a comment, not coverage)
+and the doc-13 permission grep now returns four flags. **A PARTIAL row is only as
+good as the command underneath it. Re-run the command; do not re-read the
+sentence.**
+
+**What this costs and what it buys.** Nothing in `sim/`, `game/` or `ui/` moved
+and no behaviour changed: the whole ruling is documents, four test/data comment
+pointers, and the ids. The four determinism baselines at this merge — founding
+`a27da24aaf6e9663…` / `d2dec6727c64001d…`, bench `7c99720f5ff14553…` /
+`8f60accb6d91ad1e…` — are re-measured rather than quoted, and they differ from
+**all four** sets the Wave-14 branches published, because two of those branches
+wrote `sim/` and `data/`. That is not drift; that is a merge, and it is exactly
+why the merge is where a count gets re-derived.
+
+**Applied:** doc 91 §0 (the re-derived count table and the basis rule), §6, §12,
+§14.5 (the two renumberings), §17.1/§17.2 (the 25-of-25 census), §20.1b, §20.4
+(the completion statement, re-taken) and **§20.6** (the Wave-14 marker sweep);
+doc 92 §41; doc 93 §U and six section headers; doc 98 §24b/§24c/§26b/§26c and
+this section; doc 06 §9 item 9 (closed); doc 11 §6 (the deferred-pedestrians
+annotation); **new: `tools/check_doc_refs.py`**; and four stale pointers in
+files that are not documents — `tests/test_city_sim.gd:146` and
+`tests/test_balance_gates.gd:412` (comments), `tests/test_balance_gates.gd:2277`
+(an assertion's failure-message string, which a passing run never builds) and
+`data/economy.json`'s `_wave15_money_pass_note` (a `_`-prefixed comment key).
+None can change behaviour, and that is proved rather than asserted:
+`profile_sim --hash-only` was run on both cities **before and after** these
+edits and all four digests are byte-identical.

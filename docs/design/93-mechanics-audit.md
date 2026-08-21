@@ -539,7 +539,13 @@ whitelist does not name. An evaluator written without a door now fails a test on
 wave *earlier* than a goal row that names it — which is where the rule wanted to
 be all along.
 
-### G4. `place_water_main` stays reachable and unused (Wave 10)
+### G9. `place_water_main` stays reachable and unused (Wave 10)
+
+*Filed as `G4`; **renumbered `G9` on 2026-08-21** — the Wave-10 block below is
+headed `G4–G6` and claimed the same number. This ruling is the interloper (it
+sits between G2 and G3 and belongs to no block), so it moves and the contiguous
+range stays true. The five references rewritten with it: doc 91 §17.1 and
+§17.4, doc 92 §17.6.1, §25.3 and §22.2.*
 
 The curriculum gained `l3_streets` (4 tiles of street) and `l4_repairs` (2
 repairs) the day their doors landed, and it did **not** gain a water-main row
@@ -980,7 +986,7 @@ Two reasons, and the second is the harder one.
 save will look for a top-level key and not find one. That is why `_v5_to_v6`,
 `_restore_difficulty` and this ruling all say where it is instead.
 
-## K. Wave-11 rulings — the event matrix gets a rule (2026-08-20)
+## L. Wave-11 rulings — the event matrix gets a rule (2026-08-20)
 
 ### L1. An event that describes a PLAYER-VISIBLE state change needs a consumer or a written exemption; everything else needs one line, and a RENDERER counts as a consumer
 
@@ -1107,7 +1113,7 @@ to carry, against 5.8 ms for the quiet city. That is a **rate that should
 probably consume a road**, and it is doc 06's ranked open question rather than
 this ruling's business.
 
-## M. Wave-12 rulings — the difficulty follow-through (2026-08-20)
+## N. Wave-12 rulings — the difficulty follow-through (2026-08-20)
 
 *Doc 92 §29.5 closed with four ranked questions it deliberately did not answer,
 and one of them (`E_roads_repair`'s double knob) it called "48 % of the whole
@@ -1385,7 +1391,7 @@ wants 2.7× the road at 02:30 that the commercial core does. **A fold that leave
 one of the four curves at zero everywhere is the wrong fold**, and that is the
 cheap test to apply the next time one is written.
 
-## O. Wave-13 rulings — the last two open questions in the ledger (2026-08-21)
+## P. Wave-13 rulings — the last two open questions in the ledger (2026-08-21)
 
 *Two questions that had each survived a wave by being ranked rather than
 answered. Neither needed a measurement — both measurements already existed — so
@@ -1691,7 +1697,7 @@ unrelated change.
 
 ---
 
-## P. Wave-15 rulings — the money pass (2026-08-21)
+## R. Wave-15 rulings — the money pass (2026-08-21)
 
 *Three rulings, and the first of them is four waves old. Doc 06 filed open question 6 in Wave 1 — "`reward_base` may be doc 03's money too" — and doc 93 §N1 point 4 wrote down the condition on which it would be re-openable. This pass meets that condition, and finds that the answer was worth more than the tidiness: the double booking was hiding **12.5 % of a founding day's income** from the ledger that was supposed to be teaching the player where their money comes from.*
 
@@ -1743,7 +1749,7 @@ Neither flip is the maintenance knob. Both are the same artefact seen twice: **c
 
 `value created` is not the replacement: on seed 9001 it separates the pair by **0.29 %**, which is noise wearing a threshold, and this doc has already ruled once (gate 12c, Wave 8) that a threshold fitted on the matrix must be measured on the matrix. `net_mean_per_hour` is the **flow**, it is what condition drives through doc 03's `f_condition`, it separates the pair by 12–20 % on all three seeds in **both** arms, and gate 5 already uses it for the same claim one comparison up. No constant moved to make this pass; the column moved to the thing the knob acts on.
 
-## P. Wave-14 rulings — the street gets something to do, and the three rules that came out of drawing it (2026-08-21)
+## S. Wave-14 rulings — the street gets something to do, and the three rules that came out of drawing it (2026-08-21)
 
 *Doc 11 §2.17's STREET LIFE layer. The mechanics question this pass answers is
 the player's own — **"there's not a lot of downtime of absolutely nothing to
@@ -1803,7 +1809,7 @@ publish `active_buffers()` and mean it, and the profiler can print it beside the
 timing. A budget claim that cannot be printed is a budget claim nobody re-checks.
 
 
-## P. Wave-14 rulings — a payment nobody could hear, and a pick that is not on the grid (2026-08-21)
+## T. Wave-14 rulings — a payment nobody could hear, and a pick that is not on the grid (2026-08-21)
 
 ### T1. A reward that reaches the treasury and no surface is a reward the game did not pay
 
@@ -1887,7 +1893,7 @@ anything. Its one-shot flag persists; its coordinates deliberately do not,
 because a mark restored a day later would point at a street that emptied hours
 ago, and a mark that points at nothing is worse than a mark that centres.
 
-## P. Wave-15 rulings — the reward ledger settles, and four numbers that were never checked (2026-08-21)
+## U. Wave-15 rulings — the reward ledger settles, and four numbers that were never checked (2026-08-21)
 
 *Balance fork. The full arguments and the measurements are report 98 §35
 (RR-85 … RR-89) and doc 92 §39; what follows is what each one BINDS, in one line,
@@ -2076,6 +2082,109 @@ colour in every procedural mesh in this renderer, for the same reason and with
 no conversion either. It is FILED and not fixed here (report 98 RR-91's deferral
 list) because converting the shared constants would move the mesh half at the
 same time, and the mesh half has never been judged against a picture.
+
+## W. Wave-14 merge rulings — how coverage is COUNTED, and how an id survives four siblings (2026-08-21)
+
+*Three rulings, all about the ledger rather than about the game. They exist
+because four Wave-14 branches each did the right thing on their own fork and the
+merged tree still came out with three double-assigned ids, six mislabelled
+section headers in **this document**, and a count table nobody could check
+against the rows beneath it. Report 98 §37 / RR-94 is the binding form; these are
+the three decisions inside it that a mechanics reader needs.*
+
+### W1. The row basis is a GREP plus two enumerated lists, and the promotion list is CLOSED
+
+Doc 91's coverage count has been re-derived four times and the basis has moved
+every time, which makes the percentage unquotable however carefully it is
+computed. The basis is now fixed and mechanical:
+
+```
+rows = grep -c "^### 2\.[0-9]" over docs 01-13          =  184
+     + an ENUMERATED, CLOSED list of promoted #### rows =    4   (doc 11 §2.1.1, §2.1.2, §2.1.2a, §2.10.1)
+     + an ENUMERATED list of cross-cutting "—" rows     =    2   (doc 05's, each printed twice and counted once)
+                                                          -----
+                                                           190
+```
+
+**The promotion list is closed, and doc 03 §2.5a is the case that closes it.**
+§2.5a — the state grants, RR-79 — is a real shipped deliverable with published
+constants, its own `assistance` revenue line and its own tests. So is doc 11
+§2.16b's pose cache. So is doc 06 §2.13(b)'s saturation rule, which this very
+wave leaned on. `grep -c "^#### 2\."` over docs 01–13 returns **63**, and there
+is **no criterion that admits §2.5a and excludes doc 07 §2.6.3 or doc 09
+§2.9.4**. A basis that grows by whichever sub-heading a wave felt proudest of is
+not a basis; it is a mood.
+
+**The ruling: a `####` sub-heading is graded inside its parent `### 2.N` row, and
+the parent's pointer MUST name it.** Doc 03 §2.5's row now names both grants and
+the `city_services` line, so the deliverable is graded, credited and findable —
+it simply is not a *row*. The four grandfathered doc-11 promotions stay because
+four waves of printed grades hang off them, and they are recorded as a historical
+accident this table declines to repeat rather than as a principle it applies.
+When §17's verb matrix becomes a test and "done" is a number the suite prints,
+the promotion list should be **deleted** and the basis should be the bare grep.
+
+*Consequence worth stating: adding a mechanic no longer moves the percentage
+unless it gets a `### 2.N`. That is the correct incentive — a section heading is
+cheap, and a heading is what makes a mechanic auditable in the first place.*
+
+### W2. A colliding id stays with the row that CODE points at
+
+Two Wave-13 siblings each filed an `A91-D-31`. Two Wave-15 siblings each filed an
+`A91-D-33`. Doc 91's own §14.5 already warns that renaming an id "would break
+every cross-reference in `docs/` and in code comments", which is the right
+instinct and, on its own, not a rule — both sides of a collision have references.
+
+**The ruling, mechanical, no judgement required:**
+
+1. **The id stays with the row that CODE already points at** — a file under
+   `sim/`, `ui/`, `game/`, `tests/`, `tools/` or `data/`. A code comment is the
+   reference hardest to keep true and the one a grep-driven reader trusts most.
+2. **The row whose references are docs-only takes the next free number** in the
+   document's own sequence — never a restart, never a reuse.
+3. **If neither side has a code reference, the id stays with the block whose
+   HEADER claims a contiguous range**, and the interloper moves.
+
+Applied at this merge: `A91-D-31` stays with the sliced offline catch-up (named
+from `sim/time/catchup_cursor.gd`, `sim/city_sim.gd`,
+`tests/test_catchup_cursor.gd`) and the incident-roster cascade becomes
+**`A91-D-35`** — the sequence's one unissued number, so the ledger gains no hole.
+`A91-D-33` stays with the opportunity layer (named from
+`tests/test_save_migration.gd`) and the dispatch-ledger row becomes
+**`A91-D-38`**. By rule 3, this document's own twice-assigned `G4` stays with
+Wave 10's `G4–G6` block and the `place_water_main` ruling becomes **`G9`**.
+
+### W3. A section HEADER is part of the id space, and a per-line `sed` does not know that
+
+**Six headers in this document carried a letter that none of their own rulings
+used**, every one of them a Wave-13/14 merge artefact: `## K.` over `L1`, `## M.`
+over `N1`–`N4`, `## O.` over `P1`–`P2`, and **three separate `## P.` headers**
+over the `R`, `S` and `T` blocks. Report 98 carried the same fault in its own
+numbering — `## 24.` three times, `## 26.` three times. Every ruling id inside
+was correct and every cross-reference resolved, which is exactly why it survived
+three merges: **nothing was broken, only unfindable.** A reader who greps
+`## N\.` to find `N3`'s context gets nothing and concludes the ruling does not
+exist.
+
+**The ruling: a renumbering `sed` must be run against `^#{2,4} ` as well as
+against the body, and a merge that renumbers rulings must re-derive its own table
+of headers afterwards.** Headers are fixed here (`L`, `N`, `P`, `R`, `S`, `T`),
+and where a *number* was assigned three times the first keeps it and the later
+two take a `b`/`c` suffix — report 98's own house style, established by RR-60b.
+
+**The durable half is a validator, not a habit — and it ships as
+`tools/check_doc_refs.py` rather than being recommended.** It walks
+`docs/ sim/ ui/ game/ tests/ tools/ data/ .github/`, resolves every `RR-nn`,
+`A91-D-nn`, `92 §<n>.<m>`, `93 §<letter>` and `98 §<n>` against the header that
+defines it, **and refuses any id that is assigned twice** — which is the half
+that would have caught all three of this section's collisions on the day they
+were filed rather than three merges later. At this
+merge it checked **2,517 references** and found **nine bad targets across
+sixteen references** — five dangling and, worse, **four that resolved to the
+wrong section** because the money pass was drafted as doc 92 §35 and merged as
+§36. A dangling pointer is a broken link
+and a reader notices; a pointer that resolves to the wrong section is a lie with
+a footnote. **It belongs in CI, next to the suite.**
 
 ## F. Explicitly deferred (unchanged from master plan)
 
