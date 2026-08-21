@@ -179,6 +179,12 @@ var loading_veil: LoadingVeil
 ## opinion about what the player asked for.
 var haptics: Haptics
 
+## Wave 14's payday model. It has no screen of its own — a collect is felt on
+## the HUD chip, the toast surface, the coach mark and the Economy ledger, four
+## surfaces this root already owns — so it is a model held here rather than a
+## screen node, and `feed_events()` is the only thing that drives it.
+var street: StreetModel
+
 var current_breakpoint: Breakpoint = Breakpoint.REGULAR
 var drawer_w_dp: int = 300
 
@@ -365,6 +371,8 @@ func bring_up_screens() -> void:
 		build_sheet.haptics = haptics
 	if land_panel != null:
 		land_panel.haptics = haptics
+	if street == null:
+		street = StreetModel.new(config)
 	_connect_screens()
 
 
@@ -991,6 +999,7 @@ func feed_events(batch: Array) -> void:
 	_check_city_level(batch)
 	_check_flood(batch)
 	_check_goal_events(batch)
+	_check_street(batch)
 	if onboarding == null or not onboarding.is_active():
 		return
 	for entry: Variant in batch:
@@ -1088,6 +1097,125 @@ func _check_flood(batch: Array) -> void:
 				{"depth": int(roundf(float(event.get("depth_mm", 0.0))))}),
 				HudModel.STATE_WARNING)
 		return
+
+
+# ---------------------------------------------------------------------------
+# Wave 14 — the payday (doc 12 §2.21)
+#
+# **Nothing to connect.** Every one of the four surfaces is already downstream
+# of `feed_events()`, which `game/main.gd` already calls once per tick, so the
+# bounty half of this needs no shell change at all: a crew that answered a call
+# while the player was looking somewhere else now pulses the treasury chip,
+# sounds a coin and says what it was worth, and the money finally appears in the
+# Economy tab's own column.
+#
+# The tap half needs the shell, because only the shell owns the tap: see
+# `report_collect()` below and `BuildController.pick_at_ground`.
+# ---------------------------------------------------------------------------
+
+func _check_street(batch: Array) -> void:
+	if street == null:
+		return
+	for entry: Variant in batch:
+		if not (entry is Dictionary):
+			continue
+		var event: Dictionary = entry
+		match StringName(str(event.get("type", ""))):
+			StreetModel.EVENT_INCIDENT_RESOLVED:
+				_spend_feedback(street.bounty_feedback(event), HudModel.STATE_NORMAL)
+			StreetModel.EVENT_COLLECTED:
+				# The collect the player made reaches this root through
+				# `report_collect()`; this arm is for one that happened without
+				# a tap. **`by_player` defaults to TRUE, and the default is the
+				# safe direction**: a sim that never stamps the field leaves an
+				# auto-collect out of the ledger's street line, where the other
+				# default would count the player's own tap twice and print it.
+				if not bool(event.get("by_player", true)):
+					_spend_feedback(street.collect_feedback(
+							{"ok": true, "payload": event}), HudModel.STATE_NORMAL)
+			StreetModel.EVENT_SPAWNED:
+				_raise_street_coach(event)
+			StreetModel.EVENT_HOUR_SETTLED:
+				street.close_hour()
+				_push_side_revenue()
+
+
+## The one-time discovery mark (§2.17's machinery, not §2.17's curriculum). The
+## model decides whether this is the first opportunity a save has ever seen; the
+## tutorial's own claim on the screen is checked here, because only this root
+## knows whether a step is up.
+func _raise_street_coach(event: Dictionary) -> void:
+	if onboarding == null:
+		return
+	var request := street.note_spawn(event, onboarding.is_active())
+	if request.is_empty():
+		return
+	onboarding.show_notice(str(request["text"]), request["world_pos"] as Vector3,
+			bool(request["has_pos"]), float(request["ttl_s"]))
+
+
+## Whatever `StreetModel` said should be felt, spent on the surfaces that can
+## feel it. Returns the toast copy — `""` when there was nothing to say — so the
+## shell and the tests can read what the player was told.
+func _spend_feedback(feedback: Dictionary, state: StringName) -> String:
+	if feedback.is_empty():
+		return ""
+	var chip := str(feedback.get("flash_chip", ""))
+	if chip != "" and hud != null:
+		hud.flash_chip(StringName(chip), street.chip_flash_s())
+	var cue := StringName(str(feedback.get("haptic", "")))
+	if cue != &"" and haptics != null:
+		haptics.fire(cue)
+	var toast := str(feedback.get("toast", ""))
+	if toast != "":
+		push_toast(toast, state if bool(feedback.get("ok", false))
+				else HudModel.STATE_WARNING)
+	return toast
+
+
+## The two ledger lines doc 03 does not settle. Pushed on the hour boundary and
+## on a restore, which are the only two moments the CLOSED hour's tally can
+## change — a deposit lands in the hour still running and moves no ledger row.
+func _push_side_revenue() -> void:
+	if city_dashboard == null or city_dashboard.model == null:
+		return
+	city_dashboard.model.budget.feed_side_revenue(street.side_revenue())
+
+
+## **The tap that collected something.** `result` is
+## `BuildController.collect_opportunity()`'s record and `pick` is the row
+## `pick_at_ground` resolved.
+##
+## Returns `StreetModel`'s feedback record — `{ok, amount, toast, cue, …}` —
+## rather than the toast copy the other `report_*` calls return, for one reason:
+## the shell keeps exactly one job out of this, and it needs an answer to do it.
+## `AudioService` belongs to `game/` and `ui/` has never held one, so the shell
+## reads `cue` and calls `audio.ui_cue(AudioService.UI_CASH)`, exactly as it
+## already does for `UI_CONFIRM` on every other command result. It must not read
+## `ok` for that: a build whose sim has no collect verb yet refuses with
+## `E_NO_COMMAND`, and the honest sound for a feature that is not there is
+## silence rather than a rejection buzz.
+##
+## Called once per collect, never speculatively: the record it returns is also
+## what moves the street line of the ledger.
+func report_collect(result: Dictionary, pick: Dictionary = {}) -> Dictionary:
+	if street == null:
+		return {}
+	var feedback := street.collect_feedback(result, pick)
+	# A collect is also the best possible end to the mark that pointed at it:
+	# the player did the thing, so the sentence has done its work.
+	if bool(feedback.get("ok", false)) and onboarding != null \
+			and onboarding.notice_active():
+		onboarding.dismiss_notice()
+	feedback["toast_shown"] = _spend_feedback(feedback, HudModel.STATE_NORMAL)
+	return feedback
+
+
+## The projector a street coach mark points with — see
+## `OnboardingFlow.set_world_point_projector`.
+func set_onboarding_world_projector(projector: Callable) -> void:
+	if onboarding != null:
+		onboarding.set_world_point_projector(projector)
 
 
 ## S14 — the goals seam (doc 12 §2.19).
@@ -1438,6 +1566,14 @@ func _on_onboarding_action(action: StringName, payload: Dictionary) -> void:
 
 
 func _on_onboarding_finished(was_skipped: bool) -> void:
+	# A discovery mark the tutorial was standing on is owed, not lost: the first
+	# collectable a player ever sees is worth explaining late, and skipping the
+	# tutorial is exactly the case where nothing else has explained it.
+	if street != null and onboarding != null:
+		var owed := street.take_pending()
+		if not owed.is_empty():
+			onboarding.show_notice(str(owed["text"]), owed["world_pos"] as Vector3,
+					bool(owed["has_pos"]), float(owed["ttl_s"]))
 	onboarding_finished.emit(was_skipped)
 
 
@@ -1639,6 +1775,8 @@ func capture_ui_state() -> Dictionary:
 		out["settings"] = settings_sheet.capture_state()
 	if onboarding != null:
 		out["onboarding"] = onboarding.capture_state()
+	if street != null:
+		out["street"] = street.capture_state()
 	return out
 
 
@@ -1659,6 +1797,10 @@ func restore_ui_state(state: Dictionary) -> void:
 	if onboarding != null:
 		var coach: Variant = state.get("onboarding", {})
 		onboarding.restore_state(coach if coach is Dictionary else {})
+	if street != null:
+		var payday: Variant = state.get("street", {})
+		street.restore_state(payday if payday is Dictionary else {})
+		_push_side_revenue()
 
 
 ## doc 12 §2.1: `Control` coordinates are dp on every device, matching Android's

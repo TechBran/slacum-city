@@ -6455,3 +6455,114 @@ opportunities against a 0.3 ms allowance — A/B'd with
 `tools/profile_frame.gd --street-life=0` versus `--street-life=5
 --street-collect=45`, the two runs differing in nothing else. Doc 11 §2.17 has
 the table.
+
+## 38. Pass 14 — the money the ledger could not see, and the radius of a finger (2026-08-21)
+
+*Shell/UI fork. No sim constant moved and no determinism baseline moved;
+everything below is either a re-reading of numbers doc 06 has always computed,
+or a number that lives in `data/ui.json` and is spent on pixels.*
+
+### 38.1 The bounty table doc 06 has been paying all along
+
+`IncidentSystem._pay_reward` is not new. It has run on every resolution since
+doc 06 shipped:
+
+```
+reward      = round(reward_base × (1 + 0.35·(tier_peak − 1)) × speed_bonus)
+speed_bonus = clamp(1.5 − 0.5·(response_min / target_response_min), 0.60, 1.50)
+```
+
+What is new on 2026-08-21 is that anybody read it as a *revenue line*. Written
+out from `data/incidents.json` at this fork:
+
+| type | `reward_base` | target | T1, instant | T3, on target | T3, at 3× target | T5, instant |
+|---|---:|---:|---:|---:|---:|---:|
+| structure_fire | 900 | 6 min | 1,350 | **1,530** | 918 | 3,240 |
+| transformer_failure | 600 | 12 min | 900 | 1,020 | 612 | 2,160 |
+| water_main_break | 500 | 15 min | 750 | 850 | 510 | 1,800 |
+| storm_damage | 400 | 15 min | 600 | 680 | 408 | 1,440 |
+| crime | 350 | 8 min | 525 | **595** | 357 | 1,260 |
+| traffic_accident | 300 | 7 min | 450 | 510 | 306 | 1,080 |
+
+Two readings worth recording:
+
+* **The speed bonus is a 2.5× spread**, floor to ceiling, and it is the only
+  term a player can move after the fact. Answering a tier-3 crime on target pays
+  **$595**; letting the same incident sit to three times its target response
+  pays **$357** — 60 %, the clamp exactly. That is a real skill gradient on a
+  verb the player already has, and until this wave the game never told them the
+  gradient existed, because the number never appeared anywhere.
+* **It is not small against the hourly ledger, and the bar is low.** One tier-3
+  fire is **$1,530** on its own. The Economy tab's own fixture ledger carries
+  `power_tariff 940 + water_tariff 410 + fines 120 = $1,470` of non-tax revenue
+  per settled hour, so **a single resolved fire, or roughly two and a half
+  crimes, outweighs every non-tax line in the ledger combined.** Whether a real
+  city clears that bar per hour is **unmeasured at this fork** — it needs a soak
+  with a fleet out, and doc 91 §19's own soak measured too few incidents to say
+  (D-6). The point stands either way: A91-D-37 is that none of this money has
+  ever appeared in the Economy tab or in the NET drawn under it, so the ledger
+  could not have answered the question even if somebody had asked it.
+
+**Not re-fitted, deliberately.** This pass changed no reward constant. Making
+the payment visible is expected to change how a player dispatches, which changes
+the response-time distribution, which is the input to the speed bonus — so the
+honest order is: ship the feedback, re-measure §26's arrival table against a
+player who can now see what a fast answer is worth, then decide whether
+`[0.60, 1.50]` is the right spread. Re-fitting a curve against behaviour nobody
+could observe would be fitting to the old behaviour twice.
+
+### 38.2 The toast floor, and why it is 25
+
+`data/ui.json.street.toast_min: 25`. Below it a bounty still pays, still sounds
+the coin and still pulses the chip, and says nothing. The floor sits below
+**every** row of the table above at every tier — the smallest bounty this game
+can pay is a tier-1 traffic accident answered at 3× target,
+`round(300 × 1.00 × 0.60)` = **$180** — so no bounty in the current tables is
+silenced by it. That is on purpose: the floor guards against a future cheap
+incident type or a difficulty preset that scales rewards down, not against the
+roster we have. A toast that fires for a $12 nuisance teaches the player to
+ignore the next one, and the next one is the $1,530 fire.
+
+### 38.3 48 dp of finger, in metres
+
+`data/ui.json.street.tap_dp: 48` is doc 12 §2.1's touch target, converted at the
+CURRENT zoom (doc 12 D-61). Ground metres per dp is `2·D·tan(h_half)/W`, with
+`D = 18·(420/18)^zoom_t` (`data/ui.json.camera`) and `fov_deg = 40`
+(`data/render.json`, C-63 — read, never restated):
+
+| display | `zoom_t` 0.00 (D = 18 m) | 0.42, default (D = 67.6 m) | 1.00 (D = 420 m) |
+|---|---:|---:|---:|
+| 360 × 800 | 0.79 m (0.10 tiles) | **2.95 m** (0.37) | 18.34 m (2.29) |
+| 412 × 915 | 0.69 m (0.09) | **2.58 m** (0.32) | 16.04 m (2.00) |
+| 794 × 924 (Fold inner) | 0.68 m (0.09) | **2.56 m** (0.32) | 15.88 m (1.99) |
+
+This is the whole argument for converting rather than authoring a constant. A
+fixed radius chosen for the default zoom — 2.58 m — is **7.7 dp** of screen at
+full zoom-out, a sixth of a touch target and a pick nobody can make; one chosen
+for full zoom-out — 16.04 m — is **exactly two tiles** at the default, which
+swallows the building panel for anything standing within a block of the finger.
+The radius is only ever 48 dp, and 48 dp is only ever a finger.
+
+The tile is 8 m (constitution §6), so the 48 dp radius stays **under one tile up
+to `zoom_t = 0.779`** and crosses it there — at which point a tile is exactly
+48 dp on screen, and by full zoom-out **23.9 dp**, where a building is half a
+touch target across and there is nothing precise left to hit anyway.
+
+### 38.4 The audio budget, after
+
+One asset added: `cash`, 0.55 s at 44.1 kHz mono 16-bit = **48,554 B**. The set
+is **4,584,206 B against the 4,718,592 B budget — 97.2 %**, up from 96.1 %.
+`tools/gen_audio.py` regenerated all 21 assets and the other 20 came back
+byte-identical, which is the determinism claim its `rng()` docstring has always
+made and the first time anything has checked it across an edit.
+
+**Ranked, for the next pass** — §34's list, with one item added above it:
+
+0. **`revenue.bounties` and `revenue.street` belong in `EconomySystem.
+   settle_hour`** (A91-D-37). The UI tallies them off the bus today and the
+   tally is written to stand down the moment doc 03 publishes the keys; a
+   settled figure is the correct provenance, and `Treasury._note_lifetime` has
+   no `&"incident"` arm to build one from yet. Not hash-affecting on its own —
+   `Treasury.credit` already moves the balance — but it moves what a ledger
+   line's *source* is, so it wants a wave allowed to touch doc 03.
+1. …then §34's list unchanged, from `RoadNetwork.repair_quote` down.

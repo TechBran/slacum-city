@@ -114,6 +114,29 @@ var component_level := GRID_CARD_LEVEL
 ## computes, and `BuildingPanel` already holds exactly one controller.
 var water: WaterActions
 
+## Wave 14's street roster — the thing a tap on a fleeing shoplifter or a loose
+## dog has to find before it finds the house behind them.
+##
+## Deliberately an untyped `Object` and deliberately optional. The roster lives
+## in `sim/` and this class must keep working in every build that does not have
+## one yet: `street_roster()` takes this when the shell has bound one, otherwise
+## asks the sim for `street` by name, and answers `null` rather than failing when
+## neither exists. A build with no roster picks buildings and land exactly as it
+## did before, which is also what makes the seam testable without a `CitySim`.
+var street: Object = null
+
+## The pick radius, in METRES, for the roster query — `tap_dp` converted at the
+## camera's current zoom by `set_tap_radius_from()`. Zero disables the
+## opportunity arm of the pick entirely, which is the state a shell that has not
+## wired the conversion is in: no regression, just no street picks.
+var tap_radius_m := 0.0
+
+## `Callable(id: String) -> Dictionary`, overriding `sim.cmd_collect_opportunity`.
+## Two reasons it exists, and both are about a seam that crosses two agents: the
+## command's final name is the sim's to choose, and a pick that cannot be
+## exercised without a whole `CitySim` is a pick with no unit test.
+var collect_command := Callable()
+
 var _verdict: Dictionary = {}
 var _grid_placeable: Dictionary = {}
 var _water_placeable: Dictionary = {}
@@ -898,6 +921,135 @@ func block_id_at_ground(point: Vector3) -> String:
 const PICK_NONE := &"none"
 const PICK_BUILDING := &"building"
 const PICK_BLOCK := &"block"
+## Wave 14. A collectable thing standing on the street, not a thing built on it.
+const PICK_OPPORTUNITY := &"opportunity"
+
+## `data/ui.json.street.tap_dp`, and the fallback for a malformed file. The path
+## is `UIConfig`'s own — a second copy of it here is a second thing to rename.
+const TAP_DP_DEFAULT := 48.0
+## The verb the roster is asked for, and the command a pick reaches. Named
+## constants because both are the seam to a system this file does not import.
+const STREET_QUERY := "opportunity_near"
+const STREET_COMMAND := "cmd_collect_opportunity"
+## What a refusal says when the sim in this build has no collect verb at all —
+## distinguishable from "you were too late", which is a real refusal with copy.
+const E_NO_COMMAND := &"E_NO_COMMAND"
+
+## Parsed once per process: `pick_at_ground` runs on a finger and every
+## `BuildController` in the test suite would otherwise re-read a 1,100-line
+## file to learn one number.
+static var _street_cfg: Dictionary = {}
+static var _street_cfg_read := false
+
+
+## `data/ui.json.street`, or `{}`. Same degrade-loudly contract as `load_tile_m`.
+static func street_config() -> Dictionary:
+	if _street_cfg_read:
+		return _street_cfg
+	_street_cfg_read = true
+	if not FileAccess.file_exists(UIConfig.UI_JSON_PATH):
+		return _street_cfg
+	var parsed: Variant = JSON.parse_string(
+			FileAccess.get_file_as_string(UIConfig.UI_JSON_PATH))
+	if not (parsed is Dictionary):
+		return _street_cfg
+	var block: Variant = (parsed as Dictionary).get("street", {})
+	if block is Dictionary:
+		_street_cfg = block
+	return _street_cfg
+
+
+static func tap_dp() -> float:
+	return UIConfig.get_num(BuildController.street_config(), "tap_dp", TAP_DP_DEFAULT)
+
+
+## **48 dp of finger, in metres, at the zoom the player is actually at.** The
+## whole reason this conversion exists in the shell rather than as a constant:
+## measured on a 412 × 915 dp display (doc 92 §38.3), the same 48 dp is **0.69 m**
+## of ground at `zoom_t = 0`, **2.58 m** at the default 0.42 and **16.04 m** at
+## full zoom-out — a factor of 23. Any radius authored in metres is wrong at one
+## end of that range by more than an order of magnitude.
+## `CameraState.m_per_dp(viewport)` is the one number that carries both the
+## distance and the FOV, so it is the one number the shell passes.
+##
+## Returns the radius it set, so a caller can assert on it.
+func set_tap_radius_from(m_per_dp: float, dp: float = -1.0) -> float:
+	var want := dp if dp > 0.0 else BuildController.tap_dp()
+	tap_radius_m = maxf(0.0, m_per_dp) * want
+	return tap_radius_m
+
+
+## The roster, or `null`. The shell's binding wins; otherwise the sim is asked
+## for a `street` member **by name**, because a statically-typed `sim.street`
+## would not compile in a build whose `CitySim` has no such property.
+func street_roster() -> Object:
+	if street != null:
+		return street
+	if sim == null:
+		return null
+	var found: Variant = sim.get("street")
+	return found if found is Object else null
+
+
+## The nearest collectable within `radius_m` of `point`, as a normalised row, or
+## `{}`. `radius_m < 0` uses `tap_radius_m`.
+##
+## The roster answers in whatever shape doc 06's street system settles on; this
+## normalises it to `{id, kind, world_pos, reward, has_pos}` so nothing above
+## this line has to know. Two things are checked rather than trusted:
+##
+##   * a row with no `id` is not a pick — an anonymous collectable cannot be
+##     handed to a command, so treating it as one would eat the tap and open
+##     nothing, which is the worst outcome a pick has.
+##   * a row that *does* carry a position is re-measured against the radius
+##     here. The roster is expected to filter; a roster that returns its nearest
+##     regardless of distance would otherwise make every tap in the city a
+##     collect, and that failure would look like a broken building panel rather
+##     than like a broken roster.
+func opportunity_near(point: Vector3, radius_m: float = -1.0) -> Dictionary:
+	var radius := radius_m if radius_m >= 0.0 else tap_radius_m
+	if radius <= 0.0:
+		return {}
+	var roster := street_roster()
+	if roster == null or not roster.has_method(STREET_QUERY):
+		return {}
+	var answer: Variant = roster.call(STREET_QUERY, point, radius)
+	if not (answer is Dictionary):
+		return {}
+	var row: Dictionary = answer
+	var id := str(row.get("id", ""))
+	if id == "":
+		return {}
+	var raw_pos: Variant = row.get("world_pos", row.get("pos", null))
+	var has_pos := raw_pos is Vector3
+	var world_pos: Vector3 = raw_pos if has_pos else point
+	if has_pos and Vector2(world_pos.x - point.x, world_pos.z - point.z).length() > radius:
+		return {}
+	return {
+		"id": id,
+		"kind": str(row.get("kind", "")),
+		"world_pos": world_pos,
+		"has_pos": has_pos,
+		"reward": int(row.get("reward", row.get("payout", 0))),
+		"row": row,
+	}
+
+
+## The collect itself. Same funnel as every other verb on this class (doc 12
+## §4.4): the UI sends a command and reads the answer, and the answer is
+## `CommandQueue`'s `{ok, reason_code, payload}` whether the sim has the verb or
+## not — a caller never has to special-case a build without a street system.
+func collect_opportunity(id: String) -> Dictionary:
+	if id == "":
+		return {"ok": false, "reason_code": E_NO_COMMAND, "payload": {"id": id}}
+	var result: Variant = null
+	if collect_command.is_valid():
+		result = collect_command.call(id)
+	elif sim != null and sim.has_method(STREET_COMMAND):
+		result = sim.call(STREET_COMMAND, id)
+	if not (result is Dictionary):
+		return {"ok": false, "reason_code": E_NO_COMMAND, "payload": {"id": id}}
+	return result
 
 
 ## **The whole tap seam, in one call.** Before S4 the shell asked
@@ -908,11 +1060,27 @@ const PICK_BLOCK := &"block"
 ## The order is the order of specificity, and it is decided here rather than in
 ## the shell so the two panels can never both claim a tap:
 ##
+##   0. a street opportunity within `tap_radius_m` → `{kind: "opportunity", id}`
+##      → collect (Wave 14, below)
 ##   1. a building on the tile  → `{kind: "building", id: sim_id}` → S5
 ##   2. otherwise the block, when S4 has something to offer for it (unowned,
 ##      owned-undeveloped, or mid-pipeline) → `{kind: "block", id: block_id}`
 ##   3. otherwise `{kind: "none"}` — finished ground the player already owns, or
 ##      a point off the map, which deselects exactly as it does today.
+##
+## **Why an opportunity outranks a building, and by a radius rather than by a
+## tile.** Everything else on this list is a thing the player BUILT and can find
+## again in a second; a loose dog is a thing that is leaving. The dog is also a
+## 32 dp sprite standing in front of a house that occupies a whole tile, so a
+## pick decided by tile ownership hands the tap to the house every time — the
+## player's finger is on the animal and the game opens a building panel. The
+## radius is 48 dp of finger converted at the current zoom
+## (`set_tap_radius_from`), and it is a radius from the tapped POINT rather than
+## a tile test for the same reason: the thing being picked is not on a grid.
+##
+## The house behind it is not lost. It has never moved and it will still be
+## there on the next tap, which is exactly the asymmetry that makes this order
+## the safe one.
 ##
 ## `block` is filled in on every in-bounds pick, kind 1 and 3 included, so a
 ## caller that wants the block a *building* sits in does not need a second query.
@@ -920,6 +1088,12 @@ func pick_at_ground(point: Vector3) -> Dictionary:
 	var tile := BuildController.tile_at(point, tile_m)
 	var block_id := block_id_at_tile(tile)
 	var out := {"kind": PICK_NONE, "id": "", "tile": tile, "block": block_id}
+	var chance := opportunity_near(point)
+	if not chance.is_empty():
+		out["kind"] = PICK_OPPORTUNITY
+		out["id"] = str(chance["id"])
+		out["opportunity"] = chance
+		return out
 	var sim_id := sim_id_at_tile(tile)
 	if sim_id != "":
 		out["kind"] = PICK_BUILDING

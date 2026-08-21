@@ -747,11 +747,41 @@ func push_alert(alert: Dictionary, now_s: float = -1.0) -> Dictionary:
 	return verdict
 
 
+## Wave 14's deposit pulse: the treasury chip acknowledges money landing.
+##
+## The meta is stamped here as well as through the model because the top bar is
+## rebuilt on the shell's HUD cadence and a 0.9 s pulse that waited a quarter of
+## a second to start would miss the coin it is answering. The model's countdown
+## is what ENDS it, and what keeps it lit across the rebuilds in between.
+##
+## **Intended for a chip with no STATE pulse of its own** — treasury is the only
+## one today, and §2.4 gives the standing pulse to `grid` and `water` alone. The
+## expiry below clears the meta outright, which is exactly right for a chip whose
+## pulse can only ever have come from here and would blink a state pulse off for
+## one HUD frame on a chip where it could not.
+func flash_chip(chip_id: StringName, seconds: float) -> void:
+	if model == null:
+		return
+	model.flash_chip(String(chip_id), seconds)
+	var button: Button = _chips.get(String(chip_id), null)
+	if button != null:
+		button.set_meta("pulse", true)
+
+
 func _process(delta: float) -> void:
 	_alert_timer += delta
 	if _alert_timer >= ALERT_REFRESH_S:
 		_alert_timer = 0.0
 		_render_alerts(_now_s())
+	# Before the A8 return on purpose: a flash that is never drawn must still
+	# expire, or a reduce-motion device would carry the flag until it reloaded.
+	if model != null:
+		model.advance_flashes(delta)
+		if not model.chip_flashing(HudModel.CHIP_TREASURY):
+			var treasury: Button = _chips.get(HudModel.CHIP_TREASURY, null)
+			if treasury != null and bool(treasury.get_meta("pulse", false)):
+				treasury.set_meta("pulse", false)
+				treasury.modulate.a = 1.0
 	if _reduce_motion:  # A8: pulses are motion
 		return
 	_pulse_phase = fmod(_pulse_phase + delta * _pulse_hz, 1.0)

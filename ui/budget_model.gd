@@ -45,6 +45,9 @@ var _pending := -1
 
 var _settlement: Dictionary = {}
 var _has_breakdown := false
+## Revenue the treasury really took in that doc 03's settle snapshot does not
+## carry. See `feed_side_revenue()`.
+var _side: Dictionary = {}
 
 
 func _init(cfg: UIConfig = null) -> void:
@@ -236,6 +239,29 @@ func feed_settlement(snapshot: Dictionary) -> void:
 			and (snapshot.get("expenses", null) is Dictionary)
 
 
+## **Money the city took in that doc 03 never settled.** A resolved incident's
+## bounty and a collected street opportunity both reach the treasury through
+## `Treasury.credit(…, &"incident", …)` — a direct credit, outside
+## `EconomySystem.settle_hour` — so no key of the settle snapshot has ever
+## contained either, and the NET this ledger prints has been short by exactly
+## that much on every hour a crew answered a call. `ui/street_model.gd` tallies
+## the two off the bus per game-hour and hands them here.
+##
+## **The rule that retires this.** A key doc 03 *does* settle is taken from the
+## snapshot and this tally is ignored for it, always — so the day the economy
+## publishes `revenue.bounties`, the sim's number wins with no edit here and no
+## chance of counting the same dollar twice.
+##
+## `{key: amount}`, in the settled hour's own units. Empty by default, so a shell
+## that never calls this gets exactly the ledger it got before.
+func feed_side_revenue(amounts: Dictionary) -> void:
+	_side = amounts.duplicate()
+
+
+func side_revenue() -> Dictionary:
+	return _side.duplicate()
+
+
 func has_settlement() -> bool:
 	return not _settlement.is_empty()
 
@@ -269,17 +295,18 @@ func breakdown() -> Dictionary:
 	var gross := 0.0
 	var expense := 0.0
 	var net := 0.0
+	# What of the revenue column came from the side channel rather than from the
+	# settle snapshot. It is added to `gross` and to `net` below: a row the
+	# column shows but the total does not contain is a ledger that does not add
+	# up, which is worse than the line being missing.
+	var side_total := 0.0
 	var revenue_rows: Array[Dictionary] = []
 	var expense_rows: Array[Dictionary] = []
+	var settled_revenue: Dictionary = _settlement["revenue"] if _has_breakdown else {}
 	if _has_breakdown:
-		var revenue: Dictionary = _settlement["revenue"]
 		var expenses: Dictionary = _settlement["expenses"]
-		gross = float(revenue.get("gross", 0.0))
+		gross = float(settled_revenue.get("gross", 0.0))
 		expense = float(expenses.get("total", 0.0))
-		for key: String in revenue_keys():
-			var amount := float(revenue.get(key, 0.0))
-			if not is_zero_approx(amount):
-				revenue_rows.append(_line("revenue", key, amount))
 		for key: String in expense_keys():
 			var amount := float(expenses.get(key, 0.0))
 			if not is_zero_approx(amount):
@@ -287,9 +314,29 @@ func breakdown() -> Dictionary:
 	else:
 		gross = float(_settlement.get("gross", 0.0))
 		expense = float(_settlement.get("expense", 0.0))
-	net = float(_settlement.get("net", gross - expense))
+	# The revenue column is walked once for both sources, in the file's authored
+	# order, so a side line is not a footnote under the ledger — it is a row of
+	# it, in the place the reader is already looking.
+	for key: String in revenue_keys():
+		var settled := settled_revenue.has(key)
+		var amount := float(settled_revenue.get(key, 0.0)) if settled \
+				else float(_side.get(key, 0.0))
+		if is_zero_approx(amount):
+			continue
+		if not settled:
+			side_total += amount
+		# A ledger with no breakdown draws no rows at all (the Economy tab gates
+		# the whole column on `has_breakdown`), so building them would be data
+		# nothing reads. The total still moves: the money was still taken in.
+		if not _has_breakdown:
+			continue
+		var line := _line("revenue", key, amount)
+		line["settled"] = settled
+		revenue_rows.append(line)
+	net = float(_settlement.get("net", gross - expense)) + side_total
+	gross += side_total
 	return {
-		"has_data": has_settlement(),
+		"has_data": has_settlement() or not is_zero_approx(side_total),
 		"has_breakdown": _has_breakdown,
 		"hour": int(_settlement.get("hour", 0)),
 		"revenue": revenue_rows,
@@ -297,6 +344,7 @@ func breakdown() -> Dictionary:
 		"gross": gross,
 		"expense": expense,
 		"net": net,
+		"side_revenue": side_total,
 		# One column, one convention. `HudModel.money()`'s three-significant-digit
 		# ladder is right on a fixed-width chip and wrong here: it printed the tax
 		# line as `$12.5K` directly above `$4,120` of building upkeep, so the two

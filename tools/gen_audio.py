@@ -274,6 +274,42 @@ def build_purchase() -> np.ndarray:
     return out * fade_out(t, 0.60, 0.70)
 
 
+def build_cash() -> np.ndarray:
+    """Coins landing in a palm: three struck discs over a short note rustle.
+
+    Deliberately **not** `purchase`. That one is a till drawer closing on a
+    decision made from a menu — it has a mechanism in it, and it takes 0.70 s to
+    say so. This is money arriving from something the player touched on the
+    street, or a bounty landing while they were looking elsewhere, so it is
+    faster, higher and mechanism-free: the whole event is over in 0.34 s and the
+    ear reads it as "that paid" rather than as "that was bought".
+
+    The partial ratios are struck-disc ratios, not harmonics — that is the whole
+    difference between a coin and a bell — and each disc carries its own 5 kHz
+    strike transient, which is what makes it metal rather than a sine.
+    """
+    n, t = times(0.55)
+    out = np.zeros(n)
+    for at, f0, amp, dec in ((0.000, 2240.0, 0.80, 0.20),
+                             (0.058, 2980.0, 0.66, 0.16),
+                             (0.132, 1830.0, 0.58, 0.26)):
+        seg = np.maximum(t - at, 0.0)
+        live = (t >= at).astype(float)
+        out += amp * live * partial_stack(
+            seg, f0,
+            ratios=(1.0, 1.59, 2.14, 3.41, 4.72),
+            amps=(1.0, 0.62, 0.44, 0.22, 0.11),
+            decays=(dec, dec * 0.70, dec * 0.52, dec * 0.34, dec * 0.22),
+            attack=0.0008)
+        strike = circ_noise(n, "cash/strike%d" % int(round(at * 1000)),
+                            lambda f: bp(f, 5200, 1.4))
+        out += 0.32 * amp * live * strike * ad(seg, 0.0004, 0.006)
+    rustle = circ_noise(n, "cash/rustle", lambda f: bp(f, 1500, 2.0) * lp(f, 6000, 2))
+    out += 0.13 * rustle * np.clip((t - 0.02) / 0.05, 0.0, 1.0) \
+        * np.clip((0.34 - t) / 0.14, 0.0, 1.0)
+    return out * fade_out(t, 0.44, 0.55)
+
+
 def build_construct_stage() -> np.ndarray:
     """One construction stage tick. Deliberately almost subliminal."""
     n, t = times(0.13)
@@ -653,6 +689,10 @@ SPECS = [
     ("ui_confirm",         build_ui_confirm,         0.46, False, SR_FULL),
     ("ui_deny",            build_ui_deny,            0.42, False, SR_HALF),
     ("purchase",           build_purchase,           0.62, False, SR_FULL),
+    # Wave 14's payday. FULL rate on purpose: the disc partials run to 4.72 ×
+    # 2.98 kHz = 14.1 kHz, which is the top half of the band and the whole
+    # reason a coin reads as a coin.
+    ("cash",               build_cash,               0.56, False, SR_FULL),
     ("construct_stage",    build_construct_stage,    0.26, False, SR_FULL),
     ("construct_complete", build_construct_complete, 0.58, False, SR_FULL),
     ("blackout_whomp",     build_blackout_whomp,     0.88, False, SR_HALF),

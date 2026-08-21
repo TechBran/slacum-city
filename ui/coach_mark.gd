@@ -202,6 +202,13 @@ func present(view: Dictionary, target: Rect2 = Rect2()) -> void:
 		_ack.visible = bool(view.get("show_ack", false))
 	if _help != null:
 		_help.visible = bool(view.get("show_autohelp", false))
+	# Wave 14: the same mark also carries one-shot notices that are not tutorial
+	# steps (`OnboardingFlow.show_notice`). `Skip tutorial` on one of those would
+	# offer to skip something that is not running — and on a player who already
+	# finished the tutorial, to skip something that no longer exists. Defaults to
+	# true, so every step view written before this is unchanged.
+	if _skip != null:
+		_skip.visible = bool(view.get("show_skip", true))
 	_layout_bubble()
 	queue_redraw()
 

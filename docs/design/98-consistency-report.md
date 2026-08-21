@@ -3090,3 +3090,59 @@ zero: this one, `ConstructionVehicleView`'s five buffers on a city with no sites
 already gates its wire buckets by DISTANCE for the same reason and by the same
 mechanism (`wire_gate_m`), which is the precedent — this ruling only says that
 *count* is a gate too. Not re-audited from this branch; filed for the lead.
+
+## 34. WAVE 14 — the payday reaches a surface (binding)
+
+*Shell/UI fork off the Wave-13 integration. Hash-neutral by construction:
+nothing under `sim/` was touched, both determinism baselines are unmoved, and
+the balance gates are unread by anything in this pass.*
+
+### RR-84 — Two documents describe the same dollar and only one of them is the ledger (docs 03, 06, 12)
+
+**The inconsistency.** Doc 03 §2.4 specifies the hourly settlement and names its
+revenue terms: tax, power tariff, water tariff, fines. Doc 06 §2.9 specifies an
+incident reward and `IncidentSystem._pay_reward` pays it — through
+`CityIncidentWorld.credit` → `Treasury.credit(amount, &"incident", reason)`, a
+**direct credit that never enters `EconomySystem.settle_hour`**. Doc 12 §2.10
+then draws "the ledger" from the settle snapshot, in good faith, and the
+resulting screen is missing a revenue stream large enough that **one resolved
+fire outweighs every non-tax line on it combined** (doc 92 §38.1: a tier-3 fire
+pays $1,530 against `power_tariff + water_tariff + fines = $1,470` per settled
+hour on the tab's own fixture). **The NET line was wrong by exactly the bounty
+income, every hour a crew answered a call.** Filed as A91-D-37.
+
+Neither document is *wrong* in isolation, which is why this is a consistency
+finding rather than a defect in one of them: doc 03 never claimed to enumerate
+every path into the treasury, doc 06 never claimed its reward was a settled
+line, and doc 12 read the only structured source there was.
+
+**Ruling, in two parts.**
+
+1. **A ledger's rows and its total are one object.** A surface that renders a
+   revenue column and a NET beneath it is asserting that the column explains the
+   total. Where it cannot, it must say so by carrying the line, not by omitting
+   it — an omitted line reads as "there was none", which is a stronger and
+   falser claim than a line whose provenance is imperfect. `BudgetModel`
+   therefore adds side revenue to `gross` and to `net` as well as to the rows;
+   a row the column shows but the total does not contain would be a second,
+   worse defect.
+2. **Every path into the treasury is doc 03's to enumerate, and a direct credit
+   is a path.** `revenue.bounties` and `revenue.street` should be settle-snapshot
+   keys, accumulated where the credit is made. Doc 92 §35's ranked list carries
+   it at position 0. Until then doc 12 tallies them off the bus, and the tally is
+   built to stand down: **a key the settle snapshot carries is taken from the
+   snapshot, always**, so the day doc 03 publishes one, the sim's number wins
+   with no edit under `ui/` and no possibility of counting a dollar twice.
+
+**The generalising half.** This is the third instance in three waves of the same
+shape — a correct system with no observable (RR-69's `profile_weights_of`,
+RR-62's cascade, this) — and it is the first one a **player** found rather than
+an audit. That is worth recording precisely because the audit had every chance:
+`reward` is a field on a bus event that four classes already read, and no test
+anywhere asks *"is this number ever shown to anybody?"*. Doc 93 §T1 is the
+ruling that generalises it — a value transfer the player did not personally
+authorise must have a sensory surface at the moment it lands.
+
+**Applied:** doc 12 §2.21 and D-61 … D-64; doc 91 A91-D-37; doc 92 §38; doc 93
+§P; `data/ui.json.budget` (two keys plus the `_comment_side_revenue` note that
+states the retirement rule at the point of use).

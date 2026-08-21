@@ -63,6 +63,10 @@ const SCREENS: Array[String] = [
 	# phases and they carry different copy.
 	"veil_load", "veil_catchup",
 	"coach_welcome", "coach_place_house", "coach_dispatch", "coach_payoff",
+	# Wave 14's payday. Two states, because it lands on two surfaces that are
+	# never on screen together: the one-shot discovery mark over the world, and
+	# the Economy ledger with the two lines doc 03 does not settle.
+	"street_coach", "economy_street",
 ]
 
 ## A `Control` does not have a size until its container has laid it out, and the
@@ -574,6 +578,29 @@ func _apply(screen: String) -> void:
 			_root.city_dashboard.row_button("treasury").pressed.emit()
 		"economy":
 			_root.city_dashboard.open(DashboardModel.TAB_ECONOMY)
+		"economy_street":
+			# The same ledger with a policed city's real income in it: bounties
+			# are the second-largest line on this screen once a fleet is out, and
+			# they have never been drawn before this wave.
+			_root.feed_events([
+				{"type": &"incident_resolved", "incident_id": 4,
+						"incident_type": "crime", "reward": 1840},
+				{"type": &"street_opportunity_collected", "id": "opp_3",
+						"by_player": false, "reward": 260},
+				{"type": &"economy_hour_settled", "hour": 41, "gross": 5840.0,
+						"expense": 2100.0, "net": 3740.0},
+			])
+			_root.city_dashboard.open(DashboardModel.TAB_ECONOMY)
+		"street_coach":
+			# The discovery mark, pointed at a fixed spot: the coach layer only
+			# cares that a world point RESOLVES, and a live camera is not what
+			# this pass is judging (same contract as `_coach` below).
+			var centre := get_viewport().get_visible_rect().size * 0.5
+			_root.set_onboarding_world_projector(
+					func(_world: Vector3) -> Variant: return centre)
+			_root.feed_events([{"type": &"street_opportunity_spawned",
+					"id": "opp_1", "kind": "loose_dog",
+					"world_pos": Vector3(96.0, 0.0, 128.0)}])
 		"infrastructure":
 			_root.city_dashboard.open(DashboardModel.TAB_INFRASTRUCTURE)
 		"response":
@@ -676,6 +703,12 @@ func _close_everything() -> void:
 		_root.overlay_rail.select(OverlayModel.MODE_NONE)
 	if _root.onboarding != null:
 		_root.onboarding.reset()
+		# A one-shot notice is not a step, so `reset()` does not know about it.
+		_root.onboarding.dismiss_notice()
+	# …and the flag behind it, or the sweep would only ever see the mark once.
+	if _root.street != null:
+		_root.street.coached = false
+		_root.street.coach_pending = false
 	_root.dismiss_title()
 	_root.dismiss_veil()
 	# Banners live for `alert_ttl_s`, which is longer than a settle window — one

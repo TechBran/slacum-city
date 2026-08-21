@@ -41,6 +41,17 @@ var _world_resolver := Callable()
 var _last_step := ""
 var _marker_dp := 48.0
 
+## Wave 14's one-shot NOTICE — see `show_notice()`. Held here rather than in
+## `OnboardingModel` on purpose: the step machine is a curriculum with a count,
+## a save block and a balance gate over it, and a notice is none of those.
+var _notice: Dictionary = {}
+var _notice_left := 0.0
+var _notice_pos := Vector3.ZERO
+var _notice_has_pos := false
+## `Callable(world: Vector3) -> Variant` — a `Vector2` screen point, or null when
+## the point is behind the camera. Only the shell can project metres.
+var _world_point := Callable()
+
 
 func setup(cfg: UIConfig = null, p_model: OnboardingModel = null) -> void:
 	if cfg != null:
@@ -72,6 +83,91 @@ func _ready() -> void:
 ## this; without it a world step still runs, with a centred bubble and no cutout.
 func set_world_resolver(resolver: Callable) -> void:
 	_world_resolver = resolver
+
+
+## `Callable(world: Vector3) -> Variant` — the projector a NOTICE points with.
+## The tag resolver above answers for a fixed tutorial lot; a notice points at a
+## thing that is walking down a street, so it needs the metres themselves.
+## Without it a notice still shows, centred, with no cutout.
+func set_world_point_projector(projector: Callable) -> void:
+	_world_point = projector
+
+
+# ---------------------------------------------------------------------------
+# One-shot notices (Wave 14)
+#
+# **Not a tutorial step, and deliberately not reachable as one.** The scripted
+# fifteen minutes is a curriculum: an ordered table with a count, a persisted
+# cursor, hard gates, and a balance gate that asserts how many steps there are.
+# A notice is a single sentence over a single thing, raised once because the
+# world did something the player has never seen before — the first collectable
+# to appear on a street — and it is over when they acknowledge it, when they
+# collect the thing, or when its timer runs out. Adding it to the step table
+# would have made "how many steps is the tutorial" a question with a different
+# answer depending on what the director happened to spawn.
+#
+# It borrows the MARK and nothing else: the same dim, the same cutout, the same
+# 240 dp bubble, so a player who has met one has met both.
+# ---------------------------------------------------------------------------
+
+## Raise the notice. A live tutorial always wins — the caller is expected to
+## hold the notice back (`StreetModel.note_spawn` does), and this refuses it
+## anyway so two teachers can never talk at once.
+##
+## Returns whether the notice went up.
+func show_notice(text: String, world_pos: Vector3 = Vector3.ZERO,
+		has_pos: bool = false, ttl_s: float = 12.0) -> bool:
+	if text == "" or _mark == null or is_active():
+		return false
+	_notice = {
+		"id": "notice",
+		"kind": OnboardingModel.KIND_CARD,
+		# Soft, always: a notice that swallowed the taps outside its cutout would
+		# stop the player doing the very thing it is pointing at.
+		"gate": OnboardingModel.GATE_SOFT,
+		"text": text,
+		"show_ack": true,
+		"ack_text": UIWidgets.t(config, "ui_coach_got_it", "GOT IT"),
+		"show_autohelp": false,
+		# There is no step 3 of 8 here, and no tutorial to skip.
+		"step_text": "",
+		"show_skip": false,
+	}
+	_notice_pos = world_pos
+	_notice_has_pos = has_pos
+	_notice_left = maxf(0.1, ttl_s)
+	_refresh(true)
+	return true
+
+
+func notice_active() -> bool:
+	return not _notice.is_empty()
+
+
+## Takes the notice down: the GOT IT, the timer, and the shell's own call when
+## the player collected the thing the mark was pointing at — which is the best
+## of the three, because it means the sentence worked.
+func dismiss_notice() -> void:
+	if _notice.is_empty():
+		return
+	_notice = {}
+	_notice_left = 0.0
+	_notice_has_pos = false
+	_refresh(true)
+
+
+## Where the notice's cutout goes. A projector that says "behind the camera", or
+## no projector at all, is not an error — the bubble simply centres itself,
+## which is what a card step does.
+func notice_rect() -> Rect2:
+	if not _notice_has_pos or not _world_point.is_valid():
+		return Rect2()
+	var answer: Variant = _world_point.call(_notice_pos)
+	if not (answer is Vector2):
+		return Rect2()
+	var point: Vector2 = answer
+	return Rect2(point - Vector2(_marker_dp, _marker_dp) * 0.5,
+			Vector2(_marker_dp, _marker_dp))
 
 
 func mark() -> CoachMark:
@@ -145,6 +241,15 @@ func feed_ui_opened(path: String) -> bool:
 
 func _process(delta: float) -> void:
 	if model == null or not model.is_active():
+		# A notice runs with the step machine idle — that is the normal case, and
+		# it still needs its timer and its per-frame re-present, because the
+		# thing it points at is walking away from where it was drawn.
+		if not _notice.is_empty():
+			_notice_left -= delta
+			if _notice_left <= 0.0:
+				dismiss_notice()
+			else:
+				_refresh()
 		return
 	model.feed({"kind": OnboardingModel.OBS_TICK, "dt": delta})
 	_drain()
@@ -170,9 +275,20 @@ func _refresh(force: bool = false) -> void:
 		return
 	var view: Dictionary = model.current() if model != null else {}
 	if view.is_empty():
+		# The step machine has nothing to say. A notice may.
+		if not _notice.is_empty():
+			_mark.present(_notice, notice_rect())
+			return
 		if _mark.is_showing() or force:
 			_mark.hide_mark()
 		return
+	# A step that starts while a notice is up takes the mark back: the curriculum
+	# outranks a one-off, and `show_notice` refuses to raise one over a live step
+	# for the same reason.
+	if not _notice.is_empty():
+		_notice = {}
+		_notice_left = 0.0
+		_notice_has_pos = false
 	_mark.present(view, target_rect(view.get("target", {}) as Dictionary))
 	var id := str(view.get("id", ""))
 	if id != _last_step:
@@ -255,6 +371,11 @@ func _on_skip() -> void:
 
 
 func _on_ack() -> void:
+	# The notice's GOT IT is the only button it has, and the mark cannot be
+	# showing both at once, so this ordering is the whole disambiguation.
+	if not _notice.is_empty():
+		dismiss_notice()
+		return
 	feed({"kind": OnboardingModel.OBS_ACK})
 
 

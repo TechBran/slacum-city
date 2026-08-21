@@ -415,6 +415,9 @@ static func chip_label_key(chip_id: String) -> String:
 ## treasury, which is the reading a goal most often costs money against).
 const _DEFAULT_GOAL_CHIP_INDEX := 1
 const CHIP_GOALS := "goals"
+## P1, and the chip a deposit pulses (`flash_chip`). Named because two other
+## files now reach for it and a spelling mistake in a Dictionary key is silent.
+const CHIP_TREASURY := "treasury"
 ## What `GoalsModel` puts between the level and the fraction. The compact form
 ## splits on it, so the two files have to agree about one character.
 const GOAL_CHIP_SEPARATOR := "·"
@@ -924,6 +927,55 @@ func build_view(snapshot: Dictionary, width_dp: float,
 	}
 
 
+# ===========================================================================
+# Transient chip pulses (Wave 14 — the deposit)
+#
+# §2.4's own pulse is a STATE: the grid chip pulses because the grid is below
+# 60 %, and it stops when the grid recovers. This is the other kind — a chip
+# that pulses because something just *happened* to it, the way S13's unlocked
+# build card does. Deliberately the same mechanism the view already drives
+# (`chip["pulse"]` → `Button.meta("pulse")` → the 1.2 Hz alpha in `_process`),
+# so a deposit and a critical grid look like one language and A8's reduce-motion
+# suppression covers both without a second branch.
+#
+# The countdown is in REAL seconds and is advanced by the view, because this
+# class holds no clock — the same contract `GoalsSheet._celebrating` runs on.
+# ===========================================================================
+
+var _chip_flash: Dictionary = {}          ## chip_id -> real seconds remaining
+
+
+## Pulse `chip_id` for `seconds`. A second deposit inside the first's window
+## extends it rather than restarting it, which is what keeps a run of four
+## collects reading as one continuous "money is arriving" instead of a stutter.
+func flash_chip(chip_id: String, seconds: float) -> void:
+	if chip_id == "" or seconds <= 0.0:
+		return
+	_chip_flash[chip_id] = maxf(float(_chip_flash.get(chip_id, 0.0)), seconds)
+
+
+## Real seconds. Called from the view's `_process` **before** its own
+## reduce-motion return, so a flash still expires on a device that never draws
+## it — a flag that outlives its animation is a flag that never comes down.
+func advance_flashes(dt: float) -> void:
+	if _chip_flash.is_empty():
+		return
+	for chip_id: String in _chip_flash.keys():
+		var left := float(_chip_flash[chip_id]) - maxf(0.0, dt)
+		if left <= 0.0:
+			_chip_flash.erase(chip_id)
+		else:
+			_chip_flash[chip_id] = left
+
+
+func chip_flashing(chip_id: String) -> bool:
+	return _chip_flash.has(chip_id)
+
+
+func clear_flashes() -> void:
+	_chip_flash.clear()
+
+
 func chip_values(snapshot: Dictionary) -> Dictionary:
 	var balance := int(snapshot.get("treasury", 0))
 	var net_per_hour := float(snapshot.get("net_per_hour", 0.0))
@@ -973,6 +1025,11 @@ func chip_values(snapshot: Dictionary) -> Dictionary:
 	(out["stability"] as Dictionary)["band"] = band
 	(out["stability"] as Dictionary)["label_key"] = "ui_hud_stability_%s" % String(band)
 	(out["stability"] as Dictionary)["percent"] = stability_pct
+	# A live flash wins over a chip that is not pulsing for its state, and never
+	# cancels one that is: the two are OR'd, not swapped.
+	for chip_id: String in _chip_flash:
+		if out.has(chip_id):
+			(out[chip_id] as Dictionary)["pulse"] = true
 	return out
 
 

@@ -7,7 +7,7 @@
 	],
 	"bit_depth": 16,
 	"channels": 1,
-	"total_bytes": 4535652,
+	"total_bytes": 4584206,
 	"budget_bytes": 4718592,
 	"assets": [
 		{
@@ -63,6 +63,20 @@
 			"top_band_energy": 9e-08,
 			"peak": 0.620014,
 			"rms": 0.106391,
+			"head": 0.0,
+			"tail": 0.0
+		},
+		{
+			"name": "cash",
+			"file": "cash.wav",
+			"samples": 24255,
+			"sample_rate": 44100,
+			"seconds": 0.55,
+			"bytes": 48554,
+			"loop": false,
+			"top_band_energy": 9.819e-05,
+			"peak": 0.560015,
+			"rms": 0.114021,
 			"head": 0.0,
 			"tail": 0.0
 		},
