@@ -79,7 +79,9 @@ sleep "$hold"
 fg_after=1; is_foreground || fg_after=0
 
 adb logcat -d -s godot:V > "$OUT/log_$label.txt" 2>/dev/null
-n=$(grep -c '^.*PERF ' "$OUT/log_$label.txt" 2>/dev/null || echo 0)
+# `grep -c` exits 1 on zero matches, so a `|| echo 0` appends a SECOND line and
+# the count prints as "0\n0". Take the true branch's value or nothing.
+n=$(grep -c 'PERF ' "$OUT/log_$label.txt" 2>/dev/null) || n=0
 
 if [[ $fg_before -eq 0 || $fg_after -eq 0 ]]; then
   echo "CONTAMINATED fg_before=$fg_before fg_after=$fg_after" >> "$OUT/log_$label.txt"

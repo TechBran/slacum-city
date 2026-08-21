@@ -1359,6 +1359,102 @@ launch** (this one did, which is the only reason the pre-session state exists),
 and **prefer one long foreground hold over many short launches** — the relaunch
 is what costs the player, not the measurement.
 
+##### The 2026-08-21 session — three blockers found, no frame measured
+
+**The pose matrix is still open, and this session did not close it.** It is
+recorded because what it found is *why* two device windows in a row produced no
+matrix, and because two of the three causes were nobody's suspect.
+
+**The state it walked into was the good one.** The D-20 build was installed
+(`lastUpdateTime` 01:10:59, `versionName` 0.4.0), `game/main.gd` reads
+`DevArgs.user_args()` at all four sites including `_perf_capture_armed()`, the
+launcher alias resolved, the saves were backed up before the first launch, and
+`--self-test` passed 25/25. Everything the last session filed as the blocker was
+fixed. The window still produced no `PERF` line, for three independent reasons
+stacked in front of each other.
+
+**Blocker 1 — the launch command itself was malformed, and had always been.**
+`adb shell` does not preserve local argv: it joins everything after `shell` with
+single spaces and hands one string to the device's `sh -c`. So the documented
+
+```bash
+adb shell am start … --es args "--resume --zoom=1.0"
+```
+
+reaches `am` as three tokens and dies with `IllegalArgumentException: Unknown
+option: --zoom=1.0` **before the app is launched at all**. The `--esa` form
+survived only because its CSV payload contains no spaces. **The consequence is
+that the `--es args` half of the "send both extra forms" insurance had never
+once reached a device** — including in `tools/bench_device.sh`, whose 20-check
+self-test could not see it because the fault is in `adb`'s transport, not in the
+string the script builds. Fixed by composing one remote-shell string with the
+values single-quoted (`remote_start_cmd`), at both launch sites and in the
+`--dry-run` output, which had been printing the broken form for humans to copy.
+
+**Blocker 2 — a locked phone is indistinguishable from a broken build.** The
+Fold was on AC at 100 %, screen on, `stay_on_while_plugged_in=15`, `adb`
+responsive — and behind a secure lockscreen. In that state `am start` resolves
+the activity, launches it, and reports `Starting: Intent {…}` exactly as it does
+when unlocked. What the app cannot do is hold a surface:
+
+```
+V Godot: OnResume: GodotFragment{…}
+V Godot: OnPause:  GodotFragment{…}      <- 21 ms later
+V Godot: OnStop:   GodotFragment{…}
+```
+
+Godot's main loop is tied to the `SurfaceView`, so **no GDScript runs**: no city
+load, no argument parse, no `PERF` line, no screenshot. The symptom is a
+telemetry build that appears unarmed and arguments that appear undelivered —
+i.e. **it presents as a D-20 regression**, and is only distinguishable from one
+by reading the lifecycle callbacks. This is now runbook §1.0, ahead of every
+other check. `adb shell wm dismiss-keyguard` raises the Bouncer on a secure lock
+and there is nothing further `adb` can do; it needs a human.
+
+**Blocker 3 — the three A/B questions had no lever in the shell.** Independent
+of both faults above: `--road-detail`, `--pad-shadows`, `--flood-detail` and
+`--flood` existed **only** as `tools/profile_frame.gd` flags. Nothing in `game/`
+parsed any of them. So the zebra-optimisation confirmation, the flood-detail
+rung and the daylight pad-shadow re-check were **undrivable on the installed
+build no matter how well arguments were delivered** — a session that had found
+the phone unlocked and the quoting right would still have collected nothing for
+those three. `game/main.gd` now has `_apply_render_ab_args()`, applied after the
+boot preset seeding so a lever overrides its tier ceiling rather than the other
+way round. **It needs a build.**
+
+**What was measured, with the phone locked.** Only what the process logs before
+it needs a surface — but one open question closes on it. **The game resolves to
+the stock vendor GPU driver**: `Adreno 0762.41`, built 2025-09-19, from
+`/vendor/lib64/hw/vulkan.adreno.so`, with `updatable_driver_prerelease_opt_in_apps`
+and the production opt-in both `null` and `App is not on the allowlist for
+updatable production driver` in the log. **The Qualcomm pre-release driver is
+not a suspect for the presentation-corruption bands, and "move it to stable" is
+not an available mitigation because it already is stable.** Record that driver
+string with any future corruption report.
+
+**And the city was read without launching it.** The save manifest carries the
+clock, so `--advance-hours` deltas no longer need the HUD read by eye:
+`day 31, 09:46, pop 359, $174,414` came out of one `run-as cat` while the phone
+was locked. `tools/cap_pose.sh` recomputes it per launch, which makes the
+runbook's "re-base `NOW` after every pose" automatic — and because `force-stop`
+is an unclean exit that does not write the clock back, a per-pose matrix pays
+its delta once per pose instead of accumulating it across the player's city.
+
+**One number the last session left on the floor.** Its contaminated
+`log_sustained.txt` contains a `PERFIO` row nobody transcribed:
+`kind=save slot=0 reason=manual ms=100.3 bytes=129823 ok=1`. A **100.3 ms save
+of a 129 KB slot on device** sits between the workstation's founding-city 14 ms
+and its bench-city 149 ms, and is consistent with the 2–3× factor §Q6 asks to
+confirm — but it was captured while the app was not reliably foreground, so it
+is a plausibility check and **not** the Q6 measurement.
+
+**Still open after two windows, in the order a third should take them:** the
+three-pose day/night matrix, the `PERFIO` save/load rows, the zebra A/B, the
+flood A/B and screenshot, and the daylight pad-shadow re-check. All five now
+need only **an unlocked phone and a build from this branch** — the harness
+faults in front of them are fixed and `tools/run_matrix.sh` runs the whole list
+in one command, refusing to start if the phone is locked.
+
 **Method, and what it does and does not claim.** Every A/B below is interleaved
 *within* each round — both arms measured back to back, three or four rounds — on
 a workstation that was carrying other Godot work for part of the session (four

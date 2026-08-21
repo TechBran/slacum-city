@@ -753,6 +753,51 @@ so a finished tutorial stays finished across a restart. **D-3 closed.**
 > in this branch; it needs a build. **2.12 keeps its grade** but `targetSdk` 36
 > is now confirmed on the installed artefact.
 
+> **2026-08-21: the premise under rows 2.4–2.7 is now false, and the permission
+> gap has a different cause than the one recorded.** The blocker those four rows
+> name is "a debug APK that does not carry the plugin". **The installed debug
+> APK carries the plugin and the plugin registers**, which the device says
+> plainly and which is readable even with the phone locked:
+>
+> ```
+> I GodotPluginRegistry: Initializing Godot plugin SlacumNative
+> I GodotPluginRegistry: Completed initialization for Godot plugin SlacumNative
+> ```
+>
+> That is decisive about the manifest, not just about the binary: the
+> `org.godotengine.plugin.v2.SlacumNative` meta-data the registry scans for
+> exists **only** in `android/plugins/slacum_native/src/main/AndroidManifest.xml`,
+> so if the registry found it, that manifest merged. `dumpsys package` agrees on
+> the components — `componentsDeclared=6`, covering the activity, the alias and
+> the two receivers.
+>
+> **And yet the same dump lists no requested permissions at all** — zero of
+> `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`, `VIBRATE`, `WAKE_LOCK`, with an
+> empty `runtime permissions:` block and no declared-permission section. So the
+> merge took the plugin's `<application>` children and **did not take its
+> `<uses-permission>` elements.** The likely cause is in our own configuration
+> rather than in the merger: Godot's Android exporter builds the manifest's
+> permission list from the preset, and `export_presets.cfg` has
+> `permissions/custom_permissions=PackedStringArray()` with **zero**
+> `permissions/*=true` flags on all three presets. **That makes doc 13 §2.6's
+> stated rationale — "the plugin declares its own permissions and receivers so
+> that manifest merging keeps it self-contained and `export_presets.cfg` needs no
+> `custom_permissions` entry" — wrong for permissions and right for receivers.**
+> The fix is one preset field, not a code change, and it is the difference
+> between the permission flow being untested and being unrunnable.
+>
+> **Not yet confirmed**, and it should be before the preset is edited: whether
+> the release path (`tools/make_release.sh`, which adds `POST_NOTIFICATIONS`
+> itself) produces an APK that *does* carry the four. That is an `aapt2 badging`
+> read on a built artefact, needs no device, and settles whether this is a
+> debug-only gap or the shipping manifest as well.
+>
+> **The zero-notification-channels reading was NOT re-confirmed this session and
+> must not be quoted from it.** Channels are created when the game runs, and on
+> 2026-08-21 the game never ran — a secure lockscreen stopped it 21 ms after
+> resume (doc 11 §2.13). Zero channels today is the expected consequence of that,
+> not evidence about the code.
+
 | § | Subject | Grade | Pointer / gap |
 |---|---|---|---|
 | 2.0 | Toolchain | SHIPPED | `android/build/` gradle project, `tools/setup_android.sh` |
@@ -762,7 +807,7 @@ so a finished tutorial stays finished across a restart. **D-3 closed.**
 | 2.4 | **Notification scheduling** | ~~**ABSENT**~~ **PARTIAL 2026-08-20** | ~~no scheduler, no `AlarmManager` bridge, no code path~~ — **all three now exist.** `game/notifications/notification_scheduler.gd` produces the schedule-at-save-time plan, `NativeNotificationSink` hands it across, and `NotificationCenter.kt:233` / `:307` set it with `AlarmManager.setAndAllowWhileIdle(RTC_WAKEUP, …)`; `BootReceiver.kt` re-arms the registry after a restart, which is §2.4's own requirement. **Unproven on device**: the last `dumpsys notification` still shows zero channels, against a debug APK that does not carry the plugin. |
 | 2.5 | **Notification platform** | ~~**ABSENT**~~ **PARTIAL 2026-08-20** | ~~no channels, no ids, no delivery~~ — `NotificationCenter.kt` creates channels (existence-checked before create), owns the id base (`data/notifications.json.delivery.id_base`) and delivers through `AlarmReceiver.kt`. `tests/test_release_plumbing.gd::test_the_plugin_registers_itself_and_its_two_receivers` holds the manifest wiring. **Unproven on device**, same single blocker. |
 | 2.6 | `SlacumNative` plugin | PARTIAL → **PARTIAL, and its notification surface now exists** | `elapsedRealtime`, `boot_id`, thermal status and sustained performance are **live on device** — `PERF` reported `thermal` 0 → 1 from `AndroidNative.thermal_status_changed`. ~~The doc's notification and permission surface is still not in it~~ — it is, as of this fork: `NotificationCenter.kt` plus the four declared permissions. What has not happened is a device run of that surface. |
-| 2.7 | Permissions | ~~**ABSENT in the build under test**~~ **PARTIAL 2026-08-20** | The *flow* ships — `game/notifications/permission_flow.gd` is the `POST_NOTIFICATIONS` state machine, wired at `main.gd:114–116` and connected to `AndroidNative.permission_result`. The *declaration* ships in `android/plugins/slacum_native/src/main/AndroidManifest.xml:27` and `tools/make_release.sh:65`. The measured fact is unchanged and is about the artefact, not the code: `dumpsys package` on the installed **debug** APK lists no requested permissions, so the flow cannot execute on the build anyone is holding. |
+| 2.7 | Permissions | ~~**ABSENT in the build under test**~~ **PARTIAL 2026-08-20; cause re-identified 2026-08-21** | The *flow* ships — `game/notifications/permission_flow.gd` is the `POST_NOTIFICATIONS` state machine, wired at `main.gd:114–116` and connected to `AndroidNative.permission_result`. The *declaration* ships in `android/plugins/slacum_native/src/main/AndroidManifest.xml:27` and `tools/make_release.sh:65`. The measured fact is unchanged — `dumpsys package` lists **no** requested permissions — but **the reason given for it was wrong.** It is not that the APK lacks the plugin: the plugin is present and registers, and its receivers merged (`componentsDeclared=6`). The plugin's `<uses-permission>` elements specifically did not survive, and `export_presets.cfg` carries `custom_permissions=PackedStringArray()` with zero `permissions/*=true` on every preset — i.e. **the exporter's permission list is the authority and doc 13 §2.6's "the plugin declares its own permissions so the preset needs no entry" does not hold.** One preset field, then a rebuild, then this row is testable. |
 | 2.8 | Battery, frame pacing, thermal | PARTIAL *(evidence upgraded, grade held)* | ~~nothing consumes the thermal ladder~~ is **retired**: the governor was observed stepping on device (`knob` 0 → 4 in the foreground, `preset=balanced`, doc 11 §2.13), and `SlacumNative` fed it a real `thermal` 0 → 1. Still PARTIAL, and deliberately: the Fold never left `thermal=1` / 45.7–49.6 °C and was **cooling**, so **no thermal step-down was ever exercised**, and battery (D-07) was not measured at all |
 | 2.9 | Long catch-up without an ANR | PARTIAL | measured at 1.04 s for 43 coarse hours (soak §14.2). ~~The resume path is **D-1**, so the measurement is of the planner, not of the shipped call~~ — **D-1 closed 2026-08-19**, and the shell now makes the same `CatchUpPlanner.plan()` call the measurement was taken against. Still PARTIAL because the number is a workstation number: no on-device ANR run has happened (doc 13 §7 D-15). |
 | 2.10 | Export pipeline | SHIPPED | `export_presets.cfg`, gradle v0.3.x |

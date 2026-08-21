@@ -1,5 +1,43 @@
 # The Fold 6 runbook — the six Wave-8 device questions, as commands
 
+> ## START HERE, 2026-08-21 — the four things that have eaten two windows
+>
+> **The pose matrix has never been run.** Not because the phone is slow or the
+> questions are hard, but because four separate faults sit in front of the first
+> frame. Three are now fixed; the fourth needs a person. Check them in this
+> order — each one, when it fires, looks exactly like the next one down.
+>
+> 1. **Is the phone UNLOCKED?** `adb shell dumpsys window | grep mDreamingLockscreen`
+>    A locked Fold answers `adb`, accepts `am start`, reports success — and then
+>    stops the app 21 ms after resume, so **no GDScript runs at all**. That
+>    presents as "arguments not delivered" and as "telemetry not armed". §1.0.
+>    **This is what stopped 2026-08-21**, and `adb` cannot fix it.
+> 2. **Is the launch quoted for the REMOTE shell?** `adb shell` joins argv on
+>    spaces, so `--es args "a b"` reaches `am` as separate tokens and dies with
+>    `Unknown option:` before launching. §1.2's box. Fixed in
+>    `tools/bench_device.sh`; it had never worked on a device before.
+> 3. **Does `game/main.gd` parse the flag you are planning the session around?**
+>    `--road-detail`, `--pad-shadows`, `--flood-detail` and `--flood` were
+>    `tools/profile_frame.gd`-only, so three of the 2026-08-21 questions were
+>    undrivable *independently* of everything else. Now wired — **needs a build.**
+> 4. **Is the build a D-20 build?** `grep -c DevArgs.user_args game/main.gd`
+>    must be ≥ 4. Godot's own `command_line_params` reader returns `[]` on this
+>    export template even when delivered correctly, so the plugin is the only
+>    path.
+>
+> Then: `bash tools/run_matrix.sh` runs the whole session and **refuses to start
+> on a locked phone** rather than collecting empty captures.
+>
+> **First command of the next session, before any of the above:**
+> `adb shell run-as com.slacumcity.game rm -f files/perf_capture.flag` — it was
+> left armed on 2026-08-21 when the wire dropped, and while it is there every
+> player session pays a per-frame GPU timestamp query. §5 has the detail.
+>
+> Two standing rules, both learned expensively: **back the saves up before the
+> first launch**, and **prefer one long foreground hold to many short launches**
+> (the 2026-08-20 session cost the player ~12 sim-hours and ~$46K; 2026-08-21
+> cost zero, because nothing ever ran).
+
 > ## RUN ONCE, 2026-08-20 — read this box before you use anything below
 >
 > **The device appeared and the session ran.** Results are in doc 11 §2.13,
@@ -543,10 +581,26 @@ different GPU and are a shape, not a target.
 | bench | Z1 | **13** | 12.83 | 13.33 | **233** | **258** | 320 | — | — | — |
 | bench | Z2 | **13** | 13.72 | 14.82 | 196 | 221 | 320 | — | — | — |
 
-**Every Fold column above is an em-dash and stays one.** The pose matrix needs
-`--zoom` and `--advance-hours`, and neither argument reaches the game (see the
-box at the top). The jank column additionally needs `gfxinfo`, which measures
-nothing here. **What the session got instead is one pose, and it is not a row in
+**Every Fold column above is still an em-dash after two sessions.** ~~The pose
+matrix needs `--zoom` and `--advance-hours`, and neither argument reaches the
+game~~ — **that reason expired on 2026-08-21 and was replaced by three others.**
+The delivery fix (D-20) is in the installed build and the shell reads the merged
+list; what stopped the matrix the second time was, in order: the launch command
+being re-split by `adb shell` (§1.2's box, fixed), a **secure lockscreen** that
+stops the app 21 ms after resume so no GDScript runs at all (§1.0, needs a
+person), and — for the A/B rows specifically — the fact that `--road-detail`,
+`--pad-shadows` and `--flood-detail` had **no parser in `game/main.gd`** (fixed,
+needs a build). The jank column additionally needs `gfxinfo`, which measures
+nothing here, so it should be deleted rather than filled: use the `PERF` line's
+`p95` instead.
+
+**The matrix is now one command against an unlocked phone**:
+`bash tools/run_matrix.sh q1`. It computes each pose's `--advance-hours` from the
+save manifest, asserts the app holds the foreground across every hold, and marks
+any capture that loses it `CONTAMINATED` rather than averaging it in. The column
+that proves the poses actually separated is **`near`**: 2026-08-20 read `near=4`
+at every nominal zoom because no argument landed, and a real Z2 pose must read
+`near=0`. **What the session got instead is one pose, and it is not a row in
 this table** — it is the player's own 70-building city at whatever camera the
 save restored, on the 1856×2160 inner screen, Balanced, `render_scale` 0.85:
 
@@ -923,10 +977,32 @@ direct, and all three need `game/main.gd`'s integration snippet plus one
    default** (a service that writes files should not print on every call, and
    the suite drives thousands of saves), so the shell has to set it: one line,
    in the integration snippet.
-3. **The A/B flags.** `--road-detail`, `--pad-shadows` and `--sites` are
-   `tools/profile_frame.gd` flags and do not exist in the shell. Wiring
-   `road_surface.detail` to a settings row (or to `--es`) would make Q2's ladder
-   directly measurable on the phone rather than extrapolated.
+3. **The A/B flags.** ~~`--road-detail`, `--pad-shadows` and `--sites` are
+   `tools/profile_frame.gd` flags and do not exist in the shell.~~ **WIRED INTO
+   THE SHELL 2026-08-21** — `game/main.gd`'s `_apply_render_ab_args()` now parses
+   `--road-detail=N`, `--pad-shadows=0|1`, `--flood-detail=N` and `--flood=<mm>`.
+   **It needs a build**; the installed APK does not have them.
+
+   > **This was the real blocker on the three A/B questions, and it is separate
+   > from both D-20 and the lockscreen.** On 2026-08-21 the session confirmed by
+   > grep that *none* of these flags existed anywhere in `game/` — they were
+   > `tools/` only. So the zebra A/B, the flood A/B and the daylight pad-shadow
+   > re-check were undrivable on the installed build **no matter how perfectly
+   > the arguments were delivered**. A session that had walked in, found the
+   > phone unlocked and run the pose matrix would still have collected nothing
+   > for questions 3-5. Check the shell parses a flag before planning a window
+   > around it:
+   >
+   > ```bash
+   > grep -n 'road-detail\|pad-shadows\|flood-detail\|--flood=' game/main.gd
+   > ```
+   >
+   > They are applied AFTER the boot preset seeding, deliberately: an A/B lever
+   > asks "what would this rung cost here", so it has to override the per-tier
+   > ceiling `set_preset()` just applied, not be overridden by it.
+
+   `--sites` is still workstation-only, and Q4's device half does not need it
+   (0-3 simultaneous sites is the real load).
 
 ~~`tools/bench_device.sh` also needs its `--es cmdline` corrected to
 `--esa command_line_params "--,…"` (or the simpler `--es args "…"`, which the
@@ -957,6 +1033,26 @@ vocabulary in §1.3 before it can be run at all.~~
 
 ## 4. Provisional knob settings, and what would overturn each
 
+> **No knob moved on 2026-08-21, and that is the correct outcome rather than a
+> deferral.** The session reached no frame (§5), so every value below still rests
+> on the workstation ladder and the single 2026-08-20 pose. In particular
+> **`presets.performance.road_detail` stays at 1** and **the ladder is NOT
+> retired**: RR-42's note that the junction early-out may have made the ladder
+> pointless is a hypothesis the device was supposed to test, and setting every
+> preset to 2 on the strength of a workstation delta would be exactly the kind of
+> device-shaped claim this file exists to prevent. What would settle it is now a
+> single command against an unlocked phone carrying a build from this branch:
+>
+> ```bash
+> bash tools/run_matrix.sh zebra     # rung 2 vs rung 0, Z0, hours 13 and 21
+> ```
+>
+> **Read it as: if `gpu_est` at rung 2 and rung 0 sit inside each other's spread
+> across the rounds, the ladder buys nothing on Adreno 750 and every preset row
+> goes to 2 with the ladder marked dormant.** If rung 0 is clearly cheaper, the
+> tier-C rung keeps its reason to exist. Either way the numbers go in the table
+> below and in doc 11 §2.13.
+
 | knob | shipped value | basis | overturned by |
 |---|---|---|---|
 | `power_infra.pad_shadows` | **true — CONFIRMED on device 2026-08-20** | +1 draw call of 320, GPU delta negative on the low-noise instrument (§Q3); the Fold measured **141–189 of 320** and is fragment-bound, not submission-bound | ~~a daylight Z0/Z1 Fold pose within 5 % of the draw-call budget~~ — tested at the one reachable pose and missed by an order of magnitude. Re-open only if a true Z0 daylight pose (needs the argument fix) lands within 5 % |
@@ -971,6 +1067,60 @@ vocabulary in §1.3 before it can be run at all.~~
 ---
 
 ## 5. Session checklist
+
+### The 2026-08-21 run — three blockers, no frame
+
+`[x]` done, `[~]` partial, `[ ]` not reached, `[!]` blocked by something new.
+
+- [x] device on the wire (already connected), `svc power stayon true`
+- [x] **saves backed up before the first launch** — `gen_000062–64`, 207 KB
+- [x] save read WITHOUT launching: `day 31, 09:46, pop 359, $174,414`
+- [x] §1.1 activity confirmed `GodotAppLauncher`; D-20 build installed 01:10:59;
+      `game/main.gd` reads `DevArgs.user_args()` at all four sites
+- [x] `--self-test` 25/25 green
+- [!] **§1.2 probe — could not be answered.** Not a D-20 failure and not a pass:
+      the game never ran. Three faults, in the order they were hit:
+      **(1) the launch command was malformed** — `adb shell` re-splits the
+      space-bearing extra and `am` died with `Unknown option: --zoom=1.0`
+      (fixed, §1.2's box); **(2) the phone was behind a secure lockscreen**, so
+      after the fix the app launched and was stopped 21 ms later with no
+      GDScript run (§1.0); **(3)** Godot's own reader returns `[]` even for a
+      correctly delivered `--esa`, so the plugin is the only path and its
+      `launch args:` line needs a surface to be printed
+- [!] **the pose matrix, the zebra A/B, the flood A/B, the pad-shadow re-check
+      and the `PERFIO` rows — all not reached.** The first two of the three
+      blockers are fixed; the third was that **`--road-detail`, `--pad-shadows`,
+      `--flood-detail` and `--flood` did not exist in `game/` at all**, so three
+      of these were undrivable on the installed build regardless. Now wired
+      (`_apply_render_ab_args()`), needs a build
+- [x] **GPU driver question CLOSED** (§1.5): stock vendor driver, Adreno
+      `0762.41`, both updatable-driver opt-ins `null`. The pre-release driver is
+      not a corruption-band suspect
+- [x] **doc 91 §13's premise overturned**: the debug APK *does* carry the plugin
+      and registers it; its `<uses-permission>` elements are what do not reach
+      the APK, and `export_presets.cfg` is why
+- [!] **`files/perf_capture.flag` IS STILL ARMED ON THE DEVICE — disarm it.** It
+      was touched early so that any launch would capture, and the wire dropped
+      before it could be removed (`adb` went to "no devices" at ~02:08 and ten
+      minutes of the §0 reconnect loop found nothing). While it is there **every
+      player session pays a per-frame `viewport_set_measure_render_time` GPU
+      timestamp query** — the exact class of driver sync point filed against the
+      Fold's presentation-corruption bands. First command of the next session,
+      before anything else:
+
+      ```bash
+      adb shell run-as com.slacumcity.game rm -f files/perf_capture.flag
+      ```
+
+      `tools/run_matrix.sh` arms it itself, so nothing is lost by removing it.
+- [x] **app NOT uninstalled**, no save deleted, no data cleared, nothing advanced
+      (the sim never ran, so this session cost the player **zero** sim-hours and
+      zero treasury — the first one that did not)
+
+**The one-command version of everything above is `tools/run_matrix.sh`**, which
+refuses to start on a locked phone rather than collecting six empty captures.
+
+### The 2026-08-20 run
 
 Marked up as run on 2026-08-20. `[x]` done, `[~]` partial, `[ ]` not reached.
 

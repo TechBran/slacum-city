@@ -425,6 +425,57 @@ func _build_city_view(render_data: Dictionary) -> void:
 	for id in sim_host.sim.buildings.keys():
 		if (sim_host.sim.buildings[id] as Building).state == &"under_construction":
 			_add_construction_site(String(id))
+	_apply_render_ab_args()
+
+
+## The render A/B levers, as launch arguments (doc 11 §2.13, runbook §3.3).
+##
+## **Why these are here and not in the main argument loop.** That loop runs
+## during bring-up, before `road_surface`, `flood_view` or `power_infra` exist;
+## these have to be applied after every view is built AND after the preset seeding
+## above, because each one deliberately OVERRIDES the per-tier ceiling that
+## `set_preset()` just applied. That is the whole point of an A/B lever: it asks
+## "what would this rung cost here", not "what does this tier allow".
+##
+## **The fault this closes (2026-08-21).** `--road-detail`, `--pad-shadows` and
+## `--flood-detail` existed only as `tools/profile_frame.gd` flags, so the three
+## questions that most needed a device answer — does the RR-42 zebra early-out's
+## 61-69 % win survive on Adreno 750, does `flood_detail` earn its rung, does the
+## pad-shadow ruling hold at a daylight pose — were undrivable on hardware no
+## matter how well the arguments were delivered. They were the last of the three
+## items in the runbook's "what needs the telemetry build" list.
+##
+## **A lever can only LOWER a rung, never raise one.** Both `set_detail`s clamp
+## to their view's `detail_ceiling`, which the preset sets — the same one-way
+## contract `PerfGovernor` has with every other knob, and the right rule, but it
+## makes one A/B silently dishonest: on a phone that auto-detected into
+## `performance` (`road_detail` 1) a `--road-detail=2` arm IS rung 1, so the
+## ladder measures as free. That is the answer such a session is hoping for,
+## which is what makes it dangerous. **Pin `--preset=balanced` alongside any
+## rung-2 arm** (its ceiling is 2 for both road and flood);
+## `tools/run_matrix.sh` does.
+##
+## Debug/QA only, and they are read from the same merged list as everything else,
+## so they arrive over `--es args` exactly like `--zoom`.
+func _apply_render_ab_args() -> void:
+	for arg in DevArgs.user_args():
+		var a := String(arg)
+		if a.begins_with("--road-detail=") and road_surface != null:
+			road_surface.set_detail(int(a.trim_prefix("--road-detail=")))
+		elif a.begins_with("--pad-shadows=") and power_infra != null:
+			power_infra.set_pad_shadows(a.trim_prefix("--pad-shadows=") != "0")
+		elif a.begins_with("--flood-detail=") and flood_view != null:
+			flood_view.set_detail(int(a.trim_prefix("--flood-detail=")))
+		elif a.begins_with("--flood=") and flood_view != null:
+			# Standing water on demand, in mm, over every tile the flood layer
+			# knows about — the device's first look at the wet look without
+			# waiting for doc 07's director to route a storm to a basin.
+			var mm := float(a.trim_prefix("--flood="))
+			var depths := {}
+			for key: Variant in flood_view.floodable_cell_keys():
+				depths[String(key)] = mm
+			flood_view.prime(depths)
+			flood_view.snap()
 
 
 ## doc 11 §5's BuildingView for one sim building, as the render model wants it.

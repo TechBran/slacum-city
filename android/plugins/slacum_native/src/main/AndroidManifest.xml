@@ -10,6 +10,20 @@
 	entry (doc 13 §2.6). These four are the WHOLE release manifest (doc 13 §2.7),
 	and the list is enforced on every build by `tools/make_release.sh`:
 
+	  *** MEASURED FALSE FOR THE PERMISSIONS, 2026-08-21. ***
+	  The RECEIVERS and the meta-data below do merge — the installed debug APK
+	  registers this plugin (`GodotPluginRegistry: Initializing Godot plugin
+	  SlacumNative`), which it could only do by finding the meta-data below, and
+	  `dumpsys package` reports `componentsDeclared=6`. The four
+	  `<uses-permission>` lines DO NOT reach that APK: the same dump lists no
+	  requested permissions at all. Godot's exporter builds the permission list
+	  from the preset, and `export_presets.cfg` has an empty
+	  `custom_permissions` with no `permissions/*=true` on any of the three
+	  presets. So self-containment works for `<application>` children and not for
+	  permissions. Do not delete these four — they are the authored intent and
+	  `tools/make_release.sh` asserts them — but the preset is what the build
+	  actually reads. See doc 91 §13.
+
 	  POST_NOTIFICATIONS      runtime (API 33+)  every notification
 	  RECEIVE_BOOT_COMPLETED  normal             re-arm alarms after a reboot
 	  VIBRATE                 normal             the P1 channel's vibration + haptics
