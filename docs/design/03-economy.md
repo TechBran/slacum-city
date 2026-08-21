@@ -609,7 +609,7 @@ Difficulty changes *pressure*, not health bars.
 
 (The rows above are the `economic` section of `data/difficulty.json`; the other three sections are listed in §8.)
 
-**Two rows carry a scope, and the scope is part of the number** *(Wave 12 — doc 93 §M1/§M2, measured in doc 92 §31)*:
+**Two rows carry a scope, and the scope is part of the number** *(Wave 12 — doc 93 §N1/§N2, measured in doc 92 §32)*:
 
 - **`M_rev` multiplies the TAX line only** — §2.2's per-building formula and §2.2's revenue floor. §2.5's power tariff, water tariff and fines are outside it, deliberately: two of those three are §9 item 6b's *held* metering constants (`delivered_mwh` 1.5, fines 3/350) and a difficulty knob on a placeholder is a difficulty knob on nothing. Non-tax revenue is **11.82 % of founding gross**, so the row's advertised effect and its measured effect differ by that share:
 
@@ -1324,7 +1324,7 @@ Headless, `tests/sim/economy/`, run via `godot --headless --path . -s res://test
 43. `test_starter_road_repair_expectation` *(re-based on doc 10's operating point — report 98 RR-13)* — with the doc-09 core (540 AVENUE + 243 STREET), decay at doc 10's base rates, **`c_day = 0.35`** (decay multiplier **1.2625**), clear weather (`wx_wear_day = 0`) and `M_repair = 1.0`, assert the steady-state road-repair rate is **$185.9 ± 0.5 /gh**; assert it is **invariant to `auto_repair_threshold`** across {0.25, 0.40, 0.55} over 2,000 gh (the threshold changes lumpiness, not rate); and assert the underlying damage-fraction throughput equals doc 10 test 42's published **0.28548 tile-fractions/gh**, so both docs are asserting the same starter city rather than two different ones. Also assert the `c_day = 0` floor still evaluates to **$147.2 ± 0.5 /gh**, which pins the `(1 + 0.75·c_day)` coupling itself rather than just its value at one point. *(Was `c_day = 0` / $147.2 — a point doc 10's own arithmetic never uses.)*
 44. `test_road_upgrade_costs_more_than_building_big` — `street.build + street_to_avenue.upgrade > avenue.build` (5,800 > 5,200), the same inequality §2.3 imposes on buildings.
 45. `test_block_template_billed_once` — stamping a 87-tile block template during `road_install` produces exactly one `Treasury.spend()` of the §2.8 phase price and **zero** per-tile charges (the mirror of doc 10's test 42).
-46. `test_one_difficulty_knob_per_ledger_line` *(new — doc 93 §M1/§M2)* — settle the §2.12 founding ledger on all four **live** `data/difficulty.json` `economic` rows and assert, per preset and against the `standard` settlement: the seven swept expense lines are exactly `× M_exp`; `roads_repair` is exactly `× M_repair` **and explicitly not `× M_repair × M_exp`**; `debt` takes neither; `tax` is exactly `× M_rev`; and `power_tariff` / `water_tariff` / `fines` are exactly `× 1.000`. Reads the live file rather than transcribed constants, so a retune moves the expectation with the file and only a change of SCOPE fails.
+46. `test_one_difficulty_knob_per_ledger_line` *(new — doc 93 §N1/§N2)* — settle the §2.12 founding ledger on all four **live** `data/difficulty.json` `economic` rows and assert, per preset and against the `standard` settlement: the seven swept expense lines are exactly `× M_exp`; `roads_repair` is exactly `× M_repair` **and explicitly not `× M_repair × M_exp`**; `debt` takes neither; `tax` is exactly `× M_rev`; and `power_tariff` / `water_tariff` / `fines` are exactly `× 1.000`. Reads the live file rather than transcribed constants, so a retune moves the expectation with the file and only a change of SCOPE fails.
 
 ---
 

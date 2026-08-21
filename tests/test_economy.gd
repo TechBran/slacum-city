@@ -554,7 +554,7 @@ func test_one_difficulty_knob_per_ledger_line() -> void:
 							% preset)
 		assert_almost_eq(float(expenses["debt"]), float(base_expenses["debt"]), 1e-6,
 				"debt on %s carries its own difficulty term (the APR)" % preset)
-		# §M2: the tax line and only the tax line.
+		# §N2: the tax line and only the tax line.
 		assert_almost_eq(float(revenue["tax"]), float(base_revenue["tax"]) * m_rev,
 				1e-6, "tax on %s is M_rev × standard" % preset)
 		for line in ["power_tariff", "water_tariff", "fines"]:
