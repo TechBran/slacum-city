@@ -248,3 +248,76 @@ func test_block_dark_events_drive_the_renderer_contract() -> void:
 		if event["type"] == &"BlockDarkChanged" and not bool(event["block_dark"]):
 			relit += 1
 	assert_true(relit >= 1, "relight arrives on the same event channel")
+
+
+# ------------------------------------------- doc 04's per-tile transformer memo
+
+## The scan `CitySim._transformer_covering` WAS, verbatim, before the Wave-14
+## warm fill inverted it: read straight off `loader.power`, tile-major, with no
+## index and no memo. It is the oracle here precisely because it shares no code
+## with the thing under test.
+func _covering_by_the_authored_scan(sim: CitySim, tile: Vector2i) -> String:
+	var best := ""
+	var best_dist := 999999.0
+	for node in sim.loader.power.get("nodes", []):
+		if String(node["kind"]) != "transformer":
+			continue
+		var t := StarterCityLoader.core_to_global(int(node["tile"][0]), int(node["tile"][1]))
+		var dist := maxf(absf(tile.x - t.x), absf(tile.y - t.y))
+		if dist > float(PowerGrid.TRANSFORMER_SERVICE_RADIUS[int(node.get("level", 1)) - 1]):
+			continue
+		var id := String(node["id"])
+		if dist < best_dist or (dist == best_dist and id < best):
+			best_dist = dist
+			best = id
+	return best
+
+
+func test_the_warm_transformer_memo_answers_what_the_authored_scan_answers() -> void:
+	# Hash-neutrality proved on the ANSWER rather than on a digest: doc 10 asks
+	# `_is_tile_powered` once per signalised intersection every tick, so a warm
+	# fill that disagreed with the scan on ONE tile would move the whole city.
+	# Every tile within a margin of the authored transformers is checked, which
+	# covers both sides of every service boundary and the uncovered ground beyond.
+	var sim := CitySim.boot_from_files()
+	assert_true(sim._transformer_cover_warm, "the boot warmed the memo")
+	assert_true(sim._transformer_cover.size() > 500,
+			"and filled it (%d tiles)" % sim._transformer_cover.size())
+	var lo := Vector2i(1 << 30, 1 << 30)
+	var hi := Vector2i(-(1 << 30), -(1 << 30))
+	for node in sim.loader.power.get("nodes", []):
+		if String(node["kind"]) != "transformer":
+			continue
+		var t := StarterCityLoader.core_to_global(int(node["tile"][0]), int(node["tile"][1]))
+		lo = Vector2i(mini(lo.x, t.x), mini(lo.y, t.y))
+		hi = Vector2i(maxi(hi.x, t.x), maxi(hi.y, t.y))
+	var margin := 10   # > the largest service radius, so the uncovered ring is real
+	var mismatches := 0
+	var covered := 0
+	var uncovered := 0
+	for y in range(lo.y - margin, hi.y + margin + 1):
+		for x in range(lo.x - margin, hi.x + margin + 1):
+			var tile := Vector2i(x, y)
+			var want := _covering_by_the_authored_scan(sim, tile)
+			if want != String(sim._transformer_cover.get(tile, "")):
+				mismatches += 1
+			if want == "":
+				uncovered += 1
+			else:
+				covered += 1
+	assert_eq(mismatches, 0,
+			"every tile in the transformer envelope agrees with the authored scan")
+	assert_true(covered > 500 and uncovered > 500,
+			"the sweep saw both sides of the boundary (%d covered, %d uncovered)"
+			% [covered, uncovered])
+
+
+func test_an_uncovered_tile_is_lit_and_costs_no_scan() -> void:
+	# The warm memo's shortcut: a MISS is the uncovered answer, so a far-away
+	# tile neither scans nor grows the memo. Doc 10 asks about tiles no authored
+	# transformer reaches on every graph it builds.
+	var sim := CitySim.boot_from_files()
+	var before := sim._transformer_cover.size()
+	assert_true(sim._is_tile_powered(Vector2i(2000, 2000)), "uncovered ground is lit")
+	assert_eq(sim._transformer_cover.size(), before,
+			"and the memo did not grow by one entry for it")

@@ -429,6 +429,11 @@ func _refresh_road_density() -> void:
 func _is_tile_powered(tile: Vector2i) -> bool:
 	var cached: Variant = _transformer_cover.get(tile)
 	if cached == null:
+		if _transformer_cover_warm:
+			# Warm ⇒ every covered tile is already in the memo, so a miss IS the
+			# uncovered answer. No scan, no insert, no unbounded growth from the
+			# tiles doc 10 asks about that no transformer reaches.
+			return true
 		cached = _transformer_covering(tile)
 		_transformer_cover[tile] = cached
 	var best := String(cached)
@@ -439,23 +444,96 @@ func _is_tile_powered(tile: Vector2i) -> bool:
 ## question once per signalised intersection EVERY tick, and the answer depends
 ## only on `loader.power`, which is written once at boot and never again — so it
 ## is memoised. DERIVED state: it is not captured, not saved, and a loaded game
-## refills it from the same loader data on its first tick.
+## refills it from the same loader data.
+##
+## **It is WARM-FILLED at boot rather than cold-filled one intersection at a
+## time** (doc 10's Wave-12 open q4). The lazy fill was O(authored power nodes)
+## per tile with a `String()` cast, a `core_to_global()` and a radius lookup
+## inside the inner loop, and report 98 RR-60b measured what that came to: **96 ms
+## on the benchmark city**, paid by `RoadGraph.refresh_signal_power` at the load
+## seam in five ~21 ms cursor steps, or by the first live frame on a fresh boot.
+## `_warm_transformer_cover()` inverts the loop and pays it once.
 var _transformer_cover: Dictionary = {}
+## True once [_warm_transformer_cover] has enumerated every covered tile, after
+## which a memo MISS is a complete answer rather than a cache fault.
+var _transformer_cover_warm: bool = false
+# The authored transformers, resolved once into packed columns: global tile,
+# service radius, id. Everything the old inner loop re-derived per tile per node.
+var _tf_x := PackedInt32Array()
+var _tf_y := PackedInt32Array()
+var _tf_radius := PackedInt32Array()
+var _tf_id := PackedStringArray()
 
 
-func _transformer_covering(tile: Vector2i) -> String:
-	var best := ""
-	var best_dist := 999999.0
+## Resolve `loader.power`'s transformer rows into the packed columns above. Boot
+## data, read once; `_boot_power` calls it before anything can ask a tile.
+func _index_transformers() -> void:
+	_tf_x.clear()
+	_tf_y.clear()
+	_tf_radius.clear()
+	_tf_id.clear()
 	for node in loader.power.get("nodes", []):
 		if String(node["kind"]) != "transformer":
 			continue
 		var t := StarterCityLoader.core_to_global(int(node["tile"][0]), int(node["tile"][1]))
-		var dist := maxf(absf(tile.x - t.x), absf(tile.y - t.y))
-		if dist > float(PowerGrid.TRANSFORMER_SERVICE_RADIUS[int(node.get("level", 1)) - 1]):
+		_tf_x.append(t.x)
+		_tf_y.append(t.y)
+		_tf_radius.append(int(PowerGrid.TRANSFORMER_SERVICE_RADIUS[int(node.get("level", 1)) - 1]))
+		_tf_id.append(String(node["id"]))
+
+
+## One pass over the transformers, stamping every tile each one reaches — the
+## SAME argmin the per-tile scan computed, evaluated from the other side.
+##
+## Identical by construction, and that is the whole hash-neutrality argument:
+## `_transformer_covering` is `argmin over transformers of (chebyshev distance,
+## id)` restricted to `distance <= radius`, which is order-independent, so
+## stamping tile-major or transformer-major lands on the same id for every tile.
+## The covered SET is identical too — it is the union of the same square service
+## areas — so `_transformer_cover_warm`'s "a miss means uncovered" shortcut
+## answers exactly what the scan answered with `""`.
+##
+## The `best` table is transient: it holds the winning DISTANCE per tile for the
+## duration of the fill and is dropped on the way out, because nothing afterwards
+## asks how far a tile is from its transformer — only which one it is.
+func _warm_transformer_cover() -> void:
+	_transformer_cover.clear()
+	_transformer_cover_warm = false
+	var best: Dictionary = {}
+	for i in _tf_id.size():
+		var cx := _tf_x[i]
+		var cy := _tf_y[i]
+		var radius := _tf_radius[i]
+		var id := _tf_id[i]
+		for dy in range(-radius, radius + 1):
+			var ady := absi(dy)
+			for dx in range(-radius, radius + 1):
+				var dist := maxi(absi(dx), ady)
+				var tile := Vector2i(cx + dx, cy + dy)
+				var held: Variant = best.get(tile)
+				if held != null:
+					var seen := int(held)
+					if dist > seen or (dist == seen and id >= String(_transformer_cover[tile])):
+						continue
+				best[tile] = dist
+				_transformer_cover[tile] = id
+	_transformer_cover_warm = true
+
+
+## The cold path, kept because a sim whose transformers were never indexed (a
+## bare `CitySim.new()` in a unit test that boots no power) still has to answer.
+## It reads the packed columns rather than `loader.power`, which is the same scan
+## with the per-node `String()`, `core_to_global()` and radius lookup hoisted.
+func _transformer_covering(tile: Vector2i) -> String:
+	var best := ""
+	var best_dist := 0x7fffffff
+	for i in _tf_id.size():
+		var dist := maxi(absi(tile.x - _tf_x[i]), absi(tile.y - _tf_y[i]))
+		if dist > _tf_radius[i]:
 			continue
 		# The [dist, id] tuple ordering the scan used, unpacked: nearer wins,
 		# ties break on the lower id.
-		var id := String(node["id"])
+		var id := _tf_id[i]
 		if dist < best_dist or (dist == best_dist and id < best):
 			best_dist = dist
 			best = id
@@ -581,6 +659,12 @@ func _boot_buildings() -> void:
 
 func _boot_power() -> void:
 	grid = PowerGrid.new()
+	# Doc 10's per-tile transformer memo, indexed and filled HERE — before the
+	# road network exists to ask it, and once for the life of the sim, restores
+	# included (`loader.power` is boot data and a load re-derives from it rather
+	# than trusting the body; see `_restamp_authored_power_tiles`).
+	_index_transformers()
+	_warm_transformer_cover()
 	for node in loader.power.get("nodes", []):
 		var kind := String(node["kind"])
 		var opts := {"level": int(node.get("level", 1))}
@@ -734,6 +818,27 @@ func advance_coarse_hours(hours: int, is_catchup: bool = true) -> void:
 	if is_catchup and director != null:
 		director.catchup_begin()   # doc 07 C-55: once per catch-up session
 	scheduler.advance_coarse_n(hours, is_catchup, 0, hours)
+
+
+## A whole `CatchUpPlanner` plan, resumable: units the shell may spend across
+## frames behind S15's catch-up veil (doc 13 §2.9, A91-D-31). The synchronous
+## loop it replaces lives in `game/main.gd::_on_app_resumed`, and the two land on
+## the same city bit for bit — `CatchUpCursor` explains which seam guarantees it
+## and `tests/test_catchup_cursor.gd` proves it on both cities.
+##
+## Doc 13 §2.9's pseudocode calls this `advance_coarse_sliced(hours_per_slice)`
+## and has it return "done yet?". It is a cursor instead, for two reasons the
+## shipped planner makes unavoidable: a returning player's plan is not coarse
+## hours alone — it carries a fine head-align segment and a 40-tick fine tail
+## (doc 91 D-1), which a coarse-only entry point cannot advance — and the slice
+## BUDGET cannot live in here at all, because `sim/` may not read a clock
+## (constitution §5). Same design, one layer out: the shell owns the budget, this
+## owns the unit.
+func begin_catchup(plan: Dictionary) -> CatchUpCursor:
+	var on_segment_begin := Callable()
+	if director != null:
+		on_segment_begin = director.catchup_begin
+	return CatchUpCursor.new(scheduler, plan, on_segment_begin)
 
 
 ## Capture for SAVING. Godot's full-precision JSON printer is not

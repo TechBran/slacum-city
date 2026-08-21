@@ -1128,7 +1128,7 @@ breaks_reserve(unit):
 
 ### 2.13 Offline catch-up integration
 
-`IncidentSystem` exposes exactly one entry point; the offline driver (**doc 08**, through doc 01's `advance_coarse_sliced`) calls it repeatedly with `dt_h = 1.0`:
+`IncidentSystem` exposes exactly one entry point; the offline driver (**doc 08**, through doc 01's sliced catch-up — `CitySim.begin_catchup(plan)` → `CatchUpCursor` as built, Wave 14) calls it repeatedly with `dt_h = 1.0`:
 
 ```
 for hour in range(elapsed_game_hours):

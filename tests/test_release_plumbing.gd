@@ -220,6 +220,54 @@ func test_the_plugin_declares_exactly_the_four_permissions() -> void:
 	assert_eq(declared, expected, "the release manifest is these four and no more")
 
 
+## doc 13 §2.7's four, as `export_presets.cfg` spells them.
+## `"permissions/" + PERMISSION.to_lower()` is the exporter's own option key, and
+## all four are in Godot 4.7.2's built-in table, so none of them needs
+## `custom_permissions`.
+const EXPECTED_PRESET_PERMISSION_KEYS: Array[String] = [
+	"permissions/post_notifications",
+	"permissions/receive_boot_completed",
+	"permissions/vibrate",
+	"permissions/wake_lock",
+]
+
+
+func test_every_preset_requests_exactly_the_four_permissions() -> void:
+	# THE SECOND SOURCE, and the gate this file did not have for it.
+	# `test_the_plugin_declares_exactly_the_four_permissions` checks what the
+	# plugin manifest AUTHORS; nothing checked what a preset REQUESTS. Both reach
+	# the APK — measured on four locally built debug APKs, `aapt2 dump
+	# permissions`: AAR-only → 4, preset-only → 4, both → 4, NEITHER → 0 with the
+	# plugin and both receivers still merged (report 98 §28 RR-69). That last row
+	# is the reading the 2026-08-21 Fold session took off the phone, and its cause
+	# was a stale AAR, not the preset.
+	# So the preset flags are redundancy, not the fix: with them a stale or
+	# hand-edited AAR degrades from "silently drops a runtime permission" to
+	# "nothing at all". Nothing headless can catch a stale binary — this catches
+	# the second source going missing, which is the half that CAN be caught here.
+	var text := _presets()
+	for key: String in EXPECTED_PRESET_PERMISSION_KEYS:
+		var values := _values(text, key)
+		assert_eq(values.size(), 3,
+				"%s is set on all three presets — the debug APK is the one the dev "
+				% key + "loop installs, and an untested permission set is not a test")
+		for value: String in values:
+			assert_eq(value, "true", "%s is requested, not merely present" % key)
+	# …and nothing else is. A fifth permission cannot arrive without renaming it
+	# here, which is the same promise `custom_permissions` already carries.
+	var requested: Array[String] = []
+	for line: String in text.split("\n"):
+		var trimmed := line.strip_edges()
+		if trimmed.begins_with("permissions/") and trimmed.ends_with("=true"):
+			var key := trimmed.substr(0, trimmed.length() - 5)
+			if not requested.has(key):
+				requested.append(key)
+	requested.sort()
+	var expected := EXPECTED_PRESET_PERMISSION_KEYS.duplicate()
+	expected.sort()
+	assert_eq(requested, expected, "the presets request these four and no others")
+
+
 func test_the_forbidden_permissions_are_absent() -> void:
 	# INTERNET is the load-bearing one: its absence is the entire reason the Play
 	# Data Safety form can say "no data collected". The two exact-alarm

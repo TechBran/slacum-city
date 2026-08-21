@@ -2250,3 +2250,253 @@ is what keeps the card on screen for that one frame.
 **Ruling: after choosing a width for a wrapping container, re-read its height.**
 Recorded here because it will be met again — every `HBox` → `HFlowContainer`
 conversion this project makes from now on carries it.
+
+## 28. WAVE 14 — the four platform items with known fixes (binding)
+
+Four rows the previous waves had already diagnosed and left standing: the
+exporter's permission list, the synchronous resume, doc 04's cold transformer
+memo, and `TrafficFeed._by_edge`'s insertion order. **Three of the four were
+diagnosed correctly. The first was not** — RR-69 measures it and reverses the
+finding, which is why that entry is the longest one here and why the change it
+ships is redundancy rather than a repair.
+
+**Every one of them is hash-neutral, and the proof is the same instrument in
+every case** —
+`tools/profile_sim.gd --hash-only` on `data/starter_city.json` and
+`res://tests/fixtures/bench_city.json`, coarse 24 h and fine 2 h, unmoved:
+
+| | before | after |
+|---|---|---|
+| founding, coarse 24 h | `e8bffba1853f248e…` | `e8bffba1853f248e…` |
+| founding, fine 2 h | `08bfdfaa3dd65281…` | `08bfdfaa3dd65281…` |
+| bench, coarse 24 h | `e760f9305d21d331…` | `e760f9305d21d331…` |
+| bench, fine 2 h | `bd2d8f30d25827f4…` | `bd2d8f30d25827f4…` |
+
+### RR-69 — The permission list had TWO possible sources and the failing build had NEITHER. Measure the artifact, and make sure the artifact is the one you built (docs 13 §2.6/§2.7/§3.4/§10.8/§11.2, 91 §13)
+
+**The finding this wave was sent to fix, and it does not survive measurement.**
+The third Fold session recorded that the plugin's four `<uses-permission>`
+elements never reach the APK, that manifest merging carries `<application>`
+children and not permissions, that Godot's exporter builds the list from
+`export_presets.cfg` alone, and therefore that doc 13 §2.6's self-containment
+rationale was false. That reading was written into
+`android/plugins/slacum_native/src/main/AndroidManifest.xml` in capitals, into
+doc 13 §2.6, into §3.4's preset block and into doc 91 §13. **It is wrong.**
+
+**The 2×2, `aapt2 dump permissions` on four locally built debug APKs** (Gradle
+path, `godot --headless --export-debug "Android"`, build-tools 36.1.0). Each arm
+is a full export from a cleared `build/`, and the AAR arms are real rebuilds
+through `tools/build_native_plugin.sh`:
+
+| plugin AAR declares the four | `export_presets.cfg` declares the four | APK requests |
+|---|---|---|
+| yes | yes | **4** ← shipped state |
+| yes | no | **4** |
+| no | yes | **4** |
+| no | no | **0**, and the plugin meta-data plus both receivers still merge |
+
+**Either source suffices, and the bottom row reproduces the phone reading
+exactly** — zero requested permissions against a package whose plugin loads and
+whose `componentsDeclared` is 6. So the APK on the Fold was built against an AAR
+that predated the plugin manifest's permission block, and **the root cause is the
+STALE AAR the session immediately before it had just diagnosed and fixed by
+tracking the binary.** The same defect, one symptom later, attributed to the
+wrong file. Doc 13 §2.6 was right all along; §11.2's `aapt2` block was right; and
+§10.8's "superseded by §11.2" was right. Every one of those was corrected in the
+wrong direction and is corrected back here.
+
+**The ruling is what to do about a fact with two sources.** `export_presets.cfg`
+**keeps** the four flags this wave added:
+
+```ini
+permissions/post_notifications=true
+permissions/receive_boot_completed=true
+permissions/vibrate=true
+permissions/wake_lock=true
+```
+
+on all three presets, not because the plugin manifest is insufficient — arm 2
+proves it is sufficient — but because **arm 3 is the one that matters to a
+project a stale AAR has now cost two sessions.** With the preset flags in
+place the APK's permission set no longer depends on a 36 KB binary being current;
+it depends on a committed, diffable text file the exporter reads directly, and a
+stale AAR degrades from "silently drops a runtime permission" to "nothing".
+`custom_permissions` stays `PackedStringArray()`: all four are in 4.7.2's own
+permission table (`"permissions/" + PERMISSION.to_lower()` is the option key), so
+the boolean flags are the idiomatic spelling and
+`test_the_forbidden_permissions_are_absent`'s "presets add no permissions of
+their own" assertion keeps its meaning.
+
+Shipped state, read back off the binary:
+
+```
+$ aapt2 dump permissions build/slacum-debug.apk
+package: com.slacumcity.game
+uses-permission: name='android.permission.POST_NOTIFICATIONS'
+uses-permission: name='android.permission.RECEIVE_BOOT_COMPLETED'
+uses-permission: name='android.permission.VIBRATE'
+uses-permission: name='android.permission.WAKE_LOCK'
+```
+
+Four, exactly; no `INTERNET`, so the Data Safety story is intact; `minSdk 29`,
+`targetSdk 36`, `arm64-v8a`; and `aapt2 dump xmltree` confirms the plugin
+meta-data and both receivers.
+
+**The gate that would have caught the stale AAR without a phone now exists.**
+`tests/test_release_plumbing.gd` asserted what the plugin manifest AUTHORS and
+asserted that `custom_permissions` was empty; it had no assertion at all about
+what the presets REQUEST, so the second source could be missing silently.
+`test_every_preset_requests_exactly_the_four_permissions` closes that: the four
+flags are `true` on all three presets and a scan of every `permissions/*=true`
+line finds those four and nothing else. It does not catch a stale AAR — nothing
+headless can — but it means a stale AAR can no longer take a permission with it.
+
+**The lesson, stated where the next session will read it, because it has now cost
+two:** *a measurement of a binary is a measurement of THAT binary.* `dumpsys
+package` on the phone was correct about the APK it was given and wrong about
+every APK the repository can build, and the difference is one build input that
+was not committed at the time. The 2×2 above costs four exports and twelve
+minutes, and it is what turns "the manifest does not work" into "this artifact
+was stale" — which is a different fix in a different file.
+
+
+### RR-70 — A memo whose whole input is boot data should be filled at boot (docs 04 §2.2, 10 §2.6/§9 q13, 13 §2.9.1)
+
+`CitySim._transformer_cover` answers doc 10's G-6 question — *is this tile
+powered?* — for every signalised intersection on every tick. It depends only on
+`loader.power`, which is written once at boot and never again, and it was filled
+**lazily, one tile at a time**, by a scan that re-derived every transformer's
+global tile, radius and id string *inside* the per-tile loop. RR-60b already
+measured the total and moved it under the veil: **96 ms on the benchmark city**,
+emitted as five ~21 ms `roads_signals` restore steps.
+
+**Ruling: derived state whose whole input is boot data is filled once, at boot,
+in whichever loop order is cheapest — not on demand in the order a consumer
+happens to ask.** `_boot_power()` now resolves the transformers into packed
+columns and stamps every covered tile from the transformer side. The winner per
+tile is the same `argmin (chebyshev distance, id)` restricted to
+`distance <= radius` that the per-tile scan computed; that is order-independent,
+so tile-major and transformer-major land on the same id for every tile, and the
+covered SET is identical because it is the union of the same square service
+areas. A memo MISS is therefore a complete answer — *uncovered, and lit* — rather
+than a cache fault, which is what keeps the query O(1) for the tiles no
+transformer reaches.
+
+Interleaved A/B, three rounds, no arm overlapping, `tools/profile_save.gd`
+(`--steps` and the new `--boot-only`), workstation carrying two sibling suites:
+
+| | before | after |
+|---|---|---|
+| `roads_signals` steps, bench | 109.5 / 108.9 / 107.6 ms | **1.54 / 1.62 / 1.51 ms** |
+| restore total, bench | 316.0 / 315.0 / 313.7 ms | **207.2 / 207.8 / 204.6 ms** |
+| cold `CitySim.boot()`, bench | 211.3 / 215.9 / 219.9 ms | **222.4 / 225.5 / 228.7 ms** |
+| cold `CitySim.boot()`, founding | 38.7 / 38.5 / 38.7 ms | **39.2 / 38.7 / 38.8 ms** |
+| memo entries after boot | **0** — it fills in play, to one per signalised node (2,024 on the bench city, RR-60b) | **11,236** bench / **1,072** founding |
+
+**The trade, stated plainly: +9.4 ms once per process launch buys −108 ms off
+every load.** A boot happens behind the splash before any city is on screen; a
+restore happens behind the veil the player is watching. The memo grows to one
+entry per covered tile — **2,024 → 11,236** on the benchmark city, the *union* of
+144 level-5 squares rather than the 41,616 stamps that fill it. At Godot's
+Variant sizes that is on the order of a megabyte; the entry count is the measured
+number and the megabyte is arithmetic on it.
+
+**Hash-neutrality is proved on the ANSWER, not on the digest.**
+`tests/test_city_sim.gd::test_the_warm_transformer_memo_answers_what_the_authored_scan_answers`
+re-implements the pre-Wave-14 tile-major scan verbatim as an oracle that shares
+no code with the thing under test, and walks every tile in the transformer
+envelope plus a 10-tile margin — both sides of every service boundary and the
+uncovered ground beyond. Zero mismatches, and `--hash-only` is unmoved.
+
+`tools/profile_save.gd` gained a `boot (cold sim)` row and a `--boot-only` mode
+for this A/B, because a table that could see the restore end of the move and not
+the boot end would have made the move look free.
+
+### RR-71 — Order-canonical containers, not order-tolerant consumers (doc 10 §2.15/§9 q14)
+
+`TrafficFeed._by_edge` (`edge_id → [vehicle ids]`) was insertion-ordered, and a
+shipped city produces two insertion histories for the same feed: **live**, a car
+is appended to the edge it spawns on and again to every edge it hops onto, so a
+list is in visit order and the key order is first-touch; **restored**,
+`deserialize` walks the saved roster in ascending vehicle id. The two disagree on
+every city with a hop in it. It was inert because the one consumer — `rebalance`
+— copied each list, sorted it, and iterated `_sorted_keys()`.
+
+**Ruling: when a container's order is load-bearing, the container owns it.** An
+order-tolerant consumer is a defence that has to be remembered, and the first
+reader to forget it breaks save→load→advance identity in a way that only
+reproduces after a hop — the same class of defect as RR-60's ULP and RR-60b's
+lit signals, each of which cost a wave to find. `_attach` / `_detach` now place
+by binary search, so every per-edge list is ascending; a maintained `_edge_keys`
+`PackedInt32Array` carries the keys ascending; `edges_with_vehicles()` and
+`vehicles_on_edge()` are the seam and `rebalance()` sorts nothing.
+
+`tests/test_roads_traffic_order.gd` asserts over the **raw** containers with no
+sorting on the way in — which is exactly the assertion an unsorted future
+consumer would need — plus the parallel-index invariant (`_edge_keys` equals
+`sorted(_by_edge.keys())`, and no emptied edge is ever left behind as an empty
+list) across spawn, hop, despawn, drain, refill and reset. **Against the
+pre-Wave-14 append behaviour the file produces 356 failures**; against the
+shipped one, none. Hash-neutral on both cities, coarse and fine.
+
+### RR-72 — The budget belongs to the shell, the unit belongs to the sim (docs 13 §2.9, 01 §2.10, 91 A91-D-31)
+
+`game/main.gd::_on_app_resumed` ran `CatchUpPlanner`'s segments in a synchronous
+`for` loop, so S15's catch-up veil drew for one frame and then froze until the
+whole absence had been simulated — 720 coarse steps in the worst case, at 6.3 ms
+(founding) to 190 ms (bench) each. Doc 13 §2.9 has specified the other shape
+since it was drafted.
+
+**Ruling: `CitySim.begin_catchup(plan) -> CatchUpCursor`, and the shell spends
+units against its own wall clock.** Two parts of §2.9's pseudocode did not
+survive contact with the shipped planner, and are recorded rather than quietly
+dropped:
+
+* **`advance_coarse_sliced(hours_per_slice)` returning "done yet?" cannot advance
+  a real resume.** A returning player's plan is not coarse hours alone: it
+  carries a fine head-align segment and a 40-tick fine tail (doc 91 D-1), and a
+  coarse-only entry point has nothing to do with either. The cursor takes the
+  whole plan.
+* **The budget cannot live in `sim/` at all** — constitution §5 forbids reading a
+  clock there, which is the same argument `RestoreCursor` already makes and which
+  §2.9's own text makes too ("the shell decides the budget"). So the unit is one
+  coarse hour or one fine tick and the shell loops on `Time.get_ticks_usec()`.
+  `hours_per_slice = 12` came from the retired 0.60 ms estimate; at the measured
+  step costs a 12 ms budget spends **one** step per frame on every city in this
+  project, which is §2.9's own worst-case row.
+
+**Slicing may not change the simulation, and the seam that guarantees it is
+`TickScheduler.advance_coarse_n`'s `catchup_index_base`.** A coarse step reads
+`ctx.catchup_index` / `ctx.catchup_total`; doc 03's `offline_yield_mult` and doc
+07's 72-hour offline event gate both consume them, and they index the SEGMENT,
+not the slice. The cursor issues
+`advance_coarse_n(1, true, hours_done_in_segment, segment_hours)` where the loop
+issued `advance_coarse_n(n, true, 0, n)` once, and `catchup_begin()` fires once
+per coarse segment (doc 07 C-55) rather than once per frame.
+
+`tests/test_catchup_cursor.gd` proves bit-identity against a verbatim copy of the
+old shell loop, on **both cities**, at **1, 3, 12 and unbounded** units per frame,
+on `state_hash()` **and** on the drained event stream — an away report is built
+from `sim.bus.drain()`, so two resumes that agree on the hash and disagree on the
+stream are still two different resumes. A second test pins the index mechanism
+directly through a probe `SimSystem`, so a regression names its cause and not
+only its symptom.
+
+ANR safety is unchanged and still structural: a step longer than the budget runs
+to completion, so the worst blocked frame is one coarse step against the 5 s line.
+
+**Two shell-side consequences of the catch-up no longer being one frame, and both
+are integration decisions rather than UI ones — which is what A91-D-31 reserved
+for the lead when it declined to fix this itself.** First, **`SimHost` must be
+paused for the duration**: it is a separate node with its own `_process`, and
+unpaused it adds `delta × 60` to `clock.residual_game_ms` and spends LIVE fine
+ticks *between* the plan's slices, so the sliced resume would land on a different
+city from the synchronous one. That pause is a determinism requirement, not
+tidiness, and it is the one line of the integration that is not optional. Second,
+a player can now background the app **while the veil is up**, which was
+unreachable when the catch-up was atomic; a second `_on_app_resumed` therefore
+drains the unfinished cursor on the spot and then plans the new absence, rather
+than dropping it. Draining synchronously is exactly what this path did with the
+whole plan at HEAD, so the worst case is no worse than the frame it replaces.
+
+The shell integration is an exact snippet — `game/main.gd` is the lead's.
