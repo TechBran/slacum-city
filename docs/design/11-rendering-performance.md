@@ -1455,6 +1455,130 @@ need only **an unlocked phone and a build from this branch** — the harness
 faults in front of them are fixed and `tools/run_matrix.sh` runs the whole list
 in one command, refusing to start if the phone is locked.
 
+##### The 2026-08-21 third session — a settled baseline, both `PERFIO` rows, and why the matrix is *still* open
+
+**The phone was unlocked, awake and in hand, the D-20 branch was installed, and
+the matrix still could not run.** The cause was not any of the five things the
+previous two sessions had queued up. It is written out in full in
+`tools/device_runbook.md`'s "READ FIRST" box; the short form is that **the
+`SlacumNative` AAR is a gitignored build artifact that nobody had rebuilt**, so
+the installed APK contained the plugin but not `launch_args`, and every dev
+argument was dropped in silence. The evidence is static and not inferential:
+`launch_args` appears **0 times in all three `classes*.dex`** of the installed
+APK while `thermal_status` (the control) appears once.
+
+**The transport half of D-20 is CONFIRMED GOOD on hardware, and that is a real
+result.** `logcat` caught the launch line arriving at `am` byte-perfect in both
+forms — `--esa command_line_params '--,--resume,--zoom=1.0,--perf' --es args
+'--resume --zoom=1.0 --perf'` — so §1.2's quoting fix works and the 2026-08-21
+"Blocker 1" is closed. `GodotActivity` still logs `Launch intent … (has extras)
+with parameters []`, which is the engine-side drop D-20 exists to route around,
+now observed directly rather than deduced.
+
+**The discriminator that separates a stale plugin from a dead build, for the
+next session:** with `--perf` on the command line and nothing else arming the
+capture, **0 `PERF` lines**; with `touch files/perf_capture.flag` and no
+argument at all, **19 `PERF` lines** — same build, same pose, minutes apart.
+Telemetry gating on `--perf` is therefore *only* as reliable as argument
+delivery, which is the cross-branch hazard the 2026-08-20 box flagged; the flag
+file is what made this session measurable at all.
+
+**Measured — the player's real city, foreground, `preset=balanced`
+(auto-detected), capture armed by flag file, one 45 s hold.** Day 31, pop 359,
+`sim_time_minutes` 45,262. The hold has two regimes and they are reported
+separately, because averaging them is what produces a meaningless row:
+
+| phase | t (s) | fps | p95 ms | cpu ms | gpu_est ms | dc | prim | vram MB | chunks | near | inst | knob | thermal |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| streaming in | 2–14 | 111.3–117.9 | 8.3–13.9 | 0.2–0.5 | 5.8–7.1 | 108 | 25,774 | 187 | 9 | 4 | 34 | 0 | 0 |
+| **incremental add** | 16 | 80.0 | **36.5** | 0.5 | 6.2 | **149** | 95,186 | 197 | 9 | 4 | 81 | 0 | 0 |
+| **settled** | 18–38 | **99.5–112.4** | **10.1–15.8** | **0.3–0.4** | **6.1–6.8** | **103–107** | ~37,270 | **198** | 9 | 4 → 6 | 81 | **0** | **0** |
+
+*(`near` is 4 in the `t = 18 s` sample and 6 from `t = 20 s` onward — the tier
+settles one sample after the instance count does. Ranges are the real min..max
+across the phase, not a mean ± anything.)*
+
+**Four things this says.**
+
+**1. At this pose the frame is nowhere near any budget, and the governor never
+moved.** `dc` **103–107 against §2.13's 320** (a 67 % margin, wider than the
+41–56 % the 2026-08-20 session saw), `cpu` **0.3–0.4 ms against 4 ms**,
+`gpu_est` **6.1–6.8 ms against 16.7 ms**, `knob = 0` for the entire hold and
+`thermal = 0` throughout. This is a **larger** city than the one that drove the
+governor to `knob = 4` on 2026-08-20 (pop 359 vs 255, `inst` 81 vs 70), so the
+earlier session's governed rows are **not** explained by city size. What
+separates them is not yet established and the two candidate causes it named —
+the 4 MP panel and the shadow pass — both survive. **The `near` column differs
+(6 here, 4 there), so these are different camera positions and the comparison is
+suggestive, not controlled.** That is exactly what the pose matrix exists to fix.
+
+**2. The city's incremental stream-in costs one visible hitch.** At `t = 16 s`
+`inst` goes 34 → 81 and `dc` spikes to **149** — the run's maximum, and the only
+sample above 110 — with **p95 36.5 ms**, i.e. a dropped frame at 120 Hz, four
+frames' worth. It resolves in a single 2 s sample and never recurs. It is an
+incremental-add cost, not a steady-state one, and it is the first device
+evidence that the add path is worth a budget of its own.
+
+**3. `vram` 187 → 198 MB, `static_mem` 138 → 148 MB** across the same
+transition, both flat afterwards.
+
+**4. Both `PERFIO` rows are captured — deliverable 3 of the 2026-08-20 session,
+which had neither.**
+
+| row | line | note |
+|---|---|---|
+| **boot load** | `kind=load slot=0 reason=slot ms=165.5 write_ms=0.0 read_ms=24.0 restore_ms=136.2 async=1 bytes=202946 ok=1` | **The first ever.** Fault (c) above — `log_io` set 211 lines after the boot load — is **fixed and confirmed fixed on device.** |
+| **lifecycle save** | `kind=save slot=0 reason=pause ms=159.4 write_ms=42.9 bytes=203538 ok=1` | `reason=pause`, i.e. the real backgrounding path, not `--save-now`. |
+
+**Read against doc 13 §2.9's ANR arithmetic:** a **165.5 ms boot load** of a
+203 KB slot, of which only **24.0 ms is I/O** and **136.2 ms is restore** — so
+the load is CPU-bound on deserialisation, not on storage, and shaving it is a
+restore-path question. The **159.4 ms save** (42.9 ms of it the write) sits
+close to the 100.3 ms/129 KB row the previous session left on the floor and
+scales with it roughly by size. Both are inside a 500 ms `onPause` window with
+room to spare, on a 203 KB slot.
+
+> **The capture is stamped `CONTAMINATED` and the frames are still good — read
+> the stamp carefully.** `cap_pose.sh` asserts foreground before and after the
+> hold; the user picked the phone up during this one, so the *after* assertion
+> failed. But Godot stops emitting once it loses its surface: the last `PERF`
+> line is `06:05:29.030` and the `PERFIO … reason=pause` is `06:05:29.752`, so
+> **every frame above was rendered in the foreground** and the backgrounding is
+> what produced the save row. The stamp means "the hold ended dirty", not "the
+> samples are dirty" — and the ordering is what proves which.
+
+**Two harness faults found and fixed, one of which made the session's own tool
+unrunnable.** `tools/run_matrix.sh` gated on
+`printf '%s' "$d" | grep -q 'mDreamingLockscreen=false'`. `grep -q` exits at the
+first match, `printf` takes SIGPIPE on the remaining ~200 KB and dies **141**,
+and under `set -o pipefail` **the pipeline reports the writer's failure instead
+of grep's success** — so on an awake, unlocked, focused phone the script printed
+`REFUSING TO RUN: the phone is LOCKED` **every single time**. Verified on device:
+status `141` on the 200 KB dump, status `0` on a 25-byte string, which is why no
+test caught it. `cap_pose.sh`'s `is_foreground()` carried the same construct,
+where it is *racy* instead of constant and intermittently stamps good captures
+`CONTAMINATED`. Both are now pipe-free. **Rule: never put `grep -q` downstream
+of a large writer under `pipefail`.** Separately, `adb exec-out screencap -p`
+with no `-d` prints a *"Multiple displays were found"* warning **ahead of the
+PNG bytes** on this two-display phone, so the flood screenshot would have been
+an unopenable file with no error — `cap_pose.sh --snap` now resolves the display
+and verifies the signature.
+
+**Still open, and now genuinely unblocked:** the three-pose day/night matrix,
+the zebra A/B, the flood A/B and screenshot, and the daylight pad-shadow
+re-check. All four need arguments; arguments only began working after this
+session rebuilt the AAR, re-exported and reinstalled, by which point the phone
+was in use. **The fixed build is installed and verified on the device**
+(`tools/run_matrix.sh build_check` → `launch_args in dex: 1`), and
+`build_check` now refuses the matrix on a build that cannot receive arguments,
+so the next window starts at the measurements with no repair in front of it.
+
+**Cost charged to the player this session: two launches, ~3 sim-hours
+(`sim_time_minutes` 45,262 → 45,441) and a treasury move $175,791 → $96,141.**
+Population held at 359 and the save is intact; a `tar` backup was taken before
+the first launch and is at `tools/device_results/saves_backup_prewf187.tgz`.
+`adb install -r` preserved the saves through the reinstall, verified after.
+
 **Method, and what it does and does not claim.** Every A/B below is interleaved
 *within* each round — both arms measured back to back, three or four rounds — on
 a workstation that was carrying other Godot work for part of the session (four

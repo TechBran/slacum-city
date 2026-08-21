@@ -1,5 +1,123 @@
 # The Fold 6 runbook — the six Wave-8 device questions, as commands
 
+> ## READ FIRST, 2026-08-21 (third session) — the two faults that ate THIS window
+>
+> The box below says "three are now fixed; the fourth needs a person". The phone
+> was unlocked, awake and in hand for this session, so the fourth was not the
+> problem. **Two new faults were, and both are now fixed. Neither was visible
+> from anything the game printed.**
+>
+> ### 0. The installed APK could not receive a single argument — the AAR is a gitignored artifact
+>
+> `SlacumNative.launch_args()` is the whole of D-20's delivery path, and it lives
+> in **`android/plugins/slacum_native.aar`**, which is a **build artifact, not
+> source**: exporting does not rebuild it, and it **does not exist at all in a
+> fresh `git worktree`**. D-20's Kotlin landed on 2026-08-20/21; the AAR in the
+> main tree was still the one built on **2026-08-19 (6,201 bytes)**. The export
+> at 05:59 packaged that stale AAR, so:
+>
+> * `launch_args` was **absent from all three `classes*.dex`** of the installed
+>   APK, while `SlacumNative` and `thermal_status` were present — the plugin was
+>   there, the method was not;
+> * `AndroidNative.launch_args()` tests `_plugin.has_method("launch_args")`,
+>   found `false`, and returned empty;
+> * `OS.get_cmdline_user_args()` returned `[]`, as it always does here;
+> * so `DevArgs.user_args()` was **empty on every launch** and every dev argument
+>   was dropped in silence.
+>
+> **The transport was never the problem this time.** `logcat` shows the line
+> arriving at `am` byte-perfect in both forms —
+> `--esa command_line_params '--,--resume,--zoom=1.0,--perf' --es args '--resume --zoom=1.0 --perf'`
+> — so §1.2's quoting fix is **confirmed good on hardware**. The receiver simply
+> was not built.
+>
+> **The symptom is indistinguishable from a working session**: the city loads,
+> the game renders the real save, `am start` reports success. Only the arguments
+> do nothing, which reads as "the poses did not separate" — the exact 2026-08-20
+> symptom, from a completely different cause. The clean discriminator, and it is
+> free:
+>
+> ```sh
+> # --perf is the ONLY thing arming telemetry (do not create the flag file first)
+> bash tools/cap_pose.sh probe "--resume --perf" 20
+> # 0 PERF lines  -> the argument did not arrive
+> # N PERF lines  -> arguments reach GDScript
+> ```
+>
+> It was confirmed both ways on device: with `--perf` on the command line, **0
+> PERF lines**; with `touch files/perf_capture.flag` and nothing else, **19 PERF
+> lines**, same build, same pose.
+>
+> **`tools/run_matrix.sh build_check` now checks the installed APK's own dex for
+> `launch_args` (with `thermal_status` as a control) and the matrix REFUSES to
+> run when it is missing.** The repair, ~4 minutes end to end:
+>
+> ```sh
+> tools/build_native_plugin.sh --debug          # rebuild the AAR (8 s)
+> godot --headless --path . --export-debug "Android" build/slacum-debug.apk
+> adb install -r build/slacum-debug.apk          # -r KEEPS THE SAVES
+> ```
+>
+> **Second gitignored-artifact trap, hit on the way:** `android/build/libs/{debug,release}/godot-lib.template_*.aar`
+> (~110 MB each) is *also* absent in a fresh worktree, and the export then fails
+> with **21 errors in `GodotApp.java` about `cannot find symbol: variable super`**
+> — which is a red herring. The real first error is `package org.godotengine.godot
+> does not exist`; the superclass is unresolvable, so every `super` reference
+> cascades. Copy the two AARs from the main tree and re-export.
+>
+> ### 1. `run_matrix.sh` refused to run on an UNLOCKED phone, 100% of the time
+>
+> The lock fail-safe was written to fail closed, and it did — permanently. It
+> used `printf '%s' "$d" | grep -q 'mDreamingLockscreen=false'`. `grep -q` exits
+> at the first match; `printf` is still pushing the other ~200 KB, takes SIGPIPE
+> and dies **141**; and under `set -o pipefail` **the pipeline takes the writer's
+> failure rather than grep's success**, so a match was read as a non-match.
+> Measured on an awake, unlocked, focused device: status `141` on the 200 KB dump,
+> status `0` on a 25-byte test string — which is why it passed every test that
+> was not a real `dumpsys`. `dumpsys window` is ~200 KB against a 64 KB pipe
+> buffer, so **on a real phone it fired every time.**
+>
+> `cap_pose.sh`'s `is_foreground()` had the same construct, where it is *racy*
+> rather than constant (`mCurrentFocus` appears early in the dump), so it
+> intermittently stamped good captures `CONTAMINATED` — a guard that marks good
+> data bad, on the one check the trustworthiness of every number depends on.
+>
+> **Both are now pipe-free**, using bash's own `==` / a line loop. The rule this
+> file should have carried from the start: **never put `grep -q` downstream of a
+> large writer under `pipefail`.** Use bash matching, or `grep -c` and compare.
+>
+> ### Device state this session left behind — check these two first
+>
+> * **`perf_capture.flag` is REMOVED.** Verified by `ls` after deletion, and the
+>   teardown now runs from a `trap` so a dropped wire cannot leave it armed
+>   (which is what happened on 2026-08-21). Nothing to clean up.
+> * **`stay_on_while_plugged_in` may have been changed to `0` and that is worth
+>   one check.** This session ran `svc power stayon true` at the start and its
+>   teardown ran `svc power stayon false`, which writes `0` — but `0` is a
+>   *restore* only if `0` is what the phone had, and an earlier session recorded
+>   it at **15**. Nobody had ever recorded the value before overwriting it, so
+>   whether 15 was the user's own developer-option or a previous session's
+>   leftover is not knowable from here. **`run_matrix.sh` now reads the value
+>   before it writes it and puts the original back**, so this is a one-time
+>   loose end rather than a recurring one. If the user wants the screen to stay
+>   awake while charging:
+>
+>   ```sh
+>   adb shell settings get global stay_on_while_plugged_in   # 0 = off
+>   adb shell settings put global stay_on_while_plugged_in 15
+>   ```
+>
+> ### What this session actually measured, and what it did not
+>
+> Measured (doc 11 §2.13, "the 2026-08-21 session"): a foreground baseline on the
+> player's real city, and **both PERFIO rows including the boot `load` line that
+> had never been capturable before**. Not measured: the pose matrix, the zebra
+> A/B, the flood A/B and the pad-shadow A/B — all four need arguments, and
+> arguments only started working after the reinstall, by which point the user was
+> using the phone. **The fixed build is installed and verified**
+> (`run_matrix.sh build_check` → `launch_args in dex: 1`), so the next window
+> starts at step 2 with no repair work in front of it.
+
 > ## START HERE, 2026-08-21 — the four things that have eaten two windows
 >
 > **The pose matrix has never been run.** Not because the phone is slow or the
