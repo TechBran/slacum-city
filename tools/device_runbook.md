@@ -110,7 +110,50 @@ either read-only or runs against the installed build.
 
 ---
 
-## 1. Pre-flight — five things that are not what the old harness assumes
+## 1. Pre-flight — six things that are not what the old harness assumes
+
+### 1.0 The phone must be UNLOCKED, and this is check zero (2026-08-21)
+
+**`adb` reaching the device is not the same as the device being able to run the
+game, and the difference is invisible in every command above.** A locked Fold
+answers `adb devices`, answers `dumpsys`, accepts `am start` and reports
+`Starting: Intent {…}` exactly as it does when unlocked. `am` even resolves and
+launches the activity. What it will not do is let the app hold a surface:
+
+```
+V Godot: OnResume: GodotFragment{…}
+V Godot: OnPause:  GodotFragment{…}      <- 21 ms later
+V Godot: OnStop:   GodotFragment{…}
+```
+
+Godot's main loop is tied to the `SurfaceView`, so **no GDScript ever runs** —
+no `_ready`, no city load, no argument parsing, no `PERF` line, no screenshot.
+The failure looks precisely like "the telemetry is not armed" or "the arguments
+did not arrive", which is how it can eat a window: on 2026-08-21 it presented as
+a §1.2 probe failure and was only distinguishable from a real D-20 regression by
+reading the lifecycle callbacks.
+
+```bash
+# The check. Non-zero output means STOP and get the phone unlocked.
+adb shell dumpsys window | grep -c 'mDreamingLockscreen=true'
+
+# Only dismisses a NON-secure lockscreen. A secure one raises the Bouncer and
+# there is nothing adb can do about it — it needs a human and a PIN.
+adb shell wm dismiss-keyguard
+```
+
+`svc power stayon true` and `stay_on_while_plugged_in=15` keep the screen ON but
+do **not** keep it unlocked, and the device may well be sitting at 100 % on AC
+with the screen lit and the keyguard up. Confirm the game actually holds the
+foreground before trusting any capture:
+
+```bash
+adb shell dumpsys window | grep 'mCurrentFocus'   # must name com.slacumcity.game
+```
+
+Note `mResumedActivity` keeps naming the game behind a lockscreen and behind
+another app, so it is the wrong field; **`mCurrentFocus` is the one that moves.**
+`tools/cap_pose.sh` asserts it before and after every hold.
 
 ### 1.1 The launcher activity
 
@@ -152,20 +195,66 @@ grep -n 'DevArgs.user_args\|OS.get_cmdline_user_args' game/main.gd
   Three `OS.` hits and no `DevArgs` means the shell half has not landed and the
   probe below will fail no matter how good the AAR is.
 
-Two forms work, and they are equivalent. Godot's own:
+> ### THE QUOTING FAULT — read this before you type either form (2026-08-21)
+>
+> **Both command forms as they were written below are WRONG, and the second one
+> fails outright.** `adb shell` does not preserve your local argv: it joins
+> everything after `shell` with single spaces and hands one string to the
+> device's `sh -c`. Your own shell has already eaten the quotes by then, so
+>
+> ```bash
+> adb shell am start … --es args "--resume --zoom=1.0"     # WRONG
+> ```
+>
+> arrives at `am` as `--es args --resume --zoom=1.0` and dies before the app is
+> launched:
+>
+> ```
+> java.lang.IllegalArgumentException: Unknown option: --zoom=1.0
+>     at android.content.Intent.parseCommandArgs(Intent.java:9908)
+> ```
+>
+> The `--esa` form survived only because its CSV payload has no spaces in it —
+> which is exactly why this went unnoticed: **the `--es args` half of the "send
+> both forms" insurance had never once reached a device.** Quote for the REMOTE
+> shell, i.e. put the whole command in one string:
+>
+> ```bash
+> adb shell "am start -n com.slacumcity.game/com.godot.game.GodotAppLauncher \
+>   --esa command_line_params '--,--resume,--zoom=1.0' --es args '--resume --zoom=1.0'"
+> ```
+>
+> `tools/bench_device.sh` composes exactly this via `remote_start_cmd`, and
+> `--self-test` now asserts it (`the launch is ONE remote-shell string`).
+> `tools/cap_pose.sh` is the one-pose version.
+
+Two forms work, and they are equivalent — **inside the remote quoting above**.
+Godot's own:
 
 ```bash
-adb shell am start -n com.slacumcity.game/com.godot.game.GodotAppLauncher \
-  --esa command_line_params "--,--resume,--zoom=1.0"
+adb shell "am start -n com.slacumcity.game/com.godot.game.GodotAppLauncher \
+  --esa command_line_params '--,--resume,--zoom=1.0'"
 ```
 
 and the one with no comma syntax and no separator to forget, which is the one to
 reach for when a scenario has quoting in it:
 
 ```bash
-adb shell am start -n com.slacumcity.game/com.godot.game.GodotAppLauncher \
-  --es args "--resume --zoom=1.0"
+adb shell "am start -n com.slacumcity.game/com.godot.game.GodotAppLauncher \
+  --es args '--resume --zoom=1.0'"
 ```
+
+> **And Godot's own reader is still empty on this template (re-confirmed
+> 2026-08-21 against the D-20 build).** With `--esa command_line_params` sent
+> correctly, `GodotActivity` still logs
+> `Launch intent Intent { … (has extras) } with parameters []`. So the `--esa`
+> form is *not* a working second opinion on this export template — **everything
+> rides on `SlacumNative.launch_args()`**, and the `--es args` form that the
+> plugin reads is the one that has to be quoted right. Grep for it:
+>
+> ```bash
+> adb logcat -d | grep -E 'GodotActivity: Launch intent|SlacumNative.*launch args'
+> ```
 
 Pass both if you like: the merge de-duplicates, so an argument that arrives twice
 is applied once. (That is not tidiness — `--advance-hours=4` counted twice would
@@ -268,11 +357,29 @@ new build before any `PERF` row can be collected.
 > While that investigation is open, §2's platform instruments remain the
 > corruption-safe capture path. Device driver facts recorded from the first
 > window: Android 16, Adreno 750 (SM8650 "pineapple"), Samsung stable
-> GameDriver AND a Qualcomm pre-release driver both installed — WHICH one the
-> game resolves to is unverified (the window closed mid-query); finish with
-> `settings get global updatable_driver_prerelease_opt_in_apps` and, if the
-> game is on the pre-release driver, move it to stable in Developer options →
-> Game driver preferences before blaming the engine.
+> GameDriver AND a Qualcomm pre-release driver both installed — ~~WHICH one the
+> game resolves to is unverified (the window closed mid-query)~~ **ANSWERED
+> 2026-08-21: the game runs on the STOCK VENDOR driver, and the pre-release
+> driver is not a suspect.** Four independent confirmations, all readable with
+> the phone still LOCKED (this is the one useful thing a locked device gives
+> you — the process starts and logs its graphics environment before it needs a
+> surface):
+>
+> ```
+> V GraphicsEnvironment: com.slacumcity.game is not listed in per-application setting
+> V GraphicsEnvironment: App is not on the allowlist for updatable production driver.
+> V GraphicsEnvironment: No special selections for ANGLE, returning default driver choice
+> I AdrenoVK-0: Driver Path : /vendor/lib64/hw/vulkan.adreno.so
+> ```
+>
+> and `settings get global updatable_driver_prerelease_opt_in_apps` → `null`
+> (production opt-in likewise `null`; both allowlist and denylist empty). The
+> resolved driver is **Adreno `0762.41`**, QUALCOMM build `f6b5df5188`, built
+> **2025-09-19**, shader compiler `E031.45.02.26`, branch
+> `AU_LINUX_ANDROID_LA.VENDOR.14.3.0.11.00.00.974.010`, `Build Config S P 16.1.2
+> AArch64`. **Record that string with any corruption-band report** — it is the
+> driver the bands were seen on, and "move it to stable" is not an available
+> mitigation because it already is stable.
 
 **Therefore §2 is written entirely against PLATFORM instruments** — `gfxinfo`,
 `SurfaceFlinger`, `meminfo`, `thermalservice`, `am start -W` — which work against
@@ -357,9 +464,34 @@ Six poses. Each one: launch pinned to the pose, let it settle 10 s, reset
 gfxinfo, hold still 60 s, read.
 
 **`--advance-hours` is a DELTA, not an hour of day.** It advances the city clock
-from wherever the save happens to sit, so the loop below takes the save's current
-hour once, by eye off the HUD, and passes the difference. Getting this wrong is
-the easiest way to spend a device window measuring dusk twice.
+from wherever the save happens to sit, so the difference has to be computed
+against the save's current hour. Getting this wrong is the easiest way to spend a
+device window measuring dusk twice.
+
+> **Do not read it off the HUD by eye (2026-08-21).** The save manifest carries
+> the clock exactly, so the delta can be computed and — more importantly —
+> **re-computed before every launch**, which is what the "re-base `NOW` after
+> every pose" instruction below is really asking for. It also tells you the
+> city you are about to measure before you launch it:
+>
+> ```bash
+> adb exec-out run-as com.slacumcity.game cat files/saves/slot_0/manifest.json \
+>   | python3 -c 'import json,sys; m=json.load(sys.stdin)["active"]["meta"]; \
+>       print("day %d  %02d:%02d  pop %d  $%d" % (m["day_index"],
+>             m["sim_time_minutes"]%1440//60, m["sim_time_minutes"]%60,
+>             m["population"], m["treasury"]))'
+> ```
+>
+> On 2026-08-21 that read `day 31  09:46  pop 359  $174414` in one command, with
+> the phone still locked. `tools/cap_pose.sh` does this per launch; pass it a
+> target hour and it works out the delta itself.
+>
+> **It also bounds the cost to the player's city.** A `force-stop` is an unclean
+> exit and does not write the advanced clock back, so a matrix that re-launches
+> per pose advances from the SAME base every time — the delta is paid once per
+> pose, not accumulated. Verify by re-reading the manifest after the first pose;
+> if the sim time moved, an autosave landed inside the hold and the next delta
+> must be recomputed (which is what `cap_pose.sh` does unconditionally).
 
 ```bash
 NOW=17            # <-- the in-game hour on the HUD right now, read it first
