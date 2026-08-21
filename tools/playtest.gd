@@ -21,6 +21,10 @@ extends SceneTree
 ##                       coarse = doc 01's 1-game-hour offline catch-up path
 ##                                (~60x faster, and NOT the same city — see
 ##                                docs/design/92-balance-report.md)   (default fine)
+##   --difficulty=NAME   doc 03 §2.9's preset: casual|standard|hard|crisis.
+##                       The city is FOUNDED on it and keeps it (doc 93 §K1), so
+##                       it is a boot argument. `standard` is the control every
+##                       table in doc 92 before §29 is measured on  (default standard)
 ##   --out=DIR           output directory              (default res://build/playtest)
 ##   --no-json           terminal table only
 ##   --quiet             suppress the per-run progress lines
@@ -112,8 +116,16 @@ func _initialize() -> void:
 					int(summary["city_level_end"]),
 					String(report["digest"]).substr(0, 12)])
 			if opts.write_json:
-				var path: String = "%s/%s_seed%d_d%d_%s.json" % [
-						opts.out_dir, strategy_id, seed_value, opts.days, opts.mode]
+				# The preset is in the NAME, not only in the body: a `crisis` run
+				# and the `standard` control are different cities, and a run that
+				# silently overwrote the control would be the worst artifact this
+				# tool could produce. `standard` keeps its historical filename so
+				# every report already on disk still matches.
+				var suffix := "" if opts.difficulty == Difficulty.DEFAULT_PRESET \
+						else "_" + opts.difficulty
+				var path: String = "%s/%s_seed%d_d%d_%s%s.json" % [
+						opts.out_dir, strategy_id, seed_value, opts.days, opts.mode,
+						suffix]
 				_write_json(path, report)
 
 	Table.print_all(runs, opts)
@@ -164,6 +176,11 @@ class Options extends RefCounted:
 	var seeds: Array[int] = DEFAULT_SEEDS.duplicate()
 	var strategies: Array[String] = STRATEGY_IDS.duplicate()
 	var mode: String = "fine"
+	## Doc 03 §2.9's difficulty. A city is FOUNDED on it (doc 93 §K1), so it is a
+	## boot argument and never a mid-run setter. `standard` is the preset every
+	## table in doc 92 before §29 is measured on, and it is printed in the report
+	## header so a pasted table can never be mistaken for the control.
+	var difficulty: String = Difficulty.DEFAULT_PRESET
 	var out_dir: String = DEFAULT_OUT_DIR
 	var write_json: bool = true
 	var quiet: bool = false
@@ -210,6 +227,12 @@ class Options extends RefCounted:
 						opts.errors.append("--mode must be fine or coarse")
 					else:
 						opts.mode = value
+				"difficulty":
+					if not Difficulty.is_preset(value):
+						opts.errors.append("unknown difficulty '%s' (have %s)"
+								% [value, ", ".join(Difficulty.PRESETS)])
+					else:
+						opts.difficulty = value
 				"out":
 					opts.out_dir = value
 				"no-json":
@@ -1555,7 +1578,31 @@ class InfrastructureFirst extends Strategy:
 ## so any difference in their curves is attributable to that knob and nothing
 ## else — a controlled pair, not two more bots.
 class Balanced extends Strategy:
-	const RESERVE_FLOOR := 12_000
+	## **The reserve floor is a FRACTION of the founding purse, not a constant**
+	## (doc 92 §29.5 ranked item 4, closed in §31.4).
+	##
+	## Pass 2 authored it as a flat **$12,000**, and on `standard` — the only
+	## preset that existed then — that one number is two things at once: about one
+	## founding game-day of expense ($12,100) *and* 48 % of the founding purse
+	## ($25,000). Only one of the two travels: on `crisis` the flat floor IS the
+	## entire founding purse, so `spare = balance − reserve` is zero on game-hour
+	## 0 and the agent cannot even open its ladder. An agent whose reserve is a
+	## constant cannot measure a difficulty that scales the purse.
+	##
+	## `12,000 / 25,000 = 0.48` reproduces `standard` **to the dollar** — the
+	## constant is not retired, it is re-expressed in the units it was always in —
+	## and it scales with `starting_treasury` on the other three: casual $16,800,
+	## hard $8,640, crisis $5,760.
+	##
+	## **What this does NOT fix, said here so the next reader does not re-derive
+	## it.** Doc 92 §29.5(a) step 3 blamed this floor for `balanced` placing zero
+	## buildings in 21 game-days on `crisis`. It was the other term:
+	## `operating_reserve()` is `max(floor, one game-day of expense)`, and on
+	## crisis the payroll was $17,968 against a $12,000 purse, so the floor never
+	## entered the maximum. What unfroze the agent was doc 93 §M1 taking `M_exp`
+	## off `E_roads_repair`, which moved crisis's founding net −$18.70 →
+	## +$44.47/gh. Doc 92 §31.4 measures all three arms.
+	const RESERVE_FLOOR_FRACTION := 0.48
 	const RESERVE_DAYS_OF_EXPENSE := 1.0
 	const RESIDENTIAL_PER_COMMERCIAL := 2
 	const REVENUE: Array[String] = ["residential", "commercial", "industrial"]
@@ -1802,6 +1849,12 @@ class Balanced extends Strategy:
 	var _land_target: float = 0.0
 	var _land_block: String = ""
 	var _land_quote_hour: int = -1000
+	## `RESERVE_FLOOR_FRACTION × starting_treasury`, resolved once from the live
+	## city on the first game-hour. Read off `Treasury.difficulty()` rather than
+	## `Difficulty` directly, because the treasury's row is the one the city was
+	## actually FOUNDED on (doc 93 §K1) — it is the same dictionary a save
+	## restores, so a strategy driving a loaded city gets the right purse.
+	var _reserve_floor: int = 0
 
 	func id() -> String:
 		return "balanced"
@@ -1813,11 +1866,22 @@ class Balanced extends Strategy:
 	func note_expense(expense_per_hour: float) -> void:
 		_last_expense_per_hour = expense_per_hour
 
+	## The founding purse this city was handed, cached on first read. `Factory`
+	## constructs a `Strategy` before any `CitySim` exists, so this cannot live in
+	## `_init`; every `act()` in this class hierarchy calls it first, before
+	## anything reads `operating_reserve()`.
+	func note_founding_purse(api: Api) -> void:
+		if _reserve_floor > 0:
+			return
+		var purse := float(int(api.sim.treasury.difficulty()
+				.get("starting_treasury", 0)))
+		_reserve_floor = int(RESERVE_FLOOR_FRACTION * purse)
+
 	## One game-day of gross expense, floored — the payroll this agent will not
 	## touch. `reserve()` adds the land fund on top so the growth ladder cannot
 	## spend money that is already earmarked for the next block.
 	func operating_reserve() -> int:
-		return maxi(RESERVE_FLOOR,
+		return maxi(_reserve_floor,
 				int(RESERVE_DAYS_OF_EXPENSE * 24.0 * _last_expense_per_hour))
 
 	func reserve() -> int:
@@ -1847,6 +1911,8 @@ class Balanced extends Strategy:
 	## 10–20 % band by construction, and `disaster_neglect` still differs from
 	## this agent in exactly one field.
 	func act(api: Api, hour: int) -> void:
+		# The purse before anything reads the reserve off it.
+		note_founding_purse(api)
 		# Policy first: it is free (doc 03 prices no rate change beyond its
 		# consequences) and it must be in force before the first settlement the
 		# report reads.
@@ -2287,6 +2353,8 @@ class Curriculum extends Balanced:
 		return super() + _goal_price
 
 	func act(api: Api, hour: int) -> void:
+		# Before `super.reserve()` below, which reads the floor this resolves.
+		note_founding_purse(api)
 		_goal_price = 0
 		var wanted := _next_objective(api)
 		if not wanted.is_empty():
@@ -2451,7 +2519,7 @@ class Runner extends RefCounted:
 
 	## One run: boot, drive, sample, summarise. Returns the JSON document.
 	static func run_one(strategy_id: String, seed_value: int, opts: Options) -> Dictionary:
-		var sim := CitySim.boot_from_files(seed_value)
+		var sim := CitySim.boot_from_files(seed_value, opts.difficulty)
 		var strategy := Factory.make(strategy_id)
 		var api := Api.new(sim)
 		var total_hours := opts.hours()
@@ -2494,6 +2562,7 @@ class Runner extends RefCounted:
 				"strategy": strategy_id,
 				"strategy_note": strategy.describe(),
 				"seed": seed_value,
+				"difficulty": sim.difficulty_preset(),
 				"boot_errors": _boot_errors(sim),
 			},
 			"verbs": _verb_map(api),
@@ -3030,8 +3099,8 @@ class Table extends RefCounted:
 			return
 		print("")
 		print("=".repeat(118))
-		print("SLACUM CITY balance harness — %d game-days, %s path, seeds %s"
-				% [opts.days, opts.mode, ", ".join(_seed_strings(opts))])
+		print("SLACUM CITY balance harness — %d game-days, %s path, %s difficulty, seeds %s"
+				% [opts.days, opts.mode, opts.difficulty, ", ".join(_seed_strings(opts))])
 		print("=".repeat(118))
 		var verbs: Dictionary = runs[0]["verbs"]
 		var present: Array[String] = []

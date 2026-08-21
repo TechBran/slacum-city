@@ -1746,18 +1746,33 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 ## is the one the player actually meets (`credit_line_engaged`, doc 03 §2.10
 ## layer 3, then the −$20,000 hard floor of layer 4).
 ##
-## Measured 2026-08-20, seeds 1337 / 4242 / 9001 (doc 92 §29.2):
+## Measured 2026-08-20 with `tools/measure_insolvency.gd`, seeds 1337 / 4242 /
+## 9001, **after doc 93 §M1 took `M_exp` off `E_roads_repair`** (doc 92 §31.5):
 ##
 ## | preset | day the treasury first closes negative | peak, and its day |
 ## |---|---|---|
-## | casual | 109 / 116 / 113 | $428k–$491k around game-day 50 |
-## | standard | 76 / 75 / 74 | $233k–$237k around game-day 46 |
-## | hard | 52 / 52 / 53 | negative before it can peak twice |
-## | crisis | 35 / 34 / 35 | — |
+## | casual | 104 / 110 / 108 | $471k around game-day 50 |
+## | standard | **76 / 75 / 74** | $237k around game-day 44 |
+## | hard | 57 / 56 / 56 | $88k around game-day 28 |
+## | crisis | 41 / 42 / 40 | $21k around game-day 10 |
 ##
-## Each rung buys about **1.5×** the next one's rope (109/76 = 1.43, 76/52 =
-## 1.46, 52/35 = 1.49). That is a shape and not a fit — nothing was tuned to
-## produce it — so this gate does not assert it.
+## **`standard` did not move by one game-day on any of the three seeds** — the
+## same 76 / 75 / 74 the pre-ruling column measured — which is the longest-horizon
+## proof this repository has that the ruling is hash-neutral on the default
+## preset: 76 game-days of a decaying city, not 24 game-hours of a fresh one.
+##
+## The superseded column, kept because gate thresholds were fitted to it and a
+## reader comparing this file against doc 92 §29.3 needs to see both: casual
+## 109 / 116 / 113, standard 76 / 75 / 74, hard 52 / 52 / 53, crisis 35 / 34 / 35.
+## What moved is exactly what the double knob was paying for — `casual` lost 5
+## game-days of rope (its road bill rose from 0.595× standard's to 0.700×) and
+## `hard` / `crisis` gained 4 and 6 (theirs fell from 1.512× / 2.000× to
+## 1.350× / 1.600×).
+##
+## Each rung now buys about **1.36×** the next one's rope (104/76 = 1.37, 76/57 =
+## 1.33, 57/41 = 1.39), where the compounding bought 1.5×. That is a shape and
+## not a fit — nothing was tuned to produce either number — so this gate does not
+## assert it.
 ##
 ## **What IS asserted** is the part a regression would break: strict ordering,
 ## and finiteness on all four. The bounds are the measurements with a margin wide
@@ -1779,11 +1794,18 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 ## > **0 or 1**. A gate that ran into it would hang rather than fail, which is the
 ## > worst thing a gate can do.
 ##
-## Total ~43 s (15.8 / 11.7 / 8.8 / 6.5). The three-seed table above is doc 92
-## §29.2's; this is the tripwire.
-const PRESET_HORIZON_DAYS := {"casual": 120, "standard": 90, "hard": 65, "crisis": 48}
+## Total ~48 s. The three-seed table above is doc 92 §31.5's; this is the
+## tripwire.
+const PRESET_HORIZON_DAYS := {"casual": 120, "standard": 90, "hard": 70, "crisis": 55}
 ## casual must die before its own horizon; crisis must not die absurdly early.
 ## The ordering assertions carry the rest.
+##
+## The FLOOR is deliberately loose (25 against a measured 40–42). It guards
+## against a preset becoming a different game, not against a knob wired to the
+## wrong scope — that is `tests/test_economy.gd`'s
+## `test_one_difficulty_knob_per_ledger_line`, which asserts the per-line
+## multiplier directly and would fail on the compounding this table's superseded
+## column was measured under.
 const PRESET_LIFETIME_CEILING := 118
 const PRESET_LIFETIME_FLOOR := 25
 ## `standard` is the preset every other gate in this file is measured on, so its
@@ -1830,11 +1852,11 @@ func test_gate_29_neglect_is_fatal_on_every_preset_and_ordered() -> void:
 						+ "has stopped being fatal on that preset") % [preset, horizon])
 		assert_true(day <= PRESET_LIFETIME_CEILING,
 				("do_nothing on %s survived to game-day %d; the ruled ceiling is %d "
-						+ "(measured 109–116 on casual, doc 92 §29.2)")
+						+ "(measured 104–110 on casual, doc 92 §31.5)")
 						% [preset, day, PRESET_LIFETIME_CEILING])
 		assert_true(day >= PRESET_LIFETIME_FLOOR,
 				("do_nothing on %s went insolvent on game-day %d; the ruled floor is "
-						+ "%d (measured 34–35 on crisis) — below it a preset is not "
+						+ "%d (measured 40–42 on crisis) — below it a preset is not "
 						+ "harder, it is a different game")
 						% [preset, day, PRESET_LIFETIME_FLOOR])
 	# ORDERED, strictly, in the direction §2.9 authors: casual outlives standard
@@ -1848,5 +1870,5 @@ func test_gate_29_neglect_is_fatal_on_every_preset_and_ordered() -> void:
 						% [kinder, harder, int(died[kinder]), int(died[harder])])
 	assert_true(absi(int(died["standard"]) - STANDARD_LIFETIME_DAYS)
 					<= STANDARD_LIFETIME_BAND,
-			"standard do_nothing died on game-day %d; measured 74–76 (doc 92 §29.2)"
-					% int(died["standard"]))
+			("standard do_nothing died on game-day %d; measured 74–76 "
+					+ "(doc 92 §31.5, unmoved from §29.3)") % int(died["standard"]))

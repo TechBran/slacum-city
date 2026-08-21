@@ -310,6 +310,22 @@ func e_fuel_vehicle(vehicles: Array, fuel_weather_mult: float = 1.0) -> float:
 ##   REV_FLOOR_FRACTION}, yield_mult, grid_inventory{}, generation[],
 ##   delivered_mwh, water{}, stations[], vehicles[], fuel_weather_mult, roads{},
 ##   police_incidents_resolved, debt_interest, apply_to_treasury
+##
+## **Which line takes which difficulty knob** (doc 03 §2.4, doc 93 §M1). Three
+## groups, and the rule is *one knob per line, never two*:
+##   * seven recurring lines take `M_exp` — maint, departments, fleet, vehicle
+##     fuel, grid, generation fuel, water;
+##   * `roads_repair` takes `M_repair` and NOT `M_exp`, because it is a repair
+##     price booked as a recurring accrual, and the policy that realises it pays
+##     `repair_cost_road(…, M_repair)`;
+##   * `debt` takes neither — its difficulty is the APR.
+## `M_rev` is the TAX multiplier and reaches `revenue_for_building()` only — doc
+## 03 §2.2 puts it inside the per-building formula and inside the revenue floor,
+## and §2.5, which authors every non-tax line, never mentions it. Two of those
+## three lines are §9 item 6b's HELD metering constants
+## (`CitySim.HELD_DELIVERED_MWH`, `HELD_FINE_RATE`), so scaling them by difficulty
+## would price a placeholder; the third, `water_tariff`, is 0.41 % of founding
+## gross. Doc 93 §M2 rules it and carries the re-open condition.
 func settle_hour(inputs: Dictionary) -> Dictionary:
 	var hour := int(inputs.get("hour", 0))
 	var difficulty := _resolve_difficulty(inputs)
@@ -387,9 +403,21 @@ func settle_hour(inputs: Dictionary) -> Dictionary:
 	var roads_repair := e_roads_repair(inputs.get("roads", {}), m_repair)
 
 	var recurring := building_maint + departments + fleet + vehicle_fuel + grid \
-			+ generation_fuel + water_expense + roads_repair
+			+ generation_fuel + water_expense
 	var austerity_mult := _treasury.austerity_expense_mult() if _treasury != null else 1.0
 	recurring *= m_exp * austerity_mult
+	# E_roads_repair carries its own difficulty term (`M_repair`, applied inside
+	# `e_roads_repair` above) and is NOT swept by `M_exp` — the same exclusion
+	# `E_debt` gets two lines below, for the same reason (doc 03 §2.4, doc 93
+	# §M1). It IS swept by austerity and by the offline taper, because those are
+	# not difficulty. The reason it is not swept by M_exp: this line is an ACCRUAL
+	# against a payment, and the payment is C-16's one repair price —
+	# `repair_cost_road(class, damage_fraction, M_repair)`, which has no `M_exp`
+	# anywhere in it. An accrual billed at M_repair × M_exp against a payment
+	# priced at M_repair is the double count RR-2 and C-16 exist to stop, one knob
+	# down. Hash-neutral on the DEFAULT preset by construction: `M_exp` is 1.00 on
+	# `standard`, so this line's arithmetic is unmoved.
+	recurring += roads_repair * austerity_mult
 	# E_debt carries its own difficulty term (the APR) and is not scaled by M_exp,
 	# austerity or the offline taper: interest accrues on the real balance.
 	var debt := float(inputs.get("debt_interest",
@@ -417,7 +445,7 @@ func settle_hour(inputs: Dictionary) -> Dictionary:
 			"grid": grid * m_exp * austerity_mult * yield_mult,
 			"generation_fuel": generation_fuel * m_exp * austerity_mult * yield_mult,
 			"water": water_expense * m_exp * austerity_mult * yield_mult,
-			"roads_repair": roads_repair * m_exp * austerity_mult * yield_mult,
+			"roads_repair": roads_repair * austerity_mult * yield_mult,
 			"debt": debt,
 			"total": expense_total,
 		},

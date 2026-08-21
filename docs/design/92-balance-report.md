@@ -1826,11 +1826,15 @@ eight `RoadNetwork` / `WaterSystem` verbs it never calls:
 | `cmd_set_water_restrictions` | `WaterSystem` | open; doc 05's demand-management lever, a *balance* surface |
 | `cmd_set_water_policy` | `WaterSystem` | open |
 | `cmd_deploy_pump_truck` | `WaterSystem` | open |
-| **`cmd_install_backup_generator`** | `WaterSystem` | **open, and NEW to this list.** `sim/water/water_system.gd:1155`; the only callers in the repository are `tests/test_water_system.gd:338` and `:355`. §17.6.1 and doc 91 §17.2 both count seven and both omit it |
+| `cmd_install_backup_generator` | `WaterSystem` | **NEW to this list here, and RULED an interface call in Wave 12** (doc 93 §M3 / doc 05 §9) — no wrapper, no card, and none until doc 04 ships the generator it delegates to. `sim/water/water_system.gd:1155`; the only callers in the repository are `tests/test_water_system.gd:338` and `:355`. §17.6.1 and doc 91 §17.2 both counted seven and both omitted it |
 
 So the honest count at this fork is **22 of 23 re-exported verbs have a door, one
 sub-system verb is ruled out of scope, and seven sub-system verbs remain
-unreachable by any shell.** Two of the seven (`cmd_set_water_restrictions`,
+unreachable by any shell.** *(Wave-12 supersession — §31.6. Two of the eight rows above have since closed:
+`cmd_set_auto_repair_policy` got a door (§30, doc 12 D-50) and
+`cmd_install_backup_generator` is ruled an interface call with a written re-open
+condition (doc 93 §M3). 8 − 1 ruled − 1 doored − 1 ruled = **five** open, all
+five `WaterSystem`'s. Doc 91 §17.2 carries the same arithmetic.)* Two of the seven (`cmd_set_water_restrictions`,
 `cmd_set_auto_repair_policy`) are balance surfaces and want a matrix, exactly as
 §25.7 said `cmd_route_feeder` did — and §28 is the precedent for how that pass
 should look.
@@ -4364,6 +4368,12 @@ curriculum arc of §26 stands exactly as published.
 
 ### 28.2 The matrix — 7 strategies × 3 seeds × 21 game-days, before and after
 
+> **HISTORICAL — do not quote this table.** Its figures are §27.6's **pre**-fix
+> column; the error was found by re-running it and is itemised in the box below.
+> The section's *conclusion* stands, which is why the table is kept rather than
+> deleted: the Wave-11 UI pass moved nothing. **The live control at the current
+> fork is §31.1.**
+
 `tests/balance_matrix.gd`, both sides of the whole change, `curriculum` included:
 
 | strategy (mean of 3 seeds) | treasury | value | net $/gh | pop | happy | stab | dark % | placed | upg | minC | open inc |
@@ -4388,7 +4398,10 @@ re-fitted, because none is even nudged.
 > identical in both columns, which is why the error survived a read). The
 > conclusion of this section is unaffected — the Wave-11 UI pass moved nothing —
 > but the table is stale. **§29.1 re-runs the same matrix against the right
-> control and supersedes it.**
+> control and supersedes it.** *(And §31.1 re-runs it a third time, after the
+> Wave-12 difficulty follow-through, with all 63 cells still identical to
+> §29.1's. The chain of custody for this project's control matrix is therefore
+> §27.6 post-fix → §29.1 → §31.1, and the table above is outside it.)*
 
 ### 28.3 Why it did not move, which is the interesting half
 
@@ -4543,8 +4556,17 @@ other: **the default preset reproduces the pre-difficulty binary bit-for-bit.**
 
 ### 29.2 The founding ledger, preset by preset — where the difference actually enters
 
+> **SUPERSEDED for the three non-default presets, 2026-08-20 (Wave 12) — §31.2.**
+> Doc 93 §M1 took `M_exp` off `E_roads_repair`, so every `casual` / `hard` /
+> `crisis` figure below moved and the `standard` column did not move by a cent.
+> The tables are kept because §29.5's two findings are derived from them and
+> because the *mechanism* they identify — (a) `M_rev` reaches the tax line only,
+> (b) `roads_repair` took two knobs — is exactly what §31 rules on. **Quote §31.2
+> for numbers; quote this section for how they were found.**
+
 First settled game-hour of a `do_nothing` boot, seed 1337, measured rather than
-derived:
+derived (and reproducible since Wave 12 as
+`tools/measure_founding_ledger.gd`, which returns this table to the cent):
 
 | preset | founding purse | gross $/gh | expense $/gh | **net $/gh** |
 |---|---|---|---|---|
@@ -4594,6 +4616,14 @@ compounding is *arguable*: `E_roads_repair` is genuinely both a recurring line
 arguable is that nobody decided it. §29.5 ranks it.
 
 ### 29.3 `do_nothing`, and the neglect-fatal identity on every preset
+
+> **SUPERSEDED for the three non-default presets, 2026-08-20 (Wave 12) — §31.5
+> for the insolvency table, §31.3 for the 21-game-day matrix rows.** Same cause
+> as §29.2: doc 93 §M1. `standard`'s insolvency days are **unmoved** — 76 / 75 /
+> 74 on the same three seeds, which is the longest-horizon proof of default
+> neutrality this repository has. The claim this section makes — neglect is fatal
+> on every preset, and the presets are strictly ordered — survives the change on
+> every seed; only the lengths moved.
 
 Doc 06 §2.10 and report 98 RR-26 both close by asserting that *"the neglect-fatal
 identity is untouched — `do_nothing` still dies in about five weeks"*. Until this
@@ -4665,6 +4695,25 @@ city saved on `hard`, loaded into a process that booted on `standard`, and
 advanced 12 game-hours has the same `state_hash()` as the one that never stopped.
 
 ### 29.5 The findings — two, and the second one is not about difficulty at all
+
+> **RULED, 2026-08-20 (Wave 12).** Ranked item 1 → doc 93 **§M1**; item 2 → doc
+> 93 **§M2**; item 4 → doc 93 **§M4**. Item 3 (crisis's founding purse) is ruled
+> **not moved** — its own trigger was "if crisis still founds negative" and after
+> §M1 it founds at +$44.47/gh — and is replaced by a better test that is now
+> §31.7's first open question. All four are measured in §31. Ranked item 0, the
+> cascade, is **untouched and still outranks everything**; §31 does not go near
+> it.
+>
+> **One arithmetic error in this section, found by implementing it.** Step 2 of
+> (a) below computes the un-compounded crisis road bill as `157.90 × 1.25` and
+> predicts a founding net of **+$99.73/gh**. That is `M_exp`; the ruling applies
+> `M_repair`, `157.90 × 1.60`. Measured, crisis founds at **+$44.47/gh** (casual
+> **+$547.63**, hard **+$180.88**, standard unmoved at **+$337.05**). Still
+> positive — which is what ranked item 3 was waiting on — and 55 % smaller than
+> this section predicted. Step 3's diagnosis is also off by one term: the flat
+> `RESERVE_FLOOR` is not what the agent's `max(floor, one game-day of expense)`
+> returned on crisis, the payroll term was, as step 3's own arithmetic shows
+> ($17,968 > $12,000). §31.4 has both.
 
 #### (a) `crisis` is not a harder game, it is a stalled one
 
@@ -4804,6 +4853,13 @@ hard: 65, crisis: 48}`, each its own insolvency day plus about ten game-days. No
 thrift — §29.5(b). Measured cost 15.8 / 11.7 / 8.8 / 6.5 s, **43 s total**, and
 peak open incidents 1 / 1 / 0 / 1. §29.3's three-seed table is the record; the
 gate is the tripwire.
+
+> **RE-BASED, 2026-08-20 (Wave 12) — §31.5.** Doc 93 §M1 lengthened `hard` and
+> `crisis` and shortened `casual`, so the horizons move to `{casual: 120,
+> standard: 90, hard: 70, crisis: 55}` and the two band messages quote 104–110 and
+> 40–42. **Every threshold this gate asserts is unchanged in kind and three of
+> them are unchanged in number** — the 25/118 band, the ≤ 40 open-incident
+> tripwire, and `standard`'s 76 ± 6 pin, which did not have to move. Cost ~48 s.
 
 ### 29.7 What this pass did not do
 
@@ -4946,3 +5002,296 @@ on a command no tick path calls.
   directly.
 - **It did not re-measure the curriculum or any price.** `data/goals.json` and
   `data/economy.json` did not move.
+
+## 31. Pass 12 — the difficulty follow-through, and the four numbers §29 would not move (2026-08-20)
+
+*§29.5 ended with a ranked list and a sentence: "**Nothing here is changed.** This
+pass was tasked to make the presets reachable and to gate their sanity, not to
+tune them." This pass is the other half. It answers ranked items 1–4, leaves item
+0 — the cascade — exactly where §29.5(b) filed it, and it opens by proving the
+one thing it is not allowed to move.*
+
+### 31.1 The control — `standard` did not move, on any row of any column, again
+
+Three proofs at three horizons, in ascending order of how much they are worth.
+
+**(a) The two state hashes, both cities, both paths.** `tools/profile_sim.gd
+--hash-only`, baseline recorded on HEAD before the change and re-run after it:
+
+| city | path | verdict |
+|---|---|---|
+| `data/starter_city.json` | coarse 24 h | `HASH OK 18e70625e633c254` |
+| `data/starter_city.json` | fine 2.0 h | `HASH OK 4c3c52cdb4c5a3cc` |
+| `tests/fixtures/bench_city.json` | coarse 24 h | `HASH OK d6b2509c179987d3` |
+| `tests/fixtures/bench_city.json` | fine 2.0 h | `HASH OK bf8dc7282758843b` |
+
+`BEHAVIOUR UNCHANGED vs baseline` on both cities. The same four digests §29.1
+published, and the same four §24.12 and §30.4 published.
+
+**(b) The seven-strategy matrix, 3 seeds, 21 game-days.** `tests/balance_matrix.gd
+-- days=21 strategies=do_nothing,greedy_growth,infrastructure_first,balanced,
+tax_squeezer,disaster_neglect,curriculum`:
+
+| strategy (mean of 3 seeds) | treasury | value | pop | happy | stab | dark % | placed | upg | minC |
+|---|---|---|---|---|---|---|---|---|---|
+| `do_nothing` | 165,302 | 165,302 | 144 | 82.4 | 0.9487 | 0.04 | 0 | 0 | 0.512 |
+| `greedy_growth` | 65,962 | 954,523 | 1,771 | 52.6 | 0.6666 | 39.98 | 122 | 30 | 0.381 |
+| `infrastructure_first` | 23,947 | 140,347 | 230 | 76.9 | 0.9705 | 0.35 | 27 | 0 | 0.890 |
+| `balanced` | 75,399 | 895,852 | 1,351 | 74.8 | 0.9465 | 0.11 | 224 | 131 | 0.797 |
+| `tax_squeezer` | 97,631 | 1,213,981 | 1,168 | 52.3 | 0.9692 | 0.18 | 251 | 155 | 0.797 |
+| `disaster_neglect` | 55,932 | 971,942 | 1,394 | 57.3 | 0.7844 | 28.61 | 289 | 133 | 0.389 |
+| `curriculum` | 38,421 | 316,376 | 551 | 70.0 | 0.9327 | 0.80 | 70 | 32 | 0.790 |
+
+**All 63 cells are byte-identical to §29.1's**, compared field by field. That is
+two changes proved neutral at once, because the matrix runs `tools/playtest.gd`'s
+strategies through `BalanceGateRig`: the `sim/` change (doc 93 §M1) *and* the
+harness change (§M4) are both in this run.
+
+**(c) 76 game-days of a decaying city, which is the one that matters.** A 24-hour
+hash and a 21-game-day matrix both measure a city that is still mostly the city
+doc 09 handed over. `tools/measure_insolvency.gd` runs `do_nothing` to the day the
+treasury first closes negative, and on `standard` that is game-day **76 / 75 /
+74** on seeds 1337 / 4242 / 9001 — **the same three days §29.3 measured**, after
+76 game-days of decay, 1,824 settlements and a road bill that has roughly
+doubled. A change that survives that is not neutral by luck.
+
+### 31.2 The founding ledger, re-taken — `tools/measure_founding_ledger.gd`
+
+The instrument is new and its first job was to reproduce §29.2 before it was
+allowed to publish anything: on the coarse path at game-hour 1 it returns §29.2's
+table to the cent, including the $741.80 / $99.42 tax / non-tax split §29.2 had to
+solve for algebraically. Then, after §M1:
+
+| preset | founding purse | gross $/gh | expense $/gh | **net $/gh** | net before §M1 |
+|---|---|---|---|---|---|
+| `casual` | 35,000 | 952.49 | 404.86 | **+547.63** | +564.21 |
+| `standard` | 25,000 | 841.22 | 504.18 | **+337.05** | +337.05 |
+| `hard` | 18,000 | 781.88 | 601.00 | **+180.88** | +155.30 |
+| `crisis` | 12,000 | 729.95 | 685.49 | **+44.47** | **−18.70** |
+
+**`crisis` founds positive.** That is the whole of ranked item 1, and it costs the
+default preset nothing — `standard`'s row is identical in both columns because
+`M_exp` and `M_repair` are both 1.00 there.
+
+The eight-line breakdown, which is where §29.2(b) found the defect and where it is
+now absent:
+
+| expense line | casual | standard | hard | crisis | crisis ÷ standard |
+|---|---|---|---|---|---|
+| `building_maint` | 23.34 | 27.46 | 30.76 | 34.32 | 1.2500 |
+| `departments` | 81.60 | 96.00 | 107.52 | 120.00 | 1.2500 |
+| `fleet` | 64.60 | 76.00 | 85.12 | 95.00 | 1.2500 |
+| `grid` | 63.19 | 74.35 | 83.27 | 92.93 | 1.2500 |
+| `generation_fuel` | 48.45 | 57.00 | 63.84 | 71.25 | 1.2500 |
+| `water` | 13.15 | 15.47 | 17.32 | 19.33 | 1.2500 |
+| **`roads_repair`** | **110.53** | **157.90** | **213.17** | **252.65** | **1.6000** |
+| TOTAL | 404.86 | 504.18 | 601.00 | 685.49 | 1.3596 |
+
+`roads_repair` is now exactly `M_repair` — 1.6000 measured against 1.60 authored,
+where §29.2(b) measured 2.0000 — and the eight-line spread across the presets
+falls from 1.9281× to 1.6931×. The largest single multiplier in the founding
+ledger is now the largest multiplier anybody *authored*.
+
+**The revenue side, unchanged and now published rather than solved for:**
+
+| revenue line | casual | standard | hard | crisis |
+|---|---|---|---|---|
+| `tax` | 853.07 | 741.80 | 682.46 | 630.53 |
+| `power_tariff` | 93.00 | 93.00 | 93.00 | 93.00 |
+| `water_tariff` | 3.42 | 3.42 | 3.42 | 3.42 |
+| `fines` | 3.00 | 3.00 | 3.00 | 3.00 |
+
+Doc 93 §M2 rules on that shape. The two flat rows are not a bug and not a
+coincidence: `delivered_mwh` and `police_incidents_resolved` are doc 03 §9 item
+6b's **held metering pair** (`CitySim.HELD_DELIVERED_MWH = 1.5`,
+`HELD_FINE_RATE = 3/350`), and they are still flat at 21 and at 48 game-days of
+neglect on every preset —
+
+| `do_nothing`, mean $/gh over the horizon | casual | standard | hard | crisis |
+|---|---|---|---|---|
+| `power_tariff`, 21 game-days | 93.00 | 93.00 | 93.00 | 93.00 |
+| `power_tariff`, 48 game-days | 93.00 | 93.00 | 93.00 | 93.00 |
+| `fines`, 21 and 48 game-days | 3.00 | 3.00 | 3.00 | 3.00 |
+| `water_tariff`, 21 game-days | 3.05 | 3.23 | 3.25 | 3.41 |
+
+— so a `× M_rev` on those two would make 88 % of the advertised revenue
+difficulty a property of a placeholder. The one live non-tax line,
+`water_tariff`, is **0.41 % of founding gross**. §2.9 now prints the measured
+effective figures (+13.23 % / −7.05 % / −13.23 %) beside the advertised ones.
+
+### 31.3 The 21-game-day matrix on every preset, re-taken
+
+`do_nothing` and `balanced`, 3 seeds, 21 game-days — the two strategies §29.3's
+ruling names. The `standard` rows are §31.1(b)'s, unmoved.
+
+| preset | strategy | treasury | value | net $/gh | pop | happy | stab | placed | upg | minC | credit |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `casual` | `do_nothing` | 273,044 | 273,044 | 463 | 138 | 84.4 | 0.9505 | 0 | 0 | 0.528 | 0 |
+| `casual` | `balanced` | 91,997 | 1,280,119 | 3,008 | 1,652 | 76.6 | 0.9625 | 214 | 170 | 0.798 | 0 |
+| `standard` | `do_nothing` | 165,302 | 165,302 | 266 | 144 | 82.4 | 0.9487 | 0 | 0 | 0.512 | 0 |
+| `standard` | `balanced` | 75,399 | 895,852 | 2,125 | 1,351 | 74.8 | 0.9465 | 224 | 131 | 0.797 | 0 |
+| `hard` | `do_nothing` | 82,081 | 82,081 | 111 | 142 | 83.0 | 0.9517 | 0 | 0 | 0.549 | 0 |
+| `hard` | `balanced` | 29,931 | 346,298 | 876 | 893 | 73.1 | 0.9273 | 199 | 11 | 0.633 | 0 |
+| `crisis` | `do_nothing` | 9,669 | 9,669 | −24 | 142 | 82.9 | 0.9485 | 0 | 0 | 0.555 | **0** |
+| `crisis` | `balanced` | 7,302 | 7,702 | −25 | 144 | 82.1 | 0.9471 | 0 | 0 | 0.555 | **0** |
+
+Three things in that table are worth saying out loud.
+
+1. **The credit line stopped being engaged on `crisis`.** §29.3 measured four
+   `credit_line_engaged` events on both crisis rows in 21 game-days; there are now
+   zero, on all three seeds. A founding city that no longer borrows inside three
+   game-weeks is the visible half of the founding net crossing zero.
+2. **`hard` became a game and `casual` became less of a walkover.** `hard`'s
+   `balanced` was 186 placed / **2** upgraded on §29.3's column — an agent placing
+   floorspace it could never afford to upgrade; it is now 199 / **11**. `casual`'s
+   went the other way: 217/170 → 214/170, with $12,661 less treasury and 81 fewer
+   people.
+3. **`crisis` is still not a game the scripted agent plays**, and §31.4 is about
+   why. The founding *hour* is positive; the 21-game-day *arc* is not — measured
+   at −$21.86/gh mean on `do_nothing`, because a city left alone loses tax faster
+   than §M1 gave back road bill.
+
+### 31.4 `Balanced`'s reserve, and the finding underneath ranked item 4
+
+`RESERVE_FLOOR := 12_000` becomes `RESERVE_FLOOR_FRACTION := 0.48` of the founding
+purse, resolved from `Treasury.difficulty()` (doc 93 §M4). `12,000 / 25,000 =
+0.48` reproduces `standard` to the dollar — §31.1(b) is the proof — and gives
+$16,800 / $8,640 / $5,760 on the others.
+
+**And it is not what froze `crisis`.** §29.5(a) step 3 named the flat floor; the
+agent holds `max(floor, one game-day of expense)` and on crisis the *payroll* term
+was the maximum, $17,968 against a $12,000 purse. Step 3's own arithmetic says so.
+Three arms, `balanced` on `crisis`, mean of 3 seeds, 21 game-days:
+
+| arm | treasury | value | net $/gh | placed | grid | credit |
+|---|---|---|---|---|---|---|
+| §29.3, before anything | 1,417 | 1,417 | −38 | **0** | 0 | 4 |
+| after §M1 only (floor still flat $12,000) | 11,786 | 14,986 | −13 | **2** | 0 | 0 |
+| after §M1 + §M4 (floor $5,760) | 7,302 | 7,702 | −25 | **0** | 1 | 0 |
+
+**The agent unfroze because of the sim change, not the harness change** — §M1 made
+the founding net positive, so the treasury climbs toward the reserve instead of
+away from it, and the gap closes. What §M4 then bought is a *different* result and
+it is worth publishing rather than tidying: with a reachable floor the agent has
+`12,000 − 5,760 = $6,240` of spare on game-hour 0, before its first settled hour
+has told it what a game-day costs, and the first rung of the growth ladder that
+can afford anything is `_lead_grid` — so it buys a transformer, and on `crisis` a
+transformer does not pay itself back inside 21 game-days. Seed 1337 spends it and
+still ends with one more building and $10,919 of value against `do_nothing`'s
+$10,692; seeds 4242 and 9001 spend it and place nothing.
+
+**Ruled, and ranked, separately:** §M4's fraction is right — a constant reserve
+cannot measure a difficulty that scales the purse, and it costs the control
+nothing. The game-hour-0 spare window it exposes is a *second* harness artifact
+(`_last_expense_per_hour` is 0 before the first settlement, so game-hour 0 is the
+only hour of any run on which the floor is the binding term), and it belongs to
+whoever next opens `tools/playtest.gd`. §31.7 ranks it.
+
+`tools/playtest.gd` also learns `--difficulty=` this pass, because ranked item 4
+asked for the crisis arm to be *published* and the harness could not boot a
+non-default preset at all — only `tests/balance_matrix.gd` could. The per-run JSON
+now carries `run.difficulty`, and a non-default preset gets its own filename
+suffix so a crisis run cannot overwrite the control.
+
+### 31.5 The neglect-fatal table, re-taken — `tools/measure_insolvency.gd`
+
+The first game-day a `do_nothing` city's treasury closes below zero, 3 seeds,
+after §M1:
+
+| preset | 1337 | 4242 | 9001 | mean | before §M1 (§29.3) | peak treasury, and its game-day |
+|---|---|---|---|---|---|---|
+| `casual` | **104** | **110** | **108** | 107.3 | 109 / 116 / 113 | $471k around day 50 |
+| `standard` | **76** | **75** | **74** | **75.0** | **76 / 75 / 74 — unmoved** | $237k around day 44 |
+| `hard` | **57** | **56** | **56** | 56.3 | 52 / 52 / 53 | $88k around day 28 |
+| `crisis` | **41** | **42** | **40** | 41.0 | 35 / 34 / 35 | $21k around day 10 |
+
+**Strictly ordered on every seed, finite on all four, and `standard` unmoved on
+all three seeds.** What moved is exactly what the double knob was paying for:
+`casual` lost 5 game-days of rope because its road bill rose from 0.595× to
+0.700× of standard's; `hard` and `crisis` gained 4 and 6 because theirs fell from
+1.512× and 2.000× to 1.350× and 1.600×.
+
+Each rung now buys about **1.36×** the next one's rope (104/76 = 1.37, 76/57 =
+1.33, 57/41 = 1.39), against §29.3's ~1.5×. Neither number was fitted and gate 29
+asserts neither. What gate 29 *does* assert is unchanged in kind and re-based in
+number: strict ordering, finiteness, a 25–118 game-day band, `standard` pinned at
+76 ± 6 — **that pin did not have to move** — and doc 06 §2.13's ≤ 40 open
+incidents as §29.5(b)'s tripwire. The per-preset horizons become
+`{casual: 120, standard: 90, hard: 70, crisis: 55}`, each ten-plus game-days past
+its worst measured seed; measured cost ~48 s total, peak open incidents 0–1 on the
+day rows and 2–3 measured hour by hour.
+
+`tools/measure_insolvency.gd` stops at insolvency by default and takes a
+`--max-days` ceiling. That is a hazard rule and not thrift: §29.5(b)'s cascade is
+untouched by this pass, and a run that walks into it does not finish.
+
+**All 29 balance gates pass, and 28 of the 29 are unchanged in every threshold.**
+Gate 29 is the one that moved, and only in its horizons and two band messages —
+`{casual: 120, standard: 90, hard: 70, crisis: 55}` against `{120, 90, 65, 48}`,
+"measured 104–110" and "measured 40–42" against "109–116" and "34–35". The four
+assertions themselves (finite, strictly ordered, inside 25–118 game-days,
+`standard` pinned at 76 ± 6) and the ≤ 40 open-incident tripwire are word for word
+what §29.6 shipped. The full suite is green with `silent: 0`, and one new test —
+`test_one_difficulty_knob_per_ledger_line` — is what makes §M1 and §M2 rules
+rather than comments.
+
+### 31.6 `cmd_install_backup_generator`, ruled
+
+Doc 93 §M3: it is doc 05 handing doc 04 `{kw_required, backup_kw, coverage_frac}`,
+doc 04 §12 defers the generator, `grep -rn fuel sim/power/` returns nothing, and
+the command as shipped grants a permanent `coverage_frac` on a dark node for **no
+dollar**. No wrapper, no card, no matrix row — and a written re-open condition:
+doc 04 §2.10's capital price, tank, burn and refuel, after which the verb that
+gets a door is `place_backup_gen`.
+
+The verb matrix at this fork, arithmetic shown because it has been wrong twice:
+eight sub-system verbs with no `CitySim` wrapper, minus `cmd_road_repair` (ruled,
+§J3), minus `cmd_set_auto_repair_policy` (doored, §30), minus
+`cmd_install_backup_generator` (ruled, §M3) = **five open**, all five
+`WaterSystem`'s: `cmd_remove_main`, `cmd_overhaul_node`,
+`cmd_set_water_restrictions`, `cmd_set_water_policy`, `cmd_deploy_pump_truck`.
+Doc 91 §17.2 and §17.6.2 both carry the correction.
+
+### 31.7 What this pass did not do, and what it ranks
+
+- **It did not go near §29.5(b)'s cascade**, which still outranks everything in
+  this document. One line reproduces it — `BalanceGateRig.run("do_nothing", 1337,
+  120, "crisis")` — and it is doc 06's, not doc 03's. §M1 moved crisis's total
+  decay *later* (insolvency 35 → 41), so the cascade day probably moved later too;
+  nothing here measured it, and nobody should assume it.
+- **It did not move `crisis`'s founding purse**, and that was a ruling rather than
+  an omission. §29.5 ranked item 3's own trigger was "if crisis still founds
+  negative"; after §M1 it founds at **+$44.47/gh**. What replaces the trigger is a
+  better test, and it is the top-ranked open question below.
+- **It did not retune a digit of `data/difficulty.json`.** Every number there is
+  still doc 03 §2.9's, doc 07 §8.3's, doc 06 §8's and doc 08 §2.3's authored
+  table, and `tests/test_difficulty.gd` still transcribes all four sections.
+- **It did not re-measure the curriculum, the frame, the arrival table or the
+  ambient arm.** `data/goals.json`, `data/render.json`, `data/incidents.json` and
+  `data/economy.json` did not move; §26's, §27.4's, §25.3's and §27.7's tables
+  stand.
+
+**Ranked, for the next pass:**
+
+0. **The cascade** (§29.5(b)). Unchanged, still first, still doc 06's.
+1. **Does `crisis` get a bigger purse, or is 0.729 game-days of coverage the
+   point?** The founding purse buys **3.60 / 2.07 / 1.25 / 0.729** game-days of
+   the founding city's own expense across the four presets, so `crisis` is the
+   only preset handed a city whose bills it cannot pay for one game-day out of the
+   purse it comes with. That is either the definition of `crisis` or a defect, and
+   it wants a ruling rather than a measurement — the measurement is here.
+   `starting_treasury` is the knob; gate 29's ordering is what a change has to
+   re-prove.
+2. **`Balanced`'s game-hour 0 is the only hour its reserve floor binds** (§31.4),
+   because `_last_expense_per_hour` is 0 before the first settlement. A harness
+   question, and the smallest thing on this list.
+3. **`RoadNetwork.repair_quote` passes no `M_repair`** — `sim/city_sim.gd:330`
+   calls `econ_curves.repair_cost_road(road_class, damage_fraction)` with the
+   multiplier defaulted to 1.00. It is only a *budget* quote against
+   `auto_repair_daily_cap`, which doc 10 §2.12 calls "a player budget setting, not
+   a price", so it is arguably correct — but it means a `crisis` city's daily cap
+   buys 1.60× more tile-fractions than those repairs actually cost. Doc 10 owns
+   it; hash-neutral on the default preset either way.
+4. **When doc 04 meters `delivered_mwh` and doc 06 meters resolutions**, §M2's
+   third reason expires and "should `M_rev` reach the tariff lines" becomes a live
+   question against live numbers.
