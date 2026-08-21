@@ -978,6 +978,17 @@ matrix measures — `greedy_growth`, ~550 incidents in 21 game-days = 26.2/game-
 — that ceiling is **26 open incidents**, against the 42-and-still-climbing that
 held the wiring, and inside §2.13's own worst-case accounting of ≤ 40 active.
 
+> **AMENDED, Wave 13 (§2.13(b)).** That derivation is correct and it is not
+> complete: `arrival_rate × T` is a ceiling only while arrivals are **exogenous**,
+> and eight `spawn_incident` actions spawn incidents *from* incidents — `crime`
+> alone has a mean offspring of **three**. A supercritical branching process has
+> no fixed point to multiply `T` by, and a `crisis` `do_nothing` city reached **89,055** open
+> incidents at game-day 104 with every one of them terminating on schedule. The
+> rule above bounds an incident's LIFETIME; §2.13(b) is what bounds its FERTILITY.
+> The **26** measured here keeps its job: it is the knee where §2.13(b)'s
+> generation taper starts, chosen precisely because it is the worst backlog a
+> played city has ever produced.
+
 **Why ABANDONED and not FAILED.** `FAILED` is *the consequence landed*;
 `ABANDONED` is *the city never answered*, and §2.2 already reserves it for
 exactly that. Balance gate 9 measures the count, which is the point: a city that
@@ -1128,9 +1139,159 @@ for hour in range(elapsed_game_hours):
 
 Bounded cost: `MAX_SUBSTEPS = 64` per hour, and each sub-step is O(active_incidents + queued_assignments). With ≤ 40 active incidents and ≤ 20 units, worst case is ~2,500 cheap operations per simulated hour. At doc 01's post-C-19 cap — **12 real hours = 720 game-hours** — that is ~1.8 M cheap operations for a maximal absence, comfortably inside doc 08's sliced 12 ms-per-frame budget (C-22: main-thread slicing, no worker thread) and well under the "feels immediate" target (spec §50).
 
+> **The "≤ 40" in that sentence was an ASSUMPTION until Wave 13 — §2.13(b) below is what makes it true.** And the other half of the estimate is now measured rather than assumed: a roster actually held at the ceiling costs **66–73 ms per simulated game-hour** on a headless desktop against **5.8 ms** for a quiet city (doc 92 §31.4). The operation COUNT is right; the operations are not as cheap as "cheap" implies, and doc 92 §31.6 ranks that as this system's open perf question.
+
 **Offline clamp (Risk 5 mitigation, spec §51):** if `elapsed_game_hours > OFFLINE_FULL_FIDELITY_H (72 game-hours)`, hours beyond the first 72 use `incident_load_damper *= 0.5` and the Disaster Director (**doc 07**) is suppressed. The player's city degrades but is never destroyed by a long absence. This is a **generation-rate** change only — the escalation and resolution math are untouched, so the invariant in §2.12 still holds.
 
 **Offline destruction is refused, not silently dropped** *(C-47).* `world.destroy_allowed()` is `false` for every offline hour, so the `destroy_building` / `feeder_destroy` verbs take the clamped branch in §2.7: condition floors at 0.15, the incident stays open at tier 5, and `destroy_refused_offline` is written to the history ring so the WHILE YOU WERE AWAY report can say *"your L2 house was still burning when you got back."*
+
+#### 2.13(b) The saturation rule — RR-26 bounded an incident's LIFETIME, and nothing bounded its FERTILITY (Wave 13, 2026-08-20)
+
+The paragraph above has costed this system against **"≤ 40 active incidents"**
+since it was written, and **nothing enforced it**. §2.10.1 published a ceiling and
+its derivation is correct — *"an unanswered roster cannot grow past
+`arrival_rate × T`"* — but it holds only while arrivals are **exogenous**, and
+**eight** `spawn_incident` actions in `data/incidents.json` spawn incidents *from*
+incidents:
+
+| row | trigger | children | of type | scope | consumes a subject? |
+|---|---|---|---|---|---|
+| `crime` | `on_tier_enter[4]` | **1** | `crime` | `district` | **no** |
+| `crime` | `on_tier_enter[5]` | **2** | `crime` | `district` | **no** |
+| `crime` | `on_fail` | 1 | `structure_fire` | `district_random_building` | yes |
+| `traffic_accident` | `on_tier_enter[5]` | 1 | `traffic_accident` | `adjacent_edge` | **no** |
+| `structure_fire` | `on_fail` | 1 | `storm_damage/blocked_road` | `self` | yes |
+| `water_main_break` | `on_fail` | 1 | `storm_damage/blocked_road` | `self` | yes |
+| `transformer_failure` | `on_fail` | 1 @ `chance 0.3` | `structure_fire` | `nearest_building` | yes |
+| `storm_damage/downed_power_line` | `on_tier_enter[4]` | 1 @ `chance 0.25` | `structure_fire` | `nearest_building` | yes |
+
+**Read the last column first.** Five of the eight resolve to a BUILDING and take
+it off the board — an eligible building is a finite resource, so those five are
+self-limiting the way fire spread is. The three that consume nothing are the
+whole problem, and one row owns two of them: an unanswered `crime` produces
+**three more crimes**, and three children per parent is a supercritical branching
+process no matter how briefly each parent lives. RR-26's terminal rule was never
+the wrong rule — it was answering a different question.
+
+##### The measurement (doc 92 §31, `BalanceGateRig.run("do_nothing", 1337, 120, "crisis")`)
+
+A `crisis` `do_nothing` city is destroyed by game-day 55 and then sits at total
+decay — every building at condition 0.000, no fleet, nothing dispatched. On
+game-day **103** one ambient crime is generated in the last district that still
+has residents, and from there:
+
+| game-hour | open incidents | wall clock for that game-hour |
+|---|---|---|
+| 2496 | 103 | 0.22 s |
+| 2497 | 357 | 0.50 s |
+| 2498 | 832 | 1.39 s |
+| 2499 | 2,424 | 3.89 s |
+| 2500 | 6,389 | 9.92 s |
+| … | 14,671 → 37,631 → **89,055** | → **269 s** |
+
+*Why it multiplies at that rate.* Each tier entry also applies
+`district_stability` (−0.01 / −0.025 / −0.045 / −0.07), so the lineage drives its
+own district's stability to zero inside four game-hours; §2.4's `esc_env` for
+crime is `(1 + 1.5(1 − S))·(1 + 0.20·dark)·(1 + 0.35·outage)` clamped to 3.0, so
+it pins at its ceiling. At `crisis` (`escalation_mult` 1.6):
+
+```
+E      = esc_base · esc_env · difficulty = 0.80 × (2.5…3.0) × 1.6 = 3.20…3.84 /gh
+t(1→4) = (1/1.00 + 1/1.25 + 1/1.50) / E = 0.642…0.771 gh   ← the first child
+t(1→5) = 3.038095 / E                   = 0.791…0.949 gh   ← the other two
+```
+
+The Euler–Lotka root of `1 = e^(−r·t₄) + 2·e^(−r·t₅)` is `r ≈ 1.24…1.49 /gh`, i.e.
+a multiplier of **3.5–4.4 per game-hour** in the limit; the measured 2.5–2.9
+is that with the sub-step guard and `load_damper` taking the edge off. And the
+terminal rule fires on schedule the whole time — `crime`'s own
+`on_fail{hold_tier 5, hold_h 1.0}` ends every incident at `t(1→5) + 1 ≈ 2.0` gh,
+which is exactly the `unanswered_h` maximum the roster measures. **Every incident
+died on time. There were simply three more of it.**
+
+*It is not fire spread, and it is not destroyed buildings.* Both candidates were
+checked and both are already correct: doc 02 §2.12's `state_fire_mult` is **0**
+for `destroyed`, so a ruin is not an ignition candidate and not a spread target;
+and a `structure_fire` that burns its building down goes `FAILED` and leaves the
+roster in the same sub-step (`_release_finished_units`). Fire spread is
+**substrate-limited** — every ignition consumes an eligible building, and
+buildings run out. `scope: "district"` consumes nothing at all, which is the
+whole difference.
+
+##### The rule
+
+Three numbers, in `data/incidents.json` → `globals`:
+
+```
+N        = open (non-terminal) incidents
+CEIL     = 40   this section's own worst-case accounting — the ROSTER bound
+RESERVE  =  4   slots inside CEIL that doc 06 may not spend
+A_CEIL   = CEIL − RESERVE = 36        where AUTOMATIC births stop
+KNEE     = 26   §2.10.1's measured worst LEGITIMATE backlog
+sat(N)   = clamp((A_CEIL − N) / (A_CEIL − KNEE), 0, 1)
+```
+
+1. **Ambient generation** is multiplied by `sat(N)`: `load_damper()` gains one
+   factor, applied *outside* its `[0.25, 1]` clamp, because the anti-death-spiral
+   damper is a taper that must never reach zero and this one must.
+2. **Every AUTOMATIC birth is refused at `A_CEIL`** — the six generators, fire
+   spread's child ignition, and the `spawn_incident` cascade verb, all through
+   one seam (`IncidentSystem.spawn_automatic`). The refusal is **deterministic
+   and RNG-free**: it draws nothing, so a city below `A_CEIL` is bit-identical to
+   one running without the rule.
+3. **`spawn()` itself stays open.** A scripted incident, a player-driven one and a
+   doc 04 component failure are not what the ceiling is about. That includes
+   **doc 07's Disaster Director** (`CitySim`'s `director_incident` arm): the
+   Director already runs its own budget — threat points, a cap on concurrent
+   events, and doc 08's fairness gates — so an event it has committed to is a
+   decision that has been costed once already, and refusing it here would be doc
+   06 quietly overruling doc 07's pacing.
+
+**Why the reserve exists, and why it is 4.** Doc 04 emits
+`PowerComponentFailed` for a given component **exactly once**; nothing re-offers
+it. Refusing that incident does not defer it — it strands the component, because
+`power_restore_component` has no other caller and the node stays dead for the
+life of the city. So the doc 04 path is admitted unconditionally, and the roster
+can therefore stand *above* `A_CEIL`. A first cut without the reserve measured
+**42** open on a 200-game-day `crisis` run against a ceiling of 40, and both
+extras were `PowerComponentFailed`. The reserve is that measurement doubled, and
+it puts the roster bound back **on** §2.13's own number instead of near it.
+A doc 04 admission cannot branch — the only endogenous child a
+`transformer_failure` authors is a `structure_fire` on `nearest_building` at
+`chance 0.3`, and that *is* an automatic birth — so the reserve is a bound and
+not a leak.
+
+**A cascade may not invent a subject the GENERATOR would not have found.**
+§2.6(z) already states this for the ambient floor — *"λ_natural ≤ 0 means the
+channel scanned and found no eligible candidate … it changes how OFTEN, never
+WHERE"* — and `district_random_building` / `nearest_building` already obey it by
+returning `""`. `scope: "district"` did not, because it needs no entity at all:
+a target-less crime in a district with no residents is a token, not an incident,
+and the measured cascade was made of 89,055 of them in a district whose
+population had been zero since its first game-hour. `scope: "district"` now
+applies the type's own generator eligibility, which for `crime` is §2.6(a)'s
+`population > 0` and for every other (per-asset) type is nothing.
+
+**Nothing a played city does can feel this.** The whole doc 92 strategy matrix —
+7 strategies × 3 seeds × 21 game-days — peaks at **13** open incidents, on
+`greedy_growth`; `sat(N)` is exactly 1.0 at and below 26 and `saturated()` is
+false below 36. Both determinism baselines (`tools/profile_sim.gd --hash-only`
+on the starter city and on `bench_city.json`) are byte-identical.
+
+##### The bound, and what it now costs
+
+| | before | after |
+|---|---|---|
+| peak open, `crisis` `do_nothing`, 200 game-days | 89,055 and climbing | **37** (36 automatic + 1 doc 04) |
+| worst single game-hour | 269 s | **0.47 s** |
+| whole 200-game-day run | did not finish | **89 s** |
+| game-days 0–159 (the quiet city) | 5.8 ms/game-hour | 5.8 ms/game-hour |
+| game-days 160–199 (roster pinned at 36) | — | 66–73 ms/game-hour |
+
+Gate 30 (`tests/test_balance_gates.gd`) asserts `peak ≤ CEIL` on that exact run,
+and gate 29's per-preset horizons no longer have to dodge the cascade. The curve
+is reproduced by `tools/profile_decay.gd --days=200 --preset=crisis`; doc 92
+§31.4 publishes it in full and §31.6 ranks what it still costs.
 
 ---
 
@@ -1201,6 +1362,18 @@ Bounded cost: `MAX_SUBSTEPS = 64` per hour, and each sub-step is O(active_incide
 ```
 
 `op` vocabulary (the data-driven cascade verbs, Constitution §8): `district_stability`, `city_confidence`, `spawn_incident`, `set_district_flag`, `building_condition`, `destroy_building`, `feeder_load_shed`, `feeder_offline`, `feeder_destroy`, `zone_pressure_delta`, `edge_speed_mult`, `edge_close`, `population_delta`, `notify`. Each verb is one small handler; adding a cascade never requires new incident code.
+
+**`spawn_incident` scopes, and what each one has to prove** *(§2.13(b), Wave 13).* The verb resolves its child's target four ways, and three of them can come back empty — a scope that cannot find a subject spawns nothing rather than spawning a token:
+
+| `scope` | target | eligibility |
+|---|---|---|
+| `self` | the parent's own `target_ref` | none — the parent had one |
+| `district_random_building` | a weighted pick in the parent's district | `state_fire_mult > 0` (doc 02 §2.12) |
+| `nearest_building` | the closest eligible building | same |
+| `district` | none — the district itself | **the type's own generator eligibility**: `population > 0` for `crime` (§2.6(a)); nothing for the per-asset types |
+| `adjacent_edge` | none — the parent's tile | none |
+
+Every child is also an **automatic birth** and meets §2.13(b)'s ceiling; a refused one comes back as `SKIPPED{reason: "saturated"}` rather than a silent `null`.
 
 **Guarded verbs** *(report 98 C-47).* `destroy_building` and `feeder_destroy` are the only *irreversible* verbs, and both open with an explicit `world.destroy_allowed()` check before doing anything:
 
@@ -1459,6 +1632,12 @@ Headless tests (`tests/sim/incidents/`, `tests/sim/dispatch/`), all with injecte
 47. `test_the_terminal_rule_never_pre_empts_an_authored_ending` — the invariant `T = 24` was derived for, checked at both ends of the catalog: an unanswered `structure_fire` still reaches its own `FAILED` and **destroys its building** (the neglect-fatal identity), and so does `storm_damage/roof_damage`, the slowest-escalating row in the file and the one that set the window. Both must terminate strictly inside 24 gh.
 48. `test_the_seam_honours_doc_06s_per_vehicle_speed` *(the defect that held the wiring for two waves)* — through `RoadTravelTimeProvider`, assert a quote at `speed_mpgm 18` costs strictly more than one at 32 on the same pair, that `{speed_mpgm: 26, siren: true, siren_mult: 1.25}` costs strictly less than `{speed_mpgm: 26}`, and that it equals a plain `{speed_mpgm: 32.5}` — one speed at the seam, with §2.11's siren product folded in by doc 06. *(`tests/test_incidents_routes.gd`.)*
 
+**§2.13(b), the saturation rule (Wave 13):**
+49. `test_saturation_is_a_knee_not_a_cliff` — read all three numbers out of `data/incidents.json` and assert the shape at four roster sizes: `sat` is exactly **1.0** on an empty roster **and at the knee** (the property every unchanged gate rests on), ≈0.5 at the midpoint, and exactly **0.0** at the automatic ceiling — not merely floored. At the ceiling `spawn_automatic()` returns `null` and `spawn()` does not, because a scripted or player-driven incident is not what the ceiling is about. *(`tests/test_incidents_lifecycle.gd`.)*
+50. `test_a_district_cascade_needs_a_district_that_can_host_it` — the same `spawn_incident{type: crime, count: 2, scope: "district"}` action run against a district with residents and one without: two children and **zero**. A `storm_damage` cascade in the same empty district still spawns, because only `crime` has a district eligibility test to fail (§2.6(a)).
+51. `test_the_crime_cascade_is_bounded_by_the_ceiling` — the defect itself, as a unit test. One populated district at stability 0, no fleet, generation off, one seed crime; assert the roster never exceeds the automatic ceiling at any of 336 game-hours **and that it actually reaches it**, because a bound the fixture never touches proves nothing. Before §2.13(b) this test could not be written: the roster passed five figures inside a game-day.
+52. **Balance gate 30** (`tests/test_balance_gates.gd`) — `do_nothing` on `crisis` to game-day **200**, sampled per game-HOUR because the cascade multiplied inside one, asserting `peak ≤ saturation_ceiling` and that the run still generated incidents at all, so a future "fix" cannot pass by muting the engine.
+
 ---
 
 ## 8. Tunables
@@ -1509,6 +1688,9 @@ One document, three top-level keys — split into `data/incidents.json`, `data/v
       "access_police_bonus": 1.15,
       "load_damper_per_excess": 0.06,
       "load_damper_floor": 0.25,
+      "saturation_knee": 26,
+      "saturation_world_reserve": 4,
+      "saturation_ceiling": 40,
       "offline_full_fidelity_h": 72,
       "offline_beyond_damper": 0.50,
       "night_start_hour": 19,
@@ -1759,3 +1941,10 @@ One document, three top-level keys — split into `data/incidents.json`, `data/v
 | **§2.1 / §6** (housekeeping under RR-15) | `next_discontinuity_h()` gained an explicit **(h) weather-segment boundary** breakpoint. §2.6 had always asserted the integrator "breaks at day/night and weather boundaries", but §2.1's enumerated list did not contain it; RR-15 makes two further rates (`fire_escalation_mult` in escalation, `fire_spread_mult` in spread) depend on that breakpoint for online/offline exactness, so the implied item is now written down. No behaviour change — tests 1/2/9 already required it. §6's MVP-cut list records the six wired channels and `g_weather`. |
 | **§7** | Test plan grew from 40 to **43** cases. Tests 5, 9, 23 and 38 restated: 5 and 23 now drive `esc_env` through the live channel while asserting the *same* expectations (the point of RR-15), 9 re-runs under `HEAVY_RAIN` to prove `g_weather` enters the hazard rate rather than the per-roll probability, and 38's grep guard widens from generation to the whole `sim/incidents/` tree and adds the `heat_mult` / `rain_mult` identifiers. New: **41** (`esc_env` consumes the channel; golden `1.250` CLEAR and `1.2192` storm; intensity-invariance; no clamp), **42** (spread consumes `fire_spread_mult`; the four re-derived rates; removing it reproduces the pre-RR-15 `0.703833 /gh`), **43** (the three fire channels are read at three distinct sites with three distinct values and none may be substituted; wind is not double-counted). |
 | **§9** | Open question 10 **closed by RR-15** and moved into the ruled list, recording both halves — the escalation move that changed no number, and the spread consumption that did — plus the reason the audit's feared 25–44% escalation cut never happened (doc 07 published a *new* channel instead of overloading `fire_spread_mult`). Questions 6–9 remain open and none of them is a weather question. **Doc 06 now authors no weather constant anywhere: not in generation (RR-4), not in escalation, not in spread (RR-15).** |
+
+### Wave 13 — the saturation rule (doc 92 §31, doc 93 §M1, report 98 RR-62, audit 91 A91-D-31)
+
+| ruling | change |
+|---|---|
+| **RR-62** *(§2.13(b) — the roster gets the ceiling §2.13 always costed itself against)* | §2.13's "≤ 40 active incidents" was an assumption and nothing enforced it; §2.10.1's `arrival_rate × T` is a ceiling only while arrivals are **exogenous**, and eight `spawn_incident` actions spawn incidents from incidents, three of which consume no subject at all (`crime` alone spawns **three more crimes**). Measured: a `crisis` `do_nothing` city multiplies its open roster ~2.5–2.9 **per game-hour** from game-day 104 — 103 → … → **89,055**, 269 s of wall clock for one game-hour — with every incident terminating on schedule under RR-26. New **§2.13(b)** adds three numbers to `globals` (`saturation_knee 26`, `saturation_world_reserve 4`, `saturation_ceiling 40`): ambient generation tapers by `sat(N)` from the knee, every AUTOMATIC birth is refused at `CEIL − RESERVE = 36`, doc 04's one-shot component failures are admitted inside the reserve because refusing one strands the component, and a `scope: "district"` cascade must now pass the type's own generator eligibility. §2.10.1 gains the amendment note that its derivation is correct and incomplete; §3.1 gains the `spawn_incident` scope/eligibility table; §8 gains the three keys. Measured after: peak **37** open over 200 game-days on `crisis`, worst game-hour **0.47 s**, whole run **89 s** (`tools/profile_decay.gd`, added this wave, is the reproducer). **Nothing a played city does can feel it** — the 7×3×21 matrix peaks at 13 open and both determinism baselines are byte-identical. Gate 30 asserts the bound on the 200-game-day run; gate 29's horizons no longer have to dodge the cascade. |
+| **§7** | Test plan grew from 48 to **52** cases: three new unit tests (**49** the knee's shape at four roster sizes, **50** the district-eligibility rule, **51** the cascade itself reproduced and bounded over 336 game-hours) and **52**, balance gate 30, the 200-game-day boundedness run. |

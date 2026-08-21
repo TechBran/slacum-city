@@ -73,6 +73,9 @@ var _order: Array = []  # ascending incident ids
 var _recent: Array = []  # terminal incidents, kept KEEP_RESOLVED_MIN game-min
 var _events: Array = []
 var _spread_next_h: float = 0.0
+## §2.13(b)'s edge detector. Derived from the roster, never serialized — see
+## `_update_saturation_latch`.
+var _saturated_latch: bool = false
 
 
 func _init(p_catalog: IncidentCatalog, p_world: IncidentWorld, p_rng: RngStreams,
@@ -161,6 +164,7 @@ func _integrate(dt_h: float, t_end_h: float) -> void:
 	_generate(dt_h, dark)
 	_rescore_and_dispatch()
 	_release_finished_units()
+	_update_saturation_latch()
 
 
 # ------------------------------------------------------------ discontinuities
@@ -464,8 +468,17 @@ func esc_env(inc: Incident, dark_frac: float) -> float:
 					* (1.0 + catalog.factor("water_main", "esc_flood_k", 0.5)
 					* world.flood_saturation()), lo, hi)
 		"traffic_accident":
-			var congestion := float(inc.context.get("congestion_index",
-					travel.congestion_index(inc.tile)))
+			# NOT `context.get(key, travel.congestion_index(tile))`: GDScript builds
+			# the default BEFORE the lookup, so the road query ran on every
+			# `escalation_rate` — twice per incident per integrator sub-step, from
+			# `_integrate` and again from `_next_discontinuity_h` — for a value the
+			# context already held. `_refresh_traffic_weights` carries the same note
+			# about the same shape (C-48); this is the second instance of it, found
+			# in the Wave-13 saturation profile where a roster pinned at the ceiling
+			# made it visible.
+			var congestion := float(inc.context["congestion_index"]) \
+					if inc.context.has("congestion_index") \
+					else travel.congestion_index(inc.tile)
 			return clampf((1.0 + catalog.factor("traffic", "esc_congestion_k", 0.6) * congestion)
 					* (1.0 + catalog.factor("traffic", "esc_dark_k", 0.25) * dark_frac), lo, hi)
 		"storm_damage":
@@ -816,6 +829,13 @@ func _roll_spread() -> void:
 	if now_h < _spread_next_h - EPS:
 		return
 	for incident_id in _order.duplicate():
+		# §2.13(b), checked BEFORE the candidate query and BEFORE the hazard roll:
+		# a roll whose ignition would be refused is a draw spent on nothing, and
+		# `spread_candidates` is a spatial query. The grid is still re-anchored
+		# below, so the saturated hours cost a fire neither an extra roll nor a
+		# delayed one — the same argument `_next_discontinuity_h` makes.
+		if saturated():
+			break
 		var inc: Incident = _active.get(incident_id)
 		if inc == null or inc.type != "structure_fire" or inc.is_terminal():
 			continue
@@ -823,6 +843,8 @@ func _roll_spread() -> void:
 			continue
 		var assist := assist_ratio(inc)
 		for target_id in spread.spread_candidates(inc):
+			if saturated():
+				break
 			var rate := spread.spread_rate(inc, String(target_id), assist)
 			if rate <= 0.0:
 				continue
@@ -833,7 +855,7 @@ func _roll_spread() -> void:
 				inc.cluster_id = next_cluster_id
 				next_cluster_id += 1
 			var target := world.building(String(target_id))
-			var child := spawn("structure_fire", "", target.get("tile", inc.tile),
+			var child := spawn_automatic("structure_fire", "", target.get("tile", inc.tile),
 					{"kind": "building", "id": String(target_id)},
 					spread.spread_severity_0(inc.tier()),
 					{"source": "fire_spread", "source_id": inc.id})
@@ -854,7 +876,131 @@ func load_damper() -> float:
 	if world.is_offline() \
 			and offline_hours_elapsed > catalog.global_value("offline_full_fidelity_h", 72.0):
 		damper *= catalog.global_value("offline_beyond_damper", 0.5)
-	return damper
+	# §2.13(b) rides OUTSIDE the [floor, 1] clamp on purpose: the anti-death-spiral
+	# damper is a taper and never reaches zero, and the saturation rule has to.
+	return damper * saturation_damper()
+
+
+# ------------------------------------------------------- §2.13(b) saturation
+
+## **Doc 06 §2.13(b) — the saturation rule.** §2.13 has costed this system against
+## "≤ 40 active incidents" since it was written and NOTHING ENFORCED IT, and
+## §2.10.1's ceiling — `arrival_rate × T` — is only a ceiling while arrivals are
+## EXOGENOUS. **Eight** `spawn_incident` actions in `data/incidents.json` make
+## them endogenous, and five of those resolve to a BUILDING and take it off the
+## board — self-limiting, the way fire spread is, because buildings run out. The
+## three that consume nothing are `crime`'s two (one child at tier 4, two more at
+## tier 5, both `scope: "district"`) and `traffic_accident`'s one at tier 5. RR-26
+## bounds an incident's LIFETIME; nothing bounded its FERTILITY, and a mean
+## offspring of three is a supercritical branching process whichever way it is
+## measured (doc 92 §31: crisis `do_nothing` multiplies its roster ~2.8× per
+## game-hour from game-day 104, to 89,055 open incidents and 269 s of wall clock
+## per game-hour).
+##
+## The rule is THREE numbers, and the middle one is the one a first draft misses:
+##
+##     N        = open (non-terminal) incidents
+##     CEIL     = 40   §2.13's own worst-case accounting — the ROSTER bound
+##     RESERVE  =  4   slots inside CEIL that doc 06 may not spend
+##     A_CEIL   = CEIL − RESERVE = 36   where AUTOMATIC births stop
+##     KNEE     = 26   §2.10.1's measured worst LEGITIMATE backlog
+##     sat(N)   = clamp((A_CEIL − N) / (A_CEIL − KNEE), 0, 1)
+##
+## **Why the reserve exists.** Doc 04 hands `on_power_event` a component failure
+## exactly once — `PowerComponentFailed` is not re-emitted for a component that is
+## already failed — so refusing that incident does not defer it, it STRANDS the
+## component: nothing else calls `power_restore_component`, and the grid keeps a
+## dead node forever. So the doc 04 path is not an automatic birth and is never
+## refused, and the roster can therefore stand above `A_CEIL`. A first cut without
+## the reserve measured **42** open on a 200-game-day `crisis` run against a
+## ceiling of 40, and the two extra were both `PowerComponentFailed`. The reserve
+## is that measurement doubled, and it puts the ROSTER bound back on §2.13's own
+## number instead of near it.
+##
+## **A doc 04 admission cannot branch**, which is what makes the reserve a bound
+## and not a leak: the only endogenous child a `transformer_failure` authors is a
+## `structure_fire` on `nearest_building` at `chance 0.3`, and that IS an
+## automatic birth, so it is refused above `A_CEIL` like any other.
+##
+## `sat` multiplies ambient generation (`load_damper`); `saturated()` refuses
+## every automatic birth outright. Below the knee `sat` is exactly 1.0 and
+## `saturated()` is false, so a city inside its own measured band cannot tell the
+## rule is there — the whole 7×3×21 matrix peaks at **13** open — which is why it
+## does not soften a live city's pressure and why the starter and bench
+## determinism baselines do not move.
+##
+## Zero or absent disables it, which is what every fixture with a bare globals
+## block gets.
+func saturation_ceiling() -> int:
+	return catalog.global_int("saturation_ceiling", 0)
+
+
+func saturation_world_reserve() -> int:
+	return catalog.global_int("saturation_world_reserve", 0)
+
+
+func saturation_knee() -> int:
+	return catalog.global_int("saturation_knee", 0)
+
+
+## The ceiling AUTOMATIC births actually meet — §2.13's roster bound less the
+## slots held for the world's own one-shot events.
+func saturation_automatic_ceiling() -> int:
+	var ceiling := saturation_ceiling()
+	if ceiling <= 0:
+		return 0
+	return maxi(1, ceiling - saturation_world_reserve())
+
+
+func saturation_damper() -> float:
+	if saturation_ceiling() <= 0:
+		return 1.0
+	var ceiling := saturation_automatic_ceiling()
+	var knee := mini(saturation_knee(), ceiling - 1)
+	var span := float(ceiling - knee)
+	return clampf((float(ceiling) - float(_order.size())) / span, 0.0, 1.0)
+
+
+## True when the roster is at the automatic ceiling. Deterministic and RNG-free:
+## a refusal draws nothing, so a city below it is bit-identical to one running
+## without the rule.
+func saturated() -> bool:
+	return saturation_ceiling() > 0 and _order.size() >= saturation_automatic_ceiling()
+
+
+## **The one seam every AUTOMATIC birth passes through** — the six ambient
+## generators, fire spread's child ignition, and `CascadeOps`' `spawn_incident`
+## verb. `spawn()` itself stays open, and deliberately: a scripted incident, a
+## player-driven one, a doc 07 Director event and a doc 04 component failure are
+## not what the ceiling is about. Refusing a component failure would strand a
+## failed transformer with no repair path and no way back onto the grid, and
+## refusing a Director event would be doc 06 overruling doc 07's pacing — the
+## Director has already costed that event against its own threat-point budget.
+func spawn_automatic(type_id: String, subtype: String, tile: Vector2i,
+		target_ref: Dictionary, severity_0: float = -1.0, cause: Dictionary = {},
+		district_id: String = "") -> Incident:
+	if saturated():
+		return null
+	return spawn(type_id, subtype, tile, target_ref, severity_0, cause, district_id)
+
+
+## Saturation is a STATE, not a stream. A dead city at the ceiling refuses
+## thousands of births a game-day, and one event per refusal would be a second
+## ANR in the history ring — so the bus hears the two EDGES and nothing else.
+## The latch is derived, never serialized: `deserialize_incidents` recomputes it
+## from the roster it just loaded, so a save carries no new key (doc 06 §3.3 is
+## unchanged and the section version does not move).
+func _update_saturation_latch() -> void:
+	var now_saturated := saturated()
+	if now_saturated == _saturated_latch:
+		return
+	_saturated_latch = now_saturated
+	if now_saturated:
+		_emit("incident_roster_saturated", {"open": _order.size(),
+				"ceiling": saturation_automatic_ceiling(), "at_h": now_h})
+	else:
+		_emit("incident_roster_relieved", {"open": _order.size(),
+				"ceiling": saturation_automatic_ceiling(), "at_h": now_h})
 
 
 ## Doc 92 §18 — the small-city ambient floor (audit 91 D-6).
@@ -946,7 +1092,7 @@ func _generate_crime(dt_h: float, dark_frac: float, damper: float) -> void:
 			tile = world.building(building_id).get("tile", Vector2i.ZERO)
 			target_ref = {"kind": "building", "id": building_id}
 		var d2 := world.district(district_id2)
-		spawn("crime", "", tile, target_ref, -1.0,
+		spawn_automatic("crime", "", tile, target_ref, -1.0,
 				{"source": "generator", "district": district_id2,
 				"stability": d2.get("stability", 1.0)}, district_id2)
 
@@ -1002,7 +1148,7 @@ func _generate_structure_fire(dt_h: float, damper: float) -> void:
 		if picked == "":
 			continue
 		var b2 := world.building(picked)
-		spawn("structure_fire", "", b2.get("tile", Vector2i.ZERO),
+		spawn_automatic("structure_fire", "", b2.get("tile", Vector2i.ZERO),
 				{"kind": "building", "id": picked}, -1.0,
 				{"source": "generator", "archetype": b2.get("archetype", ""),
 				"level": b2.get("level", 1)})
@@ -1104,6 +1250,13 @@ func _generate_transformer(dt_h: float, damper: float) -> void:
 			var entry: Dictionary = candidate
 			entry["row"] = full_by_id.get(String(entry["id"]), entry["row"])
 	for i in count:
+		# §2.13(b). This generator is the one that cannot go through
+		# `spawn_automatic`: it needs `spawn_component_incident`'s component
+		# plumbing, and that entry point also serves doc 04's real failures, which
+		# the ceiling must never refuse (see `spawn_automatic`). So the AMBIENT
+		# path takes the check and the doc 04 path does not.
+		if saturated():
+			break
 		var picked := _weighted_pick_row(candidates, total, stream)
 		if picked.is_empty():
 			continue
@@ -1146,7 +1299,7 @@ func _generate_water_main(dt_h: float, damper: float) -> void:
 		if picked.is_empty():
 			continue
 		var row2: Dictionary = picked.get("row", {})
-		var inc := spawn("water_main_break", "", row2.get("tile", Vector2i.ZERO),
+		var inc := spawn_automatic("water_main_break", "", row2.get("tile", Vector2i.ZERO),
 				{"kind": "water_segment", "id": String(picked.get("id", ""))}, -1.0,
 				{"source": "generator"})
 		if inc != null:
@@ -1183,7 +1336,7 @@ func _generate_traffic(dt_h: float, dark_frac: float, damper: float) -> void:
 		if picked.is_empty():
 			continue
 		var row2: Dictionary = picked.get("row", {})
-		var inc := spawn("traffic_accident", "", row2.get("tile", Vector2i.ZERO),
+		var inc := spawn_automatic("traffic_accident", "", row2.get("tile", Vector2i.ZERO),
 				{"kind": "intersection", "id": String(picked.get("id", ""))}, -1.0,
 				{"source": "generator"})
 		if inc != null:
@@ -1285,7 +1438,7 @@ func _generate_storm(dt_h: float, damper: float) -> void:
 			continue
 		var subtype := _pick_storm_subtype(stream)
 		var row2: Dictionary = picked.get("row", {})
-		spawn("storm_damage", subtype, row2.get("tile", Vector2i.ZERO),
+		spawn_automatic("storm_damage", subtype, row2.get("tile", Vector2i.ZERO),
 				{"kind": "power_component", "id": String(picked.get("id", ""))}, -1.0,
 				{"source": "generator", "wind_kph": wind})
 
@@ -1724,3 +1877,7 @@ func deserialize_incidents(data: Dictionary) -> void:
 	_spread_next_h = float(data.get("spread_next_h", now_h))
 	offline_hours_elapsed = float(data.get("offline_hours_elapsed", 0.0))
 	fleet.now_h = now_h
+	# §2.13(b)'s latch is DERIVED from the roster, which is why the save section
+	# carries no new key: a city loaded at the ceiling is a city at the ceiling,
+	# and it must not announce the crossing a second time.
+	_saturated_latch = saturated()
