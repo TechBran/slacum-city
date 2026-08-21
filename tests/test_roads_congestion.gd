@@ -363,3 +363,81 @@ func test_the_dark_signal_sweep_is_skipped_only_when_nothing_is_dark() -> void:
 	assert_true(net.graph.dark_signals > 0, "a dark signalised node was counted")
 	assert_false(net.graph.dark_signal_counts_by_edge().is_empty(),
 			"and the edges around it are reported")
+
+
+# ---------------------------------------------- §2.10 / §2.12 the weather input
+
+func test_the_weather_provider_reaches_c_raw_and_the_planner() -> void:
+	# `weather_state_of` was injected by nothing until this wave, so
+	# `wx_cong_add` and `wx_slowdown` were 0.00 for the life of every city and
+	# doc 10 §8's eleven authored weather rows were unreachable. One `step()`
+	# samples doc 07 and freezes the row for the whole of that step.
+	var net := _corridor(STREET)
+	var edge_id: int = net.graph.edge_ids_sorted()[0]
+	net.congestion.refresh_density({edge_id: 410.0})
+	# A Dictionary and not a String: a GDScript lambda captures a local by VALUE,
+	# so a plain `var sky` would freeze at "clear" and this test would pass on a
+	# provider that was never re-read.
+	var sky := {"state": "clear"}
+	net.weather_state_of = func() -> String: return String(sky["state"])
+	var hour := 17.0 + 40.0 / 60.0
+
+	net.step(RoadsTestRig.context(4, hour))
+	assert_eq(net.weather_state, "clear")
+	assert_almost_eq(net.planner.wx_slowdown, 0.00, 1e-12, "clear costs nothing")
+	var dry := net.congestion.c_raw(edge_id, net._congestion_inputs(hour, 1.0, true))
+	assert_almost_eq(dry, 0.941, 1e-3, "worked example D's 17:40 row, clear")
+
+	sky["state"] = "heavy_rain"
+	net.step(RoadsTestRig.context(8, hour))
+	assert_eq(net.weather_state, "heavy_rain", "the step re-sampled doc 07")
+	assert_almost_eq(net.planner.wx_slowdown, 0.18, 1e-12,
+			"§2.7 F_weather sees heavy_rain's 0.18 slowdown")
+	var wet := net.congestion.c_raw(edge_id, net._congestion_inputs(hour, 1.0, true))
+	assert_almost_eq(wet - dry, 0.19, 1e-9,
+			"c_raw gains EXACTLY heavy_rain's authored wx_cong_add, additively")
+	assert_almost_eq(wet, 1.131, 1e-3, "0.9414 + 0.19 — one dark signal short of §2.10's 1.321")
+
+	# The additive is snapped to the STATE row, never interpolated on precip
+	# (report 98 C-59): the quantised snapshot route_minutes' mode-invariance
+	# depends on has no room for a continuous input.
+	sky["state"] = "thunderstorm"
+	net.step(RoadsTestRig.context(12, hour))
+	var storm := net.congestion.c_raw(edge_id, net._congestion_inputs(hour, 1.0, true))
+	assert_almost_eq(storm - dry, 0.24, 1e-9, "thunderstorm's row, exactly")
+	assert_true(storm > wet, "a storm is worse than heavy rain")
+
+
+func test_wet_roads_wear_faster_through_the_provider() -> void:
+	# §2.12: decay = base_decay · (1 + 0.75·c_day) · (1 + wx_wear_day), where
+	# wx_wear_day is the MAX wear observed over the game-day's 24 hourly samples.
+	# Nothing set `weather_state` before this wave, so the term was always 1.00.
+	var dry := _corridor(STREET)
+	var wet := _corridor(STREET)
+	var snowy_hour := 9
+	wet.weather_state_of = func() -> String:
+		return "snow" if wet.sim_minute / 60 % 24 == snowy_hour else "clear"
+	for net in [dry, wet]:
+		net.set_density_sources([{"tile": Vector2i(10, 10), "pj": 410.0}])
+		net.refresh_density()
+		for hour in range(0, 25):
+			var ctx := RoadsTestRig.context(hour * GameClock.TICKS_PER_HOUR,
+					float(hour % 24) + 0.5, TimeContext.Mode.COARSE)
+			net.step(ctx)
+			net.full_pass(ctx)
+			if hour % 24 == 0:
+				net.on_day(ctx)
+	assert_almost_eq(dry.wx_wear_day(), 0.0, 1e-12, "a clear day wears at the base rate")
+	# The day that just closed saw one snow hour; the accumulator for the NEW day
+	# has been reset, so the wear that priced the decay is read off the decay.
+	var tile := Vector2i(10, 10)
+	var dry_loss := 1.0 - dry.condition_of(tile)
+	var wet_loss := 1.0 - wet.condition_of(tile)
+	assert_true(wet_loss > dry_loss,
+			"one snow hour wore the road harder (%.6f vs %.6f)" % [wet_loss, dry_loss])
+	# snow's wear is 0.80, so the day's decay is (1 + 0.80) = 1.8x the clear one —
+	# to the precision the two runs' c_day can share (identical: wx_cong_add is 0
+	# for snow's 8 hours only through the additive, which DOES move c_day, so the
+	# ratio is bounded rather than exact).
+	assert_true(wet_loss / dry_loss > 1.5 and wet_loss / dry_loss < 2.2,
+			"and by about the authored 1 + 0.80 (ratio %.4f)" % (wet_loss / dry_loss))

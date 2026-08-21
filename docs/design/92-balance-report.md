@@ -4098,6 +4098,10 @@ door, and it is also what licenses §27.7: the ambient-pacing arm is a
 
 ### 27.4 The arc, re-measured — `tools/measure_curriculum.gd --days=45`
 
+> **SUPERSEDED by §33.6 (2026-08-21)**, which reproduces this table exactly on
+> its "before" arm and then measures the arc with doc 07's weather reaching doc
+> 10's roads. Level 1 is bit-identical; everything below it slips 5–15 %.
+
 Seeds 1337 / 4242 / 9001, the game-hour each curriculum level was earned:
 
 | level | 1337 | 4242 | 9001 | duration | pre-fix duration |
@@ -5294,6 +5298,9 @@ published, and the same four §24.12 and §30.4 published.
 -- days=21 strategies=do_nothing,greedy_growth,infrastructure_first,balanced,
 tax_squeezer,disaster_neglect,curriculum`:
 
+> **SUPERSEDED by §33.4(a) (2026-08-21)** — doc 07's weather reaches doc 10's
+> roads and every treasury column moved. Kept as the "before" arm of that A/B.
+
 | strategy (mean of 3 seeds) | treasury | value | pop | happy | stab | dark % | placed | upg | minC |
 |---|---|---|---|---|---|---|---|---|---|
 | `do_nothing` | 165,302 | 165,302 | 144 | 82.4 | 0.9487 | 0.04 | 0 | 0 | 0.512 |
@@ -5457,6 +5464,11 @@ suffix so a crisis run cannot overwrite the control.
 
 ### 32.5 The neglect-fatal table, re-taken — `tools/measure_insolvency.gd`
 
+> **SUPERSEDED by §33.4(b) (2026-08-21).** Doc 07's weather reaches doc 10's
+> roads, and every row below moved — `standard` 75.0 → 69.0, `crisis` 41.0 →
+> 26.0. Kept because a superseded measurement is what makes the next one
+> checkable; do not hold a claim against it.
+
 The first game-day a `do_nothing` city's treasury closes below zero, 3 seeds,
 after §N1:
 
@@ -5557,3 +5569,338 @@ Doc 91 §17.2 and §17.6.2 both carry the correction.
 4. **When doc 04 meters `delivered_mwh` and doc 06 meters resolutions**, §N2's
    third reason expires and "should `M_rev` reach the tariff lines" becomes a live
    question against live numbers.
+
+## 33. Pass 13 — the weather reaches the roads, and one ledger line moves (2026-08-21)
+
+*Every pass before this one opened by proving the control did not move. This one
+opens by proving it DID, and by naming the one line that carries all of it.
+Doc 10's two injected siblings — doc 09's per-district land-use weights and doc
+07's weather state — were assigned by nothing (report 98 RR-69, doc 91
+A91-D-32), so for the life of the project every district read one profile row and
+`weather_state` was the string `"clear"`. Wiring them moves four determinism
+baselines, one expense line, and one gate.*
+
+### 33.1 The four determinism baselines, re-recorded
+
+`tools/profile_sim.gd --hash-only`, seed 1337, 24 coarse game-hours + 2 fine,
+recorded on HEAD before the change and re-taken after it. **These are not "the
+hash moved, re-record it"** — §33.2 is the derivation that says what moved and
+by how much, and §33.4 is the trajectory evidence.
+
+| city | path | HEAD (Wave 13) | this pass |
+|---|---|---|---|
+| `data/starter_city.json` | coarse 24 h | `e8bffba1853f248e…` | **`0b67cd2273a5115a…`** |
+| `data/starter_city.json` | fine 2.0 h | `08bfdfaa3dd65281…` | **`4f9f383038fbe383…`** |
+| `tests/fixtures/bench_city.json` | coarse 24 h | `e760f9305d21d331…` | **`bbe658aeeaa9f855…`** |
+| `tests/fixtures/bench_city.json` | fine 2.0 h | `bd2d8f30d25827f4…` | **`158501b8845b056f…`** |
+
+**The gate ledger for this pass, in one place.** Four of thirty re-fitted, each
+with its derivation in `tests/test_balance_gates.gd` itself; twenty-six
+untouched, including every gate that asserts a *shape* rather than a number.
+
+| gate | re-fitted | before → after | derivation |
+|---|---|---|---|
+| **2** founding first game-day net | yes | `STARTER_FIRST_GAME_DAY_NET_EXACT` 8,004.047 → **7,380.321** | §33.2(b)(c) |
+| **19** the ambient dispatch beat | yes | band `[62, 132]` → **`[100, 200]`** (measured 92 → 146) | §33.5 |
+| **21** the curriculum is paced | yes | `CURRICULUM_OPENING_BEAT_H` 45 → **58** | §33.6 |
+| **29** neglect is fatal, and ordered | yes | `PRESET_LIFETIME_FLOOR` 25 → **18**; `STANDARD_LIFETIME_DAYS` 76 → **69** | §33.4(b) |
+| **1**, **2b** founding hour anchors | **no** | 0.11 % / 0.17 % against a ±1 % band | §33.2(a) |
+| **3, 4, 4b, 5–18, 20, 22–28, 30** | **no** | — | — |
+
+Gates 1 and 2b are the interesting refusal. The founding *hour* is clear weather,
+so it moved only by the land-use half, and `data/economy.json`'s two `_EXACT`
+hour anchors keep their values and gain a note saying why: absorbing a 0.17 %
+drift into an anchor is the mistake that file's own `_k_rounding_note` declines
+to make. **Recorded, not absorbed.**
+
+### 33.2 The founding ledger — one line moved, and here is its arithmetic
+
+`tools/measure_founding_ledger.gd --presets=standard`, run on both arms of the
+same patch (`git diff` → `git checkout --` → measure → `git apply`; never `git
+stash`, whose ref is shared across worktrees).
+
+**(a) The first settled game-hour — the district half alone.** The founding hour
+is CLEAR, so `wx_wear_day` is 0 and this row isolates the *land-use* change:
+
+| line | before | after | Δ |
+|---|---|---|---|
+| gross $/gh | 841.22 | 841.22 | — |
+| `roads_repair` | 157.90 | **158.46** | **+0.56 (+0.35 %)** |
+| expense $/gh | 504.18 | **504.73** | +0.55 (+0.11 %) |
+| net $/gh | +337.05 | **+336.49** | −0.56 (−0.17 %) |
+
+The founding districts' real mixes want slightly more road at 06:00–07:00 than
+doc 10's default row does, so `c_day` — and with it `E_roads_repair`'s
+`(1 + 0.75·c_day)` — rises by a third of a percent. **Gate 1's ±1 % band holds
+with three times the margin to spare**, and gate 2b's expense anchor likewise.
+
+**(b) The first game-day — the weather half, which is the whole story.** Mean
+over 24 game-hours:
+
+| line | before | after | Δ |
+|---|---|---|---|
+| gross revenue $/gh | 839.81 | 839.81 | **0.00** |
+| `building_maint` | 27.70 | 27.70 | 0.00 |
+| `departments` | 96.00 | 96.00 | 0.00 |
+| `fleet` | 77.56 | 77.56 | 0.00 |
+| `grid` | 74.62 | 74.62 | 0.00 |
+| `generation_fuel` | 57.00 | 57.00 | 0.00 |
+| `water` | 15.49 | 15.49 | 0.00 |
+| **`roads_repair`** | **158.42** | **183.92** | **+25.50 (+16.10 %)** |
+| net $/gh | +333.01 | **+307.51** | −25.50 (−7.66 %) |
+
+**Seven of eight expense lines are unchanged to the cent.** That is the evidence
+that the wiring did what it says and touched nothing else.
+
+**(c) The derivation, hour by hour.** `E_roads_repair ∝ (1 + 0.75·c_day)·(1 +
+wx_wear_day)`. On the founding day at seed 1337 the sky is CLEAR for twelve
+game-hours and then RAIN → HEAVY_RAIN → RAIN → CLOUDY for twelve, and
+`wx_wear_day` is the **max** over the day's hourly samples — so it steps
+`0.00 → 0.30` at gh 13 and holds:
+
+| gh | weather | `wx_wear_day` | `c_day` | `(1+.75c)` | `(1+wx)` | product |
+|---|---|---|---|---|---|---|
+| 1 | CLEAR | 0.00 | 0.1017 | 1.0763 | 1.00 | 1.0763 |
+| 6 | CLEAR | 0.00 | 0.1066 | 1.0799 | 1.00 | 1.0799 |
+| 12 | CLEAR | 0.00 | 0.1115 | 1.0836 | 1.00 | 1.0836 |
+| **13** | **RAIN** | **0.30** | 0.1179 | 1.0884 | **1.30** | **1.4149** |
+| 16 | HEAVY_RAIN | 0.30 | 0.1307 | 1.0980 | 1.30 | 1.4275 |
+| 20 | CLOUDY | 0.30 | 0.1215 | 1.0911 | 1.30 | 1.4184 |
+| 24 | CLOUDY | 0.30 | 0.1058 | 1.0793 | 1.30 | 1.4031 |
+| | | | | **mean 1.0857** | | **mean 1.2493** |
+
+`1.2493 / 1.0857 = **1.1507**`, against a measured line ratio of
+`183.92 / 158.42 = **1.1610**`. **The 1.03 pp gap is the second channel and it is
+supposed to be there**: the middle column of that table is the *wired* run's
+`c_day`, which already carries `wx_cong_add` raising congestion on the twelve wet
+hours. So of the +16.10 %, **≈15.07 pp is doc 10 §2.12's wet-road wear and
+≈1.03 pp is doc 10 §2.10's rain congestion feeding back into the daily decay
+multiplier** — the two authored channels, in the ratio the tables imply.
+
+**Nothing was retuned.** `ROAD_REPAIR_CAPITAL_FRACTION` stays 0.20,
+`REPAIR_COST_PER_CAPITAL` is untouched, and `data/roads.json`'s `weather` table
+is authored exactly as it was. The line moved because the multiplier it was
+always specified to carry stopped being pinned at 1.00.
+
+*(Worth noticing rather than leaning on: doc 10 §1 publishes `1.2625` as the
+starter operating multiplier, authored at `c_day = 0.35` in clear weather, and
+`data/economy.json`'s `STARTER_ROAD_DECAY_MULT` records it. The founding city is
+far quieter than that sample point — `c_day ≈ 0.11` — and used to realise only
+`1.0857`. In real weather it realises **1.2493**. The published anchor and the
+shipped city have arrived at the same place by two different routes, four waves
+apart.)*
+
+### 33.3 The consequence a player can SEE — the traffic overlay, censused
+
+Doc 12's five congestion bands (`clear ≤ 0.25`, `light ≤ 0.50`, `heavy ≤ 0.75`,
+`severe ≤ 0.90`, `gridlock`) at the 18:00 evening peak. Same city, same seed,
+same hour; only doc 07's state differs.
+
+**Censused off the renderer's own payload, not off a float.** The rows below
+count `RoadNetwork.snapshot.visible_edges[i]["band"]` — the exact array
+`game/render/road_overlay_view.gd` ingests, with the band already classified by
+`RoadCosts.overlay_band`. (The identical census taken through
+`OverlayModel.traffic_band(congestion_of(edge))` produces the same table, which
+is a small free check that doc 10's snapshot and doc 12's model agree about the
+thresholds.) *A `game/showcase.gd --rain=1.0 --overlay=5` screenshot pair would
+have been the wrong instrument and is deliberately not offered: the showcase
+carries a `TileGrid` and a `RoadGraph` but no `CitySim` and no `RoadNetwork`, so
+its overlay is synthesised and cannot move for weather no matter what this wave
+does.*
+
+**Founding city — 644 edges:**
+
+| sky | mean `c_e` | clear | light | heavy |
+|---|---|---|---|---|
+| `clear` | 0.1250 | 626 | 18 | 0 |
+| `rain` | 0.2050 | 572 | 72 | 0 |
+| `heavy_rain` | 0.3150 | **0** | **638** | 6 |
+| `thunderstorm` | 0.3650 | 0 | 629 | 15 |
+
+**Benchmark city — 3,092 edges:**
+
+| sky | mean `c_e` | light | heavy | severe | gridlock |
+|---|---|---|---|---|---|
+| `clear` | 0.9651 | 26 | 121 | 151 | 2,794 |
+| `heavy_rain` | 1.1521 | 1 | 39 | 79 | **2,973** |
+
+Heavy rain recolours **every edge of the founding city** at rush hour.
+
+**And the trip itself is longer, which is the half a band census cannot show.**
+`tests/test_roads_integration.gd::test_rain_slows_traffic_and_the_dry_road_is_the_control`
+runs two arms of the starter network for one game-hour with an identical density
+source, and prints: mean `c_e` **0.0972 → 0.2869** (`+0.1897`, i.e. heavy rain's
+authored `+0.19` to two decimal places) and the same cross-city civilian route
+**19.324 → 24.956 game-minutes, +29.1 %**. That second number is `F_weather`
+(§2.7's `wx_slowdown 0.18`) and `F_cong` compounding on one trip, and before this
+wave both factors were 1.00 in every weather.
+
+No renderer work was needed: the overlay has always drawn `congestion_index`, and
+until this wave the number it drew could not move for weather.
+
+**The WEAR consequence reaches the existing machinery too, on both ends.**
+`TrafficSnapshot`'s per-edge view already carries `condition` and
+`condition_tier`, so a road that wears faster is drawn worse without a line of
+renderer work; and doc 10 §2.12's auto-repair queue is the other end —
+`tools/measure_curriculum.gd`'s `repaired` counter goes **186 / 204 / 210 → 230 /
+213 / 202** over 45 game-days (§33.6), and the 21-game-day matrix's `minC`
+column moves by at most 0.024 on any strategy. More repairs bought, roads not
+materially further gone: the accrual rose and the auto-repair policy spent it,
+which is exactly the loop §2.12 authored.
+
+### 33.4 The 21-game-day matrix, and the neglect-fatal table
+
+**(a) 7 strategies × 3 seeds × 21 game-days**, `tests/balance_matrix.gd`,
+`standard` preset — the same call §32.1(b) published, either side of the same
+patch. **Every strategy still completes, the value ordering is unchanged, and
+the peak open-incident roster did not rise:**
+
+| strategy (mean of 3 seeds) | treasury b → a | value b → a | pop b → a | minC b → a | peak open b → a |
+|---|---|---|---|---|---|
+| `do_nothing` | 165,302 → **145,417** | 165,302 → 145,417 | 144 → 141 | 0.512 → 0.501 | 2 → 2 |
+| `greedy_growth` | 65,962 → **31,719** | 954,523 → 927,277 | 1,771 → 1,769 | 0.381 → 0.379 | 13 → 11 |
+| `infrastructure_first` | 23,947 → **15,500** | 140,347 → 125,900 | 230 → 231 | 0.890 → 0.890 | 3 → 2 |
+| `balanced` | 75,399 → **81,950** | 895,852 → 834,156 | 1,351 → 1,247 | 0.797 → 0.797 | 2 → 3 |
+| `tax_squeezer` | 97,631 → **97,971** | 1,213,981 → 1,160,951 | 1,168 → 1,062 | 0.797 → 0.797 | 3 → 3 |
+| `disaster_neglect` | 55,932 → **55,624** | 971,942 → 952,519 | 1,394 → 1,270 | 0.389 → 0.412 | 10 → 12 |
+| `curriculum` | 38,421 → **31,210** | 316,376 → 277,904 | 551 → 509 | 0.790 → 0.792 | 3 → 3 |
+
+**The congestion-sensitive columns moved and the insensitive ones did not**,
+which is the shape this change should have. Treasury falls hardest on the two
+strategies that bank rather than build (`do_nothing` −12 %, `infrastructure_first`
+−35 %) because they carry the road bill with no growth to outrun it, and barely
+at all on the two that spend everything (`tax_squeezer` +0.3 %, `disaster_neglect`
+−0.6 %). `happy` moves by under 3 points on every row and `minC` by under 0.024.
+**`abandoned` is 0.0 on all seven rows and the peak roster stays at 2–12 against
+doc 06 §2.13(b)'s ceiling of 36** — the extra traffic accidents of §33.5 are
+absorbed by the fleet, not queued.
+
+**(b) The neglect-fatal table** — `tools/measure_insolvency.gd --max-days=130`,
+the first game-day a `do_nothing` treasury closes below zero:
+
+| preset | before | after: 1337 / 4242 / 9001 | after (mean) | Δ |
+|---|---|---|---|---|
+| `casual` | 104–110 | 103 / 108 / 104 | **105.0** | −4 % |
+| `standard` | 74 / 75 / 76 | 68 / 70 / 69 | **69.0** | −8 % |
+| `hard` | — | 52 / 51 / 50 | **51.0** | — |
+| `crisis` | 40–42 | 23 / 29 / 26 | **26.0** | −36 % |
+
+Neglect got more fatal on every preset, **and §2.9's ordering is preserved on
+every seed**, which is what gate 29 is actually for. `crisis` moved furthest
+because it starts with the thinnest purse, so the same extra dollars per
+game-hour eat a larger share of it. Gate 29's `PRESET_LIFETIME_FLOOR` re-fits
+25 → 18 and `STANDARD_LIFETIME_DAYS` 76 → 69; the ceiling (118) and the four
+horizons are untouched.
+
+### 33.5 The finding — the ambient dispatch beat is now dominated by one channel
+
+Gate 19 failed at its upper bound, and the census says why in one line.
+`do_nothing`, five seeds × 21 game-days = 105 game-days, either side of the same
+patch:
+
+| channel | before | after | Δ |
+|---|---|---|---|
+| `crime` | 10 | 12 | +2 |
+| `structure_fire` | 6 | 13 | +7 |
+| `transformer_failure` | 15 | 11 | −4 |
+| `water_main_break` | 12 | 7 | −5 |
+| **`traffic_accident`** | **48** | **101** | **+53** |
+| **TOTAL** | **92** | **146** | **+54** |
+
+The four other channels move by ±small and net **−1**: they are the same
+generators drawing from the `incidents` stream in a different ORDER once the
+traffic channel's frequency changes. **One channel carries all of it, and its
+arithmetic is two authored formulas meeting for the first time.** Doc 06 §2's
+`f_flow = clamp(c, 0.05, 2.0)^1.5` was pinned at or near its own 0.05 **clamp
+floor** on a quiet clear city — `f_flow = 0.05^1.5 = 0.0112` — and rain lifts
+`c` clear of that floor for most of the day (`c ≈ 0.09–0.31` ⇒ `f_flow ≈
+0.027–0.173`). Doc 06 authored the accident rate against congestion precisely so
+that a jammed city crashes more; before this wave it could not be jammed.
+
+**Nothing was retuned to produce this and nothing is retuned to absorb it.** The
+control city still survives it whole: zero failed, zero abandoned, nothing
+destroyed, treasury still climbing, and §33.4(a)'s peak roster unmoved at 2.
+Gate 19's band re-fits to `[100, 200]` around a measured 146, keeping the shape
+it had (0.68× / 1.45×). **Whether ~0.96 traffic accidents per game-day is the
+intended dispatch beat is a balance question and not a gate question** — §33.7
+ranks it first.
+
+### 33.6 The curriculum, re-measured — `tools/measure_curriculum.gd --days=45`
+
+Both arms of the same patch. **The before column reproduces §27.4's published
+table to the game-hour**, which is what makes this an A/B rather than a
+re-record (RR-55: quote the fork).
+
+| level | before (1337/4242/9001) | after | duration before → after |
+|---|---|---|---|
+| 1 | 13 / 13 / 14 | 13 / 13 / 14 | 13–14 → **13–14, bit-identical** |
+| 2 | 52 / 54 / 55 | 63 / 56 / 67 | 39–41 → **43–53** |
+| 3 | 111 / 115 / 119 | 123 / 122 / 128 | 59–64 → 60–66 |
+| 4 | 176 / 179 / 192 | 192 / 191 / 209 | 64–73 → 69–81 |
+| 5 | 371 / 358 / 361 | 399 / 389 / 409 | 169–195 → 198–207 |
+| 6 | 827 / 852 / 866 | 918 / 917 / 932 | 456–505 → 519–528 |
+
+| counter (1337/4242/9001) | before | after |
+|---|---|---|
+| `repaired` | 186 / 204 / 210 | 230 / 213 / 202 |
+| `repair_spend` | 389k / 458k / 512k | 401k / 486k / 416k |
+| `treasury_end` | 143,198 / 153,640 / 141,258 | 117,382 / 143,321 / 131,881 |
+| `population_end` | 2,290 / 1,727 / 1,842 | 1,149 / 1,597 / 1,703 |
+
+**Level 1 does not move by a single game-hour on any seed.** That is the shape a
+purse-side change should have at the very top of the arc: four houses, one
+transformer and 170 residents are bought out of the founding purse inside the
+first fourteen game-hours, before a rainy day has been billed. Everything below
+it slips 5–15 %, in one direction, on every seed — the arc did not get harder,
+the purse got thinner.
+
+**One bound is re-fitted and one deliberately is not.**
+`CURRICULUM_OPENING_BEAT_H` moves **45 → 58** (the new worst seed, 53, plus a
+notch — the same rule that put 45 above 41). `CURRICULUM_TOP_LEVEL_DAYS` stays
+**40**, and it is now the tightest number in `tests/test_balance_gates.gd`: the
+arc finishes on game-day **38.2–38.8** where it used to finish on 34.5–36.1.
+That is a ruled design bound rather than a fit, so it is not re-cut to buy margin
+back — but **the next change that slows the arc at all will fail gate 21 there**.
+§33.7 ranks it. The MIDDLE ceiling (90) is untouched and holds with 9 game-hours
+of margin; level 3's day bound (6) holds at day 5 where it used to hold at 4.
+
+### 33.7 What this pass could not see, ranked
+
+1. **Is ~0.96 traffic accidents per game-day the dispatch beat the game wants?**
+   §33.5 doubled one channel by wiring two authored formulas together, and gate
+   19's title is still *"the dispatch loop is a **weekly** beat"* — 9.7 per
+   game-week is more than one a day. Everything safety-critical holds (nothing
+   fails, nothing is abandoned, the roster peaks at 2), so this is a *pacing*
+   ruling and not a defect, and it belongs to whoever owns doc 06 §2's rate.
+   The cheapest lever if it is too many is doc 06's own `traffic_accident` base
+   rate, **not** doc 10's congestion — the congestion is now measured and right.
+2. **Gate 21's top-level bound has 1.2 game-days of margin.** 38.8 against a
+   ruled 40. It was 5.7 before this wave. The next thing that slows the
+   curriculum arc fails there, and the failure will look like that change's fault
+   rather than this one's. Either the bound is re-ruled at 45 (which is what the
+   45-game-day horizon already allows) or the arc's top level is re-costed.
+3. **Doc 07 authors six weather states; doc 10 authors eleven rows.** `snow`
+   (`slowdown 0.30`, `wear 0.80`), `blizzard` (`0.55` / `0.80`), `fog`,
+   `high_wind` and `extreme_cold` are still unreachable — but the *seam* is not
+   what blocks them any more: `data/weather.json`'s `states` block has six
+   entries. `blizzard` is now the most consequential unreachable row left in the
+   tree, and it is doc 07's to author, not doc 10's to wire.
+4. **Doc 02 has no industrial archetype a player chooses.** The `ind` curve is
+   live (§33.2's Foundry reads `ind 0.667`) but it gets there through
+   `power_facility` and `water_facility` under doc 09 §2.6.1's `utility → ind`
+   fold; the only `category: "industrial"` row in `data/buildings.json` is
+   `data_center`. Industry as a *land use the player zones* does not exist, so
+   the most differentiated of doc 10's four curves is reachable only through
+   utilities the player places for another reason.
+5. **`E_evt` is the next dead input in `sim/roads/`, and it is a deliberate one.**
+   `RoadNetwork.add_event_spike` has no caller outside `sim/roads/`; doc 10
+   §2.10 already says the event spike is *"off by default (no venue)"* and doc 09
+   has no venue concept to hang one on. Filed so the next audit does not
+   re-discover it as a defect: it is a feature waiting on a sibling, not a seam
+   waiting on a line.
+6. **The founding day is one draw of a stochastic process.** Twelve wet
+   game-hours out of twenty-four is seed 1337's founding day, not "the" founding
+   day. §33.2(b)'s +16.10 % is therefore "on a day it rains half the time"; the
+   gates are seed-pinned so this is not a flake, but the *balance meaning* of the
+   number carries that qualifier and the long-horizon tables (§33.4) are the
+   better guide to the steady state.

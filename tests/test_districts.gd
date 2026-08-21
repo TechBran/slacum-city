@@ -167,3 +167,62 @@ func test_registry_serialize_roundtrip() -> void:
 	# New districts after load must not collide with existing ids.
 	var next_id := restored.create_district(["B_2_2"])
 	assert_ne(next_id, id)
+
+
+# ------------------------------------------- doc 10 §5.1 land-use profile weights
+
+func test_profile_weights_normalise_the_building_mix() -> void:
+	# The mix is Σ(population + jobs) per doc 10 profile, NOT a building count:
+	# one 60-resident high rise outweighs ten houses, which is what a trip
+	# generator is. Doc 09 normalises once, here, so no reader can be handed an
+	# un-normalised row.
+	var registry := _registry()
+	var id := registry.create_district(["B_3_3"], "Downtown")
+	registry.set_building_mix({id: {"res": 30, "com": 60, "ind": 10, "civ": 0}})
+	var weights := registry.profile_weights(id)
+	assert_almost_eq(float(weights["res"]), 0.30, 1e-12, "res")
+	assert_almost_eq(float(weights["com"]), 0.60, 1e-12, "com")
+	assert_almost_eq(float(weights["ind"]), 0.10, 1e-12, "ind")
+	assert_almost_eq(float(weights["civ"]), 0.00, 1e-12, "civ")
+	var total := 0.0
+	for profile in DistrictRegistry.PROFILES:
+		total += float(weights[profile])
+	assert_almost_eq(total, 1.0, 1e-12, "the row sums to 1")
+
+
+func test_a_district_with_no_trips_publishes_nothing() -> void:
+	# Doc 10 falls back to `data/roads.json`'s authored `default_profile_weights`
+	# on an empty row. A fabricated uniform row would be a number nobody wrote.
+	var registry := _registry()
+	var id := registry.create_district(["B_3_3"])
+	assert_true(registry.profile_weights(id).is_empty(), "never asked")
+	registry.set_building_mix({id: {"res": 0, "com": 0, "ind": 0, "civ": 0}})
+	assert_true(registry.profile_weights(id).is_empty(),
+			"asked, and there is no land use to report")
+
+
+func test_profile_weights_are_derived_not_persisted() -> void:
+	# They are a pure function of a roster this section does not carry, so the
+	# save must not carry a second copy that could disagree with it — and a
+	# restore must DROP the live row rather than keep a stale one alive.
+	var registry := _registry()
+	var id := registry.create_district(["B_3_3"], "Downtown")
+	registry.set_building_mix({id: {"res": 1, "com": 1, "ind": 1, "civ": 1}})
+	var body := registry.serialize()
+	assert_false(JSON.stringify(body).contains("profile_weights"),
+			"no profile weight reaches the save body or the state hash")
+	registry.deserialize(body)
+	assert_true(registry.profile_weights(id).is_empty(),
+			"a restore drops the derived row; CitySim's revision memo rebuilds it")
+
+
+func test_the_category_fold_covers_every_authored_category() -> void:
+	# Doc 02 owns the category list; doc 09 owns the fold onto doc 10's four
+	# curves. A new category added to doc 02 must not fall silently into `civ`.
+	for category in BuildingCatalog.CATEGORIES:
+		assert_true(DistrictRegistry.CATEGORY_PROFILE.has(category),
+				"category '%s' has no doc 10 profile" % category)
+	for category in DistrictRegistry.CATEGORY_PROFILE:
+		assert_true(DistrictRegistry.PROFILES.has(
+				String(DistrictRegistry.CATEGORY_PROFILE[category])),
+				"'%s' folds onto a profile doc 10 does not have" % category)

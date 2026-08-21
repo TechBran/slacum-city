@@ -113,6 +113,9 @@ var roster_revision: int = 0
 ## Derived, revision-keyed building id -> district id (see `district_of_building`).
 var _district_of_building: Dictionary = {}
 var _district_of_building_key := Vector2i(-1, -1)
+## The revision pair `districts._profile_weights` was last rebuilt for — same
+## key, same reason, see `_district_profile_weights`.
+var _district_profile_key := Vector2i(-1, -1)
 var _building_records: Dictionary = {}  # id -> starter record (block, tags…)
 ## AUTHORED buildings removed by cmd_demolish_building, keyed by sim_id, so a
 ## reload does not resurrect the tile reservation the loader re-stamps on every
@@ -321,9 +324,23 @@ func _boot_roads() -> void:
 	if not tun.is_valid():
 		boot_errors.append_array(tun.errors)
 	roads = RoadNetwork.new(world.grid, tun, rng)
-	roads.bootstrap()
+	# **Every sibling is injected BEFORE `bootstrap()`, and that ordering is now
+	# load-bearing.** `bootstrap()` rebuilds the graph, stamps every edge's state
+	# and takes a cold congestion pass at hour 12; with the assignments on the
+	# lines AFTER it, `_assign_districts()` saw an invalid `Callable` and wrote no
+	# `district_id` at all — which report 98 RR-61 filed as inert *"only because
+	# `profile_weights_of` is injected by nothing"*. This wave injects it, so the
+	# inertness is gone and the ordering is the fix. `district_of_tile` keeps its
+	# re-stamping setter as the belt to this braces.
+	#
+	# The one sibling that is NOT live at this point is doc 07's: `_boot_roads`
+	# runs before `_boot_weather` so `_boot_incidents` can be handed a router, so
+	# `_road_weather_state` answers `clear` for the length of this function and
+	# tick 0's `step()` is the first call that sees the real sky.
 	roads.power_is_tile_powered = _is_tile_powered      # doc 04 (G-6)
 	roads.district_of_tile = _district_of_tile          # doc 09
+	roads.profile_weights_of = _district_profile_weights  # doc 09 (§5.1)
+	roads.weather_state_of = _road_weather_state          # doc 07 (§5.1)
 	roads.land_is_buildable = func(t: Vector2i) -> bool:
 		var b := world.block_of_tile(t.x, t.y)
 		return b != null and b.is_ready()
@@ -334,6 +351,7 @@ func _boot_roads() -> void:
 		var job_id := construction.submit(kind, target, crew_hours, crew, payload)
 		construction.assign_crew(job_id, "YARD-CREW-1")   # MVP binding, as buildings do
 		return job_id
+	roads.bootstrap()
 	_refresh_road_density()
 	RoadsPhaseSystems.register_all(scheduler, roads, bus.emit)
 
@@ -465,6 +483,76 @@ func _transformer_covering(tile: Vector2i) -> String:
 func _district_of_tile(tile: Vector2i) -> String:
 	var b := world.block_of_tile(tile.x, tile.y)
 	return String(_block_to_district.get(b.id, "")) if b != null else ""
+
+
+## Doc 10 §5.1's `land.district_profile_weights(id)`: doc 02's building mix, per
+## doc 09 district, as doc 10 §2.10's four land-use weights. Implemented here
+## because `CitySim` owns the cross-doc seams — doc 09's `DistrictRegistry` owns
+## the interface and the normalisation, doc 02's `BuildingCatalog` owns the
+## category, and nothing but this class can see both.
+##
+## **Not a cadence — a revision memo**, exactly as `district_of_building()` is,
+## and that is a ruling rather than a convenience (doc 93 §O1). Doc 10 §2.10 says
+## the weights are "recomputed once per game-day"; a day timer would be a second
+## thing to keep bit-identical between the fine and coarse paths for no gain,
+## because the mix is a pure function of the roster and of district membership
+## and both carry a revision counter. A memo over those two is exact, is cheaper
+## (it recomputes only when the mix actually MOVED, not 45 times over a
+## curriculum run), and — decisively — it gives a restored city the same row as
+## the live one it was saved from without a restore hook to forget. It also
+## matches doc 10's own grain for the sibling term: `L_dens` refreshes on
+## `building_changed`, not only on the day boundary.
+func _district_profile_weights(district_id: String) -> Dictionary:
+	var key := Vector2i(roster_revision, districts.membership_revision)
+	if key != _district_profile_key:
+		_district_profile_key = key
+		_rebuild_district_profile_weights()
+	return districts.profile_weights(district_id)
+
+
+## Σ(population + jobs) per district per doc 10 profile, from the SAME roster and
+## the SAME two stats `_refresh_road_density` counts for `L_dens` — so a district
+## whose demand index doc 10 raises is the district whose land-use row moved, and
+## the two terms of `c_raw` can never disagree about which buildings exist.
+##
+## Authored CAPACITY, not this hour's occupancy: `population.occ_of` swings with
+## the hour of day, and a weight that swung with it would put the time-of-day
+## curve inside its own weights. The curves already own the hour.
+func _rebuild_district_profile_weights() -> void:
+	var mix: Dictionary = {}
+	var district_by_id := district_of_building()
+	for id in roster_ids():
+		var b: Building = buildings[id]
+		var district_id: String = district_by_id[id]
+		if district_id == "":
+			continue
+		var profile := String(DistrictRegistry.CATEGORY_PROFILE.get(
+				catalog.category(String(b.archetype)), "civ"))
+		var row: Dictionary = mix.get(district_id, {})
+		row[profile] = int(row.get(profile, 0)) \
+				+ int(b.stats.get("population", 0)) + int(b.stats.get("jobs", 0))
+		mix[district_id] = row
+	districts.set_building_mix(mix)
+
+
+## Doc 07 → doc 10 §5.1: the CITY-WIDE weather state (report 98 C-59 — roads
+## never asks `state_at(tile)`; only the storm cell is spatial and it does not
+## touch the global effect channels), lower-cased onto `data/roads.json`'s
+## `weather` rows. Doc 05's water system already reads doc 07 exactly this way,
+## and the six states doc 07 authors — CLEAR, CLOUDY, RAIN, HEAVY_RAIN,
+## THUNDERSTORM, HEAT_WAVE — are six of doc 10's eleven rows under that fold.
+##
+## `RoadNetwork.step()` calls this ONCE per step and freezes the answer in
+## `weather_state` for that whole step's congestion, wear and routing. That is
+## the quantised snapshot doc 10 §4 guarantee 2 depends on, and it is why roads
+## deliberately does not read doc 07's continuous `precip01` (C-59).
+##
+## The null guard is the boot window and nothing else: `_boot_roads` runs before
+## `_boot_weather` so the router exists when `_boot_incidents` asks for it, and
+## `bootstrap()`'s cold congestion pass reads the `clear` default rather than a
+## weather system that does not exist yet. Tick 0's `step()` is the first caller.
+func _road_weather_state() -> String:
+	return weather.get_state().to_lower() if weather != null else "clear"
 
 
 ## Strikes are generated at WEATHER and resolved before POWER, so the grid sees
