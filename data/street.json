@@ -1,7 +1,8 @@
 {
   "schema_version": 1,
-  "_doc": "doc 06 §2.16 — THE OPPORTUNITY LAYER. Tappable street events that pay, spawned on the `street` RNG stream by `sim/street/opportunity_system.gd`. This file is the whole tuning surface: kinds, weights, lifetimes, rewards and the police-coverage response are all read from here, so a retune is a data edit and never a code edit. Every number below is a PLACEHOLDER fitted by hand against the founding city's +$319/gh net (doc 03 §2.12) — the balance agent owns the final values and this file's shape is what it retunes through.",
-  "_ledger": "doc 03 §2.5 — collections credit the treasury under category `street`, which is its own revenue line and its own lifetime counter (`ledger_totals.lifetime_street`). It is deliberately NOT folded into tax: tax is a rate on the city's value and this is a bounty on the player's attention, and a ledger that mixed them would make the tax slider look like it moved when the player simply tapped more.",
+  "_doc": "doc 06 §2.16 — THE OPPORTUNITY LAYER. Tappable street events that pay, spawned on the `street` RNG stream by `sim/street/opportunity_system.gd`. This file owns WHEN an opportunity appears, WHERE it stands and HOW LONG it lives — kinds, weights, lifetimes and the police-coverage response. **It owns no dollar** (doc 03 §2.5, report 98 RR-85): every bounty in the layer is priced by `data/economy.json`'s `city_services.street_payout`, which is the same split C-07 gives every other price in the project and the same one RR-78 gave doc 06's dispatch rewards a wave earlier.",
+  "_no_dollars": "MIGRATED 2026-08-21 (report 98 RR-85, doc 92 §39.1). The `reward` block that used to sit on every kind row and the `spawn.reward_city_level_k` that scaled it are DELETED and live in `data/economy.json` under `city_services.street_payout` and `city_services.STREET_REWARD_CITY_LEVEL_K`, at the SAME VALUES to the dollar — the migration moved no number, exactly as RR-78's did for `reward_base`. `OpportunitySystem.configure()` refuses a file that carries either of them back (`FORBIDDEN_KEYS`), the same way `IncidentCatalog` refuses `reward_base`: a price re-appearing in a sibling file is a boot error and not a silent second source of truth.",
+  "_ledger": "doc 03 §2.5 — collections credit the treasury through `Treasury.credit_city_service(reward, \"street\")`: category `city_services` (the settled revenue line RR-78 created) with SOURCE `street`, which is its own sub-row and its own lifetime counter (`ledger_totals.lifetime_street`). It is deliberately NOT folded into tax: tax is a rate on the city's value and this is a bounty on the player's attention, and a ledger that mixed them would make the tax slider look like it moved when the player simply tapped more. NOTE (report 98 RR-88): that lifetime counter read ZERO on every city until 2026-08-21 — the credit was keyed on the category and the counter on the source, and nothing joined them.",
   "_offline": "doc 08 §2.3 rule 9 — opportunities do NOT accrue while the player is away. The spawner is a FINE-PATH system: its coarse contract is zero draws and zero spawns, and a catch-up clears whatever it finds expired without a word. Nothing here is a reward for having been absent.",
 
   "spawn": {
@@ -9,8 +10,7 @@
     "target_interval_h": 1.5,
     "max_live": 4,
     "min_separation_tiles": 5.0,
-    "reward_city_level_k": 0.20,
-    "_reward_city_level_note": "reward = round((base + spread·u) · (1 + k·(city_level − 1))). A level-5 city pays 1.8× a founding one, so the layer stays worth crossing the map for after the treasury has grown. Frozen at SPAWN and carried on the row, so the preview, the commit and a save→load all quote the same dollars."
+    "_rate_contract_note": "`1 / target_interval_h` = 0.6667 offers/gh is the layer's UN-REJECTED Bernoulli rate — the most offers this table can produce before `max_live`, `min_separation_tiles` and an empty kerb pool take their share. `data/economy.json`'s `city_services.STREET_MAX_RATE_PER_GAME_HOUR` is the ruled ceiling on it, and balance gate 32 now reads BOTH files and asserts the one against the other. Before RR-85 the two lived in different branches, so the contract was a number nobody could check; it is a contract now."
   },
 
   "kinds": {
@@ -18,7 +18,6 @@
       "_note": "The player's own words: 'humans that are committing crimes that aren't being picked up by the police station'. Its weight at a tile is a function of `coverage_police(tile)` — doc 02 §2.9's field, published by doc 06 §2.9 (C-51) — so a city that has not built a station finds crooks on every corner and a well-covered one almost never does. Expiring unanswered is currently SILENT (v1); a stability micro-ding on the containing district is the authorable next step and belongs here as `expire_stability_delta` when doc 09 rules on it.",
       "base_weight": 1.0,
       "lifetime_h": [2.5, 4.0],
-      "reward": {"base": 260, "spread": 90},
       "coverage": {
         "field": "police",
         "weak_below": 0.45,
@@ -31,17 +30,15 @@
       "_note": "A dog or a goat off its lead, on residential frontage. `frontage_weight` applies when any tile orthogonally adjacent to the kerb tile is occupied by a residential building; `elsewhere_weight` otherwise. Parks would join the frontage test the day doc 02 authors one — there is no park archetype today, which is why the key is named for the test and not for the category.",
       "base_weight": 1.0,
       "lifetime_h": [2.0, 3.5],
-      "reward": {"base": 150, "spread": 60},
       "frontage": {"frontage_weight": 2.5, "elsewhere_weight": 0.40}
     },
     "lost_valuables": {
       "_note": "The rare one: a glint on the kerb, pure cash, gone quickly. Flat weight — it is the kind that makes scrubbing the city worth doing in a district that is neither poor nor residential.",
       "base_weight": 0.50,
-      "lifetime_h": [1.0, 1.75],
-      "reward": {"base": 420, "spread": 180}
+      "lifetime_h": [1.0, 1.75]
     }
   },
 
   "_placement": "Positions are KERB tiles: a road tile with at least one orthogonal neighbour that is in bounds, not road and not water. That is `RoadSurfaceView.classify()`'s `kerb` mask, minus the graph-derived carriageway class the renderer needs and the sim does not — replicated in `sim/street/opportunity_system.gd` from `TileGrid` flags rather than imported, because `game/` may not be read from `sim/` (constitution §3). The row carries the kerb SIDE (0..3 = N, E, S, W, the same order as `StreetlightPlacer.DIRS`) so the renderer can stand the actor on the footway instead of in a traffic lane.",
-  "_tests": "tests/test_street_opportunities.gd — spawner determinism, the coverage response (a station-less city spawns more crooks than a covered one), the collect/expire lifecycle, a save→load round-trip mid-crook, and the verb's two refusals."
+  "_tests": "tests/test_street_opportunities.gd — spawner determinism, the coverage response (a station-less city spawns more crooks than a covered one), the collect/expire lifecycle (including that a tap moves `ledger_totals.lifetime_street`, RR-88), a save→load round-trip mid-crook, and the verb's two refusals. tests/test_city_services.gd holds the RR-85 guard, beside the RR-78 one it already holds on data/incidents.json: this file carries no price at any depth, a price put back is a BOOT ERROR, and a kind named here that data/economy.json's street_payout does not price is a boot error too."
 }

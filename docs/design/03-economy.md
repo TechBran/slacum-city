@@ -385,7 +385,27 @@ prevented_loss  = capital_value(target) − repair_cost(target, residual_damage_
 
 **Where the clamp cannot reach**, `prevented_loss` answers −1 rather than 0 — a road edge and a water segment have no `capital_value` in this doc, and a clamp that read a zero there would silently delete a payout the design intends to pay. Those three types are held instead by `MORAL_HAZARD_UNPRICED_CEILING = $3,900`, derived from the most expensive single asset a road-class response protects (a `COLLAPSED` AVENUE rebuilt at the full §2.13(d) build price, $5,200, × 0.75). The worst case any of them can pay today is `base × 5.40` — tier 5, best speed, manually dispatched — i.e. $1,620 / $2,160 / $2,700.
 
-**Street opportunities** (doc 12's tappable street life) are priced here too, for the same C-07 reason: `petty_crime $180`, `stray_animal $120`, `abandoned_haul $150`. `petty_crime < dispatch_payout_base[crime]` **by ruling** — a tapped crook is petty, a dispatched crime is the real one — and the ratio (0.514) has to read as *about half* at a glance. The sibling system owns when an opportunity appears and where it stands; it owns no dollar. `STREET_MAX_RATE_PER_GAME_HOUR = 0.45` is the income-share contract expressed as something a test can hold: `0.45 × $180 = $81.00/gh` against the opening's own $506.05/gh net is **16.0 %**, inside the ruled 10–20 % band. An uncollected opportunity pays nothing and books nothing (`STREET_IDLE_SHARE = 0.0`).
+**Street opportunities** (doc 06 §2.16's tappable street life) are priced here too, for the same C-07 reason — **and since Wave 15 they are priced here ONLY** *(report 98 RR-81, doc 92 §39.1)*. Each kind is a BAND, `{base, spread}`, drawn once at spawn and frozen onto the offer:
+
+| kind | base | spread | mean | top |
+|---|---:|---:|---:|---:|
+| `petty_crime` | 260 | 90 | **305** | 350 |
+| `loose_animal` | 150 | 60 | **180** | 210 |
+| `lost_valuables` | 420 | 180 | **510** | 600 |
+
+`reward = round((base + spread·u) × (1 + STREET_REWARD_CITY_LEVEL_K·(city_level − 1)))`, `k = 0.20`. `data/street.json` owns when an opportunity appears, where it stands and how long it lives; it owns no dollar, and `OpportunitySystem.FORBIDDEN_KEYS` refuses one that comes back — the same guard `IncidentCatalog` puts on `reward_base`.
+
+**What this migration corrected, because it is the reason the migration was ranked.** Until Wave 15 this table read `petty_crime 180 / stray_animal 120 / abandoned_haul 150` and **nothing read it**: the live columns were in `data/street.json`, at the bands above, under kind names this table did not even use (`stray_animal` and `abandoned_haul` were never live kind ids). One feature, two price tables, and the balance gate was holding the dead one. The bands are MOVED, not retuned — every determinism baseline is bit-identical across the change, which is the check that says so.
+
+**The ruled ratio holds, and its DENOMINATOR was what was wrong.** *A tapped crook is petty; a dispatched crime is the real one, and the ratio has to read as about half at a glance.* The placeholder stated that as `180 / 350 = 0.514` against `dispatch_payout_base[crime]` — but nobody is ever paid 350: doc 06 multiplies it by tier and by a speed bonus first, and the crime a player watches resolve is doc 06's own reference case, tier 3 answered on target, which pays `350 × 1.70 × 1.00 = $595`. Against that, the live mean bounty of **$305 is 0.513** — the ruled "about half" to three decimals, within 0.002 of the ratio the placeholder claimed. So nothing retunes; gate 32(b) now compares a payout to a payout.
+
+**The income bounds, both re-derived** *(doc 92 §39.2 / §39.4)*:
+
+- `STREET_MAX_RATE_PER_GAME_HOUR = 0.70` is the ruled ceiling on the spawn table's un-rejected offer rate, `1 / target_interval_h`. It was **0.45 against a table running at 0.667** — a contract violated by 48 % since the day it was written, because the table it constrained lived in a file no test could open. Gate 32(c) now reads both files and holds one against the other.
+- `STREET_CEILING_SHARE_MAX = 0.40` is the ruled ceiling on what the layer pays a player who collects **every** offer, as a share of the opening's own net. Measured: **$181.65/gh = 35.90 %** of $506.05/gh. Doc 92 §35.3 measured the same $181.65 at **57 %** and asked for a retune to 35–40 %; the money pass (RR-78/RR-79) delivered it from the other side by raising the founding net 337.05 → 506.05, so the share is inside the ruled band with no street dollar moving.
+- `STREET_PLAYED_SHARE_BAND = [0.05, 0.20]` is the same question on a played 21-game-day arc, measured for the first time in Wave 15 by the `collector` agent (RR-82). The old band claimed 10–20 % "when played" and was never measured; the floor is loosened to 5 % because the share DECAYS across an arc by construction — street income grows 1.8× with city level while a curriculum city's net grows about three-fold.
+
+An uncollected opportunity pays nothing and books nothing (`STREET_IDLE_SHARE = 0.0`), and gate 32(e) now measures that zero on an agent that never taps as well as asserting it from this file.
 
 #### 2.5a State grants — the founding subsidy and the celebration *(report 98 RR-79)*
 
@@ -422,19 +442,26 @@ Three properties this line has that no other revenue line has, all of them delib
 
 - **It is not a rate.** Nothing accrues per game-hour; a collection is a discrete credit at the moment of the tap. It therefore never enters `settle()`'s `revenue` argument, never scales by `M_rev`, and never moves `daily_gross_revenue` — so it cannot inflate the §2.10 credit limit, which would be a loop where tapping raises the ceiling on borrowing.
 - **It is not offline income.** §2.11's offline rules do not reach it and its taper does not apply, because doc 08 §2.3 rule 9 makes the layer spawn nothing while the player is away. There is no accrual to taper.
-- **Reward magnitude is doc 06's**, authored in `data/street.json` and scaled `× (1 + 0.20·(city_level − 1))`.
+- **Reward magnitude is THIS doc's** *(Wave 15, RR-81 — it was `data/street.json`'s until this wave, and the two files disagreed)*. The bands and the `× (1 + 0.20·(city_level − 1))` level scalar are §2.5's `city_services.street_payout` and `STREET_REWARD_CITY_LEVEL_K`; doc 06 keeps the SHAPE of an opportunity — which kinds exist, where they stand, how long they live, how police coverage bends the mix — and this doc owns every dollar in it, the same split RR-78 drew for dispatch.
+- **And the lifetime counter finally counts** *(Wave 15, RR-85)*. `ledger_totals.lifetime_street` read **zero on every city since the layer shipped**: `Treasury.credit_city_service` credits under the CATEGORY `city_services` and the counter is keyed on the SOURCE, so nothing ever reached it. The cash was always right and the balance was always right; the named row answered zero to anyone who asked, which is worse than a missing row because it answers.
 
-**The placeholder ceiling, measured** *(`tools/measure_street_yield.gd`, founding city, seeds 1337 / 4242 / 9001, 720 game-hours each = 2,160 gh, 1,225 offers):*
+**The ceiling, measured and RULED** *(`tools/measure_street_yield.gd`, founding city, seeds 1337 / 4242 / 9001, 720 game-hours each = 2,160 gh, 1,225 offers; doc 92 §39.2):*
 
 | | value |
 |---|---|
 | mean interval between offers | **1.763 gh** (= 1.76 real minutes at 1x) |
-| mean bounty | **$320.30** |
+| mean bounty | **$320.29** |
 | kind mix on the founding city | petty_crime **67.8 %** · lost_valuables **17.1 %** · loose_animal **15.1 %** |
 | yield if EVERY offer is collected | **$181.65/gh**, $4,360/game-day |
-| …against the §2.12 founding net | **+$319/gh** — so the ceiling is **57 %** of net |
+| …against `STARTER_NET_PER_HOUR_EXACT` | **$506.05/gh** — so the ceiling is **35.90 %** of net |
 
-Read that ceiling honestly: it is the yield of a player who taps **all 13.6 offers a game-day**, which costs 24 real minutes of uninterrupted attention and a lot of map-scrubbing. A realistic session collects a fraction of them. But 57 % is the number the **balance agent has to rule on**, and this doc's opinion is that the ceiling belongs nearer **35–40 %** of founding net — high enough that the layer answers the player's "make money quickly", low enough that tapping never outruns running a city. The cheapest lever is `lost_valuables` (17 % of offers at the largest bounty); the second is `target_interval_h`. The crook share being two-thirds on the founding city is **not** a defect to tune away — it is doc 06 §2.16's coverage hook reading a starter city that has one police station, and it is the layer teaching what a second one would be for.
+Read that ceiling honestly: it is the yield of a player who taps **all 13.6 offers a game-day**, which costs 24 real minutes of uninterrupted attention and a lot of map-scrubbing. A realistic session collects a fraction of them.
+
+**The Wave-14 version of this table divided by $319/gh and read 57 %**, and doc 92 §35.3 ruled that the ceiling belonged nearer 35–40 %. **It arrived there without a street dollar moving**: §2.5a's founding assistance and RR-78's retired `fines` line raised the founding net anchor from $337.05 to $506.05/gh in the same wave, and the same $181.65/gh is 35.90 % of it. The share was fixed by making the city richer rather than the street poorer — which is the better outcome, because §35.3's own two levers were `lost_valuables` and `target_interval_h`, and the second of those is the session beat the player actually asked for. `STREET_CEILING_SHARE_MAX = 0.40` publishes the top of the ruled band; balance gate 32(d) measures the ceiling on the live spawner and holds it there.
+
+The crook share being two-thirds on the founding city is **not** a defect to tune away — it is doc 06 §2.16's coverage hook reading a starter city that has one police station, and it is the layer teaching what a second one would be for.
+
+**And what the layer does on a PLAYED arc**, measured for the first time in Wave 15 by the `collector` agent (report 98 RR-86, doc 92 §39.5) — `curriculum` with one tap per game-minute and nothing else changed, over 21 game-days on the fine path. Street bounties land at the low end of `STREET_PLAYED_SHARE_BAND` and the share DECAYS across the run, because the layer grows 1.8× with city level while the city's own net grows about three-fold: the street stays a second income by construction, which is the property this doc wanted and could not previously check.
 
 **Event revenue (post-MVP stub, stadium/zoo):** `event_revenue = event_base_gate[type] × attendance_factor × f_stability × f_power`.
 
@@ -1172,11 +1199,11 @@ The one table in this ladder that runs the other way. Doc 06's `reward_base` col
 | dispatch | `storm_damage` (any subtype) | **400** | `MORAL_HAZARD_UNPRICED_CEILING $3,900` |
 | dispatch | `crime` | **350** | `0.75 × prevented_loss`, per incident |
 | dispatch | `traffic_accident` | **300** | `MORAL_HAZARD_UNPRICED_CEILING $3,900` |
-| street | `petty_crime` | **180** | ruled `< dispatch crime 350` |
-| street | `abandoned_haul` | **150** | `STREET_MAX_RATE_PER_GAME_HOUR 0.45` |
-| street | `stray_animal` | **120** | `STREET_MAX_RATE_PER_GAME_HOUR 0.45` |
+| street | `lost_valuables` | **420 + 180·u** (mean 510) | `STREET_CEILING_SHARE_MAX 0.40` of the opening's net |
+| street | `petty_crime` | **260 + 90·u** (mean 305) | ruled `< dispatch crime at its reference payout, $595` |
+| street | `loose_animal` | **150 + 60·u** (mean 180) | `STREET_CEILING_SHARE_MAX 0.40` of the opening's net |
 
-Multipliers, in the order they apply: doc 06's shape `(1 + tier_k·(tier_peak − 1)) × speed_bonus` (0.65× to 3.60× across the tier and speed bands), then `MANUAL_DISPATCH_MULT 1.50` if and only if a human made the call, then the ceiling. **A street collection takes no multiplier at all** — an opportunity is what it is, and a tap is a tap.
+Multipliers, in the order they apply: doc 06's shape `(1 + tier_k·(tier_peak − 1)) × speed_bonus` (0.65× to 3.60× across the tier and speed bands), then `MANUAL_DISPATCH_MULT 1.50` if and only if a human made the call, then the ceiling. **A street collection takes no dispatch multiplier at all** — an opportunity is what it is, and a tap is a tap. Its one scalar is `STREET_REWARD_CITY_LEVEL_K 0.20`, applied at spawn against the city level and frozen onto the offer, so a level-5 city pays 1.8× a founding one for the same crook.
 
 *Recorded, because it will be re-litigated:* doc 10's per-tile replacement value for one stamped block is `60 × 5,200 + 27 × 1,800 = $360,600`, which is **17–52×** the `road_install` phase price. That gap is real and this doc has chosen to live with it rather than move either number, on the reasoning that the two prices answer different questions — the phase price is what it costs to *connect a block to the network* through a development contract, the per-tile price is what it costs to *lay one tile on demand*, and bulk civil works are genuinely an order of magnitude cheaper per unit than piecework. The gap is what makes player-drawn roads a considered purchase instead of free paint. It is flagged as §9 item 14 for the overseer.
 
@@ -1564,8 +1591,14 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
     "MANUAL_DISPATCH_MULT": 1.50,                      // = doc 06's own speed_bonus_max
     "MORAL_HAZARD_CAP_FRACTION": 0.75,
     "MORAL_HAZARD_UNPRICED_CEILING": 3900,             // 0.75 × a COLLAPSED AVENUE rebuild
-    "street_payout": { "petty_crime": 180, "stray_animal": 120, "abandoned_haul": 150 },
-    "STREET_MAX_RATE_PER_GAME_HOUR": 0.45,             // the income-share contract
+    "street_payout": {                                 // §2.5, report 98 RR-81 — MOVED from
+      "petty_crime":    { "base": 260, "spread":  90 },//   data/street.json at the same values
+      "loose_animal":   { "base": 150, "spread":  60 },
+      "lost_valuables": { "base": 420, "spread": 180 } },
+    "STREET_REWARD_CITY_LEVEL_K": 0.20,                // MOVED with them (a term in a $ formula)
+    "STREET_MAX_RATE_PER_GAME_HOUR": 0.70,             // ceiling on 1/target_interval_h
+    "STREET_CEILING_SHARE_MAX": 0.40,                  // every offer taken, vs the opening's net
+    "STREET_PLAYED_SHARE_BAND": [0.05, 0.20],          // measured on a 21-day arc (RR-82)
     "STREET_IDLE_SHARE": 0.0                           // a written-down zero
   },
 

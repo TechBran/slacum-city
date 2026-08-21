@@ -86,9 +86,11 @@ func _run_spawner(sim: CitySim, hours: int) -> Array:
 func test_the_spawn_rate_lands_in_the_session_beat() -> void:
 	# One game-hour is one real minute at 1x (`SimHost.GAME_MS_PER_REAL_MS` =
 	# 60), so this measurement IS the beat the player feels. The design asks for
-	# something every 1–3 real minutes on a settled starter city; the band is
-	# wide because `data/street.json` is a placeholder the balance agent owns and
-	# a tight assertion here would be a gate on a number nobody has fitted yet.
+	# something every 1–3 real minutes on a settled starter city; the band stays
+	# wide on purpose even now that the numbers are RULED (doc 92 §39), because
+	# what the design committed to is the BEAT and not the interval — the ruled
+	# ceiling on the spawn rate lives in `data/economy.json`
+	# (`STREET_MAX_RATE_PER_GAME_HOUR`) and balance gate 32(c) is what holds it.
 	var total := 0
 	var hours := 0
 	for seed_value: int in [1337, 4242, 9001]:
@@ -250,6 +252,15 @@ func test_collecting_pays_once_on_its_own_ledger_line() -> void:
 			"…on doc 03 §2.5's own `street` row")
 	assert_eq(int(sim.treasury.lifetime["lifetime_tax"]), tax_before,
 			"…and not on tax, which the slider owns")
+	# **And on the LIFETIME row, which read zero on every city until Wave 15**
+	# (report 98 RR-88). `credit_city_service` credits under the CATEGORY
+	# `city_services` and the counter is keyed on the SOURCE, so nothing ever
+	# reached it: the cash was right, the balance was right, and doc 03 §2.5's
+	# named row answered zero to anyone who asked. This assertion is what would
+	# have caught it — the old tests checked the row EXISTED in the save, which
+	# it always did.
+	assert_eq(int(sim.treasury.lifetime["lifetime_street"]), street_before + reward,
+			"…and on `ledger_totals.lifetime_street`, which counts it for life")
 	var collected := _drain(sim, "opportunity_collected")
 	assert_eq(collected.size(), 1, "the tap announced itself on the bus")
 	assert_eq(int((collected[0] as Dictionary)["reward"]), reward)

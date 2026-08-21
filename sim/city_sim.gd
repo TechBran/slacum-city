@@ -341,9 +341,18 @@ func _boot_incidents() -> void:
 ## authored anywhere — see `StreetPhaseSystem`. `data/street.json` expresses the
 ## rate as a mean interval in game-hours, and a hand-written period that drifted
 ## from the cadence would silently re-rate the whole layer.
+##
+## **The fifth seam is not a Callable and is not a view of the city**: since
+## RR-85 every bounty the layer pays is priced out of `data/economy.json`, so
+## `econ_curves` is handed over whole. It is bound AFTER `configure()` has parsed
+## the kind roster, because the check it performs is *"every kind this city can
+## spawn has a price"* — see `OpportunitySystem.bind_payouts`.
 func _boot_street() -> void:
 	street = OpportunitySystem.new(
 			StarterCityLoader.read_json("res://data/street.json"))
+	street.bind_payouts(econ_curves)
+	if not street.errors.is_empty():
+		boot_errors.append_array(street.errors)
 	street.bind_stream(rng)
 	street.grid = world.grid
 	street.graph = roads.graph
@@ -404,8 +413,28 @@ func _boot_roads() -> void:
 	roads.land_is_buildable = func(t: Vector2i) -> bool:
 		var b := world.block_of_tile(t.x, t.y)
 		return b != null and b.is_ready()
+	# **The auto-repair quote is priced at the city's own `M_repair`** (doc 10
+	# §9.4 item 12, doc 92 §34's top open number, ruled 2026-08-21 as RR-87).
+	#
+	# `RoadNetwork.auto_repair_daily_cap` is doc 10 §2.12's *player budget
+	# setting* — dollars the city may commit to road repair in a game-day — and
+	# the quote's only job is deciding how many contiguous runs fit inside it.
+	# Quoting at nominal made the cap mean a different number of repairs on every
+	# difficulty preset: a `crisis` city (`M_repair` 1.60) admitted 1.60× more
+	# tile-fractions than repairing them actually costs and a `casual` one
+	# (0.70×) admitted fewer, so the settings row said "$25,000/day" and bought
+	# whatever the preset felt like. C-16's multiplier is part of the price, and
+	# a budget compared against a price that is not the price is not a budget.
+	#
+	# **Hash-neutral on `standard`**, where `M_repair` is exactly 1.00 — the
+	# multiplication is the identity and every determinism baseline is
+	# bit-identical across this change. It is the non-default presets that move,
+	# which is the whole point of fixing it. `cmd_repair_building` has always
+	# passed the multiplier (see §2.6 below); this is the same seam on doc 10's
+	# side, and doc 03 §2.4's `E_roads_repair` accrual already carried it.
 	roads.repair_quote = func(road_class: String, damage_fraction: float) -> int:
-		return econ_curves.repair_cost_road(road_class, damage_fraction)
+		return econ_curves.repair_cost_road(road_class, damage_fraction,
+				float(treasury.difficulty().get("M_repair", 1.0)))
 	roads.submit_job = func(kind: StringName, target: String, crew_hours: float,
 			crew: StringName, payload: Dictionary) -> int:
 		var job_id := construction.submit(kind, target, crew_hours, crew, payload)

@@ -9,6 +9,10 @@ extends SimTest
 ## real reports.
 
 const Playtest := preload("res://tools/playtest.gd")
+## The gate rig, for the two Wave-15 fine-path tests below. It drives the same
+## strategies and the same summariser this file's own `_run` does; what it adds
+## is the FINE loop, which is the only path doc 06 §2.16's spawner draws on.
+const Rig := preload("res://tests/balance_gate_rig.gd")
 
 const TEST_OUT_DIR := "user://playtest_schema_test"
 
@@ -42,6 +46,9 @@ const SUMMARY_KEYS: Array[String] = [
 	"tax_level_end", "blocks_owned_end", "min_condition", "min_condition_end",
 	"mean_condition_end", "damaged_end", "destroyed_end",
 	"failed_components_end", "open_incidents_mean",
+	# Wave 15 — doc 06 §2.16's tap on an arc (RR-86).
+	"opportunities_collected", "street_income", "street_missed",
+	"street_share_of_net", "street_by_level",
 ]
 
 
@@ -258,12 +265,75 @@ func test_place_into_the_wall_reports_e_unserved() -> void:
 
 
 func test_every_strategy_id_builds_and_runs() -> void:
-	for strategy_id in Playtest.STRATEGY_IDS:
+	for strategy_id in Playtest.STRATEGY_IDS + Playtest.NAMED_ONLY_STRATEGY_IDS:
 		var strategy := Playtest.Factory.make(String(strategy_id))
 		assert_true(strategy != null, "factory knows '%s'" % String(strategy_id))
 		assert_eq(strategy.id(), String(strategy_id), "id() round-trips")
 		assert_ne(strategy.describe(), "", "%s documents itself" % String(strategy_id))
 	assert_true(Playtest.Factory.make("nonsense") == null, "unknown ids return null")
+	# The named-only list is not in `all`, and that is a budget decision worth a
+	# test rather than a comment: `collector` is a FINE-path agent and a 21-day
+	# fine run is ~60× a coarse one, so putting it in the default matrix would
+	# quietly make every `--strategies=all` invocation an hour long.
+	for strategy_id in Playtest.NAMED_ONLY_STRATEGY_IDS:
+		assert_false(Playtest.STRATEGY_IDS.has(String(strategy_id)),
+				"'%s' must stay out of `all`" % String(strategy_id))
+
+
+# --------------------------------------- the fine slice (Wave 15, RR-86)
+
+## **Sixty game-minutes are one game-hour, to the bit.**
+##
+## `Collector` needs the seam between game-minutes, so `Runner` cuts the fine
+## advance into sixty calls when a strategy asks for it. That slice is only safe
+## if it produces the identical city — otherwise every collector measurement is a
+## measurement of a *different* game, and the controlled pair doc 92 §39.5 rests
+## on stops being controlled.
+##
+## Asserted on `state_hash()` rather than on the loop's shape, and on an agent
+## that does nothing in the seam, so the two arms differ in nothing but the
+## slicing.
+func test_slicing_an_hour_into_minutes_lands_on_the_same_city() -> void:
+	var whole := CitySim.boot_from_files(4242)
+	for _h in 6:
+		whole.advance_hours(1.0)
+	var sliced := CitySim.boot_from_files(4242)
+	var idle := Playtest.Factory.make("do_nothing")
+	var api := Playtest.Api.new(sliced)
+	for h in 6:
+		Playtest.Runner.advance_hour_by_minutes(sliced, idle, api, h)
+	assert_eq(sliced.state_hash(), whole.state_hash(),
+			"sixty advance_fine_n(4) calls must be one advance_fine_n(240)")
+	assert_eq(sliced.clock.tick_index, whole.clock.tick_index,
+			"and land on the same tick")
+
+
+## The tap itself, end to end through the harness: a collector run on the fine
+## path collects, the money reaches doc 03's own `street` ledger row, and the
+## same agent with the tap removed collects nothing.
+##
+## One game-day, one seed — this is a plumbing test, not a balance measurement.
+## The balance measurement is gate 32(f) and the published table is
+## `tools/measure_street_arc.gd`.
+func test_the_collector_taps_and_the_curriculum_does_not() -> void:
+	var played: Dictionary = Rig.run_fine("collector", 1337, 1)["summary"]
+	assert_true(int(played["opportunities_collected"]) > 0,
+			"the collector took no offers in a whole game-day")
+	assert_true(int(played["street_income"]) > 0, "and was paid for none of them")
+	assert_true(float(played["street_share_of_net"]) > 0.0,
+			"and the share column stayed at zero anyway")
+	# Doc 03 §2.5's own row, not the harness's tally — the two agreeing is what
+	# says the harness is measuring the game and not itself.
+	assert_eq(int((played["lifetime"] as Dictionary)["lifetime_street"]),
+			int(played["street_income"]),
+			"the harness's tally and doc 03's lifetime row are the same dollars")
+
+	var idle: Dictionary = Rig.run_fine("curriculum", 1337, 1)["summary"]
+	assert_eq(int(idle["opportunities_collected"]), 0,
+			"`curriculum` is `collector` with the tap removed and must take nothing")
+	assert_eq(int(idle["street_income"]), 0)
+	assert_almost_eq(float(idle["street_share_of_net"]), 0.0, 1e-12,
+			"doc 03 §2.5's `STREET_IDLE_SHARE` zero, measured")
 
 
 # --------------------------------------------------------- command-layer probe

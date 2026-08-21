@@ -58,6 +58,18 @@ const KINDS: Array[StringName] = [
 ## Constitution §5's named stream for this system, and the only one it touches.
 const STREAM_NAME := "street"
 
+## C-07 / RR-85: `data/street.json` may carry no dollar, at any depth.
+##
+## The layer shipped with its reward columns in its own file and doc 03
+## publishing a second, dead set beside them — one feature, two price tables,
+## and the live one was not the one the balance gates read. The columns moved to
+## `data/economy.json`'s `city_services.street_payout` at the same values, and
+## these two keys are refused on the way back in so the second source of truth
+## cannot quietly reappear. It is the same guard `IncidentCatalog.FORBIDDEN_KEYS`
+## puts on `reward_base`, and it fails the BOOT rather than a report six weeks
+## later.
+const FORBIDDEN_KEYS: Array[String] = ["reward", "reward_city_level_k"]
+
 ## N, E, S, W — the same order and the same meaning as
 ## `StreetlightPlacer.DIRS` / `RoadSurfaceView.DIRS`, declared locally because
 ## `sim/` may not read `game/` (constitution §3). A row's `side` indexes this,
@@ -73,13 +85,26 @@ const DIRS: Array[Vector2i] = [
 var target_interval_h: float = 1.5
 var max_live: int = 4
 var min_separation_tiles: float = 5.0
-var reward_city_level_k: float = 0.20
 ## Set by `CitySim` from the phase adapter's OWN cadence, never authored: the
 ## per-evaluation probability is `eval_period_h / target_interval_h`, and a
 ## hand-written period that drifted from the cadence would silently re-rate the
 ## whole layer. See `CitySim._boot_street`.
 var eval_period_h: float = 1.0 / 60.0
 var _kinds: Dictionary = {}  # StringName -> normalised row
+
+## Doc 03 §2.5's price table, the ONLY place this system's dollars come from
+## (RR-85). Held rather than resolved through a `Callable` because unlike the
+## four seams below it is not a view of the live city — it is a parsed data
+## file that outlives every tick and holds no reference back to `CitySim`, so
+## there is no cycle for `dispose()` to break. Null in a fixture that never
+## bound one, which is why `_reward_for` still draws its `u`.
+var payouts: CostCurves = null
+
+## Boot errors, drained into `CitySim.boot_errors` (`_boot_street`). A file that
+## carries a price back, or a kind that no price table names, is a boot error and
+## not a fallback: a city that quietly paid $0 for every crook because a row was
+## missing would look like a balance finding for a wave before anyone found it.
+var errors: PackedStringArray = []
 
 # ------------------------------------------------------------------ the world
 # Set once at boot. `sim/street/` knows the tile grid and the road graph (both
@@ -128,20 +153,60 @@ func _init(table: Dictionary = {}) -> void:
 ## `data/street.json`, whole. Unknown kinds are DROPPED rather than crashing a
 ## city (the same rule doc 09 §8.3's curriculum parses under), so a table that
 ## names a fourth kind before the code knows one still boots.
+##
+## A dollar anywhere in the table is NOT dropped — it is an error (`FORBIDDEN_KEYS`).
 func configure(table: Dictionary) -> void:
+	errors = PackedStringArray()
+	_assert_no_prices(table)
 	var spawn: Dictionary = table.get("spawn", {})
 	target_interval_h = maxf(0.000001, float(spawn.get("target_interval_h",
 			target_interval_h)))
 	max_live = maxi(0, int(spawn.get("max_live", max_live)))
 	min_separation_tiles = maxf(0.0, float(spawn.get("min_separation_tiles",
 			min_separation_tiles)))
-	reward_city_level_k = float(spawn.get("reward_city_level_k", reward_city_level_k))
 	_kinds = {}
 	var rows: Dictionary = table.get("kinds", {})
 	for kind: StringName in KINDS:
 		var raw: Variant = rows.get(String(kind), null)
 		if raw is Dictionary:
 			_kinds[kind] = _normalise_kind(raw as Dictionary)
+
+
+## Doc 03 §2.5's price table, bound after `configure()` so the kind roster it
+## checks is the parsed one. Every kind this file names must be PRICED — an
+## unpriced one is a boot error, not a free crook.
+func bind_payouts(curves: CostCurves) -> void:
+	payouts = curves
+	if curves == null:
+		return
+	for kind: StringName in KINDS:
+		if not _kinds.has(kind):
+			continue
+		if not curves.has_street_payout(String(kind)):
+			errors.append(("data/street.json names kind `%s` and "
+					+ "data/economy.json city_services.street_payout prices no "
+					+ "row for it (RR-85)") % String(kind))
+
+
+## Recursive, because a price that came back would come back somewhere. Mirrors
+## `IncidentCatalog._assert_clean`, deliberately down to the shape of the
+## message: two files, one rule, one way to read the failure.
+func _assert_no_prices(value: Variant) -> void:
+	match typeof(value):
+		TYPE_DICTIONARY:
+			for key: Variant in (value as Dictionary):
+				var key_text := String(key)
+				if FORBIDDEN_KEYS.has(key_text):
+					errors.append(("data/street.json carries price key `%s`; doc 03 "
+							+ "owns every dollar (C-07 / RR-85) — it belongs in "
+							+ "data/economy.json city_services.street_payout")
+							% key_text)
+				_assert_no_prices((value as Dictionary)[key])
+		TYPE_ARRAY:
+			for entry: Variant in (value as Array):
+				_assert_no_prices(entry)
+		_:
+			pass
 
 
 static func _normalise_kind(row: Dictionary) -> Dictionary:
@@ -151,15 +216,12 @@ static func _normalise_kind(row: Dictionary) -> Dictionary:
 	if life is Array and (life as Array).size() >= 2:
 		life_lo = float((life as Array)[0])
 		life_hi = maxf(life_lo, float((life as Array)[1]))
-	var reward: Dictionary = row.get("reward", {})
 	var coverage: Dictionary = row.get("coverage", {})
 	var frontage: Dictionary = row.get("frontage", {})
 	return {
 		"base_weight": maxf(0.0, float(row.get("base_weight", 1.0))),
 		"life_lo": life_lo,
 		"life_hi": life_hi,
-		"reward_base": float(reward.get("base", 100.0)),
-		"reward_spread": maxf(0.0, float(reward.get("spread", 0.0))),
 		"has_coverage": not coverage.is_empty(),
 		"weak_below": clampf(float(coverage.get("weak_below", 0.45)), 0.000001, 0.999999),
 		"weight_at_zero": maxf(0.0, float(coverage.get("weight_at_zero", 1.0))),
@@ -260,7 +322,7 @@ func _try_spawn(now_h: float) -> void:
 	if kind == &"":
 		return
 	var row: Dictionary = _kinds[kind]
-	var reward := _reward_for(rng, row)
+	var reward := _reward_for(rng, kind)
 	var lifetime := lerpf(float(row["life_lo"]), float(row["life_hi"]), rng.randf())
 	var offer := {
 		"id": _next_id,
@@ -277,12 +339,23 @@ func _try_spawn(now_h: float) -> void:
 	_emit(&"opportunity_spawned", offer)
 
 
-## Doc 03 §2.5's bounty, frozen at spawn. `u` is drawn BEFORE the lifetime so
-## the two are stably associated whatever a future retune does to either.
-func _reward_for(rng: RandomNumberGenerator, row: Dictionary) -> int:
-	var base := float(row["reward_base"]) + float(row["reward_spread"]) * rng.randf()
+## Doc 03 §2.5's bounty, frozen at spawn — **and every dollar in it is read from
+## `data/economy.json`, not from this system's own file** (RR-85).
+##
+## `u` is drawn BEFORE the lifetime and UNCONDITIONALLY: it is a stream position,
+## not an optimisation, so a fixture with no price table bound draws it anyway
+## and produces the same sequence a priced one does at zero dollars. Skipping the
+## draw when `payouts` is null would make the `street` stream depend on whether
+## doc 03's file was loaded, which is exactly the class of dependency
+## save → load → advance identity forbids.
+func _reward_for(rng: RandomNumberGenerator, kind: StringName) -> int:
+	var u := rng.randf()
+	if payouts == null:
+		return 0
+	var band := payouts.street_payout_base(String(kind)) \
+			+ payouts.street_payout_spread(String(kind)) * u
 	var level := maxi(1, _city_level())
-	var scaled := base * (1.0 + reward_city_level_k * float(level - 1))
+	var scaled := band * (1.0 + payouts.street_reward_city_level_k() * float(level - 1))
 	return maxi(0, int(floor(scaled + 0.5)))
 
 

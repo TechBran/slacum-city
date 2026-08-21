@@ -145,6 +145,20 @@ func credit(amount: int, category: StringName = &"misc", reason: String = "") ->
 ## `source` is `"dispatch"` or `"street"`; an unknown source is credited and
 ## tallied under `dispatch` rather than dropped, because losing the tally would
 ## make the line disagree with the balance.
+## **The second `_note_lifetime` is not a double count, and it is a FIX** (Wave
+## 15, report 98 RR-88). `credit()` above is handed the CATEGORY `city_services`,
+## which `_note_lifetime` has no arm for; the lifetime row this feature promises
+## is keyed on the SOURCE, and nothing was passing the source anywhere near it.
+## So `ledger_totals.lifetime_street` — doc 03 §2.5's own named row, the one the
+## comment two paragraphs up calls "its OWN row on purpose" — has read **zero on
+## every city since the layer shipped**, while the cash it is supposed to count
+## sat correctly in the balance. A counter that is always zero is worse than a
+## missing one: it answers the question.
+##
+## `dispatch` gets nothing here and that is deliberate, not an oversight —
+## `_note_lifetime` has no `&"incident"` arm to credit, doc 91 A91-D-37 is the
+## row that would build one, and inventing a key here would put a lifetime
+## counter in this file that doc 03 has not published.
 func credit_city_service(amount: int, source: String,
 		reason: String = "") -> Dictionary:
 	var result := credit(amount, &"city_services", reason)
@@ -152,6 +166,7 @@ func credit_city_service(amount: int, source: String,
 		return result
 	var key := source if hour_city_services.has(source) else "dispatch"
 	hour_city_services[key] = int(hour_city_services[key]) + amount
+	_note_lifetime(StringName(key), amount)
 	return result
 
 
