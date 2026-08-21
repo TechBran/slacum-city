@@ -26,6 +26,11 @@ func _ctx(tick_index: int, is_catchup: bool = false) -> TimeContext:
 	return ctx
 
 
+## The pressure knobs come from doc 03's `data/difficulty.json` and nowhere else
+## (C-17, closed as doc 91 A91-D-19) — `data/director.json` no longer mirrors
+## them, and `DirectorTables` refuses a file that tries to. So this rig wires the
+## same two calls `CitySim._push_difficulty_to_systems()` makes, which is what
+## makes test 26 below a measurement of the SHIPPED table.
 func _director(seed_value: int = 1337, preset: String = "standard") -> DisasterDirector:
 	var director := DisasterDirector.new(DirectorTables.load_from_file(DIRECTOR_DATA),
 			RngStreams.new(seed_value))
@@ -35,6 +40,9 @@ func _director(seed_value: int = 1337, preset: String = "standard") -> DisasterD
 	weather.bootstrap(_ctx(0))
 	director.attach(weather, IncidentRequestSink.Recording.new())
 	director.set_difficulty(preset)
+	var difficulty := Difficulty.load_from_file()
+	difficulty.select(preset)
+	director.set_pressure_knobs(difficulty.row("pressure"))
 	return director
 
 
@@ -400,17 +408,27 @@ func test_26_difficulty_scaling() -> void:
 	var days_per_major := 1200.0 / float(int(majors["standard"]))
 	assert_true(days_per_major >= 1.8 and days_per_major <= 3.2,
 			"one major per %.2f game-days at Standard" % days_per_major)
-	# C-17: no difficulty knob and no repair price may live in director.json.
+	# C-17: no difficulty knob, no repair price and — since doc 03's file shipped
+	# — no read-only mirror of the pressure rows may live in director.json.
 	var raw: Dictionary = JSON.parse_string(
 			FileAccess.get_file_as_string(DIRECTOR_DATA))
 	assert_false(raw.has("difficulty"), "no difficulty block")
 	assert_false(raw.has("repair_cost_mult"), "no repair_cost_mult — that is M_repair")
-	# And the knobs are read through one path, which doc 03 can take over.
+	assert_false(raw.has("_difficulty_fallback"),
+			"the mirror is gone: data/difficulty.json owns the pressure rows")
+	# And the knobs are read through one path, which doc 03 has taken over.
 	var director := _director()
 	director.set_pressure_knobs({"tp_rate_mult": 3.0, "cooldown_mult": 1.0,
 			"severity_mult": 1.0, "warning_lead_mult": 1.0, "soft_suppression": false})
 	assert_almost_eq(director.knob("tp_rate_mult"), 3.0, 1e-9,
-			"Difficulty.get(\"pressure\", ·) overrides the fallback mirror")
+			"Difficulty.value(\"pressure\", ·) is the read path")
+	# With nothing set at all the Director runs NOMINAL, which is `standard` by
+	# construction — not "whatever preset string it happens to hold".
+	var bare := DisasterDirector.new(DirectorTables.load_from_file(DIRECTOR_DATA),
+			RngStreams.new(1))
+	bare.set_difficulty("crisis")
+	assert_almost_eq(bare.knob("tp_rate_mult"), 1.0, 1e-9, "nominal without a row")
+	assert_true(bare.soft_suppression_enabled(), "nominal without a row")
 
 
 # ------------------------------------------------------------ integration

@@ -1644,13 +1644,36 @@ One document, three top-level keys — split into `data/incidents.json`, `data/v
 
 ```json
 "escalation": {
-  "_owner": "06",
-  "casual":   { "escalation_mult": 0.75, "generation_mult": 0.80 },
-  "standard": { "escalation_mult": 1.00, "generation_mult": 1.00 },
-  "hard":     { "escalation_mult": 1.35, "generation_mult": 1.20 },
-  "crisis":   { "escalation_mult": 1.60, "generation_mult": 1.40 }
+  "_owner": "06-incidents-dispatch.md",
+  "_direction": { "escalation_mult": "up", "generation_mult": "up",
+                  "OFFLINE_RESPONSE_TIME_MULT": "up" },
+  "casual":   { "escalation_mult": 0.75, "generation_mult": 0.80, "OFFLINE_RESPONSE_TIME_MULT": 1.2 },
+  "standard": { "escalation_mult": 1.00, "generation_mult": 1.00, "OFFLINE_RESPONSE_TIME_MULT": 1.6 },
+  "hard":     { "escalation_mult": 1.35, "generation_mult": 1.20, "OFFLINE_RESPONSE_TIME_MULT": 1.9 },
+  "crisis":   { "escalation_mult": 1.60, "generation_mult": 1.40, "OFFLINE_RESPONSE_TIME_MULT": 2.2 }
 }
 ```
+
+> **SHIPPED 2026-08-20 (doc 91 A91-D-19, report 98 RR-48).** `data/difficulty.json`
+> exists and carries this block verbatim. Three consequences for this doc:
+>
+> 1. **`data/incidents.json` no longer carries a `difficulty_escalation` block**,
+>    and `IncidentCatalog.load_from()` now REFUSES a file that does — the rows
+>    were parked there while doc 03's file did not exist, and a copy beside the
+>    real one would be a second authority.
+> 2. **`escalation_mult` was reading 1.00 on every preset until this date, and not
+>    because the presets were unreachable.** `CityIncidentWorld.difficulty_escalation_mult()`
+>    asked `Treasury.difficulty()` for it; the economic row is twelve keys and this
+>    is not one of them, so the `.get(key, 1.0)` fallback *was* the read path. Both
+>    knobs now come from `Difficulty.value("escalation", …)`, and
+>    `difficulty_generation_mult()` — which had no override at all — comes with
+>    them. On `standard` both are 1.00, which is why the change is hash-neutral on
+>    the default preset.
+> 3. **`OFFLINE_RESPONSE_TIME_MULT` joins the block** as doc 03 §8.2 always
+>    intended (it was seeded there and handed here with its owner). It is a
+>    **seam**: doc 06's offline auto-response path does not exist yet and nothing
+>    reads it. Authored, validated and reachable; unread, and said so rather than
+>    dropped.
 
 ---
 

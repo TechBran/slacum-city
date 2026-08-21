@@ -25,10 +25,14 @@ const AUSTERITY_BLOCKED_CATEGORIES: Array[StringName] = [
 	&"construction", &"land", &"vehicle",
 ]
 
-## doc 03 §2.9's `economic` row for `standard`. These knobs belong in
-## `data/difficulty.json` (§3.4, report 98 C-17) behind `Difficulty.get()`;
-## until that loader ships they are injectable constructor input and this is
-## the default row, not a second authority.
+## doc 03 §2.9's `economic` row for `standard`, as a **compiled-in mirror**.
+##
+## The authority is `data/difficulty.json` behind `Difficulty` (§3.4, report 98
+## C-17), and `CitySim` constructs this class with that file's row — this
+## dictionary is only what a `Treasury` built with no difficulty argument falls
+## back to, so a unit test that wants a nominal treasury does not have to open a
+## data file to get one. `tests/test_difficulty.gd` asserts the two are the same
+## twelve knobs with the same twelve values, so the mirror cannot drift.
 const DIFFICULTY_STANDARD := {
 	"M_rev": 1.00, "M_exp": 1.00, "M_land": 1.00, "M_dev": 1.00, "M_build": 1.00,
 	"M_repair": 1.00, "starting_treasury": 25000, "OFF_TAU_HOURS": 90,
@@ -56,12 +60,10 @@ var _difficulty: Dictionary = {}
 var _events: Array[Dictionary] = []
 
 
-func _init(economy: Dictionary = {}, difficulty: Dictionary = {},
+func _init(economy: Dictionary = {}, difficulty_row: Dictionary = {},
 		starting_balance: int = -1) -> void:
 	_recovery = economy.get("recovery", {})
-	_difficulty = DIFFICULTY_STANDARD.duplicate()
-	for key in difficulty:
-		_difficulty[key] = difficulty[key]
+	apply_difficulty(difficulty_row, false)
 	balance = starting_balance if starting_balance >= 0 \
 			else int(_difficulty.get("starting_treasury", 0))
 	credit_limit = int(_recovery.get("CREDIT_LIMIT_FLOOR", 0))
@@ -69,6 +71,26 @@ func _init(economy: Dictionary = {}, difficulty: Dictionary = {},
 
 func difficulty() -> Dictionary:
 	return _difficulty.duplicate()
+
+
+## The ONE write path for doc 03 §2.9's `economic` row (C-17). `CitySim` hands it
+## `Difficulty.row("economic")` at boot, again when a city is FOUNDED on a preset
+## (doc 93 §K1), and again after a load — the preset is part of the city, so a
+## restored city has to get its multipliers back before it settles an hour.
+##
+## `reset_balance` is the founding case and nothing else: a load must keep the
+## dollars the save recorded, and a preset cannot be changed mid-city, so the
+## only moment the starting treasury is authoritative is the moment before the
+## first tick. Unknown knobs are refused rather than merged — a difficulty row
+## is a fixed twelve-key shape and a typo that quietly added a thirteenth would
+## read as a knob some system was failing to honour.
+func apply_difficulty(row: Dictionary, reset_balance: bool) -> void:
+	_difficulty = DIFFICULTY_STANDARD.duplicate()
+	for key in row:
+		if _difficulty.has(key):
+			_difficulty[key] = row[key]
+	if reset_balance:
+		balance = int(_difficulty.get("starting_treasury", 0))
 
 
 func drain_events() -> Array[Dictionary]:

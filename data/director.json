@@ -59,14 +59,7 @@
     },
     "irreplaceable_condition_floor": 0.1
   },
-  "_difficulty_note": "MOVED — the four pressure knobs live in data/difficulty.json (doc 03, report 98 C-17), read via Difficulty.get(\"pressure\", key). repair_cost_mult is DELETED; repair difficulty is economic.M_repair.",
-  "_difficulty_fallback": {
-    "_note": "Read-only mirror of doc 07 §8.3's authored rows, used ONLY until doc 03 ships data/difficulty.json. DisasterDirector.set_pressure_knobs() overrides it; the fallback is never the read path once the real file exists.",
-    "casual": {"tp_rate_mult": 0.6, "cooldown_mult": 2.0, "severity_mult": 0.8, "warning_lead_mult": 1.5, "soft_suppression": true},
-    "standard": {"tp_rate_mult": 1.0, "cooldown_mult": 1.0, "severity_mult": 1.0, "warning_lead_mult": 1.0, "soft_suppression": true},
-    "hard": {"tp_rate_mult": 1.45, "cooldown_mult": 0.75, "severity_mult": 1.2, "warning_lead_mult": 0.7, "soft_suppression": true},
-    "crisis": {"tp_rate_mult": 2.0, "cooldown_mult": 0.5, "severity_mult": 1.45, "warning_lead_mult": 0.5, "soft_suppression": false}
-  },
+  "_difficulty_note": "MOVED and now GONE (2026-08-20, doc 91 A91-D-19). Doc 07 §8.3's four pressure knobs plus soft_suppression live in data/difficulty.json section \"pressure\", read via Difficulty.value(\"pressure\", key) and handed to the Director by CitySim._push_difficulty_to_systems(). repair_cost_mult is DELETED; repair difficulty is economic.M_repair. The _difficulty_fallback mirror that sat here until doc 03's file shipped is deleted, and DirectorTables.load_from() now REFUSES a file that carries one — one file, one loader (C-17).",
   "events": [
     {"id": "traffic_pileup", "tp_cost": 6, "class": "minor", "hazard_tier": 1, "forecastable": false, "warn_min": 0, "min_city_tier": 1, "min_preparedness": 0.0, "base_weight": 1.1},
     {"id": "water_main_break", "tp_cost": 8, "class": "minor", "hazard_tier": 1, "forecastable": false, "warn_min": 0, "min_city_tier": 1, "min_preparedness": 0.0, "base_weight": 1.0},

@@ -499,7 +499,9 @@ Per-event overrides are in §2.7.3 for lightning. F4 and F10 are applied as filt
 
 #### 2.6.6 Difficulty
 
-**These four rows are authored by this doc but they live in `data/difficulty.json`, owned by doc 03** *(report 98 C-17)*. There is one difficulty file in the project and one read path, `Difficulty.get("pressure", key)`; this doc opens no difficulty file of its own and `data/director.json` carries no `difficulty` block. The rows below are the `pressure` section of that file.
+**These four rows are authored by this doc but they live in `data/difficulty.json`, owned by doc 03** *(report 98 C-17)*. There is one difficulty file in the project and one read path, `Difficulty.value("pressure", key)`; this doc opens no difficulty file of its own and `data/director.json` carries no `difficulty` block. The rows below are the `pressure` section of that file.
+
+> **SHIPPED 2026-08-20 (doc 91 A91-D-19, report 98 RR-48).** The file exists and these five columns are in it, moved and not edited. `data/director.json`'s `_difficulty_fallback` — the read-only mirror this section's rows lived in while doc 03's file did not exist — is **deleted**, and `DirectorTables.load_from()` now REFUSES a director file that carries one. `CitySim._push_difficulty_to_systems()` calls `set_difficulty()` then `set_pressure_knobs(Difficulty.row("pressure"))` at boot, at founding and after every load, so `DisasterDirector.knob()` reads the live row and never a fallback. With nothing set at all it reads NOMINAL — every scale 1.0, soft suppression on — which is `standard` by construction rather than "whatever preset string the object happens to hold". *(The read path is `Difficulty.value(…)` and not `Difficulty.get(…)`: `get` is `Object.get` and GDScript refuses the redeclaration. Doc 03 §2.9 rule 3 carries the note.)*
 
 | | `tp_rate_mult` | `cooldown_mult` | `severity_mult` | `warning_lead_mult` | `soft_suppression` |
 |---|---|---|---|---|---|

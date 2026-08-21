@@ -45,7 +45,6 @@ var power_event_map: Dictionary = {}
 var tutorial: Dictionary = {}
 var fire: Dictionary = {}
 var reward: Dictionary = {}
-var difficulty_escalation: Dictionary = {}
 
 var vehicle_types: Dictionary = {}
 var vehicle_type_ids: Array = []
@@ -224,7 +223,13 @@ func _load_incidents(data: Dictionary) -> void:
 	tutorial = data.get("tutorial", {})
 	fire = data.get("fire", {})
 	reward = data.get("reward", {})
-	difficulty_escalation = data.get("difficulty_escalation", {})
+	# C-17 / doc 03 §2.9 rule 2: doc 06 AUTHORS the escalation pair and doc 03
+	# FILES it, in `data/difficulty.json.escalation`. It was parked here while
+	# that file did not exist; it exists, so a copy here would be a second
+	# authority and is refused rather than ignored.
+	if data.has("difficulty_escalation"):
+		errors.append("incidents.json must not carry difficulty_escalation — "
+				+ "data/difficulty.json owns it (C-17)")
 
 	for channel_name in weather_channels.values():
 		if channel_name != null and not ALLOWED_WEATHER_CHANNELS.has(String(channel_name)):

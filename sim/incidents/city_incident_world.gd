@@ -825,9 +825,17 @@ func debit(amount: int, reason: String) -> bool:
 	return bool(sim.treasury.spend(amount, &"incident", reason).get("ok", false))
 
 
+## Doc 06 §8's two knobs, read through doc 03's one loader (C-17). They used to
+## be asked of `Treasury.difficulty()`, which never carried them — the economic
+## row is twelve keys and neither of these is one of them, so the `.get(…, 1.0)`
+## fallback WAS the read path and every preset escalated at 1.0 (doc 91
+## A91-D-19). They now come from `escalation`, where doc 06 authors them.
 func difficulty_escalation_mult() -> float:
-	var rows: Dictionary = sim.treasury.difficulty()
-	return float(rows.get("escalation_mult", 1.0))
+	return sim.difficulty.number("escalation", "escalation_mult", 1.0)
+
+
+func difficulty_generation_mult() -> float:
+	return sim.difficulty.number("escalation", "generation_mult", 1.0)
 
 
 # -------------------------------------------------------- doc 02 construction

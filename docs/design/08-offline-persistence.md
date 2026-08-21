@@ -422,6 +422,55 @@ static func _v3_to_v4(b: Dictionary) -> Dictionary:
 > printed digit — the control that says this epoch reaches the sim through
 > exactly one command.
 
+> ### Shipped 2026-08-20 — `city.section_version` 5 → 6, **the difficulty epoch**
+>
+> Doc 03 §2.9's preset stops being a thing only the Disaster Director knows and
+> becomes the **city's** (doc 91 A91-D-19, ruled in doc 93 §K1). Under v5 exactly
+> one of the sixteen difficulty knobs was reachable — doc 07's `pressure` row,
+> through `data/director.json`'s read-only mirror — and the other fifteen were
+> `Treasury.DIFFICULTY_STANDARD` on every boot forever. Under v6 the preset
+> prices every build, upgrade, land purchase, development phase and repair
+> (`M_build` / `M_land` / `M_dev` / `M_repair`), scales revenue and recurring
+> expense (`M_rev` / `M_exp`), sets the revenue floor, the credit APR, the
+> relief-grant allowance and the offline taper, and drives doc 06's escalation and
+> generation multipliers as well as doc 07's four pressure knobs.
+>
+> **The body's SHAPE does not move, and that is the interesting part.**
+> `DisasterDirector.serialize()` has written `"difficulty"` since doc 07 shipped,
+> and `deserialize` has keyed `_difficulty_locked` on it — so **the preset is
+> already in every v5 body**. `CitySim._restore_difficulty` reads it back out of
+> that section and re-pins the treasury's twelve economic knobs, the Director's
+> four pressure knobs and doc 06's escalation pair. Doc 93 §K2 rules why there is
+> no second copy at city level: two records of one fact is the scattering report
+> 98 C-17 exists to stop, and a new key in `canonical_capture()` would move
+> `state_hash()` on the DEFAULT preset, which this change may not do.
+>
+> `CitySim._v5_to_v6` is therefore **the identity function on every save the game
+> has ever written**, and it adds **no top-level key, ever**. It writes exactly
+> one thing, into one body: a `director` section that exists but does not name its
+> preset gets `"standard"`. That is not a guess about what such a body meant —
+> under v5 only `standard` was reachable, so `standard` is what it was played on.
+> A body with no `director` section at all is a fragment rather than a city and is
+> left alone; `restore_state` defaults it to the same preset anyway. Doc 08 §2.8's
+> three rules hold: TOTAL, additive-first, and it reads no `data/` (the preset
+> NAMES a row, it does not carry one).
+>
+> **What the rung records**, since the migrator does nothing: a v5 body advanced
+> under v6 rules is a city v5 could not have produced *if it names a non-default
+> preset*, and is bit-for-bit the same city if it names `standard`. That is the
+> only rung on this ladder whose cost depends on a value in the body rather than
+> on the binary, and it is stated that way rather than rounded to "identity":
+> `tools/profile_sim.gd --hash-only` is byte-identical on both cities and both
+> paths (the identity pass founds on the default), doc 92 §29.1's seven-strategy
+> matrix is byte-identical to §27.6's post-fix column, and doc 92 §29.3 measures
+> what the other three presets do instead.
+>
+> **Save → load → advance is bit-identical on all four presets**
+> (`tests/test_difficulty.gd`): a city saved on `hard`, loaded into a process that
+> booted on `standard`, and advanced 12 game-hours has the same `state_hash()` as
+> the one that never stopped. That is the property that makes the preset a save
+> section rather than a launch flag.
+
 ### 2.9 Load & corruption recovery
 
 Candidate order: `manifest.active` → `manifest.history[…]` → `pinned.pre_catchup` → `pinned.pre_migration` → directory scan sorted by embedded `sim_time_minutes` descending.

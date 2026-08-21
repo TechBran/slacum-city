@@ -585,7 +585,7 @@ The land purchase dialog must therefore display **Purchase / Est. development / 
 
 1. Exactly four preset keys — `casual`, `standard`, `hard`, `crisis` — and every section must define a row for all four. A missing row is a load error, not a default.
 2. **No difficulty scalar may exist outside this file.** Doc 07's `repair_cost_mult` is deleted; repair difficulty is `M_repair` and nothing else.
-3. One loader, `sim/economy/difficulty.gd`, exposes `Difficulty.get(section, key) -> Variant`. Systems read through it; nobody parses the file twice.
+3. One loader, `sim/economy/difficulty.gd`, exposes `Difficulty.value(section, key) -> Variant`. Systems read through it; nobody parses the file twice. *(This rule said `Difficulty.get(…)` until 2026-08-20. It cannot ship under that name: `get` is `Object.get(StringName) -> Variant` and GDScript refuses a method that redeclares a native one with a different signature. The rule is about there being exactly ONE read path — there is; only the spelling moved.)*
 4. Schema in §3.4, contents in §8.
 
 Difficulty changes *pressure*, not health bars.
@@ -607,11 +607,23 @@ Difficulty changes *pressure*, not health bars.
 
 (The rows above are the `economic` section of `data/difficulty.json`; the other three sections are listed in §8.)
 
-Difficulty may be raised at any time. Lowering it is permitted at any time but sets `save.assisted = true` permanently (excludes the city from any future leaderboard, spec §35). Multipliers apply from the moment of change; already-accrued treasury is untouched.
+**The preset is chosen when a city is FOUNDED, and a city keeps it for life (doc 93 §K1).** This paragraph used to say the opposite — *"Difficulty may be raised at any time. Lowering it is permitted at any time but sets `save.assisted = true` permanently (excludes the city from any future leaderboard, spec §35)"* — and it is replaced rather than annotated, because the two rules cannot both be true of one save. The ruling and its three reasons are in doc 93 §K1; the short version is that `save.assisted` was a leaderboard flag for a leaderboard this game does not have, and a mid-city multiplier change is a re-pricing of a city the player has already paid for. There is no `cmd_set_difficulty`, no settings control and no `assisted` field.
 
-> **IMPLEMENTATION STATUS — none of this section ships (verified 2026-08-20, doc 91 A91-D-19).** `data/difficulty.json` **is not in the tree**; `sim/economy/difficulty.gd`, the loader rule 3 names, is not either. What runs is `Treasury.DIFFICULTY_STANDARD` (`sim/economy/treasury.gd:32`) — a twelve-key dictionary compiled into the class, holding exactly the `standard` column of the table above — and `sim/city_sim.gd:197` constructs `Treasury.new(econ_curves.economy_data())` **with no difficulty argument**, so `_difficulty` is that dictionary on every boot and the `casual` / `hard` / `crisis` columns are unreachable by any code path. Rule 2 is also unmet in the other direction: `data/director.json` still holds the `pressure` rows behind `DisasterDirector.tables.difficulty_fallback()`, `data/incidents.json` still holds `escalation` behind `IncidentWorld.difficulty_escalation_mult()`, and `data/economy.json:166` carries a `_difficulty_note` announcing a move to a file nobody wrote. `save.assisted` appears nowhere in the tree, and there is no `cmd_set_difficulty` and no settings row.
+> **IMPLEMENTATION STATUS — this section SHIPS (2026-08-20; doc 91 A91-D-19 closed).**
 >
-> **The consequence worth writing down: every number doc 92 has ever measured was measured on `standard`, because `standard` is the only preset the code can reach.** That is a statement about coverage, not about tuning — no figure in doc 92 is wrong, three quarters of this section's surface is simply unmeasured. The cheapest honest step is not the whole section: write `data/difficulty.json` with the four rows already tabulated here, add the loader, pass it at `city_sim.gd:197`, and leave the selection UI for a later wave. That alone makes the other three columns reachable by a test.
+> | rule | what ships |
+> |---|---|
+> | one file | `data/difficulty.json` — four sections × four presets, the tables above and in §8.2 verbatim |
+> | one loader | `sim/economy/difficulty.gd` (`class_name Difficulty`), the only reader of that file |
+> | one read path | `Difficulty.value(section, key)` — **not** `get`, see §3.4 rule 5 |
+> | no scalar outside it | `data/director.json`'s `_difficulty_fallback` mirror and `data/incidents.json`'s `difficulty_escalation` block are **deleted**, and `DirectorTables` / `IncidentCatalog` now REFUSE a file that grows one back. `OFF_TAU_HOURS` left `data/economy.json.offline` on the same day |
+> | resolved at boot | `CitySim.boot(…, difficulty_preset)` loads and pins it before the treasury is constructed, because the founding balance is one of its twelve knobs |
+> | chosen at founding | `CitySim.found_with_difficulty(preset)`, valid only at `tick_index == 0`; the front door's chip (doc 12, `ui/title_screen.gd`) is the surface, and S9 shows it read-only |
+> | part of the city | doc 08 §2.8 city section **v6**; the body names the preset in the `director` section it has always named it in, and `_v5_to_v6` defaults a body that does not |
+>
+> **The default preset reproduces the pre-difficulty binary bit-for-bit.** `tools/profile_sim.gd --hash-only` reports `18e70625e633c254…` / `4c3c52cdb4c5a3cc…` on the founding city and `d6b2509c179987d3…` / `bf8dc7282758843b…` on `bench_city` before and after, and doc 92 §29.1's control matrix is byte-identical to §27.6's post-fix table. Non-default presets move the hashes, which is their job.
+>
+> **Two rows of §2.9's own table are still SEAMS**, and they are named rather than quietly dropped: `escalation.OFFLINE_RESPONSE_TIME_MULT` (doc 06's offline auto-response path does not exist yet) and `offline.difficulty_offline_mult` (doc 08 §2.3's band gating does not read it yet). Both are authored, validated and reachable through the loader; nothing reads them. `economic.offline_damage_cap_fraction` is in the same position — `EconomySystem.offline_oneoff_cap()` takes it as an argument and no live caller passes it yet.
 
 ### 2.10 Anti-bankruptcy floor (spec §37)
 
@@ -1104,6 +1116,7 @@ Owned by this doc, authored section-by-section by the systems that own the knobs
 {
   "meta": { "schema_version": 1, "owner_doc": "03-economy.md",
             "presets": ["casual", "standard", "hard", "crisis"],
+            "default_preset": "standard",
             "sections": { "economic": "03", "pressure": "07", "escalation": "06", "offline": "08" } },
   "economic":   { "casual": { }, "standard": { }, "hard": { }, "crisis": { } },
   "pressure":   { "casual": { }, "standard": { }, "hard": { }, "crisis": { } },
@@ -1112,13 +1125,15 @@ Owned by this doc, authored section-by-section by the systems that own the knobs
 }
 ```
 
-**Schema rules, validated on load by `sim/economy/difficulty.gd`:**
+**Schema rules, validated on load by `sim/economy/difficulty.gd`** — every one of them refuses a real file in `tests/test_difficulty.gd`, because a validation rule with no test is a comment:
 
 1. `meta.presets` is exactly the four names, in that order. Every section must carry a row for all four; a missing preset is a load error, never a silent default.
 2. Section keys are fixed: `economic`, `pressure`, `escalation`, `offline`. A key not in `meta.sections` is a load error (this is what stops a fifth doc quietly adding a fifth scalar).
 3. Values are scalars (`float`/`int`/`bool`) only — no nested tables, no per-archetype maps. A knob that needs a table belongs in the owning system's own data file, gated by a scalar here.
-4. Monotonicity is asserted by test 32: for any knob whose name begins `M_`, or that ends `_mult` / `_fraction`, the casual→crisis sequence must be monotone in the direction the owner declares via a `"_direction": "up" | "down"` sibling key at section level.
-5. `Difficulty.get(section, key)` is the only read path. Systems never open the file.
+4. Monotonicity: for any knob whose name begins `M_`, or that ends `_mult` / `_fraction`, the casual→crisis sequence must be **strictly** monotone in the direction the owner declares via a `"_direction": {knob: "up" | "down"}` sibling map at section level. A knob matching that pattern with no declared direction is a load error. Strict and not weak — two presets that agree on a multiplier are the same game in that dimension, and the file should say so by not carrying the knob.
+5. `Difficulty.value(section, key)` is the only read path (see §2.9 rule 3 for why not `get`). Systems never open the file.
+6. **Key parity**: the four rows of a section carry the same knob names. A knob present on three presets and absent on the fourth would read as its caller's `.get(key, default)` fallback on exactly one difficulty — which is the shape of A91-D-19 itself, one level down.
+7. `meta.default_preset` names the preset a city is founded on when nothing chooses, and it is the preset every figure in doc 92 before §29 is measured on. *(Added 2026-08-20; §3.4 shipped without it and the loader needs one name rather than an index into `meta.presets`.)*
 
 Full contents in §8.
 

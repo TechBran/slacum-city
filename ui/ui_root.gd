@@ -121,7 +121,13 @@ signal title_continue(slot: int)
 ## was preserved (`TitleModel.confirm_new_game`). It is NOT the new city's home:
 ## the autosave rotation is always the live city's, which is the whole reason the
 ## confirmation exists.
-signal title_new_game(slot: int)
+##
+## `difficulty` is doc 03 §2.9's preset the new city is FOUNDED on — the shell
+## passes it straight to `CitySim.found_with_difficulty()` before it captures the
+## founding state. It rides this signal rather than being read back off the view
+## because doc 93 §K1 makes it a one-shot: after the founding tick there is no
+## second chance to ask, and no setter to ask with.
+signal title_new_game(slot: int, difficulty: String)
 signal title_settings
 
 @export var apply_content_scale: bool = true
@@ -466,6 +472,18 @@ func bind_dispatch_policy(command: Callable, values: Dictionary = {}) -> void:
 	_seed_dispatch_rows()
 
 
+## Doc 03 §2.9's preset, for S9's read-only city block. Called by the shell with
+## `CitySim.difficulty_preset()` after a boot or a load, and by the front door
+## when NEW CITY founds one. There is no setter behind it: doc 93 §K1 makes the
+## preset a property of a city, so the settings sheet REPORTS it and nothing in
+## `ui/` can change it.
+func set_city_difficulty(preset: String) -> void:
+	if settings_sheet == null or settings_sheet.model == null:
+		return
+	settings_sheet.model.set_city_difficulty(preset)
+	settings_sheet.refresh_city()
+
+
 func _seed_dispatch_rows() -> void:
 	if settings_sheet == null or settings_sheet.model == null or _dispatch_values.is_empty():
 		return
@@ -753,10 +771,13 @@ func _on_title_continue(slot: int) -> void:
 	title_continue.emit(slot)
 
 
-func _on_title_new_game(slot: int) -> void:
+func _on_title_new_game(slot: int, difficulty: String) -> void:
 	# A new city has never seen the tutorial, whatever the previous one did.
 	reset_onboarding()
-	title_new_game.emit(slot)
+	# S9 shows the preset read-only (doc 03 §2.9), and the city that is about to
+	# be founded is the one it should show — not the one the process booted on.
+	set_city_difficulty(difficulty)
+	title_new_game.emit(slot, difficulty)
 
 
 func _on_title_settings() -> void:

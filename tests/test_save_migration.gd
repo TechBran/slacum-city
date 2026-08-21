@@ -337,12 +337,12 @@ static func _sha256_of(text: String) -> String:
 	return ctx.finish().hex_encode()
 
 
-func test_the_city_section_is_on_rung_five() -> void:
+func test_the_city_section_is_on_rung_six() -> void:
 	# The constant, the published accessor and the bytes on disk must agree.
 	# A bump that lands in only two of the three is how a save silently keeps
 	# claiming to be something it is not.
-	assert_eq(CitySim.SAVE_SECTION_VERSION, 5,
-			"the upgrade-timing epoch is rung 5 (doc 08 §2.8, report 98 RR-38)")
+	assert_eq(CitySim.SAVE_SECTION_VERSION, 6,
+			"the difficulty epoch is rung 6 (doc 08 §2.8, doc 91 A91-D-19)")
 	var sim := CitySim.boot_from_files(4242)
 	assert_eq(sim.save_section_version(), CitySim.SAVE_SECTION_VERSION)
 	var service := _fresh_service()
@@ -417,10 +417,13 @@ func test_the_city_section_ladder_is_total_and_additive_only() -> void:
 	#
 	# **ADDITIVE-FIRST**: v1 → v2 marks a rules epoch and is the identity; v2 → v3
 	# (Wave 9, doc 09 §2.14.4) adds **exactly one** key, `goals`, and touches
-	# nothing else; v3 → v4 (the routing/cadence epoch) and v4 → v5 (the
-	# upgrade-timing epoch) are rules rungs and identities again. A migrator that
-	# quietly "fixed" something here would be rewriting the player's city on
-	# load, and no rung on this ladder does.
+	# nothing else; v3 → v4 (the routing/cadence epoch), v4 → v5 (the
+	# upgrade-timing epoch) and v5 → v6 (the difficulty epoch) are rules rungs and
+	# identities again. v6 in particular adds no TOP-LEVEL key at all: the preset
+	# it names already lives in the `director` section, and a body with no
+	# director section is a fragment rather than a city. A migrator that quietly
+	# "fixed" something here would be rewriting the player's city on load, and no
+	# rung on this ladder does.
 	var sim := CitySim.boot_from_files(4242)
 	sim.advance_hours(1.0)
 	var body := sim.canonical_capture()
@@ -460,7 +463,14 @@ func test_the_city_section_ladder_is_total_and_additive_only() -> void:
 	# assertion that would catch a v4 → v5 (or later) rung that quietly started
 	# inventing a key: the goals marker is the ONLY thing this ladder may add.
 	assert_eq(sim.migrate_save_section({"a": 1}, 4).keys().size(), 1,
-			"v4 → v5 is the identity: the upgrade-timing epoch adds no key")
+			"v4 → v5 → v6 are identities: neither epoch adds a top-level key")
+	# The one thing v6 DOES write, and where: inside a director section that
+	# exists but does not name its preset.
+	var unnamed := sim.migrate_save_section({"director": {"tp_pool": 3.0}}, 5)
+	assert_eq(unnamed.keys().size(), 1, "still no new top-level key")
+	assert_eq(String((unnamed["director"] as Dictionary)["difficulty"]),
+			Difficulty.DEFAULT_PRESET,
+			"v5 → v6 names the preset the body was actually played on")
 	assert_eq(int(sim.migrate_save_section({"a": 1}, 7).get("a", 0)), 1,
 			"a body from the future is not mangled on the way past")
 	# And a body restored through the migrator is the body itself.

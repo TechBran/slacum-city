@@ -28,8 +28,15 @@ const HOURS_PER_DAY := 24
 
 ## One run of one strategy, online, on the coarse step. Returns the same
 ## document shape `Playtest.Runner.run_one` does, minus the file write.
-static func run(strategy_id: String, seed_value: int, days: int) -> Dictionary:
-	var sim := CitySim.boot_from_files(seed_value)
+##
+## `preset` is doc 03 §2.9's difficulty. It defaults to `standard`, which is what
+## every gate and every doc 92 table before §29 is measured on — a run that took
+## a different preset would be measuring a different game, so the argument is
+## explicit at every call site that uses one (`tests/balance_matrix.gd
+## difficulty=…`, gate 29).
+static func run(strategy_id: String, seed_value: int, days: int,
+		preset: String = Difficulty.DEFAULT_PRESET) -> Dictionary:
+	var sim := CitySim.boot_from_files(seed_value, preset)
 	var strategy := Playtest.Factory.make(strategy_id)
 	var api := Playtest.Api.new(sim)
 	var samples: Array[Dictionary] = []
@@ -53,7 +60,8 @@ static func run(strategy_id: String, seed_value: int, days: int) -> Dictionary:
 	opts.mode = "coarse"
 	opts.write_json = false
 	return {
-		"run": {"strategy": strategy_id, "seed": seed_value, "days": days},
+		"run": {"strategy": strategy_id, "seed": seed_value, "days": days,
+				"difficulty": sim.difficulty_preset()},
 		"samples": samples,
 		## The per-command action log, same shape `tools/playtest.gd` writes into
 		## its JSON. Gates that need a REASON CODE and the game-hour it landed on

@@ -421,7 +421,8 @@ func debit(_amount: int, _reason: String) -> bool:
 	return true
 
 
-## data/difficulty.json `escalation` row, owned/loaded by doc 03 (C-17).
+## data/difficulty.json `escalation` row, owned/loaded by doc 03 (C-17). The base
+## world answers with the nominal pair; `CityIncidentWorld` reads the live row.
 func difficulty_escalation_mult() -> float:
 	return 1.0
 

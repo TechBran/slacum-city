@@ -328,7 +328,7 @@ func test_new_city_confirms_and_carries_the_slot_it_preserved() -> void:
 	root.title_screen.bind_service(SlotStub.new({0: _meta(12, 184291, 8420000, 1755500000)}))
 	root.present_title()
 	var seen: Array[int] = []
-	root.title_new_game.connect(func(slot: int) -> void: seen.append(slot))
+	root.title_new_game.connect(func(slot: int, _d: String) -> void: seen.append(slot))
 
 	root.title_screen.action_button(TitleModel.ACTION_NEW_GAME).pressed.emit()
 	assert_true(root.title_screen.confirm_visible(), "a save exists, so it asks")
@@ -355,10 +355,16 @@ func test_a_first_launch_starts_without_a_question() -> void:
 	root.title_screen.bind_service(SlotStub.new())
 	root.present_title()
 	var seen: Array[int] = []
-	root.title_new_game.connect(func(slot: int) -> void: seen.append(slot))
+	var presets: PackedStringArray = []
+	root.title_new_game.connect(func(slot: int, preset: String) -> void:
+		seen.append(slot)
+		presets.append(preset))
 	root.title_screen.action_button(TitleModel.ACTION_NEW_GAME).pressed.emit()
 	assert_false(root.title_screen.confirm_visible(), "nothing to lose, nothing to ask")
 	assert_eq(str(seen), "[-1]")
+	# …and it still carries a preset, which is the whole reason the chip is on the
+	# door rather than inside the confirmation nobody sees on a first launch.
+	assert_eq(str(presets), '["standard"]')
 	_unmount(root)
 
 
@@ -407,6 +413,75 @@ func test_starting_a_new_city_forgets_the_tutorial() -> void:
 	root.title_screen.action_button(TitleModel.ACTION_NEW_GAME).pressed.emit()
 	assert_true(root.start_onboarding({"tutorial_lot_a": Vector2i(43, 40)}),
 			"the reset behind NEW CITY makes the tutorial startable again")
+	_unmount(root)
+
+
+# ===========================================================================
+# Difficulty (doc 03 §2.9, doc 93 §K1)
+# ===========================================================================
+
+func test_the_door_offers_the_four_authored_presets_and_nothing_else() -> void:
+	var model := _model(SlotStub.new())
+	# The list is doc 03's file, not a copy in data/ui.json — one list, one
+	# loader (C-17). Order is the file's: casual first, crisis last.
+	assert_eq(str(model.difficulty_options()),
+			'["casual", "standard", "hard", "crisis"]')
+	assert_eq(model.difficulty(), Difficulty.DEFAULT_PRESET,
+			"the door opens on the preset every doc 92 number is measured against")
+	assert_false(model.set_difficulty("nightmare"), "an unknown preset is refused")
+	assert_eq(model.difficulty(), Difficulty.DEFAULT_PRESET)
+	assert_true(model.set_difficulty("hard"))
+	assert_eq(int(model.new_game_plan()["difficulty"] == "hard"), 1)
+	assert_eq(str(model.confirm_new_game(false)["difficulty"]), "hard",
+			"the answer the shell founds with carries it")
+
+
+func test_one_tap_walks_the_presets_and_wraps() -> void:
+	var model := _model(SlotStub.new())
+	var walked: PackedStringArray = []
+	for i in 5:
+		walked.append(model.cycle_difficulty())
+	assert_eq(str(walked), '["hard", "crisis", "casual", "standard", "hard"]',
+			"four options on one 48 dp target, wrapping (doc 12 A3)")
+
+
+func test_every_preset_has_a_word_and_the_permanence_is_in_words() -> void:
+	var model := _model(SlotStub.new())
+	for preset: String in model.difficulty_options():
+		var word := model.difficulty_text(preset)
+		assert_ne(word, "ui_title_difficulty_%s" % preset,
+				"data/strings.en.json names %s" % preset)
+		assert_false(word.contains("{"), word)
+	var row := model.difficulty_row()
+	assert_true(str(row["label"]).contains(model.difficulty_text(model.difficulty())),
+			str(row["label"]))
+	assert_false(str(row["label"]).contains("{"))
+	# Doc 93 §K1: there is no way back, so the door says so rather than letting a
+	# player find out thirty game-days later.
+	assert_ne(str(row["hint"]), "ui_title_difficulty_hint")
+	assert_ne(str(row["hint"]), "")
+
+
+func test_the_chip_founds_the_city_the_shell_is_asked_for() -> void:
+	var root := _mount()
+	root.title_screen.bind_service(SlotStub.new({0: _meta(12, 184291, 8420000, 1755500000)}))
+	root.present_title()
+	var presets: PackedStringArray = []
+	root.title_new_game.connect(func(_slot: int, preset: String) -> void:
+		presets.append(preset))
+	# Two taps: standard -> hard -> crisis.
+	root.title_screen.action_button(TitleModel.ACTION_DIFFICULTY).pressed.emit()
+	root.title_screen.action_button(TitleModel.ACTION_DIFFICULTY).pressed.emit()
+	assert_eq(root.title_screen.model.difficulty(), "crisis")
+	root.title_screen.action_button(TitleModel.ACTION_NEW_GAME).pressed.emit()
+	assert_true(root.title_screen.confirm_visible())
+	# The confirmation reads the choice back before it becomes permanent.
+	assert_true(root.title_screen.model.new_game_plan()["prompt"]
+			.contains(root.title_screen.model.difficulty_text("crisis")))
+	root.title_screen.confirm_button(&"start").pressed.emit()
+	assert_eq(str(presets), '["crisis"]')
+	# …and S9 now reports what the city about to be founded is.
+	assert_eq(root.settings_sheet.model.city_difficulty(), "crisis")
 	_unmount(root)
 
 
@@ -552,7 +627,8 @@ func test_every_door_names_itself_and_clears_the_touch_floor() -> void:
 					"S0 at %d %% text, confirm=%s" % [int(scale * 100.0), confirming])
 			var touch := float(ThemeBuilder.touch_min_dp(root.config, scale, scale > 1.0))
 			for action: StringName in [TitleModel.ACTION_CONTINUE,
-					TitleModel.ACTION_NEW_GAME, TitleModel.ACTION_SETTINGS]:
+					TitleModel.ACTION_NEW_GAME, TitleModel.ACTION_SETTINGS,
+					TitleModel.ACTION_DIFFICULTY]:
 				var button := root.title_screen.action_button(action)
 				assert_ne(button, null, String(action))
 				var wanted := button.get_combined_minimum_size()

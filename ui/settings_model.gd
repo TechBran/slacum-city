@@ -41,6 +41,9 @@ var _settings: Dictionary = {}
 var _defaults: Dictionary = {}
 var _rows: Array = []
 var _values: Dictionary = {}
+## Doc 03 §2.9's preset, as REPORTED by the shell. Empty until a city is bound —
+## S9 can be opened over the title door, where there is no city to report on.
+var _city_difficulty: String = ""
 
 
 func _init(cfg: UIConfig = null) -> void:
@@ -355,6 +358,45 @@ func about_rows() -> Array[Dictionary]:
 			"text": _t_args("ui_settings_about_engine",
 					{"engine": str(engine_version.get("string", ""))})},
 	]
+
+
+## ---------------------------------------------------------------------------
+## The city block — read-only, and read-only is the whole point
+## ---------------------------------------------------------------------------
+##
+## Doc 03 §2.9's difficulty is chosen when a city is FOUNDED and kept for life
+## (doc 93 §K1). That makes it the one thing on this screen that is a property of
+## the CITY rather than a preference of the app, so it has no `key`, no row in
+## `data/ui.json.settings.rows`, no default and no `set_value` path: it is
+## reported by the shell and rendered as a sentence, beside About.
+##
+## §2.9's own text once allowed raising difficulty at any time and lowering it
+## with an `assisted` flag. That is ruled out in doc 93 §K1 and the reasons are
+## there; what matters here is that a screen with a control the sim refuses would
+## be a lie, and a screen with no mention at all would leave a player unable to
+## find out what they are playing. A sentence is the honest third answer.
+
+## Called by `UIRoot.set_city_difficulty` with `CitySim.difficulty_preset()`.
+func set_city_difficulty(preset: String) -> void:
+	_city_difficulty = preset
+
+
+func city_difficulty() -> String:
+	return _city_difficulty
+
+
+## Zero rows until a city is bound, one row after — the same shape `about_rows()`
+## returns, so `SettingsSheet` renders both with one loop.
+func city_rows() -> Array[Dictionary]:
+	if _city_difficulty == "":
+		return [] as Array[Dictionary]
+	var word := _t("ui_title_difficulty_%s" % _city_difficulty)
+	return [{
+		"label_key": "ui_settings_city_difficulty",
+		"args": {"value": word},
+		"value_text": word,
+		"text": _t_args("ui_settings_city_difficulty", {"value": word}),
+	}]
 
 
 func device_scoped_keys() -> Array:

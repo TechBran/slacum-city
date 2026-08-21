@@ -171,8 +171,9 @@ func debug_set_tp(value: float) -> void:
 
 
 ## Doc 03 owns `data/difficulty.json`; this is the one write path for its
-## `pressure` section (C-17). Until doc 03 ships it, the read falls back to the
-## read-only mirror in `data/director.json`.
+## `pressure` section (C-17), and since that file shipped it is the ONLY path —
+## `CitySim` calls it at boot, at founding and after every load. With nothing
+## set, `knob()` reads the nominal row, which is `standard` by construction.
 func set_pressure_knobs(knobs: Dictionary) -> void:
 	_pressure_knobs = knobs.duplicate()
 
@@ -189,13 +190,13 @@ func set_difficulty(preset: String) -> void:
 func knob(key: String) -> float:
 	if _pressure_knobs.has(key):
 		return float(_pressure_knobs[key])
-	return float(tables.difficulty_fallback(difficulty).get(key, 1.0))
+	return float(tables.nominal_pressure().get(key, 1.0))
 
 
 func soft_suppression_enabled() -> bool:
 	if _pressure_knobs.has("soft_suppression"):
 		return bool(_pressure_knobs["soft_suppression"])
-	return bool(tables.difficulty_fallback(difficulty).get("soft_suppression", true))
+	return bool(tables.nominal_pressure().get("soft_suppression", true))
 
 
 # ------------------------------------------------------------ derived scores
