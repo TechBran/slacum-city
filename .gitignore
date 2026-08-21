@@ -31,7 +31,11 @@ android/build/libs/
 # The plugin AAR is built from the Kotlin sources next to it; committing it
 # would let a stale binary outlive an edited source. tools/setup_android.sh
 # builds it.
-android/plugins/slacum_native.aar
+# android/plugins/slacum_native.aar — TRACKED since 2026-08-21: this 34 KB
+# artifact is load-bearing (the exporter packages it verbatim) and ignoring
+# it let every export from 08-19 to 08-21 silently ship a stale plugin with
+# no launch_args (third Fold session's root cause). `tools/build_native_plugin.sh`
+# regenerates it; `tests/test_release_plumbing.gd` pins the symbol.
 android/plugins/slacum_native/build/
 android/plugins/slacum_native/.gradle/
 android/plugins/slacum_native/local.properties
