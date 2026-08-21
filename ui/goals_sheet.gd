@@ -50,6 +50,11 @@ var _close: Button
 var _body: VBoxContainer
 
 var _level_badge: Label
+## "You are Level 2 — completing these reaches Level 3." The one line that
+## keeps the badge honest: the badge names the TARGET level, and a playtest
+## (2026-08-21) showed a player reading it as the level they HELD, then filing
+## the build sheet's correct Level-3 gate as a bug.
+var _level_standing: Label
 var _level_name: Label
 var _level_intent: Label
 var _level_teaches: Label
@@ -151,6 +156,9 @@ func _build_level_card() -> Container:
 	head.add_theme_constant_override(&"separation", int(_spacing))
 	_level_badge = UIWidgets.label("Badge", "", &"Wordmark")
 	head.add_child(_level_badge)
+	_level_standing = UIWidgets.label("Standing", "", &"Caption")
+	_level_standing.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	head.add_child(_level_standing)
 	_level_name = UIWidgets.label("Name", "", &"SeverityBadge")
 	_level_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_level_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -281,6 +289,16 @@ func refresh() -> void:
 			{"level": int(view["level"])}, "L%d" % int(view["level"])) if not complete \
 			else UIWidgets.t(config, "ui_goals_complete_badge", "✦")
 	_level_name.text = str(view["title"])
+	var standing_city := int(view.get("city_level", 0))
+	var standing_target := int(view["level"])
+	if complete or standing_city == standing_target:
+		_level_standing.visible = false
+	else:
+		_level_standing.visible = true
+		_level_standing.text = UIWidgets.t_args(config,
+				"ui_goals_standing_below" if standing_city < standing_target
+				else "ui_goals_standing_above",
+				{"city": standing_city, "level": standing_target})
 	_level_intent.text = str(view["intent"])
 	_level_teaches.text = str(view["teaches"])
 	_level_teaches.visible = _level_teaches.text != ""

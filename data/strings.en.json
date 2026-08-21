@@ -380,6 +380,8 @@
 	"ui_goal_l6_tower_one": "Take {target} building all the way to level 6",
 	"ui_goals_backstop": "Or grow to {target} residents — the level arrives either way.",
 	"ui_goals_chip": "Level and goals",
+	"ui_goals_standing_below": "You are Level {city} — completing these goals reaches Level {level}.",
+	"ui_goals_standing_above": "Your city is already Level {city}; this is the Level {level} curriculum.",
 	"ui_goals_close": "Close goals",
 	"ui_goals_complete_badge": "✦",
 	"ui_goals_complete_body": "You have built housing, power, shops, a budget, a response and your own water. Now keep it alive.",

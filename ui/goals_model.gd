@@ -57,10 +57,16 @@ func chip_view() -> Dictionary:
 	var level: int = sim.goals.active_level()
 	if level == GoalSystem.LEVEL_COMPLETE:
 		return {"visible": false, "text": "", "level": 0, "label": _t("ui_goals_title")}
+	# The chip names BOTH levels — the one the city HOLDS and the one the goals
+	# reach — because "L3 · 1/4" alone taught a level-2 player they were level 3
+	# and the build sheet then looked broken when it asked for 3 (playtest,
+	# 2026-08-21). `city→target` is the transition the card actually sells.
+	var city_level: int = sim.progression.city_level
 	return {
 		"visible": true,
-		"text": "L%d %s %s" % [level, SEPARATOR, sim.goals.chip_text()],
+		"text": "L%d→%d %s %s" % [city_level, level, SEPARATOR, sim.goals.chip_text()],
 		"level": level,
+		"city_level": city_level,
 		"label": _t("ui_goals_chip"),
 	}
 

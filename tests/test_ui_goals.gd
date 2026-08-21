@@ -57,8 +57,11 @@ func test_the_chip_reads_the_level_and_the_fraction() -> void:
 	var chip := model.chip_view()
 	assert_true(bool(chip["visible"]), "a fresh city has a curriculum to show")
 	assert_eq(int(chip["level"]), 1)
-	assert_true(str(chip["text"]).begins_with("L1"),
-			"the chip leads with the level: %s" % chip["text"])
+	# `L{city}->{target}`: the chip names BOTH levels since the 2026-08-21
+	# playtest, where "L3" alone taught a level-2 player they were level 3.
+	assert_true(str(chip["text"]).begins_with("L0→1"),
+			"the chip leads with city→target: %s" % chip["text"])
+	assert_eq(int(chip["city_level"]), 0)
 	assert_true(str(chip["text"]).ends_with("0/3"),
 			"and ends with the fraction: %s" % chip["text"])
 
@@ -278,7 +281,7 @@ func test_the_goal_chip_renders_its_level_and_retires_with_the_curriculum() -> v
 	root.refresh_goals()
 	var button := hud.chip_button(HudModel.CHIP_GOALS)
 	assert_ne(button, null, "the chip is on the bar")
-	assert_true(button.text.contains("L1"), "and reads its level: %s" % button.text)
+	assert_true(button.text.contains("L0→1"), "and reads city→target: %s" % button.text)
 	_finish(mounted["sim"] as CitySim, GoalSystem.top_level())
 	root.refresh_goals()
 	assert_eq(hud.chip_button(HudModel.CHIP_GOALS), null,
