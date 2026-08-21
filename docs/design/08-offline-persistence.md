@@ -233,6 +233,28 @@ A crash anywhere before step 6 leaves the previous save active plus one orphan, 
 
 > **Settled by report C-25.** `section_version` inside every section; `schema_version` only on the envelope. Docs 01, 02, 04, 09, 10 and 12 apply the one-word rename in their own §3.2; docs 05, 08 and 13 already comply. This doc's sections (§3.2) use `section_version` throughout and always have.
 
+> ### RULED 2026-08-21 — a SECTION rung is sufficient; `city` is a section like any other (report 98 RR-70, doc 93 §O2)
+>
+> **The question, which has now been asked three times.** When `water.section_version` went 2 → 3 and `roads.section_version` 2 → 3 (RR-60 / RR-60b) the bytes on disk changed and `city.section_version` did not. Twice a wave has stopped to ask whether the city body owed a rung beside them as an *epoch marker*, and twice the answer has been written in a note under one shipment, where the next wave does not find it. It is written here instead, because this is the section that owns the counters.
+>
+> **The ruling.** **No.** A section rung is sufficient when the body's shape holds. Three counters, three triggers, and no counter may be forced by a change it does not own:
+>
+> | counter | MOVES when | does NOT move when |
+> |---|---|---|
+> | envelope `schema_version` | the section **registry** changes — a section appears, disappears, splits, is renamed, or a top-level key moves *between* sections | any section changes its own contents |
+> | `<section>.section_version` | that section's own **shape** changes, or the **rules under which that section's own state is advanced** change | a sibling section takes a rung |
+> | `city.section_version` | the same two triggers for the `city` section — **plus** a rules change no single section owns (scheduler, phase order, or a cross-section association) | `water`, `roads` or any other section takes a rung of its own |
+>
+> **This is the second bullet above, applied.** *"Adding a field to `power` bumps `power.section_version`, not the envelope"* — and, for exactly the same reason, not `city`'s either. A per-section ladder that a sibling can force is not independent, and independence is the whole reason §2.8 gave every section one.
+>
+> **The v1 → v2 argument does not say otherwise; it says this.** That note is the strongest statement in the project that a version records *rules* and not only *shape*: "a save is a promise about what the binary that wrote it would do next", and "`section_version` is the only field a future migrator can key on to know which set of rules a body was last advanced under". The field it names is the **changed section's**. When water's rules move, `water.section_version` is that key, and a `city` rung beside it would be a second record of one fact — the scattering C-17 exists to stop.
+>
+> **The test, so this is checkable and not a preference.** *Does an old body still mean what it meant?* A v6 city body written by the pre-RR-60 binary restores under the post-RR-60 binary to **exactly** the city it restored to before: the two new keys are simply absent and both loaders fall back to the behaviour they always had. Where that holds and the only thing that moved is inside a section that took its own rung, `city.section_version` stays put. `tests/test_save_migration.gd` and `tests/test_save_determinism_days.gd` are the gates.
+>
+> **What this forbids: the pure epoch marker.** A `_v6_to_v7` identity migrator with nothing in the body it is about is a rung that describes rules the city section did not have — the same fault the Wave-9 correction below calls out ("a ladder that describes rules the binary did not have is worse than no ladder"), at the same price: every future migrator walks a rung that answers nothing. A rung is taken because a body needs it, never to date-stamp a wave.
+>
+> **Where the marker belongs instead.** In this section, as one of the dated shipment notes below — which is what the RR-60 rungs already have. The record of *when* is prose; the counter is a contract.
+
 **Ladder.** Pure `Dictionary -> Dictionary` functions registered by source version. They never import sim classes, so a migration written today still works after those classes are rewritten:
 
 ```gdscript
@@ -481,6 +503,10 @@ static func _v3_to_v4(b: Dictionary) -> Dictionary:
 > sampler are none of them re-derivable from the body, and every one of them was
 > being re-derived. Additive, documented in their own doc's §3.2, and
 > `city.section_version` stays at **6**.
+>
+> **That last part is now a RULE and not a decision taken once** — see §2.8's
+> ruled block above (2026-08-21, report 98 RR-70, doc 93 §O2). What follows is
+> the reasoning it was generalised from; the rule is the thing to quote.
 >
 > That last part is the decision worth writing down. §2.8's rule is that a rung
 > records a change of shape *or of rules*, and here neither moved at CITY level:

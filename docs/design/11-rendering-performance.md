@@ -1455,6 +1455,14 @@ need only **an unlocked phone and a build from this branch** — the harness
 faults in front of them are fixed and `tools/run_matrix.sh` runs the whole list
 in one command, refusing to start if the phone is locked.
 
+> **Superseded by the third session, 2026-08-21 — this list is FIVE items and the
+> live one is FOUR.** `PERFIO` is done: the session below took both rows.
+> The other four stand, and the sentence about what they need is now true where
+> it was aspirational, because the AAR that swallowed every launch argument has
+> been rebuilt and `tools/run_matrix.sh build_check` refuses a build that cannot
+> receive one. Read the "Still open, and now genuinely unblocked" list at the end
+> of the third session, not this one. *(Marker sweep, doc 91 §20.5.)*
+
 ##### The 2026-08-21 third session — a settled baseline, both `PERFIO` rows, and why the matrix is *still* open
 
 **The phone was unlocked, awake and in hand, the D-20 branch was installed, and

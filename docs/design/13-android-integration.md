@@ -1558,19 +1558,43 @@ Console keeps the pixels.
 
 ### 11.10 Still open after this commit
 
-* **Nothing consumes the thermal ladder** (§2.8) — `AndroidLifecycle` forwards
-  the status and no policy acts on it. Unchanged by this commit, still doc 11's.
-* **On-device verification** (§7's D-01…D-16) has not been run: this commit was
-  built and tested off-device by instruction. The alarm path in particular has
-  never fired on real hardware; `dumpsys alarm | grep slacumcity` after a pause is
-  the first thing to check on the Fold.
-* **`consume_launch_payload()` has no consumer.** The plugin captures a tap's
-  deeplink and emits `notification_opened`, and nothing in `game/main.gd` routes
-  it to the incident drawer or the overlay yet. That is a shell wiring change of
-  a few lines, and it is the difference between a notification that opens the
-  game and one that opens the *thing the notification was about*.
+> **RE-SWEPT 2026-08-21 (doc 91 §20.5's marker sweep).** Three Fold sessions have
+> run since this list was written and it had never been re-read against them.
+> Two bullets close, one halves, two stand. Each is marked in place; the original
+> wording is kept struck rather than deleted, because the list's value is that it
+> was right about what would be hard.
+
+* ~~**Nothing consumes the thermal ladder** (§2.8) — `AndroidLifecycle` forwards
+  the status and no policy acts on it. Unchanged by this commit, still doc 11's.~~
+  **CLOSED 2026-08-20 (Fold session 1).** `game/render/perf_governor.gd` consumes
+  it, and it was watched doing so on hardware: the `PERF` line reported
+  `thermal=0` then `thermal=1` (NONE → LIGHT) pushed through
+  `AndroidNative.thermal_status_changed`, and the governor stepped `knob` 0 → 4 in
+  the foreground. **What is still unproven is the heat half**, and that is §2.8's
+  row, not this bullet's: the Fold sat at 45.7–49.6 °C and was *cooling*, so no
+  thermal step-DOWN was ever exercised, and battery (D-07) was never measured.
+* **On-device verification** (§7's D-01…D-16) is **partly run, and the alarm path
+  still has not fired.** Three sessions: 2026-08-20 (governor and `PERF` on
+  device), 2026-08-21 (the plugin registers; the AAR staleness found), and the
+  matrix session that established the transport. ~~this commit was built and
+  tested off-device by instruction~~ — that premise is retired. What has *not*
+  happened is unchanged and is the one this bullet was written for:
+  **`dumpsys alarm | grep slacumcity` after a pause has never been read**, and
+  no notification has ever been posted by this app on real hardware. Blocked
+  behind the permission gap in the row below.
+* **`consume_launch_payload()` has no consumer — HALF CLOSED 2026-08-21.** The
+  *warm* path is wired: `game/main.gd:129` connects
+  `android_lifecycle.native.notification_opened` and `main.gd:1473`'s
+  `_on_notification_opened(payload)` routes all four payload forms
+  (`overlay/…` → the overlay rail, `incident/…` → the drawer, `building/…` →
+  `camera_state.focus_on`, `report` → S11). **The cold-start path is not:**
+  `AndroidNative.consume_launch_payload()` (`game/android_native.gd:304`) has no
+  caller anywhere outside the plugin, so a tap that *launches* the app lands on
+  the city rather than on the thing the notification was about. Same few lines as
+  before, now on a smaller surface — one call at the end of boot.
 * **`targetSdk` is 36, not §2.0/§2.12's 37**, for the reason §10.2 records: the
-  template pins `compileSdk 36`. Unchanged.
+  template pins `compileSdk 36`. Unchanged — and now **confirmed on the installed
+  artefact** rather than on the preset (Fold session 1, `dumpsys package`).
 * **The pause pass now posts in-session events, and that is a policy question.**
   `NotificationRouter.plan_for_background()` flushes the queued in-session
   candidates before it plans the offline future — doc 08 §2.13's shipped
