@@ -159,6 +159,51 @@ func test_it_paints_the_blocks_ROAD_tiles_and_not_the_block() -> void:
 	view.free()
 
 
+func test_floodable_cell_keys_names_every_block_that_has_road_under_it() -> void:
+	# `floodable_cell_keys()` exists for the shell's `--flood=<mm>` lever (doc 11
+	# §2.13, the 2026-08-21 device session): it needs the key set to fill, and
+	# asking the layer beats re-deriving doc 07's block arithmetic in the caller.
+	# The contract is the one `rebuild` establishes — a block appears iff the grid
+	# has ROAD in it, which is the same rule `_tiles_for` paints by.
+	#
+	# It is deliberately NOT the existing `cell_keys()`, and this test pins the
+	# difference: that one lists cells the view is TRACKING, which on a dry city
+	# is empty, and a lever built on it would flood nothing at all.
+	var view := _view()
+	view.rebuild(_grid())
+	var keys := view.floodable_cell_keys()
+	assert_true(keys.has("B0,0"), "the block the fixture's roads run through")
+	assert_false(keys.has("B3,3"), "a block with no road is not a flood cell")
+	for key: Variant in keys:
+		assert_true(String(key).begins_with("B"),
+				"rebuild registers BLOCK keys, not bare tile keys")
+	assert_eq(view.cell_keys(), [],
+			"a dry city TRACKS no cells — which is why the lever cannot use "
+			+ "cell_keys() and this second accessor has to exist")
+	view.free()
+
+
+func test_flooding_every_cell_by_key_wets_the_streets_and_nothing_else() -> void:
+	# The `--flood=<mm>` lever end to end, through the public API the shell uses:
+	# read the keys, prime them all, snap. It must wet every road tile in the
+	# fixture and no other: B0,0's 31 (the test above counts them) plus B1,0's
+	# 16, because the horizontal run continues to x=31 and crosses the block
+	# boundary at x=16. The lever cannot put water anywhere a real flood would
+	# not — it only says "every cell at once".
+	var view := _view()
+	view.rebuild(_grid())
+	var depths := {}
+	for key: Variant in view.floodable_cell_keys():
+		depths[String(key)] = 350.0
+	view.prime(depths)
+	view.snap()
+	assert_eq(view.drawn_tiles(), 47,
+			"31 road tiles in B0,0 + 16 in B1,0, and no building tile")
+	assert_almost_eq(view.target01_of("B0,0"), 1.0, 1e-6,
+			"350 mm is doc 07's full depth, so the cell reads fully wet")
+	view.free()
+
+
 func test_a_cell_with_no_roads_yet_tracks_its_level_and_draws_nothing() -> void:
 	var view := _view()
 	view.rebuild(_grid())

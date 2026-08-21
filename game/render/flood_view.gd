@@ -297,6 +297,21 @@ func apply_event(e: Dictionary) -> bool:
 	return true
 
 
+## Every block the layer COULD paint — the keys `rebuild` found road inside.
+##
+## Deliberately not `cell_keys()`, which is a different set and already exists:
+## that one lists the cells the view is currently TRACKING (`_cells`, populated
+## as depths arrive), and at boot on a dry city it is empty. This one is the
+## static capability — what a flood could ever wet — which is what the shell's
+## `--flood=<mm>` lever needs to fill. Public for the same reason
+## `set_cell_depth` is: the dev levers drive the view this way, and asking the
+## layer beats a caller re-deriving doc 07's block arithmetic.
+func floodable_cell_keys() -> Array:
+	var keys := _tiles_of_cell.keys()
+	keys.sort()
+	return keys
+
+
 ## Re-derive the whole field from doc 07's persisted state: `cell key ->
 ## depth_mm`, i.e. `WeatherSystem.flood.depth_mm` verbatim. The load path, the
 ## attach path, and the only path that does not need an event to have happened.

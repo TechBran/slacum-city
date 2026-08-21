@@ -217,14 +217,34 @@ launch() {
   local csv="--,${args// /,}"
   run "${ADB[@]}" shell am force-stop "$PACKAGE"
   if [[ $DRY_RUN -eq 1 ]]; then
-    # Printed quoted, so a session can copy the line straight out of a --dry-run
-    # into a terminal and have it mean the same thing.
-    printf '  $ %s shell am start -n %s/%s --esa command_line_params "%s" --es args "%s"\n' \
-        "${ADB[*]}" "$PACKAGE" "$ACTIVITY" "$csv" "$args"
+    # Printed as ONE remote-shell string, because that is the only form that
+    # survives `adb shell`'s argv-joining (see `remote_start_cmd`). A session
+    # copying this line out of a --dry-run gets the command that works, not the
+    # one the runbook used to document.
+    printf '  $ %s shell "%s"\n' "${ADB[*]}" "$(remote_start_cmd '' "$csv" "$args")"
   else
-    "${ADB[@]}" shell am start -n "$PACKAGE/$ACTIVITY" \
-        --esa command_line_params "$csv" --es args "$args"
+    "${ADB[@]}" shell "$(remote_start_cmd '' "$csv" "$args")"
   fi
+}
+
+## `adb shell` does NOT preserve local argv boundaries: it joins everything after
+## `shell` with single spaces and hands the result to the device's `sh -c`. So a
+## value containing a space — which `--es args "--resume --zoom=1.0"` is, by
+## construction — arrives at `am` as THREE tokens, and `am` dies with
+##
+##     IllegalArgumentException: Unknown option: --zoom=1.0
+##
+## before the app is ever launched. FOUND ON FIRST DEVICE CONTACT, 2026-08-21:
+## the whole `--es args` half of the "send both forms" insurance had never
+## reached a device, and the `--esa` half only survived because its CSV has no
+## spaces in it. The fix is to quote for the REMOTE shell, which means composing
+## the command as one string here. Dev args are flags and never contain a single
+## quote; the `'\''` escape keeps that from being an assumption.
+remote_start_cmd() {
+  local wait_flag="$1" csv="$2" args="$3"
+  local q_csv="${csv//\'/\'\\\'\'}" q_args="${args//\'/\'\\\'\'}"
+  printf "am start %s-n '%s/%s' --esa command_line_params '%s' --es args '%s'" \
+      "${wait_flag:+$wait_flag }" "$PACKAGE" "$ACTIVITY" "$q_csv" "$q_args"
 }
 
 # ---------------------------------------------------------------------------
@@ -360,16 +380,28 @@ self_test() {
   local launched
   launched="$(launch "--resume --zoom=1.0" | tr -s ' ')"
   case "$launched" in
-    *'--esa command_line_params "--,--resume,--zoom=1.0"'*) printf '  ok    --esa carries the leading -- separator\n' ;;
+    *"--esa command_line_params '--,--resume,--zoom=1.0'"*) printf '  ok    --esa carries the leading -- separator\n' ;;
     *) printf '  FAIL  --esa form: %s\n' "$launched"; fails=$((fails + 1)) ;;
   esac
   case "$launched" in
-    *'--es args "--resume --zoom=1.0"'*) printf '  ok    --es args carries the plain form\n' ;;
+    *"--es args '--resume --zoom=1.0'"*) printf '  ok    --es args carries the plain form\n' ;;
     *) printf '  FAIL  --es args form: %s\n' "$launched"; fails=$((fails + 1)) ;;
   esac
   case "$launched" in
     *"GodotAppLauncher"*) printf '  ok    activity default is the alias, not GodotApp\n' ;;
     *) printf '  FAIL  activity: %s\n' "$launched"; fails=$((fails + 1)) ;;
+  esac
+  # The regression that cost the 2026-08-21 session its first ten minutes: the
+  # space-bearing extra MUST be quoted for the device's shell, or `adb shell`
+  # joins argv on spaces and `am` rejects `--zoom=1.0` as an unknown option
+  # before the app launches. Assert the whole thing is one quoted remote string.
+  case "$launched" in
+    *'shell "am start '*) printf '  ok    the launch is ONE remote-shell string\n' ;;
+    *) printf '  FAIL  launch not wrapped for the remote shell: %s\n' "$launched"; fails=$((fails + 1)) ;;
+  esac
+  case "$(remote_start_cmd -W "--,--resume" "--resume --save-now")" in
+    "am start -W -n "*"--es args '--resume --save-now'") printf '  ok    Q6 -W arm quotes its args too\n' ;;
+    *) printf '  FAIL  Q6 -W arm: %s\n' "$(remote_start_cmd -W "--,--resume" "--resume --save-now")"; fails=$((fails + 1)) ;;
   esac
   DRY_RUN=0
 
@@ -662,8 +694,7 @@ question_q6() {
         printf '  $ %s shell am start -W -n %s/%s --esa command_line_params "--,%s"\n' \
             "${ADB[*]}" "$PACKAGE" "$ACTIVITY" "${args// /,}"
       else
-        "${ADB[@]}" shell am start -W -n "$PACKAGE/$ACTIVITY" \
-            --esa command_line_params "--,${args// /,}" --es args "$args" \
+        "${ADB[@]}" shell "$(remote_start_cmd -W "--,${args// /,}" "$args")" \
             | grep -E "^TotalTime" >> "$OUT_DIR/coldstart_$name.txt"
       fi
     done

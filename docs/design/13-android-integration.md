@@ -304,7 +304,7 @@ fun launch_args(): Array<String>
 - `PendingIntent` flags `FLAG_IMMUTABLE or FLAG_UPDATE_CURRENT` (mutability is explicit since API 31).
 - `AlarmReceiver : BroadcastReceiver` builds the notification with `NotificationCompat` and posts through `NotificationManagerCompat`. Tap → `PendingIntent` to `com.godot.game.GodotApp` with extra `slacum_payload`; if the process is alive the plugin emits `notification_opened`, otherwise the payload is stashed for `consume_launch_payload()`.
 - **Reboot survival.** Alarms are cleared on reboot. The plugin owns `filesDir/notif_schedule.json`, rewritten on every schedule/cancel; `BootReceiver` (`RECEIVE_BOOT_COMPLETED`) replays entries whose `at_unix_ms` is still in the future and drops the rest. `am force-stop` also cancels alarms and *cannot* be recovered from until the user launches the app — accepted and documented, not worked around.
-- The plugin ships its own `AndroidManifest.xml` declaring its receivers and its permissions, so manifest merging keeps the plugin self-contained and `export_presets.cfg` needs no `custom_permissions` entries.
+- The plugin ships its own `AndroidManifest.xml` declaring its receivers and its permissions, so manifest merging keeps the plugin self-contained and `export_presets.cfg` needs no `custom_permissions` entries. **Half of this is measured false (2026-08-21).** The receivers and the `plugin.v2` meta-data *do* merge — the installed debug APK registers the plugin, which requires the meta-data, and reports `componentsDeclared=6`. The four `<uses-permission>` elements *do not*: the same `dumpsys package` lists no requested permissions at all. Godot's exporter builds the permission list from the preset, and all three presets carry an empty `custom_permissions` with no `permissions/*=true`. **`export_presets.cfg` does need the entries**, and the permission flow (§2.7) cannot execute until it has them. Doc 91 §13 carries the evidence.
 
 **Bounded scope.** The plugin contains no game logic, no scheduling policy, and no strings — GDScript decides *what* and *when*; Kotlin only knows *how*. That keeps the untestable-headlessly surface as small as possible.
 
@@ -668,6 +668,10 @@ screen/support_small=false                        ; support_normal/large/xlarge 
 user_data_backup/allow=false
 apk_expansion/enable=false
 permissions/custom_permissions=PackedStringArray()   ; plugin manifest owns permissions
+                                                     ; ^ MEASURED FALSE 2026-08-21: it does not.
+                                                     ;   The installed APK requests NO permissions
+                                                     ;   though the plugin's receivers merged fine.
+                                                     ;   The exporter owns this list; see §2.6.
 
 [preset.1]  name="Android Play AAB"
 ;   as preset.0, but export_path="build/slacum-release.aab" and gradle_build/export_format=1
@@ -798,7 +802,7 @@ Adds: release AAB, upload keystore + Play App Signing, store listing assets, Dat
 | D-16 | Cold start | `am start -W` → `TotalTime` ≤ 4 000 ms on Tier B |
 | **D-17** | **Save and load, timed** | Three cold starts, five runs each, median `TotalTime`: **A** `--esa command_line_params "--,--title"` (no city load), **B** `"--,--resume"`, **C** `"--,--resume,--save-now"`. **`B − A` is the load, `C − B` is the save** — the difference cancels process start, Vulkan init and shader warm-up, which is what makes it work with no instrumentation in the build. Provisional (workstation, `tools/profile_save.gd`, the shipped `SaveService` path): founding city **14.4 ms save / 49.2 ms load**, 1,500-building city **138 ms / 456 ms**. Expect 2–3× on device. On a telemetry build, read `PERFIO` off logcat instead. **NOT RUN 2026-08-20 — blocked twice over:** the three arms are selected by arguments and no argument arrives (D-20), and the `PERFIO` fallback could not cover the LOAD either, because `game/main.gd` set `save_service.log_io` inside `_build_city_view()` (~line 344) while the boot load runs at ~line 133. **The flag now moves to `SaveService` construction**, so the next build times the load — which is the one number §2.9's ANR arithmetic has never had |
 | **D-18** | **Frame time and jank at the three poses, day and night** | Six runs: `--zoom=` 0.0 / 0.5 / 1.0 × hour 13 / hour 21, 60 s of `dumpsys gfxinfo … framestats` each. **Hour 13 is the shadow worst case and is the one that matters** — doc 11's whole measured record was taken at 21:00 with the sun down and an empty shadow pass, and daylight costs the benchmark city +142 draw calls at Z0. Gate: doc 11 §7.4's table, read against the DAY rows |
-| **D-19** | **Harness pre-flight** | Before D-17/D-18: confirm the launcher activity (`com.godot.game.GodotAppLauncher`), confirm `--esa command_line_params "--,--zoom=1.0"` reaches the camera (a visible signal, not a log line — D-20's fix makes this the pass/fail that unblocks the pose matrix), and confirm "Profile HWUI rendering" is OFF. `tools/device_runbook.md` §1 is the procedure and records why the incumbent `tools/bench_device.sh` invocation cannot work |
+| **D-19** | **Harness pre-flight** | Before D-17/D-18: **(0) confirm the phone is UNLOCKED** — `adb shell dumpsys window \| grep mDreamingLockscreen` — because a locked device accepts `am start`, reports success, and then stops the app in 21 ms with no GDScript run at all, which is indistinguishable from a D-20 regression (2026-08-21; runbook §1.0). **(1) quote for the REMOTE shell** — `adb shell "am start … --es args '…'"`, since `adb` joins argv on spaces and `am` rejects the split tokens before launching. **(2)** confirm the launcher activity (`com.godot.game.GodotAppLauncher`). **(3)** confirm `--zoom=1.0` reaches the camera (a visible signal, not a log line). **(4)** confirm the shell actually parses the flag the session is built around — `grep -n 'road-detail\|pad-shadows\|flood-detail' game/main.gd` — three of the 2026-08-21 questions had no lever in `game/` at all. "Profile HWUI rendering" no longer matters (D-21: `gfxinfo` sees nothing here). `tools/device_runbook.md` §1 is the procedure; `tools/run_matrix.sh` runs the whole session and refuses to start on a locked phone |
 | **D-20** | **Make `--esa command_line_params` reach the game** *(blocked D-17 and D-18)* | **FAILED 2026-08-20, FIXED the same day — re-run to confirm on device.** *The finding:* arguments do not reach `OS.get_cmdline_user_args()` on this export template — two runs at `--zoom=0.0` / `--zoom=0.5` produced byte-identical `dc`/`prim` sequences, and `--rain=1.0,--overlay=2` came up clear with no overlay. The city still loaded on every launch, through `CrashSentinel`'s recovery branch (`am force-stop` registers as an unclean exit), which is what disguised the fault. *The fix, and why it is where it is:* the extra is on the Intent — `GodotAppLauncher` is an `activity-alias` for `.GodotApp` and Android forwards extras across an alias — so the loss is inside the template's own command-line plumbing, which we do not patch (doc 13 §10.5: the patch set under `android/build/` is kept empty on purpose). **`SlacumNative.launch_args()` reads the Intent extras in Kotlin**, where they demonstrably survive, and **`game/dev_args.gd` merges that list with `OS.get_cmdline_user_args()`**, de-duplicating so a future engine fix cannot make `--advance-hours=4` count twice. Two extras are accepted: `--esa command_line_params "--,--resume,--zoom=1.0"` (Godot's own form, separator included) and `--es args "--resume --zoom=1.0"` (the one with no syntax to get wrong). Consumers read `DevArgs.user_args()`. **Verified off device:** `tests/test_dev_args.gd` (10 cases), `launch_args()` present in the exported APK's `classes.dex`, `aapt2` badging clean, debug APK 89.2 MB and signed. **The device half is the §1.2 probe: `--zoom=1.0` must visibly put the camera at the Z2 stop** |
 | **D-21** | **Replace `gfxinfo` with the `PERF` line everywhere** *(new)* | **`dumpsys gfxinfo` measures nothing on this app** — every `framestats` read returned `Total frames rendered: 0` and the `4950ms` sentinel, because Godot renders through a `SurfaceView` and never touches HWUI. Verified 2026-08-20. D-18's "60 s of `dumpsys gfxinfo … framestats`" is unrunnable as written; `adb logcat -s godot:V \| grep '^PERF'` is the replacement and carries `dc`, `prim`, `vram` and the chunk census besides |
 
@@ -821,6 +825,46 @@ com.slacumcity.game tar czf - -C /data/data/com.slacumcity.game/files saves`
 before the first launch. The generational ladder keeps three entries, and a
 dozen relaunches rotate the player's pre-session city off the device — this
 session's backup is the only surviving copy of the city as it stood at 14:00.
+
+**Run again 2026-08-21, against the D-20 build. Three further blockers, none of
+them D-20** (doc 11 §2.13, "The 2026-08-21 session"). The checklist above is
+still right and is still not sufficient; add these three, in this order.
+
+1. **`adb shell` re-splits the command — quote for the REMOTE shell.** `adb`
+   joins everything after `shell` with single spaces and hands one string to the
+   device's `sh -c`, so `--es args "--resume --zoom=1.0"` arrives at `am` as
+   three tokens and dies with `IllegalArgumentException: Unknown option:
+   --zoom=1.0` before the app launches. The `--esa` form survived only because
+   its CSV has no spaces — so **the `--es args` half of D-20's two-form
+   insurance had never once reached hardware.** Send
+   `adb shell "am start -n … --es args '…'"`, which is what
+   `bench_device.sh`'s `remote_start_cmd` now composes.
+2. **Confirm the phone is UNLOCKED before anything else** (runbook §1.0). A
+   locked device answers `adb`, accepts `am start` and reports success, but the
+   app gets `OnResume → OnPause → OnStop` in 21 ms and no GDScript ever runs —
+   which presents exactly as "D-20 has regressed" or "the telemetry is not
+   armed". `mCurrentFocus` is the field that moves; `mResumedActivity` keeps
+   naming the game behind both a lockscreen and another app.
+3. **Confirm the shell parses the flag before planning a window around it.**
+   `--road-detail`, `--pad-shadows`, `--flood-detail` and `--flood` were
+   `tools/profile_frame.gd`-only; nothing in `game/` parsed them, so three of
+   the session's five questions were undrivable *independently* of argument
+   delivery. `game/main.gd`'s `_apply_render_ab_args()` closes that and needs a
+   build.
+
+**D-20's own device half is still unconfirmed** — the probe needs a surface, and
+the phone never gave one. What *is* confirmed on device: Godot's own reader
+returns `[]` even when `--esa command_line_params` is delivered correctly
+(`GodotActivity: Launch intent … with parameters []`), so the plugin is the only
+delivery path and the `--es args` form that feeds it is the one that had to be
+quoted right.
+
+**One question closes without a surface.** The game resolves to the **stock
+vendor GPU driver** — `Adreno 0762.41`, built 2025-09-19,
+`/vendor/lib64/hw/vulkan.adreno.so`, both updatable-driver opt-in lists `null` —
+so the Qualcomm pre-release driver is not a suspect for the presentation-
+corruption bands, and "switch to the stable driver" is not an available
+mitigation because it already is stable.
 
 ### Device matrix
 
