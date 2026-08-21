@@ -2203,7 +2203,7 @@ with their owners:
   wall-clock budget, so S15's catch-up veil draws every frame instead of one.
   This is a frame-pacing win the profilers here cannot see — the same shape as
   Wave 9's proposal 2 — because the work per absence is identical and only its
-  distribution across frames changed. Doc 13 §2.9; report 98 §28 RR-73.
+  distribution across frames changed. Doc 13 §2.9; report 98 §29 RR-73.
 
 `tools/profile_save.gd` gained a `boot (cold sim)` row and a `--boot-only` mode
 so the first of those is measurable at both ends of the trade rather than only
