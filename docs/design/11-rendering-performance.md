@@ -1492,7 +1492,11 @@ separately, because averaging them is what produces a meaningless row:
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | streaming in | 2–14 | 111.3–117.9 | 8.3–13.9 | 0.2–0.5 | 5.8–7.1 | 108 | 25,774 | 187 | 9 | 4 | 34 | 0 | 0 |
 | **incremental add** | 16 | 80.0 | **36.5** | 0.5 | 6.2 | **149** | 95,186 | 197 | 9 | 4 | 81 | 0 | 0 |
-| **settled** | 18–38 | **99.5–112.4** | **10.1–15.8** | **0.3–0.4** | **6.1–6.8** | **103–107** | ~37,270 | **198** | 9 | 6 | 81 | **0** | **0** |
+| **settled** | 18–38 | **99.5–112.4** | **10.1–15.8** | **0.3–0.4** | **6.1–6.8** | **103–107** | ~37,270 | **198** | 9 | 4 → 6 | 81 | **0** | **0** |
+
+*(`near` is 4 in the `t = 18 s` sample and 6 from `t = 20 s` onward — the tier
+settles one sample after the instance count does. Ranges are the real min..max
+across the phase, not a mean ± anything.)*
 
 **Four things this says.**
 
