@@ -383,12 +383,5 @@
     "tier_k": 0.35, "speed_bonus_base": 1.5, "speed_bonus_k": 0.5,
     "speed_bonus_min": 0.60, "speed_bonus_max": 1.50
   },
-  "_difficulty_note": "Doc 06 §8: these rows are AUTHORED here and FILED in doc 03's data/difficulty.json (C-17, one difficulty file, one loader). Until doc 03 ships that file the loader reads them from here and IncidentWorld.difficulty_escalation_mult() overrides.",
-  "difficulty_escalation": {
-    "_owner": "06",
-    "casual":   { "escalation_mult": 0.75, "generation_mult": 0.80 },
-    "standard": { "escalation_mult": 1.00, "generation_mult": 1.00 },
-    "hard":     { "escalation_mult": 1.35, "generation_mult": 1.20 },
-    "crisis":   { "escalation_mult": 1.60, "generation_mult": 1.40 }
-  }
+  "_difficulty_note": "MOVED and now GONE (2026-08-20, doc 91 A91-D-19). Doc 06 §8 AUTHORS escalation_mult and generation_mult; doc 03 FILES them, in data/difficulty.json section \"escalation\", alongside OFFLINE_RESPONSE_TIME_MULT. CityIncidentWorld reads them through Difficulty (C-17, one difficulty file, one loader), and IncidentCatalog now REFUSES a file that carries a difficulty_escalation block."
 }

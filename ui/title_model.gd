@@ -55,9 +55,32 @@ extends RefCounted
 ## number formats and the `ui_saves_*` copy the save sheet already uses, so a
 ## treasury reads the same on the front door as it does in the slot list.
 
+## ---------------------------------------------------------------------------
+## THE DIFFICULTY ROW — why it lives on the door and not in a settings screen
+## ---------------------------------------------------------------------------
+##
+## Doc 03 §2.9 authors four presets; doc 93 §K1 rules that a city is FOUNDED on
+## one and keeps it for life. That makes the front door the only screen that can
+## ask: after this the answer is a property of a city, not a preference, and S9
+## shows it read-only.
+##
+## The row therefore sits with NEW CITY and not inside its confirmation. A first
+## launch has nothing to confirm — doc 12's flow starts immediately, and
+## `tests/test_ui_title.gd` holds it to that — so a question hidden behind the
+## confirm panel would be unreachable by exactly the player most likely to want
+## it. What it costs is that the chip is visible while CONTINUE is too, which the
+## copy answers by naming what it is for ("New city: Standard").
+##
+## The four names come from `data/difficulty.json` through `Difficulty`, doc 03's
+## own loader (C-17) — never from `data/ui.json`, which would be a second list to
+## keep in step with the first.
+
 const ACTION_CONTINUE := &"continue"
 const ACTION_NEW_GAME := &"new_game"
 const ACTION_SETTINGS := &"settings"
+## Not one of `actions()` — the door's fourth control is a cycling chip, not a
+## door — but named here because `TitleScreen` binds it by id like the rest.
+const ACTION_DIFFICULTY := &"difficulty"
 
 const _DEFAULT_ACTIONS: Array[String] = ["continue", "new_game", "settings"]
 const _DEFAULT_SLOT_COUNT := 3
@@ -67,9 +90,13 @@ var _title_cfg: Dictionary = {}
 var _slots_cfg: Dictionary = {}
 var _service: Object = null
 var _meta: Dictionary = {}          # slot:int -> meta Dictionary
+var _difficulty: Difficulty = null
+var _preset: String = Difficulty.DEFAULT_PRESET
 
 
 func _init(cfg: UIConfig = null) -> void:
+	_difficulty = Difficulty.load_from_file()
+	_preset = _difficulty.default_preset()
 	if cfg == null:
 		return
 	_cfg = cfg
@@ -223,6 +250,58 @@ func actions() -> Array[Dictionary]:
 
 
 # ---------------------------------------------------------------------------
+# Difficulty (doc 03 §2.9, doc 93 §K1)
+# ---------------------------------------------------------------------------
+
+## The four preset ids, in `data/difficulty.json`'s own order — casual first,
+## crisis last, which is the order §2.9 authors and the order the chip cycles in.
+func difficulty_options() -> Array[String]:
+	return _difficulty.preset_names()
+
+
+func difficulty() -> String:
+	return _preset
+
+
+## Refuses an unknown name rather than coercing, on `SettingsModel.set_value`'s
+## contract: a door that silently founded a `standard` city because a stale view
+## asked for one that no longer exists is worse than a door that does nothing.
+func set_difficulty(name: String) -> bool:
+	if not difficulty_options().has(name) or name == _preset:
+		return false
+	_preset = name
+	return true
+
+
+## One tap advances and wraps — four options on a 48 dp target, exactly as S9's
+## choice rows work (doc 12 A3). Returns the new preset.
+func cycle_difficulty() -> String:
+	var options := difficulty_options()
+	if options.is_empty():
+		return _preset
+	var index := maxi(0, options.find(_preset))
+	_preset = options[(index + 1) % options.size()]
+	return _preset
+
+
+## The chip, as data: the label the button carries and the sentence under it.
+## `value` is the preset id (what the shell founds with); `text` is the word.
+func difficulty_row() -> Dictionary:
+	return {
+		"action": ACTION_DIFFICULTY,
+		"value": _preset,
+		"text": difficulty_text(_preset),
+		"label": _t_args("ui_title_difficulty", {"value": difficulty_text(_preset)}),
+		"hint": _t("ui_title_difficulty_hint"),
+		"options": difficulty_options(),
+	}
+
+
+func difficulty_text(name: String) -> String:
+	return _t("ui_title_difficulty_%s" % name)
+
+
+# ---------------------------------------------------------------------------
 # NEW CITY — the plan, and only the plan
 # ---------------------------------------------------------------------------
 
@@ -259,7 +338,8 @@ func new_game_plan() -> Dictionary:
 				archive_to = slot
 				break
 	var blocked_keep := archive_from >= 0 and archive_to < 0
-	var lines: PackedStringArray = [_t("ui_title_confirm_prompt")]
+	var lines: PackedStringArray = [_t("ui_title_confirm_prompt"),
+			_t_args("ui_title_confirm_difficulty", {"value": difficulty_text(_preset)})]
 	if not kept.is_empty():
 		lines.append(_t_args("ui_title_confirm_kept", {"slots": _names(kept)}))
 	if replaced:
@@ -281,6 +361,10 @@ func new_game_plan() -> Dictionary:
 		"can_keep": archive_to >= 0,
 		"prompt": "\n".join(lines),
 		"keep_note": keep_note,
+		## What the new city would be founded on. In the plan because the confirm
+		## panel is the last place the answer can still be read back before it
+		## becomes permanent — the chip that SETS it lives with NEW CITY itself.
+		"difficulty": _preset,
 	}
 
 
@@ -289,9 +373,12 @@ func new_game_plan() -> Dictionary:
 ## offers it, so a stale view can never ask for a copy into slot −1.
 ##
 ## `slot` is **the slot the outgoing city was preserved into**, or −1 when
-## nothing was preserved — which is exactly what `UIRoot.title_new_game(slot)`
-## carries and what `game/main.gd` needs in order to know whether to run the
-## archive round trip before it founds the new city.
+## nothing was preserved — which is exactly what
+## `UIRoot.title_new_game(slot, difficulty)` carries and what `game/main.gd`
+## needs in order to know whether to run the archive round trip before it founds
+## the new city. `difficulty` is the preset the founding call takes
+## (`CitySim.found_with_difficulty`), and it rides the same answer so the shell
+## never has to reach back into a view for it.
 func confirm_new_game(keep: bool = false) -> Dictionary:
 	var plan := new_game_plan()
 	var keeping := keep and bool(plan["can_keep"])
@@ -301,6 +388,7 @@ func confirm_new_game(keep: bool = false) -> Dictionary:
 		"archive_from": int(plan["archive_from"]) if keeping else -1,
 		"archive_to": int(plan["archive_to"]) if keeping else -1,
 		"slot": int(plan["archive_to"]) if keeping else -1,
+		"difficulty": _preset,
 	}
 
 

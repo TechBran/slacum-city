@@ -46,6 +46,10 @@ var catalog: BuildingCatalog
 var construction: ConstructionQueue
 var development: DevelopmentController
 var econ_curves: CostCurves
+## Doc 03 §2.9's one difficulty file, resolved at boot and pinned for the life of
+## the city (doc 93 §K1). Every difficulty scalar in the project is read through
+## it; nothing else opens `data/difficulty.json`.
+var difficulty: Difficulty
 var treasury: Treasury
 var economy: EconomySystem
 var water: WaterSystem
@@ -138,20 +142,23 @@ var _strike_roster_min: int = -1
 var boot_errors: PackedStringArray = []
 
 
-static func boot_from_files(seed_value: int = 1337) -> CitySim:
+static func boot_from_files(seed_value: int = 1337,
+		difficulty_preset: String = Difficulty.DEFAULT_PRESET) -> CitySim:
 	var sim := CitySim.new()
 	sim.boot(seed_value,
 			StarterCityLoader.read_json("res://data/time.json"),
 			StarterCityLoader.read_json("res://data/starter_city.json"),
 			StarterCityLoader.read_json("res://data/buildings.json"),
 			StarterCityLoader.read_json("res://data/building_rules.json"),
-			StarterCityLoader.read_json("res://data/grid_components.json"))
+			StarterCityLoader.read_json("res://data/grid_components.json"),
+			difficulty_preset)
 	return sim
 
 
 func boot(seed_value: int, time_data: Dictionary, starter_data: Dictionary,
 		buildings_data: Dictionary, rules_data: Dictionary,
-		grid_rules_data: Dictionary = {}) -> bool:
+		grid_rules_data: Dictionary = {},
+		difficulty_preset: String = Difficulty.DEFAULT_PRESET) -> bool:
 	boot_errors.clear()
 	grid_rules = grid_rules_data
 	rng = RngStreams.new(seed_value)
@@ -194,7 +201,16 @@ func boot(seed_value: int, time_data: Dictionary, starter_data: Dictionary,
 			StarterCityLoader.read_json("res://data/economy.json"))
 	if not econ_curves.errors.is_empty():
 		boot_errors.append_array(econ_curves.errors)
-	treasury = Treasury.new(econ_curves.economy_data())
+	# Doc 03 §2.9: the preset resolves BEFORE the treasury, because the founding
+	# balance is one of its twelve knobs. A bad file is a boot error and not a
+	# fallback — a city that quietly played `standard` because a row was missing
+	# is the defect A91-D-19 named.
+	difficulty = Difficulty.load_from_file()
+	if not difficulty.is_valid():
+		boot_errors.append_array(difficulty.errors)
+	if not difficulty.select(difficulty_preset):
+		boot_errors.append("unknown difficulty preset " + difficulty_preset)
+	treasury = Treasury.new(econ_curves.economy_data(), difficulty.row("economic"))
 	economy = EconomySystem.new(econ_curves, treasury)
 	tax_rate = float((econ_curves.economy_data().get("tax", {}) as Dictionary)
 			.get("TAX_RATE_BASE", 0.09))
@@ -339,7 +355,55 @@ func _boot_weather() -> void:
 		boot_errors.append_array(director.tables.errors)
 	incident_sink = DirectorIncidentSink.new(self)
 	director.attach(weather, incident_sink, modifiers)
+	# Doc 03 §2.9 rule 2 / C-17: the Director stores no difficulty knob. This is
+	# the one write path for its `pressure` row, and it runs on every boot, so
+	# `DirectorTables` no longer needs the read-only mirror it used to carry.
+	_push_difficulty_to_systems()
 	weather.bootstrap(_boot_context())
+
+
+## Pushes the live preset into the three systems that hold difficulty-scaled
+## state. `Difficulty` is the authority; these are its readers, and they get the
+## row rather than the file.
+##
+## `EconomySystem` is absent on purpose: it reads `Treasury.difficulty()` every
+## settlement, so setting the treasury's row IS setting the economy's. So is the
+## incident world — `CityIncidentWorld` asks `sim.difficulty` directly.
+func _push_difficulty_to_systems() -> void:
+	if director == null:
+		return
+	director.set_difficulty(difficulty.preset)
+	director.set_pressure_knobs(difficulty.row("pressure"))
+
+
+## Doc 03 §2.9's founding moment, and the ONLY way a preset is chosen (doc 93
+## §K1 — difficulty is not changeable mid-city, so there is no `cmd_set_difficulty`
+## and never will be).
+##
+## The shell founds a city by *keeping the sim it booted with*: `game/main.gd`
+## holds a paused starter city behind the title door and hands it to the player
+## when NEW CITY says so. So the preset cannot be a boot argument on that path —
+## it arrives after the boot and before the first tick, and this is the window it
+## is honoured in. Outside that window it refuses: `tick_index != 0` is a city
+## that has already been played, and re-pricing one mid-life is exactly what the
+## ruling forbids.
+##
+## Booting on a preset and founding on it are the same city, bit for bit
+## (`tests/test_difficulty.gd`), because nothing between the two draws RNG.
+func found_with_difficulty(preset_name: String) -> bool:
+	if clock.tick_index != 0:
+		return false
+	if not Difficulty.is_preset(preset_name) or not difficulty.select(preset_name):
+		return false
+	treasury.apply_difficulty(difficulty.row("economic"), true)
+	_push_difficulty_to_systems()
+	return true
+
+
+## The city's preset, for the settings sheet's read-only row and for a save
+## header. Never a setter — see `found_with_difficulty`.
+func difficulty_preset() -> String:
+	return difficulty.preset if difficulty != null else Difficulty.DEFAULT_PRESET
 
 
 func _boot_context() -> TimeContext:
@@ -442,7 +506,7 @@ func build_director_inputs() -> DirectorInputs:
 		"unresolved_major_incidents": 0,     # doc 06 seam
 		"customers_out_pct": float(dark) / float(maxi(1, total)),
 		"roads_impassable_pct": 0.0,         # doc 10 seam
-		"difficulty": "standard",
+		"difficulty": difficulty_preset(),
 	})
 
 
@@ -775,7 +839,34 @@ func canonical_capture() -> Dictionary:
 ## The rung exists for the epoch rule and nothing else: the binary now does
 ## something different with the same body, so the version that names the rules
 ## has to move.
-const SAVE_SECTION_VERSION := 5
+##
+## **v6 — 2026-08-20, THE DIFFICULTY EPOCH (doc 91 A91-D-19).** Doc 03 §2.9's
+## preset stops being a thing only the Disaster Director knows and becomes the
+## city's: it now prices every build, upgrade, land purchase, development phase
+## and repair through `M_build` / `M_land` / `M_dev` / `M_repair`, scales revenue
+## and recurring expense through `M_rev` / `M_exp`, sets the revenue floor, the
+## credit APR, the relief-grant allowance and the offline taper, and drives doc
+## 06's escalation and generation multipliers as well as doc 07's four pressure
+## knobs. Under v5 exactly one of those was reachable — the Director's — and the
+## other eleven were `Treasury.DIFFICULTY_STANDARD` on every boot forever.
+##
+## **The body's SHAPE does not move, and that is deliberate.** The preset is
+## already in a v5 body: `DisasterDirector.serialize()` has written
+## `"difficulty"` since doc 07 shipped, and `deserialize` has keyed
+## `_difficulty_locked` on it. Adding a second copy at city level would be two
+## records of one fact — the scattering C-17 exists to stop — and would move
+## `state_hash()` on the DEFAULT preset, which this change may not do. So
+## `_restore_difficulty` reads the preset back out of the section that already
+## carries it and makes it the whole city's again. `_v5_to_v6` is therefore the
+## identity function on every save the game has ever written, and stamps the
+## default only into a body that somehow carries no `director.difficulty` at all
+## (a hand-edited one; there is no such save in the wild).
+##
+## What a v5 save loses by opening under v6: **nothing**. Every v5 save was
+## written by a binary on which only `standard` was reachable, so the default the
+## migrator names is not a guess — it is the preset that city was actually played
+## on, and the rung is a rules rung exactly like v2 and v4.
+const SAVE_SECTION_VERSION := 6
 
 
 func save_section_version() -> int:
@@ -794,6 +885,7 @@ func migrate_save_section(body: Dictionary, from_version: int) -> Dictionary:
 			2: body = _v2_to_v3(body)
 			3: body = _v3_to_v4(body)
 			4: body = _v4_to_v5(body)
+			5: body = _v5_to_v6(body)
 		version += 1
 	return body
 
@@ -847,6 +939,35 @@ static func _v3_to_v4(body: Dictionary) -> Dictionary:
 ## buy. Re-pricing a paid-for job downward mid-flight would be a gift and upward
 ## would be a theft; leaving it is the only one of the three that is a record.
 static func _v4_to_v5(body: Dictionary) -> Dictionary:
+	return body
+
+
+## v5 → v6: **name the preset, and default it to the only one that was
+## reachable.** The difficulty epoch (see `SAVE_SECTION_VERSION`) promotes doc 03
+## §2.9's preset from the Director's own knob to the city's, and the body already
+## records it — `director.difficulty` has carried it since doc 07 shipped. So on
+## every save the game has ever written this is the identity function.
+##
+## The stamp exists for the one body that is not: a `director` section with no
+## `difficulty` string. Under v5 that body restored to the Director's own
+## `"standard"` default and played `standard`, so writing `standard` in is not a
+## guess about what it meant — it is what it meant, said out loud so that v6's
+## reader has one place to look. Doc 08 §2.8: TOTAL, additive-first, and it reads
+## no `data/` (the preset NAMES a row; it does not carry one).
+##
+## It adds **no top-level key**, ever. A body with no `director` section at all
+## is a fragment, not a city, and inventing a section for it would make this the
+## first rung on the ladder that rewrites a shape rather than recording a rules
+## change — `restore_state` defaults such a body to the same preset anyway.
+static func _v5_to_v6(body: Dictionary) -> Dictionary:
+	var raw: Variant = body.get("director", null)
+	if not (raw is Dictionary):
+		return body
+	var block: Dictionary = raw
+	if String(block.get("difficulty", "")) != "":
+		return body
+	block["difficulty"] = Difficulty.DEFAULT_PRESET
+	body["director"] = block
 	return body
 
 
@@ -1076,8 +1197,35 @@ func restore_state(raw_body: Dictionary) -> void:
 	roads.load_section(body.get("roads", {}))
 	weather.deserialize(body.get("weather", {}))
 	director.deserialize(body.get("director", {}))
+	_restore_difficulty(body)
 	_refresh_road_density()
 	_restore_goals(body)
+
+
+## Doc 03 §2.9 + doc 08 §2.8 city section v6: the preset is part of the city, so
+## a restored city gets its multipliers back before it settles an hour.
+##
+## The body records the preset in exactly ONE place — the `director` section's
+## own `difficulty` string, which has carried it since doc 07 shipped — and this
+## is where it becomes the whole city's again. `director.deserialize` has just
+## re-pinned the Director from the same string; this line re-pins the treasury's
+## twelve economic knobs, the four pressure knobs and (through `sim.difficulty`)
+## doc 06's escalation pair, so a `hard` city loaded from disk prices its next
+## build at `hard` and not at whatever the process booted on.
+##
+## The balance is NOT reset: `treasury.deserialize` has already restored the
+## dollars the save recorded, and `starting_treasury` is a founding number only.
+## An unknown preset falls back to the default rather than refusing the load —
+## doc 08 §2.8's migrator contract is TOTAL, and a city is worth more than a
+## string.
+func _restore_difficulty(body: Dictionary) -> void:
+	var raw: Variant = body.get("director", null)
+	var block: Dictionary = raw if raw is Dictionary else {}
+	var name := String(block.get("difficulty", Difficulty.DEFAULT_PRESET))
+	if not difficulty.select(name):
+		difficulty.select(Difficulty.DEFAULT_PRESET)
+	treasury.apply_difficulty(difficulty.row("economic"), false)
+	_push_difficulty_to_systems()
 
 
 ## Doc 09 §2.14's half of the load, and it runs LAST on purpose: both branches

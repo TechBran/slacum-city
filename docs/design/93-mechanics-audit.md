@@ -893,6 +893,89 @@ built here, and ranked as this wave's second open question; doc 10 §9.4's
 question 5 ("auto-repair default: on or off?") is the same row and is folded into
 it.
 
+## K. Wave-11 rulings — difficulty goes live (2026-08-20)
+
+### K1. A city is FOUNDED on a difficulty and keeps it for life
+
+**The question.** Doc 03 §2.9 shipped its four presets and, in the same
+paragraph, two sentences about changing them: *"Difficulty may be raised at any
+time. Lowering it is permitted at any time but sets `save.assisted = true`
+permanently (excludes the city from any future leaderboard, spec §35)."* Doc 91
+A91-D-19 asked for §2.9 to ship. Those two sentences are the part that cannot.
+
+**Ruled: the preset is chosen once, when a city is founded, and is thereafter a
+property of that city.** There is no `cmd_set_difficulty`, no settings control,
+no `save.assisted` field, and the settings sheet reports the preset read-only.
+The surface is one cycling chip on the front door, under NEW CITY
+(`ui/title_screen.gd`), and `CitySim.found_with_difficulty()` refuses any call
+after `tick_index == 0`.
+
+**Three reasons, in the order they bind.**
+
+1. **`save.assisted` is a flag for a leaderboard this game does not have.** Spec
+   §35 hangs the whole "lowering is permitted" rule on excluding a city from
+   *"any future leaderboard"* — and there is none, no plan for one inside Phase
+   1–2, and doc 13 §11's monetisation boundary rules out the shape that usually
+   pays for one. A permanent scarlet letter on a save, whose only consequence is
+   exclusion from a feature that does not exist, is a punishment with no
+   mechanism behind it. The honest options were to build the leaderboard or to
+   drop the flag.
+
+2. **A mid-city change re-prices a city the player has already paid for.** §2.9's
+   own escape clause — *"multipliers apply from the moment of change;
+   already-accrued treasury is untouched"* — protects the treasury and nothing
+   else. Twelve of the sixteen knobs are not treasury: `starting_treasury` is
+   meaningless after hour zero, `M_build` / `M_land` / `M_dev` / `M_repair` price
+   the NEXT purchase against a city built at the old prices, `REV_FLOOR_FRACTION`
+   and `CREDIT_APR_PER_GAME_DAY` change the floor a player is already standing
+   on, and doc 07's four pressure knobs change the schedule of events already
+   committed to the Director's timeline. Doc 92's `do_nothing` arc is the clearest
+   case: a city founded on `crisis` is insolvent on game-day 35 and one founded on
+   `casual` on game-day 109 (§29.2), and there is no defensible answer to *what
+   day is a city that switched on day 30?*
+
+3. **It is the only reading under which doc 92 means anything.** Every figure in
+   that document is a measurement of a city played end to end on one preset. A
+   save that can change preset mid-life is a save whose arc is not any of the four
+   measured arcs, and gate 29's ordering — casual outlives standard outlives hard
+   outlives crisis — stops being a statement about the game and becomes a
+   statement about the last thing the player did in a menu.
+
+**What this costs, said plainly.** A player who finds `crisis` too hard has to
+start a city. That is a real cost and it is why the chip sits on the door with
+the sentence *"A city keeps the difficulty it was founded on."* under it rather
+than in a tooltip: the one moment the choice is reversible is before it is made.
+
+**What it leaves open** is a genuinely smaller question, ranked with this wave's
+others: **a NEW CITY FROM THIS ONE door** — found a city on a different preset
+while keeping the outgoing one, which the title screen's archive plan
+(`TitleModel.new_game_plan`) already performs for every other reason. Nothing in
+this ruling blocks it and nothing in this wave builds it.
+
+### K2. The preset rides the save section it is already in
+
+**Ruled: doc 08 §2.8's city section v6 records the preset in `director.difficulty`
+— the field that has carried it since doc 07 shipped — and does not add a second
+copy at city level.** `CitySim._restore_difficulty` reads it back and re-pins the
+treasury's economic row, the Director's pressure knobs and doc 06's escalation
+pair.
+
+Two reasons, and the second is the harder one.
+
+1. **Two records of one fact is the scattering C-17 exists to stop.** A
+   `policy.difficulty` beside `director.difficulty` is a divergence waiting for
+   the first migrator that touches one of them.
+2. **A new key would move `state_hash()` on the DEFAULT preset**, and the whole
+   claim of this pass is that `standard` reproduces the pre-difficulty binary
+   bit-for-bit. `state_hash()` is SHA-256 over `canonical_capture()`; a key added
+   to that dictionary changes the bytes whether or not it changes the game. The
+   rule "hashes move only behind non-default presets" and the rule "the preset is
+   part of the city" are compatible in exactly one way, and this is it.
+
+**The cost, and it is real:** a reader looking for the city's difficulty in a
+save will look for a top-level key and not find one. That is why `_v5_to_v6`,
+`_restore_difficulty` and this ruling all say where it is instead.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

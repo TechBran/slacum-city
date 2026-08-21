@@ -1,0 +1,61 @@
+{
+  "_comment": "Doc 03 §2.9 / §3.4 — THE difficulty file. One file, one schema, one loader (report 98 C-17, closed as doc 91 A91-D-19). Every difficulty scalar in the project lives here; a knob authored anywhere else is a load error in the file that carries it. Doc 03 owns the file and the schema; the four sections are authored by the docs named in meta.sections. Read ONLY through sim/economy/difficulty.gd — no system opens this file.",
+  "_rules": "1. meta.presets is exactly casual/standard/hard/crisis, in that order, and every section carries a row for all four — a missing preset is a load error, never a silent default. 2. Values are scalars (int/float/bool) only; a knob that needs a table belongs in the owning system's own data file, gated by a scalar here. 3. Every knob named M_* or ending _mult/_fraction must declare a direction in its section's _direction map and must be strictly monotone casual->crisis in that direction (doc 03 §3.4 rule 4). 4. Underscore-prefixed keys are notes, never knobs.",
+  "meta": {
+    "schema_version": 1,
+    "owner_doc": "03-economy.md",
+    "presets": ["casual", "standard", "hard", "crisis"],
+    "default_preset": "standard",
+    "sections": {"economic": "03", "pressure": "07", "escalation": "06", "offline": "08"}
+  },
+
+  "economic": {
+    "_owner": "03-economy.md",
+    "_note": "Doc 03 §2.9's authored table, verbatim. starting_treasury is the founding balance; OFF_TAU_HOURS is §2.11's taper constant and MOVED here out of data/economy.json.offline (rule 2 — it is a difficulty scalar).",
+    "_direction": {
+      "M_rev": "down", "M_exp": "up", "M_land": "up", "M_dev": "up", "M_build": "up",
+      "M_repair": "up", "starting_treasury": "down", "OFF_TAU_HOURS": "down",
+      "offline_damage_cap_fraction": "up", "REV_FLOOR_FRACTION": "down",
+      "CREDIT_APR_PER_GAME_DAY": "up", "relief_grants_per_era": "down"
+    },
+    "casual":   {"M_rev": 1.15, "M_exp": 0.85, "M_land": 0.85, "M_dev": 0.85, "M_build": 0.90, "M_repair": 0.70, "starting_treasury": 35000, "OFF_TAU_HOURS": 120, "offline_damage_cap_fraction": 0.10, "REV_FLOOR_FRACTION": 0.25, "CREDIT_APR_PER_GAME_DAY": 0.004, "relief_grants_per_era": 4},
+    "standard": {"M_rev": 1.00, "M_exp": 1.00, "M_land": 1.00, "M_dev": 1.00, "M_build": 1.00, "M_repair": 1.00, "starting_treasury": 25000, "OFF_TAU_HOURS": 90,  "offline_damage_cap_fraction": 0.20, "REV_FLOOR_FRACTION": 0.18, "CREDIT_APR_PER_GAME_DAY": 0.008, "relief_grants_per_era": 3},
+    "hard":     {"M_rev": 0.92, "M_exp": 1.12, "M_land": 1.15, "M_dev": 1.15, "M_build": 1.10, "M_repair": 1.35, "starting_treasury": 18000, "OFF_TAU_HOURS": 75,  "offline_damage_cap_fraction": 0.30, "REV_FLOOR_FRACTION": 0.14, "CREDIT_APR_PER_GAME_DAY": 0.014, "relief_grants_per_era": 2},
+    "crisis":   {"M_rev": 0.85, "M_exp": 1.25, "M_land": 1.30, "M_dev": 1.30, "M_build": 1.20, "M_repair": 1.60, "starting_treasury": 12000, "OFF_TAU_HOURS": 60,  "offline_damage_cap_fraction": 0.45, "REV_FLOOR_FRACTION": 0.10, "CREDIT_APR_PER_GAME_DAY": 0.022, "relief_grants_per_era": 0}
+  },
+
+  "pressure": {
+    "_owner": "07-weather-disaster-director.md",
+    "_note": "Doc 07 §8.3's four knobs plus soft_suppression, MOVED here out of data/director.json._difficulty_fallback (C-17). repair_cost_mult is DELETED — repair difficulty is economic.M_repair and nothing else. soft_suppression carries no direction: it is a bool, not a scale, and F5's earned suppression is simply absent on crisis.",
+    "_direction": {
+      "tp_rate_mult": "up", "cooldown_mult": "down", "severity_mult": "up",
+      "warning_lead_mult": "down"
+    },
+    "casual":   {"tp_rate_mult": 0.60, "cooldown_mult": 2.00, "severity_mult": 0.80, "warning_lead_mult": 1.50, "soft_suppression": true},
+    "standard": {"tp_rate_mult": 1.00, "cooldown_mult": 1.00, "severity_mult": 1.00, "warning_lead_mult": 1.00, "soft_suppression": true},
+    "hard":     {"tp_rate_mult": 1.45, "cooldown_mult": 0.75, "severity_mult": 1.20, "warning_lead_mult": 0.70, "soft_suppression": true},
+    "crisis":   {"tp_rate_mult": 2.00, "cooldown_mult": 0.50, "severity_mult": 1.45, "warning_lead_mult": 0.50, "soft_suppression": false}
+  },
+
+  "escalation": {
+    "_owner": "06-incidents-dispatch.md",
+    "_note": "Doc 06 §8's two knobs, MOVED here out of data/incidents.json.difficulty_escalation (C-17). OFFLINE_RESPONSE_TIME_MULT was seeded by doc 03 §2.12 and files here with its owner; it is a SEAM today — doc 06's offline auto-response path does not read it yet, and the row exists so that path has one number to read when it lands, not four scattered ones.",
+    "_direction": {
+      "escalation_mult": "up", "generation_mult": "up", "OFFLINE_RESPONSE_TIME_MULT": "up"
+    },
+    "casual":   {"escalation_mult": 0.75, "generation_mult": 0.80, "OFFLINE_RESPONSE_TIME_MULT": 1.2},
+    "standard": {"escalation_mult": 1.00, "generation_mult": 1.00, "OFFLINE_RESPONSE_TIME_MULT": 1.6},
+    "hard":     {"escalation_mult": 1.35, "generation_mult": 1.20, "OFFLINE_RESPONSE_TIME_MULT": 1.9},
+    "crisis":   {"escalation_mult": 1.60, "generation_mult": 1.40, "OFFLINE_RESPONSE_TIME_MULT": 2.2}
+  },
+
+  "offline": {
+    "_owner": "08-offline-persistence.md",
+    "_note": "Doc 08 §2.3's one knob, authored at §12 and never filed anywhere (data/persistence.json never carried it — C-17 moved it here before it shipped). A SEAM today, on the same terms as OFFLINE_RESPONSE_TIME_MULT above.",
+    "_direction": {"difficulty_offline_mult": "up"},
+    "casual":   {"difficulty_offline_mult": 0.50},
+    "standard": {"difficulty_offline_mult": 1.00},
+    "hard":     {"difficulty_offline_mult": 1.30},
+    "crisis":   {"difficulty_offline_mult": 1.60}
+  }
+}

@@ -12,6 +12,11 @@ extends SceneTree
 ##   ~/.local/bin/godot --headless --path "/home/bbx/Slacum City game" \
 ##       -s res://tests/balance_matrix.gd -- days=21
 ##   ... -- days=21 strategies=balanced,disaster_neglect seeds=1337
+##   ... -- days=21 difficulty=casual        # doc 03 §2.9's presets, doc 92 §29
+##
+## `difficulty` defaults to `standard`, which is the preset every table in doc 92
+## before §29 is measured on. It is printed in the header so a pasted table can
+## never be mistaken for the control.
 
 const DEFAULT_STRATEGIES := ["do_nothing", "greedy_growth", "infrastructure_first",
 		"balanced", "tax_squeezer", "disaster_neglect"]
@@ -21,6 +26,7 @@ func _initialize() -> void:
 	var days := 21
 	var strategies: Array = DEFAULT_STRATEGIES.duplicate()
 	var seeds: Array = [1337, 4242, 9001]
+	var difficulty := Difficulty.DEFAULT_PRESET
 	for raw in OS.get_cmdline_user_args():
 		var arg := String(raw)
 		var split := arg.find("=")
@@ -31,6 +37,8 @@ func _initialize() -> void:
 		match key:
 			"days":
 				days = int(value)
+			"difficulty":
+				difficulty = value
 			"strategies":
 				strategies = []
 				for p in value.split(",", false):
@@ -39,13 +47,19 @@ func _initialize() -> void:
 				seeds = []
 				for p in value.split(",", false):
 					seeds.append(int(p))
+	if not Difficulty.is_preset(difficulty):
+		printerr("balance_matrix: unknown difficulty preset " + difficulty)
+		quit(2)
+		return
+	print("difficulty: %s · %d days · seeds %s" % [difficulty, days, str(seeds)])
 	print("| strategy | seed | treasury | value | net $/gh | pop | happy | stab | lvl | dark % | placed | upg | minC | open inc | abandoned | dir ev | credit | wall s |")
 	print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
 	var agg := {}
 	for strategy in strategies:
 		for seed_value in seeds:
 			var t0 := Time.get_ticks_msec()
-			var doc := BalanceGateRig.run(String(strategy), int(seed_value), days)
+			var doc := BalanceGateRig.run(String(strategy), int(seed_value), days,
+					difficulty)
 			var s: Dictionary = doc["summary"]
 			var wall := float(Time.get_ticks_msec() - t0) / 1000.0
 			print("| %s | %d | %d | %d | %.0f | %d | %.1f | %.4f | %d | %.2f | %d | %d | %.3f | %.2f | %d | %d | %d | %.1f |" % [

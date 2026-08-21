@@ -1730,3 +1730,123 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 			assert_true(level >= previous,
 					"seed %d lost a curriculum level it had earned" % int(seed_value))
 			previous = level
+
+
+# ====================================== 29 the presets (doc 92 §29, A91-D-19)
+
+## GATE 29 — doc 03 §2.9's difficulty horizon. Neglect must be fatal on EVERY
+## preset — that is the identity doc 06 §2.10 and report 98 RR-26 keep naming —
+## and the presets have to be ordered: a kinder difficulty buys a longer rope,
+## never a permanent one.
+##
+## The measure is **insolvency**: the first game-day on which a `do_nothing`
+## city's treasury closes below zero. It is chosen over "buildings destroyed"
+## because the roster does not shrink — a destroyed building keeps its record —
+## so the count is a state, while the day the money runs out is an EVENT, and it
+## is the one the player actually meets (`credit_line_engaged`, doc 03 §2.10
+## layer 3, then the −$20,000 hard floor of layer 4).
+##
+## Measured 2026-08-20, seeds 1337 / 4242 / 9001 (doc 92 §29.2):
+##
+## | preset | day the treasury first closes negative | peak, and its day |
+## |---|---|---|
+## | casual | 109 / 116 / 113 | $428k–$491k around game-day 50 |
+## | standard | 76 / 75 / 74 | $233k–$237k around game-day 46 |
+## | hard | 52 / 52 / 53 | negative before it can peak twice |
+## | crisis | 35 / 34 / 35 | — |
+##
+## Each rung buys about **1.5×** the next one's rope (109/76 = 1.43, 76/52 =
+## 1.46, 52/35 = 1.49). That is a shape and not a fit — nothing was tuned to
+## produce it — so this gate does not assert it.
+##
+## **What IS asserted** is the part a regression would break: strict ordering,
+## and finiteness on all four. The bounds are the measurements with a margin wide
+## enough that ordinary seed noise cannot trip them, and narrow enough that a
+## preset which stopped biting would.
+##
+## **Cost, and the horizon rule.** One seed, not three, and a **per-preset**
+## horizon — each is its own measured insolvency day plus about ten game-days of
+## margin, never a flat 120. That is not thrift, it is a hazard:
+##
+## > **A neglected city eventually cascades, and past the cascade this gate would
+## > not finish.** Measured on `crisis`, seed 1337: from game-day **104** the open
+## > incident count multiplies by ~2.5–2.9 **per game-hour** — 103 → 357 → 832 →
+## > 2,424 → 6,389 → 14,671 → 37,631 → 89,055 — and the per-hour wall cost
+## > multiplies with it (0.22 s → 269 s over eight game-hours). Nothing is
+## > responding, everything is at condition zero, and the generator has no upper
+## > bound to meet. It is filed as doc 92 §29.5(b) and it is **not** something this
+## > gate is for: inside every horizon below, the peak open-incident count is
+## > **0 or 1**. A gate that ran into it would hang rather than fail, which is the
+## > worst thing a gate can do.
+##
+## Total ~43 s (15.8 / 11.7 / 8.8 / 6.5). The three-seed table above is doc 92
+## §29.2's; this is the tripwire.
+const PRESET_HORIZON_DAYS := {"casual": 120, "standard": 90, "hard": 65, "crisis": 48}
+## casual must die before its own horizon; crisis must not die absurdly early.
+## The ordering assertions carry the rest.
+const PRESET_LIFETIME_CEILING := 118
+const PRESET_LIFETIME_FLOOR := 25
+## `standard` is the preset every other gate in this file is measured on, so its
+## own number is pinned rather than merely ordered.
+const STANDARD_LIFETIME_DAYS := 76
+const STANDARD_LIFETIME_BAND := 6
+## The cascade tripwire, asserted inside the horizon rather than assumed away:
+## doc 06 §2.13's own worst-case accounting is ≤ 40 active incidents, and a
+## `do_nothing` city inside these horizons measures 0 or 1.
+const PRESET_MAX_OPEN_INCIDENTS := 40
+
+
+func _preset_run(preset: String) -> Dictionary:
+	return Rig.run("do_nothing", GATE_SEED, int(PRESET_HORIZON_DAYS[preset]), preset)
+
+
+func test_gate_29_neglect_is_fatal_on_every_preset_and_ordered() -> void:
+	var died: Dictionary = {}
+	for preset: String in Difficulty.PRESETS:
+		var horizon := int(PRESET_HORIZON_DAYS[preset])
+		var day := -1
+		var peak_open := 0
+		for row_variant in ((_preset_run(preset)["summary"] as Dictionary)
+				["day_rows"] as Array):
+			var row: Dictionary = row_variant
+			peak_open = maxi(peak_open, int(row["open_incidents"]))
+			if day < 0 and int(row["treasury"]) < 0:
+				day = int(row["day"])
+		died[preset] = day
+		# The cascade tripwire (see `PRESET_HORIZON_DAYS`). Measured 0–1 inside
+		# every horizon; doc 06 §2.13's own worst case is 40. If this ever fires,
+		# the horizon has crossed into doc 92 §29.5(b)'s runaway and the gate is
+		# measuring the wrong thing — shorten it before touching a threshold.
+		assert_true(peak_open <= PRESET_MAX_OPEN_INCIDENTS,
+				("do_nothing on %s peaked at %d open incidents inside %d game-days; "
+						+ "doc 06 §2.13's worst case is %d — this horizon has run "
+						+ "into doc 92 §29.5(b)'s cascade")
+						% [preset, peak_open, horizon, PRESET_MAX_OPEN_INCIDENTS])
+		# FINITE. A preset on which standing still never costs anything is a
+		# preset with no game in it, and `casual` is the one that could drift
+		# there without anybody noticing.
+		assert_true(day > 0,
+				("do_nothing on %s was still solvent after %d game-days — neglect "
+						+ "has stopped being fatal on that preset") % [preset, horizon])
+		assert_true(day <= PRESET_LIFETIME_CEILING,
+				("do_nothing on %s survived to game-day %d; the ruled ceiling is %d "
+						+ "(measured 109–116 on casual, doc 92 §29.2)")
+						% [preset, day, PRESET_LIFETIME_CEILING])
+		assert_true(day >= PRESET_LIFETIME_FLOOR,
+				("do_nothing on %s went insolvent on game-day %d; the ruled floor is "
+						+ "%d (measured 34–35 on crisis) — below it a preset is not "
+						+ "harder, it is a different game")
+						% [preset, day, PRESET_LIFETIME_FLOOR])
+	# ORDERED, strictly, in the direction §2.9 authors: casual outlives standard
+	# outlives hard outlives crisis. This is the assertion that would catch a
+	# preset edited in the wrong direction, or a knob wired to the wrong sign.
+	for i in range(1, Difficulty.PRESETS.size()):
+		var kinder: String = Difficulty.PRESETS[i - 1]
+		var harder: String = Difficulty.PRESETS[i]
+		assert_true(int(died[kinder]) > int(died[harder]),
+				"%s should outlive %s: game-day %d vs %d"
+						% [kinder, harder, int(died[kinder]), int(died[harder])])
+	assert_true(absi(int(died["standard"]) - STANDARD_LIFETIME_DAYS)
+					<= STANDARD_LIFETIME_BAND,
+			"standard do_nothing died on game-day %d; measured 74–76 (doc 92 §29.2)"
+					% int(died["standard"]))

@@ -25,8 +25,10 @@ extends Control
 
 signal continue_requested(slot: int)
 ## `slot` is the slot the OUTGOING city was preserved into, or −1 when nothing
-## was preserved — see `TitleModel.confirm_new_game`.
-signal new_game_requested(slot: int)
+## was preserved — see `TitleModel.confirm_new_game`. `difficulty` is doc 03
+## §2.9's preset the new city is FOUNDED on: chosen here because doc 93 §K1 says
+## a city keeps it for life, so this is the last screen that can ask.
+signal new_game_requested(slot: int, difficulty: String)
 signal settings_requested
 signal title_toggled(open: bool)
 
@@ -57,6 +59,8 @@ var _confirm_actions: VBoxContainer
 
 var _buttons: Dictionary = {}          # StringName action -> Button
 var _confirm_buttons: Dictionary = {}  # StringName id -> Button
+var _difficulty_button: Button
+var _difficulty_hint: Label
 var _touch_min := 48.0
 var _spacing := 8.0
 var _button_w := _DEFAULT_BUTTON_W_DP
@@ -143,6 +147,8 @@ func _build_buttons() -> void:
 		return
 	UIWidgets.clear_children(_buttons_box)
 	_buttons.clear()
+	_difficulty_button = null
+	_difficulty_hint = null
 	for row: Dictionary in model.actions():
 		var action: StringName = row["action"]
 		var text := str(row["label"])
@@ -153,7 +159,48 @@ func _build_buttons() -> void:
 		button.pressed.connect(_on_action.bind(action))
 		_buttons_box.add_child(button)
 		_buttons[action] = button
+		if action == TitleModel.ACTION_NEW_GAME:
+			_build_difficulty_chip()
 	_build_confirm_buttons()
+
+
+## Doc 03 §2.9's preset, directly under NEW CITY: one 48 dp target that cycles
+## the four names and wraps, plus the sentence that says the choice is permanent.
+##
+## It is here rather than inside the confirmation because a FIRST launch never
+## sees the confirmation — doc 12 starts that city immediately and
+## `tests/test_ui_title.gd` holds the door to it — so a chip behind the confirm
+## panel would be invisible to the one player who has never chosen a difficulty
+## before. See `TitleModel`'s own header for the ruling.
+##
+## The hint WRAPS, which is what makes it width-safe: an autowrapping Label
+## reports its longest word as its minimum, so this sentence costs the card
+## nothing at 360 dp and 130 % text (`test_the_front_door_fits_…`).
+func _build_difficulty_chip() -> void:
+	var row := model.difficulty_row()
+	var label := str(row["label"])
+	_difficulty_button = UIWidgets.button("Action_difficulty", label, label,
+			Vector2(_button_w, _touch_min), &"GhostButton")
+	_difficulty_button.pressed.connect(_on_difficulty_pressed)
+	_buttons_box.add_child(_difficulty_button)
+	_difficulty_hint = UIWidgets.label("DifficultyHint", str(row["hint"]),
+			&"LegendRow", true)
+	_difficulty_hint.custom_minimum_size.x = _button_w
+	_difficulty_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_buttons_box.add_child(_difficulty_hint)
+
+
+func _on_difficulty_pressed() -> void:
+	model.cycle_difficulty()
+	_refresh_difficulty()
+
+
+func _refresh_difficulty() -> void:
+	if _difficulty_button == null:
+		return
+	var label := str(model.difficulty_row()["label"])
+	_difficulty_button.text = label
+	_difficulty_button.tooltip_text = label
 
 
 func _build_confirm_buttons() -> void:
@@ -185,7 +232,7 @@ func _on_action(action: StringName) -> void:
 		TitleModel.ACTION_NEW_GAME:
 			var plan := model.new_game_plan()
 			if not bool(plan["needs_confirm"]):
-				new_game_requested.emit(-1)
+				new_game_requested.emit(-1, str(plan["difficulty"]))
 				return
 			_show_confirm(plan)
 		TitleModel.ACTION_SETTINGS:
@@ -198,7 +245,7 @@ func _on_confirm(id: StringName) -> void:
 		return
 	var answer := model.confirm_new_game(id == &"keep")
 	_hide_confirm()
-	new_game_requested.emit(int(answer["slot"]))
+	new_game_requested.emit(int(answer["slot"]), str(answer["difficulty"]))
 
 
 func _show_confirm(plan: Dictionary) -> void:
@@ -266,6 +313,7 @@ func refresh() -> void:
 		button.disabled = not bool(action_row["enabled"])
 		button.theme_type_variation = &"PrimaryFAB" if bool(action_row["primary"]) \
 				else &"GhostButton"
+	_refresh_difficulty()
 
 
 func is_open() -> bool:
@@ -297,6 +345,8 @@ func _set_visible(value: bool) -> void:
 
 
 func action_button(action: StringName) -> Button:
+	if action == TitleModel.ACTION_DIFFICULTY:
+		return _difficulty_button
 	return _buttons.get(action, null)
 
 

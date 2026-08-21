@@ -156,14 +156,15 @@
 
   "offline": {
     "_note": "This doc owns the economic curve only. Absence detection, the minimum-absence threshold, the session-start reset and the offline cap are doc 08 / doc 01 mechanism (C-19, C-20). OFFLINE_MIN_MINUTES and SESSION_START_SECONDS are deleted from this file.",
-    "OFF_FULL_HOURS": 4, "OFF_TAU_HOURS": 90,
+    "OFF_FULL_HOURS": 4,
+    "_off_tau_note": "OFF_TAU_HOURS MOVED to data/difficulty.json economic.OFF_TAU_HOURS (2026-08-20, doc 91 A91-D-19). It is a DIFFICULTY scalar — §2.9 authors it at 120/90/75/60 — and §2.9 rule 2 allows no difficulty scalar outside that file. EconomySystem resolves it from the live preset; the standard row is the 90 that used to sit here.",
     "HOUR_INDEX_SOURCE": "ctx.catchup_index",
     "PUBLISHES_TO": "OfflinePolicy.band_for(h).yield_mult",
     "TAPER_APPLIES_TO": ["revenue", "recurring_expenses"],
     "TAPER_EXEMPT": ["construction", "repairs", "crew_work", "condition_decay", "population", "weather", "incidents"]
   },
 
-  "_difficulty_note": "MOVED — every difficulty knob now lives in data/difficulty.json (C-17, §3.4). This file defines none.",
+  "_difficulty_note": "MOVED, and the destination now EXISTS (2026-08-20, doc 91 A91-D-19). Every difficulty knob in the project lives in data/difficulty.json (C-17, §3.4), behind sim/economy/difficulty.gd. This file defines none — including OFF_TAU_HOURS, which left the offline block above on the same day.",
 
   "recovery": {
     "AUSTERITY_EXPENSE_MULT": 0.55, "AUSTERITY_DECAY_MULT": 2.5, "AUSTERITY_VEHICLE_BREAKDOWN_MULT": 2.0,

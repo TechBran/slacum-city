@@ -48,6 +48,22 @@ Drawer width formula: `drawer_w = clamp(round(0.34 * W), 260, 340)`.
 | S13 | Event log | `EventLogModal` | full-screen modal | Away report ▸ See all | back |
 | S14 | **Goals** | `GoalsSheet` | full-screen modal | the goal chip (§2.4), or the tutorial's last step | back |
 
+**S0 carries a fourth control, and it is not a door** (2026-08-20, doc 03 §2.9,
+doc 93 §K1). Directly under NEW CITY sits a 48 dp chip that cycles the four
+difficulty presets and wraps — `New city: Standard` → `Hard` → `Crisis` →
+`Casual` — with the line *"A city keeps the difficulty it was founded on."*
+beneath it. It rides `new_game_requested(slot, difficulty)` and
+`UIRoot.title_new_game(slot, difficulty)` to `CitySim.found_with_difficulty()`.
+
+**Why it is on the door and not inside the NEW CITY confirmation.** A first
+launch has nothing to confirm — this screen map starts that city immediately, and
+`tests/test_ui_title.gd::test_a_first_launch_starts_without_a_question` holds it
+to that — so a chip behind the confirm panel would be invisible to precisely the
+player who has never chosen a difficulty. The confirmation still *reads it back*
+(`Founded on Crisis.`) before the choice becomes permanent, which is the last
+moment it can be undone. The chip is visible while CONTINUE is too, and the copy
+answers that by naming what it is for ("New city: …") rather than by hiding.
+
 Android **Back** is a stack: `ModalLayer` → `SheetLayer` → `PanelLayer` → placement cancel → deselect → "Press back again to minimise" (2 s window). Handled in one place: `UIRoot._notification(NOTIFICATION_WM_GO_BACK_REQUEST)`. **S0 removes rungs rather than adding one**: while the title is up there is no city behind it, so the four middle rungs cannot apply and back goes straight to the minimise pair — but `ModalLayer` still wins, or back at the settings sheet opened from the title would quit the game.
 
 ### 2.3 HUD layout (reference box 880 × 400 dp)
@@ -316,7 +332,19 @@ Layout, top to bottom: **(1) Header** `WHILE YOU WERE AWAY` + `6h 14m of city ti
 
 **S9 pages:** Gameplay · Notifications · Accessibility · Graphics · Audio · Data & Saves · About.
 
-- *Gameplay:* difficulty (Casual/Standard/Hard, spec §35 — changing mid-city warns and is one-way downward), `auto_speed_reset_on_critical`, camera rotation mode (`free / snap45 / snap90 / locked`, default `snap45`), invert pan (off), follow dispatched unit (on), confirm before demolish (on).
+- *Gameplay:* ~~difficulty (Casual/Standard/Hard, spec §35 — changing mid-city warns and is one-way downward)~~ **difficulty is READ-ONLY here (2026-08-20, doc 93 §K1)**, `auto_speed_reset_on_critical`, camera rotation mode (`free / snap45 / snap90 / locked`, default `snap45`), invert pan (off), follow dispatched unit (on), confirm before demolish (on).
+
+> **The difficulty row is a sentence, not a control.** Doc 03 §2.9 authors four
+> presets (Casual / Standard / Hard / **Crisis** — this row said three); doc 93
+> §K1 rules that a city is FOUNDED on one and keeps it for life, so there is no
+> `cmd_set_difficulty` for a control to write to. S9 therefore renders a **city
+> block** above About — `SettingsModel.city_rows()`, one read-only line, *"Difficulty:
+> Standard — set when this city was founded."* — fed by `UIRoot.set_city_difficulty()`
+> from `CitySim.difficulty_preset()`. It has no `key`, no row in
+> `data/ui.json.settings.rows`, no default and no `set_value` path, because it is a
+> property of the CITY and not a preference of the app. It is absent entirely
+> until a city is bound, since S9 can be opened over the title door. The choice
+> lives on S0 — see §2.2.
 - *Auto-response policies* (spec §21.3) live on the Response dashboard tab and are mirrored here: auto-dispatch nearest fire unit (on), auto-dispatch police for tier ≥ T3 (on), utility restoration priority list (drag-reorder: Hospital → Water → Fire station → Residential → Commercial → Industrial), reserve N fire engines (default 1), auto-repair cost ceiling (default $25,000, slider $0–$250K), never spend emergency contractor funds (on).
 
 **S10 notification settings** (spec §22, §49 "clear notification controls"): master push toggle (on); per-priority toggles over doc 08's four classes — **P1 Critical** on with sound+vibrate, **P2 Important** on and silent, **P3 Routine** **off** by default, **P4** present but disabled and greyed with the reason `Not in this build`; doc 08's per-event-type list (18 types, grouped by system, each showing its class); quiet hours; digest mode; and one control this doc actually owns — **in-app banners** (on, independent of push).

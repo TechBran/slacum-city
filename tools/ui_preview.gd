@@ -51,7 +51,7 @@ const SCREENS: Array[String] = [
 	"overlay", "overlay_police", "overlay_fire", "overlay_folded",
 	"goals", "goals_late", "goals_done",
 	"settings", "saves", "pause",
-	"title", "title_fresh", "title_confirm",
+	"title", "title_fresh", "title_confirm", "title_crisis",
 	"coach_welcome", "coach_place_house", "coach_dispatch", "coach_payoff",
 ]
 
@@ -600,6 +600,10 @@ func _apply(screen: String) -> void:
 			# a payoff card — the one state with no objective rows at all.
 			_goals_at(5, 0)
 		"settings":
+			# Doc 03 §2.9's read-only city block only exists once a city has been
+			# reported, and the shell reports it — so the preview reports one too,
+			# or this state photographs a screen the game never shows.
+			_root.set_city_difficulty(Difficulty.DEFAULT_PRESET)
 			_root.settings_sheet.open()
 		"saves":
 			_root.save_load_sheet.open()
@@ -611,6 +615,13 @@ func _apply(screen: String) -> void:
 			_title([], false)
 		"title_confirm":
 			_title(_TITLE_SLOTS, true)
+		"title_crisis":
+			# The widest the difficulty chip gets: the longest preset word on the
+			# door, with the permanence line under it.
+			_title(_TITLE_SLOTS, false)
+			while _root.title_screen.model.difficulty() != "crisis":
+				_root.title_screen.action_button(
+						TitleModel.ACTION_DIFFICULTY).pressed.emit()
 		_:
 			if screen.begins_with("coach_"):
 				_coach(screen.trim_prefix("coach_"))

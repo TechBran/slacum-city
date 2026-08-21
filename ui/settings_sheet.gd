@@ -158,15 +158,35 @@ func _build_row(row: Dictionary) -> Container:
 	return stack
 
 
+## The About block, and above it the CITY block when there is a city to describe.
+##
+## Doc 03 §2.9's difficulty is the first (and today the only) row of the second
+## kind: a fact about the city rather than a preference, so it renders as a
+## sentence with no control beside it — see `SettingsModel.city_rows()` for why
+## there is nothing to tap. Both blocks live in the same authored container, so
+## the read-only half costs the scene no node.
 func _build_about() -> void:
 	if _about_box == null:
 		return
 	UIWidgets.clear_children(_about_box)
+	var city_rows := model.city_rows()
+	if not city_rows.is_empty():
+		_about_box.add_child(UIWidgets.label("CityTitle",
+				UIWidgets.t(config, "ui_settings_city_title"), &"LegendRow"))
+		for row: Dictionary in city_rows:
+			_about_box.add_child(UIWidgets.label("City_" + str(row["label_key"]),
+					str(row["text"]), &"", true))
 	_about_box.add_child(UIWidgets.label("Title",
 			UIWidgets.t(config, "ui_settings_about_title"), &"LegendRow"))
 	for row: Dictionary in model.about_rows():
 		_about_box.add_child(UIWidgets.label("About_" + str(row["label_key"]),
 				str(row["text"])))
+
+
+## Re-renders the city block after the shell reports a preset. Public for the
+## same reason `refresh_values()` is: the fact arrives from the sim, not a tap.
+func refresh_city() -> void:
+	_build_about()
 
 
 # ---------------------------------------------------------------------------

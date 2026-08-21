@@ -4,9 +4,10 @@ extends RefCounted
 ##
 ## The four difficulty knobs are NOT here (report 98 C-17): they are the
 ## `pressure` section of doc 03's `data/difficulty.json`, read through
-## `Difficulty.get("pressure", key)`. Until that file lands, `_difficulty_fallback`
-## in the data file mirrors doc 07 §8.3 read-only, and
-## `DisasterDirector.set_pressure_knobs()` replaces it the moment doc 03 ships.
+## `Difficulty.value("pressure", key)` and handed to the Director by
+## `DisasterDirector.set_pressure_knobs()`. That file shipped (doc 91 A91-D-19),
+## so the `_difficulty_fallback` mirror this class used to read is **gone from
+## the data file and refused on load** — one file, one loader, and no way back.
 
 const SCHEMA_VERSION := 1
 const CLASS_MINOR := "minor"
@@ -28,7 +29,6 @@ var events: Array = []  # catalog rows, in file order (deterministic)
 var errors: PackedStringArray = []
 
 var _by_id: Dictionary = {}
-var _difficulty_fallback: Dictionary = {}
 
 
 static func load_from_file(path: String) -> DirectorTables:
@@ -57,7 +57,6 @@ func load_from(data: Dictionary) -> bool:
 	fairness = data.get("fairness", {})
 	storm = data.get("storm", {})
 	events = data.get("events", [])
-	_difficulty_fallback = data.get("_difficulty_fallback", {})
 	_by_id.clear()
 	for event in events:
 		var id := String(event.get("id", ""))
@@ -79,6 +78,9 @@ func load_from(data: Dictionary) -> bool:
 		errors.append("director.json must not carry a difficulty block (C-17)")
 	if data.has("repair_cost_mult"):
 		errors.append("director.json must not carry repair_cost_mult (C-17)")
+	if data.has("_difficulty_fallback"):
+		errors.append("director.json must not mirror the pressure rows — "
+				+ "data/difficulty.json owns them (C-17)")
 	return errors.is_empty()
 
 
@@ -90,12 +92,17 @@ func event_by_id(id: String) -> Dictionary:
 	return _by_id.get(id, {})
 
 
-func difficulty_fallback(preset: String) -> Dictionary:
-	var row: Dictionary = _difficulty_fallback.get(preset, _difficulty_fallback.get("standard", {}))
+## The NOMINAL pressure row — every scale at 1.0 with soft suppression on, which
+## is `standard` by construction. It is what a `DisasterDirector` reads when
+## nobody has called `set_pressure_knobs()`, which in the shipped game is never:
+## `CitySim._push_difficulty_to_systems()` sets them at boot, at founding and
+## after every load. Kept as a named function rather than inlined so a Director
+## driven bare in a unit test still has a documented row to run on.
+func nominal_pressure() -> Dictionary:
 	var out := {}
 	for key in PRESSURE_KEYS:
-		out[key] = float(row.get(key, 1.0))
-	out["soft_suppression"] = bool(row.get("soft_suppression", true))
+		out[key] = 1.0
+	out["soft_suppression"] = true
 	return out
 
 

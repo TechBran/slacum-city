@@ -537,8 +537,7 @@ func development_total_cost(dev_terrain: String, d: float = 0.0,
 ## `h` is `ctx.catchup_index` — this doc keeps no absence counter (C-20).
 func offline_yield_mult(catchup_index: float, off_tau_hours: float = -1.0) -> float:
 	var full := float(_offline.get("OFF_FULL_HOURS", 0.0))
-	var tau := off_tau_hours if off_tau_hours > 0.0 \
-			else float(_offline.get("OFF_TAU_HOURS", 1.0))
+	var tau := off_tau_hours if off_tau_hours > 0.0 else _off_tau_hours()
 	if catchup_index <= full:
 		return 1.0
 	return exp(-(catchup_index - full) / tau)
@@ -548,11 +547,20 @@ func offline_yield_mult(catchup_index: float, off_tau_hours: float = -1.0) -> fl
 ## `E(H) = H` for `H ≤ OFF_FULL`, else `OFF_FULL + OFF_TAU × (1 - e^(-(H-OFF_FULL)/OFF_TAU))`.
 func offline_effective_hours(absence_hours: float, off_tau_hours: float = -1.0) -> float:
 	var full := float(_offline.get("OFF_FULL_HOURS", 0.0))
-	var tau := off_tau_hours if off_tau_hours > 0.0 \
-			else float(_offline.get("OFF_TAU_HOURS", 1.0))
+	var tau := off_tau_hours if off_tau_hours > 0.0 else _off_tau_hours()
 	if absence_hours <= full:
 		return absence_hours
 	return full + tau * (1.0 - exp(-(absence_hours - full) / tau))
+
+
+## §2.11's taper constant is a DIFFICULTY knob (§2.9: casual 120 / standard 90 /
+## hard 75 / crisis 60), so it comes off the live `economic` row through the
+## treasury — the same place `M_rev` and the revenue floor come from — and no
+## longer off `data/economy.json`, which stopped carrying it when
+## `data/difficulty.json` shipped. A caller may still pass an explicit tau; doc
+## 08's catch-up planner does, when it is asking a what-if.
+func _off_tau_hours() -> float:
+	return float(_resolve_difficulty({}).get("OFF_TAU_HOURS", 1.0))
 
 
 ## §2.11: one-off offline costs are capped, and damage beyond it is simply not

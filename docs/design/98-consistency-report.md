@@ -1059,3 +1059,125 @@ The asset test is the shape the other three should take, and its own first run i
 **Consequential and general: the three `D-nn` id spaces are ended.** Doc 91, doc 12's delta table and doc 13 §7's device matrix all number defects `D-nn` in unrelated sequences, which has already forced one renumbering (2026-08-19, the second `D-14`/`D-15` collision in two waves). From this date **doc 91 files `A91-D-nn`**, and the number CONTINUES doc 91's own sequence rather than restarting — the Wave-10 rows are `A91-D-19` … `A91-D-28`, because `A91-D-01` sitting beside `D-1` would be the same ambiguity in a new coat. Existing rows keep their ids, because renaming them would break every cross-reference in `docs/` and in code comments a third time. Doc 12 and doc 13 should take `A12-D-nn` and `A13-D-nn` when they next file. **Reading rule: an unprefixed `D-nn` belongs to whichever document you found it in.**
 
 **And one thing this ruling explicitly does not do.** It does not re-open any balance number. The re-audit changed no `sim/`, no `data/`, no `game/`: `tools/profile_sim.gd --hash-only` reports `18e70625e633c254…` / `4c3c52cdb4c5a3cc…` on the founding city and `d6b2509c179987d3…` / `bf8dc7282758843b…` on the benchmark city at `a892315`, before and after, and the 28 gates are untouched. **A91-D-19 is the one finding with a balance consequence and it is a statement about coverage, not about tuning**: every figure doc 92 has ever published was measured on `standard`, because `standard` is the only preset the code can reach.
+
+### RR-48 — A difficulty preset is a property of a CITY, and the file the docs have pointed at for six waves now exists (doc 03 §2.9/§3.4, doc 06 §8, doc 07 §8.3, doc 08 §2.3/§2.8, doc 91 A91-D-19, doc 92 §29, doc 93 §K1/§K2)
+
+RR-47 closed by naming **A91-D-19 as the one Wave-10 finding with a balance
+consequence**, and by saying the consequence was coverage rather than tuning.
+This entry is the fix, and the interesting part is that measuring the other three
+presets for the first time found something neither document predicted.
+
+**(a) What was actually broken, restated once.** C-17 ruled in Wave 3 that every
+difficulty scalar lives in `data/difficulty.json` behind one loader. Three
+documents then wrote "MOVED" notes into their own data files pointing at that
+path, and **nobody wrote the file**. What shipped instead was
+`Treasury.DIFFICULTY_STANDARD` compiled into a class, a read-only mirror of doc
+07's pressure rows in `data/director.json`, doc 06's escalation rows parked in
+`data/incidents.json` and read by nothing, and doc 08's `difficulty_offline_mult`
+authored in a doc and filed nowhere. Three files, three readers, one of them
+unreachable — against a ruling whose whole content is "one file, one loader".
+
+**(b) Ruled and shipped: the whole section, not the cheap half.** A91-D-19's own
+filing recommended writing the file and leaving the selection UI for a later
+wave. The lead ruled otherwise and the ruling was right: a preset that no player
+can choose is the same defect one level up — a table the code can reach and the
+player cannot. So `data/difficulty.json` ships with all four sections × four
+presets, `sim/economy/difficulty.gd` is the one loader, `CitySim.boot()` resolves
+it before the treasury (the founding balance is one of its knobs),
+`CitySim.found_with_difficulty()` is the founding seam, the front door carries a
+cycling chip, S9 reports it read-only, and doc 08's city section moved to **v6**.
+The three stranded copies are **deleted**, and `DirectorTables` and
+`IncidentCatalog` now REFUSE a file that grows one back — a ruling that only
+holds while somebody remembers it is not a ruling.
+
+**(c) Two things §2.9 asked for that were ruled OUT rather than shipped**, and
+both are in doc 93 §K1. `save.assisted` is a leaderboard flag for a leaderboard
+this game does not have and has no plan to have, and mid-city difficulty changes
+re-price a city the player has already paid for — twelve of the sixteen knobs are
+not treasury, so §2.9's own "already-accrued treasury is untouched" escape clause
+protects almost nothing. **A city is founded on a preset and keeps it for life.**
+The cost is real (a player who finds crisis too hard starts a city) and it is
+stated on the door in words rather than buried in a tooltip.
+
+**(d) The preset rides the section it was already in, and that is a determinism
+ruling as much as a schema one** (doc 93 §K2). `DisasterDirector.serialize()` has
+written `"difficulty"` since doc 07 shipped. `state_hash()` is SHA-256 over
+`canonical_capture()`, so a new city-level key would move the hash on the DEFAULT
+preset — and "the default preset reproduces the pre-difficulty binary bit-for-bit"
+is the claim the whole change stands on. The two requirements are compatible in
+exactly one way and this is it: `_v5_to_v6` adds **no top-level key**, and
+`CitySim._restore_difficulty` reads the preset back out of the `director` section
+and re-pins the treasury's economic row, the pressure knobs and doc 06's
+escalation pair.
+
+**Proof, not assertion:** `tools/profile_sim.gd --hash-only` reports
+`18e70625e633c254…` / `4c3c52cdb4c5a3cc…` on the founding city and
+`d6b2509c179987d3…` / `bf8dc7282758843b…` on `bench_city`, before and after, both
+paths; and doc 92 §29.1's seven-strategy × three-seed × 21-game-day matrix is
+byte-identical to §27.6's post-fix column in **all 63 cells**.
+
+**(e) What the measurement found, which is why this entry is not just plumbing.**
+Doc 92 §29 is the first look at the other three presets. The neglect-fatal
+identity holds on all four and is cleanly ordered — `do_nothing` goes insolvent on
+game-day **109/76/52/35** (casual/standard/hard/crisis), strictly ordered on every
+seed, each rung about 1.5× the next one's rope, all four ending with the whole
+authored roster destroyed. Gate 29 pins that. But:
+
+> **`E_roads_repair` takes the difficulty TWICE.** `EconomySystem.settle_hour()`
+> computes it as `e_roads_repair(roads, m_repair)` and then sweeps it into
+> `recurring *= m_exp` with the other seven lines, so it scales by
+> `M_repair × M_exp` — **2.0000× on crisis** — while every other expense line
+> scales by `M_exp` exactly. At $157.90/gh it is 31.3 % of the standard founding
+> expense, so this one line contributes **48 % of the entire difficulty delta on
+> the expense side**, and it is why the crisis founding city settles its first
+> hour at **−$18.70/gh**: negative before the player has done anything. Remove the
+> compounding and it is +$99.73/gh.
+
+**It is left alone, deliberately.** The compounding is *arguable* — `E_roads_repair`
+is genuinely both a recurring line (doc 03 §2.4) and a repair price (§2.5) — and
+this pass was tasked to make the presets reachable and gate their sanity, not to
+tune them. What it does not have is a decision, and doc 92 §29.5(a) carries the
+derivation and the counterfactual. Two facts make the ruling cheap when the lead
+takes it: the fix is one line, and **it is hash-neutral on the default preset by
+construction**, because `M_repair` and `M_exp` are both 1.00 there.
+
+**(f) And one finding that is not about difficulty at all, found because a
+preset made it reachable in 104 game-days instead of never.** Gate 29 was first
+written with a flat 120-game-day horizon; it did not fail, it **did not finish**.
+From game-day 104 of a `do_nothing` `crisis` city the open incident count
+multiplies by **~2.5–2.9 per game-hour** — 103 → 357 → 832 → 2,424 → 6,389 →
+14,671 → 37,631 → 89,055 — with the per-game-hour wall cost following it from
+0.22 s to 269 s, and no ceiling in sight. Doc 06 §2.13's own worst-case
+accounting is ≤ 40 active. The Director is idle throughout (TP pinned, nothing
+scheduled, zero lightning, zero flood), so this is doc 06's own generation and
+spread on a city where every building is at condition 0.000 and nothing is ever
+dispatched.
+
+**It is a state, not a preset**: `standard` and `casual` were both run to 200
+game-days without it. `crisis` only gets there sooner. But a game-hour that costs
+269 s and doubles is an ANR on device, and the state it needs is *a city left
+alone for three and a half months* — which doc 03 §2.10's recovery ladder exists
+to make survivable rather than terminal. **Filed as doc 92 §29.5(b), ranked above
+everything else that section names, and owned by doc 06 rather than doc 03.**
+Gate 29 is written AROUND it — per-preset horizons, each its own insolvency day
+plus ten days — and asserts the peak open-incident count stays ≤ 40 inside them
+(measured 0–1), so that if the cascade ever moves earlier the gate says so in
+words instead of hanging.
+
+**(g) A stale table in doc 92, found by running it.** §28.2 republished §27.6's
+**pre**-fix matrix column as if it were the current tree (`greedy_growth` 69,006
+against a real 65,962, and four more). `do_nothing` and `infrastructure_first` are
+identical in both columns, which is how it survived a read. §28.2's conclusion is
+unaffected — the Wave-11 UI pass genuinely moved nothing — but the table is
+superseded by §29.1 and is now marked as such. Filed here because it is the second
+time in this document that *a number nobody re-ran* has been the defect, and the
+lesson is the same one RR-47 drew about coverage claims: **a table that is quoted
+rather than produced is a claim, not a measurement.**
+
+**(h) One naming deviation, recorded rather than hidden.** §3.4 rule 5 names the
+read path `Difficulty.get(section, key)`. It cannot ship under that name — `get`
+is `Object.get(StringName) -> Variant` and GDScript refuses a method that
+redeclares a native one with a different signature — so it is
+`Difficulty.value(section, key)`, with `number()` and `flag()` as typed wrappers.
+The rule was about there being exactly ONE read path; there is. Doc 03 §2.9 rule 3
+and §3.4 rule 5 both now say so.
