@@ -3591,8 +3591,11 @@ func cmd_set_dispatch_policy(key: String, value: Variant) -> Dictionary:
 ## it landed, so the surface should say the same thing for both: *it's gone*.
 ## They are separate codes because they are separate FACTS, not because the
 ## player needs to tell them apart.
-func cmd_collect_opportunity(opportunity_id: int, preview: bool = false) -> Dictionary:
-	var row := street.find(opportunity_id)
+func cmd_collect_opportunity(opportunity_id: Variant, preview: bool = false) -> Dictionary:
+	# The shell's tap funnel carries ids as text (doc 12 §4.4's one-funnel rule);
+	# the roster keys on int. Coerce here so both callers speak.
+	var opp_id := int(str(opportunity_id))
+	var row := street.find(opp_id)
 	if row.is_empty():
 		return CommandQueue.fail(&"E_UNKNOWN_OPPORTUNITY")
 	var quote := {
@@ -3607,12 +3610,18 @@ func cmd_collect_opportunity(opportunity_id: int, preview: bool = false) -> Dict
 		return CommandQueue.fail(&"E_EXPIRED", quote)
 	if preview:
 		return CommandQueue.ok(quote)
-	var taken := street.take(opportunity_id)
+	var taken := street.take(opp_id)
 	if taken.is_empty():
 		return CommandQueue.fail(&"E_UNKNOWN_OPPORTUNITY")
 	var reward := int(taken["reward"])
 	if reward > 0:
-		treasury.credit(reward, &"street", "opportunity " + String(taken["kind"]))
+		# Through the SETTLED city-services channel (doc 03 §2.5), source
+		# "street" — so the budget row, gate 32's share measurement and the
+		# lifetime book all see the same dollar. `lifetime_street` still
+		# accrues via the category, so the sim branch's three-key hash
+		# enumeration keeps its meaning.
+		treasury.credit_city_service(reward, &"street",
+				"opportunity " + String(taken["kind"]))
 	bus.emit(&"opportunity_collected", OpportunitySystem.event_payload(
 			&"opportunity_collected", taken))
 	stats_add(&"opportunities_collected")

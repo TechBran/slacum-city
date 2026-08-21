@@ -46,7 +46,8 @@ func hour_of_day_float() -> float:
 
 
 func _exit_tree() -> void:
-	# Doc 91 D-9: unregister the phase adapters so the RefCounted cycle
-	# (sim -> scheduler -> adapter -> sim) breaks and the city can free.
-	if sim != null and sim.scheduler != null:
-		sim.scheduler.dispose()
+	# Doc 91 D-9: break every RefCounted cycle a sim can make — the phase
+	# adapters (sim -> scheduler -> adapter -> sim) and doc 06 §2.16's spawner,
+	# which stores Callables that resolve through CitySim. One call knows both.
+	if sim != null:
+		sim.dispose()

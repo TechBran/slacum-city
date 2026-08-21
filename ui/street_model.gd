@@ -42,8 +42,8 @@ const EVENT_INCIDENT_RESOLVED := &"incident_resolved"
 ## The street system's spawn and its collect. Named as constants because they
 ## are the seam to a system this file does not import; a build whose sim emits
 ## neither simply never raises a coach mark and never tallies a pickup.
-const EVENT_SPAWNED := &"street_opportunity_spawned"
-const EVENT_COLLECTED := &"street_opportunity_collected"
+const EVENT_SPAWNED := &"opportunity_spawned"
+const EVENT_COLLECTED := &"opportunity_collected"
 ## Doc 03's hourly close — the tally's window boundary, and nothing else.
 const EVENT_HOUR_SETTLED := &"economy_hour_settled"
 

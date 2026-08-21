@@ -40,6 +40,9 @@ var ghost_view: GhostView
 var path_ghost_view: PathGhostView
 var construction_view: ConstructionSiteView
 var construction_plant: ConstructionVehicleView   # doc 11 §2.16: plant + deliveries
+## doc 11 §2.17: the crook, the stray, the goat and the dropped stash. A pure
+## event consumer — three `opportunity_*` types in, four MultiMeshes out.
+var street_life: StreetLifeView
 var vehicle_view: VehicleView
 ## doc 11 §2.10b's distribution layer: transformer pads, service drops and the
 ## distress plume. Reads the grid on its own schedule, writes nothing back.
@@ -428,6 +431,15 @@ func _build_city_view(render_data: Dictionary) -> void:
 			func(id: int, side: int) -> void:
 				if construction_view != null:
 					construction_view.set_gate_side(id, side))
+	# doc 11 §2.17 — STREET LIFE. The road CLASS probe is what puts a crook on a
+	# footway rather than in a traffic lane; without it the layer still draws,
+	# it just wanders the spawn tile.
+	street_life = StreetLifeView.new()
+	street_life.name = "StreetLife"
+	add_child(street_life)
+	street_life.setup(render_data)
+	street_life.set_preset(render_model.preset, render_data)
+	street_life.set_road_probe(StreetLifeView.road_probe(sim_host.sim.world))
 	# doc 11 §2.10b — the visible power grid. The height lookup is the mesh
 	# manifest's (a service drop lands on the eave, not on the roof); the road
 	# probe is doc 10's tile flags, which turn each cabinet's doors to the street.
@@ -554,6 +566,8 @@ func _on_sim_batch(batch: Array) -> void:
 		weather_fx.feed_events(batch)   # doc 07's weather_changed / lightning_strike
 	if flood_view != null:
 		flood_view.feed_events(batch)   # doc 07's flood_level_changed
+	if street_life != null:
+		street_life.feed_events(batch)  # doc 11 §2.17's opportunity_* trio
 	for event in batch:
 		match StringName(String(event.get("type", ""))):
 			&"road_graph_changed", &"block_roads_stamped":
@@ -952,6 +966,7 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 	# save's flow — mid-tutorial or finished — came back through the UI section
 	# above; the regions are set either way so world-tag cutouts work on resume.
 	root.set_onboarding_world_resolver(_coach_world_rect)
+	root.set_onboarding_world_projector(_coach_world_point)
 	root.onboarding_action.connect(_on_coach_action)
 	var tutorial_regions := {
 		"tutorial_lot_a": sim_host.sim.loader.resolve_tag("tutorial_lot_a")["tile_global"],
@@ -1164,6 +1179,15 @@ func _coach_world_rect(tag: String) -> Variant:
 	return null if bool(answer["behind"]) else answer["position"]
 
 
+## Wave 14 (doc 12 §2.21 / D-63): where a one-shot street notice points. The
+## tag resolver above answers for a fixed tutorial lot; a collectable walks, so
+## the mark is handed the metres themselves.
+func _coach_world_point(world: Vector3) -> Variant:
+	var answer := camera_state.project_to_screen(world,
+			Vector2(get_viewport().get_visible_rect().size))
+	return null if bool(answer["behind"]) else answer["position"]
+
+
 func _on_coach_action(action: StringName, payload: Dictionary) -> void:
 	match action:
 		&"focus_camera":
@@ -1257,6 +1281,9 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 						StarterCityLoader.read_json("res://data/render.json"))
 			if flood_view != null:
 				flood_view.set_preset(str(model.value("graphics")),
+						StarterCityLoader.read_json("res://data/render.json"))
+			if street_life != null:
+				street_life.set_preset(str(model.value("graphics")),
 						StarterCityLoader.read_json("res://data/render.json"))
 			if perf_governor != null:
 				# A player's preset choice clears the ladder and any latched drop.
@@ -1782,7 +1809,21 @@ func _handle_tap(screen_pos: Vector2, viewport_size: Vector2) -> void:
 	# doc 12 §2.8: one pick, three answers, decided in the controller so the two
 	# panels can never both claim a tap. `""` used to mean "deselect", which is
 	# the mechanical reason land was unreachable.
+	# Wave 14 (doc 12 §2.21 / D-61): 48 dp of finger, in metres, AT THIS ZOOM,
+	# before the pick — a tap near a street collectable has to catch it rather
+	# than the house it is standing in front of.
+	build_controller.set_tap_radius_from(camera_state.m_per_dp(viewport_size))
 	var pick := build_controller.pick_at_ground(ground)
+	if StringName(str(pick["kind"])) == BuildController.PICK_OPPORTUNITY:
+		var collected := build_controller.collect_opportunity(str(pick["id"]))
+		var payday: Dictionary = ui_root.report_collect(collected,
+				pick.get("opportunity", {}) as Dictionary) if ui_root != null else {}
+		# `payday["cue"]`, not `collected["ok"]`: a build whose sim has no
+		# collect verb refuses E_NO_COMMAND, and the honest sound for a feature
+		# that is not there is silence, not a buzz.
+		if bool(payday.get("cue", false)) and audio != null:
+			audio.ui_cue(AudioService.UI_CASH)
+		return
 	if StringName(str(pick["kind"])) == BuildController.PICK_BUILDING \
 			and building_panel != null:
 		building_panel.show_building(str(pick["id"]))   # closes S4 (doc 12 D-27)
@@ -1849,6 +1890,14 @@ func _process(delta: float) -> void:
 		construction_plant.refresh(delta, environment_controller.last_night,
 				0.0 if sim_host.paused else float(sim_host.speed),
 				float(sim_host.sim.clock.game_seconds()) / 60.0)
+	# doc 11 §2.17. Same two arguments the plant takes and for the same reasons,
+	# plus the CAMERA position — the marker's angular size and the distance gate
+	# are both computed from it.
+	if street_life != null:
+		street_life.refresh(delta, environment_controller.last_night,
+				0.0 if sim_host.paused else float(sim_host.speed),
+				float(sim_host.sim.clock.game_seconds()) / 60.0,
+				camera_rig.camera.global_position)
 	if power_infra != null:
 		# One call: it owns its own poll schedules (state 4 Hz, topology 0.2 Hz
 		# plus the event hook above) and its own wire gating off the camera.
@@ -1886,6 +1935,8 @@ func _process(delta: float) -> void:
 					road_surface.set_preset(String(knobs["preset"]), _render_data)
 				if flood_view != null:
 					flood_view.set_preset(String(knobs["preset"]), _render_data)
+				if street_life != null:
+					street_life.set_preset(String(knobs["preset"]), _render_data)
 			if audio != null:
 				audio.feed_batch(perf_governor.drain_events())   # telemetry cue
 	if _autosave_interval_s > 0.0 and save_service != null:

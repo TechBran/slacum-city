@@ -65,13 +65,14 @@ const STATE_EXPIRED := 2
 ## whereas guessing "goat" for an event this layer has never heard of would put
 ## livestock on the street because a string was typo'd.
 const KIND_NAMES := {
+	"petty_crime": KIND_CROOK,
 	"crook": KIND_CROOK, "thief": KIND_CROOK, "burglar": KIND_CROOK,
 	"mugger": KIND_CROOK, "vandal": KIND_CROOK, "crime": KIND_CROOK,
 	"dog": KIND_DOG, "stray": KIND_DOG, "stray_dog": KIND_DOG,
-	"animal": KIND_DOG, "loose_dog": KIND_DOG,
+	"animal": KIND_DOG, "loose_dog": KIND_DOG, "loose_animal": KIND_DOG,
 	"goat": KIND_GOAT, "loose_goat": KIND_GOAT, "livestock": KIND_GOAT,
 	"stash": KIND_STASH, "valuables": KIND_STASH, "cash": KIND_STASH,
-	"glint": KIND_STASH, "lost_cash": KIND_STASH,
+	"glint": KIND_STASH, "lost_cash": KIND_STASH, "lost_valuables": KIND_STASH,
 }
 
 ## Marker glyph per kind — `!` for the crook, a paw for the dog, a bell for the

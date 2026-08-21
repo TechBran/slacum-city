@@ -211,15 +211,20 @@ func test_a_sim_with_no_street_roster_answers_null_rather_than_raising() -> void
 	# the pick must fall straight through to the building. **No injected roster
 	# here on purpose** — every other test in this section supplies one, which
 	# means every other test in this section skips the line that would break.
+	# A CitySim always carries `street` since the Wave-14 integration. Two
+	# halves survive of the original premise: a NULL-sim controller (the world
+	# every headless UI preview constructs) answers null and refuses cleanly;
+	# and a LIVE roster with nothing spawned near the tap still lets the
+	# building win, exactly as it always did.
+	assert_eq(BuildController.new(null).street_roster(), null,
+			"a null sim answers null, never raises")
 	var sim := CitySim.boot_from_files()
 	var controller := BuildController.new(sim)
-	assert_eq(controller.street_roster(), null,
-			"asked for a member it does not have, a CitySim answers null")
 	controller.set_tap_radius_from(0.35)
 	var spot := _on_a_building(sim, controller)
 	assert_eq(controller.pick_at_ground(spot["point"] as Vector3)["kind"],
 			BuildController.PICK_BUILDING,
-			"and a radius with nothing to ask picks exactly as it always did")
+			"a live roster with nothing near picks exactly as it always did")
 
 
 func test_land_still_answers_a_tap_on_unowned_ground() -> void:
@@ -247,7 +252,9 @@ func test_land_still_answers_a_tap_on_unowned_ground() -> void:
 # ===========================================================================
 
 func test_a_build_with_no_collect_verb_refuses_rather_than_crashes() -> void:
-	var controller := BuildController.new(CitySim.boot_from_files())
+	# Same premise shift as the roster test above: the verb exists on every
+	# CitySim now, so the verbless world is the null sim.
+	var controller := BuildController.new(null)
 	var result := controller.collect_opportunity("opp_1")
 	assert_false(bool(result["ok"]))
 	assert_eq(result["reason_code"], BuildController.E_NO_COMMAND,
@@ -479,13 +486,17 @@ func test_the_ledger_shows_the_money_the_settle_snapshot_never_carried() -> void
 	var model := BudgetModel.new(_cfg())
 	model.feed_settlement(_settlement())
 	var before := model.breakdown()
-	model.feed_side_revenue({"bounties": 900.0, "street": 150.0})
+	# Reconciled at the Wave-14 merge: the canonical rows are doc 03's SETTLED
+	# `city_services` + `assistance`; the side-tally remains the fallback for a
+	# build whose snapshot has not caught up, keyed by the same names.
+	model.feed_side_revenue({"city_services": 900.0, "assistance": 150.0})
 	var after := model.breakdown()
 	var labels: PackedStringArray = []
 	for entry: Variant in (after["revenue"] as Array):
 		labels.append(str((entry as Dictionary)["label"]))
-	assert_true(labels.has("Dispatch bounties"), "the bounty line: %s" % str(labels))
-	assert_true(labels.has("Street pickups"), "the street line: %s" % str(labels))
+	assert_true(labels.has("City services"), "the services line: %s" % str(labels))
+	assert_true(labels.has("State founding assistance"),
+			"the assistance line: %s" % str(labels))
 	# A row the column shows but the total does not contain is a ledger that does
 	# not add up, which is worse than the line being missing.
 	assert_almost_eq(float(after["gross"]) - float(before["gross"]), 1050.0, 0.001)
@@ -496,12 +507,13 @@ func test_the_ledger_shows_the_money_the_settle_snapshot_never_carried() -> void
 func test_the_lines_read_in_the_authored_order_with_the_rest() -> void:
 	var model := BudgetModel.new(_cfg())
 	model.feed_settlement(_settlement())
-	model.feed_side_revenue({"bounties": 900.0, "street": 150.0})
+	model.feed_side_revenue({"city_services": 900.0, "assistance": 150.0})
 	var keys: PackedStringArray = []
 	for entry: Variant in (model.breakdown()["revenue"] as Array):
 		keys.append(str((entry as Dictionary)["key"]))
-	assert_eq(str(keys), str(PackedStringArray(["tax", "power_tariff", "bounties",
-			"street"])), "a side line is a row of the ledger, not a footnote under it")
+	assert_eq(str(keys), str(PackedStringArray(["tax", "power_tariff",
+			"city_services", "assistance"])),
+			"a side line is a row of the ledger, not a footnote under it")
 
 
 func test_the_sim_wins_the_moment_doc_03_settles_the_key() -> void:
@@ -646,12 +658,12 @@ func test_the_hour_boundary_hands_the_ledger_its_two_lines() -> void:
 
 func test_the_first_spawn_raises_the_mark_once() -> void:
 	var root := _mount()
-	root.feed_events([{"type": &"street_opportunity_spawned", "id": "opp_1",
+	root.feed_events([{"type": &"opportunity_spawned", "id": "opp_1",
 			"world_pos": Vector3(64.0, 0.0, 64.0)}])
 	assert_true(root.onboarding.notice_active(), "the player is told, once")
 	assert_true(root.onboarding.mark().is_showing())
 	root.onboarding.dismiss_notice()
-	root.feed_events([{"type": &"street_opportunity_spawned", "id": "opp_2"}])
+	root.feed_events([{"type": &"opportunity_spawned", "id": "opp_2"}])
 	assert_false(root.onboarding.notice_active(), "and never again")
 	_unmount(root)
 
@@ -661,7 +673,7 @@ func test_the_mark_is_not_a_tutorial_step() -> void:
 	# happened to spawn must not change that count, and must not gate anything.
 	var root := _mount()
 	var steps := root.onboarding.model.step_count()
-	root.feed_events([{"type": &"street_opportunity_spawned", "id": "opp_1"}])
+	root.feed_events([{"type": &"opportunity_spawned", "id": "opp_1"}])
 	assert_eq(root.onboarding.model.step_count(), steps)
 	assert_false(root.onboarding.is_active(), "the step machine never started")
 	assert_eq(root.onboarding.mark().mouse_filter, Control.MOUSE_FILTER_IGNORE,
@@ -671,7 +683,7 @@ func test_the_mark_is_not_a_tutorial_step() -> void:
 
 func test_collecting_the_thing_takes_the_mark_down() -> void:
 	var root := _mount()
-	root.feed_events([{"type": &"street_opportunity_spawned", "id": "opp_1"}])
+	root.feed_events([{"type": &"opportunity_spawned", "id": "opp_1"}])
 	assert_true(root.onboarding.notice_active())
 	var feedback := root.report_collect({"ok": true, "payload": {"reward": 90}},
 			{"reward": 90})
@@ -692,12 +704,12 @@ func test_a_refused_collect_says_so_and_sounds_nothing() -> void:
 
 func test_the_ui_save_section_carries_the_one_shot_flag() -> void:
 	var root := _mount()
-	root.feed_events([{"type": &"street_opportunity_spawned", "id": "opp_1"}])
+	root.feed_events([{"type": &"opportunity_spawned", "id": "opp_1"}])
 	var state := root.capture_ui_state()
 	assert_true((state["street"] as Dictionary)["coached"] as bool)
 	var second := _mount()
 	second.restore_ui_state(state)
-	second.feed_events([{"type": &"street_opportunity_spawned", "id": "opp_2"}])
+	second.feed_events([{"type": &"opportunity_spawned", "id": "opp_2"}])
 	assert_false(second.onboarding.notice_active(),
 			"a reload does not re-teach a lesson")
 	_unmount(second)

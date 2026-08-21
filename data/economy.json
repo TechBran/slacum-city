@@ -124,7 +124,7 @@
   "_tariffs_note": "POLICE_FINE_PER_RESOLVED_INCIDENT 350 is DELETED here (report 98 RR-78). It was the same dollar as doc 06's reward_base[crime] 350 and only one of the two was ever live; the survivor is city_services.dispatch_payout_base below. Doc 06 open question 6 asked for this ruling in Wave 1 and doc 93 sec N1 point 4 wrote its re-open condition; both are discharged.",
 
   "city_services": {
-    "_note": "NEW, report 98 RR-78 (the money pass). Sole payout table for doc 06's dispatch and doc 12's street opportunities - the last dollar column that lived outside this file. data/incidents.json carried reward_base and no longer does; data/street.json carries no dollar column at all. The split of ownership is the same one C-16 uses for repairs: doc 06 owns the SHAPE of a payout - which tier it peaked at, how fast the city answered, whether a human made the call - and doc 03 owns every dollar in it.",
+    "_note": "NEW, report 98 RR-78 (the money pass). Sole payout table for doc 06's dispatch and doc 12's street opportunities - the last dollar column that lived outside this file. data/incidents.json carried reward_base and no longer does; data/street.json still carries the LIVE reward columns this table is due to absorb (single-source migration is the next balance touch, with the 57%-ceiling retune). The split of ownership is the same one C-16 uses for repairs: doc 06 owns the SHAPE of a payout - which tier it peaked at, how fast the city answered, whether a human made the call - and doc 03 owns every dollar in it.",
     "_double_booking_ruling": "RR-78 answers doc 06 open question 6, held since Wave 1. reward_base[crime] 350 and POLICE_FINE_PER_RESOLVED_INCIDENT 350 ARE the same dollar. Only doc 06's was live - credited straight to the treasury on resolve, in no ledger line and no notification - while doc 03's was a HELD metering constant (CitySim.HELD_FINE_RATE = 3/350, measured flat at $3.00/gh on every preset at the founding hour, at 21 game-days and at 48, doc 93 sec N1 point 3). Doc 93 sec N1 point 4 wrote the re-open condition down: 'when doc 06 publishes real resolutions, the line becomes a measurement'. It has. The held pair and the `fines` ledger line are retired; the live `city_services` line below replaces them.",
     "dispatch_payout_base": {
       "crime": 350, "structure_fire": 900, "transformer_failure": 600,
@@ -140,8 +140,8 @@
     "_cap_scope_note": "The runtime clamp binds only where doc 03 can price the asset: buildings (capital_value by archetype and level) and grid components (capital_value_grid). Road edges and water segments have no capital_value in this file, so prevented_loss returns -1 there and the clamp is SKIPPED rather than silently zeroing a payout - the published table is what holds those types, and tests/test_balance_gates.gd gate 31 is what holds the published table.",
     "street_payout": {
       "petty_crime": 180,
-      "stray_animal": 120,
-      "abandoned_haul": 150
+      "loose_animal": 120,
+      "lost_valuables": 150
     },
     "_street_note": "The sibling street-life system (data/street.json) owns WHEN an opportunity appears, WHERE it stands and what it looks like; it owns no dollar. petty_crime 180 < dispatch_payout_base.crime 350 by ruling: a tapped crook is petty, a dispatched crime is the real one, and the ratio (0.514) has to read as 'about half' at a glance. stray_animal and abandoned_haul are placed under it because neither is a crime at all.",
     "STREET_MAX_RATE_PER_GAME_HOUR": 0.45,

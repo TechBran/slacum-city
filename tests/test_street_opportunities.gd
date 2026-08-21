@@ -236,14 +236,17 @@ func test_collecting_pays_once_on_its_own_ledger_line() -> void:
 	assert_eq(sim.street.live_count(), 1, "a preview takes nothing")
 
 	var balance_before := sim.treasury.balance
-	var street_before := int(sim.treasury.lifetime["lifetime_street"])
+	# Integration ruling (Wave 14): the collect deposits through the SETTLED
+	# city-services channel with source "street" (doc 03 §2.5), so the budget
+	# row, gate 32 and this book all see the same dollar.
+	var street_before := int(sim.treasury.hour_city_services["street"])
 	var tax_before := int(sim.treasury.lifetime["lifetime_tax"])
 	sim.bus.drain()
 	var result := sim.cmd_collect_opportunity(id)
 	assert_true(bool(result["ok"]), "the tap lands")
 	assert_eq(sim.treasury.balance, balance_before + reward,
 			"the treasury is up by exactly the quoted bounty")
-	assert_eq(int(sim.treasury.lifetime["lifetime_street"]), street_before + reward,
+	assert_eq(int(sim.treasury.hour_city_services["street"]), street_before + reward,
 			"…on doc 03 §2.5's own `street` row")
 	assert_eq(int(sim.treasury.lifetime["lifetime_tax"]), tax_before,
 			"…and not on tax, which the slider owns")

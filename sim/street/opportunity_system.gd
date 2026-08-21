@@ -455,6 +455,25 @@ func live_count() -> int:
 
 
 ## One offer by id, or an EMPTY dictionary. A private copy — see `live()`.
+## The nearest live offer within `radius_m` of a WORLD point (metres), or `{}`.
+## The shell's tap funnel (doc 12 §2.21) calls this through `BuildController`;
+## a query, so it moves nothing and draws nothing. `world_pos` rides the answer
+## because the caller circle-tests against it — tile centre, the same 8 m grid
+## every renderer uses.
+func opportunity_near(point: Vector3, radius_m: float) -> Dictionary:
+	var best: Dictionary = {}
+	var best_d := radius_m
+	for row: Dictionary in _live:
+		var world := Vector3(float(int(row["tile_x"])) * 8.0 + 4.0, 0.0,
+				float(int(row["tile_y"])) * 8.0 + 4.0)
+		var d := Vector2(world.x - point.x, world.z - point.z).length()
+		if d <= best_d:
+			best_d = d
+			best = row.duplicate()
+			best["world_pos"] = world
+	return best
+
+
 func find(opportunity_id: int) -> Dictionary:
 	for row: Dictionary in _live:
 		if int(row["id"]) == opportunity_id:

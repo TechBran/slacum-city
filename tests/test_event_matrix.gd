@@ -297,20 +297,10 @@ const REGISTER := {
 		"bookkeeping: the queue re-ordered itself. Neither site changed state.",
 
 	# ── doc 06 §2.16, the opportunity layer ────────────────────────────────
-	"opportunity_spawned":
-		"awaiting_consumer: Wave 15 splits this mechanic across two branches —"
-		+ " the sim spawner (this one) and the street-life renderer that draws"
-		+ " the crook, the dog and the glint. Its consumer is"
-		+ " game/render/, landing in the same wave; the third event of the set,"
-		+ " opportunity_collected, is already consumed by"
-		+ " sim/progression/goal_system.gd. Delete this row when the marker"
-		+ " lands — the stale-exemption test will insist.",
-	"opportunity_expired":
-		"awaiting_consumer: Wave 15, the same pair. The player-visible change is"
-		+ " the marker VANISHING, which is the renderer's to un-draw in"
-		+ " game/render/ — and it must never become a push or a log line, because"
-		+ " a bounty nobody took is not news (doc 08 §2.13). Delete this row when"
-		+ " the marker lands.",
+	# opportunity_spawned / opportunity_expired: consumed by
+	# game/render/street_life_view.gd since the marker landed at the Wave-14
+	# integration — their awaiting_consumer rows deleted themselves exactly as
+	# written. opportunity_collected: goal_system + street_life + ui/street_model.,
 
 	# ── not an event at all ────────────────────────────────────────────────
 	"water_works":
