@@ -76,6 +76,21 @@ const EVENT_KINDS: Dictionary = {
 			"match_field": "", "match_key": "", "amount": ""},
 	&"set_tax_rate": {"event": &"tax_rate_changed",
 			"match_field": "", "match_key": "", "amount": ""},
+	# Doc 06 §2.16's street tap. `match_field` is EMPTY, so the row counts a
+	# collection of any kind — "collect 3 street opportunities", not "collect 3
+	# crooks". The kind-specific reading is one authored key away (set
+	# `match_field: "kind"` and give the row an `opportunity_kind`), and it is
+	# deliberately not taken yet: a curriculum row that asks for a crook asks
+	# the player to wait for a crime the police did not answer, and the level it
+	# would sit on is the one that teaches building a police station.
+	#
+	# **No curriculum row uses it yet** — `data/goals.json` is untouched and
+	# balance gate 21's fitted targets do not move. When one lands, level 4 is
+	# where it fits: that level already teaches the police station, so "there
+	# are still crimes it misses, and here is what you do about them" is the
+	# sentence the objective would be finishing.
+	&"collect_opportunities": {"event": &"opportunity_collected",
+			"match_field": "", "match_key": "", "amount": ""},
 }
 
 ## Kinds that READ STATE, and the key each one reads out of [reconcile]'s view.

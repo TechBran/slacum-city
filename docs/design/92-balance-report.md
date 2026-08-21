@@ -6115,3 +6115,141 @@ that:
 4. **The expensive tables have never been re-taken on a merged tree** (§34.3).
    Not urgent. `tests/balance_matrix.gd` already prints §31.1's table in one
    command, so this is a scheduled re-run rather than an instrument to build.
+
+---
+
+## 35. Pass 14 — the opportunity layer arrives with placeholder numbers, and a measured ceiling to rule on (2026-08-21)
+
+*Doc 06 §2.16 ships the first system in this project that pays the player for
+LOOKING at the city. Its constants are **placeholders authored by the sim
+agent**; this section is the hand-off — what the layer costs, what it pays, what
+it did NOT move, and the one number the balance agent has to rule on. Nothing
+here retunes anything: `data/street.json` is a new file, no existing tunable
+moved, and no gate was re-fitted.*
+
+### 35.1 The control — the coarse matrix did not move, because the layer is not on it
+
+Doc 06 §2.16's spawner is a **fine-path** system: `advance_coarse` expires and
+returns, drawing nothing from the new `street` stream (report 98 RR-77(a), doc 93
+§Q1). `tests/balance_matrix.gd` runs the coarse step. So the matrix is not merely
+"close" — it is the same run:
+
+    ~/.local/bin/godot --headless --path . -s res://tests/balance_matrix.gd \
+        -- days=21 strategies=do_nothing seeds=1337,4242,9001
+
+| `do_nothing`, 21 gd | §33.4 published | this fork |
+|---|---|---|
+| treasury (mean of 3 seeds) | 145,417 | **145,417** |
+| value | 145,417 | **145,417** |
+| pop | 141 | **141** |
+| minC | 0.501 | **0.501** |
+| peak open incidents | 2 | **2** |
+| abandoned | 0.0 | **0.0** |
+
+Per seed: 150,197 / 143,603 / 142,453. **Cell for cell**, which is the property
+RR-77(a) exists to guarantee and the reason every table in this document
+published against a scripted agent still measures what it measured.
+
+*Why the matrix cannot see the layer at all, stated once so nobody re-runs it
+hoping to:* every strategy in `tools/playtest.gd` is a coarse-path agent that
+never taps, and there is no `Api` verb for `cmd_collect_opportunity`. A tapping
+agent is the missing instrument — see §35.4.
+
+### 35.2 The beat and the ceiling — `tools/measure_street_yield.gd`
+
+New instrument, printed command line, founding city, seeds 1337 / 4242 / 9001,
+720 game-hours each (2,160 gh, 1,225 offers):
+
+    ~/.local/bin/godot --headless --path . -s res://tools/measure_street_yield.gd \
+        -- --hours=720 --seeds=1337,4242,9001 --net=319.0
+
+| metric | value |
+|---|---|
+| mean interval between offers | **1.763 gh** |
+| …as real time at 1x | **1 minute 46 seconds** |
+| mean bounty | **$320.29** |
+| offers per game-day | **13.6** |
+| ceiling — every offer collected | **$181.65/gh**, **$4,360/game-day** |
+| …against §2.12's founding net of +$319/gh | **57 %** |
+
+| kind | share | mean bounty |
+|---|---|---|
+| `petty_crime` | **67.8 %** | $303.18 |
+| `lost_valuables` | **17.1 %** | $509.79 |
+| `loose_animal` | **15.1 %** | $181.96 |
+
+The beat lands inside the design's 1–3 real-minute band with room on both sides,
+and `tests/test_street_opportunities.gd` holds it there as a (deliberately loose)
+gate rather than a fitted target.
+
+### 35.3 THE NUMBER TO RULE ON — a 57 % ceiling is too generous, and the two levers
+
+**The finding.** A player who collects **all 13.6 offers a game-day** earns 57 %
+of what the whole city earns. That is the ceiling, not the expectation — it costs
+24 real minutes of uninterrupted attention and a great deal of map-scrubbing, and
+a realistic session takes a fraction of it. But 57 % is the number a determined
+player can reach, and this document's opinion is that **the ceiling belongs
+nearer 35–40 %**: high enough to answer the player's *"make money quickly"*, low
+enough that tapping never outruns running a city. At 40 % the layer is a strong
+second income; at 57 % a player who ignores tax and builds nothing can bank on
+attention alone, which inverts the §2.12 pacing model this document is built on.
+
+**The two cheapest levers, in order.**
+
+1. **`lost_valuables`** — 17.1 % of offers at $509.79, i.e. **27 % of all street
+   income from the kind with the least to say.** It is the free lever: halving
+   its `reward.base` costs the ceiling ~11 points and costs the *design* nothing,
+   because the crook and the dog are the kinds carrying the fiction the player
+   asked for.
+2. **`spawn.target_interval_h`** (1.5) — scales the whole layer linearly and the
+   BEAT with it. Moving it to 2.0 takes the ceiling to ~43 % and the beat to
+   ~2.35 real minutes, which is still inside band. Use this one second, because
+   the beat is the thing the player actually asked for and it should be the last
+   thing traded away.
+
+**What is NOT a lever, and should not be tuned away.** The crook share of
+**67.8 %** on the founding city is doc 06 §2.16's coverage hook working: the
+starter city has one police station, so most kerbs read as weakly covered and
+most offers are crimes. That is the layer *teaching what a second station is
+for*. The measured contrast — **70 % crook share at `coverage_police = 0`
+against 12 % at `1.0`**, 240 gh per arm — is the mechanic, not a bias.
+
+**Two second-order effects to check before ruling**, neither measured here:
+
+- **`reward_city_level_k = 0.20`** makes a level-5 city pay 1.8× a founding one.
+  Nobody has measured whether that keeps pace with a level-5 city's net or
+  outruns it; §2.12's pacing rows are the comparison and the tapping agent below
+  is what would take it.
+- **The layer is not in the pacing model at all.** §2.12's ten-hour treasury
+  curve, the §2.10 recovery ladder's credit limit and gate 5's *"playing beats
+  standing still"* margin were all fitted on a city with no street income. Street
+  money deliberately never enters `settle()`'s `revenue` (doc 93 §Q2), so it
+  cannot move the credit limit — but it does move the treasury, and gate 5's
+  margin is the one that would notice first.
+
+### 35.4 What this pass did not do, ranked
+
+1. **A TAPPING AGENT.** `tools/playtest.gd` has no strategy that collects, and
+   `Api` has no door for `cmd_collect_opportunity`, so no table in this document
+   can see the layer's effect on an arc. This is the top-ranked instrument gap:
+   until it exists, §35.3's ruling rests on a ceiling computed from spawn
+   telemetry rather than on a played city. It is small — one strategy that calls
+   the verb on the nearest live offer each step, plus one `Api` method — and it
+   must run on the FINE path, which is the part that makes it more than a
+   one-line change (every agent in the matrix is coarse today).
+2. **The curriculum row.** Doc 09 §2.14's `collect_opportunities` evaluator kind
+   is authorable and **deliberately unused** — `data/goals.json` is untouched and
+   gate 21's fitted targets do not move. Where a row would fit: **level 4**,
+   which already teaches the police station, so *"there are still crimes it
+   misses, and here is what you do about them"* is the sentence the objective
+   would finish. Adding it is a re-measure of §33.6's arrival table, which is why
+   it is not in this wave.
+3. **Difficulty.** The layer reads no difficulty knob. `M_rev` deliberately does
+   not touch it (doc 93 §Q2), which means `crisis` and `casual` get the same
+   street income — arguably right (attention is not a difficulty setting) and
+   arguably a missed lever on the preset whose whole identity is a thin purse.
+   Ranked, not ruled.
+4. **The expiry has no consequence.** An unanswered `petty_crime` vanishes
+   silently. Doc 06 §2.16 names `expire_stability_delta` as the authorable hook
+   and explains why v1 does not ship it; if it ever does, it is a doc 09
+   stability change and a gate-4 re-measure, not a data edit.

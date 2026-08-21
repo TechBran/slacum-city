@@ -337,12 +337,12 @@ static func _sha256_of(text: String) -> String:
 	return ctx.finish().hex_encode()
 
 
-func test_the_city_section_is_on_rung_six() -> void:
+func test_the_city_section_is_on_rung_seven() -> void:
 	# The constant, the published accessor and the bytes on disk must agree.
 	# A bump that lands in only two of the three is how a save silently keeps
 	# claiming to be something it is not.
-	assert_eq(CitySim.SAVE_SECTION_VERSION, 6,
-			"the difficulty epoch is rung 6 (doc 08 §2.8, doc 91 A91-D-19)")
+	assert_eq(CitySim.SAVE_SECTION_VERSION, 7,
+			"the opportunity layer is rung 7 (doc 08 §2.8, doc 91 A91-D-33)")
 	var sim := CitySim.boot_from_files(4242)
 	assert_eq(sim.save_section_version(), CitySim.SAVE_SECTION_VERSION)
 	var service := _fresh_service()
@@ -463,7 +463,7 @@ func test_the_city_section_ladder_is_total_and_additive_only() -> void:
 	# assertion that would catch a v4 → v5 (or later) rung that quietly started
 	# inventing a key: the goals marker is the ONLY thing this ladder may add.
 	assert_eq(sim.migrate_save_section({"a": 1}, 4).keys().size(), 1,
-			"v4 → v5 → v6 are identities: neither epoch adds a top-level key")
+			"v4 → v5 → v6 → v7 are identities: no epoch adds a top-level key")
 	# The one thing v6 DOES write, and where: inside a director section that
 	# exists but does not name its preset.
 	var unnamed := sim.migrate_save_section({"director": {"tp_pool": 3.0}}, 5)
@@ -471,7 +471,14 @@ func test_the_city_section_ladder_is_total_and_additive_only() -> void:
 	assert_eq(String((unnamed["director"] as Dictionary)["difficulty"]),
 			Difficulty.DEFAULT_PRESET,
 			"v5 → v6 names the preset the body was actually played on")
-	assert_eq(int(sim.migrate_save_section({"a": 1}, 7).get("a", 0)), 1,
+	# v6 → v7 (the opportunity layer, doc 06 §2.16) is an identity too, and it is
+	# the interesting one to say out loud: it adds a `street` section and a
+	# seventh RNG stream to the SHAPE, and still writes nothing here, because a
+	# v6 body's absent `street` block and unknown `street` stream both restore to
+	# exactly what a v6 city had — an empty street on its boot seed.
+	assert_eq(sim.migrate_save_section({"a": 1}, 6).keys().size(), 1,
+			"v6 → v7 invents no key: restore_state answers the absent section")
+	assert_eq(int(sim.migrate_save_section({"a": 1}, 8).get("a", 0)), 1,
 			"a body from the future is not mangled on the way past")
 	# And a body restored through the migrator is the body itself.
 	var restored := CitySim.boot_from_files(4242)

@@ -2787,3 +2787,128 @@ one is current.
 **Applied:** doc 91 (the re-derived count table before §0.5; the provenance box
 at the head of the file; §20.1a's eight clauses; §20.4's completion statement;
 §20.5's marker sweep), and the pointer above RR-47.
+
+---
+
+## 31. WAVE 15 — the layer that pays for LOOKING (binding)
+
+### RR-77 — A system that pays for ATTENTION belongs to the fine path; and a hash delta is a claim you can enumerate (docs 00 §5, 03 §2.5/§3.3, 06 §2.16, 08 §2.3/§2.8/§2.9/§3.1, 09 §2.14, 91 A91-D-33, 92 §35, 93 §Q)
+
+**What the player said, because it is the whole requirement.** *"We need to have
+ways where we can make money quickly… on the street, we should have an animation
+of humans that are committing crimes that aren't being picked up by the police
+station, and animals that maybe have gotten on the loose — need to collect them.
+And these should definitely pay you money. So there's not a lot of downtime of
+absolutely nothing to do."*
+
+Read that against what the project had: eleven systems the player SETS UP and
+then watches settle. A fire answers itself. A tax rate pays on the hour. A block
+develops over game-days. **Nothing rewarded looking at the city**, so a session
+had a busy first minute and then a wait. Doc 06 §2.16 is the answer — three kinds
+of tappable street offer, spawned on a new named stream, expiring in two to four
+real minutes, paying a bounty — and it ships behind three rulings.
+
+**(a) The offline rule is STRUCTURAL, not clamped** *(doc 93 §Q1, doc 08 §2.3
+rule 9).* Every other rule in §2.3 is a clamp: the system runs offline and
+`OfflineGuard` bounds its output. This one is not — the spawner's
+`advance_coarse` expires and returns, drawing nothing, so there is no output to
+bound. Same visible result as the clamp version ("they expire before you get
+back"); different guarantees. Zero draws is checkable, cannot drift, satisfies
+doc 01 §2.5's coarse contract without an argument, and leaves the coarse-step
+balance matrix bit-identical. **Verified: 21 game-days of catch-up move the
+`street` stream's state by zero** (`tests/test_street_opportunities.gd`), and
+`tests/balance_matrix.gd -- days=21 strategies=do_nothing seeds=1337,4242,9001`
+reproduces doc 92 §33.4's published row **cell for cell** — treasury 145,417,
+value 145,417, pop 141, minC 0.501, peak open 2.
+
+**(b) Attention money is its own ledger line** *(doc 93 §Q2, doc 03 §2.5).*
+`Treasury.credit(reward, &"street", …)`, with `ledger_totals.lifetime_street`.
+Never `tax` (a rate on the city's value is not a bounty on the player's
+attention, and mixing them makes the tax slider appear to move when the player
+merely tapped more), never `tariff` (nothing was delivered or metered), never in
+`settle()`'s `revenue` (which would let tapping raise the credit limit).
+
+**(c) A split delivery gets a named, self-clearing exemption** *(doc 93 §Q3).*
+RR-53 requires a consumer or a written exemption for every player-visible event.
+`tests/test_event_matrix.gd` gains one classification word, `awaiting_consumer`,
+usable only by a row that names the wave that owes the consumer and the file that
+will be it — and it expires mechanically, because the register's own
+stale-exemption test fails the suite the moment the consumer lands. The same
+shape lands one gate over: doc 09 §2.14's `collect_opportunities` evaluator kind
+sits in a `SURFACE_DEFERRED_KINDS` list in `tests/test_goals_system.gd` under
+§G2, with a **stronger** expiry — the test scans `game/` and `ui/` for the verb
+the row names and fails the moment anything there calls it.
+
+**(d) And a defect this change FOUND rather than caused** *(doc 93 §Q4).* Doc 01
+§2.3 has always said the scheduler "sorts by `(phase, system_id)` … so ties are
+broken deterministically". `sort_custom` is an introsort and is **not stable**, so
+two systems sharing a phase *and* an id had no defined order at all. Nothing
+shipped registers a duplicate; `tests/test_weather_integration.gd` deliberately
+does — a second `&"weather"` driving a wired `WeatherSystem` alongside the sim's,
+both writing the shared `ModifierStack`, so the last to run decides what the grid
+draws. Registering one unrelated system elsewhere flipped that sort, the rig lost,
+and the failure read as *"a heat wave stopped moving power demand"* three
+directories from the change. **Ruled: the sort key gains registration order as its
+final term** — an override registered later wins, which is what a caller
+registering a duplicate already means. It can move no correct behaviour, because
+the order it defines was previously undefined, and it changes nothing for a
+unique-id registry: all four determinism baselines are byte-identical across it.
+The general form is worth more than the fix: **a sort key that is not unique is
+not a key**, and this project sorts for determinism everywhere.
+
+**The methodological half of this ruling, and the part that generalises.**
+
+> **A hash delta is not "the baselines moved". It is a claim about which keys
+> moved and which values did not, and that claim can be ENUMERATED.**
+
+This change moves all four published determinism baselines, which under the
+existing practice would be recorded as four new digests and a sentence of
+reassurance. That is exactly the shape RR-55 and RR-76 keep catching in other
+documents: a derived number republished without the argument that produced it.
+So the delta was enumerated instead. The layer adds **exactly three keys** to the
+city body — `street` (the roster), `rng.street` (the eighth named stream) and
+`treasury.ledger_totals.lifetime_street` — and **changes no existing value
+anywhere**. Strip those three from the captured body and re-digest:
+
+| city / path | shipped digest | with the three keys stripped | Wave-13 baseline |
+|---|---|---|---|
+| founding, coarse 24 h | `32a3e968…` | `0b67cd2273a5115a…` | `0b67cd22…` ✅ |
+| founding, fine 2 h | `90a41a97…` | `4f9f383038fbe383…` | `4f9f3830…` ✅ |
+| bench, coarse 24 h | `385dacb2…` | `bbe658aeeaa9f855…` | `bbe658ae…` ✅ |
+| bench, fine 2 h | `e4204947…` | `158501b8845b056f…` | `158501b8…` ✅ |
+
+Four for four, on two cities and both paths, **to the byte** — including the fine
+runs, which have two live opportunities standing on the street when the digest is
+taken. That is the difference between "we believe this was additive" and "this
+was additive, here is the arithmetic". The property is kept alive after the
+baselines move on by
+`test_the_layer_moves_nothing_outside_its_own_three_keys`, which runs the same
+comparison between a live spawner and one pinned at `max_live = 0` and needs no
+published digest at all.
+
+**Constitution §5's stream roster is a ROSTER, not a cap.** `street` is added to
+doc 00 §5's list. The rule above the list — *every stochastic system gets its own
+named RNG stream* — **requires** the addition; a new stochastic system that
+reused `misc` would be the violation. It costs the existing streams nothing,
+because each stream's seed is `hash(master_seed + ":" + name)` and a name that
+did not exist perturbs no sequence that did. The whole cost lands in one place,
+the body's `rng` block, which is why it takes a section rung.
+
+**And the rung is a SHAPE rung, which doc 93 §P2 requires it to be.** §P2 forbids
+"a rung taken as a pure epoch marker — a `_v6_to_v7` identity migrator with
+nothing in the body it is about". This one has something in the body it is about:
+a new top-level `street` key. `_v6_to_v7` is still the identity function, and
+here that is the complete answer rather than a formality — an absent `street`
+block deserialises to an empty roster (which is what a v6 city genuinely had) and
+`RngStreams.deserialize` leaves an unknown stream on its boot seed (which is
+where a fresh city of that seed starts). A migrator that materialised those
+defaults would have to be re-read every time a default changed.
+
+**Applied:** doc 00 §5 (the roster + the ruling pointer); doc 01 §2.3 (the sort
+key's third term); doc 03 §2.5 (the
+`street` revenue line, the measured ceiling table) and §3.3 (`lifetime_street`);
+doc 06 §2.16 (the mechanic, whole); doc 08 §2.3 rule 9, §2.8's v7 shipped note,
+§2.9 (eight streams) and §3.1's registry row; doc 09 §2.14 gains the
+`collect_opportunities` evaluator kind with **no curriculum row** (gate 21's
+fitted targets are untouched — see doc 92 §35 for where a row would fit); doc 91
+A91-D-33 and §17's verb matrix; doc 92 §35; doc 93 §Q.

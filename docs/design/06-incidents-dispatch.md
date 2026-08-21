@@ -1295,6 +1295,116 @@ and gate 29's per-preset horizons no longer have to dodge the cascade. The curve
 is reproduced by `tools/profile_decay.gd --days=200 --preset=crisis`; doc 92
 §31.4 publishes it in full and §31.6 ranks what it still costs.
 
+### 2.16 The opportunity layer — the street events the player TAPS (Wave 15, 2026-08-21)
+
+Everything above this line is a system the player sets up and then watches
+settle. A fire answers itself. A tax rate pays out on the hour. A block develops
+over game-days. **None of it rewards LOOKING at the city**, and the Wave-13
+playtest said so in as many words: *"we should have an animation of humans that
+are committing crimes that aren't being picked up by the police station, and
+animals that maybe have gotten on the loose — need to collect them. And these
+should definitely pay you money. So there's not a lot of downtime of absolutely
+nothing to do."*
+
+This section is that layer. It lives in doc 06 because its headline kind is
+**the crime the station did not answer** — it reads §2.9's `coverage_police`
+field and nothing else decides where a crook stands — but it is deliberately
+*not* an incident: it has no severity, no tier, no escalation, no unit, no
+dispatch and no `on_fail`. An incident is a consequence the city must survive;
+an opportunity is an **offer the player may take**.
+
+**The three kinds v1 ships.**
+
+| kind | where it stands | lifetime | what it pays |
+|---|---|---|---|
+| `petty_crime` | a kerb, weighted by `f_weak(coverage_police(tile))` | 2.5–4.0 gh | $260 + $0–90 |
+| `loose_animal` | a kerb with residential frontage | 2.0–3.5 gh | $150 + $0–60 |
+| `lost_valuables` | any kerb, flat-weighted, rare (0.50) | 1.0–1.75 gh | $420 + $0–180 |
+
+Every number is authored in `data/street.json` and **every one of them is a
+placeholder**: the balance agent owns the fit, and the file is shaped so that a
+retune is a data edit. Rewards scale `× (1 + 0.20·(city_level − 1))`, frozen at
+spawn and carried on the row, so the preview, the commit and a save→load all
+quote the same dollars.
+
+**Placement is a kerb, and the kerb is the renderer's.** A candidate is a road
+tile with at least one orthogonal neighbour that is in bounds, not road and not
+water — `RoadSurfaceView.classify()`'s `kerb` mask exactly, replicated from
+`TileGrid` flags in `sim/street/opportunity_system.gd` because `sim/` may not
+read `game/` (constitution §3). One divergence, in the safe direction: the
+renderer kerbs an *off-map* neighbour so a road that runs to the edge of the
+world still gets a face; the sim does not, because a bounty may not stand off
+the world. The row carries the kerb SIDE (0..3 = N, E, S, W), so the actor
+stands on the footway and never in a traffic lane. **Founding city: 734
+candidate tiles.**
+
+**The kind is drawn AT the tile, and that is the whole coverage hook.** One
+uniform tile draw, then the three weights evaluated there:
+
+```
+w(petty_crime)   = 1.00 × f_weak(coverage_police(tile))
+w(loose_animal)  = 1.00 × (2.50 if residential frontage else 0.40)
+w(lost_valuables)= 0.50
+
+f_weak(c) = lerp(3.00, 1.00, c / 0.45)              for c ≤ 0.45
+          = lerp(1.00, 0.15, (c − 0.45) / 0.55)     for c > 0.45
+```
+
+So a crook's weight at an unpoliced corner is **twenty times** its weight at a
+fully covered one, and the crook lands where the player can *see* the station is
+missing. The total spawn RATE does not move with coverage — this layer is what
+keeps a session busy, and a well-run city may not be a quiet one; what moves is
+*which* kind the street offers. Measured over 240 game-hours per arm on the
+founding city (`tests/test_street_opportunities.gd`): **crook share 70 % at
+`coverage_police = 0` against 12 % at `1.0`.**
+
+**Cadence and ceiling.** One Bernoulli per game-minute at
+`p = eval_period_h / target_interval_h`, skipped entirely while four offers are
+already live; on success, one tile draw, one kind draw, one reward draw and one
+lifetime draw — **five draws per spawn, one per quiet minute**, all on the
+`street` stream (constitution §5) and no other. A tile within
+`min_separation_tiles` (5.0) of a live offer is rejected without a spawn.
+Measured on the settled starter city across seeds 1337 / 4242 / 9001, 120
+game-hours each: **one offer per 1.85 game-hours**. One game-hour is one real
+minute at 1x, so that is the 1–3 real-minute beat the design asked for.
+
+**It is a FINE-PATH system, and that is the offline rule made structural.**
+`advance_coarse` expires and returns, drawing nothing. Doc 08 §2.3 rule 9:
+opportunities do not accrue while the player is away, because they are the
+play-NOW layer and a bounty is paid for attention, not for absence. A catch-up
+therefore clears whatever it finds expired **without a word** — a returning
+player is not told about money they could not possibly have taken. Two
+consequences worth stating: the doc 01 §2.5 coarse contract is satisfied
+trivially (zero draws, zero spawns), and `tests/balance_matrix.gd`, which runs
+the coarse step, is bit-identical to the day before this system existed.
+
+**Nothing spawns value.** A live opportunity is not money; a TAP is money.
+`cmd_collect_opportunity(id, preview)` is the only door, it refuses
+`E_UNKNOWN_OPPORTUNITY` and `E_EXPIRED`, and it pays through doc 03 §2.5's
+`street` revenue line — its own ledger row and its own lifetime counter, never
+folded into tax. An agent that never taps (every strategy in `tools/playtest.gd`)
+reaches the same city it always did.
+
+**Three events**, sharing one payload shape `{id, kind, tile, side, reward,
+expires_h}`: `opportunity_spawned`, `opportunity_collected`,
+`opportunity_expired`. The renderer draws and un-draws off the first and third;
+doc 09 §2.14's `collect_opportunities` evaluator counts the second.
+
+**What v1 does NOT do, and where each would go.**
+
+- An unanswered `petty_crime` expires **silently**. A stability micro-ding on the
+  containing district is the obvious next beat — "the neighbourhood noticed you
+  did not" — and belongs in `data/street.json` as `expire_stability_delta` under
+  the kind, applied through doc 09's `districts.apply_stability`. It is left out
+  of v1 on purpose: a punishment for not looking is the opposite of what the
+  player asked for, and it should not ship before doc 09 rules on the size.
+- Nothing checks road closures or flooding when it picks a tile. A crook can
+  stand on a closed street. Cheap to add (`RoadNetwork.flags_of`), and worth
+  measuring before it is: rejecting tiles narrows the pool and slows the beat.
+- No park frontage, because doc 02 authors no park archetype. `frontage` is
+  named for the TEST and not for the category so the day one lands it is a
+  one-line change.
+
 ---
 
 ## 3. Data Schema
@@ -1475,6 +1585,33 @@ The point of the explicit guard is that the refusal is **visible** — a `REFUSE
 
 `rolling_response_score` = EWMA (α = 0.05) of `clamp(1.5 - response_minutes/target_response_min, 0, 1)` — read by the Disaster Director (**doc 07**) as a preparedness input.
 
+**§2.16's roster is a `city`-section block, not an `incidents` one** *(Wave 15).*
+The opportunity layer is not an incident — no severity, no tier, no unit, no
+dispatch — so it does not ride the `incidents` section and does not take that
+section's rung. It is one key in the city body, and it costs doc 08 §2.8 rung
+**v7**:
+
+```jsonc
+"street": {
+  "next_id": 12,
+  "live": [ {
+    "id": 11, "kind": "petty_crime",
+    "tile_x": 48, "tile_y": 40,     // the road tile
+    "side": 1,                      // the KERB, 0..3 = N,E,S,W — the footway the actor stands on
+    "reward": 264,                  // frozen at spawn, so preview / commit / reload all quote it
+    "spawned_h": 22.6333333333333,  // absolute game-hours; both are ~f~ encoded on disk
+    "expires_h": 25.2255634540071
+  } ]
+}
+```
+
+Everything else the layer needs is DERIVED and deliberately absent: the kerb
+candidate index is rebuilt from the tile grid, the road graph and the building
+roster (memoised on `graph_version` + `roster_revision`), and the `street` RNG
+stream lives in the body's own `rng` block with the other seven. A body with no
+`street` key at all restores to an empty roster, which is exactly what a v6 city
+had — see doc 08 §2.8's v7 note for why `_v6_to_v7` writes nothing.
+
 **`speed` and `heading` are first-class persisted fields on `vehicle_state`, not derived** *(report 98 C-67).* Doc 11's Hermite interpolation needs both to place a vehicle between two 4 Hz sim positions; reconstructing them from consecutive positions doubles visible latency and makes a vehicle turn a frame after it has already moved. `speed` is `effective_speed` in metres per game-minute at the last sim update, `heading` is the direction of travel along the current route polyline in radians on the XZ plane. Both are written by `FleetSystem.advance()`, snapshot each tick, and round-trip through save/load so a resumed city does not stutter on the first frame.
 
 ---
@@ -1640,11 +1777,25 @@ Headless tests (`tests/sim/incidents/`, `tests/sim/dispatch/`), all with injecte
 51. `test_the_crime_cascade_is_bounded_by_the_ceiling` — the defect itself, as a unit test. One populated district at stability 0, no fleet, generation off, one seed crime; assert the roster never exceeds the automatic ceiling at any of 336 game-hours **and that it actually reaches it**, because a bound the fixture never touches proves nothing. Before §2.13(b) this test could not be written: the roster passed five figures inside a game-day.
 52. **Balance gate 30** (`tests/test_balance_gates.gd`) — `do_nothing` on `crisis` to game-day **200**, sampled per game-HOUR because the cascade multiplied inside one, asserting `peak ≤ saturation_ceiling` and that the run still generated incidents at all, so a future "fix" cannot pass by muting the engine.
 
+**§2.16, the opportunity layer (Wave 15)** — all in `tests/test_street_opportunities.gd`:
+
+53. `test_two_cities_on_one_seed_spawn_the_same_street` — 24 game-hours of the whole integrated sim on one seed, twice; the `opportunity_spawned` stream must be identical field for field (id, kind, tile, kerb, dollars, expiry) and the two `state_hash()` values equal.
+54. `test_the_phase_adapter_is_wired_to_the_minute` — the seam, asserted rather than sampled: `EVERY_MINUTE`, `Phase.INCIDENTS`, a `system_id` that sorts BEHIND `&"incidents"`, and the exact absolute game-hour handed to the spawner on both paths — `(tick+4)/240` fine, `(tick+240)/240` coarse — proved with planted offers whose expiries straddle each boundary.
+55. `test_a_city_with_no_police_finds_more_crooks` — the coverage hook, isolated: the same city and the same stream with `coverage_police` stubbed at 0.0 and at 1.0, 240 game-hours per arm. Crook share **70 % vs 12 %**; the assertion is the ratio (≥ 2×) and the ≥ 0.35 floor at zero coverage, not the digits.
+56. `test_the_coverage_knee_is_read_from_the_file_not_the_code` — `f_weak` returns the three authored points at 0, the knee and 1.0, and never rises with coverage across 21 samples.
+57. `test_collecting_pays_once_on_its_own_ledger_line` — preview quotes what the commit pays and takes nothing; the commit moves the balance by exactly the bounty, moves `lifetime_street` by the same and `lifetime_tax` by zero; a second tap on the same id answers `E_UNKNOWN_OPPORTUNITY`.
+58. `test_a_marker_that_died_between_the_frame_and_the_finger_refuses` — `E_EXPIRED`, no money moved, and the refusal payload still names the marker.
+59. `test_an_offer_that_nobody_answers_expires_and_says_so` — past the longest authored lifetime, `opportunity_expired` names the id and the roster no longer holds it.
+60. `test_a_save_taken_mid_crook_restores_the_crook` — capture with a live offer standing, restore into a fresh sim: identical roster, identical `state_hash()`, and identical again after both advance six game-hours.
+61. `test_nothing_accrues_while_the_player_is_away` / `test_the_coarse_path_costs_the_matrix_nothing` — doc 08 §2.3 rule 9. A 24-game-hour catch-up emits **no** `opportunity_*` event, leaves the street empty, and moves the `street` stream's state by **zero**; three game-weeks of coarse advance likewise.
+62. `test_the_layer_moves_nothing_outside_its_own_three_keys` — report 98 RR-77's property, self-contained: a live spawner and one pinned at `max_live = 0`, 24 game-hours each, must differ on `state_hash()` (so the test cannot pass vacuously) and be **byte-identical** once `street`, `rng.street` and `ledger_totals.lifetime_street` are stripped from both bodies.
+63. `test_the_sim_stands_its_actors_on_the_renderer_s_kerb` — every candidate `(tile, side)` is a kerb in `RoadSurfaceView.classify()`'s own mask, and the two tile sets are equal once the renderer's off-map faces are removed. This is what stops a crook standing in a traffic lane after either side of the copy moves.
+
 ---
 
 ## 8. Tunables
 
-One document, three top-level keys — split into `data/incidents.json`, `data/vehicles.json`, `data/dispatch.json` verbatim.
+One document, three top-level keys — split into `data/incidents.json`, `data/vehicles.json`, `data/dispatch.json` verbatim. **§2.16's opportunity layer adds a fourth file, `data/street.json`**, owned by this doc and authored entirely as placeholders: kinds, base weights, lifetime bands, reward base/spread, the police-coverage knee and the spawn cadence. It is deliberately shaped so a retune is a data edit and never a code edit — the balance agent owns the final values and doc 92 §35 is the hand-off, including the one number it has to rule on (a 57 %-of-founding-net collection ceiling, which that section argues belongs nearer 35–40 %).
 
 **Deleted by report 98, with where to look instead** — these keys are *removed*, not defaulted, not commented out:
 

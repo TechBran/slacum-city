@@ -50,9 +50,17 @@ var austerity_entered_hour: int = -1
 var relief_grants_used: int = 0
 var relief_last_grant_hour: int = -1
 
+## Doc 03 §2.5's revenue and repair rows, counted for life. `lifetime_street` is
+## doc 06 §2.16's opportunity bounties and is its OWN row on purpose: folding
+## street money into `lifetime_tax` would make the tax slider look like it moved
+## when the player simply tapped more, and the budget sheet's whole job is to
+## tell the player which lever did what. Counters migrate by appending at 0 and
+## never renaming — `deserialize` walks the keys it has, so an older
+## `ledger_totals` block restores the rows it carries and starts this one at
+## zero, which is what a city that could not earn it genuinely had.
 var lifetime: Dictionary = {
 	"lifetime_tax": 0, "lifetime_tariff": 0, "lifetime_expense": 0,
-	"lifetime_repairs": 0, "lifetime_foregone": 0,
+	"lifetime_repairs": 0, "lifetime_foregone": 0, "lifetime_street": 0,
 }
 
 var _recovery: Dictionary = {}
@@ -333,6 +341,8 @@ func _note_lifetime(category: StringName, amount: int) -> void:
 			lifetime["lifetime_tariff"] = int(lifetime["lifetime_tariff"]) + amount
 		&"repair":
 			lifetime["lifetime_repairs"] = int(lifetime["lifetime_repairs"]) + amount
+		&"street":
+			lifetime["lifetime_street"] = int(lifetime["lifetime_street"]) + amount
 
 
 func _fail(reason_code: StringName, payload: Dictionary) -> Dictionary:

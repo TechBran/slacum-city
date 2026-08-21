@@ -435,7 +435,12 @@ func test_mode_invariance_holds_on_every_preset() -> void:
 
 
 func test_the_section_version_moved_and_an_old_save_defaults() -> void:
-	assert_eq(CitySim.SAVE_SECTION_VERSION, 6, "the difficulty epoch")
+	# The difficulty epoch is rung SIX. This asserts the ladder still reaches it
+	# rather than pinning the top — `tests/test_save_migration.gd` owns the
+	# current rung, and a rung added above this one (v7, the opportunity layer)
+	# must not make this file's subject look like it moved.
+	assert_true(CitySim.SAVE_SECTION_VERSION >= 6,
+			"the difficulty epoch is rung 6 and the ladder still walks through it")
 	# A v5 body already names the preset — every save the game has written does —
 	# so the migrator is the identity function on it.
 	var live := CitySim.boot_from_files(1337, "hard")
