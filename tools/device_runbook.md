@@ -86,6 +86,27 @@
 > file should have carried from the start: **never put `grep -q` downstream of a
 > large writer under `pipefail`.** Use bash matching, or `grep -c` and compare.
 >
+> ### Device state this session left behind — check these two first
+>
+> * **`perf_capture.flag` is REMOVED.** Verified by `ls` after deletion, and the
+>   teardown now runs from a `trap` so a dropped wire cannot leave it armed
+>   (which is what happened on 2026-08-21). Nothing to clean up.
+> * **`stay_on_while_plugged_in` may have been changed to `0` and that is worth
+>   one check.** This session ran `svc power stayon true` at the start and its
+>   teardown ran `svc power stayon false`, which writes `0` — but `0` is a
+>   *restore* only if `0` is what the phone had, and an earlier session recorded
+>   it at **15**. Nobody had ever recorded the value before overwriting it, so
+>   whether 15 was the user's own developer-option or a previous session's
+>   leftover is not knowable from here. **`run_matrix.sh` now reads the value
+>   before it writes it and puts the original back**, so this is a one-time
+>   loose end rather than a recurring one. If the user wants the screen to stay
+>   awake while charging:
+>
+>   ```sh
+>   adb shell settings get global stay_on_while_plugged_in   # 0 = off
+>   adb shell settings put global stay_on_while_plugged_in 15
+>   ```
+>
 > ### What this session actually measured, and what it did not
 >
 > Measured (doc 11 §2.13, "the 2026-08-21 session"): a foreground baseline on the

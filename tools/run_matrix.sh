@@ -246,6 +246,14 @@ if locked; then
   exit 3
 fi
 
+## `svc power stayon true` writes `stay_on_while_plugged_in`, which is a USER
+## developer-option, not a scratch variable. `svc power stayon false` writes 0 —
+## which is a *restore* only if 0 is what the phone had. The 2026-08-21 session
+## found it at **15** (stay awake on every charger type) and could not tell
+## whether that was the user's own setting or an earlier session's, because
+## nobody had recorded it. Record it, then put back exactly what was there.
+_STAYON_WAS="$(adb shell settings get global stay_on_while_plugged_in 2>/dev/null | tr -d '\r')"
+[[ "$_STAYON_WAS" =~ ^[0-9]+$ ]] || _STAYON_WAS=""
 adb shell svc power stayon true >/dev/null 2>&1
 
 ## The capture flag is a BELT-AND-BRACES arming route, and it must not be armed
@@ -267,7 +275,14 @@ arm_flag() {
 }
 disarm_flag() {
   adb shell run-as "$PKG" rm -f files/perf_capture.flag >/dev/null 2>&1
-  adb shell svc power stayon false >/dev/null 2>&1
+  if [[ -n "$_STAYON_WAS" ]]; then
+    adb shell settings put global stay_on_while_plugged_in "$_STAYON_WAS" \
+      >/dev/null 2>&1
+  else
+    # Never read it (device already gone) — leave the phone alone rather than
+    # guess 0 and silently turn off a setting the user chose.
+    :
+  fi
 }
 trap disarm_flag EXIT INT TERM
 
