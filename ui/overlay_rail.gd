@@ -36,6 +36,9 @@ signal legend_collapsed(mode: StringName, collapsed: bool)  ## → the `ui` save
 
 const CHECK_GLYPH := "✓"
 const OVERLAY_GLYPH := "◈"  ## §2.3's overlay button face
+## This screen's slot in §2.3's left rail: above the BUILD FAB, below the speed
+## rail. `UIRoot` solves the stack — see `UIWidgets.solve_rail_stack`.
+const RAIL_INDEX := 1
 
 ## Writing doc 11's global is the whole point of the rail; a test mounts the
 ## scene without a renderer and turns it off.
@@ -140,8 +143,14 @@ func _build_button() -> void:
 	_button.custom_minimum_size = Vector2(d, d)
 	_button.text = OVERLAY_GLYPH
 	_button.tooltip_text = UIWidgets.t(config, "ui_overlay_button")  # A15
-	# Second slot of §2.3's rail stack — see `UIWidgets.rail_slot`.
-	UIWidgets.place_in_rail(_button, 1, config.layout(), _touch_min)
+	# Second slot of §2.3's rail stack — see `UIWidgets.rail_slot`. This is the
+	# FIRST placement only: it runs inside `setup()`, before the theme has
+	# propagated and before anything is laid out, so it reads the
+	# `custom_minimum_size` two lines up and nothing else. `UIRoot` re-solves the
+	# whole stack against one shared pitch once there are real metrics
+	# (`UIWidgets.solve_rail_stack`) — this measurement being the last word is
+	# what put 28 dp between this button and the speed rail above it.
+	UIWidgets.place_in_rail(_button, RAIL_INDEX, config.layout(), _touch_min)
 	if not _button.pressed.is_connected(_on_button_pressed):
 		_button.pressed.connect(_on_button_pressed)
 	if not _button.button_down.is_connected(_on_button_down):
@@ -572,6 +581,11 @@ func legend_mode() -> StringName:
 
 func legend_card() -> OverlayLegend:
 	return _legend_card
+
+
+## This screen's member of §2.3's rail stack — see `UIWidgets.solve_rail_stack`.
+func rail_entry() -> Dictionary:
+	return {"control": _button, "index": RAIL_INDEX}
 
 
 ## §2.5's "1–3 overlay-specific aggregate lines", from the shell — only the shell

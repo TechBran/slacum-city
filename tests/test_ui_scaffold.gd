@@ -224,6 +224,56 @@ func test_theme_scaler_multiplies_font_sizes() -> void:
 	assert_eq(built.default_font_size, 21)
 
 
+func test_a_button_stylebox_is_scaled_exactly_once() -> void:
+	# **The accessibility root defect, as one assertion.** `build()` used to size
+	# a button's vertical padding from an ALREADY-SCALED touch minimum and then
+	# hand the theme to `scale_theme()`, which scales every content margin again —
+	# so a 56 dp target at 130 % measured 100 dp against a 73 dp requirement, and
+	# every A2/A3 finding in the Wave-12 sweep was that number arriving somewhere
+	# it did not fit. The padding is now derived at 1.0 and scaled once.
+	var cfg := _cfg()
+	var body := int(UIConfig.get_num(cfg.section("type_scale_dp"), "body", 14.0))
+	for arm: Array in [[1.3, true], [1.5, true], [1.3, false], [1.5, false]]:
+		var scale: float = arm[0]
+		var larger: bool = arm[1]
+		var scaled := ThemeBuilder.build(cfg,
+				{"text_scale": scale, "larger_touch_targets": larger})
+		var base := ThemeBuilder.build(cfg, {"larger_touch_targets": larger})
+		for type_name: String in ["Button", "StatChip", "RailButton", "PrimaryFAB"]:
+			var one := base.get_stylebox("normal", type_name)
+			var two := scaled.get_stylebox("normal", type_name)
+			assert_almost_eq(two.content_margin_top,
+					round(one.content_margin_top * scale), 0.001,
+					"%s at %d %% is its own padding × the scale, once"
+					% [type_name, int(scale * 100.0)])
+		# And the whole point: what the theme alone makes a button measure still
+		# clears A3's floor without overshooting it into the next control.
+		var floor_dp := float(ThemeBuilder.touch_min_dp(cfg, scale, larger))
+		var box := scaled.get_stylebox("normal", "StatChip")
+		var themed_h := box.content_margin_top + box.content_margin_bottom \
+				+ float(body) * scale * 1.4
+		# Rounding slack, not a second multiplication: `ceil` on the padding and
+		# `round` on the scaled margin can each add a dp, and 4 dp is the whole
+		# budget for both. A second scaling costs 22 dp at 130 % and 32 at 150 %.
+		assert_true(themed_h <= floor_dp + 4.0,
+				"a StatChip's own box is %d dp against an A3 floor of %d"
+				% [int(themed_h), int(floor_dp)])
+
+
+func test_the_stylebox_fix_is_a_no_op_at_100_percent() -> void:
+	# The reference layout may not move: every screenshot in the repository is at
+	# 100 % text with 48 dp targets, and a root fix that shifted one dp there
+	# would be a redesign wearing a bug fix's clothes.
+	var cfg := _cfg()
+	for larger: bool in [false, true]:
+		var theme := ThemeBuilder.build(cfg, {"larger_touch_targets": larger})
+		var box := theme.get_stylebox("normal", "StatChip")
+		var expected := maxf(4.0, ceil((float(ThemeBuilder.touch_min_dp(cfg, 1.0, larger))
+				- float(UIConfig.get_num(cfg.section("type_scale_dp"), "body", 14.0))
+						* 1.4) * 0.5))
+		assert_almost_eq(box.content_margin_top, expected, 0.001)
+
+
 func test_text_scale_options_are_the_five_the_doc_lists() -> void:
 	var ui := _cfg().ui_data()
 	assert_eq(str(ui["text_scale_options"]), str([0.85, 1.0, 1.15, 1.30, 1.50]), "A2")

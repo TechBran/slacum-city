@@ -47,6 +47,7 @@ Drawer width formula: `drawer_w = clamp(round(0.34 * W), 260, 340)`.
 | S12 | Onboarding coach layer | `CoachLayer` | overlay above all | new save | step 11 done / skip |
 | S13 | Event log | `EventLogModal` | full-screen modal | Away report ▸ See all | back |
 | S14 | **Goals** | `GoalsSheet` | full-screen modal | the goal chip (§2.4), or the tutorial's last step | back |
+| S15 | **Loading veil** | `LoadingVeil` | full, own `VeilLayer` **above everything** | a stepped restore or an offline catch-up (shell calls `UIRoot.present_veil_load()`) | the shell, when the slicer is done |
 
 **S0 carries a fourth control, and it is not a door** (2026-08-20, doc 03 §2.9,
 doc 93 §K1). Directly under NEW CITY sits a 48 dp chip that cycles the four
@@ -63,6 +64,15 @@ player who has never chosen a difficulty. The confirmation still *reads it back*
 (`Founded on Crisis.`) before the choice becomes permanent, which is the last
 moment it can be undone. The chip is visible while CONTINUE is too, and the copy
 answers that by naming what it is for ("New city: …") rather than by hiding.
+
+**S15 is a veil and not a screen, and the difference is that it has no targets
+at all.** Every other surface in this map ends in a `Button`; this one is a
+scrim, a card, two labels and a bar. That is a requirement rather than a
+simplification: doc 08 §2.15.2's contract for a stepped restore is that nothing
+may tick, render against or query the sim between steps, and a control the
+player could press during a half-restored city is precisely the thing that
+breaks it. Its scrim swallows input and offers none, and Back does not reach it
+— there is nothing to go back to while the city is half in memory. See §2.20.
 
 Android **Back** is a stack: `ModalLayer` → `SheetLayer` → `PanelLayer` → placement cancel → deselect → "Press back again to minimise" (2 s window). Handled in one place: `UIRoot._notification(NOTIFICATION_WM_GO_BACK_REQUEST)`. **S0 removes rungs rather than adding one**: while the title is up there is no city behind it, so the four middle rungs cannot apply and back goes straight to the minimise pair — but `ModalLayer` still wins, or back at the settings sheet opened from the title would quit the game.
 
@@ -576,8 +586,29 @@ exit 0 five times, which also closes doc 91's D-12 and D-13. Re-run at **`--text
 
 **All three are closed as of Wave 12** and the sweep is zero findings at all five
 boxes on both settings; the numbers above are kept as the filing, not as a
-current state. The paragraph below about 640 × 340 still stands — that box is
-A91-D-29 and nothing has measured it since.
+current state. ~~The paragraph below about 640 × 340 still stands — that box is
+A91-D-29 and nothing has measured it since.~~ **A91-D-29 is closed as of Wave 13
+(D-54 … D-58): 640 × 340 is a row of `tests/test_ui_audit.gd::BOXES`, and the
+sweep is 55 states × six boxes × three text scales — 990 state-sweeps — at zero
+findings.** See the table at the end of this section.
+
+**Wave 13 found the cause under all of it, and it is one line** (D-54).
+`ThemeBuilder.build()` sized a button's vertical content margins from a touch
+minimum that was *already* multiplied by the text scale, and then handed the
+finished theme to `scale_theme()`, which multiplies every content margin again.
+So a `StatChip` at 130 % with larger touch targets measured **100 dp against an
+A3 floor of 73** — a 37 % overshoot on every themed button in the deck, on both
+axes, compounding at 150 % to 32 dp of pure surplus per control. Every A2/A3
+defect this section has ever filed is that number arriving somewhere it did not
+fit: the chips that measured 89 × 100 in the first row of the table above, the
+94 dp drawer handle, the 407-against-392 top-bar arithmetic of D-51. The three
+fixes those numbers bought are all still correct and all still shipped — a
+solved rail is better than an authored one at any scale — but they were solving
+for a control that should never have been that size. Building the base theme at
+1.0 and letting the scaler scale it exactly once is a **no-op at 100 %** (the
+two figures agree there, which is why the reference layout does not move) and
+takes the whole-deck finding count from **408 to 8** before any other change in
+this wave.
 
 The second row is the one that matters most for A3 specifically: **a player who
 turns large touch targets on, on a 360 dp phone, cannot close the settings sheet
@@ -593,28 +624,52 @@ overlap or a Y-axis overflow, which a width check on one display cannot express.
 Widening it to loop `BOXES` (plus 640 × 340) and to carry `UIAudit`'s overlap and
 offscreen checks is ranked first-equal in doc 91 §20.2.
 
-**A2's own geometry — 640 × 340 dp — is `data/ui.json.layout.min_safe_box_dp`,
-this document's declared floor, and it is in no `BOXES` list in this repository.
-It was measured for the first time on 2026-08-20. Both results are bad:**
+~~**A2's own geometry — 640 × 340 dp — is `data/ui.json.layout.min_safe_box_dp`,
+this document's declared floor, and it is in no `BOXES` list in this
+repository.**~~ **It is a row of `BOXES` as of Wave 13** (D-58), added in the
+same commit as the layout fixes, which is what the filing asked for. The
+first-measurement figures, kept as the filing:
 
-* **At 100 %** the box is *not* clean, which is the only base-scale layout defect
-  this audit found: `TitleLayer/TitleScreen/…/Confirm_cancel "CANCEL"` lays out at
-  y 318.5 with height 96 against a 340-tall viewport — **26 dp off the bottom, at
-  default text scale, with large targets off.** It is the CANCEL half of "start a
-  new city and lose this one?". Filed as doc 91 **A91-D-29**.
-* **At 150 % + `larger_touch_targets`** — the exact wording of A2's pass
-  criterion — **all 49 states are dirty**, with 228 overlaps and **72 offscreen**
-  findings. `HUDLayer/LeftRail/SpeedButton` lays out at **y −70 … 56 against a
-  340-tall box in every state** — 70 of its 126 dp clipped off the top, leaving a
-  56 dp sliver of a control A3 requires to be 56 dp. A10 ("pause + 1× / 2× / 3×
-  always reachable in ≤ 2 taps") is therefore standing on a half-clipped target
-  as a *consequence* of A2 failing, which is the argument for treating these rows
-  as one gate rather than fifteen independent ones.
+* ~~**At 100 %** the box is *not* clean:
+  `TitleLayer/TitleScreen/…/Confirm_cancel "CANCEL"` lays out at y 318.5 with
+  height 96 against a 340-tall viewport — **26 dp off the bottom, at default text
+  scale.**~~ **Closed by D-52** (the centred card scrolls and is capped), and
+  re-measured at Wave 13's fork: 100 % is clean at 640 × 340 with 0 findings
+  across all 53 states before this wave changed anything. The 96 dp CANCEL was
+  the double-scale (D-54); at the same box and scale it is **73 dp** now.
+* ~~**At 150 % + `larger_touch_targets`** — **all 49 states are dirty**, with 228
+  overlaps and **72 offscreen** findings. `HUDLayer/LeftRail/SpeedButton` lays out
+  at **y −70 … 56 against a 340-tall box in every state.**~~ Re-measured at Wave
+  13's fork the same arm is **209 findings across 53 states**; D-54 alone takes it
+  to **2**, and D-55 takes it to **0**. `SpeedButton` is 84 × 84 at that box and
+  scale, in its slot, with 8 dp of clear air above the overlay button (D-59).
+  A10's "pause + 1× / 2× / 3× in ≤ 2 taps" is no longer standing on a
+  half-clipped target.
 
-The five 130 % sweeps in the table above are a **lower bound**. Fix the layout
-against 150 % / 640 × 340 rather than against 130 %, and add that box to
-`tests/test_ui_audit.gd::BOXES` in the same commit — otherwise the gate passes
-and the requirement still is not met.
+**The whole deck, six boxes × three text scales, before → after Wave 13**
+(`tools/ui_preview.gd --screen=all --audit --strict`; 53 states per cell at the
+fork, 55 after — S15 is two new states):
+
+| box | 100 % | 130 % + larger | 150 % + larger |
+|---|---|---|---|
+| 360 × 800 | 0 → **0** | 0 → **0** | **25 → 0** |
+| 412 × 915 | 0 → **0** | 0 → **0** | **8 → 0** |
+| **640 × 340** *(`min_safe_box_dp`)* | 0 → **0** | **3 → 0** | **209 → 0** |
+| 794 × 924 (Fold inner) | 0 → **0** | 0 → **0** | 0 → **0** |
+| 880 × 400 (reference) | 0 → **0** | 0 → **0** | **162 → 0** |
+| 1280 × 720 | 0 → **0** | 0 → **0** | **1 → 0** |
+
+**408 → 0.** The 100 % row does not move by a single finding, which is the check
+that says D-54 is a bug fix rather than a redesign. Of the 408, **400 are
+D-54's** — the one line. The 8 that survived it are four separate defects, each
+of which the double-scale had been hiding behind a bigger number:
+
+| survivor | box · scale | findings | fix |
+|---|---|---|---|
+| `SettingsSheet/…/Close "✕"` at y −1.5 and `…/Saves "MANAGE SAVES"` 1.5 dp past the bottom — 164 dp of About block sitting OUTSIDE the sheet's own scroller, and a full-rect panel grows through both edges rather than clipping | 640 × 340 · 130 % and 150 % | 4 | **D-55** |
+| `LandPanel/…/ActionButton "PURCHASE $12,600"` at x −11 — a two-column `GridContainer` asks for the sum of its columns and the panel is `clamp(0.34·W, 260, 340)` whatever the display is | 360 × 800 · 150 % | 2 | **D-56** |
+| `CoachMark/…/Ack "GOT IT"` at x 246 … 364 of a 352 dp safe area — `Skip tutorial` (202 dp) + `GOT IT` (118 dp) in an `HBox` | 360 × 800 · 150 % | 2 | **D-57** |
+| *(surfaced by D-57)* the same `Ack` 64 dp below the display once the row wrapped: a flow container's minimum **height** is a function of its width, and the bubble measured itself before its width was decided | 360 × 800 · 150 % | 1 | **D-57** |
 
 ### 2.19 S14 — the goals sheet (Wave 9)
 
@@ -706,6 +761,77 @@ Six decisions worth recording:
 coach mark on the goal chip, satisfied by opening this sheet **or** by
 acknowledging the card. The tutorial used to end at `payoff` and leave the player
 in a running city with nothing to aim at.
+
+### 2.20 S15 — the loading veil (Wave 13)
+
+Doc 13 §2.9 has written `veil.show()` in its pseudocode since the section was
+drafted, and doc 13 §2.9.1 added a second `veil.show()` in front of it for the
+restore. **Both slicers were built and neither had a surface**: `RestoreCursor`
+cuts a restore into eleven resumable steps and `CatchUpPlanner.plan()` cuts an
+absence into boundary-aligned segments, and what the player saw was the title
+door left up on purpose (report 98 §24) — which covers CONTINUE and covers
+nothing else. Not a resume, not a slot load from S8, not the catch-up that
+follows any of them. Doc 91 §20.2 item 19.
+
+**Entry.** The shell, and only the shell: `UIRoot.present_veil_load(city,
+steps)` and `UIRoot.present_veil_catchup(hours, steps)`. Like S0, nothing in
+`ui/` raises it, so a headless mount that does not ask does not get one.
+
+**Presentation.** Its own `VeilLayer`, the last child of the safe area and
+therefore above every other layer including the coach marks. A scrim at **0.92**
+alpha — heavier than the 0.55 every modal uses, because there is no city behind
+this one worth reading — and a centred card:
+
+```
+ ┌──────────────────────────────────────────┐
+ │              Opening Autosave…           │   the phase, in one sentence
+ │  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░             │   the slicer's own index
+ │              Step 7 of 11                │   the UNIT, named
+ └──────────────────────────────────────────┘
+```
+
+Five decisions worth recording:
+
+1. **It has no tap targets, and that is a requirement.** Doc 08 §2.15.2: nothing
+   may tick, render against or query the sim between restore steps. A control the
+   player could press during a half-restored city is the one thing that breaks
+   the guarantee this screen exists to make, so the scrim is `MOUSE_FILTER_STOP`
+   and there is nothing else to touch. It is also why S15 costs the A3/A15 tree
+   walk exactly nothing: a surface with no `Button` has no floor to miss and no
+   accessibility name to forget.
+2. **A stepped bar, where doc 13 §2.9.1 asked for a spinner — and the doc's
+   argument is honoured rather than overruled.** That section's objection is that
+   `cursor.completed() / cursor.step_count()` is "honest about how many steps have
+   run and dishonest about how much time is left" (`roads_graph` alone is 37 % of
+   the work and one step of eleven). The answer here is to **name the unit**:
+   `Step 7 of 11` sits under the bar and the bar means what the line says. A
+   spinner would also be the one animation in the deck that A8's `reduce_motion`
+   would have to suppress — and a loading screen whose animation has been
+   suppressed is indistinguishable from a hung one, which is the failure doc 13
+   §2.9.1 is trying to avoid in the first place. A stepped bar has no motion to
+   suppress. **Deviation from doc 13 §2.9.1, recorded here and there.**
+3. **The catch-up phase is a different sentence and a truthful bar.** `Your city
+   ran {hours} hours`, with `ui_veil_catchup_one` for the singular (§3.1's plural
+   rule), and here `steps_done / steps_total` *is* proportional to time, which is
+   §2.9's own argument. Doc 01's 12-real-hour cap gets a line of its own —
+   `ui_veil_catchup_capped` — because A14 says a refusal is stated in words.
+4. **A short absence gets no veil; a short load does.** `data/ui.json.veil.
+   min_steps` is doc 13's `catchup_veil_min_steps = 5`, and a catch-up beneath it
+   is refused (and takes a showing veil down with it, which is the sequence a
+   returning player actually produces). A **restore** is never refused however few
+   steps it has: doc 13 §2.9.1's own per-step table runs from 0.2 ms to 76.5 ms,
+   so "few steps" does not mean "fast", and the one-step cursor
+   `SaveService.begin_load_slot()` returns for a legacy file is the slowest load
+   in the project rather than the quickest.
+5. **The city has a name because the shell supplies one.** `ui/` has no slot list
+   and `sim/` has no name for a city, so the shell passes S8's own slot title
+   (`Autosave`, `Slot 2`) and an unnamed load falls back to `Opening your city…`.
+
+**Preview states**: `veil_load` (mid-restore, step 7 of 11 — the frame doc 13
+§2.9.1's arithmetic is written about) and `veil_catchup` (the C-19 cap exactly:
+720 coarse game-hours, capped, so it is also the only state that shows the capped
+line). Both added in the same commit as the screen, which is A91-D-28's lesson
+applied on the way in rather than a wave late.
 
 ---
 
@@ -986,7 +1112,13 @@ Headless (`tests/ui/`), no scene tree — these exercise `ui/logic/` classes wit
 
 27. **`test_ui_audit`'s corner-rail and sheet-wrap block** (D-37/D-38, Wave 11) — `UIWidgets.corner_slot()` reproduces the scene's authored offsets at 100 % text with 48 dp targets (alerts bottom 92, event log bottom 148, both 48 tall) and keeps exactly one `rail_gap_dp` of clear air between two 100 dp chips at 130 % with larger targets, with both chips clear of the column the tab reserved; all three affordances actually answer `corner_rail_entry()` with the index the rail expects (an affordance that forgets it is one the solver cannot see, and it lands back on top of its neighbour with nothing failing); and every settings row and every save-slot action group is a `FlowContainer`, so a row that does not fit wraps instead of widening its sheet. The geometry half is asserted on the **solver**, not on measured pixels, because a headless run has no text metrics — the pixel-accurate pass is `tools/ui_preview.gd --screen=all --audit`, whose whole-deck score is now **zero findings at 360×800, 412×915, 794×924 and 1280×720, at 100 % and at 130 % + larger targets**.
 
-Manual/device checklist (not automated): thumb-reach on a 6.1" and a 6.8" device, notch/cutout safe area on a punch-hole and a notched device, one-handed reachability of jump-to-worst, 150 % text scale at 640 dp, and the step-9 relight moment reading as a payoff.
+28. **`test_ui_scaffold`'s theme-scale block** (D-54, Wave 13) — a themed button's content margins are its **own** padding times the text scale, once, at 130 % and 150 % on both touch settings and across `Button` / `StatChip` / `RailButton` / `PrimaryFAB`; what the theme alone makes a `StatChip` measure clears A3's floor with **at most 4 dp of rounding slack** rather than the 22 dp a second multiplication costs; and the whole thing is byte-identical at 100 %, which is the assertion that says the reference layout did not move. The old theme fails it with `a StatChip's own box is 95 dp against an A3 floor of 73`.
+
+29. **`test_ui_audit`'s left-rail block** (D-59, Wave 13) — `UIWidgets.solve_rail_stack()` gives the whole column **one** pitch (the tallest member's) with exactly `rail_gap_dp` between slots and every slot the same height; a stack of 48 dp members still keeps `fab_d_dp`'s floor and the bottom rung still sits one `rail_margin_dp` off the safe area, so the 100 % layout is unchanged; and all three members — on two different layers, in three different files — actually answer `rail_entry()` with the index the solver expects. The mirror of test 27's corner-rail assertion, and for the same reason: a member that forgets to join goes back to placing itself, with nothing failing.
+
+30. **`test_veil_model`** (§2.20, D-60, Wave 13) — the phase machine, the copy and the fraction, headless: a cursor with no steps reads 0 rather than dividing; a step count past the total cannot overfill the bar; a late `advance_load` from the frame the catch-up started cannot rewind the bar the catch-up now drives; an absence beneath `veil.min_steps` is refused **and takes a showing veil down with it**, which is the sequence a returning player produces; `ui_veil_catchup_one` is picked for one hour and not for two; a capped absence says so; `finish()` is idempotent; and a second load behind the same veil starts from zero. The pixel-accurate pass is `tools/ui_preview.gd --screen=veil_load|veil_catchup`.
+
+Manual/device checklist (not automated): thumb-reach on a 6.1" and a 6.8" device, notch/cutout safe area on a punch-hole and a notched device, one-handed reachability of jump-to-worst, ~~150 % text scale at 640 dp~~ (**automated as of Wave 13's D-58** — 640 × 340 is a `BOXES` row and the sweep runs it at 100 / 130 / 150 %), and the step-9 relight moment reading as a payoff.
 
 ---
 
@@ -1039,6 +1171,10 @@ Ships as three files — `data/ui.json`, `data/onboarding.json`, `data/strings.e
     "desaturate": 0.25, "exposure": 0.70, "transition_s": 0.18,
     "strip_chip_dp": [64,56], "strip_x_offset_dp": 80,
     "outage_fill_alpha": 0.25, "coverage_disc_alpha": 0.18, "flow_dash_speed_m_s": 14.0, "heat_bin_m": 32.0
+  },
+  "veil": {
+    "_comment": "S15 (§2.20). min_steps is doc 13's own catchup_veil_min_steps: an offline catch-up worth fewer steps than this gets no veil. A stepped RESTORE always gets one whatever its step count — doc 13 §2.9.1's per-step table runs 0.2 ms to 76.5 ms, so few steps does not mean fast.",
+    "min_steps": 5, "card_w_dp": 320, "bar_h_dp": 8
   },
   "camera": {
     "_comment": "Interaction range only (C-63). Projection constants fov_deg/near_m/far_m live in data/render.json (doc 11) and are read from there; they must never be added to this block.",
@@ -1392,3 +1528,25 @@ chips overlapping *each other* between wrapped rows — the rows are a
 and `OverlayRail/Button`, which is what A91-D-23 filed and what D-51 fixes. **A2 and A3 are now green at every box the
 project tests.** What is still not measured is A2's own stated geometry — 150 %
 at 640 × 340 — which is A91-D-29 and is not this wave's.
+
+### Wave-13 deltas — the accessibility root fix, and the veil (2026-08-20)
+
+| id | change | doc ref | why |
+|---|---|---|---|
+| D-54 | **A themed button's padding is scaled exactly once.** `ThemeBuilder.build()` passes `touch_min_dp(cfg, 1.0, larger)` into `_button()` instead of the already-scaled figure. One line, and a no-op at `text_scale == 1.0` — the two numbers agree there, which is why no screenshot in the repository moves. | §4.3, A2, A3 | **The root cause under every A2/A3 defect this document has ever filed.** `_button()` derived `pad_v` from a touch minimum that had already been multiplied by the text scale, and `scale_theme()` then multiplied every content margin again. At 130 % with larger targets a `StatChip` measured **100 dp against an A3 floor of 73**; at 150 %, **117 against 84**. That 37 % surplus on every themed button is the 89 × 100 chip of A91-D-21, the 94 dp handle of D-46 and the 407-against-392 top bar of D-51. Whole deck, six boxes × three scales: **408 findings → 8**, with the 100 % row unchanged at zero. Gated by `test_ui_scaffold.gd::test_a_button_stylebox_is_scaled_exactly_once`, which fails on the old theme with `a StatChip's own box is 95 dp against an A3 floor of 73`. |
+| D-55 | **A full-rect modal's CONTENT scrolls; only its chrome does not.** `UIWidgets.scroll_into()`, applied to S9's About block: the header and `MANAGE SAVES` stay put and the About text joins the rows inside the scroller. | §2.2, §2.13, D-47/D-52 | The full-rect sibling of D-52. A panel anchored to the display with `grow_* = BOTH` does not clip when its minimum exceeds its rect — it grows through **both** edges. S9's body is `Header + Scroll + About + Saves` and only the rows were inside the scroller, so 164 dp of plain About text made a 343 dp body against 284 dp of panel: the sheet's own ✕ at **y −1.5** and `MANAGE SAVES` 1.5 dp past the bottom, at 640 × 340 / 130 %, and 29 dp / 29 dp at 150 %. |
+| D-56 | **§2.8's facts block is one column of wrapping rows, not two rigid ones.** `GridContainer.columns = 1` with an `HFlowContainer` per fact. | §2.8, D-47 | D-47's rule, third instance. A two-column grid asks for the sum of its two widest columns and the land panel is `clamp(0.34·W, 260, 340)` dp *whatever the display is*, so there is no width at which the sum fits. At 150 % `Time to develop` (188 dp) beside `18 of 24 tiles` (151 dp) made a 347 dp grid against 328 dp of interior and put `PURCHASE $12,600` at **x −11** on a 360 dp phone. |
+| D-57 | **§2.17's coach bubble wraps its buttons, and measures itself twice.** The button row is an `HFlowContainer`, and `_layout_bubble()` re-reads the bubble's minimum height after `sort_tree` has laid the row out at the width it just chose. | §2.17, D-47 | D-47's rule, fourth instance, plus the defect the fix surfaces. `Skip tutorial` (202 dp) + `GOT IT` (118 dp) in an `HBox` is a 336 dp row, a 360 dp bubble and a 352 dp safe area: `GOT IT` at x 246 … **364**. Wrapping fixes the width and breaks the height, because **a flow container's minimum height is a function of its width** and the bubble's width is derived from its own minimum — measured once, the two-line row is placed as a one-line row and `GOT IT` lands 64 dp below the display. |
+| D-58 | **640 × 340 dp is a gate box.** `tests/test_ui_audit.gd::BOXES` and `tools/ui_preview.gd`'s sweep list both carry `data/ui.json.layout.min_safe_box_dp`, added in the same commit as D-55 … D-57. | §2.18 A2, A91-D-29 | The project authored its own minimum safe box and then tested every box except that one. A requirement whose own geometry nothing runs is not a gate — which is how a 26 dp overflow on the title screen's CANCEL survived three waves of green sweeps. |
+| D-59 | **§2.3's LEFT rail is one solved stack, like D-46's right one.** `UIWidgets.solve_rail_stack()` computes **one pitch** for the whole column and places every member; `UIRoot` owns the call, because the three members are not siblings (the FAB is on `SheetLayer`) and nobody could find them by walking a parent. Membership is duck-typed — a screen joins by answering `rail_entry()`. | §2.3, D-46, D-51 | Three files placed three controls against three separate measurements, and two of them were taken at different moments: `OverlayRail._build_button()` places inside `setup()`, before the theme has propagated and before anything is laid out, so it read its own `custom_minimum_size` — **73 dp** at 880 × 400 / 130 % — while `CityHUD.refresh()` re-places the speed rail every frame and read the laid-out **93**. Two pitches, one column: the overlay button at y 210 … 303 and the speed rail at y 89 … 182, **28 dp of gap where `rail_gap_dp` says 8**, and `HudModel.top_bar_left_inset()` solving the bar against a rail top no button actually had. Indices are fixed and gaps are not closed: the FAB hides during placement, and a rail button that slid down to take its slot would move under the player's thumb mid-gesture. |
+| D-60 | **S15, the loading veil, ships** — `ui/veil_model.gd` (headless) + `ui/loading_veil.gd` (code-built) on a new `VeilLayer`, with `UIRoot.present_veil_load/…_catchup/dismiss_veil` and two preview states. §2.20 has the screen. | §2.2, §2.20, doc 13 §2.9/§2.9.1 | Doc 13 has assumed a veil since it was written; the restore is eleven resumable steps and the catch-up has always been sliceable, and **both levers were built with neither having a surface**. The title door standing in for it covered CONTINUE and nothing else. One deviation, argued in §2.20 item 2: doc 13 §2.9.1 asks for a spinner over the restore and this is a stepped bar with its unit named under it. |
+
+**Preview states added** (`tools/ui_preview.gd`): `veil_load`, `veil_catchup` —
+S15's two phases, added in the same commit as the screen (A91-D-28's lesson).
+The deck is 55 states.
+
+**Measured, whole-deck, before → after** (`--screen=all --audit --strict`, every
+finding of every kind, **six** boxes × **three** text scales; 53 states per cell
+at the fork, 55 after): the table is in §2.18. **408 → 0**, with the 100 % row
+unchanged at zero on every box — including 640 × 340, which no `BOXES` list in
+this repository contained until D-58.

@@ -100,7 +100,12 @@ static func build(cfg: UIConfig, opts: Dictionary = {}) -> Theme:
 	var accent := _color(palette, "accent", "#4FA8FF")
 	var critical := _color(palette, "critical", "#E5533D")
 
-	var touch_min := touch_min_dp(cfg, text_scale, larger)
+	# The **unscaled** floor, deliberately. `scale_theme()` below multiplies every
+	# content margin by `text_scale`, so a padding derived from an already-scaled
+	# floor is scaled twice — a 56 dp target at 130 % became a 100 dp one against a
+	# 73 dp requirement. Build the base theme at 1.0 and let the scaler scale it
+	# exactly once. A no-op at `text_scale == 1.0`, where the two agree.
+	var touch_min := touch_min_dp(cfg, 1.0, larger)
 	var spacing := int(ceil(UIConfig.get_num(layout, "touch_spacing_min_dp",
 			DEFAULT_TOUCH_SPACING_DP)))
 

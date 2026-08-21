@@ -1620,3 +1620,158 @@ ruined every capture — a comma-separated pose list set `IFS` globally,
 unresolved `--hour=` and was captured at whatever hour the save held. **The
 device half remains unverified and the script says so in its own summary rather
 than in a document nobody opens.**
+
+---
+
+## 26. WAVE 13 — the accessibility root fix, and the veil (binding)
+
+*One line of `ui/theme_builder.gd` took the whole-deck a11y sweep from 408
+findings to 8; four small layout fixes took it to 0; `640 × 340` became a gate
+box; §2.3's left rail became one solved stack; and doc 13's veil got a surface.
+`ui/`, `tests/`, `tools/`, `data/ui.json`, `data/strings.en.json` and
+`game/ui/ui_root.tscn` only — `sim/`, `game/` scripts and every balance table
+are untouched, and `tools/profile_sim.gd --hash-only` is unchanged on both
+cities before and after.*
+
+### RR-60 — A number that is already scaled must not be handed to the scaler
+
+`ThemeBuilder.build()` computed a button's vertical content margin from
+`touch_min_dp(cfg, text_scale, larger)` — a figure that has **already** been
+multiplied by the text scale — and then, seventeen lines later, handed the
+finished `Theme` to `scale_theme(theme, text_scale)`, which multiplies every
+`content_margin_*` again. The arithmetic, at 130 % with larger touch targets:
+
+```
+touch_min       = ceil(56 × 1.3)                     = 73
+pad_v           = max(4, ceil((73 − 14×1.4) × 0.5))  = 27      ← already scaled
+scale_theme     = round(27 × 1.3)                    = 35      ← scaled again
+StatChip height = 35 + 35 + round(16×1.3)×1.4        ≈ 100 dp
+A3 floor                                             = 73 dp
+```
+
+**Every themed button in the deck was 37 % taller and wider than the gate it was
+sized for**, and at 150 % the surplus is 32 dp per control. That is the 89 × 100
+chip of A91-D-21, the 94 dp drawer handle of doc 12 D-46, the
+`407-against-392` top-bar arithmetic of D-51 and the 126 dp `SpeedButton`
+clipped to a 56 dp sliver in A91-D-29. Four separate S-sized fixes were priced,
+argued and shipped against symptoms of one line.
+
+**Ruling: a derived value crosses a scaling boundary once, and the boundary is
+named.** The fix is `touch_min_dp(cfg, 1.0, larger)` — build the base theme in
+base units and let the scaler own the scaling. It is a **no-op at
+`text_scale == 1.0`** (the two figures are equal there), which is what keeps
+every screenshot in the repository valid, and
+`tests/test_ui_scaffold.gd::test_a_button_stylebox_is_scaled_exactly_once` fails
+on the old theme with `a StatChip's own box is 95 dp against an A3 floor of 73`.
+
+Measured, `--screen=all --audit --strict`, six boxes × three text scales:
+**408 findings → 8** on the one line, **→ 0** with the four layout defects it
+exposed. The 100 % row does not move by a single finding at any box.
+
+### RR-61 — Three placers, three measurements, one column
+
+Doc 12 §2.3's left rail — the BUILD FAB, the overlay button, the speed rail —
+lives in three files on **two layers**, so no `solve_corner_rail()`-style sibling
+walk can find it, and each file called `UIWidgets.place_in_rail()` with its own
+control's measurement. Two of those measurements are taken at different moments
+in the frame:
+
+| placer | when | measured pitch at 880 × 400 / 130 % / larger |
+|---|---|---|
+| `OverlayRail._build_button()` | inside `setup()`, before the theme has propagated and before any layout | **73** (its own `custom_minimum_size`) |
+| `CityHUD.refresh()` | every frame, after layout | **93** (the laid-out size) |
+
+Result: the overlay button at y 210 … 303 and the speed rail at y 89 … 182 —
+**28 dp of gap where `data/ui.json.layout.rail_gap_dp` says 8** — and
+`HudModel.top_bar_left_inset()` solving the top bar against a rail top that no
+button actually had. It produced no *finding*, which is why three waves of green
+sweeps did not see it: a stack with the wrong pitch is still a stack of
+non-overlapping rects.
+
+**Ruling: a shared pitch has one owner, and it is not any of the things being
+pitched.** `UIWidgets.solve_rail_stack()` takes every member, computes one pitch
+from the tallest, and places all of them; `UIRoot` collects the members (they
+answer `rail_entry()`, duck-typed like `corner_rail_entry()`) and calls it from
+`_process`, from `_recompute_layout` and at the end of `force_layout` — the last
+because a headless mount never gets a frame. Indices are fixed and gaps are
+deliberately *not* closed, unlike the corner rail: the FAB hides during
+placement, and a rail button that slid down into its slot would move under the
+player's thumb mid-gesture.
+
+`place_in_rail()` survives as each file's **first** placement, so a rail button
+does not spend a frame at the wrong offset; the solver overwrites it as soon as
+there are real metrics to solve against.
+
+### RR-62 — A slicer with no surface is not a feature
+
+`RestoreCursor` (eleven resumable restore steps, Wave 12) and
+`CatchUpPlanner.plan()` (boundary-aligned offline segments, Wave 7) were both
+built, both tested, and **neither had anything to draw**. Doc 13 §2.9 has
+written `veil.show()` in its pseudocode since it was drafted and doc 13 §2.9.1
+added a second one in front of it; what shipped instead was a comment in
+`game/main.gd` saying the title door *is* the veil — which covers CONTINUE and
+covers nothing else. Not a resume, not a slot load from S8, not the catch-up
+that follows any of them.
+
+**Ruling: the mechanism and its surface land in the same wave, or the mechanism
+is unverifiable.** Doc 12 §2.20 / D-60 builds S15 on the deck's own pattern
+(headless model + code-built view, its own layer, two preview states, a
+`SURFACES` row, thirteen model tests). It is the cheapest screen in the project —
+a scrim, two labels and a `MeterBar`, with **no tap targets at all**, which is
+itself a requirement rather than an economy: doc 08 §2.15.2 forbids anything
+querying the sim between restore steps, and a pressable control during a
+half-restored city is exactly what would.
+
+**One deviation from doc 13 §2.9.1, recorded in both documents.** That section
+asks for a spinner over the restore because `completed() / step_count()` is
+"honest about how many steps have run and dishonest about how much time is
+left". S15 ships a stepped **bar with its unit named under it** — `Step 7 of 11`
+— because (a) naming the unit answers the objection rather than hiding from it,
+and (b) a spinner is the one animation in the deck that A8's `reduce_motion`
+would have to suppress, and *a loading animation that has been suppressed is
+indistinguishable from a hung app*, which is the failure §2.9.1 spends a
+paragraph avoiding. The catch-up phase takes doc 13's own bar unchanged, where
+the fraction *is* proportional to time.
+
+**What it left behind, filed as A91-D-31**: `game/main.gd::_on_app_resumed`
+walks the planner's segments in a synchronous `for` loop, so a 12-hour absence
+runs 720 coarse steps inside one frame and the catch-up veil is a message rather
+than an animation. Doc 13 §2.9's `advance_coarse_sliced(12)` +
+`await get_tree().process_frame` has never been wired; the veil is now the half
+that was missing on the other side of it.
+
+### RR-63 — The box a data file calls the floor
+
+`data/ui.json.layout.min_safe_box_dp` is `[640, 340]`. Doc 12 §2.18's A2 names it
+as the size the layout must survive 150 % at. It appeared in **no `BOXES` list,
+no sweep and no test** until this wave — the one box the project's own data calls
+the minimum was the one box nothing ran, which is how a 26 dp overflow on the
+title screen's CANCEL survived three waves of green sweeps (A91-D-29).
+
+**Ruling: a geometry a data file declares is a geometry the suite runs.** It is a
+row of `tests/test_ui_audit.gd::BOXES` and of `tools/ui_preview.gd`'s sweep list,
+added in the same commit as the layout fixes — which is exactly what A91-D-29's
+filing demanded and what it is closed against.
+
+### RR-64 — A wrapping container measures its height from its width
+
+Three of this wave's four layout fixes are doc 12 D-47's rule applied one screen
+over — *an `HBox` asks for the SUM of its children; a flow container asks for its
+widest child* — and the third of them surfaced the rule's companion, which was
+written down nowhere:
+
+**a flow container's minimum HEIGHT is a function of the width it has been
+given.** `CoachMark._layout_bubble()` derives the bubble's width from the
+bubble's own minimum and then takes its height from the same minimum — so once
+the button row became an `HFlowContainer`, the two-line row was *measured* as a
+one-line row and `GOT IT` landed 64 dp below a 360 dp display. The fix is to
+measure twice with a `UIRoot.sort_tree()` between. The same trap is why S15's
+card is capped by `UIWidgets.card_height()` even though its content is three
+short lines: an autowrapped `Label` reports **771 dp** of minimum height on the
+frame before it has been given a width, and Godot invalidates that cache through
+the message queue rather than synchronously, so the cap — not the measurement —
+is what keeps the card on screen for that one frame.
+
+**Ruling: after choosing a width for a wrapping container, re-read its height.**
+Recorded here because it will be met again — every `HBox` → `HFlowContainer`
+conversion this project makes from now on carries it.

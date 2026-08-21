@@ -131,8 +131,17 @@ func _build_static() -> void:
 		if not _action.pressed.is_connected(_on_action_pressed):
 			_action.pressed.connect(_on_action_pressed)
 	if _facts != null:
-		_facts.columns = 2
+		# **One column of wrapping rows, not two rigid ones (D-47's rule).** A
+		# two-column `GridContainer` asks for the sum of its two widest columns, and
+		# the panel is `clamp(0.34·W, 260, 340)` dp whatever the display is — so
+		# there is no width at which the sum fits. At 150 % text `Time to develop`
+		# (188 dp) beside `18 of 24 tiles` (151 dp) made a 347 dp grid against 328 dp
+		# of panel interior, and `PURCHASE $12,600` laid out at x −11 on a 360 dp
+		# phone. Each fact is now its own `HFlowContainer` line: the grid asks for
+		# its widest CHILD, and a fact whose two halves do not fit takes two lines.
+		_facts.columns = 1
 		_facts.add_theme_constant_override(&"h_separation", int(_spacing))
+		_facts.add_theme_constant_override(&"v_separation", int(_spacing))
 	for box: Node in [_risks, _advantages, _phases, _blockers]:
 		if box != null:
 			(box as Control).add_theme_constant_override(&"separation", int(_spacing))
@@ -242,12 +251,19 @@ func _render_facts(v: Dictionary) -> void:
 	UIWidgets.clear_children(_facts)
 	for entry: Variant in (v["facts"] as Array):
 		var fact: Dictionary = entry
-		_facts.add_child(UIWidgets.label("Label_" + str(fact["id"]),
-				_text(str(fact["label_key"]))))
+		var line := HFlowContainer.new()
+		line.name = "Fact_" + str(fact["id"])
+		line.add_theme_constant_override(&"h_separation", int(_spacing))
+		line.add_theme_constant_override(&"v_separation", int(_spacing))
+		var label := UIWidgets.label("Label_" + str(fact["id"]),
+				_text(str(fact["label_key"])))
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		line.add_child(label)
 		var value := UIWidgets.label("Value_" + str(fact["id"]), str(fact["value"]))
 		value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_facts.add_child(value)
+		line.add_child(value)
+		_facts.add_child(line)
 
 
 ## §2.8's risk profile. One `Label` per risk, never a tap target: the row is a
