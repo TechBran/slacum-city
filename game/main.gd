@@ -1245,18 +1245,22 @@ func _on_title_continue(slot: int) -> void:
 	_begin_restore(target)
 
 
-## One step per frame, behind the door. The door IS the veil until there is a
-## real one (doc 91 §20.2 item 19): it is already drawn and already animating,
-## and dismissing it is now the last thing the load does rather than the first.
+## One step per frame, behind S15 (doc 12 §2.20, doc 13 §2.9.1). The title door
+## used to stand in for the veil; there is a real one now, and it covers the
+## paths the door never could — a resume, and any load with no door up.
 func _begin_restore(target: int) -> void:
 	_restore_slot = target
 	_restore_cursor = save_service.begin_load_slot(sim_host.sim, target)
+	ui_root.present_veil_load(ui_root.slot_title(target),
+			_restore_cursor.step_count())
 
 
 ## Runs INSTEAD of the rest of `_process` while a load is in flight.
 func _advance_restore() -> void:
 	if not save_service.step_load(_restore_cursor):
+		ui_root.advance_veil_load(_restore_cursor.completed())
 		return
+	ui_root.advance_veil_load(_restore_cursor.step_count())
 	_restore_cursor = null
 	if not save_service.last_load_ok:
 		# Exactly the old fallback: the named slot, then the newest other one.
@@ -1270,6 +1274,7 @@ func _advance_restore() -> void:
 	_on_ui_save_loaded(_restore_slot)
 	ui_root.set_city_level(sim_host.sim.progression.city_level)
 	ui_root.dismiss_title()
+	ui_root.dismiss_veil()
 	sim_host.paused = false
 	_title_up = false
 	if android_lifecycle != null:
@@ -1279,6 +1284,7 @@ func _advance_restore() -> void:
 func _refuse_title_continue() -> void:
 	_restore_cursor = null
 	_restore_slot = -1
+	ui_root.dismiss_veil()   # a refused load must not leave the veil up
 	ui_root.push_toast(UIWidgets.t(ui_root.config, "ui_saves_failed"),
 			HudModel.STATE_CRITICAL)
 	ui_root.refresh_title()   # the door survives a corrupt save
@@ -1515,14 +1521,29 @@ func _on_app_resumed(elapsed_wall_s: float) -> void:
 	var sim := sim_host.sim
 	var plan: Dictionary = CatchUpPlanner.plan(int(elapsed_wall_s * 1000.0),
 			sim.clock.residual_game_ms, sim.clock.tick_index)
+	# S15's catch-up phase (doc 13 §2.9). `veil.min_steps` refuses a short
+	# absence and takes a SHOWING veil down with it. A91-D-31 note: this loop is
+	# synchronous, so the veil draws for at most one frame until the sliced
+	# advance is wired; `advance_veil_catchup` is already called per segment.
+	var total_ticks := int(plan.get("total_ticks", 0))
+	if ui_root != null:
+		ui_root.present_veil_catchup(total_ticks / GameClock.TICKS_PER_HOUR,
+				total_ticks, bool(plan.get("capped", false)))
+	var done_ticks := 0
 	for segment: Dictionary in plan.get("segments", []):
 		var count := int(segment.get("count", 0))
 		if count <= 0:
 			continue
 		if String(segment.get("kind", "")) == "coarse":
 			sim.advance_coarse_hours(count)
+			done_ticks += count * GameClock.TICKS_PER_HOUR
 		else:
 			sim.scheduler.advance_fine_n(count)
+			done_ticks += count
+		if ui_root != null:
+			ui_root.advance_veil_catchup(done_ticks)
+	if ui_root != null:
+		ui_root.dismiss_veil()
 	sim.clock.residual_game_ms = int(plan.get("new_residual_game_ms", 0))
 	var offline_batch: Array = sim.bus.drain()
 	_on_sim_batch(offline_batch)
