@@ -28,13 +28,18 @@ extends SceneTree
 ##                    `write` column is what the worker did with it; run it
 ##                    against the same city without the flag and the two columns
 ##                    are the A/B behind report 98 RR-44.
+##   --steps          additionally break `restore` into `CitySim.begin_restore()`'s
+##                    nine resumable steps and print the per-step cost. This is
+##                    the table doc 13 §2.9's loading-veil budget is written
+##                    against: the LONGEST step is what a frame has to swallow,
+##                    not the total.
 ##   --quiet          table only
 ##
 ## The table splits BOTH operations, because the two halves have different
-## futures: a save is capture (main thread, determinism) + write (bytes), and a
-## load is read (bytes: decompress, parse, digest, gate) + restore (main thread,
-## rebuilds the live city). Doc 08 §2.14's streaming design is costed against
-## the load split.
+## futures: a save is capture (main thread, determinism) + finalize-and-write
+## (bytes, any thread), and a load is read (bytes: decompress, parse, digest,
+## gate) + restore (main thread, rebuilds the live city). Doc 08 §2.14's
+## streaming design is costed against the load split.
 
 const CITY_DEFAULT := "res://data/starter_city.json"
 const SCRATCH_DIR := "user://profile_save"
@@ -111,10 +116,51 @@ func _initialize() -> void:
 	print("  generation on disk, not the size of one save.")
 	print("  `save (caller)` is what the CALLING THREAD paid. With --async that is")
 	print("  the capture alone and `write half` is the worker's; without it, the")
-	print("  first is the sum of both.")
+	print("  first is the sum of both. The float canonicalisation rides")
+	print("  `SaveSection.finalize` into the write half either way (report 98 §24).")
+
+	if bool(opts["steps"]):
+		_step_table(sim, city_path, repeats)
 
 	_remove_tree(SCRATCH_DIR)
 	quit(0)
+
+
+## `CitySim.begin_restore()` step by step. The body is read ONCE and replayed
+## into a scratch sim per repeat, so what is timed is the restore and not the
+## decompress in front of it.
+func _step_table(sim: CitySim, city_path: String, repeats: int) -> void:
+	var body: Dictionary = sim.canonical_capture()
+	var totals: Dictionary = {}
+	var labels: Array[String] = []
+	for r in repeats:
+		var target := _boot(city_path)
+		if target == null:
+			return
+		var cursor := target.begin_restore(body)
+		while not cursor.is_done():
+			var label := cursor.next_label()
+			var t0 := Time.get_ticks_usec()
+			cursor.step()
+			var ms := float(Time.get_ticks_usec() - t0) * 0.001
+			if not totals.has(label):
+				totals[label] = 1.0e30
+				labels.append(label)
+			totals[label] = minf(float(totals[label]), ms)
+	print("")
+	print("=== RESTORE STEPS — best of %d ===" % repeats)
+	print("  %-16s %10s" % ["step", "best ms"])
+	print("  " + "-".repeat(28))
+	var worst := 0.0
+	var sum := 0.0
+	for label in labels:
+		var ms := float(totals[label])
+		sum += ms
+		worst = maxf(worst, ms)
+		print("  %-16s %10.2f" % [label, ms])
+	print("  " + "-".repeat(28))
+	print("  %-16s %10.2f" % ["total", sum])
+	print("  %-16s %10.2f  <- doc 13 §2.9's per-frame worst case" % ["longest step", worst])
 
 
 func _row(name: String, values: PackedFloat64Array, bytes: int) -> void:
@@ -169,13 +215,15 @@ static func _remove_tree(path: String) -> void:
 
 func _parse(argv: PackedStringArray) -> Dictionary:
 	var opts := {"city": CITY_DEFAULT, "repeats": 5, "advance": 0.0,
-			"quiet": false, "async": false}
+			"quiet": false, "async": false, "steps": false}
 	for raw in argv:
 		var arg := String(raw)
 		if arg == "--quiet":
 			opts["quiet"] = true
 		elif arg == "--async":
 			opts["async"] = true
+		elif arg == "--steps":
+			opts["steps"] = true
 		elif arg.begins_with("--city="):
 			opts["city"] = arg.substr(7)
 		elif arg.begins_with("--repeats="):

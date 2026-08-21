@@ -403,6 +403,47 @@ Veil wall time = `steps × measured_coarse_ms`, generated from doc 08's P0-27 me
 
 Progress fraction = `steps_done() / steps_total()`, so the bar is honest. If `steps_total ≤ 4` (`catchup_veil_min_steps = 5`) the veil is skipped entirely — sub-frame work.
 
+#### 2.9.1 The term this section forgot: the LOAD in front of the catch-up (Wave 12)
+
+Every number above is about the catch-up. **Nothing above it is about getting the city into memory in the first place**, and until Wave 12 measured it there was no figure to put there. There is now, and it is not small: the arithmetic above was written as though a returning player's first frame begins at `advance_coarse_sliced`, when in fact it begins at `SaveService.load_slot()` and the catch-up does not start until that has finished.
+
+The full sequence a returning player pays, in order, with `tools/profile_save.gd` figures (workstation, best of 7, at `28b9550` → Wave 12):
+
+| Term | Founding city | Benchmark city (1,500 buildings) | Thread |
+|---|---|---|---|
+| read (decompress, parse, digest, 7-check gate) | 2.6 ms | 28.4 ms | main |
+| **restore** (`CitySim.restore_state`) | 45.4 → **42.2 ms** | 396.8 → **202.1 ms** | main |
+| catch-up | `steps × measured_coarse_ms` | as above | main, sliced |
+| pause-path save on the way back out | 13.9 → **11.2 ms** | 125.3 → **106.4 ms** | main (`SYNC_REASONS`) |
+
+**The load term is 230 ms of main-thread work on the benchmark city and it is not sliceable by the same mechanism the catch-up uses** — `advance_coarse_sliced` slices a loop of identical steps, and a restore is eleven different ones. So it gets its own mechanism, `CitySim.begin_restore()`, and the veil budget for it is written against the LONGEST STEP rather than the total:
+
+```
+veil.show()                                  # "Opening <city>…", indeterminate — see below
+var cursor := sim.begin_restore(body)
+while not cursor.step():                     # one step per frame
+    veil.set_progress(cursor.completed() / float(cursor.step_count()))
+    await get_tree().process_frame
+# …and only now does the catch-up above begin.
+```
+
+Per-step cost, benchmark city, `profile_save.gd --steps` (best of 7):
+
+| Step | ms | | Step | ms |
+|---|---|---|---|---|
+| `decode` | 31.6 | | `incidents` | 0.8 |
+| `core` | 3.7 | | `roads_tiles` | 15.4 |
+| `world` | 21.8 | | **`roads_graph`** | **76.5** |
+| `records` | 0.2 | | `roads_state` | 29.4 |
+| `roster` | 7.9 | | `finish` | 1.6 |
+| `water` | 18.8 | | **total** | **207.6** |
+
+**ANR safety is structural here for exactly the reason it is above**, and the margin is the same order: the longest step is 76.5 ms on a workstation, so at the Fold's measured 3–5× penalty (§2.13) the worst frame a restore can produce is **≈0.4 s against a 5 s ANR line** — a 13× margin, and the same argument as `advance_coarse_sliced`'s. What the slicing buys is not ANR safety, it is the veil: an unsliced restore freezes the animation for 0.2 s on a workstation and up to 1 s on a phone, and a frozen loading animation is how a player decides an app has hung.
+
+**The progress bar over a restore is indeterminate, and the doc says so rather than lying with a fraction.** `cursor.completed() / cursor.step_count()` is honest about how many steps have run and dishonest about how much time is left — `roads_graph` alone is 37 % of the work and one step of eleven. Doc 12's veil therefore shows a spinner for the restore and switches to the real bar when the catch-up starts, where `steps_done() / steps_total()` *is* proportional to time.
+
+**Why the restore cannot simply move off the main thread, restated because it is asked every wave.** It writes the live sim, and the sim is single-owner `RefCounted` (constitution §3) — the same C-22 ruling that refused to thread the catch-up. What *did* move is the SAVE's second half: the float canonicalisation is a pure function of a detached snapshot and now runs on the write thread (report 98 §24 RR-49), which is why the pause-path row above fell 125 → 106 ms and the autosave row fell 85 → 39.
+
 ### 2.10 Export pipeline
 
 > **As built:** §10.1–§10.4. The `--install-android-build-template` line below

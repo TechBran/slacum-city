@@ -1181,3 +1181,85 @@ redeclares a native one with a different signature — so it is
 `Difficulty.value(section, key)`, with `number()` and `flag()` as typed wrappers.
 The rule was about there being exactly ONE read path; there is. Doc 03 §2.9 rule 3
 and §3.4 rule 5 both now say so.
+
+---
+
+## 24. WAVE 12 — the deep save/load levers (binding)
+
+*Wave 10 measured the two numbers and named them the next levers: `canonical_capture()` was 96.3 ms of a 148.7 ms save, and `restore_state()` was 442.6 of a 483.9 ms load. Both are taken here. Both turned out to be a different shape than the brief that asked for them, and one of the three levers the brief proposed is refused on measurement.*
+
+### RR-49 — The float codec's bill was the WALK, not the hex — and the half that walks does not belong on the sim's thread (doc 08 §2.6, doc 13 §2.9)
+
+**The suspects the brief named were both measured and both are wrong.** Pooling the encoder's `PackedByteArray` and replacing `"~f~%08x%08x"` with a nibble-table formatter are the two obvious optimizations of a function that produces hex strings, and the benchmark city's body contains **21,923 floats of which only 6,229 are fractional** — the other 15,694 canonicalize to ints and never touch the formatter at all. Measured on the same body, five runs, best-of: pooling the buffer is **50.60 ms against 50.34** (inside the noise), and the nibble table is **57.58 ms — 14 % SLOWER** than `%08x`. Inlining the leaf dispatch so scalars cost no function call is **50.54 against 51.44**, also inside the noise. The hex is not the bill.
+
+**What the bill is.** The body is **112,000 Variant nodes**, and a GDScript walk that does nothing at all but visit them — no allocation, no encoding, an integer counter — costs **30.06 ms** if it recurses once per node and **14.03 ms** if it pops an explicit stack and pushes `values()` through one native `append_array`. `Dictionary.duplicate(true)`, which visits the same 112,000 nodes in C++, costs **8.77 ms**. The recursive rebuild was paying GDScript interpreter overhead 112,000 times to produce a tree the engine can copy natively in a twelfth of the time.
+
+**Ruling: deep-copy natively, then patch the float leaves with a stack walk.** `_encode_floats` is `duplicate(true)` + `_encode_in_place`, and the decoder is its mirror. **62.4 → 36.3 ms encode and 58.4 → 34.5 ms decode on the benchmark city, with byte-identical output** (`tests/test_save_chunked_restore.gd` diffs the JSON text against a reference implementation of the old recursive walk, kept in the test file so it cannot be "optimized" alongside the thing it certifies).
+
+**One correctness trap the rebuild was hiding, and it would have been a silent format change.** The old walk built `[]` and `{}` from scratch, so every array in the output was untyped. An in-place patch inherits the input's typing, and **three arrays in the benchmark city's capture arrive typed** — writing a `~f~` string into an `Array[float]` is a runtime error, and writing an int into one *silently converts it back to a float*, which prints `1.0` instead of `1` and changes the bytes on disk without changing anything a reader would notice. The walk therefore re-seats a typed array untyped at the moment it discovers it. `tests/test_save_chunked_restore.gd::test_a_typed_float_array_is_re_seated_untyped` is that trap, pinned.
+
+**And the half that walks does not need the sim's thread.** RR-44 split the save into `capture_save` (main thread, reads live state) and `commit_save` (bytes, any thread), and put the whole capture — the read AND the canonicalisation — on the main side. The canonicalisation is a pure function of a snapshot. `SaveSection` therefore grows a second half, **`finalize()`**, which `commit_save` runs on the write thread; `DictSection` carries it as a Callable and `SaveService` installs `CitySim.encode_captured` there. What stays on the sim's thread is `capture_detached()` — `capture_state()` plus a native `duplicate(true)`, which is **8.1 ms and makes `capture_save`'s "nothing aliases the sim" a guarantee instead of an accident it inherited from the old codec's rebuild**. (`RoadNetwork.save_section()` alone puts three live containers into its body by reference; the recursive encode had been quietly deep-copying them for free.)
+
+Measured, benchmark city, `tools/profile_save.gd --repeats=7`, best ms:
+
+| | before | after |
+|---|---|---|
+| save, caller thread, `--async` | 85.4 | **39.2** |
+| save, caller thread, synchronous (the pause path) | 125.3 | **106.4** |
+| write half (now carries `finalize`) | 38.3 | 61.5 |
+| save, founding city, `--async` | 10.0 | **5.2** |
+| save, founding city, synchronous | 13.9 | **11.2** |
+
+The brief's target was "capture under 40 ms bench". It is 39.2.
+
+### RR-50 — The restore's 443 ms was one quadratic loop and one indivisible call, and only the second one needed a design (doc 08 §2.14, doc 13 §2.9)
+
+**Half the load was a linear scan inside a linear loop.** `restore_state()` rebuilt the building roster by asking, for each of the 1,500 buildings in the body, which `_building_records` entry has a matching `grid_id` — with a scan of all 1,500 records. **1.1 million dictionary reads, 216 ms of a 426 ms restore.** Replaced with a `grid_id -> sim_id` index built once, `has()`-guarded so a body with duplicate grid ids still binds to the first record exactly as the scan did: **216 → 7.9 ms.** Nothing else changed and no hash moved.
+
+**The rest is a design.** A restore writes the live sim, so C-22's refusal to thread the catch-up applies to it verbatim, and what is left after the quadratic loop is real work: `roads.load_section` 118 ms, `decode` 31, `world` 22, `water` 19. **Ruling: `CitySim.begin_restore()` returns a `RestoreCursor` — eleven labelled, resumable steps the shell spends one per frame behind a veil**, and `restore_state()` is that cursor drained on the spot, so there is one implementation and not two. `tests/test_save_chunked_restore.gd` proves stepped and monolithic land on the same `state_hash()` on the founding city, the benchmark city and a body captured mid-storm mid-incident, and that save → load → **advance** stays bit-identical through the cursor.
+
+**The veil's budget is the LONGEST STEP, not the total, which is why `roads` is three steps and not one.** At eight steps the cut left `roads.load_section` as a single 118 ms block — 58 % of the restore in one frame. `RoadNetwork.load_section_steps()` names its own three seams (`tiles` = the RLE block decode, `graph` = `rebuild_all()` plus §2.4's id adoption, `state` = everything restored against an edge id) and `CitySim` splices them in rather than cutting them from outside, because a restore that pretended to know a road loader's seams would go stale the first time that loader grew a phase. **Longest step 118 → 76.5 ms.**
+
+| | before | after |
+|---|---|---|
+| load, benchmark city | 432.8 | **236.4** |
+| restore half, benchmark city | 396.8 | **202.1** |
+| longest single step | (not sliceable) | **76.5** |
+| load, founding city | 48.4 | **45.3** |
+| restore half, founding city | 45.4 | **42.2** |
+
+The founding city barely moves, and that is the honest reading of it: it has no roster to scan quadratically, and what its restore costs is `roads.load_section` on a small graph. The lever was never about small cities.
+
+### RR-51 — The per-section skip is REFUSED, and the measurement that refuses it refuses it on both sides (doc 08 §3.1)
+
+The brief named a section cache as "the honest big lever" on both paths: capture would reuse the last serialized form of any section that had not moved, and restore would skip any section already identical to the live state. Doc 08 §3.1's registry was always the plan and `SaveManager` already speaks sections, so the plumbing is nearly free. **The premise is not.**
+
+Measured directly — capture the benchmark city, advance, capture again, compare each of the 28 sections with a native deep `==` (4.16 ms for the whole body, so the *test* would have been affordable):
+
+| Advance between the two captures | Sections unchanged | Sections changed |
+|---|---|---|
+| 15 game-minutes | 14 of 28 | 14 of 28 |
+| 1 game-hour | 14 of 28 | 14 of 28 |
+
+Fourteen unchanged sections sounds like a win until they are named. The unchanged set is `construction`, `development`, `director_links`, `events`, `goals`, `placed_records`, `policy`, `population`, `progression`, `removed_records`, `stats`, `timers`, `work`, `world_blocks` — **whose combined encode cost is 0.25 ms of a 36 ms encode.** The changed set is `buildings`, `grid`, `roads`, `water`, `clock`, `rng`, `districts`, `dispatch`, `director`, `fleet`, `happiness`, `incidents`, `treasury`, `weather` — and the first four of those are **91 % of the body**. Every one of the four changes within fifteen game-minutes, because condition decays, congestion smooths, flows settle and the load ledger accrues, every tick, on every one of them.
+
+**Ruling: a section cache would ship a comparison that always says "changed" on the sections that cost anything, and would ship it on the save path AND the restore path, where the same table applies to a mid-session reload.** It is refused, and it is refused with the table rather than with an opinion, so the next session that reads doc 08 §3.1 and has the same idea can see what it costs before building it. **What would change the answer**: splitting `roads`, `water` and `grid` into a static half (topology, which changes when the player builds) and a dynamic half (condition, congestion, flow, which changes every tick) — a real format change, correctly out of scope for a hash-neutral wave, and the shape doc 08 §3.1's twenty-owner registry should take when it is actually built.
+
+**A format change was costed and is also refused, for the record.** The body is 1.28 MB of JSON text and `JSON.stringify` is 24.8 ms of it. A binary body (`var_to_bytes`) would remove the stringify, the parse (20.3 ms) and the whole float-canonicalisation problem — doubles would be doubles — for something like 60 ms of the round trip. It would also invalidate every save on every phone, retire the digest-over-text rule doc 08 §2.6 step 3 depends on, and make a corrupt save unreadable by eye at exactly the moment somebody needs to read one. Not worth it at this size; revisit if a body ever passes 10 MB.
+
+### RR-52 — A save taken after the first game-day does not replay bit-identically, and it is a ROADS defect, not a serialization one (A91-D-30)
+
+Found while writing the mid-incident round-trip test for RR-50, on the FOUNDING city, at `28b9550` — i.e. **before** anything in this wave, and reproduced against the stashed tree to be certain. Seed 8191, `CitySim.boot_from_files`:
+
+| Save taken at | at rest | after 2 further game-hours |
+|---|---|---|
+| 1, 2, 4, 6, 8, 10, 12, 16, 20 h | identical | identical |
+| **24 h, 30 h** | identical | **DIFFERENT** |
+
+The body is byte-identical and the restored city matches the live one exactly at the moment of restore — `state_hash()` agrees — and then the two runs diverge within one game-hour of advancing. The first fields to move are `roads.traffic_feed.vehicles[*].s_m` and `.speed_mpgm` at a relative 2 × 10⁻⁶, followed immediately by `roads.edge_dynamics[*][1]` (smoothed congestion). Both restore paths — one call and eleven steps — land on the *same* wrong city, which is what places the fault upstream of the cursor and upstream of the codec: **something derived inside `RoadNetwork` is rebuilt differently by `load_section()` than the live run had it, and it only starts to matter once a day boundary has been crossed.** `_last_hour_sampled` is the obvious candidate — it is the one day-scoped member of `RoadNetwork` that `save_section()` does not persist, and `load_section()` hard-codes the `12.0` that its `-1` default produces — but poking it (and `_mean_congestion`) across the restore does **not** close the gap, so the real cause is something else and is not yet named.
+
+Filed as **A91-D-30 (High)**. It is not fixed here: this wave is hash-neutral by contract, and the fix is a change to what `roads` persists, which is a `SECTION_VERSION` bump and a ladder rung. `tests/test_save_chunked_restore.gd` asserts the three properties that DO hold (the body round-trips, the two restore paths agree with each other, and both agree at rest) and documents the fourth in prose rather than smuggling a weakened assertion past a reader.
+
+**Why the suite never caught it.** Every existing save → load → advance proof saves inside the first game-day: `tests/test_milestone1.gd` at 2 h, `test_save_service.gd` shorter still. The determinism gate is real and the window it covers is smaller than a day.
+
+**Hash-neutrality of this wave, stated for the record.** `tools/profile_sim.gd --hash-only` before and after, both cities: founding `18e70625e633c254…` / `4c3c52cdb4c5a3cc…`, benchmark `d6b2509c179987d3…` / `bf8dc7282758843b…`. Unchanged.

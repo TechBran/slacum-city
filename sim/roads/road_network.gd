@@ -1839,17 +1839,54 @@ func _serialize_c_day_sum() -> Dictionary:
 	return out
 
 
+## Restore the section in ONE call. Every caller that has no frame to protect —
+## tools, tests, the legacy loader — wants this.
 func load_section(data: Dictionary) -> void:
+	for step in load_section_steps(data):
+		(step as Callable).call()
+
+
+## The same restore, cut into THREE resumable steps for `RestoreCursor`
+## (report 98 §24, doc 13 §2.9).
+##
+## Roads is the longest thing a load does — **118 ms of a 204 ms restore** on the
+## 1,500-building benchmark city — so a loading veil that spends one restore step
+## per frame is bounded by THIS call and not by the other eight put together. The
+## cut is at the two seams the code already had:
+##
+##   * `tiles` — the RLE block decode. Touches `_condition` and `_flags` and
+##     nothing that reads an edge id, because there are no edges yet.
+##   * `graph` — `rebuild_all()` and §2.4's id adoption. The single most
+##     expensive thing in a load, and indivisible: an edge that has been derived
+##     but not yet labelled is an edge nothing may look up.
+##   * `state` — everything restored AGAINST an edge id: closures, overrides,
+##     jobs, the traffic feed, the congestion history.
+##
+## The order is unchanged, line for line. What was one function is three
+## closures over the same `data`, and `load_section()` above runs them back to
+## back, which is why there is no second implementation to drift.
+func load_section_steps(data: Dictionary) -> Array[Callable]:
+	var steps: Array[Callable] = []
 	if data.is_empty():
-		return
+		return steps
+	var version := int(data.get("section_version", 1))
+	steps.append(func() -> void: _load_tiles(data))
+	steps.append(func() -> void: _load_graph(data, version))
+	steps.append(func() -> void: _load_edge_state(data, version))
+	return steps
+
+
+func _load_tiles(data: Dictionary) -> void:
 	_closures.clear()
 	_edge_closure.clear()
 	_shadow.clear()
 	_overrides.clear()
 	_condition.clear()
 	_flags.clear()
-	var version := int(data.get("section_version", 1))
 	_deserialize_blocks(data.get("blocks", {}))
+
+
+func _load_graph(data: Dictionary, version: int) -> void:
 	graph.rebuild_all()
 	# BEFORE anything reads an edge id: adopt the live run's labelling (§2.4).
 	# Closures, overrides, the traffic feed and the congestion history are all
@@ -1873,6 +1910,9 @@ func load_section(data: Dictionary) -> void:
 			var pair: Array = data["edge_heads"][key]
 			heads[String(key)] = Vector2i(int(pair[0]), int(pair[1]))
 		graph.orient_edges(heads)
+
+
+func _load_edge_state(data: Dictionary, version: int) -> void:
 	_refresh_all_edge_state()
 	next_closure_id = int(data.get("next_closure_id", 1))
 	for entry in data.get("closures", []):

@@ -743,8 +743,46 @@ func advance_coarse_hours(hours: int, is_catchup: bool = true) -> void:
 ## any number of JSON round-trips, so the instance that saved and the
 ## instance that loads proceed bit-identically (constitution §5, M1
 ## criterion 8). restore_state() decodes transparently.
+##
+## **This is [capture_detached] then [encode_captured], in one call.** It is what
+## every tool, test and `state_hash()` wants and it stays the API. The split
+## below is for the saver that cares which thread each half runs on.
 func canonical_capture() -> Dictionary:
-	return _encode_floats(capture_state())
+	return encode_captured(capture_detached())
+
+
+## THE HALF THAT MUST RUN ON THE SIM'S THREAD: a read of live simulation state,
+## and the whole reason a save is deterministic (doc 08 §2.6).
+##
+## `capture_state()` builds fresh dictionaries almost everywhere, but "almost" is
+## not a contract a worker thread can be handed — `RoadNetwork.save_section()`
+## alone puts three live containers into its body by reference. The
+## `duplicate(true)` is that contract, made explicit and made NATIVE: 8.1 ms on
+## the 1,500-building benchmark city against the 28 ms a GDScript walk needs to
+## copy the same tree (doc 98 §24). What comes back aliases nothing in the sim,
+## so it may be encoded, stringified and digested anywhere.
+##
+## Measured in isolation: capture_state 25.5 ms + duplicate 8.1 = **33.6 ms**,
+## against the 75 ms `capture_state()` + `_encode_floats()` used to cost on the
+## same city. Through the shipped path — `SaveService.save_slot`, sections,
+## envelope header and all — that is **85.4 → 39.2 ms** of caller time
+## (`tools/profile_save.gd --async --repeats=7`, best of 7).
+func capture_detached() -> Dictionary:
+	return capture_state().duplicate(true)
+
+
+## THE HALF THAT NEED NOT: a pure function of the detached body above, which is
+## why `SaveManager.commit_save()` runs it on the write thread. It MUTATES its
+## argument and returns it — the tree is already a private copy, and a second
+## deep copy here is 8 ms nobody is paying for.
+##
+## Idempotent on purpose: `_encode_float()` leaves ints and `~f~` strings alone,
+## so encoding an already-encoded body is a no-op rather than a corruption. That
+## is what makes it safe as a `SaveSection` finalizer, where the manager cannot
+## know whether a caller encoded first.
+static func encode_captured(raw_body: Dictionary) -> Dictionary:
+	_encode_in_place(raw_body)
+	return raw_body
 
 
 ## Doc 08 §2.8: this body's own ladder position, independent of the envelope's
@@ -971,31 +1009,144 @@ static func _v5_to_v6(body: Dictionary) -> Dictionary:
 	return body
 
 
+
+## One float, canonicalized. Integral values become ints (exactly representable
+## either way; consumers cast on read) so int/float typing between a live and a
+## loaded state can never alias. Only true fractions need bits.
+##
+## Two u32 halves, high first — the same 16 hex chars "%016x" would print, but
+## sign-bit-set doubles survive: a whole-u64 "%016x" prints a NEGATIVE int with a
+## minus sign, and `hex_to_int` refuses any pattern above int64 max, so both
+## full-width paths break on negative doubles.
+static func _encode_float(value: float) -> Variant:
+	if absf(value) < 4.6e18 and value == float(int(value)):
+		return int(value)
+	var bytes := PackedByteArray()
+	bytes.resize(8)
+	bytes.encode_double(0, value)
+	return "~f~%08x%08x" % [bytes.decode_u32(4), bytes.decode_u32(0)]
+
+
+static func _decode_float(text: String) -> float:
+	var hex := text.substr(3)
+	var bytes := PackedByteArray()
+	bytes.resize(8)
+	bytes.encode_u32(4, ("0x" + hex.substr(0, 8)).hex_to_int())
+	bytes.encode_u32(0, ("0x" + hex.substr(8, 8)).hex_to_int())
+	return bytes.decode_double(0)
+
+
+## Encode a body the caller already owns, in place. **The shape of this walk is
+## the whole optimization** (doc 98 §24).
+##
+## The recursive rebuild it replaces cost 62 ms on the benchmark city, and the
+## measurements say why: a GDScript walk that does nothing but VISIT the 112,000
+## nodes of that body costs 30 ms if it recurses per node and 14 ms if it pops a
+## stack and pushes `values()` in one native `append_array`. The per-node call is
+## the bill, not the hex — a float encoder that pools its `PackedByteArray` saves
+## 0.1 ms and a nibble-table formatter is 6 ms SLOWER than `%08x` (both measured
+## and both rejected). So: copy the tree with the engine's own deep copy (8 ms of
+## C++), then patch the ~22,000 float leaves with a stack walk that never
+## recurses. **36 ms, and byte-identical output.**
+##
+## A TYPED array is re-seated untyped as it is discovered, which is not a detail:
+## the old rebuild produced untyped arrays everywhere, three of the benchmark
+## city's arrays arrive typed, and writing a `~f~` string into an `Array[float]`
+## is an error while writing an int into one silently converts it back to a float
+## and changes the bytes on disk.
+static func _encode_in_place(root: Variant) -> void:
+	var stack: Array = [root]
+	while not stack.is_empty():
+		var node: Variant = stack.pop_back()
+		if node is Dictionary:
+			var d: Dictionary = node
+			for key: Variant in d.keys():
+				var v: Variant = d[key]
+				var t := typeof(v)
+				if t == TYPE_FLOAT:
+					d[key] = _encode_float(v)
+				elif t == TYPE_DICTIONARY:
+					stack.push_back(v)
+				elif t == TYPE_ARRAY:
+					if (v as Array).is_typed():
+						var untyped: Array = []
+						untyped.assign(v)
+						d[key] = untyped
+						v = untyped
+					stack.push_back(v)
+		else:
+			var a: Array = node
+			for i in a.size():
+				var v: Variant = a[i]
+				var t := typeof(v)
+				if t == TYPE_FLOAT:
+					a[i] = _encode_float(v)
+				elif t == TYPE_DICTIONARY:
+					stack.push_back(v)
+				elif t == TYPE_ARRAY:
+					if (v as Array).is_typed():
+						var untyped: Array = []
+						untyped.assign(v)
+						a[i] = untyped
+						v = untyped
+					stack.push_back(v)
+
+
+## [_encode_in_place]'s mirror. Same shape, same reasons, 58 ms → 34 ms.
+static func _decode_in_place(root: Variant) -> void:
+	var stack: Array = [root]
+	while not stack.is_empty():
+		var node: Variant = stack.pop_back()
+		if node is Dictionary:
+			var d: Dictionary = node
+			for key: Variant in d.keys():
+				var v: Variant = d[key]
+				var t := typeof(v)
+				if t == TYPE_STRING:
+					if (v as String).begins_with("~f~"):
+						d[key] = _decode_float(v)
+				elif t == TYPE_DICTIONARY:
+					stack.push_back(v)
+				elif t == TYPE_ARRAY:
+					if (v as Array).is_typed():
+						var untyped: Array = []
+						untyped.assign(v)
+						d[key] = untyped
+						v = untyped
+					stack.push_back(v)
+		else:
+			var a: Array = node
+			for i in a.size():
+				var v: Variant = a[i]
+				var t := typeof(v)
+				if t == TYPE_STRING:
+					if (v as String).begins_with("~f~"):
+						a[i] = _decode_float(v)
+				elif t == TYPE_DICTIONARY:
+					stack.push_back(v)
+				elif t == TYPE_ARRAY:
+					if (v as Array).is_typed():
+						var untyped: Array = []
+						untyped.assign(v)
+						a[i] = untyped
+						v = untyped
+					stack.push_back(v)
+
+
+## The pure form: never touches the caller's tree. Kept because `state_hash()`,
+## the migration ladder and the tests all hand it bodies they still need.
 static func _encode_floats(value: Variant) -> Variant:
 	match typeof(value):
 		TYPE_FLOAT:
-			# Integral values canonicalize as ints (exactly representable either
-			# way; consumers cast on read) so int/float typing between a live
-			# and a loaded state can never alias. Only true fractions need bits.
-			if absf(value) < 4.6e18 and value == float(int(value)):
-				return int(value)
-			var bytes := PackedByteArray()
-			bytes.resize(8)
-			bytes.encode_double(0, value)
-			# Two u32 halves, high first — the same 16 hex chars "%016x" printed,
-			# but sign-bit-set doubles survive: a whole-u64 "%016x" prints a
-			# NEGATIVE int with a minus sign, and hex_to_int refuses any pattern
-			# above int64 max, so both full-width paths break on negative doubles.
-			return "~f~%08x%08x" % [bytes.decode_u32(4), bytes.decode_u32(0)]
+			return _encode_float(value)
 		TYPE_DICTIONARY:
-			var out_dict := {}
-			for key in value:
-				out_dict[key] = _encode_floats(value[key])
+			var out_dict: Dictionary = (value as Dictionary).duplicate(true)
+			_encode_in_place(out_dict)
 			return out_dict
 		TYPE_ARRAY:
-			var out_array := []
-			for entry in value:
-				out_array.append(_encode_floats(entry))
+			var out_array: Array = []
+			out_array.assign((value as Array).duplicate(true))
+			_encode_in_place(out_array)
 			return out_array
 		_:
 			return value
@@ -1005,22 +1156,16 @@ static func _decode_floats(value: Variant) -> Variant:
 	match typeof(value):
 		TYPE_STRING:
 			if (value as String).begins_with("~f~"):
-				var hex := (value as String).substr(3)
-				var bytes := PackedByteArray()
-				bytes.resize(8)
-				bytes.encode_u32(4, ("0x" + hex.substr(0, 8)).hex_to_int())
-				bytes.encode_u32(0, ("0x" + hex.substr(8, 8)).hex_to_int())
-				return bytes.decode_double(0)
+				return _decode_float(value)
 			return value
 		TYPE_DICTIONARY:
-			var out_dict := {}
-			for key in value:
-				out_dict[key] = _decode_floats(value[key])
+			var out_dict: Dictionary = (value as Dictionary).duplicate(true)
+			_decode_in_place(out_dict)
 			return out_dict
 		TYPE_ARRAY:
-			var out_array := []
-			for entry in value:
-				out_array.append(_decode_floats(entry))
+			var out_array: Array = []
+			out_array.assign((value as Array).duplicate(true))
+			_decode_in_place(out_array)
 			return out_array
 		_:
 			return value
@@ -1092,8 +1237,65 @@ func _serialize_placed_records() -> Array:
 	return out
 
 
+## Rebuild the live city from a saved body, in ONE call. Tools, tests, the
+## legacy loader and every caller that has no frame to protect want this.
+##
+## It is [begin_restore] drained on the spot, and that is not a convenience
+## wrapper around a second implementation — there is one implementation, cut
+## into nine steps, and this drains them. See `RestoreCursor` for why the cut
+## exists and `tests/test_save_chunked_restore.gd` for the proof that draining
+## it in one call and spending it one step per frame land on the same city.
 func restore_state(raw_body: Dictionary) -> void:
-	var body: Dictionary = _decode_floats(raw_body)
+	begin_restore(raw_body).run()
+
+
+## The same restore, resumable: eleven steps the shell may spend across frames
+## behind a loading veil (doc 13 §2.9). The cut points are where the measured
+## cost is, and the sim is INCONSISTENT at every seam, so nothing may tick,
+## render or query it between steps.
+##
+## Step costs on the 1,500-building benchmark city, workstation (report 98 §24):
+## decode 31, core 4, world 23, records 0.1, roster 8, water 18, incidents 0.7,
+## roads_tiles 26, roads_graph 55, roads_state 37, finish 2. **What the veil
+## budget is written against is the LONGEST step, not the total** — 55 ms, which
+## is why `roads` is three steps and not one.
+##
+## `roads` is spliced in from `RoadNetwork.load_section_steps()` rather than cut
+## here: the seams inside a road load are the road network's to name, and a
+## restore that pretended to know them would go stale the first time that loader
+## grew a phase.
+func begin_restore(raw_body: Dictionary) -> RestoreCursor:
+	var cursor := RestoreCursor.new()
+	# One-slot holder rather than a member: two restores in flight is not a
+	# state this class should be able to represent, and a member would let it.
+	var held: Dictionary = {}
+	cursor.add("decode", func() -> void:
+		held["body"] = _decode_floats(raw_body))
+	cursor.add("core", func() -> void: _restore_core(held["body"]))
+	cursor.add("world", func() -> void: _restore_world(held["body"]))
+	cursor.add("records", func() -> void: _restore_records(held["body"]))
+	cursor.add("roster", func() -> void: _restore_roster(held["body"]))
+	cursor.add("water", func() -> void: _restore_water(held["body"]))
+	cursor.add("incidents", func() -> void: _restore_incidents(held["body"]))
+	# The road loader's own seams. Resolved at STEP time, not here: the body is
+	# still encoded when `begin_restore` returns, and `roads` is not a key until
+	# `decode` has run.
+	var road_steps: Array[Callable] = []
+	cursor.add("roads_tiles", func() -> void:
+		road_steps.assign(roads.load_section_steps(held["body"].get("roads", {})))
+		if not road_steps.is_empty():
+			road_steps[0].call())
+	cursor.add("roads_graph", func() -> void:
+		if road_steps.size() > 1:
+			road_steps[1].call())
+	cursor.add("roads_state", func() -> void:
+		if road_steps.size() > 2:
+			road_steps[2].call())
+	cursor.add("finish", func() -> void: _restore_finish(held["body"]))
+	return cursor
+
+
+func _restore_core(body: Dictionary) -> void:
 	clock.deserialize(body.get("clock", {}))
 	rng.deserialize(body.get("rng", {}))
 	grid.deserialize(body.get("grid", {}))
@@ -1109,6 +1311,9 @@ func restore_state(raw_body: Dictionary) -> void:
 	development.deserialize(body.get("development", {}))
 	treasury.deserialize(body.get("treasury", {}))
 	stats.deserialize(body.get("stats", {}))
+
+
+func _restore_world(body: Dictionary) -> void:
 	for saved in body.get("world_blocks", []):
 		var block := world.block(String(saved.get("id", "")))
 		if block != null:
@@ -1119,6 +1324,9 @@ func restore_state(raw_body: Dictionary) -> void:
 	for block_id in world.block_ids_sorted():
 		if (world.block(block_id) as LandBlock).is_ready():
 			_open_block_for_building(block_id)
+
+
+func _restore_records(body: Dictionary) -> void:
 	# Demolitions are replayed FIRST, against the loader's authored stamps, so a
 	# tile a demolition freed is genuinely free before anything re-stamps it.
 	_removed_records.clear()
@@ -1161,15 +1369,28 @@ func restore_state(raw_body: Dictionary) -> void:
 	for sim_id in _removed_records:
 		_grid_id_high_water = maxi(_grid_id_high_water,
 				int(_removed_records[sim_id]["grid_id"]))
+
+
+func _restore_roster(body: Dictionary) -> void:
 	buildings.clear()
 	_invalidate_roster()
+	# `grid_id -> sim_id`, built ONCE. The roster rebuild used to answer that
+	# question with a linear scan of `_building_records` per saved building, which
+	# is O(roster²) — 1,500 buildings against 1,500 records is 1.1 million
+	# dictionary reads and it was **216 ms of a 426 ms restore** (measured, doc 98
+	# §24). The index is the same answer: `_building_records` iterates in insertion
+	# order, the scan took the FIRST record with a matching `grid_id`, and
+	# `has()`-guarding the insert keeps the first one here too, so a body with
+	# duplicate grid ids (there is no such body, but a hand-edited one is not this
+	# loop's business to re-rule) still binds exactly where it did before.
+	var record_by_grid_id := {}
+	for candidate_id in _building_records:
+		var candidate_grid_id := int(_building_records[candidate_id]["grid_id"])
+		if not record_by_grid_id.has(candidate_grid_id):
+			record_by_grid_id[candidate_grid_id] = candidate_id
 	for record in body.get("buildings", []):
 		var b := Building.deserialize(record)
-		var id := ""
-		for candidate_id in _building_records:
-			if int(_building_records[candidate_id]["grid_id"]) == b.id:
-				id = candidate_id
-				break
+		var id := String(record_by_grid_id.get(b.id, ""))
 		if id == "":
 			continue
 		b.stats = catalog.stats(String(b.archetype), maxi(b.level, 1))
@@ -1183,18 +1404,26 @@ func restore_state(raw_body: Dictionary) -> void:
 		var live: Building = buildings[id]
 		_block_dark_weights[id] = int(live.stats.get("population", 0)) \
 				+ int(live.stats.get("jobs", 0))
+
+
+func _restore_water(body: Dictionary) -> void:
 	water.deserialize(body.get("water", {}))
 	# The site loads are DERIVED from the node roster, and a player-placed pump
 	# exists only in the water section — so they are rebuilt here rather than
 	# carried, exactly as `_block_dark_weights` is above.
 	_refresh_water_kw()
+
+
+func _restore_incidents(body: Dictionary) -> void:
 	_director_links.clear()
 	for key in body.get("director_links", {}):
 		_director_links[int(key)] = int(body["director_links"][key])
 	incidents.deserialize_incidents(body.get("incidents", {}))
 	incidents.fleet.deserialize(body.get("fleet", {}))
 	incidents.dispatch.deserialize(body.get("dispatch", {}))
-	roads.load_section(body.get("roads", {}))
+
+
+func _restore_finish(body: Dictionary) -> void:
 	weather.deserialize(body.get("weather", {}))
 	director.deserialize(body.get("director", {}))
 	_restore_difficulty(body)

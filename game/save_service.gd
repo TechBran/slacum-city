@@ -134,6 +134,14 @@ var last_load_recovered: bool = false
 var last_load_lost_minutes: int = 0
 ## 1 when the last successful load came from a format-1 file, 2 from the ladder.
 var last_load_format: int = 0
+## Outcome of the last load, however it was driven. [load_slot] returns it
+## directly; a STEPPED load ([begin_load_slot]) has no return value to carry it,
+## because it finishes several frames after the call that started it.
+var last_load_ok: bool = false
+## Slot a [begin_load_slot] cursor is restoring into, or -1. Only [step_load]
+## reads it, and only to know whether the log line and the total are its to
+## write — the one-step fallback cursor runs `load_slot`, which writes both.
+var _stepped_slot: int = -1
 ## Structural repairs the last load had to make (doc 08 §2.9's repair notes).
 var repair_notes: PackedStringArray = []
 
@@ -350,7 +358,17 @@ func _save_slot(sim: Object, slot: int, reason: String) -> Dictionary:
 	var meta := _meta_of(sim, slot, reason)
 	var manager := _manager(slot)
 	var city := DictSection.new(CITY_SECTION, _city_section_version(sim))
-	city.payload = sim.call("canonical_capture")
+	# The capture splits in two (report 98 §24): the read of live sim state stays
+	# here, on this thread, between ticks; the float canonicalisation is a pure
+	# function of the snapshot and rides `SaveSection.finalize` onto the write
+	# thread. A sim that has not grown the pair still answers `canonical_capture`
+	# and pays for both halves here, which is what every test double does.
+	var finalizer := _city_finalizer(sim)
+	if finalizer.is_valid() and sim.has_method("capture_detached"):
+		city.payload = sim.call("capture_detached")
+		city.finalizer = finalizer
+	else:
+		city.payload = sim.call("canonical_capture")
 	city.migrator = _city_migrator(sim)
 	var ui := DictSection.new(UI_SECTION, UI_SECTION_VERSION)
 	if ui_provider.is_valid():
@@ -521,8 +539,72 @@ func load_slot(sim: Object, slot: int) -> bool:
 	var t0 := Time.get_ticks_usec()
 	var ok := _load_slot(sim, slot)
 	last_load_ms = float(Time.get_ticks_usec() - t0) * 0.001
+	last_load_ok = ok
 	_log_io("load", slot, "slot", last_load_ms, ok)
 	return ok
+
+
+## THE SAME LOAD, SPREAD ACROSS FRAMES (doc 08 §2.15.2, doc 13 §2.9.1).
+##
+## The READ half runs here and synchronously — decompress, parse, digest, the
+## seven-check gate — because it is 28 ms on the benchmark city and because
+## there is nothing to step through until it has produced a body. What comes
+## back is the RESTORE, cut into `CitySim.begin_restore()`'s steps plus a
+## `settle` step that publishes `last_loaded_ui`, the recovery bookkeeping and
+## the `loaded` signal. Spend it with [step_load], one step per frame, behind a
+## veil, and read [last_load_ok] when it finishes.
+##
+## **Nothing may tick, render against or query the sim between steps.** A
+## half-restored city is not a city. The veil is what enforces that, and it is
+## the shell's job, not this service's.
+##
+## It never returns null. Three cases collapse into a ONE-STEP cursor rather
+## than a second failure mode for the caller to handle: a format-1 file beside
+## the ladder (a founding-sized body that predates chunking), a sim that has not
+## grown `begin_restore`, and an invalid slot. A ladder that fails its gate
+## comes back as an EMPTY cursor — the refusal and the `failed` signal have
+## already happened inside the read, and re-running the load would re-walk a
+## candidate list it has just quarantined.
+func begin_load_slot(sim: Object, slot: int) -> RestoreCursor:
+	flush_writes()
+	last_load_ok = false
+	last_load_ms = 0.0
+	last_load_restore_ms = 0.0
+	_stepped_slot = slot
+	var cursor := RestoreCursor.new()
+	if _valid_slot(slot) and sim != null and sim.has_method("begin_restore") \
+			and _has_ladder(slot) and not FileAccess.file_exists(_legacy_path(slot)):
+		var opened := _open_ladder(sim, slot)
+		if opened.is_empty():
+			return cursor
+		var city: DictSection = opened["city"]
+		var stepped: RestoreCursor = sim.call("begin_restore", city.restored)
+		stepped.add("settle", func() -> void: _settle_ladder_load(slot, opened))
+		return stepped
+	_stepped_slot = -1   # `load_slot` does its own timing and its own log line
+	cursor.add("whole", func() -> void:
+		last_load_ok = load_slot(sim, slot))
+	return cursor
+
+
+## Spend ONE step of a cursor from [begin_load_slot]. Returns true when the load
+## has finished — outcome in [last_load_ok].
+##
+## The timing lives here rather than in `RestoreCursor` because `sim/` may not
+## read a clock (constitution §5), and it accumulates STEP time rather than wall
+## time so `last_load_restore_ms` stays comparable with the single-call figure
+## instead of counting the frames the veil spent drawing between steps.
+func step_load(cursor: RestoreCursor) -> bool:
+	if cursor == null:
+		return true
+	var t0 := Time.get_ticks_usec()
+	var done := cursor.step()
+	last_load_restore_ms += float(Time.get_ticks_usec() - t0) * 0.001
+	if done and _stepped_slot >= 0:
+		last_load_ms = last_load_read_ms + last_load_restore_ms
+		_log_io("load", _stepped_slot, "slot_stepped", last_load_ms, last_load_ok)
+		_stepped_slot = -1
+	return done
 
 
 func _load_slot(sim: Object, slot: int) -> bool:
@@ -554,6 +636,23 @@ func _load_slot(sim: Object, slot: int) -> bool:
 ## `last_error`, but a failure the caller is about to recover from is not one
 ## the player needs a toast about.
 func _load_ladder(sim: Object, slot: int, report_failure: bool = true) -> bool:
+	var opened := _open_ladder(sim, slot, report_failure)
+	if opened.is_empty():
+		return false
+	var city: DictSection = opened["city"]
+	var restore_t0 := Time.get_ticks_usec()
+	sim.call("restore_state", city.restored)
+	last_load_restore_ms = float(Time.get_ticks_usec() - restore_t0) * 0.001
+	_settle_ladder_load(slot, opened)
+	return true
+
+
+## The READ half of a ladder load: register the sections, walk the candidates,
+## run the gate. Returns `{city, ui, manager, payload}` or `{}` — and on `{}` it
+## has already refused, so a caller may not simply try again. Split out of
+## [_load_ladder] so [begin_load_slot] can stop here and hand the RESTORE half
+## back to the shell one step at a time.
+func _open_ladder(sim: Object, slot: int, report_failure: bool = true) -> Dictionary:
 	var manager := _manager(slot)
 	var city := DictSection.new(CITY_SECTION, _city_section_version(sim))
 	city.migrator = _city_migrator(sim)
@@ -569,26 +668,32 @@ func _load_ladder(sim: Object, slot: int, report_failure: bool = true) -> bool:
 	last_load_restore_ms = 0.0
 	if not bool(result["ok"]):
 		_refuse(slot, _reason_for(result), report_failure)
-		return false
+		return {}
 	if city.restored_is_empty():
 		# A body with no `city` section is a save of nothing. The structural
 		# repair would hand us an empty default and the sim would restore into
 		# a blank city, which is worse than refusing.
 		_refuse(slot, "no_state", report_failure)
-		return false
+		return {}
+	return {"city": city, "ui": ui, "manager": manager, "payload": result["payload"]}
 
-	var restore_t0 := Time.get_ticks_usec()
-	sim.call("restore_state", city.restored)
-	last_load_restore_ms = float(Time.get_ticks_usec() - restore_t0) * 0.001
+
+## What a ladder load publishes once the city is standing, whether it was
+## restored in one call or in eleven steps. The `loaded` signal fires from here
+## and from nowhere else on this path, so a stepped load and a single-call one
+## are indistinguishable to everything that listens.
+func _settle_ladder_load(slot: int, opened: Dictionary) -> void:
+	var ui: DictSection = opened["ui"]
+	var manager: SaveManager = opened["manager"]
+	var payload: Dictionary = opened["payload"]
 	last_loaded_ui = {} if ui.restored_is_empty() else ui.restored
-	var payload: Dictionary = result["payload"]
 	last_load_recovered = bool(payload["recovered"])
 	last_load_lost_minutes = int(payload["lost_minutes"])
 	last_load_format = FORMAT_VERSION
 	repair_notes = manager.repair_notes.duplicate()
 	last_error = ""
+	last_load_ok = true
 	loaded.emit(slot)
-	return true
 
 
 ## Format 1 → format 2 reader (doc 08 §2.8's rules applied to the shell's own
@@ -770,6 +875,24 @@ func _city_section_version(sim: Object) -> int:
 	if sim != null and sim.has_method("save_section_version"):
 		return int(sim.call("save_section_version"))
 	return CITY_SECTION_VERSION
+
+
+## The sim's bytes-only capture tail, when it has one (`SaveSection.finalize`).
+## Duck-typed like everything else here, and CAPTURE-ONLY: a sim that publishes
+## `capture_detached` without `encode_captured` gets a raw body and a save that
+## is not canonical, so both are required or neither is used.
+##
+## The returned Callable runs on the WRITE THREAD. `encode_captured` is static on
+## `CitySim` and reads nothing but its argument, which is what makes that legal;
+## a future sim that makes it an instance method that reads the roster would put
+## a worker thread inside a live simulation. The `has_method` pair below is the
+## only gate this file can enforce — the contract is on `SaveSection.finalize`.
+func _city_finalizer(sim: Object) -> Callable:
+	if sim == null or not sim.has_method("encode_captured"):
+		return Callable()
+	return func(data: Dictionary) -> Dictionary:
+		var out: Variant = sim.call("encode_captured", data)
+		return out if out is Dictionary else data
 
 
 func _city_migrator(sim: Object) -> Callable:

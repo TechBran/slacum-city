@@ -795,6 +795,90 @@ That is a doc 08 / doc 01 change and it wants its own wave.
 resume pays 484 ms of load before a single coarse step of catch-up runs, and
 threading the write does not touch that number. RR-37 filed it; it remains filed.
 
+### 2.15 Both halves get their lever (report 98 §24, Wave 12, 2026-08-20)
+
+§2.14 closes on two open items — "the next lever on the save path is the capture"
+and "re-open only if `restore_state` itself becomes chunked". Both are taken here,
+and doc 13 §2.9's arithmetic is re-written with the load term it never had
+(§2.9.1). **Every byte on disk is unchanged**: `tools/profile_sim.gd --hash-only`
+reports the same four digests on both cities before and after.
+
+#### 2.15.1 The capture splits again — and this time the second half may leave
+
+§2.14.1's two halves were `capture_save` (live state, main thread) and
+`commit_save` (bytes, any thread), and `CitySim.canonical_capture()` sat entirely
+in the first. It is two things: a READ of live state, and a canonicalisation of
+the snapshot that read produced. Only the first has a thread requirement.
+
+`SaveSection` therefore gains **`finalize(data) -> Dictionary`** — the bytes-only
+tail of `serialize()`, run by `commit_save`, with two normative rules:
+
+1. **It may not touch the sim.** Not a read, not a counter. The thread it runs on
+   has no ordering relationship with the tick loop.
+2. **It must be idempotent.** The manager cannot know whether a caller finalized
+   before handing the payload over, and a capture committed twice (a retried
+   write) must not encode twice.
+
+`DictSection` carries it as an optional Callable; `SaveService` installs
+`CitySim.encode_captured` there and asks the sim for `capture_detached()` instead
+of `canonical_capture()`. A sim that publishes neither still answers
+`canonical_capture()` and pays for both halves on the calling thread, which is
+what every test double does.
+
+**`capture_detached()` is `capture_state()` plus a native `duplicate(true)`, and
+the copy is load-bearing.** §2.14.1 claimed the capture aliases nothing in the
+sim; that was true only because the old float codec REBUILT the whole tree on its
+way past. `RoadNetwork.save_section()` puts three live containers into its body by
+reference. The explicit deep copy costs **8.1 ms of C++** on the benchmark city
+and turns an accident into the contract, and
+`tests/test_save_chunked_restore.gd` asserts it from both ends — that the detached
+body does not move when the sim advances, and that `capture_state()` itself hands
+out no live container.
+
+#### 2.15.2 The load is chunked, so §2.14.3 re-opens on its own terms
+
+`CitySim.begin_restore(body)` returns a **`RestoreCursor`**: eleven labelled,
+resumable steps. `restore_state()` is that cursor drained on the spot — one
+implementation, not two. The sim is INCONSISTENT at every seam, so nothing may
+tick, render or query it between steps; the veil is what guarantees that, and it
+is the shell's obligation.
+
+The veil's budget is **the longest step, not the total** (doc 13 §2.9.1 has the
+table), which is why `roads` is three steps: `RoadNetwork.load_section_steps()`
+names its own seams and `CitySim` splices them in rather than cutting a
+subsystem's loader from outside.
+
+§2.14.3's refusal of a threaded READ **stands, and for the same 7 %**: 28 ms of
+read against 202 ms of restore is still a background thread and a second path
+through the load gate for a fourteenth of one operation. What changed is that the
+restore no longer freezes the veil, which was the thing a player actually noticed.
+
+Measured, `tools/profile_save.gd --repeats=7`, workstation, best ms:
+
+| city | operation | before | after |
+|---|---|---|---|
+| founding | save (caller, `--async`) | 10.04 | **5.17** |
+| founding | save (caller, synchronous) | 13.85 | **11.22** |
+| founding | load / restore half | 48.39 / 45.35 | **45.32 / 42.17** |
+| benchmark | save (caller, `--async`) | 85.39 | **39.19** |
+| benchmark | save (caller, synchronous) | 125.29 | **106.43** |
+| benchmark | load / restore half | 432.82 / 396.84 | **236.43 / 202.14** |
+| benchmark | longest restore step | — | **76.5** |
+
+#### 2.15.3 §3.1's section registry — what the measurement says about building it
+
+The incremental-capture idea §2.14.2 gestures at ("a section registry that
+captured incrementally") was measured before it was built, and **refused**: on the
+benchmark city, fourteen of twenty-eight sections are unchanged after a game-hour
+and they are worth **0.25 ms of a 36 ms encode**, while `buildings`, `grid`,
+`roads` and `water` are 91 % of the body and every one of them changes within
+fifteen game-MINUTES. Report 98 §24 RR-51 has the table and the ruling. The
+finding is not "sections are a bad idea" — it is that **the split §3.1 needs is
+not by owner, it is by rate**: a static half per subsystem (topology, which moves
+when the player builds) and a dynamic half (condition, congestion, flow, load,
+which moves every tick). That is a format change and wants a wave that is allowed
+to move the bytes.
+
 ## 3. Data Schema
 
 ### 3.1 Save body — top level and section registry
