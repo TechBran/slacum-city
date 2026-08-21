@@ -58,6 +58,8 @@ var _paused := false
 var _rail_expanded := false
 var _reduce_motion := false
 var _touch_min := 48.0
+## §2.3's rail-stack pitch, published by `UIRoot` — see `set_rail_pitch()`.
+var _rail_pitch := 0.0
 var _chip_gap := 6.0
 var _spacing := 8.0
 var _max_rows := 1
@@ -454,12 +456,27 @@ func _row_height_dp() -> float:
 ## one, and `UIWidgets.rail_slot()` is the arithmetic all three placers share.
 func _rail_top_dp() -> float:
 	var rail := _speed_button.get_parent() as Control if _speed_button != null else null
-	var measured := 0.0
+	var measured := _rail_pitch
 	if rail != null:
-		measured = maxf(rail.get_combined_minimum_size().y, rail.size.y)
+		measured = maxf(measured, rail.get_combined_minimum_size().y)
 	var slot := UIWidgets.rail_slot(RAIL_TOP_INDEX, config.layout(), _touch_min,
 			measured)
 	return _height_dp() - float(slot["bottom"]) - float(slot["height"])
+
+
+## §2.3's rail stack lives in three files on two layers, so `UIRoot` solves it in
+## one pass (`UIWidgets.solve_rail_stack`) and hands the shared pitch back here —
+## the top bar has to clear the rail's TOP slot, and solving that against this
+## screen's own button while the other two were placed at a different pitch is
+## how the column got a 28 dp gap it never asked for.
+func set_rail_pitch(pitch: float) -> void:
+	_rail_pitch = maxf(0.0, pitch)
+
+
+## This screen's member of §2.3's rail stack: the speed rail, top slot.
+func rail_entry() -> Dictionary:
+	return {"control": _speed_button.get_parent() as Control \
+			if _speed_button != null else null, "index": RAIL_TOP_INDEX}
 
 
 ## How wide the rail column is, from the left edge of the safe area: the rail's

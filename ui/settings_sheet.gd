@@ -26,6 +26,7 @@ var _scrim: ColorRect
 var _panel: PanelContainer
 var _title: Label
 var _close: Button
+var _scroll: ScrollContainer
 var _rows_box: VBoxContainer
 var _about_box: VBoxContainer
 var _saves_button: Button
@@ -63,8 +64,16 @@ func _bind_nodes() -> void:
 	_panel = get_node_or_null("Panel") as PanelContainer
 	_title = get_node_or_null("Panel/Body/Header/Title") as Label
 	_close = get_node_or_null("Panel/Body/Header/Close") as Button
-	_rows_box = get_node_or_null("Panel/Body/Scroll/Rows") as VBoxContainer
-	_about_box = get_node_or_null("Panel/Body/About") as VBoxContainer
+	_scroll = get_node_or_null("Panel/Body/Scroll") as ScrollContainer
+	# Both paths, because `_build_static()` moves the rows and the About block
+	# into a shared column inside the scroller and `setup()` is idempotent — the
+	# second pass has to find the same nodes the first one left behind.
+	_rows_box = get_node_or_null("Panel/Body/Scroll/Column/Rows") as VBoxContainer
+	if _rows_box == null:
+		_rows_box = get_node_or_null("Panel/Body/Scroll/Rows") as VBoxContainer
+	_about_box = get_node_or_null("Panel/Body/Scroll/Column/About") as VBoxContainer
+	if _about_box == null:
+		_about_box = get_node_or_null("Panel/Body/About") as VBoxContainer
 	_saves_button = get_node_or_null("Panel/Body/Saves") as Button
 
 
@@ -94,6 +103,14 @@ func _build_static() -> void:
 			_saves_button.pressed.connect(_on_saves_pressed)
 	if _rows_box != null:
 		_rows_box.add_theme_constant_override(&"separation", int(_spacing))
+	# A2/A91-D-29: the About block is 164 dp of plain text sitting OUTSIDE the
+	# scroller, and a full-rect panel grows through both edges rather than
+	# clipping — at 640 × 340 that put this sheet's own ✕ off the top. Header and
+	# MANAGE SAVES are chrome and stay put; About is content and scrolls with the
+	# rows it reads like. See `UIWidgets.scroll_into`.
+	if _about_box != null and _scroll != null:
+		UIWidgets.scroll_into(_about_box, _scroll)
+		_bind_nodes()
 
 
 func _build_rows() -> void:

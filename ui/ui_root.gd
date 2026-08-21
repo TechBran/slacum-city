@@ -143,6 +143,7 @@ var sheet_layer: Control
 var modal_layer: Control
 var coach_layer: Control
 var title_layer: Control
+var veil_layer: Control
 var toast_layer: CanvasLayer
 
 ## The screens this scaffold carries. Bound in `_bind_nodes()`; any of them may
@@ -169,6 +170,9 @@ var toast_view: ToastView
 ## S0. Present in every mount and **closed in every one of them** — only
 ## `present_title()` opens it, and only `game/main.gd` calls that.
 var title_screen: TitleScreen
+## S15. Its own layer, above the coach layer: a half-restored city is not a city,
+## and nothing — not even the tutorial — draws over the veil that says so.
+var loading_veil: LoadingVeil
 
 ## Doc 12 §2.14's one vibrator. Owned here because three screens fire cues and
 ## two settings rows gate them; a per-screen instance would be a per-screen
@@ -268,6 +272,7 @@ func _bind_nodes() -> void:
 	modal_layer = safe_area.get_node_or_null("ModalLayer") as Control
 	coach_layer = safe_area.get_node_or_null("CoachLayer") as Control
 	title_layer = safe_area.get_node_or_null("TitleLayer") as Control
+	veil_layer = safe_area.get_node_or_null("VeilLayer") as Control
 	toast_layer = get_node_or_null("ToastLayer") as CanvasLayer
 
 	hud = hud_layer as CityHUD
@@ -288,6 +293,7 @@ func _bind_nodes() -> void:
 	onboarding = safe_area.get_node_or_null("CoachLayer/Onboarding") as OnboardingFlow
 	land_panel = safe_area.get_node_or_null("PanelLayer/LandPanel") as LandPanel
 	title_screen = safe_area.get_node_or_null("TitleLayer/TitleScreen") as TitleScreen
+	loading_veil = safe_area.get_node_or_null("VeilLayer/LoadingVeil") as LoadingVeil
 	toast_view = get_node_or_null("ToastLayer/ToastAnchor/Toast") as ToastView
 
 
@@ -347,6 +353,11 @@ func bring_up_screens() -> void:
 	# `tools/ui_preview.gd` depend on.
 	if title_screen != null and title_screen.config == null:
 		title_screen.setup(config)
+	# S15 comes up on the same terms as S0: with the shared config, and CLOSED. A
+	# mount that never calls `present_veil_load()` never sees a veil, which is what
+	# lets the other 53 preview states measure the deck rather than measure this.
+	if loading_veil != null and loading_veil.config == null:
+		loading_veil.setup(config)
 	# §2.14: the two screens that fire their own cues share the root's one gate.
 	# The other three cues (dispatch, escalate, relight) are events rather than
 	# taps, so they are fired here, where the sim batch arrives.
@@ -902,6 +913,66 @@ func _on_title_settings() -> void:
 	title_settings.emit()
 
 
+# ---------------------------------------------------------------------------
+# S15 — the loading veil (doc 13 §2.9 / §2.9.1, doc 91 §20.2 item 19)
+# ---------------------------------------------------------------------------
+
+## Raises the veil over a stepped restore. Like the front door, the ONLY way it
+## ever appears — nothing in `ui/` calls it.
+##
+## `city` is what the player calls the thing being opened; the shell supplies it,
+## because `ui/` has no slot list and `sim/` has no name for a city. `total_steps`
+## is `RestoreCursor.step_count()`. Returns false when the scene carries no veil.
+func present_veil_load(city: String, total_steps: int) -> bool:
+	if loading_veil == null:
+		return false
+	loading_veil.present_load(city, total_steps)
+	return true
+
+
+## `RestoreCursor.completed()`, once per stepped frame.
+func advance_veil_load(completed: int) -> void:
+	if loading_veil != null:
+		loading_veil.advance_load(completed)
+
+
+## Doc 13 §2.9's catch-up messaging. `hours` is the game time about to run and
+## `total_steps` the planner's tick count; answers false — and takes the veil
+## down — when the absence is beneath `data/ui.json.veil.min_steps`.
+func present_veil_catchup(hours: int, total_steps: int,
+		capped: bool = false) -> bool:
+	if loading_veil == null:
+		return false
+	return loading_veil.present_catchup(hours, total_steps, capped)
+
+
+func advance_veil_catchup(completed: int) -> void:
+	if loading_veil != null:
+		loading_veil.advance_catchup(completed)
+
+
+## Down. Idempotent, and safe to call on a path that never raised one — which is
+## what the corrupt-save fallback needs.
+func dismiss_veil() -> void:
+	if loading_veil != null:
+		loading_veil.dismiss()
+
+
+func veil_open() -> bool:
+	return loading_veil != null and loading_veil.is_open()
+
+
+## What the player calls a save slot — `Autosave`, `Slot 2` — for the veil's
+## `Opening {city}…`. S8's model already owns the answer and the string table it
+## comes from; this exists so `game/main.gd` reaches through one object for it
+## rather than three. `""` when there is no save sheet to ask, which
+## `VeilModel` renders as `Opening your city…`.
+func slot_title(slot: int) -> String:
+	if save_load_sheet == null or save_load_sheet.model == null:
+		return ""
+	return save_load_sheet.model.slot_title(slot)
+
+
 ## Pipes one `SimEventBus.drain()` batch into the feeds that eat sim events —
 ## the alerts centre (§2.15), the incident drawer (§2.6) and, while it is
 ## running, the onboarding step machine (§2.17). The shell calls this once from
@@ -1423,6 +1494,7 @@ func _on_build_placement_committed(result: Dictionary) -> void:
 ## while the tutorial is running, and never otherwise.
 func _process(_delta: float) -> void:
 	_update_ui_coverage()
+	solve_rail_stack()
 	if onboarding == null or not onboarding.is_active() or build_sheet == null:
 		return
 	var category := build_sheet.active_category() if build_sheet.is_open() else ""
@@ -1432,6 +1504,45 @@ func _process(_delta: float) -> void:
 	if category != "":
 		feed_onboarding({"kind": OnboardingModel.OBS_UI_OPENED,
 				"path": OnboardingFlow.SCREEN_BUILD_CATEGORY + category})
+
+
+## §2.3's LEFT rail, solved in one pass like D-46 solves the right one.
+##
+## Its three members are not siblings — the BUILD FAB is on `SheetLayer` and the
+## other two on `HUDLayer` — so nobody could walk a parent to find them and each
+## file placed its own control against its own measurement. Two of those
+## measurements were taken at different moments and disagreed (see
+## `UIWidgets.solve_rail_stack` for the 93-against-73 arithmetic), which is a
+## stack only by coincidence. This is the one place that owns the pitch.
+##
+## Idempotent and cheap: three minimum-size reads, and `Control.set_offset()`
+## early-returns on an unchanged value, so a frame in which nothing moved costs
+## nothing. Called from `_process`, from `_recompute_layout` and at the end of
+## `force_layout`, because a headless mount never gets a frame.
+func solve_rail_stack() -> void:
+	if config == null:
+		return
+	var entries: Array = []
+	for screen: Node in [build_sheet, overlay_rail, hud]:
+		if screen == null or not screen.has_method("rail_entry"):
+			continue
+		var entry: Dictionary = screen.call("rail_entry")
+		if entry.get("control") != null:
+			entries.append(entry)
+	if entries.is_empty():
+		return
+	var pitch := UIWidgets.solve_rail_stack(entries, config.layout(),
+			float(ThemeBuilder.touch_min_dp(config, _text_scale(), _larger_targets())))
+	if hud != null:
+		hud.set_rail_pitch(pitch)
+
+
+func _text_scale() -> float:
+	return UIConfig.get_num(config.section("defaults"), "text_scale", 1.0)
+
+
+func _larger_targets() -> bool:
+	return bool(config.section("defaults").get("larger_touch_targets", false))
 
 
 ## How much of the safe area a sheet, panel or modal currently covers, 0..1.
@@ -1607,6 +1718,7 @@ func _recompute_layout() -> void:
 	if bp != current_breakpoint:
 		current_breakpoint = bp
 		breakpoint_changed.emit(bp)
+	solve_rail_stack()
 
 
 ## Replaces `DisplayServer.get_display_safe_area()` when it is set. A desktop
@@ -1637,6 +1749,10 @@ func force_layout(box: Vector2i) -> void:
 	_recompute_layout()
 	safe_area.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
 	safe_area.size = Vector2(box)
+	UIRoot.sort_tree(safe_area)
+	# After the sort, not before: the rail's pitch is a MEASUREMENT, and a
+	# headless mount has none until the tree has been laid out once.
+	solve_rail_stack()
 	UIRoot.sort_tree(safe_area)
 
 

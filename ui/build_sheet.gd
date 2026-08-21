@@ -39,6 +39,9 @@ const CLOSE_GLYPH := "✕"
 ## fit with 95 dp to spare. A control the player cannot reach is worse than a
 ## control they have to press twice.
 const RESTART_GLYPH := "↺"
+## The BUILD FAB's slot in §2.3's left rail — the bottom rung, nearest the thumb.
+## `UIRoot` solves the stack; see `UIWidgets.solve_rail_stack`.
+const RAIL_INDEX := 0
 
 var config: UIConfig
 var controller: BuildController
@@ -181,8 +184,10 @@ func _build_static() -> void:
 		_fab.custom_minimum_size = Vector2(fab_d, fab_d)
 		_fab.text = _text("ui_build_open", "BUILD")
 		_fab.tooltip_text = _fab.text
-		# First slot of §2.3's rail stack — see `UIWidgets.rail_slot`.
-		UIWidgets.place_in_rail(_fab, 0, layout, _touch_min)
+		# First slot of §2.3's rail stack — see `UIWidgets.rail_slot`. The stack's
+		# shared pitch is `UIRoot`'s to solve; this is the placement the FAB has
+		# until there are real metrics to solve it against.
+		UIWidgets.place_in_rail(_fab, RAIL_INDEX, layout, _touch_min)
 		if not _fab.pressed.is_connected(toggle):
 			_fab.pressed.connect(toggle)
 	if _bar_cancel != null:
@@ -926,6 +931,11 @@ func cards() -> Array[Dictionary]:
 
 func active_category() -> String:
 	return _category
+
+
+## This screen's member of §2.3's rail stack — see `UIWidgets.solve_rail_stack`.
+func rail_entry() -> Dictionary:
+	return {"control": _fab, "index": RAIL_INDEX}
 
 
 ## The placement bar's two lines. Exposed rather than reached by node path: they

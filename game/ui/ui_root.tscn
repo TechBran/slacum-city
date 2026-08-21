@@ -1,4 +1,4 @@
-[gd_scene load_steps=20 format=3]
+[gd_scene load_steps=21 format=3]
 
 [ext_resource type="Script" path="res://ui/ui_root.gd" id="1_uiroot"]
 [ext_resource type="Script" path="res://ui/hud.gd" id="2_hud"]
@@ -19,6 +19,7 @@
 [ext_resource type="Script" path="res://ui/toast_view.gd" id="17_toast"]
 [ext_resource type="Script" path="res://ui/title_screen.gd" id="18_title"]
 [ext_resource type="Script" path="res://ui/goals_sheet.gd" id="19_goalssheet"]
+[ext_resource type="Script" path="res://ui/loading_veil.gd" id="20_loadingveil"]
 
 [node name="UIRoot" type="CanvasLayer"]
 layer = 10
@@ -1231,6 +1232,45 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("14_onboarding")
+
+[node name="VeilLayer" type="Control" parent="SafeArea"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="LoadingVeil" type="Control" parent="SafeArea/VeilLayer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("20_loadingveil")
+
+[node name="Scrim" type="ColorRect" parent="SafeArea/VeilLayer/LoadingVeil"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.92)
+
+[node name="Center" type="CenterContainer" parent="SafeArea/VeilLayer/LoadingVeil"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="Panel" type="PanelContainer" parent="SafeArea/VeilLayer/LoadingVeil/Center"]
+layout_mode = 2
+theme_type_variation = &"SheetPanel"
+
+[node name="Body" type="VBoxContainer" parent="SafeArea/VeilLayer/LoadingVeil/Center/Panel"]
+layout_mode = 2
 
 [node name="ToastLayer" type="CanvasLayer" parent="."]
 layer = 20

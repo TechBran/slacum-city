@@ -28,6 +28,13 @@ extends SimTest
 const BOXES: Array[Vector2i] = [
 	Vector2i(360, 800), Vector2i(412, 915), Vector2i(794, 924), Vector2i(880, 400),
 	Vector2i(1280, 720),  # the project's own viewport (doc 91 D-12's blind spot)
+	# **`data/ui.json.layout.min_safe_box_dp` — the project's own authored floor,
+	# and until now the one box no `BOXES` list in the repository contained**
+	# (A91-D-29). Doc 12 §2.18's A2 names it as the size the layout must survive
+	# 150 % at; measured for the first time by the Wave-12 audit it put the title
+	# screen's CANCEL 26 dp off the bottom at DEFAULT text scale. A requirement
+	# whose own geometry nothing runs is not a gate, so it is a row here now.
+	Vector2i(640, 340),
 ]
 
 ## Node paths, from the safe area, of every surface that occupies the full width
@@ -53,6 +60,9 @@ const SURFACES: Array[String] = [
 	# carries the longest single sentence in the deck (the "no free slot" line),
 	# so it is the one most likely to blow a 360 dp box.
 	"TitleLayer/TitleScreen/Center/Panel",
+	# S15. The other surface a player meets with no city behind it, and the only
+	# one that can be up while the sim is half-restored.
+	"VeilLayer/LoadingVeil/Center/Panel",
 ]
 
 
@@ -152,6 +162,12 @@ func _populate(root: UIRoot, panel: String = "drawer") -> void:
 	# the state the other checks in this file were written against.
 	root.title_screen.bind_service(SlotStub.new())
 	root.present_title()
+	# S15, mid-restore on the benchmark city's step count. Up at the same time as
+	# everything else for this file's reason: a surface's minimum width does not
+	# depend on which of its siblings is showing, and a veil nobody raises is a
+	# veil this walk cannot measure.
+	root.present_veil_load(UIWidgets.t(root.config, "ui_saves_slot_autosave"), 11)
+	root.advance_veil_load(7)
 	match panel:
 		"alerts":
 			root.alerts_center.open()
@@ -322,6 +338,79 @@ func test_the_bottom_right_corner_is_a_rail_and_not_a_pile() -> void:
 			"and both keep out of the column the tab reserved")
 
 
+func test_the_left_rail_is_one_stack_with_one_pitch() -> void:
+	# §2.3's left rail lives in three files on TWO layers, so nobody could walk a
+	# parent to find it and each file placed its own control against its own
+	# measurement. `OverlayRail._build_button()` measures inside `setup()` —
+	# before the theme has propagated and before anything is laid out — and read
+	# 73 dp, while `CityHUD.refresh()` re-places the speed rail every frame and
+	# read the laid-out 93: **28 dp of gap where `rail_gap_dp` says 8.**
+	var layout := UIConfig.load_from_files().layout()
+	var stack: Array = []
+	var controls: Array[Control] = []
+	for spec: Array in [[0, 62.0], [1, 73.0], [2, 93.0]]:
+		var control := Control.new()
+		control.custom_minimum_size = Vector2(56.0, float(spec[1]))
+		controls.append(control)
+		stack.append({"control": control, "index": int(spec[0])})
+	var pitch := UIWidgets.solve_rail_stack(stack, layout, 73.0)
+	assert_almost_eq(pitch, 93.0, 0.001,
+			"one pitch for the whole column: the tallest member's")
+	var gap := UIConfig.get_num(layout, "rail_gap_dp", 8.0)
+	for i in range(1, controls.size()):
+		# Offsets are negative and measured up from the bottom edge, so the slot
+		# above is the one with the more negative top.
+		assert_almost_eq(controls[i - 1].offset_top - controls[i].offset_bottom,
+				gap, 0.001, "one rail_gap_dp between slot %d and slot %d" % [i - 1, i])
+	for control in controls:
+		assert_almost_eq(control.offset_bottom - control.offset_top, pitch, 0.001,
+				"and every slot is the same height")
+	for control in controls:
+		control.free()
+
+
+func test_a_stack_shorter_than_the_fab_still_keeps_the_fabs_pitch() -> void:
+	# The pitch floor is `max(fab_d_dp, rail_button_d_dp, touch_min)` and it is
+	# not the FAB's to claim alone — solving the stack must not shrink the column
+	# at 100 % text, or every screenshot in the repo moves for a bug that is not
+	# on any of them.
+	var layout := UIConfig.load_from_files().layout()
+	var stack: Array = []
+	var controls: Array[Control] = []
+	for index in 3:
+		var control := Control.new()
+		control.custom_minimum_size = Vector2(48.0, 48.0)
+		controls.append(control)
+		stack.append({"control": control, "index": index})
+	var pitch := UIWidgets.solve_rail_stack(stack, layout, 48.0)
+	assert_almost_eq(pitch,
+			maxf(UIConfig.get_num(layout, "fab_d_dp", 64.0), 48.0), 0.001)
+	assert_almost_eq(controls[0].offset_bottom,
+			-UIConfig.get_num(layout, "rail_margin_dp", 12.0), 0.001,
+			"and the bottom rung still sits one rail margin off the safe area")
+	for control in controls:
+		control.free()
+
+
+func test_every_left_rail_member_answers_the_solver() -> void:
+	# The mirror of the corner-rail test below: a member that forgets its
+	# `rail_entry()` is one the solver cannot see, and it goes back to placing
+	# itself with nothing failing.
+	var root := _mount(1.3, true)
+	var expected := {BuildSheet.RAIL_INDEX: root.build_sheet,
+			OverlayRail.RAIL_INDEX: root.overlay_rail,
+			CityHUD.RAIL_TOP_INDEX: root.hud}
+	for index: int in expected:
+		var screen: Node = expected[index]
+		assert_true(screen.has_method("rail_entry"),
+				"%s joins §2.3's rail stack" % screen.name)
+		var entry: Dictionary = screen.call("rail_entry")
+		assert_eq(int(entry.get("index", -1)), index)
+		assert_ne(entry.get("control"), null,
+				"every rail entry names a Control the solver can place")
+	_unmount(root)
+
+
 func test_the_corner_rail_is_solved_from_the_scene_not_from_its_offsets() -> void:
 	# The three files must actually join the rail: an affordance that forgets its
 	# `corner_rail_entry()` is one the solver cannot see, and it lands back on top
@@ -351,8 +440,12 @@ func test_a_sheet_row_wraps_rather_than_widening_its_sheet() -> void:
 	# and drops the tail onto a second line. Asserted structurally because a
 	# headless run has no text metrics to measure the collapse with.
 	var root := _mount(1.3, true)
+	# Inside the scroller's shared `Column` since A91-D-29: the About block moved
+	# in beside the rows (`UIWidgets.scroll_into`), because a full-rect panel grows
+	# through both edges rather than clipping and 164 dp of About outside the
+	# scroller is what put this sheet's ✕ off the top of a 640 × 340 box.
 	var rows := root.safe_area.get_node_or_null(
-			"ModalLayer/SettingsSheet/Panel/Body/Scroll/Rows") as VBoxContainer
+			"ModalLayer/SettingsSheet/Panel/Body/Scroll/Column/Rows") as VBoxContainer
 	assert_ne(rows, null)
 	assert_true(rows.get_child_count() > 0, "the settings sheet built its rows")
 	for child in rows.get_children():

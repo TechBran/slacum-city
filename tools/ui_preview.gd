@@ -57,6 +57,11 @@ const SCREENS: Array[String] = [
 	"goals", "goals_late", "goals_done",
 	"settings", "saves", "pause",
 	"title", "title_fresh", "title_confirm", "title_crisis",
+	# S15. A91-D-28's lesson, applied on the way in rather than a wave late: a
+	# screen with no state here is a screen the sweep has never opened, and the
+	# one that caused D-12 was exactly that. Two states, because the veil has two
+	# phases and they carry different copy.
+	"veil_load", "veil_catchup",
 	"coach_welcome", "coach_place_house", "coach_dispatch", "coach_payoff",
 ]
 
@@ -637,6 +642,19 @@ func _apply(screen: String) -> void:
 			while _root.title_screen.model.difficulty() != "crisis":
 				_root.title_screen.action_button(
 						TitleModel.ACTION_DIFFICULTY).pressed.emit()
+		"veil_load":
+			# S15 mid-restore, on the benchmark city's own step count: eleven
+			# steps with `roads_graph` — step 7, and 37 % of the work — running.
+			# That is the moment doc 13 §2.9.1's arithmetic is written about.
+			_root.present_veil_load(
+					UIWidgets.t(_root.config, "ui_saves_slot_autosave"), 11)
+			_root.advance_veil_load(7)
+		"veil_catchup":
+			# The C-19 cap exactly: 12 real hours away is 720 coarse game-hours,
+			# and the absence ran longer than the sim will credit — so this is
+			# also the only state that shows the capped line.
+			_root.present_veil_catchup(720, 720, true)
+			_root.advance_veil_catchup(415)
 		_:
 			if screen.begins_with("coach_"):
 				_coach(screen.trim_prefix("coach_"))
@@ -659,6 +677,7 @@ func _close_everything() -> void:
 	if _root.onboarding != null:
 		_root.onboarding.reset()
 	_root.dismiss_title()
+	_root.dismiss_veil()
 	# Banners live for `alert_ttl_s`, which is longer than a settle window — one
 	# state's banners would otherwise photobomb the next four screens.
 	for alert: Dictionary in _root.hud.model.active_alerts(0.0):

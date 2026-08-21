@@ -1326,6 +1326,12 @@
 			"tagline": "#8096B2"
 		}
 	},
+	"veil": {
+		"_comment": "S15, the loading veil (doc 12 §2.20, doc 13 §2.9/§2.9.1). `min_steps` is doc 13's own `catchup_veil_min_steps`: an offline catch-up worth fewer steps than this is sub-frame work and gets no veil, because a veil that flashes for one frame is a defect rather than a courtesy. A stepped RESTORE always gets one whatever its step count — its eleven steps run 0.2 ms to 76.5 ms, so few steps does not mean fast.",
+		"min_steps": 5,
+		"card_w_dp": 320,
+		"bar_h_dp": 8
+	},
 	"camera": {
 		"_comment": "Interaction range only (C-63). Projection constants fov_deg/near_m/far_m live in data/render.json (doc 11) and are read from there; they must never be added to this block.",
 		"projection_from": "data/render.json",

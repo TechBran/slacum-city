@@ -172,6 +172,48 @@ static func wrap_in_scroller(control: Control, node_name: String,
 	return scroll
 
 
+## Moves `control` into `scroll`, under a `VBoxContainer` column that holds
+## whatever the scroller already had. Idempotent: a control already inside the
+## column is left where it is, so a `setup()` that runs twice does not reorder
+## the screen.
+##
+## **The full-rect half of the same defect `wrap_in_scroller()` fixes.** A
+## full-rect modal's panel is anchored to the display with `grow_* = BOTH`, so a
+## body whose MINIMUM exceeds that rect does not clip and does not scroll — it
+## grows through both edges. S9's body is `Header + Scroll + About + MANAGE
+## SAVES`, and only the rows were inside the scroller: at 640 × 340 dp — the
+## project's own `min_safe_box_dp` — the About block measures **164 dp** of plain
+## text, the body wants **343** against **284** of panel, and the sheet's ✕ ends
+## up at y −1.5 with `MANAGE SAVES` 1.5 dp past the bottom. The header and the
+## footer are chrome; About is content, and content belongs in the scroller.
+static func scroll_into(control: Control, scroll: ScrollContainer,
+		column_name: String = "Column") -> VBoxContainer:
+	if control == null or scroll == null:
+		return null
+	var column := scroll.get_node_or_null(NodePath(column_name)) as VBoxContainer
+	if column == null:
+		column = VBoxContainer.new()
+		column.name = column_name
+		column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var existing: Array[Node] = []
+		for child in scroll.get_children():
+			existing.append(child)
+		scroll.add_child(column)
+		for child in existing:
+			scroll.remove_child(child)
+			child.owner = null
+			column.add_child(child)
+	if control.get_parent() == column:
+		return column
+	var host := control.get_parent()
+	if host != null:
+		host.remove_child(control)
+	control.owner = null
+	control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_child(control)
+	return column
+
+
 ## How tall a centred card may be: what it wants, capped at what the display can
 ## show with `margin` above and below, floored at `floor_h` so a card is never
 ## smaller than one tap target. `host_h <= 1` (an unlaid-out mount) returns the
@@ -298,6 +340,12 @@ static func rail_slot(index: int, layout: Dictionary, touch_min: float,
 ## has landed reports the default theme's metrics, and one measured before it has
 ## been laid out reports only its minimum. Both answers are too small, and both
 ## correct themselves on the next pass — `size` is the truth once there is one.
+##
+## **This places ONE control against its OWN measurement, which is what
+## `solve_rail_stack()` exists to stop being the last word** — see there. It
+## remains the first placement each of the three files makes (a rail button that
+## waited a frame for its offsets would visibly jump), and the solver overwrites
+## it with the stack's shared pitch on the first pass that has real metrics.
 static func place_in_rail(control: Control, index: int, layout: Dictionary,
 		touch_min: float) -> void:
 	if control == null:
@@ -306,6 +354,48 @@ static func place_in_rail(control: Control, index: int, layout: Dictionary,
 			maxf(control.get_combined_minimum_size().y, control.size.y))
 	control.offset_bottom = -float(slot["bottom"])
 	control.offset_top = control.offset_bottom - float(slot["height"])
+
+
+## Solves §2.3's LEFT rail the way `solve_corner_rail()` solves the right one:
+## **one pitch for the whole stack**, applied to every member in one pass.
+##
+## The three affordances live in three files on two layers — the BUILD FAB
+## (`ui/build_sheet.gd`, `SheetLayer`), the overlay button (`ui/overlay_rail.gd`,
+## `HUDLayer`) and the speed rail (`ui/hud.gd`, `HUDLayer`) — so they cannot find
+## each other by walking a parent, and each was calling `place_in_rail()` with
+## its own measurement. That is only a stack while the three measurements agree,
+## and they did not: `OverlayRail._build_button()` places its button inside
+## `setup()`, before the theme has propagated and before anything is laid out, so
+## it read its own `custom_minimum_size` (**73 dp** at 880 × 400 / 130 % / larger
+## targets) while `CityHUD.refresh()` re-places the speed rail every frame and
+## read the laid-out **93 dp**. Two placers, two pitches, one column: the overlay
+## button sat at y 210…303 and the speed rail at y 89…182 — **28 dp of gap where
+## `rail_gap_dp` says 8**, and `HudModel.top_bar_left_inset()` solved the top bar
+## against a rail top that no button actually had.
+##
+## `entries` is `{control, index}` in any order; the caller collects them, because
+## the members are not siblings. Indices are FIXED and gaps are not closed — the
+## FAB hides while a placement bar is up, and an overlay button that slid down to
+## take its slot would move under the player's thumb mid-gesture. Returns the
+## pitch, so the top bar can be solved against the same number.
+static func solve_rail_stack(entries: Array, layout: Dictionary,
+		touch_min: float) -> float:
+	var pitch := float(rail_slot(0, layout, touch_min)["height"])
+	for raw: Variant in entries:
+		var entry: Dictionary = raw
+		var control := entry.get("control") as Control
+		if control == null:
+			continue
+		pitch = maxf(pitch, control.get_combined_minimum_size().y)
+	for raw: Variant in entries:
+		var entry: Dictionary = raw
+		var control := entry.get("control") as Control
+		if control == null:
+			continue
+		var slot := rail_slot(int(entry.get("index", 0)), layout, touch_min, pitch)
+		control.offset_bottom = -float(slot["bottom"])
+		control.offset_top = control.offset_bottom - float(slot["height"])
+	return pitch
 
 
 ## Where one of the bottom-RIGHT corner affordances sits — the mirror of

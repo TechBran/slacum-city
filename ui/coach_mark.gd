@@ -129,9 +129,17 @@ func _build() -> void:
 	_text = UIWidgets.label("Text", "", &"", true)
 	body.add_child(_text)
 
-	var row := HBoxContainer.new()
+	# **A flow container, not an `HBox` (D-47's rule, third instance).** An `HBox`
+	# asks for the SUM of its children, and the bubble's width is derived from its
+	# own minimum — so at 150 % text with larger targets `Skip tutorial` (202 dp)
+	# beside `GOT IT` (118 dp) made a 336 dp row, a 360 dp bubble and a 360 dp
+	# phone whose safe area is 352: `GOT IT` laid out at x 246 … 364, four dp off
+	# the right edge. A flow container asks for its widest child and drops the tail
+	# onto a second line, which is the axis the bubble is free to grow on.
+	var row := HFlowContainer.new()
 	row.name = "Row"
-	row.add_theme_constant_override(&"separation", int(_spacing))
+	row.add_theme_constant_override(&"h_separation", int(_spacing))
+	row.add_theme_constant_override(&"v_separation", int(_spacing))
 	body.add_child(row)
 
 	# None of the three may be abbreviated: §2.17 names `Skip tutorial` verbatim,
@@ -244,6 +252,15 @@ func _layout_bubble() -> void:
 	if _text != null:
 		_text.custom_minimum_size.x = width - _spacing * 2.0
 	_bubble.custom_minimum_size.x = width
+	_bubble.size = Vector2(width, _bubble.get_combined_minimum_size().y)
+	# **Measure the height twice, because the row wraps.** A flow container's
+	# minimum HEIGHT is a function of the width it is given, and the width was
+	# only decided on the line above — so the first answer is the height of a row
+	# that has not wrapped yet. At 150 % text on a 360 dp phone the buttons take
+	# two lines, and the one-line answer put `GOT IT` 64 dp below the display.
+	# `sort_tree` lays the subtree out at the width it now has; the second read is
+	# the honest one.
+	UIRoot.sort_tree(_bubble)
 	_bubble.size = Vector2(width, _bubble.get_combined_minimum_size().y)
 	var height := _bubble.size.y
 	var x := clampf(size.x * 0.5 - width * 0.5, _gap, maxf(_gap, size.x - width - _gap))
