@@ -682,6 +682,33 @@ so a finished tutorial stays finished across a restart. **D-3 closed.**
 > asserted" is precisely PARTIAL and nothing more. **This is the largest single
 > block of remaining work in the project (§20) and it is one build away from
 > being measurable.**
+>
+> **That build now exists and has run on the phone — 2026-08-21, third Fold
+> session. The 2026-08-20 measurement above is superseded and should not be
+> re-quoted.** It was taken against an APK that did not carry the plugin; the
+> APK installed on 2026-08-21 does, and the device says so at three levels:
+>
+> * **The manifest declares exactly the four permissions** — `aapt2 dump
+>   permissions` on the installed APK returns `POST_NOTIFICATIONS`,
+>   `RECEIVE_BOOT_COMPLETED`, `VIBRATE`, `WAKE_LOCK` and nothing else, which is
+>   the contract `tests/test_release_plumbing.gd` asserts, now confirmed against
+>   the shipped artifact rather than the source manifest.
+> * **The plugin and both receivers are registered** — the manifest carries the
+>   `org.godotengine.plugin.v2.SlacumNative` metadata pointing at
+>   `com.slacumcity.nativeplugin.SlacumNative`, plus `AlarmReceiver` and
+>   `BootReceiver` as declared receivers.
+> * **It actually loads at runtime on the Fold** — `logcat` on launch:
+>   `GodotPluginRegistry: Initializing Godot plugin SlacumNative` followed by
+>   `Completed initialization for Godot plugin SlacumNative`.
+>
+> **What is still NOT measured, so these rows do not move to SHIPPED here.**
+> `dumpsys notification` was not re-read: channels are created lazily by the
+> notification platform, so the check has to follow a run that actually reaches
+> that code, and the device left the network before it could be taken. The
+> honest grade after this session is **PARTIAL with the build blocker removed** —
+> the five rows are no longer waiting on an artifact, they are waiting on one
+> read of `dumpsys notification` and a permission-request flow driven once by
+> hand. That is a ten-minute pass, not a wave.
 
 > **Stale, and deliberately not re-graded here (2026-08-19).** Every row below is
 > as measured at `6d8c2b1`, and an Android wave has landed since: `game/notifications/`

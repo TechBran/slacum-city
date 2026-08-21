@@ -48,9 +48,75 @@ except Exception:
 ## True while the game owns the focused window. `mCurrentFocus` is the field that
 ## moves when the user picks the phone up, which is the exact failure being
 ## guarded; `mResumedActivity` keeps saying the game long after that.
+##
+## NOT `... | grep -q ...`: `grep -q` exits at the first match, `adb` is still
+## writing ~200 KB of dump, takes SIGPIPE, and under this file's `set -o
+## pipefail` the pipeline reports the writer's 141 instead of grep's 0 — so a
+## capture that WAS in the foreground gets stamped `CONTAMINATED` at random,
+## depending only on whether the dump happened to fit the 64 KB pipe buffer
+## before grep let go. Measured on device 2026-08-21; it is racy rather than
+## constant here because `mCurrentFocus` appears early in the dump.
+##
+## A guard that marks good captures bad is worse than no guard: this one decides
+## which numbers a report is allowed to quote. Done with bash's own matching, so
+## there is no second process to signal.
+## The test is per LINE, not per dump: `mCurrentFocus=` and the package name both
+## occur in a 200 KB `dumpsys window` for reasons that have nothing to do with
+## each other (the package appears in token lists, recent-task records and the
+## window hierarchy), so a whole-string `*focus*pkg*` glob would report the game
+## as focused while Facebook is on top.
 is_foreground() {
-  adb shell dumpsys window 2>/dev/null | grep -q "mCurrentFocus=.*$PKG"
+  local d line
+  d="$(adb shell dumpsys window 2>/dev/null)"
+  while IFS= read -r line; do
+    if [[ "$line" == *"mCurrentFocus="* && "$line" == *"$PKG"* ]]; then
+      return 0
+    fi
+  done <<< "$d"
+  return 1
 }
+
+## The Fold has TWO physical displays, and `adb exec-out screencap -p` with no
+## `-d` prints
+##   "[Warning] Multiple displays were found, but no display id was specified!"
+## **onto stdout, ahead of the PNG**, so the redirected file is not a PNG at all
+## and every image viewer refuses it. Discovered 2026-08-21: the flood
+## screenshot in `run_matrix.sh` would have come back corrupt with no error, and
+## the session would have reported "the first device look at standing water" as
+## a file nobody could open.
+##
+## The inner panel is the one the game renders to, and it is the display with
+## the most pixels — resolved rather than hard-coded, because the two ids are
+## per-boot values on this device.
+screen_display_id() {
+  adb shell dumpsys SurfaceFlinger --display-id 2>/dev/null \
+    | sed -n 's/^Display \([0-9]\+\) .*/\1/p' | head -1
+}
+
+## One screenshot, guaranteed to be a real PNG or to fail loudly.
+snap() {
+  local dest="$1" id
+  id="$(screen_display_id)"
+  if [[ -n "$id" ]]; then
+    adb exec-out screencap -p -d "$id" > "$dest" 2>/dev/null
+  else
+    adb exec-out screencap -p > "$dest" 2>/dev/null
+  fi
+  # `file`-free check: a PNG starts with the 8-byte signature \x89PNG\r\n\x1a\n.
+  if [[ "$(head -c 4 "$dest" 2>/dev/null | tr -d '\0')" != $'\x89PNG' ]]; then
+    echo "  !! screenshot is NOT a PNG (display id '$id') — $dest" >&2
+    return 1
+  fi
+  echo "  snapped $dest ($(stat -c%s "$dest" 2>/dev/null) bytes, display $id)"
+}
+
+# `cap_pose.sh --snap <dest>` — the screenshot half on its own, so callers that
+# only want a picture (run_matrix.sh's flood look) get the display-id fix too
+# instead of re-deriving it and getting it wrong.
+if [[ "$label" == "--snap" ]]; then
+  snap "$args"
+  exit $?
+fi
 
 if [[ -n "$target_hour" ]]; then
   now="$(save_hour)" || now=""
