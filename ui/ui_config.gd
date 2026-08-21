@@ -25,6 +25,13 @@ const RENDER_JSON_PATH := "res://data/render.json"
 ## `data/ui.json`. Same contract as `data/render.json`: absence is not an error
 ## for the UI layer, it means the rows fall back to their own `default`.
 const DISPATCH_JSON_PATH := "res://data/dispatch.json"
+## Doc 10's own file, read on exactly the same terms as `data/dispatch.json`:
+## S9's road AUTO-REPAIR rows (§2.13) must default to whatever `RoadNetwork`
+## actually boots with, and the authority for that is `condition` here — the
+## threshold LADDER included, because `cmd_set_auto_repair_policy` refuses a
+## threshold that is not on it (`E_BAD_THRESHOLD`). A control offering a rung the
+## sim would refuse is not a control.
+const ROADS_JSON_PATH := "res://data/roads.json"
 
 ## Projection keys that belong to doc 11 and must never appear in ui.json.camera.
 const PROJECTION_KEYS := ["fov_deg", "near_m", "far_m"]
@@ -43,21 +50,24 @@ var _ui: Dictionary = {}
 var _strings: Dictionary = {}
 var _render: Dictionary = {}
 var _dispatch: Dictionary = {}
+var _roads: Dictionary = {}
 
 
 func _init(ui: Dictionary = {}, strings: Dictionary = {}, render: Dictionary = {},
-		dispatch: Dictionary = {}) -> void:
+		dispatch: Dictionary = {}, roads: Dictionary = {}) -> void:
 	_ui = ui
 	_strings = strings
 	_render = render
 	_dispatch = dispatch
+	_roads = roads
 
 
 static func load_from_files(
 		ui_path: String = UI_JSON_PATH,
 		strings_path: String = STRINGS_JSON_PATH,
 		render_path: String = RENDER_JSON_PATH,
-		dispatch_path: String = DISPATCH_JSON_PATH) -> UIConfig:
+		dispatch_path: String = DISPATCH_JSON_PATH,
+		roads_path: String = ROADS_JSON_PATH) -> UIConfig:
 	var cfg := UIConfig.new()
 	cfg._ui = UIConfig._parse(ui_path, cfg.errors, true)
 	cfg._strings = UIConfig._parse(strings_path, cfg.errors, true)
@@ -66,6 +76,8 @@ static func load_from_files(
 	cfg._render = UIConfig._parse(render_path, cfg.errors, false)
 	# data/dispatch.json is doc 06's, on the same terms.
 	cfg._dispatch = UIConfig._parse(dispatch_path, cfg.errors, false)
+	# data/roads.json is doc 10's, on the same terms again.
+	cfg._roads = UIConfig._parse(roads_path, cfg.errors, false)
 	return cfg
 
 
@@ -109,6 +121,19 @@ func dispatch_data() -> Dictionary:
 ## therefore the only correct default for S9's auto-response rows (§2.13, D-11).
 func dispatch_policy_defaults() -> Dictionary:
 	var raw: Variant = _dispatch.get("policy_defaults", {})
+	return raw if raw is Dictionary else {}
+
+
+func roads_data() -> Dictionary:
+	return _roads
+
+
+## Doc 10's `condition` block — where `auto_repair_thresholds`,
+## `auto_repair_default_threshold` and `auto_repair_default_daily_cap` live, and
+## therefore the only correct default and the only correct ladder for S9's
+## road auto-repair rows (§2.13, feeder-water open q1).
+func road_condition() -> Dictionary:
+	var raw: Variant = _roads.get("condition", {})
 	return raw if raw is Dictionary else {}
 
 

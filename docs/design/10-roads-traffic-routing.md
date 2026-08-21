@@ -1427,11 +1427,25 @@ Four reasons, in the order they bind:
    a purchase against a discrete asset the player taps and whose condition the
    panel already shows. A road tile is neither.
 
-**What is still open is smaller, and is §9.4 question 5 restated.**
-`cmd_set_auto_repair_policy` has no `CitySim` wrapper and no door either, so the
-threshold and the cap ship at their defaults and a player cannot move them. It
-wants a settings-sheet row: doc 12 §2.13's sheet already carries the
-`policy: "dispatch"` mechanism for exactly this shape — rows whose defaults come
-from an owning system's table and whose values go to a `cmd_set_*_policy`.
-Recommended, and §9.4 question 5 ("auto-repair default: on or off?") is folded
-into it: with a dial, the default stops being a permanent ruling.
+**~~What is still open is smaller, and is §9.4 question 5 restated.~~
+CLOSED, Wave 12.** `cmd_set_auto_repair_policy` now has a `CitySim` wrapper
+(`cmd_set_auto_repair_policy(threshold, daily_cap)` plus a read-side
+`auto_repair_policy()`) and two settings rows behind it —
+`data/ui.json.settings.rows` carries `auto_repair_threshold` and
+`auto_repair_daily_cap`, both `policy: "roads"`, the mechanism doc 12 §2.13
+already used for dispatch. **The threshold row's ladder is
+`data/roads.json.condition.auto_repair_thresholds` itself**, read through
+`UIConfig.road_condition()`, so a rung the command would answer
+`E_BAD_THRESHOLD` for can never appear on the control; the cap row is
+`[0, 10K, 25K, 75K, 200K]` with this doc's own 25,000 on it. One difference from
+the dispatch family and it is the command's, not the UI's: **a change writes the
+PAIR**, because the policy is one decision with two numbers in it.
+
+§9.4 question 5 ("auto-repair default: on or off?") is answered the way that
+section asked for: the default stays `0.40 / $25,000` — the matrix control run in
+doc 92 §30.2 is byte-identical with the dial in place, every game-state column of
+all 21 runs — and the answer stops being a permanent ruling because there is now
+a dial. §29.2 also measures both ends of it, which is the part that matters:
+turning the threshold OFF and turning it up to `0.55 / $200,000` both move the
+matrix, so the control's byte-identity is a *measurement* rather than a wire that
+was never connected.

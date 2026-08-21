@@ -54,6 +54,10 @@ tools/__pycache__/
 
 # Agent worktrees and session-local state
 .claude/
+# The suite is not concurrency-safe across worktrees (one shared `user://`), so
+# every run points XDG_DATA_HOME at a worktree-local directory. That directory
+# is a scratch `user://`, never source.
+.xdg*/
 build/playtest/
 # Store listing assets are GENERATED (tools/gen_store_assets.py) and are ~20 MB
 # of PNG per run. The generator is deterministic, so the repo keeps the recipe

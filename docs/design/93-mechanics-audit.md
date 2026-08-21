@@ -884,14 +884,18 @@ says so. Four reasons, in the order they bind:
    asset the player taps and whose condition the panel already shows. A road tile
    is neither.
 
-**What this leaves open, and it is a smaller question than the one it closes:**
-`cmd_set_auto_repair_policy` has no `CitySim` wrapper and no door either. It
-wants a settings-sheet row — doc 12 §2.13's sheet already has the `policy:
-"dispatch"` mechanism for exactly this shape (rows whose defaults come from a
-sim's own table and whose values go to a `cmd_set_*_policy`). Recommended, not
-built here, and ranked as this wave's second open question; doc 10 §9.4's
-question 5 ("auto-repair default: on or off?") is the same row and is folded into
-it.
+**~~What this leaves open~~ CLOSED, Wave 12.** `cmd_set_auto_repair_policy` has a
+`CitySim` wrapper and two settings rows carrying `policy: "roads"` — the
+mechanism this paragraph recommended, with one difference that belongs to the
+command: it takes the threshold and the cap **together**, so a row change writes
+the pair. The threshold row's ladder is `data/roads.json`'s own
+`auto_repair_thresholds`, so a rung the command answers `E_BAD_THRESHOLD` for
+cannot appear on the control. Doc 12 D-50 has the delta; doc 92 §30 has the
+matrix, and it strengthens ruling J3 rather than weakening it: the per-tile
+verb's only new effect would be a way around a daily cap that is now a number the
+player *sets*, which makes routing around it worse than it was when the cap was
+fixed. Doc 10 §9.4 question 5 is answered there too — at the default the policy
+is dormant for a whole 21-game-day city and does not wake until roads pass 0.40.
 
 ## K. Wave-11 rulings — difficulty goes live (2026-08-20)
 

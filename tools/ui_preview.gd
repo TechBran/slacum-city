@@ -26,6 +26,11 @@ extends Node
 ##   change. A sweep that only ever runs at 100 % is the happy path, not a sweep.
 ## * `--audit` prints every finding `UIAudit` has; `--strict` also exits non-zero
 ##   when it found any, which is what a CI shot would use.
+## * `--rects=SUBSTRING` prints the laid-out rect of every `Control` whose path
+##   contains it. An overlap finding names two nodes and their rects; fixing one
+##   needs the rects of everything ELSE in that column, which only a live layout
+##   knows. `--rects=TopBar` beside `--rects=Rail` is how the vertical budget in
+##   §2.4's solver was measured.
 ##
 ## `tests/test_ui_audit.gd` runs the frame-free half of the same checks inside the
 ## suite; this is the pixel-accurate pass, and the one that can take a picture.
@@ -90,6 +95,8 @@ var _large_targets := false
 ## not the chip's, and doc 91 D-12's lesson is that "it was already broken" has
 ## to be MEASURED rather than assumed.
 var _no_goal_chip := false
+## `--rects=`: print the laid-out rect of every Control whose path contains this.
+var _rects := ""
 
 
 func _ready() -> void:
@@ -109,6 +116,8 @@ func _ready() -> void:
 			_large_targets = true
 		elif text == "--no-goal-chip":
 			_no_goal_chip = true
+		elif text.begins_with("--rects="):
+			_rects = text.trim_prefix("--rects=")
 		elif text == "--audit":
 			_audit = true
 		elif text == "--strict":
@@ -229,6 +238,12 @@ func _populate() -> void:
 	})
 	_root.bind_tax(_sim.cmd_set_tax_level, _sim.tax_level(), _sim.tax_level_count(),
 			_sim.tax_rate)
+	# Doc 06 §2.11's recall and doc 10 §2.13's auto-repair dials, on the same
+	# terms `game/main.gd` binds them: without the wires the drawer draws no
+	# recall chip and S9's two road rows never see the city's own policy, so the
+	# sweep would photograph a deck the shipped game does not have.
+	_root.bind_recall(_sim.cmd_recall_unit)
+	_root.bind_road_policy(_sim.cmd_set_auto_repair_policy, _sim.auto_repair_policy())
 	_root.ingest_service({"power01": 0.93, "water01": 0.71})
 	_root.feed_infrastructure(_infrastructure())
 	_root.feed_response(_response())
@@ -926,6 +941,26 @@ func _report(screen: String) -> void:
 			str(get_window().size if get_window() != null else DEFAULT_SIZE)]))
 
 
+## `--rects=`: what a named part of the tree actually measured. A finding names
+## two rects; a FIX needs the rects of everything else sharing that column, and
+## only a laid-out tree has them.
+func _dump_rects(screen: String) -> void:
+	print("── rects %s @ %s" % [screen,
+			str(get_window().size if get_window() != null else DEFAULT_SIZE)])
+	_walk_rects(_root.safe_area)
+
+
+func _walk_rects(node: Node) -> void:
+	var control := node as Control
+	if control != null and control.visible:
+		var path := UIAudit.path_of(control, _root.safe_area)
+		if path.contains(_rects):
+			print("  %-56s P%s S%s min%s" % [path, str(control.global_position),
+					str(control.size), str(control.get_combined_minimum_size())])
+	for child in node.get_children():
+		_walk_rects(child)
+
+
 ## One state per settle window: measure it, shoot it if this run wanted a picture
 ## of it, then move on. The whole deck is one process loop rather than one run per
 ## screen because booting the sim costs more than every screen put together.
@@ -936,6 +971,8 @@ func _process(delta: float) -> void:
 	var screen := _queue[0]
 	if _audit:
 		_report(screen)
+	if _rects != "":
+		_dump_rects(screen)
 	if _path != "":
 		# `--screen=all --screenshot=DIR` writes one file per state; a single state
 		# writes exactly the file it was given.

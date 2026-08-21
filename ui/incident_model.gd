@@ -179,6 +179,20 @@ func _release_unit(unit_id: int) -> Dictionary:
 	return NOT_AN_INCIDENT
 
 
+## Doc 06 §2.11's recall, applied optimistically to the row the player is looking
+## at. The sim emits `unit_returned` on its own cadence and `_release_unit` would
+## do the same thing a fraction of a second later — but the chip the thumb is
+## still on has to go NOW, or the player taps a unit that is already coming home.
+## Returns the row it changed, or `NOT_AN_INCIDENT`.
+func drop_unit(incident_id: int, unit_id: int) -> Dictionary:
+	var row: Dictionary = _rows.get(incident_id, {})
+	if row.is_empty() or not (row["assigned"] as Array).has(unit_id):
+		return NOT_AN_INCIDENT
+	_drop_unit(row, unit_id)
+	_render(row)
+	return row
+
+
 ## A whole `SimEventBus.drain()` batch. Returns only the rows it touched.
 func feed_batch(events: Array) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []

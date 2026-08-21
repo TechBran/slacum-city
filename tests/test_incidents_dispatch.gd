@@ -206,6 +206,17 @@ func test_manual_lock() -> void:
 	assert_eq(unit.status, Vehicle.RETURNING, "recalled unit is heading home")
 	assert_false(unit.manual_lock, "lock cleared on recall")
 	assert_false(minor.assigned.has(unit_id), "incident released the unit")
+	# …and a second recall is refused rather than answered `ok` for a no-op:
+	# `FleetSystem.recall` already does nothing to a unit that is on its way home,
+	# and a door whose command says yes to nothing is a door that lies (A91-D-24
+	# gave this verb its first caller — doc 12 §2.6's unit chips).
+	var again := system.dispatch.cmd_recall_unit(unit_id)
+	assert_false(bool(again["ok"]), "a RETURNING unit cannot be recalled again")
+	assert_eq(String(again["reason_code"]), "E_UNIT_NOT_DEPLOYED")
+	assert_eq(str((again["payload"] as Dictionary)["status"]), Vehicle.RETURNING,
+			"and the refusal names the state it refused for")
+	assert_false(bool(system.dispatch.cmd_recall_unit(9999)["ok"]),
+			"an unknown unit is still E_UNKNOWN_UNIT")
 
 
 ## Doc 06 §7 test 15 — with fire_reserve_units = 1 and two engines, a tier-2
