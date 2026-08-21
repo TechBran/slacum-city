@@ -620,29 +620,45 @@ The same guard covers `feeder_destroy` and any future terminal verb. Online, `de
 **Rewards & penalties.**
 
 ```
-reward = reward_base[type] * (1 + 0.35 * (tier_peak - 1)) * speed_bonus
+shape       = (1 + 0.35 * (tier_peak - 1)) * speed_bonus          # THIS doc owns this line
 speed_bonus = clamp(1.5 - 0.5 * (response_minutes / target_response_min[type]), 0.60, 1.50)
 response_minutes = first_onscene_min - created_min
+
+reward = economy.dispatch_payout(type, shape, inc.manual_requested,               # doc 03 §2.5
+                                 inc.target_ref, residual_damage_fraction(inc))
+       # = dispatch_payout_base[type] * shape * (manual ? MANUAL_DISPATCH_MULT : 1.00)
+       #   capped at MORAL_HAZARD_CAP_FRACTION * prevented_loss
 
 cost_dispatch  = Σ over responding units of  economy.vehicle_dispatch_cost(type)   # doc 03 §2.13(c)
 cost_materials = economy.repair_cost(inc.target_ref, damage_fraction(inc))         # doc 03 §2.5
 net = reward - cost_dispatch - cost_materials      # may be negative; crises cost money by design
 ```
 
-**All three money terms above are doc 03's** *(report 98 C-07 / C-16 / R-14).* Doc 06's `repair_material_base` column is **deleted** — it was a second repair price table. Doc 06 supplies only `damage_fraction ∈ [0,1]` (§2.8), and doc 03 computes `capital_value × damage_fraction × REPAIR_COST_PER_CAPITAL (0.85) × M_repair`. Look for the numbers in **doc 03 §2.5** and `data/economy.json`.
+**All FOUR money terms above are doc 03's** *(report 98 C-07 / C-16 / R-14, and now **RR-77**).* Doc 06's `repair_material_base` column was deleted in Round 1; **`reward_base` is deleted here.** It lived on every type row of `data/incidents.json` and it was a price, which made it the last dollar column standing outside doc 03's currency monopoly — and it was the same dollar as doc 03's own `POLICE_FINE_PER_RESOLVED_INCIDENT = 350`, which is precisely what open question 6 below asked about in Wave 1. **The ruling is RR-77 and the question is CLOSED.** The six values are unchanged and now live in `data/economy.json` under `city_services.dispatch_payout_base`; `IncidentCatalog.FORBIDDEN_KEYS` refuses a doc-06 data file that carries the key back.
 
-| type | `reward_base` | `target_response_min` | stability on resolve |
+**What this doc still owns is the SHAPE**, and it is the whole of what §2.7 was ever really answering: *how much more is a tier-3 worth than a tier-1* (`tier_k = 0.35`) and *how much is a fast answer worth* (the `speed_bonus` band). Doc 03 answers *how much*, *how much more when a human made the call*, and *how much is too much*.
+
+**Two things arrive with the move.** `Incident.manual_requested` — set only by `cmd_dispatch_unit` — now changes the price: a human working the incident drawer is paid `MANUAL_DISPATCH_MULT = 1.50×`, which is this doc's own `speed_bonus_max` adopted rather than a new magnitude invented, and the auto-dispatcher is paid 1.00×, i.e. exactly the dollars it has quietly earned since Wave 1. And doc 03 applies a **moral-hazard ceiling** against the loss the response prevented, which is why `target_ref` and the residual damage fraction now cross the seam alongside the shape.
+
+**The ceiling BINDS on this doc's shipped curve, and that is a finding about §2.7 rather than about doc 03** *(doc 92 §35.3).* `tier_k = 0.35` grows the payout faster than doc 02's residual-damage curve grows the damage (`0.10` per tier), so on a cheap building the reward outruns the value at risk from about tier 4 up. House L1, capital $1,200, tier-5 fire answered at the target response: reward `900 × 2.40 = $2,160`, residual damage 0.40 ⇒ repair `$408`, loss prevented `$792` — **2.73×**. Doc 03 clamps it to `0.75 × 792 = $594`. Nothing in this doc was retuned to fix that; the ceiling is what fixes it, and balance gate 31 is what keeps it fixed.
+
+| type | `target_response_min` | stability on resolve | *(payout base — doc 03 §2.13(e))* |
 |---|---|---|---|
-| crime | 350 | 8 | +0.010 |
-| structure_fire | 900 | 6 | +0.020 |
-| transformer_failure | 600 | 12 | +0.015 |
-| water_main_break | 500 | 15 | +0.015 |
-| traffic_accident | 300 | 7 | +0.008 |
-| storm_damage (any) | 400 | 15 | +0.010 |
+| crime | 8 | +0.010 | *350* |
+| structure_fire | 6 | +0.020 | *900* |
+| transformer_failure | 12 | +0.015 | *600* |
+| water_main_break | 15 | +0.015 | *500* |
+| traffic_accident | 7 | +0.008 | *300* |
+| storm_damage (any) | 15 | +0.010 | *400* |
 
-*Worked (recomputed on doc 03's ladder, R-14):* tier-3 structure fire in a **house L2**, one engine, on scene at minute 5, resolved with `burn_timer = 0`.
+*The fourth column is italicised because it is **not this doc's** — it is reproduced for reading convenience exactly as the vehicle prices are in §2.11, and `data/incidents.json` carries it in no form.*
+
+*Worked (recomputed on doc 03's ladder, R-14; re-checked against the RR-77 ceiling):* tier-3 structure fire in a **house L2**, one engine, on scene at minute 5, resolved with `burn_timer = 0`.
 - `speed_bonus = clamp(1.5 − 0.5·(5/6), 0.60, 1.50) = 1.083333`
-- `reward = 900 × (1 + 0.35·2) × 1.083333 = 900 × 1.70 × 1.083333 = **$1,657**`
+- `shape = (1 + 0.35·2) × 1.083333 = 1.841666`
+- `reward = 900 × 1.841666 × 1.00 (auto-dispatched) = **$1,657**` — **unchanged**, which is the point of RR-77's "moved, not retuned"
+- *the ceiling, checked:* `prevented_loss = capital_value(house, L2) $2,940 − cost_materials $500 = $2,440`, and `0.75 × 2,440 = $1,830 > $1,657`, so the clamp does not bind here. **This example is the floor the 0.75 was placed above** (`1,657 / 2,440 = 0.679`): a lower fraction would have retuned a ruled payout at its own reference point.
+- *dispatched by hand instead:* `1,657 × 1.50 = $2,486`, clamped to **$1,830** — the premium pays 10.4 % rather than 50 % on this incident, because the ceiling is doing its job. On a `crime` or a `traffic_accident` at the same tier it pays in full.
 - `cost_dispatch = 1 × fire_engine.dispatch_cost` — doc 03 `$29` (was doc 06's deleted `$220`) → **$29**
 - `damage_fraction = 0.10·(3 − 1) + 0.30·0.0 = 0.20`; doc 03 `capital_value(house, L2) = $2,940` →
   `cost_materials = round(2,940 × 0.20 × 0.85 × M_repair 1.00) = **$500**` (was `250 × 3 = $750`)
@@ -1327,7 +1343,7 @@ is reproduced by `tools/profile_decay.gd --days=200 --preset=crisis`; doc 92
         "base_rate": 0.012,
         "factors": ["stability","dark","police_coverage","weather"]   // named factor fns, §2.6
       },
-      "reward_base": 350, "target_response_min": 8,
+      "target_response_min": 8,
       // repair_material_base DELETED (C-07/C-16) -> doc 03 economy.repair_cost(target, damage_fraction)
       "stability_on_resolve": 0.010,
       "notification_priority_by_tier": [3,3,2,1,1],
@@ -1763,12 +1779,12 @@ One document, three top-level keys — split into `data/incidents.json`, `data/v
       "spread":     "fire_spread_mult"
     },
     "types": {
-      "crime":               { "type_priority":2, "sev_bias":0.0,  "sev_spread":1.0, "esc_base":0.80, "hold_base":1.00, "w_base":0.30, "w_slope":0.40, "suppression_model":"generic", "self_resolve_h":2.0, "self_resolve_max_tier":2, "primary_role":"police",       "primary_counts_by_tier":[1,1,2,3,3], "support_roles":[], "reward_base":350, "target_response_min":8,  "stability_on_resolve":0.010, "notification_priority_by_tier":[3,3,2,1,1] },
-      "structure_fire":      { "type_priority":5, "sev_bias":0.0,  "sev_spread":0.6, "sev_level_k":0.15, "esc_base":2.20, "hold_base":0.00, "w_base":0.30, "w_slope":0.45, "suppression_model":"fire",    "self_resolve_h":0.0, "self_resolve_max_tier":0, "primary_role":"fire",         "primary_counts_by_tier":[1,1,2,3,4], "support_roles":[{"role":"police","rate_bonus":0.15,"min_tier":2},{"role":"construction","rate_bonus":0.00,"min_tier":4}], "reward_base":900, "target_response_min":6,  "stability_on_resolve":0.020, "notification_priority_by_tier":[3,3,2,1,1] },
-      "transformer_failure": { "type_priority":4, "sev_bias":0.2,  "sev_spread":0.8, "esc_base":0.50, "hold_base":1.00, "w_base":0.90, "w_slope":0.30, "suppression_model":"generic", "self_resolve_h":0.0, "self_resolve_max_tier":0, "primary_role":"utility",      "primary_counts_by_tier":[1,1,2,2,2], "support_roles":[{"role":"construction","rate_bonus":0.20,"min_tier":3}], "reward_base":600, "target_response_min":12, "stability_on_resolve":0.015, "notification_priority_by_tier":[3,2,2,1,1] },
-      "water_main_break":    { "type_priority":3, "sev_bias":0.1,  "sev_spread":0.9, "esc_base":0.60, "hold_base":1.00, "w_base":1.20, "w_slope":0.30, "suppression_model":"generic", "self_resolve_h":0.0, "self_resolve_max_tier":0, "primary_role":"water",        "primary_counts_by_tier":[1,1,2,2,2], "support_roles":[{"role":"construction","rate_bonus":0.25,"min_tier":2}], "reward_base":500, "target_response_min":15, "stability_on_resolve":0.015, "notification_priority_by_tier":[3,3,2,1,1], "zone_pressure_delta_by_tier":[0.0,0.0,-0.15,-0.35,-0.60,-0.80] },
-      "traffic_accident":    { "type_priority":3, "sev_bias":0.0,  "sev_spread":0.8, "esc_base":0.70, "hold_base":1.00, "w_base":0.35, "w_slope":0.35, "suppression_model":"generic", "self_resolve_h":1.0, "self_resolve_max_tier":2, "primary_role":"police",       "primary_counts_by_tier":[1,1,1,2,2], "support_roles":[{"role":"fire","rate_bonus":0.30,"min_tier":1},{"role":"construction","rate_bonus":0.20,"min_tier":3}], "reward_base":300, "target_response_min":7,  "stability_on_resolve":0.008, "notification_priority_by_tier":[3,3,2,1,1] },
-      "storm_damage":        { "type_priority":3, "sev_bias":0.1,  "sev_spread":0.9, "esc_base":0.40, "hold_base":1.00, "w_base":0.70, "w_slope":0.30, "suppression_model":"generic", "self_resolve_h":0.0, "self_resolve_max_tier":0, "primary_role":"utility",      "primary_counts_by_tier":[1,1,2,2,2], "support_roles":[{"role":"construction","rate_bonus":0.20,"min_tier":1}], "reward_base":400, "target_response_min":15, "stability_on_resolve":0.010, "notification_priority_by_tier":[3,3,2,1,1],
+      "crime":               { "type_priority":2, "sev_bias":0.0,  "sev_spread":1.0, "esc_base":0.80, "hold_base":1.00, "w_base":0.30, "w_slope":0.40, "suppression_model":"generic", "self_resolve_h":2.0, "self_resolve_max_tier":2, "primary_role":"police",       "primary_counts_by_tier":[1,1,2,3,3], "support_roles":[], "target_response_min":8,  "stability_on_resolve":0.010, "notification_priority_by_tier":[3,3,2,1,1] },
+      "structure_fire":      { "type_priority":5, "sev_bias":0.0,  "sev_spread":0.6, "sev_level_k":0.15, "esc_base":2.20, "hold_base":0.00, "w_base":0.30, "w_slope":0.45, "suppression_model":"fire",    "self_resolve_h":0.0, "self_resolve_max_tier":0, "primary_role":"fire",         "primary_counts_by_tier":[1,1,2,3,4], "support_roles":[{"role":"police","rate_bonus":0.15,"min_tier":2},{"role":"construction","rate_bonus":0.00,"min_tier":4}], "target_response_min":6,  "stability_on_resolve":0.020, "notification_priority_by_tier":[3,3,2,1,1] },
+      "transformer_failure": { "type_priority":4, "sev_bias":0.2,  "sev_spread":0.8, "esc_base":0.50, "hold_base":1.00, "w_base":0.90, "w_slope":0.30, "suppression_model":"generic", "self_resolve_h":0.0, "self_resolve_max_tier":0, "primary_role":"utility",      "primary_counts_by_tier":[1,1,2,2,2], "support_roles":[{"role":"construction","rate_bonus":0.20,"min_tier":3}], "target_response_min":12, "stability_on_resolve":0.015, "notification_priority_by_tier":[3,2,2,1,1] },
+      "water_main_break":    { "type_priority":3, "sev_bias":0.1,  "sev_spread":0.9, "esc_base":0.60, "hold_base":1.00, "w_base":1.20, "w_slope":0.30, "suppression_model":"generic", "self_resolve_h":0.0, "self_resolve_max_tier":0, "primary_role":"water",        "primary_counts_by_tier":[1,1,2,2,2], "support_roles":[{"role":"construction","rate_bonus":0.25,"min_tier":2}], "target_response_min":15, "stability_on_resolve":0.015, "notification_priority_by_tier":[3,3,2,1,1], "zone_pressure_delta_by_tier":[0.0,0.0,-0.15,-0.35,-0.60,-0.80] },
+      "traffic_accident":    { "type_priority":3, "sev_bias":0.0,  "sev_spread":0.8, "esc_base":0.70, "hold_base":1.00, "w_base":0.35, "w_slope":0.35, "suppression_model":"generic", "self_resolve_h":1.0, "self_resolve_max_tier":2, "primary_role":"police",       "primary_counts_by_tier":[1,1,1,2,2], "support_roles":[{"role":"fire","rate_bonus":0.30,"min_tier":1},{"role":"construction","rate_bonus":0.20,"min_tier":3}], "target_response_min":7,  "stability_on_resolve":0.008, "notification_priority_by_tier":[3,3,2,1,1] },
+      "storm_damage":        { "type_priority":3, "sev_bias":0.1,  "sev_spread":0.9, "esc_base":0.40, "hold_base":1.00, "w_base":0.70, "w_slope":0.30, "suppression_model":"generic", "self_resolve_h":0.0, "self_resolve_max_tier":0, "primary_role":"utility",      "primary_counts_by_tier":[1,1,2,2,2], "support_roles":[{"role":"construction","rate_bonus":0.20,"min_tier":1}], "target_response_min":15, "stability_on_resolve":0.010, "notification_priority_by_tier":[3,3,2,1,1],
         "subtypes": {
           "downed_power_line": { "primary_role":"utility",      "esc_base":0.40, "w_base":0.70, "w_slope":0.30 },
           "blocked_road":      { "primary_role":"construction", "esc_base":0.30, "w_base":0.50, "w_slope":0.25, "self_resolve_h":6.0, "self_resolve_max_tier":2, "type_priority":2 },
@@ -1888,7 +1904,7 @@ One document, three top-level keys — split into `data/incidents.json`, `data/v
 
 **Still open for the overseer:**
 
-6. **`reward_base` may be doc 03's money too.** `reward_base[crime] = 350` is numerically identical to doc 03's `POLICE_FINE_PER_RESOLVED_INCIDENT = 350`, which suggests doc 03 already books that revenue. Report 98 did not name `reward_base` in C-07 and doc 03's single-price-table grep guard (its test 33) does not cover it, so it is retained here — but if it is the same dollar it must move. **Requesting a ruling.**
+*(Question 6 — "`reward_base` may be doc 03's money too" — is **CLOSED by report 98 RR-77**, four waves after it was asked. It was the same dollar. Only this doc's half was ever live; doc 03's was a held constant printing $3.00/gh forever. `reward_base` has moved to `data/economy.json`, `POLICE_FINE_PER_RESOLVED_INCIDENT` and the `fines` ledger line are retired, and the live `city_services` line replaces both. The moved question left its number behind: the six values are unchanged. See §2.7 and doc 03 §2.5.)*
 
 7. **Fatalities.** `FIRE_FATALITY_FRACTION = 0.02` on burn-down is the only death source this doc introduces; spec §31 says deaths should follow only from credible severe conditions. Confirm this is acceptable for a mobile store rating, or set it to 0 and model the loss purely as displacement.
 

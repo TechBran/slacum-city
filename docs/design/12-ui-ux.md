@@ -1040,7 +1040,7 @@ AwayReport.build(from_min, to_min) -> {ledger, deltas, timeline[], unresolved[],
 
 ### 4.5 Events consumed from the sim bus
 
-`incident_created`, `incident_escalated`, `incident_resolved`, `unit_dispatched`, `unit_arrived`, `unit_freed`, `power_restored`, `power_lost`, `construction_completed`, `land_developed`, `treasury_threshold`, `weather_warning`, `weather_changed`, `day_phase_changed`, `city_level_up`.
+`incident_created`, `incident_escalated`, `incident_resolved`, `unit_dispatched`, `unit_arrived`, `unit_freed`, `power_restored`, `power_lost`, `construction_completed`, `land_developed`, `treasury_threshold`, `weather_warning`, `weather_changed`, `day_phase_changed`, `city_level_up`, **`level_up_grant_paid`** *(report 98 RR-78 — LOG ONLY, no push: `city_level_up` already wakes the player for that rung and a second push would be the game repeating itself, but a payment belongs in the money ledger where it can be found again an hour later)*.
 Each maps to: a marker update, an optional in-app alert banner (via `InAppAlertGate`, §2.13), an optional **push** — which this doc only *requests*; doc 08 decides class and budget and doc 13 delivers it — and an optional `OnboardingDirector` trigger.
 
 ---

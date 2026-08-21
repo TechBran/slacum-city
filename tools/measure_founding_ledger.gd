@@ -42,7 +42,10 @@ const DEFAULT_HOURS := 1
 ## debt line that carries its own difficulty term.
 const EXPENSE_LINES: Array[String] = ["building_maint", "departments", "fleet",
 		"vehicle_fuel", "grid", "generation_fuel", "water", "roads_repair", "debt"]
-const REVENUE_LINES: Array[String] = ["tax", "power_tariff", "water_tariff", "fines"]
+## `fines` retired, `city_services` and `assistance` in its place (report 98
+## RR-77 / RR-78).
+const REVENUE_LINES: Array[String] = ["tax", "power_tariff", "water_tariff",
+		"city_services", "assistance"]
 
 
 func _initialize() -> void:
@@ -92,6 +95,16 @@ func _initialize() -> void:
 		print("| `%s` | %d | %.2f | %.2f | **%+.2f** |" % [preset,
 				int(row["purse"]), float(row["gross"]), float(row["expense"]),
 				float(row["net"])])
+	# The two-decimal table above is doc 92 §29.2's published shape. The anchors
+	# in `data/economy.json.pacing_guardrails` are quoted to six, and re-stamping
+	# one from a rounded print is how an anchor drifts — so the same numbers are
+	# printed again at full precision, plus the ×24 form gate 2 holds.
+	print("")
+	for preset in presets:
+		var row: Dictionary = rows[preset]
+		print("anchors `%s`: gross %.6f  expense %.6f  net %.6f  net×24 %.6f"
+				% [preset, float(row["gross"]), float(row["expense"]),
+				float(row["net"]), float(row["net"]) * 24.0])
 
 	print("")
 	print("| revenue line | " + " | ".join(presets) + " |")

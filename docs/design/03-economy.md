@@ -361,7 +361,60 @@ In implementation this is not a separate charge — it is the *accrual* the auto
 
 Gas-fired grid power nets +$24/MWh; diesel backup nets **−$33/MWh**. Undelivered energy earns nothing — the outage hits tax *and* tariff.
 
-**Fines & fees.** `POLICE_FINE_PER_RESOLVED_INCIDENT = 350` per police incident resolved (doc 06 event). Small, but it makes patrol cars visibly pay for a slice of themselves.
+**City services — the live line that replaces "Fines & fees"** *(report 98 RR-77).* `POLICE_FINE_PER_RESOLVED_INCIDENT = 350` is **deleted**, and so is the `fines` ledger line it fed. It and doc 06 §2.7's `reward_base[crime] = 350` were the same dollar under two names — doc 06 asked for the ruling in its own open question 6 in Wave 1 and §N1 of doc 93 wrote the re-open condition — and only doc 06's was ever live. This doc's half was metered by `CitySim.HELD_FINE_RATE = 3/350`, a §9 item 6b held constant that printed a flat **$3.00/gh on every preset at the founding hour, at 21 game-days and at 48**, while doc 06 credited the real money straight to the treasury where no ledger line and no notification ever named it.
+
+The re-open condition — *"when doc 06 publishes real resolutions, the line becomes a measurement"* — is met. The measurement, taken on a `do_nothing` city that builds nothing and dispatches nothing: **$921 on its founding game-day, 12.5 % of that day's net income, invisible since Wave 1.**
+
+```
+city_services = Σ dispatch payouts this game-hour + Σ street collections this game-hour
+
+dispatch payout = dispatch_payout_base[type]              # this doc, §2.13(e)
+                × (1 + tier_k·(tier_peak − 1)) × speed_bonus   # doc 06 §2.7's SHAPE
+                × (manual ? MANUAL_DISPATCH_MULT (1.50) : 1.00)
+                capped at MORAL_HAZARD_CAP_FRACTION (0.75) × prevented_loss
+
+prevented_loss  = capital_value(target) − repair_cost(target, residual_damage_fraction)
+                = −1 where this doc prices no capital (road edges, water segments)
+```
+
+**One line, not two, and the sub-grain lives inside it.** Dispatch and street are one concept — *the city answered a call and got paid* — and splitting a line a player reads into two half-sized ones buys nothing. The snapshot carries `city_services_by_source: {dispatch, street}` beside the total, exactly as `tax_by_class` already sits beside `tax`.
+
+**`MANUAL_DISPATCH_MULT = 1.50` is doc 06's own `speed_bonus_max`, adopted rather than invented.** The game already prices a perfect response at 1.50×; a human working the incident drawer is worth the same. It applies only when `Incident.manual_requested` is true — only through `cmd_dispatch_unit` — so auto-dispatch pays exactly the dollars it has quietly earned since Wave 1 and the premium is the part a player has to turn up for.
+
+**The moral-hazard ceiling, and why it BINDS on shipped numbers.** The hazard is not arson (there is no arson verb); it is *waiting*. Doc 06 grows the payout at `tier_k = 0.35` per tier while doc 02 grows the residual damage at `0.10` per tier, so on a cheap building the reward outruns the value at risk from about tier 4 up. House L1, capital $1,200, tier-5 fire answered at the target response: the payout is `900 × 2.40 = $2,160`, the residual damage is 0.40 so the repair costs `1,200 × 0.40 × 0.85 = $408`, and the loss prevented is **$792** — an unclamped ratio of **2.73**. At 0.75 the city pays $594. The fraction is placed between doc 06 §2.7's own ruled worked example (0.679 of prevented loss, so a lower cap would retune a ruled payout at its reference point) and 1.00 (indifference between a fire and no fire, which plus variance is a strategy): the midpoint to the nearest 0.05. Balance gate 31 holds all three surfaces of it.
+
+**Where the clamp cannot reach**, `prevented_loss` answers −1 rather than 0 — a road edge and a water segment have no `capital_value` in this doc, and a clamp that read a zero there would silently delete a payout the design intends to pay. Those three types are held instead by `MORAL_HAZARD_UNPRICED_CEILING = $3,900`, derived from the most expensive single asset a road-class response protects (a `COLLAPSED` AVENUE rebuilt at the full §2.13(d) build price, $5,200, × 0.75). The worst case any of them can pay today is `base × 5.40` — tier 5, best speed, manually dispatched — i.e. $1,620 / $2,160 / $2,700.
+
+**Street opportunities** (doc 12's tappable street life) are priced here too, for the same C-07 reason: `petty_crime $180`, `stray_animal $120`, `abandoned_haul $150`. `petty_crime < dispatch_payout_base[crime]` **by ruling** — a tapped crook is petty, a dispatched crime is the real one — and the ratio (0.514) has to read as *about half* at a glance. The sibling system owns when an opportunity appears and where it stands; it owns no dollar. `STREET_MAX_RATE_PER_GAME_HOUR = 0.45` is the income-share contract expressed as something a test can hold: `0.45 × $180 = $81.00/gh` against the opening's own $506.05/gh net is **16.0 %**, inside the ruled 10–20 % band. An uncollected opportunity pays nothing and books nothing (`STREET_IDLE_SHARE = 0.0`).
+
+#### 2.5a State grants — the founding subsidy and the celebration *(report 98 RR-78)*
+
+*A sub-part of §2.5 and deliberately not a `### 2.N` row of its own: a grant is non-tax revenue, which is what §2.5 is, and doc 91's completeness count is a count of `### 2.N` rows. This wave shipped no new row — it made an existing one honest.*
+
+Two grants, one hourly and one lumpy. Both are dollars, so both are authored here.
+
+**Founding assistance.** `FOUNDING_ASSISTANCE_PER_HOUR = 172`, tapering to zero over `FOUNDING_ASSISTANCE_DAYS = 7` on `share(day) = clamp(1 − day/7, 0, 1)`, evaluated on the settled game-day so the line steps once a day rather than drifting inside one.
+
+172 is not a fit — it is §2.12's own founding `departments` ($96.00/gh) plus `fleet` ($76.00/gh). A founded city is handed three stations and eight vehicles by `data/starter_city.json` and starts paying full price for them in game-hour 1: **$172.00 of a $504.73/gh expense bill against $841.22 of gross, 34.1 % of everything the city spends before it has built anything.** That is the mechanical reason the opening read slow to a player, and it is why the state covers those two lines at founding and hands them back over the first game-week. Total paid over the window is `172 × 24 × (7+6+5+4+3+2+1)/7 = 172 × 24 × 4 = $16,512`, against a founding purse of $25,000 — the **discrete** daily step, not the continuous integral: the share is evaluated once per settled game-day, so the seven daily shares average `4/7 = 0.5714` and not 0.5. (A reader who integrates gets $14,448 and is $2,064 light. That gap is the difference between a line that steps at midnight and a line that drifts, and §2.5a chose the step.) Seven game-days is the curriculum's own opening: level 3 arrived on game-day 5.1–5.3 before this pass, so the taper covers levels 1–3 and is fully retired before level 4's incident wait begins.
+
+It is a **published constant and not a fraction of the live bill**, deliberately. A subsidy that grew with the fleet would pay a player to buy vehicles, and a revenue line carrying an `M_exp` inside it would break §7 test 46's one-knob-per-line contract (doc 93 §N1).
+
+**The celebration grant.** `LEVEL_UP_GRANT_BY_CITY_LEVEL = [0, 2500, 7000, 9000, 22500, 37000, 83000]`, indexed by city level, paid once per level for the life of a city, on whichever route earned it (doc 93 §G1 composes the population ladder and doc 09's objectives with `max()`, and this pays the composed level so neither route is worth more than the other).
+
+The rule is one sentence — **the city pays half of what the next chapter asks you to buy** — applied to doc 09 §2.14's curriculum row above each rung and rounded to a readable figure:
+
+| rung earned | the next chapter's taught purchase | half | published |
+|---|---|---|---|
+| 1 | two stores @ $2,600 + one upgrade | ~$2,600 | **$2,500** |
+| 2 | one apartment $7,000 + four street tiles $7,200 | $7,100 | **$7,000** |
+| 3 | one police station $18,000 | $9,000 | **$9,000** |
+| 4 | one water works $45,000 | $22,500 | **$22,500** |
+| 5 | the level-6 tower upgrade $73,572 | $36,786 | **$37,000** |
+| 6 | *(no chapter above it)* | — | **$83,000** |
+
+Rung 6 is the extrapolation the rung itself is (doc 92 §24.6): `37,000 × 2.25 = 83,250`, on the same 2.25× step the population ladder uses above rung 3, published as $83,000 and labelled honest extrapolation exactly as ladder rungs 4 and 5 are.
+
+**A one-off receipt is not an hourly ledger line.** §2.4 keeps one-off capital *spends* out of the recurring rate; the symmetric treatment for a one-off *receipt* is the same. The player sees it as a treasury event and a notification, and the budget panel's income statement stays an income statement.
 
 **Event revenue (post-MVP stub, stadium/zoo):** `event_revenue = event_base_gate[type] × attendance_factor × f_stability × f_power`.
 
@@ -416,7 +469,8 @@ REVENUE                             EXPENSES
   Technology tax     +$50,400/d       Utility crews         -$1,730/d
   Power tariff        +$4,010/d       Water services        -$1,100/d
   Water tariff          +$390/d       Public works          -$1,440/d
-  Fines & fees          +$280/d       Grid O&M              -$2,980/d
+  City services       +$1,840/d       Grid O&M              -$2,980/d
+  State assistance        +$0/d
                                       Generation fuel       -$2,020/d
                                       Vehicle fuel            -$620/d
                                       Road repair           -$4,760/d
@@ -611,7 +665,7 @@ Difficulty changes *pressure*, not health bars.
 
 **Two rows carry a scope, and the scope is part of the number** *(Wave 12 — doc 93 §N1/§N2, measured in doc 92 §32)*:
 
-- **`M_rev` multiplies the TAX line only** — §2.2's per-building formula and §2.2's revenue floor. §2.5's power tariff, water tariff and fines are outside it, deliberately: two of those three are §9 item 6b's *held* metering constants (`delivered_mwh` 1.5, fines 3/350) and a difficulty knob on a placeholder is a difficulty knob on nothing. Non-tax revenue is **11.82 % of founding gross**, so the row's advertised effect and its measured effect differ by that share:
+- **`M_rev` multiplies the TAX line only** — §2.2's per-building formula and §2.2's revenue floor. §2.5's power tariff, water tariff, city services and state assistance are outside it, deliberately: `delivered_mwh` 1.5 is still §9 item 6b's *held* metering constant and a difficulty knob on a placeholder is a difficulty knob on nothing, and the other three are §2.5 lines that §2.2's two `M_rev` formulas do not reach. *(The `fines 3/350` half of the held pair was retired in Wave 15 — report 98 RR-77 — and its replacement stays outside `M_rev` on the §2.5 argument rather than on the placeholder one.)* Non-tax revenue is **11.82 % of founding gross**, so the row's advertised effect and its measured effect differ by that share:
 
   | preset | advertised | **measured on GROSS revenue** |
   |---|---|---|
@@ -816,8 +870,9 @@ REVENUE
                  x policy 1.000 x M_rev 1.000                        =  740.291
   power tariff                                       (held - see below)  93.00
   water tariff  5.56 m3/h x 0.55                                     =    3.058
-  fines & fees                                       (held - see below)   3.00
-                                                    GROSS REVENUE    =  839.349 $/gh
+  city services  no incident resolved in the founding HOUR (RR-77)   =    0.000
+  state assistance  departments 96 + fleet 76, share(day 0) = 1.00   =  172.000
+                                                    GROSS REVENUE    = 1008.349 $/gh
 
 EXPENSES
   building maintenance   68,600 capital x 0.00040 x 1.0              =   27.440
@@ -831,8 +886,25 @@ EXPENSES
   debt service                                                      =    0.000
                                                     TOTAL EXPENSE    =  519.977 $/gh
 
-NET  =  839.349 - 519.977  =  +319.37 $/gh  ->  +$319/gh  =  +$7,665/game-day
+NET  = 1008.349 - 519.977  =  +488.37 $/gh  ->  +$488/gh  =  +$11,721/game-day
 ```
+
+> **WAVE 15 — the revenue side moves by exactly +$169.00/gh and not one expense
+> line moves at all** *(report 98 RR-77 / RR-78, doc 92 §35.2).* Two published
+> constants, in opposite directions: `+172.00` of §2.5a founding assistance and
+> `-3.00` of the retired `fines` line. Gross `839.349412 -> 1008.349412`, net
+> `319.372846 -> 488.372846`, game-day `+$7,665 -> +$11,721`.
+>
+> **The `city services` line reads 0.000 in this table and that is the founding
+> HOUR, not the founding day.** Settle the same city for 24 game-hours and the
+> line is **$38.38/gh — $921 across the founding day, 12.5 % of what this ledger
+> used to call its whole net income** — on a `do_nothing` city that builds
+> nothing and dispatches nothing. That money was always being paid; before RR-77
+> it went straight to the treasury with no ledger line and no notification
+> naming it, which is the whole of the player's report that automatic dispatch
+> "should pay us money". The as-integrated anchors move with it:
+> `STARTER_FIRST_GAME_DAY_NET_EXACT 7380.320908 -> 12357.320908`, of which
+> `169 x 24 = 4056.00` is the design and **$921.00 is the arrears.**
 
 > **`E_grid` $74.874 → $74.274/gh, and the net with it** *(doc 92 §14.1, ruled Wave 4; the doc edit doc 92 §16 held is applied here)*. Doc 92 F-4 thinned `data/starter_city.json`'s founding transformer roster **23 → 18 nodes**. That is **0.15 MVA** of rated plate off the inventory (`2.40 → 7×0.05 + 10×0.15 + 1×0.40 = 2.25`), and this section bills $4.00/MVA-gh on the inventory, so the transformer term falls by exactly `0.15 × 4.0 = $0.60/gh` — `9.600 → 9.000`. The plant, the substation and the 1.416 km of line are untouched, and so is every revenue line. **Net: `839.349412 − 519.976566 = 319.372846 $/gh`**, displayed as **+$319/gh** and **+$7,664.95/game-day**; the rounded headline figure does not move. `data/economy.json`'s `pacing_guardrails` and `tests/test_economy.gd` carry the re-stamped pair, and doc 93 §E2 carries the shift table.
 
@@ -859,7 +931,7 @@ expense   E_grid       -0.60   (74.274 - 74.874, i.e. -0.15 MVA) expense  521 ->
                                                                 NET     +318.77 -> +319.37
 ```
 
-**Two revenue lines and one expense line are still held, and this doc will not invent them.** `power tariff 93` and `generation fuel 57` both imply a starter delivered/generated load of ~1.5 MWh/gh. Doc 09 now publishes the **402.0 kW building nameplate** and the **783.3 kW night peak**, but the 24-hour **delivered** MWh depends on the 24-hour mean of doc 01's `streetlight_load` channel (on 19:00–07:00, so nowhere near 1.000) and on doc 04's loss model — and doc 04 owes exactly that restatement under **RR-10**. The two figures sit on opposite sides of the ledger and move together, so holding them shifts net by less than the pair's own uncertainty. `vehicle fuel 6` waits on doc 06's `vehicle_km_this_hour`. See §9 item 6b.
+**Two revenue lines and one expense line are still held, and this doc will not invent them.** `power tariff 93` and `generation fuel 57` both imply a starter delivered/generated load of ~1.5 MWh/gh. Doc 09 now publishes the **402.0 kW building nameplate** and the **783.3 kW night peak**, but the 24-hour **delivered** MWh depends on the 24-hour mean of doc 01's `streetlight_load` channel (on 19:00–07:00, so nowhere near 1.000) and on doc 04's loss model — and doc 04 owes exactly that restatement under **RR-10**. The two figures sit on opposite sides of the ledger and move together, so holding them shifts net by less than the pair's own uncertainty. `vehicle fuel 6` waits on doc 06's `vehicle_km_this_hour`. See §9 item 6b. *(The third held line, `fines 3/350`, was retired in Wave 15: doc 06 had been taking that measurement all along — report 98 RR-77.)*
 
 **Regenerating the pacing table.** Round 1's model stands: revenue and the city-scaling expense lines (`E_grid`, `E_water`, departments, maintenance, fleet, fuel) all grow with installed capacity, because the grid is sized to the load and the load is sized to the buildings that pay the tax. **Roads are the exception** — the road network grows only when a *block* is developed (one stamped template = 87 tiles), not when a vacant lot is filled or a building upgraded, and the starter core is 62 % vacant lots. So the Round 2 rule splits into a proportional term and a per-block term:
 
@@ -1068,6 +1140,24 @@ Resale is `VEHICLE_RESALE_FRACTION (0.40) × purchase` for every type.
 
 **No double-billing with development phases.** The 87-tile block template stamped during land development is charged **once**, by §2.8's `road_install` phase (`PHASE_BASE 7,500 × terrain × distance × access`, $6,930–$21,090 in worked example F). The per-tile prices above are the charge for **player-placed** tiles, the **upgrade** command, the `COLLAPSED` rebuild and the demolish refund. Doc 10's test 42 asserts the same invariant from the other side: a stamped block produces **zero** `Treasury.spend()` calls from `sim/roads/`.
 
+#### (e) City services — what the city is PAID (report 98 RR-77)
+
+The one table in this ladder that runs the other way. Doc 06's `reward_base` column is deleted from `data/incidents.json` and lands here unchanged; doc 12's street opportunities are priced here from the day they ship.
+
+| kind | id | base | ceiling that holds it |
+|---|---|---|---|
+| dispatch | `structure_fire` | **900** | `0.75 × prevented_loss`, per incident |
+| dispatch | `transformer_failure` | **600** | `0.75 × prevented_loss`, per incident |
+| dispatch | `water_main_break` | **500** | `MORAL_HAZARD_UNPRICED_CEILING $3,900` |
+| dispatch | `storm_damage` (any subtype) | **400** | `MORAL_HAZARD_UNPRICED_CEILING $3,900` |
+| dispatch | `crime` | **350** | `0.75 × prevented_loss`, per incident |
+| dispatch | `traffic_accident` | **300** | `MORAL_HAZARD_UNPRICED_CEILING $3,900` |
+| street | `petty_crime` | **180** | ruled `< dispatch crime 350` |
+| street | `abandoned_haul` | **150** | `STREET_MAX_RATE_PER_GAME_HOUR 0.45` |
+| street | `stray_animal` | **120** | `STREET_MAX_RATE_PER_GAME_HOUR 0.45` |
+
+Multipliers, in the order they apply: doc 06's shape `(1 + tier_k·(tier_peak − 1)) × speed_bonus` (0.65× to 3.60× across the tier and speed bands), then `MANUAL_DISPATCH_MULT 1.50` if and only if a human made the call, then the ceiling. **A street collection takes no multiplier at all** — an opportunity is what it is, and a tap is a tap.
+
 *Recorded, because it will be re-litigated:* doc 10's per-tile replacement value for one stamped block is `60 × 5,200 + 27 × 1,800 = $360,600`, which is **17–52×** the `road_install` phase price. That gap is real and this doc has chosen to live with it rather than move either number, on the reasoning that the two prices answer different questions — the phase price is what it costs to *connect a block to the network* through a development contract, the per-tile price is what it costs to *lay one tile on demand*, and bulk civil works are genuinely an order of magnitude cheaper per unit than piecework. The gap is what makes player-drawn roads a considered purchase instead of free paint. It is flagged as §9 item 14 for the overseer.
 
 ---
@@ -1201,7 +1291,7 @@ All in `sim/economy/`, `RefCounted` only, no `Node`, no engine singletons (const
 | **04 Power** | `damage_fraction` per failure type (its old `cost_frac_of_build` table, re-read) | 0..1 (C-16) |
 | **05 Water** | `water_service_factor_hour(building_id)` | 0..1 |
 | **05 Water** | `delivered_m3_hour`, `m3_treated_hour`, `main_km`, `pump_capacity_m3h`, `water_margin_score`, `damage_fraction` per break type | |
-| **06 Incidents / Dispatch / Fleet** | `vehicle_roster` (type, dispatched flag), `vehicle_km_this_hour`, `police_incidents_resolved_hour`, `response_capacity_score`, `damage_fraction` per incident | |
+| **06 Incidents / Dispatch / Fleet** | `vehicle_roster` (type, dispatched flag), `vehicle_km_this_hour`, `response_capacity_score`, `damage_fraction` per incident; **the payout SHAPE** — `(1 + tier_k·(tier_peak − 1)) × speed_bonus` — plus `target_ref`, the residual damage fraction and `manual_requested`, all of which this doc needs to price a resolve and to ceiling it (RR-77). *(`police_incidents_resolved_hour` deleted with the `fines` line — RR-77.)* | |
 | **07 Weather / Director** | `damage_fraction` per hazard event, `fuel_weather_mult` | 0..1, ≥1.0 |
 | **08 Persistence / Offline** | `ctx.catchup_index`; `OfflinePolicy.band_for(hour_index)` — the only signal that the sim is offline (C-20) | int, band |
 | **09 Map / Land / Districts / Population** | block `distance_blocks (d)`, `dev_terrain`, `waterfront_edges`, `arterial_connections (n)`, `elevation_norm`, `prestige`, `env_risk_index (ERI)`, adjacency | the `LandPriceInputs` bundle |
@@ -1218,7 +1308,7 @@ All in `sim/economy/`, `RefCounted` only, no `Node`, no engine singletons (const
 | **02 Construction** | affordability check + `Treasury.spend()` on project start; contractor surcharge pricing |
 | **04 Power** | the grid component price ladder (§2.13b); `E_grid` billing; `FUEL_PRICE_PER_MWH`; `repair_cost(asset, damage_fraction)` |
 | **05 Water** | `E_water` billing; `repair_cost(asset, damage_fraction)` |
-| **06 Incidents / Fleet** | vehicle purchase / upkeep / `active_mult` / `dispatch_cost` / resale (§2.13c); austerity breakdown multiplier; `repair_cost()` in place of `cost_materials` |
+| **06 Incidents / Fleet** | vehicle purchase / upkeep / `active_mult` / `dispatch_cost` / resale (§2.13c); austerity breakdown multiplier; `repair_cost()` in place of `cost_materials`; **`dispatch_payout(type, shape, manual, target_ref, residual)` and `prevented_loss_value()` (§2.13e / §2.5, RR-77)** — doc 06 holds no `reward_base` column |
 | **07 Weather / Director** | `repair_cost(asset, damage_fraction)` — doc 07 quotes no repair totals and owns no `repair_cost_mult` (C-16, C-17) |
 | **08 Persistence / Offline** | the `"economy"` save section and its hourly ring buffer; **`band.yield_mult`** populated from §2.11's exponential taper (C-20) |
 | **09 Map / Land / Population** | `LandMarket.price_for_block()`, `development_phase_cost()`; `happiness_tax_delta = -(r - 0.09) × 360`; `growth_rate_multiplier = 1 - (r - 0.09) × 8.0`; **`attractiveness_tax_factor(r) = 1 + 1.30 × min(0, happiness_tax_delta)/100`** (doc 09 §2.10.2a, T-1); austerity flag |
@@ -1324,7 +1414,10 @@ Headless, `tests/sim/economy/`, run via `godot --headless --path . -s res://test
 43. `test_starter_road_repair_expectation` *(re-based on doc 10's operating point — report 98 RR-13)* — with the doc-09 core (540 AVENUE + 243 STREET), decay at doc 10's base rates, **`c_day = 0.35`** (decay multiplier **1.2625**), clear weather (`wx_wear_day = 0`) and `M_repair = 1.0`, assert the steady-state road-repair rate is **$185.9 ± 0.5 /gh**; assert it is **invariant to `auto_repair_threshold`** across {0.25, 0.40, 0.55} over 2,000 gh (the threshold changes lumpiness, not rate); and assert the underlying damage-fraction throughput equals doc 10 test 42's published **0.28548 tile-fractions/gh**, so both docs are asserting the same starter city rather than two different ones. Also assert the `c_day = 0` floor still evaluates to **$147.2 ± 0.5 /gh**, which pins the `(1 + 0.75·c_day)` coupling itself rather than just its value at one point. *(Was `c_day = 0` / $147.2 — a point doc 10's own arithmetic never uses.)*
 44. `test_road_upgrade_costs_more_than_building_big` — `street.build + street_to_avenue.upgrade > avenue.build` (5,800 > 5,200), the same inequality §2.3 imposes on buildings.
 45. `test_block_template_billed_once` — stamping a 87-tile block template during `road_install` produces exactly one `Treasury.spend()` of the §2.8 phase price and **zero** per-tile charges (the mirror of doc 10's test 42).
-46. `test_one_difficulty_knob_per_ledger_line` *(new — doc 93 §N1/§N2)* — settle the §2.12 founding ledger on all four **live** `data/difficulty.json` `economic` rows and assert, per preset and against the `standard` settlement: the seven swept expense lines are exactly `× M_exp`; `roads_repair` is exactly `× M_repair` **and explicitly not `× M_repair × M_exp`**; `debt` takes neither; `tax` is exactly `× M_rev`; and `power_tariff` / `water_tariff` / `fines` are exactly `× 1.000`. Reads the live file rather than transcribed constants, so a retune moves the expectation with the file and only a change of SCOPE fails.
+46. `test_one_difficulty_knob_per_ledger_line` *(new — doc 93 §N1/§N2)* — settle the §2.12 founding ledger on all four **live** `data/difficulty.json` `economic` rows and assert, per preset and against the `standard` settlement: the seven swept expense lines are exactly `× M_exp`; `roads_repair` is exactly `× M_repair` **and explicitly not `× M_repair × M_exp`**; `debt` takes neither; `tax` is exactly `× M_rev`; and `power_tariff` / `water_tariff` / `city_services` / `assistance` are exactly `× 1.000`. Reads the live file rather than transcribed constants, so a retune moves the expectation with the file and only a change of SCOPE fails. *(`fines` retired — RR-77. The two lines that replaced it join the same list for the same §2.5 reason: `M_rev` is the TAX multiplier.)*
+47. `test_city_services_is_one_dollar_and_one_line` *(new — report 98 RR-77)* — resolve an incident on a live `CitySim` and assert three things at once: the treasury moved by the payout **immediately**, the next settlement's `revenue.city_services` names exactly that amount, and `Treasury.settle` was handed `revenue − city_services` so the same dollar was not banked twice. Also asserts `data/incidents.json` carries no `reward_base` key at any depth and `IncidentCatalog` refuses a file that carries it back — the RR-77 half of test 33.
+48. `test_the_receipt_book_survives_a_save` *(new — RR-77)* — resolve an incident, save between the resolve and the hour's settlement, load, settle, and assert the `city_services` line is the same as an unsaved control's. A save taken mid-hour must not lose a line the income statement is about to print, and an older save (no `hour_city_services` key) must restore to 0 rather than to garbage.
+49. `test_the_grants_are_paid_once_and_only_forward` *(new — report 98 RR-78)* — a city that crosses two city-level rungs in one move is paid BOTH grants; a city that crosses the same rung twice is paid once (`city_level` is monotone by `data/progression.json`); a city at level 0 is paid nothing. And the founding-assistance taper: `founding_assistance_per_hour(0) = 172.00`, `(3) = 98.29`, `(7) = 0.00`, `(99) = 0.00`.
 
 ---
 
@@ -1441,7 +1534,25 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
     }
   },
 
-  "tariffs": { "POWER_TARIFF_PER_MWH": 62, "WATER_TARIFF_PER_M3": 0.55, "POLICE_FINE_PER_RESOLVED_INCIDENT": 350 },
+  "tariffs": { "POWER_TARIFF_PER_MWH": 62, "WATER_TARIFF_PER_M3": 0.55 },
+
+  "city_services": {                                   // §2.5, report 98 RR-77
+    "dispatch_payout_base": { "crime": 350, "structure_fire": 900,
+      "transformer_failure": 600, "water_main_break": 500,
+      "traffic_accident": 300, "storm_damage": 400 },  // doc 06 §2.7's column, MOVED not retuned
+    "MANUAL_DISPATCH_MULT": 1.50,                      // = doc 06's own speed_bonus_max
+    "MORAL_HAZARD_CAP_FRACTION": 0.75,
+    "MORAL_HAZARD_UNPRICED_CEILING": 3900,             // 0.75 × a COLLAPSED AVENUE rebuild
+    "street_payout": { "petty_crime": 180, "stray_animal": 120, "abandoned_haul": 150 },
+    "STREET_MAX_RATE_PER_GAME_HOUR": 0.45,             // the income-share contract
+    "STREET_IDLE_SHARE": 0.0                           // a written-down zero
+  },
+
+  "grants": {                                          // §2.5a, report 98 RR-78
+    "FOUNDING_ASSISTANCE_PER_HOUR": 172,               // = §2.12 departments 96 + fleet 76
+    "FOUNDING_ASSISTANCE_DAYS": 7,
+    "LEVEL_UP_GRANT_BY_CITY_LEVEL": [0, 2500, 7000, 9000, 22500, 37000, 83000]
+  },
 
   "land": {
     "LAND_BASE": 9000, "DIST_DECAY": 4.0, "DIST_FLOOR": 0.55, "RISK_DISCOUNT": 0.45,
@@ -1609,6 +1720,7 @@ Empty preset objects above are placeholders for rows the owning doc authors; the
 
 6b. **One starter line was owed and has now been paid; one pair is still held.** *(Updated under RR-6.)*
    - **`departments 116 → 96 $/gh` — RESOLVED.** This line was held pending doc 09's post-C-11 manifest. That manifest has landed, and the answer is the "96" reading: `police_station 26 + fire_station 30 + water_works 20 + construction_yard 20`. `PLANT-1` and `SUB-A` are not stations — they are billed by `E_grid`'s plant O&M and node maintenance, and adding a department line for them is the C-08 double-charge. `utility_depot` does not exist in the starter city.
+   - **`fines 3/350` — RESOLVED, and it was never a placeholder for a missing measurement.** *(Wave 15, report 98 RR-77.)* It was a placeholder for a measurement doc 06 was already taking and crediting straight to the treasury, where no ledger line named it. `CitySim.HELD_FINE_RATE` and `POLICE_FINE_PER_RESOLVED_INCIDENT` are deleted; the live `city_services` line replaces them, and the founding day's real figure is **$38.38/gh** against the held $3.00. The lesson for the pair still held below: a held line whose sibling doc has an implementation is worth checking, not just waiting on.
    - **`power tariff 93` / `gas fuel 57` — STILL HELD.** Both imply a ~1.5 MWh/gh starter load. Doc 09's R-16 result now publishes the **402.0 kW building nameplate** and the **783.3 kW night peak**, but neither is the 24-hour **delivered** figure this pair needs: that requires the 24-hour mean of doc 01's `streetlight_load` channel (on 19:00–07:00 only, so materially below 1.000 over the day) and doc 04's loss model, and doc 04 owes exactly that restatement under **RR-10**. The two figures sit on opposite sides of the ledger and move together, so net movement is small and holding them is safer than guessing. **Re-derive the pair when doc 04 lands RR-10.** A first-order estimate (mean building load 402.0 kW + signals 48.6 kW + streetlights at a ~0.5 duty ≈ 137 kW ⇒ ~0.59 MWh/gh delivered) would move tariff 93 → ~37 and gas fuel 57 → ~24, i.e. net −$24/gh; it is recorded as a *magnitude*, not applied.
 
 6c. **Doc 04's starter transformer mix — CLOSED.** This doc previously *assumed* 14 × L1 + 9 × L2 = 2.05 MVA to reproduce C-12's "~2.1 MVA" gloss. Doc 09 §2.9.5 now **publishes** the real fleet — 13 × L1 + 9 × L2 + 1 × L3 = **2.40 MVA** over 23 units, with the L3 forced by `WTR-1`'s 132 kW site load under C-35 — plus **177 line tiles = 1.416 km**. §2.4 reads those figures; nothing is assumed. Doc 04's test 24 expectation moves from `73 ± 1` to **`74.9 ± 0.5`**, and this doc's test 37 carries the identical band (report 98 RR-18 — the two tolerances were `± 0.5` and `± 1` on the same assertion, which is one tolerance too many for one number).
@@ -1617,7 +1729,7 @@ Empty preset objects above are placeholders for rows the owning doc authors; the
 
 8. **Doc 06 must expose `vehicle_km_this_hour`.** Without it, fuel is a flat fee and dispatch distance stops mattering economically.
 
-8b. **Nothing outside `data/economy.json` may carry a price.** After C-07 this is mechanically testable (test 33). The columns deleted from other docs, and where a reader should now look: doc 02 `build_cost` / `upkeep_cents_per_hour` / `Tax $/gh` → §2.13(a) and §2.2; doc 04 `build_cost` / `upkeep_per_gh` / `fuel_cost_per_kwh` → §2.13(b), §2.4 `E_grid`, §2.4 `FUEL_PRICE_PER_MWH`; doc 06 `purchase_cost` / `upkeep_per_game_hour` / `dispatch_cost` / `repair_material_base` → §2.13(c) and §2.5; docs 02/04/05/07 repair prices → §2.5.
+8b. **Nothing outside `data/economy.json` may carry a price.** After C-07 this is mechanically testable (test 33). The columns deleted from other docs, and where a reader should now look: doc 02 `build_cost` / `upkeep_cents_per_hour` / `Tax $/gh` → §2.13(a) and §2.2; doc 04 `build_cost` / `upkeep_per_gh` / `fuel_cost_per_kwh` → §2.13(b), §2.4 `E_grid`, §2.4 `FUEL_PRICE_PER_MWH`; doc 06 `purchase_cost` / `upkeep_per_game_hour` / `dispatch_cost` / `repair_material_base` / **`reward_base` (RR-77)** → §2.13(c), §2.13(e) and §2.5; docs 02/04/05/07 repair prices → §2.5.
 
 ### Open questions for the overseer
 
@@ -1693,6 +1805,14 @@ The closing audit's four economy rulings: **RR-13, RR-16, RR-17, RR-18.** One mo
 | **RR-16** | **`water_works 20` labelled staffing-only.** §2.4's `E_departments` gains a *Staffing-only lines* paragraph and §2.12(b) states it at the point of use: the water works' plant O&M is already billed by `E_water`'s `pump_capacity_m3h × PUMP_OM_PER_M3H_HOUR` ($14.00/gh on the starter pump), so the department line buys operators only — the same exclusion `PLANT-1` and `SUB-A` get from `E_grid`, now stated rather than implied. `data/economy.json` gains `_station_staffing_note` and `station_upkeep_is_staffing_only: ["water_works"]`. **No number changes**; the ledger's `$96/gh` and the `20` itself are untouched. |
 | **RR-17** | **Test 33 respecified as key-based.** `test_single_price_table` now **parses** each `data/*.json` and asserts the eight price names appear as **JSON keys** in no file but `data/economy.json` — at any nesting depth, including keys that end with one of the names, so prefixing cannot dodge it. **`_note` strings may name the tokens freely**, and must: doc 10's `_pricing_owner_note` and doc 04's `_price_note` list the deleted keys precisely so a reader finds the owner, and a text grep would fail both files for saying the right thing. **No data changes** — the guard's intent is unchanged, its implementation is now the one that can actually pass. |
 | **RR-18** | **Three stale figures corrected, one tolerance harmonised.** (i) §7 **test 7**'s negative case is **16.7 %**, not 14.5 % — `2,100 / (180,000 × 0.0100) − 1 = +0.16667`; the old figure measured the drift from the wrong side of the ratio (`1 − 1,800/2,100`), while the test's own expression divides the published row by the yield estimate. (ii) The **founding net line is shown from unrounded components on both sides**: `839.349412 − 520.576566 = 318.772846`, replacing Round 2's rounded-`$839`-minus-unrounded-expense subtraction; the ledger block now prints revenue to three decimals. (iii) The **per-district `K` sensitivity constant is re-derived to 1.36378** (Round 2's 1.36285 reproduces from no consistent input set and is 0.07 % low), with the full chain shown from the tax-weighted `f_stability 0.977524`; unrounded arithmetic lands on 1.363799 and the **ruled 1.36378 is what this doc publishes**. The constant is not used by the shipped model. (iv) The **`E_grid` test tolerance is ±0.5 on both sides** — §7 test 37, §2.4's Round-2 correction note and §9 item 6c all now read `$74.9 ± 0.5/gh`, identical to doc 04 test 24. Related: the RR-5 and RR-6 changelog rows above are annotated in place rather than rewritten, matching how doc 04 handled its own stale C-12 row. |
+
+### Wave 15 — the money pass (report 98 RR-77 / RR-78 / RR-79)
+
+| ruling | change |
+|---|---|
+| **RR-77** | **The last dollar column joins the currency monopoly, and the double-booking doc 06 asked about in Wave 1 is closed.** `reward_base` is deleted from `data/incidents.json` and lands here as **§2.13(e)** / `city_services.dispatch_payout_base`, at the same six values — doc 06 keeps the SHAPE of a payout (`tier_k`, the speed bonus) and this doc owns every dollar in it, the same split C-16 uses for repairs. `IncidentCatalog.FORBIDDEN_KEYS` gains `reward_base` so the boot refuses a file that carries it back, and §7 test 33's key list gains it too. **`POLICE_FINE_PER_RESOLVED_INCIDENT` and `CitySim.HELD_FINE_RATE` are RETIRED with the `fines` ledger line**: they were the same dollar as `reward_base[crime]` and only doc 06's was live, so doc 03's half printed a flat $3.00/gh forever (doc 93 §N1 point 3's measurement) while the real money reached the treasury unnamed. Doc 93 §N1 point 4's re-open condition is met. New **`city_services`** revenue line — ONE line for dispatch and street both, with `city_services_by_source: {dispatch, street}` inside it exactly as `tax_by_class` sits inside `tax` — plus `MANUAL_DISPATCH_MULT 1.50` (doc 06's own `speed_bonus_max`, paid only through `cmd_dispatch_unit`), the **moral-hazard ceiling** `MORAL_HAZARD_CAP_FRACTION 0.75` against `capital_value(target) − repair_cost(target, residual)`, and `MORAL_HAZARD_UNPRICED_CEILING 3900` for the three types whose targets this doc prices no capital for. **The ceiling BINDS on shipped numbers**: a tier-5 fire in a house L1 paid 2.73× the loss it prevented. Street opportunity prices (`petty_crime 180 < dispatch crime 350`, by ruling) and the `STREET_MAX_RATE_PER_GAME_HOUR 0.45` income-share contract are authored here for the same C-07 reason. New §7 tests 47 and 48; new balance gates 31 and 32. |
+| **RR-78** | **The early-income retune: two state grants, both published constants, neither farmable.** New **§2.5a**. `FOUNDING_ASSISTANCE_PER_HOUR 172` — §2.12's own `departments` 96 + `fleet` 76, the two operating lines the player is billed for and never chose, 34.1 % of a founding city's expense bill — tapering to zero over `FOUNDING_ASSISTANCE_DAYS 7` on `clamp(1 − day/7, 0, 1)`, booked as the `assistance` revenue line. `LEVEL_UP_GRANT_BY_CITY_LEVEL [0, 2500, 7000, 9000, 22500, 37000, 83000]`, derived as *half of what the next chapter asks you to buy* against doc 09 §2.14's curriculum, paid once per level on whichever route earned it, as a one-off receipt and not an hourly line. **Founding ledger: gross `839.349412 → 1008.349412`, net `319.372846 → 488.372846`, game-day `+$7,665 → +$11,721`; not one expense line moves.** As-integrated anchors: `STARTER_NET_PER_HOUR_EXACT 337.047860 → 506.047860` (exactly +169.00) and `STARTER_FIRST_GAME_DAY_NET_EXACT 7380.320908 → 12357.320908` (+4,977.00, of which $921.00 is RR-77's arrears). `STARTER_EXPENSE_PER_HOUR_EXACT` is deliberately NOT re-stamped. New §7 test 49. |
+| **RR-79** | **Gate 4's money column moves from the stock to the flow.** The retune raised the opening's income and both agents spent it, differently — so `treasury_end` inverted (`balanced` $81,950 → $58,612 against neglect's $55,624 → $80,532) at the same time as `value created` un-inverted. Neither flip is the maintenance knob: a stock measures how much an agent chose not to spend. `net_mean_per_hour` is what condition drives through `f_condition`, it separates the pair by **12–20 % on all three seeds in both arms**, and it is the column gate 5 already uses one comparison up. No constant moved. |
 
 **Numbers that moved in Round 3.** `E_roads_repair 147.22 → 185.87 $/gh` · `road line per developed block 16.35825 → 20.65229` · `starter expense 482 → 521 $/gh` · `starter net +357 → +319 $/gh` · `daily net +8,568 → +7,650` · `S1 treasury 33,170 → 31,460` · `S8 treasury 121,637 → 80,107` · `S12 treasury 972,787 → 897,900` · `G1 peak 12.55 → 11.48` · `G2 floor 3.86 (S1) → 3.84 (S8)` · `G3 S8 treasury 382,637 → 341,107, sum 1.264 → 1.418, min 0.582 → 0.653` · `G4 1.250 → 1.242` · `G5 available 72,124 → 68,339` · `1.00-basis road line 736.12 → 929.35 $/gh` · `test 7 negative case 14.5 % → 16.7 %` · `per-district K 1.36285 → 1.36378` · `E_grid test tolerance ±1 → ±0.5` · `test 43 c_day 0 / $147.2 → c_day 0.35 / $185.9`.
 

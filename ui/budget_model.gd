@@ -30,7 +30,7 @@ const REASON_OK := &""
 const REASON_NO_COMMAND := &"E_NO_COMMAND"
 
 const _DEFAULT_REVENUE_KEYS: Array[String] = ["tax", "power_tariff", "water_tariff",
-		"fines"]
+		"city_services", "assistance"]
 const _DEFAULT_EXPENSE_KEYS: Array[String] = ["building_maint", "departments", "fleet",
 		"vehicle_fuel", "grid", "generation_fuel", "water", "roads_repair", "debt"]
 

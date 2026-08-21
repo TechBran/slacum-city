@@ -309,7 +309,13 @@ func e_fuel_vehicle(vehicles: Array, fuel_weather_mult: float = 1.0) -> float:
 ##   hour, buildings[], happiness, tax_rate, difficulty{M_rev,M_exp,M_repair,
 ##   REV_FLOOR_FRACTION}, yield_mult, grid_inventory{}, generation[],
 ##   delivered_mwh, water{}, stations[], vehicles[], fuel_weather_mult, roads{},
-##   police_incidents_resolved, debt_interest, apply_to_treasury
+##   city_services{dispatch,street}, founding_assistance, debt_interest,
+##   apply_to_treasury
+##
+## *(`police_incidents_resolved` is GONE — report 98 RR-77. It fed a `fines`
+## line that was doc 06's `reward_base` under another name, metered by
+## `CitySim.HELD_FINE_RATE` so it printed a flat $3.00/gh forever. The live
+## measurement replaces it: `city_services`.)*
 ##
 ## **Which line takes which difficulty knob** (doc 03 §2.4, doc 93 §N1). Three
 ## groups, and the rule is *one knob per line, never two*:
@@ -322,10 +328,13 @@ func e_fuel_vehicle(vehicles: Array, fuel_weather_mult: float = 1.0) -> float:
 ## `M_rev` is the TAX multiplier and reaches `revenue_for_building()` only — doc
 ## 03 §2.2 puts it inside the per-building formula and inside the revenue floor,
 ## and §2.5, which authors every non-tax line, never mentions it. Two of those
-## three lines are §9 item 6b's HELD metering constants
-## (`CitySim.HELD_DELIVERED_MWH`, `HELD_FINE_RATE`), so scaling them by difficulty
-## would price a placeholder; the third, `water_tariff`, is 0.41 % of founding
-## gross. Doc 93 §N2 rules it and carries the re-open condition.
+## three lines was §9 item 6b's HELD metering constant
+## (`CitySim.HELD_DELIVERED_MWH`), so scaling it by difficulty would price a
+## placeholder; `water_tariff` is 0.41 % of founding gross. Doc 93 §N2 rules it
+## and carries the re-open condition — **and RR-77 discharged half of it**: the
+## `fines` half of the held pair is now the live `city_services` line, and
+## `city_services` and `assistance` are outside `M_rev` for the same §2.5 reason
+## every other non-tax line is.
 func settle_hour(inputs: Dictionary) -> Dictionary:
 	var hour := int(inputs.get("hour", 0))
 	var difficulty := _resolve_difficulty(inputs)
@@ -371,9 +380,25 @@ func settle_hour(inputs: Dictionary) -> Dictionary:
 			* float(_tariffs.get("POWER_TARIFF_PER_MWH", 0.0))
 	var water_tariff := float(water.get("delivered_m3", 0.0)) \
 			* float(_tariffs.get("WATER_TARIFF_PER_M3", 0.0))
-	var fines := float(inputs.get("police_incidents_resolved", 0)) \
-			* float(_tariffs.get("POLICE_FINE_PER_RESOLVED_INCIDENT", 0.0))
-	var gross_revenue := floored + power_tariff + water_tariff + fines
+	# --- §2.5 city services, and §2.5a the founding grant (RR-77 / RR-78) -----
+	# `city_services` is CASH ALREADY IN THE TREASURY: doc 06 pays a resolved
+	# incident the moment it resolves and doc 12 pays a collected street
+	# opportunity the moment it is tapped, because the player has to see the
+	# number move. It is still operating revenue, so it is reported on its own
+	# line here and then subtracted from what the settlement moves in cash, five
+	# lines below. Exactly one dollar, exactly one line; only the moment differs.
+	#
+	# It REPLACES the `fines` line, which was doc 03's half of a dollar doc 06
+	# was already paying (report 98 RR-77 — the ruling doc 06 asked for in Wave 1
+	# and doc 93 §N1 point 4 wrote the re-open condition for). `fines` was a held
+	# metering constant standing in until doc 06 published real resolutions; it
+	# has, and this is them.
+	var services: Dictionary = inputs.get("city_services", {})
+	var services_total := 0.0
+	for key in services:
+		services_total += float(services[key])
+	var assistance := float(inputs.get("founding_assistance", 0.0))
+	var gross_revenue := floored + power_tariff + water_tariff + assistance
 
 	# --- §2.4 expenses ----------------------------------------------------
 	var maint_rate := float(_expenses.get("BUILDING_MAINT_RATE", 0.0))
@@ -424,7 +449,11 @@ func settle_hour(inputs: Dictionary) -> Dictionary:
 			_treasury.debt_interest_per_hour() if _treasury != null else 0))
 
 	# --- §2.11 offline taper: revenue and recurring expenses, identically --
-	var revenue_total := gross_revenue * yield_mult
+	# The taper is doc 08's offline discount on what the city EARNS while nobody
+	# is watching. `services_total` is outside it because it is not an accrual at
+	# all — it is dollars the treasury already holds, at face value, from the
+	# moment they were paid.
+	var revenue_total := gross_revenue * yield_mult + services_total
 	var expense_total := recurring * yield_mult + debt
 
 	var snapshot := {
@@ -434,7 +463,9 @@ func settle_hour(inputs: Dictionary) -> Dictionary:
 			"tax_by_class": tax_by_class,
 			"power_tariff": power_tariff * yield_mult,
 			"water_tariff": water_tariff * yield_mult,
-			"fines": fines * yield_mult,
+			"city_services": services_total,
+			"city_services_by_source": services.duplicate(),
+			"assistance": assistance * yield_mult,
 			"gross": revenue_total,
 		},
 		"expenses": {
@@ -458,9 +489,14 @@ func settle_hour(inputs: Dictionary) -> Dictionary:
 	}
 
 	if _treasury != null and bool(inputs.get("apply_to_treasury", true)):
-		snapshot["settled"] = _treasury.settle(revenue_total, expense_total)
+		# `services_total` is netted out because that cash moved when it was
+		# earned. Settling it again would credit the same dollar twice — which
+		# is the exact mistake RR-77 exists to end.
+		snapshot["settled"] = _treasury.settle(
+				revenue_total - services_total, expense_total)
 	events.append({"type": &"economy_hour_settled", "hour": hour,
 			"gross": revenue_total, "expense": expense_total,
+			"city_services": services_total, "assistance": assistance * yield_mult,
 			"net": revenue_total - expense_total})
 	return snapshot
 

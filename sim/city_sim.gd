@@ -61,12 +61,16 @@ var weather: WeatherSystem
 var director: DisasterDirector
 var incident_sink: IncidentRequestSink
 
-## Held metering pair (doc 03 §9 item 6b): constants until doc 04 meters
-## delivered energy. (HELD_WATER retired — doc 05's live inventory() feeds the
-## settlement now; STARTER_VEHICLES retired — doc 06's live roster does, per the
-## fleet-billing ruling on doc 92 F-3.)
+## The last held metering constant (doc 03 §9 item 6b): a constant until doc 04
+## meters delivered energy. (HELD_WATER retired — doc 05's live inventory()
+## feeds the settlement now; STARTER_VEHICLES retired — doc 06's live roster
+## does, per the fleet-billing ruling on doc 92 F-3; **HELD_FINE_RATE retired —
+## report 98 RR-77**: it metered a `fines` line that was doc 06's `reward_base`
+## under a second name, so it printed a flat $3.00/gh on every preset at every
+## horizon while the real money went straight to the treasury unnamed. Doc 93
+## §N1 point 4's re-open condition — *"when doc 06 publishes real resolutions"* —
+## is met, and the live `city_services` line replaces the pair.)
 const HELD_DELIVERED_MWH := 1.5
-const HELD_FINE_RATE := 3.0 / 350.0
 
 ## Station shells whose roster doc 06 houses (doc 06 §2.11 / C-50). A completed
 ## build or upgrade of one of these re-runs that station's housing, which is what
@@ -1726,6 +1730,35 @@ func publish_progression(events: Array) -> void:
 		bus.emit(type, event)
 		if type == &"city_level_changed":
 			world.refresh_purchasable(progression.city_level)
+			_pay_level_up_grant(event as Dictionary)
+
+
+## **The celebration grant** (doc 03 §2.5a, report 98 RR-78).
+##
+## The goals sheet already celebrates a city level; from this wave it also pays
+## for the next chapter. `grant_level` is the one write path onto `city_level`
+## and it emits exactly one `city_level_changed` per move, carrying `from` and
+## `to` — so a jump that crosses two rungs at once (a population surge past a
+## threshold the objectives had not reached) pays BOTH, and neither route to a
+## rung is worth more than the other.
+##
+## It is a one-off receipt, not an hourly ledger line: doc 03 §2.4 keeps one-off
+## capital spends out of the recurring rate, and the symmetric treatment for a
+## one-off receipt is the same. The player sees it as a treasury event and a
+## notification; the budget panel's income statement stays an income statement.
+##
+## `city_level` is monotone (`data/progression.json`'s `city_level_monotone`),
+## so a level can never be re-crossed and a grant can never be paid twice.
+func _pay_level_up_grant(event: Dictionary) -> void:
+	var from_level := int(event.get("from", 0))
+	var to_level := int(event.get("to", 0))
+	for level in range(maxi(1, from_level + 1), to_level + 1):
+		var amount := econ_curves.level_up_grant(level)
+		if amount <= 0:
+			continue
+		treasury.credit(amount, &"grant", "city_level_%d" % level)
+		bus.emit(&"level_up_grant_paid", {"city_level": level, "amount": amount,
+				"balance": treasury.balance})
 
 
 ## The O(1) scalars `GoalSystem.STATE_KINDS` reads, once a game-hour.
@@ -4006,7 +4039,14 @@ func build_settlement_inputs(ctx: TimeContext, availability: Dictionary) -> Dict
 		"generation": [{"plant_type": "gas", "mwh": HELD_DELIVERED_MWH, "level": 1}],
 		"water": water.inventory(),
 		"roads": roads.settlement_inputs(),
-		"police_incidents_resolved": HELD_FINE_RATE,
+		# RR-77 / RR-78. The receipt book is DRAINED here — once per settled
+		# game-hour, in the ECONOMY phase, after INCIDENTS has finished writing
+		# to it (doc 01 §2's phase order) — so no payout is reported twice and
+		# none is dropped. The founding grant is a published constant on a clock
+		# doc 03 owns; this method only tells it which game-day it is.
+		"city_services": treasury.take_hour_city_services(),
+		"founding_assistance": econ_curves.founding_assistance_per_hour(
+				ctx.tick_index / GameClock.TICKS_PER_DAY),
 	}
 
 

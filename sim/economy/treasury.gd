@@ -55,6 +55,26 @@ var lifetime: Dictionary = {
 	"lifetime_repairs": 0, "lifetime_foregone": 0,
 }
 
+## **The city-services receipt book** (doc 03 §2.5, report 98 RR-77).
+##
+## A dispatch payout and a street collection are paid the instant they are
+## earned — the player taps and the number moves, which is the whole point of
+## the money pass — but they are still OPERATING revenue and doc 03's income
+## statement has to name them. So the cash goes through `credit()` like any
+## other credit, and the dollars are *also* tallied here by source until the
+## next settlement reads them.
+##
+## `EconomySystem` books the tally as the `city_services` revenue line, includes
+## it in `gross` and `net`, and then settles `revenue − services` in cash,
+## because that cash has already moved. There is exactly one dollar and exactly
+## one line; what differs is the moment.
+##
+## It is serialised (defaulting to 0 on any older save) because a save taken
+## between a resolve and the hour's settlement would otherwise lose a line the
+## income statement is about to print — and `save → load → advance` has to be
+## bit-identical.
+var hour_city_services: Dictionary = {"dispatch": 0, "street": 0}
+
 var _recovery: Dictionary = {}
 var _difficulty: Dictionary = {}
 var _events: Array[Dictionary] = []
@@ -110,6 +130,30 @@ func credit(amount: int, category: StringName = &"misc", reason: String = "") ->
 	_emit(&"treasury_credited", {"amount": amount, "category": category, "reason": reason,
 			"balance": balance})
 	return {"ok": true, "reason_code": &"", "credited": amount, "balance": balance}
+
+
+## A city-services receipt (doc 03 §2.5, RR-77): the same `credit()` as any
+## other, plus a tally the hour's settlement will print on its own ledger line.
+## `source` is `"dispatch"` or `"street"`; an unknown source is credited and
+## tallied under `dispatch` rather than dropped, because losing the tally would
+## make the line disagree with the balance.
+func credit_city_service(amount: int, source: String,
+		reason: String = "") -> Dictionary:
+	var result := credit(amount, &"city_services", reason)
+	if not bool(result.get("ok", false)):
+		return result
+	var key := source if hour_city_services.has(source) else "dispatch"
+	hour_city_services[key] = int(hour_city_services[key]) + amount
+	return result
+
+
+## Drained by `CitySim` once per settled game-hour, immediately before doc 03's
+## settlement reads it. Returns the tally and resets the book.
+func take_hour_city_services() -> Dictionary:
+	var out := hour_city_services.duplicate()
+	for key in hour_city_services:
+		hour_city_services[key] = 0
+	return out
 
 
 ## Layer 4: the balance can never go below `-credit_limit`. Anything that would
@@ -305,6 +349,7 @@ func serialize() -> Dictionary:
 		"relief_grants_used": relief_grants_used,
 		"relief_last_grant_hour": null if relief_last_grant_hour < 0 else relief_last_grant_hour,
 		"ledger_totals": lifetime.duplicate(),
+		"hour_city_services": hour_city_services.duplicate(),
 	}
 
 
@@ -321,6 +366,12 @@ func deserialize(data: Dictionary) -> void:
 	var totals: Dictionary = data.get("ledger_totals", {})
 	for key in lifetime:
 		lifetime[key] = int(totals.get(key, 0))
+	# RR-77. Absent on every save written before the money pass, and 0 is the
+	# right answer there: those cities booked the payout straight to the balance
+	# and had no line waiting to be printed.
+	var services: Dictionary = data.get("hour_city_services", {})
+	for key in hour_city_services:
+		hour_city_services[key] = int(services.get(key, 0))
 
 
 # ---------------------------------------------------------------- plumbing

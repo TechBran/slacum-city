@@ -819,6 +819,49 @@ func credit(amount: int, reason: String) -> void:
 		sim.treasury.credit(amount, &"incident", reason)
 
 
+## Report 98 RR-77. Doc 06 hands over the shape; doc 03 owns the dollars AND the
+## ceiling, so the whole moral-hazard guard lives on this side of the seam.
+func dispatch_payout(type_id: String, shape_mult: float, manual: bool,
+		target_ref: Dictionary, residual_fraction: float) -> int:
+	var base: float = sim.econ_curves.dispatch_payout_base(type_id)
+	if base <= 0.0:
+		return 0
+	var dispatcher: float = sim.econ_curves.manual_dispatch_mult() if manual else 1.0
+	var payout := CostCurves.round_half_up(base * shape_mult * dispatcher)
+	var prevented := prevented_loss_value(target_ref, residual_fraction)
+	if prevented < 0:
+		return payout  # doc 03 prices no capital for this asset class — gate 31
+	var cap_fraction: float = sim.econ_curves.moral_hazard_cap_fraction()
+	return mini(payout, CostCurves.round_half_up(cap_fraction * float(prevented)))
+
+
+## `capital_value(target) − repair_cost(target, residual)`, or **−1** where doc
+## 03 prices no capital for that asset class (road edges, water segments) — see
+## the base class for why the difference matters.
+func prevented_loss_value(target_ref: Dictionary, residual_fraction: float) -> int:
+	match String(target_ref.get("kind", "")):
+		"building":
+			var b: Building = sim.buildings.get(String(target_ref.get("id", "")), null)
+			if b == null:
+				return -1
+			var capital: int = sim.econ_curves.capital_value(String(b.archetype),
+					maxi(1, b.level))
+			return maxi(0, capital - repair_cost(target_ref, residual_fraction))
+		"power_component":
+			var c: Dictionary = sim.grid.component(String(target_ref.get("id", "")))
+			if c.is_empty():
+				return -1
+			var grid_capital: int = sim.econ_curves.capital_value_grid(
+					String(c.get("kind", "transformer")), int(c.get("level", 1)))
+			return maxi(0, grid_capital - repair_cost(target_ref, residual_fraction))
+	return -1
+
+
+func credit_city_service(amount: int, source: String, reason: String) -> void:
+	if amount > 0:
+		sim.treasury.credit_city_service(amount, source, reason)
+
+
 func debit(amount: int, reason: String) -> bool:
 	if amount <= 0:
 		return true

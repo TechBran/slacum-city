@@ -656,6 +656,13 @@ func _resolve(inc: Incident) -> void:
 	_emit("incident_resolved", {"incident_id": inc.id, "incident_type": inc.type,
 			"subtype": inc.subtype, "tier_peak": inc.tier_peak, "at_h": now_h,
 			"response_min": inc.response_minutes(), "reward": reward,
+			# RR-77: the payout and the loss it prevented travel together, so the
+			# moral-hazard ratio is a thing a reader — and balance gate 31 — can
+			# check on a live city instead of on a spreadsheet. `-1` means doc 03
+			# prices no capital for this target's asset class.
+			"prevented_loss": world.prevented_loss_value(inc.target_ref,
+					_residual_damage_fraction(inc, row)),
+			"manual": inc.manual_requested,
 			"target_ref": inc.target_ref.duplicate(true)})
 
 
@@ -692,9 +699,33 @@ func _apply_resolution_effects(inc: Incident, row: Dictionary) -> void:
 		world.repair_cost(inc.target_ref, expected_damage_fraction(inc))
 
 
+## **The payout, and the two things doc 06 no longer decides about it**
+## *(report 98 RR-77).*
+##
+## This method still owns the SHAPE — `(1 + tier_k·(tier_peak − 1)) ×
+## speed_bonus`, doc 06 §2.7's own two questions: *how much more is a tier-3
+## worth than a tier-1*, and *how much is a fast answer worth*. It no longer
+## owns a dollar. `reward_base` left `data/incidents.json` for
+## `data/economy.json`'s `city_services.dispatch_payout_base`, at the same six
+## values, so the currency monopoly C-07 built now covers the last column that
+## stood outside it — and `IncidentCatalog` refuses a file that carries the key
+## back.
+##
+## Two things arrive with the move. **Who answered** now changes the price: a
+## human working the incident drawer (`Incident.manual_requested`, set only by
+## `cmd_dispatch_unit`) is paid doc 06's own `speed_bonus_max`, 1.50×, and the
+## auto-dispatcher is paid 1.00× — exactly the dollars it has quietly earned
+## since Wave 1. And the **moral-hazard ceiling** is applied by doc 03 against
+## the loss the response actually prevented, which is why the target and the
+## residual damage fraction cross the seam with the shape.
+##
+## The money is credited as a `city_services` receipt rather than a bare
+## `credit`: it lands in the treasury now, and doc 03's next settlement prints
+## it on a ledger line that says what it was. Before this wave it landed in the
+## treasury and appeared nowhere at all — which is the whole of the player's
+## report that automatic dispatch "should pay us money". It always did.
 func _pay_reward(inc: Incident, row: Dictionary) -> int:
 	var reward_table: Dictionary = catalog.reward
-	var base := float(row.get("reward_base", 0))
 	var tier_k := float(reward_table.get("tier_k", 0.35))
 	var speed_bonus := 1.0
 	var response := inc.response_minutes()
@@ -704,9 +735,11 @@ func _pay_reward(inc: Incident, row: Dictionary) -> int:
 				- float(reward_table.get("speed_bonus_k", 0.5)) * (response / target),
 				float(reward_table.get("speed_bonus_min", 0.60)),
 				float(reward_table.get("speed_bonus_max", 1.50)))
-	var reward := int(round(base * (1.0 + tier_k * float(inc.tier_peak - 1)) * speed_bonus))
+	var shape := (1.0 + tier_k * float(inc.tier_peak - 1)) * speed_bonus
+	var reward := world.dispatch_payout(inc.type, shape, inc.manual_requested,
+			inc.target_ref, _residual_damage_fraction(inc, row))
 	if reward > 0:
-		world.credit(reward, "incident_resolved")
+		world.credit_city_service(reward, "dispatch", "incident_resolved")
 	for unit_id in inc.assigned_unit_ids():
 		var u: Vehicle = fleet.unit(int(unit_id))
 		if u != null:
@@ -714,6 +747,17 @@ func _pay_reward(inc: Incident, row: Dictionary) -> int:
 			if cost > 0:
 				world.debit(cost, "vehicle_dispatch")
 	return reward
+
+
+## The damage that DID land on the target, so doc 03 can subtract it from what
+## the target is worth and get the loss the response prevented. It is the same
+## fraction `_apply_resolution_effects` charges the player for repairing, read
+## the same way: doc 06 §2.8's residual curve for a fire, §2.4's expected
+## fraction for everything else.
+func _residual_damage_fraction(inc: Incident, row: Dictionary) -> float:
+	if String(row.get("suppression_model", "generic")) == "fire":
+		return spread.residual_damage_fraction(inc)
+	return expected_damage_fraction(inc)
 
 
 func _run_fail(inc: Incident) -> void:

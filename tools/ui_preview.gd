@@ -235,7 +235,7 @@ func _populate() -> void:
 	_root.feed_settlement({
 		"hour": 96,
 		"revenue": {"tax": 12480.0, "power_tariff": 940.0, "water_tariff": 410.0,
-				"fines": 120.0, "gross": 13950.0},
+				"city_services": 120.0, "assistance": 0.0, "gross": 13950.0},
 		"expenses": {"building_maint": 4120.0, "departments": 2260.0, "fleet": 610.0,
 				"vehicle_fuel": 140.0, "grid": 320.0, "generation_fuel": 830.0,
 				"water": 260.0, "roads_repair": 90.0, "debt": 0.0, "total": 8630.0},

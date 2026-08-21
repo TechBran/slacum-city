@@ -6115,3 +6115,152 @@ that:
 4. **The expensive tables have never been re-taken on a merged tree** (§34.3).
    Not urgent. `tests/balance_matrix.gd` already prints §31.1's table in one
    command, so this is a scheduled re-run rather than an instrument to build.
+
+---
+
+## 35. Pass 14 — the money pass: what the ledger was hiding, and what the opening actually costs (2026-08-21)
+
+*The player, after a playtest: "it's coming a real game here that actually is fun to play. We need to make it more fun. We need to have ways where we can make money quickly… our automatic dispatch in crime — that should pay us money." And, standing since Wave 7: "money production is pretty slow for these first three levels."*
+
+*Both halves of that turned out to be one question, and the question had already been asked. Doc 06's own open question 6, filed in Wave 1 and never ruled: `reward_base[crime] = 350` and doc 03's `POLICE_FINE_PER_RESOLVED_INCIDENT = 350` might be the same dollar. They were. This pass rules it (RR-77), and the ruling is what turned the player's report from a feature request into a **measurement**.*
+
+### 35.1 The finding: automatic dispatch has been paying since Wave 1, into a ledger with no line for it
+
+`IncidentSystem._pay_reward` credited `reward_base × tier × speed` to the treasury on every resolve — auto-dispatched or not, online or offline — through `world.credit(reward, "incident_resolved")`, which lands in `Treasury.credit(…, &"incident")` and stops there. Doc 03's hourly settlement never saw it. The budget panel never showed it. `data/notifications.json` never announced it.
+
+Meanwhile doc 03's own half of the same dollar was `CitySim.HELD_FINE_RATE = 3/350`, a §9 item 6b held constant, which is why doc 93 §N1 point 3 could measure the `fines` line at **$3.00/gh on every preset at the founding hour, at 21 game-days and at 48** — it was never metering anything.
+
+Measured, `tools/measure_founding_ledger.gd --hours=24`, seed 1337, `do_nothing` — a city that builds nothing, dispatches nothing and never opens a drawer:
+
+| line | founding hour | founding day (mean $/gh) |
+|---|---|---|
+| `tax` | 741.80 | 740.13 |
+| `power_tariff` | 93.00 | 93.00 |
+| `water_tariff` | 3.42 | 3.67 |
+| **`city_services`** *(new)* | 0.00 | **38.38** |
+| `assistance` *(new, §35.2)* | 172.00 | 172.00 |
+
+**$38.38/gh is $921 across the founding day — 12.5 % of what the ledger used to call that day's entire net income** ($7,380.32), on the control strategy. It was real money in the real treasury; the income statement was simply short a line. That is the whole of "automatic dispatch should pay us money": it did, and the game never said so.
+
+The arrears show up in the anchor: `STARTER_FIRST_GAME_DAY_NET_EXACT 7380.320908 → 12357.320908` is **+4,977.00**, of which `169 × 24 = 4,056.00` is §35.2's design change and **$921.00 is the money that was already there.**
+
+### 35.2 The retune: what the opening is actually billed for
+
+`tools/measure_money_pass.gd` is the instrument, and it exists because the feel metric needed one. `data/time.json` sets `real_seconds_per_game_minute = 1.0`, so **one game-hour is one real minute at 1×** and doc 03's $/gh column IS the player's $/real-minute with no conversion anywhere. The instrument reports, per curriculum level: net $/gh over the level's window, the `city_services` share of it, and **BROKE game-minutes** — game-hours in which the treasury could not buy the cheapest thing on the build sheet (a level-1 house, $1,200).
+
+**The broke count is zero, on every seed, in both arms, and that is the finding that redirected this pass.** So is the `E_FUNDS` count in the curriculum agent's own action log. The opening is not poor. It is *slow*: nothing is unaffordable, the milestones are just far apart in wall-clock. Level 3 arrived at game-hour 122–128 — **two real hours of continuous 1× play**.
+
+So the lever is the income RATE, and the ledger says exactly where it goes:
+
+```
+founding expense $504.73/gh    of which   departments  $96.00   police + fire + water + yard
+                                          fleet        $76.00   2 patrol, 1 engine, 2 utility,
+                                                                2 water, 1 crew
+                                          -----------  -------
+                                                       $172.00  = 34.1 % of the bill
+```
+
+**A founded city is handed three stations and eight vehicles by `data/starter_city.json` and starts paying full price for them in game-hour 1.** It never chose them. `building_maint` — the line a "maintenance easing at low levels" would have touched — is **$27.46/gh**, 5.4 % of the bill: a dead lever, measured before it was pulled.
+
+Hence RR-78, and both grants are published constants rather than fractions of anything a player controls:
+
+* **`FOUNDING_ASSISTANCE_PER_HOUR = 172`**, `share(day) = clamp(1 − day/7, 0, 1)`. The state covers the two civic lines at founding and hands them back over the first game-week. Total $16,512 against a $25,000 purse — the **discrete** daily step, seven shares averaging `4/7 = 0.5714`, not the continuous integral's 0.5 (which is $2,064 light). Seven days is the curriculum's own opening — level 3 landed on game-day 5.1–5.3 — so the taper covers levels 1–3 and is retired before level 4's incident wait begins.
+* **`LEVEL_UP_GRANT_BY_CITY_LEVEL = [0, 2500, 7000, 9000, 22500, 37000, 83000]`** — *the city pays half of what the next chapter asks you to buy*, derived row by row against doc 09 §2.14 (doc 03 §2.5a carries the table). A one-off receipt, not a ledger line.
+
+### 35.3 The moral-hazard guard, and why it had to bind
+
+The hazard is not arson; there is no arson verb. It is **waiting**. Doc 06 §2.7 grows the payout at `tier_k = 0.35` per tier; doc 02 grows the residual damage at `0.10` per tier. On a cheap building the reward outruns the value at risk from about tier 4 up:
+
+| target | tier | payout at target speed | residual | repair | prevented loss | ratio |
+|---|---|---|---|---|---|---|
+| house L2 ($2,940) | 3 | $1,657 | 0.20 | $500 | $2,440 | **0.679** |
+| house L1 ($1,200) | 5 | $2,160 | 0.40 | $408 | $792 | **2.73** |
+| house L1 ($1,200) | 5, best speed | $3,240 | 0.40 | $408 | $792 | **4.09** |
+
+The first row is doc 06's own ruled worked example. The second and third are the same formula three tiers up on a building one level down, and they say that **letting a fire grow before answering it has been the profitable play since doc 06 shipped.**
+
+`MORAL_HAZARD_CAP_FRACTION = 0.75` is placed between the two: above 0.679, because a cap below a ruled payout at its own reference point is a retune wearing a guard's clothes; strictly below 1.00, because at 1.00 the player is indifferent between a fire and no fire and indifference plus variance is a strategy; and at the midpoint to the nearest 0.05. The denominator is `capital_value(target) − repair_cost(target, residual)` — what you kept, net of what you spent keeping it.
+
+**Where the clamp cannot reach it answers −1, not 0.** Road edges and water segments have no `capital_value` in doc 03, and a clamp reading a zero there would silently delete a payout the design intends to pay. Those three types are held by `MORAL_HAZARD_UNPRICED_CEILING = $3,900` (0.75 × a `COLLAPSED` AVENUE rebuilt at the full build price) against a worst case of `base × 5.40` — tier 5, best speed, manually dispatched — i.e. $1,620 / $2,160 / $2,700. It is the loose bound and says so; the farming vector is not there, because a moral hazard needs an asset the player owns and could choose to let burn.
+
+**Gate 31** holds all three surfaces: the clamp has teeth on a controlled incident, every priced resolve of a 21-game-day city is inside the ceiling, and the published table holds the three types the clamp cannot reach.
+
+### 35.4 The measurement: $/real-minute and the arrival table
+
+`tools/measure_money_pass.gd --days=21`, curriculum agent, seeds 1337 / 4242 / 9001. Net $/gh **is** $/real-minute at 1×.
+
+| level window | net $/real-min, before | after | change |
+|---|---|---|---|
+| 1 | 368 / 338 / 356 | **536 / 537 / 541** | +46 % / +59 % / +52 % |
+| 2 | 444 / 462 / 427 | **673 / 635 / 657** | +52 % / +37 % / +54 % |
+| 3 | 631 / 638 / 614 | **842 / 841 / 845** | +33 % / +32 % / +38 % |
+| whole run | 864 / 884 / 846 | **1,706 / 1,415 / 1,355** | +97 % / +60 % / +60 % |
+| `city_services` share of net | 0.00 % | **4.83 / 5.21 / 5.76 %** | the line that did not exist |
+| BROKE game-minutes | 0 / 504 | 0 / 504 | unchanged, and it is a guard |
+
+And what that buys, `tools/measure_curriculum.gd --days=45` on both arms — **gate 21's own instrument, gate 21's own horizon**:
+
+| level | arrives, before (1337/4242/9001) | after | duration before → after |
+|---|---|---|---|
+| 1 | 13 / 13 / 14 | 14 / 13 / 17 | 13–14 → **13–17** |
+| 2 | 63 / 56 / 67 | **47 / 42 / 47** | 43–53 → **29–33** |
+| 3 | 123 / 122 / 128 | **82 / 79 / 83** | 60–66 → **35–37** |
+| 4 | 192 / 191 / 209 | **135 / 131 / 132** | 69–81 → **49–53** |
+| 5 | 399 / 389 / 409 | **246 / 258 / 284** | 198–207 → **111–152** |
+| 6 | 918 / 917 / 932 | **710 / 709 / 754** | 519–528 → **451–470** |
+
+**Level 3 lands at 79–83 game-hours instead of 122–128 — an hour and twenty real minutes instead of two hours** — and every rung from 2 to 6 arrives 25–37 % sooner. Level 1 does NOT improve and on two seeds is a game-minute or three later (13→14, 14→17): with a fuller purse the curriculum agent makes different first choices, and 17 game-minutes is still inside gate 21's day-0 bound with two-thirds of the day to spare.
+
+**The number this buys back is the tightest one in the gate file.** Doc 92 §33.7 ranked `CURRICULUM_TOP_LEVEL_DAYS = 40` as the constant with the least margin left — the arc was finishing on game-day 38.2–38.8. It now finishes on **29.6 / 29.5 / 31.4**, and the ruled bound is untouched.
+
+### 35.5 The matrix, 7 × 3 × 21, and the one gate that had to be re-fitted
+
+`tests/balance_matrix.gd days=21`, all seven strategies, `standard`, seeds 1337 / 4242 / 9001. Means:
+
+| strategy | treasury before → after | value before → after | pop before → after | net $/gh before → after |
+|---|---|---|---|---|
+| **`do_nothing`** | 145,417 → **160,073** (+10.1 %) | same | 141 → **141** | 223 → 270 |
+| **`infrastructure_first`** | 15,500 → **25,802** | 125,900 → 92,202 | 231 → 182 | 349 → 297 |
+| `greedy_growth` | 31,719 → 32,898 | 927,277 → 924,322 | 1,769 → 1,595 | 1,320 → 1,791 |
+| `balanced` | 81,950 → 58,612 | 834,156 → **965,739** | 1,247 → **1,379** | 1,968 → **2,342** |
+| `tax_squeezer` | 97,971 → 98,597 | 1,160,951 → 1,384,520 | 1,062 → 1,240 | 2,743 → 3,345 |
+| `disaster_neglect` | 55,624 → 80,532 | 952,519 → 925,644 | 1,270 → 1,292 | 1,653 → 2,020 |
+| `curriculum` | 31,210 → **79,232** | 277,904 → **592,694** | 509 → **673** | 865 → 1,492 |
+
+**The control rows moved through the retune and the GUARD, and the decomposition is where the honesty is.** `do_nothing` never reaches city level 1 (its population ends at 141 against rung 1's 200), so it collects no celebration grant at all. Its whole movement should therefore be two published constants — and it is not, by a small, seed-dependent amount that turns out to be the third thing this pass shipped:
+
+| term | expected | note |
+|---|---|---|
+| founding assistance, days 0–6 | **+$16,512** | `172 × 24 × (7+6+5+4+3+2+1)/7` |
+| the retired `fines` line, 21 game-days | **−$1,512** | `$3.00/gh × 504` |
+| *predicted* | **+$15,000** | two constants, no seed in either |
+| measured, seed 1337 / 4242 / 9001 | +$14,465 / +$14,772 / +$14,731 | mean **+$14,656** |
+| **residual** | **−$535 / −$228 / −$269** | seed-dependent, so not a constant |
+
+**`city_services` cannot be the residual**: that cash was already in the control's treasury before this pass and the settlement nets it back out, which is the check that RR-77's plumbing books one dollar and not two. **The residual is the moral-hazard clamp** (§35.3) — the control auto-dispatches, some of its resolves are high-tier fires on cheap houses, and those now pay the ceiling instead of the curve. It is **2–4 % of the row's movement and 0.15–0.34 % of the row's treasury**, it moves in the direction a guard should move a control (down), and it is the only seed-dependent term in the table.
+
+So the honest form of the claim the task set is: *the controls moved through the retune, plus a guard that had to bind or it was not a guard.* `infrastructure_first` reaches level 1 and adds one $2,500 grant on top of the same two terms.
+
+**Gate 3 still holds with room**: `do_nothing` banks $160,073 against pass 2's $199,427.
+
+**Gate 4 did not, and re-fitting it is RR-79.** The maintenance A/B's cash column inverted — `balanced` $58,612 against `disaster_neglect`'s $80,532 — at the same moment its `value created` column *un*-inverted. Neither flip is the maintenance knob; a stock measures how much an agent chose not to spend, and with more money to spend the maintaining agent spent more of it on city. `value created` is not the replacement either: seed 9001 separates the pair by **0.29 %** on it, which is noise wearing a threshold. `net_mean_per_hour` is the flow the maintenance knob actually drives through doc 03's `f_condition`, it separates the pair by **12–20 % on all three seeds in both arms**, and gate 5 already uses it for the same claim one comparison up. The gate's own header carries the full table.
+
+The health columns never wavered: min condition **0.798 vs 0.391**, dark share **0.19 % vs 30.66 %**, happiness 75.1 vs 59.8, stability 0.946 vs 0.796.
+
+### 35.6 The four determinism baselines, re-recorded
+
+`tools/profile_sim.gd --hash-only`, seed 1337, 24 coarse game-hours + 2 fine. **These move by design** — §35.1's ledger line changes the settlement's inputs and §35.2's grants change the treasury, and both are inside the state hash.
+
+| city | path | HEAD (Wave 14) | this pass |
+|---|---|---|---|
+| `data/starter_city.json` | coarse 24 h | `0b67cd2273a5115a…` | **`939294ec35f4c5a5…`** |
+| `data/starter_city.json` | fine 2.0 h | `4f9f383038fbe383…` | **`474171a6beeb6dbd…`** |
+| `tests/fixtures/bench_city.json` | coarse 24 h | `bbe658aeeaa9f855…` | **`d8cd840cdacacf02…`** |
+| `tests/fixtures/bench_city.json` | fine 2.0 h | `158501b8845b056f…` | **`2404cb0a04ec8860…`** |
+
+### 35.7 Ranked for the overseer
+
+1. **`greedy_growth` on seed 9001 abandoned 284 incidents and fell to min condition 0.107** (before: 0 abandoned, 0.354). Its peak roster hit 36 against gate 29's tripwire of 40. The agent that buys buildings and never buys a station now has more money to buy buildings with, and its fleet drowns — which is arguably the correct consequence and is certainly a louder one. **No gate measures abandonment on `greedy_growth`** (gate 9 measures `balanced`, which is still 0). Worth a ruling: is a strategy that self-destructs through its own success a feature, or does the ambient generator need a load damper the roster can see?
+2. **The retune's magnitude.** The curriculum's whole-run net roughly doubled (865 → 1,492 $/gh mean) because faster rungs compound into a bigger city. Every ruled ceiling still holds and the arc finishes eight game-days inside its bound, but if the lead wants a smaller step the single dial is `FOUNDING_ASSISTANCE_DAYS` (7 → 5 removes ~29 % of the subsidy without touching a derivation) — `FOUNDING_ASSISTANCE_PER_HOUR` is derived from the ledger and should not be the dial.
+3. **The dispatcher's premium is unmeasured in the matrix**, because no scripted agent in `tools/playtest.gd` calls `cmd_dispatch_unit`. That is exactly why the controls moved only through the retune, and it is also why `MANUAL_DISPATCH_MULT`'s effect on a real session is a number this report does not have. A `dispatcher` strategy that works the drawer would close it.
+4. **`infrastructure_first` lost 27 % of its `value created`** while gaining 66 % of its treasury, because with more cash it buys land (not construction spend) rather than buildings. No gate measures it and nothing is obviously wrong, but a control strategy whose *shape* changed under a revenue-side retune is worth one look.

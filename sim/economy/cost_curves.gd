@@ -282,6 +282,72 @@ func repair_cost_road(road_class: String, damage_fraction: float, m_repair: floa
 	return repair_cost(capital_value_road(road_class), damage_fraction, m_repair)
 
 
+# ============================== §2.5 city services and §2.5a grants (RR-77/78)
+
+## Doc 03 §2.5's payout table for doc 06's dispatch and doc 12's street
+## opportunities. The SHAPE of a payout is doc 06's (`data/incidents.json`'s
+## `reward` block — tier and speed); every dollar in it is this file's.
+func city_services() -> Dictionary:
+	return _economy.get("city_services", {})
+
+
+func dispatch_payout_base(type_id: String) -> float:
+	return float((city_services().get("dispatch_payout_base", {}) as Dictionary)
+			.get(type_id, 0.0))
+
+
+## 1.50 — doc 06's own `speed_bonus_max`, paid only when a human made the call
+## (`Incident.manual_requested`). Auto-dispatch pays 1.00.
+func manual_dispatch_mult() -> float:
+	return float(city_services().get("MANUAL_DISPATCH_MULT", 1.0))
+
+
+## The moral-hazard ceiling: a payout may never exceed this fraction of the loss
+## it prevented. Derived in `data/economy.json`; applied inside
+## `CityIncidentWorld.dispatch_payout()`, i.e. on doc 03's side of the seam, so
+## `sim/incidents/` authors neither the price nor the ceiling. For the types
+## whose targets this file prices no capital for, balance gate 31 holds the
+## published table instead.
+func moral_hazard_cap_fraction() -> float:
+	return float(city_services().get("MORAL_HAZARD_CAP_FRACTION", 1.0))
+
+
+func street_payout(kind: String) -> int:
+	return int((city_services().get("street_payout", {}) as Dictionary).get(kind, 0))
+
+
+func street_max_rate_per_game_hour() -> float:
+	return float(city_services().get("STREET_MAX_RATE_PER_GAME_HOUR", 0.0))
+
+
+func grants() -> Dictionary:
+	return _economy.get("grants", {})
+
+
+## Doc 03 §2.5a — the founding operating subsidy, in $/game-hour, on the settled
+## game-day `day`. `share(day) = clamp(1 − day / FOUNDING_ASSISTANCE_DAYS, 0, 1)`,
+## so it is the full civic bill on the founding day and exactly zero from
+## `FOUNDING_ASSISTANCE_DAYS` onward. A published constant, never a fraction of
+## the live bill: a subsidy that grew with the fleet would pay a player to buy
+## vehicles.
+func founding_assistance_per_hour(game_day: int) -> float:
+	var days := float(grants().get("FOUNDING_ASSISTANCE_DAYS", 0.0))
+	if days <= 0.0:
+		return 0.0
+	var share := clampf(1.0 - float(maxi(0, game_day)) / days, 0.0, 1.0)
+	return float(grants().get("FOUNDING_ASSISTANCE_PER_HOUR", 0.0)) * share
+
+
+## Doc 03 §2.5a — the celebration grant for reaching `city_level`, paid once per
+## level per city. Index 0 is the founding level and pays nothing; a level above
+## the published ladder pays nothing rather than extrapolating itself.
+func level_up_grant(city_level: int) -> int:
+	var ladder: Array = grants().get("LEVEL_UP_GRANT_BY_CITY_LEVEL", [])
+	if city_level < 0 or city_level >= ladder.size():
+		return 0
+	return int(ladder[city_level])
+
+
 ## doc 03 §2.5 — preventive maintenance, allowed on condition ∈ [PM_MIN, 0.99].
 func pm_cost(capital: int) -> int:
 	return round_half_up(float(capital) * _pm_cost_fraction)
