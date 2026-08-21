@@ -3065,6 +3065,7 @@ func cmd_place_road(tiles: Array, road_class: int, preview: bool = false) -> Dic
 		blockers.append(&"E_FUNDS")
 	var quote := {"blockers": blockers, "cost": cost, "tiles": fresh.size(),
 			"road_class": road_class, "class_name": class_name_of,
+			"skipped": road_preview.get("skipped", []),
 			"crew_hours": float(road_preview["crew_hours"]),
 			"work_units": int(road_preview["work_units"])}
 	if not blockers.is_empty():

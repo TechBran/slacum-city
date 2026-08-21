@@ -282,3 +282,51 @@ func test_rain_slows_traffic_and_the_dry_road_is_the_control() -> void:
 			% [dry_minutes, wet_minutes])
 	print("      [weather] mean c %.4f -> %.4f, cross-city civilian trip %.3f -> %.3f gm"
 			% [dry_c, wet_c, dry_minutes, wet_minutes])
+
+
+## The 2026-08-21 red-drag fix (playtest: "one block comes up green, then when
+## I try to drag it all turns red"): an unbuildable tile inside a run is a
+## PASS-OVER, never a poison pill. The run lays what fits, prices only that,
+## and names every skip per tile so the ghost can paint it.
+func test_a_run_through_an_occupied_tile_lays_what_fits() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var grid := sim.world.grid
+	var found := false
+	for z in range(34, 76):
+		for x in range(34, 76):
+			var t := Vector2i(x, z)
+			if grid.has_flag(x, z, TileGrid.FLAG_ROAD) \
+					or not grid.can_place(t, Vector2i.ONE):
+				continue
+			var near_road := false
+			for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0),
+					Vector2i(0, 1), Vector2i(0, -1)]:
+				if grid.road_class_at(t.x + d.x, t.y + d.y) != 0:
+					near_road = true
+			if not near_road:
+				continue
+			for d: Vector2i in [Vector2i(1, 0), Vector2i(0, 1)]:
+				var t2 := t + d
+				var t3 := t2 + d
+				if TileGrid.in_bounds(t3.x, t3.y) \
+						and grid.has_flag(t2.x, t2.y, TileGrid.FLAG_OCCUPIED):
+					found = true
+					var run := sim.cmd_place_road([t, t2, t3], 1, true)
+					assert_true(bool(run["ok"]),
+							"the run is placeable for the tiles that fit")
+					var quote: Dictionary = run["payload"]
+					assert_true(int(quote["tiles"]) >= 1,
+							"at least the near tile is laid")
+					var skipped: Array = quote["skipped"]
+					var named := false
+					for row: Variant in skipped:
+						var entry: Array = row
+						if Vector2i(int(entry[0]), int(entry[1])) == t2:
+							assert_eq(StringName(str(entry[2])), &"E_FOOTPRINT",
+									"the occupied tile is named, per tile")
+							named = true
+					assert_true(named, "the skip list names the occupied tile")
+					return
+			if found:
+				return
+	assert_true(found, "the founding city offers the fixture this test needs")

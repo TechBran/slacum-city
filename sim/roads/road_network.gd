@@ -1351,46 +1351,77 @@ var land_is_buildable: Callable = Callable()
 
 
 func query_road_preview(tiles: Array, road_class: int) -> Dictionary:
-	var reasons: Array = []
+	# EVERY unbuildable tile is a PASS-OVER, not a poison pill (2026-08-21,
+	# the level-3 playtest: "one block comes up green, then when I try to drag
+	# it all turns red"). A drag through a built-up block clips lots, water and
+	# undeveloped ground routinely; the run stays placeable for the tiles that
+	# fit, each skip is reported per tile so the ghost can paint it red, and a
+	# refusal happens only when NOTHING in the run can be laid. Already-road
+	# tiles were always passed over (§2.13's three-verb rule); this makes the
+	# whole family behave like that one member.
+	var skipped: Array = []   # [[x, y, reason: StringName], …] — the ghost's reds
 	var fresh: Array = []
 	for entry in RoadGraph._sorted_tiles(tiles):
 		var t: Vector2i = entry
 		if not TileGrid.in_bounds(t.x, t.y):
-			reasons.append(&"E_OUT_OF_BOUNDS")
+			skipped.append([t.x, t.y, &"E_OUT_OF_BOUNDS"])
 			continue
 		if grid.has_flag(t.x, t.y, TileGrid.FLAG_WATER):
-			reasons.append(&"E_WATER")
+			skipped.append([t.x, t.y, &"E_WATER"])
 			continue
 		if grid.has_flag(t.x, t.y, TileGrid.FLAG_OCCUPIED):
-			reasons.append(&"E_FOOTPRINT")
+			skipped.append([t.x, t.y, &"E_FOOTPRINT"])
 			continue
 		if land_is_buildable.is_valid() and not bool(land_is_buildable.call(t)):
-			reasons.append(&"E_NOT_DEVELOPED")
+			skipped.append([t.x, t.y, &"E_NOT_DEVELOPED"])
 			continue
-		# A tile that already carries ANY road is not fresh, whatever class the
-		# drag asked for. §2.13 keeps build, upgrade and demolish as three verbs:
-		# re-laying a STREET over an AVENUE would be a silent downgrade, and
-		# re-laying an AVENUE over a STREET would buy the upgrade at the build
-		# price AND reset the tile to `under_construction_seed`. Both are the
-		# upgrade/demolish verbs' business, so the build verb passes over them.
 		if grid.road_class_at(t.x, t.y) != RoadTunables.CLASS_NONE:
+			skipped.append([t.x, t.y, &"E_ALREADY_ROAD"])
 			continue
 		fresh.append(t)
-	var connected := fresh.is_empty()
-	for entry in fresh:
-		var t: Vector2i = entry
-		for d in RoadGraph.DIRS:
-			var q: Vector2i = t + d
-			if TileGrid.in_bounds(q.x, q.y) \
-					and grid.road_class_at(q.x, q.y) != RoadTunables.CLASS_NONE:
-				connected = true
-				break
-		if connected:
-			break
-	if not connected and not fresh.is_empty():
-		reasons.append(&"E_NOT_CONNECTED")
+	# Connectivity is a FLOOD over (fresh ∪ the live network), because a
+	# pass-over gap can split the run: only the segment that reaches the
+	# network may be laid, and the cut-off remainder is skipped per tile —
+	# never stamped as an island. Deterministic: seeds and expansion walk the
+	# sorted `fresh` list.
+	if not fresh.is_empty():
+		var in_run: Dictionary = {}
+		for entry in fresh:
+			in_run[entry] = false
+		var frontier: Array = []
+		for entry in fresh:
+			var t: Vector2i = entry
+			for d in RoadGraph.DIRS:
+				var q: Vector2i = t + d
+				if TileGrid.in_bounds(q.x, q.y) \
+						and grid.road_class_at(q.x, q.y) != RoadTunables.CLASS_NONE:
+					in_run[t] = true
+					frontier.append(t)
+					break
+		while not frontier.is_empty():
+			var t: Vector2i = frontier.pop_back()
+			for d in RoadGraph.DIRS:
+				var q: Vector2i = t + d
+				if in_run.has(q) and not bool(in_run[q]):
+					in_run[q] = true
+					frontier.append(q)
+		var reached: Array = []
+		for entry in fresh:
+			if bool(in_run[entry]):
+				reached.append(entry)
+			else:
+				var t: Vector2i = entry
+				skipped.append([t.x, t.y, &"E_NOT_CONNECTED"])
+		fresh = reached
+	# Fatal only when the whole run washed out: report the FIRST skip's reason,
+	# which is the tile nearest the sorted head — the one under the finger.
+	var reasons: Array = []
+	if fresh.is_empty():
+		reasons.append(StringName(skipped[0][2]) if not skipped.is_empty()
+				else &"E_NO_TILES")
 	return {
 		"ok": reasons.is_empty(), "reasons": reasons, "tiles": fresh,
+		"skipped": skipped,
 		"crew_hours": float(fresh.size()) * tun.build_crew_hours(road_class),
 		"work_units": roundi(float(fresh.size()) * tun.build_crew_hours(road_class)
 				* float(tun.work_units_per_crew_hour)),

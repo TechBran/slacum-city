@@ -695,6 +695,14 @@ func billable_flags() -> Array[bool]:
 			out.append(true)
 		return out
 	var verb := StringName(str(PathTool.row(card_id)["verb"]))
+	# The build preview names its pass-overs exactly (the 2026-08-21 red-drag
+	# fix: occupied lots, water, undeveloped ground and existing road are all
+	# SKIPPED per tile, never fatal) — so when the quote is fresh, the ghost's
+	# dims come from the same list the commit will skip, not a re-derivation.
+	var skipped_set: Dictionary = {}
+	for entry: Variant in (_quote.get("skipped", []) as Array):
+		var row: Array = entry
+		skipped_set[Vector2i(int(row[0]), int(row[1]))] = true
 	for tile: Vector2i in _tiles:
 		if not TileGrid.in_bounds(tile.x, tile.y):
 			out.append(false)
@@ -702,7 +710,8 @@ func billable_flags() -> Array[bool]:
 		var road_class := sim.world.grid.road_class_at(tile.x, tile.y)
 		match verb:
 			VERB_ROAD_BUILD:
-				out.append(road_class == TileGrid.ROAD_NONE)
+				out.append(not skipped_set.has(tile) if not _quote.is_empty()
+						else road_class == TileGrid.ROAD_NONE)
 			VERB_ROAD_UPGRADE:
 				out.append(road_class == TileGrid.ROAD_STREET)
 			VERB_ROAD_DEMOLISH:
