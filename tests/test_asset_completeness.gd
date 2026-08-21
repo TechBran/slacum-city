@@ -53,7 +53,7 @@ const FAMILY_ORDER := ["residential", "commercial", "industrial", "tech", "civic
 ## referenced is either dead weight or a layer that quietly lost its material.
 const SHADERS := [
 	"building.gdshader", "building_far.gdshader", "construction_rig.gdshader",
-	"ground.gdshader", "lamp.gdshader", "light_pool.gdshader",
+	"flood.gdshader", "ground.gdshader", "lamp.gdshader", "light_pool.gdshader",
 	"power_pad.gdshader", "power_smoke.gdshader", "power_wire.gdshader",
 	"road_overlay.gdshader", "road_surface.gdshader", "sidewalk.gdshader",
 	"vehicle.gdshader", "vehicle_headlight.gdshader", "water.gdshader",
@@ -65,6 +65,7 @@ const SHADER_OWNER := {
 	"building.gdshader": "res://game/render/city_view.gd",
 	"building_far.gdshader": "res://game/render/city_view.gd",
 	"construction_rig.gdshader": "res://game/render/construction_vehicle_view.gd",
+	"flood.gdshader": "res://game/render/flood_view.gd",
 	"ground.gdshader": "res://game/render/ground_surface.gd",
 	"lamp.gdshader": "res://game/render/streetlight_view.gd",
 	"light_pool.gdshader": "res://game/render/streetlight_view.gd",
@@ -630,7 +631,9 @@ func test_19_the_matrix_census_is_what_doc_91_records() -> void:
 	assert_eq((tex.get("grounds", {}) as Dictionary).size(), 2, "ground pages")
 	assert_eq((tex.get("props", {}) as Dictionary).size(), 3, "prop pages")
 	assert_eq((tex.get("vehicles", {}) as Dictionary).size(), 1, "vehicle atlas")
-	assert_eq(SHADERS.size(), 15, "shaders")
+	# 16 since A91-D-26: `flood.gdshader` is doc 07 §2.4's standing water, which
+	# the sim had been integrating and nothing had been drawing.
+	assert_eq(SHADERS.size(), 16, "shaders")
 	assert_eq((StarterCityLoader.read_json(VEHICLES).get("types", {}) as Dictionary).size(),
 			5, "doc 06 vehicle types")
 	assert_eq(DEFERRED_BODIES.size(), 1,

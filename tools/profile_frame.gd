@@ -69,6 +69,19 @@ extends SceneTree
 ##                      `power_infra.pad_shadows` says). The A/B behind that
 ##                      knob's shipped default — the two runs differ in nothing
 ##                      else, so the `rs gpu` delta IS the pad shadow pass.
+##   --flood=MM         stand doc 07 §2.4's STANDING WATER MM millimetres deep on
+##                      every LOW land block and draw it with `FloodView`
+##                      (doc 11 §2.9b). 0 leaves the layer out entirely, which
+##                      is the A/B control: the two runs differ in nothing else,
+##                      so the `dc` and `rs gpu` deltas ARE the flood layer.
+##                      350 is doc 07's impassable band — the worst case, every
+##                      road tile on every low block fully covered.
+##   --flood-detail=N   force `flood.gdshader`'s fragment ladder to rung N
+##                      (2 ripple + puddle noise, 1 puddle noise only, 0 a flat
+##                      sheet) instead of the preset's ceiling. Same geometry,
+##                      same draw calls, same everything but the fragment
+##                      program — which is the A/B the Fold's fragment-bound
+##                      frame actually needs.
 ##   --road-detail=N    force `road_surface.gdshader`'s fragment ladder to rung
 ##                      N (2 full, 1 no wear, 0 also no zebra) instead of the
 ##                      preset's ceiling. The A/B behind the asphalt fragment
@@ -109,6 +122,7 @@ var _roads: RoadSurfaceView
 var _streetlights: StreetlightView
 var _vehicles: VehicleView
 var _construction: ConstructionVehicleView
+var _flood: FloodView
 var _construction_usec := 0
 var _env: EnvironmentController
 var _camera_state: CameraState
@@ -423,6 +437,36 @@ func _build_ground(stage: Node3D) -> void:
 	water_node.multimesh = water_mm
 	ground.add_child(water_node)
 
+	# doc 11 §2.9b / doc 07 §2.4's standing water. Off unless `--flood=` asks
+	# for it, so the run with it and the run without differ in exactly this.
+	if float(_opts["flood"]) > 0.0:
+		_flood = FloodView.new()
+		_flood.name = "Flood"
+		ground.add_child(_flood)
+		_flood.setup(_render_data, String(_opts["preset"]))
+		if int(_opts["flood_detail"]) >= 0:
+			# Raise the ceiling first: `set_detail` clamps to it by contract, so
+			# a harness asking for rung 2 on a preset capped at 0 must move the
+			# cap or it would silently measure rung 0 and print "2".
+			_flood.detail_ceiling = clampi(int(_opts["flood_detail"]), 0, 2)
+			_flood.set_detail(int(_opts["flood_detail"]))
+		_flood.rebuild(_sim.world.grid)
+		# Every LOW block, at the asked depth. This is the flood field the sim
+		# would produce under sustained rain (doc 07 §2.4: only LOW blocks
+		# accumulate) and the worst case the layer can be asked to draw.
+		var depths: Dictionary = {}
+		for block_id in _sim.world.block_ids_sorted():
+			var block: LandBlock = _sim.world.block(String(block_id))
+			if String(block.elevation_band()) != "LOW":
+				continue
+			depths[FloodField.block_key_of(block.grid.x, block.grid.y)] = \
+					float(_opts["flood"])
+		_flood.prime(depths)
+		_flood.snap()
+		print("  [flood] %d LOW cells at %.0f mm -> %d tiles, %d draw call(s), detail %d"
+				% [depths.size(), float(_opts["flood"]), _flood.drawn_tiles(),
+				_flood.draw_calls(), _flood.detail])
+
 
 func _building_view(sim_id: String) -> Dictionary:
 	var b: Building = _sim.buildings.get(sim_id)
@@ -496,6 +540,11 @@ func _process(delta: float) -> bool:
 	_streetlights.refresh()
 	_vehicles.set_focus(_camera_state.focus)
 	_vehicles.refresh(delta, _env.last_night, 1.0)
+	if _flood != null:
+		# Held at its primed depth by the ease's own settle rule, so after the
+		# warm-up frames this costs nothing on the CPU and the whole delta the
+		# `--flood=` A/B measures is fragment.
+		_flood.refresh(delta)
 	if _power_infra != null:
 		# `refresh`, not `sync`: the harness holds the sim still, and re-polling
 		# a frozen grid every frame would measure the poll instead of the layer.
@@ -691,6 +740,11 @@ func _report() -> void:
 	# those poses are printed as `n/a` rather than as a wrong number.
 	print("  non-building draw calls (Z2 only, see _non_building_rows): "
 			+ ", ".join(_non_building_rows()))
+	if _flood != null:
+		print("  STANDING WATER (doc 07 §2.4 / doc 11 §2.9b): %.0f mm on %d cells"
+				% [float(_opts["flood"]), _flood.cell_keys().size()]
+				+ " -> %d tiles in ONE MultiMesh, %d draw call(s), fragment rung %d"
+				% [_flood.drawn_tiles(), _flood.draw_calls(), _flood.detail])
 	if _construction != null:
 		var census: Dictionary = _construction.census()
 		print(("  LIVING CONSTRUCTION: %d sites at stage %d -> %d excavators,"
@@ -735,6 +789,7 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 		"no_power_infra": false, "power_distress": 0.0,
 		"sites": 0, "site_stage": 2, "site_gm": 900.0,
 		"pad_shadows": -1, "road_detail": -1,
+		"flood": 0.0, "flood_detail": -1,
 	}
 	for raw in argv:
 		var arg := String(raw)
@@ -750,6 +805,10 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			opts["pad_shadows"] = clampi(int(arg.substr(14)), 0, 1)
 		elif arg.begins_with("--road-detail="):
 			opts["road_detail"] = clampi(int(arg.substr(14)), 0, 2)
+		elif arg.begins_with("--flood="):
+			opts["flood"] = maxf(0.0, float(arg.substr(8)))
+		elif arg.begins_with("--flood-detail="):
+			opts["flood_detail"] = clampi(int(arg.substr(15)), 0, 2)
 		elif arg.begins_with("--sites="):
 			opts["sites"] = maxi(0, int(arg.substr(8)))
 		elif arg.begins_with("--site-stage="):

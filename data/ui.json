@@ -573,6 +573,77 @@
 				}
 			},
 			{
+				"_comment": "Doc 05's diagnostic half, logged — doc 91 §18.2's named exception, closed. Seven rows and four sentences: the three `*_failed` types share one notify_id because a failed pump, plant and source are the same sentence and the same job. `water_tank_low` is here and NOT in data/notifications.json: a tank drawing on reserve belongs in the ledger, not on a lock screen.",
+				"type": "water_capacity_shortage",
+				"category": "water",
+				"notify_id": "water_capacity_short",
+				"state": "warning",
+				"key": "zone",
+				"args": {
+					"zone": "zone"
+				}
+			},
+			{
+				"type": "water_tank_low",
+				"category": "water",
+				"notify_id": "water_tank_low",
+				"state": "warning",
+				"key": "zone",
+				"args": {
+					"zone": "zone"
+				}
+			},
+			{
+				"type": "water_tank_empty",
+				"category": "water",
+				"notify_id": "water_tank_empty",
+				"state": "critical",
+				"key": "zone",
+				"args": {
+					"zone": "zone"
+				}
+			},
+			{
+				"type": "water_pump_failed",
+				"category": "water",
+				"notify_id": "water_node_failed",
+				"state": "critical",
+				"key": "node",
+				"args": {
+					"node": "node"
+				}
+			},
+			{
+				"type": "water_treatment_failed",
+				"category": "water",
+				"notify_id": "water_node_failed",
+				"state": "critical",
+				"key": "node",
+				"args": {
+					"node": "node"
+				}
+			},
+			{
+				"type": "water_source_failed",
+				"category": "water",
+				"notify_id": "water_node_failed",
+				"state": "critical",
+				"key": "node",
+				"args": {
+					"node": "node"
+				}
+			},
+			{
+				"type": "water_contamination_cleared",
+				"category": "water",
+				"notify_id": "water_contamination_cleared",
+				"state": "normal",
+				"key": "zone",
+				"args": {
+					"zone": "zone"
+				}
+			},
+			{
 				"type": "incident_created",
 				"category": "incidents",
 				"notify_id": "incident_started",
@@ -613,6 +684,15 @@
 				"args": {}
 			},
 			{
+				"_comment": "The rung BEFORE the collapse. Doc 10 latches this once per tile as the surface runs out, and it was read by tests only — so the only warning a player ever had that a road was about to fail was the road failing. Log-only and deliberately: it is a maintenance job, not a lock-screen event, and `key: tile` gives the row a camera jump the shell's locator already resolves.",
+				"type": "road_condition_critical",
+				"category": "incidents",
+				"notify_id": "road_wearing_out",
+				"state": "warning",
+				"key": "tile",
+				"args": {}
+			},
+			{
 				"type": "credit_line_engaged",
 				"category": "economy",
 				"notify_id": "treasury_low",
@@ -638,6 +718,26 @@
 				"notify_id": "austerity",
 				"state": "warning",
 				"args": {
+					"time": "@time"
+				}
+			},
+			{
+				"_comment": "The other half of austerity, and of the relief that pays for it. `austerity_entered` was announced and `austerity_exited` was read by tests only, so the game told the player when the belt tightened and never when it came off; `relief_grant_awarded` is money arriving in the treasury that nothing anywhere mentioned. Both are log-only — the budget sheet is where a player goes to argue with numbers, and neither is worth a push.",
+				"type": "austerity_exited",
+				"category": "economy",
+				"notify_id": "austerity_lifted",
+				"state": "normal",
+				"args": {
+					"time": "@time"
+				}
+			},
+			{
+				"type": "relief_grant_awarded",
+				"category": "economy",
+				"notify_id": "relief_grant",
+				"state": "normal",
+				"args": {
+					"amount": "@money:amount",
 					"time": "@time"
 				}
 			},
@@ -703,8 +803,72 @@
 				"category": "weather",
 				"notify_id": "road_flooded",
 				"state": "warning",
+				"key": "cell",
 				"args": {
 					"depth": "depth_mm"
+				}
+			},
+			{
+				"_comment": "Doc 07 §2.4's flood, logged (defect A91-D-26). The four rows below are the whole of what a ledger should carry about standing water, and the rule that picked them is written out in data/notifications.json's `_comment_flood`: NARRATE the bands that change what the player can do, DRAW the ones that only change how the street looks. So 100 mm (vehicles start stalling) and 200 mm (civilian traffic is turned back) are here, 40 mm is not, and the all-clear is `road_reopened` rather than `flood_level_changed{band: dry}` — `dry` fires after any shower at all, `road_reopened` fires only for a cell that was actually shut. `key: cell` gives the row an identity to coalesce on and, once the shell's locator learns the key shape, something to jump to; a locator that cannot place it simply offers no jump.",
+				"type": "flood_level_changed",
+				"match": {
+					"band": "standing_water"
+				},
+				"category": "weather",
+				"notify_id": "flood_started",
+				"state": "warning",
+				"key": "cell",
+				"args": {
+					"depth": "depth_mm"
+				}
+			},
+			{
+				"type": "flood_level_changed",
+				"match": {
+					"band": "flooded"
+				},
+				"category": "weather",
+				"notify_id": "flood_deepening",
+				"state": "critical",
+				"key": "cell",
+				"args": {
+					"depth": "depth_mm",
+					"time": "@time"
+				}
+			},
+			{
+				"type": "road_reopened",
+				"category": "weather",
+				"notify_id": "road_reopened",
+				"state": "normal",
+				"key": "cell",
+				"args": {
+					"time": "@time"
+				}
+			},
+			{
+				"_comment": "The storm CELL's own arc (doc 07 §2.7.1). `weather_changed` says the sky turned; this says the cell that carries the strikes arrived over the city and later left it, which is a different fact and the one that decides whether a transformer is about to be hit. Two rows, matched on the phase, because `peak` and `trailing` are pacing internals the player has no verb for.",
+				"type": "storm_phase_changed",
+				"match": {
+					"phase": "lead_in"
+				},
+				"category": "weather",
+				"notify_id": "storm_cell_formed",
+				"state": "warning",
+				"args": {
+					"time": "@time"
+				}
+			},
+			{
+				"type": "storm_phase_changed",
+				"match": {
+					"phase": "ended"
+				},
+				"category": "weather",
+				"notify_id": "storm_cell_passed",
+				"state": "normal",
+				"args": {
+					"time": "@time"
 				}
 			}
 		]

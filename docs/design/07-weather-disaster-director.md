@@ -267,9 +267,23 @@ Flood depth multiplies with the weather-wide `road_speed_mult`: a flooded tile d
 
 For consumers that want a scalar rather than a band: `flood_saturation(tile) = clamp(depth_mm / 350.0, 0, 1)` (0 = dry, 1 = impassable). `flood_saturation_city` is the area-weighted mean over LOW tiles. Roads (doc 10) uses this for its ground-condition term.
 
-> **THE SIM HALF SHIPS AND THE PLAYER NEVER SEES IT (verified 2026-08-20, doc 91 A91-D-26).** `sim/weather/flood_field.gd` is live, not a stub — a two-real-hour soak logged **460 `flood_level_changed`** and 92 `road_closed_flood`, and doc 10's closures fire off it correctly. But `flood_level_changed` is consumed by **nothing**: `game/render/weather_fx.gd:305` matches exactly three types (`weather_changed`, `lightning_strike`, `lightning_flash_cosmetic`), `game/main.gd`'s `_on_sim_batch` translator has no arm for it, and it appears in neither `data/ui.json.event_log.events` nor `data/notifications.json.bindings`. **Standing water is integrated continuously and is never drawn, never announced and never logged.** The only way a player learns a tile flooded is indirectly, through `road_closed_flood` — which *is* wired to both the notification router and the event log, and which only fires at the 350 mm band. The three bands below it are invisible.
+> **THE SIM HALF SHIPPED AND THE PLAYER NEVER SAW IT — ✅ CLOSED 2026-08-20 (doc 91 A91-D-26, report 98 RR-53).** `sim/weather/flood_field.gd` was live, not a stub — a two-real-hour soak logged **460 `flood_level_changed`** and 92 `road_closed_flood`, and doc 10's closures fired off it correctly. But `flood_level_changed` was consumed by **nothing**: `game/render/weather_fx.gd` matched exactly three types (`weather_changed`, `lightning_strike`, `lightning_flash_cosmetic`), `game/main.gd`'s `_on_sim_batch` translator had no arm for it, and it appeared in neither `data/ui.json.event_log.events` nor `data/notifications.json.bindings`. **Standing water was integrated continuously and was never drawn, never announced and never logged.** The only way a player learned a tile had flooded was indirectly, through `road_closed_flood` — which *is* wired to both routers, and which only fires at the 350 mm band. The three bands below it were invisible.
 >
-> This is doc 04's "a subsystem can be fully shipped and wholly invisible" gap, in doc 07. The cheapest fix is a `flood_level_changed` arm in `WeatherFX` that raises the existing `sc_wetness` global on the affected tiles, or a per-tile channel on the ground surface; doc 91 §20.2 sizes it M and ranks it eighth.
+> **What ships now.** The band table above is unchanged in every number; nothing in `sim/` moved and the state hashes are identical (RR-53). What changed is that all five bands now reach the player, and each reaches them by the route that suits it:
+>
+> | band | depth | how the player learns |
+> |---|---|---|
+> | dry/wet | 0–39 mm | — |
+> | nuisance | 40–99 mm | **drawn**: puddles in `game/render/flood_view.gd`. Not narrated, on purpose |
+> | standing water | 100–199 mm | drawn, **event log** (weather), **push** `flood_started` (P2) |
+> | flooded | 200–349 mm | drawn, **event log**, **push** `flood_deepening` (P1) |
+> | impassable | 350 mm+ | drawn (the sheet stands above the kerb), **push** `road_flooded` — already wired — and `road_reopened` on the way down, which nothing consumed before |
+>
+> The rule behind that column, adopted as doc 93's event ruling: **narrate the bands that change what the player can DO; draw the ones that only change how the street looks.** A film of water in the gutter is something to see, not something to be told, and its consumer is the renderer.
+>
+> **The renderer is `game/render/flood_view.gd`, not a `WeatherFX` arm.** The cheap fix this note used to propose — raise `sc_wetness` on the affected tiles — cannot be done there and would be wrong if it could: `sc_wetness` is a **project shader global**, one float for the whole world, and `WeatherFX` owns it as §2.9's city-wide rain integrator. A flood is the opposite shape of data — per land block, outliving the rain that caused it by hours, routinely at different bands a hundred metres apart. Folding it into the global would flood the whole city or none of it. So the flood is geometry: one MultiMesh of 8 m quads over the flooded cell's **road tiles** (this section's own rule — a 128 m sheet over the block would put standing water through every building on it), one draw call while water stands and none when the city is dry.
+>
+> **The renderer's query on load is this section's persisted field, and there is no render-side save state.** `WeatherSystem.serialize()` already writes `"flood": flood.serialize()` → `{"tiles": {cell: depth_mm}}`, so a city resumed at the peak of a flood has the answer in hand before the first frame; the view takes that dictionary through `prime()` and snaps to it. Waiting for the next band crossing would have been wrong twice over — on a draining field the next crossing can be a game-hour away, and a render-side copy of a sim fact can only ever disagree with it.
 
 ### 2.5 Forecast system
 

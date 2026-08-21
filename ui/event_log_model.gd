@@ -65,7 +65,14 @@ const _DEFAULT_CATEGORIES := ["all", "power", "water", "incidents", "economy", "
 ## Locator kinds the shell's `_alert_world_pos` actually resolves. A `zone` or
 ## an `edge` is a real key for coalescing and a useless one for a camera jump,
 ## so it is never offered as one.
-const FOCUSABLE_KINDS := ["tile", "block_id", "building"]
+##
+## `cell` is doc 07 §2.4's FLOOD cell — `"B<bx>,<bz>"` for a land block,
+## `"<tx>,<tz>"` for a tile (`FloodField.block_key_of` / `key_of`). It is here
+## because a flooded street is the one thing in the weather category a player
+## would want to jump to; a shell whose locator does not yet know the shape
+## returns null and the row simply carries no `Jump to it`, which is this
+## model's standing rule and not a special case for floods.
+const FOCUSABLE_KINDS := ["tile", "block_id", "building", "cell"]
 
 var _cfg: UIConfig
 var _log: Dictionary = {}

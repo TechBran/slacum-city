@@ -1051,7 +1051,7 @@ Doc 91 was written post-Wave-4 against a 1,249-test tree and patched piecemeal f
 |---|---|---|
 | roster row → textured asset | **`tests/test_asset_completeness.gd`** (new; 19 tests, 3,167 asserts) | **green at HEAD**, nothing xfail'd |
 | `cmd_*` → player door | doc 91 §17, doc 92 §17.6.1 | 18 of 23; A91-D-24 |
-| event name → consumer | doc 91 §18 | 58 of 121 wired; A91-D-26 |
+| event name → consumer | doc 91 §18 | 58 of 121 wired; A91-D-26 — **closed in RR-48**, and the instrument is now `tests/test_event_matrix.gd` |
 | screen × box × a11y setting | `tools/ui_preview.gd --audit --strict`, 12 sweeps | 5 of 12; A91-D-21/22/23, and A91-D-29 at 640 × 340 — the box A2 names and no `BOXES` list contains. The harness also covers only 14 of 15 screens, A91-D-28 |
 
 The asset test is the shape the other three should take, and its own first run is the argument: it failed twice before it passed, and **both failures were in the sweep rather than in the tree** — an equality rule where the invariant is monotonicity (twenty LOD1 meshes are legitimately shorter than their LOD0, because `lod1_volume_keep_frac` drops the non-signature roof props, and it is safe only because `CityView` builds `_far_scale` inside a `lod == 0` arm), and a page-group reader attributed to the wrong class. A join test that never disagrees with the author is a join test that was written from the same assumption as the code.
@@ -1263,3 +1263,58 @@ Filed as **A91-D-30 (High)**. It is not fixed here: this wave is hash-neutral by
 **Why the suite never caught it.** Every existing save → load → advance proof saves inside the first game-day: `tests/test_milestone1.gd` at 2 h, `test_save_service.gd` shorter still. The determinism gate is real and the window it covers is smaller than a day.
 
 **Hash-neutrality of this wave, stated for the record.** `tools/profile_sim.gd --hash-only` before and after, both cities: founding `18e70625e633c254…` / `4c3c52cdb4c5a3cc…`, benchmark `d6b2509c179987d3…` / `bf8dc7282758843b…`. Unchanged.
+
+## 24. WAVE 11 — the flood gets drawn, and the event matrix gets a rule (binding)
+
+### RR-53 — Standing water is GEOMETRY, not a global; and an event that describes a player-visible state change needs a consumer or a written exemption (docs 07 §2.4, 11 §2.9b/§7.3e/§7.3f, 91 §18 + A91-D-26, 93 §L1)
+
+Two findings, one branch, because the second is the general form of the first.
+
+**The flood.** `sim/weather/flood_field.gd` has been integrating `depth_mm` on the utilities cadence since the weather system shipped — **460 `flood_level_changed` in a two-real-hour soak**, doc 10 closing edges off it correctly — and **nothing in the tree matched that event type.** Not `game/render/weather_fx.gd` (three types, and that is not one of them), not `main.gd`'s translator, not `data/ui.json.event_log.events`, not `data/notifications.json.bindings`. The only evidence a player ever had was `road_closed_flood`, which fires at the 350 mm band; the three bands below it were invisible. Doc 04's *"a subsystem can be fully shipped and wholly invisible"* gap, in doc 07.
+
+**The cheap fix doc 07 §2.4 proposed is the wrong fix, and this is the ruling.** The note said: raise `sc_wetness` on the affected tiles. It cannot be done and would be wrong if it could. **`sc_wetness` is a project shader global — one float for the entire world — and `WeatherFX` owns it as doc 11 §2.9's city-wide rain integrator.** A flood is the opposite shape of data: per land block, outliving the rain that caused it by hours (drainage is 40 mm/h against an inflow that stops when the segment does), and routinely at different bands on blocks a hundred metres apart. Folding it into the global floods the whole city or none of it.
+
+> **RULING: standing water is GEOMETRY.** One MultiMesh of 8 m quads over the flooded cell's ROAD tiles — doc 07 §2.4's own rule, *only road tiles accumulate*, which also means a 128 m sheet over the land block would put water through every building on it. `game/render/flood_view.gd` + `game/shaders/flood.gdshader`. **+1 draw call while water stands anywhere and +0 when the city is dry.**
+
+Three sub-rulings fell out of building it, and all three were found by looking at a screenshot rather than by reasoning:
+
+* **(a) Nothing in this surface may be a function of the INSTANCE.** Two drafts had a per-tile term — a UV-space gutter bias, then a per-tile hash seed phasing the puddle noise so "which corner holds the last puddle" would be a fact about the city. Both are reasonable and both drew the same thing: **a wet 8 m LATTICE over the whole city — the tile grid, in water.** Coverage has to be a function of WORLD position for two adjacent quads to read as one puddle, which is the rule `water.gdshader` already follows for the canal. `INSTANCE_CUSTOM` therefore carries two channels and two zeroes, and the picture is a pure function of the sim with no seed to persist.
+* **(b) Coverage, not height, is where depth reads — and it is not linear in depth.** 350 mm on an 8 m tile is a few pixels of geometric lift at the camera's pitch band. Depth drives how much of the tile is wet. And doc 07's bands are 0–39 / 40–99 / 100–199 / 200–349 / 350+, so `standing water` — where vehicles start stalling — is only **0.29** of the way to the divisor: a linear ramp put a third of a tile under water at the depth the sim was already stalling traffic on. `pow(water01, 0.45)` puts the four bands at roughly 20 / 50 / 90 / 100 % of the tile, which is what the bands MEAN.
+* **(c) A wet road at night is LIGHTER than a dry one, and the first cut had it backwards.** Measured at 22:00: a 490 mm flood over unlit asphalt was **invisible**, because a `night_mult` borrowed from the canal put the water below the road it was standing on. Water at night has stopped diffusing and started mirroring. Report NIGHT-1's three terms, aimed the other way: `night_mult 0.80`, a `night_lift` off the sampled `sc_fog_tint`, and a `night_glow` skyglow floor. This is the shot the feature exists for and it was one constant away from shipping black.
+
+**The load path is doc 07's own persisted field, and the renderer persists nothing.** `WeatherSystem.serialize()` already writes `"flood": flood.serialize()` → `{"tiles": {cell: depth_mm}}`. The view takes that dictionary through `prime()` and `snap()`. Waiting for the next band crossing would be wrong twice: on a draining field the next crossing can be a game-hour away, and a render-side copy of a sim fact can only ever disagree with it. `tools/flood_preview.gd --reload` round-trips the weather section through JSON, throws the live view away, builds a new one and primes it — a city that has consumed **zero** flood events, with the flood on screen.
+
+**Measured** (`tools/profile_frame.gd --flood=350` vs `--flood=0`, bench city, balanced, 1920×1080, three runs × 400 frames). 350 mm on every LOW block is the worst case the layer can be asked for — **21 cells, 1,827 tiles, +3,654 primitives**:
+
+| pose | Δ draw calls | Δ rs gpu | Δ rs cpu |
+|---|---|---|---|
+| Z0 | **+1** | +0.151 ms | 0.000 |
+| Z1 | **+1** | +0.115 ms | 0.000 |
+| Z2 | **+1** | +0.127 ms | 0.000 |
+
+Against the branch's +6 draw-call budget at Z2: **+1**. And the fragment ladder (`--flood-detail=0/1/2`) reads 2.077 / 2.130 / 2.071 ms at Z0 against 1.920 dry — the three rungs are inside each other's ±0.05 ms run-to-run spread, so **on a desktop GPU the layer's cost is the transparent blend and the overdraw, not the arithmetic.** The rung stays because the Fold frame is fragment-bound and its ALU is a different machine, but it is a governor lever that desktop numbers do not justify. On the device list.
+
+**The general form: doc 93 §L1's event ruling.** Doc 91 §18's *43 consumed by nothing* is unusable as a rule — most of the 43 are a cascade trace, a treasury credit, a scheduler phase boundary. The narrowing, adopted:
+
+> **Every event whose payload describes a PLAYER-VISIBLE state change must have a consumer or a written exemption. Everything else carries a one-line classification and no consumer is expected. And a RENDERER is a consumer.**
+
+Which yields the design line: **narrate the bands that change what the player can DO, draw the ones that only change how the city looks.** Doc 07's 40 mm nuisance band has `flood_view.gd` and nothing else, for ever.
+
+**Re-walking the matrix under the rule found that the count was already stale, and that the real remainder was in doc 05.** The scan is now `tests/test_event_matrix.gd` (doc 11 §7.3f) and prints **138 types emitted, 78 consumed, 60 classified, 0 unexplained**. 138 against 121 is mostly one line of scanner — `_emit(&"water_freeze_break" if main.frozen else &"water_main_break", …)` puts a real type in an `else` branch, and a scan taking the first literal calls `water_main_break` un-emitted while two routers are wired to it. Three of the 43 (`grid_feeder_routed`, `grid_node_commissioned`, `grid_node_retired`) had acquired a `main.gd` arm in Wave 10, **the day after the defect was filed**. That is the argument for the test and not for the numbers.
+
+Eleven types were wired in this pass and every one of them is an ASYMMETRY — a state whose onset was announced and whose end was not, or a warning that only existed after the thing it warned about had happened:
+
+| wired | the asymmetry |
+|---|---|
+| `flood_level_changed` | A91-D-26's headline |
+| `road_reopened` | the closure was announced; the reopen was not |
+| `storm_phase_changed` (lead-in / ended) | `weather_changed` says the sky turned; this says the cell carrying the strikes arrived |
+| `water_capacity_shortage` | doc 05 §2.9: **no repair job exists** — the only water alert whose answer is BUILD, and the quietest thing in the game |
+| `water_tank_low` / `water_tank_empty` | a zone drawing on reserve, then living on what it makes |
+| `water_pump_failed` / `water_treatment_failed` / `water_source_failed` | `water_pump_tripped`, a recoverable lockout, was wired; a FAILURE was not. One notify_id for the three: a failed pump, plant and source are the same sentence and the same job |
+| `water_contamination_cleared` | `water_contamination_started` was wired; the boil notice lifting was not |
+| `austerity_exited` | the belt tightening was announced; the loosening was not |
+| `relief_grant_awarded` | money arriving in the treasury that nothing mentioned |
+| `road_condition_critical` | the only warning that a road was about to fail was the road failing |
+
+**Hash-neutral, and here are the numbers.** No `sim/`, no `data/weather.json`, no balance table was touched. `tools/profile_sim.gd --hash-only` at this branch: founding city `18e70625e633c254…` / `4c3c52cdb4c5a3cc…`, benchmark city `d6b2509c179987d3…` / `bf8dc7282758843b…` — identical to RR-47's recorded values. The 28 gates are untouched.

@@ -96,6 +96,9 @@ document whose only value is its record must not quietly restate its own past.
 | 06 Incidents & dispatch | 13 | 13 | 0 | 0 | 0 | §2.6 and §2.12 PARTIAL → SHIPPED |
 | 07 Weather & director | 7 | 6 | **1** | 0 | 0 | **§2.4 SHIPPED → PARTIAL (A91-D-26)** |
 | 08 Offline & persistence | 15 | 12 | 2 | 1 | 0 | §2.13 ABSENT → PARTIAL (A91-D-27); **+2 rows 2026-08-20 (§2.14, §2.15 — neither section had ever been counted)**, both SHIPPED |
+
+| 07 Weather & director | 7 | 7 | 0 | 0 | 0 | §2.4 PARTIAL → **SHIPPED again 2026-08-20** — A91-D-26 closed, the flood is drawn, announced and logged (report 98 RR-53) |
+| 08 Offline & persistence | 13 | 10 | 2 | 1 | 0 | §2.13 ABSENT → PARTIAL (A91-D-27) |
 | 09 Map, land, starter city | 14 | 14 | 0 | 0 | 0 | +1 row (§2.14, the curriculum); the old count's 1 ABSENT was §2.13, **fixed 2026-08-19 in the row and never in the count** |
 | 10 Roads & traffic | 15 | 14 | 1 | 0 | 0 | §2.13 PARTIAL → SHIPPED — again, moved in the row and never in the count |
 | 11 Rendering & performance | 21 | 21 | 0 | 0 | 0 | +6 rows; §2.13 PARTIAL → SHIPPED (the governor ships) |
@@ -378,7 +381,7 @@ shipped and wholly invisible**, and the two facts do not contradict each other.
 | 2.1 | Weather state machine | SHIPPED | `WeatherSystem` + `WeatherTimeline`; `test_weather_system.gd` |
 | 2.2 | Effect multiplier table | SHIPPED | `WeatherTables`; `test_weather_integration.gd` |
 | 2.3 | Storm cell | SHIPPED | `StormCell` |
-| 2.4 | Localized flooding | ~~SHIPPED~~ **PARTIAL 2026-08-20 — A91-D-26** | The simulation half is exactly as this row said: `FloodField` is live and the soak logged 460 `flood_level_changed`. The re-audit's event matrix (§18) asked the next question and the answer is **nothing consumes that event** — not `main.gd`'s translator, not `game/render/weather_fx.gd` (which matches only `weather_changed` / `lightning_strike` / `lightning_flash_cosmetic`), not `data/ui.json`'s event log, not `data/notifications.json`. Standing water is simulated at 460 events a session and **is never drawn, never announced and never logged**. The player learns about it only indirectly, through `road_closed_flood`, which *is* wired to both the notification router and the event log. Doc 04's "fully shipped and wholly invisible" gap, in doc 07. |
+| 2.4 | Localized flooding | ~~SHIPPED~~ ~~PARTIAL~~ **SHIPPED 2026-08-20 — A91-D-26 CLOSED** | The simulation half was always exactly as the first grade said: `FloodField` is live and the soak logged 460 `flood_level_changed`. The re-audit's event matrix (§18) asked the next question and the answer was **nothing consumes that event**. It does now, by three routes and on purpose: **drawn** by `game/render/flood_view.gd` (doc 11 §2.9b — one MultiMesh over the flooded block's ROAD tiles, +1 draw call at every pose, +0.15 ms GPU at Z0 in the worst case the layer can be asked for); **logged** at the 100 mm and 200 mm bands plus `road_reopened`; **pushed** as `flood_started` (P2) and `flood_deepening` (P1), with a once-per-session toast on the first band a player meets. The 40 mm nuisance band is drawn and deliberately never narrated — doc 93's event ruling in one line: *narrate the bands that change what the player can do, draw the ones that only change how the street looks.* Hash-neutral: no `sim/`, no `data/weather.json`, both cities' state hashes unchanged. |
 | 2.5 | Forecast | SHIPPED | `WeatherForecast`; `test_weather_forecast.gd` |
 | 2.6 | Disaster Director v1 | SHIPPED | `DisasterDirector` + `IncidentRequestSink`; `test_weather_director.gd` |
 | 2.7 | MVP severe thunderstorm | SHIPPED | `sim/weather/severe_thunderstorm.gd`; `test_weather_lightning.gd` |
@@ -764,7 +767,7 @@ prefixed one names its document.**
 | **A91-D-23** | Medium | **The HUD top bar does not re-flow at the landscape box under large targets.** At 880×400 with `--text-scale=1.3 --large-targets`, **all 49 states are dirty** (220 findings, against 73 at the other four boxes): `HUDLayer/LeftRail/SpeedButton` overlaps `HUDLayer/TopBar/Chips/Row` in **98** findings and `HUDLayer/OverlayRail/Button` in **49** — i.e. every state, both rails, every time. 880×400 is doc 12 §2.3's own reference box and the Fold's folded/landscape shape, so this is not an exotic geometry. Separate from A91-D-21 because it is a different layout and a different fix: the chip column is a stacking problem, this is the top bar not yielding height to the rails. |
 | **A91-D-24** | Low | **`CitySim.cmd_recall_unit` has zero callers anywhere in the repository.** Not a UI door, not `tools/playtest.gd`, not `tools/qa_soak.gd`, not a `GoalSystem` kind — and not a test, because `tests/test_incidents_dispatch.gd:205` exercises recall by calling `system.dispatch.cmd_recall_unit(unit_id)` on the `DispatchSystem` directly and never touches the `CitySim` wrapper (`sim/city_sim.gd:2720-2721`). Doc 06 §2.11 lists recall as a player verb. The consequence is small and exact: a player who dispatches a unit to the wrong incident **cannot take it back**, and the two-line wrapper that would let them is already written. §17 has the matrix. |
 | **A91-D-25** | Low | **Doc 05 §2.14 quotes a channel value the store does not hold.** §2.14 states `water_demand_commercial = 0.45 at h22` as a reproducible input; `data/time.json`'s authored keyframes `[21, 0.65]` and `[23, 0.35]` interpolate to **0.50**, and report 98 C-33 makes `data/time.json` the store. `tests/test_water_data.gd:51-55` already records the disagreement in a comment and asserts the store's 0.50; the §2.14 worked examples still pass because they are driven from injected channels rather than from the store. **It is a doc quote, not a code bug** — but it has stood since the R-09/R-10 rescale, and a worked example whose stated input is not the shipped input is a worked example that cannot be used to debug the shipped system. Fix is one number in doc 05, or two keyframes in `data/time.json` if 0.45 was the intent. |
-| **A91-D-26** | Medium | **Forty-three sim event types reach no consumer at all, and one of them is a whole shipped feature.** §18's event matrix crossed all **121** type names `sim/` produces against `game/main.gd`'s translator, `game/audio/audio_events.gd`, `game/render/*`, `game/notifications/`, `ui/incident_model.gd`, `sim/progression/goal_system.gd`, `data/ui.json.event_log.events` and `data/notifications.json.bindings`. **Forty-three are consumed by nothing in any of them, and twenty more only by `tests/` or `tools/` — so 58 of 121 are wired.** Most are harmless bookkeeping. **`flood_level_changed` is not**: doc 07 §2.4's `FloodField` fires it 460 times in a two-hour soak and `game/render/weather_fx.gd` matches only `weather_changed`, `lightning_strike` and `lightning_flash_cosmetic`, so **standing water is simulated continuously and never drawn, never announced and never logged** — the player learns of it only through `road_closed_flood`, which *is* wired to both the router and the event log. Two more worth naming: `grid_node_commissioned` / `grid_node_rerated` / `grid_node_retired` / `grid_feeder_routed` are doc 04's four topology announcements and `main.gd` reacts to `grid_component_placed` instead, so a **feeder re-route moves no pixel**; and `road_block_stamped` (`sim/roads/road_network.gd:1571`) is a near-twin of `block_roads_stamped` (`sim/city_sim.gd:2504`) with only the latter in `main.gd:457` — a naming collision of exactly the pump-station class, currently harmless only because `road_graph_changed` covers the same rebuild. **The reverse direction is clean**: every event type named in `data/ui.json` and `data/notifications.json` is emitted somewhere in `sim/`, so there are no consumed-but-never-emitted rows. |
+| **A91-D-26** | ~~Medium~~ **✅ CLOSED 2026-08-20** | **Forty-three sim event types reached no consumer at all, and one of them was a whole shipped feature.** §18's event matrix crossed all **121** type names `sim/` produced against `game/main.gd`'s translator, `game/audio/audio_events.gd`, `game/render/*`, `game/notifications/`, `ui/incident_model.gd`, `sim/progression/goal_system.gd`, `data/ui.json.event_log.events` and `data/notifications.json.bindings`. **Forty-three were consumed by nothing in any of them, and twenty more only by `tests/` or `tools/` — so 58 of 121 were wired.** Most are bookkeeping. **`flood_level_changed` was not.** **Resolution (report 98 RR-48, doc 93 §K1).** The matrix was RE-WALKED at HEAD by a scanner that is now `tests/test_event_matrix.gd` rather than a one-off — **138 types, 78 consumed, 60 classified, zero unexplained** — and the re-walk found three things the counted-once version could not. (a) **The list was already stale by three rows**: `grid_feeder_routed`, `grid_node_commissioned` and `grid_node_retired` acquired a `main.gd` arm in Wave 10, the day after this defect was filed, so a feeder re-route already moved pixels. `grid_node_rerated` is the fourth and is classified `player_initiated` — it fires only on an upgrade the player bought, and `PowerInfraView` re-polls topology on its own timer. (b) **The flood is drawn, announced and logged** — see §2.4's row and doc 11 §2.9b. (c) **The genuine remainder was in doc 05, not doc 07**, exactly where §18.2 said it would be: `water_capacity_shortage`, `water_tank_low`, `water_tank_empty`, the three `water_*_failed` and `water_contamination_cleared` were all latched, player-actionable states with no wired sibling, and all seven are now in the log (four of them in the push table too). `water_capacity_shortage` is the one worth reading twice: doc 05 §2.9 says out loud that no repair job exists for it, so it is the only water alert whose answer is BUILD, and it was the quietest thing in the game. Three more asymmetries fell out with them — `road_reopened` (the closure was announced and the reopen was not), `austerity_exited` (the belt tightening was announced and the loosening was not) and `road_condition_critical` (the only warning a player had that a road was about to fail was the road failing). `road_block_stamped` stays classified `covered`: it is the near-twin of `block_roads_stamped` and `road_graph_changed` rebuilds the same street. **The reverse direction is still clean** and is now a test that fails closed (doc 11 §7.3f test 48). |
 | **A91-D-27** | Medium | **The notification budget's state resets on every launch.** `NotificationRouter.serialize()` / `deserialize()` (`game/notifications/notification_router.gd:634-641`) are complete, versioned (`section_version: 1`) and tested — and **called by nothing outside `tests/`**. `game/save_service.gd` registers exactly three sections (`CITY_SECTION`, `UI_SECTION`, `META_SECTION`, at `save_service.gd:213-225` and `:361-367`) and the budget is not one of them. Consequence: token ledgers, per-type cooldown keys and quiet-hours state are rebuilt from zero at boot, so doc 08's global cap can be spent twice inside its own window across a restart, and a cooldown a player has already "used up" is silently refunded. This is the narrowed remainder of doc 08 §2.13 — the *policy* half now reaches the router (`main.gd:1131`), only the *state* half does not persist. The fix is the four lines `SaveService.ui_provider` needed. |
 | **A91-D-28** | Medium | **S13 has no preview state, so the event log is the one screen the audit has never opened.** `tools/ui_preview.gd::SCREENS` holds 49 named states and `grep -n "event_log\|EventLog" tools/ui_preview.gd` returns **nothing** — there is no branch in `_apply()` that calls `EventLog.open()`, so `PanelLayer/EventLog/Panel` has never been laid out, measured or photographed by the sweep at any box or any accessibility setting. Its **chip** is audited constantly, because the chip is a sibling of every other state — which is exactly how D-12 was found, incidentally, a wave after S13 landed. The panel behind it is unmeasured. Doc 12 §2.2 lists fifteen screens; the sweep covers fourteen, and the claim "all fifteen" should not be made until this is one state and one branch. It is the cheapest row in this table: two lines beside the `alerts` state that sits next to it in `SCREENS`. |
 | **A91-D-29** | **High** | **A control is off the bottom of the screen at 640 × 340 at DEFAULT text scale — and 640 × 340 is doc 12 §2.18 A2's own reference box, tested by nothing.** `TitleLayer/TitleScreen/Center/Panel/Body/Confirm/Actions/Confirm_cancel "CANCEL"` lays out at y 318.5 with height 96 against a 340-tall viewport: **26 dp past the edge, at 100 %, with large targets off.** It is the CANCEL half of the title screen's *"start a new city and lose this one?"* confirmation — so on that box a player can commit to a destructive action and cannot back out of it with the button. (Android Back still dismisses the confirm, as with A91-D-22, which is the only reason this is not data loss.) **Why nothing caught it, and this is the sharp part:** 640 × 340 is not an invented box. `data/ui.json.layout.min_safe_box_dp` **is `[640, 340]`** — the project authors its own minimum safe box, doc 12 §2.18's A2 names it as the size the layout must survive 150 % at, and **it appears in no `BOXES` list, no sweep and no test**: `tests/test_ui_audit.gd::BOXES` covers 360×800, 412×915, 794×924, 880×400 and 1280×720, and `tools/ui_preview.gd` defaults to 880×400. The one box the data file calls the floor is the one box nothing runs, and it was measured for the first time by this audit. At 150 % + large targets the same box produces 49/49 dirty states, 228 overlaps and 72 offscreen findings, with `HUDLayer/LeftRail/SpeedButton` clipped to y −70 … 56 against a 340-tall box in every state. Add 640 × 340 to `BOXES` in the same commit that fixes the layout, or the box the requirement is written against stays the box nothing runs. |
@@ -1053,42 +1056,108 @@ from `ProgressionSystem`, `block_ready` from `DevelopmentController`). There are
 **no consumed-but-never-emitted rows**, which is the failure mode report RR-1
 was written for and doc 11 §7.2 test 27 guards on doc 04's side.
 
-### 18.2 The direction that is not
+### 18.2 The direction that was not — **re-walked and closed 2026-08-20**
 
-| Bucket | Count | Reading |
+The original count, kept because the delta is the finding:
+
+| Bucket | Count (2026-08-20, first walk) | Reading |
 |---|---|---|
 | Consumed by shell / UI / goals / a data router | **58** | wired |
 | Consumed **only** by `tests/` or `tools/` | **20** | measurable, invisible in play |
 | Consumed by **nothing at all** | **43** | dead wire |
 
-The 43: `block_road_access_changed`, `block_surveyed`, `building_ignited`,
-`building_priority_changed`, `building_repaired`, `development_paused`,
-`development_phase_charged`, `development_phase_started`, `director_event_ended`,
-`director_recovery_mode`, `director_scripted_suppression`, `director_suppressed`,
-`event_completed`, `event_phase_end`, `event_scheduled`, `fire_spread`,
-`fleet_station_retired`, `fleet_station_synced`, **`flood_level_changed`**,
-`grid_feeder_routed`, `grid_node_commissioned`, `grid_node_rerated`,
-`grid_node_retired`, `job_cancelled`, `policy_changed`,
-`progression_milestone`, `road_block_stamped`, `road_closure_opened`,
-`road_demolished`, `road_removed`, `road_upgrade_started`, `road_upgraded`,
-`route_ready`, `storm_phase_changed`, `storm_prep_action`, `treasury_credited`,
-`unit_commissioned`, `unit_decommissioned`, `upgrade_started`,
-`utility_corridor_extended`, `water_component_commissioned`,
-`water_component_retired`, `water_component_upgraded`.
+**And the count after the ruling** (`tests/test_event_matrix.gd`, which is now the
+instrument — the numbers below are printed by the suite, not by an author):
 
-The 20 that only `tests/` or `tools/` read: `congestion_updated`,
-`construction_job_preempted`, `director_event_scheduled`,
-`director_event_started`, `event_phase_begin`, `goal_progress`, `job_started`,
-`power_restored_by_repair`, `road_built`, `road_closure_cleared`,
-`road_condition_critical`, `road_job_rejected`, `road_reopened`,
-`route_invalidated`, `storm_incident_downgraded`, `water_contamination_cleared`,
-`water_incident_raised`, `water_main_isolated`, `water_source_failed`,
-`water_treatment_failed`. Most are measurement seams and belong there; the
-water five are the exception, and they are the diagnostic half of a subsystem
-whose maintenance verbs are also doorless (§17.2) — the same gap seen from the
-other end.
+| Bucket | Count | Reading |
+|---|---|---|
+| Types `sim/` emits, seen by the scan | **138** | +17 on the first walk; see below |
+| Consumed by shell / UI / goals / a data router | **78** | wired |
+| Carrying a written classification in the register | **60** | explained |
+| **Unexplained** | **0** | this is the assertion |
 
-Filed as **A91-D-26**, which names the ones that are not merely bookkeeping.
+Three things the re-walk found that counting once could not.
+
+**(a) The first walk's regex missed a form, and its list was stale by three rows.**
+138 against 121 is mostly one line of scanner: `_emit(&"water_freeze_break" if
+main.frozen else &"water_main_break", …)` puts a real event type in an `else`
+branch, and a scan that takes the FIRST literal after the paren calls
+`water_main_break` un-emitted — while two routers are wired to it. The new scan
+reads every literal from the call up to the payload dict. Separately,
+`grid_feeder_routed`, `grid_node_commissioned` and `grid_node_retired` had
+acquired a `main.gd` arm in Wave 10, the day after A91-D-26 was filed. A matrix
+that is counted by hand is stale the week after it is counted; that is the
+argument for the test, not the numbers.
+
+**(b) The rule, narrowed (doc 93 §K1, report 98 RR-48).** *Every event whose
+payload describes a PLAYER-VISIBLE state change must have a consumer or a
+written exemption. Everything else carries a one-line classification and no
+consumer is expected.* And the sentence that makes it affordable: **a RENDERER
+is a consumer.** Doc 07 §2.4's 40 mm nuisance band has `game/render/flood_view.gd`
+and nothing else, on purpose — narrate the bands that change what the player can
+DO, draw the ones that only change how the street looks.
+
+The register's vocabulary is seven words, and a row must pick one and then say why:
+
+| word | meaning |
+|---|---|
+| `covered` | a sibling event, a snapshot or a poll that IS wired carries the same player-visible change; the row names which |
+| `player_initiated` | the player's own command produced it and the screen that issued it already knows |
+| `bookkeeping` | internal accounting or pacing; nothing the player can see changed |
+| `invisible_by_design` | a doc forbids surfacing it; the row names the doc |
+| `measurement` | a real seam, read by `tests/` or `tools/` only |
+| `unreachable` | emitted only into a command result its caller discards, so it never reaches the bus |
+| `not_an_event` | the scan matched a `"type":` field that is not an event payload |
+
+**(c) The genuine remainder was in doc 05, not doc 07** — exactly where the first
+walk's own last paragraph said it would be. Eleven types were wired in this pass:
+
+| type | where it went | why it was visible |
+|---|---|---|
+| `flood_level_changed` | renderer + event log ×2 + push ×2 + toast | A91-D-26's headline |
+| `road_reopened` | event log + push | the closure was announced; the reopen was not |
+| `storm_phase_changed` | event log ×2 (`lead_in`, `ended`) | `weather_changed` says the sky turned; this says the cell carrying the strikes arrived |
+| `water_capacity_shortage` | event log + push (P2) | doc 05 §2.9: **no repair job exists** — the only water alert whose answer is BUILD |
+| `water_tank_low` | event log | the warning before the one worth waking someone for |
+| `water_tank_empty` | event log + push (P1) | a zone living on what it makes |
+| `water_pump_failed` / `water_treatment_failed` / `water_source_failed` | event log ×3, push ×3, **one** notify_id | `water_pump_tripped` (a recoverable lockout) was wired; a FAILURE was not |
+| `water_contamination_cleared` | event log + push | `water_contamination_started` was wired; the boil notice lifting was not |
+| `austerity_exited` | event log | the belt tightening was announced; the loosening was not |
+| `relief_grant_awarded` | event log | money arriving in the treasury that nothing mentioned |
+| `road_condition_critical` | event log | the only warning that a road was about to fail was the road failing |
+
+Everything else is in the register with a reason. The families and the shape of
+their exemptions:
+
+* **The Director (7 rows)** — `director_event_scheduled`, `director_event_started`,
+  `director_event_ended`, `director_recovery_mode`, `director_suppressed`,
+  `director_scripted_suppression`, `storm_incident_downgraded` — are
+  `invisible_by_design`, and it is doc 07 §2.6's rule and not a convenience:
+  telling a player the game has decided to go easy on them is the one thing the
+  conductor must never do. Each authored event announces itself through its own
+  systems.
+* **Snapshot-covered (9 rows)** — the fleet four, the two power tie events,
+  `CascadeStep`, `power_restored_by_repair`, `congestion_updated`. Every one is
+  re-read idempotently every tick by `vehicle_states()`, `traffic_snapshot` or
+  `BlockDarkChanged`, so the event cannot be the thing that is missed.
+* **Player-initiated (12 rows)** — `cmd_*` results whose issuing screen is
+  already showing the outcome. Announcing them would be the game repeating the
+  player back at themselves.
+* **`road_graph_changed`-covered (5 rows)** — `road_built`, `road_removed`,
+  `road_demolished`, `road_upgraded`, `road_block_stamped`. The street surface
+  rebuild is the visible half and one event drives it.
+* **The scheduler and the ledger (8 rows)** — doc 01's `event_*` plumbing and doc
+  03's `treasury_credited` / `deferred_liability_*`. `sim/city_sim.gd:76` already
+  said `treasury_credited` was private; the register is where that sentence now
+  lives with the others.
+* **One `unreachable`** — `building_ignited`. `Building.ignite()` returns it
+  inside a command result and its only caller reads `ok` and drops `events`, so
+  it has never reached the bus. The fire the player sees is `incident_created`.
+* **One `not_an_event`** — `water_works`, a `{"type": "water_works"}` STATION
+  roster row the `"type":` arm cannot tell from an event payload. Naming it is
+  cheaper and more honest than a cleverer regex.
+
+**A91-D-26 is closed.**
 
 ### 18.3 The pump-station rule itself holds
 
@@ -1103,14 +1172,21 @@ a translator arm** (`main.gd:483` and `main.gd:488`). The class of bug is closed
 at this fork, and the reason it is worth restating is that the second arm was
 added the day before this audit.
 
-**A test for this is not written**, and the reason is in the shape of the
-problem: the emit list is enumerable only by scanning `sim/` source with a
-regex, and a regex-over-source test fails open — it would pass on the day
-someone writes `bus.emit(kind_variable, …)`. What *is* enumerable and worth a
-test is §18.1's direction (every consumed name is emitted), and doc 11 §7.2 test
-27 already holds it for doc 04's slice. Extending that test to walk
-`data/ui.json.event_log.events` and `data/notifications.json.bindings` whole is
-the cheap next step; it is ranked in §20.
+**A test for this IS written now** — `tests/test_event_matrix.gd`, doc 11 §7.3f —
+and it is written with the caveat this paragraph used to raise, out loud in its
+own header. The emit list is enumerable only by scanning `sim/` source with a
+regex, and a regex-over-source test **fails open**: it will pass on the day
+someone writes `bus.emit(kind_variable, …)`. That is still true and the suite
+says so. What the test buys anyway is the direction that matters — **a name the
+scan CAN see and that nothing consumes has to be explained in the register
+before the suite goes green**, so the matrix cannot go stale between audits the
+way it went stale three rows deep in a single wave (§18.2(a)).
+
+And §18.1's direction — every consumed name is emitted — **now fails closed**,
+over both routers whole rather than over doc 04's slice: doc 11 §7.2 test 27
+kept the narrow version and §7.3f test 48 walks
+`data/ui.json.event_log.events` and `data/notifications.json.bindings` entire.
+That was §20's "cheap next step" and it is done.
 
 ## 19. THE SCREEN MATRIX — 14 of 15 screens, 49 states, 12 sweeps
 
@@ -1252,9 +1328,12 @@ M (a day or two), L (a wave).
 | ~~4~~ | ~~**`data/difficulty.json` + `sim/economy/difficulty.gd` + pass it at `city_sim.gd:197`**~~ **DONE 2026-08-20** | ~~M~~ | A91-D-19 | ~~three quarters of doc 03 §2.9's authored table is unreachable, and every balance number is measured on one preset~~ — shipped whole (loader, seam, save section v6, front-door chip, gate 29, doc 92 §29). **It left two things behind, and they are new rows rather than leftovers of this one**: doc 92 §29.5(a)'s `E_roads_repair` compounding (`M_repair × M_exp`, 2.00× on crisis) makes the crisis founding city net-negative at hour one, and §29.5(b) — see the row below |
 | **4b** | **Bound the incident cascade** — a `do_nothing` city's open-incident count multiplies by ~2.5–2.9 **per game-hour** from game-day 104 on `crisis` (103 → 89,055 in eight game-hours, 0.22 s → 269 s of wall per game-hour, no ceiling) | **M** | new, doc 92 §29.5(b), doc 06 §2.13 | **the highest-severity thing this audit's difficulty work turned up, and it is not a difficulty defect** — `standard` and `casual` reach 200 game-days without it, so the trigger is total decay and `crisis` merely arrives first. Doc 06 §2.13's own worst case is ≤ 40 active; this is three orders of magnitude past it and still doubling. On device it is an ANR on a save that was left alone for three months. Repro: `BalanceGateRig.run("do_nothing", 1337, 120, "crisis")` |
 | 5 | **The verb-door test and the event-consumer test** | **S** | §20.1's two untested clauses | the two matrices that found the most, mechanised |
+
+| 4 | **`data/difficulty.json` + `sim/economy/difficulty.gd` + pass it at `city_sim.gd:197`** | **M** | A91-D-19 | three quarters of doc 03 §2.9's authored table is unreachable, and every balance number is measured on one preset |
+| 5 | **The verb-door test** and ~~the event-consumer test~~ (✅ **DONE 2026-08-20**: `tests/test_event_matrix.gd`, 6 tests, and the exemption register is in it) | **S** | §20.1's two untested clauses | the two matrices that found the most, mechanised; one of the two now is |
 | 6 | **Yield the 880×400 top bar to the rails** | **M** | A91-D-23 | §2.3's own reference box, all 49 states |
 | 7 | **A debug build that carries the plugin, on the Fold** | **M** | doc 13 §2.4–§2.9 (5 rows), doc 08 §2.13's platform half | **the single largest block of PARTIAL rows in the project, and it is one build away from being measurable rather than one feature** |
-| 8 | **Draw the flood** — a `flood_level_changed` arm in `WeatherFX` or a wetness channel | **M** | A91-D-26's headline, doc 07 §2.4 | 460 events a session, currently drawn by nothing |
+| 8 | ~~**Draw the flood**~~ — ✅ **DONE 2026-08-20.** Not a `WeatherFX` arm and not `sc_wetness`: `game/render/flood_view.gd` + `game/shaders/flood.gdshader`, one MultiMesh over the flooded block's road tiles, **+1 draw call**. Announced in both routers, toasted once, and `road_reopened` got the all-clear it never had. See doc 11 §2.9b, report 98 RR-48 | **M** | A91-D-26's headline, doc 07 §2.4 | was: 460 events a session, drawn by nothing |
 | 9 | **Doors for the five doorless verbs** | **M** | A91-D-24, doc 05's verbs row | two sibling agents are on four of the five this wave (`cmd_route_feeder` and the water maintenance trio); `cmd_recall_unit` is the fifth and is two lines |
 | 10 | **Persist the notification budget** | **S** | A91-D-27, doc 08 §2.13 | four lines, the same shape `SaveService.ui_provider` took |
 | 11 | **Persist the event-log ring** | **S** | doc 08 §2.10 — **the last ABSENT row in the tree, and a constitutional clause** (doc 00 §9, §0.5) | the log is empty on every launch; the ring exists and the report that wants it exists |

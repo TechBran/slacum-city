@@ -567,6 +567,44 @@ env.fog_light_color     = lerp(fog_tint, #AEBEE0, 0.7 * f)
 
 Five property writes per frame for 0.30 s. No fullscreen white quad: a lighting-driven flash correctly lights façades from the sky and avoids a photosensitivity spike. Peak screen luminance is clamped to 1.35× the pre-flash frame average; accessibility setting `reduce_flashes` scales the envelope by 0.25. Thunder delay for doc 13: `distance(camera, strike_pos) / 340.0` seconds.
 
+### 2.9b STANDING WATER — doc 07 §2.4, drawn, **shipped 2026-08-20**
+
+Owner: `game/render/flood_view.gd` + `game/shaders/flood.gdshader` + `data/render.json.flood`. Reviewed with `tools/flood_preview.gd` (the real shell, doc 07's own `debug_force_weather` lever, `--phase=rise|peak|recede|dry`, `--reload`); budgeted with `tools/profile_frame.gd --flood=MM --flood-detail=N`. Closes **A91-D-26**; ruled in report 98 **RR-53**.
+
+**The finding this section exists for.** `sim/weather/flood_field.gd` has been integrating `depth_mm` on the utilities cadence since the weather system shipped — 460 `flood_level_changed` in a two-real-hour soak — and **nothing in the tree matched that event type.** §2.9 above is the whole of what the renderer knew about doc 07, and rain is not flooding: `sc_wetness` is one float for the world, and a flood is per land block, outlives the rain that made it, and sits at different bands on blocks a hundred metres apart. The two facts cannot share a channel.
+
+**One MultiMesh, on the road tiles, and nothing else.** Doc 07 §2.4 says only road tiles accumulate; this draws exactly those, so a flooded 128 m block is its ~87 road tiles and not a 128 m blue square over the buildings on it. Every flooded cell in the city shares one `MultiMeshInstance3D` and one material, so the layer costs **+1 draw call while water stands anywhere and +0 when the city is dry** (the node hides itself). `custom_aabb` is world-sized, and it has to be: the sheet LIFTS as the water rises, and a bounds box computed dry would cull the flood at exactly the depth that matters.
+
+**Per-instance contract — two channels, and the other two are empty on purpose.**
+
+| channel | meaning |
+|---|---|
+| `INSTANCE_CUSTOM.r` | `water01` — doc 07's own `flood_saturation`, `depth_mm / 350`, eased (τ 1.1 s up, 2.6 s down) |
+| `INSTANCE_CUSTOM.g` | `wet01` — the dark-wet memory. Rises with the water, falls on τ 20 s |
+| `.b`, `.a` | reserved, zero |
+
+`.b` held a per-tile hash seed for one draft, so that "which corner holds the last puddle" would be a fact about the city. **Any function of the instance draws the tile grid.** Coverage has to be a function of WORLD position for two adjacent 8 m quads to read as one puddle — the same rule `water.gdshader` follows for the canal — and the seeded draft painted a wet 8 m lattice over the whole city. It is in the screenshot record beside the fix. Coverage is therefore a function of world position and cell depth and of nothing else, which also makes the picture a pure function of the sim with no seed to persist.
+
+**Coverage, not height, is where the rise reads.** 350 mm of water on an 8 m tile is a few pixels of geometric lift at the camera's 34°–62° pitch band. So depth drives *how much of the tile is wet*, through a world-space noise threshold, and the sheet also rises by `rise_m = 0.20 m` on top of a `base_y_m = 0.11` so that at the impassable band it stands above the 0.25 m kerb the footway sits on. The lift is the confirmation; the coverage is the read. Coverage is deliberately **not linear in depth** — doc 07's bands are 0–39 / 40–99 / 100–199 / 200–349 / 350+, so `standing water`, the band where vehicles start stalling, is only 0.29 of the way to the divisor. `pow(water01, 0.45)` puts the four bands at roughly 20 / 50 / 90 / 100 % of the tile, which is what the bands mean.
+
+**The recede is the second channel.** `wet01` chases the water up on τ 0.8 s and lets go on τ 20 s, so a street that has just drained stays black and glossy for the best part of a minute and its instances stay in the buffer until `wet01` falls under `min_visible` 0.02 (~78 s from full). That tail is the difference between *the water went away* and *there was a flood here*, and it is §2.9's own asymmetric bet (25 s soak / 90 s dry) taken per tile.
+
+**Night is where this feature actually pays, and the first cut got it backwards.** Measured at 22:00 before the night terms existed: a 490 mm flood over an unlit stretch of asphalt was **invisible** — `night_mult 0.55` on an already-dark body put the water *below* the road it was standing on. A wet road at night is LIGHTER than a dry one, because it has stopped diffusing and started mirroring. So three terms, all on `sc_night`, all zero by day: `night_mult 0.80` barely darkens, `night_lift 0.08` adds a cool bounce off the sampled `sc_fog_tint`, and `night_glow 0.055` is the skyglow floor that survives ambient going to zero. Report NIGHT-1's three ideas, aimed the other way.
+
+**Fragment ladder** (`flood.gdshader`'s `detail`, set from `presets.<name>.flood_detail`): **2** ripple normal + puddle noise (four `vnoise`), **1** puddle noise only (one), **0** a flat sheet that fades in (none). Performance ships **0** — at a 0.70 render scale a puddle's ripple was never resolvable. No texture fetch anywhere in the shader, so the "`texture()` outside divergent flow" question does not arise; `detail` is the only branch and it is uniform across the draw.
+
+**Measured** — `tools/profile_frame.gd --flood=350` against `--flood=0`, bench city, balanced, 1920×1080, three runs of 400 frames each:
+
+| pose | dc, no flood | dc, 350 mm | Δ dc | rs gpu, no flood | rs gpu, 350 mm | Δ gpu |
+|---|---|---|---|---|---|---|
+| Z0 | 95 | 96 | **+1** | 1.920 ms | 2.071 ms | **+0.151 ms** |
+| Z1 | 113 | 114 | **+1** | 1.901 | 2.016 | +0.115 |
+| Z2 | 196 | 197 | **+1** | 2.926 | 3.053 | +0.127 |
+
+350 mm on every LOW block is the worst case the layer can be asked to draw: **21 cells, 1,827 tiles, +3,654 primitives, one draw call.** Against the branch's +6 draw-call budget at Z2 that is **+1**. Layer CPU at rest is **zero** — the ease snaps when it reaches its target and the buffer is not re-uploaded after that (`tests/test_flood_view.gd` asserts it), and the ripple rides `sc_time` in the shader.
+
+**And the fragment ladder is below the desktop measurement floor.** Z0 `rs gpu` at rung 0 / 1 / 2 is 2.077 / 2.130 / 2.071 ms against 1.920 dry, i.e. the three rungs are within the ±0.05 ms run-to-run spread of each other. On this GPU the layer's cost is the transparent BLEND and the overdraw, not the arithmetic. The rung stays — the Fold frame is fragment-bound and its ALU is a different machine — but it is a governor lever that desktop numbers do not yet justify, and it is on the device list (§9).
+
 ### 2.10 Streetlights without hundreds of dynamic lights
 
 One streetlight every 32 m (4 tiles) along road polylines from doc 10. With doc 09's ~87 road tiles per developed block that is **~22 streetlights per chunk**. Lit state is **not** inferred by the renderer: doc 04 emits `StreetlightsChanged(block_id, lit)` per land block, and every streetlight in that chunk shares that one boolean, ramped through the §2.7 envelopes. Four instances across MultiMeshes:
@@ -725,6 +763,8 @@ Light bar: `EMISSION = mix(red, blue, step(0.5, fract(sc_time*2.2 + phase))) * (
 | VRAM / PSS budget | 220 / 700 MB | 320 / 900 MB | 420 / 1,300 MB |
 
 **Performance replaces shadows with blob shadows:** `MM_blob`, one dark radial-gradient quad per building at `y = 0.04`, footprint × 1.15, alpha `0.35·(1 − sc_night·0.6)`. One extra draw call per NEAR/MEDIUM chunk, and the difference between "buildings sit on the ground" and "buildings float".
+
+**Standing water costs one call, at every pose, in the worst case there is** (§2.9b, shipped 2026-08-20). `--flood=350` against `--flood=0` on the bench city, balanced: `dc` 95→96 / 113→114 / 196→197 at Z0/Z1/Z2, `rs gpu` +0.151 / +0.115 / +0.127 ms, `rs cpu` unmoved. That is 21 flooded land blocks, 1,827 tiles and 3,654 primitives in ONE MultiMesh — the flood field has no larger state, because 350 mm is doc 07's top band and only LOW blocks accumulate. `presets.<name>.flood_detail` is its fragment rung (Performance 0, Balanced 2, High 2) and the three rungs are currently inside each other's measurement noise on desktop; see §2.9b.
 
 #### Worked example — frustum footprint and draw calls (re-derived, report R-17 / C-63)
 
@@ -2442,6 +2482,32 @@ Also pinned: the two files' shared N/E/S/W wire format (01), that the carriagewa
 22. **Day/night curve:** `sc_night(hour)` continuous across the 24 h wrap (|Δ| < 0.02 at the seam), 0.00 at 12:00, 1.00 at 00:00, ≥ 0.30 by 18:15.
 23. **Fog invariant:** for every weather × time × preset combination **and every governor knob position**, the *effective* fog range obeys `fog_depth_end_eff ≤ far_cull_m` and `fog_depth_begin_eff < fog_depth_end_eff` after §2.8's clamp. Assert the clamp actually fires on Performance (`clear_day` authored 1200 vs `far_cull 900`) rather than being masked by authoring.
 
+### 7.3e Headless — STANDING WATER (`tests/test_flood_view.gd`, §2.9b)
+
+Fifteen tests over `FloodView`. The pixels are not testable headless and are not where the bugs live; every claim §2.9b makes about the picture is.
+
+36. **Doc 07's payload, verbatim.** `flood_level_changed{cell, is_block, depth_mm, band, road_speed_mult}` is claimed and `weather_changed` / `road_closed_flood` are not — the rain integrator stays `WeatherFX`'s and the closure stays doc 10's story. 175 mm resolves to `water01 = 0.50`.
+37. **The divisor is read, not restated.** `full_depth_mm` equals the LAST row of `data/weather.json`'s `flood.thresholds` — which is the 350 mm `FloodField.flood_saturation()` divides by. Cross-file, so doc 07 moving its band table moves the picture with it.
+38. **The easing is asymmetric.** One rise tau gets ~63 % of the way up; the same wall-clock second on the way down buys measurably less. And **the dark-wet memory outlives the water**: twelve seconds after the water is set to zero, `water01 < 0.02` while `wet01 > 0.50` and the tiles are still in the buffer.
+39. **Dry costs nothing.** No water → 0 instances, 0 draw calls, node hidden. Water → exactly **1** draw call whatever the tile count. Fully dry again → the buffer empties.
+40. **It paints the block's ROAD tiles.** A 2×2 toy grid with 31 road tiles inside `B0,0` draws 31, not the block's 256. A cell with no roads under it yet tracks its level and draws nothing.
+41. **Two identical runs produce a byte-identical buffer**, and `.b`/`.a` are zero in every slot — the assertion that keeps a per-tile term (and the tile lattice it draws) out of this surface.
+42. **A loaded save mid-flood shows the flood.** `prime()` off `FloodField.depth_mm` + `snap()` puts the water at its real depth on the first frame with **no event consumed**; a cell the field no longer mentions drains rather than standing (`FloodField` erases a cell that clamps to zero, so absent means dry).
+43. **The preset ladder moves the fragment ceiling** — Performance 0, High 2 — and `set_detail` may lower it and never raise it.
+44. **A settled flood re-uploads nothing.** 200 frames of easing, then 60 more, and `uploads` does not move.
+
+### 7.3f Headless — THE EVENT MATRIX (`tests/test_event_matrix.gd`, doc 91 §18, doc 93's event ruling)
+
+Six tests, and the ruling they hold is *every event whose payload describes a player-visible state change has a consumer or a written exemption; everything else carries a one-line classification.* The register lives in the test.
+
+45. **Zero unexplained rows.** Every type `sim/` emits is either consumed by `game/`, `ui/`, doc 09's goal system or one of the two data routers, or has a `REGISTER` row naming one of seven classifications and giving a reason. 138 types at this fork: 78 consumed, 60 classified.
+46. **The register cannot rot** — in both directions. A row naming an event `sim/` no longer emits fails; so does a row for an event that has since acquired a consumer, because an exemption that has stopped being true is a line of prose nobody re-read.
+47. **A classification is a word and a reason.** The word must be one of `covered` / `player_initiated` / `bookkeeping` / `invisible_by_design` / `measurement` / `unreachable` / `not_an_event`, and the reason must be more than a shrug.
+48. **Every type the routers name is emitted.** Test 27 held this for doc 04's slice; this holds it for `data/ui.json.event_log.events` and `data/notifications.json.bindings` whole — §18.2's "cheap next step". It is the one assertion here that fails CLOSED, and it is the RR-1 failure mode: copy wired to an event nobody sends renders as silence.
+49. **The flood is wired end to end**, and is not sitting in the exemption register — A91-D-26, held down.
+
+> **What this suite deliberately does not claim.** The emit scan is a regex over source and **fails open**: `bus.emit(kind_variable, …)` is invisible to it, exactly as §18.3 says. The consumer scan is generous in the other direction — any literal of the right shape in a live file counts. Both are the right way round for a gate whose job is to stop dead wires: a false "wired" is a missing test, a false "dead" is a stalled commit. Test 48 is the one that fails closed and it is the one that catches a router pointed at nothing.
+
 ### 7.3b Headless — cross-file assertions (report C-40, G-7)
 
 These read two or more files and fail the build when a sibling doc's data drifts.
@@ -2836,6 +2902,7 @@ opaque = 13·10 + 8·3 = 130 + 24 = 154;  total = 154 + 41 = 195  (201 with over
 Same pure-ceiling rule as §2.13, applied to the widened rows — note row C at `7.004` is a hair *over* 7 columns, so it genuinely takes 8; nothing here is a judgement call.
 
 ≈ **21 chunks instead of 16**, i.e. **+5 chunks = +36 draw calls** (`3 extra MEDIUM · 10 + 2 extra FAR · 3 = 36`; `195 − 159 = 36` ✓), taking Z2 from 159 to ≈ **195** against 320 — `(320 − 201)/320 = 37%` headroom on the with-overlay total, the same basis every other headroom figure in this doc uses. Absorbed by the 48% headroom at 16:9. *(The delta was published as +4 chunks / +26 calls against the discretionary-rounding 17, and as 26 chunks / 204 calls before RR-12 — both stale. The 20:9 column counts themselves are unchanged by RR-14; only the baseline they are differenced against moved.)* Unfolded 21:9 foldables would need the chunk budgets re-derived.
+19b. **Does `flood_detail` earn its rung on the FOLD?** (§2.9b, 2026-08-20.) Three rungs measured at Z0 on a desktop RTX read 2.077 / 2.130 / 2.071 ms against 1.920 ms dry — the whole ladder is inside its own ±0.05 ms run-to-run spread, so on that GPU the flood layer costs its transparent BLEND and its overdraw and not its four `vnoise` calls. The Fold frame is fragment-bound (§2.13) with a very different ALU-to-bandwidth ratio, and Performance already ships rung 0 on the render-scale argument alone. The rung stays; what it needs is a device pass on the same A/B (`--flood=350 --flood-detail=0|1|2`), and if the device agrees with the desktop then the ladder should be deleted rather than left as a knob nobody can justify.
 19. **Window colour as a monetization surface.** Spec §37.3 lists cosmetic city themes; `window_color` per family is a one-uniform change, making "Neo-Noir / Neon / Retro" themes nearly free post-alpha. The data layout already supports it — confirm no conflict with doc 03 (economy).
 20. **`tests/fixtures/bench_city.json`: RULED AND CLOSED (report G-7).** **Doc 09 generates it** (`tools/gen_bench_city.py`, same generator family as the starter city); **doc 08 validates it** against the current save schema in CI; **this doc consumes it** (§7.2 test 19, §7.2 test 26, §7.4). The failure mode the question was raised about — the on-device gates silently stopping when the fixture goes stale — is now covered by test 26 on this side and by doc 08's CI check on the other.
 

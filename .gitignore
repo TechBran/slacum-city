@@ -66,4 +66,10 @@ build/bench/
 # XDG_DATA_HOME at a private directory, because `user://` is keyed on the
 # project name and every worktree shares it. This is where that directory
 # lands when the instruction is followed literally from a worktree root.
+
+# The private `user://` a concurrent suite run needs. `tests/run_tests.gd`'s
+# header is explicit that two runs of the suite corrupt each other through the
+# shared `~/.local/share/godot/app_userdata/Slacum City`, and the fix is
+# `XDG_DATA_HOME=$PWD/.xdg`. That directory is save slots and settings for one
+# throwaway run and must never reach a commit.
 .xdg/

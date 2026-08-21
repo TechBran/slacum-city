@@ -976,6 +976,67 @@ Two reasons, and the second is the harder one.
 save will look for a top-level key and not find one. That is why `_v5_to_v6`,
 `_restore_difficulty` and this ruling all say where it is instead.
 
+## K. Wave-11 rulings — the event matrix gets a rule (2026-08-20)
+
+### L1. An event that describes a PLAYER-VISIBLE state change needs a consumer or a written exemption; everything else needs one line, and a RENDERER counts as a consumer
+
+**The problem this is a ruling about.** Doc 91 §18 counted every event type
+`sim/` emits and crossed it against every consumer in the tree, and the headline
+was *43 consumed by nothing at all*. A number like that is unusable as a rule.
+Some of the 43 are whole shipped features nobody can see (`flood_level_changed`,
+A91-D-26); most are a substation's cascade trace, a treasury credit, a scheduler
+phase boundary — things that do not describe anything the player could be shown.
+"Wire all 43" would bury the alerts feed in bookkeeping. "Wire the important
+ones" is not a rule at all. So the audit's open question 3 asked for the
+narrowing, and this is it.
+
+**The rule.**
+
+> **Every event whose payload describes a PLAYER-VISIBLE state change must have a
+> consumer or a written exemption. Every other event carries a one-line
+> classification, and no consumer is expected of it.**
+
+**And the sentence that makes it affordable: a RENDERER is a consumer.** This is
+the half that turns the rule from an alerts-feed mandate into a design
+principle. Doc 07 §2.4's flood has five bands. The 40 mm nuisance band — a film
+of water in the gutters — is drawn by `game/render/flood_view.gd` and is
+narrated by nothing, for ever. The 100 mm and 200 mm bands, where vehicles start
+stalling and civilian traffic is turned back, are drawn AND logged AND pushed.
+The principle in one line, and it applies well past floods:
+
+> **Narrate the bands that change what the player can DO. Draw the ones that only
+> change how the city looks.**
+
+**The classification vocabulary is seven words** — `covered`, `player_initiated`,
+`bookkeeping`, `invisible_by_design`, `measurement`, `unreachable`,
+`not_an_event` — and a row must pick one and then say WHY. `bookkeeping` on its
+own is not an argument; the test enforces a minimum length on the reason for
+exactly that reason. Doc 91 §18.2 carries the table.
+
+**Where the register lives, and why it is not a doc.** In
+`tests/test_event_matrix.gd`, as a `const REGISTER`. It could have been a
+markdown table, and a markdown table is what went stale: A91-D-26's list of 43
+was wrong by three rows within a week of being written, because three of the
+events acquired a `main.gd` arm the next day. The register is a test fixture so
+that **adding an emit without adding either a consumer or a row fails the
+suite**, and so that a row for an event that has since been wired ALSO fails —
+an exemption that has stopped being true is a line of prose nobody re-read.
+
+**What this ruling explicitly does not do.** It does not license a sim change to
+make an event nicer to consume. Every wiring done under it in Wave 11 is
+render/UI/audio only — `game/render/flood_view.gd`, rows in
+`data/ui.json.event_log.events` and `data/notifications.json.bindings`, copy in
+`data/strings.en.json`, one toast in `ui/ui_root.gd`. Both cities' state hashes
+are unchanged (report 98 RR-53). **If an event's payload is the wrong shape to
+consume, that is a defect id, not a licence.**
+
+**Honest limit, recorded so it is not rediscovered.** The emit scan is a regex
+over source and fails OPEN: `bus.emit(kind_variable, …)` is invisible to it. Doc
+91 §18.3 said so before the test existed and the test's own header says so now.
+The direction that fails CLOSED is the other one — every type the two data
+routers name must be emitted — and that is the RR-1 failure mode, copy wired to
+an event nobody sends, which renders as silence.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,
