@@ -161,6 +161,22 @@ var focus_radius := 0.0
 ## and the property test runs both arms over one timeline.
 var pose_cache := true
 
+## The three STOCK tints — sand, gravel, rebar — converted to LINEAR once
+## (A91-D-36). They reach the renderer as MultiMesh instance colours, which take
+## no sRGB decode of their own, so an authored `SAND` of (0.70, 0.59, 0.38) was
+## being used as a linear value and displaying at roughly (222, 202, 165): a
+## heap of sand the colour of the pavement it was standing on.
+##
+## FILED, not fixed here: `ConstructionRigMesh.GRAVEL` is ALSO used as a VERTEX
+## colour (the dump truck's load, `construction_rig_mesh.gd`), and so are the
+## dozen part tints beside it — `STEEL`, `DARK`, `TYRE`, `GLASS`. Vertex colours
+## take no decode either, so the same lift is latent across every procedural
+## mesh in the renderer. It is not converted from here because converting the
+## CONSTANT would move both uses at once and the mesh half has never been
+## re-judged against a screenshot. Report 98 RR-91's deferral list, owned by the
+## next render pass.
+var _stock_linear: Array[Color] = []
+
 var _id_cache: Array = []
 var _ids_dirty := true
 ## Monotone `refresh` counter. A site may only serve a pool slice from the cache
@@ -286,6 +302,16 @@ class Site extends RefCounted:
 
 
 # -------------------------------------------------------------- public API
+
+## Baked before `configure` runs, so a fixture-built layer that never configures
+## still draws its stock in the right colour rather than in none.
+func _init() -> void:
+	_stock_linear = [
+		ConstructionRigMesh.SAND.srgb_to_linear(),
+		ConstructionRigMesh.GRAVEL.srgb_to_linear(),
+		ConstructionRigMesh.REBAR.srgb_to_linear(),
+	]
+
 
 func configure(cfg: Dictionary, world_tile_m: float = 8.0) -> void:
 	tile_m = world_tile_m
@@ -738,9 +764,10 @@ func _emit_piles(site: Site, gm: float, warm: bool = false) -> void:
 		var base := pile_base_m * (0.52 + 0.48 * sqrt(fill))
 		pose.basis = (site.pile_yaw[slot] as Basis).scaled_local(
 				Vector3(base, maxf(height, 0.05), base))
-		var tint := ConstructionRigMesh.SAND if slot == 0 \
-				else (ConstructionRigMesh.GRAVEL if slot == 1 else ConstructionRigMesh.REBAR)
-		pose.tint = Color(tint.r, tint.g, tint.b, 1.0)
+		# LINEAR, like every other colour that reaches `set_instance_color`
+		# (A91-D-36). Baked at `configure` rather than converted here: this runs
+		# once per heap per frame and `srgb_to_linear` allocates.
+		pose.tint = _stock_linear[clampi(slot, 0, _stock_linear.size() - 1)]
 		pose.custom = Color(float(slot), fill, 0.0, 0.0)
 	site.cache_heap_n = heap_used - site.cache_heap_first
 	site.cache_stack_n = stack_used - site.cache_stack_first
@@ -1061,10 +1088,31 @@ static func _take(pool: Array[Pose], index: int) -> Pose:
 ## shipped a pale grey in this table and the site read as rubble. "Construction
 ## is high-visibility" is the language, and it is worth more here than the
 ## catalogue's full range.
+##
+## **Converted to LINEAR here, at the seam (A91-D-36).** The four hexes are
+## authored the way a human picks a colour — sRGB — and they end up in
+## `MultiMesh.set_instance_color`, which is neither a `source_color` uniform nor
+## an `albedo_color` and therefore gets NO conversion: `construction_rig.gdshader`
+## multiplies the value into ALBEDO as if it were already linear. An authored
+## `#E3A423` was being used as (0.89, 0.64, 0.14) linear, which displays at
+## roughly sRGB (245, 210, 105) — a pale straw where a hire-fleet amber was
+## asked for. Every machine in the city was two stops light, and the deep green
+## and the blue read as sage and ice.
+##
+## Once per SITE, not once per instance per frame: `_emit_rigs` and `_emit_trucks`
+## read `site.paint` every frame and `srgb_to_linear` allocates.
 static func _plant_paint(id: int) -> Color:
-	const LIVERY := ["#E3A423", "#D2601F", "#2F6E52", "#3D6B92"]
+	# RE-JUDGED against the linear fix below, and two of the four moved. The
+	# amber and the orange survive it — they were bright enough that two stops
+	# down still reads as hire-fleet paint — but the green and the blue were
+	# fitted against the lifted seam and, corrected, a `#2F6E52` excavator is
+	# very nearly black at hour 21 and a `#3D6B92` one is a silhouette. The
+	# paragraph above is the standard they are judged against: high-visibility,
+	# picked out of a grey street. Screenshots: report 98 RR-91, `--sites=2` at
+	# Z1, hour 13 and hour 21.
+	const LIVERY := ["#E3A423", "#D2601F", "#3E8C69", "#4C82AE"]
 	var index := int(hash01(id, 191) * float(LIVERY.size()))
-	return Color(String(LIVERY[clampi(index, 0, LIVERY.size() - 1)]))
+	return Color(String(LIVERY[clampi(index, 0, LIVERY.size() - 1)])).srgb_to_linear()
 
 
 static func _num(cfg: Dictionary, key: String, fallback: float) -> float:

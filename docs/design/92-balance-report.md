@@ -7048,3 +7048,64 @@ fourth independence check.*
    layer now demonstrably pays 12 % of a played city's income: a reward with no
    penalty for ignoring it is a reward the player can treat as optional, which is
    correct today and would stop being correct if item 1's ceiling ever moves up.
+
+
+## 40. Pass 15 — street polish: one persisted field, and the ding that stays at zero (2026-08-21)
+
+*Render/art fork. **No balance constant moved and no gate was read.** Two things
+belong in this document anyway: a determinism baseline that moved, and a number
+somebody will want to change.*
+
+### 40.1 One field, two baselines, and both predictions made before the run
+
+Doc 06 §2.16's opportunity row gained `born_gm`, the spawn game-minute (report
+98 RR-93 has the argument). **A payload field is not hashed** — `state_hash` is
+`capture_state` and the bus is not in it — **but a persisted row is**, and the
+street section is in the capture. And the COARSE path never spawns, by doc 06's
+own offline fairness rule, so the roster it hashes is empty whatever shape the
+row has. Both predictions were written down before `profile_sim` was run and
+both held:
+
+| `tools/profile_sim.gd --hash-only` | before | after |
+|---|---|---|
+| starter, coarse 24 h | `a27da24aaf6e9663…` | **unmoved** |
+| starter, fine 2.0 h | `d2dec6727c64001d…` | `7745cb25e55ff65c…` |
+| bench, coarse 24 h | `7c99720f5ff14553…` | **unmoved** |
+| bench, fine 2.0 h | `8f60accb6d91ad1e…` | `d8e8889681b23297…` |
+
+Full digests:
+
+```
+starter fine 2.0h  7745cb25e55ff65ccec6dfedb86d5ba5685b4df674beebbb2c690fe2447cc70b
+bench   fine 2.0h  d8e8889681b23297055db10806e41e02ce6c54c9d94f5b8f54c960cf7f0da883
+```
+
+`tests/test_save_determinism_days.gd` — the multi-day
+save → load → advance identity gate — is green. **That is the property that
+matters**: the baseline moved because the row got wider, not because the
+sequence moved. The 32 balance gates are untouched; nothing this pass wrote is
+on any path a gate walks, and `tests/balance_matrix.gd` runs the coarse step,
+which is one of the two digests that did not move.
+
+### 40.2 `expire_stability_delta = 0.0` — a balance number that is deliberately not a balance number
+
+`data/street.json`'s `petty_crime` row now carries `expire_stability_delta` at
+**0.0**, authored so the ruling is visible where a balance pass would look for
+it. It is parsed and spent nowhere. **This is not a placeholder awaiting a
+fit** — doc 93 §V1 rules it zero for v1 on design grounds (an attention reward
+may not have an inattention penalty) — so a future balance pass should not treat
+the 0.0 as an unset knob and fit it. The re-open condition is behavioural and
+not numeric: telemetry showing players farm-ignoring crooks at scale. If that
+day comes, the fit is a district stability delta per unanswered expiry and the
+measurement it wants is *expiries per game-day at each coverage band*, which
+`tests/test_street_opportunities.gd`'s coverage harness already produces.
+
+### 40.3 What this pass costs, for the record
+
+Frame budget, not money, and most of it is a refund. **−13 draw calls at every
+pose on a quiet city** (report 98 RR-92: eight empty `VehicleView` buffers and
+five empty `ConstructionVehicleView` ones that were submitting for nothing), and
+**+0 draw calls** for the blob shadows, which ride the street fx buffer as a
+sixth mode: +4 instances and +0.010 ms of layer CPU for four bodies at Z0. The
+crook's flee costs one float on a render-side record and no frame time that a
+0.1 ms layer can resolve.

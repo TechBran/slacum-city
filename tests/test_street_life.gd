@@ -743,3 +743,233 @@ func test_a_full_street_life_frame_leaves_the_state_hash_alone() -> void:
 	assert_eq(live.state_hash(), expected,
 			"a street-life frame leaves the simulation bit-identical")
 	view.free()
+
+
+# ------------------------------------------------------- 9: the crook legs it
+
+## THE ORDER OF THE THREE CUES, which is the whole feature. Tap -> the number
+## rises AT ONCE and stays where the finger was; the crook RUNS; and only then
+## does the poof land, on him, where he was caught.
+func test_a_collected_crook_runs_before_he_is_cuffed() -> void:
+	var m := _model()
+	# A single east-west street: the tile and its E/W neighbours are road, so
+	# the body snaps to a kerb and has a line to run down.
+	m.set_road_probe(func(tile: Vector2i) -> int:
+		return TileGrid.ROAD_STREET if tile.y == 30 else TileGrid.ROAD_NONE)
+	m.spawn(5, "crook", Vector2i(30, 30), 240)
+	_step(m, 0.4)
+	var stood := m.body_world_pos(5)
+	m.collect(5, 240)
+	var op: StreetLifeModel.Op = m.ops[5]
+	assert_true(op.flee_s >= m.flee_s_min and op.flee_s <= m.flee_s_max,
+			"the dash is hashed inside the authored range")
+	_step(m, op.flee_s * 0.6)
+	var running: StreetLifeModel.Pose = m.body_poses[StreetLifeModel.KIND_CROOK][0]
+	var ran := Vector2(running.origin.x - stood.x, running.origin.z - stood.z).length()
+	assert_true(ran > 0.5, "he has left the spot he was taken on (%.2f m)" % ran)
+	assert_almost_eq(running.custom.a, 0.0, 0.0001,
+			"and is NOT shrinking yet - the cuff has not landed")
+	assert_eq(m.burst_used, 0, "no poof while he is still running")
+	assert_eq(m.label_used, 1, "but the +$N is already up, at the tap")
+	_step(m, op.flee_s * 0.5 + 0.10)
+	assert_eq(m.burst_used, 1, "the poof lands when he is caught")
+	assert_true((m.body_poses[StreetLifeModel.KIND_CROOK][0] as StreetLifeModel.Pose)
+			.custom.a > 0.0, "and the body is leaving now")
+
+
+func test_the_crook_runs_along_the_kerb_and_never_across_it() -> void:
+	# The street runs east-west, so the flee must be along X. A crook who ran
+	# across the kerb would be running into a live traffic lane.
+	var m := _model()
+	m.set_road_probe(func(tile: Vector2i) -> int:
+		return TileGrid.ROAD_STREET if tile.y == 30 else TileGrid.ROAD_NONE)
+	var ids := [11, 12, 13, 14]
+	for id: int in ids:
+		m.spawn(id, "crook", Vector2i(20 + id, 30), 100)
+	_step(m, 0.3)
+	var signs: Dictionary = {}
+	for id2: int in ids:
+		m.collect(id2, 100)
+		var op: StreetLifeModel.Op = m.ops[id2]
+		assert_almost_eq(op.flee_dir.z, 0.0, 0.001,
+				"id %d runs along the street, not across it" % id2)
+		assert_almost_eq(absf(op.flee_dir.x), 1.0, 0.001, "and at full stride")
+		signs[int(signf(op.flee_dir.x))] = true
+	assert_eq(signs.size(), 2,
+			"four crooks do not all pick the same way out (the sign is hashed)")
+
+
+func test_an_expiring_crook_does_not_run_and_an_animal_still_bounds() -> void:
+	var m := _model()
+	m.spawn(21, "crook", Vector2i(30, 30), 100)
+	m.spawn(22, "goat", Vector2i(34, 30), 100)
+	_step(m, 0.3)
+	m.expire(21)
+	assert_almost_eq((m.ops[21] as StreetLifeModel.Op).flee_s, 0.0, 0.0001,
+			"a crook nobody caught does not run from nobody")
+	var goat_at := m.body_world_pos(22)
+	m.collect(22, 100)
+	assert_almost_eq((m.ops[22] as StreetLifeModel.Op).flee_s, 0.0, 0.0001,
+			"and an animal bounds rather than flees")
+	_step(m, m.collect_s * 0.5)
+	var pose: StreetLifeModel.Pose = m.body_poses[StreetLifeModel.KIND_GOAT][0]
+	assert_true(Vector2(pose.origin.x - goat_at.x,
+			pose.origin.z - goat_at.z).length() > 0.4, "the goat is bounding away")
+	assert_true(pose.custom.a > 0.0, "and shrinking as it goes, from frame one")
+
+
+# ---------------------------------------------------------- 10: blob shadows
+
+func test_a_blob_shadow_rides_the_fx_buffer_and_costs_no_draw_call() -> void:
+	var view := StreetLifeView.new()
+	view.setup(_render_data())
+	# `balanced` has `vehicle_shadows: false`, so this is the shipping phone
+	# case: no real shadow, therefore a blob.
+	view.set_preset("balanced", _render_data())
+	assert_true(view.model.blob_enabled,
+			"blob when real is off - one knob decides both")
+	view.feed_events([{"type": &"opportunity_spawned", "id": 1, "kind": "crook",
+			"tile": Vector2i(30, 30), "reward": 100}])
+	view.refresh(1.0 / 60.0, 0.0, 1.0, -1.0, Vector3(240.0, 20.0, 240.0))
+	assert_eq(view.model.blob_used, 1, "one body, one shadow")
+	assert_eq(view.active_buffers(), 2,
+			"and it is on the fx buffer: still two submitting, not three")
+	assert_eq(view.layer_count(), DRAW_CALL_MAX, "and still four buffers in all")
+	view.set_preset("high", _render_data())
+	assert_false(view.model.blob_enabled,
+			"High casts real shadows, so it gets no blob")
+	view.refresh(1.0 / 60.0, 0.0, 1.0, -1.0, Vector3(240.0, 20.0, 240.0))
+	assert_eq(view.model.blob_used, 0, "and draws none")
+	view.free()
+
+
+func test_the_blob_lies_flat_on_the_ground_the_body_stands_on() -> void:
+	var m := _model()
+	m.set_blob_shadows(true)
+	m.set_road_probe(func(tile: Vector2i) -> int:
+		return TileGrid.ROAD_STREET if tile.y == 30 else TileGrid.ROAD_NONE)
+	m.spawn(3, "dog", Vector2i(30, 30), 100)
+	_step(m, 0.2, Vector3(30.5 * 8.0, 12.0, 31.0 * 8.0))
+	assert_eq(m.blob_used, 1, "the dog has a shadow")
+	var blob: StreetLifeModel.Pose = _first_fx(m, StreetLifeModel.FX_BLOB)
+	assert_true(blob != null, "and it is on the fx buffer as mode 5")
+	var op: StreetLifeModel.Op = m.ops[3]
+	assert_almost_eq(blob.origin.y, op.anchor.y + m.blob_y_m, 0.0001,
+			"it sits just over the ground the body stands on, not over y = 0")
+	assert_true(op.anchor.y > 0.2, "which on a kerb is the FOOTWAY, not the road")
+	# The quad's own +Y must lie in the ground plane and its +Z point at the
+	# sky: that is the -90 degrees about X which turns a billboard into a decal.
+	assert_almost_eq((blob.basis * Vector3.UP).y, 0.0, 0.001,
+			"the quad is laid flat")
+	assert_almost_eq((blob.basis * Vector3.BACK).normalized().y, 1.0, 0.001,
+			"facing up")
+	assert_almost_eq(blob.tint.a, m.blob_alpha, 0.001,
+			"at the authored body alpha")
+
+
+func test_a_body_in_the_middle_of_a_junction_stands_on_the_asphalt() -> void:
+	# Four road neighbours means no kerb anywhere on the tile. Before this the
+	# body stood at y = 0, ten centimetres INSIDE the carriageway it was walking
+	# on, and its blob shadow was depth-buried under the road it belonged to.
+	var m := _model()
+	m.set_blob_shadows(true)
+	m.set_road_probe(func(_tile: Vector2i) -> int: return TileGrid.ROAD_STREET)
+	m.spawn(4, "crook", Vector2i(40, 40), 100)
+	var op: StreetLifeModel.Op = m.ops[4]
+	assert_false(op.snapped, "there is no kerb to snap to")
+	assert_almost_eq(op.anchor.y, m.road_top_m, 0.0001,
+			"so it stands on the asphalt top")
+	_step(m, 0.2, Vector3(40.5 * 8.0, 12.0, 41.0 * 8.0))
+	var blob: StreetLifeModel.Pose = _first_fx(m, StreetLifeModel.FX_BLOB)
+	assert_true(blob != null and blob.origin.y > m.road_top_m,
+			"and its shadow is over the road, not under it")
+
+
+func test_the_blob_lets_go_as_a_body_leaves_the_ground() -> void:
+	var m := _model()
+	m.set_blob_shadows(true)
+	m.spawn(6, "goat", Vector2i(30, 34), 100)
+	_step(m, 0.3)
+	var grounded: StreetLifeModel.Pose = _first_fx(m, StreetLifeModel.FX_BLOB)
+	var on_ground: float = grounded.tint.a
+	m.collect(6, 100)
+	_step(m, m.collect_s * 0.45)
+	var airborne: StreetLifeModel.Pose = _first_fx(m, StreetLifeModel.FX_BLOB)
+	assert_true(airborne == null or airborne.tint.a < on_ground,
+			"a goat mid-bound is not nailed to the pavement by its own shadow")
+
+
+## The first fx pose carrying this mode code, or null.
+func _first_fx(m: StreetLifeModel, mode: float) -> StreetLifeModel.Pose:
+	for i in m.fx_used:
+		var p: StreetLifeModel.Pose = m.fx_poses[i]
+		if absf(p.custom.r - mode) < 0.01:
+			return p
+	return null
+
+
+# -------------------------------------------------- 11: born_gm and cold load
+
+func test_a_spawn_carrying_born_gm_anchors_the_wander_to_the_sims_clock() -> void:
+	# Two models: one that saw the spawn live, one re-seeding 45 game-minutes
+	# later off a save. Same id, same tile, same sim minute -> same pose.
+	var live := _model()
+	live.set_game_minutes(120.0)
+	live.spawn(77, "dog", Vector2i(30, 30), 100)
+	live.set_game_minutes(165.0)
+	live.refresh(Vector3.INF)
+	var live_at := live.body_world_pos(77)
+
+	var loaded := _model()
+	loaded.set_game_minutes(165.0)
+	loaded.spawn(77, "dog", Vector2i(30, 30), 100, 120.0)
+	loaded.refresh(Vector3.INF)
+	var loaded_at := loaded.body_world_pos(77)
+	assert_almost_eq(loaded_at.x, live_at.x, 0.0001,
+			"the re-seeded dog is where the save says, not on its first waypoint")
+	assert_almost_eq(loaded_at.z, live_at.z, 0.0001, "in z too")
+
+	# And WITHOUT it the beat restarts, which is the defect the field fixes.
+	var naive := _model()
+	naive.set_game_minutes(165.0)
+	naive.spawn(77, "dog", Vector2i(30, 30), 100)
+	naive.refresh(Vector3.INF)
+	assert_true(naive.body_world_pos(77).distance_to(live_at) > 0.05,
+			"a spawn with no born_gm restarts the wander - the thing it fixes")
+
+
+func test_seed_roster_replays_the_sims_own_rows() -> void:
+	var view := StreetLifeView.new()
+	view.setup(_render_data())
+	view.set_game_minutes(400.0)
+	view.seed_roster([
+		{"id": 3, "kind": "petty_crime", "tile_x": 30, "tile_y": 30,
+			"reward": 260, "born_gm": 180.0},
+		{"id": 4, "kind": "loose_animal", "tile_x": 36, "tile_y": 30,
+			"reward": 150, "born_gm": 361.5},
+		"not a row",
+	])
+	view.refresh(1.0 / 60.0, 0.0, 0.0, 400.0, Vector3(240.0, 40.0, 240.0))
+	assert_eq(view.live_ids(), [3, 4] as Array[int],
+			"both rows are live, ascending, and the junk row was ignored")
+	assert_almost_eq((view.model.ops[3] as StreetLifeModel.Op).born_gm, 180.0,
+			0.0001, "each body keeps the minute it actually appeared")
+	# A row with no `born_gm` (a save written before render q2) is not a crash.
+	view.seed_roster([{"id": 9, "kind": "crook", "tile_x": 30, "tile_y": 30,
+			"reward": 100}])
+	view.refresh(1.0 / 60.0, 0.0, 0.0, 400.0, Vector3(240.0, 40.0, 240.0))
+	assert_eq(view.live_ids(), [9] as Array[int], "and it still draws")
+	view.free()
+
+
+func test_the_event_feed_carries_born_gm_through() -> void:
+	var m := _model()
+	m.set_game_minutes(500.0)
+	m.feed_events([{"type": &"opportunity_spawned", "id": 12, "kind": "crook",
+			"tile": [30, 30], "reward": 100, "born_gm": 411.25}])
+	assert_almost_eq((m.ops[12] as StreetLifeModel.Op).born_gm, 411.25, 0.0001,
+			"the payload's spawn minute is the one the wander uses")
+	m.feed_events([{"type": &"opportunity_spawned", "id": 13, "kind": "crook",
+			"tile": [30, 30], "reward": 100}])
+	assert_almost_eq((m.ops[13] as StreetLifeModel.Op).born_gm, 500.0, 0.0001,
+			"and a build whose sim predates the field falls back to this clock")

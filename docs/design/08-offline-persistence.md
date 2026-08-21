@@ -553,6 +553,20 @@ static func _v3_to_v4(b: Dictionary) -> Dictionary:
 > to be re-read every time the default changes, and `restore_state` already
 > answers this one. The v5 → v6 rung took the same line for the same reason.
 >
+> **A row of the v7 roster widened in Wave 15 and did NOT take a rung** (report
+> 98 RR-93). `born_gm` — the spawn game-minute, which doc 11 §2.17 anchors a
+> body's wander beat to so a cold load restores the street mid-stride instead of
+> restarting it — is a new field on an existing row, and `deserialize` derives
+> it from `spawned_h × 60` when a body does not carry one. That derivation is
+> *exact*: it reproduces the number the spawner would have written, so a v7 body
+> from before the field is not a body with a guessed beat. **A field a reader
+> can derive from what the body already carries is additive, and additive
+> changes do not take rungs** — that is §2.8's rule, and taking one here would
+> have been the pure epoch marker this section forbids two hundred lines above.
+> The field DOES move the fine determinism baselines, because the persisted row
+> is hashed; doc 92 §40.1 publishes the delta and the multi-day
+> save → load → advance identity gate is green.
+>
 > **What the rung costs the player: nothing**, and they gain the layer on the
 > next game-minute they spend looking at the city. **What it costs the
 > baselines:** `state_hash()` moves for every city, founding and played alike,

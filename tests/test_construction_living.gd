@@ -812,3 +812,38 @@ func test_the_schedule_constants_survive_a_reconfigure() -> void:
 			view.activity.leg_gm(site) * 2.0 + view.activity.dump_gm, 0.0001,
 			"and the round trip follows it")
 	view.free()
+
+
+# ------------------------------ A91-D-36 and RR-83's corollary, on the plant
+
+## The plant livery is a MultiMesh instance colour, which takes no sRGB decode.
+## `_plant_paint` therefore converts at the seam, once per site.
+func test_the_plant_livery_is_a_linear_colour() -> void:
+	var activity := ConstructionActivity.new()
+	activity.configure((StarterCityLoader.read_json("res://data/render.json")
+			as Dictionary).get("construction_vehicles", {}))
+	activity.add_site(4242, Vector3(80.0, 0.0, 80.0), Vector2i(2, 2), 18.0)
+	var site: ConstructionActivity.Site = activity.sites[4242]
+	assert_true(site.paint.r <= site.paint.linear_to_srgb().r + 0.0001,
+			"the stored paint is DARKER than the hex it came from")
+	# And it is one of the four authored liveries, converted — not something new.
+	var matched := false
+	for hex: String in ["#E3A423", "#D2601F", "#3E8C69", "#4C82AE"]:
+		var want := Color(hex).srgb_to_linear()
+		if absf(want.r - site.paint.r) < 0.002 and absf(want.g - site.paint.g) < 0.002 \
+				and absf(want.b - site.paint.b) < 0.002:
+			matched = true
+	assert_true(matched, "and it is one of the four, converted once")
+
+
+func test_a_city_with_no_sites_submits_no_plant_buffers() -> void:
+	# The common case — the benchmark city has no sites and a real one is
+	# between builds most of the time — and it was costing five draw calls a
+	# frame for five empty buffers (report 98 RR-83's corollary, measured at
+	# +5 dc at every pose on the bench city).
+	var view := ConstructionVehicleView.new()
+	view.setup(StarterCityLoader.read_json("res://data/render.json"))
+	view.refresh(1.0 / 60.0, 0.0, 1.0)
+	assert_eq(view.layer_count(), DRAW_CALL_MAX, "five buffers exist")
+	assert_eq(view.active_buffers(), 0, "and none of them submits")
+	view.free()

@@ -3411,3 +3411,233 @@ city survives it. Both: yes.
 
 **Applied:** `tests/test_balance_gates.gd` gate 19 (re-titled, with the ruling
 and the superseded clause marked in the historical block); doc 92 §39.7.
+
+
+## 36. WAVE 15 — street polish: the five art items, and the one sim ruling (binding)
+
+*Render/art fork off the Wave-14 street-life integration. Hash-neutral except
+for RR-93, whose delta is published below; the balance gates are unread by
+anything in this pass and both determinism COARSE baselines are unmoved.*
+
+### RR-90 — A shadow you cannot see is not a shadow (docs 11 §2.11/§2.17, 93 §V3)
+
+**The defect (render q4).** `data/render.json` has carried a `blob_shadow` block
+since the preset table was written — `enabled_presets`, `y_m`,
+`footprint_scale`, `alpha`, `night_fade` — and **nothing in the renderer read
+it**. Meanwhile `vehicle_shadows` is `false` on Performance and on Balanced,
+which is every phone, so doc 11 §2.17's bodies had no contact shadow of any
+kind: a crook at Z0 read as a decal printed on the pavement rather than as a
+person standing on it.
+
+**Ruled.** *One knob decides both shadows.* `StreetLifeView.set_preset` pushes
+the preset's `vehicle_shadows` into `StreetLifeModel.set_blob_shadows`
+**inverted** — blob when real is off — so no body can have two shadows and no
+body can have none. The `blob_shadow` block's own `enabled_presets` row is NOT
+read by this layer and the reason is stated at the point of use: that row
+belongs to §2.11's per-BUILDING decal, which is a different object with a
+different gate, and reading both is what would let a preset arrive at "no real
+shadow and no blob either".
+
+**Zero draw calls, measured.** The blob is a sixth MODE on the existing street
+fx buffer (`INSTANCE_CUSTOM.r == 5`), not a fifth buffer. It is the one quad on
+that buffer that must NOT face the camera, so the vertex stage `mix`es the
+billboard's three basis columns against the instance's own on a mode test —
+three vec4 mixes, no branch.
+
+| bench city, balanced, hour 21, `--street-life=6 --focus=48,48` | Z0 | Z1 |
+|---|---|---|
+| blobs off (preset `high`) | 91 dc, 7 fx rows, layer CPU 0.089 ms | 109 dc, layer CPU 0.088 ms |
+| blobs on (preset `balanced`) | **91 dc**, 11 fx rows, layer CPU 0.099 ms | **109 dc**, layer CPU 0.096 ms |
+
+**+0 draw calls, +4 instances, +8 primitives, +0.010 ms of layer CPU** for four
+bodies. `profile_frame` now prints the blob count beside the buffer count, so
+the claim is checkable rather than asserted.
+
+**Two things a census could not have told us, and a screenshot did.**
+
+1. **A `blend_mix` pass mixes TOWARDS a colour; it does not multiply by one.**
+   The first cut authored the ambient's own blue-grey (0.055, 0.062, 0.080) on
+   the reasoning that a real contact shadow is sky-coloured. The shaded
+   carriageway at Z0 sits near **0.02 linear** — the shadow was *lighter than
+   the road it was cast on*, and the layer was invisible while the census said
+   one blob was in the frame. Black makes the same blend a multiply: the ground
+   keeps (1 − a) of whatever it was, so one disc darkens dark asphalt and pale
+   pavement by the same FRACTION, which is what a shadow does.
+2. **A body has an AREA of contact.** The first cut reused the poof's
+   `pow(1 − r, softness)`, which peaks at one pixel and is half gone a third of
+   the way out: measured at the shipping size it put **244 pixels** of real
+   shadow into a 1920 × 1080 frame. A core-and-rim falloff
+   (`1 − smoothstep(blob_core, 1.0, r)`) at the same instruction count reads as
+   a contact shadow. With `body_alpha` 0.50 the shipping disc moves **2,637
+   pixels** at Z0, mean |Δ| 11.9 per channel, peak 129 — an A/B taken with the
+   wander clock PINNED (`profile_frame --street-gm=`), because a free-running
+   layer puts the bodies in different parts of their beat between two runs and
+   the pixel diff then measures the frame rate.
+
+**And a latent defect it exposed.** A body deep inside a junction has four road
+neighbours, therefore no footway anywhere on its tile, therefore
+`StreetLifeModel._anchor` left it at **y = 0 — ten centimetres inside the
+carriageway it was walking on**. Invisible on the body (its feet are a dark box
+against a dark road; its boots were simply gone) and fatal to a flat decal,
+which was being depth-buried under the road it belonged to. It is the same
+defect report NIGHT-1 found under the lamp pools, in the same 0.10 m. An
+unsnapped body on a road tile now stands on `asphalt_top_m`.
+
+**Applied:** `game/shaders/street_fx.gdshader` (mode 5, the basis mix, the
+core-and-rim disc), `game/render/street_life_model.gd`
+(`_emit_blob`, `set_blob_shadows`, `road_top_m`, the pool grows to
+`max_live * 3`), `game/render/street_life_view.gd`,
+`data/render.json.blob_shadow` (`body_alpha`, `body_m`, `body_lift_m` and the
+`_blob_shadow` note that states which consumer takes which gate),
+`tools/profile_frame.gd` (`--street-gm`, the blob column),
+`tests/test_street_life.gd` (four tests).
+
+### RR-91 — An instance colour is LINEAR, and a palette fitted against a lift is unfitted (A91-D-36; docs 11 §2.12/§2.16, 91, 93 §V4)
+
+**The defect, as filed by the street-life branch and left for the lead.** A
+shader uniform hinted `source_color` is converted from sRGB for free, and so is
+`StandardMaterial3D.albedo_color` — but a **MultiMesh INSTANCE COLOUR is
+neither**. It arrives in the shader exactly as written and is used as a linear
+value. `VehicleView._paint_for` and `ConstructionActivity._plant_paint` were
+both passing authored hexes straight in, so an authored `#9E3B34` (a deep oxide
+red) rendered as if it were linear (0.62, 0.23, 0.20) — roughly sRGB
+(208, 133, 122), a pale salmon. **Every fleet and every machine in the city was
+about two stops light**, and it read as a deliberately chalky palette rather
+than as a bug, which is exactly why it survived four waves and shipped.
+`StreetLifeModel._bake_colours` had already made the same fix on its own layer
+one wave earlier and filed this one.
+
+**Fixed at the seam and not per frame.** `srgb_to_linear` allocates a `Color`,
+and both call sites write a colour per instance per frame; the conversion is
+therefore done once per vehicle and once per site, where the hex is chosen.
+The three stock tints (`SAND`, `GRAVEL`, `REBAR`) reaching
+`ConstructionVehicleView`'s heap and stack buffers take the same conversion,
+baked once in `ConstructionActivity._init`.
+
+**And then the palettes were re-judged, which is the half that is easy to skip.**
+Screenshots: `profile_frame --traffic=14 --units=4 --sites=2` at Z1, hour 13 and
+hour 21, bench city, no UI layer in the frame. The fix darkens everything, and
+four hexes had been fitted BY EYE against the lift:
+
+| hex | was | now | why |
+|---|---|---|---|
+| `CIV_PAINT[2]` | `#4A5157` | `#5B646C` | linear 0.068 against a carriageway near 0.02 — a car the same value as the road is not traffic, it is a hole |
+| `CIV_PAINT[3]` | `#2C3237` | `#3B434B` | linear 0.024, i.e. the road exactly; still the darkest of the ten |
+| `LIVERY[2]` | `#2F6E52` | `#3E8C69` | a plant livery is high-visibility by its own doc comment; corrected, it was near-black at hour 21 |
+| `LIVERY[3]` | `#3D6B92` | `#4C82AE` | ditto — a silhouette rather than a machine |
+
+The amber `#E3A423`, the orange `#D2601F`, all six department colours and the
+other eight civilian paints survive the correction unchanged: they were bright
+enough that two stops down still reads as paint. **`StreetLifeView` did not have
+this defect** — its model bakes every coat and marker tint to linear at
+`configure` — which is the audit answer the task asked for.
+
+**DEFERRED, with a named owner.** The same latent lift is on every **vertex**
+colour in every procedural mesh in this renderer — `ConstructionRigMesh.STEEL`,
+`DARK`, `TYRE`, `GLASS`, `GRAVEL`, `VehicleMesh`'s part tints,
+`StreetLifeMesh.CLOTH_DARK` and the rest — because a vertex colour takes no
+decode either. It is not fixed here for one reason: several of those constants
+are used BOTH as vertex colours and as instance tints (`GRAVEL` is the dump
+truck's load and the yard's gravel heap), so converting the constant would move
+both at once and the mesh half has never been judged against a picture.
+**awaiting_consumer:** the next render pass, over
+`game/render/construction_rig_mesh.gd`, `game/render/vehicle_mesh.gd` and
+`game/render/street_life_mesh.gd`, with a screenshot per mesh family.
+
+**Applied:** `game/render/vehicle_view.gd` (`_paint_for` + the `CIV_PAINT`
+re-judgement), `game/render/construction_activity.gd` (`_plant_paint`,
+`_stock_linear`, the `LIVERY` re-judgement),
+`tests/test_vehicle_view.gd` and `tests/test_construction_living.gd`
+(three tests), doc 91 A91-D-36, doc 93 §V4.
+
+### RR-92 — RR-83's corollary, audited and closed (docs 11 §2.13/§2.16, 93 §S3)
+
+RR-83 ruled that `node.visible = n > 0` belongs on the same line as
+`visible_instance_count`, applied it to `StreetLifeView`, and **filed the rest
+for the lead**: `ConstructionVehicleView`'s five buffers on a city with no
+sites, `PowerInfraView`'s smoke buffer on a healthy grid. The audit is done.
+
+**The instrument first.** The harness could price a BUSY layer and an ABSENT one
+and never the third thing a real city spends most of its life in — the layer
+present, every buffer empty, every node still submitting — because `--sites=0`
+did not build the layer at all. `profile_frame --quiet-layers` builds both
+optional layers and stands nothing in them, which is the quiet city.
+
+| bench city, balanced, hour 21 | Z0 | Z1 | Z2 |
+|---|---|---|---|
+| baseline, before | 95 | 113 | 196 |
+| `--quiet-layers`, before | 100 | 118 | 201 |
+| baseline, **after** | **87** | **105** | **188** |
+| `--quiet-layers`, **after** | **87** | **105** | **188** |
+
+**−13 draw calls at every pose on a quiet city**, and the optional layers now
+cost exactly zero when they have nothing to draw. The 5 is
+`ConstructionVehicleView`; the other 8 is `VehicleView`, which nobody had
+counted because the harness feeds it no traffic — seven body buffers and a
+headlight cone, all eight submitting, all eight empty. In the real game the
+emergency four are empty in any city with nothing on fire and **the headlight
+cone is empty for the whole of every daylight hour**, so the saving is real
+there too, just smaller.
+
+**The audit, layer by layer, so the next person does not redo it.**
+
+| layer | verdict |
+|---|---|
+| `StreetLifeView` | already gated (RR-83) |
+| `ConstructionVehicleView` | **gated now** — 5 buffers, world AABB, born hidden |
+| `VehicleView` | **gated now** — 7 bodies + cone, world AABB, born hidden |
+| `CityView` bucket nodes | **gated now** — a bucket is allocated on the first building of its (archetype, level) and is not freed when the last is demolished, so a redeveloped chunk carries empty buckets that still submit |
+| `CityView` far nodes | **gated now** — `_upload_far` returns its instance count and the caller gates on it |
+| `PowerInfraView` | already gated — `_pad_node.visible = count > 0`, `_smoke_node.visible = count > 0`. No change needed; the filing was cautious rather than wrong |
+| `FloodView` | already gated |
+| `StreetlightView` | not applicable — a chunk with no lamps is FREED, not emptied |
+| `RoadOverlayView`, `PathGhostView`, `ConstructionSiteView` | already gated, or per-object nodes that are freed |
+
+`VehicleView` and `ConstructionVehicleView` both publish `active_buffers()` now,
+for the reason RR-83 gave: a budget claim that cannot be printed is a budget
+claim nobody re-checks.
+
+### RR-93 — A field the renderer needs is a field the save owes it (docs 06 §2.16, 08 §2.8, 11 §2.17, 93 §V2)
+
+**The gap (render q2), and it is bigger than the field.** Doc 11 §2.17's wander
+is a closed form in `(id, elapsed)`, which makes it exact under pause, catch-up
+and frame-rate change — and undefined after a COLD LOAD, because the layer had
+no way to learn when a restored opportunity had appeared. Worse: **it had no way
+to learn that it existed at all.** `CitySim.restore_state` refills the roster in
+silence — there is no `opportunity_spawned` for a row that was already on the
+books — and `game/main.gd`'s load path resyncs the road surface, the vehicles,
+the power layer, the lamps and the flood field, and not this one. A crook the
+player was walking toward was live, tappable and paying, and **invisible until
+it expired**.
+
+**Both halves, in one field and one call.** `born_gm` (the spawn game-minute) is
+written at spawn, republished on all three payloads and persisted with the row;
+`StreetLifeView.seed_roster(sim.street.live())` replays the restored roster as
+spawns carrying it, so every body comes back MID-WANDER rather than restarting
+on its first waypoint. A row written before this field derives it from
+`spawned_h × 60`, which is exactly what the spawner would have written, so an
+old save is a body with a beat rather than a crash.
+
+**The hash delta, predicted before the run and published.** A payload field is
+not hashed (`state_hash` is `capture_state`; the bus is not in it); a persisted
+row is. And the COARSE path never spawns — doc 06 §2.16's offline fairness rule
+— so the roster it hashes is empty whatever the row's shape.
+
+| `profile_sim --hash-only` | before | after |
+|---|---|---|
+| starter, coarse 24 h | `a27da24a…` | **`a27da24a…` (unmoved)** |
+| starter, fine 2.0 h | `d2dec672…` | `7745cb25…` |
+| bench, coarse 24 h | `7c99720f…` | **`7c99720f…` (unmoved)** |
+| bench, fine 2.0 h | `8f60accb…` | `d8e88896…` |
+
+`tests/test_save_determinism_days.gd` — the multi-day
+save → load → advance identity gate — is green, which is the property that
+matters: the baseline moved because the row got wider, not because the sequence
+moved.
+
+**Applied:** `sim/street/opportunity_system.gd` (the field on spawn, on
+`event_payload`, in `deserialize`), `game/render/street_life_model.gd`
+(`spawn`'s fifth argument, `seed_roster`), `game/render/street_life_view.gd`
+(`seed_roster`), `tests/test_street_opportunities.gd` and
+`tests/test_street_life.gd` (five tests), doc 93 §V2. **`game/main.gd` is the
+lead's** — the one-line call is in the branch report's integration snippets.

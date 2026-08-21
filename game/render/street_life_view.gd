@@ -22,8 +22,9 @@ extends Node3D
 ##   MM_crook   the hooded figure with the swag bag, `street_life.gdshader`
 ##   MM_dog     the stray, the same shader with its own rig table
 ##   MM_goat    ditto
-##   MM_fx      markers, `+$N` labels, poof puffs, rings and stash sparkles —
-##              ONE buffer, `street_fx.gdshader`, dispatched on a mode code
+##   MM_fx      markers, `+$N` labels, poof puffs, rings, stash sparkles AND
+##              the blob shadows — ONE buffer, `street_fx.gdshader`, dispatched
+##              on a mode code
 ##
 ## The fourth is the interesting one. A marker, a floating digit, a puff of dust
 ## and a sparkle are all the same object — a flat quad turned to face the
@@ -31,6 +32,12 @@ extends Node3D
 ## MODE in `INSTANCE_CUSTOM.r` rather than four buffers and four calls. The
 ## budget for the whole layer was six; it costs four, and the two it gives back
 ## are what the shell's tap affordance and the next wave get to spend.
+##
+## The BLOB SHADOW is on that buffer too, and it is the case that proves the
+## rule: it is the one quad that does not face the camera, so the vertex stage
+## `mix`es the billboard basis against the instance's own on a mode test. Three
+## vec4 mixes, no branch, no fifth buffer — a contact shadow for every body on a
+## preset with no real ones, at zero draw calls.
 ##
 ## WHAT IT READS. Its own events, a road-class probe (optional — it is what
 ## snaps a body to a kerb line rather than into a traffic lane), the camera
@@ -90,7 +97,8 @@ func setup(render_data: Dictionary = {}) -> void:
 	var roads: Dictionary = render_data.get("road_surface", {})
 	tile_m = float((render_data.get("world", {}) as Dictionary).get("tile_m", DEF_TILE_M))
 	world_m = maxf(1024.0, tile_m * 128.0)
-	model.configure(cfg, roads, tile_m)
+	model.configure(cfg, roads, tile_m,
+			render_data.get("blob_shadow", {}) as Dictionary)
 	_read_presets(render_data)
 	_build_layers(cfg)
 	_configured = true
@@ -98,12 +106,19 @@ func setup(render_data: Dictionary = {}) -> void:
 
 ## Preset swap from the settings sheet. One knob, the same one the traffic and
 ## plant layers move: whether these bodies are re-drawn into the shadow splits.
+##
+## And it now decides BOTH shadows, which is the point of it being one knob. A
+## tier that can afford to re-draw a 1.8 m body into every split gets the real
+## thing; a tier that cannot gets a blob decal on the fx buffer for no extra
+## draw call. What no tier gets is NEITHER — which is what shipped, and what
+## made every body at Z0 read as a sticker on the pavement.
 func set_preset(name: String, render_data: Dictionary = {}) -> void:
 	preset = name
 	if not render_data.is_empty():
 		_read_presets(render_data)
 	var setting := GeometryInstance3D.SHADOW_CASTING_SETTING_ON if cast_shadows \
 			else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	model.set_blob_shadows(not cast_shadows)
 	for key: String in _layers:
 		var layer: Layer = _layers[key]
 		if layer.node != null and key != "fx":
@@ -136,6 +151,21 @@ static func road_probe(world: WorldMap) -> Callable:
 func feed_events(batch: Array) -> void:
 	_ensure_setup()
 	model.feed_events(batch)
+
+
+## Re-seed from the sim's own roster — `sim.street.live()`, straight through.
+##
+## THE SHELL MUST CALL THIS AFTER A LOAD. A loaded save restores the sim's
+## opportunities in silence: there is no `opportunity_spawned` for a row that
+## was already on the books, so without this the crook the player was walking
+## toward is live, tappable and paying, and invisible until it expires. It is
+## the same resync `StreetlightView.replace_from` and `FloodView.prime` take on
+## the same code path, and it is the reason doc 06's payload gained `born_gm` —
+## each row is anchored to the minute it really appeared, so the roster comes
+## back MID-WANDER instead of restarting on its first waypoint.
+func seed_roster(rows: Array) -> void:
+	_ensure_setup()
+	model.seed_roster(rows)
 
 
 ## One rendered frame.
@@ -306,6 +336,12 @@ func _read_presets(render_data: Dictionary) -> void:
 	# decide whether a 1.8 m body is re-drawn into all of them.
 	if row.has("vehicle_shadows"):
 		cast_shadows = bool(row["vehicle_shadows"])
+	# NOTE, stated where it is spent: the `blob_shadow` block's own
+	# `enabled_presets` row is NOT read here, and that is deliberate. That row
+	# belongs to §2.11's per-BUILDING decal, which is a different object with a
+	# different gate; a body is a dynamic thing and takes the dynamic-shadow
+	# knob. Reading both would let a preset arrive at "no real shadow and no
+	# blob either", which is precisely the hole this pass exists to fill.
 
 
 func _build_layers(cfg: Dictionary) -> void:

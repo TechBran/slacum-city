@@ -77,8 +77,20 @@ const ROLLING_STATUS := {"RESPONDING": true, "ON_SCENE": true, "RETURNING": true
 
 ## Civilian paint, pulled towards the city's muted stylized palette rather than
 ## showroom colours — traffic should read as texture on the street, not confetti.
+##
+## **RE-JUDGED against the A91-D-36 fix, and two entries moved.** These hexes
+## were fitted by eye against the renderer as it was, i.e. against a seam that
+## was silently LIFTING every one of them by roughly two stops (`_paint_for`).
+## Correcting the seam darkens the whole table, and the two darkest entries then
+## landed on top of the asphalt they were driving over: `#4A5157` and `#2C3237`
+## convert to linear 0.068 and 0.024, against a carriageway that sits near 0.02
+## at Z1 — a car the same value as the road is not traffic, it is a hole, and
+## doc 11 §1's "alive read" is the thing it costs. They are lifted one step each
+## and stay the darkest two in the set; nothing else moved, because nothing else
+## needed to. Screenshot pair: report 98 RR-91, `--traffic=14` at Z1, hour 13
+## and hour 21.
 const CIV_PAINT := [
-	"#B7BCC2", "#8E969E", "#4A5157", "#2C3237", "#D9D5C8",
+	"#B7BCC2", "#8E969E", "#5B646C", "#3B434B", "#D9D5C8",
 	"#42607B", "#7C4B3C", "#8E9C86", "#9E3B34", "#C9A24A",
 ]
 
@@ -379,9 +391,25 @@ func motion(key: int) -> VehicleMotion:
 	return _vehicles.get(key)
 
 
-## Draw calls this layer costs: one per body mesh plus the headlight cone.
+## Buffers this layer OWNS: one per body mesh plus the headlight cone.
 func layer_count() -> int:
 	return _layers.size() + (1 if _cone_node != null else 0)
+
+
+## Buffers actually SUBMITTING geometry this frame — what a draw-call budget is
+## measured against, as opposed to what exists. Since report 98 RR-83's
+## corollary these are different numbers: a quiet city draws three of the eight.
+func active_buffers() -> int:
+	var n := 0
+	for key: String in _layers:
+		var layer: Layer = _layers[key]
+		if layer.node != null and layer.node.visible \
+				and layer.mm.visible_instance_count > 0:
+			n += 1
+	if _cone_node != null and _cone_node.visible \
+			and _cone_mm.visible_instance_count > 0:
+		n += 1
+	return n
 
 
 # ------------------------------------------------------------------ ingest
@@ -475,11 +503,28 @@ func _make(key: int, mesh_key: String, vehicle_class: String) -> VehicleMotion:
 	return v
 
 
+## THE LIVERY SEAM, and the one place `srgb_to_linear` belongs (A91-D-36).
+##
+## Every hex in `CIV_PAINT` and `DEPT_PAINT` above is authored the way a human
+## picks a colour: an sRGB hex. A shader uniform hinted `source_color` is
+## converted for free and so is `StandardMaterial3D.albedo_color` — but a
+## **MultiMesh INSTANCE COLOUR is neither.** It arrives in `vehicle.gdshader`
+## exactly as written and is multiplied into ALBEDO as a LINEAR value, so an
+## authored `#9E3B34` (a deep oxide red) was being used as linear
+## (0.62, 0.23, 0.20), which displays at roughly sRGB (208, 133, 122) — a pale
+## salmon. **Every fleet in the city was two stops light**, and it read as a
+## deliberately chalky palette rather than as a bug, which is exactly why it
+## survived four waves and shipped.
+##
+## Converted HERE, at the seam, and once per vehicle rather than once per
+## instance per frame: `_upload` writes a colour per vehicle per frame and
+## `srgb_to_linear` allocates a `Color`. `StreetLifeModel._bake_colours` is the
+## same fix in the same shape, made one wave earlier on the layer that noticed.
 func _paint_for(v: VehicleMotion) -> Color:
 	if v.vehicle_class != "civilian" and DEPT_PAINT.has(v.vehicle_class):
-		return Color(String(DEPT_PAINT[v.vehicle_class]))
+		return Color(String(DEPT_PAINT[v.vehicle_class])).srgb_to_linear()
 	var index := int(VehicleMotion.hash01(v.id, 91) * float(CIV_PAINT.size()))
-	return Color(String(CIV_PAINT[clampi(index, 0, CIV_PAINT.size() - 1)]))
+	return Color(String(CIV_PAINT[clampi(index, 0, CIV_PAINT.size() - 1)])).srgb_to_linear()
 
 
 ## Despawn: the record stays until it has faded out, so cars leave rather than
@@ -590,11 +635,23 @@ func _upload() -> void:
 						Color(0.0, lamps, 0.0, v.fade))
 				cone_i += 1
 		mm.visible_instance_count = used
+		# HIDE the node, do not merely empty it — report 98 RR-83's corollary.
+		# This layer has the exact shape that ruling is about: eight buffers, a
+		# world-sized custom AABB on every one of them (so the frustum culler can
+		# never drop one), and several that are legitimately empty most of the
+		# time. The four EMERGENCY meshes are empty in every city with nothing on
+		# fire, `truck` empties whenever the sim's cap has not spawned one, and
+		# the headlight cone is empty for the whole of every daylight hour —
+		# five draw calls a frame for buffers with nothing in them.
+		if layer.node != null:
+			layer.node.visible = used > 0
 		if layer.material != null:
 			layer.material.set_shader_parameter("anim_time", _time)
 			layer.material.set_shader_parameter("night_amt", _night)
 	if _cone_mm != null:
 		_cone_mm.visible_instance_count = cone_i
+		if _cone_node != null:
+			_cone_node.visible = cone_i > 0
 	_drive_beacons()
 
 
@@ -766,6 +823,9 @@ func _build_layers(cfg: Dictionary) -> void:
 		# the preset's `vehicle_shadows` row.
 		layer.node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON \
 				if cast_shadows else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		# Born hidden. `_upload` switches it on the first frame it has anything
+		# to draw; until then an empty buffer would cost its call for nothing.
+		layer.node.visible = false
 		add_child(layer.node)
 		_layers[key] = layer
 
@@ -790,6 +850,7 @@ func _build_layers(cfg: Dictionary) -> void:
 	_cone_node.multimesh = _cone_mm
 	_cone_node.custom_aabb = aabb
 	_cone_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_cone_node.visible = false
 	add_child(_cone_node)
 	_size_beacons()
 
