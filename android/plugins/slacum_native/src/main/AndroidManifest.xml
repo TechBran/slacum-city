@@ -6,23 +6,35 @@
 	AAR only tells Gradle where the binary is.
 
 	The plugin declares its own permissions and receivers so that manifest merging
-	keeps it self-contained and `export_presets.cfg` needs no `custom_permissions`
-	entry (doc 13 §2.6). These four are the WHOLE release manifest (doc 13 §2.7),
-	and the list is enforced on every build by `tools/make_release.sh`:
+	keeps it self-contained (doc 13 §2.6). **That is true, including for the four
+	`<uses-permission>` elements — re-measured on built binaries, Wave 14.** The
+	2026-08-21 annotation that used to sit here said the opposite; it was wrong,
+	and it is reversed rather than deleted because the wrong reading cost a
+	session. The 2×2, `aapt2 dump permissions` on four locally built debug APKs:
 
-	  *** MEASURED FALSE FOR THE PERMISSIONS, 2026-08-21. ***
-	  The RECEIVERS and the meta-data below do merge — the installed debug APK
-	  registers this plugin (`GodotPluginRegistry: Initializing Godot plugin
-	  SlacumNative`), which it could only do by finding the meta-data below, and
-	  `dumpsys package` reports `componentsDeclared=6`. The four
-	  `<uses-permission>` lines DO NOT reach that APK: the same dump lists no
-	  requested permissions at all. Godot's exporter builds the permission list
-	  from the preset, and `export_presets.cfg` has an empty
-	  `custom_permissions` with no `permissions/*=true` on any of the three
-	  presets. So self-containment works for `<application>` children and not for
-	  permissions. Do not delete these four — they are the authored intent and
-	  `tools/make_release.sh` asserts them — but the preset is what the build
-	  actually reads. See doc 91 §13.
+	    AAR declares 4 | export_presets.cfg declares 4 | APK requests
+	    ...............+..............................+.............
+	         yes       |             yes              |      4   <- shipped
+	         yes       |             no               |      4
+	         no        |             yes              |      4
+	         no        |             no               |    * 0 *
+
+	**Either source suffices and the failing build had NEITHER.** The bottom row
+	reproduces the phone reading exactly — zero requested permissions, plugin and
+	both receivers merged, `componentsDeclared=6` — so the APK on the Fold was
+	built against an AAR that predated this permission block. That is the SAME
+	stale-AAR root cause the session before it had just diagnosed, and it is why
+	the AAR is tracked now.
+
+	`export_presets.cfg` carries the four as well (Wave 14), and the redundancy is
+	the point: a stale or hand-edited AAR can no longer silently drop a permission,
+	because the preset is a second, committed, diffable source that the exporter
+	reads directly. `tests/test_release_plumbing.gd` asserts BOTH halves; do not
+	delete either.
+
+	These four are the WHOLE release manifest (doc 13 §2.7), and the list is
+	enforced on every release build by `tools/make_release.sh`, which reads it
+	back off the built AAB and APK rather than off any source file.
 
 	  POST_NOTIFICATIONS      runtime (API 33+)  every notification
 	  RECEIVE_BOOT_COMPLETED  normal             re-arm alarms after a reboot
@@ -34,7 +46,8 @@
 	USE_EXACT_ALARM (Play restricts them to clocks and calendars — a city builder
 	asking for one risks the listing, which is why every alarm here is inexact),
 	FOREGROUND_SERVICE* (there is no service; the sim never runs in the background),
-	and any storage or ad-id permission.
+	and any storage or ad-id permission. Absent from BOTH sources now: no preset
+	sets a flag for any of them either, and the test scans for that.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 

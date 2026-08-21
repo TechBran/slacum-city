@@ -777,6 +777,16 @@ follows any of them. Doc 91 §20.2 item 19.
 steps)` and `UIRoot.present_veil_catchup(hours, steps)`. Like S0, nothing in
 `ui/` raises it, so a headless mount that does not ask does not get one.
 
+> **The catch-up half draws now (Wave 14).** This section shipped against a
+> `_on_app_resumed` that spent the whole absence in one synchronous `for` loop,
+> so `present_veil_catchup` put a truthful sentence and a truthful bar on screen
+> and the player saw **one frame of it**. The shell now steps a `CatchUpCursor`
+> (doc 13 §2.9, report 98 §28 RR-73) and calls `advance_veil_catchup()` once per
+> frame, so the bar this screen was built for finally moves. **Nothing in `ui/`
+> changed** — the model, the copy and the fraction were right; the thing feeding
+> them was not. Doc 91 A91-D-31 is closed by that change and this screen is what
+> made the defect visible in the first place.
+
 **Presentation.** Its own `VeilLayer`, the last child of the safe area and
 therefore above every other layer including the coach marks. A scrim at **0.92**
 alpha — heavier than the 0.55 every modal uses, because there is no city behind

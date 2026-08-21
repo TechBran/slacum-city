@@ -36,7 +36,13 @@ var next_vehicle_id: int = 1
 var headlights: bool = false
 
 var _vehicles: Dictionary = {}  # vehicle id -> record
-var _by_edge: Dictionary = {}  # edge_id -> Array[int] vehicle ids
+## edge_id -> Array[int] vehicle ids, **ASCENDING**, and the key set is mirrored
+## by `_edge_keys` below. See [edges_with_vehicles] for why both halves of that
+## sentence are a contract rather than a coincidence.
+var _by_edge: Dictionary = {}
+## The canonical iteration order of `_by_edge`: its keys, ascending, maintained
+## by binary-search insert/remove rather than sorted on demand.
+var _edge_keys := PackedInt32Array()
 var _events: Array = []
 
 
@@ -60,6 +66,39 @@ func vehicle_ids_sorted() -> Array:
 	return ids
 
 
+## The edges that currently hold a vehicle, ASCENDING — the feed's per-edge index
+## read in its one canonical order (doc 10's Wave-12 open q5).
+##
+## **This closes a fragility class rather than a bug.** `_by_edge` used to be
+## insertion-ordered in both halves, and the two insertion histories a shipped
+## city produces are DIFFERENT: a live feed appends a vehicle to an edge when it
+## spawns there and again every time it hops onto it, so a per-edge list is in
+## visit order and the key order is first-touch order; a feed rebuilt by
+## [deserialize] appends in ascending vehicle id and its key order is first
+## appearance in that walk. Nothing diverged, because the only consumer —
+## [rebalance] — copied the list, sorted it, and iterated `_sorted_keys()`. That
+## is a defence that has to be remembered by every future reader of the
+## container, and the next one to forget it would have broken save→load→advance
+## identity in a way that reproduces only after a hop.
+##
+## So the ORDER moved into the container: [_attach] and [_detach] keep every
+## per-edge list ascending and keep this key vector ascending, and both are
+## therefore identical live and restored. `tests/test_roads_traffic_order.gd`
+## asserts exactly that, over the RAW containers, which is the assertion that
+## would fail for a future consumer that iterates without sorting.
+##
+## Returns a SNAPSHOT: a caller may despawn while iterating it, which [rebalance]
+## does on its very first pass.
+func edges_with_vehicles() -> PackedInt32Array:
+	return _edge_keys.duplicate()
+
+
+## The vehicles on one edge, ASCENDING, as stored. Never a copy — treat it as
+## read-only; [rebalance] duplicates it because it despawns while walking it.
+func vehicles_on_edge(edge_id: int) -> Array:
+	return _by_edge.get(edge_id, [])
+
+
 func global_cap() -> int:
 	return tun.civ_cap(preset)
 
@@ -77,6 +116,7 @@ func reset(emit_despawns: bool = true) -> void:
 			_emit(&"vehicle_despawned", {"id": vehicle_id, "reason": "reset"})
 	_vehicles.clear()
 	_by_edge.clear()
+	_edge_keys.clear()
 
 
 ## Advance every live vehicle by `dt_game_minutes`. Called EVERY_TICK in fine
@@ -134,11 +174,13 @@ func rebalance() -> void:
 		_shrink_to(0)
 		return
 	var targets := _allocate_targets()
-	# 1. Trim edges that are over their target (oldest first).
-	for edge_id in _sorted_keys(_by_edge):
+	# 1. Trim edges that are over their target (lowest id first — which is
+	# oldest, because ids are handed out in spawn order and never recycled).
+	# The list is already ascending (`edges_with_vehicles`), so this copies to
+	# survive despawning while walking it and no longer sorts.
+	for edge_id in edges_with_vehicles():
 		var target := int(targets.get(edge_id, 0))
-		var ids: Array = (_by_edge.get(edge_id, []) as Array).duplicate()
-		ids.sort()
+		var ids: Array = vehicles_on_edge(edge_id).duplicate()
 		var index := 0
 		while ids.size() - index > target:
 			_despawn(int(ids[index]), "density")
@@ -148,7 +190,7 @@ func rebalance() -> void:
 	# are already there, so the Dictionary's own order IS the sorted order.
 	var cap := global_cap()
 	for edge_id in targets.keys():
-		var have: int = (_by_edge.get(edge_id, []) as Array).size()
+		var have: int = vehicles_on_edge(int(edge_id)).size()
 		for i in maxi(0, int(targets[edge_id]) - have):
 			if _vehicles.size() >= cap:
 				return
@@ -340,9 +382,7 @@ func _spawn(edge_id: int) -> void:
 		"hops_remaining": hops, "speed_mpgm": 0.0,
 	}
 	_vehicles[vehicle_id] = v
-	var list: Array = _by_edge.get(edge_id, [])
-	list.append(vehicle_id)
-	_by_edge[edge_id] = list
+	_attach(edge_id, vehicle_id)
 	v["speed_mpgm"] = _speed_of(v, record)
 	var pose := _pose_of(v)
 	_emit(&"vehicle_spawned", {
@@ -366,13 +406,7 @@ func _despawn(vehicle_id: int, reason: String) -> void:
 	var v: Dictionary = _vehicles.get(vehicle_id, {})
 	if v.is_empty():
 		return
-	var edge_id := int(v["edge_id"])
-	var list: Array = _by_edge.get(edge_id, [])
-	list.erase(vehicle_id)
-	if list.is_empty():
-		_by_edge.erase(edge_id)
-	else:
-		_by_edge[edge_id] = list
+	_detach(int(v["edge_id"]), vehicle_id)
 	_vehicles.erase(vehicle_id)
 	_emit(&"vehicle_despawned", {"id": vehicle_id, "reason": reason})
 
@@ -408,17 +442,10 @@ func _hop(v: Dictionary) -> bool:
 	options.sort()
 	var pick := int(options[rng.stream("traffic").randi_range(0, options.size() - 1)])
 	var next_record: Dictionary = graph.edge(pick)
-	var list: Array = _by_edge.get(edge_id, [])
-	list.erase(int(v["id"]))
-	if list.is_empty():
-		_by_edge.erase(edge_id)
-	else:
-		_by_edge[edge_id] = list
+	_detach(edge_id, int(v["id"]))
 	v["edge_id"] = pick
 	v["forward"] = int(next_record["node_a"]) == arrival_node
-	var next_list: Array = _by_edge.get(pick, [])
-	next_list.append(int(v["id"]))
-	_by_edge[pick] = next_list
+	_attach(pick, int(v["id"]))
 	return true
 
 
@@ -454,10 +481,33 @@ func _emit(event_type: StringName, payload: Dictionary) -> void:
 	_events.append(event)
 
 
-static func _sorted_keys(dict: Dictionary) -> Array:
-	var keys := dict.keys()
-	keys.sort()
-	return keys
+## Put `vehicle_id` on `edge_id`, keeping the per-edge list and the key vector
+## ascending. Both inserts are binary-search placements into containers that are
+## already sorted, so the whole index is order-canonical at every observation
+## point rather than at the ones a consumer remembers to sort.
+func _attach(edge_id: int, vehicle_id: int) -> void:
+	var list: Array = _by_edge.get(edge_id, [])
+	list.insert(list.bsearch(vehicle_id, true), vehicle_id)
+	if list.size() == 1:
+		# First vehicle on this edge: `_detach` erases an emptied key, so a
+		# present key always has a non-empty list and this is the only new one.
+		_edge_keys.insert(_edge_keys.bsearch(edge_id, true), edge_id)
+	_by_edge[edge_id] = list
+
+
+func _detach(edge_id: int, vehicle_id: int) -> void:
+	var list: Array = _by_edge.get(edge_id, [])
+	var at := list.bsearch(vehicle_id, true)
+	if at >= list.size() or int(list[at]) != vehicle_id:
+		return
+	list.remove_at(at)
+	if not list.is_empty():
+		_by_edge[edge_id] = list
+		return
+	_by_edge.erase(edge_id)
+	var key_at := _edge_keys.bsearch(edge_id, true)
+	if key_at < _edge_keys.size() and _edge_keys[key_at] == edge_id:
+		_edge_keys.remove_at(key_at)
 
 
 ## Save-identity support: the vehicle roster rides the roads save section so a
@@ -485,6 +535,7 @@ func deserialize(data: Dictionary) -> void:
 	headlights = bool(data.get("headlights", false))
 	_vehicles.clear()
 	_by_edge.clear()
+	_edge_keys.clear()
 	_events.clear()
 	for entry in data.get("vehicles", []):
 		var v: Dictionary = entry
@@ -496,6 +547,4 @@ func deserialize(data: Dictionary) -> void:
 			"hops_remaining": int(v["hops_remaining"]),
 			"speed_mpgm": float(v["speed_mpgm"]),
 		}
-		var list: Array = _by_edge.get(int(v["edge_id"]), [])
-		list.append(vehicle_id)
-		_by_edge[int(v["edge_id"])] = list
+		_attach(int(v["edge_id"]), vehicle_id)

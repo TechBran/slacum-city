@@ -709,6 +709,43 @@ so a finished tutorial stays finished across a restart. **D-3 closed.**
 > the five rows are no longer waiting on an artifact, they are waiting on one
 > read of `dumpsys notification` and a permission-request flow driven once by
 > hand. That is a ten-minute pass, not a wave.
+>
+> **RE-MEASURED 2026-08-21 (Wave 14). The three bullets above stand; the note in
+> the plugin manifest that contradicted the first one does not.** That note said
+> the four `<uses-permission>` elements never reach an APK and that
+> `export_presets.cfg` is the only source. Four locally built debug APKs say
+> otherwise (`aapt2 dump permissions`, report 98 §28 RR-69):
+>
+> | plugin AAR declares the four | preset declares the four | APK requests |
+> |---|---|---|
+> | yes | yes | **4** ← shipped |
+> | yes | no | **4** |
+> | no | yes | **4** |
+> | no | no | **0**, plugin and both receivers still merged |
+>
+> **Either source suffices, and the failing build had neither.** The bottom row
+> is the Fold `dumpsys package` reading reproduced exactly — no requested
+> permissions, `componentsDeclared=6`, plugin loading — so the APK on the phone
+> was built against an AAR that predated the plugin manifest's permission block.
+> That is the **stale-AAR root cause the session immediately before it had just
+> diagnosed**, showing up one symptom later and attributed to the wrong file. It
+> is why the AAR is tracked now, and it is the second time a stale AAR has cost
+> this project a session.
+>
+> **`export_presets.cfg` carries the four as well from Wave 14, as a second
+> source rather than as the fix**: with it, a stale AAR degrades from *silently
+> drops a runtime permission* to *nothing at all*.
+> `tests/test_release_plumbing.gd::test_every_preset_requests_exactly_the_four_permissions`
+> is the headless gate for that half — the file asserted what the plugin manifest
+> AUTHORS and had no assertion about what a preset REQUESTS, so the second source
+> could go missing in silence.
+>
+> **What none of this establishes:** the rows below still do not move. Nothing
+> measured here shows a system dialog appearing, a `permission_result` arriving
+> or a channel being created. It shows that the permission those things need is
+> requested by every artefact this repository can build. The remaining work is
+> still one device session — one `dumpsys notification` read and one prompt
+> driven by hand.
 
 > **Stale, and deliberately not re-graded here (2026-08-19).** Every row below is
 > as measured at `6d8c2b1`, and an Android wave has landed since: `game/notifications/`
@@ -999,7 +1036,7 @@ prefixed one names its document.**
 
 | # | Severity | Defect |
 |---|---|---|
-| **A91-D-31** | Medium | **The offline catch-up is not sliced, so doc 13 §2.9's veil has nothing to animate over.** `game/main.gd::_on_app_resumed` walks `CatchUpPlanner.plan()`'s segments in a synchronous `for` loop — `advance_coarse_hours(count)` and `advance_fine_n(count)` back to back — so a 12-real-hour absence runs **720 coarse steps inside one frame**. Doc 13 §2.9 specifies the other shape and has since it was drafted: `while not sim.advance_coarse_sliced(12): veil.set_progress(...); await get_tree().process_frame`, with a 12 ms budget whose stated purpose is "keeping the 30 fps veil animation smooth". **This is not an ANR risk** — §2.9's own argument is that whole coarse steps are atomic and the margin to the 5 s line is 90× — it is a *presentation* defect, and it is only visible now because Wave 13 built the veil the loop was supposed to feed. Today `UIRoot.present_veil_catchup()` puts a truthful sentence and a truthful bar on screen and the loop never yields, so the player sees one frame of it at most. The restore in front of it *is* sliced (`RestoreCursor`, eleven steps) and is where the veil currently earns its keep. Two things are needed: `CitySim.advance_coarse_sliced(budget_ms)` (or the same loop written in the shell over the planner's segments, one segment per frame), and `advance_veil_catchup()` called from inside it. Filed rather than fixed here because `game/main.gd` is the lead's and because a sliced catch-up changes when `_on_sim_batch` sees the offline events — an integration decision, not a UI one. |
+| **A91-D-31** | ~~Medium~~ **✅ CLOSED 2026-08-21 (Wave 14)** | **The offline catch-up is not sliced, so doc 13 §2.9's veil has nothing to animate over.** `game/main.gd::_on_app_resumed` walks `CatchUpPlanner.plan()`'s segments in a synchronous `for` loop — `advance_coarse_hours(count)` and `advance_fine_n(count)` back to back — so a 12-real-hour absence runs **720 coarse steps inside one frame**. Doc 13 §2.9 specifies the other shape and has since it was drafted: `while not sim.advance_coarse_sliced(12): veil.set_progress(...); await get_tree().process_frame`, with a 12 ms budget whose stated purpose is "keeping the 30 fps veil animation smooth". **This is not an ANR risk** — §2.9's own argument is that whole coarse steps are atomic and the margin to the 5 s line is 90× — it is a *presentation* defect, and it is only visible now because Wave 13 built the veil the loop was supposed to feed. Today `UIRoot.present_veil_catchup()` puts a truthful sentence and a truthful bar on screen and the loop never yields, so the player sees one frame of it at most. The restore in front of it *is* sliced (`RestoreCursor`, eleven steps) and is where the veil currently earns its keep. Two things are needed: `CitySim.advance_coarse_sliced(budget_ms)` (or the same loop written in the shell over the planner's segments, one segment per frame), and `advance_veil_catchup()` called from inside it. Filed rather than fixed here because `game/main.gd` is the lead's and because a sliced catch-up changes when `_on_sim_batch` sees the offline events — an integration decision, not a UI one. — **CLOSED 2026-08-21 (Wave 14), and the row's own prescription is half right.** `CitySim.begin_catchup(plan) -> CatchUpCursor` ships in `sim/time/catchup_cursor.gd`; the shell integration is an exact snippet against `main.gd`'s existing `_restore_cursor` guard, so the lead still owns the integration decision this row reserved for them. **What did not survive contact with the shipped planner:** `advance_coarse_sliced(budget_ms)` cannot advance a real resume — a returning player's plan carries a fine head-align segment and a 40-tick fine tail (D-1), which a coarse-only entry point has nothing to do with — and the BUDGET cannot live in `sim/` at all, because constitution §5 forbids reading a clock there. So the unit is one coarse hour or one fine tick and the shell spends them against `Time.get_ticks_usec()`, which is `RestoreCursor`'s own contract and doc 13 §2.9's own sentence ("the shell decides the budget"). The 12 ms budget is unchanged in meaning and buys **one** step per frame on every city in the project at the measured 6.3–190 ms per coarse step, which is §2.9's own worst-case row rather than its retired 0.60 ms estimate. Determinism is the part that could have gone wrong and is proved instead: a coarse step reads `ctx.catchup_index` / `ctx.catchup_total`, which index the SEGMENT and not the slice, so the cursor issues `advance_coarse_n(1, true, hours_done_in_segment, segment_hours)` and `catchup_begin()` still fires once per segment. `tests/test_catchup_cursor.gd` proves bit-identity against a verbatim copy of the old shell loop on both cities at 1, 3, 12 and unbounded units per frame, on `state_hash()` **and** on the drained event bus. **And the row was right that the integration is where the decisions are.** Two of them, both in the snippet: `SimHost` must be **paused** for the duration — it is a separate node with its own `_process`, and unpaused it adds `delta × 60` to `clock.residual_game_ms` and spends live fine ticks *between* the slices, which is a different city and not merely untidy — and a player can now background the app *while the veil is up*, so a second resume drains the unfinished cursor on the spot rather than dropping the new absence. Report 98 §28 RR-72. |
 
 #### New rows, Wave 14 (2026-08-21) — `A91-D-32`
 
@@ -1562,7 +1599,7 @@ eight green at once and not five:
 | Every screen clean at every box × both a11y settings | `tools/ui_preview.gd --audit --strict`; the suite's own a11y check now runs **six** boxes including `min_safe_box_dp` (D-58) | ~~**5 / 12 sweeps**~~ ~~**10 / 18 sweeps at `28b9550`**~~ **18 / 18 sweeps at Wave 13** — six boxes × 100 % / 130 % / 150 %, **55 states each, 990 state-sweeps, 0 findings, exit 0 eighteen times** (§19.1). A91-D-21, A91-D-22, A91-D-23 and A91-D-29 all closed. The instrument covers 15 / 16 screens — S15 arrived with its own two states, S13 still has none (A91-D-28) |
 | Determinism | `tools/profile_sim.gd --hash-only --baseline`, both cities | ✅ |
 | Balance | `tests/test_balance_gates.gd`, ~~28~~ **29** gates (gate 29 = the preset ordering, doc 92 §29.6) | ✅ |
-| Suite | `tests/run_tests.gd` | ✅ ~~109 / 1,909 / 505,294~~ ~~112 files / 1,991 tests / 511,256 asserts~~ **117 files / 2,056 tests / 519,294 asserts** / 0 failed / 0 silent (2026-08-20; `tests/test_save_determinism_days.gd` is the new file this wave, and it is deliberately the most expensive one in the suite — see report 98 §26 RR-60) |
+| Suite | `tests/run_tests.gd` | ✅ ~~109 / 1,909 / 505,294~~ ~~112 files / 1,991 tests / 511,256 asserts~~ ~~117 files / 2,056 tests / 519,294 asserts~~ **120 files / 2,096 tests / 524,684 asserts** / 0 failed / 0 silent (2026-08-21, Wave 14; the new files are `tests/test_catchup_cursor.gd` and `tests/test_roads_traffic_order.gd`. `tests/test_save_determinism_days.gd` remains deliberately the most expensive one in the suite — see report 98 §26 RR-60) |
 
 **Two of those clauses have no test yet**, and making them into tests is the
 cheapest structural work left in the project: a verb-door test (walk `CitySim`'s
@@ -1589,7 +1626,7 @@ M (a day or two), L (a wave).
 | 4 | **`data/difficulty.json` + `sim/economy/difficulty.gd` + pass it at `city_sim.gd:197`** | **M** | A91-D-19 | three quarters of doc 03 §2.9's authored table is unreachable, and every balance number is measured on one preset |
 | 5 | **The verb-door test** and ~~the event-consumer test~~ (✅ **DONE 2026-08-20**: `tests/test_event_matrix.gd`, 6 tests, and the exemption register is in it) | **S** | §20.1's two untested clauses | the two matrices that found the most, mechanised; one of the two now is |
 | 6 | **Yield the 880×400 top bar to the rails** | **M** | A91-D-23 | §2.3's own reference box, all 49 states |
-| 7 | **A debug build that carries the plugin, on the Fold** | **M** | doc 13 §2.4–§2.9 (5 rows), doc 08 §2.13's platform half | **the single largest block of PARTIAL rows in the project, and it is one build away from being measurable rather than one feature** |
+| 7 | **A debug build that carries the plugin, on the Fold** | **M** | doc 13 §2.4–§2.9 (5 rows), doc 08 §2.13's platform half | **the single largest block of PARTIAL rows in the project, and it is one build away from being measurable rather than one feature.** *Updated 2026-08-21 (Wave 14): the build the phone got requested no permissions, and the reason was a STALE AAR rather than the preset* — four locally built APKs show either source is sufficient and that only a build with neither declares zero (report 98 §28 RR-69). The AAR is tracked now and `export_presets.cfg` carries the four as a second source, so the permission set survives a stale binary. **The remaining work here is unchanged in size and is now honestly one device session**: one `dumpsys notification` read and one permission prompt driven by hand |
 | 8 | ~~**Draw the flood**~~ — ✅ **DONE 2026-08-20.** Not a `WeatherFX` arm and not `sc_wetness`: `game/render/flood_view.gd` + `game/shaders/flood.gdshader`, one MultiMesh over the flooded block's road tiles, **+1 draw call**. Announced in both routers, toasted once, and `road_reopened` got the all-clear it never had. See doc 11 §2.9b, report 98 RR-48 | **M** | A91-D-26's headline, doc 07 §2.4 | was: 460 events a session, drawn by nothing |
 | 9 | **Doors for the five doorless verbs** | **M** | A91-D-24, doc 05's verbs row | two sibling agents are on four of the five this wave (`cmd_route_feeder` and the water maintenance trio); `cmd_recall_unit` is the fifth and is two lines |
 | 10 | **Persist the notification budget** | **S** | A91-D-27, doc 08 §2.13 | four lines, the same shape `SaveService.ui_provider` took |
@@ -1603,6 +1640,8 @@ M (a day or two), L (a wave).
 | ~~18~~ | ~~**Find what `roads` restores differently after a day boundary**~~ **DONE 2026-08-20 — and it was not roads.** One ULP in `WaterDemandCache`'s per-zone demand sums, which the live run maintains incrementally and a restore rebuilt from scratch; `water.section_version` 2 → 3 carries them. Roads was the loudest symptom and the wrong suspect. The gate that would have caught it in Wave 5 now exists: `tests/test_save_determinism_days.gd` saves at 2 h, 26 h, 50 h and seven game-days on both cities. See report 98 §26 RR-60 | ~~M~~ | ~~A91-D-30~~ | ~~a determinism violation on the founding city at a save point a player reaches in one sitting~~ — the lesson worth keeping is the method: the first field to MOVE is not the field that is wrong, and the only instrument that separates them is a reflection-walk comparator run *before* the two cities advance (`tools/diff_restore.gd`) |
 | 19 | **The loading veil, and the catch-up veil with it** | **S** | doc 13 §2.9 / §2.9.1's own pseudocode | *added 2026-08-20.* Doc 13 has assumed `veil.show()` since it was written and the shell has never had one. The restore is now eleven resumable steps and the catch-up has always been sliceable, so **both levers are built and neither has a surface**; the title door standing in for it (report 98 §24) covers CONTINUE and covers nothing else. One `ColorRect`, one label, one progress bar, and a `SCREENS` entry so the sweep can see it |
 | ~~20~~ | ~~**Inject doc 10's two dead siblings — `profile_weights_of` and `weather_state_of`**~~ **DONE 2026-08-21 (Wave 14)** | ~~S~~ | **A91-D-32** | *added and closed in the same wave.* Two `Callable` fields `CitySim` never assigned, each with a plausible default behind it, so doc 09's per-district land-use weights and doc 10 §8's eleven weather rows were authored and unreachable — **rain had never slowed traffic in a shipped build**. Closed by report 98 RR-69: `DistrictRegistry.profile_weights(id)` (doc 09 §2.6.1) and `CitySim._road_weather_state`, both injected before `bootstrap()`. Four determinism baselines re-recorded, four of thirty gates re-fitted with derivations (doc 92 §33), twenty-six untouched |
+
+| 19 | **The loading veil, and the catch-up veil with it** | **S** | doc 13 §2.9 / §2.9.1's own pseudocode | *added 2026-08-20.* Doc 13 has assumed `veil.show()` since it was written and the shell has never had one. The restore is now eleven resumable steps and the catch-up has always been sliceable, so **both levers are built and neither has a surface**; the title door standing in for it (report 98 §24) covers CONTINUE and covers nothing else. One `ColorRect`, one label, one progress bar, and a `SCREENS` entry so the sweep can see it. **Both halves are real as of 2026-08-21 (Wave 14).** Wave 13 built the surface and the catch-up half still drew for one frame, because the shell's resume was a synchronous loop with no frame in it; `CitySim.begin_catchup()` + `CatchUpCursor` closed that (A91-D-31, report 98 §28 RR-72) and nothing in `ui/` had to change to make the bar move |
 
 ~~**Items 1–3, 5, 10, 11, 16, 17 and 19 are all S and together are about one day.**~~
 **Items 1, 2, 3 and 19 are done as of 2026-08-20 (Wave 13); 5, 10, 11, 16 and 17

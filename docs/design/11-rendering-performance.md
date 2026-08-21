@@ -2177,6 +2177,30 @@ nothing in the codebase can observe a half-written ladder, and
 `NOTIFICATION_PREDELETE` / `EXIT_TREE` flush too, so a process that ends with a
 write queued still lands it.
 
+#### Wave 14 — the load in front of the frame gets 108 ms shorter (2026-08-21)
+
+Two of this wave's four items move a number this section indexes, and neither is
+a *frame* number, so the tables above are unchanged and the measurements live
+with their owners:
+
+* **Doc 04's per-tile transformer memo is warm-filled at boot.** It was
+  cold-filled by the load seam's signal-power sample — the 96 ms RR-60b split
+  into five ~21 ms `roads_signals` restore steps. Interleaved A/B, three rounds,
+  benchmark city: `roads_signals` **109.5 → 1.54 ms**, restore total
+  **316 → 207 ms**, cold `CitySim.boot()` **211 → 222 ms**. The longest restore
+  step is unchanged at `decode` ≈ 31 ms, which is what §2.9.1's veil budget is
+  written against. Full table in doc 04 §2.2; ruling in report 98 §28 RR-71.
+* **The offline catch-up is sliced.** `CitySim.begin_catchup()` hands the shell a
+  cursor and the shell spends whole coarse hours or fine ticks against a 12 ms
+  wall-clock budget, so S15's catch-up veil draws every frame instead of one.
+  This is a frame-pacing win the profilers here cannot see — the same shape as
+  Wave 9's proposal 2 — because the work per absence is identical and only its
+  distribution across frames changed. Doc 13 §2.9; report 98 §28 RR-73.
+
+`tools/profile_save.gd` gained a `boot (cold sim)` row and a `--boot-only` mode
+so the first of those is measurable at both ends of the trade rather than only
+at the end that got faster.
+
 #### Device matrix
 
 | Tier | Representative devices | GPU | Preset | Target |

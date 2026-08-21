@@ -138,7 +138,7 @@ ticks        = game_minutes * GameClock.TICKS_PER_MINUTE                  # ×4
 | Range | Path | UI |
 |---|---|---|
 | `< 60 s` | Fine ticks: `sim.tick()` × `elapsed_s × 4`, capped at 240 ticks, executed inside one frame | None — seamless |
-| `60 s … 12 h` | Coarse offline path (doc 01's `advance_coarse_sliced`, under doc 08's fidelity bands), sliced (§2.9) | Progress veil → WHILE YOU WERE AWAY report |
+| `60 s … 12 h` | Coarse offline path (`CitySim.begin_catchup(plan)` → `CatchUpCursor`, under doc 08's fidelity bands), sliced (§2.9) | Progress veil → WHILE YOU WERE AWAY report |
 | `> 12 h` | Same, clamped to 12 h | Report additionally shows "Your city ran for 30 game-days; N hours of your absence were beyond the cap and were not simulated" |
 
 The 60 s threshold is exactly one coarse step, since 1 real second = 1 game minute ⇒ 60 real s = 1 game hour = the coarse granularity.
@@ -304,7 +304,7 @@ fun launch_args(): Array<String>
 - `PendingIntent` flags `FLAG_IMMUTABLE or FLAG_UPDATE_CURRENT` (mutability is explicit since API 31).
 - `AlarmReceiver : BroadcastReceiver` builds the notification with `NotificationCompat` and posts through `NotificationManagerCompat`. Tap → `PendingIntent` to `com.godot.game.GodotApp` with extra `slacum_payload`; if the process is alive the plugin emits `notification_opened`, otherwise the payload is stashed for `consume_launch_payload()`.
 - **Reboot survival.** Alarms are cleared on reboot. The plugin owns `filesDir/notif_schedule.json`, rewritten on every schedule/cancel; `BootReceiver` (`RECEIVE_BOOT_COMPLETED`) replays entries whose `at_unix_ms` is still in the future and drops the rest. `am force-stop` also cancels alarms and *cannot* be recovered from until the user launches the app — accepted and documented, not worked around.
-- The plugin ships its own `AndroidManifest.xml` declaring its receivers and its permissions, so manifest merging keeps the plugin self-contained and `export_presets.cfg` needs no `custom_permissions` entries. **Half of this is measured false (2026-08-21).** The receivers and the `plugin.v2` meta-data *do* merge — the installed debug APK registers the plugin, which requires the meta-data, and reports `componentsDeclared=6`. The four `<uses-permission>` elements *do not*: the same `dumpsys package` lists no requested permissions at all. Godot's exporter builds the permission list from the preset, and all three presets carry an empty `custom_permissions` with no `permissions/*=true`. **`export_presets.cfg` does need the entries**, and the permission flow (§2.7) cannot execute until it has them. Doc 91 §13 carries the evidence.
+- The plugin ships its own `AndroidManifest.xml` declaring its receivers and its permissions, so manifest merging keeps the plugin self-contained and `export_presets.cfg` needs no `custom_permissions` entries. ~~**Half of this is measured false (2026-08-21)** — the four `<uses-permission>` elements do not merge; `dumpsys package` on the installed APK lists no requested permissions at all.~~ **THAT ANNOTATION IS ITSELF FALSE, and it is reversed rather than deleted because it cost a session (Wave 14, report 98 §28 RR-70).** Re-measured on four locally built debug APKs with `aapt2 dump permissions`: a build whose AAR declares the four and whose preset does not **requests all four**, so merging carries `<uses-permission>` exactly as this bullet says. The failing build had **neither** source — an AAR that predated this permission block, which is the same stale-AAR root cause the session before it had just fixed by tracking the binary. `export_presets.cfg` now carries the four as well (§2.7, §3.4), and the redundancy is the point rather than the fix: with it, a stale AAR can no longer take a runtime permission with it.
 
 **Bounded scope.** The plugin contains no game logic, no scheduling policy, and no strings — GDScript decides *what* and *when*; Kotlin only knows *how*. That keeps the untestable-headlessly surface as small as possible.
 
@@ -345,6 +345,46 @@ Release manifest, complete:
 8. API < 33: no runtime permission exists; notifications_enabled() still reports the
    user's system toggle, so the Settings row stays truthful.
 ```
+
+> **As built (Wave 14) — the four permissions have TWO sources now, and the reason is not the one this wave was sent to fix.** The third Fold session concluded that the plugin manifest's `<uses-permission>` elements never reach an APK and that the preset is the only source; **that is measured false** (report 98 §28 RR-70). The 2×2, `aapt2 dump permissions` on four locally built debug APKs:
+>
+> | plugin AAR declares the four | `export_presets.cfg` declares the four | APK requests |
+> |---|---|---|
+> | yes | yes | **4** ← shipped |
+> | yes | no | **4** |
+> | no | yes | **4** |
+> | no | no | **0**, with the plugin meta-data and both receivers still merged |
+>
+> Either source suffices, and the bottom row is the phone reading reproduced exactly — so the APK on the Fold was built against an AAR that predated the plugin manifest's permission block. Same stale-AAR root cause as the session before it.
+>
+> **The presets carry the four anyway, on all three, and that is a deliberate redundancy rather than a fix:**
+>
+> ```ini
+> permissions/custom_permissions=PackedStringArray()
+> permissions/post_notifications=true
+> permissions/receive_boot_completed=true
+> permissions/vibrate=true
+> permissions/wake_lock=true
+> ```
+>
+> With it, the APK's permission set no longer depends on a 36 KB binary being current — it depends on a committed, diffable text file the exporter reads directly, and a stale AAR degrades from *silently drops a runtime permission* to *nothing at all*. `custom_permissions` stays empty: all four are in 4.7.2's own permission table (`"permissions/" + PERMISSION.to_lower()` is the option key), so the boolean flags are the idiomatic spelling and the "presets add no permissions of their own" assertion keeps its meaning.
+>
+> Shipped state, read back off the binary (`godot --headless --export-debug "Android"`, build-tools 36.1.0):
+>
+> ```
+> $ aapt2 dump permissions build/slacum-debug.apk
+> package: com.slacumcity.game
+> uses-permission: name='android.permission.POST_NOTIFICATIONS'
+> uses-permission: name='android.permission.RECEIVE_BOOT_COMPLETED'
+> uses-permission: name='android.permission.VIBRATE'
+> uses-permission: name='android.permission.WAKE_LOCK'
+> ```
+>
+> Four, exactly, and **no `INTERNET`** — which the preset flags do not put back. `aapt2 dump xmltree` on the same binary shows `org.godotengine.plugin.v2.SlacumNative → com.slacumcity.nativeplugin.SlacumNative` and both receivers, so nothing was traded for it.
+>
+> **What this does NOT establish, and the flow above still waits on it:** every line of the POST_NOTIFICATIONS flow remains untested on a device. Nothing here proves that step 4's dialog appears, that `permission_result` arrives, or that a channel is created — only that the permission the dialog is for is now requested by every artefact this repository can build, from two independent sources. Doc 91 §13's remaining item is one device session.
+>
+> **The headless gate that would have caught the stale AAR's consequence now exists.** `tests/test_release_plumbing.gd` asserted what the plugin manifest AUTHORS and that `custom_permissions` was empty; it had no assertion at all about what the presets REQUEST, so the second source could go missing in silence. `test_every_preset_requests_exactly_the_four_permissions` closes that.
 
 ### 2.8 Battery, frame pacing, and thermal policy
 
@@ -405,7 +445,15 @@ Progress fraction = `steps_done() / steps_total()`, so the bar is honest. If `st
 
 > **As built (Wave 13):** the veil is `ui/loading_veil.gd` + `ui/veil_model.gd`, doc 12 §2.20, and this phase's copy is `Your city ran {hours} hours` with the 12-hour cap named in words underneath when the absence ran past it. `catchup_veil_min_steps` lives at `data/ui.json.veil.min_steps`, and a refused catch-up also takes a *showing* veil down with it — which is the sequence a returning player actually produces, since the restore in front of it raised one.
 >
-> **What is still doc 13's to do, and it is the shell's half rather than the screen's:** `game/main.gd::_on_app_resumed` runs the planner's segments in a synchronous `for` loop, so there is no frame between them for the veil to draw in. The slicing this section specifies (`advance_coarse_sliced`, 12 ms budget, one `await get_tree().process_frame` per slice) has never been wired; the veil is now the thing that was missing on the other side of it. Until it is, the catch-up phase is a message rather than an animation, and the restore in front of it — which *is* sliced — is where the veil earns its keep.
+> ~~**What is still doc 13's to do, and it is the shell's half rather than the screen's:**~~ **DONE (Wave 14).** `game/main.gd::_on_app_resumed` ran the planner's segments in a synchronous `for` loop, so there was no frame between them for the veil to draw in. It now takes a **`CatchUpCursor`** and spends units out of it inside the same guard `_restore_cursor` already owns — one `_process` frame per slice, `advance_veil_catchup(cursor.done_ticks())` per slice, and the post-catch-up work (`residual_game_ms`, the bus drain into `_on_sim_batch`, the away report) moved to the completion branch where it belongs.
+>
+> **Two shell-side consequences of the catch-up no longer being one frame, both handled in the snippet and neither of them a UI question.** First, `SimHost` is **paused for the duration**: it is a separate node with its own `_process`, and unpaused it would add `delta × 60` to `clock.residual_game_ms` and spend LIVE fine ticks between the plan's slices — so the sliced resume would land on a different city from the synchronous one. The pause is a determinism requirement, not tidiness. Second, a player can now background the app *while the veil is up*, which was unreachable before; a second `_on_app_resumed` therefore drains the unfinished cursor on the spot and then plans the new absence, rather than dropping it. Draining synchronously is exactly what this path did with the whole plan at HEAD, so it is no worse than the frame it replaces.
+>
+> **The unit is one coarse hour or one fine tick, and the BUDGET is the shell's**, which is where this section's own pseudocode already put it and where constitution §5 requires it — `sim/` may not read a clock, so a cursor cannot decide for itself that it has spent long enough. The shell writes `while not cursor.step(): if Time.get_ticks_usec() - t0 >= CATCHUP_SLICE_USEC: break`, spends 12 ms of whole steps and returns the frame. ANR safety is unchanged and still structural: a step longer than the budget runs to completion, so the worst blocked frame is one coarse step (190 ms on the benchmark city) against the 5 s line.
+>
+> **Two shapes in this section did not survive contact with the shipped planner, and both are recorded rather than quietly dropped.** `advance_coarse_sliced(hours_per_slice)` returning "done yet?" cannot advance a real resume: a returning player's plan carries a fine head-align segment and a 40-tick fine tail (doc 91 D-1), and a coarse-only entry point has nothing to do with either. And `hours_per_slice = 12` came from the retired 0.60 ms/step estimate — at the measured 6.3 ms (founding) to 190 ms (bench) per coarse step, a 12 ms budget spends **one** step per frame on any city in the project, which is this section's own worst-case row.
+>
+> **Slicing changes nothing about the city, and the seam that guarantees it is `TickScheduler.advance_coarse_n`'s `catchup_index_base`.** A coarse step reads `ctx.catchup_index` / `ctx.catchup_total` — doc 03's offline yield decay and doc 07's 72-hour offline event gate both consume them — so an hour has to be told which hour OF ITS SEGMENT it is, not of its slice. `tests/test_catchup_cursor.gd` proves bit-identity against the old loop on both cities at 1, 3, 12 and unbounded units per frame, on `state_hash()` **and** on the drained event stream, and pins the index mechanism directly so a regression names its own cause. `catchup_begin()` still fires once per coarse segment (doc 07 C-55), not once per slice. Report 98 §28 RR-73.
 
 #### 2.9.1 The term this section forgot: the LOAD in front of the catch-up (Wave 12)
 
@@ -430,6 +478,8 @@ while not cursor.step():                     # one step per frame
     await get_tree().process_frame
 # …and only now does the catch-up above begin.
 ```
+
+> **Wave 14 moved 108 ms off the table below, and it was never a restore term to begin with.** Doc 04's per-tile transformer memo was cold-filled by the signal-power sample at the load seam — the five `roads_signals` steps RR-60b split it into — and it is now warm-filled once in `CitySim._boot_power`. Interleaved A/B, three rounds, benchmark city: `roads_signals` **109.5 → 1.54 ms**, restore total **316 → 207 ms**, against **cold `CitySim.boot()` 211 → 222 ms** on the other side of the trade. The longest step is unchanged, which is what the veil budget is written against. Doc 04 §2.2 carries the full table; report 98 §28 RR-70.
 
 Per-step cost, benchmark city, `profile_save.gd --steps` (best of 7):
 
@@ -667,11 +717,15 @@ screen/immersive_mode=true
 screen/support_small=false                        ; support_normal/large/xlarge = true
 user_data_backup/allow=false
 apk_expansion/enable=false
-permissions/custom_permissions=PackedStringArray()   ; plugin manifest owns permissions
-                                                     ; ^ MEASURED FALSE 2026-08-21: it does not.
-                                                     ;   The installed APK requests NO permissions
-                                                     ;   though the plugin's receivers merged fine.
-                                                     ;   The exporter owns this list; see §2.6.
+permissions/custom_permissions=PackedStringArray()   ; ^ the plugin manifest DOES merge its four
+                                                     ;   (2×2 in §2.7; the 2026-08-21 "measured
+                                                     ;   false" note was itself false and is
+                                                     ;   reversed). custom_permissions stays empty.
+permissions/post_notifications=true                  ; Wave 14: the four, on every preset, as a
+permissions/receive_boot_completed=true              ; SECOND source. A stale AAR then degrades from
+permissions/vibrate=true                             ; "silently drops a runtime permission" to
+permissions/wake_lock=true                           ; "nothing at all", which is the failure that
+                                                     ; has now cost two sessions. See §2.6 / §2.7.
 
 [preset.1]  name="Android Play AAB"
 ;   as preset.0, but export_path="build/slacum-release.aab" and gradle_build/export_format=1
@@ -711,7 +765,7 @@ Nothing in this document lives in `sim/`. The shell classes below are `game/` la
 
 **Events emitted** (onto the shell's own bus, not the sim's): `app_paused`, `app_resumed(elapsed_s, anomaly)`, `catchup_started(steps_total)`, `catchup_progress(fraction)`, `catchup_finished(summary)`, `notification_permission_changed(state)`, `notification_opened(payload)`, `notification_delivered(id, key)`, `thermal_changed(status)`, `power_preset_changed(preset, reason)`, `unclean_exit_detected(path)`.
 
-**Nothing here ever calls into `sim/` except through the sanctioned surface**: `Sim.deserialize()`, `Sim.tick()`, `Sim.advance_coarse_hours()`, `Sim.advance_coarse_sliced(max_ms)` + `steps_done()` / `steps_total()`, `Sim.drain_events()`, `SaveManager.request_save(reason)` and `SaveManager.load_slot(slot)`. **`Sim.serialize()` is no longer called from here** — snapshotting is inside doc 08's `request_save`.
+**Nothing here ever calls into `sim/` except through the sanctioned surface**: `Sim.deserialize()`, `Sim.tick()`, `Sim.advance_coarse_hours()`, ~~`Sim.advance_coarse_sliced(max_ms)`~~ **`Sim.begin_catchup(plan)` → `CatchUpCursor.step()` + `steps_done()` / `steps_total()` / `done_ticks()` / `total_ticks()`** (Wave 14 — §2.9), `Sim.drain_events()`, `SaveManager.request_save(reason)` and `SaveManager.load_slot(slot)`. **`Sim.serialize()` is no longer called from here** — snapshotting is inside doc 08's `request_save`.
 
 ## 5. Cross-System Interfaces
 
@@ -1273,10 +1327,17 @@ so **the permission set is empty in debug as well as release**. Two consequences
   reason to split the presets the way §3.4 always intended, and it is the only
   argument for doing so that this commit found.
 
-**Superseded by §11.2.** The debug APK still declares nothing of its own, but the
-plugin now ships §2.7's four permissions, so every build — debug, test APK and
-AAB alike — declares exactly those four. The gate is now an equality check rather
-than an emptiness check, and it runs on every release build.
+**Superseded by §11.2** — and that supersession is CORRECT, re-verified Wave 14
+on a locally built debug APK. This section's own measurement was taken before the
+plugin manifest carried §2.7's four; once it did, the merged manifest carries
+them into every build, debug included. `aapt2 dump permissions build/slacum-debug.apk`
+returns exactly the four and nothing else. See report 98 §28 RR-69 for the 2×2
+that settles which file supplies them (either does) and for what the third Fold
+session's zero-permission reading actually was (a stale AAR).
+
+The **`INTERNET`-for-remote-debugging** note above still stands unchanged: it is
+still absent, still deliberately, and the fix is still a debug-only preset if it
+is ever wanted.
 
 ---
 
@@ -1330,6 +1391,17 @@ outside:
    `PendingIntent` directly, which needs no export.
 
 ### 11.2 The four permissions are real now
+
+> **RE-VERIFIED Wave 14, and this section was right.** The 2026-08-21 Fold
+> session read `dumpsys package` on a build that requested no permissions at all
+> and concluded that this section's `aapt2` block had been written from intent
+> rather than from a binary. It had not: a fresh export whose plugin AAR carries
+> §2.7's four and whose preset does not still requests all four, because manifest
+> merging carries `<uses-permission>` (report 98 §28 RR-69's 2×2). The build on
+> the phone was made against an AAR that predated the permission block — the
+> stale-AAR root cause the previous session had just fixed by tracking the
+> binary. `export_presets.cfg` now declares the four as a **second** source, so
+> the set survives a stale AAR; §2.7 carries the current `aapt2` output.
 
 The plugin's manifest declares `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`,
 `VIBRATE` and `WAKE_LOCK` — §2.7's list, exactly, and nothing else. Verified on

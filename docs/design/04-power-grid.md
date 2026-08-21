@@ -92,6 +92,22 @@ The superseded 14 × L1 + 9 × L2 / 110-tile set (`rated_mva 2.05`, `line_km 0.8
 
 Component upgrades (not level ladders): **surge arrester** on substation/transformer/feeder, levels 0–3, −22% lightning damage probability per level. **Flood wall** on substations, levels 0–2, +0.6 m immunity depth per level. Both are priced by doc 03 §2.13(b).
 
+> **As built (Wave 14) — the service radius above has a second reader, and it is now WARM.** Doc 10's G-6 seam asks "is this tile powered?" once per signalised intersection every tick, and `CitySim._is_tile_powered` answers it from a tile → covering-transformer memo built out of the same `service radius 3/4/5/6/8` column. The memo was filled lazily, one intersection at a time, by a scan that re-derived every transformer's global tile and radius **inside** the per-tile loop — and report 98 §26 RR-60b measured what that cost: **96 ms on the 1,500-building benchmark city**, paid by `RoadGraph.refresh_signal_power` at the load seam (five ~21 ms restore steps) or by the first live frame after a fresh boot.
+>
+> It is now one pass at `_boot_power`, stamped from the transformers outward: each transformer writes its own square of covered tiles and the winner per tile is the same `argmin (chebyshev distance, id)` the per-tile scan computed, which is order-independent and therefore identical from either side. Measured, workstation, interleaved A/B, three rounds:
+>
+> | | before | after |
+> |---|---|---|
+> | `roads_signals` restore steps, bench city | **109.5 / 108.9 / 107.6 ms** | **1.54 / 1.62 / 1.51 ms** |
+> | restore total, bench city | 316.0 / 315.0 / 313.7 ms | **207.2 / 207.8 / 204.6 ms** |
+> | cold `CitySim.boot()`, bench city | 211.3 / 215.9 / 219.9 ms | **222.4 / 225.5 / 228.7 ms** |
+> | cold `CitySim.boot()`, founding city | 38.7 / 38.5 / 38.7 ms | **39.2 / 38.7 / 38.8 ms** |
+> | memo entries after boot | **0** — it fills in play, to one per signalised node (2,024 on the bench city, RR-60b) | **11,236** bench / **1,072** founding |
+>
+> **The trade, stated plainly: +9.4 ms once at process boot buys −108 ms off every load.** A boot happens once per launch, behind the splash, before any city is on screen; a restore happens behind the veil the player is watching, and its own §2.9.1 budget is written against the longest step. The memo grows from one entry per signalised node to one per covered tile: **2,024 → 11,236** on the benchmark city, which is the UNION of 144 level-5 squares rather than the 41,616 stamps that fill it, because transformers overlap. At Godot's Variant sizes that is on the order of a megabyte — an estimate, not a measurement; the entry count is the measured figure.
+>
+> **Hash-neutral, and proved on the answer rather than on the digest.** `tests/test_city_sim.gd::test_the_warm_transformer_memo_answers_what_the_authored_scan_answers` re-implements the pre-Wave-14 tile-major scan as an oracle sharing no code with the thing under test, and walks every tile in the transformer envelope plus a 10-tile uncovered margin. `tools/profile_sim.gd --hash-only` is unchanged on both cities, coarse and fine. Report 98 §28 RR-71.
+
 ### 2.3 Demand model
 
 ```

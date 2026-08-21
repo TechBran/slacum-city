@@ -28,6 +28,9 @@ extends SceneTree
 ##                    `write` column is what the worker did with it; run it
 ##                    against the same city without the flag and the two columns
 ##                    are the A/B behind report 98 RR-44.
+##   --boot-only      the `boot (cold sim)` row alone, plus the size of doc 04's
+##                    warm-filled transformer memo — the A/B behind doc 10's
+##                    Wave-12 open q4, without paying for a save and a load
 ##   --steps          additionally break `restore` into `CitySim.begin_restore()`'s
 ##                    resumable steps and print the per-step cost. The step COUNT
 ##                    is a property of the city — the road graph emits one trace
@@ -57,6 +60,11 @@ func _initialize() -> void:
 	if not FileAccess.file_exists(city_path):
 		printerr("profile_save: no such city file " + city_path)
 		quit(2)
+		return
+
+	if bool(opts["boot_only"]):
+		_boot_table(city_path, int(opts["repeats"]))
+		quit(0)
 		return
 
 	var sim := _boot(city_path)
@@ -100,6 +108,21 @@ func _initialize() -> void:
 		reads.append(service.last_load_read_ms)
 		restores.append(service.last_load_restore_ms)
 
+	# The term in front of every other one, and the instrument had no row for it:
+	# `CitySim.boot()` on a cold process. A LOAD does not pay it — the shell
+	# constructs the sim once at launch and restores into it — but doc 04's
+	# per-tile transformer memo is warm-filled there (doc 10's Wave-12 open q4),
+	# so the cost of that memo now shows up here instead of inside `roads_signals`
+	# below, and a table that could not see both ends of the move would have made
+	# the move look free.
+	var boots := PackedFloat64Array()
+	for i in repeats:
+		var t0 := Time.get_ticks_usec()
+		var cold := _boot(city_path)
+		boots.append(float(Time.get_ticks_usec() - t0) * 0.001)
+		if cold != null:
+			cold.scheduler.dispose()   # break the sim ↔ adapter cycle (doc 91 D-9)
+
 	if not bool(opts["quiet"]):
 		print("profile_save: %s — %d buildings, +%.0f game-hours, %d repeats" % [
 				city_path, sim.buildings.size(), hours, repeats])
@@ -109,6 +132,7 @@ func _initialize() -> void:
 	print("  %-16s %10s %10s %10s %12s"
 			% ["op", "best ms", "mean ms", "worst ms", "slot bytes"])
 	print("  " + "-".repeat(64))
+	_row("boot (cold sim)", boots, bytes)
 	_row("save (caller)", saves, bytes)
 	_row("  write half", writes, bytes)
 	_row("load", loads, bytes)
@@ -171,6 +195,31 @@ func _step_table(sim: CitySim, city_path: String, repeats: int) -> void:
 	print("  %-20s %10.2f  <- doc 13 §2.9's per-frame worst case" % ["longest step", worst])
 
 
+## `--boot-only`: the cold boot on its own, plus the size of the memo the Wave-14
+## warm fill puts there. The memo is derived state with no accessor and does not
+## want one — it is read here the way a profiler reads anything, by name, and a
+## sim that has never heard of it reports 0 rather than failing.
+func _boot_table(city_path: String, repeats: int) -> void:
+	var boots := PackedFloat64Array()
+	var memo := 0
+	for i in repeats:
+		var t0 := Time.get_ticks_usec()
+		var cold := _boot(city_path)
+		boots.append(float(Time.get_ticks_usec() - t0) * 0.001)
+		if cold == null:
+			return
+		var cover: Variant = cold.get("_transformer_cover")
+		memo = (cover as Dictionary).size() if cover is Dictionary else 0
+		cold.scheduler.dispose()
+	print("")
+	print("=== COLD BOOT — %s, best of %d ===" % [city_path.get_file(), repeats])
+	print("  %-16s %10s %10s %10s %12s"
+			% ["op", "best ms", "mean ms", "worst ms", "slot bytes"])
+	print("  " + "-".repeat(64))
+	_row("boot (cold sim)", boots, 0)
+	print("  transformer memo %10d tiles" % memo)
+
+
 func _row(name: String, values: PackedFloat64Array, bytes: int) -> void:
 	if values.is_empty():
 		print("  %-16s %10s" % [name, "no samples"])
@@ -223,7 +272,7 @@ static func _remove_tree(path: String) -> void:
 
 func _parse(argv: PackedStringArray) -> Dictionary:
 	var opts := {"city": CITY_DEFAULT, "repeats": 5, "advance": 0.0,
-			"quiet": false, "async": false, "steps": false}
+			"quiet": false, "async": false, "steps": false, "boot_only": false}
 	for raw in argv:
 		var arg := String(raw)
 		if arg == "--quiet":
@@ -232,6 +281,8 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			opts["async"] = true
 		elif arg == "--steps":
 			opts["steps"] = true
+		elif arg == "--boot-only":
+			opts["boot_only"] = true
 		elif arg.begins_with("--city="):
 			opts["city"] = arg.substr(7)
 		elif arg.begins_with("--repeats="):
