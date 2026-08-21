@@ -1766,18 +1766,20 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 ##
 ## **Cost, and the horizon rule.** One seed, not three, and a **per-preset**
 ## horizon — each is its own measured insolvency day plus about ten game-days of
-## margin, never a flat 120. That is not thrift, it is a hazard:
+## margin, never a flat 120. That was thrift AND a hazard, and it is now only
+## thrift:
 ##
-## > **A neglected city eventually cascades, and past the cascade this gate would
-## > not finish.** Measured on `crisis`, seed 1337: from game-day **104** the open
-## > incident count multiplies by ~2.5–2.9 **per game-hour** — 103 → 357 → 832 →
-## > 2,424 → 6,389 → 14,671 → 37,631 → 89,055 — and the per-hour wall cost
-## > multiplies with it (0.22 s → 269 s over eight game-hours). Nothing is
-## > responding, everything is at condition zero, and the generator has no upper
-## > bound to meet. It is filed as doc 92 §29.5(b) and it is **not** something this
-## > gate is for: inside every horizon below, the peak open-incident count is
-## > **0 or 1**. A gate that ran into it would hang rather than fail, which is the
-## > worst thing a gate can do.
+## > **The cascade the horizons used to dodge is fixed** *(Wave 13, doc 06
+## > §2.13(b), doc 92 §31)*. The note that stood here said a neglected city
+## > eventually cascades — measured on `crisis`, seed 1337, from game-day **104**
+## > the roster multiplied ~2.5–2.9 per game-hour, 103 → 357 → … → 89,055, at
+## > 269 s of wall clock for the eighth of those game-hours — and that a gate
+## > running into it would hang rather than fail. It was filed as doc 92 §29.5(b).
+## > §2.13(b)'s saturation rule closes it: no automatic birth crosses the roster
+## > ceiling, and **gate 30 below runs the same city to game-day 200 on purpose**.
+## > These horizons stay where they are because they are fitted to INSOLVENCY,
+## > which is what this gate measures; the tripwire below stays because a
+## > horizon-shaped assumption should be asserted, not assumed.
 ##
 ## Total ~43 s (15.8 / 11.7 / 8.8 / 6.5). The three-seed table above is doc 92
 ## §29.2's; this is the tripwire.
@@ -1814,13 +1816,14 @@ func test_gate_29_neglect_is_fatal_on_every_preset_and_ordered() -> void:
 				day = int(row["day"])
 		died[preset] = day
 		# The cascade tripwire (see `PRESET_HORIZON_DAYS`). Measured 0–1 inside
-		# every horizon; doc 06 §2.13's own worst case is 40. If this ever fires,
-		# the horizon has crossed into doc 92 §29.5(b)'s runaway and the gate is
-		# measuring the wrong thing — shorten it before touching a threshold.
+		# every horizon; doc 06 §2.13(b)'s ceiling is 40. It is now the same
+		# number gate 30 asserts on a 200-game-day run, so if it ever fires here
+		# it is a real regression in the saturation rule and not a horizon that
+		# wandered — read gate 30's failure first, it says more.
 		assert_true(peak_open <= PRESET_MAX_OPEN_INCIDENTS,
 				("do_nothing on %s peaked at %d open incidents inside %d game-days; "
-						+ "doc 06 §2.13's worst case is %d — this horizon has run "
-						+ "into doc 92 §29.5(b)'s cascade")
+						+ "doc 06 §2.13(b)'s roster ceiling is %d — the saturation "
+						+ "rule has regressed, see gate 30")
 						% [preset, peak_open, horizon, PRESET_MAX_OPEN_INCIDENTS])
 		# FINITE. A preset on which standing still never costs anything is a
 		# preset with no game in it, and `casual` is the one that could drift
@@ -1850,3 +1853,62 @@ func test_gate_29_neglect_is_fatal_on_every_preset_and_ordered() -> void:
 					<= STANDARD_LIFETIME_BAND,
 			"standard do_nothing died on game-day %d; measured 74–76 (doc 92 §29.2)"
 					% int(died["standard"]))
+
+
+# ============================== 30 the saturation rule (doc 06 §2.13(b), §31)
+
+## GATE 30 — **a fully-decayed city's incident roster is BOUNDED, and by the
+## number doc 06 §2.13 has always costed itself against** (doc 92 §31).
+##
+## Gate 29 above carries a horizon per preset and a written reason for each one,
+## and the reason was a hazard: *"a neglected city eventually cascades, and past
+## the cascade this gate would not finish."* Measured on `crisis`, seed 1337, the
+## roster multiplied ~2.5–2.9× **per game-hour** from game-day 104 — 103 → 357 →
+## 832 → 2,424 → 6,389 → 14,671 → 37,631 → 89,055 — at 269 s of wall clock for
+## the eighth of those game-hours. On device that is an ANR on any long-abandoned
+## save. This gate is the half of the ruling that says the horizon no longer has
+## to dodge: it runs `do_nothing` on `crisis` **past** the cascade and asserts the
+## roster stayed under the ceiling.
+##
+## **The bound, re-derived with the rule.** §2.10.1 published
+## `arrival_rate × T ≤ 26` and it is correct for EXOGENOUS arrivals; eight cascade
+## actions make arrivals endogenous, and a mean offspring of three is supercritical
+## however short each parent's life is. §2.13(b) closes it with a ceiling that no
+## automatic birth may cross, so the bound is now the ceiling itself —
+## `saturation_ceiling`, read here out of `data/incidents.json` rather than
+## repeated, because a gate that hard-codes a tunable stops gating it.
+##
+## **Sampled per game-HOUR, not per game-day.** The cascade multiplied inside a
+## single game-hour; a daily row would have stepped over its own evidence.
+const DECAY_PRESET := "crisis"
+## Past game-day 104, which is where seed 1337's cascade started, with enough
+## margin that a slower seed cannot hide behind the horizon.
+const DECAY_HORIZON_DAYS := 200
+
+
+func test_gate_30_a_decayed_city_roster_is_bounded() -> void:
+	var globals: Dictionary = (StarterCityLoader.read_json("res://data/incidents.json")
+			.get("globals", {}) as Dictionary)
+	var ceiling := int(globals.get("saturation_ceiling", 0))
+	var knee := int(globals.get("saturation_knee", 0))
+	assert_true(ceiling > 0 and knee > 0 and ceiling > knee,
+			"doc 06 §2.13(b) is authored: knee %d, ceiling %d" % [knee, ceiling])
+	var doc := Rig.run("do_nothing", GATE_SEED, DECAY_HORIZON_DAYS, DECAY_PRESET)
+	var peak := 0
+	var peak_hour := -1
+	for sample_variant in (doc["samples"] as Array):
+		var sample: Dictionary = sample_variant
+		var open_now := int(sample["open_incidents"])
+		if open_now > peak:
+			peak = open_now
+			peak_hour = int(sample["h"])
+	assert_true(peak <= ceiling,
+			("do_nothing on %s peaked at %d open incidents on game-hour %d over %d "
+					+ "game-days; doc 06 §2.13(b)'s ceiling is %d")
+					% [DECAY_PRESET, peak, peak_hour, DECAY_HORIZON_DAYS, ceiling])
+	# The other end. A rule that bounded the roster by switching the incident
+	# engine off would pass the assertion above and break the game, so the run
+	# has to still be producing incidents after its city is gone.
+	assert_true(Rig.event_count(doc, "incident_created") > 0,
+			"a 200-game-day city generated no incidents at all — the ceiling is "
+			+ "not supposed to be a mute button")

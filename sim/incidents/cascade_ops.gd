@@ -157,6 +157,26 @@ func _feeder_destroy(inc: Incident, _action: Dictionary) -> Dictionary:
 
 # ------------------------------------------------------------------- spawns
 
+## **The verb that turned a bounded roster into a branching process** (doc 06
+## §2.13(b), doc 92 §31). `crime` spawns one child at tier 4 and two more at
+## tier 5, so an unanswered crime has a mean offspring of **three** — and three
+## children per parent is supercritical no matter how briefly each parent lives.
+## RR-26 bounds LIFETIME; §2.13(b) is what bounds FERTILITY, and it does it in
+## the two places a cascade can be wrong:
+##
+## 1. **The roster ceiling** (`system.spawn_automatic`). A cascade child is an
+##    automatic birth like any other, so it stops at §2.13(b)'s AUTOMATIC ceiling
+##    — the roster bound less the slots reserved for doc 04's own one-shot events
+##    — and the refusal comes back as a `SKIPPED` row rather than a silent `null`
+##    so a test can see it.
+## 2. **A cascade may not invent a subject the GENERATOR would not have found.**
+##    Doc 92 §18 states this for the ambient floor — *"λ_natural ≤ 0 means the
+##    channel scanned and found no eligible candidate … it changes how OFTEN,
+##    never WHERE"* — and `district_random_building` / `nearest_building` already
+##    obey it by returning `""`. `scope: "district"` did not, because it needs no
+##    entity at all: a target-less crime in a district with no residents is a
+##    token, not an incident, and the measured cascade was made of 89,055 of them
+##    in a district whose population had been zero since its first game-hour.
 func _spawn_incident(inc: Incident, action: Dictionary) -> Dictionary:
 	var count := int(action.get("count", 1))
 	var type_id := String(action.get("type", inc.type))
@@ -164,13 +184,21 @@ func _spawn_incident(inc: Incident, action: Dictionary) -> Dictionary:
 	var scope := String(action.get("scope", "self"))
 	var severity_0 := float(action.get("severity_0", 1.0))
 	var spawned: Array = []
+	var refused := 0
 	for i in count:
+		if system.saturated():
+			refused += 1
+			continue
 		var target_ref: Dictionary = {}
 		var tile := inc.tile
 		match scope:
 			"self":
 				target_ref = inc.target_ref.duplicate(true)
-			"district", "adjacent_edge":
+			"district":
+				if not _district_can_host(inc, type_id):
+					continue
+				target_ref = {}
+			"adjacent_edge":
 				target_ref = {}
 			"district_random_building", "nearest_building":
 				var building_id := _pick_building(inc, scope)
@@ -178,13 +206,28 @@ func _spawn_incident(inc: Incident, action: Dictionary) -> Dictionary:
 					continue
 				target_ref = {"kind": "building", "id": building_id}
 				tile = world.building(building_id).get("tile", inc.tile)
-		var child: Incident = system.spawn(type_id, subtype, tile, target_ref, severity_0,
-				{"source": inc.type, "source_id": inc.id, "cascade": true})
+		var child: Incident = system.spawn_automatic(type_id, subtype, tile, target_ref,
+				severity_0, {"source": inc.type, "source_id": inc.id, "cascade": true})
 		if child != null:
 			child.parent_id = inc.id
 			child.cluster_id = inc.cluster_id
 			spawned.append(child.id)
+	if spawned.is_empty() and refused > 0:
+		return {"op": "spawn_incident", "result": SKIPPED, "reason": "saturated"}
 	return {"op": "spawn_incident", "result": DONE, "spawned": spawned}
+
+
+## The eligibility test the type's own GENERATOR applies, asked on behalf of a
+## district-scoped cascade. Only `crime` has one that a district can fail —
+## doc 06 §2.6(a) skips a district with no residents, so a crime cascade in an
+## emptied district is a crime with nobody to commit it. Every other type is
+## per-asset and its `district` scope is unrestricted, exactly as before.
+func _district_can_host(inc: Incident, type_id: String) -> bool:
+	if type_id != "crime":
+		return true
+	if inc.district_id == "":
+		return false
+	return float(world.district(inc.district_id).get("population", 0)) > 0.0
 
 
 func _pick_building(inc: Incident, scope: String) -> String:

@@ -1620,3 +1620,99 @@ ruined every capture — a comma-separated pose list set `IFS` globally,
 unresolved `--hour=` and was captured at whatever hour the save held. **The
 device half remains unverified and the script says so in its own summary rather
 than in a document nobody opens.**
+
+## 26. WAVE 13 — the incident cascade gets its ceiling (binding)
+
+### RR-60 — RR-26 bounded how long an incident LIVES; nothing bounded how many it MAKES (docs 06 §2.10.1/§2.13(b)/§3.1/§8, 92 §31, 93 §M1, 91 A91-D-31)
+
+**The defect.** `BalanceGateRig.run("do_nothing", 1337, 120, "crisis")` does not
+finish. From game-day **104** the open-incident roster multiplies by ~2.5–2.9
+**per game-hour** — 103 → 357 → 832 → 2,424 → 6,389 → 14,671 → 37,631 →
+**89,055** — and the wall clock for one simulated game-hour goes 0.22 s → 269 s
+with it. Doc 06 §2.13's own worst-case accounting is **≤ 40 active**. On device
+this is an ANR on any long-abandoned save, and gate 29 was already routing around
+it with a per-preset horizon and a written warning.
+
+**The mechanism, and the two candidates that were NOT it.** Doc 02 §2.12's
+`state_fire_mult` is already `0` for `destroyed`, so a ruin is neither an
+ignition candidate nor a spread target; and a `structure_fire` that burns its
+building down already goes `FAILED` and leaves the roster in the same sub-step.
+Both of the obvious suspects were already correct. What runs away is `crime`:
+
+```
+on_tier_enter[4] → spawn_incident{type: crime, count: 1, scope: "district"}
+on_tier_enter[5] → spawn_incident{type: crime, count: 2, scope: "district"}
+```
+
+Mean offspring **three**, and `scope: "district"` needs no entity at all, so the
+process consumes nothing and cannot exhaust itself. Five of the catalog's eight
+`spawn_incident` actions resolve to a building and are self-limiting because
+buildings run out; these two and `traffic_accident`'s are the three that are not. Its own tier entries drive
+the district's stability to zero inside four game-hours, which pins §2.4's
+`esc_env` at its 3.0 clamp and collapses the generation time to
+`t(1→5) = 3.038095 / (0.80 × 3.0 × 1.6) = 0.79` gh at `crisis`. **RR-26 fired on
+every single one of them, on schedule** — `crime`'s own
+`on_fail{hold_tier 5, hold_h 1.0}` terminates each incident at ≈ 2.0 gh, which is
+exactly the `unanswered_h` maximum the runaway roster measures. Every incident
+died on time. There were simply three more of it.
+
+**Ruling: an action that creates an incident from an incident is a RATE, and
+every automatic birth in the system answers to one published roster ceiling.**
+Doc 06 §2.13(b) adds three numbers and one seam:
+
+```
+CEIL    = 40   §2.13's own accounting — the ROSTER bound
+RESERVE =  4   slots inside CEIL that doc 06 may not spend
+A_CEIL  = 36   where ambient generation, fire spread and cascades stop
+KNEE    = 26   §2.10.1's measured worst LEGITIMATE backlog
+sat(N)  = clamp((A_CEIL − N) / (A_CEIL − KNEE), 0, 1)   × ambient generation
+```
+
+`IncidentSystem.spawn_automatic()` is the single seam every automatic birth
+passes through, and the refusal is **deterministic and RNG-free** — it draws
+nothing, so a city below `A_CEIL` is bit-identical to one running without the
+rule. `spawn()` itself stays open.
+
+**The reserve is not a fudge factor, it is doc 04's one-shot contract.**
+`PowerComponentFailed` is emitted once per component and never re-offered;
+refusing that incident does not defer it, it strands the component, because
+`power_restore_component` has no other caller. So the doc 04 path is admitted
+unconditionally and the roster can stand above `A_CEIL`. A first cut without the
+reserve measured **42** open on a 200-game-day `crisis` run against a ceiling of
+40, and both extras were `PowerComponentFailed`. Four is that measurement
+doubled, and a doc 04 admission cannot branch — the only endogenous child a
+`transformer_failure` authors is itself an automatic birth — so the reserve is a
+bound rather than a leak.
+
+**Second half of the ruling: a cascade may not invent a subject the GENERATOR
+would not have found.** Doc 92 §18 states this for the ambient floor; the
+building-scoped cascades already obeyed it by returning `""`. `scope: "district"`
+now applies the type's own generator eligibility — §2.6(a)'s `population > 0` for
+`crime`, nothing for the per-asset types. This alone ends the measured cascade in
+its first game-hour; the ceiling is what makes the class of defect impossible.
+
+**What it costs a played city: nothing, and that is measured, not asserted.**
+The whole doc 92 matrix — 7 strategies × 3 seeds × 21 game-days — peaks at **13**
+open incidents; `sat(N)` is exactly 1.0 at and below 26. Both determinism
+baselines (`tools/profile_sim.gd --hash-only` on the starter city and on
+`tests/fixtures/bench_city.json`) are byte-identical, all 30 balance gates hold
+with no threshold re-fit — gate 29's pinned `standard` insolvency day and its
+strict four-preset ordering included. **The
+save section is unchanged**: the rule's only piece of state is a rising/falling
+edge latch for the two `incident_roster_saturated` / `incident_roster_relieved`
+events, and it is DERIVED from the roster on load rather than persisted, so doc
+06 §3.3's `incidents` section keeps `section_version: 1` and no save rung is
+taken.
+
+**What it buys.** `crisis` `do_nothing`, seed 1337, 200 game-days: peak **37**
+open (36 automatic + 1 doc 04), worst single game-hour **0.47 s**, whole run
+**89 s** — against a run that could not finish (reproducer:
+`tools/profile_decay.gd --days=200 --preset=crisis`). Gate 30 asserts the bound on that
+exact run and gate 29's horizons no longer have to dodge the cascade.
+
+**Recorded limit.** `traffic_accident`'s tier-5 cascade has expected offspring
+exactly **1** and also invents its subject (`scope: "adjacent_edge"`, the parent's
+own tile). It is the critical case: it does not diverge and it does not die, and
+from game-day 160 it is what holds the roster at the ceiling on a dead `crisis`
+city, at 66–73 ms per game-hour against 5.8 ms quiet. Bounded, correct, and doc
+06's ranked open question.

@@ -62,8 +62,8 @@ func _initialize() -> void:
 	print("difficulty: %s · %d days · seeds %s" % [difficulty, days, str(seeds)])
 	if not road_policy.is_empty():
 		print("auto-repair policy: %s" % str(road_policy))
-	print("| strategy | seed | treasury | value | net $/gh | pop | happy | stab | lvl | dark % | placed | upg | minC | open inc | abandoned | dir ev | credit | wall s |")
-	print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+	print("| strategy | seed | treasury | value | net $/gh | pop | happy | stab | lvl | dark % | placed | upg | minC | open inc | pk inc | abandoned | dir ev | credit | wall s |")
+	print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
 	var agg := {}
 	for strategy in strategies:
 		for seed_value in seeds:
@@ -72,13 +72,14 @@ func _initialize() -> void:
 					difficulty, road_policy)
 			var s: Dictionary = doc["summary"]
 			var wall := float(Time.get_ticks_msec() - t0) / 1000.0
-			print("| %s | %d | %d | %d | %.0f | %d | %.1f | %.4f | %d | %.2f | %d | %d | %.3f | %.2f | %d | %d | %d | %.1f |" % [
+			var peak := _peak_open(doc)
+			print("| %s | %d | %d | %d | %.0f | %d | %.1f | %.4f | %d | %.2f | %d | %d | %.3f | %.2f | %d | %d | %d | %d | %.1f |" % [
 				strategy, seed_value, int(s["treasury_end"]), int(s["value_created"]),
 				float(s["net_mean_per_hour"]), int(s["population_end"]),
 				float(s["happiness_end"]), float(s["stability_end"]),
 				int(s["city_level_end"]), 100.0 * float(s["unserved_share"]),
 				int(s["placed"]), int(s["upgraded"]), float(s["min_condition"]),
-				float(s["open_incidents_mean"]),
+				float(s["open_incidents_mean"]), peak,
 				BalanceGateRig.event_count(doc, "incident_abandoned"),
 				BalanceGateRig.event_count(doc, "director_event_started"),
 				BalanceGateRig.event_count(doc, "credit_line_engaged"), wall])
@@ -96,21 +97,36 @@ func _initialize() -> void:
 					+ float(BalanceGateRig.event_count(doc, "credit_line_engaged"))
 			row["incident_created"] = float(row.get("incident_created", 0.0)) \
 					+ float(BalanceGateRig.event_count(doc, "incident_created"))
+			row["peak_open"] = maxf(float(row.get("peak_open", 0.0)), float(peak))
 			row["n"] = float(row.get("n", 0.0)) + 1.0
 			agg[strategy] = row
 	print("")
-	print("| strategy (mean) | treasury | value | net $/gh | pop | happy | stab | dark % | placed | upg | minC | open inc | inc created | abandoned | dir ev | credit | repairs |")
-	print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+	# `pk inc (max)` is the one column in this table that is NOT a mean: averaging
+	# three seeds' worst game-hours would report a roster no run ever carried, and
+	# doc 06 §2.13(b)'s ceiling binds on the worst one.
+	print("| strategy (mean) | treasury | value | net $/gh | pop | happy | stab | dark % | placed | upg | minC | open inc | pk inc (max) | inc created | abandoned | dir ev | credit | repairs |")
+	print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
 	for strategy in strategies:
 		var row: Dictionary = agg[strategy]
 		var n := float(row["n"])
-		print("| **%s** | %d | %d | %.0f | %d | %.1f | %.4f | %.2f | %d | %d | %.3f | %.2f | %.1f | %.1f | %.1f | %.1f | %.1f |" % [
+		print("| **%s** | %d | %d | %.0f | %d | %.1f | %.4f | %.2f | %d | %d | %.3f | %.2f | %d | %.1f | %.1f | %.1f | %.1f | %.1f |" % [
 			strategy, int(float(row["treasury_end"]) / n), int(float(row["value_created"]) / n),
 			float(row["net_mean_per_hour"]) / n, int(float(row["population_end"]) / n),
 			float(row["happiness_end"]) / n, float(row["stability_end"]) / n,
 			100.0 * float(row["unserved_share"]) / n, int(float(row["placed"]) / n),
 			int(float(row["upgraded"]) / n), float(row["min_condition"]) / n,
-			float(row["open_incidents_mean"]) / n, float(row["incident_created"]) / n,
+			float(row["open_incidents_mean"]) / n, int(float(row["peak_open"])),
+			float(row["incident_created"]) / n,
 			float(row["incident_abandoned"]) / n, float(row["director_event_started"]) / n,
 			float(row["credit_line_engaged"]) / n, float(row["repaired"]) / n])
 	quit(0)
+
+
+## The PEAK open roster of one run, which the mean cannot show and doc 06
+## §2.13(b)'s ceiling is written against: `open_incidents_mean` reports 0.4 for a
+## run whose worst game-hour carried 14, and the ceiling binds on the worst hour.
+static func _peak_open(doc: Dictionary) -> int:
+	var peak := 0
+	for sample in doc["samples"]:
+		peak = maxi(peak, int((sample as Dictionary)["open_incidents"]))
+	return peak

@@ -374,17 +374,125 @@ func test_spread_cluster() -> void:
 
 
 ## Doc 06 §7 test 22 — the anti-death-spiral damper hits its 0.25 floor.
+##
+## **Measured at the SATURATION KNEE, not at 40.** This test used to fill the
+## roster to 40 and read the damper there; §2.13(b) now zeroes generation at 40,
+## and a product of two dampers cannot measure either one. The knee is the last
+## roster size at which §2.13(b)'s factor is exactly 1.0, so it is where the
+## anti-death-spiral damper alone is visible — and it is well past the excess the
+## floor needs.
 func test_load_damper() -> void:
 	var world := _world()
 	var system := _system(world)
 	system.fleet.populate_from_stations([{"id": "POL-1", "archetype": "police_station",
 			"level": 3, "tile": Vector2i(0, 0)}])
 	assert_almost_eq(system.load_damper(), 1.0, 1e-9, "no incidents ⇒ no damping")
-	for i in 40:
+	var knee := system.saturation_knee()
+	for i in knee:
 		system.spawn("crime", "", Vector2i(i, 0), {}, 1.2, {}, "D1")
-	assert_eq(system.active_count(), 40, "40 active incidents")
-	assert_true(system.fleet.size() < 40, "against a small fleet")
+	assert_eq(system.active_count(), knee, "%d active incidents" % knee)
+	assert_true(system.fleet.size() < knee, "against a small fleet")
+	assert_almost_eq(system.saturation_damper(), 1.0, 1e-9,
+			"§2.13(b) is still exactly 1.0 at its own knee")
 	assert_almost_eq(system.load_damper(), 0.25, 1e-9, "damper pinned to its floor")
+
+
+# ------------------------------------------------- §2.13(b) the saturation rule
+
+## **Doc 06 §2.13(b) — the roster ceiling is a KNEE, not a cliff.** All three
+## numbers come out of `data/incidents.json`; the shape is asserted at four
+## points, and the first two are the ones that matter: below and AT the knee the
+## factor is exactly 1.0, which is why no measured city's pressure moves and why
+## the starter and bench determinism baselines are byte-identical.
+func test_saturation_is_a_knee_not_a_cliff() -> void:
+	var world := _world()
+	var system := _system(world)
+	var knee := system.saturation_knee()
+	var ceiling := system.saturation_automatic_ceiling()
+	assert_true(knee > 0 and ceiling > knee,
+			"the rule is authored: knee %d, automatic ceiling %d" % [knee, ceiling])
+	assert_eq(system.saturation_ceiling() - system.saturation_world_reserve(), ceiling,
+			"the automatic ceiling is §2.13's roster bound less the world reserve")
+	assert_almost_eq(system.saturation_damper(), 1.0, 1e-9, "an empty roster is undamped")
+	assert_false(system.saturated(), "and not saturated")
+	while system.active_count() < knee:
+		system.spawn("crime", "", Vector2i(system.active_count(), 0), {}, 1.2, {}, "D1")
+	assert_almost_eq(system.saturation_damper(), 1.0, 1e-9,
+			"exactly 1.0 AT the knee — this is the property the gates rest on")
+	while system.active_count() < (knee + ceiling) / 2:
+		system.spawn("crime", "", Vector2i(system.active_count(), 0), {}, 1.2, {}, "D1")
+	assert_almost_eq(system.saturation_damper(), 0.5, 0.06,
+			"about half way down at the midpoint")
+	while system.active_count() < ceiling:
+		system.spawn("crime", "", Vector2i(system.active_count(), 0), {}, 1.2, {}, "D1")
+	assert_true(system.saturated(), "saturated at the automatic ceiling")
+	assert_almost_eq(system.saturation_damper(), 0.0, 1e-9,
+			"and generation is zero there, not merely floored")
+	assert_eq(system.spawn_automatic("crime", "", Vector2i(0, 0), {}, 1.2, {}, "D1"), null,
+			"an AUTOMATIC birth is refused at the ceiling")
+	assert_ne(system.spawn("crime", "", Vector2i(0, 0), {}, 1.2, {}, "D1"), null,
+			"a scripted or player-driven one is not — `spawn()` stays open")
+
+
+## **Doc 06 §2.13(b) part 2 — a cascade may not invent a subject the GENERATOR
+## would not have found** (doc 92 §31). `crime`'s tier-4 and tier-5 cascades are
+## authored `scope: "district"`, which needs no entity at all, so they kept
+## producing crimes in a district whose population had been zero for a hundred
+## game-days. Doc 92 §18 already states the rule for the ambient floor — it
+## changes how OFTEN, never WHERE — and this is the same rule one layer up.
+func test_a_district_cascade_needs_a_district_that_can_host_it() -> void:
+	var world := IncidentTestWorld.new()
+	world.add_district("D_LIVE", 5000.0, 0.10, 0.0, 0.0)
+	world.add_district("D_DEAD", 0.0, 0.0, 0.0, 0.0)
+	var system := _system(world)
+	var action := {"op": "spawn_incident", "type": "crime", "count": 2, "scope": "district"}
+
+	var live := system.spawn("crime", "", Vector2i(0, 0), {}, 1.0, {}, "D_LIVE")
+	var live_result := system.ops.run_one(live, action)
+	assert_eq(String(live_result["result"]), CascadeOps.DONE, "a district with residents hosts it")
+	assert_eq((live_result["spawned"] as Array).size(), 2, "both children born")
+
+	var dead := system.spawn("crime", "", Vector2i(9, 9), {}, 1.0, {}, "D_DEAD")
+	var dead_result := system.ops.run_one(dead, action)
+	assert_eq((dead_result["spawned"] as Array).size(), 0,
+			"an emptied district has nobody to commit the crime")
+	# Every other type stays per-asset and its `district` scope is unrestricted:
+	# doc 06 §2.6 only makes a DISTRICT ineligible for crime.
+	var storm_result := system.ops.run_one(dead,
+			{"op": "spawn_incident", "type": "storm_damage", "count": 1, "scope": "district"})
+	assert_eq((storm_result["spawned"] as Array).size(), 1,
+			"only crime has a district eligibility test to fail")
+
+
+## **The cascade itself, reproduced and bounded** (doc 92 §31). One populated
+## district at stability zero, no fleet, ambient generation off: a single crime
+## left unanswered is a branching process with a mean offspring of THREE — one
+## child at tier 4, two more at tier 5 — and RR-26's terminal rule bounds each
+## incident's lifetime without touching its fertility.
+##
+## Before §2.13(b) this test could not be written: the roster passed five figures
+## inside a game-day and the run never came back. The two assertions are the
+## whole rule — it saturates (so the ceiling is what is holding it, not some
+## accident of the fixture) and it never exceeds the ceiling, over a horizon long
+## enough for any leak of one incident per generation to show.
+func test_the_crime_cascade_is_bounded_by_the_ceiling() -> void:
+	var world := IncidentTestWorld.new()
+	world.add_district("D1", 5000.0, 0.0, 0.0, 0.0)
+	var system := _system(world)
+	var ceiling := system.saturation_automatic_ceiling()
+	system.spawn("crime", "", Vector2i(0, 0), {}, 1.0, {}, "D1")
+	var peak := 0
+	for hour in 14 * 24:
+		system.advance_to(float(hour + 1))
+		peak = maxi(peak, system.active_count())
+		assert_true(system.active_count() <= ceiling,
+				"game-hour %d carried %d open incidents against an automatic ceiling of %d"
+						% [hour, system.active_count(), ceiling])
+	assert_eq(peak, ceiling,
+			"the cascade must actually reach the ceiling or this test proves nothing "
+			+ "(peaked at %d)" % peak)
+	assert_true(peak <= system.saturation_ceiling(),
+			"and the roster bound §2.13 costs itself against is never crossed")
 
 
 # ------------------------------------------------------------- generation

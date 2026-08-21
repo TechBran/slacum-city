@@ -183,6 +183,18 @@ const REGISTER := {
 	"fire_spread":
 		"covered: the child fire is created with incident_created, which is"
 		+ " wired to the drawer, the log and a push.",
+	"incident_roster_saturated":
+		"invisible_by_design: doc 06 §2.13(b). The ceiling is an ENGINE bound on"
+		+ " a cost model, not a city fact — what the player can see is a drawer"
+		+ " holding forty open incidents, which the drawer already shows and the"
+		+ " alerts feed already narrated one at a time. Announcing the clamp"
+		+ " would tell them the simulation stopped trying, which is the one"
+		+ " thing it must not say. Emitted on the RISING EDGE only, so a dead"
+		+ " city produces one of these and not thousands.",
+	"incident_roster_relieved":
+		"invisible_by_design: doc 06 §2.13(b), the falling edge of the same"
+		+ " latch. The player's evidence that pressure came back is the next"
+		+ " incident_created, which is wired.",
 	"unit_commissioned":
 		"covered: VehicleView takes incidents.vehicle_states() every tick, so"
 		+ " the roster syncs idempotently whatever the event says.",

@@ -1041,6 +1041,72 @@ The direction that fails CLOSED is the other one — every type the two data
 routers name must be emitted — and that is the RR-1 failure mode, copy wired to
 an event nobody sends, which renders as silence.
 
+## M. Wave-13 rulings — a consequence that makes more of itself is a rate, and rates need ceilings (2026-08-20)
+
+### M1. A cascade is a BRANCHING PROCESS, and every automatic birth answers to one ceiling
+
+**The problem this is a ruling about.** Doc 06 §2.7's cascades are the best thing
+in the crisis loop: a fire that takes the building down blocks the road, a
+transformer that dies takes a house with it, a riot that nobody polices becomes
+two riots. They are data — Constitution §8 — and adding one costs no code. That
+is exactly why nobody counted them. `data/incidents.json` authors **eight**
+incident-spawning cascade actions; five of them resolve to a BUILDING and take it
+off the board, which makes them self-limiting the way fire spread is. Three do
+not, and one row (`crime`) owns two: one child at tier 4 and two more at tier 5.
+
+Three children per parent is not a consequence. It is a **reproduction rate**,
+and a reproduction rate above 1 with no ceiling is a population, not a game
+event. Doc 06 §2.10.1 had already bounded how long an unanswered incident LIVES
+(RR-26, 24 game-hours) and published the resulting backlog ceiling as
+`arrival_rate × T`. That ceiling is exactly right and it silently assumes
+arrivals come from outside the roster. Measured: a `crisis` `do_nothing` city
+reached **89,055 open incidents**, multiplying ~2.8× per game-hour, with every
+single one of them terminating on schedule under RR-26.
+
+**The rule.**
+
+> **Any action that creates an incident from an incident is a rate, not an
+> effect. Its expected offspring must be counted when it is authored, and every
+> automatic birth in the system — ambient generation, fire spread, and cascade
+> spawns alike — answers to ONE published roster ceiling.**
+
+**And the sentence that makes it a design rule rather than a clamp: a cascade
+that CONSUMES its subject is self-limiting; a cascade that does not is a
+population.** Fire spread has the same shape as the crime cascade and has never
+run away, because every ignition takes an eligible building off the board and
+buildings run out. `crime`'s `scope: "district"` takes nothing off the board —
+a district can host any number of crimes about nothing — so the same arithmetic
+diverges. When authoring a cascade, name what it consumes. If the answer is
+"nothing", it is a rate and it needs the ceiling.
+
+**Second half, and it is the one that fixed the measured case: a cascade may not
+invent a subject the GENERATOR would not have found.** Doc 92 §18 already states
+this for the ambient floor — *"λ_natural ≤ 0 means the channel scanned and found
+no eligible candidate … it changes how OFTEN, never WHERE"* — and the
+building-scoped cascades already obeyed it. The district-scoped one did not,
+because it needs no entity at all. The 89,055 were crimes in a district whose
+population had been zero since the cascade's first game-hour.
+
+**What this ruling explicitly does not do.** It does not retune a single
+consequence. Every `on_tier_enter` and `on_fail` list in `data/incidents.json` is
+unchanged, and so is every escalation constant: neglect is exactly as fatal on
+every preset as it was, gate 29 holds every threshold it had — its pinned
+`standard` insolvency day and its strict four-preset ordering included — and the
+whole doc 92 strategy matrix — which peaks at **13** open incidents against a
+knee of 26 — is byte-identical. **A ceiling that a played city can feel is a
+retune wearing a safety rule's clothes**, which is why the knee was placed at the
+worst backlog the matrix has ever measured rather than at a round number.
+
+**Honest limit, recorded so it is not rediscovered.** `traffic_accident`'s tier-5
+cascade is `scope: "adjacent_edge"` with `count: 1` — expected offspring exactly
+**1**, the critical case — and it also invents its subject (the child lands on the
+parent's own tile). It does not diverge, but it does not die either: on a
+200-game-day `crisis` run it is what pins the roster at the ceiling from game-day
+160 onward. The ceiling bounds it correctly and it costs 66–73 ms per game-hour
+to carry, against 5.8 ms for the quiet city. That is a **rate that should
+probably consume a road**, and it is doc 06's ranked open question rather than
+this ruling's business.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

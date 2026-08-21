@@ -4707,6 +4707,14 @@ real argument on both sides (§29.2b). What it does not have is a decision.
 
 #### (b) A neglected city eventually CASCADES, and the cascade is unbounded
 
+> **✅ CLOSED by §31 (Wave 13, doc 06 §2.13(b), report 98 RR-60).** The mechanism
+> is `crime`'s own cascade — one child at tier 4, two more at tier 5, all
+> `scope: "district"`, so it consumes nothing and cannot exhaust itself. It is
+> **not** the generators and **not** the terminal rule: RR-26 fired on schedule on
+> every one of the 89,055, and it is fire spread's substrate limit (a ruin is not
+> an ignition candidate) that keeps the fire cascade bounded while this one is
+> not. Everything measured below stands; §31 is what it turned into.
+
 This one was found by accident and is the more serious of the two. Gate 29 was
 first written with a flat 120-game-day horizon on all four presets. It did not
 fail — **it did not finish**, and finding out why produced this:
@@ -4760,7 +4768,8 @@ Ranked, both findings together:
    not a tuning question and not a difficulty question: an unbounded incident
    cascade is a hang on a state a real save can reach. Doc 06 owns it. The repro
    is one line — `BalanceGateRig.run("do_nothing", 1337, 120, "crisis")` — and it
-   is reproducible on the first try.
+   is reproducible on the first try. **✅ Taken and closed by §31**; that repro now
+   finishes, and gate 30 runs the same city to game-day 200 on purpose.
 1. **Does `E_roads_repair` take one difficulty knob or two?** A ruling either way
    is cheap and the fix is one line. If it takes `M_repair` only, the founding
    net on crisis moves −18.70 → +99.73 and **no hash on the default preset
@@ -4946,3 +4955,256 @@ on a command no tick path calls.
   directly.
 - **It did not re-measure the curriculum or any price.** `data/goals.json` and
   `data/economy.json` did not move.
+
+## 31. Pass 12 — the incident cascade, and the ceiling doc 06 had already costed itself against (Wave 13)
+
+§29.5(b) filed a defect and gate 29 routed around it:
+
+> **A neglected city eventually cascades, and past the cascade this gate would
+> not finish.** Measured on `crisis`, seed 1337: from game-day **104** the open
+> incident count multiplies by ~2.5–2.9 **per game-hour** — 103 → 357 → 832 →
+> 2,424 → 6,389 → 14,671 → 37,631 → 89,055 — and the per-hour wall cost
+> multiplies with it (0.22 s → 269 s over eight game-hours).
+
+Doc 06 §2.13's own worst-case accounting is **≤ 40 active incidents**, and it has
+priced the whole offline catch-up budget on that number since it was written. On
+device this is an ANR on any long-abandoned save. This pass is that defect,
+diagnosed, ruled and gated.
+
+### 31.1 The mechanism, and the two suspects it was not
+
+§29.5(b) read the runaway as *"doc 06's own generation and spread on a city where
+every building is at condition 0.000 … and the terminal rule's ABANDONED path is
+evidently not reclaiming faster than the generators create."* **Every clause of
+that is wrong**, and the three reasons why are what make the real mechanism
+legible:
+
+* **A ruin cannot re-burn.** Doc 02 §2.12's `state_fire_mult` is **0** for
+  `destroyed`, and the structure-fire generator drops any candidate whose state
+  multiplier is zero (`IncidentSystem._structure_fire_rates`) — as does
+  `FireSpread.spread_rate`, so a ruin is neither an ignition candidate nor a
+  spread target.
+* **An escalated-to-destruction incident closes.** `_run_fail` sets
+  `STATUS_FAILED` and `_release_finished_units` erases the incident from
+  `_active` and `_order` in the same sub-step.
+* And structurally: **fire spread is substrate-limited.** Every ignition consumes
+  an eligible building and buildings run out. A fire cascade in a 34-building
+  starter city cannot exceed 34.
+* **The terminal rule was reclaiming perfectly.** RR-26's `unanswered_h` maximum
+  across the whole runaway roster reads **2.000** — every incident in it was less
+  than two game-hours old, because `crime`'s own
+  `on_fail{hold_tier 5, hold_h 1.0}` was ending each one exactly on time.
+
+What runs away is `crime`, and it is authored in one table:
+
+```json
+"on_tier_enter": {
+  "4": [ …, {"op":"spawn_incident","type":"crime","count":1,"scope":"district"} ],
+  "5": [ …, {"op":"spawn_incident","type":"crime","count":2,"scope":"district"} ]
+}
+```
+
+**Mean offspring three**, and `scope: "district"` needs no entity at all — it
+consumes nothing, so the process cannot exhaust itself the way fire does. The
+run at seed 1337:
+
+| game-hour | open | ×/gh | wall clock for that game-hour |
+|---|---|---|---|
+| 2496 | 103 | — | 0.22 s |
+| 2497 | 357 | 3.47 | 0.50 s |
+| 2498 | 832 | 2.33 | 1.39 s |
+| 2499 | 2,424 | 2.91 | 3.89 s |
+| 2500 | 6,389 | 2.64 | 9.92 s |
+| … | 14,671 → 37,631 → **89,055** | | → **269 s** |
+
+*The generation time, and why it collapses.* Each tier entry also applies
+`district_stability` (−0.01 / −0.025 / −0.045 / −0.07), so the lineage drives its
+own district's stability to zero inside four game-hours — measured
+0.974 → 0.825 → 0.273 → 0.000 — which pins doc 06 §2.4's crime `esc_env`
+`(1 + 1.5(1 − S))·(1 + 0.20·dark)·(1 + 0.35·outage)` at its **3.0** clamp. At
+`crisis` (`escalation_mult` 1.6):
+
+```
+E      = 0.80 × (2.5…3.0) × 1.6 = 3.20…3.84 severity/gh
+t(1→4) = 2.466667 / E = 0.642…0.771 gh      ← the first child
+t(1→5) = 3.038095 / E = 0.791…0.949 gh      ← the other two
+```
+
+The Euler–Lotka root of `1 = e^(−r·t₄) + 2·e^(−r·t₅)` is `r ≈ 1.24…1.49 /gh`, a
+limiting multiplier of **3.5–4.4 per game-hour**; the measured 2.5–2.9 is that
+with the sub-step guard and the load damper taking the edge off.
+
+**And RR-26 fired on schedule the entire time.** `crime`'s own
+`on_fail{hold_tier 5, hold_h 1.0}` ends each incident at `t(1→5) + 1.0 ≈ 2.0` gh
+— which is exactly the `unanswered_h` maximum the runaway roster measures
+(2.000). Every incident died on time. There were simply three more of it.
+
+> **The one-line diagnosis: RR-26 bounds an incident's LIFETIME, and nothing
+> bounded its FERTILITY.** §2.10.1's ceiling `arrival_rate × T` is correct and it
+> silently assumes arrivals come from outside the roster. Eight `spawn_incident`
+> actions make them endogenous, and three of them consume no subject at all.
+
+### 31.2 The rule (doc 06 §2.13(b), report 98 RR-60, doc 93 §M1)
+
+```
+CEIL    = 40   §2.13's own accounting — the ROSTER bound
+RESERVE =  4   slots inside CEIL that doc 06 may not spend
+A_CEIL  = 36   where every AUTOMATIC birth stops
+KNEE    = 26   §2.10.1's measured worst LEGITIMATE backlog
+sat(N)  = clamp((A_CEIL − N) / (A_CEIL − KNEE), 0, 1)   × ambient generation
+```
+
+Plus: **a cascade may not invent a subject the generator would not have found.**
+`scope: "district"` now applies the type's own generator eligibility — §2.6(a)'s
+`population > 0` for `crime`, nothing for the per-asset types. This alone ends
+the measured cascade in its first game-hour; the ceiling is what makes the whole
+class of defect impossible.
+
+**Why the four reserved slots.** Doc 04 emits `PowerComponentFailed` once per
+component and never re-offers it, so refusing that incident strands the component
+— `power_restore_component` has no other caller. The doc 04 path is therefore
+admitted unconditionally. A first cut without the reserve measured **42** open on
+the 200-game-day `crisis` run against a ceiling of 40, and both extras were
+`PowerComponentFailed`; the reserve is that doubled, and it puts the roster bound
+back **on** §2.13's number. A doc 04 admission cannot branch, so it is a bound
+and not a leak.
+
+### 31.3 The consequences matrix — 7 strategies × 3 seeds × 21 game-days
+
+`tests/balance_matrix.gd`, `days=21`, `seeds=1337,4242,9001`, `curriculum`
+included, default (`standard`) preset. HEAD before the change vs this tree:
+
+> **All 21 per-run rows and all 7 strategy means are byte-identical, every
+> game-state column. The only differing field anywhere in either table is the
+> `wall s` timing column.**
+
+That is the result this pass wanted and it is not a null one — the §31.4 run
+below shows the same tree behaving completely differently on the city the rule
+was written for. The matrix is unchanged because **no city in it ever reaches the
+knee**, which is the whole design: `sat(N)` is exactly 1.0 at and below 26 open
+incidents, and `saturated()` is false below 36.
+
+The matrix gained one column this pass — **`pk inc`, the PEAK open roster of a
+run** — because `open_incidents_mean` reports 0.04 for a `do_nothing` run whose
+worst game-hour carried 2, and the ceiling binds on the worst hour, not the mean.
+It is the column §2.13(b) is written against and the matrix could not previously
+show it:
+
+| strategy | peak open (max over 3 seeds) |
+|---|---|
+| `do_nothing` | 2 |
+| `greedy_growth` | **13** ← the worst any played city produces |
+| `infrastructure_first` | 3 |
+| `balanced` | 2 |
+| `tax_squeezer` | 3 |
+| `disaster_neglect` | 10 |
+| `curriculum` | 3 |
+
+**13 against a knee of 26 and an automatic ceiling of 36.** The rule cannot be
+felt by anything the matrix measures, and that is the reason the knee sits where
+§2.10.1's own worst-legitimate-backlog derivation put it rather than at a round
+number.
+
+### 31.4 Boundedness — `crisis` `do_nothing` to game-day 200
+
+The run §29.5(b) said would not finish, now run past the cascade on purpose.
+**The reproducer is `tools/profile_decay.gd`**, added this pass, because a gate
+answers pass/fail and the question here is a curve:
+
+```
+~/.local/bin/godot --headless --path "/home/bbx/Slacum City game" \
+    -s res://tools/profile_decay.gd -- --days=200 --preset=crisis --seed=1337
+```
+
+The **before** column of the table below is the same tool on a tree with the rule
+reverted, plus `--stop=6000` — which exists precisely because a run that does not
+finish cannot be measured any other way.
+
+| | before | after |
+|---|---|---|
+| peak open incidents | 89,055 and climbing | **37** (36 automatic + 1 doc 04) |
+| game-hours above `CEIL` = 40 | all of them, from game-day 104 | **0** |
+| worst single game-hour | 269 s | **0.47 s** |
+| whole 200-game-day run | did not finish | **89 s** |
+
+The wall-clock curve, mean over 20-game-day buckets (headless desktop, seed
+1337; the ms column is a shape, not a device number — doc 11 §7.4 owns those):
+
+| game-days | mean open | mean ms/game-hour |
+|---|---|---|
+| 0–19 | 0.06 | 5.6 |
+| 20–39 | 0.10 | 5.8 |
+| 40–59 | 0.07 | 5.7 |
+| 60–79 | 0.09 | 6.0 |
+| 80–99 | 0.07 | 5.7 |
+| 100–119 | 0.11 | 5.8 |
+| 120–139 | 0.09 | 5.9 |
+| 140–159 | 0.08 | 5.8 |
+| **160–179** | **23.73** | **72.6** |
+| **180–199** | **28.04** | **66.4** |
+
+**The last two rows are the honest part of this table.** From game-day ~160 the
+roster is pinned at the ceiling and stays there for the rest of the city's life,
+and carrying it costs 12× the quiet city — the tool's own `final roster` line
+names what it is made of: `traffic_accident:36 <generator>:8
+<traffic_accident>:28` — eight seeds and twenty-eight of their descendants.
+What pins it is *not* crime — that cascade is dead by then, because its district
+has no residents — it is
+`traffic_accident`, whose tier-5 cascade is `count: 1` on `scope: "adjacent_edge"`:
+**expected offspring exactly one**, the critical case of a branching process. It
+does not diverge and it does not die. It is bounded by the ceiling, correctly,
+and it is this pass's ranked open question (§31.6).
+
+### 31.5 Gates
+
+* **Gate 30 (new)** — `do_nothing` on `crisis` to game-day **200**, sampled per
+  game-HOUR (the cascade multiplied inside one game-hour; a daily row would have
+  stepped over its own evidence), asserts `peak ≤ saturation_ceiling` read out of
+  `data/incidents.json`, and asserts the run still generated incidents at all so
+  a future "fix" cannot pass by muting the engine.
+* **Gate 29** — passes with **every threshold unchanged**, including its pinned
+  `standard` insolvency day (76 ± 6) and the strict ordering across all four
+  presets. Its per-preset horizons stay where they are, because they are fitted
+  to insolvency and not to the cascade; its written warning that "a gate that ran
+  into the cascade would hang rather than fail" is retired and points at gate 30.
+  *(Why the four runs cannot have moved, stated as an argument rather than a
+  fourth measurement: gate 29's own tripwire measures a peak of **0 or 1** open
+  incidents inside every horizon, `sat(N)` is 1.0 below 26 and `saturated()` is
+  false below 36, and the district-eligibility rule can only fire on a `crime`
+  that reached tier 4 — which needs a child, which a roster that never exceeds 1
+  never had.)*
+* **Gates 1–28** — no threshold re-fit anywhere. **Nothing was re-derived,
+  because nothing moved.**
+* **Determinism** — `tools/profile_sim.gd --hash-only` on the starter city and on
+  `tests/fixtures/bench_city.json`, both paths, **byte-identical** before and
+  after. The refusal is deterministic and draws no RNG, and no measured city ever
+  reaches a knee, so there is nothing for a hash to notice.
+
+### 31.6 What this pass could not see, ranked
+
+1. **`traffic_accident`'s cascade is the critical case and it now owns the
+   ceiling.** `count: 1`, `scope: "adjacent_edge"`, and the child lands on the
+   parent's own tile — it invents its subject exactly the way the crime cascade
+   did, and only its offspring number keeps it from diverging. Two candidate
+   rulings, both doc 06's: make it consume a road (an accident closes the edge it
+   is on, so an adjacent-edge child should have to find an OPEN one), or drop the
+   count to a `chance` below 1 so the process is subcritical. Neither was taken
+   here, because both retune a consequence and this pass ruled that a saturation
+   rule must not.
+2. **A roster pinned at the ceiling costs 66–73 ms/game-hour against 5.8 ms
+   quiet, and doc 08's catch-up budget is priced on §2.13's "≈2,500 cheap
+   operations per simulated hour".** At a 720-game-hour absence that is ~50 s of
+   main-thread work sliced at 12 ms/frame. The count is right; the operations are
+   not as cheap as the estimate. Where it goes was not profiled — the sub-step
+   count, `_rescore_and_dispatch`'s per-incident priority pass and
+   `_next_discontinuity_h`'s second walk of the roster are the three candidates.
+3. **The 40 is flat, and doc 06 pairs it with "≤ 20 units".** A city with a real
+   fleet can answer more than a starter one, so the ceiling arguably wants to be
+   `max(40, k × fleet.size())`. Flat is what §2.13 says and flat is what shipped;
+   a scaling rule needs a measured late-game city, which the matrix's 21-game-day
+   horizon does not produce.
+4. **The `crime` generator can still produce a target-less crime.** `λ` is
+   per-district-population, and `_pick_crime_target` returns `""` when no building
+   in the district is eligible — a district with residents and no standing
+   buildings is a doc 02/doc 09 state question, not doc 06's, and it was left
+   alone.
