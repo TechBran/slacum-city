@@ -238,7 +238,7 @@ func test_every_preset_requests_exactly_the_four_permissions() -> void:
 	# plugin manifest AUTHORS; nothing checked what a preset REQUESTS. Both reach
 	# the APK — measured on four locally built debug APKs, `aapt2 dump
 	# permissions`: AAR-only → 4, preset-only → 4, both → 4, NEITHER → 0 with the
-	# plugin and both receivers still merged (report 98 §28 RR-70). That last row
+	# plugin and both receivers still merged (report 98 §29 RR-70). That last row
 	# is the reading the 2026-08-21 Fold session took off the phone, and its cause
 	# was a stale AAR, not the preset.
 	# So the preset flags are redundancy, not the fix: with them a stale or

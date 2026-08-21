@@ -2,6 +2,20 @@
 
 **The honest ledger of what "completely built out" still lacks.**
 
+> **CURRENT PROVENANCE — Wave 13, 2026-08-21, Godot 4.7.2.** The tree this
+> edition is measured on: **118 test files / 2,083 tests / 522,300 asserts /
+> 0 failed / 0 silent, 30 balance gates.** Determinism re-measured, not quoted:
+> founding `e8bffba1853f248e…` / `08bfdfaa3dd65281…`, benchmark
+> `e760f9305d21d331…` / `bd2d8f30d25827f4…`. **The count is 169 of 187 rows —
+> 90 %**; the re-derivation is the table headed *THE COUNT, RE-DERIVED ROW BY ROW
+> AT THE WAVE-13 FORK*, immediately before §0.5, and it supersedes both count
+> tables before it, and report 98 **RR-76** carries it as the project's single
+> quotable figure. **The one-page answer to "are we done" is §20.4**; §20.5 is
+> this edition's marker sweep. The two provenance blocks below are kept for the
+> record and must not be quoted as current — a stale header is the reason the
+> Wave-10 pass happened, and this box exists so it cannot be the reason for the
+> next one.
+
 ~~Provenance: written against `6d8c2b1` (post Wave-4), Godot 4.7.2, 1,249 tests +
 20 balance gates green.~~ **RE-DERIVED AGAINST TODAY'S TREE — Wave 10, 2026-08-20,
 at `a892315`, Godot 4.7.2. The tree this was measured on: 108 test files /
@@ -337,6 +351,99 @@ Three rows of the §19 table above are therefore restated:
   filed: the two rails were placed at two different pitches (93 and 73) because
   one placer measured before layout. Doc 12 **D-59**; it is closed, and the fix is
   the mirror of D-46's corner rail.
+
+### THE COUNT, RE-DERIVED ROW BY ROW AT THE WAVE-13 FORK — 2026-08-21
+
+*Every count table above was edited by hand beside a table of rows — the exact
+thing the Wave-10 table's own commentary warned about ("a count table that is
+edited by hand beside a table of rows will drift"), and it drifted again, twice,
+below. This one is re-derived the way §0 specifies — **from the documents**,
+`grep -c "^### 2\.[0-9]" docs/design/*.md`, then every non-SHIPPED row re-verified
+against the tree with a named command at this fork. It supersedes both tables
+above. **This is the number to quote.***
+
+| Doc | Rows | SHIPPED | PARTIAL | ABSENT | DEFERRED | what moved, and why |
+|---|---|---|---|---|---|---|
+| 01 Time & ticks | 12 | **12** | 0 | 0 | 0 | unchanged |
+| 02 Buildings | 14 | **13** | 1 | 0 | 0 | unchanged. §2.9 re-verified: `grep -rn "E_FIRE_COVERAGE\|E_POLICE_COVERAGE"` over `*.gd` and `*.json` returns **nothing** |
+| 03 Economy | 13 | **13** | 0 | 0 | 0 | §2.9 SHIPPED (A91-D-19) — *the row said so and the Total above never folded it in* |
+| 04 Power grid | 13 | **11** | 1 | 0 | 1 | unchanged. §2.10 re-verified: `grep -rn fuel sim/power/` returns **nothing** |
+| 05 Water | 16 | **14** | 1 | 0 | 1 | **+1 SHIPPED**: the `— Overlay` row moved PARTIAL → SHIPPED in Wave 11 (all six `enabled_modes` live, both answering verbs doored) and the count never followed its own row |
+| 06 Incidents & dispatch | 13 | **13** | 0 | 0 | 0 | unchanged |
+| 07 Weather & director | 7 | **7** | 0 | 0 | 0 | §2.4 SHIPPED (A91-D-26 closed, RR-53) — *an override row above says so; the main row and the Total never did* |
+| 08 Offline & persistence | 15 | **12** | 2 | 1 | 0 | unchanged. All three re-verified below |
+| 09 Map, land, starter city | 14 | **14** | 0 | 0 | 0 | unchanged |
+| 10 Roads & traffic | 15 | **14** | 1 | 0 | 0 | unchanged. §2.15 re-verified: `game/render/road_overlay_view.gd` ingests `RoadNetwork.snapshot.visible_edges` as a per-edge MultiMesh, not §2.15's polyline |
+| 11 Rendering & performance | **22** | **22** | 0 | 0 | 0 | **basis +1** (see below) |
+| 12 UI/UX | **20** | **19** | 1 | 0 | 0 | **basis +1** (§2.20, S15) and **+1 SHIPPED** (§2.18, Wave 13) |
+| 13 Android | 13 | **5** | 8 | 0 | 0 | unchanged in the count; the *blocker* changed (see below) |
+| **Total** | **187** | **169** | **15** | **1** | **2** | |
+
+> **90 % shipped — 169 of 187 — or 91 % of the 185 rows that are not deferred by
+> their own docs.**
+
+**Two rows moved because a count table drifted from its own rows, and that is the
+third instance of the same fault.** Doc 03 §2.9 (A91-D-19, closed
+2026-08-20) and doc 07 §2.4 (A91-D-26, closed 2026-08-20) were both struck in
+their rows, and the Wave-12 `185 / 163 / 19 / 1 / 2` Total folded in **neither**
+— its own rows sum to 164 SHIPPED with doc 03 corrected and 165 with doc 07
+corrected too, so the published headline was two rows behind the table printed
+directly above it. It is exactly the §28.2 fault in doc 92, in this document, and
+it is the argument for §20.1's last line restated for the third time: *a count
+maintained by hand beside a table of rows will drift; when all four matrices are
+tests, "done" is a number the suite prints.* **Report 98 RR-76 rules it** — a
+derived total is not a source; either it is computed, or it carries the fork it
+was computed at — and from here every count table in this document carries its
+fork and its date in its own heading.
+
+**The basis moves 185 → 187, in two documents, and every row it gains is a section
+that shipped and was never counted.**
+
+* **Doc 11: 21 → 22.** `grep -c "^### 2\.[0-9]" docs/design/11-rendering-performance.md`
+  returns **18**, being §2.1–§2.16 plus **§2.9b** (standing water, shipped Wave
+  11 — `game/render/flood_view.gd`, `game/shaders/flood.gdshader`,
+  `tests/test_flood_view.gd`) and **§2.10b** (the distribution layer, shipped
+  Wave 10 — `game/render/power_infra_view.gd`, `tests/test_power_infra.gd`).
+  Neither has ever been a printed row of §11's table. Add the four promoted
+  `####` deliverables (§2.1.1, §2.1.2, §2.1.2a, §2.10.1) and fold §11's
+  **duplicated** `2.10.1` row back into one — it is a second deliverable under
+  one heading and is recorded as such in the row's own pointer — and the basis is
+  18 + 4 = **22, all SHIPPED**. Net +1 against the published 21.
+* **Doc 12: 19 → 20.** **§2.20 — S15, the loading veil** (Wave 13, doc 12 D-60,
+  RR-66): `ui/loading_veil.gd` + `ui/veil_model.gd`, driven from
+  `game/main.gd:1305/:1312/:1328`, with `tests/test_veil_model.gd`, two states in
+  `tools/ui_preview.gd::SCREENS` (`veil_load`, `veil_catchup`) and a `SURFACES`
+  row in `tests/test_ui_audit.gd` — the whole of A91-D-28's lesson applied on the
+  way in. **SHIPPED.**
+
+**And two rows moved up on work that landed and was never subtracted from the
+tally** — doc 05's `— Overlay` (Wave 11) and doc 12 §2.18 (Wave 13, 990
+state-sweeps at six boxes × three text scales, 0 findings). With the two
+corrections folded and these two moves, `165 → 169` and `17 → 15` reconcile
+exactly against a basis of `185 → 187`. Nothing else moved.
+
+**The sixteen rows that are a gap — 15 PARTIAL + 1 ABSENT, every one re-verified
+at this fork.** *(The two DEFERRED rows — doc 04 §2.11 black start, doc 05 §2.10
+contamination — are deferred by their own docs and are not gaps; §20.4 lists
+them with the rest of the deferred surface.)*
+
+| row | grade | the command that says so, run 2026-08-21 |
+|---|---|---|
+| doc 08 §2.10 — event history rings | **ABSENT** — *the last ABSENT row in the tree* | `ui/event_log_model.gd:28` states it in its own class doc: the ring is session-lifetime and "this class has no `capture_state`". Constitution §9 and doc 91 §0.5 both name it |
+| doc 02 §2.9 — service coverage | PARTIAL | `grep -rn "E_FIRE_COVERAGE\|E_POLICE_COVERAGE" --include=*.gd --include=*.json .` → **nothing** |
+| doc 12 §2.9 — building panel (S5) | PARTIAL | same grep, same root — the two rows close together |
+| doc 04 §2.10 — backup generators | PARTIAL (re-open condition written, doc 93 §N3) | `grep -rn fuel sim/power/` → **nothing** |
+| doc 05 §2.14 — worked examples | PARTIAL — **A91-D-25** | a doc quote: §2.14 says `water_demand_commercial = 0.45 at h22`, `data/time.json`'s `[21, 0.65]` / `[23, 0.35]` interpolate to **0.50** |
+| doc 08 §2.3 — anti-frustration invariants | PARTIAL | `grep -rln _on_app_resumed tests/` → **nothing**. The planner is tested; `main.gd`'s own body is not |
+| doc 08 §2.13 — notification budget state | PARTIAL — **A91-D-27** | `game/save_service.gd:380–382` and `:661–663` register exactly `city`, `ui`, `meta`; `NotificationRouter` appears nowhere in the file |
+| doc 10 §2.15 — cosmetic civilian traffic | PARTIAL | `game/render/road_overlay_view.gd:145` ingests `visible_edges` per edge; §2.15 describes a polyline. Cosmetic-only |
+| doc 13 §2.4, §2.5, §2.6, §2.7, §2.8, §2.9, §2.11, §2.12 | PARTIAL × 8 | §20.4's device-gated list. **The blocker is no longer "a build that carries the plugin"** — it does, and `GodotPluginRegistry` logs its initialisation on the Fold. It is `export_presets.cfg`'s `permissions/custom_permissions=PackedStringArray()` with zero `permissions/*=true` on all three presets, so the plugin's four `<uses-permission>` elements never reach the APK |
+
+**Eight of the sixteen are one document's, and it is the same document it has
+always been.** Doc 13 is **half** of everything this project has left, it is one
+preset field and one device session away from being *measurable* rather than
+guessed at, and no amount of workstation work moves it. §20.4 is written around
+that fact.
 
 ---
 
@@ -714,7 +821,7 @@ so a finished tutorial stays finished across a restart. **D-3 closed.**
 > the plugin manifest that contradicted the first one does not.** That note said
 > the four `<uses-permission>` elements never reach an APK and that
 > `export_presets.cfg` is the only source. Four locally built debug APKs say
-> otherwise (`aapt2 dump permissions`, report 98 §28 RR-69):
+> otherwise (`aapt2 dump permissions`, report 98 §29 RR-70):
 >
 > | plugin AAR declares the four | preset declares the four | APK requests |
 > |---|---|---|
@@ -1609,6 +1716,32 @@ and an event-consumer test (walk `data/ui.json.event_log.events` and
 `data/notifications.json.bindings`, assert every `type` is emitted in `sim/`).
 Both are an afternoon. Both would have caught defects this audit found by hand.
 
+#### 20.1a The eight clauses, RE-TAKEN at the Wave-13 fork — 2026-08-21
+
+*The table above accumulated four waves of struck rows and two rows appear in it
+twice. This is the same eight clauses, each measured once, at this fork. It
+supersedes every row above it.*
+
+| # | Clause | The gate that measures it | Green at this fork? |
+|---|---|---|---|
+| 1 | Every §2.N SHIPPED | Part I, re-derived row by row | **169 / 187 (90 %)** — 91 % of the 185 non-deferred. 15 PARTIAL, 1 ABSENT. **Eight of the sixteen gaps are doc 13's** |
+| 2 | Every roster row has a textured asset | `tests/test_asset_completeness.gd` | ✅ — and the one exemption is named: `DEFERRED_BODIES = ["ambulance"]`, A91-D-20, deleted the day doc 06's EMS lands |
+| 3 | Every `cmd_*` has a door | §17 — **still no test**, §20.2 item 5 | **24 / 24 on `CitySim`.** Census run 2026-08-21: every `cmd_*` on `sim/city_sim.gd` is named by a file under `ui/` or `game/`, `cmd_recall_unit` included (A91-D-24 closed; `game/main.gd:914` binds it). **Five sub-system verbs still have no wrapper**, all five `WaterSystem`'s — `cmd_remove_main`, `cmd_overhaul_node`, `cmd_set_water_restrictions`, `cmd_set_water_policy`, `cmd_deploy_pump_truck` (doc 92 §32.6) — plus two ruled deliberate (`cmd_road_repair` §J3, `cmd_install_backup_generator` §N3). **Of the five, three are named in doc 05 §6's own deferred list and are therefore not gaps** (§20.4): the honest open count is **two** |
+| 4 | Every event has a consumer or a written reason not to | **`tests/test_event_matrix.gd`** — ✅ **this clause became a test in Wave 11** | ✅ **140 types emitted, 78 consumed by the game, 62 classified, zero unexplained** (printed by the suite at this fork). The exemption register is in the test, so a new unexplained type fails the build |
+| 5 | Every screen clean at every box × both a11y settings | `tools/ui_preview.gd --audit --strict`; the suite's own width gate runs six boxes including `min_safe_box_dp` | ✅ **18 / 18 sweeps** — 6 boxes × 3 text scales × **55 states = 990 state-sweeps, 0 findings, exit 0 eighteen times** (§19.1). A91-D-21/22/23/29 all closed. **The instrument covers 15 of 16 screens**: S13's panel still has no preview state (A91-D-28) |
+| 6 | Determinism | `tools/profile_sim.gd --hash-only --baseline`, both cities, **and `tests/test_save_determinism_days.gd`** | ✅ founding `e8bffba1…` / `08bfdfaa…`, bench `e760f930…` / `bd2d8f30…`. The multi-day gate saves at 2 h, 26 h, 50 h and seven game-days on both cities — the window every earlier proof was smaller than |
+| 7 | Balance | `tests/test_balance_gates.gd` | ✅ **30 gates** (gate 29 = preset ordering §29.6; gate 30 = the incident-roster ceiling, §31 / doc 06 §2.13(b)) |
+| 8 | Suite | `tests/run_tests.gd` | ✅ **118 files / 2,083 tests / 522,300 asserts / 0 failed / 0 silent** (2026-08-21, `tools/run_suite.sh`) |
+
+**Two clauses of the eight moved since Wave 12, and both moved the same way:
+a matrix became a test.** Clause 4 is `tests/test_event_matrix.gd` and clause 5's
+width half is `tests/test_ui_audit.gd::BOXES` with the `min_safe_box_dp` row in
+it. **Clause 3 is the last matrix that is still a section**, and §20.2 item 5 has
+been the cheapest structural work left in this project for three waves. It is now
+also the *only* one, which is a better argument for taking it than any it has had
+before: the census in row 3 above was run by hand, and a hand census is exactly
+what §16, §18 and §19 each stopped needing the wave they became tests.
+
 ### 20.2 Distance to done, ranked and sized
 
 Ranked by *player-visible harm per hour of work*, sized S (< half a day),
@@ -1663,6 +1796,42 @@ underneath four rows rather than beside them. *When the same defect class comes
 back after a fix, price the next attempt as a search for a common cause, not as
 another instance.*
 
+#### 20.2a Every item of §20.2, statused at the Wave-13 fork — 2026-08-21
+
+*The list above has been edited in place across four waves and reads as a
+palimpsest. This is its status line, item by item, once. **§20.4's two tables
+supersede it** — they split the same work by whether a workstation can close it,
+which is the split that actually matters now.*
+
+| # | §20.2 item | Status at this fork |
+|---|---|---|
+| 1 | Re-flow the right-edge chip column | ✅ **DONE** (Wave 12, D-46). A91-D-21 closed |
+| 2 | Keep sheet/menu/title controls on screen | ✅ **DONE** (Wave 13, D-54…D-57). A91-D-22 and A91-D-29 closed |
+| 3 | Widen the suite's a11y check | ◐ **HALF.** `640 × 340` is a `BOXES` row and S15 is a `SURFACES` row; the overlap/offscreen half needs laid-out geometry and lives in `tools/ui_preview.gd`. **Remaining work is one line of CI** → §20.4 workstation item 6 |
+| 4 | `data/difficulty.json` + the loader + the seam | ✅ **DONE** (Wave 11). A91-D-19 closed; doc 03 §2.9 SHIPPED |
+| 4b | Bound the incident cascade | ✅ **DONE** (Wave 13, doc 06 §2.13(b)). A91-D-31 closed; **gate 30** asserts it |
+| 5 | The verb-door test **and** the event-consumer test | ◐ **HALF.** `tests/test_event_matrix.gd` ships (140 / 78 / 62 / 0). The verb-door test is the **last matrix that is not a test** → §20.4 workstation item 4 |
+| 6 | Yield the 880 × 400 top bar to the rails | ✅ **DONE** (Wave 12, D-51). A91-D-23 closed |
+| 7 | A debug build that carries the plugin, on the Fold | ◐ **PREMISE RETIRED, BLOCKER REPLACED.** The APK carries the plugin and registers it. The gap is `export_presets.cfg`'s empty permission list → §20.4 device item 1 |
+| 8 | Draw the flood | ✅ **DONE** (Wave 11, RR-53). A91-D-26 closed; doc 07 §2.4 SHIPPED |
+| 9 | Doors for the five doorless verbs | ✅ **DONE on `CitySim` — 24 of 24.** A91-D-24 closed. Of the five sub-system verbs left, **three are deferred by doc 05 §6** and two are open (§20.4) |
+| 10 | Persist the notification budget | ○ **OPEN**, S → §20.4 workstation item 2 |
+| 11 | Persist the event-log ring | ○ **OPEN**, S — **the last ABSENT row** → §20.4 workstation item 1 |
+| 12 | `E_FIRE_COVERAGE` / `E_POLICE_COVERAGE` | ○ **OPEN**, M — two rows, one fix → §20.4 workstation item 3 |
+| 13 | Store listing, privacy policy, data-safety form | ○ **OPEN** — not code and not device-gated; three documents and a Console form |
+| 14 | `CitySim.dispose()` | ○ **OPEN**, S — filed (D-9), not ranked with the coverage work |
+| 15 | The fine tick, 18.0 ms against 8 | ○ **OPEN**, L — D-15's narrowed half; doc 10 §9.3 C-3's ladder or GDExtension |
+| 16 | Doc 05 §2.14's 0.45 / 0.50 | ○ **OPEN**, S → §20.4 workstation item 7 |
+| 17 | A preview state for S13 | ○ **OPEN**, S — the one screen of sixteen the sweep has never opened → §20.4 workstation item 5 |
+| 18 | Find what `roads` restores differently after a day boundary | ✅ **DONE** (Wave 13) — and it was water, not roads. A91-D-30 closed; `tests/test_save_determinism_days.gd` is the gate |
+| 19 | The loading veil, and the catch-up veil with it | ✅ **DONE** (Wave 13, RR-66). S15 ships as doc 12 §2.20 with two `SCREENS` states in the same commit |
+
+**Nine of nineteen done, two half, eight open — and the eight are §20.4's
+workstation list plus the two filed non-coverage items (14, 15) and the store
+paperwork (13).** One item on this list has *changed shape* rather than moved:
+item 9's five doorless verbs are two, because three of them are named in doc 05
+§6's own deferred list and were never gaps.
+
 ### 20.3 What this document is now for
 
 Part I is the row ledger and stays append-only. Part II is the mechanised half,
@@ -1670,3 +1839,251 @@ and the intention is that it **shrinks**: §16 is already a test, and §17 and �
 should become tests rather than sections (§20.2 item 5). When all four matrices
 are tests, this document's job is Part I alone, and "done" is a number the suite
 prints.
+
+*2026-08-21: three of the four are tests now — §16 was one from the day it was
+written, §18 became `tests/test_event_matrix.gd` in Wave 11, and §19's width half
+is `tests/test_ui_audit.gd` with `min_safe_box_dp` in its `BOXES`. §17 is the
+last section. §20.4 is what this document is for in the meantime.*
+
+---
+
+## 20.4 ARE WE DONE? — the completion statement
+
+*Written 2026-08-21 at the Wave-13 fork, re-derived rather than inherited, and
+written to be quoted. Three questions, answered in order: what is done, what
+remains and why each remaining item cannot be closed from this workstation, and
+what is deferred by design. §20.1's rule governs all three — **anything the docs
+themselves defer is not a gap; anything else is.***
+
+**Provenance.** Godot 4.7.2, headless. `tools/run_suite.sh` at this fork:
+**118 files / 2,083 tests / 522,300 asserts / 0 failed / 0 silent**, exit 0, with
+**30 balance gates** inside it. Determinism, re-measured rather than quoted:
+founding `e8bffba1853f248e…` / `08bfdfaa3dd65281…`, bench `e760f9305d21d331…` /
+`bd2d8f30d25827f4…` — the four published baselines to the digit, and unchanged
+*by construction*, because this pass wrote no `sim/`, no `data/`, no `game/` and
+no `ui/`.
+
+### What is DONE
+
+> **SLACUM CITY is 90 % shipped: 169 of 187 `### 2.N` rows of docs 01–13, or
+> 91 % of the 185 rows that are not deferred by their own docs — implemented,
+> reachable by a player, and held by a named test. Six of the eight clauses of
+> §20.1's definition are outright green; clause 1 is 169/187 and clause 3 is
+> 24 of 24 at the `CitySim` layer with two sub-system verbs still without a
+> wrapper. One row in the entire tree is ABSENT. Half of everything that remains
+> is one document's, and that document needs a phone, not a feature.**
+
+Row by row, at this fork:
+
+| Doc | Rows | SHIPPED | the gap, if any |
+|---|---|---|---|
+| 01 Time & ticks | 12 | **12 — complete** | — |
+| 02 Buildings | 14 | 13 | §2.9 service coverage: the field ships, the `E_*_COVERAGE` upgrade gates do not |
+| 03 Economy | 13 | **13 — complete** | — |
+| 04 Power grid | 13 | 11 | §2.10 backup generators (PARTIAL, re-open condition written §N3); §2.11 black start (DEFERRED by the doc) |
+| 05 Water | 16 | 14 | §2.14 a doc quote (A91-D-25); §2.10 contamination (DEFERRED by the doc) |
+| 06 Incidents & dispatch | 13 | **13 — complete** | — |
+| 07 Weather & director | 7 | **7 — complete** | — |
+| 08 Offline & persistence | 15 | 12 | §2.3 (`main.gd`'s resume body untested), §2.13 (A91-D-27), §2.10 **ABSENT** — the event-log ring |
+| 09 Map, land, starter city | 14 | **14 — complete** | — |
+| 10 Roads & traffic | 15 | 14 | §2.15 the traffic overlay is edges, not polylines — cosmetic |
+| 11 Rendering & performance | 22 | **22 — complete** | — |
+| 12 UI/UX | 20 | 19 | §2.9 building panel — the same root as doc 02 §2.9 |
+| 13 Android | 13 | 5 | eight PARTIAL — seven device-gated, one (§2.12's remainder) three documents and a Console form. The list below |
+| **Total** | **187** | **169 (90 %)** | 15 PARTIAL · 1 ABSENT · 2 DEFERRED |
+
+**Six of thirteen documents are complete.** And the four matrices §20.1 adds on
+top of the rows are green or nearly: every roster row has a textured asset (a
+test); every event has a consumer or a written exemption — **140 emitted, 78
+consumed, 62 classified, zero unexplained** (a test); every screen is clean at
+**six boxes × three text scales × 55 states = 990 state-sweeps, 0 findings**;
+every one of `CitySim`'s **24 of 24** `cmd_*` is named by a file under `ui/` or
+`game/`. Determinism holds past a day boundary for the first time in the
+project's life (`tests/test_save_determinism_days.gd`), and the balance contract
+is **30 gates**.
+
+### What REMAINS, and why each item cannot be closed from this workstation
+
+**Eight of the sixteen gaps are doc 13's, and all eight reduce to one sentence:
+the code exists, the build exists, and nobody has run the notification surface on
+a phone.** The blocker moved this week and the new one is smaller than the old
+one: it is **not** "a debug APK that does not carry the plugin" — it does, and
+`GodotPluginRegistry` logs `Initializing Godot plugin SlacumNative` on the Fold.
+It is that `export_presets.cfg` carries
+`permissions/custom_permissions=PackedStringArray()` with **zero**
+`permissions/*=true` on all three presets, so the plugin's four
+`<uses-permission>` elements never reach the manifest and the permission flow
+cannot execute.
+
+| # | What is device-gated | Rows it closes | **The exact command or user action that closes it** |
+|---|---|---|---|
+| 1 | **The notification flow, end to end** | doc 13 §2.4, §2.5, §2.6, §2.7 (4 rows) + doc 08 §2.13's platform half | *(a)* on all three presets in `export_presets.cfg`, fill `permissions/custom_permissions` with the four the plugin declares (`android.permission.POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`, `VIBRATE`, `WAKE_LOCK`) — today all three read `PackedStringArray()` with no `permissions/*=true` beside them, which is why the plugin's `<uses-permission>` elements never merge; *(b)* `bash tools/build_native_plugin.sh` then `bash tools/setup_android.sh` (the AAR is tracked but not rebuilt by an export, and the templates are gitignored) and export debug; *(c)* `adb install -r` and confirm with `aapt2 dump permissions`; *(d)* **a human taps ALLOW on the runtime prompt** — the step no script can take; *(e)* `adb shell dumpsys notification` filtered to `com.slacumcity.game` for the channels, then background the app and read `adb shell dumpsys alarm` for the alarm. **Do this first, because it needs no device:** `aapt2 badging` on a `tools/make_release.sh` artefact settles whether the *release* path already carries the four, i.e. whether this is a debug-only gap or the shipping manifest as well |
+| 2 | **The three-pose day/night matrix** | doc 11 §2.13's device column; doc 13 §2.8's heat half | `bash tools/run_matrix.sh q1` on an unlocked phone — three zooms × hour 13 / hour 21, preset pinned Balanced. `build_check` refuses a build that cannot receive `launch_args`, so the run either measures or says why in one line; `bash tools/run_matrix.sh` with no argument runs the whole session in priority order |
+| 3 | **The zebra / flood / pad-shadow A/Bs** | doc 11 §2.1.2's fragment ladder, §2.9b, §2.10b — all three published as workstation numbers | `bash tools/run_matrix.sh zebra flood pads`. The four render levers (`--road-detail`, `--pad-shadows`, `--flood-detail`, `--flood`) exist in `game/` as of the third Fold session and had never been drivable before it |
+| 4 | **Tier-C `road_detail`** | doc 11 §2.13's `presets.performance.road_detail = 1`, **marked provisional in `data/render.json`** | the same matrix run on a **tier-C part**, not on the Fold. The zebra loop costs 2.4× every wear term put together on this workstation; the ruling assumes it is worse still at `render_scale` 0.70 on a weaker ALU:bandwidth ratio, and that assumption has never been measured. It is the only *provisional* number in the render presets |
+| 5 | **The presentation-corruption ("tearing") A/B** | doc 11 §2.13's open band; the reason `PERF` is not always-on | it rides **real player sessions**, not a matrix: `adb shell run-as com.slacumcity.game touch files/perf_capture.flag` to arm, play, then `rm -f` it and play the same content again. The suspicion is that the per-frame `viewport_set_measure_render_time` GPU timestamp query provokes the swapchain bands — which is unfalsifiable in a 40-second capture and obvious across two sessions. **First command of the next window regardless:** `adb shell run-as com.slacumcity.game rm -f files/perf_capture.flag`, because it was left armed |
+| 6 | **An on-device ANR run of the long catch-up** | doc 13 §2.9 | background the app for 12 real hours, resume, and read the `PERFIO` load row plus `am` for an ANR. The workstation number (1.04 s for 43 coarse hours) is a workstation number |
+| 7 | **Battery** (doc 13 §7 D-07) | doc 13 §2.8's other half | `dumpsys batterystats --reset`, a measured session, `dumpsys batterystats com.slacumcity.game`. Never attempted |
+| 8 | **Store listing, privacy policy, data-safety form** | doc 13 §2.12's remainder | not device-gated and not code: a human writes three documents and fills a Console form. The signing pipeline ships and is asserted (`tests/test_release_plumbing.gd`) |
+
+**The other eight gaps are NOT device-gated, and the accounting closes exactly:
+six of them are workstation work, and two are already ruled or deliberate.**
+
+The workstation backlog, ranked by player-visible harm per hour, with the size
+§20.2 uses. Three of the eight items below are not `§2.N` rows at all — they are
+the definition's own clauses and the sweep's own coverage, and they are here
+because §20.1 counts them as part of "done":
+
+| # | Work | Size | Closes |
+|---|---|---|---|
+| 1 | **Persist the event-log ring** — the log is empty on every launch | **S** | **doc 08 §2.10 — the last ABSENT row in the tree**, and a constitution §9 clause |
+| 2 | **Persist the notification budget** — four lines, the shape `SaveService.ui_provider` already took | **S** | doc 08 §2.13; A91-D-27 |
+| 3 | **`E_FIRE_COVERAGE` / `E_POLICE_COVERAGE` upgrade gates** — the field, the overlay and the panel tiles all ship; falling below a requirement still costs nothing | **M** | **doc 02 §2.9 and doc 12 §2.9 — two rows, one fix** |
+| 4 | **The verb-door test** — the last matrix that is not a test | **S** | §20.1a clause 3 *(not a row)* |
+| 5 | **A preview state for S13** — two lines beside `alerts` in `SCREENS` | **S** | A91-D-28; the one screen of sixteen the sweep has never opened *(not a row)* |
+| 6 | **A CI step for the overlap/offscreen sweep** — a headless run has no laid-out geometry, so this is one line of CI, not one of GDScript | **S** | §20.2 item 3's remaining half *(not a row)* |
+| 7 | **Doc 05 §2.14's 0.45 / 0.50** — one number in a doc, or two keyframes in `data/time.json` | **S** | doc 05 §2.14; A91-D-25 |
+| 8 | **A headless test that drives `main.gd._on_app_resumed`** | **S** | doc 08 §2.3's narrowed remainder |
+
+Seven of those eight are **S**. **Together they are about a day, and they close
+the last ABSENT row in the tree, three defects, one clause of the definition of
+done and the last unswept screen.** Item 3 is the only M and it is the only one a
+player would notice.
+
+**And the two remaining gaps are not backlog at all:**
+
+* **doc 04 §2.10 — backup generators.** Ruled in doc 93 §N3 with a written
+  re-open condition: doc 05's `cmd_install_backup_generator` is an interface call
+  and stays wrapper-less until doc 04 ships §2.10's capital price, tank, burn rate
+  and refuelling. Doc 04 §12 defers the generator; the row is PARTIAL rather than
+  DEFERRED only because §2.10 is written as if it ships.
+* **doc 10 §2.15 — cosmetic civilian traffic.** The feed ships and drives
+  `VehicleView`; the *overlay* is a per-edge MultiMesh rather than §2.15's
+  polyline. A deliberate, recorded, cosmetic-only difference.
+
+Two more, filed and deliberately not ranked with them because neither is a
+coverage row: **`CitySim.dispose()`** (D-9 — 199 objects per abandoned sim,
+load-bearing the day a New Game button exists) and **the fine tick at 18.0 ms
+against 8** (D-15's narrowed half — no longer a cadence problem; doc 10 §9.3
+C-3's ladder or GDExtension, and an **L**).
+
+### What is DEFERRED BY DESIGN
+
+*Enumerated from the docs' own §6 "MVP Cut → Deferred" lists and nowhere else.
+None of it is a gap under §20.1, and none of it is invented here — every entry is
+quoted from the document that owns it. Where a §6 list had itself gone stale, the
+entry is corrected rather than repeated: see doc 12 and §20.5.*
+
+| Doc | Deferred by its own **§6 — MVP Cut** (docs 00 and 93 have no §6; theirs are §7 and §F) |
+|---|---|
+| **00 Constitution** | premium currency and all monetisation hooks (§7, post-alpha); binary/SQLite saves (post-alpha optimisation) |
+| **01 Time & ticks** | weekend curve override tables (mechanism ships, data does not); stadium event templates and venue anchoring; sliceable day-cadence systems; seasonal variation of the daylight curve; per-system RNG-draw accounting tooling |
+| **02 Buildings** | archetypes 7/8/10/11/12 (factory, warehouse, hospital, school, stadium); building-specific incidents beyond fire/crime (data-centre cooling, backup-generator dependence); non-square footprints and rotation; land-value / desirability tax modifiers; research unlock preconditions; landmark and premium architecture packs; per-level distinct 3D models |
+| **03 Economy** | stadium/event gate revenue, tourism, export contracts; bond issuance and player-chosen debt; **per-district tax rates**; disaster insurance policies; the non-adjacent land premium; all IAP; analytics export beyond the local ring |
+| **04 Power grid** | **black start as a player action** *(a counted DEFERRED row, §2.11)*; batteries; solar and wind; underground feeders, flood walls, surge arresters; nuclear, plant L4–5, substation L4–5, transformer L5, **feeder class 3**; `FUEL_SHORTAGE` / `PLANT_FAULT` / `SUB_FLOOD`; **backup generators**; preventive-maintenance jobs; regional imports/exports; tiered `powered_fraction` |
+| **05 Water** | **contamination beyond the flag** *(a counted DEFERRED row, §2.10)*; freeze damage & insulation; the `booster` variant, `source: well`, `arterial` mains, facility levels 4–5; `water_pump_truck`, `water_heavy_truck`, `water_flood_response`; **the `water_restrictions` policy and `overhaul_node`**; explicit hydrant placement, per-hydrant flow, player-drawn pressure districts, drought; sewage (never — spec §52) |
+| **06 Incidents & dispatch** | **EMS** and every other unit class (ladder, rescue, hazmat, SWAT, mobile transformer, bucket truck, pump truck) and their alarm-level interactions; crew skill and unit damage; fuel as a distinct resource; building-specific incidents; contractor hiring; multi-district alarms and mutual aid; incident chaining across saves; the traffic-accident injury EMS branch. Also **ruled, not deferred**: unpowered stations have no effect on their units (C-52) |
+| **07 Weather & director** | `SNOW` / `BLIZZARD` / `FOG` / `EXTREME_COLD` / high-wind states; seasons beyond the four-row multiplier table; multi-cell and per-district weather; weather stations and forecast upgrades; sandbags and storm drains; **the nine pre-costed post-MVP disasters** (flash flood, river flood, blizzard, wildfire, tornado, major blackout, riot, hurricane, earthquake); evacuation; insurance beyond the flat 15 %; hail; Challenge/Crisis scenario exemptions to F9 |
+| **08 Offline & persistence** | retention slots D–F; **multiple city slots**; cloud / Play Games saves; emergent risk projection (ships present, `emergent_projection_enabled = false`); the **P4 ambient** notification class (ships present, disabled); report sharing; save export/import; `id_remap` + the Save Repair panel |
+| **09 Map, land, starter city** | bridges, islands, satellite and special-zone blocks; **rings 3+ and world growth**; terraforming, land reclamation, block resale; manual district split/merge UI; district specialisations and zoning bonuses; intra-block elevation variation; road classes beyond AVENUE/STREET; demolition of authored starter buildings; a `brownfield` `dev_terrain` key; per-district happiness; explicit migration flows |
+| **10 Roads & traffic** | **hierarchical routing** (built, measured and not shipped — RR-27); one-ways, turn restrictions, lane counts; multi-tile arterials; bridges, tunnels, overpasses; `debris` and `police_cordon` closures; evacuation flow; per-district signal timing; pedestrians, transit, parking (spec §52 non-goals); congestion pricing |
+| **11 Rendering & performance** | snow / blizzard / fog VFX; `ReflectionProbe` on High (gated on device validation); the remaining three archetypes' detail; the overlay LINE layers; decorative pedestrians; **boot auto-detect of the quality preset** (the table and the governor ship, the detection benchmark does not); cosmetic city themes; headlight cone projection; sub-block ground darkening |
+| **12 UI/UX** | the **CONSTRUCTION overlay** and multi-overlay stacking *(its §6 list also named TRAFFIC, which shipped in Wave 5 — struck 2026-08-21 by §20.5)*; the S13 full event log beyond the away report's top 8; dashboard charts beyond raw numbers; colourblind palette variants (A6); **text scale beyond 100/130 %** (A2); screen-reader labels (A15); manual camera pitch, bookmarks, mini-map; radial long-press quick actions; cluster de-clustering animation; haptics beyond `light`; **any second locale** |
+| **13 Android** | Google Play Billing and all IAP; ads; cloud save / Play Games Services; achievements and leaderboards; app shortcuts and widgets; deep links beyond the notification payload; a network crash SDK (Sentry is Phase 3); `armeabi-v7a`; Android TV / large-screen optimisation; Play Asset Delivery; **localisation beyond English** |
+| **93 Rulings** | multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves, monetisation (§F) |
+
+**Three entries in that table are worth naming out loud, because they are the
+ones most likely to be mistaken for gaps.** **EMS** — doc 06 §6 defers the unit,
+which is why `VehicleMesh.ambulance()` is an asset built ahead of a deferred
+feature (A91-D-20) and why `tests/test_asset_completeness.gd::DEFERRED_BODIES`
+holds `["ambulance"]` rather than failing. **Feeder class 3** — doc 04 §6 defers
+the conductor, which is why doc 12's `Power Line` cards read their roster from
+`data/grid_components.json` and a class this build does not ship never gets a
+card. **Rings 3+** — doc 09 §6 defers world growth, so the 7×7 world is the
+world, and nothing that reads "the map is small" is a defect.
+
+**And three of the five doorless verbs are deferred by doc 05's own §6.**
+`cmd_set_water_restrictions`, `cmd_overhaul_node` and `cmd_deploy_pump_truck`
+are named in that list verbatim (`water_restrictions` policy, `overhaul_node`,
+`water_pump_truck`), so under §20.1's rule they are **not gaps**. The honest open
+verb count is **two** — `cmd_remove_main` and `cmd_set_water_policy` — and
+neither has ever been ranked, because doc 92 §32.6 counted five without checking
+them against doc 05 §6. That correction belongs to this pass and is recorded
+here rather than in doc 92, because it is a *coverage* correction.
+
+### The one-paragraph answer
+
+> **No, and here is exactly how much.** 169 of 187 documented mechanics are
+> shipped, reachable and tested — 90 %, or 91 % of everything the docs have not
+> deferred. Six of thirteen design documents are complete. Determinism, balance
+> (30 gates), the asset matrix, the event matrix and the accessibility sweep are
+> all green, and the suite is green with zero silent tests. **Half of what
+> remains is a single document — doc 13 — and it cannot be closed from a
+> workstation at all: it needs one `export_presets.cfg` field, a rebuild, and a
+> human tapping ALLOW on a phone.** The other half is eight items, seven of them
+> under half a day each, that together close the last ABSENT row in the tree,
+> three filed defects, one clause of this project's own definition of done, and
+> the one screen of sixteen the sweep has never opened. Everything else on
+> anyone's list is deferred by the document that owns it, and is enumerated above
+> so that nobody has to guess which.
+
+## 20.5 The marker sweep — TODO / OPEN / IN FLIGHT older than Wave 10
+
+*2026-08-21. Every `### 2.N`-bearing document (00–13) swept for open-state
+markers written before Wave 10, checked against what Waves 11–13 verifiably
+shipped. **Six markers moved with dated notes — five closed outright and one
+halved**; the rest are listed below with why they
+stand. The sweep read §6's DEFERRED lists as well as §9's OPEN ones, and the
+sixth closure came out of a deferred list — which is the finding worth keeping:
+a stale "open" makes work look unfinished, and a stale "deferred" makes finished
+work look like scope nobody took.*
+
+**Closed, with the evidence that closed them:**
+
+| Doc | Marker | Closed by |
+|---|---|---|
+| **10 §9.4 item 5** | *"Auto-repair default: on or off?"* — carried as open since the first draft | **Wave 12's dial.** `cmd_set_auto_repair_policy(threshold, daily_cap)` + `auto_repair_policy()` + two `policy: "roads"` rows in `data/ui.json.settings.rows`. Default stays `0.40 / $25,000` and doc 92 §30.2's control run is byte-identical with the dial in place, while both ends of it move the matrix. §2.13's Wave-12 note had already answered it and §9.4 was never struck |
+| **12's "Still open against this doc"** *(in *Phase-1 implementation deltas*, dated Wave 6)* | *"S10's notification rows are still doc 08's and doc 13's to land"* | **Waves 10–12.** Five rows in `data/ui.json.settings.rows`, inside S9's sheet as §2.2 specifies, written through `NotificationRouter.apply_settings` at `game/main.gd:1254`. Four of the five items in that sentence stand and are re-listed with today's date |
+| **13 §11.10** | *"Nothing consumes the thermal ladder"* | **Fold session 1 (2026-08-20).** `PerfGovernor` consumed a real `thermal` 0 → 1 and stepped `knob` 0 → 4 on device. The heat half of doc 13 §2.8 is still unproven and says so |
+| **13 §11.10** | *"`consume_launch_payload()` has no consumer"* | **HALF.** The warm path is wired — `game/main.gd:129` connects `notification_opened`, `:1473` routes all four payload forms. The cold-start call still has no caller; the bullet is narrowed rather than struck |
+| **11 §2.13** | *"Still open after two windows"* — a five-item list | **The third session took `PERFIO`.** The list is superseded by the four-item one at the end of that session and now says so in place |
+| **12 §6** | *"Deferred: **TRAFFIC** and CONSTRUCTION overlays"* | **Wave 5.** `data/ui.json.overlay.enabled_modes` carries all six and `OverlayModel` has a `MODE_*` for each; §2.5's row has said so for waves and §6's deferred list was never struck. **A stale DEFERRED entry is worse than a stale OPEN one** — this one would have made a shipped overlay look like scope nobody had taken |
+
+**Left open, and why** — these are the markers a sweep must not close:
+
+* **06 §2.10's heading still says the router wiring is HELD.** The body corrects
+  itself four paragraphs down (both Wave-9 rulings landed;
+  `sim/city_sim.gd:314` constructs `IncidentSystem` with
+  `roads.travel_time_provider()`). The heading is annotated rather than
+  rewritten, because its wrong diagnosis is the reason the note is kept.
+* **03 §9's `power tariff 93` / `gas fuel 57` — STILL HELD**, pending doc 04's
+  RR-10 delivered-MWh restatement. Doc 92 §32.2 confirms both lines are still
+  flat placeholders at 21 and 48 game-days on every preset, which is the same
+  finding from the other side. **Unverifiable at this fork** — it needs doc 04 to
+  publish a number nobody has computed.
+* **07 §9 item 8, `elevation_class` per tile or per block.** The flood ships
+  per road *tile* and doc 09 carries `elevation_band` per block; the disagreement
+  is real, shipped and harmless. Needs a design answer, not a measurement.
+* **05 §9 item 9, doc 09's `elev_m(tile)` in metres.** Still open on doc 09's
+  side; harmless either way, as the item says.
+* **09 §9 item 7, `brownfield` as a request to doc 03.** Six blocks are priced
+  as `forest`. Nothing breaks; it is a request across a document boundary and
+  doc 03 has not answered it.
+* **02 §9 and 06 §9's "Still open — for the overseer" lists**, 10 §9.4 items
+  2 / 3 / 4 / 6 / 7 / 10 / 11 / 12, doc 12's *Phase-1 implementation deltas*
+  remaining four (the condition histogram, the Response tab's auto-response
+  editor, the utility restoration order, and §2.5's coverage discs), and 13
+  §11.10's remainder — including its
+  **pause-pass policy question**, which is a genuine two-readings decision the
+  doc says it does not own. Every one is a **question**, not a stale status: they
+  ask for a decision this pass has no evidence to make, and a sweep that closed
+  them would be inventing answers. Doc 10 §9.4 item 12 is the one with a
+  measurement behind it and it is ranked first in doc 92 §33.4.
+* **11 §2.13's device-gated list.** Not stale — **blocked**, which is a different
+  status and the sweep must not flatten the two. §20.4's device items 2–5 carry
+  each one with the command that closes it.
+
+**Nothing in docs 00–13 carries a literal `TODO` or `TBD`.** `grep -rniE
+"TODO|TBD"` over the fourteen documents returns zero hits, which is worth
+recording once: this project's open work is in prose and in numbered lists, and
+that is why a sweep like this one is a *reading* job rather than a grep job.

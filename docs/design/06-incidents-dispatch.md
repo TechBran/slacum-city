@@ -860,7 +860,9 @@ profile = { speed_mpgm, siren: true, ignores_closures: false }
 
 **Required interface from doc 10:** `route_minutes(a, b, profile) -> float` MUST be a pure function of (road-graph version, congestion snapshot, profile) and MUST return the identical value in the online and offline paths. Doc 10 is expected to implement this as a cached node→node cost with congestion quantised to 0.05 steps. **The sim's arrival time is this number; the renderer animates the vehicle along the real polyline stretched to hit it** (Constitution §3: renderer follows sim, never the reverse). If a route does not exist, `route_minutes` returns `INF`, the unit is skipped, and the incident is flagged `unreachable` for the UI.
 
-> #### Measured 2026-08-20 — the seam is complete, and the wiring is HELD (Wave 8)
+> #### Measured 2026-08-20 — the seam is complete, and the wiring is HELD (Wave 8) — **HELD RELEASED, Wave 9; heading kept for the record**
+>
+> **Read the last three paragraphs of this note before the first one.** The word HELD in the heading has been stale since Wave 9 and was re-checked on 2026-08-21: `CitySim._boot_incidents` constructs `RoadTravelTimeProvider`, the router is live, and the cliff this note measured was a 20 %-slow siren profile rather than the router. The note is not rewritten because its wrong diagnosis is the point of keeping it; the heading now says so, so that a reader who greps for HELD does not stop at the first line.
 >
 > For two waves the paragraph above was aspirational in two separate ways, and Wave 8 closed one of them and measured the other into an open ruling.
 >

@@ -1039,6 +1039,8 @@ Two pre-existing sweep failures, both invisible at 100 % text and together worth
 
 ### RR-47 — A coverage claim is a JOIN, and every join in this project gets a test or an id (doc 91 Part II, doc 92 §17.6.1)
 
+> *The count in this ruling is the Wave-10 one, at `a892315`, and it must not be quoted after 2026-08-21: **RR-71 measures 169 of 187 (90 %)**, on a basis two rows wider. Doc 91's re-derived table is the authority. The ruling itself — a coverage claim is a join — is unaffected and is the reason the number can be re-derived at all.*
+
 Doc 91 was written post-Wave-4 against a 1,249-test tree and patched piecemeal for six waves while HEAD grew to 1,890. Re-derived against `a892315` it moved **thirteen rows up, three rows down, and found ten sections of docs 01–13 that had never been counted at all** — 183 rows against the 173 it claimed, 161 SHIPPED (88 %). The three downward moves are the finding, because each is the same failure and none of them is a bug in any subsystem:
 
 * **doc 03 §2.9 SHIPPED → PARTIAL.** The row's own pointer, `data/difficulty.json`, **is not in the tree**, and neither is `sim/economy/difficulty.gd`, the loader §2.9 names. `Treasury.DIFFICULTY_STANDARD` is compiled in and `CitySim` never passes a difficulty, so three of four authored presets are unreachable and `data/economy.json` announces a move to a file nobody wrote. A scan of every backticked path in doc 91 found this one and only this one.
@@ -2633,3 +2635,155 @@ than dropping it. Draining synchronously is exactly what this path did with the
 whole plan at HEAD, so the worst case is no worse than the frame it replaces.
 
 The shell integration is an exact snippet — `game/main.gd` is the lead's.
+
+---
+
+## 30. WAVE 13 — the final ledger: the last two rulings, and the count (binding)
+
+*Two questions that had each outlived a wave by being ranked instead of answered,
+and one number the project needs to be able to quote from one place. This section
+changes no `sim/`, no `data/`, no `game/` and no `ui/`; it is rulings and
+arithmetic. **RR-76 is the count**, and it supersedes RR-47's.*
+
+### RR-74 — A starting purse is a RESERVE, and a difficulty is defined by the cushions it removes (docs 03 §2.9, 92 §32.7/§33, 93 §O1, 91 §20)
+
+**The question.** Doc 92 §32.7's ranked item 1: the founding purse buys
+**3.60 / 2.07 / 1.25 / 0.729** game-days of the founding city's own expense
+across `casual` / `standard` / `hard` / `crisis`, so `crisis` is the only preset
+whose purse does not cover one game-day of bills. Raise it, or rule the
+knife-edge?
+
+**Ruled: the knife-edge. `economic.crisis.starting_treasury` stays $12,000**, and
+`data/difficulty.json` is not touched — so the ruling is hash-neutral on all four
+presets by construction, not by measurement.
+
+**The reasoning that generalises, which is why this is an RR and not just a doc
+92 section.** Four arguments — the first two about *reading a ratio correctly*,
+the last two about what a tuning table is for. Each names a mistake this project
+could make again against any other knob:
+
+1. **A ratio needs its denominator checked before it is believed.** "Purse ÷ one
+   game-day of expense" sounds like solvency and is not: the founding city on
+   `crisis` nets **+$44.47/gh** (doc 92 §33.1), so expense is paid out of revenue
+   and the purse is a *reserve*. Left completely alone a `crisis` city takes its
+   $12,000 to **$20,657 by game-day 10** and does not close negative until
+   game-day **41** (doc 92 §33.2, re-measured). The figure that reads like "one
+   day from ruin" describes a city that grows its purse by 72 % before it spends
+   a dollar of it.
+2. **Before treating a value as an outlier, check whether it is on the curve.**
+   The coverage rungs are 1.7434 / 1.6556 / 1.7109 — mean 1.703, span ±2.6 %,
+   the most regular ladder in the file. Extend the mean of the two rungs `crisis`
+   is not in one rung past `hard` and it predicts **$12,080**; the authored value
+   is 12,000, **0.66 % low**. The "outlier" is the ladder's own extrapolation of
+   itself, and the proposed fix — $16,452 for exactly 1.000 game-days — would put
+   the last rung 27 % off the ladder, ten times its spread.
+3. **Never tune shipped data to satisfy a harness threshold.** `grep -rn
+   RESERVE_DAYS_OF_EXPENSE sim/ game/ ui/ data/` returns **nothing**. The only
+   two hits in the repository are `tools/playtest.gd:1606` and `:1885`. The
+   1.0-game-day line exists solely inside the scripted agent's
+   `operating_reserve()`, already ruled a harness artifact in doc 93 §N4. A
+   preset retuned to make an agent's private prudence rule work is a game tuned
+   to its test.
+4. **A difficulty preset is a set of REMOVED CUSHIONS, not a set of scaled
+   numbers, and the two read differently.** `crisis`'s column carries four knobs
+   that take a safety net away rather than scale one: `starting_treasury` 0.48×
+   standard (the largest single departure in a row whose every multiplier is
+   0.85–1.60), `REV_FLOOR_FRACTION` 0.10 against 0.18, `relief_grants_per_era`
+   **0**, and `soft_suppression` **false**. Three of the four are absolutes. A
+   knob that looks extreme against the multipliers beside it should be read
+   against the *absolutes* beside it first.
+
+**The re-open condition, recorded so the question is not re-asked without new
+evidence:** a measurement showing a *player* — not `tools/playtest.gd`'s agent —
+cannot take the first meaningful action on `crisis` inside the founding session.
+The arm that would show it is `curriculum` on `crisis` failing doc 09 §2.14's
+level-1 objectives inside gate 21's horizon. If it is ever moved, the number is
+$16,452 and gate 29's four assertions are what the change re-proves.
+
+**Applied:** doc 93 §O1 (the ruling), doc 92 §33.1–§33.2 (the tables and the
+derivation), doc 92 §33.4 (the ranked list, re-headed).
+
+### RR-75 — A SECTION rung is sufficient when the body's shape holds; a rung is never a date stamp (docs 08 §2.8, 05 §3.2, 10 §3.2, 93 §O2)
+
+**The question, asked three times now.** Wave 13's determinism fix took
+`water.section_version` 2 → 3 and `roads.section_version` 2 → 3 (RR-60 /
+RR-60b) and left `city.section_version` at 6. Did the city body owe a rung beside
+them as an epoch marker?
+
+**Ruled: no.** Doc 08 §2.8's second bullet already answers it — *"`section_version`
+inside every section — owned by that section's system, with its own independent
+ladder. Adding a field to `power` bumps `power.section_version`, not the
+envelope."* A ladder a sibling section can force is not independent, and
+independence is the entire reason §2.8 gave every section one. The ruling is now
+in doc 08 §2.8's own body as a rule with a table, rather than in a note under one
+shipment where the next wave does not find it.
+
+**Three counters, three triggers, and no counter may be forced by a change it
+does not own:**
+
+| counter | MOVES when | does NOT move when |
+|---|---|---|
+| envelope `schema_version` | the section **registry** changes — a section appears, disappears, splits, is renamed, or a top-level key moves *between* sections | any section changes its own contents |
+| `<section>.section_version` | that section's own **shape** changes, or the **rules under which that section's state is advanced** change | a sibling section takes a rung |
+| `city.section_version` | the same two triggers for the `city` section — **plus** a rules change no single section owns (scheduler, phase order, cross-section association) | `water`, `roads` or any other section takes a rung of its own |
+
+**The v1 → v2 argument is the reason for the ruling, not against it.** That note
+is this project's strongest statement that a version records *rules* and not only
+*shape*: "a save is a promise about what the binary that wrote it would do next",
+and "`section_version` is the only field a future migrator can key on to know
+which set of rules a body was last advanced under". The field it names is **the
+changed section's**. When water's rules moved, `water.section_version` became
+that key. A `city` rung beside it would be a second record of one fact — the
+scattering C-17 exists to stop, and the same objection §K2 raised against a
+second copy of the difficulty preset.
+
+**The test that makes it checkable rather than a preference:** *does an old body
+still mean what it meant?* A v6 city body written by the pre-RR-60 binary
+restores under the post-RR-60 binary to **exactly** the city it restored to
+before — the two new keys are absent and both loaders fall back to what they
+always did. Where that holds and the only thing that moved is inside a section
+that took its own rung, the city rung stays. `tests/test_save_migration.gd` and
+`tests/test_save_determinism_days.gd` are the gates.
+
+**What the ruling forbids: the pure epoch marker.** A `_v6_to_v7` identity
+migrator with nothing in the body it is about describes rules the *city section*
+did not have. §2.8's own Wave-9 correction already names that fault — "a ladder
+that describes rules the binary did not have is worse than no ladder" — and the
+price is that every future migrator walks a rung that answers nothing. **A rung
+is taken because a body needs it, never to date-stamp a wave.** The date stamp
+belongs in §2.8's dated shipment notes, which is exactly where the RR-60 rungs
+already have one.
+
+**Applied:** doc 08 §2.8 (the ruled block, and a pointer from the RR-60 shipment
+note), doc 93 §O2.
+
+### RR-76 — The count is 169 of 187, and a count table that drifts from its own rows has now done so three times (doc 91)
+
+**The binding number, so it can be quoted from one place.** At the Wave-13 fork,
+2026-08-21: **169 of 187 `### 2.N` rows of docs 01–13 are SHIPPED — 90 %, or
+91 % of the 185 rows that are not deferred by their own docs.** 15 PARTIAL, 1
+ABSENT, 2 DEFERRED. Six of thirteen design documents are complete. Suite
+118 files / 2,083 tests / 522,300 asserts / 0 failed / 0 silent, 30 balance
+gates, both determinism baselines unmoved. Doc 91's re-derived table is the
+authority and this line is its pointer; **RR-47's 161 of 183 is the Wave-10
+number and is superseded.**
+
+**And the process finding, which is the part that generalises.** The published
+Wave-12 headline (`185 / 163 / 19 / 1 / 2`) was **two rows behind the table
+printed directly above it**: doc 03 §2.9 and doc 07 §2.4 were both struck in
+their own rows and folded into neither total. That is the **third** time a hand-
+maintained count in this project has drifted from the rows beneath it, and it is
+the same class as §28.2 in doc 92 (RR-55) one document over.
+
+**Ruling: a derived total is not a source. Either it is computed, or it carries
+the fork it was computed at.** Doc 91 already names the durable fix and it is
+half done — three of its four matrices are tests now (§16 asset, §18 event, §19's
+width half), and the fourth (§17's verb doors) is the last hand census in the
+project. **When the fourth becomes a test, "done" is a number the suite prints
+and this failure mode ends.** Until then, every count table in doc 91 carries the
+fork and the date in its heading, and the top-of-file provenance box names which
+one is current.
+
+**Applied:** doc 91 (the re-derived count table before §0.5; the provenance box
+at the head of the file; §20.1a's eight clauses; §20.4's completion statement;
+§20.5's marker sweep), and the pointer above RR-47.

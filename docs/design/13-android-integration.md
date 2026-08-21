@@ -304,7 +304,7 @@ fun launch_args(): Array<String>
 - `PendingIntent` flags `FLAG_IMMUTABLE or FLAG_UPDATE_CURRENT` (mutability is explicit since API 31).
 - `AlarmReceiver : BroadcastReceiver` builds the notification with `NotificationCompat` and posts through `NotificationManagerCompat`. Tap → `PendingIntent` to `com.godot.game.GodotApp` with extra `slacum_payload`; if the process is alive the plugin emits `notification_opened`, otherwise the payload is stashed for `consume_launch_payload()`.
 - **Reboot survival.** Alarms are cleared on reboot. The plugin owns `filesDir/notif_schedule.json`, rewritten on every schedule/cancel; `BootReceiver` (`RECEIVE_BOOT_COMPLETED`) replays entries whose `at_unix_ms` is still in the future and drops the rest. `am force-stop` also cancels alarms and *cannot* be recovered from until the user launches the app — accepted and documented, not worked around.
-- The plugin ships its own `AndroidManifest.xml` declaring its receivers and its permissions, so manifest merging keeps the plugin self-contained and `export_presets.cfg` needs no `custom_permissions` entries. ~~**Half of this is measured false (2026-08-21)** — the four `<uses-permission>` elements do not merge; `dumpsys package` on the installed APK lists no requested permissions at all.~~ **THAT ANNOTATION IS ITSELF FALSE, and it is reversed rather than deleted because it cost a session (Wave 14, report 98 §28 RR-70).** Re-measured on four locally built debug APKs with `aapt2 dump permissions`: a build whose AAR declares the four and whose preset does not **requests all four**, so merging carries `<uses-permission>` exactly as this bullet says. The failing build had **neither** source — an AAR that predated this permission block, which is the same stale-AAR root cause the session before it had just fixed by tracking the binary. `export_presets.cfg` now carries the four as well (§2.7, §3.4), and the redundancy is the point rather than the fix: with it, a stale AAR can no longer take a runtime permission with it.
+- The plugin ships its own `AndroidManifest.xml` declaring its receivers and its permissions, so manifest merging keeps the plugin self-contained and `export_presets.cfg` needs no `custom_permissions` entries. ~~**Half of this is measured false (2026-08-21)** — the four `<uses-permission>` elements do not merge; `dumpsys package` on the installed APK lists no requested permissions at all.~~ **THAT ANNOTATION IS ITSELF FALSE, and it is reversed rather than deleted because it cost a session (Wave 14, report 98 §29 RR-70).** Re-measured on four locally built debug APKs with `aapt2 dump permissions`: a build whose AAR declares the four and whose preset does not **requests all four**, so merging carries `<uses-permission>` exactly as this bullet says. The failing build had **neither** source — an AAR that predated this permission block, which is the same stale-AAR root cause the session before it had just fixed by tracking the binary. `export_presets.cfg` now carries the four as well (§2.7, §3.4), and the redundancy is the point rather than the fix: with it, a stale AAR can no longer take a runtime permission with it.
 
 **Bounded scope.** The plugin contains no game logic, no scheduling policy, and no strings — GDScript decides *what* and *when*; Kotlin only knows *how*. That keeps the untestable-headlessly surface as small as possible.
 
@@ -346,7 +346,7 @@ Release manifest, complete:
    user's system toggle, so the Settings row stays truthful.
 ```
 
-> **As built (Wave 14) — the four permissions have TWO sources now, and the reason is not the one this wave was sent to fix.** The third Fold session concluded that the plugin manifest's `<uses-permission>` elements never reach an APK and that the preset is the only source; **that is measured false** (report 98 §28 RR-70). The 2×2, `aapt2 dump permissions` on four locally built debug APKs:
+> **As built (Wave 14) — the four permissions have TWO sources now, and the reason is not the one this wave was sent to fix.** The third Fold session concluded that the plugin manifest's `<uses-permission>` elements never reach an APK and that the preset is the only source; **that is measured false** (report 98 §29 RR-70). The 2×2, `aapt2 dump permissions` on four locally built debug APKs:
 >
 > | plugin AAR declares the four | `export_presets.cfg` declares the four | APK requests |
 > |---|---|---|
@@ -453,7 +453,7 @@ Progress fraction = `steps_done() / steps_total()`, so the bar is honest. If `st
 >
 > **Two shapes in this section did not survive contact with the shipped planner, and both are recorded rather than quietly dropped.** `advance_coarse_sliced(hours_per_slice)` returning "done yet?" cannot advance a real resume: a returning player's plan carries a fine head-align segment and a 40-tick fine tail (doc 91 D-1), and a coarse-only entry point has nothing to do with either. And `hours_per_slice = 12` came from the retired 0.60 ms/step estimate — at the measured 6.3 ms (founding) to 190 ms (bench) per coarse step, a 12 ms budget spends **one** step per frame on any city in the project, which is this section's own worst-case row.
 >
-> **Slicing changes nothing about the city, and the seam that guarantees it is `TickScheduler.advance_coarse_n`'s `catchup_index_base`.** A coarse step reads `ctx.catchup_index` / `ctx.catchup_total` — doc 03's offline yield decay and doc 07's 72-hour offline event gate both consume them — so an hour has to be told which hour OF ITS SEGMENT it is, not of its slice. `tests/test_catchup_cursor.gd` proves bit-identity against the old loop on both cities at 1, 3, 12 and unbounded units per frame, on `state_hash()` **and** on the drained event stream, and pins the index mechanism directly so a regression names its own cause. `catchup_begin()` still fires once per coarse segment (doc 07 C-55), not once per slice. Report 98 §28 RR-73.
+> **Slicing changes nothing about the city, and the seam that guarantees it is `TickScheduler.advance_coarse_n`'s `catchup_index_base`.** A coarse step reads `ctx.catchup_index` / `ctx.catchup_total` — doc 03's offline yield decay and doc 07's 72-hour offline event gate both consume them — so an hour has to be told which hour OF ITS SEGMENT it is, not of its slice. `tests/test_catchup_cursor.gd` proves bit-identity against the old loop on both cities at 1, 3, 12 and unbounded units per frame, on `state_hash()` **and** on the drained event stream, and pins the index mechanism directly so a regression names its own cause. `catchup_begin()` still fires once per coarse segment (doc 07 C-55), not once per slice. Report 98 §29 RR-73.
 
 #### 2.9.1 The term this section forgot: the LOAD in front of the catch-up (Wave 12)
 
@@ -479,7 +479,7 @@ while not cursor.step():                     # one step per frame
 # …and only now does the catch-up above begin.
 ```
 
-> **Wave 14 moved 108 ms off the table below, and it was never a restore term to begin with.** Doc 04's per-tile transformer memo was cold-filled by the signal-power sample at the load seam — the five `roads_signals` steps RR-60b split it into — and it is now warm-filled once in `CitySim._boot_power`. Interleaved A/B, three rounds, benchmark city: `roads_signals` **109.5 → 1.54 ms**, restore total **316 → 207 ms**, against **cold `CitySim.boot()` 211 → 222 ms** on the other side of the trade. The longest step is unchanged, which is what the veil budget is written against. Doc 04 §2.2 carries the full table; report 98 §28 RR-70.
+> **Wave 14 moved 108 ms off the table below, and it was never a restore term to begin with.** Doc 04's per-tile transformer memo was cold-filled by the signal-power sample at the load seam — the five `roads_signals` steps RR-60b split it into — and it is now warm-filled once in `CitySim._boot_power`. Interleaved A/B, three rounds, benchmark city: `roads_signals` **109.5 → 1.54 ms**, restore total **316 → 207 ms**, against **cold `CitySim.boot()` 211 → 222 ms** on the other side of the trade. The longest step is unchanged, which is what the veil budget is written against. Doc 04 §2.2 carries the full table; report 98 §29 RR-71.
 
 Per-step cost, benchmark city, `profile_save.gd --steps` (best of 7):
 
@@ -1331,7 +1331,7 @@ so **the permission set is empty in debug as well as release**. Two consequences
 on a locally built debug APK. This section's own measurement was taken before the
 plugin manifest carried §2.7's four; once it did, the merged manifest carries
 them into every build, debug included. `aapt2 dump permissions build/slacum-debug.apk`
-returns exactly the four and nothing else. See report 98 §28 RR-69 for the 2×2
+returns exactly the four and nothing else. See report 98 §29 RR-70 for the 2×2
 that settles which file supplies them (either does) and for what the third Fold
 session's zero-permission reading actually was (a stale AAR).
 
@@ -1630,19 +1630,43 @@ Console keeps the pixels.
 
 ### 11.10 Still open after this commit
 
-* **Nothing consumes the thermal ladder** (§2.8) — `AndroidLifecycle` forwards
-  the status and no policy acts on it. Unchanged by this commit, still doc 11's.
-* **On-device verification** (§7's D-01…D-16) has not been run: this commit was
-  built and tested off-device by instruction. The alarm path in particular has
-  never fired on real hardware; `dumpsys alarm | grep slacumcity` after a pause is
-  the first thing to check on the Fold.
-* **`consume_launch_payload()` has no consumer.** The plugin captures a tap's
-  deeplink and emits `notification_opened`, and nothing in `game/main.gd` routes
-  it to the incident drawer or the overlay yet. That is a shell wiring change of
-  a few lines, and it is the difference between a notification that opens the
-  game and one that opens the *thing the notification was about*.
+> **RE-SWEPT 2026-08-21 (doc 91 §20.5's marker sweep).** Three Fold sessions have
+> run since this list was written and it had never been re-read against them.
+> Two bullets close, one halves, two stand. Each is marked in place; the original
+> wording is kept struck rather than deleted, because the list's value is that it
+> was right about what would be hard.
+
+* ~~**Nothing consumes the thermal ladder** (§2.8) — `AndroidLifecycle` forwards
+  the status and no policy acts on it. Unchanged by this commit, still doc 11's.~~
+  **CLOSED 2026-08-20 (Fold session 1).** `game/render/perf_governor.gd` consumes
+  it, and it was watched doing so on hardware: the `PERF` line reported
+  `thermal=0` then `thermal=1` (NONE → LIGHT) pushed through
+  `AndroidNative.thermal_status_changed`, and the governor stepped `knob` 0 → 4 in
+  the foreground. **What is still unproven is the heat half**, and that is §2.8's
+  row, not this bullet's: the Fold sat at 45.7–49.6 °C and was *cooling*, so no
+  thermal step-DOWN was ever exercised, and battery (D-07) was never measured.
+* **On-device verification** (§7's D-01…D-16) is **partly run, and the alarm path
+  still has not fired.** Three sessions: 2026-08-20 (governor and `PERF` on
+  device), 2026-08-21 (the plugin registers; the AAR staleness found), and the
+  matrix session that established the transport. ~~this commit was built and
+  tested off-device by instruction~~ — that premise is retired. What has *not*
+  happened is unchanged and is the one this bullet was written for:
+  **`dumpsys alarm | grep slacumcity` after a pause has never been read**, and
+  no notification has ever been posted by this app on real hardware. Blocked
+  behind the permission gap in the row below.
+* **`consume_launch_payload()` has no consumer — HALF CLOSED 2026-08-21.** The
+  *warm* path is wired: `game/main.gd:129` connects
+  `android_lifecycle.native.notification_opened` and `main.gd:1473`'s
+  `_on_notification_opened(payload)` routes all four payload forms
+  (`overlay/…` → the overlay rail, `incident/…` → the drawer, `building/…` →
+  `camera_state.focus_on`, `report` → S11). **The cold-start path is not:**
+  `AndroidNative.consume_launch_payload()` (`game/android_native.gd:304`) has no
+  caller anywhere outside the plugin, so a tap that *launches* the app lands on
+  the city rather than on the thing the notification was about. Same few lines as
+  before, now on a smaller surface — one call at the end of boot.
 * **`targetSdk` is 36, not §2.0/§2.12's 37**, for the reason §10.2 records: the
-  template pins `compileSdk 36`. Unchanged.
+  template pins `compileSdk 36`. Unchanged — and now **confirmed on the installed
+  artefact** rather than on the preset (Fold session 1, `dumpsys package`).
 * **The pause pass now posts in-session events, and that is a policy question.**
   `NotificationRouter.plan_for_background()` flushes the queued in-session
   candidates before it plans the offline future — doc 08 §2.13's shipped

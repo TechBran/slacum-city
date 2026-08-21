@@ -1385,6 +1385,174 @@ wants 2.7× the road at 02:30 that the commercial core does. **A fold that leave
 one of the four curves at zero everywhere is the wrong fold**, and that is the
 cheap test to apply the next time one is written.
 
+## O. Wave-13 rulings — the last two open questions in the ledger (2026-08-21)
+
+*Two questions that had each survived a wave by being ranked rather than
+answered. Neither needed a measurement — both measurements already existed — so
+both are settled here on the lead's proxy, and both are recorded with the
+counterfactual they declined so the next reader can see what was weighed. The
+binding form of each is report 98 **RR-69** and **RR-70**.*
+
+### P1. The founding purse is a RESERVE, not an operating budget — `crisis`'s 0.729 game-days is the ruled knife-edge
+
+**Ruled: `data/difficulty.json` `economic.crisis.starting_treasury` stays at
+$12,000.** Doc 92 §32.7 ranked item 1 asked whether `crisis` gets a bigger purse
+or whether 0.729 game-days of coverage is the point. It is the point. Zero bytes
+of data move, so the ruling is hash-neutral by construction on every preset, not
+merely on the default.
+
+**The measurement, re-taken at this fork** (`tools/measure_founding_ledger.gd
+--hours=1`, which reproduces §32.2's table to the cent — every revenue line,
+every one of the eight expense lines, every net):
+
+| preset | purse | expense $/gh | one game-day of expense | **purse ÷ game-day** | rung |
+|---|---|---|---|---|---|
+| `casual` | 35,000 | 404.86 | 9,716.64 | **3.6021** | — |
+| `standard` | 25,000 | 504.18 | 12,100.32 | **2.0661** | 1.7434× |
+| `hard` | 18,000 | 601.00 | 14,424.00 | **1.2479** | 1.6556× |
+| `crisis` | 12,000 | 685.49 | 16,451.76 | **0.7294** | 1.7109× |
+
+**Four reasons, in order of weight.**
+
+1. **The founding city pays its own bills on every preset, `crisis` included.**
+   §32.2's own row: gross 729.95, expense 685.49, **net +$44.47/gh**. The purse
+   is not what the bills are paid out of — the city's revenue is — so "a city
+   that cannot pay a day's bills" is not what 0.729 measures. It measures how
+   deep the *reserve* is, which is a different and much better question.
+2. **A `crisis` city left completely alone GROWS the purse it was handed.**
+   `tools/measure_insolvency.gd --presets=crisis,hard --max-days=70`, re-taken at
+   this fork and reproducing §32.5 seed for seed: `crisis` peaks at **$20,657 on
+   game-day 10** — the $12,000 purse is up **72 %** — and does not close negative
+   until game-day **41 / 42 / 40**. §32.3 measures **zero** `credit_line_engaged`
+   events on `crisis` over 21 game-days on all three seeds. A purse that is never
+   drawn down inside three game-weeks is not a purse the city cannot live on.
+3. **The coverage ladder is the most regular ladder in `data/difficulty.json`,
+   and $12,000 is the purse it predicts.** The three rungs are 1.7434 / 1.6556 /
+   1.7109 — mean **1.703**, span ±2.6 %. **Nobody fitted that, and the
+   decomposition is the proof**: a coverage rung is the purse rung times the
+   inverse expense rung, and *neither factor is even on its own* —
+
+   | rung | purse ratio | expense ratio | **product = coverage rung** |
+   |---|---|---|---|
+   | `casual` → `standard` | 35,000 / 25,000 = **1.4000** | 504.18 / 404.86 = **1.2453** | **1.7434** |
+   | `standard` → `hard` | 25,000 / 18,000 = **1.3889** | 601.00 / 504.18 = **1.1920** | **1.6556** |
+   | `hard` → `crisis` | 18,000 / 12,000 = **1.5000** | 685.49 / 601.00 = **1.1406** | **1.7109** |
+
+   The purse column spans 1.389–1.500 and the expense column 1.141–1.245; the
+   product of the two spans 1.656–1.743. Two ladders authored in two different
+   places by two different rules multiply to something flatter than either, which
+   is what a coherent difficulty curve looks like and is not what an accident
+   looks like. And the prediction is not
+   circular: take the mean of the two rungs `crisis` is not in (1.7434, 1.6556 →
+   **1.6995**), extend it one rung past `hard`, and it lands on **0.7343
+   game-days = $12,080**. The authored value is $12,000 — **0.66 % below the
+   ladder's own extrapolation of itself.** The counterfactual is derived rather
+   than waved at: **$16,452** buys exactly 1.000 game-days and keeps
+   `starting_treasury` strictly monotone-down (35,000 > 25,000 > 18,000 >
+   16,452, so doc 03 §3.4 rule 4's monotonicity check — enforced by
+   `Difficulty._check_monotonicity` against the `_direction` map, which lists
+   `starting_treasury: "down"` — still passes), but it turns the last rung into
+   **1.2479** —
+   27 % off the ladder, **ten times the ladder's own spread** — and flattens the
+   purse rung from 1.3889× to 1.0941× against `hard`. A repair that breaks the
+   only even ladder in the table, to reach a number the table itself does not
+   predict, is not a repair.
+4. **Nothing in the shipped game reads "one game-day of expense".** `grep -rn
+   RESERVE_DAYS_OF_EXPENSE sim/ game/ ui/ data/` returns **nothing**; the only
+   two hits in the repository are `tools/playtest.gd:1606` (the constant, `:=
+   1.0`) and `:1885`, where `operating_reserve()` is `max(floor, one game-day of
+   expense)`. That is a **harness** heuristic, and §N4 already ruled on it once.
+   The 1.0 line is the scripted agent's private opinion about prudence, not a
+   threshold the city, the treasury, the credit ladder or any UI compares
+   anything to. Tuning `data/difficulty.json` to satisfy it would be tuning the
+   game to the test.
+
+**And `crisis` is defined by the absence of cushions, in four knobs authored
+together.** This is why the purse being the shallowest reserve in the table is
+coherent rather than accidental — read the crisis column of `data/difficulty.json`
+down:
+
+| knob | standard | crisis | crisis ÷ standard | what it removes |
+|---|---|---|---|---|
+| `starting_treasury` | 25,000 | 12,000 | **0.48** | the reserve. The largest single departure in the row — every multiplier in it is 0.85–1.60 |
+| `REV_FLOOR_FRACTION` | 0.18 | 0.10 | 0.556 | the revenue floor under a collapsing tax base (`economy_system.gd:335`) |
+| `relief_grants_per_era` | 3 | **0** | — | the only preset with **no** State Emergency Assistance at all (`treasury.gd:270`) |
+| `soft_suppression` | true | **false** | — | the only preset without doc 07 F5's earned suppression (`disaster_director.gd:196`) |
+
+Three of those four are already absolutes rather than scales. The purse is the
+fourth statement of the same sentence, and the sentence is *on `crisis` there is
+no net*. Doc 92 §32.5's ordering says the same thing in game-days: each rung buys
+about 1.36× the next one's rope, and `crisis`'s rope is 41 game-days.
+
+**The re-open condition, written down so this stops being re-asked.** Move
+`starting_treasury` when — and only when — a measurement shows that a *player*
+(not `tools/playtest.gd`'s agent) cannot take the first meaningful action on
+`crisis` inside the founding session. The measurement that would show it is a
+`curriculum`-strategy arm on `crisis` failing doc 09 §2.14's level-1 objectives
+inside gate 21's horizon; the current evidence points the other way, since §32.3
+puts `balanced` on `crisis` at 0 placed for a reason §32.4 traces to the harness
+reserve rather than to the purse. If it is ever moved, the number is **$16,452**
+— one game-day, derived above — and what the change has to re-prove is gate 29:
+strict ordering on every seed, finiteness, the 25–118 game-day band, and
+`standard` pinned at 76 ± 6. Nothing else in the file may move with it, because
+`starting_treasury` is the one economic knob whose direction the other eleven do
+not depend on.
+
+### P2. A SECTION rung is sufficient when the body's shape holds — and `city.section_version` records what the CITY section owns
+
+**Ruled: there is no `city.section_version` 6 → 7 for the Wave-13 water and
+roads rungs, and doc 08 §2.8 now says so in its own text rather than in a note
+under one shipment.** The question — raised as the Wave-12/13 roads deviation 2,
+and re-raised every time a sibling section takes bytes — is whether
+`water.section_version` 2 → 3 and `roads.section_version` 2 → 3 (report 98 §26
+RR-60 / RR-60b) needed a city-body rung as an epoch marker beside them.
+
+**The doc decides, and it decided before the question was asked.** §2.8's second
+bullet is the whole answer and it is one sentence: *"`section_version` (int)
+inside every section — owned by that section's system, with its own independent
+ladder. **Adding a field to `power` bumps `power.section_version`, not the
+envelope.**"* A per-section ladder that a sibling section's change can force is
+not independent, and §2.8 gave every section one precisely so that it is.
+
+**The one argument that could have gone the other way, and why it does not.**
+§2.8's v1 → v2 note is the strongest statement in this project that a version
+records *rules* and not only *shape*: "a save is a promise about what the binary
+that wrote it would do next", and "`section_version` is the only field a future
+migrator can key on to know which set of rules a body was last advanced under".
+Read carelessly that says every rules change needs a city rung. Read correctly it
+says the opposite: it names `section_version` — **the changed section's** — as
+the key. When water's rules move, `water.section_version` is that key. Nothing a
+migrator needs is missing, and a city rung would add a second record of one fact,
+which is the scattering §K2 refused for the difficulty preset.
+
+**The rule, stated once so it stops recurring.** Three counters, three triggers:
+
+| counter | moves when | does NOT move when |
+|---|---|---|
+| envelope `schema_version` | the section **registry** changes — a section appears, disappears, splits, is renamed, or a top-level key moves between sections | any section changes its own contents |
+| `<section>.section_version` | that section's **shape** changes, or the **rules under which that section's own state is advanced** change | a sibling section moves |
+| `city.section_version` | the same two triggers, for the `city` section specifically — **plus** a rules change that no single section owns (a scheduler, phase-order or cross-section-association change) | `water`, `roads` or any other section takes a rung of its own |
+
+The third row's "plus" clause is what v2 and v5 were: the fire-spread breakpoint
+and the difficulty seam are properties of how the whole city is advanced, and
+`city` is the section that carries the whole city. Water's zone sums are not.
+
+**The property that makes the ruling checkable rather than a preference.** A v6
+body written by the pre-RR-60 binary restores under the post-RR-60 binary to
+**exactly** the city it restored to before: the two new keys are simply absent
+and both loaders fall back to what they have always done. That is the test —
+*does an old body still mean what it meant?* — and where the answer is yes and
+the only thing that moved is inside a section that took its own rung, the city
+rung stays where it is. `tests/test_save_migration.gd` and
+`tests/test_save_determinism_days.gd` are the two gates that hold it.
+
+**What this ruling forbids.** A rung taken as a "pure epoch marker" — a
+`_v6_to_v7` identity migrator with nothing in the body it is about. Doc 08 §2.8's
+v2 note already warns, in its Wave-9 correction, that *"a ladder that describes
+rules the binary did not have is worse than no ladder"*; a rung that describes
+rules the **city section** did not have is the same fault with the same cost, and
+it charges every future migrator a rung to walk that answers nothing.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

@@ -5904,3 +5904,214 @@ of margin; level 3's day bound (6) holds at day 5 where it used to hold at 4.
    gates are seed-pinned so this is not a flake, but the *balance meaning* of the
    number carries that qualifier and the long-horizon tables (§33.4) are the
    better guide to the steady state.
+
+---
+
+## 34. Pass 13 — the crisis purse is ruled, and two published tables are re-taken at a clean fork (2026-08-21)
+
+*§32.7 ended with a ranked list whose item 1 asked for a ruling rather than a
+measurement — "does `crisis` get a bigger purse, or is 0.729 game-days of
+coverage the point?" — and §28.2 left this document with a hygiene problem it had
+found in itself: a table published from a stale fork. This pass answers the first
+and audits the second. **It changes zero bytes of `data/`, `sim/`, `game/` and
+`ui/`**, so every hash, every gate and every matrix in this document is untouched
+by construction rather than by measurement.*
+
+### 34.1 The founding purse, re-taken and turned into the ratio the ruling needs
+
+`tools/measure_founding_ledger.gd --hours=1`, at this fork:
+
+| preset | founding purse | gross $/gh | expense $/gh | net $/gh |
+|---|---|---|---|---|
+| `casual` | 35,000 | 952.49 | 404.86 | **+547.63** |
+| `standard` | 25,000 | 841.22 | 504.18 | **+337.05** |
+| `hard` | 18,000 | 781.88 | 601.00 | **+180.88** |
+| `crisis` | 12,000 | 729.95 | 685.49 | **+44.47** |
+
+**Every cell is §32.2's, to the cent** — and so is every row of the eight-line
+expense breakdown and the four-line revenue table the instrument prints beside
+it (`roads_repair` 110.53 / 157.90 / 213.17 / 252.65, TOTAL ratio 1.6931; `tax`
+853.07 / 741.80 / 682.46 / 630.53; the two flat rows at 93.00 and 3.00). §32.2
+was published from the Wave-12 difficulty branch; it reproduces on the merged
+tree, which is what §28.2's lesson asks for and what RR-55 rules.
+
+**The derived column the ruling turns on**, printed here because §32.7 ranked it
+and no table in this document had it:
+
+| preset | purse | one game-day of founding expense | **purse ÷ game-day** | rung vs. the row above |
+|---|---|---|---|---|
+| `casual` | 35,000 | 9,716.64 | **3.6021** | — |
+| `standard` | 25,000 | 12,100.32 | **2.0661** | 1.7434× |
+| `hard` | 18,000 | 14,424.00 | **1.2479** | 1.6556× |
+| `crisis` | 12,000 | 16,451.76 | **0.7294** | 1.7109× |
+
+### 34.2 The ruling — `crisis` keeps its purse, and 0.729 is the knife-edge
+
+**Ruled (doc 93 §O1, report 98 RR-69): `economic.crisis.starting_treasury` stays
+at $12,000.** The full argument is doc 93 §O1 and the generalised form is RR-69;
+the four load-bearing numbers are here, because they are this document's.
+
+1. **`crisis` founds POSITIVE.** +$44.47/gh (§34.1). The purse is not what pays
+   the bills — revenue is — so "0.729 game-days of coverage" measures reserve
+   *depth*, not solvency. The phrase this pass was handed, *"the only preset
+   handed a city that cannot pay a day's bills"*, is false as stated on the
+   ledger's own numbers, and correcting it is half the ruling.
+2. **A `crisis` city left alone GROWS the purse.**
+   `tools/measure_insolvency.gd --presets=crisis,hard --max-days=70`, re-taken at
+   this fork:
+
+   | preset | 1337 | 4242 | 9001 | mean | peak treasury (game-day) | peak open inc | wall s |
+   |---|---|---|---|---|---|---|---|
+   | `crisis` | **41** | **42** | **40** | 41.0 | **$20,657 (day 10)** | 2 | 16.9 |
+   | `hard` | **57** | **56** | **56** | 56.3 | $88,205 (day 28) | 3 | 22.6 |
+
+   §32.5's rows to the seed, and its "$21k around day 10" / "$88k around day 28"
+   resolved to the dollar and the day. **A $12,000 purse that reaches $20,657
+   before it is ever drawn down is not a purse the city cannot live on**, and
+   §32.3 measures zero `credit_line_engaged` on `crisis` across 21 game-days on
+   all three seeds.
+3. **$12,000 is the purse the coverage ladder predicts.** The three rungs are
+   1.7434 / 1.6556 / 1.7109 — mean **1.703**, span ±2.6 %, the most regular
+   ladder in `data/difficulty.json`. It is regular because it is a *product*, and
+   neither factor is even on its own:
+
+   | rung | purse ratio | expense ratio | **coverage rung** |
+   |---|---|---|---|
+   | `casual` → `standard` | 35,000 / 25,000 = **1.4000** | 504.18 / 404.86 = **1.2453** | **1.7434** |
+   | `standard` → `hard` | 25,000 / 18,000 = **1.3889** | 601.00 / 504.18 = **1.1920** | **1.6556** |
+   | `hard` → `crisis` | 18,000 / 12,000 = **1.5000** | 685.49 / 601.00 = **1.1406** | **1.7109** |
+
+   The purse column spans 1.389–1.500, the expense column 1.141–1.245, and the
+   product 1.656–1.743. Extend the mean of the two rungs `crisis` is **not** in
+   (1.7434, 1.6556 → 1.6995) one rung past `hard` and it lands on 0.7343
+   game-days = **$12,080**. The authored 12,000 is **0.66 % below the ladder's own
+   extrapolation of itself.**
+4. **The counterfactual, derived so it is on the record.** One game-day of
+   coverage is **$16,452**. It keeps `starting_treasury` monotone-down
+   (35,000 > 25,000 > 18,000 > 16,452) so doc 03 §3.4 rule 4's monotonicity
+   check still passes — and it makes the last coverage rung **1.2479**, 27 % off the
+   ladder and **ten times the ladder's own spread**, while flattening the purse
+   rung from 1.3889× to 1.0941×. It was not taken.
+
+**And the 1.0 line is a harness opinion, not a game rule.** `grep -rn
+RESERVE_DAYS_OF_EXPENSE sim/ game/ ui/ data/` returns nothing; the only two hits
+in the repository are `tools/playtest.gd:1606` and `:1885`, which is §32.4's
+`operating_reserve() = max(floor, one game-day of expense)` — already ruled a
+harness artifact in doc 93 §N4. §32.7's ranked item 2 (game-hour 0 is the only
+hour the reserve floor binds) is the same seam and is **unchanged and still
+ranked**.
+
+**What `crisis` is, stated once.** Read the crisis column of
+`data/difficulty.json` down and four knobs remove a cushion rather than scale
+one: `starting_treasury` 0.48× standard (the largest single departure in a row
+whose every multiplier is 0.85–1.60), `REV_FLOOR_FRACTION` 0.10 against 0.18,
+`relief_grants_per_era` **0** — the only preset with no State Emergency
+Assistance at all — and `soft_suppression` **false**, the only preset without doc
+07 F5's earned suppression. Three of those four are absolutes rather than scales.
+The purse is the fourth statement of one sentence.
+
+**Gate 29 is not re-run and does not need to be**: nothing it reads has moved.
+Its horizons stay `{casual: 120, standard: 90, hard: 70, crisis: 55}` and its
+four assertions stay word for word what §29.6 shipped. §34.2 item 2 is a
+*partial* free re-proof of them and is stated as partial rather than rounded up:
+it runs the two harshest presets only, and on those two the ordering holds on
+every seed (41/42/40 against 57/56/56), every run is finite, and every day is
+inside the 25–118 band. `casual` and `standard` were not re-run here — §32.5's
+rows for them stand, and `standard` is separately pinned by §32.1's four
+byte-identical hashes.
+
+### 34.3 §28.2-class hygiene — the two cheapest published tables, re-run at this fork
+
+*§28.2 published §27.6's **pre**-fix column and stood for a wave; RR-55 is the
+rule that came out of it — "a digest published from a branch is a statement about
+that branch; quote the fork or quote the merge". The doors agent found that one,
+the difficulty agent re-took it, and this pass checks whether anything else in
+this document drifted the same way. The method is the cheapest possible: re-run
+the published tables that cost seconds rather than hours and see whether they
+reproduce.*
+
+**(a) The founding ledger — reproduces to the cent.** §34.1. Twenty-eight
+published cells across three tables, every one identical to §32.2's.
+
+**(b) §18.6's ambient arm — reproduces to the dollar.** `tools/pacing_ab.gd`,
+§18.6's methodology to the letter, §18.8.3's canonical block-A seeds
+(`1337,4242,9001,101,202,303,404,505,606,707,808,909`) × 28 game-days of
+`do_nothing` = 336 game-days:
+
+| ambient / game-week | §18.6 floor ON | §18.7 Wave 8 | §27.7 | §18.8.1 HEAD `28b9550` | **this fork** |
+|---|---|---|---|---|---|
+| `crime` | 0.73 | 0.71 | 0.69 | 0.69 | **0.69** |
+| `structure_fire` | 0.56 | 0.56 | 0.54 | 0.54 | **0.54** |
+| `transformer_failure` | 1.08 | 1.02 | 1.08 | 1.08 | **1.08** |
+| `water_main_break` | 0.60 | 0.75 | 0.90 | 0.90 | **0.90** |
+| `traffic_accident` | 3.60 | 3.35 | 3.46 | 3.46 | **3.46** |
+| `storm_damage` | 0.04 | 0.02 | 0.02 | 0.02 | **0.02** |
+| **total** | **6.62** | **6.42** | **6.69** | **6.69** | **6.69** |
+| created | 318 | 308 | 321 | 321 | **321** |
+| failed · abandoned · destroyed | 0·0·0 | 0·0·0 | 0·0·0 | 0·0·0 | **0·0·0** |
+| treasury, 28 gd, mean | $194,847 | $191,077 | $191,595 | $191,595 | **$191,595** |
+
+Every channel, the total, the 321 and the treasury **to the dollar**. Four
+integrations have landed since §18.8.1 and none of them touched this arm, which
+is also a third independent confirmation of §18.8.3's ruling: `water_main_break`
+at 0.90 is a block, not a rate.
+
+**One new digit, and it is not a disagreement.** The instrument prints
+`resolved=320` against `created=321`. §18.6 and §18.7 published the pair
+(318/318, 308/308); §18.8.1 published only `created`, so this is a figure that
+column did not carry rather than one that moved. It is the expected shape with
+`failed · abandoned · destroyed = 0·0·0`: **one incident is still open when the
+horizon ends.** Nothing failed and nothing was lost.
+
+**(c) The insolvency rows — reproduce seed for seed.** §34.2 item 2. `crisis`
+41 / 42 / 40 and `hard` 57 / 56 / 56, against §32.5's identical six figures, on
+a tree §32.5 was not published from.
+
+**Verdict on the hygiene sweep: nothing this pass re-took had drifted.** §28.2
+remains the only stale-fork table this document has caught, and it is already
+marked HISTORICAL with its successor named (§29.1, then §31.1). Three tables
+re-derived here — §32.2's
+ledger, §32.5's insolvency rows, §18.8.1's ambient arm — all reproduce at a fork
+none of them was published from. Two things are worth saying about the limits of
+that:
+
+* **It is a sample, not a proof.** The expensive tables — §31.1's 7 × 3 × 21
+  matrix, §26's curriculum, §30.2's auto-repair control — are not re-run here.
+  What makes them lower-risk is that all three are *already* published against a
+  named fork with a named instrument, which is the whole of RR-55's requirement.
+* **The durable fix is the one §20.1 names**, not a re-run every wave: when a
+  table's instrument is a file in `tools/` with a printed command line, checking
+  it costs a minute. The insolvency arm prints its own wall clock — **16.9 s** for
+  `crisis` and **22.6 s** for `hard`, three seeds each — the founding ledger is
+  four boots of one game-hour, and the ambient arm is the only one of the three
+  that runs for minutes. **The tables to watch are the ones that cannot be
+  re-taken cheaply**, and the answer for those is a named fork in the caption,
+  not a re-run.
+
+### 34.4 What this pass did not do, and what it leaves ranked
+
+- **The cascade is closed.** §29.5(b) / §32.7 item 0 was ranked first in this
+  document for four passes and is **CLOSED by doc 06 §2.13(b)** (§31, doc 93 §M1,
+  doc 91 A91-D-31, gate 30). The ranked list below is §32.7's, re-headed without
+  it.
+- **It did not retune a digit of `data/difficulty.json`**, and that is now a
+  ruling (§34.2) rather than an omission.
+- **It did not re-measure the matrix, the curriculum, the frame, the arrival
+  table or the upgrade band.** §31.1's, §26's, §27.4's, §25.3's and §27.7's
+  tables stand.
+
+**Ranked, for the next pass** — §32.7's list with item 0 closed and item 1 ruled:
+
+1. **`RoadNetwork.repair_quote` passes no `M_repair`** (§32.7 item 3, doc 10 §9.4
+   item 12). `sim/city_sim.gd:330` quotes at nominal, so a `crisis` city's
+   `auto_repair_daily_cap` admits 1.60× more tile-fractions than the repairs
+   cost and a `casual` city's 0.70× fewer. Doc 10 owns it; hash-neutral on the
+   default preset either way. **Now the top-ranked open number in this document.**
+2. **`Balanced`'s game-hour 0 is the only hour its reserve floor binds** (§32.4,
+   §34.2). A harness question, and the smallest thing on this list.
+3. **When doc 04 meters `delivered_mwh` and doc 06 meters resolutions**, §N2's
+   third reason expires and "should `M_rev` reach the tariff lines" becomes a
+   live question against live numbers.
+4. **The expensive tables have never been re-taken on a merged tree** (§34.3).
+   Not urgent. `tests/balance_matrix.gd` already prints §31.1's table in one
+   command, so this is a scheduled re-run rather than an instrument to build.

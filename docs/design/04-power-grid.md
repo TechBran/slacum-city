@@ -106,7 +106,7 @@ Component upgrades (not level ladders): **surge arrester** on substation/transfo
 >
 > **The trade, stated plainly: +9.4 ms once at process boot buys −108 ms off every load.** A boot happens once per launch, behind the splash, before any city is on screen; a restore happens behind the veil the player is watching, and its own §2.9.1 budget is written against the longest step. The memo grows from one entry per signalised node to one per covered tile: **2,024 → 11,236** on the benchmark city, which is the UNION of 144 level-5 squares rather than the 41,616 stamps that fill it, because transformers overlap. At Godot's Variant sizes that is on the order of a megabyte — an estimate, not a measurement; the entry count is the measured figure.
 >
-> **Hash-neutral, and proved on the answer rather than on the digest.** `tests/test_city_sim.gd::test_the_warm_transformer_memo_answers_what_the_authored_scan_answers` re-implements the pre-Wave-14 tile-major scan as an oracle sharing no code with the thing under test, and walks every tile in the transformer envelope plus a 10-tile uncovered margin. `tools/profile_sim.gd --hash-only` is unchanged on both cities, coarse and fine. Report 98 §28 RR-71.
+> **Hash-neutral, and proved on the answer rather than on the digest.** `tests/test_city_sim.gd::test_the_warm_transformer_memo_answers_what_the_authored_scan_answers` re-implements the pre-Wave-14 tile-major scan as an oracle sharing no code with the thing under test, and walks every tile in the transformer envelope plus a 10-tile uncovered margin. `tools/profile_sim.gd --hash-only` is unchanged on both cities, coarse and fine. Report 98 §29 RR-71.
 
 ### 2.3 Demand model
 
