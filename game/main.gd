@@ -1491,6 +1491,13 @@ func _resync_world_views() -> void:
 		flood_view.rebuild(sim.world.grid)
 		flood_view.prime(sim.weather.flood.depth_mm)
 		flood_view.snap()
+	# doc 11 §2.17b: a loaded save restores the sim's opportunity roster in
+	# SILENCE — there is no `opportunity_spawned` for a row that was already on
+	# the books — so a crook the player was walking toward is live, tappable,
+	# paying and INVISIBLE until it expires. `born_gm` on each row puts every
+	# body back MID-WANDER rather than on its first waypoint (report 98 RR-93).
+	if street_life != null:
+		street_life.seed_roster(sim.street.live())
 
 
 func _on_ui_dispatch(unit_id: int, incident_id: int) -> void:

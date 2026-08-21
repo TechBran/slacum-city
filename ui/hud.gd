@@ -74,6 +74,30 @@ var _chip_order_signature := ""
 ## near-square box without a window.
 var _width_override := -1.0
 var _last_snapshot: Dictionary = {}
+## One deferred re-solve per resize burst — see `_notification`.
+var _resize_solve_queued := false
+
+
+## The chip solve is priced against the width `refresh()` ran at, and nothing
+## else re-runs it: `refresh()` arrives on the sim cadence, so a PAUSED game that
+## changes width — the Fold folding or unfolding, a desktop window drag, the
+## preview harness resizing after its one boot refresh — keeps the stale solve.
+## Left stale, a row 0 solved wider than the new box is centred whole by
+## `grow_horizontal`, and the treasury chip leaves the screen on the left — the
+## §2.4 failure the solver exists to prevent. Deferred, because the notification
+## lands mid-layout and `_apply_rows` re-parents children.
+func _notification(what: int) -> void:
+	if what != NOTIFICATION_RESIZED or _resize_solve_queued \
+			or _last_snapshot.is_empty():
+		return
+	_resize_solve_queued = true
+	_solve_after_resize.call_deferred()
+
+
+func _solve_after_resize() -> void:
+	_resize_solve_queued = false
+	if not _last_snapshot.is_empty():
+		refresh(_last_snapshot)
 
 
 ## Builds every widget from `data/ui.json`. `_ready()` calls it; callers may call
