@@ -45,7 +45,7 @@ static func _settlement() -> Dictionary:
 	return {
 		"hour": 40,
 		"revenue": {"tax": 12000.0, "power_tariff": 900.0, "water_tariff": 400.0,
-				"fines": 0.0, "gross": 13300.0},
+				"city_services": 0.0, "assistance": 0.0, "gross": 13300.0},
 		"expenses": {"building_maint": 4000.0, "departments": 2200.0, "fleet": 600.0,
 				"vehicle_fuel": 120.0, "grid": 300.0, "generation_fuel": 800.0,
 				"water": 250.0, "roads_repair": 0.0, "debt": 0.0, "total": 8270.0},
@@ -332,7 +332,7 @@ func test_the_breakdown_uses_doc03s_own_keys() -> void:
 	for line: Variant in (ledger["revenue"] as Array):
 		revenue_keys.append(str((line as Dictionary)["key"]))
 	assert_eq(revenue_keys, ["tax", "power_tariff", "water_tariff"] as Array[String],
-			"the zero line (fines) is dropped, not printed as $0")
+			"the zero lines (city_services, assistance) are dropped, not $0")
 	for line: Variant in (ledger["expenses"] as Array):
 		var record: Dictionary = line
 		assert_ne(str(record["label"]), "ui_budget_expense_%s" % record["key"],

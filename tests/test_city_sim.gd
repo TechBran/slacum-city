@@ -122,8 +122,16 @@ func test_economy_settles_in_the_loop() -> void:
 	var start: int = sim.treasury.balance
 	sim.advance_hours(1.0)
 	var first_hour: int = sim.treasury.balance - start
-	assert_true(first_hour >= 330 and first_hour <= 343,
-			"first settled hour ≈ +$336.50 (got %d)" % first_hour)
+	# **RE-FIT Wave 15 (doc 92 §36.2, report 98 RR-78 / RR-79): ≈ +$336.50 →
+	# ≈ +$505.50, and the whole of it is two published constants.** RR-79's
+	# founding assistance pays `+$172.00/gh` on game-day 0 and RR-78 retired the
+	# held `fines` line worth `−$3.00/gh`, so this band moves by exactly
+	# **+169** and by nothing else: not one expense line changed, and
+	# `city_services` — the live line that replaced `fines` — settles $0 in a
+	# founding hour with no incident in it. The band keeps the width it always
+	# had, re-centred on 336.50 + 169.00 = 505.50.
+	assert_true(first_hour >= 499 and first_hour <= 512,
+			"first settled hour ≈ +$505.50 (got %d)" % first_hour)
 	# **RE-FIT Wave 14 (doc 92 §33.2, report 98 RR-69): ≈ +$8,006 → ≈ +$7,390.**
 	# The FIRST HOUR above did not move (it is clear weather, and the band holds
 	# with three times the margin to spare) — the DAY did, because doc 07's
@@ -135,10 +143,20 @@ func test_economy_settles_in_the_loop() -> void:
 	# Every other expense line and the whole revenue side are unchanged to the
 	# cent — doc 92 §33.2 carries the eight-line table and the hour-by-hour
 	# derivation. Same ±2.5 % band this assertion always had, re-centred.
+	# **RE-FIT Wave 15 (doc 92 §35.2): ≈ +$7,390 → ≈ +$11,446, which is
+	# +169 × 24 = +4,056 and not one dollar more.** Worth reading twice, because
+	# it is the check that RR-77's plumbing books one dollar and not two: the
+	# founding day DOES resolve incidents, and those payouts DO now print on a
+	# ledger line — but this assertion reads the TREASURY, and the treasury was
+	# already getting that money before this wave (straight from
+	# `world.credit`, with no line naming it). So the balance moves by the
+	# grant alone. The coarse-path ledger tells the other half of the story:
+	# `STARTER_FIRST_GAME_DAY_NET_EXACT` moves by +4,977, of which $921 is the
+	# dispatch payout the ledger had never counted. Same ±2.5 % band, re-centred.
 	sim.advance_hours(23.0)
 	var day_net: int = sim.treasury.balance - start
-	assert_true(day_net >= 7_200 and day_net <= 7_580,
-			"a founding day nets ≈ +$7,390 in the founding day's real weather (got %d)"
+	assert_true(day_net >= 11_160 and day_net <= 11_740,
+			"a founding day nets ≈ +$11,446 in the founding day's real weather (got %d)"
 					% day_net)
 
 

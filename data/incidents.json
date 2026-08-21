@@ -165,7 +165,7 @@
       "primary_role": "police", "primary_counts_by_tier": [1, 1, 2, 3, 3],
       "support_roles": [],
       "generator": { "candidate_source": "district", "factors": ["stability", "dark", "police_coverage", "weather"] },
-      "reward_base": 350, "target_response_min": 8,
+      "target_response_min": 8,
       "stability_on_resolve": 0.010,
       "notification_priority_by_tier": [3, 3, 2, 1, 1],
       "on_tier_enter": {
@@ -197,7 +197,7 @@
       "support_roles": [ { "role": "police", "rate_bonus": 0.15, "min_tier": 2 },
                          { "role": "construction", "rate_bonus": 0.00, "min_tier": 4 } ],
       "generator": { "candidate_source": "building", "factors": ["power", "weather", "arson"] },
-      "reward_base": 900, "target_response_min": 6,
+      "target_response_min": 6,
       "stability_on_resolve": 0.020,
       "notification_priority_by_tier": [3, 3, 2, 1, 1],
       "burn_down_key": "fire_burn_down_h",
@@ -229,7 +229,7 @@
       "primary_role": "utility", "primary_counts_by_tier": [1, 1, 2, 2, 2],
       "support_roles": [ { "role": "construction", "rate_bonus": 0.20, "min_tier": 3 } ],
       "generator": { "candidate_source": "transformer", "factors": ["load", "condition", "temp", "weather"] },
-      "reward_base": 600, "target_response_min": 12,
+      "target_response_min": 12,
       "stability_on_resolve": 0.015,
       "notification_priority_by_tier": [3, 2, 2, 1, 1],
       "burn_down_key": "transformer_burn_down_h",
@@ -257,7 +257,7 @@
       "primary_role": "water", "primary_counts_by_tier": [1, 1, 2, 2, 2],
       "support_roles": [ { "role": "construction", "rate_bonus": 0.25, "min_tier": 2 } ],
       "generator": { "candidate_source": "water_segment", "factors": ["pressure", "condition", "load", "ground", "freeze"] },
-      "reward_base": 500, "target_response_min": 15,
+      "target_response_min": 15,
       "stability_on_resolve": 0.015,
       "notification_priority_by_tier": [3, 3, 2, 1, 1],
       "zone_pressure_delta_by_tier": [0.0, 0.0, -0.15, -0.35, -0.60, -0.80],
@@ -288,7 +288,7 @@
       "support_roles": [ { "role": "fire", "rate_bonus": 0.30, "min_tier": 1 },
                          { "role": "construction", "rate_bonus": 0.20, "min_tier": 3 } ],
       "generator": { "candidate_source": "intersection", "factors": ["flow", "signal", "weather", "dark", "road_condition"] },
-      "reward_base": 300, "target_response_min": 7,
+      "target_response_min": 7,
       "stability_on_resolve": 0.008,
       "notification_priority_by_tier": [3, 3, 2, 1, 1],
       "on_tier_enter": {
@@ -314,7 +314,7 @@
       "primary_role": "utility", "primary_counts_by_tier": [1, 1, 2, 2, 2],
       "support_roles": [ { "role": "construction", "rate_bonus": 0.20, "min_tier": 1 } ],
       "generator": { "candidate_source": "exposed_asset", "factors": ["wind", "exposure", "condition"] },
-      "reward_base": 400, "target_response_min": 15,
+      "target_response_min": 15,
       "stability_on_resolve": 0.010,
       "notification_priority_by_tier": [3, 3, 2, 1, 1],
       "on_tier_enter": {},
@@ -387,5 +387,6 @@
     "tier_k": 0.35, "speed_bonus_base": 1.5, "speed_bonus_k": 0.5,
     "speed_bonus_min": 0.60, "speed_bonus_max": 1.50
   },
+  "_reward_note": "This block is the SHAPE of a payout and carries no dollar (report 98 RR-78, extending C-07). The reward_base column that used to sit on every type row is DELETED and lives in data/economy.json under city_services.dispatch_payout_base, with the same six values; IncidentCatalog refuses a file that carries it back. Doc 06 answers 'how much more is a tier-3 worth than a tier-1, and how much is a fast answer worth' - doc 03 answers 'how much'.",
   "_difficulty_note": "MOVED and now GONE (2026-08-20, doc 91 A91-D-19). Doc 06 §8 AUTHORS escalation_mult and generation_mult; doc 03 FILES them, in data/difficulty.json section \"escalation\", alongside OFFLINE_RESPONSE_TIME_MULT. CityIncidentWorld reads them through Difficulty (C-17, one difficulty file, one loader), and IncidentCatalog now REFUSES a file that carries a difficulty_escalation block."
 }

@@ -2615,6 +2615,11 @@ class Runner extends RefCounted:
 			"net": float(settled.get("net", 0.0)),
 			"revenue": float(settled.get("gross", 0.0)),
 			"expenses": float(settled.get("expense", 0.0)),
+			## Doc 03 §2.5's `city_services` line for the hour just settled —
+			## dispatch payouts plus street collections (report 98 RR-78). The
+			## money pass measures its share of net, so it needs a column.
+			"city_services": float(settled.get("city_services", 0.0)),
+			"assistance": float(settled.get("assistance", 0.0)),
 			"population": sim.population.city_population,
 			"happiness": sim.happiness.happiness,
 			"stability": sim.districts.city_stability,

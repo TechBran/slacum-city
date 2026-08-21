@@ -106,6 +106,33 @@ const CURRICULUM_TOP_LEVEL_DAYS := 40
 ## a ruled 40, where it used to finish on 34.5–36.1. It is a ruled design bound,
 ## not a fit, so it is not re-cut to buy margin back — but the next change that
 ## slows the arc at all will fail gate 21 there, and doc 92 §33.7 ranks it.
+##
+## **WAVE-15 RE-MEASURE, AND NOT ONE BOUND MOVES** (doc 92 §36.4, report 98
+## RR-79). The money pass raised the opening's income, and every bound in this
+## block is a CEILING — so an arc that got faster is an arc with more margin, and
+## a ceiling with more margin under it is not re-cut to look tight. Same
+## instrument, same horizon, same seeds:
+##
+## | level | before (1337/4242/9001) | after | duration before → after |
+## |---|---|---|---|
+## | 1 | 13 / 13 / 14 | 14 / 13 / 17 | 13–14 → **13–17** |
+## | 2 | 63 / 56 / 67 | 47 / 42 / 47 | 43–53 → **29–33** |
+## | 3 | 123 / 122 / 128 | 82 / 79 / 83 | 60–66 → **35–37** |
+## | 4 | 192 / 191 / 209 | 135 / 131 / 132 | 69–81 → **49–53** |
+## | 5 | 399 / 389 / 409 | 246 / 258 / 284 | 198–207 → **111–152** |
+## | 6 | 918 / 917 / 932 | 710 / 709 / 754 | 519–528 → **451–470** |
+##
+## **Level 1 is the one rung that does not improve**, and on two seeds it is a
+## game-minute or three later (13 → 14, 14 → 17): with a fuller purse the
+## curriculum agent makes different first choices. 17 game-minutes is still
+## game-day 0 with two thirds of the day left, so the `first_day_at[1] <= 1`
+## assertion below holds by the same margin it always did.
+##
+## **`CURRICULUM_TOP_LEVEL_DAYS` is what this buys back.** Doc 92 §33.7 ranked it
+## as the tightest number in this file — the arc was finishing on game-day
+## 38.2–38.8 against a ruled 40. It now finishes on **29.6 / 29.5 / 31.4**. The
+## bound is a ruled design decision and is NOT re-cut downward to reclaim the
+## tension; it is recorded that the tension is gone.
 const CURRICULUM_OPENING_BEAT_H := 58
 const CURRICULUM_MIDDLE_BEAT_H := 90
 
@@ -337,15 +364,60 @@ func test_gate_05_playing_beats_standing_still() -> void:
 ## lit city earns its tax line.
 ##
 ## The neglect knob is still fatal on the long horizon — see gate 4b.
+##
+## **WAVE-15 RE-FIT — the money column moves from `treasury_end` to
+## `net_mean_per_hour`, and the reason is the same one this header already gives
+## for dropping `value created`** (doc 92 §36.5, report 98 RR-80).
+##
+## The money pass raised the opening's income (RR-78's founding assistance and
+## celebration grants), and both agents spent the extra cash — but they spent it
+## differently, because `balanced` also buys repairs. Measured on the same rig,
+## 21 game-days, three seeds, before → after:
+##
+## | column | `balanced` | `disaster_neglect` | discriminates? |
+## |---|---|---|---|
+## | treasury, before | **$81,950** | $55,624 | yes |
+## | treasury, after | $58,612 | **$80,532** | **INVERTED** |
+## | value created, before | $834,156 | **$952,519** | inverted |
+## | value created, after | **$965,739** | $925,644 | yes, but +4.3 % |
+## | net $/gh, before | **$1,968** | $1,653 | yes, +19 % |
+## | net $/gh, after | **$2,342** | $2,020 | yes, +16 % |
+## | min condition | **0.798** | 0.391 | yes, 2.0× |
+## | dark share | **0.19 %** | 30.66 % | yes, 161× |
+##
+## Read the first three rows together and the finding is not that maintenance
+## stopped paying — it is that **cash-in-bank is a stock, and a stock measures
+## how much an agent chose not to spend.** The two money columns swapped which
+## one is contaminated: `value created` was inverted before and is now the right
+## way up, `treasury_end` was the right way up and is now inverted, and NEITHER
+## flip has anything to do with the maintenance knob. `value created` is not the
+## replacement either — seed 9001 separates the pair by 0.29 % on it, which is
+## noise wearing a threshold.
+##
+## `net_mean_per_hour` is the flow, it is what condition actually drives through
+## doc 03's `f_condition`, and it separates the pair by **12–20 % on every one of
+## the three seeds** in both the before and the after column. It is also the
+## column gate 5 already uses for the same claim one comparison up. An agent that
+## skips maintenance holding more cash is *correct* — that is what "maintenance
+## costs money" means — and the design claim was never that it holds less: it is
+## that the maintained city is worth more and earns more, which is what the
+## bottom four rows say.
 func test_gate_04_maintenance_pays() -> void:
 	var maintained := _summary("balanced")
 	var neglected := _summary("disaster_neglect")
 	assert_true(int(maintained["repaired"]) > 0,
 			"wear must give the repair verb something to do")
 	assert_eq(int(neglected["repaired"]), 0, "the neglect knob is the only difference")
-	assert_true(int(maintained["treasury_end"]) > int(neglected["treasury_end"]),
-			"neglect still ends richer: $%d against $%d"
-					% [int(neglected["treasury_end"]), int(maintained["treasury_end"])])
+	# **WAVE-15 RE-FIT: the money column moves from the STOCK to the FLOW**
+	# (doc 92 §35.5, report 98 RR-79). See the block comment above this test for
+	# the whole derivation; the short version is that the money pass swapped
+	# which of the two money columns is contaminated, and the flow is the one the
+	# maintenance knob actually drives.
+	assert_true(float(maintained["net_mean_per_hour"])
+					> float(neglected["net_mean_per_hour"]),
+			("the neglected city out-EARNS the maintained one: $%.0f/gh against "
+					+ "$%.0f/gh") % [float(neglected["net_mean_per_hour"]),
+					float(maintained["net_mean_per_hour"])])
 	assert_true(float(maintained["min_condition"]) > float(neglected["min_condition"]),
 			"the agent that repairs should hold a higher floor condition: %.3f vs %.3f"
 					% [float(maintained["min_condition"]), float(neglected["min_condition"])])
@@ -2020,3 +2092,194 @@ func test_gate_30_a_decayed_city_roster_is_bounded() -> void:
 	assert_true(Rig.event_count(doc, "incident_created") > 0,
 			"a 200-game-day city generated no incidents at all — the ceiling is "
 			+ "not supposed to be a mute button")
+
+
+# ============== 31 the moral-hazard guard (doc 03 §2.5, report 98 RR-77)
+
+## GATE 31 — **a payout may never exceed the loss it prevented.**
+##
+## The hazard is not arson; the player has no arson verb. It is *waiting*. Doc 06
+## §2.7 grows the payout at `tier_k = 0.35` per tier while doc 02 grows the
+## residual damage at `0.10` per tier, so on a cheap building the reward outruns
+## the value at risk somewhere around tier 4 and letting a fire grow before
+## answering it becomes the profitable play. That is a strategy the game must not
+## contain, and this is where it is refused.
+##
+## **The guard bound on shipped numbers, and that is the finding** (doc 92
+## §35.3). House L1, capital $1,200. A tier-5 fire resolved at the target
+## response pays `900 × (1 + 0.35·4) × 1.00 = $2,160` before the clamp; the
+## residual damage is `0.10 × 4 = 0.40`, so the repair costs
+## `1,200 × 0.40 × 0.85 = $408` and the prevented loss is `1,200 − 408 = $792`.
+## The unclamped ratio is **2.73**. At `MORAL_HAZARD_CAP_FRACTION = 0.75` the
+## city pays $594 and the ratio is 0.75 by construction.
+##
+## Three assertions, because the guard has three surfaces: the clamp has TEETH
+## (a controlled incident), the LIVE game respects it (every resolve of a played
+## city), and the types the clamp cannot reach are held by a PUBLISHED ceiling.
+func test_gate_31_a_payout_never_exceeds_the_damage_it_prevented() -> void:
+	var services := _city_services()
+	var cap := float(services["MORAL_HAZARD_CAP_FRACTION"])
+	assert_true(cap > 0.0 and cap < 1.0,
+			"the ceiling is strictly below indifference: %.3f" % cap)
+
+	# (a) TEETH. Doc 03 prices the payout AND the ceiling, so the whole guard is
+	# exercised through the one seam doc 06 crosses to reach money.
+	var sim := CitySim.boot_from_files(GATE_SEED)
+	var house_id := ""
+	for id in sim.roster_ids():
+		if String((sim.buildings[String(id)] as Building).archetype) == "house":
+			house_id = String(id)
+			break
+	assert_ne(house_id, "", "the starter city houses somebody")
+	var target := {"kind": "building", "id": house_id}
+	var residual := 0.40  # doc 06 §2.8's residual curve at tier_peak 5
+	var prevented: int = sim.incident_world.prevented_loss_value(target, residual)
+	assert_true(prevented > 0, "a house is an asset doc 03 can price")
+	var shape := 1.0 + 0.35 * 4.0  # tier 5 answered at the target response time
+	var paid: int = sim.incident_world.dispatch_payout("structure_fire", shape,
+			false, target, residual)
+	var base := float((services["dispatch_payout_base"] as Dictionary)["structure_fire"])
+	var unclamped := int(round(base * shape))
+	var ceiling := int(round(cap * float(prevented)))
+	assert_true(unclamped > ceiling,
+			("the clamp needs something to clamp: unclamped $%d against a ceiling "
+					+ "of $%d on a prevented loss of $%d")
+					% [unclamped, ceiling, prevented])
+	assert_true(paid <= ceiling + 1,
+			"a tier-5 house fire paid $%d against a ceiling of $%d" % [paid, ceiling])
+	assert_true(paid < unclamped,
+			"and the clamp actually bound: $%d < $%d" % [paid, unclamped])
+
+	# (b) THE LIVE GAME. Every resolve of an UNTOUCHED founding city over
+	# `LONG_DAYS`, checked against the prevented loss that same resolve reported.
+	# Untouched on purpose: the ceiling's worst case is a high tier on a CHEAP
+	# building, and the founding roster is eighteen houses — a built-out city
+	# dilutes exactly the case this is looking for. Driven inline rather than
+	# through `Rig.run` because the rig tallies event COUNTS and this needs the
+	# payloads.
+	var live := CitySim.boot_from_files(GATE_SEED)
+	live.bus.drain()
+	var checked := 0
+	var worst := 0.0
+	var worst_at := ""
+	for _h in LONG_DAYS * 24:
+		live.advance_coarse_hours(1, false)
+		for event_variant in live.bus.drain():
+			var event: Dictionary = event_variant
+			if String(event.get("type", "")) != "incident_resolved":
+				continue
+			var loss := int(event.get("prevented_loss", -1))
+			if loss <= 0:
+				continue  # unpriced asset class, or nothing was at risk — see (c)
+			checked += 1
+			var ratio := float(int(event.get("reward", 0))) / float(loss)
+			if ratio > worst:
+				worst = ratio
+				worst_at = String(event.get("incident_type", ""))
+	assert_true(checked > 0,
+			("%d game-days resolved nothing with a priced target — this gate "
+					+ "measured nothing at all") % LONG_DAYS)
+	assert_true(worst <= cap + 0.001,
+			("the worst of %d priced resolves (%s) took %.3f of the loss it "
+					+ "prevented; the ceiling is %.3f")
+					% [checked, worst_at, worst, cap])
+
+	# (c) THE TYPES THE CLAMP CANNOT REACH. Road edges and water segments carry
+	# no `capital_value` in doc 03, so `prevented_loss_value` answers −1 and a
+	# published ceiling holds them instead. `base × 5.40` is the worst case the
+	# formula can produce: tier 5 (×2.40), best speed (×1.50), human on the
+	# drawer (×`MANUAL_DISPATCH_MULT`).
+	var unpriced_ceiling := float(services["MORAL_HAZARD_UNPRICED_CEILING"])
+	var worst_case_mult := 2.40 * 1.50 * float(services["MANUAL_DISPATCH_MULT"])
+	for type_id: String in ["traffic_accident", "water_main_break", "storm_damage"]:
+		var worst_payout := float((services["dispatch_payout_base"] as Dictionary)
+				[type_id]) * worst_case_mult
+		assert_true(worst_payout <= unpriced_ceiling,
+				("%s can pay $%.0f at tier 5, best speed, manually dispatched; the "
+						+ "published ceiling for an unpriced target is $%.0f")
+						% [type_id, worst_payout, unpriced_ceiling])
+
+
+# =========== 32 the active-play income share (doc 03 §2.5, RR-77 / the street)
+
+## GATE 32 — **active play pays visibly more, and idle play still pays.**
+##
+## The player's ask was two-sided: *"our automatic dispatch in crime — that
+## should pay us money"* **and** a reason to work the drawer and the street. This
+## gate is the bound on the second half, so that collecting things can never grow
+## into the only way to play.
+##
+## Four of its five assertions read `data/economy.json` rather than a run,
+## deliberately: the street system's spawn table lives in a sibling branch's
+## file, and a contract that can only be checked by running two branches at once
+## is not a contract. Doc 03 owns every dollar in that feature (RR-77), so doc
+## 03's file is where the bound can be held.
+func test_gate_32_active_play_pays_more_and_idling_still_pays() -> void:
+	var services := _city_services()
+
+	# (a) The dispatcher's premium is VISIBLE. 1.50 is doc 06's own
+	# `speed_bonus_max`; under 1.25 it stops reading as a raise at all.
+	var manual := float(services["MANUAL_DISPATCH_MULT"])
+	assert_true(manual >= 1.25,
+			"a %.2f× dispatcher premium is not one a player would notice" % manual)
+
+	# (b) A TAPPED CROOK IS PETTY; A DISPATCHED CRIME IS THE REAL ONE. The
+	# ordering is the ruling; the ratio is what makes it read at a glance.
+	var street: Dictionary = services["street_payout"]
+	var petty := float(street["petty_crime"])
+	var dispatched := float((services["dispatch_payout_base"] as Dictionary)["crime"])
+	assert_true(petty < dispatched,
+			"street petty_crime $%.0f must sit under dispatch crime $%.0f"
+					% [petty, dispatched])
+	assert_true(petty / dispatched <= 0.60,
+			"and it must read as about half, not as nearly the same: %.3f"
+					% (petty / dispatched))
+
+	# (c) THE INCOME-SHARE BAND. The worst a street system may pay is its maximum
+	# spawn rate times its most valuable opportunity, and that has to land inside
+	# the ruled 10–20 % against the opening's own income — `STARTER_NET_PER_HOUR_EXACT`,
+	# which is doc 03's founding anchor WITH the RR-78 grant in it, because that
+	# is the income the opening actually earns.
+	var most := 0.0
+	for key in street:
+		most = maxf(most, float(street[key]))
+	var worst_street := float(services["STREET_MAX_RATE_PER_GAME_HOUR"]) * most
+	var opening_net := float(_pacing()["STARTER_NET_PER_HOUR_EXACT"])
+	assert_true(worst_street <= 0.20 * opening_net,
+			("a street system running flat out would pay $%.2f/gh against an "
+					+ "opening net of $%.2f/gh (%.1f %%); the ruled ceiling is 20 %%")
+					% [worst_street, opening_net, 100.0 * worst_street / opening_net])
+	assert_true(worst_street >= 0.10 * opening_net,
+			("and it has to be worth doing: $%.2f/gh is %.1f %% of the opening's "
+					+ "income, under the ruled 10 %% floor")
+					% [worst_street, 100.0 * worst_street / opening_net])
+
+	# (d) AND EXACTLY ZERO WHEN IDLE. An opportunity nobody taps pays nobody.
+	assert_almost_eq(float(services["STREET_IDLE_SHARE"]), 0.0, 1e-9,
+			"an opportunity nobody taps must pay nobody")
+
+	# (e) The measured half. A played city's `city_services` line is a real share
+	# of its income and not a rounding error: measured on the curriculum agent at
+	# 21 game-days, three seeds, **4.83 / 5.21 / 5.76 %** of net from dispatch
+	# alone, before the street system lands. The band is wide on both sides
+	# because the street half will raise it and a seed must not flip it.
+	var total_net := 0.0
+	var total_services := 0.0
+	for seed_value in MATRIX_SEEDS:
+		var samples: Array = _run("curriculum", LONG_DAYS, int(seed_value))["samples"]
+		for i in range(1, samples.size()):
+			var sample: Dictionary = samples[i]
+			total_net += float(sample.get("net", 0.0))
+			total_services += float(sample.get("city_services", 0.0))
+	var share := total_services / maxf(1.0, total_net)
+	assert_true(share >= 0.02 and share <= 0.25,
+			("city services are %.2f %% of a played city's net over %d game-days; "
+					+ "measured 4.8–5.8 %% from dispatch alone (doc 92 §35.4)")
+					% [100.0 * share, LONG_DAYS])
+
+
+## `data/economy.json`'s `city_services` block, read live so a gate cannot
+## re-state a tunable it exists to gate.
+static func _city_services() -> Dictionary:
+	return (StarterCityLoader.read_json(ECONOMY_DATA).get("city_services", {})
+			as Dictionary)

@@ -416,8 +416,14 @@ func test_founding_ledger() -> void:
 	assert_almost_eq(float(revenue["tax"]), 740.291412, 0.5, "686 × 0.9722 × 1.110")
 	assert_almost_eq(float(revenue["power_tariff"]), 93.0, 0.01)
 	assert_almost_eq(float(revenue["water_tariff"]), 3.058, 0.01)
-	assert_almost_eq(float(revenue["fines"]), 3.0, 0.01)
-	assert_almost_eq(float(revenue["gross"]), 839.349412, 0.5, "GROSS REVENUE $/gh")
+	# RR-78 / RR-79 move this row. `fines` (a held $3.00/gh that stood in for a
+	# payout doc 06 was already making) is gone; `city_services` is the live line
+	# in its place and settles $0 on a founding hour with no incident in it; and
+	# `assistance` is doc 03 §2.5a's founding subsidy at its day-0 full value,
+	# `departments` $96 + `fleet` $76 = $172.00/gh.
+	assert_almost_eq(float(revenue["city_services"]), 0.0, 1e-9)
+	assert_almost_eq(float(revenue["assistance"]), 172.0, 0.01)
+	assert_almost_eq(float(revenue["gross"]), 1008.349412, 0.5, "GROSS REVENUE $/gh")
 
 	assert_almost_eq(float(expenses["building_maint"]), 27.44, 0.01, "68,600 × 0.00040")
 	assert_almost_eq(float(expenses["departments"]), 96.0, 0.01, "26 + 30 + 20 + 20")
@@ -431,9 +437,12 @@ func test_founding_ledger() -> void:
 	assert_almost_eq(float(expenses["debt"]), 0.0)
 	assert_almost_eq(float(expenses["total"]), 519.977016, 0.5, "TOTAL EXPENSE $/gh")
 
-	assert_almost_eq(float(snapshot["net"]), 319.372396, 0.5, "NET +$319/gh")
-	assert_almost_eq(float(snapshot["net"]) * 24.0, 7664.94, 12.0, "+$7,665/game-day")
-	assert_eq(treasury.balance, 25000 + 319, "the settled dollar lands in the treasury")
+	# RR-79 moves this row and only this row's revenue side: +$172.00 of founding
+	# assistance, -$3.00 of retired `fines`, so net 319.372396 -> 488.372396 and
+	# the game-day figure with it. No expense line moved by a cent.
+	assert_almost_eq(float(snapshot["net"]), 488.372396, 0.5, "NET +$488/gh")
+	assert_almost_eq(float(snapshot["net"]) * 24.0, 11720.94, 12.0, "+$11,721/game-day")
+	assert_eq(treasury.balance, 25000 + 488, "the settled dollar lands in the treasury")
 	assert_almost_eq(float(treasury.carry_millidollars) / 1000.0, 0.38, 0.02,
 			"and the sub-dollar remainder in the carry")
 
@@ -557,7 +566,7 @@ func test_one_difficulty_knob_per_ledger_line() -> void:
 		# §N2: the tax line and only the tax line.
 		assert_almost_eq(float(revenue["tax"]), float(base_revenue["tax"]) * m_rev,
 				1e-6, "tax on %s is M_rev × standard" % preset)
-		for line in ["power_tariff", "water_tariff", "fines"]:
+		for line in ["power_tariff", "water_tariff", "city_services", "assistance"]:
 			assert_almost_eq(float(revenue[line]), float(base_revenue[line]), 1e-6,
 					"%s on %s is NOT scaled by M_rev — M_rev is the tax multiplier"
 							% [line, preset])
@@ -836,9 +845,10 @@ func test_settlement_is_deterministic_and_offline_uses_one_code_path() -> void:
 		system_b.settle_hour(offline)
 	assert_eq(first.balance, second.balance)
 	assert_eq(first.carry_millidollars, second.carry_millidollars)
-	# 100 × $319.372396 = $31,937 (was $31,878 before doc 92 F-4 took 0.15 MVA
-	# of transformer plate out of `E_grid`).
-	assert_true(absi(first.balance - (25000 + 31937)) <= 3,
+	# 100 × $488.372396 = $48,837 (was $31,937 before RR-79's founding assistance
+	# joined the revenue side, and $31,878 before doc 92 F-4 took 0.15 MVA of
+	# transformer plate out of `E_grid`).
+	assert_true(absi(first.balance - (25000 + 48837)) <= 3,
 			"100 gh of the founding ledger, got %d" % first.balance)
 
 
@@ -880,8 +890,13 @@ func _founding_inputs() -> Dictionary:
 		"water": {"m3_treated": 5.56, "main_km": 1.512, "main_condition": 1.0,
 				"pump_capacity_m3h": 40.0, "delivered_m3": 5.56},
 		"roads": {"tiles": {"AVENUE": 540, "STREET": 243}, "c_day": 0.35, "wx_wear_day": 0.0},
-		# $3/gh of fines is a rate, not one incident per hour.
-		"police_incidents_resolved": 3.0 / 350.0,
+		# RR-78: no incident resolved in this synthetic hour, so the live
+		# `city_services` line is 0 — where the retired `fines` line printed a
+		# held $3.00/gh whether anything happened or not.
+		"city_services": {"dispatch": 0, "street": 0},
+		# RR-79: the founding hour is game-day 0, so the assistance taper is at
+		# its full published value.
+		"founding_assistance": 172.0,
 	}
 
 

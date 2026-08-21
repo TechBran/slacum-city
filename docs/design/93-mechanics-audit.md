@@ -1689,6 +1689,60 @@ things being sorted, not merely a plausible one. Where it cannot be, the sort is
 a latent dependency on the container's contents, and it will be found by an
 unrelated change.
 
+---
+
+## P. Wave-15 rulings — the money pass (2026-08-21)
+
+*Three rulings, and the first of them is four waves old. Doc 06 filed open question 6 in Wave 1 — "`reward_base` may be doc 03's money too" — and doc 93 §N1 point 4 wrote down the condition on which it would be re-openable. This pass meets that condition, and finds that the answer was worth more than the tidiness: the double booking was hiding **12.5 % of a founding day's income** from the ledger that was supposed to be teaching the player where their money comes from.*
+
+### R1. It was the same dollar, and only one of the two was ever real
+
+**Ruled: `reward_base` moves to doc 03; `POLICE_FINE_PER_RESOLVED_INCIDENT` and `CitySim.HELD_FINE_RATE` are retired; the `fines` ledger line is replaced by a live `city_services` line.** Report 98 RR-78 is the binding text.
+
+The evidence that closed it is not an argument about ownership — C-07 settled ownership three waves ago and `reward_base` was simply missed. It is that **the two halves were in wildly different states of aliveness and nobody could see it.**
+
+* Doc 06's half was **live and invisible**: `IncidentSystem._pay_reward` → `world.credit(reward, "incident_resolved")` → `Treasury.credit(…, &"incident")`. That is a terminal call. `EconomySystem.settle_hour` never saw the dollars, so the budget panel had no line for them, `data/notifications.json` had no event for them, and the only way to notice the money was to watch the balance change for no printed reason.
+* Doc 03's half was **dead and visible**: `HELD_FINE_RATE = 3/350` fed `police_incidents_resolved`, which multiplied straight back into `POLICE_FINE_PER_RESOLVED_INCIDENT = 350` for a permanent **$3.00/gh**. §N1 point 3 measured it at the founding hour, at 21 game-days and at 48 game-days on all four presets and got 3.00 every time, and used that as evidence for keeping `M_rev` off the line. That reasoning was correct and is now spent: the line is a measurement.
+
+**The re-open condition, quoted from §N1 point 4:** *"When doc 04 §2.4 publishes real `delivered_mwh` and doc 06 publishes real resolutions, the two lines become measurements of a city under pressure, and the question 'should a revenue multiplier reach them' becomes a different question with a different answer."* Half of it is discharged here. **`city_services` and `assistance` are still outside `M_rev`** and §7 test 46 now asserts it of them by name — not because they are placeholders any more, but for the §2.5 reason every non-tax line is outside it: `M_rev` is written into §2.2's per-building formula and into §2.2's revenue floor, and §2.5 never mentions it. The *other* half of the re-open condition — `delivered_mwh` — is untouched and still ranked.
+
+**Why ONE line and not two.** The wave that files this ruling also lands doc 12's street opportunities, and the obvious shape is `dispatch` and `street` as separate rows. They are the same concept — *the city answered a call and got paid* — and a §2.6 budget panel is a thing a player reads in one glance on a phone. Splitting a line into two half-sized ones costs a row of screen and buys nothing. The sub-grain is not lost: `city_services_by_source: {dispatch, street}` sits inside the snapshot exactly as `tax_by_class` sits beside `tax`, which is the precedent this doc already set for "one line the player reads, N numbers the report can read".
+
+**Why the payout is credited immediately and reported afterwards.** The player's ask is a number that MOVES when they tap. So the dollars go through `Treasury.credit()` at the moment of resolve, and `Treasury.hour_city_services` tallies them by source until the next settlement reads and clears the tally. `EconomySystem` then books the tally on its own revenue line, includes it in `gross` and `net` — it is operating revenue and the income statement must say so — and settles `revenue − city_services` in cash, because that cash has already moved. **One dollar, one line, two moments.** The tally is serialised (defaulting to 0 on any older save) because a save taken between a resolve and the hour's settlement would otherwise drop a line the statement is about to print, and `save → load → advance` is bit-identical or it is nothing.
+
+### R2. A subsidy is honest when it is a published constant on a clock
+
+**Ruled: the early-income retune is two state grants, and neither may be a fraction of anything the player controls.** Report 98 RR-79.
+
+The measurement came first and it killed the obvious candidate. `tools/measure_money_pass.gd` counts BROKE game-minutes — game-hours in which the treasury cannot buy the cheapest row on the build sheet — and the count is **zero, on every seed, in both arms**, as is `E_FUNDS` in the curriculum agent's own action log. *The opening is not poor. It is slow.* Nothing is unaffordable; the milestones are two real hours apart. So the lever is the income rate, and "ease maintenance at low levels" was measured and discarded: `building_maint` is **$27.46 of a $504.73/gh** founding expense bill, 5.4 %, a dead lever.
+
+What the bill actually says is that **$172.00/gh — 34.1 % of it — is `departments` plus `fleet`: three stations and eight vehicles `data/starter_city.json` hands the player, billed at full price from game-hour 1, that the player never chose.** `FOUNDING_ASSISTANCE_PER_HOUR = 172` is that number and not a fit.
+
+Two properties make it a grant rather than a loophole:
+
+1. **It is a constant, not a fraction of the live bill.** A subsidy that scaled with the fleet would pay a player to buy vehicles — the same shape of mistake C-08 and RR-2 exist to stop one knob down. It would also put an `M_exp` inside a revenue line and break §N1's one-knob-per-line contract from the other side.
+2. **It runs out on a clock the player cannot touch.** `share(day) = clamp(1 − day/7, 0, 1)`, evaluated on the settled game-day so the line steps once a day rather than drifting inside one. Seven game-days is the curriculum's own opening (level 3 arrived on game-day 5.1–5.3), so it covers levels 1–3 and is fully retired before level 4's incident wait begins.
+
+**The celebration grant is the fun half, and its rule is one sentence: the city pays half of what the next chapter asks you to buy.** Doc 09 §2.14 already names that purchase per level, so `LEVEL_UP_GRANT_BY_CITY_LEVEL` is a derivation and not a ladder somebody liked the shape of. It pays on the composed level (§G1's `max(population_ladder, objectives_earned)`), so neither route to a rung is worth more than the other, and `city_level` is monotone by `data/progression.json` so a rung can never be sold twice. It is a **one-off receipt and therefore not an hourly ledger line** — §2.4 keeps one-off capital spends out of the recurring rate and the symmetric treatment is the same one.
+
+**What this does NOT do is touch a price.** Not one `build_cost_l1`, not one `base_tax_by_level` row, not one expense constant. The founding ledger's entire movement is `+172.00 − 3.00 = +169.00/gh` on the revenue side, which is why `STARTER_EXPENSE_PER_HOUR_EXACT` is not re-stamped and gate 2b — the expense anchor — is the check that this was a revenue-side change.
+
+### R3. A stock measures how much an agent chose not to spend
+
+**Ruled: gate 4's money column moves from `treasury_end` to `net_mean_per_hour`.** Report 98 RR-80.
+
+Gate 4 is the maintenance A/B — `balanced` against `disaster_neglect`, the same agent class with one field changed — and its header already carries one re-fit of exactly this kind: pass 3 dropped `value created` because a spend-everything agent's construction column was contaminated by the harness's action budget. The money pass inverted the OTHER money column, and un-inverted the first one at the same time:
+
+| column | before | after |
+|---|---|---|
+| `treasury_end` | balanced $81,950 > neglect $55,624 | balanced $58,612 **< neglect $80,532** |
+| `value created` | balanced $834,156 **< neglect $952,519** | balanced $965,739 > neglect $925,644 |
+| `net_mean_per_hour` | balanced $1,968 > neglect $1,653 | balanced $2,342 > neglect $2,020 |
+
+Neither flip is the maintenance knob. Both are the same artefact seen twice: **cash-in-bank is a stock, and a stock records how much of its income an agent declined to convert into city.** Give both agents more money and the one that also buys repairs converts more of it, so its stock falls and its stake rises. An agent that skips maintenance holding more cash is *correct* — that is what "maintenance costs money" means — and the design claim was never that neglect ends poorer. It is that the maintained city is worth more and earns more.
+
+`value created` is not the replacement: on seed 9001 it separates the pair by **0.29 %**, which is noise wearing a threshold, and this doc has already ruled once (gate 12c, Wave 8) that a threshold fitted on the matrix must be measured on the matrix. `net_mean_per_hour` is the **flow**, it is what condition drives through doc 03's `f_condition`, it separates the pair by 12–20 % on all three seeds in **both** arms, and gate 5 already uses it for the same claim one comparison up. No constant moved to make this pass; the column moved to the thing the knob acts on.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

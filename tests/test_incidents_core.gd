@@ -36,8 +36,16 @@ func test_catalog_loads_clean() -> void:
 	assert_true(catalog.has_type("storm_damage"), "storm_damage type present")
 	assert_eq(catalog.type_row("storm_damage", "blocked_road").get("primary_role", ""),
 			"construction", "subtype overrides the parent's primary role")
-	assert_eq(catalog.type_row("storm_damage", "blocked_road").get("reward_base", 0), 400,
-			"subtype inherits the parent's reward_base")
+	# Report 98 RR-78: the payout BASE left this file for doc 03's currency
+	# monopoly, and the inheritance that used to be asserted on it is asserted on
+	# the shape column that stayed — a subtype inherits `target_response_min`
+	# from its parent exactly as it inherited `reward_base`.
+	assert_eq(catalog.type_row("storm_damage", "blocked_road").get("reward_base", null),
+			null, "no dollar column survives in doc 06's data (RR-78)")
+	assert_eq(catalog.type_row("storm_damage", "blocked_road").get("target_response_min", 0),
+			15, "subtype inherits the parent's response target")
+	assert_almost_eq(CostCurves.load_from_files().dispatch_payout_base("storm_damage"),
+			400.0, 1e-9, "and doc 03 carries the same 400 the row used to")
 
 
 ## Doc 06 §7 test 5 / 41 — esc_env driven through the LIVE doc 07 channel.

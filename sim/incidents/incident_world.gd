@@ -421,6 +421,38 @@ func debit(_amount: int, _reason: String) -> bool:
 	return true
 
 
+## Doc 03 §2.5's payout for a resolved incident (report 98 RR-78), ceiling and
+## all. Doc 06 hands over its own SHAPE — `shape_mult` is
+## `(1 + tier_k·(tier_peak − 1)) × speed_bonus` — plus the target and the damage
+## fraction that actually landed on it; doc 03 answers with the dollars,
+## including the dispatcher's premium when a human made the call and including
+## the moral-hazard clamp, so no price and no ceiling is authored on this side
+## of the seam. The base world prices nothing, exactly as it prices no repair.
+func dispatch_payout(_type_id: String, _shape_mult: float, _manual: bool,
+		_target_ref: Dictionary, _residual_fraction: float) -> int:
+	return 0
+
+
+## The moral-hazard ceiling's denominator: what resolving this incident SAVED,
+## in dollars — `capital_value(target) − repair_cost(target, residual)`.
+##
+## **`-1` means "this world cannot price that asset", and is not zero.** Road
+## edges and water segments have no `capital_value` in doc 03, so a clamp that
+## read a 0 there would silently delete a payout the design intends to pay; the
+## clamp is skipped on a negative answer and balance gate 31 holds the published
+## table for those types instead.
+func prevented_loss_value(_target_ref: Dictionary, _residual_fraction: float) -> int:
+	return -1
+
+
+## Books a city-services receipt: the money reaches the treasury NOW (the player
+## taps and the number moves), and doc 03's hourly settlement reports it on the
+## `city_services` ledger line without settling it a second time.
+## `source` is `"dispatch"` or `"street"`.
+func credit_city_service(_amount: int, _source: String, _reason: String) -> void:
+	pass
+
+
 ## data/difficulty.json `escalation` row, owned/loaded by doc 03 (C-17). The base
 ## world answers with the nominal pair; `CityIncidentWorld` reads the live row.
 func difficulty_escalation_mult() -> float:

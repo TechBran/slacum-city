@@ -760,6 +760,17 @@
 				}
 			},
 			{
+				"_comment": "report 98 RR-79. The LOG carries the celebration grant and the push does not: city_level_up already wakes the player for that moment, and a second push for the same rung would be the game repeating itself. A payment, though, belongs in the money ledger — this is the row that makes the grant a thing the player can find again an hour later.",
+				"type": "level_up_grant_paid",
+				"category": "economy",
+				"notify_id": "city_level_grant",
+				"state": "normal",
+				"args": {
+					"level": "city_level",
+					"amount": "@money:amount"
+				}
+			},
+			{
 				"type": "building_completed",
 				"category": "economy",
 				"notify_id": "construction_complete",
@@ -982,7 +993,8 @@
 			"tax",
 			"power_tariff",
 			"water_tariff",
-			"fines"
+			"city_services",
+			"assistance"
 		],
 		"expense_keys": [
 			"building_maint",

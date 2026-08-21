@@ -335,6 +335,39 @@ func credit(amount: int, reason: String) -> void:
 	credits.append({"amount": amount, "reason": reason})
 
 
+## Report 98 RR-78 — doc 03 prices a resolve and ceilings it. This stand-in
+## carries doc 06 §2.7's own six values so the lifecycle tests keep measuring
+## the SHAPE (tier and speed) they were written to measure, and applies no
+## clamp: `prevented_loss_value` below answers −1, which is the same answer the
+## live world gives for an asset class doc 03 prices no capital for. A test that
+## wants the ceiling exercised drives the real `CityIncidentWorld`
+## (`tests/test_balance_gates.gd` gate 31 does).
+var dispatch_payout_base := {
+	"crime": 350.0, "structure_fire": 900.0, "transformer_failure": 600.0,
+	"water_main_break": 500.0, "traffic_accident": 300.0, "storm_damage": 400.0,
+}
+var manual_dispatch_mult := 1.50
+
+
+func dispatch_payout(type_id: String, shape_mult: float, manual: bool,
+		_target_ref: Dictionary, _residual_fraction: float) -> int:
+	var base := float(dispatch_payout_base.get(type_id, 0.0))
+	if base <= 0.0:
+		return 0
+	return int(round(base * shape_mult * (manual_dispatch_mult if manual else 1.0)))
+
+
+func prevented_loss_value(_target_ref: Dictionary, _residual_fraction: float) -> int:
+	return -1
+
+
+## The receipt lands in the same `credits` ledger the old bare `credit()` used,
+## so every assertion written against it still reads the same list — and the
+## source rides along for the tests that care which half of the line it was.
+func credit_city_service(amount: int, source: String, reason: String) -> void:
+	credits.append({"amount": amount, "reason": reason, "source": source})
+
+
 func debit(amount: int, reason: String) -> bool:
 	debits.append({"amount": amount, "reason": reason})
 	return true

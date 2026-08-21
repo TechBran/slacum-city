@@ -9,9 +9,12 @@ extends RefCounted
 ## (tests 33 / 38) are enforced HERE as well as in the test suite, so a
 ## reintroduced price or weather table fails the boot, not just CI.
 
-## C-07 / R-14 and C-49: none of these keys may exist in doc 06's data.
+## C-07 / R-14, C-49 and RR-78: none of these keys may exist in doc 06's data.
+## `reward_base` is the newest of them — the last dollar column outside
+## `data/economy.json`, moved to `city_services.dispatch_payout_base` by the
+## ruling that closed doc 06's Wave-1 open question 6.
 const FORBIDDEN_KEYS := [
-	"purchase_cost", "upkeep_per_game_hour", "dispatch_cost",
+	"purchase_cost", "upkeep_per_game_hour", "dispatch_cost", "reward_base",
 	"repair_material_base", "weather_speed_mult", "road_class_mult",
 	"weather_mults", "base_fire_risk_by_archetype", "level_risk_slope",
 	"s_req_base_by_archetype", "s_level_slope", "heat_mult", "rain_mult",

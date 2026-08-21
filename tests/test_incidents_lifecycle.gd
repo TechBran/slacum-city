@@ -649,11 +649,17 @@ func _mid_incident_system(empty: bool = false) -> IncidentSystem:
 
 # -------------------------------------------------------------- grep guards
 
-## Doc 06 §7 test 33 (C-07 / R-14) — no price lives in doc 06's data, and every
-## vehicle's economy_id resolves in doc 03's table.
+## Doc 06 §7 test 33 (C-07 / R-14, extended by RR-78) — no price lives in doc
+## 06's data, and every vehicle's economy_id resolves in doc 03's table.
+##
+## `reward_base` is the newest name on the list and was the last dollar column
+## standing outside doc 03's monopoly. The match is quote-delimited, which is
+## what lets `data/incidents.json`'s `_reward_note` name the retired key in prose
+## — RR-17's rule, and the same one doc 10's `_pricing_owner_note` relies on.
 func test_no_price_in_doc06_data() -> void:
 	var forbidden := ["purchase_cost", "upkeep_per_game_hour", "dispatch_cost",
-			"repair_material_base", "weather_speed_mult", "road_class_mult"]
+			"repair_material_base", "reward_base", "weather_speed_mult",
+			"road_class_mult"]
 	for path in ["res://data/incidents.json", "res://data/vehicles.json",
 			"res://data/dispatch.json"]:
 		var text := JSON.stringify(StarterCityLoader.read_json(path))
