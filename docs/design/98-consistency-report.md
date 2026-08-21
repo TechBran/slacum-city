@@ -2962,3 +2962,131 @@ That killed the obvious candidate before it was implemented: `building_maint` is
 **The diagnosis: both money columns are artefacts, and this pass swapped which one is showing it.** `value created` *un*-inverted in the same run (balanced $965,739 against neglect's $925,644, where it used to read $834,156 against $952,519). Neither flip is the maintenance knob. Cash-in-bank is a **stock** — it records how much of its income an agent declined to convert into city — so giving both agents more money moves the stock toward whichever one converts less, and the agent that also buys repairs converts more. **An agent that skips maintenance holding more cash is correct**; that is what "maintenance costs money" means. The design claim was never that neglect ends poorer.
 
 **RULED: gate 4's money column is `net_mean_per_hour`.** It is the **flow**; it is what condition drives through doc 03's `f_condition`; it separates the pair by **12–20 % on all three seeds in both arms**; and gate 5 already uses it for the same claim one comparison up. `value created` is refused as the replacement on the evidence — seed 9001 separates the pair by **0.29 %** on it, and doc 92 already ruled once (gate 12c, Wave 8) that a threshold fitted on the matrix must be measured on the matrix rather than on one seed's noise. **No constant moved**; the column moved to the thing the knob acts on. The health columns were never in doubt: min condition 0.798 vs 0.391, dark share 0.19 % vs 30.66 %.
+
+## 33. WAVE 14 — the street gets something to do, and three render rules come out of it (binding)
+
+*The STREET LIFE layer (doc 11 §2.17). Three of its findings generalise past the
+layer that found them, and two of the three are defects a headless suite is
+structurally incapable of catching — they were found by looking at a screenshot,
+which is why the rulings below each name the assertion that now stands in for the
+eye. This section changes no `sim/`; the layer is a pure event consumer and its
+hash neutrality is proved by an interleaved full-frame test, not asserted.*
+
+### RR-81 — A distance field is DATA, and `source_color` is a lie about it (docs 11 §2.17, 91 §11, 93 §S1)
+
+**The symptom.** Every attention marker in the city drew as a **perfect, empty
+pin** — the chip, the tail, the rim and the pulse all correct, and no mark inside
+any of them. The `+$N` labels drew, which is what made it look like a marker bug
+rather than a page bug.
+
+**The cause, and it is one word.** `StreetGlyphAtlas` builds a signed distance
+field: the stored value is `0.5 − d / 2·SPREAD`, so the contour a shader tests
+against is `field > 0.5`. The uniform was declared
+
+```glsl
+uniform sampler2D glyph_page : source_color, filter_linear, repeat_disable;
+```
+
+and `source_color` tells Godot the texture is **sRGB-encoded colour**, so the
+sampler decodes it. **0.561 — the field one texel inside a stroke — comes back as
+0.275.** Every `field > 0.5` test in the file fails, every mark vanishes, and
+nothing errors, because a decode of a valid texture is a valid texture.
+
+**Why the labels survived and hid it.** A label draws `max(ink, outline)`, and
+the outline contour sits at `0.5 − label_outline_w` = **0.16** — below the
+decoded 0.275. So the labels kept drawing their outline shape at full alpha and
+looked *nearly* right, while the markers, which only ever test the 0.5 contour,
+went silently blank. A partial survivor is worse than none: it argues the page is
+fine.
+
+**Ruled, and it generalises past this file.** **A sampler is hinted
+`source_color` if and only if the texture is a COLOUR a human picked.** A
+distance field, a mask, a lookup table, a packed set of channels — none of them
+are. The rule has a companion this pass also paid for and that points the other
+way:
+
+**A MultiMesh INSTANCE COLOUR is LINEAR and Godot converts nothing on that
+path.** A `source_color` uniform is converted for free; so is
+`StandardMaterial3D.albedo_color`; `MultiMesh.set_instance_color` is neither. An
+authored `#F25242` therefore renders as if it were linear `(0.95, 0.32, 0.26)`,
+which displays at roughly sRGB `(250, 165, 150)` — the marker came out the colour
+of a plaster. `StreetLifeModel` now converts its whole authored palette once, at
+`configure()`, and says why in the file.
+
+**Filed as `A91-D-36` (Low), not fixed from this branch:** `VehicleView` and
+`ConstructionVehicleView` pass their authored liveries into `set_instance_color`
+raw and have the same latent lift. On a SHADED surface it is much less visible
+than on an unshaded billboard and reads as a deliberately chalky palette rather
+than as a bug — which is exactly why a branch that only *found* it should not be
+the branch that re-saturates a fleet and a plant hire. It is an art call on two
+shipped layers: the lead's, not a street-life branch's.
+
+**The assertion that stands in for the eye.** `tests/test_street_life.gd`
+`test_every_glyph_has_ink_at_the_contour` asserts every glyph has texels on BOTH
+sides of 0.5 inside its own cell, and `test_the_shaders_keep_this_renderers_rules`
+reads the shader source. Neither can see an sRGB decode — that happens in the
+driver — so the durable guard is the RULE, written here and in the shader's own
+header, plus the screenshot repro in doc 11 §2.17.
+
+### RR-82 — A screen-space affordance is laid out in SCREEN space (docs 11 §2.17, 93 §S2)
+
+**The symptom.** `+$120` read as `+ 20` for the first third of a second, and the
+number skewed and foreshortened as the camera turned.
+
+**The cause, two of them, both the same mistake.** The label's glyph run was
+placed in WORLD space — `origin + (i·pitch − span/2, 0, 0)` — so it lay along
+world **+X**, not along the screen. At any camera yaw but one it therefore
+foreshortened; and because it was centred on the marker's own world position, its
+middle glyphs sat **behind the marker chip**, which is where the `$` and the `1`
+went.
+
+**Ruled.** **A billboard's siblings are laid out in the billboard's own frame.**
+Every glyph of a label now shares ONE world origin and carries its SLOT
+(`i − (n−1)/2`) in `INSTANCE_CUSTOM.a`; the shader steps them apart along the
+quad's local **+X**, which is screen right by the time the billboard transform is
+done. One float per instance, no camera basis on the CPU, and the run is exactly
+horizontal at every yaw and every zoom. The label also starts clear of the
+marker's own top before it begins to rise.
+
+**And the same rule has a size half.** The rise was authored in METRES
+(`label_rise_m` 1.55) against a marker that holds an ANGULAR size — so at Z0 it
+was a hand's width and at Z1 a twitch. It is now `label_rise_frac` × the marker's
+own size, and the label travels the same number of screen pixels at every pose.
+The general form: **a quantity that decorates a screen-sized thing is measured in
+that thing, not in metres.**
+
+### RR-83 — An empty MultiMesh still costs a draw call (docs 11 §2.13/§2.17, 93 §S3)
+
+**The measurement.** `profile_frame --street-life=5` against `--street-life=0`,
+bench city, balanced, everything else identical:
+
+| pose | before | after | delta |
+|---|---|---|---|
+| Z0 | 237 dc | 241 dc | +4 |
+| Z1 | 233 dc | 237 dc | +4 |
+| Z2 | 196 dc | **200** dc | **+4** |
+
+Z2 is the wrong number and the harness said so out loud: its own census line read
+`4 MultiMeshes declared, 1 submitting`, because at 420 m every body is past
+`body_radius_m` and only the marker buffer has anything in it. **Three buffers
+holding `visible_instance_count == 0` were each costing a call.**
+
+**Why the culler cannot save you.** Every MultiMesh in this renderer carries an
+explicit world-sized `custom_aabb` — it has to, because instances are written
+straight into the buffer and never update the auto AABB (the note is on every
+`_add_layer` in `game/render/`). So the frustum test passes for every one of
+them, every frame, whether they hold anything or not.
+
+**Ruled.** **Emptying a buffer is not the same as switching it off. A layer that
+gates its instances by distance must gate its NODES by count**:
+`node.visible = n > 0`, on the same line that writes `visible_instance_count`.
+Z2 then reads **197** — the one live marker buffer, and nothing else. The layer's
+`active_buffers()` is now exactly its draw-call cost and `profile_frame` prints
+it beside the timing, so the claim is checkable rather than asserted.
+
+**Where else this applies.** Any layer whose instance count legitimately reaches
+zero: this one, `ConstructionVehicleView`'s five buffers on a city with no sites,
+`PowerInfraView`'s smoke and spark buffer on a healthy grid. `PowerInfraView`
+already gates its wire buckets by DISTANCE for the same reason and by the same
+mechanism (`wire_gate_m`), which is the precedent — this ruling only says that
+*count* is a gate too. Not re-audited from this branch; filed for the lead.

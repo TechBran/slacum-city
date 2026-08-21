@@ -64,6 +64,16 @@ extends SceneTree
 ##                      four nodes per site and would bury the figure this flag
 ##                      exists to read.
 ##   --site-stage=S     stage 1..6 every `--sites` site is held at (default 2)
+##   --street-life=N    stand N STREET LIFE opportunities (doc 11 §2.17) on the
+##                      road tiles nearest the focus and drive `StreetLifeView`
+##                      every frame, so the layer's draw-call and CPU cost can be
+##                      A/B'd against `--street-life=0`. The two runs differ in
+##                      nothing else, so the `dc` delta IS the layer.
+##   --street-collect=F collect one of them every F frames and immediately spawn
+##                      a replacement, so the measured frames always carry a
+##                      poof and a rising `+$N` (0 = never, the quiet case).
+##                      This is the WORST frame the layer has: every marker,
+##                      every burst and every label the caps allow, at once.
 ##   --pad-shadows=0|1  whether the transformer pad buffer casts into the sun's
 ##                      shadow pass (default: whatever `data/render.json`'s
 ##                      `power_infra.pad_shadows` says). The A/B behind that
@@ -122,8 +132,16 @@ var _roads: RoadSurfaceView
 var _streetlights: StreetlightView
 var _vehicles: VehicleView
 var _construction: ConstructionVehicleView
+var _street: StreetLifeView
 var _flood: FloodView
 var _construction_usec := 0
+var _street_usec := 0
+## Round-robin cursor and id allocator for `--street-collect`.
+var _street_ids: Array[int] = []
+var _street_tiles: Array[Vector2i] = []
+var _street_cursor := 0
+var _street_next_id := 1
+var _street_frames := 0
 var _env: EnvironmentController
 var _camera_state: CameraState
 var _camera_rig: CameraRig
@@ -278,6 +296,15 @@ func _build_scene() -> void:
 		if int(_opts["pad_shadows"]) >= 0:
 			_power_infra.set_pad_shadows(int(_opts["pad_shadows"]) == 1)
 		_force_distress(float(_opts["power_distress"]))
+	if int(_opts["street_life"]) > 0:
+		# doc 11 §2.17. Same shape as `--sites`: a layer the shell drives, stood
+		# up here so the `dc` delta against `--street-life=0` IS the layer.
+		_street = StreetLifeView.new()
+		stage.add_child(_street)
+		_street.setup(_render_data)
+		_street.set_preset(String(_opts["preset"]), _render_data)
+		_street.set_road_probe(StreetLifeView.road_probe(_sim.world))
+		_stand_up_street_life(int(_opts["street_life"]))
 	if int(_opts["sites"]) > 0:
 		_construction = ConstructionVehicleView.new()
 		stage.add_child(_construction)
@@ -384,6 +411,73 @@ func _stand_up_sites(count: int, stage_index: int) -> void:
 	# measured frames have full yards and lorries on the road. A cold layer
 	# would measure the cheap case and call it the budget.
 	_construction.set_game_minutes(float(_opts["site_gm"]))
+
+
+## The N road tiles nearest the focus, turned into opportunities — one of each
+## kind in rotation, so all three bodies AND the stash sparkle are in the frame.
+## Nearest-first for the same reason `--sites` is: a layer that is culled is a
+## layer whose cost is zero, and measuring that is measuring nothing.
+func _stand_up_street_life(count: int) -> void:
+	var centre_tile: Array = (_sim.loader.world_header.get(
+			"city_center_tile", [56, 56]) as Array)
+	var focus_tile := Vector2(float(centre_tile[0]), float(centre_tile[1]))
+	var wanted: Vector2 = _opts["focus"]
+	if wanted.x >= 0.0:
+		focus_tile = wanted
+	var tiles: Array = _sim.roads.graph.road_tiles_sorted() if _sim.roads != null \
+			else []
+	if tiles.is_empty():
+		printerr("profile_frame: --street-life needs a road network")
+		return
+	var ranked: Array = tiles.duplicate()
+	ranked.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		var da := Vector2(float(a.x), float(a.y)).distance_squared_to(focus_tile)
+		var db := Vector2(float(b.x), float(b.y)).distance_squared_to(focus_tile)
+		if absf(da - db) > 0.01:
+			return da < db
+		if a.x != b.x:
+			return a.x < b.x
+		return a.y < b.y)
+	var kinds := ["crook", "dog", "goat", "valuables"]
+	# Spread them a few tiles apart: four opportunities on one junction is not a
+	# picture anyone has to draw, and not the one the layer is budgeted for.
+	var step := maxi(1, ranked.size() / maxi(count * 3, 1))
+	for i in mini(count, ranked.size()):
+		var tile: Vector2i = ranked[mini(i * step, ranked.size() - 1)]
+		_street_tiles.append(tile)
+		_street_ids.append(_street_next_id)
+		_street.feed_events([{"type": &"opportunity_spawned",
+				"id": _street_next_id, "kind": kinds[i % kinds.size()],
+				"tile": tile, "reward": 80 + i * 45}])
+		_street_next_id += 1
+	# Wind the wander past its own cycle so the measured frames catch bodies
+	# mid-stride rather than all standing on their spawn waypoint.
+	_street.set_game_minutes(37.0)
+
+
+## One frame of the layer, plus `--street-collect`'s churn. Collecting and
+## immediately respawning is what keeps a poof and a rising label in EVERY
+## measured frame — the worst case, rather than the one-in-thirty a real cadence
+## would happen to put in front of the camera.
+func _drive_street_life(delta: float, camera_pos: Vector3) -> void:
+	var every := int(_opts["street_collect"])
+	if every > 0 and not _street_ids.is_empty():
+		_street_frames += 1
+		if _street_frames >= every:
+			_street_frames = 0
+			var slot := _street_cursor % _street_ids.size()
+			var going: int = _street_ids[slot]
+			var tile: Vector2i = _street_tiles[slot]
+			_street.feed_events([{"type": &"opportunity_collected",
+					"id": going, "reward": 120 + slot * 60}])
+			_street_ids[slot] = _street_next_id
+			_street.feed_events([{"type": &"opportunity_spawned",
+					"id": _street_next_id,
+					"kind": ["crook", "dog", "goat", "valuables"][slot % 4],
+					"tile": tile, "reward": 80 + slot * 45}])
+			_street_next_id += 1
+			_street_cursor += 1
+	_street.refresh(delta, _env.last_night, 1.0, -1.0, camera_pos)
 
 
 func _build_ground(stage: Node3D) -> void:
@@ -555,6 +649,11 @@ func _process(delta: float) -> bool:
 	# a fast desktop (mean and p95 both sit on the refresh interval), so a
 	# sub-millisecond layer is invisible in it. `Time` is a TOOL read — nothing
 	# in `sim/` or `game/render/` touches a wall clock.
+	_street_usec = 0
+	if _street != null:
+		var s0 := Time.get_ticks_usec()
+		_drive_street_life(delta, camera_pos)
+		_street_usec = Time.get_ticks_usec() - s0
 	_construction_usec = 0
 	if _construction != null:
 		var t0 := Time.get_ticks_usec()
@@ -574,6 +673,7 @@ func _process(delta: float) -> bool:
 			"primitives": int(Performance.get_monitor(
 					Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)),
 			"construction_usec": _construction_usec,
+			"street_usec": _street_usec,
 		})
 	if _samples.size() < int(_opts["frames"]):
 		return false
@@ -613,6 +713,7 @@ func _summarise(pose_key: String) -> Dictionary:
 	var draw_calls := 0
 	var primitives := 0
 	var cons := PackedFloat64Array()
+	var street := PackedFloat64Array()
 	for s: Dictionary in _samples:
 		frame.append(float(s["frame_ms"]))
 		cpu += float(s["cpu_ms"])
@@ -620,7 +721,9 @@ func _summarise(pose_key: String) -> Dictionary:
 		draw_calls = maxi(draw_calls, int(s["draw_calls"]))
 		primitives = maxi(primitives, int(s["primitives"]))
 		cons.append(float(s["construction_usec"]) * 0.001)
+		street.append(float(s["street_usec"]) * 0.001)
 	cons.sort()
+	street.sort()
 	var n := maxi(1, frame.size())
 	frame.sort()
 	var census: Dictionary = _model.tier_census()
@@ -661,6 +764,14 @@ func _summarise(pose_key: String) -> Dictionary:
 		"construction_p95_ms": 0.0 if cons.is_empty() \
 				else cons[clampi(int(ceil(0.95 * float(cons.size()))) - 1, 0,
 						cons.size() - 1)],
+		# Doc 11 §2.17's budget line, measured the same way and for the same
+		# reason: `frame_ms` on a fast desktop is presentation-bound, so a
+		# sub-millisecond layer is invisible in it.
+		"street_mean_ms": _mean(street),
+		"street_p95_ms": 0.0 if street.is_empty() \
+				else street[clampi(int(ceil(0.95 * float(street.size()))) - 1, 0,
+						street.size() - 1)],
+		"street_buffers": _street.active_buffers() if _street != null else 0,
 		# The non-building draw calls: the term this harness can A/B reliably,
 		# because the chunk tier census wobbles between runs and the building
 		# buckets wobble with it.
@@ -758,6 +869,19 @@ func _report() -> void:
 			print("    %s  layer CPU mean %.3f ms, p95 %.3f ms" % [
 					String(row["pose"]), float(row["construction_mean_ms"]),
 					float(row["construction_p95_ms"])])
+	if _street != null:
+		var scensus: Dictionary = _street.census()
+		print(("  STREET LIFE: %d live (%d crook, %d dog, %d goat) -> %d markers,"
+				+ " %d labels, %d bursts, %d fx rows"
+				+ " (%d MultiMeshes declared, %d submitting)") % [
+				int(scensus["live"]), int(scensus["crook"]), int(scensus["dog"]),
+				int(scensus["goat"]), int(scensus["markers"]), int(scensus["labels"]),
+				int(scensus["bursts"]), int(scensus["fx"]),
+				_street.layer_count(), _street.active_buffers()])
+		for row2: Dictionary in _results:
+			print("    %s  layer CPU mean %.3f ms, p95 %.3f ms, %d buffers" % [
+					String(row2["pose"]), float(row2["street_mean_ms"]),
+					float(row2["street_p95_ms"]), int(row2["street_buffers"])])
 	var out := String(_opts["out"])
 	if out != "":
 		var f := FileAccess.open(out, FileAccess.WRITE)
@@ -788,6 +912,7 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 		"focus": Vector2(-1.0, -1.0),
 		"no_power_infra": false, "power_distress": 0.0,
 		"sites": 0, "site_stage": 2, "site_gm": 900.0,
+		"street_life": 0, "street_collect": 0,
 		"pad_shadows": -1, "road_detail": -1,
 		"flood": 0.0, "flood_detail": -1,
 	}
@@ -815,6 +940,10 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			opts["site_stage"] = clampi(int(arg.substr(13)), 1, 6)
 		elif arg.begins_with("--site-gm="):
 			opts["site_gm"] = maxf(0.0, float(arg.substr(10)))
+		elif arg.begins_with("--street-life="):
+			opts["street_life"] = maxi(0, int(arg.substr(14)))
+		elif arg.begins_with("--street-collect="):
+			opts["street_collect"] = maxi(0, int(arg.substr(17)))
 		elif arg.begins_with("--atlas-lod="):
 			opts["atlas_lod"] = int(arg.substr(12))
 		elif arg.begins_with("--shots="):

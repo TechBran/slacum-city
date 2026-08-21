@@ -2490,6 +2490,189 @@ per frame (`_trip_window` called `leg_gm` called `has_route`), which at
 Arrays. Both are the same floats in the same order; §2.13's table has the
 measurement.
 
+### 2.17 STREET LIFE — the crook, the dog, the goat and the glint, **shipped 2026-08-21**
+
+**The defect this closes, in the player's own words.** *"There's not a lot of downtime of absolutely nothing to do… these things just pop up periodically, so a user scrubbing around their town can actually see them and give them money for things."* Until this pass, a city with nothing on fire and nothing under construction had **nothing happening on its streets that the player could act on**. §2.12's traffic moves and §2.16's plant works, but neither of them is *addressed to the player*: a car cannot be tapped, and a lorry that arrives is a thing that happens whether anyone is watching or not. The sim's opportunity system (`sim/street/opportunity_system.gd`) supplies the events; this section is the half that makes them **findable while scrubbing, and irresistible once found.**
+
+**What ships.** All new files; nothing under `sim/` was touched, and this layer never reads it.
+
+| file | role |
+|---|---|
+| `game/render/street_life_mesh.gd` (`StreetLifeMesh`) | the bodies. Crook **220 tris**, dog **192**, goat **252**, plus the flat quad everything else is drawn on. Extends `ConstructionRigMesh` — see below |
+| `game/shaders/street_life.gdshader` | the joint rig, walked in the **vertex** stage; one rotation per vertex, not a chain |
+| `game/render/street_glyph_atlas.gd` (`StreetGlyphAtlas`) | sixteen signed-distance marks — the digits, `+`, `$`, `!`, `k`, a paw, a bell — on one 256 × 20 page built in GDScript at boot |
+| `game/shaders/street_fx.gdshader` | marker, label, puff, ring and sparkle, **one shader, one buffer**, dispatched on a mode code |
+| `game/render/street_life_model.gd` (`StreetLifeModel`) | the story. `RefCounted`, Node-free, clock-injected: events + a tile probe in, poses out |
+| `game/render/street_life_view.gd` (`StreetLifeView`) | the hands. Four MultiMeshes, the distance gate, the shell's tap handles |
+| `data/render.json` → `street_life` | the tunables |
+| `tests/test_street_life.gd` | 526 assertions, including the hash gate below |
+| `tools/profile_frame.gd` → `--street-life=N`, `--street-collect=F` | the A/B instrument and the screenshot harness, both |
+| `tests/test_asset_completeness.gd` | two rows: §16's shader roster is 16 → **18**, both owned by `StreetLifeView` |
+
+#### The budget was six draw calls. It costs four.
+
+| buffer | what it draws |
+|---|---|
+| `MM_crook` | the hooded figure with the swag bag |
+| `MM_dog` | the stray |
+| `MM_goat` | the goat |
+| `MM_fx` | **markers, `+$N` labels, poof puffs, rings and stash sparkles** |
+
+The fourth is the interesting one. A marker, a floating digit, a puff of dust and a sparkle are the same object — a flat quad turned to face the camera, alpha-blended, writing no depth — so they are one MultiMesh with a **MODE in `INSTANCE_CUSTOM.r`** rather than four buffers and four calls. The two calls that gives back are what the shell's tap affordance and the next wave get to spend.
+
+The fourth kind of opportunity, a dropped **stash**, deliberately has no body at all: it is a `$` marker over a ground sparkle, so it varies the street for zero extra geometry and is what any *unknown* event kind falls through to. Guessing "goat" for an event this layer has never heard of would put livestock on the street because a string was typo'd.
+
+#### Articulation without a chain — how this rig differs from §2.16's
+
+§2.16's `construction_rig.gdshader` walks a strictly **nested** chain, because a boom carries an arm which carries a bucket. An animal is the opposite shape: four legs, a neck and a tail all hang off ONE barrel and none of them moves any other. So there is no cascade here. Every vertex names its joint in `UV2.x`; that joint names its own pivot and axis in `rig_pivot[8]` and its own `INSTANCE_CUSTOM` channel in `rig_sel[8]`; the vertex stage applies **exactly one rotation**:
+
+```
+j     = int(UV2.x)
+a     = dot(ang, rig_sel[j])           // channel mask × gain — one dot product
+R     = rot_z / rot_y / rot_x by rig_pivot[j].w
+VERTEX = R·(VERTEX − pivot) + pivot
+```
+
+`dot(ang, rig_sel[j])` rather than `ang[channel]` is deliberate: the mask carries the gain, so no driver has to support dynamic indexing into a vector.
+
+**And the pay-off is in `rig_sel`.** A trot is the two DIAGONAL legs swinging together against the other two — so all four legs read channel 0 and the second diagonal simply carries **gain −1**. Four legs, a neck and a tail — six moving parts — off **three** animated floats. The fourth is the leaving animation. The channels are identical for all three bodies so the model has one animator and not three:
+
+| channel | crook | dog | goat |
+|---|---|---|---|
+| `.r` LIMB | legs | all four legs, diagonally paired | ditto |
+| `.g` HEAD | a furtive **yaw** — he checks over his shoulder, and most while standing still | bob on the stride, nose down at rest | browse: head at the kerb while parked, level on the amble |
+| `.b` EXTRA | arms, counter-swinging the legs | tail, hardest while moving | tail flick |
+| `.a` FX | 0 = standing there, 1 = gone | | |
+
+The channel envelopes are authored **symmetric about zero** (`±0.62 rad` for limbs and head, `±0.72` for the extra), because `gain = −1` is only a true mirror across a symmetric range — an asymmetric one gives a trotting dog a limp. `tests/test_street_life.gd` asserts that, and asserts that every joint a MESH uses has a row in the rig table its MATERIAL uploads: a vertex on joint 6 of a body whose table stops at 5 rotates about the world origin, the animal draws with a leg through the pavement, and nothing else in the suite would say so.
+
+**The one channel that is not a joint.** `.a` FX is a scalar 0 → 1, and the instance COLOUR's alpha says which kind of leaving it is: **1 = collected**, so the body lifts `fx_lift_m` off the pavement and flashes; **0 = expired**, so it takes none of the lift and shrinks into its own feet instead. Shrinking about the body's own origin — which is on the ground between its feet — is what makes a collect read as a pop upward and an expiry read as sinking, from one float and no second shader.
+
+#### The three gaits ARE the characterisation
+
+Everything below is a pure function of `(id, elapsed game-minutes)`; the id is hashed for variation and there is no sim RNG anywhere in it.
+
+| kind | move | pause | the read |
+|---|---|---|---|
+| crook | 0.90 gm | 1.55 gm | **SKULKS.** A long wait and a short fast dash, head turning while he waits |
+| dog | 1.10 gm | 0.34 gm | **TROTS.** Barely a pause, diagonals swinging, tail going |
+| goat | 1.55 gm | 1.95 gm | **BROWSES.** A long head-down pause, an amble, and now and then a straight-legged hop |
+
+Each is hashed ±20% per id, so two crooks on one street never pace the same beat. The three read differently at Z1 *from their timing alone*, before any triangle of their bodies is resolvable — which matters, because at Z1 a 1.8 m body is **30 screen pixels** on a 1080-line frame.
+
+**Stride phase follows DISTANCE, not time.** `sp = travelled_m / stride_m`, so the legs match the speed the body is actually crossing the pavement at. Driving the cycle off the clock instead is the single most common way a walk cycle turns into a body sliding along with its legs waving.
+
+#### The wander is a CLOSED FORM, and that is what makes it deterministic
+
+Each opportunity gets a ring of hashed waypoints round its anchor, each leg gets a hashed move and pause duration, and the position at time `t` is read out of `fposmod(t, cycle)`. So it is a pure function of `(id, elapsed)` — **nothing accumulates.** Nothing drifts across a frame-rate change, a pause, a clock re-sync or a save; the same id walks the same path on every device; and a catch-up that skips six hours puts the goat exactly where the save says rather than where the frame counter got to. The test asserts it by sampling one id through two differently-stepped clocks and by comparing a walked model against one that jumped straight to the same minute.
+
+**TWO CLOCKS, and the split is deliberate.** The **wander** runs on GAME-MINUTES, like §2.12's traffic and §2.16's plant: a paused city is a still city, and a 3× city has three times as much happening. The **FX** — the collect burst, the rising label, a body shrinking as it leaves — run on REAL SECONDS. They are feedback about a TAP, not motion in the world, and a `+$120` that freezes in mid-air because the player paused a quarter-second after collecting is a bug, not a feature.
+
+#### The kerb, because a crook loitering in a live traffic lane is a different event
+
+The anchor is snapped off the road CLASS (`StreetLifeView.road_probe`, bound to the world map exactly as `PowerInfraFeed.road_probe` is), and there are three cases:
+
+* **The spawn tile IS a road** → the body belongs on that tile's FOOTWAY. Kerbed sides are found in a fixed order and the id picks between them, so two crooks on one tile do not stand on the same slab. The anchor lands in the middle of the 1.40 m (street) or 1.05 m (avenue) footway, at `asphalt_top_m + kerb_height_m` = 0.25 m — **the kerb §2.1.2 actually drew**, read from the `road_surface` block rather than restated here.
+* **A NEIGHBOUR is a road** → the footway on that road's near side is the pavement in front of this lot, which is exactly where a stray or a dropped wallet would be.
+* **No road in reach** → the body wanders its own tile at ground level, and the ellipse stays circular.
+
+**A snapped wander is SQUASHED across the kerb line** (`wander_across` = 0.30). Left circular, a 2.9 m wander round a 1.40 m footway puts the crook in the middle of the carriageway one second in four. Squashed, he never leaves 0.87 m of the kerb line — which is inside the tile, i.e. never in a traffic lane, and the test asserts exactly that bound.
+
+#### The marker holds a SCREEN size, not a metric one
+
+This is the "*a user scrubbing around their town can actually see them*" requirement, in numbers. `marker_angular` is **metres of marker per metre of camera distance** — an angular size — clamped at both ends:
+
+| pose | camera | marker | on a 1080-line frame |
+|---|---|---|---|
+| **Z0** | 18 m | 0.95 m (min clamp) | **78 px** — a pin, and a comfortable tap target |
+| **Z1** | 86.9 m | 2.69 m | **46 px** — legible while scrubbing, which is the pose that matters |
+| **Z2** | 420 m | 3.30 m (max clamp) | **12 px** at 0.30 alpha — subtle, present, not gone |
+
+Beyond `marker_fade_begin_m` (150 m) the alpha ramps to `marker_far_alpha` (0.30) at the visible radius, and a faded instance is **collapsed to a point in the vertex stage** so the rasteriser never sees it — the same gate `lamp.gdshader` uses for its daylight quads. The BODIES are gated 190 m earlier than the markers (`body_radius_m` 240 against `visible_radius_m` 430), because a 1.8 m body at Z2 is six pixels and not worth a triangle, while the marker is the thing the player is scrubbing FOR.
+
+The marker is a **map pin**: a rounded chip with a tail, drawn from an SDF in the fragment stage, with the kind's mark inside it — `!` for the crook, a paw for the dog, a bell for the goat, `$` for a stash. It **pulses in brightness and never in size**, and it **bobs on the CPU**, both for the same reason: the marker's size and position are the shell's tap target, so `marker_world_pos(id)` and `marker_radius_m(id)` have to be exactly where the thing is drawn.
+
+#### The page: sixteen marks, one texture, no font
+
+A floating `+$120` wants text, and the obvious tool is a `Label3D` — a Node per label, a `TextMesh` rebuild per value and **a draw call per label**. What ships instead is one 256 × 20 page in which every mark is a **signed distance field**, so a label is a run of MultiMesh quads sharing one buffer and one call, and `smoothstep` across the 0.5 contour reconstructs a hard edge at Z0 (82 px per metre) and Z1 (17 px) alike, with no mipmap chain and no second authored size. The same field gives the labels a dark outline for free, at a second contour.
+
+**The trap, and it is worth writing down.** A glyph here is authored as ink on a 5 × 7 cell grid, so it is a union of unit cells — and the *obvious* field is `min` over the cells of the box distance. That is wrong: at the seam between two touching cells both boxes report distance 0, so `min` puts **a contour along every internal cell edge** and the digits come out striped like graph paper. The distance to a union is the distance to the union's BOUNDARY, so that is what is measured: the boundary is extracted as axis-aligned edge segments (a cell edge with ink on exactly one side), collinear neighbours are welded into runs, and the sign comes from a grid lookup. Exact, seam-free, ~18 segments a glyph over 320 texels, and **8.9 ms of GDScript for the whole page, once per process**. `test_the_page_has_no_internal_seams` samples the four cell junctions at the centre of `+`.
+
+Rewards abbreviate at 10,000 (`+$12k`). That is not cosmetic: a label is a billboard whose width is glyph count × pitch, and `+$1250000` at Z0 is a nine-glyph banner three car-lengths wide lying across the street it was earned on. Six glyphs is the width the art is tuned for, and the ladder stops at `k` because `+$1.2M` would need a decimal point the page does not carry.
+
+#### The collect moment
+
+On `opportunity_collected`: the marker goes **that frame** (the thing has been taken; leaving it up for another 200 ms is the layer telling a lie), a **poof** takes its place — six puffs on hashed bearings plus one expanding ring — the body lifts and flashes as it shrinks, and a `+$N` rises off the marker's own position — `label_rise_frac` of the MARKER's size, not a fixed metre count, so it travels the same number of screen pixels at Z0 as at Z1 — on an ease-out, held solid for the first 55% of its life and faded over the rest. A number that starts dissolving the instant it appears is a number nobody reads. An animal **bounds off** as it goes (`bound_m` along its own heading, on a `sin` arc); the crook does not, because he is cuffed on the spot and the flash is what says so.
+
+On `opportunity_expired`: half the puffs, greyer, falling rather than flying, **no ring and no label** — because nothing was earned, and the absence of the number is the whole message.
+
+#### Measured
+
+`tools/profile_frame.gd --street-life=N` stands N opportunities on the road tiles nearest the focus and drives the layer every frame; `--street-collect=F` collects one every F frames and immediately respawns it, so **every measured frame carries a poof and a rising label** — the worst case, rather than the one-in-thirty a real cadence would happen to put in front of the camera. The two runs differ in nothing else, so the `dc` delta IS the layer.
+
+| pose | `--street-life=0` | `--street-life=5 --street-collect=45` | delta | layer CPU mean / p95 | fx buffers submitting |
+|---|---|---|---|---|---|
+| **Z0** D 18 m | 237 dc | **241 dc** | **+4** | 0.131 / 0.166 ms | 4 |
+| **Z1** D 86.9 m | 233 dc | **237 dc** | **+4** | 0.126 / 0.142 ms | 4 |
+| **Z2** D 420 m | 196 dc | **197 dc** | **+1** | 0.074 / 0.085 ms | 1 |
+
+`tools/profile_frame.gd --city=res://tests/fixtures/bench_city.json --preset=balanced --hour=13 --resolution=1920x1080`, 1,500 buildings, five opportunities, one collected every 45 frames. Against a **+6 budget** and a **0.3 ms** layer-CPU budget at five live.
+
+**Z2 costs one call, not four, and that is a line of code rather than luck.** A `MultiMeshInstance3D` whose buffer holds `visible_instance_count == 0` **still costs a draw call**, and this layer's custom AABB is world-sized — it has to be, because instances are written straight into the buffer and never update the auto AABB — so the frustum culler can never drop it either. The first measurement read **200 dc** at Z2 with all three body buffers empty (every body is past `body_radius_m` at that pose) and one live marker buffer. `StreetLifeView._write` now sets `node.visible = n > 0`, and Z2 reads 197. `active_buffers()` is therefore exactly the layer's draw-call count, and the profiler prints it.
+
+The whole page is built once per process at **8.9 ms** of GDScript, which is a boot cost and not a frame cost; `StreetGlyphAtlas.build_usec()` reports it.
+
+#### The repro commands the art was judged with
+
+The harness is `profile_frame` rather than a preview scene of its own, because
+the thing being judged is the marker against a REAL street at a REAL pose — a
+preview stage would put it against whatever background flattered it.
+
+```bash
+# Day, all three poses, five opportunities, one collected every 45 frames so a
+# poof and a rising +$N are in every measured frame.
+DISPLAY=:0 ~/.local/bin/godot --path "/home/bbx/Slacum City game" \
+    -s res://tools/profile_frame.gd -- \
+    --street-life=5 --street-collect=45 --hour=13 \
+    --warmup=30 --frames=45 --resolution=1920x1080 --shots=/tmp/sl_day
+
+# Night — the marker's emission lift and the glow threshold.
+DISPLAY=:0 ~/.local/bin/godot --path "/home/bbx/Slacum City game" \
+    -s res://tools/profile_frame.gd -- \
+    --street-life=5 --street-collect=40 --hour=21 \
+    --warmup=30 --frames=50 --resolution=1920x1080 --shots=/tmp/sl_night
+
+# The A/B control. Identical in every other respect, so the `dc` delta IS the
+# layer and an image diff of the two `--shots` directories IS the layer too.
+DISPLAY=:0 ~/.local/bin/godot --path "/home/bbx/Slacum City game" \
+    -s res://tools/profile_frame.gd -- \
+    --street-life=0 --hour=13 \
+    --warmup=30 --frames=45 --resolution=1920x1080 --shots=/tmp/sl_off
+```
+
+**Diff the two shot directories rather than eyeballing one.** Two of the three
+defects this pass fixed were found that way and neither could have been found by
+assertion: an SDF page hinted `source_color` drew a *perfect, empty* pin, and a
+label laid out in world space read as `+ 20` and skewed with the camera. A
+bounding box over `ImageChops.difference(off, on)` puts the crop window exactly
+on the layer, at every pose, in one line.
+
+#### The shell's handles
+
+The tap itself belongs to the shell. This layer publishes three things and nothing else:
+
+```gdscript
+view.live_ids()             -> Array[int]   # ids with a marker on screen NOW
+view.marker_world_pos(id)   -> Vector3      # where to aim, bob included; INF if not drawn
+view.marker_radius_m(id)    -> float        # how big the target is at this zoom
+```
+
+`marker_radius_m` exists because the target's size is not a constant: at Z0 the pin is 0.95 m across and at Z2 it is 3.30, and a tap radius authored in metres would be four times too generous at one end of the ladder and half the size of the mark at the other.
+
+#### Hash neutrality
+
+This layer is a **pure event consumer**: it takes a drained batch and a tile probe and gives back nothing — no command, no sim query, no route lookup, not one clock read of its own. `test_a_full_street_life_frame_leaves_the_state_hash_alone` pins it the only way it can be pinned: a clean 6-hour run against the same 6 hours with a full frame of this layer — spawns, wanders, collects, expiries and every road probe they take — driven at every hour boundary, comparing `state_hash()`. If a future change ever makes this layer read the simulation, that is what goes red, and not a screenshot three waves later.
+
 ## 3. Data Schema
 
 ### 3.1 `data/render.json`
@@ -2839,6 +3022,79 @@ It is a **JOIN**, not a depth probe. The rosters are the authored tables (`data/
 
 36. **The pose cache is bit-identical (§2.16b, 2026-08-20).** One scripted 700-frame timeline — irregular game-minute steps, a stage change at 5 % of frames, and a focus gate that walks the city so sites drop out of a pass and come back — replayed on a cached and an uncached view, comparing **every field of every emitted pose**. The focus gate is in the script on purpose: it is the only way a site loses its slice of a pose pool to another site, which is the one way a slice-index cache can be wrong and the one no amount of steady-state running would ever show. Two narrower tests pin the invalidation events (a stage change and a re-route each re-derive the site against a from-cold view) and one pins `_reprice` (a `configure()` that doubles `truck_speed_mpgm` halves the leg for a site that already has a route). `tools/profile_construction.gd --verify` runs the same comparison at profiling scale.
 
+### 7.3g Headless — STREET LIFE (`tests/test_street_life.gd`, §2.17)
+
+Thirty-one tests, **526 assertions**, over `StreetLifeMesh`, `StreetGlyphAtlas`,
+`StreetLifeModel` and `StreetLifeView`. Seven things are pinned and they are the
+seven that can break.
+
+37. **Bodies.** Crook ≤ 260 tris, dog ≤ 240, goat ≤ 280 — a body here is a hero
+    prop at Z0 and a thirty-pixel silhouette at Z1, so it is allowed more than a
+    car (90) and much less than the plant (520). And the one a reviewer would
+    miss: **every joint a MESH uses has a row in the rig table its MATERIAL
+    uploads.** A vertex on joint 6 of a body whose table stops at 5 rotates about
+    the world origin; the animal draws with a leg through the pavement and
+    nothing else in the suite would say so. Joint 0's mask is all zeros (the body
+    never swings about its own feet) and no joint drives off the FX channel.
+38. **The trot is a trot.** Fore-left and hind-right share a channel at gain +1
+    and the other diagonal carries −1; get the pairing wrong and the animal paces
+    like a camel. The three animation channels are authored **symmetric about
+    zero**, because `gain = −1` is only a mirror across a symmetric range.
+39. **The page.** Dimensions match what the shader indexes; every glyph has
+    texels on BOTH sides of the 0.5 contour inside its own cell (a blank cell is
+    a `$` marker with no `$` in it); and `test_the_page_has_no_internal_seams`
+    samples the four-cell junction at the centre of `+`, which is exactly where
+    the naive `min`-of-box-distances field puts a false contour and turns every
+    digit into graph paper. Rewards map to the right glyph run and **no reward
+    makes a label longer than six glyphs**, a million included.
+40. **The lifecycle.** Spawn puts a body inside its own tile's wander radius and
+    the shell can see it. Each kind draws its own body and the stash draws none.
+    A collect takes the marker away **that frame**, raises a burst and a label,
+    sets the instance alpha that tells the shader to flash, and the record is
+    dropped once both the label and the burst are done. An expiry does the same
+    minus the ring, minus the flash and — the whole point — **minus the label**.
+    A collect on something that already left is a no-op, and so is an unknown id.
+    The event feed reads `tile` as a `Vector2i`, an array or a dictionary.
+41. **The wander is deterministic.** Two models stepped at 60 Hz and at 10 Hz to
+    the same game-minute answer with the same position, heading and stride; a
+    model that WALKED there and one that JUMPED straight to it agree (the
+    save/load case, and the one an integrator would fail); and the function is
+    defined at 9,999 game-minutes, which is what a catch-up needs. Two ids
+    diverge by more than half a metre and get different gaits. A wander never
+    leaves its own radius **and does actually move**. `gm_per_s = 0` parks every
+    body exactly where it stands — while a `+$N` still rises, because the FX
+    clock is not the wander's.
+42. **The kerb.** A body on a road tile stands at `asphalt_top_m + kerb_height_m`
+    exactly in the middle of the 1.40 m footway and paces ALONG the street; a
+    body on the lot next door stands on the avenue's own 1.05 m footway across
+    the property line; with no road probe nothing snaps and everything still
+    draws. And the squash: a snapped wander never leaves 0.87 m of the kerb line,
+    which is inside the tile, i.e. **never in the carriageway**.
+43. **The budget.** Exactly **4** MultiMeshes, `active_buffers()` never exceeds
+    them, and a lone crook submits exactly two. The fx pool survives the worst
+    frame the caps allow — every live opportunity collected on one frame — and is
+    **sized from the caps rather than guessed at**. The roster evicts a finished
+    record before a live one and never the newest. Distance gates the bodies
+    before the markers, and past the visible radius nothing is drawn at all.
+44. **The marker reads, in screen pixels.** 46 px at Z1, 78 at Z0, 12 at Z2 on a
+    1080-line frame at doc 11's 40° FOV — asserted as numbers, because "legible
+    while scrubbing" is otherwise an opinion. `marker_world_pos` sits over the
+    body and clear of a goat's horns, returns `INF` once collected and for an id
+    the layer never had, and the marker **bobs through its full authored travel
+    without ever changing size** — the pulse is a brightness, because the size is
+    the shell's tap target.
+45. **The shaders keep this renderer's rules.** The rig arrays are the mesh
+    tables' size; the channel is selected by `dot(ang, rig_sel[j])` and not by a
+    dynamic index into a vector; the fx shader fetches **exactly once**, off
+    exactly one sampler, **outside every branch**; a faded instance is collapsed
+    in the vertex stage; and the pass writes no depth and opts out of fog.
+46. **The hash gate (§2.17).** Six game-hours of a real `CitySim` against the
+    same six with a full frame of this layer driven at every hour boundary — 48
+    spawns on real road tiles, 180 rendered frames, 24 collects, 24 expiries and
+    every road probe they take — comparing `state_hash()`. Bit-identical. If a
+    future change ever makes this layer read the simulation, this is what goes
+    red, and not a screenshot three waves later.
+
 ### 7.2c Headless — the incremental street rebuild (`tests/test_road_incremental.gd`, §2.1.2a)
 
 Seven tests over `RoadSurfaceView`'s stateful diff. The contract is one sentence — *after any sequence of edits, both uploaded buffers are byte-identical to a from-scratch rebuild of the same city* — and five of the seven are property tests, because the defect shape here is a dependency radius one tile too small and nothing but a lot of random edits on a lot of random cities finds that.
@@ -3084,6 +3340,30 @@ Deep dives when a gate fails: **Android GPU Inspector** for Adreno/Mali counters
                              "pile_out_m": 0.95, "rig_out_m": 4.40,
                              "beacon_hz": 1.35, "beacon_energy": 3.2, "lamp_energy": 2.2,
                              "visible_radius_m": 520.0, "max_sites": 28 },
+
+  "_street_life": "§2.17. TWO CLOCKS: the WANDER is in GAME-MINUTES (a paused city is a still city), the FX (collect_s, expire_s, burst_s, label_s) are REAL SECONDS. The footway numbers a body stands on are NOT here - the layer reads road_surface.asphalt_top_m, kerb_height_m and the two sidewalk widths, so a body stands on the kerb §2.1.2 actually drew. marker_angular is METRES OF MARKER PER METRE OF CAMERA DISTANCE, i.e. an ANGULAR size: 46 screen px at Z1 on a 1080-line frame, 78 at Z0, 12 at Z2. label_rise_frac and label_glyph_frac are fractions OF THE MARKER for the same reason - a rise authored in metres is a hand's width at Z0 and a twitch at Z1.",
+  "street_life": { "wander_radius_m": 2.9, "wander_across_frac": 0.30, "waypoints": 5,
+                   "gait_move_gm": [0.90, 1.10, 1.55, 1.0],
+                   "gait_pause_gm": [1.55, 0.34, 1.95, 1.0],
+                   "stride_m": [1.35, 1.05, 1.15, 1.0],
+                   "marker_angular": 0.0310, "marker_min_m": 0.95, "marker_max_m": 3.30,
+                   "marker_gap_m": 0.62, "marker_bob_m": 0.13, "marker_bob_hz": 0.44,
+                   "marker_pulse_hz": 0.62, "marker_pulse_depth": 0.20,
+                   "marker_energy_day": 1.00, "marker_energy_night": 1.45,
+                   "marker_fade_begin_m": 150.0, "marker_far_alpha": 0.30,
+                   "body_radius_m": 240.0, "body_fade_m": 45.0, "visible_radius_m": 430.0,
+                   "collect_s": 0.62, "expire_s": 0.70, "burst_s": 0.58,
+                   "label_s": 1.35, "label_rise_frac": 0.85, "label_energy": 1.35,
+                   "label_glyph_frac": 0.50, "label_pitch_frac": 0.66,
+                   "bound_m": 3.2, "rim_gain": 0.34, "glint_energy": 1.5,
+                   "flash_energy": 2.6,
+                   "crook_coat": "#333542", "dog_coat": "#8C6B45",
+                   "goat_coat": "#DBD9CC", "stash_coat": "#CCB866",
+                   "crook_marker": "#F25242", "dog_marker": "#6BB8F5",
+                   "goat_marker": "#8CD670", "stash_marker": "#FFCC3D",
+                   "label_tint": "#FFDB57",
+                   "max_live": 8, "max_bursts": 6, "max_labels": 6,
+                   "puffs_per_burst": 6 },
 
   "blob_shadow": { "enabled_presets": ["performance"], "y_m": 0.04,
                    "footprint_scale": 1.15, "alpha": 0.35, "night_fade": 0.6 },

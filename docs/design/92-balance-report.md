@@ -6400,3 +6400,58 @@ The health columns never wavered: min condition **0.798 vs 0.391**, dark share *
 2. **The retune's magnitude.** The curriculum's whole-run net roughly doubled (865 → 1,492 $/gh mean) because faster rungs compound into a bigger city. Every ruled ceiling still holds and the arc finishes eight game-days inside its bound, but if the lead wants a smaller step the single dial is `FOUNDING_ASSISTANCE_DAYS` (7 → 5 removes ~29 % of the subsidy without touching a derivation) — `FOUNDING_ASSISTANCE_PER_HOUR` is derived from the ledger and should not be the dial.
 3. **The dispatcher's premium is unmeasured in the matrix**, because no scripted agent in `tools/playtest.gd` calls `cmd_dispatch_unit`. That is exactly why the controls moved only through the retune, and it is also why `MANUAL_DISPATCH_MULT`'s effect on a real session is a number this report does not have. A `dispatcher` strategy that works the drawer would close it.
 4. **`infrastructure_first` lost 27 % of its `value created`** while gaining 66 % of its treasury, because with more cash it buys land (not construction spend) rather than buildings. No gate measures it and nothing is obviously wrong, but a control strategy whose *shape* changed under a revenue-side retune is worth one look.
+
+## 37. Pass 14 — the STREET LIFE layer is balance-NEUTRAL, and here is the proof rather than the assurance (2026-08-21)
+
+*Doc 11 §2.17 ships a layer that draws money-bearing opportunities on the street.
+A reader of this document is entitled to ask the obvious question — **does a
+render pass that draws rewards move a ledger line?** — and the honest answer has
+to be evidence, because "it is only a renderer" is exactly what was said about
+`profile_weights_of` and `weather_state_of` for thirteen waves (§33, report 98
+RR-69).*
+
+### 37.1 What this pass touched, exhaustively
+
+| tree | touched | why it cannot move a ledger line |
+|---|---|---|
+| `sim/` | **nothing** | the layer is a pure event CONSUMER: `feed_events(batch)` in, poses out. It issues no command, makes no sim query, takes no route lookup and reads no clock of its own |
+| `data/` | `render.json` only — one new `street_life` block and its `_street_life` note | `render.json` is the RENDERER's tunables file. No sim system reads it; `tools/profile_sim.gd` does not open it |
+| `game/render/`, `game/shaders/` | six new files, one edited (`profile_frame.gd`, a measuring instrument) | downstream of the sim by construction (constitution §3) |
+| `tests/` | one new file | — |
+
+**The rewards themselves are the sim's.** This layer is handed `reward` in the
+`opportunity_collected` payload and does exactly one thing with it: turns it into
+a run of glyphs. It never computes a reward, never proposes one, and never tells
+the sim a tap happened — the tap itself belongs to the shell, and the shell talks
+to `sim/street/opportunity_system.gd`. **Whatever the economics of an opportunity
+turn out to be, they are ruled in the sim's own section and measured in the
+section of this document that covers it, not here.**
+
+### 37.2 The gate that proves it rather than asserting it
+
+`tests/test_street_life.gd::test_a_full_street_life_frame_leaves_the_state_hash
+_alone`: a clean 6-game-hour run of `CitySim.boot_from_files()` against the same
+6 hours with **a full frame of this layer driven at every hour boundary** — 48
+spawns across all four kinds on real road tiles, 180 rendered frames, 24 collects
+and 24 expiries, and every road-class probe they take — comparing `state_hash()`.
+Bit-identical. It is the same instrument doc 11 §2.16 uses for the construction
+layer (`test_route_lookups_do_not_move_the_state_hash`) and for the same reason:
+if a future change ever makes this layer read the simulation, that assertion goes
+red rather than a screenshot three waves later.
+
+### 37.3 The four determinism baselines, unmoved
+
+`tools/profile_sim.gd --hash-only --baseline` on the founding city and on
+`res://tests/fixtures/bench_city.json`, at this fork: **all four digests match
+Wave 13's published values.** Not "should match" — re-run, and the run is in the
+branch report. The 30 balance gates are likewise untouched: nothing this pass
+wrote is on any path a gate walks.
+
+### 37.4 What this pass DOES cost, for the record
+
+Frame budget, not money. **+4 draw calls** at Z0 and Z1 and **+1** at Z2 against
+doc 11 §2.13's 320-call budget, and **0.131 ms** of layer CPU at five live
+opportunities against a 0.3 ms allowance — A/B'd with
+`tools/profile_frame.gd --street-life=0` versus `--street-life=5
+--street-collect=45`, the two runs differing in nothing else. Doc 11 §2.17 has
+the table.
