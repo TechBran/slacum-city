@@ -56,6 +56,7 @@ const SHADERS := [
 	"flood.gdshader", "ground.gdshader", "lamp.gdshader", "light_pool.gdshader",
 	"power_pad.gdshader", "power_smoke.gdshader", "power_wire.gdshader",
 	"road_overlay.gdshader", "road_surface.gdshader", "sidewalk.gdshader",
+	"street_fx.gdshader", "street_life.gdshader",
 	"vehicle.gdshader", "vehicle_headlight.gdshader", "water.gdshader",
 ]
 
@@ -75,6 +76,8 @@ const SHADER_OWNER := {
 	"road_overlay.gdshader": "res://game/render/road_overlay_view.gd",
 	"road_surface.gdshader": "res://game/render/road_surface_view.gd",
 	"sidewalk.gdshader": "res://game/render/road_surface_view.gd",
+	"street_fx.gdshader": "res://game/render/street_life_view.gd",
+	"street_life.gdshader": "res://game/render/street_life_view.gd",
 	"vehicle.gdshader": "res://game/render/vehicle_view.gd",
 	"vehicle_headlight.gdshader": "res://game/render/vehicle_view.gd",
 	"water.gdshader": "res://game/render/ground_surface.gd",
@@ -632,8 +635,11 @@ func test_19_the_matrix_census_is_what_doc_91_records() -> void:
 	assert_eq((tex.get("props", {}) as Dictionary).size(), 3, "prop pages")
 	assert_eq((tex.get("vehicles", {}) as Dictionary).size(), 1, "vehicle atlas")
 	# 16 since A91-D-26: `flood.gdshader` is doc 07 §2.4's standing water, which
-	# the sim had been integrating and nothing had been drawing.
-	assert_eq(SHADERS.size(), 16, "shaders")
+	# the sim had been integrating and nothing had been drawing. **18 since doc
+	# 11 §2.17**: `street_life.gdshader` is the crook, the dog and the goat, and
+	# `street_fx.gdshader` is the marker, the label, the poof and the sparkle —
+	# four effects on one buffer, which is why there is one shader and not four.
+	assert_eq(SHADERS.size(), 18, "shaders")
 	assert_eq((StarterCityLoader.read_json(VEHICLES).get("types", {}) as Dictionary).size(),
 			5, "doc 06 vehicle types")
 	assert_eq(DEFERRED_BODIES.size(), 1,

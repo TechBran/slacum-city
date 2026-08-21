@@ -1553,6 +1553,66 @@ rules the binary did not have is worse than no ladder"*; a rung that describes
 rules the **city section** did not have is the same fault with the same cost, and
 it charges every future migrator a rung to walk that answers nothing.
 
+## P. Wave-14 rulings — the street gets something to do, and the three rules that came out of drawing it (2026-08-21)
+
+*Doc 11 §2.17's STREET LIFE layer. The mechanics question this pass answers is
+the player's own — **"there's not a lot of downtime of absolutely nothing to
+do"** — and the answer is a render layer, so the rulings here are render rulings.
+The full arguments and the measurements are report 98 §31 (RR-77, RR-78, RR-79);
+what follows is what each one BINDS, in one line, because that is what a
+mechanics audit is for.*
+
+### P1 — A distance field is DATA, not colour (report 98 RR-77)
+
+**Binding:** a shader sampler carries `source_color` **if and only if** the
+texture is a colour a human picked. A signed distance field, a mask, a lookup
+table or a set of packed channels is data, and hinting it as colour makes the
+sampler decode it as sRGB — which is silent, which is valid, and which moved the
+`StreetGlyphAtlas` page's 0.561 contour value to 0.275 so that every mark on
+every marker in the city drew as nothing.
+
+**Companion, and it points the other way:** a **MultiMesh instance colour is
+LINEAR** and nothing on that path converts it. `source_color` uniforms and
+`StandardMaterial3D.albedo_color` are converted for free;
+`MultiMesh.set_instance_color` is not. Authored palettes destined for an instance
+buffer are converted ONCE, where they are read, and the file says so.
+
+**Open, and deliberately not closed from the branch that found it:**
+`VehicleView` and `ConstructionVehicleView` pass their authored liveries in raw
+and carry the same lift. Re-saturating a shipped fleet and a shipped plant hire
+is an art call on two layers this branch does not own.
+
+### P2 — A screen-space affordance is laid out in screen space, and measured in itself (report 98 RR-78)
+
+**Binding:** the siblings of a billboard — the glyphs of a floating label, the
+ticks of a floating gauge — are laid out in the **billboard's own frame**, never
+in world space. Laid out along world +X, a `+$120` skews and foreshortens with
+the camera yaw and puts its middle glyphs behind the marker it belongs to; it
+reads as `+ 20`. The fix is one float per instance (the glyph's SLOT) and an
+offset applied after the billboard transform, where local +X is screen right.
+
+**And the size half:** a quantity that decorates a thing which holds a SCREEN
+size is measured in that thing, not in metres. The label's rise was authored at
+1.55 m against a marker sized angularly, so it was a hand's width at Z0 and a
+twitch at Z1; it is a fraction of the marker now and travels the same number of
+screen pixels at every pose.
+
+### P3 — Emptying a buffer is not switching it off (report 98 RR-79)
+
+**Binding:** a `MultiMeshInstance3D` whose buffer holds
+`visible_instance_count == 0` **still costs a draw call**, and every MultiMesh in
+this renderer carries a world-sized `custom_aabb` by necessity — instances are
+written straight into the buffer and never update the auto AABB — so the frustum
+culler can never drop it either. **A layer that gates its instances by distance
+must gate its NODES by count**, on the same line that writes the count. Measured:
+three empty body buffers cost 3 of the 4 draw calls this layer read at Z2, where
+every body is out of range and only the marker buffer has anything in it.
+
+**The corollary that makes the claim checkable:** a layer that does this can
+publish `active_buffers()` and mean it, and the profiler can print it beside the
+timing. A budget claim that cannot be printed is a budget claim nobody re-checks.
+
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,
