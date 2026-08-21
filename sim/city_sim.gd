@@ -1249,21 +1249,28 @@ func restore_state(raw_body: Dictionary) -> void:
 	begin_restore(raw_body).run()
 
 
-## The same restore, resumable: eleven steps the shell may spend across frames
-## behind a loading veil (doc 13 §2.9). The cut points are where the measured
-## cost is, and the sim is INCONSISTENT at every seam, so nothing may tick,
-## render or query it between steps.
+## The same restore, resumable: steps the shell may spend across frames behind a
+## loading veil (doc 13 §2.9). The cut points are where the measured cost is, and
+## the sim is INCONSISTENT at every seam, so nothing may tick, render or query it
+## between steps.
 ##
-## Step costs on the 1,500-building benchmark city, workstation (report 98 §24):
+## **The step COUNT is a property of the city, not of this function.** Nine steps
+## are named here; the `roads` step splices in `RoadNetwork.load_section_steps()`
+## when it runs, and the road graph's own trace phase emits one step per
+## `RoadGraph.REBUILD_TRACE_NODE_BUDGET` nodes — so a bigger city is more steps,
+## not longer ones, which is the only shape a per-frame budget can be written
+## against. Ask `RestoreCursor.step_count()`; do not count the `add` calls below.
+##
+## `roads` is spliced rather than cut here because the seams inside a road load
+## are the road network's to name, and a restore that pretended to know them would
+## go stale the first time that loader grew a phase — which it just did, from
+## three phases to eight.
+##
+## Step costs on the 1,500-building benchmark city, workstation (report 98 §26):
 ## decode 31, core 4, world 23, records 0.1, roster 8, water 18, incidents 0.7,
-## roads_tiles 26, roads_graph 55, roads_state 37, finish 2. **What the veil
-## budget is written against is the LONGEST step, not the total** — 55 ms, which
-## is why `roads` is three steps and not one.
-##
-## `roads` is spliced in from `RoadNetwork.load_section_steps()` rather than cut
-## here: the seams inside a road load are the road network's to name, and a
-## restore that pretended to know them would go stale the first time that loader
-## grew a phase.
+## roads_tiles 16, then the road graph in four phases and the labelling and state
+## behind it. **What the veil budget is written against is the LONGEST step, not
+## the total.**
 func begin_restore(raw_body: Dictionary) -> RestoreCursor:
 	var cursor := RestoreCursor.new()
 	# One-slot holder rather than a member: two restores in flight is not a
@@ -1277,20 +1284,47 @@ func begin_restore(raw_body: Dictionary) -> RestoreCursor:
 	cursor.add("roster", func() -> void: _restore_roster(held["body"]))
 	cursor.add("water", func() -> void: _restore_water(held["body"]))
 	cursor.add("incidents", func() -> void: _restore_incidents(held["body"]))
-	# The road loader's own seams. Resolved at STEP time, not here: the body is
-	# still encoded when `begin_restore` returns, and `roads` is not a key until
-	# `decode` has run.
-	var road_steps: Array[Callable] = []
-	cursor.add("roads_tiles", func() -> void:
-		road_steps.assign(roads.load_section_steps(held["body"].get("roads", {})))
-		if not road_steps.is_empty():
-			road_steps[0].call())
-	cursor.add("roads_graph", func() -> void:
-		if road_steps.size() > 1:
-			road_steps[1].call())
-	cursor.add("roads_state", func() -> void:
-		if road_steps.size() > 2:
-			road_steps[2].call())
+	# The road loader's own seams, spliced WHOLE. Resolved at STEP time and not
+	# here — the body is still encoded when `begin_restore` returns, and `roads`
+	# is not a key until `decode` has run — so the first roads step is the one
+	# that asks for the list, runs the list's own first entry, and splices the
+	# rest into this cursor.
+	#
+	# It is spliced rather than named here because the seams inside a road load
+	# are the road network's, and there are now eight of them rather than three:
+	# `RoadGraph.rebuild_all()` used to be one 73.7 ms step and is four (doc 91
+	# A91-D-30, report 98 §26 RR-61). A `begin_restore` that hard-coded three
+	# indices would have quietly dropped five of them.
+	#
+	# `splice_next`, never `add`: the spliced steps have to land BEFORE `finish`
+	# below and before the `settle` step `SaveService.begin_load_slot()` appends
+	# after this function returns. See `RestoreCursor.splice_next`.
+	#
+	# The cursor is captured WEAKLY. A lambda stored in `cursor._steps` that also
+	# held a strong reference to `cursor` is a reference cycle, and `RefCounted`
+	# has no collector to break it — every restore would leak its own cursor and
+	# every closure hanging off it. The cursor is alive for as long as anything is
+	# calling `step()` on it, which is the only window this runs in.
+	var cursor_ref: WeakRef = weakref(cursor)
+	cursor.add("roads", func() -> void:
+		var road_steps: Array = roads.load_section_steps(held["body"].get("roads", {}))
+		if road_steps.is_empty():
+			return
+		(((road_steps[0] as Array)[1]) as Callable).call()
+		var live: RestoreCursor = cursor_ref.get_ref()
+		if live == null:
+			# No cursor to splice into: drain the rest here so a caller that let go
+			# of its cursor mid-restore still gets a whole city rather than half of
+			# one. Nothing does this; a half-restored city is worth a defensive line.
+			for i in range(1, road_steps.size()):
+				(((road_steps[i] as Array)[1]) as Callable).call()
+			return
+		var labels := PackedStringArray()
+		var steps: Array[Callable] = []
+		for i in range(1, road_steps.size()):
+			labels.append(String((road_steps[i] as Array)[0]))
+			steps.append((road_steps[i] as Array)[1])
+		live.splice_next(labels, steps))
 	cursor.add("finish", func() -> void: _restore_finish(held["body"]))
 	return cursor
 

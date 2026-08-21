@@ -29,10 +29,12 @@ extends SceneTree
 ##                    against the same city without the flag and the two columns
 ##                    are the A/B behind report 98 RR-44.
 ##   --steps          additionally break `restore` into `CitySim.begin_restore()`'s
-##                    nine resumable steps and print the per-step cost. This is
-##                    the table doc 13 §2.9's loading-veil budget is written
-##                    against: the LONGEST step is what a frame has to swallow,
-##                    not the total.
+##                    resumable steps and print the per-step cost. The step COUNT
+##                    is a property of the city — the road graph emits one trace
+##                    step per node batch — so the rows are numbered and named,
+##                    never named alone. This is the table doc 13 §2.9's
+##                    loading-veil budget is written against: the LONGEST step is
+##                    what a frame has to swallow, not the total.
 ##   --quiet          table only
 ##
 ## The table splits BOTH operations, because the two halves have different
@@ -138,8 +140,14 @@ func _step_table(sim: CitySim, city_path: String, repeats: int) -> void:
 		if target == null:
 			return
 		var cursor := target.begin_restore(body)
+		var index := 0
 		while not cursor.is_done():
-			var label := cursor.next_label()
+			# Positional, not by name: a step LABEL repeats (the road graph emits
+			# one `graph_trace` per node batch), and keying the table by label alone
+			# collapsed those rows onto one another — the table then showed the
+			# cheapest trace batch and dropped the rest of the total on the floor.
+			var label := "%02d %s" % [index, cursor.next_label()]
+			index += 1
 			var t0 := Time.get_ticks_usec()
 			cursor.step()
 			var ms := float(Time.get_ticks_usec() - t0) * 0.001
@@ -149,18 +157,18 @@ func _step_table(sim: CitySim, city_path: String, repeats: int) -> void:
 			totals[label] = minf(float(totals[label]), ms)
 	print("")
 	print("=== RESTORE STEPS — best of %d ===" % repeats)
-	print("  %-16s %10s" % ["step", "best ms"])
-	print("  " + "-".repeat(28))
+	print("  %-20s %10s" % ["step", "best ms"])
+	print("  " + "-".repeat(32))
 	var worst := 0.0
 	var sum := 0.0
 	for label in labels:
 		var ms := float(totals[label])
 		sum += ms
 		worst = maxf(worst, ms)
-		print("  %-16s %10.2f" % [label, ms])
-	print("  " + "-".repeat(28))
-	print("  %-16s %10.2f" % ["total", sum])
-	print("  %-16s %10.2f  <- doc 13 §2.9's per-frame worst case" % ["longest step", worst])
+		print("  %-20s %10.2f" % [label, ms])
+	print("  " + "-".repeat(32))
+	print("  %-20s %10.2f" % ["total", sum])
+	print("  %-20s %10.2f  <- doc 13 §2.9's per-frame worst case" % ["longest step", worst])
 
 
 func _row(name: String, values: PackedFloat64Array, bytes: int) -> void:

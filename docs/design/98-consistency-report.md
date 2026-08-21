@@ -1620,3 +1620,274 @@ ruined every capture — a comma-separated pose list set `IFS` globally,
 unresolved `--hour=` and was captured at whatever hour the save held. **The
 device half remains unverified and the script says so in its own summary rather
 than in a document nobody opens.**
+
+---
+
+## 26. WAVE 13 — the determinism defect, found where nobody was looking (binding)
+
+### RR-60 — A91-D-30 is a WATER defect, and the field that MOVES first is not the field that is wrong (docs 05 §3.2, 08 §2.8, 10 §3.2, 91 A91-D-30 + §20.2 item 18, 00 §5)
+
+**The root cause, in one paragraph.** `WaterDemandCache` keeps three per-zone
+demand sums — `zone_res`, `zone_com`, `zone_proc` — and maintains them
+**incrementally**: `set_demand` subtracts a building's old contribution from the
+running sum and adds its new one, once per changed building per utilities tick,
+which after a game-day of a founding city is tens of thousands of additions and
+subtractions in the order the city happened to change. A restore does not have
+that history. `WaterSystem.deserialize()` ends in `rebuild_zones()`, which calls
+`demand.reassign()`, which clears the three sums and rebuilds them with **one
+clean forward pass in sorted building order** — the same number, arrived at by a
+different route, and therefore **not the same float**. Measured on the founding
+city at seed 8191 after 24 game-hours: `zone_com[0]` is
+`0.99869999999999992` live and `0.99870000000000014` restored, a difference of
+one ULP, present **at the moment of the load and before anything advances**.
+`com_base` is a term of every zone's hourly demand, demand drives the pressure
+solve, the solve drives delivery, and within one further game-hour the two cities
+disagree about `water.hour_accum.delivered_m3` in a way `state_hash()` can see.
+**The fix is that the sums travel with the save** (`water.section_version` 2 → 3,
+additive), taken back immediately after the rebuild that re-derives each
+building's zone — which is the same shape, and the same argument, as doc 10
+§3.2's `edge_dynamics` two waves earlier: *a quantity that is a function of the
+city's HISTORY cannot be re-derived from its state.*
+
+**Roads was the wrong suspect, and the reason is worth more than the fix.**
+RR-52 named `roads.traffic_feed.vehicles[*].s_m` and `roads.edge_dynamics[*][1]`
+as "the first fields to move", filed the defect against `RoadNetwork`, and
+eliminated the only candidate it could name (`_last_hour_sampled`). Every one of
+those observations was correct and the conclusion drawn from them was not. The
+diff was taken **after** advancing, and after advancing, a chaotic system's
+loudest coordinate is whichever one amplifies fastest — here the cosmetic traffic
+feed, whose `speed_mpgm` is a multiplicative function of a smoothed congestion
+value, three systems downstream of the seed. The instrument that separates the
+two is a **reflection walk over every member of every live object, run before
+either city advances a tick**: `tools/diff_restore.gd` walks `RoadNetwork`,
+`RoadGraph`, `CongestionModel`, `RoutePlanner`, `TrafficFeed` and
+`TrafficSnapshot` — or any other `CitySim` member — comparing dictionaries by
+key ORDER as well as by value, floats with `is_same` rather than a tolerance, and
+collapsing the result into a per-field census. It found the answer in one run,
+and the answer was in the section nobody had a hypothesis about.
+
+> **RULING: a determinism divergence is diagnosed AT REST, never after
+> advancing.** The first field to move is evidence of amplification, not of
+> cause. A save→load bug report that names a field must say whether the field
+> differed *before* the two cities were stepped; if it did not, the field is a
+> symptom and the report has not found the defect yet.
+
+**And "at rest" has to mean every LIVE member, not the body.** The body was
+byte-identical in all three defects this section closes; every one of them lived
+in state the body does not carry. `state_hash()` is a gate, not an instrument.
+
+**The A/B, because a root-cause claim needs one.** Restoring at 24 h and then
+overwriting the restored city's four zone dictionaries with the live city's —
+changing nothing else, touching no other system — makes the founding city
+bit-identical after two further game-hours, at every save point tried. Without
+the patch the same runs diverge. Before the fix, on
+`CitySim.boot_from_files(8191)`, saving and then advancing two game-hours:
+
+| save taken at | at rest | after +2 game-hours | first field to differ |
+|---|---|---|---|
+| 2 h | identical | identical | — |
+| 26 h | identical | **DIFFERENT** | `water.hour_accum.delivered_m3`, 1 ULP |
+| 50 h | identical | **DIFFERENT** | `water.hour_accum.delivered_m3`, 1 ULP |
+| 74 h | identical | **DIFFERENT** | `water.hour_accum.delivered_m3`, 1 ULP |
+| 120 h | identical | **DIFFERENT** | — |
+
+and with the fix, every row reads *identical / identical*. **The 24-hour
+threshold is not a day boundary and never was**: the ULP is present from the
+first minutes of the city's life, and 24 game-hours is simply how long it takes
+to grow into a digit the hash can see. RR-52's *"it only starts to matter once a
+day boundary has been crossed"* was pattern-matching on the two save points that
+had been tried.
+
+**Why the suite could not see it, and what replaces the gate.** Every
+save → load → advance proof in the tree saved inside the first game-day:
+`tests/test_milestone1.gd` at 2 h, `test_save_service.gd` shorter,
+`test_save_chunked_restore.gd` at 9 h and 7 h. The gate was real and its window
+was smaller than a day. `tests/test_save_determinism_days.gd` is the widened one
+— saves at 2 h, 26 h, 50 h and seven game-days, restores, advances two further
+game-hours and asserts bit-identity, on the founding city **and** the benchmark
+city, walking one reference timeline so each milestone is checked against a city
+with real history rather than a fresh one. It is the most expensive file in the
+suite and that is the correct trade for the one property the constitution does
+not let this project trade.
+
+**And the widened gate immediately earned itself, which is the other half of the
+argument for writing it.** With `zone_sums` carried, three of the four save
+points were clean on both cities and the fourth was not: the **benchmark city,
+seven game-days in, aged on the coarse path**, diverged on
+`water.stats.last_rebuild_minutes` — **10080.0 live against 9960.0 restored**.
+The cause is the same shape as the first one and is not a float at all. That city
+had broken a main, so it was carrying `topology_dirty = true` into its next
+`advance()`, where it would rebuild its zones; the restored city has already
+spent that rebuild inside `deserialize()`, so it did not owe one, did not do one,
+and never re-stamped the timestamp. **A pending rebuild is work the city OWES,
+and work a city owes is history**: `pending: {topology, demand}` joins
+`zone_sums` on the same rung, and is the same argument `service_pending_h` (C-37)
+made for the un-banked remainder of a game-minute. It is worth noticing that
+neither of the two defects this section closes would have been found by looking
+harder at the roads section, and that the second was found by a test rather than
+by a person.
+
+### RR-60b — …and there WAS a roads defect with RR-52's exact fingerprint. It needs a dark signal, not a day boundary (doc 10 §2.6, §3.2)
+
+Two defects, one symptom, which is why one report could not separate them.
+
+`RoadGraph.rebuild_all()` builds every node with `powered = true` — the
+`_create_node` default — and **nothing between the rebuild and the end of
+`load_section()` ever wrote it**. So a city loaded with a substation down comes
+back with every signal lit. That is not a cosmetic difference for one tick.
+`RoadNetwork.step()`'s very first act is `graph.refresh_signal_power(…)`, and its
+return value is *how many nodes CHANGED*; a non-zero answer dirties **every edge
+in the city** and takes a full smoothed congestion pass. The live run's signals
+went dark hours ago and are not changing, so it takes no such pass. The restored
+city therefore applies **one extra smoothing step to all 644 edges on its first
+tick**, and from there `edge_dynamics` and the cosmetic feed's `speed_mpgm` walk
+away from the live run — which is, precisely, the ordering RR-52 described:
+`traffic_feed.vehicles[*].s_m` and `.speed_mpgm` first, `edge_dynamics[*][1]`
+immediately after.
+
+Reproduced with `tests/test_save_chunked_restore.gd`'s own mid-incident,
+mid-flood fixture — seed 8191, a storm injected across the save point and doc
+04's tutorial transformer failed under it — where the restored graph held
+**eleven** signalised nodes lit that the live one held dark. The fix is to derive
+rather than to persist: doc 04's grid is restored by `begin_restore`'s `core`
+step, three steps before roads, so `power_is_tile_powered` already answers
+correctly and `_load_edge_state` simply asks it. §3.2's own rule — *the graph is
+derived* — with the emphasis where it belongs: derived state has to actually be
+DERIVED, at the seam, and not left at a constructor default for the next tick to
+discover.
+
+**Why the caveat in `test_a_mid_incident_mid_flood_body_round_trips` never caught
+it.** That test asserted the restored city and the stepped-restore city agree
+with *each other*. They did — they were both wrong in the same way. The
+assertion it was missing is the one that was added with this fix: **and both must
+keep burning the way the city that was never saved does.**
+
+**Two more genuine roads restore defects were found on the way, and neither is
+the one above.** They are fixed in the same branch because they are real:
+
+* **Every edge of a live founding city carries `district_id == ""` for its whole
+  life, while its restored twin carries the real district on every one.**
+  `CitySim._boot_roads` calls `roads.bootstrap()` and assigns
+  `roads.district_of_tile` on the *next line*, so `_assign_districts()` inside
+  that bootstrap sees an invalid `Callable` and returns having written nothing;
+  and on a city where no road tile is ever edited, `_refresh_all_edge_state()` is
+  never reached again. A restore refreshes edge state after rebuilding the graph,
+  by which time the callable is valid — so the live city and the loaded city
+  genuinely disagree about which district every road is in. It is numerically
+  inert **today** only because `profile_weights_of` is injected by nothing, so
+  `_profile_weights` answers with the same default row for every district; the
+  day doc 10 §2.10's per-district land-use weights are wired in it becomes an
+  immediate divergence on the first congestion pass. `district_of_tile` is now a
+  property with a setter that re-stamps the edges, because a setter cannot be
+  forgotten the way a call after an assignment can.
+* **`RoadNetwork._mean_congestion` was left describing a city that no longer
+  existed.** `_load_edge_state` recomputes congestion cold at hour 12, caches the
+  mean of *that*, and then overwrites every edge's value with the saved one — and
+  never re-takes the mean. It is what `estimate_eta_practical` reads, doc 12 §9.2
+  asks ~40 of those inside one frame and doc 06 ranks dispatch candidates on
+  them, so the first frame after a load ranked units against a stale scalar until
+  the next game-minute's `full_pass` replaced it.
+
+And one that is a rung: **`roads.section_version` 2 → 3 persists
+`last_hour_sampled`.** Its `-1` default makes `_last_sample_hour()` answer a
+hard-coded **12.0**, which is the hour `_after_closure_change()` prices its
+immediate two-hop spillback recompute at — with smoothing BYPASSED, so it does
+not nudge those edges toward noon, it *sets* them to noon's `c_raw`. A closure
+opening in the first game-minute after a load therefore landed on a different
+congestion than the live run's, at every hour of the day except midday. RR-52
+tested this one by hand and correctly reported that it does not close the gap; it
+is still wrong, and it is now written down.
+
+**The founding-path hashes MOVED, and here is the proof that the trajectory did
+not.** Three keys were added to the save body, so `tools/profile_sim.gd
+--hash-only` prints different digests and any recorded baseline has to be
+re-taken. That is exactly the failure mode a baseline invites — *"the hash moved,
+re-record it"* — so it is answered with a measurement rather than an assurance.
+The A/B is the constitution's own protocol (`git diff > patch` / `git checkout
+--` / `git apply`; never `git stash`, whose ref is shared across worktrees), and
+what it compares is not the digest but **the canonical body itself**, pretty
+-printed and diffed line by line:
+
+| | founding (`data/starter_city.json`) | benchmark |
+|---|---|---|
+| lines differing, HEAD vs this wave | **25** | **25** |
+| …that are not a new key or a `section_version` stamp | **0** | **0** |
+
+The 25 are `roads.last_hour_sampled`, `roads.section_version` 2 → 3,
+`water.demand.zone_sums` (four sub-objects), `water.pending` (two booleans) and
+`water.section_version` 2 → 3. **Every number that existed at HEAD is the same
+number.** The identity pass is 24 coarse game-hours plus 2 fine ones on both
+cities, which is what `--hash-only` runs.
+
+For the record, the digests either side:
+
+| | HEAD | this wave |
+|---|---|---|
+| founding, coarse 24 h | `18e70625e633c254…` | `e8bffba1853f248e…` |
+| founding, fine 2 h | `4c3c52cdb4c5a3cc…` | `08bfdfaa3dd65281…` |
+| bench, coarse 24 h | `d6b2509c179987d3…` | `e760f9305d21d331…` |
+| bench, fine 2 h | `bf8dc7282758843b…` | `bd2d8f30d25827f4…` |
+
+### RR-61 — The largest indivisible step of a restore is a graph rebuild, and a graph rebuild has seams (docs 08 §2.14, 10 §3.2, 13 §2.9)
+
+`RoadGraph.rebuild_all()` was **73.7 ms of a 202 ms restore** on the
+1,500-building benchmark city — the longest single thing the game does on the
+main thread, and therefore the entire per-frame budget of doc 13 §2.9's loading
+veil, since a veil that spends one cursor step per frame is bounded by the
+longest step and not by the total. It is now four phases cut where the function
+already had them: `graph_scan` (clear + the 512 × 512 tile sweep, bounded by map
+AREA and so identical on every city), `graph_nodes` (§2.4's node predicate),
+`graph_trace` (the polyline walk, one step per 700 nodes) and `graph_finish`
+(orphan loops, node meta, the version bump).
+
+**Slicing the trace is exact, not approximate.** `_trace_from_nodes` is a loop
+over node ids in ascending order with `seen` and `_edge_key` carried across, so a
+batch boundary cannot change which edge is created, in what order, or with what
+id. `tests/test_roads_graph.gd::test_a_stepped_rebuild_lands_where_the_one_call_lands`
+asserts the strong form — same ids, same node pairs, same tiles in the same
+ORDER, at batch sizes down to **one node**, which puts a seam between every pair
+of nodes in the graph. And `rebuild_all()` itself is now `rebuild_all_steps()`
+drained on the spot, so there is one implementation and not two to drift.
+
+`RoadNetwork.load_section_steps()` returns `[[label, Callable], …]` and
+`CitySim.begin_restore()` splices the whole list rather than naming three indices
+of it — the seams inside a road load are the road network's, there are now eight
+of them, and a cursor that hard-coded three would have quietly dropped five.
+`RestoreCursor` gained one method for it, `splice_next`, and the reason it is an
+INSERT rather than an append is a bug this branch wrote and then caught:
+`SaveService.begin_load_slot()` adds a `settle` step of its own *after*
+`begin_restore()` hands the cursor back — the step that publishes the loaded UI
+state and fires the `loaded` signal — so an append put ten road-graph steps
+*behind* it and the city was announced as loaded with no road graph in it.
+`tests/test_save_chunked_restore.gd` now asserts the ORDER (`finish` last of the
+restore's own, `settle` last of all) and not only the membership, because
+membership is what a set of labels proves and order is what the bug was. The
+cursor is captured WEAKLY: a lambda stored in a cursor that also holds the cursor
+is a `RefCounted` cycle with no collector to break it.
+
+**Measured, `tools/profile_save.gd --city=res://tests/fixtures/bench_city.json
+--repeats=5 --steps`, workstation:**
+
+| | before | after |
+|---|---|---|
+| restore total | 202.4 ms | 203.8 ms |
+| longest step | **73.7 ms** (`roads_graph`) | **32.2 ms** (`decode`) |
+| longest ROADS step | 73.7 ms | **28.4 ms** (`roads_state`) |
+| steps | 11 | 19 (9 announced + 10 spliced) |
+
+The total is unchanged to within run-to-run noise, which is the point: this buys
+nothing but the right to hand the frame back, and the target it was written
+against — *no single restore step over 40 ms on the bench city* — is met with the
+longest step no longer belonging to roads at all. `tools/profile_graph_rebuild.gd`
+prints the four phases on their own: **15.1 / 4.9 / 10.0 + 9.8 + 8.4 / 7.0 ms**
+on 3,132 road tiles, 2,024 nodes and 3,092 edges.
+
+**One honest cost.** The trace slot count is derived from an exact ceiling — every
+road tile can be a node, which is the worst case §2.4 admits — so a city whose
+nodes are fewer than its tiles spends one or two no-op steps at the end of the
+trace. On the bench city that is two frames of nothing out of nineteen. The
+alternative is a ceiling that can be too small, and a rebuild that silently
+leaves half a graph untraced is not a failure mode worth being elegant about;
+`graph_finish` drains the remainder for exactly that reason, and
+`rebuild_all()`'s own one-slot path exercises that drain on every call, so it is
+never untested code.

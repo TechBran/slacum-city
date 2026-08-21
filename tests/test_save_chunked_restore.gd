@@ -10,8 +10,11 @@ extends SimTest
 ##   2. that patch moved off the sim's thread onto the write thread, behind
 ##      `SaveSection.finalize` — so `capture_detached()` must hand over a body
 ##      that aliases nothing the sim will touch next;
-##   3. `restore_state()` became eleven resumable steps — so draining them one at
-##      a time must land on the same city as draining them in one call.
+##   3. `restore_state()` became a list of resumable steps — so draining them one
+##      at a time must land on the same city as draining them in one call. (Wave
+##      13 grew that list: the road graph's rebuild is four phases instead of one
+##      indivisible 73.7 ms step, so the COUNT is now a function of the city and
+##      this file asserts the shape rather than a number.)
 ##
 ## Each of those is a claim about identity, and identity is what this file
 ## tests. Speed is `tools/profile_save.gd`'s job and doc 98 §24's.
@@ -173,8 +176,17 @@ func test_the_split_capture_equals_canonical_capture() -> void:
 
 # ------------------------------------------------------------ the chunked restore
 
-## The property the whole cursor rests on: eleven steps spent one at a time land
-## on the city one call lands on, hash for hash.
+## The property the whole cursor rests on: the steps spent one at a time land on
+## the city one call lands on, hash for hash.
+##
+## **The step COUNT is not a constant and this test no longer pretends it is.**
+## `begin_restore` names seven steps and then the `roads` step splices in
+## `RoadNetwork.load_section_steps()`, whose length is a function of the city —
+## `RoadGraph.rebuild_all()` emits one trace step per
+## `REBUILD_TRACE_NODE_BUDGET` nodes (doc 91 A91-D-30 item 4). So what is
+## asserted is the SHAPE: the list grows while it is being spent, every step is
+## labelled, the cursor finishes exactly what it advertises, and the four road-
+## graph phases are all in there.
 func test_a_stepped_restore_lands_where_a_single_call_lands() -> void:
 	for city_seed in [1337, 4242]:
 		var source := CitySim.boot_from_files(city_seed)
@@ -186,13 +198,35 @@ func test_a_stepped_restore_lands_where_a_single_call_lands() -> void:
 
 		var stepped := CitySim.boot_from_files(city_seed)
 		var cursor := stepped.begin_restore(body)
-		assert_eq(cursor.step_count(), 11, "the cut is eleven steps")
+		var announced := cursor.step_count()
+		assert_eq(announced, 9,
+				"eight named steps — the last of which splices roads — plus `finish`")
+		var seen: Array[String] = []
 		var spent := 0
 		while not cursor.is_done():
-			assert_ne(cursor.next_label(), "", "every step is labelled")
+			var label := cursor.next_label()
+			assert_ne(label, "", "every step is labelled")
+			seen.append(label)
 			cursor.step()
 			spent += 1
-		assert_eq(spent, 11, "and every one of them ran")
+		assert_eq(spent, cursor.step_count(), "the cursor spends exactly what it holds")
+		assert_true(spent > announced,
+				"the roads step adds the road loader's own seams (%d > %d)"
+				% [spent, announced])
+		for phase in ["graph_scan", "graph_nodes", "graph_trace", "graph_finish",
+				"roads_labels", "roads_state", "finish"]:
+			assert_true(seen.has(phase), "the spliced list carries `%s`" % phase)
+		# ORDER, not just membership. The spliced steps are INSERTED at the cursor
+		# rather than appended, and the reason is exactly this: `finish` was queued
+		# before the road seams existed, and `SaveService.begin_load_slot()` queues
+		# a `settle` behind `finish` that announces the city as loaded. An append
+		# would have fired both of those with no road graph in the city.
+		assert_eq(seen[seen.size() - 1], "finish",
+				"`finish` stays last however many road steps are spliced in")
+		assert_true(seen.find("roads") < seen.find("graph_scan"),
+				"the roads step splices its seams AFTER itself")
+		assert_true(seen.find("roads_state") < seen.find("finish"),
+				"and all of them before `finish`")
 		assert_eq(stepped.state_hash(), monolithic.state_hash(),
 				"stepped and monolithic restores must agree (seed %d)" % city_seed)
 
@@ -221,8 +255,9 @@ func test_stepping_past_the_end_is_a_no_op() -> void:
 	var cursor := sim.begin_restore(body)
 	cursor.run()
 	var settled := sim.state_hash()
+	var spent := cursor.completed()
 	assert_true(cursor.step(), "step() on a finished cursor answers done")
-	assert_eq(cursor.completed(), 11, "and completes nothing further")
+	assert_eq(cursor.completed(), spent, "and completes nothing further")
 	assert_eq(sim.state_hash(), settled, "and moves nothing")
 
 
@@ -253,16 +288,15 @@ func test_save_load_advance_is_bit_identical_through_the_cursor() -> void:
 ## player is most likely to take — the autosave fires on the same cadence
 ## whatever is burning.
 ##
-## **What this test does NOT assert, and why.** Writing it turned up a
-## determinism defect that predates Wave 12 by a long way (report 98 §24, defect
-## A91-D-30): on the founding city, a save taken after the first game-day
-## boundary does not replay bit-identically — the restored run's `roads`
-## traffic feed drifts within one game-hour, and it drifts whether the restore
-## was one call or eleven steps. It is a ROADS defect, not a serialization one; the
-## body is byte-identical, `at rest` matches, and both restore paths land on the
-## same wrong city. So this file asserts the three things it owns — the body
-## round-trips, the two restore paths agree with each other, and they agree at
-## rest — and the fourth is filed rather than smuggled into a passing test.
+## **The caveat this test used to carry is GONE, and it was pointing the wrong
+## way.** Wave 12 wrote here that a save taken after the first game-day did not
+## replay bit-identically and that the fault was in `roads`, because the roads
+## traffic feed was the loudest thing that moved. It was not: the seed was one
+## ULP in `WaterDemandCache`'s per-zone demand sums, which the live run reaches
+## incrementally and a restore rebuilt in one forward pass. `roads` was
+## downstream of it. Fixed in Wave 13 (report 98 §26 RR-60, defect A91-D-30), and
+## the property this file declined to assert is now asserted here and, at four
+## save points on two cities, in `tests/test_save_determinism_days.gd`.
 func test_a_mid_incident_mid_flood_body_round_trips() -> void:
 	var a := CitySim.boot_from_files(8191)
 	a.advance_hours(3.0)
@@ -285,10 +319,13 @@ func test_a_mid_incident_mid_flood_body_round_trips() -> void:
 	c.begin_restore(body).run()
 	assert_eq(c.state_hash(), a.state_hash(), "and restores exactly one step at a time")
 
+	a.advance_hours(4.0)
 	b.advance_hours(4.0)
 	c.advance_hours(4.0)
 	assert_eq(c.state_hash(), b.state_hash(),
 			"the cursor and the single call must keep burning the same way")
+	assert_eq(b.state_hash(), a.state_hash(),
+			"and both must keep burning the way the city that was never saved does")
 
 
 ## A body captured mid-storm, mid-construction, mid-development — the three
@@ -329,11 +366,25 @@ func test_a_stepped_slot_load_matches_a_single_call_one() -> void:
 	var fired: Array[int] = []
 	service.loaded.connect(func(slot: int) -> void: fired.append(slot))
 	var cursor := service.begin_load_slot(stepped, 1)
-	assert_eq(cursor.step_count(), 12, "eleven restore steps and a settle")
+	assert_eq(cursor.step_count(), 10, "the restore's nine announced steps, plus a settle")
+	# `settle` is what announces the city as loaded, and it is appended AFTER
+	# `begin_restore` hands the cursor back — so it must still be the last thing
+	# to run once the road loader has spliced its own seams into the middle.
 	var spent := 0
-	while not service.step_load(cursor):
+	var last_label := ""
+	while true:
+		var label := cursor.next_label()
+		var done := service.step_load(cursor)
+		if label != "":
+			last_label = label
 		spent += 1
 		assert_true(spent < 64, "the cursor must terminate")
+		if done:
+			break
+	assert_eq(last_label, "settle", "`settle` runs last, after every spliced step")
+	assert_true(cursor.step_count() > 10,
+			"and the road loader spliced its seams in ahead of it (%d)"
+			% cursor.step_count())
 	assert_true(service.last_load_ok, "stepped load reports success")
 	assert_eq(fired.size(), 1, "`loaded` fires exactly once")
 	assert_eq(stepped.state_hash(), single.state_hash(),

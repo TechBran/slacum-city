@@ -478,12 +478,45 @@ func test_section_version_key() -> void:
 	# the edge's canonical tile key, and the graph's LABELLING now travels with
 	# the save. See `RoadNetwork.SECTION_VERSION` for why a rebuild cannot
 	# re-derive it once a road tile has ever been edited.
+	# 2 → 3 (Wave 13): the daily sampler's `last_hour_sampled` cursor. See
+	# `RoadNetwork.SECTION_VERSION` for the two readers that were wrong without it.
 	assert_eq(int(section["section_version"]), RoadNetwork.SECTION_VERSION)
-	assert_eq(RoadNetwork.SECTION_VERSION, 2)
+	assert_eq(RoadNetwork.SECTION_VERSION, 3)
 	assert_false(section.has("schema_version"),
 			"schema_version exists ONLY on doc 08's envelope")
 	var text := JSON.stringify(section)
 	assert_false(text.contains("schema_version"), "and nowhere inside the section")
+
+
+## Doc 08 §2.8, the rung read from both ends: a v3 section carries the sampler
+## cursor and restores it, and a v2 section — every save the game has written
+## until now — still loads, to the `-1` it has always restored to.
+func test_the_daily_sampler_cursor_rides_the_save() -> void:
+	var net := RoadsTestRig.starter_network()
+	# Reach hour 14 of a game-day the way the sim does, so the cursor is a real
+	# sample point and not a poked member.
+	net.full_pass(RoadsTestRig.context(GameClock.TICKS_PER_HOUR * 14, 14.5))
+	var section := net.save_section()
+	assert_eq(int(section["last_hour_sampled"]), 14,
+			"the sampler banked hour 14 and says so")
+
+	var reloaded := RoadNetwork.new(TileGrid.new(), net.tun, RngStreams.new(1337))
+	reloaded.load_section(section)
+	assert_almost_eq(reloaded._last_sample_hour(), 14.5, 1e-12,
+			"the restored city prices an immediate closure spillback at the hour "
+			+ "it is actually in, not at the hard-coded noon a -1 produces")
+
+	# The v2 body: additive-first, so dropping the key restores the old behaviour
+	# rather than refusing the load.
+	var old := section.duplicate(true)
+	old["section_version"] = 2
+	old.erase("last_hour_sampled")
+	var legacy := RoadNetwork.new(TileGrid.new(), net.tun, RngStreams.new(1337))
+	legacy.load_section(old)
+	assert_almost_eq(legacy._last_sample_hour(), 12.0, 1e-12,
+			"a v2 section has no cursor and lands on the documented default")
+	assert_eq(legacy.graph.edge_count(), net.graph.edge_count(),
+			"and the rest of a v2 section loads exactly as it always did")
 
 
 func test_save_load_roundtrip() -> void:

@@ -27,7 +27,28 @@ var snapshot: TrafficSnapshot
 # --- injected sibling interfaces (doc 10 §5.1). All optional; roads degrades
 # --- to a well-defined default rather than crashing when a sibling is absent.
 var power_is_tile_powered: Callable = Callable()  # doc 04
-var district_of_tile: Callable = Callable()  # doc 09
+## Doc 09. **Injecting this re-stamps the edge records**, and that is not a
+## convenience: `bootstrap()` runs before the integrator has anything to inject
+## (`CitySim._boot_roads` builds the network, bootstraps it, and assigns the
+## siblings on the next line), so `_assign_districts` inside that bootstrap sees
+## an invalid Callable and returns without writing a single `district_id`. On a
+## city where no road tile is ever edited — the founding city, for its whole life
+## — `_refresh_all_edge_state()` is never reached again, so **every edge of a live
+## founding city carries `district_id == ""` for ever, while its restored twin
+## carries the real district on every one** (`load_section` refreshes edge state
+## after the graph is rebuilt, by which time the Callable is valid).
+##
+## That is numerically inert only because `profile_weights_of` below is not
+## injected by anything yet, so `_profile_weights` answers with the same default
+## row for every district. The day doc 10 §2.10's per-district land-use weights
+## are wired in, it becomes an immediate save→load→advance divergence on the
+## first congestion pass. A setter cannot be forgotten the way a call after the
+## assignment can, which is the whole reason it is one.
+var district_of_tile: Callable = Callable():
+	set(value):
+		district_of_tile = value
+		if value.is_valid() and graph != null and graph.edge_count() > 0:
+			_refresh_all_edge_state()
 var profile_weights_of: Callable = Callable()  # doc 09
 var weather_state_of: Callable = Callable()  # doc 07
 var repair_quote: Callable = Callable()  # doc 03 economy.repair_cost_road(class, frac)
@@ -1763,6 +1784,8 @@ func save_section() -> Dictionary:
 		"c_day_sum": _serialize_c_day_sum(),
 		"c_day_samples": _c_day_samples,
 		"wx_wear_day": _wx_wear_day,
+		# The hour the daily sampler last banked — see `SECTION_VERSION` rung 3.
+		"last_hour_sampled": _last_hour_sampled,
 	}
 
 
@@ -1786,12 +1809,29 @@ func save_section() -> Dictionary:
 ##          congestion and density value landed on the wrong edge, and
 ##          save→load→advance identity broke one game-hour later.
 ##
+##   2 → 3  `last_hour_sampled` — the day-scoped cursor of the hourly `c_day`
+##          sampler — is written down instead of being left at its `-1` default.
+##          It has two readers and both of them were wrong across a load. The
+##          loud one is `_last_sample_hour()`, which turns `-1` into a hard-coded
+##          **12.0**: that is the hour `_after_closure_change()` prices its
+##          immediate two-hop spillback recompute at, with `bypass_smoothing`
+##          TRUE — so it does not nudge those edges toward noon, it *sets* them
+##          to noon's `c_raw`. A closure opening in the first game-minute after a
+##          load therefore lands on a different congestion than the live run had,
+##          at any hour of the day that is not midday. The quiet one is
+##          `full_pass`'s `ctx.hour_of_day != _last_hour_sampled` guard: restored
+##          as `-1`, the hour the save was taken inside gets sampled a second
+##          time, so that game-day settles doc 03's `e_roads_repair` from 25
+##          samples instead of 24.
+##          Additive: a v2 section restores it as `-1` and behaves exactly as it
+##          does today, which is doc 08 §2.8's additive-first rule.
+##
 ## A version-1 section is read for everything else and its two id-keyed maps are
 ## dropped: both are recomputable (congestion is a pure function of the state
 ## §4 recomputes cold, `c_day_sum` re-accumulates over the running game-day), so
 ## an old save loads to a city that is at most one game-day of road-repair
 ## billing off, instead of one that is silently wrong forever.
-const SECTION_VERSION: int = 2
+const SECTION_VERSION: int = 3
 
 
 ## `{canonical tile key: [edge_id, congestion, dens_index]}` — one map doing
@@ -1842,38 +1882,63 @@ func _serialize_c_day_sum() -> Dictionary:
 ## Restore the section in ONE call. Every caller that has no frame to protect —
 ## tools, tests, the legacy loader — wants this.
 func load_section(data: Dictionary) -> void:
-	for step in load_section_steps(data):
-		(step as Callable).call()
+	for entry in load_section_steps(data):
+		((entry as Array)[1] as Callable).call()
 
 
-## The same restore, cut into THREE resumable steps for `RestoreCursor`
-## (report 98 §24, doc 13 §2.9).
+## The same restore, cut into resumable steps for `RestoreCursor` (report 98 §24
+## and §26 RR-61, doc 13 §2.9). Returns `[[label, Callable], …]` — the label is a
+## stable KEY, not a sentence, and `CitySim.begin_restore()` splices the whole
+## list into its own cursor rather than naming the seams itself, because the seams
+## inside a road load are the road network's to name.
 ##
 ## Roads is the longest thing a load does — **118 ms of a 204 ms restore** on the
 ## 1,500-building benchmark city — so a loading veil that spends one restore step
-## per frame is bounded by THIS call and not by the other eight put together. The
-## cut is at the two seams the code already had:
+## per frame is bounded by THIS call and not by the other eight put together.
 ##
-##   * `tiles` — the RLE block decode. Touches `_condition` and `_flags` and
+##   * `roads_tiles` — the RLE block decode. Touches `_condition` and `_flags` and
 ##     nothing that reads an edge id, because there are no edges yet.
-##   * `graph` — `rebuild_all()` and §2.4's id adoption. The single most
-##     expensive thing in a load, and indivisible: an edge that has been derived
-##     but not yet labelled is an edge nothing may look up.
-##   * `state` — everything restored AGAINST an edge id: closures, overrides,
-##     jobs, the traffic feed, the congestion history.
+##   * `graph_scan` / `graph_nodes` / `graph_trace…` / `graph_finish` —
+##     `RoadGraph.rebuild_all()`, cut at its own four seams. It was **73.7 ms**
+##     as one step and was the largest indivisible thing in a restore; see
+##     `RoadGraph.rebuild_all_steps`.
+##   * `roads_labels` — §2.4's id adoption and the polyline orientation. It is
+##     the step that turns a derived graph into THIS city's graph, and it is
+##     genuinely indivisible: an edge that has been derived but not yet labelled
+##     is an edge nothing may look up, so it may not be split from the rebuild by
+##     anything that could observe the graph in between (nothing may, between
+##     cursor steps — that is the cursor's contract).
+##   * `roads_state` — everything restored AGAINST an edge id: closures,
+##     overrides, jobs, the traffic feed, the congestion history.
 ##
-## The order is unchanged, line for line. What was one function is three
-## closures over the same `data`, and `load_section()` above runs them back to
-## back, which is why there is no second implementation to drift.
-func load_section_steps(data: Dictionary) -> Array[Callable]:
-	var steps: Array[Callable] = []
+## The order is unchanged, line for line, and `load_section()` above runs them
+## back to back — which is why there is no second implementation to drift.
+func load_section_steps(data: Dictionary) -> Array:
+	var steps: Array = []
 	if data.is_empty():
 		return steps
 	var version := int(data.get("section_version", 1))
-	steps.append(func() -> void: _load_tiles(data))
-	steps.append(func() -> void: _load_graph(data, version))
-	steps.append(func() -> void: _load_edge_state(data, version))
+	steps.append(["roads_tiles", func() -> void: _load_tiles(data)])
+	var held: Dictionary = {}
+	steps.append_array(graph.rebuild_all_steps(held,
+			RoadGraph.trace_slots_for(_saved_road_tile_count(data))))
+	steps.append(["roads_labels", func() -> void: _adopt_labels(data, version)])
+	steps.append(["roads_state", func() -> void: _load_edge_state(data, version)])
 	return steps
+
+
+## The road-tile count the saved RLE describes, without decoding it — the exact
+## ceiling `RoadGraph.trace_slots_for` wants, at a few dozen integer reads per
+## land block instead of a second 512 × 512 sweep.
+static func _saved_road_tile_count(data: Dictionary) -> int:
+	var total := 0
+	var blocks: Dictionary = data.get("blocks", {})
+	for key in blocks:
+		var record: Dictionary = blocks[key]
+		for pair in record.get("class", []):
+			if int((pair as Array)[0]) != RoadTunables.CLASS_NONE:
+				total += int((pair as Array)[1])
+	return total
 
 
 func _load_tiles(data: Dictionary) -> void:
@@ -1886,12 +1951,11 @@ func _load_tiles(data: Dictionary) -> void:
 	_deserialize_blocks(data.get("blocks", {}))
 
 
-func _load_graph(data: Dictionary, version: int) -> void:
-	graph.rebuild_all()
-	# BEFORE anything reads an edge id: adopt the live run's labelling (§2.4).
-	# Closures, overrides, the traffic feed and the congestion history are all
-	# restored against edge ids below, so this has to be the first thing after
-	# the rebuild — see `SECTION_VERSION` for what went wrong when it was not.
+## BEFORE anything reads an edge id: adopt the live run's labelling (§2.4).
+## Closures, overrides, the traffic feed and the congestion history are all
+## restored against edge ids below, so this has to be the first thing after the
+## rebuild — see `SECTION_VERSION` for what went wrong when it was not.
+func _adopt_labels(data: Dictionary, version: int) -> void:
 	if version >= 2:
 		var labels := {}
 		for key in (data.get("edge_dynamics", {}) as Dictionary):
@@ -1913,6 +1977,23 @@ func _load_graph(data: Dictionary, version: int) -> void:
 
 
 func _load_edge_state(data: Dictionary, version: int) -> void:
+	# **Signal power is DERIVED, and it has to be derived HERE rather than left to
+	# the first tick.** `rebuild_all()` builds every node with `powered = true`
+	# (the `_create_node` default), and nothing between there and here writes it —
+	# so a city loaded with a substation down has eleven dark signals lit. That is
+	# not a cosmetic difference for one tick: `step()`'s very first act is
+	# `refresh_signal_power`, which would find eleven nodes CHANGING and therefore
+	# dirty EVERY EDGE IN THE CITY and take a full smoothed congestion pass the
+	# live run — whose signals went dark hours ago and are not changing — does not
+	# take. One extra smoothing step on 644 edges, and save→load→advance identity
+	# is gone.
+	#
+	# Doc 04's grid is restored before roads is (`CitySim.begin_restore`'s `core`
+	# step), so `power_is_tile_powered` already answers correctly and the state can
+	# be re-derived exactly rather than persisted — §3.2's rule for anything the
+	# body already implies. This is report 98 §26 RR-60's second roads defect and
+	# it is the one whose fingerprint RR-52 actually saw.
+	graph.refresh_signal_power(power_is_tile_powered)
 	_refresh_all_edge_state()
 	next_closure_id = int(data.get("next_closure_id", 1))
 	for entry in data.get("closures", []):
@@ -1956,6 +2037,8 @@ func _load_edge_state(data: Dictionary, version: int) -> void:
 				_c_day_sum[edge_id] = float(saved_c_day[key])
 		_c_day_samples = int(data.get("c_day_samples", 0))
 	_wx_wear_day = float(data.get("wx_wear_day", 0.0))
+	# §3.2 rung 3. A v2 section has no cursor and restores the `-1` it always did.
+	_last_hour_sampled = int(data.get("last_hour_sampled", -1))
 	var saved_dyn: Dictionary = data.get("edge_dynamics", {}) if version >= 2 else {}
 	if not saved_dyn.is_empty():
 		for edge_id in graph.edge_ids_sorted():
@@ -1966,6 +2049,15 @@ func _load_edge_state(data: Dictionary, version: int) -> void:
 				graph.edge(edge_id)["dens_index"] = float(pair[2])
 		congestion.epoch += 1
 		planner.invalidate_all()
+	# `_recompute_all_congestion` above left the cached mean over the COLD hour-12
+	# pass it had just written, and the loop that follows it then replaced every
+	# one of those values with the saved one — so the cache described a city that
+	# no longer existed. It is what `estimate_eta_practical` reads, doc 12 §9.2
+	# asks ~40 of those inside one frame, and doc 06 ranks dispatch candidates on
+	# them, so the first frame after a load ranked units against a stale mean
+	# until the next game-minute's `full_pass` overwrote it. Same values, same
+	# ascending order, same additions the live run made.
+	_mean_congestion = congestion.mean_congestion()
 
 
 func _restore_closure(entry: Dictionary) -> void:

@@ -567,7 +567,49 @@ The loader validates: every `components[variant][i]` row length equals `_compone
 
 **Changes from `section_version` 1** (migration `migrate_water_v1_to_v2`): `kind` → `variant` (+ `subtype` for `source`); the `backup` object collapses to the single boolean `backup_installed` — **`kw`, `fuel_l` and `start_timer_min` move to doc 04's `power` section** (C-36); `owning_incident` added to edges (C-46); `damage_fraction` added to jobs (C-16); `service_accum` added (C-37); `auto_refuel_backup` removed from `policy`. Volumes in the example are rescaled per C-34.
 
-**Not saved (rebuilt on load):** zone→tile maps, `tile_factor` caches, `feed_capacity`, `upstream_cap`, demand sums, `fire_draw`. `load()` ends with `rebuild_zones()` + `rebuild_demand_cache()`. Zone **ids** are unstable across rebuilds; the persisted `zones` array is keyed by a stable `zone_key` = smallest node id in the component, and re-mapped on load (pressure defaults to 1.0 if a zone key is unknown).
+**`section_version` 2 → 3 (Wave 13, report 98 §26 RR-60, defect A91-D-30).** Two
+additive keys, and both of them are **history rather than state**:
+
+```json
+"demand": {
+  "buildings": [ { "id": "APT-001", "archetype": "apartment", "tile": [40,32], "w_b": 1.62 } ],
+  "zone_sums": {
+    "res":   { "0": 4.8125 }, "com":   { "0": 0.9987 },
+    "proc":  { "0": 1.3741 }, "count": { "0": 37 }
+  }
+},
+"pending": { "topology": false, "demand": false }
+```
+
+The rung is **additive** — a v2 body has neither key, `adopt_zone_sums` declines
+and `pending` defaults to `false`, so the section restores exactly as it always
+has (doc 08 §2.8's additive-first rule) and there is no `migrate_water_v2_to_v3`
+to write.
+
+**`pending` is the rebuilds this city OWES.** A city that broke a main a tick
+before the save carries `topology_dirty` into its next `advance()` and rebuilds
+its zones there; a restored city has already spent that rebuild inside
+`deserialize()`, so without the flag it does not owe it, does not do it, and
+`stats.last_rebuild_minutes` — which IS in the save body — stops agreeing within
+one game-hour. Measured on the benchmark city seven game-days in: **10080.0 live
+against 9960.0 restored**. Same family as `service_pending_h` (C-37 / D-15
+proposal 3), and named the same way for that reason.
+
+**Why `zone_sums` exists, because the paragraph below used to say the opposite.** The
+three per-zone demand sums were listed as *"not saved (rebuilt on load)"*, and
+rebuilding them is what broke constitution §5. They are maintained
+**incrementally** while the city runs — `set_demand` backs a building's old
+contribution out of the sum and adds its new one, once per changed building per
+utilities tick — and `reassign()` rebuilds them with a single forward pass in
+sorted building order. Both are correct and the two float histories are **not
+the same float**: after 24 game-hours of the founding city `com_base` differs in
+its last bit, and one further game-hour is enough for the live city and its
+restored twin to disagree about how much water was delivered. A quantity that is
+a function of the city's HISTORY has to travel with the save; doc 10 §3.2 reached
+the same conclusion about smoothed congestion two waves earlier, for the same
+reason and in the same words.
+
+**Not saved (rebuilt on load):** zone→tile maps, `tile_factor` caches, `feed_capacity`, `upstream_cap`, `fire_draw`. `load()` ends with `rebuild_zones()` + `rebuild_demand_cache()`, **and then takes the saved `zone_sums` back** — the rebuild is what re-derives each building's zone, and the sums are what the live run held. Zone **ids** are unstable across rebuilds; the persisted `zones` array is keyed by a stable `zone_key` = smallest node id in the component, and re-mapped on load (pressure defaults to 1.0 if a zone key is unknown).
 
 ---
 
@@ -740,6 +782,9 @@ Every test constructs a `WaterSystem` with an injected clock, injected doc-01 ch
 | 25 | `test_scale_invariance` | Re-running Example A with every flow/volume constant divided by `WU_SCALE 0.1333` yields identical pressures, ratios and buffer hours (±1e-4) — proves the applied rescale changed no behaviour. |
 | 26 | `test_no_currency_and_no_curves` | Static scan of `data/water.json` + `sim/water/`: no key or literal carrying a dollar magnitude (C-07/C-16), no hourly curve (C-33), no `pressure_radius` / coverage-percentage term (C-06), no fuel constant (C-36). Fails loudly if a ruling is silently reverted. |
 | 27 | `test_save_roundtrip` | Save → load → `rebuild_zones()` → all zone pressures, tank volumes, jobs and service accumulators identical (±1e-4); `migrate_water_v1_to_v2` maps `kind`→`variant` and drops the fuel fields. |
+| 31 | `test_the_water_zone_sums_survive_the_round_trip_bit_for_bit` | **RR-60 / A91-D-30.** A founding city advanced 26 game-hours, saved and restored: every zone's `res_base`, `com_base` and `proc_base` compares equal under `is_same` — **bit-for-bit, not within a tolerance**, because the defect this guards was one ULP and every tolerance in the table above would have passed it. `building_count` too. |
+| 32 | `test_a_water_section_without_zone_sums_still_loads` | Doc 08 §2.8 additive-first: a v3 section stamps `section_version: 3` and carries `demand.zone_sums`; erase the key, stamp the version back to 2, and the body still restores to a city with non-zero zone demand — the rebuild answers, exactly as it did before the rung existed. |
+| 33 | `test_a_week_old_city_replays_from_its_save` | The whole property, and it lives in `tests/test_save_determinism_days.gd` rather than here because it is not a water test — it is the constitution's. Saves at 2 h, 26 h, 50 h (fine) and seven game-days (aged on the coarse path, the way a player ages a city), restores, advances two further game-hours and asserts an identical `state_hash()`, on the founding city and the benchmark city. |
 | 28 | `test_no_engine_deps` | Static scan: no `Node`, `Engine`, `OS`, `Input`, `Time` references under `sim/water/`. |
 | 29 | `test_perf_tick` | 120 zones / 600 mains / 20k developed tiles: `advance()` < 0.8 ms mean over 2,000 ticks; `rebuild_zones()` < 8 ms. |
 | 30 | `test_starter_headroom_reference` | **RR-11 guard.** Load doc 09's starter manifest and doc 02's water column: Σ `water_demand` over the 18/5/3/1 + 6 civic buildings == **5.56 ± 0.01 m³/h**; against `components.pump[L1].rated_flow_m3h == 40.0` → headroom `40.0 / 5.56 == 7.19 ± 0.02`, and the quoted `_provenance._starter_reference` block matches doc 09 §2.9.4 to the digit. Fails loudly if either doc's manifest moves without the other's quoted figure moving — the stale-quote failure mode that produced the withdrawn 8.2 / 4.9×. |

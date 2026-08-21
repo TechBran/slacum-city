@@ -155,6 +155,54 @@ func test_incremental_matches_full_rebuild() -> void:
 	assert_eq(mismatches, 0, "incremental rebuild tracks a full rebuild exactly")
 
 
+## **The stepped rebuild IS the rebuild** (doc 91 A91-D-30 item 4). `rebuild_all()`
+## was the largest indivisible step of a restore — 73.7 ms of a 202 ms load on the
+## benchmark city — and is now four phases a `RestoreCursor` can spend across
+## frames, with the trace phase sliced into `REBUILD_TRACE_NODE_BUDGET`-node
+## batches. Slicing it is only legitimate if a batch boundary changes nothing, so
+## this asserts the strong form: same edge ids, same tiles in the same ORDER, same
+## nodes, same components, whatever the batch size — including 1, which puts a
+## seam between every pair of nodes in the graph.
+func test_a_stepped_rebuild_lands_where_the_one_call_lands() -> void:
+	var tun := RoadsTestRig.tunables()
+	var reference := RoadsTestRig.starter_network().graph
+	assert_true(reference.edge_count() > 100, "the starter core is worth comparing")
+	var wanted := _labelled_signature(reference)
+	for slots in [1, 2, 3, 40]:
+		var net := RoadsTestRig.starter_network()
+		var held: Dictionary = {}
+		var steps: Array = net.graph.rebuild_all_steps(held, slots)
+		for entry in steps:
+			((entry as Array)[1] as Callable).call()
+		assert_eq(_labelled_signature(net.graph), wanted,
+				"%d trace slots must rebuild the identical graph" % slots)
+		assert_true((held["result"] as Dictionary).has("added_edges"),
+				"the last step publishes what `rebuild_all()` returns")
+	# One slot is what `rebuild_all()` itself uses, so the drain in `graph_finish`
+	# is on the shipped path and not a fallback nobody exercises.
+	assert_eq(RoadGraph.trace_slots_for(0), 1, "an empty graph still gets one slot")
+	assert_eq(RoadGraph.trace_slots_for(RoadGraph.REBUILD_TRACE_NODE_BUDGET), 1,
+			"a graph exactly one budget wide is one slot")
+	assert_eq(RoadGraph.trace_slots_for(RoadGraph.REBUILD_TRACE_NODE_BUDGET + 1), 2,
+			"one node past it is two")
+
+
+## `_signature` deliberately drops edge IDS, because an incremental retrace is
+## allowed to number differently. The stepped rebuild is NOT allowed to: it is the
+## same function, so it must produce the same labelling and the same polyline
+## orientation, and the traffic feed's `s_m` is measured against that orientation.
+func _labelled_signature(g: RoadGraph) -> String:
+	var rows := PackedStringArray()
+	for edge_id in g.edge_ids_sorted():
+		var record: Dictionary = g.edge(edge_id)
+		var tiles := PackedStringArray()
+		for t: Vector2i in record["tiles"]:
+			tiles.append("%d,%d" % [t.x, t.y])
+		rows.append("%d=%d>%d:%s" % [edge_id, int(record["node_a"]),
+				int(record["node_b"]), "|".join(tiles)])
+	return _signature(g) + " L[" + "/".join(rows) + "]"
+
+
 ## Node tile set + edge tile-sets + component partition — everything an edge id
 ## is allowed to differ on is deliberately excluded.
 func _signature(g: RoadGraph) -> String:
