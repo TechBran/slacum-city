@@ -118,14 +118,18 @@ either read-only or runs against the installed build.
 adb shell cmd package resolve-activity --brief com.slacumcity.game | tail -1
 ```
 
-`tools/bench_device.sh` hard-codes `com.godot.game.GodotApp`. Confirm it; an
-export-template change moves it and the script fails with a bare "Activity not
-started" that reads like a crash.
+~~`tools/bench_device.sh` hard-codes `com.godot.game.GodotApp`.~~ **Since
+2026-08-20 the script runs the line above itself, in pre-flight, and uses the
+answer** — the hard-coded name is only the `--dry-run` fallback, and it is
+`GodotAppLauncher` now. Confirm it anyway; an export-template change moves it and
+a session that assumes it fails with a bare "Activity not started" that reads
+like a crash.
 
 ### 1.2 How arguments reach the game — **do this probe first**
 
-`tools/bench_device.sh` launches with `--es cmdline "…"`, which is wrong three
-ways over. All three are readable in the source rather than guessed at:
+~~`tools/bench_device.sh` launches with `--es cmdline "…"`~~ — **it sends both
+correct forms as of 2026-08-20**; the three faults below are why, and they are
+readable in the source rather than guessed at:
 
 * Godot's Android launcher reads a **string ARRAY** extra, so `--es` (a single
   string) is the wrong `am` flag; `--esa` is the one that produces an array.
@@ -187,6 +191,11 @@ them. If that line is present and the camera still does not move, the fault is i
 easier one.
 
 ### 1.3 `--bench=S1|S2|S3` does not exist
+
+> **As of 2026-08-20 `tools/bench_device.sh` no longer sends it** — the script
+> was rewritten against this table (§3's closing note). The table below is still
+> the authority on what the installed build understands, and it is what the
+> script's `--self-test` greps `game/main.gd` for.
 
 Doc 11 §7.4 and `tools/bench_device.sh` both drive three scenarios with
 `--bench=S1 --preset=balanced --city=res://tests/fixtures/bench_city.json`.
@@ -787,10 +796,30 @@ direct, and all three need `game/main.gd`'s integration snippet plus one
    `road_surface.detail` to a settings row (or to `--es`) would make Q2's ladder
    directly measurable on the phone rather than extrapolated.
 
-`tools/bench_device.sh` also needs its `--es cmdline` corrected to
+~~`tools/bench_device.sh` also needs its `--es cmdline` corrected to
 `--esa command_line_params "--,…"` (or the simpler `--es args "…"`, which the
 plugin now also reads) and its `--bench=` scenarios replaced with the flag
-vocabulary in §1.3 before it can be run at all.
+vocabulary in §1.3 before it can be run at all.~~
+
+> **DONE 2026-08-20 (Wave 12). `tools/bench_device.sh` is rewritten against this
+> file.** Everything §1.1, §1.2 and §1.3 recorded as wrong with it is fixed *in
+> the script*: the activity is resolved live rather than hard-coded, every launch
+> carries **both** extra forms (`--esa command_line_params "--,a,b"` and
+> `--es args "a b"` — `game/dev_args.gd` merges and de-duplicates, so sending
+> both is free insurance), and `--bench=` is gone. The script now drives §Q1's
+> six poses (`--question=Q1 --now=17`), §Q6's three cold-start arms
+> (`--question=Q6`), §1's five pre-flight checks (`--question=preflight`) and the
+> "extras" block, and doc 11 §7.4's S1/S2/S3 survive as `--scenario=` re-expressed
+> in real flags. It carries §2's `framestats` parser and the `PERF`/`PERFIO`
+> summariser as functions, so the same code that reads a device capture is what
+> `--self-test` checks against known answers.
+>
+> **`--self-test` is the part to run before a session**: 20 checks, no device
+> needed, covering the flag vocabulary against `game/main.gd`'s own parse table,
+> the `--hour=` → `--advance-hours=` delta arithmetic including §Q1's day wrap and
+> its re-base, both launch forms, and both summarisers. **The device half is
+> still unverified and the script prints that in its own summary.** Start with
+> `--question=preflight`.
 
 ---
 

@@ -1795,6 +1795,51 @@ so a pass that gives them doors is a pass that wants a matrix, exactly as
 the wrapper, the door and the matrix — and §29 is the pass.** The other six rows
 stand as written.
 
+#### 17.6.2 The verb matrix, RE-TAKEN from the merged tree — `28b9550`, 2026-08-20
+
+*§17.6.1 asked for exactly this and named the reason: it was graded at `a892315`
+with two sibling branches still in flight. Both landed (`3bfa3cd`, Wave 11 §28).
+Re-graded here against the integrated tree, by grepping every `func cmd_*` under
+`sim/` for a caller under `ui/` or `game/`.*
+
+**`CitySim` re-exports 23 verbs. Twenty-two have a door. §17.6.1's prediction was
+exactly right, including which row would be the last one standing.**
+
+| §17.6.1's doorless verb | State at `28b9550` | The door |
+|---|---|---|
+| `cmd_route_feeder` | ✅ **CLOSED** | `ui/path_tool.gd:647` — two cards on doc 12 §2.7's drag-path tool, `Feeder` (class 1) and `Heavy Feeder` (class 2), doc 93 §J2. Also now DRIVEN by two playtest strategies, not one: `Balanced` (`playtest.gd:2115`) and `InfrastructureFirst` (`:1471`) |
+| `cmd_upgrade_water_component` | ✅ **CLOSED** | `ui/water_actions.gd:216`, as a node block on `ui/building_panel.gd` — S5, doc 93 §J1 |
+| `cmd_isolate_water_main` | ✅ **CLOSED** | `ui/water_actions.gd:274`, on `ui/incident_drawer.gd`'s expanded row — S6 |
+| `cmd_restore_water_main` | ✅ **CLOSED** | `ui/water_actions.gd:280`, the same control in its other mood |
+| `cmd_recall_unit` | ❌ **OPEN — the last one** | still no caller anywhere outside `sim/city_sim.gd:2764`; `tests/test_incidents_dispatch.gd:205` reaches `DispatchSystem.cmd_recall_unit` directly and never touches the wrapper. Doc 91 **A91-D-24**, unchanged |
+
+**The wrapper-less list is EIGHT, not seven, and the eighth has been missed by
+two audits.** Grepping `sim/city_sim.gd` for what it actually delegates to gives
+eight `RoadNetwork` / `WaterSystem` verbs it never calls:
+
+| verb | owner | status |
+|---|---|---|
+| `cmd_road_repair` | `RoadNetwork` | **ruled NOT a player verb**, doc 93 §J3 / doc 10 §2.13 (Wave 11) — the row is closed, not open |
+| `cmd_set_auto_repair_policy` | `RoadNetwork` | open; doc 10's spend cap, a *balance* surface |
+| `cmd_remove_main` | `WaterSystem` | open |
+| `cmd_overhaul_node` | `WaterSystem` | open |
+| `cmd_set_water_restrictions` | `WaterSystem` | open; doc 05's demand-management lever, a *balance* surface |
+| `cmd_set_water_policy` | `WaterSystem` | open |
+| `cmd_deploy_pump_truck` | `WaterSystem` | open |
+| **`cmd_install_backup_generator`** | `WaterSystem` | **open, and NEW to this list.** `sim/water/water_system.gd:1155`; the only callers in the repository are `tests/test_water_system.gd:338` and `:355`. §17.6.1 and doc 91 §17.2 both count seven and both omit it |
+
+So the honest count at this fork is **22 of 23 re-exported verbs have a door, one
+sub-system verb is ruled out of scope, and seven sub-system verbs remain
+unreachable by any shell.** Two of the seven (`cmd_set_water_restrictions`,
+`cmd_set_auto_repair_policy`) are balance surfaces and want a matrix, exactly as
+§25.7 said `cmd_route_feeder` did — and §28 is the precedent for how that pass
+should look.
+
+**The goal side is unchanged and still complete**: every `kind` value
+`data/goals.json` uses resolves to an evaluator in
+`sim/progression/goal_system.gd`, and `reach_stability` / `reach_treasury` are
+still authored-and-unused levers a pacing pass can reach for without code.
+
 **The goal side is complete and that is worth stating plainly**: every one of the
 fourteen `kind` values `data/goals.json` uses resolves to an evaluator in
 `sim/progression/goal_system.gd`, and no curriculum row is unteachable. Three of
@@ -2228,6 +2273,120 @@ source, `grace_days` 2.0. No `generator_base_rates` row moves. §18.5's three
 "not the instrument" entries all still stand. This ruling changes one sentence in
 a design document and zero bytes of data.
 
+### 18.8 Wave 12 — `water_main_break`'s "drift", bisected to one commit and then dismissed
+
+*2026-08-20. §27.7 filed this and would not absorb it: "the one channel that has
+moved more than a σ since Wave 8 — `water_main_break`, 0.60 → 0.75 → 0.90, which
+is 2.6 σ on its own counts across two waves — belongs to the Wave-9 integration
+that landed between §18.7 and this fork and has never had this arm run on it…
+a channel that has drifted 50 % across two waves deserves its own arm rather than
+a footnote in a pass about upgrade durations." It has one. **Two answers: the
+move is one named commit, and it is not a rate change.***
+
+#### 18.8.1 HEAD reproduces §27.7 to the digit
+
+`tools/pacing_ab.gd`, §18.6's methodology to the letter — 12 seeds × 28
+game-days of `do_nothing`, 336 game-days:
+
+| ambient / game-week | §18.6 floor OFF | §18.6 floor ON | §18.7 Wave 8 | §27.7 | **HEAD `28b9550`** |
+|---|---|---|---|---|---|
+| `crime` | 0.35 | 0.73 | 0.71 | 0.69 | **0.69** |
+| `structure_fire` | 0.69 | 0.56 | 0.56 | 0.54 | **0.54** |
+| `transformer_failure` | 0.81 | 1.08 | 1.02 | 1.08 | **1.08** |
+| `water_main_break` | 0.58 | 0.60 | 0.75 | 0.90 | **0.90** |
+| `traffic_accident` | 3.58 | 3.60 | 3.35 | 3.46 | **3.46** |
+| `storm_damage` | 0.04 | 0.04 | 0.02 | 0.02 | **0.02** |
+| **total** | **6.06** | **6.62** | **6.42** | **6.69** | **6.69** |
+| created | 291 | 318 | 308 | 321 | **321** |
+| failed · abandoned · destroyed | 0·0·0 | 0·0·0 | 0·0·0 | 0·0·0 | **0·0·0** |
+| treasury, 28 gd, mean | $193,627 | $194,847 | $191,077 | $191,595 | **$191,595** |
+
+Every channel, the total, the 321 and the treasury **to the dollar**. §27.7 was
+taken on a pre-merge fork; three integrations have landed since and not one of
+them touched this arm.
+
+#### 18.8.2 The mover is `d66a0e5`, and the bisect is six arms wide
+
+Full arms at each commit, same 12 seeds, same 28 game-days, on trees extracted
+with `git archive`:
+
+| commit | `water_main_break` | /game-week | total | treasury |
+|---|---|---|---|---|
+| `8b36323` Wave 8 (§18.7's own tree) | 36 | 0.75 | 308 | $191,077 |
+| `64390c5` Wave 8A integration | 36 | 0.75 | 308 | $191,077 |
+| `85e25aa` goals integration | 36 | 0.75 | 308 | $191,077 |
+| **`d66a0e5` routing enablement** | **43** | **0.90** | **321** | **$191,595** |
+| `1b2852b` its merge | 43 | 0.90 | 321 | $191,595 |
+| `a892315` Fold integration | 43 | 0.90 | 321 | $191,595 |
+| `28b9550` HEAD | 43 | 0.90 | 321 | $191,595 |
+
+`8b36323` reproduces §18.7's Wave-8 column exactly, which is the control the
+bisect needs. **`d66a0e5` has a single parent — `85e25aa` — so the A/B either
+side of it is one commit**, and it is a declared rules epoch:
+`CitySim.SAVE_SECTION_VERSION` 3 → 4. It is also not a `water_main_break` change
+at all: **every channel resamples** (crime 34→33, fires 27→26, transformers
+49→52, traffic 161→166) and the total moves 308 → 321.
+
+**And it is the CODE half of that commit, not the tuning half.** `d66a0e5` moves
+two `data/dispatch.json` keys — `max_acceptable_cost_min` 90 → 115 and the new
+terminal rule `unanswered_abandon_h: 24.0` — which is the obvious suspect for a
+channel whose candidate pool is "mains that are not already broken". Measured
+rather than assumed: `d66a0e5` **with `data/dispatch.json` rolled back to
+`85e25aa`'s** returns `water_main_break` 43, total 321, treasury $191,595 —
+byte-identical to the shipped commit. The dispatch retune moves nothing on a
+`do_nothing` arm. What is left is the code: the seam that started honouring doc
+06's per-vehicle profiles (`RoadTravelTimeProvider._profile_for`, RR-26 — a
+responding patrol car had been quoted 20 % slow), and `WaterSystem`'s service
+ledger moving from the SimTick to the game-minute (doc 91 D-15 proposal 3), which
+re-associates a float sum and is why the commit bumps the save section at all.
+
+#### 18.8.3 It is not a rate change, and the right statistic says so
+
+The arm was re-run at HEAD on two more 12-seed blocks disjoint from the canonical
+one. **Same code, same 336 game-days, three samples:**
+
+| block | seeds | `water_main_break` | mains/gw | total | total/gw | treasury |
+|---|---|---|---|---|---|---|
+| A (canonical) | 1337, 4242, 9001, 101, 202, 303, 404, 505, 606, 707, 808, 909 | 43 | **0.90** | 321 | 6.69 | $191,595 |
+| B | 11, 22, 33, 44, 55, 66, 77, 88, 99, 111, 222, 333 | 29 | **0.60** | 296 | 6.17 | $182,816 |
+| C | 1–10, 11111, 22222 | 27 | **0.56** | 312 | 6.50 | $191,385 |
+
+**Block B lands on 0.60 — §18.6's number — on the tree that "drifted" to 0.90.**
+The channel's between-block spread at fixed code is 27–43 counts (mean 33.0,
+sd 8.7), which contains the whole of the reported drift. The three totals are
+6.17 / 6.50 / 6.69, all inside §18.7's ruled 5–8 and inside gate 19's executable
+4.13–8.80.
+
+**§27.7's "2.6 σ" is the wrong statistic, and correcting it is the point.** It
+divides the difference by the Poisson σ of ONE of the two counts; comparing two
+independent counts over equal exposure divides by `√(n₁+n₂)`:
+
+| comparison | Δ | σ = √(n₁+n₂) | two-sample |
+|---|---|---|---|
+| §18.6 29 → §18.7 36 | 7 | 8.06 | **0.87 σ** |
+| §18.7 36 → HEAD 43 | 7 | 8.89 | **0.79 σ** |
+| §18.6 29 → HEAD 43 (the "2.6 σ") | 14 | 8.49 | **1.65 σ** |
+| total 308 → 321 | 13 | 25.08 | **0.52 σ** |
+
+Nothing here is significant at any threshold this document would act on.
+
+#### 18.8.4 The ruling
+
+**Explained, not a defect. `data/incidents.json` is untouched again and §18.7's
+5–8 band stands.** The 0.60 → 0.75 → 0.90 sequence is two resamples of one λ
+across two rules epochs, the larger of which is `d66a0e5` and is named above.
+`water_main_break`'s row in §27.7's table should be read as the sample it is.
+
+**One recommendation, and it is about the instrument.** 12 seeds × 28 game-days
+puts ~33 `water_main_break` arrivals in the sample, so 1 σ on that channel is
+**±0.15/game-week — a sixth of its own mean**. The arm is correctly sized for the
+TOTAL (σ ≈ 0.37 on 6.4) and it is under-powered for any per-channel claim. A pass
+that wants to rule on one channel should quadruple the exposure (48 seeds, or
+112 game-days) before writing a sentence about it, and until then a per-channel
+row in this table is a sample and not a rate. **That is the standing correction
+this section makes to how §18.6, §18.7 and §27.7 read their own per-channel
+columns.**
+
 ---
 
 ## 19. Pass 5 — progression pacing (audit 91 D-7)
@@ -2383,6 +2542,87 @@ cliff — 56 % dark, minimum condition 0.000 — which was already true before t
 pass and is the feeder verb's problem, not the pacing floor's. Recorded here so
 that when the feeder verb lands, the day-50 population is re-measured against
 **2,274** and not against pass-3's number.
+
+### 19.6 The 50-game-day pair, re-run at the merged tree — and §19.5's standing prediction, answered
+
+*2026-08-20, Wave 12. §27.9 said this table was stale and that re-running it
+"belongs to whichever pass next needs the horizon". This is that pass. **What I
+ran:** `tools/playtest.gd --days=50 --mode=coarse --seeds=1337,4242,9001
+--strategies=balanced,do_nothing` at `28b9550` — 300 game-days, 13 minutes of
+wall clock. **What I did not run:** the six-strategy 50-day sweep. It is 900
+game-days on the same instrument, and this document already records
+`tax_squeezer` seed 9001 failing to finish a 21-day run inside the harness's
+budget (§0's coverage note), so a 50-day one is a job for a pass that has the
+horizon as its subject rather than as a debt.*
+
+| 50 game-days, 3 seeds | `balanced` mean | range | `do_nothing` mean | range |
+|---|---|---|---|---|
+| treasury | **$130,412** | 105,614 – 143,402 | **$228,752** | 225,530 – 230,951 |
+| value created | **$2,963,206** | 2,878,822 – 3,022,914 | $228,752 | 225,530 – 230,951 |
+| net / game-hour | $3,341 | 3,316 – 3,390 | $155 | 153 – 158 |
+| population | **4,747** | 4,453 – 5,001 | **114** | 96 – 144 |
+| happiness | 73.6 | 72.4 – 75.6 | 82.8 | 82.2 – 83.6 |
+| stability | 0.9339 | 0.9201 – 0.9513 | 0.9609 | 0.9482 – 0.9697 |
+| city level | **4** | 4 / 4 / 4 | 0 | 0 / 0 / 0 |
+| dark share | **5.07 %** | 0.80 – 7.92 % | 0.09 % | 0.06 – 0.13 % |
+| min condition | 0.73 | 0.72 – 0.75 | **0.00** | 0.00 |
+| buildings placed | 648 | 637 – 660 | 0 | — |
+| upgrades · repairs · transformers · blocks | 183 · 555 · 126 · 9 | — | 0 · 0 · 0 · 0 | — |
+| incidents created / resolved / failed *(per seed)* | 460 / 457 / 2.0 | — | 44 / 44 / 0 | — |
+
+*(Counters are the harness's `sim events by strategy (all seeds)` block divided by
+the three seeds; every other column is its own per-seed table row.)*
+
+**§19.5's prediction is answered and it was right.** That section closed by
+saying the day-50 columns were governed by the power cliff and that the number to
+re-measure once the feeder verb landed was **2,274**. The feeder verb landed
+(Wave 11, §28) and on the same seed, 1337:
+
+| seed 1337, game-day 50 | §19.5 (Wave 6/7) | Wave 12 | |
+|---|---|---|---|
+| population | 2,274 | **4,453** | **+96 %** |
+| value created | $2,021,692 | **$2,878,822** | +42 % |
+| treasury | $106,462 | $143,402 | +35 % |
+| city level | 3 (day 23) | **4** | +1 |
+| buildings | 795 | 648 | −19 % |
+| **dark share** | **56.5 %** | **0.80 %** | **−98 %** |
+| incidents created | 1,363 | **~460** | −66 % |
+
+**The power cliff is gone, and it is the whole story.** A city that keeps 99 % of
+its floorspace lit does not fail transformers, does not lose buildings to the
+cascade and does not spend its day-50 population on brownouts — so it carries
+twice the residents on 19 % FEWER buildings, and its incident load falls by
+two thirds because doc 06's generators are priced per asset and a dark asset is a
+sick one. §19.5's own sentence — *"which is the feeder verb's problem, not the
+pacing floor's"* — is now a measurement.
+
+**Against the live baseline (§22.3.1, Wave 9) the pass is a wash on size and a
+gain on health**, which is the shape §27's upgrade fix predicted:
+
+| `balanced`, 50 gd, 3-seed range | §22.3.1 (Wave 9) | Wave 12 |
+|---|---|---|
+| population | 4,583 – 5,358 | 4,453 – 5,001 |
+| treasury | 113,994 – 151,030 | 105,614 – 143,402 |
+| value created | 2,896,670 – 3,209,725 | 2,878,822 – 3,022,914 |
+| happiness | 68.8 – 75.8 | **72.4 – 75.6** |
+| min condition | 0.686 – 0.752 | **0.72 – 0.75** |
+| dark share | 1.67 – 14.3 % | **0.80 – 7.92 %** |
+| city level | 4 | 4 |
+
+Slightly smaller and slightly poorer at the top of each range, better on every
+health column and with the floor of each range lifted. Nothing here is a gate and
+nothing here is fitted to; it is the horizon, recorded.
+
+**`do_nothing` past the horizon is new, and it is a finding neither §15.2 nor
+§19.5 could have had** — neither ran the control that far. **A `do_nothing` city
+SHRINKS**: 144 residents at founding and at game-day 21 (§24.14's matrix row),
+and **96 / 101 / 144 at game-day 50** — two of three seeds lose residents while
+the treasury climbs $165,636 → $228,752. Minimum condition is **0.000** on all
+three: nothing is ever repaired, buildings rot to the floor, and the population
+leaves the ones that do. The control is not a flat line past three game-weeks; it
+is a slow decline paid for in cash, which is exactly the premise on the box —
+*you built it, now keep it alive* — showing up in the instrument for the first
+time.
 
 
 ---
@@ -3375,6 +3615,59 @@ bench   coarse 24h  8b4e0079bfc5a8076e9c4a5ab80245d4a679a5928c1478cf6683323e0c10
 bench   fine  2.0h  aea5370b3a25de02d3e51f6ad86d224363f463ca2305b52b55505a80882a35f3
 ```
 
+> ### ⚠ RE-PUBLISHED 2026-08-20 (Wave 12) — the four digests above are BRANCH values and do not reproduce on the merged tree
+>
+> §27.3 filed this as a standing debt it could not pay. Paid here, at `28b9550`.
+> **Every digest in the table and the block above was measured on a Wave-10
+> sibling branch off `85e25aa`, and none of them reproduces on the integrated
+> tree.** The identity ARGUMENT in this section is unaffected — the starter city
+> really is untouched by the seventh rung and the bench city really does move
+> through one key — but the absolute values are not the mainline's and must not
+> be quoted as a baseline. The mainline values, `tools/profile_sim.gd
+> --hash-only`, both cities, both paths:
+>
+> ```
+> starter coarse 24h  18e70625e633c25477e4358f7c7ff2aca58eac396052e4f4c3d9ef6637431772
+> starter fine  2.0h  4c3c52cdb4c5a3ccc1c6cd2f093fab2feb8b66f50eefcabd4051c90b478cf319
+> bench   coarse 24h  d6b2509c179987d3d8994087936f3049d923edc32b016d02145b4f7b3ec6dddb
+> bench   fine  2.0h  bf8dc7282758843b01fb2172726a631db9108c5662e6c3e754bb877ca398a31e
+> ```
+>
+> **And the mover is named, by bisect rather than by inference.** One
+> `--hash-only` pass per commit along the first-parent chain, both cities:
+>
+> | commit | starter coarse / fine | bench coarse / fine |
+> |---|---|---|
+> | `85e25aa` goals integration | `2231df75…` / `bffdf583…` | `a06e7d43…` / `224a900d…` |
+> | `1b2852b` **routing enablement** | **`18e70625…` / `4c3c52cd…`** | **`f1c2e250…` / `9d08c381…`** |
+> | `5d4585a` ladder-top merge | `18e70625…` / `4c3c52cd…` | `f1c2e250…` / `9d08c381…` |
+> | `675226e` **player-surfaces merge** | `18e70625…` / `4c3c52cd…` | **`d6b2509c…` / `bf8dc728…`** |
+> | `660f0d8` render follow-ups | `18e70625…` / `4c3c52cd…` | `d6b2509c…` / `bf8dc728…` |
+> | `28b9550` HEAD | `18e70625…` / `4c3c52cd…` | `d6b2509c…` / `bf8dc728…` |
+>
+> `85e25aa` is where this section's branch forked, which is why its starter pair
+> is exactly the `2231df75…` / `bffdf583…` published above and its bench pair is
+> exactly §25.2's `a06e7d43…` / `224a900d…`. **Both cities move at `1b2852b`** —
+> the Wave-9 routing-enablement merge, branch commit `d66a0e5`, which
+> self-declares the epoch as `CitySim.SAVE_SECTION_VERSION` 4 (§18.8 measures the
+> same commit moving the ambient-incident sample). **The starter pair never moves
+> again**, through six subsequent integrations including the upgrade-timing fix —
+> which is §27.3's point restated as a longer measurement: the identity pass
+> issues no player command, so a change to what a command costs cannot reach it.
+> The bench pair moves once more, at `675226e` — the player-surfaces merge,
+> branch commit `1510113`, whose own report published its `profile_sim` digests
+> as unmoved against ITS base. **Not contradicted, and not explained here
+> either**: two branches that are each hash-neutral against `85e25aa` can compose
+> into a move on the merged tree, and this bisect measures that it happened
+> without opening which key did it. Naming the commit is enough for the purpose —
+> a baseline refresh — and chasing the key belongs to a pass that needs it. It is
+> the third reason this section had to be re-taken from the merged tree rather
+> than trusted from a branch snapshot.
+>
+> The lesson for the next pass, and it is the reason this took a bisect: **a
+> digest published from a branch is a statement about that branch.** Quote the
+> fork it was taken at, or quote the merged tree.
+
 **The mover is the seventh population rung, and that is proved rather than
 argued.** Two A/B arms on the same tree, changing one key at a time:
 
@@ -3510,6 +3803,27 @@ Bit-identical on all seven. The curriculum reaches the sim only through
 `GoalSystem`, whose `progress` / `done` dictionaries gain a key only when an
 event or a reconcile touches the ACTIVE level — and the two new rows sit on
 levels 3 and 4, which no hash-bearing run reaches.
+
+> ### ⚠ RE-PUBLISHED 2026-08-20 (Wave 12) — the four `profile_sim` rows above are BRANCH values
+>
+> §27.3 filed this and §24.12 as a standing debt; both are paid at `28b9550`.
+> **The identity result stands — before and after were taken on the same tree, so
+> "bit-identical on all seven" is exactly as true as it was.** What does not
+> stand is the absolute values: this pass forked from `85e25aa`, and every
+> `profile_sim` digest here is that fork's. Measured on the merged tree:
+>
+> | row | published here (`85e25aa`) | mainline (`28b9550`) |
+> |---|---|---|
+> | `profile_sim` starter, coarse 24 h | `2231df7517a1c0b2…` | **`18e70625e633c254…`** |
+> | `profile_sim` starter, fine 2 h | `bffdf583288551cf…` | **`4c3c52cdb4c5a3cc…`** |
+> | `profile_sim` bench_city, coarse 24 h | `a06e7d43f8187e2b…` | **`d6b2509c179987d3…`** |
+> | `profile_sim` bench_city, fine 2 h | `224a900d09211b7f…` | **`bf8dc7282758843b…`** |
+>
+> §24.12's re-publication note carries the bisect: all four moved at `1b2852b`,
+> the Wave-9 routing-enablement merge, and the bench pair moved once more at
+> `675226e`. The three `balanced` 21-game-day digests in the table above are
+> **not** re-taken here — they are a `BalanceGateRig` result rather than a
+> `profile_sim` one, and re-taking them wants the matrix pass that owns them.
 
 ### 25.3 The arrival table, re-measured
 
@@ -3974,6 +4288,17 @@ it. **Filed as an open question rather than absorbed here**, because a channel
 that has drifted 50 % across two waves deserves its own arm rather than a
 footnote in a pass about upgrade durations.
 
+> **ANSWERED — see §18.8 (2026-08-20, Wave 12).** It got its own arm and the
+> filing was right about where to look and wrong about the size of it. The move
+> is one commit, `d66a0e5` (the Wave-9 routing enablement, `SAVE_SECTION_VERSION`
+> 4), bisected across six trees with the dispatch-table retune ruled out by a
+> negative control. And it is **not a rate change**: two more disjoint 12-seed
+> blocks on THIS tree return 0.60 and 0.56 for the same channel, so the whole
+> reported drift sits inside the arm's own sampling spread. The **2.6 σ above is
+> a single-sample statistic**; the two-sample figure is **1.65 σ**. Every number
+> in this section's table is otherwise reproduced at `28b9550` to the digit,
+> `$191,595` included.
+
 ### 27.8 Gates
 
 All 28 balance gates pass. **No threshold moved.** Gate 21 gains two executable
@@ -3997,8 +4322,11 @@ restatement of the epoch, not a re-fit of anything.
 - **It did not re-run the 50-game-day pair** (§15.2 / §19.5). Every strategy that
   upgrades has moved, so that table is stale — but re-running it is a
   three-strategy, 150-game-day job and it belongs to whichever pass next needs
-  the horizon rather than to this one.
-- **It did not chase `water_main_break`.** §27.7 files it.
+  the horizon rather than to this one. *(**Done 2026-08-20 — §19.6**, `balanced`
+  and `do_nothing`, 3 seeds, at `28b9550`. The six-strategy version is still not
+  run and §19.6 says why.)*
+- **It did not chase `water_main_break`.** §27.7 files it. *(**Chased 2026-08-20
+  — §18.8.** One commit, and not a rate change.)*
 
 
 ---

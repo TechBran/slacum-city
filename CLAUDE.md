@@ -13,12 +13,22 @@ Persistent urban survival city builder for Android (working spec: `docs/BLACKOUT
 ## Commands
 
 ```bash
-# Run all headless sim tests (the path has spaces — always quote it):
+# Run all headless sim tests (the path has spaces — always quote it).
+# Safe beside a sibling worktree: the runner moves user:// to a per-process
+# directory itself (report 98 RR-57), so no XDG_DATA_HOME juggling is needed.
 ~/.local/bin/godot --headless --path "/home/bbx/Slacum City game" -s res://tests/run_tests.gd
+
+# Same thing, one line, resolves its own --path:
+tools/run_suite.sh
+tools/run_suite.sh --one=test_power_grid.gd   # a single file, while writing it
 
 # Run the game in editor runtime (needs display):
 ~/.local/bin/godot --path "/home/bbx/Slacum City game"
 ```
+
+A green run prints `failed: 0` **and** `silent: 0`. A non-zero `silent` count
+means a test method ran without asserting anything — it aborted on a runtime
+error, or it is empty — and the runner refuses to call that green.
 
 ## Layout
 

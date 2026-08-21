@@ -184,13 +184,27 @@ func test_every_key_in_the_table_is_reachable() -> void:
 
 func test_every_notification_placeholder_has_a_supplier() -> void:
 	# The `n_*` family is the one whose arguments are fully declared in data:
-	# `data/ui.json.alerts.events[].args` maps each `{name}` to where it comes
+	# `data/ui.json.event_log.events[].args` maps each `{name}` to where it comes
 	# from. Anything a template asks for and no rule supplies is a sentence the
 	# hole rule will delete for ever.
+	#
+	# **This test read `alerts.events` until Wave 12 and was therefore VACUOUS.**
+	# `data/ui.json.alerts` holds the panel's geometry — `max_entries`,
+	# `row_h_dp`, `coalesce_window_s` — and has never had an `events` array; the
+	# rows live under `event_log`. `raw` came back `[]`, `supplied` stayed empty,
+	# every `n_*` key hit the `continue` below, and the method made **zero
+	# assertions** while counting as a passing test. It was found the day
+	# `tests/run_tests.gd` learned to fail a method that never asserts, which is
+	# the entire argument for that guard: nothing else in the suite can see the
+	# difference between a test that holds and a test that is not there.
 	var cfg := _cfg()
 	var strings := cfg.strings_data()
 	var supplied: Dictionary = {}
-	var raw: Variant = cfg.section("alerts").get("events", [])
+	var raw: Variant = cfg.section("event_log").get("events", [])
+	assert_false((raw as Array if raw is Array else []).is_empty(),
+			"data/ui.json.event_log.events must exist — an empty supplier table "
+			+ "makes every assertion below unreachable, which is exactly how "
+			+ "this test spent its first waves")
 	for entry: Variant in (raw as Array if raw is Array else []):
 		var rule: Dictionary = entry
 		var notify_id := str(rule.get("notify_id", ""))
@@ -208,7 +222,8 @@ func test_every_notification_placeholder_has_a_supplier() -> void:
 			continue
 		for name: String in UIConfig.placeholders(str(strings[key])):
 			assert_true((supplied[body] as Dictionary).has(name),
-					"%s asks for {%s}; data/ui.json.alerts.events supplies it" % [key, name])
+					"%s asks for {%s}; data/ui.json.event_log.events supplies it"
+					% [key, name])
 
 
 func test_every_requirement_placeholder_has_a_supplier() -> void:

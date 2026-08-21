@@ -66,14 +66,11 @@ build/store/
 # On-device benchmark artefacts (tools/bench_device.sh): logcat CSVs, framestats,
 # meminfo, thermal traces. Measurements of one run on one phone, never source.
 build/bench/
-# `tests/run_tests.gd`'s own header tells a concurrent run to point
-# XDG_DATA_HOME at a private directory, because `user://` is keyed on the
-# project name and every worktree shares it. This is where that directory
-# lands when the instruction is followed literally from a worktree root.
 
-# The private `user://` a concurrent suite run needs. `tests/run_tests.gd`'s
-# header is explicit that two runs of the suite corrupt each other through the
-# shared `~/.local/share/godot/app_userdata/Slacum City`, and the fix is
-# `XDG_DATA_HOME=$PWD/.xdg`. That directory is save slots and settings for one
-# throwaway run and must never reach a commit.
+# Hand-made XDG isolation roots. `tests/run_tests.gd` moves `user://` to a
+# per-process temp directory by itself now (report 98 RR-57), so these should not
+# appear any more — the pattern stays because the old
+# `XDG_DATA_HOME=$PWD/.xdg` invocation is still in agent muscle memory and a
+# 40 MB save tree is not something to commit by accident.
 .xdg/
+.xdg-*/

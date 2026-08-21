@@ -1,31 +1,43 @@
 extends SceneTree
 ## Headless test runner. Usage:
 ##   godot --headless --path "/home/bbx/Slacum City game" -s res://tests/run_tests.gd
+##   tools/run_suite.sh
 ## Discovers tests/test_*.gd, runs every test_* method, exits 0 on success / 1 on failure.
 ##
-## **TWO RUNS OF THIS FILE AT ONCE CORRUPT EACH OTHER, WHATEVER DIRECTORY THEY ARE
-## LAUNCHED FROM.** `user://` is keyed on `application/config/name`, which every
-## worktree and every checkout of this project shares, so two agents running the
-## suite in two worktrees both write
+## **Two runs of this file at once used to corrupt each other, whatever directory
+## they were launched from.** `user://` is keyed on `application/config/name`,
+## which every worktree and every checkout of this project shares, so two agents
+## running the suite in two worktrees both wrote
 ## `~/.local/share/godot/app_userdata/Slacum City/saves` — and the save-service
 ## tests write real generations into real slots. Measured 2026-08-20: with a
-## sibling suite running, `test_save_service.gd` fails
-## `test_a_ruined_generation_falls_through_to_the_one_behind_it` and *aborts*
+## sibling suite running, `test_save_service.gd` failed
+## `test_a_ruined_generation_falls_through_to_the_one_behind_it` and *aborted*
 ## `test_a_pinned_checkpoint_is_never_swept` on a missing manifest key — and an
-## aborted method contributes no assert and no failure, so the run can still
-## print ALL TESTS PASSED with a test that never ran. **Give a concurrent run its
-## own user directory:**
+## aborted method contributed no assert and no failure, so the run still printed
+## ALL TESTS PASSED with a test that never ran.
 ##
-##   XDG_DATA_HOME=<private dir> godot --headless --path <worktree>
-##       --script tests/run_tests.gd
+## Both halves of that are closed here, and neither depends on how the run is
+## invoked, because "remember the environment variable" is not a fix:
 ##
-## Godot's `OS.get_data_path()` reads `XDG_DATA_HOME` on Linux, so that one
-## variable isolates `user://` completely. Same file, same 24 tests, 0 failures.
+## **1. `user://` is moved to a per-process directory by `UserDirIsolation`**
+## (`tests/user_dir_isolation.gd`), from inside `_initialize()`. Two suites can
+## no longer see each other's saves however they are launched.
+## `tools/run_suite.sh` is a convenience wrapper, not a requirement.
+##
+## **2. A test method that makes no assertion FAILS the run** — see
+## `SimTest.end_test`. A GDScript runtime error unwinds one function and returns
+## quietly to the caller, so "aborted" and "passed" used to look identical from
+## here; now the assert counter is read on both sides of every method and a
+## method that did not move it is reported by name.
+##
+## A green run prints `failed: 0` AND `silent: 0`.
 
 const TESTS_DIR := "res://tests"
 
 
 func _initialize() -> void:
+	var isolation := UserDirIsolation.new().begin()
+
 	var test_files: Array[String] = []
 	var dir := DirAccess.open(TESTS_DIR)
 	if dir == null:
@@ -44,6 +56,7 @@ func _initialize() -> void:
 	var total_tests := 0
 	var total_asserts := 0
 	var all_failures: Array[String] = []
+	var all_silent: Array[String] = []
 
 	for file in test_files:
 		var script: GDScript = load(TESTS_DIR + "/" + file)
@@ -64,8 +77,14 @@ func _initialize() -> void:
 			total_tests += 1
 			suite.begin_test("%s::%s" % [file, method_name])
 			suite.call(method_name)
+			# The close is what turns "aborted on a runtime error" from an
+			# invisible pass into a named failure. It must run even when the
+			# method above died mid-way, which it does: a GDScript runtime error
+			# unwinds `method_name` and nothing else.
+			suite.end_test()
 		total_asserts += suite.assert_count()
 		all_failures.append_array(suite.failures())
+		all_silent.append_array(suite.silent())
 
 	print("")
 	print("========================================")
@@ -74,11 +93,22 @@ func _initialize() -> void:
 	print("  tests:   %d" % total_tests)
 	print("  asserts: %d" % total_asserts)
 	print("  failed:  %d" % all_failures.size())
+	print("  silent:  %d" % all_silent.size())
+	print("  user://  %s" % isolation.user_dir)
 	print("========================================")
 	for failure in all_failures:
 		printerr("FAIL " + failure)
-	if all_failures.is_empty():
+	for method_name in all_silent:
+		printerr("SILENT " + method_name
+				+ " — ran without asserting anything (aborted, or empty)")
+
+	var ok := all_failures.is_empty() and all_silent.is_empty()
+	if ok:
 		print("ALL TESTS PASSED")
-		quit(0)
-	else:
-		quit(1)
+	elif all_failures.is_empty():
+		printerr("NOT PASSED: %d test method(s) never asserted. A method that "
+				% all_silent.size()
+				+ "aborts on a runtime error looks exactly like one that "
+				+ "passed, so the suite refuses to call this green.")
+	isolation.end()
+	quit(0 if ok else 1)

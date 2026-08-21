@@ -26,7 +26,7 @@
 | Package id | `com.slacumcity.game` | |
 | Persistence | Versioned JSON per save slot (`user://saves/slot0/`), atomic write (tmp + rename), rotating checkpoints. The on-disk file may be zstd-compressed (the *format* is still JSON; debug builds write a plain mirror). Binary/SQLite is a post-alpha optimization, not an MVP concern. | |
 | Device settings | Graphics preset, notification prefs, accessibility live in `user://settings.cfg` — device-scoped, outside any save slot, never touched by the save migration ladder. | Survive city deletion and checkpoint rollback. |
-| Tests | Custom minimal headless runner: `godot --headless --path . -s res://tests/run_tests.gd`. Every sim system ships with tests in the same commit. | |
+| Tests | Custom minimal headless runner: `godot --headless --path . -s res://tests/run_tests.gd`, or `tools/run_suite.sh`. Every sim system ships with tests in the same commit. **Two rules the runner enforces itself (2026-08-20), because both were learned the hard way:** it moves `user://` to a per-process directory before the first test loads, so two worktrees can run the suite at the same time; and **a test method that finishes without making a single assertion FAILS the run** — a GDScript runtime error unwinds one function and returns quietly, so "aborted" and "passed" are otherwise the same thing from the runner's seat. | Report 98 RR-57 |
 | VCS | git, branch `main`. | |
 
 ## 3. Architecture (LOCKED) — spec §27, Core Rule 11

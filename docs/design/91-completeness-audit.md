@@ -199,6 +199,97 @@ now rather than two:
   simulation was needed for any of the three: a `cmd_*` re-export, a card, and
   in land's case a panel and a tap seam.
 
+### The count, re-graded on the merged tree — 2026-08-20 (`28b9550`), Wave 12
+
+*The table above was graded at `a892315`, with three Wave-10 build branches still
+in flight. All three have landed (`3bfa3cd`, `3a025e9`, `0b84eee`, integrated at
+`28b9550`). This is the re-grade, and it is deliberately narrow: **only rows
+re-measured with a named instrument at this fork appear here**, and the four
+matrices (§16–§19) are re-run rather than re-read.*
+
+**The count table's numbers do not move, and that is a result rather than an
+omission.** Every row that a Wave-10 branch closed was ALREADY graded SHIPPED in
+the table above — the verb doors were counted in advance by their own rows
+(doc 05's "Player verbs", doc 12 §2.2/§2.5/§2.13) — and every row still PARTIAL
+is PARTIAL for a reason no shipped branch touched. Checked one at a time:
+
+| PARTIAL / ABSENT row | still open at `28b9550`? | how it was checked |
+|---|---|---|
+| doc 03 §2.9 — difficulty (**A91-D-19**) | **yes** | `data/difficulty.json` and `sim/economy/difficulty.gd` are both absent from the tree; `CitySim` still constructs `Treasury.new(econ_curves.economy_data())` with no difficulty argument |
+| doc 07 §2.4 — flooding (**A91-D-26**) | **yes** | `grep -rn flood_level_changed game/ ui/ data/` returns **nothing**. Standing water is still simulated and never drawn, announced or logged |
+| doc 08 §2.13 — notification budget state (**A91-D-27**) | **yes** | `game/save_service.gd` still registers exactly three sections (`city`, `ui`, `meta`); `NotificationRouter.serialize()` still has no caller outside `tests/` |
+| doc 12 §2.9 — building panel (S5) | **yes** | `grep -rn "E_FIRE_COVERAGE\|E_POLICE_COVERAGE"` over `*.gd` and `*.json` returns **nothing**; the coverage upgrade gates §2.9 promises are still unimplemented. *(The panel DID gain surface this wave — `ui/water_actions.gd`'s node block, doc 93 §J1 — which is why the row is worth re-checking and why it still does not move.)* |
+| doc 12 §2.18 — accessibility (**A91-D-21/22/23/29**) | **yes, but two of the four moved** | re-swept; see below |
+| doc 05 §2.14 — worked example (**A91-D-25**) | **yes** | doc quote, untouched |
+
+**§17's verb matrix, re-taken — 22 of 23, and the wrapper-less list is EIGHT.**
+`cmd_route_feeder` (`ui/path_tool.gd:647`), `cmd_upgrade_water_component`
+(`ui/water_actions.gd:216`), `cmd_isolate_water_main` (`:274`) and
+`cmd_restore_water_main` (`:280`) all have player doors now; §17.3's in-flight
+note called all four correctly. **`cmd_recall_unit` is the last doorless verb and
+A91-D-24 is unchanged.** §17.2's list of sub-system verbs with no `CitySim`
+wrapper is **wrong by one in this document and in doc 92 §17.6.1**: both count
+seven and both omit **`WaterSystem.cmd_install_backup_generator`**
+(`sim/water/water_system.gd:1155`), whose only callers anywhere are
+`tests/test_water_system.gd:338` and `:355`. With `RoadNetwork.cmd_road_repair`
+ruled out of scope by doc 93 §J3, the open count is **seven**, not six. Doc 92
+§17.6.2 carries the full re-take.
+
+**§19's screen matrix, re-swept at SIX boxes — and it is 52 states now, not 49.**
+`tools/ui_preview.gd::SCREENS` gained `path_feeder`, `building_water` and
+`drawer_water` with the Wave-11 doors. `--screen=all --audit --strict` at each
+box × three settings:
+
+| box | 100 % | 130 % + large targets | 150 % + large targets |
+|---|---|---|---|
+| 360 × 800 | **52/52 clean** | **52/52 clean** ✅ *(was: fails)* | 36/52 clean |
+| 412 × 915 | **52/52 clean** | **52/52 clean** ✅ | 47/52 clean |
+| 794 × 924 | **52/52 clean** | **52/52 clean** ✅ | **52/52 clean** |
+| 880 × 400 | **52/52 clean** | 0/52 clean | 0/52 clean |
+| 1280 × 720 | **52/52 clean** | **52/52 clean** ✅ | 50/52 clean |
+| **640 × 340** *(the min-safe box, A91-D-29)* | **51/52** | 0/52 | 0/52 |
+
+Which moves three defects and closes one:
+
+* **A91-D-21 — CLOSED.** The row's whole claim was *"36 of 49 states report
+  `overlapping_targets` in the right-edge chip column"*. At this fork, `grep -c
+  "AlertsCenter/Chip\|EventLog/Chip\|IncidentDrawer/Handle"` over the 880 × 400
+  a11y sweep — the worst box — returns **0**, and four of the six boxes are
+  52/52 clean at 130 % + large targets. The chip column re-flows.
+* **A91-D-22 — NARROWED, not closed.** The two findings the row called
+  unrecoverable — `SettingsSheet/…/Close "✕"` and `SaveLoadSheet/…/Close "✕"` at
+  360 × 800 — are **gone** (that box is now 52/52 clean at 130 %). Five offscreen
+  controls remain and all five are at **880 × 400**: `TitleScreen/…/Confirm_start
+  "START NEW"`, `Confirm_cancel "CANCEL"`, `Buttons/Action_settings "SETTINGS"`,
+  `PauseMenu/…/Action_quit "SAVE & QUIT"` and an alert row's `VIEW`. The row's
+  headline — *"a new player on A3, on a folded Fold, cannot press START NEW"* —
+  **still holds**, at one box instead of two.
+* **A91-D-23 — OPEN and now exactly characterised.** 880 × 400 at 130 % + large
+  targets is **0 of 52 states clean, 156 `overlapping_targets` and 6
+  `offscreen`**, and the overlaps reduce to **five unique pairs**, all of them
+  the top bar's two chip rows over the two rails:
+  `TopBar/Chips/Row0/Chip_treasury` and `Row1/Chip_water` and `Row1/Chip_grid`
+  over `LeftRail/SpeedButton` and `OverlayRail/Button`. Nothing else. It is one
+  container that will not yield height, exactly as the row said.
+* **A91-D-29 — OPEN, and smaller.** 640 × 340 at 100 % has **one** dirty state:
+  `TitleLayer/…/Confirm_cancel "CANCEL"` at `P (200.0, 318.5) S (240.0, 50.0)`
+  against a 340-tall viewport — **28.5 dp past the bottom edge**, where the
+  original filing measured y 318.5 with height **96** (74.5 dp past). The
+  Wave-10 sheet work shrank the control and did not move it inside. The box is
+  still in no `BOXES` list and no test: `tests/test_ui_audit.gd::BOXES` is
+  unchanged at five entries.
+
+**A91-D-28 — OPEN, unchanged.** `grep -n "event_log\|EventLog" tools/ui_preview.gd`
+still returns nothing; S13's panel has still never been laid out by the sweep.
+**A91-D-20 — OPEN, unchanged**: `tests/test_asset_completeness.gd::DEFERRED_BODIES`
+is still `["ambulance"]`.
+
+**What the lead should route at integration.** Nothing in the count table, and
+two things in the defect table: **A91-D-21 can be struck**, and **A91-D-22
+rewritten to the 880 × 400 remainder**. Both are measured above and neither needs
+a further run. Everything else on the list is open at this fork on evidence, not
+on assumption.
+
 ---
 
 ## 0.5 Doc 00 — the constitution, checked rather than assumed
@@ -353,7 +444,7 @@ shipped and wholly invisible**, and the two facts do not contradict each other.
 | — | **Player verbs** | **SHIPPED** (Waves 5 / 10 / 11) | `WaterSystem` exposes ten `cmd_*`; `CitySim` re-exports the five a player needs and all five now have surfaces — `cmd_place_water_component` (build sheet, Wave 5), `cmd_place_water_main` (drag-path cards, Wave 10), `cmd_upgrade_water_component` (S5's node block, Wave 11) and `cmd_isolate_water_main` / `cmd_restore_water_main` (S6's row, Wave 11). Original filing: ~~none is re-exported, so `ui/build_controller.gd` cannot see them and no card exists.~~ See **D-4**. |
 | — | Overlay | PARTIAL | mode 2 ships (`OverlayModel.MODE_WATER`), but with no verbs the overlay is diagnosis without treatment |
 | 2.14 | **Worked examples A–F** | **PARTIAL 2026-08-20 — A91-D-25** *(row added; the section had never been counted)* | The examples reproduce, and `tests/test_water_system.gd` says so — but **one stated input in §2.14 disagrees with the store**. §2.14 quotes `water_demand_commercial = 0.45 at h22`; `data/time.json`'s authored keyframes (`[21, 0.65]`, `[23, 0.35]`) interpolate to **0.50**, and C-33 makes `data/time.json` the store. `tests/test_water_data.gd:51–55` records the disagreement in a comment and asserts the store's 0.50; the worked examples are driven from injected channels so they still pass. A doc quote, not a code bug — and a doc quote that has stood since the R-09/R-10 rescale. |
-| — | **Player verbs** | ~~PARTIAL~~ **PARTIAL — narrower 2026-08-20** | The row as written is retired: `CitySim` now re-exports six of doc 05's verbs and **three of them have player doors** — `cmd_place_water_component` (the build sheet's infrastructure tab, `ui/build_controller.gd`), `cmd_place_water_main` (the drag-path tool, `ui/path_tool.gd`), and the pump/tank/treatment shells they place are real doc-02 buildings. What is still doorless is the *maintenance* half: `cmd_upgrade_water_component`, `cmd_isolate_water_main` and `cmd_restore_water_main` are re-exported by `CitySim` and reached by no surface — the first is driven by `tools/playtest.gd` and the other two by **nothing at all, not even the harness**. They want a water-NODE panel that doc 12's screen map does not have. See §17 and **D-4**. |
+| — | **Player verbs** *(duplicate of the row above; kept for its record)* | ~~PARTIAL~~ ~~PARTIAL — narrower~~ **SHIPPED 2026-08-20 (Wave 12)** | **The maintenance half got its doors.** This row's remaining gap was *"`cmd_upgrade_water_component`, `cmd_isolate_water_main` and `cmd_restore_water_main` are re-exported by `CitySim` and reached by no surface"*. All three are reached now — `ui/water_actions.gd:216` puts the upgrade on S5's building panel as a node block, and `:274` / `:280` put isolate/restore on S6's expanded drawer row (doc 93 §J1, Wave 11). The water-NODE panel this row asked for was not built and did not need to be: the node hangs off a shell that already has a panel. **This row and the SHIPPED "Player verbs" row above it are the same row graded twice by two waves** — the count table counts it once, and the one above is the current text. Original filing: The row as written is retired: `CitySim` now re-exports six of doc 05's verbs and **three of them have player doors** — `cmd_place_water_component` (the build sheet's infrastructure tab, `ui/build_controller.gd`), `cmd_place_water_main` (the drag-path tool, `ui/path_tool.gd`), and the pump/tank/treatment shells they place are real doc-02 buildings. What is still doorless is the *maintenance* half: `cmd_upgrade_water_component`, `cmd_isolate_water_main` and `cmd_restore_water_main` are re-exported by `CitySim` and reached by no surface — the first is driven by `tools/playtest.gd` and the other two by **nothing at all, not even the harness**. They want a water-NODE panel that doc 12's screen map does not have. See §17 and **D-4**. |
 | — | Overlay | ~~PARTIAL~~ **SHIPPED 2026-08-20** | `OverlayModel.MODE_WATER` ships and is no longer diagnosis without treatment: the two verbs that answer a low-pressure zone (place a pump, run a main) both have doors. All **six** of `data/ui.json.overlay.enabled_modes` are live, which also closes doc 12 §2.5's "3 of the doc's modes". |
 
 ## 6. Doc 06 — Incidents and dispatch
@@ -1011,6 +1102,10 @@ them however many doors get built.
 | `cmd_set_water_restrictions` | `WaterSystem:1218` | no wrapper — doc 05's demand-management verb is unreachable |
 | `cmd_set_water_policy` | `WaterSystem:1225` | no wrapper |
 | `cmd_deploy_pump_truck` | `WaterSystem:1234` | no wrapper (and a `_zone_key` stub) |
+| **`cmd_install_backup_generator`** | **`WaterSystem:1155`** | **no wrapper — ADDED 2026-08-20 (Wave 12).** The table above shipped with seven rows and this one missing, and doc 92 §17.6.1 copied the seven. Its only callers anywhere in the repository are `tests/test_water_system.gd:338` and `:355`. Found by re-deriving the list mechanically — `grep -on 'roads\.cmd_[a-z_]*\|water\.cmd_[a-z_]*' sim/city_sim.gd` against every `func cmd_*` in the two owners — rather than by reading the previous table |
+
+*Since Wave 11, `cmd_road_repair` is **ruled not a player verb** (doc 93 §J3, doc
+10 §2.13), so its row is closed rather than open. The open count is **seven**.*
 
 ### 17.3 In-flight at this fork
 
@@ -1022,6 +1117,13 @@ records what was true there.** If both land, ⚠️/🚫 becomes ✅ on four row
 "18 of 23" becomes **22 of 23**, with `cmd_recall_unit` the last one standing —
 and doc 92 §17.6 should be re-taken from the merged tree rather than from this
 section.
+
+> **RESOLVED 2026-08-20 (Wave 12), at `28b9550`.** Both landed. All four rows are
+> ✅ and the count **is 22 of 23**, with `cmd_recall_unit` the last one standing
+> exactly as predicted — the doors are `ui/path_tool.gd:647` (two feeder cards on
+> the drag-path tool) and `ui/water_actions.gd:216 / :274 / :280` (the S5 node
+> block and the S6 drawer row). Doc 92 **§17.6.2** is the re-take from the merged
+> tree that this section asked for. A91-D-24 is unchanged.
 
 ### 17.4 The goal-kind side is complete
 
@@ -1309,7 +1411,7 @@ eight green at once and not five:
 | Every roster row has an asset | `tests/test_asset_completeness.gd` | **✅ 19 tests, 3,167 asserts** |
 | Every `cmd_*` has a door | §17 (wants a test — see below) | 18 / 23 |
 | Every event has a consumer | §18 (wants a test — see below) | 58 / 121 wired, 78 / 121 heard by *something* |
-| Every screen clean at every box × both a11y settings | `tools/ui_preview.gd --audit --strict` — the suite's own a11y check is width-only on one box | **5 / 12 sweeps**, and the instrument covers 14 / 15 screens (A91-D-28) |
+| Every screen clean at every box × both a11y settings | `tools/ui_preview.gd --audit --strict` — the suite's own a11y check is width-only on one box | ~~**5 / 12 sweeps**~~ **10 / 18 sweeps at `28b9550`** (six boxes × 100 % / 130 % / 150 %, 52 states each — see the Wave-12 re-grade after the count table): clean at 100 % on five of six boxes and at 130 % + large targets on four of six. A91-D-21 closed; A91-D-22 narrowed to 880 × 400; A91-D-23 and A91-D-29 open. The instrument still covers 14 / 15 screens (A91-D-28) |
 | Determinism | `tools/profile_sim.gd --hash-only --baseline`, both cities | ✅ |
 | Balance | `tests/test_balance_gates.gd`, ~~28~~ **29** gates (gate 29 = the preset ordering, doc 92 §29.6) | ✅ |
 | Suite | `tests/run_tests.gd` | ✅ ~~109 files / 1,909 tests / 505,294 asserts~~ **112 files / 1,991 tests / 511,256 asserts** / 0 failed (2026-08-20; `tests/test_difficulty.gd` is the new file) |
@@ -1329,7 +1431,7 @@ M (a day or two), L (a wave).
 
 | # | Work | Size | Closes | Why here |
 |---|---|---|---|---|
-| 1 | **Re-flow the right-edge chip column under `larger_touch_targets`** | **S** | A91-D-21 | 36 of 49 states at every box; it is one stacking container that needs to shrink or wrap |
+| ~~1~~ | ~~**Re-flow the right-edge chip column under `larger_touch_targets`**~~ **DONE — closed by `3a025e9`, verified 2026-08-20** | **S** | ~~A91-D-21~~ | ~~36 of 49 states at every box~~ — zero chip-column findings at any of six boxes now; the next item on this list is the one below it |
 | 2 | **Keep sheet/menu/title controls on screen** — at 130 % **and at 100 % on 640 × 340** | **S** | A91-D-22, A91-D-29 | a 360 dp player on A3 cannot close settings; a folded-Fold player cannot press START NEW; and on A2's own reference box the title screen's CANCEL is 26 dp off the bottom at default scale |
 | 3 | **Widen `tests/test_ui_audit.gd`'s a11y check from one axis on one box to `BOXES` + 640 × 340, with overlap and offscreen** | **S** | A91-D-21/22/23/29 regressions | the a11y test exists and is width-only at 360 dp, which is why it passes while five sweeps fail; without this (1) and (2) rot in a wave |
 | ~~4~~ | ~~**`data/difficulty.json` + `sim/economy/difficulty.gd` + pass it at `city_sim.gd:197`**~~ **DONE 2026-08-20** | ~~M~~ | A91-D-19 | ~~three quarters of doc 03 §2.9's authored table is unreachable, and every balance number is measured on one preset~~ — shipped whole (loader, seam, save section v6, front-door chip, gate 29, doc 92 §29). **It left two things behind, and they are new rows rather than leftovers of this one**: doc 92 §29.5(a)'s `E_roads_repair` compounding (`M_repair × M_exp`, 2.00× on crisis) makes the crisis founding city net-negative at hour one, and §29.5(b) — see the row below |
