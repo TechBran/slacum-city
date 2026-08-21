@@ -1908,6 +1908,10 @@ func load_section(data: Dictionary) -> void:
 ##     is an edge nothing may look up, so it may not be split from the rebuild by
 ##     anything that could observe the graph in between (nothing may, between
 ##     cursor steps — that is the cursor's contract).
+##   * `roads_signals…` — doc 04's answer to "is this intersection lit", sampled
+##     `RoadGraph.SIGNAL_REFRESH_NODE_BUDGET` nodes at a time. The most expensive
+##     phase of a load on a cold sim and the one whose cost is not roads' own; see
+##     `_load_edge_state` for why it happens here rather than on the first tick.
 ##   * `roads_state` — everything restored AGAINST an edge id: closures,
 ##     overrides, jobs, the traffic feed, the congestion history.
 ##
@@ -1923,7 +1927,15 @@ func load_section_steps(data: Dictionary) -> Array:
 	steps.append_array(graph.rebuild_all_steps(held,
 			RoadGraph.trace_slots_for(_saved_road_tile_count(data))))
 	steps.append(["roads_labels", func() -> void: _adopt_labels(data, version)])
-	steps.append(["roads_state", func() -> void: _load_edge_state(data, version)])
+	# Signal power, sampled in batches — see `_load_edge_state`. The ceiling is
+	# the same exact one the trace uses (every road tile can be a node), scaled to
+	# this phase's smaller budget.
+	var signal_slots := maxi(1, ceili(float(_saved_road_tile_count(data))
+			/ float(RoadGraph.SIGNAL_REFRESH_NODE_BUDGET)))
+	for i in signal_slots:
+		steps.append(["roads_signals",
+				func() -> void: graph.refresh_signal_power_slice(power_is_tile_powered, held)])
+	steps.append(["roads_state", func() -> void: _load_edge_state(data, version, held)])
 	return steps
 
 
@@ -1976,24 +1988,27 @@ func _adopt_labels(data: Dictionary, version: int) -> void:
 		graph.orient_edges(heads)
 
 
-func _load_edge_state(data: Dictionary, version: int) -> void:
-	# **Signal power is DERIVED, and it has to be derived HERE rather than left to
-	# the first tick.** `rebuild_all()` builds every node with `powered = true`
+func _load_edge_state(data: Dictionary, version: int, held: Dictionary = {}) -> void:
+	# **Signal power is DERIVED, and it has to be derived BEFORE THE FIRST TICK
+	# rather than by it.** `rebuild_all()` builds every node with `powered = true`
 	# (the `_create_node` default), and nothing between there and here writes it —
 	# so a city loaded with a substation down has eleven dark signals lit. That is
 	# not a cosmetic difference for one tick: `step()`'s very first act is
-	# `refresh_signal_power`, which would find eleven nodes CHANGING and therefore
-	# dirty EVERY EDGE IN THE CITY and take a full smoothed congestion pass the
-	# live run — whose signals went dark hours ago and are not changing — does not
-	# take. One extra smoothing step on 644 edges, and save→load→advance identity
-	# is gone.
+	# `refresh_signal_power`, whose return value is *how many nodes CHANGED*, and
+	# eleven of them would — dirtying EVERY EDGE IN THE CITY and taking a full
+	# smoothed congestion pass that the live run, whose signals went dark hours ago
+	# and are not changing, does not take. One extra smoothing step on 644 edges,
+	# and save→load→advance identity is gone. Report 98 §26 RR-60b, and the defect
+	# whose fingerprint RR-52 actually saw.
 	#
-	# Doc 04's grid is restored before roads is (`CitySim.begin_restore`'s `core`
-	# step), so `power_is_tile_powered` already answers correctly and the state can
-	# be re-derived exactly rather than persisted — §3.2's rule for anything the
-	# body already implies. This is report 98 §26 RR-60's second roads defect and
-	# it is the one whose fingerprint RR-52 actually saw.
-	graph.refresh_signal_power(power_is_tile_powered)
+	# Doc 04's grid is restored three cursor steps earlier, so this is re-derived
+	# rather than persisted — §3.2's rule for anything the body already implies.
+	# It is also, on a cold sim, the single most expensive thing in a load (doc
+	# 04's per-tile transformer memo is empty and each signalised node fills it),
+	# which is why `load_section_steps` gives it its own batched steps. This drains
+	# whatever they did not reach, exactly as `graph_finish` drains the trace.
+	while not graph.signal_power_slice_done(held):
+		graph.refresh_signal_power_slice(power_is_tile_powered, held)
 	_refresh_all_edge_state()
 	next_closure_id = int(data.get("next_closure_id", 1))
 	for entry in data.get("closures", []):

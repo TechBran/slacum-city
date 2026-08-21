@@ -1162,6 +1162,53 @@ func refresh_signal_power(powered_of: Callable) -> int:
 	return changed
 
 
+## How many NODES one `roads_signals` restore step samples. Smaller than the
+## trace budget because the work per node is not roads' at all: `powered_of` is
+## doc 04's, and on a cold sim its answer costs a scan of the authored transformer
+## roster per tile — 2,024 nodes of it is **106 ms** on the benchmark city, which
+## is the single most expensive thing a load can be asked to do and is why this is
+## sliced rather than swallowed. See `RoadNetwork._load_edge_state`.
+const SIGNAL_REFRESH_NODE_BUDGET: int = 400
+
+
+## [refresh_signal_power] over the NEXT batch of nodes, for the restore cursor.
+## `held` carries the batch cursor and the running dark count; `dark_signals` is
+## published only when the last node has been sampled, because a half-swept count
+## is worse than the `-1` that means "unknown".
+##
+## It does not report a CHANGE count and no caller wants one: this is the first
+## sample of a freshly rebuilt graph, so nothing has changed — it has been
+## established. That distinction is the whole defect it exists to fix (report 98
+## §26 RR-60b).
+func refresh_signal_power_slice(powered_of: Callable, held: Dictionary) -> void:
+	var ids := node_ids_ref()
+	var cursor := int(held.get("sig_cursor", 0))
+	if cursor >= ids.size():
+		return
+	var stop := mini(ids.size(), cursor + SIGNAL_REFRESH_NODE_BUDGET)
+	var dark := int(held.get("sig_dark", 0))
+	for i in range(cursor, stop):
+		var record: Dictionary = _nodes[ids[i]]
+		if not bool(record["signalised"]):
+			record["powered"] = true
+			continue
+		var powered := true
+		if powered_of.is_valid():
+			powered = bool(powered_of.call(record["tile"]))
+		record["powered"] = powered
+		if not powered:
+			dark += 1
+	held["sig_dark"] = dark
+	held["sig_cursor"] = stop
+	if stop >= ids.size():
+		dark_signals = dark
+
+
+## True once [refresh_signal_power_slice] has swept the whole roster for `held`.
+func signal_power_slice_done(held: Dictionary) -> bool:
+	return int(held.get("sig_cursor", 0)) >= node_ids_ref().size()
+
+
 ## Doc 06 consumes this for `dark_frac` (§2.11). `district_of` maps a tile to a
 ## district id; pass "" to list every signalised intersection in the city.
 func signalised_intersections(district_id: String, district_of: Callable) -> Array:

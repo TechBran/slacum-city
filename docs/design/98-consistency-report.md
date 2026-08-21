@@ -1762,6 +1762,28 @@ with *each other*. They did — they were both wrong in the same way. The
 assertion it was missing is the one that was added with this fix: **and both must
 keep burning the way the city that was never saved does.**
 
+**And the fix moved 107 ms off the first live frame, which was the surprise.**
+Sampling signal power at the load seam is the single most expensive thing a
+restore does on a cold sim — `power_is_tile_powered` fills doc 04's per-tile
+transformer memo, and 2,024 nodes of that is **106 ms** on the benchmark city.
+That is not new work. It is work the FIRST TICK after a load was already paying,
+in one hitch, on a live frame, after the veil had come down. Measured three ways
+on the benchmark city, first `advance_fine_n(1)` after a restore against the
+steady-state tick beside it:
+
+| | tick 1 | tick 2 |
+|---|---|---|
+| no sample at the load seam (before) | **186 ms** | 13.4 ms |
+| sampled at the load seam (after) | **79 ms** | 13.3 ms |
+
+So the restore's total goes 202 → 298 ms and the first frame goes 186 → 79, and
+the 40 ms per-step ceiling still holds because the sample is emitted as
+`SIGNAL_REFRESH_NODE_BUDGET`-sized steps (five of ~21 ms on that city) rather
+than swallowed by `roads_state` — which is what it did in the first cut of this
+change, taking that step from 28 ms to **135 ms** and failing the target on the
+spot. A restore total is a number under a veil; a first frame is a number the
+player feels.
+
 **Two more genuine roads restore defects were found on the way, and neither is
 the one above.** They are fixed in the same branch because they are real:
 
@@ -1870,17 +1892,20 @@ is a `RefCounted` cycle with no collector to break it.
 
 | | before | after |
 |---|---|---|
-| restore total | 202.4 ms | 203.8 ms |
-| longest step | **73.7 ms** (`roads_graph`) | **32.2 ms** (`decode`) |
-| longest ROADS step | 73.7 ms | **28.4 ms** (`roads_state`) |
-| steps | 11 | 19 (9 announced + 10 spliced) |
+| restore total | 202.4 ms | 297.6 ms |
+| longest step | **73.7 ms** (`roads_graph`) | **29.2 ms** (`decode`) |
+| longest ROADS step | 73.7 ms | **27.7 ms** (`roads_state`) |
+| first LIVE frame after the load | 186 ms | **79 ms** |
+| steps | 11 | 27 (9 announced + 18 spliced) |
 
-The total is unchanged to within run-to-run noise, which is the point: this buys
-nothing but the right to hand the frame back, and the target it was written
-against — *no single restore step over 40 ms on the bench city* — is met with the
-longest step no longer belonging to roads at all. `tools/profile_graph_rebuild.gd`
-prints the four phases on their own: **15.1 / 4.9 / 10.0 + 9.8 + 8.4 / 7.0 ms**
-on 3,132 road tiles, 2,024 nodes and 3,092 edges.
+**The total went UP and that is the right trade, stated plainly.** 96 ms of it is
+RR-60b's signal-power sample, which the first live frame was paying before and
+the veil pays now (see the table there); the rest is noise. The target this cut
+was written against — *no single restore step over 40 ms on the bench city* — is
+met, with the longest step no longer belonging to roads at all, and the number
+the player actually feels more than halved. `tools/profile_graph_rebuild.gd`
+prints the rebuild's four phases on their own: **15.1 / 4.9 / 10.0 + 9.8 + 8.4 /
+7.0 ms** on 3,132 road tiles, 2,024 nodes and 3,092 edges.
 
 **One honest cost.** The trace slot count is derived from an exact ceiling — every
 road tile can be a node, which is the worst case §2.4 admits — so a city whose

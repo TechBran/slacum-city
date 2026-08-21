@@ -187,6 +187,55 @@ func test_a_stepped_rebuild_lands_where_the_one_call_lands() -> void:
 			"one node past it is two")
 
 
+## The signal-power sample is sliced for the same reason the trace is, and has to
+## survive being sliced for the same reason: **a batch boundary must change
+## nothing.** It is also the one restore phase whose cost is not roads' own —
+## `powered_of` is doc 04's — so a whole-roster sweep in one step was measured at
+## 106 ms on the benchmark city and is why this is batched at all (report 98 §26
+## RR-60b).
+func test_a_sliced_signal_power_sample_lands_where_the_whole_sweep_lands() -> void:
+	var net := RoadsTestRig.starter_network()
+	# Half the signalised nodes dark, chosen by a stable rule so the fixture is a
+	# fact about the graph rather than about an RNG.
+	var dark_tiles: Dictionary = {}
+	var index := 0
+	for node_id in net.graph.node_ids_sorted():
+		var record: Dictionary = net.graph.node(node_id)
+		if not bool(record["signalised"]):
+			continue
+		index += 1
+		if index % 2 == 0:
+			dark_tiles[record["tile"]] = true
+	assert_true(dark_tiles.size() > 4, "the starter core has signals to darken")
+	var powered_of := func(t: Vector2i) -> bool: return not dark_tiles.has(t)
+
+	var whole := RoadsTestRig.starter_network()
+	whole.graph.refresh_signal_power(powered_of)
+	var wanted := _powered_signature(whole.graph)
+
+	var sliced := RoadsTestRig.starter_network()
+	var held: Dictionary = {}
+	var passes := 0
+	while not sliced.graph.signal_power_slice_done(held):
+		sliced.graph.refresh_signal_power_slice(powered_of, held)
+		passes += 1
+		assert_true(passes < 64, "the slice loop must terminate")
+	assert_true(passes > 1, "the starter core takes more than one batch (%d)" % passes)
+	assert_eq(_powered_signature(sliced.graph), wanted,
+			"batched and whole-sweep signal power must agree node for node")
+	assert_eq(sliced.graph.dark_signals, whole.graph.dark_signals,
+			"and publish the same dark count, only when the sweep is finished")
+
+
+func _powered_signature(g: RoadGraph) -> String:
+	var rows := PackedStringArray()
+	for node_id in g.node_ids_sorted():
+		var record: Dictionary = g.node(node_id)
+		rows.append("%d:%s%s" % [node_id, "S" if bool(record["signalised"]) else "-",
+				"P" if bool(record["powered"]) else "D"])
+	return "|".join(rows)
+
+
 ## `_signature` deliberately drops edge IDS, because an incremental retrace is
 ## allowed to number differently. The stepped rebuild is NOT allowed to: it is the
 ## same function, so it must produce the same labelling and the same polyline

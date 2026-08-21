@@ -214,7 +214,7 @@ func test_a_stepped_restore_lands_where_a_single_call_lands() -> void:
 				"the roads step adds the road loader's own seams (%d > %d)"
 				% [spent, announced])
 		for phase in ["graph_scan", "graph_nodes", "graph_trace", "graph_finish",
-				"roads_labels", "roads_state", "finish"]:
+				"roads_labels", "roads_signals", "roads_state", "finish"]:
 			assert_true(seen.has(phase), "the spliced list carries `%s`" % phase)
 		# ORDER, not just membership. The spliced steps are INSERTED at the cursor
 		# rather than appended, and the reason is exactly this: `finish` was queued
