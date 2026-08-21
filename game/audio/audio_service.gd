@@ -31,6 +31,12 @@ const BUS_MASTER := &"Master"
 const UI_TAP := &"ui_tap"
 const UI_CONFIRM := &"ui_confirm"
 const UI_DENY := &"ui_deny"
+## The payday (Wave 14). Not a fourth flavour of confirmation: a collect that
+## paid and an upgrade that succeeded are different events to a player, and the
+## one that put money in the treasury is the one that has to sound like it. The
+## bounty half of the same beat needs no call at all — `incident_resolved`
+## already carries its `reward` and `data/audio.json` maps it to the same cue.
+const UI_CASH := &"ui_cash"
 
 const _MIN_AUDIBLE_LINEAR := 0.0001
 

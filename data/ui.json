@@ -978,11 +978,14 @@
 	},
 	"budget": {
 		"_comment": "The Economy tab's ledger. Keys are doc 03's settle-snapshot keys VERBATIM (`revenue.*` and `expenses.*` from EconomySystem.settle_hour) so a rename there shows up as a missing line here rather than as a wrong total. Order is the reading order, not doc 03's; the tax ladder itself is doc 03's and is never restated here.",
+		"_comment_side_revenue": "Wave 14 adds two keys doc 03 does not settle: `bounties` and `street`. They are DIRECT credits — `Treasury.credit(amount, &\"incident\", …)` from a resolved incident's reward, and the same door a collected street opportunity uses — so they never pass through `EconomySystem.settle_hour` and no row of this ledger has ever contained them. That is not a rounding error: one resolved structure fire pays $1,530, against $1,470 of power tariff + water tariff + fines per settled hour on this tab's own fixture, and until now the Economy tab's NET was wrong by exactly the bounty income every hour a crew answered a call. Until doc 03 settles them, `BudgetModel.feed_side_revenue()` supplies the two lines from the UI's own per-hour tally of the bus events that paid them, and the moment a settle snapshot carries either key the sim's number wins and the tally is ignored — so this retires itself rather than needing to be found again.",
 		"revenue_keys": [
 			"tax",
 			"power_tariff",
 			"water_tariff",
-			"fines"
+			"fines",
+			"bounties",
+			"street"
 		],
 		"expense_keys": [
 			"building_maint",
@@ -1030,6 +1033,17 @@
 		"phase_glyph_pending": "·",
 		"_advantage_min_pct": "§2.8's `advantages` are the terms of the price product, measured by re-pricing the block with each term neutralised (see ui/land_panel_model.gd). A term worth less than this either way is dropped: a `+0 %` row is noise, and rounding a real 0.4 % to `+0 %` is a lie about a number that is not zero.",
 		"advantage_min_pct": 1.0
+	},
+	"street": {
+		"_comment": "Wave 14's street life — the tap, not the characters (doc 11 owns those) and not the roster (the sim owns that). Four numbers, and every one of them is about the finger rather than about the economy: no reward, no spawn rate and no lifetime is authored here or anywhere else in ui/.",
+		"_tap_dp": "The pick radius, in dp, converted to metres at the CURRENT zoom before the roster is asked (BuildController.set_tap_radius_from). 48 is §2.1's touch target and the same number `marker_tap_dp` uses, on purpose: a loose dog is a 32 dp sprite, and a pick that demanded the exact pixel would make the most-tapped thing in the game the hardest thing to tap. It is spelled here rather than shared with `marker_tap_dp` because that one is a Control's minimum SIZE and this one is a world-space RADIUS — they agree today and there is no reason they must agree tomorrow.",
+		"tap_dp": 48.0,
+		"_coach_ttl_s": "How long the one-time discovery mark stays up before it retires itself. It is not a tutorial step (gate 21 counts those and this is not one of them): it never gates, it never repeats, and if the player collects the thing first it comes down on the collect.",
+		"coach_ttl_s": 14.0,
+		"_chip_flash_s": "The treasury chip's deposit pulse, in real seconds, at §2.5's `state_pulse_hz.critical` rate. A8 suppresses the motion entirely — the toast and the ledger still carry the money.",
+		"chip_flash_s": 0.9,
+		"_toast_min": "A bounty below this is not worth a toast: a $12 fender-bender clearing itself would otherwise interrupt the player once an hour to say so. The cue and the chip pulse still fire — they cost no attention — and the ledger still counts every dollar.",
+		"toast_min": 25
 	},
 	"settings": {
 		"_comment": "S9 (doc 12 §2.13), Phase-1 pages only. Every row is data so the sheet holds no option list and no default; `options_from`/`default_from` resolve against data/render.json (doc 11 owns the graphics presets) and this file's own `defaults` block.",

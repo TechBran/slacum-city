@@ -1553,6 +1553,90 @@ rules the binary did not have is worse than no ladder"*; a rung that describes
 rules the **city section** did not have is the same fault with the same cost, and
 it charges every future migrator a rung to walk that answers nothing.
 
+## P. Wave-14 rulings — a payment nobody could hear, and a pick that is not on the grid (2026-08-21)
+
+### P1. A reward that reaches the treasury and no surface is a reward the game did not pay
+
+**The finding.** `IncidentSystem._emit("incident_resolved", …)` has carried a
+`reward` field since doc 06 shipped, and `_pay_reward` has credited it on every
+resolution. Nothing anywhere sounded it, said it, or counted it. The 2026-08-21
+playtest asked for it in the only terms a player has — *"our automatic dispatch
+in crime — that should pay us money"* — and the correct answer was that it
+always had.
+
+**The ruling: a value transfer the player did not personally authorise MUST have
+a sensory surface at the moment it lands.** Not a screen they could go and open;
+a thing that happens on its own. Three of them, and they are cheap on purpose:
+
+1. **Audible.** One cue, `cash`, on the UI bus with attenuation `none`.
+2. **Visible where the value lives.** The treasury chip pulses — §2.5's own
+   pulse mechanism, reused, so A8's `reduce_motion` covers it for free.
+3. **Legible.** A toast, above a floor (doc 92 §35.2), naming the amount.
+
+**Why this is a ruling and not a feature note.** The failure mode is not
+"the feedback was missing", it is that **the system could not be
+distinguished from a broken one by playing it**. A player who dispatches a crew,
+watches it work, and sees no consequence concludes the verb does nothing —
+and reasonably stops using it. The same argument applied to `profile_weights_of`
+in §O and to the ambient floor in §K: a correct system with no observable is
+indistinguishable from an absent one, and the audit keeps finding it because
+nothing in the suite asks the question. A test that a value moved is not a test
+that anybody could tell.
+
+**Scope.** Player-authorised spends already have their surfaces (`purchase`,
+the placement bar, the refusal copy) and are untouched. What this ruling covers
+is the other direction: money that arrives.
+
+### P2. A pick is decided by what the player's finger covers, not by what a tile owns
+
+**The finding.** `BuildController.pick_at_ground` resolved a tap by asking which
+tile it fell in — building first, then land block. Correct for everything that
+had ever been pickable, because everything that had ever been pickable was
+built on the grid. A street collectable is not: it is a character standing on a
+tile a house already owns, so every tap on one opened the house.
+
+**The ruling: an entity that is not placed on the grid is picked by a RADIUS
+from the tapped point, and it outranks the grid.** Two halves, both load-bearing:
+
+* **The radius is 48 dp converted at the current zoom, never a metre constant.**
+  Doc 92 §35.3 has the arithmetic: the same 48 dp is 0.69 m of ground at
+  `zoom_t = 0` and 16.04 m at full zoom-out, a factor of 23. Any constant chosen
+  in metres is wrong at one end of that range by more than an order of
+  magnitude. The unit the player has is the finger; the shell owns the
+  conversion because only the shell knows the camera.
+* **The moving thing wins.** Everything the grid holds is something the player
+  built and can find again in a second. The collectable is leaving. Losing the
+  building panel for one tap costs a tap; losing the dog costs the dog.
+
+**And the roster asked is the SIM's, never the render view.** A pick that asked
+the renderer would be picking what is *drawn* — subject to LOD, culling, the
+perf governor's own decisions and a frame of interpolation lag — rather than
+what exists. That is the same class of error as a UI that predicts a command's
+success (doc 12 §4.4), and it fails in the same silent way: the tap that misses
+is the one where the governor had just dropped the character's bucket.
+
+### P3. A one-shot notice is not a curriculum step
+
+**The ruling.** A sentence shown once because the *world* did something new is
+not the same object as a step of doc 12 §2.17's scripted fifteen minutes, and
+must not be authored as one. It gets the mark's presentation and none of its
+machinery: no index, no count, no persisted cursor, no gate, no `Skip tutorial`.
+
+**The mechanical reason, which is the whole ruling.** The balance suite counts
+the tutorial's steps. A curriculum whose length depends on what the director
+happened to spawn is not a curriculum — it is a number that changes per save,
+and every assertion written against it becomes a flake. The same argument
+retires the button: offering `Skip tutorial` on a notice offers to skip
+something that is not running, and on a player who graduated, something that no
+longer exists.
+
+**Ordering, since both can want the screen.** A live step always wins. A notice
+raised during one is **owed**, not dropped — it goes up when the tutorial ends,
+skipped included, which is precisely the case where nothing else has explained
+anything. Its one-shot flag persists; its coordinates deliberately do not,
+because a mark restored a day later would point at a street that emptied hours
+ago, and a mark that points at nothing is worse than a mark that centres.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

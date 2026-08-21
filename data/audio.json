@@ -83,6 +83,8 @@
 		"ui_deny":           {"stream": "ui_deny",           "bus": "UI",      "gain_db": -5.0, "pitch_jitter": 0.02, "priority": 2},
 
 		"purchase":          {"stream": "purchase",          "bus": "SFX",     "gain_db": -4.0, "pitch_jitter": 0.03, "priority": 3},
+		"_comment_cash": "The payday. It sits on the UI bus rather than SFX and it is never attenuated (see the two rules below), because money arriving is FEEDBACK — the player's own tap paid, or a crew they never watched leave came back with a bounty — and feedback that gets quieter because the camera drifted is feedback the player stops trusting. Its priority sits above `purchase` for the same reason: a coin landing must not be the voice the pool steals when a storm is on.",
+		"cash":              {"stream": "cash",              "bus": "UI",      "gain_db": -5.0, "pitch_jitter": 0.03, "priority": 4},
 		"construct_stage":   {"stream": "construct_stage",   "bus": "SFX",     "gain_db": -12.0, "pitch_jitter": 0.10, "priority": 1},
 		"construct_complete":{"stream": "construct_complete","bus": "SFX",     "gain_db": -4.0, "pitch_jitter": 0.02, "priority": 3},
 
@@ -171,6 +173,14 @@
 
 		{"type": "city_level_changed", "cue": "level_fanfare",
 			"dedup_by": "cue", "dedup_s": 1.00, "cooldown_s": 20.00,
+			"attenuation": {"curve": "none"}},
+
+		{"_comment": "The payday, Wave 14. Two doors, ONE identity. `ui_cash` is the shell's synthetic cue on a street collect the player tapped for (the same door `ui_confirm` uses, `AudioService.UI_CASH`); `incident_resolved` with a reward on it is the bounty a dispatch earned while the player was somewhere else entirely — that payload has carried `reward` since doc 06 shipped and NOTHING has ever sounded it, which is the audible half of why an automatic dispatch felt like it paid nothing. Both resolve to `cash`, they dedup and cool down on that shared identity, and the 0.35 s cooldown is deliberately longer than a sim tick: a collect whose command lands a tick after the tap can therefore never double-strike, and a player sweeping up four dogs in a second hears four coins at the rate an ear can count them, not a machine gun."},
+		{"type": "ui_cash", "cue": "cash",
+			"dedup_by": "cue", "dedup_s": 0.30, "cooldown_s": 0.35,
+			"attenuation": {"curve": "none"}},
+		{"type": "incident_resolved", "range": {"reward": {"min": 1}}, "cue": "cash",
+			"dedup_by": "cue", "dedup_s": 0.30, "cooldown_s": 0.35,
 			"attenuation": {"curve": "none"}}
 	],
 

@@ -843,6 +843,117 @@ Five decisions worth recording:
 line). Both added in the same commit as the screen, which is A91-D-28's lesson
 applied on the way in rather than a wave late.
 
+### 2.21 The tap and the payday (Wave 14)
+
+The 2026-08-21 playtest asked for one thing this doc owns: "there's not a lot of
+downtime of absolutely nothing to do… these things just pop up periodically, so
+a user scrubbing around their town can actually see them and give them money."
+Doc 06 spawns the things and doc 11 draws them. This section is everything
+between a finger landing on one and the player believing they got paid.
+
+**The pick gets a zeroth arm.** §2.8's seam — `BuildController.pick_at_ground` —
+answered `building → block → none` in that order, decided by which tile the
+point fell in. A street opportunity is not on the grid: it is a 32 dp character
+standing on a tile some house already owns, so a tile-decided pick hands every
+tap on a loose dog to the building panel behind it. The new order is
+
+```
+opportunity (within tap_radius_m)  →  building  →  block  →  none
+```
+
+and three things about it are deliberate:
+
+1. **It outranks the building, and the asymmetry is the argument.** Everything
+   below it on the list is a thing the player BUILT and can find again in a
+   second; the dog is leaving. Losing the house for one tap costs nothing.
+2. **It is a radius from the tapped POINT, not a tile test**, because the thing
+   being picked is not on a grid. `data/ui.json.street.tap_dp` is 48 — §2.1's
+   touch target — and the shell converts it to metres at the CURRENT zoom
+   (`BuildController.set_tap_radius_from(CameraState.m_per_dp(viewport))`).
+   Measured on a 412 × 915 dp display (doc 92 §35.3), that same 48 dp is
+   **0.69 m** of ground at `zoom_t = 0`, **2.58 m** at the default 0.42 and
+   **16.04 m** at full zoom-out — a factor of 23. A radius authored in metres is
+   therefore wrong at one end of the range by more than an order of magnitude:
+   2.58 m is **7.7 dp** of screen zoomed out — a sixth of a touch target, a pick
+   nobody can make — and 16.04 m is **exactly two tiles** at the default zoom.
+3. **The query is the SIM's roster, never the render view.** `sim.street.
+   opportunity_near(point, radius)`. A pick that asked the renderer would be
+   picking what is drawn rather than what exists, which is the same class of
+   defect as a UI that predicts success (§4.4).
+
+Both seams degrade rather than fail: `tap_radius_m` starts at 0, so a shell that
+never wires the conversion picks exactly as it did before, and a sim with no
+`street` member or no `cmd_collect_opportunity` refuses with `E_NO_COMMAND` —
+which the payday reads as *say nothing*, because there is no story to tell a
+player about a feature that is not there.
+
+**The payday is one beat with two doors.** A collect the player tapped for and a
+bounty a crew earned while they were looking somewhere else are the same event
+to a player: money arrived. Both resolve to
+
+| surface | what happens | owner |
+| --- | --- | --- |
+| audio | the `cash` cue — three struck discs over a note rustle, 0.55 s, UI bus, never attenuated | `data/audio.json`, `tools/gen_audio.py` |
+| HUD | the treasury chip pulses at §2.5's `state_pulse_hz.critical` for `street.chip_flash_s` | `HudModel.flash_chip` |
+| world | the floating `+$` | doc 11 |
+| copy | a toast — on the bounty half above `street.toast_min`, and on a collect only under A8 | §2.15's surface |
+| ledger | a revenue row | §2.10's Economy tab |
+
+**`incident_resolved` has carried `reward` since doc 06 shipped and nothing has
+ever sounded it, toasted it or counted it.** That is the whole reason the
+automatic dispatch the player asked to be paid for felt like it paid nothing: it
+was already paying, silently, which is indistinguishable from not paying. The
+audio half needs no shell change at all — a `data/audio.json` rule matching
+`range: {reward: {min: 1}}` — and the other three come off the batch `UIRoot.
+feed_events()` is already given.
+
+Copy is the player's own sentence where they wrote one: `Crime stopped — +$120
+bounty` for crime, `{kind} cleared — {amount} bounty` for everything else, with
+`{kind}` resolved from the drawer's own `ui_incident_kind_*` table so a fire is
+named here exactly as it is named there. Below `street.toast_min` there is no
+sentence — the coin and the chip still fire, because they cost no attention, and
+a toast that interrupts for a $12 fender-bender teaches the player to ignore the
+next one.
+
+**A8.** The floating `+$` is motion and `reduce_motion` takes it away, so the
+collect raises `ui_street_collected` instead. The payday is never silent for an
+accessibility setting.
+
+**Discovery is a NOTICE, not a tutorial step.** The first opportunity a save
+ever sees raises one coach mark — `Something's happening on Main St — tap it.` —
+through §2.17's machinery and none of its curriculum. `OnboardingFlow.
+show_notice()` borrows the dim, the cutout and the 240 dp bubble; it has no step
+counter, no `Skip tutorial`, no advance condition and no row in
+`data/ui.json.onboarding.steps`. The reason is a gate: the balance suite counts
+the tutorial's steps, and a curriculum whose length depended on what the
+director happened to spawn would not be a curriculum. A live step always wins,
+and a notice raised during one is *owed* rather than dropped — it goes up when
+the tutorial finishes, including when it is skipped, which is exactly the case
+where nothing else has explained anything. The one-shot flag rides in §3.2's
+`ui` section; the coordinates deliberately do not, because a mark restored a day
+later would point at a street that emptied hours ago.
+
+**The ledger line nobody could see.** A bounty is `Treasury.credit(amount,
+&"incident", …)` — a DIRECT credit that does not pass
+`EconomySystem.settle_hour` — so **no row of §2.10's Economy tab has ever
+contained one, and its NET was short by exactly that much on every hour a crew
+answered a call.** A collected opportunity is expected to arrive by the same
+door (doc 06's roster is not landed at this fork), which is why it gets a row of
+its own here rather than being folded into the bounty line. `data/ui.json.budget.revenue_keys` now carries
+`bounties` and `street`, and until doc 03 settles them `StreetModel` tallies the
+two off the bus per game-hour and `BudgetModel.feed_side_revenue()` renders
+them. The rule that retires it: **a key the settle snapshot carries is taken
+from the snapshot, always** — so the day doc 03 publishes `revenue.bounties` the
+sim's number wins with no edit here and no chance of counting a dollar twice.
+The tally window is the hour that CLOSED, not the one running, because the
+column is headed "Revenue, last settled hour" and it has to mean that.
+
+**Preview states**: `street_coach` (the discovery mark over a fixed world point)
+and `economy_street` (the ledger with a policed city's real income in it —
+one resolved fire outweighs every non-tax line on that screen combined —
+doc 92 §35.1). Both
+added in the same commit as the surface, per A91-D-28.
+
 ---
 
 ## 3. Data Schema
@@ -920,6 +1031,9 @@ Completion kinds: `command_accepted`, `sim_event`, `ui_opened` (`{path, min_seco
                               "confirm_water","review_ledger","..."],
                  "director_suppress_until_min":1284},
   "seen_tips": ["overlay_first_use","escalation_bar","rotation_locked"],
+  "street": {"coached":true,"coach_pending":false,
+             "live":{"bounties":0.0,"street":0.0},
+             "settled":{"bounties":1840.0,"street":260.0}},
   "settings": {"text_scale":1.0,"colorblind":"default","reduce_motion":false,
     "larger_touch_targets":false,"haptics":"light","rotation_mode":"snap45","invert_pan":false,
     "follow_dispatched_unit":true,"auto_speed_reset_on_critical":true,"graphics":"balanced","battery_saver":false,
@@ -933,6 +1047,8 @@ Completion kinds: `command_accepted`, `sim_event`, `ui_opened` (`{path, min_seco
 **What left this section (C-71/C-72).** Push preferences — master toggle, per-class P1–P4 toggles, per-event-type toggles, quiet hours, digest — are doc 08's policy and persist in doc 08's `notifications` save section; the S10 screen edits them there. What remains here is the single control this doc owns (`in_app_banners`) plus the in-app token buckets, renamed `notif_buckets` → **`in_app_buckets`** with an explicit `global_p2p3` counter so no reader can mistake them for push budgets. `selected_entity_id` is new and carries the §2.5 selection ring — at most one, because selection is single-valued.
 
 Device-scoped preferences (`text_scale`, `colorblind`, `reduce_motion`, `larger_touch_targets`, `haptics`, `graphics`, `battery_saver`) are also written to `user://settings.cfg` per constitution §2 so they survive city deletion and checkpoint rollback; the copy above is the per-city snapshot, and on load `settings.cfg` wins for those keys.
+
+**`street` (Wave 14, §2.21).** Two things, for two different reasons. `coached` / `coach_pending` are the one-shot discovery flag — a lesson taught twice is a lesson nobody trusts, and a mark the tutorial was standing on is owed rather than lost. **The mark's coordinates are deliberately NOT here**: restored a day later they would point at a street that emptied hours ago, and a mark that points at nothing is worse than one that centres. `live` / `settled` are the per-game-hour tally the Economy tab's two unsettled revenue lines are drawn from; they ride along because a save taken mid-hour and restored would otherwise print a ledger line for money the restored city no longer remembers earning. Both halves retire the day doc 03 settles `revenue.bounties` — the tally is ignored for any key the settle snapshot carries.
 
 Migration policy: unknown settings keys are dropped, missing keys take defaults from `data/ui.json` — a settings change must never invalidate a city (constitution §9).
 
@@ -1213,6 +1329,8 @@ Ships as three files — `data/ui.json`, `data/onboarding.json`, `data/strings.e
   },
   "speed": {"options": [1,2,3], "default": 1, "paused_is_separate_flag": true, "resume_unpaused": true, "auto_speed_reset_on_critical": true},
   "away_report": {"min_real_seconds": 120, "max_timeline_entries": 8, "max_unresolved_shown": 3},
+  "_comment_street": "§2.21. Four numbers, and every one is about the finger or the screen: no reward, spawn rate or lifetime is authored here or anywhere else in ui/. `tap_dp` is §2.1's touch target, converted to a world RADIUS at the current zoom (doc 92 §35.3 has the metres). `toast_min` is the dollar floor below which a bounty pays, sounds and pulses the chip and says nothing.",
+  "street": {"tap_dp": 48.0, "coach_ttl_s": 14.0, "chip_flash_s": 0.9, "toast_min": 25},
   "in_app_alerts": {
     "_comment": "FOREGROUND banners and toasts ONLY (C-71/C-72). These are ~3x doc 08's PUSH budgets in data/notifications.json and that is deliberate: an in-app banner costs a glance the player is already giving. Never read these to decide a push, or a push budget to decide a banner.",
     "classes": {
@@ -1551,9 +1669,16 @@ at 640 × 340 — which is A91-D-29 and is not this wave's.
 | D-59 | **§2.3's LEFT rail is one solved stack, like D-46's right one.** `UIWidgets.solve_rail_stack()` computes **one pitch** for the whole column and places every member; `UIRoot` owns the call, because the three members are not siblings (the FAB is on `SheetLayer`) and nobody could find them by walking a parent. Membership is duck-typed — a screen joins by answering `rail_entry()`. | §2.3, D-46, D-51 | Three files placed three controls against three separate measurements, and two of them were taken at different moments: `OverlayRail._build_button()` places inside `setup()`, before the theme has propagated and before anything is laid out, so it read its own `custom_minimum_size` — **73 dp** at 880 × 400 / 130 % — while `CityHUD.refresh()` re-places the speed rail every frame and read the laid-out **93**. Two pitches, one column: the overlay button at y 210 … 303 and the speed rail at y 89 … 182, **28 dp of gap where `rail_gap_dp` says 8**, and `HudModel.top_bar_left_inset()` solving the bar against a rail top no button actually had. Indices are fixed and gaps are not closed: the FAB hides during placement, and a rail button that slid down to take its slot would move under the player's thumb mid-gesture. |
 | D-60 | **S15, the loading veil, ships** — `ui/veil_model.gd` (headless) + `ui/loading_veil.gd` (code-built) on a new `VeilLayer`, with `UIRoot.present_veil_load/…_catchup/dismiss_veil` and two preview states. §2.20 has the screen. | §2.2, §2.20, doc 13 §2.9/§2.9.1 | Doc 13 has assumed a veil since it was written; the restore is eleven resumable steps and the catch-up has always been sliceable, and **both levers were built with neither having a surface**. The title door standing in for it covered CONTINUE and nothing else. One deviation, argued in §2.20 item 2: doc 13 §2.9.1 asks for a spinner over the restore and this is a stepped bar with its unit named under it. |
 
+| D-61 | **The pick's zeroth arm: a street opportunity outranks a building, by a RADIUS.** `BuildController.pick_at_ground` gained `PICK_OPPORTUNITY` in front of §2.8's three answers; the radius is `data/ui.json.street.tap_dp` (48) converted at the current zoom by `set_tap_radius_from(CameraState.m_per_dp(viewport))`, and the roster asked is the **sim's** (`sim.street.opportunity_near`), never the render view. §2.21 has the argument. | §2.8, §2.16, §2.21 | A collectable is a 32 dp character standing on a tile some house already owns, so a tile-decided pick hands every tap on one to the building panel behind it — the player's finger is on the animal and the game opens a building. Everything else on the pick list is a thing they built and can find again in a second; this one is leaving. A fixed metre radius could not work at both ends of a 5 m-to-100 m zoom range, which is why the conversion is the shell's per tap. |
+| D-62 | **The payday is one cue, one chip and one sentence, whatever door it came through.** `AudioService.UI_CASH` + a `data/audio.json` rule on `incident_resolved` with `range: {reward: {min: 1}}`, both resolving to the `cash` cue; `HudModel.flash_chip()` for the treasury chip's deposit pulse; `ui_bounty_toast*` for the copy. | §2.4, §2.5, §2.14, §2.15, §2.21 | **`incident_resolved` has carried `reward` since doc 06 shipped and nothing had ever sounded it, toasted it or counted it.** The automatic dispatch the 2026-08-21 playtest asked to be paid for was already paying, silently, which a player cannot tell apart from not paying. §2.5's chip pulse was a STATE (the grid is below 60 %); this is the other kind — a chip that pulses because something happened to it — and it reuses the same `chip["pulse"]` → `meta` → 1.2 Hz alpha path, so A8's suppression covers both without a second branch. |
+| D-63 | **A one-shot NOTICE is not a tutorial step.** `OnboardingFlow.show_notice()` borrows §2.17's mark — the dim, the cutout, the 240 dp bubble — with no step counter, no `Skip tutorial` (`CoachMark` reads `show_skip`, defaulting true), no advance condition and no row in `data/ui.json.onboarding.steps`. A live step always wins; a notice raised during one is owed and goes up when the tutorial finishes, skipped included. | §2.17, §2.21, §3.2 | The balance suite counts the tutorial's steps (gate 21). A curriculum whose length depended on what the director happened to spawn would not be a curriculum — and a mark that offered to `Skip tutorial` would be offering to skip something that is not running, or on a graduated player something that no longer exists. |
+| D-64 | **The Economy ledger may carry a revenue line doc 03 does not settle**, through `BudgetModel.feed_side_revenue()`; a key the settle snapshot **does** carry is taken from the snapshot, always. `data/ui.json.budget.revenue_keys` gained `bounties` and `street`. | §2.10, §2.21, doc 03 §2.4 | A bounty is `Treasury.credit(amount, &"incident", …)` — a direct credit that never passes `EconomySystem.settle_hour` — so **no row of this ledger has ever contained one and its NET was short by exactly that much on every hour a crew answered a call.** A row the column shows but the total does not contain would be a second, worse defect, so the side total moves `gross` and `net` too. The precedence rule is what retires this: the day doc 03 publishes `revenue.bounties`, the sim's number wins with no edit here and no chance of double-counting. |
+
 **Preview states added** (`tools/ui_preview.gd`): `veil_load`, `veil_catchup` —
-S15's two phases, added in the same commit as the screen (A91-D-28's lesson).
-The deck is 55 states.
+S15's two phases, added in the same commit as the screen (A91-D-28's lesson) —
+and, at Wave 14, `street_coach` and `economy_street` (D-61 … D-64), on the same
+terms. The deck is 55 states, then **57**. Both new states are **clean at all six
+`BOXES` × both accessibility settings** — 24 sweeps, `--audit --strict`, exit 0.
 
 **Measured, whole-deck, before → after** (`--screen=all --audit --strict`, every
 finding of every kind, **six** boxes × **three** text scales; 53 states per cell
