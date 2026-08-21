@@ -17,6 +17,7 @@ var city_view: CityView
 var streetlights: StreetlightView
 var environment_controller: EnvironmentController
 var weather_fx: WeatherFX
+var flood_view: FloodView
 var camera_rig: CameraRig
 var camera_state: CameraState
 var touch_input: TouchInput
@@ -69,6 +70,12 @@ var _last_overlay_minute := -1
 var _resumed_slot := -1   # >= 0 when this session restored a save at boot
 var _want_title := false  # clean player launch → the title door owns the load
 var _title_up := false    # true while the door is showing; gates saves + catch-up
+## The load in flight, or null. While it is non-null the sim is HALF-RESTORED —
+## every `_process` line below the guard would read a city that does not exist
+## yet — and the title door is still up, which is what the player sees instead
+## of a frozen frame (doc 08 §2.15.2, doc 13 §2.9.1).
+var _restore_cursor: RestoreCursor = null
+var _restore_slot := -1
 var _render_data: Dictionary = {}
 var road_surface: RoadSurfaceView
 ## doc 11 §7.4's PERF line — emitted by this, because nothing ever called
@@ -311,10 +318,27 @@ func _build_ground() -> void:
 	water_node.name = "Water"
 	water_node.multimesh = water_mm
 	ground_root.add_child(water_node)
+	# doc 11 §2.9b / doc 07 §2.4: standing water on flooded LOW blocks' road
+	# tiles. ONE MultiMesh for the whole city; the node hides itself when the
+	# city is dry, so a dry frame costs nothing (A91-D-26).
+	flood_view = FloodView.new()
+	flood_view.name = "Flood"
+	ground_root.add_child(flood_view)
+	flood_view.setup(_render_data)
+	flood_view.rebuild(world.grid)
+	# Doc 07 PERSISTS the flood field, so a save resumed mid-flood has its
+	# answer before the first frame rather than after the next band crossing.
+	flood_view.prime(sim_host.sim.weather.flood.depth_mm)
+	flood_view.snap()
 
 
 func _build_city_view(render_data: Dictionary) -> void:
 	render_model = RenderStateModel.new(render_data)
+	# doc 11 §7.4 / tools/bench_device.sh: pin the graphics preset from the
+	# launch arguments, BEFORE PerfGovernor and the per-layer seeds read it.
+	for preset_arg in DevArgs.user_args():
+		if String(preset_arg).begins_with("--preset="):
+			render_model.set_preset(String(preset_arg).trim_prefix("--preset="))
 	var manifest: Dictionary = StarterCityLoader.read_json(
 			"res://game/meshes/generated/manifest.json")
 	for entry in manifest.get("meshes", []):
@@ -366,6 +390,8 @@ func _build_city_view(render_data: Dictionary) -> void:
 	# the settings row. Seed them all from the resolved preset once, here.
 	if road_surface != null:
 		road_surface.set_preset(render_model.preset, render_data)
+	if flood_view != null:
+		flood_view.set_preset(render_model.preset, render_data)
 	vehicle_view.set_preset(render_model.preset, render_data)
 	android_lifecycle.thermal_status_changed.connect(perf_governor.set_thermal_status)
 	construction_view = ConstructionSiteView.new()
@@ -460,6 +486,8 @@ func _on_sim_batch(batch: Array) -> void:
 		ui_root.feed_events(batch)
 	if weather_fx != null:
 		weather_fx.feed_events(batch)   # doc 07's weather_changed / lightning_strike
+	if flood_view != null:
+		flood_view.feed_events(batch)   # doc 07's flood_level_changed
 	for event in batch:
 		match StringName(String(event.get("type", ""))):
 			&"road_graph_changed", &"block_roads_stamped":
@@ -826,8 +854,18 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 	root.deeplink_requested.connect(_on_ui_deeplink)
 	root.bind_tax(sim_host.sim.cmd_set_tax_level, sim_host.sim.tax_level(),
 			sim_host.sim.tax_level_count(), sim_host.sim.tax_rate)
+	# Doc 10 §2.13's automatic road repair (doc 12 D-50): the PAIR of dials
+	# `RoadNetwork` takes, seeded from what this city actually holds so a
+	# restored save's policy wins over the data default.
+	root.bind_road_policy(sim_host.sim.cmd_set_auto_repair_policy,
+			sim_host.sim.auto_repair_policy())
+	# Doc 06 §2.11's recall (doc 12 D-48, doc 91 A91-D-24): one line is the door.
+	root.bind_recall(sim_host.sim.cmd_recall_unit)
 	root.bind_dispatch_policy(sim_host.sim.cmd_set_dispatch_policy,
 			sim_host.sim.incidents.dispatch.policy.serialize())
+	# Doc 03 §2.9: S9 shows the city's difficulty read-only (doc 93 §K1 — there
+	# is no setter, so this is a REPORT and not a binding).
+	root.set_city_difficulty(sim_host.sim.difficulty_preset())
 	# §2.13's level-up moment fires on a CHANGE; seed the level the city already
 	# has so a resumed save does not celebrate it a second time.
 	root.set_city_level(sim_host.sim.progression.city_level)
@@ -1098,6 +1136,16 @@ func _alert_world_pos(kind: StringName, id: Variant) -> Variant:
 			var b: Building = sim_host.sim.buildings[sim_id]
 			if sim_id == str(id) or b.id == int(id):
 				return Vector3(b.origin.x * tile_m, 0.0, b.origin.y * tile_m)
+	if kind == &"cell":
+		# doc 07 §2.4 keys a flood cell "B<bx>,<bz>" (land block) or "<tx>,<tz>".
+		var parts := str(id).split(",")
+		if parts.size() == 2:
+			if str(id).begins_with("B"):
+				var bx := int(parts[0].substr(1))
+				var bz := int(parts[1])
+				return Vector3((bx * 16 + 8) * tile_m, 0.0, (bz * 16 + 8) * tile_m)
+			return Vector3(int(parts[0]) * tile_m + 4.0, 0.0,
+					int(parts[1]) * tile_m + 4.0)
 	return null
 
 
@@ -1141,6 +1189,9 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 			if road_surface != null:
 				road_surface.set_preset(str(model.value("graphics")),
 						StarterCityLoader.read_json("res://data/render.json"))
+			if flood_view != null:
+				flood_view.set_preset(str(model.value("graphics")),
+						StarterCityLoader.read_json("res://data/render.json"))
 			if perf_governor != null:
 				# A player's preset choice clears the ladder and any latched drop.
 				perf_governor.reset(str(model.value("graphics")))
@@ -1178,20 +1229,45 @@ func _on_ui_save_loaded(_slot: int) -> void:
 	_resync_world_views()
 	if ui_root != null:
 		ui_root.restore_ui_state(save_service.last_loaded_ui)
+		# The preset is part of the city (doc 08 §2.8 v6), so a loaded city can
+		# carry a different one than the process booted on.
+		ui_root.set_city_difficulty(sim_host.sim.difficulty_preset())
 	_refresh_hud()
 
 
 func _on_title_continue(slot: int) -> void:
-	var ok := slot >= 0 and save_service.load_slot(sim_host.sim, slot)
-	if not ok:
-		ok = save_service.load_latest(sim_host.sim) >= 0
-	if not ok:
-		ui_root.push_toast(UIWidgets.t(ui_root.config, "ui_saves_failed"),
-				HudModel.STATE_CRITICAL)
-		ui_root.refresh_title()
-		return   # the door survives a corrupt save
-	_resumed_slot = slot
-	_on_ui_save_loaded(slot)
+	if _restore_cursor != null:
+		return   # a second press while the first load is still stepping
+	var target := slot if slot >= 0 else save_service.latest_slot()
+	if target < 0:
+		_refuse_title_continue()
+		return
+	_begin_restore(target)
+
+
+## One step per frame, behind the door. The door IS the veil until there is a
+## real one (doc 91 §20.2 item 19): it is already drawn and already animating,
+## and dismissing it is now the last thing the load does rather than the first.
+func _begin_restore(target: int) -> void:
+	_restore_slot = target
+	_restore_cursor = save_service.begin_load_slot(sim_host.sim, target)
+
+
+## Runs INSTEAD of the rest of `_process` while a load is in flight.
+func _advance_restore() -> void:
+	if not save_service.step_load(_restore_cursor):
+		return
+	_restore_cursor = null
+	if not save_service.last_load_ok:
+		# Exactly the old fallback: the named slot, then the newest other one.
+		var fallback := save_service.latest_slot()
+		if fallback >= 0 and fallback != _restore_slot:
+			_begin_restore(fallback)
+			return
+		_refuse_title_continue()
+		return
+	_resumed_slot = _restore_slot
+	_on_ui_save_loaded(_restore_slot)
 	ui_root.set_city_level(sim_host.sim.progression.city_level)
 	ui_root.dismiss_title()
 	sim_host.paused = false
@@ -1200,7 +1276,20 @@ func _on_title_continue(slot: int) -> void:
 		android_lifecycle.save_enabled = true
 
 
-func _on_title_new_game(slot: int) -> void:
+func _refuse_title_continue() -> void:
+	_restore_cursor = null
+	_restore_slot = -1
+	ui_root.push_toast(UIWidgets.t(ui_root.config, "ui_saves_failed"),
+			HudModel.STATE_CRITICAL)
+	ui_root.refresh_title()   # the door survives a corrupt save
+
+
+func _on_title_new_game(slot: int, difficulty: String) -> void:
+	# Doc 03 §2.9 / doc 93 §K1: the preset is chosen ONCE, here, and the window
+	# closes at the founding tick — `found_with_difficulty` refuses after
+	# `tick_index == 0`. It runs BEFORE the capture below, because that capture
+	# is what a KEEP round trip restores.
+	sim_host.sim.found_with_difficulty(difficulty)
 	# `slot` is where the OLD city goes (the door's replace/archive ruling), or
 	# -1 when there is nothing worth keeping.
 	if slot >= 0:
@@ -1238,6 +1327,9 @@ func _rebuild_road_multimesh() -> void:
 	if streetlights != null:
 		streetlights.replace_from(sim_host.sim.world.grid, graph,
 				sim_host.sim.world.block_of_tile)
+	# A street laid across a low block is a street that can now flood.
+	if flood_view != null:
+		flood_view.rebuild(sim_host.sim.world.grid)
 
 
 ## Rebuild every world view from the (just-replaced) sim. The render model's
@@ -1293,6 +1385,13 @@ func _resync_world_views() -> void:
 		streetlights.replace_from(sim.world.grid,
 				sim.roads.graph if sim.roads != null else null,
 				sim.world.block_of_tile)
+	# A loaded save is a different flood field. `prime` takes doc 07's own
+	# persisted depths; `snap` puts the water at its real level on the first
+	# frame instead of rising into it.
+	if flood_view != null:
+		flood_view.rebuild(sim.world.grid)
+		flood_view.prime(sim.weather.flood.depth_mm)
+		flood_view.snap()
 
 
 func _on_ui_dispatch(unit_id: int, incident_id: int) -> void:
@@ -1602,6 +1701,12 @@ func _on_hud_pause_toggled(paused: bool) -> void:
 
 
 func _process(delta: float) -> void:
+	# A restore in flight owns the frame: the sim is half-rebuilt at every step
+	# boundary. `sim_host.paused` is already true (the door set it), so no tick
+	# can land in a seam either.
+	if _restore_cursor != null:
+		_advance_restore()
+		return
 	var hour := sim_host.hour_of_day_float()
 	_hud_timer += delta
 	if _hud_timer >= HUD_REFRESH_S:
@@ -1609,6 +1714,8 @@ func _process(delta: float) -> void:
 		_refresh_hud()
 	if weather_fx != null:
 		weather_fx.refresh(delta, camera_state.focus)
+	if flood_view != null:
+		flood_view.refresh(delta)
 	environment_controller.apply(hour, delta)
 	city_view.refresh(delta, hour, camera_rig.camera.global_position)
 	if construction_view != null:
@@ -1656,6 +1763,8 @@ func _process(delta: float) -> void:
 					construction_plant.set_preset(String(knobs["preset"]), _render_data)
 				if road_surface != null:
 					road_surface.set_preset(String(knobs["preset"]), _render_data)
+				if flood_view != null:
+					flood_view.set_preset(String(knobs["preset"]), _render_data)
 			if audio != null:
 				audio.feed_batch(perf_governor.drain_events())   # telemetry cue
 	if _autosave_interval_s > 0.0 and save_service != null:
