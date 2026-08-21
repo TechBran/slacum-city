@@ -174,7 +174,7 @@ At r = 0.16 revenue is ×1.778, happiness drops 25.2 points, attractiveness rela
 
 **As shipped (Wave 1.5, audit doc 93 §B).** The slider has detents: **`cmd_set_tax_level(level, preview)`** walks `TAX_RATE_MIN … TAX_RATE_MAX` in `TAX_RATE_STEP` (new in §8, **0.01**) increments — 13 levels, with **level 5 landing exactly on `TAX_RATE_BASE`** — and the ladder is computed in basis points so no detent can drift off its authored rate through float arithmetic. Codes are `E_TAX_LEVEL_RANGE` then `E_TAX_COOLDOWN` (whose payload carries `hours_remaining`); re-selecting the level already in force is a free no-op that starts **no** cooldown, so the UI need not special-case it. All **four** couplings are live: the policy factor scales revenue here, and `happiness_tax_delta` / `growth_rate_multiplier` / `attractiveness_tax_factor` are passed into doc 09's happiness target, attractiveness relaxation rate and attractiveness ceiling at the hourly settlement — all exactly neutral (0 / 1.0 / 1.0) at the base rate, so the shipped starter city is unaffected and the founding ledger does not move. *(The audit's phrase "the `TAX_LEVEL_GROWTH` curve exists" conflated two constants: `TAX_LEVEL_GROWTH 2.15` is `base_tax` growth per **building** level and has nothing to do with the tax rate.)*
 
-**M_rev[difficulty]** — §2.9.
+**M_rev[difficulty]** — §2.9. **It appears here and in the revenue-floor formula below, and NOWHERE ELSE** (doc 93 §N2): it is the *tax* multiplier, not a multiplier on §2.5's non-tax lines. §2.9's table says so and states the measured effective figure.
 
 **City revenue floor (anti-death-spiral).** After summing all buildings:
 
@@ -272,7 +272,9 @@ E_total = E_building_maint + E_departments + E_fleet + E_fuel_vehicle
         + E_debt + E_oneoff
 ```
 
-All × `M_exp[difficulty]` except `E_debt` and `E_oneoff` (which carry their own difficulty terms).
+All × `M_exp[difficulty]` except **`E_roads_repair`**, `E_debt` and `E_oneoff` (which carry their own difficulty terms).
+
+**`E_roads_repair`'s exception is new (Wave 12, doc 93 §N1) and it is a fix, not a design change.** That line's own formula below ends `× M_repair[difficulty]`, and it is an ACCRUAL against a payment — the auto-repair policy's realised job, priced by §2.5's `repair_cost = capital_value × damage_fraction × 0.85 × M_repair`. Before the ruling the settlement swept it into `M_exp` as well, so it took **`M_repair × M_exp` — 2.0000 on `crisis` against 1.2500 on every other line** — and the ledger accrued 1.25× what the same tiles cost to fix. An accrual that does not converge on its payment is the double count C-07 / C-08 / C-12 / RR-2 keep removing, one knob down. Doc 92 §29.2(b) measured it; doc 92 §32 measures the fix. **Nothing on the default preset moves**: both knobs are 1.00 on `standard`. The rule, stated once so no fourth reading is possible: **one difficulty knob per ledger line, never two** — seven recurring lines take `M_exp`, `E_roads_repair` takes `M_repair`, `E_debt` takes the APR, `E_oneoff` takes whichever price knob authored it.
 
 **E_building_maint** — revenue-producing buildings only. Civic and utility buildings are covered entirely by their department/O&M lines; billing them twice was the original balance error.
 
@@ -347,7 +349,7 @@ capital_value(tile) = road_build_cost_per_tile[class] × ROAD_REPAIR_CAPITAL_FRA
 decay_this_hour(tile) = base_decay[class] × (1 + 0.75 × c_day) × (1 + wx_wear_day) / 24     (doc 10 §2.12)
 ```
 
-In implementation this is not a separate charge — it is the *accrual* the auto-repair policy realises as lumpy `E_oneoff` repair jobs. The ledger books it as a recurring line because that is what the player experiences and what the budget panel must show; `ExpenseLedger` reconciles the accrual against actual repair spend each game-day so no dollar is counted twice. **Nothing in doc 10 may bill a flat per-tile rate in parallel** — that double-billing is exactly what RR-2 removed, in the same shape as C-12 for the grid and C-08 for buildings. Worked for the starter core in §2.12(f) at doc 10's published starter operating point `c_day = 0.35` (decay multiplier **1.2625**): **$185.87/gh**. *(Round 2 booked this line at the `c_day = 0` floor, $147.22/gh; report 98 RR-13 moved it onto the operating point doc 10 actually publishes.)*
+In implementation this is not a separate charge — it is the *accrual* the auto-repair policy realises as lumpy `E_oneoff` repair jobs. The ledger books it as a recurring line because that is what the player experiences and what the budget panel must show; `ExpenseLedger` reconciles the accrual against actual repair spend each game-day so no dollar is counted twice. **Nothing in doc 10 may bill a flat per-tile rate in parallel** — that double-billing is exactly what RR-2 removed, in the same shape as C-12 for the grid and C-08 for buildings. **And nothing may apply `M_exp` to it on top of the `M_repair` in the formula above** (doc 93 §N1): the accrual is priced with the same knob as the payment it accrues for, or it does not reconcile. Worked for the starter core in §2.12(f) at doc 10's published starter operating point `c_day = 0.35` (decay multiplier **1.2625**): **$185.87/gh**. *(Round 2 booked this line at the `c_day = 0` floor, $147.22/gh; report 98 RR-13 moved it onto the operating point doc 10 actually publishes.)*
 
 **E_debt** — §2.10.
 
@@ -592,12 +594,12 @@ Difficulty changes *pressure*, not health bars.
 
 | knob | casual | standard | hard | crisis |
 |---|---|---|---|---|
-| `M_rev` revenue | 1.15 | 1.00 | 0.92 | 0.85 |
-| `M_exp` recurring expense | 0.85 | 1.00 | 1.12 | 1.25 |
+| `M_rev` **tax** revenue | 1.15 | 1.00 | 0.92 | 0.85 |
+| `M_exp` recurring expense **(seven lines — see §2.4)** | 0.85 | 1.00 | 1.12 | 1.25 |
 | `M_land` land price | 0.85 | 1.00 | 1.15 | 1.30 |
 | `M_dev` development cost | 0.85 | 1.00 | 1.15 | 1.30 |
 | `M_build` build/upgrade cost | 0.90 | 1.00 | 1.10 | 1.20 |
-| `M_repair` repair cost | 0.70 | 1.00 | 1.35 | 1.60 |
+| `M_repair` repair cost **(and `E_roads_repair`'s accrual — §2.4)** | 0.70 | 1.00 | 1.35 | 1.60 |
 | `starting_treasury` | 35,000 | 25,000 | 18,000 | 12,000 |
 | `OFF_TAU` offline taper | 120 | 90 | 75 | 60 |
 | `offline_damage_cap_fraction` | 0.10 | 0.20 | 0.30 | 0.45 |
@@ -606,6 +608,20 @@ Difficulty changes *pressure*, not health bars.
 | `relief_grants_per_era` | 4 | 3 | 2 | 0 |
 
 (The rows above are the `economic` section of `data/difficulty.json`; the other three sections are listed in §8.)
+
+**Two rows carry a scope, and the scope is part of the number** *(Wave 12 — doc 93 §M1/§M2, measured in doc 92 §31)*:
+
+- **`M_rev` multiplies the TAX line only** — §2.2's per-building formula and §2.2's revenue floor. §2.5's power tariff, water tariff and fines are outside it, deliberately: two of those three are §9 item 6b's *held* metering constants (`delivered_mwh` 1.5, fines 3/350) and a difficulty knob on a placeholder is a difficulty knob on nothing. Non-tax revenue is **11.82 % of founding gross**, so the row's advertised effect and its measured effect differ by that share:
+
+  | preset | advertised | **measured on GROSS revenue** |
+  |---|---|---|
+  | `casual` | +15 % | **+13.23 %** |
+  | `hard` | −8 % | **−7.05 %** |
+  | `crisis` | −15 % | **−13.23 %** |
+
+  The advertised column is what the knob does to the line it multiplies; the measured column is what the player's ledger shows. Both are printed because a preset table that quotes only the first is the reason doc 92 §29.2(a) had to solve for the split algebraically.
+
+- **`M_exp` multiplies SEVEN of the eight recurring lines.** `E_roads_repair` is the eighth and takes `M_repair` instead — one knob per line, never two (§2.4).
 
 **The preset is chosen when a city is FOUNDED, and a city keeps it for life (doc 93 §K1).** This paragraph used to say the opposite — *"Difficulty may be raised at any time. Lowering it is permitted at any time but sets `save.assisted = true` permanently (excludes the city from any future leaderboard, spec §35)"* — and it is replaced rather than annotated, because the two rules cannot both be true of one save. The ruling and its three reasons are in doc 93 §K1; the short version is that `save.assisted` was a leaderboard flag for a leaderboard this game does not have, and a mid-city multiplier change is a re-pricing of a city the player has already paid for. There is no `cmd_set_difficulty`, no settings control and no `assisted` field.
 
@@ -1308,6 +1324,7 @@ Headless, `tests/sim/economy/`, run via `godot --headless --path . -s res://test
 43. `test_starter_road_repair_expectation` *(re-based on doc 10's operating point — report 98 RR-13)* — with the doc-09 core (540 AVENUE + 243 STREET), decay at doc 10's base rates, **`c_day = 0.35`** (decay multiplier **1.2625**), clear weather (`wx_wear_day = 0`) and `M_repair = 1.0`, assert the steady-state road-repair rate is **$185.9 ± 0.5 /gh**; assert it is **invariant to `auto_repair_threshold`** across {0.25, 0.40, 0.55} over 2,000 gh (the threshold changes lumpiness, not rate); and assert the underlying damage-fraction throughput equals doc 10 test 42's published **0.28548 tile-fractions/gh**, so both docs are asserting the same starter city rather than two different ones. Also assert the `c_day = 0` floor still evaluates to **$147.2 ± 0.5 /gh**, which pins the `(1 + 0.75·c_day)` coupling itself rather than just its value at one point. *(Was `c_day = 0` / $147.2 — a point doc 10's own arithmetic never uses.)*
 44. `test_road_upgrade_costs_more_than_building_big` — `street.build + street_to_avenue.upgrade > avenue.build` (5,800 > 5,200), the same inequality §2.3 imposes on buildings.
 45. `test_block_template_billed_once` — stamping a 87-tile block template during `road_install` produces exactly one `Treasury.spend()` of the §2.8 phase price and **zero** per-tile charges (the mirror of doc 10's test 42).
+46. `test_one_difficulty_knob_per_ledger_line` *(new — doc 93 §M1/§M2)* — settle the §2.12 founding ledger on all four **live** `data/difficulty.json` `economic` rows and assert, per preset and against the `standard` settlement: the seven swept expense lines are exactly `× M_exp`; `roads_repair` is exactly `× M_repair` **and explicitly not `× M_repair × M_exp`**; `debt` takes neither; `tax` is exactly `× M_rev`; and `power_tariff` / `water_tariff` / `fines` are exactly `× 1.000`. Reads the live file rather than transcribed constants, so a retune moves the expectation with the file and only a change of SCOPE fails.
 
 ---
 

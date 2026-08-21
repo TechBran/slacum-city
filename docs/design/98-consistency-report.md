@@ -2012,3 +2012,88 @@ own tile). It is the critical case: it does not diverge and it does not die, and
 from game-day 160 it is what holds the roster at the ceiling on a dead `crisis`
 city, at 66–73 ms per game-hour against 5.8 ms quiet. Bounded, correct, and doc
 06's ranked open question.
+
+## 26. WAVE 12 — the difficulty follow-through (binding)
+
+### RR-63 — One difficulty knob per ledger line, never two; and a summary-table row label does not outrank the two formulas that define the knob (docs 03 §2.4/§2.2/§2.9, 05 §9, 91 §17.2, 92 §29.2/§29.3/§29.5/§31, 93 §N1–§N4)
+
+Doc 92 §29 shipped the four difficulty presets as *measurements* and closed with
+four ranked questions it deliberately did not answer. Three of the four are the
+same defect wearing three hats: **a scalar's SCOPE was never written down, so it
+drifted.**
+
+**(a) `E_roads_repair` took two knobs.** `EconomySystem.settle_hour()` computed
+the line as `e_roads_repair(roads, M_repair)` and then swept it into
+`recurring *= M_exp` with the other seven, so it carried `M_repair × M_exp` —
+**2.0000 on `crisis` against 1.2500 everywhere else**, 48 % of the whole
+difficulty delta on the expense side, and the entire sign of crisis's founding
+net (−$18.70/gh). The decisive argument is not that two knobs are too many; it is
+that **the accrual and the payment disagreed**. Doc 03 §2.4 defines this line as
+the *accrual* the auto-repair policy realises as `E_oneoff` jobs, and what the
+policy pays is `repair_cost_road(class, damage_fraction, M_repair)` — no `M_exp`
+anywhere in it. An accrual that does not converge on its own payment is C-07 /
+C-08 / C-12 / RR-2's double count one knob down.
+
+**Ruled (doc 93 §N1): `E_roads_repair` takes `M_repair` and is excluded from the
+`M_exp` sweep, exactly the way `E_debt` already is.** Doc 03 §2.4's "All ×
+`M_exp` except `E_debt` and `E_oneoff`" gains a third exception and states the
+rule once: **one difficulty knob per ledger line, never two.**
+
+**(b) `M_rev` says "revenue" and means "tax".** §2.9's table row is labelled
+*revenue*; the code applies it inside `revenue_for_building()` only, so crisis's
+advertised −15 % measures **−13.2 %**. **Ruled the other way (doc 93 §N2): the
+code is right and the label is wrong.** Doc 03 defines the knob twice — §2.2's
+per-building formula and §2.2's revenue-floor formula — and both say tax; §2.5,
+which authors every non-tax line, never mentions it. One row label does not
+outrank two formulas. The decider is a measurement rather than a preference:
+**two of the three non-tax lines are held constants** (`HELD_DELIVERED_MWH = 1.5`,
+`HELD_FINE_RATE = 3/350`, doc 03 §9 item 6b), measured flat at $93.00/gh and
+$3.00/gh on **all four presets** at the founding hour, at 21 game-days and at 48
+game-days of total neglect. Difficulty-scaling a seam makes a preset's advertised
+strength a property of a placeholder. §2.9 now prints the measured effective
+column (+13.23 % / −7.05 % / −13.23 %) beside the advertised one.
+
+**(c) The verb list counted itself wrong twice.** Doc 91 §17.2 and doc 92 §17.6.2
+both published an open count without showing the arithmetic, and both were wrong
+— first by omitting `cmd_install_backup_generator` entirely, then by not
+subtracting `cmd_set_auto_repair_policy` after it got a door. **Ruled (doc 93
+§N3): `cmd_install_backup_generator` is doc 05's interface call, not a player
+verb** — doc 05 §2.6 gives the generator to doc 04, doc 04 §12 defers it,
+`grep -rn fuel sim/power/` returns nothing, and the command as shipped grants a
+permanent `coverage_frac` on a dark node for no dollar. It keeps a **written
+re-open condition** rather than a permanent closure, which is the difference from
+§J3's `cmd_road_repair`. Both tables now show the subtraction: 8 − 1 ruled − 1
+doored − 1 ruled = **five** open.
+
+**What it cost the default preset: nothing, and that is proved three ways** (doc
+92 §32.1) — the four state hashes on both cities and both paths, all 63 cells of
+the seven-strategy matrix, and `standard`'s `do_nothing` insolvency day, which is
+**76 / 75 / 74 on the same three seeds after 76 game-days of decay**. The last one
+is the proof that matters: a 24-hour hash and a 21-day matrix both measure a city
+that is still nearly the city it was handed.
+
+**What it cost the other three, said plainly:** `casual` lost 5 game-days of rope
+(104–110 against 109–116), `hard` gained 4 and `crisis` gained 6 (57/56/56 and
+41/42/40), the strict ordering held on every seed, and crisis's founding net moved
+**−$18.70 → +$44.47/gh**. Gate 29's horizons re-base to `{120, 90, 70, 55}`; every
+threshold it asserts is unchanged in kind and three are unchanged in number,
+including `standard`'s 76 ± 6 pin.
+
+**Two corrections to §29.5's own arithmetic, found by implementing it.** Step 2
+of §29.5(a) predicted crisis would found at +$99.73/gh; it computed the
+un-compounded road bill as `157.90 × 1.25`, which is `M_exp`, where the ruling
+applies `M_repair`, `157.90 × 1.60`. The measured answer is **+$44.47**. Step 3
+blamed `Balanced`'s flat `RESERVE_FLOOR` for the frozen crisis agent, but the
+agent holds `max(floor, one game-day of expense)` and step 3's own numbers show
+the payroll term winning ($17,968 > $12,000). The floor becomes a fraction of the
+founding purse anyway — `0.48`, which reproduces `standard` to the dollar — because
+the principle is right; what actually unfroze the agent was (a).
+
+**Ruling, in one line: a difficulty scalar declares its SCOPE in the document that
+authors it, and a test asserts the scope against the live data file.**
+`tests/test_economy.gd::test_one_difficulty_knob_per_ledger_line` settles the
+founding ledger on all four live `data/difficulty.json` rows and asserts, per
+preset, that the seven swept lines are exactly `M_exp`, `roads_repair` is exactly
+`M_repair` and explicitly not `M_repair × M_exp`, `debt` is neither, `tax` is
+exactly `M_rev`, and the three non-tax lines are exactly 1.000. A retune moves the
+expectation with the file; only a change of scope fails.

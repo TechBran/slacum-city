@@ -1107,6 +1107,214 @@ to carry, against 5.8 ms for the quiet city. That is a **rate that should
 probably consume a road**, and it is doc 06's ranked open question rather than
 this ruling's business.
 
+## M. Wave-12 rulings — the difficulty follow-through (2026-08-20)
+
+*Doc 92 §29.5 closed with four ranked questions it deliberately did not answer,
+and one of them (`E_roads_repair`'s double knob) it called "48 % of the whole
+difficulty delta on the expense side". These are the four answers. Doc 92 §31
+carries the measurements; this section carries the reasons. **Everything here is
+hash-neutral on the default preset by construction** — every knob involved is
+1.00 on `standard` — and doc 92 §32.1 proves it three ways.*
+
+### N1. `E_roads_repair` takes ONE difficulty knob, and it is `M_repair`
+
+**Ruled.** `EconomySystem.settle_hour()` computes `e_roads_repair(roads,
+M_repair)` and then **excludes that line from the `M_exp` sweep**, exactly the
+way `E_debt` is already excluded. Doc 03 §2.4's "All × `M_exp` except `E_debt`
+and `E_oneoff`" gains a third exception and says why.
+
+Doc 92 §29.2(b) measured the defect and did not rule on it: `roads_repair` was
+the only line in the ledger taking `M_repair × M_exp`, **2.0000 on `crisis`
+against 1.2500 on the other seven**, and at $157.90/gh it is 31.3 % of the
+`standard` founding expense — $118.43/gh of the $244.47/gh separating crisis's
+founding expense from standard's. §29.2(b) called the compounding *arguable*
+because `E_roads_repair` is genuinely both a recurring line (§2.4) and a repair
+price (§2.5). It is not arguable any more, for four reasons in the order they
+bind:
+
+1. **The accrual and the payment disagreed, and only one of them can be right.**
+   Doc 03 §2.4 is explicit that this line "is not a separate charge — it is the
+   *accrual* the auto-repair policy realises as lumpy `E_oneoff` repair jobs",
+   and that `ExpenseLedger` reconciles the accrual against actual repair spend.
+   What the policy actually pays is `CostCurves.repair_cost_road(class,
+   damage_fraction, M_repair)` — **`M_repair` and no `M_exp` anywhere in it**. So
+   on `crisis` the ledger accrued 1.25× what the same tiles cost to fix. An
+   accrual that does not converge on the payment it is accruing for is the
+   double-count C-07 / C-08 / C-12 / RR-2 keep removing, one knob down.
+
+2. **`E_debt`'s exclusion is the same argument, already written.** `settle_hour`
+   documents E_debt as carrying "its own difficulty term (the APR)" and not being
+   scaled by `M_exp`. `E_roads_repair` carries its own difficulty term too, and it
+   is named in doc 03 §2.4's own formula: `× REPAIR_COST_PER_CAPITAL × M_repair`.
+   A line whose formula names a knob does not also take the sweep.
+
+3. **The knob it kept is the knob the doc authored.** `M_repair` runs 0.70 → 1.60
+   casual→crisis; `M_exp` runs 0.85 → 1.25. The compound ran 0.595 → 2.000, a
+   **3.36× spread** where the widest single knob in the `economic` row spans
+   2.29×. Nobody authored a 3.36× knob; it was the product of two.
+
+4. **It is free on the default preset.** Both knobs are 1.00 on `standard`, so
+   the line's arithmetic is unmoved and every hash, every gate threshold and every
+   published `standard` table stands. Doc 92 §32.1 proves it on the two state
+   hashes, on all 63 cells of the seven-strategy matrix, and — the one that
+   matters most — on 76 game-days of a decaying `do_nothing` city whose
+   insolvency day did not move by one.
+
+**What it costs, said plainly.** Three of the four presets moved and that is the
+point of moving it: `casual` got harder (its road bill rises 0.595× → 0.700× of
+standard's, and its `do_nothing` rope shortens 109–116 → 104–110 game-days),
+`hard` and `crisis` got easier (1.512× → 1.350×, 2.000× → 1.600×; ropes 52–53 →
+56–57 and 34–35 → 40–42). The ordering casual > standard > hard > crisis holds on
+every seed, which is gate 29's actual assertion. Doc 92 §32.5 has both columns.
+
+**One arithmetic correction this ruling forces.** §29.5(a) step 2 predicted
+crisis's founding net would move −$18.70 → **+$99.73/gh**. It will not: that line
+computed the un-compounded road bill as `157.90 × 1.25` — `M_exp` — where the
+ruling applies `M_repair`, `157.90 × 1.60`. Measured, the answer is
+**+$44.47/gh** (casual +$547.63, hard +$180.88, standard unmoved at +$337.05).
+Positive, which is what §29.5's ranked item 3 was waiting on; smaller than
+advertised, which is why item 3 gets a real answer below instead of "the question
+answered itself".
+
+### N2. `M_rev` is the TAX multiplier, and §2.9's table row is corrected to say so
+
+**Ruled: the code is right and the label is wrong.** `M_rev` reaches
+`EconomySystem.revenue_for_building()` and nothing else. Doc 03 §2.9's table row
+`M_rev` **revenue** becomes `M_rev` **tax revenue**, and the section publishes the
+measured effective figure beside the advertised one. No line of `sim/` moves.
+
+Doc 92 §29.2(a) found the gap by solving the four founding gross figures for a
+tax/non-tax split — $741.80 tax and $99.42 non-tax per game-hour — and observing
+that crisis's advertised −15 % measures **−13.2 %**. `tools/measure_founding_ledger.gd`
+now reads the same split straight off the settlement snapshot and reproduces it to
+the cent. The full correction, which §2.9 now prints:
+
+| preset | advertised `M_rev` | measured effect on GROSS revenue |
+|---|---|---|
+| `casual` | +15 % | **+13.23 %** |
+| `standard` | — | — |
+| `hard` | −8 % | **−7.05 %** |
+| `crisis` | −15 % | **−13.23 %** |
+
+Symmetric, because the non-tax share is the same on every preset: **11.82 % of
+founding gross**.
+
+Four reasons the scope stays where it is:
+
+1. **Doc 03 defines the knob twice and both definitions say tax.** §2.2's
+   per-building formula ends `× M_rev[difficulty]`, and §2.2's revenue-floor
+   formula repeats it inside `R_potential_city = Σ base_tax(b) × occ_b ×
+   tax_policy_factor × M_rev`. §2.5 — which authors *every* non-tax line: power
+   tariff, water tariff, fines, the post-MVP event gate — never mentions it. One
+   summary-table row label disagrees with two formulas. The label is what moves.
+
+2. **The other revenue knob in the same row is tax-scoped by construction.**
+   `REV_FLOOR_FRACTION` (0.25 → 0.10) is a fraction of *potential tax*, and doc 03
+   §2.10 layer 1's whole promise — "the treasury can never be driven to literally
+   zero income" — is computed on that base. Widening `M_rev` would leave the
+   `economic` row carrying two knobs whose names both say "revenue" at two scopes
+   11.8 % apart, and §2.10's ladder arithmetic would stop being checkable against
+   either.
+
+3. **Two of the three non-tax lines are HELD CONSTANTS, and you cannot
+   difficulty-scale a seam.** `CitySim.HELD_DELIVERED_MWH = 1.5` and
+   `HELD_FINE_RATE = 3/350` are doc 03 §9 item 6b's held metering pair, standing
+   in until doc 04 meters delivered energy and doc 06 meters resolutions. Measured
+   on a `do_nothing` city, `power_tariff` is **$93.00/gh and `fines` $3.00/gh on
+   all four presets** at the founding hour, at 21 game-days, and at 48 game-days
+   of total neglect — they do not move because there is nothing behind them yet to
+   move. A `× M_rev` on those two would make 88 % of the advertised revenue
+   difficulty a property of a placeholder. The only live non-tax line is
+   `water_tariff`, at **$3.42/gh — 0.41 % of founding gross.**
+
+4. **The re-open condition is written down rather than implied.** When doc 04
+   §2.4 publishes real `delivered_mwh` and doc 06 publishes real resolutions, the
+   two lines become measurements of a city under pressure, and the question
+   "should a revenue multiplier reach them" becomes a different question with a
+   different answer. It is ranked in doc 92 §32.7, not buried here.
+
+**Given teeth:** `tests/test_economy.gd::test_one_difficulty_knob_per_ledger_line`
+settles the founding ledger on all four live `data/difficulty.json` rows and
+asserts, per preset, that the seven swept lines are exactly `M_exp`,
+`roads_repair` is exactly `M_repair` (and explicitly **not** `M_repair × M_exp`),
+`debt` is neither, `tax` is exactly `M_rev`, and `power_tariff` / `water_tariff` /
+`fines` are exactly 1.000. It reads the live file, so a retune moves with the
+file and only a change of SCOPE fails.
+
+### N3. `cmd_install_backup_generator` is doc 05's INTERFACE CALL, not a player verb
+
+**Ruled, and the row is closed with a re-open condition.**
+`WaterSystem.cmd_install_backup_generator(node_id)` keeps no `CitySim` wrapper,
+no card and no matrix row — **until doc 04 ships the generator it delegates to.**
+Doc 91 §17.2's open count drops from seven to six.
+
+The same four-question frame §J3 used, answered against this verb:
+
+1. **Does the owning doc name this as the player's surface?** No — it names the
+   opposite. Doc 05 §2.6 (report 98 C-36): *"Doc 04 owns the generator itself:
+   fuel, burn rate, tank size, start delay, refuelling, its save state and its
+   events."* Doc 05 §9's own command list describes this one as *"validates the
+   node, then delegates sizing, fuel and refuelling to doc 04"*, and the method
+   returns `backup_spec(node_id)` — `{kw_required, backup_kw, coverage_frac}`,
+   three numbers published to another document. That is an interface call. The
+   player-facing verb for a generator is doc 04 §4's `place_backup_gen`.
+
+2. **Does the thing it delegates to exist?** No, and doc 04 says so twice. §12's
+   **Deferred** list names "backup generators"; §6's still-unshipped list names
+   `place_backup_gen`. `grep -rn fuel sim/power/` returns nothing at all (doc 91
+   row 2.10, re-verified at this fork). The delegation has no delegate.
+
+3. **What would the card actually sell?** A free, permanent removal of the water
+   system's only power-failure mode. The command sets `backup_installed = true`
+   and debits **no dollar**: `WaterSystem.power_fraction_of` then answers
+   `coverage_frac_for(level)` — 0.60 / 0.70 / 0.85 / 1.00 at L2–L5 — instead of
+   0.0 whenever the node goes dark, forever, with no capital price (doc 04 §8's
+   `backup_gen` tiers carry no price row in this repository, by C-07/C-12), no
+   tank, no burn and no refuel. Doc 03 §2.5's discipline is that *prevention wins
+   and prevention costs*; half a feature that grants the benefit and prices none
+   of it is not a door, it is a cheat.
+
+4. **Does the precedent hold?** It runs the other way from §J3's, and that
+   difference is the ruling's shape. `cmd_road_repair` is closed **permanently**
+   because doc 10 already authors a better surface. This one is closed **for
+   now**: the day doc 04 §2.10 ships capital price, tank, burn rate and
+   refuelling, `place_backup_gen` gets the door and this call stays exactly what
+   it is — doc 05 handing doc 04 three numbers.
+
+**What ships:** nothing in `sim/`. Doc 05 §9 gains a sentence, doc 91 §17.2's row
+moves from *open* to *ruled*, and doc 92 §32.6 carries it.
+
+### N4. `Balanced`'s reserve floor is a fraction of the founding purse — and it was never the thing that froze `crisis`
+
+**Ruled, and the second half is the finding.** `tools/playtest.gd`'s
+`Balanced.RESERVE_FLOOR := 12_000` becomes
+`RESERVE_FLOOR_FRACTION := 0.48` of the city's own `starting_treasury`,
+resolved once from `Treasury.difficulty()` — the row the city was *founded* on
+(§K1), so a strategy driving a restored save gets the right purse. `12,000 /
+25,000 = 0.48` reproduces `standard` **to the dollar**; the other three become
+$16,800 / $8,640 / $5,760. Doc 92 §29.5's ranked item 4 is right about the
+principle — *an agent whose reserve is a constant cannot measure a difficulty
+that scales the purse* — and this closes it.
+
+**It is not, however, what §29.5(a) step 3 said it was.** That paragraph blamed
+the flat floor for the frozen crisis agent; the arithmetic in the same paragraph
+shows the other term binding. The agent holds `max(floor, one game-day of
+expense)`, and on crisis the payroll term was **$17,968** against a $12,000
+purse — the floor never entered the maximum. Measured after §N1, the two terms
+are $5,760 and $16,452, and the payroll still wins. What actually unfroze the
+agent was **§N1**: `crisis`'s founding net moved −$18.70/gh → +$44.47/gh, so the
+gap between purse and reserve stopped being permanent, and `balanced` went from
+**0 buildings on all three seeds** to placing. Doc 92 §32.4 has the arm.
+
+**The residual, ranked rather than fixed.** The founding purse buys **3.60 /
+2.07 / 1.25 / 0.729** game-days of the founding city's own expense across the
+four presets — `crisis` is the only preset handed a city it cannot pay the bills
+on for one game-day out of the purse it comes with. That is a statement about the
+purse (doc 92 §29.5 ranked item 3), and this wave does **not** move it: item 3's
+own trigger was "if crisis still founds negative", and after §N1 it founds
+positive. The coverage ratio is the better test and it belongs to whoever rules
+on the purse; doc 92 §32.7 ranks it first.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

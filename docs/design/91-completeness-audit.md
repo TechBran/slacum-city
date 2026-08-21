@@ -233,7 +233,9 @@ seven and both omit **`WaterSystem.cmd_install_backup_generator`**
 (`sim/water/water_system.gd:1155`), whose only callers anywhere are
 `tests/test_water_system.gd:338` and `:355`. With `RoadNetwork.cmd_road_repair`
 ruled out of scope by doc 93 §J3, the open count is **seven**, not six. Doc 92
-§17.6.2 carries the full re-take.
+§17.6.2 carries the full re-take. *(Wave 12 update: `cmd_install_backup_generator`
+is itself now ruled an interface call rather than an open verb — doc 93 §N3, doc
+05 §9 — so the open count is **six**. §17.2's row says so.)*
 
 **§19's screen matrix, re-swept at SIX boxes — and it is 52 states now, not 49.**
 `tools/ui_preview.gd::SCREENS` gained `path_feeder`, `building_water` and
@@ -400,7 +402,7 @@ single largest grade regression this re-audit found.
 | 2.7 | Weather couplings | SHIPPED | `sim/weather/grid_strike_adapter.gd` |
 | 2.8 | Failure types & incidents | SHIPPED | `IncidentSystem.on_power_event`; `test_incidents_transformer_arc.gd` |
 | 2.9 | Cascades, ties, N-1 | SHIPPED | `_ties` + `_tag_cascade` |
-| 2.10 | Backup generators (fuel) | **PARTIAL** *(re-verified 2026-08-20)* | doc 04 owns the generator; only doc 05's `cmd_install_backup_generator` exists, and *it* is unreachable — no `CitySim` wrapper, so §17.2 lists it among the seven verbs no shell can call. **No fuel model in `PowerGrid`**: grep for `fuel` under `sim/power/` returns nothing at all, and doc 05 has since *retreated* from the model rather than doc 04 adopting it — `water_system.gd:1410` erases `fuel_l` on migration and `water_snapshot.gd:9` says `fuel_hours_left` is "deliberately absent". So the one fuel model in the tree was deleted and the one this row asks for was never written. |
+| 2.10 | Backup generators (fuel) | **PARTIAL** *(re-verified 2026-08-20)* | doc 04 owns the generator; only doc 05's `cmd_install_backup_generator` exists, and *it* is unreachable — no `CitySim` wrapper, so §17.2 lists it among the seven verbs no shell can call. **No fuel model in `PowerGrid`**: grep for `fuel` under `sim/power/` returns nothing at all, and doc 05 has since *retreated* from the model rather than doc 04 adopting it — `water_system.gd:1410` erases `fuel_l` on migration and `water_snapshot.gd:9` says `fuel_hours_left` is "deliberately absent". So the one fuel model in the tree was deleted and the one this row asks for was never written. **Wave 12 rules the consequence rather than leaving it dangling (doc 93 §N3):** `cmd_install_backup_generator` is doc 05's INTERFACE CALL and stays wrapper-less *until doc 04 ships the generator* — as shipped it grants a permanent `coverage_frac` on a dark node for no dollar, so a door on it would sell the benefit with none of the price. This row stays **PARTIAL** and the re-open condition is doc 04 §2.10's capital / tank / burn / refuel. |
 | 2.11 | Black start | DEFERRED | deferred by the doc (spec §13.4) |
 | 2.12 | Offline catch-up | SHIPPED | `PowerPhaseSystem.advance_coarse` |
 | 2.13 | Worked examples | SHIPPED | reproduced in `test_power_grid.gd` |
@@ -1108,10 +1110,17 @@ them however many doors get built.
 | `cmd_set_water_restrictions` | `WaterSystem:1218` | no wrapper — doc 05's demand-management verb is unreachable |
 | `cmd_set_water_policy` | `WaterSystem:1225` | no wrapper |
 | `cmd_deploy_pump_truck` | `WaterSystem:1234` | no wrapper (and a `_zone_key` stub) |
-| **`cmd_install_backup_generator`** | **`WaterSystem:1155`** | **no wrapper — ADDED 2026-08-20 (Wave 12).** The table above shipped with seven rows and this one missing, and doc 92 §17.6.1 copied the seven. Its only callers anywhere in the repository are `tests/test_water_system.gd:338` and `:355`. Found by re-deriving the list mechanically — `grep -on 'roads\.cmd_[a-z_]*\|water\.cmd_[a-z_]*' sim/city_sim.gd` against every `func cmd_*` in the two owners — rather than by reading the previous table |
+| `cmd_install_backup_generator` | `WaterSystem:1155` | no wrapper; ADDED to this table 2026-08-20 (Wave 12) — the table above shipped with seven rows and this one missing, and doc 92 §17.6.1 copied the seven. **And ruled** the same wave to stay that way *until doc 04 ships the generator*: doc 93 §M3 / doc 05 §9. It is doc 05 handing doc 04 `{kw_required, backup_kw, coverage_frac}`, and doc 04 §12 defers the generator, so a card would sell a free permanent `coverage_frac` with no capital, tank or fuel behind it. Its only callers anywhere in the repository are `tests/test_water_system.gd:338` and `:355` |
 
-*Since Wave 11, `cmd_road_repair` is **ruled not a player verb** (doc 93 §J3, doc
-10 §2.13), so its row is closed rather than open. The open count is **seven**.*
+*The count, arithmetic shown, because it has been wrong twice. **Eight** rows;
+`cmd_road_repair` is **ruled not a player verb** (Wave 11 — doc 93 §J3, doc 10
+§2.13); `cmd_set_auto_repair_policy` is **wrapped and doored** (Wave 12 — doc 12
+D-50, doc 92 §30); `cmd_install_backup_generator` is **ruled an interface call**
+with a written re-open condition (Wave 12 — doc 93 §M3, doc 05 §9). 8 − 3 = the
+open count is **five**, and all five are `WaterSystem`'s: `cmd_remove_main`,
+`cmd_overhaul_node`, `cmd_set_water_restrictions`, `cmd_set_water_policy`,
+`cmd_deploy_pump_truck`. (This line read "seven" until Wave 12, which was correct
+at the fork it was written on — before the auto-repair door and before §M3.)*
 
 ### 17.3 In-flight at this fork
 

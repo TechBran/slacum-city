@@ -480,8 +480,47 @@ func test_option_defaults_and_errors() -> void:
 	assert_eq((defaults.strategies as Array).size(), 7)
 	assert_true((defaults.strategies as Array).has("curriculum"))
 	assert_eq(defaults.experiment, "", "the matrix runs unless one is named")
+	assert_eq(defaults.difficulty, Difficulty.DEFAULT_PRESET,
+			"the harness founds on the preset every doc 92 table is measured on")
 	var bad := Playtest.Options.parse(PackedStringArray([
 			"--nonsense", "--mode=warp", "--strategies=cheat",
-			"--experiment=teleport"]))
-	assert_eq((bad.errors as Array).size(), 4, "every bad option is reported: %s"
+			"--experiment=teleport", "--difficulty=nightmare"]))
+	assert_eq((bad.errors as Array).size(), 5, "every bad option is reported: %s"
 			% ", ".join(bad.errors))
+
+
+## Doc 92 §32.4 / §29.5 ranked item 4. `Balanced`'s reserve floor was a flat
+## $12,000 that happened to equal `crisis`'s ENTIRE founding purse, so the agent
+## whose reserve is `max(floor, one game-day of expense)` had `spare = 0` on the
+## first game-hour and never issued a command in 21 game-days. The constant is
+## now the fraction it always was — and the whole claim is that it reproduces
+## `standard` to the dollar, which is why this test asserts a literal 12,000
+## there and only a scaling relationship elsewhere.
+func test_the_reserve_floor_is_a_fraction_of_the_founding_purse() -> void:
+	var difficulty := Difficulty.load_from_file()
+	assert_true(difficulty.is_valid(), ", ".join(difficulty.errors))
+	var expected := {}
+	for preset in Difficulty.PRESETS:
+		var purse := float(int(difficulty.row_of("economic", preset)["starting_treasury"]))
+		expected[preset] = int(Playtest.Balanced.RESERVE_FLOOR_FRACTION * purse)
+	assert_eq(int(expected["standard"]), 12_000,
+			"the control's floor is the pass-2 constant, to the dollar")
+	assert_eq(int(expected["casual"]), 16_800)
+	assert_eq(int(expected["hard"]), 8_640)
+	assert_eq(int(expected["crisis"]), 5_760)
+	# And it is what the live agent actually holds, on a city founded on the
+	# preset — read off the treasury row, so a save-restored city gets it too.
+	for preset in Difficulty.PRESETS:
+		var sim := CitySim.boot_from_files(1337, preset)
+		var agent := Playtest.Balanced.new()
+		agent.note_founding_purse(Playtest.Api.new(sim))
+		assert_eq(agent.operating_reserve(), int(expected[preset]),
+				("on %s the agent holds its founding-purse floor before the first "
+						+ "settled hour has told it what a game-day of expense costs")
+						% preset)
+	# The pathology this closes, stated as an inequality: on `crisis` the flat
+	# floor was >= the purse, so `balance - reserve` could never be positive.
+	var crisis_purse := int(difficulty.row_of("economic", "crisis")["starting_treasury"])
+	assert_true(int(expected["crisis"]) < crisis_purse,
+			"a reserve floor a city cannot afford on its founding hour is a lock, "
+					+ "not a reserve")

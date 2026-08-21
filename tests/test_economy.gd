@@ -492,6 +492,77 @@ func test_no_standing_road_upkeep() -> void:
 			"road money in a settlement is repair accrual only")
 
 
+# ============================ §2.4 / §2.9 which line takes which difficulty knob
+
+## Doc 93 §N1 and §N2, and the reason both rulings exist: **one knob per line,
+## never two.** Doc 92 §29.2 measured `E_roads_repair` taking `M_repair × M_exp`
+## — 2.0000 on `crisis` against 1.2500 on every other line — which was 48 % of
+## the whole difficulty delta on the expense side and the entire sign of the
+## founding net. This test is that finding's tripwire, and it is written against
+## the LIVE `data/difficulty.json` rows rather than transcribed numbers, so a
+## retune of the file moves the expectation with the file and a change of SCOPE
+## fails.
+##
+## The three groups, asserted separately because they are three rulings:
+##   * seven recurring lines take `M_exp`;
+##   * `roads_repair` takes `M_repair` and NOTHING else;
+##   * `debt` takes neither — its difficulty is the APR.
+## And on the revenue side, `M_rev` reaches `tax` and no other line (§N2).
+func test_one_difficulty_knob_per_ledger_line() -> void:
+	var difficulty := Difficulty.load_from_file()
+	assert_true(difficulty.is_valid(),
+			"difficulty.json errors: " + ", ".join(difficulty.errors))
+	var system := _system()
+	var by_preset: Dictionary = {}
+	for preset in Difficulty.PRESETS:
+		var inputs := _founding_inputs()
+		inputs["difficulty"] = difficulty.row_of("economic", preset)
+		inputs["apply_to_treasury"] = false
+		# A non-zero interest bill, so "debt takes neither knob" is an assertion
+		# about a number rather than about zero.
+		inputs["debt_interest"] = 100.0
+		by_preset[preset] = system.settle_hour(inputs)
+	var base: Dictionary = by_preset[Difficulty.DEFAULT_PRESET]
+	var base_expenses: Dictionary = base["expenses"]
+	var base_revenue: Dictionary = base["revenue"]
+
+	var swept_by_m_exp: Array[String] = ["building_maint", "departments", "fleet",
+			"vehicle_fuel", "grid", "generation_fuel", "water"]
+	for preset in Difficulty.PRESETS:
+		var row := difficulty.row_of("economic", preset)
+		var m_exp := float(row["M_exp"])
+		var m_repair := float(row["M_repair"])
+		var m_rev := float(row["M_rev"])
+		var expenses: Dictionary = (by_preset[preset] as Dictionary)["expenses"]
+		var revenue: Dictionary = (by_preset[preset] as Dictionary)["revenue"]
+		for line in swept_by_m_exp:
+			assert_almost_eq(float(expenses[line]),
+					float(base_expenses[line]) * m_exp, 1e-6,
+					"%s on %s is M_exp × standard and nothing else" % [line, preset])
+		# The whole point. `M_repair`, NOT `M_repair × M_exp`: the accrual is a
+		# repair price, and `repair_cost_road(…, M_repair)` — what the auto-repair
+		# policy actually pays for the same tiles — has no `M_exp` in it.
+		assert_almost_eq(float(expenses["roads_repair"]),
+				float(base_expenses["roads_repair"]) * m_repair, 1e-6,
+				"roads_repair on %s takes M_repair alone (doc 93 §N1)" % preset)
+		if absf(m_exp - 1.0) > 1e-9:
+			assert_true(absf(float(expenses["roads_repair"])
+							- float(base_expenses["roads_repair"]) * m_repair * m_exp)
+						> 1e-6,
+					("roads_repair on %s is M_repair × M_exp again — that is the "
+							+ "compounding doc 92 §29.2(b) measured at 2.0000 on crisis")
+							% preset)
+		assert_almost_eq(float(expenses["debt"]), float(base_expenses["debt"]), 1e-6,
+				"debt on %s carries its own difficulty term (the APR)" % preset)
+		# §M2: the tax line and only the tax line.
+		assert_almost_eq(float(revenue["tax"]), float(base_revenue["tax"]) * m_rev,
+				1e-6, "tax on %s is M_rev × standard" % preset)
+		for line in ["power_tariff", "water_tariff", "fines"]:
+			assert_almost_eq(float(revenue[line]), float(base_revenue[line]), 1e-6,
+					"%s on %s is NOT scaled by M_rev — M_rev is the tax multiplier"
+							% [line, preset])
+
+
 # ============================================== §2.5 repair pricing (deliverable f)
 
 func test_repair_pricing_single_source() -> void:
