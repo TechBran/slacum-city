@@ -41,8 +41,16 @@ func _init(p_clock: GameClock, p_curves: DayCurveSet, p_modifiers: ModifierStack
 	modifiers = p_modifiers
 
 
+## Registration ordinal per system, the FINAL tie-break in [_system_less].
+## Derived bookkeeping — never captured, never restored, cleared by [dispose].
+var _register_seq: int = 0
+var _seq: Dictionary = {}
+
+
 func register(system: SimSystem) -> void:
 	assert(system.system_id() != &"", "system needs a stable id")
+	_seq[system] = _register_seq
+	_register_seq += 1
 	_systems.append(system)
 	_systems.sort_custom(_system_less)
 
@@ -172,10 +180,33 @@ func _hour_channels() -> Dictionary:
 	return out
 
 
-static func _system_less(a: SimSystem, b: SimSystem) -> bool:
+## (phase, system_id, REGISTRATION ORDER). The third term is not decoration.
+##
+## **An unstable tie is a bug, and it bit exactly once** (Wave 15). `sort_custom`
+## is an introsort: it is not stable, so two systems with the SAME phase and the
+## SAME id had no defined order, and which of them ran last depended on the
+## LENGTH and CONTENT of the array they were sorted in. That is fine as long as
+## no such pair exists — `CitySim._register_systems` registers thirteen distinct
+## ids — but a test rig may deliberately register a second `&"weather"` to
+## override the sim's (`tests/test_weather_integration.gd` does, and both write
+## the shared `ModifierStack`, so the LAST one decides what the grid draws).
+## Adding one unrelated system elsewhere in the registry flipped that sort and
+## the rig silently lost, which read as "a heat wave stopped moving power
+## demand" three files away from the change.
+##
+## Registration order is the honest tie-break: it says an override registered
+## later wins, which is what every caller that registers a duplicate already
+## means. It cannot move any *correct* behaviour, because the order it defines
+## was previously undefined — and it changes nothing at all for a registry with
+## unique ids, which every shipped sim has.
+func _system_less(a: SimSystem, b: SimSystem) -> bool:
 	if a.phase() != b.phase():
 		return a.phase() < b.phase()
-	return String(a.system_id()) < String(b.system_id())
+	var id_a := String(a.system_id())
+	var id_b := String(b.system_id())
+	if id_a != id_b:
+		return id_a < id_b
+	return int(_seq.get(a, 0)) < int(_seq.get(b, 0))
 
 
 ## Break the sim ↔ scheduler ↔ adapter reference cycle (doc 91 D-9): every
@@ -183,3 +214,4 @@ static func _system_less(a: SimSystem, b: SimSystem) -> bool:
 ## so a RefCounted-only sim can never free itself. Call when a sim is retired.
 func dispose() -> void:
 	_systems.clear()
+	_seq.clear()

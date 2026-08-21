@@ -1158,7 +1158,7 @@ shapes:
 
 | shape | kinds | how it is measured |
 |---|---|---|
-| **event** | `build_archetype` · `place_grid_component` · `place_water_component` · `place_water_main` · `stamp_road_tiles` · `upgrade_building` · **`upgrade_to_level`** · `repair_buildings` · `resolve_incidents` · `buy_block` · `develop_block` · `set_tax_rate` | counted off `SimEventBus`, from LEVEL ENTRY, on the command rather than on the thing finishing |
+| **event** | `build_archetype` · `place_grid_component` · `place_water_component` · `place_water_main` · `stamp_road_tiles` · `upgrade_building` · **`upgrade_to_level`** · `repair_buildings` · `resolve_incidents` · `buy_block` · `develop_block` · `set_tax_rate` · **`collect_opportunities`** | counted off `SimEventBus`, from LEVEL ENTRY, on the command rather than on the thing finishing |
 | **state** | `reach_population` · `reach_happiness` · `reach_stability` · `reach_treasury` | one O(1) reading per game-hour |
 | **endurance** | `survive_no_abandonment` | game-hours in a row without `incident_abandoned` / `incident_failed` / `building_destroyed` |
 
@@ -1171,6 +1171,24 @@ objective is not in it until doc 04 publishes a city-wide scalar.
 A counter ticks on the **command**, not on the completion: "Build 4 houses"
 lands when the fourth house is committed, not two game-hours later when its
 scaffolding comes down. A teaching counter that lags the tap teaches nothing.
+
+**`collect_opportunities` is authorable and deliberately UNUSED** (Wave 15, doc
+06 §2.16). It counts `opportunity_collected` — a street bounty taken — with an
+empty `match_field`, so an unqualified row counts a collection of any kind
+("collect 3 street opportunities", not "collect 3 crooks"); the kind-specific
+reading is one authored key away (`match_field: "kind"` plus an
+`opportunity_kind` on the row) and is deliberately not taken, because a row that
+asks for a crook asks the player to wait for a crime the police did not answer.
+
+**No row in `data/goals.json` uses it**, and that is a decision rather than an
+omission: §2.14.2's targets are FITTED against the `curriculum` agent and held by
+balance gate 21, so adding a rung is a re-measure of that arrival table and not a
+data edit. Where one would fit when it is taken: **level 4**, which already
+teaches the police station — *"there are still crimes it misses, and here is what
+you do about them"* is the sentence the objective would be finishing. Doc 92
+§35.4 item 2 ranks it, and `tests/test_street_opportunities.gd` asserts the file
+stays clean of it until then, so the kind cannot drift into the curriculum
+without the measurement.
 
 **`upgrade_to_level` is the one kind that filters NUMERICALLY** (Wave 10). It reads the same `upgrade_started_sim` event `upgrade_building` reads and additionally requires `to_level >= ` the row's own `to_level`. The comparison is `>=` and not `==` because doc 02 §2.14's ladder is archetype-shaped — six archetypes have a level 6 and six do not — so an equality row would refuse a player who went further and a per-archetype row would be unanswerable by a police station. It costs one extra dictionary lookup and one comparison per event, so the cost rule above still holds.
 

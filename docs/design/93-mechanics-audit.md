@@ -1553,6 +1553,142 @@ rules the binary did not have is worse than no ladder"*; a rung that describes
 rules the **city section** did not have is the same fault with the same cost, and
 it charges every future migrator a rung to walk that answers nothing.
 
+## Q. Wave-15 rulings — the opportunity layer, and what a play-NOW system may cost (2026-08-21)
+
+*The playtest asked for something the project had never built: a reason to LOOK
+at the city. Everything shipped before this wave is a system the player sets up
+and then watches settle, and a settled system pays the same whether or not
+anybody is watching. Three rulings came out of building the first one that does
+not. The binding form of all three is report 98 **RR-77**.*
+
+### Q1. A play-NOW system does not accrue offline, and the enforcement is STRUCTURAL rather than clamped
+
+**Ruled: doc 06 §2.16's opportunity layer spawns nothing on the coarse path, and
+its `street` RNG stream does not move a single position across a catch-up of any
+length.** Doc 08 §2.3 gains rule 9 to say so.
+
+**The alternative that was rejected, and why.** Every other offline rule in §2.3
+is a *clamp*: the system runs offline and `OfflineGuard` bounds its output —
+damage ≤ 0.35 of the pool, no asset below 0.15, no destruction, no deaths. The
+obvious way to write rule 9 in that idiom is "opportunities spawn offline but
+expire before you get back", which produces the same visible result and is one
+line shorter. It was rejected because it is **the same result reached by a
+mechanism that can drift**: a spawner that runs offline draws from its stream
+offline, so the city a returning player resumes depends on how long they were
+away in a way that nothing observable can check, and the first person to add
+"…except keep the last one" has broken the rule without touching it.
+
+Making it structural — the spawner is a fine-path system whose `advance_coarse`
+expires and returns — costs nothing and buys three things a clamp could not:
+there is no output for `OfflineGuard` to bound, the doc 01 §2.5 coarse contract
+is satisfied *trivially* (zero draws, zero spawns) rather than argued, and
+`tests/balance_matrix.gd` — which runs the coarse step — stays bit-identical to
+the build before the layer existed, so every table doc 92 ever published against
+`do_nothing` still measures the thing it measured.
+
+**The general rule, stated once.** *A system that pays for ATTENTION belongs to
+the fine path. Not because offline accrual would be unfair — because attention
+is the one input the coarse path cannot supply, and a system whose input is
+absent should not be running.* The corollary is the kind one: a returning player
+is told **nothing** about opportunities that expired while they were away. A
+"while you were away" line naming $2,400 of money they were never offered is
+worse than silence.
+
+### Q2. Money earned by ATTENTION is its own ledger line, and may never be folded into tax
+
+**Ruled: collections credit `Treasury` under category `street`, with its own
+`ledger_totals.lifetime_street` row (doc 03 §2.5).** Folding it into `tax` was
+the cheaper change — no new category, no new counter, no rung on the ledger —
+and it is exactly wrong.
+
+The budget sheet's whole job is to tell the player **which lever did what**. Tax
+is a rate on the city's value; a bounty is a payment for the player's attention.
+Mixed, the tax slider appears to move when the player simply tapped more, and the
+one screen in the game whose purpose is attributing income starts lying. It is
+not a `tariff` either: nothing was delivered and nothing was metered.
+
+Three consequences follow and all three are deliberate: the line is **not a
+rate**, so it never enters `settle()`'s `revenue`, never scales by `M_rev` and
+never moves `daily_gross_revenue` — which would otherwise be a loop where tapping
+raises the ceiling on borrowing; it is **not offline income**, so §2.11's taper
+has nothing to taper (see Q1); and its magnitude is **doc 06's** to author, in
+`data/street.json`, where the balance agent can retune it without touching code.
+
+### Q3. An event whose consumer lives in a sibling branch gets a NAMED, self-clearing exemption
+
+**Ruled: `tests/test_event_matrix.gd` gains one classification,
+`awaiting_consumer`, and it is the narrowest word in that list.**
+
+RR-53's rule is that every event describing a player-visible state change needs a
+consumer or a written exemption. A wave that splits one mechanic across two
+branches — a sim spawner here, a street-life renderer there — produces, in each
+branch alone, an emit whose consumer genuinely exists and genuinely is not in
+this tree. The three words that could have been stretched to cover it all say
+something false: `covered` claims a sibling event carries the same change,
+`measurement` claims tests are the intended reader, `bookkeeping` claims nothing
+visible happened.
+
+What makes the new word safe rather than an escape hatch is that **it expires
+mechanically**. `test_the_register_names_a_consumer_that_is_no_longer_needed`
+already fails the suite the moment a classified event acquires a consumer, so the
+row deletes itself at the merge that makes it untrue — it cannot age into a
+permanent excuse the way a prose exemption can. The gate adds one further
+requirement, asserted: a row using this word must name **the wave that owes the
+consumer and the file that will be it**. "Somebody will get to it" does not
+compile.
+
+**What this does not license.** Shipping an emit with no consumer *planned*. The
+word is for a split delivery, not for a deferred decision, and the two rows that
+carry it today (`opportunity_spawned`, `opportunity_expired`) name Wave 15 and
+`game/render/`.
+
+**The same shape, one gate over.** Doc 09 §2.14's evaluator kinds are held by
+`tests/test_goals_system.gd` under §G2's rule — *an evaluator kind with no player
+surface is a wall with no door* — and `collect_opportunities` is in exactly the
+position the two events are: its door is `cmd_collect_opportunity`, reached from
+the renderer branch of this wave. It goes in a `SURFACE_DEFERRED_KINDS` list on
+the same terms, and with a **stronger** expiry than the event register's, because
+one is available: the test scans `game/` and `ui/` for the verb the row names and
+fails the moment anything there calls it. A deferral that can detect its own door
+arriving is a deferral; one that cannot is an exemption.
+
+### Q4. An unstable sort over a key that is not unique is not a tie-break
+
+**Ruled: `TickScheduler` sorts by `(phase, system_id, REGISTRATION ORDER)`** (doc
+01 §2.3, report 98 RR-77).
+
+Doc 01 has said since it was written that the scheduler "sorts by `(phase,
+system_id)` … so ties are broken deterministically and alphabetically rather than
+by registration accident". That sentence is true for the registry `CitySim`
+builds — thirteen distinct ids — and it quietly stops being true the moment two
+systems share both. `sort_custom` is an introsort and is not stable, so such a
+pair had **no defined order at all**: which ran last was a function of the array's
+length and contents.
+
+Nothing shipped registers a duplicate. A **test rig** does, and legitimately:
+`tests/test_weather_integration.gd` registers a second `&"weather"` to drive a
+wired `WeatherSystem` alongside the sim's, and both write the shared
+`ModifierStack`, so the last one to run decides what the grid draws. Adding one
+unrelated system to the registry — a street spawner, in a different phase —
+flipped that sort. The rig lost, and the failure read as *"a heat wave stopped
+moving power demand"*, in a file three directories from the change.
+
+**Why registration order and not a uniqueness assert.** A `assert(id is unique)`
+would have caught it too, and louder — but it would also outlaw the override, and
+the override is a real and useful thing for a rig to want. Registration order
+says the thing the caller already means: *the one you registered later wins*.
+And it is safe by construction — the order it defines was previously **undefined**,
+so no correct behaviour can depend on the old answer, and for a unique-id registry
+it changes nothing. All four determinism baselines are byte-identical across it.
+
+**The general form, which is the reason this is a ruling and not a patch.** *A
+sort key that is not unique is not a key.* Wherever this project sorts to get
+determinism — and it does so constantly, because sorted iteration is how float
+sums are made reproducible — the comparator must be a **total** order on the
+things being sorted, not merely a plausible one. Where it cannot be, the sort is
+a latent dependency on the container's contents, and it will be found by an
+unrelated change.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

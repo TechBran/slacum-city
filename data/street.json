@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "_doc": "doc 06 §2.16 — THE OPPORTUNITY LAYER. Tappable street events that pay, spawned on the `street` RNG stream by `sim/street/opportunity_system.gd`. This file is the whole tuning surface: kinds, weights, lifetimes, rewards and the police-coverage response are all read from here, so a retune is a data edit and never a code edit. Every number below is a PLACEHOLDER fitted by hand against the founding city's +$319/gh net (doc 03 §2.12) — the balance agent owns the final values and this file's shape is what it retunes through.",
+  "_ledger": "doc 03 §2.5 — collections credit the treasury under category `street`, which is its own revenue line and its own lifetime counter (`ledger_totals.lifetime_street`). It is deliberately NOT folded into tax: tax is a rate on the city's value and this is a bounty on the player's attention, and a ledger that mixed them would make the tax slider look like it moved when the player simply tapped more.",
+  "_offline": "doc 08 §2.3 rule 9 — opportunities do NOT accrue while the player is away. The spawner is a FINE-PATH system: its coarse contract is zero draws and zero spawns, and a catch-up clears whatever it finds expired without a word. Nothing here is a reward for having been absent.",
+
+  "spawn": {
+    "_note": "`target_interval_h` is the mean game-hours between spawn attempts that clear the Bernoulli. One game-hour is one real minute at 1x (`SimHost.GAME_MS_PER_REAL_MS` = 60), so 1.5 here IS 'something appears about every ninety seconds'. The per-evaluation probability is `eval_period_h / target_interval_h`, and `eval_period_h` is not authored: `CitySim` sets it from the phase adapter's own cadence so the two can never disagree.",
+    "target_interval_h": 1.5,
+    "max_live": 4,
+    "min_separation_tiles": 5.0,
+    "reward_city_level_k": 0.20,
+    "_reward_city_level_note": "reward = round((base + spread·u) · (1 + k·(city_level − 1))). A level-5 city pays 1.8× a founding one, so the layer stays worth crossing the map for after the treasury has grown. Frozen at SPAWN and carried on the row, so the preview, the commit and a save→load all quote the same dollars."
+  },
+
+  "kinds": {
+    "petty_crime": {
+      "_note": "The player's own words: 'humans that are committing crimes that aren't being picked up by the police station'. Its weight at a tile is a function of `coverage_police(tile)` — doc 02 §2.9's field, published by doc 06 §2.9 (C-51) — so a city that has not built a station finds crooks on every corner and a well-covered one almost never does. Expiring unanswered is currently SILENT (v1); a stability micro-ding on the containing district is the authorable next step and belongs here as `expire_stability_delta` when doc 09 rules on it.",
+      "base_weight": 1.0,
+      "lifetime_h": [2.5, 4.0],
+      "reward": {"base": 260, "spread": 90},
+      "coverage": {
+        "field": "police",
+        "weak_below": 0.45,
+        "weight_at_zero": 3.0,
+        "weight_at_threshold": 1.0,
+        "weight_at_full": 0.15
+      }
+    },
+    "loose_animal": {
+      "_note": "A dog or a goat off its lead, on residential frontage. `frontage_weight` applies when any tile orthogonally adjacent to the kerb tile is occupied by a residential building; `elsewhere_weight` otherwise. Parks would join the frontage test the day doc 02 authors one — there is no park archetype today, which is why the key is named for the test and not for the category.",
+      "base_weight": 1.0,
+      "lifetime_h": [2.0, 3.5],
+      "reward": {"base": 150, "spread": 60},
+      "frontage": {"frontage_weight": 2.5, "elsewhere_weight": 0.40}
+    },
+    "lost_valuables": {
+      "_note": "The rare one: a glint on the kerb, pure cash, gone quickly. Flat weight — it is the kind that makes scrubbing the city worth doing in a district that is neither poor nor residential.",
+      "base_weight": 0.50,
+      "lifetime_h": [1.0, 1.75],
+      "reward": {"base": 420, "spread": 180}
+    }
+  },
+
+  "_placement": "Positions are KERB tiles: a road tile with at least one orthogonal neighbour that is in bounds, not road and not water. That is `RoadSurfaceView.classify()`'s `kerb` mask, minus the graph-derived carriageway class the renderer needs and the sim does not — replicated in `sim/street/opportunity_system.gd` from `TileGrid` flags rather than imported, because `game/` may not be read from `sim/` (constitution §3). The row carries the kerb SIDE (0..3 = N, E, S, W, the same order as `StreetlightPlacer.DIRS`) so the renderer can stand the actor on the footway instead of in a traffic lane.",
+  "_tests": "tests/test_street_opportunities.gd — spawner determinism, the coverage response (a station-less city spawns more crooks than a covered one), the collect/expire lifecycle, a save→load round-trip mid-crook, and the verb's two refusals."
+}

@@ -363,6 +363,26 @@ Gas-fired grid power nets +$24/MWh; diesel backup nets **−$33/MWh**. Undeliver
 
 **Fines & fees.** `POLICE_FINE_PER_RESOLVED_INCIDENT = 350` per police incident resolved (doc 06 event). Small, but it makes patrol cars visibly pay for a slice of themselves.
 
+**Street opportunities — the `street` line** *(Wave 15, doc 06 §2.16).* Doc 06's opportunity layer pays a **bounty per collection**: the player taps a crook the station missed, a loose animal or a dropped wallet, and `Treasury.credit(reward, &"street", …)` books it. It is **its own revenue line and its own lifetime counter** (`ledger_totals.lifetime_street`), and that is a ruling rather than a filing convenience: tax is a *rate on the city's value* and this is a *bounty on the player's attention*, so a ledger that folded them together would make the tax slider look like it moved when the player simply tapped more — and the budget sheet's entire job is to tell the player which lever did what. It is likewise not a `tariff`: nothing was delivered and nothing was metered.
+
+Three properties this line has that no other revenue line has, all of them deliberate:
+
+- **It is not a rate.** Nothing accrues per game-hour; a collection is a discrete credit at the moment of the tap. It therefore never enters `settle()`'s `revenue` argument, never scales by `M_rev`, and never moves `daily_gross_revenue` — so it cannot inflate the §2.10 credit limit, which would be a loop where tapping raises the ceiling on borrowing.
+- **It is not offline income.** §2.11's offline rules do not reach it and its taper does not apply, because doc 08 §2.3 rule 9 makes the layer spawn nothing while the player is away. There is no accrual to taper.
+- **Reward magnitude is doc 06's**, authored in `data/street.json` and scaled `× (1 + 0.20·(city_level − 1))`.
+
+**The placeholder ceiling, measured** *(`tools/measure_street_yield.gd`, founding city, seeds 1337 / 4242 / 9001, 720 game-hours each = 2,160 gh, 1,225 offers):*
+
+| | value |
+|---|---|
+| mean interval between offers | **1.763 gh** (= 1.76 real minutes at 1x) |
+| mean bounty | **$320.30** |
+| kind mix on the founding city | petty_crime **67.8 %** · lost_valuables **17.1 %** · loose_animal **15.1 %** |
+| yield if EVERY offer is collected | **$181.65/gh**, $4,360/game-day |
+| …against the §2.12 founding net | **+$319/gh** — so the ceiling is **57 %** of net |
+
+Read that ceiling honestly: it is the yield of a player who taps **all 13.6 offers a game-day**, which costs 24 real minutes of uninterrupted attention and a lot of map-scrubbing. A realistic session collects a fraction of them. But 57 % is the number the **balance agent has to rule on**, and this doc's opinion is that the ceiling belongs nearer **35–40 %** of founding net — high enough that the layer answers the player's "make money quickly", low enough that tapping never outruns running a city. The cheapest lever is `lost_valuables` (17 % of offers at the largest bounty); the second is `target_interval_h`. The crook share being two-thirds on the founding city is **not** a defect to tune away — it is doc 06 §2.16's coverage hook reading a starter city that has one police station, and it is the layer teaching what a second one would be for.
+
 **Event revenue (post-MVP stub, stadium/zoo):** `event_revenue = event_base_gate[type] × attendance_factor × f_stability × f_power`.
 
 **Repairs — this doc owns repair pricing outright (report 98 C-16).** There is exactly one repair price formula in the project:
@@ -1112,15 +1132,16 @@ Doc 02's own `build_cost` and `upkeep_cents_per_hour` columns are deleted (C-07,
                       "dev_phase": 6, "dev_spent": 68578, "risk_index_revealed": 0.443 } ],
     "ledger_totals": { "lifetime_tax": 41822190, "lifetime_tariff": 1902410,
                        "lifetime_expense": 9840112, "lifetime_repairs": 1201884,
-                       "lifetime_foregone": 3418220 }
+                       "lifetime_foregone": 3418220, "lifetime_street": 214600 }
   }
 }
 ```
 
-Two changes from the pre-amendment shape:
+Three changes from the pre-amendment shape:
 
 - **`schema_version` → `section_version`** (report 98 C-25: `schema_version` appears on the save *envelope* only; every section uses `section_version`). Doc 03 was omitted from C-25's amend list, but the ruling's text is general and this section carried exactly the colliding key.
 - **`absence_hours_elapsed` is deleted** (C-20). This doc keeps no absence counter; `OfflineYield` reads `ctx.catchup_index` and publishes `band.yield_mult` to doc 08's `OfflinePolicy`.
+- **`ledger_totals.lifetime_street` is added** *(Wave 15, §2.5's `street` line).* Lifetime counters migrate the way doc 09 §2.12's do — **appended at 0, never renamed** — and `Treasury.deserialize` walks the keys it HAS rather than the keys the body carries, so an older `ledger_totals` restores every row it wrote and starts this one at zero. That is not a default invented for the save: a city that could not earn street money genuinely earned none. The city section takes doc 08 §2.8 rung **v7** for the wider shape change this belongs to.
 
 `hourly_history` is a ring buffer of `ECONOMY_HISTORY_HOURS = 168` entries (one game-week) feeding the budget graphs and the WHILE YOU WERE AWAY report.
 

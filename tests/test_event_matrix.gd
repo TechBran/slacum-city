@@ -71,6 +71,15 @@ const CLASSIFICATIONS: Array[String] = [
 	"unreachable",
 	# The scan matched a `"type":` field that is not an event payload.
 	"not_an_event",
+	# A player-visible event whose consumer is COMMITTED and NAMED but has not
+	# landed in this tree yet — a sim branch that ships the emit ahead of the
+	# renderer branch that draws it. Deliberately the narrowest word here, and
+	# the only one with a mechanical expiry: `test_the_register_names_a_consumer_
+	# that_is_no_longer_needed` fails the suite the moment the consumer appears,
+	# so the row deletes itself rather than aging into a permanent excuse. A row
+	# using it MUST name the wave and the file that will consume it — asserted
+	# below, so "somebody will get to it" cannot be written here.
+	"awaiting_consumer",
 ]
 
 ## THE REGISTER. One row per event `sim/` emits that nothing consumes, and the
@@ -287,6 +296,22 @@ const REGISTER := {
 	"construction_job_preempted":
 		"bookkeeping: the queue re-ordered itself. Neither site changed state.",
 
+	# ── doc 06 §2.16, the opportunity layer ────────────────────────────────
+	"opportunity_spawned":
+		"awaiting_consumer: Wave 15 splits this mechanic across two branches —"
+		+ " the sim spawner (this one) and the street-life renderer that draws"
+		+ " the crook, the dog and the glint. Its consumer is"
+		+ " game/render/, landing in the same wave; the third event of the set,"
+		+ " opportunity_collected, is already consumed by"
+		+ " sim/progression/goal_system.gd. Delete this row when the marker"
+		+ " lands — the stale-exemption test will insist.",
+	"opportunity_expired":
+		"awaiting_consumer: Wave 15, the same pair. The player-visible change is"
+		+ " the marker VANISHING, which is the renderer's to un-draw in"
+		+ " game/render/ — and it must never become a push or a log line, because"
+		+ " a bounty nobody took is not news (doc 08 §2.13). Delete this row when"
+		+ " the marker lands.",
+
 	# ── not an event at all ────────────────────────────────────────────────
 	"water_works":
 		"not_an_event: sim/city_sim.gd builds a STATION roster row"
@@ -483,6 +508,15 @@ func test_every_classification_is_one_word_and_a_reason() -> void:
 				% [name, word, str(CLASSIFICATIONS)])
 		assert_true(row.substr(colon + 1).strip_edges().length() >= 24,
 				"%s says WHY, not just what: `%s`" % [name, row])
+		# The one word with a stricter contract: a deferred consumer has to be
+		# a commitment, which means naming the wave that owes it and the file
+		# that will do the consuming. Without this, `awaiting_consumer` would be
+		# the escape hatch every other word in this list exists to prevent.
+		if word == "awaiting_consumer":
+			assert_true(row.contains("Wave ") and (row.contains("game/")
+					or row.contains("ui/") or row.contains("data/")),
+					"%s defers to a NAMED wave and a NAMED file: `%s`"
+					% [name, row])
 
 
 func test_every_type_the_routers_name_is_emitted() -> void:

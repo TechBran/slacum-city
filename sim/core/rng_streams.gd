@@ -4,8 +4,15 @@ extends RefCounted
 ## Each stochastic system draws ONLY from its own stream so systems don't
 ## perturb each other's sequences. Seed + state are persisted in saves.
 
+## `street` joined in Wave 15 for doc 06 §2.16's opportunity layer. Adding a
+## name is a SAFE change to every existing stream and that is the whole point of
+## the derivation below: each stream's seed is `hash(master_seed + ":" + name)`,
+## so a new name draws its own sequence and perturbs nobody's. What it does move
+## is `serialize()`'s key set — one more entry in the `rng` block — which is why
+## the city section takes a rung (doc 08 §2.8 v7) rather than growing quietly.
 const STREAM_NAMES: Array[String] = [
-	"weather", "incidents", "crime", "failures", "director", "traffic", "misc",
+	"weather", "incidents", "crime", "failures", "director", "traffic",
+	"street", "misc",
 ]
 
 var _streams: Dictionary = {}

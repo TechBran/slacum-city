@@ -40,6 +40,34 @@ const PLAYER_REACHABLE_KINDS: Array[String] = [
 	"stamp_road_tiles", "place_water_main", "repair_buildings",
 ]
 
+## Kinds whose surface is COMMITTED to a named branch of the current wave and is
+## not in this tree yet — the split-delivery case, and the narrowest possible
+## door in §G2's wall.
+##
+## §G2's rule is *a curriculum may never ask for something the UI cannot do*, and
+## the gate below enforces its stronger sibling: an evaluator kind with no
+## surface at all is a wall with no door, one wave earlier. A wave that splits
+## one mechanic across two branches — a sim spawner here, the renderer and its
+## tap there — produces, in the sim branch alone, a kind whose door genuinely
+## exists and genuinely is not here. Putting it in the whitelist would make the
+## whitelist claim a surface that does not exist; leaving it out fails a gate
+## that is right about everything except the calendar.
+##
+## So it goes here, and it is **mechanically self-clearing**:
+## `test_a_deferred_surface_moves_the_moment_its_door_exists` fails the suite as
+## soon as `game/` or `ui/` mentions the verb, so the row cannot outlive the
+## branch it names. A row must state the WAVE and the FILE — asserted — so
+## "somebody will get to it" cannot be written here.
+const SURFACE_DEFERRED_KINDS := {
+	"collect_opportunities":
+		"Wave 15, doc 06 §2.16. The door is `cmd_collect_opportunity`, reached"
+		+ " from the street-life marker in game/render/ — the sibling branch of"
+		+ " this same wave. No curriculum row uses the kind either (gate 21's"
+		+ " targets are untouched), so nothing is asked of a player who cannot"
+		+ " answer it. Move this into PLAYER_REACHABLE_KINDS when the marker"
+		+ " lands; the test below insists.",
+}
+
 
 func _sim(seed_value: int = 1337) -> CitySim:
 	return CitySim.boot_from_files(seed_value)
@@ -127,12 +155,76 @@ func test_every_evaluator_kind_is_accounted_for_by_a_surface() -> void:
 		kinds.append(String(kind))
 	kinds.append(String(GoalSystem.KIND_SURVIVE))
 	for kind: String in kinds:
+		if SURFACE_DEFERRED_KINDS.has(kind):
+			continue
 		assert_true(PLAYER_REACHABLE_KINDS.has(kind),
 				("`%s` is an evaluator kind with no player surface. Either ship "
-						+ "the surface and list it here, or delete the evaluator "
-						+ "— doc 93 §G2.") % kind)
-	assert_eq(PLAYER_REACHABLE_KINDS.size(), kinds.size(),
-			"and the whitelist names no kind the evaluator does not have")
+						+ "the surface and list it here, name the branch that "
+						+ "will in SURFACE_DEFERRED_KINDS, or delete the "
+						+ "evaluator — doc 93 §G2.") % kind)
+	assert_eq(PLAYER_REACHABLE_KINDS.size() + SURFACE_DEFERRED_KINDS.size(),
+			kinds.size(),
+			"and the two lists between them name no kind the evaluator does"
+			+ " not have")
+
+
+func test_a_deferred_surface_moves_the_moment_its_door_exists() -> void:
+	# What makes SURFACE_DEFERRED_KINDS a deferral rather than an exemption.
+	# Three things are asserted: a kind is on exactly ONE of the two lists; the
+	# deferral names a wave and a file; and the door it promises does not exist
+	# yet — the moment `game/` or `ui/` can call the verb, this fails and the
+	# row has to move into the whitelist where it now belongs.
+	var doors := _shell_source()
+	for kind: Variant in SURFACE_DEFERRED_KINDS:
+		var name := String(kind)
+		assert_false(PLAYER_REACHABLE_KINDS.has(name),
+				"`%s` is on both lists; it belongs to exactly one" % name)
+		var row := str(SURFACE_DEFERRED_KINDS[kind])
+		assert_true(row.contains("Wave ") and (row.contains("game/")
+				or row.contains("ui/")),
+				"`%s` defers to a NAMED wave and a NAMED file: `%s`" % [name, row])
+		var verb := _verb_named_in(row)
+		assert_ne(verb, "", "`%s` names the verb its door will call" % name)
+		assert_false(doors.contains(verb),
+				("`%s` is doored now — `%s` is called from game/ or ui/ — so move"
+						+ " it into PLAYER_REACHABLE_KINDS.") % [name, verb])
+
+
+## Every line of `game/` and `ui/`, concatenated. Generous on purpose: any
+## mention of the verb counts as a door, because this test's job is to notice
+## that the branch landed, not to prove the wiring is correct.
+func _shell_source() -> String:
+	var out := ""
+	for dir_path: String in ["res://game", "res://ui"]:
+		out += _read_gd(dir_path)
+	return out
+
+
+func _read_gd(dir_path: String) -> String:
+	var out := ""
+	var dir := DirAccess.open(dir_path)
+	if dir == null:
+		return out
+	dir.list_dir_begin()
+	var entry := dir.get_next()
+	while entry != "":
+		var full := dir_path + "/" + entry
+		if dir.current_is_dir():
+			if not entry.begins_with("."):
+				out += _read_gd(full)
+		elif entry.ends_with(".gd"):
+			out += FileAccess.get_file_as_string(full)
+		entry = dir.get_next()
+	dir.list_dir_end()
+	return out
+
+
+## The `cmd_*` name a deferral row quotes in backticks.
+func _verb_named_in(row: String) -> String:
+	var matcher := RegEx.new()
+	matcher.compile("cmd_[a-z_]+")
+	var found := matcher.search(row)
+	return "" if found == null else found.get_string()
 
 
 func test_every_objective_has_copy_and_a_unique_id() -> void:

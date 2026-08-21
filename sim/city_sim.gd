@@ -60,6 +60,11 @@ var roads: RoadNetwork
 var weather: WeatherSystem
 var director: DisasterDirector
 var incident_sink: IncidentRequestSink
+## Doc 06 §2.16's opportunity layer — the play-NOW street events the player taps
+## for money. A FINE-PATH system: it spawns nothing offline and draws nothing on
+## the coarse step, which is doc 08 §2.3 rule 9 made structural. See
+## `_boot_street` and `cmd_collect_opportunity`.
+var street: OpportunitySystem
 
 ## Held metering pair (doc 03 §9 item 6b): constants until doc 04 meters
 ## delivered energy. (HELD_WATER retired — doc 05's live inventory() feeds the
@@ -232,6 +237,10 @@ func boot(seed_value: int, time_data: Dictionary, starter_data: Dictionary,
 	# constitution §5) and neither draws during boot.
 	_boot_roads()
 	_boot_incidents()
+	# STREET AFTER INCIDENTS. Doc 06 §2.16's spawner reads `coverage_police`
+	# through `CityIncidentWorld`, so the world has to exist first. It draws
+	# nothing at boot, so the reorder costs no stream position.
+	_boot_street()
 	_boot_weather()
 	_check_grid_rules()
 	_register_systems()
@@ -317,6 +326,53 @@ func _boot_incidents() -> void:
 			roads.travel_time_provider())
 	incidents.founding_offset_h = float(GameClock.FOUNDING_OFFSET_MINUTES) / 60.0
 	incidents.fleet.populate_from_stations(incident_world.station_rows())
+
+
+## Doc 06 §2.16's opportunity layer. Four seams, and every one of them is a
+## Callable rather than a back-reference: `OpportunitySystem` needs a coverage
+## scalar, a residential-frontage set, a revision to memo on and a city level,
+## and none of those is a reason for `sim/street/` to know what a `CitySim` is.
+##
+## `eval_period_h` comes from the phase adapter's OWN cadence and is not
+## authored anywhere — see `StreetPhaseSystem`. `data/street.json` expresses the
+## rate as a mean interval in game-hours, and a hand-written period that drifted
+## from the cadence would silently re-rate the whole layer.
+func _boot_street() -> void:
+	street = OpportunitySystem.new(
+			StarterCityLoader.read_json("res://data/street.json"))
+	street.bind_stream(rng)
+	street.grid = world.grid
+	street.graph = roads.graph
+	street.eval_period_h = float(SimSystem.CADENCE_PERIOD_TICKS[
+			SimSystem.Cadence.EVERY_MINUTE]) / float(GameClock.TICKS_PER_HOUR)
+	street.coverage_police = func(tile: Vector2i) -> float:
+		return incident_world.coverage_police(tile)
+	street.residential_ids = _residential_grid_ids
+	street.roster_revision = func() -> int: return roster_revision
+	street.city_level = func() -> int: return progression.city_level
+
+
+## Grid building id -> true, for every RESIDENTIAL building in the roster. Doc
+## 06 §2.16's loose animal is weighted toward frontage, and frontage is a
+## question about the tile ACROSS the kerb — which the tile grid answers with a
+## grid id and nothing else, so the categories have to be resolved here.
+##
+## Asked once per candidate-index rebuild (`graph_version` or `roster_revision`
+## moved), never per spawn. The archetype → category lookup is memoised inside
+## the walk for the same reason `_population_inputs` memoises it: a handful of
+## archetypes against 1,500 buildings.
+func _residential_grid_ids() -> Dictionary:
+	var out: Dictionary = {}
+	var category_by_archetype: Dictionary = {}
+	for id in roster_ids():
+		var b: Building = buildings[id]
+		var found: Variant = category_by_archetype.get(b.archetype)
+		if found == null:
+			found = catalog.category(String(b.archetype))
+			category_by_archetype[b.archetype] = found
+		if String(found) == "residential":
+			out[b.id] = true
+	return out
 
 
 func _boot_roads() -> void:
@@ -898,6 +954,27 @@ func distributed_sinks(ctx: TimeContext) -> Dictionary:
 	return out
 
 
+## Retire this city: break every reference cycle a `RefCounted`-only sim can
+## make, so the instance can actually free (doc 91 D-9).
+##
+## **One call instead of two, and the second one is new.** Every caller today
+## does `sim.scheduler.dispose()` — `game/sim_host.gd`, `tools/profile_save.gd`,
+## two tests — which breaks the sim ↔ phase-adapter loop and nothing else. Doc 06
+## §2.16's spawner adds a second loop of the same shape: it stores `Callable`s
+## that resolve through this class (the coverage index lives behind
+## `CityIncidentWorld`, which holds the sim), exactly as
+## `WaterSystem.powered_provider` has since doc 05 shipped.
+##
+## This is the one place that knows about both, so callers should move to it.
+## `scheduler.dispose()` on its own is not wrong — it is half — and calling this
+## twice is harmless.
+func dispose() -> void:
+	if scheduler != null:
+		scheduler.dispose()
+	if street != null:
+		street.dispose()
+
+
 func advance_hours(hours: float) -> void:
 	scheduler.advance_fine_n(roundi(hours * GameClock.TICKS_PER_HOUR))
 
@@ -1097,7 +1174,36 @@ static func encode_captured(raw_body: Dictionary) -> Dictionary:
 ## written by a binary on which only `standard` was reachable, so the default the
 ## migrator names is not a guess — it is the preset that city was actually played
 ## on, and the rung is a rules rung exactly like v2 and v4.
-const SAVE_SECTION_VERSION := 6
+##
+## **v7 — 2026-08-21, THE OPPORTUNITY LAYER (doc 06 §2.16).** A SHAPE rung, and
+## the first one since v3. The body gains one top-level key, `street` —
+## `{next_id, live: [...]}`, the roster of tappable bounties standing on the
+## city's kerbs — and one entry inside an existing one: `rng.street`, the new
+## named stream the spawner draws from (constitution §5).
+##
+## `_v6_to_v7` is the identity function, and unusually it is the identity
+## function *and* the whole truth. Both additions restore correctly from a v6
+## body with no migration at all:
+##
+##   * `OpportunitySystem.deserialize({})` yields an EMPTY roster with
+##     `next_id = 1`, which is exactly what a v6 city had — under v6 nothing
+##     could spawn, so "no live opportunities" is not a default invented for the
+##     save, it is the fact.
+##   * `RngStreams.deserialize` walks the streams it HAS and takes each one's
+##     entry if the body carries it, so a v6 body re-seats its six known streams
+##     and leaves `street` on the seed `hash(master_seed + ":street")` gave it at
+##     boot — the same position a fresh city of that seed starts from.
+##
+## What the player loses by opening a v6 save under v7: nothing, and they gain
+## the layer on the next game-minute they spend looking at the city.
+##
+## The rung exists because the *shape* moved and §2.8's ladder is the only
+## record of that. It is also a rules rung, mildly: `state_hash()` moves for
+## every city, played or founding, because the `rng` block has a seventh entry
+## and the body has a twenty-ninth key. Nothing else in the body changes value —
+## the spawner reads the city and writes only its own section, and no other
+## stream's sequence is perturbed, which is the property RR-77 turns into a test.
+const SAVE_SECTION_VERSION := 7
 
 
 func save_section_version() -> int:
@@ -1117,6 +1223,7 @@ func migrate_save_section(body: Dictionary, from_version: int) -> Dictionary:
 			3: body = _v3_to_v4(body)
 			4: body = _v4_to_v5(body)
 			5: body = _v5_to_v6(body)
+			6: body = _v6_to_v7(body)
 		version += 1
 	return body
 
@@ -1199,6 +1306,22 @@ static func _v5_to_v6(body: Dictionary) -> Dictionary:
 		return body
 	block["difficulty"] = Difficulty.DEFAULT_PRESET
 	body["director"] = block
+	return body
+
+
+## v6 → v7: **the identity function, and here it is also the complete answer.**
+## The opportunity layer (see `SAVE_SECTION_VERSION`) adds a `street` section and
+## a seventh RNG stream, and both restore correctly from a body that has
+## neither: an absent `street` block deserialises to an empty roster, which is
+## what a v6 city genuinely had, and `RngStreams.deserialize` leaves an unknown
+## stream on its boot seed, which is where a fresh city of the same seed starts.
+##
+## It deliberately does NOT stamp an empty `street` block in. Doc 08 §2.8's rule
+## is additive-first and TOTAL, not "write every key the current shape has": a
+## migrator that materialises defaults is a migrator that has to be re-read every
+## time the default changes, and `restore_state` already answers this one. The
+## v5 → v6 rung took the same line for the same reason.
+static func _v6_to_v7(body: Dictionary) -> Dictionary:
 	return body
 
 
@@ -1398,6 +1521,7 @@ func capture_state() -> Dictionary:
 		"roads": roads.save_section(),
 		"weather": weather.serialize(),
 		"director": director.serialize(),
+		"street": street.serialize(),
 	}
 
 
@@ -1648,6 +1772,10 @@ func _restore_incidents(body: Dictionary) -> void:
 	incidents.deserialize_incidents(body.get("incidents", {}))
 	incidents.fleet.deserialize(body.get("fleet", {}))
 	incidents.dispatch.deserialize(body.get("dispatch", {}))
+	# Doc 06 §2.16 / doc 08 §2.8 v7: a save taken mid-crook restores the crook.
+	# A v6 body has no `street` block and restores to an empty roster, which is
+	# exactly what a v6 city had.
+	street.deserialize(body.get("street", {}))
 
 
 func _restore_finish(body: Dictionary) -> void:
@@ -3400,6 +3528,70 @@ func cmd_set_dispatch_policy(key: String, value: Variant) -> Dictionary:
 	return incidents.dispatch.cmd_set_policy(key, value)
 
 
+# ------------------------------------------------ doc 06 §2.16 the street tap
+
+## Collect one street opportunity — the tap the whole opportunity layer exists
+## for (doc 06 §2.16). Reporting a crook, catching a dog, pocketing what somebody
+## dropped: three fictions, one verb, because what the player does is identical
+## and a game that made them three buttons would be teaching filing, not play.
+##
+##   1 E_UNKNOWN_OPPORTUNITY  no live offer with that id
+##   2 E_EXPIRED              the offer's clock ran out between the tap and here
+##
+## `preview = true` answers the same payload and takes nothing, which is what the
+## map marker's label reads. The commit path pays through doc 03 §2.5's `street`
+## revenue line — its own ledger row and its own lifetime counter, deliberately
+## NOT folded into tax: tax is a rate on the city's value and this is a bounty on
+## the player's attention, and mixing them would make the tax slider look like it
+## moved when the player simply tapped more.
+##
+## **The second refusal is not defensive.** The spawner expires on the
+## game-minute; a tap lands between ticks, off a marker the renderer drew up to a
+## frame ago. `E_EXPIRED` is the honest answer to "I was half a second late", and
+## it is answered BEFORE the money so a stale marker can never pay twice.
+##
+## **The two refusals overlap, and `ui/` should treat them alike.** A marker the
+## spawner has already swept answers `E_UNKNOWN_OPPORTUNITY`, not `E_EXPIRED` —
+## the row is gone, so there is nothing left to call expired — while one whose
+## clock ran out *between* game-minutes is still on the roster and answers
+## `E_EXPIRED`. Which of the two a late tap gets depends on where in the minute
+## it landed, so the surface should say the same thing for both: *it's gone*.
+## They are separate codes because they are separate FACTS, not because the
+## player needs to tell them apart.
+func cmd_collect_opportunity(opportunity_id: int, preview: bool = false) -> Dictionary:
+	var row := street.find(opportunity_id)
+	if row.is_empty():
+		return CommandQueue.fail(&"E_UNKNOWN_OPPORTUNITY")
+	var quote := {
+		"id": int(row["id"]),
+		"kind": String(row["kind"]),
+		"reward": int(row["reward"]),
+		"tile": [int(row["tile_x"]), int(row["tile_y"])],
+		"side": int(row["side"]),
+		"expires_h": float(row["expires_h"]),
+	}
+	if float(row["expires_h"]) <= sim_hour():
+		return CommandQueue.fail(&"E_EXPIRED", quote)
+	if preview:
+		return CommandQueue.ok(quote)
+	var taken := street.take(opportunity_id)
+	if taken.is_empty():
+		return CommandQueue.fail(&"E_UNKNOWN_OPPORTUNITY")
+	var reward := int(taken["reward"])
+	if reward > 0:
+		treasury.credit(reward, &"street", "opportunity " + String(taken["kind"]))
+	bus.emit(&"opportunity_collected", OpportunitySystem.event_payload(
+			&"opportunity_collected", taken))
+	stats_add(&"opportunities_collected")
+	return CommandQueue.ok(quote)
+
+
+## The city's absolute game-hour, off the exact integer tick. The one clock read
+## the command layer needs — `expires_h` is stated in these units.
+func sim_hour() -> float:
+	return float(clock.tick_index) / float(GameClock.TICKS_PER_HOUR)
+
+
 ## The doc 12 P1-38 onboarding hook: the tutorial's transformer cooks on cue.
 func trigger_tutorial_transformer_failure() -> Incident:
 	return incidents.spawn_scripted_from_tag(loader, "transformer_fail")
@@ -4065,6 +4257,7 @@ func _register_systems() -> void:
 	scheduler.register(WaterHourlySystem.new(self))
 	scheduler.register(WorkPhaseSystem.new(self))
 	scheduler.register(IncidentPhaseSystem.new(self))
+	scheduler.register(StreetPhaseSystem.new(self))
 	scheduler.register(DistrictPhaseSystem.new(self))
 	scheduler.register(HourlyPhaseSystem.new(self))
 	scheduler.register(DirectorPhaseSystem.new(self))
@@ -4229,6 +4422,35 @@ class IncidentPhaseSystem extends SimSystem:
 				/ float(GameClock.TICKS_PER_HOUR))
 
 
+## Doc 06 §2.16's opportunity layer, in the INCIDENTS phase behind the incident
+## system — `&"street"` sorts after `&"incidents"`, which is the same trick
+## `WaterHourlySystem` uses to sit behind `&"water"` — so the coverage index it
+## reads is the one this minute's dispatch already rebuilt.
+##
+## **`advance_coarse` expires and returns.** That is doc 08 §2.3 rule 9 made
+## structural rather than remembered: opportunities are the play-NOW layer, they
+## do not accrue while the player is away, and the coarse path is the away path.
+## The doc 01 §2.5 coarse contract is satisfied trivially — zero draws, zero
+## spawns, and an expected value that matches the fine path's *for a player who
+## was not there to tap anything*, which is the only equivalence that means
+## something here. It is also why `tests/balance_matrix.gd`, which runs the
+## coarse step, is bit-identical to the day before this system existed.
+class StreetPhaseSystem extends SimSystem:
+	var sim: CitySim
+	func _init(p_sim: CitySim) -> void: sim = p_sim
+	func system_id() -> StringName: return &"street"
+	func phase() -> int: return Phase.INCIDENTS   # sorts AFTER &"incidents"
+	func cadence() -> int: return Cadence.EVERY_MINUTE
+	func advance_fine(ctx: TimeContext) -> void:
+		# Absolute game-hours off an exact integer tick, never an accumulated
+		# delta — the same rule the incident system advances on.
+		sim.street.advance(float(ctx.tick_index + period_ticks())
+				/ float(GameClock.TICKS_PER_HOUR), not ctx.is_catchup)
+	func advance_coarse(ctx: TimeContext) -> void:
+		sim.street.advance(float(ctx.tick_index + GameClock.TICKS_PER_HOUR)
+				/ float(GameClock.TICKS_PER_HOUR), false)
+
+
 class DirectorPhaseSystem extends SimSystem:
 	var sim: CitySim
 	func _init(p_sim: CitySim) -> void: sim = p_sim
@@ -4353,6 +4575,11 @@ class ReportPhaseSystem extends SimSystem:
 						sim._director_links.erase(incident_id)
 			sim.bus.emit(StringName(String(event["type"])), event)
 		for event in sim.water.drain_events():
+			sim.bus.emit(StringName(String(event["type"])), event)
+		# Doc 06 §2.16. `opportunity_collected` is NOT drained here — the verb
+		# emits it on the spot, because doc 09 §2.14's counters tick on the TAP
+		# and a counter that waited for the next tick would lag the finger.
+		for event in sim.street.drain_events():
 			sim.bus.emit(StringName(String(event["type"])), event)
 		for event in sim.development.drain_events():
 			# The two phase effects that reach outside the land block itself —

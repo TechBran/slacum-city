@@ -56,7 +56,7 @@ data/    JSON balance tables. ALL tunable numbers live here. No magic numbers in
 
 ## 5. Determinism & RNG (LOCKED) — spec §47
 
-- Every stochastic system gets its own **named RNG stream** (`RandomNumberGenerator` with persisted seed + state). Streams: `weather`, `incidents`, `crime`, `failures`, `director`, `traffic`, `misc`.
+- Every stochastic system gets its own **named RNG stream** (`RandomNumberGenerator` with persisted seed + state). Streams: `weather`, `incidents`, `crime`, `failures`, `director`, `traffic`, `street`, `misc`. *(`street` added per report 98 RR-77 for doc 06 §2.16's opportunity layer. The roster is a ROSTER, not a cap: the rule above is that a new stochastic system takes a new stream, so a new system extends this list by definition. Extending it costs the existing streams nothing — each stream's seed is `hash(master_seed + ":" + name)`, so a name that did not exist perturbs no sequence that did — and the whole cost lands in one place, the `rng` block of the save body, which is why the addition takes a section rung.)*
 - Same save + same elapsed time ⇒ same offline outcome. Cross-device bit-determinism is NOT required (single-player, local saves).
 - Never call a shared/global RNG from sim code.
 

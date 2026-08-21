@@ -2,13 +2,27 @@
 
 **The honest ledger of what "completely built out" still lacks.**
 
-> **CURRENT PROVENANCE — Wave 13, 2026-08-21, Godot 4.7.2.** The tree this
-> edition is measured on: **118 test files / 2,083 tests / 522,300 asserts /
-> 0 failed / 0 silent, 30 balance gates.** Determinism re-measured, not quoted:
-> founding `e8bffba1853f248e…` / `08bfdfaa3dd65281…`, benchmark
-> `e760f9305d21d331…` / `bd2d8f30d25827f4…`. **The count is 169 of 187 rows —
-> 90 %**; the re-derivation is the table headed *THE COUNT, RE-DERIVED ROW BY ROW
-> AT THE WAVE-13 FORK*, immediately before §0.5, and it supersedes both count
+> **CURRENT PROVENANCE — Wave 15, 2026-08-21, Godot 4.7.2.** The tree this
+> edition is measured on: **121 test files / 2,124 tests / 532,153 asserts /
+> 0 failed / 0 silent, 30 balance gates** *(the Wave-13 line read 118 /
+> 2,083 / 522,300; the delta is `tests/test_street_opportunities.gd` plus the
+> two sibling files this wave grew, and it is RE-MEASURED at this fork rather
+> than incremented)*. Determinism re-measured, not quoted:
+> founding `32a3e96855218af5…` / `90a41a97eb1e49fb…`, benchmark
+> `385dacb23d3ec1b7…` / `e420494749d5c90e…` **(Wave 15, 2026-08-21 — and the
+> four digits this box carried before today were the pre-Wave-14 set,
+> `e8bffba1…` / `08bfdfaa…` / `e760f930…` / `bd2d8f30…`, superseded by doc 92
+> §33.1 and report 98 RR-69 a wave ago and never re-copied here. That is the
+> RR-76 drift pattern for the fourth time and in the very box RR-76 added to
+> stop it, which is worth saying plainly: a provenance box has to be
+> RE-MEASURED, not inherited. Report 98 RR-77 carries the enumeration that
+> connects the two sets — the Wave-15 layer adds exactly three keys and
+> changes no value, so stripping them reproduces the Wave-14 set to the
+> byte).** **The count is 170 of 188 rows — 90 %** at the Wave-15 fork (doc 06
+> §2.16 is the one row added and the one row shipped; `grep -c "^### 2\.[0-9]"
+> docs/design/06-incidents-dispatch.md` reads 14); the re-derivation is the table
+> headed *THE COUNT, RE-DERIVED ROW BY ROW AT THE WAVE-13 FORK*, immediately
+> before §0.5, and it supersedes both count
 > tables before it, and report 98 **RR-76** carries it as the project's single
 > quotable figure. **The one-page answer to "are we done" is §20.4**; §20.5 is
 > this edition's marker sweep. The two provenance blocks below are kept for the
@@ -369,7 +383,7 @@ above. **This is the number to quote.***
 | 03 Economy | 13 | **13** | 0 | 0 | 0 | §2.9 SHIPPED (A91-D-19) — *the row said so and the Total above never folded it in* |
 | 04 Power grid | 13 | **11** | 1 | 0 | 1 | unchanged. §2.10 re-verified: `grep -rn fuel sim/power/` returns **nothing** |
 | 05 Water | 16 | **14** | 1 | 0 | 1 | **+1 SHIPPED**: the `— Overlay` row moved PARTIAL → SHIPPED in Wave 11 (all six `enabled_modes` live, both answering verbs doored) and the count never followed its own row |
-| 06 Incidents & dispatch | 13 | **13** | 0 | 0 | 0 | unchanged |
+| 06 Incidents & dispatch | **14** | **14** | 0 | 0 | 0 | **basis +1 and +1 SHIPPED** (Wave 15): §2.16, the opportunity layer — `grep -c "^### 2\.[0-9]" docs/design/06-incidents-dispatch.md` reads 14 at this fork |
 | 07 Weather & director | 7 | **7** | 0 | 0 | 0 | §2.4 SHIPPED (A91-D-26 closed, RR-53) — *an override row above says so; the main row and the Total never did* |
 | 08 Offline & persistence | 15 | **12** | 2 | 1 | 0 | unchanged. All three re-verified below |
 | 09 Map, land, starter city | 14 | **14** | 0 | 0 | 0 | unchanged |
@@ -377,10 +391,10 @@ above. **This is the number to quote.***
 | 11 Rendering & performance | **22** | **22** | 0 | 0 | 0 | **basis +1** (see below) |
 | 12 UI/UX | **20** | **19** | 1 | 0 | 0 | **basis +1** (§2.20, S15) and **+1 SHIPPED** (§2.18, Wave 13) |
 | 13 Android | 13 | **5** | 8 | 0 | 0 | unchanged in the count; the *blocker* changed (see below) |
-| **Total** | **187** | **169** | **15** | **1** | **2** | |
+| **Total** | **188** | **170** | **15** | **1** | **2** | **Wave 15: basis +1, SHIPPED +1 — doc 06 §2.16, re-derived here rather than inherited (RR-76)** |
 
-> **90 % shipped — 169 of 187 — or 91 % of the 185 rows that are not deferred by
-> their own docs.**
+> **90 % shipped — 170 of 188 — or 92 % of the 186 rows that are not deferred by
+> their own docs.** *(Wave-15 fork, 2026-08-21. The Wave-13 figure was 169 of 187; doc 06 §2.16 is the one row added and the one row shipped, so the headline percentage is unmoved and the non-deferred share ticks up. RR-76's rule binds this line as much as the one it replaces: it carries its fork because it was computed at one.)*
 
 **Two rows moved because a count table drifted from its own rows, and that is the
 third instance of the same fault.** Doc 03 §2.9 (A91-D-19, closed
@@ -1145,6 +1159,12 @@ prefixed one names its document.**
 |---|---|---|
 | **A91-D-31** | ~~Medium~~ **✅ CLOSED 2026-08-21 (Wave 14)** | **The offline catch-up is not sliced, so doc 13 §2.9's veil has nothing to animate over.** `game/main.gd::_on_app_resumed` walks `CatchUpPlanner.plan()`'s segments in a synchronous `for` loop — `advance_coarse_hours(count)` and `advance_fine_n(count)` back to back — so a 12-real-hour absence runs **720 coarse steps inside one frame**. Doc 13 §2.9 specifies the other shape and has since it was drafted: `while not sim.advance_coarse_sliced(12): veil.set_progress(...); await get_tree().process_frame`, with a 12 ms budget whose stated purpose is "keeping the 30 fps veil animation smooth". **This is not an ANR risk** — §2.9's own argument is that whole coarse steps are atomic and the margin to the 5 s line is 90× — it is a *presentation* defect, and it is only visible now because Wave 13 built the veil the loop was supposed to feed. Today `UIRoot.present_veil_catchup()` puts a truthful sentence and a truthful bar on screen and the loop never yields, so the player sees one frame of it at most. The restore in front of it *is* sliced (`RestoreCursor`, eleven steps) and is where the veil currently earns its keep. Two things are needed: `CitySim.advance_coarse_sliced(budget_ms)` (or the same loop written in the shell over the planner's segments, one segment per frame), and `advance_veil_catchup()` called from inside it. Filed rather than fixed here because `game/main.gd` is the lead's and because a sliced catch-up changes when `_on_sim_batch` sees the offline events — an integration decision, not a UI one. — **CLOSED 2026-08-21 (Wave 14), and the row's own prescription is half right.** `CitySim.begin_catchup(plan) -> CatchUpCursor` ships in `sim/time/catchup_cursor.gd`; the shell integration is an exact snippet against `main.gd`'s existing `_restore_cursor` guard, so the lead still owns the integration decision this row reserved for them. **What did not survive contact with the shipped planner:** `advance_coarse_sliced(budget_ms)` cannot advance a real resume — a returning player's plan carries a fine head-align segment and a 40-tick fine tail (D-1), which a coarse-only entry point has nothing to do with — and the BUDGET cannot live in `sim/` at all, because constitution §5 forbids reading a clock there. So the unit is one coarse hour or one fine tick and the shell spends them against `Time.get_ticks_usec()`, which is `RestoreCursor`'s own contract and doc 13 §2.9's own sentence ("the shell decides the budget"). The 12 ms budget is unchanged in meaning and buys **one** step per frame on every city in the project at the measured 6.3–190 ms per coarse step, which is §2.9's own worst-case row rather than its retired 0.60 ms estimate. Determinism is the part that could have gone wrong and is proved instead: a coarse step reads `ctx.catchup_index` / `ctx.catchup_total`, which index the SEGMENT and not the slice, so the cursor issues `advance_coarse_n(1, true, hours_done_in_segment, segment_hours)` and `catchup_begin()` still fires once per segment. `tests/test_catchup_cursor.gd` proves bit-identity against a verbatim copy of the old shell loop on both cities at 1, 3, 12 and unbounded units per frame, on `state_hash()` **and** on the drained event bus. **And the row was right that the integration is where the decisions are.** Two of them, both in the snippet: `SimHost` must be **paused** for the duration — it is a separate node with its own `_process`, and unpaused it adds `delta × 60` to `clock.residual_game_ms` and spends live fine ticks *between* the slices, which is a different city and not merely untidy — and a player can now background the app *while the veil is up*, so a second resume drains the unfinished cursor on the spot rather than dropping the new absence. Report 98 §28 RR-72. |
 
+#### New rows, Wave 15 (2026-08-21) — `A91-D-33`
+
+| # | Severity | Defect |
+|---|---|---|
+| **A91-D-33** | ~~**High**~~ **✅ CLOSED 2026-08-21 (this wave), sim half** | **Nothing in the game rewarded LOOKING at the city.** Eleven systems ship; every one of them is something the player SETS UP and then watches settle. A fire answers itself, a tax rate pays on the hour, a block develops over game-days — and all of it pays the same whether or not anybody is watching. The Wave-13 playtest named the consequence exactly: *“there's not a lot of downtime of absolutely nothing to do”* is what the player asked us to fix, and *“we need to have ways where we can make money quickly”* is the shape they asked for. This is a **completeness** defect and not a balance one: the arc had no beat between commitments, so a session was a busy first minute and then a wait, and no amount of retuning `data/economy.json` could put one there. **Closed (sim half) by doc 06 §2.16's opportunity layer**, report 98 RR-77, doc 93 §Q. `sim/street/opportunity_system.gd` spawns three kinds of tappable street offer on a new `street` RNG stream — `petty_crime` weighted by doc 02 §2.9's `coverage_police` (the player's own *“crimes that aren't being picked up by the police station”*), `loose_animal` weighted by residential frontage, and a rare `lost_valuables` — each standing on a kerb tile the renderer's own classification agrees with, each living two to four real minutes, each paying a bounty through doc 03 §2.5's new `street` revenue line. Measured on the founding city: **one offer every 1.763 game-hours** (= 1 min 46 s at 1x, inside the 1–3 real-minute design band), mean bounty **$320.29**, **734 candidate kerb tiles**, and a crook share of **70 % at `coverage_police = 0` against 12 % at `1.0`** — the hook working, not a bias. **What it cost:** exactly three added keys in the city body (`street`, `rng.street`, `treasury.ledger_totals.lifetime_street`), zero changed values anywhere — strip the three and all four determinism digests reproduce the Wave-13 baselines to the byte (RR-77's table) — city section rung **v7**, and `do_nothing` on the 21-game-day matrix reproduces doc 92 §33.4 cell for cell, because the spawner is a fine-path system that draws nothing offline (doc 08 §2.3 rule 9). **What is still open, and it is the OTHER HALF of this wave, not a defect:** the street-life renderer that draws the crook, the dog and the glint, and the tap that reaches `cmd_collect_opportunity` — §17's verb matrix records the verb as doorless-by-design at this fork and doc 93 §Q3's `awaiting_consumer` classification carries the two events until the marker lands. **What is deferred with a reason:** an unanswered crook expires silently (doc 06 §2.16 names `expire_stability_delta` and why v1 does not ship it), no curriculum row uses the `collect_opportunities` evaluator kind (gate 21's fitted targets are untouched; doc 92 §35.4 item 2 names level 4 as where a row would fit), and doc 92 §35.3 ranks the one number the balance agent has to rule on — a **57 % of founding net** collection ceiling that this document's opinion puts nearer 35–40 %. |
+
 #### New rows, Wave 14 (2026-08-21) — `A91-D-32`
 
 | # | Severity | Defect |
@@ -1355,6 +1375,7 @@ is visible rather than silent — and no strategy reaches for it.
 | `cmd_set_tax_level` | `budget_model`, `city_dashboard` → `main.gd:806` | ✔ | `set_tax_rate` | ✅ |
 | `cmd_buy_block` | `ui/land_panel_model.gd` | ✔ | `buy_block` | ✅ |
 | `cmd_start_development` | `ui/land_panel_model.gd` | ✔ | `develop_block` | ✅ |
+| **`cmd_collect_opportunity`** | **none yet — Wave 15 renderer branch** | **none** | `collect_opportunities` (authored, deliberately unused — doc 92 §35.4 item 2) | ⚠️ **doorless, split delivery** |
 
 **18 of 23 have a door. Five do not, and three of those five have no caller of
 any kind** — `cmd_isolate_water_main`, `cmd_restore_water_main` and
@@ -1369,6 +1390,20 @@ gives `cmd_recall_unit` the drawer chip §2.6 always specified, and the wrapper
 that "is not merely undriven, it is unproven" is now driven by
 `tests/test_ui_incidents.gd` through the whole chain — chip → signal → root →
 command — with the refusal path asserted as well as the success one.
+
+**Wave 15 adds a twenty-fourth verb and it arrives doorless BY DESIGN, which is
+a state this matrix has not had before.** `cmd_collect_opportunity` (doc 06
+§2.16) is the tap that collects a street bounty. Its door is the street-life
+marker in `game/render/`, and that is a **sibling branch of the same wave** — the
+sim spawner and the renderer were split so the events, the persistence rung and
+the determinism accounting could land and be measured independently. So the row
+above is not the familiar ⚠️ *"somebody forgot the UI"*; it is *"the UI is the
+other half of this delivery"*, and the honest thing is to say which. The count is
+therefore **23 of 24 at this fork, 24 of 24 at the merge**, and if the merge
+lands without the marker this row becomes an ordinary doorless defect and should
+be read as one. The same split is recorded on the event side by doc 93 §Q3's
+`awaiting_consumer` classification, which — unlike this table — fails the suite
+by itself once the consumer arrives.
 
 ### 17.2 Sub-system verbs with no `CitySim` wrapper
 
@@ -1729,7 +1764,7 @@ supersedes every row above it.*
 | 3 | Every `cmd_*` has a door | §17 — **still no test**, §20.2 item 5 | **24 / 24 on `CitySim`.** Census run 2026-08-21: every `cmd_*` on `sim/city_sim.gd` is named by a file under `ui/` or `game/`, `cmd_recall_unit` included (A91-D-24 closed; `game/main.gd:914` binds it). **Five sub-system verbs still have no wrapper**, all five `WaterSystem`'s — `cmd_remove_main`, `cmd_overhaul_node`, `cmd_set_water_restrictions`, `cmd_set_water_policy`, `cmd_deploy_pump_truck` (doc 92 §32.6) — plus two ruled deliberate (`cmd_road_repair` §J3, `cmd_install_backup_generator` §N3). **Of the five, three are named in doc 05 §6's own deferred list and are therefore not gaps** (§20.4): the honest open count is **two** |
 | 4 | Every event has a consumer or a written reason not to | **`tests/test_event_matrix.gd`** — ✅ **this clause became a test in Wave 11** | ✅ **140 types emitted, 78 consumed by the game, 62 classified, zero unexplained** (printed by the suite at this fork). The exemption register is in the test, so a new unexplained type fails the build |
 | 5 | Every screen clean at every box × both a11y settings | `tools/ui_preview.gd --audit --strict`; the suite's own width gate runs six boxes including `min_safe_box_dp` | ✅ **18 / 18 sweeps** — 6 boxes × 3 text scales × **55 states = 990 state-sweeps, 0 findings, exit 0 eighteen times** (§19.1). A91-D-21/22/23/29 all closed. **The instrument covers 15 of 16 screens**: S13's panel still has no preview state (A91-D-28) |
-| 6 | Determinism | `tools/profile_sim.gd --hash-only --baseline`, both cities, **and `tests/test_save_determinism_days.gd`** | ✅ founding `e8bffba1…` / `08bfdfaa…`, bench `e760f930…` / `bd2d8f30…`. The multi-day gate saves at 2 h, 26 h, 50 h and seven game-days on both cities — the window every earlier proof was smaller than |
+| 6 | Determinism | `tools/profile_sim.gd --hash-only --baseline`, both cities, **and `tests/test_save_determinism_days.gd`** | ✅ founding `32a3e968…` / `90a41a97…`, bench `385dacb2…` / `e4204947…` (Wave 15; the previous set `e8bffba1…` / `08bfdfaa…` / `e760f930…` / `bd2d8f30…` was two waves stale in this row — see the provenance box). The multi-day gate saves at 2 h, 26 h, 50 h and seven game-days on both cities — the window every earlier proof was smaller than |
 | 7 | Balance | `tests/test_balance_gates.gd` | ✅ **30 gates** (gate 29 = preset ordering §29.6; gate 30 = the incident-roster ceiling, §31 / doc 06 §2.13(b)) |
 | 8 | Suite | `tests/run_tests.gd` | ✅ **118 files / 2,083 tests / 522,300 asserts / 0 failed / 0 silent** (2026-08-21, `tools/run_suite.sh`) |
 
@@ -1855,21 +1890,23 @@ remains and why each remaining item cannot be closed from this workstation, and
 what is deferred by design. §20.1's rule governs all three — **anything the docs
 themselves defer is not a gap; anything else is.***
 
-**Provenance.** Godot 4.7.2, headless. `tools/run_suite.sh` at this fork:
-**118 files / 2,083 tests / 522,300 asserts / 0 failed / 0 silent**, exit 0, with
-**30 balance gates** inside it. Determinism, re-measured rather than quoted:
-founding `e8bffba1853f248e…` / `08bfdfaa3dd65281…`, bench `e760f9305d21d331…` /
-`bd2d8f30d25827f4…` — the four published baselines to the digit, and unchanged
-*by construction*, because this pass wrote no `sim/`, no `data/`, no `game/` and
-no `ui/`.
+**Provenance.** Godot 4.7.2, headless. The suite at this fork:
+**121 files / 2,124 tests / 532,153 asserts / 0 failed / 0 silent**, with
+**30 balance gates** inside it. *(Wave 15. Taken in three file-range slices of `tests/run_tests.gd`'s own discovery — same files, same per-file `SimTest` instance, same `begin_test`/`end_test` silent-method guard, three processes instead of one so a 40-minute run fits a budget; each slice carries its own `UserDirIsolation`, which is the isolation the runner's header exists to provide. The Wave-13 line read 118 / 2,083 / 522,300.)* Determinism, re-measured rather than quoted:
+founding `32a3e96855218af5…` / `90a41a97eb1e49fb…`, bench `385dacb23d3ec1b7…` /
+`e420494749d5c90e…` — re-measured at the Wave-15 fork. **All four MOVED this wave**, and the move is enumerated rather than asserted: doc 06 §2.16's opportunity layer adds exactly three keys to the city body and changes no existing value, so stripping those three reproduces the Wave-14 set (`0b67cd22…` / `4f9f3830…` / `bbe658ae…` / `158501b8…`) to the byte on both cities and both paths — report 98 RR-77's table. *(The set this paragraph carried before today was the pre-Wave-14 one, which had been superseded for a wave; the correction is in the provenance box at the head of this file.)*
 
 ### What is DONE
 
-> **SLACUM CITY is 90 % shipped: 169 of 187 `### 2.N` rows of docs 01–13, or
-> 91 % of the 185 rows that are not deferred by their own docs — implemented,
+> **SLACUM CITY is 90 % shipped: 170 of 188 `### 2.N` rows of docs 01–13, or
+> 92 % of the 186 rows that are not deferred by their own docs — implemented,
 > reachable by a player, and held by a named test. Six of the eight clauses of
-> §20.1's definition are outright green; clause 1 is 169/187 and clause 3 is
-> 24 of 24 at the `CitySim` layer with two sub-system verbs still without a
+> §20.1's definition are outright green; clause 1 is 170/188 and clause 3 is
+> **23 of 24** at the `CitySim` layer (Wave 15 adds `cmd_collect_opportunity`,
+> doorless at this fork BY DESIGN — its door is the street-life marker in the
+> sibling renderer branch of the same wave, so the clause reads 24 of 24 at the
+> merge and this line should be re-derived there rather than inherited) with two
+> sub-system verbs still without a
 > wrapper. One row in the entire tree is ABSENT. Half of everything that remains
 > is one document's, and that document needs a phone, not a feature.**
 
@@ -1882,7 +1919,7 @@ Row by row, at this fork:
 | 03 Economy | 13 | **13 — complete** | — |
 | 04 Power grid | 13 | 11 | §2.10 backup generators (PARTIAL, re-open condition written §N3); §2.11 black start (DEFERRED by the doc) |
 | 05 Water | 16 | 14 | §2.14 a doc quote (A91-D-25); §2.10 contamination (DEFERRED by the doc) |
-| 06 Incidents & dispatch | 13 | **13 — complete** | — |
+| 06 Incidents & dispatch | **14** | **14 — complete** | — |
 | 07 Weather & director | 7 | **7 — complete** | — |
 | 08 Offline & persistence | 15 | 12 | §2.3 (`main.gd`'s resume body untested), §2.13 (A91-D-27), §2.10 **ABSENT** — the event-log ring |
 | 09 Map, land, starter city | 14 | **14 — complete** | — |

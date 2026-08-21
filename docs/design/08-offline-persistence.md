@@ -100,6 +100,7 @@ The difficulty row above is authored by this doc but **lives in `data/difficulty
 6. **Treasury floor.** Offline expenses are paid to zero, then accrue as `deferred_bills`, capped at `deferred_bills_cap_days = 3` game-days of operating expense; while deferred, service efficiency ×0.80. Treasury never goes negative offline.
 7. **Return grace.** For `return_grace_minutes = 120` game-minutes after resume, the Director may schedule nothing, and every incident that began offline has its escalation timer frozen. The player always gets time to read the report and act.
 8. **Stability floor.** Purely-offline accrual may not push city stability below `offline_stability_floor = 0.20`. Riots and civil emergency are attended content.
+9. **The play-NOW layer does not accrue** *(Wave 15, doc 06 §2.16).* Doc 06 §2.16's tappable street opportunities — the crook the police missed, the loose dog, the glint on the kerb — **do not spawn offline, and none is waiting when the player returns**. A catch-up expires whatever it finds past its lifetime and says NOTHING about it: a bounty nobody could have taken is not news, and a "while you were away" line listing $2,400 of money the player was never offered is worse than silence. Nor is it deferred, banked or paid at a taper — the layer pays for *attention*, and attention is the one thing an absent player did not spend. This rule is the only one of the nine that is **structural rather than clamped**: the spawner is a fine-path system whose `advance_coarse` expires and returns, so there is no output for `OfflineGuard` to clamp and no branch in the rules to get wrong. Its `street` RNG stream does not move a single position across a catch-up of any length (`tests/test_street_opportunities.gd`), which is also why the coarse-step balance matrix is bit-identical to the build before the layer existed.
 
 These are enforced by `OfflineGuard`, a wrapper the coarse path installs around the mutation calls (`apply_condition_delta`, `apply_population_delta`, `destroy_entity`, treasury debit). It is a clamp on outputs, not a branch in the rules — G2 holds.
 
@@ -525,6 +526,46 @@ static func _v3_to_v4(b: Dictionary) -> Dictionary:
 > benchmark city — and the reason it is stated in game-DAYS is that every gate
 > before it saved inside the first one.
 
+> ### Shipped 2026-08-21 — `city.section_version` 6 → 7, the opportunity layer
+>
+> **A SHAPE rung, and the first one since v3.** Doc 06 §2.16 adds the tappable
+> street layer, and with it two additions to the city body: one top-level key,
+> `street` (`{next_id, live: […]}` — the roster of bounties standing on the
+> city's kerbs, so a save taken mid-crook restores the crook), and one entry
+> inside an existing key, `rng.street` (constitution §5's eighth named stream,
+> report 98 RR-77).
+>
+> **`CitySim._v6_to_v7` is the identity function, and here that is not a
+> formality — it is the complete answer.** Both additions restore correctly from
+> a v6 body that has neither:
+>
+> - `OpportunitySystem.deserialize({})` yields an empty roster at `next_id = 1`,
+>   which is exactly what a v6 city had. Under v6 nothing could spawn, so "no
+>   live opportunities" is not a default invented for the save — it is the fact.
+> - `RngStreams.deserialize` walks the streams it HAS and takes each one's entry
+>   only if the body carries it, so a v6 body re-seats its seven known streams
+>   and leaves `street` on the seed `hash(master_seed + ":street")` gave it at
+>   boot. That is the same position a fresh city of that seed starts from, which
+>   is the only sensible place for a stream nobody has drawn from.
+>
+> So the migrator writes **no key at all**, and that is the deliberate choice
+> §2.8's additive-first rule asks for: a migrator that materialises defaults has
+> to be re-read every time the default changes, and `restore_state` already
+> answers this one. The v5 → v6 rung took the same line for the same reason.
+>
+> **What the rung costs the player: nothing**, and they gain the layer on the
+> next game-minute they spend looking at the city. **What it costs the
+> baselines:** `state_hash()` moves for every city, founding and played alike,
+> because the `rng` block has an eighth entry and the body a twenty-ninth key.
+> Nothing else in the body changes value — the spawner reads the city and writes
+> only its own section, perturbs no other stream, and creates no money without a
+> tap. Report 98 RR-77 turns that last sentence into the test it needs to be.
+>
+> **And it is a §2.3 rule-9 system**, which is why this rung does NOT change what
+> a catch-up produces: the spawner's coarse path expires and returns, drawing
+> nothing, so an offline advance of any length lands on the same city v6 would
+> have produced apart from the two added keys.
+
 ### 2.9 Load & corruption recovery
 
 Candidate order: `manifest.active` → `manifest.history[…]` → `pinned.pre_catchup` → `pinned.pre_migration` → directory scan sorted by embedded `sim_time_minutes` descending.
@@ -541,7 +582,7 @@ Per-candidate gate — fail any ⇒ quarantine and advance:
 | 6 | `validate_structural()` passes | Logic corruption |
 | 7 | `sim_time_minutes ≤ manifest.high_water_sim_minutes + 1` | Time moved impossibly forward |
 
-`validate_structural()` asserts: every registry section present (missing ⇒ that system's `default_section()`, logged as a repair note); `sim_time_minutes ≥ 0` and `== time.tick_index / 4` (doc 01's invariant, constitution §4 as amended by report C-01); all seven RNG streams present with int seed+state; entity counts in `[0, 200000]`; no dangling entity references. Dangling references below `repair_threshold_frac = 0.02` of entities are **repaired** and noted; above it the candidate is rejected.
+`validate_structural()` asserts: every registry section present (missing ⇒ that system's `default_section()`, logged as a repair note); `sim_time_minutes ≥ 0` and `== time.tick_index / 4` (doc 01's invariant, constitution §4 as amended by report C-01); all **eight** RNG streams present with int seed+state (`street` joined in Wave 15 per report 98 RR-77 — and note that a MISSING stream is not a rejection: `RngStreams.deserialize` walks the streams it has and leaves an absent one on its boot seed, which is the only reading that lets a save from an older build open at all); entity counts in `[0, 200000]`; no dangling entity references. Dangling references below `repair_threshold_frac = 0.02` of entities are **repaired** and noted; above it the candidate is rejected.
 
 **Quarantine, never delete** (cap 3 files, oldest evicted) so a support path exists.
 
@@ -961,7 +1002,7 @@ Per constitution §9, sections sit at top level beside `schema_version` / `sim_t
 | Section | Owner | Notes |
 |---|---|---|
 | `meta` | 08 | save identity, difficulty, catch-up bookkeeping, `reserve_treasury` |
-| `rng_streams` | 08 (custody) | seven streams per constitution §5 |
+| `rng_streams` | 08 (custody) | **eight** streams per constitution §5 (`street` added Wave 15, report 98 RR-77) |
 | `time` | 01 | `tick_index`, residual, timers, work units, scheduled events |
 | `world` | 09 | blocks, ownership, development, tile overrides |
 | `districts` | 09 | membership, reliability EMAs, stability components |
