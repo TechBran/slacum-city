@@ -215,6 +215,11 @@ func clear() -> void:
 		var layer: Layer = _layers[key]
 		if layer.mm != null:
 			layer.mm.visible_instance_count = 0
+		if layer.node != null:
+			# Emptied AND switched off — see `_write`. A cleared layer is the one
+			# case where an empty buffer would go on costing its draw call for as
+			# long as the city runs.
+			layer.node.visible = false
 
 
 ## One rendered frame.
@@ -254,6 +259,20 @@ func site_count() -> int:
 ## Draw calls this layer costs when every kind is on screen at once.
 func layer_count() -> int:
 	return _layers.size()
+
+
+## Buffers actually SUBMITTING geometry this frame — the number a draw-call
+## budget is measured against, as opposed to the number of buffers that exist.
+## On a city with no sites it is 0 and `layer_count()` is still 5; report 98
+## RR-83's whole point is that those used to be the same number.
+func active_buffers() -> int:
+	var n := 0
+	for key: String in _layers:
+		var layer: Layer = _layers[key]
+		if layer.node != null and layer.node.visible \
+				and layer.mm.visible_instance_count > 0:
+			n += 1
+	return n
 
 
 ## Live instance census, for the tests and the profiler table.
@@ -547,6 +566,21 @@ func _write(layer_v: Variant, poses: Array, used: int, lamp: float) -> void:
 			mm.set_instance_color(i, pose.tint)
 			mm.set_instance_custom_data(i, pose.custom)
 	mm.visible_instance_count = n
+	# HIDE the node, do not merely empty it — report 98 RR-83's corollary,
+	# applied where that ruling said it applied. A `MultiMeshInstance3D` holding
+	# a buffer with `visible_instance_count == 0` still costs a draw call, and
+	# this layer's custom AABB is world-sized (it has to be: instances are
+	# written straight into the buffer and never update the auto AABB), so the
+	# frustum culler can never drop it either. A city with NO construction sites
+	# is the common case — the benchmark city has none, and a real one is between
+	# builds most of the time — and it was paying five calls a frame for five
+	# empty buffers. MEASURED on the bench city with `profile_frame
+	# --quiet-layers`: the quiet city read 100 / 118 / 201 dc at Z0 / Z1 / Z2
+	# against a 95 / 113 / 196 baseline before this line — exactly five, at every
+	# pose — and reads the SAME as its baseline after it. (Both numbers then fall
+	# another 8 once `VehicleView` takes the same gate: 87 / 105 / 188.)
+	if layer.node != null:
+		layer.node.visible = n > 0
 
 
 func _ensure_capacity(layer: Layer, needed: int) -> void:
@@ -679,6 +713,10 @@ func _add_layer(key: String, builder: ConstructionRigMesh, material: Material,
 			Vector3(-world_m * 0.05, -4.0, -world_m * 0.05),
 			Vector3(world_m * 1.1, height_m + 8.0, world_m * 1.1))
 	layer.node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# Born hidden — `_write` switches it on the first frame it has anything to
+	# draw. A layer built for a city with no sites would otherwise cost its five
+	# calls from boot until the first hole is dug.
+	layer.node.visible = false
 	add_child(layer.node)
 	_layers[key] = layer
 

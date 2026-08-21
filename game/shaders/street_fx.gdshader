@@ -2,16 +2,26 @@
 // opportunity, the `+$N` LABEL that rises off a collected one, the POOF that
 // replaces it, and the SPARKLE over a dropped stash.
 //
-// FOUR EFFECTS, ONE DRAW CALL. Every one of them is the same thing: a flat quad
+// SIX EFFECTS, ONE DRAW CALL. Five of them are the same thing: a flat quad
 // turned to face the camera, alpha-blended, writing no depth. So they are one
-// MultiMesh with a MODE in `INSTANCE_CUSTOM.r` rather than four buffers, four
-// materials and four calls — which matters, because the layer's whole budget is
+// MultiMesh with a MODE in `INSTANCE_CUSTOM.r` rather than five buffers, five
+// materials and five calls — which matters, because the layer's whole budget is
 // four calls including the three character bodies.
 //
+// The sixth is the BLOB SHADOW, and it is on this buffer for the same economics
+// even though it is the one quad that does NOT face the camera: it is still a
+// flat, alpha-blended, depth-writeless quad, so it costs a `mix` of three basis
+// columns in the vertex stage (below) and a mask in the fragment stage instead
+// of a whole extra submission. It is drawn only where the preset has switched
+// REAL shadows off — `vehicle_shadows`, the one knob — so no body ever has two
+// shadows and no body on a phone has none.
+//
 // INSTANCE_CUSTOM
-//   .r MODE   0 marker, 1 puff, 2 ring, 3 glyph, 4 sparkle
+//   .r MODE   0 marker, 1 puff, 2 ring, 3 glyph, 4 sparkle, 5 BLOB SHADOW
 //   .g        modes 0 and 3: the GLYPH index into the atlas page, 0..15
 //             modes 1, 2 and 4: PROGRESS / phase, 0..1
+//             mode 5: the NIGHT FADE fraction — how much of the shadow is
+//             taken away at midnight, because a contact shadow needs a sun
 //   .b FADE   0..1, the distance gate and the fade-out, multiplied into alpha
 //   .a        modes 0, 1, 2 and 4: PHASE, 0..1, hashed off the opportunity id —
 //             the marker's pulse offset and the sparkle's spin, so five markers
@@ -93,6 +103,29 @@ uniform float ring_width = 0.16;
 uniform vec3 sparkle_color : source_color = vec3(1.0, 0.93, 0.62);
 uniform float sparkle_energy = 2.1;
 
+// ---- the blob shadow (mode 5) --------------------------------------------
+// BLACK, and it took a screenshot to be sure. The first pass authored the
+// ambient's own blue-grey (0.055, 0.062, 0.080) on the reasoning that a real
+// contact shadow is sky-coloured — but this pass is `blend_mix`, so the value
+// is a colour the ground is mixed TOWARDS, not a factor it is multiplied by,
+// and the shaded carriageway at Z0 sits near 0.02 linear. The shadow was
+// LIGHTER than the road it was cast on and the whole layer was invisible in
+// the picture while the census said it was there.
+//
+// Black makes `blend_mix` a multiply: at alpha a, the ground keeps (1 − a) of
+// itself whatever it was, so the same disc darkens dark asphalt and pale
+// pavement by the same FRACTION — which is what a shadow does.
+uniform vec3 blob_color : source_color = vec3(0.0, 0.0, 0.0);
+// A CORE and a RIM, not a falloff from the centre — the second thing the
+// screenshot corrected. The first pass used the poof's own
+// `pow(1 − r, softness)`, which peaks at a single pixel and is already half
+// gone a third of the way out: measured at the shipping size it put 244 pixels
+// of real shadow under a body and the picture had nothing in it. A body has an
+// AREA of contact, so the disc is solid to `blob_core` and ramps to nothing at
+// the rim. Same instruction count, and it is the difference between a contact
+// shadow and a smudge.
+uniform float blob_core = 0.42;
+
 varying flat float v_mode;
 varying flat float v_arg;
 varying flat float v_fade;
@@ -106,11 +139,20 @@ void vertex() {
 	v_phase = INSTANCE_CUSTOM.a;
 	// Per-instance billboard, the same construction `lamp.gdshader` uses: face
 	// the camera, keep the instance's own position and scale.
+	//
+	// EXCEPT mode 5. A blob shadow is a DECAL: it lies on the pavement, and a
+	// camera-facing one would stand up like a card the moment the player tilted
+	// the view. So the billboard's three basis columns are `mix`ed against the
+	// instance's own — three vec4 mixes and no branch, which is the price of
+	// keeping the contact shadow on this buffer instead of paying a draw call
+	// for a fifth one. The CPU writes a quad already rotated flat (see
+	// `StreetLifeModel._emit_blob`), so `is_blob` simply lets that basis through.
+	float is_blob = step(4.5, v_mode);
 	mat4 model = MODEL_MATRIX;
 	MODELVIEW_MATRIX = VIEW_MATRIX * mat4(
-			INV_VIEW_MATRIX[0] * length(model[0].xyz),
-			INV_VIEW_MATRIX[1] * length(model[1].xyz),
-			INV_VIEW_MATRIX[2],
+			mix(INV_VIEW_MATRIX[0] * length(model[0].xyz), model[0], is_blob),
+			mix(INV_VIEW_MATRIX[1] * length(model[1].xyz), model[1], is_blob),
+			mix(INV_VIEW_MATRIX[2], model[2], is_blob),
 			model[3]);
 	// Screen-aligned label layout. For mode 3 the phase channel carries the
 	// glyph's SLOT — `i − (n−1)/2`, so a five-glyph run steps −2, −1, 0, 1, 2 —
@@ -176,7 +218,8 @@ void fragment() {
 	float m_puff = step(0.5, v_mode) * (1.0 - step(1.5, v_mode));
 	float m_ring = step(1.5, v_mode) * (1.0 - step(2.5, v_mode));
 	float m_glyph = step(2.5, v_mode) * (1.0 - step(3.5, v_mode));
-	float m_spark = step(3.5, v_mode);
+	float m_spark = step(3.5, v_mode) * (1.0 - step(4.5, v_mode));
+	float m_blob = step(4.5, v_mode);
 
 	// ---- the marker: a pin, a rim, and the mark inside it ---------------
 	float d_chip = min(sd_round_box(uv, chip_centre, chip_half, chip_radius),
@@ -211,16 +254,27 @@ void fragment() {
 	float spark_a = clamp(star * twinkle + pow(clamp(1.0 - r, 0.0, 1.0), 4.0),
 			0.0, 1.0);
 
+	// ---- the blob: a soft dark disc on the pavement ----------------------
+	// `r` is the same radial term the puff uses, so the contact shadow costs one
+	// `pow` and nothing else. Squared falloff rather than the puff's softer one:
+	// a shadow has a core, and a linear ramp reads as a smudge.
+	// `.g` carries the NIGHT FADE fraction — a shadow needs the sun, and by
+	// 03:00 the only light is a lamp thirty metres away.
+	float blob_a = (1.0 - smoothstep(blob_core, 1.0, r))
+			* mix(1.0, 1.0 - clamp(v_arg, 0.0, 1.0), clamp(sc_night, 0.0, 1.0));
+
 	// ---- combine, by mask, with no branch -------------------------------
 	vec3 rgb = marker_rgb * m_marker
 			+ puff_color * (m_puff + m_ring)
 			+ mix(label_outline, COLOR.rgb, ink) * m_glyph
-			+ sparkle_color * m_spark;
+			+ sparkle_color * m_spark
+			+ blob_color * m_blob;
 	float alpha = marker_a * m_marker
 			+ puff_a * m_puff
 			+ ring_a * m_ring
 			+ max(ink, outline) * m_glyph
-			+ spark_a * m_spark;
+			+ spark_a * m_spark
+			+ blob_a * m_blob;
 
 	// Energy, not a light: this pass is `unshaded`, so lifting ALBEDO above 1
 	// is what puts the mark into the glow post-process after dark, exactly the
@@ -229,7 +283,10 @@ void fragment() {
 	float gain = m_marker * energy
 			+ (m_puff + m_ring) * 1.0
 			+ m_glyph * label_energy
-			+ m_spark * sparkle_energy * mix(0.7, 1.0, clamp(sc_night, 0.0, 1.0));
+			+ m_spark * sparkle_energy * mix(0.7, 1.0, clamp(sc_night, 0.0, 1.0))
+			// A shadow emits nothing. Its whole job is to take light AWAY, which
+			// `blend_mix` does with a near-black albedo and the alpha above.
+			+ m_blob * 1.0;
 
 	ALBEDO = rgb * gain;
 	ALPHA = clamp(alpha, 0.0, 1.0) * fade;

@@ -74,6 +74,30 @@ extends SceneTree
 ##                      poof and a rising `+$N` (0 = never, the quiet case).
 ##                      This is the WORST frame the layer has: every marker,
 ##                      every burst and every label the caps allow, at once.
+##   --street-gm=M      PIN the street layer's wander clock to game-minute M
+##                      every frame, so two runs put every body in exactly the
+##                      same part of its beat. Without it the wander advances
+##                      with the real frame delta and a pixel A/B of two
+##                      `--shots` runs measures the frame rate, not the change.
+##   --traffic=N        stand N CIVILIAN vehicles on the road tiles nearest the
+##                      focus, ids chosen so the run walks `VehicleView`'s whole
+##                      paint palette once before repeating. The harness builds
+##                      no UI layer, so this is the only place the fleet's livery
+##                      can be judged with nothing on top of it (A91-D-36).
+##   --units=N          the same for EMERGENCY units, one per department in
+##                      rotation, all RESPONDING (bars up, lamps on).
+##   --quiet-layers     build `ConstructionVehicleView` AND `StreetLifeView`
+##                      with NOTHING in them — no sites, no opportunities. The
+##                      QUIET CITY: the third case, between "the layer is busy"
+##                      and "the layer is absent", and the one report 98 RR-83's
+##                      corollary is about. A/B it against a run with neither
+##                      flag and the `dc` delta is what empty buffers cost.
+##   --street-shot-lag=N  collect EVERY live opportunity exactly N frames before
+##                      each pose's capture, so `--shots` lands on a chosen
+##                      moment of the leaving animation instead of on whatever
+##                      `--street-collect`'s rotation happened to leave there.
+##                      The A/B instrument for §2.17's crook flee: one run at a
+##                      lag inside the dash, one past it at the cuff.
 ##   --pad-shadows=0|1  whether the transformer pad buffer casts into the sun's
 ##                      shadow pass (default: whatever `data/render.json`'s
 ##                      `power_infra.pad_shadows` says). The A/B behind that
@@ -282,6 +306,8 @@ func _build_scene() -> void:
 	stage.add_child(_vehicles)
 	_vehicles.setup(_render_data)
 	_vehicles.set_preset(String(_opts["preset"]), _render_data)
+	if int(_opts["traffic"]) > 0 or int(_opts["units"]) > 0:
+		_stand_up_traffic(int(_opts["traffic"]), int(_opts["units"]))
 
 	# --- the visible power layer (doc 04's distribution end, drawn) --------
 	# Built exactly the way `game/main.gd` builds it, so the `dc` column below
@@ -296,7 +322,14 @@ func _build_scene() -> void:
 		if int(_opts["pad_shadows"]) >= 0:
 			_power_infra.set_pad_shadows(int(_opts["pad_shadows"]) == 1)
 		_force_distress(float(_opts["power_distress"]))
-	if int(_opts["street_life"]) > 0:
+	# `--quiet-layers` builds BOTH optional layers and stands NOTHING in them.
+	# That is the case RR-83's corollary is about and the only one that could not
+	# be measured before it existed: with `--sites=0` the layer was not built at
+	# all, so the harness could price a BUSY construction yard and an ABSENT one
+	# and never the third thing a real city spends most of its life in — the
+	# layer present, every buffer empty, every node still submitting.
+	var quiet_layers := bool(_opts["quiet_layers"])
+	if int(_opts["street_life"]) > 0 or quiet_layers:
 		# doc 11 §2.17. Same shape as `--sites`: a layer the shell drives, stood
 		# up here so the `dc` delta against `--street-life=0` IS the layer.
 		_street = StreetLifeView.new()
@@ -304,14 +337,16 @@ func _build_scene() -> void:
 		_street.setup(_render_data)
 		_street.set_preset(String(_opts["preset"]), _render_data)
 		_street.set_road_probe(StreetLifeView.road_probe(_sim.world))
-		_stand_up_street_life(int(_opts["street_life"]))
-	if int(_opts["sites"]) > 0:
+		if int(_opts["street_life"]) > 0:
+			_stand_up_street_life(int(_opts["street_life"]))
+	if int(_opts["sites"]) > 0 or quiet_layers:
 		_construction = ConstructionVehicleView.new()
 		stage.add_child(_construction)
 		_construction.setup(_render_data)
 		_construction.set_preset(String(_opts["preset"]), _render_data)
 		_construction.set_road_network(_sim.roads)
-		_stand_up_sites(int(_opts["sites"]), int(_opts["site_stage"]))
+		if int(_opts["sites"]) > 0:
+			_stand_up_sites(int(_opts["sites"]), int(_opts["site_stage"]))
 
 	# --- camera -----------------------------------------------------------
 	_camera_state = CameraState.load_from_files()
@@ -413,6 +448,108 @@ func _stand_up_sites(count: int, stage_index: int) -> void:
 	_construction.set_game_minutes(float(_opts["site_gm"]))
 
 
+## `--traffic=N` / `--units=N`: stand N civilian vehicles and N emergency units
+## on the road tiles nearest the focus and hold them there.
+##
+## The harness has always BUILT `VehicleView` and never fed it, so every picture
+## it has ever taken was of an empty street — which is fine for a draw-call table
+## and useless for the one thing report 98 A91-D-36 needs, which is a look at the
+## LIVERY with no UI `CanvasLayer` over it. The ids are not 1..N: `VehicleView`
+## picks a civilian's paint with `hash01(id, 91)`, so a run of consecutive ids
+## lands wherever that hash happens to land and a ten-entry palette is judged off
+## whichever four it drew. `_paint_ids` solves the hash instead — the lowest id
+## that maps to each palette slot, in order — so the row of cars IS the palette,
+## once each, left to right, and a screenshot of it is a contact sheet.
+func _stand_up_traffic(count: int, units: int) -> void:
+	var ranked := _road_tiles_near_focus()
+	if ranked.is_empty():
+		printerr("profile_frame: --traffic needs a road network")
+		return
+	var ids := _paint_ids(count)
+	# Two tiles apart, not `ranked.size() / count`: the ranking spirals out from
+	# the focus, so a proportional step on the benchmark city's 3,000 road tiles
+	# puts the second car a kilometre from the first and the picture has one car
+	# in it. Sixteen metres is a queue.
+	var step := 2
+	for i in count:
+		var tile: Vector2i = ranked[mini(i * step, ranked.size() - 1)]
+		# Heading along the road, taken off the next tile in the ranked run so a
+		# car sits in a lane rather than across one.
+		var next: Vector2i = ranked[mini(i * step + 1, ranked.size() - 1)]
+		var d := next - tile
+		var heading := 0.0 if d == Vector2i.ZERO \
+				else atan2(float(d.y), float(d.x))
+		_vehicles.apply_event({
+			"type": "vehicle_spawned", "id": ids[i], "vehicle_class": "civilian",
+			"kind": ["car", "car", "van", "car", "truck"][i % 5],
+			"pos": Vector3(float(tile.x) * 8.0 + 4.0, 0.0, float(tile.y) * 8.0 + 4.0),
+			"heading": heading, "speed": 0.0, "edge_id": -1,
+			"headlights": true, "siren": false, "lightbar": false})
+	if units <= 0:
+		return
+	const DEPT_TYPES := ["police_patrol", "fire_engine", "utility_service_truck",
+			"water_repair_truck", "construction_crew_vehicle"]
+	var states: Array = []
+	for i in units:
+		var tile: Vector2i = ranked[mini(count * step + i * step + 3, ranked.size() - 1)]
+		states.append({
+			"id": i + 1, "type": DEPT_TYPES[i % DEPT_TYPES.size()],
+			"pos": [tile.x, tile.y], "heading": 0.0, "speed": 0.0,
+			"status": "RESPONDING"})
+	_vehicles.apply_unit_states(states)
+
+
+## The lowest vehicle id that lands on each civilian paint slot, in slot order,
+## then repeating. Solved rather than assumed — the hash is `VehicleView`'s, and
+## a table of ids copied into this harness would rot the day it changes.
+func _paint_ids(count: int) -> Array[int]:
+	var slots := VehicleView.CIV_PAINT.size()
+	var found: Array[int] = []
+	found.resize(slots)
+	found.fill(-1)
+	var left := slots
+	var id := 1
+	while left > 0 and id < 100000:
+		var slot := clampi(int(VehicleMotion.hash01(id, 91) * float(slots)), 0, slots - 1)
+		if found[slot] < 0:
+			found[slot] = id
+			left -= 1
+		id += 1
+	var out: Array[int] = []
+	for i in count:
+		var pick: int = found[i % slots]
+		# A slot the search never reached (impossible at the shipped palette, but
+		# the loop is bounded) falls back to a plain id rather than to -1.
+		out.append(pick if pick > 0 else i + 1)
+	return out
+
+
+## Every road tile, ranked by distance from the focus tile — the ordering both
+## `--street-life` and `--traffic` place against, so the two layers land on the
+## same stretch of street and one screenshot carries both.
+func _road_tiles_near_focus() -> Array:
+	var centre_tile: Array = (_sim.loader.world_header.get(
+			"city_center_tile", [56, 56]) as Array)
+	var focus_tile := Vector2(float(centre_tile[0]), float(centre_tile[1]))
+	var wanted: Vector2 = _opts["focus"]
+	if wanted.x >= 0.0:
+		focus_tile = wanted
+	var tiles: Array = _sim.roads.graph.road_tiles_sorted() if _sim.roads != null \
+			else []
+	if tiles.is_empty():
+		return []
+	var ranked: Array = tiles.duplicate()
+	ranked.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		var da := Vector2(float(a.x), float(a.y)).distance_squared_to(focus_tile)
+		var db := Vector2(float(b.x), float(b.y)).distance_squared_to(focus_tile)
+		if absf(da - db) > 0.01:
+			return da < db
+		if a.x != b.x:
+			return a.x < b.x
+		return a.y < b.y)
+	return ranked
+
+
 ## The N road tiles nearest the focus, turned into opportunities — one of each
 ## kind in rotation, so all three bodies AND the stash sparkle are in the frame.
 ## Nearest-first for the same reason `--sites` is: a layer that is culled is a
@@ -460,6 +597,25 @@ func _stand_up_street_life(count: int) -> void:
 ## measured frame — the worst case, rather than the one-in-thirty a real cadence
 ## would happen to put in front of the camera.
 func _drive_street_life(delta: float, camera_pos: Vector3) -> void:
+	# `--street-shot-lag`: the whole roster is collected exactly N frames before
+	# the capture, so the PNG lands on a chosen moment of the leaving animation.
+	# Fired on one frame only — `==`, not `>=` — or every frame after it would
+	# re-collect a roster that has already gone and the picture would never move.
+	var lag := int(_opts["street_shot_lag"])
+	if lag > 0 and _frames_seen == int(_opts["warmup"]) + int(_opts["frames"]) - lag:
+		for id: int in _street_ids:
+			_street.feed_events([{"type": &"opportunity_collected",
+					"id": id, "reward": 120 + id * 20}])
+	# `--street-gm=M` PINS the wander clock, which is what makes a street-life
+	# screenshot A/B-able at all. Left free-running, the layer's game-minute
+	# advances with the real frame delta, so two runs of the same command put the
+	# bodies in different parts of their beat and a pixel diff of the two is
+	# dominated by that rather than by whatever was being tested. Pinned, the
+	# bodies are frozen mid-stride and the only difference between two runs is
+	# the change under test.
+	var pin := float(_opts["street_gm"])
+	if pin >= 0.0:
+		_street.set_game_minutes(pin)
 	var every := int(_opts["street_collect"])
 	if every > 0 and not _street_ids.is_empty():
 		_street_frames += 1
@@ -772,6 +928,11 @@ func _summarise(pose_key: String) -> Dictionary:
 				else street[clampi(int(ceil(0.95 * float(street.size()))) - 1, 0,
 						street.size() - 1)],
 		"street_buffers": _street.active_buffers() if _street != null else 0,
+		# Blob shadows in the frame. On the fx buffer, so this number is
+		# instances and never draw calls -- which is the claim, printed rather
+		# than asserted (report 98 RR-85).
+		"street_blobs": int((_street.census() as Dictionary).get("blobs", 0)) \
+				if _street != null else 0,
 		# The non-building draw calls: the term this harness can A/B reliably,
 		# because the chunk tier census wobbles between runs and the building
 		# buckets wobble with it.
@@ -879,9 +1040,10 @@ func _report() -> void:
 				int(scensus["bursts"]), int(scensus["fx"]),
 				_street.layer_count(), _street.active_buffers()])
 		for row2: Dictionary in _results:
-			print("    %s  layer CPU mean %.3f ms, p95 %.3f ms, %d buffers" % [
+			print("    %s  layer CPU mean %.3f ms, p95 %.3f ms, %d buffers, %d blobs" % [
 					String(row2["pose"]), float(row2["street_mean_ms"]),
-					float(row2["street_p95_ms"]), int(row2["street_buffers"])])
+					float(row2["street_p95_ms"]), int(row2["street_buffers"]),
+					int(row2["street_blobs"])])
 	var out := String(_opts["out"])
 	if out != "":
 		var f := FileAccess.open(out, FileAccess.WRITE)
@@ -912,7 +1074,8 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 		"focus": Vector2(-1.0, -1.0),
 		"no_power_infra": false, "power_distress": 0.0,
 		"sites": 0, "site_stage": 2, "site_gm": 900.0,
-		"street_life": 0, "street_collect": 0,
+		"street_life": 0, "street_collect": 0, "quiet_layers": false,
+			"street_shot_lag": 0, "traffic": 0, "units": 0, "street_gm": -1.0,
 		"pad_shadows": -1, "road_detail": -1,
 		"flood": 0.0, "flood_detail": -1,
 	}
@@ -920,6 +1083,8 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 		var arg := String(raw)
 		if arg == "--quiet":
 			opts["quiet"] = true
+		elif arg == "--quiet-layers":
+			opts["quiet_layers"] = true
 		elif arg == "--no-merge":
 			opts["no_merge"] = true
 		elif arg == "--no-power-infra":
@@ -944,6 +1109,14 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			opts["street_life"] = maxi(0, int(arg.substr(14)))
 		elif arg.begins_with("--street-collect="):
 			opts["street_collect"] = maxi(0, int(arg.substr(17)))
+		elif arg.begins_with("--street-shot-lag="):
+			opts["street_shot_lag"] = maxi(0, int(arg.substr(18)))
+		elif arg.begins_with("--street-gm="):
+			opts["street_gm"] = float(arg.substr(13))
+		elif arg.begins_with("--traffic="):
+			opts["traffic"] = maxi(0, int(arg.substr(10)))
+		elif arg.begins_with("--units="):
+			opts["units"] = maxi(0, int(arg.substr(8)))
 		elif arg.begins_with("--atlas-lod="):
 			opts["atlas_lod"] = int(arg.substr(12))
 		elif arg.begins_with("--shots="):

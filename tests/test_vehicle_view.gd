@@ -461,3 +461,81 @@ func test_department_liveries_are_wordless_and_distinct() -> void:
 		for j in range(i + 1, liveries.size()):
 			assert_false((liveries[i] as Color).is_equal_approx(liveries[j]),
 					"livery %d and %d are the same colour" % [i, j])
+
+
+# ------------------------------------ A91-D-36: the livery is a LINEAR colour
+
+## A MultiMesh instance colour takes no sRGB decode — it reaches
+## `vehicle.gdshader` exactly as written and is multiplied into ALBEDO as a
+## linear value. So the SEAM has to convert, and this is the assertion that
+## says which end of the seam owns it.
+func test_the_paint_reaches_the_buffer_in_linear() -> void:
+	var view := _view()
+	view.apply_event(_spawn(4001))
+	var v := view.motion(4001)
+	assert_true(v != null, "the car exists")
+	var slots := VehicleView.CIV_PAINT.size()
+	var index := clampi(int(VehicleMotion.hash01(4001, 91) * float(slots)), 0,
+			slots - 1)
+	var authored := Color(String(VehicleView.CIV_PAINT[index]))
+	var want := authored.srgb_to_linear()
+	assert_almost_eq(v.paint.r, want.r, 0.0005,
+			"the authored hex is converted once, at the seam")
+	assert_almost_eq(v.paint.g, want.g, 0.0005, "green too")
+	assert_almost_eq(v.paint.b, want.b, 0.0005, "and blue")
+	assert_true(v.paint.r <= authored.r + 0.0001,
+			"which is DARKER than the raw hex — the fix takes the lift out")
+	view.free()
+
+
+func test_a_department_livery_is_linear_too() -> void:
+	var view := _view()
+	view.apply_unit_states([{"id": 3, "type": "fire_engine", "pos": [10, 10],
+			"heading": 0.0, "speed": 0.0, "status": "RESPONDING"}])
+	var v := view.motion(VehicleView.EMERGENCY_KEY_BASE + 3)
+	assert_true(v != null, "the engine rolled")
+	var want := Color(String(VehicleView.DEPT_PAINT["fire"])).srgb_to_linear()
+	assert_almost_eq(v.paint.r, want.r, 0.0005,
+			"fire red is a linear value by the time it is an instance colour")
+	view.free()
+
+
+# --------------------------------- RR-83's corollary: an empty buffer is OFF
+
+func test_an_empty_vehicle_layer_submits_nothing() -> void:
+	# The quiet city: no traffic at all. Eight buffers exist and NONE of them
+	# may submit — an empty MultiMesh still costs a draw call, and this layer's
+	# AABB is world-sized, so the culler can never drop it either.
+	var view := _view()
+	view.refresh(1.0 / 60.0, 0.0, 1.0)
+	assert_eq(view.layer_count(), 8,
+			"eight buffers exist — seven bodies and the headlight cone")
+	assert_true(view.layer_count() <= DRAW_CALL_MAX, "inside §2.13's budget")
+	assert_eq(view.active_buffers(), 0, "and not one of them is submitting")
+	view.apply_event(_spawn(4002, "car"))
+	view.refresh(1.0 / 60.0, 0.0, 1.0)
+	assert_eq(view.active_buffers(), 1,
+			"one car lights exactly one buffer, not eight")
+	view.apply_event({"type": &"vehicle_despawned", "id": 4002,
+			"vehicle_class": "civilian"})
+	for i in 60:
+		view.refresh(1.0 / 30.0, 0.0, 1.0)
+	assert_eq(view.active_buffers(), 0, "and it goes dark again when it leaves")
+	view.free()
+
+
+func test_the_headlight_cone_is_dark_by_day() -> void:
+	# The cone buffer is empty for the whole of every daylight hour, and an
+	# empty buffer that is still switched on is a draw call spent on nothing.
+	var view := _view()
+	view.apply_event(_spawn(4003, "car"))
+	view.refresh(1.0 / 60.0, 0.0, 1.0)
+	var by_day := view.active_buffers()
+	view.apply_event({"type": &"vehicle_spawned", "id": 4003, "kind": "car",
+			"vehicle_class": "civilian", "pos": Vector3(80.0, 0.0, 80.0),
+			"heading": 0.0, "speed": 34.0, "edge_id": 7, "siren": false,
+			"lightbar": false, "headlights": true})
+	view.refresh(1.0 / 60.0, 1.0, 1.0)
+	assert_eq(view.active_buffers(), by_day + 1,
+			"the cone buffer joins only when a lamp is actually on")
+	view.free()

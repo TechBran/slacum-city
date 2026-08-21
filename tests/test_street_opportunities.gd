@@ -490,3 +490,92 @@ func test_the_sim_stands_its_actors_on_the_renderer_s_kerb() -> void:
 				break
 	assert_eq(mine.size(), theirs.size(),
 			"the sim's kerb set is the renderer's, minus the off-map faces")
+
+
+# ===========================================================================
+# 7. born_gm, and the expiry that is free
+# ===========================================================================
+
+## Render q2. Doc 11 §2.17's wander is a closed form in `(id, now - born)`, so a
+## body re-seeded after a COLD LOAD has to be told the minute it actually
+## appeared or it restarts its beat on the frame the save was opened.
+## `born_gm` is that minute: written at spawn, republished on every payload,
+## persisted with the row.
+func test_born_gm_is_written_published_and_persisted() -> void:
+	var sim := _sim()
+	assert_true(_advance_until_live(sim), "something appeared on the street")
+	var spawned := _drain(sim, "opportunity_spawned")
+	assert_true(spawned.size() > 0, "and it said so on the bus")
+	for e: Variant in spawned:
+		var payload: Dictionary = e
+		assert_true(payload.has("born_gm"),
+				"every payload carries the spawn game-minute")
+	for row: Variant in sim.street.live():
+		var live_row: Dictionary = row
+		assert_true(live_row.has("born_gm"), "and so does every live row")
+		assert_almost_eq(float(live_row["born_gm"]),
+				float(live_row["spawned_h"]) * 60.0, 0.001,
+				"which is the spawn HOUR in minutes, never a second clock")
+
+	# The round trip. `expires_h` already proved the encoder; this proves the
+	# new field rides it, which is what makes the renderer's cold-load anchor
+	# trustworthy rather than approximate.
+	var before := sim.street.live()
+	var restored := _sim()
+	restored.restore_state(sim.canonical_capture())
+	var after := restored.street.live()
+	assert_eq(after.size(), before.size(), "the roster survives the save")
+	for i in before.size():
+		assert_eq(str(float((after[i] as Dictionary)["born_gm"])),
+				str(float((before[i] as Dictionary)["born_gm"])),
+				"born_gm survives to the bit (row %d)" % i)
+
+
+## A v7 save written before the field existed restores a roster whose bodies
+## still have a beat: `born_gm` is derived from `spawned_h`, which is exactly
+## what the spawner would have written.
+func test_a_row_with_no_born_gm_derives_one() -> void:
+	var system := OpportunitySystem.new(
+			StarterCityLoader.read_json("res://data/street.json"))
+	system.deserialize({"next_id": 9, "live": [
+		{"id": 3, "kind": "petty_crime", "tile_x": 12, "tile_y": 8, "side": 1,
+			"reward": 260, "spawned_h": 6.5, "expires_h": 9.0},
+	]})
+	var rows := system.live()
+	assert_eq(rows.size(), 1, "the row restored")
+	assert_almost_eq(float((rows[0] as Dictionary)["born_gm"]), 390.0, 0.0001,
+			"6.5 game-hours is game-minute 390")
+
+
+## SIM q5, RULED (doc 93 §U1). An unanswered crook costs the player NOTHING in
+## v1 — not stability, not happiness, not a dollar. The key is authored at 0.0
+## so the ruling is visible in the file; this asserts the file still says so and
+## that nothing spends it.
+func test_an_unanswered_crook_costs_the_player_nothing() -> void:
+	var table: Dictionary = StarterCityLoader.read_json("res://data/street.json")
+	var crime: Dictionary = (table["kinds"] as Dictionary)["petty_crime"]
+	assert_true(crime.has("expire_stability_delta"),
+			"the ruling is authored, not absent (doc 93 §U1)")
+	assert_almost_eq(float(crime["expire_stability_delta"]), 0.0, 0.0,
+			"and it is ZERO: this layer never punishes not looking")
+
+	# And the running system agrees. One city advanced far enough that offers
+	# have certainly expired unanswered; its happiness and district state must
+	# match a run of the same seed with the same clock, which they do only
+	# because an expiry spends nothing at all.
+	var busy := _sim()
+	var expired := 0
+	for i in 30:
+		busy.advance_hours(1.0)
+		expired += _drain(busy, "opportunity_expired").size()
+	assert_true(expired > 0,
+			"the run actually let some expire (%d) — otherwise this proves nothing"
+			% expired)
+	var mirror := _sim()
+	mirror.advance_hours(30.0)
+	assert_eq(busy.happiness.serialize(), mirror.happiness.serialize(),
+			"letting crooks walk moved no happiness")
+	assert_eq(busy.districts.serialize(), mirror.districts.serialize(),
+			"and no district state")
+	assert_eq(busy.state_hash(), mirror.state_hash(),
+			"an expiry is free, to the bit")

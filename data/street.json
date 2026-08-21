@@ -15,7 +15,9 @@
 
   "kinds": {
     "petty_crime": {
-      "_note": "The player's own words: 'humans that are committing crimes that aren't being picked up by the police station'. Its weight at a tile is a function of `coverage_police(tile)` — doc 02 §2.9's field, published by doc 06 §2.9 (C-51) — so a city that has not built a station finds crooks on every corner and a well-covered one almost never does. Expiring unanswered is currently SILENT (v1); a stability micro-ding on the containing district is the authorable next step and belongs here as `expire_stability_delta` when doc 09 rules on it.",
+      "_note": "The player's own words: 'humans that are committing crimes that aren't being picked up by the police station'. Its weight at a tile is a function of `coverage_police(tile)` — doc 02 §2.9's field, published by doc 06 §2.9 (C-51) — so a city that has not built a station finds crooks on every corner and a well-covered one almost never does.",
+      "_expire_ruling": "RULED, v1, and the key below is authored at 0.0 so the ruling is visible in the file rather than only in a document (doc 93 §U1, sim q5). An unanswered crook costs the player NOTHING. The obvious next step — a stability micro-ding on the containing district — is deliberately not taken: this layer exists because a playtester said there was 'not a lot of downtime of absolutely nothing to do', i.e. they asked for something to DO, and a penalty for not doing it converts a bounty into a chore. It also taxes precisely the player who put the phone down, which is the player doc 08 §2.3 rule 9 already promises not to punish. `OpportunitySystem` parses this key and spends it nowhere — `_expire_through` is the function that would spend it and does not — so a future ruling is a three-line change with one authored number, and a 0.0 here is a decision on the record instead of an absence. RE-OPEN ON ONE CONDITION AND NO OTHER: telemetry showing players farm-ignoring crooks at scale.",
+      "expire_stability_delta": 0.0,
       "base_weight": 1.0,
       "lifetime_h": [2.5, 4.0],
       "reward": {"base": 260, "spread": 90},

@@ -1887,6 +1887,104 @@ anything. Its one-shot flag persists; its coordinates deliberately do not,
 because a mark restored a day later would point at a street that emptied hours
 ago, and a mark that points at nothing is worse than a mark that centres.
 
+## U. Wave-15 rulings — street polish: what a shadow is, what a livery is, and the ding that never rings (2026-08-21)
+
+*The five render items Street Life filed, plus the one sim question it left
+open. Hash-neutral except where §U2 says otherwise. The full arguments and the
+measurements are report 98 §35 (RR-85 … RR-88); what follows is what each one
+BINDS.*
+
+### U1 — A layer that pays you for LOOKING may not fine you for looking away
+
+**The question (sim q5).** `data/street.json`'s `petty_crime` note carried an
+authorable next step: `expire_stability_delta`, a stability micro-ding on the
+district that let a crook walk unanswered.
+
+**Ruled: ZERO for v1, and the key is authored at 0.0 so the ruling is in the
+file rather than only in this document.** The reason is not caution. This whole
+layer exists because a playtester said *"there's not a lot of downtime of
+absolutely nothing to do"* — they asked for something to **do**, and a penalty
+for not doing it converts a bounty into a chore. It also taxes exactly the
+player who put the phone down, which is the player doc 08 §2.3 rule 9 already
+promises not to punish for being away; a layer that is free while you are absent
+and costly while you are present-but-not-looking is a rule with a seam in it.
+
+**Binding, generalised:** *an ATTENTION reward may not have an inattention
+penalty.* A system whose whole proposition is "notice this and be paid" is
+balanced by the size of the payment and by nothing else; the moment it also
+charges for the notice you missed, the player is no longer choosing whether to
+engage, they are paying rent.
+
+**The shape of the deferral, because "we decided not to" is a decision that has
+to be re-openable.** `OpportunitySystem._normalise_kind` parses the key and
+`_expire_through` — the one function that would spend it — does not, and says so
+at the point where the spending would go. So the day this is re-opened it is a
+three-line change against one authored number rather than a new field, a new
+migration and a new test. **RE-OPEN ON ONE CONDITION AND NO OTHER:** telemetry
+showing players farm-ignoring crooks at scale. Pinned by
+`tests/test_street_opportunities.gd::test_an_unanswered_crook_costs_the_player_nothing`,
+which asserts both halves — the authored 0.0 AND that thirty game-hours of
+unanswered expiries leave the city bit-identical to a mirror run.
+
+### U2 — A field the RENDERER needs is a field the SAVE owes it (report 98 RR-88)
+
+**Binding:** where a render layer derives its whole state from a closed form in
+`(id, now − t0)`, `t0` is not the renderer's to guess. Doc 11 §2.17's wander is
+exactly that shape, and a cold load had no `t0` to offer it: the sim restores
+its opportunity roster in silence — there is no `opportunity_spawned` for a row
+that was already on the books — so every restored body either did not exist for
+the renderer at all or restarted its beat on the frame the save was opened.
+`born_gm` is the spawn game-minute, written once, republished on every payload
+and **persisted with the row**.
+
+**And the hash consequence is stated rather than discovered.** A payload field
+is not hashed; a persisted row is. `state_hash` is `capture_state`, the street
+section is in it, so the field moves the FINE baselines and cannot move the
+COARSE ones — the coarse path never spawns (doc 06 §2.16's fairness rule), so the
+roster it hashes is empty either way. Both predictions were made before the run
+and both held; the numbers are in report 98 RR-88. The multi-day
+save → load → advance identity gate is unmoved, which is the property that
+actually matters.
+
+### U3 — A shadow you cannot see is not a shadow (report 98 RR-85)
+
+**Binding:** a preset knob that removes a cue owes a replacement, and "the knob
+is off" is not a shipping state for a cue the picture depends on.
+`vehicle_shadows` is false on Performance AND Balanced — i.e. on every phone —
+and doc 11 §2.11's `blob_shadow` block had existed since the preset table was
+written without anything reading it, so every dynamic body in the game floated.
+One knob now decides **both** shadows: real where the tier can afford to re-draw
+a body into every split, a blob decal where it cannot, and never neither.
+
+**The second half, which is the one that generalises.** *An art constant is not
+verified until a screenshot has been taken of it.* The first cut of this feature
+emitted the right instance, in the right place, with the right mode code — and
+was invisible in the frame, twice over, for two reasons a census could not
+show: the colour was **lighter than the road it was cast on** (a `blend_mix`
+pass mixes TOWARDS a value, it does not multiply by one, and the shaded
+carriageway sits near 0.02 linear), and the falloff peaked at a single pixel
+(244 pixels of real shadow in a 1920 × 1080 frame). Both were found by
+photographing it and neither by reading it.
+
+### U4 — A palette fitted against a broken seam is a palette that has to be re-judged (report 98 RR-86)
+
+**Binding:** when a colour-space defect is corrected, **every hex that was
+authored against it is now unfitted**, and the fix is not finished until they
+have been looked at again. A MultiMesh instance colour takes no sRGB decode;
+`VehicleView` and `ConstructionActivity` were handing it authored hexes raw, so
+the whole fleet and every machine rendered roughly two stops light. Applying
+`srgb_to_linear` at the seam is one line — and it darkened ten civilian paints,
+four plant liveries and six department colours at once, four of which had been
+chosen BY EYE against the lift. Two civilian entries then matched the asphalt
+they were driving over and two plant liveries went black at 21:00. They were
+moved, against screenshots, and the move is documented where the hexes are.
+
+*The corollary for the next pass:* the same latent lift is on every **vertex**
+colour in every procedural mesh in this renderer, for the same reason and with
+no conversion either. It is FILED and not fixed here (report 98 RR-86's deferral
+list) because converting the shared constants would move the mesh half at the
+same time, and the mesh half has never been judged against a picture.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

@@ -168,6 +168,16 @@ static func _normalise_kind(row: Dictionary) -> Dictionary:
 		"has_frontage": not frontage.is_empty(),
 		"frontage_weight": maxf(0.0, float(frontage.get("frontage_weight", 1.0))),
 		"elsewhere_weight": maxf(0.0, float(frontage.get("elsewhere_weight", 1.0))),
+		# RULED ZERO, v1 (doc 93 §U1, sim q5). Parsed and carried so the ruling
+		# is visible in code as well as in `data/street.json`, and SPENT NOWHERE:
+		# `_expire_through` is the one function that would spend it and it does
+		# not, so an unanswered crook costs the player nothing at all. The steer
+		# is the lead's and it is a design rule, not a placeholder — this layer
+		# exists because the player asked for something to DO, and a layer that
+		# fines you for not looking has turned a bounty into a chore. Re-open
+		# only on the named condition: telemetry showing players farm-ignoring
+		# crooks at scale.
+		"expire_stability_delta": float(row.get("expire_stability_delta", 0.0)),
 	}
 
 
@@ -223,6 +233,19 @@ func advance(now_h: float, online: bool) -> void:
 ## `opportunity_expired` per row, in ascending id order; OFFLINE it clears them
 ## without a word — doc 08 §2.3 rule 9: a returning player is not told about
 ## bounties they could not possibly have taken.
+##
+## **AN EXPIRY COSTS NOTHING, and that is a ruling (doc 93 §U1, sim q5).** The
+## obvious next step from the kinds table is a stability micro-ding on the
+## district that let a crook walk — `expire_stability_delta` is authored, is
+## parsed, and would be spent here. It is ruled **zero for v1** and the reason is
+## not conservatism: this whole layer exists because a playtester said *"there's
+## not a lot of downtime of absolutely nothing to do"*, i.e. they wanted
+## something to DO. A penalty for NOT doing it converts a bounty into a chore
+## and taxes exactly the player who put the phone down — which is the same
+## player doc 08's offline fairness rule already promises not to punish. There
+## is no line of code below to disable, because there is no line of code above
+## that spends it. Re-open on the named condition and no other: telemetry
+## showing players farm-ignoring crooks at scale.
 func _expire_through(now_h: float, online: bool) -> void:
 	if _live.is_empty():
 		return
@@ -270,6 +293,13 @@ func _try_spawn(now_h: float) -> void:
 		"side": int(pick["side"]),
 		"reward": reward,
 		"spawned_h": now_h,
+		# The spawn GAME-MINUTE, and it is a second field rather than
+		# `spawned_h * 60` computed at the reader for one reason: it is the
+		# number doc 11 §2.17's renderer anchors a body's wander beat to, and a
+		# unit conversion done in a renderer is a unit conversion the save cannot
+		# check. Written once, persisted, republished on every event, and read by
+		# exactly one consumer.
+		"born_gm": now_h * 60.0,
 		"expires_h": now_h + lifetime,
 	}
 	_next_id += 1
@@ -499,9 +529,17 @@ func _emit(event_type: StringName, row: Dictionary) -> void:
 
 
 ## The payload shape all three events share, so a consumer that can read one can
-## read the others: `{id, kind, tile, side, reward, expires_h}`. `tile` is a
-## two-int array rather than a `Vector2i` because this crosses the bus into
+## read the others: `{id, kind, tile, side, reward, born_gm, expires_h}`. `tile`
+## is a two-int array rather than a `Vector2i` because this crosses the bus into
 ## `game/` and `ui/`, and doc 91 §18's routers key on plain JSON shapes.
+##
+## `born_gm` is the spawn GAME-MINUTE and it is here for doc 11 §2.17's benefit
+## alone: that layer's whole wander is a closed form in `(id, now − born)`, so
+## with the spawn minute on the payload a body re-seeded after a load is
+## standing where the save says instead of restarting on its first waypoint.
+## **A payload field is not hashed** — `state_hash` reads `capture_state`, and
+## the bus is not in it — so publishing this moves nothing. The persisted row
+## does move the hash, and that delta is published in doc 98 RR-88.
 static func event_payload(event_type: StringName, row: Dictionary) -> Dictionary:
 	return {
 		"type": event_type,
@@ -510,6 +548,7 @@ static func event_payload(event_type: StringName, row: Dictionary) -> Dictionary
 		"tile": [int(row["tile_x"]), int(row["tile_y"])],
 		"side": int(row["side"]),
 		"reward": int(row["reward"]),
+		"born_gm": float(row.get("born_gm", float(row.get("spawned_h", 0.0)) * 60.0)),
 		"expires_h": float(row["expires_h"]),
 	}
 
@@ -549,6 +588,11 @@ func deserialize(data: Dictionary) -> void:
 			"side": clampi(int(row.get("side", 0)), 0, 3),
 			"reward": int(row.get("reward", 0)),
 			"spawned_h": float(row.get("spawned_h", 0.0)),
+			# A v7 save written before render q2 carries no `born_gm`; deriving
+			# it from `spawned_h` restores exactly the value the spawner would
+			# have written, so an old save is not a body with no beat.
+			"born_gm": float(row.get("born_gm",
+					float(row.get("spawned_h", 0.0)) * 60.0)),
 			"expires_h": float(row.get("expires_h", 0.0)),
 		})
 	_live.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:

@@ -764,6 +764,8 @@ Light bar: `EMISSION = mix(red, blue, step(0.5, fract(sc_time*2.2 + phase))) * (
 
 **Performance replaces shadows with blob shadows:** `MM_blob`, one dark radial-gradient quad per building at `y = 0.04`, footprint × 1.15, alpha `0.35·(1 − sc_night·0.6)`. One extra draw call per NEAR/MEDIUM chunk, and the difference between "buildings sit on the ground" and "buildings float".
 
+**The same block has a second consumer, on a different gate.** §2.17's street bodies read the LOOK keys (`y_m`, `footprint_scale`, `body_alpha`, `night_fade`, `body_m`, `body_lift_m`) and take their on/off from the preset's `vehicle_shadows` **inverted** — blob when real is off — rather than from `enabled_presets`, which stays the building decal's alone. That is not an inconsistency, it is the rule: a body is a dynamic object, so it takes the dynamic-shadow knob, and one knob deciding both is what makes "no real shadow and no blob either" unreachable. That state is what shipped in Wave 14 and it is why every crook at Z0 read as a sticker printed on the pavement (report 98 RR-85). The `MM_blob` building layer itself is still unbuilt; `enabled_presets` is waiting for it.
+
 **Standing water costs one call, at every pose, in the worst case there is** (§2.9b, shipped 2026-08-20). `--flood=350` against `--flood=0` on the bench city, balanced: `dc` 95→96 / 113→114 / 196→197 at Z0/Z1/Z2, `rs gpu` +0.151 / +0.115 / +0.127 ms, `rs cpu` unmoved. That is 21 flooded land blocks, 1,827 tiles and 3,654 primitives in ONE MultiMesh — the flood field has no larger state, because 350 mm is doc 07's top band and only LOW blocks accumulate. `presets.<name>.flood_detail` is its fragment rung (Performance 0, Balanced 2, High 2) and the three rungs are currently inside each other's measurement noise on desktop; see §2.9b.
 
 #### Worked example — frustum footprint and draw calls (re-derived, report R-17 / C-63)
@@ -2673,6 +2675,128 @@ view.marker_radius_m(id)    -> float        # how big the target is at this zoom
 
 This layer is a **pure event consumer**: it takes a drained batch and a tile probe and gives back nothing — no command, no sim query, no route lookup, not one clock read of its own. `test_a_full_street_life_frame_leaves_the_state_hash_alone` pins it the only way it can be pinned: a clean 6-hour run against the same 6 hours with a full frame of this layer — spawns, wanders, collects, expiries and every road probe they take — driven at every hour boundary, comparing `state_hash()`. If a future change ever makes this layer read the simulation, that is what goes red, and not a screenshot three waves later.
 
+### 2.17b STREET POLISH — the flee, the shadow, the anchor, **shipped 2026-08-21**
+
+*The five art items §2.17 filed against itself, plus the one the traffic layer
+had been carrying since Wave 6. Arguments and measurements: report 98 §35
+(RR-85 … RR-88); the rulings they bind: doc 93 §U.*
+
+#### The crook legs it
+
+An animal bounds away the instant it is collected. A crook now **runs, and is
+then caught**: a dash of `flee_s` seconds (hashed per id inside an authored
+`[0.40, 0.70]`) over `flee_m` metres, and only then the cuff-flash the shader
+already drew. It costs one float on the record, no new buffer, no new event and
+no new clock — the dash is a pure function of `(id, elapsed since the tap)`
+exactly as the wander is a pure function of `(id, elapsed since spawn)`.
+
+**The order of the three cues is the feature.** Tap → the `+$N` rises AT ONCE
+and stays where the finger was (doc 93 §T1: the money landed when the finger
+did) → the crook runs → the poof lands **on him, where he was caught**, because
+a poof is a physical event and the physical event is the arrest. The animals'
+poof still belongs to the spot they were taken at, because the animal is what
+left and the dust is what it left behind.
+
+**Direction: along the kerb, sign hashed.** The nearest road exit a man standing
+on a pavement has *is that pavement*; a flee across the carriageway would be a
+flee into traffic. `Op.along` already carries the kerb line, so the dash takes
+it and the id picks the sign — two crooks caught on one corner do not run the
+same way, and the same crook runs the same way on every device and after every
+load. An unsnapped body (no probe, or a lot with no street in reach) takes a
+hashed compass bearing instead, which is the honest answer: there is no street
+to head for.
+
+#### Blob shadows — the knob that removed a cue now replaces it
+
+`vehicle_shadows` is `false` on Performance and Balanced, i.e. on every phone,
+and §2.11's `blob_shadow` block had existed since the preset table was written
+with **nothing reading it** — so every body in this layer floated. One knob now
+decides both: `StreetLifeView.set_preset` pushes `vehicle_shadows` into
+`StreetLifeModel.set_blob_shadows` **inverted**. Real where the tier can afford
+to re-draw a body into every split, a blob decal where it cannot, never neither.
+
+The blob is a **sixth MODE on the existing fx buffer**, not a fifth buffer:
+`INSTANCE_CUSTOM.r == 5`, and it is the one quad on that buffer that must not
+face the camera, so the vertex stage `mix`es the billboard's three basis columns
+against the instance's own on a mode test. Three vec4 mixes, no branch,
+**+0 draw calls** — measured at 91/109 dc at Z0/Z1 with and without, +4
+instances and +0.010 ms of layer CPU for four bodies.
+
+Two corrections came out of photographing it rather than reading it, and both
+generalise (doc 93 §U3): a `blend_mix` pass mixes *towards* a colour rather than
+multiplying by one, so a sky-grey shadow was **lighter than the shaded
+carriageway** it was cast on; and a body has an **area** of contact, so the
+poof's `pow(1 − r, softness)` — which peaks at one pixel — put 244 pixels of
+real shadow into a 1920 × 1080 frame. Black plus a core-and-rim falloff, at the
+same instruction count, moves 2,637 pixels.
+
+`blob_shadow` therefore has **two consumers with two different gates**, and the
+block says so at the point of use: `enabled_presets` belongs to §2.11's
+per-BUILDING decal, `body_alpha` / `body_m` / `body_lift_m` to this layer, and
+this layer's on/off is `vehicle_shadows`. A body is a dynamic object, so it
+takes the dynamic-shadow knob.
+
+#### A body stands on the ground it is walking on
+
+Latent since §2.17 shipped, and found by the decal that had to lie on it. A
+body deep inside a junction has four road neighbours, therefore no footway
+anywhere on its tile, therefore `_anchor` left it at **y = 0 — ten centimetres
+inside the carriageway** it was walking on. Invisible on the body (its boots
+were simply gone against a dark road) and fatal to a flat shadow, which was
+depth-buried under the road it belonged to. It is the same defect report NIGHT-1
+found under the lamp pools, in the same 0.10 m. An unsnapped body on a road tile
+now stands on `asphalt_top_m`.
+
+#### `born_gm` — the cold load, which was worse than a missing field
+
+The wander is a closed form in `(id, now − born)`, which is what makes it exact
+under pause, catch-up and frame-rate change — and undefined after a cold load.
+Worse: **the layer never learned the roster existed.** `CitySim.restore_state`
+refills it in silence (there is no `opportunity_spawned` for a row that was
+already on the books) and `main.gd`'s load path resyncs the road surface, the
+vehicles, the power layer, the lamps and the flood field — and not this one. A
+crook the player was walking toward was live, tappable, paying and invisible
+until it expired.
+
+Doc 06 §2.16's payload gained `born_gm`, the spawn game-minute, written once and
+persisted with the row; this layer gained `seed_roster(rows)`, which replays a
+restored roster as spawns carrying it. Every body comes back **mid-wander**. A
+row written before the field derives it from `spawned_h × 60`, which is exactly
+what the spawner would have written.
+
+> **The shell owes one call.** `street_life.seed_roster(sim.street.live())` on
+> the load path, beside `streetlights.replace_from` and `flood_view.prime`.
+> Without it the layer is correct and empty.
+
+#### The empty-buffer audit (RR-83's corollary, closed)
+
+`node.visible = n > 0` is now on every layer whose instance count legitimately
+reaches zero: `ConstructionVehicleView`'s five buffers, `VehicleView`'s seven
+bodies and its headlight cone, `CityView`'s bucket and far nodes.
+`PowerInfraView` and `FloodView` already had it; `StreetlightView` frees a
+lampless chunk rather than emptying it, so it never applies.
+
+| bench city, balanced, hour 21 | Z0 | Z1 | Z2 |
+|---|---|---|---|
+| baseline, before | 95 | 113 | 196 |
+| layers present and empty, before | 100 | 118 | 201 |
+| baseline, **after** | **87** | **105** | **188** |
+| layers present and empty, **after** | **87** | **105** | **188** |
+
+**−13 draw calls at every pose on a quiet city.** `VehicleView` and
+`ConstructionVehicleView` publish `active_buffers()` and `profile_frame` prints
+it, for the reason RR-83 gave: a budget claim that cannot be printed is a budget
+claim nobody re-checks.
+
+#### The harness grew four flags, and three of them are why the pictures exist
+
+| flag | what it buys |
+|---|---|
+| `--quiet-layers` | builds both optional layers with nothing in them — the QUIET CITY, the case that could not be measured before because `--sites=0` did not build the layer at all |
+| `--traffic=N` / `--units=N` | stands vehicles on the street with **no UI layer in the frame**; ids are solved so the run walks the whole civilian palette once before repeating, so a screenshot of it is a contact sheet |
+| `--street-gm=M` | PINS the wander clock, which is what makes a street-life screenshot A/B-able: free-running, two runs put the bodies in different parts of their beat and a pixel diff measures the frame rate |
+| `--street-shot-lag=N` | collects the whole roster N frames before the capture, so `--shots` lands on a chosen moment of the leaving animation — the instrument the flee A/B was taken with |
+
 ## 3. Data Schema
 
 ### 3.1 `data/render.json`
@@ -3355,7 +3479,8 @@ Deep dives when a gate fails: **Android GPU Inspector** for Adreno/Mali counters
                    "collect_s": 0.62, "expire_s": 0.70, "burst_s": 0.58,
                    "label_s": 1.35, "label_rise_frac": 0.85, "label_energy": 1.35,
                    "label_glyph_frac": 0.50, "label_pitch_frac": 0.66,
-                   "bound_m": 3.2, "rim_gain": 0.34, "glint_energy": 1.5,
+                   "bound_m": 3.2, "flee_s": [0.40, 0.70], "flee_m": 3.6,
+                   "rim_gain": 0.34, "glint_energy": 1.5,
                    "flash_energy": 2.6,
                    "crook_coat": "#333542", "dog_coat": "#8C6B45",
                    "goat_coat": "#DBD9CC", "stash_coat": "#CCB866",
@@ -3366,7 +3491,9 @@ Deep dives when a gate fails: **Android GPU Inspector** for Adreno/Mali counters
                    "puffs_per_burst": 6 },
 
   "blob_shadow": { "enabled_presets": ["performance"], "y_m": 0.04,
-                   "footprint_scale": 1.15, "alpha": 0.35, "night_fade": 0.6 },
+                   "footprint_scale": 1.15, "alpha": 0.35, "night_fade": 0.6,
+                   "body_alpha": 0.50, "body_m": [0.62, 0.78, 0.82, 0.0],
+                   "body_lift_m": 0.60 },
 
   "overlay": { "desaturate_blend": 0.55, "emission_mult": 0.40, "render_priority": 5,
                "superblock_chunks": 4, "flow_scroll_speed": 0.35, "max_extra_draw_calls": 6 },

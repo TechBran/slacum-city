@@ -1402,18 +1402,35 @@ folded into tax. An agent that never taps (every strategy in `tools/playtest.gd`
 reaches the same city it always did.
 
 **Three events**, sharing one payload shape `{id, kind, tile, side, reward,
-expires_h}`: `opportunity_spawned`, `opportunity_collected`,
+born_gm, expires_h}`: `opportunity_spawned`, `opportunity_collected`,
 `opportunity_expired`. The renderer draws and un-draws off the first and third;
 doc 09 §2.14's `collect_opportunities` evaluator counts the second.
 
+`born_gm` is the spawn game-minute and it is on the payload for doc 11 §2.17's
+benefit alone: that layer's whole wander is a closed form in `(id, now − born)`,
+so with the spawn minute published a body **re-seeded after a cold load stands
+where the save says** instead of restarting on its first waypoint. It is a
+second field rather than `spawned_h × 60` computed at the reader because a unit
+conversion done in a renderer is a unit conversion the save cannot check.
+Publishing it moves no hash — `state_hash` reads `capture_state`, and the bus is
+not in it — but **persisting it does**, and that delta is published in report 98
+RR-88 (both FINE baselines moved, both COARSE ones did not, because the coarse
+path never spawns).
+
 **What v1 does NOT do, and where each would go.**
 
-- An unanswered `petty_crime` expires **silently**. A stability micro-ding on the
-  containing district is the obvious next beat — "the neighbourhood noticed you
-  did not" — and belongs in `data/street.json` as `expire_stability_delta` under
-  the kind, applied through doc 09's `districts.apply_stability`. It is left out
-  of v1 on purpose: a punishment for not looking is the opposite of what the
-  player asked for, and it should not ship before doc 09 rules on the size.
+- An unanswered `petty_crime` expires **silently, and that is now a RULING
+  rather than an omission** (doc 93 §U1, sim q5). `expire_stability_delta` is
+  authored in `data/street.json` **at 0.0**, so the decision is visible in the
+  file rather than only in a document, and `OpportunitySystem` parses it and
+  spends it nowhere — `_expire_through` is the one function that would spend it
+  and says at that point that it does not. The reason is not caution: this layer
+  exists because a playtester asked for something to **do**, and a penalty for
+  not doing it converts a bounty into a chore; it also taxes exactly the player
+  who put the phone down, which is the player doc 08 §2.3 rule 9 already
+  promises not to punish. Generalised in doc 93 §U1 as *an attention reward may
+  not have an inattention penalty*. **RE-OPEN ON ONE CONDITION AND NO OTHER:**
+  telemetry showing players farm-ignoring crooks at scale.
 - Nothing checks road closures or flooding when it picks a tile. A crook can
   stand on a closed street. Cheap to add (`RoadNetwork.flags_of`), and worth
   measuring before it is: rejecting tiles narrows the pool and slows the beat.
@@ -1615,7 +1632,10 @@ section's rung. It is one key in the city body, and it costs doc 08 §2.8 rung
     "tile_x": 48, "tile_y": 40,     // the road tile
     "side": 1,                      // the KERB, 0..3 = N,E,S,W — the footway the actor stands on
     "reward": 264,                  // frozen at spawn, so preview / commit / reload all quote it
-    "spawned_h": 22.6333333333333,  // absolute game-hours; both are ~f~ encoded on disk
+    "spawned_h": 22.6333333333333,  // absolute game-hours; all three are ~f~ encoded on disk
+    "born_gm": 1358.0,              // the same instant in game-MINUTES — doc 11 §2.17 anchors
+                                    // a body's wander beat to it, so a cold load restores the
+                                    // roster mid-stride instead of restarting it (RR-88)
     "expires_h": 25.2255634540071
   } ]
 }

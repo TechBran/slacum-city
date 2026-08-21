@@ -871,10 +871,12 @@ func _far_overlay_state(buckets: Array) -> float:
 ## Fold every bucket of `chunk` into the chunk's far MultiMesh. Reads the
 ## bucket mirrors rather than the model's records so the far buffer carries
 ## exactly what the near buffer would have drawn this frame, ramps included.
-func _upload_far(chunk: Vector2i) -> void:
+## Returns the instance count written, so the caller can gate the NODE on it —
+## an empty far buffer still costs a draw call (report 98 RR-83).
+func _upload_far(chunk: Vector2i) -> int:
 	var node := _far_node_for(chunk)
 	if node == null:
-		return
+		return 0
 	var buckets := _sorted_buckets(chunk)
 	var total := 0
 	for bucket: RenderStateModel.Bucket in buckets:
@@ -882,7 +884,7 @@ func _upload_far(chunk: Vector2i) -> void:
 	var mm := node.multimesh
 	if total <= 0:
 		mm.visible_instance_count = 0
-		return
+		return 0
 	if mm.instance_count < total:
 		# Same granularity the model allocates buckets at: grow in blocks of 32
 		# so a city that gains one building does not reallocate every frame.
@@ -927,6 +929,7 @@ func _upload_far(chunk: Vector2i) -> void:
 		_far_buffers[chunk] = buffer.slice(0, out)
 	mm.buffer = buffer
 	mm.visible_instance_count = total
+	return total
 
 
 ## Tier for one chunk, resolved for RENDERING: an unknown tier (-1, before the
@@ -1038,7 +1041,14 @@ func _upload_all() -> void:
 				if node == null:
 					continue
 			var taken: bool = merged.has(String(bucket.archetype))
-			node.visible = not (far or culled or taken)
+			# `visible_count > 0` is the third gate, and it is report 98 RR-83's
+			# corollary: a bucket is allocated when the first building of its
+			# (archetype, level) lands in the chunk and is NOT freed when the
+			# last one is demolished, so a redeveloped chunk carries empty
+			# buckets that still submit. Cheaper than freeing them — the mirror
+			# is what makes a rebuild instant — and one boolean makes the cost
+			# go away without giving that up.
+			node.visible = not (far or culled or taken) and bucket.visible_count > 0
 			if far or culled or taken:
 				# A hidden bucket is not uploaded: skipping the write is most of
 				# what the far tier buys on the CPU side. The mirror is still
@@ -1053,10 +1063,14 @@ func _upload_all() -> void:
 			mm.visible_instance_count = bucket.visible_count
 		var far_node: MultiMeshInstance3D = _far_nodes.get(chunk)
 		if far:
-			_upload_far(chunk)
+			var far_total := _upload_far(chunk)
 			far_node = _far_nodes.get(chunk)
 			if far_node != null:
-				far_node.visible = true
+				# `> 0`, not `true` — RR-83's corollary again. A FAR chunk whose
+				# buckets are all empty (every building in it demolished, the
+				# chunk not yet retired) was submitting a call for an empty
+				# buffer that the culler could not drop.
+				far_node.visible = far_total > 0
 		elif far_node != null:
 			far_node.visible = false
 

@@ -100,6 +100,13 @@ const FX_RING := 2.0
 ## steps the run apart along the billboard's own +X. See `_emit_label`.
 const FX_GLYPH := 3.0
 const FX_SPARKLE := 4.0
+## The BLOB SHADOW under a body — the sixth mode and the only one that is not a
+## billboard. It rides the same buffer for the same reason the other five do:
+## a contact shadow is a flat alpha-blended quad that writes no depth, so making
+## it a sixth MODE costs a `mix` in the vertex stage and a mask in the fragment
+## stage, while making it a fifth BUFFER would cost a draw call — and the whole
+## claim of this layer is that it costs four.
+const FX_BLOB := 5.0
 
 # ------------------------------------------------------------------- tuning
 
@@ -108,6 +115,16 @@ var tile_m := 8.0
 ## snapped to a kerb line stands on this; a body with no street in reach stands
 ## on the block, which this renderer draws flat at y = 0.
 var walk_top_m := 0.25
+## Top of the CARRIAGEWAY — `road_surface.asphalt_top_m`. The ground a body
+## stands on when its tile is a road with no kerb anywhere on it (the middle of
+## a junction, which has four road neighbours and therefore no footway at all).
+## Before this existed such a body stood at y = 0, which is **ten centimetres
+## inside the asphalt it is standing on**: invisible on the body itself, whose
+## feet are a dark box against a dark road, and fatal to a blob shadow, which is
+## a flat disc and was being depth-buried under the road it belonged to. It is
+## the same defect report NIGHT-1 found under the lamp pools, in the same
+## 0.10 m, and it is fixed here for the same reason.
+var road_top_m := 0.10
 var walk_width_street_m := 1.40
 var walk_width_avenue_m := 1.05
 ## Metres of wander around the anchor. Small on purpose: the player has to be
@@ -158,9 +175,55 @@ var label_s := 1.35
 var label_rise_frac := 0.85
 var label_glyph_frac := 0.50
 var label_pitch_frac := 0.66
-## Metres an animal bounds away as it goes. The crook does not: he is cuffed on
-## the spot, which is the flash the shader draws.
+## Metres an animal bounds away as it goes.
 var bound_m := 3.2
+
+## THE CROOK LEGS IT. An animal bounds off the moment it is collected; a crook
+## RUNS, and then is caught — a short dash down the pavement and only then the
+## cuff-flash. It is the same two facts every other kind carries (something
+## left, you were paid) told in the order the fiction wants them, and it costs
+## one extra float on the record and no new buffer, no new event and no new
+## clock.
+##
+## THE ORDER MATTERS AND IT IS DELIBERATE. The `+$N` rises at the TAP, not at
+## the cuff — doc 93 §T1's rule is that a value transfer has a sensory surface
+## **at the moment it lands**, and the money lands when the player's finger does.
+## The POOF waits for the cuff, because a poof is a physical event and the
+## physical event is the arrest. So the beat reads: tap → number → he runs →
+## he is taken. Half a second, and it is the difference between collecting a
+## token and catching somebody.
+##
+## Seconds, hashed per id between the two. Fast enough that the layer's own
+## `max_live` slack still covers a collect and its replacement.
+var flee_s_min := 0.40
+var flee_s_max := 0.70
+## Metres of that dash. 3.6 m over ~0.55 s is a sprint and it is meant to be:
+## the read is PANIC, and a crook who jogs looks like a crook out for a walk.
+var flee_m := 3.6
+
+## BLOB SHADOWS (doc 11 §2.11's `blob_shadow`). A cheap dark decal under each
+## body, drawn ONLY where the preset has switched real shadows off — which is
+## every preset but High, so on a phone this is the whole of the contact shadow
+## these bodies get. Without it a crook at Z0 reads as a decal printed on the
+## pavement rather than as a person standing on it; `vehicle_shadows` is the
+## knob, and this is what fills the hole it leaves.
+##
+## The numbers are `data/render.json`'s `blob_shadow` block — the same block
+## §2.11's building decal reads, because a shadow is a shadow and two tables
+## would drift.
+var blob_enabled := false
+var blob_y_m := 0.04
+var blob_scale := 1.15
+var blob_alpha := 0.35
+var blob_night_fade := 0.6
+## Ground DIAMETER of each body, metres — the disc the blob is sized off. The
+## crook is the narrowest thing here and the goat the widest; a stash has no
+## body and therefore no shadow.
+var blob_body_m: Array[float] = [0.62, 0.78, 0.82, 0.0]
+## How much of the blob survives as the body leaves the ground. An animal's
+## bound lifts it 0.55 m and a shadow that stayed solid under it would nail the
+## goat to the pavement it has just jumped off.
+var blob_lift_m := 0.60
 
 ## Pool ceilings. The sim caps live opportunities well below `max_live`; the
 ## slack is for the frame on which one is collected and its replacement spawns.
@@ -226,6 +289,7 @@ var fx_used := 0
 var marker_used := 0
 var label_used := 0
 var burst_used := 0
+var blob_used := 0
 
 var body_poses: Array = [[], [], [], []]
 var fx_poses: Array = []
@@ -253,8 +317,25 @@ class Op extends RefCounted:
 	var snapped := false
 	## Game-minutes at spawn, and real seconds at the moment it stopped being
 	## live. The two clocks meet here and nowhere else.
+	##
+	## `born_gm` is the sim's own `born_gm` where the payload carried one, and
+	## only this layer's clock reading where it did not. That distinction is the
+	## whole of render q2: the wander is a pure function of `(id, now − born)`,
+	## so a body re-seeded after a COLD LOAD anchors its beat to the minute it
+	## actually appeared instead of to the minute the save was opened, and the
+	## crook is standing where the save says rather than back on his first
+	## waypoint. See `spawn`.
 	var born_gm := 0.0
 	var ended_s := -1.0
+	## Seconds of FLEE before the cuff-flash, or 0 for anything that does not
+	## run. Resolved at COLLECT rather than at spawn: an expiry is a crook who
+	## was never caught, and he does not run from nobody.
+	var flee_s := 0.0
+	## Unit XZ the dash goes along, and where it ends. Frozen at collect so the
+	## dash is a pure function of `(id, elapsed since the tap)` exactly as the
+	## wander is a pure function of `(id, elapsed since spawn)`.
+	var flee_dir := Vector3(1.0, 0.0, 0.0)
+	var flee_from := Vector3.ZERO
 	## The wander, resolved once: waypoints, per-leg lengths, per-leg timings.
 	var path: PackedVector3Array = PackedVector3Array()
 	var leg_len: PackedFloat32Array = PackedFloat32Array()
@@ -287,9 +368,29 @@ func _init() -> void:
 ## block, which owns the footway numbers this layer stands its bodies on. Every
 ## key is optional — the values above are the shipping ones, so the layer works
 ## against a render.json that has never heard of it.
-func configure(cfg: Dictionary, roads: Dictionary, p_tile_m: float) -> void:
+##
+## `blob` is `data/render.json` → `blob_shadow`, the LOOK of a contact shadow.
+## Whether one is drawn at all is not in it and must not be: that answer is the
+## preset's `vehicle_shadows`, and `StreetLifeView.set_preset` pushes it through
+## `set_blob_shadows`. One knob, one shadow — real where the tier can afford
+## one, faked where it cannot, never both and never neither.
+func configure(cfg: Dictionary, roads: Dictionary, p_tile_m: float,
+		blob: Dictionary = {}) -> void:
 	tile_m = p_tile_m
-	walk_top_m = _num(roads, "asphalt_top_m", 0.10) + _num(roads, "kerb_height_m", 0.15)
+	blob_y_m = _num(blob, "y_m", blob_y_m)
+	blob_scale = _num(blob, "footprint_scale", blob_scale)
+	# `body_alpha` first, `alpha` as the fallback. The two are different numbers
+	# on purpose: §2.11's building decal is a 12 m footprint under a mass that
+	# blocks the sky, and 0.35 is right for it; a 0.7 m disc under a person is a
+	# tenth of the screen area and 0.35 of it, on a shaded carriageway, measured
+	# as nothing at all. This is the art call and it is documented in the block.
+	blob_alpha = _num(blob, "body_alpha", _num(blob, "alpha", blob_alpha))
+	blob_night_fade = _num(blob, "night_fade", blob_night_fade)
+	blob_lift_m = _num(blob, "body_lift_m", blob_lift_m)
+	if blob.has("body_m"):
+		blob_body_m = _floats(blob["body_m"], blob_body_m)
+	road_top_m = _num(roads, "asphalt_top_m", 0.10)
+	walk_top_m = road_top_m + _num(roads, "kerb_height_m", 0.15)
 	walk_width_street_m = _num(roads, "sidewalk_width_street_m", walk_width_street_m)
 	walk_width_avenue_m = _num(roads, "sidewalk_width_avenue_m", walk_width_avenue_m)
 	wander_radius_m = _num(cfg, "wander_radius_m", wander_radius_m)
@@ -314,6 +415,11 @@ func configure(cfg: Dictionary, roads: Dictionary, p_tile_m: float) -> void:
 	label_glyph_frac = _num(cfg, "label_glyph_frac", label_glyph_frac)
 	label_pitch_frac = _num(cfg, "label_pitch_frac", label_pitch_frac)
 	bound_m = _num(cfg, "bound_m", bound_m)
+	flee_m = _num(cfg, "flee_m", flee_m)
+	if cfg.has("flee_s"):
+		var span: Array[float] = _floats(cfg["flee_s"], [flee_s_min, flee_s_max])
+		flee_s_min = maxf(0.0, span[0])
+		flee_s_max = maxf(flee_s_min, span[1])
 	max_live = maxi(1, int(cfg.get("max_live", max_live)))
 	max_bursts = maxi(1, int(cfg.get("max_bursts", max_bursts)))
 	max_labels = maxi(1, int(cfg.get("max_labels", max_labels)))
@@ -358,6 +464,13 @@ func set_road_probe(probe: Callable) -> void:
 		_lay_out(op)
 
 
+## Whether a body gets a faked contact shadow. The view pushes the preset's
+## `vehicle_shadows` here INVERTED — blob when real is off — so the two can
+## never both be on and can never both be off.
+func set_blob_shadows(enabled: bool) -> void:
+	blob_enabled = enabled
+
+
 func set_game_minutes(value: float) -> void:
 	_gm = value
 
@@ -388,15 +501,27 @@ func feed_events(batch: Array) -> void:
 		var e: Dictionary = event
 		match StringName(String(e.get("type", ""))):
 			&"opportunity_spawned":
+				# `born_gm` is doc 06 §2.16's spawn game-minute, carried on the
+				# payload since render q2. A build whose sim predates it sends
+				# no such key, and -1 puts the wander on this layer's own clock
+				# exactly as it always was.
 				spawn(int(e.get("id", -1)), String(e.get("kind", "")),
-						_tile_of(e.get("tile", null)), int(e.get("reward", 0)))
+						_tile_of(e.get("tile", null)), int(e.get("reward", 0)),
+						float(e.get("born_gm", -1.0)))
 			&"opportunity_collected":
 				collect(int(e.get("id", -1)), int(e.get("reward", -1)))
 			&"opportunity_expired":
 				expire(int(e.get("id", -1)))
 
 
-func spawn(id: int, kind_name: String, tile: Vector2i, reward: int) -> void:
+## `born_gm` < 0 means "this is happening now" — the live path, where the event
+## arrives in the frame the sim spawned it. A value >= 0 is the sim's own spawn
+## minute, and it is what a COLD LOAD hands over: `seed_roster` replays a
+## restored roster whose rows are hours old, and anchoring each body to the
+## minute it really appeared is the difference between a save that restores the
+## street and one that restarts it.
+func spawn(id: int, kind_name: String, tile: Vector2i, reward: int,
+		born_gm: float = -1.0) -> void:
 	if id < 0:
 		return
 	if ops.has(id):
@@ -413,7 +538,7 @@ func spawn(id: int, kind_name: String, tile: Vector2i, reward: int) -> void:
 	op.kind = kind_of(kind_name)
 	op.tile = tile
 	op.reward = maxi(0, reward)
-	op.born_gm = _gm
+	op.born_gm = born_gm if born_gm >= 0.0 else _gm
 	op.phase = VehicleMotion.hash01(id, 17)
 	var tone := (VehicleMotion.hash01(id, 23) - 0.5) * 0.16
 	var base: Color = coat_linear[op.kind]
@@ -437,6 +562,7 @@ func collect(id: int, reward: int = -1) -> void:
 		op.reward = reward
 	op.state = STATE_COLLECTED
 	op.ended_s = _real_s
+	_arm_flee(op)
 
 
 func expire(id: int) -> void:
@@ -445,6 +571,58 @@ func expire(id: int) -> void:
 		return
 	op.state = STATE_EXPIRED
 	op.ended_s = _real_s
+
+
+## THE CROOK LEGS IT — which way, and for how long.
+##
+## **Along the street, and the street is the exit.** A body snapped to a kerb
+## already carries `along`, the direction of the footway it is standing on; the
+## nearest road exit a man on a pavement has IS that pavement, and a flee across
+## the carriageway would be a flee into traffic. The id picks the SIGN, so two
+## crooks caught on the same corner do not both run the same way — and the same
+## crook runs the same way on every device and after every load, because the
+## hash is the id's and nothing here is random.
+##
+## An unsnapped body (no road probe, or a lot with no street in reach) has no
+## kerb line to run down, so it takes a hashed compass bearing instead. It is
+## the honest answer: there is no street to head for.
+func _arm_flee(op: Op) -> void:
+	if op.kind != KIND_CROOK or flee_m <= 0.0:
+		op.flee_s = 0.0
+		return
+	op.flee_s = lerpf(flee_s_min, flee_s_max, VehicleMotion.hash01(op.id, 43))
+	op.flee_from = op.last_pos
+	if op.snapped:
+		var sign_h := 1.0 if VehicleMotion.hash01(op.id, 47) < 0.5 else -1.0
+		op.flee_dir = op.along * sign_h
+	else:
+		var a := VehicleMotion.hash01(op.id, 47) * TAU
+		op.flee_dir = Vector3(cos(a), 0.0, sin(a))
+
+
+## Re-seed the whole roster from the sim's own `OpportunitySystem.live()` rows —
+## the COLD LOAD path, and the reason `born_gm` exists.
+##
+## A loaded save restores the sim's roster silently: no `opportunity_spawned` is
+## emitted for a row that was already there, so without this call the crook the
+## player was walking toward is on the sim's books, is tappable, is paying, and
+## is INVISIBLE until it expires. This replays the roster as spawns with each
+## row's real spawn minute, so every body is standing exactly where the save
+## says rather than back on its first waypoint.
+##
+## Rows are the sim's shape (`tile_x` / `tile_y` / `kind` / `reward` /
+## `born_gm`), read defensively — a row missing `born_gm` is a pre-render-q2
+## save and falls back to this layer's clock, which is the old behaviour and
+## not a crash.
+func seed_roster(rows: Array) -> void:
+	clear()
+	for raw: Variant in rows:
+		if not (raw is Dictionary):
+			continue
+		var row: Dictionary = raw
+		spawn(int(row.get("id", -1)), String(row.get("kind", "")),
+				Vector2i(int(row.get("tile_x", 0)), int(row.get("tile_y", 0))),
+				int(row.get("reward", 0)), float(row.get("born_gm", -1.0)))
 
 
 func clear() -> void:
@@ -456,6 +634,7 @@ func clear() -> void:
 	marker_used = 0
 	label_used = 0
 	burst_used = 0
+	blob_used = 0
 
 
 # ------------------------------------------------------------------ queries
@@ -499,7 +678,7 @@ func census() -> Dictionary:
 		"crook": body_used[KIND_CROOK], "dog": body_used[KIND_DOG],
 		"goat": body_used[KIND_GOAT],
 		"markers": marker_used, "labels": label_used, "bursts": burst_used,
-		"fx": fx_used,
+		"blobs": blob_used, "fx": fx_used,
 	}
 
 
@@ -519,42 +698,81 @@ func refresh(camera_pos: Vector3) -> void:
 	marker_used = 0
 	label_used = 0
 	burst_used = 0
+	blob_used = 0
 	var gated := camera_pos != Vector3.INF
 	var retire: Array[int] = []
 	for id: int in _order:
 		var op: Op = ops[id]
 		var leaving := op.state != STATE_LIVE
+		var since := _real_s - op.ended_s
+		# The DASH comes first and the cuff-flash after it, so every clock below
+		# that belongs to the LEAVING (the shrink, the poof) is measured from the
+		# end of the dash and not from the tap. `flee_s` is 0 for everything that
+		# does not run, and this is then exactly the arithmetic it always was.
+		var flee01 := 1.0
 		var fx_t := 0.0
 		if leaving:
+			if op.flee_s > 0.0:
+				flee01 = clampf(since / op.flee_s, 0.0, 1.0)
 			var span := collect_s if op.state == STATE_COLLECTED else expire_s
-			fx_t = clampf((_real_s - op.ended_s) / maxf(span, 0.0001), 0.0, 1.0)
-		var label_done := op.state != STATE_COLLECTED \
-				or (_real_s - op.ended_s) >= label_s
-		var burst_done := not leaving or (_real_s - op.ended_s) >= burst_s
+			fx_t = clampf((since - op.flee_s) / maxf(span, 0.0001), 0.0, 1.0)
+		# The LABEL is the one thing that still runs from the tap: the money
+		# landed when the finger did (doc 93 §T1), so the `+$N` does not wait for
+		# an arrest.
+		var label_done := op.state != STATE_COLLECTED or since >= label_s
+		var burst_done := not leaving or (since - op.flee_s) >= burst_s
 		if leaving and fx_t >= 1.0 and label_done and burst_done:
 			retire.append(id)
 			continue
-		_emit(op, camera_pos, gated, leaving, fx_t)
+		_emit(op, camera_pos, gated, leaving, fx_t, flee01)
 	for id2: int in retire:
 		_drop(id2)
 
 
 ## Everything one opportunity contributes this frame.
 func _emit(op: Op, camera_pos: Vector3, gated: bool, leaving: bool,
-		fx_t: float) -> void:
+		fx_t: float, flee01: float) -> void:
 	var elapsed := maxf(_gm - op.born_gm, 0.0)
 	var walk := sample(op, elapsed)
 	var pos: Vector3 = walk["pos"]
 	var head: float = walk["head"]
+	var limb: float = walk["limb"]
+	var head_t: float = walk["head_t"]
+	var extra: float = walk["extra"]
+	var lean: float = walk["lean"]
+	var bounce: float = walk["bounce"]
 	if leaving:
 		# A body that is going does not keep walking its loop: it holds the pose
-		# it was in, and an animal bounds off it.
+		# it was in, an animal bounds off it — and a crook RUNS off it.
 		pos = op.last_pos
 		head = op.last_head
 		if op.state == STATE_COLLECTED and op.kind != KIND_CROOK:
 			var hop := sin(PI * clampf(fx_t, 0.0, 1.0))
 			pos += VehicleMotion.dir_xz(head) * (bound_m * fx_t)
 			pos.y += hop * 0.55
+		elif op.flee_s > 0.0:
+			# THE DASH. Eased out, not linear: he is off the mark at once and
+			# already slowing when the hand lands on his shoulder, which is what
+			# makes the cuff read as an arrest rather than as a body stopping.
+			var run := _ease_out(flee01)
+			pos = op.flee_from + op.flee_dir * (flee_m * run)
+			head = atan2(op.flee_dir.z, op.flee_dir.x)
+			# The legs follow the DISTANCE covered, exactly as the wander's do —
+			# it is the same rule and the same stride table, so the sprint is the
+			# walk cycle turned up rather than a second animation.
+			var stride: float = maxf(stride_m[op.kind], 0.05)
+			limb = 0.5 + 0.5 * sin(TAU * (flee_m * run / stride + op.phase))
+			# Arms pumping counter to the legs; a hard forward hunch; and the head
+			# thrown back over his shoulder at whoever is behind him. The head
+			# channel is a YAW on this body (see `sample`), so the extreme IS the
+			# look back.
+			extra = 1.0 - limb
+			lean = -0.34
+			head_t = 0.94
+			bounce = 0.055 * maxf(sin(TAU * (flee_m * run / stride + op.phase)), 0.0)
+			# `last_pos` is deliberately NOT advanced by the dash: it is where the
+			# opportunity was TAKEN, and that is the spot the `+$N` belongs to.
+			# The poof follows him — see the `_emit_burst` call below.
 	else:
 		op.last_pos = pos
 		op.last_head = head
@@ -612,29 +830,80 @@ func _emit(op: Op, camera_pos: Vector3, gated: bool, leaving: bool,
 			body_fade = clampf((body_radius_m - to_cam) / maxf(body_fade_m, 0.001),
 					0.0, 1.0)
 		var bp := _body_pose(op.kind)
+		var leave := fx_t if leaving else (1.0 - body_fade)
 		if bp != null:
-			var lean: float = walk["lean"]
 			bp.basis = Basis.from_euler(Vector3(0.0, -head, 0.0)) \
 					* Basis.from_euler(Vector3(0.0, 0.0, lean))
-			bp.origin = Vector3(pos.x, pos.y + float(walk["bounce"]), pos.z)
+			bp.origin = Vector3(pos.x, pos.y + bounce, pos.z)
 			bp.tint = Color(op.coat.r, op.coat.g, op.coat.b,
 					1.0 if op.state == STATE_COLLECTED else 0.0)
 			# A body faded out by distance is retired by shrinking it on the FX
 			# channel, which is the one shrink the shader already has.
-			var leave := fx_t if leaving else (1.0 - body_fade)
-			bp.custom = Color(float(walk["limb"]), float(walk["head_t"]),
-					float(walk["extra"]), leave)
+			bp.custom = Color(limb, head_t, extra, leave)
 			body_used[op.kind] += 1
+		# ---- the blob shadow, under the feet ------------------------------
+		# Emitted beside the body and gated by exactly the same distance test, so
+		# there is never a shadow with nothing standing on it. It shrinks with
+		# the body's own leave curve for the same reason.
+		_emit_blob(op, pos, leave, far_fade)
 
 	# ---- the poof and the label -----------------------------------------
 	if leaving:
-		_emit_burst(op, fx_at, fx_t, far_fade)
+		# The poof lands where the body IS. For an animal that is the spot it was
+		# taken at (the bound carries the animal away and leaves the dust behind);
+		# for a crook it is the end of the dash, because the poof IS the arrest
+		# and the arrest happens where he was caught.
+		_emit_burst(op, pos if op.flee_s > 0.0 else fx_at, fx_t, far_fade)
 	if op.state == STATE_COLLECTED and op.reward > 0:
 		_emit_label(op, marker_pos, far_fade)
 
 
+## The contact shadow: one flat disc under the body, on the fx buffer, mode 5.
+##
+## It is a QUAD LAID FLAT, which is the one thing on that buffer that is not a
+## billboard — the basis written here survives into the shader (see
+## `street_fx.gdshader`'s `is_blob` mix) instead of being replaced by a
+## camera-facing frame. Rotated −90° about X so the quad's own +Y becomes world
+## −Z and it lies on the pavement.
+##
+## Height: `anchor.y` and not zero. A body standing on a footway is 0.25 m up
+## (`asphalt_top_m + kerb_height_m`), and a shadow at world y = 0.04 would be
+## buried under the kerb it belongs to — the same defect report NIGHT-1's
+## `pool_y_superseded` note records for the lamp pools, in the same 0.15 m.
+func _emit_blob(op: Op, pos: Vector3, leave: float, fade: float) -> void:
+	if not blob_enabled:
+		return
+	var d: float = blob_body_m[op.kind] * blob_scale
+	if d <= 0.0:
+		return
+	# Off the ground, the shadow goes: an animal mid-bound is 0.55 m up and a
+	# solid disc under it would nail it back to the pavement.
+	var lift := clampf((pos.y - op.anchor.y) / maxf(blob_lift_m, 0.001), 0.0, 1.0)
+	var alpha := blob_alpha * (1.0 - lift * 0.75) * (1.0 - smoothstep(0.0, 0.9, leave))
+	if alpha <= 0.004:
+		return
+	var p := _fx_pose()
+	if p == null:
+		return
+	# A blob spreads slightly as its owner lifts — the same read a real contact
+	# shadow gives, and it costs the multiply that was already there.
+	var s := d * (1.0 + 0.35 * lift)
+	p.basis = Basis.from_euler(Vector3(-PI * 0.5, 0.0, 0.0)).scaled(Vector3(s, s, s))
+	p.origin = Vector3(pos.x, op.anchor.y + blob_y_m, pos.z)
+	p.tint = Color(0.0, 0.0, 0.0, alpha)
+	p.custom = Color(FX_BLOB, blob_night_fade, fade, op.phase)
+	blob_used += 1
+
+
 func _emit_burst(op: Op, pos: Vector3, fx_t: float, fade: float) -> void:
-	var t := clampf((_real_s - op.ended_s) / maxf(burst_s, 0.0001), 0.0, 1.0)
+	# Measured from the END of the dash, not from the tap — see `refresh`. While
+	# the crook is still running there is no poof at all: a dust cloud that
+	# started at the tap and travelled with him would say the arrest had already
+	# happened, which is the one thing the dash exists to delay.
+	var since_cuff := _real_s - op.ended_s - op.flee_s
+	if since_cuff < 0.0:
+		return
+	var t := clampf(since_cuff / maxf(burst_s, 0.0001), 0.0, 1.0)
 	if t >= 1.0 or burst_used >= max_bursts:
 		return
 	burst_used += 1
@@ -846,6 +1115,11 @@ func _anchor(op: Op) -> void:
 			if int(_road_probe.call(op.tile + dirs[i])) <= 0:
 				kerbs.append(i)
 		if kerbs.is_empty():
+			# Deep inside a junction: four road neighbours, no footway anywhere
+			# on the tile. The body wanders the carriageway — there is nowhere
+			# else — and it stands on the ASPHALT TOP rather than at y = 0,
+			# which is 10 cm below the slab it is walking on.
+			op.anchor.y = road_top_m
 			return
 		var pick: int = kerbs[int(VehicleMotion.hash01(op.id, 7) * float(kerbs.size()))
 				% kerbs.size()]
@@ -887,7 +1161,10 @@ func _reserve() -> void:
 		var pool: Array = body_poses[k]
 		while pool.size() < max_live:
 			pool.append(Pose.new())
-	var want := max_live * 2 + max_bursts * (puffs_per_burst + 1) \
+	# `max_live * 3`: a marker, a stash sparkle and a BLOB per live opportunity.
+	# The blob is on this buffer (mode 5), so the pool has to carry it or a full
+	# frame would silently drop the last body's shadow.
+	var want := max_live * 3 + max_bursts * (puffs_per_burst + 1) \
 			+ max_labels * 8
 	while fx_poses.size() < want:
 		fx_poses.append(Pose.new())
