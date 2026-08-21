@@ -416,13 +416,30 @@ The dt-aware `smooth()` exponent is what makes coarse offline steps agree with f
 
 **Time sampling.** `D_tod` reads the hour-of-day from doc 01's frozen `TimeContext` (fine step: `hour + (minute + 0.125)/60`; coarse step: `h + 0.5`). Roads never samples the clock itself.
 
-**`D_tod(e,t)` — time-of-day demand.** Four land-use profile curves, 24 hourly samples, linearly interpolated. Each district (doc 09) carries normalised `profile_weights = {res, com, ind, civ}` recomputed once per game-day from its building mix (doc 02).
+**`D_tod(e,t)` — time-of-day demand.** Four land-use profile curves, 24 hourly samples, linearly interpolated. Each district (doc 09) carries normalised `profile_weights = {res, com, ind, civ}` derived from its building mix (doc 02).
 
 ```
 D_tod(e,t) = Σ_p  profile_weights[district_of(e)][p] * lerp(curve[p][h], curve[p][h+1], frac)
 ```
 
 The four 24-entry curves are in `tunables.tod_curves` (§8). Shape: `res` twin-peaks at 07:00 (0.85) and 18:00 (0.95); `com` plateaus 09:00–17:00 (0.85–0.95); `ind` is flat-shifted, peaking 16:00 (0.75) and never below 0.18 overnight; `civ` peaks 07:00 (0.75) and 15:00 (0.75) for school and shift changes.
+
+> **LIVE since Wave 14 — and until Wave 14 this paragraph described nothing (report 98 RR-69, doc 91 A91-D-32).** `RoadNetwork.profile_weights_of` was a field nothing assigned, so `_profile_weights` answered with `data/roads.json`'s `default_profile_weights` for **every district of every city**, and the four curves above were four copies of one curve. Doc 09's `DistrictRegistry.profile_weights(id)` is that seam's other end and now publishes the real mix; `CitySim._district_profile_weights` is the wire between them.
+>
+> **The mix is `Σ(population + jobs)` per profile, not a building count** — the same `pj` `L_dens` counts below, because both terms are trip generation and a 60-resident high-rise is not one house. Doc 02's five archetype categories fold onto these four curves in `DistrictRegistry.CATEGORY_PROFILE`: `residential → res`, `commercial → com`, `industrial → ind`, **`utility → ind`** (a power plant or water works is industrial land use, and `ind`'s "never below 0.18 overnight" *is* a continuously-staffed plant), `service → civ` (police, fire, the yard — the 07:00/15:00 watch change this curve was written for).
+>
+> **The cadence is a REVISION MEMO, not "once per game-day" (doc 93 §O1).** The paragraph above used to say once per game-day; it now says *derived*, and the difference is deliberate. The mix is a pure function of the building roster and district membership, and both carry a revision counter, so `CitySim` keys the rebuild on that pair — the same shape `district_of_building()` already had. It is exact, it recomputes only when the mix actually moved, it matches this section's own grain for `L_dens` (which refreshes on `building_changed`, not only at the day boundary), and — decisively — it gives a **restored** city the same row as the live city it was saved from with no restore hook that can be forgotten. A block that develops mid-game therefore shifts its district's rush hour on the pass after the building lands, not at the next midnight.
+>
+> Measured on the founding city, `D_tod` per district (the spread that did not exist before):
+>
+> | hour | `D_DOWNTOWN` | `D_FOUNDRY` | `D_MILLPOND` | `D_NORTHGATE` | default row |
+> |---|---|---|---|---|---|
+> | 02:30 | 0.0498 | **0.1347** | 0.1117 | 0.0567 | 0.0565 |
+> | 08:00 | 0.7643 | 0.7200 | 0.6875 | 0.6888 | 0.7250 |
+> | 13:00 | **0.7333** | 0.6667 | 0.5292 | **0.4224** | 0.5725 |
+> | 17:40 | **0.8813** | 0.6456 | 0.6514 | 0.8363 | 0.8542 |
+>
+> Read the corners: at 02:30 the foundry (`ind` 0.667, its plant staffed through the night) wants **2.7×** the road the commercial core does; at 13:00 downtown (`com` 0.643) wants **1.74×** what the dormitory district does; and by 17:40 the foundry has already peaked and fallen while downtown is still climbing. Every one of those four columns used to read the default row in the last column.
 
 **`L_dens(e)` — local development density.**
 ```
@@ -468,6 +485,19 @@ Mixed district, `profile_weights = {res .55, com .30, ind .05, civ .10}`, `pj = 
 
 (`D_tod` at 17:40 = `.55×lerp(.90,.95,.667) + .30×lerp(.95,.85,.667) + .05×lerp(.65,.45,.667) + .10×lerp(.60,.45,.667)` = `.55×.9333 + .30×.8833 + .05×.5167 + .10×.50` = `.8542`.)
 
+> **`wx_cong_add(weather)` is LIVE since Wave 14, and rows 4 and 5 of that table were unreachable until it was (report 98 RR-69).** `RoadNetwork.weather_state_of` was the second field nothing assigned, so `weather_state` was the string `"clear"` for the life of every city ever played: `wx_cong_add` was 0.00, `wx_slowdown` (§2.7) was 0.00, and `wx_wear_day` (§2.12) was 0.00. **Rain had never slowed traffic in a shipped build, and no road had ever worn faster for being wet.** `CitySim._road_weather_state` now hands roads doc 07's city-wide `weather.get_state()` lower-cased onto §8's table (report 98 C-59: the global state, never `state_at(tile)`, and never doc 07's continuous `precip01`). Doc 07 authors six of §8's eleven rows — CLEAR, CLOUDY, RAIN, HEAVY_RAIN, THUNDERSTORM, HEAT_WAVE — and `snow` / `blizzard` / `fog` / `high_wind` / `extreme_cold` stay authored-and-waiting on doc 07's state list, not on this seam.
+>
+> `RoadNetwork.step()` samples the provider **once per step** and freezes the answer for that whole step's congestion, wear and routing — the quantised snapshot §4 guarantee 2 rests on. Measured on the founding city at the 18:00 peak, every edge moving by exactly its authored row:
+>
+> | sky | `wx_cong_add` | mean `c_e` | `wx_slowdown` | overlay bands (of 644 edges) |
+> |---|---|---|---|---|
+> | `clear` | 0.00 | 0.1250 | 0.00 | 626 clear · 18 light |
+> | `rain` | +0.08 | 0.2050 | 0.08 | 572 clear · 72 light |
+> | `heavy_rain` | +0.19 | 0.3150 | 0.18 | **0 clear · 638 light · 6 heavy** |
+> | `thunderstorm` | +0.24 | 0.3650 | 0.22 | 0 clear · 629 light · 15 heavy |
+>
+> On the 1,500-building benchmark city at the same hour: mean `c_e` **0.9651 → 1.1521** under heavy rain, and doc 12's `gridlock` band goes **2,794 → 2,973** of 3,092 edges. This is a whole-city recolour of the traffic overlay, not a number in a debug panel.
+
 Note that the worst case reaches **1.881**, not the clamp — the `[0,2]` headroom is real, and only a disaster-scale combination (blizzard + major accident + district blackout) saturates it. That is deliberate: doc 06's `f_flow = clamp(c, 0.05, 2.0)^1.5` must keep discriminating at the top end.
 
 Contrast, same hour, same district, on an **AVENUE** with `pj = 900` (→ `L_dens` clamped 1.60), commercial weights `{res .20, com .70, ind 0, civ .10}` → `D_tod = .855`, `c_raw = 0.64 × .855 × 1.60 = **0.876**` (at capacity). Same corridor built as street: `1.00 × .855 × 1.60 = **1.368**` (over capacity). Combined with `S_cong` (0.55 vs 0.80), the avenue is **1.9× cheaper in travel-cost terms at rush hour** — that is what its price premium and its 2.8× build work (`1.40` vs `0.50` crew-hours/tile) buy. *(The former "2.9× build cost" gloss is deleted with the price table under RR-2; doc 03's `data/economy.json` sets the actual ratio.)*
@@ -509,6 +539,10 @@ Examples (all rescaled by RR-3; the *durations* are unchanged because both the r
 - avenue, `c_day = 0.88`, clear → `0.0060 × 1.66 = ` **0.00996 / day**.
 
 At 1 game-day = 24 real minutes, a neglected busy street needs attention roughly every 10–15 real hours of play. Maintenance is a recurring but not nagging decision.
+
+> **`wx_wear_day` was 0.00 on every game-day of every city until Wave 14** (report 98 RR-69) — the same dead `weather_state_of` seam as §2.10's. It is the **max** `wx_wear` over the game-day's 24 hourly samples, so one rain hour prices the whole day at `× 1.30` and one snow hour at `× 1.80`, exactly as the bullets above always claimed.
+>
+> **This is the one place the wiring reaches doc 03's ledger**, and it is worth stating plainly because it is the whole balance consequence of this wave. On the founding day at seed 1337 the sky is CLEAR for twelve game-hours and then RAIN/HEAVY_RAIN/CLOUDY for twelve, so `wx_wear_day` steps `0.00 → 0.30` at gh 13 and holds. The multiplier `E_roads_repair` bills, `(1 + 0.75·c_day)·(1 + wx_wear_day)`, therefore averages **1.2493** over the day against **1.0857** if the sky had stayed clear — and the realised line moves **$158.42 → $183.92 /gh (+16.1 %)**. Doc 92 §33 carries the hour-by-hour derivation and the gate re-fit; §1's published anchor multiplier of `1.2625` (authored at `c_day = 0.35`, clear) is, by coincidence worth noticing rather than leaning on, almost exactly where the founding city now lands by a different route — a quiet city (`c_day ≈ 0.11`) in real weather.
 
 **Instant damage.** These deltas are also the **damage fractions** this doc publishes per cause under C-16 — doc 03 multiplies them by `capital_value` to price the resulting repair. They are physical constants and are **kept** by RR-2.
 
@@ -867,6 +901,19 @@ route_invalidated(ticket_ids: PackedInt32Array, reason: int)   # CLOSURE | GRAPH
 | **08 — Persistence, offline policy & notifications** (`sim/persistence/`, `sim/offline/`) | save/load, coarse step driving | `save_section()` / `load_section(dict)` for the `roads` section (report 98 §11 registry), coarse `step(ctx)` with `dt = 60 gm` |
 | **09 — Map, land, districts, population & stability** (`sim/world/`, `sim/population/`) | ownership + development state, buildability, district id, `profile_weights`, **and the road template** | `land.is_developed(tile)`, `land.is_buildable(tile)`, `land.district_of(tile)`, `land.district_profile_weights(id) -> {res,com,ind,civ}`; the 87-tile block template of doc 09 §2.9.1, stamped at its `ROAD_INSTALL` phase (C-60, §2.3) |
 
+> #### Wave 14 — two rows of this table were an INTERFACE, not a wiring, and now they are both (report 98 RR-69, doc 91 A91-D-32)
+>
+> `RoadNetwork` carried `profile_weights_of` (doc 09's row) and `weather_state_of` (doc 07's row) as injectable `Callable`s. **`CitySim` assigned neither**, on any path, for the whole life of the project. The fields were not stubs and they were not TODOs — they were seams with a well-defined degraded default on the other side of them, which is exactly why nobody noticed: `_profile_weights` fell back to one authored row and `_weather_state()` fell back to the string `"clear"`, so every consumer got a plausible number and no test could tell.
+>
+> | field | doc | what filled it before | what fills it now |
+> |---|---|---|---|
+> | `profile_weights_of` | 09 §5.1 | nothing — `data/roads.json`'s `default_profile_weights` for every district of every city | `CitySim._district_profile_weights` → `DistrictRegistry.profile_weights(id)`, from doc 02's roster |
+> | `weather_state_of` | 07 §5.1 | nothing — the literal `"clear"`, for the life of every city | `CitySim._road_weather_state` → `weather.get_state().to_lower()` |
+>
+> Both are injected **before** `RoadNetwork.bootstrap()` now, and that ordering is load-bearing rather than tidy: `bootstrap()` stamps every edge's `district_id` and takes a cold congestion pass, and with the assignments on the following lines it did both with an invalid `Callable` (report 98 RR-61 filed this and could correctly call it *inert*, because the weights were dead). It is not inert any more.
+>
+> The one sibling still absent at that point is doc 07's: `CitySim._boot_roads` runs before `_boot_weather` so `_boot_incidents` can be handed a router, so `bootstrap()`'s cold pass reads `clear` and tick 0's `step()` is the first call that sees the real sky.
+
 ### 5.2 Roads provides to
 
 | doc | what roads gives | call |
@@ -1036,6 +1083,12 @@ Headless, `tests/sim/roads/`, run by `godot --headless --path . -s res://tests/r
 49. `test_a_stepped_rebuild_lands_where_the_one_call_lands` (RR-61) — `RoadGraph.rebuild_all_steps()` at 1, 2, 3 and 40 trace slots rebuilds a graph identical to `rebuild_all()`'s in the **strong** sense: same edge ids, same `(node_a, node_b)` pairs, same tiles in the same ORDER, same node degrees, same component partition. One slot means the drain in `graph_finish` carries the whole trace, which is the path `rebuild_all()` itself takes; forty means a seam between (almost) every pair of nodes. `trace_slots_for` is checked at 0, exactly one budget, and one node past it.
 50. `test_a_sliced_signal_power_sample_lands_where_the_whole_sweep_lands` (RR-60b) — with half the starter core's signalised nodes dark, `refresh_signal_power_slice` in batches produces the identical `(signalised, powered)` verdict for every node that a single `refresh_signal_power` sweep does, and publishes the same `dark_signals` count — only once the sweep has finished, because a half-swept count is worse than the `-1` that means "unknown".
 51. `test_the_daily_sampler_cursor_rides_the_save` (RR-60) — a `section_version` 3 section carries `last_hour_sampled` and restores it, so `_last_sample_hour()` answers the hour the city is actually in rather than the hard-coded 12.0 the `-1` default produces; a v2 section (the key erased, the version stamped back) still loads and lands on that documented default, with the rest of the section unchanged. Doc 08 §2.8's additive-first rule, read from both ends.
+52. `test_the_weather_provider_reaches_c_raw_and_the_planner` (RR-69) — with `weather_state_of` injected, one `step()` re-samples doc 07 and freezes the row: `clear` reproduces worked example D's 17:40 `0.941`; `heavy_rain` adds **exactly** its authored `+0.19` to `c_raw` and sets `planner.wx_slowdown` to `0.18`; `thunderstorm` adds exactly `+0.24`. The additive is snapped to the state row and never interpolated on `precip01` (C-59).
+53. `test_wet_roads_wear_faster_through_the_provider` (RR-69) — two identical corridors over one game-day, one of whose 24 hourly samples is `snow`; the wet arm loses **1.5–2.2×** the condition of the dry one, bracketing the authored `1 + wx_wear 0.80`. Before this wave `wx_wear_day` was 0.00 on every game-day of every city.
+54. `test_the_weather_seam_is_mode_invariant_while_the_sky_holds` (RR-69, doc 93 §O2) — a whole game-day of `heavy_rain` driven through the doc 01 scheduler in fine ticks and, separately, in coarse hours: `wx_wear_day` is the **same float** and every one of 700-plus road tiles agrees on condition to 1e-9. Doc 07 derives `now_min` from `tick_index`, so both modes sample the state at the same game-minutes.
+55. `test_rain_slows_traffic_and_the_dry_road_is_the_control` (RR-69) — two arms of the starter city, same seed, same hour, same density; heavy rain raises mean `c_e` by the authored `+0.19 ± 0.005` and lengthens the same cross-city civilian trip. Prints both numbers, because "rain slows traffic" is a claim that should carry its magnitude.
+56. `test_the_roads_land_use_and_weather_seams_are_injected` (RR-69, in `tests/test_city_sim.gd`) — the seam test the fallbacks made impossible to write before. Asserts CONSEQUENCES, not `Callable.is_valid()`: every edge of a **live** founding city carries a non-empty `district_id` (RR-61's other half), all four districts publish a non-empty mix, and their `D_tod` at 02:30 spans more than 0.05 — which it cannot if they are all reading the default row.
+57. `test_the_land_use_weights_survive_a_restore_identically` (RR-69, doc 93 §O1) — the weights are derived and unsaved, so a restored city must re-derive the identical row from the roster the save does carry; every profile of every district is the **same float** after a `capture_state` / `restore_state` round trip three game-hours in.
 
 ---
 

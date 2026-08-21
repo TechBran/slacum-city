@@ -207,3 +207,78 @@ func test_cached_quote_is_cheap() -> void:
 	assert_eq(int(net.planner.expansions_last_call), 0, "no expansions on a cache hit")
 	assert_eq(int(net.planner.cache_reprices), 100, "every call re-priced the stored path")
 	assert_true(per_call < 2000.0, "a re-price is orders of magnitude cheaper than a search")
+
+
+# --------------------------------------- the two seams, and their mode invariance
+
+func test_the_weather_seam_is_mode_invariant_while_the_sky_holds() -> void:
+	# Doc 93's per-system rule: mode-invariance is claimed per system, and this
+	# is the roads-vs-doc-07 claim. Roads samples the CITY-WIDE state once per
+	# `step()` and freezes it, so while a doc 07 segment spans the window the
+	# fine path (240 samples per game-hour) and the coarse path (one) read the
+	# same row and must agree exactly — congestion, condition and wx_wear_day.
+	var sky := "heavy_rain"
+	var fine := RoadsTestRig.starter_network()
+	var coarse := RoadsTestRig.starter_network()
+	for net in [fine, coarse]:
+		net.weather_state_of = func() -> String: return sky
+		net.set_density_sources([{"tile": Vector2i(40, 40), "pj": 300.0}])
+		net.refresh_density()
+	# One tick / one hour PAST the day boundary in each mode, so the EVERY_DAY
+	# cadence fires its second time and the day's decay is actually applied.
+	var fine_rig := _scheduler()
+	RoadsPhaseSystems.register_all(fine_rig["scheduler"], fine)
+	fine_rig["scheduler"].advance_fine_n(GameClock.TICKS_PER_DAY + 1)
+	var coarse_rig := _scheduler()
+	RoadsPhaseSystems.register_all(coarse_rig["scheduler"], coarse)
+	coarse_rig["scheduler"].advance_coarse_n(25, true, 0, 25)
+
+	assert_eq(fine.weather_state, "heavy_rain", "the sky reached the fine path")
+	assert_eq(coarse.weather_state, "heavy_rain", "…and the offline one")
+	# `wx_wear_day` is read at the top of each game-hour in BOTH modes (doc 07
+	# derives `now_min` from `tick_index`, so the two paths sample the same
+	# game-minutes), which is what makes the wear term bit-identical rather than
+	# merely close.
+	assert_eq(fine.wx_wear_day(), coarse.wx_wear_day(),
+			"the day's max wear is the same float in both modes")
+	var checked := 0
+	for t in coarse.graph.road_tiles_sorted():
+		assert_almost_eq(fine.condition_of(t), coarse.condition_of(t), 1e-9,
+				"wet-weather wear at %s agrees between modes" % str(t))
+		checked += 1
+	assert_true(checked > 500, "a real city's worth of tiles (%d)" % checked)
+	assert_true(fine.condition_of(Vector2i(40, 32)) < 1.0, "and the wear happened")
+
+
+func test_rain_slows_traffic_and_the_dry_road_is_the_control() -> void:
+	# The consequence in one assertion: doc 10 §8's `wx_cong_add` and `slowdown`
+	# rows were unreachable until this wave, so rain had never slowed a shipped
+	# city's traffic. Two arms of the same city, same seed, same hour, same
+	# density — the ONLY difference is doc 07's state.
+	var arms: Dictionary = {}
+	for sky in ["clear", "heavy_rain"]:
+		var net := RoadsTestRig.starter_network()
+		net.weather_state_of = func() -> String: return sky
+		net.set_density_sources([{"tile": Vector2i(40, 40), "pj": 300.0}])
+		net.refresh_density()
+		var rig := _scheduler()
+		RoadsPhaseSystems.register_all(rig["scheduler"], net)
+		rig["scheduler"].advance_fine_n(GameClock.TICKS_PER_HOUR)
+		arms[sky] = net
+	var dry: RoadNetwork = arms["clear"]
+	var wet: RoadNetwork = arms["heavy_rain"]
+	var prof := RouteProfile.civilian()
+	var a := Vector2i(35, 35)
+	var b := Vector2i(76, 76)
+	var dry_c := dry.mean_congestion()
+	var wet_c := wet.mean_congestion()
+	var dry_minutes := dry.route_minutes(a, b, prof)
+	var wet_minutes := wet.route_minutes(a, b, prof)
+	assert_almost_eq(wet_c - dry_c, 0.19, 0.005,
+			"mean congestion rose by heavy_rain's authored +0.19 (%.4f -> %.4f)"
+			% [dry_c, wet_c])
+	assert_true(wet_minutes > dry_minutes,
+			"and the same civilian trip takes longer in the rain (%.3f -> %.3f gm)"
+			% [dry_minutes, wet_minutes])
+	print("      [weather] mean c %.4f -> %.4f, cross-city civilian trip %.3f -> %.3f gm"
+			% [dry_c, wet_c, dry_minutes, wet_minutes])

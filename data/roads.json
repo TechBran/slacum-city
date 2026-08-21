@@ -71,7 +71,7 @@
     "evac_peak": 2.50,
     "evac_decay_gm": 180,
     "default_profile_weights": { "res": 0.55, "com": 0.30, "ind": 0.05, "civ": 0.10 },
-    "_default_profile_weights_note": "ADDED BEYOND doc 10 section 8: doc 09's DistrictRegistry does not yet publish district_profile_weights(), so an edge whose district has no published mix falls back to this. These are worked example D's weights. Delete the fallback once doc 09 ships the real per-district building mix."
+    "_default_profile_weights_note": "ADDED BEYOND doc 10 section 8. Doc 09's DistrictRegistry.profile_weights(id) SHIPPED in Wave 14 (report 98 RR-69) and is now the normal source, so this is no longer the answer for every district — it is the answer for an edge in no district, or in a district whose buildings generate no trips at all. It STAYS: an empty district has no land use and inventing a uniform row for it would be a number nobody authored. These are worked example D's weights."
   },
 
   "tod_curves": {

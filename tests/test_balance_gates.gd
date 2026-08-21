@@ -75,7 +75,38 @@ const CURRICULUM_TOP_LEVEL_DAYS := 40
 ## a ceiling in the wrong place, so it moves to the measurement plus a notch.
 ## Both numbers are ceilings and neither is a fit: measured 13–14 / 39–41 at the
 ## opening and 59–64 / 64–73 in the middle.
-const CURRICULUM_OPENING_BEAT_H := 45
+##
+## **RE-FIT Wave 14, the OPENING ceiling only: 45 → 58** (doc 92 §33.6, report 98
+## RR-69). Doc 07's weather reaches doc 10's roads, `E_roads_repair` rises 16 %
+## and doc 06 writes twice as many traffic accidents, so the curriculum agent's
+## purse fills more slowly and its purchase beats land later. Re-measured with
+## `tools/measure_curriculum.gd --days=45` on both arms of the same patch — the
+## before column reproduces §27.4's published table to the game-hour, which is
+## what makes this an A/B and not a re-record:
+##
+## | level | before (1337/4242/9001) | after | duration before → after |
+## |---|---|---|---|
+## | 1 | 13 / 13 / 14 | 13 / 13 / 14 | 13–14 → **13–14, bit-identical** |
+## | 2 | 52 / 54 / 55 | 63 / 56 / 67 | 39–41 → **43–53** |
+## | 3 | 111 / 115 / 119 | 123 / 122 / 128 | 59–64 → 60–66 |
+## | 4 | 176 / 179 / 192 | 192 / 191 / 209 | 64–73 → 69–81 |
+## | 5 | 371 / 358 / 361 | 399 / 389 / 409 | 169–195 → 198–207 |
+## | 6 | 827 / 852 / 866 | 918 / 917 / 932 | 456–505 → 519–528 |
+##
+## **Level 1 does not move by a single game-hour on any seed**, and that is the
+## shape a purse-side change should have at the very top of the arc: four houses,
+## one transformer and 170 residents are bought out of the founding purse inside
+## the first fourteen game-hours, before a rainy day has been billed. Everything
+## below it slips by 5–15 %, in the one direction, on every seed. The MIDDLE
+## ceiling (90) is untouched and still holds with 9 game-hours of margin.
+##
+## 58 is 53 (the new worst seed) plus a notch, the same rule that put 45 above 41.
+## **What did NOT move is `CURRICULUM_TOP_LEVEL_DAYS`, and that is now the
+## tightest number in this file**: the arc finishes on game-day 38.2–38.8 against
+## a ruled 40, where it used to finish on 34.5–36.1. It is a ruled design bound,
+## not a fit, so it is not re-cut to buy margin back — but the next change that
+## slows the arc at all will fail gate 21 there, and doc 92 §33.7 ranks it.
+const CURRICULUM_OPENING_BEAT_H := 58
 const CURRICULUM_MIDDLE_BEAT_H := 90
 
 ## One run per (strategy, days, seed) across the whole file: several gates read
@@ -1367,13 +1398,44 @@ func test_gate_19_ambient_incidents_are_a_weekly_beat() -> void:
 		assert_true(int(by_channel[channel]) > 0,
 				"`%s` produced ZERO over %d game-days — its candidate source is "
 				% [channel, game_days] + "empty again (the D-17 / D-18 shape)")
-	# Measured 91 over these exact 105 game-days (6.07/game-week); Poisson σ ≈ 9.5.
-	# The floor going dark lands near 63 and disconnecting either adapter lands
-	# below 50, so the lower bound catches both; a 1.5× runaway lands at 137.
-	assert_true(created >= 62,
+	# **RE-FIT Wave 14 — 91 → 146 over these exact 105 game-days, and ONE channel
+	# carries all of it** (doc 92 §33.5, report 98 RR-69). Doc 07's weather state
+	# now reaches doc 10's roads, so doc 06's `traffic_accident` generator finally
+	# sees a congestion index that moves for weather. Census either side of the
+	# same patch, five seeds × 21 game-days:
+	#
+	#   channel              before  after
+	#   crime                    10     12
+	#   structure_fire            6     13
+	#   transformer_failure      15     11
+	#   water_main_break         12      7
+	#   traffic_accident         48    101      ← +110 %
+	#   TOTAL                    92    146
+	#
+	# The other four move by ±small and net −1: they are the same generators
+	# drawing from the `incidents` stream in a different ORDER once the traffic
+	# channel's frequency changes. The arithmetic of the one that moved is two
+	# authored formulas meeting for the first time: doc 06 §2's
+	# `f_flow = clamp(c, 0.05, 2.0)^1.5` was pinned near its own 0.05 CLAMP FLOOR
+	# on a quiet clear city (`f_flow = 0.0112`), and rain lifts `c` clear of that
+	# floor for most of the day (`c ≈ 0.09–0.31 → f_flow 0.027–0.173`).
+	# **Nothing was retuned to produce this and nothing is retuned to absorb it** —
+	# doc 06 authored the accident rate against congestion precisely so that a
+	# jammed city crashes more, and the three assertions below this band are the
+	# ones that say the city can still take it: zero failed, zero abandoned,
+	# nothing destroyed, treasury still climbing, and the 7×3×21 matrix's peak
+	# open roster UNMOVED at 2 for `do_nothing` against doc 06 §2.13(b)'s 36.
+	# *Whether ~0.96 traffic accidents per game-day is the intended dispatch beat
+	# is a balance question ranked in doc 92 §33.7 — it is not this gate's to
+	# answer, and this gate is not the place to hide it.*
+	#
+	# The band keeps its old SHAPE (0.68× / 1.45× of measured, Poisson σ ≈ 12.1):
+	# the traffic channel going dark lands at 45 and the ambient floor going dark
+	# lands near 101, so the lower bound catches both; a 1.4× runaway lands at 204.
+	assert_true(created >= 100,
 			"%d incidents over %d game-days is %.2f per game-week — a channel has "
 			% [created, game_days, per_week] + "gone quiet")
-	assert_true(created <= 132,
+	assert_true(created <= 200,
 			"%d incidents over %d game-days is %.2f per game-week — generation ran away"
 					% [created, game_days, per_week])
 	assert_eq(failed, 0, "a do_nothing city must survive its own pacing floor")
@@ -1802,17 +1864,40 @@ const PRESET_HORIZON_DAYS := {"casual": 120, "standard": 90, "hard": 70, "crisis
 ## casual must die before its own horizon; crisis must not die absurdly early.
 ## The ordering assertions carry the rest.
 ##
-## The FLOOR is deliberately loose (25 against a measured 40–42). It guards
-## against a preset becoming a different game, not against a knob wired to the
-## wrong scope — that is `tests/test_economy.gd`'s
-## `test_one_difficulty_knob_per_ledger_line`, which asserts the per-line
-## multiplier directly and would fail on the compounding this table's superseded
-## column was measured under.
+## The FLOOR is deliberately loose (it guards against a preset becoming a
+## different game, not against a knob wired to the wrong scope — that is
+## `tests/test_economy.gd`'s `test_one_difficulty_knob_per_ledger_line`, which
+## asserts the per-line multiplier directly and would fail on the compounding
+## this table's superseded column was measured under).
+##
+## **RE-MEASURED Wave 14 (doc 92 §33.4, report 98 RR-69).** Doc 07's weather
+## reaches doc 10's roads, so a neglected city now pays a road-repair accrual
+## that is 16 % higher on a wet day and answers twice as many traffic accidents.
+## Every preset dies sooner, by 8–35 %, **and the ordering §2.9 authors is
+## preserved on every seed** — which is the assertion this gate is actually for.
+## `tools/measure_insolvency.gd --max-days=130`, three seeds:
+##
+## | preset | before (mean) | after: 1337 / 4242 / 9001 | after (mean) |
+## |---|---|---|---|
+## | `casual` | 104–110 | 103 / 108 / 104 | **105.0** |
+## | `standard` | 74 / 75 / 76 | 68 / 70 / 69 | **69.0** |
+## | `hard` | — | 52 / 51 / 50 | **51.0** |
+## | `crisis` | 40–42 | 23 / 29 / 26 | **26.0** |
+##
+## `crisis` moved the furthest and for the reason its own name implies: it starts
+## with the thinnest purse, so the same extra $/gh eats a larger share of it.
+## The FLOOR moves 25 → **18**, keeping the ratio it had (0.625× of the measured
+## `crisis` mean, which was 25/40 and is now 18/26 ≈ 0.69× — deliberately a
+## little tighter, because 26 game-days is close enough to "a different game"
+## that the guard should not be relaxed proportionally). The CEILING stays 118:
+## `casual`'s worst seed is 108 and its horizon is 120.
 const PRESET_LIFETIME_CEILING := 118
-const PRESET_LIFETIME_FLOOR := 25
+const PRESET_LIFETIME_FLOOR := 18
 ## `standard` is the preset every other gate in this file is measured on, so its
-## own number is pinned rather than merely ordered.
-const STANDARD_LIFETIME_DAYS := 76
+## own number is pinned rather than merely ordered. **76 → 69, Wave 14**: the
+## seed spread is 2 game-days (68–70) and the band stays 6, so this still fails
+## on anything that moves `standard`'s neglect curve by more than ~9 %.
+const STANDARD_LIFETIME_DAYS := 69
 const STANDARD_LIFETIME_BAND := 6
 ## The cascade tripwire, asserted inside the horizon rather than assumed away:
 ## doc 06 §2.13's own worst-case accounting is ≤ 40 active incidents, and a
@@ -1855,11 +1940,11 @@ func test_gate_29_neglect_is_fatal_on_every_preset_and_ordered() -> void:
 						+ "has stopped being fatal on that preset") % [preset, horizon])
 		assert_true(day <= PRESET_LIFETIME_CEILING,
 				("do_nothing on %s survived to game-day %d; the ruled ceiling is %d "
-						+ "(measured 104–110 on casual, doc 92 §31.5)")
+						+ "(measured 103–108 on casual, doc 92 §33.4)")
 						% [preset, day, PRESET_LIFETIME_CEILING])
 		assert_true(day >= PRESET_LIFETIME_FLOOR,
 				("do_nothing on %s went insolvent on game-day %d; the ruled floor is "
-						+ "%d (measured 40–42 on crisis) — below it a preset is not "
+						+ "%d (measured 23–29 on crisis, doc 92 §33.4) — below it a preset is not "
 						+ "harder, it is a different game")
 						% [preset, day, PRESET_LIFETIME_FLOOR])
 	# ORDERED, strictly, in the direction §2.9 authors: casual outlives standard
@@ -1873,8 +1958,9 @@ func test_gate_29_neglect_is_fatal_on_every_preset_and_ordered() -> void:
 						% [kinder, harder, int(died[kinder]), int(died[harder])])
 	assert_true(absi(int(died["standard"]) - STANDARD_LIFETIME_DAYS)
 					<= STANDARD_LIFETIME_BAND,
-			("standard do_nothing died on game-day %d; measured 74–76 "
-					+ "(doc 92 §32.5, unmoved from §29.3)") % int(died["standard"]))
+			("standard do_nothing died on game-day %d; measured 68–70 "
+					+ "(doc 92 §33.4; was 74–76 before doc 07 reached doc 10)")
+					% int(died["standard"]))
 
 
 # ============================== 30 the saturation rule (doc 06 §2.13(b), §31)

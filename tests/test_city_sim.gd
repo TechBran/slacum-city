@@ -114,20 +114,32 @@ func test_economy_settles_in_the_loop() -> void:
 	# factors, real E_water inventory, per-building road access — and doc 06's
 	# live fleet roster replaced doc 03's held `STARTER_VEHICLES` (doc 92 pass-2
 	# fleet-billing ruling: E_fleet 58 → 76, E_fuel_vehicle 6 → 0). The founding
-	# hour lands at ≈ +$336.50/gh, ≈ +$8.0k/day, which is what
-	# `data/economy.json`'s re-stamped `STARTER_NET_PER_HOUR_EXACT` says. The doc
-	# 03 §2.12 worked-example refresh is tracked in doc 93; the LIVE CHAIN is the
-	# test, and `tests/test_balance_gates.gd` gates 1–2 hold the exact figure.
+	# hour lands at ≈ +$336.50/gh, which is what `data/economy.json`'s re-stamped
+	# `STARTER_NET_PER_HOUR_EXACT` says. The doc 03 §2.12 worked-example refresh
+	# is tracked in doc 93; the LIVE CHAIN is the test, and
+	# `tests/test_balance_gates.gd` gates 1–2 hold the exact figures.
 	var sim := CitySim.boot_from_files()
 	var start: int = sim.treasury.balance
 	sim.advance_hours(1.0)
 	var first_hour: int = sim.treasury.balance - start
 	assert_true(first_hour >= 330 and first_hour <= 343,
 			"first settled hour ≈ +$336.50 (got %d)" % first_hour)
+	# **RE-FIT Wave 14 (doc 92 §33.2, report 98 RR-69): ≈ +$8,006 → ≈ +$7,390.**
+	# The FIRST HOUR above did not move (it is clear weather, and the band holds
+	# with three times the margin to spare) — the DAY did, because doc 07's
+	# weather state now reaches doc 10's roads and the founding day at seed 1337
+	# rains for twelve of its twenty-four game-hours. `wx_wear_day` steps
+	# 0.00 → 0.30 at gh 13 and holds (it is the day's MAX), so `E_roads_repair`'s
+	# `(1 + 0.75·c_day)·(1 + wx_wear_day)` averages 1.2493 over the day against
+	# 1.0857 in permanent sunshine, and the line goes $158.42 → $183.92/gh.
+	# Every other expense line and the whole revenue side are unchanged to the
+	# cent — doc 92 §33.2 carries the eight-line table and the hour-by-hour
+	# derivation. Same ±2.5 % band this assertion always had, re-centred.
 	sim.advance_hours(23.0)
 	var day_net: int = sim.treasury.balance - start
-	assert_true(day_net >= 7_800 and day_net <= 8_200,
-			"a founding day nets ≈ +$8,006 (got %d)" % day_net)
+	assert_true(day_net >= 7_200 and day_net <= 7_580,
+			"a founding day nets ≈ +$7,390 in the founding day's real weather (got %d)"
+					% day_net)
 
 
 func test_availability_settles_hourly() -> void:
@@ -248,3 +260,62 @@ func test_block_dark_events_drive_the_renderer_contract() -> void:
 		if event["type"] == &"BlockDarkChanged" and not bool(event["block_dark"]):
 			relit += 1
 	assert_true(relit >= 1, "relight arrives on the same event channel")
+
+
+# ------------------------------- doc 10 §5.1: the two seams nothing used to fill
+
+func test_the_roads_land_use_and_weather_seams_are_injected() -> void:
+	# `RoadNetwork.profile_weights_of` and `weather_state_of` shipped as fields
+	# nothing assigned, so doc 09's per-district land-use weights and doc 10 §8's
+	# weather rows were authored and unreachable. Both are wired now, and the
+	# assertions below are what "wired" has to mean rather than a valid Callable.
+	var sim := CitySim.boot_from_files()
+	assert_true(sim.roads.profile_weights_of.is_valid(), "doc 09's weights reach roads")
+	assert_true(sim.roads.weather_state_of.is_valid(), "doc 07's state reaches roads")
+	assert_eq(sim.roads._weather_state(), sim.weather.get_state().to_lower(),
+			"and roads reads the CITY-WIDE state, lower-cased onto its own table")
+
+	# Report 98 RR-61's founding-city defect stays fixed: every sibling is
+	# injected BEFORE `bootstrap()`, so `_assign_districts` had a valid Callable
+	# on the pass that stamped the edges. With the weights live, an unstamped
+	# edge is now a live-vs-restored divergence rather than an inert one.
+	var blank := 0
+	for edge_id in sim.roads.graph.edge_ids_sorted():
+		if String(sim.roads.graph.edge(edge_id).get("district_id", "")) == "":
+			blank += 1
+	assert_eq(blank, 0, "every edge of a LIVE founding city carries its district")
+
+	# The point of the table: districts disagree about the shape of their day.
+	var rows: Dictionary = {}
+	for district_id in sim.districts.district_ids_sorted():
+		var weights: Dictionary = sim.roads.profile_weights_of.call(district_id)
+		assert_false(weights.is_empty(), "%s publishes a land-use mix" % district_id)
+		rows[district_id] = sim.roads.congestion.d_tod(weights, 2.5)
+	var values: Array = rows.values()
+	values.sort()
+	assert_true(float(values[-1]) - float(values[0]) > 0.05,
+			("the four founding districts want different amounts of road at 02:30 "
+					+ "(%s) — before this wave every one of them read the default row")
+					% str(rows))
+
+
+func test_the_land_use_weights_survive_a_restore_identically() -> void:
+	# They are DERIVED and not persisted, so the only thing that keeps a loaded
+	# city on the live city's congestion is that the derivation is re-run from a
+	# roster the save does carry. If it were not, save->load->advance would
+	# diverge on the first congestion pass.
+	var sim := CitySim.boot_from_files()
+	sim.advance_hours(3.0)
+	var before: Dictionary = {}
+	for district_id in sim.districts.district_ids_sorted():
+		before[district_id] = (sim.roads.profile_weights_of.call(district_id) as Dictionary) \
+				.duplicate()
+	var body := sim.capture_state()
+	var restored := CitySim.boot_from_files()
+	restored.restore_state(body)
+	for district_id in restored.districts.district_ids_sorted():
+		var weights: Dictionary = restored.roads.profile_weights_of.call(district_id)
+		var was: Dictionary = before[district_id]
+		for profile in DistrictRegistry.PROFILES:
+			assert_eq(float(weights[profile]), float(was[profile]),
+					"%s.%s is the same float after a restore" % [district_id, profile])

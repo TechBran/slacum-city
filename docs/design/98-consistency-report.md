@@ -2250,3 +2250,136 @@ is what keeps the card on screen for that one frame.
 **Ruling: after choosing a width for a wrapping container, re-read its height.**
 Recorded here because it will be met again — every `HBox` → `HFlowContainer`
 conversion this project makes from now on carries it.
+
+## 28. WAVE 14 — the last two dead inputs (binding)
+
+### RR-69 — A seam with a plausible DEFAULT on the far side is the hardest kind to notice, and there were two of them in one file (docs 07 §5, 09 §2.6.1/§5, 10 §2.10/§2.12/§5.1, 91 A91-D-32, 92 §33, 93 §O)
+
+`RoadNetwork` declares two injectable siblings at the top of the file:
+
+```gdscript
+var profile_weights_of: Callable = Callable()  # doc 09
+var weather_state_of: Callable = Callable()    # doc 07
+```
+
+**`CitySim` assigned neither. Not at boot, not after a restore, not anywhere.**
+Wave 12's determinism agent found them and filed them as its open q1/q2; this
+wave closes them. What was actually shipping, on every city anyone has ever
+played:
+
+* `_profile_weights(district)` fell through to `data/roads.json`'s
+  `default_profile_weights` **for every district**, so doc 10 §2.10's four
+  authored land-use curves were four copies of one curve and doc 09's
+  `district_profile_weights` interface had no implementation on either side.
+* `_weather_state()` fell through to the field's initialiser, the literal string
+  `"clear"`, **for the life of the process**. `wx_cong_add` was 0.00,
+  `wx_slowdown` was 0.00 and `wx_wear_day` was 0.00 — so **rain had never slowed
+  traffic in a shipped build and no road had ever worn faster for being wet**,
+  and eleven authored rows of `data/roads.json`'s `weather` table were
+  unreachable by any code path.
+
+**The lesson is the shape, not the two fields.** A stub crashes, a TODO greps,
+and an unimplemented method fails a test. A `Callable()` with a *well-defined
+degraded default behind it* does none of those things: every consumer gets a
+plausible number, every test passes, and the profiler shows the code running.
+The same shape produced A91-D-19 (four authored difficulty presets behind a
+compiled-in `standard` row) and doc 06's Chebyshev stand-in. **The tell is a
+fallback whose own comment explains what will replace it** —
+`data/roads.json`'s `_default_profile_weights_note` said *"Delete the fallback
+once doc 09 ships the real per-district building mix"*, and had said it since it
+was written.
+
+> **Ruling.** An injected sibling that has a default must have a test that asserts
+> the sibling is INJECTED, not merely that the default is sane —
+> and it must assert a CONSEQUENCE, because a `Callable` that returns the default
+> is perfectly valid. `tests/test_city_sim.gd::test_the_roads_land_use_and_weather_seams_are_injected`
+> is that test for these two: every edge carries a district id, and the four
+> founding districts disagree about `D_tod` by more than 0.05.
+
+**What shipped.** Doc 09's `DistrictRegistry` gains `profile_weights(id)` and
+`set_building_mix(mix)` — the publication doc 10 §5.1 has always named — holding
+the normalised `Σ(population + jobs)` share per profile, computed from doc 02's
+roster. `CitySim._district_profile_weights` is the wire, memoised on
+`(roster_revision, membership_revision)` rather than given a cadence (doc 93
+§O1), and `CitySim._road_weather_state` is the other,
+`weather.get_state().to_lower()` onto doc 10 §8's table — the same fold doc 05's
+water system has always used for `weather_kind`.
+
+**Both are injected BEFORE `bootstrap()` now, and the ordering closes a second
+defect.** RR-61 recorded that `_assign_districts()` inside `bootstrap()` saw an
+invalid `Callable` and wrote no `district_id` on a live founding city while the
+restored twin carried the real district on every edge — and correctly called it
+*inert, only because `profile_weights_of` is injected by nothing*. It is not
+inert any more, so the assignments moved above the `bootstrap()` call.
+`district_of_tile` keeps its re-stamping setter as the belt to these braces.
+
+**The hashes moved, and this time that IS the deliverable.** Doc 92 §33 carries
+the balance derivation and the gate re-fit. For the record, the digests either
+side (`tools/profile_sim.gd --hash-only`, 24 coarse game-hours + 2 fine, seed
+1337, on the founding city and on `tests/fixtures/bench_city.json`):
+
+| | HEAD (Wave 13) | this wave |
+|---|---|---|
+| founding, coarse 24 h | `e8bffba1853f248e…` | `0b67cd2273a5115a…` |
+| founding, fine 2 h | `08bfdfaa3dd65281…` | `4f9f383038fbe383…` |
+| bench, coarse 24 h | `e760f9305d21d331…` | `bbe658aeeaa9f855…` |
+| bench, fine 2 h | `bd2d8f30d25827f4…` | `158501b8845b056f…` |
+
+**One row of the ledger moved, and only one** — which is the evidence that the
+wiring did what it says and nothing else. Founding `do_nothing`, `standard`, mean
+over the first 24 game-hours, measured with `tools/measure_founding_ledger.gd`
+either side of the same patch (`git diff` → `git checkout --` → `git apply`;
+never `git stash`, whose ref is shared across worktrees):
+
+| line | before | after |
+|---|---|---|
+| gross revenue | 839.81 | 839.81 |
+| `building_maint` · `departments` · `fleet` · `grid` · `generation_fuel` · `water` | — | unchanged to the cent |
+| **`roads_repair`** | **158.42** | **183.92** |
+| net $/gh | +333.01 | **+307.51** |
+
+**Four of the thirty gates are re-fitted, each with its derivation in the test
+file itself, and twenty-six are not touched.** The 30-gate contract is a contract
+about *what is asserted*, not about the numbers a measurement produces, and the
+rule this wave applied is the one doc 92 has applied since §13: **re-fit a gate
+only where its derivation legitimately moved, and record the old number beside
+the new one.**
+
+| gate | what moved | before → after |
+|---|---|---|
+| **2** founding first game-day net | `wx_wear_day` stopped being 0.00 | `STARTER_FIRST_GAME_DAY_NET_EXACT` 8,004.047 → **7,380.321** |
+| **19** the ambient dispatch beat | doc 06's `f_flow` finally sees a congestion index that moves | band `[62, 132]` → **`[100, 200]`** around a measured 92 → 146 |
+| **21** the curriculum is paced | the agent's purse fills more slowly | `CURRICULUM_OPENING_BEAT_H` 45 → **58** |
+| **29** neglect is fatal and ordered | every preset dies sooner; the ORDERING is preserved | `PRESET_LIFETIME_FLOOR` 25 → **18**, `STANDARD_LIFETIME_DAYS` 76 → **69** |
+
+**Gates 1 and 2b were NOT re-fitted and that is the more interesting half.** The
+founding *hour* is clear weather, so it moved only by the land-use half —
+`roads_repair` 157.90 → 158.46, net +337.05 → +336.49, i.e. **0.17 %** against a
+±1 % band. `data/economy.json`'s two `_EXACT` hour anchors keep their values and
+gain a note saying why: absorbing a drift that small into an anchor is the
+mistake the file's own `_k_rounding_note` declines to make. **Recorded, not
+absorbed.**
+
+Two more that did not move, and are worth naming because they could have:
+`tests/test_save_determinism_days.gd` takes its saves at 2 h, **26 h**, **50 h**
+and seven game-days — every one of the last three lands inside rain on the
+founding city now — and it is green, so **a city saved mid-downpour restores with
+the same wet roads and advances bit-identically**. And gate 30's 200-game-day
+`crisis` run is green with the roster still bounded, so §33.5's doubled accident
+channel does not reach doc 06 §2.13(b)'s ceiling.
+
+**And it is free, which RR-43 makes it easy to check.** The congestion pass
+already resolved the per-district weights once per district per pass and handed
+`_d_tod_memo` a key it was already keyed on; all this wave adds is a `Vector2i`
+compare and one dictionary lookup per district per pass. Measured back to back on
+a quiet box, `tools/profile_congestion.gd --city=res://tests/fixtures/bench_city.json`:
+
+| | before | after |
+|---|---|---|
+| `RoadNetwork.full_pass` | 2.9372 ms/game-minute | **2.9486** (+0.4 %) |
+| `roads_congestion` SimTick mean | 3.8416 ms | **3.7267** |
+| `CongestionModel.last_moved` census | 3,092 of 3,092 | 3,092 of 3,092 |
+
+RR-43's refusal is untouched: `hour` still reaches every edge through `D_tod`,
+so the skippable set is still empty — and it is now empty for a second reason,
+because `D_tod` differs per district as well as per hour.

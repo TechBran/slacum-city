@@ -312,6 +312,46 @@ Under the `F_SOUTH` fault, with only `D_DOWNTOWN` degraded to 0.7335: `(93.580 +
 
 `city_stability` is a **read-only publication**: nothing outside this doc writes it, and it feeds doc 03's happiness chain (§2.10), doc 07's Director pressure and doc 12's dashboard.
 
+#### 2.6.1 `profile_weights` — the district's land-use mix, and doc 10's consumer (Wave 14)
+
+Doc 10 §5.1 has always named `land.district_profile_weights(id) -> {res, com, ind, civ}` as this doc's to publish. Until Wave 14 nothing did, and doc 10's four authored time-of-day curves were four copies of one curve on every district of every city (report 98 RR-69, doc 91 A91-D-32). `DistrictRegistry.profile_weights(id)` is that publication.
+
+**What it is.** A district's normalised share of *trip generation*, per doc 10 profile:
+
+```
+raw_p     = Σ over buildings in the district with profile p of (population + jobs)     ← doc 02 CAPACITY
+weight_p  = raw_p / Σ_q raw_q                                     (the row sums to 1)
+```
+
+The weight is `population + jobs` and **not a building count**: it is the same `pj` doc 10 §2.10's `L_dens` counts, because both are trip generation, and one 60-resident high-rise is not one house. It is authored **capacity**, not this hour's `occ_b`: occupancy already swings with the hour of day, and a weight that swung with it would put doc 10's time-of-day curve inside its own weights.
+
+**The fold from doc 02's five categories to doc 10's four curves** lives in `DistrictRegistry.CATEGORY_PROFILE` and is read off what doc 10 says each curve *means*, not off the category's name:
+
+| doc 02 category | archetypes | doc 10 profile | why |
+|---|---|---|---|
+| `residential` | house, apartment, high_rise | `res` | — |
+| `commercial` | store, office | `com` | — |
+| `industrial` | data_center | `ind` | (its doc 03 **tax** class is `tech`; that is a different axis) |
+| `utility` | power_facility, substation, water_facility | **`ind`** | utilities are industrial land use in any zoning taxonomy, and `ind` is *"flat-shifted, peaking 16:00 and never below 0.18 overnight"* — a continuously-staffed plant. Folding them into `civ` would empty a 24/7 works at 03:00 |
+| `service` | police_station, fire_station, construction_yard | `civ` | doc 10: `civ` *"peaks 07:00 and 15:00 for school and shift changes"* — the emergency-service watch change |
+
+**Cadence: a revision memo, not a day timer (doc 93 §O1).** Doc 10 §2.10 used to say "recomputed once per game-day". The mix is a pure function of the building roster and of district membership, and both carry a revision counter, so `CitySim` keys the rebuild on that pair — the same shape `district_of_building()` already had. **A block that develops mid-game therefore shifts its district's rush hour on the pass after the building lands**, not at the next midnight; that is this doc's grain (a district *aggregates*, and its aggregates are refreshed when their inputs move) and it removes a second cadence that would have had to be kept bit-identical between the fine and coarse paths for no gain.
+
+**Derived, never persisted.** §3.2's district section does not carry it and the state hash never sees it. A restored city re-derives the identical row from the roster the save *does* carry, before its first tick — which is what keeps a loaded city on the live city's congestion. `deserialize` drops the live row rather than keeping a stale one alive.
+
+**A district with no trips at all publishes `{}`**, and doc 10 falls back to `data/roads.json`'s authored `default_profile_weights`. That is deliberate: an empty district has no land use, and a fabricated uniform row would be a number nobody authored.
+
+Measured on the founding city at t0:
+
+| district | mix (`Σ pop+jobs`) | `res` | `com` | `ind` | `civ` |
+|---|---|---|---|---|---|
+| `D_DOWNTOWN` | 1 apartment · 1 office · 4 stores · 1 substation | 0.3095 | **0.6429** | 0.0476 | 0.0000 |
+| `D_FOUNDRY` | 1 house · 1 power facility · 1 store | 0.1333 | 0.2000 | **0.6667** | 0.0000 |
+| `D_MILLPOND` | 4 houses · 1 police station · 2 water facilities | 0.3333 | 0.0000 | 0.4167 | 0.2500 |
+| `D_NORTHGATE` | 13 houses · 2 apartments · 1 fire station · 1 yard | **0.7761** | 0.0000 | 0.0000 | 0.2239 |
+
+The starter city's authored character survives the arithmetic without anyone hand-tuning a weight: Downtown is commercial, the Foundry is industrial, Northgate is a dormitory. Doc 10 §2.10 carries what that does to `D_tod`.
+
 ### 2.7 Elevation, and what other docs get from it
 
 Blocks are **flat at their `elevation_m`**; there is no intra-block terrain variation in MVP. `elev_m(tile)` therefore reduces to a block lookup — this is the answer to doc 07's open question 8 (flooding is block-granular, 128 m at a time) and to doc 05's `elev_m(tile)` requirement.
@@ -1358,7 +1398,7 @@ Doc numbers below are the **canonical on-disk numbering** (report 98 Ruling Zero
 | **06 Incidents, dispatch & fleets** | `crime_index`, `fire_risk` per district, station/vehicle definitions, crew roster and rates, `destroy_allowed()` participation | **`stability ∈ [0,1]` per district** (§2.6) for `f_stab`, `city_level` for vehicle unlocks, station sites, hydrant sites, `block_of(tile)`, the land-development phase→crew-type mapping (G-2) |
 | **07 Weather & Disaster Director** | storm intensity, `wind_kph`, `precip01`, `weather_build_mult` via `get_effect()` | `elevation_band ∈ {LOW,MID,HIGH}` per block (**answers their open question 8: block-granular, 128 m**), `drain_rate_mm_h` per block, `flood_risk` and the full `env_risk` profile; **`city_stability`** and `districts.apply_stability(id, d)` — they never write a city scalar directly (C-56) |
 | **08 Persistence & offline** | save/load orchestration, the offline coarse-advance driver, `OfflineGuard`, `is_resync` | the five sections of §3.2, integer-minute development state and closed-form relaxations that make the coarse path exact; **`tests/fixtures/bench_city.json`, which they validate in CI** (G-7) |
-| **10 Roads, routing & traffic** | road-graph construction, congestion, closure state, **`access_quality(pos) ∈ [0,1]`** — the single definition of tile-level road access (C-61) | the road tile template and **the class mapping: boundary → `AVENUE`, interior collector and player-placed → `STREET`** (C-60); 87 tiles/block, 540 AVENUE + 243 STREET tiles in the core; the widening-on-development rule; flooded-tile impassability; the intersection list; `city_level` for the road-crew unlock |
+| **10 Roads, routing & traffic** | road-graph construction, congestion, closure state, **`access_quality(pos) ∈ [0,1]`** — the single definition of tile-level road access (C-61) | the road tile template and **the class mapping: boundary → `AVENUE`, interior collector and player-placed → `STREET`** (C-60); 87 tiles/block, 540 AVENUE + 243 STREET tiles in the core; the widening-on-development rule; flooded-tile impassability; the intersection list; `city_level` for the road-crew unlock; **`district_profile_weights(id) -> {res,com,ind,civ}` (§2.6.1) — SHIPPED Wave 14, and until then the one row of this table that was an interface rather than a wiring (report 98 RR-69)** |
 | **11 Rendering & performance** | — | block bounds as chunk bounds (chunk == land block, constitution §6), `get_block_terrain()`, terrain class + elevation for the ground mesh, `development_state` for construction-site VFX, **`block_road_access_score`** (C-61), `district_dark_fraction` for district-scale tinting; **`tests/fixtures/bench_city.json`** via `tools/gen_bench_city.py` (G-7) |
 | **12 UI/UX & onboarding** | — | grid labels `A1`–`G7`, block purchase preview data, development progress, district colours/aggregates/`stability`, **population, happiness, `city_level` and progress to the next level**, milestone notifications, and the **tag registry of §2.9.7 (answers their open question 7)** |
 | **13 Android integration** | — | nothing directly; all state reaches the shell through doc 08's save and doc 12's UI |

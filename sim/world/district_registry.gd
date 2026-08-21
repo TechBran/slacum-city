@@ -13,6 +13,34 @@ const WATER_REL_HALFLIFE_H: float = 24.0  # doc 05 §2.11: EMA over a game-day
 ## one-off event fades rather than permanently rewriting the aggregate.
 const EVENT_OFFSET_HALFLIFE_H: float = 6.0
 
+## Doc 10 §2.10's four land-use profile curves, in the order this file sums
+## them. A district's `profile_weights` is one normalised number per entry.
+const PROFILES: Array[String] = ["res", "com", "ind", "civ"]
+## Doc 02's five archetype CATEGORIES folded onto those four curves. The fold is
+## read off doc 10 §2.10's own description of what each curve MEANS, not off the
+## name of the category:
+##
+## * `industrial` carries `data_center` (whose TAX class is `tech` — doc 03's
+##   axis, not this one) → **ind**.
+## * `utility` — power plant, substation, water works — is **ind** as well, and
+##   deliberately. Utilities are industrial land use in every zoning taxonomy,
+##   and doc 10's `ind` curve is *"flat-shifted, peaking 16:00 and never below
+##   0.18 overnight"*, which is precisely a 24/7 plant's trip profile. Folding
+##   them into `civ` instead would put a continuously-staffed works on a curve
+##   that empties at 03:00 — and would leave the `ind` row of `tod_curves`
+##   authored and dead on the founding city, which is the exact defect this
+##   wiring exists to end.
+## * `service` — police, fire, the construction yard — is **civ**: doc 10 says
+##   that curve *"peaks 07:00 (0.75) and 15:00 (0.75) for school and shift
+##   changes"*, which is the emergency-service watch change, not a plant.
+##
+## An unknown category is `civ` rather than a crash: a new archetype must not be
+## able to silently zero a district's demand.
+const CATEGORY_PROFILE := {
+	"residential": "res", "commercial": "com", "industrial": "ind",
+	"service": "civ", "utility": "ind",
+}
+
 var world: WorldMap
 var rng: RngStreams
 var name_pool: Array = []
@@ -25,6 +53,9 @@ var city_stability: float = 1.0
 ## sub-step, per building) can tell when its answer went stale. Derived, so it
 ## is neither serialized nor hashed.
 var membership_revision: int = 0
+## `district_id -> {res, com, ind, civ}`, normalised. Doc 10 §5.1's
+## `land.district_profile_weights(id)`, and DERIVED — see `set_building_mix`.
+var _profile_weights: Dictionary = {}
 
 
 func _init(p_world: WorldMap, p_rng: RngStreams, p_name_pool: Array = []) -> void:
@@ -164,6 +195,51 @@ func set_population_jobs(district_id: String, population: int, jobs: int) -> voi
 	d["jobs"] = jobs
 
 
+## Doc 10 §5.1's `land.district_profile_weights(id) -> {res, com, ind, civ}` —
+## the per-district land-use mix doc 10 §2.10's `D_tod` sums the four hourly
+## curves with. A residential district's twin rush-hour peaks and an industrial
+## district's flat-shifted 16:00 peak are the same four curves read through two
+## different rows of this table; without it every district got doc 10's default
+## row and the authored curves were four copies of one curve.
+##
+## A district this registry has never been given a mix for — or one whose
+## buildings generate no trips at all — answers `{}`, which is roads' signal to
+## use `data/roads.json`'s authored `default_profile_weights`. It is deliberately
+## NOT a fabricated uniform row: an empty district has no land use, and inventing
+## one would be a number nobody authored.
+func profile_weights(district_id: String) -> Dictionary:
+	return _profile_weights.get(district_id, {})
+
+
+## The one writer. `mix` is `{district_id: {profile: pj}}` of RAW
+## `Σ(population + jobs)` per profile — trip generation, the same `pj` doc 10
+## §2.10's `L_dens` counts, and NOT a building count: a 60-resident high-rise is
+## not one house. `CitySim` builds it from doc 02's roster (it owns the
+## cross-doc seam); this normalises it, because a row that reached doc 10
+## un-normalised would silently rescale `D_tod`.
+##
+## **Derived, and therefore neither serialized nor hashed.** The mix is a pure
+## function of the building roster and district membership, both of which the
+## save already carries, so a restored city re-derives the identical row before
+## its first tick rather than carrying a second copy that could disagree with
+## the roster it was saved beside.
+func set_building_mix(mix: Dictionary) -> void:
+	_profile_weights.clear()
+	var district_ids := mix.keys()
+	district_ids.sort()   # float division order is not state, but reproducibility is cheap
+	for district_id in district_ids:
+		var row: Dictionary = mix[district_id]
+		var total := 0.0
+		for profile in PROFILES:
+			total += float(row.get(profile, 0.0))
+		if total <= 0.0:
+			continue
+		var normalised: Dictionary = {}
+		for profile in PROFILES:
+			normalised[profile] = float(row.get(profile, 0.0)) / total
+		_profile_weights[String(district_id)] = normalised
+
+
 func set_indices(district_id: String, crime_index: float, fire_risk: float, traffic_state: float) -> void:
 	var d: Dictionary = _districts[district_id]
 	d["crime_index"] = crime_index
@@ -270,6 +346,11 @@ func serialize() -> Dictionary:
 
 func deserialize(data: Dictionary) -> void:
 	_districts.clear()
+	# The mix is derived from a roster this call does not restore, so it is
+	# dropped rather than carried: `membership_revision` moves here, which is
+	# half of `CitySim`'s memo key, so the next reader rebuilds it from the
+	# roster the restore is about to lay down.
+	_profile_weights.clear()
 	membership_revision += 1
 	for d in data.get("districts", []):
 		_districts[String(d["id"])] = d

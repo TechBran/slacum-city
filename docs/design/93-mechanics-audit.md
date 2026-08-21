@@ -1315,6 +1315,76 @@ own trigger was "if crisis still founds negative", and after §N1 it founds
 positive. The coverage ratio is the better test and it belongs to whoever rules
 on the purse; doc 92 §32.7 ranks it first.
 
+## O. Wave-14 rulings — the two dead traffic inputs, and the cadence that is not a cadence (2026-08-21)
+
+Doc 10 §2.10 and §2.12 read two things through injected `Callable`s: doc 09's
+per-district land-use weights and doc 07's weather state. **`CitySim` assigned
+neither, on any path, for the life of the project** (report 98 RR-69, doc 91
+A91-D-32). Both fields had a well-defined degraded default on the other side —
+one authored profile row, and the literal string `"clear"` — which is why the
+gap survived thirteen waves of audit: every consumer got a plausible number.
+Three things had to be ruled to close it.
+
+### O1. A derived quantity's refresh grain is its INPUTS' revision, not a timer
+
+Doc 10 §2.10 said `profile_weights` is *"recomputed once per game-day"*. It is
+now **derived**, and `CitySim` keys the rebuild on `(roster_revision,
+districts.membership_revision)` — the same shape `district_of_building()` has
+carried since Wave 9. The ruling, stated generally because it will be met again:
+
+> **When a value is a pure function of state that already carries a revision
+> counter, memoise it on that counter. Do not give it a cadence.** A cadence is a
+> second thing that has to be proved bit-identical between the fine and the
+> coarse path, it recomputes when nothing moved, and — the decisive one — it needs
+> a hook on the RESTORE path that a future wave can forget. A revision memo cannot
+> be forgotten: the counter moves during the restore, so the first reader after a
+> load rebuilds from the roster the save carried.
+
+Three consequences worth naming. (a) A block that develops mid-game shifts its
+district's rush hour on the pass after the building lands, not at the next
+midnight — which is doc 09's grain (a district *aggregates*) and matches doc 10's
+own treatment of the sibling term `L_dens`, refreshed on `building_changed`.
+(b) The weights are neither serialized nor hashed; `DistrictRegistry.deserialize`
+**drops** the live row rather than keeping a stale one alive. (c) There is no
+save-section rung in this wave, because no persisted shape changed.
+
+### O2. Mode invariance for the weather → roads seam, stated per system (§E2)
+
+§E2 ruled that mode-invariance is claimed **per system**. This is the roads-vs-doc-07 claim, and it has two halves that are deliberately not the same strength:
+
+| quantity | claim | why |
+|---|---|---|
+| `wx_wear_day`, and therefore daily condition decay | **bit-identical** between the fine and coarse paths | doc 07's `_sync_clock` derives `now_min` from `ctx.tick_index` alone, and roads samples its daily wear accumulator at the top of each game-hour in **both** modes — so the two paths read `get_state()` at the same game-minutes, and take the same `max` over the same 24 samples |
+| within-hour `c_e` | **bounded by one coarse step** | a doc 07 segment boundary inside a coarse hour is priced at the hour's opening state by the coarse path and at the tick's own state by the fine one. `c_e` re-converges within the next step because the smoother lands on `c_raw` |
+
+The second row is sanctioned in exactly the class §E2 already sanctions — doc 06
+§2.6's Poisson counts per step size, doc 04 §2.12's one-step coarse thermal
+integration — and it is *smaller* than either, because roads' congestion has no
+memory beyond the smoother. **Save→load→advance identity is untouched and stays
+exact and whole-hash**: a save taken in the rain restores into the same rain
+(doc 07 §3.2 persists the timeline and the segment cursor), and the derived
+weights come back from the roster. `tests/test_roads_integration.gd::test_the_weather_seam_is_mode_invariant_while_the_sky_holds`
+and `tests/test_city_sim.gd::test_the_land_use_weights_survive_a_restore_identically`
+are the assertions.
+
+### O3. A category fold is read off what the CURVE means, not off the category's name
+
+Doc 02 has five archetype categories and doc 10 has four land-use curves, so
+somebody had to write the fold. `utility` — power plant, substation, water works
+— folds onto **`ind`**, not onto `civ`, and the argument is doc 10's own prose:
+`ind` is *"flat-shifted, peaking 16:00 and never below 0.18 overnight"*, which is
+a continuously-staffed plant, while `civ` *"peaks 07:00 and 15:00 for school and
+shift changes"*, which is the emergency-service watch change that `service`
+actually is. Utilities are also industrial land use in any zoning taxonomy.
+
+The check that this is not a rationalisation: with `utility → civ`, the founding
+city's `ind` weight is **0.000 in all four districts** — doc 10's `ind` curve
+would have been authored-and-dead on the very wave that exists to end
+authored-and-dead rows. With `utility → ind` the Foundry reads `ind 0.667` and
+wants 2.7× the road at 02:30 that the commercial core does. **A fold that leaves
+one of the four curves at zero everywhere is the wrong fold**, and that is the
+cheap test to apply the next time one is written.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,
