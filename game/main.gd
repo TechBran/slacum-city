@@ -10,6 +10,13 @@ extends Node3D
 ## HUD snapshot cadence: doc 12 §2.4 classes the chips "read-only + rare", and
 ## once a real second is already far more often than a player can read them.
 const HUD_REFRESH_S := 1.0
+## doc 13 §2.9's catch-up slice. WHOLE units only, so one unit longer than this
+## still runs to completion — the ANR margin is structural, not budgetary, and
+## the budget is here rather than in `sim/` because `sim/` may not read a clock
+## (constitution §5). At the measured 6.3 ms (founding) to 190 ms (bench) per
+## coarse step this spends exactly one step per frame, which is §2.9's own
+## worst-case row.
+const CATCHUP_SLICE_USEC := 12000
 
 var sim_host: SimHost
 var render_model: RenderStateModel
@@ -76,6 +83,14 @@ var _title_up := false    # true while the door is showing; gates saves + catch-
 ## of a frozen frame (doc 08 §2.15.2, doc 13 §2.9.1).
 var _restore_cursor: RestoreCursor = null
 var _restore_slot := -1
+## The offline catch-up in flight, or null (doc 13 §2.9, report 98 §29 RR-73).
+## While it is non-null the city is MID-ABSENCE: every hour of it is a real sim
+## state, but it is not the state the HUD, the bus drain or the away report are
+## written against, and `SimHost` must not add live ticks on top of the plan.
+var _catchup_cursor: CatchUpCursor = null
+## What `_finish_catchup()` needs that the cursor does not carry.
+var _catchup_after: Dictionary = {}
+var _catchup_was_paused := false
 var _render_data: Dictionary = {}
 var road_surface: RoadSurfaceView
 ## doc 11 §7.4's PERF line — emitted by this, because nothing ever called
@@ -1567,37 +1582,66 @@ func _on_app_paused(saved: bool) -> void:
 func _on_app_resumed(elapsed_wall_s: float) -> void:
 	if crash_sentinel != null:
 		crash_sentinel.arm()
-	if _title_up:
-		return   # the title door is up; nothing underneath is owed catch-up
+	if _title_up or _restore_cursor != null:
+		return   # the title door is up, or a load already owns the frame
+	# A SECOND absence on top of an unfinished one — the player backgrounded the
+	# app while the catch-up veil was still up, which only became reachable when
+	# the catch-up stopped being one frame. Drain the old plan on the spot rather
+	# than drop the new one; it cannot recurse because `_finish_catchup()` clears
+	# the cursor.
+	if _catchup_cursor != null:
+		_catchup_cursor.run()
+		_finish_catchup()
 	var sim := sim_host.sim
 	var plan: Dictionary = CatchUpPlanner.plan(int(elapsed_wall_s * 1000.0),
 			sim.clock.residual_game_ms, sim.clock.tick_index)
-	# S15's catch-up phase (doc 13 §2.9). `veil.min_steps` refuses a short
-	# absence and takes a SHOWING veil down with it. A91-D-31 note: this loop is
-	# synchronous, so the veil draws for at most one frame until the sliced
-	# advance is wired; `advance_veil_catchup` is already called per segment.
+	# S15's catch-up phase (doc 13 §2.9, report 98 §29 RR-73). One slice per
+	# frame through `CatchUpCursor`, so the veil draws for the whole absence.
 	var total_ticks := int(plan.get("total_ticks", 0))
 	if ui_root != null:
 		ui_root.present_veil_catchup(total_ticks / GameClock.TICKS_PER_HOUR,
 				total_ticks, bool(plan.get("capped", false)))
-	var done_ticks := 0
-	for segment: Dictionary in plan.get("segments", []):
-		var count := int(segment.get("count", 0))
-		if count <= 0:
-			continue
-		if String(segment.get("kind", "")) == "coarse":
-			sim.advance_coarse_hours(count)
-			done_ticks += count * GameClock.TICKS_PER_HOUR
-		else:
-			sim.scheduler.advance_fine_n(count)
-			done_ticks += count
-		if ui_root != null:
-			ui_root.advance_veil_catchup(done_ticks)
+	# THE PAUSE IS LOAD-BEARING: unpaused, `SimHost._process` would add live
+	# fine ticks BETWEEN the plan's slices and the sliced resume would land on
+	# a different city from the synchronous one.
+	_catchup_was_paused = sim_host.paused
+	sim_host.paused = true
+	_catchup_after = {"elapsed_wall_s": elapsed_wall_s,
+			"residual_game_ms": int(plan.get("new_residual_game_ms", 0))}
+	_catchup_cursor = sim.begin_catchup(plan)
+	_advance_catchup()   # spend the first slice on THIS frame, as the loop did
+
+
+## Runs INSTEAD of the rest of `_process` while a catch-up is in flight. Whole
+## units against a wall-clock budget: the sim owns the unit, the shell owns the
+## budget (doc 13 §2.9, `CatchUpCursor`'s own class doc).
+func _advance_catchup() -> void:
+	var started := Time.get_ticks_usec()
+	var done := false
+	while not done:
+		done = _catchup_cursor.step()
+		if Time.get_ticks_usec() - started >= CATCHUP_SLICE_USEC:
+			break
+	if ui_root != null:
+		ui_root.advance_veil_catchup(_catchup_cursor.done_ticks())
+	if done:
+		_finish_catchup()
+
+
+## Everything the synchronous loop did AFTER it: the residual the planner left,
+## the offline event batch (which is what puts buildings finished offline into
+## the world — `_on_sim_batch` is the only door), and the away report.
+func _finish_catchup() -> void:
+	var sim := sim_host.sim
+	_catchup_cursor = null
+	sim_host.paused = _catchup_was_paused
 	if ui_root != null:
 		ui_root.dismiss_veil()
-	sim.clock.residual_game_ms = int(plan.get("new_residual_game_ms", 0))
+	sim.clock.residual_game_ms = int(_catchup_after.get("residual_game_ms", 0))
 	var offline_batch: Array = sim.bus.drain()
 	_on_sim_batch(offline_batch)
+	var elapsed_wall_s := float(_catchup_after.get("elapsed_wall_s", 0.0))
+	_catchup_after = {}
 	if ui_root == null or _before_snapshot.is_empty() or elapsed_wall_s < 60.0:
 		return
 	var toast := ui_root.present_away_report({
@@ -1615,7 +1659,6 @@ func _on_app_resumed(elapsed_wall_s: float) -> void:
 	})
 	if toast != "" and hud != null:
 		hud.push_alert({"class": "p3", "title": toast})
-
 
 func _on_placement_started(_archetype: String, _variant: String) -> void:
 	if building_panel != null:
@@ -1778,6 +1821,12 @@ func _process(delta: float) -> void:
 	# can land in a seam either.
 	if _restore_cursor != null:
 		_advance_restore()
+		return
+	# A catch-up in flight owns the frame for the same reason a restore does,
+	# with one extra: `SimHost.paused` is set below, so no LIVE tick and no
+	# residual accumulation can interleave with the plan.
+	if _catchup_cursor != null:
+		_advance_catchup()
 		return
 	var hour := sim_host.hour_of_day_float()
 	_hud_timer += delta
