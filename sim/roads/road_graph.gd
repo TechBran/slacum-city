@@ -71,8 +71,78 @@ func _init(p_grid: TileGrid, p_tun: RoadTunables) -> void:
 
 ## Full rebuild from the tile grid. Measured target: < 30 ms for 12,000 road
 ## tiles (§3.2); the 783-tile starter core is ~1 ms.
+##
+## **This is [rebuild_all_steps] drained on the spot.** There is one
+## implementation, cut into four phases, and this runs them back to back — the
+## same argument `CitySim.restore_state()` makes about `begin_restore()`, and the
+## reason there is no second rebuild to drift.
 func rebuild_all() -> Dictionary:
-	var removed := edge_ids_sorted()
+	var held: Dictionary = {}
+	for entry in rebuild_all_steps(held, 1):
+		((entry as Array)[1] as Callable).call()
+	return held["result"]
+
+
+## How many NODES one `graph_trace` step retraces before handing the frame back.
+## The trace is the expensive phase and it is the only one that scales with graph
+## COMPLEXITY rather than with map area, so it is the only one that is sliced.
+## Slicing it is exact rather than approximate: `_trace_from_nodes` is a loop over
+## node ids in ascending order and `seen` / `_edge_key` carry across the calls, so
+## a batch boundary changes nothing about which edge is created, in what order, or
+## with what id. Tuned on the benchmark city — see `tools/profile_graph_rebuild.gd`.
+const REBUILD_TRACE_NODE_BUDGET: int = 700
+
+
+## `rebuild_all()`, cut into resumable steps for `RestoreCursor` (doc 08 §2.14,
+## doc 13 §2.9). Returns `[[label, Callable], …]`; `held` is the caller's scratch
+## dictionary, carrying the phases' shared working set and — once the last step
+## has run — `held["result"]`, which is what `rebuild_all()` returns.
+##
+## `trace_slots` is how many `graph_trace` steps to emit. The node roster does not
+## exist until `graph_nodes` has run, so the count cannot be derived here and the
+## CALLER supplies it — `RoadNetwork.load_section_steps()` counts the road tiles
+## out of the saved RLE, which is an exact ceiling on the node count and costs a
+## few dozen integer reads. Too few slots is not a correctness problem: whatever
+## the slots did not reach, `graph_finish` drains, which is exactly what the
+## `trace_slots = 1` of the one-call `rebuild_all()` above relies on.
+##
+## **Why this exists.** `roads_graph` was the largest indivisible step of a
+## restore at **73.7 ms** on the 1,500-building benchmark city, against a 202 ms
+## total — so a loading veil that spends one step per frame was bounded by this
+## one call and by nothing else (doc 13 §2.9's ANR arithmetic budgets the LONGEST
+## step, not the sum). The seams are the phases the function already had:
+##
+##   * `graph_scan`  — clear, walk the 512 × 512 grid, take the road-tile set.
+##     Bounded by map AREA, so it is the same cost on every city.
+##   * `graph_nodes` — the §2.4 node predicate over those tiles, in scan order.
+##   * `graph_trace` — `_trace_from_nodes`, in `REBUILD_TRACE_NODE_BUDGET`-node
+##     batches. The polyline walk, and the phase that actually costs.
+##   * `graph_finish` — orphan loops, node meta, the version bump.
+##
+## The sim is INCONSISTENT at every seam — between `graph_nodes` and the last
+## `graph_trace` there are nodes with no edges on them — so nothing may tick,
+## render or query the graph between steps. That is the `RestoreCursor` contract
+## and the veil is what enforces it.
+func rebuild_all_steps(held: Dictionary, trace_slots: int = 1) -> Array:
+	var steps: Array = [
+		["graph_scan", func() -> void: _rebuild_scan(held)],
+		["graph_nodes", func() -> void: _rebuild_nodes(held)],
+	]
+	for i in maxi(1, trace_slots):
+		steps.append(["graph_trace", func() -> void: _rebuild_trace(held)])
+	steps.append(["graph_finish", func() -> void: _rebuild_finish(held)])
+	return steps
+
+
+## How many `graph_trace` slots a graph of `road_tiles` tiles wants. Every road
+## tile can be a node — a city of isolated single tiles is the worst case §2.4
+## admits — so this is an exact ceiling and never a guess.
+static func trace_slots_for(road_tiles: int) -> int:
+	return maxi(1, ceili(float(maxi(0, road_tiles)) / float(REBUILD_TRACE_NODE_BUDGET)))
+
+
+func _rebuild_scan(held: Dictionary) -> void:
+	held["removed"] = edge_ids_sorted()
 	_nodes.clear()
 	_edges.clear()
 	_node_order.clear()
@@ -87,22 +157,50 @@ func rebuild_all() -> Dictionary:
 	_next_edge_id = 0
 	_pending_dirty.clear()
 	last_retraced_tiles = 0
-
 	var tiles := _scan_road_tiles()
 	for t in tiles:
 		_road_tiles[t] = grid.road_class_at(t.x, t.y)
-	for t in tiles:
+	held["tiles"] = tiles
+	held["seen"] = {}
+	held["added"] = [] as Array[int]
+	held["cursor"] = 0
+
+
+func _rebuild_nodes(held: Dictionary) -> void:
+	for t in (held["tiles"] as Array):
 		if _is_node_tile(t):
 			_create_node(t)
-	var seen: Dictionary = {}
-	var added: Array[int] = []
-	_trace_from_nodes(node_ids_sorted(), seen, added)
-	_promote_orphan_loops(tiles, seen, added)
+	# Taken ONCE, here, and then walked by the trace batches below. Asking
+	# `node_ids_sorted()` per batch would re-sort and re-copy the whole roster on
+	# every one of them, and — worse — the roster GROWS during the trace
+	# (`_promote_orphan_loops` aside, `_create_node` is not reached, but the
+	# contract should not depend on that), so a re-read could hand a later batch a
+	# different list than the one this phase settled.
+	held["node_ids"] = node_ids_sorted()
+
+
+func _rebuild_trace(held: Dictionary) -> void:
+	var node_ids: Array = held.get("node_ids", [])
+	var cursor := int(held.get("cursor", 0))
+	if cursor >= node_ids.size():
+		return
+	var stop := mini(node_ids.size(), cursor + REBUILD_TRACE_NODE_BUDGET)
+	_trace_from_nodes(node_ids.slice(cursor, stop), held["seen"], held["added"])
+	held["cursor"] = stop
+
+
+func _rebuild_finish(held: Dictionary) -> void:
+	# Drain whatever the fixed slot count did not reach. It cannot happen on a
+	# city the ceiling above was computed for, and a rebuild that silently left
+	# half a graph untraced is not a failure mode worth being elegant about.
+	while int(held.get("cursor", 0)) < (held.get("node_ids", []) as Array).size():
+		_rebuild_trace(held)
+	_promote_orphan_loops(held["tiles"], held["seen"], held["added"])
 	_refresh_node_meta(node_ids_sorted())
 	_components_dirty = true
 	graph_dirty = false
 	graph_version += 1
-	return {"added_edges": added, "removed_edges": removed}
+	held["result"] = {"added_edges": held["added"], "removed_edges": held["removed"]}
 
 
 ## Incremental rebuild (§2.5). `edited` is this tick's batch of tiles that were
@@ -1062,6 +1160,53 @@ func refresh_signal_power(powered_of: Callable) -> int:
 	# the normal case and is taken once a game-minute by the congestion pass.
 	dark_signals = dark
 	return changed
+
+
+## How many NODES one `roads_signals` restore step samples. Smaller than the
+## trace budget because the work per node is not roads' at all: `powered_of` is
+## doc 04's, and on a cold sim its answer costs a scan of the authored transformer
+## roster per tile — 2,024 nodes of it is **106 ms** on the benchmark city, which
+## is the single most expensive thing a load can be asked to do and is why this is
+## sliced rather than swallowed. See `RoadNetwork._load_edge_state`.
+const SIGNAL_REFRESH_NODE_BUDGET: int = 400
+
+
+## [refresh_signal_power] over the NEXT batch of nodes, for the restore cursor.
+## `held` carries the batch cursor and the running dark count; `dark_signals` is
+## published only when the last node has been sampled, because a half-swept count
+## is worse than the `-1` that means "unknown".
+##
+## It does not report a CHANGE count and no caller wants one: this is the first
+## sample of a freshly rebuilt graph, so nothing has changed — it has been
+## established. That distinction is the whole defect it exists to fix (report 98
+## §26 RR-60b).
+func refresh_signal_power_slice(powered_of: Callable, held: Dictionary) -> void:
+	var ids := node_ids_ref()
+	var cursor := int(held.get("sig_cursor", 0))
+	if cursor >= ids.size():
+		return
+	var stop := mini(ids.size(), cursor + SIGNAL_REFRESH_NODE_BUDGET)
+	var dark := int(held.get("sig_dark", 0))
+	for i in range(cursor, stop):
+		var record: Dictionary = _nodes[ids[i]]
+		if not bool(record["signalised"]):
+			record["powered"] = true
+			continue
+		var powered := true
+		if powered_of.is_valid():
+			powered = bool(powered_of.call(record["tile"]))
+		record["powered"] = powered
+		if not powered:
+			dark += 1
+	held["sig_dark"] = dark
+	held["sig_cursor"] = stop
+	if stop >= ids.size():
+		dark_signals = dark
+
+
+## True once [refresh_signal_power_slice] has swept the whole roster for `held`.
+func signal_power_slice_done(held: Dictionary) -> bool:
+	return int(held.get("sig_cursor", 0)) >= node_ids_ref().size()
 
 
 ## Doc 06 consumes this for `dark_frac` (§2.11). `district_of` maps a tile to a

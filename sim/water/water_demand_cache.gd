@@ -138,6 +138,19 @@ func _apply(record: Dictionary, sign_value: float) -> void:
 	zone_count[zone_index] = int(zone_count.get(zone_index, 0)) + int(signf(sign_value))
 
 
+## **The three zone sums CARRY HISTORY, so they travel with the save** (report 98
+## §26 RR-60 / doc 91 A91-D-30). They are maintained INCREMENTALLY — `set_demand`
+## backs a building's old contribution out and adds the new one, once per changed
+## building per utilities tick — while [reassign] rebuilds them with a single
+## forward pass in `sorted_ids()` order. Both are correct and the two float
+## histories are not the same float: after one game-day of a founding city they
+## differ by 1 ULP on `com_base`, which is the seed the whole 24-hour
+## save→load→advance divergence grew from.
+##
+## So a restore takes the numbers rather than re-deriving them, exactly as
+## `RoadNetwork` takes its smoothed congestion rather than recomputing it. Keys
+## are the zone index as a STRING, because a JSON round-trip stringifies every
+## dictionary key and an int key would come back as one anyway.
 func serialize() -> Dictionary:
 	var out: Array = []
 	for building_id in sorted_ids():
@@ -145,7 +158,48 @@ func serialize() -> Dictionary:
 		var tile: Vector2i = record["tile"]
 		out.append({"id": building_id, "archetype": String(record["archetype"]),
 				"tile": [tile.x, tile.y], "w_b": float(record["w_b"])})
-	return {"buildings": out}
+	return {"buildings": out, "zone_sums": _serialize_zone_sums()}
+
+
+func _serialize_zone_sums() -> Dictionary:
+	var res: Dictionary = {}
+	var com: Dictionary = {}
+	var proc: Dictionary = {}
+	var count: Dictionary = {}
+	for zone_index in _sorted(zone_count):
+		var key := str(zone_index)
+		res[key] = float(zone_res.get(zone_index, 0.0))
+		com[key] = float(zone_com.get(zone_index, 0.0))
+		proc[key] = float(zone_proc.get(zone_index, 0.0))
+		count[key] = int(zone_count[zone_index])
+	return {"res": res, "com": com, "proc": proc, "count": count}
+
+
+## Overwrite the sums [reassign] just rebuilt with the ones the live run held.
+## Called by `WaterSystem.deserialize()` AFTER its `rebuild_zones()`, because that
+## rebuild is what assigns each building its zone and it clears these on the way
+## through. A body with no `zone_sums` — every save written before this shipped —
+## keeps the rebuild's answer, which is what it has always restored to.
+## Returns true when saved sums were adopted.
+func adopt_zone_sums(state: Dictionary) -> bool:
+	var saved: Dictionary = state.get("zone_sums", {})
+	if saved.is_empty():
+		return false
+	var res: Dictionary = saved.get("res", {})
+	var com: Dictionary = saved.get("com", {})
+	var proc: Dictionary = saved.get("proc", {})
+	var count: Dictionary = saved.get("count", {})
+	zone_res.clear()
+	zone_com.clear()
+	zone_proc.clear()
+	zone_count.clear()
+	for key in _sorted(count):
+		var zone_index := int(key)
+		zone_res[zone_index] = float(res.get(key, 0.0))
+		zone_com[zone_index] = float(com.get(key, 0.0))
+		zone_proc[zone_index] = float(proc.get(key, 0.0))
+		zone_count[zone_index] = int(count[key])
+	return true
 
 
 func deserialize(state: Dictionary) -> void:

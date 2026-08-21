@@ -55,6 +55,16 @@ var now_minutes: float = 0.0
 ## not been told about yet, and a save that dropped it would restore a city that
 ## banks a different slice of that minute from the live one.
 var _service_pending_h: float = 0.0
+## **Persisted** (`section_version` 3), and for the same reason
+## `_service_pending_h` above is: it is WORK THE CITY OWES. A city that broke a
+## main a tick before the save carries a pending `rebuild_zones()` into its next
+## `advance()`; a restored one has already spent that rebuild inside
+## `deserialize()`, so without these two flags it does not owe it, does not do
+## it, and its `stats.last_rebuild_minutes` — which is in the save body — stops
+## agreeing with the live run's within one game-hour. Found by
+## `tests/test_save_determinism_days.gd` on the benchmark city seven game-days
+## in, which is exactly the window that test exists to cover (report 98 §26
+## RR-60).
 var topology_dirty: bool = true
 var demand_dirty: bool = false
 var maintenance_level: float = 1.0  # doc 03's maintenance budget, [0,1]
@@ -1291,7 +1301,16 @@ func serialize() -> Dictionary:
 	for building_id in _sorted(_no_water_hours):
 		counters[building_id] = float(_no_water_hours[building_id])
 	return {
-		"section_version": 2,
+		# 2 → 3: `demand.zone_sums` and `pending` (report 98 §26 RR-60, doc 91
+		# A91-D-30). Both are HISTORY rather than state — the running float of an
+		# incremental sum, and a rebuild the city owes but has not done — and
+		# neither could be re-derived from the body. Purely ADDITIVE: a v2 body has
+		# neither key, `adopt_zone_sums` declines and `pending` defaults to false,
+		# so it restores exactly as it always has. That is doc 08 §2.8's
+		# additive-first rule and the reason there is no `migrate_water_v2_to_v3`
+		# to write. What a v2 save cannot get back is a number nobody ever wrote
+		# down; the rung is here so a reader can see that was considered.
+		"section_version": 3,
 		"now_minutes": now_minutes,
 		# Doc 91 D-15 proposal 3: the un-banked remainder of the current
 		# game-minute. Additive; a body without it restores at 0.0, which is
@@ -1309,6 +1328,8 @@ func serialize() -> Dictionary:
 		"no_water_hours": counters,
 		"policy": {"water_restrictions": restrictions_active,
 				"auto_dispatch_water": auto_dispatch_water},
+		# The rebuilds this city still OWES — see `topology_dirty`.
+		"pending": {"topology": topology_dirty, "demand": demand_dirty},
 		"environment": {"maintenance_level": maintenance_level,
 				"external_main_breaks": external_main_breaks},
 		"hour_accum": {"delivered_m3": _delivered_m3_hour, "treated_m3": _treated_m3_hour,
@@ -1369,8 +1390,24 @@ func deserialize(state: Dictionary) -> void:
 	_treated_m3_prev_hour = float(accum.get("treated_m3_prev", 0.0))
 	topology_dirty = true
 	rebuild_zones()
-	# AFTER the rebuild: `rebuild_zones()` restamps `last_rebuild_minutes`, and
-	# a load must reproduce the saved value, not the load's own timestamp.
+	# AFTER the rebuild, and for the same reason `last_rebuild_minutes` is:
+	# `rebuild_zones()` → `demand.reassign()` re-derives every building's zone and
+	# rebuilds the three per-zone demand sums with a clean forward pass, while the
+	# live run reached those sums through a game-day of incremental ± updates. The
+	# two are the same number and NOT the same float — 1 ULP on `com_base` after
+	# 24 game-hours of the founding city — and that ULP is the seed the whole
+	# A91-D-30 divergence grew from (report 98 §26 RR-60). The reassignment is what a
+	# load needs; the sums are what the live run held, so the sums are taken back.
+	if demand.adopt_zone_sums(state.get("demand", {})):
+		demand.publish(topology)
+	# …and take back the rebuilds the city still OWED, which the rebuild above has
+	# just cleared. See `topology_dirty`. Absent in a v2 body: `false`, which is
+	# what such a body has always restored to.
+	var pending: Dictionary = state.get("pending", {})
+	topology_dirty = bool(pending.get("topology", false))
+	demand_dirty = bool(pending.get("demand", false))
+	# `rebuild_zones()` restamps `last_rebuild_minutes`, and a load must reproduce
+	# the saved value, not the load's own timestamp.
 	stats = (state.get("stats", stats) as Dictionary).duplicate()
 	# Zone pressures are keyed by the stable zone_key; an unknown key defaults
 	# to 1.0 rather than to a dry zone (§3.2).

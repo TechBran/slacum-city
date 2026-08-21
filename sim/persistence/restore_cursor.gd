@@ -26,6 +26,11 @@ extends RefCounted
 ## The end state is bit-identical to the single call: same steps, same order,
 ## same code. `tests/test_save_chunked_restore.gd` proves it on both cities and
 ## on a mid-flood, mid-incident body.
+##
+## **The step COUNT is a property of the city being restored, not of the code**
+## (Wave 13): a step may [splice_next] more steps, and the road graph's rebuild
+## emits one trace step per batch of nodes. Read [step_count] for a progress bar;
+## never assume a number.
 
 var _labels: PackedStringArray = []
 var _steps: Array[Callable] = []
@@ -40,6 +45,28 @@ var _index: int = 0
 func add(label: String, step: Callable) -> void:
 	_labels.append(label)
 	_steps.append(step)
+
+
+## Insert steps to run **next** — immediately after the step that is calling
+## this, and before everything that was already queued behind it.
+##
+## This exists because a restore's step list is not fully known when the cursor
+## is built. `CitySim.begin_restore()` cannot ask `RoadNetwork` for the road
+## loader's seams until the body has been decoded, which is itself a step; so the
+## `roads` step asks, runs the first seam, and splices the rest in here.
+##
+## **It must be an insert and not an append**, and that is the whole reason this
+## method has a body worth reading. `SaveService.begin_load_slot()` adds a
+## `settle` step of its own AFTER `begin_restore()` has handed the cursor back —
+## the step that publishes the loaded UI state and fires the `loaded` signal — and
+## an append would have put ten road-graph steps *behind* it. The city would have
+## been announced as loaded with no road graph in it.
+func splice_next(labels: PackedStringArray, steps: Array[Callable]) -> void:
+	if labels.size() != steps.size():
+		return
+	for i in range(steps.size() - 1, -1, -1):
+		_labels.insert(_index, labels[i])
+		_steps.insert(_index, steps[i])
 
 
 func step_count() -> int:

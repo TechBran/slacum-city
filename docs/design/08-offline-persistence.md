@@ -471,6 +471,34 @@ static func _v3_to_v4(b: Dictionary) -> Dictionary:
 > the one that never stopped. That is the property that makes the preset a save
 > section rather than a launch flag.
 
+> ### Shipped 2026-08-20 — two SECTION rungs, and no envelope rung
+>
+> **`water.section_version` 2 → 3** (`demand.zone_sums` and `pending`) and
+> **`roads.section_version` 2 → 3** (`last_hour_sampled`), from doc 91 A91-D-30
+> and report 98 §26 RR-60. All three keys are the same KIND of thing and it is
+> worth naming: **they are history, not state.** A running incremental float sum,
+> a rebuild the city owes but has not done, and the cursor of a once-per-game-hour
+> sampler are none of them re-derivable from the body, and every one of them was
+> being re-derived. Additive, documented in their own doc's §3.2, and
+> `city.section_version` stays at **6**.
+>
+> That last part is the decision worth writing down. §2.8's rule is that a rung
+> records a change of shape *or of rules*, and here neither moved at CITY level:
+> the body gains no top-level key, no existing key changes meaning, and a v6 body
+> written by the old binary restores under the new one to **exactly** the city it
+> restored to before — the two new keys are simply absent and both loaders fall
+> back to the behaviour they have always had. What did change is what those two
+> SECTIONS record about themselves, which is what a per-section ladder is for and
+> the whole reason §2.8 gave every section one.
+>
+> **The property the two rungs buy** is the one this document has claimed since it
+> was written and could not prove: *the same save plus the same elapsed time
+> produces the same city.* It did not, past the first game-day, and the reason was
+> a quantity neither section was writing down. `tests/test_save_determinism_days.gd`
+> is the gate — 2 h, 26 h, 50 h and seven game-days, on the founding city and the
+> benchmark city — and the reason it is stated in game-DAYS is that every gate
+> before it saved inside the first one.
+
 ### 2.9 Load & corruption recovery
 
 Candidate order: `manifest.active` → `manifest.history[…]` → `pinned.pre_catchup` → `pinned.pre_migration` → directory scan sorted by embedded `sim_time_minutes` descending.
