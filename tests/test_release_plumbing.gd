@@ -264,6 +264,58 @@ func test_the_release_tooling_is_present_and_documented() -> void:
 				"tools/make_release.sh still covers: %s" % gate)
 
 
+## The device tooling's own footgun, found on hardware 2026-08-21. It gets a test
+## because it cost a session, left no trace in any output, and reads as a
+## hardware problem rather than a script problem.
+##
+##     printf '%s' "$big" | grep -q PATTERN     # under set -o pipefail
+##
+## reports FAILURE when the pattern MATCHES. `grep -q` exits at the first hit,
+## the writer takes SIGPIPE and dies 141, and `pipefail` promotes the writer's
+## status over grep's success. It only fires once the data outgrows the 64 KB
+## pipe buffer, so it passes every small-input test and fails on every real
+## `dumpsys window` (~200 KB) — which is how `run_matrix.sh` came to print
+## "REFUSING TO RUN: the phone is LOCKED" on an unlocked, awake, focused phone
+## 100 % of the time, and `cap_pose.sh` came to stamp good captures
+## CONTAMINATED at random.
+##
+## Safe forms this must NOT flag: `grep -q PATTERN FILE` (no pipe at all) and
+## `grep -q PATTERN <<<"$var"` (a herestring, which bash backs with a temp file).
+## The `||` in `a || grep -q b` is also not a pipe, and a naive `| *grep -q`
+## search does flag it — hence the lookarounds.
+func test_no_shell_tool_pipes_into_grep_q_under_pipefail() -> void:
+	var pipe_into_grep_q := RegEx.new()
+	# A single `|` — not `||`, not `|&` — then `grep -q`.
+	pipe_into_grep_q.compile("(?<!\\|)\\|(?![|&])\\s*grep\\s+-q")
+
+	var dir := DirAccess.open("res://tools")
+	assert_true(dir != null, "res://tools is readable")
+	var checked := 0
+	for name: String in dir.get_files():
+		if not name.ends_with(".sh"):
+			continue
+		var text := _read("res://tools/%s" % name)
+		if not text.contains("pipefail"):
+			continue
+		checked += 1
+		var line_no := 0
+		for line: String in text.split("\n"):
+			line_no += 1
+			var trimmed := line.strip_edges()
+			# Comments are where this bug is *explained*, so they must be exempt
+			# or the documentation trips its own test.
+			if trimmed.begins_with("#"):
+				continue
+			assert_true(pipe_into_grep_q.search(line) == null,
+					("tools/%s:%d pipes into `grep -q` under `pipefail`; "
+					+ "grep -q exits early, the writer takes SIGPIPE (141), and "
+					+ "pipefail reports a MATCH as a failure. Use bash `==`, a "
+					+ "herestring, or `grep -c` and compare.")
+					% [name, line_no])
+	assert_true(checked >= 2,
+			"at least the two device tools were scanned (got %d)" % checked)
+
+
 func test_the_shell_still_refuses_to_die_on_the_back_button() -> void:
 	# Not release plumbing as such, but the one project setting whose loss would
 	# make every notification and every autosave in this document pointless: with
