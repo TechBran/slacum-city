@@ -1750,7 +1750,7 @@ number rather than a prediction.
 
 The second measurement (at what city size does the authored water topology stop
 covering demand) is still open: the `curriculum` agent finishes its 21-game-day
-arc with zero main tiles laid, which is doc 93 §G4's ruling and not yet the
+arc with zero main tiles laid, which is doc 93 §G9's ruling and not yet the
 measurement.
 
 #### 17.6.1 The verb matrix — re-taken at `a892315` (Wave-10 re-audit, 2026-08-20)
@@ -1826,14 +1826,14 @@ eight `RoadNetwork` / `WaterSystem` verbs it never calls:
 | `cmd_set_water_restrictions` | `WaterSystem` | open; doc 05's demand-management lever, a *balance* surface |
 | `cmd_set_water_policy` | `WaterSystem` | open |
 | `cmd_deploy_pump_truck` | `WaterSystem` | open |
-| `cmd_install_backup_generator` | `WaterSystem` | **NEW to this list here, and RULED an interface call in Wave 12** (doc 93 §M3 / doc 05 §9) — no wrapper, no card, and none until doc 04 ships the generator it delegates to. `sim/water/water_system.gd:1155`; the only callers in the repository are `tests/test_water_system.gd:338` and `:355`. §17.6.1 and doc 91 §17.2 both counted seven and both omitted it |
+| `cmd_install_backup_generator` | `WaterSystem` | **NEW to this list here, and RULED an interface call in Wave 12** (doc 93 §N3 / doc 05 §9) — no wrapper, no card, and none until doc 04 ships the generator it delegates to. `sim/water/water_system.gd:1155`; the only callers in the repository are `tests/test_water_system.gd:338` and `:355`. §17.6.1 and doc 91 §17.2 both counted seven and both omitted it |
 
 So the honest count at this fork is **22 of 23 re-exported verbs have a door, one
 sub-system verb is ruled out of scope, and seven sub-system verbs remain
 unreachable by any shell.** *(Wave-12 supersession — §31.6. Two of the eight rows above have since closed:
 `cmd_set_auto_repair_policy` got a door (§30, doc 12 D-50) and
 `cmd_install_backup_generator` is ruled an interface call with a written re-open
-condition (doc 93 §M3). 8 − 1 ruled − 1 doored − 1 ruled = **five** open, all
+condition (doc 93 §N3). 8 − 1 ruled − 1 doored − 1 ruled = **five** open, all
 five `WaterSystem`'s. Doc 91 §17.2 carries the same arithmetic.)* Two of the seven (`cmd_set_water_restrictions`,
 `cmd_set_auto_repair_policy`) are balance surfaces and want a matrix, exactly as
 §25.7 said `cmd_route_feeder` did — and §28 is the precedent for how that pass
@@ -1848,7 +1848,7 @@ still authored-and-unused levers a pacing pass can reach for without code.
 fourteen `kind` values `data/goals.json` uses resolves to an evaluator in
 `sim/progression/goal_system.gd`, and no curriculum row is unteachable. Three of
 the seventeen implemented kinds are authored and unused — `place_water_main`
-(deliberate, doc 93 §G4), `reach_stability` and `reach_treasury`. The last two
+(deliberate, doc 93 §G9), `reach_stability` and `reach_treasury`. The last two
 are free levers a future pacing pass can reach for without writing any code, and
 naming them here is the point of the audit: doc 09 §2.14's ladder is not limited
 by what the evaluator can measure.
@@ -3916,7 +3916,7 @@ one fork, both sides.
 - **It did not add a water-main curriculum row**, even though the verb now has a
   door. Doc 05 §6 already laterals every placed pump onto the network, so at
   level 5 the taught action connects itself; the agent finishes the arc with zero
-  main tiles laid. Ruled in doc 93 §G4.
+  main tiles laid. Ruled in doc 93 §G9.
 - **It did not surface `cmd_route_feeder`.** It is a run verb and the drag-path
   tool would take it in an afternoon — and §17.3 names the 2 × 1,200 kW feeder
   ceiling as the late-game's binding constraint, so putting it on a card is a
@@ -6092,7 +6092,7 @@ that:
 
 - **The cascade is closed.** §29.5(b) / §32.7 item 0 was ranked first in this
   document for four passes and is **CLOSED by doc 06 §2.13(b)** (§31, doc 93 §M1,
-  doc 91 A91-D-31, gate 30). The ranked list below is §32.7's, re-headed without
+  doc 91 A91-D-35, gate 30). The ranked list below is §32.7's, re-headed without
   it.
 - **It did not retune a digit of `data/difficulty.json`**, and that is now a
   ruling (§34.2) rather than an omission.
@@ -6566,3 +6566,67 @@ made and the first time anything has checked it across an edit.
    `Treasury.credit` already moves the balance — but it moves what a ledger
    line's *source* is, so it wants a wave allowed to touch doc 03.
 1. …then §34's list unchanged, from `RoadNetwork.repair_quote` down.
+
+---
+
+## 39. Wave-14 merge — the ledger-hygiene pass, and the five pointers of this document that were wrong (2026-08-21)
+
+*Not a balance pass. **No number in this document moved and no gate was
+re-fitted.** This section exists because five cross-references **in doc 92** were
+corrected by the Wave-14 merge audit (report 98 §35 / RR-85), and a document as
+heavily cited as this one has to record what moved inside it or the next reader
+will assume the citation they remember is still the citation that is there.*
+
+| where in this doc | was | is | why |
+|---|---|---|---|
+| §17.6.1's `cmd_install_backup_generator` row | doc 93, `§M3` *(retired)* | **`doc 93 §N3`** | doc 93 has no `M3`. The Wave-12 difficulty-follow-through block's rulings were renumbered `M`→`N` per-line and its **section header** was not, so five references across three documents kept pointing at a letter nobody had issued |
+| §17.6.1's closing arithmetic | doc 93, `§M3` *(retired)* | **`doc 93 §N3`** | same |
+| §22.2's `place_water_main` note | `doc 93 §G4` | **`doc 93 §G9`** | `G4` was assigned twice — once to the `place_water_main` ruling and once to Wave 10's *Core Design Rule 5 is amended*. The Wave-10 block's own header claims the contiguous range `G4–G6`, so the interloper moved and the range stayed true |
+| §25.3's goal-coverage line | `doc 93 §G4` | **`doc 93 §G9`** | same |
+| §17.6's curriculum note | `doc 93 §G4` | **`doc 93 §G9`** | same |
+
+**And five references *to* this document, from elsewhere, were pointing at the
+wrong section of it — which is the half worth reading.** The Wave-14 money pass
+was drafted as **§35** on its branch and merged as **§36**; the lead's per-line
+`sed` moved the headers and the body, and missed four pointers that lived in
+other files and one that lived in doc 91:
+
+| pointer, in | was | is | what it actually describes |
+|---|---|---|---|
+| `tests/test_city_sim.gd:146` | `§35.2` | **`§36.2`** | the founding-day net `≈ +$7,390 → ≈ +$11,446` re-fit — §36.2, *the retune* |
+| `tests/test_balance_gates.gd:412` | `§35.5` | **`§36.5`** | gate 4's money column moving from the stock to the flow — §36.5, and §35 has no `.5` at all |
+| `tests/test_balance_gates.gd:2277` | `§35.4` | **`§36.4`** | *"4.8–5.8 % from dispatch alone"* — §36.4's table reads `4.83 / 5.21 / 5.76 %` |
+| `data/economy.json:235` | `sec 35.2` | **`sec 36.2`** | the Wave-14 revenue-side re-anchor note |
+| doc 91 §20.4 (two places) | `§35.3/§35.4`, `§35.6` | **`§36.3/§36.4`, `§36.6`** | gates 31 and 32, and the four re-recorded baselines |
+
+**Four of those five resolved to a real section — the *opportunity layer's* —
+rather than dangling**, so nothing looked broken and a reader chasing "why is
+gate 32 the way it is" landed on a page about street bounties. That is the
+finding this section is for: **a dangling pointer is a broken link and a reader
+notices; a pointer that resolves to the wrong section is a lie with a footnote,
+and only a validator notices.** Report 98 RR-85(d) has the validator and the
+rule.
+
+**Three older pointers into §24 were dangling outright and are also fixed**:
+report 98 §18 (RR-29, Wave 10) cited this document's `§23.8`, `§23.9` and `§23.12` for the
+power-headroom surprise, the 45-game-day curriculum re-fit and the hash refresh.
+§23 has no subsection past `.7`. All three are **§24**'s — `§24.8`, `§24.9`,
+`§24.12` — and the content matches heading for heading.
+
+**Nine cross-reference targets were wrong in total across the tree — sixteen
+references — and the split is the lesson: five dangled, four landed on the wrong
+section.** Report 98 RR-85(d) has the whole list.
+
+**Nothing this section touched can move a measurement**, and that is asserted
+rather than assumed: the only edits outside `docs/` are **three pointer
+corrections in two test files** — two in `##`/`#` comments
+(`tests/test_city_sim.gd:146`, `tests/test_balance_gates.gd:412`) and one inside
+an assertion's **failure-message string** (`:2277`), which is text a passing run
+never builds — and **one `_`-prefixed JSON comment key**
+(`data/economy.json`'s `_wave15_money_pass_note`) — plus one new,
+standalone tool, `tools/check_doc_refs.py`, which nothing in `sim/`, `game/`,
+`ui/` or the suite loads. The four determinism baselines at this
+merge — founding `a27da24aaf6e9663…` / `d2dec6727c64001d…`, bench
+`7c99720f5ff14553…` / `8f60accb6d91ad1e…` — were taken **after** the edits and
+reproduce the pre-edit run on the same tree to the byte, on both cities and both
+paths.

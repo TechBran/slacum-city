@@ -143,7 +143,7 @@ func test_economy_settles_in_the_loop() -> void:
 	# Every other expense line and the whole revenue side are unchanged to the
 	# cent — doc 92 §33.2 carries the eight-line table and the hour-by-hour
 	# derivation. Same ±2.5 % band this assertion always had, re-centred.
-	# **RE-FIT Wave 15 (doc 92 §35.2): ≈ +$7,390 → ≈ +$11,446, which is
+	# **RE-FIT Wave 15 (doc 92 §36.2): ≈ +$7,390 → ≈ +$11,446, which is
 	# +169 × 24 = +4,056 and not one dollar more.** Worth reading twice, because
 	# it is the check that RR-77's plumbing books one dollar and not two: the
 	# founding day DOES resolve incidents, and those payouts DO now print on a
