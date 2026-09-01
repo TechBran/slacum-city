@@ -156,14 +156,22 @@ func _build_level_card() -> Container:
 	head.add_theme_constant_override(&"separation", int(_spacing))
 	_level_badge = UIWidgets.label("Badge", "", &"Wordmark")
 	head.add_child(_level_badge)
-	_level_standing = UIWidgets.label("Standing", "", &"Caption")
-	_level_standing.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	head.add_child(_level_standing)
 	_level_name = UIWidgets.label("Name", "", &"SeverityBadge")
 	_level_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_level_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	head.add_child(_level_name)
 	box.add_child(head)
+
+	# The standing line ("You are Level 2 — completing these reaches Level 3")
+	# is a SENTENCE, so it gets its own row under the head, on `Intent`'s terms:
+	# wrap on, EXPAND_FILL. It used to sit INSIDE the head HBox with wrap on and
+	# no expand flag, and an HBox hands a non-expanding wrapping label its
+	# minimum width — one glyph — so the 2026-09-01 audit found it laid out ONE
+	# CHARACTER PER LINE, 1,101 px tall, with the objectives pushed 540 dp down
+	# the sheet on every box (production audit, new-player lens, P0).
+	_level_standing = UIWidgets.label("Standing", "", &"Caption", true)
+	_level_standing.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_child(_level_standing)
 
 	_level_intent = UIWidgets.label("Intent", "", &"", true)
 	_level_intent.size_flags_horizontal = Control.SIZE_EXPAND_FILL
