@@ -286,7 +286,13 @@ disarm_flag() {
 }
 trap disarm_flag EXIT INT TERM
 
-for step in "${@:-build_check probe q1 zebra flood pads io extras}"; do
+# No-argument form: the default list must be an ARRAY, not one quoted string —
+# `"${@:-a b c}"` expands to the single word "a b c", which the dispatcher then
+# reports as `unknown step: a b c` and (until 2026-09-01) exited 0 on, so the
+# whole-session command did nothing and looked like success.
+DEFAULT_STEPS=(build_check probe q1 zebra flood pads io extras)
+if [ "$#" -eq 0 ]; then set -- "${DEFAULT_STEPS[@]}"; fi
+for step in "$@"; do
   case "$step" in build_check|probe) ;; *) arm_flag ;; esac
   case "$step" in
     build_check)
@@ -307,6 +313,6 @@ for step in "${@:-build_check probe q1 zebra flood pads io extras}"; do
     pads)   step_pads ;;
     io)     step_io ;;
     extras) step_extras ;;
-    *) echo "unknown step: $step" ;;
+    *) echo "unknown step: $step" >&2; exit 2 ;;
   esac
 done
