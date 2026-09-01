@@ -1,0 +1,22 @@
+Applications Memory Usage (in Kilobytes):
+Uptime: 885956265 Realtime: 1099918274
+
+** MEMINFO in pid 12532 [com.slacumcity.game] **
+                   Pss  Private  Private  SwapPss      Rss     Heap     Heap     Heap
+                 Total    Dirty    Clean    Dirty    Total     Size    Alloc     Free
+                ------   ------   ------   ------   ------   ------   ------   ------
+  Native Heap   231514   231464       28   161035   232192   543064   392401   145057
+  Dalvik Heap     1307     1276        4       71     1936    26893     2317    24576
+ Dalvik Other     8585     1480        0      336    15940                           
+        Stack      600      600        0      764      608                           
+       Ashmem       25        0        0        0      516                           
+    Other dev      464      408       12        0     1112                           
+     .so mmap     1723      112      640       78    27568                           
+    .jar mmap     1071        0       12        0    42316                           
+    .apk mmap    19017     1436    17428      360    19852                           
+    .dex mmap       61        0       56        0      812                           
+    .oat mmap       10        0        0        0     1440                           
+    .art mmap     2945     2376      132     5806    11908                           
+   Other mmap    72134    72096       20        0    72808                           
+   EGL mtrack   126912   126912        0        0   126912                           
+    GL mtrack   373804   373804        0        0   373804                           

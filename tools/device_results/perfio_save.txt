@@ -1,0 +1,2 @@
+09-01 15:25:06.912 11904 11946 I godot   : PERFIO kind=load slot=0 reason=slot ms=150.2 write_ms=0.0 read_ms=11.2 restore_ms=138.8 async=1 bytes=288385 ok=1
+09-01 15:25:59.049 11904 11946 I godot   : PERFIO kind=save slot=0 reason=pause ms=88.1 write_ms=43.3 read_ms=11.2 restore_ms=138.8 async=1 bytes=345597 ok=1

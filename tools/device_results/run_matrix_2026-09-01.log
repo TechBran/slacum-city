@@ -1,0 +1,153 @@
+
+=== 0. is the INSTALLED build a D-20 build? (the 2026-08-21 killer)
+   pulling /data/app/~~9sw2LRMSmxPMJ-UKANZsHQ==/com.slacumcity.game-77DclQJZ1IreX8WCMmJCdA==/base.apk (~90 MB, a few seconds)
+   launch_args in dex: 1    (control thermal_status: 1)
+   OK — the plugin can read the launch Intent.
+
+=== 1. args-delivery probe (runbook §1.2)
+  launched: --resume --zoom=1.0 --perf
+  captured 0 PERF lines -> tools/device_results/log_probe_zoom.txt
+-- plugin's own answer (Kotlin read the Intent):
+09-01 15:12:05.453 32426 32426 I SlacumNative: launch args: [--resume, --zoom=1.0, --perf]
+09-01 15:12:07.655 32426 32487 I SlacumNative: launch args: [--resume, --zoom=1.0, --perf]
+-- Godot's own reader (expected [] on this template):
+09-01 15:12:05.331 32426 32426 D GodotActivity: Launch intent Intent { flg=0x10000000 xflg=0x5 cmp=com.slacumcity.game/com.godot.game.GodotAppLauncher (has extras) } with parameters []
+-- lifecycle (OnStop right after OnResume == lockscreen, runbook §1.0):
+09-01 15:12:05.453 32426 32426 V Godot   : OnResume: GodotFragment{b157946} (e9b0de32-c579-4ae7-b204-20f07259fd25 id=0x7f07002c)
+-- the visible check: zoom=1.0 is the Z2 stop, near should read 0
+probe_zoom         NO PERF LINES — capture unarmed, or the app never ran (lockscreen: Godot gets OnStop ~20 ms after OnResume)
+-- VERDICT:
+   NO PERF LINES with --perf on the command line.
+   Either the plugin is stale (run: bash tools/run_matrix.sh build_check)
+   or the app never ran (lockscreen). Do NOT run the rest of the matrix:
+   it would produce six identical captures and read like a result.
+
+=== 2. pose matrix — 3 zooms x day 13 / night 21, balanced
+-- pose z0.0 h13
+  clock: save at 18:00, target 13:00, delta +19h
+  launched: --resume --zoom=0.0 --preset=balanced --perf --advance-hours=19
+  captured 25 PERF lines -> tools/device_results/log_z0.0_h13.txt
+-- pose z0.5 h13
+  clock: save at 18:00, target 13:00, delta +19h
+  launched: --resume --zoom=0.5 --preset=balanced --perf --advance-hours=19
+  captured 25 PERF lines -> tools/device_results/log_z0.5_h13.txt
+-- pose z1.0 h13
+  clock: save at 18:00, target 13:00, delta +19h
+  launched: --resume --zoom=1.0 --preset=balanced --perf --advance-hours=19
+  captured 25 PERF lines -> tools/device_results/log_z1.0_h13.txt
+-- pose z0.0 h21
+  clock: save at 18:00, target 21:00, delta +3h
+  launched: --resume --zoom=0.0 --preset=balanced --perf --advance-hours=3
+  captured 25 PERF lines -> tools/device_results/log_z0.0_h21.txt
+-- pose z0.5 h21
+  clock: save at 18:00, target 21:00, delta +3h
+  launched: --resume --zoom=0.5 --preset=balanced --perf --advance-hours=3
+  captured 25 PERF lines -> tools/device_results/log_z0.5_h21.txt
+-- pose z1.0 h21
+  clock: save at 18:00, target 21:00, delta +3h
+  launched: --resume --zoom=1.0 --preset=balanced --perf --advance-hours=3
+  captured 25 PERF lines -> tools/device_results/log_z1.0_h21.txt
+z0.0_h13           n=20  fps=109.2 p95=12.6  cpu=0.35 gpu=6.1   dc=100/100 prim=47783 vram=134 chunks=9 near=4 inst=86 preset=balanced knob=[0] thermal=0
+    PERFIO kind=load slot=0 reason=slot ms=163.0 write_ms=0.0 read_ms=17.8 restore_ms=138.1 async=1 bytes=288385 ok=1
+z0.0_h21           n=20  fps=71.3  p95=16.7  cpu=0.50 gpu=8.6   dc=100/100 prim=47783 vram=134 chunks=9 near=4 inst=86 preset=balanced knob=[0] thermal=0
+    PERFIO kind=load slot=0 reason=slot ms=153.3 write_ms=0.0 read_ms=11.5 restore_ms=141.6 async=1 bytes=288385 ok=1
+z0.5_h13           n=20  fps=107.8 p95=12.1  cpu=0.40 gpu=6.0   dc=100/100 prim=47783 vram=134 chunks=9 near=4 inst=86 preset=balanced knob=[0] thermal=0
+    PERFIO kind=load slot=0 reason=slot ms=149.5 write_ms=0.0 read_ms=11.0 restore_ms=138.3 async=1 bytes=288385 ok=1
+z0.5_h21           n=20  fps=68.6  p95=17.1  cpu=0.50 gpu=8.7   dc=100/100 prim=47783 vram=134 chunks=9 near=4 inst=86 preset=balanced knob=[0] thermal=0
+    PERFIO kind=load slot=0 reason=slot ms=150.4 write_ms=0.0 read_ms=11.4 restore_ms=138.9 async=1 bytes=288385 ok=1
+z1.0_h13           n=20  fps=106.5 p95=15.2  cpu=0.40 gpu=6.0   dc=100/100 prim=47783 vram=134 chunks=9 near=4 inst=86 preset=balanced knob=[0] thermal=0
+    PERFIO kind=load slot=0 reason=slot ms=151.2 write_ms=0.0 read_ms=11.3 restore_ms=139.7 async=1 bytes=288385 ok=1
+z1.0_h21           n=20  fps=68.1  p95=18.1  cpu=0.40 gpu=8.6   dc=100/100 prim=47783 vram=134 chunks=9 near=4 inst=86 preset=balanced knob=[0] thermal=0
+    PERFIO kind=load slot=0 reason=slot ms=150.5 write_ms=0.0 read_ms=11.6 restore_ms=138.7 async=1 bytes=288385 ok=1
+
+=== 3. road_detail A/B at a junction pose (Q2)
+-- road_detail=2 h13
+  clock: save at 18:00, target 13:00, delta +19h
+  launched: --resume --zoom=0.0 --preset=balanced --road-detail=2 --perf --advance-hours=19
+  captured 25 PERF lines -> tools/device_results/log_rd2_h13.txt
+-- road_detail=0 h13
+  clock: save at 18:00, target 13:00, delta +19h
+  launched: --resume --zoom=0.0 --preset=balanced --road-detail=0 --perf --advance-hours=19
+  captured 25 PERF lines -> tools/device_results/log_rd0_h13.txt
+-- road_detail=2 h21
+  clock: save at 18:00, target 21:00, delta +3h
+  launched: --resume --zoom=0.0 --preset=balanced --road-detail=2 --perf --advance-hours=3
+  captured 25 PERF lines -> tools/device_results/log_rd2_h21.txt
+-- road_detail=0 h21
+  clock: save at 18:00, target 21:00, delta +3h
+  launched: --resume --zoom=0.0 --preset=balanced --road-detail=0 --perf --advance-hours=3
+  captured 25 PERF lines -> tools/device_results/log_rd0_h21.txt
+rd0_h13            n=20  fps=69.4  p95=18.3  cpu=0.50 gpu=8.9   dc=100/100 prim=47783 vram=134 chunks=9 near=4 inst=86 preset=balanced knob=[0] thermal=0
+    PERFIO kind=load slot=0 reason=slot ms=151.0 write_ms=0.0 read_ms=11.6 restore_ms=139.2 async=1 bytes=288385 ok=1
+rd0_h21            n=20  fps=58.0  p95=21.3  cpu=0.60 gpu=11.1  dc=130/130 prim=54551 vram=134 chunks=9 near=0 inst=86 preset=balanced knob=[0, 1, 2] thermal=0
+    PERFIO kind=load slot=0 reason=slot ms=149.6 write_ms=0.0 read_ms=11.4 restore_ms=138.1 async=1 bytes=288385 ok=1
+rd2_h13            n=20  fps=69.7  p95=18.0  cpu=0.50 gpu=8.5   dc=100/100 prim=47783 vram=134 chunks=9 near=4 inst=86 preset=balanced knob=[0] thermal=0
+    PERFIO kind=load slot=0 reason=slot ms=147.8 write_ms=0.0 read_ms=10.9 restore_ms=136.7 async=1 bytes=288385 ok=1
+rd2_h21            n=20  fps=69.5  p95=17.3  cpu=0.50 gpu=8.6   dc=100/100 prim=47783 vram=134 chunks=9 near=4 inst=86 preset=balanced knob=[0] thermal=0
+    PERFIO kind=load slot=0 reason=slot ms=151.7 write_ms=0.0 read_ms=11.9 restore_ms=139.6 async=1 bytes=288385 ok=1
+
+=== 4. flood + flood_detail A/B (flood wave q2)
+  clock: save at 18:00, target 21:00, delta +3h
+  launched: --resume --zoom=0.5 --preset=balanced --flood=350 --flood-detail=2 --perf --advance-hours=3
+  captured 25 PERF lines -> tools/device_results/log_flood2.txt
+  clock: save at 18:00, target 21:00, delta +3h
+  launched: --resume --zoom=0.5 --preset=balanced --flood=350 --flood-detail=0 --perf --advance-hours=3
+  captured 25 PERF lines -> tools/device_results/log_flood0.txt
+flood0             n=20  fps=69.1  p95=17.6  cpu=0.55 gpu=8.8   dc=100/100 prim=47783 vram=134 chunks=9 near=4 inst=86 preset=balanced knob=[0] thermal=0
+    PERFIO kind=load slot=0 reason=slot ms=151.2 write_ms=0.0 read_ms=11.3 restore_ms=139.8 async=1 bytes=288385 ok=1
+flood2             n=20  fps=67.5  p95=17.2  cpu=0.40 gpu=8.8   dc=101/101 prim=45889 vram=134 chunks=9 near=7 inst=86 preset=balanced knob=[0] thermal=0
+    PERFIO kind=load slot=0 reason=slot ms=171.4 write_ms=0.0 read_ms=21.6 restore_ms=139.5 async=1 bytes=288385 ok=1
+-- the first device look at standing water:
+  snapped tools/device_results/flood_night.png (2618648 bytes, display 4630946165277524611)
+
+=== 5. pad_shadows re-check at a DAYLIGHT pose (Q3/RR-33)
+  clock: save at 18:00, target 13:00, delta +19h
+  launched: --resume --zoom=0.0 --pad-shadows=1 --perf --advance-hours=19
+  captured 25 PERF lines -> tools/device_results/log_pads1.txt
+  clock: save at 18:00, target 13:00, delta +19h
+  launched: --resume --zoom=0.0 --pad-shadows=0 --perf --advance-hours=19
+  !! CONTAMINATED — app lost the foreground (before=0 after=1)
+  captured 25 PERF lines -> tools/device_results/log_pads0.txt
+pads0              n=20  fps=91.5  p95=15.8  cpu=0.35 gpu=6.5   dc=100/100 prim=47783 vram=134 chunks=9 near=4 inst=86 preset=balanced knob=[0] thermal=1  ** CONTAMINATED **
+    PERFIO kind=load slot=0 reason=slot ms=150.2 write_ms=0.0 read_ms=11.2 restore_ms=138.8 async=1 bytes=288385 ok=1
+pads1              n=20  fps=69.2  p95=17.5  cpu=0.40 gpu=8.6   dc=100/100 prim=47783 vram=134 chunks=9 near=4 inst=86 preset=balanced knob=[0] thermal=1
+    PERFIO kind=load slot=0 reason=slot ms=152.4 write_ms=0.0 read_ms=11.5 restore_ms=140.7 async=1 bytes=288385 ok=1
+
+=== 6. PERFIO save / load
+09-01 15:25:06.912 11904 11946 I godot   : PERFIO kind=load slot=0 reason=slot ms=150.2 write_ms=0.0 read_ms=11.2 restore_ms=138.8 async=1 bytes=288385 ok=1
+09-01 15:25:59.049 11904 11946 I godot   : PERFIO kind=save slot=0 reason=pause ms=88.1 write_ms=43.3 read_ms=11.2 restore_ms=138.8 async=1 bytes=345597 ok=1
+  launched: --resume --perf
+  captured 13 PERF lines -> tools/device_results/log_io_boot.txt
+
+=== 7. thermal, memory, driver
+Applications Memory Usage (in Kilobytes):
+Uptime: 885956265 Realtime: 1099918274
+
+** MEMINFO in pid 12532 [com.slacumcity.game] **
+                   Pss  Private  Private  SwapPss      Rss     Heap     Heap     Heap
+                 Total    Dirty    Clean    Dirty    Total     Size    Alloc     Free
+                ------   ------   ------   ------   ------   ------   ------   ------
+  Native Heap   231514   231464       28   161035   232192   543064   392401   145057
+  Dalvik Heap     1307     1276        4       71     1936    26893     2317    24576
+ Dalvik Other     8585     1480        0      336    15940                           
+        Stack      600      600        0      764      608                           
+       Ashmem       25        0        0        0      516                           
+    Other dev      464      408       12        0     1112                           
+     .so mmap     1723      112      640       78    27568                           
+    .jar mmap     1071        0       12        0    42316                           
+    .apk mmap    19017     1436    17428      360    19852                           
+    .dex mmap       61        0       56        0      812                           
+    .oat mmap       10        0        0        0     1440                           
+    .art mmap     2945     2376      132     5806    11908                           
+   Other mmap    72134    72096       20        0    72808                           
+   EGL mtrack   126912   126912        0        0   126912                           
+    GL mtrack   373804   373804        0        0   373804                           
+IsStatusOverride: false
+ThermalStatusListeners:
+Thermal Status: 1
+Cached temperatures:
+	Temperature{mValue=28.2, mType=2, mName=SUBBAT, mStatus=0}
+	Temperature{mValue=47.4, mType=0, mName=AP, mStatus=0}
+	Temperature{mValue=38.4, mType=12, mName=CP, mStatus=0}
+	Temperature{mValue=38.8, mType=5, mName=PA, mStatus=0}
+MATRIX EXIT: 0

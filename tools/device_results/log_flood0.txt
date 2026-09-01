@@ -1,0 +1,34 @@
+--------- beginning of main
+09-01 15:23:09.042 10446 10494 I godot   : Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+09-01 15:23:09.086 10446 10494 I godot   : Vulkan 1.3.128 - Forward Mobile - Using Device #0: Qualcomm - Adreno (TM) 750
+09-01 15:23:09.291 10446 10494 I godot   : 
+09-01 15:23:11.350 10446 10494 I godot   : PERFIO kind=load slot=0 reason=slot ms=151.2 write_ms=0.0 read_ms=11.3 restore_ms=139.8 async=1 bytes=288385 ok=1
+09-01 15:23:11.350 10446 10494 E godot   : WARNING: [crash] unclean exit #26; breadcrumb user://logs/incident_1788290591.json
+09-01 15:23:11.350 10446 10494 E godot   :    at: push_warning (core/variant/variant_utility.cpp:1033)
+09-01 15:23:11.350 10446 10494 E godot   :    GDScript backtrace (most recent call first):
+09-01 15:23:11.350 10446 10494 E godot   :        [0] _ready (res://game/main.gd:171)
+09-01 15:23:14.242 10446 10494 I godot   : PERF t=2.0 fps=56.5 p95=87.2 cpu=0.6 gpu_est=8.5 dc=94 prim=47012 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:16.234 10446 10494 I godot   : PERF t=4.0 fps=70.3 p95=15.9 cpu=0.6 gpu_est=9.7 dc=94 prim=47016 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:18.250 10446 10494 I godot   : PERF t=6.0 fps=70.5 p95=16.7 cpu=0.4 gpu_est=8.5 dc=93 prim=47020 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:20.263 10446 10494 I godot   : PERF t=8.0 fps=69.6 p95=18.3 cpu=0.8 gpu_est=8.8 dc=94 prim=47016 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:22.264 10446 10494 I godot   : PERF t=10.0 fps=72.6 p95=16.7 cpu=0.4 gpu_est=9.5 dc=93 prim=47016 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:24.250 10446 10494 I godot   : PERF t=12.0 fps=70.5 p95=16.7 cpu=0.6 gpu_est=8.8 dc=93 prim=47020 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:26.259 10446 10494 I godot   : PERF t=14.0 fps=72.6 p95=18.7 cpu=0.6 gpu_est=9.7 dc=93 prim=47018 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:28.278 10446 10494 I godot   : PERF t=16.0 fps=70.3 p95=17.4 cpu=1.0 gpu_est=8.5 dc=100 prim=47186 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:30.296 10446 10494 I godot   : PERF t=18.1 fps=70.6 p95=17.0 cpu=0.3 gpu_est=8.8 dc=99 prim=47186 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:32.311 10446 10494 I godot   : PERF t=20.1 fps=67.2 p95=20.3 cpu=0.4 gpu_est=8.8 dc=100 prim=47352 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:34.312 10446 10494 I godot   : PERF t=22.1 fps=66.4 p95=17.6 cpu=0.4 gpu_est=10.1 dc=100 prim=47432 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:36.320 10446 10494 I godot   : PERF t=24.1 fps=69.3 p95=19.0 cpu=0.3 gpu_est=8.5 dc=100 prim=47526 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:38.319 10446 10494 I godot   : PERF t=26.1 fps=71.2 p95=17.6 cpu=0.4 gpu_est=8.4 dc=100 prim=47610 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:40.330 10446 10494 I godot   : PERF t=28.1 fps=64.8 p95=17.9 cpu=0.8 gpu_est=9.8 dc=99 prim=47700 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:42.339 10446 10494 I godot   : PERF t=30.1 fps=69.3 p95=16.7 cpu=0.4 gpu_est=8.8 dc=99 prim=47788 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:44.337 10446 10494 I godot   : PERF t=32.1 fps=64.5 p95=21.2 cpu=0.8 gpu_est=8.6 dc=99 prim=47786 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:46.352 10446 10494 I godot   : PERF t=34.1 fps=68.7 p95=17.6 cpu=0.5 gpu_est=8.8 dc=100 prim=47868 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:48.355 10446 10494 I godot   : PERF t=36.1 fps=66.3 p95=19.3 cpu=0.7 gpu_est=9.7 dc=100 prim=47872 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:50.360 10446 10494 I godot   : PERF t=38.1 fps=69.8 p95=19.3 cpu=0.4 gpu_est=8.5 dc=100 prim=47868 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:52.387 10446 10494 I godot   : PERF t=40.1 fps=67.9 p95=17.1 cpu=0.8 gpu_est=9.3 dc=100 prim=47780 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:54.315 10446 10494 I godot   : PERF t=42.1 fps=70.0 p95=17.4 cpu=0.6 gpu_est=8.6 dc=100 prim=47868 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:56.404 10446 10494 I godot   : PERF t=44.2 fps=64.4 p95=15.3 cpu=0.9 gpu_est=8.5 dc=100 prim=47870 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:23:58.411 10446 10494 I godot   : PERF t=46.2 fps=68.9 p95=19.7 cpu=0.9 gpu_est=8.5 dc=99 prim=47954 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:24:00.415 10446 10494 I godot   : PERF t=48.2 fps=67.5 p95=16.9 cpu=0.5 gpu_est=8.4 dc=97 prim=47960 vram=134 static_mem=149 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0
+09-01 15:24:02.403 10446 10494 I godot   : PERF t=50.2 fps=69.3 p95=18.3 cpu=0.5 gpu_est=8.9 dc=99 prim=47888 vram=135 static_mem=150 chunks=9 near=4 inst=86 lights=0 preset=balanced knob=0 thermal=0

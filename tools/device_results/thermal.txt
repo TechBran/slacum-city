@@ -1,0 +1,8 @@
+IsStatusOverride: false
+ThermalStatusListeners:
+Thermal Status: 1
+Cached temperatures:
+	Temperature{mValue=28.2, mType=2, mName=SUBBAT, mStatus=0}
+	Temperature{mValue=47.4, mType=0, mName=AP, mStatus=0}
+	Temperature{mValue=38.4, mType=12, mName=CP, mStatus=0}
+	Temperature{mValue=38.8, mType=5, mName=PA, mStatus=0}
