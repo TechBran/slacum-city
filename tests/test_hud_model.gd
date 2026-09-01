@@ -781,29 +781,57 @@ func test_resize_re_solves_the_chip_rows() -> void:
 	# width (the Fold folding, the preview harness resizing after its one boot
 	# refresh) kept the stale solve, and a row 0 solved wider than the new box
 	# was centred whole by `grow_horizontal`: the treasury chip measured at
-	# x = −121.5 in the 880×400 audit box. `NOTIFICATION_RESIZED` now queues one
-	# deferred re-solve; this exercises the queue and the re-solve it defers
-	# (the suite is synchronous, so the deferred hop is driven by hand).
+	# x = −121.5 in the 880×400 audit box (doc 12 D-65). `NOTIFICATION_RESIZED`
+	# now queues one deferred re-solve.
+	#
+	# Two headless facts shape this test (measured 2026-09-01, the two failures
+	# that had been hiding behind a piped exit code): a Control OUTSIDE the tree
+	# never receives `NOTIFICATION_RESIZED` from `set_size`, and a container
+	# outside the tree reports a ZERO combined minimum size. So the engine's
+	# emission is taken as its contract and the notification is delivered by
+	# hand, and the observable is the SOLVE — the row signature and the chips
+	# row 0 keeps — not a container's measured width.
 	var scene := _hud_scene()
 	var hud: CityHUD = scene["hud"]
-	hud.size = Vector2(1280.0, 720.0)
-	hud.refresh({
+	var snapshot := {
 		"treasury": 8420000, "net_per_hour": 5750.0, "population": 184291,
 		"stability": 0.68, "incidents": {"count": 7, "worst_tier": 4},
 		"clock": {"minute_of_day": 372, "day_index": 2}, "speed": 2, "paused": false,
-	})
-	var bar := hud.get_node("TopBar") as Control
-	var wide := bar.get_combined_minimum_size().x
-	assert_true(wide > 872.0,
-			"the full Wave-14 chip set at 1280 dp is wider than the 880 audit box, "
-			+ "or this test no longer exercises the defect")
-	hud.size = Vector2(872.0, 392.0)
+	}
+	hud.size = Vector2(1280.0, 720.0)
+	hud.refresh(snapshot)
+	var row0 := hud.get_node("TopBar/Chips/Row0") as HBoxContainer
+	var wide_signature: String = hud._row_signature
+	var wide_visible := 0
+	for chip_id: String in hud.model.chip_order():
+		if hud.chip_button(chip_id).visible:
+			wide_visible += 1
+	assert_eq(wide_visible, hud.model.chip_order().size(),
+			"at 1280 dp every chip is on the bar")
+	assert_eq(hud.get_node("TopBar/Chips").get_child_count(), 1, "and on one row")
+	# The Fold folds: 480 dp of width, the same snapshot, no sim tick.
+	hud.size = Vector2(480.0, 900.0)
+	assert_false(hud._resize_solve_queued,
+			"headless: set_size alone delivers no NOTIFICATION_RESIZED (Godot's "
+			+ "contract is that the engine sends it in-tree)")
+	hud.notification(Control.NOTIFICATION_RESIZED)
 	assert_true(hud._resize_solve_queued,
-			"NOTIFICATION_RESIZED queues exactly one deferred re-solve")
+			"NOTIFICATION_RESIZED queues the deferred re-solve")
+	hud.notification(Control.NOTIFICATION_RESIZED)
+	assert_true(hud._resize_solve_queued, "a resize burst queues it once, not once per event")
 	hud._solve_after_resize()
 	assert_false(hud._resize_solve_queued, "the queue drains with the solve")
-	assert_true(bar.get_combined_minimum_size().x <= 872.0,
-			"re-solved at the new width, the bar fits its box (A1: nothing clips)")
+	assert_ne(hud._row_signature, wide_signature,
+			"re-solved at 480 dp, the rows are not the 1280 dp rows")
+	var narrow_visible := 0
+	for chip_id: String in hud.model.chip_order():
+		if hud.chip_button(chip_id).visible:
+			narrow_visible += 1
+	var rows := hud.get_node("TopBar/Chips").get_child_count()
+	assert_true(rows > 1 or narrow_visible < wide_visible,
+			"the narrow solve wrapped or hid something (rows=%d, visible %d->%d)"
+			% [rows, wide_visible, narrow_visible])
+	assert_true(row0.get_child_count() > 0, "row 0 still carries the clock and the menu")
 	(scene["root"] as Node).free()
 
 

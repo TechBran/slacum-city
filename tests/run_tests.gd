@@ -52,6 +52,22 @@ func _initialize() -> void:
 		entry = dir.get_next()
 	dir.list_dir_end()
 	test_files.sort()
+	# `-- --file=<substring> --method=<substring>`: run one file or one method
+	# alone. Added 2026-09-01, when a fleet of sibling suites made wall-clock
+	# budget asserts flake under load and the only way to re-check one failure
+	# was the whole 10-minute run — and when a verifier needs to re-run a single
+	# named failure, "the whole suite again" is not an answer. Filters are
+	# substrings; the summary still refuses green on silent methods.
+	var file_filter := ""
+	var method_filter := ""
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--file="):
+			file_filter = arg.trim_prefix("--file=")
+		elif arg.begins_with("--method="):
+			method_filter = arg.trim_prefix("--method=")
+	if file_filter != "":
+		test_files = test_files.filter(func(f: String) -> bool: return f.contains(file_filter))
+		print("filter: files containing '%s' -> %d file(s)" % [file_filter, test_files.size()])
 
 	var total_tests := 0
 	var total_asserts := 0
@@ -73,6 +89,8 @@ func _initialize() -> void:
 			if m.name.begins_with("test_"):
 				method_names.append(m.name)
 		method_names.sort()
+		if method_filter != "":
+			method_names = method_names.filter(func(m: String) -> bool: return m.contains(method_filter))
 		for method_name in method_names:
 			total_tests += 1
 			suite.begin_test("%s::%s" % [file, method_name])
