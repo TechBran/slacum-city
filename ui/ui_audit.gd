@@ -26,9 +26,13 @@ const KIND_TINY_TARGET := &"tiny_target"
 const KIND_NO_TOOLTIP := &"no_tooltip"
 const KIND_OFFSCREEN := &"offscreen"
 const KIND_OVERLAP := &"overlapping_targets"
+## A visible, wrapping label laid out narrower than one em of its own font —
+## the one-glyph column an HBox hands a wrapping label that forgot
+## EXPAND_FILL, which then renders its sentence one character per line.
+const KIND_DEGENERATE_LABEL := &"degenerate_label"
 
 const KIND_ORDER: Array[StringName] = [
-	KIND_CLIPPED, KIND_UNDERSIZED, KIND_UNBOUNDED_CLIP, KIND_PLACEHOLDER,
+	KIND_CLIPPED, KIND_UNDERSIZED, KIND_DEGENERATE_LABEL, KIND_UNBOUNDED_CLIP, KIND_PLACEHOLDER,
 	KIND_RAW_KEY, KIND_TINY_TARGET, KIND_NO_TOOLTIP, KIND_OFFSCREEN, KIND_OVERLAP,
 ]
 
@@ -129,6 +133,20 @@ static func _check_control(control: Control, root: Node, out: Array[Dictionary],
 		if UIAudit.clips(control) and control.custom_minimum_size.x <= 1.0:
 			out.append(_finding(KIND_UNBOUNDED_CLIP, path, control, text,
 					"clips with no minimum width — use UIWidgets.elide()"))
+		# A WRAPPING label that was handed less than one em of width is not
+		# wrapping, it is stacking: an HBox gives a non-expanding wrapping label
+		# its minimum width, one glyph, and the sentence comes out one character
+		# per line. The goals sheet's standing line shipped that way and every
+		# sweep called it clean, because nothing here measured a label against
+		# its own font (2026-09-01 production audit, new-player lens, P0).
+		var label := control as Label
+		if label != null and label.autowrap_mode != TextServer.AUTOWRAP_OFF \
+				and control.size.x > 0.0 and text.length() > 1:
+			var em := float(label.get_theme_font_size(&"font_size"))
+			if em > 0.0 and control.size.x < em:
+				out.append(_finding(KIND_DEGENERATE_LABEL, path, control, text,
+						"wraps inside %.0f px, under one em (%.0f) — a wrapping "
+						% [control.size.x, em] + "label in an HBox needs EXPAND_FILL"))
 
 	# What the container actually gave it against what it asked for. Catches a row
 	# squeezed out of a fixed-height bar as well as a label crushed by a sibling.

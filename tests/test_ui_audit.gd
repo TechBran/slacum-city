@@ -482,3 +482,42 @@ func test_the_top_bar_reserves_the_clock_column_on_every_row() -> void:
 		assert_ne(row0.get_node_or_null("MenuButton"), null,
 				"and so does the pause-menu button")
 	_unmount(root)
+
+
+func test_a_wrapping_label_narrower_than_one_em_is_a_finding() -> void:
+	# The goals sheet's standing line shipped inside an HBox with wrap on and no
+	# expand flag: the box gave it one glyph of width and it rendered "You are
+	# Level 0" ONE CHARACTER PER LINE, 1,101 px tall, on every box — and every
+	# sweep called it clean, because nothing measured a label against its own
+	# font (2026-09-01 production audit, P0). `degenerate_label` is the check.
+	var root := Control.new()
+	var bad := Label.new()
+	bad.name = "Standing"
+	bad.text = "You are Level 0 — completing these reaches Level 1"
+	bad.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	root.add_child(bad)
+	bad.size = Vector2(1.0, 1101.0)
+	var kinds: Array = []
+	for f in UIAudit.walk(root):
+		kinds.append(f["kind"])
+	assert_true(kinds.has(UIAudit.KIND_DEGENERATE_LABEL),
+			"a 1 px wide wrapping label is a degenerate_label (%s)" % [kinds])
+	# Given a real column it is a sentence again.
+	bad.size = Vector2(800.0, 20.0)
+	kinds.clear()
+	for f in UIAudit.walk(root):
+		kinds.append(f["kind"])
+	assert_false(kinds.has(UIAudit.KIND_DEGENERATE_LABEL),
+			"800 px is not degenerate (%s)" % [kinds])
+	# A non-wrapping label is never judged by this rule — clipping has its own.
+	var badge := Label.new()
+	badge.name = "Badge"
+	badge.text = "L1"
+	root.add_child(badge)
+	badge.size = Vector2(1.0, 20.0)
+	var hits := 0
+	for f in UIAudit.walk(root):
+		if f["kind"] == UIAudit.KIND_DEGENERATE_LABEL:
+			hits += 1
+	assert_eq(hits, 0, "AUTOWRAP_OFF labels are exempt")
+	root.free()
