@@ -180,6 +180,10 @@ extends SceneTree
 ##                      the city removes nothing, so bringing it inside the
 ##                      city is the only way to show the tier machinery
 ##                      responds to it (report 98 RR-98).
+##   --far-relief=D     force §2.6b (2)'s day façade relief depth. 0 is the
+##                      flat far tier that shipped before Wave 17; the
+##                      modulation is zero-mean, so this is a STRUCTURE A/B
+##                      that cannot move the tier's level.
 ##   --far-gain=G       multiply §2.6b's measured per-family FAR palette by G.
 ##                      The sweep lever the boundary's level was checked with;
 ##                      the shipped value is identity and the shader carries
@@ -415,6 +419,8 @@ func _build_scene() -> void:
 	# Set BEFORE `setup`, so the very first `_upload_all` is already on the arm
 	# under test and no frame of the other one lands in the warm-up.
 	_city_view.blob_override = int(_opts["blob"])
+	# §2.6b (2)'s A/B arm: 0 is the flat far tier, the authored row is 0.55.
+	_city_view.far_relief_override = float(_opts["far_relief"])
 	# §2.6b's A/B arm, set before `setup` for the same reason `blob_override`
 	# is: the first `_upload_all` must already be on the arm under test.
 	_city_view.far_family_override = int(_opts["far_family"])
@@ -1348,7 +1354,7 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 		"pad_shadows": -1, "road_detail": -1, "blob": -1, "road_tint": 1.0,
 		"flood": 0.0, "flood_detail": -1,
 		"no_quality": false, "medium_max": -1.0, "far_family": -1,
-		"far_gain": -1.0, "pitch": -1.0, "pitch_cull": -1, "far_cull": -1.0,
+		"far_gain": -1.0, "far_relief": -1.0, "pitch": -1.0, "pitch_cull": -1, "far_cull": -1.0,
 	}
 	for raw in argv:
 		var arg := String(raw)
@@ -1362,6 +1368,8 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			opts["no_lod"] = true
 		elif arg == "--no-quality":
 			opts["no_quality"] = true
+		elif arg.begins_with("--far-relief="):
+			opts["far_relief"] = float(arg.trim_prefix("--far-relief="))
 		elif arg.begins_with("--far-cull="):
 			opts["far_cull"] = float(arg.trim_prefix("--far-cull="))
 		elif arg.begins_with("--pitch="):

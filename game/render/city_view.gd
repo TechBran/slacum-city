@@ -178,6 +178,12 @@ var _far_energy_scale: float = 0.62
 var _far_cell_m: float = 6.4
 var _far_bay_m: float = 3.2
 var _far_mullion_duty: float = 0.72
+## §2.6b (2)'s day façade relief. 0 is the flat far tier that shipped before
+## Wave 17; the modulation is zero-mean at every depth, so this knob changes
+## the STRUCTURE the far city shows and never its level.
+var _far_relief_depth: float = 0.0
+## `--far-relief=D` (tools/profile_frame.gd). Negative = take the authored row.
+var far_relief_override: float = -1.0
 ## Tests only. `MultiMesh.buffer` round-trips through the rendering server,
 ## which is the dummy one headless, so the far buffer has to be readable from
 ## the CPU side to be asserted at all. Off in play: keeping it would double the
@@ -281,6 +287,7 @@ func setup(p_model: RenderStateModel, render_data: Dictionary) -> void:
 	_far_bay_m = float(emissive.get("far_bay_m",
 			world.get("window_spacing_x_m", 3.2)))
 	_far_mullion_duty = float(emissive.get("far_mullion_duty", 0.72))
+	_far_relief_depth = float(emissive.get("far_relief_depth", 0.0))
 	_far_band = Vector2(float(emissive.get("far_band_lo", 0.30)),
 			float(emissive.get("far_band_hi", 0.78)))
 	_day_gate = float(emissive.get("day_gate", 0.06))
@@ -1219,6 +1226,8 @@ func _far_node_for(chunk: Vector2i) -> MultiMeshInstance3D:
 	material.set_shader_parameter("far_cell_m", _far_cell_m)
 	material.set_shader_parameter("far_bay_m", _far_bay_m)
 	material.set_shader_parameter("far_mullion_duty", _far_mullion_duty)
+	material.set_shader_parameter("far_relief_depth",
+			_far_relief_depth if far_relief_override < 0.0 else far_relief_override)
 	material.set_shader_parameter("day_gate", _day_gate)
 	material.set_shader_parameter("floor_height_m", _floor_height_m)
 	material.set_shader_parameter("band_lo", _far_band.x)

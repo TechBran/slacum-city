@@ -1416,3 +1416,53 @@ func test_the_authored_alpha_reaches_the_shader_uniform() -> void:
 			1.0 / float(blob["footprint_scale"]), 1e-6,
 			"…and it is exactly 1 / footprint_scale")
 	view.free()
+
+
+## §2.6b (2) — the DAY façade of the far tier (report 98 RR-98).
+##
+## The per-family palette made the far city the right COLOUR and left it the
+## wrong SURFACE: by day `ALBEDO` was one flat value per family per face. This
+## pins the term that fixes it and, more importantly, **the property that makes
+## it safe** — the modulation is ZERO-MEAN, so it cannot undo the level match
+## the palette bought (−0.7 % against the same buildings drawn by the textured
+## shader). Any pattern whose average is not exactly 1 would.
+func test_the_far_day_relief_is_zero_mean_and_costs_no_fetch() -> void:
+	var src := _code_only(_src("res://game/shaders/building_far.gdshader"))
+	assert_true(src.contains("far_relief_depth"), "the term ships")
+	assert_true(src.contains("mean_cover"),
+			"…and it subtracts its own mean: `1 + depth * (cover - mean_cover)` "
+			+ "is what makes E[relief] = 1 at every depth")
+	assert_true(src.contains("(band_hi - band_lo) * far_mullion_duty"),
+			"and `mean_cover` is exactly what the sharp pattern integrates to, "
+			+ "not a fitted constant")
+	# The far tier's whole claim is one draw call and no texture unit.
+	assert_false(src.contains("sampler2D"),
+			"the far tier still fetches nothing: the relief is 3 ALU reusing "
+			+ "terms the night path already computes")
+	# Both factors must be fwidth-crossfaded or a periodic pattern under
+	# minification moirés — the same failure the per-window hash was rejected
+	# for. Crossfading to the mean is also what makes the relief vanish at
+	# range WITHOUT a second visible boundary further out.
+	assert_true(src.contains("rows_per_px"),
+			"the storey band is anti-aliased like the mullion beside it")
+	assert_true(src.contains("fwidth"), "…by fwidth, to its own mean")
+
+
+func test_the_relief_depth_is_authored_and_reaches_the_material() -> void:
+	var data := _data()
+	var emissive: Dictionary = data["emissive"]
+	assert_true(emissive.has("far_relief_depth"),
+			"the depth is data, not a shader default")
+	var depth := float(emissive["far_relief_depth"])
+	assert_true(depth > 0.0, "the far tier is not flat by day any more")
+	# Beyond the mean the term would drive ALBEDO negative on a fully-unlit
+	# bay: the trough is `1 - depth * mean_cover`, and mean_cover < 0.35.
+	var mean_cover := (float(emissive["far_band_hi"])
+			- float(emissive["far_band_lo"])) * float(emissive["far_mullion_duty"])
+	assert_true(1.0 - depth * mean_cover > 0.0,
+			"depth %.2f against mean_cover %.4f keeps the trough positive"
+			% [depth, mean_cover])
+	var view := _blob_view("high")
+	view.refresh(0.1, 13.0, Vector3(64.0, 20.0, 64.0))
+	assert_almost_eq(view._far_relief_depth, depth, 1e-6,
+			"CityView read the authored row")

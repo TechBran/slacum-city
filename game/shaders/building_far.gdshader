@@ -152,6 +152,30 @@ uniform float far_family_mix = 0.0;
 // is deliberately not in `data/render.json`, because a constant of 1.0 that
 // nothing varies is the very thing §2.13b spent this wave deleting.
 uniform float far_albedo_gain = 1.0;
+// ═════════ §2.6b (2) — THE DAY FAÇADE, and why it cannot move the level ════
+// The palette fix above made the far city the right COLOUR. It is still the
+// wrong SURFACE by day: `ALBEDO` is one flat value per family per face, so a
+// tower at 300 m is a coloured slab where the tier in front of it is brick and
+// glass. The night path already computes storey bands and bay mullions — for
+// `EMISSION` — and this reuses those exact terms on `ALBEDO`, which is the
+// audit's own "3.5 m storey-band darkening" and costs three ALU, no texture
+// fetch and no draw call.
+//
+// **It is authored as a ZERO-MEAN modulation, and that is the whole trick.**
+// The level match this section just bought (−0.7 % against the same buildings
+// drawn by the textured shader) would be thrown away by any pattern whose
+// average is not 1. So the term is `1 + depth · (cover − mean_cover)`, where
+// `mean_cover = (band_hi − band_lo) · far_mullion_duty` is exactly what the
+// sharp pattern integrates to. E[relief] = 1 by construction, at every depth.
+//
+// **And it self-extinguishes at range with no step.** Both factors are already
+// `fwidth`-crossfaded to their own means (the mullion by the block below, the
+// storey band here) — so as a bay or a storey approaches a pixel wide, `cover`
+// approaches `mean_cover`, the modulation approaches exactly 1.0, and the
+// building fades to the flat family colour it would have had anyway. No
+// aliasing, no moiré, and no second boundary further out.
+uniform float far_relief_depth = 0.0;
+// ═════════ END §2.6b (2) ══════════════════════════════════════════════════
 // ═════════ END §2.6b ═══════════════════════════════════════════════════════
 uniform vec3 soot_color: source_color = vec3(0.278, 0.263, 0.239);
 uniform float wet_albedo_mult = 0.85;
@@ -273,6 +297,19 @@ void fragment() {
 	vec3 roof_c = mix(roof_albedo, far_roof_albedo[family] * far_albedo_gain,
 			far_family_mix);
 	ALBEDO = mix(wall_c, roof_c, is_roof);
+	// §2.6b (2): the day façade. `storey_band` is 1 across the glazed band of
+	// a storey and 0 on the spandrel, crossfaded to its own mean as a storey
+	// approaches a pixel tall — the same anti-aliasing the mullion takes, for
+	// the same reason. `mullion` is reused as computed above.
+	float rows_per_px = fwidth(v_local.y * v_rows);
+	float storey_sharp = smoothstep(band_lo, band_lo + 0.06, band)
+			* (1.0 - smoothstep(band_hi - 0.06, band_hi, band));
+	float storey_band = mix(storey_sharp, band_hi - band_lo,
+			clamp(rows_per_px * 2.0, 0.0, 1.0));
+	float mean_cover = (band_hi - band_lo) * far_mullion_duty;
+	float relief = 1.0 + far_relief_depth
+			* (storey_band * mullion - mean_cover);
+	ALBEDO *= mix(1.0, relief, is_side);
 	float tint = (variant / 15.0 - 0.5) * 0.16;
 	ALBEDO *= vec3(1.0 + tint, 1.0 + tint * 0.8, 1.0 + tint * 0.55);
 	ALBEDO *= mix(vec3(1.0), soot_color, v_custom.g * 0.8);

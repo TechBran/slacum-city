@@ -2518,6 +2518,78 @@ its page by `v_color`, the mesh's baked AO, whose area-weighted mean over all
 the decode fixed the band lands at +1.6 % without it; applying it would push
 the far tier back under the tier in front of it.*
 
+
+##### §2.6b (2) — where the boundary sits, how big the step was, and the day façade (2026-09-02)
+
+**Where it sits.** `medium_max_m` is 420 m and the tier test is against
+`chunk_ground_distance`, which is the 3-D distance from the camera — so at the
+Z2 pose (camera 370.8 m up) the boundary is a ring on the ground at
+**197.3 m**, and the FAR tier covers **20.87 % of the Z2 frame** (432,751 px of
+1920 × 1080, `--focus=52,44`, hour 13, High). That ring crosses the middle of
+the skyline, which is why it read as a line drawn across the shot rather than
+as haze.
+
+**How big the step was.** The A/B that measures it is `--medium-max=1500`,
+which pushes the boundary past the cull so the same buildings are drawn by the
+NEAR/MEDIUM textured shader instead — nothing else differs, so the delta over
+the FAR footprint *is* the tier step:
+
+| arm | mean luma over the FAR footprint | vs the textured reference | sd |
+|---|---|---|---|
+| reference (all textured) | 142.63 | — | 23.10 |
+| **FAR flat grey (pre-Wave-17)** | **120.62** | **−15.4 %** | **12.63** |
+| FAR per-family palette | 141.70 | **−0.7 %** | 23.70 |
+
+The far city was not merely "grey": it was **15.4 % too dark and carrying 55 %
+of the variance**, which is what a boundary is made of. The per-family palette
+takes the level error to **−0.7 %** and restores the spread (23.70 against
+23.10). **Cost: zero draw calls and zero primitives** — 182 dc / 302,878 prims
+either way, both arms measured.
+
+**The day façade, and why the step was only half the row.** With the level
+matched, `ALBEDO` was still one flat value per family per face by day: a tower
+at 300 m was a coloured slab where the tier in front of it was brick and glass.
+The night path already computes a storey band and a bay mullion for `EMISSION`;
+§2.6b (2) reuses those exact terms on `ALBEDO` — the audit's own "3.5 m
+storey-band darkening" — for **three ALU, no texture fetch and no draw call**.
+
+**It is authored as a ZERO-MEAN modulation and that is the whole trick.**
+`1 + depth · (cover − mean_cover)`, with `mean_cover = (band_hi − band_lo) ·
+far_mullion_duty` — exactly what the sharp pattern integrates to. Any pattern
+whose average is not 1 would throw away the −0.7 % level match above. Measured:
+the far-tier walls move **145.53 → 144.58 mean luma, −0.65 %**, at depth 0.90.
+It also **self-extinguishes at range with no second boundary**, because both
+factors are already `fwidth`-crossfaded to their own means: as a bay or a
+storey approaches a pixel, `cover → mean_cover` and the modulation → exactly
+1.0.
+
+**The depth is a measured art call.** High-pass detail RMS over the far-tier
+walls at Z2 (103,737 px, 24 % of the far footprint):
+
+| depth | 0 (flat) | 0.55 | **0.90 (shipped)** | textured reference |
+|---|---|---|---|---|
+| detail RMS | 4.46 | 6.07 | **7.66** | 13.30 |
+| mean luma | 145.53 | 145.05 | 144.58 | 152.87 |
+
+0.90 is where the towers read as floors in the screenshot pair without reading
+as stripes, and it stays well under the reference's density, so the boundary
+does not come back as a *contrast* step in the other direction.
+
+> **FILED, with its price, rather than taken: a textured FAR atlas.** The audit
+> allows one and notes Z2's headroom. Promoting the whole Z2 frame to the
+> textured shader (`--medium-max=1500`) costs **+80 draw calls and +158,322
+> primitives** on High (182 → 262, 302,878 → 461,200), which fits inside High's
+> 520 budget and inside Balanced's 320 as well (262 + 25 UI = 287) — but it is
+> not what the row needed: the level error is already −0.7 % and the walls
+> carry structure, so the remaining gap is texture DETAIL, which reads as
+> softness and not as a line. **A distance fade was rejected outright**:
+> `Environment.fog_aerial_perspective` already greys the far city with range
+> (§2.8), and a second fade in the albedo greys the skyline twice — the shot
+> §1's "show the tall skyline" is about. *Re-open trigger: a device session in
+> which the far tier reads as soft at Z2 on the Fold; the atlas is the fix and
+> its price is the paragraph above.*
+
+
 #### 2.13b The engine-side half of a preset (2026-09-01, report 98 RR-98, doc 93 §X5)
 
 **Until Wave 17, none of it reached the engine.** **Thirteen** keys in every
