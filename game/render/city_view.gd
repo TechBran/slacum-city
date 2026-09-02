@@ -1605,6 +1605,53 @@ func _paint_material(material: ShaderMaterial, paint: Array, names: Array) -> vo
 			float((paint[2] as Dictionary).get("emission", 0.55)))
 
 
+## Doc 11 §2.5b — the camera pitch the tier pass is culling against, in degrees
+## below horizontal.
+##
+## **Read off the live `Camera3D` rather than passed in, on purpose.** The
+## alternative was a fourth argument to `refresh()`, which would have made this
+## feature inert in the shipped game until the shell was edited to supply it —
+## and a knob that is authored and not applied is the exact defect this wave
+## exists to close (report 98 RR-98). The viewport's current camera is the same
+## object `camera_pos` was taken from, so nothing can disagree; the shell keeps
+## its one-line call.
+##
+## `pitch_override` is for the harnesses (`tools/profile_frame.gd`'s
+## `--pitch-cull`, the headless tests): `--headless` has no `Camera3D` at all,
+## and a test that had to stand a camera up to check a distance would be
+## testing Godot. A negative return means "no pitch known", which
+## `RenderStateModel.set_camera_pose` reads as "leave `far_cull_m` alone".
+var pitch_override: float = -1.0
+
+
+func camera_pitch_deg() -> float:
+	if pitch_override >= 0.0:
+		return pitch_override
+	if not is_inside_tree():
+		return -1.0
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return -1.0
+	# -Z is Godot's camera forward. Its Y component is the sine of the angle
+	# below horizontal, which is the pitch §2.5 authors and `CameraState`
+	# derives — taken off the basis rather than off `rotation`, so a rig that
+	# builds its transform any other way still reports the truth.
+	var forward := -cam.global_transform.basis.z
+	return rad_to_deg(asin(clampf(-forward.y, -1.0, 1.0)))
+
+
+## The render target's width/height, for §2.5b's corner reach. Negative when
+## there is no viewport (headless), which the model reads as "use the authored
+## `max_aspect`" and therefore as "cull nothing you are not sure of".
+func viewport_aspect() -> float:
+	if not is_inside_tree():
+		return -1.0
+	var size := get_viewport().get_visible_rect().size
+	if size.y <= 0.0:
+		return -1.0
+	return size.x / size.y
+
+
 func refresh(delta: float, hour: float, camera_pos: Vector3 = Vector3.ZERO) -> void:
 	model.set_hour(hour)
 	model.advance(delta)
@@ -1617,5 +1664,6 @@ func refresh(delta: float, hour: float, camera_pos: Vector3 = Vector3.ZERO) -> v
 		# inherits both: a chunk cannot flip tiers more than twice a second and
 		# never inside 20 m of a band edge. That is what stops the boundary
 		# popping under a normal-speed zoom.
-		model.update_chunk_tiers(camera_pos, delta)
+		model.update_chunk_tiers(camera_pos, delta, camera_pitch_deg(),
+				viewport_aspect())
 	_upload_all()

@@ -1196,3 +1196,140 @@ func test_civ_headlights_caps_the_one_additive_buffer() -> void:
 			"a preset DROP shrinks the buffer it inherited — the governor's "
 			+ "latched drop takes this path and must not keep High's memory")
 	view.free()
+
+
+# ---------------------------------------------------------------------------
+# Doc 11 §2.5b — the PITCH-COUPLED cull (report 98 RR-98, doc 92 §42)
+# ---------------------------------------------------------------------------
+
+## The Z2 pose, from `lod._z2_derivation`: D 420 m at 62°, so the camera is
+## 420·sin62 = 370.8 m up and the top edge of the frame meets the ground at
+## 411.9 m. This is the cross-check that `pitch_cull_reach_m` is the same
+## geometry that paragraph is, rather than a second opinion about it.
+const Z2_CAMERA_Y := 370.8
+const Z2_R_FAR_DOC := 411.9
+## 1920×1080. `h½` is derived from the vertical FOV through the aspect
+## (Godot's `KEEP_HEIGHT` default), so the corner reach depends on it.
+const ASPECT_16_9 := 1.7777778
+
+
+func test_the_centre_reach_reproduces_the_z2_derivation() -> void:
+	var model := RenderStateModel.new(_data(), "balanced")
+	# A degenerate aspect collapses the corner onto the centre of the top edge,
+	# which is the quantity `_z2_derivation` computes by hand as `r_far`.
+	var slack := model._pitch_slack(62.0)
+	var centre := model.pitch_cull_reach_m(Z2_CAMERA_Y, 62.0, 0.000001) / slack
+	assert_true(absf(centre - Z2_R_FAR_DOC) < 1.0,
+			"the centre of the top edge reaches %.1f m; `lod._z2_derivation` "
+			% centre + "computes r_far = %.1f by hand" % Z2_R_FAR_DOC)
+
+
+func test_the_corners_reach_a_third_further_than_the_centre() -> void:
+	var model := RenderStateModel.new(_data(), "balanced")
+	var slack := model._pitch_slack(62.0)
+	var centre := model.pitch_cull_reach_m(Z2_CAMERA_Y, 62.0, 0.000001) / slack
+	var corner := model.pitch_cull_reach_m(Z2_CAMERA_Y, 62.0, ASPECT_16_9) / slack
+	assert_true(corner > centre * 1.25 and corner < centre * 1.35,
+			"at the Z2 pose the top CORNERS reach %.0f m against the centre's "
+			% corner + "%.0f m (×%.3f). A cull drawn at the centre figure "
+			% [centre, corner / centre] + "deletes chunks visible in the top "
+			+ "corners of the frame — which is what the first draft of this "
+			+ "feature did (report 98 RR-98)")
+
+
+func test_a_shallower_pitch_reaches_further_from_the_same_height() -> void:
+	var model := RenderStateModel.new(_data(), "balanced")
+	var last := 0.0
+	for pitch: float in [62.0, 48.0, 34.0]:
+		var r := model.pitch_cull_reach_m(Z2_CAMERA_Y, pitch, ASPECT_16_9)
+		assert_true(r > last, "pitch %.0f° reaches %.0f m, further than the "
+				% [pitch, r] + "steeper pitch above it (%.0f m) — 'cull "
+				% last + "farther when looking down, nearer at the floor'")
+		last = r
+	# Below the half-FOV the top ray clears the horizon and the frustum reaches
+	# forever; only `far_cull_m` can stop it, and INF is how this says so.
+	assert_true(is_inf(model.pitch_cull_reach_m(Z2_CAMERA_Y, 15.0, ASPECT_16_9)),
+			"a top ray above the horizon reaches forever")
+
+
+func test_the_cull_is_reconciled_into_the_models_own_distance_metric() -> void:
+	# `chunk_ground_distance` is the 3-D distance from the camera, which is why
+	# `medium_max_m` 420 is a GROUND radius of 197.3 m at Z2 in the derivation.
+	# A reach in ground metres written straight into `active_far_cull_m` would
+	# pull the ring in by the camera height — 371 m of it at this pose.
+	var model := RenderStateModel.new(_data(), "balanced")
+	model.set_camera_pose(Z2_CAMERA_Y, 62.0, ASPECT_16_9)
+	var reach := model.pitch_cull_reach_m(Z2_CAMERA_Y, 62.0, ASPECT_16_9)
+	var expected := sqrt(reach * reach + Z2_CAMERA_Y * Z2_CAMERA_Y)
+	assert_true(absf(model.active_far_cull_m - expected) < 1.0,
+			"active cull %.0f m = hypot(reach %.0f, camera height %.0f)"
+			% [model.active_far_cull_m, reach, Z2_CAMERA_Y])
+	assert_true(model.active_far_cull_m > reach,
+			"…and it is therefore LONGER than the ground reach, not shorter")
+
+
+func test_the_pitch_cull_never_comes_inside_the_medium_band() -> void:
+	var data := _data()
+	var model := RenderStateModel.new(data, "balanced")
+	var lod: Dictionary = data["lod"]
+	var floor_m := float((lod["pitch_cull"] as Dictionary)["floor_m"])
+	assert_eq(floor_m, float(lod["medium_max_m"]),
+			"§2.5b's floor IS `medium_max_m`: the cull may remove FAR chunks "
+			+ "and may never touch the tier the player is looking at")
+	# The Z1 pose: 86.9 m at 48°, camera 64.6 m up. Its frustum reaches ~160 m,
+	# far inside the MEDIUM band, and the floor is what stops the cull there.
+	model.set_camera_pose(64.6, 48.0, ASPECT_16_9)
+	assert_eq(model.active_far_cull_m, floor_m,
+			"at Z1 the whole visible city is MEDIUM, so the cull clamps to the "
+			+ "floor and removes nothing — which is why §2.5b cannot fix the "
+			+ "Z1 draw-call bust (report 98 RR-98)")
+	assert_eq(model.raw_tier(300.0), RenderStateModel.TIER_MEDIUM,
+			"a chunk at 300 m is still MEDIUM with the cull at the floor")
+
+
+func test_an_unposed_model_culls_exactly_as_it_did_before_2_5b() -> void:
+	var model := RenderStateModel.new(_data(), "balanced")
+	assert_eq(model.active_far_cull_m, model.far_cull_m,
+			"a model nobody has posed uses the preset's ring untouched")
+	# -1 is what `CityView.camera_pitch_deg()` returns headless, and what every
+	# caller that predates §2.5b supplies by omission.
+	model.set_camera_pose(370.8, -1.0, ASPECT_16_9)
+	assert_eq(model.active_far_cull_m, model.far_cull_m,
+			"and 'no pitch supplied' leaves it untouched too")
+	model.pitch_cull_enabled = false
+	model.set_camera_pose(370.8, 62.0, ASPECT_16_9)
+	assert_eq(model.active_far_cull_m, model.far_cull_m,
+			"…as does disarming it in data")
+
+
+func test_the_governor_wins_whenever_it_is_the_tighter_of_the_two() -> void:
+	var model := RenderStateModel.new(_data(), "balanced")
+	model.set_camera_pose(Z2_CAMERA_Y, 62.0, ASPECT_16_9)
+	var pitch_ring := model.active_far_cull_m
+	assert_true(pitch_ring < model.preset_far_cull_m,
+			"the pitch ring is inside the preset's 1200 m at Z2")
+	# Rung 3 of §2.13's ladder, several steps down.
+	model.apply_governor({"far_cull_m": 700.0})
+	assert_eq(model.active_far_cull_m, minf(pitch_ring, 700.0),
+			"a governor in trouble must not be undone by a camera that "
+			+ "happens to be looking down: the two compose by MINIMUM")
+	# …and a pose taken after the governor step still respects it.
+	model.set_camera_pose(Z2_CAMERA_Y, 62.0, ASPECT_16_9)
+	assert_true(model.active_far_cull_m <= 700.0,
+			"and the next pose does not lift the ladder's step back off")
+
+
+func test_an_unknown_aspect_errs_towards_culling_nothing() -> void:
+	var data := _data()
+	var model := RenderStateModel.new(data, "balanced")
+	var authored := float(((data["lod"] as Dictionary)["pitch_cull"]
+			as Dictionary)["max_aspect"])
+	assert_true(authored >= 2.0, "the fallback aspect is wider than any box "
+			+ "the game ships on, so an unknown aspect cannot cull a corner "
+			+ "it cannot see")
+	var unknown := model.pitch_cull_reach_m(Z2_CAMERA_Y, 62.0, -1.0)
+	var known := model.pitch_cull_reach_m(Z2_CAMERA_Y, 62.0, ASPECT_16_9)
+	assert_true(unknown > known,
+			"a headless caller (aspect %.0f) reaches %.0f m against 16:9's "
+			% [authored, unknown] + "%.0f m — further, i.e. it culls less"
+			% known)

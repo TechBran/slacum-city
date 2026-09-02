@@ -287,6 +287,120 @@ Three reference poses, used by every worked example and by test 19:
 
 **Why `medium_max_m` stays at 420 m.** Report C-63 allows either raising `medium_max_m` or accepting ~10 draw calls per chunk at max zoom. Raising it only converts FAR chunks into MEDIUM and makes Z2 *more* expensive. Restoring the all-FAR result would instead require *lowering* `medium_max_m` below 370.8 m — arithmetic in §2.13 — which buys 118 → 48 opaque calls at Z2 but renders the entire skyline as the shared 12-tri box, discarding exactly the LOD1 roof signatures §2.14 authors "to preserve archetype readability at 400 m". **Ruling: keep `medium_max_m = 420`, accept ~10 calls per MEDIUM chunk.** The budget carries it with 48% headroom.
 
+#### 2.5b The pitch-coupled cull, and the bust it turned out not to be (2026-09-02, report 98 RR-98, doc 92 §42)
+
+`far_cull_m` was a constant per preset (900 / 1200 / 1500 m) and the camera's
+pitch had no say in it. The camera tilt work handed this lane a ranked fix:
+**couple `far_cull_m` to pitch — cull farther when looking down, nearer at the
+floor — to bring a manual pitch floor's draw calls back under the 320 budget.**
+It is built, it is armed, and **it does not do the job it was ranked for.**
+Both halves of that sentence are this section.
+
+**What is built.** `RenderStateModel.pitch_cull_reach_m(camera_y, pitch,
+aspect)` computes where the frustum's TOP CORNERS meet the ground, and
+`set_camera_pose` clamps the cull ring down to it. `CityView.refresh` supplies
+the pitch and the aspect, read off the live `Camera3D` and viewport rather than
+passed down from the shell — a fourth argument to `refresh()` would have made
+this feature inert in the shipped game until `main.gd` was edited to supply it,
+and an authored-but-unapplied knob is precisely the defect §2.13b exists to
+close. `lod.pitch_cull` authors `enabled`, a `slack` curve in pitch, a
+`floor_m` and a `max_aspect`.
+
+**The corners, not the centre — the correction that matters.** The centre of
+the top edge reaches `h / tan(θ − fov_v/2)`, which is 411.9 m at the Z2 pose
+and is exactly the `r_far` `lod._z2_derivation` computes by hand. The top
+CORNERS reach **532 m at that same pose, 29 % further**, because a corner ray
+carries a horizontal component that flattens its descent. The first draft of
+this function culled at the centre figure and would have deleted chunks
+visible in the top corners of every frame.
+`test_the_corners_reach_a_third_further_than_the_centre` is the guard.
+
+**Why the bound is exact at any building height.** Past the range where the top
+ray meets the ground, that ray is *below* ground — so every point at that
+range, tower tops included, sits above the frame's top edge and is off-screen.
+The reach is a true horizon, not a heuristic, which is what makes culling at it
+safe rather than merely cheap.
+
+**Two reconciliations the first draft got wrong and this one does not.**
+(1) `slack` multiplies the computed REACH, not `far_cull_m`: the reach scales
+with camera height as much as with pitch — 48 m from the Z0 pose at the 34°
+floor against 1,111 m from the Z2 pose, a factor of 23 — and one multiplier
+keyed on pitch alone cannot express both. (2) The reach is a GROUND range and
+`chunk_ground_distance` is the 3-D distance from the camera, which is why
+`medium_max_m` 420 is a ground radius of 197.3 m at Z2 in the derivation above.
+The ring is written as `hypot(reach, camera_y)` or it comes in by the whole
+camera height — 371 m of it at Z2.
+
+**Composition.** The pitch ring may only ever SHORTEN the draw distance; it may
+never come inside `pitch_cull_floor_m`, which is authored EQUAL to
+`medium_max_m` so §2.5b can remove FAR chunks and can never touch the tier the
+player is looking at; and it composes with §2.13's ladder by MINIMUM, so a
+governor in trouble is not undone by a camera that happens to be looking down.
+A model nobody has posed, or one posed with pitch `< 0` (which is what a
+headless caller and every pre-§2.5b call site supply), uses the preset's ring
+untouched — so nothing that existed before this section changed behaviour.
+
+##### The measurement, and the finding
+
+Bench city, hour 13, `--focus=52,44`, 1920×1080, `--pitch=DEG` pins the pitch
+band to a constant at every pose (§2.5's pitch is a pure function of `zoom_t`,
+so a manual floor has no other expression). `dc+ui` adds §2.13's 25 batched UI
+calls; the budget is Balanced's 320.
+
+| pitch | Z0 dc+ui | Z1 dc+ui | Z2 dc+ui | Z2 tiers (near/med/far) |
+|---|---|---|---|---|
+| 34° (**the floor**) | 248 | **353** | 264 | 0 / 18 / 18 |
+| 48° | 248 | 335 | 221 | 0 / 17 / 19 |
+| 62° (**the ceiling**) | 246 | 299 | 221 | 0 / 17 / 19 |
+| §2.5 zoom-coupled (34/48/62 by pose) | 248 | **335** | 221 | 0 / 17 / 19 |
+
+**Every one of those numbers is identical with §2.5b armed and disarmed**
+(`--pitch-cull=1` vs `--pitch-cull=0`, which differ in nothing else): at 62°
+the ring resolves to 675 m against the preset's 1200 and removes **zero** draw
+calls; at 34° it resolves to 1,245 m, longer than the preset's ring, and is
+clipped to it.
+
+**Why zero, and it is not because the code is wrong.** The bench and starter
+cities are about 896 m across and the presets cull at 900 / 1200 / 1500 m. **A
+cull ring larger than the city is not a cull.** The proof is `--far-cull=M`,
+which brings the ring inside the city with nothing else changed: at Z2 the FAR
+chunk count is 19 at 1200 m, 19 at 675 m — and **8 at 500 m**, with `dc`
+196 → 191. The tier machinery answers the ring exactly as designed; it simply
+has nothing to remove until the ring is inside the city. §2.5b is therefore
+**armed for the city sizes doc 09 allows and for the manual pitch floor doc 12
+will add, and is worth 0 dc on the fixtures we have today.** That is the honest
+statement and it is published rather than buried.
+
+##### The bust is the shadow pass, not the cull
+
+The Z1 bust is real — **353 dc+ui at the pitch floor and 335 at the shipped
+zoom-coupled pitch, against a 320 budget, i.e. it busts by 15 before any manual
+tilt is involved at all.** `far_cull_m` cannot fix it *in principle*: the Z1
+census is 10 NEAR + 26 MEDIUM + **0 FAR**, and a cull distance only ever
+removes chunks beyond `medium_max_m`. There are none to remove. The ranked fix
+was ranked against a cost it cannot reach.
+
+Two levers were measured against it instead:
+
+* **`medium_max_m`, pulled to 250 m at the pitch floor: Z1 328 → 322 dc
+  (−6).** Not the answer either — but the same run takes **Z2 from 239 to 174
+  dc (−65)**, so a pitch-coupled `medium_max_m` is a real Z2 lever and is the
+  one worth building if Z2 ever becomes the problem.
+* **The shadow pass, which is where Z1's draw calls actually are.** Performance
+  (`shadows: false`) draws Z1 at **124 dc**; the identical run with the shadow
+  pass restored draws **311**. **~187 of Balanced's 310 Z1 draw calls, 60 % of
+  the pose, are the sun re-drawing the city into its cascades.** The lever with
+  purchase at Z1 is `shadow_max_m` / cascade coverage — `shadow_splits` is not
+  one, because Godot batches the PSSM passes and High's four splits cost the
+  same 223 draw calls at Z0 as Balanced's two (they cost 67 % more primitives,
+  which is the column a shadow setting actually shows up in).
+
+> **OPEN — Z1 busts the draw-call budget by 15 as shipped, and by 33 at a pitch
+> floor.** Not closed by this lane, and deliberately not closed by adjusting
+> the budget. *Re-open trigger: `profile_frame --preset=balanced --focus=52,44`
+> reporting `z1 dc+ui` over 320. The measured candidate is `shadow_max_m`, worth
+> ~187 dc at Z1; a pitch-coupled `medium_max_m` is worth 6 there and 65 at Z2.*
+
 ### 2.6 Building rendering: MultiMesh + per-instance custom data
 
 **Custom-data contract (LOCKED by this doc):**

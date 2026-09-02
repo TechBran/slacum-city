@@ -163,6 +163,23 @@ extends SceneTree
 ##                      in the tree applied them — so this is the flag that
 ##                      reproduces the old numbers, and a run WITHOUT it is
 ##                      what the preset the player picked actually costs.
+##   --pitch=DEG        PIN the camera pitch to DEG at every pose instead of
+##                      taking §2.5's zoom-coupled band (34 deg at Z0 ramping
+##                      to 62 at Z2). This is how a MANUAL pitch — a floor the
+##                      player holds while zooming out — is measured, since
+##                      `CameraState.pitch_deg_at()` is a pure function of
+##                      `zoom_t` and has no other expression. Distance, focus
+##                      and yaw are unchanged, so a `--pitch=34` Z2 run is the
+##                      Z2 pose seen from a camera that is not looking down.
+##   --pitch-cull=0|1   force §2.5b's pitch-coupled `far_cull_m` off (0) or on
+##                      (1), instead of taking it from `lod.pitch_cull`. The
+##                      A/B behind that ruling: the two runs differ in nothing
+##                      else, so the `dc` delta IS the cull (report 98 RR-98).
+##   --far-cull=M       override the preset's `far_cull_m` with M metres. The
+##                      one experiment it exists for: a cull ring LARGER than
+##                      the city removes nothing, so bringing it inside the
+##                      city is the only way to show the tier machinery
+##                      responds to it (report 98 RR-98).
 ##   --far-gain=G       multiply §2.6b's measured per-family FAR palette by G.
 ##                      The sweep lever the boundary's level was checked with;
 ##                      the shipped value is identity and the shader carries
@@ -297,9 +314,12 @@ func _initialize() -> void:
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	Engine.max_fps = 0
 	if not bool(_opts["quiet"]):
-		print("profile_frame: %s — %d buildings, preset %s, hour %.1f, %dx%d" % [
+		var pitch_note := ""
+		if float(_opts["pitch"]) > 0.0:
+			pitch_note = ", pitch PINNED %.0f deg" % float(_opts["pitch"])
+		print("profile_frame: %s — %d buildings, preset %s, hour %.1f, %dx%d%s" % [
 				String(_opts["city"]), _sim.buildings.size(), String(_opts["preset"]),
-				float(_opts["hour"]), size.x, size.y])
+				float(_opts["hour"]), size.x, size.y, pitch_note])
 
 
 # ---------------------------------------------------------------- the scene
@@ -363,6 +383,22 @@ func _build_scene() -> void:
 	# runs cull identically and differ only in which shader drew what.
 	if float(_opts["medium_max"]) > 0.0:
 		_model.medium_max_m = minf(float(_opts["medium_max"]), _model.far_cull_m)
+	# §2.5b's A/B arm. `--pitch-cull=0` disarms the pitch-coupled cull and
+	# leaves `far_cull_m` standing at the preset's authored value, which is what
+	# every pose in §2.13 was measured against before this wave.
+	if int(_opts["pitch_cull"]) >= 0:
+		_model.pitch_cull_enabled = int(_opts["pitch_cull"]) == 1
+	# `--far-cull=M` overrides the preset's cull ring outright. It exists for
+	# ONE experiment and the doc says so rather than leaving it to be guessed:
+	# `far_cull_m` cannot be shown to have leverage on a city SMALLER than the
+	# ring, so the only way to prove the tier machinery responds to it at all —
+	# and therefore that §2.5b would bite on a city that is big enough — is to
+	# bring the ring inside the city and watch the census move (report 98
+	# RR-98). It is not a preset knob and nothing in `game/` reads it.
+	if float(_opts["far_cull"]) > 0.0:
+		_model.far_cull_m = float(_opts["far_cull"])
+		_model.preset_far_cull_m = _model.far_cull_m
+		_model.active_far_cull_m = _model.far_cull_m
 	var manifest: Dictionary = StarterCityLoader.read_json(MESH_MANIFEST)
 	for entry in manifest.get("meshes", []):
 		_family_of[String(entry["archetype"])] = String(entry.get("family", "residential"))
@@ -471,6 +507,18 @@ func _build_scene() -> void:
 	if wanted.x >= 0.0:
 		focus = Vector3(wanted.x * 8.0, 0.0, wanted.y * 8.0)
 	_camera_state.set_focus(focus)
+	# §2.5's pitch is a pure function of `zoom_t` (34 deg at Z0 ramping to 62 at
+	# Z2), so a MANUAL pitch — a floor the player holds while zooming out — has
+	# no expression in `CameraState` at all. `--pitch=DEG` collapses the band to
+	# a single value, which makes `pitch_deg_at(t)` constant and reproduces
+	# exactly that: the same three §2.5 poses (same distance, same focus) seen
+	# from a camera that is NOT looking as far down as the zoom asks for. This
+	# is the harness half of report 98 RR-98's pitch-coupled cull, and it writes
+	# to the profiler's own CameraState — nothing under `ui/` is touched.
+	var pinned := float(_opts["pitch"])
+	if pinned > 0.0:
+		_camera_state.pitch_near_deg = pinned
+		_camera_state.pitch_far_deg = pinned
 	_camera_rig = CameraRig.new()
 	stage.add_child(_camera_rig)
 	_camera_rig.setup(_camera_state, _render_data)
@@ -998,6 +1046,11 @@ func _summarise(pose_key: String) -> Dictionary:
 	return {
 		"pose": pose_key,
 		"label": String((POSES[pose_key] as Dictionary)["label"]),
+		# §2.5b, read off the model AFTER the pose settled: the pitch the tier
+		# pass actually culled against and the cull ring it resolved to.
+		"pitch_deg": _model.culling_pitch_deg,
+		"active_far_cull_m": _model.active_far_cull_m,
+		"preset_far_cull_m": _model.far_cull_m,
 		"frame_mean_ms": _mean(frame),
 		"frame_p95_ms": frame[clampi(int(ceil(0.95 * float(n))) - 1, 0, n - 1)],
 		"frame_max_ms": frame[n - 1],
@@ -1213,6 +1266,20 @@ func _report() -> void:
 	# those poses are printed as `n/a` rather than as a wrong number.
 	print("  non-building draw calls (Z2 only, see _non_building_rows): "
 			+ ", ".join(_non_building_rows()))
+	# §2.5b's line. Prints the RESOLVED ring per pose, not the authored one:
+	# the claim worth checking is that the cull moved, and `= preset` is the
+	# honest report when the frustum reaches further than the ring does.
+	var cull_bits: Array = []
+	for row: Dictionary in _results:
+		var active := float(row["active_far_cull_m"])
+		var authored := float(row["preset_far_cull_m"])
+		cull_bits.append("%s %.0f°→%s" % [String(row["pose"]),
+				float(row["pitch_deg"]),
+				"%.0f m" % active if active < authored - 0.5 \
+						else "%.0f m (= preset, frustum reaches past it)" % active])
+	print("  PITCH CULL (doc 11 §2.5b, %s): %s" % [
+			"ON" if _model.pitch_cull_enabled else "DISARMED",
+			"   ".join(cull_bits)])
 	if _flood != null:
 		print("  STANDING WATER (doc 07 §2.4 / doc 11 §2.9b): %.0f mm on %d cells"
 				% [float(_opts["flood"]), _flood.cell_keys().size()]
@@ -1281,7 +1348,7 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 		"pad_shadows": -1, "road_detail": -1, "blob": -1, "road_tint": 1.0,
 		"flood": 0.0, "flood_detail": -1,
 		"no_quality": false, "medium_max": -1.0, "far_family": -1,
-		"far_gain": -1.0,
+		"far_gain": -1.0, "pitch": -1.0, "pitch_cull": -1, "far_cull": -1.0,
 	}
 	for raw in argv:
 		var arg := String(raw)
@@ -1295,6 +1362,12 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			opts["no_lod"] = true
 		elif arg == "--no-quality":
 			opts["no_quality"] = true
+		elif arg.begins_with("--far-cull="):
+			opts["far_cull"] = float(arg.trim_prefix("--far-cull="))
+		elif arg.begins_with("--pitch="):
+			opts["pitch"] = float(arg.trim_prefix("--pitch="))
+		elif arg.begins_with("--pitch-cull="):
+			opts["pitch_cull"] = clampi(int(arg.trim_prefix("--pitch-cull=")), 0, 1)
 		elif arg.begins_with("--medium-max="):
 			opts["medium_max"] = float(arg.trim_prefix("--medium-max="))
 		elif arg.begins_with("--far-family="):
