@@ -966,3 +966,42 @@ func _first_event(drained: Array, type: StringName) -> Dictionary:
 
 func _has_event(drained: Array, type: StringName) -> bool:
 	return not _first_event(drained, type).is_empty()
+
+
+## Doc 03 §2.5a / doc 93 §Y4 — the taper's WINDOW, published because the taper
+## itself is correct and its silence was the defect. PA-32 measured it as the
+## largest single mover of the net chip in the opening fortnight with no toast,
+## no log row and no end date anywhere. No dollar moves for this test to check:
+## it checks that the number the surface needs exists and agrees with the
+## per-hour curve it is derived from.
+func test_founding_assistance_window_is_published() -> void:
+	var curves := _curves()
+	var grants: Dictionary = curves.economy_data()["grants"]
+	var days := int(grants["FOUNDING_ASSISTANCE_DAYS"])
+	var per_hour := float(grants["FOUNDING_ASSISTANCE_PER_HOUR"])
+	assert_eq(curves.founding_assistance_days_left(0), days,
+			"on the founding day the whole window is still to come")
+	for day in range(0, days + 3):
+		var left := curves.founding_assistance_days_left(day)
+		assert_eq(left, maxi(0, days - day), "day %d" % day)
+		# The two readings of the same pair must agree about the END: the hourly
+		# curve pays nothing exactly when the window says nothing is left.
+		assert_eq(left == 0, is_zero_approx(curves.founding_assistance_per_hour(day)),
+				"day %d: days_left and the hourly curve disagree about the end" % day)
+	# And the step is the one PA-32 measured: 172/7 = $24.571/gh = $589.71 a day.
+	assert_almost_eq(per_hour / float(days), 24.5714, 0.001)
+	assert_almost_eq(24.0 * per_hour / float(days), 589.714, 0.01)
+
+
+## …and the settle snapshot carries it, at the TOP and not inside `revenue`,
+## because every key in `revenue` is a dollar a budget sheet sums and this is a
+## count (doc 93 §Y4).
+func test_settlement_carries_the_assistance_window_as_a_count() -> void:
+	var system := _system()
+	var inputs := _founding_inputs()
+	inputs["founding_assistance_days_left"] = 4
+	var snapshot := system.settle_hour(inputs)
+	assert_eq(int(snapshot["assistance_days_left"]), 4)
+	assert_false((snapshot["revenue"] as Dictionary).has("assistance_days_left"),
+			"a count must not sit among the dollar rows a sheet totals")
+

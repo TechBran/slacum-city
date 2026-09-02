@@ -2617,9 +2617,14 @@ at the old prices instead of following?
 is defined as a *ratio of doc 03's anchor step*, not as a price — doc 05 owns
 the ratio and doc 03 owns the dollar (C-07, "ALL tunable numbers live here").
 Pinning would mean authoring a second upgrade curve, which is a second currency
-authority in the one place the constitution names by hand. The consequence is
-published rather than assumed: doc 92 §43.3 measures what the follow is worth
-and confirms the ladder still rises.
+authority in the one place the constitution names by hand.
+
+**Measured, and asserted as a follow rather than as a number**
+(`tests/test_infra_verbs.gd::test_upgrade_water_component`): the `water_plant`
+anchor step goes `65,250 → 51,750` and the authored tank's own step, at doc 05's
+ratio 1.33, goes **`86,783 → 68,828`** — exactly `1.15/1.45 = 79.31 %`, the same
+factor every other upgrade in the game took. The ladder still rises
+(`51,750 / 131,963 / 336,504 / 858,086`), which is the property that mattered.
 
 ### Y7b. The construction-rush verb reads the same curves — a merge check, not a change
 

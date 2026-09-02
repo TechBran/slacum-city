@@ -455,8 +455,15 @@ func test_upgrade_water_component() -> void:
 	# scaled by doc 05's tank ratio 1.33.
 	var expected := sim.econ_curves.water_component_upgrade_cost(
 			sim.water.data.variant_cost_ratio(&"tank"), 1)
-	assert_eq(expected, CostCurves.round_half_up(65250.0 * 1.33),
-			"upgrade_cost_by_step[0] for water_plant is $65,250")
+	# **The follow, asserted as a follow** (doc 93 §Y7a). `UPG_COEFF` 1.45 → 1.15
+	# moved the anchor step 65,250 → 51,750, and doc 05 owns the RATIO, not the
+	# price, so the component ladder came with it: 86,783 → 68,828, which is
+	# exactly 1.15/1.45 = 79.31 % of what it was. Pinning it instead would have
+	# authored a second upgrade curve — a second currency authority in the one
+	# place C-07 names by hand.
+	assert_eq(expected, CostCurves.round_half_up(51750.0 * 1.33),
+			"upgrade_cost_by_step[0] for water_plant is $51,750 (doc 93 §Y7)")
+	assert_eq(expected, 68828, "and the tank's own step is the ratio of it")
 	var quote := sim.cmd_upgrade_water_component("WTR-2", true)
 	assert_true(bool(quote["ok"]), str(quote))
 	assert_eq(int(quote["payload"]["cost"]), expected)
