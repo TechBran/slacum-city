@@ -2050,8 +2050,17 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 ## > which is what this gate measures; the tripwire below stays because a
 ## > horizon-shaped assumption should be asserted, not assumed.
 ##
-## Total ~48 s. The three-seed table above is doc 92 §31.5's; this is the
-## tripwire.
+## Total ~48 s at the Wave-14 horizons. The three-seed table above is doc 92
+## §31.5's; this is the tripwire.
+##
+## **COST WARNING, Wave 17.** The re-fitted horizons below total 560 game-days
+## against 335, and — unlike `tools/measure_insolvency.gd`, which stops at
+## insolvency — `Rig.run` advances the FULL horizon, through the late-arc
+## incident cascade that is far slower per game-hour than a quiet city. This gate
+## is now the slowest single thing in the suite by a wide margin. If that becomes
+## a problem the right fix is to teach the rig to stop at the first negative
+## close (the gate reads `day_rows` and needs nothing after it), not to shorten
+## the horizons, which are fitted.
 ##
 ## **RE-FITTED Wave 17 (doc 92 §43.8, doc 93 §Y1/§Y3).** The ownership floor took
 ## the dominant term out of this gate's engine and the horizons roughly double.
