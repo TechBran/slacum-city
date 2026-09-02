@@ -3,6 +3,16 @@
 
 	"schema_version": 1,
 
+	"_comment_catchup": "doc 08 §2.12's NORMATIVE max_coarse_hours rule (report 98 C-21), IMPLEMENTED 2026-09-01 (report 98 §48, RR-133). Until this wave the rule existed only in prose: `grep -rn max_coarse_hours sim/ game/ data/` returned nothing and CatchUpPlanner clamped at OFFLINE_CAP_REAL_MS alone.",
+
+	"catchup": {
+		"_comment_measurement": "`measured_coarse_ms` is ONE FULL-band coarse hour on the REFERENCE CITY (data/starter_city.json) on the reference workstation: `godot --headless -s res://tools/profile_sim.gd -- --coarse-hours=48 --fine-hours=1 --repeats=3 --no-profile` -> 5.488 ms/hour. `bench_coarse_ms` is the same measurement on tests/fixtures/bench_city.json (1,500 buildings) -> 165.493 ms/hour, which derives 72 (the floor). It is RECORDED, NOT SHIPPED — report 98 §48 RR-133 rules which city the rule reads and why. The Fold multiplier is doc 13 §2.13's 3-5x on top of both figures.",
+		"_comment_rule": "max_coarse_hours is derived from measured_coarse_ms and from NOTHING else: raw = ceil(2000 / measured_coarse_ms) = 365; floorm = floor(raw / 24) * 24 = 360; max_coarse_hours = clamp(floorm, 72, 720) = 360. `tests/test_catchup_clamp.gd` re-derives it from this file and fails if the two disagree, so the number can never drift from the measurement beside it.",
+		"measured_coarse_ms": 5.488,
+		"bench_coarse_ms": 165.493,
+		"max_coarse_hours": 360
+	},
+
 	"save": {
 		"_comment_version": "`current_schema_version` is the ENVELOPE version (doc 08 §2.8), and it is 1, not §8's illustrative 7: no generation file has ever shipped, so there is no history to have laddered through. It is duplicated here for documentation and asserted equal to `SaveManager.CURRENT_SCHEMA_VERSION` by `tests/test_save_manager.gd` — a tripwire, never a source. The ladder itself is code (`SaveManager.LADDER`), because a migration step is a function.",
 		"current_schema_version": 1,

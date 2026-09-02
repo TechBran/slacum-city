@@ -948,10 +948,10 @@ func advance_veil_load(completed: int) -> void:
 ## `total_steps` the planner's tick count; answers false — and takes the veil
 ## down — when the absence is beneath `data/ui.json.veil.min_steps`.
 func present_veil_catchup(hours: int, total_steps: int,
-		capped: bool = false) -> bool:
+		capped: bool = false, cap_real_hours: int = 12) -> bool:
 	if loading_veil == null:
 		return false
-	return loading_veil.present_catchup(hours, total_steps, capped)
+	return loading_veil.present_catchup(hours, total_steps, capped, cap_real_hours)
 
 
 func advance_veil_catchup(completed: int) -> void:

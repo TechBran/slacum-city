@@ -130,6 +130,10 @@ func _ready() -> void:
 	android_lifecycle.setup(save_service, sim_host.sim)
 	android_lifecycle.resumed.connect(_on_app_resumed)
 	android_lifecycle.paused.connect(_on_app_paused)
+	# RR-134: what is LEFT of a catch-up, for doc 13 §3.2's pause stamp to carry
+	# across a process death. `{}` whenever none is running, which is almost
+	# always.
+	android_lifecycle.catchup_probe = _catchup_remainder
 
 	audio = AudioService.new()
 	audio.name = "AudioService"
@@ -178,6 +182,12 @@ func _ready() -> void:
 				% [save_service.last_load_lost_minutes,
 				"" if save_service.repair_notes.is_empty()
 				else " (%d repairs)" % save_service.repair_notes.size()])
+	if _resumed_slot >= 0 and android_lifecycle != null:
+		# Doc 08's Core Rule 2 on a COLD launch (report 98 §48, RR-132): the city
+		# owes the real time since the generation it just came off was committed.
+		# `pump_resume()` in `_process` spends it on the first frame with no
+		# cursor in flight, which is after the views exist.
+		android_lifecycle.arm_cold_resume(save_service)
 
 	_build_environment(render_data)
 	_build_ground()
@@ -1372,6 +1382,12 @@ func _advance_restore() -> void:
 	_title_up = false
 	if android_lifecycle != null:
 		android_lifecycle.save_enabled = true
+		# The door's CONTINUE is a cold launch too, and it is the DEFAULT one
+		# (doc 12 §2.19) — the same absence is owed (RR-132). Spent on THIS
+		# frame, before `SimHost` (this node's child, and so processed after it)
+		# can put a live tick into a city that has not caught up yet.
+		if android_lifecycle.arm_cold_resume(save_service):
+			android_lifecycle.pump_resume()
 
 
 func _refuse_title_continue() -> void:
@@ -1601,8 +1617,17 @@ func _on_app_paused(saved: bool) -> void:
 	# only door into the game.
 	if saved and crash_sentinel != null:
 		crash_sentinel.mark_clean_exit()
-	var sim := sim_host.sim
-	_before_snapshot = {"treasury": sim.treasury.balance,
+	# RR-134: mid-catch-up the 'before' is already in flight and the city under
+	# it is a MID-absence one. Overwriting the snapshot here is what made the
+	# away report diff the city against a half-advanced version of itself.
+	if _catchup_cursor != null:
+		return
+	_before_snapshot = _snapshot_city(sim_host.sim)
+
+
+## The five figures the WHILE YOU WERE AWAY report diffs (doc 12 §2.12).
+func _snapshot_city(sim: CitySim) -> Dictionary:
+	return {"treasury": sim.treasury.balance,
 			"population": sim.population.city_population,
 			"day_index": sim.clock.day_index(),
 			"stability": sim.districts.city_stability,
@@ -1619,31 +1644,68 @@ func _on_app_resumed(elapsed_wall_s: float) -> void:
 	if _title_up or _restore_cursor != null:
 		return   # the title door is up, or a load already owns the frame
 	# A SECOND absence on top of an unfinished one — the player backgrounded the
-	# app while the catch-up veil was still up, which only became reachable when
-	# the catch-up stopped being one frame. Drain the old plan on the spot rather
-	# than drop the new one; it cannot recurse because `_finish_catchup()` clears
-	# the cursor.
+	# app while the catch-up veil was still up. RR-134: QUEUE it. Draining the
+	# old cursor here ran up to 720 coarse steps in ONE frame (119 s on the
+	# benchmark city — an ANR twenty-four times over) and planned the second
+	# absence against a clock the first plan had not finished moving.
 	if _catchup_cursor != null:
-		_catchup_cursor.run()
-		_finish_catchup()
+		if android_lifecycle != null:
+			android_lifecycle.defer_absence(elapsed_wall_s)
+		return
 	var sim := sim_host.sim
-	var plan: Dictionary = CatchUpPlanner.plan(int(elapsed_wall_s * 1000.0),
+	# The unspent tail of a plan a process death interrupted, when this is the
+	# cold launch that inherited one (RR-134). `{}` on every warm resume.
+	var unfinished: Dictionary = {}
+	if android_lifecycle != null:
+		unfinished = android_lifecycle.take_unfinished_catchup()
+	# The report's 'before' is the PRE-absence city. A warm resume captured it at
+	# the pause; a cold launch either finds it in the stamp or takes the city
+	# that just came off the disk, which IS the city the player left.
+	if _before_snapshot.is_empty():
+		var carried: Dictionary = unfinished.get("before", {})
+		_before_snapshot = carried if not carried.is_empty() else _snapshot_city(sim)
+	var plan: Dictionary = CatchUpPlanner.plan_after(unfinished,
+			int(elapsed_wall_s * 1000.0),
 			sim.clock.residual_game_ms, sim.clock.tick_index)
 	# S15's catch-up phase (doc 13 §2.9, report 98 §29 RR-73). One slice per
 	# frame through `CatchUpCursor`, so the veil draws for the whole absence.
 	var total_ticks := int(plan.get("total_ticks", 0))
+	var cap_game_hours := int(plan.get("cap_game_hours", 720))
 	if ui_root != null:
+		# 60 game-hours is one real hour, and the veil line promises REAL time
+		# (doc 08 §2.12 / RR-133 — the cap stopped being 12 h this wave).
 		ui_root.present_veil_catchup(total_ticks / GameClock.TICKS_PER_HOUR,
-				total_ticks, bool(plan.get("capped", false)))
+				total_ticks, bool(plan.get("capped", false)), cap_game_hours / 60)
 	# THE PAUSE IS LOAD-BEARING: unpaused, `SimHost._process` would add live
 	# fine ticks BETWEEN the plan's slices and the sliced resume would land on
 	# a different city from the synchronous one.
 	_catchup_was_paused = sim_host.paused
 	sim_host.paused = true
-	_catchup_after = {"elapsed_wall_s": elapsed_wall_s,
-			"residual_game_ms": int(plan.get("new_residual_game_ms", 0))}
+	_catchup_after = {
+		"elapsed_wall_s": elapsed_wall_s + float(unfinished.get("elapsed_wall_s", 0.0)),
+		"residual_game_ms": int(plan.get("new_residual_game_ms", 0)),
+		"capped": bool(plan.get("capped", false)),
+		"cap_game_hours": float(cap_game_hours),
+	}
 	_catchup_cursor = sim.begin_catchup(plan)
 	_advance_catchup()   # spend the first slice on THIS frame, as the loop did
+
+
+## The unspent tail of the catch-up in flight, in `CatchUpPlanner.plan`'s own
+## segment shape, or `{}` — doc 13 §3.2's `last_pause.unfinished` (RR-134). The
+## pre-absence snapshot rides with it so a relaunch can still report against the
+## city the player actually left.
+func _catchup_remainder() -> Dictionary:
+	if _catchup_cursor == null:
+		return {}
+	var rest := _catchup_cursor.remaining_plan()
+	if int(rest.get("total_ticks", 0)) <= 0:
+		return {}
+	rest["new_residual_game_ms"] = int(_catchup_after.get("residual_game_ms", 0))
+	rest["elapsed_wall_s"] = float(_catchup_after.get("elapsed_wall_s", 0.0))
+	if not _before_snapshot.is_empty():
+		rest["before"] = _before_snapshot.duplicate()
+	return rest
 
 
 ## Runs INSTEAD of the rest of `_process` while a catch-up is in flight. Whole
@@ -1675,18 +1737,27 @@ func _finish_catchup() -> void:
 	var offline_batch: Array = sim.bus.drain()
 	_on_sim_batch(offline_batch)
 	var elapsed_wall_s := float(_catchup_after.get("elapsed_wall_s", 0.0))
+	var capped := bool(_catchup_after.get("capped", false))
+	var cap_game_hours := float(_catchup_after.get("cap_game_hours", 720.0))
 	_catchup_after = {}
-	if ui_root == null or _before_snapshot.is_empty() or elapsed_wall_s < 60.0:
+	# The 'before' belongs to the absence that just finished. A QUEUED second
+	# absence (RR-134) gets its own, captured in `_on_app_resumed` from the city
+	# this catch-up left behind — which is exactly the city it was then away
+	# from. Clearing it here is what makes that true.
+	var before := _before_snapshot
+	_before_snapshot = {}
+	if ui_root == null or before.is_empty() or elapsed_wall_s < 60.0:
 		return
 	var toast := ui_root.present_away_report({
 		"elapsed_wall_s": elapsed_wall_s,
 		"elapsed_game_minutes": elapsed_wall_s,      # 1 real s = 1 game min at 1x
-		"before": _before_snapshot,
-		"after": {"treasury": sim.treasury.balance,
-				"population": sim.population.city_population,
-				"day_index": sim.clock.day_index(),
-				"stability": sim.districts.city_stability,
-				"happiness": sim.happiness.happiness},
+		"before": before,
+		"after": _snapshot_city(sim),
+		# Doc 08 §2.12: "the report says so (`catchup_capped`)". Until this wave
+		# the dictionary carried no `capped` key at all, so `AwayModel`'s
+		# `capped_text` branch could never fire (doc 12 D-77).
+		"capped": capped,
+		"cap_game_hours": cap_game_hours,
 		"events_digest": offline_batch,
 		"unresolved": ui_root.incident_drawer.model.rows() \
 				if ui_root.incident_drawer != null else [],
@@ -1875,7 +1946,17 @@ func _process(delta: float) -> void:
 	# residual accumulation can interleave with the plan.
 	if _catchup_cursor != null:
 		_advance_catchup()
+		# A QUEUED absence starts on the SAME frame the one in front of it
+		# finished, so no live tick can land between two absences (RR-134).
+		if _catchup_cursor == null and android_lifecycle != null and not _title_up:
+			android_lifecycle.pump_resume()
 		return
+	# Doc 08's Core Rule 2 on a COLD launch, and the second absence a background
+	# mid-veil left behind: both arrive here, on a frame with no cursor in
+	# flight, through the ONE path that owns catch-up (report 98 §48, RR-132 /
+	# RR-134). `Main` is `SimHost`'s parent and so processes before it.
+	if android_lifecycle != null and not _title_up:
+		android_lifecycle.pump_resume()
 	var hour := sim_host.hour_of_day_float()
 	_hud_timer += delta
 	if _hud_timer >= HUD_REFRESH_S:

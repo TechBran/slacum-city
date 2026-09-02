@@ -78,10 +78,16 @@ const META_SCAN_BYTES := 4096
 const META_SECTION := &"meta"
 const CITY_SECTION := &"city"
 const UI_SECTION := &"ui"
+## Doc 13 §3.2's platform section. Wave 17 writes ONE thing into it — the
+## `last_pause` stamp Core Rule 2's cold-launch path needs (report 98 §48,
+## RR-132) — and leaves the permission block, the device profile and the
+## delivered log to whoever builds `AndroidState`.
+const ANDROID_SECTION := &"android"
 ## Fallback when the sim exposes no `save_section_version()` of its own.
 const CITY_SECTION_VERSION := 1
 const UI_SECTION_VERSION := 1
 const META_SECTION_VERSION := 1
+const ANDROID_SECTION_VERSION := 1
 
 ## slot:int -> SaveManager. Declared before [base_dir] because that property's
 ## setter clears it.
@@ -116,6 +122,29 @@ var ui_provider: Callable = Callable()
 ## The `ui` section of the most recent successful load. A boot-time restore
 ## happens before the UI exists; the shell applies this once it does.
 var last_loaded_ui: Dictionary = {}
+## Optional: `AndroidLifecycle.capture_stamp` (doc 13 §3.2). Same shape of
+## contract as [ui_provider] — set it and every save carries the pause stamp;
+## leave it and the file is byte-for-byte what it was, which is what desktop and
+## the headless runner do.
+var android_provider: Callable = Callable()
+## The `android` section of the most recent successful load, or `{}`.
+##
+## **Read straight out of the loaded body, NOT through a registered section**, on
+## purpose. `SaveManager._validate_structural` files a `repair_notes` entry for
+## every registered section a body is missing, and every generation ever written
+## before this wave is missing this one — registering it on the read side would
+## put "(1 repairs)" in front of a player whose save is perfectly healthy. The
+## section is registered on the WRITE side, where it has a real
+## `section_version` and a real ladder position; when a v2 arrives, saves will
+## carry a v1 to migrate from and the read side can register normally.
+var last_loaded_android: Dictionary = {}
+## `manifest.active.real_unix` of the last successful ladder load — when the
+## generation now in memory was committed, in unix seconds. 0 for a legacy
+## format-1 load, which has no manifest and therefore owes no measurable
+## absence. Doc 08 §2.9's `max_seen_unix` rides beside it as the clock-tamper
+## floor.
+var last_loaded_real_unix: int = 0
+var last_loaded_max_seen_unix: int = 0
 ## Reason string for the last failure, "" after a success. Useful for UI that
 ## wants the detail without connecting to `failed`.
 var last_error: String = ""
@@ -235,7 +264,12 @@ var async_writes: bool = false
 ## paths. `pre_migration` and `pre_catchup` are pinned generations taken
 ## immediately before something destructive, and a pin that has not landed is
 ## not a pin.
-const SYNC_REASONS: PackedStringArray = ["pause", "quit", "pre_migration", "pre_catchup"]
+## `pause_mid_catchup` is a `pause` that landed while the catch-up veil was up
+## (RR-134). It is sync for the same reason `pause` is, and it is a distinct
+## reason because the generation it writes is a MID-ABSENCE city carrying an
+## unfinished plan — a cold launch has to be able to tell it from a settled one.
+const SYNC_REASONS: PackedStringArray = ["pause", "pause_mid_catchup", "quit",
+		"pre_migration", "pre_catchup"]
 
 ## Everything `_settle_write` needs, written on the main thread before the task
 ## is queued and read after it completes. Never touched while the task runs.
@@ -375,10 +409,16 @@ func _save_slot(sim: Object, slot: int, reason: String) -> Dictionary:
 		var ui_state: Variant = ui_provider.call()
 		if ui_state is Dictionary:
 			ui.payload = ui_state
+	var android := DictSection.new(ANDROID_SECTION, ANDROID_SECTION_VERSION)
+	if android_provider.is_valid():
+		var android_state: Variant = android_provider.call()
+		if android_state is Dictionary:
+			android.payload = android_state
 	var meta_section := DictSection.new(META_SECTION, META_SECTION_VERSION)
 	meta_section.payload = meta.duplicate()
 	manager.register_section(city)
 	manager.register_section(ui)
+	manager.register_section(android)
 	manager.register_section(meta_section)
 
 	# The header rides the manifest (see the class docs): one small
@@ -567,6 +607,7 @@ func load_slot(sim: Object, slot: int) -> bool:
 ## candidate list it has just quarantined.
 func begin_load_slot(sim: Object, slot: int) -> RestoreCursor:
 	flush_writes()
+	_reset_resume_facts()
 	last_load_ok = false
 	last_load_ms = 0.0
 	last_load_restore_ms = 0.0
@@ -608,6 +649,7 @@ func step_load(cursor: RestoreCursor) -> bool:
 
 
 func _load_slot(sim: Object, slot: int) -> bool:
+	_reset_resume_facts()
 	if not _valid_slot(slot):
 		_fail_dict(slot, "invalid_slot")
 		return false
@@ -687,6 +729,17 @@ func _settle_ladder_load(slot: int, opened: Dictionary) -> void:
 	var manager: SaveManager = opened["manager"]
 	var payload: Dictionary = opened["payload"]
 	last_loaded_ui = {} if ui.restored_is_empty() else ui.restored
+	# Doc 13 §3.2 and doc 08 §2.9's two clock facts, published together because
+	# the cold-launch catch-up needs both: the stamp says WHEN, `max_seen_unix`
+	# says whether "now" is allowed to be later than it (report 98 §48).
+	var body: Dictionary = payload.get("body", {})
+	var android: Variant = body.get(String(ANDROID_SECTION), {})
+	last_loaded_android = android if android is Dictionary else {}
+	var manifest := manager.read_manifest()
+	var active: Variant = manifest.get("active", {})
+	last_loaded_real_unix = int((active as Dictionary).get("real_unix", 0)) \
+			if active is Dictionary else 0
+	last_loaded_max_seen_unix = int(manifest.get("max_seen_unix", 0))
 	last_load_recovered = bool(payload["recovered"])
 	last_load_lost_minutes = int(payload["lost_minutes"])
 	last_load_format = FORMAT_VERSION
@@ -946,6 +999,16 @@ static func _int_prop(owner: Object, property: String) -> int:
 ## reasons. The distinction the UI needs is "this file is not a save" versus
 ## "this file is a save that did not survive", and only the first is a JSON
 ## problem.
+## Doc 13 §3.2's stamp and doc 08 §2.9's clock facts belong to the generation
+## that is about to be loaded, so they are cleared before the walk starts: a
+## refused load, or one that falls through to the legacy reader, must not leave
+## the PREVIOUS load's absence lying around for the cold-launch path to credit.
+func _reset_resume_facts() -> void:
+	last_loaded_android = {}
+	last_loaded_real_unix = 0
+	last_loaded_max_seen_unix = 0
+
+
 func _reason_for(result: Dictionary) -> String:
 	var failures: Array = (result.get("payload", {}) as Dictionary).get("failures", [])
 	if failures.is_empty():

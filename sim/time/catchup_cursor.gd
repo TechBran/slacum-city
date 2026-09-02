@@ -78,7 +78,16 @@ func _init(p_scheduler: TickScheduler, plan: Dictionary,
 		if count <= 0:
 			continue
 		var coarse := String(segment.get("kind", "")) == KIND_COARSE
-		_segments.append({"coarse": coarse, "count": count})
+		# `index_base` / `total` are the RESUME fields (RR-134). A plan straight
+		# out of `CatchUpPlanner` has neither, and then a coarse segment is its
+		# own whole context: base 0, total `count`. A plan carried across a
+		# process death through [remaining_plan] has both, and they are what
+		# make the resumed steps see the SAME `ctx.catchup_index` /
+		# `ctx.catchup_total` the uninterrupted run would have shown them —
+		# doc 03's offline yield decay and doc 07's 72-hour gate read those two.
+		_segments.append({"coarse": coarse, "count": count,
+				"index_base": maxi(0, int(segment.get("index_base", 0))),
+				"total": maxi(count, int(segment.get("total", count)))})
 		_steps_total += count
 		_total_ticks += count * GameClock.TICKS_PER_HOUR if coarse else count
 	_skip_empty()
@@ -122,11 +131,17 @@ func step() -> bool:
 		return true
 	var segment: Dictionary = _segments[_segment]
 	if bool(segment["coarse"]):
-		if _unit == 0 and _on_coarse_segment_begin.is_valid():
+		# `index_base > 0` means this segment is the unspent tail of one that
+		# already began before a process death, so C-55's once-per-segment
+		# `catchup_begin` has already fired and must not fire twice.
+		if _unit == 0 and int(segment["index_base"]) == 0 \
+				and _on_coarse_segment_begin.is_valid():
 			_on_coarse_segment_begin.call()
-		# `_unit` IS the segment-relative hour index, which is the whole point:
-		# see the class doc. `catchup_total` is the segment's own length.
-		_scheduler.advance_coarse_n(1, true, _unit, int(segment["count"]))
+		# `index_base + _unit` IS the segment-relative hour index, which is the
+		# whole point: see the class doc. `catchup_total` is the segment's own
+		# length — the ORIGINAL length across a resume, not the tail's.
+		_scheduler.advance_coarse_n(1, true, int(segment["index_base"]) + _unit,
+				int(segment["total"]))
 		_done_ticks += GameClock.TICKS_PER_HOUR
 	else:
 		_scheduler.advance_fine_n(1)
@@ -138,6 +153,41 @@ func step() -> bool:
 		_unit = 0
 	_skip_empty()
 	return is_done()
+
+
+## The UNSPENT tail of this plan, in `CatchUpPlanner.plan`'s own segment shape
+## (RR-134, doc 98 §48).
+##
+## Android can kill the process while the catch-up veil is up, and until this
+## wave everything the cursor had not yet spent was simply lost — the pause save
+## committed a mid-absence city and no launch after it ever finished the plan.
+## The tail is stamped into `save.android.last_pause.unfinished` (doc 13 §3.2)
+## and put back in front of the next absence by `CatchUpPlanner.plan_after`.
+##
+## A partially-spent COARSE segment keeps its ORIGINAL `index_base` and `total`
+## so the resumed steps see the same `TimeContext` the uninterrupted run would
+## have; a partially-spent fine run needs neither, because a fine tick carries
+## no segment index. `{}` segments when there is nothing left.
+func remaining_plan() -> Dictionary:
+	var segments: Array[Dictionary] = []
+	var total := 0
+	var spent := _unit
+	for index in range(_segment, _segments.size()):
+		var segment: Dictionary = _segments[index]
+		var count := int(segment["count"]) - spent
+		var already := spent
+		spent = 0
+		if count <= 0:
+			continue
+		if bool(segment["coarse"]):
+			segments.append({"kind": KIND_COARSE, "count": count,
+					"index_base": int(segment["index_base"]) + already,
+					"total": int(segment["total"])})
+			total += count * GameClock.TICKS_PER_HOUR
+		else:
+			segments.append({"kind": "fine", "count": count})
+			total += count
+	return {"segments": segments, "total_ticks": total}
 
 
 ## Drain every remaining unit now. This is what the synchronous resume was, and

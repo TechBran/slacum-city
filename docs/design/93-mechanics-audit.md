@@ -2190,3 +2190,102 @@ a footnote. **It belongs in CI, next to the suite.**
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,
 monetisation — none are Phase-1/2 scope; nothing in Waves 1–3 blocks them.
+
+---
+
+## AG. Wave-17 rulings — the absence a dead process owes, and why two absences are never one plan (2026-09-01)
+
+*Three mechanics questions came out of the cold-launch branch. Two of them are
+about what a player is OWED, which makes them fairness questions and therefore
+this document's; the third is about which of two arrangements of the same work
+is the honest one.*
+
+### AG1. The absence belongs to the SAVE, not to the process
+
+**Question.** A process dies while the player is away. When they open the game
+again, what does the city owe them, and measured from what?
+
+**Ruled: from the moment the generation on disk was committed, and it owes it on
+every path back in.** The alternative the code had — "measure from the pause this
+process saw" — is not a rule about the player's time at all; it is a rule about
+the process's luck. A player who was away eight hours got eight hours if Android
+happened to keep the process and **nothing** if it did not, and they cannot tell
+those two cases apart. Core Design Rule 2 says the city continues while the
+player is away; it does not say *while the process survives*.
+
+Two corollaries that fall straight out of it and are worth stating because both
+were live bugs:
+
+* **The title door's CONTINUE is a cold launch.** It is the *default* player
+  launch (doc 12 §2.19: every clean launch that is not `--resume` and not crash
+  recovery), and it loads inside a process that never paused. It was the worst
+  case of the P0, not an edge of it.
+* **A fresh city owes zero, and so does a clock that went backwards.** Neither is
+  a fault and neither gets a veil. Doc 08 §2.9's rule is *clamp, never punish*,
+  and the branch adds only that the clamp says so in the log.
+
+### AG2. SEQUENTIAL, not merged — and the reason is that "merged" cannot be written down
+
+**Question (the one report 98 §48 asks to be argued here).** The player
+backgrounds the app while the catch-up veil is up. On the way back there are two
+absences: what is left of plan 1, and the new one. Keep stepping plan 1 and plan
+the second absence when it finishes — or merge the remaining ticks and the new
+elapsed into a single plan?
+
+**Ruled: sequential, with the remainder carried as SEGMENTS in front of the new
+plan's segments.** Not because merging is worse, but because **the merge that was
+proposed cannot be expressed.** "Remaining ticks + new elapsed" is a duration,
+and a plan is not a function of a duration. It is a function of:
+
+* the **tick index it was planned at** — which fixes the fine head-align that
+  gets the coarse body onto an hour boundary (doc 91 D-1) and the 40-tick fine
+  tail;
+* the **residual** the planner left, which belongs to the whole of absence 1 and
+  not to the part of it that has run;
+* and, for a coarse segment already part way through, the segment-relative
+  `ctx.catchup_index` / `ctx.catchup_total` that doc 03's offline yield decay and
+  doc 07's 72-hour offline event gate both read.
+
+Turn the remainder into milliseconds and every one of those is lost: the head is
+re-aligned against a clock that has moved, the residual is double-counted or
+dropped, and hour 5 of a 10-hour segment is told it is hour 0 of a 5-hour one —
+so doc 03 restarts the decay curve and doc 07 re-opens the event gate. **The
+player would be paid differently for the same absence depending on when Android
+happened to kill them**, which is precisely the unfairness AG1 exists to close.
+
+Carrying the segments has none of those problems and one property the arithmetic
+version could never have: the result is *bit-identical* to the uninterrupted run,
+which is a claim a test can make.
+
+**What "sequential" costs, honestly.** Two veils where a merge would show one,
+and two away reports where a merge would show one. Both are the right answer
+anyway: absence 1's report diffs the pre-absence city, absence 2's diffs the city
+absence 1 left behind, and a single merged report would have had to pick one
+'before' and be wrong about the other. And the second veil is usually not a veil
+at all — an absence under doc 01's 120 s grace credits zero ticks and
+`data/ui.json.veil.min_steps` refuses to raise a veil for it.
+
+**One place they DO merge, and it is not this question.** A process death mid-veil
+followed by a long absence produces a carried tail *and* a new elapsed measured
+from the same stamp, and those go into `CatchUpPlanner.plan_after` as one
+schedule with one veil — because there was only ever one moment the player left.
+Two absences are two absences; one absence interrupted by a kill is one absence.
+
+### AG3. A pause taken mid-absence is not a moment the away report may quote
+
+**Question.** `_on_app_paused` captured the five figures the WHILE YOU WERE AWAY
+report diffs. What should it capture when it fires *during* a catch-up?
+
+**Ruled: nothing.** The report's 'before' means *the city the player left*, and
+mid-catch-up the live city is a city part way through the absence being
+reported — diffing against it would show the player a fraction of their own
+progress and call it the whole of it. So the snapshot is skipped, the existing
+one stands, and it rides `last_pause.unfinished.before` across a process death so
+that even a relaunch reports against the city the player actually left.
+
+The same ruling settles the notification pass: `plan_for_background` schedules
+alarms from construction that completes at a known tick and Director events
+pre-rolled into the save (doc 13 §2.4 classes (a) and (b)). Mid-catch-up neither
+has settled, so the alarms would be predictions about a future that is still
+being computed. It is skipped, and the resume — cold or warm — re-plans from the
+finished city, which is what doc 08 §2.13 already says happens on every resume.

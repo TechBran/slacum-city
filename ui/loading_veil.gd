@@ -193,10 +193,11 @@ func advance_load(completed: int) -> void:
 
 ## Switch to (or raise) doc 13 §2.9's catch-up messaging. Answers false when the
 ## absence is beneath `VeilModel.min_steps()`, in which case the veil is down.
-func present_catchup(hours: int, total_steps: int, capped: bool = false) -> bool:
+func present_catchup(hours: int, total_steps: int, capped: bool = false,
+		cap_real_hours: int = 12) -> bool:
 	if model == null:
 		setup()
-	var up := model.begin_catchup(hours, total_steps, capped)
+	var up := model.begin_catchup(hours, total_steps, capped, cap_real_hours)
 	_set_open(up)
 	refresh()
 	return up
