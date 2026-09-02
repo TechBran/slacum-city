@@ -926,13 +926,54 @@ Light bar: `EMISSION = mix(red, blue, step(0.5, fract(sc_time*2.2 + phase))) * (
 
 **Performance replaces shadows with blob shadows:** `MM_blob`, one dark quad per building at `y = 0.04`, footprint × 1.15, alpha `0.35·(1 − sc_night·0.6)`. The difference between "buildings sit on the ground" and "buildings float". **SHIPPED 2026-09-01** (`game/render/city_view.gd`, `game/shaders/blob_shadow.gdshader`; report 98 RR-96, doc 93 §X2) — and three clauses of the sentence above it are corrected by the build:
 
-* **ONE draw call city-wide, not "one per NEAR/MEDIUM chunk".** The per-chunk shape this paragraph priced was built first, because that is what it asked for, and measured: Performance's chunk census on the benchmark city is not the worked example's 3 NEAR + 3 MEDIUM, it is **12 NEAR + 24 MEDIUM at Z0**, so the layer cost **36 / 36 / 16 draw calls at Z0 / Z1 / Z2** against a budget the city is already over. City-wide costs **one, at every pose**. This is §2.1.2's road-surface ruling on a second layer: a layer with no per-chunk state worth culling on buys nothing from per-chunk buckets and pays a call each.
+* **ONE draw call city-wide, not "one per NEAR/MEDIUM chunk".** The per-chunk shape this paragraph priced was built first, because that is what it asked for, and measured: Performance's chunk census on the benchmark city is not the worked example's 3 NEAR + 3 MEDIUM, it is **10 NEAR + 26 MEDIUM at Z0** (`--focus=52,44`; the earlier 12 + 24 was the authored city centre, which puts the Z0 camera inside a tower), so the layer cost **36 draw calls at Z0** against a budget the city is already over. City-wide costs **one, at every pose**, measured. This is §2.1.2's road-surface ruling on a second layer: a layer with no per-chunk state worth culling on buys nothing from per-chunk buckets and pays a call each.
 * **Every building is in the buffer, whatever tier its chunk is.** That makes the buffer a function of the ROSTER rather than of the camera: scrubbing across a tier boundary rewrites nothing, and no block drops its shadow as it crosses one. The far field costs 2 triangles and a sub-pixel quad per building.
 * **The falloff is a BOX, not a radial gradient.** A radial gradient under a rectangular footprint leaves the building's four corners unshaded and puts penumbra where the wall is. The mask is the Chebyshev distance `max(|u|,|v|)` and `blob_core` is **derived** as `1 / footprint_scale`, so the solid region is exactly the footprint and the ramp is exactly the 15 % overhang — the overhang IS the penumbra and there is no second number to tune.
 
-**Measured, bench city, Performance, hour 13, `--blob=0|1`:** `dc` **229 → 230 / 225 → 226 / 188 → 189** at Z0 / Z1 / Z2; primitives **466,282 → 469,282 / 482,464 → 485,464 / 248,532 → 251,532**, i.e. **+3,000** at every pose (1,500 buildings × 2 triangles); the fork (no blob code) and `--blob=0` agree to the call and the primitive. `rs gpu` is **not resolved here**: the two no-blob arms differ from each other by 0.55 ms at Z0 under sibling load, more than the `0 → 1` delta — that number belongs to a Fold session. Balanced and High are unchanged **to the draw call and to the primitive** (fork vs branch, 229 / 225 / 188 and the same three primitive counts), because `enabled_presets` names neither. A settled city uploads the buffer **zero** times: it is rebuilt every frame and handed to the server only when it differs (`PackedFloat32Array ==` is a native compare), the same bargain §2.10b's pad buffer strikes.
+**Measured, bench city, Performance, hour 13, `--focus=52,44`, 1920×1080,
+`--blob=0` vs `--blob=1` (the two runs differ in nothing else):**
 
-**Alpha 0.35 verified against pictures, not assumed** (bench city, hour 13, `--focus=52,44`, `--anim-step` pinned so the two arms are comparable pixel for pixel): at **Z0** the pavement at a shopfront corner moves on **1.88 %** of the frame (39,029 px), mean |Δ| 10.2, peak **41/255**, the moved pixels going 72.7 → 63.5 sRGB8; at **Z1** 2.94 %, mean 11.3, peak 43; at **Z2** 3.67 %, mean 11.3, peak **60**. Z2 is where it earns most — a city of flat boxes on a flat plane becomes a city of blocks standing on one.
+| pose | dc, blob off → on | primitives, off → on | `rs gpu`, off → on |
+|---|---|---|---|
+| Z0 | **89 → 90** | 89,822 → 92,822 | 0.585 → 0.586 ms |
+| Z1 | **123 → 124** | 95,494 → 98,494 | 0.741 → 0.742 ms |
+| Z2 | **196 → 197** | 261,464 → 264,464 | 0.837 → 0.843 ms |
+
+**One draw call and +3,000 primitives at every pose** — 1,500 buildings × 2
+triangles, exactly the roster and not a function of the camera. *(Note that
+these draw-call bases are far below the figures the first draft of this section
+published: those were taken before §2.13b wired `shadows: false`, so
+Performance was still paying a shadow pass it had authored itself out of. The
+`0 → 1` delta is the same either way.)* **`rs gpu` is reported and not
+claimed:** the in-pair delta is 0.001–0.006 ms, but the same configuration
+measured 0.837 and 1.228 ms at Z2 in two runs an hour apart on a workstation
+carrying sibling suites — a ±0.4 ms run-to-run band swamps a 0.006 ms effect,
+so the honest statement is "below this rig's noise floor" and the number that
+matters belongs to a Fold session. Balanced and High are unchanged because
+`enabled_presets` names neither: `blob_draw_calls()` is **0 at every pose** on
+both, printed on the harness's `BLOB SHADOWS` line in every run above. A
+settled city uploads the buffer **zero** times: it is rebuilt every frame and
+handed to the server only when it differs (`PackedFloat32Array ==` is a native
+compare), the same bargain §2.10b's pad buffer strikes.
+
+**Alpha 0.35 verified against pictures, and then against the arithmetic.** The
+screen-space effect, same two arms, `--shots` at each pose:
+
+| pose | frame moved | peak darkening | mean over the moved pixels |
+|---|---|---|---|
+| Z0 | 39,609 px (**1.91 %**) | 39/255 | 11.1/255 |
+| Z1 | 49,002 px (**2.36 %**) | 43/255 | 14.6/255 |
+| Z2 | 69,468 px (**3.35 %**) | 49/255 | 10.3/255 |
+
+Screen deltas alone cannot confirm an alpha, because AgX sits between the blend
+and the pixel. Linearising both frames (undoing the sRGB transfer) and taking
+the ratio over the decal gives **p5 = 0.630 / 0.574 / 0.653** at Z0 / Z1 / Z2
+against the **0.650** that `blend_mix` toward black at α = 0.35 predicts — the
+match is the verification. The deeper p1 tail (0.457 / 0.423 / 0.521) is where
+two neighbouring decals OVERLAP, and 0.65² = **0.42** is exactly where that
+tail sits, which is the second, independent check on the same number. Z2 is
+where the layer earns most: a city of flat boxes on a flat plane becomes a city
+of blocks standing on one.
 
 **The same block has a second consumer, on a different gate.** §2.17's street bodies read the LOOK keys (`y_m`, `footprint_scale`, `body_alpha`, `night_fade`, `body_m`, `body_lift_m`) and take their on/off from the preset's `vehicle_shadows` **inverted** — blob when real is off — rather than from `enabled_presets`, which stays the building decal's alone. That is not an inconsistency, it is the rule: a body is a dynamic object, so it takes the dynamic-shadow knob, and one knob deciding both is what makes "no real shadow and no blob either" unreachable. That state is what shipped in Wave 14 and it is why every crook at Z0 read as a sticker printed on the pavement (report 98 RR-90). ~~The `MM_blob` building layer itself is still unbuilt; `enabled_presets` is waiting for it.~~ **Built 2026-09-01 (RR-96); `enabled_presets` is read by `CityView` and by nothing else, and `body_alpha` / `body_m` / `body_lift_m` are read by `StreetLifeModel` and by nothing else. The two consumers are now both live and the split is enforced by `tests/test_render_polish.gd` section 6 and `tests/test_street_life.gd` section 10.**
 

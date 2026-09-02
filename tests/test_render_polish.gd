@@ -1386,3 +1386,33 @@ func test_every_procedural_mesh_decodes_its_authored_vertex_colour() -> void:
 	assert_true(checked >= 4, "the census found %d files that push vertex "
 			% checked + "colours; if that number has fallen, a mesh moved and "
 			+ "this guard stopped guarding it")
+
+
+## The gap between "0.35 is authored" and "0.35 is what renders" — the one the
+## rest of this section's tests do not close (report 98 RR-96).
+##
+## `test_the_blob_block_names_the_building_decals_gate_and_only_that` asserts
+## the JSON says 0.35. This asserts the number reaches the shader, which is a
+## different claim and is the one PA-06's whole family of defects was about: an
+## authored value nothing carries to the engine is a comment.
+func test_the_authored_alpha_reaches_the_shader_uniform() -> void:
+	var data := _data()
+	var blob: Dictionary = data["blob_shadow"]
+	var view := _blob_view("performance")
+	view.refresh(0.1, 13.0, Vector3(64.0, 20.0, 64.0))
+	var material := view._blob_material_for()
+	assert_true(material != null, "the decal has a material")
+	assert_almost_eq(float(material.get_shader_parameter("blob_alpha")),
+			float(blob["alpha"]), 1e-6,
+			"the material carries `blob_shadow.alpha`, not the shader default")
+	assert_almost_eq(float(material.get_shader_parameter("night_fade")),
+			float(blob["night_fade"]), 1e-6)
+	# `blob_core` is DERIVED (1 / footprint_scale) and is the one uniform that
+	# must not be authored twice: it is what puts the solid part of the mask on
+	# the footprint and the penumbra on the overhang.
+	assert_false(blob.has("blob_core"),
+			"`blob_core` is derived from `footprint_scale`, never authored")
+	assert_almost_eq(float(material.get_shader_parameter("blob_core")),
+			1.0 / float(blob["footprint_scale"]), 1e-6,
+			"…and it is exactly 1 / footprint_scale")
+	view.free()
