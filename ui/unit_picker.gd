@@ -32,6 +32,9 @@ var _message: Label
 var _list: VBoxContainer
 
 var _rows: Dictionary = {}   # unit id:int -> Button
+## Doc 12 §2.7's formatter, made once — the sheet needs it only to turn a
+## dispatch refusal into a sentence (PA-52), and only when one arrives.
+var _formatter: RequirementFormatter
 var _touch_min := 48.0
 var _spacing := 8.0
 var _row_h := 56.0
@@ -269,9 +272,9 @@ func report_result(unit_id: int, ok: bool, result: Dictionary = {}) -> String:
 	if _message != null:
 		_message.text = text
 		_message.visible = true
-		# A5/A14 again: the refusal is tinted with the same four data states the
-		# rest of the deck uses, so it reads as a refusal without relying on
-		# colour alone — the glyph is already in the sentence's own state.
+		# §2.5's four data states, so the line reads as a refusal in the same
+		# vocabulary the rows above it are tinted in. The words carry the
+		# meaning; the colour only agrees with them (A5).
 		UIWidgets.paint_state(self, _message, HudModel.STATE_CRITICAL)
 	return text
 
@@ -289,7 +292,9 @@ func _refusal_text(unit_id: int, result: Dictionary) -> String:
 		"unit": str(record.get("name", "")),
 		"status": str(record.get("state_text", "")),
 	}
-	var row := RequirementFormatter.new(config).from_result(result, params)
+	if _formatter == null:
+		_formatter = RequirementFormatter.new(config)
+	var row := _formatter.from_result(result, params)
 	if row.is_empty() or not RequirementFormatter.is_known(row.get("code", "")):
 		return UIWidgets.t(config, "ui_picker_failed")
 	return str(row["body"])

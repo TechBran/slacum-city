@@ -374,7 +374,7 @@ resolves to nothing.
 | `FIX_TILE` | `""` | `{tile: Vector2i}` — **required**; the tile *is* the target |
 | `FIX_DISTRICT` | district / pressure-zone key | `{district_id: String, tile: Vector2i}` |
 | `FIX_ROAD_SEGMENT` | segment id, or `""` | `{tile: Vector2i}` — the nearest tile of the road the row is short of |
-| `FIX_COMPONENT` | grid / water component id | `{component: String, tile: Vector2i}` |
+| `FIX_COMPONENT` | grid / water component id | `{component: String}` — resolve with `PowerGrid.component_tile()`; **never** the row's own `tile`, which is where the ghost is |
 | `FIX_REPAIR` | `sim_id` | `{verb: "cmd_repair_building", cost, cost_text}` |
 | `FIX_POWER` | `sim_id` | `{verb: "cmd_fix_power_capacity", cost, cost_text}` |
 
@@ -391,10 +391,18 @@ Two rules the table encodes:
   quote; `fix_cost` — never the row's `cost`, which is the *upgrade's* price — is
   what a producer passes to fill them.
 
-`FIX_COMPONENT` is new this wave. A doc 04 substation or transformer is not a key
-in `CitySim.buildings`, so `E_NO_SLOT` and `POWER_CAPACITY` routing
-`FIX_BUILDING` was never a near miss — it was a category error, and both rows
-were dead buttons for three waves.
+`FIX_COMPONENT` is new this wave, and which rows belong in it was **measured, not
+assumed**. On the founding city `PowerGrid.attachment_of("H-001")` answers
+`T-06`, `sim.buildings.has("T-06")` is `false`, and `component_tile("T-06")` is
+`(39, 34)` — so a transformer id handed to a branch that resolves buildings is a
+dead button. `E_TRANSFORMER_FULL` and `E_NEEDS_TRANSFORMER` move here from
+`FIX_TILE`, whose tile was the **ghost's** — the tile under the player's own
+finger, which is D-35's lesson in miniature.
+
+`E_NO_SLOT` deliberately does **not** move. Its target is a doc 04 *substation*,
+and a substation is also a doc 02 shell: `sim.buildings.has("SUB-A")` is `true`
+and `substation` is an archetype the build sheet sells. The id resolves, the
+camera move is the whole useful answer, and D-71 already ruled it so.
 
 ### 2.8 Land purchase flow (S4)
 

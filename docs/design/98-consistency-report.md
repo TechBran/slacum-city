@@ -6101,9 +6101,16 @@ district key for `FIX_DISTRICT`, a component id for `FIX_COMPONENT`, the
 `ui/requirement_formatter.gd`'s class doc and in doc 12 §2.7a, and it is
 **normative in both directions**: a producer that cannot fill a row's `params`
 routes `FIX_NONE` and draws no button, rather than shipping one the router will
-drop on the floor. `FIX_COMPONENT` is new and exists for exactly this reason — a
-grid component is not a key in `CitySim.buildings`, and routing one through
-`FIX_BUILDING` was never a near miss, it was a category error.
+drop on the floor. `FIX_COMPONENT` is new and exists for exactly this reason, and **which rows
+belong in it was measured rather than assumed**: on the founding city
+`attachment_of("H-001")` = `T-06`, `buildings.has("T-06")` = `false`,
+`component_tile("T-06")` = `(39, 34)`. `E_TRANSFORMER_FULL` and
+`E_NEEDS_TRANSFORMER` move there. `E_NO_SLOT` does **not** — its substation is
+also a doc 02 shell (`buildings.has("SUB-A")` = `true`), so `FIX_BUILDING`
+resolves and doc 12 D-71 already ruled that one deliberate. A contract this lane
+first got wrong in the other direction, and the suite caught it: the correction
+is recorded here rather than quietly fixed, because "the id looks like a
+component" is not evidence and `has()` is.
 
 **Why `params` and not a better id.** Because the two halves are written by two
 different lanes and the id alone cannot say which namespace it is in. A tile is
@@ -6166,6 +6173,29 @@ now fails the suite in the commit that adds it.
 hole was found; the same shape applies to any command whose preview returns a
 `blockers` array that a checklist mirrors.
 
+### Not this lane's, filed rather than fixed
+
+**Two findings this lane surfaced and did not own.**
+
+1. **`hud_banners` at 412 × 915, 130 % text + larger targets:** `HUDLayer/
+   AlertStack/Alert1/Row/View` covers **1,155 px²** of `HUDLayer/TiltSlider/
+   Thumb`. It is the one finding standing between the deck and `--screen=all
+   --audit --strict` exit 0 across all five boxes × two text scales; the other
+   nine cells are clean. **Verified pre-existing at the fork by A/B**: with
+   `ui/ui_root.gd` and `tools/ui_preview.gd` restored to the fork's own state and
+   every other Lane-L change in place, the finding reproduces with byte-identical
+   rects. Owners: the alert stack's solve (doc 12 §2.4) and the tilt column's
+   band (§2.23, Wave 17). Not touched here — Lane L owns neither.
+2. **The side panel could grow wider than the screen and nothing could see it.**
+   Fixed here because PA-47 could not land without it (`SCROLL_MODE_SHOW_NEVER`
+   plus the shed row's `HFlowContainer`), but the *class* of defect is wider than
+   this panel: `UIAudit` exempts everything inside a `ScrollContainer`, which is
+   correct for content and wrong for the container's own outer geometry. Every
+   deck surface whose only child is a scroller with `SCROLL_MODE_DISABLED` has
+   the same blind spot. A check that measures a scroller's own laid-out rect
+   against the viewport would find the rest of them; this lane did not write it.
+
 **Applied:** doc 12 §2.7a (the params table), §2.9 (the seventh row, the four
 live coverage tiles, the pinned actions footer) and §2.7 (the placement bar's
-second line and its door); doc 91 §14.5 (`A91-D-91`, `A91-D-92`); doc 93 §AJ.
+second line and its door); doc 91 §14.5 (`A91-D-91`, `A91-D-92`); doc 92 §51 (the
+founding city's first coverage readings); doc 93 §AJ.

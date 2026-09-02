@@ -8212,3 +8212,51 @@ beyond `medium_max_m`.
 cascades.** `shadow_max_m` is the lever with purchase at Z1; a pitch-coupled
 `medium_max_m` is worth 6 there and 65 at Z2. Neither is taken in this lane;
 both are filed with their numbers in doc 11 §2.5b's OPEN note.
+
+
+## 51. Wave 18 — the building panel, measured: four tiles that had never had a number (2026-09-02)
+
+Three of the building panel's four service tiles read `✕ —` on every building in
+the city for eleven waves (99-PA PA-22, A91-D-92), so the founding city has never
+had these readings written down. It does now, and they are the numbers
+`tests/test_build_controller.gd` asserts — the test used to assert the em dash.
+
+**Founding city, `CitySim.boot_from_files()` + `advance_hours(1.0)`.** Police and
+fire are doc 02 §2.9's `coverage_*(origin)`; water is doc 05's `pressure_at()` at
+the building's access tile, in the zone named beside it.
+
+| building | origin | police | fire | pressure | zone |
+|---|---|---|---|---|---|
+| `H-001` | (36, 33) | **0.0000** | 0.0000 | **0.6000** | `WTR-1-PMP` |
+| `POL-1` | (33, 65) | **0.9931** | 0.0000 | 1.0000 | `WTR-1-PMP` |
+| `FIRE-1` | (65, 33) | 0.0000 | **0.9920** | 0.6000 | `WTR-1-PMP` |
+| `H-016` | (36, 65) | **0.9542** | 0.0000 | 1.0000 | `WTR-1-PMP` |
+| `WTR-1` | (33, 52) | **0.4447** | 0.0000 | 1.0000 | `WTR-1-PMP` |
+
+Three readings worth keeping:
+
+1. **The zeros are real, not absent.** `H-001` is 32 tiles from `POL-1` and 29
+   from `FIRE-1`; the L1 radii are 20 and 18, and `c_station` clamps at zero
+   outside them. The tile reads OFFLINE with a true `0 %` — which is the honest
+   answer and the one the L4 curriculum needs, because the lesson is that a lot
+   this far out is not covered and a station is what covers it.
+2. **The founding city has exactly one fire station and one police station**, and
+   they sit at opposite corners of the owned core (65, 33) and (33, 65). Every
+   building is inside one radius or neither; none is inside both. That is a
+   pacing fact the panel has never been able to show.
+3. **`0.6000` is doc 05's `nominal_pressure` exactly**, which is why `H-001`'s
+   water tile bands NORMAL rather than WARNING: the band floor is the same key
+   the pressure solver relaxes toward. `WTR-1` and the two buildings on the
+   southern main read `1.0000` — full head at the source.
+
+**The margin the panel had been hiding (PA-12).** `cmd_upgrade_building` asks doc
+04 for `delta_kw × headroom_safety.power = delta × 1.15`; the panel quoted
+`delta`. A player who bought exactly the quoted capacity was refused again with a
+deficit **13 % of the original** still outstanding (`1 − 1/1.15`). The water
+panel beside it had applied the margin since Wave 5, so the two panels quoted
+different numbers for the same gate — which is the drift PA-75's shared shape
+now makes impossible.
+
+**No sim number moved.** All four `profile_sim` hashes are unchanged at the
+branch tip; see §51's commit and the lane report. This section records readings
+that existed and were never displayed, not a retune.

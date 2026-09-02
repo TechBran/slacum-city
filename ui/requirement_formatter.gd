@@ -53,7 +53,7 @@ extends RefCounted
 ## | `FIX_TILE`         | `""`                    | `{tile: Vector2i}` — **required**; the tile IS the target |
 ## | `FIX_DISTRICT`     | district / zone key     | `{district_id: String, tile: Vector2i}` |
 ## | `FIX_ROAD_SEGMENT` | segment id, or `""`     | `{tile: Vector2i}` the nearest tile of the road the row is short of |
-## | `FIX_COMPONENT`    | grid / water component  | `{component: String, tile: Vector2i}` |
+## | `FIX_COMPONENT`    | grid / water component  | `{component: String}` — resolve with `PowerGrid.component_tile()` |
 ## | `FIX_REPAIR`       | `sim_id`                | `{verb: "cmd_repair_building", cost: int, cost_text: String}` |
 ## | `FIX_POWER`        | `sim_id`                | `{verb: "cmd_fix_power_capacity", cost: int, cost_text: String}` |
 ##
@@ -97,10 +97,12 @@ const FIX_REPAIR := &"repair"
 const FIX_POWER := &"power"
 ## A doc 04 grid component or a doc 05 water component — a SUBSTATION, a
 ## transformer, a pump. Not a `Building`, which is why it needs a kind of its
-## own: `FIX_BUILDING` resolves through `CitySim.buildings`, and a component id
-## (`SUB-A`, `T-18`) is not a key in that dictionary, so every row that routed a
-## component through `FIX_BUILDING` was a dead button (PA-05). The router
-## resolves it with `PowerGrid.component_tile(id)`.
+## own: `FIX_BUILDING` resolves through `CitySim.buildings`, and a transformer id
+## (`T-06`, from `PowerGrid.attachment_of()`) is not a key in that dictionary —
+## measured on the founding city, where `sim.buildings.has("T-06")` is `false`
+## and `component_tile("T-06")` is `(39, 34)`. A doc 04 SUBSTATION is the
+## exception that proves it: `SUB-A` is also a doc 02 shell and is in
+## `buildings`, which is why `E_NO_SLOT` correctly stays `FIX_BUILDING`.
 const FIX_COMPONENT := &"component"
 
 ## Every kind this class can emit, for the lint that walks them (doc 12 §2.7a).
@@ -211,10 +213,14 @@ const CODE_TABLE := {
 	# or upgrade the substation), so it routes the camera like `POWER_CAPACITY`.
 	&"E_CLASS_UNAVAILABLE": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	&"E_DISCONTINUOUS": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
-	# Wave 18 (PA-05): the substation this run would have rooted on is a doc 04
-	# COMPONENT, and `FIX_BUILDING` resolves through `CitySim.buildings`, where
-	# `SUB-A` is not a key — so this row's button was a no-op for three waves.
-	&"E_NO_SLOT": {"severity": SEVERITY_BLOCKED, "fix": FIX_COMPONENT},
+	# **Stays `FIX_BUILDING`, and that is measured** (Wave 18, PA-05). A doc 04
+	# substation is also a doc 02 SHELL — `sim.buildings.has("SUB-A")` is `true`
+	# on the founding city and `substation` is an archetype the build sheet sells
+	# — so this id resolves and the camera move is the whole useful answer, which
+	# is what doc 12 D-71 ruled deliberate. The component namespace below is a
+	# different thing: `attachment_of("H-001")` answers `T-06`, which is NOT a
+	# building.
+	&"E_NO_SLOT": {"severity": SEVERITY_BLOCKED, "fix": FIX_BUILDING},
 	&"E_UNKNOWN_NODE": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	&"E_NOT_UPGRADEABLE": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	&"E_UNKNOWN_MAIN": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
@@ -232,8 +238,15 @@ const CODE_TABLE := {
 	# the ghost is a fact the player is told, not a tile they are refused (§AD3).
 	# `E_NEEDS_TRANSFORMER` is the top of the ladder: nothing the fix strip can
 	# buy in one tap clears it, and the answer is a tile the player has to pick.
-	&"E_TRANSFORMER_FULL": {"severity": SEVERITY_WARN, "fix": FIX_TILE},
-	&"E_NEEDS_TRANSFORMER": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	# Wave 18 (PA-05): both of these name a TRANSFORMER, and a transformer is a
+	# doc 04 component (`T-06`), not a `Building` — `CitySim.buildings` has no
+	# such key. They routed `FIX_TILE` with the GHOST's tile, which is the tile
+	# the player's finger is already on, so the button answered "go to where you
+	# are" (doc 12 D-35's lesson). `FIX_COMPONENT` is the namespace they are in
+	# and `PowerGrid.component_tile()` is what resolves it — measured on the
+	# founding city: `component_tile("T-06")` = `(39, 34)`.
+	&"E_TRANSFORMER_FULL": {"severity": SEVERITY_WARN, "fix": FIX_COMPONENT},
+	&"E_NEEDS_TRANSFORMER": {"severity": SEVERITY_BLOCKED, "fix": FIX_COMPONENT},
 	&"E_NOT_BLOCKED": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	# --- Wave 18: doc 02 §2.11's SEVENTH upgrade gate (PA-24). `city_sim.gd`
 	# has appended `E_WATER_HEADROOM` since the water system landed and no
@@ -400,6 +413,18 @@ func format(code: Variant, params: Dictionary = {}) -> Dictionary:
 	# for the kind that will actually be emitted.
 	var fix_kind_out := StringName(str(params.get("fix_kind",
 			RequirementFormatter.fix_kind(name))))
+	var fix_id := str(params.get("fix_target_id", ""))
+	var fix_params := RequirementFormatter._fix_params_for(fix_kind_out, params)
+	# **The contract enforces itself** (PA-05). A kind that answers "where do I
+	# go?" with neither a tile nor an id it can resolve is not a target, and the
+	# honest render of that is NO BUTTON — not a button the router drops on its
+	# first line, which is what `E_AVENUE` shipped for three waves. This is the
+	# one place the decision can be made, because it is the one place that knows
+	# both what the kind needs and what the producer actually supplied.
+	if not RequirementFormatter._is_routable(fix_kind_out, fix_id, fix_params):
+		fix_kind_out = FIX_NONE
+		fix_id = ""
+		fix_params = {}
 	return {
 		"code": StringName(str(code).to_upper()),
 		"canonical": name,
@@ -417,10 +442,10 @@ func format(code: Variant, params: Dictionary = {}) -> Dictionary:
 		# the blocker and offers no button rather than offering one that refuses.
 		"fix_target": {
 			"kind": fix_kind_out,
-			"id": str(params.get("fix_target_id", "")),
+			"id": fix_id,
 			# PA-05: what the router needs in order to ACT. See the contract
 			# table in this class's doc — it is normative for both halves.
-			"params": RequirementFormatter._fix_params_for(fix_kind_out, params),
+			"params": fix_params,
 		},
 		"args": args,
 	}
@@ -710,8 +735,12 @@ static func _fix_params_for(kind: StringName, p: Dictionary) -> Dictionary:
 		FIX_COMPONENT:
 			out["component"] = str(p.get("component",
 					p.get("fix_target_id", p.get("at", ""))))
-			if tile != null:
-				out["tile"] = tile
+			# **Only an explicit `fix_tile`.** The row's own `tile` is where the
+			# GHOST is, and a router that preferred it would fly the camera to
+			# the finger instead of to the full transformer. The component id is
+			# the target; `PowerGrid.component_tile()` turns it into a place.
+			if p.get("fix_tile", null) is Vector2i:
+				out["tile"] = p["fix_tile"]
 		_:
 			# `FIX_TILE`, `FIX_BUILDING`, `FIX_BLOCK`, `FIX_ROAD_SEGMENT`: every
 			# one of them answers "where do I go?", and a tile is the answer the
@@ -725,6 +754,34 @@ static func _fix_params_for(kind: StringName, p: Dictionary) -> Dictionary:
 		for key: Variant in (extra as Dictionary):
 			out[str(key)] = (extra as Dictionary)[key]
 	return out
+
+
+## Can `ui/fix_router.gd` do anything with this target? The contract table in
+## this class's doc, read as a predicate.
+##
+##   * the two purchase kinds are ALWAYS routable: they are performed in place by
+##     the surface that already has the building open, so they need no locator at
+##     all — a producer that wants one of them silent says so with an explicit
+##     `fix_kind: FIX_NONE` (which is how a privately maintained building draws
+##     no repair button);
+##   * `FIX_TILE` needs its tile — for that kind the tile IS the target;
+##   * every other placing kind needs a tile, or an id of its own namespace.
+static func _is_routable(kind: StringName, id: String, params: Dictionary) -> bool:
+	if kind == FIX_NONE:
+		return false
+	if FIX_VERB_KINDS.has(kind):
+		return true
+	if kind == FIX_TILE:
+		return params.has("tile")
+	# The component id IS the target for this kind, so a tile does not stand in
+	# for a missing one — see `_fix_params_for`.
+	if kind == FIX_COMPONENT:
+		return str(params.get("component", "")) != ""
+	if params.has("tile"):
+		return true
+	if kind == FIX_DISTRICT:
+		return str(params.get("district_id", "")) != ""
+	return id != ""
 
 
 ## `fix_tile` over `tile`, and only a real `Vector2i` — a tile the producer

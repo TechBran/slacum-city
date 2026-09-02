@@ -1302,3 +1302,116 @@ func test_a_coverage_tile_answers_why_on_tap() -> void:
 	assert_true(reason.text.contains("POL-1"),
 			"naming the station that covers this lot: %s" % reason.text)
 	_unmount(mounted)
+
+
+## PA-05's own gate, written the way the audit asked for it: **every** row the
+## real producers build against a **booted sim** either resolves to something
+## `ui/fix_router.gd` can act on, or is `FIX_NONE`. Never a silent null.
+##
+## The synthetic-params walk in `tests/test_requirement_formatter.gd` asserts the
+## contract's shape; this asserts that the shipped producers keep it. That is the
+## half that was missing — `grep -rn "main.gd" tests/` found six prose comments
+## and no test, and two dead `Fix this →` buttons survived three waves because of
+## it.
+func test_every_real_fix_target_resolves_or_is_none() -> void:
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	var controller := _controller(sim)
+	var rows: Array[Dictionary] = []
+	# 1. The upgrade checklist, on a building broken in every way it can be:
+	#    worn, poor, and one level from a gate it cannot pass.
+	var b: Building = sim.buildings["H-001"]
+	b.condition = 0.30
+	sim.treasury.spend(sim.treasury.balance, &"test_drain")
+	sim.progression.city_level = 0
+	for entry: Variant in (controller.building_view("H-001")["upgrade"]["checklist"] as Array):
+		rows.append(entry as Dictionary)
+	# 2. Placement, refused on each of the walls a player actually hits.
+	for archetype: String in ["house", "office"]:
+		controller.enter(archetype)
+		for tile: Vector2i in [b.origin, Vector2i(0, 0), Vector2i(120, 120)]:
+			var verdict := controller.evaluate(tile)
+			var failure: Dictionary = verdict.get("failure", {})
+			if not failure.is_empty():
+				rows.append(failure)
+		controller.cancel()
+	# 3. The water block's own ladder, on the shell that hosts three nodes.
+	for entry: Variant in (controller.water.building_block("WTR-1")["nodes"] as Array):
+		for row: Variant in ((entry as Dictionary)["upgrade"]["checklist"] as Array):
+			rows.append(row as Dictionary)
+	assert_true(rows.size() >= 12, "the walk saw %d rows" % rows.size())
+
+	var unroutable: Array[String] = []
+	for row: Dictionary in rows:
+		var fix: Dictionary = row["fix_target"]
+		var kind := StringName(str(fix["kind"]))
+		assert_true(RequirementFormatter.FIX_KINDS.has(kind),
+				"%s routes %s, which is not a kind" % [row["canonical"], kind])
+		if kind == RequirementFormatter.FIX_NONE:
+			continue
+		var params: Dictionary = fix["params"]
+		var id := str(fix["id"])
+		match kind:
+			RequirementFormatter.FIX_REPAIR, RequirementFormatter.FIX_POWER:
+				# Performed in place by the panel; the verb names the command.
+				if not params.has("verb"):
+					unroutable.append("%s: no verb" % row["canonical"])
+			RequirementFormatter.FIX_TILE:
+				if not (params.get("tile", null) is Vector2i):
+					unroutable.append("%s: no tile" % row["canonical"])
+			RequirementFormatter.FIX_BUILDING:
+				if not sim.buildings.has(id) and not (params.get("tile", null) is Vector2i):
+					unroutable.append("%s: %s is not a building and there is no \
+tile to fall back on" % [row["canonical"], id])
+			RequirementFormatter.FIX_COMPONENT:
+				# The failure PA-05 catalogued: a component id looked up in
+				# `CitySim.buildings`, where it has never been a key. The router
+				# resolves it with `component_tile()`, so that is what is asserted.
+				# `component_tile()` answers `Vector2i.ZERO` for an id it does not
+				# know, which is a real tile — so the lookup that decides is
+				# `component()`, whose empty dictionary cannot be mistaken.
+				var component := str(params.get("component", ""))
+				if sim.grid.component(component).is_empty():
+					unroutable.append("%s: %s resolves to no component" \
+							% [row["canonical"], component])
+			RequirementFormatter.FIX_BLOCK:
+				if sim.world.block(id) == null \
+						and not (params.get("tile", null) is Vector2i):
+					unroutable.append("%s: %s is not a block" % [row["canonical"], id])
+			RequirementFormatter.FIX_DISTRICT:
+				if str(params.get("district_id", "")) == "" \
+						and not (params.get("tile", null) is Vector2i):
+					unroutable.append("%s: no district" % row["canonical"])
+			RequirementFormatter.FIX_ROAD_SEGMENT:
+				if not (params.get("tile", null) is Vector2i):
+					unroutable.append("%s: no road tile" % row["canonical"])
+	assert_true(unroutable.is_empty(),
+			"targets the router cannot act on: %s" % ", ".join(unroutable))
+
+
+## And the two rows the audit named by name, on a real city: `E_AVENUE` used to
+## emit an empty id and `POWER_CAPACITY` a transformer id into a building lookup.
+func test_the_avenue_row_carries_the_avenue_it_searched_for() -> void:
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	var controller := _controller(sim)
+	var b: Building = sim.buildings["H-001"]
+	var payload: Dictionary = sim.cmd_upgrade_building("H-001", true).get("payload", {})
+	# Level 4 is where C-62's gate starts existing at all.
+	var params := controller._check_params("H-001", b, 4, payload)
+	var avenue: Dictionary = params[&"E_AVENUE"]
+	var tile: Variant = avenue["fix_tile"]
+	assert_true(tile is Vector2i, "the search answers with a tile")
+	if tile != BuildController.NO_TILE:
+		assert_eq(sim.world.grid.road_class_at((tile as Vector2i).x,
+				(tile as Vector2i).y), TileGrid.ROAD_AVENUE,
+				"and the tile it answers with is an AVENUE")
+		assert_eq(controller.nearest_avenue_tiles(b.origin),
+				maxi(absi((tile as Vector2i).x - b.origin.x),
+						absi((tile as Vector2i).y - b.origin.y)),
+				"the distance the sentence quotes is measured to that tile")
+		var row := controller.formatter.format(&"E_AVENUE", avenue)
+		assert_eq(str(row["fix_target"]["kind"]),
+				String(RequirementFormatter.FIX_ROAD_SEGMENT))
+		assert_eq((row["fix_target"]["params"] as Dictionary)["tile"], tile,
+				"and the button goes to the avenue, not to the building")
