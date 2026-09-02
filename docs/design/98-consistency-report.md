@@ -6283,3 +6283,35 @@ ruling and not a gate.
 
 **The matrix holder this wave is lane B**; any lane whose merge moves a hash
 should publish its delta against §49.4's four baselines.
+
+### 49.z — what the lane leaves green, and the two things the suite caught last
+
+`~/.local/bin/godot --headless --script tests/run_tests.gd` → **137 files,
+2,516 tests, 563,090 asserts, 0 failed**, exit 0, on a branch merged up to
+`4503d35` (all of Wave 17). `tools/check_doc_refs.py` → 3,830 references, all
+resolving. `tools/ui_preview.gd --screen=all --audit --strict` → exit 0 at
+412×915, at 360×800 with 130 % text and larger touch targets, and at the Fold's
+673×841 with the same two settings.
+
+Two failures survived to the first full run, and both are worth the record
+because neither was reachable by any smaller instrument:
+
+1. **`test_weather_director.gd::test_29` went red**, and that is A91-D-87
+   confirming itself. The test called `SevereThunderstorm.begin()` — a call the
+   Director itself only makes at IMPACT — and then asked for a window measured
+   against `storm.t0_min`. RR-135's re-pointing of the window at the SCHEDULED
+   row is exactly what broke it: a test standing on an unreachable branch stays
+   green until the branch becomes reachable. It is re-pointed at a real
+   `director.scheduled` row at T−50 and keeps every assertion it had.
+2. **S17 did not fit a 360 dp phone at 130 % text.** The action row's one-line
+   form needs 395 dp of a 300 dp body, a `ScrollContainer` with horizontal
+   scrolling off hands that straight up its parents, and the sheet became 423 dp
+   wide inside a 320 dp box — pushing ✕, the only way out of a modal, off the
+   screen. The button moves to the row's second line (307 dp). Doc 12 §2.24 and
+   D-78 carry the derivation. `tests/test_ui_audit.gd` could not have caught it:
+   its `SURFACES` sweep reads a CLOSED modal, and a hidden subtree reports a
+   minimum width of 0 — `ModalLayer/PauseMenu/Panel` 260 against
+   `ModalLayer/GoalsSheet/Panel` 0 in one mount. This lane binds S17 to a
+   six-row fixture there and measures its own row directly; **the sweep itself
+   is left open for the lane that owns that file**, because every modal in that
+   list is currently unmeasured.
