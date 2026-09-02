@@ -6142,3 +6142,31 @@ low-latency stroke path that attaches to this window at launch (`SPen::FbrDrawPa
 overlay composited above the game. Until that image exists, this section names
 no cause.
 
+### §55.1 PARKED by the owner, 2026-09-02, and how to pick it up
+
+*"We should focus more on this banding issue later... we should get the game more
+built out so it works the way we expect. The banding is not a big deal, it
+doesn't hinder the gameplay at all."* — the player, after three suspects were
+eliminated and the fourth needed a build.
+
+**Parked, not abandoned, and the next step is one command.** The dev screenshot
+that would settle it is fixed as of the same day (`game/main.gd`'s `--shot-at`
+clock now runs above the two cursor returns; it had never once fired on a device
+launch). On the next build:
+
+```bash
+adb shell am force-stop com.slacumcity.game
+adb shell "am start -n com.slacumcity.game/com.godot.game.GodotAppLauncher \
+  --es args '--resume --screenshot=user://band.png --shot-at=30'"
+# open a full-screen sheet and leave it up; the app saves and quits itself
+adb shell "run-as com.slacumcity.game cat files/band.png" > band.png
+```
+
+A band in `band.png` is OURS — a render-target or swapchain defect, and the hunt
+moves into the renderer. A clean `band.png` beside a banded `adb shell screencap`
+of the same moment puts it downstream of us, and the standing candidate is the
+Samsung front-buffer / low-latency stroke path that attaches to this window on
+every boot (`SPen::FbrDrawPad`, `LowLatencyStrokeView`, in logcat at every
+launch). **Do not re-run the three tests that are already done:** it is not
+scan-out tearing, not the remote-control encoder, and not the quality governor.
+
