@@ -825,6 +825,20 @@
 				}
 			},
 			{
+				"_comment": "99-PA PA-83. Land development charges the treasury SIX times per block, $1.2K to $21K a phase, 14-15 times per 21 game-days on a curriculum run, and until now not one of them appeared anywhere the player could see: `development_phase_charged` had zero shell consumers. A log row and nothing louder — the player pressed DEVELOP and the schedule is doc 03 §2.8's own, so this is a receipt, not news. `phase` resolves through the same `ui_land_phase_*` copy the land panel's own progress line uses, because 'road_install started on Block E4' is a sentence written by a machine for a machine.",
+				"type": "development_phase_charged",
+				"category": "economy",
+				"notify_id": "development_charged",
+				"state": "normal",
+				"key": "block_id",
+				"args": {
+					"phase": "@lookup:ui_land_phase_:phase",
+					"block": "block",
+					"amount": "@money:cost",
+					"time": "@time"
+				}
+			},
+			{
 				"_comment": "99-PA PA-33 / doc 98 RR-150. The auto-repair pass's receipt. `count` is the PAYLOAD's own number, not `@count`: one pass repaired N buildings, and the log row for that pass has to say N rather than 1.",
 				"type": "building_repair_policy_ran",
 				"category": "economy",

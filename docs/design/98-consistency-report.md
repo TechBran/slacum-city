@@ -5703,7 +5703,7 @@ and the completion statement); doc 93 §AF; and
 
 *Filed 2026-09-02 against 99-PA §3.2 Lane S (rows PA-31 surface half, PA-32,
 PA-33, PA-83). Baselines re-recorded at the lane fork `d0d114f` and unmoved at
-delivery — see §53.4. Every number below is a command in this section.*
+delivery — see §53.5. Every number below is a command in this section.*
 
 **The shape of all four rows is one shape.** The Wave-17 economy dial-in made the
 money HONEST: the repair fell on the owner (doc 93 §Y1), the founding grant's
@@ -5838,7 +5838,7 @@ decision that has exactly one sensible answer.
    exactly as it did at the fork: no candidate is selected, no quote is taken, no
    dollar moves, and the policy is omitted from the city section entirely, so
    `capture_state()` is byte-identical and **the four `profile_sim` baselines do
-   not move** (§53.4). A default of *auto* would have been a balance change, would
+   not move** (§53.5). A default of *auto* would have been a balance change, would
    have moved every gate, and is not what a surfacing lane is for.
 
 **And the batch verb is the same pass, run once, by hand.** `cmd_repair_all_worn`
@@ -5853,7 +5853,30 @@ never disagree about which buildings are candidates or what they cost.
 `data/economy.json` (`building_repair`), `ui/dashboard_model.gd`,
 `ui/city_dashboard.gd`; doc 02 §2.6, doc 03 §2.5, doc 12 §2.10 (D-84), doc 93 §AL.
 
-### 53.4 Baselines
+### 53.4 PA-83 — the six silent debits, and the two defects the wiring found
+
+Land development charges the treasury **six times per block**, $1.2K to $21K a
+phase, 14–15 times per 21 game-days on a curriculum run, and
+`development_phase_charged` had **zero shell consumers**. It has a doc 12 log row
+now — *"Grading started on Block E4 — $4,770"* with a camera jump — and nothing
+louder, because the player pressed DEVELOP and doc 03 §2.8 published the
+schedule: this is a receipt, not news. The phase resolves through the same
+`ui_land_phase_*` copy the land panel's progress line uses, so no surface prints
+`road_install` at a player.
+
+The one sim-side change it needed is a name, not a number: the alerts centre's
+locator contract is `(&"block_id", id)` and the event carried the id as `block`,
+so the payload now names it **both ways** rather than the router guessing. That
+is not gold-plating — writing this row is what turned up **`A91-D-95`**: the
+`block_ready` row already in the same table makes exactly that mistake and has
+been rendering a **blank title with a dead jump** on the log's most celebratory
+line. `data/notifications.json` has the same binding written correctly, with a
+`_comment` recording the fix, so the log half was simply missed. Neither that row
+nor **`A91-D-96`** — the gate that cannot see this class, because it proves a
+placeholder has a *declaration* and never a *value* — is fixed here: both live in
+Lane K's table and Lane K's gate (99-PA §3.0 rule 1).
+
+### 53.5 Baselines
 
 Re-recorded at the lane fork `d0d114f` (`~/.local/bin/godot --headless --script
 tools/profile_sim.gd -- --hash-only`, and again with

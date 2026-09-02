@@ -25,6 +25,8 @@
 	"n_city_level_up_body": "New buildings are unlocked.",
 	"n_city_level_up_title": "City reached Level {level}",
 	"n_component_failed_body": "It went down at {time}. Cause: {cause}.",
+	"n_development_charged_body": "{amount} was paid out of the treasury at {time}.",
+	"n_development_charged_title": "{phase} started on Block {block}",
 	"n_component_failed_title": "{component} failed",
 	"n_component_tripped_body": "Protection opened at {time}; it may reclose on its own.",
 	"n_component_tripped_title": "{component} tripped",

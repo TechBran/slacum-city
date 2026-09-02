@@ -4950,7 +4950,15 @@ func _charge_development_phases() -> void:
 			# credit-floor refusal books its own deferral inside `spend()`.)
 			deferred = cost
 			treasury.defer(deferred, &"construction", reason)
+		# `block_id` is the SAME id as `block`, under the name the alerts centre's
+		# locator contract uses (`_alert_world_pos(&"block_id", …)`). 99-PA PA-83:
+		# land development charges the treasury six times, $1.2K…$21K a phase,
+		# 14-15 times per 21 game-days, and had no foreground cue at all — this
+		# event had zero shell consumers. It has a log row now, and a log row
+		# whose `key` is not a locator kind cannot carry `Jump to it`, so the
+		# payload names the id both ways rather than the router guessing.
 		bus.emit(&"development_phase_charged", {"block": block_id,
+				"block_id": block_id,
 				"phase": String(charge["phase"]), "cost": cost,
 				"deferred": deferred})
 	_publish_treasury_events()

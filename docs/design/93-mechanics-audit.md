@@ -3393,4 +3393,4 @@ existed, and would move every balance gate in the matrix in a wave whose stated
 job is to *surface* what the money already does. So the shipped default is
 manual: the control exists, the ladder is doc 02's own band table, and a player
 who never opens it plays the game they played yesterday, bit for bit. See RR-150
-and its §53.4 baselines.
+and its §53.5 baselines.

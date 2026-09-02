@@ -646,3 +646,69 @@ func test_upkeep_the_band_is_the_real_sim_end_to_end() -> void:
 	# them: private stock is in the loss and can never be in the quote.
 	assert_true(int(band["worn"]) >= int(band["repair_count"]),
 			"the loss counts taxed stock; the button counts what the city owns")
+
+
+# ===========================================================================
+# PA-83 — a debit the player never saw
+# ===========================================================================
+
+func test_pa83_every_development_charge_renders_a_log_row_with_a_jump() -> void:
+	# The row the audit asked for: "Grading started on Block E4 — $4,770", with
+	# a camera jump. Driven off the REAL event, through the REAL router.
+	var cfg := _cfg()
+	var model := EventLogModel.new(cfg)
+	model.set_clock(600, 0)
+	model.set_locator(func(kind: StringName, id: Variant) -> Variant:
+		return Vector3(16.0, 0.0, 32.0) if kind == &"block_id" and str(id) != "" \
+				else null)
+	model.feed({"type": &"development_phase_charged", "block": "E4",
+			"block_id": "E4", "phase": "grading", "cost": 4770, "deferred": 0})
+	assert_eq(model.size(), 1, "the charge is a row")
+	var row: Dictionary = model.entries()[0]
+	var text := str(row["title"]) + " " + str(row["body"])
+	assert_true(text.contains("Grading"),
+			"the phase is words, not `grading`: " + text)
+	assert_true(text.contains("E4"), "and it names the block: " + text)
+	assert_true(text.contains("4,770"), "and the money: " + text)
+	assert_true(bool(row["has_focus"]),
+			"`block_id` is a locator kind, so the row carries `Jump to it`")
+
+
+func test_pa83_the_event_names_its_block_the_way_the_locator_asks_for_it() -> void:
+	# The half that would rot silently: the shell's locator contract is
+	# `(&"block_id", id)`, so the payload has to carry that name or the jump is
+	# a dead button. This asserts the emit, not the table.
+	var sim := _sim()
+	var charges: Array = []
+	sim.bus.observer = func(event: Dictionary) -> void:
+		if StringName(String(event.get("type", &""))) == &"development_phase_charged":
+			charges.append(event.duplicate())
+	# Buying land is gated on city level on a fresh starter (`E_CITY_LEVEL`), and
+	# the purchase is not what this test is about — the block is handed over the
+	# way `tests/test_development.gd` hands one over, and the CHARGES are the
+	# subject.
+	var started := false
+	for candidate: Variant in sim.world.block_ids_sorted():
+		var block_id := String(candidate)
+		var block: LandBlock = sim.world.block(block_id)
+		if block.is_ready():
+			continue
+		block.ownership_state = &"OWNED"
+		if bool(sim.cmd_start_development(block_id)["ok"]):
+			started = true
+			break
+	assert_true(started, "a block was put into development")
+	sim.advance_coarse_hours(8)
+	sim.bus.observer = Callable()
+	assert_true(charges.size() >= 1, "a started development charges the treasury")
+	for raw: Variant in charges:
+		var charge: Dictionary = raw
+		assert_eq(str(charge["block_id"]), str(charge["block"]),
+				"the same id, under the name the locator asks for")
+		assert_true(int(charge["cost"]) > 0, "and it says what it took")
+		assert_true(cfg_has_phase_label(_cfg(), str(charge["phase"])),
+				"every phase the sim can charge has copy: " + str(charge["phase"]))
+
+
+static func cfg_has_phase_label(cfg: UIConfig, phase: String) -> bool:
+	return cfg.has_string("ui_land_phase_%s" % phase.to_lower())

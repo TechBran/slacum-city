@@ -1987,3 +1987,23 @@ to `RefreshPin.set_mode()` the way it hands `auto_quality` to
 `tests/test_ui_settings.gd` (`…_round_trips_and_refuses_a_mode_the_pin_would_not_take`):
 a saved `"240"` from a build whose ladder was longer is **dropped for its
 default**, which is §3.2's promise applied to a row that did not exist last wave.
+
+### Wave-18 delta — money has surfaces (2026-09-02)
+
+| id | change | doc ref | why |
+|---|---|---|---|
+| D-84 | **The Economy tab gains an `Upkeep` band above the ledger, the assistance row gains a note, and the event log gains four rows.** (a) **Upkeep** — `Tax lost to wear −$169` with its per-game-day figure, `27 of 27 taxed buildings below Good`, a `Repair all worn (N) — $X` button, and the standing `Automatic repair:` policy line. `DashboardModel.feed_upkeep` / `upkeep_view` format it; the loss is `BudgetModel.condition_loss()` off doc 03's own per-building settle rows, the repair half is `CitySim.cmd_repair_all_worn(true)`'s real payload and the policy line is `building_repair_policy()`. `CityDashboard.bind_upkeep(repair_all, policy, balance)` is the wire; a shell that does not bind it draws the loss half and no button. (b) **The assistance row's note** now reads `+$4,128/d today · ends day 7, 7 days left` — `ui_budget_assistance_days_left` takes `{per_day}` and `{end_day}` beside the count RR-102 added, and `_build_ledger` learned to draw a line's note at all. (c) **Four `data/ui.json.event_log` rows** (append): `assistance_stepped` ×2 (routine / final), `building_condition_band` ×2 (worn / poor), plus `building_repair_policy_ran` and `development_phase_charged`. | §2.10, §2.13, doc 02 §2.6, doc 03 §2.5/§2.5a, 99-PA PA-31/PA-32/PA-33/PA-83, report 98 §53 RR-148–RR-150 | **Four audit rows, one finding: the simulation knew and no screen said.** PA-31 measured an untouched city losing 53 % of its non-subsidy income to decay with nothing on any surface until `damaged` at 0.35 — a line doc 93 §Y1's ownership floor now makes unreachable for served private stock, so on a 60-game-day starter run there are **48 band crossings against 0 `building_damaged` events**. PA-32 measured doc 03 §2.5a's grant retiring **$589.71 a game-day** with no toast, no log row and no end date. PA-83 found `development_phase_charged` — 14–15 debits of $1.2K–$21K per 21 game-days — with **zero** shell consumers. The band answers the first two in the unit the player is losing them in: a count of worn buildings is a fact, and *"you are losing $169/gh; ending it costs $24,281"* is a decision. **The two counts on the band are deliberately different sets** and it never conflates them — the loss counts taxed stock (private included, which the city can never repair), the button counts what the city owns. **Two preview states ship in the same commit** as the screen (A91-D-28's lesson): `economy_assistance` and `economy_upkeep`, the latter driving the real `cmd_repair_all_worn` on a booted `CitySim`, both `--audit --strict` clean at 412×915 and at 360×800 with `--text-scale=1.3 --large-targets`. |
+
+**What this row deliberately does NOT add: a settings row.** 99-PA §3.2 assigns
+Lane S `data/ui.json settings.rows` for the building repair policy, and the row is
+**not** appended, because the plumbing that would make it live —
+`SettingsModel.POLICY_*` and `UIRoot._write_*_policy` — is in two files this wave
+gives to other lanes. A `policy: "buildings"` row appended alone would be stored,
+written to the device settings file and **never reach the sim**: a control that
+lies, which is the RR-1 failure mode §2.13's own road rows are written to avoid.
+So the policy's surface is the Upkeep band's line (which states it and is honest
+about `off`), and the S9 row is a one-line note for the lead: it lands the moment
+a `POLICY_BUILDINGS` arm exists beside `POLICY_ROADS`, reading its ladder from
+`CitySim.building_repair_thresholds()` and its caps from
+`data/economy.json.building_repair`, exactly as the road rows read theirs from
+`data/roads.json`.

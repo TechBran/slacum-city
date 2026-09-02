@@ -8133,3 +8133,93 @@ coefficient reaching a station and a plant. **Not** `data/buildings.json` — ev
 `decay_per_hour` cell in it is byte-identical to the fork (§43.8), and its one
 diff is a stale `s2.12 -> s2.14` cross-reference in a `_note` string that the
 generator had already corrected and the shipped file had not.
+
+---
+
+## 52. Wave 18 — Lane S: what the money surfaces are made of, measured (2026-09-02)
+
+*Every figure the Economy tab's two new surfaces print, and the re-measurement
+that made 99-PA PA-33 smaller than it was filed. Instruments only — this lane
+authored one balance number (§52.3) and moved no hash (§52.4).*
+
+### 52.1 The taper, per game-day
+
+`assistance_stepped`, collected off the bus on a booted starter city
+(`CitySim.boot_from_files()`, 9 game-days coarse). Eight events, then silence:
+
+| game-day | settled hour | $/game-day | days left | final |
+|---|---|---|---|---|
+| 0 | 0 | 4,128.00 | 7 | no |
+| 1 | 24 | 3,538.29 | 6 | no |
+| 2 | 48 | 2,948.57 | 5 | no |
+| 3 | 72 | 2,358.86 | 4 | no |
+| 4 | 96 | 1,769.14 | 3 | no |
+| 5 | 120 | 1,179.43 | 2 | no |
+| 6 | 144 | 589.71 | 1 | no |
+| 7 | 168 | 0.00 | 0 | **yes** |
+
+The step is **$589.71 a game-day**, which is doc 03 §2.5a's own
+`FOUNDING_ASSISTANCE_PER_HOUR / FOUNDING_ASSISTANCE_DAYS × 24` and the figure
+report 98 RR-102 published. Seven log rows and one notification — the audit's own
+target for PA-32 — reached by the shape of the taper rather than by a budget rule.
+
+### 52.2 The band crossings nothing was reporting
+
+`building_condition_band`, 60 game-days, starter city, no player action:
+
+| band | city-owned | private | total |
+|---|---|---|---|
+| Worn (↓ 0.85) | 8 | 29 | 37 |
+| Poor (↓ 0.60) | 7 | 4 | 11 |
+| **`building_damaged`** | — | — | **0** |
+
+Forty-eight moments at which the city got poorer, against **zero** of the one cue
+the game had. The four private Poor crossings are doc 93 §Y1a working — an owner
+the city left in the dark loses the floor — and they are the only way a private
+building gets below `band_worn` at all.
+
+On the 45-game-day curriculum arc `tools/measure_repair_burden.gd` counts **321 /
+0 / 0** crossings of 0.85 / 0.60 / 0.35, with **185 private buildings sitting
+worn** at the end: ~7 Worn crossings a game-day. That rate is why both
+notifications are `aggregate: true` P3 and not one row per building.
+
+### 52.3 The repair burden, re-measured — and the one number this lane authored
+
+`~/.local/bin/godot --headless --path . -s res://tools/measure_repair_burden.gd
+-- --days=45 --seeds=1337 --strategies=curriculum`, at the Wave-18 fork `d0d114f`:
+
+| reading | filed by 99-PA PA-33 | measured at the fork |
+|---|---|---|
+| repair trips per 45 game-days | 211–245 | **51** (0 private, 51 civic) |
+| repair spend | $567,679–$620,212 | **$226,852** (private **$0**) |
+| repair share of net | — | **3.91 %** (13.90 % with upkeep) |
+| REPAIR affordance shown, end state | — | 0 private / **39 civic** |
+
+Doc 93 §Y1 did most of PA-33's work before PA-33 was written: there is no private
+repair left to buy at any price. The row survives at a fifth of its filed size —
+51 taps is one every ~21 game-hours, on buildings the city unambiguously owns.
+
+**`AUTO_REPAIR_DEFAULT_DAILY_CAP` = $10,000/game-day** is the only balance number
+this lane adds, and it is derived from the table above rather than chosen:
+$226,852 / 45 = **$5,041 a game-day** averaged, and the heaviest bucket (game-days
+36–42) is $55,249 / 7 = **$7,893 a game-day**. A $10,000 cap therefore pays the
+whole bill on an ordinary day and throttles a catch-up spike over two or three
+days instead of emptying the treasury in one — which is what a budget is for. It
+is inert at the shipped default (the policy is `off`), so it enters no gate.
+
+### 52.4 Hashes
+
+Recorded at the fork and re-taken at delivery, both cities, both passes:
+
+| city | pass | hash |
+|---|---|---|
+| starter | coarse 24 h | `05614522975fad5218c42bb2aa164ec47085bf0cd8ec08d50e7ce759944f7c06` |
+| starter | fine 2.0 h | `d1aaee0dca92f2fd6eb10ae422eccc15b7b1ddcfbeb7284fda2be38a192796b0` |
+| bench | coarse 24 h | `275aad9d4aeea80965dd4d0d1b2cf34f76fd5c1ccc1e7644ca5b873700572ab1` |
+| bench | fine 2.0 h | `d40126e371371d599e53e862232fdb0c0d70ea1a3cd3d33f11ced56e34499081` |
+
+**Unmoved.** No gate is re-fitted and the matrix holder has nothing to consume
+from this lane — by construction, not by luck: report 98 RR-148's step detection
+is stateless, RR-149's band is derived from the two conditions the decay pass
+already holds, and RR-150's policy is omitted from the city section at its
+default, so `capture_state()` is byte-identical.
