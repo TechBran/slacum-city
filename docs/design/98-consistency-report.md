@@ -6147,7 +6147,7 @@ suite. `dumpsys notification` after a pause is what this ruling is owed, and doc
 **Ruling.** Doc 01 §2.9 / doc 12 §2.11's `auto_speed_reset_on_critical` resets
 speed on **exactly three authored events** — `incident_failed`,
 `credit_limit_reached`, and `flood_level_changed` at band `flooded` — with a
-**ten-real-minute re-arm**, both in `data/ui.json.speed`.
+**thirty-real-minute re-arm**, both in `data/ui.json.speed`.
 
 **Why the docs' own wording could not ship.** They said "a P1 notification".
 Taken literally that is the whole P1 class, and the P1 class is not rare: on the

@@ -1488,9 +1488,11 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 ## `HudModel.auto_speed_reset` had no caller outside its own test. It has one
 ## now, and the whole design decision is in WHAT reaches it: three authored
 ## events (`data/ui.json.speed.auto_speed_reset_triggers`), not every CRITICAL
-## alert, plus a ten-real-minute re-arm — because the naive wiring drops the
-## player to 1× several times an hour under PA-07's alert load, and a speed
+## alert, plus a **thirty**-real-minute re-arm — because the naive wiring drops
+## the player to 1× several times an hour under PA-07's alert load, and a speed
 ## control that keeps being taken away is worse than a feature that never landed.
+## (Thirty, not the ten PA-84 suggested: ten misses PA-84's own ≤ 1-per-real-hour
+## target on one of eleven curriculum seeds. Doc 12 §2.11 carries the sweep.)
 ##
 ## It never touches `paused`: §2.11 is explicit that pausing the player mid-crisis
 ## is worse than the crisis. The alert banner is not raised here either — the same
