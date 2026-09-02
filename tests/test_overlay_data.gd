@@ -250,14 +250,21 @@ func test_the_band_colour_comes_from_the_palette_the_legend_paints_with() -> voi
 	var palette := cfg.palette("default")
 	view.apply_edges([_edge([Vector2i(0, 0)], "heavy")])
 	var paint := view.paint_of_band(&"heavy")
-	var expected := Color(str(palette["warning"]))
+	# LINEAR, since Wave 17 (doc 91 A91-D-36, report 98 RR-95): the band is a
+	# MultiMesh INSTANCE colour, which takes no sRGB decode, so the view decodes
+	# the legend hex once per band. Asserting the raw hex here would pin the
+	# lift back in — the road band and the legend chip beside it have to be the
+	# same colour on the screen, not in the file.
+	var expected := Color(str(palette["warning"])).srgb_to_linear()
 	assert_almost_eq((paint["color"] as Color).r, expected.r, 0.001,
-			"heavy wears the legend's WARNING hue")
+			"heavy wears the legend's WARNING hue, decoded once")
+	assert_true((paint["color"] as Color).r < Color(str(palette["warning"])).r,
+			"…and the stored value is DARKER than the raw hex — the lift is out")
 	assert_true((paint["color"] as Color).a > 0.0, "and a wash alpha")
 	# Gridlock deepens the same hue rather than inventing a sixth colour, so a
 	# colourblind palette carries it too.
 	var grid := view.paint_of_band(&"gridlock")
-	var crit := Color(str(palette["critical"]))
+	var crit := Color(str(palette["critical"])).srgb_to_linear()
 	assert_true((grid["color"] as Color).r < crit.r, "gridlock is a deepened CRITICAL")
 	assert_true(float(grid["hz"]) > 0.0, "and it moves")
 	_drop(view)

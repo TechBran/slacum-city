@@ -394,6 +394,23 @@ func _build_shared() -> void:
 
 # ------------------------------------------------------------------- fence
 
+## The colour a hoarding panel is written with — LINEAR, at the write (doc 91
+## A91-D-36's instance half, report 98 RR-91 / RR-95). A MultiMesh instance
+## colour takes no sRGB decode, and these are the same authored hexes the
+## vertex seam in `PropMesh._push` decodes for the posts' and cranes' geometry.
+## Decoded here rather than at `_col()` so `fence_color` stays the one authored
+## sRGB source of truth for BOTH channels. Once per panel per fence build, not
+## per frame. Exposed (rather than inlined) because the headless test server
+## stores no instance data, so the only place a test can read the seam is here.
+func fence_paint(accent: bool) -> Color:
+	return (fence_accent_color if accent else fence_color).srgb_to_linear()
+
+
+## The same for a post: the gate posts wear the accent orange.
+func post_paint(gate: bool) -> Color:
+	return (fence_accent_color if gate else post_color).srgb_to_linear()
+
+
 ## Hoarding around the lot: panels on one MultiMesh (tinted per instance so a
 ## few of them read safety orange), posts on a second, and one panel left out
 ## as the site gate.
@@ -462,21 +479,19 @@ func _build_fence(site: Site) -> void:
 				panel_mm.set_instance_transform(panel_i, Transform3D(basis,
 						Vector3(centre_2d.x, 0.0, centre_2d.y)))
 				var accent := (i + accent_seed + side) % fence_accent_every == 0
-				panel_mm.set_instance_color(panel_i,
-						fence_accent_color if accent else fence_color)
+				panel_mm.set_instance_color(panel_i, fence_paint(accent))
 			else:
 				# The gate: no panel, but keep the slot so the buffer stays put.
 				panel_mm.set_instance_transform(panel_i,
 						Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * 0.001),
 						Vector3(centre_2d.x, -4.0, centre_2d.y)))
-				panel_mm.set_instance_color(panel_i, fence_color)
+				panel_mm.set_instance_color(panel_i, fence_paint(false))
 			panel_i += 1
 			var post_2d := start + step * (length * float(i))
 			var gate_post := is_gate or (side == gate_side and i == gate_index + 1)
 			post_mm.set_instance_transform(post_i, Transform3D(Basis.IDENTITY,
 					Vector3(post_2d.x, 0.0, post_2d.y)))
-			post_mm.set_instance_color(post_i,
-					fence_accent_color if gate_post else post_color)
+			post_mm.set_instance_color(post_i, post_paint(gate_post))
 			post_i += 1
 
 	site.fence = MultiMeshInstance3D.new()
@@ -996,10 +1011,19 @@ class PropMesh extends RefCounted:
 			mesh.surface_set_material(0, material)
 		return mesh
 
+	## THE COLOUR SEAM for every prop this builder makes (report 98 RR-95,
+	## doc 93 §X1). A vertex COLOR is handed to the material exactly as written:
+	## `StandardMaterial3D.vertex_color_is_srgb` is off (the project default) and
+	## `power_pad.gdshader` reads `COLOR.rgb` raw, so every hex above — the
+	## fence, the crane yellow, the skip green, the pad's cabinet — was being used
+	## as if it were already linear and rendered about two stops light. Decoded
+	## HERE, once per vertex at build time, never at the constant: `crane_dark_color`
+	## and friends are also handed to `set_instance_color` in `_build_fence`, and
+	## that seam decodes for itself at its own write.
 	func _push(p: Vector3, n: Vector3, color: Color, uv: Vector2) -> int:
 		_verts.push_back(p)
 		_norms.push_back(n)
-		_cols.push_back(color)
+		_cols.push_back(color.srgb_to_linear())
 		_uvs.push_back(uv)
 		return _verts.size() - 1
 

@@ -47,6 +47,30 @@ var far_cull_m: float = 1200.0
 ## clamps to, so a governor step can shorten the draw distance but never extend
 ## it past the quality level the player selected.
 var preset_far_cull_m: float = 1200.0
+## Doc 11 §2.5b — the PITCH-COUPLED cull distance actually in force, and the
+## number `raw_tier` reads. It is `far_cull_m` (i.e. the preset's, as the
+## governor may have shortened it) clamped down to what the frustum can
+## actually reach at the camera's current pitch. Equal to `far_cull_m` until a
+## caller supplies a pitch, so a model nobody poses behaves exactly as it did
+## before §2.5b — which is what every existing tier test relies on.
+var active_far_cull_m: float = 1200.0
+## Whether §2.5b is armed at all (`lod.pitch_cull.enabled`), and the pitch the
+## last `update_chunk_tiers` was given (< 0 = "no pitch supplied").
+var pitch_cull_enabled: bool = true
+var culling_pitch_deg: float = -1.0
+## Half the VERTICAL field of view — the angle between the camera's forward
+## axis and the TOP edge of the frustum, which is the edge that decides how far
+## along the ground the frustum reaches. Seeded from `camera.fov_deg`.
+var pitch_cull_fov_margin_deg: float = 20.0
+## `[[pitch_deg, slack], …]`, piecewise-linear. See `pitch_cull_reach_m`.
+var pitch_cull_slack: Array = []
+## The cull may never come inside this. Authored as `lod.medium_max_m`: §2.5b
+## is allowed to remove FAR chunks and is never allowed to touch the tier the
+## player is looking at.
+var pitch_cull_floor_m: float = 420.0
+## The aspect assumed when no caller can see a viewport. Wider than any box the
+## game ships on, so an unknown aspect errs towards culling nothing.
+var pitch_cull_max_aspect: float = 2.40
 var hysteresis_m: float = 20.0
 var lod_dwell_s: float = 0.5
 
@@ -219,6 +243,16 @@ func configure(render_cfg: Dictionary, preset_name: String = "balanced") -> void
 	pitch_min_deg = float(cam.get("pitch_min_deg", pitch_min_deg))
 	pitch_max_deg = float(cam.get("pitch_max_deg", pitch_max_deg))
 
+	# §2.5b. The FOV margin is HALF the vertical FOV and is derived from
+	# `camera.fov_deg` rather than authored twice — a projection constant with
+	# two homes is a projection constant that will disagree with itself.
+	var pitch_cull: Dictionary = lod.get("pitch_cull", {})
+	pitch_cull_enabled = bool(pitch_cull.get("enabled", true))
+	pitch_cull_fov_margin_deg = 0.5 * float(cam.get("fov_deg", 40.0))
+	pitch_cull_slack = pitch_cull.get("slack", [])
+	pitch_cull_floor_m = float(pitch_cull.get("floor_m", medium_max_m))
+	pitch_cull_max_aspect = float(pitch_cull.get("max_aspect", pitch_cull_max_aspect))
+
 	var streaming: Dictionary = cfg.get("streaming", {})
 	writes_per_frame = int(streaming.get("multimesh_instance_writes_per_frame", writes_per_frame))
 	bucket_granularity = int(streaming.get("bucket_alloc_granularity", bucket_granularity))
@@ -238,6 +272,7 @@ func set_preset(preset_name: String) -> void:
 	if presets.has(preset_name):
 		far_cull_m = float((presets[preset_name] as Dictionary).get("far_cull_m", far_cull_m))
 	preset_far_cull_m = far_cull_m
+	active_far_cull_m = far_cull_m
 
 
 ## §2.13's adaptive governor, knob 3 (`far_cull_m`, −128 m per step, floor
@@ -255,6 +290,10 @@ func apply_governor(knobs: Dictionary) -> void:
 	if not knobs.has("far_cull_m"):
 		return
 	far_cull_m = clampf(float(knobs["far_cull_m"]), 1.0, preset_far_cull_m)
+	# §2.5b composes by MINIMUM with the ladder, and the ladder wins whenever it
+	# is the tighter of the two: a governor in trouble must not be undone by a
+	# camera that happens to be looking down.
+	active_far_cull_m = minf(active_far_cull_m, far_cull_m)
 
 
 ## Census of the tiers actually assigned right now — `{near, medium, far,
@@ -799,11 +838,106 @@ func chunk_ground_distance(chunk: Vector2i, camera_pos: Vector3) -> float:
 	return sqrt(dx * dx + dz * dz + camera_pos.y * camera_pos.y)
 
 
+## Doc 11 §2.5b — how far along the ground this camera's frustum actually
+## reaches, in metres from the camera's ground point, measured at the TOP
+## CORNERS of the frame.
+##
+## THE GEOMETRY, and why the corner and not the centre. Take the camera basis
+## pitched `θ` below horizontal. A top-corner ray is
+## `right·tan(h½) + up·tan(v½) + forward`, whose vertical component is
+## `tan(v½)·cos θ − sin θ` and whose horizontal magnitude is
+## `√(tan(h½)² + (tan(v½)·sin θ + cos θ)²)`; the ground it reaches is the
+## camera height times their ratio. The CENTRE of the top edge reaches only
+## `h / tan(θ − v½)` — 412 m at the Z2 pose, which is exactly the `r_far 411.9`
+## `lod._z2_derivation` computes by hand and is the check that this function is
+## the same geometry that paragraph is. **The corners reach 532 m at that same
+## pose, 29 % further**, and a cull drawn at the centre figure would delete
+## chunks that are visible in the top corners of the frame. The first draft of
+## this function used the centre figure; the corner form is the one that
+## shipped.
+##
+## WHY THE BOUND IS EXACT, at any building height. Past the range where the top
+## ray meets the ground that ray is below ground, so EVERY point at that range
+## — at any altitude, tower tops included — sits above the frame's top edge and
+## is off-screen. The reach is therefore a true horizon and not a heuristic,
+## which is what makes culling at it safe rather than merely cheap.
+##
+## WHY IT IS NOT A CURVE IN PITCH ALONE. The reach scales with camera HEIGHT as
+## much as with pitch: at the 34° floor it is 48 m from the Z0 pose and 1,111 m
+## from the Z2 pose, a factor of 23. One multiplier keyed on pitch cannot
+## express both, which is why the authored `slack` multiplies this COMPUTED
+## reach rather than multiplying `far_cull_m`.
+##
+## `aspect` is width/height of the render target, because `h½` is derived from
+## the vertical FOV through it (Godot's `KEEP_HEIGHT` default) and a wider frame
+## reaches further at its corners. Callers that cannot see a viewport pass the
+## authored `max_aspect`, which is wider than any box the game ships on, so an
+## unknown aspect errs towards culling nothing.
+##
+## Returns INF when the top ray clears the horizon (`θ ≤ v½`), which is the
+## honest answer: a frustum that sees sky reaches forever, and only
+## `far_cull_m` can stop it.
+func pitch_cull_reach_m(camera_y: float, pitch_deg: float,
+		aspect: float = -1.0) -> float:
+	var v_half := deg_to_rad(pitch_cull_fov_margin_deg)
+	var theta := deg_to_rad(pitch_deg)
+	var tan_v := tan(v_half)
+	var descent := sin(theta) - tan_v * cos(theta)
+	if descent <= 0.001:
+		return INF
+	var tan_h := tan_v * (aspect if aspect > 0.0 else pitch_cull_max_aspect)
+	var forward_ground := tan_v * sin(theta) + cos(theta)
+	var horizontal := sqrt(tan_h * tan_h + forward_ground * forward_ground)
+	return maxf(0.0, camera_y) * horizontal / descent * _pitch_slack(pitch_deg)
+
+
+## The authored `lod.pitch_cull.slack` curve, piecewise-linear in pitch and
+## flat outside its ends. An empty curve is slack 1.0 — the bare geometry.
+func _pitch_slack(pitch_deg: float) -> float:
+	if pitch_cull_slack.is_empty():
+		return 1.0
+	var first: Array = pitch_cull_slack[0]
+	if pitch_deg <= float(first[0]):
+		return float(first[1])
+	for i in range(pitch_cull_slack.size() - 1):
+		var a: Array = pitch_cull_slack[i]
+		var b: Array = pitch_cull_slack[i + 1]
+		if pitch_deg <= float(b[0]):
+			var span := maxf(0.0001, float(b[0]) - float(a[0]))
+			return lerpf(float(a[1]), float(b[1]),
+					(pitch_deg - float(a[0])) / span)
+	return float((pitch_cull_slack[pitch_cull_slack.size() - 1] as Array)[1])
+
+
+## §2.5b's composition, in one place: the pitch cull may only ever SHORTEN the
+## draw distance, may never come inside `pitch_cull_floor_m`, and loses to the
+## governor whenever the governor is tighter. `pitch_deg < 0` means "no pitch
+## supplied" and leaves `far_cull_m` standing untouched.
+func set_camera_pose(camera_y: float, pitch_deg: float,
+		aspect: float = -1.0) -> void:
+	culling_pitch_deg = pitch_deg
+	if not pitch_cull_enabled or pitch_deg < 0.0:
+		active_far_cull_m = far_cull_m
+		return
+	var reach := pitch_cull_reach_m(camera_y, pitch_deg, aspect)
+	if is_inf(reach):
+		active_far_cull_m = far_cull_m
+		return
+	# `reach` is a GROUND range and `chunk_ground_distance` is the 3-D distance
+	# from the camera — which is why `medium_max_m` 420 corresponds to a ground
+	# r of 197.3 m at Z2 in `_z2_derivation` and not to 420 m of ground. The
+	# two metrics have to be reconciled or the cull comes in by the camera
+	# height, which at Z2 is 371 m of it.
+	var d := sqrt(reach * reach + camera_y * camera_y)
+	active_far_cull_m = clampf(d, minf(pitch_cull_floor_m, far_cull_m),
+			far_cull_m)
+
+
 func tier_band_max(tier: int) -> float:
 	match tier:
 		TIER_NEAR: return near_max_m
 		TIER_MEDIUM: return medium_max_m
-		TIER_FAR: return far_cull_m
+		TIER_FAR: return active_far_cull_m
 		_: return INF
 
 
@@ -812,7 +946,7 @@ func raw_tier(dist: float) -> int:
 		return TIER_NEAR
 	if dist <= medium_max_m:
 		return TIER_MEDIUM
-	if dist <= far_cull_m:
+	if dist <= active_far_cull_m:
 		return TIER_FAR
 	return TIER_CULLED
 
@@ -841,7 +975,11 @@ func lod_for(dist: float, cur_tier: int, dwell: float) -> int:
 
 ## Advances per-chunk dwell timers and applies `lod_for` to every known chunk.
 ## Returns {chunk: tier} for the chunks whose tier changed this call.
-func update_chunk_tiers(camera_pos: Vector3, delta: float) -> Dictionary:
+func update_chunk_tiers(camera_pos: Vector3, delta: float,
+		pitch_deg: float = -1.0, aspect: float = -1.0) -> Dictionary:
+	# §2.5b, applied here because this is the one call that already knows where
+	# the camera IS and is the only reader of the answer.
+	set_camera_pose(camera_pos.y, pitch_deg, aspect)
 	var changed: Dictionary = {}
 	for coord in _sorted_chunk_coords():
 		var c: ChunkRec = _chunks[coord]
