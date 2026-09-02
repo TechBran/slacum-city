@@ -3771,8 +3771,19 @@ edits and all four digests are byte-identical.
 ## 39. WAVE 17 — the economy dial-in: who pays, how fast, how much (binding)
 
 *Filed 2026-09-02 against the user's three playtest notes of 2026-09-01. Five
-rulings; every number was measured on this branch and the command is quoted
-beside it. The rulings themselves are doc 93 §Y and the measurements doc 92 §43.*
+rulings — one of which was reversed by its own measurement, and that reversal is
+the most useful thing in this section. Every number was measured on this branch
+and the command is quoted beside it. The rulings themselves are doc 93 §Y and the
+measurements doc 92 §43.*
+
+**Baselines.** The fork's four `tools/profile_sim.gd --hash-only` hashes were
+`a27da24aaf6e9663…` / `7745cb25e55ff65c…` (starter) and `7c99720f5ff14553…` /
+`d8e8889681b23297…` (bench), verified unmoved before a line was edited. After
+this pass: **`05614522975fad52…` / `d1aaee0dca92f2fd…`** and
+**`275aad9d4aeea809…` / `d40126e371371d59…`**. `data/buildings.json` carries no numeric change at all — every
+`decay_per_hour` cell is byte-identical to the fork (RR-101); its one diff is a
+stale `s2.12 -> s2.14` cross-reference inside a `_note` string that
+`tools/gen_buildings.py` had already corrected and the shipped file had not.
 
 **The shape of it.** Three notes came back from days of play on the Fold — repair
 is too aggressive and bills the wrong party, income is too slow, upgrades cost

@@ -545,18 +545,43 @@ func test_gate_04b_maintenance_pacing_is_a_line_item_not_a_chore() -> void:
 	var net := 0.0
 	for i in range(1, samples.size()):
 		net += float((samples[i] as Dictionary)["net"])
+	# **RE-FITTED Wave 17 (doc 92 §43.8/§43.10, doc 93 §Y1).** Both bands are the
+	# same formula over a different ROSTER. This gate's own header derives
+	# `repair trips/day = Σ decay_b × 24 / (1 − threshold)` over the buildings the
+	# CITY repairs, and doc 02 §2.6a took the private stock out of that sum: a
+	# 21-game-day `balanced` city drew the REPAIR row on 260 private + 21 civic
+	# buildings and now draws it on 0 + 24, so the sum runs over roughly a tenth
+	# of the roster and returns roughly a tenth of the trips. Measured on the
+	# three matrix seeds: 10 / 10 / 11 trips over 21 game-days = 0.48 / 0.48 /
+	# 0.52 per game-day, against 27.3 mean trips (1.30/day) at the fork.
+	#
+	# **Neither `decay_per_hour` nor `REPAIR_COST_PER_CAPITAL` nor
+	# `REPAIR_THRESHOLD` moved** — exactly as in the Wave-5 re-anchor recorded
+	# above, the city the ratio is measured on is what changed.
+	#
+	# The floor's job is unchanged: catch the mechanic going dead altogether. It
+	# moves 0.80 → 0.30, which is 37 % below the lowest measured seed and still
+	# strictly positive. The SHARE floor moves 0.04 → 0.03 for the same reason and
+	# with the same measurement (4.42 % at seed 1337, against 11.2 % at the fork):
+	# a city that only buys repairs for its own assets cannot spend as large a
+	# share of a larger net on them, and 0.04 was inside a rounding error of
+	# failing on a number the ruling deliberately moved.
 	var share := float(int(summary["repair_spend"])) / maxf(1.0, net)
-	assert_true(share >= 0.04 and share <= 0.12,
-			"upkeep is %.1f%% of net over %d game-days; Wave 6 measured 5.5–6.3 %% "
-			% [share * 100.0, LONG_DAYS] + "across three seeds on a fully lit city")
+	assert_true(share >= 0.03 and share <= 0.12,
+			"upkeep is %.1f%% of net over %d game-days; Wave 17 measures 4.4 %% "
+			% [share * 100.0, LONG_DAYS] + "on the city's OWN assets (Wave 6 "
+			+ "measured 5.5–6.3 %% when the city also bought private repairs)")
 	assert_true(int(summary["repair_spend"]) > 0, "and it is not free")
 	var trips_per_day := float(int(summary["repaired"])) / float(LONG_DAYS)
-	assert_true(trips_per_day >= 0.8 and trips_per_day <= 9.0,
-			"%.2f repair trips per game-day — the ruled target is 'a few', "
-			% trips_per_day + "pass 2's 0.90 threshold measured 11.5, and Wave 6 "
-			+ "measures 1.05–1.29 on a city that is no longer dark")
+	assert_true(trips_per_day >= 0.30 and trips_per_day <= 9.0,
+			"%.2f repair trips per game-day — the ruled target is 'a few', and "
+			% trips_per_day + "since doc 02 §2.6a they are the city's own assets "
+			+ "only: Wave 17 measures 0.48–0.52 across the three matrix seeds")
 	# And it is buying something: the maintained city holds its floor at the
-	# threshold rather than sliding toward the auto-damage line.
+	# threshold rather than sliding toward the auto-damage line. Since Wave 17
+	# this reads doubly true — 0.60 is also `condition.band_worn`, the floor doc
+	# 02 §2.6a gives private stock, so a `balanced` city's worst building is at
+	# or above the worst any building in it can now be while the lights are on.
 	assert_true(float(summary["min_condition_end"]) >= 0.60,
 			"the maintained city's worst building sat at %.3f"
 					% float(summary["min_condition_end"]))

@@ -7654,4 +7654,22 @@ The fork's four hashes were `a27da24aaf6e9663…` / `7745cb25e55ff65c…` and
 `7c99720f5ff14553…` / `d8e8889681b23297…`, verified unmoved before a line was
 edited. This pass is hash-moving by construction — `data/economy.json`,
 `data/building_economy.json` and `sim/buildings/building.gd` all changed — and
-the new set is recorded in report 98 §39 beside the rulings that moved it.
+the new set is:
+
+| city | path | hash |
+|---|---|---|
+| starter | coarse 24 h | `05614522975fad52…` |
+| starter | fine 2.0 h | `d1aaee0dca92f2fd…` |
+| `bench_city.json` | coarse 24 h | `275aad9d4aeea809…` |
+| `bench_city.json` | fine 2.0 h | `d40126e371371d59…` |
+
+**What moved them, exhaustively**: `upgrades.UPG_COEFF` and
+`upgrades.CAPITAL_VALUE_V` in `data/economy.json` (doc 93 §Y7) and the whole of
+`data/building_economy.json` regenerated from them; `grants
+.LEVEL_UP_GRANT_BY_CITY_LEVEL` rungs 5–6, which follow doc 03 §2.5a's own rule;
+`data/building_rules.json`'s new `owner_maintenance` block; and
+`sim/buildings/building.gd`'s ownership floor plus doc 03 §2.4's condition
+coefficient reaching a station and a plant. **Not** `data/buildings.json` — every
+`decay_per_hour` cell in it is byte-identical to the fork (§43.8), and its one
+diff is a stale `s2.12 -> s2.14` cross-reference in a `_note` string that the
+generator had already corrected and the shipped file had not.
