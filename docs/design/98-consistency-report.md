@@ -5763,6 +5763,22 @@ do about it) belongs to `ui/fix_router.gd`, is headless, and is total over
 three lines and does the one thing a shell may do with the answer: move the
 camera.
 
+**The sweep caught this lane's own bug, and that is the row's best evidence.**
+`test_no_real_checklist_row_falls_through_silently` runs the REAL
+`BuildController.upgrade_view` checklist for every building in the starter city
+and routes every row. A first cut of the router treated `FIX_POWER`'s id as a
+building sim id — the natural reading, since `FIX_REPAIR`'s is one — and the
+sweep failed **33 rows in one method**, every `POWER_CAPACITY` row in the city,
+each naming the transformer it had been handed (`APT-001 … id T-02 named nothing
+on the map`). `FIX_POWER`'s id is the component the headroom **binds at**, not
+the subject: it is filled from `sim.grid.attachment_of(sim_id)`, which is
+precisely the mismatch PA-05 is about, and a router that "fixed" it by looking
+the component up among buildings would have reproduced the original defect in a
+new file. It is carried as `binds_at` with the wall's position; the BUILDING is
+taken only from an explicit `sim_id` a caller adds, never by reinterpreting the
+component id. The gate is the reason that is a paragraph here instead of a
+regression on the phone.
+
 **Why "an ACTION" and not "a world position".** Two of the seven kinds have no
 place to go — `FIX_REPAIR` and `FIX_POWER` target the building the player is
 already looking at, so a camera move is a no-op, which is precisely how
@@ -5856,7 +5872,7 @@ inside the process that is about to be killed.
 | `grep -c "sim_host\.sim\." game/main.gd` (fork → now) | 72 → 67 — the metric doc 93 §AI1 argues for |
 | `grep -rn "res://game/main" tests/` | 0 — `main.gd` is still not loaded, and the point is that it no longer has to be |
 | `grep -rn "sim\._[a-z]" --include=*.gd game ui tools` (fork → now) | 8 → 0 (two comments naming the row) |
-| `--file=test_fix_router` | 18 tests, 330 asserts, 0 failed |
+| `--file=test_fix_router` | 19 tests, 347 asserts, 0 failed |
 | `--file=test_world_locator` | 16 tests, 51 asserts, 0 failed |
 | `--file=test_tile_geometry` | 9 tests, 46 asserts, 0 failed |
 | `--file=test_power_infra_feed` | 14 tests, 68 asserts, 0 failed |

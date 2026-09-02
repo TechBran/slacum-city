@@ -22,9 +22,14 @@ extends RefCounted
 ##
 ##  * `ACTION_FOCUS` — *go and look at this*: `{world_pos: Vector3}`. Every fix
 ##    whose answer is a place.
-##  * `ACTION_SHEET` — *open this surface, already armed*: `{sheet, arm, sim_id}`.
-##    `FIX_POWER`'s answer is not a place (the player is already looking at the
-##    building); it is the panel's power strip, armed to quote.
+##  * `ACTION_SHEET` — *open this surface, already armed*:
+##    `{sheet, arm, binds_at, world_pos}`. `FIX_POWER`'s answer is not a place to
+##    go (the player is already looking at the building); it is the panel's power
+##    strip, armed to quote. `binds_at` is the component the headroom binds at —
+##    which is what the id on this kind actually is — and `world_pos` is where
+##    that wall stands, for a surface that wants to show it. `sim_id` and `quote`
+##    appear only when the caller supplied the BUILDING explicitly, because the
+##    component id is not one and must never be mistaken for one.
 ##  * `ACTION_VERB` — *run this, and here is what it will cost*:
 ##    `{verb, args, quote}`. `FIX_REPAIR` buys a repair. The quote is the sim's
 ##    own `preview: true` return, which is a pure read — it stops before the
@@ -32,7 +37,7 @@ extends RefCounted
 ##    so routing a fix target never moves a hash.
 ##
 ## And one refusal shape: `ACTION_NONE` with a `reason`. A router that cannot
-## answer says which of the six ways it failed, so a gate can tell "this code has
+## answer says which of the FIVE ways it failed, so a gate can tell "this code has
 ## no fix" (`no_fix`) apart from "this code has a fix and the id was empty"
 ## (`empty_id`) — the second is a bug in the caller's params and the first is not.
 
@@ -101,15 +106,29 @@ static func route(sim: CitySim, fix_target: Dictionary,
 			# the strip spends. The router names the surface and the arm.
 			if id == "":
 				return _none(kind, id, REASON_EMPTY_ID)
-			# Both purchase kinds target a BUILDING by sim id. An id that names
-			# none of them is `unresolved` like any other, rather than a sheet
-			# armed to quote something that is not there.
-			if not sim.buildings.has(id):
+			# **`FIX_POWER`'s id is NOT the building.** `build_controller.gd`
+			# fills it from `sim.grid.attachment_of(sim_id)` — the component the
+			# headroom BINDS AT (`T-02`), which is the whole of PA-05's first
+			# half. Treating it as a building id is the bug this row exists to
+			# kill, and a `sim.buildings.has(id)` guard here reproduces it: the
+			# real checklist sweep failed 33 rows on exactly that, which is what
+			# `test_no_real_checklist_row_falls_through_silently` is for.
+			#
+			# So: resolve the id in whatever namespace it belongs to, carry it as
+			# `binds_at` with the wall's position, and take the BUILDING only
+			# from an explicit `sim_id` a caller chose to add — never by
+			# reinterpreting the component id as one.
+			var wall: Variant = WorldLocator.locate_any(sim, id)
+			if wall == null:
 				return _none(kind, id, REASON_UNRESOLVED)
 			var armed := {"action": ACTION_SHEET, "reason": &"", "kind": kind, "id": id,
-					"sheet": SHEET_BUILDING_PANEL, "arm": ARM_POWER_FIX, "sim_id": id}
-			if with_quote:
-				armed["quote"] = sim.cmd_fix_power_capacity(id, true)
+					"sheet": SHEET_BUILDING_PANEL, "arm": ARM_POWER_FIX,
+					"binds_at": id, "world_pos": wall}
+			var subject := str(fix_target.get("sim_id", ""))
+			if subject != "" and sim.buildings.has(subject):
+				armed["sim_id"] = subject
+				if with_quote:
+					armed["quote"] = sim.cmd_fix_power_capacity(subject, true)
 			return armed
 		RequirementFormatter.FIX_BUILDING, RequirementFormatter.FIX_BLOCK, \
 				RequirementFormatter.FIX_TILE, RequirementFormatter.FIX_DISTRICT, \

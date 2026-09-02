@@ -85,8 +85,11 @@ static func locate(sim: CitySim, kind: StringName, id: Variant) -> Variant:
 ## never — an unqualified id is not a licence to walk the map.
 ##
 ## Determinism note: the order is fixed and the namespaces are disjoint in
-## practice (`B-nnn` buildings, `T-nn`/`F-nn`/`S-nn` components, `B<bx>_<bz>`
-## blocks, `D_nnn` districts), so "first that knows it" is a stable answer.
+## practice — buildings are archetype-tagged (`APT-001`, `H-001`, `FIRE-1`),
+## components are `T-nn` / `F-nn` / `SUB-n`, blocks are `B_<bx>_<bz>` and
+## districts are `D_<NAME>` — so "first that knows it" is a stable answer, and
+## the four tables are asserted to disagree about nothing in
+## `test_world_locator.gd::test_locate_any_walks_the_namespaces_in_order`.
 static func locate_any(sim: CitySim, id: Variant) -> Variant:
 	if sim == null:
 		return null

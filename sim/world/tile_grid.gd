@@ -28,7 +28,7 @@ const ROAD_AVENUE: int = 2
 ## `METRES_PER_TILE`, `TILE_METERS`, `TILE_M`, `DEF_TILE_M`, `TILE_M_DEFAULT` and
 ## bare `8.0` literals — and the footprint→centre formula four times, with no
 ## test asserting any of them agreed (PA-76). Nothing here is new arithmetic: the
-## constant and the three helpers below reproduce the expressions the shell and
+## constants and the five helpers below reproduce the expressions the shell and
 ## the renderer already wrote by hand, so adopting them is hash-neutral by
 ## construction. New readers take it from here; the migration of the existing
 ## spellings is one row per owning lane (doc 98 §50).

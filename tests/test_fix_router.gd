@@ -109,18 +109,39 @@ func test_a_repair_target_is_a_VERB_with_a_price_on_it() -> void:
 	assert_eq(quote["reason_code"], &"E_NOT_DAMAGED")
 
 
-func test_a_power_target_opens_the_panel_pre_armed() -> void:
-	# `POWER_CAPACITY` is a purchase too (A91-D-54). The router names the surface
-	# and the arm rather than a camera move, which is what the panel already does
-	# in place — stated once, here, so the placement bar and the alerts centre can
-	# reach the same behaviour without re-deriving it.
+func test_a_power_target_opens_the_panel_pre_armed_on_the_component_that_binds() -> void:
+	# `POWER_CAPACITY` is a purchase too (A91-D-54), and **its id is the
+	# TRANSFORMER**, not the building: `build_controller.gd` fills it from
+	# `sim.grid.attachment_of(sim_id)`. The router names the surface and the arm
+	# rather than a camera move, carries the component as `binds_at`, and does
+	# NOT pretend the component id is a building id — which is the bug PA-05 is.
 	var sim := _sim()
-	var action := FixRouter.route(sim, _target(RequirementFormatter.FIX_POWER, "APT-001"))
+	var binds_at := String(sim.grid.attachment_of("APT-001"))
+	assert_eq(binds_at, "T-02", "the real payload for this row")
+	var action := FixRouter.route(sim, _target(RequirementFormatter.FIX_POWER, binds_at))
 	assert_eq(action["action"], FixRouter.ACTION_SHEET)
 	assert_eq(action["sheet"], FixRouter.SHEET_BUILDING_PANEL)
 	assert_eq(action["arm"], FixRouter.ARM_POWER_FIX)
+	assert_eq(action["binds_at"], binds_at)
+	assert_eq(action["world_pos"],
+			WorldLocator.locate(sim, WorldLocator.KIND_COMPONENT, binds_at),
+			"and the wall has a place, for a surface that wants to show it")
+	assert_false(action.has("sim_id"),
+			"the component id is NOT a building id and is never used as one")
+	assert_false(action.has("quote"), "no building, no quote")
+
+
+func test_a_power_target_quotes_only_when_the_caller_names_the_building() -> void:
+	# The quote needs `cmd_fix_power_capacity(sim_id)`, and `sim_id` is a
+	# BUILDING. A caller that knows it says so; the router never invents it.
+	var sim := _sim()
+	var action := FixRouter.route(sim, {"kind": RequirementFormatter.FIX_POWER,
+			"id": String(sim.grid.attachment_of("APT-001")), "sim_id": "APT-001"})
+	assert_eq(action["action"], FixRouter.ACTION_SHEET)
 	assert_eq(action["sim_id"], "APT-001")
 	assert_true(action.has("quote"))
+	assert_eq(action["quote"]["reason_code"], &"E_NOT_BLOCKED",
+			"APT-001 has headroom at L1, so the quote refuses by name")
 
 
 # ---------------------------------------------------------------- refusals
@@ -139,6 +160,8 @@ func test_an_id_that_names_nothing_refuses_with_unresolved() -> void:
 	for kind: StringName in [RequirementFormatter.FIX_BUILDING,
 			RequirementFormatter.FIX_BLOCK, RequirementFormatter.FIX_DISTRICT,
 			RequirementFormatter.FIX_REPAIR, RequirementFormatter.FIX_POWER]:
+		# `FIX_POWER` resolves its id in ANY namespace (it is a component id in
+		# practice), so the junk id has to name nothing anywhere.
 		var action := FixRouter.route(sim, _target(kind, "NOPE-999"))
 		assert_eq(action["reason"], FixRouter.REASON_UNRESOLVED,
 				"%s with a junk id" % [kind])
@@ -163,7 +186,7 @@ func test_every_answer_carries_the_four_common_keys() -> void:
 	var sim := _sim()
 	for target: Dictionary in [_target(RequirementFormatter.FIX_NONE, ""),
 			_target(RequirementFormatter.FIX_BUILDING, "APT-001"),
-			_target(RequirementFormatter.FIX_POWER, "APT-001"),
+			_target(RequirementFormatter.FIX_POWER, "T-02"),
 			_target(RequirementFormatter.FIX_REPAIR, "FIRE-1"),
 			_target(&"teleport", "x")]:
 		var action := FixRouter.route(sim, target)
@@ -186,6 +209,7 @@ func test_every_declared_fix_kind_is_routed() -> void:
 		var action := FixRouter.route(sim, _target(kind, "APT-001"))
 		assert_ne(action["reason"], FixRouter.REASON_UNKNOWN_KIND,
 				"%s is declared in CODE_TABLE and unknown to the router" % [kind])
+		assert_true(action.has("action"), "%s answered something" % [kind])
 
 
 func test_no_real_checklist_row_falls_through_silently() -> void:
@@ -238,7 +262,7 @@ func test_routing_never_moves_the_sim() -> void:
 	sim.advance_hours(3.0)
 	var before := sim.state_hash()
 	for target: Dictionary in [_target(RequirementFormatter.FIX_REPAIR, "FIRE-1"),
-			_target(RequirementFormatter.FIX_POWER, "APT-001"),
+			{"kind": RequirementFormatter.FIX_POWER, "id": "T-02", "sim_id": "APT-001"},
 			_target(RequirementFormatter.FIX_BUILDING, "APT-001"),
 			_target(RequirementFormatter.FIX_ROAD_SEGMENT, "APT-001"),
 			_target(RequirementFormatter.FIX_DISTRICT, "D_DOWNTOWN")]:
