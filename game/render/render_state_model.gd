@@ -1352,6 +1352,29 @@ func apply_event(e: Dictionary) -> void:
 				rec3.powered = false
 				_write_overlay(rec3, OVERLAY_OFFLINE)
 				_retarget(rec3)
+		&"restore_started_sim":
+			# **The ruin has to GO the same frame** (Wave 18, report 98 RR-157).
+			# The pump lesson (RR-108) says a thing the player just bought appears
+			# immediately rather than on the next relaunch; a rubble lot is that
+			# statement inverted — the player paid to clear it, so the soot and
+			# the OFFLINE tint the `building_destroyed` arm wrote come off here,
+			# and the record goes to construction stage 1.
+			#
+			# **And it has to come off HERE rather than at completion.** The
+			# `building_completed` arm below carries `damage` FORWARD when the
+			# event does not name one, and `Building.complete_construction` emits
+			# `{type, building, level}` — no condition, no damage. So a lot whose
+			# soot was not cleared at restore-start would still be rendering a
+			# burnt-out shell after the crew finished and the building was
+			# `active` at condition 1.00, which is the renderer lying about a
+			# state the sim has left.
+			var rec_ruin := _rec_of(e.get("building", e.get("building_id", -1)))
+			if rec_ruin != null:
+				rec_ruin.damage = 0.0
+				rec_ruin.condition = 1.0
+				rec_ruin.stage = 1
+				_write_overlay(rec_ruin, OVERLAY_NORMAL)
+				_retarget(rec_ruin)
 		&"building_repaired":
 			# The soot's OTHER end (Wave 17, doc 93 §Y1). `building_repaired` has
 			# been emitted by `Building.complete_repair` since doc 02 §2.6 shipped

@@ -19,6 +19,11 @@ signal fix_requested(fix_target: Dictionary)    ## `Fix this →` on a blocker r
 signal repaired(result: Dictionary)             ## `cmd_repair_building` answered
 signal priority_set(result: Dictionary)         ## `cmd_set_priority` answered
 signal demolished(sim_id: String, result: Dictionary)  ## `cmd_demolish_building`
+## Wave 18's ruin verb (doc 12 §2.9 D-86). Carries `cmd_restore_building`'s own
+## answer — or `cmd_restore_all_destroyed`'s, from the batch row, which is the
+## same command N times — so the shell re-reads the city rather than predicting
+## what a rebuild moved.
+signal restored(sim_id: String, result: Dictionary)
 ## Doc 05 §6's node ladder (doc 93 §J1). A water shell hosts one or more doc-05
 ## nodes and each has a capacity to buy; this fires with the sim's own answer,
 ## exactly as `upgraded` does for the doc-02 shell above it.
@@ -95,6 +100,12 @@ var _power_remove_armed := ""
 ## — so a strip that is still on screen after the player selected a DIFFERENT
 ## building cannot spend money on that one.
 var _power_fix_armed := ""
+## Wave 18's ruin row (doc 12 §2.9 D-86). `_restore_button` is the ONE TAP; the
+## `RestoreAll` pair below it appears only when the city has more than one ruin.
+var _restore_button: Button
+var _restore_note: Label
+var _restore_all_button: Button
+var _restore_all_note: Label
 var _repair_button: Button
 var _repair_note: Label
 var _priority_row: HBoxContainer
@@ -212,6 +223,10 @@ func _build_actions() -> void:
 		# Second `setup()` pass: re-bind rather than rebuild, exactly as
 		# `_bind_nodes()` re-binds the authored half.
 		_actions = existing
+		_restore_button = existing.get_node_or_null("Restore") as Button
+		_restore_note = existing.get_node_or_null("RestoreNote") as Label
+		_restore_all_button = existing.get_node_or_null("RestoreAll") as Button
+		_restore_all_note = existing.get_node_or_null("RestoreAllNote") as Label
 		_repair_button = existing.get_node_or_null("Repair") as Button
 		_repair_note = existing.get_node_or_null("RepairNote") as Label
 		_priority_note = existing.get_node_or_null("PriorityNote") as Label
@@ -231,6 +246,34 @@ func _build_actions() -> void:
 	_actions.name = "Actions"
 	_actions.add_theme_constant_override(&"separation", int(_spacing))
 	body.add_child(_actions)
+
+	# --- Wave 18: the RUIN's own row (doc 12 §2.9 D-86, doc 93 §AN6) ----------
+	# FIRST in the actions column, and it is the only row a ruin draws. A player
+	# looking at rubble has exactly one decision to make, so it is the primary
+	# button on the panel — not a ghost beside `Repair`, which is the verb that
+	# cannot answer this state at all.
+	_restore_note = UIWidgets.label("RestoreNote", "", &"LegendRow", true)
+	_restore_note.visible = false
+	_actions.add_child(_restore_note)
+	_restore_button = UIWidgets.button("Restore",
+			_text("ui_building_restore", "RESTORE"),
+			_text("ui_building_restore", "RESTORE"),
+			Vector2(_touch_min * 2.0, _touch_min), &"PrimaryFAB")
+	_restore_button.visible = false
+	_restore_button.pressed.connect(request_restore)
+	_actions.add_child(_restore_button)
+	# The many-at-once affordance, on the panel of the ruin that made the player
+	# open it. Absent unless there is more than one.
+	_restore_all_button = UIWidgets.button("RestoreAll",
+			_text("ui_building_restore_all", "RESTORE ALL"),
+			_text("ui_building_restore_all", "RESTORE ALL"),
+			Vector2(_touch_min * 2.0, _touch_min), &"GhostButton")
+	_restore_all_button.visible = false
+	_restore_all_button.pressed.connect(request_restore_all)
+	_actions.add_child(_restore_all_button)
+	_restore_all_note = UIWidgets.label("RestoreAllNote", "", &"LegendRow", true)
+	_restore_all_note.visible = false
+	_actions.add_child(_restore_all_note)
 
 	_repair_button = UIWidgets.button("Repair", _text("ui_building_repair", "REPAIR"),
 			_text("ui_building_repair", "REPAIR"),
@@ -629,9 +672,103 @@ func _render_actions(v: Dictionary) -> void:
 	if _actions == null:
 		return
 	var actions: Dictionary = v.get("actions", {})
-	_render_repair(actions.get("repair", {}))
+	var restore: Dictionary = actions.get("restore", {})
+	_render_restore(restore)
+	# **A ruin draws the restore and nothing else from this row.** `REPAIR` cannot
+	# answer `destroyed` — `cmd_repair_building` refuses it with `E_STATE`, and on
+	# private stock `E_OWNER_MAINTAINED` fires first and hides the row entirely —
+	# so leaving it on screen offers the player a dead button beside the live one
+	# (doc 93 §AN7). `PRIORITY` and `DEMOLISH` stay: a ruin still carries a shed
+	# tier, and clearing the lot instead of rebuilding it is a real choice.
+	_render_repair({} if bool(restore.get("available", false)) \
+			else actions.get("repair", {}))
 	_render_priority(actions.get("priority", {}))
 	_render_demolish(actions.get("demolish", {}))
+
+
+## **THE ONE TAP** (Wave 18; doc 12 §2.9 D-86, doc 93 §AN6). A destroyed building
+## gets its own row and one primary button with the price on its face:
+##
+##     Destroyed 2h 30m ago · comes back at Level 3
+##     [        RESTORE · $1,220        ]
+##
+## **No confirm dialog**, per §AB's precedent — the price is on the button, and a
+## second dialog on a purchase whose cost is already legible teaches the player
+## that the number they just read was not the whole story. This is deliberately
+## unlike `DEMOLISH` below, which is hold-to-confirm: demolition is the one button
+## in the deck that cannot be undone, and this is the one that undoes something.
+##
+## Unaffordable does not blank it. The build-card pattern applies: the button goes
+## disabled **with the price still on its face** and the formatter's sentence
+## underneath, because "you cannot afford this" is only useful beside the number.
+func _render_restore(restore: Dictionary) -> void:
+	if _restore_button == null or _restore_note == null:
+		return
+	var available := bool(restore.get("available", false))
+	_restore_button.visible = available
+	_restore_note.visible = available
+	if not available:
+		_render_restore_all({})
+		return
+	_restore_button.text = _text_args("ui_building_restore_cost",
+			{"cost": str(restore["cost_text"])}, _text("ui_building_restore", "RESTORE"))
+	_restore_button.tooltip_text = _text_args("ui_building_restore_tooltip",
+			{"cost": str(restore["cost_text"]), "level": int(restore["level"])},
+			_restore_button.text)
+	_restore_button.disabled = not bool(restore["ok"])
+	var reason: Dictionary = restore.get("reason", {})
+	if not reason.is_empty():
+		_restore_note.text = str(reason["body"])
+		_apply_state_color(_restore_note, StringName(str(reason["state"])))
+		_restore_note.tooltip_text = _restore_note.text
+		_render_restore_all(restore.get("batch", {}))
+		return
+	# What happened, in the only terms the model holds: it is down, this is how
+	# long it has been down, and this is the level it comes back at. The CAUSE is
+	# not persisted on a `Building` — see `BuildController.restore_view` — and it
+	# is already in the event log with its fire.
+	_restore_note.text = _text_args("ui_building_restore_note",
+			{"since": str(restore["since_text"]), "level": int(restore["level"])},
+			"%s · L%d" % [str(restore["since_text"]), int(restore["level"])])
+	_restore_note.tooltip_text = _restore_note.text
+	_apply_state_color(_restore_note, &"")
+	_render_restore_all(restore.get("batch", {}))
+
+
+## `Restore all destroyed (12) · $84,200`, on the panel of the ruin that made the
+## player open it — which is where a player with "a ton" of them actually is.
+## Absent when this ruin is the whole set, because the primary button above
+## already is that offer.
+func _render_restore_all(batch: Dictionary) -> void:
+	if _restore_all_button == null or _restore_all_note == null:
+		return
+	var available := bool(batch.get("available", false))
+	_restore_all_button.visible = available
+	_restore_all_note.visible = available
+	if not available:
+		return
+	_restore_all_button.text = _text_args("ui_building_restore_all_cost",
+			{"count": int(batch["count"]), "cost": str(batch["cost_text"])},
+			_text("ui_building_restore_all", "RESTORE ALL"))
+	_restore_all_button.tooltip_text = _restore_all_button.text
+	# It stays LIVE while any of them is affordable: the verb buys cheapest-first
+	# and stops at the wall, so a player who cannot afford all twelve still gets
+	# the nine they can. The note says how far the money reaches, and says it
+	# BEFORE the tap rather than after it.
+	_restore_all_button.disabled = not bool(batch["ok"])
+	if bool(batch["all_affordable"]):
+		_restore_all_note.text = _text_args("ui_building_restore_all_note",
+				{"others": int(batch["others"])},
+				"%d more down" % int(batch["others"]))
+		_apply_state_color(_restore_all_note, &"")
+	else:
+		_restore_all_note.text = _text_args("ui_building_restore_all_partial",
+				{"affordable": int(batch["affordable_count"]),
+				"count": int(batch["count"])},
+				"%d of %d affordable" % [int(batch["affordable_count"]),
+				int(batch["count"])])
+		_apply_state_color(_restore_all_note, HudModel.STATE_WARNING)
+	_restore_all_note.tooltip_text = _restore_all_note.text
 
 
 ## The repair affordance. It is **only drawn when there is something to buy** —
@@ -1108,6 +1245,28 @@ func request_repair() -> void:
 	repaired.emit(result)
 
 
+## **The one tap** (Wave 18). The door answers; the panel re-reads rather than
+## predicting, and the toast, the chips and the site props all arrive from the
+## bus like every other purchase. No confirm — the price was on the button.
+func request_restore() -> void:
+	if controller == null or _sim_id == "":
+		return
+	var result := controller.restore(_sim_id)
+	refresh()
+	restored.emit(_sim_id, result)
+
+
+## The many-at-once tap. Same door, same re-read; the sim buys cheapest-first and
+## stops at the funds wall, and the note above the button already said how far the
+## money reaches.
+func request_restore_all() -> void:
+	if controller == null:
+		return
+	var result := controller.restore_all_destroyed()
+	refresh()
+	restored.emit(_sim_id, result)
+
+
 func _on_priority_pressed(priority_class: String) -> void:
 	if controller == null or _sim_id == "":
 		return
@@ -1165,6 +1324,27 @@ func _on_fix_pressed(fix_target: Dictionary) -> void:
 
 func upgrade_button() -> Button:
 	return _upgrade_button
+
+
+## Wave 18's ruin row, for a test or a coach mark that has to point at one.
+func restore_button() -> Button:
+	return _restore_button
+
+
+func restore_note() -> Label:
+	return _restore_note
+
+
+func restore_all_button() -> Button:
+	return _restore_all_button
+
+
+func restore_all_note() -> Label:
+	return _restore_all_note
+
+
+func repair_button() -> Button:
+	return _repair_button
 
 
 ## The `UPGRADE` button of one doc-05 node's row, or null — the water twin of

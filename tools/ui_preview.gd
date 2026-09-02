@@ -47,6 +47,11 @@ const SCREENS: Array[String] = [
 	"placement_ok", "placement_blocked",
 	"path_aiming", "path_ok", "path_blocked", "path_refund", "path_feeder",
 	"building", "building_blocked", "building_repairable", "building_water",
+	# Wave 18's RUIN row (doc 12 §2.9 D-86), in the two states that decide
+	# whether the button is a decision or a wall: affordable, and the build-card
+	# disabled-with-the-price-still-showing. Same commit as the row, which is
+	# A91-D-28's lesson applied on the way in.
+	"building_destroyed", "building_destroyed_broke",
 	# Wave 17's POWER section (doc 12 §2.9 D-70) in its two states: the wire with
 	# room, and the wire that is the reason the UPGRADE button is dead.
 	"building_power", "building_power_fix",
@@ -616,6 +621,21 @@ func _apply(screen: String) -> void:
 				worn.condition = 0.72
 				_sim.treasury.balance = 500_000
 				_building_panel.show_building("POL-1")
+		"building_destroyed":
+			# Wave 18's whole point: rubble with a way out. Two ruins, so the
+			# batch row is on screen as well as the primary button — which is the
+			# shape a player with "a ton" of them actually sees.
+			if _building_panel != null:
+				_sim.treasury.balance = 500_000
+				_building_panel.show_building(_burn_two_down())
+		"building_destroyed_broke":
+			# The build-card pattern on the ruin row: the button goes dead with
+			# the PRICE STILL ON ITS FACE and the formatter's sentence under it,
+			# because "you cannot afford this" is only useful beside the number.
+			if _building_panel != null:
+				var ruin := _burn_two_down()
+				_sim.treasury.balance = 0
+				_building_panel.show_building(ruin)
 		"building_water":
 			# Doc 05 §6's node block: a `water_facility` shell with its own
 			# ladder rows under the doc-02 one. `WTR-1` hosts three nodes, which
@@ -1118,6 +1138,26 @@ func _first_building() -> String:
 	var keys := _sim.buildings.keys()
 	keys.sort()
 	return str(keys[0]) if not keys.is_empty() else ""
+
+
+## Burn TWO buildings down through doc 02 §2.12's own transitions and answer the
+## first — so `building_destroyed` photographs a real ruin (not a hand-set state
+## field) with a second one standing behind it, which is what puts the batch row
+## on screen. Wave 18.
+func _burn_two_down() -> String:
+	var first := ""
+	for id: Variant in _sim.roster_ids():
+		var b: Building = _sim.buildings[id]
+		if b.state != &"active":
+			continue
+		b.ignite()
+		b.burn_down(true, _sim.clock.sim_time_minutes())
+		if first == "":
+			first = String(id)
+		else:
+			break
+	_sim.bus.drain()
+	return first if first != "" else _first_building()
 
 
 ## The first building whose next level is refused on POWER, for

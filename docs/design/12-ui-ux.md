@@ -1999,3 +1999,39 @@ time.*
 |---|---|---|---|
 | D-74 | **`--road-tint=K` joins `--road-detail=` and `--pad-shadows=` in `Main._apply_render_ab_args`** (the lead's file; the two-line snippet is in the Wave-17 branch report, anchored on the `--pad-shadows=` arm). It multiplies doc 11 §2.1.2's carriageway tint by `K` in linear via `RoadSurfaceView.set_tint_gain(k)` — one uniform, live, no rebuild, byte-identical at `1.0`. **It is an A/B ARM, not a setting**: no settings row, no persisted key, no string, and it must never grow one — the ruling it feeds is DEVICE-GATED and not taken (doc 93 §X3, report 98 RR-97). **And the Graphics row's `Performance` value now draws a contact shadow under every building** (doc 11 §2.11's `MM_blob`, report 98 RR-96): the settings description strings are unchanged, because none of them promised "no shadows" — `ui_settings_value_graphics_performance` is one word — but a screenshot of that preset taken before this wave is no longer a picture of it. `tools/profile_frame --blob=0\|1` is the A/B. | doc 11 §2.1.2 / §2.11, doc 93 §X2 / §X3 | A dev arm that lives only in the shell is invisible to this document's reader unless it is recorded here, and a preset whose look changed without a string changing is exactly the kind of drift §2.18's screenshot rows exist to catch. |
 | D-74b | **The Graphics row now changes the picture.** Doc 11 §2.13b, report 98 RR-98: twenty-two engine-side keys in every preset — `render_scale`, `msaa`, `fxaa`, the shadow atlas, split count and distance, the glow ladder and its HDR thresholds, `env_adjustments` — were authored and read by nothing, so picking `High` bought more cars, more rain and more draw distance and **nothing else**. `render_scale` was read once in the whole tree, by `SettingsModel`, to SORT this row's values cheapest-first: the number that decided the order of the options was the number that did nothing when you chose one. They are live now. **No string, no key and no layout moved** — `ui_settings_value_graphics_*` are unchanged and were never wrong, because none of them promised a resolution — but the 3D framebuffer is now 1344×756 at `Performance` and 1920×1080 at `High` on a 1080p device, `Performance` renders with FXAA and no sun shadow, `High` with 2× MSAA and four shadow splits, and **a screenshot of any of the three taken before this wave is no longer a picture of it**. §2.18's screenshot rows are the ones that go stale. The A/B is `tools/profile_frame --no-quality`, which reproduces the old frame exactly. | doc 11 §2.13b, doc 93 §X5 | A settings row whose values were visually indistinguishable is a row that lied to the player by omission, and the fix changes what three of this document's screens show without changing a single string — which is precisely the drift §2.18 exists to catch. |
+
+---
+
+### Wave 18 delta — the ruin's row on S5 (2026-09-02)
+
+*One row, on the one screen a player looks at when they are looking at rubble.
+Rulings: doc 93 §AN6/§AN7. Verb: report 98 RR-155/157. Price: doc 92 §54.*
+
+| id | change | doc ref | why |
+|---|---|---|---|
+| D-86 | **S5 draws a destroyed building's own block, and it is the only action that building gets.** `BuildController.restore_view()` (asking `CitySim.cmd_restore_building(…, true)`, so this file authors no gate) → `BuildingPanel._render_restore`: a note that says what happened in the terms the model holds — *"Destroyed 2h 30m ago. Rebuilds at level 3, condition as new."* — and one **primary 48 dp button, `RESTORE · $1,220`, with the price on its face**. **No confirm dialog** (§AB's precedent). Unaffordable does not blank it: the build-card pattern applies and the button goes disabled **with the price still showing** and the formatter's sentence under it. **`REPAIR` is suppressed on a ruin**, because `cmd_repair_building` refuses `destroyed` with `E_STATE` and on private stock `E_OWNER_MAINTAINED` fires first and hides the row entirely — so before this wave a burnt-out house's panel offered **no action at all**. `PRIORITY` and `DEMOLISH` stay: a ruin still carries a shed tier, and clearing the lot instead of rebuilding it is a real choice. Under the primary button, when the city has more than one ruin, a ghost **`RESTORE ALL 12 · $84,200`** with a note saying how far the money reaches — it stays LIVE below full affordability because the verb buys cheapest-first and stops at the wall. Preview states `building_destroyed` and `building_destroyed_broke`, same commit. | §2.9 item 6, doc 02 §2.12, doc 93 §AN6 | The player, on their own city, 2026-09-02: *"When buildings are destroyed, we should have a ONE BUTTON CLICK to just pay a fee and restore the building. That's it. I have many buildings that are destroyed that I can't actually fix even if I upgrade power."* They were right, and the reason is doc 91 A91-D-99: `Building.order_rebuild` had a model, a doc and a price and **no caller anywhere in the project**. The ruin was already selectable — the tiles stay stamped, so `pick_at_ground` resolves it and `building_view()` has no state guard — and the panel already opened. What it drew was a dead `REPAIR` with an `E_STATE` sentence, or nothing. **`RESTORE ALL` lives on the ruin's own panel and not on the dashboard on purpose:** a player looking at one ruin is exactly the player who has a dozen, and this is the moment they learn the city can come back in one tap. The dashboard's Upkeep band is the citywide home and is a deferral row below, because a sibling lane owns that file this wave. |
+
+**What the row deliberately does NOT say.** The **cause** of the destruction —
+which fire, which collapse. `Building.serialize()` is inside doc 08's save body
+and inside `CitySim.state_hash()`, so persisting a cause field would move every
+determinism baseline in the project on a **surface** change, and this is a
+player-verb lane that moves none. The row therefore states the facts the model
+actually holds: that it is down, how long it has been down, and the level it
+comes back at. The fire itself is already published, with its cause, in §2.13's
+event log at the hour it happened.
+
+**What is left to a sibling — a deferral row, never a guess.**
+
+| awaiting_consumer | what this screen does meanwhile | closes when |
+| --- | --- | --- |
+| the CITYWIDE `Restore all destroyed (N) · $Y` affordance, in `ui/city_dashboard.gd`'s **Upkeep band** — the surface a player checks *without* having tapped a ruin first | S5 carries the same offer on every ruin's own panel, so the verb is reachable from the moment the player looks at any one of them; the sim side is **shipped and tested** (`CitySim.cmd_restore_all_destroyed(preview)` answers `{count, cost, rows}` sorted cheapest-first, and `BuildController.restore_all_destroyed()` is the door) | the dashboard lane merges — this wave does not edit `ui/city_dashboard.gd`, which it does not own |
+| a lifetime `Restores` row on the Economy ledger beside `Repairs` | the charge is visible in the treasury and in the hourly budget view under its own `&"restore"` category | doc 03 publishes the `ledger_totals` key, together with A91-D-37's `&"incident"` arm — one `state_hash` re-record for both, not two (doc 91 A91-D-100) |
+
+**One string changed for a player-facing reason.** `ui_queue_source_rebuild`
+reads **"Restore"**, not "Rebuild": the queue row and the button the player
+pressed have to say the same word. `rebuild` stays the sim's job kind — the code
+word and the player's word are allowed to differ; two *player* words for one
+thing are not.
+
+**The deck is 69 states**, the two new ones included; `--screen=all --audit
+--strict` reads clean in every cell.

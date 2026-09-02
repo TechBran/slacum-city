@@ -1208,9 +1208,106 @@ func building_view(sim_id: String) -> Dictionary:
 
 func actions_view(sim_id: String) -> Dictionary:
 	return {
+		"restore": restore_view(sim_id),
 		"repair": repair_view(sim_id),
 		"priority": priority_view(sim_id),
 		"demolish": demolish_view(sim_id),
+	}
+
+
+## **The ruin's own row** (Wave 18; doc 12 §2.9 D-86, doc 93 §AN6). Drawn on a
+## `destroyed` building and nowhere else, and it is the ONLY action that building
+## has — so `available` is simply "is this a ruin", read off the state rather than
+## off a refusal, because every other verb on the panel answers `E_STATE` here and
+## `E_STATE` is not a sentence the player can act on.
+##
+## Same contract as the three rows below it: `CitySim.cmd_restore_building(…,
+## true)` answers every value and this file shapes the answer, so the button is
+## never enabled on a rule `ui/` believes and the sim does not.
+##
+## **What the row can honestly say happened.** `Building` does not persist the
+## CAUSE of a destruction — `serialize()` is inside doc 08's save body and inside
+## `state_hash()`, so adding a field would move every baseline in the project on a
+## surface change — so the row states the facts the model actually holds: that it
+## is destroyed, how long ago, and the level it will come back at. The fire that
+## did it is already published, with its cause, in the event log (doc 12 §2.13).
+##
+## `batch` is the many-at-once half, quoted from `cmd_restore_all_destroyed(true)`
+## on the same read: a player looking at one ruin is exactly the player who has a
+## dozen, and this is the moment they learn the city can be brought back in one
+## tap. It is absent when this ruin is the only one.
+func restore_view(sim_id: String) -> Dictionary:
+	var blank := {"available": false, "ok": false, "cost": 0,
+			"cost_text": RequirementFormatter.money(0), "reason": {}, "batch": {}}
+	if sim == null or not sim.buildings.has(sim_id):
+		return blank
+	var b: Building = sim.buildings[sim_id]
+	if b.state != &"destroyed":
+		return blank
+	var preview := sim.cmd_restore_building(sim_id, true)
+	var payload: Dictionary = preview.get("payload", {})
+	var ok := bool(preview["ok"])
+	var cost := int(payload.get("cost", 0))
+	var reason: Dictionary = {}
+	if not ok:
+		reason = formatter.format(preview["reason_code"],
+				{"cost": cost, "balance": sim.treasury.balance,
+				"state": String(b.state), "required_state": "destroyed",
+				"sim_id": sim_id})
+	return {
+		"available": true,
+		"ok": ok,
+		"cost": cost,
+		"cost_text": RequirementFormatter.money(cost),
+		"level": int(payload.get("restore_level", maxi(b.level_at_destruction, 1))),
+		"capital": int(payload.get("capital", 0)),
+		"crew_hours": float(payload.get("crew_hours", 0.0)),
+		"hours_destroyed": float(payload.get("hours_destroyed", 0.0)),
+		# The queue panel's own clock words, in game-minutes — a player who reads
+		# `2h 30m` on one screen and `2.5 hours` on another is reading two things.
+		"since_text": UIWidgets.duration_text(
+				formatter.config if formatter != null else null,
+				float(payload.get("hours_destroyed", 0.0)) * 60.0),
+		"reason": reason,
+		"batch": _restore_batch_view(sim_id),
+	}
+
+
+## `Restore all destroyed (N) · $Y`, or `{}` when this ruin is the only one.
+##
+## **Cheapest first is the sim's ruling, not this file's** — a player with $30,000
+## and a $28,000 power plant beside eleven $900 houses gets the eleven houses AND
+## the plant if the plant is affordable last — so this only reads the count and
+## the total the verb published. `ok` is whether the WHOLE set is affordable; the
+## button stays live below that because the verb buys what it can and stops at the
+## wall, which is the answer a player with a ton of ruins and not enough money
+## wants. The note under it says how far the money reaches.
+func _restore_batch_view(sim_id: String) -> Dictionary:
+	var preview := sim.cmd_restore_all_destroyed(true)
+	if not bool(preview["ok"]):
+		return {}
+	var payload: Dictionary = preview["payload"]
+	var rows: Array = payload.get("rows", [])
+	if rows.size() <= 1:
+		return {}   # this ruin is the whole set; the primary button already is it
+	var affordable := 0
+	var running := 0
+	for row: Variant in rows:
+		var next := running + int((row as Dictionary)["cost"])
+		if next > sim.treasury.balance:
+			break
+		running = next
+		affordable += 1
+	return {
+		"available": true,
+		"ok": affordable > 0,
+		"count": rows.size(),
+		"affordable_count": affordable,
+		"all_affordable": affordable == rows.size(),
+		"cost": int(payload["cost"]),
+		"cost_text": RequirementFormatter.money(int(payload["cost"])),
+		"others": rows.size() - 1,
+		"sim_id": sim_id,
 	}
 
 
@@ -1333,6 +1430,22 @@ func repair(sim_id: String) -> Dictionary:
 	if sim == null:
 		return CommandQueue.fail(&"E_UNKNOWN_BUILDING", {"sim_id": sim_id})
 	return sim.cmd_repair_building(sim_id)
+
+
+## Doc 02 §2.12's restore, through the same funnel (Wave 18). One tap, the price
+## already on the button's face, and the panel re-reads whatever the sim answers.
+func restore(sim_id: String) -> Dictionary:
+	if sim == null:
+		return CommandQueue.fail(&"E_UNKNOWN_BUILDING", {"sim_id": sim_id})
+	return sim.cmd_restore_building(sim_id)
+
+
+## The many-at-once half. Cheapest first and stopping at the funds wall, both of
+## which are the sim's rulings — this is a door, not a policy.
+func restore_all_destroyed() -> Dictionary:
+	if sim == null:
+		return CommandQueue.fail(&"E_NO_RUINS", {})
+	return sim.cmd_restore_all_destroyed()
 
 
 func set_priority(sim_id: String, priority_class: String) -> Dictionary:
