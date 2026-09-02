@@ -236,7 +236,11 @@ func test_every_policy_row_names_a_key_the_sim_actually_has() -> void:
 	var sim := CitySim.boot_from_files()
 	var model := SettingsModel.new(_cfg())
 	var keys := model.policy_keys(SettingsModel.POLICY_DISPATCH)
-	assert_true(keys.size() >= 7, "§2.13's auto-response block is on the sheet")
+	# Six, not the seven this read until Wave 18: PA-59 withdrew
+	# `auto_spend_contractor`, whose key `DispatchPolicy` carries and no code
+	# consults. The floor moves with the sheet; what it guards is that the block
+	# is still THERE, and the loop below is what guards each key.
+	assert_true(keys.size() >= 6, "§2.13's auto-response block is on the sheet")
 	for key: String in keys:
 		assert_true(bool(sim.cmd_set_dispatch_policy(key,
 				sim.incidents.dispatch.policy.get_value(key))["ok"]),

@@ -497,6 +497,25 @@ func is_device_scoped(key: String) -> bool:
 	return device_scoped_keys().has(key)
 
 
+## Rows that USED to be on this screen and are not any more (PA-59).
+##
+## A withdrawn row is not the same as an unknown key and must not be reported as
+## one: the save that carries it was written by this game, at a version where the
+## control existed, and the value in it is still meaningful to whoever owns the
+## number. `data/ui.json.settings.retired_rows` keeps the whole row object — copy
+## keys included, so the string table does not read them as orphans — and putting
+## it back in `rows` is the entire cost of re-shipping the control.
+func retired_keys() -> Array[String]:
+	var out: Array[String] = []
+	var raw: Variant = _settings.get("retired_rows", [])
+	if not (raw is Array):
+		return out
+	for entry: Variant in (raw as Array):
+		if entry is Dictionary:
+			out.append(str((entry as Dictionary).get("key", "")))
+	return out
+
+
 ## Where the device-scoped copy lives (constitution §2): these survive city
 ## deletion and checkpoint rollback, and win over the per-city snapshot on load.
 func settings_file_path() -> String:
@@ -623,6 +642,8 @@ func restore_state(state: Dictionary) -> PackedStringArray:
 				if not _same_option(_values.get(name, null), state[key]):
 					dropped.append(name)
 			continue
+		if retired_keys().has(name):
+			continue   # withdrawn, not unknown — see `retired_keys()`
 		dropped.append(name)
 	# Last, and deliberately: the device file outranks the city's snapshot for
 	# the keys it owns (doc 12 §3.2 — "on load `settings.cfg` wins for those

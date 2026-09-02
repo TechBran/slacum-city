@@ -601,6 +601,39 @@ func test_ui_state_round_trips_through_the_root() -> void:
 
 
 # ===========================================================================
+# PA-59 — the auto-response row with nothing behind it
+# ===========================================================================
+
+func test_no_settings_row_writes_a_key_the_sim_never_reads() -> void:
+	# `auto_spend_contractor` was a `policy: dispatch` toggle that wrote a flag
+	# `DispatchPolicy` stores and no code consults, because there is no
+	# contractor unit to hire (doc 06 line 1749). A control the sim never reads
+	# is a control that lies about what the player just did.
+	var model := SettingsModel.new(_cfg())
+	assert_false(model.keys().has("auto_spend_contractor"),
+			"the row is withdrawn until there is a unit behind it")
+	assert_false(model.policy_keys(SettingsModel.POLICY_DISPATCH)
+			.has("auto_spend_contractor"), "…and it seeds nothing from the sim")
+
+
+func test_a_withdrawn_row_is_not_an_unknown_key() -> void:
+	# The distinction PA-59 asks for in its own words: "keep the key and default
+	# so saves stay valid". A save written while the control existed still
+	# restores clean, and doc 06 still owns the number.
+	var model := SettingsModel.new(_cfg())
+	assert_true(model.retired_keys().has("auto_spend_contractor"))
+	var dropped := model.restore_state({
+		"auto_spend_contractor": true,   # written by a build that had the row
+		"favourite_colour": "teal",      # never a row at all
+	})
+	assert_eq(str(dropped), "[\"favourite_colour\"]",
+			"the withdrawn key is ignored in silence; the unknown one is reported")
+	var policy: Dictionary = _cfg().dispatch_policy_defaults()
+	assert_true(policy.has("auto_spend_contractor"),
+			"doc 06 still carries the default, so the sim is unchanged")
+
+
+# ===========================================================================
 # PA-14 · A91-D-69 — S10's permission row and the rationale modal
 # ===========================================================================
 

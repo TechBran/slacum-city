@@ -1203,14 +1203,6 @@
 				"hint_key": "ui_settings_auto_repair_cost_cap_hint"
 			},
 			{
-				"_comment": "§2.13 phrases this one as `never spend emergency contractor funds (on)`. The ROW is phrased as the sim key instead — spending ON/OFF, not never-spend ON/OFF — because an inverted control is the single easiest settings bug to ship and the hardest for a player to notice.",
-				"key": "auto_spend_contractor",
-				"kind": "toggle",
-				"policy": "dispatch",
-				"default_from": "dispatch.auto_spend_contractor",
-				"hint_key": "ui_settings_auto_spend_contractor_hint"
-			},
-			{
 				"_comment": "Doc 10 §2.13's AUTOMATIC ROAD REPAIR, the pair `RoadNetwork.cmd_set_auto_repair_policy` takes. Doc 93 §J3 rules road condition the policy's job rather than a per-tile player verb, which makes these two dials the whole of the player's say over it. Both carry `policy: roads`: the ladder and the default are read from data/roads.json.condition — doc 10's own file, never a second copy here — and a change writes the PAIR, because the command takes both at once. The threshold ladder is the sim's own `auto_repair_thresholds`, so a rung the command would answer E_BAD_THRESHOLD for can never appear on the control.",
 				"key": "auto_repair_threshold",
 				"kind": "choice",
@@ -1280,6 +1272,16 @@
 				"value_text_from": "permission",
 				"action": "permission",
 				"hint_key": "ui_settings_permission_hint"
+			}
+		],
+		"retired_rows": [
+			{
+				"_comment": "PA-59, Wave 18 — WITHDRAWN from the sheet, kept here on purpose. §2.13 phrases this one as `never spend emergency contractor funds (on)`; the row was phrased as the sim key instead (spending ON/OFF) because an inverted control is the easiest settings bug to ship. Neither phrasing was the problem: `grep -rn auto_spend_contractor sim/ game/ ui/` finds no reader at all — `dispatch_policy.gd` stores the flag and there is no contractor unit to hire, which doc 06 line 1749 says outright. A control the sim never consults is a control that lies about what the player just did, so the ROW goes and the KEY stays: doc 06's `data/dispatch.json.policy_defaults` still carries it, `DispatchPolicy` still round-trips it, and a save written while the row existed still restores without a drop (`SettingsModel.retired_keys`). The row comes back the day a contractor unit does — restore this object to `rows` and nothing else changes.",
+				"key": "auto_spend_contractor",
+				"kind": "toggle",
+				"policy": "dispatch",
+				"default_from": "dispatch.auto_spend_contractor",
+				"hint_key": "ui_settings_auto_spend_contractor_hint"
 			}
 		],
 		"device_scoped_keys": [
