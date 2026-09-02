@@ -79,6 +79,52 @@ func test_graphics_presets_are_doc11s_and_ordered_cheapest_first() -> void:
 				"%s has copy" % name)
 
 
+func test_the_refresh_row_is_doc_11s_ladder_and_cycles_it() -> void:
+	# D-75 / report 98 RR-126. The row is a `choice` like `graphics`, its ladder is
+	# `data/render.json.refresh.settings_modes` so it cannot offer a mode
+	# `RefreshPin` refuses, and it is one 48 dp cycling target (A3 — no dropdown).
+	var cfg := _cfg()
+	var model := SettingsModel.new(cfg)
+	assert_true(model.has_key("refresh_rate"), "S9 carries the refresh row")
+	assert_eq(model.kind("refresh_rate"), SettingsModel.KIND_CHOICE)
+	var modes := model.options("refresh_rate")
+	var authored: Variant = (cfg.render_data().get("refresh", {}) as Dictionary) \
+			.get("settings_modes", [])
+	assert_eq(modes, authored as Array,
+			"the ladder is doc 11's file, never a second copy in data/ui.json")
+	assert_eq(str(model.value("refresh_rate")), "auto",
+			"a fresh install declares the cap — data/ui.json.defaults.refresh_rate")
+	for mode: Variant in modes:
+		assert_true(cfg.has_string("ui_settings_value_refresh_%s" % str(mode)),
+				"%s has copy" % mode)
+	# The cycle walks the whole ladder and wraps, in the authored order.
+	for expected: Variant in modes.slice(1) + [modes[0]]:
+		assert_eq(str(model.cycle("refresh_rate")), str(expected))
+	assert_eq(model.value_text("refresh_rate"), "Auto")
+	model.set_value("refresh_rate", "off")
+	assert_eq(model.value_text("refresh_rate"), "Off")
+	assert_true(Array(model.device_scoped_keys()).has("refresh_rate"),
+			"the panel is a property of the phone, not of the city")
+
+
+func test_the_refresh_row_round_trips_and_refuses_a_mode_the_pin_would_not_take() -> void:
+	var model := SettingsModel.new(_cfg())
+	assert_false(model.set_value("refresh_rate", "90"),
+			"90 is on the LEVER's ladder and not on the row's")
+	assert_false(model.set_value("refresh_rate", "144"))
+	assert_true(model.set_value("refresh_rate", "120"))
+	var restored := SettingsModel.new(_cfg())
+	var dropped := restored.restore_state(model.capture_state())
+	assert_eq(dropped.size(), 0)
+	assert_eq(str(restored.value("refresh_rate")), "120")
+	# …and a saved value the ladder no longer carries is dropped for its default,
+	# which is §3.2's whole migration promise applied to a new row.
+	var messy := SettingsModel.new(_cfg())
+	var dropped2 := messy.restore_state({"refresh_rate": "240"})
+	assert_true(Array(dropped2).has("refresh_rate"))
+	assert_eq(str(messy.value("refresh_rate")), "auto")
+
+
 func test_choice_rows_cycle_and_wrap() -> void:
 	# One 48 dp target per row: tapping it walks the options (A3 — no dropdowns).
 	var model := SettingsModel.new(_cfg())

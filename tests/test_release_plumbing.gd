@@ -24,6 +24,28 @@ const MAKE_RELEASE := "res://tools/make_release.sh"
 const SETUP_ANDROID := "res://tools/setup_android.sh"
 const STORE_ASSETS := "res://tools/gen_store_assets.py"
 const AAB_BADGING := "res://tools/aab_badging.py"
+## The tracked plugin binary. It is packaged VERBATIM by the exporter, so a
+## symbol that is not in this file is a symbol no APK can call.
+const PLUGIN_AAR := "res://android/plugins/slacum_native.aar"
+const PLUGIN_SOURCE := ("res://android/plugins/slacum_native/src/main/java/"
+		+ "com/slacumcity/nativeplugin/SlacumNative.kt")
+const REFRESH_PIN := "res://game/render/refresh_pin.gd"
+## Where the `.class` files sit inside the AAR, and inside the jar inside it.
+const AAR_CLASSES_JAR := "classes.jar"
+const PLUGIN_CLASS := "com/slacumcity/nativeplugin/SlacumNative.class"
+
+## The pinned set is DERIVED from the Kotlin's own `@UsedByGodot` annotations
+## rather than hand-listed, so a method added to the plugin is pinned by being
+## written. These four are the sentinels: a source-parse fault that returned an
+## empty list would otherwise make the whole gate vacuous, which is the failure
+## mode the suite has already been bitten by once (`test_ui_strings`'s
+## `alerts.events`). One per capability, oldest to newest.
+const SENTINEL_SYMBOLS: Array[String] = [
+	"elapsed_realtime_ms",
+	"thermal_status",
+	"launch_args",
+	"set_frame_rate",
+]
 
 ## doc 13 §2.7, and this list is the whole release manifest.
 const EXPECTED_PERMISSIONS: Array[String] = [
@@ -373,3 +395,188 @@ func test_the_shell_still_refuses_to_die_on_the_back_button() -> void:
 	assert_true(project.contains("config/quit_on_go_back=false"))
 	assert_true(project.contains("window/energy_saving/keep_screen_on=true"))
 	assert_true(project.contains("frame_pacing/android/enable_frame_pacing=true"))
+
+
+
+# ===========================================================================
+# The plugin binary — the stale-AAR gate
+# ===========================================================================
+
+## Byte search over a `PackedByteArray`. `find()` on the first byte then a
+## comparison, rather than a decode: a `.class` file is not text and
+## `get_string_from_utf8()` on one is a lie that happens to be searchable.
+static func _bytes_contain(haystack: PackedByteArray, needle: String) -> bool:
+	var pattern := needle.to_ascii_buffer()
+	var size := pattern.size()
+	if size == 0 or haystack.size() < size:
+		return false
+	var at := haystack.find(pattern[0], 0)
+	while at >= 0 and at + size <= haystack.size():
+		var hit := true
+		for i in range(1, size):
+			if haystack[at + i] != pattern[i]:
+				hit = false
+				break
+		if hit:
+			return true
+		at = haystack.find(pattern[0], at + 1)
+	return false
+
+
+## The AAR's `SlacumNative.class`, or an empty array with the reason logged.
+## Two nested zips: the AAR holds `classes.jar` and the jar holds the classes.
+## `ZIPReader` only opens a path, so the inner jar is spilled to `user://` —
+## which the runner has already moved to a per-process directory (RR-57).
+func _plugin_class_bytes() -> PackedByteArray:
+	var aar := ZIPReader.new()
+	if aar.open(ProjectSettings.globalize_path(PLUGIN_AAR)) != OK:
+		return PackedByteArray()
+	var jar_bytes := aar.read_file(AAR_CLASSES_JAR)
+	aar.close()
+	if jar_bytes.is_empty():
+		return PackedByteArray()
+	var spill := "user://slacum_native_classes.jar"
+	var out := FileAccess.open(spill, FileAccess.WRITE)
+	if out == null:
+		return PackedByteArray()
+	out.store_buffer(jar_bytes)
+	out.close()
+	var jar := ZIPReader.new()
+	if jar.open(ProjectSettings.globalize_path(spill)) != OK:
+		return PackedByteArray()
+	var class_bytes := jar.read_file(PLUGIN_CLASS)
+	jar.close()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(spill))
+	return class_bytes
+
+
+## Every `@UsedByGodot` method the plugin declares, read out of the Kotlin.
+## That annotation is the whole contract: it is what makes a method visible to
+## `Engine.get_singleton("SlacumNative")`, so it is exactly the set the AAR owes.
+func _used_by_godot() -> Array[String]:
+	var kotlin := _read(PLUGIN_SOURCE)
+	var declaration := RegEx.new()
+	declaration.compile("@UsedByGodot\\s+fun\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(")
+	var out: Array[String] = []
+	for match in declaration.search_all(kotlin):
+		var name := match.get_string(1)
+		if not out.has(name):
+			out.append(name)
+	return out
+
+
+func test_the_tracked_aar_carries_every_symbol_the_plugin_declares() -> void:
+	# This is the ONLY check in the repository that can tell a stale
+	# `slacum_native.aar` from a fresh one, and a stale one is invisible in every
+	# other way: the export succeeds, the APK installs, the game runs, and each
+	# `has_method()` guard in `game/android_native.gd` quietly answers false. It
+	# is what `.gitignore`'s own note about this file promises and what
+	# `tools/run_matrix.sh step_build_check` does on device, one layer earlier.
+	assert_true(FileAccess.file_exists(PLUGIN_AAR),
+			"the plugin AAR is TRACKED (see .gitignore); tools/build_native_plugin.sh "
+			+ "regenerates it and it is committed WITH the Kotlin change")
+	var declared := _used_by_godot()
+	assert_true(declared.size() >= 16,
+			"the Kotlin still declares its entry points with @UsedByGodot (got %d)"
+			% declared.size())
+	for sentinel: String in SENTINEL_SYMBOLS:
+		assert_true(declared.has(sentinel),
+				"%s is still an @UsedByGodot entry point" % sentinel)
+	var bytes := _plugin_class_bytes()
+	assert_true(bytes.size() > 4096,
+			"SlacumNative.class read out of the AAR (got %d bytes)" % bytes.size())
+	for symbol: String in declared:
+		# A method name survives Kotlin compilation into the class file's constant
+		# pool verbatim, which is what makes this checkable with no device, no dex
+		# tool and no JVM.
+		assert_true(_bytes_contain(bytes, symbol),
+				("`%s` is compiled into android/plugins/slacum_native.aar. "
+				+ "If this fails the AAR is older than the Kotlin beside it: run "
+				+ "tools/build_native_plugin.sh and commit the result.") % symbol)
+	# The negative control. Without it a scan that matched everything — a decode
+	# fault, an empty needle, a wrong-file read — would pass this test silently.
+	assert_false(_bytes_contain(bytes, "set_frame_rate_that_never_shipped"),
+			"the byte scan can still say no")
+
+
+func test_every_symbol_the_bridge_probes_for_is_one_the_plugin_declares() -> void:
+	# `AndroidNative` probes the plugin BY NAME through `has_method("…")` so that
+	# an older AAR degrades instead of throwing. That guard is also a place a typo
+	# can hide for ever: a misspelt probe answers false on every device and looks
+	# exactly like an old build. Nothing checked the spelling until now.
+	var bridge := _read("res://game/android_native.gd")
+	var probe := RegEx.new()
+	probe.compile("has_method\\(\"([a-z_]+)\"\\)")
+	var probed: Array[String] = []
+	for match in probe.search_all(bridge):
+		var name := match.get_string(1)
+		if not probed.has(name):
+			probed.append(name)
+	assert_true(probed.size() >= 12, "the bridge still probes by name (got %d)"
+			% probed.size())
+	var declared := _used_by_godot()
+	for name: String in probed:
+		assert_true(declared.has(name),
+				("game/android_native.gd probes for `%s`; SlacumNative.kt declares "
+				+ "no such @UsedByGodot method, so that probe can only ever "
+				+ "answer false") % name)
+
+
+# ===========================================================================
+# The refresh pin — the rule that lives in two languages
+# ===========================================================================
+
+## `RefreshPin.choose_refresh_hz()` is the rule and the suite tests it;
+## `SlacumNative.modeFor()` is a Kotlin mirror of it, because the real chooser
+## has to run against a `Display.Mode` that only exists on a device. Two copies
+## of a rule drift, so this is the seam that says so out loud: neither copy may
+## exist without naming the other, and the ordered clauses have to be present in
+## the Kotlin in the order the GDScript tests assert them.
+##
+## What this can prove: that the mirror is still declared, still points at its
+## source, and still spells the three clauses in order. What it cannot prove is
+## that the Kotlin arithmetic agrees — only a device can, and report 98 §46's
+## protocol is where that is read (`REFRESH … panel=` against `dumpsys display`).
+func test_the_kotlin_mode_chooser_still_declares_itself_a_mirror() -> void:
+	var kotlin := _read(PLUGIN_SOURCE)
+	assert_ne(kotlin, "", "the plugin source is where the mirror lives")
+	assert_true(kotlin.contains("RefreshPin.choose_refresh_hz()"),
+			"the Kotlin names the GDScript rule it mirrors")
+	assert_true(kotlin.contains("private fun modeFor("),
+			"…and still has a chooser to mirror it with")
+	var gdscript := _read(REFRESH_PIN)
+	assert_true(gdscript.contains("SlacumNative.modeFor()"),
+			"and the GDScript names the Kotlin copy back, so neither can be "
+			+ "deleted or moved without the other showing up in the diff")
+	# The three clauses, in order, in both files.
+	for phrases: Array in [
+			["integer multiple", "at or above", "fastest"],
+	]:
+		var at := -1
+		for phrase: String in phrases:
+			var next := kotlin.findn(phrase, at + 1)
+			assert_true(next > at,
+					"the Kotlin still states '%s' after the clause before it" % phrase)
+			at = next
+		at = -1
+		for phrase: String in phrases:
+			var next := gdscript.findn(phrase, at + 1)
+			assert_true(next > at,
+					"the GDScript still states '%s' in the same order" % phrase)
+			at = next
+
+
+func test_the_frame_rate_vote_is_version_guarded_with_a_stated_fallback() -> void:
+	# minSdk is 29 and `Surface.setFrameRate` is API 30, so the guard is not
+	# optional — an unguarded call is a `NoSuchMethodError` on the one tier the
+	# device matrix calls "min spec" (doc 13 §7, tier C, API 29).
+	var kotlin := _read(PLUGIN_SOURCE)
+	assert_true(kotlin.contains("Build.VERSION_CODES.R"),
+			"the API-30 floor is named")
+	assert_true(kotlin.contains("FRAME_RATE_COMPATIBILITY_FIXED_SOURCE"),
+			"content that has capped itself declares a FIXED source rate")
+	assert_true(kotlin.contains("preferredDisplayModeId"),
+			"…and the window is told which mode to sit in")
+	var gradle := _read("res://android/plugins/slacum_native/build.gradle")
+	assert_true(gradle.contains("minSdk 29"),
+			"the guard is against THIS floor; if the floor moves the guard is dead code")

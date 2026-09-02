@@ -22,6 +22,13 @@ const KIND_SLIDER := &"slider"
 
 const SOURCE_RENDER_PRESETS := "render_presets"
 const SOURCE_TEXT_SCALE := "text_scale_options"
+## The refresh-pin ladder (D-75, report 98 RR-126). Resolved against
+## `data/render.json.refresh.settings_modes` for exactly the reason the preset
+## list is: doc 11 owns the display policy, and a row that authored its own
+## ladder could offer a mode `RefreshPin` does not accept. The LEVER's ladder is
+## longer than the row's — `90` is a dev arm and not a player choice — which is
+## why there are two lists in that file and this one names the shorter.
+const SOURCE_REFRESH_MODES := "refresh_modes"
 ## Doc 10's own ladder for the road auto-repair threshold. Resolved against
 ## `data/roads.json.condition.auto_repair_thresholds` rather than authored here,
 ## because `RoadNetwork.cmd_set_auto_repair_policy` answers `E_BAD_THRESHOLD` for
@@ -49,6 +56,11 @@ const DEFAULT_FROM_ROADS := "roads."
 
 ## Fallback preset order if `data/render.json` is absent (doc 11 authors it).
 const _DEFAULT_PRESETS := ["performance", "balanced", "high"]
+## Same rule for the refresh ladder, and the same reason it is spelled twice: a
+## model that cannot answer without its data file is a model the title screen
+## cannot open. It matches `RefreshPin.DEF_SETTINGS_MODES`, which is the copy
+## `game/` falls back to; `data/render.json` is what both of them actually read.
+const _DEFAULT_REFRESH_MODES := ["auto", "60", "120", "off"]
 const _EPSILON := 0.0005
 
 var _cfg: UIConfig
@@ -144,7 +156,22 @@ func options(key: String) -> Array:
 			return (raw as Array).duplicate() if raw is Array else []
 		SOURCE_ROAD_THRESHOLDS:
 			return road_auto_repair_thresholds()
+		SOURCE_REFRESH_MODES:
+			return refresh_modes()
 	return []
+
+
+## Doc 11's `render.json.refresh.settings_modes`, in doc 11's own order — Auto
+## first because it is the default and the answer for every player who will never
+## open this row.
+func refresh_modes() -> Array:
+	var render: Dictionary = _cfg.render_data() if _cfg != null else {}
+	var block: Variant = render.get("refresh", null)
+	if not (block is Dictionary):
+		return _DEFAULT_REFRESH_MODES.duplicate()
+	var raw: Variant = (block as Dictionary).get("settings_modes", null)
+	return (raw as Array).duplicate() if raw is Array \
+			else _DEFAULT_REFRESH_MODES.duplicate()
 
 
 ## Doc 10's own ladder, in doc 10's own order. `0` is on it and means OFF — the

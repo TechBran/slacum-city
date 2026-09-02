@@ -1436,6 +1436,31 @@ not a suspect for the presentation-corruption bands, and "move it to stable" is
 not an available mitigation because it already is stable.** Record that driver
 string with any future corruption report.
 
+> **The band has a named suspect and a shipped remedy — Wave 17, 2026-09-01
+> (report 98 RR-126, doc 93 §AE, doc 13 §2.8).** The player's verdict after days
+> on the Aug-21 build is *"tearing only happens in the sub menus"*; world play is
+> clean. That narrows it hard, and it fits one thing in this document better than
+> anything else in it: **the app caps `Engine.max_fps` at the preset's
+> `target_fps` and had never DECLARED that rate to the display.** `vsync_mode=1`
+> is a swapchain property and Swappy consumes the refresh rate rather than
+> declaring it, so on this 1856 × 2160 **LTPO 1–120 Hz** panel the platform's only
+> input to its mode policy was the app's observed cadence — and a sheet opening
+> over a still world is a workload step with no camera motion to hide the re-time.
+> `game/render/refresh_pin.gd` plus `SlacumNative.set_frame_rate()` now declare
+> it, at the same number and in the same statement as the cap; the mode chosen is
+> the smallest supported multiple of the cap, which is also this section's own
+> battery answer (60 fps → the 60 Hz mode, not the 120).
+>
+> **This is a hypothesis with a shipped test, not a fix.** Report 98 §46 has the
+> A/B — one binary, `--refresh=off` against `--refresh=auto`, perf capture
+> disarmed in both arms so the `viewport_set_measure_render_time` suspect (doc 91
+> §19 row 5) is absent from both — and doc 93 §AE3 has the observation that
+> refutes it. **Do not close this open band on the pin's existence.** The driver
+> string above is still the one to record with any future corruption report, and
+> the second suspect if the A/B comes back null is the compositor's handling of a
+> full-screen UI layer over the `SurfaceView`, which nothing in this document can
+> see from a workstation.
+
 **And the city was read without launching it.** The save manifest carries the
 clock, so `--advance-hours` deltas no longer need the HUD read by eye:
 `day 31, 09:46, pop 359, $174,414` came out of one `run-as cat` while the phone

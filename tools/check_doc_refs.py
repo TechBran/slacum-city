@@ -26,6 +26,13 @@ It also catches the fault under those: a per-line renumbering `sed` moves the
 section letters and two of doc 98's section numbers were wrong that way, in a
 tree whose every cross-reference still resolved.
 
+Doc 93's id pattern is `[A-Z]+[0-9]*` and NOT `[A-Z][0-9]*` (A91-D-82, Wave 17).
+The ladder ran past `Z` this wave and the single-letter form was wrong in both
+halves at once: a `## AE.` header registered as no target at all, and a `93 §AE`
+reference matched its first letter and resolved, silently, to section `A`. A
+pointer that resolves to the wrong section is this tool's whole reason for
+existing, so it was doing the exact thing it was built to catch.
+
 No dependencies. Reads only; changes nothing.
 """
 from __future__ import annotations
@@ -97,7 +104,7 @@ def main() -> int:
         "RR": set(re.findall(r"^### (RR-[0-9]+[a-z]?)", d98, re.M)),
         "A91-D": set(re.findall(r"^\| \*\*(A91-D-[0-9]+)\*\*", d91, re.M)),
         "92": set(re.findall(r"^#{2,4} ([0-9]+(?:\.[0-9]+)*[a-z]?)(?=[ .]|$)", d92, re.M)),
-        "93": set(re.findall(r"^#{2,3} ([A-Z][0-9]*)[.— ]", d93, re.M)),
+        "93": set(re.findall(r"^#{2,3} ([A-Z]+[0-9]*)[.— ]", d93, re.M)),
         "98": set(re.findall(r"^## ([0-9]+[a-z]?)\.", d98, re.M)),
     }
 
@@ -107,7 +114,7 @@ def main() -> int:
     for label, doc, pattern in (
         ("doc 98 RR", d98, r"^### (RR-[0-9]+[a-z]?)"),
         ("doc 98 section", d98, r"^## ([0-9]+[a-z]?)\."),
-        ("doc 93 section", d93, r"^#{2,3} ([A-Z][0-9]*)[.— ]"),
+        ("doc 93 section", d93, r"^#{2,3} ([A-Z]+[0-9]*)[.— ]"),
         ("doc 92 section", d92, r"^#{2,4} ([0-9]+(?:\.[0-9]+)*[a-z]?)(?=[ .]|$)"),
         ("doc 91 defect", d91, r"^\| \*\*(A91-D-[0-9]+)\*\*"),
     ):
@@ -122,7 +129,7 @@ def main() -> int:
         ("RR", r"\bRR-([0-9]+[a-z]?)\b", "RR-%s"),
         ("A91-D", r"\bA91-D-([0-9]+)\b", "A91-D-%s"),
         ("92", r"\b92 §([0-9]+(?:\.[0-9]+)*[a-z]?)", "%s"),
-        ("93", r"\b93 §([A-Z][0-9]*)", "%s"),
+        ("93", r"\b93 §([A-Z]+[0-9]*)", "%s"),
         ("98", r"\b98 §([0-9]+[a-z]?)", "%s"),
     )
 

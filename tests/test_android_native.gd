@@ -181,6 +181,14 @@ func test_real_bridge_is_unavailable_off_device() -> void:
 	assert_eq(bridge.thermal_status(), AndroidNative.THERMAL_UNKNOWN)
 	assert_false(bridge.is_sustained_performance_supported())
 	bridge.set_sustained_performance(true)  # must be a no-op, not a crash
+	# The refresh pin (RR-126) takes the same terms: off-device it must answer
+	# "nothing was declared" rather than throw, because the same GDScript runs in
+	# this runner, on desktop, and on an APK built from the prebuilt template
+	# where no plugin exists at all.
+	assert_false(bridge.set_frame_rate(60.0, true))
+	assert_eq(bridge.supported_refresh_rates().size(), 0,
+			"an empty list is 'no display to ask', never 'one mode'")
+	assert_eq(bridge.current_frame_rate_pin(), -1)
 
 
 # -------------------------------------------------------------------- thermal

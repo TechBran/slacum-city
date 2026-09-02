@@ -4892,3 +4892,347 @@ doc 04 one.
 is refilled from a snapshot of the world at FOUNDING. The moment a verb can
 delete one of the things that snapshot lists, the refill needs a reconciliation
 pass. Grep for `loader.` inside restore paths before shipping a delete verb.
+
+## 46. WAVE 17 — the refresh pin (binding)
+
+The screen-tearing investigation (doc 11 §2.13's open band, doc 13 §2.8) got a
+verdict from the player on 2026-09-01, after days of play on the Aug-21 build:
+**"tearing only happens in the sub menus."** World play is clean.
+
+That is a much narrower claim than the one the band has carried for three waves,
+and it fits one thing in this tree better than anything else in it. Doc 93 §AE
+has the analysis; this section has the rulings, what shipped, and the protocol
+that decides whether the rulings were right.
+
+### RR-126 — Declare the rate you cap at, in the same statement that caps it
+
+**The finding.** `PerfGovernor.target_fps()` answers 60, 45 or 30, `game/main.gd`
+writes it into `Engine.max_fps`, and **nothing has ever told the display**. Three
+searches, each one line:
+
+* `grep -rn "max_fps" game/ ui/` → `game/main.gd:1935` and `game/showcase.gd:138`
+  (`= 0`, the screenshot harness). Two writes in the tree, one of them a tool.
+* `grep -n "max_fps" project.godot` → nothing. There is no `run/max_fps`, so a
+  fresh launch runs uncapped until the governor first steps — and the 2026-08-21
+  Fold capture held `knob = 0` for its whole settled window at **99.5–112.4 fps**.
+  The reference device has never once run this game at a declared rate.
+* `git show HEAD:…/SlacumNative.kt | grep -c 'setFrameRate\|preferredRefreshRate\|preferredDisplayModeId'`
+  → **0**.
+
+`vsync_mode=1` is a property of the *swapchain*; Swappy (`swappy_mode=2`,
+auto-fps) is a *consumer* of the refresh rate, not a declarer of it. So on the
+reference device's **1856 × 2160 LTPO, 1–120 Hz adaptive** inner panel, the sole
+input to the platform's mode policy was the app's observed present cadence.
+
+**The ruling.** **A frame cap that is not declared is not a frame policy — it is a
+side effect the platform reverse-engineers, and it re-derives that inference every
+time the cadence changes.** Wherever the shell writes `Engine.max_fps` it also
+declares the same number, through one idempotent object
+(`game/render/refresh_pin.gd`) and one plugin method
+(`SlacumNative.set_frame_rate`).
+
+**The mode rule**, written once in `RefreshPin.choose_refresh_hz()`, table-tested
+in `tests/test_refresh_pin.gd`, mirrored in Kotlin because it has to run against a
+`Display.Mode` that only exists on a device:
+
+| cap | panel | mode | clause |
+|---|---|---|---|
+| 60 | {60, 120} | **60** | smallest integer multiple |
+| 30 | {60, 120} | **60** | smallest integer multiple |
+| 120 | {60, 120} | **120** | smallest integer multiple |
+| 45 | {60, 90, 120} | **90** | smallest integer multiple |
+| 45 | {60, 120} | **120** | no multiple → fastest at or above |
+| 90 | {60, 120} | **120** | no multiple → fastest at or above |
+| 60 | {24, 30, 48} | **48** | nothing reaches it → the fastest there is |
+
+**Smallest** multiple, not fastest: an integer multiple is what makes the cadence
+exact — every app frame held for the same whole number of scanouts — and every
+*extra* scanout beyond that is battery spent on a picture that did not change.
+Doc 13 §2.8 calls capping at 60 on a 120 Hz panel "the single biggest battery
+lever available"; pinning the panel to 120 for a 60 fps game hands it straight
+back. Where no multiple exists the error is one scanout whatever is chosen, so the
+faster mode halves it (±4.2 ms at 120 Hz against ±8.3 ms at 60) and wins.
+
+**The cap and the declaration are ONE statement, and the order matters.**
+Declaring a rate the app does not then present at would be worse than declaring
+nothing — it asks the panel for a mode and then misses it. On this build the two
+are self-consistent by construction: `vsync_mode=1` is FIFO, so a panel held at
+60 Hz throttles the swapchain to 60 whether or not `Engine.max_fps` says so. But
+that is a property of the *current* vsync setting and not of the design, so the
+shell hook writes both numbers in one helper (`_apply_frame_cap(fps)` in the
+branch report's snippet) and there is no path that writes one without the other.
+The boot half of that helper is also the first time this project has ever applied
+its own frame cap at launch — see A91-D-81's third search.
+
+**And the declaration is conservative by construction.** The two-argument
+`Surface.setFrameRate(fps, FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)` means
+`CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS` on API 31+, so a mode switch the panel could
+not make invisibly is **refused rather than made**; `preferredDisplayModeId` is
+set only for a mode at the *current resolution*, because a mode that also changes
+resolution is a reconfiguration and is the one kind that cannot be seamless. A
+remedy for banding may not be a new source of banding.
+
+### RR-127 — A frame-rate vote is cast on change, and re-cast on a new surface, and on nothing else
+
+Two halves, and both are failure modes rather than tidiness.
+
+**A vote is a request, so it is not per-frame.** `RefreshPin.pin(cap_fps)` is
+idempotent: the same number twice reaches the platform once
+(`test_the_same_rate_twice_casts_one_vote`). Re-declaring every frame would put a
+request into the compositor's mode policy at 60–120 Hz, which is a fix for mode
+hunting that hunts.
+
+**A vote lives on the Surface and dies with it.** `Surface.setFrameRate` is a
+property of the surface, not of the process: a surface that has been recreated has
+no vote at all until one is cast again. On the reference device the surface is
+recreated by **the Fold folding and unfolding**, and on every device by rotation
+and by some resume paths — precisely the moments a player's session changes shape.
+So `SlacumNative` caches the last rate GDScript asked for and re-casts it from
+`onVkSurfaceCreated` / `onVkSurfaceChanged`, which is the only hook a
+`GodotPlugin` is given that is handed the actual surface. **The shell must not do
+this**: GDScript cannot see a surface recreation, and a shell that re-pinned "just
+in case" would be back to per-frame.
+
+The generalisation, which is what makes this binding: **when the platform owns an
+object's lifetime and the app owns a property of it, the app re-applies the
+property from the platform's own lifecycle callback — never from its own loop, and
+never once at boot.** Doc 12 D-65 is the same rule for a solved layout, one layer
+up: nothing owned re-running it.
+
+### RR-128 — A device A/B's control arm is the shipped behaviour, in the same binary, or it is not a control
+
+The pin is a **hypothesis with a test**, not a fix, and RR-126 is only worth what
+§46's protocol below can say about it. That puts three requirements on the arms,
+all of which are design decisions and none of which is obvious:
+
+1. **`off` declares nothing at all rather than declaring zero.** Clearing a vote is
+   itself a request to the compositor, and an arm that makes a request is not the
+   behaviour that shipped. `RefreshPin.pin()` returns early on `off` before it
+   computes anything (`test_off_casts_no_vote_at_all_rather_than_a_vote_of_zero`).
+2. **Both arms come out of ONE install.** `--refresh=auto|60|90|120|off` rides doc
+   13 D-20's argument path, so the two arms differ in an Intent extra and in
+   nothing else — no rebuild, no reinstall, no second APK to confuse with the
+   first. A control arm that is a *different binary* is a control for the change
+   plus everything else that binary carries.
+3. **The lever outranks the settings row.** A saved preference that could silently
+   overturn an arm is not an arm (`test_the_lever_outranks_the_settings_row`), and
+   this is the same precedence `main.gd`'s `_apply_render_ab_args()` already
+   applies to the render levers.
+
+**And the arm has to be provable from outside the app.** This project has already
+lost one session to a **stale AAR**: an export packaged a plugin two days old,
+`has_method("launch_args")` answered false, and every dev argument was dropped in
+silence while the game looked perfect (RR-70, `.gitignore`'s own note). The
+refresh pin has exactly that failure mode — a stale AAR makes `auto` and `off`
+**the same arm** — so it is gated twice: `tools/run_matrix.sh step_build_check`
+greps the installed dex for `set_frame_rate` beside `launch_args`, and
+`tests/test_release_plumbing.gd` opens the tracked
+`android/plugins/slacum_native.aar`, reads `SlacumNative.class` out of the
+`classes.jar` inside it, and asserts **every `@UsedByGodot` method the Kotlin
+declares** is in its constant pool. The pinned list is *derived from the source's
+own annotations*, not hand-maintained, so the next plugin method is pinned by
+being written; a second test asserts every `has_method("…")` probe in
+`game/android_native.gd` names one of them, which is how a misspelt probe — false
+on every device, indistinguishable from an old build — stops being invisible.
+
+*(Proof that the gate has teeth: with the pre-Wave-17 AAR restored in place, the
+suite reports `set_frame_rate`, `get_supported_refresh_rates` and
+`current_frame_rate_pin` missing — three failures, then green again on the
+rebuilt one.)*
+
+### §46's shell hook — five anchors in `game/main.gd`, which this branch did not edit
+
+`game/main.gd` is the lead's file, so the hook is delivered as anchored snippets
+rather than applied. There are five, and the third is the one that matters: it is
+the single door every `Engine.max_fps` write goes through, so the cap and the
+declaration cannot come apart.
+
+**1 — the field**, beside `var perf_governor: PerfGovernor` (`main.gd:57`):
+
+```gdscript
+var perf_governor: PerfGovernor
+## doc 13 §2.8 / RR-126 — the rate is DECLARED, not merely capped.
+var refresh_pin: RefreshPin
+```
+
+**2 — construction and the boot cap**, immediately after
+`perf_governor = PerfGovernor.new(render_data, render_model.preset)`
+(`main.gd:390`; `android_lifecycle` exists from `:127` and `main.gd:144` already
+reads `.native`):
+
+```gdscript
+	perf_governor = PerfGovernor.new(render_data, render_model.preset)
+	# RR-126. The lever is applied HERE because it outranks the settings row the
+	# UI restores later (RR-128), and the cap is applied here because until this
+	# line the game had never capped itself at boot at all (A91-D-81).
+	refresh_pin = RefreshPin.new(render_data, android_lifecycle.native)
+	refresh_pin.apply_lever(DevArgs.user_args())
+	_apply_frame_cap(perf_governor.target_fps())
+```
+
+**3 — the one door**, a new function beside `_apply_render_ab_args()`
+(`main.gd:487`):
+
+```gdscript
+## The frame cap and the frame-rate DECLARATION, which are one statement
+## (report 98 RR-126). Every write of `Engine.max_fps` goes through here, so no
+## path can cap without telling the panel: declaring a rate the app does not then
+## present at asks the display for a mode and then misses it. `RefreshPin.pin()`
+## is idempotent (RR-127), so calling this on every governor step costs one vote
+## per CHANGE and none per frame.
+func _apply_frame_cap(fps: int) -> void:
+	Engine.max_fps = fps
+	if refresh_pin != null:
+		refresh_pin.pin(fps)
+```
+
+**4 — the governor step**, replacing `main.gd:1935`:
+
+```gdscript
+			Engine.max_fps = perf_governor.target_fps()          # doc 13 §2.8
+```
+becomes
+```gdscript
+			_apply_frame_cap(perf_governor.target_fps())         # doc 13 §2.8, RR-126
+```
+
+**5 — the two settings paths.** In `_wire_ui`, where the restored sheet is read
+(`main.gd:954`, beside `_autosave_interval_s = …`):
+
+```gdscript
+		# D-75: the restored row, unless a --refresh= lever is holding the arm.
+		if refresh_pin != null and perf_governor != null:
+			refresh_pin.set_mode(
+					str(root.settings_sheet.model.value("refresh_rate")), true)
+			_apply_frame_cap(perf_governor.target_fps())
+```
+
+…and in `_on_ui_setting_changed` (`main.gd:1268`), one new arm beside `&"auto_quality"` (`:1297`), plus one line inside the existing `&"graphics"` arm:
+
+```gdscript
+		&"refresh_rate":
+			if refresh_pin != null and perf_governor != null:
+				refresh_pin.set_mode(str(model.value("refresh_rate")), true)
+				_apply_frame_cap(perf_governor.target_fps())
+```
+```gdscript
+			if perf_governor != null:
+				# A player's preset choice clears the ladder and any latched drop.
+				perf_governor.reset(str(model.value("graphics")))
+				_apply_frame_cap(perf_governor.target_fps())   # NEW: the preset
+				                                               # owns target_fps
+```
+
+**That last line is a defect fix in its own right.** `presets.performance.target_fps`
+is **30** and `balanced`/`high` are **60**, and `PerfGovernor.reset()` re-reads
+`target_fps` — so a player switching to Performance today does not get a 30 fps
+cap until the governor next happens to step a knob, which on a device with
+headroom is never. The preset row has been a quality control with no frame-rate
+consequence since it shipped.
+
+### §46's A/B — the protocol the lead runs on the phone
+
+**One binary, one install, two Intent extras.** The perf-capture flag is disarmed
+in BOTH arms, so the per-frame `viewport_set_measure_render_time` GPU timestamp
+query — doc 91 §19's row-5 suspect — is absent from both and cannot explain a
+difference between them.
+
+**0. Build the thing that is being tested.** The AAR is a tracked binary and it is
+not rebuilt by exporting:
+
+```bash
+tools/build_native_plugin.sh --debug
+~/.local/bin/godot --headless --path "/home/bbx/Slacum City game" \
+  --export-debug "Android" build/slacum-debug.apk
+adb install -r build/slacum-debug.apk        # -r keeps the player's saves
+adb shell run-as com.slacumcity.game rm -f files/perf_capture.flag
+bash tools/run_matrix.sh build_check         # must print set_frame_rate in dex: 1
+```
+
+**1. Arm A — the control, and it is the shipped behaviour.**
+
+```bash
+adb logcat -c
+adb shell "am start -n com.slacumcity.game/com.godot.game.GodotAppLauncher \
+  --es args '--resume --refresh=off'"
+```
+
+**2. Arm B — the pin.** Same install, same save, one extra changed.
+
+```bash
+adb logcat -c
+adb shell "am start -n com.slacumcity.game/com.godot.game.GodotAppLauncher \
+  --es args '--resume --refresh=auto'"
+```
+
+**3. The content, identical in both arms — 30 s each, in this order.** These are
+the four sheets the player names, and each is a full-screen UI layer over a world
+that is not moving. **Do not touch the camera while a sheet is open**: camera
+motion is the thing that hides the artifact, and it is the whole reason world play
+reads clean.
+
+| # | screen | how to get there |
+|---|---|---|
+| 1 | **Settings** (S9) | pause → SETTINGS |
+| 2 | **Build sheet** (S3) | the FAB, bottom right |
+| 3 | **Goals** (S8) | the goals chip, top bar |
+| 4 | **Budget / Economy** (S6) | the treasury chip, top bar |
+
+Open each, hold it for 30 s with the world still behind it, close it, and move on.
+**The reading is the player's**: *did bands appear on this screen, yes or no, and
+roughly how often.* Nothing on the workstation can see this artifact — it is a
+scanout event and a screenshot is a framebuffer read.
+
+**4. What to record, per arm.** Three machine readings and one human one.
+
+```bash
+# what the app ASKED the window manager for (0 / 0.0 in arm A, non-zero in arm B)
+adb shell dumpsys window | grep -iE 'preferredDisplayModeId|preferredRefreshRate' | head
+
+# what the PLUGIN says it declared, and which mode it picked
+adb logcat -d -s SlacumNative | grep -i 'refresh pin'
+
+# what the PANEL is actually doing, taken while a sheet is open
+adb shell dumpsys display | grep -iE 'DesiredDisplayModeSpecs|mActiveModeId|fps ' | head
+
+# and the frame record for the same window
+adb shell dumpsys gfxinfo com.slacumcity.game framestats | head -40
+```
+
+**5. How to read the result, decided in advance.**
+
+* **Bands in arm A, none in arm B** → RR-126 is confirmed on the reference device.
+  Doc 11 §2.13's open band closes, `off` stays as a settings row and a lever, and
+  doc 91's row-5 A/B is retired as superseded.
+* **Bands in both, at the same rate** → **RR-126 is refuted as a remedy** and doc
+  93 §AE says so first. The declaration keeps its battery and pacing arguments and
+  loses its tearing argument; the band stays open and the next suspect is the
+  compositor's handling of a full-screen layer over the `SurfaceView`, which needs
+  a different instrument. Write that down rather than leaving the pin to imply a
+  fix it did not make.
+* **Bands in both but rarer in arm B** → partial. Re-run arm B as
+  `--refresh=120` (declare the panel's top mode outright) before concluding
+  anything: that separates *"the mode is being held"* from *"the mode being held
+  is the right one"*.
+* **`preferredDisplayModeId` reads 0 in arm B** → the arm did not run. Check
+  `set_frame_rate in dex` from step 0 and the `SlacumNative` log line, in that
+  order; a stale AAR makes both arms `off` and the session measures nothing. If
+  the dex has the symbol and the log line is still absent, the third possibility
+  is that Godot refused to REGISTER the method — `set_frame_rate(double, boolean)`
+  is the first `double` parameter this plugin has ever exposed — and
+  `current_frame_rate_pin()` is the readback that separates the two, because its
+  own signature carries no `double`.
+
+**Applied at this branch:** new `game/render/refresh_pin.gd`,
+`tests/test_refresh_pin.gd`; `SlacumNative.kt` (`set_frame_rate`,
+`get_supported_refresh_rates`, `current_frame_rate_pin`, the two Vulkan surface
+callbacks) and the rebuilt, committed `android/plugins/slacum_native.aar`;
+`game/android_native.gd`; `data/render.json.refresh`; `data/ui.json`'s
+`refresh_rate` row + `defaults` + `device_scoped_keys`, `ui/settings_model.gd`'s
+`refresh_modes` source, four `data/strings.en.json` values and two labels;
+`tests/test_release_plumbing.gd` (the AAR gate), `tests/test_ui_settings.gd`,
+`tests/test_android_native.gd`; `tools/run_matrix.sh step_build_check`;
+`tools/check_doc_refs.py` (A91-D-82); docs 11 §2.13, 12 D-75, 13 §2.8, 91 §14.5
+(A91-D-81, A91-D-82), 93 §AE and this section. **`game/main.gd` is untouched** —
+the shell hook is delivered as an anchored snippet in the branch report, because
+that file is the lead's.
