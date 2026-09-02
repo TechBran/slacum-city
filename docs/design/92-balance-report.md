@@ -7588,11 +7588,33 @@ what it is — the city's cost of *serving* a building; the sawtooth becomes a
 so private stock is never `damaged` by wear, never destroyed by wear, and always
 still upgradable; and the recovery is an **upgrade**, not a repair tap.
 
-### 43.9 The gates, re-fitted — one gate moved, and here is its derivation
+### 43.9 The gates, re-fitted — two of thirty-two, each with its derivation
 
-**Gate 29 is the only gate this pass re-fits.** The founding anchors did not move
-enough to touch gates 1, 2 or 2b (§43.6: −0.18 %, against a ±1 % tolerance), and
-no other constant this pass changed feeds a gate threshold.
+**Gates 29 and 4b are the only two this pass re-fits, and both move for the same
+reason: the roster they measure changed, not the constants they measure it
+with.** The founding anchors did not move enough to touch gates 1, 2 or 2b
+(§43.6: −0.18 % against a ±1 % tolerance), and no other constant this pass
+changed feeds a gate threshold. The remaining thirty pass untouched.
+
+**Gate 4b — the maintenance pacing fit.** Its own header derives
+`repair trips/day = Σ decay_b × 24 / (1 − threshold)` over the buildings the
+**city** repairs, and doc 02 §2.6a took the private stock out of that sum: a
+21-game-day `balanced` city drew the REPAIR row on 260 private + 21 civic and now
+draws it on 0 + 24, so the sum runs over about a tenth of the roster and returns
+about a tenth of the trips. Measured on the three matrix seeds: **10 / 10 / 11
+trips over 21 game-days = 0.48 / 0.48 / 0.52 per game-day**, against 1.30/day at
+the fork; and repair spend **4.42 %** of net at seed 1337 against 11.2 %.
+
+| constant | before | after | why |
+|---|---|---|---|
+| trips/day floor | 0.80 | **0.30** | 37 % below the lowest measured seed, still strictly positive — the floor's job is to catch the mechanic going dead, and it still does |
+| share-of-net floor | 0.04 | **0.03** | 0.04 was inside a rounding error of failing on a number the ruling deliberately moved |
+
+**Neither `decay_per_hour` nor `REPAIR_COST_PER_CAPITAL` nor `REPAIR_THRESHOLD`
+moved** — exactly the shape of this gate's own Wave-5 re-anchor, where the city
+the ratio is measured on is what changed and not the ratio.
+
+**Gate 29 — neglect is fatal on every preset, and ordered.**
 
 `tools/measure_insolvency.gd --max-days=220`, three seeds, `do_nothing`:
 
