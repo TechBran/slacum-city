@@ -7420,19 +7420,20 @@ The same three cities, run 21 game-days and then through doc 01's capped
 
 | strategy | private bands Good/Worn/Poor/Failing | private damaged | civic bands | `building_damaged` in the absence |
 |---|---|---|---|---|
-| `do_nothing` | 0/0/19/8 → **0/27/0/0** | 8 → **0** | 0/0/2/5 → 0/0/2/5 | 13 → **5** (all civic) |
-| `balanced` | 2/16/236/8 → **4/233/0/0** | 19 → **0** | 0/14/3/6 → 0/13/6/5 | 10 → **4** (all civic) |
-| `curriculum` | 1/18/61/19 → **65/2/0/29**† | 24 → 0 | 0/3/1/6 → 0/4/0/6 | 21 → **0** |
+| `do_nothing` | 0/0/19/8 → **0/27/0/0** | 8 → **0** | 0/0/2/5 → 0/0/2/5 | 13 → **5** |
+| `balanced` | 2/16/236/8 → **4/233/0/0** | 19 → **0** | 0/14/3/6 → 0/13/6/5 | 10 → **4** |
+| `curriculum` | 1/18/61/19 → **3/97/0/0** | 24 → **0** | 0/3/1/6 → 0/1/2/7 | 21 → **6** |
 
-† the `curriculum` row is the one to read carefully: its 29 are `on_fire`, not
-worn — see the state census the instrument now prints. Across all three
-strategies **every building still below the auto-damage line after a night away
-is either civic or on fire**, and not one is a private building that simply
-rotted there.
+**Not one private building is in the Poor or Failing band, damaged, or destroyed,
+on any strategy** — and the state census the instrument now prints says the same
+thing from the other side: everything still below the auto-damage line after a
+night away is `civic/damaged` (×5, ×5, ×7), and **not one of them is a private
+building that simply rotted there.** Every `building_damaged` event that still
+fires during an absence is a city asset.
 
 **The morning bill a `balanced` player wakes up to falls from $564,524 to
-$225,814**, all of it city assets, and **not one private building is damaged,
-destroyed, or asking to be tapped.** That is note (a), measured.
+$225,814** — and it is now *entirely* city assets, because a private building has
+no purchasable repair at any price. That is note (a), measured.
 
 ### 43.6 Income after the rulings — what moved, and what did not
 
