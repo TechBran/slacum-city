@@ -290,24 +290,42 @@ func test_pa13_min_condition_to_upgrade_is_read() -> void:
 			"min_condition_to_upgrade is READ (PA-13)")
 
 
-## Doc 93 §Y1: a SERVED private building never reaches the auto-damage line from
-## wear, and settles into a sawtooth between `band_good` and 1.00.
-func test_owner_maintained_building_never_damages_while_served() -> void:
+## Doc 93 §Y1: a SERVED private building wears exactly as §2.6 says and then
+## STOPS at the Worn band's floor. It never reaches the auto-damage line from
+## wear, and the floor is above `min_condition_to_upgrade` — the ordering that
+## makes it a floor rather than a trap.
+func test_owner_maintained_building_floors_at_band_worn_while_served() -> void:
 	var b := _apartment_l3()
 	b.owner_maintained = true
-	var total := 0.0
 	var lowest := 1.0
 	var events := 0
-	for i in range(2000):
+	for i in range(4000):
 		events += b.apply_decay(1.0, 0.0, 1.0).size()
-		total += b.condition
 		lowest = minf(lowest, b.condition)
-	assert_eq(b.state, &"active", "2000 game-hours of wear, never damaged")
+	assert_eq(b.state, &"active", "4000 game-hours of wear, never damaged")
 	assert_eq(events, 0, "and never an event: routine private wear is silent")
-	assert_true(lowest >= 0.85 - 0.01,
-			"the sawtooth floor is band_good, got %.4f" % lowest)
-	assert_true(total / 2000.0 > 0.90,
-			"mean condition sits high, got %.4f" % (total / 2000.0))
+	assert_almost_eq(b.condition, 0.60, 1e-9,
+			"it settles exactly on condition.band_worn")
+	assert_almost_eq(lowest, 0.60, 1e-9, "and never goes below it")
+	assert_true(b.condition > b.min_condition_to_upgrade(),
+			"the floor is ABOVE the upgrade gate (0.60 > 0.55) — otherwise it "
+			+ "would be a trap, not a floor, because the recovery is an upgrade")
+
+
+## …and the wear ITSELF is untouched: the first 800 game-hours of an
+## owner-maintained building are bit-identical to an unowned one, because doc 93
+## §Y1 moved no `decay_per_hour` cell. Only the floor is new.
+func test_owner_maintenance_moves_no_decay_rate() -> void:
+	var owned := _apartment_l3()
+	owned.owner_maintained = true
+	var plain := _apartment_l3()
+	for i in range(500):
+		owned.apply_decay(1.0, 0.0, 1.0)
+		plain.apply_decay(1.0, 0.0, 1.0)
+	assert_true(plain.condition > 0.60, "the control has not reached the floor yet")
+	assert_eq(owned.condition, plain.condition,
+			"identical wear until the floor binds — the ruling is a floor, "
+			+ "not a rate change")
 
 
 ## Doc 93 §Y1a — the service clause. A building the city has left DARK is not
@@ -324,6 +342,8 @@ func test_owner_maintenance_stops_when_the_city_stops_serving() -> void:
 	assert_eq(b.state, &"damaged", "a dark private building still fails")
 	assert_eq(events, 1, "exactly one building_damaged, when it crosses")
 	assert_true(hours < 4000, "and it gets there: %d game-hours" % hours)
+	assert_true(b.condition < 0.60,
+			"the floor lifted with the lights — %.3f" % b.condition)
 
 
 ## The owner rebuilds after an incident to §2.12's post-damage target, and says
@@ -353,3 +373,9 @@ func test_owner_maintenance_defaults_off() -> void:
 	b.apply_decay(168.0)
 	assert_almost_eq(b.condition, 0.879, 0.0005,
 			"worked example E4 is unmoved by the ruling")
+	# …and it is unmoved WITH the flag on too, because 0.879 is above the floor.
+	var owned := _apartment_l3()
+	owned.owner_maintained = true
+	owned.apply_decay(168.0)
+	assert_almost_eq(owned.condition, 0.879, 0.0005,
+			"E4 is above band_worn, so the floor does not touch it either")

@@ -907,3 +907,25 @@ func test_water_footprint_cross_check_against_doc_05() -> void:
 		if water is Dictionary:
 			assert_true(catalog.cross_check_water_footprints(water).is_empty(),
 					"shipped data/water.json agrees with doc 02's pump reference row")
+
+
+## The bug this test exists for was shipped and caught in the same wave: doc 02
+## §2.6a's ownership floor reads `condition.band_worn`, `Building
+## .DEFAULT_CONDITION` did not carry that key, and so an UNSTAMPED building had
+## no floor — a silently different physics from a stamped one, in the exact shape
+## PA-13 filed against the consts this dict replaced. A fallback that is not the
+## whole authored block is not a fallback.
+func test_building_default_condition_matches_the_authored_block() -> void:
+	var catalog := _catalog()
+	var authored := catalog.condition_rules()
+	assert_false(authored.is_empty(), "data/building_rules.json carries the block")
+	for key: String in Building.DEFAULT_CONDITION:
+		assert_true(authored.has(key),
+				"Building.DEFAULT_CONDITION carries '%s' and the file does not" % key)
+		assert_almost_eq(float(authored[key]),
+				float(Building.DEFAULT_CONDITION[key]), 1e-9,
+				"condition.%s: the fallback and the authored value must agree" % key)
+	for key: String in ["band_good", "band_worn", "band_poor",
+			"auto_damage_threshold", "min_condition_to_upgrade", "repair_time_factor"]:
+		assert_true(Building.DEFAULT_CONDITION.has(key),
+				"every key `Building` READS must be in the fallback: '%s'" % key)

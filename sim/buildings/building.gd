@@ -42,7 +42,15 @@ const DEFAULT_CONDITION := {
 	"overload_decay_coefficient": OVERLOAD_DECAY_COEFFICIENT,
 	"unpowered_decay_coefficient": UNPOWERED_DECAY_COEFFICIENT,
 	"damaged_decay_multiplier": DAMAGED_DECAY_MULTIPLIER,
+	# Doc 02 §2.6's band table. `band_worn` is the ownership floor (§2.6a) and is
+	# the one value in this dict a `Building` cannot do without: a fallback that
+	# omitted it gave an unstamped private building NO floor, which is a silently
+	# different physics from the stamped one. `band_poor` is here for the same
+	# reason — the fallback must be the whole block, not the part today happens
+	# to read.
 	"band_good": 0.85,
+	"band_worn": 0.60,
+	"band_poor": 0.35,
 }
 
 var id: int = 0
