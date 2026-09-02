@@ -6119,11 +6119,26 @@ the map to write the sentence — is the row that has it. `E_AVENUE` searched
 outward to the nearest avenue to print *"no avenue within 4 tiles"* and then
 threw the tile away.
 
-**The test.** `tests/test_requirement_formatter.gd::
+**The test**, in three parts, because "normative in both directions" is three
+claims. `tests/test_requirement_formatter.gd::
 test_every_fix_target_carries_the_params_its_kind_needs` walks every code in
 `CODE_TABLE`, asserts the kind is one of `FIX_KINDS`, and asserts the params its
 kind's row of the table requires — with `FIX_TILE` strict, because for that kind
-the tile **is** the target.
+the tile **is** the target. `tests/test_build_controller.gd::
+test_every_real_fix_target_resolves_or_is_none` is the half PA-05 asked for by
+name: the same walk over rows the REAL producers build against a BOOTED sim —
+the upgrade checklist on a building broken every way it can be, placement refused
+on each wall a player hits, the water block's own ladder — every one of which
+resolves to something `ui/fix_router.gd` can act on, or is `FIX_NONE`, never a
+silent null.
+
+And `test_the_two_copies_of_the_params_contract_agree` diffs the class doc's
+table against doc 12 §2.7a's, kind by kind and key by key. **That test exists
+because this lane drifted them inside one wave**: `FIX_BLOCK` gained `block_id`
+in `_fix_params_for` and in doc 12 and not in the class doc, which is the copy
+Lane D's router is written against. A contract written twice is a contract that
+drifts — PA-75's whole finding, one file over — and the only cure that survives
+the wave is a test that reads both copies.
 
 ### RR-143 — A refusal reaches a touch screen as visible copy with a door, or it does not reach the player at all (docs 12 §2.7, 99-PA PA-23)
 

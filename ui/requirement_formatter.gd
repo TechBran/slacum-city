@@ -49,7 +49,7 @@ extends RefCounted
 ## |--------------------|-------------------------|-----------------------------|
 ## | `FIX_NONE`         | `""`                    | `{}` — no button is drawn |
 ## | `FIX_BUILDING`     | `sim_id`                | `{tile: Vector2i}` the building's origin |
-## | `FIX_BLOCK`        | `block_id`              | `{tile: Vector2i}` the block's centre tile, when the producer knows it |
+## | `FIX_BLOCK`        | `block_id`              | `{tile: Vector2i, block_id: String}` — the tile is the block's, when the producer knows it |
 ## | `FIX_TILE`         | `""`                    | `{tile: Vector2i}` — **required**; the tile IS the target |
 ## | `FIX_DISTRICT`     | district / zone key     | `{district_id: String, tile: Vector2i}` |
 ## | `FIX_ROAD_SEGMENT` | segment id, or `""`     | `{tile: Vector2i}` the nearest tile of the road the row is short of |

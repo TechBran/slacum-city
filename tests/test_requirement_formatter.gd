@@ -369,3 +369,60 @@ func test_the_wave_18_codes_render_english() -> void:
 	assert_eq(str(water["fix_target"]["kind"]), String(RequirementFormatter.FIX_DISTRICT))
 	assert_eq(str((water["fix_target"]["params"] as Dictionary)["district_id"]),
 			"WTR-1-PMP")
+
+
+## The `params` table is written **twice** — in this class's own doc and in doc
+## 12 §2.7a — and both copies say they are normative. Two copies of a contract is
+## the shape PA-75 filed on `_check_params`, where they had already drifted, and
+## this lane drifted these two inside one wave: `FIX_BLOCK` gained `block_id` in
+## the code and in doc 12 and not in the class doc.
+##
+## So the two are diffed here, kind by kind and key by key. Lane D's router reads
+## the class doc; a reviewer reads doc 12; a disagreement between them is a
+## contract with a hole in it whichever half is right.
+func test_the_two_copies_of_the_params_contract_agree() -> void:
+	var code_table := _contract_rows(
+			FileAccess.get_file_as_string("res://ui/requirement_formatter.gd"), "## |")
+	var doc_table := _contract_rows(
+			FileAccess.get_file_as_string("res://docs/design/12-ui-ux.md"), "|")
+	assert_eq(code_table.size(), RequirementFormatter.FIX_KINDS.size(),
+			"the class doc lists every kind: %s" % [code_table.keys()])
+	assert_eq(doc_table.size(), RequirementFormatter.FIX_KINDS.size(),
+			"doc 12 s2.7a lists every kind: %s" % [doc_table.keys()])
+	for kind: StringName in RequirementFormatter.FIX_KINDS:
+		var row := "FIX_%s" % String(kind).to_upper()
+		assert_true(code_table.has(row), "%s has no row in the class doc" % row)
+		assert_true(doc_table.has(row), "%s has no row in doc 12 s2.7a" % row)
+		assert_eq(code_table[row], doc_table[row],
+				"%s: the class doc says %s and doc 12 s2.7a says %s"
+				% [row, code_table[row], doc_table[row]])
+
+
+## One markdown table row → the param KEYS its third cell names, sorted. The
+## class doc's rows are the same markdown behind a `##`, which is why the prefix
+## is a parameter and nothing else is.
+func _contract_rows(source: String, prefix: String) -> Dictionary:
+	var out: Dictionary = {}
+	for raw: String in source.split("\n"):
+		var line := raw.strip_edges()
+		if not line.begins_with("%s `FIX_" % prefix):
+			continue
+		var cells := line.split("|")
+		if cells.size() < 4:
+			continue
+		var kind := cells[1].strip_edges().replace("`", "")
+		var params: Array[String] = []
+		var body := cells[3]
+		var open := body.find("{")
+		var close := body.find("}", open + 1)
+		if open >= 0 and close > open:
+			for part: String in body.substr(open + 1, close - open - 1).split(","):
+				var key := part.strip_edges()
+				if key.contains(":"):
+					key = key.substr(0, key.find(":"))
+				key = key.strip_edges()
+				if key != "":
+					params.append(key)
+		params.sort()
+		out[kind] = params
+	return out
