@@ -388,6 +388,14 @@ Release manifest, complete:
 
 ### 2.8 Battery, frame pacing, and thermal policy
 
+> **The modal row is implemented (2026-09-02, report 98 RR-154).** It was
+> authored here and never built, and the gap had a symptom: with a sheet up the
+> quality ladder read the menu's headroom as the world's and took a rung back
+> every 30 s, resizing the 3D render target under a composited panel and drawing
+> a static band across the player's screen. `PerfGovernor.set_suspended()` is
+> the gate; `UIRoot.modal_open()` is the question; `game/main.gd` asks it once a
+> frame before the frame is submitted.
+
 **Frame cap** (`Engine.max_fps`), resolved every 2 s from the highest-priority active rule:
 
 | Rule | Cap | Extra effects |

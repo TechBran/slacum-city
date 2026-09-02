@@ -995,6 +995,24 @@ func dismiss_title() -> void:
 		title_screen.close()
 
 
+## Is a full-screen surface over the city? Every child of `ModalLayer` is one by
+## construction (§2.2: the layer is STOP when populated), and the title door and
+## the loading veil are their own layers with the same property. The renderer's
+## quality governor asks this every frame: a frame drawn under a sheet measures
+## the sheet, not the world, and acting on it resizes the 3D render target while
+## a panel is composited over it (report 98 RR-154).
+func modal_open() -> bool:
+	if title_open() or veil_open():
+		return true
+	if modal_layer == null:
+		return false
+	for child in modal_layer.get_children():
+		var control := child as Control
+		if control != null and control.visible:
+			return true
+	return false
+
+
 func title_open() -> bool:
 	return title_screen != null and title_screen.is_open()
 

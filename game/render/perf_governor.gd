@@ -85,6 +85,11 @@ const PRESET_ORDER := ["performance", "balanced", "high"]
 ## which would be a visible quality *jump* at the moment the player asked for
 ## manual control.
 var enabled := true
+## Set while a full-screen surface owns the display (doc 13 §2.8's modal row).
+## `suspended` is not `enabled = false`: the ladder keeps every rung it has
+## applied, it simply stops measuring and stops moving until the world is
+## visible again.
+var _suspended := false
 
 var cfg: Dictionary = {}
 var preset := "balanced"
@@ -201,11 +206,29 @@ func _preset_value(row: Dictionary, id: String) -> float:
 	return float(row.get(id, 1.0))
 
 
+## Freeze the ladder while something full-screen is over the city. Idempotent;
+## the shell calls it every frame with what the UI reports (report 98 RR-154).
+func set_suspended(value: bool) -> void:
+	if value == _suspended:
+		return
+	_suspended = value
+	if value:
+		_under_budget_s = 0.0
+		_over_budget_s = 0.0
+		_since_eval = 0.0
+
+
+func is_suspended() -> bool:
+	return _suspended
+
+
 # ---------------------------------------------------------------- the window
 
 ## One rendered frame, in milliseconds. Cheap by construction: a ring write and
 ## a counter, no sort — the sort happens once per `eval_interval_s`.
 func submit_frame(frame_ms: float) -> void:
+	if _suspended:
+		return
 	_frames[_frame_head] = maxf(0.0, frame_ms)
 	_frame_head = (_frame_head + 1) % window_frames
 	_frame_count = mini(_frame_count + 1, window_frames)
@@ -323,6 +346,22 @@ func update(delta: float) -> bool:
 			_thermal_pending_s = 0.0
 			_emit("render_thermal_changed", {"status": _thermal, "direction": "down"})
 	if not enabled:
+		return false
+	if _suspended:
+		# A frame drawn under a full-screen sheet is not a measurement of the
+		# world: the city is behind an opaque panel, the load collapses, and the
+		# ladder reads the headroom as its own. Doc 13 §2.8's modal row, and the
+		# 2026-09-02 defect it closes (report 98 RR-154): every 30 s — the
+		# step-up hold, to the second — the governor took a rung back, which
+		# writes `scaling_3d_scale` and RESIZES the 3D render target while a
+		# modal is composited over it. The player sees a static horizontal band
+		# across the frame for as long as the menu is up. Nothing here is
+		# discarded: the window keeps the last world frames it measured, and the
+		# hold timers are reset so the first eval after the sheet closes starts
+		# from real frames rather than from a menu's headroom.
+		_under_budget_s = 0.0
+		_over_budget_s = 0.0
+		_since_eval = 0.0
 		return false
 
 	var moved := false

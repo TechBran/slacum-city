@@ -6065,3 +6065,49 @@ the census the fix eventually shipped —
 `test_no_inert_preset_key`, `test_the_deleted_keys_stay_deleted` and
 `test_every_procedural_mesh_decodes_its_authored_vertex_colour` are those
 censuses, and they are the part of this section worth keeping.
+
+---
+
+## 55. WAVE 18 — the band the governor drew (binding)
+
+### RR-154 — A frame drawn under a full-screen sheet is not a measurement of the world
+
+**The report.** On the Fold, 2026-09-02, on the Wave-17 build: *"the banding does
+happen, right in the middle of the screen, only in menus... it's instant, it
+doesn't go away or move... every 30 seconds... in any menu or submenu that opens
+up. Not the gameplay itself."*
+
+**Three things the evidence settled before any code was read.** (a) A device-side
+`adb shell screencap` — a SurfaceFlinger re-composite that never touches a video
+encoder — **contains the band**, so it is not scan-out tearing and not the
+remote-control capture path; both were the standing suspects since 2026-08-21 and
+both are now excluded. (b) Three consecutive captures a second apart are
+**identical across the band's rows** (device y ≈ 912-920): it does not crawl, so
+it is not a tear. (c) The player's own cadence — *every 30 seconds* — is
+`PerfGovernor.DEF_STEP_UP_HOLD_S = 30.0`, to the second.
+
+**The mechanism.** A full-screen sheet covers the city with an opaque panel. The
+GPU load collapses, `p95_ms` falls far under budget, and after the 30 s hold the
+ladder **takes a rung back**. Rung 1 is `render_scale`, which
+`QualityApplier.apply_viewport` writes as `scaling_3d_scale` — so the step
+**resizes the 3D render target while a modal is composited over it**, and the
+frame that lands mid-resize carries a static horizontal band for as long as the
+menu is up. Doc 13 §2.8 authored a *modal row* for exactly this; it had never
+been implemented, and the Wave-17 refresh-pin lane said so in its open questions
+before anyone knew it was load-bearing.
+
+**The ruling.** The ladder measures the WORLD. While a full-screen surface owns
+the display, `PerfGovernor` is **suspended**: `submit_frame` refuses the sample,
+`update` makes no move, and the hold timers reset so no step rides out of a menu
+on the menu's own headroom. Suspended is not disabled — every rung already
+applied is kept, because the world behind the panel has not got any cheaper.
+`UIRoot.modal_open()` is the one query (every `ModalLayer` child is full-screen
+by §2.2's construction, plus the title door and the loading veil), and
+`game/main.gd` asks it once a frame **before** `submit_frame`.
+
+**Re-open condition.** A band that survives this fix is not the governor: the
+next suspects, in order, are the Samsung front-buffer/low-latency path that
+attaches to the surface at launch (`SPen::FbrDrawPad`, visible in logcat) and a
+swapchain recreation the app does not drive. The A/B that separates them needs no
+build: **Settings → Auto quality OFF** disables the ladder outright.
+

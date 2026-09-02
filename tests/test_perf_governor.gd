@@ -276,3 +276,49 @@ func test_tier_census_counts_what_the_view_submits() -> void:
 	assert_eq(int(census["medium"]), 1)
 	assert_eq(int(census["far"]), 1)
 	assert_eq(int(census["culled"]), 1)
+
+
+func test_a_modal_freezes_the_ladder_and_its_frames_never_enter_the_window() -> void:
+	# doc 13 §2.8's modal row (report 98 RR-154). The 2026-09-02 device defect:
+	# a full-screen sheet collapses the GPU load, the ladder reads the headroom
+	# as the world's, and after `step_up_hold_s` — 30 s, which is exactly the
+	# cadence the player reported — it takes a rung back. Rung 1 is
+	# `render_scale`, so the step RESIZES the 3D render target underneath a
+	# composited panel and leaves a static horizontal band across the frame.
+	var gov := _governor()
+	gov.budget_ms = 16.7
+	# A world running hot: step down so there is a rung to take back.
+	for i in 400:
+		gov.submit_frame(30.0)
+	for i in 40:
+		gov.update(1.0)
+	var rungs_after_load := gov.rungs_applied()
+	assert_true(rungs_after_load > 0, "a hot world steps the ladder down")
+	# The player opens a sheet: cheap frames, for far longer than the hold.
+	gov.set_suspended(true)
+	assert_true(gov.is_suspended())
+	var window_before := gov.sample_count()
+	for i in 600:
+		gov.submit_frame(2.0)
+	assert_eq(gov.sample_count(), window_before,
+			"a menu's frames never enter the measurement window")
+	var moved := false
+	for i in 120:  # 120 s, four times the 30 s step-up hold
+		if gov.update(1.0):
+			moved = true
+	assert_false(moved, "the ladder does not move while a modal is up")
+	assert_eq(gov.rungs_applied(), rungs_after_load,
+			"and it keeps every rung it had — suspended is not disabled")
+	# The sheet closes: the first evaluation starts from real frames again, not
+	# from the headroom the menu was showing.
+	gov.set_suspended(false)
+	assert_false(gov.is_suspended())
+	# It may still act — the window still holds the hot world frames it measured
+	# before the sheet, and stepping DOWN on those is the right answer. What may
+	# never happen is a step UP riding out of the menu on the menu's headroom: a
+	# step up REMOVES a rung, and the hold that would have earned one was reset.
+	for i in 5:
+		gov.update(1.0)
+	assert_true(gov.rungs_applied() >= rungs_after_load,
+			"no rung is given back on a menu's headroom (%d -> %d)"
+			% [rungs_after_load, gov.rungs_applied()])

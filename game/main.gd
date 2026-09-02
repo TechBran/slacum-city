@@ -2142,6 +2142,10 @@ func _process(delta: float) -> void:
 		audio.update_audio(delta, camera_rig.camera.global_position,
 				environment_controller.last_night)
 	if perf_governor != null:
+		# doc 13 §2.8's modal row (report 98 RR-154): freeze the ladder while a
+		# full-screen surface owns the display. Before `submit_frame`, so a menu's
+		# cheap frame never enters the window in the first place.
+		perf_governor.set_suspended(ui_root != null and ui_root.modal_open())
 		perf_governor.submit_frame(delta * 1000.0)
 		if perf_telemetry != null:
 			perf_telemetry.tick(delta, perf_governor)
