@@ -8134,6 +8134,85 @@ coefficient reaching a station and a plant. **Not** `data/buildings.json` — ev
 diff is a stale `s2.12 -> s2.14` cross-reference in a `_note` string that the
 generator had already corrected and the shipped file had not.
 
+## 42. Wave 17 — the render numbers: what a preset costs, and what the pitch cull is worth (2026-09-02)
+
+*Render lane, forked off the Wave-17 integration (`a5d9021`). Every row here is
+`tools/profile_frame.gd` on `tests/fixtures/bench_city.json`, 1,500 buildings,
+hour 13, `--focus=52,44` (the authored centre puts the Z0 camera inside a
+tower), 1920×1080, warmup 30 / frames 60, on the workstation's RTX 2000 Ada.
+**None of it moves a hash** — nothing in this lane touches `sim/`, and doc 11's
+`data/render.json` is not a file `sim/` opens. Report 98 §38's table carries the
+four hashes, unmoved at the fork and at the end.*
+
+### 42.1 What a graphics preset costs, before and after it was wired
+
+Before Wave 17 nothing in the tree applied `render_scale`, `msaa`, `fxaa`,
+`shadows`, the shadow atlas, the split count, the shadow distance, the glow
+levels, the HDR thresholds, `env_adjustments`, `moon` or `street_lights`
+(report 98 RR-98, audit PA-06). `--no-quality` reproduces that frame exactly.
+
+| arm | Z0 dc | Z0 prims | Z0 `rs gpu` | Z1 dc | Z1 `rs gpu` | Z2 `rs gpu` | VRAM |
+|---|---|---|---|---|---|---|---|
+| performance, pre-W17 | 224 | 276,530 | 1.271 ms | 311 | 1.738 ms | 1.717 ms | — |
+| balanced, pre-W17 | 223 | 273,710 | 1.290 ms | 310 | 1.762 ms | 2.037 ms | 125 MB |
+| high, pre-W17 | 223 | 273,710 | 1.286 ms | 310 | 1.755 ms | 1.692 ms | — |
+| **performance, shipped** | **90** | **92,822** | **0.583 ms** | **124** | **0.739 ms** | 1.228 ms | **74 MB** |
+| **balanced, shipped** | 223 | 273,710 | 0.964 ms | 310 | 1.375 ms | 1.442 ms | **123 MB** |
+| **high, shipped** | 223 | **455,852** | 1.405 ms | 312 | 1.902 ms | 1.819 ms | **191 MB** |
+
+**Balanced and High were identical to the primitive before this wave** — 223
+draw calls and 273,710 primitives each, GPU times 0.3 % apart. Performance
+differed by one draw call and 2,820 primitives, and that one call is §2.11's
+`MM_blob` decal. The audit's "High is Balanced with more cars" was exactly
+true.
+
+Three numbers carry the after-column. **`shadows: false` is worth 134 draw
+calls and 183,708 primitives at Z0** — the largest single figure in this
+lane — because the sun stops re-drawing the city into a shadow map Performance
+was never going to sample. **High costs 67 % more primitives than Balanced**
+(455,852 vs 273,710) for its four splits and 180 m shadow distance, at the same
+223 draw calls, because Godot batches the PSSM passes: **`dc` is the wrong
+column to look for a shadow setting in.** And **VRAM was flat at 125 MB across
+all three presets** and now spreads 74 / 123 / 191 MB.
+
+### 42.2 The pitch-coupled cull: the table, and the zero
+
+`--pitch=DEG` pins the pitch band to a constant at every pose. `dc+ui` adds
+§2.13's 25 batched UI calls; Balanced's budget is 320.
+
+| pitch | Z0 dc+ui | Z1 dc+ui | Z2 dc+ui | Z2 tiers | §2.5b ring at Z2 |
+|---|---|---|---|---|---|
+| 34° (floor) | 248 | **353** | 264 | 0/18/18 | 1,245 m → clipped to 1,200 |
+| 48° | 248 | 335 | 221 | 0/17/19 | — |
+| 62° (ceiling) | 246 | 299 | 221 | 0/17/19 | 675 m |
+| §2.5 zoom-coupled | 248 | **335** | 221 | 0/17/19 | 675 m |
+
+**Armed and disarmed are the same numbers, everywhere** (`--pitch-cull=1` vs
+`--pitch-cull=0`, differing in nothing else). The ring at 62° comes in to 675 m
+against the preset's 1,200 and removes **zero** draw calls, because the bench
+city is ~896 m across and a cull ring larger than the city is not a cull. The
+mechanism does work: `--far-cull=M` at Z2 gives **19 FAR chunks at 1,200 m, 19
+at 675 m, 8 at 500 m**, `dc` 196 → 191.
+
+### 42.3 Where the Z1 bust actually is
+
+Z1 busts the 320 budget at **335 dc+ui as shipped** — before any manual tilt —
+and at **353** at the pitch floor. `far_cull_m` cannot touch it: the Z1 census
+is 10 NEAR + 26 MEDIUM + **0 FAR**, and a cull distance only removes chunks
+beyond `medium_max_m`.
+
+| lever, measured at the pitch floor | Z1 dc | Z2 dc |
+|---|---|---|
+| as shipped | 328 | 239 |
+| `medium_max_m` 420 → 250 | 322 (**−6**) | 174 (**−65**) |
+| shadow pass off (`performance` row) | 124 | 197 |
+| shadow pass restored on that same row | 311 (**+187**) | 197 |
+
+**~187 of Balanced's 310 Z1 draw calls — 60 % of the pose — are the sun's
+cascades.** `shadow_max_m` is the lever with purchase at Z1; a pitch-coupled
+`medium_max_m` is worth 6 there and 65 at Z2. Neither is taken in this lane;
+both are filed with their numbers in doc 11 §2.5b's OPEN note.
+
 ---
 
 ## 52. Wave 18 — Lane S: what the money surfaces are made of, measured (2026-09-02)

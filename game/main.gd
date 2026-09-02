@@ -362,6 +362,20 @@ func _build_ground() -> void:
 	flood_view.snap()
 
 
+## doc 11 §2.13b — the engine-side half of a graphics preset, in ONE place, so
+## boot, the settings row and the governor's latched drop cannot drift apart
+## (report 98 RR-98: render_scale, MSAA/FXAA, shadows, glow and the street-light
+## budget were authored per preset and applied nowhere).
+func _apply_quality(preset_name: String) -> void:
+	var q := QualityApplier.resolve(_render_data, preset_name,
+			perf_governor.knobs() if perf_governor != null else {})
+	QualityApplier.apply_viewport(get_viewport(), q)
+	if environment_controller != null:
+		environment_controller.apply_quality(q)
+	if streetlights != null:
+		streetlights.set_light_budget(int(q["street_lights"]))
+
+
 func _build_city_view(render_data: Dictionary) -> void:
 	render_model = RenderStateModel.new(render_data)
 	# doc 11 §7.4 / tools/bench_device.sh: pin the graphics preset from the
@@ -421,6 +435,10 @@ func _build_city_view(render_data: Dictionary) -> void:
 	# Boot-time presets: a phone that auto-detected into Performance used to come
 	# up with Balanced counts on every per-layer view until the player touched
 	# the settings row. Seed them all from the resolved preset once, here.
+	# doc 11 §2.13b: the ENGINE-side half of the same preset (report 98 RR-98).
+	_apply_quality(render_model.preset)
+	if streetlights != null:
+		streetlights.set_preset(render_model.preset, render_data)
 	if road_surface != null:
 		road_surface.set_preset(render_model.preset, render_data)
 	if flood_view != null:
@@ -518,6 +536,10 @@ func _apply_render_ab_args() -> void:
 			power_infra.set_pad_shadows(a.trim_prefix("--pad-shadows=") != "0")
 		elif a.begins_with("--flood-detail=") and flood_view != null:
 			flood_view.set_detail(int(a.trim_prefix("--flood-detail=")))
+		elif a.begins_with("--road-tint=") and road_surface != null:
+			# doc 12 D-74 / doc 11 §2.1.2: the carriageway tint gain, in LINEAR — the
+			# device-gated A/B for the blob shadow's body_alpha question (RR-97).
+			road_surface.set_tint_gain(float(a.trim_prefix("--road-tint=")))
 		elif a.begins_with("--flood=") and flood_view != null:
 			# Standing water on demand, in mm, over every tile the flood layer
 			# knows about — the device's first look at the wet look without
@@ -1372,6 +1394,9 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 	match key:
 		&"graphics":
 			render_model.set_preset(str(model.value("graphics")))
+			_apply_quality(str(model.value("graphics")))
+			if streetlights != null:
+				streetlights.set_preset(str(model.value("graphics")), _render_data)
 			if vehicle_view != null:
 				vehicle_view.set_preset(str(model.value("graphics")),
 						StarterCityLoader.read_json("res://data/render.json"))
@@ -2123,6 +2148,9 @@ func _process(delta: float) -> void:
 		if perf_governor.update(delta):
 			var knobs := perf_governor.knobs()
 			city_view.apply_governor(knobs)
+			# §2.13b rungs 1 and 4: render_scale -> the viewport, street_lights
+			# -> StreetlightView. Both were computed and applied nowhere.
+			_apply_quality(String(knobs["preset"]))
 			if power_infra != null:
 				power_infra.apply_governor(knobs)   # `particle_ratio` only
 			_apply_frame_cap(perf_governor.target_fps())          # doc 13 §2.8 / RR-126

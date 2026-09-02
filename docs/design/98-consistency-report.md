@@ -3542,9 +3542,16 @@ decode either. It is not fixed here for one reason: several of those constants
 are used BOTH as vertex colours and as instance tints (`GRAVEL` is the dump
 truck's load and the yard's gravel heap), so converting the constant would move
 both at once and the mesh half has never been judged against a picture.
-**awaiting_consumer:** the next render pass, over
+~~**awaiting_consumer:** the next render pass, over
 `game/render/construction_rig_mesh.gd`, `game/render/vehicle_mesh.gd` and
-`game/render/street_life_mesh.gd`, with a screenshot per mesh family.
+`game/render/street_life_mesh.gd`, with a screenshot per mesh family.~~
+**CONSUMED 2026-09-01 by RR-95** (§38), which is the named pass over the three
+named files with the screenshot pass the filing asked for. One correction to
+this deferral's own text is recorded there: `GRAVEL` as "the dump truck's load"
+is a DEAD vertex colour — the load carries `SURF_STOCK` and the fragment stage
+replaces it with the `stock_color` uniform, which is `source_color` and
+therefore already decoded. The heap half of that dual use is real and is exactly
+why the conversion went at the WRITE and not at the constant.
 
 **Applied:** `game/render/vehicle_view.gd` (`_paint_for` + the `CIV_PAINT`
 re-judgement), `game/render/construction_activity.gd` (`_plant_paint`,
@@ -5698,6 +5705,366 @@ and the completion statement); doc 93 §AF; and
 `tools/device_results/README.md`.
 
 ---
+
+## 38. WAVE 17 — the preset that did nothing, the linear meshes, the building shadow and the far line (binding)
+
+*Render/art lane, forked off the Wave-17 integration (`a5d9021`), 2026-09-02.
+**Hash-neutral throughout**, proved on both cities at the fork and again at the
+end: nothing in this lane touches `sim/`, and its only `data/` edit is
+`data/render.json`, which no file under `sim/` opens.*
+
+*Two earlier attempts at this task died mid-build on the weekly usage limit,
+each leaving an unverified diff and neither having run the suite. **This
+section is the third, and its first commit was the second attempt's diff
+re-based onto the fork — after which every number in it was re-taken.** Six of
+the inherited claims turned out to be wrong; each is corrected in place, with
+what it said, what it is, and how the error was found. Those six are the most
+useful paragraphs here, because five of them are the SAME MISTAKE — a claim
+about a consumer made from reading rather than from grepping — which is
+`A91-D-19`'s shape for the fourth wave running.*
+
+| `profile_sim --hash-only` | at the fork | after this pass |
+|---|---|---|
+| starter, coarse 24 h | `a27da24aaf6e9663…` | **`a27da24aaf6e9663…`** |
+| starter, fine 2.0 h | `7745cb25e55ff65c…` | **`7745cb25e55ff65c…`** |
+| bench, coarse 24 h | `7c99720f5ff14553…` | **`7c99720f5ff14553…`** |
+| bench, fine 2.0 h | `d8e8889681b23297…` | **`d8e8889681b23297…`** |
+
+### RR-95 — a vertex colour takes no decode either, and the file that gets missed is the one nobody greps for (closes `A91-D-36`; docs 11 §2.12/§2.16/§2.17, 91, 93 §X1)
+
+**RR-91 closed the INSTANCE half of `A91-D-36`** — a `MultiMesh` instance
+colour is handed to the shader as LINEAR and nothing on that path decoded it,
+so every authored livery rendered about two stops light — and left the VERTEX
+half open with an `awaiting_consumer` naming three files. A vertex `COLOR` is
+the same: no decode, no `source_color` hint, no engine help.
+
+**The seam is at the WRITE, never at the constant**, and the reason is
+`ConstructionRigMesh`'s dual-use trio. `SAND`, `GRAVEL` and `REBAR` are read
+both as vertex colours here and as MultiMesh instance TINTS by
+`ConstructionActivity._stock_linear`, which already applies `srgb_to_linear()`
+once at `_init`. Decoding the constant would decode them **twice** on that path
+— gravel at linear 0.049 instead of 0.223, i.e. black — while fixing nothing
+the mesh half needed. One authored source of truth, one decode per consumer.
+
+**Two hexes of twenty moved, and both had to.** `DARK` `#1D2022` → `#424548`
+and `TYRE` `#161618` → `#333336`, in both mesh files. Decoded from their
+authored values they land at linear **0.0125** and **0.0069** against a shaded
+carriageway near **0.02**: an excavator's track band stopped being an object
+standing on the road and became a hole cut in it, and a tyre went blacker than
+fresh asphalt, taking its tread ribs with it. The other eighteen survive — the
+fix is a darkening, and a darkening is what it is for.
+
+**THE FIFTH BUILDER, and the correction that matters most in this entry.** The
+inherited note recorded `CobraHeadMesh` as *"checked and deliberately left,
+whose vertex colour is a grime ramp and whose colour is `albedo_color`"*.
+**Both halves of that are wrong.** The ramp MULTIPLIES two authored tints
+(`COWL_TINT`, `LENS_TINT`), and those tints reach the shader through
+`ARRAY_COLOR` and not through `albedo_color`. It is fixed, and the ruling is a
+SPLIT worth stating on its own:
+
+> **The authored TINT is decoded; the GRIME RAMP is not.** A ramp is a
+> reflectance multiplier — soot on a mast — and belongs in linear, where
+> halving it means half the light. Decoding the product instead would put the
+> ramp through a 2.4 power and take the foot of the mast from linear 0.41 to
+> 0.18, which is not grime, it is night.
+
+Neither cobra constant moved: both are near-white, `0.90` decodes to `0.787`,
+and white is a fixed point of the decode. That is exactly the difference
+between this file and `DARK`/`TYRE`, and it is why "convert everything and
+re-judge everything" would have been the wrong instruction.
+
+**AND THE GUARD IS NOW A CENSUS RATHER THAN A LIST.**
+`test_every_procedural_mesh_decodes_its_authored_vertex_colour` walks
+`game/render/`, takes every file containing `Mesh.ARRAY_COLOR`, and requires
+`srgb_to_linear` in each — five files found, five checked. **A hand-kept list
+of builders is what missed the fifth one twice.** `grep -rln "ARRAY_COLOR"
+game/render/` was always the audit answer this row was owed; it is a test now.
+
+**The re-judge, measured rather than described** (`profile_frame --preset=high
+--hour=13 --focus=52,44 --poses=z0 --sites=3 --street-life=8 --traffic=14
+--units=2 --shots`, bench city, 1920 × 1080, before/after with nothing else
+changed):
+
+| | |
+|---|---|
+| frame moved > 2/255 | 28,282 px, **1.36 %** |
+| frame moved > 32/255 | 12,514 px, 0.60 %; peak **87/255** |
+| mean luma over the moved pixels | **151.1 → 99.3** |
+| whole-frame mean luma | 94.59 → 94.15 — *targeted, not a global dimming* |
+| **pixels below 20/255 luma** | **1,956 before, 1,956 after** |
+| pixels below 12/255 luma | **0 before, 0 after** |
+
+**The near-black count is the number that matters**: the re-judged `DARK` and
+`TYRE` are what bought it, and an unchanged near-black population is what "no
+part became a hole in the road" means as evidence rather than as an opinion.
+The picture that carries the art call is the construction site's cabin — a
+washed-out mint before, a saturated sage after, with the white barricade tops
+unmoved.
+
+### RR-96 — the layer §2.11 has been owed since the preset table was written, and the price of a per-chunk cost multiplied by a modelled chunk count (docs 11 §2.11/§2.13, 91, 93 §X2)
+
+`presets.performance.shadows` is `false` and `blob_shadow.enabled_presets` has
+named `["performance"]` since the preset table existed, and nothing drew it —
+so the cheapest preset shipped with **every block in the city floating**.
+`MM_blob` is that layer.
+
+**ONE draw call city-wide, not one per NEAR/MEDIUM chunk.** §2.11 priced the
+per-chunk shape; built and measured, Performance's census on the bench city at
+`--focus=52,44` is **10 NEAR + 26 MEDIUM at Z0**, not the worked example's
+3 + 3, so per-chunk cost **36 calls at Z0** against a budget the city was
+already over. **A per-chunk cost multiplied by a chunk count taken from the
+model rather than from the census is the failure mode; the census is the
+number.**
+
+**Measured** (bench city, performance, hour 13, `--focus=52,44`, `--blob=0`
+vs `--blob=1`, nothing else different):
+
+| pose | dc, off → on | prims, off → on | `rs gpu`, off → on |
+|---|---|---|---|
+| Z0 | **89 → 90** | 89,822 → 92,822 | 0.585 → 0.586 ms |
+| Z1 | **123 → 124** | 95,494 → 98,494 | 0.741 → 0.742 ms |
+| Z2 | **196 → 197** | 261,464 → 264,464 | 0.837 → 0.843 ms |
+
+**+1 draw call and +3,000 primitives at every pose** = 1,500 buildings × 2
+triangles: a function of the ROSTER, not of the camera, which is what makes
+scrubbing across a tier boundary free. Balanced and High are unchanged —
+`blob_draw_calls()` is 0 at every pose on both.
+
+*Corrected from the inherited draft: its table read `229 → 230 / 225 → 226 /
+188 → 189`. Those were measured before RR-98 wired `shadows: false`, so
+Performance was still paying a shadow pass it had authored itself out of. The
+`0 → 1` delta is the same either way; the base is not.*
+
+*Also corrected: `rs gpu` is REPORTED, not claimed. The same configuration
+measured 0.837 and 1.228 ms at Z2 in two runs an hour apart on a workstation
+carrying sibling suites, so a ±0.4 ms run-to-run band swamps a 0.006 ms effect.
+That number belongs to a Fold session.*
+
+**Alpha 0.35 verified twice, and screen deltas alone could not have done it**,
+because AgX sits between the blend and the pixel. Linearising both frames and
+taking the ratio over the decal gives **p5 = 0.630 / 0.574 / 0.653** at
+Z0 / Z1 / Z2 against the **0.650** that `blend_mix` toward black at α = 0.35
+predicts. The deeper p1 tail (0.457 / 0.423 / 0.521) is where two neighbouring
+decals OVERLAP — and **0.65² = 0.42** is exactly where that tail sits, which is
+a second, independent check on the same number.
+
+**Path decided, and it is a dedicated MultiMesh under RR-83 rather than a mode
+on the street FX buffer.** Three reasons, in the order that decides them: the
+fx buffer is rewritten every frame for objects that WALK while a building decal
+moves only when a building does; the fx shader's one unconditional
+`texture(glyph_page, …)` fetch is right for five of its six modes and would be
+paid by every fragment of every building decal on the lowest tier for nothing;
+and the two layers have two different gates (`enabled_presets` against
+`vehicle_shadows` INVERTED) that a shared shader would hide rather than merge.
+
+**The live preset swap and the governor's latched drop both need no shell
+call**: `_sync_blob_preset()` runs inside `_upload_all` and re-derives the gate
+from `RenderStateModel.preset`, which is the one object both paths write.
+
+### RR-97 — the lever with authority is not always the lever with the ruling, and an arm has to be checked at a pose that contains the thing (docs 11 §2.1.2/§2.17b, 93 §X3/§X4)
+
+§2.17b's street-body blob is near-invisible on the carriageway and `body_alpha`
+is not the cause: a `blend_mix` decal darkens what is behind it by a FRACTION,
+so the same disc is a 15/255 mark on the carriageway and a 40/255 mark on the
+footway. The lever with authority is the road — and the road is every street in
+the city on a phone screen. So this lane ships `RoadSurfaceView.set_tint_gain(k)`
+(live, one uniform, byte-identical at `k = 1.0`), both commands, and **moves
+nothing**.
+
+**THE ARM HAD TO BE CHECKED, AND IT FAILED ITS FIRST CHECK.** The
+re-measurement began at Z0, `--focus=52,44`, and moved **zero pixels at
+`k = 4.0`** — three shots at `k` = 1.0, 1.5 and 4.0 byte-identical by `md5sum`.
+The arm was not broken: **that pose has no carriageway in it.** A null result
+from a frame containing none of the thing under test is indistinguishable from
+a null result from a lever with no authority, and this section's own binding is
+that an arm must be checked for authority before its result is believed. What
+caught it was making the harness print the uniform **read back off the live
+`ShaderMaterial`** (`RoadSurfaceView.live_tint_color()`) beside the value the
+arithmetic wanted — the same "read back off the live object" rule RR-98's
+`QUALITY` line follows.
+
+**Re-measured on a road-bearing pose** (bench city, High, `--focus=52,44`,
+`k = 1.0` vs `1.5`, i.e. `(0.3412, 0.3412, 0.3725)` → `(0.4141, 0.4141,
+0.4512)`, a +21.4 % lift of the authored triple):
+
+| pose / hour | carriageway in frame | rendered luma | peak |
+|---|---|---|---|
+| Z1, 13 | 19.2 % | 72.84 → 75.07, **+3.1 %** | 8/255 |
+| Z2, 13 | 7.7 % | 107.78 → 109.04, **+1.2 %** | 5/255 |
+| Z1, 21 | 1.8 % | 38.83 → 40.22, **+3.6 %** | 5/255 |
+| Z2, 21 | 1.2 % | 36.46 → 37.37, **+2.5 %** | 6/255 |
+
+**Two inherited claims corrected.** (1) **There is no day/night asymmetry.**
+The draft said the tint moves the road 17 % by day and "buys nothing at all" at
+night, on the theory that after dark the road's value belongs to
+`road_night_albedo_lift` and `road_night_glow` in a different block. At Z1 the
+night arm moves it **more** than the day arm. The theory was reasonable and it
+is not what the frames do. (2) **The lever has far less authority than "the
+lever with authority" implies.** The response is near-linear and was measured,
+not extrapolated (`k` 1.0 → 3.0 gives 73.55 → 81.96 luma at Z1 by day,
+**+4.21 luma per unit of `k`**, against +4.46 from the 1.0 → 1.5 arm), so
+moving the road the ~15/255 the blob needs takes **`k ≈ 4.6`** — an authored
+tint near `(0.68, 0.68, 0.73)`. **That is not a tint adjustment, it is a
+different, pale-grey road**, which makes the case for leaving the ruling to a
+device session stronger than the draft made it.
+
+**§V1's re-open condition is restated and the restatement was re-checked**
+(doc 93 §X4): the trigger was *"telemetry showing players farm-ignoring crooks
+at scale"* and **this project has no analytics path at all** — the crash
+sentinel writes a local file and sends nothing, and no `INTERNET` permission is
+requested. It now names two instruments that exist on the day it is written: a
+play session in which a tester says the offers became **wallpaper**, and a
+`tools/run_matrix.sh` row in which the tapping agent's `street_share_of_net`
+collapses. The second is **a column that already prints** —
+`tools/playtest.gd:3000-3007` computes `opportunities_collected`,
+`street_income`, `street_missed` and `street_share_of_net` per run — verified
+by reading those lines, not by trusting the citation.
+
+### RR-98 — an authored number nothing reads is not a setting, it is a comment; and the FAR tier was grey because a colour space was applied twice (docs 11 §2.5b/§2.6b/§2.13b, 12 D-74/D-74b, 91, 93 §X5)
+
+**Twenty-two keys** in every preset row of `data/render.json` reached no engine
+call. The count is `grep -rn '"<key>"' --include=*.gd game/ ui/` against the
+fork tree, and it **corrects the "thirteen" the inherited draft published**:
+that list omitted `shadows`, `glow_blend`, `civ_headlights` and the six deleted
+rows. Twenty-one of the twenty-two appear nowhere in `game/` or `ui/` in any
+form — unreachable, not merely unread. The twenty-second, `render_scale`,
+appears exactly twice, both in `ui/settings_model.gd:172-173`'s comparator:
+**it sorted the graphics menu cheapest-first**, so the number that decided the
+ORDER of the options was the number that did nothing when you picked one.
+
+**The audit's sentence, as three numbers.** With the engine-side keys inert
+(`--no-quality`, which reproduces the pre-Wave-17 frame exactly), bench city,
+hour 13, `--focus=52,44`, Z0:
+
+| pre-Wave-17 | dc | prims | `rs gpu` |
+|---|---|---|---|
+| performance | 224 | 276,530 | 1.271 ms |
+| balanced | 223 | **273,710** | 1.290 ms |
+| high | 223 | **273,710** | 1.286 ms |
+
+**Balanced and High rendered the same frame to the primitive**, GPU times 0.3 %
+apart. Performance's one extra call and 2,820 extra primitives are RR-96's
+decal — the only thing on the whole engine side separating the rows. As
+shipped: **90 / 223 / 223 dc** and **92,822 / 273,710 / 455,852 prims**, with
+VRAM spreading **74 / 123 / 191 MB** from a flat 125 MB. **`shadows: false`
+alone is 134 draw calls and 183,708 primitives at Z0**, and High costs **67 %
+more primitives than Balanced** at the same draw-call count, because Godot
+batches the PSSM passes — **`dc` is the wrong column to look for a shadow
+setting in.**
+
+**`civ_headlights` was DELETED by the draft on a false claim and is WIRED.**
+The claim was that it "duplicates a cap `vehicles.headlight_*` already owns".
+Those four rows are a night threshold, a cone length, an energy and a colour —
+none of them a count — and `MM_headlights` was in fact **the one buffer in
+`VehicleView` with no ceiling at all**: `_ensure_capacity` clamps every body
+layer against `caps`, and `_ensure_cone_capacity` grew the cone buffer to the
+next multiple of 32 above the roster and clamped against nothing. It is the
+only additive, transparent layer the vehicle system draws, on a device §2.13
+measures as fragment-bound. **Deleting a key needs the same evidence as wiring
+one: the grep, not the recollection.**
+
+**The three `reflection_probe` rows stay deleted, but the justification was
+also wrong and is replaced.** The draft cited
+`test_water_has_two_octaves_and_no_reflection_probe` as *"the standing ruling
+that the probe is not coming"*. That test forbids the WATER SHADER from faking
+a reflection, and its own failure message says §2.11 *"gates the ONE probe the
+game may own to High"* — **it assumes the probe, it does not refuse it.** The
+rows go because nothing constructs a `ReflectionProbe`, and §2.13b now records
+the node, the owner and the three numbers so the wave that builds it re-authors
+them in the same commit. Six keys are deleted, not seven.
+
+**§2.5b — the pitch-coupled cull is BUILT, and it does not fix what it was
+ranked to fix.** `pitch_cull_reach_m` computes where the frustum's TOP CORNERS
+meet the ground and clamps the cull ring to it; `CityView` supplies pitch and
+aspect off the live `Camera3D` and viewport, so it is live with no shell edit.
+Three things the obvious implementation gets wrong and this one does not: the
+CENTRE of the top edge reaches 411.9 m at Z2 (exactly `_z2_derivation`'s
+hand-computed `r_far`) but **the CORNERS reach 532 m, 29 % further**; `slack`
+must multiply the computed REACH and not `far_cull_m`, because the reach scales
+with camera height as much as pitch (48 m from Z0 at the floor, 1,111 m from
+Z2); and the reach is a GROUND range while `chunk_ground_distance` is 3-D, so
+the ring is `hypot(reach, camera_y)` or it comes in by the whole camera height.
+
+**And it removes zero draw calls**, at every pose and every pitch, armed or
+disarmed. At 62° the ring resolves to 675 m against the preset's 1,200; the
+bench and starter cities are ~896 m across and the presets cull at
+900/1200/1500. **A cull ring larger than the city is not a cull.** The
+mechanism works — `--far-cull=M` at Z2 gives 19 FAR chunks at 1,200 m, 19 at
+675 m and **8 at 500 m** — it simply has nothing to remove until the ring is
+inside the city.
+
+**The bust the handoff pointed at is the shadow pass.** Z1 busts the 320 budget
+at **335 dc+ui as shipped**, before any manual tilt, and at **353** at the
+pitch floor. `far_cull_m` cannot reach it in principle: the Z1 census is
+10 NEAR + 26 MEDIUM + **0 FAR**. Measured alternatives: `medium_max_m`
+420 → 250 is worth **6 dc at Z1 and 65 at Z2**; the shadow pass is worth
+**187 at Z1** (Performance draws Z1 at 124 dc, the same run with the pass
+restored at 311) — **60 % of that pose is the sun's cascades**. Filed as an
+OPEN with its re-open trigger rather than closed by moving a budget.
+
+**§2.6b — the FAR tier, and it was a colour space applied twice wearing an art
+bug's clothes.** `base_albedo`/`roof_albedo` are `source_color` uniforms, which
+the engine decodes, so the authored 0.340/0.260 painted linear 0.0946/0.0550
+against a tier in front of it painting the MEAN OF ITS FAÇADE PAGE. `CityView`
+now measures each page the near tier wears (an 8×8 Lanczos reduction — what
+that page looks like once it is a few pixels wide) and hands the five wall/roof
+pairs over in sRGB, so the engine performs the one and only decode.
+
+**Where the boundary sits and how big the step was.** `medium_max_m` 420 m is a
+3-D distance, so at Z2 the boundary is a ground ring at **197.3 m** and the FAR
+tier covers **20.87 % of the frame**. The A/B is `--medium-max=1500`, which
+draws the same buildings with the textured shader:
+
+| arm | mean luma over the FAR footprint | vs textured | sd |
+|---|---|---|---|
+| reference (all textured) | 142.63 | — | 23.10 |
+| FAR flat grey (pre-Wave-17) | 120.62 | **−15.4 %** | 12.63 |
+| FAR per-family palette | 141.70 | **−0.7 %** | 23.70 |
+
+The far city was **15.4 % too dark and carrying 55 % of the variance**, at zero
+draw-call cost either way (182 dc / 302,878 prims in both arms).
+
+**§2.6b (2) — the day façade, which is the other half of the audit's row and is
+new in this lane.** With the level matched, `ALBEDO` was still one flat value
+per family per face by day. The night path already computes a storey band and a
+bay mullion for `EMISSION`; this reuses them on `ALBEDO` for **three ALU, no
+texture fetch and no draw call**. **It is ZERO-MEAN by construction** —
+`1 + depth · (cover − mean_cover)` with `mean_cover = (band_hi − band_lo) ·
+far_mullion_duty`, exactly what the sharp pattern integrates to — because any
+pattern whose average is not 1 would throw away the −0.7 % level match above;
+measured, the far walls move 145.53 → 144.58 luma, **−0.65 %**. It also
+self-extinguishes at range with no second boundary, because both factors are
+`fwidth`-crossfaded to their own means. **The depth is a measured art call**:
+high-pass detail RMS over the far-tier walls runs **4.46 / 6.07 / 7.66** at
+depth 0 / 0.55 / **0.90 (shipped)** against the textured reference's 13.30.
+
+**A textured FAR atlas is FILED WITH ITS PRICE rather than taken**: promoting
+the whole Z2 frame to the textured shader costs **+80 dc and +158,322 prims**
+on High (182 → 262; inside High's 520 and inside Balanced's 320 at 287 with
+UI), but the level error is already −0.7 % and the walls carry structure, so
+the residual is texture DETAIL, which reads as softness and not as a line. **A
+distance fade is rejected outright**: `fog_aerial_perspective` already greys
+the far city with range, and a second fade in the albedo greys the skyline
+twice — which is the shot §1's "show the tall skyline" is about.
+
+### The six inherited claims that were wrong, in one place
+
+| the draft said | it is | how it was found |
+|---|---|---|
+| `civ_headlights` duplicates a cap `vehicles.headlight_*` owns | those are a threshold, a length, an energy and a colour; `MM_headlights` had **no** cap | read `_ensure_cone_capacity` beside `_ensure_capacity` |
+| the water test is a standing ruling that no probe is coming | it forbids the water SHADER faking one and assumes the probe | read the test's own failure message |
+| `CobraHeadMesh` is exempt: a grime ramp, and `albedo_color` | the ramp multiplies two authored tints, through `ARRAY_COLOR` | `grep -rln "ARRAY_COLOR" game/render/` |
+| thirteen preset keys were inert | **twenty-two** | the grep, against the fork tree |
+| the road tint moves the road 17 % by day, 1.6 % at night | +3.1 % / +1.2 % by day, +3.6 % / +2.5 % at night — no asymmetry | re-measured at a pose that has a road in it |
+| only Performance misses `chunk_budget`, at Z2 | all three presets miss `near_chunk_max` at Z0/Z1; Performance misses `chunk_budget` at all three poses | read the harness's own `OVER` line |
+
+**Five of the six are the same mistake**: a claim about a consumer, made from
+reading the code once rather than from grepping for it. `A91-D-19` was closed
+by a census and not by a fix, and every one of these would have been caught by
+the census the fix eventually shipped —
+`test_no_inert_preset_key`, `test_the_deleted_keys_stay_deleted` and
+`test_every_procedural_mesh_decodes_its_authored_vertex_colour` are those
+censuses, and they are the part of this section worth keeping.
 
 ## 53. WAVE 18 — money has surfaces: the taper says when it ends, the wear says what it costs, and the city repairs what it owns (binding)
 

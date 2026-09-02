@@ -37,6 +37,21 @@ const COLLAR_GRIME := 0.86
 ## the head reads as a fitted object bolted to the mast rather than as more
 ## mast. (Vertex colour is quantised to RGBA8, so these stay inside [0,1] and
 ## the contrast is spent on HUE, which survives the quantisation intact.)
+##
+## **AUTHORED sRGB, DECODED ONCE IN `_push` (report 98 RR-95).** This file was
+## missed by the first pass at `A91-D-36`'s vertex half, which converted
+## `ConstructionRigMesh`, `VehicleMesh`, `StreetLifeMesh` and
+## `ConstructionSiteView` and left the fourth procedural mesh in the tree —
+## found by `grep -rln "ARRAY_COLOR" game/render/`, which is a census and not a
+## memory, and which is why the census is written down here.
+##
+## **The two constants are NOT re-judged and did not move**, unlike
+## `ConstructionRigMesh.DARK`/`TYRE`. Both are near-white and the decode moves
+## them about an eighth of a stop (0.90 → linear 0.787, 1.00 → 1.000, which is
+## a fixed point) — nowhere near the failure those two had, where a decoded
+## dark landed on the value of the carriageway it stood on. What the decode
+## does here is exactly what it should: the painted cowl steps back a little
+## from the glass lens beside it, which is the read this pair was authored for.
 const COWL_TINT := Color(0.90, 0.91, 0.94)
 const LENS_TINT := Color(1.00, 0.99, 0.93)
 const ARM_SEGMENTS := 4
@@ -172,7 +187,15 @@ func _push(p: Vector3, n: Vector3, grime: float, tint: Color) -> int:
 	_verts.push_back(p)
 	_norms.push_back(n)
 	var k := lerpf(GRIME_FLOOR, 1.0, clampf(p.y / maxf(GRIME_M, 0.01), 0.0, 1.0)) * grime
-	_cols.push_back(Color(k * tint.r, k * tint.g, k * tint.b, 1.0))
+	# The TINT is decoded and the GRIME RAMP is not, and the split is the whole
+	# of the ruling (report 98 RR-95). `tint` is an authored colour and takes
+	# the sRGB decode every authored colour in this tree now takes; `k` is a
+	# multiplicative darkening — soot on a mast — and a reflectance multiplier
+	# belongs in LINEAR, where halving it means half the light. Decoding the
+	# product instead would put the ramp through a 2.4 power and take the foot
+	# of the mast from linear 0.41 to 0.18, which is not grime, it is night.
+	var lin := tint.srgb_to_linear()
+	_cols.push_back(Color(k * lin.r, k * lin.g, k * lin.b, 1.0))
 	# Metres along the face and up the shaft: the prop page's own pitch, so a
 	# 0.14 m arm and an 8 m mast carry the same grain.
 	var u := (p.z if absf(n.x) >= absf(n.z) else p.x) / _tile

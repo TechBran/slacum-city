@@ -17,6 +17,8 @@ extends RefCounted
 ##   (the machine's paint). Painted panels are authored near-white so the paint
 ##   IS the colour; steelwork, glass and rubber are authored dark enough that
 ##   the paint on them never reads as a colour of its own.
+##   **The tint constants below are authored as sRGB and converted to LINEAR
+##   once, in `_push`** — see `_linear`, which is the only seam in this file.
 ## * **UV** — the surface coordinate, projected in METRES and divided by
 ##   `PropSurface.tile_m()`, so a 0.14 m bed rib and a 4.6 m track frame carry
 ##   the same grain and the same baked AO band pitch as every other prop in the
@@ -96,12 +98,47 @@ const TIP_LOAD_FLOOR_Y := 1.20
 const TIP_AXES := Color(0.0, 0.0, 0.0, 0.0)
 
 # ---- shared tints ---------------------------------------------------------
+#
+# ALL AUTHORED sRGB, ALL CONVERTED ONCE IN `_push` (report 98 RR-95, closing the
+# `awaiting_consumer` half of doc 91 `A91-D-36`). A vertex COLOR takes no sRGB
+# decode — the same rule that made a MultiMesh instance colour render two stops
+# light (RR-91) — so every hex below was being used as if it were already
+# linear.
+#
+# **The CONSTANTS stay sRGB and are NOT converted in place, and that is the
+# decision.** Three of them are DUAL-USE: `SAND`, `GRAVEL` and `REBAR` are read
+# by `ConstructionActivity._stock_linear` as MultiMesh instance TINTS for the
+# yard heaps, where that class already applies `srgb_to_linear()` once at
+# `_init`. Converting the constant here would convert them TWICE on that path —
+# a heap of gravel at linear 0.049 instead of 0.223, i.e. black — while fixing
+# nothing the mesh half needed. Converting at the WRITE instead lets each
+# consumer decode once, from one authored source of truth.
 
 ## Painted plant panels are authored WHITE: the instance colour is the paint.
+## (White is a fixed point of the decode, so this row is the one the conversion
+## cannot move — which is why the "panels are the paint" contract survives it.)
 const PAINT := Color(1.0, 1.0, 1.0)
 const STEEL := Color(0.46, 0.48, 0.50)
-const DARK := Color(0.115, 0.125, 0.135)
-const TYRE := Color(0.085, 0.085, 0.095)
+## **Re-judged 2026-09-01 against the screenshot pair, `#1D2022` → `#424548`
+## (report 98 RR-95).** This is the track frame, the chassis rail, the exhaust
+## stack, the grille and the lightbar housing — every dark structural face on
+## the layer. Decoded from its authored `0.115` it lands at linear **0.0125**,
+## and the shaded carriageway at Z0 sits near **0.02** (report 98 RR-90's
+## measurement): the undercarriage stopped being an object standing on the road
+## and became a hole cut in it, the whole track band flat black with the grouser
+## line gone. That is RR-91's `CIV_PAINT[3]` failure one layer down. `0.260`
+## decodes to **0.055** — a genuinely dark part, half the `0.115` it used to
+## render at, and 2.7× the road it stands on.
+const DARK := Color(0.260, 0.272, 0.284)
+## **Re-judged with `DARK`, `#161618` → `#333336`.** Rubber, and the same
+## constant as `VehicleMesh.TYRE` because it is the same material on the same
+## street; the two are kept identical by hand and `tests/test_construction_living.gd`
+## asserts it. Authored `0.085` decodes to **0.0069** — blacker than fresh
+## asphalt, which took the tread ribs off the `dark` atlas cell with it (a ±20 %
+## value pattern on an invisible value is an invisible pattern). `0.200` decodes
+## to **0.033**: still 2.6× darker than the `0.085` it was rendering at, and
+## still above the carriageway, so the wheel line survives a night frame.
+const TYRE := Color(0.200, 0.200, 0.210)
 const GLASS := Color(0.145, 0.175, 0.225)
 const CHROME := Color(0.68, 0.70, 0.73)
 const GREASE := Color(0.22, 0.20, 0.18)
@@ -542,10 +579,25 @@ static func _hash01(value: int, salt: int) -> float:
 	return float(h) / 100003.0
 
 
+## THE COLOUR SEAM, and the only one in this file (report 98 RR-95).
+##
+## A vertex COLOR is handed to the shader exactly as written and used as a
+## LINEAR value — a `source_color` uniform and `StandardMaterial3D.albedo_color`
+## are decoded for free, and neither a MultiMesh instance colour (RR-91) nor a
+## vertex colour is. Every tint above is authored the way a painter authors one,
+## in sRGB, so it is decoded HERE: once per vertex at BUILD time, never per
+## frame, and never at the constant (see the block above the tints for why).
+##
+## Alpha is untouched by `srgb_to_linear`, which this layer depends on:
+## `construction_rig.gdshader` reads `COLOR.a` as the per-machine hash.
+static func _linear(color: Color) -> Color:
+	return color.srgb_to_linear()
+
+
 func _push(p: Vector3, n: Vector3, color: Color, joint: float, surf: float) -> int:
 	_verts.push_back(p)
 	_norms.push_back(n)
-	_cols.push_back(color)
+	_cols.push_back(_linear(color))
 	_uvs.push_back(_tiled_uv(p, n))
 	_uv2s.push_back(Vector2(joint, surf))
 	return _verts.size() - 1

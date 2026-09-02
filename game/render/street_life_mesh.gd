@@ -76,6 +76,12 @@ const SURF_DARK := 1.0
 const SURF_GLINT := 2.0
 
 # ------------------------------------------------------------- shared tints
+#
+# AUTHORED sRGB, DECODED ONCE at the vertex write — this file inherits
+# `ConstructionRigMesh._push`, so it inherits `_linear` with it and there is no
+# second seam to keep in step (report 98 RR-95). `StreetLifeModel._bake_colours`
+# does the same thing to the INSTANCE half — the coats and marker tints — which
+# is why this layer never had RR-91's defect and did have RR-95's.
 
 ## Painted like the plant: near-white takes the instance colour whole.
 const COAT := Color(1.0, 1.0, 1.0)
