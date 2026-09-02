@@ -1054,6 +1054,20 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 	if save_service != null:
 		root.bind_save_service(save_service, sim_host.sim)
 	if root.settings_sheet != null:
+		# PA-15: `user://settings.cfg` FIRST, before anything below reads a row.
+		# It is the device's answer — graphics preset, refresh pin, text scale,
+		# the notification switches — and it outranks both the data defaults the
+		# model booted on and the `ui` block a resumed save is about to restore
+		# (doc 08 §2.5, doc 12 §3.2, constitution §2 amendment #3). The three
+		# reads under it therefore pick the device's numbers up for free.
+		var dropped_device := root.load_device_settings()
+		if not dropped_device.is_empty():
+			push_warning("[settings] device file dropped %s" % str(dropped_device))
+		# The preset is the one device row whose effect is spread over eight
+		# views and the governor, and all of them were seeded at boot from the
+		# data default. One re-apply through the change path puts them on the
+		# player's preset instead of duplicating that list here.
+		_on_ui_setting_changed(&"graphics", root.settings_sheet.model.value("graphics"))
 		_autosave_interval_s = root.settings_sheet.model.autosave_interval_s()
 		if audio != null:
 			audio.set_sound_volume(root.settings_sheet.model.value_num("sound_volume"))
@@ -1544,6 +1558,13 @@ func _on_title_new_game(slot: int, difficulty: String) -> void:
 	_title_up = false
 	if android_lifecycle != null:
 		android_lifecycle.save_enabled = true
+	# PA-15: the door hands a NEW city a clean `ui` section — the overlay choice,
+	# the street tally and the city-scoped settings rows all go back to their
+	# data defaults, because they belonged to the city that just left. The
+	# device-scoped rows do not move: `SettingsModel.restore_state` re-applies
+	# `user://settings.cfg` last, so a player who turned notifications off does
+	# not get them back by founding a city (doc 08 §2.13.4).
+	ui_root.reset_ui_state_for_new_city()
 	ui_root.start_onboarding({
 		"tutorial_lot_a": sim_host.sim.loader.resolve_tag("tutorial_lot_a")["tile_global"],
 		"tutorial_lot_b": sim_host.sim.loader.resolve_tag("tutorial_lot_b")["tile_global"]})

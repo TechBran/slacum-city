@@ -507,7 +507,49 @@ func _on_settings_changed(key: StringName, value: Variant) -> void:
 		tilt_slider.apply_setting(key, value)
 	_write_dispatch_policy(key, value)
 	_write_road_policy(key, value)
+	# PA-15: a device-scoped row is committed to `user://settings.cfg` on the tap
+	# that changed it, not at some later save. The player who turns notifications
+	# off and immediately swipes the app away has been heard.
+	if settings_sheet != null and settings_sheet.model != null \
+			and settings_sheet.model.is_device_scoped(String(key)):
+		settings_sheet.model.save_device()
 	settings_changed.emit(key, value)
+
+
+## Read `user://settings.cfg` and apply it over the rows (PA-15). `game/main.gd`
+## calls this once, BEFORE the title door — the door is a screen the player can
+## read, so the text scale that lets them read it has to be in place already.
+## Returns the keys the file was carrying that no row will take.
+func load_device_settings(path: String = "") -> PackedStringArray:
+	if settings_sheet == null or settings_sheet.model == null:
+		return PackedStringArray()
+	var dropped := settings_sheet.model.load_device(path)
+	settings_sheet.refresh_values()
+	_apply_device_side_effects()
+	return dropped
+
+
+## New City (doc 12 §2.19): the city-scoped rows go back to their data defaults —
+## a new city has not seen the tutorial — and the device-scoped ones do not move,
+## because they never belonged to the city that was just replaced. Restoring an
+## EMPTY ui block is exactly that statement, since `SettingsModel.restore_state`
+## re-applies the device copy last.
+func reset_ui_state_for_new_city() -> void:
+	restore_ui_state({})
+
+
+## The two rows whose effect lives outside the model. Both are idempotent, and
+## both are the same call `_on_settings_changed` would have made had the value
+## arrived from a tap rather than from the file.
+func _apply_device_side_effects() -> void:
+	if settings_sheet == null or settings_sheet.model == null:
+		return
+	var model := settings_sheet.model
+	if haptics != null:
+		for key: StringName in [Haptics.SETTING_LEVEL, Haptics.SETTING_REDUCE_MOTION]:
+			if model.has_key(String(key)):
+				haptics.apply_setting(key, model.value(String(key)))
+	rebuild_theme(model.theme_opts())
 
 
 # ---------------------------------------------------------------------------

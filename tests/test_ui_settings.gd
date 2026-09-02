@@ -601,6 +601,147 @@ func test_ui_state_round_trips_through_the_root() -> void:
 
 
 # ===========================================================================
+# PA-15 · A91-D-70 — `user://settings.cfg`, the file that is not in a save
+# ===========================================================================
+
+## A fresh path per test, so two methods in this file cannot read each other's
+## file and the suite's `UserDirIsolation` keeps it off the developer's own.
+var _device_seq := 0
+
+
+func _device_path() -> String:
+	_device_seq += 1
+	return "user://test_settings_%d.cfg" % _device_seq
+
+
+func test_the_device_file_round_trips_only_the_device_scoped_rows() -> void:
+	var path := _device_path()
+	var model := SettingsModel.new(_cfg())
+	model.set_value("text_scale", 1.3)
+	model.set_value("notifications_enabled", false)
+	model.set_value("replay_tutorial", true)   # city-scoped: a door into THIS city
+	assert_true(model.save_device(path))
+
+	var stored := DeviceSettings.read_section(path, DeviceSettings.SECTION_SETTINGS)
+	assert_true(stored.has("text_scale"), "an accessibility row is the device's")
+	assert_false(stored.has("replay_tutorial"),
+			"the tutorial door belongs to the city, not the phone")
+	assert_eq(stored.size(), model.device_scoped_keys().size(),
+			"every device-scoped row is written, and nothing else is")
+
+	# A second model — a relaunch, or the next city — sees the same answers.
+	var fresh := SettingsModel.new(_cfg())
+	assert_eq(fresh.value_num("text_scale"), 1.0, "…before it reads the file")
+	assert_eq(str(fresh.load_device(path)), "[]", "nothing dropped")
+	assert_eq(fresh.value_num("text_scale"), 1.3)
+	assert_false(fresh.value_bool("notifications_enabled"))
+	assert_false(fresh.value_bool("replay_tutorial"), "and the door stayed shut")
+
+
+func test_the_device_copy_outranks_a_citys_saved_block() -> void:
+	# Doc 12 §3.2: "on load `settings.cfg` wins for those keys". The failure this
+	# pins is the one a player notices: a city saved at 100 % text scale putting
+	# their 130 % back every single time they load it.
+	var path := _device_path()
+	var device := SettingsModel.new(_cfg())
+	device.set_value("text_scale", 1.3)
+	device.set_value("graphics", "performance")
+	assert_true(device.save_device(path))
+
+	var model := SettingsModel.new(_cfg())
+	model.load_device(path)
+	var dropped := model.restore_state({"text_scale": 1.0, "graphics": "high",
+			"in_app_banners": false})
+	assert_eq(str(dropped), "[]")
+	assert_eq(model.value_num("text_scale"), 1.3, "the device wins")
+	assert_eq(str(model.value("graphics")), "performance")
+	assert_false(model.value_bool("in_app_banners"),
+			"…and a city-scoped row still comes from the city")
+
+
+func test_a_settings_change_survives_the_city_that_was_deleted() -> void:
+	# PA-15's own acceptance test, spelled the way the audit spells it: change
+	# text scale, delete the city, relaunch, the scale survives.
+	var path := _device_path()
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	root.settings_sheet.model.load_device(path)
+	root.settings_sheet.value_button("text_scale").pressed.emit()   # one tap
+	var chosen: float = root.settings_sheet.model.value_num("text_scale")
+	assert_true(chosen != 1.0, "the tap moved the row")
+	assert_true(FileAccess.file_exists(path), "the tap COMMITTED it")
+
+	# The city goes away and a new one is founded over the same shell.
+	root.reset_ui_state_for_new_city()
+	assert_eq(root.settings_sheet.model.value_num("text_scale"), chosen,
+			"New City does not reset the phone's accessibility settings")
+
+	# …and a whole new process comes up on the same device file.
+	var relaunched := _mount()
+	var fresh: UIRoot = relaunched["root"]
+	assert_eq(fresh.settings_sheet.model.value_num("text_scale"), 1.0,
+			"before the read, the model is on data defaults")
+	fresh.load_device_settings(path)
+	assert_eq(fresh.settings_sheet.model.value_num("text_scale"), chosen)
+	assert_eq(fresh.settings_sheet.value_button("text_scale").text,
+			root.settings_sheet.value_button("text_scale").text,
+			"the sheet re-rendered from the file, not just the model")
+	_unmount(relaunched)
+	_unmount(mounted)
+
+
+func test_a_nonsense_device_file_costs_preferences_and_never_the_launch() -> void:
+	var path := _device_path()
+	DeviceSettings.write_section(path, DeviceSettings.SECTION_SETTINGS, {
+		"text_scale": "enormous",          # wrong type for a choice row
+		"replay_tutorial": true,           # real row, but not device-scoped
+		"favourite_colour": "teal",        # no row at all
+	})
+	var model := SettingsModel.new(_cfg())
+	var dropped := model.load_device(path)
+	assert_eq(str(dropped), "[\"favourite_colour\", \"replay_tutorial\", \"text_scale\"]",
+			"every refusal is reported, sorted, and none of them threw")
+	assert_eq(model.value_num("text_scale"), 1.0, "the default is kept")
+	assert_false(model.value_bool("replay_tutorial"))
+
+
+func test_two_owners_share_one_file_without_overwriting_each_other() -> void:
+	# doc 08 §2.5: docs 08, 11, 12 and 13 all write into this one file. The
+	# permission block and the settings block are written by different classes
+	# at different moments, and a write of either must leave the other standing.
+	var path := _device_path()
+	var model := SettingsModel.new(_cfg())
+	model.set_value("notifications_enabled", false)
+	assert_true(model.save_device(path))
+
+	var flow := PermissionFlow.new(null)
+	flow.asked_count = 2
+	flow.last_asked_unix = 1_700_000_000
+	flow.reprompt_count = 1
+	assert_true(flow.save_device(path))
+
+	assert_false(bool(DeviceSettings.read_section(path,
+			DeviceSettings.SECTION_SETTINGS)["notifications_enabled"]),
+			"the permission write left the settings block alone")
+	model.set_value("notifications_enabled", true)
+	assert_true(model.save_device(path))
+	var back := PermissionFlow.new(null)
+	back.load_device(path)
+	assert_eq(back.asked_count, 2, "…and the settings write left the permission block alone")
+	assert_eq(back.last_asked_unix, 1_700_000_000)
+	assert_eq(back.reprompt_count, 1)
+
+
+func test_the_device_write_is_atomic_and_leaves_no_temporary_behind() -> void:
+	var path := _device_path()
+	var model := SettingsModel.new(_cfg())
+	assert_true(model.save_device(path))
+	assert_true(FileAccess.file_exists(path))
+	assert_false(FileAccess.file_exists(path + ".tmp"),
+			"tmp+rename: the half-written file never has the real name")
+
+
+# ===========================================================================
 # The stub — exactly `game/save_service.gd`'s published API, nothing more
 # ===========================================================================
 

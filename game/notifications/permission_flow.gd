@@ -204,3 +204,21 @@ func deserialize(data: Dictionary) -> void:
 	asked_count = int(data.get("asked_count", 0))
 	last_asked_unix = int(data.get("last_asked_unix", 0))
 	reprompt_count = int(data.get("reprompt_count", 0))
+
+
+## …and it persists in `user://settings.cfg`, not in a save slot (doc 08 §2.5
+## names doc 13's permission bookkeeping as one of that file's four tenants).
+##
+## This is the one piece of state where device-scoping is not a convenience but
+## the whole correctness argument: Android's two dismissals are spent per
+## INSTALL. If the counter rode in the city's save, deleting the city — or
+## rolling back to a checkpoint taken before the first prompt — would hand the
+## app a third chance it does not have, and the modal would open a system dialog
+## that never appears. The player would be asked, would answer, and nothing would
+## happen.
+func load_device(path: String = DeviceSettings.DEFAULT_PATH) -> void:
+	deserialize(DeviceSettings.read_section(path, DeviceSettings.SECTION_PERMISSION))
+
+
+func save_device(path: String = DeviceSettings.DEFAULT_PATH) -> bool:
+	return DeviceSettings.write_section(path, DeviceSettings.SECTION_PERMISSION, serialize())
