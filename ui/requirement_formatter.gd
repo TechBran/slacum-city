@@ -57,6 +57,14 @@ extends RefCounted
 ## | `FIX_REPAIR`       | `sim_id`                | `{verb: "cmd_repair_building", cost: int, cost_text: String}` |
 ## | `FIX_POWER`        | `sim_id`                | `{verb: "cmd_fix_power_capacity", cost: int, cost_text: String}` |
 ##
+## **The invariant the router may rely on** (`_is_routable`, checked by `format()`
+## on every row it emits): if `kind != FIX_NONE` then the `params` that kind's row
+## requires are present. A row whose producer could not fill them is folded to
+## `FIX_NONE` here, with an empty `id` and empty `params`, so a consumer never has
+## to defend against a half-filled target — and a surface that draws its button on
+## `kind != FIX_NONE` alone (which the building panel does, and did before this
+## was true) is drawing it exactly when there is somewhere to go.
+##
 ## The two verb kinds are performed **in place** by `ui/building_panel.gd` and
 ## never reach the router (A91-D-54); their `params` exist so a second surface
 ## can offer the same purchase without re-deriving the quote.
