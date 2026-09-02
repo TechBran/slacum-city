@@ -6084,13 +6084,14 @@ id}`, and the shell resolved `id` per kind. Two of the building panel's seven
 checklist rows resolved to nothing:
 
 * `POWER_CAPACITY` set `fix_target_id = grid.attachment_of(sim_id)`, which is a
-  **transformer** (`T-01`…), and routed `FIX_BUILDING`, whose branch reads
-  `sim.buildings.get(id)` → `null` → `return`. `E_NO_SLOT` did the same with a
-  **substation** (`SUB-A`).
+  **transformer** (`T-06` on the founding city), and routed `FIX_BUILDING`, whose
+  branch reads `sim.buildings.get(id)` → `null` → `return`.
 * `E_AVENUE` carried no `fix_target_id` at all, so the formatter emitted `id ==
   ""` and the router discarded it on its first line.
 
-Neither produced an error, a log line or a haptic. The land panel escaped only
+*(The audit's third candidate, `E_NO_SLOT`, is **not** one of them and the ruling
+below says why: `buildings.has("SUB-A")` is `true`.)* Neither of the two produced
+an error, a log line or a haptic. The land panel escaped only
 because `land_panel.gd:392` happens to gate its button on a non-empty id as well
 as a kind — a second, accidental check that the building panel does not have.
 

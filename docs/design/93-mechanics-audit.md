@@ -3620,13 +3620,25 @@ which namespace the consumer will look the id up in, and two producers did not:
 
 | Row | `id` it supplied | Kind it routed | What the shell did |
 |---|---|---|---|
-| `POWER_CAPACITY` (pre-Wave-17) | `grid.attachment_of()` → `T-18` | `FIX_BUILDING` | `sim.buildings.get("T-18")` → `null` → `return` |
-| `E_NO_SLOT` | a substation, `SUB-A` | `FIX_BUILDING` | same |
+| `POWER_CAPACITY` (pre-Wave-17) | `grid.attachment_of()` → `T-06` | `FIX_BUILDING` | `sim.buildings.get("T-06")` → `null` → `return` |
+| `E_TRANSFORMER_FULL` / `E_NEEDS_TRANSFORMER` | *(none)* | `FIX_TILE` | flew the camera to the **ghost's** tile — the one under the player's finger |
 | `E_AVENUE` | *(none supplied)* → `""` | `FIX_ROAD_SEGMENT` | `if id == "": return` |
 
-None of the three logged anything. The building panel drew the button on `kind !=
+None of them logged anything. The building panel drew the button on `kind !=
 FIX_NONE` alone; the land panel escaped only because `land_panel.gd:392` also
 requires a non-empty id — a second check nobody wrote down as a rule.
+
+**`E_NO_SLOT` is the row that is NOT on that list, and it is worth its own
+line**, because this lane put it there first and the suite took it back off. Its
+target is a doc 04 **substation**, and a substation is also a doc 02 shell:
+`sim.buildings.has("SUB-A")` is `true` on the founding city and `substation` is
+an archetype the build sheet sells. `FIX_BUILDING` resolves, the camera move is
+the whole useful answer, and doc 12 D-71 had already ruled it deliberate. The
+general point is the one that survives the wave: *"the id looks like a
+component"* is not evidence, and `has()` is — which is why the corrected routing
+of `E_TRANSFORMER_FULL` and `E_NEEDS_TRANSFORMER` above rests on
+`attachment_of("H-001")` = `T-06`, `buildings.has("T-06")` = `false`,
+`component_tile("T-06")` = `(39, 34)`, measured rather than reasoned.
 
 **The ruling** (RR-142): the row carries `params`, and `params` is what the
 router **acts on**. A tile for `FIX_TILE`, a district key for `FIX_DISTRICT`, a

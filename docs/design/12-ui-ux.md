@@ -2013,6 +2013,17 @@ reading. **The deck is 60 states**, and the whole sweep is clean:
 `--screen=all --size=412x915 --audit --strict` → 60 states, 60 clean, 0 findings,
 exit 0.
 
+At Wave 18, two more (D-80, D-81), on the same terms and in the same commits as
+the surfaces they photograph: **`placement_unowned`** — the placement bar
+carrying a refusal whose fix is somewhere else on the map, which is the state
+`FIX THIS →` exists for, and the only one that shows both halves of PA-23 at once
+— and **`picker_refused`**, a dispatch the sim refused rendered in the words of
+the refusal it actually raised rather than *"That unit could not be sent."*
+**The deck is 68 states**, and the whole sweep is clean at every box and both
+accessibility settings: `--screen=all --audit --strict` × six `BOXES` × {100 %,
+130 % + larger targets} → **twelve sweeps, exit 0 in every one** (the twelfth
+needed §2.23's band to count the banner stack; see D-80).
+
 **Measured, whole-deck, before → after** (`--screen=all --audit --strict`, every
 finding of every kind, **six** boxes × **three** text scales; 53 states per cell
 at the fork, 55 after): the table is in §2.18. **408 → 0**, with the 100 % row
