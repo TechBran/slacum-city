@@ -1392,7 +1392,12 @@ Device-scoped preferences (`text_scale`, `colorblind`, `reduce_motion`, `larger_
 >
 > A `state` row (D-82) is in neither copy: it is not a preference, and persisting
 > Android's answer would show the player a stale token for one frame after every
-> load and a *wrong* one after they changed it in system settings.
+> load and a *wrong* one after they changed it in system settings. **It also
+> survives `reset_to_defaults()`** — the mirror-image bug, and the one this lane
+> nearly shipped: a load or a New City would otherwise put *Not available* in
+> front of a player whose notifications are on, until the shell happened to
+> re-report. A value that was never this screen's to set is not this screen's to
+> clear.
 
 **`street` (Wave 14, §2.21).** Two things, for two different reasons. `coached` / `coach_pending` are the one-shot discovery flag — a lesson taught twice is a lesson nobody trusts, and a mark the tutorial was standing on is owed rather than lost. **The mark's coordinates are deliberately NOT here**: restored a day later they would point at a street that emptied hours ago, and a mark that points at nothing is worse than one that centres. `live` / `settled` are the per-game-hour tally the Economy tab's two unsettled revenue lines are drawn from; they ride along because a save taken mid-hour and restored would otherwise print a ledger line for money the restored city no longer remembers earning. Both halves retire the day doc 03 settles `revenue.bounties` — the tally is ignored for any key the settle snapshot carries.
 

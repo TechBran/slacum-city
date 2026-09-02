@@ -112,13 +112,24 @@ static func load_from_files() -> SettingsModel:
 	return SettingsModel.new(UIConfig.load_from_files())
 
 
+## Every row back to its authored default — **except a `state` row**, whose value
+## is not a preference and was not this screen's to begin with. Clearing one
+## would put *Not available* in front of a player whose notifications are on,
+## every time a city was loaded or founded, until the platform next reported.
+## The shell re-reports on its own schedule; this must not race it.
 func reset_to_defaults() -> void:
+	var reported: Dictionary = {}
+	for raw_key: Variant in _values:
+		var key := str(raw_key)
+		if kind(key) == KIND_STATE:
+			reported[key] = _values[raw_key]
 	_values.clear()
 	for raw: Variant in _rows:
 		if not (raw is Dictionary):
 			continue
 		var row: Dictionary = raw
-		_values[str(row.get("key", ""))] = _default_for(row)
+		var key := str(row.get("key", ""))
+		_values[key] = reported[key] if reported.has(key) else _default_for(row)
 
 
 # ---------------------------------------------------------------------------

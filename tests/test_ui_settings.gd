@@ -774,11 +774,14 @@ func test_the_permission_row_reports_a_state_and_never_stores_one() -> void:
 			"there is nothing to remember: the platform re-answers every time")
 	assert_false(model.capture_state().has(UIRoot.PERMISSION_ROW),
 			"a report is not a preference — it never enters a save")
-	# …and a save that carries one anyway is ignored rather than obeyed.
+	# …and a save that carries one anyway is ignored rather than obeyed — while
+	# what the PLATFORM last reported survives the reset, because a load or a
+	# New City must never put "Not available" in front of a player whose
+	# notifications are on until the shell happens to re-report.
 	model.set_value(UIRoot.PERMISSION_ROW, "on")
 	model.restore_state({UIRoot.PERMISSION_ROW: "blocked"})
-	assert_eq(str(model.value(UIRoot.PERMISSION_ROW)), "unavailable",
-			"restore_state reset it to the row default and then left it alone")
+	assert_eq(str(model.value(UIRoot.PERMISSION_ROW)), "on",
+			"the save was ignored and the reported state was kept")
 
 
 func test_every_permission_state_reads_as_a_sentence_and_only_one_offers_a_route()\
@@ -937,9 +940,12 @@ func test_a_settings_change_survives_the_city_that_was_deleted() -> void:
 	assert_true(FileAccess.file_exists(path), "the tap COMMITTED it")
 
 	# The city goes away and a new one is founded over the same shell.
+	root.set_permission_state("on")
 	root.reset_ui_state_for_new_city()
 	assert_eq(root.settings_sheet.model.value_num("text_scale"), chosen,
 			"New City does not reset the phone's accessibility settings")
+	assert_eq(root.permission_state(), "on",
+			"…and it does not tell the player their notifications went away either")
 
 	# …and a whole new process comes up on the same device file.
 	var relaunched := _mount()
