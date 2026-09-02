@@ -6170,3 +6170,250 @@ every boot (`SPen::FbrDrawPad`, `LowLatencyStrokeView`, in logcat at every
 launch). **Do not re-run the three tests that are already done:** it is not
 scan-out tearing, not the remote-control encoder, and not the quality governor.
 
+## 54. WAVE 18 — the tilt looks up: an axis that could not reach its own pose, a scale that was invariant by accident, and a far zoom that got cheaper (binding)
+
+**The user's directive (2026-09-02), verbatim:** *"The screen tilt does work, but
+we need more vertical. We need to be able to look UP towards the sky, towards the
+top of the buildings as well."*
+
+**What shipped:** the AIM-HEIGHT RAMP on `ui/camera_state.gd` — `aim_height_m()`,
+`view_pitch_deg()`, `aim_point()`, `orbit_basis()`, `focus_axis_distance()`,
+authored by `data/ui.json.camera.aim_up_ground_frac` / `aim_up_anchor_ndc`; the
+`m_per_dp()` correction that follows from it; `--aim=0|1` and a view-angle column
+in `tools/profile_frame.gd`; `tests/test_camera_aim.gd` (14 tests, 1,776
+asserts). **No screen, no string, no layout, no preview state and no save key
+moved**, and **nothing in `sim/` moved** — `profile_sim --hash-only` on both
+cities, at the fork and at the end, all four digests byte-identical (§54.4).
+
+### RR-151 — A camera axis built to look UP could not, at any angle it had (docs 12 §2.23.7, 93 §AM1/§AM2/§AM3, A91-D-97)
+
+Wave 17 answered *"we need to be able to look up at the buildings"* with a manual
+pitch band floored at 12° and **thirty tests** across
+`test_camera_state.gd`, `test_ui_tilt.gd` and `test_gestures.gd` — every one of
+which asserts the ANGLE, the bias, the reach or the gesture. **Not one of them
+asserted the FRAME**, and the frame is what the directive was about. In doc 12
+§2.16's rig the camera looks AT THE FOCUS and the focus is on `y = 0`, so the
+horizon is always `pitch` above the view axis and is drawn at
+`(1 − tan p / tan(fov/2))/2` down the frame — **20.8 % down at the 12° floor,
+leaving the ground the other 79 %**, at *every* angle the band can reach. The
+picture at the floor is the complaint verbatim: two thirds pavement, the mid-rise
+facades cut off at mid-height, the tower tops off the TOP edge, sky only in the
+gaps between roofs. And there was nowhere left to go — `18·sin 12° = 3.74 m` is
+the last angle that clears doc 11 §2.6's 3.5 m ground floor.
+
+So the LOOK-AT point rises with the lean instead:
+
+    v_target = −atan((1 − 2·aim_up_ground_frac)·tan(fov/2))     = −6.92°
+    view     = lerp(pitch, v_target, |bias| · reach(t)) , ≥ pitch − atan(ndc·tan(fov/2))
+    aim      = D·(sin pitch − cos pitch·tan view)
+    look_at  = focus + (0, aim, 0)
+
+Four properties, all tested:
+
+* **`bias = 0` lifts exactly nothing.** AUTO and the whole top-down half of the
+  axis are the camera Wave 17 shipped, to the bit — `view_pitch_rad()` *returns*
+  `pitch_rad()` there rather than reconstructing it through an `atan2`, so
+  `camera_basis()` is `orbit_basis()` byte-for-byte and every existing pose,
+  test, hash and screenshot is untouched.
+* **The composition is authored, and the scale is derived rather than chosen.**
+  `aim_up_ground_frac = 1/3` is "pavement in the bottom third". At the far pose it
+  solves to `420·(sin 24° + cos 24°·tan 20°/3) = 217.4 m` — and doc 02 §2.3's
+  five-rung roster maximum is `high_rise` L5 at `62 × 3.5 = 217.0 m`, the same
+  217 m tower doc 11 §2.5 works its LOD example against. **At full zoom-out the
+  ramp aims at the roofline of the tallest tower the roster can build, to within
+  0.4 m.** Both numbers are read out of `data/building_shapes.json` by the test
+  rather than restated, so a roster change fails loudly.
+* **It is a PURE AIM LIFT, and that is the ruling** (doc 93 §AM1). A
+  camera-height lift changes what is occluded and cannot move the horizon at all,
+  because the horizon's screen position is a function of the view axis ANGLE
+  alone. Leaving `camera_position()` untouched is what keeps Wave 17's
+  ground-floor clearance (swept: 41 zooms × 21 biases, lowest camera in the whole
+  product still 3.742 m), doc 11 §2.5's LOD tiering and doc 92 §47.2's bought
+  150 m NEAR boundary all statements about the *same* rig.
+* **The lean interpolates the ANGLE, not the height.** The first cut scaled the
+  full-lean height by the lean and was **not monotone** — the orbit pitch falls
+  under the lean and takes `R` with it, so the Z0 aim peaked at 5.896 m around
+  bias 0.95 and came back to 5.879 m at bias 1, which the slider would have shown
+  as the horizon nodding at the end of its travel.
+
+| pose | orbit pitch | view pitch | look-at height | ground's share of the frame |
+|---|---|---|---|---|
+| Z0 (t 0) | 12.00° | **−6.92°** | 5.88 m | **33.3 %** (was 79.2 %) |
+| default (t 0.42) | 14.99° | −4.92° | 23.09 m | 38.2 % (was 86.8 %) |
+| Z1 (t 0.5) | 16.32° | −3.68° | 29.80 m | 41.2 % (was 90.2 %) |
+| Z2 (t 1) | 24.00° | +4.00° | 144.0 m | 59.6 % (was 100 %, the horizon off the top edge) |
+
+The near end lands on the authored third exactly; the far end does not, because
+two guards bite there first — `reach_up_far = 0.76`, and `aim_up_anchor_ndc`.
+That second one is the ramp's only guard and it is geometric rather than a taste
+number: **the focus may not leave the frame**, because it is the pan anchor, the
+pinch anchor, the twist pivot and `focus_on()`'s landing spot. At the authored
+1.0 it may ride the bottom edge and no further; it does not bind at the near zoom
+(Z0's full lean needs 18.92° of drop against the frame's 20°) and binds by 0.45°
+at Z1 and 3.5° at Z2. That the near end clears it by 1.08° is a coincidence of
+three authored numbers and is therefore TESTED, by projecting the horizon and
+asserting where it lands.
+
+### RR-152 — A scale that was invariant by accident, and a pick that had to be proved (docs 12 §2.21/§2.23.4 (D-85), 93 §AM4, A91-D-98)
+
+The ramp changes where the frustum POINTS, and every ray in this project reads
+`camera_position()` and `camera_basis()` — the same basis the `Camera3D` wears —
+so `screen_ray`, `ground_hit`, `screen_to_ground` and `project_to_screen` follow
+the aim for free and cannot disagree with what is drawn. **Proved, not argued:**
+`test_a_tap_resolves_to_the_tile_it_visually_covers` projects a tile centre to the
+screen and casts that pixel back at three zooms × {AUTO, floor} and asserts the
+same 8 m tile to within 0.01 m; the inverse round trip is
+`test_a_screen_point_round_trips_through_the_ground_and_back`.
+
+**One number did have to move, and it is the defect this wave found.**
+`m_per_dp()` is documented — in its own comment and in doc 12 §2.23.4 — as
+pitch-invariant "because screen-right is parallel to the ground at every pitch".
+Half true. Screen-right is parallel to the ground, but the figure also carries a
+DEPTH: `2·D·tan(h½)/w` is the frame's width in metres *at the focus*, and that is
+only `D` deep while the camera is aimed at the focus. It always was, for four
+waves, which is why the claim read as arithmetic rather than as a property of the
+rig. The ramp tips the focus `Δ = pitch − view` below the axis and its depth to
+`D·cos Δ`, and leaving the figure at `D` would have over-stated §2.21's 48 dp tap
+radius, §2.7's drag ghost and the drawer offset by **5.4 % at the Z0 floor and
+6.0 % at Z2** — small, silent, and in the un-conservative direction. It now
+measures at `focus_axis_distance()`, and
+`test_m_per_dp_is_the_scale_the_projection_actually_draws` proves it against
+`project_to_screen` itself, at 27 poses, rather than against its own formula. The
+correction moves it DOWN, so a lifted aim can only make a radius pick tighter —
+which is the direction §2.23.4 already promised.
+
+**The typed miss is now most of the frame rather than a corner of it.** At the
+floor the horizon is drawn two thirds of the way down, so every screen point
+above it answers `MISS_ABOVE_HORIZON`. No caller changed — RR-116's split already
+routes every caller that ACTS on the world through `hit` — and *which* ground is
+pickable did not move either: the `ray_parallel_eps` and `dist·4` limits are
+properties of the camera POSITION, not of the aim. Only where that ground is
+DRAWN moved, from "below 32 % of the frame" to "below 78 %". **The consequence
+that is real and is filed rather than hidden:** the screen AREA a placement tap
+can land on at a full lean shrinks from the bottom 68 % of the frame to the
+bottom 22 %. The same world ground is reachable and the remedy is the control the
+player already has — let the slider go and the frame comes back — but a build
+flow driven at the floor has a smaller target than it had, and no measurement in
+this wave says whether that reads as tight on a phone. Owed on the device.
+
+### RR-153 — What the recomposition costs: the near zoom pays, the far zoom is REFUNDED, and the cull cannot arbitrate either (docs 11 §2.5b/§2.13, 92 §53, 93 §AM5)
+
+Full table in doc 92 §53, measured as a true A/B on one binary through
+`--aim=0|1`. The headline, bench city, balanced, 1920 × 1080, day, at the pitch
+floor:
+
+| pose | before (`--aim=0`) | after (`--aim=1`) | Δ |
+|---|---|---|---|
+| Z0 | 361 dc / **386** | 409 dc / **434** | **+48** |
+| Z1 | 321 dc / **346** | 332 dc / **357** | **+11** |
+| Z2 | 240 dc / **265** | 201 dc / **226** | **−39** |
+
+**The far pose gets CHEAPER**, and that is the geometry rather than luck: aiming
+up rotates the frustum off the ground immediately in front of the camera, and at
+Z2 the camera is 171 m up, so what leaves the frame is a large apron of near
+ground and what enters is sky. At Z0 the camera is 3.74 m up, the apron is 10 m
+wide, and what enters is the airspace 1,500 buildings stand in — which is the
+picture the wave exists to produce, and the calls that draw it.
+
+**Fifteen of the table's twenty-four cells are byte-identical** — every cell whose
+bias is `≤ 0`, i.e. AUTO and the whole top-down half of the axis. That is the
+"AUTO lifts nothing" claim tested through a rendered frame rather than through a
+unit test. And **the worst cell is not the floor**: 34° asked at Z1 is a 0.39
+lean off a 48° curve and goes 285 → 350 dc+ui, taking a cell that was inside the
+budget outside it, where the Z1 *floor* moves only +11 because `reach_up` and the
+anchor cap have already shortened the lean there.
+
+**Where the +48 went, attributed.** The visible NEAR building buckets are
+identical in both arms (197 + 149 = 346), so none of it is building geometry
+re-tiering. Two independent ways of disarming the sun's shadow pass — hour 21,
+and the `performance` preset's `shadow_max 0 m` — both give **+33**, so the split
+is **+33 main pass** (the road and ground surfaces, the street furniture and the
+merged tier an aimed-up frustum newly contains; `--no-power-infra` is 3 of it)
+and **+15 sun-shadow pass**, day only.
+
+**The pitch-coupled `far_cull_m` cannot pay for the Z0 bill, and the brief's
+hypothesis about it is backwards** (doc 93 §AM5). Aiming up moves the frame's
+NEAR edge out — the bottom ray at the Z0 floor is 13.08° below horizontal, so the
+nearest visible ground is `3.742/tan 13.08° = 16.1 m` where it was 6.0 m — and
+leaves the FAR edge exactly where it was, at infinity, because the top ray still
+clears the horizon. §2.5b's `pitch_cull_reach_m` returns INF for every angle at or
+below the half-FOV and is honest to do so; a cull tightened past it would delete
+the skyline. **The `lod.pitch_cull.slack` curve is therefore NOT re-fitted, and
+the excess is published under §AC2's standing ruling** — Z0 day floor **+114 dc
+over the 320 budget (434 of 320, +35.6 %)**, Z1 floor +37, Z1 at 34° +30, with
+Z2 **under** by 94 and every night cell in the table inside the budget. One thing
+was checked rather than assumed: a NEGATIVE view pitch now collides with
+`set_camera_pose`'s `pitch_deg < 0` "no pitch supplied" sentinel, and both
+branches produce the identical answer (`far_cull_m` untouched) precisely because
+the reach is INF there — asserted at five angles from −6.92° to 19.9°.
+**Re-open** if a `slack` curve is ever authored that makes the reach finite below
+the half-FOV.
+
+**Where these numbers sit against doc 92 §47's.** The NIGHT column reproduces §47
+cell for cell (Z0 floor 221, Z1 216, Z2 251, AUTO Z0 112). The DAY column is
++23 / +13 / +7 dc above §47's at the floor, and that gap is not this wave: §47 was
+measured before the render fork merged (RR-95…98, the building shadow and the
+linear meshes), and the sun's shadow pass is the only renderer difference between
+hour 13 and hour 21 at a fixed pose. The A/B above is taken on ONE binary for
+exactly this reason. **One §47 claim is now stale and is recorded rather than
+left standing:** §47.5's "the draw calls do not move with the preset" — after
+RR-98 wired doc 11 §2.13b's engine-side keys, `performance` draws no sun shadow
+and the Z0 day floor measures **222 dc+ui at performance against 386 at
+balanced**, before the aim ramp is involved at all (doc 92 §53.4).
+
+### 54.4 The world edge, re-checked — and it is better seated than before
+
+The 2026-09-01 audit's P1 (*"an 896 m floating slab with a hard cliff"*) was
+answered at Wave 17's composition by RR-114 with a ≤ 17/255 seam step. Re-run at
+the new one, same worst case — pitch floor, far zoom, camera at the city's corner
+looking out over the edge (`--poses=z2 --hour=13 --tilt=12 --yaw=225 --focus=60,60`)
+— the sky-to-world seam measures **7 … 11 / 255** at the three sample columns that
+sample the edge rather than a tower silhouette (doc 92 §53.5 has the table). The
+edge is **better** seated after the ramp, and the mechanism is the composition:
+the aim lift puts more SKY above the fogged skyline rather than more slab below
+it. That pose is also one of the refunded cells — 213 → 168 dc.
+
+### 54.5 The pictures, and the baselines
+
+Every screenshot is `tools/profile_frame.gd --shots=DIR` on the bench city at
+1920 × 1080, preset balanced.
+
+| what | command | reads as |
+|---|---|---|
+| the complaint, measured | `--poses=z0 --hour=13 --tilt=12 --aim=0` | horizon a fifth down, two thirds pavement, mid-rise facades cut at mid-height, tower tops off the top edge |
+| the same pose, after | `--poses=z0 --hour=13 --tilt=12` | street-level camera, pavement in the bottom third, facades filling the middle, towers into the top third, sky above them |
+| a 168 m tower bottom to top | `--poses=t0.88 --hour=13 --tilt=12 --focus=69,67 --yaw=45` | `R-0046`, one of the bench city's tallest (`high_rise` L4, 48 × 3.5 m), standing at the focus: base on the bottom edge, roof at 13.5 % down by projection with its mast above that, sky over it, and a skyline behind |
+| the same floor at night | `--poses=z0 --hour=21 --tilt=12` | lit facades and towers against a night sky, road in the bottom third |
+| the world edge, worst case | `--poses=z2 --hour=13 --tilt=12 --yaw=225 --focus=60,60` | the far city fogs into the haze band; no cliff, no black band, 7…11/255 at the seam |
+
+**A 168 m tower cannot be framed bottom-to-top at Z0 and no camera change can do
+it:** 40° of vertical FOV needs `168/(2·tan 20°) = 230.8 m` of view distance and
+Z0 is 18 m. The pose above is `zoom_t 0.88` (`D = 288 m`), and at the floor with
+the ramp the anchor cap puts the tower's base corner exactly on the bottom edge
+while its roof projects to 145.9 px of 1080 — **13.5 % down** — which is as close
+to "bottom to top" as the projection allows. At `t0.85` the same tower clips the
+top edge (roof at 4.8 %), which is how the zoom was chosen.
+
+**One harness trap, recorded because it cost a screenshot.** `--focus=TX,TZ` is a
+**GLOBAL** tile; a city fixture's building `origin` is **core-local**, and
+`StarterCityLoader.core_to_global` adds `CORE_TILE_OFFSET = 32` to each axis. The
+first take of this shot aimed 30 tiles away from the tower it named. The flag's
+doc comment in `tools/profile_frame.gd` now says so.
+
+**Baselines — all four bit-identical, at the fork and at the end.** `sim/` was
+not touched; this wave is shell and `ui/` only.
+
+    ~/.local/bin/godot --headless --script tools/profile_sim.gd -- --hash-only
+    ~/.local/bin/godot --headless --script tools/profile_sim.gd -- --hash-only         --city=res://tests/fixtures/bench_city.json
+
+| city | coarse 24 h | fine 2 h |
+|---|---|---|
+| starter | `05614522975fad52…` | `d1aaee0dca92f2fd…` |
+| bench | `275aad9d4aeea809…` | `d40126e371371d59…` |
+
+**Gates.** `~/.local/bin/godot --headless --script tests/run_tests.gd` — **134
+files, 2,490 tests, 551,462 asserts, failed 0, silent 0**, exit 0.
+`xvfb-run -a ~/.local/bin/godot --path . res://tools/ui_preview.tscn --
+--screen=all --audit --strict` — **exit 0**, and the two tilt preview states
+(`tilt_rest`, `tilt_drag`) are clean at every box: the ramp adds no control and
+changes no layout, so the deck stays at 59 states.

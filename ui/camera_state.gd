@@ -34,6 +34,32 @@ extends RefCounted
 ## as `zoom_t` rises. It is authored per direction, because the cost is not
 ## symmetric — leaning toward top-down is cheaper than the pose it came from.
 ##
+## **The aim-height ramp (Wave 18, doc 98 §54).** The pitch band alone could not
+## do what it was built for, and the reason is that in this rig the camera always
+## looks AT THE FOCUS, which is on the ground. The horizon is therefore always
+## `pitch` ABOVE the view axis: at the 12° floor with a 40° FOV it sits
+## `(1 − tan12°/tan20°)/2 = 20.8 %` down the frame and the ground owns the other
+## **79 %** — a floor that is already grazing and still frames two-thirds
+## pavement, with the tower tops cropped off the TOP edge. Lowering the floor
+## cannot fix it (and cannot move: `18·sin12° = 3.74 m` is what clears doc 11
+## §2.6's 3.5 m ground floor). **The aim is the axis that was missing.**
+##
+##     look_at = focus + (0, aim_height_m(), 0)
+##
+## `aim_height_m()` is 0 at `bias ≤ 0` — AUTO and the whole top-down half of the
+## axis are the camera that shipped, to the bit — and with the UP lean the frame
+## recomposes toward leaving the ground exactly `aim_up_ground_frac` of its own
+## height. The lean interpolates the view ANGLE and the height is derived out of
+## it; `view_pitch_for()` carries that argument and the guard that goes with it.
+## The camera POSITION does not move: this is a pure aim lift, so
+## every guarantee written against `camera_position()` (the ground-floor
+## clearance above, doc 11 §2.5's LOD tiering, doc 92 §47.2's NEAR-boundary
+## measurement) survives verbatim, and the only thing that changes is where the
+## frustum points. The view axis is allowed to rise ABOVE horizontal —
+## `view_pitch_deg()` goes negative — which is the whole point and is what
+## `camera_basis()` now carries; `pitch_deg()` remains the ORBIT angle and
+## `orbit_basis()` is the rig arm that positions the camera from it.
+##
 ## Ownership split (report 98 C-63): this class owns the **interaction range**
 ## (`D_MIN`/`D_MAX`, the pitch band, the curves, gestures, momentum, bounds) from
 ## `data/ui.json.camera`. Doc 11 owns the **projection** (`fov_deg`, `near_m`,
@@ -58,7 +84,9 @@ const WORLD_JSON_PATH := "res://data/world.json"
 ## the log line and for the tests, never for control flow that matters.
 const GROUND_OK := &"ground"
 ## The ray leaves the camera going UP (or level). At the pitch floor the top of
-## the frustum is above the horizon and a tap up there has no ground under it.
+## the frustum is above the horizon and a tap up there has no ground under it —
+## and since Wave 18's aim ramp that is not a corner of the frame but two thirds
+## of it, so every caller that ACTS on the world must branch on `hit`.
 const MISS_ABOVE_HORIZON := &"above_horizon"
 ## The ray points down but so shallowly that the intersection is past
 ## `dist * 4` — geometrically a hit, practically the far haze.
@@ -83,6 +111,14 @@ var pitch_reach_up_near := 1.0
 var pitch_reach_up_far := 1.0
 var pitch_reach_down_near := 1.0
 var pitch_reach_down_far := 1.0
+## The aim-height ramp's authored framing. `aim_up_ground_frac` is the share of
+## the FRAME HEIGHT, measured from the bottom edge, that the ground is left at a
+## full upward lean — 1/3 is "pavement in the bottom third, sky and facades above
+## it". `aim_up_anchor_ndc` is the hard guard: the focus (the pan/zoom/rotate
+## anchor) may never sit more than this fraction of the half-frame below the view
+## axis, i.e. at 1.0 it may ride the bottom edge and never leave the frame.
+var aim_up_ground_frac := 0.3333
+var aim_up_anchor_ndc := 1.0
 ## Gesture feel for the axis, mirroring the pan's: a rubber band past the ends
 ## while the finger is down, a decaying fling on release, an eased return home.
 var pitch_rubber_band := 0.35
@@ -233,6 +269,10 @@ func _apply_camera_config(c: Dictionary) -> void:
 	pitch_reach_up_far = UIConfig.get_num(c, "pitch_reach_up_far", pitch_reach_up_far)
 	pitch_reach_down_near = UIConfig.get_num(c, "pitch_reach_down_near", pitch_reach_down_near)
 	pitch_reach_down_far = UIConfig.get_num(c, "pitch_reach_down_far", pitch_reach_down_far)
+	aim_up_ground_frac = clampf(UIConfig.get_num(c, "aim_up_ground_frac", aim_up_ground_frac),
+			0.0, 0.5)
+	aim_up_anchor_ndc = clampf(UIConfig.get_num(c, "aim_up_anchor_ndc", aim_up_anchor_ndc),
+			0.0, 1.0)
 	pitch_rubber_band = UIConfig.get_num(c, "pitch_rubber_band", pitch_rubber_band)
 	pitch_momentum_decay_k = UIConfig.get_num(c, "pitch_momentum_decay_k",
 			pitch_momentum_decay_k)
@@ -389,6 +429,108 @@ func height_m() -> float:
 	return distance() * sin(pitch_rad())
 
 
+# ---------------------------------------------------------------------------
+# The aim-height ramp (Wave 18, doc 98 §54) — see the class doc for why
+# ---------------------------------------------------------------------------
+
+## Metres the LOOK-AT point rides up the facades above `focus`. Exactly `0.0` at
+## `bias ≤ 0`, because `view_pitch_for()` returns the orbit pitch there unchanged
+## and this function subtracts them — which is what makes AUTO and the whole
+## top-down half of the axis bit-identical to the pre-Wave-18 camera.
+func aim_height_m() -> float:
+	return aim_height_for(zoom_t, 0.0 if pitch_auto else pitch_bias)
+
+
+## The look-at height that realises `view_pitch_for(t, bias)`. Pure geometry:
+## the camera is `H = D·sin p` up and `R = D·cos p` back, and an axis `v` below
+## horizontal through it crosses the focus's vertical at
+##
+##     aim = H − R·tan v = D·(sin p − cos p·tan v)
+##
+## which is `0` at `v = p` (the axis already passes through the focus) and grows
+## as the axis rises. **The lift is therefore proportional to `R`, not a constant
+## number of metres, because the recomposition is ANGULAR** — a fixed height
+## would be a 74° pitch-up at Z0 and a rounding error at Z2.
+##
+## What that comes to, at a full lean (`--tilt=12`), is the ramp's whole scale:
+## **5.88 m at Z0, 23.1 m at the 0.42 default, 29.8 m at Z1, 144.0 m at Z2**.
+func aim_height_for(t: float, bias: float) -> float:
+	var p := deg_to_rad(pitch_deg_for(t, bias))
+	var v := view_pitch_for(t, bias)
+	if v >= p:
+		return 0.0
+	return distance_at(t) * (sin(p) - cos(p) * tan(v))
+
+
+## The world point the camera is aimed at: `focus` plus the ramp. `camera_basis()`
+## is the basis whose forward passes through it.
+func aim_point() -> Vector3:
+	return focus + Vector3(0.0, aim_height_m(), 0.0)
+
+
+## The angle of the VIEW AXIS below horizontal, in radians — NEGATIVE when the
+## ramp has lifted the aim above the camera's own height, which is the camera
+## looking up at the sky. This is the frustum's angle and therefore the number
+## every projection, every ray and doc 11 §2.5b's cull all read; `pitch_rad()`
+## stays the ORBIT angle and is what positions the camera.
+func view_pitch_rad() -> float:
+	return view_pitch_for(zoom_t, 0.0 if pitch_auto else pitch_bias)
+
+
+func view_pitch_deg() -> float:
+	return rad_to_deg(view_pitch_rad())
+
+
+## THE RAMP, and the cap that keeps the anchor on screen. The lean interpolates
+## the VIEW ANGLE — not the height — from the orbit pitch to an authored target,
+## and the height is derived back out of it by `aim_height_for`. Doing it the
+## other way round (scale the full-lean height by the lean) is NOT monotone,
+## because the orbit pitch is itself falling as the lean rises and takes `R` with
+## it: measured, the Z0 aim peaks at 5.896 m around bias 0.95 and comes back down
+## to 5.879 m at bias 1, which the slider would show as the horizon nodding.
+##
+## The target. A camera whose view axis is `v` below horizontal draws the horizon
+## at `ndc_y = tan v / tan(fov/2)`. Wanting it `aim_up_ground_frac` of the frame
+## above the BOTTOM edge is wanting `ndc_y = 2·frac − 1`, so
+##
+##     v_target = −atan((1 − 2·frac)·tan(fov/2))    = −6.92° at frac = 1/3
+##     v        = lerp(pitch, v_target, |bias|·reach(t))
+##
+## `v_target` is a constant of the projection and the authored fraction alone, so
+## a full lean composes the SAME frame at every zoom — which is the property the
+## slider's ends promise. `bias` is scaled by `reach_up_at(t)` exactly as the
+## pitch lean is, so the zoom coupling doc 92 §47 bought applies to the aim too
+## and the two halves of the axis can never disagree about how far this zoom may
+## lean.
+##
+## THE CAP. The focus is the pan/zoom/twist anchor and `focus_on()`'s landing
+## spot, so it may not leave the frame. It sits `p − v` below the axis, so the
+## guard is `v ≥ p − atan(aim_up_anchor_ndc·tan(fov/2))`; at the authored 1.0 the
+## anchor may ride the bottom edge and no further. It does NOT bind where the
+## composition lives — Z0's full lean needs `12° + 6.92° = 18.92°` of drop and
+## the frame allows 20° — and it binds by 0.45° at Z1 and 3.5° at Z2, where the
+## reach curve has already shortened the lean for the budget's sake.
+func view_pitch_for(t: float, bias: float) -> float:
+	var p := deg_to_rad(pitch_deg_for(t, bias))
+	var lean := clampf(bias, 0.0, 1.0) * reach_up_at(t)
+	if lean <= 0.0:
+		return p
+	var tan_v := _tan_half_v()
+	var target := -atan((1.0 - 2.0 * aim_up_ground_frac) * tan_v)
+	return maxf(lerpf(p, target, lean), p - atan(aim_up_anchor_ndc * tan_v))
+
+
+## Distance from the camera to the focus measured ALONG THE VIEW AXIS, which is
+## what the perspective divide uses and therefore what sets the on-screen scale
+## at the focus. `D` when the ramp is idle; `D·cos(pitch − view_pitch)` once the
+## aim has tipped the focus below the axis.
+func focus_axis_distance() -> float:
+	var drop := pitch_rad() - view_pitch_rad()
+	if drop <= 0.0:
+		return distance()
+	return distance() * cos(drop)
+
+
 ## D_MAX_eff = clamp(city_diagonal_m * 1.6, 120, 420) — keeps a small city from
 ## floating in an empty void.
 func d_max_eff() -> float:
@@ -411,20 +553,32 @@ func set_distance(dist: float) -> void:
 # Derived rig transform — the struct doc 11 §2.5 consumes
 # ---------------------------------------------------------------------------
 
-## Rig basis: yaw about +Y, then pitch down about X (Godot's YXZ Euler order).
-func camera_basis() -> Basis:
+## The RIG ARM's basis: yaw about +Y, then the ORBIT pitch down about X (Godot's
+## YXZ Euler order). This is what places the camera, and it is unchanged by the
+## aim-height ramp — which is the whole reason a ramp was chosen over a lower
+## floor (see the class doc).
+func orbit_basis() -> Basis:
 	return Basis.from_euler(Vector3(-pitch_rad(), yaw, 0.0), EULER_ORDER_YXZ)
 
 
-## Camera3D world position: focus + basis * (0, 0, D) = focus + (D·cos p·sin yaw,
-## D·sin p, D·cos p·cos yaw). Height D·sin p reproduces doc 11 §2.5's table.
+## Rig basis: yaw about +Y, then the VIEW pitch down about X. Identical to
+## `orbit_basis()` to the bit whenever the aim ramp is idle (`view_pitch_rad()`
+## returns `pitch_rad()` unchanged, not a reconstruction of it).
+func camera_basis() -> Basis:
+	return Basis.from_euler(Vector3(-view_pitch_rad(), yaw, 0.0), EULER_ORDER_YXZ)
+
+
+## Camera3D world position: focus + orbit_basis * (0, 0, D) = focus +
+## (D·cos p·sin yaw, D·sin p, D·cos p·cos yaw). Height D·sin p reproduces doc 11
+## §2.5's table at every bias, because the ramp moves the aim and not the arm.
 func camera_position() -> Vector3:
-	return focus + camera_basis() * Vector3(0.0, 0.0, distance())
+	return focus + orbit_basis() * Vector3(0.0, 0.0, distance())
 
 
-## Euler rotation for the Camera3D node (radians, YXZ).
+## Euler rotation for the Camera3D node (radians, YXZ) — the VIEW angle, the one
+## the frustum wears.
 func camera_rotation() -> Vector3:
-	return Vector3(-pitch_rad(), yaw, 0.0)
+	return Vector3(-view_pitch_rad(), yaw, 0.0)
 
 
 func camera_transform() -> Transform3D:
@@ -441,19 +595,28 @@ func ground_forward() -> Vector3:
 	return Vector3(-sin(yaw), 0.0, -cos(yaw))
 
 
-## Metres of ground per dp at the focus depth, along the screen-right axis:
-## the frame is 2·D·tan(h_half) metres wide across `viewport_dp.x` dp.
+## Metres of ground per dp at the focus, along the screen-right axis: the frame
+## is `2·z·tan(h_half)` metres wide across `viewport_dp.x` dp at view-axis depth
+## `z`, and `focus_axis_distance()` is that depth for the focus.
 ##
-## **Pitch-INVARIANT, and that is the point.** Screen-right is parallel to the
-## ground at every pitch, so this number does not move when the camera tilts —
-## which is what keeps §2.21's 48 dp tap radius and §2.7's drag ghost the same
-## size in metres before and after a tilt. The anisotropy is entirely in the
-## other axis; `m_per_dp_depth()` is that one, and no caller may use this figure
-## as if it covered both.
+## **Invariant under the PITCH BAND, and exact under the AIM RAMP** (Wave 18,
+## doc 12 D-85). Screen-right is parallel to the ground at every pitch and is the
+## camera's own local X at every yaw, so leaning the pitch band alone does not
+## move this number — which is what keeps §2.21's 48 dp tap radius and §2.7's
+## drag ghost the same size in metres through a tilt. What the aim ramp changes
+## is the DEPTH the focus sits at: tipping the view axis up by `Δ` slides the
+## focus `Δ` below it and its axis depth to `D·cos Δ`, so the frame really is
+## narrower in metres there and this figure follows it (`×0.946` at the Z0 floor,
+## `×0.940` at Z2). It follows it EXACTLY, not approximately — `project_to_screen`
+## divides by the same `−local.z`, which is the same `D·cos Δ` — and it moves in
+## the conservative direction, fewer metres per dp, so a lifted aim can only make
+## a radius pick tighter. The anisotropy is entirely in the other axis;
+## `m_per_dp_depth()` is that one, and no caller may use this figure as if it
+## covered both.
 func m_per_dp(viewport_dp: Vector2) -> float:
 	if viewport_dp.x <= 0.0:
 		return 0.0
-	return (2.0 * distance() * _tan_half_h(viewport_dp)) / viewport_dp.x
+	return (2.0 * focus_axis_distance() * _tan_half_h(viewport_dp)) / viewport_dp.x
 
 
 ## Metres of ground per dp at the focus depth along the screen-UP axis, i.e. into
@@ -468,6 +631,11 @@ func m_per_dp(viewport_dp: Vector2) -> float:
 ## dp wide and `2r·sin(pitch)/m_per_dp` dp tall — the tap radius keeps its metres
 ## and loses screen height as the camera tilts, never the other way round, so a
 ## tilt can only make the pick MORE conservative.
+##
+## The divisor stays the ORBIT pitch and not `view_pitch_deg()` under the aim
+## ramp, because the foreshortening asked about here is the angle the line of
+## sight *to the focus* makes with the ground, and that line is the rig arm — the
+## ramp swings the frame around it, not it.
 func m_per_dp_depth(viewport_dp: Vector2) -> float:
 	var s := sin(pitch_rad())
 	if s <= 0.000001:

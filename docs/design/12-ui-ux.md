@@ -1176,12 +1176,15 @@ distance**. `CameraState.ground_hit()` answers `{hit, position, reason, distance
 (`ground` / `above_horizon` / `grazing`); `screen_to_ground()` is unchanged and
 still answers the clamped point for pan, pinch and the anchor lock, which have
 always wanted it. Placement, picking, the path ghost and tap-to-focus branch on
-`hit` (report 98 RR-116). §2.21's 48 dp tap radius is unaffected by tilt:
-`m_per_dp()` is measured across screen-right, which is parallel to the ground at
-every pitch. The other axis is not, and is published as `m_per_dp_depth()` =
-`m_per_dp / sin(pitch)` — a world circle projects to an ellipse that keeps its
-metres and loses screen height as the camera tilts, so a tilt can only make a
-radius pick more conservative.
+`hit` (report 98 RR-116). §2.21's 48 dp tap radius is unaffected by the
+PITCH BAND: `m_per_dp()` is measured across screen-right, which is parallel to
+the ground at every pitch. *(Wave 18, D-85: the AIM RAMP is the part that does
+move it — it slides the focus below the view axis and its depth to `D·cos Δ`, so
+the figure follows the frame by −5.4 % at the Z0 floor. Same direction, fewer
+metres per dp.)* The other axis is not parallel to the ground, and is published
+as `m_per_dp_depth()` = `m_per_dp / sin(pitch)` — a world circle projects to an
+ellipse that keeps its metres and loses screen height as the camera tilts, so a
+tilt can only make a radius pick more conservative.
 
 **5. What the tilt reveals.** The sky (doc 11 §2.8) is now something a player can
 look at, and the world's 896 m edge is something they can look over: the gradient
@@ -1196,6 +1199,53 @@ could not tell AUTO from a bias that happened to land on the curve. Restore
 re-composes the bias against the band **this build** authors, so retuning the band
 retunes every restored city rather than leaving old saves pointing where the data
 no longer allows.
+
+**7. The aim-height ramp (Wave 18).** *"The screen tilt does work, but we need
+more vertical. We need to be able to look UP towards the sky, towards the top of
+the buildings as well."* (2026-09-02.) The band above was necessary and not
+sufficient, and the reason is item 1's rig rather than item 1's numbers: §2.16's
+camera looks AT THE FOCUS and the focus is on the ground, so the horizon always
+sits `pitch` above the view axis, at `(1 − tan p / tan(fov/2))/2` down the frame.
+At the 12° floor that is **20.8 % down — the ground owns 79 % of the frame** at
+the shallowest angle the band has, and no lower floor changes it (nor is one
+available: `18·sin 12° = 3.74 m` is what clears a 3.5 m ground floor).
+
+So the LOOK-AT point rises with the UP lean instead:
+
+    look_at  = focus + (0, aim, 0)
+    v_target = −atan((1 − 2·aim_up_ground_frac)·tan(fov/2))    = −6.92°
+    view     = lerp(pitch, v_target, |bias| · reach(t))
+               clamped to view ≥ pitch − atan(aim_up_anchor_ndc·tan(fov/2))
+    aim      = D·(sin pitch − cos pitch·tan view)
+
+`aim_up_ground_frac` (**1/3**) is the share of the frame the ground is left at a
+full lean, so a full lean means *pavement in the bottom third, facades and sky
+above it*, at every zoom. **`bias = 0` lifts exactly nothing** — AUTO and the
+whole top-down half of the axis are the camera that shipped in Wave 17, to the
+bit — and the lean rides the same `reach(t)` the pitch does, so the two halves of
+the axis cannot disagree about how far this zoom may lean.
+
+| pose | orbit pitch | view pitch | look-at height | ground's share of the frame |
+|---|---|---|---|---|
+| Z0 (t 0) | 12.0° | **−6.92°** | 5.88 m | **33.3 %** |
+| default (t 0.42) | 14.99° | −4.92° | 23.09 m | 38.2 % |
+| Z1 (t 0.5) | 16.32° | −3.68° | 29.80 m | 41.2 % |
+| Z2 (t 1) | 24.0° | +4.00° | 144.0 m | 59.6 % |
+
+The near end lands on the authored third exactly; the far end does not, because
+two authored guards bite there first — `reach_up_far = 0.76` (doc 92 §47.2's
+bought number) and `aim_up_anchor_ndc`. That second one is the ramp's only guard
+and it is geometric: **the focus may not leave the frame**, because it is the pan
+anchor, the pinch anchor, the twist pivot and `focus_on()`'s landing spot. At the
+authored 1.0 it may ride the bottom edge and no further; it does not bind at the
+near zoom (Z0's full lean needs 18.92° of drop against the frame's 20°) and binds
+by 0.45° at Z1 and 3.5° at Z2.
+
+The camera POSITION does not move — this is a pure aim lift — so every number in
+§2.16's coverage table, doc 11 §2.5's tiering and doc 11 §2.6's ground-floor
+clearance are the same numbers about the same rig (doc 93 §AM1). What the ramp
+costs is draw calls, and they are published rather than hidden, exactly as the
+band's were: doc 92 §53.
 
 ## 3. Data Schema
 
@@ -1999,3 +2049,16 @@ time.*
 |---|---|---|---|
 | D-74 | **`--road-tint=K` joins `--road-detail=` and `--pad-shadows=` in `Main._apply_render_ab_args`** (the lead's file; the two-line snippet is in the Wave-17 branch report, anchored on the `--pad-shadows=` arm). It multiplies doc 11 §2.1.2's carriageway tint by `K` in linear via `RoadSurfaceView.set_tint_gain(k)` — one uniform, live, no rebuild, byte-identical at `1.0`. **It is an A/B ARM, not a setting**: no settings row, no persisted key, no string, and it must never grow one — the ruling it feeds is DEVICE-GATED and not taken (doc 93 §X3, report 98 RR-97). **And the Graphics row's `Performance` value now draws a contact shadow under every building** (doc 11 §2.11's `MM_blob`, report 98 RR-96): the settings description strings are unchanged, because none of them promised "no shadows" — `ui_settings_value_graphics_performance` is one word — but a screenshot of that preset taken before this wave is no longer a picture of it. `tools/profile_frame --blob=0\|1` is the A/B. | doc 11 §2.1.2 / §2.11, doc 93 §X2 / §X3 | A dev arm that lives only in the shell is invisible to this document's reader unless it is recorded here, and a preset whose look changed without a string changing is exactly the kind of drift §2.18's screenshot rows exist to catch. |
 | D-74b | **The Graphics row now changes the picture.** Doc 11 §2.13b, report 98 RR-98: twenty-two engine-side keys in every preset — `render_scale`, `msaa`, `fxaa`, the shadow atlas, split count and distance, the glow ladder and its HDR thresholds, `env_adjustments` — were authored and read by nothing, so picking `High` bought more cars, more rain and more draw distance and **nothing else**. `render_scale` was read once in the whole tree, by `SettingsModel`, to SORT this row's values cheapest-first: the number that decided the order of the options was the number that did nothing when you chose one. They are live now. **No string, no key and no layout moved** — `ui_settings_value_graphics_*` are unchanged and were never wrong, because none of them promised a resolution — but the 3D framebuffer is now 1344×756 at `Performance` and 1920×1080 at `High` on a 1080p device, `Performance` renders with FXAA and no sun shadow, `High` with 2× MSAA and four shadow splits, and **a screenshot of any of the three taken before this wave is no longer a picture of it**. §2.18's screenshot rows are the ones that go stale. The A/B is `tools/profile_frame --no-quality`, which reproduces the old frame exactly. | doc 11 §2.13b, doc 93 §X5 | A settings row whose values were visually indistinguishable is a row that lied to the player by omission, and the fix changes what three of this document's screens show without changing a single string — which is precisely the drift §2.18 exists to catch. |
+
+### Wave-18 deltas — the tilt looks up (2026-09-02)
+
+| id | change | doc ref | why |
+|---|---|---|---|
+| D-85 | **The AIM-HEIGHT RAMP** — `CameraState.aim_height_m()` / `view_pitch_deg()` / `aim_point()`, authored by `data/ui.json.camera.aim_up_ground_frac` (1/3) and `aim_up_anchor_ndc` (1.0). The camera stops looking at the ground under the focus and starts looking `aim` metres up the facade above it, on a lean that is **exactly 0 at `bias = 0` and on the whole top-down half of the axis**. `camera_basis()` becomes the VIEW basis and the rig arm is published separately as `orbit_basis()`; `camera_rotation()` follows the view. §2.23 item 7 has the composition and the per-pose table. **Two knock-ons.** (a) `m_per_dp()` now measures at `focus_axis_distance()` = `D·cos(pitch − view)` rather than at `D` — item 4's "unaffected by tilt" is narrowed to the PITCH BAND, because the aim ramp really does move the frame's width in metres at the focus and the figure has to follow it (−5.4 % at the Z0 floor, −6.0 % at Z2, always fewer metres per dp, so §2.21's radius pick can only get tighter). (b) `ground_hit()`'s `MISS_ABOVE_HORIZON` is now most of the frame rather than a corner of it: at the floor the horizon is drawn two thirds of the way down, so every tap above it answers the typed miss. No caller changed — item 4's split already routed every acting caller through `hit` — and *which* ground is pickable did not move either, only where it is drawn. | §2.16, §2.21, §2.23 items 4 and 7, doc 11 §2.5/§2.5b, doc 93 §AM, doc 92 §53 | The user, 2026-09-02: *"The screen tilt does work, but we need more vertical. We need to be able to look UP towards the sky, towards the top of the buildings as well."* The band Wave 17 shipped was necessary and not sufficient, and the reason is the RIG, not the numbers: §2.16's camera looks at the focus and the focus is on the ground, so the horizon lands at `(1 − tan p/tan 20°)/2` down the frame — **20.8 % at the 12° floor, leaving the ground 79 %** — at *every* angle the band can reach. Measured at the floor before the ramp: two thirds pavement, mid-rise facades cut off at mid-height, tower tops off the top edge, sky only in the gaps between roofs. There was also nowhere left to go, because `18·sin 12° = 3.74 m` is the last angle that clears doc 11 §2.6's 3.5 m ground floor. The ramp is a **pure aim lift** and not a camera-height lift precisely so that stays true: the arm does not move, so the clearance, doc 11 §2.5's tiering and doc 92 §47.2's bought NEAR boundary are all still statements about the same rig (doc 93 §AM1). |
+
+**No screen, no string, no layout and no preview state moved** — the slider's
+column, its detent, its reach compression and the two-finger arm are all
+untouched, and the ramp rides the bias they already produce. What moved is what
+the frame is a picture OF, so §2.18's screenshot rows that show a tilted camera
+are stale by design: at the pitch floor a screenshot taken before this wave is a
+picture of the pavement and one taken after is a picture of the skyline.

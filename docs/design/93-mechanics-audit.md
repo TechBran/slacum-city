@@ -3603,3 +3603,167 @@ Two consequences, both recorded rather than fixed here:
    whole difficulty table was fitted on a mechanism the docs believed in and the
    sim never had. It belongs to the power lane, and until it lands, §Y1a is a
    correct clause with nothing to bite on.
+
+---
+
+## AM. Wave-18 rulings — the tilt looks up: what the aim is allowed to move, and what it may never move (2026-09-02)
+
+**The directive (2026-09-02), verbatim:** *"The screen tilt does work, but we need
+more vertical. We need to be able to look UP towards the sky, towards the top of
+the buildings as well."*
+
+**What the frame did before this wave, and why the floor was not the problem.**
+In doc 12 §2.16's rig the camera looks AT THE FOCUS and the focus is on the
+ground, so the horizon is always `pitch` ABOVE the view axis and lands at
+`(1 − tan p / tan(fov/2))/2` of the way down the frame. At Wave 17's floor —
+`p = 12°`, `fov = 40°` — that is **20.8 % down, leaving the ground the other
+79 %**. Measured, not asserted: `--tilt=12 --poses=z0` frames the intersection
+across the bottom two thirds, the mid-rise facades cut off at mid-height, the
+tower tops off the TOP edge and the sky only in the gaps between roofs. **Lowering
+`pitch_manual_min_deg` cannot fix it, and cannot move:** the ground fills whatever
+the axis points at, so every angle in the band composes the same way, and 12° is
+already the last angle that clears a ground floor (`18·sin 12° = 3.74 m` against
+doc 11 §2.6's 3.5 m). The axis that was missing is the AIM.
+
+### AM1. A camera recomposition moves the AIM, not the ARM
+
+The ramp lifts the **look-at point** — `look_at = focus + (0, aim, 0)` — and
+leaves `camera_position()` untouched at every zoom and every bias. Three options
+were on the table and this is why the other two lost:
+
+* **A lower pitch floor** is the null option and is ruled out above: it cannot
+  change the horizon's share of the frame at all, and it has nowhere left to go.
+* **A camera-height lift** (raise the camera, keep aiming at the focus) changes
+  what is OCCLUDED and nothing else. The horizon's screen position is a function
+  of the view axis ANGLE alone — the camera's height does not appear in it — so a
+  rig lifted 100 m still frames 79 % ground. It also moves the one thing every
+  existing guarantee in this project is written against.
+* **A pure aim lift** changes the composition and nothing else, and that is the
+  ruling. Because the arm does not move: Wave 17's ground-floor clearance holds
+  verbatim (`tests/test_camera_aim.gd::test_the_camera_is_never_inside_a_ground_floor_at_any_lean`
+  sweeps 41 zooms × 21 biases and the lowest camera in the whole product is still
+  the Z0 floor's 3.742 m); doc 11 §2.5's LOD tiering is byte-identical, because
+  chunks tier off the camera POSITION; and doc 92 §47.2's bought number — the
+  150 m NEAR boundary `pitch_reach_up_far = 0.76` was fitted to — is still a
+  measurement of the same rig rather than of a new one.
+
+**A NEGATIVE view pitch is allowed and is the point.** `view_pitch_deg()` reaches
+**−6.92°** at the Z0 floor — the axis is above horizontal and the camera is
+looking at sky — while `pitch_deg()` remains the ORBIT angle that positions it.
+Two angles with two jobs, named apart (`orbit_basis()` places, `camera_basis()`
+points), so no caller can take one for the other.
+
+### AM2. The lean interpolates the ANGLE; the height is derived out of it
+
+The first cut scaled the full-lean look-at height by the lean, and it was **not
+monotone**: the orbit pitch is itself falling as the lean rises and takes `R` with
+it, so the Z0 aim peaked at 5.896 m around bias 0.95 and came back to 5.879 m at
+bias 1 — which the slider would have shown as the horizon nodding at the end of
+its own travel. The shipped composition interpolates the VIEW ANGLE instead:
+
+    v_target = −atan((1 − 2·aim_up_ground_frac)·tan(fov/2))     = −6.92°
+    view     = lerp(pitch, v_target, |bias| · reach(t))         , capped (AM3)
+    aim      = D·(sin p − cos p·tan view)
+
+`v_target` is a constant of the projection and one authored fraction, so a full
+lean composes the SAME frame at every zoom — which is what the slider's ends
+promise. The invariant that is tested is on the view angle and deliberately NOT
+on the derived height: at Z2 a full lean aims 144.0 m up where a half lean aims
+149.5 m, while looking 20° further up, because the camera itself has dropped from
+286.5 m to 170.8 m on the way. **A derived quantity is not a proxy for the thing
+it was derived from**, and a test that asserted it was would have been asserting
+the wrong axis.
+
+**The scale is derived, not chosen.** `aim_up_ground_frac = 1/3` is "pavement in
+the bottom third". At the far pose it solves to
+`420·(sin 24° + cos 24°·tan 20°/3) = 217.4 m`, and doc 02 §2.3's five-rung roster
+maximum is `high_rise` L5 at `62 × 3.5 = 217.0 m` — the same 217 m tower doc 11
+§2.5 works its LOD example against. **That is what the ground-share rule ASKS for at the far pose — and it is not
+what ships there.** §AM3's anchor cap binds first at Z2 and takes 3.5° off the
+lean, so the shipped far-zoom aim is **144.0 m**, not 217.4 m: the roofline
+figure is the rule's own solution before the cap, quoted here because it is what
+makes 0.3333 the right ground share, and the two numbers appear two paragraphs
+apart in this document. A verifier caught the bolded sentence claiming the capped
+behaviour was the uncapped one (report 98 §54's verify pass, 2026-09-02); the
+arithmetic was never wrong, the sentence was. §2.14's
+sixth rung (78 floors, 273 m) is deliberately not the scale: it is city-level
+gated growth stock, not the pose the far zoom is composed against. Both figures
+are asserted in `test_the_far_lean_aims_at_the_tall_archetype_roofline`, read out
+of `data/building_shapes.json` rather than restated, so a roster change fails the
+test instead of quietly staling the number.
+
+### AM3. The anchor may not leave the frame, and the guard is the frame itself
+
+`focus` is the pan anchor, the pinch anchor, the twist pivot and `focus_on()`'s
+landing spot. A recomposition that pushes it off the bottom edge makes all four of
+those act on a point nobody can see. The guard is therefore geometric rather than
+a taste number: the anchor sits `pitch − view` below the axis, so
+`view ≥ pitch − atan(aim_up_anchor_ndc·tan(fov/2))`, and at the authored
+`aim_up_anchor_ndc = 1.0` it may ride the bottom edge and no further. **It does
+not bind where the composition lives** — Z0's full lean needs `12 + 6.92 = 18.92°`
+of drop against the frame's 20° — and binds by 0.45° at Z1 and 3.5° at Z2, where
+`reach()` has already shortened the lean for the budget's sake.
+
+That the near end clears the guard by 1.08° is a coincidence of three authored
+numbers (`12°`, `1/3`, `40°`) and is therefore TESTED rather than trusted:
+`test_the_full_lean_leaves_the_ground_in_the_authored_bottom_share` asserts the
+horizon is DRAWN at exactly `1 − frac` down the frame at Z0, so retuning any of
+the three into a zoom where the cap binds fails loudly instead of quietly
+composing something else.
+
+### AM4. The ray math did not move, so the picks did not move
+
+The ramp changes where the frustum POINTS. `screen_ray()`, `ground_hit()`,
+`screen_to_ground()` and `project_to_screen()` all read `camera_position()` and
+`camera_basis()`, and `camera_basis()` is the basis the `Camera3D` wears, so they
+follow the aim for free and cannot disagree with what is drawn. Proved rather
+than argued: `test_a_tap_resolves_to_the_tile_it_visually_covers` projects a tile
+centre to the screen and casts that pixel back, at three zooms × {AUTO, floor},
+and asserts the same 8 m tile; `test_a_screen_point_round_trips_through_the_ground_and_back`
+does the inverse at the floor.
+
+Three consequences are recorded because they are real:
+
+1. **`m_per_dp` MOVES under the ramp, and had to.** It claims to be metres of
+   ground per dp *at the focus*, and the focus's depth along the view axis is now
+   `D·cos(pitch − view)`, not `D`. Leaving it at `D` would have made the one
+   number §2.21's tap radius and §2.7's drag ghost are sized from disagree with
+   the frame by 5.4 % at the Z0 floor and 6.0 % at Z2. It is corrected, it is
+   exact — `test_m_per_dp_is_the_scale_the_projection_actually_draws` proves it
+   against `project_to_screen` itself rather than against its own formula — and it
+   moves in the conservative direction, fewer metres per dp, so a lifted aim can
+   only make a radius pick tighter. Doc 12 §2.23.4's "unaffected by tilt" is
+   narrowed to the PITCH BAND in delta D-85; the aim ramp is the part that moves
+   it.
+2. **The typed miss is now most of the frame, not a corner of it.** At the floor
+   the horizon is two thirds of the way down, so every screen point above it
+   answers `MISS_ABOVE_HORIZON`. §AC3's rule is unchanged and is load-bearing
+   rather than defensive now: the caller that ACTS on the world branches on
+   `hit`, the caller that TRACKS the finger does not. Which ground is *pickable*
+   did not change — the `ray_parallel_eps` and `dist·4` limits are properties of
+   the camera position, not of the aim — only where that ground is DRAWN.
+3. **Doc 11 §2.5b's cull reads the frustum off the basis, so it follows the aim
+   with no call at all.** Below the half-FOV the top ray clears the horizon and
+   `pitch_cull_reach_m` returns INF, which is the same answer `set_camera_pose`'s
+   `pitch_deg < 0` "no pitch supplied" sentinel gives — so a negative view pitch
+   cannot accidentally shorten the draw distance through the sentinel it now
+   collides with. Asserted rather than assumed
+   (`test_the_pitch_cull_reads_the_frustum_and_a_lifted_aim_leaves_it_standing`,
+   five angles from −6.92° to 19.9°). **Re-open** if anyone ever authors a `slack`
+   curve that makes the reach finite below the half-FOV: the sentinel must then be
+   split from the value.
+
+### AM5. The cull cannot pay for this, and the geometry says which way it fails
+
+The brief's hypothesis was that "a camera aimed up needs LESS distance behind the
+focus". The geometry says the opposite, and it is worth writing down because it is
+the same mistake in the other direction. Aiming up moves the frame's **near** edge
+OUT — the bottom ray at the Z0 floor is 13.08° below horizontal, so the nearest
+visible ground is `3.742/tan 13.08° = 16.1 m` from the camera's ground point where
+before it was `3.742/tan 32° = 6.0 m` — and leaves the **far** edge exactly where
+it was, at infinity, because the top ray still clears the horizon. What the ramp
+removes is 10 m of near ground, a fourteenth of one 128 m chunk; what it adds is
+the airspace the towers stand in, and that is where the draw calls are. §2.5b's
+cull is exact and is honest to return INF there, and a cull tightened past it
+would delete the skyline this wave exists to show. The excess is therefore
+published (doc 92 §53) under §AC2's standing ruling, not tuned away.

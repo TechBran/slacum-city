@@ -699,9 +699,25 @@ func test_a_tap_above_the_horizon_is_a_typed_miss() -> void:
 	assert_true(cam.screen_to_ground(top, REF_VIEWPORT).is_equal_approx(guarded),
 			"the untyped read keeps the guard's answer, byte for byte")
 	assert_true(bool(cam.ground_hit(bottom, REF_VIEWPORT)["hit"]),
-			"the bottom of the frame looks 32° down and hits")
-	assert_true(bool(cam.ground_hit(Vector2(440.0, 200.0), REF_VIEWPORT)["hit"]),
-			"the centre of the frame is 12° down and lands within dist·4")
+			"the bottom of the frame looks 26.9° down and hits")
+	# WAVE 18 (doc 12 D-85): the aim ramp moved the horizon from 20.8 % down the
+	# frame to 66.7 %, so the CENTRE of the frame at the floor is now 6.9° ABOVE
+	# it and misses. The typed miss is not a corner case any more, it is most of
+	# the frame — which is the whole reason RR-116's callers branch on `hit`.
+	var centre := Vector2(REF_VIEWPORT.x * 0.5, REF_VIEWPORT.y * 0.5)
+	var centre_miss := cam.ground_hit(centre, REF_VIEWPORT)
+	assert_false(bool(centre_miss["hit"]),
+			"at the floor the centre of the frame is above the horizon")
+	assert_eq(centre_miss["reason"], CameraState.MISS_ABOVE_HORIZON)
+	# …and the bottom third, which is the pavement the ramp leaves in frame, is
+	# still ground at every column.
+	for frac: float in [0.80, 0.90, 1.00]:
+		var low := Vector2(REF_VIEWPORT.x * 0.5, REF_VIEWPORT.y * frac)
+		assert_true(bool(cam.ground_hit(low, REF_VIEWPORT)["hit"]),
+				"the bottom of the frame is pavement at %.0f %% down" % (frac * 100.0))
+	cam.clear_pitch_bias()
+	assert_true(bool(cam.ground_hit(centre, REF_VIEWPORT)["hit"]),
+			"AUTO is unchanged: the centre of the frame is 34° down and hits")
 
 
 func test_m_per_dp_is_pitch_invariant_and_the_depth_axis_is_not() -> void:
@@ -711,11 +727,32 @@ func test_m_per_dp_is_pitch_invariant_and_the_depth_axis_is_not() -> void:
 	var flat := cam.m_per_dp(REF_VIEWPORT)
 	cam.set_pitch_bias(1.0)
 	var floor_deg := cam.pitch_floor_deg_at(0.5)
-	assert_almost_eq(cam.m_per_dp(REF_VIEWPORT), flat, 0.000001,
+	# WAVE 18 (doc 12 D-85). The PITCH BAND alone still does not move this number
+	# — screen-right is parallel to the ground at every pitch — but the AIM RAMP
+	# does, because it slides the focus `Δ = pitch − view_pitch` below the view
+	# axis and its axis depth to `D·cos Δ`. The frame really is that much
+	# narrower in metres at the focus, so the figure follows it, exactly.
+	var drop := deg_to_rad(cam.pitch_deg() - cam.view_pitch_deg())
+	assert_almost_eq(cam.m_per_dp(REF_VIEWPORT), flat * cos(drop), 0.000001,
+			"the aim ramp scales the focus depth by cos(pitch − view_pitch)")
+	assert_true(cam.m_per_dp(REF_VIEWPORT) < flat,
+			"…and only ever downwards, so a lifted aim makes a radius pick tighter")
+	# The lean with the ramp DISABLED is still exactly pitch-invariant: this is
+	# the same camera, the same 12° floor, with `aim_up_ground_frac` authored to
+	# the pre-Wave-18 value (aim 0 at every bias).
+	var flat_cam := _camera()
+	flat_cam.bounds_enabled = false
+	flat_cam.aim_up_anchor_ndc = 0.0   # the anchor may not leave the AXIS → aim 0
+	flat_cam.set_zoom_t(0.5)
+	var flat_before := flat_cam.m_per_dp(REF_VIEWPORT)
+	flat_cam.set_pitch_bias(1.0)
+	assert_almost_eq(flat_cam.aim_height_m(), 0.0, 0.000001, "the ramp is disarmed")
+	assert_almost_eq(flat_cam.m_per_dp(REF_VIEWPORT), flat_before, 0.000001,
 			"screen-right is parallel to the ground at every pitch")
-	assert_almost_eq(cam.m_per_dp_depth(REF_VIEWPORT), flat / sin(deg_to_rad(floor_deg)),
+	assert_almost_eq(flat_cam.m_per_dp_depth(REF_VIEWPORT),
+			flat_before / sin(deg_to_rad(floor_deg)),
 			0.0001, "screen-up rakes 1/sin(pitch) further across the ground")
-	assert_almost_eq(cam.m_per_dp_anisotropy(), 1.0 / sin(deg_to_rad(floor_deg)), 0.0001)
+	assert_almost_eq(flat_cam.m_per_dp_anisotropy(), 1.0 / sin(deg_to_rad(floor_deg)), 0.0001)
 	cam.clear_pitch_bias()
 	cam.set_zoom_t(0.0)
 	assert_almost_eq(cam.m_per_dp_anisotropy(), 1.0 / sin(deg_to_rad(34.0)), 0.0001,
