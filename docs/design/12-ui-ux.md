@@ -398,11 +398,24 @@ Pause freezes the sim clock only — camera, overlays, panels and build preview 
 > been handed the wheel.
 >
 > **Measured, not asserted.** `tools/measure_speed_resets.gd`, curriculum
-> strategy, 21 game-days, seeds 1337/4242/9001: raw triggers **0 / 138 / 161**,
-> forced resets after the re-arm **0 / 4 / 6**, worst **0.714 per real hour**
-> against PA-84's ≤ 1 bar. The same stream without the re-arm forces **19.2 per
-> real hour** on seed 9001 — which is the feature as the docs described it, and
-> the number that explains why it was never wired.
+> strategy, 21 game-days (504 game-hours = 8.4 real hours at 1×):
+>
+> | seed | raw triggers | forced resets | per real hour |
+> |---|---:|---:|---:|
+> | 1337 | 0 | 0 | 0.000 |
+> | 4242 | 138 | 4 | 0.476 |
+> | 9001 | 161 | 6 | 0.714 |
+> | 2718 | 161 | 6 | 0.714 |
+> | 3141 | 271 | 8 | **0.952** |
+> | 1618 | 78 | 5 | 0.595 |
+>
+> Six seeds, worst **0.952** against PA-84's ≤ 1 bar. **The margin is thin and
+> that is worth saying out loud**: the re-arm is the audit's own prescribed ten
+> minutes, and on seed 3141 the raw stream is 271 events — **32.3 per real hour**
+> without it. If a future seed crosses 1.0 the lever is `auto_speed_reset_rearm_real_s`,
+> not the trigger list: dropping a trigger would leave a crisis the player cannot
+> fix at 3× unannounced, while lengthening the re-arm only says "you have already
+> been handed the wheel for this storm".
 
 ### 2.12 WHILE YOU WERE AWAY (S11, spec §21.2)
 

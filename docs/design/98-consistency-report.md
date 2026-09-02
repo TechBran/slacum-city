@@ -6159,10 +6159,19 @@ away every three minutes has not implemented a safety feature; it has
 implemented a fault. That is the reason the function sat uncalled for seventeen
 waves, and *"nobody got round to it"* was the wrong diagnosis.
 
-**What the re-arm buys, exactly.** The same three streams, with 600 real seconds
-between forced resets: **0 / 4 / 6**, worst **0.714 per real hour**, against
-PA-84's ≤ 1 bar. `tools/measure_speed_resets.gd` prints both columns and exits
-non-zero above the bar, so the bar is a runnable claim rather than a sentence.
+**What the re-arm buys, exactly.** The same streams, with 600 real seconds
+between forced resets: **0 / 4 / 6** on those three seeds, worst **0.714 per real
+hour**. Widened to six seeds (`--seeds=1337,4242,9001,2718,3141,1618`) the raw
+column runs 0 / 138 / 161 / 161 / 271 / 78 and the forced column 0 / 4 / 6 / 6 /
+8 / 5 — worst **0.952**, still under PA-84's ≤ 1 bar and **not by much**.
+`tools/measure_speed_resets.gd` prints both columns and exits non-zero above the
+bar, so the bar is a runnable claim rather than a sentence.
+
+**Where the margin should be spent if a future seed crosses it.** On
+`auto_speed_reset_rearm_real_s`, never on the trigger list. Dropping a trigger
+leaves a crisis the player cannot fix at 3× unannounced, which is the failure the
+feature exists to prevent; lengthening the re-arm only says *"you have already
+been handed the wheel for this storm"*, which is true by construction.
 
 **The generalisable shape.** A spec clause whose subject is an undefined
 adjective — *critical*, *significant*, *nearby* — is not a feature that has not

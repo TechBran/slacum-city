@@ -318,12 +318,12 @@ if not paused:
 - **Auto-speed.** Setting `auto_speed_reset_on_critical` (default **on**): a P1 notification (class owned by doc 08) forces `speed = 1` and raises a toast. It never force-pauses — pausing the player mid-crisis is worse than the crisis.
   > **As built (Wave 18, PA-84): not *a P1 notification* — three of them.** This
   > clause said "a P1" and had no caller for seventeen waves, because *every* P1
-  > is far too many: measured on the curriculum path, the P1 stream is 138–161
-  > events over 21 game-days, which is **19.2 forced resets per real hour** on the
-  > worst seed. The shipped trigger set is `data/ui.json.speed.auto_speed_reset_triggers`
+  > is far too many: measured on the curriculum path, the matching stream is
+  > 78–271 events over 21 game-days, which is up to **32.3 forced resets per real
+  > hour**. The shipped trigger set is `data/ui.json.speed.auto_speed_reset_triggers`
   > — `incident_failed`, `credit_limit_reached`, and `flood_level_changed` at band
-  > `flooded` — plus a ten-real-minute re-arm, which brings the same run to **0.714
-  > per real hour**. Doc 12 §2.11 carries the table and the measurement;
+  > `flooded` — plus a ten-real-minute re-arm, which brings the worst of six seeds
+  > to **0.952 per real hour**. Doc 12 §2.11 carries the table and the measurement;
   > `tools/measure_speed_resets.gd` re-runs it. The toast is not raised separately:
   > the same event is already on its way to the alert surface.
 
