@@ -82,6 +82,13 @@ const STRATEGY_IDS: Array[String] = [
 ## published seven of. It is run by name, and by `test_balance_gates.gd` gate 32.
 const NAMED_ONLY_STRATEGY_IDS: Array[String] = [
 	"collector",
+	# Wave 18 — `balanced` that also PREPARES (99-PA PA-26). Named-only for the
+	# same reason `collector` is: it differs from `balanced` on the handful of
+	# game-hours a storm is pending, so on the 21-game-day matrix horizon it is
+	# mostly the same agent, and adding it to `all` would put an eighth row in a
+	# table doc 92 has published seven of. It earns its keep on a horizon long
+	# enough to contain a `severe_thunderstorm`.
+	"storm_ready",
 ]
 
 ## Verbs the harness knows how to drive. Present ones are used, absent ones are
@@ -111,6 +118,11 @@ const KNOWN_VERBS: Array[String] = [
 	# on the FINE path: opportunities do not spawn during a coarse step, so a
 	# coarse agent that drove this would drive it against an empty roster forever.
 	"cmd_collect_opportunity",
+	# Wave 18 — doc 07 §2.7.7's preparation window (99-PA PA-26). Driven only by
+	# `storm_ready`, because it is reachable only inside the T−90 → T−20 window
+	# of a committed `severe_thunderstorm` and an agent that is not watching for
+	# one would record nothing but `E_NO_STORM`.
+	"cmd_storm_prep_action",
 ]
 
 
@@ -318,6 +330,9 @@ class Api extends RefCounted:
 	## is a different decision at a different scale: a tap is $1k of local ground,
 	## a feeder is $5k of trunk capacity that only a substation can root.
 	var feeders_routed: int = 0
+	## Wave 18 — doc 07 §2.7.7's preparation window (99-PA PA-26).
+	var storm_preps: int = 0
+	var storm_prep_spend: int = 0
 	var feeder_spend: int = 0
 	var feeder_adopted_kw: float = 0.0
 	var substations_built: int = 0
@@ -1261,6 +1276,18 @@ class Api extends RefCounted:
 		return out
 
 	# --- bookkeeping --------------------------------------------------------
+
+	## Doc 07 §2.7.7 (99-PA PA-26). Takes one preparation action for the storm
+	## the city has been warned about. Refusals are recorded like every other
+	## verb's, which is the point of driving it at all: `E_PREP_WINDOW` and
+	## `E_NO_STORM` outnumbering `OK` in a run's reason-code table is how a
+	## reader sees that the window is too narrow to hit.
+	func storm_prep(action_id: String, target: Dictionary = {}) -> Dictionary:
+		var result: Dictionary = sim.cmd_storm_prep_action(action_id, target)
+		if bool(result["ok"]):
+			storm_preps += 1
+			storm_prep_spend += int((result["payload"] as Dictionary).get("cost", 0))
+		return _log("cmd_storm_prep_action", action_id, result, {})
 
 	func _log(verb: String, subject: String, result: Dictionary, extra: Dictionary) -> Dictionary:
 		var reason := String(result.get("reason_code", ""))
@@ -2679,6 +2706,56 @@ class Collector extends Curriculum:
 		api.collect_nearby(SWEEP_CENTRE, SWEEP_RADIUS_M)
 
 
+## `balanced` that also PREPARES. Doc 07 §2.7.7's six actions are optional by
+## design — *"a city that does nothing is still playable, just worse"* — so the
+## only way to measure what preparation is worth is to run an agent that takes it
+## against one that does not. This is that agent, and `balanced` is its control:
+## it differs on exactly the game-hours a `severe_thunderstorm` is pending.
+##
+## It takes the CHEAPEST available actions first and stops at
+## `storm.reward.min_prep_actions`, which is the Storm Ready threshold. That is
+## the rational play and it is also the one that makes the measurement legible:
+## an agent that bought all six would confound "preparation works" with "spending
+## works".
+class StormReady extends Balanced:
+
+	func id() -> String:
+		return "storm_ready"
+
+	func describe() -> String:
+		return "balanced, plus doc 07 §2.7.7's prep window when a storm is coming"
+
+	func act(api: Api, hour: int) -> void:
+		_prepare(api)
+		super(api, hour)
+
+	func _prepare(api: Api) -> void:
+		var overview: Dictionary = api.sim.storm_prep_overview()
+		if not bool(overview["open"]):
+			return
+		var target := int(overview["min_prep_actions"])
+		if (overview["taken"] as Array).size() >= target:
+			return
+		var affordable: Array = []
+		for entry in (overview["actions"] as Array):
+			var row: Dictionary = entry
+			if not bool(row["available"]) or bool(row["taken"]):
+				continue
+			if bool(row["needs_target"]):
+				continue  # a sandbag needs a block; this agent has no map opinion
+			if int(row["cost"]) > api.balance():
+				continue
+			affordable.append(row)
+		affordable.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			if int(a["cost"]) != int(b["cost"]):
+				return int(a["cost"]) < int(b["cost"])
+			return String(a["id"]) < String(b["id"]))
+		for row in affordable:
+			if (api.sim.director.prep_actions as Array).size() >= target:
+				return
+			api.storm_prep(String((row as Dictionary)["id"]))
+
+
 class Factory extends RefCounted:
 
 	static func make(strategy_id: String) -> Strategy:
@@ -2699,6 +2776,8 @@ class Factory extends RefCounted:
 				return TaxSqueezer.new()
 			"disaster_neglect":
 				return DisasterNeglect.new()
+			"storm_ready":
+				return StormReady.new()
 		return null
 
 

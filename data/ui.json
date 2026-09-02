@@ -1487,6 +1487,11 @@
 		"resume_unpaused": true,
 		"auto_speed_reset_on_critical": true
 	},
+	"storm_prep": {
+	  "_source": "12-ui-ux.md §2.24 (S17). Doc 07 §2.7.7 owns the six actions and their knobs; doc 03 owns their dollars (data/economy.json storm_prep); this block is layout only.",
+	  "row_h_dp": 72,
+	  "meter_h_dp": 6
+	},
 	"away_report": {
 		"min_real_seconds": 120,
 		"max_timeline_entries": 8,

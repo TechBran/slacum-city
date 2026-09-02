@@ -64,6 +64,10 @@ const SURFACES: Array[String] = [
 	# S15. The other surface a player meets with no city behind it, and the only
 	# one that can be up while the sim is half-restored.
 	"VeilLayer/LoadingVeil/Center/Panel",
+	# S17 (doc 12 §2.24). Six action rows with a price, a countdown and a reason
+	# line — the widest single column in the deck after S9's settings list, and
+	# the one most likely to blow a 360 dp box at the largest text setting.
+	"ModalLayer/StormPrepSheet/Panel",
 ]
 
 

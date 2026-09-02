@@ -146,6 +146,18 @@ var _prev_block_dark: Dictionary = {}  # block id -> bool
 var _last_construction_stage: Dictionary = {}  # sim_id -> stage 1..6
 var _last_expense_hour: float = 1.0            # DirectorInputs.daily_opex source
 var _director_links: Dictionary = {}           # incident id -> director event_uid
+## 99-PA PA-26 — the storm's repair bill, READ BACK from doc 03's ledger rather
+## than priced here (C-16). `Treasury.lifetime.lifetime_repairs` is a running
+## total of every `repair` charge the city has ever settled, so this holds WHERE
+## THAT STOOD when each in-flight event began and §2.7.6's Storm Report is the
+## difference. A baseline rather than a running tally because doc 03's ledger is
+## the only ledger: a second accumulator beside it is a second number to drift.
+## `event_uid -> lifetime_repairs at the event's start`.
+var _storm_repair_by_event: Dictionary = {}
+## Prep effects with a lifetime: `[{action, until_min, …}]`, swept at REPORT.
+## A crew called out for 12 game-hours has to go home again, and a construction
+## site recalled for the storm has to go back to work.
+var _storm_prep_effects: Array = []
 ## The last settled hour, verbatim (doc 12's budget breakdown reads it).
 ## Derived: not captured, refilled on the first settled hour after a load.
 var last_settlement: Dictionary = {}
@@ -1623,6 +1635,10 @@ func capture_state() -> Dictionary:
 		"weather": weather.serialize(),
 		"director": director.serialize(),
 		"street": street.serialize(),
+		# 99-PA PA-26. The storm's ledger tally and the prep effects that have to
+		# be lifted again — both outlive the tick that made them, so both are the
+		# city's state and not a view of it.
+		"storm_prep": _serialize_storm_prep(),
 	}
 
 
@@ -1879,6 +1895,7 @@ func _restore_incidents(body: Dictionary) -> void:
 	# A v6 body has no `street` block and restores to an empty roster, which is
 	# exactly what a v6 city had.
 	street.deserialize(body.get("street", {}))
+	_restore_storm_prep(body.get("storm_prep", {}))
 
 
 func _restore_finish(body: Dictionary) -> void:
@@ -2084,6 +2101,7 @@ func _director_busy_uids() -> Dictionary:
 func _sweep_director_events(now_min: int) -> void:
 	if director == null or director.active_events.is_empty():
 		return
+	_note_storm_repair_baseline()
 	var busy := _director_busy_uids()
 	for entry in director.events_due_for_resolution(now_min, busy):
 		var event_uid := int(entry[0])
@@ -2092,12 +2110,29 @@ func _sweep_director_events(now_min: int) -> void:
 		director.on_event_resolved(event_uid, outcome, now_min)
 
 
-## Hook for the beats that must happen while the event is still in flight —
-## §2.7.6's storm report is built here, because `on_event_resolved` takes the
-## storm down with it. Empty until PA-26 fills it.
-func _on_director_event_resolving(_event_uid: int, _outcome: String,
-		_now_min: int) -> void:
-	pass
+## PA-26 / C-16 — where doc 03's repair ledger stood when this storm began. Taken
+## on the first REPORT tick of the event, which is the same tick the DIRECTOR
+## phase started it on (DIRECTOR runs before REPORT), so nothing charged to the
+## storm is charged before the mark.
+func _note_storm_repair_baseline() -> void:
+	for uid in director.active_events:
+		if String((director.active_events[uid] as Dictionary)["type"]) \
+				!= "severe_thunderstorm":
+			continue
+		if not _storm_repair_by_event.has(int(uid)):
+			_storm_repair_by_event[int(uid)] = int(treasury.lifetime["lifetime_repairs"])
+
+
+## The beats that must happen while the event is still in flight. §2.7.6's storm
+## report is built HERE and not after, because `on_event_resolved` sets
+## `storm.active = false` and the save stops carrying the storm's metrics with
+## it — the report would then have nothing to report.
+func _on_director_event_resolving(event_uid: int, _outcome: String,
+		now_min: int) -> void:
+	var row: Dictionary = director.active_events.get(event_uid, {})
+	if String(row.get("type", "")) != "severe_thunderstorm":
+		return
+	_publish_storm_report(event_uid, row, now_min)
 
 
 # ------------------------------- doc 07 §2.6.5 target selection (99-PA PA-25)
@@ -5304,6 +5339,387 @@ func cmd_rush_construction(job_id: Variant) -> Dictionary:
 	return {"ok": true, "err": "", "cost": cost}
 
 
+# ------------------------ doc 07 §2.7.7 / §2.7.6 — the storm's player half
+#
+# **99-PA PA-26.** Doc 07 authors six preparation actions, a Storm Report and a
+# Storm Ready payout, and at the Wave-17 fork `grep -c storm_prep sim/city_sim.gd`
+# returned **0**. `DisasterDirector.storm_prep_action` existed and was
+# unreachable twice over: no command layer called it, and its own window test
+# (`storm.active` AND `−90 ≤ now − t0 ≤ −20`) can never be true, because
+# `storm.begin()` sets `t0 = now`. `build_report` and `storm_ready_earned` had no
+# callers at all. The player received *"You have about {minutes} minutes to get
+# ready"* and had nothing to do with it.
+
+## The six, in the order §2.7.7 lists them — which is also the order the sheet
+## draws them, cheapest commitment first.
+const STORM_PREP_ACTIONS: Array[String] = [
+	"pre_stage_crews", "load_shed", "top_off_water",
+	"callout_crew", "recall_construction", "sandbag_block",
+]
+## The department a called-out crew joins (§2.7.7: "+1 temporary utility crew").
+const STORM_PREP_CALLOUT_TYPE := "utility_truck"
+
+
+## **The Storm Prep window, as a surface can draw it.** One read, everything the
+## sheet needs: whether the door is open, how long the player has, what the city
+## is walking into, what it has already done, and — the part that makes this a
+## teaching screen rather than a shop — the three readiness numbers §2.7.7's
+## actions each move.
+##
+## Safe to call at any time; `open` is false and `actions` is still populated
+## (every row `available: false`) so the screen has something honest to show
+## when there is no storm.
+func storm_prep_overview() -> Dictionary:
+	var window: Dictionary = director.storm_prep_window() if director != null \
+			else {"open": false, "event_uid": -1, "minutes_left": 0,
+					"minutes_to_impact": 0}
+	var taken: Array = director.prep_actions.duplicate() if director != null else []
+	var rows: Array = []
+	for action_id in STORM_PREP_ACTIONS:
+		var quote := cmd_storm_prep_action(action_id, {}, true)
+		rows.append({
+			"id": action_id,
+			"cost": int((quote["payload"] as Dictionary).get("cost", 0)),
+			"taken": taken.has(action_id),
+			"available": bool(quote["ok"]),
+			"reason_code": String(quote.get("reason_code", "")),
+			"needs_target": action_id == "sandbag_block",
+		})
+	var storm_row: Dictionary = director.pending_storm() if director != null else {}
+	return {
+		"open": bool(window["open"]),
+		"event_uid": int(window.get("event_uid", -1)),
+		"minutes_to_impact": int(window.get("minutes_to_impact", 0)),
+		"minutes_left": int(window.get("minutes_left", 0)),
+		"severity_mult": float(storm_row.get("severity_mult", 0.0)),
+		"intensity": float(storm_row.get("intensity", 0.0)),
+		"taken": taken,
+		"min_prep_actions": int((director.tables.storm.get("reward", {}) as Dictionary)
+				.get("min_prep_actions", 3)) if director != null else 3,
+		"actions": rows,
+		"readiness": storm_readiness(),
+	}
+
+
+## The three numbers §2.7.7's actions move, each ∈ [0,1] and each read from the
+## system that owns it — never recomputed here. A sheet draws them as meters and
+## the player learns which button to press by looking at which meter is short.
+func storm_readiness() -> Dictionary:
+	var powered := 0
+	var lit := 0
+	for id in roster_ids():
+		powered += 1
+		if grid.is_powered(String(id)):
+			lit += 1
+	var idle := 0
+	var free: Dictionary = incidents.fleet.free_units_by_dept()
+	for department in free:
+		idle += int(free[department])
+	var stored := 0.0
+	var capacity := 0.0
+	for node_id in water.nodes:
+		var node: WaterNode = water.nodes[node_id]
+		if node.variant != &"tank":
+			continue
+		stored += node.volume_m3
+		capacity += float(water.data.component(node.variant, node.level)
+				.get("capacity_m3", 0.0))
+	return {
+		"grid_powered_frac": float(lit) / float(maxi(1, powered)),
+		"fleet_idle": idle,
+		"water_fill": (stored / capacity) if capacity > 0.0 else 1.0,
+	}
+
+
+## **`cmd_storm_prep_action(action_id, target, preview)` — the door.**
+##
+## Refusal order, first blocker wins, and every one of them is something the
+## sheet can say in words rather than by greying a button with no reason:
+##
+##   1 `E_UNKNOWN_ACTION`  not one of §2.7.7's six
+##   2 `E_NO_STORM`        nothing scheduled to prepare for
+##   3 `E_PREP_WINDOW`     outside T−90 → T−20 (doc 07 §2.7.7)
+##   4 `E_ALREADY_TAKEN`   each action is once per storm
+##   5 `E_NO_TARGET`       `sandbag_block` without a block
+##   6 `E_FUNDS`/`E_AUSTERITY`  doc 03 §2.10 refused the spend
+##
+## `preview = true` quotes the price and the first blocker without charging
+## anything, which is what `storm_prep_overview` builds its rows from — one code
+## path, so a greyed button and a refused tap can never disagree.
+func cmd_storm_prep_action(action_id: String, target: Dictionary = {},
+		preview: bool = false) -> Dictionary:
+	if not STORM_PREP_ACTIONS.has(action_id):
+		return CommandQueue.fail(&"E_UNKNOWN_ACTION", {"action": action_id})
+	var window: Dictionary = director.storm_prep_window()
+	var cost := _storm_prep_quote(action_id)
+	var payload := {"action": action_id, "cost": cost,
+			"event_uid": int(window.get("event_uid", -1)),
+			"minutes_left": int(window.get("minutes_left", 0))}
+	if int(window.get("event_uid", -1)) < 0:
+		return CommandQueue.fail(&"E_NO_STORM", payload)
+	if not bool(window["open"]):
+		return CommandQueue.fail(&"E_PREP_WINDOW", payload)
+	if director.prep_actions.has(action_id):
+		return CommandQueue.fail(&"E_ALREADY_TAKEN", payload)
+	if action_id == "sandbag_block" and not target.has("block"):
+		return CommandQueue.fail(&"E_NO_TARGET", payload)
+	if preview:
+		return CommandQueue.ok(payload)
+	if cost > 0:
+		var paid := treasury.spend(cost, &"storm_prep", "storm prep " + action_id)
+		if not bool(paid["ok"]):
+			return CommandQueue.fail(_spend_reason(paid), payload)
+	if not director.storm_prep_action(action_id, target):
+		return CommandQueue.fail(&"E_PREP_WINDOW", payload)
+	_apply_storm_prep_effect(action_id, int(window["event_uid"]))
+	stats_add(&"storm_prep_actions")
+	bus.emit(&"storm_prep_taken", {"action": action_id, "cost": cost,
+			"event_uid": int(window["event_uid"]),
+			"taken": director.prep_actions.size(),
+			"minutes_to_impact": int(window.get("minutes_to_impact", 0))})
+	return CommandQueue.ok(payload)
+
+
+## What one action costs right now, through doc 03's accessor and nothing else.
+## `top_off_water` is the only variable one: it buys the water it actually adds.
+func _storm_prep_quote(action_id: String) -> int:
+	match action_id:
+		"pre_stage_crews":
+			return econ_curves.storm_prep_cost(action_id, float(_storm_prep_knob(
+					action_id, "crews", 2.0)))
+		"top_off_water":
+			return econ_curves.storm_prep_cost(action_id, _storm_water_deficit_m3())
+		_:
+			return econ_curves.storm_prep_cost(action_id)
+
+
+func _storm_prep_knob(action_id: String, key: String, fallback: float) -> float:
+	var actions: Dictionary = director.tables.storm.get("prep_actions", {})
+	return float((actions.get(action_id, {}) as Dictionary).get(key, fallback))
+
+
+## Cubic metres between every live tank and `fill_to`. The price is per m³, so a
+## city that already tops its tanks off pays nothing and the button says so.
+func _storm_water_deficit_m3() -> float:
+	var fill_to := clampf(_storm_prep_knob("top_off_water", "fill_to", 1.0), 0.0, 1.0)
+	var deficit := 0.0
+	for node_id in _sorted(water.nodes):
+		var node: WaterNode = water.nodes[node_id]
+		if node.variant != &"tank" or not node.is_live():
+			continue
+		var capacity := float(water.data.component(node.variant, node.level)
+				.get("capacity_m3", 0.0))
+		deficit += maxf(0.0, capacity * fill_to - node.volume_m3)
+	return deficit
+
+
+## The half of a prep action that is not the Director's. `load_shed` and
+## `sandbag_block` are applied inside `DisasterDirector` (they are a modifier
+## source and a flood-field knob, both of which it owns); these four need the
+## city.
+##
+## **Two are DEFERRED and say so** rather than being taken and doing nothing:
+## `pre_stage_crews`' −35 % travel time needs a knob on `sim/incidents/
+## fleet_system.gd`, and `load_shed`'s −5 % commercial tax needs doc 03's revenue
+## half — neither file is this lane's to edit (99-PA §3.0 rule 1). Both are still
+## PRICED, RECORDED and counted toward Storm Ready, and both carry a row in doc
+## 12 D-78's deferral table. Nothing here pretends to an effect it does not have.
+func _apply_storm_prep_effect(action_id: String, event_uid: int) -> void:
+	var now_min := clock.tick_index / GameClock.TICKS_PER_MINUTE
+	match action_id:
+		"top_off_water":
+			var fill_to := clampf(_storm_prep_knob(action_id, "fill_to", 1.0), 0.0, 1.0)
+			for node_id in _sorted(water.nodes):
+				var node: WaterNode = water.nodes[node_id]
+				if node.variant != &"tank" or not node.is_live():
+					continue
+				var capacity := float(water.data.component(node.variant, node.level)
+						.get("capacity_m3", 0.0))
+				node.volume_m3 = maxf(node.volume_m3, capacity * fill_to)
+		"callout_crew":
+			var station := _storm_callout_station()
+			if station == "":
+				return
+			var tile: Vector2i = (incidents.fleet.station(station) as Dictionary) \
+					.get("tile", Vector2i.ZERO)
+			var unit := incidents.fleet.add_unit(STORM_PREP_CALLOUT_TYPE, station, tile)
+			if unit == null:
+				return
+			_storm_prep_effects.append({"action": action_id, "event_uid": event_uid,
+					"unit_id": unit.id, "until_min": now_min
+							+ int(_storm_prep_knob(action_id, "duration_min", 720.0))})
+		"recall_construction":
+			var recalled: Array = []
+			for job in construction.active_jobs():
+				var job_id := int((job as Dictionary)["id"])
+				construction.set_site_mult(job_id, 0.0)
+				recalled.append(job_id)
+			if recalled.is_empty():
+				return
+			_storm_prep_effects.append({"action": action_id, "event_uid": event_uid,
+					"jobs": recalled, "until_min": now_min
+							+ int(_storm_prep_knob(action_id, "progress_loss_min", 90.0))})
+
+
+## The utility station with the most idle trucks — a called-out crew reports
+## where there is already a yard to report to. Ties by station id, so it is the
+## same station on every replay of the same city.
+func _storm_callout_station() -> String:
+	var best := ""
+	var best_idle := -1
+	for station_id in incidents.fleet.station_ids():
+		var id := String(station_id)
+		var idle := incidents.fleet.idle_count_at_station("utility", id)
+		if idle > best_idle or (idle == best_idle and id < best):
+			best_idle = idle
+			best = id
+	return best
+
+
+## Prep effects have a lifetime and this is where it runs out — swept beside the
+## Director's own resolution sweep, on the same REPORT tick, from the same clock.
+## A crew called out for 12 game-hours goes home; a recalled construction site
+## goes back to work having lost the progress §2.7.7 said it would.
+func _sweep_storm_prep_effects(now_min: int) -> void:
+	if _storm_prep_effects.is_empty():
+		return
+	var kept: Array = []
+	for entry in _storm_prep_effects:
+		var effect: Dictionary = entry
+		if now_min < int(effect["until_min"]):
+			kept.append(effect)
+			continue
+		match String(effect["action"]):
+			"callout_crew":
+				incidents.fleet.remove_unit(int(effect["unit_id"]))
+			"recall_construction":
+				for job_id in (effect["jobs"] as Array):
+					construction.set_site_mult(int(job_id), 1.0)
+	_storm_prep_effects = kept
+
+
+## **§2.7.6's headline resilience metric, finally counted.**
+## `SevereThunderstorm.metrics.outage_customer_minutes` is the number the Storm
+## Ready check is made against (`< 250 × population/1000`) and at the fork
+## NOTHING WROTE IT — so the check reduced to "did the player take three
+## actions", which is not a resilience test, it is an attendance test.
+##
+## A customer is a resident whose building is dark, because that is the unit
+## §2.7.6's own budget is stated in (its worked example puts 400 customers out of
+## a city of 45,000 at 0.9 %). Accrued at REPORT on the same tick as the sweeps
+## above, from the same `dt`, so the fine and coarse paths integrate the same
+## quantity at their own step sizes.
+func _accrue_storm_outage(dt_min: float) -> void:
+	if director == null or not director.storm.active or dt_min <= 0.0:
+		return
+	var dark := 0
+	for id in roster_ids():
+		var b: Building = buildings[id]
+		if b.state != &"active" or grid.is_powered(String(id)):
+			continue
+		dark += int(b.stats.get("population", 0))
+	if dark <= 0:
+		return
+	director.storm.metrics["outage_customer_minutes"] = int(
+			director.storm.metrics["outage_customer_minutes"]) \
+			+ int(roundf(float(dark) * dt_min))
+
+
+# ------------------------------------------- §2.7.6 the Storm Report and the payout
+
+## **The teaching moment (Core Rule 12), finally built.** Called from
+## `_on_director_event_resolving`, which is the last tick on which the storm's
+## own metrics still exist — `on_event_resolved` takes the storm down and the
+## save stops carrying it.
+##
+## Every dollar in it is READ BACK, never priced here (C-16): `_storm_repair_by_event`
+## is the sum of the `repair` spends doc 03 settled while this event was in
+## flight. The reward is §2.7.6's, whole: ≥ `min_prep_actions` taken AND
+## `outage_customer_minutes` under budget earns `reimburse_frac` of that total
+## back as state aid and `stability_bonus` on every district the storm touched.
+func _publish_storm_report(event_uid: int, row: Dictionary, now_min: int) -> void:
+	var settled := int(treasury.lifetime["lifetime_repairs"])
+	var ledger_total := maxi(0, settled
+			- int(_storm_repair_by_event.get(event_uid, settled)))
+	var report := director.storm.build_report(ledger_total)
+	report["kind"] = "severe_thunderstorm"
+	report["minute"] = now_min
+	report["impact_min"] = int(row.get("impact_min", 0))
+	report["districts"] = _storm_touched_districts(event_uid)
+	var earned := director.storm.storm_ready_earned(population.city_population)
+	report["storm_ready"] = earned
+	var reward: Dictionary = director.tables.storm.get("reward", {})
+	var relief := 0
+	if earned:
+		relief = int(roundf(float(reward.get("reimburse_frac", 0.15))
+				* float(ledger_total)))
+		if relief > 0:
+			treasury.credit(relief, &"grants", "storm relief")
+		var bonus := float(reward.get("stability_bonus", 0.05))
+		for district_id in report["districts"]:
+			districts.apply_stability(String(district_id), bonus)
+	report["relief_paid"] = relief
+	bus.emit(&"storm_report_ready", report)
+	_storm_repair_by_event.erase(event_uid)
+
+
+## Every district the storm actually touched, ascending — the set §2.7.6 applies
+## the Storm Ready bonus to. A struck asset's district, plus the district of
+## every incident this event spawned; empty ids are dropped, because "" is not a
+## district and applying a bonus to it would be a silent no-op that looked like
+## a payout.
+func _storm_touched_districts(event_uid: int) -> Array:
+	var seen: Dictionary = {}
+	for ref in director.storm.struck:
+		var tile := Vector2i(-1, -1)
+		if buildings.has(ref):
+			tile = (buildings[ref] as Building).origin
+		elif grid.has_component(String(ref)):
+			tile = grid.component(String(ref)).get("tile", Vector2i(-1, -1))
+		if tile.x >= 0:
+			var district_id := incident_world.district_of_tile(tile)
+			if district_id != "":
+				seen[district_id] = true
+	for incident_id in _director_links:
+		if int(_director_links[incident_id]) != event_uid:
+			continue
+		var incident := incidents.incident(int(incident_id))
+		if incident != null and incident.district_id != "":
+			seen[incident.district_id] = true
+	return _sorted(seen)
+
+
+# ---------------------------------------------------------------- persistence
+
+func _serialize_storm_prep() -> Dictionary:
+	var repairs := {}
+	for event_uid in _sorted(_storm_repair_by_event):
+		repairs[str(event_uid)] = int(_storm_repair_by_event[event_uid])
+	var effects: Array = []
+	for entry in _storm_prep_effects:
+		effects.append((entry as Dictionary).duplicate(true))
+	return {"repair_by_event": repairs, "effects": effects}
+
+
+func _restore_storm_prep(data: Dictionary) -> void:
+	_storm_repair_by_event.clear()
+	for key in data.get("repair_by_event", {}):
+		_storm_repair_by_event[int(key)] = int(data["repair_by_event"][key])
+	_storm_prep_effects = []
+	for entry in data.get("effects", []):
+		var effect: Dictionary = (entry as Dictionary).duplicate(true)
+		effect["until_min"] = int(effect.get("until_min", 0))
+		effect["event_uid"] = int(effect.get("event_uid", -1))
+		if effect.has("unit_id"):
+			effect["unit_id"] = int(effect["unit_id"])
+		if effect.has("jobs"):
+			var jobs: Array = []
+			for job_id in (effect["jobs"] as Array):
+				jobs.append(int(job_id))
+			effect["jobs"] = jobs
+		_storm_prep_effects.append(effect)
+
+
 ## Construction stage pulses for the renderer (doc 11 §5): a site under
 ## build/upgrade walks six visual stages, and the crane/site loop switches on
 ## each. One event per CHANGE only — a pulse every tick would be 240 events an
@@ -6033,7 +6449,10 @@ class ReportPhaseSystem extends SimSystem:
 			sim.bus.emit(StringName(String(event["type"])), event)
 		# PA-04: the link book is now current for this tick, so this is the
 		# first honest moment to ask which Director events are over.
-		sim._sweep_director_events(ctx.tick_index / GameClock.TICKS_PER_MINUTE)
+		var minute: int = ctx.tick_index / GameClock.TICKS_PER_MINUTE
+		sim._sweep_director_events(minute)
+		sim._sweep_storm_prep_effects(minute)  # PA-26
+		sim._accrue_storm_outage(float(ctx.dt_game_seconds) / 60.0)  # PA-26
 		for event in sim.water.drain_events():
 			sim.bus.emit(StringName(String(event["type"])), event)
 		# Doc 06 §2.16. `opportunity_collected` is NOT drained here — the verb

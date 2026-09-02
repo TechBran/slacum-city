@@ -68,6 +68,13 @@ var scheduled: Array = []
 var active_events: Dictionary = {}  # event_uid -> row
 var post_event_bleed_until_min: int = -1
 var debt_since_min: int = -1
+## 99-PA PA-26 — §2.7.7's prep ledger, kept HERE and not on the storm, because
+## every prep action is taken in the WARNING window and the storm object does not
+## exist yet (`storm.begin()` runs at impact). `_start_event` hands the list over
+## when the storm starts; `on_event_resolved` clears it, so one storm's
+## preparation can never be counted toward the next one's Storm Ready check.
+var prep_actions: Array = []
+var prep_event_uid: int = -1
 
 var _now_min: int = 0
 var _rng: RngStreams
@@ -131,25 +138,75 @@ func scripted_suppression_active() -> bool:
 ## worse. Returns false when the action is unknown, already taken, or outside
 ## the window, so the UI can grey the button rather than lie about it.
 func storm_prep_action(action_id: String, target: Dictionary = {}) -> bool:
-	if not storm.active:
+	var window := storm_prep_window()
+	if not bool(window["open"]):
 		return false
 	var actions: Dictionary = tables.storm.get("prep_actions", {})
-	if not actions.has(action_id) or storm.prep_actions.has(action_id):
+	if not actions.has(action_id) or prep_actions.has(action_id):
 		return false
-	var t := _now_min - storm.t0_min
-	var window_open := -int(tables.event_by_id("severe_thunderstorm").get("warn_min", 90))
-	if t < window_open or t > int(tables.storm_phases().get("cell_entry_min", -20)):
-		return false
-	storm.prep_actions.append(action_id)
+	prep_event_uid = int(window["event_uid"])
+	prep_actions.append(action_id)
+	if storm.active and storm.event_uid == prep_event_uid:
+		storm.prep_actions = prep_actions.duplicate()
 	if action_id == "load_shed":
 		_apply_load_shed(float(actions[action_id].get("power_load_mult", 0.92)))
 	elif action_id == "sandbag_block" and weather != null and target.has("block"):
 		var block: Array = target["block"]
 		weather.flood.set_block_drain_bonus(int(block[0]), int(block[1]),
 				float(actions[action_id].get("drain_rate_mult", 1.6)))
-	_emit(&"storm_prep_action", {"action": action_id, "event_uid": storm.event_uid,
+	_emit(&"storm_prep_action", {"action": action_id, "event_uid": prep_event_uid,
 			"target": target.duplicate()})
 	return true
+
+
+## 99-PA PA-26 — **the row the prep window is measured against, and why it is not
+## the storm object.** `SevereThunderstorm.begin()` runs at IMPACT, in
+## `_start_event`, and sets `t0_min = now`. The fork's window test was
+## `storm.active` AND `−90 ≤ now − t0 ≤ −20`, and those two are never true
+## together: while the storm is active `now − t0 ≥ 0`, so the six authored prep
+## actions were unreachable through this function as well as through the shell.
+## The window is a property of the SCHEDULED row — the one F7's warning went out
+## for — so that is what this reads. It falls back to the in-flight row, so a
+## storm that has already begun answers "closed" rather than "no storm".
+func pending_storm() -> Dictionary:
+	for row in scheduled:
+		if String(row["type"]) == "severe_thunderstorm":
+			return row
+	for uid in _sorted_keys(active_events):
+		var row: Dictionary = active_events[uid]
+		if String(row["type"]) == "severe_thunderstorm":
+			return row
+	return {}
+
+
+## §2.7.7's window, T−90 → T−20 relative to the storm's own T=0, with the lead
+## scaled by difficulty exactly as F7's warning is (`warning_lead_mult`): a
+## casual player gets a longer window because they were given a longer warning.
+## `{open, event_uid, t0_min, opens_at_min, closes_at_min, minutes_left,
+## minutes_to_impact}`; every field is present even when there is no storm, so a
+## surface can bind once and redraw.
+func storm_prep_window() -> Dictionary:
+	var row := pending_storm()
+	if row.is_empty():
+		return {"open": false, "event_uid": -1, "t0_min": -1, "opens_at_min": -1,
+				"closes_at_min": -1, "minutes_left": 0, "minutes_to_impact": 0}
+	var t0 := int(row["impact_min"])
+	var lead := int(roundf(float(tables.event_by_id("severe_thunderstorm")
+			.get("warn_min", 90)) * knob("warning_lead_mult")))
+	var opens := t0 - lead
+	var closes := t0 + int(tables.storm_phases().get("cell_entry_min", -20))
+	return {
+		"open": _now_min >= opens and _now_min <= closes,
+		"event_uid": int(row["event_uid"]),
+		"t0_min": t0, "opens_at_min": opens, "closes_at_min": closes,
+		"minutes_left": maxi(0, closes - _now_min),
+		"minutes_to_impact": maxi(0, t0 - _now_min),
+	}
+
+
+## The Director's clock, for a caller that has to line a window up against it.
+func now_min() -> int:
+	return _now_min
 
 
 ## Voluntary load shed is a POLICY source on the shared ModifierStack, not a
@@ -839,6 +896,8 @@ func _start_event(row: Dictionary, inputs: DirectorInputs) -> void:
 		storm.begin(uid, float(row["severity_mult"]), float(row.get("intensity", 0.77)),
 				_now_min, int(row.get("duration_min", 120)),
 				maxi(1, inputs.total_response_units), _rng.stream("weather").randf())
+		# PA-26: the warning window's ledger becomes this storm's report line.
+		storm.prep_actions = prep_actions.duplicate() if prep_event_uid == uid else []
 		return
 	# Everything else is one request into doc 06, which decides what it becomes.
 	#
@@ -891,6 +950,9 @@ func on_event_resolved(event_uid: int, outcome: String = OUTCOME_RESOLVED,
 	if String(row["type"]) == "severe_thunderstorm":
 		_clear_load_shed()  # the shed lasts the storm's duration, not forever
 		storm.active = false
+		# PA-26: one storm's preparation is never counted toward the next one's.
+		prep_actions = []
+		prep_event_uid = -1
 	last_event_end_min[String(row["type"])] = _now_min
 	if String(row["class"]) == DirectorTables.CLASS_MAJOR:
 		last_major_end_min = _now_min
@@ -998,6 +1060,8 @@ func serialize() -> Dictionary:
 		"offline_hazard_used": offline_hazard_used,
 		"post_event_bleed_until_min": post_event_bleed_until_min,
 		"debt_since_min": debt_since_min,
+		"prep_actions": prep_actions.duplicate(),
+		"prep_event_uid": prep_event_uid,
 		"active_storm": storm.serialize() if storm.active else null,
 	}
 
@@ -1065,6 +1129,10 @@ func deserialize(data: Dictionary) -> void:
 	offline_hazard_used = bool(data.get("offline_hazard_used", false))
 	post_event_bleed_until_min = int(data.get("post_event_bleed_until_min", -1))
 	debt_since_min = int(data.get("debt_since_min", -1))
+	prep_actions = []
+	for action in data.get("prep_actions", []):
+		prep_actions.append(String(action))
+	prep_event_uid = int(data.get("prep_event_uid", -1))
 	var storm_state: Variant = data.get("active_storm", null)
 	if typeof(storm_state) == TYPE_DICTIONARY:
 		storm.deserialize(storm_state)
