@@ -8235,13 +8235,20 @@ the building's access tile, in the zone named beside it.
 
 Three readings worth keeping:
 
-1. **The zeros are real, not absent.** `H-001` is 32 tiles from `POL-1` and 29
-   from `FIRE-1`; the L1 radii are 20 and 18, and `c_station` clamps at zero
-   outside them. The tile reads OFFLINE with a true `0 %` — which is the honest
-   answer and the one the L4 curriculum needs, because the lesson is that a lot
-   this far out is not covered and a station is what covers it.
-2. **The founding city has exactly one fire station and one police station**, and
-   they sit at opposite corners of the owned core (65, 33) and (33, 65). Every
+1. **The zeros are real, not absent.** `CoverageIndex.station_contribution()`
+   measures **Euclidean between footprint centroids** (doc 02 §2.9), and on that
+   metric `H-001` at (36, 33) is **32.596** tiles from `POL-1`'s centroid
+   (33.5, 65.5) against a `radius_tiles` of **20**, and **29.504** from
+   `FIRE-1`'s (65.5, 33.5) against **18**. `c_station` returns zero without
+   evaluating the falloff at `distance >= radius`, so the tile reads OFFLINE with
+   a true `0 %` — which is the honest answer and the one the L4 curriculum needs,
+   because the lesson is that a lot this far out is not covered and a station is
+   what covers it. (Not L1: the index's own line is
+   `(pos - centroid).length()`, and a lane that quotes a Manhattan figure for a
+   Euclidean gate has published a number the gate does not use.)
+2. **The founding city has exactly one fire station and one police station** —
+   `station_count(&"police")` and `station_count(&"fire")` are both `1` — and they
+   sit at opposite corners of the owned core, (65, 33) and (33, 65). Every
    building is inside one radius or neither; none is inside both. That is a
    pacing fact the panel has never been able to show.
 3. **`0.6000` is doc 05's `nominal_pressure` exactly**, which is why `H-001`'s
@@ -8257,6 +8264,10 @@ panel beside it had applied the margin since Wave 5, so the two panels quoted
 different numbers for the same gate — which is the drift PA-75's shared shape
 now makes impossible.
 
-**No sim number moved.** All four `profile_sim` hashes are unchanged at the
-branch tip; see §51's commit and the lane report. This section records readings
-that existed and were never displayed, not a retune.
+**No sim number moved.** All four `profile_sim --hash-only` digests are
+byte-identical to the fork (`4503d35`) at the branch tip — starter coarse
+`05614522975fad52…` / fine `d1aaee0dca92f2fd…`, benchmark coarse
+`275aad9d4aeea809…` / fine `d40126e371371d59…`. Nothing in this lane is outside
+`ui/`, `tests/`, `tools/ui_preview.gd` and append-only strings and doc sections,
+so there is no delta for Lane B's matrix to consume. This section records
+readings that existed and were never displayed, not a retune.
