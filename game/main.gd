@@ -1080,9 +1080,14 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 			push_warning("[settings] device file dropped %s" % str(dropped_device))
 		# The preset is the one device row whose effect is spread over eight
 		# views and the governor, and all of them were seeded at boot from the
-		# data default. One re-apply through the change path puts them on the
-		# player's preset instead of duplicating that list here.
-		_on_ui_setting_changed(&"graphics", root.settings_sheet.model.value("graphics"))
+		# data default (`:441` above). One re-apply through the change path puts
+		# them on the player's preset instead of duplicating that list here —
+		# and it is skipped when the two agree, which is every launch with no
+		# `settings.cfg` and every launch where the player never moved the row,
+		# because that path re-reads `data/render.json` five times.
+		var device_preset := str(root.settings_sheet.model.value("graphics"))
+		if render_model != null and render_model.preset != device_preset:
+			_on_ui_setting_changed(&"graphics", device_preset)
 		_refresh_permission_row()
 		_autosave_interval_s = root.settings_sheet.model.autosave_interval_s()
 		if audio != null:
