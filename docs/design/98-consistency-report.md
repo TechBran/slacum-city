@@ -5894,3 +5894,26 @@ The buy is **all-or-nothing** rather than a slider: a partial buy would need a
 draw, and a draw here is a stream position the coarse and fine paths would have
 to agree on for no design gain. `tp_spent` rides on the committed row so the
 report and the save both carry what it actually cost.
+
+### 49.x — awaiting_consumer: disaster income
+
+**Filed by lane B, addressed to the money lane (99-PA §3.2 lane S), not ruled
+here.** With the Director running for the first time, `city_services` revenue on
+the `do_nothing` control agent rises **36–49 % on every difficulty preset**
+(doc 92 §49.5's table) — because doc 06 pays the city for an incident it
+auto-resolves and a city that never repairs anything pays none of the damage it
+takes. On `hard` that is $26k over 120 game-days, enough to keep a neglected
+city's treasury closing above zero for 72 consecutive game-days after it first
+runs out of money.
+
+Doc 03 and doc 06 own both halves of that (`dispatch_payout_base`, RR-78's
+ruling that the payout is the survivor of the double-booked fine); lane B owns
+neither file and rules nothing about it. The row is filed because **it could not
+be seen before**: with the Director stalled at two events there was no disaster
+income to notice, and the first thing that measures it is this wave's gate 29
+re-read. Gate 29's own bands are untouched (§49.5) — the question is whether a
+disaster should be net revenue for a player who ignores it, which is a design
+ruling and not a gate.
+
+**The matrix holder this wave is lane B**; any lane whose merge moves a hash
+should publish its delta against §49.4's four baselines.

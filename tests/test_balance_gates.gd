@@ -864,14 +864,35 @@ func test_gate_12b_tax_squeezing_trails_on_population() -> void:
 ## Both readings are honest; only one of them is the ruling's. The fix is the
 ## SAMPLE, not the threshold — 10 %, 8 points and "value created still ahead" are
 ## the ruled numbers and are untouched. It costs four extra 21-game-day runs.
+## **10 % → 7 %, Wave 18** (99-PA PA-04, doc 92 §49.6). The population bound is
+## this gate's SECONDARY reading — the happiness gap below is the direct one —
+## and it narrowed because the CONTROL ARM got poorer, not because squeezing got
+## cheaper. With the Disaster Director running for the first time, `balanced`'s
+## own three-seed mean population falls 1,582 → 1,529 (−3.4 %) while
+## `tax_squeezer`'s rises 1,366 → 1,394: the squeezer ends 21 game-days with
+## ~$100k against balanced's ~$68k and 264 buildings against 217, and it spends
+## the difference growing back through the storms that now happen. Money buying
+## resilience is the game working, and it is exactly what a bound fitted on a
+## matrix where no storm ever came could not have seen.
+##
+## Measured (`tools/playtest.gd --strategies=balanced,tax_squeezer --days=21
+## --seeds=1337,4242,9001 --mode=coarse`): the ratio moves **0.864 → 0.912**.
+## The bound goes to 0.93, keeping ~2 points of headroom on a three-seed mean
+## whose per-seed spread is 110 people. **The ruling's direct reading moved the
+## other way**: the happiness gap widened 14.5 → 15.9 points against a floor of
+## 8, so the slider costs MORE of what it is supposed to cost.
+const TAX_SQUEEZE_POP_MAX_RATIO := 0.93
+
+
 func test_gate_12c_the_tax_slider_is_not_a_free_lunch_for_a_real_agent() -> void:
 	var base_pop := _matrix_mean("balanced", "population_end")
 	var maxed_pop := _matrix_mean("tax_squeezer", "population_end")
-	assert_true(maxed_pop <= base_pop * 0.90,
+	assert_true(maxed_pop <= base_pop * TAX_SQUEEZE_POP_MAX_RATIO,
 			("tax_squeezer ends %d game-days with %.0f people against balanced's "
 					+ "%.0f (means of doc 92's %d matrix seeds) — the ruling wants "
-					+ "it trailing by at least 10 %%")
-					% [LONG_DAYS, maxed_pop, base_pop, MATRIX_SEEDS.size()])
+					+ "it trailing by at least %.0f %%")
+					% [LONG_DAYS, maxed_pop, base_pop, MATRIX_SEEDS.size(),
+					100.0 * (1.0 - TAX_SQUEEZE_POP_MAX_RATIO)])
 	var gap := _matrix_mean("balanced", "happiness_end") \
 			- _matrix_mean("tax_squeezer", "happiness_end")
 	assert_true(gap >= 8.0,
@@ -1405,6 +1426,24 @@ const AMBIENT_FLOOR_CHANNELS := ["crime", "structure_fire", "transformer_failure
 ## measured 6.07/game-week the sum below has an expectation near 91 and a
 ## standard deviation near 9.5.
 const PACING_SEEDS: Array[int] = [1337, 4242, 9001, 101, 202]
+## **ABANDONED is a bound working, not a loss** — and this ceiling exists because
+## Wave 18 gave the gate a second incident source (99-PA PA-04, doc 92 §49.5).
+##
+## Until this wave the Disaster Director stalled after two events, so every
+## incident this gate counted came from the ambient floor, the starter roster
+## answered all of them, and `abandoned` was flatly **0** — which is what this
+## line asserted and what it measured. With the Director running, `do_nothing`
+## takes 45 % more incidents on the same five stations and doc 06 §2.10's
+## terminal rule (RR-26: one game-day with nothing committed) ends **2** of them
+## across 5 seeds × 21 game-days — 0.019 per game-day, against 146 created.
+##
+## The ceiling is 6, roughly 3× the measurement, and it is deliberately NOT a
+## rate band: this is a tripwire for the roster falling over, not a fit. `failed`
+## stays pinned at exactly **0**, because a FAILED incident is a real loss (a
+## building burns down) while an ABANDONED one is doc 06 declining to hold a
+## queue open forever — the two are not the same kind of thing and only one of
+## them may ever be non-zero on the control agent.
+const AMBIENT_ABANDONED_CEILING := 6
 
 
 ## GATE 19 — **doc 92 §18 / audit 91 D-6: the dispatch loop is a DAILY beat, and
@@ -1631,7 +1670,11 @@ func test_gate_19_ambient_incidents_are_a_weekly_beat() -> void:
 			"%d incidents over %d game-days is %.2f per game-week — generation ran away"
 					% [created, game_days, per_week])
 	assert_eq(failed, 0, "a do_nothing city must survive its own pacing floor")
-	assert_eq(abandoned, 0, "the starter roster answered every one of them")
+	assert_true(abandoned <= AMBIENT_ABANDONED_CEILING,
+			("the starter roster abandoned %d of %d incidents over %d game-days; "
+					+ "the ceiling is %d (measured 2 — see "
+					+ "`AMBIENT_ABANDONED_CEILING`)")
+					% [abandoned, created, game_days, AMBIENT_ABANDONED_CEILING])
 
 
 ## GATE 20 — **doc 92 §19 / audit 91 D-7: the level ladder is reachable.**
@@ -2144,18 +2187,45 @@ func _preset_run(preset: String) -> Dictionary:
 	return Rig.run("do_nothing", GATE_SEED, int(PRESET_HORIZON_DAYS[preset]), preset)
 
 
+## **The insolvency day, read at HOUR resolution** (99-PA PA-04, doc 92 §49.5).
+##
+## This gate used to read `summary.day_rows` — the treasury at each day's CLOSE —
+## and on a city hovering on the line that is a knife edge, not a measurement. A
+## `do_nothing` city on `hard` goes below zero every evening from game-day 48 and
+## closes every one of the next 72 game-days above it, and the day-close reading
+## then answers **"still solvent after 120 game-days"** about a city that ran out
+## of money ten game-weeks earlier.
+##
+## Measured on both arms of Wave 18's fork (`tools/probe_neglect.gd`, seed 1337,
+## each preset's own horizon) — the reading change moves nothing about the game:
+##
+## | preset | fork close / hour | this branch close / hour |
+## |---|---|---|
+## | `casual` | 193 / 193 | 193 / 193 |
+## | `standard` | 137 / 137 | 135 / 135 |
+## | `hard` | **58 / 48** | **never / 48** |
+## | `crisis` | 31 / 18 | 35 / 19 |
+##
+## `hard` is the only preset the two readings ever disagreed on, and they
+## disagreed at the fork too (58 vs 48) — the Director waking up just widened the
+## gap until the day-close reading fell off the end of the horizon. Every band
+## below is UNCHANGED and every one of them holds under the finer reading on both
+## arms, which is the evidence that this is a resolution fix and not a re-fit.
 func test_gate_29_neglect_is_fatal_on_every_preset_and_ordered() -> void:
 	var died: Dictionary = {}
 	for preset: String in Difficulty.PRESETS:
 		var horizon := int(PRESET_HORIZON_DAYS[preset])
+		var run := _preset_run(preset)
 		var day := -1
 		var peak_open := 0
-		for row_variant in ((_preset_run(preset)["summary"] as Dictionary)
-				["day_rows"] as Array):
-			var row: Dictionary = row_variant
-			peak_open = maxi(peak_open, int(row["open_incidents"]))
-			if day < 0 and int(row["treasury"]) < 0:
-				day = int(row["day"])
+		for row_variant in ((run["summary"] as Dictionary)["day_rows"] as Array):
+			peak_open = maxi(peak_open, int((row_variant as Dictionary)["open_incidents"]))
+		# `samples[0]` is the pre-run reading; `samples[i]` closes game-hour `i`.
+		var samples: Array = run["samples"]
+		for i in range(1, samples.size()):
+			if float((samples[i] as Dictionary).get("treasury", 0.0)) < 0.0:
+				day = ((i - 1) / 24) + 1
+				break
 		died[preset] = day
 		# The cascade tripwire (see `PRESET_HORIZON_DAYS`). Measured 0–1 inside
 		# every horizon; doc 06 §2.13(b)'s ceiling is 40. It is now the same
@@ -2193,9 +2263,11 @@ func test_gate_29_neglect_is_fatal_on_every_preset_and_ordered() -> void:
 						% [kinder, harder, int(died[kinder]), int(died[harder])])
 	assert_true(absi(int(died["standard"]) - STANDARD_LIFETIME_DAYS)
 					<= STANDARD_LIFETIME_BAND,
-			("standard do_nothing died on game-day %d; measured 68–70 "
-					+ "(doc 92 §33.4; was 74–76 before doc 07 reached doc 10)")
-					% int(died["standard"]))
+			("standard do_nothing died on game-day %d; the pinned value is %d ± %d "
+					+ "(doc 92 §43.8's re-fit, re-read at hour resolution in §49.5: "
+					+ "137 on the fork, 135 on this branch)")
+					% [int(died["standard"]), STANDARD_LIFETIME_DAYS,
+					STANDARD_LIFETIME_BAND])
 
 
 # ============================== 30 the saturation rule (doc 06 §2.13(b), §31)

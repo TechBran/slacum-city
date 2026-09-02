@@ -176,6 +176,18 @@ const REGISTER := {
 		+ " spared is not a thing that happened.",
 	"storm_prep_action":
 		"player_initiated: the storm prep sheet issued it.",
+	"storm_prep_taken":
+		"player_initiated: S17 (doc 12 §2.24) issued the command and already"
+		+ " knows what it bought — this is the SHELL's copy of the fact, for a"
+		+ " toast and a cue, and a screen that announced the button the player"
+		+ " just pressed would be the game repeating them (99-PA PA-26).",
+	"storm_report_ready":
+		"awaiting_consumer: doc 07 §2.7.6's Storm Report, on S12's away-report"
+		+ " layout. Wave 18 ships the sim half — the report is built at the"
+		+ " storm's resolution with doc 03's ledger total read back, and the"
+		+ " Storm Ready reimbursement is paid — and doc 12 D-78's deferral table"
+		+ " owes the sheet: `game/main.gd`'s `_on_sim_batch` arm and a"
+		+ " `ui/storm_report_sheet.gd` beside `ui/away_report_sheet.gd`.",
 
 	# ── doc 01, the scheduler ──────────────────────────────────────────────
 	"event_scheduled":

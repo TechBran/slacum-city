@@ -1197,6 +1197,72 @@ re-composes the bias against the band **this build** authors, so retuning the ba
 retunes every restored city rather than leaving old saves pointing where the data
 no longer allows.
 
+### 2.24 S17 — the Storm Prep window (Wave 18)
+
+*Doc 07 §2.7.7's seventy game-minutes, given a screen. `99-PA` PA-26; doc 93
+§AH2; report 98 §49.*
+
+**The problem this screen exists for, stated as the player met it.** F7 makes a
+`severe_thunderstorm`'s warning a CRITICAL notification, exempt from every rate
+limit, and it says *"You have about {minutes} minutes to get ready."* There was
+nothing to get ready WITH: doc 07 authors six preparation actions and the game
+had no verb for them, no door to a verb, and — because the window's own test
+could never be true (A91-D-87) — no minute in which one could have been taken.
+The most urgent notification in the game pointed at nothing.
+
+**Where it lives.** A full-screen modal on `ModalLayer`, the same shape as S9 and
+S14: the scrim is the only `STOP` control while it is up and Android BACK closes
+it first (§2.2). It is **not** a side panel, and the reason is the countdown —
+this is a screen you make three decisions on and leave, not one you consult while
+looking at the city, and a side panel that leaves the map visible invites the
+player to go and look at the map while the window shuts.
+
+**What it draws, top to bottom.**
+
+```
+Storm prep                                                       ✕
+Storm hits in 1h 30m  ·  1h 10m left to prepare
+Forecast: this one will be felt.
+────────────────────────────────────────────────────────
+Power holding  ▓▓▓▓▓▓▓▓▓░  96%
+Water stored   ▓▓▓▓▓░░░░░  52%
+Crews free     ▓▓▓░░░░░░░  3 idle
+────────────────────────────────────────────────────────
+○  Voluntary load shed                     No charge   [ DO IT ]
+   Shave 8% off demand for the storm…
+✓  Top off water storage                      $1,240
+   Fill every tank, so hydrant pressure survives a pump outage
+—  Call out a crew                           $18,000
+   Not enough in the treasury.
+────────────────────────────────────────────────────────
+1 of 3  ·  2 more earns Storm Ready
+```
+
+Three decisions are worth naming:
+
+* **The meters are the argument.** A shop with six prices teaches nothing; a
+  player who cannot tell which button to press looks at which meter is short.
+  Each of the three is read from the system that owns it — grid, water, fleet —
+  and each maps onto the actions above it.
+* **A refused row says WHY, in words, in the detail line.** The reason replaces
+  the description rather than sitting beside it, because a greyed button with its
+  sales copy still under it reads as a bug. The player never sees a reason code
+  (§1); `StormPrepModel.REASON_KEYS` maps the six the verb can answer with.
+* **The severity is a sentence, not a multiplier.** `severity_mult 1.28` becomes
+  *"Forecast: the worst in a while."* The player is told how hard this one is,
+  which is the decision input; the number is the Director's business.
+
+**The two states in `tools/ui_preview.gd`, shipped in the same commit as the
+screen** (A91-D-28's lesson, applied on the way in): `storm_prep` is the window
+as the player first meets it, with one row already unaffordable so the reason
+line is laid out beside five that are not; `storm_prep_ready` is the same window
+three actions in, which is the only state that draws the Storm Ready line.
+
+**The shell's whole surface is one call**, `UIRoot.bind_storm_prep(provider,
+door)`, both Callables — so the screen is measured and photographed against a
+fixture and knows nothing about `CitySim`. Opened from the `weather_warning`
+alert, which is the only place a player learns a storm is coming.
+
 ## 3. Data Schema
 
 ### 3.1 `data/` files owned by this doc
@@ -1925,6 +1991,7 @@ at 640 × 340 — which is A91-D-29 and is not this wave's.
 | D-73 | **The repair row leaves the private stock, and the one refusal a player must never read.** `BuildController.repair_view` folds `E_OWNER_MAINTAINED` into "nothing to buy" beside `E_NOT_DAMAGED`, so a house draws no REPAIR row at any condition; `RequirementFormatter.format` accepts a `fix_kind` override and `_check_params` uses it to drop `Fix this →` from `E_CONDITION` on private stock, where the remedy is not a purchase; `ui_requirement_e_condition_remedy` becomes true of both parties; three `ui_requirement_e_owner_maintained_*` strings exist so the code can never print itself; `ui_settings_auto_repair_cost_cap_hint` names the assets the city actually repairs; `tools/ui_preview.gd`'s `building_repairable` state and four `test_build_controller.gd` cases move from `H-001` onto `POL-1`. `RenderStateModel` grows a `building_repaired` branch that clears the soot and the WARNING tint. And the Economy tab's `ui_budget_expense_building_maint` row is relabelled **`Building upkeep` -> `Building services`**. | §2.9 item 6, §2.15, §2.19, A8, doc 02 §2.6a, doc 93 §Y1/§Y3a | The 2026-09-01 playtest: *"we shouldn't have to interrupt the gameplay to repair buildings because nothing actually happened."* Measured (doc 92 §43.1): the REPAIR row was drawn on **260 private and 21 civic** buildings in one 21-game-day `balanced` city and on **98 / 10** in a `curriculum` one, because `repair_view` drew it for anything under condition 1.00 — while `data/notifications.json` has no building condition binding at all, so the interruption was never an alert to silence, it was an affordance to stop drawing. After the ruling it is **0 private** on every strategy. The `fix_kind` override is the second half: `E_CONDITION` still blocks an upgrade on a worn house, and a `Fix this →` that buys a repair the sim now refuses would be PA-24's failure shape in a new place — a button that cannot work, on a row that reads as if it can. `building_repaired` had been emitted since doc 02 §2.6 shipped and consumed by nothing, so a repaired building kept its soot; §2.6a makes that visible rather than rare, because a private building damaged by an incident now un-damages itself with no player action and nothing else was coming to clear it. **The relabel is the cheapest row here and possibly the most useful**: `Building upkeep` sits directly above the REPAIR button in the player's mental model and reads as *the city paying a landlord's repair bill*, which is exactly the misreading that sent this wave's own first draft down a blind alley for half a day (doc 92 §43.8). The line is the city's cost of SERVING those buildings and the label now says so. |
 
 | D-76 | **`degenerate_label` joins the audit, and the goals sheet's standing line gets its own row.** `UIAudit.KIND_DEGENERATE_LABEL`: a visible wrapping `Label` laid out narrower than one em of its own font; `tests/test_ui_audit.gd` pins it. `ui/goals_sheet.gd` moves `Standing` out of the head HBox onto a wrap + `EXPAND_FILL` row on `Intent`'s terms. | §2.19, §7 item 27 | The 2026-09-01 production audit found the standing line rendering **one character per line, 1 px wide and 1,101 px tall**, on every box — with the objectives pushed 540 dp down the sheet — and every prior `--audit --strict` sweep had called the screen clean, because no check measured a label against its own font: an HBox hands a non-expanding wrapping label its minimum width, one glyph, and `clipped_text` cannot see a label that is not clipping but stacking. Measured after: `Standing` 800×20 at 880×400; whole deck exit 0 with the new kind armed. |
+| D-78 | **S17, the Storm Prep window, ships** — `ui/storm_prep_model.gd` (headless: the countdown, the three readiness meters, six rows with a price and a reason, the Storm Ready line) + `ui/storm_prep_sheet.gd` (code-built rows on a `ModalLayer` modal, the S14 shape) + `UIRoot.bind_storm_prep` / `open_storm_prep` / `refresh_storm_prep` + the node in `game/ui/ui_root.tscn` + 36 `ui_storm_*` strings + `data/ui.json storm_prep` + a `SURFACES` row + **two preview states**. §2.24 has the screen; the sim door is `CitySim.cmd_storm_prep_action` (`99-PA` PA-26), the mechanics ruling is doc 93 §AH2, and the defects are A91-D-87 / A91-D-88. | §2.2, §2.24, doc 07 §2.7.6/§2.7.7 | Doc 07 has authored six preparation actions since it was written and the game had **no verb, no door and no minute** in which to take one: `grep -c storm_prep sim/city_sim.gd` → **0**, and `DisasterDirector.storm_prep_action`'s own window test could never be true. The player was handed the most urgent notification the game can send — F7's CRITICAL, exempt from every rate limit — and it pointed at nothing. **Deferral table, stated rather than faked** (doc 93 §AH3): two of the six actions ship PRICED, RECORDED and counted toward Storm Ready with their effect not yet wired, because neither file is lane B's to edit — `pre_stage_crews`' −35 % travel time needs a knob on `sim/incidents/fleet_system.gd`, and `load_shed`'s −5 % commercial tax needs doc 03's revenue half in `sim/economy/economy_system.gd`. Also deferred: the `weather_warning` alert's tap target and the `storm_report_ready` sheet, both `game/main.gd` lines the lead merges (the S16 precedent, D-66). |
 | D-77 | **Two capped-catch-up surfaces that could not tell the truth, and one that could not fire at all.** `ui_veil_catchup_capped` had "12 hours" written into the string; it now takes `{hours}`, and `VeilModel.begin_catchup` / `LoadingVeil.present_catchup` / `UIRoot.present_veil_catchup` take a `cap_real_hours` (defaulting to 12, so no existing caller changes). `ui/away_model.gd`'s `capped_text` is reachable at last: the shell's report dictionary now carries `capped` and `cap_game_hours` straight out of the plan. | §2.12, §2.20, doc 08 §2.12, doc 13 §2.9 | Wave 17 implemented doc 08 §2.12's NORMATIVE `max_coarse_hours` clamp (report 98 §48, RR-133), which ships at **360 game-hours = 6 real hours** — so the veil's "12 hours" became a sentence the game does not mean, and a player told the wrong number about their own missing time has been lied to in exactly the place A14 says a refusal must be stated in words. The away line was worse: `capped_text` has existed since S12 and `game/main.gd`'s `present_away_report` dictionary **had no `capped` key at all**, so the branch was dead from the day it was written and no `--audit` sweep could ever have seen it — a screenshot of a line that never renders looks exactly like a line with nothing to say. `tests/test_catchup_clamp.gd` pins both surfaces against the cap that was actually applied. |
 
 | D-70 | **The building panel names the wire.** A POWER section under the water block (`ui/power_actions.gd` headless, rendered by `ui/building_panel.gd::_render_power`): one row per hop of `PowerGrid.service_path()` — transformer, feeder, substation — each with its id, how many buildings hang off it, what it carries **now**, what it carries **at the day's peak**, the spare capacity **in words**, §5.10's band, and its own `UPGRADE` button with the price on its face. Under them, the next level's headroom answer, whether or not it refuses. | §2.9, doc 04 §2.2 | The user, twice: *"feeders adding extra power to a building is not clear and I'm not sure it actually works"*, and *"how the transformers feed power … doesn't seem to be working well at all."* Both were true readings of a panel that had a `⚡ 98 kW` vital and no way to find out what that 98 kW came through. The section is a LIST OF HOPS rather than a summary because the answer to a full grid is different at every hop — a bigger transformer, heavier copper, a bigger substation — and a player who cannot see which hop is full cannot pick. The peak column is the other half: doc 01's residential channel swings 0.67 → 1.46 across a day, so "62 kW spare" read at 05:00 is not a fact about the evening. |

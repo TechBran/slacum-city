@@ -3319,3 +3319,130 @@ Two consequences, both recorded rather than fixed here:
    whole difficulty table was fitted on a mechanism the docs believed in and the
    sim never had. It belongs to the power lane, and until it lands, §Y1a is a
    correct clause with nothing to bite on.
+
+---
+
+## AH. Wave-18 rulings — an event that cannot end, a window that cannot open, and what a reward is allowed to measure (2026-09-02)
+
+*Four mechanics questions came out of lane B (`99-production-audit.md` PA-04,
+PA-25, PA-26, PA-89). Three of them are fairness questions and therefore this
+document's; the fourth is about what a design number is allowed to say when the
+thing it describes was never built.*
+
+### AH1. An event ENDS when the thing it caused is over — and there is always a wall behind that
+
+**Question.** Doc 07 F2 measures its class cooldowns "from resolution". What
+resolves an event, and what happens when the answer never arrives?
+
+**Ruled: an event resolves when its consequence is over, and a consequence that
+cannot be found is over.** Three shapes, one rule:
+
+* an event that INJECTED WEATHER is not over while the segment runs — the player
+  is still in it — so it resolves no earlier than `impact + duration`;
+* an event that REQUESTED INCIDENTS is over when the last of them closes, which
+  is `CitySim`'s `_director_links` book and nobody else's;
+* an event that requested an incident and was REFUSED is over immediately,
+  because it produced nothing. This is the case the fork could not express at
+  all, and it is the honest one: a pick that did nothing should cost a cooldown,
+  not a permanent slot.
+
+**And behind all three, a wall.** `fairness.max_active_min` (2880 game-minutes =
+48 game-hours) ends anything still held. The wall is not a fallback for a bug we
+expect; it is the statement that **the Director's pacing gate is a promise to the
+player** — "you will not be left alone for the rest of this city's life" — and a
+promise that depends on a book staying in sync with a roster is not a promise.
+Doc 06 §2.10 already ends an incident after one game-day with nothing committed,
+so 48 game-hours is past every legitimate hold by a factor of two.
+
+**Rejected: resolving on the FIRST incident.** `on_incident_resolved` already
+existed and already fired, and using it would have been one line. It is the wrong
+line: F2's cooldown is measured from the end of the CRISIS, and a storm whose
+first downed line is repaired in twenty minutes has not ended.
+
+**Rejected: dropping stale rows on load.** See RR-136. A row that is genuinely in
+flight has incidents on the map pointing at it, and deleting it would leave
+`last_major_end_min` unset — the gate would then be lying in the other direction,
+which is worse than the stall because it is invisible.
+
+### AH2. A preparation window belongs to the WARNING, not to the storm
+
+**Question.** §2.7.7 opens the prep window at T−90 and shuts it at T−20. Which
+object owns those two minutes?
+
+**Ruled: the scheduled row — the one F7's warning went out for.** The fork asked
+the ACTIVE storm, and the active storm's `t0` is the minute it began, so the
+window's own arithmetic (`now − t0 ≤ −20`) could not be true while the object it
+was asked of existed (A91-D-87).
+
+The deeper point, and the reason this is a ruling and not a bug report: **the
+warning and the window are the same promise.** F7 exists so that a forecastable
+event is never new information; §2.7.7 exists so that the information is
+ACTIONABLE. A window measured against the storm rather than against the warning
+would be a window that opens after the thing it prepares for. So the lead scales
+with `warning_lead_mult` exactly as the warning does — a casual player is given a
+longer warning **and** a longer window, one knob, one meaning.
+
+**Corollary: the ledger of what was taken belongs to the Director, not to the
+storm.** Every prep action is taken before `SevereThunderstorm.begin()` runs, so
+a ledger on the storm object is a ledger that does not exist when it is written
+to. It moves up one level, and `on_event_resolved` clears it — so one storm's
+preparation can never be counted toward the next one's reward, which is the
+fairness half of the same decision.
+
+### AH3. A reward may only measure what the game actually computes
+
+**Question.** §2.7.6's Storm Ready has two conditions: three prep actions AND an
+outage under budget. Nothing computed the second. Ship the reward on the half
+that works, or count the other half?
+
+**Ruled: count it, or the reward is teaching the wrong lesson.** Doc 07's own
+sentence is *"this makes preparation profitable, not merely less painful."* With
+`outage_customer_minutes` unwritten (A91-D-88) the payout was earned by pressing
+three buttons, which makes ATTENDANCE profitable — the exact inversion of Core
+Rule 12, which says the storm report is a teaching moment. A reward whose
+condition is not computed is not a lenient reward; it is a different reward,
+wearing the label of the one that was designed.
+
+**The unit is a resident in a dark building**, because that is the unit §2.7.6's
+own budget is stated in: its worked example puts "400 customers out" against a
+city of 45,000 at 0.9 %. Accrued at REPORT on the same tick and the same `dt` as
+the Director's resolution sweep, so the fine and the coarse path integrate the
+same quantity at their own step sizes rather than two quantities that happen to
+agree at 21 game-days.
+
+**A related ruling, applied and worth writing down: two of §2.7.7's six actions
+ship UNIMPLEMENTED and SAY SO.** `pre_stage_crews`' −35 % travel time needs a
+knob on a file this lane may not edit, and `load_shed`'s −5 % commercial tax
+needs doc 03's revenue half. Both are still priced, recorded and counted toward
+Storm Ready, and both carry a row in doc 12 D-78's deferral table. The
+alternative — quietly accepting the action and doing nothing — is the defect this
+whole lane exists to close, one level down: a verb that reports success and
+changes nothing is worse than no verb, because the player learns a false lesson
+about what preparation buys.
+
+### AH4. When a design sentence contradicts itself, implement the ENDPOINTS and record the slip
+
+**Question.** §2.6.2 says the Director may "spend up to `1.60 × tp_cost` to add
+up to `+0.30` to `severity_mult`, linearly", and then parenthesises
+"(`+0.50×tp_cost` buys `+0.125`)". Those two cannot both be true: the first fixes
+the rate at `+0.50` of severity per unit of cost overspent, which puts
+`+0.50×tp_cost` at `+0.25`.
+
+**Ruled: implement the endpoints, flag the parenthetical.** The endpoints are the
+load-bearing half — they are what the `buy_max_cost_mult` and `buy_max_severity`
+columns in `data/director.json` say, and a data file is a stronger statement of
+intent than a worked example in prose. The parenthetical is recorded as an open
+question against doc 07 rather than silently patched, because this lane does not
+own that document's text and a silent patch would erase the evidence that the two
+disagreed.
+
+**And the second clause of the same sentence is a mechanics ruling in its own
+right.** "Only when `tp_pool > 1.6 × tp_cost` **and no other candidate is
+affordable**" was implementable two ways, and the looser one — "nothing DEARER is
+affordable" — was built first, measured, and rejected: over doc 07 §7 test 26's
+own rig it took the Standard cadence from one major per 2.64 game-days to one per
+**3.23**, outside §2.6.3's own published claim, and bought only +2.5 % mean
+severity for an 18 % cut in majors. The literal reading (`pool.size() == 1`)
+lands at 2.86 game-days for +6.2 % severity. The measurement is doc 92 §49's; the
+ruling is that **a lever whose whole purpose is to convert an idle budget into
+tension may not be allowed to convert a working budget into silence.**

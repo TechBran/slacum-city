@@ -8133,3 +8133,217 @@ coefficient reaching a station and a plant. **Not** `data/buildings.json` — ev
 `decay_per_hour` cell in it is byte-identical to the fork (§43.8), and its one
 diff is a stale `s2.12 -> s2.14` cross-reference in a `_note` string that the
 generator had already corrected and the shipped file had not.
+
+---
+
+## 49. Wave 18 — the Director, measured for the first time (2026-09-02)
+
+*Lane B holds the balance matrix this wave. Every number below was taken on this
+branch with the command quoted beside it; the fork column is the same command run
+against `d0d114f` in a clean checkout (`git archive HEAD | tar -x`, imported and
+run separately, so the two arms differ only in the code under test).*
+
+**Why this section is longer than a retune's.** Nothing here is a tuning change.
+Three of the four rows are a system that was implemented, unit-tested, graded
+SHIPPED and **never actually ran** past its first two events, so this is the first
+time doc 07 §2.6's own published cadence claim has been measured against a played
+city at all. The numbers below are therefore a baseline, not a delta from one.
+
+### 49.1 The stall, and what closing it costs
+
+`tools/probe_director.gd` — balanced agent, seed 4242, 60 game-days, coarse
+online path (`advance_coarse_hours(1, false)`), which is `BalanceGateRig.run`'s
+own loop:
+
+| | fork (`d0d114f`) | this branch |
+|---|---|---|
+| `director_event_started` | **2** | **23** |
+| `director_event_ended` | **0** | **23** |
+| `weather_warning` | 0 | 5 |
+| `active_events` at the wall | **2** | **0** |
+| last event started, game-day | **7.5** | **47.3** |
+| longest hold, game-minutes | — (nothing ended) | **226** |
+| `tp_pool` at the wall | 40.0 (capped, unspendable) | 29.4 |
+| kinds that resolved | *none* | `traffic_pileup` ×8, `water_main_break` ×6, `storm_minor` ×5, `transformer_explosion` ×4 |
+
+Two readings worth pulling out.
+
+**The fork's `active_by_day` column is the whole defect in one line:** `0,0,0,0,
+1,1,1,2,2,2, …, 2` — two from game-day 8 to game-day 60 and for the rest of that
+city's life. `tp_pool` sat at its suppressed cap with nothing it was allowed to
+buy.
+
+**23 events over 60 game-days is 0.38/day, against §2.6.3's "≈1.4 events/game-day"
+worked example — and that gap is not a defect.** The worked example is computed
+for the reference city (pop 45,000, tier 3, `P = 0.658`); the balanced agent's
+city at game-day 60 is tier 1–2 with a far lower `P`, and doc 92 F-1's `floor`
+block deliberately caps a small city at cheap tier-1 minors. The measurement that
+matters here is the SHAPE: events keep arriving, each one ends, and the last one
+lands in the final fifth of the run. Gate 33 asserts exactly those three things
+and nothing about the rate, because a rate gate on a founding city would be a
+gate on how fast the agent builds.
+
+### 49.2 The hold bound
+
+`max_hold_min` is `max(end_min − start_min)` over `DisasterDirector.history` —
+the ring the Director itself writes on every resolution, which at the fork was
+empty because nothing resolved. Measured **226** game-minutes on the 60-day run
+against a cap of **2880** (48 game-hours, `fairness.max_active_min`). Gate 33
+holds every hold under the shipped knob rather than a literal, so a retune of the
+cap moves the gate with it.
+
+The cap fired **zero** times across the matrix; it exists for the case the fork
+proved is reachable — a link book that has lost its incident — and a rule a
+played city never reaches is exactly what a terminal rule should be (the same
+argument RR-26 made for doc 06 §2.10's ABANDONED rule).
+
+### 49.3 Buy severity: the two readings of one sentence, measured
+
+Doc 07 §2.6.2 permits the buy "only when `tp_pool > 1.6 × tp_cost` and **no other
+candidate is affordable**". `candidates()` has already filtered the pool to what
+the budget can buy, so the second clause has two implementable readings. Both were
+built and both were measured on doc 07 §7 test 26's own rig — 100 game-days × 12
+seeds × 4 presets, `tools/probe_test26.gd`, which is `test_weather_director.gd`'s
+`_drive` copied verbatim so the tool and the gate are the same measurement:
+
+| arm | majors (casual / standard / hard / crisis) | days per major, Standard | mean `severity_mult`, Standard | crisis/casual ratio |
+|---|---|---|---|---|
+| fork — no buy | 264 / 454 / 561 / 698 | 2.643 | 1.2080 | 2.644 |
+| "nothing DEARER is affordable" | 255 / 372 / 503 / 639 | **3.226** | 1.2377 | **2.506** |
+| **shipped** — `pool.size() == 1` | 259 / **420** / 549 / 679 | **2.857** | **1.2825** | **2.622** |
+
+`test_26_difficulty_scaling` holds two bounds that were fitted before the lever
+existed: the crisis/casual major ratio ∈ [2.6, 4.0] and Standard's days-per-major
+∈ [1.8, 3.2]. **The looser arm breaks both** (2.506 and 3.226) and buys +2.5 %
+mean severity for an 18 % cut in majors; **the shipped arm keeps both green with
+no re-fit at all** and buys +6.2 % mean severity for 7.5 %. Neither bound is
+touched by this wave, which is the outcome a lane holding the matrix should want:
+a lever that needed the gates re-fitted to accommodate it was the wrong lever.
+
+The mean-severity column is what the row is FOR. Every preset gains: casual
+0.9664 → 1.0872 (+12.5 %, where the candidate pool is smallest and the buy fires
+most), standard +6.2 %, hard +3.9 %, crisis +1.6 %. The lever converts an idle
+budget into tension and does most of its work exactly where the budget is most
+often idle.
+
+### 49.4 The four `profile_sim` baselines, re-recorded with the fix named
+
+`~/.local/bin/godot --headless --script tools/profile_sim.gd -- --hash-only`
+(starter), and the same with `--city=res://tests/fixtures/bench_city.json`:
+
+| | fork (`d0d114f`, re-taken at this lane's fork) | this branch |
+|---|---|---|
+| starter coarse 24 h | `05614522975fad52…` | `64c4d7e9d8f8fb74…` |
+| starter fine 2.0 h | `d1aaee0dca92f2fd…` | `9f19dcc5212f834d…` |
+| bench coarse 24 h | `275aad9d4aeea809…` | `6f383de1ed6940a2…` |
+| bench fine 2.0 h | `d40126e371371d59…` | `311e29d10b1cb43d…` |
+
+**Hash-moving, and the four causes are named** (RR-55/RR-76):
+
+1. **the save body gained a `storm_prep` section** (PA-26) — a thirtieth key, so
+   the hash moves on every city including a founding one, exactly as rung 7's
+   `street` key did;
+2. **`director` rows gained `resolve_after_min` / `expire_at_min`** (PA-04) and
+   the section gained `prep_actions` / `prep_event_uid` (PA-26);
+3. **`_choose_target` now consumes a `director` stream draw** on every pick with a
+   target roster (PA-25), which re-phases that stream for the rest of the run;
+4. **events resolve, so more of them are scheduled** (PA-04) — the only one of
+   the four that changes what the player experiences rather than what the body
+   records.
+
+The first three would move the hash on a city that never sees a Director event;
+the fourth is the one the re-baseline is really recording, and it moves the hash
+of every played arc, because storms that never came now come.
+
+### 49.5 Gate 29 — a knife-edge reading, corrected, and NOT a re-fit
+
+Gate 29 reported **"do_nothing on `hard` was still solvent after 120 game-days —
+neglect has stopped being fatal on that preset"**, which would be a regression in
+the constitution's own thesis. It is not one; it is the gate reading the treasury
+once a game-day.
+
+`tools/probe_neglect.gd` drives gate 29's own arm (`BalanceGateRig.run`,
+`do_nothing`, seed 1337, each preset's own horizon) and prints the insolvency day
+under BOTH readings — the day's CLOSE, which the gate used, and the first HOUR
+the treasury goes below zero:
+
+| preset | fork close / hour | this branch close / hour | created | dir events | `city_services` $ | treasury at the wall |
+|---|---|---|---|---|---|---|
+| `casual` | 193 / 193 | 193 / 193 | 1,481 → 1,421 | 2 → 55 | 51,029 → 74,307 | −17,731 → −17,788 |
+| `standard` | 137 / 137 | 135 / 135 | 728 → 1,193 | 2 → 81 | 62,240 → 87,559 | −20,000 → −20,000 |
+| `hard` | **58 / 48** | **never / 48** | 186 → 269 | 2 → 89 | 72,007 → 97,994 | 6,407 → **1,726** |
+| `crisis` | 31 / 18 | 35 / 19 | 123 → 186 | 2 → 65 | 49,648 → 73,807 | 2,799 → **150** |
+
+**The hourly reading is identical on `hard`: 48 on both arms.** What changed is
+that the branch's neglected city hovers on the line for longer — it dips below
+zero every evening from game-day 48 and closes 72 consecutive game-days above it
+— so the day-close reading falls off the end of the horizon. It is not a
+healthier city: it took **45 % more incidents** and ends the run **$4,681 poorer**
+than the fork's at the same wall. The two readings disagreed on `hard` at the
+fork too (58 vs 48); the Director waking up only widened the gap.
+
+**So the gate's reading gains an hour of resolution and NOTHING ELSE MOVES.**
+Every band holds on both arms under the finer reading, unchanged:
+
+* ordering — fork `193 > 137 > 48 > 18`, branch `193 > 135 > 48 > 19` ✓
+* `PRESET_LIFETIME_CEILING` 200 vs `casual` 193 ✓ (unchanged)
+* `PRESET_LIFETIME_FLOOR` 18 vs `crisis` 19 ✓ (unchanged)
+* `STANDARD_LIFETIME_DAYS` 137 ± 12 vs 135 ✓ (unchanged)
+
+**The finding underneath it, filed rather than absorbed.** The Director's
+incidents are NET INCOME for a city that never repairs anything:
+`city_services` rises 36–49 % on every preset because doc 06 pays for an
+incident it auto-resolves and a `do_nothing` city pays none of the damage it
+takes. That is doc 03 / doc 06's ruling (RR-78), not doc 07's, and this lane does
+not own either file — it is an **awaiting_consumer** row for the money lane
+(99-PA §3.2 lane S). It is worth their attention precisely because it could not
+be seen before: with the Director stalled at two events, there was no disaster
+income to notice.
+
+### 49.6 Gate 19 and gate 12c — two bands the Director's arrival moved
+
+**Gate 19's `abandoned` moves 0 → 2** (5 seeds × 21 game-days, 146 incidents).
+Every incident this gate counted used to come from the ambient floor; the
+Director now contributes a second source, and doc 06 §2.10's terminal rule
+(RR-26 — one game-day with nothing committed) ends the two the five-station
+starter roster could not commit to. 0.019 per game-day. The assertion becomes
+`abandoned ≤ 6` (`AMBIENT_ABANDONED_CEILING`, ~3× the measurement, a tripwire
+rather than a fit); `failed` stays pinned at exactly **0**, because a FAILED
+incident is a building burning down and an ABANDONED one is doc 06 declining to
+hold a queue open forever.
+
+**Gate 12c's population ratio moves 0.864 → 0.912**, and the bound goes 0.90 →
+0.93. The gap narrowed because the CONTROL ARM got poorer:
+
+| | fork | this branch |
+|---|---|---|
+| `balanced` population (3-seed mean) | 1,582 | **1,529** (−3.4 %) |
+| `tax_squeezer` population | 1,366 | 1,394 |
+| ratio | 0.864 | **0.912** |
+| happiness gap | 14.5 | **15.9** |
+
+`tax_squeezer` ends 21 game-days with ~$100k against `balanced`'s ~$68k and 264
+buildings against 217, and it spends the difference growing back through storms
+that now happen. Money buying resilience is the game working. **The ruling's
+direct reading moved the other way** — the happiness gap widened 14.5 → 15.9
+against a floor of 8 — so the slider costs more of exactly what it is supposed
+to cost, and only its secondary, population-mean instrument softened.
+
+### 49.7 What did NOT move
+
+Every other gate in `tests/test_balance_gates.gd` was re-measured with the
+Director live and is unchanged — 33 tests, three touched, and the two this lane
+was told to keep honest by name are among the untouched:
+
+* **gate 21, the curriculum** — all three matrix seeds still finish every level
+  inside 45 game-days (`tools/measure_curriculum.gd`: `goal_level_end 5`,
+  `city_level_end 5`, `water_placed 1` on 1337 / 4242 / 9001), and no band in it
+  is touched;
+* **gate 29's ordering** — see §49.5;
+* **gate 19's own rate band** (100–200 incidents over 5 seeds × 21 game-days) —
+  green with no edit, and it is the assertion §49.6's ceiling sits beside;
+* **gates 1, 2, 2b, 10–18c, 20, 30, 31, 32** — green with no edit.
+
+`tests/test_save_determinism_days.gd` (6) and `tests/test_save_migration.gd` (13)
+are green with rung 8 and the new `storm_prep` section in the body: save → load →
+advance is still bit-identical.

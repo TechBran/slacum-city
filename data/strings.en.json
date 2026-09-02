@@ -1030,9 +1030,5 @@
 	"ui_storm_reason_target": "Tap a block on the map first.",
 	"ui_storm_reason_window": "Too late — the cell is entering.",
 	"ui_storm_reason_no_storm": "Nothing forecast to prepare for.",
-	"ui_storm_report_title": "Storm report",
-	"ui_storm_report_ready": "STORM READY",
-	"ui_storm_report_relief": "State aid: {amount}",
-	"ui_storm_report_summary": "{strikes} strikes  ·  {incidents} incidents  ·  repairs {repairs}",
 	"ui_storm_take": "DO IT"
 }
