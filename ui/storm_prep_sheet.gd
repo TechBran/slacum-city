@@ -14,12 +14,12 @@ extends Control
 ##     Water stored   ▓▓▓▓▓░░░░░  52%
 ##     Crews free     ▓▓▓░░░░░░░  3 idle
 ##     ─────────────────────────────────────────────
-##     ○  Voluntary load shed                    No charge   [ DO IT ]
-##        Shave 8% off demand for the storm…
-##     ✓  Top off water storage                     $1,240
-##        Fill every tank, so hydrant pressure survives…
-##     —  Call out a crew                          $18,000
-##        Not enough in the treasury.
+##     ○  Voluntary load shed                          No charge
+##        Shave 8% off demand for the storm…           [ DO IT ]
+##     ✓  Top off water storage                           $1,240
+##        Fill every tank, so hydrant pressure…        [ DO IT ]
+##     —  Call out a crew                                $18,000
+##        Not enough in the treasury.                  [ DO IT ]
 ##     ─────────────────────────────────────────────
 ##     1 of 3  ·  2 more earns Storm Ready
 ##
@@ -173,6 +173,18 @@ func _meter_row(meter: Dictionary) -> void:
 ## One action row. The button is the only `STOP` control in it: the row itself is
 ## not tappable, because a whole-row tap on a screen with a countdown running is
 ## how a player buys $18,000 of crew they meant to read about.
+##
+## **Two lines, and the button is on the second one.** A single line —
+## `mark · title · cost · [ DO IT ]` — has a minimum width that no accessible
+## small phone can pay: at 360 dp with A2's 1.3 text scale and A3's larger touch
+## targets the four minima sum to **395 dp** against **292 dp** of content box,
+## and a `ScrollContainer` with horizontal scrolling off hands that number
+## straight up its parents, so the SHEET grows to 423 dp and its close button
+## leaves the screen (`UIAudit.KIND_OFFSCREEN`; doc 12 §2.24, delta D-78). The
+## button moves down beside the detail sentence, which autowraps and therefore
+## has a minimum width of one character — the shape `ui/building_panel.gd`'s
+## requirement rows already use, and the reason they survive the same sweep.
+## Line 1 then needs 245 dp and line 2 needs 157 dp.
 func _action_row(row: Dictionary) -> void:
 	var box := VBoxContainer.new()
 	box.custom_minimum_size = Vector2(0.0, _row_h)
@@ -187,6 +199,14 @@ func _action_row(row: Dictionary) -> void:
 	head.add_child(title)
 	var cost := Label.new()
 	head.add_child(cost)
+	box.add_child(head)
+	var foot := HBoxContainer.new()
+	foot.add_theme_constant_override("separation", int(_spacing))
+	var detail := Label.new()
+	detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	detail.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	foot.add_child(detail)
 	var button := Button.new()
 	button.custom_minimum_size = Vector2(_touch_min * 2.0, _touch_min)
 	button.text = config.t("ui_storm_take")
@@ -194,12 +214,8 @@ func _action_row(row: Dictionary) -> void:
 	# screen reader once it is one of six. The tooltip names the action.
 	button.tooltip_text = String(row["title"])
 	button.pressed.connect(_on_action_pressed.bind(String(row["id"])))
-	head.add_child(button)
-	box.add_child(head)
-	var detail := Label.new()
-	detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	box.add_child(detail)
+	foot.add_child(button)
+	box.add_child(foot)
 	_rows_box.add_child(box)
 	_row_nodes[String(row["id"])] = {"mark": mark, "title": title, "cost": cost,
 			"detail": detail, "button": button}
