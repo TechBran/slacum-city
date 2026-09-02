@@ -6318,6 +6318,18 @@ nor **`A91-D-96`** — the gate that cannot see this class, because it proves a
 placeholder has a *declaration* and never a *value* — is fixed here: both live in
 Lane K's table and Lane K's gate (99-PA §3.0 rule 1).
 
+**And the full suite made the lane delete its own excuse.**
+`tests/test_event_matrix.gd`'s register carried an exemption for this event —
+*"bookkeeping: money moving. Spend belongs in the budget sheet's ledger, not in
+the alerts feed"* — and `test_the_register_names_a_consumer_that_is_no_longer_needed`
+failed the moment the log row landed. The exemption was not merely stale: **the
+budget sheet's ledger does not itemise these debits either**, so the sentence was
+covering a dollar that reached no surface at all, which is precisely what PA-83
+measured. The entry is gone and the reasoning that replaces it is a comment
+naming the row. That half of the gate — the one that fails when an exemption
+becomes unnecessary — is the reason a `_comment` in a register is not a place a
+wrong answer can hide.
+
 ### 53.5 Baselines
 
 Re-recorded at the lane fork `d0d114f` (`~/.local/bin/godot --headless --script

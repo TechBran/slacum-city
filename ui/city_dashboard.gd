@@ -564,7 +564,8 @@ func _refresh_upkeep() -> void:
 ## The audit's target for PA-31, drawn: *the lost $/gh and the repair total on
 ## one screen*. Four lines and a button — what wear costs, how much of the taxed
 ## stock is below Good, what the city's own repairable stock would cost, and the
-## standing policy that would buy it without being asked again.
+## standing policy that would buy it without being asked again — and, when the
+## shell binds the verb, the two dials that stand that policy (`_build_policy_control`).
 func _build_upkeep(upkeep: Dictionary) -> VBoxContainer:
 	var box := VBoxContainer.new()
 	box.name = "Upkeep"
