@@ -3618,7 +3618,8 @@ is inside a file the suite cannot load.*
 
 ### AI1. Why a line count is the wrong metric, and what the right one is
 
-PA-38's headline number — 2,229 lines, zero test references — is the symptom.
+PA-38's headline number — 2,034 lines at the audit's own fork, 2,257 at this
+lane's, zero test references either way — is the symptom.
 The disease is narrower and it has a name: **`main.gd` does sim reasoning**.
 `grep -c "sim_host\.sim\." game/main.gd` counted **72** reads at the Wave-17
 fork (67 after this wave),
@@ -3631,7 +3632,7 @@ So the target is not "get under 1,200 lines". It is **every derivation out; ever
 wiring, node and lifecycle line stays**. A shell that is 2,000 lines of
 `add_child`, `connect` and `if node == null` is a shell doing its job; a shell
 that is 300 lines of `sim.buildings.get(id)` is a bug farm whatever its total.
-The two functions extracted this wave came to 48 lines and carried three
+The two functions extracted this wave came to 45 lines and carried three
 independent defects between them.
 
 ### AI2. The ten, ranked
@@ -3663,5 +3664,16 @@ is testing Godot.
 
 The honest consequence is that `main.gd` does not get under 1,200 lines by
 extraction alone, and PA-38's line target should be read as its assert target
-instead. This wave moved 48 lines out and put 540 assertions behind what they
-did.
+instead. This wave moved 45 lines out (`_on_fix_requested` 18,
+`_alert_world_pos` 27, measured at `4503d35`) and put **398 assertions** behind
+what those two did — `--file=test_fix_router` 347, `--file=test_world_locator`
+51 — inside a lane total of **553** across its five new test files.
+
+And the count went the other way, which is the part worth writing down:
+`wc -l game/main.gd` reads **2,264 against the fork's 2,257**. The lane removed
+52 lines of executable shell and added 21 (net −31); the file is longer because
+46 of its 67 added lines are the `##` rulings above, and because PA-20's
+`_on_memory_warning` is a handler the shell never had — new behaviour cannot
+shrink a file. Report 98 §50.3 states the same thing with the commands. The
+assert target is met; the line target is not, and §AI1 is the argument for why
+that is the correct trade rather than an excuse for it.

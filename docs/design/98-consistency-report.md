@@ -6071,7 +6071,7 @@ censuses, and they are the part of this section worth keeping.
 half), PA-38, PA-20, PA-76, PA-72, PA-100. Three rulings; every number below is
 quoted with the command that produced it.*
 
-**The shape of it.** `game/main.gd` was 2,229 lines with **zero test
+**The shape of it.** `game/main.gd` was 2,257 lines with **zero test
 references** (`grep -rn "main\.gd\|main\.tscn\|MainShell" tests/` → six prose
 comments and no load). Three separate defects lived in it and none of them could
 fail a gate: `Fix this →` looked a **transformer** id up in `sim.buildings` and
@@ -6234,7 +6234,9 @@ inside the process that is about to be killed.
 
 | Command | Number |
 |---|---|
-| `wc -l game/main.gd` (fork → now) | 2,229 → 2,210 |
+| `wc -l game/main.gd` (fork → now) | 2,257 → 2,264 — **the file got 7 lines LONGER**, and §50.3 is why that is the honest result rather than an embarrassing one |
+| `git diff 4503d35 --numstat -- game/main.gd` | `67 60` |
+| of those 67 added lines, `grep -c '^+[[:space:]]*#'` | **46 are `##` rulings**; 21 are code. Deleted: 60, of which 8 are comment → **52 lines of executable shell removed, 21 added, net −31** |
 | `grep -c "sim_host\.sim\." game/main.gd` (fork → now) | 72 → 67 — the metric doc 93 §AI1 argues for |
 | `grep -rn "res://game/main" tests/` | 0 — `main.gd` is still not loaded, and the point is that it no longer has to be |
 | `grep -rn "sim\._[a-z]" --include=*.gd game ui tools` (fork → now) | 8 → 0 (two comments naming the row) |
@@ -6243,7 +6245,15 @@ inside the process that is about to be killed.
 | `--file=test_tile_geometry` | 9 tests, 46 asserts, 0 failed |
 | `--file=test_power_infra_feed` | 14 tests, 68 asserts, 0 failed |
 | `--file=test_memory_warning` | 12 tests, 41 asserts, 0 failed |
-| `profile_sim --hash-only`, starter + bench, coarse + fine | all four identical to the fork — the lane is hash-neutral |
+| `profile_sim --hash-only` starter, coarse 24 h | `05614522975fad52…` = the `4503d35` baseline |
+| `profile_sim --hash-only` starter, fine 2.0 h | `d1aaee0dca92f2fd…` = the `4503d35` baseline |
+| `--hash-only --city=res://tests/fixtures/bench_city.json`, coarse 24 h | `275aad9d4aeea809…` = the `4503d35` baseline |
+| same, fine 2.0 h | `d40126e371371d59…` = the `4503d35` baseline |
+
+All four are the lane brief's `4503d35` baselines, unchanged. Nothing this lane
+ships is under `sim/` except `sim/world/tile_grid.gd`, which declares constants
+and pure functions and is called by no sim system — `grep -rn "TileGrid\." sim/`
+names only its own test.
 
 ### 50.2 `awaiting_consumer` — filed, with the owner named
 
@@ -6284,3 +6294,29 @@ lane's gate can already see.
 
 **Applied:** doc 93 §AI; doc 91 §14.5 (`A91-D-89`, `A91-D-90`); doc 12 §2.7
 (D-79).
+
+
+### 50.3 The file got longer, and the metric that says so is the wrong metric
+
+`main.gd` is **2,264 lines against the fork's 2,257**. Stated without the split
+above that reads as a failed extraction, so state it with the split: the lane
+**removed 52 lines of executable shell and added 21**, and 46 of its 67 added
+lines are the `##` paragraphs that make RR-139/140/141 auditable in the file
+they constrain. The net movement of *code* is **−31 lines**, and it happened
+while the lane also **added a handler the file never had** — `_on_memory_warning`
+plus its wiring is new behaviour (PA-20), not moved behaviour, so it can only
+push the count up.
+
+This is exactly the failure mode doc 93 §AI1 was written to head off, and it is
+worth being blunt about: **PA-38's "under 1,200 lines" target is not met, is not
+close, and is not reachable by extraction.** What moved is the thing that was
+actually broken — `grep -c "sim_host\.sim\." game/main.gd` fell **72 → 67**, and
+the five reads that left were the three defects PA-05 and PA-76 found plus the
+two `_building_records` reach-throughs PA-100 named. A lane that chased the line
+count instead would have extracted `_ready` and `_wire_*`, bought a shorter file,
+and moved no defect at all.
+
+The follow-on is filed rather than claimed: doc 93 §AI2 ranks the eight
+remaining extractions by what a player sees when one is wrong, and item 3
+(`_on_sim_batch` → `RenderEventRouter`) is the one that carries the
+constitution's own event rule.
