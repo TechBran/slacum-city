@@ -3984,6 +3984,286 @@ func stats_add(counter: StringName) -> void:
 	stats.add(String(counter))
 
 
+# ================================ doc 02 §2.13 + doc 03 §2.13(f) — the roster
+#                                          and the rush (report 98 §41, RR-107)
+
+## Every kind `ConstructionQueue` can hold, mapped to the SOURCE word
+## `construction_overview()` publishes. The map is TOTAL over
+## `ConstructionQueue.KINDS` on purpose: a kind nothing submits today still gets
+## a word, so the roster can never answer a source the UI branch was not told
+## about, and adding a kind without deciding what the player calls it fails
+## `tests/test_construction_rush.gd::test_every_job_kind_has_a_published_source`.
+##
+## Only `development` is renamed. The player bought a BLOCK and is watching a
+## block; "development" is the pipeline's word for it, not theirs. Everything
+## else keeps the queue's own noun, because a second vocabulary for the same
+## thing is exactly how two halves of a seam drift apart.
+const CONSTRUCTION_SOURCE_BY_KIND := {
+	&"build": &"build",
+	&"upgrade": &"upgrade",
+	&"repair": &"repair",
+	&"rebuild": &"rebuild",
+	&"clear_rubble": &"clear_rubble",
+	&"road": &"road",
+	&"development": &"block",
+}
+
+## Used when a job's own noun cannot be resolved — a building demolished out
+## from under its own job, a hand-edited save. Never reached on a healthy city,
+## and it is a real key so the roster can never hand `ui/` a blank line.
+const CONSTRUCTION_TITLE_FALLBACK := "ui_queue_title_project"
+
+
+## **THE ROSTER** — one row per IN-FLIGHT project, whatever machinery is
+## actually running it, sorted by ETA with the un-crewed ones last.
+##
+## Everything the player would call "being built or upgraded" runs through doc
+## 02 §2.13's one queue — `cmd_place_building`, `cmd_upgrade_building` (which
+## has NO clock of its own; the §2.11 gate submits an `upgrade` job and the
+## queue's integer accumulator is the timer), `cmd_repair_building`,
+## `cmd_place_water_component`'s shell, doc 09's six development phases and doc
+## 10's three road jobs. So this is a read of `active_jobs()` and nothing else:
+## no adapter, no second source, no merge.
+##
+## `progress01` and `eta_gm` are `ConstructionQueue`'s **own** presentation
+## functions. This function does not accumulate, estimate or interpolate — its
+## header forbids a second accumulator and this would be one.
+##
+## **The ETA quotes the unmodified construction rate**, exactly as
+## `LandPanelModel._progress` does and for the same reason: doc 07's weather
+## moves doc 01's `construction_rate` channel hour by hour and a crew can be
+## pulled to an incident, so the copy says "about" and means it. Guessing a
+## channel value the sim has not published yet would be a more precise lie.
+##
+## Row shape is the Wave-17 seam contract, verbatim, and `ui/` reads nothing
+## else. A field either side wants and the other does not ship is a deferral
+## row, never a guess.
+func construction_overview() -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for job in construction.active_jobs():
+		rows.append(_construction_row(job))
+	rows.sort_custom(_construction_row_before)
+	return rows
+
+
+## ETA ascending; `-1.0` (nothing is working it) last; job_id breaks every tie.
+## Exact float comparison, deliberately — both sides come out of the same
+## deterministic arithmetic, and an epsilon here would make the ordering
+## non-transitive and the sort machine-dependent.
+static func _construction_row_before(a: Dictionary, b: Dictionary) -> bool:
+	var eta_a := float(a["eta_gm"])
+	var eta_b := float(b["eta_gm"])
+	var idle_a := eta_a < 0.0
+	var idle_b := eta_b < 0.0
+	if idle_a != idle_b:
+		return idle_b
+	if not idle_a and eta_a != eta_b:
+		return eta_a < eta_b
+	return int(a["job_id"]) < int(b["job_id"])
+
+
+func _construction_row(job: Dictionary) -> Dictionary:
+	var job_id := int(job["job_id"])
+	var kind := StringName(String(job["kind"]))
+	var payload: Dictionary = job.get("payload", {})
+	var required_hours := float(job["required_crew_hours"])
+	var remaining_hours := construction.remaining_crew_hours(job_id)
+	var price := _job_cash_price(job)
+	var rushable := remaining_hours > 0.0 and price > 0
+	var level_from := 0
+	var level_to := 0
+	var tile := Vector2i(-1, -1)
+	var b: Building = buildings.get(String(payload.get("sim_id", "")))
+	if b != null:
+		tile = b.origin
+		if kind == &"upgrade":
+			# `pending_level` IS the target: `start_upgrade` sets it to L+1 and
+			# leaves `level` alone until `complete_construction`. A build sets it
+			# to 1 and is not a level change, so it stays 0/0 per the contract.
+			level_from = b.level
+			level_to = b.pending_level
+	elif kind == &"development":
+		tile = _block_focus_tile(String(payload.get("block_id", "")))
+	elif payload.has("roads_kind"):
+		var record := _road_job_record(job_id)
+		var tiles: Array = record.get("tiles", [])
+		if not tiles.is_empty():
+			tile = tiles[0]
+	return {
+		"job_id": job_id,
+		"source": CONSTRUCTION_SOURCE_BY_KIND.get(kind, kind),
+		"title_key": _construction_title_key(job),
+		"ref": String(job["target_ref"]),
+		"tile": tile,
+		"level_from": level_from,
+		"level_to": level_to,
+		"progress01": construction.progress(job_id),
+		"eta_gm": construction.eta_game_minutes(job_id),
+		"crews": (job["assigned_crews"] as Dictionary).size(),
+		"rushable": rushable,
+		"rush_cost": econ_curves.rush_cost(price, required_hours, remaining_hours) \
+				if rushable else 0,
+	}
+
+
+## A representative world tile for a land block — its CENTRE, the same point
+## `_extend_utility_corridor` runs the trunk to, because a 16×16 block framed on
+## its corner puts the thing the player tapped off the edge of the shot.
+func _block_focus_tile(block_id: String) -> Vector2i:
+	var block := world.block(block_id)
+	if block == null:
+		return Vector2i(-1, -1)
+	return block.grid * TileGrid.TILES_PER_BLOCK \
+			+ Vector2i(TileGrid.TILES_PER_BLOCK / 2, TileGrid.TILES_PER_BLOCK / 2)
+
+
+## Doc 10's OWN record for a road job, not the queue payload's copy of it.
+##
+## The two disagree after a load and doc 10's is the one that survives:
+## `RoadNetwork` serialises its tiles as `[x, y]` pairs and rebuilds `Vector2i`
+## from them, while `ConstructionQueue`'s payload carries live `Vector2i` that
+## `JSON.stringify` degrades to the text `"(3, 4)"`. Nothing read the payload's
+## copy before this roster, which is why the rot has been invisible; A91-D-47
+## files it rather than papering over it here.
+func _road_job_record(job_id: int) -> Dictionary:
+	if roads == null:
+		return {}
+	return roads.job_record(job_id)
+
+
+## The strings key naming WHAT is being built. The verb ("Upgrading", "Repairs")
+## is `ui/`'s to compose from `source` and the level pair — this is the noun, and
+## shipping the noun once is what stops the two branches authoring two rosters.
+func _construction_title_key(job: Dictionary) -> String:
+	var kind := StringName(String(job["kind"]))
+	var payload: Dictionary = job.get("payload", {})
+	if kind == &"development":
+		var phase := String(payload.get("phase", "")).to_lower()
+		if phase == "":
+			return CONSTRUCTION_TITLE_FALLBACK
+		return "ui_land_phase_%s" % phase
+	if payload.has("roads_kind"):
+		var roads_kind := String(payload["roads_kind"])
+		if roads_kind == "upgrade":
+			return "ui_queue_title_road_upgrade"
+		if roads_kind == "repair":
+			return "ui_queue_title_road_repair"
+		var record := _road_job_record(int(job["job_id"]))
+		var road_class := int(record.get("road_class",
+				payload.get("road_class", RoadTunables.CLASS_STREET)))
+		if road_class == RoadTunables.CLASS_AVENUE:
+			return "ui_queue_title_road_avenue"
+		return "ui_queue_title_road_street"
+	var b: Building = buildings.get(String(payload.get("sim_id", "")))
+	if b == null:
+		return CONSTRUCTION_TITLE_FALLBACK
+	return "ui_build_card_%s" % String(b.archetype)
+
+
+## What this project's CASH price was — the number doc 03 §2.13(f) prices a
+## rush against. Four of the five live kinds carry it on the job (`build`,
+## `upgrade`, `repair`, `road`); doc 09's phases are billed downstream by
+## `_charge_development_phases`, so a phase is re-quoted here off the same
+## `_development_phase_cost` that charged it.
+##
+## **The re-quote can differ from what was charged**, by exactly the amount the
+## block's own inputs moved since the phase started — a road built next door
+## raises `arterial_connections` and lowers the price. That is correct: a rush
+## is a NEW purchase, quoted today, the same way `cmd_start_development`'s
+## preview quotes the next phase today.
+##
+## **No difficulty multiplier is applied here and that is not an omission.**
+## `M_build` / `M_dev` are already inside the job's cash price — they were
+## applied when doc 03 charged it — so the rush inherits the preset's scaling
+## through the number it is a fraction of. Applying it twice would make a
+## `crisis` city pay `M² ×` for the same hours.
+func _job_cash_price(job: Dictionary) -> int:
+	var payload: Dictionary = job.get("payload", {})
+	if payload.has("cost"):
+		return maxi(0, int(payload["cost"]))
+	if StringName(String(job["kind"])) != &"development":
+		return 0
+	var index: int = DevelopmentController.PHASES.find(
+			StringName(String(payload.get("phase", ""))))
+	if index < 0:
+		return 0
+	return maxi(0, _development_phase_cost(String(payload.get("block_id", "")), index))
+
+
+## **THE RUSH** — pay to finish a project NOW (doc 03 §2.13(f), doc 93 §AA).
+##
+## Instant completion, not acceleration, and doc 93 §AA argues the choice out
+## loud. The short version: overtime would edit what `ConstructionQueue.advance()`
+## multiplies for the rest of the job's life — a live change to the one exact
+## integer accumulator the multi-day determinism gate exists to protect — and it
+## would leave the row on the roster still counting down, which does not read as
+## *"I paid to make this go away"*. Instant completion touches the accumulator
+## exactly once, from a command, and then hands the job to `_route_completed_jobs`,
+## the identical door the tick uses.
+##
+## **Price** is doc 03 §2.5's emergency contractor carried to its limit rather
+## than a new curve: that row buys 65 % of a project's duration for a surcharge
+## of 80 % of its cash price, so the published price of time is `0.80 / 0.65 =
+## 1.23077 ×` the cash price per unit of full duration, and a rush buys the
+## remaining `1 − progress` of it. A full-length rush therefore costs **1.23 ×
+## what the project cost**, on top of what was already paid — the same value per
+## hour saved as the contractor, so neither valve dominates and §2.5's
+## *"deliberately bad value"* verdict is inherited rather than re-argued.
+##
+##   1 E_UNKNOWN_JOB     no live job with that id
+##   2 E_JOB_COMPLETE    the accumulator is already at its required total
+##   3 E_NOT_RUSHABLE    the project's cash price does not resolve (`rushable`
+##                       is false on its roster row; this is the race-guard for
+##                       a tap against a row drawn a frame ago, exactly as
+##                       `cmd_collect_opportunity` answers `E_EXPIRED`)
+##   4 E_FUNDS           the treasury cannot pay the quote — below the credit
+##                       floor, or austerity has closed `construction` (doc 03
+##                       §2.10 layer 2 blocks NEW commitments, and a rush is
+##                       one). The quote rides in `cost` either way.
+##
+## Nothing is charged on any refusal. `int(str(job_id))` at the door because the
+## shell's tap funnel carries ids as text (doc 12 §4.4's one-funnel rule) and
+## the queue keys on int.
+func cmd_rush_construction(job_id: Variant) -> Dictionary:
+	var id := int(str(job_id))
+	var job := construction.job(id)
+	if job.is_empty():
+		return {"ok": false, "err": "E_UNKNOWN_JOB", "cost": 0}
+	var remaining_hours := construction.remaining_crew_hours(id)
+	if remaining_hours <= 0.0:
+		return {"ok": false, "err": "E_JOB_COMPLETE", "cost": 0}
+	var price := _job_cash_price(job)
+	if price <= 0:
+		return {"ok": false, "err": "E_NOT_RUSHABLE", "cost": 0}
+	var cost := econ_curves.rush_cost(price, float(job["required_crew_hours"]),
+			remaining_hours)
+	if cost <= 0 or not treasury.can_spend(cost, &"construction"):
+		return {"ok": false, "err": "E_FUNDS", "cost": cost}
+	var source: StringName = CONSTRUCTION_SOURCE_BY_KIND.get(
+			StringName(String(job["kind"])), StringName(String(job["kind"])))
+	var reason := "rush %s %s" % [String(job["kind"]), String(job["target_ref"])]
+	var paid := treasury.spend(cost, &"construction", reason)
+	if not bool(paid["ok"]):
+		# Unreachable: `can_spend` cleared the austerity gate and the credit
+		# floor one line up, so the charge is whole or it does not happen. If it
+		# ever does fire, the job has not been touched yet and anything taken
+		# goes straight back — a partial charge may never buy a partial rush.
+		if int(paid.get("spent", 0)) > 0:
+			treasury.credit(int(paid["spent"]), &"construction", reason + " refused")
+		return {"ok": false, "err": "E_FUNDS", "cost": cost}
+	var finished := construction.force_complete(id)
+	bus.emit(&"construction_rushed", {"job": id, "cost": cost, "source": source})
+	# From here down this is a NATURAL completion, in the tick's own order:
+	# stage pulses first (so the finished site's stage residue is cleared before
+	# anything reads it), then the one completion door, then doc 03 §2.8's
+	# invoice for whatever phase the finished one auto-submitted.
+	_emit_construction_stages()
+	_route_completed_jobs([finished])
+	_charge_development_phases()
+	stats_add(&"projects_rushed")
+	return {"ok": true, "err": "", "cost": cost}
+
+
 ## Construction stage pulses for the renderer (doc 11 §5): a site under
 ## build/upgrade walks six visual stages, and the crane/site loop switches on
 ## each. One event per CHANGE only — a pulse every tick would be 240 events an
@@ -4014,6 +4294,23 @@ func _emit_construction_stages() -> void:
 	for sim_id in _sorted(_last_construction_stage):
 		if not live.has(sim_id):
 			_last_construction_stage.erase(sim_id)
+
+
+## THE completion door — one function, three owners, and every job in the game
+## walks through it exactly once (report 98 RR-108, "the pump lesson").
+##
+## `WorkPhaseSystem` hands it what `ConstructionQueue.advance()` finished this
+## tick and `cmd_rush_construction` hands it what `force_complete()` finished on
+## the player's tap. Because the two callers share this body, a rushed project
+## fires the SAME events, in the SAME order, as a natural one — there is no
+## second completion path to keep in step, which is the only way to keep the
+## translator, the notification bindings and doc 09's goals honest.
+func _route_completed_jobs(completed: Array) -> void:
+	for job: Dictionary in completed:
+		if (job.get("payload", {}) as Dictionary).has("roads_kind"):
+			roads.on_job_completed(int(job["job_id"]))
+		elif not development.on_job_completed(job):
+			on_construction_completed(job)
 
 
 ## Route a completed construction job to its building (build, upgrade, repair).
@@ -4395,11 +4692,7 @@ class WorkPhaseSystem extends SimSystem:
 		# finished jobs left it, so a completing site never pulses again — its
 		# building_completed event is what takes the scaffolding down.
 		sim._emit_construction_stages()
-		for job in completed:
-			if (job.get("payload", {}) as Dictionary).has("roads_kind"):
-				sim.roads.on_job_completed(int(job["job_id"]))
-			elif not sim.development.on_job_completed(job):
-				sim.on_construction_completed(job)
+		sim._route_completed_jobs(completed)
 		# A finished phase auto-submits the next one; doc 03 §2.8 bills it here,
 		# in the same tick, so the ledger never runs a phase behind the site.
 		sim._charge_development_phases()

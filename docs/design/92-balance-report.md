@@ -7173,3 +7173,70 @@ merge — founding `a27da24aaf6e9663…` / `d2dec6727c64001d…`, bench
 `7c99720f5ff14553…` / `8f60accb6d91ad1e…` — were taken **after** the edits and
 reproduce the pre-edit run on the same tree to the byte, on both cities and both
 paths.
+
+---
+
+## 45. Pass 17 — the rush: a rate that was already published, and the flat rate that would have been wrong (2026-08-21)
+
+*The sim half of the construction roster and the rush verb (report 98 §41, RR-107…RR-110; doc 03 §2.13(f); doc 93 §AA). One new published cell, no retune, **all four determinism baselines bit-identical** and **no balance gate read** — a rush is a player verb and no agent in the matrix taps it.*
+
+### 45.1 The rate was not chosen; it was divided out
+
+The brief asked for `rush_cost = ceil(remaining_crew_hours × rate)` with the rate *"derived against doc 03's own build/upgrade price tables"* and — explicitly — *"do not guess"*. The honest answer is that **doc 03 has published this rate since the founding ledger and nobody had noticed it was a rate**.
+
+§2.5's *emergency contractor* row says: `CONTRACTOR_SURCHARGE = 1.80 ×` the job cost, completing in `CONTRACTOR_TIME_FRACTION = 0.35` of the normal duration. Read as a purchase rather than a package, it buys **0.65 of a project's duration for 0.80 of its cash price**, so
+
+```
+price of time = 0.80 / 0.65 = 1.230769…   cash-price-units per unit of FULL duration
+```
+
+and a rush, which buys the remaining `1 − progress` of a project's duration, pays exactly that. **`RUSH_SURCHARGE_PER_DURATION = 1.23077`** is that quotient to the five decimal places every money cell in this project is authored to, and `CostCurves` re-checks it against the two cells it came from at load (tolerance `1e-5`, residual `7.7e-7`) so it cannot drift away from its own derivation without failing the boot.
+
+**The fraction chosen, stated plainly: 1.23 of the project's cash price for a full-length rush** — the total outlay for an instantly-finished anything is **2.23× its sticker**. It was chosen because it is the only number that leaves the two money-for-time valves at **identical value per hour saved**: the contractor is the cheaper ticket on a project you have not started, the rush is the only one that works on a project already half-built, and neither dominates the other at any progress. Doc 03 §2.5's verdict on the contractor — *"deliberately bad value"* — is therefore **inherited rather than re-argued**, which is the strongest form this branch could ship: no new balance claim to defend.
+
+### 45.2 The sweep, and why the rate is per-project
+
+`build_cost_l1 ÷ build_time_hours` across the nine costed archetypes doc 02 gives an L1 build time for:
+
+| archetype | cash price | build hours | $/crew-hour | full-length rush | total outlay |
+|---|---|---|---|---|---|
+| `house` | 1,200 | 2.0 | **600** | 1,477 | 2,677 (2.23×) |
+| `store` | 2,600 | 3.0 | 867 | 3,201 | 5,801 (2.23×) |
+| `apartment` | 7,000 | 6.0 | 1,167 | 8,616 | 15,616 (2.23×) |
+| `construction_yard` | 16,000 | 10.0 | 1,600 | 19,693 | 35,693 (2.23×) |
+| `office` | 13,000 | 8.0 | 1,625 | 16,001 | 29,001 (2.23×) |
+| `police_station` | 18,000 | 10.0 | 1,800 | 22,154 | 40,154 (2.23×) |
+| `substation` | 15,000 | 8.0 | 1,875 | 18,462 | 33,462 (2.23×) |
+| `fire_station` | 20,000 | 10.0 | 2,000 | 24,616 | 44,616 (2.23×) |
+| `data_center` | 180,000 | 20.0 | **9,000** | 221,539 | 401,539 (2.23×) |
+
+**The spread is 15×**, and that is the whole argument against the shape the brief sketched first. Take the median $/ch (`office`, 1,625), multiply by the rate, and a flat **$2,000/crew-hour** valve prices:
+
+- a `house` full rush at `2.0 × 2,000 = $4,000` — **2.71× dearer** than the derived quote, on a $1,200 building, so the cheapest thing in the game becomes the most absurd thing to rush;
+- a `data_center` full rush at `20 × 2,000 = $40,000` — **0.18×** the derived quote, i.e. **$180,000 of tower finished instantly for $40,000**. That is not a bad-value valve; it is the dominant strategy in the game.
+
+So the rate is a **per-project** quantity, `cash_price × 1.23077 / required_crew_hours`, which is still literally `ceil(remaining_crew_hours × rate)` and still derived from doc 03's own tables — it is just derived per row rather than once. The last column being constant at 2.23× is the proof that the derivation did what it claimed.
+
+### 45.3 What it costs in game-hours of the city's own income
+
+Against the post-RR-79 founding ledger (`STARTER_NET_PER_HOUR_EXACT = 506.04786`):
+
+| purchase | dollars | game-hours of the founding city's whole net |
+|---|---|---|
+| `house` rushed from scratch | 1,477 | **2.9 gh** |
+| `house` rushed at 50 % | 739 | 1.5 gh |
+| `fire_station` rushed from scratch | 24,616 | **48.6 gh** (just over two game-days) |
+| `data_center` rushed from scratch | 221,539 | 437.8 gh — an S8-city purchase, and only there |
+
+That is the shape the valve should have: an impulse buy on a shack, a considered one on a station, and out of reach on a tower until the city is one that could have built three. **No pacing row, no guardrail and no gate reads any of it**, because none of the balance-matrix agents rushes anything.
+
+### 45.4 The four baselines — and they do NOT move
+
+`profile_sim --hash-only` on both cities, both paths, at this branch's fork and after every edit in it:
+
+| city | coarse 24 h | fine 2.0 h |
+|---|---|---|
+| founding (`data/starter_city.json`) | `a27da24aaf6e9663…` | `7745cb25e55ff65c…` |
+| benchmark (`tests/fixtures/bench_city.json`) | `7c99720f5ff14553…` | `d8e8889681b23297…` |
+
+All four reproduce the post-Wave-15 published values **byte for byte**. They have to: `cmd_rush_construction` is a player verb no agent calls, `construction_overview()` is a read, and the one number added to `data/economy.json` is read by nothing until a rush happens. The discriminating evidence for this branch is not a hash — it is `tests/test_construction_rush.gd`, where the quote is compared to the charge, a rushed building is compared field-for-field to a naturally-finished one, and every refusal is checked to have taken nothing.

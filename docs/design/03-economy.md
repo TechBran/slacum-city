@@ -1207,6 +1207,35 @@ Multipliers, in the order they apply: doc 06's shape `(1 + tier_k·(tier_peak �
 
 *Recorded, because it will be re-litigated:* doc 10's per-tile replacement value for one stamped block is `60 × 5,200 + 27 × 1,800 = $360,600`, which is **17–52×** the `road_install` phase price. That gap is real and this doc has chosen to live with it rather than move either number, on the reasoning that the two prices answer different questions — the phase price is what it costs to *connect a block to the network* through a development contract, the per-tile price is what it costs to *lay one tile on demand*, and bulk civil works are genuinely an order of magnitude cheaper per unit than piecework. The gap is what makes player-drawn roads a considered purchase instead of free paint. It is flagged as §9 item 14 for the overseer.
 
+#### (f) The rush — buying the remaining duration outright (report 98 RR-107, Wave 17)
+
+The player asked for it in the only terms a player has: *"we should have the ability to speed it up with cash."* `CitySim.cmd_rush_construction(job_id)` finishes an in-flight project **now**, and this is what it costs.
+
+**It is not a new number.** §2.5 already publishes this doc's price of time — the *emergency contractor* buys `1 − CONTRACTOR_TIME_FRACTION = 0.65` of a project's duration for a surcharge of `CONTRACTOR_SURCHARGE − 1 = 0.80` of its cash price. Divide the one by the other and the rate falls out:
+
+```
+RUSH_SURCHARGE_PER_DURATION = (CONTRACTOR_SURCHARGE − 1) / (1 − CONTRACTOR_TIME_FRACTION)
+                            = 0.80 / 0.65 = 1.230769… → published as 1.23077
+
+rush_rate($/crew-hour)  = job_cash_price × 1.23077 / required_crew_hours
+rush_cost               = ceil( remaining_crew_hours × rush_rate )
+                        = ceil( 1.23077 × (1 − progress) × job_cash_price )
+```
+
+`remaining_crew_hours / required_crew_hours` **is** `1 − progress`, off doc 02 §2.13's exact integer accumulator, so the quote and the work can never disagree. `CostCurves` re-checks the published cell against the contractor pair at load (`RUSH_DERIVATION_TOLERANCE 1e-5`) and refuses a boot where the two have drifted apart — the constant is published because C-07 says a price lives in this file, and re-checked because a published derivation that nothing re-derives is a comment.
+
+**What it buys, and why the two valves do not fight.** A rush at zero progress costs **1.23 × the project's cash price**, on top of what was already paid: an instantly-finished `house` is `1,200 + 1,477 = $2,677`, **2.23×** its sticker; a `data_center` is `180,000 + 221,539 = $401,539`. Per unit of duration saved the rush and the contractor are the **same price by construction**, so neither dominates — the contractor is the cheaper ticket for a project you have not started, the rush is the only one that works on a project half-built, and §2.5's *"deliberately bad value"* verdict is inherited rather than re-argued.
+
+**The rate is per-project, not per-crew-hour-of-the-city.** The roster's dollars-per-crew-hour spans **15×** — `house 1,200 / 2.0 h = $600/ch` at the bottom, `data_center 180,000 / 20 h = $9,000/ch` at the top, with `store 867`, `apartment 1,167`, `construction_yard 1,600`, `office 1,625`, `police_station 1,800`, `substation 1,875` and `fire_station 2,000` in between — so a flat $/ch rate would make rushing a tower nearly free and rushing a shack ruinous. Doc 92 §45 has the sweep.
+
+**Rounding is a CEILING here and nowhere else in this ladder.** §2.1's half-up rule governs prices computed from static table cells; this is the only price computed against a live, continuously-moving quantity, and half-up would let a project at 99.9 % quote **$0** — the money-for-time valve handing over the last of the time for none of the money. The ceiling also makes the floor $1 without a second rule.
+
+**Where the dollars land.** The charge goes through `Treasury.spend()` in the **`construction`** category with the ledger reason `rush <kind> <target_ref>`, so it is part of §2.4's `E_oneoff` column, which already names *"contractor surcharges"*. It is therefore **blocked by §2.10 layer 2's austerity gate** — a rush is a new commitment, and layer 2 blocks new commitments — and it is refused outright below the layer-4 credit floor rather than deferred: a half-paid rush would buy a whole building. Both refusals answer `E_FUNDS` with the quote, because from the player's side they are the same fact.
+
+**No difficulty multiplier is applied on top.** `M_build` / `M_dev` are already inside the job's cash price — they were applied when this doc charged it — so a `crisis` city pays a `crisis` rush through the number the rush is a fraction of. Multiplying again would charge `M²`.
+
+**Development phases are re-quoted, not remembered.** Four of the five live job kinds carry their cash price on the job record; doc 09's six phases are billed downstream by `_charge_development_phases`, so a phase's rush price is re-derived from §2.8's own `development_phase_cost()`. If the block's inputs moved since the phase started — a road built next door raises `arterial_connections` — the re-quote differs from what was charged, and that is correct: a rush is a **new purchase, quoted today**, exactly as `cmd_start_development`'s preview quotes the next phase today. A91-D-48 files the underlying asymmetry.
+
 ---
 
 ## 3. Data Schema
@@ -1533,6 +1562,8 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
     "REPAIR_COST_PER_CAPITAL": 0.85, "PM_COST_FRACTION": 0.06, "PM_MIN_CONDITION": 0.50, "PM_CREW_HOURS": 2,
     "_repair_note": "repair_cost = capital_value * damage_fraction * REPAIR_COST_PER_CAPITAL * M_repair (C-16). Docs 02/04/05/06/07 supply damage_fraction only and hold no price table.",
     "CONTRACTOR_SURCHARGE": 1.80, "CONTRACTOR_TIME_FRACTION": 0.35,
+    "RUSH_SURCHARGE_PER_DURATION": 1.23077,
+    "_rush_derivation": "§2.13(f): (CONTRACTOR_SURCHARGE − 1) / (1 − CONTRACTOR_TIME_FRACTION). Re-checked at load.",
     "FUEL_COST_PER_KM": { "light": 0.6, "medium": 1.1, "heavy": 1.9 },
     "FUEL_PRICE_PER_MWH": { "gas": 38, "diesel": 95, "coal": 30, "nuclear": 9, "solar": 0, "wind": 0, "hydro": 0 },
     "plant_efficiency_mult": { "gas": [1.000, 0.935, 0.871, 0.806, 0.758] },

@@ -3766,3 +3766,201 @@ files that are not documents — `tests/test_city_sim.gd:146` and
 None can change behaviour, and that is proved rather than asserted:
 `profile_sim --hash-only` was run on both cities **before and after** these
 edits and all four digests are byte-identical.
+
+## 41. WAVE 17 — the rush verb and the overview roster: the sim half (binding)
+
+*The player's ask, verbatim: "if we have buildings that are being upgraded or
+built on, those should have a queue that tells us what's actually being built and
+the progress tracker of that. And we also should have the ability to speed it up
+with cash." This is the `sim/` half — the roster read and the money verb, against
+a seam contract the UI branch builds to independently. Doc 03 §2.13(f) prices it,
+doc 92 §45 derives the rate, doc 93 §AA argues the shape. **All four determinism
+baselines are bit-identical**: a rush is a player verb and no agent taps it.*
+
+### RR-107 — The price of time was already published; it was just not written as a rate (docs 03 §2.5/§2.13(f), 92 §45, `data/economy.json`, `sim/economy/cost_curves.gd`)
+
+**The question.** A rush needs a price, and the brief was explicit: derive it
+against doc 03's own build/upgrade tables, say what fraction was chosen and why,
+**do not guess**. The trap is that "a meaningful premium" is exactly the kind of
+number a branch invents, defends with a paragraph, and hands the balance report
+as a new claim to re-litigate every wave.
+
+**The finding.** Doc 03 §2.5 has carried the answer since the founding ledger.
+The *emergency contractor* row — `CONTRACTOR_SURCHARGE 1.80 ×` the job cost for
+`CONTRACTOR_TIME_FRACTION 0.35` of the duration — is not a package price, it is a
+**point on a curve**: it buys `1 − 0.35 = 0.65` of a project's duration for
+`1.80 − 1 = 0.80` of its cash price. The quotient is the rate:
+
+```
+RUSH_SURCHARGE_PER_DURATION = 0.80 / 0.65 = 1.230769…  → published as 1.23077
+rush_cost = ceil( remaining_crew_hours × cash_price × 1.23077 / required_crew_hours )
+          = ceil( 1.23077 × (1 − progress) × cash_price )
+```
+
+**The ruling.** The cell is **published in `data/economy.json` behind a
+`CostCurves` accessor** (C-07: a price lives in that file, not in a runtime
+expression) and **re-checked against the two cells it came from at load** —
+`RUSH_DERIVATION_TOLERANCE 1e-5`, residual `7.7e-7`, and a drifted cell is a boot
+error, asserted by
+`tests/test_construction_rush.gd::test_the_rush_rate_is_the_contractor_row_carried_to_its_limit`.
+A published derivation that nothing re-derives is a comment.
+
+Three consequences are binding. **(a) The fraction is 1.23 of the project's cash
+price for a full-length rush**, so an instantly-finished anything costs 2.23× its
+sticker — chosen because it is the only rate that leaves the contractor and the
+rush at *identical value per hour saved*, so neither dominates and §2.5's
+"deliberately bad value" verdict is inherited rather than re-argued. **(b) The
+rate is PER-PROJECT, not a flat $/crew-hour.** The roster's dollars-per-crew-hour
+spans **15×** (`house` $600/ch → `data_center` $9,000/ch); a flat rate at the
+median would price a `house` rush 2.71× too dear and a `data_center` rush at
+**0.18×** — $180,000 of tower finished instantly for $40,000, which is not a
+bad-value valve but the dominant strategy in the game. Doc 92 §45.2 has the
+sweep. **(c) Rounding is a CEILING, and §2.13(f) names it as the ladder's one
+exception to §2.1's half-up.** This is the only price computed against a live,
+continuously-moving quantity; half-up would let a project at 99.9 % quote **$0**
+and hand over the last of the time for none of the money.
+
+**No difficulty multiplier is applied on top**, and that is not an omission:
+`M_build` / `M_dev` are already inside the job's cash price, so a `crisis` city
+pays a `crisis` rush through the number the rush is a fraction of. Applying it
+again would charge `M²`.
+
+### RR-108 — A rushed completion is not a second completion path; it is the SAME one, called from a command (docs 02 §2.13, 93 §AA2, `sim/construction/construction_queue.gd`, `sim/city_sim.gd`)
+
+**The rule this obeys.** *Every event that completes or creates a Building must
+reach `main.gd`'s `_on_sim_batch` translator, and a rushed completion fires the
+SAME events as a natural one — never a new bespoke path.* The Wave-13 pump lesson
+is the reason it is written down, and a money verb that finishes buildings is
+exactly the shape that re-breaks it: the tempting implementation calls
+`Building.complete_construction()` directly, gets a working building, and quietly
+skips `_sync_station_fleet`, `_commission_water_nodes`, `_commission_grid_node`,
+doc 09's phase auto-submit and doc 03 §2.8's invoice for it.
+
+**The mechanism, ruled.** `ConstructionQueue.force_complete(job_id)` fills the
+accumulator to its required total, takes the job off the queue and returns **the
+identical record `advance()` would have returned** — and deliberately routes
+nothing. The dispatch loop that used to live inside `WorkPhaseSystem.advance_fine`
+is lifted verbatim into **`CitySim._route_completed_jobs(completed)`**, and both
+callers use it. The rush path then runs the tick's own order for that one job:
+`_emit_construction_stages()` (so the finished site's stage residue clears
+exactly as it would have), `_route_completed_jobs([finished])`, and
+`_charge_development_phases()` (so a rushed phase's successor is billed in the
+same breath, which is §2.8's *"never a phase behind the site"* rule).
+
+`force_complete` requires **no crew**, and that is doc 03 §2.5's fiction, not an
+oversight: the whole point of *"paying to bypass the construction/crew queue"* is
+that it works when the city's own crews are somewhere else. A job parked at
+`blocked_reason = "no_crew"` is precisely the one a player pays to be rid of.
+
+The one **new** event is `construction_rushed{job, cost, source}` — additive, and
+emitted *in front* of the completion (the money left, then the thing finished).
+It carries an `awaiting_consumer` row in `tests/test_event_matrix.gd` naming Wave
+16's `ui/construction_queue_model.gd` and `game/notifications/`; the row deletes
+itself the day the model lands, by the register's own expiry test.
+
+**The shell-side tail of this rule, found on review and NOT fixed here.** The
+sim half is whole — the events are emitted, in the right order, onto the bus. But
+there is exactly **one** live drain in the shell, `SimHost._process`'s
+(`game/sim_host.gd:35`, `grep -c "bus.drain()" game/main.gd game/sim_host.gd` →
+one apiece, and `main.gd`'s is the offline-report path at 1675), and it is gated
+on `if paused or sim == null: return` at `sim_host.gd:27`. **A player verb that
+completes a building therefore leaves its completion on the bus for as long as
+the game is paused.** For `cmd_place_building` this has always been invisible —
+the site appears with its scaffolding either way. For a rush it is the whole
+verb: the player pays to make a crane go away, and the crane stays up until they
+un-pause. `main.gd` is the lead's file, so this is a snippet and a ruling, not a
+patch. The fix is the two lines `main.gd` *already runs* on the offline path,
+given a name — insert immediately **after** `_on_sim_batch`'s body, at the line
+`func _render_id(sim_id: String) -> int:`:
+
+```gdscript
+## A player verb that COMPLETES work (doc 03 §2.13(f)'s rush) emits its events
+## from inside the command, and the only live drain is `SimHost._process`'s,
+## which does not run while the game is paused (`sim_host.gd:27`). So a rush
+## bought from a paused panel finishes in the sim and leaves its crane standing
+## until the player un-pauses. This is the door that lets a command's own batch
+## through immediately. It is NOT a second translator — it is `_on_sim_batch`,
+## called once, with the events already on the bus — and it is idempotent: a
+## second call drains an empty array and does nothing. Same two lines the
+## offline-report path already runs at `_apply_offline_progress`.
+func flush_sim_events() -> void:
+	if sim_host == null or sim_host.sim == null:
+		return
+	var batch: Array = sim_host.sim.bus.drain()
+	if not batch.is_empty():
+		_on_sim_batch(batch)
+```
+
+`awaiting_consumer` — Wave 17's UI branch calls it on the tap that returns
+`{"ok": true}` from `cmd_rush_construction`, and nothing else in the game needs
+it today. Filed against RR-108 rather than taking a new id, because it is this
+rule (*the completion must reach the translator*) at the one seam the sim half
+cannot reach from inside `sim/`.
+
+### RR-109 — There was nothing to unify: `cmd_upgrade_building` has no clock of its own (docs 02 §2.13, 09 §2.3, 10 §2.13, `sim/city_sim.gd`)
+
+**The mapping this branch was told to make first**, and the answer, recorded
+because the next reader will ask it too. Every project the player would call
+*"being built or upgraded"* runs through doc 02 §2.13's **one** queue:
+
+| submitter | kind | roster `source` |
+|---|---|---|
+| `cmd_place_building` (and `cmd_place_water_component`'s shell) | `build` | `build` |
+| `cmd_upgrade_building` — **the §2.11 gate submits a job; the accumulator IS the timer** | `upgrade` | `upgrade` |
+| `cmd_repair_building` | `repair` | `repair` |
+| `DevelopmentController._submit_phase` (doc 09's six phases) | `development` | `block` |
+| `RoadNetwork` build / upgrade / repair, via the injected `submit_job` | `road` | `road` |
+
+So `construction_overview()` is a read of `active_jobs()` and **nothing else** —
+no adapter, no second source, no merge — and the "if upgrades run a separate
+clock, adapt them" branch of the brief is dead code. The `city_sim.gd` ladder
+note that prompted the question is about **which row the DURATION is read from**
+(RR-38: the row upgraded *from*, not *to*), not about where the clock lives.
+
+Two things are ruled here so the roster cannot drift. **(a) The kind → source map
+is TOTAL over `ConstructionQueue.KINDS`**, including the two nothing submits
+(`rebuild`, `clear_rubble`), so a new kind can never reach `ui/` as a word the UI
+branch was never told about; the gate is
+`test_every_job_kind_has_a_published_source`. **(b) Only `development` is
+renamed** — the player bought a *block* and is watching a block — and every other
+kind keeps the queue's own noun, because a second vocabulary for the same thing
+is how two halves of a seam drift apart.
+
+The roster's `title_key` is the **noun** (`ui_build_card_<archetype>`,
+`ui_land_phase_<phase>`, and five new namespaced `ui_queue_title_road_*` /
+`ui_queue_title_project` keys); the **verb** is `ui/`'s to compose from `source`
+and the `level_from`/`level_to` pair. Shipping the noun once is what stops the
+two branches authoring two rosters. Every key the roster can answer is asserted
+to resolve in `data/strings.en.json`.
+
+### RR-110 — Hash-neutrality is not evidence for a player verb; the quote-versus-charge is (docs 92 §45.4, `tests/test_construction_rush.gd`)
+
+**The trap.** A player verb no agent calls **cannot** move a determinism
+baseline, so "all four baselines are bit-identical" is a statement about the
+harness, not about the feature. Publishing it as the branch's proof would be
+A91-D-40's mistake in a new costume: a check that passes identically whether the
+thing works or not.
+
+**The ruling.** The neutrality claim still ships — all four digests reproduce the
+post-Wave-15 values byte for byte, and a moved one would mean the verb had leaked
+into the tick path — but it is stated as a **falsifier, not evidence**. The
+discriminating assertions are the verb's own, and there are four claims worth
+making:
+
+1. **the quote is the charge** — the dollars the roster drew are the dollars the
+   treasury lost, exactly, with no rounding drift and no partial deferral, and
+   **nothing is charged on any refusal**;
+2. **a rushed building equals a naturally-finished one** — two cities, same seed,
+   same house; one finishes on the clock, one buys the rest of the hours;
+   compared field-for-field *and* event-stream-for-event-stream from
+   `building_completed` onward;
+3. **the price lives in exactly one file** — asserted by **absence**, scanning
+   every `data/*.json` but `economy.json` for the key, because a test that only
+   proves doc 03's cell is present passes identically beside a live duplicate;
+4. **the refusals refuse** — and the money-shaped one is checked from both sides
+   of the credit floor, one dollar apart.
+
+Two further properties are asserted because instant completion's *claim* is that
+it adds no state: a city that has rushed **restores from its save at rest and
+replays bit-identically two game-hours on**, and the same seed plus the same taps
+produces the same city (the verb draws no RNG and reads no clock).
