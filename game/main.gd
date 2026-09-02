@@ -2072,6 +2072,26 @@ func _on_hud_pause_toggled(paused: bool) -> void:
 
 
 func _process(delta: float) -> void:
+	# The dev screenshot's clock runs FIRST, before the two cursors below can
+	# own the frame. It used to sit at the bottom of this function, after both
+	# `return`s — so on a device launch, which always restores and (since
+	# RR-132) always catches up, `--shot-at` counted seconds that never
+	# arrived and `--screenshot=` silently never fired. It works on the
+	# workstation because a founding boot has no cursor to wait for, which is
+	# why nothing noticed. Found 2026-09-02 while trying to photograph the
+	# menu-band defect with the game's OWN framebuffer.
+	if _screenshot_path != "":
+		_screenshot_timer += delta
+		if _screenshot_timer > _shot_at and _restore_cursor == null \
+				and _catchup_cursor == null:
+			var shot := get_viewport().get_texture().get_image()
+			var err := shot.save_png(_screenshot_path)
+			print("screenshot saved: ", _screenshot_path, " err=", err,
+					" render_buildings=", render_model.building_count())
+			if crash_sentinel != null:
+				crash_sentinel.mark_clean_exit()  # dev exits are not crashes
+			get_tree().quit()
+			return
 	# A restore in flight owns the frame: the sim is half-rebuilt at every step
 	# boundary. `sim_host.paused` is already true (the door set it), so no tick
 	# can land in a seam either.
@@ -2183,16 +2203,6 @@ func _process(delta: float) -> void:
 	if _lightning_at >= 0.0 and _screenshot_timer >= _lightning_at:
 		weather_fx.strike(0.9)
 		_lightning_at = -1.0
-	if _screenshot_path != "":
-		_screenshot_timer += delta
-		if _screenshot_timer > _shot_at:
-			var image := get_viewport().get_texture().get_image()
-			image.save_png(_screenshot_path)
-			print("screenshot saved: ", _screenshot_path,
-					" render_buildings=", render_model.building_count())
-			if crash_sentinel != null:
-				crash_sentinel.mark_clean_exit()  # dev exits are not crashes
-			get_tree().quit()
 
 
 func _unhandled_input(event: InputEvent) -> void:
