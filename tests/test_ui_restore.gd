@@ -112,10 +112,21 @@ func test_the_ruin_row_is_the_only_action_and_carries_its_price() -> void:
 	assert_true(note.visible and note.text.length() > 0)
 	assert_false(note.text.contains("{"), "no unresolved placeholder: %s" % note.text)
 
-	# REPAIR is suppressed: it cannot answer `destroyed`, and a dead button
-	# beside the live one is the state this row exists to remove.
+	# **The panel draws what the sim will accept and hides what it refuses.**
+	# Both of these answer `E_STATE` on a ruin; the assertion is written against
+	# the SIM's answer rather than against the panel's rule, so a future change
+	# to either one has to move both.
+	assert_false(bool(sim.cmd_repair_building(sim_id, true)["ok"]))
 	assert_false(panel.repair_button().visible,
 			"a ruin must not be offered a repair the sim refuses")
+	assert_false(bool(sim.cmd_demolish_building(sim_id, true)["ok"]))
+	assert_false(panel.demolish_button().visible,
+			"nor a demolition — §2.12 routes a ruin to cmd_clear_rubble, which"
+			+ " has no door either (A91-D-99's remaining half)")
+	# PRIORITY stays, because `cmd_set_priority` ACCEPTS a ruin: the tier lives
+	# on the grid service record, which a destruction does not detach, and the
+	# tier set now is the one the restored building comes back with.
+	assert_true(bool(sim.cmd_set_priority(sim_id, "CRITICAL")["ok"]))
 	_unmount(mounted)
 
 

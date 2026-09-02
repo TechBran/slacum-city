@@ -674,16 +674,24 @@ func _render_actions(v: Dictionary) -> void:
 	var actions: Dictionary = v.get("actions", {})
 	var restore: Dictionary = actions.get("restore", {})
 	_render_restore(restore)
-	# **A ruin draws the restore and nothing else from this row.** `REPAIR` cannot
-	# answer `destroyed` — `cmd_repair_building` refuses it with `E_STATE`, and on
-	# private stock `E_OWNER_MAINTAINED` fires first and hides the row entirely —
-	# so leaving it on screen offers the player a dead button beside the live one
-	# (doc 93 §AN7). `PRIORITY` and `DEMOLISH` stay: a ruin still carries a shed
-	# tier, and clearing the lot instead of rebuilding it is a real choice.
-	_render_repair({} if bool(restore.get("available", false)) \
-			else actions.get("repair", {}))
+	# **On a ruin, the panel draws what the sim will ACCEPT and hides what it
+	# refuses** (doc 93 §AN7). Both of the buttons below answer `E_STATE` on a
+	# destroyed building — `cmd_repair_building` because a ruin is not `active`
+	# or `damaged` (and on private stock `E_OWNER_MAINTAINED` fires first and
+	# hides the row entirely), and `cmd_demolish_building` because §2.12 routes
+	# a ruin to `cmd_clear_rubble` instead, **which has no door either** and is
+	# A91-D-99's remaining half. A dead button beside the live one is the exact
+	# state this row exists to remove, so neither is drawn.
+	#
+	# `PRIORITY` STAYS, and the asymmetry is the rule rather than an exception:
+	# `cmd_set_priority` ACCEPTS a ruin, the tier lives on the grid service
+	# record which a destruction does not detach, and the tier set now is the
+	# tier the restored building comes back with. It is the one thing on this
+	# panel a player can usefully decide while the lot is still rubble.
+	var is_ruin := bool(restore.get("available", false))
+	_render_repair({} if is_ruin else actions.get("repair", {}))
 	_render_priority(actions.get("priority", {}))
-	_render_demolish(actions.get("demolish", {}))
+	_render_demolish({} if is_ruin else actions.get("demolish", {}))
 
 
 ## **THE ONE TAP** (Wave 18; doc 12 §2.9 D-86, doc 93 §AN6). A destroyed building
@@ -1351,6 +1359,10 @@ func restore_all_note() -> Label:
 
 func repair_button() -> Button:
 	return _repair_button
+
+
+func demolish_button() -> Button:
+	return _demolish_button
 
 
 ## The `UPGRADE` button of one doc-05 node's row, or null — the water twin of

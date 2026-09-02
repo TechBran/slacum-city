@@ -3796,5 +3796,19 @@ state guard either. What the panel then DREW was the defect: `_render_repair`
 drew a disabled REPAIR button with an `E_STATE` sentence on a city-maintained
 ruin, and on private stock `E_OWNER_MAINTAINED` folded into "nothing to buy" and
 the ruin's panel offered **no action at all**. Doc 12 D-86 is the row; the
-destroyed state now has its own block, and the repair affordance is suppressed on
-a ruin because the restore is the verb that answers it.
+destroyed state now has its own block.
+
+**And the rule that block follows is: draw what the sim will ACCEPT, hide what it
+refuses.** Two of §2.9 item 6's three buttons answer `E_STATE` on a ruin, so
+neither is drawn — `cmd_repair_building` because a ruin is not `active` or
+`damaged`, and `cmd_demolish_building` because doc 02 §2.12 routes a ruin to
+`cmd_clear_rubble` instead, **which has no door either and is A91-D-99's
+remaining half** (`grep -rn "cmd_clear_rubble" sim/ ui/ game/` finds nothing).
+`PRIORITY` stays, and the asymmetry is the rule rather than an exception:
+`cmd_set_priority` ACCEPTS a ruin, the tier lives on the grid service record
+which a destruction does not detach, and the tier set now is the one the restored
+building comes back with. It is the one thing besides the restore that a player
+can usefully decide while the lot is still rubble.
+
+`tests/test_ui_restore.gd` asserts both halves **against the sim's own answer**
+rather than against the panel's rule, so a change to either has to move both.
