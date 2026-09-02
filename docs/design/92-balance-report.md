@@ -7173,3 +7173,203 @@ merge — founding `a27da24aaf6e9663…` / `d2dec6727c64001d…`, bench
 `7c99720f5ff14553…` / `8f60accb6d91ad1e…` — were taken **after** the edits and
 reproduce the pre-edit run on the same tree to the byte, on both cities and both
 paths.
+
+## 43. Pass 16 — the economy dial-in: who pays, how fast, how much (2026-09-02)
+
+Three notes came back from days of on-device play, and this pass is the
+measurement behind all three (the rulings are doc 93 §Y):
+
+> **(a)** repair is too aggressive, the bill falls on the wrong party, and it
+> interrupts play for nothing; **(b)** income is too slow; **(c)** upgrade
+> prices are too aggressive.
+
+**The fork.** `a5d9021`, the Wave-17 integration. Every table below is coarse
+path, standard difficulty, on the same rig every doc 92 table since §15 is
+measured on. The four state hashes at the fork are unmoved from the Wave-16
+baselines, verified before a line was edited:
+
+```
+tools/profile_sim.gd --hash-only                 coarse 24h a27da24aaf6e9663…  fine 2.0h 7745cb25e55ff65c…
+    …  --city=res://tests/fixtures/bench_city.json  coarse 24h 7c99720f5ff14553…  fine 2.0h d8e8889681b23297…
+```
+
+**One number to carry through the whole section.** `data/time.json.clock` sets
+`real_seconds_per_game_minute = 1.0`, so at 1× speed **1 game-hour is exactly 1
+real minute** and **1 game-day is 24 real minutes**. Every `$/gh` in this
+document is therefore already a `$/real-minute`, and every game-hour duration is
+already a wait in real minutes. Note (b) is measurable without a new unit.
+
+### 43.1 What repair actually costs, by asset class
+
+`tools/measure_repair_burden.gd` is new in this pass and is the instrument for
+note (a): it boots the real `CitySim`, drives a `tools/playtest.gd` strategy
+through the real command layer, and reports per game-day the repair dollars and
+trips **by asset class**, the condition-band crossings that make a player reach
+for a repair, what reaches a *surface* (`data/notifications.json` push classes,
+`data/ui.json.event_log` rows, and the building panel's REPAIR affordance), and
+repairs' share of the settled net. `--absence=N` then runs a capped offline
+catch-up on the finished city and prints the morning bill.
+
+```
+~/.local/bin/godot --headless -s res://tools/measure_repair_burden.gd -- \
+    --days=21 --seeds=1337 --strategies=do_nothing,balanced,curriculum --bucket=7 --absence=720
+```
+
+**At the fork, 21 game-days, seed 1337, starter city:**
+
+| strategy | net | building repairs | of which **private** | of which **civic** | trips priv/civ | **city upkeep on private stock** | roads accrual | (repairs+upkeep)/net |
+|---|---|---|---|---|---|---|---|---|
+| `do_nothing` | $140,305 | $0 | $0 | $0 | 0/0 | **$16,585** | $94,338 | 11.82 % |
+| `balanced` | $1,260,224 | $62,692 | $9,995 (15.9 %) | $52,697 | 14/10 | **$78,038** | $102,673 | 11.17 % |
+| `curriculum` | $938,285 | $70,053 | $19,394 (27.7 %) | $50,659 | 39/10 | **$63,915** | $104,377 | 14.28 % |
+
+**Five findings, and each one names a different half of note (a).**
+
+**1. The dollars are civic; the *taps* are private.** On the two playing agents
+the city spends 72–84 % of its building-repair money on the seven civic and
+utility shells it owns, and makes 58–80 % of its repair *trips* on private
+stock. The plant and the two water works are expensive and rare; the houses are
+cheap and endless. A player counts trips, not dollars, which is why the note
+says "aggressive" about a line that is 5.0–7.5 % of net.
+
+**2. The city is paying more to maintain buildings it does not own than to
+repair the ones it does.** `E_building_maint` bills $63,915–$78,038 over the
+same three weeks the city spends $62,692–$70,053 on all building repair
+combined. On `do_nothing` it is the *entire* building-related bill: $16,585
+against $0 of repair. This is the line doc 93 §Y1 retires.
+
+**3. Nothing was destroyed, and nothing was damaged, in three weeks of play.**
+`damaged private 0 (decay 0 / incident 0) · damaged civic 0 · destroyed 0` on
+all three strategies, with 34–100 crossings of the 0.85 band and 0–2 of 0.60.
+The user's "buildings being destroyed" is **not** a 21-day-online phenomenon —
+see finding 5.
+
+**4. The interruption is an affordance, not an alert.** The push and log
+channels are nearly silent on repair — `curriculum` sees 79 P2 offers and 83 log
+rows in 21 days, and `grep` finds no `building_damaged`, `building_repaired` or
+condition-band row in `data/notifications.json.bindings` at all. What actually
+interrupts is the building panel: at the end of the run the REPAIR row is drawn
+on **260 private / 21 civic** buildings (`balanced`) and **98 / 10**
+(`curriculum`), because `repair_view` draws it for any building under condition
+1.00. Every one of those is a tap the player can be nagged into making, and
+after doc 93 §Y1 all of the private ones stop existing.
+
+**5. The destruction the user saw is what an absence does.** Run the same
+finished cities through doc 01's capped 720-game-hour catch-up — one night away:
+
+| strategy | private bands Good/Worn/Poor/Failing | civic bands | damaged | **morning bill** |
+|---|---|---|---|---|
+| `do_nothing` | 0/0/19/8 | 0/0/2/5 | 13 | $38,199 private + $170,700 civic |
+| `balanced` | 2/16/236/8 | 0/14/3/6 | 26 | **$332,942 private + $231,582 civic** |
+| `curriculum` | 1/18/61/19 | 0/3/1/6 | 31 | $456,371 private + $174,848 civic |
+
+A `balanced` player who plays three weeks and then sleeps comes back to **254 of
+their 262 buildings in the Poor or Failing band, 26 of them damaged, and a
+$564,524 bill** — against a treasury of $43,258 at the moment they left. That is
+the whole of note (a) in one row, and it is the row the ownership ruling is
+aimed at: 236 of those 254 are private buildings whose owners should have been
+keeping them up.
+
+### 43.1a Where each number comes from
+
+Every source named in the brief, and what it contributes:
+
+| source | value at the fork | what it drives |
+|---|---|---|
+| `data/buildings.json decay_per_hour` (from `building_rules.seed_rows[*].decay` × `k_decay^(L−1)`, `k_decay` 1.20) | house 0.00045, apartment 0.00050, store 0.00055, office 0.00045, high_rise 0.00060, data_center 0.00075; **plant 0.00090, substation 0.00080, water 0.00070, yard 0.00065**, police/fire 0.00040 | the whole wear curve |
+| `CostCurves._repair_cost_per_capital` (`economy.json REPAIR_COST_PER_CAPITAL`) | 0.85 | `repair_cost = capital × damage × 0.85 × M_repair` |
+| the auto-repair dial (§30) | `roads.auto_repair_threshold` / `auto_repair_daily_cap` — **roads only** | no building has a policy (PA-33) |
+| `E_roads_repair` | $94,338–$104,377 per 21 days, the largest single repair line in the game | the city's road accrual, correctly the city's |
+| `repair_quote(M_repair)` | `M_repair` 1.00 on `standard` | the road quote, priced at the city's own knob (§30) |
+| `data/building_rules.json condition.*` | fifteen keys | **read by nothing** at the fork (PA-13) — landed by doc 93 §Y2 |
+
+### 43.2 Income, in dollars per real minute at 1×
+
+Note (b) is "we wait too long for money to generate", and the unit that makes it
+falsifiable is above: **1 game-hour = 1 real minute at 1×**, so the curriculum's
+own level boundaries are a wait in real minutes and the founding ledger's `$/gh`
+is already a `$/real-minute`.
+
+**The founding ledger at the fork** (`tools/measure_founding_ledger.gd
+--hours=24`, mean of the first 24 settled game-hours, seed 1337):
+
+| preset | gross $/min | expense $/min | **net $/min** |
+|---|---|---|---|
+| `casual` | 1,158.20 | 424.86 | **+733.34** |
+| `standard` | 1,047.18 | 532.30 | **+514.89** |
+| `hard` | 962.94 | 638.26 | **+324.68** |
+| `crisis` | 911.13 | 729.50 | **+181.63** |
+
+and the `standard` expense split, which is where note (b)'s answer has to come
+from because the revenue side is doc 03's calibrated anchor:
+
+| line | $/min | share |
+|---|---|---|
+| `roads_repair` | 183.92 | **34.6 %** |
+| `departments` | 96.00 | 18.0 % |
+| `fleet` | 77.56 | 14.6 % |
+| `grid` | 74.62 | 14.0 % |
+| `generation_fuel` | 57.00 | 10.7 % |
+| **`building_maint`** | **27.70** | **5.2 %** |
+| `water` | 15.49 | 2.9 % |
+| **total** | **532.30** | |
+
+`building_maint` is only 5.2 % of the founding bill — but it is the line that
+grows with the city rather than with the map, and doc 92 §13.4 measured it at
+**$466.89/gh of $1,289.80 (36.2 %)** at 320 buildings. It is a *late* line, and
+so is the relief from retiring it.
+
+**The wait, measured** (`tools/measure_curriculum.gd --days=45`, three seeds).
+Level boundaries are in game-hours, i.e. in real minutes at 1×:
+
+| level reached | 1337 | 4242 | 9001 | **band duration (real minutes)** |
+|---|---|---|---|---|
+| 1 | 14 | 13 | 17 | 13–17 |
+| 2 | 47 | 42 | 47 | 29–33 |
+| 3 | 82 | 79 | 83 | 35–37 |
+| 4 | 135 | 131 | 132 | 49–53 |
+| 5 | 246 | 258 | 284 | 111–152 |
+| 6 | 710 | 709 | 754 | **451–470** |
+
+and the 45-day arc it sits in: **245 / 211 / 231 repairs**, repair spend
+**$620,212 / $567,679 / $595,385**, treasury end **$190,075 / $178,919 /
+$135,259** — repair spend is 3.1–4.4× the ending treasury, which reproduces
+PA-33 exactly.
+
+The opening is not where the waiting is. Levels 1–4 arrive at 14, 47, 82 and 135
+real minutes, and a do-nothing starter city banks $89,798 by game-day 7 without
+being touched. **The waits are L4→L5 (111–152 real minutes) and L5→L6 (451–470
+real minutes, 7.5–7.8 real hours)** — and the second of those is longer than doc
+03 §2.12's entire modelled arc, which reaches an end state of ~$898K in 600 real
+minutes. Doc 93 §Y6 rules the target on §2.12's own beat table: **N = 10 real
+minutes**, the shortest opening play session in it, and no band in levels 1–4
+may leave the player with nothing the curriculum asks for that they can afford
+for longer than that.
+
+### 43.3 The upgrade ladder
+
+Note (c). At the fork, `economy.json.upgrades` is `UPG_COEFF 1.45`,
+`UPG_GROWTH 2.55`, against `tax.TAX_LEVEL_GROWTH 2.15`, and
+`CAPITAL_VALUE_V = [1.0, 2.45, 6.147, 15.576, 39.62, 100.929]`.
+
+Doc 93 §Y7 derives the payback ladder in closed form from exactly those three
+constants and `build_cost_l1 / base_tax_l1 = 100 gh`, which holds for every
+revenue archetype:
+
+```
+payback(L -> L+1) = 100 x [UPG_COEFF / (TAX_LEVEL_GROWTH - 1)] x 1.18605^(L-1)   game-hours
+```
+
+| step | payback at the fork (`UPG_COEFF` 1.45) | vs a new build |
+|---|---|---|
+| L1→L2 | 126.1 gh | **+26 %** |
+| L2→L3 | 149.5 gh | +49 % |
+| L3→L4 | 177.4 gh | +77 % |
+| L4→L5 | 210.4 gh | +110 % |
+| L5→L6 | 249.5 gh | +150 % |
+
+The first rung reproduces doc 03 §2.3's published "126 → 210 gh" to the tenth of
+a game-hour, which is the check that the closed form is the shipped curve and
+not a model of it. **Every rung is slower than building a fresh L1**, and level
+2's card teaches "upgrading instead of building more" — PA-46's finding, and the
+arithmetic reason note (c) is right.
