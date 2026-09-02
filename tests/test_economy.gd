@@ -689,6 +689,32 @@ func test_a_restore_is_never_cheaper_than_the_repair_it_replaced() -> void:
 			"a restore that costs more than the deepest sane repair is not modest")
 
 
+## …and the floor is refused at BOOT as well as asserted by the test above, the
+## way §2.13(f)'s rush rate is re-checked against the contractor row it comes
+## from. A table edit that dropped below the maintainer repair must fail loudly
+## rather than quietly making the game pay for neglect.
+func test_a_restore_fraction_below_the_floor_is_a_boot_error() -> void:
+	var economy: Variant = JSON.parse_string(
+			FileAccess.get_file_as_string(ECONOMY_PATH))
+	var building_economy: Variant = JSON.parse_string(
+			FileAccess.get_file_as_string(BUILDING_ECONOMY_PATH))
+	var expenses: Dictionary = (economy as Dictionary)["expenses"]
+	# 0.10 is below `0.20 × 0.85 = 0.17`, so letting a building fall down would
+	# be cheaper than the repair a maintaining player buys.
+	expenses["RESTORE_COST_FRACTION"] = 0.10
+	var broken := CostCurves.new(building_economy, economy)
+	assert_false(broken.is_valid(), "a restore below the floor booted silently")
+	var named := false
+	for message in broken.errors:
+		if String(message).contains("RESTORE_COST_FRACTION"):
+			named = true
+	assert_true(named, "the boot error names the cell: " + ", ".join(broken.errors))
+	# And the shipped table is above it, which is the same statement from the
+	# other side — this test would pass on a broken file if it only checked one.
+	expenses["RESTORE_COST_FRACTION"] = 0.20
+	assert_true(CostCurves.new(building_economy, economy).is_valid())
+
+
 # ============================================ §2.1 millidollar carry (deliverable g)
 
 func test_no_money_lost_to_rounding() -> void:

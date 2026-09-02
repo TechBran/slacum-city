@@ -214,7 +214,59 @@ func test_the_price_is_the_published_row_and_lives_in_one_file() -> void:
 			float(sim.treasury.difficulty().get("M_repair", 1.0))))
 
 
+## **What the money actually buys** (doc 92 §54.9(a)). Doc 02 §2.12 gives
+## `destroyed` an occupancy multiplier of 0 and doc 03's tax reads occupancy, so
+## a ruin pays nothing — which is the trap the 2026-09-02 player was in: the
+## ruins take away the income needed to fix them. This asserts the loop closes:
+## the city's net falls when the shells burn and comes back when they do.
+func test_a_restore_buys_back_the_tax_line_the_ruin_took() -> void:
+	var sim := CitySim.boot_from_files()
+	sim.advance_coarse_hours(24, false)
+	var before := _mean_net(sim, 24)
+	var burned: Array[String] = []
+	for id in sim.roster_ids():
+		var b: Building = sim.buildings[id]
+		if b.state == &"active" and int(b.stats.get("population", 0)) > 0 \
+				and burned.size() < 5:
+			_destroy(sim, String(id))
+			burned.append(String(id))
+	assert_eq(burned.size(), 5, "the founding manifest carries five occupied shells")
+	sim.bus.drain()
+	var ruined := _mean_net(sim, 24)
+	assert_true(ruined < before - 100.0,
+			"five ruins cost the city real money: %.2f → %.2f" % [before, ruined])
+
+	sim.treasury.balance = 5_000_000
+	var batch := sim.cmd_restore_all_destroyed()
+	assert_true(bool(batch["ok"]))
+	assert_eq(int((batch["payload"] as Dictionary)["count"]), 5)
+	for _h in 400:
+		sim.advance_coarse_hours(1, false)
+		var still_down := false
+		for id: Variant in burned:
+			if (sim.buildings[String(id)] as Building).state != &"active":
+				still_down = true
+		if not still_down:
+			break
+	for id: Variant in burned:
+		assert_eq(String((sim.buildings[String(id)] as Building).state), "active",
+				"%s came back" % id)
+	var healed := _mean_net(sim, 24)
+	assert_true(healed > ruined + 100.0,
+			"the restore bought the income back: %.2f → %.2f" % [ruined, healed])
+
+
 # ------------------------------------------------------------------ helpers
+
+## Mean settled net over `hours` game-hours on the coarse path.
+func _mean_net(sim: CitySim, hours: int) -> float:
+	var total := 0.0
+	for _h in hours:
+		sim.advance_coarse_hours(1, false)
+		total += float(sim.last_settlement.get("net", 0.0))
+	return total / float(maxi(1, hours))
+
+
 
 ## Burn one building down through doc 02 §2.12's own transitions, so the ruin
 ## under test is the ruin the game makes and not a hand-set field.

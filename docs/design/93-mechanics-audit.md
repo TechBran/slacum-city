@@ -3763,6 +3763,29 @@ This is deliberately **unlike** `DEMOLISH`, which is hold-to-confirm — demolit
 is the one button in the deck that cannot be undone, and a restore is the one
 that undoes something.
 
+### AN7a. Found on the way past and deliberately NOT fixed: a destroyed utility shell keeps supplying
+
+Measured while pricing the restore (doc 92 §54.9(b)), on the shipped starter
+city: burn `PLANT-1` down through §2.12's own transitions and
+`grid.system_supply_kw` stays at **8,000 kW**, the component reads `state OK`
+and `energized`, and **0 of 34** buildings go dark. `WTR-2`'s doc-05 node reads
+`state ok` with its shell `destroyed`.
+
+The cause is a seam, not a sum: doc 04's grid node and doc 05's water node are
+separate objects from the doc-02 shell that hosts them, `_retire_grid_node` and
+`_retire_water_nodes` are called from `cmd_demolish_building` **and from nowhere
+else**, and nothing on the supply side reads `Building.state == &"destroyed"`
+(`grep -n destroyed sim/power/*.gd sim/water/*.gd` → one comment, no code). It
+is A91-D-19's shape again.
+
+**The ruling is to file it, not to fix it here.** It belongs to the power and
+water models; its fix darkens cities, which moves the balance surface; and this
+is a player-verb lane that holds no matrix and may move no baseline. It also
+does not change anything in §AN — a restore is priced off `capital_value`, which
+is a property of the archetype and its level, not of what the shell was supplying
+while it was down. Doc 92 §54.9(b) carries the repro; it has no `A91-D` id
+because this wave's ids were pre-assigned.
+
 ### AN7. A ruin must be SELECTABLE
 
 Checked rather than assumed, and it holds today:

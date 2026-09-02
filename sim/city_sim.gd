@@ -4434,6 +4434,12 @@ func cmd_restore_all_destroyed(preview: bool = false) -> Dictionary:
 	var rows: Array = []
 	var total := 0
 	for id in roster_ids():
+		# Filtered on STATE before the quote, not after it. The benchmark city
+		# has 1,500 buildings and a handful of ruins; pricing all 1,500 to throw
+		# 1,495 away would put a catalog read and a curve read per building into
+		# a call the panel makes on every render of a ruin.
+		if (buildings[id] as Building).state != &"destroyed":
+			continue
 		var quoted := cmd_restore_building(id, true)
 		var payload: Dictionary = quoted.get("payload", {})
 		# Anything that is not a ruin, or is a ruin with a job still on it, is not

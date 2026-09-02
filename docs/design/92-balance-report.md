@@ -8269,13 +8269,15 @@ the player described.
 
 **And WHICH three is the finding.** `PLANT-1` (power_facility L1, capital
 $60,000), `SUB-A` (substation L1, $15,000) and `WTR-2` (water_facility L1,
-$45,000): the starter city's **entire utility spine**. That is the mechanism
-behind the player's own sentence — *"I have many buildings that are destroyed
-that I can't actually fix even if I upgrade power"* — read from the other end.
-There was no verb that could bring a power plant back, so a city that lost one
-lost the game, silently, forever. The same arc's ledger shows the outcome
-without any reference to the missing verb: **mean net $53,546/game-day at city
-level 2 collapses to $17,058 at level 3**, a 68 % fall, as the spine dies.
+$45,000): the starter city's **entire utility spine**, and until Wave 18 there
+was no verb in the project that could bring any of them back.
+
+The same arc's ledger falls **$53,546/game-day at city level 2 to $17,058 at
+level 3**, a 68 % drop, and the ruins are standing across that fall. **That is a
+correlation and this section does not claim it is the cause** — a `disaster_neglect`
+agent also stops building, stops repairing and holds its tax, and §54.9 shows
+that two of the three ruins cost this city nothing at all. The $17,058 is quoted
+here as the DENOMINATOR of §54.5's table, which is all it is used for.
 
 For contrast, `tools/measure_repair_burden.gd --days=45 --seeds=1337
 --strategies=balanced --absence=720`: a maintaining city destroys **0** buildings
@@ -8358,3 +8360,68 @@ byte-identical at the fork and at the end of this lane — founding
 issues, `Treasury.lifetime` gains **no** key (it is captured into `state_hash`),
 and `StatsRecorder.counters` gains `buildings_restored` only on a city where the
 verb has actually been used.
+
+### 54.9 What a ruin actually costs — and one thing it does not (both measured)
+
+Two numbers taken directly off the shipped sim while this section was being
+written. The first is the case FOR restoring; the second is a defect found on
+the way past, filed rather than fixed.
+
+**(a) A destroyed REVENUE building costs its whole tax line, and five of them
+put the founding city under water.** Doc 02 §2.12's state table gives
+`destroyed` an occupancy multiplier of 0, and doc 03's tax reads occupancy, so a
+ruin pays nothing. Measured on the founding city, 24 game-hours of settling then
+48 hours of mean net, before and after burning the first five residential shells
+down through §2.12's own transitions:
+
+| | net $/gh | city population |
+|---|---|---|
+| before | **+421.28** | — |
+| after five ruins | **−34.75** | 64 |
+| delta | **−456.02** | |
+
+**This is the whole argument for a modest price, and it is a trap rather than a
+tax.** The ruins take away the income the player needs to fix them: a city at
+−$34.75/gh never accumulates anything, so the price of the restore is not paid
+out of a surplus, it is paid out of a reserve that is now shrinking every hour.
+At the ruled 0.20, five `house` L1 restores cost **5 × $240 = $1,200** and buy
+back $456.02/gh — **2.6 game-hours of payback**, and a hole a stalled city can
+still climb out of. At the authored 0.60 the same recovery is **$3,600**, three
+times as deep, in a city whose income has already gone. A price that is
+unaffordable exactly when it is needed is not a difficulty setting; it is a dead
+end, which is what the 2026-09-02 player was looking at.
+
+**(b) A destroyed UTILITY SHELL keeps supplying, and that is a defect this lane
+found and did not fix.** Repro, on the shipped starter city:
+
+```
+sim = CitySim.boot_from_files(); sim.advance_coarse_hours(2, false)
+b = sim.buildings["PLANT-1"]; b.ignite(); b.burn_down(true, sim.clock.sim_time_minutes())
+sim.advance_coarse_hours(2, false)
+→ b.state                  = destroyed
+→ sim.grid.system_supply_kw = 8000.0        (unchanged)
+→ sim.grid.component("PLANT-1").state = OK, energized, capacity_kw 8000.0
+→ dark buildings            = 0 of 34
+```
+
+…and the same for water: `WTR-2`'s doc-05 node reads `state ok` with the shell
+`destroyed`. The cause is structural rather than arithmetic: **doc 04's grid
+node and doc 05's water node are separate objects from the doc-02 shell that
+hosts them**, `CitySim` retires them on `_retire_grid_node` / `_retire_water_nodes`
+— which are called from `cmd_demolish_building` and **from nowhere else** — and
+nothing anywhere reads `Building.state == &"destroyed"` on the supply side
+(`grep -n destroyed sim/power/*.gd sim/water/*.gd` returns one comment and no
+code).
+
+It is `A91-D-19`'s shape again: a correct model, a correct doc, and a seam with
+nothing on it. **It is filed and not fixed here, on purpose.** It belongs to the
+power and water lanes' models, its fix darkens cities and therefore moves the
+balance surface, and this is a player-verb lane that holds no matrix and may
+move no baseline. It has no `A91-D` id yet because this wave's ids were
+pre-assigned; the repro above is what a lane that takes it needs.
+
+**What it does NOT change about §54.** The restore's price is read off
+`capital_value`, which is a property of the archetype and its level, and every
+number in §54.2–§54.7 is either a published ladder cell or a settled-ledger
+figure. The one sentence it does correct is §54.3's, which is why that paragraph
+now says the net fall is a correlation.
