@@ -6268,6 +6268,14 @@ this row nothing mounted the dashboard. The fix splits the two halves: the
 **reading** refreshes synchronously (the next press must see it) and the
 **nodes** rebuild once the emission has unwound (`_reread_upkeep_after_press`).
 
+**And the row's target is now measurable, because a policy no player can stand
+cannot be measured.** `tools/measure_repair_burden.gd --auto-repair=` stands the
+pair the way the dial does; on the 45-game-day curriculum arc, seed 1337, the
+manual tap count falls **51 → 3** at `band_good` for **+0.11 %** of repair
+spend ($226,852 → $227,109). The audit asked for ≤ 20. Doc 92 §52.4a carries the
+table, including the finding that rung 1 (`band_worn`, 0.60) buys nothing on a
+played arc because doc 93 §Y1's ownership floor IS 0.60.
+
 *Verification:* `tests/test_money_surfaces.gd` `test_door_*` — six tests that
 mount the real `ui_root.tscn`, bind a real `CitySim` and press the real buttons.
 `tools/ui_preview.gd` gains `economy_upkeep_auto`, the policy-ON state a

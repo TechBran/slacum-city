@@ -30,6 +30,14 @@ extends SceneTree
 ##   ~/.local/bin/godot --headless --path . -s res://tools/measure_repair_burden.gd \
 ##       -- [--days=21] [--seeds=1337] [--strategies=do_nothing,balanced,curriculum]
 ##          [--city=starter|bench] [--absence=720] [--bucket=7]
+##          [--auto-repair=off|band_worn|band_good]
+##
+## `--auto-repair` stands 99-PA PA-33's building repair policy before the arc
+## runs, through `cmd_set_building_repair_policy` on the sim's own ladder with
+## doc 03's own default budget — the exact pair one press of the Upkeep band's
+## dial stands (report 98 RR-150a). The TOTAL line then separates the civic
+## repair trips the policy bought from the ones the player had to tap, which is
+## the unit PA-33 filed its target in.
 ##
 ## A MEASURING instrument (constitution §3): it owns no balance constant and
 ## nothing in `sim/` imports it.
@@ -58,6 +66,13 @@ func _initialize() -> void:
 	var city := "starter"
 	var absence := 0
 	var bucket := 7
+	## 99-PA PA-33 / report 98 RR-150a. `off` (the shipped default, and the
+	## reading every table before Wave 18 was taken at) or a rung NAME from
+	## `data/economy.json.building_repair.AUTO_REPAIR_BANDS`. The rung is
+	## resolved through `CitySim.building_repair_thresholds()` and the budget is
+	## doc 03's own default, so this instrument stands exactly the policy one
+	## press of the Upkeep band's dial stands — it authors neither number.
+	var auto_repair := "off"
 	for raw in OS.get_cmdline_user_args():
 		var arg := String(raw)
 		var split := arg.find("=")
@@ -78,6 +93,7 @@ func _initialize() -> void:
 			"--city": city = value
 			"--absence": absence = int(value)
 			"--bucket": bucket = maxi(1, int(value))
+			"--auto-repair": auto_repair = value
 			_:
 				printerr("measure_repair_burden: unknown option " + key)
 				quit(2)
@@ -86,12 +102,18 @@ func _initialize() -> void:
 		printerr("measure_repair_burden: --city must be starter|bench")
 		quit(2)
 		return
+	var bands: Array = StarterCityLoader.read_json("res://data/economy.json") \
+			.get("building_repair", {}).get("AUTO_REPAIR_BANDS", [])
+	if not bands.has(auto_repair):
+		printerr("measure_repair_burden: --auto-repair must be one of " + str(bands))
+		quit(2)
+		return
 	_load_surfaces()
-	print("repair burden · city=%s · %d game-days · seeds %s · strategies %s"
-			% [city, days, str(seeds), str(strategies)])
+	print("repair burden · city=%s · %d game-days · seeds %s · strategies %s · auto-repair %s"
+			% [city, days, str(seeds), str(strategies), auto_repair])
 	for strategy_id in strategies:
 		for seed_value in seeds:
-			_one(city, strategy_id, int(seed_value), days, absence, bucket)
+			_one(city, strategy_id, int(seed_value), days, absence, bucket, auto_repair)
 	quit(0)
 
 
@@ -199,8 +221,22 @@ static func _band(condition: float) -> int:
 
 
 func _one(city: String, strategy_id: String, seed_value: int, days: int,
-		absence: int, bucket: int) -> void:
+		absence: int, bucket: int, auto_repair: String = "off") -> void:
 	var sim := _boot(city, seed_value)
+	if auto_repair != "off":
+		# Through the COMMAND, on the sim's own ladder, with doc 03's own
+		# default budget — exactly what one press of the Upkeep band's band dial
+		# does (report 98 RR-150a). A refused pair would silently measure the
+		# default arc as if it were the policy arc, so it is checked.
+		var live: Dictionary = sim.building_repair_policy()
+		var rung := float((live["thresholds"] as Array)[
+				(sim.econ_curves.building_repair()["AUTO_REPAIR_BANDS"] as Array)
+						.find(auto_repair)])
+		var set_result: Dictionary = sim.cmd_set_building_repair_policy(
+				rung, int(live["default_daily_cap"]))
+		if not bool(set_result.get("ok", false)):
+			printerr("measure_repair_burden: policy refused: " + str(set_result))
+			return
 	var strategy := Playtest.Factory.make(strategy_id)
 	if strategy == null:
 		printerr("unknown strategy " + strategy_id)
@@ -293,6 +329,14 @@ func _one(city: String, strategy_id: String, seed_value: int, days: int,
 	print("      end state: min condition %.3f · REPAIR affordance shown on %d private / %d civic buildings · state_hash %s"
 			% [api.min_condition(), int(rows[-1]["repair_shown_private"]),
 			int(rows[-1]["repair_shown_civic"]), sim.state_hash()])
+	# 99-PA PA-33's acceptance unit. A trip the standing policy bought is a trip
+	# the player did not TAP, and the row's target ("≤ 20 manual repair taps per
+	# 45-game-day arc") is about taps.
+	print("      taps: civic repair trips %d · bought by the policy %d in %d daily passes · MANUAL TAPS %d (auto-repair=%s)"
+			% [int(total["trips_civic"]), int(total["policy_repairs"]),
+			int(total["policy_runs"]),
+			maxi(0, int(total["trips_civic"]) - int(total["policy_repairs"])),
+			auto_repair])
 
 	if absence > 0:
 		_absence(sim, absence)
@@ -301,6 +345,11 @@ func _one(city: String, strategy_id: String, seed_value: int, days: int,
 func _fresh_row() -> Dictionary:
 	return {"net": 0.0, "repair_private": 0.0, "repair_civic": 0.0,
 			"trips_private": 0, "trips_civic": 0, "maint": 0.0, "roads": 0.0,
+			# 99-PA PA-33's own acceptance number. `trips_civic` counts every
+			# repair the city bought; `policy_repairs` counts the ones the
+			# standing policy bought unasked, and the difference is the TAPS —
+			# which is the unit the audit filed the row in.
+			"policy_runs": 0, "policy_repairs": 0,
 			"damaged_private_decay": 0, "damaged_private_incident": 0, "damaged_civic": 0,
 			"destroyed": 0, "cross_085": 0, "cross_060": 0, "cross_035": 0,
 			"push_p1": 0, "push_p2": 0, "push_p3": 0, "log_rows": 0, "silent": 0,
@@ -356,6 +405,9 @@ func _tally(sim: CitySim, event: Dictionary, day: Dictionary) -> void:
 				day["damaged_civic"] += 1
 		"building_destroyed":
 			day["destroyed"] += 1
+		"building_repair_policy_ran":
+			day["policy_runs"] += 1
+			day["policy_repairs"] += int(event.get("count", 0))
 	if not REPAIR_FAMILY.has(type):
 		return
 	var push := _push_class(event)

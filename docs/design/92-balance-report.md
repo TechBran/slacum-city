@@ -8310,6 +8310,49 @@ before.
 The last row is the strongest hash statement this lane can make: **45 game-days
 of real play, through the real command layer, bit-identical to the fork.**
 
+### 52.4a The taps the door removes — PA-33's own acceptance number
+
+PA-33 is filed in **taps**, and until the policy had a control the number could
+not be taken: an instrument can only measure a policy a player can stand.
+`--auto-repair=` stands it the way the Upkeep band's dial does — through
+`cmd_set_building_repair_policy`, on the sim's own ladder, with doc 03's own
+default budget — and the TOTAL line separates the civic repair trips the policy
+bought from the ones the player had to tap:
+
+```
+~/.local/bin/godot --headless --path . -s res://tools/measure_repair_burden.gd \
+    -- --days=45 --seeds=1337 --strategies=curriculum --auto-repair=<rung>
+```
+
+| rung | civic trips | bought by the policy | **manual TAPS** | civic repair $ | played-arc `state_hash` |
+|---|---|---|---|---|---|
+| `off` (shipped) | 51 | 0, in 0 passes | **51** | 226,852 | `09c2b55f5b81ded9…` |
+| `band_worn` (0.60) | 51 | 0, in 0 passes | **51** | 226,852 | `67df739dc8e1ecb9…` |
+| `band_good` (0.85) | 61 | 58, in 30 passes | **3** | 227,109 | `42e508d97ef996f2…` |
+
+**Three taps against fifty-one, for $257 more.** The audit's target for the row
+is *"≤ 20 manual repair taps per 45-day arc"*; the control clears it by a factor
+of six, and it does so without buying a different amount of repair — 227,109
+against 226,852 is **+0.11 %**, because the policy is not spending more, it is
+spending the same money *without being asked fifty-one times*. That is what
+99-PA measured the row as: not a cost, a tap count.
+
+**Rung 1 of the ladder buys nothing on this arc, and that is not a defect.**
+`band_worn` is 0.60 and the arc's minimum condition IS 0.600 — doc 93 §Y1's
+ownership floor — so the pass runs and finds no candidate below its threshold.
+It is the cautious rung, and it exists for a city neglected past the floor rather
+than for a city played. A player who wants the policy to *do* something on an
+ordinary arc wants `band_good`, which is why the sentence above the dials states
+the rung in the same words the band event uses.
+
+**Both live rungs move the played-arc hash, and neither moves a baseline.** The
+hash differs at `band_worn` even though the pass buys nothing, because
+`capture_state()` carries the pair the moment either dial leaves zero
+(`_serialize_building_repair`) and `state_hash()` hashes the captured state — a
+player who changed a setting has a different city, which is the correct reading.
+The four `profile_sim` baselines in §52.5 are taken at the **shipped default**,
+where the key is absent, and they are unmoved.
+
 ### 52.5 Hashes
 
 Recorded at the fork and re-taken at delivery, both cities, both passes:
