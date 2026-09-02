@@ -472,6 +472,33 @@ measurement that withdrew the retirement, because after this ruling the city's
 own rates are the only neglect clock left. §2.3's Decay columns stand as
 published.
 
+**The band table speaks, and the city may put a policy on it (Wave 18).**
+Report 98 RR-149 / RR-150, 99-PA PA-31 / PA-33. §2.6's bands were a table nothing
+read out loud, and §2.6a made that worse before it made it better: an owner holds
+a served private building at `band_worn`, so it can never reach `damaged` at 0.35
+and the one condition cue the game had became unreachable for the four revenue
+classes. Measured on a 60-game-day starter run with no player action: **48 band
+crossings, 0 `building_damaged` events** (doc 92 §52.2).
+
+* `CitySim` emits **`building_condition_band`** on a **downward** crossing of
+  `condition.band_good` and `condition.band_worn`, read off the building's own
+  stamped rules — this section's table, never a copy of it. Downward only; a
+  building climbing back is the player's own repair or upgrade finishing. The
+  auto-damage line is not a band here, because crossing it already emits
+  `building_damaged`.
+* **`cmd_set_building_repair_policy(threshold, daily_cap)`** and
+  **`cmd_repair_all_worn(preview)`** give buildings the automatic repair doc 10
+  §2.13 gave roads, on the buildings the city owns — §2.6a's `E_OWNER_MAINTAINED`
+  is what bounds the candidate set, so the policy can never try to buy a repair
+  that does not exist. The **threshold ladder is this table**: `off`,
+  `band_worn`, `band_good`, resolved from the stamped rules; the daily cap is
+  dollars and therefore doc 03's (`data/economy.json.building_repair`).
+* **The shipped default is manual**, and that is a ruling rather than a
+  placeholder (RR-150): an auto-repair default would spend a treasury without
+  being asked and would move every gate in the balance matrix. A city that never
+  opens the control is bit-identical to the Wave-17 fork, because the pair is
+  written to the city section only once it has been moved.
+
 ### 2.7 Fire — ignition here, dynamics in doc 06
 
 **Ignition is owned by this doc and is normative** *(report 98 C-42)*. `fire_ignition_per_hour` is per archetype **per level**, rolled once per game-hour per building on the `failures` RNG stream. Doc 06 has deleted `base_fire_risk_by_archetype` and `level_risk_slope`; it must not re-weight this rate by archetype or level, only by situation.

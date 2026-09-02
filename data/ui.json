@@ -781,6 +781,88 @@
 				}
 			},
 			{
+				"_comment": "99-PA PA-32 / doc 98 RR-148. Doc 03 §2.5a's founding assistance retires $589.71 a game-day for seven game-days and used to do it in total silence: the audit measured it as the largest single mover of the opening fortnight's net chip, with no toast, no log row and no end date anywhere, and named that silence as most of what reads on the phone as 'income too slow'. `EconomySystem` now steps the grant out loud once per game-day. TWO rows because the last step is a different sentence: days 0-6 are `final: false` and are routine bookkeeping the player can scroll back to, while day 7 is `final: true`, is the day the city starts paying its own departments and fleet, and is the ONE that is also a doc 08 notification (see data/notifications.json). Exactly 8 rows per city, then never again.",
+				"type": "assistance_stepped",
+				"match": {
+					"final": false
+				},
+				"category": "economy",
+				"notify_id": "assistance_stepped",
+				"state": "normal",
+				"args": {
+					"days": "days_left",
+					"per_day": "@money:per_day",
+					"end_day": "end_day"
+				}
+			},
+			{
+				"_comment": "99-PA PA-31 / doc 98 RR-149. Doc 02 §2.6's two band lines, in the log, one row per crossing — the log's own rule (§S13: never coalesced, because the third one is the interesting one). The ALERTS centre is where these aggregate into 'N buildings are wearing out'; here they are the ledger behind that number, filed under `economy` because what a worn building costs is money and not maintenance trivia, and keyed on `building` so a Poor row carries `Jump to it`.",
+				"type": "building_condition_band",
+				"match": {
+					"band": "worn"
+				},
+				"category": "economy",
+				"notify_id": "buildings_worn",
+				"state": "warning",
+				"key": "building",
+				"args": {
+					"count": "@count",
+					"time": "@time"
+				}
+			},
+			{
+				"type": "building_condition_band",
+				"match": {
+					"band": "poor"
+				},
+				"category": "economy",
+				"notify_id": "buildings_poor",
+				"state": "critical",
+				"key": "building",
+				"args": {
+					"count": "@count",
+					"time": "@time"
+				}
+			},
+			{
+				"_comment": "99-PA PA-83. Land development charges the treasury SIX times per block, $1.2K to $21K a phase, 14-15 times per 21 game-days on a curriculum run, and until now not one of them appeared anywhere the player could see: `development_phase_charged` had zero shell consumers. A log row and nothing louder — the player pressed DEVELOP and the schedule is doc 03 §2.8's own, so this is a receipt, not news. `phase` resolves through the same `ui_land_phase_*` copy the land panel's own progress line uses, because 'road_install started on Block E4' is a sentence written by a machine for a machine.",
+				"type": "development_phase_charged",
+				"category": "economy",
+				"notify_id": "development_charged",
+				"state": "normal",
+				"key": "block_id",
+				"args": {
+					"phase": "@lookup:ui_land_phase_:phase",
+					"block": "block",
+					"amount": "@money:cost",
+					"time": "@time"
+				}
+			},
+			{
+				"_comment": "99-PA PA-33 / doc 98 RR-150. The auto-repair pass's receipt. `count` is the PAYLOAD's own number, not `@count`: one pass repaired N buildings, and the log row for that pass has to say N rather than 1.",
+				"type": "building_repair_policy_ran",
+				"category": "economy",
+				"notify_id": "auto_repair_ran",
+				"state": "normal",
+				"args": {
+					"count": "count",
+					"amount": "@money:cost",
+					"time": "@time"
+				}
+			},
+			{
+				"type": "assistance_stepped",
+				"match": {
+					"final": true
+				},
+				"category": "economy",
+				"notify_id": "assistance_ended",
+				"state": "warning",
+				"args": {
+					"time": "@time"
+				}
+			},
+			{
 				"type": "building_completed",
 				"category": "economy",
 				"notify_id": "construction_complete",

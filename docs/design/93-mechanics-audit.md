@@ -4160,3 +4160,107 @@ and a 600 s re-arm bring the same streams to 0.714 per real hour, and
 `tools/measure_speed_resets.gd` exits non-zero above the bar so the number stays
 a claim rather than a memory. Doc 12 §2.11 and doc 01 §2.9 now say which events;
 neither says "critical" on its own any more.
+
+## AL. Wave-18 rulings — what the money is allowed to do in silence (2026-09-02)
+
+*Three fairness questions came out of Lane S (99-PA PA-31/PA-32/PA-33). All three
+are the same question asked about three different dollars: when is the game
+allowed to change what a player earns, or spend what a player has, without
+saying so?*
+
+### AL1. A scheduled change must announce its own schedule
+
+**Question.** Doc 03 §2.5a's founding assistance is correct, published and on a
+clock the player never agreed to. Is it fair for it to shrink in silence?
+
+**Ruled: no, and the reason is not the size of it.** A number that falls because
+the player neglected something is a consequence and the game owes them the
+*cause*. A number that falls because the game always intended it to is a
+**schedule**, and the game owes them the schedule — the rate today, the day it
+ends, the days between. The taper is the clearest case in the project because it
+is the only income line whose entire future is already written down: there is
+nothing to predict, only something to say.
+
+The corollary is where the fairness actually bites. **Saying it seven times on
+the lock screen is not more honest, it is louder.** Doc 08's budget is finite and
+every push spends it; a push about a scheduled step the player cannot alter buys
+nothing and crowds out a transformer that is about to cook. So the routine steps
+are log rows — findable, scroll-backable, free — and exactly one step is a
+notification: the last one, because *that* one changes what the city has to do
+next. See RR-148.
+
+### AL2. Wear is reported in the unit the player is losing it in
+
+**Question.** A worn building pays less tax. Does the player get told the count
+of worn buildings, or the money?
+
+**Ruled: the money, and the price of ending it, in the same band.** "34 buildings
+are worn" is a fact. "You are losing $412/gh to condition; repairing it costs
+$18,900" is a decision, and a decision is what a management game owes. The count
+belongs on the band too, but as the *subject of the sentence*, never as the
+sentence.
+
+This ruling has a sharp edge that §Y1 created and did not close. After the
+ownership floor, a private building the city keeps **served** cannot reach
+`damaged` at 0.35 — its owner holds it at `band_worn` — so the one cue the game
+had ever given about condition became, on the path a player actually plays,
+structurally unreachable. Measured: **185 private buildings sitting worn** at the
+end of a 45-game-day curriculum arc, and on a 60-game-day `do_nothing` starter
+run **48 band crossings against zero `building_damaged` events** — forty-eight
+moments at which the city got poorer and nothing on any screen moved. §Y1 is
+right and it silenced the thing it was right about; RR-149 is the repair.
+
+(§Y1a still bites, and the measurement shows it biting: 4 of those 11 Poor
+crossings were private buildings whose owners had been left in the dark. A city
+that stops serving its stock gets the old physics back, which is the clause
+working.)
+
+### AL3. A policy may spend the player's money; a default may not
+
+**Question.** Roads repair themselves under a policy (§J3). Should buildings?
+
+**Ruled: yes for the buildings the city OWNS, and no by default.** The §J3
+argument transfers exactly — a per-building repair tap is not a decision, it is
+the same decision restated 51 times over a 45-game-day arc — and it transfers
+*only* as far as ownership goes. §Y1 already ruled that the city pays for what it
+owns; a policy that repaired private stock would be the retired
+`E_building_maint` reading, re-introduced through a settings row.
+
+**The default is the whole of the second half.** An auto-repair default would take
+money from a treasury without being asked, on a city founded before the control
+existed, and would move every balance gate in the matrix in a wave whose stated
+job is to *surface* what the money already does. So the shipped default is
+manual: the control exists, the ladder is doc 02's own band table, and a player
+who never opens it plays the game they played yesterday, bit for bit. See RR-150
+and its §53.5 baselines.
+
+### AL3a. A default of `off` obliges the control to be findable, and to switch ON to something
+
+**Question.** AL3 shipped the policy `off`. A control that ships off is a control
+the player has to find and press before the feature exists at all — so where does
+it live, and what happens on the first press?
+
+**Ruled: the door goes where the loss is, and the first press supplies a budget.**
+
+*Where.* The obvious home is doc 12 §2.13's Auto-response rows, beside the road
+pair. It is the wrong one, and not only because §2.13's plumbing belongs to
+another lane this wave. The settings sheet is where a player goes having
+*already decided*; the Upkeep band is where the game tells them there is a
+decision — *"you are losing $169/gh; ending it costs $24,281"* — and a control
+that is one line under that sentence is answerable in the moment the sentence
+lands. AL2 ruled that wear is reported in the unit the player is losing it in;
+the same reasoning puts the remedy on the same band as the report. A settings row
+remains **appropriate as a second door** once §2.13's `POLICY_BUILDINGS` arm
+exists (doc 12 D-84's note), and a second door onto one command is not a
+contradiction — `cmd_set_building_repair_policy` is the single source either
+would write through.
+
+*What the first press does.* The pair ships `off / no budget`, and
+`building_repair_policy().enabled` requires **both** dials, so cycling the band
+alone would stand the policy at a rung with nothing behind it: a control that
+does nothing when pressed, which is RR-1's failure mode wearing a different hat.
+So the transition `off → a live rung` also supplies doc 03's own
+`AUTO_REPAIR_DEFAULT_DAILY_CAP`, and the sentence above the dials says the number
+out loud in the same frame. **The reverse is not symmetric**: cycling back to
+`off` keeps the budget, because a budget the player chose is a decision and
+switching a policy off is not a reason to forget it. See RR-150a.

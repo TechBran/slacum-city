@@ -338,12 +338,25 @@ func breakdown() -> Dictionary:
 		# end date anywhere (doc 93 §Y4). No dollar moves for this: the row says
 		# how many game-days of itself are left, on its own label, from the
 		# count doc 03 now publishes in the settle snapshot.
+		# **The taper, before it bites** (99-PA PA-32, doc 98 RR-148). RR-102 put
+		# the COUNT on this row; the audit's finding was that a count alone does
+		# not tell a player what the step is going to cost them. So the note now
+		# carries all three of the numbers the sentence needs — what the grant
+		# pays TODAY as a per-day rate (the unit the net chip is read in, not the
+		# per-hour figure in the column beside it), which game-day it ends on,
+		# and how many game-days that leaves — and none of them is authored here:
+		# `per_day` is this row's own settled amount × 24 through
+		# `HudModel.rate_per_day`, and `end_day` is the settled hour's own day
+		# plus doc 03's published count.
 		if key == "assistance":
 			var days_left := int(_settlement.get("assistance_days_left", 0))
 			line["days_left"] = days_left
+			line["end_day"] = int(_settlement.get("hour", 0)) / 24 + days_left
 			if days_left > 0:
 				line["note"] = UIWidgets.t_args(_cfg, "ui_budget_assistance_days_left",
-						{"days": str(days_left)})
+						{"per_day": str(line["per_day_text"]),
+						"end_day": str(line["end_day"]),
+						"days": str(days_left)})
 		revenue_rows.append(line)
 	net = float(_settlement.get("net", gross - expense)) + side_total
 	gross += side_total
@@ -369,6 +382,61 @@ func breakdown() -> Dictionary:
 		"net_per_day_text": HudModel.rate_per_day(net),
 		"net_state": HudModel.STATE_NORMAL if net >= 0.0 else HudModel.STATE_WARNING,
 	}
+
+
+## **What wear is costing the city this hour** (99-PA PA-31, doc 98 RR-149).
+##
+## Doc 03 publishes `f_condition` per building in the settle snapshot's own
+## `buildings` rows, and the audit's formula is `(1 − f_condition) × tax` — where
+## *tax* is the tax that row would pay at condition 1.00, everything else about
+## it held exactly as it is. That figure is `revenue / f_condition`, so the loss
+## is `revenue / f_condition − revenue`, and **not one number is authored here**:
+## every term comes off doc 03's own row.
+##
+## The rows are the TAXED ones only, because civic and utility buildings carry
+## `base_tax = 0` and doc 03 skips them (§2.2) — a civic building's wear costs
+## the city through its department line, not through this one, and adding it here
+## would be counting a dollar doc 03 already bills somewhere else.
+##
+## `{has_data, tax_lost_per_hour, tax_at_full, worn, counted, f_condition_mean}`.
+## `worn` is *rows paying less than full*, which is a different and larger set
+## than the buildings the city may repair — see `CitySim.cmd_repair_all_worn`,
+## and see the Upkeep band, which prints both and labels them differently.
+func condition_loss() -> Dictionary:
+	var out := {"has_data": false, "tax_lost_per_hour": 0.0, "tax_at_full": 0.0,
+			"worn": 0, "counted": 0, "f_condition_mean": 1.0}
+	var raw: Variant = _settlement.get("buildings", [])
+	if not (raw is Array) or (raw as Array).is_empty():
+		return out
+	var lost := 0.0
+	var full := 0.0
+	var fc_sum := 0.0
+	var worn := 0
+	var counted := 0
+	for entry: Variant in (raw as Array):
+		if not (entry is Dictionary):
+			continue
+		var row: Dictionary = entry
+		var fc := clampf(float(row.get("f_condition", 1.0)), 0.0, 1.0)
+		var revenue := float(row.get("revenue", 0.0))
+		counted += 1
+		fc_sum += fc
+		if fc <= 0.0 or fc >= 1.0:
+			full += revenue
+			continue
+		var at_full := revenue / fc
+		full += at_full
+		lost += at_full - revenue
+		worn += 1
+	if counted == 0:
+		return out
+	out["has_data"] = true
+	out["tax_lost_per_hour"] = lost
+	out["tax_at_full"] = full
+	out["worn"] = worn
+	out["counted"] = counted
+	out["f_condition_mean"] = fc_sum / float(counted)
+	return out
 
 
 func _line(side: String, key: String, amount: float) -> Dictionary:

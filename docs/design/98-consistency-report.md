@@ -7316,3 +7316,343 @@ adjective — *critical*, *significant*, *nearby* — is not a feature that has 
 been built yet. It is a decision that has not been made, and the honest close is
 to make it **in data, with the measurement that justifies the number beside it**
 — never to implement the literal reading and let the playtest find out.
+
+## 53. WAVE 18 — money has surfaces: the taper says when it ends, the wear says what it costs, and the city repairs what it owns (binding)
+
+*Filed 2026-09-02 against 99-PA §3.2 Lane S (rows PA-31 surface half, PA-32,
+**PA-33 REPAIR HALF**, PA-83). **PA-33 is half, and the filing line said
+whole until a verifier read the row against the tree.** The row names two
+targets — at most 20 manual REPAIR taps and at most 30 manual UPGRADE taps per
+45-day arc — and two fixes; this lane shipped the repair policy and no batch
+upgrade exists anywhere in the tree (`grep -rn "upgrade_all\|Upgrade all"
+--include=*.gd --include=*.json .` → nothing). The upgrade half lives on
+`ui/build_sheet.gd` / `ui/build_controller.gd`, which Lane S does not own, and
+is handed to **Lane L** with this note. Corrected at merge rather than merged
+as written, because closing an audit row that is still half open is how a
+ledger stops meaning anything. Baselines re-recorded at the lane fork `d0d114f` and unmoved at
+delivery — see §53.5. Every number below is a command in this section.*
+
+**The shape of all four rows is one shape.** The Wave-17 economy dial-in made the
+money HONEST: the repair fell on the owner (doc 93 §Y1), the founding grant's
+window was published into the settle snapshot (RR-102), the upgrade ladder became
+an identity (§Y7). None of that put a number on a screen. The audit's Lane S is
+therefore not a tuning lane at all — every row is a computed value with no
+consumer, and the fix is a consumer:
+
+| row | the value the sim already had | where it now lands |
+|---|---|---|
+| PA-32 | `founding_assistance_days_left` (RR-102) | `assistance_stepped` ×8 per city; the Economy tab's assistance note |
+| PA-31 | `Building.condition` crossing doc 02 §2.6's bands | `building_condition_band`; the Economy tab's **Upkeep** band |
+| PA-33 | `cmd_repair_building`, one building at a time | `cmd_set_building_repair_policy` + `cmd_repair_all_worn` |
+| PA-83 | `development_phase_charged` | a doc 12 economy log row |
+
+### RR-148 — A scheduled taper announces its OWN schedule, once per step, and only the last step is a notification
+
+**The finding (99-PA PA-32).** Doc 03 §2.5a's founding assistance retires
+`FOUNDING_ASSISTANCE_PER_HOUR / FOUNDING_ASSISTANCE_DAYS` = **$589.71 a game-day**
+for seven game-days. Measured on the coarse curriculum arc, `do_nothing` net falls
+517 → 266 $/gh across the same window and the taper is the largest single mover in
+it. At the Wave-17 fork the whole surface was `ui/budget_model.gd`'s
+`"ends in {days} days"` on a row inside a sheet — a count, on a screen the player
+has to open, with no rate and no end date.
+
+**Ruled.** A change the game has *already scheduled* is owed a statement at each
+step, and the statement must carry **the rate, the end day and the days left** —
+the three numbers the sentence needs — because a count alone does not tell a
+player what the next step is going to cost them.
+
+**And the corollary that keeps it cheap: only the LAST step is a notification.**
+Seven pushes about a number going down on a published schedule is the doc 08
+budget spent on a thing the player cannot act on. So `assistance_stepped` fires
+eight times per city and exactly one of them (`final: true`, the game-day the
+grant is gone) carries a `data/notifications.json` binding; the other seven are
+`data/ui.json.event_log` rows and nothing else. That is the audit's own target —
+*1 toast + 7 log rows per city* — reached by construction rather than by a budget
+rule.
+
+**Hash-neutral by construction.** The step is detected by asking `CostCurves` what
+YESTERDAY's published share was, so `EconomySystem` remembers nothing between
+hours, serializes nothing new, and `state_hash()` cannot move for it.
+
+*Verification:* `tests/test_money_surfaces.gd`
+`test_pa32_the_taper_steps_once_a_game_day_and_says_when_it_ends`,
+`test_pa32_each_step_is_the_published_daily_retirement`,
+`test_pa32_the_economy_row_carries_the_rate_and_the_end_day`,
+`test_pa32_both_steps_reach_a_surface`.
+
+**Applied:** `sim/economy/economy_system.gd` (`_publish_assistance_step`),
+`ui/budget_model.gd`, `ui/city_dashboard.gd` (ledger notes),
+`data/ui.json.event_log`, `data/notifications.json`, `data/strings.en.json`;
+doc 03 §2.5a, doc 12 §2.10 (D-84), doc 93 §AL.
+
+### RR-149 — Wear that costs money is reported as MONEY, in one band, and the band names the repair that ends it
+
+**The finding (99-PA PA-31, surface half).** An untouched city loses 53 % of its
+non-subsidy income in 20 game-days from decay alone; at the Wave-17 fork nothing
+said so until a building reached `damaged` at 0.35 — and after doc 93 §Y1's
+ownership floor **a private building the city keeps SERVED never gets there**
+(§Y1a lifts the floor only for an owner left in the dark), so on the path a
+player actually plays the only cue that ever existed is unreachable by
+construction. Two instruments size the silence:
+
+* `tools/measure_repair_burden.gd --days=45 --seeds=1337 --strategies=curriculum`
+  counts **321 downward crossings of 0.85, 0 of 0.60, 0 of 0.35**, ends with
+  **185 private buildings sitting worn**, and reports **118 repair-family events
+  reaching no surface at all**.
+* A 60-game-day `do_nothing` starter run emits **37 Worn and 11 Poor** crossings
+  and **zero** `building_damaged` — forty-eight moments at which the city got
+  poorer and nothing on any screen moved.
+
+**Ruled, in two halves.**
+
+*(a) The crossing is an event.* `building_condition_band` is emitted on a
+**downward** crossing of doc 02 §2.6's `band_good` (0.85) and `band_worn` (0.60) —
+the two lines the band table already draws, read out of `building_rules.json`, not
+restated. Downward only: a building climbing back through a band is the player's
+own repair or upgrade finishing, and the screen that issued it already knows
+(doc 93's event rule, `player_initiated`). Worn is a doc 12 log row, aggregated;
+Poor is a P3.
+
+*(b) The consequence is a BAND on the Economy tab, denominated in dollars.* A
+count of worn buildings is not a reason to act. `(1 − f_condition) × tax` is: it
+is the money the city is not collecting this hour because its stock is worn,
+computed off doc 03's own per-building settle rows and off nothing this lane
+authors, printed beside **the repair quote that would end it**. That pairing is
+the whole ruling — *the loss and the price of stopping it, on one screen*, which
+is the audit's stated target for this row.
+
+**Hash-neutral by construction.** The band is derived from `condition` before and
+after the hour's own decay call. No band is stored, so nothing new is serialized,
+and the Upkeep band is a read of `last_settlement` plus `preview` quotes — no
+dollar moves to draw it.
+
+*Verification:* `tests/test_money_surfaces.gd` `test_pa31_*`.
+
+**Applied:** `sim/city_sim.gd` (`apply_hourly_decay`), `ui/dashboard_model.gd`,
+`ui/city_dashboard.gd`, `data/ui.json.event_log`, `data/notifications.json`,
+`data/strings.en.json`; doc 02 §2.6, doc 12 §2.10 (D-84), doc 93 §AL.
+
+### RR-150 — The city repairs what it OWNS under a policy, the way roads already do; the default is manual, and that is what keeps the matrix still
+
+**The finding (99-PA PA-33).** Roads have `cmd_set_auto_repair_policy` and a
+settings row (doc 10 §2.13, doc 93 §J3); buildings had `cmd_repair_building(sim_id)`,
+one call per building, and nothing ruled them manual. The audit measured 211–245
+repair taps per 45-game-day arc. **That number has already fallen**, and this
+ruling records the new one rather than the one that motivated it: after doc 93
+§Y1 moved private stock to its owners, `tools/measure_repair_burden.gd --days=45
+--seeds=1337 --strategies=curriculum` counts **51 civic repair trips and $226,852
+of civic repair** on the same arc — 0 private, because there is no private repair
+left to buy. So the row is smaller than filed and it is the same row: 51 taps is
+still one every ~21 game-hours, on buildings the city unambiguously owns, for a
+decision that has exactly one sensible answer.
+
+**Ruled.** `cmd_set_building_repair_policy(threshold, daily_cap)` and
+`cmd_repair_all_worn(preview)`, mirroring roads:
+
+1. **The threshold ladder is doc 02's own band table**, resolved through
+   `BuildingCatalog` — `0.0` (off), `band_worn`, `band_good`. A policy dial that
+   authored its own condition constants would be the second copy doc 02 §2.6
+   exists to prevent, and `E_BAD_THRESHOLD` is answered for anything else exactly
+   as `RoadNetwork` answers it.
+2. **The daily cap is doc 03's**, because it is dollars (C-07). It is a player
+   *budget*, not a price: the pass never invents a number, it asks
+   `cmd_repair_building(sim_id, true)` for each quote and stops at the cap.
+3. **Only what the city owns.** `owner_maintained` buildings are skipped, and not
+   as an optimisation — `cmd_repair_building` refuses them with
+   `E_OWNER_MAINTAINED`, so a policy that tried would be a policy that spends its
+   whole pass being refused.
+4. **The default is `off` / manual.** A city that never opens the control behaves
+   exactly as it did at the fork: no candidate is selected, no quote is taken, no
+   dollar moves, and the policy is omitted from the city section entirely, so
+   `capture_state()` is byte-identical and **the four `profile_sim` baselines do
+   not move** (§53.5). A default of *auto* would have been a balance change, would
+   have moved every gate, and is not what a surfacing lane is for.
+
+**And the batch verb is the same pass, run once, by hand.** `cmd_repair_all_worn`
+is what the Upkeep band's *"Repair all worn (N) — $X"* button presses; it shares
+one implementation with the daily policy pass, so the button and the policy can
+never disagree about which buildings are candidates or what they cost.
+
+*Verification:* `tests/test_money_surfaces.gd` `test_pa33_*`.
+
+**Applied:** `sim/city_sim.gd` (`cmd_set_building_repair_policy`,
+`cmd_repair_all_worn`, `building_repair_policy`, `run_building_repair_policy`),
+`data/economy.json` (`building_repair`), `ui/dashboard_model.gd`,
+`ui/city_dashboard.gd`; doc 02 §2.6, doc 03 §2.5, doc 12 §2.10 (D-84), doc 93 §AL.
+
+### RR-150a — The verb gets a DOOR, and it is on the band that reports the loss
+
+**The finding, against this section's own first draft.** RR-150 shipped
+`cmd_set_building_repair_policy`, its ladders, its refusal code, its save rung and
+its daily pass — and no way for a player to call it. The Upkeep band *reported*
+the standing policy in a sentence; a command with no control is 99-PA's own
+PA-55 shape ("verbs get doors") filed against the lane that had just written the
+verb. Doc 99 §3.2 assigns Lane S `data/ui.json settings.rows` for it, and the
+first draft of D-84 declined the row for a sound reason — §2.13's plumbing
+(`SettingsModel.POLICY_*`, `UIRoot._write_*_policy`) belongs to Lane G this wave,
+and a row appended without the arm would be **stored, written to the device
+settings file and never reach the sim**, which is RR-1's control-that-lies. That
+reasoning is kept; the conclusion "therefore no door" is not.
+
+**Ruled (doc 93 §AL3a).** The door is **two cycling faces on the Upkeep band**,
+under the sentence that reports them:
+
+1. **Both ladders are the sim's.** `building_repair_policy()` publishes
+   `thresholds` (doc 02 §2.6's band table, resolved off a real building's stamped
+   rules) and `daily_caps` (doc 03's `AUTO_REPAIR_DAILY_CAPS`), and
+   `DashboardModel` forwards both **verbatim** — it picks no rung and authors no
+   dollar. Feed it a ladder doc 02 never wrote and it offers that one, which is
+   the test that proves the model has no opinion of its own
+   (`test_door_the_control_never_authors_a_band_or_a_dollar`). So no sequence of
+   presses can produce a pair the command answers `E_BAD_THRESHOLD` for
+   (`test_door_every_face_it_can_show_is_a_rung_the_command_accepts`: 6 + 10
+   presses, 0 refusals).
+2. **A press writes the PAIR**, because `cmd_set_building_repair_policy` takes
+   the pair, exactly as `UIRoot._write_road_policy` does for doc 10's control.
+3. **Switching on supplies a budget** — doc 03's own `AUTO_REPAIR_DEFAULT_DAILY_CAP`,
+   newly published on `building_repair_policy()` so `ui/` reads it rather than
+   restating it (C-07). Switching off keeps it. §AL3a is the argument.
+4. **A shell that binds three wires and not the fourth draws the sentence and no
+   dials** — `bind_upkeep`'s fourth parameter is optional and the read-only band
+   is a shipped state, asserted rather than promised
+   (`test_door_a_shell_that_binds_no_verb_draws_no_control`).
+
+**And the row's own first press found a live use-after-free in the button RR-150
+had already shipped.** Every control on the Upkeep band lives *inside* the
+subtree a refresh rebuilds, so `refresh()` called from a `pressed` handler frees
+the button while its own signal is still on the stack — Godot's *"Object was
+freed or unreferenced while a signal is being emitted from it"*, which the tab
+buttons never hit because they sit outside `_content`. `Repair all worn` had this
+from the moment it was written and no test had ever pressed it, because until
+this row nothing mounted the dashboard. The fix splits the two halves: the
+**reading** refreshes synchronously (the next press must see it) and the
+**nodes** rebuild once the emission has unwound (`_reread_upkeep_after_press`).
+
+**And the row's target is now measurable, because a policy no player can stand
+cannot be measured.** `tools/measure_repair_burden.gd --auto-repair=` stands the
+pair the way the dial does; on the 45-game-day curriculum arc, seed 1337, the
+manual tap count falls **51 → 3** at `band_good` for **+0.11 %** of repair
+spend ($226,852 → $227,109). The audit asked for ≤ 20. Doc 92 §52.4a carries the
+table, including the finding that rung 1 (`band_worn`, 0.60) buys nothing on a
+played arc because doc 93 §Y1's ownership floor IS 0.60.
+
+*Verification:* `tests/test_money_surfaces.gd` `test_door_*` — six tests that
+mount the real `ui_root.tscn`, bind a real `CitySim` and press the real buttons.
+`tools/ui_preview.gd` gains `economy_upkeep_auto`, the policy-ON state a
+screenshot of the shipped default can never show, and it is the state that caught
+the control's first layout: `Automatic repair  below 85%  $10,000/day` is 300 dp
+on a 360 dp screen at `--text-scale=1.3`, and the audit reported the whole panel
+pushed off the viewport. The row label is dropped (the sentence above is the
+label, the faces name themselves to a screen reader) and both faces clip. Both
+audits exit 0 at 412×915 and at 360×800 `--text-scale=1.3 --large-targets`.
+
+**Hash-neutral.** The only `sim/` change is one derived key on a dictionary
+nothing serializes; the default pair is still `off / no budget`, so §53.5's four
+baselines are unmoved.
+
+**Applied:** `ui/city_dashboard.gd`, `ui/dashboard_model.gd`, `sim/city_sim.gd`
+(`building_repair_policy`'s `default_daily_cap`), `data/strings.en.json`,
+`tools/ui_preview.gd`, `tests/test_money_surfaces.gd`; doc 12 §2.10 (D-84),
+doc 93 §AL3a.
+
+### 53.4 PA-83 — the six silent debits, and the two defects the wiring found
+
+Land development charges the treasury **six times per block**, $1.2K to $21K a
+phase, 14–15 times per 21 game-days on a curriculum run, and
+`development_phase_charged` had **zero shell consumers**. It has a doc 12 log row
+now — *"Grading started on Block E4 — $4,770"* with a camera jump — and nothing
+louder, because the player pressed DEVELOP and doc 03 §2.8 published the
+schedule: this is a receipt, not news. The phase resolves through the same
+`ui_land_phase_*` copy the land panel's progress line uses, so no surface prints
+`road_install` at a player.
+
+The one sim-side change it needed is a name, not a number: the alerts centre's
+locator contract is `(&"block_id", id)` and the event carried the id as `block`,
+so the payload now names it **both ways** rather than the router guessing. That
+is not gold-plating — writing this row is what turned up **`A91-D-95`**: the
+`block_ready` row already in the same table makes exactly that mistake and has
+been rendering a **blank title with a dead jump** on the log's most celebratory
+line. `data/notifications.json` has the same binding written correctly, with a
+`_comment` recording the fix, so the log half was simply missed. Neither that row
+nor **`A91-D-96`** — the gate that cannot see this class, because it proves a
+placeholder has a *declaration* and never a *value* — is fixed here: both live in
+Lane K's table and Lane K's gate (99-PA §3.0 rule 1).
+
+**And the full suite made the lane delete its own excuse.**
+`tests/test_event_matrix.gd`'s register carried an exemption for this event —
+*"bookkeeping: money moving. Spend belongs in the budget sheet's ledger, not in
+the alerts feed"* — and `test_the_register_names_a_consumer_that_is_no_longer_needed`
+failed the moment the log row landed. The exemption was not merely stale: **the
+budget sheet's ledger does not itemise these debits either**, so the sentence was
+covering a dollar that reached no surface at all, which is precisely what PA-83
+measured. The entry is gone and the reasoning that replaces it is a comment
+naming the row. That half of the gate — the one that fails when an exemption
+becomes unnecessary — is the reason a `_comment` in a register is not a place a
+wrong answer can hide.
+
+### 53.5 Baselines
+
+Re-recorded at the lane fork `d0d114f` (`~/.local/bin/godot --headless --script
+tools/profile_sim.gd -- --hash-only`, and again with
+`--city=res://tests/fixtures/bench_city.json`) and re-taken at delivery:
+
+| city | pass | fork `d0d114f` | after Lane S |
+|---|---|---|---|
+| starter | coarse 24 h | `05614522975fad52…` | unchanged |
+| starter | fine 2.0 h | `d1aaee0dca92f2fd…` | unchanged |
+| bench | coarse 24 h | `275aad9d4aeea809…` | unchanged |
+| bench | fine 2.0 h | `d40126e371371d59…` | unchanged |
+
+**No hash delta, so no `awaiting_consumer` row and nothing for the matrix holder
+(Lane B) to re-fit.** That is a deliberate constraint on the lane and not a happy
+accident: RR-148's step detection is stateless, RR-149's band is derived, and
+RR-150's policy is omitted from the save at its default.
+
+### 53.6 Delivered, and what the lane hands on
+
+| gate | command | result |
+|---|---|---|
+| the lane's own tests | `run_tests.gd -- --file=test_money_surfaces.gd` | 36 tests, 218 asserts, **0 failed** |
+| the full suite | `run_tests.gd` | 134 files, 2,512 tests, 551,886 asserts, **0 failed**, exit 0 |
+| the deck, portrait | `ui_preview --screen=all --size=412x915 --audit --strict` | **exit 0**, 69 states clean |
+| the deck, small + A2/A3 | `… --size=360x800 --text-scale=1.3 --large-targets --audit --strict` | **exit 0**, 69 states clean |
+| determinism | `profile_sim --hash-only` ×2 cities | all four §53.5 baselines **unmoved** |
+| doc integrity | `python3 tools/check_doc_refs.py` | 3,874 references, all resolving, no id twice |
+
+**Three things the lane found rather than shipped**, each recorded above with the
+gate that caught it: `A91-D-95` (a blank log title and a dead jump on
+`block_ready`, for Lane K), the Upkeep band's use-after-free (RR-150a, fixed
+here because the button was this lane's), and `test_event_matrix.gd`'s stale
+`development_phase_charged` exemption (§53.4, deleted here).
+
+**Two things it hands on.**
+
+1. **The shell binding — LANDED at merge, and written down here because a
+   snippet that lives only in a delivery note is a snippet that is lost.**
+   RR-116's precedent put its `main.gd` wires into doc 98 §43.4; this one was
+   in a chat message and nowhere else, which a verifier held the merge on.
+   Inserted immediately after `root.bind_recall(sim_host.sim.cmd_recall_unit)`:
+
+   ```gdscript
+   	if root.city_dashboard != null:
+   		root.city_dashboard.bind_upkeep(
+   				func(preview: bool = false) -> Dictionary:
+   					var quoted: Dictionary = sim_host.sim.cmd_repair_all_worn(preview)
+   					if not preview and bool(quoted.get("ok", false)):
+   						flush_sim_events()
+   					return quoted,
+   				sim_host.sim.building_repair_policy,
+   				func() -> float: return float(sim_host.sim.treasury.balance),
+   				sim_host.sim.cmd_set_building_repair_policy)
+   ```
+
+   Four wires: the batch verb (preview and commit are one Callable with a
+   different first argument), the standing policy, a treasury reading so an
+   unaffordable batch shows its price on a disabled face instead of vanishing,
+   and the policy verb the band's dials write through. The batch is WRAPPED in
+   `flush_sim_events()` for RR-108's reason — the command emits from inside
+   itself and the only live drain does not run while the game is paused, so
+   repairs a paused player just bought would not reach the renderer until they
+   un-paused.
+2. **The §2.13 settings row** (doc 12 D-84's note), which lands the moment Lane
+   G's `POLICY_BUILDINGS` arm exists. Not a blocker: D-84 (d) is the door.

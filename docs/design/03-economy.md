@@ -460,6 +460,19 @@ Two grants, one hourly and one lumpy. Both are dollars, so both are authored her
 
 It is a **published constant and not a fraction of the live bill**, deliberately. A subsidy that grew with the fleet would pay a player to buy vehicles, and a revenue line carrying an `M_exp` inside it would break §7 test 46's one-knob-per-line contract (doc 93 §N1).
 
+**The taper announces itself (Wave 18).** Report 98 RR-148, 99-PA PA-32. RR-102
+published `founding_assistance_days_left` into the settle snapshot and the budget
+row spent it on its own label; the audit's finding was that a count on a screen
+the player has to open is not a surface for the largest single mover of the
+opening fortnight's net. `EconomySystem.settle_hour` now appends
+**`assistance_stepped {day, per_hour, per_day, days_left, end_day, final}`** at
+the first settled hour of each game-day the taper is live, plus one on the day it
+retires — **eight per city** on the shipped constants, measured in doc 92 §52.1,
+of which exactly one (`final`) is a doc 08 notification and the other seven are
+doc 12 log rows. No dollar moves for it and no state is added: the step is
+detected by asking `founding_assistance_per_hour` what *yesterday's* published
+share was, so `state_hash()` cannot move.
+
 **The celebration grant.** `LEVEL_UP_GRANT_BY_CITY_LEVEL = [0, 2500, 7000, 9000, 22500, 29000, 65000]` *(rungs 5 and 6 re-derived in Wave 17: the rule is "half of what the next chapter asks you to buy" and rung 5's basis is an UPGRADE, which doc 93 §Y7 re-priced 73,572 → 58,350. Rungs 1–4 are built on build costs, which did not move.)*, indexed by city level, paid once per level for the life of a city, on whichever route earned it (doc 93 §G1 composes the population ladder and doc 09's objectives with `max()`, and this pays the composed level so neither route is worth more than the other).
 
 The rule is one sentence — **the city pays half of what the next chapter asks you to buy** — applied to doc 09 §2.14's curriculum row above each rung and rounded to a readable figure:
@@ -540,6 +553,21 @@ Repairing 100% damage costs 85% of capital — cheaper than rebuilding, expensiv
 **Preventive maintenance.** Player action on any asset with condition ∈ [0.50, 0.99], costing `pm_cost = round( capital_value(asset) × PM_COST_FRACTION (0.06) )`.
 
 Restores condition to 1.00, occupies one crew for `PM_CREW_HOURS = 2` gh. Below 0.50 it is a repair, not a PM. This is the cheapest possible resilience purchase and the first one the tutorial should teach.
+
+**The repair BUDGET (Wave 18).** Report 98 RR-150, 99-PA PA-33.
+`data/economy.json.building_repair` holds doc 02 §2.6's auto-repair policy dials,
+and it is here rather than in `building_rules.json` for the reason C-07 gives:
+**the cap is dollars.** It is a player *budget*, not a price — the pass it bounds
+authors nothing and asks `cmd_repair_building(sim_id, true)` for every quote, the
+identical preview the building panel's REPAIR button takes, so this section stays
+the only place a repair is priced. `AUTO_REPAIR_DEFAULT_DAILY_CAP = 10000` is
+derived from the measured civic bill and not chosen: **$226,852 over 45 game-days
+= $5,041/game-day averaged, peaking at $7,893/game-day** in the heaviest bucket
+(doc 92 §52.3), so the cap pays an ordinary day in full and spreads a catch-up
+spike over two or three days. The block's *threshold* half authors no number at
+all — it names doc 02 §2.6's own band keys, which `CitySim` resolves off the
+building's stamped rules. Inert at the shipped default (`off`), so it enters no
+balance gate.
 
 ### 2.6 Net-income presentation
 

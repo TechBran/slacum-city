@@ -1047,6 +1047,27 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 			sim_host.sim.auto_repair_policy())
 	# Doc 06 §2.11's recall (doc 12 D-48, doc 91 A91-D-24): one line is the door.
 	root.bind_recall(sim_host.sim.cmd_recall_unit)
+	# 99-PA PA-31/PA-33 (doc 12 D-84, report 98 RR-149/RR-150a): the Economy
+	# tab's Upkeep band. FOUR wires — the batch verb (preview and commit are the
+	# same Callable taken with a different first argument), the standing policy,
+	# a treasury reading so an unaffordable batch shows its price on a disabled
+	# face rather than vanishing, and the policy verb the band's two dials write
+	# through.
+	#
+	# The batch is WRAPPED for the rush door's reason (report 98 RR-108): it
+	# emits from inside the command and `SimHost._process`'s drain does not run
+	# while the game is paused, so the repairs a paused player just bought would
+	# not reach the renderer until they un-paused.
+	if root.city_dashboard != null:
+		root.city_dashboard.bind_upkeep(
+				func(preview: bool = false) -> Dictionary:
+					var quoted: Dictionary = sim_host.sim.cmd_repair_all_worn(preview)
+					if not preview and bool(quoted.get("ok", false)):
+						flush_sim_events()
+					return quoted,
+				sim_host.sim.building_repair_policy,
+				func() -> float: return float(sim_host.sim.treasury.balance),
+				sim_host.sim.cmd_set_building_repair_policy)
 	# S16 (doc 12 §2.22, D-66): the construction seam — the overview provider,
 	# the rush door and a treasury reading so an unaffordable rush shows its
 	# price on a disabled face instead of vanishing. The rush door is WRAPPED:

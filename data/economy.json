@@ -245,6 +245,17 @@
     "RELIEF_AD_COOLDOWN_REDUCTION_HOURS": 24, "RELIEF_AD_ENABLED": false
   },
 
+  "building_repair": {
+    "_comment": "99-PA PA-33 / report 98 RR-150 (Wave 18). The player's say over doc 02 §2.6's building repair, mirroring doc 10 §2.13's road pair. TWO dials and NOT ONE PRICE: doc 03 owns every dollar (C-07) and this block authors none of them — `cmd_repair_building(sim_id, true)` is asked for every quote, exactly the same call the panel's REPAIR button makes, so the policy and the button can never disagree about what a repair costs. The CAP is a player BUDGET, not a price: it is how much of its own money the city is willing to spend on repairs in a game-day, which is the same thing `data/roads.json`'s auto_repair_default_daily_cap is and is why it lives with the money rather than with doc 02's physics.",
+    "_bands_note": "The threshold ladder names doc 02 §2.6's OWN band keys and copies no number: `CitySim` resolves `band_worn` / `band_good` through the building's stamped `condition` rules (Building.rule, PA-13's accessor), so a policy rung and the band a player is told about are the same value by construction, and re-authoring building_rules.json moves both. `off` is 0.0 and is the SHIPPED DEFAULT — RR-150: a default that spent the treasury without being asked would move every gate in the balance matrix in a wave whose job is to surface what the money already does, so a city that never opens the control is bit-identical to the Wave-17 fork.",
+    "_cap_derivation": "10000 is one game-day of the measured civic repair bill with headroom, not a round number: tools/measure_repair_burden.gd --days=45 --seeds=1337 --strategies=curriculum measures $226,852 of civic repair across 45 game-days = $5,041/game-day averaged, peaking at $55,249 in the 36-42 bucket (7 days = $7,893/day). A $10,000/day cap therefore pays the whole bill on an ordinary day and throttles a catch-up spike into two or three days instead of emptying the treasury in one, which is what a budget is for. The ladder's rungs are the same shape data/roads.json uses: off, a cautious rung, the default, and two rungs for a city that would rather spend than tap.",
+    "AUTO_REPAIR_BANDS": ["off", "band_worn", "band_good"],
+    "AUTO_REPAIR_DEFAULT_BAND": "off",
+    "AUTO_REPAIR_DAILY_CAPS": [0, 2500, 10000, 25000, 50000],
+    "AUTO_REPAIR_DEFAULT_DAILY_CAP": 10000,
+    "AUTO_REPAIR_MAX_JOBS_PER_DAY": 8
+  },
+
   "presentation": {
     "NET_DISPLAY_EMA_ALPHA": 0.25, "ECONOMY_HISTORY_HOURS": 168,
     "DAILY_SETTLEMENT_GAME_HOUR": 6, "CASH_BUFFER_TARGET_DAYS": 5,

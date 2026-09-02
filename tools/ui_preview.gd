@@ -77,6 +77,17 @@ const SCREENS: Array[String] = [
 	# never on screen together: the one-shot discovery mark over the world, and
 	# the Economy ledger with the two lines doc 03 does not settle.
 	"street_coach", "economy_street",
+	# Wave 18, Lane S. `economy_assistance` (99-PA PA-32) is the founding
+	# fortnight: doc 03 §2.5a's grant still paying, with the row that now says
+	# what it pays today and which game-day it stops — `economy` above is a
+	# settlement with the grant already retired, so it can never photograph this.
+	# `economy_upkeep` (PA-31/PA-33) is the Upkeep band with a worn city under it
+	# and the batch button live, which is the state the band exists for.
+	# `economy_upkeep_auto` is the SAME band with the policy switched on through
+	# the real door — the two dials' faces read their standing rungs and the
+	# sentence above them agrees, which is the half of RR-150 a screenshot of the
+	# shipped default can never show.
+	"economy_assistance", "economy_upkeep", "economy_upkeep_auto",
 	# S16, Wave 17 (doc 12 §2.22). Four states, in the same commit as the screen
 	# — A91-D-28's lesson, applied on the way in. `queue` is the mixed list the
 	# panel is written for; `queue_uncrewed` is the row that says so in words
@@ -739,6 +750,52 @@ func _apply(screen: String) -> void:
 			_root.city_dashboard.open(DashboardModel.TAB_OVERVIEW)
 			_root.city_dashboard.row_button("treasury").pressed.emit()
 		"economy":
+			_root.city_dashboard.open(DashboardModel.TAB_ECONOMY)
+		"economy_assistance":
+			# Game-day 3 of the founding week: the grant is still paying and the
+			# row has to say what it pays TODAY and which day it stops (99-PA
+			# PA-32). The settlement is doc 03's own snapshot shape, `hour` and
+			# `assistance_days_left` included, because the end day is derived
+			# from those two and not authored anywhere in `ui/`.
+			_root.feed_settlement({
+				"hour": 74,
+				"assistance_days_left": 4,
+				"revenue": {"tax": 980.0, "power_tariff": 61.0, "water_tariff": 26.0,
+						"city_services": 38.0, "assistance": 98.29, "gross": 1203.29},
+				"expenses": {"building_maint": 214.0, "departments": 96.0,
+						"fleet": 76.0, "vehicle_fuel": 12.0, "grid": 31.0,
+						"generation_fuel": 74.0, "water": 21.0, "roads_repair": 8.0,
+						"debt": 0.0, "total": 532.0},
+				"net": 671.29,
+			})
+			_root.city_dashboard.open(DashboardModel.TAB_ECONOMY)
+		"economy_upkeep", "economy_upkeep_auto":
+			# A worn city, through the REAL verbs: the band's repair half is
+			# `CitySim.cmd_repair_all_worn`, its policy line is
+			# `CitySim.building_repair_policy` and its two dials write through
+			# `CitySim.cmd_set_building_repair_policy`, so what this photographs
+			# is the shipped screen and not a fixture of it (99-PA PA-31/PA-33).
+			for sim_id: String in _sim.roster_ids():
+				var worn: Building = _sim.buildings[sim_id]
+				if worn.state == &"active":
+					worn.condition = 0.62
+			# One settled game-hour on the worn roster, so `last_settlement`
+			# carries doc 03's own per-building `f_condition` rows — which is
+			# where every figure on the band comes from.
+			_sim.advance_coarse_hours(1)
+			_root.feed_settlement(_sim.last_settlement)
+			_root.city_dashboard.bind_upkeep(_sim.cmd_repair_all_worn,
+					_sim.building_repair_policy,
+					func() -> float: return float(_sim.treasury.balance),
+					_sim.cmd_set_building_repair_policy)
+			if screen == "economy_upkeep_auto":
+				# Through the command, never by assignment: the rung comes off
+				# the sim's own ladder and the budget off doc 03's own default,
+				# which is exactly what one press of each face does.
+				var live: Dictionary = _sim.building_repair_policy()
+				_sim.cmd_set_building_repair_policy(
+						float((live["thresholds"] as Array)[-1]),
+						int(live["default_daily_cap"]))
 			_root.city_dashboard.open(DashboardModel.TAB_ECONOMY)
 		"economy_street":
 			# The same ledger with a policed city's real income in it: bounties

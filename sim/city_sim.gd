@@ -103,6 +103,19 @@ var grid_rules: Dictionary = {}
 var tax_rate: float = 0.09
 var tax_rate_changed_hour: int = -1
 
+## Doc 02 §2.6's building auto-repair policy (99-PA PA-33, report 98 RR-150) —
+## the pair, mirroring `RoadNetwork.auto_repair_threshold` / `_daily_cap`.
+##
+## **Both ship at 0**, which is `off`, which is manual, which is the Wave-17
+## behaviour exactly. That is the ruling and not a placeholder: an auto-repair
+## default would spend a treasury without being asked and would move every gate
+## in the balance matrix. The pair is written to the city section ONLY when it
+## has been moved off the default (`_serialize_building_repair`), so a city that
+## never opens the control produces a byte-identical `capture_state()` and the
+## four `profile_sim` baselines cannot move for this feature.
+var building_repair_threshold: float = 0.0
+var building_repair_daily_cap: int = 0
+
 var buildings: Dictionary = {}  # building id string -> Building
 ## The ascending building-id order EVERY roster walk iterates in, cached.
 ##
@@ -1624,8 +1637,7 @@ func capture_state() -> Dictionary:
 		"stats": stats.serialize(),
 		"placed_records": _serialize_placed_records(),
 		"removed_records": _serialize_removed_records(),
-		"policy": {"tax_rate": tax_rate, "tax_rate_changed_hour": tax_rate_changed_hour,
-				"grid_id_high_water": _grid_id_high_water},
+		"policy": _policy_section(),
 		"water": water.serialize(),
 		"director_links": _serialize_director_links(),
 		"incidents": incidents.serialize_incidents(),
@@ -1640,6 +1652,20 @@ func capture_state() -> Dictionary:
 		# city's state and not a view of it.
 		"storm_prep": _serialize_storm_prep(),
 	}
+
+
+## The city's standing policy decisions. `building_repair` is present ONLY when
+## the player has moved it off the shipped default (`_serialize_building_repair`),
+## so this dictionary is byte-identical to the Wave-17 fork's on every city that
+## has never opened the control — which is what keeps RR-150 out of the balance
+## matrix.
+func _policy_section() -> Dictionary:
+	var out := {"tax_rate": tax_rate, "tax_rate_changed_hour": tax_rate_changed_hour,
+			"grid_id_high_water": _grid_id_high_water}
+	var repair := _serialize_building_repair()
+	if not repair.is_empty():
+		out["building_repair"] = repair
+	return out
 
 
 ## Demolished AUTHORED buildings (doc 02 §2.12): the loader re-creates and
@@ -1835,6 +1861,12 @@ func _restore_records(body: Dictionary) -> void:
 	tax_rate = float(policy.get("tax_rate", tax_rate))
 	tax_rate_changed_hour = int(policy.get("tax_rate_changed_hour", -1))
 	_grid_id_high_water = int(policy.get("grid_id_high_water", 0))
+	# Absent means the shipped default, which is `off` (RR-150). A save written
+	# before the control existed and a save written by a player who never touched
+	# it are the same save, and both restore to manual.
+	var repair: Dictionary = policy.get("building_repair", {})
+	building_repair_threshold = float(repair.get("threshold", 0.0))
+	building_repair_daily_cap = int(repair.get("daily_cap", 0))
 	for sim_id in _removed_records:
 		_grid_id_high_water = maxi(_grid_id_high_water,
 				int(_removed_records[sim_id]["grid_id"]))
@@ -4624,6 +4656,234 @@ func cmd_repair_building(sim_id: String, preview: bool = false) -> Dictionary:
 	return CommandQueue.ok(quote)
 
 
+# ------------------------------------ doc 02 §2.6 building auto-repair policy
+#
+# 99-PA PA-33, report 98 RR-150, doc 93 §AL3. Roads have had a repair POLICY and
+# a settings row since doc 10 §2.13; buildings had `cmd_repair_building(sim_id)`,
+# one call per building, and nothing ruled them manual. The audit filed 211-245
+# repair taps per 45-game-day arc; after doc 93 §Y1 moved private stock to its
+# owners that has already fallen to **51 civic trips and $226,852** on the same
+# arc (`tools/measure_repair_burden.gd --days=45 --seeds=1337
+# --strategies=curriculum`) — smaller than filed, and the same row: 51 taps is
+# still one every ~21 game-hours, on buildings the city unambiguously owns, for
+# a decision that has exactly one sensible answer.
+#
+# **One implementation, two doors.** `_repair_worn_pass` is the whole of it; the
+# daily policy calls it with the policy's dials and the Upkeep band's
+# "Repair all worn (N) - $X" button calls it with the same ones. The button and
+# the policy therefore cannot disagree about which buildings are candidates or
+# what they cost, which is the failure mode a second implementation would have.
+#
+# **It authors no dollar.** Every price is `cmd_repair_building(sim_id, true)` -
+# the identical call the building panel's REPAIR button previews with - so
+# doc 03 §2.5 remains the only place a repair is priced (C-07).
+
+## The policy's threshold ladder, resolved. `data/economy.json.building_repair`
+## names doc 02 §2.6's own band KEYS (`band_worn`, `band_good`) and copies no
+## number; this turns them into the values the roster is actually compared
+## against, off a real building's stamped rules, so re-authoring
+## `building_rules.json` moves the ladder with it.
+##
+## `off` is 0.0 and is always the first rung: a policy has to be switchable off,
+## and 0.0 is the same "no candidate can ever be below this" the road policy uses.
+func building_repair_thresholds() -> Array[float]:
+	var out: Array[float] = []
+	var sample: Building = null
+	for id in roster_ids():
+		var candidate: Building = buildings[id]
+		if candidate.decays():
+			sample = candidate
+			break
+	for raw: Variant in (econ_curves.building_repair().get("AUTO_REPAIR_BANDS", []) as Array):
+		var band := String(raw)
+		if band == "off":
+			out.append(0.0)
+		elif sample != null:
+			out.append(sample.rule(band))
+		else:
+			out.append(float(Building.DEFAULT_CONDITION.get(band, 0.0)))
+	return out
+
+
+## Doc 02 §2.6's automatic building repair — the PAIR, because the decision is
+## one decision with two numbers in it, exactly as `RoadNetwork` has it.
+##
+##   1 E_BAD_THRESHOLD  not a rung of `building_repair_thresholds()`
+##
+## The cap is clamped rather than refused: a player budget has no wrong value,
+## and a negative one is a typo, not a decision.
+##
+## Free: doc 03 prices no policy change. The SPEND it moves is the daily pass's,
+## against doc 03's own quotes.
+func cmd_set_building_repair_policy(threshold: float, daily_cap: int) -> Dictionary:
+	var allowed := building_repair_thresholds()
+	var matched := -1.0
+	for rung: float in allowed:
+		if absf(rung - threshold) < 1e-6:
+			matched = rung
+			break
+	if matched < 0.0:
+		return CommandQueue.fail(&"E_BAD_THRESHOLD", {"allowed": allowed})
+	building_repair_threshold = matched
+	building_repair_daily_cap = maxi(0, daily_cap)
+	return CommandQueue.ok(building_repair_policy())
+
+
+## What the two dials currently hold — what a shell seeds its control from, and
+## what the Upkeep band prints beside the batch button. The keys are the control's
+## keys, because that is the only thing this dictionary is for.
+func building_repair_policy() -> Dictionary:
+	return {
+		"building_repair_threshold": building_repair_threshold,
+		"building_repair_daily_cap": building_repair_daily_cap,
+		"thresholds": building_repair_thresholds(),
+		"daily_caps": econ_curves.building_repair().get("AUTO_REPAIR_DAILY_CAPS", []),
+		# Doc 03's own `AUTO_REPAIR_DEFAULT_DAILY_CAP`, published so a control
+		# that switches the policy ON has a budget to switch it on WITH and does
+		# not have to author one. This is the same thing a `data/ui.json`
+		# settings row's `default_from` does for the road pair; a dollar in `ui/`
+		# would be C-07's second copy.
+		"default_daily_cap": int(econ_curves.building_repair().get(
+				"AUTO_REPAIR_DEFAULT_DAILY_CAP", 0)),
+		# BOTH dials, because a threshold with a zero budget buys nothing and a
+		# surface that called that "on" would be describing a policy the city
+		# does not have.
+		"enabled": building_repair_threshold > 0.0 and building_repair_daily_cap > 0,
+	}
+
+
+## **"Repair all worn (N) — $X"** (99-PA PA-33). The batch the Upkeep band's
+## button presses, and the same pass the daily policy runs.
+##
+## `threshold` defaults to the policy's own rung; a caller that passes one
+## (the dashboard button, which offers the Good band whether or not the policy is
+## on) overrides it. `preview` quotes and buys nothing, which is what the button's
+## face is drawn from.
+##
+## Returns `{count, cost, sim_ids, skipped}` — `skipped` being candidates the
+## cap or the treasury could not reach, so a surface can say "7 of 11" instead of
+## quietly doing less than it offered.
+func cmd_repair_all_worn(preview: bool = false, threshold: float = -1.0,
+		daily_cap: int = -1) -> Dictionary:
+	var band := threshold
+	if band < 0.0:
+		band = building_repair_threshold
+		if band <= 0.0:
+			# The button is offered on a city with the policy OFF, and the band it
+			# offers is doc 02's Good line — "worn" in the panel's own words.
+			band = _band_value("band_good")
+	var cap := daily_cap
+	if cap < 0:
+		# Not supplied: this is the HAND-PRESSED batch, and it is bounded by the
+		# purse rather than by the automatic policy's daily budget — a budget is
+		# a rule for the pass that runs unattended, and the player pressing the
+		# button is not unattended. It still has to be bounded by SOMETHING,
+		# because every quote below is taken against the same unspent balance and
+		# ten individually affordable repairs are not an affordable batch.
+		cap = maxi(0, int(treasury.balance))
+	return _repair_worn_pass(band, cap, preview)
+
+
+## The pass. Worst-condition-first, so a fixed budget buys the repairs that are
+## costing the city the most; ties break on `sim_id` so two runs of the same city
+## queue the same jobs in the same order (determinism, constitution §5).
+##
+## Candidates are city-owned only, and that is not an optimisation:
+## `cmd_repair_building` refuses private stock with `E_OWNER_MAINTAINED`
+## (doc 02 §2.6a, doc 93 §Y1), so a pass that tried would spend itself being
+## refused. Every other blocker — `E_STATE`, `E_JOB_IN_FLIGHT`, `E_FUNDS` — is
+## discovered by asking the command, never by re-implementing its rules here.
+func _repair_worn_pass(threshold: float, daily_cap: int, preview: bool) -> Dictionary:
+	var candidates: Array = []
+	if threshold > 0.0:
+		for id in roster_ids():
+			var b: Building = buildings[id]
+			if b.owner_maintained or b.condition >= threshold:
+				continue
+			if b.state != &"active" and b.state != &"damaged":
+				continue
+			candidates.append({"sim_id": String(id), "condition": b.condition})
+	candidates.sort_custom(func(a: Dictionary, c: Dictionary) -> bool:
+		if absf(float(a["condition"]) - float(c["condition"])) > 1e-9:
+			return float(a["condition"]) < float(c["condition"])
+		return String(a["sim_id"]) < String(c["sim_id"]))
+
+	var max_jobs := int(econ_curves.building_repair().get("AUTO_REPAIR_MAX_JOBS_PER_DAY", 0))
+	var spent := 0
+	var count := 0
+	var skipped := 0
+	var sim_ids: Array[String] = []
+	for raw: Variant in candidates:
+		var sim_id := String((raw as Dictionary)["sim_id"])
+		if max_jobs > 0 and count >= max_jobs:
+			skipped += 1
+			continue
+		var quote: Dictionary = cmd_repair_building(sim_id, true)
+		if not bool(quote.get("ok", false)):
+			skipped += 1
+			continue
+		var cost := int((quote.get("payload", {}) as Dictionary).get("cost", 0))
+		# `daily_cap <= 0` means SPEND NOTHING, never "spend without limit". A
+		# budget dial at zero that quietly meant unlimited would be the worst
+		# reading of any control in the game.
+		if spent + cost > daily_cap:
+			skipped += 1
+			continue
+		if not preview:
+			var done: Dictionary = cmd_repair_building(sim_id, false)
+			if not bool(done.get("ok", false)):
+				skipped += 1
+				continue
+		spent += cost
+		count += 1
+		sim_ids.append(sim_id)
+	return CommandQueue.ok({"count": count, "cost": spent, "sim_ids": sim_ids,
+			"skipped": skipped, "candidates": candidates.size(),
+			"threshold": threshold})
+
+
+## One game-day of the policy, run from `apply_hourly_decay` at the day boundary
+## (see its call site). A no-op at the shipped default, which is what makes this
+## whole feature hash-neutral: with `building_repair_threshold` at 0.0 the pass
+## selects no candidate, takes no quote and moves no dollar.
+func run_building_repair_policy() -> void:
+	if building_repair_threshold <= 0.0 or building_repair_daily_cap <= 0:
+		return
+	var result: Dictionary = _repair_worn_pass(building_repair_threshold,
+			building_repair_daily_cap, false)
+	var payload: Dictionary = result.get("payload", {})
+	if int(payload.get("count", 0)) <= 0:
+		return
+	bus.emit(&"building_repair_policy_ran", {
+		"count": int(payload["count"]), "cost": int(payload["cost"]),
+		"skipped": int(payload["skipped"]),
+		"threshold": building_repair_threshold})
+
+
+## A band value off a real building's stamped rules, with doc 02's own fallback
+## for a city whose roster is empty. Never a literal.
+func _band_value(key: String) -> float:
+	for id in roster_ids():
+		var b: Building = buildings[id]
+		if b.decays():
+			return b.rule(key)
+	return float(Building.DEFAULT_CONDITION.get(key, 0.0))
+
+
+## The pair, in the city section — **and only when it has been moved**.
+##
+## An unconditional key would change `capture_state()`'s shape for every city
+## ever saved and would move all four `profile_sim` baselines for a feature that,
+## at its default, does nothing (RR-150). Omitting it at the default keeps the
+## fork's bytes exactly, and the restore below reads the default back, so
+## save → load → advance is bit-identical either way.
+func _serialize_building_repair() -> Dictionary:
+	if building_repair_threshold <= 0.0 and building_repair_daily_cap <= 0:
+		return {}
+	return {"threshold": building_repair_threshold,
+			"daily_cap": building_repair_daily_cap}
+
+
 # ------------------------------------------- doc 04 §2.4 shedding priority
 
 ## Set a building's load priority (doc 04 §2.4). The class lives on the grid's
@@ -5045,7 +5305,15 @@ func _charge_development_phases() -> void:
 			# credit-floor refusal books its own deferral inside `spend()`.)
 			deferred = cost
 			treasury.defer(deferred, &"construction", reason)
+		# `block_id` is the SAME id as `block`, under the name the alerts centre's
+		# locator contract uses (`_alert_world_pos(&"block_id", …)`). 99-PA PA-83:
+		# land development charges the treasury six times, $1.2K…$21K a phase,
+		# 14-15 times per 21 game-days, and had no foreground cue at all — this
+		# event had zero shell consumers. It has a log row now, and a log row
+		# whose `key` is not a locator kind cannot carry `Jump to it`, so the
+		# payload names the id both ways rather than the router guessing.
 		bus.emit(&"development_phase_charged", {"block": block_id,
+				"block_id": block_id,
 				"phase": String(charge["phase"]), "cost": cost,
 				"deferred": deferred})
 	_publish_treasury_events()
@@ -5940,15 +6208,73 @@ func apply_hourly_decay(dt_h: float, availability: Dictionary,
 		if not b.decays():
 			continue
 		var excess := float(overload.get(grid.attachment_of(String(id)), 0.0))
+		var before := b.condition
 		var events: Array = b.apply_decay(dt_h, excess,
 				float(availability.get(id, 1.0)), weather_mult)
 		if destroy_allowed:
 			events.append_array(b.roll_structural_failure(rng, dt_h, now_minutes))
+		_emit_condition_band(String(id), b, before)
 		for event in events:
 			var out: Dictionary = event.duplicate()
 			out["sim_id"] = id
 			out["condition"] = b.condition
 			bus.emit(StringName(String(out["type"])), out)
+	# Doc 02 §2.6's auto-repair policy, once per game-day, on the boundary this
+	# hourly pass is already standing on (99-PA PA-33, report 98 RR-150). It runs
+	# AFTER the hour's wear for the same reason the settlement does: the day's
+	# candidates are the day's real conditions. A no-op at the shipped default —
+	# `run_building_repair_policy` returns on its first line with the threshold at
+	# 0.0, so no quote is taken and no dollar moves.
+	if now_minutes % GameClock.MINUTES_PER_DAY == 0:
+		run_building_repair_policy()
+
+
+## Doc 02 §2.6's band table, as a name. `""` above `band_good`; the two names
+## below it are the two lines 99-PA PA-31 asks the game to speak at. The
+## thresholds are read off the building's own stamped rules (`Building.rule`,
+## PA-13's accessor), so the band a player is told about and the band the
+## ownership floor holds at are the same number by construction.
+##
+## The auto-damage line (`band_poor`, 0.35) is deliberately NOT a band here:
+## crossing it already emits `building_damaged`, which is a stronger statement
+## about the same building in the same hour, and two events for one crossing is
+## how a log starts repeating itself.
+static func _condition_band_of(b: Building, value: float) -> StringName:
+	if value >= b.rule("band_good"):
+		return &""
+	if value >= b.rule("band_worn"):
+		return &"worn"
+	return &"poor"
+
+
+## **PA-31's surface half** (doc 98 RR-149, doc 93 §AL2). One event per DOWNWARD
+## band crossing, and nothing else.
+##
+## Downward only, on purpose. A building climbing back through a band is the
+## player's own repair or upgrade finishing, and the screen that issued it
+## already knows — announcing it would be the game repeating the player (doc 93's
+## event rule, `player_initiated`).
+##
+## **No state is added for this.** The band is a pure function of the condition
+## before and after this hour's own decay call, which the caller already holds,
+## so nothing is remembered between hours, nothing new is serialized and
+## `state_hash()` cannot move. That matters more than it looks: after doc 93 §Y1
+## a private building floors at `band_worn` and can never reach `damaged`, so for
+## the four revenue classes this event is the ONLY cue the game has left — and it
+## had to be bought for free.
+func _emit_condition_band(sim_id: String, b: Building, before: float) -> void:
+	var band := _condition_band_of(b, b.condition)
+	if band == &"":
+		return
+	var previous := _condition_band_of(b, before)
+	if band == previous:
+		return
+	if previous == &"poor":
+		return  # climbing out of Poor into Worn is a recovery, not a warning
+	bus.emit(&"building_condition_band", {"sim_id": sim_id, "building": b.id,
+			"band": String(band), "previous": String(previous),
+			"condition": b.condition, "type_id": String(b.archetype),
+			"owner_maintained": b.owner_maintained})
 
 
 ## Per-component `max(0, load/capacity − 1)`, computed once per settled hour and

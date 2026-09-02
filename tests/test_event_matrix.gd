@@ -128,9 +128,14 @@ const REGISTER := {
 		"covered: same land-panel poll; block_ready is the announced end.",
 	"development_phase_completed":
 		"covered: same land-panel poll; block_ready is the announced end.",
-	"development_phase_charged":
-		"bookkeeping: money moving. Spend belongs in the budget sheet's ledger,"
-		+ " not in the alerts feed.",
+	# `development_phase_charged` used to be exempt here — *"bookkeeping: money
+	# moving. Spend belongs in the budget sheet's ledger, not in the alerts
+	# feed."* 99-PA PA-83 measured what that reasoning cost: **six debits per
+	# block, $1.2K–$21K a phase, 14–15 per 21 game-days, and the budget sheet's
+	# ledger does not itemise them either**, so the exemption was covering a
+	# dollar that reached no surface at all. It has a doc 12 log row now (report
+	# 98 §53.4) and its exemption is gone, which is exactly what this gate's
+	# `..._no_longer_needed` half exists to force.
 	"development_paused":
 		"player_initiated: cmd_pause_development. The panel that paused it is"
 		+ " showing that it is paused.",
