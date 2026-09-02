@@ -220,7 +220,14 @@ func e_grid(inventory: Dictionary) -> float:
 				* (1.0 + penalty * (1.0 - float(record.get("condition", 1.0))))
 	for plant in inventory.get("plants", []):
 		var record: Dictionary = plant
-		total += float(record.get("plant_capacity_mw", 0.0)) * plant_rate
+		# The plant carries the same condition penalty its own nodes and lines
+		# carry (Wave 17, doc 03 §2.4, doc 93 §Y5). It was the one row of this
+		# inventory left flat, and a half-dead plant burning the same fuel to
+		# make less power is precisely what the coefficient means. A record with
+		# no `condition` reads 1.00 and bills what it billed before.
+		total += float(record.get("plant_capacity_mw", 0.0)) * plant_rate \
+				* (1.0 + penalty * (1.0 - clampf(
+						float(record.get("condition", 1.0)), 0.0, 1.0)))
 	return total
 
 
@@ -401,6 +408,26 @@ func settle_hour(inputs: Dictionary) -> Dictionary:
 	var gross_revenue := floored + power_tariff + water_tariff + assistance
 
 	# --- §2.4 expenses ----------------------------------------------------
+	# **`E_building_maint` STAYS, and doc 93 §Y1 says why it stays** (Wave 17).
+	# The first draft of that ruling retired it: the loop below skips every row
+	# where `is_revenue_producing(type)` is false — C-08, so a civic shell is not
+	# billed beside its own department line — and that predicate is exactly the
+	# four `REVENUE_CLASSES`, so the line bills exactly the buildings the city
+	# does not own. It reads like the city paying a landlord's repair bill.
+	#
+	# **It is not.** It is the city's cost of SERVING a building — the reading
+	# C-08 itself implies, since the civic exclusion is "those are billed by
+	# their own O&M lines", not "the city only pays for what it owns" — and it
+	# rises as the building wears because a worn building costs more to serve.
+	# The thing the 2026-09-01 playtest asked to move to the owner is the lumpy,
+	# TAPPED repair, and that is what `E_OWNER_MAINTAINED` moves.
+	#
+	# Retiring it was measured before it was believed, and the measurement is why
+	# it is here: doc 92 §43.8. With this line gone AND private stock kept up by
+	# its owners, `tools/measure_insolvency.gd` put `do_nothing` on `standard` at
+	# game-day 176 against gate 29's ruled 69, and `casual` never went insolvent
+	# inside 200 game-days at all — "a preset on which standing still never costs
+	# anything is a preset with no game in it", in the gate's own words.
 	var maint_rate := float(_expenses.get("BUILDING_MAINT_RATE", 0.0))
 	var maint_penalty := float(_expenses.get("MAINT_CONDITION_PENALTY", 0.0))
 	var building_maint := 0.0
@@ -413,11 +440,21 @@ func settle_hour(inputs: Dictionary) -> Dictionary:
 		building_maint += capital * maint_rate \
 				* (1.0 + maint_penalty * (1.0 - float(record.get("condition", 1.0))))
 
+	# **The station's own condition reaches its own bill** (Wave 17, doc 03 §2.4,
+	# doc 93 §Y5). `ASSET_CONDITION_PENALTY_COEFF` has always been applied to the
+	# two other classes of asset the city owns — a worn grid node and a worn
+	# water main both cost more per hour, on exactly this coefficient — and the
+	# station line was the one that stayed flat: a police station at condition
+	# 0.20 was billed the same staffing as one at 1.00. A row that carries no
+	# `condition` reads 1.00 and bills exactly what it billed before.
+	var asset_penalty := float(_expenses.get("ASSET_CONDITION_PENALTY_COEFF", 0.0))
 	var departments := 0.0
 	for entry in inputs.get("stations", []):
 		var record: Dictionary = entry
 		departments += station_upkeep(String(record.get("type", "")),
-				int(record.get("level", 1)), bool(record.get("mothballed", false)))
+				int(record.get("level", 1)), bool(record.get("mothballed", false))) \
+				* (1.0 + asset_penalty
+						* (1.0 - clampf(float(record.get("condition", 1.0)), 0.0, 1.0)))
 
 	var vehicles: Array = inputs.get("vehicles", [])
 	var fleet := e_fleet(vehicles)
@@ -458,6 +495,11 @@ func settle_hour(inputs: Dictionary) -> Dictionary:
 
 	var snapshot := {
 		"hour": hour,
+		# Wave 17 (doc 93 §Y4, doc 92 §43.2): whole game-days of founding
+		# assistance still to come, 0 once the taper has retired. It lives at the
+		# TOP of the snapshot and not inside `revenue`, because every key in
+		# `revenue` is a dollar figure a budget sheet sums and this one is a count.
+		"assistance_days_left": int(inputs.get("founding_assistance_days_left", 0)),
 		"revenue": {
 			"tax": floored * yield_mult,
 			"tax_by_class": tax_by_class,

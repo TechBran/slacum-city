@@ -545,18 +545,43 @@ func test_gate_04b_maintenance_pacing_is_a_line_item_not_a_chore() -> void:
 	var net := 0.0
 	for i in range(1, samples.size()):
 		net += float((samples[i] as Dictionary)["net"])
+	# **RE-FITTED Wave 17 (doc 92 §43.8/§43.10, doc 93 §Y1).** Both bands are the
+	# same formula over a different ROSTER. This gate's own header derives
+	# `repair trips/day = Σ decay_b × 24 / (1 − threshold)` over the buildings the
+	# CITY repairs, and doc 02 §2.6a took the private stock out of that sum: a
+	# 21-game-day `balanced` city drew the REPAIR row on 260 private + 21 civic
+	# buildings and now draws it on 0 + 24, so the sum runs over roughly a tenth
+	# of the roster and returns roughly a tenth of the trips. Measured on the
+	# three matrix seeds: 10 / 10 / 11 trips over 21 game-days = 0.48 / 0.48 /
+	# 0.52 per game-day, against 27.3 mean trips (1.30/day) at the fork.
+	#
+	# **Neither `decay_per_hour` nor `REPAIR_COST_PER_CAPITAL` nor
+	# `REPAIR_THRESHOLD` moved** — exactly as in the Wave-5 re-anchor recorded
+	# above, the city the ratio is measured on is what changed.
+	#
+	# The floor's job is unchanged: catch the mechanic going dead altogether. It
+	# moves 0.80 → 0.30, which is 37 % below the lowest measured seed and still
+	# strictly positive. The SHARE floor moves 0.04 → 0.03 for the same reason and
+	# with the same measurement (4.42 % at seed 1337, against 11.2 % at the fork):
+	# a city that only buys repairs for its own assets cannot spend as large a
+	# share of a larger net on them, and 0.04 was inside a rounding error of
+	# failing on a number the ruling deliberately moved.
 	var share := float(int(summary["repair_spend"])) / maxf(1.0, net)
-	assert_true(share >= 0.04 and share <= 0.12,
-			"upkeep is %.1f%% of net over %d game-days; Wave 6 measured 5.5–6.3 %% "
-			% [share * 100.0, LONG_DAYS] + "across three seeds on a fully lit city")
+	assert_true(share >= 0.03 and share <= 0.12,
+			"upkeep is %.1f%% of net over %d game-days; Wave 17 measures 4.4 %% "
+			% [share * 100.0, LONG_DAYS] + "on the city's OWN assets (Wave 6 "
+			+ "measured 5.5–6.3 %% when the city also bought private repairs)")
 	assert_true(int(summary["repair_spend"]) > 0, "and it is not free")
 	var trips_per_day := float(int(summary["repaired"])) / float(LONG_DAYS)
-	assert_true(trips_per_day >= 0.8 and trips_per_day <= 9.0,
-			"%.2f repair trips per game-day — the ruled target is 'a few', "
-			% trips_per_day + "pass 2's 0.90 threshold measured 11.5, and Wave 6 "
-			+ "measures 1.05–1.29 on a city that is no longer dark")
+	assert_true(trips_per_day >= 0.30 and trips_per_day <= 9.0,
+			"%.2f repair trips per game-day — the ruled target is 'a few', and "
+			% trips_per_day + "since doc 02 §2.6a they are the city's own assets "
+			+ "only: Wave 17 measures 0.48–0.52 across the three matrix seeds")
 	# And it is buying something: the maintained city holds its floor at the
-	# threshold rather than sliding toward the auto-damage line.
+	# threshold rather than sliding toward the auto-damage line. Since Wave 17
+	# this reads doubly true — 0.60 is also `condition.band_worn`, the floor doc
+	# 02 §2.6a gives private stock, so a `balanced` city's worst building is at
+	# or above the worst any building in it can now be while the lights are on.
 	assert_true(float(summary["min_condition_end"]) >= 0.60,
 			"the maintained city's worst building sat at %.3f"
 					% float(summary["min_condition_end"]))
@@ -2025,9 +2050,46 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 ## > which is what this gate measures; the tripwire below stays because a
 ## > horizon-shaped assumption should be asserted, not assumed.
 ##
-## Total ~48 s. The three-seed table above is doc 92 §31.5's; this is the
-## tripwire.
-const PRESET_HORIZON_DAYS := {"casual": 120, "standard": 90, "hard": 70, "crisis": 55}
+## Total ~48 s at the Wave-14 horizons. The three-seed table above is doc 92
+## §31.5's; this is the tripwire.
+##
+## **COST WARNING, Wave 17.** The re-fitted horizons below total 560 game-days
+## against 335, and — unlike `tools/measure_insolvency.gd`, which stops at
+## insolvency — `Rig.run` advances the FULL horizon, through the late-arc
+## incident cascade that is far slower per game-hour than a quiet city. This gate
+## is now the slowest single thing in the suite by a wide margin. If that becomes
+## a problem the right fix is to teach the rig to stop at the first negative
+## close (the gate reads `day_rows` and needs nothing after it), not to shorten
+## the horizons, which are fitted.
+##
+## **RE-FITTED Wave 17 (doc 92 §43.8, doc 93 §Y1/§Y3).** The ownership floor took
+## the dominant term out of this gate's engine and the horizons roughly double.
+## The engine was never really the blackout: `tools/probe_neglect` showed
+## `PLANT-1` destroyed on game-day 40 and `SUB-A` on 45 **with the tax line
+## unmoved** (569 → 585 $/gh across the failure), so what actually killed a
+## neglected city was PRIVATE STRUCTURAL FAILURE — buildings rotting past 0.35,
+## going `damaged`, and being destroyed one at a time until the tax base was
+## gone. Doc 02 §2.6a stops exactly that (an owner does not let their own asset
+## become a liability), so what remains is `f_condition` capped at the Worn
+## floor — a permanent 24 % cut, not a slide to zero — plus the city's own
+## assets failing. Half the engine, so about twice the clock.
+##
+## `tools/measure_insolvency.gd --max-days=220`, three seeds, all four presets:
+##
+## | preset | 1337 / 4242 / 9001 | mean | before (Wave 14) |
+## |---|---|---|---|
+## | `casual` | 193 / 190 / 189 | **190.7** | 105.0 |
+## | `standard` | 137 / 139 / 129 | **135.0** | 69.0 |
+## | `hard` | 58 / 97 / 64 | **73.0** | 51.0 |
+## | `crisis` | 31 / 18 / 43 | **30.7** | 26.0 |
+##
+## **Every preset still dies and the §2.9 ordering holds on every seed
+## individually**, which is the assertion this gate is actually for. The seed
+## spread widened on `hard` and `crisis` (39 and 25 game-days against 2 and 6),
+## and that is the same finding read from the other end: with the smooth
+## condition slide gone, the remaining collapse is driven by the incident
+## cascade, which is stochastic where wear was not.
+const PRESET_HORIZON_DAYS := {"casual": 210, "standard": 160, "hard": 120, "crisis": 70}
 ## casual must die before its own horizon; crisis must not die absurdly early.
 ## The ordering assertions carry the rest.
 ##
@@ -2058,14 +2120,20 @@ const PRESET_HORIZON_DAYS := {"casual": 120, "standard": 90, "hard": 70, "crisis
 ## little tighter, because 26 game-days is close enough to "a different game"
 ## that the guard should not be relaxed proportionally). The CEILING stays 118:
 ## `casual`'s worst seed is 108 and its horizon is 120.
-const PRESET_LIFETIME_CEILING := 118
+## **118 → 200 (Wave 17)**: `casual`'s worst seed is 193 and its horizon is 210.
+## The FLOOR stays at 18 — `crisis` measures 18–43 across the three seeds, so 18
+## is now the observed minimum rather than 0.69× the mean, and moving it down
+## would stop it guarding anything.
+const PRESET_LIFETIME_CEILING := 200
 const PRESET_LIFETIME_FLOOR := 18
 ## `standard` is the preset every other gate in this file is measured on, so its
-## own number is pinned rather than merely ordered. **76 → 69, Wave 14**: the
-## seed spread is 2 game-days (68–70) and the band stays 6, so this still fails
-## on anything that moves `standard`'s neglect curve by more than ~9 %.
-const STANDARD_LIFETIME_DAYS := 69
-const STANDARD_LIFETIME_BAND := 6
+## own number is pinned rather than merely ordered. **69 → 137, Wave 17** (doc 92
+## §43.8): the three-seed spread is 10 game-days (129–139) and the band widens
+## 6 → 12 to hold it, which keeps the guard at the same ~9 % of the pinned value
+## it had before — so this still fails on anything that moves `standard`'s
+## neglect curve by more than about a tenth.
+const STANDARD_LIFETIME_DAYS := 137
+const STANDARD_LIFETIME_BAND := 12
 ## The cascade tripwire, asserted inside the horizon rather than assumed away:
 ## doc 06 §2.13's own worst-case accounting is ≤ 40 active incidents, and a
 ## `do_nothing` city inside these horizons measures 0 or 1.

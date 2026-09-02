@@ -123,7 +123,7 @@ payback(L1→L5)  = total_spend / net_income(5)
 | high_rise (residential, $26,000) | 104.2 | 70.7 | 84.5 | 101.2 | 121.5 | $1,030,120 / 200.3 gh |
 | data_center (tech, $180,000) | 88.8 | 60.2 | 71.8 | 85.9 | 103.0 | $7,131,600 / 169.7 gh |
 
-Worked check, house L3: `capital_value(3) = 1,200 × 6.147 = $7,376`; maintenance `7,376 × 0.00040 = $2.95/gh`; `net = 55 − 2.95 = $52.05/gh`; `upgrade_cost(2→3) = 1,200 × 3.6975 = $4,437`; `4,437 / 52.05 = 85.2 gh`. ✔
+Worked check, house L3 *(re-taken in Wave 17 — doc 93 §Y7 re-priced the upgrade ladder and §Y1 retired the city's maintenance line on private stock)*: `capital_value(3) = 1,200 × 5.083 = $6,100`; the city bills **no** maintenance on a house any more (§2.6a), so `net = 55 $/gh`; `upgrade_cost(2→3) = 1,200 × 2.9325 = $3,519`; `3,519 / 55 = 64.0 gh` against the whole yield, and `3,519 / (55 − 26) = 121.3 gh` against the yield the step actually *adds*, which is the reading doc 03 §2.3's ruled `[100, 200] gh` window is written on. *(At `UPG_COEFF` 1.45 and with the maintenance line: $7,376 capital, $2.95/gh, $4,437, 85.2 gh / 153.0 gh.)* ✔
 
 (1 game-hour = 60 real seconds while the app is open, per constitution §4.) Three readings fall out and all three are intended:
 
@@ -401,7 +401,76 @@ Incident-inflicted damage (doc 06 fire, doc 07 disasters) arrives as a `damage_f
 **Worked example E4 (recomputed on `[0,1]`).** An L3 apartment (`decay_per_hour 0.000720`) left alone for one game-week (168 gh) on a healthy grid: `1.000 − 0.000720 × 168 = 1.000 − 0.12096 = **0.879**`.
 Same apartment on a grid node at 130 % load with `P = 0.7` for that week:
 `0.000720 × (1 + 0.8×0.30) × (1 + 0.5×0.30) = 0.000720 × 1.24 × 1.15 = 0.00102672/gh` → `1.000 − 0.17249 = **0.828**`.
-Repairing it back to 1.00: `damage_fraction = 0.172`, `repair_hours = 14.5 × 0.50 × 0.172 = **1.25 crew-hours**`, and doc 03 charges `capital_value(apartment L3) 43,029 × 0.172 × 0.85 × 1.00 = **$6,291**` at standard difficulty. *(The old figures — condition 87.9 / 82.1 and $2,855 — used the deleted `[0,100]` scale and doc 02's deleted `build_cost` column. The old 82.1 also contained an arithmetic slip: `0.0720 × 1.24 × 1.15 = 0.10267`, not `0.1067`, giving 82.75 on the old scale.)*
+Repairing it back to 1.00: `damage_fraction = 0.172`, `repair_hours = 14.5 × 0.50 × 0.172 = **1.25 crew-hours**`, and doc 03 charges `capital_value(apartment L3) 35,581 × 0.172 × 0.85 × 1.00 = **$5,202**` at standard difficulty *(Wave 17: `CAPITAL_VALUE_V(3)` 6.147 → 5.083 with `UPG_COEFF`, doc 93 §Y7, so the same repair on the same damage costs 17.3 % less; it was $6,291 on 43,029)*. *(The old figures — condition 87.9 / 82.1 and $2,855 — used the deleted `[0,100]` scale and doc 02's deleted `build_cost` column. The old 82.1 also contained an arithmetic slip: `0.0720 × 1.24 × 1.15 = 0.10267`, not `0.1067`, giving 82.75 on the old scale.)*
+
+### 2.6a Who pays — the city buys no repair for a building it does not own (Wave 17)
+
+**Ruled by doc 93 §Y1**, from the 2026-09-01 playtest: *"repair prices should
+fall on the OWNERS of the building, not the city… and we shouldn't have to
+interrupt the gameplay to repair buildings because nothing actually happened."*
+
+| asset class | who buys the REPAIR | what the player sees |
+|---|---|---|
+| **private stock** — the four `REVENUE_CLASSES` (`house`, `apartment`, `store`, `office`, `high_rise`, `data_center`) | **the owner** | no REPAIR row at any condition, no toast, no banner, no push. Only `f_condition` on the tax line — and doc 03 §2.4's `Building upkeep`, which the city always paid and still pays |
+| roads · water infrastructure · power infrastructure · civic buildings | **the city** | the existing surfaces — the road accrual and its policy, the water panel, the grid chip, the panel's REPAIR row |
+
+**Two things change and one deliberately does not.**
+
+**(1) `cmd_repair_building` refuses private stock** with `E_OWNER_MAINTAINED`, at
+any condition, and doc 12's panel folds that code into "there is nothing to buy"
+beside `E_NOT_DAMAGED` so the row is not drawn at all (doc 93 §Y3a).
+
+**(2) The owner holds a FLOOR.** A private building wears exactly as §2.6 says —
+**not one `decay_per_hour` cell moves** — and its owner will not let it fall past
+the Worn band's floor:
+
+```
+owner_maintenance.classes = ["residential", "commercial", "industrial", "tech"]   §8
+
+after wear, if owner_maintained and P > 0:
+    condition = max(condition, condition.band_worn)          # 0.60
+if state == damaged (an INCIDENT, doc 06) and P > 0:
+    condition += (hours / (build_time_hours × repair_time_factor)) × P
+    damaged → active at condition.repair_target_damaged, event `building_repaired {cause: owner}`
+```
+
+so a private building is **never `damaged` by wear, never destroyed by wear, and
+always still upgradable** — 0.60 sits above `min_condition_to_upgrade` 0.55, and
+*that ordering is what makes the floor a floor rather than a trap*. **No number is
+authored**: the floor is §2.6's own band table, the rebuild rate is §2.6's own
+`repair_hours` read as a rate, and `P` is doc 04's `power_availability_hour`.
+
+**(3) Doc 03 §2.4's `E_building_maint` does NOT move.** It bills exactly these
+buildings, and the first draft of this ruling retired it on that reading;
+measured, that broke the game (doc 92 §43.8 — `do_nothing` on `standard` survived
+to game-day 176 against gate 29's ruled 69). The line is the city's cost of
+*serving* a building, which is what C-08's civic exclusion already implied.
+
+**The service clause** (doc 93 §Y1a). Both the floor and the rebuild are gated on
+`P > 0`: a building the city has left **dark** is held by nobody, wears at the
+unpowered rate, crosses the auto-damage line, emits, and
+`roll_structural_failure` can take it. *Recorded honestly:* on this fork that
+clause has nothing to bite on, because destroying the power plant and the
+substation darkens nothing — doc 93 §Y8, filed for the power lane.
+
+**What the city sees, and what the player does about it.** A building left to
+wear settles at the floor, where `f_condition = COND_FLOOR + (1 − COND_FLOOR) ×
+0.60 = 0.76` — a permanent **24 %** cut in what it pays. The recovery is an
+**upgrade**: `complete_construction` sets condition back to 1.00, so the answer
+to a worn city is to invest in it, which is the loop doc 09 level 2 already
+teaches and which doc 93 §Y7 made 20.7 % cheaper in the same wave.
+
+**Measured** (`tools/measure_repair_burden.gd`, doc 92 §43): the REPAIR
+affordance falls from 260 private / 21 civic to **0 / 24** in a 21-game-day
+`balanced` city; private repair trips 14 → **0**; and after a 720-game-hour
+absence that city's private stock goes from **2/16/236/8** across the bands to
+**4/233/0/0** with **0 damaged** and a morning bill of **$0** for private stock.
+
+**PA-82's decay cap is declined** (doc 93 §Y2a): capping the four city-owned
+archetypes at the house rate was implemented and withdrawn on the same
+measurement that withdrew the retirement, because after this ruling the city's
+own rates are the only neglect clock left. §2.3's Decay columns stand as
+published.
 
 ### 2.7 Fire — ignition here, dynamics in doc 06
 
@@ -999,7 +1068,7 @@ Headless tests in `tests/sim/buildings/` and `tests/sim/construction/`, run by `
 19. `test_state_machine_legal_transitions` — every legal transition in §2.12 succeeds; a random sample of 40 illegal pairs all raise and leave state unchanged.
 20. `test_upgrade_in_progress_economics` — an upgrading L3 office draws full L3 power (210 kW) and reports `output × 0.35` for the whole build.
 21. `test_cancel_refunds` — the three `refund_fraction` rows of §2.10, exact fractions (no dollar assertions — doc 03 owns the conversion).
-22. `test_decay_and_repair_E4` — 168 gh healthy → condition **0.879 ±0.0005**; overloaded variant → **0.828 ±0.0005**; `damage_fraction = 0.172`, `repair_hours = 1.25 ±0.01`; the doc-03 price stub returns **$6,291 ±1** at standard difficulty.
+22. `test_decay_and_repair_E4` — 168 gh healthy → condition **0.879 ±0.0005**; overloaded variant → **0.828 ±0.0005**; `damage_fraction = 0.172`, `repair_hours = 1.25 ±0.01`; the doc-03 price stub returns **$5,202 ±1** at standard difficulty (Wave 17, doc 93 §Y7).
 23. `test_condition_auto_damage` — condition crossing **0.35** transitions `active → damaged` on the same hour tick and emits one event.
 24. `test_fire_load_ladder` — `fire_load` doubles per level for all 66 rows (§2.14); `house` L1 = 20 and `high_rise` L5 = 1120 (56×); doc 06's `S_req_base(20) == 0.50` and `S_req_base(1120) == **3.06** ±0.01` by the §2.7 formula — **3.06 is canonical, the report's old "≈3.6" gloss is void** *(RR-9)*; `s_req_base_exponent == 0.45`.
 25. `test_destroy_guard_offline` — with `world.destroy_allowed() == false`, a burn-down clamps condition to 0.15, leaves the incident open, and emits **no** `BuildingDestroyed`.

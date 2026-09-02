@@ -7601,3 +7601,535 @@ the strategies that drive them answer a power refusal by buying copper and the
 roster now sells copper that works. If a future pacing gate is written against
 "how often is an upgrade refused on power", it must be fitted **after** this
 fork, not before it.
+
+## 43. Pass 16 — the economy dial-in: who pays, how fast, how much (2026-09-02)
+
+Three notes came back from days of on-device play, and this pass is the
+measurement behind all three (the rulings are doc 93 §Y):
+
+> **(a)** repair is too aggressive, the bill falls on the wrong party, and it
+> interrupts play for nothing; **(b)** income is too slow; **(c)** upgrade
+> prices are too aggressive.
+
+**The fork.** `a5d9021`, the Wave-17 integration. Every table below is coarse
+path, standard difficulty, on the same rig every doc 92 table since §15 is
+measured on. The four state hashes at the fork are unmoved from the Wave-16
+baselines, verified before a line was edited:
+
+```
+tools/profile_sim.gd --hash-only                 coarse 24h a27da24aaf6e9663…  fine 2.0h 7745cb25e55ff65c…
+    …  --city=res://tests/fixtures/bench_city.json  coarse 24h 7c99720f5ff14553…  fine 2.0h d8e8889681b23297…
+```
+
+**One number to carry through the whole section.** `data/time.json.clock` sets
+`real_seconds_per_game_minute = 1.0`, so at 1× speed **1 game-hour is exactly 1
+real minute** and **1 game-day is 24 real minutes**. Every `$/gh` in this
+document is therefore already a `$/real-minute`, and every game-hour duration is
+already a wait in real minutes. Note (b) is measurable without a new unit.
+
+### 43.1 What repair actually costs, by asset class
+
+`tools/measure_repair_burden.gd` is new in this pass and is the instrument for
+note (a): it boots the real `CitySim`, drives a `tools/playtest.gd` strategy
+through the real command layer, and reports per game-day the repair dollars and
+trips **by asset class**, the condition-band crossings that make a player reach
+for a repair, what reaches a *surface* (`data/notifications.json` push classes,
+`data/ui.json.event_log` rows, and the building panel's REPAIR affordance), and
+repairs' share of the settled net. `--absence=N` then runs a capped offline
+catch-up on the finished city and prints the morning bill.
+
+```
+~/.local/bin/godot --headless -s res://tools/measure_repair_burden.gd -- \
+    --days=21 --seeds=1337 --strategies=do_nothing,balanced,curriculum --bucket=7 --absence=720
+```
+
+**At the fork, 21 game-days, seed 1337, starter city:**
+
+| strategy | net | building repairs | of which **private** | of which **civic** | trips priv/civ | **city upkeep on private stock** | roads accrual | (repairs+upkeep)/net |
+|---|---|---|---|---|---|---|---|---|
+| `do_nothing` | $140,305 | $0 | $0 | $0 | 0/0 | **$16,585** | $94,338 | 11.82 % |
+| `balanced` | $1,260,224 | $62,692 | $9,995 (15.9 %) | $52,697 | 14/10 | **$78,038** | $102,673 | 11.17 % |
+| `curriculum` | $938,285 | $70,053 | $19,394 (27.7 %) | $50,659 | 39/10 | **$63,915** | $104,377 | 14.28 % |
+
+**Five findings, and each one names a different half of note (a).**
+
+**1. The dollars are civic; the *taps* are private.** On the two playing agents
+the city spends 72–84 % of its building-repair money on the seven civic and
+utility shells it owns, and makes 58–80 % of its repair *trips* on private
+stock. The plant and the two water works are expensive and rare; the houses are
+cheap and endless. A player counts trips, not dollars, which is why the note
+says "aggressive" about a line that is 5.0–7.5 % of net.
+
+**2. The `Building upkeep` line is bigger than all building repair combined.**
+`E_building_maint` bills $63,915–$78,038 over the same three weeks the city
+spends $62,692–$70,053 on all building repair together, and on `do_nothing` it
+is the *entire* building-related bill ($16,585 against $0). It bills exactly the
+four `REVENUE_CLASSES` — exactly the buildings the city does not own — and doc 93
+§Y1's first draft retired it on that reading. **It is not retired**, and §43.8 is
+the measurement that stopped it: what the line actually prices is the city's cost
+of *serving* a building, and it is also half of what keeps neglect fatal.
+
+**3. Nothing was destroyed, and nothing was damaged, in three weeks of play.**
+`damaged private 0 (decay 0 / incident 0) · damaged civic 0 · destroyed 0` on
+all three strategies, with 34–100 crossings of the 0.85 band and 0–2 of 0.60.
+The user's "buildings being destroyed" is **not** a 21-day-online phenomenon —
+see finding 5.
+
+**4. The interruption is an affordance, not an alert.** The push and log
+channels are nearly silent on repair — `curriculum` sees 79 P2 offers and 83 log
+rows in 21 days, and `grep` finds no `building_damaged`, `building_repaired` or
+condition-band row in `data/notifications.json.bindings` at all. What actually
+interrupts is the building panel: at the end of the run the REPAIR row is drawn
+on **260 private / 21 civic** buildings (`balanced`) and **98 / 10**
+(`curriculum`), because `repair_view` draws it for any building under condition
+1.00. Every one of those is a tap the player can be nagged into making, and
+after doc 93 §Y1 all of the private ones stop existing.
+
+**5. The destruction the user saw is what an absence does.** Run the same
+finished cities through doc 01's capped 720-game-hour catch-up — one night away:
+
+| strategy | private bands Good/Worn/Poor/Failing | civic bands | damaged | **morning bill** |
+|---|---|---|---|---|
+| `do_nothing` | 0/0/19/8 | 0/0/2/5 | 13 | $38,199 private + $170,700 civic |
+| `balanced` | 2/16/236/8 | 0/14/3/6 | 26 | **$332,942 private + $231,582 civic** |
+| `curriculum` | 1/18/61/19 | 0/3/1/6 | 31 | $456,371 private + $174,848 civic |
+
+A `balanced` player who plays three weeks and then sleeps comes back to **254 of
+their 262 buildings in the Poor or Failing band, 26 of them damaged, and a
+$564,524 bill** — against a treasury of $43,258 at the moment they left. That is
+the whole of note (a) in one row, and it is the row the ownership ruling is
+aimed at: 236 of those 254 are private buildings whose owners should have been
+keeping them up.
+
+### 43.1a Where each number comes from
+
+Every source named in the brief, and what it contributes:
+
+| source | value at the fork | what it drives |
+|---|---|---|
+| `data/buildings.json decay_per_hour` (from `building_rules.seed_rows[*].decay` × `k_decay^(L−1)`, `k_decay` 1.20) | house 0.00045, apartment 0.00050, store 0.00055, office 0.00045, high_rise 0.00060, data_center 0.00075; **plant 0.00090, substation 0.00080, water 0.00070, yard 0.00065**, police/fire 0.00040 | the whole wear curve |
+| `CostCurves._repair_cost_per_capital` (`economy.json REPAIR_COST_PER_CAPITAL`) | 0.85 | `repair_cost = capital × damage × 0.85 × M_repair` |
+| the auto-repair dial (§30) | `roads.auto_repair_threshold` / `auto_repair_daily_cap` — **roads only** | no building has a policy (PA-33) |
+| `E_roads_repair` | $94,338–$104,377 per 21 days, the largest single repair line in the game | the city's road accrual, correctly the city's |
+| `repair_quote(M_repair)` | `M_repair` 1.00 on `standard` | the road quote, priced at the city's own knob (§30) |
+| `data/building_rules.json condition.*` | fifteen keys | **read by nothing** at the fork (PA-13) — landed by doc 93 §Y2 |
+
+### 43.2 Income, in dollars per real minute at 1×
+
+Note (b) is "we wait too long for money to generate", and the unit that makes it
+falsifiable is above: **1 game-hour = 1 real minute at 1×**, so the curriculum's
+own level boundaries are a wait in real minutes and the founding ledger's `$/gh`
+is already a `$/real-minute`.
+
+**The founding ledger at the fork** (`tools/measure_founding_ledger.gd
+--hours=24`, mean of the first 24 settled game-hours, seed 1337):
+
+| preset | gross $/min | expense $/min | **net $/min** |
+|---|---|---|---|
+| `casual` | 1,158.20 | 424.86 | **+733.34** |
+| `standard` | 1,047.18 | 532.30 | **+514.89** |
+| `hard` | 962.94 | 638.26 | **+324.68** |
+| `crisis` | 911.13 | 729.50 | **+181.63** |
+
+and the `standard` expense split, which is where note (b)'s answer has to come
+from because the revenue side is doc 03's calibrated anchor:
+
+| line | $/min | share |
+|---|---|---|
+| `roads_repair` | 183.92 | **34.6 %** |
+| `departments` | 96.00 | 18.0 % |
+| `fleet` | 77.56 | 14.6 % |
+| `grid` | 74.62 | 14.0 % |
+| `generation_fuel` | 57.00 | 10.7 % |
+| **`building_maint`** | **27.70** | **5.2 %** |
+| `water` | 15.49 | 2.9 % |
+| **total** | **532.30** | |
+
+`building_maint` is only 5.2 % of the founding bill — but it is the line that
+grows with the city rather than with the map, and §13.4 measured it at
+**$466.89/gh of $1,289.80 (36.2 %)** at 320 buildings. That size is exactly why
+retiring it looked like the answer to note (b), and exactly why §43.8 had to
+measure the consequence before believing it.
+
+**The wait, measured** (`tools/measure_curriculum.gd --days=45`, three seeds).
+Level boundaries are in game-hours, i.e. in real minutes at 1×:
+
+| level reached | 1337 | 4242 | 9001 | **band duration (real minutes)** |
+|---|---|---|---|---|
+| 1 | 14 | 13 | 17 | 13–17 |
+| 2 | 47 | 42 | 47 | 29–33 |
+| 3 | 82 | 79 | 83 | 35–37 |
+| 4 | 135 | 131 | 132 | 49–53 |
+| 5 | 246 | 258 | 284 | 111–152 |
+| 6 | 710 | 709 | 754 | **451–470** |
+
+and the 45-day arc it sits in: **245 / 211 / 231 repairs**, repair spend
+**$620,212 / $567,679 / $595,385**, treasury end **$190,075 / $178,919 /
+$135,259** — repair spend is 3.1–4.4× the ending treasury, which reproduces
+PA-33 exactly.
+
+The opening is not where the waiting is. Levels 1–4 arrive at 14, 47, 82 and 135
+real minutes, and a do-nothing starter city banks $89,798 by game-day 7 without
+being touched. **The waits are L4→L5 (111–152 real minutes) and L5→L6 (451–470
+real minutes, 7.5–7.8 real hours)** — and the second of those is longer than doc
+03 §2.12's entire modelled arc, which reaches an end state of ~$898K in 600 real
+minutes. Doc 93 §Y6 rules the target on §2.12's own beat table: **N = 10 real
+minutes**, the shortest opening play session in it, and no band in levels 1–4
+may leave the player with nothing the curriculum asks for that they can afford
+for longer than that.
+
+### 43.3 The upgrade ladder
+
+Note (c). At the fork, `economy.json.upgrades` is `UPG_COEFF 1.45`,
+`UPG_GROWTH 2.55`, against `tax.TAX_LEVEL_GROWTH 2.15`, and
+`CAPITAL_VALUE_V = [1.0, 2.45, 6.147, 15.576, 39.62, 100.929]`.
+
+Doc 93 §Y7 derives the payback ladder in closed form from exactly those three
+constants and `build_cost_l1 / base_tax_l1 = 100 gh`, which holds for every
+revenue archetype:
+
+```
+payback(L -> L+1) = 100 x [UPG_COEFF / (TAX_LEVEL_GROWTH - 1)] x 1.18605^(L-1)   game-hours
+```
+
+| step | closed form at `UPG_COEFF` 1.45 | the SHIPPED house table | vs a new build |
+|---|---|---|---|
+| L1→L2 | 126.1 gh | **124.3 gh** | **+24 %** |
+| L2→L3 | 149.5 gh | 153.0 gh | +53 % |
+| L3→L4 | 177.4 gh | 176.8 gh | +77 % |
+| L4→L5 | 210.4 gh | 210.6 gh | +111 % |
+| L5→L6 | 249.5 gh | 249.4 gh | +149 % |
+
+The closed form reproduces doc 03 §2.3's published "126 → 210 gh" to the tenth of
+a game-hour, which is the check that it is the shipped curve and not a model of
+it; the third column is the same ratio taken off the rounded
+`upgrade_cost_by_step` and `base_tax_by_level` the player actually pays, and the
+two agree to within two game-hours. **Every rung is slower than building a fresh
+L1** — and the top two are outside the `[100, 200] gh` window §43.3's ruling
+adopts — while level 2's card teaches "upgrading instead of building more". That
+is PA-46's finding and the arithmetic reason note (c) is right.
+
+*Everything below is ruled against the shipped table, because that is the one the
+player pays.*
+
+### 43.4 The interruption audit — every repair, condition and damage row
+
+Note (a)'s second half is *"we shouldn't have to interrupt the gameplay to repair
+buildings because nothing actually happened"*. Every authored row that could
+carry such an interruption, checked one at a time:
+
+| surface | row | before | after |
+|---|---|---|---|
+| `data/notifications.json.bindings` | any `building_damaged` / `building_repaired` / condition-band row | **none exists** | unchanged — there was never a push to silence |
+| `data/notifications.json.events` | any repair notify id | `water_repair_done` (P3, doc 05's) only | unchanged, and correctly the city's |
+| `data/ui.json.event_log.events` | any building condition row | `road_condition_critical` (log-only, doc 10's) and `building_completed` | unchanged, and both correctly the city's |
+| `data/ui.json.in_app_alerts` | any banner or toast on wear | **none** | unchanged |
+| `ui/build_controller.gd.repair_view` | **the REPAIR row** | drawn on **any** building under condition 1.00 — 260 private / 21 civic in a 21-day `balanced` city | `E_OWNER_MAINTAINED` folds into "nothing to buy": **0 private**, on every strategy |
+| `ui/build_controller.gd._check_params` | `E_CONDITION`'s `Fix this →` | a purchase, on every building | a purchase on city assets; the row still blocks on private stock but offers no button |
+| `data/strings.en.json` | `ui_settings_auto_repair_cost_cap_hint` | "Repairs above this wait for you." | "**City** repairs above this wait for you — roads, water, power and civic buildings." |
+| `game/render/render_state_model.gd` | soot and the WARNING tint | set by `building_damaged`, **never cleared** | `building_repaired` clears both |
+| `data/ui.json.budget` · `ui/budget_model.gd` | the `Building upkeep` row | a line item | **unchanged** — see §43.8; the line stays and so does its row |
+
+**The finding under the finding: it was never an alert.** The push and log
+channels have no building-condition row and never had one, which is PA-31's
+complaint from the other side — a city could lose half its income to wear with
+nothing on any surface. What actually interrupted was an *affordance*: a button
+drawn on every worn building, which a player reads as a to-do. Silencing a
+channel would have changed nothing; not drawing the button changes everything.
+
+**One row was deliberately NOT added.** Doc 12 A8's principle — *"a toast that
+interrupts for a $12 fender-bender teaches the player to ignore the next one"* —
+permits an event-log line for an owner's rebuild, and this pass declines it. The
+`building_repaired {cause: owner}` event fires only after an incident, so the
+rows would arrive in bursts the size of the incident, into a 200-row log the
+player is already reading for the incident itself, to say that the thing they
+just watched burn is fixed. The event exists, carries its `cause`, and the
+renderer spends it on the soot.
+
+### 43.5 What a night away looks like now
+
+The same three cities, run 21 game-days and then through doc 01's capped
+720-game-hour catch-up. The morning bill is **what the city can buy** — since doc
+02 §2.6a that is city assets only, which is the whole point:
+
+| strategy | private bands Good/Worn/Poor/Failing | private damaged | civic bands | `building_damaged` in the absence |
+|---|---|---|---|---|
+| `do_nothing` | 0/0/19/8 → **0/27/0/0** | 8 → **0** | 0/0/2/5 → 0/0/2/5 | 13 → **5** |
+| `balanced` | 2/16/236/8 → **4/233/0/0** | 19 → **0** | 0/14/3/6 → 0/13/6/5 | 10 → **4** |
+| `curriculum` | 1/18/61/19 → **3/97/0/0** | 24 → **0** | 0/3/1/6 → 0/1/2/7 | 21 → **6** |
+
+**Not one private building is in the Poor or Failing band, damaged, or destroyed,
+on any strategy** — and the state census the instrument now prints says the same
+thing from the other side: everything still below the auto-damage line after a
+night away is `civic/damaged` (×5, ×5, ×7), and **not one of them is a private
+building that simply rotted there.** Every `building_damaged` event that still
+fires during an absence is a city asset.
+
+**The morning bill a `balanced` player wakes up to falls from $564,524 to
+$225,814** — and it is now *entirely* city assets, because a private building has
+no purchasable repair at any price. That is note (a), measured.
+
+### 43.6 Income after the rulings — what moved, and what did not
+
+**The founding ledger, both sides, same command** (`tools/measure_founding_ledger.gd
+--hours=24`, `standard`, seed 1337):
+
+| line | fork | after | delta |
+|---|---|---|---|
+| gross | 1047.184374 | 1047.184374 | **0.000000 — bit-identical** |
+| `building_maint` | 27.70 | 27.70 | 0.00 — the line stays (§43.8) |
+| `departments` | 96.00 | 96.92 | **+0.92** (§Y5's condition coefficient) |
+| every other line | — | — | 0.00 |
+| **expense** | 532.296003 | 533.212457 | +0.916454 |
+| **net $/real-minute** | 514.888371 | 513.971917 | **−0.18 %** |
+
+**The opening does not move at all**, and the pass says so rather than inventing
+a subsidy: −0.18 % is inside every founding anchor's own ±1 % tolerance, so
+**gates 1, 2 and 2b hold unchanged and not one pacing guardrail is re-fitted.**
+The measured answer to *"we wait too long for money to generate"* is not that the
+opening is poor — a `do_nothing` starter city banks **$89,798 by game-day 7** —
+it is that the city was **spending** on things it should not have been.
+
+**The curriculum arc** (`tools/measure_curriculum.gd --days=45`, three seeds).
+Level boundaries are game-hours, i.e. real minutes at 1×:
+
+| level | fork (1337/4242/9001) | **after** | band length, real minutes |
+|---|---|---|---|
+| 1 | 14 / 13 / 17 | 14 / 13 / 17 | 13–17 (unmoved) |
+| 2 | 47 / 42 / 47 | 47 / 41 / 47 | 28–33 |
+| 3 | 82 / 79 / 83 | 82 / 79 / 82 | 35–38 |
+| 4 | 135 / 131 / 132 | 135 / 129 / 131 | 49–53 |
+| 5 | 246 / 258 / 284 | 243 / 244 / 281 | 108–150 |
+| 6 | 710 / 709 / 754 | **602 / 603 / 651** | 359–370 |
+
+| arc total | fork | after |
+|---|---|---|
+| repairs (taps) | 245 / 211 / 231 | **44 / 43 / 44** (−81 %) |
+| repair spend | $620,212 / $567,679 / $595,385 | **$207,135 / $204,359 / $207,741** (−66 %) |
+| treasury end | $190,075 / $178,919 / $135,259 | $469,142 / $356,785 / $226,644 |
+
+**Levels 1–4 do not move.** That is the honest reading of the opening: the
+ownership ruling changes nothing about how fast a new city climbs, because a new
+city's buildings have not worn yet. What moves is the **top** of the arc — level
+6 arrives **15 % sooner, 602–651 real minutes instead of 709–754** — because the
+player is no longer spending four hundred thousand dollars and two hundred taps
+on repairs they never owed.
+
+**$/real-minute by level band** (the instrument's new column; mean of the settled
+hours inside the band, three seeds pooled):
+
+| band | mean $/real-min | min | max | band length (real min) | treasury when the band ends |
+|---|---|---|---|---|---|
+| 1 | 537.7 | 458.6 | 787.9 | 13–17 | $18,246 |
+| 2 | 658.8 | 518.0 | 1,478.1 | 28–33 | $25,986 |
+| 3 | 851.0 | 637.8 | 1,777.3 | 35–38 | $33,639 |
+| 4 | 952.8 | 740.8 | 1,727.2 | 49–53 | $55,845 |
+| 5 | 997.9 | 820.0 | 2,096.9 | 108–150 | $82,369 |
+| 6 | 3,022.5 | 569.3 | 5,564.6 | 359–370 | $202,419 |
+
+### 43.7 Rule N, tested — the wait is zero at every rung
+
+Doc 93 §Y6 rules the target off doc 03 §2.12's own beat table: its shortest
+opening play session is **10 real minutes** (rows S2 and S4) and every session in
+it contains at least one player purchase, so *the player may never be left unable
+to afford what the curriculum asks for, for longer than one short session*.
+**N = 10 real minutes.**
+
+The test is doc 03 §2.5a's own basis table — "the city pays half of what the next
+chapter asks you to buy" — read against the treasury column above at the moment
+each rung is earned:
+
+| rung earned | the next chapter's taught purchase (doc 03 §2.5a) | treasury at that moment | **wait** |
+|---|---|---|---|
+| 1 | two stores @ $2,600 + one upgrade ($1,380) | $18,246 | **0 min** |
+| 2 | one apartment $7,000 + four street tiles $7,200 | $25,986 | **0 min** |
+| 3 | one police station $18,000 | $33,639 | **0 min** |
+| 4 | one water works $45,000 (measured spend $46,430) | $55,845 | **0 min** |
+| 5 | the level-6 tower upgrade $58,350 | $82,369 | **0 min** |
+
+**Every rung's next purchase is already affordable at the instant the rung is
+earned**, so the idle-wait is 0 and N = 10 holds with the whole margin to spare.
+
+**And it did not before.** At the fork the level-4 rung is earned at game-hour
+135, i.e. game-day 5.6, and the coarse matrix's own per-game-day treasury column
+for `curriculum` reads **$31,117 at day 5 and $48,611 at day 6** against a
+measured water-works spend of **$46,430** — so the fork city *could not* buy what
+level 5 teaches at the moment it earned level 4, and needed up to a further
+game-day (**24 real minutes**) of accumulation. That is the wait the user
+reported, in the one place the curriculum makes it compulsory. Rung 5 moves the
+same way from the other side: its taught purchase is an upgrade, and §43.3 made
+it $15,222 cheaper.
+
+**What is NOT closed.** Repair taps fall 245 → 44 per 45-day arc (−81 %), which
+is a different game and still **above PA-33's published target of ≤ 20**. The
+remaining 44 are all city assets. Closing the last two dozen is PA-33's own fix —
+`cmd_set_building_repair_policy` mirroring the road policy — a verb this lane did
+not add. Recorded as open rather than claimed.
+
+### 43.8 The ruling this pass reversed, and the measurement that reversed it
+
+**The first draft of doc 93 §Y1 retired `E_building_maint` and gave private stock
+a self-maintaining sawtooth.** The argument was clean: the line's own loop skips
+every row where `is_revenue_producing(type)` is false, that predicate is the four
+`REVENUE_CLASSES`, and so the line bills exactly the buildings the city does not
+own. It was measured before it was believed.
+
+```
+tools/measure_insolvency.gd --max-days=200 · do_nothing · seed 1337
+                                 casual   standard   hard   crisis
+  gate 29's ruled figures           105         69     51       26
+  retirement + sawtooth           NEVER        176    131       —
+  + PA-82's decay cap             NEVER        168    128       71
+```
+
+*"A preset on which standing still never costs anything is a preset with no game
+in it"* — gate 29's own header, and it was right. Both halves were withdrawn.
+
+**The autopsy, because the reason matters more than the reversal.** A probe of an
+untouched `standard` city, one row per five game-days:
+
+```
+day | treasury | net/gh | tax/gh | PLANT-1          | SUB-A            | destroyed
+ 30 |   201202 |   76.7 |  577.6 | 0.273 damaged    | 0.376 active     | 0
+ 40 |   221008 |   43.8 |  569.7 | 0.000 destroyed  | 0.067 damaged    | 1
+ 45 |   229619 |    5.4 |  569.3 | 0.000 destroyed  | 0.000 destroyed  | 3
+ 60 |   246117 |    8.1 |  580.1 | 0.000 destroyed  | 0.000 destroyed  | 4
+```
+
+**The power plant is destroyed on game-day 40 and the substation on 45, and the
+tax line does not move.** Nothing goes dark. So §Y1a's service clause — the
+mechanism that was to keep neglect fatal once private stock stopped rotting to
+death — is built on a signal this fork does not emit, and the engine that
+*actually* killed a neglected city was **private structural failure**: buildings
+crossing 0.35, going `damaged`, and being destroyed one at a time until there was
+no tax base left. Which is also, precisely, what the 2026-09-01 playtest called
+"way too aggressive". The two are the same mechanism seen from opposite ends.
+
+That is filed as doc 93 §Y8 and belongs to the power lane; it is the third
+instance of the audit's own "a computed value with no consequence" (PA-02, PA-08,
+PA-09) and the most expensive, because a whole difficulty table was fitted on a
+mechanism the documents believed in and the simulation never had.
+
+**What ships instead** (doc 93 §Y1): `E_building_maint` stays and is named for
+what it is — the city's cost of *serving* a building; the sawtooth becomes a
+**floor** at `condition.band_worn`, held only while the city serves the building,
+so private stock is never `damaged` by wear, never destroyed by wear, and always
+still upgradable; and the recovery is an **upgrade**, not a repair tap.
+
+### 43.9 The gates, re-fitted — two of thirty-two, each with its derivation
+
+**Gates 29 and 4b are the only two this pass re-fits, and both move for the same
+reason: the roster they measure changed, not the constants they measure it
+with.** The founding anchors did not move enough to touch gates 1, 2 or 2b
+(§43.6: −0.18 % against a ±1 % tolerance), and no other constant this pass
+changed feeds a gate threshold. The remaining thirty pass untouched.
+
+**Gate 4b — the maintenance pacing fit.** Its own header derives
+`repair trips/day = Σ decay_b × 24 / (1 − threshold)` over the buildings the
+**city** repairs, and doc 02 §2.6a took the private stock out of that sum: a
+21-game-day `balanced` city drew the REPAIR row on 260 private + 21 civic and now
+draws it on 0 + 24, so the sum runs over about a tenth of the roster and returns
+about a tenth of the trips. Measured on the three matrix seeds: **10 / 10 / 11
+trips over 21 game-days = 0.48 / 0.48 / 0.52 per game-day**, against 1.30/day at
+the fork; and repair spend **4.42 %** of net at seed 1337 against 11.2 %.
+
+| constant | before | after | why |
+|---|---|---|---|
+| trips/day floor | 0.80 | **0.30** | 37 % below the lowest measured seed, still strictly positive — the floor's job is to catch the mechanic going dead, and it still does |
+| share-of-net floor | 0.04 | **0.03** | 0.04 was inside a rounding error of failing on a number the ruling deliberately moved |
+
+**Neither `decay_per_hour` nor `REPAIR_COST_PER_CAPITAL` nor `REPAIR_THRESHOLD`
+moved** — exactly the shape of this gate's own Wave-5 re-anchor, where the city
+the ratio is measured on is what changed and not the ratio.
+
+**Gate 29 — neglect is fatal on every preset, and ordered.**
+
+`tools/measure_insolvency.gd --max-days=220`, three seeds, `do_nothing`:
+
+| preset | 1337 / 4242 / 9001 | mean | Wave-14 mean |
+|---|---|---|---|
+| `casual` | 193 / 190 / 189 | **190.7** | 105.0 |
+| `standard` | 137 / 139 / 129 | **135.0** | 69.0 |
+| `hard` | 58 / 97 / 64 | **73.0** | 51.0 |
+| `crisis` | 31 / 18 / 43 | **30.7** | 26.0 |
+
+**The derivation is §43.8's**: the ownership floor removes private structural
+failure, which was the dominant term; what remains is `f_condition` capped at the
+Worn floor — a permanent 24 % cut rather than a slide to zero — plus the city's
+own assets failing. Half the engine, so about twice the clock.
+
+| constant | before | after | why |
+|---|---|---|---|
+| `PRESET_HORIZON_DAYS` | 120 / 90 / 70 / 55 | **210 / 160 / 120 / 70** | each above its preset's worst seed with margin |
+| `PRESET_LIFETIME_CEILING` | 118 | **200** | `casual`'s worst seed is 193 |
+| `PRESET_LIFETIME_FLOOR` | 18 | **18** | unmoved; `crisis`'s best seed is now exactly 18 |
+| `STANDARD_LIFETIME_DAYS` | 69 ± 6 | **137 ± 12** | the three-seed spread is 10 (129–139); the band keeps the guard at ~9 % of the pin |
+
+**Every preset still dies and doc 03 §2.9's ordering holds on every seed
+individually** — `casual > standard > hard > crisis` at 1337, 4242 and 9001 —
+which is the assertion this gate is actually for. The spread widened on `hard`
+and `crisis` (39 and 25 game-days against 2 and 6), and that is §43.8 read from
+the other end: with the smooth condition slide gone, the remaining collapse is
+driven by the incident cascade, which is stochastic where wear was not.
+
+### 43.10 The matrix, re-taken
+
+21 game-days, coarse, three seeds, `standard`. Means:
+
+| strategy | treasury | value created | net $/gh | pop | **repairs** | upgrades | min cond |
+|---|---|---|---|---|---|---|---|
+| `do_nothing` | 153,526 | 153,526 | 257.1 | 144 | 0 | 0 | 0.49 |
+| `greedy_growth` | 39,062 | 899,151 | 1,742.7 | 1,835 | 0 | 30.3 | 0.34 |
+| `infrastructure_first` | 16,927 | 87,460 | 272.5 | 185 | **24.7** (was 97.0) | 2.0 | 0.70 |
+| `balanced` | 69,062 | 1,003,928 | 2,420.1 | 1,508 | **10.3** (was 27.3) | **177.0** (was 142.3) | 0.73 |
+| `tax_squeezer` | 100,991 | 1,406,090 | 3,352.8 | 1,340 | **10.3** (was 45.0) | 179.7 | 0.73 |
+| `disaster_neglect` | 76,259 | 890,955 | 1,928.4 | 1,235 | 0 | 150.3 | 0.32 |
+| `curriculum` | 69,442 | 645,187 | 1,642.1 | 745 | **10.0** (was 51.0) | 80.7 | 0.69 |
+
+Three readings. **Repair collapses on every agent that repairs** — 97 → 25,
+27 → 10, 45 → 10, 51 → 10 — and every remaining trip is a city asset, which is
+the ruling working. **Upgrades rise** (`balanced` 142 → 177) because §43.3 made
+them 20.7 % cheaper, which is the intended substitution and the answer to PA-46's
+"level 2 teaches a move that is never worth making". And **`min cond` falls a
+little on the playing agents** (0.80 → 0.73): a private building now settles at
+the Worn floor instead of being repaired back to new, which is exactly the drag
+doc 93 §Y3 rules and prices at 24 % of that building's tax.
+
+`tax_squeezer` trails `balanced` on population by **11.1 %** (1,340 against
+1,508), against gate 12c's ruled 10 %, and the gate is **not re-fitted**. Stated
+precisely, because the tempting claim here is one this pass cannot support: the
+gates were never run on the untouched fork, so what is known is that 12c *failed
+under this pass's own first draft* (1,650 against 1,659) and passes on what
+ships. Whether it was already failing at `a5d9021` is unmeasured and is left
+that way rather than assumed.
+
+### 43.11 The new baselines
+
+```
+tools/profile_sim.gd --hash-only                              (starter city)
+tools/profile_sim.gd --hash-only --city=res://tests/fixtures/bench_city.json
+```
+
+The fork's four hashes were `a27da24aaf6e9663…` / `7745cb25e55ff65c…` and
+`7c99720f5ff14553…` / `d8e8889681b23297…`, verified unmoved before a line was
+edited. This pass is hash-moving by construction — `data/economy.json`,
+`data/building_economy.json` and `sim/buildings/building.gd` all changed — and
+the new set is:
+
+| city | path | hash |
+|---|---|---|
+| starter | coarse 24 h | `05614522975fad52…` |
+| starter | fine 2.0 h | `d1aaee0dca92f2fd…` |
+| `bench_city.json` | coarse 24 h | `275aad9d4aeea809…` |
+| `bench_city.json` | fine 2.0 h | `d40126e371371d59…` |
+
+**What moved them, exhaustively**: `upgrades.UPG_COEFF` and
+`upgrades.CAPITAL_VALUE_V` in `data/economy.json` (doc 93 §Y7) and the whole of
+`data/building_economy.json` regenerated from them; `grants
+.LEVEL_UP_GRANT_BY_CITY_LEVEL` rungs 5–6, which follow doc 03 §2.5a's own rule;
+`data/building_rules.json`'s new `owner_maintenance` block; and
+`sim/buildings/building.gd`'s ownership floor plus doc 03 §2.4's condition
+coefficient reaching a station and a plant. **Not** `data/buildings.json` — every
+`decay_per_hour` cell in it is byte-identical to the fork (§43.8), and its one
+diff is a stale `s2.12 -> s2.14` cross-reference in a `_note` string that the
+generator had already corrected and the shipped file had not.

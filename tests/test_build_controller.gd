@@ -741,9 +741,15 @@ func test_building_panel_renders_the_checklist_and_gates_upgrade() -> void:
 	(sim.buildings["H-001"] as Building).condition = 0.40
 	panel.refresh()
 	assert_true(panel.upgrade_button().disabled, "§2.9: disabled while any ✗ remains")
+	# `Fix this →` on `E_CONDITION` is a PURCHASE, and since Wave 17 the city has
+	# no repair to sell on a house (doc 02 §2.6a) — so the blocker row is drawn
+	# and the button is not. The `E_STATE` row is the one that still carries an
+	# affordance on any building, so the general claim is checked there.
 	var fix_row := panel.get_node_or_null(
 			"Panel/Scroll/Body/Checklist/Check_E_CONDITION/Fix") as Button
-	assert_ne(fix_row, null, "a blocker row carries `Fix this →`")
+	assert_eq(fix_row, null,
+			"private stock: the blocker is stated, no button is offered")
+	assert_true(panel.checklist_rows().size() >= 6, "and the row itself is still there")
 
 	# Repair it and the real command runs on the button press.
 	(sim.buildings["H-001"] as Building).condition = 1.0
@@ -785,20 +791,23 @@ func test_level_pips_read_exactly_as_the_doc_writes_them() -> void:
 # shipped as sim verbs with no door (doc 92 §17.6); these are the doors.
 # ===========================================================================
 
+## Re-pointed onto a CITY asset in Wave 17 (doc 02 §2.6a): the police station is
+## the city's to repair, the tutorial house is its owners'. The test below this
+## one is the house's half.
 func test_repair_is_absent_on_a_healthy_building_and_priced_on_a_worn_one() -> void:
 	var sim := _sim()
 	var controller := _controller(sim)
-	var b: Building = sim.buildings["H-001"]
+	var b: Building = sim.buildings["POL-1"]
 	b.condition = 1.0
-	var healthy: Dictionary = controller.actions_view("H-001")["repair"]
+	var healthy: Dictionary = controller.actions_view("POL-1")["repair"]
 	assert_false(bool(healthy["available"]),
 			"doc 02 §2.6 refuses E_NOT_DAMAGED, so there is no button to press")
 
 	b.condition = 0.60
-	var worn: Dictionary = controller.actions_view("H-001")["repair"]
+	var worn: Dictionary = controller.actions_view("POL-1")["repair"]
 	assert_true(bool(worn["available"]))
-	assert_true(bool(worn["ok"]), "the founding treasury can afford one house repair")
-	assert_eq(int(worn["cost"]), sim.econ_curves.repair_cost_building("house",
+	assert_true(bool(worn["ok"]), "the founding treasury can afford one station repair")
+	assert_eq(int(worn["cost"]), sim.econ_curves.repair_cost_building("police_station",
 			maxi(b.level, 1), b.damage_fraction(),
 			float(sim.treasury.difficulty().get("M_repair", 1.0))),
 			"the price is doc 03 §2.5's, read through CostCurves")
@@ -807,12 +816,34 @@ func test_repair_is_absent_on_a_healthy_building_and_priced_on_a_worn_one() -> v
 			"an `active` building repairs back to new (doc 02 §2.12)")
 
 
+## Doc 02 §2.6a / doc 93 §Y3a — the whole of the user's "we shouldn't have to
+## interrupt the gameplay to repair buildings because nothing actually happened".
+## A private building has NO repair row at any condition, not a disabled one: the
+## 2026-09-01 playtest counted the row on 260 private buildings in one 21-day
+## city (doc 92 §43.1), and 260 disabled buttons is not an improvement on 260
+## enabled ones.
+func test_a_private_building_never_offers_a_repair_row() -> void:
+	var sim := _sim()
+	var controller := _controller(sim)
+	var b: Building = sim.buildings["H-001"]
+	assert_true(b.owner_maintained, "a house is private stock")
+	for condition in [1.0, 0.90, 0.60, 0.34, 0.01]:
+		b.condition = float(condition)
+		var view: Dictionary = controller.actions_view("H-001")["repair"]
+		assert_false(bool(view["available"]),
+				"no REPAIR row at condition %.2f" % condition)
+		assert_true((view["reason"] as Dictionary).is_empty(),
+				"and nothing to read at condition %.2f" % condition)
+	assert_eq(sim.cmd_repair_building("H-001")["reason_code"], &"E_OWNER_MAINTAINED",
+			"the command still names the reason for the agents and the tests")
+
+
 func test_the_panel_buys_the_repair_the_row_quoted() -> void:
 	var sim := _sim()
 	var mounted := _mount(sim)
 	var panel: BuildingPanel = mounted["panel"]
-	(sim.buildings["H-001"] as Building).condition = 0.55
-	panel.show_building("H-001")
+	(sim.buildings["POL-1"] as Building).condition = 0.55
+	panel.show_building("POL-1")
 	var quoted := int(((panel.view()["actions"] as Dictionary)["repair"]
 			as Dictionary)["cost"])
 	assert_true(quoted > 0)
@@ -841,8 +872,8 @@ func test_fix_this_on_condition_buys_the_repair_rather_than_moving_the_camera() 
 	sim.progression.city_level = 1
 	var mounted := _mount(sim)
 	var panel: BuildingPanel = mounted["panel"]
-	(sim.buildings["H-001"] as Building).condition = 0.40
-	panel.show_building("H-001")
+	(sim.buildings["POL-1"] as Building).condition = 0.40
+	panel.show_building("POL-1")
 	var fix := panel.get_node_or_null(
 			"Panel/Scroll/Body/Checklist/Check_E_CONDITION/Fix") as Button
 	assert_ne(fix, null, "the blocker row still carries the affordance")
@@ -854,6 +885,29 @@ func test_fix_this_on_condition_buys_the_repair_rather_than_moving_the_camera() 
 	assert_eq(routed.size(), 0, "nothing was handed to the camera router")
 	assert_eq(repairs.size(), 1, "a repair was bought instead")
 	assert_true(bool(repairs[0]["ok"]), str(repairs[0]))
+	_unmount(mounted)
+
+
+## The other half of the same row (doc 93 §Y3a). `E_CONDITION` still BLOCKS an
+## upgrade on private stock — a worn building is a worn building — but there is
+## no repair for the city to buy, so the row states the blocker and offers no
+## button rather than offering one that refuses. A button that cannot work is
+## the failure shape PA-24 filed on `E_WATER_HEADROOM`, in a new place.
+func test_fix_this_is_absent_on_a_privately_maintained_building() -> void:
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	sim.progression.city_level = 1
+	var mounted := _mount(sim)
+	var panel: BuildingPanel = mounted["panel"]
+	var house: Building = sim.buildings["H-001"]
+	assert_true(house.owner_maintained)
+	house.condition = 0.40
+	panel.show_building("H-001")
+	var row := panel.get_node_or_null(
+			"Panel/Scroll/Body/Checklist/Check_E_CONDITION")
+	assert_ne(row, null, "the blocker is still stated")
+	assert_eq(row.get_node_or_null("Fix"), null,
+			"but there is no repair to sell, so there is no button")
 	_unmount(mounted)
 
 

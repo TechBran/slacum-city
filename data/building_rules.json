@@ -36,6 +36,10 @@
     "steady": [0, 1, 2, 3, 4, 4]
   },
   "safety_coverage_factor": {"floor": 0.80, "span": 0.20},
+  "owner_maintenance": {
+    "_note": "Doc 02 s2.6a / doc 93 sec Y1 (Wave 17). PRIVATE STOCK keeps itself up: the city pays for city assets only. This block authors NO number -- the owner's crew starts below condition.band_good and works at condition.repair_time_factor, both of which are below -- it names only the tax classes whose buildings are privately owned. They are exactly cost_curves.REVENUE_CLASSES, which is exactly the set doc 03 sec 2.4's E_building_maint used to bill: that line was charging the city the upkeep of every building it does not own, and doc 93 sec Y1 retires it.",
+    "classes": ["residential", "commercial", "industrial", "tech"]
+  },
   "condition": {
     "start": 1.00,
     "band_good": 0.85,

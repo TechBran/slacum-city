@@ -1220,6 +1220,14 @@ class Api extends RefCounted:
 			var b: Building = sim.buildings[id]
 			if b.state != &"active" and b.state != &"damaged":
 				continue
+			# Doc 02 §2.6a (doc 93 §Y1): private stock keeps itself up and
+			# `cmd_repair_building` refuses it, so an agent that queued it would
+			# spend its one repair action per tick being told no and would never
+			# reach the plant. Skipping it here is not the agent being told the
+			# answer — it is the agent reading the same `owner_maintained` flag
+			# the building panel reads to decide whether to draw the row at all.
+			if b.owner_maintained:
+				continue
 			if b.condition >= threshold:
 				continue
 			out.append({"sim_id": String(id), "condition": b.condition,

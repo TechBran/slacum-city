@@ -663,7 +663,8 @@ func _on_sim_batch(batch: Array) -> void:
 					construction_view.remove_site(gone)
 				if construction_plant != null:
 					construction_plant.remove_site(gone)
-			&"building_damaged", &"building_destroyed", &"building_completed":
+			&"building_damaged", &"building_destroyed", &"building_completed", \
+					&"building_repaired":
 				var rid2 := _render_id_from_int(event.get("building", -1))
 				if rid2 >= 0:
 					var out: Dictionary = event.duplicate()

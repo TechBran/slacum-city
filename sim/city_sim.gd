@@ -827,6 +827,7 @@ func _boot_buildings() -> void:
 		b.condition = 1.0
 		b.stats = catalog.stats(String(archetype), b.level)
 		b.max_level = catalog.max_level_of(String(archetype))
+		_stamp_building_rules(b)
 		buildings[id] = b
 		_building_records[id] = record
 	_invalidate_roster()
@@ -1780,6 +1781,7 @@ func _restore_roster(body: Dictionary) -> void:
 			continue
 		b.stats = catalog.stats(String(b.archetype), maxi(b.level, 1))
 		b.max_level = catalog.max_level_of(String(b.archetype))
+		_stamp_building_rules(b)
 		buildings[id] = b
 	_invalidate_roster()
 	# Block-dark weights are derived from the live roster, so rebuild rather than
@@ -2073,6 +2075,7 @@ func cmd_place_building(archetype: String, origin: Vector2i, variant: String = "
 	var b := Building.new(grid_id, StringName(archetype), origin, StringName(variant))
 	b.stats = stats
 	b.max_level = catalog.max_level_of(archetype)
+	_stamp_building_rules(b)
 	b.built_at_minutes = clock.sim_time_minutes()
 	world.grid.stamp_building(grid_id, origin, size)
 	buildings[sim_id] = b
@@ -2118,7 +2121,7 @@ func cmd_upgrade_building(sim_id: String, preview: bool = false) -> Dictionary:
 	var top_level: int = catalog.max_level_of(String(b.archetype))
 	if b.level >= top_level:
 		blockers.append(&"E_MAX_LEVEL")
-	if b.condition < Building.MIN_CONDITION_TO_UPGRADE:
+	if b.condition < b.min_condition_to_upgrade():
 		blockers.append(&"E_CONDITION")
 	var next_level: int = mini(b.level + 1, top_level)
 	var next_stats: Dictionary = catalog.stats(String(b.archetype), next_level)
@@ -3542,6 +3545,7 @@ func cmd_place_water_component(kind: String, tile: Vector2i, level: int = 1,
 	var b := Building.new(grid_id, StringName(WATER_SHELL_ARCHETYPE), tile, variant)
 	b.stats = shell_stats
 	b.max_level = catalog.max_level_of(WATER_SHELL_ARCHETYPE)
+	_stamp_building_rules(b)
 	b.level = level
 	b.built_at_minutes = clock.sim_time_minutes()
 	world.grid.stamp_building(grid_id, tile, size)
@@ -4198,14 +4202,34 @@ func _queue_refund_fraction(job: Dictionary) -> float:
 
 # ------------------------------------------------------ doc 02 §2.6 repair
 
-## Repair a building back toward condition 1.00 (doc 02 §2.6). Order of checks:
+## Doc 02 §2.6a (doc 93 §Y2 / §Y1): everything a `Building` needs to know that
+## lives in `data/building_rules.json` rather than in its own stats row — the
+## condition block it reads its physics from (PA-13: before this it read fifteen
+## hardcoded consts and the authored file moved nothing), and whether its owner
+## keeps it up. Stamped beside `stats` and `max_level` at the four sites that
+## make a `Building` live: boot, restore, building placement and the doc 05
+## water shell. Neither is persisted —
+## both are properties of the archetype, not of the row, so a save written before
+## the ruling loads into a city that applies it.
+func _stamp_building_rules(b: Building) -> void:
+	var condition_block := catalog.condition_rules()
+	if not condition_block.is_empty():
+		b.condition_rules = condition_block
+	b.owner_maintained = catalog.owner_maintained(String(b.archetype))
+
+
+## Repair a CITY building back toward condition 1.00 (doc 02 §2.6). Order of
+## checks:
 ##
 ##   1 E_UNKNOWN_BUILDING  no such sim_id
-##   2 E_STATE             not `active` or `damaged` (a site under construction,
+##   2 E_OWNER_MAINTAINED  private stock (doc 02 §2.6a, doc 93 §Y1) — its owner
+##                         keeps it up and the city has nothing to buy, whatever
+##                         its condition
+##   3 E_STATE             not `active` or `damaged` (a site under construction,
 ##                         a fire and a ruin all have their own verbs)
-##   3 E_NOT_DAMAGED       condition is already 1.00 — nothing to buy
-##   4 E_JOB_IN_FLIGHT     a repair job for this building is already queued
-##   5 E_FUNDS             treasury below the quoted price
+##   4 E_NOT_DAMAGED       condition is already 1.00 — nothing to buy
+##   5 E_JOB_IN_FLIGHT     a repair job for this building is already queued
+##   6 E_FUNDS             treasury below the quoted price
 ##
 ## Price is doc 03 §2.5's single repair formula, `capital_value(L) ×
 ## damage_fraction × REPAIR_COST_PER_CAPITAL × M_repair`; crew-hours are doc 02
@@ -4218,6 +4242,8 @@ func cmd_repair_building(sim_id: String, preview: bool = false) -> Dictionary:
 	if b == null:
 		return CommandQueue.fail(&"E_UNKNOWN_BUILDING", {"blockers": [&"E_UNKNOWN_BUILDING"]})
 	var blockers: Array = []
+	if b.owner_maintained:
+		blockers.append(&"E_OWNER_MAINTAINED")
 	if b.state != &"active" and b.state != &"damaged":
 		blockers.append(&"E_STATE")
 	var damage := b.damage_fraction()
@@ -4233,7 +4259,7 @@ func cmd_repair_building(sim_id: String, preview: bool = false) -> Dictionary:
 			float(treasury.difficulty().get("M_repair", 1.0)))
 	if treasury.balance < cost:
 		blockers.append(&"E_FUNDS")
-	var target := 1.0 if b.state == &"active" else Building.REPAIR_TARGET_FROM_DAMAGED
+	var target := b.repair_target()
 	var quote := {"blockers": blockers, "cost": cost, "damage_fraction": damage,
 			"crew_hours": b.repair_crew_hours(), "repair_target": target}
 	if not blockers.is_empty():
@@ -5268,7 +5294,13 @@ func build_settlement_inputs(ctx: TimeContext, availability: Dictionary) -> Dict
 		})
 		match b.archetype:
 			&"police_station", &"fire_station", &"construction_yard":
-				stations.append({"type": String(b.archetype), "level": b.level})
+				# `condition` is new in Wave 17 (doc 03 §2.4, doc 93 §Y5). Doc 03
+				# already charges more for a worn transformer and a worn water
+				# main through `ASSET_CONDITION_PENALTY_COEFF` and charged a flat
+				# bill for a worn station; this is the building's own reading,
+				# not a new number.
+				stations.append({"type": String(b.archetype), "level": b.level,
+						"condition": b.condition})
 			&"water_facility":
 				pass  # water_works staffing added once, below (RR-16)
 	var pump_ids := water.nodes.keys()
@@ -5303,6 +5335,10 @@ func build_settlement_inputs(ctx: TimeContext, availability: Dictionary) -> Dict
 		# doc 03 owns; this method only tells it which game-day it is.
 		"city_services": treasury.take_hour_city_services(),
 		"founding_assistance": econ_curves.founding_assistance_per_hour(
+				ctx.tick_index / GameClock.TICKS_PER_DAY),
+		# …and how many game-days of it are left, so the budget sheet can say so
+		# (Wave 17, doc 93 §Y4). A COUNT, not a dollar — see the snapshot.
+		"founding_assistance_days_left": econ_curves.founding_assistance_days_left(
 				ctx.tick_index / GameClock.TICKS_PER_DAY),
 	}
 

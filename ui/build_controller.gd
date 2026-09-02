@@ -1235,7 +1235,18 @@ func repair_view(sim_id: String) -> Dictionary:
 	var ok := bool(preview["ok"])
 	# `E_NOT_DAMAGED` is not a refusal the player has to read — it is the normal
 	# state of a healthy building, and the row simply is not there.
-	var nothing_to_buy := not ok and code == &"E_NOT_DAMAGED"
+	#
+	# **`E_OWNER_MAINTAINED` folds in beside it** (Wave 17, doc 93 §Y3a). Private
+	# stock keeps itself up, so on a house there is nothing to buy at ANY
+	# condition and the row is not drawn at all. Drawing it disabled with an
+	# explanation would be *more* interruption than the state this ruling is
+	# fixing, not less: the 2026-09-01 playtest counted a REPAIR affordance on
+	# 260 private buildings in a 21-game-day `balanced` city (doc 92 §43.1), and
+	# a disabled button on 260 buildings is still 260 things asking to be tapped.
+	# The code exists so the command layer, the agents and the tests can name the
+	# reason exactly; it is not a thing to show a player who never asked.
+	var nothing_to_buy := not ok and (code == &"E_NOT_DAMAGED"
+			or code == &"E_OWNER_MAINTAINED")
 	var cost := int(payload.get("cost", 0))
 	var reason: Dictionary = {}
 	if not ok and not nothing_to_buy:
@@ -1442,9 +1453,15 @@ func _check_params(sim_id: String, b: Building, next_level: int,
 				"fix_target_id": sim_id},
 		&"E_MAX_LEVEL": {"level": b.level,
 				"max_level": sim.catalog.max_level_of(String(b.archetype))},
+		# `min_condition` is read off the building (PA-13 / doc 93 §Y2), and the
+		# fix is a PURCHASE only on a building the city may buy a repair for
+		# (doc 02 §2.6a). On private stock the owner is already fixing it and the
+		# city's job is to serve it, so the row blocks and offers no button.
 		&"E_CONDITION": {"condition": b.condition,
-				"min_condition": Building.MIN_CONDITION_TO_UPGRADE,
-				"fix_target_id": sim_id},
+				"min_condition": b.min_condition_to_upgrade(),
+				"fix_kind": RequirementFormatter.FIX_NONE if b.owner_maintained
+						else RequirementFormatter.FIX_REPAIR,
+				"fix_target_id": "" if b.owner_maintained else sim_id},
 		&"E_CITY_LEVEL": {"city_level": sim.progression.city_level,
 				"required_level": int(next_stats.get("min_city_level", 0))},
 		&"E_FUNDS": {"cost": int(payload.get("cost", 0)),

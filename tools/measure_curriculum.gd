@@ -63,6 +63,61 @@ func _initialize() -> void:
 			hi = maxi(hi, duration)
 		print(row + "| %s |" % ("—" if hi < 0 else ("%d" % lo if lo == hi else "%d–%d" % [lo, hi])))
 
+	# ---- doc 92 §43.2: what a level band pays, in dollars per REAL minute ----
+	# `data/time.json.clock.real_seconds_per_game_minute` is 1.0, so at 1x speed
+	# one game-hour IS one real minute and one settled hour's `net` IS a
+	# $/real-minute reading. The band table below is therefore the answer to the
+	# 2026-09-01 playtest's "we wait too long for money to generate" in the unit
+	# the player experiences, and its `wait` column is the length of the band in
+	# real minutes — doc 93 §Y6 rules that no band in levels 1–4 may leave the
+	# player unable to afford what the curriculum asks for longer than N = 10.
+	print("")
+	print("| band | mean net $/real-min | min | max | band length (real min) | treasury at end |")
+	print("|---|---|---|---|---|---|")
+	for level in range(1, top + 1):
+		var sums := 0.0
+		var counts := 0
+		var lowest := 1e30
+		var highest := -1e30
+		var lengths: Array[int] = []
+		var ends: Array[int] = []
+		for i in runs.size():
+			var boundaries: Dictionary = earned[i]
+			var hour := int(boundaries.get(level, -1))
+			if hour < 0:
+				continue
+			var previous := int(boundaries.get(level - 1, 0))
+			lengths.append(hour - previous)
+			for entry: Variant in ((runs[i] as Dictionary)["samples"] as Array):
+				var sample: Dictionary = entry
+				var h := int(sample["h"])
+				if h <= previous or h > hour:
+					continue
+				var net := float(sample.get("net", 0.0))
+				sums += net
+				counts += 1
+				lowest = minf(lowest, net)
+				highest = maxf(highest, net)
+				if h == hour:
+					ends.append(int(sample.get("treasury", 0)))
+		if counts == 0:
+			print("| %d | — | — | — | — | — |" % level)
+			continue
+		var length_lo := 1 << 30
+		var length_hi := -1
+		for value in lengths:
+			length_lo = mini(length_lo, value)
+			length_hi = maxi(length_hi, value)
+		var treasury_sum := 0
+		for value in ends:
+			treasury_sum += value
+		print("| %d | %.1f | %.1f | %.1f | %s | %s |" % [level, sums / float(counts),
+				lowest, highest,
+				("%d" % length_lo if length_lo == length_hi
+						else "%d–%d" % [length_lo, length_hi]),
+				("$%d" % (treasury_sum / maxi(ends.size(), 1)) if not ends.is_empty()
+						else "—")])
+
 	print("")
 	for key: String in ["goal_level_end", "city_level_end", "road_tiles_built",
 			"road_spend", "repaired", "repair_spend", "water_placed", "water_spend",

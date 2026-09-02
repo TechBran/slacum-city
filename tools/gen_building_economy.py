@@ -89,26 +89,33 @@ def r(value: D) -> int:
 # ==========================================================================
 
 TAX_LEVEL_GROWTH = D("2.15")
-UPG_COEFF = D("1.45")
+UPG_COEFF = D("1.15")
 UPG_GROWTH = D("2.55")
 
 # doc 03 s8 `upgrades.CAPITAL_VALUE_V` -- the published 3-dp vector.
-CAPITAL_VALUE_V = [D("1.000"), D("2.450"), D("6.147"), D("15.576"), D("39.620"),
-                   D("100.929")]
-# V(6) is NEW (doc 92 s23.4) and it is the only cell of the vector this project
-# ever placed itself, so it is placed by the rule the other five claim rather
-# than by judgement: the closed form gives V(6) = 100.9287528125 exactly, and
-# half-up at 3 dp is 100.929. The two earlier cells that disagree with their own
-# closed form (V3, V5) are doc 03's and are left exactly as published.
+CAPITAL_VALUE_V = [D("1.000"), D("2.150"), D("5.083"), D("12.560"), D("31.629"),
+                   D("80.254")]
+# RE-DERIVED IN WAVE 17 (doc 93 s Y7, doc 92 s43.3) at UPG_COEFF 1.45 -> 1.15.
+# Every one of the six cells is now the closed form at 3 dp, half-up, with no
+# exceptions: V = 1.000, 2.150, 5.0825 -> 5.083, 12.560375 -> 12.560,
+# 31.62895625 -> 31.629, 80.2538384375 -> 80.254. The two cells that used to
+# disagree with their own closed form (V3 6.1475 published as 6.147 and V5
+# 39.6191187 published as 39.620) were doc 03's historical roundings and are
+# gone with the coefficient that produced them, so CAPITAL_VALUE_NOTE's
+# "published cells win" exception no longer has a case to cover.
 
 CAPITAL_VALUE_NOTE = (
     "doc 03 s2.3 states BOTH the closed form V(L) = 1 + (UPG_COEFF/(UPG_GROWTH-1))"
     " x (UPG_GROWTH^(L-1) - 1) AND the rounded 3-dp vector CAPITAL_VALUE_V"
-    " [1.000, 2.450, 6.147, 15.576, 39.620] that data/economy.json s8 ships. They"
-    " disagree at L3 and L5: exact V3 = 6.1475 and V5 = 39.6191187, so a house"
-    " generates 7377 / 47543 from the closed form against the 7376 / 47544 doc 03"
-    " s2.3 and s3.2 publish (and doc 02 s2.2's payback check recomputes at 7376)."
-    " The published cells win, so this generator multiplies by CAPITAL_VALUE_V."
+    " [1.000, 2.150, 5.083, 12.560, 31.629, 80.254] that data/economy.json s8"
+    " ships. Since Wave 17 (doc 93 sec Y7) every cell of the vector IS"
+    " its own closed form at 3 dp, half-up -- the old L3/L5 disagreements (6.147"
+    " against an exact 6.1475, 39.620 against 39.6191187) were artefacts of the"
+    " 1.45 coefficient and went with it. A PRODUCT formed from the rounded vector"
+    " can still differ by a dollar from one formed from the exact form (house L3"
+    " 1200 x 5.083 = 6100 against 1200 x 5.0825 = 6099), which is unavoidable and"
+    " is why the vector, not the closed form, stays the authority: this generator"
+    " multiplies by CAPITAL_VALUE_V and doc 03 publishes what it produces."
 )
 
 # doc 03 s2.2's yield map -- DESCRIPTIVE ONLY (report 98 RR-5). Checked here as
@@ -204,21 +211,24 @@ MISMATCH_NOTE = (
 
 PUBLISHED_UPGRADE_STEPS = {
     # doc 03 s2.3 "House example" and s3.2's schema sample.
-    # The fifth step is the sixth rung's (doc 92 s23.4): 1,200 x 1.45 x 2.55^4.
-    "house": [1740, 4437, 11314, 28852, 73572],
+    # The fifth step is the sixth rung's (doc 92 s23.4): 1,200 x 1.15 x 2.55^4.
+    # Re-published in Wave 17 at UPG_COEFF 1.15 (doc 93 sec Y7): every step is
+    # exactly 79.31% of the 1.45 price it replaces.
+    "house": [1380, 3519, 8973, 22882, 58350],
 }
 PUBLISHED_CAPITAL_VALUES = {
-    # doc 03 s3.2's schema sample (and s2.3's "L5 capital value 47,544").
-    "house": [1200, 2940, 7376, 18691, 47544, 121115],
+    # doc 03 s3.2's schema sample (and s2.3's "L5 capital value"), re-published
+    # in Wave 17 on the new CAPITAL_VALUE_V.
+    "house": [1200, 2580, 6100, 15072, 37955, 96305],
 }
 # Single published capital cells stated elsewhere in the project.
 PUBLISHED_CAPITAL_CELLS = [
     # (archetype, level, value, source)
-    ("house", 3, 7376, "doc 02 s2.2 payback worked check (1,200 x 6.147)"),
-    ("apartment", 3, 43029, "doc 02 s2.6 repair worked example (7,000 x 6.147)"),
+    ("house", 3, 6100, "doc 02 s2.2 payback worked check (1,200 x 5.083)"),
+    ("apartment", 3, 35581, "doc 02 s2.6 repair worked example (7,000 x 5.083)"),
 ]
-PUBLISHED_STEP_MULTIPLIERS = [D("1.45"), D("3.6975"), D("9.4286"), D("24.0429"),
-                             D("61.3096")]
+PUBLISHED_STEP_MULTIPLIERS = [D("1.15"), D("2.9325"), D("7.4779"), D("19.0686"),
+                             D("48.6249")]
 
 # doc 03 s2.12 / C-11: the starter anchor the whole pacing model hangs on.
 STARTER_ANCHOR_MIX = [("house", 1, 18), ("store", 1, 5), ("apartment", 1, 3), ("office", 1, 1)]

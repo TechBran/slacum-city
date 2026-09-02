@@ -3768,6 +3768,214 @@ None can change behaviour, and that is proved rather than asserted:
 edits and all four digests are byte-identical.
 
 
+## 39. WAVE 17 — the economy dial-in: who pays, how fast, how much (binding)
+
+*Filed 2026-09-02 against the user's three playtest notes of 2026-09-01. Five
+rulings — one of which was reversed by its own measurement, and that reversal is
+the most useful thing in this section. Every number was measured on this branch
+and the command is quoted beside it. The rulings themselves are doc 93 §Y and the
+measurements doc 92 §43.*
+
+**Baselines.** The fork's four `tools/profile_sim.gd --hash-only` hashes were
+`a27da24aaf6e9663…` / `7745cb25e55ff65c…` (starter) and `7c99720f5ff14553…` /
+`d8e8889681b23297…` (bench), verified unmoved before a line was edited. After
+this pass: **`05614522975fad52…` / `d1aaee0dca92f2fd…`** and
+**`275aad9d4aeea809…` / `d40126e371371d59…`**. `data/buildings.json` carries no numeric change at all — every
+`decay_per_hour` cell is byte-identical to the fork (RR-101); its one diff is a
+stale `s2.12 -> s2.14` cross-reference inside a `_note` string that
+`tools/gen_buildings.py` had already corrected and the shipped file had not.
+
+**The shape of it.** Three notes came back from days of play on the Fold — repair
+is too aggressive and bills the wrong party, income is too slow, upgrades cost
+too much — and each of them turned out to be a *contract* defect wearing a
+tuning defect's clothes. The repair note is an ownership error the code states
+plainly and nobody had read; the income note is a charge that should never have
+been on the city's ledger; the upgrade note is a coefficient whose correct value
+is an identity between two constants that were already published.
+
+### RR-99 — the repair moves to the owner; the SERVICE cost does not
+
+**Ruling: `cmd_repair_building` refuses private stock; `E_building_maint` stays;
+`ASSET_CONDITION_PENALTY_COEFF` reaches the two city assets still billed flat.**
+
+`EconomySystem.settle_hour`'s maintenance loop skips every row for which
+`CostCurves.is_revenue_producing(type)` is false — C-08, so a civic or utility
+shell is not billed twice beside its own department or O&M line. That predicate
+is `REVENUE_CLASSES.has(class_of(type))` and `REVENUE_CLASSES` is
+`["residential", "commercial", "industrial", "tech"]`, so the set the line bills
+is exactly the set the city does not own. **The first draft of this ruling
+retired it on that reading and the retirement was withdrawn on the measurement**
+(doc 92 §43.8): with the line gone and private stock keeping itself up,
+`tools/measure_insolvency.gd` put `do_nothing` on `standard` at game-day **176**
+against gate 29's ruled 69, and `casual` never went insolvent inside 200
+game-days at all.
+
+What the line prices is the city's cost of **serving** a building — the reading
+C-08's own exclusion implies, since civic shells are excluded because *their own
+O&M lines bill them* — and it rises as a building wears because a worn building
+costs more to serve. What the 2026-09-01 playtest asked to move to the owner is
+the **repair**: a lumpy purchase, at a price, behind a tap, on a building the
+player does not own. That is what moves.
+
+* `cmd_repair_building` refuses private stock with `E_OWNER_MAINTAINED` at any
+  condition, and `repair_view` folds the code into "nothing to buy" so no row is
+  drawn (doc 93 §Y3a). Measured: the REPAIR affordance falls from **260 private /
+  21 civic** to **0 / 24** in a 21-game-day `balanced` city, and private repair
+  trips from 14 to 0.
+* A private building's owner holds it at `condition.band_worn` **while the city
+  serves it**, so it is never `damaged` by wear, never destroyed by wear, and
+  always still upgradable (0.60 > `min_condition_to_upgrade` 0.55). After a
+  720-game-hour absence a `balanced` city's private stock goes from
+  **2/16/236/8** across the bands to **4/233/0/0**, with **0** damaged.
+* The city sees the drag as `f_condition` — `0.40 + 0.60 × 0.60 = 0.76`, a
+  permanent **24 %** cut in what a neglected building pays — and the recovery is
+  an **upgrade**, which sets condition back to 1.00 and which RR-103 made 20.7 %
+  cheaper in the same wave.
+
+**Founding ledger, both sides** (`tools/measure_founding_ledger.gd --hours=24`,
+`standard`, seed 1337): gross **1047.184374 → 1047.184374, bit-identical**;
+expense `532.296003 → 533.212457`; net `514.888371 → 513.971917`. The **only**
+line that moves is `departments`, by +$0.92/gh, because doc 93 §Y5 finally
+applies `ASSET_CONDITION_PENALTY_COEFF` to a worn station — the coefficient a
+worn transformer and a worn water main have always paid. That is **0.18 %**,
+inside every anchor's own ±1 % tolerance, so **gates 1, 2 and 2b hold unchanged
+and not one pacing guardrail is re-fitted.** The same reading closes the one flat
+row left in `e_grid`: a plant carries the condition penalty its own nodes and
+lines carry.
+
+### RR-100 — `building_rules.json.condition` was a mirror; `Building` now reads it
+
+**Ruling: the condition block is stamped on every `Building` and read from
+there.** PA-13 found that all fifteen keys were validated for presence, asserted
+by `tests/test_building_catalog.gd`, and **read by nothing** — `building.gd`
+hardcoded every one of them — so this wave's decay retune would have edited a
+file that moves nothing. The block is stamped beside `stats` and `max_level` at
+the four sites that make a `Building` live (boot, restore, placement, and doc
+05's water shell), never as
+a static: `sim/` is RefCounted-only and the rigs boot several `CitySim`s per
+process, so a process-global would let one city's fixture move another city's
+physics. The consts remain as the fallback, so a `Building` nobody stamped is
+bit-identical to the day before.
+
+The gate is PA-13's own and is the reason this row exists: `tests/test_building.gd`
+perturbs an authored key and asserts the **behaviour** moves, not that the loader
+accepted it. Five tests, one per key family. **Scope: the `condition` block only.**
+`construction.*` and `headroom_safety` are the same defect in the same file and
+belong to the construction-queue and power lanes; PA-13 stays open until they land.
+
+### RR-101 — PA-82's decay cap is DECLINED, and the neglect clock is re-fitted
+
+**Ruling: no city decay rate moves.** PA-82 asks that `power_facility` 0.00090,
+`substation` 0.00080, `water_facility` 0.00070 and `construction_yard` 0.00065 be
+capped at the house's 0.00045. The cap was implemented, measured and withdrawn:
+
+```
+tools/measure_insolvency.gd --max-days=200 · do_nothing · seed 1337
+                            casual   standard   hard   crisis
+  gate 29's ruled figures      105         69     51       26
+  with the cap               NEVER        168    128       71
+  without the cap            NEVER        175    131       38
+```
+
+After RR-99 the city's own decay rates are the only neglect clock left, and the
+cap doubles it on its own. Doc 02 §2.3's Decay columns are restored cell for
+cell; **no private seed was ever touched**, because after RR-99 a private seed
+sets only how fast a building reaches its owner's floor.
+
+*PA-82 is not thereby dismissed.* Its real complaint is that the plant's and the
+water works' first quotes land before the sheet has taught repair — a curriculum
+and surface problem, and its own proposed fix (the Grid-health chip warning from
+plant condition) is the power lane's. Declined on the rate; open on the surface.
+
+**Gate 29 is re-fitted, and it is the only gate this pass moves.**
+`tools/measure_insolvency.gd --max-days=220`, three seeds:
+
+| preset | 1337 / 4242 / 9001 | mean | Wave-14 mean |
+|---|---|---|---|
+| `casual` | 193 / 190 / 189 | **190.7** | 105.0 |
+| `standard` | 137 / 139 / 129 | **135.0** | 69.0 |
+| `hard` | 58 / 97 / 64 | **73.0** | 51.0 |
+| `crisis` | 31 / 18 / 43 | **30.7** | 26.0 |
+
+Horizons `120/90/70/55 → 210/160/120/70`, ceiling `118 → 200`, floor unmoved at
+18, `standard` pinned `69 ± 6 → 137 ± 12`. **Every preset still dies and doc 03
+§2.9's ordering holds on every seed individually**, which is the assertion the
+gate is for. The derivation is doc 92 §43.8: the ownership floor removes private
+structural failure, which was the dominant term — half the engine, twice the
+clock.
+
+**And the autopsy that made this necessary is a finding in its own right.** A
+probe of an untouched `standard` city shows `PLANT-1` **destroyed on game-day 40**
+and `SUB-A` **on 45**, with the tax line moving from 569.7 to 580.1 across the
+two failures — *nothing goes dark*. So the service clause that was to keep
+neglect fatal after private stock stopped rotting to death is built on a signal
+this fork does not emit, and what actually killed a neglected city was private
+structural failure. It is the third instance of the audit's own "a computed value
+with no consequence" (PA-02, PA-08, PA-09), it is the most expensive because a
+whole difficulty table was fitted on it, and it belongs to the power lane. Filed
+as doc 93 §Y8.
+
+### RR-102 — the founding taper is correct and was invisible
+
+**Ruling: publish the window; move no dollar.** Doc 03 §2.5a's assistance retires
+`FOUNDING_ASSISTANCE_PER_HOUR / FOUNDING_ASSISTANCE_DAYS = 172/7 = $24.571/gh =
+$589.71 a game-day`, which PA-32 measured as the largest single mover of the net
+chip in the opening fortnight, with no toast, no log row and no end date
+anywhere. Flattening it would pay the player for the seven days they are least
+short of money — a `do_nothing` starter city banks **$89,798 by game-day 7**
+without being touched. `CostCurves.founding_assistance_days_left()` reads the
+same two constants the other way round, the settle snapshot carries
+`assistance_days_left` at its top (a **count**, so it is not inside `revenue`,
+where every key is a dollar a sheet sums), and doc 12's budget row spends it on
+its own label.
+
+### RR-103 — an upgrade costs what the revenue it adds is worth
+
+**Ruling: `UPG_COEFF = TAX_LEVEL_GROWTH − 1 = 1.15`, an identity and not a fit.**
+Doc 03 §2.3's ladders reduce every payback to a ratio of published constants:
+
+```
+payback(upgrade L->L+1) = (build_cost_l1 / base_tax_l1)
+                        x [UPG_COEFF / (TAX_LEVEL_GROWTH - 1)]
+                        x (UPG_GROWTH / TAX_LEVEL_GROWTH)^(L-1)
+```
+
+and `build_cost_l1 / base_tax_l1` is **exactly 100 gh for every revenue
+archetype**, so the bracket is the whole of it. Measured on the shipped, rounded
+tables (house, `upgrade_cost / Δbase_tax`): `124.3 / 153.0 / 176.8 / 210.6 /
+249.4` → **`98.6 / 121.3 / 140.2 / 167.0 / 197.8`** game-hours. The ruled window
+is `[100, 200]` — one new-build payback to two — and 1.15 is the largest
+coefficient whose whole six-rung ladder fits inside it.
+
+**PA-46's own constant is superseded**: it proposes `UPG_COEFF ≤ 1.15 ×
+(TAX_LEVEL_GROWTH − 1) = 1.3225` "so L1→L2 payback ≤ new-build", and substituting
+gives a ratio of `1.3225/1.15 = 1.15`, i.e. a first rung 15 % **worse** than a
+new build — the opposite of its stated target. The exclusive condition is
+`UPG_COEFF ≤ TAX_LEVEL_GROWTH − 1` and this ruling takes the equality.
+
+`CAPITAL_VALUE_V` is re-derived to `[1.000, 2.150, 5.083, 12.560, 31.629,
+80.254]` and every cell is now its own closed form at 3 dp; the L3/L5
+disagreements the 1.45 vector carried were artefacts of that coefficient. Two
+derived consequences are published rather than left stale:
+
+* **the water and power component ladders FOLLOW, and pinning is forbidden**
+  (doc 93 §Y7a). `water_component_upgrade_cost` is defined as a *ratio of doc
+  03's anchor step*, not as a price — doc 05 owns the ratio, doc 03 owns the
+  dollar — so pinning would author a second upgrade curve, which is a second
+  currency authority in the one place C-07 names by hand.
+* **`LEVEL_UP_GRANT_BY_CITY_LEVEL` rungs 5 and 6 follow doc 03 §2.5a's own rule**
+  — "the city pays half of what the next chapter asks you to buy". Rung 5's basis
+  is an *upgrade* (the level-6 tower step, `73,572 → 58,350`), so `37,000 →
+  29,000`, and rung 6's own 2.25× extrapolation with it, `83,000 → 65,000`.
+  Rungs 1–4 are built on build costs, which did not move.
+
+**The construction-rush verb is not in this lane's fork** (`grep -rn "cmd_rush"
+sim/` is empty here) and this lane changes no line of it. It prices a rush off
+`CostCurves`, so RR-103 carries into it automatically: a rush of an upgrade gets
+**20.69 % cheaper** in step with the upgrade, and its derived per-crew-hour rate
+is unchanged because that rate is a fraction of a price and both halves move
+together. Recorded so the merge checks it rather than discovers it.
+
 ## 45. WAVE 17 FORK — the production audit's three rulings (binding)
 
 *Filed 2026-09-01 from `main` `fd4d8a0` by the synthesis agent of the production

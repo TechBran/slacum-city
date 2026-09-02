@@ -907,3 +907,57 @@ func test_water_footprint_cross_check_against_doc_05() -> void:
 		if water is Dictionary:
 			assert_true(catalog.cross_check_water_footprints(water).is_empty(),
 					"shipped data/water.json agrees with doc 02's pump reference row")
+
+
+## The bug this test exists for was shipped and caught in the same wave: doc 02
+## §2.6a's ownership floor reads `condition.band_worn`, `Building
+## .DEFAULT_CONDITION` did not carry that key, and so an UNSTAMPED building had
+## no floor — a silently different physics from a stamped one, in the exact shape
+## PA-13 filed against the consts this dict replaced. A fallback that is not the
+## whole authored block is not a fallback.
+func test_building_default_condition_matches_the_authored_block() -> void:
+	var catalog := _catalog()
+	var authored := catalog.condition_rules()
+	assert_false(authored.is_empty(), "data/building_rules.json carries the block")
+	for key: String in Building.DEFAULT_CONDITION:
+		assert_true(authored.has(key),
+				"Building.DEFAULT_CONDITION carries '%s' and the file does not" % key)
+		assert_almost_eq(float(authored[key]),
+				float(Building.DEFAULT_CONDITION[key]), 1e-9,
+				"condition.%s: the fallback and the authored value must agree" % key)
+	for key: String in ["band_good", "band_worn", "band_poor",
+			"auto_damage_threshold", "min_condition_to_upgrade", "repair_time_factor"]:
+		assert_true(Building.DEFAULT_CONDITION.has(key),
+				"every key `Building` READS must be in the fallback: '%s'" % key)
+
+
+## Doc 02 §2.6a / doc 93 §Y1's ownership table, asserted archetype by archetype
+## rather than by the predicate that produces it — the point of the ruling is
+## WHICH buildings are on each side, and a test that re-derives the answer from
+## `owner_maintenance.classes` would pass on any class list at all.
+func test_the_ownership_split_is_six_and_six() -> void:
+	var catalog := _catalog()
+	const PRIVATE := ["house", "apartment", "store", "office", "high_rise",
+			"data_center"]
+	const CITY := ["police_station", "fire_station", "construction_yard",
+			"power_facility", "substation", "water_facility"]
+	for archetype: String in PRIVATE:
+		assert_true(catalog.owner_maintained(archetype),
+				"%s is private stock: its owner keeps it up" % archetype)
+	for archetype: String in CITY:
+		assert_false(catalog.owner_maintained(archetype),
+				"%s is the city's: the city buys its repairs" % archetype)
+	assert_eq(PRIVATE.size() + CITY.size(), catalog.archetypes().size(),
+			"every archetype is on exactly one side of the ruling")
+	# And the split is doc 03's revenue predicate, not a second opinion about it:
+	# `E_building_maint` bills exactly the buildings whose owners repair them,
+	# which is the observation doc 93 §Y1 is built on. Asserted against the const
+	# itself, so the two lists cannot drift apart in a later wave.
+	var authored: Array = (catalog.rules()["owner_maintenance"]["classes"] as Array)
+	authored.sort()
+	var revenue := CostCurves.REVENUE_CLASSES.duplicate()
+	revenue.sort()
+	assert_eq(str(authored), str(revenue),
+			"owner_maintenance.classes IS CostCurves.REVENUE_CLASSES — the set "
+			+ "E_building_maint bills is the set whose owners repair it")
+

@@ -606,11 +606,16 @@ func _apply(screen: String) -> void:
 		"building_repairable":
 			# §2.9 item 6's actions row with everything live: a repair to buy, a
 			# shed tier to pick, and a demolition to hold for.
+			#
+			# **A CITY asset** since Wave 17 (doc 02 §2.6a): private stock keeps
+			# itself up, so a worn house draws no repair row and this state used
+			# to render the one thing it exists to show as absent. `POL-1` is
+			# the founding police station.
 			if _building_panel != null:
-				var worn: Building = _sim.buildings[_first_building()]
+				var worn: Building = _sim.buildings["POL-1"]
 				worn.condition = 0.72
 				_sim.treasury.balance = 500_000
-				_building_panel.show_building(_first_building())
+				_building_panel.show_building("POL-1")
 		"building_water":
 			# Doc 05 §6's node block: a `water_facility` shell with its own
 			# ladder rows under the doc-02 one. `WTR-1` hosts three nodes, which

@@ -45,10 +45,16 @@ func test_economy_json_carries_the_locked_constants() -> void:
 	assert_true(economy is Dictionary, "data/economy.json parses")
 	var data: Dictionary = economy
 	assert_almost_eq(float(data["tax"]["TAX_LEVEL_GROWTH"]), 2.15)
-	assert_almost_eq(float(data["upgrades"]["UPG_COEFF"]), 1.45)
+	assert_almost_eq(float(data["upgrades"]["UPG_COEFF"]), 1.15)
 	assert_almost_eq(float(data["upgrades"]["UPG_GROWTH"]), 2.55)
 	assert_almost_eq(float(data["expenses"]["REPAIR_COST_PER_CAPITAL"]), 0.85)
 	assert_almost_eq(float(data["expenses"]["BUILDING_MAINT_RATE"]), 0.00040, 1e-9)
+	# Wave 17 (doc 93 §Y1, doc 92 §43.8): the ownership ruling was drafted to
+	# retire this line and the retirement was WITHDRAWN on the measurement — with
+	# it gone, `do_nothing` on `standard` survived to game-day 176 against gate
+	# 29's ruled 69. The constant is pinned here so a second attempt has to read
+	# the note in `data/economy.json` first.
+	assert_almost_eq(float(data["expenses"]["MAINT_CONDITION_PENALTY"]), 1.5, 1e-9)
 	assert_almost_eq(float(data["roads"]["ROAD_REPAIR_CAPITAL_FRACTION"]), 0.20)
 	assert_eq(int(data["land"]["LAND_BASE"]), 9000)
 	# report 98 C-59: the knob is deleted, not defaulted.
@@ -67,7 +73,7 @@ func test_generated_columns_match_curves() -> void:
 	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(BUILDING_ECONOMY_PATH))
 	assert_true(data is Dictionary, "data/building_economy.json parses")
 	var archetypes: Dictionary = (data as Dictionary)["archetypes"]
-	var v: Array = [1.000, 2.450, 6.147, 15.576, 39.620]
+	var v: Array = [1.000, 2.150, 5.083, 12.560, 31.629]
 	for id in archetypes:
 		var row: Dictionary = archetypes[id]
 		var cost := float(row["build_cost_l1"])
@@ -81,7 +87,7 @@ func test_generated_columns_match_curves() -> void:
 					"%s capital_value L%d" % [id, level])
 		for step in range(1, 5):
 			assert_eq(int(row["upgrade_cost_by_step"][step - 1]),
-					CostCurves.round_half_up(cost * 1.45 * pow(2.55, step - 1)),
+					CostCurves.round_half_up(cost * 1.15 * pow(2.55, step - 1)),
 					"%s upgrade step %d" % [id, step])
 
 
@@ -111,15 +117,39 @@ func test_base_tax_yield_drift_guard() -> void:
 # ============================================== §2.3 cost curves (deliverable a)
 
 func test_house_payback_chain() -> void:
-	# doc 02 §2.2's worked check, recomputed against doc 03's curves.
+	# doc 02 §2.2's worked check, recomputed against doc 03's curves. Re-taken in
+	# Wave 17: `UPG_COEFF` 1.45 → 1.15 (doc 93 §Y7) moved both cells, and doc 02
+	# §2.6a retired the city's maintenance line on a house, so the net IS the tax.
 	var curves := _curves()
-	assert_eq(curves.capital_value("house", 3), 7376, "1,200 × 6.147")
-	assert_eq(curves.upgrade_cost("house", 2), 4437, "1,200 × 3.6975")
+	assert_eq(curves.capital_value("house", 3), 6100, "1,200 × 5.083")
+	assert_eq(curves.upgrade_cost("house", 2), 3519, "1,200 × 2.9325")
 	assert_eq(curves.base_tax("house", 3), 55)
-	var maintenance := 7376.0 * 0.00040
-	assert_almost_eq(maintenance, 2.95, 0.005)
-	var payback := 4437.0 / (55.0 - maintenance)
-	assert_almost_eq(payback, 85.2, 0.2, "doc 02 §2.2: 85.2 gh")
+	assert_almost_eq(3519.0 / 55.0, 64.0, 0.2, "doc 02 §2.2: 64.0 gh")
+
+
+## Doc 93 §Y7's identity, checked on the SHIPPED tables rather than on the closed
+## form: `UPG_COEFF = TAX_LEVEL_GROWTH − 1` puts every rung's payback — the
+## upgrade's price over the tax it ADDS — inside the ruled [100, 200] gh window,
+## and puts the first rung at or below a fresh L1's own 100 gh.
+func test_upgrade_payback_sits_inside_the_ruled_window() -> void:
+	var curves := _curves()
+	for type in ["house", "apartment", "store", "office"]:
+		var new_build := float(curves.build_cost_l1(type)) / float(curves.base_tax(type, 1))
+		assert_almost_eq(new_build, 100.0, 1.0,
+				"%s: a fresh L1 pays back in 100 gh" % type)
+		for level in range(1, 6):
+			var gain := float(curves.base_tax(type, level + 1)
+					- curves.base_tax(type, level))
+			if gain <= 0.0:
+				continue
+			var payback := float(curves.upgrade_cost(type, level)) / gain
+			assert_true(payback <= 200.0,
+					"%s L%d→L%d payback %.1f gh is outside the ruled window"
+							% [type, level, level + 1, payback])
+			if level == 1:
+				assert_true(payback <= new_build + 1.0,
+						"%s: the FIRST rung must not be worse than sprawling "
+								% type + "(%.1f gh vs %.1f)" % [payback, new_build])
 
 
 func test_cost_curve_published_cells() -> void:
@@ -129,14 +159,14 @@ func test_cost_curve_published_cells() -> void:
 	var steps: Array[int] = []
 	for level in range(1, 5):
 		steps.append(curves.upgrade_cost("house", level))
-	assert_eq(steps, [1740, 4437, 11314, 28852] as Array[int])
+	assert_eq(steps, [1380, 3519, 8973, 22882] as Array[int])
 	var capitals: Array[int] = []
 	for level in range(1, 6):
 		capitals.append(curves.capital_value("house", level))
-	assert_eq(capitals, [1200, 2940, 7376, 18691, 47544] as Array[int])
+	assert_eq(capitals, [1200, 2580, 6100, 15072, 37955] as Array[int])
 	assert_eq(curves.base_tax("house", 5), 256)
 	# doc 02 §2.6's repair example basis.
-	assert_eq(curves.capital_value("apartment", 3), 43029)
+	assert_eq(curves.capital_value("apartment", 3), 35581)
 	# The §2.2 table's L1 and L5 corners.
 	assert_eq(curves.base_tax("data_center", 3), 9707)
 	assert_eq(curves.base_tax("highrise_com", 5), 8974)
@@ -157,13 +187,13 @@ func test_doc02_archetype_aliases_resolve() -> void:
 func test_refunds_and_extras() -> void:
 	var curves := _curves()
 	# §2.3 demolition refund, §2.13(c) resale, §2.5 PM and contractor.
-	assert_eq(curves.demolition_refund_building("house", 5), 11886, "0.25 × 47,544")
+	assert_eq(curves.demolition_refund_building("house", 5), 9489, "0.25 × 37,955")
 	assert_eq(curves.vehicle_resale("mobile_transformer"), 19200, "0.40 × 48,000")
 	assert_eq(curves.vehicle_purchase("fire_engine"), 14400)
 	assert_eq(curves.vehicle_purchase("fire_engine"),
 			CostCurves.round_half_up(1.60 * curves.vehicle_purchase("patrol_car")),
 			"C-07 anchor: engine = 1.60 × patrol car")
-	assert_eq(curves.pm_cost(curves.capital_value("apartment", 3)), 2582, "0.06 × 43,029")
+	assert_eq(curves.pm_cost(curves.capital_value("apartment", 3)), 2135, "0.06 × 35,581")
 	assert_true(curves.pm_allowed(0.60))
 	assert_false(curves.pm_allowed(0.49), "below 0.50 it is a repair, not a PM")
 	assert_eq(curves.contractor_cost(10000), 18000, "1.80 × job cost")
@@ -579,8 +609,8 @@ func test_repair_pricing_single_source() -> void:
 	var curves := _curves()
 	assert_eq(curves.repair_cost(curves.capital_value_grid("transformer", 4), 0.35), 2053,
 			"6,900 × 0.35 × 0.85")
-	assert_eq(curves.repair_cost_building("apartment", 3, 0.172), 6291,
-			"43,029 × 0.172 × 0.85")
+	assert_eq(curves.repair_cost_building("apartment", 3, 0.172), 5202,
+			"35,581 × 0.172 × 0.85")
 	assert_eq(curves.repair_cost(12 * curves.capital_value_road("STREET"), 0.60), 2203,
 			"doc 10 example F repriced: 12 × 360 × 0.60 × 0.85")
 	assert_eq(curves.repair_cost_road("STREET", 0.60), 184,
@@ -596,9 +626,9 @@ func test_repair_pricing_single_source() -> void:
 func test_repair_difficulty_scalar() -> void:
 	var curves := _curves()
 	var capital := curves.capital_value("house", 5)
-	assert_eq(curves.repair_cost(capital, 1.0, 1.0), 40412, "0.85 × 47,544")
-	assert_eq(curves.repair_cost(capital, 1.0, 0.70), 28289, "M_repair casual")
-	assert_eq(curves.repair_cost(capital, 1.0, 1.60), 64660, "M_repair crisis")
+	assert_eq(curves.repair_cost(capital, 1.0, 1.0), 32262, "0.85 × 37,955")
+	assert_eq(curves.repair_cost(capital, 1.0, 0.70), 22583, "M_repair casual")
+	assert_eq(curves.repair_cost(capital, 1.0, 1.60), 51619, "M_repair crisis")
 	assert_eq(curves.repair_cost(capital, 0.0, 1.0), 0)
 	assert_eq(curves.repair_cost(capital, 5.0, 1.0), curves.repair_cost(capital, 1.0, 1.0),
 			"damage_fraction is clamped to [0,1]")
@@ -936,3 +966,42 @@ func _first_event(drained: Array, type: StringName) -> Dictionary:
 
 func _has_event(drained: Array, type: StringName) -> bool:
 	return not _first_event(drained, type).is_empty()
+
+
+## Doc 03 §2.5a / doc 93 §Y4 — the taper's WINDOW, published because the taper
+## itself is correct and its silence was the defect. PA-32 measured it as the
+## largest single mover of the net chip in the opening fortnight with no toast,
+## no log row and no end date anywhere. No dollar moves for this test to check:
+## it checks that the number the surface needs exists and agrees with the
+## per-hour curve it is derived from.
+func test_founding_assistance_window_is_published() -> void:
+	var curves := _curves()
+	var grants: Dictionary = curves.economy_data()["grants"]
+	var days := int(grants["FOUNDING_ASSISTANCE_DAYS"])
+	var per_hour := float(grants["FOUNDING_ASSISTANCE_PER_HOUR"])
+	assert_eq(curves.founding_assistance_days_left(0), days,
+			"on the founding day the whole window is still to come")
+	for day in range(0, days + 3):
+		var left := curves.founding_assistance_days_left(day)
+		assert_eq(left, maxi(0, days - day), "day %d" % day)
+		# The two readings of the same pair must agree about the END: the hourly
+		# curve pays nothing exactly when the window says nothing is left.
+		assert_eq(left == 0, is_zero_approx(curves.founding_assistance_per_hour(day)),
+				"day %d: days_left and the hourly curve disagree about the end" % day)
+	# And the step is the one PA-32 measured: 172/7 = $24.571/gh = $589.71 a day.
+	assert_almost_eq(per_hour / float(days), 24.5714, 0.001)
+	assert_almost_eq(24.0 * per_hour / float(days), 589.714, 0.01)
+
+
+## …and the settle snapshot carries it, at the TOP and not inside `revenue`,
+## because every key in `revenue` is a dollar a budget sheet sums and this is a
+## count (doc 93 §Y4).
+func test_settlement_carries_the_assistance_window_as_a_count() -> void:
+	var system := _system()
+	var inputs := _founding_inputs()
+	inputs["founding_assistance_days_left"] = 4
+	var snapshot := system.settle_hour(inputs)
+	assert_eq(int(snapshot["assistance_days_left"]), 4)
+	assert_false((snapshot["revenue"] as Dictionary).has("assistance_days_left"),
+			"a count must not sit among the dollar rows a sheet totals")
+

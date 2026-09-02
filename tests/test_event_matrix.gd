@@ -142,11 +142,6 @@ const REGISTER := {
 		"unreachable: Building.ignite() returns it inside a command result and"
 		+ " its only caller (sim/incidents/city_incident_world.gd) reads `ok`"
 		+ " and drops `events`. The fire the player sees is incident_created.",
-	"building_repaired":
-		"covered: RenderStateModel.ingest_conditions is fed condition on the"
-		+ " shell's game-hour walk and washes the soot off a repaired building."
-		+ " An event-only renderer shows one step; the condition feed shows"
-		+ " the wear.",
 	"building_priority_changed":
 		"player_initiated: the building panel set it.",
 	"upgrade_started":

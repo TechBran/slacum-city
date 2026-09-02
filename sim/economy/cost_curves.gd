@@ -412,6 +412,25 @@ func founding_assistance_per_hour(game_day: int) -> float:
 	return float(grants().get("FOUNDING_ASSISTANCE_PER_HOUR", 0.0)) * share
 
 
+## Doc 03 §2.5a — how many whole game-days of founding assistance are LEFT after
+## the settled game-day `day`, and 0 once the taper has retired (Wave 17, doc 93
+## §Y4, doc 92 §43.2, report 98 RR-102).
+##
+## It is the same two constants read the other way round, and it exists because
+## the 2026-09-01 production audit measured the taper as the largest single
+## income event of the opening fortnight and found it SILENT: the grant retires
+## at `FOUNDING_ASSISTANCE_PER_HOUR / FOUNDING_ASSISTANCE_DAYS` every game-day —
+## on the shipped constants **$24.57/gh, $589.71 a game-day** — while the city's
+## own income grows an order of magnitude slower, so the opening reads as the
+## game getting poorer while you play it and nothing on any surface says why.
+## **No dollar moves for this** (doc 93 §Y4): the taper is correct and its
+## invisibility was the defect, so doc 03 publishes the window and doc 12's
+## budget row spends it on the row's own label.
+func founding_assistance_days_left(game_day: int) -> int:
+	var days := int(grants().get("FOUNDING_ASSISTANCE_DAYS", 0))
+	return maxi(0, days - maxi(0, game_day))
+
+
 ## Doc 03 §2.5a — the celebration grant for reaching `city_level`, paid once per
 ## level per city. Index 0 is the founding level and pays nothing; a level above
 ## the published ladder pays nothing rather than extrapolating itself.

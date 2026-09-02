@@ -710,91 +710,115 @@ func test_demolish_determinism() -> void:
 
 # ===================================================== 3. cmd_repair_building
 
+## Re-pointed onto a CITY asset in Wave 17 (doc 02 §2.6a): `cmd_repair_building`
+## is the city buying a repair, and since the ownership ruling the only buildings
+## it can buy one for are the city's. `POL-1` is the founding police station.
 func test_repair_from_active_restores_to_new() -> void:
-	# doc 02 §2.6 / doc 03 §2.5, on the house L1 fixture: capital $1,200,
-	# damage 0.50 ⇒ cost 1,200 × 0.50 × 0.85 = $510 and crew-hours
-	# build_time_hours 2.0 × 0.50 × 0.50 = 0.50.
+	# doc 02 §2.6 / doc 03 §2.5, on the police L1 fixture: capital $18,000,
+	# damage 0.50 ⇒ cost 18,000 × 0.50 × 0.85 = $7,650 and crew-hours
+	# build_time_hours 10.0 × 0.50 × 0.50 = 2.50.
 	var sim := CitySim.boot_from_files()
-	var b: Building = sim.buildings["H-001"]
+	var b: Building = sim.buildings["POL-1"]
 	b.condition = 0.50
 	var balance: int = sim.treasury.balance
-	var preview := sim.cmd_repair_building("H-001", true)
+	var preview := sim.cmd_repair_building("POL-1", true)
 	assert_true(bool(preview["ok"]), str(preview))
-	assert_eq(int(preview["payload"]["cost"]), 510)
-	assert_almost_eq(float(preview["payload"]["crew_hours"]), 0.50, 1e-9)
+	assert_eq(int(preview["payload"]["cost"]), 7650)
+	assert_almost_eq(float(preview["payload"]["crew_hours"]), 2.50, 1e-9)
 	assert_almost_eq(float(preview["payload"]["repair_target"]), 1.00, 1e-9)
 	assert_eq(sim.treasury.balance, balance, "preview never spends")
 
-	var result := sim.cmd_repair_building("H-001")
+	var result := sim.cmd_repair_building("POL-1")
 	assert_true(bool(result["ok"]), str(result))
-	assert_eq(sim.treasury.balance, balance - 510)
+	assert_eq(sim.treasury.balance, balance - 7650)
 	assert_eq(b.state, &"repairing")
 	var job: Dictionary = sim.construction.job(int(result["payload"]["job_id"]))
 	assert_eq(job["kind"], &"repair", "doc 02 §2.13 job kind")
-	sim.advance_hours(4.0)
+	sim.advance_hours(8.0)
 	assert_eq(b.state, &"active")
-	# doc 02 §2.6 wear is live (doc 92 F-2), so the hours the house stands AFTER
-	# its repair have already cost it condition: the target is 1.00 and what is
-	# left of it is `1.00 − hours_since × decay_per_hour` (house L1, 0.00045/gh).
-	assert_almost_eq(b.condition, 1.0, 4.0 * 0.00045,
+	# doc 02 §2.6 wear is live (doc 92 F-2), so the hours the station stands
+	# AFTER its repair have already cost it condition: the target is 1.00 and
+	# what is left of it is `1.00 − hours_since × decay_per_hour` (police L1,
+	# 0.00040/gh).
+	assert_almost_eq(b.condition, 1.0, 8.0 * 0.00040,
 			"repair from active targets 1.00, less the wear since")
 	assert_true(b.condition < 1.0, "and the city keeps wearing out afterwards")
+
+
+## The private half of the same verb (doc 93 §Y1): there is nothing to buy.
+func test_repair_refuses_private_stock_at_any_condition() -> void:
+	var sim := CitySim.boot_from_files()
+	var b: Building = sim.buildings["H-001"]
+	assert_true(b.owner_maintained, "a house is private stock")
+	var balance: int = sim.treasury.balance
+	for condition in [0.90, 0.50, 0.10]:
+		b.condition = float(condition)
+		var refused := sim.cmd_repair_building("H-001")
+		assert_false(bool(refused["ok"]))
+		assert_eq(refused["reason_code"], &"E_OWNER_MAINTAINED")
+	assert_eq(sim.treasury.balance, balance, "and it charges nothing")
 
 
 func test_repair_from_damaged_targets_085() -> void:
 	# doc 02 §2.12: post-damage repairs never restore to new.
 	var sim := CitySim.boot_from_files()
-	var b: Building = sim.buildings["H-002"]
+	var b: Building = sim.buildings["FIRE-1"]
 	b.condition = 0.20
 	b.state = &"damaged"
-	var result := sim.cmd_repair_building("H-002")
+	var result := sim.cmd_repair_building("FIRE-1")
 	assert_true(bool(result["ok"]), str(result))
 	assert_almost_eq(float(result["payload"]["repair_target"]),
 			Building.REPAIR_TARGET_FROM_DAMAGED, 1e-9)
-	sim.advance_hours(4.0)
+	sim.advance_hours(12.0)
 	assert_eq(b.state, &"active")
-	assert_almost_eq(b.condition, 0.85, 4.0 * 0.00045,
+	assert_almost_eq(b.condition, 0.85, 12.0 * 0.00040,
 			"0.85 target, less doc 02 §2.6 wear since (doc 92 F-2)")
 
 
 func test_repair_rejections() -> void:
 	var sim := CitySim.boot_from_files()
 	assert_eq(sim.cmd_repair_building("NOPE")["reason_code"], &"E_UNKNOWN_BUILDING")
+	# Private stock: the owner keeps it up, whatever its condition (doc 93 §Y1).
+	# This is checked FIRST because it is checked first — it is the outermost
+	# gate, so it is the code a house answers with even when something else is
+	# also wrong with it.
+	(sim.buildings["H-001"] as Building).condition = 0.5
+	assert_eq(sim.cmd_repair_building("H-001")["reason_code"], &"E_OWNER_MAINTAINED")
 	# Nothing wrong with it.
-	assert_eq(sim.cmd_repair_building("H-001")["reason_code"], &"E_NOT_DAMAGED")
+	assert_eq(sim.cmd_repair_building("POL-1")["reason_code"], &"E_NOT_DAMAGED")
 	# Wrong state.
-	var b: Building = sim.buildings["H-002"]
+	var b: Building = sim.buildings["FIRE-1"]
 	b.condition = 0.5
 	b.state = &"under_construction"
-	assert_eq(sim.cmd_repair_building("H-002")["reason_code"], &"E_STATE")
+	assert_eq(sim.cmd_repair_building("FIRE-1")["reason_code"], &"E_STATE")
 	b.state = &"active"
 	# Already queued.
-	assert_true(bool(sim.cmd_repair_building("H-002")["ok"]))
+	assert_true(bool(sim.cmd_repair_building("FIRE-1")["ok"]))
 	b.state = &"active"  # force the state gate open to reach the queue check
-	assert_eq(sim.cmd_repair_building("H-002")["reason_code"], &"E_JOB_IN_FLIGHT")
+	assert_eq(sim.cmd_repair_building("FIRE-1")["reason_code"], &"E_JOB_IN_FLIGHT")
 	# Broke.
-	var c: Building = sim.buildings["H-003"]
+	var c: Building = sim.buildings["YARD-1"]
 	c.condition = 0.1
 	var balance: int = sim.treasury.balance
 	sim.treasury.spend(balance - 1, &"misc")
-	assert_eq(sim.cmd_repair_building("H-003")["reason_code"], &"E_FUNDS")
+	assert_eq(sim.cmd_repair_building("YARD-1")["reason_code"], &"E_FUNDS")
 	assert_eq(sim.treasury.balance, 1, "a refused repair charges nothing")
 
 
 func test_repair_survives_save_roundtrip_mid_job() -> void:
 	var sim := CitySim.boot_from_files(21)
-	var b: Building = sim.buildings["APT-001"]
+	var b: Building = sim.buildings["SUB-A"]
 	b.condition = 0.40
-	assert_true(bool(sim.cmd_repair_building("APT-001")["ok"]))
+	assert_true(bool(sim.cmd_repair_building("SUB-A")["ok"]))
 	sim.advance_hours(0.25)  # save with the repair job in flight
 	var body := sim.canonical_capture()
 	var restored := CitySim.boot_from_files(21)
 	restored.restore_state(body)
-	assert_eq((restored.buildings["APT-001"] as Building).state, &"repairing")
+	assert_eq((restored.buildings["SUB-A"] as Building).state, &"repairing")
 	sim.advance_hours(10.0)
 	restored.advance_hours(10.0)
 	assert_eq(sim.state_hash(), restored.state_hash())
-	assert_eq((restored.buildings["APT-001"] as Building).state, &"active")
+	assert_eq((restored.buildings["SUB-A"] as Building).state, &"active")
 
 
 # ========================================================= 4. cmd_set_priority

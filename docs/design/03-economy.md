@@ -237,30 +237,71 @@ One curve family, so doc 02 can derive every cost column from a single `build_co
 
 ```
 upgrade_cost(type, L → L+1) = round( build_cost_L1[type] × UPG_COEFF × UPG_GROWTH^(L-1) )
-UPG_COEFF = 1.45,   UPG_GROWTH = 2.55
+UPG_COEFF = 1.15,   UPG_GROWTH = 2.55
 ```
 
-Step multipliers of `build_cost_L1`: `1.45, 3.6975, 9.4286, 24.0429`.
+Step multipliers of `build_cost_L1`: `1.15, 2.9325, 7.4779, 19.0686`.
+
+> **`UPG_COEFF` 1.45 → 1.15 (Wave 17, doc 93 §Y7, doc 92 §43.3).** From the
+> 2026-09-01 playtest: *"upgrading buildings is way too aggressive on the
+> prices."* The new value is **an identity, not a fit**:
+> `UPG_COEFF = TAX_LEVEL_GROWTH − 1`. The Payback block below shows why — the
+> bracket `UPG_COEFF / (TAX_LEVEL_GROWTH − 1)` is the whole of an upgrade's
+> price relative to building a fresh one, and setting it to 1 makes the first
+> rung pay back in exactly the time a new build does. PA-46's proposed ceiling
+> `1.15 × (TAX_LEVEL_GROWTH − 1) = 1.3225` is 15 % loose and is superseded: it
+> makes the first rung 15 % *worse* than a new build, which is the opposite of
+> its own stated target.
 
 ```
 capital_value(type, L) = round( build_cost_L1[type] × V(L) )
 V(L) = 1 + (UPG_COEFF/(UPG_GROWTH-1)) × (UPG_GROWTH^(L-1) - 1)
-     = 1 + 0.93548 × (2.55^(L-1) - 1)
-V = [1.000, 2.450, 6.147, 15.576, 39.620]
+     = 1 + 0.74194 × (2.55^(L-1) - 1)
+V = [1.000, 2.150, 5.083, 12.560, 31.629, 80.254]
 ```
+
+Every cell of `V` is now its own closed form at 3 dp, half-up; the L3 / L5
+disagreements the 1.45 vector carried (6.147 against an exact 6.1475, 39.620
+against 39.6191187) were artefacts of that coefficient and went with it.
 
 `capital_value` drives maintenance (§2.4), repair cost (§2.5), demolition refund, and insurance-style disaster accounting.
 
-House example: build 1,200 → upgrades 1,740 / 4,437 / 11,314 / 28,852 → L5 capital value 47,544, L5 tax 256 $/gh.
+House example: build 1,200 → upgrades 1,380 / 3,519 / 8,973 / 22,882 → L5 capital value 37,955, L5 tax 256 $/gh. *(At `UPG_COEFF` 1.45 these were 1,740 / 4,437 / 11,314 / 28,852 and 47,544 — every upgrade price is now 79.31 % of what it was, and every capital value above L1 falls with it, so maintenance, repair, refunds and disaster accounting all follow.)*
 
 **Payback.** Gross payback of one upgrade step, ignoring multipliers:
 
 ```
 payback_gh(L→L+1) = UPG_COEFF / (TAX_YIELD × (TAX_LEVEL_GROWTH - 1)) × (UPG_GROWTH/TAX_LEVEL_GROWTH)^(L-1)
-                  ≈ 126 × 1.186^(L-1)   game-hours (residential)
+                  ≈ 100 × [UPG_COEFF/(TAX_LEVEL_GROWTH-1)] × 1.186^(L-1)   game-hours
 ```
 
-L1→2 ≈ 126 gh, L2→3 ≈ 150, L3→4 ≈ 177, L4→5 ≈ 210. With realistic multipliers (~0.85) and maintenance, effective payback runs **155 → 258 game-hours (2.6 → 4.3 real hours)**. Fresh L1 construction pays back in ~123 gh (~2.0 real hours). Early growth is fast; late vertical growth is a genuine capital decision. This is the intended shape of the §11.3 question.
+**The bracket is the ruling** (doc 93 §Y7). `build_cost_L1 / base_tax_L1` is
+exactly **100 gh for every revenue archetype** — house 1,200/12, apartment
+7,000/70, and the four above them alike — so an upgrade's payback relative to
+building a fresh L1 is `UPG_COEFF / (TAX_LEVEL_GROWTH − 1)` and nothing else. At
+`UPG_COEFF = TAX_LEVEL_GROWTH − 1 = 1.15` that bracket is 1 and the first rung
+matches a new build exactly; every rung above it is spaced by
+`UPG_GROWTH / TAX_LEVEL_GROWTH = 1.18605`, which doc 02 §8's rule requires to
+stay above 1 so that each upgrade is less utility-efficient than the last.
+
+**The ruled window is `[100, 200] gh`** — one new-build payback to two — and 1.15
+is the largest coefficient whose whole six-rung ladder fits inside it. Measured
+on the shipped, rounded tables (house, `upgrade_cost / Δbase_tax`):
+
+| step | at `UPG_COEFF` 1.45 | **at 1.15** |
+|---|---|---|
+| L1→L2 | 124.3 gh | **98.6 gh** |
+| L2→L3 | 153.0 gh | **121.3 gh** |
+| L3→L4 | 176.8 gh | **140.2 gh** |
+| L4→L5 | 210.6 gh | **167.0 gh** |
+| L5→L6 | 249.4 gh | **197.8 gh** |
+
+Fresh L1 construction pays back in **100 gh**, so the first rung is now *cheaper
+than sprawling* — which is what level 2's "upgrade instead of building more" card
+has been teaching against since it was written (PA-46). The top two rungs move
+inside the window; at 1.45 they were outside it. Early growth is fast; late
+vertical growth is still a genuine capital decision, because the 1.186 spacing is
+untouched. This is the intended shape of the §11.3 question.
 
 **Demolition refund** = `DEMOLITION_REFUND_FRACTION (0.25) × capital_value`. **Downgrade is not permitted** (a building is upgraded or demolished).
 
@@ -419,7 +460,7 @@ Two grants, one hourly and one lumpy. Both are dollars, so both are authored her
 
 It is a **published constant and not a fraction of the live bill**, deliberately. A subsidy that grew with the fleet would pay a player to buy vehicles, and a revenue line carrying an `M_exp` inside it would break §7 test 46's one-knob-per-line contract (doc 93 §N1).
 
-**The celebration grant.** `LEVEL_UP_GRANT_BY_CITY_LEVEL = [0, 2500, 7000, 9000, 22500, 37000, 83000]`, indexed by city level, paid once per level for the life of a city, on whichever route earned it (doc 93 §G1 composes the population ladder and doc 09's objectives with `max()`, and this pays the composed level so neither route is worth more than the other).
+**The celebration grant.** `LEVEL_UP_GRANT_BY_CITY_LEVEL = [0, 2500, 7000, 9000, 22500, 29000, 65000]` *(rungs 5 and 6 re-derived in Wave 17: the rule is "half of what the next chapter asks you to buy" and rung 5's basis is an UPGRADE, which doc 93 §Y7 re-priced 73,572 → 58,350. Rungs 1–4 are built on build costs, which did not move.)*, indexed by city level, paid once per level for the life of a city, on whichever route earned it (doc 93 §G1 composes the population ladder and doc 09's objectives with `max()`, and this pays the composed level so neither route is worth more than the other).
 
 The rule is one sentence — **the city pays half of what the next chapter asks you to buy** — applied to doc 09 §2.14's curriculum row above each rung and rounded to a readable figure:
 
@@ -429,10 +470,10 @@ The rule is one sentence — **the city pays half of what the next chapter asks 
 | 2 | one apartment $7,000 + four street tiles $7,200 | $7,100 | **$7,000** |
 | 3 | one police station $18,000 | $9,000 | **$9,000** |
 | 4 | one water works $45,000 | $22,500 | **$22,500** |
-| 5 | the level-6 tower upgrade $73,572 | $36,786 | **$37,000** |
+| 5 | the level-6 tower upgrade $58,350 | $29,175 | **$29,000** |
 | 6 | *(no chapter above it)* | — | **$83,000** |
 
-Rung 6 is the extrapolation the rung itself is (doc 92 §24.6): `37,000 × 2.25 = 83,250`, on the same 2.25× step the population ladder uses above rung 3, published as $83,000 and labelled honest extrapolation exactly as ladder rungs 4 and 5 are.
+Rung 6 is the extrapolation the rung itself is (doc 92 §24.6): `29,000 × 2.25 = 65,250`, on the same 2.25× step the population ladder uses above rung 3, published as $65,000 and labelled honest extrapolation exactly as ladder rungs 4 and 5 are.
 
 **A one-off receipt is not an hourly ledger line.** §2.4 keeps one-off capital *spends* out of the recurring rate; the symmetric treatment for a one-off *receipt* is the same. The player sees it as a treasury event and a notification, and the budget panel's income statement stays an income statement.
 
@@ -936,6 +977,29 @@ EXPENSES
 NET  = 1008.349 - 519.977  =  +488.37 $/gh  ->  +$488/gh  =  +$11,721/game-day
 ```
 
+> **WAVE 17 — this ledger does not move, and that is the finding** *(doc 93 §Y1,
+> doc 92 §43.8)*. The ownership ruling was drafted to retire `E_building_maint`
+> here, on the reading that it bills exactly the four `REVENUE_CLASSES` — exactly
+> the buildings the city does not own. **Measured, the retirement broke the
+> game**: with the line gone and private stock kept up by its owners,
+> `tools/measure_insolvency.gd` put `do_nothing` on `standard` at game-day
+> **176** against gate 29's ruled 69, and `casual` **never went insolvent inside
+> 200 game-days at all**. So the line stays, and §2.4 now says what it is: the
+> city's cost of *serving* a building, which is what C-08's civic exclusion
+> already implied — civic shells are excluded because their own O&M lines bill
+> them, not because the city only pays for what it owns. What moves to the owner
+> is the lumpy, TAPPED repair (§2.6a's `E_OWNER_MAINTAINED`), which is what the
+> 2026-09-01 playtest actually asked for.
+>
+> **Measured on the live sim, 24 settled game-hours, `standard`, seed 1337**
+> (`tools/measure_founding_ledger.gd --hours=24`): gross **1047.184374 on both
+> sides, bit-identical**; expense `532.296003 → 533.212457`; net `514.888371 →
+> 513.971917`. The only line that moves at all is `departments`, by
+> **+$0.92/gh**, because doc 93 §Y5 finally applies
+> `ASSET_CONDITION_PENALTY_COEFF` to a worn station — **0.18 % of the game-day
+> net, inside every anchor's own ±1 % tolerance, so not one pacing guardrail is
+> re-fitted and gates 1, 2 and 2b hold unchanged.**
+
 > **WAVE 15 — the revenue side moves by exactly +$169.00/gh and not one expense
 > line moves at all** *(report 98 RR-78 / RR-79, doc 92 §36.2).* Two published
 > constants, in opposite directions: `+172.00` of §2.5a founding assistance and
@@ -957,7 +1021,7 @@ NET  = 1008.349 - 519.977  =  +488.37 $/gh  ->  +$488/gh  =  +$11,721/game-day
 
 **The net line, from unrounded components on both sides (report 98 RR-18).** Round 2 subtracted an unrounded expense total from a *rounded* $839 gross, which is the one arithmetic sin this pass will not repeat. Revenue: `740.291412 + 93 + 3.058 + 3 = 839.349412` (tax = `686 × 0.9722 × 1.110 = 686 × 1.079142`). Expense: `27.44 + 96 + 58 + 74.274 + 57 + 6 + 15.392 + 185.870566 = 519.976566`. Net: `839.349412 − 519.976566 = ` **319.372846 $/gh**, displayed as **+$319/gh** and **+$7,664.95/game-day**. Nothing here is rounded until the last step. *(The `E_grid` term is the Wave-4 18-node roster — see the note under the ledger.)*
 
-**Progression of this line across the four passes:** expense `306 → 347 → 482 → 521`; net `+414 → +373 → +357 → +319`. Round 2's four moves nearly cancelled; Round 3 moves exactly one line:
+**Progression of this line across the four passes:** expense `306 → 347 → 482 → 521`; net `+414 → +373 → +357 → +319`. *(Wave 15's revenue re-anchor moved the net to +488; Wave 17 moved neither figure — see the box above.)* Round 2's four moves nearly cancelled; Round 3 moves exactly one line:
 
 ```
 ROUND 1 -> ROUND 2
@@ -1253,7 +1317,7 @@ Doc 02 owns the file; these keys are this doc's contract:
 ```json
 { "house": { "class": "residential", "build_cost_l1": 1200, "base_tax_l1": 12,
              "base_tax_by_level": [12, 26, 55, 119, 256],
-             "upgrade_cost_by_step": [1740, 4437, 11314, 28852],
+             "upgrade_cost_by_step": [1380, 3519, 8973, 22882],
              "capital_value_by_level": [1200, 2940, 7376, 18691, 47544] } }
 ```
 
@@ -1534,11 +1598,11 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
   },
 
   "upgrades": {
-    "UPG_COEFF": 1.45, "UPG_GROWTH": 2.55, "DEMOLITION_REFUND_FRACTION": 0.25,
+    "UPG_COEFF": 1.15, "UPG_GROWTH": 2.55, "DEMOLITION_REFUND_FRACTION": 0.25,
     "_demand_growth_note": "RR-7: the requirement is an EXCLUSIVE FLOOR, not an equality. Every doc-02 growth class must satisfy k_dem > REQUIRED_MIN_DEMAND_LEVEL_GROWTH. Doc 02 is the authority on the values (2.35 steady / 2.45 standard / 2.55 vertical, C-13). The old REQUIRED_DEMAND_LEVEL_GROWTH: 2.35 equality constant is DELETED - it rejected 9 of 12 archetypes.",
     "REQUIRED_MIN_DEMAND_LEVEL_GROWTH": 2.15,
     "REQUIRED_MIN_DEMAND_LEVEL_GROWTH_EXCLUSIVE": true,
-    "CAPITAL_VALUE_V": [1.000, 2.450, 6.147, 15.576, 39.620]
+    "CAPITAL_VALUE_V": [1.000, 2.150, 5.083, 12.560, 31.629, 80.254]
   },
 
   "roads": {

@@ -605,6 +605,9 @@ func test_the_roster_survives_a_save_and_still_points_at_real_tiles() -> void:
 
 
 func test_a_repair_is_on_the_roster_and_can_be_bought_out() -> void:
+	# POL-1, a CIVIC building: since the economy lane's ownership ruling (doc 93
+	# §Y1) a private house maintains itself and cmd_repair_building refuses it
+	# with E_OWNER_MAINTAINED — the city repairs only what the city owns.
 	# The fifth live kind, and the only one this file did not put on the roster.
 	# `repair` is the case where "being built" is the player's word for something
 	# that is not construction at all, so the row has to carry a resolving noun
@@ -612,15 +615,15 @@ func test_a_repair_is_on_the_roster_and_can_be_bought_out() -> void:
 	# `on_construction_completed`'s REPAIR arm, which is a different branch of
 	# the completion door from a build or an upgrade.
 	var sim := _rich_sim()
-	var b: Building = sim.buildings["H-001"]
+	var b: Building = sim.buildings["POL-1"]
 	b.condition = 0.40
-	var repair := sim.cmd_repair_building("H-001")
+	var repair := sim.cmd_repair_building("POL-1")
 	assert_true(bool(repair["ok"]), str(repair))
 	var job_id := int(repair["payload"]["job_id"])
 	var row := _row_for(sim, job_id)
 	assert_false(row.is_empty(), "a repair is a project the player is watching")
 	assert_eq(String(row["source"]), "repair", "and it says what it is")
-	assert_eq(String(row["ref"]), "H-001")
+	assert_eq(String(row["ref"]), "POL-1")
 	assert_eq(int(row["level_from"]), 0, "a repair is not a level change")
 	assert_eq(int(row["level_to"]), 0)
 	assert_true(bool(row["rushable"]), "the repair bill is on the job record")

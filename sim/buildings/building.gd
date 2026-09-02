@@ -10,6 +10,12 @@ const STATES := [
 	&"on_fire", &"repairing", &"destroyed",
 ]
 
+## Doc 02 §2.6's condition block, as it stands in `data/building_rules.json`.
+## **These are DEFAULTS, not the source** (PA-13, doc 93 §Y2): the authored file
+## is the source and `condition_rules` below carries it. They stay named consts
+## because they are also the fallback — a `Building` the coordinator never
+## stamped behaves exactly as every pre-Wave-17 fixture did — and because three
+## tests and one formatter quote them as the shipped values.
 const AUTO_DAMAGE_THRESHOLD := 0.35
 const STRUCTURAL_FAILURE_THRESHOLD := 0.10
 const STRUCTURAL_FAILURE_P_PER_H := 0.02
@@ -17,6 +23,35 @@ const MIN_CONDITION_TO_UPGRADE := 0.55
 const REPAIR_TIME_FACTOR := 0.50
 const REPAIR_TARGET_FROM_DAMAGED := 0.85
 const REBUILD_GRACE_HOURS := 72
+const OVERLOAD_DECAY_COEFFICIENT := 0.80
+const UNPOWERED_DECAY_COEFFICIENT := 0.50
+const DAMAGED_DECAY_MULTIPLIER := 1.50
+
+## The same fifteen values keyed as `data/building_rules.json.condition` keys
+## them, so a stamped block and this fallback are interchangeable and the
+## accessors below need no special case.
+const DEFAULT_CONDITION := {
+	"start": 1.00,
+	"auto_damage_threshold": AUTO_DAMAGE_THRESHOLD,
+	"structural_failure_threshold": STRUCTURAL_FAILURE_THRESHOLD,
+	"structural_failure_p_per_hour": STRUCTURAL_FAILURE_P_PER_H,
+	"min_condition_to_upgrade": MIN_CONDITION_TO_UPGRADE,
+	"repair_time_factor": REPAIR_TIME_FACTOR,
+	"repair_target_active": 1.00,
+	"repair_target_damaged": REPAIR_TARGET_FROM_DAMAGED,
+	"overload_decay_coefficient": OVERLOAD_DECAY_COEFFICIENT,
+	"unpowered_decay_coefficient": UNPOWERED_DECAY_COEFFICIENT,
+	"damaged_decay_multiplier": DAMAGED_DECAY_MULTIPLIER,
+	# Doc 02 §2.6's band table. `band_worn` is the ownership floor (§2.6a) and is
+	# the one value in this dict a `Building` cannot do without: a fallback that
+	# omitted it gave an unstamped private building NO floor, which is a silently
+	# different physics from the stamped one. `band_poor` is here for the same
+	# reason — the fallback must be the whole block, not the part today happens
+	# to read.
+	"band_good": 0.85,
+	"band_worn": 0.60,
+	"band_poor": 0.35,
+}
 
 var id: int = 0
 var archetype: StringName = &""
@@ -39,6 +74,21 @@ var stats: Dictionary = {}
 ## gets exactly the behaviour it had, and a building that somehow escapes the
 ## stamp is under-upgradable rather than infinitely upgradable.
 var max_level: int = 5
+## Doc 02 §2.6's condition block, stamped by the coordinator beside `stats` and
+## `max_level` at the four sites that make a `Building` live — boot, restore,
+## placement and the doc 05 water shell (PA-13, doc 93 §Y2). It is the SAME
+## shared `Dictionary` on every
+## instance, so this costs one reference per building and no copy. Never a
+## static and never a singleton: `sim/` is RefCounted-only and the rigs boot
+## several `CitySim`s in one process, so a process-global would let one city's
+## fixture move another city's physics.
+var condition_rules: Dictionary = DEFAULT_CONDITION
+## Doc 02 §2.6a (doc 93 §Y1): is this PRIVATE STOCK, kept up by its owner rather
+## than by the city's crews? A property of the archetype's tax class, so it is
+## stamped like the two above and never persisted. The default is `false` — a
+## fixture that never sets it wears and damages exactly as it did before the
+## ruling, which is what keeps every pre-Wave-17 worked example true.
+var owner_maintained: bool = false
 
 
 func _init(p_id: int = 0, p_archetype: StringName = &"", p_origin := Vector2i.ZERO,
@@ -123,6 +173,39 @@ func state_fire_mult() -> float:
 
 # ------------------------------------------------------- condition (§2.6)
 
+## The condition block's readers (PA-13, doc 93 §Y2). Every one of them takes the
+## authored value when the coordinator stamped a block and the const above when
+## it did not, so perturbing a key in `data/building_rules.json` moves the
+## BEHAVIOUR and not just the loader's opinion of it.
+func rule(key: String) -> float:
+	return float(condition_rules.get(key, DEFAULT_CONDITION.get(key, 0.0)))
+
+
+func auto_damage_threshold() -> float:
+	return rule("auto_damage_threshold")
+
+
+func min_condition_to_upgrade() -> float:
+	return rule("min_condition_to_upgrade")
+
+
+func repair_time_factor() -> float:
+	return rule("repair_time_factor")
+
+
+## §2.12's post-repair target: 1.00 from `active`, `repair_target_damaged` from
+## `damaged`, because a post-damage repair never restores to new.
+func repair_target() -> float:
+	return rule("repair_target_active") if state == &"active" \
+			else rule("repair_target_damaged")
+
+
+## Doc 02 §2.6a: the condition below which an owner's crew starts. It is the
+## Good band's own floor — doc 93 §Y1 authors no number for this.
+func owner_repair_threshold() -> float:
+	return rule("band_good")
+
+
 func fire_condition_mult() -> float:
 	return 1.0 + 1.5 * pow(1.0 - condition, 1.5)
 
@@ -137,7 +220,7 @@ func damage_fraction() -> float:
 func repair_crew_hours() -> float:
 	var build_hours := float(stats.get("build_time_hours",
 			stats.get("build_hours", 0.0)))
-	return build_hours * REPAIR_TIME_FACTOR * damage_fraction()
+	return build_hours * repair_time_factor() * damage_fraction()
 
 
 ## One settled hour (or dt_h of them) of decay. `powered_fraction` is doc 04's
@@ -149,25 +232,107 @@ func apply_decay(dt_h: float, overload_excess: float = 0.0, powered_fraction: fl
 	if not decays():
 		return []
 	var rate := float(stats.get("decay_per_hour", 0.0)) \
-			* (1.0 + 0.80 * maxf(0.0, overload_excess)) \
-			* (1.0 + 0.50 * (1.0 - clampf(powered_fraction, 0.0, 1.0))) \
+			* (1.0 + rule("overload_decay_coefficient") * maxf(0.0, overload_excess)) \
+			* (1.0 + rule("unpowered_decay_coefficient")
+					* (1.0 - clampf(powered_fraction, 0.0, 1.0))) \
 			* weather_decay_mult
 	if state == &"damaged":
-		rate *= 1.5  # §2.12 state table: damaged decays ×1.5
-	condition = clampf(condition - rate * dt_h, 0.0, 1.0)
+		rate *= rule("damaged_decay_multiplier")  # §2.12 state table
+	if owner_maintained and state == &"damaged" \
+			and clampf(powered_fraction, 0.0, 1.0) > 0.0:
+		# An INCIDENT put it here (doc 06) and the owner is rebuilding it, so
+		# this path owns the WHOLE hour: no wear is applied on top of the crew's
+		# work, and the floor below does not apply either. A `damaged` building
+		# is not a worn one — it is doc 06's damage, restored at §2.6's own
+		# crew-hours to §2.12's own post-damage target, and floor-jumping it to
+		# `band_worn` in a single hour would erase the incident instead of
+		# repairing it.
+		return _owner_maintain(dt_h, powered_fraction)
 	var events: Array = []
-	if state == &"active" and condition < AUTO_DAMAGE_THRESHOLD:
+	condition = clampf(condition - rate * dt_h, 0.0, 1.0)
+	if owner_maintained and state != &"damaged" \
+			and clampf(powered_fraction, 0.0, 1.0) > 0.0:
+		# **Doc 02 §2.6a, the ownership FLOOR (doc 93 §Y1).** A private building
+		# wears exactly as §2.6 has always said — this ruling moves not one
+		# `decay_per_hour` cell — but its owner will not let it fall past the
+		# Worn band's floor, because below that it stops being an asset and
+		# starts being a liability, and it is *their* asset. So a private
+		# building is never `damaged` by wear, is never destroyed by wear, and is
+		# always still upgradable (`band_worn` 0.60 sits above
+		# `min_condition_to_upgrade` 0.55 — that ordering is what makes the
+		# floor a floor rather than a trap).
+		#
+		# What the city sees is the whole of the drag: `f_condition` runs down to
+		# `COND_FLOOR + (1 − COND_FLOOR) × 0.60 = 0.76`, i.e. **a permanent 24 %
+		# cut in what a neglected building pays**, and it is the ONLY thing the
+		# city sees, because there is no repair to buy at any condition.
+		#
+		# **The answer to a worn city is to invest in it, not to tap REPAIR on
+		# it**: `complete_construction` sets condition back to 1.00, so an
+		# UPGRADE is the recovery — the loop doc 09 level 2 already teaches, and
+		# 20.7 % cheaper since doc 93 §Y7.
+		#
+		# **The service clause** (doc 93 §Y1a) is the `powered_fraction > 0`
+		# guard: an owner the city has left in the dark cannot hold anything, so
+		# the floor lifts, the building falls past the auto-damage line, and
+		# `roll_structural_failure` can take it. That is what keeps neglect fatal
+		# — and it is why the floor is not simply `clampf`ed into the line above.
+		#
+		# No new constant: `band_worn` is doc 02 §2.6's own band table.
+		condition = maxf(condition, rule("band_worn"))
+	if state == &"active" and condition < auto_damage_threshold():
 		state = &"damaged"
 		events.append({"type": &"building_damaged", "building": id, "cause": &"decay"})
 	return events
 
 
+## Doc 02 §2.6a — the owner's crew REBUILDING after an incident, one settled
+## hour (or `dt_h` of them) of it. Ordinary wear is not handled here: it is
+## absorbed in `apply_decay` above, by subtracting the base rate from the rate.
+##
+## While `damaged`, the owner restores condition at exactly the rate a city crew
+## would work: §2.6's
+## `repair_hours = build_time_hours × repair_time_factor × damage_fraction`
+## means the WHOLE of a building's damage is made good in
+## `build_time_hours × repair_time_factor` game-hours, so the restore rate is
+## `1 / that` per game-hour — a house in under an hour, a level-3 apartment's
+## 0.15 in about an hour, a level-4 data centre's in seven. No new number.
+##
+## **The service clause** (doc 93 §Y1a) gates this the same way it gates the
+## wear offset: an owner with no power cannot rebuild either, so a building the
+## city has left dark stays damaged, keeps wearing, and stays reachable by
+## `roll_structural_failure`. That is what keeps neglect fatal after the
+## ownership ruling (gate 29) — a city that stops holding up its end loses its
+## tax base because the lights went out, which the player can see and fix,
+## rather than because they did not tap REPAIR on two hundred houses.
+##
+## Nothing is billed to the city and nothing is emitted for routine wear: the
+## only event this path can produce is the `damaged → active` return after an
+## incident, which carries `cause: owner` so a surface can tell an owner's
+## rebuild from a city crew's.
+func _owner_maintain(dt_h: float, powered_fraction: float = 1.0) -> Array:
+	if state != &"damaged":
+		return []
+	var service := clampf(powered_fraction, 0.0, 1.0)
+	if service <= 0.0:
+		return []
+	var build_hours := float(stats.get("build_time_hours",
+			stats.get("build_hours", 0.0)))
+	var full_repair_hours := build_hours * repair_time_factor()
+	var restore := 1.0 if full_repair_hours <= 0.0 else dt_h / full_repair_hours
+	condition = clampf(condition + restore * service, 0.0, 1.0)
+	if state == &"damaged" and condition >= rule("repair_target_damaged"):
+		state = &"active"
+		return [{"type": &"building_repaired", "building": id, "cause": &"owner"}]
+	return []
+
+
 ## Structural-failure roll (§2.6): below condition 0.10, 0.02/gh on the
 ## `failures` stream. Returns events; may transition damaged → destroyed.
 func roll_structural_failure(rng: RngStreams, dt_h: float, now_minutes: int) -> Array:
-	if state != &"damaged" or condition >= STRUCTURAL_FAILURE_THRESHOLD:
+	if state != &"damaged" or condition >= rule("structural_failure_threshold"):
 		return []
-	var p := 1.0 - pow(1.0 - STRUCTURAL_FAILURE_P_PER_H, dt_h)
+	var p := 1.0 - pow(1.0 - rule("structural_failure_p_per_hour"), dt_h)
 	if rng.stream("failures").randf() < p:
 		return _destroy(now_minutes, &"structural_failure")
 	return []
@@ -205,7 +370,7 @@ func start_upgrade() -> Dictionary:
 		return CommandQueue.fail(&"E_STATE")
 	if is_at_top_level():
 		return CommandQueue.fail(&"E_MAX_LEVEL")
-	if condition < MIN_CONDITION_TO_UPGRADE:
+	if condition < min_condition_to_upgrade():
 		return CommandQueue.fail(&"E_CONDITION")
 	pending_level = level + 1
 	state = &"under_construction"
@@ -260,7 +425,7 @@ func apply_damage(fraction: float, now_minutes: int) -> Array:
 	var events: Array = []
 	if condition <= 0.0:
 		events.append_array(_destroy(now_minutes, &"damage"))
-	elif state == &"active" and condition < AUTO_DAMAGE_THRESHOLD:
+	elif state == &"active" and condition < auto_damage_threshold():
 		state = &"damaged"
 		events.append({"type": &"building_damaged", "building": id, "cause": &"incident"})
 	return events
@@ -271,7 +436,7 @@ func apply_damage(fraction: float, now_minutes: int) -> Array:
 func start_repair() -> Dictionary:
 	if state != &"damaged" and state != &"active":
 		return CommandQueue.fail(&"E_STATE")
-	var target := 1.0 if state == &"active" else REPAIR_TARGET_FROM_DAMAGED
+	var target := repair_target()
 	state = &"repairing"
 	return CommandQueue.ok({"repair_target": target,
 			"crew_hours": repair_crew_hours()})
