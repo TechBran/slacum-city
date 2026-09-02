@@ -39,7 +39,12 @@ extends SceneTree
 ##   --shots=DIR        save one PNG per pose into DIR (`<pose>.png`)
 ##   --focus=TX,TZ      aim the poses at this TILE instead of the city centre
 ##                      (Z0 sits 18 m off the focus, and the authored centre can
-##                      put that camera inside a tower)
+##                      put that camera inside a tower). **GLOBAL tiles.** A city
+##                      fixture's building `origin` is CORE-LOCAL and
+##                      `StarterCityLoader.core_to_global` adds
+##                      `CORE_TILE_OFFSET = 32` to each axis, so aiming at a
+##                      building read out of the JSON means `origin + 32`. Wave
+##                      18 lost a screenshot to that (report 98 §54.5).
 ##   --atlas-lod=N      cut the merged MEDIUM atlas from LOD N instead of
 ##                      `CityView.atlas_lod`. 0 keeps the un-merged tier's
 ##                      picture exactly; 1 is §2.5's ladder and costs the

@@ -6278,16 +6278,23 @@ Every screenshot is `tools/profile_frame.gd --shots=DIR` on the bench city at
 |---|---|---|
 | the complaint, measured | `--poses=z0 --hour=13 --tilt=12 --aim=0` | horizon a fifth down, two thirds pavement, mid-rise facades cut at mid-height, tower tops off the top edge |
 | the same pose, after | `--poses=z0 --hour=13 --tilt=12` | street-level camera, pavement in the bottom third, facades filling the middle, towers into the top third, sky above them |
-| a 168 m tower bottom to top | `--poses=t0.85 --hour=13 --tilt=12 --focus=28,48` | the bench city's tallest (`R-0004`, `high_rise` L4, 48 × 3.5 m) framed base-at-the-bottom-edge to roof at 13 % down, over a full skyline |
+| a 168 m tower bottom to top | `--poses=t0.88 --hour=13 --tilt=12 --focus=69,67 --yaw=45` | `R-0046`, one of the bench city's tallest (`high_rise` L4, 48 × 3.5 m), standing at the focus: base on the bottom edge, roof at 13.5 % down by projection with its mast above that, sky over it, and a skyline behind |
 | the same floor at night | `--poses=z0 --hour=21 --tilt=12` | lit facades and towers against a night sky, road in the bottom third |
 | the world edge, worst case | `--poses=z2 --hour=13 --tilt=12 --yaw=225 --focus=60,60` | the far city fogs into the haze band; no cliff, no black band, 7…11/255 at the seam |
 
 **A 168 m tower cannot be framed bottom-to-top at Z0 and no camera change can do
 it:** 40° of vertical FOV needs `168/(2·tan 20°) = 230.8 m` of view distance and
-Z0 is 18 m. The pose above is `zoom_t 0.85` (`D = 262 m`), which is the nearest
-zoom that fits it — and at the floor with the ramp the tower's base sits on the
-bottom edge and its roof 13 % down, which is as close to "bottom to top" as the
-projection allows.
+Z0 is 18 m. The pose above is `zoom_t 0.88` (`D = 288 m`), and at the floor with
+the ramp the anchor cap puts the tower's base corner exactly on the bottom edge
+while its roof projects to 145.9 px of 1080 — **13.5 % down** — which is as close
+to "bottom to top" as the projection allows. At `t0.85` the same tower clips the
+top edge (roof at 4.8 %), which is how the zoom was chosen.
+
+**One harness trap, recorded because it cost a screenshot.** `--focus=TX,TZ` is a
+**GLOBAL** tile; a city fixture's building `origin` is **core-local**, and
+`StarterCityLoader.core_to_global` adds `CORE_TILE_OFFSET = 32` to each axis. The
+first take of this shot aimed 30 tiles away from the tower it named. The flag's
+doc comment in `tools/profile_frame.gd` now says so.
 
 **Baselines — all four bit-identical, at the fork and at the end.** `sim/` was
 not touched; this wave is shell and `ui/` only.
