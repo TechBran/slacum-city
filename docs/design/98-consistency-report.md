@@ -6105,9 +6105,40 @@ applied is kept, because the world behind the panel has not got any cheaper.
 by §2.2's construction, plus the title door and the loading veil), and
 `game/main.gd` asks it once a frame **before** `submit_frame`.
 
-**Re-open condition.** A band that survives this fix is not the governor: the
-next suspects, in order, are the Samsung front-buffer/low-latency path that
-attaches to the surface at launch (`SPen::FbrDrawPad`, visible in logcat) and a
-swapchain recreation the app does not drive. The A/B that separates them needs no
-build: **Settings → Auto quality OFF** disables the ladder outright.
+**THE RULING STANDS; THE DIAGNOSIS DID NOT. Corrected 2026-09-02, same day,
+before the fix shipped.** The A/B this section proposed was run immediately —
+**Settings → Auto quality OFF, app restarted** — and **the bands were still
+there**. `auto_quality` false sets `PerfGovernor.enabled = false`, `update()`
+returns on its first line, no rung moves and `scaling_3d_scale` is never
+written; the band survived all of it. **The governor is not the cause.** The
+cadence match was a coincidence of the most seductive kind — the player said
+*"every 30 seconds"* and the constant that governs step-up is 30.0 — and it is
+recorded here as one, because a number that fits is not a mechanism that fires.
+
+**What the suspension is still for.** Everything in the ruling above is true on
+its own terms and is why the code stays: a frame drawn under an opaque sheet
+measures the sheet, the ladder acting on it resizes the world's render target
+for a reason that has nothing to do with the world, and doc 13 §2.8 asked for
+this row before any of this happened. It is a correctness fix that was mis-sold
+as a bug fix for one afternoon.
+
+**What is actually known about the band**, evidence only: it is present in a
+device-side `screencap` (so it is in the composited frame — not scan-out
+tearing, not the remote-control encoder); it is byte-identical across
+consecutive captures (so it does not crawl); it is **two strips of about eight
+device rows each, at y ≈ 904-911 and y ≈ 920-927** on the 2160×1856 inner panel,
+which replace whatever is under them, cutting through text and leaving fragments
+aligned at the panel's right edge; and the player sees it only while a
+full-screen surface is up.
+
+**The next discriminator, and it is one command.** `game/main.gd`'s
+`--screenshot=<path>` saves `get_viewport().get_texture().get_image()` — the
+app's OWN framebuffer, read back before the compositor ever sees it. Run it with
+a modal on screen: a band in that image is OURS (a render-target or swapchain
+defect); a clean image with a banded `screencap` of the same moment puts it
+downstream, and the standing candidates there are the Samsung front-buffer /
+low-latency stroke path that attaches to this window at launch (`SPen::FbrDrawPad`,
+`LowLatencyStrokeView`, both in logcat on every boot) and any system-alert
+overlay composited above the game. Until that image exists, this section names
+no cause.
 
