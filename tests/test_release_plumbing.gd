@@ -45,6 +45,14 @@ const SENTINEL_SYMBOLS: Array[String] = [
 	"thermal_status",
 	"launch_args",
 	"set_frame_rate",
+	# Wave 18, PA-14: the `POST_NOTIFICATIONS` flow got its first GDScript caller
+	# this wave, which makes these three load-bearing for the first time — until
+	# now no code path reached them, so a stale AAR that had dropped one would
+	# have failed nothing. They are named individually rather than left to the
+	# `declared` sweep because THIS list is what survives a parse fault.
+	"permission_state",
+	"request_notification_permission",
+	"open_app_notification_settings",
 ]
 
 ## doc 13 §2.7, and this list is the whole release manifest.

@@ -643,6 +643,7 @@ func restore_state(state: Dictionary) -> PackedStringArray:
 	var dropped: PackedStringArray = []
 	var incoming: Array = state.keys()
 	incoming.sort()  # deterministic apply order, deterministic dropped list
+	var retired := retired_keys()
 	for key: Variant in incoming:
 		var name := str(key)
 		if kind(name) == KIND_STATE and not _row_def(name).is_empty():
@@ -653,7 +654,7 @@ func restore_state(state: Dictionary) -> PackedStringArray:
 				if not _same_option(_values.get(name, null), state[key]):
 					dropped.append(name)
 			continue
-		if retired_keys().has(name):
+		if retired.has(name):
 			continue   # withdrawn, not unknown — see `retired_keys()`
 		dropped.append(name)
 	# Last, and deliberately: the device file outranks the city's snapshot for
