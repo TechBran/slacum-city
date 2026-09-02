@@ -3782,44 +3782,55 @@ plainly and nobody had read; the income note is a charge that should never have
 been on the city's ledger; the upgrade note is a coefficient whose correct value
 is an identity between two constants that were already published.
 
-### RR-99 — `E_building_maint` billed the city for buildings the city does not own
+### RR-99 — the repair moves to the owner; the SERVICE cost does not
 
-**Ruling: the line is RETIRED, and `ASSET_CONDITION_PENALTY_COEFF` reaches the
-two city assets that were still being billed flat.**
+**Ruling: `cmd_repair_building` refuses private stock; `E_building_maint` stays;
+`ASSET_CONDITION_PENALTY_COEFF` reaches the two city assets still billed flat.**
 
-`EconomySystem.settle_hour`'s maintenance loop skipped every row for which
-`CostCurves.is_revenue_producing(type)` was false — C-08, so a civic or utility
+`EconomySystem.settle_hour`'s maintenance loop skips every row for which
+`CostCurves.is_revenue_producing(type)` is false — C-08, so a civic or utility
 shell is not billed twice beside its own department or O&M line. That predicate
 is `REVENUE_CLASSES.has(class_of(type))` and `REVENUE_CLASSES` is
-`["residential", "commercial", "industrial", "tech"]`. **So the set of buildings
-the line billed was, exactly and only, the set the city does not own.** It is the
-wrong party, not the wrong rate, and no retune of `BUILDING_MAINT_RATE` could
-have fixed it.
+`["residential", "commercial", "industrial", "tech"]`, so the set the line bills
+is exactly the set the city does not own. **The first draft of this ruling
+retired it on that reading and the retirement was withdrawn on the measurement**
+(doc 92 §43.8): with the line gone and private stock keeping itself up,
+`tools/measure_insolvency.gd` put `do_nothing` on `standard` at game-day **176**
+against gate 29's ruled 69, and `casual` never went insolvent inside 200
+game-days at all.
 
-Measured (`tools/measure_repair_burden.gd --days=21 --seeds=1337`): the city paid
-**$63,915–$78,038** of upkeep on private stock over three game-weeks, against
-**$62,692–$70,053** of repair on everything it *does* own. On `do_nothing` it was
-the entire building-related bill — $16,585 against $0 of repair.
+What the line prices is the city's cost of **serving** a building — the reading
+C-08's own exclusion implies, since civic shells are excluded because *their own
+O&M lines bill them* — and it rises as a building wears because a worn building
+costs more to serve. What the 2026-09-01 playtest asked to move to the owner is
+the **repair**: a lumpy purchase, at a price, behind a tap, on a building the
+player does not own. That is what moves.
 
-Private stock keeps itself up instead (doc 02 §2.6a); what the city sees of that
-is `f_condition` on the tax line, which is a drag of **4.5 %** at the measured
-steady-state mean condition 0.9251 and at most 9.0 %. `BUILDING_MAINT_RATE` and
-`MAINT_CONDITION_PENALTY` are **deleted, not defaulted** — a constant nobody
-reads is RR-100's defect in a new place — and the snapshot carries no
-`building_maint` key at all, so a surface that printed the row prints nothing
-rather than a $0 line. The same reading closes the two rows of doc 03 §2.4 that
-were still flat: a worn police station and a worn power plant now pay the
-condition coefficient that a worn transformer and a worn water main have always
-paid. A row that carries no `condition` reads 1.00 and bills what it billed
-before, so no fixture moves.
+* `cmd_repair_building` refuses private stock with `E_OWNER_MAINTAINED` at any
+  condition, and `repair_view` folds the code into "nothing to buy" so no row is
+  drawn (doc 93 §Y3a). Measured: the REPAIR affordance falls from **260 private /
+  21 civic** to **0 / 24** in a 21-game-day `balanced` city, and private repair
+  trips from 14 to 0.
+* A private building's owner holds it at `condition.band_worn` **while the city
+  serves it**, so it is never `damaged` by wear, never destroyed by wear, and
+  always still upgradable (0.60 > `min_condition_to_upgrade` 0.55). After a
+  720-game-hour absence a `balanced` city's private stock goes from
+  **2/16/236/8** across the bands to **4/233/0/0**, with **0** damaged.
+* The city sees the drag as `f_condition` — `0.40 + 0.60 × 0.60 = 0.76`, a
+  permanent **24 %** cut in what a neglected building pays — and the recovery is
+  an **upgrade**, which sets condition back to 1.00 and which RR-103 made 20.7 %
+  cheaper in the same wave.
 
-**Founding ledger, measured both sides** (`tools/measure_founding_ledger.gd
---hours=24`, `standard`, seed 1337): gross **1047.184374 → 1047.184374, bit
-identical**; expense `532.296003 → 505.410898`; net `514.888371 → 541.773476`
-(**+5.22 %**). The whole move is `−27.70` of retired maintenance and `+0.81` of
-the condition coefficient. *A charge withdrawn, not a subsidy added* — which is
-the discriminating evidence that this is an ownership fix and not an income buff
-wearing one's clothes.
+**Founding ledger, both sides** (`tools/measure_founding_ledger.gd --hours=24`,
+`standard`, seed 1337): gross **1047.184374 → 1047.184374, bit-identical**;
+expense `532.296003 → 533.212457`; net `514.888371 → 513.971917`. The **only**
+line that moves is `departments`, by +$0.92/gh, because doc 93 §Y5 finally
+applies `ASSET_CONDITION_PENALTY_COEFF` to a worn station — the coefficient a
+worn transformer and a worn water main have always paid. That is **0.18 %**,
+inside every anchor's own ±1 % tolerance, so **gates 1, 2 and 2b hold unchanged
+and not one pacing guardrail is re-fitted.** The same reading closes the one flat
+row left in `e_grid`: a plant carries the condition penalty its own nodes and
+lines carry.
 
 ### RR-100 — `building_rules.json.condition` was a mirror; `Building` now reads it
 
@@ -3841,33 +3852,57 @@ accepted it. Five tests, one per key family. **Scope: the `condition` block only
 `construction.*` and `headroom_safety` are the same defect in the same file and
 belong to the construction-queue and power lanes; PA-13 stays open until they land.
 
-### RR-101 — no city asset may wear faster than the cheapest thing on the map
+### RR-101 — PA-82's decay cap is DECLINED, and the neglect clock is re-fitted
 
-**Ruling: the four city-owned archetypes are capped at the house seed 0.00045/gh**
-— `power_facility` 0.00090, `substation` 0.00080, `water_facility` 0.00070,
-`construction_yard` 0.00065; `police_station` and `fire_station` were already at
-0.00040 and are untouched, and **no private seed moves**.
-
-Derived from the arc rather than chosen. Doc 92 §33's finale is 45 game-days =
-1,080 gh and doc 02 §2.6's auto-damage line is at `1 − 0.35 = 0.65`:
+**Ruling: no city decay rate moves.** PA-82 asks that `power_facility` 0.00090,
+`substation` 0.00080, `water_facility` 0.00070 and `construction_yard` 0.00065 be
+capped at the house's 0.00045. The cap was implemented, measured and withdrawn:
 
 ```
-wear over one arc at L1  = decay x 1080
-  0.00090 (plant, before) = 0.972 > 0.65  -> reaches `damaged` from WEAR ALONE
-  0.00045 (the cap)       = 0.486 < 0.65  -> cannot: damage becomes an EVENT
-repair trips per asset    = decay x 1080 / (1 - the maintainer's 0.80 threshold)
-  0.00090                 = 4.9  ->  7 starter city assets = 34 taps per arc
-  0.00045                 = 2.4  ->  7 starter city assets = 17  <= PA-33's 20
+tools/measure_insolvency.gd --max-days=200 · do_nothing · seed 1337
+                            casual   standard   hard   crisis
+  gate 29's ruled figures      105         69     51       26
+  with the cap               NEVER        168    128       71
+  without the cap            NEVER        175    131       38
 ```
 
-Confirmed on the sim: over a 720-game-hour absence on three strategies,
-`building_damaged` events fall **13/10/21 → 0/0/0**, and every building still
-below the auto-damage line afterwards is `on_fire` — an incident, not wear.
-Stated honestly for the top of the ladder: `k_decay` 1.20 still gives an L5 asset
-2.07× its seed and 697 gh to the line, so a top-level plant left alone for a month
-does still fail. That is required rather than tolerated — gate 29 needs neglect
-to be fatal, and doc 93 §Y1a moved the private half of that mechanism onto the
-lights, where a player can see it.
+After RR-99 the city's own decay rates are the only neglect clock left, and the
+cap doubles it on its own. Doc 02 §2.3's Decay columns are restored cell for
+cell; **no private seed was ever touched**, because after RR-99 a private seed
+sets only how fast a building reaches its owner's floor.
+
+*PA-82 is not thereby dismissed.* Its real complaint is that the plant's and the
+water works' first quotes land before the sheet has taught repair — a curriculum
+and surface problem, and its own proposed fix (the Grid-health chip warning from
+plant condition) is the power lane's. Declined on the rate; open on the surface.
+
+**Gate 29 is re-fitted, and it is the only gate this pass moves.**
+`tools/measure_insolvency.gd --max-days=220`, three seeds:
+
+| preset | 1337 / 4242 / 9001 | mean | Wave-14 mean |
+|---|---|---|---|
+| `casual` | 193 / 190 / 189 | **190.7** | 105.0 |
+| `standard` | 137 / 139 / 129 | **135.0** | 69.0 |
+| `hard` | 58 / 97 / 64 | **73.0** | 51.0 |
+| `crisis` | 31 / 18 / 43 | **30.7** | 26.0 |
+
+Horizons `120/90/70/55 → 210/160/120/70`, ceiling `118 → 200`, floor unmoved at
+18, `standard` pinned `69 ± 6 → 137 ± 12`. **Every preset still dies and doc 03
+§2.9's ordering holds on every seed individually**, which is the assertion the
+gate is for. The derivation is doc 92 §43.8: the ownership floor removes private
+structural failure, which was the dominant term — half the engine, twice the
+clock.
+
+**And the autopsy that made this necessary is a finding in its own right.** A
+probe of an untouched `standard` city shows `PLANT-1` **destroyed on game-day 40**
+and `SUB-A` **on 45**, with the tax line moving from 569.7 to 580.1 across the
+two failures — *nothing goes dark*. So the service clause that was to keep
+neglect fatal after private stock stopped rotting to death is built on a signal
+this fork does not emit, and what actually killed a neglected city was private
+structural failure. It is the third instance of the audit's own "a computed value
+with no consequence" (PA-02, PA-08, PA-09), it is the most expensive because a
+whole difficulty table was fitted on it, and it belongs to the power lane. Filed
+as doc 93 §Y8.
 
 ### RR-102 — the founding taper is correct and was invisible
 

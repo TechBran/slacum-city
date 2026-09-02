@@ -428,7 +428,15 @@ func _absence(sim: CitySim, hours: int) -> void:
 		if b.condition < 0.35:
 			var key := "%s/%s" % [cls, String(b.state)]
 			low_states[key] = int(low_states.get(key, 0)) + 1
-		if b.condition < MAINTAINER_THRESHOLD:
+		# **The morning bill is what the CITY CAN BUY**, which since Wave 17 is the
+		# city's own assets only (doc 02 §2.6a): a private building under the
+		# threshold has no purchasable repair at any price, so quoting one would
+		# print a number the player can never be charged and can never pay. On a
+		# pre-Wave-17 tree `_owner_kept` answers false for everything and this
+		# reads exactly as it did — which is how the BEFORE side of doc 92 §43.1
+		# was taken.
+		if b.condition < MAINTAINER_THRESHOLD \
+				and not _owner_kept(sim, String(b.archetype)):
 			# `CostCurves.resolve_type` maps doc 02's archetype id onto its doc 03
 			# money row (`water_facility` → `water_plant`), so the quote is C-16's.
 			bill[cls] += sim.econ_curves.repair_cost_building(String(b.archetype),

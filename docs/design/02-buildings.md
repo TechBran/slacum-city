@@ -403,73 +403,74 @@ Same apartment on a grid node at 130 % load with `P = 0.7` for that week:
 `0.000720 × (1 + 0.8×0.30) × (1 + 0.5×0.30) = 0.000720 × 1.24 × 1.15 = 0.00102672/gh` → `1.000 − 0.17249 = **0.828**`.
 Repairing it back to 1.00: `damage_fraction = 0.172`, `repair_hours = 14.5 × 0.50 × 0.172 = **1.25 crew-hours**`, and doc 03 charges `capital_value(apartment L3) 35,581 × 0.172 × 0.85 × 1.00 = **$5,202**` at standard difficulty *(Wave 17: `CAPITAL_VALUE_V(3)` 6.147 → 5.083 with `UPG_COEFF`, doc 93 §Y7, so the same repair on the same damage costs 17.3 % less; it was $6,291 on 43,029)*. *(The old figures — condition 87.9 / 82.1 and $2,855 — used the deleted `[0,100]` scale and doc 02's deleted `build_cost` column. The old 82.1 also contained an arithmetic slip: `0.0720 × 1.24 × 1.15 = 0.10267`, not `0.1067`, giving 82.75 on the old scale.)*
 
-### 2.6a Who pays — private stock keeps itself up (Wave 17)
+### 2.6a Who pays — the city buys no repair for a building it does not own (Wave 17)
 
 **Ruled by doc 93 §Y1**, from the 2026-09-01 playtest: *"repair prices should
-fall on the OWNERS of the building, not the city."* Doc 03 §2.4's
-`E_building_maint` billed the treasury the upkeep of every building for which
-`is_revenue_producing(type)` was true — which is `REVENUE_CLASSES`, which is
-`residential / commercial / industrial / tech` — so the line was, exactly and
-only, the city paying for the buildings it does not own. C-08 had already
-excluded the civic and utility shells it *does*.
+fall on the OWNERS of the building, not the city… and we shouldn't have to
+interrupt the gameplay to repair buildings because nothing actually happened."*
 
-| asset class | who pays routine repair | what the player sees |
+| asset class | who buys the REPAIR | what the player sees |
 |---|---|---|
-| **private stock** — the four `REVENUE_CLASSES` (`house`, `apartment`, `store`, `office`, `high_rise`, `data_center`) | **the owner** | nothing: no REPAIR row at any condition, no toast, no banner, no push. Only `f_condition` on the tax line |
+| **private stock** — the four `REVENUE_CLASSES` (`house`, `apartment`, `store`, `office`, `high_rise`, `data_center`) | **the owner** | no REPAIR row at any condition, no toast, no banner, no push. Only `f_condition` on the tax line — and doc 03 §2.4's `Building upkeep`, which the city always paid and still pays |
 | roads · water infrastructure · power infrastructure · civic buildings | **the city** | the existing surfaces — the road accrual and its policy, the water panel, the grid chip, the panel's REPAIR row |
+
+**Two things change and one deliberately does not.**
+
+**(1) `cmd_repair_building` refuses private stock** with `E_OWNER_MAINTAINED`, at
+any condition, and doc 12's panel folds that code into "there is nothing to buy"
+beside `E_NOT_DAMAGED` so the row is not drawn at all (doc 93 §Y3a).
+
+**(2) The owner holds a FLOOR.** A private building wears exactly as §2.6 says —
+**not one `decay_per_hour` cell moves** — and its owner will not let it fall past
+the Worn band's floor:
 
 ```
 owner_maintenance.classes = ["residential", "commercial", "industrial", "tech"]   §8
 
-if owner_maintained and (state == damaged or condition < condition.band_good):
-    full_repair_hours = build_time_hours(L) × condition.repair_time_factor
-    condition += (hours_elapsed / full_repair_hours) × P          P = doc 04's power_availability_hour
+after wear, if owner_maintained and P > 0:
+    condition = max(condition, condition.band_worn)          # 0.60
+if state == damaged (an INCIDENT, doc 06) and P > 0:
+    condition += (hours / (build_time_hours × repair_time_factor)) × P
     damaged → active at condition.repair_target_damaged, event `building_repaired {cause: owner}`
 ```
 
-**No number is authored for this.** The threshold is the Good band's own floor
-and the rate is §2.6's own `repair_hours` read as a rate — the whole of a
-building's damage is made good in `build_time_hours × repair_time_factor`
-game-hours, so the restore is the reciprocal of that per game-hour.
+so a private building is **never `damaged` by wear, never destroyed by wear, and
+always still upgradable** — 0.60 sits above `min_condition_to_upgrade` 0.55, and
+*that ordering is what makes the floor a floor rather than a trap*. **No number is
+authored**: the floor is §2.6's own band table, the rebuild rate is §2.6's own
+`repair_hours` read as a rate, and `P` is doc 04's `power_availability_hour`.
 
-**The service clause** (doc 93 §Y1a). The restore is scaled by `P`, doc 04's
-`power_availability_hour` — the same argument `apply_decay` already takes. A
-building the city has left **dark** is not maintained at all: it wears at the
-unpowered rate, reaches the auto-damage line, emits `building_damaged`, and
-`roll_structural_failure` can reach it like any other. *Stated precisely, because
-the proportionality is nearly a switch:* an owner's restore rate is three orders
-of magnitude larger than the wear it answers (a house restores 1.00/gh against a
-0.00045/gh decay), so **any** service at all holds the sawtooth and only `P = 0`
-lets a private building fall. Neglect is still fatal; it is now fatal through the
-lights, which the player can see, rather than through two hundred untapped REPAIR
-buttons.
+**(3) Doc 03 §2.4's `E_building_maint` does NOT move.** It bills exactly these
+buildings, and the first draft of this ruling retired it on that reading;
+measured, that broke the game (doc 92 §43.8 — `do_nothing` on `standard` survived
+to game-day 176 against gate 29's ruled 69). The line is the city's cost of
+*serving* a building, which is what C-08's civic exclusion already implied.
 
-**Measured** (`tools/measure_repair_burden.gd`, doc 92 §43.1): a served L1 house
-settles into a sawtooth with a floor of 0.850 and a mean condition of **0.9251**
-over 2,000 game-hours, which is the whole of the drag this ruling leaves on the
-tax base; a dark one reaches `damaged` in **963 gh** (40 game-days).
+**The service clause** (doc 93 §Y1a). Both the floor and the rebuild are gated on
+`P > 0`: a building the city has left **dark** is held by nobody, wears at the
+unpowered rate, crosses the auto-damage line, emits, and
+`roll_structural_failure` can take it. *Recorded honestly:* on this fork that
+clause has nothing to bite on, because destroying the power plant and the
+substation darkens nothing — doc 93 §Y8, filed for the power lane.
 
-**`cmd_repair_building` refuses private stock with `E_OWNER_MAINTAINED`**, and
-doc 12's panel folds that code into "there is nothing to buy" beside
-`E_NOT_DAMAGED` so the row is not drawn at all (doc 93 §Y3a). Incident damage is
-unchanged and stays doc 06's: a fire, a collapse or a storm strike damages a
-private building exactly as before and is answered by the city's units at the
-city's price. This ruling is about *wear*, which is time, not about *damage*,
-which is an event.
+**What the city sees, and what the player does about it.** A building left to
+wear settles at the floor, where `f_condition = COND_FLOOR + (1 − COND_FLOOR) ×
+0.60 = 0.76` — a permanent **24 %** cut in what it pays. The recovery is an
+**upgrade**: `complete_construction` sets condition back to 1.00, so the answer
+to a worn city is to invest in it, which is the loop doc 09 level 2 already
+teaches and which doc 93 §Y7 made 20.7 % cheaper in the same wave.
 
-**And no city asset may wear faster than the cheapest thing on the map** (doc 93
-§Y2a). The four city-owned archetypes are capped at the house seed:
-`power_facility` 0.00090 → **0.00045**, `substation` 0.00080 → **0.00045**,
-`water_facility` 0.00070 → **0.00045**, `construction_yard` 0.00065 →
-**0.00045**; `police_station` and `fire_station` were already at 0.00040 and are
-untouched, and no private seed moves. §2.3's Decay columns for those four
-archetypes are re-published above. The derivation is the arc: over doc 92 §33's
-45-game-day finale (1,080 gh) an L1 asset at 0.00045 wears 0.486, which is below
-the `1 − 0.35 = 0.65` the auto-damage line needs, **so a city building cannot
-reach `damaged` from wear alone inside the arc** — at 0.00090 it wore 0.972 and
-could. At the top of the ladder `k_decay = 1.20` still gives an L5 asset 2.07× its
-seed and 697 gh to the line, so a top-level plant left alone for a month does
-still fail, which is required rather than tolerated.
+**Measured** (`tools/measure_repair_burden.gd`, doc 92 §43): the REPAIR
+affordance falls from 260 private / 21 civic to **0 / 24** in a 21-game-day
+`balanced` city; private repair trips 14 → **0**; and after a 720-game-hour
+absence that city's private stock goes from **2/16/236/8** across the bands to
+**4/233/0/0** with **0 damaged** and a morning bill of **$0** for private stock.
+
+**PA-82's decay cap is declined** (doc 93 §Y2a): capping the four city-owned
+archetypes at the house rate was implemented and withdrawn on the same
+measurement that withdrew the retirement, because after this ruling the city's
+own rates are the only neglect clock left. §2.3's Decay columns stand as
+published.
 
 ### 2.7 Fire — ignition here, dynamics in doc 06
 

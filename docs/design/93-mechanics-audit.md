@@ -2306,76 +2306,90 @@ ruling before it is a number:
 measured in doc 92 §43, and every gate a ruling moves is re-fitted there with
 its derivation.
 
-### Y1. A city does not pay the upkeep of a building it does not own
+### Y1. The city buys no repair for a building it does not own
 
 **Question.** Doc 03 §2.4's `E_building_maint` bills the treasury
 `capital_value(L) × BUILDING_MAINT_RATE × (1 + MAINT_CONDITION_PENALTY × (1 − C))`
 every settled game-hour, and doc 02 §2.6's `cmd_repair_building` sells the
-player a repair on any building at all. Which buildings is that *right* for?
+player a repair on any building at all. Which of those is *right*, and for which
+buildings?
 
-**The evidence that settles it is in the code, not in the playtest.**
-`EconomySystem.settle_hour`'s maintenance loop skips every row for which
-`CostCurves.is_revenue_producing(type)` is false — C-08, so that a civic or
-utility shell is not billed twice beside its own department or O&M line. That
-predicate is `REVENUE_CLASSES.has(class_of(type))`, and `REVENUE_CLASSES` is
-`["residential", "commercial", "industrial", "tech"]`. So the set of buildings
-`E_building_maint` bills is, exactly and only, **the set of buildings the city
-does not own** — the houses, shops, offices and towers whose owners pay it tax.
-The line is not mis-tuned. It is the wrong party.
+**The observation that starts it.** `EconomySystem.settle_hour`'s maintenance
+loop skips every row for which `CostCurves.is_revenue_producing(type)` is false —
+C-08, so a civic or utility shell is not billed twice beside its own department
+or O&M line. That predicate is `REVENUE_CLASSES.has(class_of(type))` and
+`REVENUE_CLASSES` is `["residential", "commercial", "industrial", "tech"]`. So
+the set of buildings `E_building_maint` bills is exactly the set the city does
+**not** own, and the first draft of this ruling retired the line on that reading.
 
-**Ruled: private stock maintains itself, and the city pays for city assets only.**
+**That draft was measured before it was believed, and the measurement refused
+it.** With the line retired *and* private stock keeping itself up,
+`tools/measure_insolvency.gd --max-days=200` put `do_nothing` on `standard` at
+game-day **176** against gate 29's ruled 69, and `casual` **never went insolvent
+inside 200 game-days at all**. Gate 29's own header says why that is
+disqualifying: *"a preset on which standing still never costs anything is a
+preset with no game in it"*. §Y8 has the autopsy.
 
-| asset class | what is in it | who pays routine repair | what the player sees |
+**Ruled, in two halves.**
+
+**(a) `E_building_maint` STAYS, and §2.4 says what it is.** It is the city's cost
+of *serving* a building — which is the reading C-08's own exclusion implies,
+since civic shells are excluded because *their own O&M lines bill them*, not
+because the city only pays for what it owns — and it rises as a building wears
+because a worn building costs more to serve. Not one cell of it moves.
+
+**(b) The REPAIR moves to the owner, and it is the repair the playtest was
+about**: a lumpy purchase, at a price, behind a tap, on a building the player
+does not own. `cmd_repair_building` refuses private stock with
+`E_OWNER_MAINTAINED` at any condition, and the panel draws no row for it (§Y3a).
+
+| asset class | what is in it | who pays the REPAIR | what the player sees |
 |---|---|---|---|
-| **Private stock** | `house`, `apartment`, `store`, `office`, `high_rise`, `data_center` — the four `REVENUE_CLASSES` | **the owner** | *nothing.* No REPAIR row, no toast, no banner, no cash cue, no push. The only trace is the tax the building pays, which is smaller while it is worn (`f_condition`) — §Y3 |
-| **Roads** | every STREET / AVENUE tile | **the city** | doc 03 §2.4's `E_roads_repair` accrual, doc 10 §2.13's auto-repair policy, the `road_condition_critical` log row |
+| **Private stock** | `house`, `apartment`, `store`, `office`, `high_rise`, `data_center` — the four `REVENUE_CLASSES` | **the owner** | no REPAIR row at any condition, no toast, no banner, no push. Only `f_condition` on the tax line, and the city's own `Building upkeep` line, which it always paid |
+| **Roads** | every STREET / AVENUE tile | **the city** | the `E_roads_repair` accrual, doc 10 §2.13's auto-repair policy, the `road_condition_critical` log row |
 | **Water infrastructure** | mains, and the five `water_facility` variants | **the city** | the water panel's repair quote; doc 05's own alerts |
 | **Power infrastructure** | `power_facility`, `substation`, transformers, lines | **the city** | the grid-health chip; the panel's REPAIR row |
 | **Civic buildings** | `police_station`, `fire_station`, `construction_yard` | **the city** | the panel's REPAIR row, and the Upkeep band |
 
-**Incidents are untouched and stay doc 06's.** A fire, a collapse, a storm strike
-or a vehicle impact damages a private building exactly as it did before, raises
-exactly the incident it raised before, and is answered by the city's units at
-the city's price. The ruling is about *wear*, which is weather and time, not
-about *damage*, which is an event. This is the whole of the user's "nothing
-actually happened": the taps they were being asked for were the ones where
-nothing had.
+**What the owner actually does — a FLOOR, not a restoration.** A private building
+wears exactly as §2.6 has always said (**this ruling moves not one
+`decay_per_hour` cell**), and its owner will not let it fall past the Worn band's
+floor, `condition.band_worn` = 0.60, because below that it stops being an asset
+and starts being a liability, and it is *their* asset. So a private building is
+**never `damaged` by wear, never destroyed by wear, and always still
+upgradable** — 0.60 sits above `min_condition_to_upgrade` 0.55, and that ordering
+is what makes the floor a floor rather than a trap. An incident that damages one
+is still doc 06's, and the owner rebuilds from `damaged` to §2.12's post-damage
+target on §2.6's own crew-hours.
 
-**What the owner's crew does, mechanically.** Below `condition.band_good` (0.85)
-the owner restores condition at exactly the rate a city crew would work — doc
-02 §2.6's own `repair_hours = build_time_hours × repair_time_factor ×
-damage_fraction`, which makes the whole of a building's damage good in
-`build_time_hours × repair_time_factor` game-hours, so the restore rate is the
-reciprocal of that per game-hour. **No new number is authored**; both constants
-are already in `data/building_rules.json.condition`, and §Y2 makes them
-readable for the first time.
+**No number is authored for any of this.** The floor is doc 02 §2.6's own band
+table; the rebuild rate is §2.6's own `repair_hours` read as a rate; the service
+gate is doc 04's own availability fraction.
 
-### Y1a. The service clause — an owner keeps up a building the city is still serving
+### Y1a. The service clause — a floor the city has to keep paying for
 
-**Question.** If private stock repairs itself, can a player neglect a city to
-death any more? Gate 29 says neglect must be fatal on every preset.
+**Question.** If private stock holds a floor, can a player neglect a city to
+death any more?
 
-**Ruled: the owner's crew works in proportion to the service the city delivered
-that hour.** The restore is multiplied by doc 04's `power_availability_hour` —
-the same fraction `apply_decay` already takes as an argument. A fully served
-building is maintained as §Y1 rules; a half-dark one is maintained half as fast;
-**a building the city has left dark is not maintained at all**, wears at the
-unpowered rate, reaches the auto-damage line and can be taken by
-`roll_structural_failure` like any other. No new constant: it is doc 04's own
-fraction, used once more.
+**Ruled: the floor lifts the moment the city stops serving the building.** Both
+the floor and the post-incident rebuild are gated on doc 04's
+`power_availability_hour` — the argument `apply_decay` already takes. A building
+the city has left **dark** is held by nobody: it wears at the unpowered rate,
+crosses the auto-damage line, emits, and `roll_structural_failure` can take it.
 
-This is what keeps neglect fatal *and* moves it onto something the player can
-see. Before Wave 17 a neglected city died because two hundred houses rotted on
-the city's books while the player was never told; now it dies because the lights
-went out, which is a thing with an overlay, a chip and a push.
+**And §Y8 is the honest footnote to that**: on this fork the signal it depends on
+does not fire, because destroying the plant and the substation darkens nothing.
+The clause is right and it is not currently load-bearing, so the neglect clock
+this ruling leaves behind is measured rather than assumed, and gate 29 is
+re-fitted onto what was measured (doc 92 §43.8).
 
 ### Y2. `data/building_rules.json.condition` becomes a source (PA-13)
 
 **Question.** The 2026-09-01 production audit's PA-13 found that every key in
 `building_rules.json.condition` is validated for presence, asserted by
 `tests/test_building_catalog.gd`, and **read by nothing** —
-`sim/buildings/building.gd` hardcodes all of them as consts and literals. A
-decay retune that edits that file therefore changes nothing at all.
+`sim/buildings/building.gd` hardcoded all of them as consts and literals. Any
+retune that edits that file therefore changes nothing.
 
 **Ruled: `Building` reads the condition block, and the block is stamped on the
 instance beside `stats` and `max_level`.** Not a static and not a singleton —
@@ -2383,79 +2397,74 @@ instance beside `stats` and `max_level`.** Not a static and not a singleton —
 process, so a process-global rules dict would let one city's fixture move
 another's physics. The coordinator stamps the same shared `Dictionary` on every
 `Building` at the four sites that make one live (boot, restore, building
-placement, and doc 05's water shell), and
-a `Building` that is never stamped falls back to `DEFAULT_CONDITION`, whose
-values are the consts this ruling deletes — so every fixture and every worked
-example is bit-identical to the day before.
+placement, and doc 05's water shell), and a `Building` that is never stamped
+falls back to `DEFAULT_CONDITION`, whose values are the consts this ruling
+deletes — so every fixture and every worked example is bit-identical to the day
+before.
 
-**The gate is PA-13's own:** perturb an authored key and assert the *behaviour*
-moves, not that the loader accepted it (`tests/test_building.gd`).
+This ruling is what makes §Y1's floor expressible at all: the floor **is**
+`band_good`'s neighbour `band_worn`, read from the file, and before PA-13 was
+closed there was no reader to read it.
 
-Scope: this ruling lands the **condition** block only. `construction.*` and
-`headroom_safety` are the same defect in the same file and belong to the
-construction-queue and power lanes, which own `ConstructionQueue` and
-`can_upgrade_power`; PA-13 stays open until they land.
+**The gate is PA-13's own:** `tests/test_building.gd` perturbs an authored key
+and asserts the *behaviour* moves, not that the loader accepted it. **Scope: the
+`condition` block only.** `construction.*` and `headroom_safety` are the same
+defect in the same file and belong to the construction-queue and power lanes;
+PA-13 stays open until they land.
 
-### Y2a. No city asset may wear faster than the cheapest thing on the map
+### Y2a. PA-82's decay cap is DECLINED, with the measurement that declines it
 
-**Question.** §Y1 leaves the city owning roads, water, power and three civic
-shells. `data/building_rules.json.seed_rows[*].decay` gives those shells the
-*fastest* decay in the game — `power_facility` 0.00090, `substation` 0.00080,
-`water_facility` 0.00070, `construction_yard` 0.00065 against a house's
-0.00045 — and PA-82 measured the consequence: the starter plant and water works
-are the first repair bills a player ever sees, at $4,751–$10,235, before the
-sheet has taught repair. What is the right rate?
+**Question.** PA-82 asks that civic and utility L1 decay be capped at the house
+rate — `power_facility` 0.00090, `substation` 0.00080, `water_facility` 0.00070
+and `construction_yard` 0.00065 all to 0.00045 — because those are the first
+repair bills a player ever sees.
 
-**Ruled: the city's own building stock is capped at the house rate, 0.00045/gh,
-and the cap is derived from the arc rather than chosen.** Doc 92 §33's finale
-arc is 45 game-days = 1,080 game-hours, and doc 02 §2.6's auto-damage line is at
-`1 − 0.35 = 0.65` of condition. Two consequences follow directly:
+**Ruled: no. The city's own decay rates are the only neglect clock left after
+§Y1, and they may not be softened.** The cap was implemented, measured and
+withdrawn:
 
 ```
-wear over one 45-day arc, L1     = decay × 1080
-  at 0.00090 (plant, today)      = 0.972  >  0.65   -> reaches `damaged` from WEAR
-  at 0.00045 (the cap)           = 0.486  <  0.65   -> cannot: damage is an EVENT
-repair trips per asset per arc   = decay × 1080 / (1 − maintainer threshold 0.80)
-  at 0.00090                     = 4.9 per asset  ->  7 starter city assets = 34
-  at 0.00045                     = 2.4 per asset  ->  7 starter city assets = 17  ≤ 20
+tools/measure_insolvency.gd --max-days=200, do_nothing, seed 1337
+  with the cap      casual  NEVER   standard 168   hard 128   crisis 71
+  without the cap   casual  NEVER   standard 175   hard 131   crisis 38
+  gate 29's ruled   casual    105   standard  69   hard  51   crisis 26
 ```
 
-The second line lands PA-33's published target (≤ 20 manual repair taps per
-45-day arc) exactly, and the first is the whole of the user's note (a): **after
-this cap, no city building can reach `damaged` from wear alone inside the arc**,
-so every `building_damaged` a player sees is an incident that actually happened.
-`police_station` and `fire_station` are already at 0.00040 and are untouched.
+Two things fall out of that pair. The cap on its own **doubles the standard
+clock** — and withdrawing it moved the broken clock by seven game-days, which is
+the other half of the finding: the cap was never the *cause* of the break (§Y1's
+first draft was), but it is a large enough term that it cannot be added on top of
+a ruling that already halves the engine. Doc 02 §2.3's Decay columns are restored
+cell for cell and no private seed was ever touched.
 
-**Stated honestly for the top of the ladder.** `shared_curves.k_decay` is 1.20,
-so a level-5 city asset wears 2.07× its seed and reaches the auto-damage line in
-697 gh (29 game-days). A top-level plant left alone for a month therefore still
-fails — which is required, not tolerated: gate 29 needs neglect to be fatal, and
-§Y1a moved the private half of that mechanism onto the lights.
+*PA-82's row is not thereby dismissed.* Its complaint is that the plant's and the
+water works' first quotes land before the sheet has taught repair, and that is a
+**curriculum and surface** problem — the Grid-health chip warning from plant
+condition, which PA-82 itself proposes and which is the power lane's — not a rate
+problem. Recorded as declined-on-the-rate, open-on-the-surface.
 
-**Private seeds do not move.** After §Y1 a private building's decay sets only
-the depth of the owner's sawtooth and the speed of its fall when the city stops
-serving it, so re-tuning it would change the tax drag and nothing the player
-taps. Doc 02's entire private ladder is untouched.
+### Y3. What the player sees of an owner's floor, and what they do about it
 
-### Y3. What the player sees of an owner's upkeep: one number, on the tax line
+**Question.** §Y1 says the owner holds a floor. What does the city see, and what
+is the player's recourse?
 
-**Question.** §Y1 says the owner pays. Should the player see the owner paying?
+**Ruled: the city sees `f_condition`, and the recourse is to INVEST, not to
+repair.** A private building that has been left to wear settles at the Worn
+floor, where `f_condition = COND_FLOOR + (1 − COND_FLOOR) × 0.60 = 0.76` — **a
+permanent 24 % cut in what that building pays the city**, and the only thing the
+city sees, because there is no repair to buy at any condition.
 
-**Ruled: only as `f_condition`, and never as an interruption.** A private
-building in the owner's sawtooth sits between `band_good` and 1.00, so it pays
-its tax at `f_condition = COND_FLOOR + (1 − COND_FLOOR) × C` with `C` in
-`[0.85, 1.00]` — between 0.910 and 1.000, a drag of at most 9.0 % and, at the
-steady-state mean `C = 0.925`, of **4.5 %**. That is the visible consequence of
-private wear and it is the *only* one: the drag is already drawn (the Upkeep
-band, the tax line, the condition tint), it costs no tap, and it cannot wake a
-phone.
+**The recovery is an upgrade.** `complete_construction` sets condition back to
+1.00, so the answer to a worn city is to put money into it — which is the loop
+doc 09 level 2 already teaches, and which §Y7 made **20.7 % cheaper** in the same
+wave. That is the shape this pass wanted: the three playtest notes turn out to be
+one loop, and the fix for the first is paid for by the fix for the third.
 
-**The choice, stated.** The alternative was to keep billing the city and rename
-the line. That is the same dollar taken from the same treasury with a better
-label, and it leaves the REPAIR row on two hundred houses — which is the half of
-the user's note that a rename cannot answer. This ruling takes the dollar off
-the city's expense ledger and lets the owner's own worn yield carry it, which is
-both the honest ownership model and the one that removes the taps.
+**The choice, stated.** The alternative was to let private stock rot all the way
+down as it did before and simply refuse to sell a repair. That leaves the player
+holding a building they cannot repair, cannot upgrade (`min_condition_to_upgrade`
+0.55) and cannot demolish profitably — a dead asset with no verb, which is worse
+than the tap it removes.
 
 ### Y3a. A refusal the player never reads is not a refusal
 
@@ -2502,24 +2511,52 @@ finally has the asset class it was written for. A row that carries no
 is unmoved. The same reading closes the one flat row left in `e_grid`: a plant
 carries the condition penalty its own nodes and lines already carry.
 
-### Y6. Income rises by removing a wrong charge, not by adding a right one
+### Y6. Income rises because the city stops buying repairs it never owed
 
 **Question.** Note (b) asks for more money. Which lever?
 
-**Ruled: the ownership correction is the lever, and it is measured before
-anything else is considered.** §Y1 retires the single largest expense line in a
-grown city and §Y7 cuts every upgrade price; street rewards are deferred and are
-not touched. Doc 92 §43.2 measures what those two are worth in `$/real-minute at
-1×` before proposing any further move, because a lever pulled on top of an
-unmeasured one is a guess.
+**Ruled: the two rulings already made are the lever, and no third one is pulled.**
+Street rewards are deferred and untouched; no tax constant, no `base_tax` row, no
+yield multiplier, no grant *rate* and **no expense line** moves. What moves is
+what the city *spends*:
 
-**The pacing rule they are measured against** is doc 03 §2.12's own beat table,
-whose shortest opening play session is **10 real minutes** (rows S2 and S4) and
-which places at least one player purchase in every session: *the player may
-never be left with nothing the curriculum asks for that they can afford, for
-longer than one short session — N = 10 real minutes — anywhere in levels 1–4.*
-1 real minute is 1 game-hour at 1× (`data/time.json.clock.real_seconds_per_game_minute`
-= 1.0), so the rule is directly measurable in game-hours and gate 21 can hold it.
+* §Y1 stops it buying repairs on buildings it does not own — measured at
+  **−79 % of repair spend and −87 % of repair taps** across a 45-game-day arc;
+* §Y7 cuts every upgrade price by **20.7 %**.
+
+The founding ledger is therefore **unmoved** (doc 92 §43.6: gross bit-identical,
+net 514.888371 → 513.971917, a −0.18 % that is entirely §Y5's condition
+coefficient reaching a worn station). *The opening was never short of money* — a
+`do_nothing` starter city banks $89,798 by game-day 7 — and the pass says so
+rather than inventing an opening subsidy to answer a complaint the measurement
+does not support.
+
+**The pacing rule the result is tested against** is doc 03 §2.12's own beat
+table, whose shortest opening play session is **10 real minutes** (rows S2 and
+S4) and which places at least one player purchase in every session: *the player
+may never be left unable to afford what the curriculum asks for, for longer than
+one short session.* **N = 10 real minutes.** One real minute is one game-hour at
+1× (`data/time.json.clock.real_seconds_per_game_minute` = 1.0), so the rule is
+measurable in game-hours and doc 92 §43.7 tests it against doc 03 §2.5a's own
+"half of what the next chapter asks you to buy" basis table.
+
+### Y6a. The Wave-17 rulings, and the one that was withdrawn
+
+For the record, because a ruling reversed by its own measurement is worth more
+than one that was right the first time:
+
+| ruling | shipped? |
+|---|---|
+| §Y1(b) `E_OWNER_MAINTAINED` — the city buys no repair for private stock | **yes** |
+| §Y1 the ownership floor at `band_worn`, service-gated | **yes** |
+| §Y1(a) retiring `E_building_maint` | **WITHDRAWN** — gate 29, measured (§Y8) |
+| §Y2 PA-13's condition readers | **yes** |
+| §Y2a PA-82's decay cap | **DECLINED** — gate 29, measured |
+| §Y3a `E_OWNER_MAINTAINED` folds into "nothing to buy" | **yes** |
+| §Y4 the assistance window, no dollars moved | **yes** |
+| §Y5 a worn station and a worn plant pay their own bill | **yes** |
+| §Y7 `UPG_COEFF = TAX_LEVEL_GROWTH − 1` | **yes** |
+| §Y7a water/power component ladders follow | **yes** |
 
 ### Y7. An upgrade costs what the revenue it adds is worth
 
@@ -2585,3 +2622,42 @@ gets **20.7 % cheaper** in step with the upgrade itself, and its *derived
 per-crew-hour rate* is unchanged, because that rate is a fraction of a price and
 both the numerator and the denominator move together. Recorded here so the merge
 checks it rather than discovers it.
+
+### Y8. The autopsy: destroying the power plant darkens nothing
+
+**This is the finding that shaped every ruling above, and it is not this lane's
+to fix.** §Y1a's service clause — an owner cannot hold up a building the city has
+stopped serving — is the mechanism that was supposed to keep neglect fatal after
+private stock stopped rotting to death. It cannot fire on this fork.
+
+Measured on an untouched `do_nothing` starter city, `standard`, seed 1337, one
+row per five game-days:
+
+```
+day | treasury | net/gh | tax/gh | PLANT-1          | SUB-A            | destroyed
+ 30 |   201202 |   76.7 |  577.6 | 0.273 damaged    | 0.376 active     | 0
+ 35 |   213004 |   61.2 |  571.5 | 0.099 damaged    | 0.236 damaged    | 0
+ 40 |   221008 |   43.8 |  569.7 | 0.000 destroyed  | 0.067 damaged    | 1
+ 45 |   229619 |    5.4 |  569.3 | 0.000 destroyed  | 0.000 destroyed  | 3
+ 60 |   246117 |    8.1 |  580.1 | 0.000 destroyed  | 0.000 destroyed  | 4
+```
+
+**The city's power plant and its substation are destroyed on game-days 40 and 45,
+and the tax line does not move** — 569.7 before, 580.1 twenty game-days after,
+and the treasury keeps climbing. Nothing goes dark, no `f_power` term bites, and
+the private stock is served exactly as it was the day before the plant died.
+
+Two consequences, both recorded rather than fixed here:
+
+1. **What actually killed a neglected city was private structural failure.** Not
+   the blackout — buildings rotting past 0.35, going `damaged`, and being
+   destroyed one at a time until there was no tax base left. Doc 02 §2.6a stops
+   exactly that, on purpose, because it is also what the 2026-09-01 playtest
+   called "way too aggressive". So the engine had to be re-fitted, not restored:
+   doc 92 §43.8 and gate 29.
+2. **It is the same defect the production audit filed twice** — PA-02/PA-08 on
+   the power side and PA-09 on the water side, both "a computed value with no
+   consequence". This row is the third instance and the most expensive, because a
+   whole difficulty table was fitted on a mechanism the docs believed in and the
+   sim never had. It belongs to the power lane, and until it lands, §Y1a is a
+   correct clause with nothing to bite on.
