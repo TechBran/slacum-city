@@ -174,6 +174,13 @@ extends SceneTree
 ##                      `zoom_t` and has no other expression. Distance, focus
 ##                      and yaw are unchanged, so a `--pitch=34` Z2 run is the
 ##                      Z2 pose seen from a camera that is not looking down.
+##   --aim=0|1          Wave 18 (doc 98 §54): force the AIM-HEIGHT RAMP off (0) or
+##                      on (1). `--aim=0` clamps `aim_up_anchor_ndc` to 0, i.e.
+##                      "the pan anchor may not leave the view axis", which is
+##                      the pre-Wave-18 rig exactly — the camera looks at the
+##                      focus and no bias lifts it. This is the A/B arm doc 92
+##                      §53's before/after table is taken with; it changes no
+##                      code path, only the authored guard.
 ##   --pitch-cull=0|1   force §2.5b's pitch-coupled `far_cull_m` off (0) or on
 ##                      (1), instead of taking it from `lod.pitch_cull`. The
 ##                      A/B behind that ruling: the two runs differ in nothing
@@ -552,6 +559,13 @@ func _build_scene() -> void:
 	if pinned > 0.0:
 		_camera_state.pitch_near_deg = pinned
 		_camera_state.pitch_far_deg = pinned
+	# `--aim=0`: WAVE 18's A/B arm. `aim_up_anchor_ndc = 0` says "the pan anchor
+	# may not leave the view AXIS", which is exactly the pre-Wave-18 rig — the
+	# camera looks at the focus and the ramp lifts nothing at any bias. It is a
+	# clamp on the same authored guard rather than a second code path, so an
+	# `--aim=0` row is the old composition measured by the new binary.
+	if int(_opts["aim"]) >= 0:
+		_camera_state.aim_up_anchor_ndc = 1.0 if int(_opts["aim"]) == 1 else 0.0
 	_camera_rig = CameraRig.new()
 	stage.add_child(_camera_rig)
 	_camera_rig.setup(_camera_state, _render_data)
@@ -947,8 +961,15 @@ func _apply_pose(index: int) -> void:
 					% [key, float(tilt), _camera_state.zoom_t, _camera_state.pitch_deg()])
 	else:
 		_camera_state.clear_pitch_bias()
-	_labels[key] = "%s  D %.0f m / %.0f°%s" % [key.to_upper(), _camera_state.distance(),
-			_camera_state.pitch_deg(), "" if _camera_state.is_pitch_auto() else "*"]
+	# WAVE 18 (doc 98 §54): the orbit pitch is no longer the angle the frustum
+	# wears. A row that printed only `pitch_deg()` would describe a camera aimed
+	# somewhere the frame is not, so the label carries the VIEW angle and the
+	# aim-height ramp that produced it whenever the ramp is live.
+	var aim := _camera_state.aim_height_m()
+	var aim_note := "" if aim <= 0.0 \
+			else " > view %.1f° aim %.1f m" % [_camera_state.view_pitch_deg(), aim]
+	_labels[key] = "%s  D %.0f m / %.0f°%s%s" % [key.to_upper(), _camera_state.distance(),
+			_camera_state.pitch_deg(), "" if _camera_state.is_pitch_auto() else "*", aim_note]
 	_camera_rig.camera.global_transform = _camera_state.camera_transform()
 	# A pose jump re-tiers every chunk, and §2.5 allows at most ONE tier step per
 	# `lod_dwell_s`. Leaving that to the warm-up frames is a bug in this harness,
@@ -1394,7 +1415,7 @@ func _report() -> void:
 			"city": String(_opts["city"]), "preset": String(_opts["preset"]),
 			"hour": float(_opts["hour"]), "buildings": _sim.buildings.size(),
 			"road_detail": _roads.detail if _roads != null else -1,
-			"tilt": _opts["tilt"], "sky": String(_opts["sky"]),
+			"tilt": _opts["tilt"], "sky": String(_opts["sky"]), "aim": int(_opts["aim"]),
 			"yaw_deg": float(_opts["yaw"]) if is_finite(float(_opts["yaw"])) else null,
 			"resolution": [_measured_resolution.x, _measured_resolution.y],
 			"resolution_asked": [(_opts["resolution"] as Vector2i).x,
@@ -1424,6 +1445,7 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 		"tilt": "auto", "sky": "gradient", "yaw": NAN,
 		"no_quality": false, "medium_max": -1.0, "far_family": -1,
 		"far_gain": -1.0, "far_relief": -1.0, "pitch": -1.0, "pitch_cull": -1, "far_cull": -1.0,
+		"aim": -1,
 	}
 	for raw in argv:
 		var arg := String(raw)
@@ -1445,6 +1467,8 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			opts["pitch"] = float(arg.trim_prefix("--pitch="))
 		elif arg.begins_with("--pitch-cull="):
 			opts["pitch_cull"] = clampi(int(arg.trim_prefix("--pitch-cull=")), 0, 1)
+		elif arg.begins_with("--aim="):
+			opts["aim"] = clampi(int(arg.trim_prefix("--aim=")), 0, 1)
 		elif arg.begins_with("--medium-max="):
 			opts["medium_max"] = float(arg.trim_prefix("--medium-max="))
 		elif arg.begins_with("--far-family="):

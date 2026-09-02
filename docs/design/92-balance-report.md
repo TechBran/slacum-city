@@ -8212,3 +8212,183 @@ beyond `medium_max_m`.
 cascades.** `shadow_max_m` is the lever with purchase at Z1; a pitch-coupled
 `medium_max_m` is worth 6 there and 65 at Z2. Neither is taken in this lane;
 both are filed with their numbers in doc 11 §2.5b's OPEN note.
+
+## 53. Wave 18 — the aim-height ramp, measured: fifteen cells that do not move, six that pay and four that are refunded (2026-09-02)
+
+Every row below is `tools/profile_frame.gd` on the 1,500-building benchmark city,
+preset **balanced**, **1920 × 1080**, road detail 2, pad shadows on, gradient sky,
+the harness's own default warm-up 90 / 180 frames per pose. `dc+ui` adds doc 11
+§2.13's 25 batched UI calls and is the column the **320** budget compares against.
+
+    ~/.local/bin/godot --path . -s res://tools/profile_frame.gd -- \
+        --poses=z0,z1,z2 --hour=13|21 --tilt=12|34|62|78 --aim=0|1
+
+**It is a true A/B on ONE binary.** `--aim=0` clamps `aim_up_anchor_ndc` to 0 —
+"the pan anchor may not leave the view AXIS", which is the pre-Wave-18 rig
+exactly, because the camera then looks at the focus and no bias lifts it. Same
+build, same fixture, same warm-up, one authored guard between the arms. That
+matters here more than usual, because §47's table was taken before the render
+fork merged and its DAY column no longer reproduces (see §53.4).
+
+### 53.1 The table — pitch {floor, 34°, 62°, ceiling} × zoom {Z0, Z1, Z2}, day and night, before and after
+
+| pitch asked | pose | pitch used | DAY dc+ui before | DAY dc+ui after | Δ | NIGHT dc+ui before | NIGHT dc+ui after | Δ |
+|---|---|---|---|---|---|---|---|---|
+| **12° (floor)** | Z0 | 12° | **386** ✗ | **434** ✗ | +48 | 221 | 254 | +33 |
+| **12° (floor)** | Z1 | 16° | **346** ✗ | **357** ✗ | +11 | 216 | 227 | +11 |
+| **12° (floor)** | Z2 | 24° | 265 | 226 | **−39** | 251 | 222 | **−29** |
+| 34° | Z0 | 34° | 277 | 277 | **+0** | 112 | 112 | **+0** |
+| 34° | Z1 | 34° | 285 | **350** ✗ | +65 | 152 | 220 | +68 |
+| 34° | Z2 | 34° | 258 | 215 | **−43** | 251 | 211 | **−40** |
+| 62° | Z0 | 62° | 262 | 262 | **+0** | 111 | 111 | **+0** |
+| 62° | Z1 | 62° | 253 | 253 | **+0** | 128 | 128 | **+0** |
+| 62° | Z2 | 62° | 213 | 213 | **+0** | 213 | 213 | **+0** |
+| **78° (ceiling)** | Z0 | 78° | 259 | 259 | **+0** | 111 | 111 | **+0** |
+| **78° (ceiling)** | Z1 | 78° | 262 | 262 | **+0** | 117 | 117 | **+0** |
+| **78° (ceiling)** | Z2 | 78° | 189 | 189 | **+0** | 189 | 189 | **+0** |
+
+✗ = over the 320 budget. Three readings, in order of what they change:
+
+1. **Fifteen of the twenty-four cells are byte-identical, and that is the claim
+   rather than a coincidence.** Every cell whose bias is `≤ 0` — AUTO (Z0 at 34°,
+   Z2 at 62°) and the whole top-down half of the axis — measures the SAME draw
+   call in both arms, at both hours. `aim_height_m()` returns exactly `0.0`
+   there, `view_pitch_rad()` returns `pitch_rad()` unchanged rather than
+   reconstructing it, and `camera_basis()` is `orbit_basis()` to the bit. This
+   table is that claim tested through a rendered frame instead of through a unit
+   test.
+2. **The near zoom pays and the far zoom is REFUNDED.** Z2 comes DOWN by 39 (day)
+   and 29 (night) at the floor, and by 43/40 at 34°. That is geometry, not luck:
+   aiming up rotates the frustum off the apron of ground immediately in front of
+   the camera, and at Z2 the camera is 171 m up, so the apron it drops is large
+   and what replaces it is sky. At Z0 the camera is 3.74 m up, the apron is 10 m
+   wide (§53.3), and what enters the frame instead is the airspace 1,500
+   buildings stand in — which is the picture this wave exists to produce.
+3. **The worst cell is not the floor, it is the MIDDLE of the up half at Z1**:
+   34° asked at Z1 is a 0.39 lean off a 48° curve, and it goes 285 → 350 (+65
+   day, +68 night), taking a cell that was inside the budget outside it. The Z1
+   floor moves only +11 because `reach_up` has already shortened the lean there
+   and the anchor cap takes another 0.45°. **A budget statement that only quoted
+   the ends of the axis would have missed this**, which is why the table samples
+   four pitches and not two.
+
+### 53.2 How far short, exactly
+
+| cell (day, balanced, bench city) | budget | before | after | over by |
+|---|---|---|---|---|
+| Z0, pitch floor | 320 | 386 | **434** | **+114 (+35.6 %)** |
+| Z1, pitch floor | 320 | 346 | **357** | **+37 (+11.6 %)** |
+| Z1, 34° | 320 | 285 | **350** | **+30 (+9.4 %)** |
+| Z2, pitch floor | 320 | 265 | **226** | under by 94 |
+
+Night is inside the budget in **every** cell of the table, before and after; the
+worst night cell after the ramp is Z0 at the floor, 254 of 320. The excess is
+day-only and it is the sun's shadow pass, exactly as §47.1 reading 2 found for
+the band itself.
+
+### 53.3 Why the pitch-coupled `far_cull_m` is NOT re-fitted
+
+The brief's hypothesis was that a camera aimed up needs less distance behind the
+focus. The geometry says the opposite. Aiming up moves the frame's **near** edge
+OUT and leaves the **far** edge where it was:
+
+| | before (12° at the focus) | after (view −6.92°) |
+|---|---|---|
+| top ray, relative to horizontal | 8.0° above | 26.9° above |
+| bottom ray | 32.0° below | 13.1° below |
+| nearest visible ground, Z0 | `3.742/tan 32° = 6.0 m` | `3.742/tan 13.1° = 16.1 m` |
+| furthest visible ground | ∞ (top ray clears the horizon) | ∞ |
+
+So the ramp deletes a 10 m apron — a fourteenth of one 128 m chunk — and adds
+sky. §2.5b's `pitch_cull_reach_m` returns **INF** for every angle at or below the
+half-FOV and is honest to do so: past the range where the top ray meets the
+ground there is no such range. A cull tightened past that bound would delete
+skyline that is on screen, which is the one thing this wave may not do. **The
+`lod.pitch_cull.slack` curve is therefore unchanged**, and the excess above is
+published under doc 93 §AC2's standing ruling. The runtime guard remains doc 11
+§2.13's adaptive governor.
+
+One thing was checked rather than assumed: a NEGATIVE view pitch now collides
+with `RenderStateModel.set_camera_pose`'s `pitch_deg < 0` "no pitch supplied"
+sentinel. Both branches produce the identical answer — `active_far_cull_m =
+far_cull_m` — precisely because the reach is INF there, and that is asserted at
+five angles from −6.92° to 19.9° in
+`tests/test_camera_aim.gd::test_the_pitch_cull_reads_the_frustum_and_a_lifted_aim_leaves_it_standing`.
+The harness confirms it in the frame: `PITCH CULL (doc 11 §2.5b, ON): z0
+12°→1200 m (= preset, frustum reaches past it)` in both arms.
+
+### 53.4 Where the calls went — attributed, in two halves
+
+At the Z0 day floor the count of visible NEAR building buckets is **identical in
+both arms** — 197 bucket + 149 merged = 346 — while the engine's own
+`RENDER_TOTAL_DRAW_CALLS_IN_FRAME` goes 361 → 409. So none of the +48 is the
+building geometry re-tiering; all of it is passes and layers outside those
+buckets. Two A/Bs split it:
+
+| arm | before | after | Δ | what is armed |
+|---|---|---|---|---|
+| balanced, **hour 13** | 361 | 409 | **+48** | sun shadow, `shadow_max 150 m` |
+| balanced, **hour 21** | 196 | 229 | **+33** | no shadow (`elevation > 2.0` gate) |
+| **performance**, hour 13 | 197 | 230 | **+33** | no shadow (`shadow splits-mode 0`, `shadow_max 0 m`) |
+
+Two independent ways of turning the sun's shadow pass off give the **same +33**,
+so the split is:
+
+* **+33 is the main pass** — the geometry an aimed-up frustum newly contains.
+  Not the near buckets (identical), so: the road and ground surfaces, the street
+  furniture, the merged medium tier. `--no-power-infra` accounts for 3 of it.
+* **+15 is the sun's shadow pass**, day only, and only on a preset that draws
+  one. It is the same term §47.1 reading 2 identified for the band itself: the
+  shadow pass is what doubles the marginal cost of the geometry a shallow frustum
+  drags in.
+
+**A stale claim found on the way.** Doc 92 §47.5 states that the floor pose
+measures the same `363 / 333 / 258 dc+ui` at all three presets, "because what a
+preset changes does not change which chunk buckets a given frustum contains".
+That is no longer true and it is not this wave's doing: after the render fork
+wired doc 11 §2.13b's engine-side keys (RR-98), `performance` draws **no sun
+shadow at all**, and the Z0 day floor measures **222 dc+ui at performance against
+386 at balanced** — before the aim ramp is involved at all. §47.5's per-preset row
+needs re-taking; it is recorded here rather than silently left standing.
+
+**Against §47.** The NIGHT column reproduces §47.1 cell for cell — Z0 floor 221,
+Z1 216, Z2 251, AUTO Z0 112 — so the two tables are measurements of the same
+thing. The DAY column is **+23 / +13 / +7 dc above §47's** at the floor and does
+not reproduce, and that gap is not this wave: §47 was taken before the render
+fork merged (report 98 RR-95…98, which added the per-building contact shadow and
+the linear meshes), and the sun's shadow pass is the only renderer difference
+between hour 13 and hour 21 at a fixed pose. It is exactly why the before/after
+above is an A/B on one binary rather than a diff against a published table.
+
+### 53.5 The world edge, re-checked at the new composition
+
+The 2026-09-01 visual audit's P1 — *"an 896 m floating slab with a hard cliff"* —
+was answered at Wave 17's composition by report 98 RR-114, with the same worst
+case this section re-runs: pitch floor, far zoom, the camera at the city's own
+corner looking out over the edge.
+
+    --city=res://tests/fixtures/bench_city.json --poses=z2 --hour=13 --tilt=12 \
+        --yaw=225 --focus=60,60 --aim=0|1
+
+Sampled at four columns of the 1920 × 1080 frame, the largest per-channel step
+across the first break in the sky's own gradient — i.e. the sky-to-world seam:
+
+| column | seam at | step | sky | below |
+|---|---|---|---|---|
+| x = 120 | 77.8 % down | **11 / 255** | (119, 132, 146) | (115, 127, 135) |
+| x = 960 | 64.3 % down | **11 / 255** | (131, 141, 153) | (121, 132, 142) |
+| x = 1700 | 76.2 % down | **7 / 255** | (118, 131, 143) | (115, 128, 136) |
+| x = 300 | 80.2 % down | 47 / 255 | (115, 126, 130) | (162, 161, 163) |
+
+The x = 300 column is a tower silhouette against the sky, not the world edge —
+the three columns that do sample the edge give **7 … 11 / 255**, against RR-114's
+15 … 17 at the old composition. **The edge is better seated after the ramp, not
+worse**, and the mechanism is the composition itself: the aim lift puts more SKY
+above the fogged skyline rather than more slab below it, so the seam the eye can
+find is a smaller fraction of the frame and sits further down it. There is no
+cliff and no black band; what a grazing camera sees past the last block is haze
+in the same colour the far roofs are already wearing (doc 11 §2.8's `haze_height`
+band in the fog tint).
+
+The same pose is also one of the refunded cells: **213 → 168 dc** (238 → 193 with
+the UI's 25) with the ramp on, for the same reason the Z2 rows in §53.1 are.
