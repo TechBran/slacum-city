@@ -214,6 +214,31 @@ func test_the_price_is_the_published_row_and_lives_in_one_file() -> void:
 			float(sim.treasury.difficulty().get("M_repair", 1.0))))
 
 
+## **The two vocabularies, pinned.** `CostCurves` resolves doc 03's archetype
+## aliases (`power_facility` → `power_plant_gas`); `BuildingCatalog` does not. A
+## restore reads a PRICE from the first and a DURATION from the second, so a
+## catalog read made in the economy's spelling would answer `{}` and silently
+## give every ruin a 4-hour rebuild. This walks a `power_facility` — the one
+## archetype in the founding manifest whose two names differ — and asserts the
+## quoted crew-hours are the authored figure rather than the fallback.
+func test_the_catalog_and_the_economy_are_each_asked_in_their_own_spelling() -> void:
+	var sim := CitySim.boot_from_files()
+	var b: Building = sim.buildings["PLANT-1"]
+	assert_eq(String(b.archetype), "power_facility", "the doc 02 spelling")
+	assert_ne(sim.econ_curves.resolve_type("power_facility"), "power_facility",
+			"…and doc 03 spells it differently, which is what makes this a hazard")
+	_destroy(sim, "PLANT-1")
+	var payload: Dictionary = sim.cmd_restore_building("PLANT-1", true)["payload"]
+	var authored := float(sim.catalog.stats("power_facility", 1).get("build_time_hours", -1.0))
+	assert_true(authored > 0.0, "the catalog has the row")
+	assert_almost_eq(float(payload["crew_hours"]), authored, 1e-9,
+			"the quote read the catalog through the alias and fell back to 4.0")
+	assert_ne(float(payload["crew_hours"]), 4.0,
+			"…and the authored figure is not the fallback, so this test can fail")
+	# The price side reads the OTHER spelling and still lands on doc 03's row.
+	assert_eq(int(payload["capital"]), sim.econ_curves.capital_value("power_facility", 1))
+
+
 ## **What the money actually buys** (doc 92 §54.9(a)). Doc 02 §2.12 gives
 ## `destroyed` an occupancy multiplier of 0 and doc 03's tax reads occupancy, so
 ## a ruin pays nothing — which is the trap the 2026-09-02 player was in: the

@@ -4379,7 +4379,8 @@ func cmd_restore_building(sim_id: Variant, preview: bool = false) -> Dictionary:
 		blockers.append(&"E_FUNDS")
 	var quote := {"blockers": blockers, "cost": cost, "restore_level": level,
 			"capital": econ_curves.capital_value(type, level),
-			"crew_hours": float(catalog.stats(type, level).get("build_time_hours", 4.0)),
+			"crew_hours": float(catalog.stats(String(b.archetype), level)
+					.get("build_time_hours", 4.0)),
 			"hours_destroyed": maxf(0.0,
 					float(clock.sim_time_minutes() - b.destroyed_at_minutes) / 60.0)}
 	if not blockers.is_empty():
@@ -4399,8 +4400,16 @@ func cmd_restore_building(sim_id: Variant, preview: bool = false) -> Dictionary:
 	# change — and it is here for the same reason `cmd_place_building` stamps at
 	# placement: a `Building` holds no catalog, and the crew-hours below and the
 	# renderer's crane both read `stats`.
-	b.stats = catalog.stats(type, level)
-	b.max_level = catalog.max_level_of(type)
+	# **The CATALOG is asked with `b.archetype` and the ECONOMY with `type`**, and
+	# the two spellings are only interchangeable by accident: `CostCurves` resolves
+	# doc 03's aliases (`power_facility` → `power_plant_gas`) and `BuildingCatalog`
+	# does not. They are equal on every city today — `_boot_buildings` builds the
+	# archetype FROM `record["type"]` and `cmd_place_building` writes the archetype
+	# INTO it — but a catalog read through an alias would answer `{}` and silently
+	# fall back to a 4-hour build, so each side is asked in its own vocabulary,
+	# exactly as `on_construction_completed` asks the catalog in its.
+	b.stats = catalog.stats(String(b.archetype), level)
+	b.max_level = catalog.max_level_of(String(b.archetype))
 	_stamp_building_rules(b)
 	var crew_hours := float(b.stats.get("build_time_hours", 4.0))
 	var job_id := construction.submit(&"rebuild", id, crew_hours, &"construction_crew",
