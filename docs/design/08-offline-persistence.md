@@ -149,6 +149,27 @@ user://settings.cfg    # device-scoped (audio, graphics, a11y, notification pref
 
 **`user://settings.cfg` (report C-03, constitution §2 amendment #3).** Device-scoped, outside every save slot, **never touched by the save migration ladder**, never rolled back by checkpoint recovery, and it survives city deletion. This doc adopts doc 11's `settings.cfg` naming — the former `settings.json` name is withdrawn. Docs 08 (notification prefs), 11 (graphics preset), 12 (accessibility) and 13 (permission-flow bookkeeping) all write into this one file; the `notifications` **save** section keeps only what must roll back with the city (buckets, last-sent stamps, scheduled alarm ids), while the player's *preferences* (master switch, per-class toggles, quiet hours, re-engagement switch) live in `settings.cfg` and are mirrored into the section on save purely so a report can explain what was suppressed.
 
+> **As built (Wave 18, PA-15 · A91-D-70).** Until this wave the file was a path
+> with no caller: `ui/settings_model.gd:settings_file_path()` returned the name
+> and nothing opened it, so every preference above lived only inside the city's
+> save and reset at the title door, on New City and on every other slot — the
+> case §2.13.4 forbids by name. `game/device_settings.gd` is now the whole of the
+> I/O and it is a **section registry** rather than one owner's format: `settings`
+> (doc 12's rows, the `device_scoped_keys` subset) and `permission` (doc 13
+> §2.7's `asked_count` / `last_asked_unix` / `reprompt_count`). Every write
+> re-reads the file and replaces one section, so a permission write cannot lose a
+> settings change made a frame earlier, and every write is tmp+rename — the same
+> commit discipline §2.6 uses for a generation, and for the same reason: a
+> settings write lands on the tap the player makes on their way out of the app.
+>
+> **One deviation from PA-15's own fix column, on this section's authority.** The
+> audit's fix text puts "the budget's last-sent stamps" in `settings.cfg` too;
+> this section says the opposite and wins — the `notifications` **save** section
+> keeps what must roll back with the city (buckets, last-sent stamps, scheduled
+> alarm ids) and only the *preferences* are device-scoped. `NotificationBudget`
+> is unchanged; its per-class switches already reach the device file as doc 12
+> rows.
+
 Generation files are **versioned JSON** (constitution §2) written via `FileAccess.open_compressed(..., COMPRESSION_ZSTD)`. The format is JSON; compression is transport. Debug builds also emit a plain `.json` mirror. Report C-05 records this as compliant.
 
 **This directory is the only persistence implementation in the project (report C-24).** No other doc writes city state: doc 13's `city.tmp → city.json` path, its 3-deep `city.bak.N` rotation, its fallback logic and its `saves_recovered_from_backup` counter are **deleted**; the generation ladder, `manifest.json` commit point, quarantine and repair notes below replace all of them. Doc 13's pause sequence step 3 is `SaveManager.request_save("pause")`. Doc 13 keeps exactly two things on this axis: the ≤ 250 ms pause budget and the Android lifecycle ordering — both of which this doc's §2.6 budget already fits inside.

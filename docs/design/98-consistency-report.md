@@ -6065,3 +6065,107 @@ the census the fix eventually shipped —
 `test_no_inert_preset_key`, `test_the_deleted_keys_stay_deleted` and
 `test_every_procedural_mesh_decodes_its_authored_vertex_colour` are those
 censuses, and they are the part of this section worth keeping.
+
+
+---
+
+## 52. WAVE 18 — the settings screen tells the truth: a file that is written, an ask that is earned, and a word that finally means something (binding)
+
+*Lane G, production audit PA-14 / PA-15 / PA-58 / PA-59 / PA-84, at fork
+`4503d35`. Five rows, and four of the five are the same defect wearing different
+clothes: **a control, a default or a clause that the code declares and nothing
+consumes**. `user://settings.cfg` was a path with no caller; `PermissionFlow`
+was a complete state machine with no caller; `follow_dispatched_unit` and
+`set_follow_target` were a default and a method with no caller;
+`auto_spend_contractor` wrote a key with no reader; `auto_speed_reset` was a
+function with no caller. Doc 93 §AK carries the mechanics argument; doc 12's
+D-82/D-83 carry the surface changes.*
+
+### RR-145 — The device file's ordering rule belongs to the MODEL, not to the shell
+
+**Ruling.** *"On load `settings.cfg` wins for those keys"* (doc 12 §3.2) is
+enforced at the **end of `SettingsModel.restore_state()`**, which re-applies the
+device copy after the incoming block, rather than at each call site that
+restores one.
+
+**Why it is a ruling and not a detail.** The shell restores the `ui` section
+from at least four places — the resumed save at boot, a mid-session load
+(`_on_ui_save_loaded`), the title door's CONTINUE, and New City's empty block —
+and every one of them is a place the rule could be forgotten. A rule that has to
+be remembered four times is a rule that will be right three times: the shipped
+build restored settings only when `_resumed_slot >= 0`, which is precisely one
+of the four. Putting the re-apply inside the one function all four already call
+makes the ordering a property of the model instead of a property of the caller's
+memory. **The generalisable shape: when a precedence rule has N enforcement
+sites, move it under the one thing all N already go through, or it is not a rule
+— it is a convention.**
+
+**Consequences.** `_on_title_new_game` restores `{}` rather than restoring
+nothing, which is now a *statement*: the city-scoped rows go back to data
+defaults because they belonged to the city that just left, and the device-scoped
+ones do not move. `game/device_settings.gd` is a section registry with
+merge-read-write and tmp+rename, so doc 12's rows and doc 13's permission
+counters share one file without either write losing the other. PA-15's own fix
+column also asks for the notification budget's last-sent stamps in this file;
+**that half is declined** — doc 08 §2.5 rules those roll-back-able runtime state
+and keeps them in the save's `notifications` section, and the audit's fix column
+does not outrank the owning document.
+
+### RR-146 — BACK is not an answer, and the ask is worth more than the permission
+
+**Ruling.** The `POST_NOTIFICATIONS` rationale modal has **three exits and they
+are not the same exit**: TURN ON opens the system dialog, NOT NOW calls
+`decline()` and spends one of Android's two lifetime chances, and **BACK closes
+the sheet and spends nothing**.
+
+**Why.** Android 13 makes the *ask* the scarce resource, not the permission: two
+dismissals and the system dialog never appears again for the life of the
+install, with no route back except the app's own page in system settings. Doc 12
+§2.2 makes BACK the universal "close the thing in front of me" — it is pressed
+reflexively, out of habit, by a player who has not read anything. Counting that
+as a refusal would burn an irreplaceable chance on a gesture that carried no
+opinion. So `PermissionSheet.answered` is emitted by the two buttons and never
+by `close()`, and the asymmetry is pinned by
+`test_back_costs_nothing_and_the_two_buttons_each_cost_a_chance`.
+
+**The trigger is the other half of the same ruling.** Doc 13 §2.7 step 1 names
+"the first construction timer"; the shipped trigger is `upgrade_started_sim` or
+`incident_resolved`, and **`building_placed_sim` is deliberately excluded** even
+though it creates a construction timer too — the tutorial has the player place a
+house inside its first minute, and asking there is the cold prompt §2.7 forbids
+with extra steps. The counters are device-scoped for a correctness reason rather
+than a tidiness one: two dismissals are spent per INSTALL, so a counter in the
+city's save would let a deleted city hand the app a third prompt that Android
+will not honour — a modal that opens a dialog which never appears.
+
+**Not verified on hardware.** Every claim here is code, data and headless
+suite. `dumpsys notification` after a pause is what this ruling is owed, and doc
+99 §4.1 already lists it.
+
+### RR-147 — A clause that says "critical" without saying which is not implementable, and the measurement is what closes it
+
+**Ruling.** Doc 01 §2.9 / doc 12 §2.11's `auto_speed_reset_on_critical` resets
+speed on **exactly three authored events** — `incident_failed`,
+`credit_limit_reached`, and `flood_level_changed` at band `flooded` — with a
+**ten-real-minute re-arm**, both in `data/ui.json.speed`.
+
+**Why the docs' own wording could not ship.** They said "a P1 notification".
+Taken literally that is the whole P1 class, and the P1 class is not rare: on the
+curriculum path, 21 game-days, seeds 1337/4242/9001, the P1 stream that matches
+those three types alone is **0 / 138 / 161** events — and 504 game-hours is 8.4
+real hours at 1× (constitution §4), so the literal reading forces **19.2 speed
+resets per real hour** on the worst seed. A game that takes the speed control
+away every three minutes has not implemented a safety feature; it has
+implemented a fault. That is the reason the function sat uncalled for seventeen
+waves, and *"nobody got round to it"* was the wrong diagnosis.
+
+**What the re-arm buys, exactly.** The same three streams, with 600 real seconds
+between forced resets: **0 / 4 / 6**, worst **0.714 per real hour**, against
+PA-84's ≤ 1 bar. `tools/measure_speed_resets.gd` prints both columns and exits
+non-zero above the bar, so the bar is a runnable claim rather than a sentence.
+
+**The generalisable shape.** A spec clause whose subject is an undefined
+adjective — *critical*, *significant*, *nearby* — is not a feature that has not
+been built yet. It is a decision that has not been made, and the honest close is
+to make it **in data, with the measurement that justifies the number beside it**
+— never to implement the literal reading and let the playtest find out.
