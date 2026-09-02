@@ -690,8 +690,19 @@ class PermissionShellMirror extends RefCounted:
 	## `Main._draining_offline` — true only while `_finish_catchup` drains the
 	## batch an ABSENCE produced.
 	var draining_offline := false
-	## Every reason the pump handed to `present_permission_rationale`.
+	## Every reason handed to `present_permission_rationale`, by either path.
 	var shown: Array[String] = []
+
+	## `Main._on_permission_row_tapped`, `off` arm — the one place BOTH of
+	## `should_prompt`'s gates are bypassed, because the player asked.
+	func _on_permission_row_tapped() -> void:
+		match permission_flow.settings_row_state():
+			"off":
+				permission_flow.note_trigger()
+				shown.append(PermissionFlow.REASON_FIRST)
+				permission_prompt_shown = true
+			"blocked":
+				permission_flow.open_system_settings()
 
 	func _pump_permission_prompt() -> void:
 		if permission_flow == null or permission_prompt_shown or modal_open:
@@ -842,6 +853,19 @@ func test_31b_a_modal_the_player_backed_out_of_does_not_come_straight_back() -> 
 	busy._note_permission_trigger([{"type": "upgrade_started_sim", "sim_id": "B-1"}])
 	busy._pump_permission_prompt()
 	assert_eq(busy.shown.size(), 0)
+
+	# The SAME trap reached from the one path that bypasses the flow's own gates:
+	# the settings row calls `note_trigger()` itself, so a BACK out of a
+	# row-opened sheet leaves `should_prompt()` true. The row raises the shell's
+	# guard for exactly that reason.
+	var tapped := _mirror(FakeNative.new())
+	tapped.permission_flow.native.permission = AndroidNative.PERMISSION_NEVER_ASKED
+	tapped._on_permission_row_tapped()
+	assert_eq(tapped.shown.size(), 1, "the row opened it")
+	for frame in 100:
+		tapped._pump_permission_prompt()
+	assert_eq(tapped.shown.size(), 1, "…and a hundred idle frames did not re-open it")
+	assert_eq(tapped.permission_flow.asked_count, 0)
 
 
 func test_32_the_permission_bookkeeping_is_device_scoped_not_city_scoped() -> void:

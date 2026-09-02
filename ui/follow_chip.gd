@@ -120,7 +120,8 @@ func place(bottom_offset: float, height: float, max_width: float) -> void:
 ## Step out while something is drawn over this slot. Same ruling the tilt slider
 ## makes about right-edge panels (§2.23): a target under a panel is a target
 ## nobody can reach, and leaving it there is worse than taking it away — the
-## follow is still running and the four other ways out of it still work.
+## follow is still running and the three other ways out of it (a pan, the unit
+## going off duty, a second dispatch) are untouched.
 func set_yielded(yielded: bool) -> void:
 	if _button == null or _unit_name == "":
 		return

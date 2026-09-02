@@ -28,9 +28,11 @@ extends Control
 ## asymmetry is the whole reason `answered` is emitted by the two buttons and
 ## never by `close()`.
 ##
-## Built in code rather than authored into `ui_root.tscn`, because it is the one
-## modal that may be absent: off Android there is no permission to hold, and a
-## sheet nobody can open is a node the tree does not need.
+## Built in code and added to `ModalLayer` by `UIRoot` rather than authored into
+## `ui_root.tscn`. It is a real child either way — the back stack finds it by
+## walking the layer and asking anything with `is_open()` — but a sheet that opens
+## at most twice in the life of an install, and never at all off Android, is not
+## worth a scene edit every other lane then has to merge around.
 
 ## The player answered. `accepted` true means TURN ON — the shell calls
 ## `PermissionFlow.accept()`; false means NOT NOW → `decline()`.

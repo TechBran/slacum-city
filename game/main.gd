@@ -1609,8 +1609,10 @@ func _note_permission_evidence(plans: Array) -> void:
 ##
 ## The right place for the guard is here rather than in `PermissionFlow`: the
 ## flow's own once-a-session rule is about *chances spent*, and this one is about
-## *sheets shown*. The settings row deliberately bypasses both (§2.13's row would
-## otherwise do nothing for the rest of the session).
+## *sheets shown*. S10's row is not gated by it — a row that did nothing for the
+## rest of the session would be the control doc 12 §2.13 forbids — but it does
+## RAISE it, because its own `note_trigger()` is what would otherwise let the
+## pump re-open a sheet the player had just backed out of.
 var _permission_prompt_shown := false
 
 
@@ -1679,6 +1681,13 @@ func _on_permission_row_tapped() -> void:
 			# that has none left to spend.
 			permission_flow.note_trigger()
 			ui_root.present_permission_rationale(PermissionSheet.REASON_FIRST)
+			# …and the shell's guard goes up too. `note_trigger()` above is what
+			# makes `should_prompt()` true, so without this a BACK out of a
+			# ROW-opened sheet would be re-opened by the idle pump on the very
+			# next frame — the same trap the pump's own guard closes, reached
+			# from the one path that deliberately bypasses that guard. The row
+			# itself is unaffected: it calls `present_` directly and always will.
+			_permission_prompt_shown = true
 		"blocked":
 			# Android has stopped showing the dialog. The app's own page in
 			# system settings is the only route left, and saying so is the whole

@@ -381,10 +381,12 @@ Release manifest, complete:
 > modal they could not get out of. The shell therefore keeps its own
 > `_permission_prompt_shown` guard, and the two rules are not the same rule: the
 > flow's counts **chances spent**, the shell's counts **sheets shown**. S10's row
-> bypasses both on purpose, because a row that did nothing for the rest of the
-> session would be the control doc 12 §2.13 forbids.
-> `tests/test_android_notifications.gd::test_31b` walks 300 idle frames and
-> asserts one modal and `asked_count == 0`.
+> is not *gated* by the shell's guard — a row that did nothing for the rest of
+> the session would be the control doc 12 §2.13 forbids — but it does **raise**
+> it, because the row's own `note_trigger()` is exactly what would otherwise let
+> the pump re-open a sheet the player had just backed out of.
+> `tests/test_android_notifications.gd::test_31b` walks 300 idle frames after the
+> pump and 100 after the row, and asserts one modal each and `asked_count == 0`.
 >
 > **Step 7's "offline" is load-bearing, and the gate is one flag.** The evidence
 > hook rides `_on_sim_batch`, which every batch goes through — including the live
