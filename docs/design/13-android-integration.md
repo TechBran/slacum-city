@@ -1704,3 +1704,115 @@ Every row of this doc's worklist in report 98 §12, with what changed and where.
 1. Report 98 C-23 phrases the emergent budget as "12–60 game-minutes of real-world look-ahead". Its own arithmetic — and C-23's headline that 24 coarse game-hours = 24 real minutes — makes a coarse step one game-hour, so `clamp(…, 12, 60)` steps buys 12–60 game-**hours** = 12–60 real **minutes**. The formula is implemented verbatim; the units are stated the way the arithmetic requires.
 2. The report does not rule on autosave cadence, but C-24 gives doc 08 persistence outright, so this doc deleted its own `autosave_interval_s = 60` rather than keep a second cadence. The resulting gap against the ≤ 60 s process-death gate is raised as open question 11 instead of being papered over.
 3. Doc 08 §2.6 allows a `pause` save to block for 400 ms, which cannot coexist with this doc's kept 250 ms budget. Rather than change either number, §2.2 requires the wait to be `await`-able and overlapped; open question 12.
+
+---
+
+## Wave 17 — the pause stamp as built, and the ANR arithmetic with the clamp (2026-09-01)
+
+*Appended rather than woven in: sibling branches are editing this document in the
+same wave. Report 98 §48 (RR-132 … RR-134) carries the rulings; this section
+carries what §3.2 and §2.9 now say.*
+
+### §3.2 — `save.android.last_pause`, as built
+
+The section existed on paper and in no save file. It does now, at
+`section_version = 1`, written by `game/android/lifecycle_stamp.gd` through
+`AndroidLifecycle.capture_stamp` and `SaveService.android_provider` (the same
+shape of contract `ui_provider` has had since doc 12 §3.2). §3.2's field list is
+built exactly as specified:
+
+```jsonc
+"android": {
+  "section_version": 1,
+  "last_pause": {
+    "unix_s": 1800000000,          // the pause, or the save, per `clean`
+    "elapsed_realtime_ms": 88123456,  // -1 without the plugin
+    "boot_id": "3f2a…c19",            // "" without the plugin, and "" is NEVER "same boot"
+    "clock_ticks": 49920,             // the generation's own tick index
+    "app_version": "0.4.0",
+    "clean": true,                    // stamped at APPLICATION_PAUSED, not at an autosave
+    "unfinished": { … }               // Wave 17: the unspent tail of an interrupted catch-up
+  }
+}
+```
+
+Three things §3.2 did not say, and now does:
+
+1. **The stamp rides EVERY save, not only the pause.** §2.2's step table says
+   "must precede the snapshot", and it still does — `_on_paused` writes the
+   members before `_autosave()`. But a periodic autosave the process was killed
+   two seconds after is just as much "the last time this city was awake", and the
+   launch that has to measure the absence cannot know which generation it will
+   find. `clean` is the field that tells a lifecycle pause from any other save,
+   and it is what the ruling in report 98 §48 leans on.
+2. **`unfinished`.** The unspent segments of a catch-up the process died in the
+   middle of, carrying each partially-spent coarse segment's original
+   `index_base` and `total`, plus the away report's pre-absence snapshot. See
+   §2.9 below.
+3. **It is registered on the WRITE side only.** `SaveManager._validate_structural`
+   files a `repair_notes` entry for every registered section a body is missing,
+   and every generation ever written predates this one. The read side takes the
+   section out of the loaded body directly. Doc 08 §2.8 / RR-75 terms are
+   otherwise unchanged: version 1, no migrator, no epoch marker owed.
+
+### §2.3 / §3.2 — the elapsed-time rule on a COLD launch
+
+§2.3's bracket (monotonic floor, `elapsedRealtime` ceiling) is about a process
+that lived through the absence. A process that did not has no monotonic reading
+to compare against — `Time.get_ticks_msec()` restarts at 0 — so the cold path has
+its own arithmetic, in `LifecycleStamp.elapsed_since`, and it is three readings in
+a fixed order of precedence:
+
+| # | Reading | Role | When it applies |
+|---|---|---|---|
+| 1 | `manifest.max_seen_unix` (doc 08 §2.9) | **absolute** — credit zero | `now + 120 s < max(max_seen_unix, stamp.unix_s)` |
+| 2 | `SystemClock.elapsedRealtime()` delta | **ceiling** | same `boot_id`, both known |
+| 3 | `SystemClock.elapsedRealtime()` absolute | **floor** | `boot_id` CHANGED — a reboot |
+
+Row 3 is the one §3.2 only gestured at with *"a reboot resets elapsed_realtime —
+boot_id decides"*. What it decides, concretely: a changed boot id means the
+device restarted **during** the absence, so the absence is at least as long as the
+device has been up, and `elapsedRealtime` stops being a ceiling and becomes a
+floor. A wall clock claiming less than that has lost time and is raised to it.
+The 120 s tolerance on all three is §2.3's own, unchanged — the two clocks are
+sampled milliseconds apart and neither is a stopwatch.
+
+Off device (no plugin ⇒ `elapsed_realtime_ms = -1`, `boot_id = ""`) only row 1
+applies, which is exactly what desktop and the headless runner have always done.
+
+### §2.9 — the ANR arithmetic, with the clamp and with the interruption
+
+**The clamp.** §2.9's table was parameterised on `measured_coarse_ms` with
+`max_coarse_hours` as a promise. Both halves are now numbers (doc 08 §2.12, report
+98 §48 RR-133): **5.488 ms/hour** on the reference city and **165.493 ms/hour** on
+the 1,500-building bench fixture, this workstation, `tools/profile_sim.gd
+--coarse-hours=48 --repeats=3`. The shipped clamp is **360 game-hours**.
+
+| City | ms/hour | Steps at the clamp | Wall time | Frames at 12 ms | On the Fold (§2.13, 3–5×) |
+|---|---|---|---|---|---|
+| Starter (reference) | 5.488 | 360 | **1.98 s** | 165 | 5.9 – 9.9 s |
+| Bench (1,500 buildings) | 165.493 | 360 | **59.6 s** | 360 | 3 – 5 minutes |
+
+The bench row is the honest one to look at and it is why `bench_coarse_ms` is
+recorded in `data/persistence.json` beside the shipped number rather than
+forgotten. **ANR safety is unaffected** and is still structural, not budgetary:
+the blocked frame is one whole coarse step — 165 ms on the bench city on this
+workstation, 0.5–0.8 s on the Fold — against Android's 5 s line, a 6× margin at
+the worst measured combination. What the bench row costs is *veil length*, not an
+ANR, and a 3-minute veil is a product problem for the lead, filed as an open
+question in report 98 §48 rather than fixed here.
+
+**The interruption.** This section's own Wave-14 note said a second
+`_on_app_resumed` "drains the unfinished cursor on the spot and then plans the new
+absence… no worse than the frame it replaces." **That was wrong, and the row
+above is the arithmetic that shows it.** Draining 720 unspent coarse steps
+synchronously is `720 × 165 ms = 119 s` of blocked main thread on the bench city
+— twenty-four ANRs, not one frame — and it was reachable precisely because Wave
+14 had made the catch-up long enough to background out of. Report 98 §48 RR-134
+replaces it: the old cursor keeps stepping under the veil, the second absence is
+queued, and a pause taken in between is tagged `pause_mid_catchup` and carries the
+unspent tail in `last_pause.unfinished` so a cold launch finishes the plan.
+
+**§2.11's unclean-exit accounting is unchanged** by any of this: the clean-exit
+flag still comes down at `APPLICATION_PAUSED` and back up on resume, and a
+`pause_mid_catchup` save is a clean exit like any other pause.

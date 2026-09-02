@@ -42,6 +42,25 @@ var premigration_keep_launches: int = 3
 var quarantine_max_files: int = 3
 var repair_threshold_frac: float = 0.02
 var max_entities_sane: int = 200000
+
+# ------------------------------------------------- doc 08 §2.12, the catch-up
+# clamp. It is not a `save` tunable — it is a *performance* clamp on the offline
+# credit — but it lives in the same file because doc 08 owns both and because
+# this class is the file's only reader (see the class doc). Report 98 §48
+# RR-133.
+
+## ONE FULL-band coarse hour on the reference city, measured (doc 08 §2.12).
+## 0.0 means "not measured", in which case the clamp is doc 01's C-19 cap and
+## nothing is discarded that was not already being discarded.
+var measured_coarse_ms: float = 0.0
+## The same measurement on `tests/fixtures/bench_city.json`. RECORDED, not
+## applied — RR-133 rules which city the rule reads.
+var bench_coarse_ms: float = 0.0
+## `clamp(floor(ceil(2000 / measured_coarse_ms) / 24) * 24, 72, 720)`, in
+## GAME hours. The default is doc 01's C-19 cap, so a build with no `catchup`
+## block behaves exactly as every build before this one did.
+var max_coarse_hours: int = 720
+
 ## Non-empty when the file was present but something in it was unusable. The
 ## policy is still returned fully populated — a bad tunable must never be the
 ## reason a city cannot be written.
@@ -101,6 +120,15 @@ static func from_dict(data: Dictionary) -> SavePolicy:
 	while ages.size() > policy.max_unpinned_generations - 1:
 		ages.remove_at(ages.size() - 1)
 	policy.history_slot_min_age_s = ages
+
+	var catchup: Dictionary = data.get("catchup", {}) if data.get("catchup") is Dictionary else {}
+	policy.measured_coarse_ms = maxf(0.0, _float_or(catchup, "measured_coarse_ms", 0.0))
+	policy.bench_coarse_ms = maxf(0.0, _float_or(catchup, "bench_coarse_ms", 0.0))
+	# The FILE is the authority, not the derivation: a build must not silently
+	# re-derive a different clamp because the workstation it was packaged on is
+	# faster than the one that measured. `tests/test_catchup_clamp.gd` asserts
+	# the two agree, which is where a drift is supposed to be caught.
+	policy.max_coarse_hours = _int_or(catchup, "max_coarse_hours", policy.max_coarse_hours)
 	return policy
 
 

@@ -3766,3 +3766,194 @@ files that are not documents — `tests/test_city_sim.gd:146` and
 None can change behaviour, and that is proved rather than asserted:
 `profile_sim --hash-only` was run on both cities **before and after** these
 edits and all four digests are byte-identical.
+
+---
+
+## 48. WAVE 17 — the catch-up owed on a cold launch (binding)
+
+*Filed 2026-09-01 from the production audit's robustness lens. Three findings,
+three rulings; every number below was measured on this branch and the command is
+quoted beside it.*
+
+**The shape of it.** Doc 08's Core Design Rule 2 — *"the city continues while the
+player is away"* — had exactly one implementation, and it was reachable from
+exactly one place: `game/main.gd::_on_app_resumed`, connected to
+`AndroidLifecycle.resumed`, which fires only for
+`NOTIFICATION_APPLICATION_RESUMED`. That is a notification a **dead process never
+receives**. Android kills backgrounded games routinely — a swipe-away, the task
+switcher's X, a low-memory kill, an OEM battery manager — and the title door
+(doc 12 §2.19) makes the *default* player launch a fresh process too. So on the
+commonest way back into this game, the city resumed **frozen at the pause**, with
+no veil, no catch-up and no away report. Core Rule 2 was true only for the case
+where nothing had gone wrong.
+
+Everything needed to fix it was already on disk and read by nobody:
+`manifest.active.real_unix` and `manifest.max_seen_unix` were written by
+`sim/persistence/save_manager.gd` and by `game/save_service.gd`, and
+`grep -rn "last_loaded_real_unix\|max_seen_unix" game/` at the fork returned the
+writer and no reader.
+
+### RR-132 — Core Rule 2 owes the absence on ANY successful restore, not on a notification
+
+**Ruled.** The absence is a property of **the generation that was loaded**, not
+of the process that loads it. Every successful restore — the title door's
+CONTINUE, `--resume`'s `load_latest`, crash recovery — now asks
+`AndroidLifecycle.arm_cold_resume(save_service)` what the city is owed, and the
+answer goes to the shell through **the same `resumed` signal an in-process resume
+uses**. There is one catch-up path in the game and the cold launch is not a
+second one; it is a different way of *measuring elapsed time* and nothing else.
+
+**The stamp.** Doc 13 §3.2's `save.android.last_pause` is built as specified —
+`{unix_s, elapsed_realtime_ms, boot_id, clock_ticks, app_version, clean}` — by
+`game/android/lifecycle_stamp.gd`, and rides **every** save rather than only the
+pause one: a periodic autosave the process was killed two seconds later is just
+as much a "last time this city was awake", and `clean` is what tells the two
+apart. The section is registered on the WRITE side and read straight out of the
+loaded body on the read side, because `SaveManager._validate_structural` files a
+`repair_notes` entry for every registered section a body is missing and **every
+generation ever written predates this one** — registering it on the read side
+would put "(1 repairs)" in front of a player whose save is perfectly healthy.
+That is a deviation from doc 08 §3.1's registry shape and it is recorded here
+rather than left in a comment; it costs nothing at `section_version = 1` and
+reverses the day a v2 needs a migrator.
+
+**Fallback.** A generation with no `android` section falls back to
+`manifest.active.real_unix` — a wall reading with no monotonic bracket, which is
+exactly the information desktop has always had, so it is credited on those terms.
+
+**The three clamps, in the order they may overrule each other**
+(`LifecycleStamp.elapsed_since`, doc 08 §2.9 + doc 13 §3.2):
+
+1. **`max_seen_unix` is absolute.** `now_unix + 120 s < max(max_seen_unix,
+   stamp.unix_s)` ⇒ the clock moved backwards ⇒ **credit zero**, log it, play
+   continues. We clamp; we never punish. The 120 s is doc 13 §2.3's existing
+   tolerance, not a new number — a 60-second NTP correction is not a tamper.
+2. **`elapsedRealtime` within one boot is a CEILING.** Same `boot_id`, both
+   known ⇒ a wall delta above `(now_realtime − stamp_realtime) + 120 s` is a
+   forward clock jump and is clamped to it.
+3. **`elapsedRealtime` across a reboot is a FLOOR.** Different `boot_id` ⇒ the
+   device restarted *during* the absence, so the absence is at least as long as
+   the device has been up. A wall clock claiming less has lost time and the
+   floor wins. `""` is never "same boot" — `AndroidNative.boot_id`'s own rule.
+
+**Timing.** The absence is queued and spent by `AndroidLifecycle.pump_resume()`,
+called from `Main._process` **after** the `_restore_cursor` and `_catchup_cursor`
+early-returns and never while the title door is up. `Main` is `SimHost`'s parent,
+so a parent-first `_process` order guarantees the pump runs before any live tick
+of that frame; the door's CONTINUE fires it on the restore's own last frame,
+which is the same guarantee by a shorter route.
+
+**Pinned:** `tests/test_cold_launch_catchup.gd` — the load-bearing one is
+`test_the_cold_path_and_the_warm_path_land_on_the_SAME_city`: two cities from one
+seed over one four-hour absence, one through `NOTIFICATION_APPLICATION_RESUMED`
+and one off the disk, compared on `state_hash()`.
+
+### RR-133 — `max_coarse_hours` is implemented, and the reference city is the STARTER city
+
+Doc 08 §2.12's decision rule has been NORMATIVE since report C-21 and was
+implemented **nowhere**: `grep -rn max_coarse_hours sim/ game/ data/` at the fork
+returned zero hits, and `CatchUpPlanner` clamped at `OFFLINE_CAP_REAL_MS` alone.
+
+**Measured 2026-09-01** (`godot --headless -s res://tools/profile_sim.gd --
+--coarse-hours=48 --fine-hours=1 --repeats=3 --no-profile --quiet`, this
+workstation, debug headless):
+
+| City | coarse step | `ceil(2000/m)` | ↓ ×24 | `max_coarse_hours` |
+|---|---|---|---|---|
+| `data/starter_city.json` (34 buildings) | **5.488 ms/hour** | 365 | 360 | **360** |
+| `tests/fixtures/bench_city.json` (1,500 buildings) | **165.493 ms/hour** | 13 | 0 | **72** (floor) |
+
+The Fold multiplier is doc 13 §2.13's 3–5×, on top of both.
+
+**Ruled: the rule reads the STARTER city, and 360 ships.** Three reasons, and the
+third is the one that decides it:
+
+1. `tests/test_milestone1.gd::test_coarse_step_cost_budget` — P0-30, the task
+   that OWNS this measurement — has always measured the starter city, and doc 01
+   §2.10's shipped note records the starter figure as the value the rule reports.
+2. The bench fixture is doc 09 §2.13's **1,500-building stress fixture**, sized
+   to break the renderer. It is not a city a player reaches, and a clamp derived
+   from it would be a clamp derived from a city nobody has.
+3. **Doc 08 §2.12 states which way to err, in its own words:** *"at the 72-hour
+   floor the floor wins over the budget — we would rather spend 4 s once than
+   hand back less than three game-days."* The clamp only ever *discards player
+   time*; under-clamping costs veil seconds, over-clamping costs game-days. 360
+   is the larger of the two candidates and it is what the rule's own stated
+   preference points at.
+
+**And the disagreement is recorded rather than resolved.** `bench_coarse_ms` sits
+in `data/persistence.json` beside the shipped number, and
+`tests/test_catchup_clamp.gd` re-derives the shipped value from the measurement
+beside it, so the two can never drift apart silently. **The honest statement is
+that the rule's premise — one measured number characterises the device — is false
+across cities by a factor of 30, and that this ruling picks a side rather than
+fixing it.** Fixing it would mean a clamp derived from the LIVE city, which
+constitution §5 forbids: a catch-up that credited two different amounts on two
+phones for the same absence is not deterministic. Filed as an open question, not
+as a defect.
+
+**What a player notices, stated plainly.** An absence longer than **6 real
+hours** now credits 360 game-hours (15 game-days) rather than 720 (30 game-days),
+and the veil and the away report both say so. `tests/test_catchup_planner.gd` is
+re-pinned with both forms — doc 01's C-19 ladder arithmetic with the cap passed
+explicitly, and the shipped default beside it — so the two facts stay separable.
+
+**The copy was dead, and that is the other half of this ruling.**
+`ui/away_model.gd` has carried `capped_text` since S12 and `game/main.gd`'s
+report dictionary **had no `capped` key at all**, so the line could never fire;
+and `ui_veil_catchup_capped` said "12 hours" as a literal. Both now take the cap
+that was actually applied — `{hours}` in the veil string, `cap_game_hours` in the
+report dict.
+
+### RR-134 — a second absence is QUEUED; an interrupted plan is CARRIED, never re-derived
+
+**The defect.** `_on_app_resumed` answered a second absence arriving on top of an
+unfinished one with `_catchup_cursor.run()` — drain the whole remaining plan on
+this frame. Up to 720 coarse steps at 165 ms on the benchmark city is **119
+seconds of blocked main thread**, an ANR twenty-four times over, on the one path
+Wave 14 had just made reachable. And `_on_paused` in between committed a
+mid-absence city and overwrote `_before_snapshot` with it, so the away report
+diffed the city against a version of itself that was already half way through the
+absence it was reporting.
+
+**Ruled — SEQUENTIAL, and the remainder is carried as SEGMENTS.** The full
+argument is doc 93 §AG; the conclusion is that "merge the remaining ticks with
+the new elapsed into one plan" is **not expressible**. A plan's shape is a
+function of the tick index it was planned at — the fine head-align, the 40-tick
+fine tail, the residual — and a partially-spent coarse segment additionally
+carries `ctx.catchup_index` / `ctx.catchup_total`, which doc 03's offline yield
+decay and doc 07's 72-hour offline event gate both read. None of that survives
+being turned back into a duration. So `CatchUpCursor.remaining_plan()` hands back
+the unspent segments *with their original `index_base` and `total`*, and
+`CatchUpPlanner.plan_after(unfinished, …)` puts them in front of the next
+absence's plan as one schedule. `catchup_begin()` still fires once per coarse
+segment (doc 07 C-55) and not again for a carried tail.
+
+**Three consequences, all built:**
+
+* A resume with a cursor in flight calls `AndroidLifecycle.defer_absence()` and
+  returns. The old plan keeps stepping under the veil at 12 ms a frame; the
+  queued absence is pumped when the frame is free.
+* `_on_paused` mid-catch-up tags its save **`pause_mid_catchup`** (a new
+  `SYNC_REASONS` entry — sync for the same reason `pause` is), skips
+  `plan_for_background` entirely (the alarms would be predictions from a city
+  that is still being simulated), and `Main._on_app_paused` leaves
+  `_before_snapshot` alone.
+* The unspent tail rides `last_pause.unfinished`, so a **process death mid-veil
+  is finished by the next cold launch** rather than lost. The pre-absence
+  snapshot rides with it, so the away report's 'before' survives the death too.
+
+**Pinned:** `tests/test_catchup_resume.gd`.
+`test_a_plan_carried_across_a_process_death_is_BIT_IDENTICAL` interrupts a plan
+130 units in, finishes it from the carried remainder alone, and compares
+`state_hash()` against the same plan run straight through; the two orderings —
+death then relaunch, and death then a further two-hour absence — are pinned
+separately.
+
+### The three findings, and where each is closed
+
+| Finding (2026-09-01 audit) | Severity | Closed by | Evidence |
+|---|---|---|---|
+| Cold launch never runs the offline catch-up | **P0** | RR-132 | `tests/test_cold_launch_catchup.gd` (10 tests) |
+| Backgrounding mid-catch-up drains synchronously; the pause overwrites the report's 'before' | P1 | RR-134 | `tests/test_catchup_resume.gd` (13 tests) |
+| Doc 08 §2.12's `max_coarse_hours` not implemented | P1 | RR-133 | `tests/test_catchup_clamp.gd` (15 tests) |

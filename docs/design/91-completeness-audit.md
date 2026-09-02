@@ -2787,3 +2787,16 @@ tests/` returns **zero**. Which restates §20.5's real point one wave on: this
 project's open work lives in numbered prose, so a marker sweep is a reading job,
 and the only defence against a reading job going stale is doing it every merge
 and dating what it found.
+
+---
+
+## WAVE 17 — the two defects the cold-launch branch closed (2026-09-01)
+
+Filed in §14.5's `A91-D-nn` sequence and closed in the same wave, with the
+evidence each one is closed by. Report 98 §48 carries the rulings; doc 93 §AG
+carries the mechanics argument.
+
+| Id | Defect | Sev | Status | Evidence |
+|---|---|---|---|---|
+| **A91-D-85** | **Core Design Rule 2 is void on a cold launch.** The only `CatchUpPlanner` call in the shell was inside `Main._on_app_resumed`, reachable only from `AndroidLifecycle.resumed`, i.e. only from `NOTIFICATION_APPLICATION_RESUMED` — which a *dead process never receives*. `AndroidLifecycle._paused_wall` was an in-memory member, `-1.0` at every boot and never seeded from disk, and `manifest.active.real_unix` / `manifest.max_seen_unix` were written by two files and read by none. So after a process death, a swipe-away, a low-memory kill, or the title door's CONTINUE — the *default* player launch (doc 12 §2.19) — the city resumed **frozen at the pause**: no catch-up, no veil, no away report. | **P0** | ✅ **CLOSED 2026-09-01** | Doc 13 §3.2's `save.android.last_pause` is written by `game/android/lifecycle_stamp.gd`; `AndroidLifecycle.arm_cold_resume()` seeds a synthetic pause from the loaded generation and `pump_resume()` hands it to the **same** `resumed` signal. `tests/test_cold_launch_catchup.gd` — 10 tests, and the load-bearing one compares a cold-loaded city against an in-process-resumed one on `state_hash()` over the same absence. Report 98 §48 RR-132. |
+| **A91-D-86** | **A second absence on top of an unfinished catch-up was drained synchronously, and the pause between them ate the away report's 'before'.** `_on_app_resumed` answered an in-flight cursor with `_catchup_cursor.run()` — up to 720 coarse steps in one frame, `720 × 165 ms = 119 s` of blocked main thread on the benchmark city, an ANR twenty-four times over. `_on_paused` meanwhile committed a mid-absence city and overwrote `_before_snapshot` with it, so the report diffed the city against a half-advanced version of itself; and the unspent plan was lost outright if the process then died. Separately, doc 08 §2.12's NORMATIVE `max_coarse_hours` rule was implemented nowhere (`grep -rn max_coarse_hours sim/ game/ data/` → 0 hits) and `ui/away_model.gd`'s `capped_text` had never been reachable, because the shell's report dictionary carried no `capped` key. | **P1** | ✅ **CLOSED 2026-09-01** | The second absence is queued (`AndroidLifecycle.defer_absence`), the pause is tagged `pause_mid_catchup` and carries the unspent segments in `last_pause.unfinished`, and `CatchUpPlanner.plan_after` puts them back in front of the next plan. `max_coarse_hours` is derived, shipped in `data/persistence.json` and applied in `plan()`; both capped surfaces now quote the cap that was applied. `tests/test_catchup_resume.gd` (13) + `tests/test_catchup_clamp.gd` (15). Report 98 §48 RR-133 / RR-134, doc 93 §AG. |

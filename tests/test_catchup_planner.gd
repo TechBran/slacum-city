@@ -1,10 +1,29 @@
 extends SimTest
 ## Doc 01 T-11 (planner determinism) and T-13 (cap and grace, 12 h per C-19).
+##
+## **RE-PINNED 2026-09-01 — report 98 §48 / RR-133.** Doc 08 §2.12's
+## `max_coarse_hours` was NORMATIVE prose implemented nowhere; this wave
+## implemented it, and `data/persistence.json` ships **360 game-hours** derived
+## from the reference city's measured 5.488 ms coarse step. The default clamp is
+## therefore TIGHTER than doc 01's C-19 cap, and two assertions below moved
+## because of it — not because the arithmetic changed:
+##
+## * `test_worked_example_6h12m` — 6 h 12 m is now ABOVE the shipped clamp
+##   (6 h), so the plan it produces is capped. Doc 01 §2.10's worked example is
+##   still pinned exactly, by passing the C-19 cap explicitly.
+## * `test_cap_12_hours` — the 12 h / 172 800 tick figure is C-19's and is still
+##   pinned, again with the cap passed explicitly. The DEFAULT is what changed.
+##
+## Both forms are kept on purpose. The explicit ones say what doc 01's ladder
+## does; the default ones say what a player on this build actually gets. When the
+## measurement moves, only the default ones move with it.
 
 
 func test_worked_example_6h12m() -> void:
 	# Doc 01 §2.10: away 6 h 12 m at tick 918 442 -> 38 fine, 371 coarse, 162 fine, 40 fine.
-	var plan := CatchUpPlanner.plan(22_320_000, 0, 918442)
+	# Pinned against doc 01's C-19 cap, passed explicitly: this is the LADDER's
+	# arithmetic and it is unchanged by doc 08 §2.12's performance clamp.
+	var plan := CatchUpPlanner.plan(22_320_000, 0, 918442, 720)
 	assert_eq(plan["credited_real_ms"], 22_320_000)
 	assert_false(bool(plan["capped"]))
 	assert_eq(plan["total_ticks"], 89_280)
@@ -17,6 +36,18 @@ func test_worked_example_6h12m() -> void:
 	assert_eq(CatchUpPlanner.segments_total_ticks(plan), 89_280)
 
 
+func test_the_same_absence_on_the_SHIPPED_clamp() -> void:
+	# And what a player on this build gets for the same 6 h 12 m: the shipped
+	# clamp is 360 game-hours = 6 real hours, so 12 minutes of it are discarded
+	# and the report is told to say so (doc 08 §2.12's `catchup_capped`).
+	var plan := CatchUpPlanner.plan(22_320_000, 0, 918442)
+	assert_true(bool(plan["capped"]),
+			"an absence past the shipped clamp is capped, and says so")
+	assert_eq(int(plan["cap_game_hours"]), CatchUpPlanner.configured_max_coarse_hours())
+	assert_eq(int(plan["discarded_real_ms"]), 22_320_000 - int(plan["credited_real_ms"]))
+	assert_eq(CatchUpPlanner.segments_total_ticks(plan), int(plan["total_ticks"]))
+
+
 func test_grace_window() -> void:
 	var plan := CatchUpPlanner.plan(90_000, 0, 1000)
 	assert_eq(plan["total_ticks"], 0, "90 s is inside the grace window")
@@ -26,12 +57,22 @@ func test_grace_window() -> void:
 
 
 func test_cap_12_hours() -> void:
-	# 26 real hours -> capped at 12 h = 720 game-hours = 172,800 ticks (report 98 C-19).
-	var plan := CatchUpPlanner.plan(26 * 3_600_000, 0, 0)
+	# 26 real hours -> capped at 12 h = 720 game-hours = 172,800 ticks (report 98
+	# C-19). RE-PINNED with the cap passed explicitly: this is doc 01's OUTER
+	# bound, which doc 08 §2.12's clamp may only ever tighten, never raise.
+	var plan := CatchUpPlanner.plan(26 * 3_600_000, 0, 0, 720)
 	assert_true(bool(plan["capped"]))
 	assert_eq(plan["credited_real_ms"], 43_200_000)
 	assert_eq(plan["total_ticks"], 172_800)
 	assert_eq(CatchUpPlanner.segments_total_ticks(plan), 172_800)
+
+
+func test_the_shipped_clamp_is_never_looser_than_C_19() -> void:
+	var shipped := CatchUpPlanner.plan(26 * 3_600_000, 0, 0)
+	assert_true(int(shipped["credited_real_ms"]) <= 43_200_000,
+			"doc 08 §2.12 is a performance clamp, not a second cap upward")
+	assert_eq(int(shipped["cap_game_hours"]),
+			CatchUpPlanner.configured_max_coarse_hours())
 
 
 func test_short_absence_all_fine() -> void:

@@ -350,6 +350,19 @@ func test_pause_autosaves_and_resume_reports_elapsed() -> void:
 
 
 func test_resume_without_a_pause_reports_zero() -> void:
+	# RE-PINNED 2026-09-01 (report 98 §48, RR-132) — the assertion is unchanged
+	# and the REASON for it is now written down, because for a year this test
+	# was the pin holding a P0 in place.
+	#
+	# `_on_resumed` with no pause in memory reports 0.0, and that is CORRECT for
+	# what this node measures: a `RESUMED` notification arriving with no
+	# `PAUSED` behind it means this process never went away, so this process
+	# measured no absence. What was wrong was believing that covered the case.
+	# A process that DIED went away for hours and will never see a `RESUMED` at
+	# all; its absence is measured from the pause stamp on disk, by
+	# `arm_cold_resume` / `pump_resume`, and is pinned in
+	# `tests/test_cold_launch_catchup.gd`. Two paths, two measurements, one
+	# `resumed` signal — so this line must keep saying zero.
 	var service := _fresh_service()
 	var rig := ClockRig.new()
 	var lifecycle := _rigged_lifecycle(service, CitySim.boot_from_files(1), rig)
@@ -358,6 +371,11 @@ func test_resume_without_a_pause_reports_zero() -> void:
 	rig.wall += 999.0
 	lifecycle.notification(Node.NOTIFICATION_APPLICATION_RESUMED)
 	assert_eq(seen, [0.0] as Array[float])
+	# ...and with nothing loaded, nothing is armed either: an in-memory resume
+	# that measured nothing must not become a cold-launch absence by accident.
+	assert_false(lifecycle.owes_resume())
+	assert_false(lifecycle.arm_cold_resume(service),
+			"no load, no stamp, no manifest -> the city owes nothing")
 	lifecycle.free()
 	service.free()
 

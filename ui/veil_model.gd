@@ -53,8 +53,13 @@ var steps_done := 0
 var steps_total := 0
 ## Game hours the catch-up is about to run. 0 while loading.
 var catchup_hours := 0
-## Doc 01's 12-real-hour cap bit: the absence was longer than the sim will credit.
+## Doc 01's cap bit: the absence was longer than the sim will credit.
 var capped := false
+## REAL hours the clamp allows, for the capped line's `{hours}`. It stopped
+## being a constant in Wave 17: doc 08 §2.12's `max_coarse_hours` can pull the
+## effective cap below doc 01's 720 game-hours / 12 real hours, and copy that
+## says "12" while the sim credited six is a lie with a footnote (RR-133).
+var cap_real_hours := 12
 
 var _min_steps := DEFAULT_MIN_STEPS
 
@@ -85,6 +90,7 @@ func begin_load(p_city: String, total_steps: int) -> void:
 	steps_total = maxi(0, total_steps)
 	catchup_hours = 0
 	capped = false
+	cap_real_hours = 12
 
 
 ## Where the restore cursor has got to. Clamped rather than trusted: a shell that
@@ -100,13 +106,15 @@ func advance_load(completed: int) -> void:
 ## run, `total_steps` the planner's tick count. Answers whether the veil is up
 ## afterwards: an absence under `min_steps()` is refused and, if a load was
 ## showing, the veil comes down with it.
-func begin_catchup(hours: int, total_steps: int, was_capped: bool = false) -> bool:
+func begin_catchup(hours: int, total_steps: int, was_capped: bool = false,
+		p_cap_real_hours: int = 12) -> bool:
 	if total_steps < _min_steps:
 		finish()
 		return false
 	phase = PHASE_CATCHUP
 	catchup_hours = maxi(0, hours)
 	capped = was_capped
+	cap_real_hours = maxi(1, p_cap_real_hours)
 	steps_done = 0
 	steps_total = maxi(0, total_steps)
 	return true
@@ -126,6 +134,7 @@ func finish() -> void:
 	steps_total = 0
 	catchup_hours = 0
 	capped = false
+	cap_real_hours = 12
 
 
 func is_open() -> bool:
@@ -175,7 +184,8 @@ func _detail() -> String:
 				return ""
 			return _t("ui_veil_step", {"n": steps_done, "total": steps_total})
 		PHASE_CATCHUP:
-			return _t("ui_veil_catchup_capped", {}) if capped else ""
+			return _t("ui_veil_catchup_capped",
+					{"hours": cap_real_hours}) if capped else ""
 		_:
 			return ""
 
