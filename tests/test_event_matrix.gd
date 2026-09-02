@@ -152,6 +152,15 @@ const REGISTER := {
 	"upgrade_started":
 		"covered: CitySim re-emits the same fact as upgrade_started_sim, which"
 		+ " the shell turns into a construction site.",
+	"restore_batch_completed":
+		"awaiting_consumer: Wave 18's cmd_restore_all_destroyed summary — how"
+		+ " many ruins came back and what the sweep cost. Its consumer is the"
+		+ " Upkeep band of ui/city_dashboard.gd, which a sibling lane owns this"
+		+ " wave (doc 12 §2.9 D-86's deferral row names it). Nothing is lost"
+		+ " meanwhile: every building in the sweep emits its own"
+		+ " restore_started_sim, which the renderer consumes, so the city"
+		+ " visibly comes back — what is missing is the one-line summary a"
+		+ " twelve-ruin sweep deserves instead of twelve separate notices.",
 
 	# ── doc 07, the Director ───────────────────────────────────────────────
 	"director_event_scheduled":

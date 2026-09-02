@@ -548,6 +548,28 @@ Every other system supplies **only** `damage_fraction ∈ [0,1]` and calls `econ
 
 Repairing 100% damage costs 85% of capital — cheaper than rebuilding, expensive enough that prevention wins. Doc 04's "replacement cost ×4" language for a destroyed transformer is therefore expressed as `damage_fraction = 1.0` plus a fresh purchase, never as a fourth price model.
 
+**THE RESTORE — the capital end of the same family (new Wave 18; doc 02 §2.12, doc 92 §54, doc 93 §AN2).** A building the city has *lost* is not a repair that ran off the end of the scale; it is its own row, and this doc owns it outright:
+
+```
+restore_cost = round( capital_value(type, level_at_destruction) × RESTORE_COST_FRACTION (0.20) × M_repair[difficulty] )
+```
+
+| | |
+|---|---|
+| **key** | `data/economy.json.expenses.RESTORE_COST_FRACTION` |
+| **accessor** | `CostCurves.restore_cost_building(type, level, m_repair)` — the only place a restore is priced (C-07) |
+| **charged by** | `CitySim.cmd_restore_building`, under its **own ledger source `&"restore"`** |
+| **level** | `level_at_destruction`, always. **No grace window, no demotion** — see doc 02 §2.12 |
+
+**Why 0.20 and not doc 02's authored 0.60.** The old pair — `0.60 × build cost` inside 72 game-hours, full price and a demotion to L1 after — was never charged by anything, because until Wave 18 the transition had no caller at all (doc 91 A91-D-99). It met its first measurement on 2026-09-02 and failed it. The re-derivation (doc 92 §54) pins the fraction between two prices this section already publishes:
+
+- **floor `0.17 × capital`** — the repair a *maintaining* player buys. Doc 92 §43.1's `balanced` agent repairs at condition 0.80, i.e. `0.20 damage × REPAIR_COST_PER_CAPITAL`. **A restore below this would make letting a building fall down cheaper than keeping it up**, at every level of every archetype, so `CostCurves` refuses such a table at boot and `tests/test_economy.gd` asserts the inequality per archetype per rung rather than asserting a constant.
+- **ceiling `0.5525 × capital`** — the repair at doc 02 §2.6's auto-damage line (`0.65 × 0.85`), the deepest repair anyone sanely buys.
+
+Measured consequence: the three ruins a neglected 45-day arc actually leaves standing — the starter city's power plant, substation and water plant — come back for **$24,000 against a $17,058 day's net (1.41×)**, where the authored 0.60 charged **$72,000 (4.22×)**.
+
+**`M_repair`, not `M_build`**, because the price is read off `capital_value` like every other line of the repair family. **Not `&"construction"`**, because §2.10 layer 2's austerity blocks that category and a city that cannot restore its own power plant during an austerity cannot recover from one; **not `&"repair"`**, because folding a capital event into the routine line would make doc 92's repair burden appear to move when the player simply rebuilt. No `lifetime_restores` row ships — `Treasury.lifetime` is inside `state_hash()` and Wave 18 is a player-verb lane that moves no baseline (doc 91 A91-D-100).
+
 **Emergency contractor.** Paying to bypass the construction/crew queue costs `CONTRACTOR_SURCHARGE = 1.80 ×` the job cost and completes in `CONTRACTOR_TIME_FRACTION = 0.35` of the normal duration. Available at any treasury ≥ 0. This is the *money-for-time* valve and it is deliberately bad value.
 
 **Preventive maintenance.** Player action on any asset with condition ∈ [0.50, 0.99], costing `pm_cost = round( capital_value(asset) × PM_COST_FRACTION (0.06) )`.
@@ -1653,6 +1675,8 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
     "WATER_TREAT_COST_PER_M3": 0.06, "WATER_MAIN_MAINT_PER_KM_HOUR": 0.7, "PUMP_OM_PER_M3H_HOUR": 0.35,
     "REPAIR_COST_PER_CAPITAL": 0.85, "PM_COST_FRACTION": 0.06, "PM_MIN_CONDITION": 0.50, "PM_CREW_HOURS": 2,
     "_repair_note": "repair_cost = capital_value * damage_fraction * REPAIR_COST_PER_CAPITAL * M_repair (C-16). Docs 02/04/05/06/07 supply damage_fraction only and hold no price table.",
+    "RESTORE_COST_FRACTION": 0.20,
+    "_restore_note": "restore_cost = capital_value(level_at_destruction) * RESTORE_COST_FRACTION * M_repair (Wave 18, doc 92 sec 54, doc 93 sec AN). Replaces doc 02's authored 0.60/72h pair, which no caller ever read. Floor: 0.17 = the repair a maintaining player buys.",
     "CONTRACTOR_SURCHARGE": 1.80, "CONTRACTOR_TIME_FRACTION": 0.35,
     "RUSH_SURCHARGE_PER_DURATION": 1.23077,
     "_rush_derivation": "§2.13(f): (CONTRACTOR_SURCHARGE − 1) / (1 − CONTRACTOR_TIME_FRACTION). Re-checked at load.",

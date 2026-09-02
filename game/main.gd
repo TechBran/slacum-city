@@ -676,6 +676,14 @@ func _on_sim_batch(batch: Array) -> void:
 					_add_construction_site(String(event.get("sim_id", "")))
 			&"upgrade_started_sim":
 				_add_construction_site(String(event.get("sim_id", "")))
+			# Wave 18 (report 98 RR-157): the ruin has to GO the same frame. The
+			# event carries the int render id (`repair_started_sim`'s shape), so
+			# it is appended as-is and `RenderStateModel`'s arm clears the soot
+			# and the OFFLINE tint the `building_destroyed` arm wrote. The site
+			# props are the same call every new project makes.
+			&"restore_started_sim":
+				translated.append(event)
+				_add_construction_site(String(event.get("sim_id", "")))
 			&"building_construction_stage":
 				translated.append(event)  # already carries the int render id
 				var stage_rid := int(event.get("building", -1))
@@ -968,6 +976,16 @@ func _wire_build_ui(ui_instance: Node) -> void:
 		building_panel.repaired.connect(_on_building_action)
 		building_panel.priority_set.connect(_on_building_action)
 		building_panel.demolished.connect(_on_building_demolished)
+		# Wave 18's ruin verb (doc 12 §2.9 D-86). Two args, so not
+		# `_on_building_action`. WRAPPED in `flush_sim_events()` for the same
+		# reason the rush door is (RR-108, in the other direction): the command
+		# emits from inside itself and the only live drain does not run while
+		# the game is paused, so the rubble a paused player just paid to clear
+		# would sit there until they un-paused.
+		building_panel.restored.connect(
+				func(_sim_id: String, _result: Dictionary) -> void:
+					flush_sim_events()
+					_refresh_hud())
 		# doc 05 §6's node ladder (doc 93 §J1). Two args, so not `_on_building_action`.
 		building_panel.water_upgraded.connect(
 				func(_node_id: String, _result: Dictionary) -> void: _refresh_hud())

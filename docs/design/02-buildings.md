@@ -711,10 +711,57 @@ Full transition table:
 | `damaged` | `repairing` | `cmd_repair` + crew assigned | doc 03 charges `repair_cost(damage_fraction)` |
 | `repairing` | `active` | repair progress ≥ 1.0 | `condition = 0.85` |
 | `repairing` | `damaged` | crew withdrawn or new damage | partial progress kept |
-| `destroyed` | `planned` | `cmd_rebuild`; doc 03 charges `0.60 × build cost(level_at_destruction)` if within `rebuild_grace_hours = 72`, else L1 price and level resets to 1 | rubble cleared as part of the project |
+| `destroyed` | `planned` | **`cmd_restore_building`** (Wave 18); doc 03 §2.5 charges `capital_value(level_at_destruction) × RESTORE_COST_FRACTION × M_repair`. **The level always survives — no grace window, no demotion** | rubble cleared as part of the project; a `rebuild` job on §2.13's one queue |
 | `destroyed` | (removed) | `cmd_clear_rubble`; `0.10` cost fraction, `0.25 × build_time` crew-hours | tiles freed |
 
 **Offline note.** `destroy_building` is guarded by `world.destroy_allowed()` (report 98 C-47): while catching up, doc 08's fairness rule clamps the outcome to condition **0.15** with the incident left open, and the verb is refused **visibly** rather than swallowed. The player arrives to a building still burning.
+
+#### The restore — the row above, as it actually ships (Wave 18)
+
+> **THE MODEL NOW HAS A DOOR.** `Building.order_rebuild` was authored here,
+> documented here, and until Wave 18 **had no caller anywhere in the project** —
+> `grep -rn "cmd_rebuild\|\.rebuild(" sim/ ui/ game/` found not one (doc 91
+> A91-D-99, doc 91's sixth instance of the A91-D-19 shape). `cmd_repair_building`
+> refuses anything that is not `active` or `damaged`, so the verb a player
+> reaches for was closed against exactly this state and **a destroyed building
+> was permanently dead**. The player said so, on their own city, on 2026-09-02.
+>
+> **The verb** is `CitySim.cmd_restore_building(sim_id, preview := false)`, with
+> `cmd_restore_all_destroyed(preview)` as the many-at-once half (cheapest first,
+> stopping at the funds wall; every row goes through the single verb, so a batch
+> and N taps are the same N charges). Refusals in order:
+> `E_UNKNOWN_BUILDING → E_STATE → E_JOB_IN_FLIGHT → E_FUNDS`, with the quote on
+> `E_FUNDS` so a button can name the price it could not pay. The shell comes back
+> through the ORDINARY construction path — `planned` → §2.13's one queue →
+> `active` — on the authored `rebuild` job kind, so the queue panel lists it, the
+> rush verb rushes it, the six-stage crane walk draws it, and `building_completed`
+> fires exactly as it does for a new build.
+>
+> **`owner_maintained` does NOT block it** (doc 93 §AN4). §2.6a puts ROUTINE WEAR
+> on the owner; a building destroyed by fire or collapse is a CAPITAL event, the
+> owner is gone with the building, and the rebuild is the city's call. Reading
+> §2.6a the other way would close this door on every house, store and office in
+> the city.
+>
+> **THE PRICE AND THE LEVEL, re-ruled** (doc 92 §54, doc 93 §AN2/§AN3). The
+> `0.60`-inside-72-hours / full-price-and-back-to-L1 pair this section used to
+> author is **retired, both halves**. It was never charged by anything, so it had
+> never met a measurement:
+>
+> * the price is now `capital_value(level_at_destruction) × 0.20 × M_repair`,
+>   published as `data/economy.json.expenses.RESTORE_COST_FRACTION` and read only
+>   through `CostCurves.restore_cost_building()`. `data/buildings.json` and
+>   `sim/buildings/building.gd` carry no dollar and no dollar fraction (C-07):
+>   `order_rebuild` returns `hours_destroyed`, a fact, and no price at all.
+>   0.20 is pinned between the repair a maintaining player buys (`0.17 × capital`)
+>   and the repair at §2.6's auto-damage line (`0.5525 × capital`), and the floor
+>   is enforced at boot as well as by test — below it, letting a building fall
+>   down would be cheaper than keeping it up.
+> * **the level always survives.** A demotion deletes capital the player paid for
+>   rung by rung — a `house` at L5 is $37,955 of it — for a fire they did not
+>   start; and the 72-game-hour window stood against doc 08's **720**-hour offline
+>   cap, so it punished the overnight absence this product is designed around.
+>   `REBUILD_GRACE_HOURS` is deleted rather than deprecated.
 
 **Per-state behaviour modifiers** (the `STATE_*` tables referenced in §2.5):
 

@@ -205,6 +205,11 @@ const CODE_TABLE := {
 	# the failure shape PA-24 found on `E_WATER_HEADROOM`.
 	&"E_OWNER_MAINTAINED": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	&"E_JOB_IN_FLIGHT": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
+	# Wave 18, doc 02 §2.12's restore. `cmd_restore_all_destroyed` answers this
+	# on a healthy city and `BuildController` draws no batch row for it — the
+	# entry exists for the same reason `E_OWNER_MAINTAINED`'s does, so the code
+	# can never fall through to UNKNOWN and print itself at a player.
+	&"E_NO_RUINS": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	&"E_UNKNOWN_PRIORITY": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	# --- Wave 6: doc 09 §2.5's land verbs, surfaced by S4 (doc 12 §2.8).
 	# `WorldMap.purchase_allowed` raises the first three and

@@ -634,6 +634,87 @@ func test_repair_difficulty_scalar() -> void:
 			"damage_fraction is clamped to [0,1]")
 
 
+# ================================= §2.5 the restore row (Wave 18, doc 93 §AN)
+
+## `restore_cost = capital_value(level_at_destruction) × RESTORE_COST_FRACTION ×
+## M_repair`. One formula, one file, and the level it is read at is the level the
+## ruin comes back at — there is no grace window and no demotion (doc 92 §54).
+func test_restore_pricing_single_source() -> void:
+	var curves := _curves()
+	assert_almost_eq(curves.restore_cost_fraction(), 0.20, 1e-9,
+			"doc 93 §AN's published fraction")
+	assert_eq(curves.restore_cost_building("house", 3), 1220, "6,100 × 0.20")
+	assert_eq(curves.restore_cost_building("office", 3), 13216, "66,079 × 0.20")
+	assert_eq(curves.restore_cost_building("fire_station", 3), 20332, "101,660 × 0.20")
+	assert_eq(curves.restore_cost_building("power_plant_gas", 1), 12000, "60,000 × 0.20")
+	assert_eq(curves.restore_cost_building("apartment", 3),
+			curves.restore_cost(curves.capital_value("apartment", 3)),
+			"the building helper is the capital helper, read at the ruin's level")
+	# Level 0 is what a `Building` carries WHILE the site is up; a restore is
+	# always priced at a real rung, never at zero.
+	assert_eq(curves.restore_cost_building("house", 0), curves.restore_cost_building("house", 1))
+	assert_eq(curves.restore_cost(curves.capital_value("house", 5), 0.70), 5314,
+			"M_repair casual — a restore is the capital end of the repair family")
+	assert_eq(curves.restore_cost(curves.capital_value("house", 5), 1.60), 12146,
+			"M_repair crisis")
+
+
+## **THE FLOOR, as an inequality rather than a constant** (doc 93 §AN). A restore
+## must never be cheaper than the repair a MAINTAINING player buys, or the game
+## pays for neglect: doc 92 §43.1's `balanced` agent repairs at condition 0.80,
+## which prices at `0.20 × REPAIR_COST_PER_CAPITAL`. This is asserted for every
+## archetype at every rung, because the two curves it compares are the same curve
+## — a future re-fit of either that broke the relation would break it everywhere
+## at once, and this test names the reason rather than the number.
+func test_a_restore_is_never_cheaper_than_the_repair_it_replaced() -> void:
+	var curves := _curves()
+	var floor_fraction := CostCurves.MAINTAINER_DAMAGE_FRACTION * 0.85
+	assert_true(curves.restore_cost_fraction() >= floor_fraction,
+			"RESTORE_COST_FRACTION %.4f is below the maintainer repair floor %.4f"
+					% [curves.restore_cost_fraction(), floor_fraction])
+	for type in curves.ids():
+		for level in range(1, 7):
+			var capital := curves.capital_value(String(type), level)
+			if capital <= 0:
+				continue
+			assert_true(curves.restore_cost(capital) >= curves.repair_cost(capital,
+					CostCurves.MAINTAINER_DAMAGE_FRACTION),
+					"%s L%d: letting it fall down is cheaper than keeping it up"
+							% [type, level])
+	# And the ceiling the ruling names: a restore is CHEAPER than the repair at
+	# doc 02 §2.6's auto-damage line (0.65 damage → 0.5525 × capital), which is
+	# what makes it a decision rather than a crisis.
+	var house := curves.capital_value("house", 4)
+	assert_true(curves.restore_cost(house) < curves.repair_cost(house, 0.65),
+			"a restore that costs more than the deepest sane repair is not modest")
+
+
+## …and the floor is refused at BOOT as well as asserted by the test above, the
+## way §2.13(f)'s rush rate is re-checked against the contractor row it comes
+## from. A table edit that dropped below the maintainer repair must fail loudly
+## rather than quietly making the game pay for neglect.
+func test_a_restore_fraction_below_the_floor_is_a_boot_error() -> void:
+	var economy: Variant = JSON.parse_string(
+			FileAccess.get_file_as_string(ECONOMY_PATH))
+	var building_economy: Variant = JSON.parse_string(
+			FileAccess.get_file_as_string(BUILDING_ECONOMY_PATH))
+	var expenses: Dictionary = (economy as Dictionary)["expenses"]
+	# 0.10 is below `0.20 × 0.85 = 0.17`, so letting a building fall down would
+	# be cheaper than the repair a maintaining player buys.
+	expenses["RESTORE_COST_FRACTION"] = 0.10
+	var broken := CostCurves.new(building_economy, economy)
+	assert_false(broken.is_valid(), "a restore below the floor booted silently")
+	var named := false
+	for message in broken.errors:
+		if String(message).contains("RESTORE_COST_FRACTION"):
+			named = true
+	assert_true(named, "the boot error names the cell: " + ", ".join(broken.errors))
+	# And the shipped table is above it, which is the same statement from the
+	# other side — this test would pass on a broken file if it only checked one.
+	expenses["RESTORE_COST_FRACTION"] = 0.20
+	assert_true(CostCurves.new(building_economy, economy).is_valid())
+
+
 # ============================================ §2.1 millidollar carry (deliverable g)
 
 func test_no_money_lost_to_rounding() -> void:

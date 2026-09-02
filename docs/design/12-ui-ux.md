@@ -2420,3 +2420,39 @@ dials on the Upkeep band, which is the door 99-PA PA-33 actually asked for
 (*"on the dashboard Upkeep band"*), and two doors onto one command is not a
 contradiction: both write `cmd_set_building_repair_policy`, which is the single
 place the pair is validated.
+
+---
+
+### Wave 18 delta — the ruin's row on S5 (2026-09-02)
+
+*One row, on the one screen a player looks at when they are looking at rubble.
+Rulings: doc 93 §AN6/§AN7. Verb: report 98 RR-155/157. Price: doc 92 §54.*
+
+| id | change | doc ref | why |
+|---|---|---|---|
+| D-86 | **S5 draws a destroyed building's own block, and it is the only action that building gets.** `BuildController.restore_view()` (asking `CitySim.cmd_restore_building(…, true)`, so this file authors no gate) → `BuildingPanel._render_restore`: a note that says what happened in the terms the model holds — *"Destroyed 2h 30m ago. Rebuilds at level 3, condition as new."* — and one **primary 48 dp button, `RESTORE · $1,220`, with the price on its face**. **No confirm dialog** (§AB's precedent). Unaffordable does not blank it: the build-card pattern applies and the button goes disabled **with the price still showing** and the formatter's sentence under it. **The block draws what the sim will ACCEPT and hides what it refuses.** `REPAIR` and `DEMOLISH` both answer `E_STATE` on a ruin — the first because a ruin is not `active` or `damaged` (and on private stock `E_OWNER_MAINTAINED` fires first and hid the row entirely, so before this wave a burnt-out house's panel offered **no action at all**), the second because doc 02 §2.12 routes a ruin to `cmd_clear_rubble`, **which has no door either** and is A91-D-99's remaining half. Neither is drawn: a dead button beside the live one is the state this row exists to remove. `PRIORITY` stays, because `cmd_set_priority` ACCEPTS a ruin — the tier lives on the grid service record, which a destruction does not detach, and the tier set now is the one the restored building comes back with. Under the primary button, when the city has more than one ruin, a ghost **`RESTORE ALL 12 · $84,200`** with a note saying how far the money reaches — it stays LIVE below full affordability because the verb buys cheapest-first and stops at the wall. Preview states `building_destroyed` and `building_destroyed_broke`, same commit. | §2.9 item 6, doc 02 §2.12, doc 93 §AN6 | The player, on their own city, 2026-09-02: *"When buildings are destroyed, we should have a ONE BUTTON CLICK to just pay a fee and restore the building. That's it. I have many buildings that are destroyed that I can't actually fix even if I upgrade power."* They were right, and the reason is doc 91 A91-D-99: `Building.order_rebuild` had a model, a doc and a price and **no caller anywhere in the project**. The ruin was already selectable — the tiles stay stamped, so `pick_at_ground` resolves it and `building_view()` has no state guard — and the panel already opened. What it drew was a dead `REPAIR` with an `E_STATE` sentence, or nothing. **`RESTORE ALL` lives on the ruin's own panel and not on the dashboard on purpose:** a player looking at one ruin is exactly the player who has a dozen, and this is the moment they learn the city can come back in one tap. The dashboard's Upkeep band is the citywide home and is a deferral row below, because a sibling lane owns that file this wave. |
+
+**What the row deliberately does NOT say.** The **cause** of the destruction —
+which fire, which collapse. `Building.serialize()` is inside doc 08's save body
+and inside `CitySim.state_hash()`, so persisting a cause field would move every
+determinism baseline in the project on a **surface** change, and this is a
+player-verb lane that moves none. The row therefore states the facts the model
+actually holds: that it is down, how long it has been down, and the level it
+comes back at. The fire itself is already published, with its cause, in §2.13's
+event log at the hour it happened.
+
+**What is left to a sibling — a deferral row, never a guess.**
+
+| awaiting_consumer | what this screen does meanwhile | closes when |
+| --- | --- | --- |
+| the CITYWIDE `Restore all destroyed (N) · $Y` affordance, in `ui/city_dashboard.gd`'s **Upkeep band** — the surface a player checks *without* having tapped a ruin first | S5 carries the same offer on every ruin's own panel, so the verb is reachable from the moment the player looks at any one of them; the sim side is **shipped and tested** (`CitySim.cmd_restore_all_destroyed(preview)` answers `{count, cost, rows}` sorted cheapest-first, and `BuildController.restore_all_destroyed()` is the door) | the dashboard lane merges — this wave does not edit `ui/city_dashboard.gd`, which it does not own |
+| a lifetime `Restores` row on the Economy ledger beside `Repairs` | the charge is visible in the treasury and in the hourly budget view under its own `&"restore"` category | doc 03 publishes the `ledger_totals` key, together with A91-D-37's `&"incident"` arm — one `state_hash` re-record for both, not two (doc 91 A91-D-100) |
+
+**One string changed for a player-facing reason.** `ui_queue_source_rebuild`
+reads **"Restore"**, not "Rebuild": the queue row and the button the player
+pressed have to say the same word. `rebuild` stays the sim's job kind — the code
+word and the player's word are allowed to differ; two *player* words for one
+thing are not.
+
+**The deck is 69 states**, the two new ones included; `--screen=all --audit
+--strict` reads clean in every cell.

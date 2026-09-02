@@ -7698,3 +7698,210 @@ promise which table the `id` lives in. A locator arm that cannot find its id in
 its own table asks the others rather than returning null, and a `FIX_*` with no
 locator mapping fails loudly at a gate. Both halves are pinned by Lane D's two
 tests, which is why this cost one merge and not one playtest.
+
+## 56. WAVE 18 — the restore: a door that was never cut (binding)
+
+*The restore lane, forked off the Wave-17 integration, 2026-09-02.
+**Hash-neutral throughout**, proved on both cities at the fork and again at the
+end: everything this lane adds to `sim/` is reachable only through a PLAYER
+VERB, and a player verb moves no baseline.*
+
+*This section closes the sixth instance of `A91-D-19`'s shape — authored,
+documented behaviour with no caller — and the sixth is the one a player found
+from the outside, in their own words, on their own city: "I have many buildings
+that are destroyed that I can't actually fix even if I upgrade power."*
+
+| `profile_sim --hash-only` | at the fork | after this pass |
+|---|---|---|
+| starter, coarse 24 h | `05614522975fad52…` | **`05614522975fad52…`** |
+| starter, fine 2.0 h | `d1aaee0dca92f2fd…` | **`d1aaee0dca92f2fd…`** |
+| bench, coarse 24 h | `275aad9d4aeea809…` | **`275aad9d4aeea809…`** |
+| bench, fine 2.0 h | `d40126e371371d59…` | **`d40126e371371d59…`** |
+
+### RR-155 — `cmd_restore_building`: the transition that had a model, a doc and no caller (closes `A91-D-99`; docs 02 §2.12, 03 §2.5, 91 §14.5, 92 §54, 93 §AN)
+
+`Building.order_rebuild(now_minutes)` has been in the tree since doc 02 shipped.
+It is typed, documented against §2.12's transition table, and it returned a
+priced quote — `pending_level = level_at_destruction` inside a 72-game-hour
+window at `cost_fraction` 0.60, and `1` at 1.00 after it.
+
+**The grep is the whole finding:**
+
+```
+$ grep -rn "cmd_rebuild\|\.rebuild(" sim/ ui/ game/
+sim/buildings/building.gd:463:func order_rebuild(now_minutes: int) -> Dictionary:
+game/showcase.gd:314: road_surface.rebuild(...)          ← a different rebuild
+sim/roads/road_network.gd:269: snapshot.rebuild(...)     ← a different rebuild
+...
+```
+
+Every hit is `RoadSurfaceView.rebuild` or `WaterTopology.rebuild`. **There is no
+`cmd_rebuild`, there is no CitySim verb, and there is no UI door.** The only
+caller of `order_rebuild` in the entire project was `tests/test_building.gd`,
+asserting the price of a transition nothing could reach.
+
+And the door the player DOES reach for is closed against exactly this state:
+`cmd_repair_building` (`sim/city_sim.gd`) refuses anything that is not `active`
+or `damaged` with `E_STATE`, and on private stock the `E_OWNER_MAINTAINED`
+blocker fires first and the panel draws no affordance at all. So a destroyed
+building was permanently dead, in a game whose promise is *"You built it. Now
+keep it alive."*
+
+**Shipped.** `CitySim.cmd_restore_building(sim_id: Variant, preview := false)`:
+`String()` coercion at the door (doc 12 §4.4's one-funnel rule), a
+quote-then-commit shape identical to `cmd_repair_building`'s, refusals in the
+documented order `E_UNKNOWN_BUILDING → E_STATE → E_JOB_IN_FLIGHT → E_FUNDS`
+**with the quote on `E_FUNDS`** so the button can show the price it could not
+pay, and the charge through `Treasury.spend(cost, &"restore", …)`. The building
+comes back through the ordinary construction path — `planned` → the one queue →
+`active` — on the authored `rebuild` job kind, so the queue panel lists it,
+`cmd_rush_construction` rushes it and `building_completed` fires exactly as it
+does for a new build. `cmd_restore_all_destroyed(preview)` is the many-at-once
+half and is not a second verb: every row goes through the same command,
+**cheapest first**, so a batch and N taps are the same N charges in the same
+order.
+
+`E_JOB_IN_FLIGHT` is not defensive. A shell can burn down WHILE it is being
+built (§2.12: `under_construction → on_fire → destroyed`), and that job's
+completion would call `complete_construction` on the restore the player just
+bought and finish it for free.
+
+**One thing the verb had to fix on the way past.** `CitySim._emit_construction_stages`
+filtered its scan to `build`/`upgrade`, so a `rebuild` job would have drawn no
+crane and no six-stage walk — the renderer telling the player nothing is
+happening on a lot they just paid for. `rebuild` joins the walk.
+
+### RR-156 — the price is ruled, not inherited: 0.20 of capital, the level survives, and the window is retired (docs 02 §2.12, 03 §2.5, 92 §54, 93 §AN)
+
+A price nothing has ever charged is a proposal, not a measurement. Doc 02's
+authored pair met its first measurement on 2026-09-02 and failed it.
+
+`data/economy.json.expenses.RESTORE_COST_FRACTION = 0.20`, behind
+`CostCurves.restore_cost_building()` (C-07: no dollar in `data/buildings.json`
+or `sim/buildings/building.gd` — `order_rebuild` returns no `cost_fraction`
+now, only `hours_destroyed`, which is a fact rather than a price).
+
+The fraction is pinned between two prices the game already publishes: the repair
+a maintaining player buys (`0.20 damage × 0.85 = 0.17 × capital`, doc 92 §43.1's
+`balanced` agent threshold) and the repair at doc 02 §2.6's auto-damage line
+(`0.65 × 0.85 = 0.5525 × capital`). **The floor is enforced twice** — `CostCurves`
+refuses a table below it at boot, beside the rush-rate derivation check, and
+`tests/test_economy.gd` asserts the inequality for every archetype at every rung
+rather than asserting a constant. Below it the game would pay for neglect.
+
+Measured (doc 92 §54, `tools/measure_restore_burden.gd`, new this wave): the
+three ruins a `disaster_neglect` arc actually leaves standing — the starter
+city's power plant, substation and water plant — restore for **$24,000 against a
+$17,058 day's net = 1.41×**, where the authored 0.60 charged **$72,000 = 4.22×**.
+
+**The grace window and the L1 demotion are both retired** (doc 93 §AN3). The
+demotion deleted the player's own capital — a `house` at L5 carries $37,955 paid
+rung by rung and came back holding $1,200 of it — and the window was **72
+game-hours against doc 08's 720-hour offline cap**, so it punished exactly the
+overnight absence the product is designed around. `REBUILD_GRACE_HOURS` is
+deleted rather than deprecated.
+
+**`owner_maintained` does not block a restore**, and that is a ruling read
+narrowly on purpose (doc 93 §AN4). §Y1 puts ROUTINE WEAR on the owner; a
+building destroyed by fire is a capital event, the owner is gone with the
+building, and the rebuild is the city's call. The natural reading would have
+closed this door on every house, store and office in the city —
+`tests/test_restore_building.gd::test_a_destroyed_private_building_can_still_be_restored`
+pins it, because it would have looked like a correct application of a Wave-17
+ruling while doing it.
+
+**No lifetime counter, deliberately.** `Treasury.lifetime` is captured into
+`canonical_capture().ledger_totals` and thus into `state_hash()`; a new key would
+move every baseline in the project on a player verb, which must move none.
+`A91-D-100` is the row that publishes one.
+
+### RR-157 — the ONE TAP, and the ruin the renderer has to stop drawing (docs 12 §2.9 D-86, 93 §AN6/§AN7)
+
+**A ruin was already selectable and this was checked rather than assumed.**
+`CitySim` does not un-stamp a destroyed building's tiles, so
+`BuildController.sim_id_at_tile` → `TileGrid.building_at` resolves and
+`pick_at_ground` answers `PICK_BUILDING`; `building_view()` carries no state
+guard. What the PANEL drew was the defect: on city-maintained stock a disabled
+`REPAIR` with an `E_STATE` sentence, and on private stock `E_OWNER_MAINTAINED`
+folded into "nothing to buy" so the ruin's panel offered **no action at all**.
+
+Shipped as doc 12 §2.9's destroyed block: what happened, how long ago, and one
+primary 48 dp `RESTORE · $X` with the price on its face —
+disabled-with-the-price-still-showing when unaffordable (the build-card
+pattern), namespaced strings, tooltip, **no confirm dialog** (§AB's precedent:
+the price is on the button). The repair affordance is suppressed on a ruin,
+because the restore is the verb that answers it. Every value comes from
+`BuildController.restore_view()`, which asks `cmd_restore_building(…, true)` —
+the panel decides only what is on screen, so a button is never enabled on a rule
+`ui/` believes and the sim does not.
+
+**And the renderer must not lie in either direction.** The pump lesson (RR-108)
+says a thing the player just bought appears the same frame, not on the next
+relaunch; a ruin is the same statement inverted — the rubble must GO the same
+frame. `restore_started_sim` carries the render id as well as the sim id
+(`repair_started_sim`'s shape), `game/render/render_state_model.gd` gains one arm
+that clears the soot the `building_destroyed` arm wrote and puts the site at
+stage 1, and `game/main.gd`'s translator adds the site props. Without the arm the
+lot would have kept its ruin overlay and its full damage channel **through the
+whole rebuild and past its completion**, because the `building_completed` arm
+carries damage forward when the event does not name it.
+
+### 56.4 What this lane verified before it closed
+
+| check | command | result |
+|---|---|---|
+| zero callers at the fork | `git grep -n "cmd_rebuild\|\.rebuild(\|order_rebuild" <fork> -- sim ui game` | one hit, and it is the **definition**: `sim/buildings/building.gd:463`. Every other hit in the tree is `RoadSurfaceView.rebuild` or `WaterTopology.rebuild` — two unrelated methods that happen to share a name, which is most of why this survived five waves of audit. |
+| the suite | `godot --headless --script tests/run_tests.gd > suite.log 2>&1; echo $?` | **exit 0** — 135 files, **2,495 tests, 551,375 asserts, failed 0, silent 0** |
+| determinism, founding city | `tools/profile_sim.gd --hash-only` | `05614522975fad52…` / `d1aaee0dca92f2fd…` — **byte-identical to the fork** |
+| determinism, benchmark city | `… --hash-only --city=res://tests/fixtures/bench_city.json` | `275aad9d4aeea809…` / `d40126e371371d59…` — **byte-identical to the fork** |
+| the preview deck | `xvfb-run -a godot --path . res://tools/ui_preview.tscn -- --screen=all --audit --strict` | **exit 0**, **69 of 69** states clean, the two new ones included |
+| the doc ledger | `python3 tools/check_doc_refs.py` | `all resolving; no id assigned twice` |
+
+**The one test that failed on the way, and why it is the best thing in this
+section.** `tests/test_event_matrix.gd::test_every_emitted_event_is_consumed_or_classified`
+failed on `restore_batch_completed` — a new event with no consumer — which is
+precisely the guard `A91-D-19`'s shape exists to trip, tripping on the wave whose
+whole subject is that shape. It is classified `awaiting_consumer` naming
+`ui/city_dashboard.gd`'s Upkeep band and the lane that owns it, **not deleted**:
+every building in a sweep already emits its own `restore_started_sim` and the
+renderer consumes it, so the city visibly comes back; what is missing is the
+one-line summary a twelve-ruin sweep deserves instead of twelve notices. The
+classification carries a mechanical expiry, so the row deletes itself the moment
+that lane lands.
+
+**And one hazard the lane found in its own code before the suite did.**
+`CostCurves` resolves doc 03's archetype aliases (`power_facility` →
+`power_plant_gas`) and `BuildingCatalog` does not. The restore quote reads a
+PRICE from the first and a DURATION from the second, and both were being read
+off one variable — equal on every city today only because `_boot_buildings`
+builds the archetype FROM `record["type"]` and `cmd_place_building` writes it
+INTO it. A catalog read made in the economy's spelling answers `{}` and silently
+gives every ruin a four-hour rebuild. Each side is now asked in its own
+vocabulary, and `tests/test_restore_building.gd::test_the_catalog_and_the_economy_are_each_asked_in_their_own_spelling`
+walks `PLANT-1` — the one founding archetype whose two names differ — and
+asserts the quoted crew-hours are the authored figure rather than the fallback.
+
+### 56.5 What is left to `game/main.gd` — two snippets, both the lead's
+
+Neither is guessed and neither is written here: `game/main.gd` is the lead's
+file, and both arms are anchored in the branch report.
+
+1. **`_on_sim_batch`**, immediately after the `&"upgrade_started_sim":` arm.
+   `restore_started_sim` already carries the int render id (the
+   `repair_started_sim` shape), so it is appended as-is — exactly as
+   `building_construction_stage` is — and `RenderStateModel`'s new arm does the
+   rest. `_add_construction_site()` is the same call every other new project
+   makes.
+2. **The panel wiring**, immediately after
+   `building_panel.demolished.connect(_on_building_demolished)`. Two args, so
+   not `_on_building_action`. It is **wrapped in `flush_sim_events()`** for the
+   same reason `bind_construction`'s rush door is: a verb that emits from inside
+   the command meets a live drain (`SimHost._process`) that does not run while
+   the game is paused, so the rubble a paused player just paid to clear would sit
+   there until they un-paused. RR-108's lesson, applied in the other direction.
+
+Until they land, `sim/` and `ui/` are complete and covered — the verb, the price,
+the panel and the render arm all ship with tests — and the only thing a player
+would notice missing is that the ruin's mesh survives its own restore until the
+next relaunch. That is the pump lesson exactly, which is why the arms are named
+rather than assumed.
