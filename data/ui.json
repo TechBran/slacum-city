@@ -1159,7 +1159,12 @@
 			{
 				"key": "rotation_mode",
 				"kind": "choice",
-				"options": ["snap45", "snap90", "free", "locked"],
+				"options": [
+					"snap45",
+					"snap90",
+					"free",
+					"locked"
+				],
 				"default_from": "camera.rotation_mode_default",
 				"value_text_from": "rotation",
 				"hint_key": "ui_settings_rotation_mode_hint"
@@ -1288,7 +1293,12 @@
 				"_comment": "PA-14 / doc 13 §2.7 step 6 — the row S10 never had. It is a STATE, not a preference: Android owns the answer, this app only reports it and offers the one action that is legal in each state (`off` -> ask; `blocked` -> open the app's page in system settings; `on`/`unavailable` -> nothing, and the row says so instead of pretending to be a switch). Hence `kind: state`, which stores the token PermissionFlow.settings_row_state() returns rather than a player's choice: it is NOT captured into a save and NOT in device_scoped_keys, because a value the platform re-reports every time it is looked at has nothing to persist. The four options ARE the four tokens, so a state this app could not render can never reach the row.",
 				"key": "notification_permission",
 				"kind": "state",
-				"options": ["on", "off", "blocked", "unavailable"],
+				"options": [
+					"on",
+					"off",
+					"blocked",
+					"unavailable"
+				],
 				"default": "unavailable",
 				"value_text_from": "permission",
 				"action": "permission",
