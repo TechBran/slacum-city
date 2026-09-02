@@ -2186,6 +2186,116 @@ wrong section** because the money pass was drafted as doc 92 §35 and merged as
 and a reader notices; a pointer that resolves to the wrong section is a lie with
 a footnote. **It belongs in CI, next to the suite.**
 
+## AA. Wave-17 ruling — what "speed it up with cash" BUYS (2026-08-21)
+
+*The sim half of the construction roster and the rush verb (report 98 §41
+RR-107…RR-110; doc 02 §2.13; doc 03 §2.13(f); doc 92 §45). One question was put
+two ways and had to be answered once.*
+
+### AA1. INSTANT COMPLETION, not paid overtime — and the fiction did not decide it
+
+The brief offered two shapes and asked for one, argued:
+
+- **instant completion**, priced per remaining work — the player taps, the
+  project is finished, the row leaves the roster; or
+- **paid overtime**, `×2` effective crewing to completion — the player taps, the
+  project goes twice as fast, the row stays on the roster counting down.
+
+The obvious move is to let the fiction pick, because doc 03 §2.5's own
+money-for-time valve is an *acceleration*: the emergency contractor
+*"completes in `CONTRACTOR_TIME_FRACTION = 0.35` of the normal duration"*, not
+instantly. **That reading is wrong, and the reason it is wrong is the thing worth
+writing down: 0.35 is not a fiction about how construction works, it is a
+PRICE POINT.** The row prices one package on a curve — a fraction of the
+duration for a multiple of the cost — and instant completion is the same curve at
+`0.00`. Doc 03 §2.13(f) charges exactly the rate the contractor row implies
+(`0.80 / 0.65` per unit of duration bought, doc 92 §45.1), so **nothing in the
+founding ledger is contradicted and no new curve is invented**. The fiction is
+not being overruled; it is being extended along its own axis.
+
+So the fiction did not decide it. Three other things did.
+
+**1. The tick path is sacred, and overtime edits it for the life of the job.**
+`ConstructionQueue.advance()` is the one exact-integer accumulator this project
+does not trade — `num = crew_permille × site_mult_permille × eff_permille ×
+dt_game_seconds + carry`, deliberately un-divided until the end so fine and
+coarse stay bit-equivalent. Paid overtime means changing one of those factors
+*while the job runs*, on every tick, forever after. Instant completion writes the
+accumulator **once, from a command**, and then leaves. One of these is a change
+to the machine the multi-day determinism gate exists to protect; the other is a
+write the same machine already performs.
+
+**2. The overtime flag has nowhere clean to live.** The obvious home is
+`site_mult_permille`, which is already persisted and already clamped to 4.0 — and
+that is exactly the problem: it is **doc 02 §2.10's channel** for site conditions.
+A rush that wrote it would clobber, and be clobbered by, the site's own
+modifier, silently, with the last writer winning. Keeping the two apart needs a
+second per-job multiplier, a second save field and a section rung (RR-75
+sufficiency) — real persistence cost for a feature whose whole appeal is that it
+makes something go away. **Instant completion adds no state at all.** There is no
+flag, so there is nothing to persist, nothing to migrate and nothing to get wrong
+across a load.
+
+**3. Legibility: money should buy the THING, not the slope.** The player's own
+words were *"the ability to speed it up with cash"*, but the sentence before them
+was *"a queue that tells us what's actually being built and the progress tracker
+of that"* — the ask is a **list of things you are waiting on**. A payment that
+leaves the row on that list, still counting, does not read as a purchase; it
+reads as a smaller wait, and the player has to remember they bought it. A payment
+that removes the row is unambiguous the moment the thumb leaves the glass. The
+contractor row survives untouched as the doc's own acceleration valve for
+projects not yet started; the rush is the one for projects you are *watching*.
+
+**The cost of the choice, stated:** the `×2` crewing shape would have been the
+gentler balance object — smaller quotes, no instant-power/instant-water shock —
+and it is the shape a later wave should reach for if the roster's rush button
+turns out to trivialise a chapter. Nothing here forecloses it: the price curve is
+already parameterised by *fraction of duration bought*, so an overtime tier is a
+second call against the same `CostCurves.rush_cost`, not a re-derivation.
+
+### AA2. A rushed completion is the SAME completion, and that is a structural claim
+
+The Wave-13 pump lesson, restated for money: *every event that completes or
+creates a Building must reach `main.gd`'s translator, and a rushed completion
+fires the SAME events as a natural one, never a new bespoke path.*
+
+The mechanism is one function. `ConstructionQueue.force_complete()` deliberately
+**does not route** the completion — it fills the accumulator, takes the job off
+the queue and hands back the *identical record* `advance()` would have returned.
+Both callers then pass that record to `CitySim._route_completed_jobs()`, which is
+the loop lifted verbatim out of `WorkPhaseSystem.advance_fine`. There is no
+second dispatch to keep in step, so the translator, the notification bindings and
+doc 09's goal objectives cannot tell a rushed finish from a natural one — and
+`tests/test_construction_rush.gd::test_a_rushed_building_equals_a_naturally_finished_one`
+is the assertion that says so, comparing two cities field-for-field *and*
+comparing the two event streams from `building_completed` onward.
+
+The rush's own receipt, `construction_rushed{job, cost, source}`, is **additive
+and rides in front**: the money left, then the ordinary completion happened. It
+is the only new event, and it exists because the completion event says nothing
+about a purchase — a player who paid has to hear the money leave.
+
+### AA3. A refusal that takes nothing, and a refusal that is honest about which wall
+
+Four codes, and the shape of the third and fourth is the ruling.
+
+`E_UNKNOWN_JOB` and `E_JOB_COMPLETE` are facts about the queue. `E_NOT_RUSHABLE`
+is the one the roster pre-announces: the row carries `rushable: false` and
+`rush_cost: 0` when a project's cash price does not resolve, so `ui/` never draws
+the button — the command's refusal is the **race-guard** for a tap against a row
+drawn a frame ago, which is precisely how `cmd_collect_opportunity` earns its
+`E_EXPIRED`.
+
+`E_FUNDS` answers **two** walls on purpose: below doc 03 §2.10 layer 4's credit
+floor, *and* under layer 2's austerity block on the `construction` category (a
+rush is a new commitment, so layer 2 is right to close it). They are different
+facts and the same sentence to a player — *the city cannot pay for this right
+now* — and merging them costs nothing because the quote rides in `cost` either
+way. What does **not** merge is the money: the gate is `Treasury.can_spend()`,
+checked *before* the charge, so a rush is never deferred into a layer-4
+liability. **A half-paid rush would buy a whole building**, and that is the one
+outcome this verb may not have.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

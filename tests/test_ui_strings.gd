@@ -21,7 +21,14 @@ extends SimTest
 ## covered by being written, and a deleted screen's orphans surface on the next
 ## run.
 
-const SOURCE_DIRS: Array[String] = ["res://ui", "res://game"]
+## `res://sim` joined the scan with the construction roster (doc 02 §2.13,
+## report 98 RR-109): `CitySim.construction_overview()` publishes a `title_key`
+## per row — the seam contract makes the SIM the author of the noun, and `ui/`
+## resolves it dynamically (`_t(row.title_key)`), so the five `ui_queue_title_*`
+## keys are named by no line under `ui/` or `game/` and would read as orphans.
+## `sim/` held exactly one `"ui_*"` literal before this (`ui_bands`, a forecast
+## table field, not a key), so the widening changes no other verdict.
+const SOURCE_DIRS: Array[String] = ["res://ui", "res://game", "res://sim"]
 const STRINGS_PATH := "res://data/strings.en.json"
 ## Data files besides `data/ui.json` that NAME copy through `*_key` fields.
 ## `data/goals.json` (doc 09 §8.3) is the first: the curriculum's level titles

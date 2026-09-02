@@ -32,6 +32,11 @@ const GENERATED_CELL_TOLERANCE := 1  # doc 03 §7 test 8: ±$1 (RR-5 locks 3 cel
 ## legitimate sits within 1e-6 of a half-dollar boundary.
 const ROUND_EPSILON := 0.000001
 
+## doc 03 §2.13(f): how far the PUBLISHED rush rate may sit from the §2.5
+## contractor row it is derived from. The cell is authored to five decimal
+## places like every money cell in the project, so the residual is ~8e-7.
+const RUSH_DERIVATION_TOLERANCE := 0.00001
+
 ## doc 03 §2.13(a) / §2.2 archetype ids. doc 02's roster names four of them
 ## differently and omits two; the alias map ships in building_economy.json.
 const REQUIRED_ARCHETYPE_KEYS := [
@@ -61,6 +66,8 @@ var _demolition_refund_fraction: float = 0.0
 var _vehicle_resale_fraction: float = 0.0
 var _land_resale_fraction: float = 0.0
 var _contractor_surcharge: float = 0.0
+var _contractor_time_fraction: float = 0.0
+var _rush_surcharge_per_duration: float = 0.0
 var _road_repair_capital_fraction: float = 0.0
 var _road_demolish_refund_fraction: float = 0.0
 var _road_build_cost: Dictionary = {}
@@ -399,6 +406,41 @@ func contractor_cost(job_cost: int) -> int:
 	return round_half_up(float(job_cost) * _contractor_surcharge)
 
 
+## doc 03 §2.13(f) — what one crew-hour of a project's REMAINING duration costs
+## to buy outright, in dollars, for a project whose cash price is `job_cost` and
+## whose full length is `required_crew_hours`.
+##
+## The rate is per-project, not per-hour-of-the-city, because the roster's
+## dollars-per-crew-hour spans **15×** (house $600/ch → data_center $9,000/ch on
+## the §2.13(a) build column against doc 02's `build_time_hours`). A flat rate
+## would make rushing a tower nearly free and rushing a shack ruinous.
+func rush_rate_per_crew_hour(job_cost: int, required_crew_hours: float) -> float:
+	if job_cost <= 0 or required_crew_hours <= 0.0:
+		return 0.0
+	return float(job_cost) * _rush_surcharge_per_duration / required_crew_hours
+
+
+## doc 03 §2.13(f) — the quoted price of finishing a project NOW.
+##
+## `remaining / required` is `1 − progress`, taken from `ConstructionQueue`'s own
+## exact integer accumulator, so the quote and the work agree by construction.
+##
+## **Ceiling, not §2.1's half-up, and this is the one price in the ladder that
+## rounds that way** — §2.13(f) states the exception and the reason: this is the
+## only price computed against a live, continuously moving quantity, and half-up
+## would let a project at 99.9 % quote **$0** and hand the player the last of the
+## time for none of the money. The valve may be bad value; it may not be free.
+func rush_cost(job_cost: int, required_crew_hours: float,
+		remaining_crew_hours: float) -> int:
+	var rate := rush_rate_per_crew_hour(job_cost, required_crew_hours)
+	if rate <= 0.0:
+		return 0
+	var remaining := clampf(remaining_crew_hours, 0.0, required_crew_hours)
+	if remaining <= 0.0:
+		return 0
+	return ceili(remaining * rate)
+
+
 # ------------------------------------------------------------- refunds / resale
 
 ## doc 03 §2.3 — demolition returns 0.25 × capital_value. Downgrade is not permitted.
@@ -473,6 +515,9 @@ func _load(building_economy: Dictionary, economy: Dictionary) -> void:
 	_pm_min_condition = float(expenses.get("PM_MIN_CONDITION", 0.0))
 	_vehicle_resale_fraction = float(expenses.get("VEHICLE_RESALE_FRACTION", 0.0))
 	_contractor_surcharge = float(expenses.get("CONTRACTOR_SURCHARGE", 0.0))
+	_contractor_time_fraction = float(expenses.get("CONTRACTOR_TIME_FRACTION", 0.0))
+	_rush_surcharge_per_duration = float(
+			expenses.get("RUSH_SURCHARGE_PER_DURATION", 0.0))
 	_grid_components = expenses.get("grid_components", {})
 	_vehicles = expenses.get("vehicles", {})
 	var water: Dictionary = economy.get("water", {})
@@ -493,6 +538,21 @@ func _load(building_economy: Dictionary, economy: Dictionary) -> void:
 				% [_capital_value_v.size(), LEVELS_PER_ARCHETYPE, TOP_LEVELS_PER_ARCHETYPE])
 	if _repair_cost_per_capital <= 0.0:
 		errors.append("economy.json expenses.REPAIR_COST_PER_CAPITAL missing")
+	# doc 03 §2.13(f): the rush rate is not an independent number. §2.5's
+	# emergency-contractor row already publishes the price of time — it buys
+	# `1 − CONTRACTOR_TIME_FRACTION` of a project's duration for a surcharge of
+	# `CONTRACTOR_SURCHARGE − 1` of its cash price — and the rush is that same
+	# rate carried to its limit. The constant is PUBLISHED (C-07: a price lives
+	# in this file, not in a runtime expression) and re-checked here, so it can
+	# never drift away from the row it came from without the boot saying so.
+	if _rush_surcharge_per_duration <= 0.0:
+		errors.append("economy.json expenses.RUSH_SURCHARGE_PER_DURATION missing")
+	elif _contractor_time_fraction < 1.0:
+		var derived := (_contractor_surcharge - 1.0) / (1.0 - _contractor_time_fraction)
+		if absf(_rush_surcharge_per_duration - derived) > RUSH_DERIVATION_TOLERANCE:
+			errors.append(("economy.json expenses.RUSH_SURCHARGE_PER_DURATION is %.5f;"
+					+ " §2.5's contractor row derives %.5f") % [
+					_rush_surcharge_per_duration, derived])
 
 	_alias = building_economy.get("doc02_archetype_alias", {})
 	var archetypes: Dictionary = building_economy.get("archetypes", {})

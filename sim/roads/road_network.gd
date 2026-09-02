@@ -1714,6 +1714,24 @@ func on_job_started(job_id: int) -> void:
 		add_closure(job["tiles"], "construction_work", 0.5, -1, -1)
 
 
+## A read-only COPY of one in-flight road job — `{kind, tiles, road_class}` —
+## or `{}` when this class holds no record for that id.
+##
+## This is the DURABLE record of a road job's geometry and doc 02's construction
+## roster reads it rather than the queue payload's copy: `_serialize_jobs`
+## writes these tiles as `[x, y]` pairs and `_deserialize_jobs` rebuilds
+## `Vector2i` from them, while the payload carries live `Vector2i` that
+## `JSON.stringify` degrades to the text `"(3, 4)"` on the way into a save
+## (report 98 A91-D-47).
+func job_record(job_id: int) -> Dictionary:
+	var job: Dictionary = _jobs.get(job_id, {})
+	if job.is_empty():
+		return {}
+	var out := job.duplicate()
+	out["tiles"] = (job["tiles"] as Array).duplicate()
+	return out
+
+
 func on_job_completed(job_id: int) -> void:
 	var job: Dictionary = _jobs.get(job_id, {})
 	if job.is_empty():

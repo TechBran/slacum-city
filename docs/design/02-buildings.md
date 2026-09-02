@@ -669,6 +669,13 @@ progress = work_units / required_work_units          (derived, never stored)
 | `ConstructionQueue.reorder(job_id, new_index) -> bool` | Player-facing queue reordering (doc 12). Running jobs keep their crews; only the *pending* order changes. |
 | `ConstructionQueue.cancel(job_id) -> refund_fraction` | Applies the §2.10 refund table and returns the fraction; doc 03 converts it to dollars. Releases crews back to doc 06. |
 | `ConstructionQueue.list(filter) -> [project]` | Read-only snapshot for `ui/`. |
+| `ConstructionQueue.remaining_work_units(job_id) -> int` | Work still owed, in the accumulator's own integer units. **Read off the accumulator, never recomputed from `progress()`** — a float round-trip through a fraction is the second accumulator this section forbids. |
+| `ConstructionQueue.remaining_crew_hours(job_id) -> float` | The same quantity in crew-hours, which is the unit doc 03 §2.13(f) quotes a rush in. Presentation, like `progress()`; nothing in the tick path calls it. |
+| `ConstructionQueue.force_complete(job_id) -> project` | Fills the accumulator to its required total and takes the job off the queue, returning the **same record `advance()` would have returned**. `{}` for an unknown or already-finished job. Requires no crew — doc 03 §2.5's contractor exists precisely for a job the city's own crews are not on. |
+
+**`force_complete` does not route the completion, and that is the whole point.** It hands the record back and the coordinator (`CitySim._route_completed_jobs`) passes it to the *identical* dispatch the tick uses, so a rushed build fires the same `building_completed` a natural one does, in the same order, and the translator, the notification bindings and doc 09's goals cannot tell the two apart. There is deliberately no second completion path to keep in step (report 98 RR-108).
+
+**Every project the player would call "being built or upgraded" is on this one queue.** `cmd_upgrade_building` has **no clock of its own** — the §2.11 gate submits an `upgrade` job and *this* accumulator is the timer — and the same is true of repairs, doc 09's six development phases and doc 10's three road jobs. `CitySim.construction_overview()` is therefore a read of `active_jobs()` and nothing else: no adapter, no second source, no merge (report 98 RR-109).
 
 **Events emitted:** `job_started{job_id, target_ref, crew_ids}`, `job_completed{job_id, target_ref}`, `job_cancelled{job_id, refund_fraction}`, `job_blocked{job_id, reason}`.
 

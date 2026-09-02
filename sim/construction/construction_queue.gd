@@ -88,6 +88,53 @@ func eta_game_minutes(job_id: int, construction_rate: float = 1.0) -> float:
 	return float(remaining) / rate * 60.0
 
 
+## Work still owed on this job, in the SAME exact integer units the accumulator
+## counts. `0` for an unknown job and for one already at its required total.
+##
+## This is the quantity doc 03 §2.13(f) prices a rush against, and it is read
+## off the accumulator rather than recomputed from `progress()` — a float
+## round-trip through a fraction is exactly the second accumulator this class's
+## header forbids.
+func remaining_work_units(job_id: int) -> int:
+	var j: Dictionary = _jobs.get(job_id, {})
+	if j.is_empty():
+		return 0
+	return maxi(0, int(j["required_work_units"]) - int(j["work_units"]))
+
+
+## `remaining_work_units` expressed in crew-hours — the unit doc 03 quotes a
+## rush in. Presentation, like `progress()`: nothing in the tick path calls it.
+func remaining_crew_hours(job_id: int) -> float:
+	return float(remaining_work_units(job_id)) / float(WORK_UNITS_PER_CREW_HOUR)
+
+
+## Finish a job NOW, through the same door `advance()` finishes one through: the
+## accumulator is filled to its required total, the job leaves `_jobs` and
+## `_pending_order`, and the caller gets the identical record `advance()` would
+## have returned. The COMPLETION is not this class's to route — the coordinator
+## hands the returned record to exactly the dispatch the tick uses, so a rushed
+## build and a natural one are the same event stream (doc 03 §2.13(f)).
+##
+## Returns `{}` when the job is unknown or has no work left, which is what makes
+## `cmd_rush_construction`'s two non-money refusals decidable from here.
+##
+## **`advance()` is not called and no crew is required.** A rush is doc 03
+## §2.5's emergency contractor, and the whole point of that valve is that it
+## works when the city's own crews are somewhere else — a job sitting at
+## `blocked_reason = "no_crew"` is precisely the one a player pays to be rid of.
+func force_complete(job_id: int) -> Dictionary:
+	var j: Dictionary = _jobs.get(job_id, {})
+	if j.is_empty():
+		return {}
+	if int(j["work_units"]) >= int(j["required_work_units"]):
+		return {}
+	j["work_units"] = int(j["required_work_units"])
+	j["carry"] = 0
+	_jobs.erase(job_id)
+	_pending_order.erase(job_id)
+	return j
+
+
 ## Every live job in ascending job_id order — the deterministic read path for
 ## observers (progress pulses, UI listings) that must never touch _jobs.
 func active_jobs() -> Array[Dictionary]:

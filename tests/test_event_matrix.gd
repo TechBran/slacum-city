@@ -295,6 +295,15 @@ const REGISTER := {
 		+ " building_removed.",
 	"construction_job_preempted":
 		"bookkeeping: the queue re-ordered itself. Neither site changed state.",
+	"construction_rushed":
+		"awaiting_consumer: the receipt for doc 03 §2.13(f)'s money-for-time"
+		+ " valve — job, dollars and source — and the player has to hear the"
+		+ " money leave, because the COMPLETION it also fires is the ordinary"
+		+ " building_completed and says nothing about a purchase. Wave 17's UI"
+		+ " branch owns the cue: ui/construction_queue_model.gd draws the roster"
+		+ " and the rush button, and game/notifications/ turns this into the"
+		+ " toast. The sim half ships first because both branches build against"
+		+ " one seam contract; this row deletes itself the day the model lands.",
 
 	# ── doc 06 §2.16, the opportunity layer ────────────────────────────────
 	# opportunity_spawned / opportunity_expired: consumed by
