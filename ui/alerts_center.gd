@@ -229,7 +229,7 @@ func _process(_delta: float) -> void:
 	_chip.visible = not UIWidgets.any_sibling_open(self)
 	# One affordance standing down re-packs the column, so the rail is re-solved
 	# from here rather than only when this screen refreshes.
-	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min)
+	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min, size.y)
 
 
 ## Grows each row to the height its own copy needs.
@@ -265,7 +265,7 @@ func _refresh_chip() -> void:
 	UIWidgets.paint_state(self, _chip, _worst_unread_state())
 	# `⚠ 8` is 17 dp wider than `⚠`, and the chip grows leftward out of a column
 	# the rail owns — so the badge changing is a re-solve, not just a repaint.
-	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min)
+	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min, size.y)
 	if count != _last_unread:
 		_last_unread = count
 		unread_changed.emit(count)

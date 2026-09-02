@@ -7173,3 +7173,92 @@ merge — founding `a27da24aaf6e9663…` / `d2dec6727c64001d…`, bench
 `7c99720f5ff14553…` / `8f60accb6d91ad1e…` — were taken **after** the edits and
 reproduce the pre-edit run on the same tree to the byte, on both cities and both
 paths.
+
+## 46. Wave 17 — the queue surface: geometry, reach and the sweep, measured (2026-09-01)
+
+*Not a balance pass. **No number in `data/economy.json` or under `sim/`
+moved**, and the four determinism baselines are byte-identical to 9e3f5d3's
+(§46.3). This section exists because the UI half of the construction queue
+(doc 12 §2.22, report 98 §42) made three claims that are numbers — where the
+new chip sits, when the corner rail wraps, and that the whole deck is clean
+beside it — and a number that is not written down where the other numbers
+live is a number the next reader re-derives from memory.*
+
+### 46.1 The corner rail, measured (`tools/ui_preview.gd --rects=Chip`)
+
+The rail is solved from `data/ui.json.layout` — `corner_rail_margin_dp = 92`,
+`rail_gap_dp = 8` — against the chips' own measured height, so nothing here is
+authored; every figure is a laid-out rect read back from the harness.
+
+| box · scale | chip measures | rung 1 (alerts) | rung 2 (log) | rung 3 (queue) | column capacity |
+|---|---|---|---|---|---|
+| 880 × 400 · 100 % | 72 × 53 | y 251 … 304 | y 190 … 243 | **y 129 … 182**, same column | `floor((392 − 92 + 8) / 61)` = **5** |
+| 640 × 340 · 150 % + large | 84 × 92 (queue 100 × 92) | y 152 … 244 | y 52 … 144 | **y 152 … 244, x 335 — a second column, 124 dp further in** | `floor((332 − 92 + 8) / 100)` = **2** |
+
+At 640 × 340 / 150 % a third rung in the first column would have had its
+bottom at `92 + 2 × (92 + 8) = 292` and its top **384 dp above the safe area's
+bottom edge**, which is window `y −48` on a 340 dp display — off the top of it
+by 48 dp. The wrap puts it beside rung 1 instead, at the same height and one
+column-width plus one gap further in: the two RIGHT edges are `100 + 8 = 108`
+apart, and the left edges `124`, because the wrapped chip carries a two-digit
+badge and measures 16 dp wider than the alerts chip beside it:
+`459 − 335 = 124`. The rail's authored 100 % geometry
+is unchanged (rung 1 bottom 92, rung 2 bottom 153 with the 53 dp measured
+chip, exactly D-46's solve), so no reference screenshot moves.
+
+### 46.2 Reach (doc 12 §2.3's thumb model, `PR = (W−28, H−28)`)
+
+| rung | rect at authored scale | centre | `d` from `PR` | class |
+|---|---|---|---|---|
+| 1 alerts | (W−128, H−140, 72, 48) | (W−92, H−116) | √(64² + 88²) = **108.8** | frequent |
+| 2 log | (W−128, H−196, 72, 48) | (W−92, H−172) | √(64² + 144²) = **157.6** | occasional |
+| **3 queue** | (W−128, H−252, 72, 48) | (W−92, H−228) | √(64² + 200²) = **210.0** | **rare**, edge-anchored |
+
+The queue chip is therefore in the *rare* band, and doc 12 §2.22 pays that
+deliberately: rung 2 would have been *occasional* but would move the log chip
+under the thumb every time a project started or finished (D-46's rail closes
+gaps), and the verb the chip leads to is also one tap from the building on S5.
+§2.3's hard rule — no destructive or time-critical action outside the ≤ 165 dp
+zones — is met: the chip is a glance surface, and the spend lives inside the
+panel it opens.
+
+### 46.3 The sweep, and the baselines
+
+`tools/ui_preview.gd --screen=all --audit --strict`, six boxes × three
+accessibility settings (100 % / default targets, 130 % + larger targets, 150 %
++ larger targets), **61 states per cell** (57 at the fork, four added):
+
+| box | 100 % | 130 % + large | 150 % + large |
+|---|---|---|---|
+| 360 × 800 | exit 0, 0 findings | exit 0, 0 | exit 0, 0 |
+| 412 × 915 | exit 0, 0 | exit 0, 0 | exit 0, 0 |
+| 794 × 924 | exit 0, 0 | exit 0, 0 | exit 0, 0 |
+| 880 × 400 | exit 0, 0 | exit 0, 0 | exit 0, 0 |
+| 1280 × 720 | exit 0, 0 | exit 0, 0 | exit 0, 0 |
+| 640 × 340 | exit 0, 0 | exit 0, 0 | exit 0, 0 |
+
+**18 of 18 cells, 1,098 state-audits, zero findings of any kind, zero script
+errors.** The single-state runs agree with the sweep now and did not before.
+Three states × the same six boxes, `--screen=<one> --audit`, with the two-frame
+guard disabled and then restored (report 98 RR-113(c)):
+
+| box | `alerts` | `queue` | `building_upgrading` |
+|---|---|---|---|
+| 360 × 800 | 7 → **0** | 0 → **0** | 0 → **0** |
+| 412 × 915 | 2 → **0** | 0 → **0** | 0 → **0** |
+| **640 × 340** | 6 → **0** | **4 → 0** | 3 → **0** |
+| 794 × 924 | 2 → **0** | 0 → **0** | 1 → **0** |
+| 880 × 400 | 7 → **0** | 3 → **0** | 2 → **0** |
+| 1280 × 720 | 7 → **0** | 2 → **0** | 0 → **0** |
+
+**46 → 0** across the eighteen single-state runs, on a tree `--screen=all`
+called clean in all eighteen sweep cells both before and after. Every one of
+the 46 is an `overlapping_targets` between an open panel's rows and a corner
+affordance that had not yet stood down.
+
+The four determinism baselines, re-measured on the finished tree with
+`profile_sim --hash-only` on both cities: starter coarse
+`a27da24aaf6e9663…` / fine `7745cb25e55ff65c…`, bench coarse
+`7c99720f5ff14553…` / fine `d8e8889681b23297…` — **byte-identical to the
+fork's**, which is what "hash-neutral by construction" has to mean when it is
+claimed.

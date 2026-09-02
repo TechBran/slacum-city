@@ -390,7 +390,7 @@ func _refresh_handle() -> void:
 	# have to keep out of, and the tab's width is only knowable here — so the tab
 	# is what re-solves the rail, on the frame the count changes rather than on
 	# the one after it (D-16, `UIWidgets.solve_corner_rail`).
-	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min)
+	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min, size.y)
 
 
 func _paint_sort() -> void:
@@ -609,7 +609,7 @@ func _process(delta: float) -> void:
 	# the rows it had just opened, and the panel carries its own ✕.
 	set_handle_visible(not is_open() and not UIWidgets.any_sibling_open(self))
 	# A tab that has stood down frees its column; the chips beside it take it.
-	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min)
+	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min, size.y)
 	if _reduce_motion or not bool(_handle.get_meta("pulse", false)):
 		_handle.modulate.a = 1.0    # A8: a pulse is motion
 		return

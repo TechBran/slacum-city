@@ -2186,6 +2186,103 @@ wrong section** because the money pass was drafted as doc 92 §35 and merged as
 and a reader notices; a pointer that resolves to the wrong section is a lie with
 a footnote. **It belongs in CI, next to the suite.**
 
+## AB. Wave-17 rulings — the queue surface: what a price on a button is for, and what a corner may hold (2026-09-01)
+
+*Three rulings from the UI half of the construction queue (doc 12 §2.22, report
+98 §42). They are about a screen rather than about the sim, and they are here
+because each one is a decision a mechanics reader will otherwise re-litigate:
+whether a spend needs a confirmation, what a rail does when it runs out of
+display, and whether a count of zero is a reading.*
+
+### AB1. A price on the face IS the confirmation — a rush is one tap, and the threshold above which it would not be is the treasury itself
+
+**The ruling.** `RUSH $1,240` is pressed once. No dialog, no hold, no undo
+toast. The build card (§2.7) and S4's `PURCHASE` (§2.8) set the precedent: a
+button that names what it will take has already asked, and the deck confirms
+nothing that is not *destructive* — `Demolish` holds for 800 ms because it
+destroys value the player cannot get back, and a rush converts money into time
+the player opened this screen to buy.
+
+**Why one tap is right here in particular, not just by precedent.** The RUSH
+button is a *separate* 48 dp target in its own flow row **below** the row head
+(doc 12 D-47's shape), and the row head's own tap does something harmless —
+it focuses the camera on the site. A mis-tap that lands anywhere on the row
+costs nothing; only a tap on the face that carries the price spends, and that
+face is the one thing on the row that is read before it is pressed. The
+treasury chip is on screen above it, pulsing the moment the money leaves
+(doc 12 D-62's chip flash, backwards).
+
+**The threshold, stated rather than implied.** *Above what price would a
+confirmation be warranted?* The honest answer is: **at the price that changes
+the city's solvency state** — a rush that would take the treasury below zero
+has consequences beyond itself (doc 03's credit line and austerity), and a
+spend with consequences beyond itself is not a one-tap spend. Today that
+threshold coincides exactly with the affordability rule: the button is
+**disabled with its price on it** the moment `rush_cost > balance`, and
+`cmd_rush_construction` refuses behind it. So the threshold is the balance
+itself, and nothing in between needs a second question. A share-of-treasury
+hold (say, above 25 % of the balance) was considered and declined: it would be
+the only hold in the deck on a *reversible* verb, it would arrive with no note
+saying why the button suddenly resists, and the number would be a guess.
+
+**Re-open conditions.** (1) Doc 03 publishes a solvency floor the UI can read
+(`Treasury` austerity trigger, or a `credit_floor` on the seam) — then "would
+take the treasury below the floor" becomes the disabled-with-price condition
+instead of "below zero", and the ruling's threshold moves with it, with no
+change to the one-tap rule. (2) An on-device playtest reports a rush the
+player did not mean — the fix then is D-47's already-shipped separation made
+wider (a taller gap between row head and verb), not a dialog. (3) A rush price
+above the *land purchase* price band ever appears in `construction_overview()`
+— that is the one case where the precedent inverts, and it is a doc 03 number
+to check at that time, not a UI guard to add now.
+
+### AB2. A corner rail WRAPS before it overflows, and never hides a door to make room
+
+**The ruling.** The bottom-right rail (doc 12 D-46) takes a display height. A
+column holds `floor((H − margin + gap) / (pitch + gap))` chips; the next chip
+starts a second column one chip-width plus a gap further in, at rung 1. No
+chip is dropped, shrunk or stacked under another.
+
+**Why.** Three chips in one column no longer fit the project's own minimum
+box at the scale A2 names for it: at 640 × 340 with 150 % text and larger
+targets a chip measures 92 dp, so rung 3's bottom edge sits at
+92 + 2 × (92 + 8) = 292 above the safe area's bottom edge and its top at 384,
+which is window `y −48` on a 340 dp display — 48 dp above the top of it. The
+top bar is a different layer, so the rail solves against the safe area's edge
+and not the bar's underside; the two chips that were already there have
+passed under the bar at 150 % since D-46 shipped, and moving them to tidy that
+would break D-46's own promise that the reference box does not move. This is
+D-1's rule for the top bar — *wrap before you overflow* — applied to the other
+corner, and the arithmetic is a pure static function so the wrap point is a
+test (`tests/test_ui_audit.gd::test_the_corner_rail_wraps_before_it_overflows`)
+rather than a screenshot. `host_h = 0` — every caller before Wave 17 — is the
+old unbounded column byte for byte.
+
+**Re-open condition.** A fourth chip claims the rail. Two columns of two is the
+most the 640 × 340 box holds at 150 %, and the third column would reach the
+overlay legend's side of the display; at that point the rail needs a
+*priority* (which chip yields first), which is §2.4's chip-collapse solver
+applied to the corner, not more columns.
+
+### AB3. An empty queue has NO affordance — a count of zero is not a reading
+
+**The ruling.** The queue chip exists only while something is building. It
+does not show `⚒ 0`, it does not grey out, it is not there.
+
+**Why.** Every other reading on this HUD is about something that is *happening*
+— an incident count, an unread count, a grid percentage. A chip that says `0`
+is a chip that teaches the player to stop looking at it, and the day the
+hiding rule breaks, a badge on a hidden control that reads `0` is the badge
+that will read `0` for the rest of the session (report 98 RR-88's counter,
+one screen over). The panel itself keeps an empty state, because the queue
+can drain *while it is open* and a panel that vanished under a finger would be
+worse than one that says what to do next.
+
+**Re-open condition.** A tutorial step that points at the chip before the
+player has built anything — then the chip has to exist to be pointed at, and
+the answer is a *notice* on the first project rather than a permanent chip
+(doc 12 D-63's shape).
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

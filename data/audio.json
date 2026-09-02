@@ -181,6 +181,11 @@
 			"attenuation": {"curve": "none"}},
 		{"type": "incident_resolved", "range": {"reward": {"min": 1}}, "cue": "cash",
 			"dedup_by": "cue", "dedup_s": 0.30, "cooldown_s": 0.35,
+			"attenuation": {"curve": "none"}},
+
+		{"_comment": "The payday BACKWARDS, Wave 17 (doc 12 §2.22). Rushing a project is money leaving, so it takes `purchase` — the deck's spend cue, the one `building_placed_sim` already uses — and not `cash`: a player who hears a till when their balance DROPS learns the wrong thing about their own treasury, and that is the one thing the coin was added to teach. It is never attenuated, for §2.21's reason: this is feedback on the player's own thumb, and feedback that gets quieter because the camera drifted is feedback they stop trusting. The completion the rush causes is NOT sounded here — it arrives a moment later on `building_completed` and rings `construct_complete`, exactly as an unrushed one does, which is the whole point of a rush firing the same events a natural finish fires."},
+		{"type": "construction_rushed", "cue": "purchase", "key": "job",
+			"dedup_by": "cue", "dedup_s": 0.15, "cooldown_s": 0.25,
 			"attenuation": {"curve": "none"}}
 	],
 

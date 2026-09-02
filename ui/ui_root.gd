@@ -152,6 +152,11 @@ var hud: CityHUD
 var overlay_rail: OverlayRail
 var alerts_center: AlertsCenter
 var event_log: EventLog
+## S16 (doc 12 §2.22). Third chip of the bottom-right rail and a side panel
+## behind it, brought up with the shared config and NO provider — `game/main.gd`
+## owns the sim, so it calls `bind_construction()` once it has one, and until it
+## does this screen is an empty queue with no chip on screen at all.
+var construction_queue: ConstructionQueueSheet
 var settings_sheet: SettingsSheet
 ## S14 (doc 12 §2.19). Brought up with the shared config like every other
 ## screen and with NO model — `game/main.gd` owns the sim, so it calls
@@ -285,6 +290,8 @@ func _bind_nodes() -> void:
 	overlay_rail = safe_area.get_node_or_null("HUDLayer/OverlayRail") as OverlayRail
 	alerts_center = safe_area.get_node_or_null("PanelLayer/AlertsCenter") as AlertsCenter
 	event_log = safe_area.get_node_or_null("PanelLayer/EventLog") as EventLog
+	construction_queue = safe_area.get_node_or_null(
+			"PanelLayer/ConstructionQueue") as ConstructionQueueSheet
 	settings_sheet = safe_area.get_node_or_null("ModalLayer/SettingsSheet") as SettingsSheet
 	goals_sheet = safe_area.get_node_or_null("ModalLayer/GoalsSheet") as GoalsSheet
 	save_load_sheet = safe_area.get_node_or_null("ModalLayer/SaveLoadSheet") as SaveLoadSheet
@@ -320,6 +327,11 @@ func bring_up_screens() -> void:
 		alerts_center.setup(config)
 	if event_log != null and event_log.model == null:
 		event_log.setup(config)
+	# S16 comes up with the shared config and a model whose provider is unbound,
+	# which is an empty queue — so a mount that never calls `bind_construction()`
+	# shows exactly what a city with nothing under way shows, and no chip.
+	if construction_queue != null and construction_queue.config == null:
+		construction_queue.setup(config)
 	if settings_sheet != null and settings_sheet.model == null:
 		settings_sheet.setup(config)
 	# S14 comes up with the config alone and no model, for the same reason the
@@ -402,6 +414,9 @@ func _connect_screens() -> void:
 		_connect(alerts_center.unread_changed, _on_unread_changed)
 	if event_log != null:
 		_connect(event_log.focus_requested, _on_focus_requested)
+	if construction_queue != null:
+		_connect(construction_queue.focus_requested, _on_focus_requested)
+		_connect(construction_queue.rushed, report_rush)
 	if settings_sheet != null:
 		_connect(settings_sheet.settings_changed, _on_settings_changed)
 		_connect(settings_sheet.saves_requested, _on_saves_requested)
@@ -1000,6 +1015,7 @@ func feed_events(batch: Array) -> void:
 	_check_flood(batch)
 	_check_goal_events(batch)
 	_check_street(batch)
+	_check_construction(batch)
 	if onboarding == null or not onboarding.is_active():
 		return
 	for entry: Variant in batch:
@@ -1162,7 +1178,10 @@ func _spend_feedback(feedback: Dictionary, state: StringName) -> String:
 		return ""
 	var chip := str(feedback.get("flash_chip", ""))
 	if chip != "" and hud != null:
-		hud.flash_chip(StringName(chip), street.chip_flash_s())
+		# The record may name its own flash length (S16's rush does, from
+		# `data/ui.json.construction`); the payday's does not and takes §2.21's.
+		hud.flash_chip(StringName(chip), float(feedback.get("flash_s",
+				street.chip_flash_s() if street != null else 0.9)))
 	var cue := StringName(str(feedback.get("haptic", "")))
 	if cue != &"" and haptics != null:
 		haptics.fire(cue)
@@ -1209,6 +1228,100 @@ func report_collect(result: Dictionary, pick: Dictionary = {}) -> Dictionary:
 		onboarding.dismiss_notice()
 	feedback["toast_shown"] = _spend_feedback(feedback, HudModel.STATE_NORMAL)
 	return feedback
+
+
+# ---------------------------------------------------------------------------
+# Wave 17 — S16, the construction queue (doc 12 §2.22)
+#
+# **One shell call, and the rest was already wired.** `bind_construction()`
+# hands over the seam's two doors and a treasury reading; the camera jump rides
+# `set_incident_locator()`, which the shell already makes; the cue rides
+# `data/audio.json`, which the shell already feeds; and the toast and the chip
+# pulse ride `feed_events()`, which the shell already calls once per tick.
+# ---------------------------------------------------------------------------
+
+## The seam, bound. `provider` answers `CitySim.construction_overview()`,
+## `rush_command` is `CitySim.cmd_rush_construction`, and `treasury` reads the
+## balance so an unaffordable rush can be shown DISABLED WITH ITS PRICE rather
+## than hidden. Every one of the three may be left unbound and the screen then
+## behaves exactly as a city with nothing under way does.
+func bind_construction(provider: Callable, rush_command: Callable = Callable(),
+		treasury: Callable = Callable()) -> void:
+	if construction_queue == null or construction_queue.model == null:
+		return
+	construction_queue.model.set_provider(provider)
+	if rush_command.is_valid():
+		construction_queue.model.set_rush(rush_command)
+	if treasury.is_valid():
+		construction_queue.model.set_treasury(treasury)
+	construction_queue.refresh()
+
+
+## Re-reads the provider: the chip's badge while the panel is shut, the bars and
+## the ETAs while it is open. Rides the shell's 1 Hz HUD cadence, like the goal
+## chip and the land panel.
+func refresh_construction() -> void:
+	if construction_queue != null:
+		construction_queue.refresh()
+
+
+func open_construction_queue() -> void:
+	if construction_queue != null:
+		construction_queue.open()
+
+
+func construction_queue_open() -> bool:
+	return construction_queue != null and construction_queue.is_open()
+
+
+## The player pressed RUSH and the door answered. A refusal is a sentence, never
+## a silence — the one exception is a build whose sim has no rush verb at all,
+## which says nothing for §2.21's reason: there is no story to tell a player
+## about a feature that is not there.
+##
+## **An accepted rush does NOTHING here.** The spend — the toast, the chip
+## pulse, the haptic and (through `data/audio.json`) the cue — is felt from the
+## bus, in `_check_construction()`, so a rush that lands from anywhere — this
+## button, S5's inline one, a later automation, a replayed batch — is felt
+## exactly once and identically. Buzzing here as well would be the same beat
+## twice, a tick apart (doc 98 RR-113).
+##
+## Public, because S5's `BuildingPanel.rushed` carries the same answer through
+## `game/main.gd` and a refusal has to read identically on both doors.
+func report_rush(_job_id: int, result: Dictionary) -> void:
+	if bool(result.get("ok", false)):
+		return
+	if str(result.get("err", "")) == String(BuildController.E_NO_COMMAND):
+		return
+	if haptics != null:
+		haptics.fire(Haptics.CUE_BLOCKED)
+	# The seam names its refusal `err`; §2.7's formatter reads `reason_code`.
+	# Translated at THIS door rather than in the model, because the contract's
+	# spelling is the contract's and a model that renamed it would be publishing
+	# a second one.
+	var sentence := _refusal_text({"ok": false,
+			"reason_code": StringName(str(result.get("err", ""))), "payload": {}})
+	if sentence == "":
+		sentence = UIWidgets.t(config, "ui_queue_rush_refused",
+				"That could not be rushed.")
+	push_toast(sentence, HudModel.STATE_WARNING)
+
+
+## §2.22's cue: one sentence and one chip flash for a rush that was paid for.
+## The sound is a `data/audio.json` rule on the event itself, so nothing here
+## plays it — `AudioService.feed_batch()` already has this batch.
+func _check_construction(batch: Array) -> void:
+	if construction_queue == null or construction_queue.model == null:
+		return
+	var model := construction_queue.model
+	for entry: Variant in batch:
+		if not (entry is Dictionary):
+			continue
+		var event: Dictionary = entry
+		if StringName(str(event.get("type", ""))) != ConstructionQueueModel.EVENT_RUSHED:
+			continue
+		_spend_feedback(model.rush_feedback(event), HudModel.STATE_NORMAL)
+		construction_queue.refresh()
 
 
 ## The projector a street coach mark points with — see
@@ -1420,10 +1533,14 @@ func _resolve_water_actions() -> void:
 
 
 ## `Callable(kind: StringName, id) -> Vector3`, called as `(&"tile", Vector2i)`.
-## The same shape `set_alert_locator` takes, so one shell function serves both.
+## The same shape `set_alert_locator` takes, so one shell function serves both —
+## and S16's rows take it on the same call, which is why "tap the row, look at
+## the site" needed no new line in `game/main.gd` at all.
 func set_incident_locator(locator: Callable) -> void:
 	if incident_drawer != null:
 		incident_drawer.set_locator(locator)
+	if construction_queue != null:
+		construction_queue.set_locator(locator)
 
 
 ## Where the drawer's `Nearest` sort measures from — the camera focus.

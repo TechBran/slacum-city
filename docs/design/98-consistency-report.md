@@ -3766,3 +3766,132 @@ files that are not documents — `tests/test_city_sim.gd:146` and
 None can change behaviour, and that is proved rather than asserted:
 `profile_sim --hash-only` was run on both cities **before and after** these
 edits and all four digests are byte-identical.
+
+## 42. WAVE 17 — the queue surface: a rail that wraps, a clock that may not read zero, and a beat felt once (binding)
+
+*The UI half of the construction queue (doc 12 §2.22, doc 93 §AB), built
+against the seam CONTRACT through a provider `Callable` and swept before the
+sim half existed. Three rulings. All three are hash-neutral by construction —
+nothing under `sim/` moved and the four `profile_sim` baselines at this fork
+are byte-identical to 9e3f5d3's — which is exactly why they are about pixels,
+words and frames rather than about numbers.*
+
+### RR-111 — A corner rail WRAPS before it overflows, and never hides a door to make room (docs 12 §2.3/§2.22, 93 §AB2, `ui/ui_widgets.gd`)
+
+**The bottom-right rail was two chips and a tab, solved by D-46 against no
+height at all.** It did not need one: two rungs fit every box at every scale.
+The queue chip is the third rung, and at the project's own minimum box — 640 ×
+340, `data/ui.json.layout.min_safe_box_dp` — at the 150 % A2 names for it, a
+chip measures **92 dp**, so rung 3's bottom edge sits at `92 + 2 × (92 + 8) =
+292` above the safe area's bottom edge and its top at **384**, which is window
+`y −48` on a 340 dp display. The door to the queue would have been 48 dp above
+the top of it, on precisely the box and scale the deck promises to survive, and
+`UIAudit` would have said `offscreen` on every screen behind it.
+
+**The ruling.** `UIWidgets.solve_corner_rail()` takes the safe area's height
+and `corner_rail_capacity()` — a pure static function — fits
+`floor((H − margin + gap) / (pitch + gap))` chips per column, never fewer than
+one, and starts a second column one chip-width plus a gap further in for the
+rest. Measured: **2** per column at 640 × 340 / 150 %, **5** at the 880 × 400
+reference box; `host_h = 0`, which is every caller before this wave, is the
+old unbounded column byte for byte, so the reference screenshots do not move.
+The column ends at the safe area's edge and not at the top bar's underside on
+purpose: the bar is a different layer, the two chips that were already there
+have passed under it at 150 % since D-46 shipped, and moving them to tidy a
+cosmetic overlap would break D-46's own promise. **This is D-1's rule for the
+top bar — wrap before you overflow — applied to the other corner; a rail that
+runs out of room drops nothing, shrinks nothing and stacks nothing under
+anything.** `tests/test_ui_audit.gd::test_the_corner_rail_wraps_before_it_overflows`
+pins the arithmetic; the 18-cell sweep (doc 92 §46) pins the pixels.
+
+**Re-open condition.** A fourth chip. Two columns of two is the most the
+minimum box holds at 150 %, and the third column would reach the overlay
+legend's side of the display; at that point the corner needs a *priority* —
+§2.4's chip-collapse solver, which chip yields first — not a third column.
+
+### RR-112 — An unworked project says so in WORDS: `-1` is a state, and a clock that reads `0:00` is a lie the player acts on (docs 02 §2, 12 §2.22, `ui/construction_queue_model.gd`)
+
+**The seam carries two facts that mean the same thing** — `eta_gm = -1.0`
+("nothing is working it") and `crews = 0` — and a row that formats `eta_gm`
+as a span prints `0m` for the first and *some number* for the second. Both
+are wrong in the worst direction: `0:00` on a bar frozen at 12 % reads as
+*finishing now*, which is the opposite of what is true, and a countdown on a
+job nobody is on is a promise the queue cannot keep. A player who reads either
+one will wait for a completion that is not coming rather than buy a crew or
+rush the job — the two things the screen exists to offer.
+
+**The ruling.** `working := eta_gm >= 0 and crews > 0`, decided **before** a
+sentence is written, and an unworked project renders as the sentence
+`ui_queue_eta_none` — *Nothing is working on this yet.* — with the bar hatched
+as well as amber (A5) and the crew line reading *No crew*. The span formatter
+is never handed a negative: `UIWidgets.duration_text()` floors at `0m` for a
+caller that has no reading, and the caller owns the words for *why*. The rush
+price stays on the face of an unworked row, because a project nobody is
+working is exactly the one a player would pay to unstick. The two contract
+fields are treated as one fact that has to agree, so a fixture — or a future
+sim — that sends `crews = 2, eta = -1` or `crews = 0, eta = 40` produces the
+sentence and not a clock; `tests/test_ui_construction_queue.gd::
+test_an_unworked_project_says_so_in_words_and_never_as_a_clock` holds it.
+
+**Why it is a ruling and not a formatting note.** Doc 12 §2.8's land panel
+wrote the same rule for a development phase and it was obeyed by one caller.
+The queue is the first screen where the `-1` arrives across a seam from a
+system that does not know what the screen will print, and a seam is where a
+convention has to become a rule.
+
+### RR-113 — A spend is felt from the BUS, once; a refusal from the DOOR; and two things a frame will not forgive (docs 12 §2.21/§2.22, 91 A91-D-50, `ui/ui_root.gd`, `ui/ui_widgets.gd`, `tools/ui_preview.gd`)
+
+**(a) One beat, one source.** The salvage this wave began from buzzed the
+player's hand twice for one rush: once when the door answered `ok` and once
+when `construction_rushed` came back off the bus a tick later. D-62's rule —
+one cue, one chip, one sentence — was obeyed by each half and broken by the
+pair. The ruling: **an accepted rush does nothing at the door.** The toast,
+the chip pulse, the haptic and (through `data/audio.json`) the `purchase` cue
+are all spent by `UIRoot._check_construction()` off the bus, so a rush from
+the queue, from S5's inline verb, from a later automation or a replayed batch
+is felt exactly once and identically; the door's answer is read only for a
+**refusal**, which is §2.7's formatter over `err` as a toast — and
+`E_NO_COMMAND` is silence, because there is no story to tell about a feature
+that is not there. `UIRoot.report_rush()` is public for the same reason:
+S5's `rushed` signal reaches it through the shell and a refusal reads the same
+on both doors.
+
+**(b) A control that removes its own row may not free itself mid-signal.** The
+RUSH press rebuilds the list it was pressed from, and `UIWidgets.clear_children()`
+frees immediately — correctly, everywhere a rebuild is driven by a refresh, so
+a new row never collides with the old one for a frame. Here the button being
+freed is the one whose `pressed` is still being emitted, and Godot names that
+an error and a potential crash. It is caught by the tap-then-rush case as
+ENGINE OUTPUT rather than as a failed assertion — with `clear_children()` put
+back the file still passes 22/22 and the run prints `Object … was freed or
+unreferenced while a signal is being emitted from it`; with
+`release_children()` that line is not there — caught before any device ran it.
+**The ruling: a list rebuilt from inside one of its own
+children's signals uses `UIWidgets.release_children()` — detach now, free at
+frame end — and nothing else in the deck changes.** The alerts feed sidesteps
+the case by repainting rather than rebuilding on a tap; this is the first
+screen where the tap genuinely takes the row away.
+
+**(c) A single-state audit that measures on its first frame measures a deck no
+child has processed.** `tools/ui_preview.gd --screen=<one>` is the instrument
+a developer reaches for first. A parent's `_process` runs before its
+children's, and the first frame's `delta` carries the boot — so the 0.12 s
+settle window was satisfied on the very first frame, before any sibling chip
+had run the `_process` that yields the edge to an open panel. Measured on a
+tree the whole-deck sweep called clean in all eighteen of its cells: three
+states across the six gate boxes reported **46** findings, every one of them an
+`overlapping_targets` between an open panel's rows and a corner affordance that
+had not yet stood down — `--screen=alerts` worst at **7** (360 × 800, 880 × 400
+and 1280 × 720 alike), `--screen=queue` at **4** on 640 × 340, and
+`--screen=building_upgrading` at **3** on the same box. The guard is two whole
+frames after `_apply()` (`MIN_FRAMES_BEFORE_MEASURE`), and all eighteen read
+**0** afterwards, exit 0. Doc 92 §46.3 has the table. **A single-state run has to answer the
+same as the sweep, or the first thing a developer measures is the one thing
+they cannot trust.** A91-D-50 is the row.
+
+**What this wave costs, for the record.** No file under `sim/` changed. The
+four determinism baselines were re-measured at the fork before any edit and
+again on the finished tree, and all four are byte-identical to 9e3f5d3's —
+starter `a27da24aaf6e9663…` / `7745cb25e55ff65c…`, bench `7c99720f5ff14553…` /
+`d8e8889681b23297…`. Doc 92 §46 has the geometry and the sweep table; doc 91
+§14.5 the two rows; doc 12 §2.22 the screen and its deferral rows.

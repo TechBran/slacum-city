@@ -494,16 +494,15 @@ func develop(block_id: String) -> Dictionary:
 
 ## `3h 20m` / `45m` / `2d 4h` — game time, in the units §2.8's line is written in.
 ## Never `—`: a negative is the caller's "no reading", and it is handled there.
+##
+## **The arithmetic and the copy moved to `UIWidgets.duration_text()` in Wave 17**
+## (doc 12 §2.22): S16's queue needs the same span in the same words, and a
+## second `{h}h {m}m` in the table is a second place for it to drift. The three
+## keys went with it and are neutral now (`ui_time_*`) — a span of hours is not
+## the land panel's private property. This delegate stays because §2.8's own
+## prose calls it by name and every caller of it is inside this class.
 func duration_text(minutes: float) -> String:
-	var total := maxi(0, int(round(minutes)))
-	var days := total / 1440
-	var hours := (total % 1440) / 60
-	var mins := total % 60
-	if days > 0:
-		return _t("ui_land_time_dh", {"d": days, "h": hours})
-	if hours > 0:
-		return _t("ui_land_time_hm", {"h": hours, "m": mins})
-	return _t("ui_land_time_m", {"m": mins})
+	return UIWidgets.duration_text(config, minutes)
 
 
 func _note_key(stage: StringName) -> String:

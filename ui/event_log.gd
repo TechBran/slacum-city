@@ -82,7 +82,7 @@ func _process(_delta: float) -> void:
 	if _chip == null or is_open():
 		return
 	_chip.visible = not UIWidgets.any_sibling_open(self)
-	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min)
+	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min, size.y)
 
 
 func _bind_nodes() -> void:
@@ -229,7 +229,7 @@ func _refresh_chip() -> void:
 	var total := model.size()
 	_chip.tooltip_text = UIWidgets.t(config, "ui_event_log_chip") if total <= 0 \
 			else UIWidgets.t_args(config, "ui_event_log_count", {"n": total})
-	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min)
+	UIWidgets.solve_corner_rail(self, config.layout(), _touch_min, size.y)
 
 
 func _refresh_filters() -> void:
