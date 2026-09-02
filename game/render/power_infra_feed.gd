@@ -114,6 +114,16 @@ static func road_probe(world: WorldMap) -> Callable:
 ## therefore also runs a slow unconditional rebuild — see
 ## `PowerInfraView.topology_poll_s` — and the shell can force one immediately
 ## with `note_topology_changed()` on the events that are worth a frame.
+## **Wave 17 folds in `grid.mutation_epoch`**, which the grid bumps on every call
+## that re-shapes it — a component added, removed, re-rated or re-conductored, a
+## building attached or detached. That closes the re-attachment hole the
+## paragraph above states, and it closes a real one the transformer demolition
+## verb opened: a demolish plus a placement inside one poll interval moves the
+## transformer count by −1 and +1 and the building count not at all, so the
+## counts alone read as "nothing happened" and the pad of a transformer that is
+## no longer there stays on the map. A ghost transformer after a demolish is
+## precisely this lane's failure mode.
 static func signature(sim: CitySim) -> int:
-	return sim.grid.component_ids_of_kind(&"transformer").size() * 1000003 \
+	return sim.grid.mutation_epoch * 1000003 \
+			+ sim.grid.component_ids_of_kind(&"transformer").size() * 1009 \
 			+ sim.buildings.size()

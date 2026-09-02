@@ -131,9 +131,10 @@ func test_every_card_quotes_a_price_read_from_the_economy_tables() -> void:
 	var sim := _sim()
 	var tool := _tool(sim)
 	var cards := tool.cards()
-	assert_eq(cards.size(), 8,
+	assert_eq(cards.size(), 9,
 			"four road verbs, the two water-main tiers doc 05 offers today, and "
-			+ "doc 04 §6's two conductor classes")
+			+ "doc 04 §2.2's three conductor classes (class 3 opened Wave 17 —"
+			+ " doc 04 §6.1, A91-D-55)")
 	var m_build := float(sim.treasury.difficulty().get("M_build", 1.0))
 	var by_id: Dictionary = {}
 	for card: Dictionary in cards:
@@ -448,8 +449,9 @@ func test_the_roster_offers_exactly_the_classes_doc_04_ships() -> void:
 	var sim := _sim()
 	var tool := _tool(sim)
 	var classes := tool.conductor_classes()
-	assert_eq(str(classes), str([1, 2] as Array[int]),
-			"data/grid_components.json routable.feeder — class 3 is deferred there")
+	assert_eq(str(classes), str([1, 2, 3] as Array[int]),
+			"data/grid_components.json routable.feeder — the full doc 04 §2.2"
+			+ " ladder since Wave 17 (doc 04 §6.1, A91-D-55)")
 	var offered: PackedStringArray = []
 	for card: Dictionary in tool.cards():
 		if StringName(str(card["path_verb"])) == PathTool.VERB_FEEDER:
@@ -460,6 +462,7 @@ func test_the_roster_offers_exactly_the_classes_doc_04_ships() -> void:
 	# The micro row is doc 04 §2.2's plate, read from `PowerGrid` and not authored.
 	assert_almost_eq(PathTool.feeder_capacity_kw(1), 1200.0, 0.001)
 	assert_almost_eq(PathTool.feeder_capacity_kw(2), 3000.0, 0.001)
+	assert_almost_eq(PathTool.feeder_capacity_kw(3), 7500.0, 0.001)
 	assert_almost_eq(PathTool.feeder_capacity_kw(9), 0.0, 0.001,
 			"a class this build has no row for quotes nothing rather than crashing")
 

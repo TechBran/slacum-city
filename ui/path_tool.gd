@@ -127,6 +127,15 @@ const CARDS: Array[Dictionary] = [
 			"category": CATEGORY_INFRASTRUCTURE, "road_class": ROAD_CLASS_NONE,
 			"tier": "", "min_tiles": 2, "refunds": false,
 			"conductor_class": 2, "geometry": GEOMETRY_ASSIST},
+	# Class 3, 7,500 kW. Wave 17 opened `routable.feeder.conductor_classes` to
+	# the full doc 04 §2.2 ladder (doc 04 §6.1, A91-D-55) because the AUTHORED
+	# cities run on class-3 trunks and the player could neither draw one nor
+	# re-class one. `_offers` still filters every card in this table against the
+	# live roster, so closing the data again closes the card with it.
+	{"id": "feeder_c3", "verb": VERB_FEEDER,
+			"category": CATEGORY_INFRASTRUCTURE, "road_class": ROAD_CLASS_NONE,
+			"tier": "", "min_tiles": 2, "refunds": false,
+			"conductor_class": 3, "geometry": GEOMETRY_ASSIST},
 ]
 
 ## Doc 05's arterial tier sits behind `levels_4_5_enabled` and is therefore not

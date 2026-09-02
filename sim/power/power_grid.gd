@@ -105,6 +105,13 @@ var system_demand_kw: float = 0.0
 var system_supply_kw: float = 0.0
 var shed_feeders: Array = []
 var shed_rotation_next_gs: int = 0
+## Bumped by every call that re-shapes the graph — a component added, removed,
+## re-rated or re-conductored, a building attached or detached. **Transient and
+## deliberately unsaved**: nothing in the model reads it, it is a cache key for
+## the derived tables `CitySim` memoises on top of this graph (`peak_component_
+## loads`), and a counter in the save body would be a hash that moves every time
+## the boot order changed. A restore starts it at 0 and every consumer re-derives.
+var mutation_epoch: int = 0
 
 var _components: Dictionary = {}  # id -> component Dictionary
 var _order: Array = []  # sorted component ids (deterministic iteration)
@@ -136,6 +143,7 @@ var _block_streetlights: Dictionary = {}  # block_id -> bool
 ## opts: level, conductor_class, parent, tile, route, underground,
 ##       weather_exposure, tree_adjacent, priority_class …
 func add_component(id: String, kind: StringName, opts: Dictionary = {}) -> Dictionary:
+	mutation_epoch += 1
 	assert(not _components.has(id), "duplicate component id " + id)
 	var level := int(opts.get("level", 1))
 	var capacity: float
@@ -190,6 +198,7 @@ func set_level(id: String, level: int) -> bool:
 		return false
 	c["level"] = level
 	c["capacity_kw"] = float(rows[level - 1])
+	mutation_epoch += 1
 	return true
 
 
@@ -212,6 +221,7 @@ func set_level(id: String, level: int) -> bool:
 func remove_component(id: String) -> Array:
 	if not _components.has(id):
 		return []
+	mutation_epoch += 1
 	var removed: Array = [id]
 	if _components[id]["kind"] == &"substation":
 		for child_id in _order:
@@ -309,10 +319,15 @@ func add_tie(id: String, a: String, b: String, mode: StringName = &"MANUAL") -> 
 	_ties[id] = {"id": id, "a": a, "b": b, "mode": mode, "closed": false, "pending_close_gs": -1}
 
 
-## Attach a building to the nearest transformer whose service radius covers
-## its tile, tie-broken by lowest load ratio then id. "" ⇒ UNSERVED.
-func attach_building(building_id: String, tile: Vector2i,
-		priority_class: StringName = &"STANDARD", block_id: String = "") -> String:
+## The transformer `attach_building` WOULD pick for `tile`, without attaching:
+## nearest by Chebyshev distance inside its service radius, tie-broken by lowest
+## load ratio then by id. "" ⇒ UNSERVED.
+##
+## Split out of `attach_building` so the placement preflight — the ghost's
+## verdict and `cmd_place_building`'s own answer — can ask which transformer is
+## about to take the new load without a second copy of the rule (Wave 17,
+## doc 93 §AD3).
+func would_attach(tile: Vector2i) -> String:
 	var best := ""
 	var best_key := [999999.0, 999999.0, ""]
 	for id in _order:
@@ -328,10 +343,70 @@ func attach_building(building_id: String, tile: Vector2i,
 		if key < best_key:
 			best_key = key
 			best = id
-	if best == "":
-		_attachments.erase(building_id)
-		return ""
-	_attachments[building_id] = best
+	return best
+
+
+## Can the path that WOULD serve `tile` carry `delta_kw` more at doc 04 §5.3's
+## ceiling? The placement twin of `can_upgrade_power`, for a building that does
+## not exist yet.
+##
+## The audit's P0 (doc 93 §AD3): `would_serve` answers "is this tile inside some
+## transformer's service radius", which is coverage and says nothing about
+## capacity — so a green ghost could put a 100 kW water facility on a 50 kW
+## pole-top that was already at 0.9, and the first the player heard of it was the
+## whole group browning out. Same shape as the upgrade gate, same `UPGRADE_MAX_R`,
+## same `load_override` (the peak, not the trough).
+##
+## `{ok, reason, at, kind, r_after, deficit_kw, transformer, path}`. `reason` is
+## `UNSERVED` when nothing covers the tile at all — the older, harder refusal
+## `cmd_place_building` still makes — and `BLOCKED_POWER_CAPACITY` when something
+## covers it and cannot carry it.
+func can_serve_tile(tile: Vector2i, delta_kw: float, t_ambient: float = 25.0,
+		load_override: Dictionary = {}) -> Dictionary:
+	var transformer_id := would_attach(tile)
+	if transformer_id == "":
+		return {"ok": false, "reason": "UNSERVED", "at": "", "kind": "",
+				"r_after": 0.0, "deficit_kw": delta_kw, "transformer": "", "path": []}
+	var ids := [transformer_id]
+	var feeder_id := String(_components[transformer_id]["parent"])
+	if feeder_id != "" and _components.has(feeder_id):
+		ids.append(feeder_id)
+		var substation_id := String(_components[feeder_id]["parent"])
+		if substation_id != "" and _components.has(substation_id):
+			ids.append(substation_id)
+	var worst_r := 0.0
+	var worst_id := ""
+	var worst_kind := ""
+	var worst_deficit := 0.0
+	var rows: Array = []
+	for id in ids:
+		var c: Dictionary = _components[id]
+		var effective := cap_eff(String(id), t_ambient)
+		var live: float = maxf(float(c["load_kw"]), float(load_override.get(id, 0.0)))
+		var after := live + delta_kw
+		var r_after: float = after / maxf(1.0, effective)
+		rows.append({"id": String(id), "kind": String(c["kind"]), "peak_load_kw": live,
+				"effective_kw": effective, "r_after": r_after})
+		if r_after > UPGRADE_MAX_R and r_after > worst_r:
+			worst_r = r_after
+			worst_id = String(id)
+			worst_kind = String(c["kind"])
+			worst_deficit = maxf(worst_deficit, after - UPGRADE_MAX_R * effective)
+	if worst_id != "":
+		return {"ok": false, "reason": "BLOCKED_POWER_CAPACITY", "at": worst_id,
+				"kind": worst_kind, "r_after": worst_r, "deficit_kw": worst_deficit,
+				"transformer": transformer_id, "path": rows}
+	return {"ok": true, "reason": "", "at": transformer_id, "kind": "transformer",
+			"r_after": float(rows[0]["r_after"]), "deficit_kw": 0.0,
+			"transformer": transformer_id, "path": rows}
+
+
+## Attach a building to the nearest transformer whose service radius covers
+## its tile, tie-broken by lowest load ratio then id. "" ⇒ UNSERVED.
+func attach_building(building_id: String, tile: Vector2i,
+		priority_class: StringName = &"STANDARD", block_id: String = "") -> String:
+	mutation_epoch += 1
+	var best := would_attach(tile)
 	if not _service.has(building_id):
 		_service[building_id] = {
 			"state": &"LIT", "candidate": &"LIT", "candidate_since_gs": 0,
@@ -339,6 +414,19 @@ func attach_building(building_id: String, tile: Vector2i,
 			"priority_class": priority_class, "block_id": block_id,
 		}
 		_service_order_dirty = true
+	if best == "":
+		# UNSERVED, and ON THE BOOKS (Wave 17, doc 98 §44 RR-119). The record is
+		# opened even when no transformer covers the tile, because `is_powered`
+		# answers `true` for a building the grid has never heard of — so a
+		# building that fell out of every service radius used to become
+		# permanently, silently lit, invisible to `unserved_building_ids`,
+		# uncounted by `block_dark_fractions`, and un-adoptable by the very
+		# transformer upgrade whose wider radius now reaches it. It opens LIT and
+		# goes DARK through §2.4's ordinary hysteresis, exactly as a burnout's
+		# customers do.
+		_attachments.erase(building_id)
+		return ""
+	_attachments[building_id] = best
 	return best
 
 
@@ -350,6 +438,7 @@ func attachment_of(building_id: String) -> String:
 ## service record goes with it, so the building stops counting toward
 ## `block_dark_fractions` and `settle_hour` the instant it is gone.
 func detach_building(building_id: String) -> bool:
+	mutation_epoch += 1
 	var had: bool = _attachments.has(building_id) or _service.has(building_id)
 	_attachments.erase(building_id)
 	_service.erase(building_id)
@@ -759,7 +848,9 @@ func tick(dt_gs: int, demands: Dictionary, distributed: Dictionary,
 		weather: Dictionary, rng: RngStreams) -> void:
 	now_gs += dt_gs
 	_process_reclose_timers()
+	var bands_before := _capacity_bands(weather)
 	_pass_a_aggregate(demands, distributed)
+	_emit_capacity_warnings(bands_before, weather)
 	_pass_b_supply_and_shed()
 	_pass_c_thermal(dt_gs, weather, rng)
 	if topology_dirty:
@@ -791,6 +882,88 @@ func drain_events() -> Array:
 	var out := _events
 	_events = []
 	return out
+
+
+# ------------------------------------------------- doc 04 §4 `CapacityWarning`
+
+## §5.10's overlay bands as an integer rank: 0 OK, 1 WARNING (`r ≥ 0.75`),
+## 2 CRITICAL (`r ≥ 0.95`). The same two thresholds the overlay paints with, so
+## the event and the colour can never disagree.
+static func capacity_band(r: float) -> int:
+	if r >= OVERLAY_CRITICAL_R:
+		return 2
+	if r >= OVERLAY_WARNING_R:
+		return 1
+	return 0
+
+
+## Every transformer's and feeder's band, keyed by id — sampled BEFORE pass A
+## overwrites `load_kw`, so the comparison after it is "did this component cross
+## a band during this tick".
+##
+## **Stateless on purpose** (Wave 17, doc 98 §44 RR-118). `CapacityWarning` is
+## authored in doc 04 §4 and was never emitted; the obvious implementation is a
+## per-component "already warned" latch, and a latch is state that has to be
+## captured, restored and hashed, which would move every baseline in the project
+## for an event. The previous tick's `load_kw` is ALREADY in the save section, so
+## the crossing is derivable from what is there: a restore compares against the
+## same number the live sim compares against, and the hashes do not move.
+func _capacity_bands(weather: Dictionary) -> Dictionary:
+	var t: float = float(weather.get("t_ambient_c", 25.0))
+	var out: Dictionary = {}
+	for id in _order:
+		var c: Dictionary = _components[id]
+		if c["kind"] != &"transformer" and c["kind"] != &"feeder":
+			continue
+		# `+ BAND_REARM_MARGIN` is the hysteresis: a component reads as still
+		# being in the higher band until it has fallen a clear 0.03 below the
+		# threshold, so a load hovering on 0.75 raises ONE warning rather than
+		# one per fine tick for as long as it hovers.
+		out[id] = capacity_band(float(c["load_kw"]) / maxf(1.0, cap_eff(String(id), t))
+				+ BAND_REARM_MARGIN)
+	return out
+
+
+## How far under a band threshold a component must fall before crossing it again
+## is news. 0.03 is one fifth of the 0.15 that separates §5.3's upgrade ceiling
+## (0.90) from §5.10's WARNING line (0.75) — wide enough that an hour of ordinary
+## occupancy noise cannot re-arm the warning, narrow enough that a transformer
+## that genuinely came back under 0.72 and went over again is reported twice,
+## because it was over twice.
+const BAND_REARM_MARGIN := 0.03
+
+
+## Raise `CapacityWarning` for every transformer or feeder that moved UP a band
+## this tick — the pre-failure cue doc 04 §5.3 promises and §2.8's burnout
+## curve makes expensive. Downward moves are silent: the alert layer's job is to
+## interrupt, and "your transformer is fine again" is not an interruption.
+##
+## `band` is 1 WARNING / 2 CRITICAL, `headroom_kw` is what is left at the
+## DERATED capacity, and `customers` is how many buildings are behind it, so the
+## notification can say "T-18 · 12 buildings · 8 kW left" without a second query.
+func _emit_capacity_warnings(before: Dictionary, weather: Dictionary) -> void:
+	var t: float = float(weather.get("t_ambient_c", 25.0))
+	var downstream: Dictionary = {}
+	for id in _order:
+		var c: Dictionary = _components[id]
+		if c["kind"] != &"transformer" and c["kind"] != &"feeder":
+			continue
+		var effective := cap_eff(String(id), t)
+		var r: float = float(c["load_kw"]) / maxf(1.0, effective)
+		var band := capacity_band(r)
+		if band <= int(before.get(id, band)):
+			continue
+		if downstream.is_empty():
+			downstream = _customer_index()
+		var customers := int(downstream.get(id, 0)) if c["kind"] == &"transformer" \
+				else _feeder_customers(String(id), downstream)
+		_emit(&"CapacityWarning", {
+			"component": String(id), "kind": String(c["kind"]), "band": band,
+			"load_ratio": r, "load_kw": float(c["load_kw"]),
+			"effective_kw": effective, "headroom_kw": effective - float(c["load_kw"]),
+			"customers": customers, "level": int(c["level"]),
+			"conductor_class": int(c["conductor_class"]),
+		})
 
 
 # ------------------------------------------------------------------- pass A
@@ -883,21 +1056,32 @@ func _pass_b_supply_and_shed() -> void:
 	_emit(&"LoadShedStarted", {"feeders": shed_feeders.duplicate(), "shed_kw": shed_total})
 
 
+## Doc 04 §2.4's shed rank for one feeder: the demand-weighted mean priority
+## weight of everything hanging off it. Low scores shed first.
+##
+## **The whole feeder, not one building of it** (Wave 17, doc 98 §44 RR-121).
+## The loop used to `break` on its FIRST match — which left the whole feeder
+## ranked by the priority class of whichever attached building sorted first by
+## id, so a trunk carrying one discretionary shed ahead of a trunk carrying two
+## hundred houses, and the sort was reproducible but arbitrary. `_feeder_has_
+## critical` is why nothing catastrophic came of it: criticals shed last as a
+## hard rule, above this score. Per-building demand is still the transformer
+## group's load divided among its customers — the service ledger records kWh,
+## not instantaneous kW, and that is the honest granularity the graph has.
 func _shed_score(feeder_id: String) -> float:
 	var weighted := 0.0
 	var total := 0.0
+	var downstream := _customer_index()
 	for building_id in _sorted_keys(_attachments):
 		var transformer_id: String = _attachments[building_id]
 		if String(_components[transformer_id]["parent"]) != feeder_id:
 			continue
 		var record: Dictionary = _service.get(building_id, {})
 		var priority: StringName = record.get("priority_class", &"STANDARD")
-		var demand: float = _components[transformer_id]["load_kw"]
-		# Score uses the transformer group's demand weighted by its class mix;
-		# per-building demand is folded through the service record on refine.
+		var customers := maxi(1, int(downstream.get(transformer_id, 1)))
+		var demand: float = float(_components[transformer_id]["load_kw"]) / float(customers)
 		weighted += demand * float(PRIORITY_WEIGHT[priority])
 		total += demand
-		break  # one class sample per transformer group is the MVP granularity
 	if total <= 0.0:
 		var load: float = _components[feeder_id]["load_kw"]
 		return float(PRIORITY_WEIGHT[&"DISCRETIONARY"]) if load > 0.0 else 999999.0
@@ -1253,8 +1437,16 @@ func _children_of(id: String) -> Array:
 	return out
 
 
+## False for an id the grid no longer carries. Doc 10's signal memo
+## (`CitySim._is_tile_powered`) is stamped from the AUTHORED transformer roster at
+## boot and asks this by that id for the life of the process, so a demolished
+## authored transformer (Wave 17's verb) would otherwise be a key error on the
+## next signal tick rather than a dark intersection.
 func is_energized(id: String) -> bool:
-	return bool(_components[id]["energized"])
+	var c: Variant = _components.get(id)
+	if c == null:
+		return false
+	return bool((c as Dictionary)["energized"])
 
 
 # ------------------------------------------------------ ties & auto-transfer
@@ -1405,28 +1597,151 @@ func block_dark_fractions(weights: Dictionary) -> Dictionary:
 
 # ----------------------------------------------------------- upgrade gate
 
-## Doc 02 E2: the serving path must keep ≤0.90 post-upgrade (§5.3).
-func can_upgrade_power(building_id: String, delta_kw: float, t_ambient: float = 25.0) -> Dictionary:
+## Doc 02 E2 / doc 04 §5.3's post-upgrade ceiling: the serving path must stay
+## at or under this ratio after the added load. The same 0.90 `can_upgrade_power`
+## has always used, named so the fix planner and the panel read the one number.
+const UPGRADE_MAX_R := 0.90
+
+
+## Doc 02 E2: the serving path must keep ≤ `UPGRADE_MAX_R` post-upgrade (§5.3).
+##
+## Returns `{ok, reason, deficit_kw, at, kind, r_after, path}`. `at` is the
+## component that BINDS — the one whose post-upgrade ratio is worst past the
+## gate — and `kind` its kind, because the answer to a transformer at 2.08 is a
+## bigger transformer and the answer to a feeder at 0.93 is more copper, and a
+## checklist row that cannot tell the two apart sends the player to the wrong
+## purchase (Wave 17, A91-D-55). `path` is every component walked, each with its
+## own `r_after`, in service order transformer → feeder → substation.
+##
+## **A zero-delta upgrade needs no headroom** (Wave 17, A91-D-53). A `substation`
+## shell draws nothing at any level (`data/buildings.json` `power_demand_kw 0.0`)
+## and is attached to no transformer — it IS the grid, it is not a customer of it
+## — so the old walk answered `UNSERVED` and doc 02's L1→L2 job on `SUB-A`, the
+## job doc 04 §2.2 sells as "6,000 → 14,000 kW and the third feeder slot", could
+## never be bought. Measured on the starter city at 6 game-hours:
+## `cmd_upgrade_building("SUB-A", true)` carried `E_POWER_HEADROOM` and nothing
+## else. A building that adds no load cannot overload anything.
+func can_upgrade_power(building_id: String, delta_kw: float, t_ambient: float = 25.0,
+		load_override: Dictionary = {}) -> Dictionary:
 	var transformer_id: String = _attachments.get(building_id, "")
-	if transformer_id == "":
-		return {"ok": false, "reason": "UNSERVED", "deficit_kw": delta_kw}
+	if delta_kw <= 0.0:
+		return {"ok": true, "reason": "", "deficit_kw": 0.0, "at": transformer_id,
+				"kind": "", "r_after": 0.0, "path": []}
+	if transformer_id == "" or not _components.has(transformer_id):
+		return {"ok": false, "reason": "UNSERVED", "deficit_kw": delta_kw, "at": "",
+				"kind": "", "r_after": 0.0, "path": []}
+	var path := service_path_ids(building_id)
+	var worst_deficit := 0.0
+	var worst_id := ""
+	var worst_kind := ""
+	var worst_r := 0.0
+	var rows: Array = []
+	for id in path:
+		var c: Dictionary = _components[id]
+		var effective := cap_eff(id, t_ambient)
+		# `load_override` is `CitySim.peak_component_loads()` — the load this
+		# component carries at ITS customers' peak hour rather than at the hour
+		# the player happened to tap in (RR-120). It is never below the live
+		# reading, so an empty override is the old, more permissive gate and a
+		# grid with no clock (the unit tests) still answers.
+		var live: float = maxf(float(c["load_kw"]), float(load_override.get(id, 0.0)))
+		var after := live + delta_kw
+		var r_after: float = after / maxf(1.0, effective)
+		rows.append({"id": String(id), "kind": String(c["kind"]), "load_kw": float(c["load_kw"]),
+				"peak_load_kw": live,
+				"effective_kw": effective, "r_after": r_after,
+				"deficit_kw": maxf(0.0, after - UPGRADE_MAX_R * effective)})
+		if r_after > UPGRADE_MAX_R:
+			# The binder is the component with the worst RATIO, not the largest
+			# deficit in kW: a feeder 5 kW over and a transformer 40 kW over are
+			# both refusals, but a 50 kW transformer at r 2.08 is the one the
+			# player has to replace first.
+			if r_after > worst_r:
+				worst_r = r_after
+				worst_id = String(id)
+				worst_kind = String(c["kind"])
+			worst_deficit = maxf(worst_deficit, after - UPGRADE_MAX_R * effective)
+	if worst_deficit > 0.0:
+		return {"ok": false, "reason": "BLOCKED_POWER_CAPACITY", "deficit_kw": worst_deficit,
+				"at": worst_id, "kind": worst_kind, "r_after": worst_r, "path": rows}
+	return {"ok": true, "reason": "", "deficit_kw": 0.0, "at": transformer_id,
+			"kind": "transformer",
+			"r_after": float(rows[0]["r_after"]) if not rows.is_empty() else 0.0,
+			"path": rows}
+
+
+## The components between a building and the bulk pool, in service order:
+## `[transformer, feeder, substation]`, shorter when the tree is (an orphaned
+## transformer has no feeder). Empty for an UNSERVED building.
+func service_path_ids(building_id: String) -> Array:
+	var transformer_id: String = _attachments.get(building_id, "")
+	if transformer_id == "" or not _components.has(transformer_id):
+		return []
 	var path := [transformer_id]
 	var feeder_id := String(_components[transformer_id]["parent"])
-	if feeder_id != "":
+	if feeder_id != "" and _components.has(feeder_id):
 		path.append(feeder_id)
 		var substation_id := String(_components[feeder_id]["parent"])
-		if substation_id != "":
+		if substation_id != "" and _components.has(substation_id):
 			path.append(substation_id)
-	var worst_deficit := 0.0
-	for id in path:
-		var effective := cap_eff(id, t_ambient)
-		var r_after: float = (float(_components[id]["load_kw"]) + delta_kw) / maxf(1.0, effective)
-		if r_after > 0.90:
-			worst_deficit = maxf(worst_deficit,
-					(float(_components[id]["load_kw"]) + delta_kw) - 0.90 * effective)
-	if worst_deficit > 0.0:
-		return {"ok": false, "reason": "BLOCKED_POWER_CAPACITY", "deficit_kw": worst_deficit}
-	return {"ok": true, "reason": "", "deficit_kw": 0.0}
+	return path
+
+
+## The connection a building can SEE (Wave 17, doc 12 D-70): one row per hop of
+## `service_path_ids`, each in `_row()`'s shape plus `hop` (1 = the transformer)
+## and `tile` (the transformer's; lines carry `Vector2i.ZERO`). `hops` is the
+## number of components between the building and the pool, `energized` is
+## whether the transformer is live NOW — the instantaneous answer the coverage
+## tile's `availability_prev_hour` lags by up to an hour — and `unserved` says
+## there is no transformer at all. Read-only; consumes no RNG.
+func service_path(building_id: String, t_ambient: float = 25.0,
+		load_override: Dictionary = {}) -> Dictionary:
+	var ids := service_path_ids(building_id)
+	var rows: Array = []
+	var downstream := _customer_index()
+	for i in ids.size():
+		var id := String(ids[i])
+		var c: Dictionary = _components[id]
+		var customers := int(downstream.get(id, 0)) if c["kind"] == &"transformer" \
+				else _feeder_customers(id, downstream)
+		var row := _row(id, c, t_ambient, customers)
+		row["hop"] = i + 1
+		row["tile"] = c["tile"] if c["tile"] is Vector2i else Vector2i.ZERO
+		# The two readings the panel puts side by side: what this hop carries
+		# now, and what it carries when its own customers peak (RR-120).
+		var peak: float = maxf(float(c["load_kw"]), float(load_override.get(id, 0.0)))
+		row["peak_load_kw"] = peak
+		row["peak_r"] = peak / maxf(1.0, float(row["effective_kw"]))
+		rows.append(row)
+	var transformer_id := String(ids[0]) if not ids.is_empty() else ""
+	return {
+		"unserved": transformer_id == "",
+		"transformer": transformer_id,
+		"feeder": String(ids[1]) if ids.size() > 1 else "",
+		"substation": String(ids[2]) if ids.size() > 2 else "",
+		"hops": ids.size(),
+		"energized": transformer_id != "" and bool(_components[transformer_id]["energized"]),
+		"powered": is_powered(building_id),
+		"shed": ids.size() > 1 and shed_feeders.has(String(ids[1])),
+		"rows": rows,
+	}
+
+
+## Re-class a line onto a heavier conductor (doc 04 §2.2's feeder ladder, class
+## 1 → 2 → 3). The line half of `set_level`: a feeder is rated by conductor
+## class and a transformer by level, so each refuses the other's ladder.
+func set_conductor_class(id: String, conductor_class: int) -> bool:
+	if not _components.has(id):
+		return false
+	var c: Dictionary = _components[id]
+	var rows: Array = FEEDER_CAPACITY if c["kind"] == &"feeder" \
+			else (TRANSMISSION_CAPACITY if c["kind"] == &"transmission" else [])
+	if conductor_class < 1 or conductor_class > rows.size():
+		return false
+	c["conductor_class"] = conductor_class
+	c["capacity_kw"] = float(rows[conductor_class - 1])
+	mutation_epoch += 1
+	return true
 
 
 # -------------------------------------------------------- read-only rows (UI)
@@ -1518,6 +1833,7 @@ func _row(id: String, c: Dictionary, t_ambient: float, customers: int) -> Dictio
 		"kind": String(c["kind"]),
 		"parent": String(c["parent"]),
 		"level": int(c["level"]),
+		"conductor_class": int(c["conductor_class"]),
 		"load_kw": load,
 		"capacity_kw": float(c["capacity_kw"]),
 		"effective_kw": effective,
@@ -1554,10 +1870,25 @@ func _feeder_customers(feeder_id: String, downstream: Dictionary) -> int:
 ## `{supply_kw, demand_kw, plant_capacity_kw, headroom_kw, load_ratio,
 ##   feeders_over, transformers_over, shed_feeders}`. `over` counts what the
 ## protection pass calls loaded past pickup (`R_PICKUP`), not past 100 %.
+## Wave 17 adds the band counts the grid reading needs (doc 12 D-72):
+## `transformers_warning` / `feeders_warning` count what §5.10's overlay calls
+## WARNING or worse (`r ≥ 0.75`, derated), `transformers_critical` /
+## `feeders_critical` what it calls CRITICAL (`r ≥ 0.95`), `transformers` and
+## `feeders` the roster sizes, and `shed_kw` the load the shed set is holding
+## dark. Measured on every city this wave audited, the pool had headroom and
+## the transformers were the wall — a reading that shows only supply against
+## demand tells a player to buy the one thing that will not help.
 func capacity_summary(t_ambient: float = 25.0) -> Dictionary:
 	var plant_capacity := 0.0
 	var feeders_over := 0
 	var transformers_over := 0
+	var feeders_warning := 0
+	var transformers_warning := 0
+	var feeders_critical := 0
+	var transformers_critical := 0
+	var feeders := 0
+	var transformers := 0
+	var shed_kw := 0.0
 	for id in _order:
 		var c: Dictionary = _components[id]
 		match c["kind"]:
@@ -1565,11 +1896,26 @@ func capacity_summary(t_ambient: float = 25.0) -> Dictionary:
 				if String(c["state"]) == "OK":
 					plant_capacity += cap_eff(String(id), t_ambient)
 			&"feeder", &"transmission":
-				if float(c["load_kw"]) > R_PICKUP * cap_eff(String(id), t_ambient):
+				var r_line: float = float(c["load_kw"]) / maxf(1.0, cap_eff(String(id), t_ambient))
+				if r_line > R_PICKUP:
 					feeders_over += 1
+				if c["kind"] == &"feeder":
+					feeders += 1
+					if r_line >= OVERLAY_WARNING_R:
+						feeders_warning += 1
+					if r_line >= OVERLAY_CRITICAL_R:
+						feeders_critical += 1
+					if shed_feeders.has(id):
+						shed_kw += float(c["load_kw"])
 			&"transformer":
-				if float(c["load_kw"]) > R_PICKUP * cap_eff(String(id), t_ambient):
+				transformers += 1
+				var r_node: float = float(c["load_kw"]) / maxf(1.0, cap_eff(String(id), t_ambient))
+				if r_node > R_PICKUP:
 					transformers_over += 1
+				if r_node >= OVERLAY_WARNING_R:
+					transformers_warning += 1
+				if r_node >= OVERLAY_CRITICAL_R:
+					transformers_critical += 1
 	return {
 		"supply_kw": system_supply_kw,
 		"demand_kw": system_demand_kw,
@@ -1579,6 +1925,13 @@ func capacity_summary(t_ambient: float = 25.0) -> Dictionary:
 		"feeders_over": feeders_over,
 		"transformers_over": transformers_over,
 		"shed_feeders": shed_feeders.size(),
+		"shed_kw": shed_kw,
+		"feeders": feeders,
+		"transformers": transformers,
+		"feeders_warning": feeders_warning,
+		"transformers_warning": transformers_warning,
+		"feeders_critical": feeders_critical,
+		"transformers_critical": transformers_critical,
 	}
 
 

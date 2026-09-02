@@ -114,6 +114,11 @@ var component_level := GRID_CARD_LEVEL
 ## computes, and `BuildingPanel` already holds exactly one controller.
 var water: WaterActions
 
+## Doc 04 §4's operating verbs (Wave 17, doc 93 §AD). Same ownership rule as
+## `water` above: the panel binds, this computes, and the POWER section, the
+## `Fix this →` strip and the dashboard's grid reading all read one model.
+var power: PowerActions
+
 ## Wave 14's street roster — the thing a tap on a fleeing shoplifter or a loose
 ## dog has to find before it finds the house behind them.
 ##
@@ -153,6 +158,7 @@ func _init(p_sim: CitySim = null, p_formatter: RequirementFormatter = null,
 	_water_placeable = water_roster["placeable"]
 	_water_components = water_roster["components"]
 	water = WaterActions.new(sim, formatter)
+	power = PowerActions.new(sim, formatter)
 
 
 ## `data/world.json.world.tile_meters`, mirroring `CameraState._apply_world()`.
@@ -706,17 +712,37 @@ func evaluate(p_origin: Vector2i) -> Dictionary:
 		return _blocked(&"E_NOT_DEVELOPED", {"tile": p_origin, "block_id": block.id})
 	if not sim.world.grid.can_place(p_origin, size):
 		return _blocked(&"E_FOOTPRINT", {"tile": p_origin, "block_id": block.id})
-	if not sim.grid.would_serve(p_origin):
+	var serve := sim.serving_headroom_for_new(archetype, p_origin)
+	if String(serve["reason"]) == "UNSERVED":
 		return _blocked(&"E_UNSERVED", {"tile": p_origin, "block_id": block.id})
 	var cost := sim.econ_curves.build_cost(archetype)
 	if sim.treasury.balance < cost:
 		return _blocked(&"E_FUNDS", {"cost": cost, "balance": sim.treasury.balance,
 				"tile": p_origin})
+	var params := {"cost": cost, "balance": sim.treasury.balance, "tile": p_origin}
+	if not bool(serve["ok"]):
+		# The audit's P0 (doc 93 §AD3): coverage was the only power question
+		# placement asked, so a GREEN ghost could put a 98 kW water facility on a
+		# 50 kW pole-top that was already full, and the first the player heard of
+		# it was the whole street browning out at dinner. Amber, not red: doc 04
+		# §2.1 gates placement on coverage and authorises no capacity refusal, so
+		# this reports the fact and lets the player place anyway — which is also
+		# why it is evaluated LAST, after every real blocker has had its turn.
+		params.merge({"component": String(serve["at"]), "transformer":
+				String(serve["transformer"]), "need": float(serve["demand_kw"]),
+				"deficit_kw": float(serve["deficit_kw"]),
+				"ratio": float(serve["r_after"])}, true)
+		return {
+			"verdict": VERDICT_WARN,
+			"code": &"E_TRANSFORMER_FULL",
+			"failure": formatter.format(&"E_TRANSFORMER_FULL", params),
+			"params": params,
+		}
 	return {
 		"verdict": VERDICT_VALID,
 		"code": &"",
 		"failure": {},
-		"params": {"cost": cost, "balance": sim.treasury.balance, "tile": p_origin},
+		"params": params,
 	}
 
 
@@ -1164,6 +1190,10 @@ func building_view(sim_id: String) -> Dictionary:
 		# shell's own upgrade block above sells floorspace and this one sells
 		# supply. `available` is false everywhere else (doc 93 §J1).
 		"water": water.building_block(sim_id),
+		# Doc 12 §2.9 D-70's POWER section. Present on every building, because
+		# every building is fed by something — or by nothing, which is the one
+		# reading the section exists to make impossible to miss.
+		"power": power.building_block(sim_id),
 	}
 
 

@@ -1956,6 +1956,52 @@ func feed_overlay_summary(mode: StringName, lines: Array) -> void:
 		overlay_rail.set_summary_lines(mode, lines)
 
 
+## The POWER overlay's three §2.5 aggregate lines, from `PowerActions.
+## grid_reading()` (Wave 17, doc 12 §2.10 D-72).
+##
+## **On the legend and not the dashboard**, and the argument is §2.5's own: the
+## dashboard's Infrastructure tab already lists every feeder and every
+## transformer, which is the reference reading — a table you go and consult. This
+## is the ORIENTING reading, and it belongs where the player is when the question
+## occurs to them, which is standing in the power overlay looking at a red
+## transformer. §2.5 allows exactly 1–3 aggregate lines on the legend card and
+## `OverlayModel.summary_lines` drops the rest, so it is three:
+##
+##   1. the pool — demand of supply, and what is spare;
+##   2. the WIRES — how many transformers and feeders are at WARNING or worse,
+##      which is the line this wave exists for. Every `POWER_CAPACITY` blocker on
+##      every city audited bound at a transformer while the pool sat at 6–56 % of
+##      supply, so a reading that showed only line 1 told the player to buy a
+##      power station, and a power station cleared nothing;
+##   3. what is being held dark right now, when anything is.
+##
+## Static, and handed the config rather than reading `self`, so `tools/
+## ui_preview.gd` photographs the shipping lines rather than a fixture of them.
+static func power_summary_lines(reading: Dictionary, cfg: UIConfig) -> Array:
+	if not bool(reading.get("available", false)):
+		return []
+	var lines: Array = [
+		{"id": "pool", "label": UIWidgets.t(cfg, "ui_overlay_summary_power_pool"),
+				"value": "%s / %s" % [reading["demand_text"], reading["supply_text"]],
+				"state": HudModel.STATE_NORMAL if float(reading["load_ratio"]) < 0.9
+						else HudModel.STATE_WARNING},
+		{"id": "wires", "label": UIWidgets.t(cfg, "ui_overlay_summary_power_wires"),
+				"value": "%d / %d" % [int(reading["transformers_warning"])
+						+ int(reading["feeders_warning"]),
+						int(reading["transformers"]) + int(reading["feeders"])],
+				"state": reading["state"]},
+	]
+	if float(reading["shed_kw"]) > 0.0:
+		lines.append({"id": "shed",
+				"label": UIWidgets.t(cfg, "ui_overlay_summary_power_shed"),
+				"value": str(reading["shed_text"]), "state": HudModel.STATE_CRITICAL})
+	else:
+		lines.append({"id": "wall", "label": UIWidgets.t(cfg, "ui_overlay_summary_power_wall"),
+				"value": UIWidgets.t(cfg, str(reading["wall_key"])),
+				"state": HudModel.STATE_NORMAL})
+	return lines
+
+
 ## `{power01, water01}` on `[0, 1]` for the ⚡/💧 chips (§2.4 P3/P4) and for the
 ## dashboard bands that show the same two readings.
 func ingest_service(snapshot: Dictionary) -> void:

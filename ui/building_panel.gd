@@ -28,6 +28,15 @@ signal water_upgraded(node_id: String, result: Dictionary)
 ## `upgrade_building`'s, so the shell re-reads the city rather than guessing.
 signal rushed(sim_id: String, job_id: int, result: Dictionary)
 
+## Doc 04 §4's operating verbs (Wave 17). `power_fixed` is the one-tap
+## `POWER_CAPACITY` answer — the row whose `Fix this →` used to focus the camera
+## on the building the player already had open — and `grid_upgraded` is a rung
+## bought on the transformer or the feeder that feeds this building. Both carry
+## the sim's own `{ok, reason_code, payload}` so the shell re-reads the city.
+signal power_fixed(sim_id: String, result: Dictionary)
+signal grid_upgraded(component_id: String, result: Dictionary)
+signal grid_demolished(component_id: String, result: Dictionary)
+
 const PALETTE_TYPE := "Palette"
 ## §2.9's `L1 L2 ▮L3▮ L4 L5` level pips — glyphs, not copy (A5 redundancy).
 const PIP_ON := "▮"
@@ -72,6 +81,20 @@ var _actions: VBoxContainer
 ## Doc 05 §6's node block, built in code below the actions row.
 var _water: VBoxContainer
 var _water_rows: Dictionary = {}   # node id -> Button
+## Doc 12 §2.9 D-70's POWER section, built in code below the water block.
+var _power: VBoxContainer
+var _power_rows: Dictionary = {}   # component id -> Button
+var _power_remove_rows: Dictionary = {}   # component id -> Button
+var _power_fix_button: Button
+## The transformer the REMOVE row is armed for, `""` when nothing is armed. Same
+## two-tap contract as the fix strip, and cleared by every re-render of a
+## DIFFERENT building, so an armed row cannot follow the selection.
+var _power_remove_armed := ""
+## The `Fix this →` strip is a two-tap confirm: the first tap quotes, the second
+## buys. This holds the sim id the strip is armed for, `""` when it is not armed
+## — so a strip that is still on screen after the player selected a DIFFERENT
+## building cannot spend money on that one.
+var _power_fix_armed := ""
 var _repair_button: Button
 var _repair_note: Label
 var _priority_row: HBoxContainer
@@ -198,6 +221,10 @@ func _build_actions() -> void:
 		_water = body.get_node_or_null("WaterNodes") as VBoxContainer
 		_water_rows.clear()
 		_bind_progress(body)
+
+		_power = body.get_node_or_null("PowerSection") as VBoxContainer
+		_power_rows.clear()
+		_power_remove_rows.clear()
 		return
 	_build_progress(body)
 	_actions = VBoxContainer.new()
@@ -242,6 +269,20 @@ func _build_actions() -> void:
 	_water.add_theme_constant_override(&"separation", int(_spacing))
 	_water.visible = false
 	body.add_child(_water)
+
+	# --- Wave 17: doc 12 §2.9 D-70's POWER section -------------------------
+	# Below the water block for the same reason the water block is below the
+	# actions row: it is about a DIFFERENT asset. The three buttons above act on
+	# this building; this section is the wire that feeds it — which transformer,
+	# how loaded it is, and the two purchases (a bigger transformer, heavier
+	# copper) that are the answer when it is full. Doc 04 §2.9's transfer rule
+	# means that wire can change under the player, so it is read live and never
+	# cached across a refresh.
+	_power = VBoxContainer.new()
+	_power.name = "PowerSection"
+	_power.add_theme_constant_override(&"separation", int(_spacing))
+	_power.visible = false
+	body.add_child(_power)
 
 
 ## §2.22 item 3 — the queue's row, inline on the building it is about.
@@ -335,6 +376,12 @@ func selected_id() -> String:
 func show_building(sim_id: String) -> void:
 	if controller == null:
 		return
+	if sim_id != _sim_id:
+		# A new selection disarms both two-tap confirms. Two buildings can share
+		# a transformer, so an armed REMOVE row that survived the selection would
+		# take a street's lights out on what the player read as a first tap.
+		_power_fix_armed = ""
+		_power_remove_armed = ""
 	var view := controller.building_view(sim_id)
 	if not bool(view.get("exists", false)):
 		close()
@@ -403,6 +450,7 @@ func _render(v: Dictionary) -> void:
 	_render_upgrade(v)
 	_render_actions(v)
 	_render_water(v.get("water", {}))
+	_render_power(v.get("power", {}))
 
 
 ## The queue's row for THIS building, or nothing at all.
@@ -759,6 +807,236 @@ func _build_water_row(entry: Variant) -> VBoxContainer:
 	return row
 
 
+# --- Wave 17: doc 12 §2.9 D-70's POWER section -----------------------------
+#
+# What the user asked for in the two sentences that opened this wave: "feeders
+# adding extra power to a building is not clear and I'm not sure it actually
+# works", and "how the transformers feed power … doesn't seem to be working well
+# at all". Both were true readings of a panel that never named the wire.
+#
+# The section is a LIST OF HOPS, nearest first — the transformer that feeds this
+# building, the feeder that feeds it, the substation behind that — each with what
+# it carries now, what it carries at the day's peak, how much is spare **in
+# words**, and its own UPGRADE button with the price on its face. Under them: the
+# next level's headroom answer, and the one-tap fix when the next level is
+# blocked. Every value is `PowerActions`'; this method decides only what is on
+# screen.
+
+func _render_power(block: Dictionary) -> void:
+	if _power == null:
+		return
+	var available := bool(block.get("available", false))
+	_power.visible = available
+	BuildingPanel._clear_children(_power)
+	_power_rows.clear()
+	_power_remove_rows.clear()
+	_power_fix_button = null
+	if not available:
+		_power_fix_armed = ""
+		_power_remove_armed = ""
+		return
+	_power.add_child(UIWidgets.label("PowerHeader", _text("ui_power_section_title", "")))
+	if bool(block.get("unserved", false)):
+		# No transformer at all. The most important line the section can draw,
+		# and the only one that is drawn alone.
+		var none := UIWidgets.label("Unserved",
+				_text("ui_power_unserved", ""), &"LegendRow", true)
+		none.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_apply_state_color(none, HudModel.STATE_CRITICAL)
+		_power.add_child(none)
+		return
+	var summary := UIWidgets.label("Draw", _text_args("ui_power_draw",
+			{"kw": str(block["demand_text"]), "hops": int(block["hops"])},
+			str(block["demand_text"])), &"LegendRow", true)
+	summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_power.add_child(summary)
+	if bool(block.get("shed", false)):
+		var shed := UIWidgets.label("Shed", _text("ui_power_shed", ""), &"LegendRow", true)
+		_apply_state_color(shed, HudModel.STATE_CRITICAL)
+		_power.add_child(shed)
+	for entry: Variant in (block.get("rows", []) as Array):
+		_power.add_child(_build_power_hop(entry))
+	var next: Dictionary = block.get("next_level", {})
+	if bool(next.get("available", false)):
+		var headroom := UIWidgets.label("NextLevel", _text_args(
+				"ui_power_next_level_ok" if bool(next["ok"]) else "ui_power_next_level_short",
+				{"level": int(next["to_level"]), "kw": str(next["delta_text"]),
+				"short": str(next["deficit_text"]), "at": str(next["binds_at"])},
+				str(next["delta_text"])), &"LegendRow", true)
+		headroom.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_apply_state_color(headroom, HudModel.STATE_NORMAL if bool(next["ok"])
+				else HudModel.STATE_WARNING)
+		_power.add_child(headroom)
+	_render_power_fix(block.get("fix", {}), str(block.get("sim_id", "")))
+
+
+## One hop: what it is, what it carries, what is spare, and the purchase that
+## makes it bigger. The button's face carries its price even when it is
+## DISABLED — a button that hides its price while the player is broke teaches
+## nothing about how much to save (doc 12 §2.7).
+func _build_power_hop(entry: Variant) -> VBoxContainer:
+	var hop: Dictionary = entry
+	var component_id := str(hop["id"])
+	var row := VBoxContainer.new()
+	row.name = "PowerHop_" + component_id
+	row.add_theme_constant_override(&"separation", int(_spacing))
+
+	var title := UIWidgets.label("Title", _text_args("ui_power_hop",
+			{"kind": _text(str(hop["name_key"]), str(hop["kind"])),
+			"id": component_id, "customers": int(hop["customers"])},
+			component_id))
+	title.tooltip_text = component_id
+	row.add_child(title)
+
+	# The reading, in the order a player asks for it: what is spare, then the
+	# two numbers that spare came from. The BAND word is what makes it readable
+	# without the colour (A5).
+	var load := UIWidgets.label("Load", _text_args("ui_power_hop_load",
+			{"headroom": str(hop["headroom_text"]), "load": str(hop["load_text"]),
+			"peak": str(hop["peak_text"]), "capacity": str(hop["capacity_text"]),
+			"band": _text(str(hop["band_key"]), "")},
+			"%s / %s" % [hop["peak_text"], hop["capacity_text"]]), &"LegendRow", true)
+	load.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_apply_state_color(load, StringName(str(hop["band_state"])))
+	row.add_child(load)
+
+	var upgrade: Dictionary = hop.get("upgrade", {})
+	if not bool(upgrade.get("available", false)):
+		return row
+	var label := _text_args("ui_power_upgrade",
+			{"cost": str(upgrade["cost_text"]), "capacity": str(upgrade["to_capacity_text"])},
+			str(upgrade["cost_text"]))
+	var button := UIWidgets.button("Upgrade_" + component_id, label, label,
+			Vector2(_touch_min * 2.0, _touch_min), &"GhostButton")
+	button.disabled = not bool(upgrade["ok"])
+	button.pressed.connect(_on_power_upgrade_pressed.bind(component_id))
+	row.add_child(button)
+	_power_rows[component_id] = button
+	for check: Variant in (upgrade.get("checklist", []) as Array):
+		row.add_child(_build_check_row(check))
+	_add_power_remove(row, hop)
+	return row
+
+
+## The transformer's own removal, and therefore its MOVE — the verb the user
+## asked for by name (*"the transformer should be able to be destroyed and moved
+## — if we remove it the power goes out and we hurry to reconnect"*). It lives on
+## the hop row because a transformer is not a thing the world pick can select; the
+## building it feeds is the only door there is.
+##
+## **Two taps, and the second one names the casualties.** The first arms the row
+## and re-labels it with how many buildings go dark and what the move back would
+## cost (`replace_cost − refund`); the second calls the verb. Same shape as the
+## fix strip, and the same reason as §2.9 item 6's hold-to-confirm on the
+## building demolition: this is the other button in the deck that cannot be
+## undone, and a mis-tap on it takes a street's lights out.
+func _add_power_remove(row: VBoxContainer, hop: Dictionary) -> void:
+	if String(hop["kind"]) != "transformer" or controller == null:
+		return
+	var component_id := str(hop["id"])
+	var quote := controller.power.demolish_quote(component_id)
+	if not bool(quote.get("available", false)):
+		return
+	var armed := _power_remove_armed == component_id
+	var label := _text_args("ui_power_remove_confirm" if armed else "ui_power_remove",
+			{"refund": str(quote["refund_text"]), "dark": int(quote["stranded"]),
+			"move": str(quote["move_cost_text"])}, str(quote["refund_text"]))
+	var button := UIWidgets.button("Remove_" + component_id, label, label,
+			Vector2(_touch_min * 2.0, _touch_min), &"DangerButton")
+	button.pressed.connect(_on_power_remove_pressed.bind(component_id))
+	row.add_child(button)
+	_power_remove_rows[component_id] = button
+
+
+func _on_power_remove_pressed(component_id: String) -> void:
+	if controller == null:
+		return
+	if _power_remove_armed != component_id:
+		_power_remove_armed = component_id
+		call_deferred("refresh")
+		return
+	_power_remove_armed = ""
+	var result := controller.power.demolish(component_id)
+	call_deferred("refresh")
+	grid_demolished.emit(component_id, result)
+
+
+## The `REMOVE` button of one hop, for a test that has to press one.
+func power_remove_button(component_id: String) -> Button:
+	return _power_remove_rows.get(component_id, null)
+
+
+## The `Fix this →` strip: what one tap would buy, what it costs, and whether it
+## clears the blocker. Two taps, never one — the first arms the strip and the
+## second spends the money (doc 12 §2.7).
+func _render_power_fix(fix: Dictionary, sim_id: String) -> void:
+	if not bool(fix.get("available", false)):
+		_power_fix_armed = ""
+		return
+	var armed := _power_fix_armed == sim_id and sim_id != ""
+	var cost := str(fix.get("cost_text", ""))
+	var label := _text_args("ui_power_fix_confirm" if armed else "ui_power_fix",
+			{"cost": cost,
+			"action": _text(str(fix.get("action_key", "")), str(fix.get("action", ""))),
+			"component": str(fix.get("component", ""))}, cost)
+	_power_fix_button = UIWidgets.button("PowerFix", label, label,
+			Vector2(_touch_min * 2.0, _touch_min), &"GhostButton")
+	_power_fix_button.disabled = not bool(fix.get("ok", false))
+	_power_fix_button.pressed.connect(_on_power_fix_pressed.bind(sim_id))
+	_power.add_child(_power_fix_button)
+	var note := UIWidgets.label("PowerFixNote", _text_args("ui_power_fix_note",
+			{"at": str(fix.get("binds_at", "")),
+			"kind": _text("ui_power_kind_%s" % str(fix.get("binds_kind", "")),
+					str(fix.get("binds_kind", "")))}, ""), &"LegendRow", true)
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_power.add_child(note)
+	if not bool(fix.get("clears", true)) and bool(fix.get("ok", false)):
+		# Honest about a partial fix: one purchase per tap is a rule, and a strip
+		# that implied otherwise would be selling a plan as a button.
+		var partial := UIWidgets.label("PowerFixPartial",
+				_text("ui_power_fix_partial", ""), &"LegendRow", true)
+		partial.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_apply_state_color(partial, HudModel.STATE_WARNING)
+		_power.add_child(partial)
+	for check: Variant in (fix.get("checklist", []) as Array):
+		_power.add_child(_build_check_row(check))
+
+
+## The panel's own `Fix this →` button lives on the checklist row and routes
+## through `_on_fix_pressed`; this is the strip's button. Both land here.
+func _on_power_fix_pressed(sim_id: String) -> void:
+	if controller == null or sim_id == "":
+		return
+	if _power_fix_armed != sim_id:
+		_power_fix_armed = sim_id
+		call_deferred("refresh")
+		return
+	_power_fix_armed = ""
+	var result := controller.power.fix(sim_id)
+	# Deferred for `_on_fix_pressed`'s reason: the button that fired this is
+	# inside the section a refresh rebuilds.
+	call_deferred("refresh")
+	power_fixed.emit(sim_id, result)
+
+
+func _on_power_upgrade_pressed(component_id: String) -> void:
+	if controller == null:
+		return
+	var result := controller.power.upgrade(component_id)
+	call_deferred("refresh")
+	grid_upgraded.emit(component_id, result)
+
+
+## The `UPGRADE` button of one hop, for a test or a coach mark that has to point
+## at one — the power twin of `water_upgrade_button()`.
+func power_upgrade_button(component_id: String) -> Button:
+	return _power_rows.get(component_id, null)
+
+
+func power_fix_button() -> Button:
+	return _power_fix_button
+
+
 func _on_water_upgrade_pressed(node_id: String) -> void:
 	if controller == null:
 		return
@@ -857,6 +1135,14 @@ func request_demolish() -> void:
 ## it — which is all the shell can do — moves nothing. The row's remedy is a
 ## repair, so the row buys one.
 func _on_fix_pressed(fix_target: Dictionary) -> void:
+	if StringName(str(fix_target.get("kind", ""))) == RequirementFormatter.FIX_POWER:
+		# Same reason `E_CONDITION` is answered here: the fix target is the
+		# building the player already has open, so the only thing the shell could
+		# do with it — focus the camera — moves nothing (A91-D-54). The row arms
+		# the confirm strip in the POWER section below; the strip spends.
+		_power_fix_armed = _sim_id
+		call_deferred("refresh")
+		return
 	if StringName(str(fix_target.get("kind", ""))) == RequirementFormatter.FIX_REPAIR:
 		if controller == null or _sim_id == "":
 			return

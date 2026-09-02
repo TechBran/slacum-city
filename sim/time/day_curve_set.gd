@@ -122,3 +122,31 @@ func channel_curve_value(channel_name: String, x: float) -> float:
 func channel_clamp(channel_name: String, value: float) -> float:
 	var ch: Dictionary = _channels[channel_name]
 	return clampf(value, float(ch["min"]), float(ch["max"]))
+
+
+## The highest value a channel's curve reaches in a day, and the hour it reaches
+## it. A curve is piecewise-linear between its keyframes, so its maximum IS one
+## of them — no sampling, and no search resolution to get wrong.
+##
+## Doc 04's headroom gate (§5.3) is written against `load_kw`, which is the load
+## RIGHT NOW; a residential transformer judged at 05:00 (`power_demand_
+## residential` = 0.67) is carrying 46 % of what the same buildings put on it at
+## 20:00 (1.46). That ratio is what `CitySim._peak_component_loads` scales a
+## component's present load by, so the gate answers for the evening peak rather
+## than for the hour the player happened to tap in (Wave 17, doc 98 §44 RR-120).
+##
+## `{value, hour}`; `{1.0, 0.0}` for a channel this set does not carry, so a
+## caller that divides by it is safe.
+func channel_peak(channel_name: String) -> Dictionary:
+	if not _channels.has(channel_name):
+		return {"value": 1.0, "hour": 0.0}
+	var curve_name := String(_channels[channel_name]["curve"])
+	var keys: Array = _curves[curve_name]["keys"]
+	var best := -INF
+	var at := 0.0
+	for key in keys:
+		var v := float((key as Array)[1])
+		if v > best:
+			best = v
+			at = float((key as Array)[0])
+	return {"value": channel_clamp(channel_name, best), "hour": at}
