@@ -337,6 +337,18 @@ func breakdown() -> Dictionary:
 			continue
 		var line := _line("revenue", key, amount)
 		line["settled"] = settled
+		# Doc 03 §2.5a's founding assistance retires $589.71 a game-day and used
+		# to do it in silence — PA-32 measured it as the largest single mover of
+		# the net chip in the opening fortnight, with no toast, no log row and no
+		# end date anywhere (doc 93 §Y4). No dollar moves for this: the row says
+		# how many game-days of itself are left, on its own label, from the
+		# count doc 03 now publishes in the settle snapshot.
+		if key == "assistance":
+			var days_left := int(_settlement.get("assistance_days_left", 0))
+			line["days_left"] = days_left
+			if days_left > 0:
+				line["note"] = UIWidgets.t_args(_cfg, "ui_budget_assistance_days_left",
+						{"days": str(days_left)})
 		revenue_rows.append(line)
 	net = float(_settlement.get("net", gross - expense)) + side_total
 	gross += side_total

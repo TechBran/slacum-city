@@ -136,6 +136,7 @@
 	"ui_budget_out_of_range": "That is past the end of the ladder.",
 	"ui_budget_preview_growth": "Growth ×{mult}",
 	"ui_budget_preview_happiness": "Happiness {delta}",
+	"ui_budget_assistance_days_left": "ends in {days} days",
 	"ui_budget_revenue_assistance": "State founding assistance",
 	"ui_budget_revenue_city_services": "City services",
 	"ui_budget_revenue_bounties": "Dispatch bounties",

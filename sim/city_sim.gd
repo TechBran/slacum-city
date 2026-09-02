@@ -4308,6 +4308,10 @@ func build_settlement_inputs(ctx: TimeContext, availability: Dictionary) -> Dict
 		"city_services": treasury.take_hour_city_services(),
 		"founding_assistance": econ_curves.founding_assistance_per_hour(
 				ctx.tick_index / GameClock.TICKS_PER_DAY),
+		# …and how many game-days of it are left, so the budget sheet can say so
+		# (Wave 17, doc 93 §Y4). A COUNT, not a dollar — see the snapshot.
+		"founding_assistance_days_left": econ_curves.founding_assistance_days_left(
+				ctx.tick_index / GameClock.TICKS_PER_DAY),
 	}
 
 

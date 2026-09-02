@@ -483,6 +483,11 @@ func settle_hour(inputs: Dictionary) -> Dictionary:
 
 	var snapshot := {
 		"hour": hour,
+		# Wave 17 (doc 93 §Y4, doc 92 §43.2): whole game-days of founding
+		# assistance still to come, 0 once the taper has retired. It lives at the
+		# TOP of the snapshot and not inside `revenue`, because every key in
+		# `revenue` is a dollar figure a budget sheet sums and this one is a count.
+		"assistance_days_left": int(inputs.get("founding_assistance_days_left", 0)),
 		"revenue": {
 			"tax": floored * yield_mult,
 			"tax_by_class": tax_by_class,
