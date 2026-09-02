@@ -3226,6 +3226,22 @@ func building_demand_kw(sim_id: String) -> float:
 	return float(_last_demands.get(sim_id, 0.0))
 
 
+## **The public door onto `_building_records`** (PA-100). The record is the
+## `Building` object's other half — `{id, grid_id, type, footprint, block, tags…}`
+## — and the render layer needs two of its keys (`footprint`, to centre a mesh on
+## its lot; `block`, to name the lot). Three call sites reached across the
+## underscore and indexed with `[]` (`main.gd:539`, `main.gd:564`,
+## `power_infra_feed.gd:68`), so a building the renderer knew about and the
+## roster did not was an index error in a `_process` frame rather than a blank.
+##
+## Returns a SHALLOW view, deliberately not a duplicate: this is read on the
+## boot population of 34 buildings and on every placement, and the callers below
+## read one or two keys off it. Treat it as read-only; nothing in `sim/` mutates
+## a record through a caller's handle, and nothing outside `sim/` may.
+func building_record(sim_id: String) -> Dictionary:
+	return _building_records.get(sim_id, {})
+
+
 # --------------------------------- doc 04 §5.3 headroom, judged at the PEAK
 #
 # The audit's P1 (doc 93 §AD4): every headroom gate in the project reads
