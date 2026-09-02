@@ -6347,3 +6347,31 @@ tools/profile_sim.gd -- --hash-only`, and again with
 (Lane B) to re-fit.** That is a deliberate constraint on the lane and not a happy
 accident: RR-148's step detection is stateless, RR-149's band is derived, and
 RR-150's policy is omitted from the save at its default.
+
+### 53.6 Delivered, and what the lane hands on
+
+| gate | command | result |
+|---|---|---|
+| the lane's own tests | `run_tests.gd -- --file=test_money_surfaces.gd` | 36 tests, 218 asserts, **0 failed** |
+| the full suite | `run_tests.gd` | 134 files, 2,512 tests, 551,886 asserts, **0 failed**, exit 0 |
+| the deck, portrait | `ui_preview --screen=all --size=412x915 --audit --strict` | **exit 0**, 69 states clean |
+| the deck, small + A2/A3 | `… --size=360x800 --text-scale=1.3 --large-targets --audit --strict` | **exit 0**, 69 states clean |
+| determinism | `profile_sim --hash-only` ×2 cities | all four §53.5 baselines **unmoved** |
+| doc integrity | `python3 tools/check_doc_refs.py` | 3,874 references, all resolving, no id twice |
+
+**Three things the lane found rather than shipped**, each recorded above with the
+gate that caught it: `A91-D-95` (a blank log title and a dead jump on
+`block_ready`, for Lane K), the Upkeep band's use-after-free (RR-150a, fixed
+here because the button was this lane's), and `test_event_matrix.gd`'s stale
+`development_phase_charged` exemption (§53.4, deleted here).
+
+**Two things it hands on.**
+
+1. **The shell binding is a `main.gd` snippet, not a commit.** `game/main.gd`
+   belongs to the lead, so nothing in this lane calls `bind_upkeep`: the whole
+   Economy-tab surface is dark until the four-wire call lands beside
+   `bind_road_policy`. The snippet is in the lane's delivery note, parse-checked
+   against the real file. **Until it lands, PA-31/PA-33's surfaces exist and no
+   player can see them** — this is the one open dependency of the lane.
+2. **The §2.13 settings row** (doc 12 D-84's note), which lands the moment Lane
+   G's `POLICY_BUILDINGS` arm exists. Not a blocker: D-84 (d) is the door.
