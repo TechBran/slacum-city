@@ -114,29 +114,37 @@ Roads were one MultiMesh of untextured 8 m slabs. The playtest verdict on the Fo
 
 **Night** (report NIGHT-1, unchanged calibration): the carriageway inherits the ROAD row of `data/render.json.ground` verbatim (`road_night_albedo_lift` 0.34, `road_night_glow` 0.048, `night_glow_wet_mult` 0.55). The footway takes its own row between terrain and road (0.30 / 0.042) and just under the road's on purpose. Matching the terrain leaves a black gap either side of a lit carriageway — measured at the first draft's 0.22 / 0.030, where the footway read darker than the lot behind it at 03:00. Matching the road erases the kerb line, which is the edge this whole pass exists to draw. **The gap between the two is the read.** Paint takes a third: `marking_night_glow` 0.075, which is the **retroreflective** read, and at 03:00 it is the strongest single cue that a dark band is a STREET.
 
-**The carriageway tint is an A/B ARM now, and the ruling it feeds is DEVICE-GATED and NOT TAKEN** (2026-09-01, report 98 RR-97, doc 93 §X3). `RoadSurfaceView.set_tint_gain(k)` multiplies the authored `tint` `#57575F` in LINEAR and re-encodes, so `k` is an exposure step rather than a hex nudge; `k = 1.0` is byte-identical to the shipped street and is the default on every path. Nothing in `sim/`, no preset, no governor rung and no settings row touches it. It exists because §2.17b's street-body blob shadow measures near-invisible **on the carriageway** and the alpha is not the lever:
+**The carriageway tint is an A/B ARM now, and the ruling it feeds is DEVICE-GATED and NOT TAKEN** (arm 2026-09-01, re-measured 2026-09-02; report 98 RR-97, doc 93 §X3). `RoadSurfaceView.set_tint_gain(k)` multiplies the authored `tint` `#57575F` in LINEAR and re-encodes, so `k` is an exposure step rather than a hex nudge; `k = 1.0` is byte-identical to the shipped street and is the default on every path. Nothing in `sim/`, no preset, no governor rung and no settings row touches it. It exists because §2.17b's street-body blob shadow measures near-invisible **on the carriageway** and the alpha is not the lever.
 
-| bench city, Z0, Balanced, pinned | pixels the tint moved | mean \|Δ\| | peak | mean sRGB8 of those pixels, `1.0 → 1.5` | what a 0.50 `blend_mix` disc takes off them (½ × value) |
-|---|---|---|---|---|---|
-| hour 13 | 1,638,794 of 2,073,600 (**79.0 %** of the frame) | 4.3 | 9 | 51.0 → 54.5, **+6.9 %** | 25.5 → 27.3 of 255 |
-| hour 21 | 1,340,009 (64.6 %) | 1.9 | 5 | 41.4 → 42.1, **+1.7 %** | 20.7 → 21.1 of 255 |
+**Re-measured, and the first table this section carried is replaced rather than kept beside it.** Bench city, High, `--focus=52,44`, 1920 × 1080, `k = 1.0` vs `k = 1.5` — which is `(0.3412, 0.3412, 0.3725)` → `(0.4141, 0.4141, 0.4512)`, a **+21.4 %** lift of the authored triple:
 
-**A 1.5× lift of the tint buys under two grey levels on that shadow while moving four fifths of every street frame in the city — by day.** The two arms differ in one uniform, so "the pixels the tint moved" are the carriageway and footway by construction, and their mean is the shaded carriageway's, which is most of a Z0 frame. **At night it buys nothing at all** (+1.7 %, peak 5/255), because after dark the road's value is `road_night_albedo_lift` and `road_night_glow` in the `ground` block and not this tint — so the night arm of this question is a different pair of numbers, and the A/B above cannot answer it. Both facts are why the decision is the lead's on a device and not a render branch's on a desktop.
+| pose / hour | carriageway in frame | rendered luma, `1.0 → 1.5` | peak pixel move |
+|---|---|---|---|
+| Z1, hour 13 | 398,686 px (19.2 % of frame) | 72.84 → 75.07, **+3.1 %** | 8/255 |
+| Z2, hour 13 | 158,850 px (7.7 %) | 107.78 → 109.04, **+1.2 %** | 5/255 |
+| Z1, hour 21 | 36,347 px (1.8 %) | 38.83 → 40.22, **+3.6 %** | 5/255 |
+| Z2, hour 21 | 24,787 px (1.2 %) | 36.46 → 37.37, **+2.5 %** | 6/255 |
+
+**Two corrections to what this section used to say, both of which change the question a device session is being sent to answer.**
+
+1. **There is no day/night asymmetry.** This section claimed the tint moves the road by 17 % by day and "buys nothing at all" at night, on the theory that after dark the road's value belongs to `road_night_albedo_lift` and `road_night_glow` in the `ground` block. Measured at Z1 the night arm moves the road **more** than the day arm (+3.6 % against +3.1 %). The theory was reasonable and it is not what the frames do.
+2. **The lever has far less authority than "the lever with authority" implies.** A +21.4 % lift of the authored tint moves the rendered carriageway by **at most 8 grey levels anywhere**, and the §2.17b blob needs a change of order 15/255 on a 73-luma road to become legible. The response is near-linear and was measured, not extrapolated: `k = 1.0 → 3.0` at Z1 by day gives 73.55 → 81.96 luma, a slope of **+4.21 luma per unit of `k`** (the `1.0 → 1.5` arm gives +4.46, agreeing). **Reaching 15/255 therefore takes `k ≈ 4.6`** — an authored tint near `(0.68, 0.68, 0.73)`. That is not a tint adjustment; that is a different, pale-grey road, and it is a whole-scene look decision of exactly the kind §X3 says a render branch does not get to make.
+
+> **AND THE ARM ITSELF HAD TO BE CHECKED, which is §X3 recursing one level.** The first re-measurement of this table was taken at Z0, `--focus=52,44`, and moved **zero pixels at `k = 4.0`** — three shots at `k` = 1.0, 1.5 and 4.0 were byte-identical (`md5sum`). The arm was not broken: **that pose has no carriageway in it at all**, and a null result from a frame with none of the thing under test in it looks exactly like a null result from a lever with no authority. What caught it was making the harness print the uniform **read back off the live `ShaderMaterial`** (`RoadSurfaceView.live_tint_color()`) beside the value the arithmetic wanted — the same "read back off the live object, not off the resolver" rule §2.13b's `QUALITY` line follows, for the same reason. `profile_frame`'s `ROAD TINT` line now prints both and flags them when they disagree.
 
 **The exact commands, both ends.** Desktop, the pair the table above was measured from:
 
 ```bash
-# The two arms. Identical but for K; `--anim-step` pins the three animated
-# layers so the pixel diff is the tint and not the frame rate.
+# The two arms. Identical but for K. Z1/Z2 rather than Z0: the Z0 pose at this
+# focus contains no carriageway, and an arm measured there returns zero.
 for K in 1.0 1.5; do
   ~/.local/bin/godot --path "/home/bbx/Slacum City game" \
-    -s res://tools/profile_frame.gd -- --preset=balanced --poses=z0 \
-    --hour=13 --focus=48,48 --street-life=6 --street-gm=600 \
-    --anim-step=0.016667 --warmup=60 --frames=30 --road-tint=$K \
-    --shots=/tmp/tint$K_day
+    -s res://tools/profile_frame.gd -- --preset=high --poses=z1,z2 \
+    --hour=13 --focus=52,44 --warmup=15 --frames=20 --road-tint=$K \
+    --shots=/tmp/rt_d$K
 done
-# …and the same two at --hour=21, which is the arm the table says the tint
-# cannot reach: 0.0182 -> 0.0185 linear.
+# …and the same two at --hour=21, which this section used to say the tint
+# could not reach. It reaches it: +3.6 % at Z1 against +3.1 % by day.
 ```
 
 Device (the Fold, where the look decision actually belongs — a 6.2 mm-per-degree
@@ -897,7 +905,7 @@ Network lines (power feeders, water mains, congestion) draw as **one `ImmediateM
 
 **Vehicle shadows are off on mobile (`vehicles.cast_shadows = false`, overridden per preset by `vehicle_shadows`).** A vehicle layer's custom AABB is world-sized — it has to be, because instances are written straight into the MultiMesh buffer and never update the auto AABB — so **every** body layer intersects **every** directional shadow split and is re-drawn once per split whether or not a car is standing in it. At Balanced (2 splits) that is 7 extra draw calls for shadows nobody can see from 87 m up; at High (4 splits) it is 14, which High can afford and takes. The nine remaining `VehicleView` tuning constants (`road_top_m`, `lane_offset_m`, `fade_seconds`, `interp_blend_seconds`, `headlight_cone_m`, `headlight_cone_energy`, `headlight_color`, `lightbar_amber`, `lightbar_amber_pale`) are in `data/render.json`'s `vehicles` block at the same values, with the script constants kept as the fallback.
 
-**Every colour in this renderer is now decoded exactly once, and the LAST place that was not true was the VERTEX** (2026-09-01, report 98 RR-95, doc 93 §X1, closing doc 91 `A91-D-36`'s `awaiting_consumer` half). RR-91 fixed the INSTANCE half — a MultiMesh instance colour takes no sRGB decode, so `VehicleView._paint_for` and `ConstructionActivity._plant_paint` were rendering the whole fleet and every machine about two stops light — and filed the vertex half, because a vertex colour takes no decode either and several constants are used both ways. The seam is now one `srgb_to_linear` in `ConstructionRigMesh._push` (which `StreetLifeMesh` inherits), one in `VehicleMesh._push`, and **one in `ConstructionSiteView.PropMesh._push`, which the hoarding, the crane, the scaffold, the skips AND doc 04's transformer pad are all built with** (`power_pad.gdshader` reads `COLOR.rgb` raw, and a `StandardMaterial3D` with the project's default `vertex_color_is_srgb = false` does too): **at build time, once per vertex, never per frame, and never at the CONSTANT** — `SAND` / `GRAVEL` / `REBAR` are read as instance tints by `ConstructionActivity._stock_linear`, which already decodes them, and converting the constant would decode them twice. The grep that closed the vertex half also found **three instance seams RR-91's closing note had missed** — the hoarding panels and posts (`fence_paint` / `post_paint`), doc 12 §2.5's traffic band (`RoadOverlayView._build_band_paint`, now the legend chip's colour by construction) and the road-drawing ghost (`PathGhostView.tint_for`, filed with a named consumer, report 98 RR-95 (continued)) — and one builder that is correctly left alone: `CobraHeadMesh`'s vertex colour is a grime ramp, not a hex. **Two hexes moved with the pictures and the rest did not**: `DARK` `#1D2022` → `#424548` and `TYRE` `#161618` → `#333336`, in both mesh files, because decoded from their authored values they land at linear 0.0125 and 0.0069 — **below the 0.02-linear shaded carriageway**, so an excavator's track band stopped being an object on the road and became a hole cut in it, and a tyre went blacker than fresh asphalt and took the `dark` atlas cell's tread ribs with it. §2.16's plant, §2.12's fleet, §2.17's bodies, the site props and the pads were all re-judged in one screenshot pass (report 98 RR-95 have the census) and the rest of the palette survives it — the correction is a darkening and a darkening is what the fix is FOR.
+**Every colour in this renderer is now decoded exactly once, and the LAST place that was not true was the VERTEX** (2026-09-01, report 98 RR-95, doc 93 §X1, closing doc 91 `A91-D-36`'s `awaiting_consumer` half). RR-91 fixed the INSTANCE half — a MultiMesh instance colour takes no sRGB decode, so `VehicleView._paint_for` and `ConstructionActivity._plant_paint` were rendering the whole fleet and every machine about two stops light — and filed the vertex half, because a vertex colour takes no decode either and several constants are used both ways. The seam is now one `srgb_to_linear` in `ConstructionRigMesh._push` (which `StreetLifeMesh` inherits), one in `VehicleMesh._push`, and **one in `ConstructionSiteView.PropMesh._push`, which the hoarding, the crane, the scaffold, the skips AND doc 04's transformer pad are all built with** (`power_pad.gdshader` reads `COLOR.rgb` raw, and a `StandardMaterial3D` with the project's default `vertex_color_is_srgb = false` does too): **at build time, once per vertex, never per frame, and never at the CONSTANT** — `SAND` / `GRAVEL` / `REBAR` are read as instance tints by `ConstructionActivity._stock_linear`, which already decodes them, and converting the constant would decode them twice. The grep that closed the vertex half also found **three instance seams RR-91's closing note had missed** — the hoarding panels and posts (`fence_paint` / `post_paint`), doc 12 §2.5's traffic band (`RoadOverlayView._build_band_paint`, now the legend chip's colour by construction) and the road-drawing ghost (`PathGhostView.tint_for`, filed with a named consumer, report 98 RR-95 (continued)) — and one builder that was recorded as correctly left alone and was NOT: `CobraHeadMesh`'s vertex colour is a grime ramp MULTIPLYING two authored hex tints (`COWL_TINT`, `LENS_TINT`), reaching the shader through `ARRAY_COLOR` and not through the `albedo_color` that note also claimed — fixed 2026-09-02, with the ruling that a channel carrying an authored colour TIMES a computed multiplier decodes the colour and not the multiplier (a ramp is a reflectance multiplier and belongs in linear; decoding the product takes the mast's foot from linear 0.41 to 0.18). Neither cobra constant moved — both are near-white and white is a fixed point of the decode. **The guard is a CENSUS now, not a list**: `test_every_procedural_mesh_decodes_its_authored_vertex_colour` greps `game/render/` for `Mesh.ARRAY_COLOR` and requires `srgb_to_linear` in every file that has one, because a hand-kept list is what missed this file twice. **Two hexes moved with the pictures and the rest did not**: `DARK` `#1D2022` → `#424548` and `TYRE` `#161618` → `#333336`, in both mesh files, because decoded from their authored values they land at linear 0.0125 and 0.0069 — **below the 0.02-linear shaded carriageway**, so an excavator's track band stopped being an object on the road and became a hole cut in it, and a tyre went blacker than fresh asphalt and took the `dark` atlas cell's tread ribs with it. §2.16's plant, §2.12's fleet, §2.17's bodies, the site props and the pads were all re-judged in one screenshot pass (report 98 RR-95 have the census) and the rest of the palette survives it — the correction is a darkening and a darkening is what the fix is FOR.
 
 **Emergency/service vehicles — individual nodes, real routing** (constitution §8). **Doc 06** (incidents, dispatch & fleets) emits `vehicle_state` at 4 Hz, carrying explicit `speed` and `heading` fields (report C-67, ruled). Pooled `VehicleView` = `Body` (MeshInstance3D, ≤ 180 tris, dept colour) + `LightBar` (2 emissive quads) + `Beacon` (`OmniLight3D`, only while checked out from the emergency light budget).
 
@@ -2592,13 +2600,21 @@ does not come back as a *contrast* step in the other direction.
 
 #### 2.13b The engine-side half of a preset (2026-09-01, report 98 RR-98, doc 93 §X5)
 
-**Until Wave 17, none of it reached the engine.** **Thirteen** keys in every
-preset row of `data/render.json` reached no engine call: `render_scale`,
-`msaa`, `fxaa`, `shadow_splits`, `shadow_atlas`, `shadow_max_m`, `glow_levels`,
-`glow_hdr_threshold_day`, `glow_hdr_threshold_night`, `glow_hdr_scale`,
-`env_adjustments`, `moon`, and `street_lights` (§2.13 ladder rung 4).
+**Until Wave 17, none of it reached the engine.** **Twenty-two** keys in every
+preset row of `data/render.json` reached no engine call. Counted, not
+remembered — the count below is `grep -rn '"<key>"' --include=*.gd game/ ui/`
+against the fork tree (`a5d9021`), and it corrects the "thirteen" the first
+draft of this section published:
 
-**Twelve of the thirteen never appear as a string literal anywhere in `game/` or `ui/`** — which is the only way a JSON preset key can be read, so they were unreachable, not merely unread. The thirteenth, `render_scale`, appears exactly twice, both inside `ui/settings_model.gd`'s comparator: **it sorted the graphics menu rows cheapest-first**, so the number that decided the ORDER of the options was the number that did nothing when you chose one.
+* **Sixteen are now WIRED**: `render_scale`, `msaa`, `fxaa`, `shadows`,
+  `shadow_splits`, `shadow_atlas`, `shadow_max_m`, `glow_levels`, `glow_blend`,
+  `glow_hdr_threshold_day`, `glow_hdr_threshold_night`, `glow_hdr_scale`,
+  `env_adjustments`, `moon`, `street_lights` (§2.13 ladder rung 4) and
+  `civ_headlights`.
+* **Six are DELETED**, in the table below, each because the feature it names
+  does not exist.
+
+**Twenty-one of the twenty-two never appear as a string literal anywhere in `game/` or `ui/`** — which is the only way a JSON preset key can be read, so they were unreachable, not merely unread. The twenty-second, `render_scale`, appears exactly twice, both inside `ui/settings_model.gd`'s comparator (`:172-173`): **it sorted the graphics menu rows cheapest-first**, so the number that decided the ORDER of the options was the number that did nothing when you chose one.
 
 And
 `EnvironmentController.setup` read glow from `presets["balanced"]` with the name

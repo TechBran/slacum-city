@@ -1283,6 +1283,17 @@ func _report() -> void:
 				float(row["pitch_deg"]),
 				"%.0f m" % active if active < authored - 0.5 \
 						else "%.0f m (= preset, frustum reaches past it)" % active])
+	# §2.17b's road-tint arm, printed as the RESOLVED uniform rather than as the
+	# requested gain. An A/B arm that silently fails to reach its uniform
+	# returns a null result that looks like an answer — which is doc 93 §X3's
+	# own binding, applied to §X3's own instrument (report 98 RR-97).
+	if _roads != null:
+		var t := _roads.tinted_road_color()
+		var live := _roads.live_tint_color()
+		print(("  ROAD TINT (doc 11 §2.1.2, gain %.2f): resolved (%.4f, %.4f, %.4f)"
+				+ "  LIVE MATERIAL (%.4f, %.4f, %.4f)%s")
+				% [_roads.tint_gain, t.r, t.g, t.b, live.r, live.g, live.b,
+				"" if live.is_equal_approx(t) else "   <-- ARM DID NOT REACH THE UNIFORM"])
 	print("  PITCH CULL (doc 11 §2.5b, %s): %s" % [
 			"ON" if _model.pitch_cull_enabled else "DISARMED",
 			"   ".join(cull_bits)])

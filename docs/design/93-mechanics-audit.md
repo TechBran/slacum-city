@@ -2261,11 +2261,32 @@ the form "every X is fixed" is a GREP, not a memory.** `_push(` across
 builders (`ConstructionSiteView.PropMesh` — which also builds doc 04's
 transformer pad — and `CobraHeadMesh`) and three more instance seams (the
 hoarding panels, the traffic overlay band, the road-drawing ghost) that "every
-authored livery" had not covered (report 98 RR-95 (continued)). One of the five was
-correctly left alone — the cobra head's vertex colour is a value ramp, not a
-hex, and decoding it would deepen weathering fitted by eye — which is the
-first rule again: **a channel is decoded when what is IN it was authored in
-sRGB, and the only way to know that is to read the writer.**
+authored livery" had not covered (report 98 RR-95 (continued)).
+
+**One of the five was then recorded as "correctly left alone" — and that was
+this section's own binding being broken by the paragraph that states it.**
+`CobraHeadMesh` was written off as *"a value ramp, not a hex, and decoding it
+would deepen weathering fitted by eye"*. Reading the writer, which is what the
+rule says to do, shows the ramp MULTIPLYING two authored hex tints
+(`COWL_TINT`, `LENS_TINT`) and reaching the shader through `ARRAY_COLOR` — not
+through the `albedo_color` the note also claimed. **The channel carried both
+things at once, and the rule as written offered only two answers.** So the rule
+gains its missing third:
+
+> **When a channel carries an authored colour TIMES a computed multiplier, the
+> two are decoded separately: the colour takes the decode, the multiplier does
+> not.** A ramp, a mask, an occlusion term or a fade is a reflectance
+> multiplier — halving it means half the light — and belongs in linear.
+> Decoding the product puts the multiplier through a 2.4 power: the cobra
+> mast's foot goes from linear 0.41 to 0.18, which is not grime, it is night.
+
+**And the census is now a TEST, because "check the consumer, not the grep" is
+only half an instruction.** The grep is what produces the candidate set; reading
+the writer is what decides each one; and *neither* survives as an audit answer
+unless something re-runs it. `test_every_procedural_mesh_decodes_its_authored_vertex_colour`
+walks `game/render/` for `Mesh.ARRAY_COLOR` and requires `srgb_to_linear` in
+every file that has one. **A hand-kept list of builders is what missed this file
+twice** — once in RR-91's closing note, once in RR-95's.
 
 **And §V4's own second half applies to itself.** Every hex authored against the
 broken seam is unfitted when the seam is fixed, and the re-judgement is a
@@ -2329,15 +2350,41 @@ street in the city on a phone screen. So this branch ships
 shipped value — plus both commands and the question a device session has to
 answer, and moves **nothing**.
 
-**Two measurements that narrow the question, and the second is the one worth
-keeping.** By day, a 1.5× lift of the authored tint moves the *rendered* shaded
-carriageway by 17 % rather than 50 %, because the shaded road is
-ambient-dominated. **At night it moves it by 1.6 %** — after dark the road's
-value is `road_night_albedo_lift` and `road_night_glow` in a different block, so
-the obvious experiment would have been run, would have shown nothing, and would
-have been reported as "the tint does not matter". **An A/B arm has to be checked
-for AUTHORITY before its result is believed**: an arm that cannot move the thing
-under test returns a null result that looks like an answer.
+**An A/B arm has to be checked for AUTHORITY before its result is believed**:
+an arm that cannot move the thing under test returns a null result that looks
+like an answer. This section was written on that binding and then, at the
+re-measurement two days later, **broke it twice — which is why the binding now
+carries two failures it caused rather than one it caught.**
+
+**Failure 1: the arm was measured at a pose containing none of the thing under
+test.** The re-measurement began at Z0, `--focus=52,44`, and moved **zero
+pixels at `k = 4.0`** — three shots at `k` = 1.0, 1.5 and 4.0 were byte-identical
+by `md5sum`. The arm was not broken; that pose has no carriageway in it. A null
+from an empty frame is indistinguishable from a null from a dead lever, and the
+only thing that told them apart was making the harness print the uniform **read
+back off the live `ShaderMaterial`** beside the value the arithmetic wanted.
+**So the binding grows a clause: an arm reports what the ENGINE holds, not what
+the resolver computed, and it reports the size of the thing it is measuring in
+the frame.** `profile_frame`'s `ROAD TINT` line does both now.
+
+**Failure 2: the numbers this section published were wrong about the shape of
+the answer.** It claimed a 1.5× tint lift moves the rendered carriageway by
+17 % by day and by 1.6 % at night, on the theory that after dark the road's
+value belongs to `road_night_albedo_lift` and `road_night_glow` in a different
+block. Re-measured at Z1/Z2 on a road-bearing pose, the same +21.4 % lift of
+the authored triple moves it **+3.1 % / +1.2 % by day and +3.6 % / +2.5 % at
+night** — there is no day/night asymmetry, and at Z1 the night arm moves the
+road *more* than the day arm. The theory was reasonable and it is not what the
+frames do.
+
+**What survives is the ruling, and it survives STRONGER.** The response is
+near-linear and measured rather than extrapolated (`k` 1.0 → 3.0 gives
+73.55 → 81.96 luma at Z1 by day, **+4.21 luma per unit of `k`**, against +4.46
+from the 1.0 → 1.5 arm), so moving the road the ~15/255 §2.17b's blob needs
+takes **`k ≈ 4.6`** — an authored tint near `(0.68, 0.68, 0.73)`. That is not a
+tint adjustment, it is a different, pale-grey road: the lever with authority
+here is bigger than the branch that found the problem, which is exactly what
+this section says to do about it.
 
 ### X4 — A re-open condition is written in terms of an instrument that EXISTS (report 98 RR-97)
 
@@ -2372,7 +2419,9 @@ guard is a test that names the CONSUMING FILE per key, not a test that checks
 the value**, because the failure mode is not a wrong number; it is a right
 number nobody fetches.
 
-Wave 17 found thirteen such keys in `data/render.json`'s three preset rows, one
+Wave 17 found **twenty-two** such keys in `data/render.json`'s three preset
+rows (the count is a `grep` over the fork tree, and it corrects a "thirteen"
+that an earlier draft of this section published from memory), one
 of which — `render_scale` — was read in exactly one place: `SettingsModel`, to
 **sort the graphics menu cheapest-first**. The number that decided the order of
 the rows was the number that did nothing when a row was picked. Two more
@@ -2396,7 +2445,16 @@ distance.
    OmniLight pool; `StreetlightView`'s class doc had said *"the OmniLight pool
    arrives with the perf pass"* for four waves after the billboard-and-decal
    rig had made it unnecessary. The stale promise is why nobody re-checked the
-   key. Seven keys and one sentence went together.
+   key. Six keys and one sentence went together.
+
+   The same corollary has a **converse that cost more**: a key deleted on a
+   claim about its consumer, when the claim is wrong, deletes a working lever.
+   `civ_headlights` was on the deleted list on the ground that it "duplicates a
+   cap `vehicles.headlight_*` already owns" — but those four rows are a night
+   threshold, a cone length, an energy and a colour, none of them a count, and
+   `MM_headlights` was in fact the **one buffer in `VehicleView` with no
+   ceiling at all**. **Deleting a key requires the same evidence as wiring
+   one: the grep, not the recollection.**
 
 3. **The same rule reaches into shaders.** `building_far.gdshader` held one
    neutral albedo pair for five building families while the tier in front of it

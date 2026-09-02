@@ -233,6 +233,20 @@ func tinted_road_color() -> Color:
 	return _tinted()
 
 
+## The tint the LIVE material is actually carrying, read back off the shader
+## rather than recomputed. `tinted_road_color()` says what the arithmetic
+## wants; this says what the renderer got, and report 98 RR-97 exists because
+## those were not the same thing.
+func live_tint_color() -> Color:
+	if _asphalt == null or _asphalt.material_override == null:
+		return Color(-1, -1, -1)
+	if _asphalt.material_override is ShaderMaterial:
+		var v: Variant = (_asphalt.material_override as ShaderMaterial) \
+				.get_shader_parameter("tint")
+		return v if v is Color else Color(-2, -2, -2)
+	return Color(-3, -3, -3)
+
+
 func _tinted() -> Color:
 	if is_equal_approx(tint_gain, 1.0):
 		# BYTE-IDENTICAL at the shipped gain: the round trip through linear and
