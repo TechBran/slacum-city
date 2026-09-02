@@ -238,15 +238,20 @@ func apply_decay(dt_h: float, overload_excess: float = 0.0, powered_fraction: fl
 			* weather_decay_mult
 	if state == &"damaged":
 		rate *= rule("damaged_decay_multiplier")  # §2.12 state table
+	if owner_maintained and state == &"damaged" \
+			and clampf(powered_fraction, 0.0, 1.0) > 0.0:
+		# An INCIDENT put it here (doc 06) and the owner is rebuilding it, so
+		# this path owns the WHOLE hour: no wear is applied on top of the crew's
+		# work, and the floor below does not apply either. A `damaged` building
+		# is not a worn one — it is doc 06's damage, restored at §2.6's own
+		# crew-hours to §2.12's own post-damage target, and floor-jumping it to
+		# `band_worn` in a single hour would erase the incident instead of
+		# repairing it.
+		return _owner_maintain(dt_h, powered_fraction)
 	var events: Array = []
-	if owner_maintained and state == &"damaged":
-		# An INCIDENT put it here (doc 06), and the owner rebuilds it — see
-		# `_owner_maintain`. That path owns the whole hour when it fires.
-		events = _owner_maintain(dt_h, powered_fraction)
-		if not events.is_empty():
-			return events
 	condition = clampf(condition - rate * dt_h, 0.0, 1.0)
-	if owner_maintained and clampf(powered_fraction, 0.0, 1.0) > 0.0:
+	if owner_maintained and state != &"damaged" \
+			and clampf(powered_fraction, 0.0, 1.0) > 0.0:
 		# **Doc 02 §2.6a, the ownership FLOOR (doc 93 §Y1).** A private building
 		# wears exactly as §2.6 has always said — this ruling moves not one
 		# `decay_per_hour` cell — but its owner will not let it fall past the
