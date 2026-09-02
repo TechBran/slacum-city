@@ -102,6 +102,24 @@ func sample(hour: float) -> Dictionary:
 	}
 
 
+## THE SKY's four colours (Wave 17, §2.8), from one `sample()` — the zenith and
+## the horizon are the sampled day/night pair, the HAZE is the sampled fog tint
+## (so the band the far city fogs into and the band the sky draws at the horizon
+## are the same colour, which is what seats the city edge), and the ground
+## hemisphere is the fog tint darkened by `sky.ground_darken`. Pure so a test can
+## hold the dawn key to it: at 07:00 the horizon is the authored `#C88A5A` and
+## the haze is the authored fog `#5A5A66`, never a blend of the two.
+func sky_colors(s: Dictionary, ground_darken: float = 0.45) -> Dictionary:
+	var horizon: Color = s["sky_horizon"]
+	var haze: Color = s["fog_tint"]
+	return {
+		"zenith": s["sky_top"],
+		"horizon": horizon,
+		"haze": haze,
+		"ground": haze.darkened(clampf(ground_darken, 0.0, 1.0)),
+	}
+
+
 ## Fog profile blend for the current conditions (§2.8): the two clear profiles
 ## blend by `night`; weather profiles crossfade upstream (weather_mix 0..1
 ## toward `weather_profile`). The far-cull clamp invariant is applied HERE so

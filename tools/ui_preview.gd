@@ -67,6 +67,11 @@ const SCREENS: Array[String] = [
 	# never on screen together: the one-shot discovery mark over the world, and
 	# the Economy ledger with the two lines doc 03 does not settle.
 	"street_coach", "economy_street",
+	# Wave 17's tilt slider (doc 12 §2.23). Two faces, same commit as the
+	# control: the RESTING column, ghosted after its idle fade, thumb on the
+	# AUTO detent; and MID-DRAG, full alpha, the thumb leaned toward the
+	# facades with the pressed face.
+	"tilt_rest", "tilt_drag",
 ]
 
 ## A `Control` does not have a size until its container has laid it out, and the
@@ -178,6 +183,10 @@ func _mount() -> void:
 	_apply_accessibility(_root.config)
 	add_child(_root)
 	_root.initialize()
+	# The tilt slider needs an axis to draw; this harness has no rig, so it gets
+	# a fresh `CameraState` — the same wiring `game/main.gd` does with the live
+	# one, and what puts the column into every sweep rather than only its own.
+	_root.bind_camera(CameraState.load_from_files())
 	_sim = CitySim.boot_from_files()
 	_controller = BuildController.new(_sim)
 	_building_panel = _root.safe_area.get_node_or_null(
@@ -682,6 +691,19 @@ func _apply(screen: String) -> void:
 			# also the only state that shows the capped line.
 			_root.present_veil_catchup(720, 720, true)
 			_root.advance_veil_catchup(415)
+		"tilt_rest":
+			# The resting face: nobody has touched it, the thumb is on the AUTO
+			# detent, and the idle clock is wound past the fade so the photo
+			# shows the ghost the player actually lives with.
+			if _root.tilt_slider != null:
+				_root.tilt_slider.preview_rest()
+				_root.tilt_slider.advance(_root.tilt_slider.fade_after_s() + 1.0)
+				_root.tilt_slider.advance(1.0)
+		"tilt_drag":
+			# Mid-drag toward the facades: full alpha, pressed face, the lit
+			# half of the track from the detent to the thumb.
+			if _root.tilt_slider != null:
+				_root.tilt_slider.preview_drag(0.7)
 		_:
 			if screen.begins_with("coach_"):
 				_coach(screen.trim_prefix("coach_"))
@@ -692,6 +714,8 @@ func _apply(screen: String) -> void:
 func _close_everything() -> void:
 	if _root.build_sheet != null:
 		_root.build_sheet.cancel_placement()
+	if _root.tilt_slider != null:
+		_root.tilt_slider.preview_rest()
 	for layer: Control in [_root.panel_layer, _root.sheet_layer, _root.modal_layer]:
 		if layer == null:
 			continue

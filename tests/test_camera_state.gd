@@ -570,3 +570,338 @@ func test_ui_json_camera_carries_range_not_projection() -> void:
 				found = true
 		assert_true(found or render.has("fov_deg"),
 				"data/render.json owns fov_deg (doc 11 §2.5)")
+
+
+# ---------------------------------------------------------------------------
+# Wave 17 — the manual pitch axis (doc 12 §2.23, doc 98 §43)
+# ---------------------------------------------------------------------------
+
+func test_auto_pitch_is_the_curve_to_the_bit() -> void:
+	# The axis COMPOSES: a camera nobody tilted is byte-for-byte the camera it
+	# was before the axis existed, at every zoom.
+	var cam := _camera()
+	for i in range(0, 21):
+		var t := float(i) / 20.0
+		cam.set_zoom_t(t)
+		assert_true(cam.is_pitch_auto(), "fresh camera is AUTO at t=%f" % t)
+		assert_eq(cam.pitch_deg(), cam.pitch_deg_at(cam.zoom_t),
+				"AUTO pitch == pitch(t) exactly at t=%f" % t)
+
+
+func test_the_lean_reaches_the_authored_band_at_every_zoom() -> void:
+	var cam := _camera()
+	assert_almost_eq(cam.pitch_manual_min_deg, 12.0, 0.0001, "the floor from data/ui.json")
+	assert_almost_eq(cam.pitch_manual_max_deg, 78.0, 0.0001, "the ceiling from data/ui.json")
+	for t: float in [0.0, 0.42, 0.5, 1.0]:
+		cam.set_zoom_t(t)
+		cam.set_pitch_bias(1.0)
+		assert_almost_eq(cam.pitch_deg(), cam.pitch_floor_deg_at(t), 0.0001,
+				"bias +1 is the floor this zoom allows at t=%f" % t)
+		cam.set_pitch_bias(-1.0)
+		assert_almost_eq(cam.pitch_deg(), cam.pitch_ceiling_deg_at(t), 0.0001,
+				"bias -1 is the ceiling this zoom allows at t=%f" % t)
+		cam.set_pitch_bias(0.5)
+		assert_almost_eq(cam.pitch_deg(), lerpf(cam.pitch_deg_at(t), cam.pitch_floor_deg_at(t), 0.5),
+				0.0001, "half a lean is half way from the curve to the floor at t=%f" % t)
+	# Close in, the whole authored band is reachable (reach 1.0 at t = 0).
+	cam.set_zoom_t(0.0)
+	cam.set_pitch_bias(1.0)
+	assert_almost_eq(cam.pitch_deg(), 12.0, 0.0001, "bias +1 at Z0 is the 12° floor")
+	assert_almost_eq(cam.height_m(), 18.0 * sin(deg_to_rad(12.0)), 0.001,
+			"at the floor a Z0 camera is 3.74 m up — above the 3.5 m ground floor")
+	cam.set_pitch_bias(-1.0)
+	assert_almost_eq(cam.pitch_deg(), 78.0, 0.0001, "bias -1 at Z0 is the 78° ceiling")
+
+
+func test_the_middle_detent_is_auto_not_a_bias_that_looks_like_it() -> void:
+	var cam := _camera()
+	cam.set_pitch_bias(0.03)
+	assert_true(cam.is_pitch_auto(), "inside pitch_detent_units lands on AUTO")
+	assert_almost_eq(cam.pitch_bias, 0.0, 0.000001)
+	cam.set_pitch_bias(0.05)
+	assert_false(cam.is_pitch_auto(), "outside it is a lean")
+	assert_almost_eq(cam.pitch_bias, 0.05, 0.000001)
+
+
+func test_set_pitch_deg_solves_the_bias_and_clamps_to_the_band() -> void:
+	var cam := _camera()
+	for t: float in [0.0, 0.5, 1.0]:
+		cam.set_zoom_t(t)
+		var lo := cam.pitch_floor_deg_at(t)
+		var hi := cam.pitch_ceiling_deg_at(t)
+		for k in range(0, 7):
+			var deg := lerpf(lo, hi, float(k) / 6.0)
+			cam.set_pitch_deg(deg)
+			# The middle detent is honoured on the way IN, because
+			# `set_pitch_deg` goes through `set_pitch_bias`: an angle within
+			# `pitch_detent_units` of lean of the curve lands on AUTO, which is
+			# the curve's own angle. With `pitch_reach_up_far` authored at 0.76
+			# the sampled ladder lands inside that detent at t=0.5, and the
+			# detent winning there is the ruling, not a rounding error.
+			var want := deg
+			if absf(cam.pitch_bias_for_deg(deg, t)) <= cam.pitch_detent_units:
+				want = cam.pitch_deg_at(t)
+			assert_almost_eq(cam.pitch_deg(), want, 0.001, "%f° at t=%f" % [deg, t])
+	cam.set_zoom_t(0.5)
+	cam.set_pitch_deg(5.0)
+	assert_almost_eq(cam.pitch_deg(), cam.pitch_floor_deg_at(0.5), 0.001,
+			"below the floor clamps to it")
+	cam.set_pitch_deg(89.0)
+	assert_almost_eq(cam.pitch_deg(), cam.pitch_ceiling_deg_at(0.5), 0.001,
+			"above the ceiling clamps to it")
+	cam.set_pitch_deg(cam.pitch_deg_at(0.5))
+	assert_true(cam.is_pitch_auto(), "the curve's own angle is AUTO")
+
+
+func test_reach_narrows_the_band_in_degrees_with_the_zoom() -> void:
+	# doc 92 §47's coupling: the data can author less lean far out. The bias
+	# range is always [-1, 1] — the ANGLE it buys is what shrinks.
+	var cam := _camera()
+	cam.pitch_reach_up_near = 1.0
+	cam.pitch_reach_up_far = 0.5
+	cam.pitch_reach_down_near = 1.0
+	cam.pitch_reach_down_far = 1.0
+	cam.set_zoom_t(0.0)
+	cam.set_pitch_bias(1.0)
+	assert_almost_eq(cam.pitch_deg(), 12.0, 0.0001, "close in, the whole band")
+	cam.set_zoom_t(1.0)
+	assert_almost_eq(cam.reach_up_at(1.0), 0.5, 0.0001)
+	assert_almost_eq(cam.pitch_floor_deg_at(1.0), lerpf(62.0, 12.0, 0.5), 0.0001,
+			"far out, bias +1 buys half the lean: 37°")
+	assert_almost_eq(cam.pitch_deg(), 37.0, 0.0001)
+	assert_almost_eq(cam.pitch_ceiling_deg_at(1.0), 78.0, 0.0001,
+			"the down reach is authored separately and is still 1.0")
+	assert_almost_eq(cam.reach_up_at(0.5), lerpf(1.0, 0.5, 0.5), 0.0001,
+			"interpolated by smoothstep, the pitch curve's own shape")
+
+
+func test_a_tap_above_the_horizon_is_a_typed_miss() -> void:
+	var cam := _camera()
+	cam.bounds_enabled = false
+	cam.set_focus(Vector3(400.0, 0.0, 400.0))
+	cam.set_zoom_t(0.0)
+	var top := Vector2(REF_VIEWPORT.x * 0.5, 0.0)
+	var bottom := Vector2(REF_VIEWPORT.x * 0.5, REF_VIEWPORT.y)
+	# AUTO at Z0: 34° − 20° of half-FOV is 14° of depression at the top of the
+	# frame, so every tap hits — the pre-Wave-17 guarantee.
+	assert_true(bool(cam.ground_hit(top, REF_VIEWPORT)["hit"]), "AUTO top of frame hits")
+	assert_eq(cam.ground_hit(top, REF_VIEWPORT)["reason"], CameraState.GROUND_OK)
+	# At the 12° floor the top of the frame is 8° ABOVE the horizon.
+	cam.set_pitch_bias(1.0)
+	var miss := cam.ground_hit(top, REF_VIEWPORT)
+	assert_false(bool(miss["hit"]), "a tap on the sky has no ground under it")
+	assert_eq(miss["reason"], CameraState.MISS_ABOVE_HORIZON)
+	var guarded: Vector3 = miss["position"]
+	assert_almost_eq(guarded.y, 0.0, 0.000001, "the guarded point still lies on y = 0")
+	assert_true(is_finite(guarded.x) and is_finite(guarded.z), "…and is finite")
+	assert_almost_eq(float(miss["distance"]), cam.distance() * 4.0, 0.001,
+			"…at the dist·4 clamp doc 12 §2.16 asks for")
+	assert_true(cam.screen_to_ground(top, REF_VIEWPORT).is_equal_approx(guarded),
+			"the untyped read keeps the guard's answer, byte for byte")
+	assert_true(bool(cam.ground_hit(bottom, REF_VIEWPORT)["hit"]),
+			"the bottom of the frame looks 32° down and hits")
+	assert_true(bool(cam.ground_hit(Vector2(440.0, 200.0), REF_VIEWPORT)["hit"]),
+			"the centre of the frame is 12° down and lands within dist·4")
+
+
+func test_m_per_dp_is_pitch_invariant_and_the_depth_axis_is_not() -> void:
+	var cam := _camera()
+	cam.bounds_enabled = false
+	cam.set_zoom_t(0.5)
+	var flat := cam.m_per_dp(REF_VIEWPORT)
+	cam.set_pitch_bias(1.0)
+	var floor_deg := cam.pitch_floor_deg_at(0.5)
+	assert_almost_eq(cam.m_per_dp(REF_VIEWPORT), flat, 0.000001,
+			"screen-right is parallel to the ground at every pitch")
+	assert_almost_eq(cam.m_per_dp_depth(REF_VIEWPORT), flat / sin(deg_to_rad(floor_deg)),
+			0.0001, "screen-up rakes 1/sin(pitch) further across the ground")
+	assert_almost_eq(cam.m_per_dp_anisotropy(), 1.0 / sin(deg_to_rad(floor_deg)), 0.0001)
+	cam.clear_pitch_bias()
+	cam.set_zoom_t(0.0)
+	assert_almost_eq(cam.m_per_dp_anisotropy(), 1.0 / sin(deg_to_rad(34.0)), 0.0001,
+			"×1.79 at the curve's own floor")
+
+
+func test_a_tilt_keeps_the_ground_point_under_the_fingers() -> void:
+	# The two-finger tilt re-locks the pan anchor the way a twist does, so the
+	# tile under the centroid before the tilt is the tile under it after.
+	var cam := _camera()
+	cam.bounds_enabled = false
+	cam.set_focus(Vector3(400.0, 0.0, 400.0))
+	cam.set_zoom_t(0.42)
+	cam.yaw = deg_to_rad(45.0)
+	var centroid := Vector2(560.0, 260.0)
+	var before := cam.screen_to_ground(centroid, REF_VIEWPORT)
+	cam.begin_pan(centroid, REF_VIEWPORT)
+	cam.begin_tilt()
+	for _i in 10:
+		cam.apply_tilt(0.06, centroid, REF_VIEWPORT, 1.0 / 60.0)
+	assert_false(cam.is_pitch_auto())
+	assert_true(cam.pitch_deg() < cam.pitch_deg_at(0.42), "leaned toward the facades")
+	var after := cam.screen_to_ground(centroid, REF_VIEWPORT)
+	assert_true(after.distance_to(before) < 0.01,
+			"same screen point → same ground point across the tilt (%f m)"
+			% after.distance_to(before))
+	assert_eq(BuildController.tile_at(after), BuildController.tile_at(before),
+			"…and therefore the same tile")
+	cam.end_tilt()
+	cam.end_pan()
+
+
+func test_a_tilt_at_the_floor_never_throws_the_focus_when_the_anchor_is_sky() -> void:
+	var cam := _camera()
+	cam.bounds_enabled = false
+	cam.set_focus(Vector3(400.0, 0.0, 400.0))
+	cam.set_zoom_t(0.0)
+	cam.set_pitch_bias(1.0)
+	var sky := Vector2(440.0, 0.0)
+	assert_false(bool(cam.ground_hit(sky, REF_VIEWPORT)["hit"]))
+	var focus := cam.focus
+	cam.begin_pan(sky, REF_VIEWPORT)
+	cam.update_pan(Vector2(440.0, 40.0), REF_VIEWPORT, 1.0 / 60.0)
+	assert_true(cam.focus.distance_to(focus) < 0.000001,
+			"a pan anchored on the sky moves nothing rather than a kilometre")
+	cam.begin_tilt()
+	cam.apply_tilt(-0.2, sky, REF_VIEWPORT, 1.0 / 60.0)
+	assert_true(cam.focus.distance_to(focus) < 0.000001, "and neither does a tilt from it")
+	cam.end_tilt()
+	cam.end_pan()
+	# A double tap on the sky zooms without re-anchoring.
+	cam.set_pitch_bias(1.0)
+	var t_before := cam.zoom_t
+	cam.step_zoom(sky, REF_VIEWPORT, -1)
+	assert_true(cam.zoom_t > t_before, "still zooms")
+	assert_true(cam.focus.distance_to(focus) < 0.000001, "and the focus stays put")
+
+
+func test_tilt_release_coasts_deterministically_and_stops_in_band() -> void:
+	var cam := _camera()
+	cam.set_zoom_t(0.5)
+	cam.begin_tilt()
+	for _i in 6:
+		cam.apply_tilt(0.05, Vector2.ZERO, Vector2.ZERO, 1.0 / 60.0)   # 3 units/s
+	cam.end_tilt()
+	assert_true(cam.is_pitch_coasting(), "a fast flick hands over to the axis momentum")
+	var steps := 0
+	while cam.is_pitch_coasting() and steps < 600:
+		cam.advance(1.0 / 60.0)
+		steps += 1
+	assert_false(cam.is_pitch_coasting())
+	var landed := cam.pitch_bias
+	assert_true(landed > 0.3 and landed <= 1.0, "coasted on, inside the band (%f)" % landed)
+	# Frame-rate independence: the closed form lands in the same place at 30 Hz.
+	var cam2 := _camera()
+	cam2.set_zoom_t(0.5)
+	cam2.begin_tilt()
+	for _i in 6:
+		cam2.apply_tilt(0.05, Vector2.ZERO, Vector2.ZERO, 1.0 / 60.0)
+	cam2.end_tilt()
+	var steps2 := 0
+	while cam2.is_pitch_coasting() and steps2 < 600:
+		cam2.advance(1.0 / 30.0)
+		steps2 += 1
+	assert_almost_eq(cam2.pitch_bias, landed, 0.02, "coast is dt-independent")
+
+
+func test_tilt_past_the_end_rubber_bands_and_springs_back() -> void:
+	var cam := _camera()
+	cam.set_zoom_t(0.5)
+	cam.begin_tilt()
+	cam.apply_tilt(1.4)
+	assert_true(cam.pitch_bias > 1.0 and cam.pitch_bias < 1.4,
+			"past the end the band stretches at pitch_rubber_band (%f)" % cam.pitch_bias)
+	assert_almost_eq(cam.pitch_bias, 1.0 + 0.4 * cam.pitch_rubber_band, 0.000001)
+	assert_almost_eq(cam.pitch_deg(), cam.pitch_floor_deg_at(0.5), 0.0001,
+			"the ANGLE never leaves the band")
+	cam.end_tilt()
+	var steps := 0
+	while (cam.pitch_bias > 1.0 + 0.0005) and steps < 600:
+		cam.advance(1.0 / 120.0)
+		steps += 1
+	assert_almost_eq(cam.pitch_bias, 1.0, 0.001, "critically damped return to the end")
+	assert_true(float(steps) / 120.0 < 0.6, "settles in well under a second")
+
+
+func test_reset_pitch_eases_home_and_cuts_under_reduce_motion() -> void:
+	var cam := _camera()
+	cam.set_zoom_t(0.3)
+	cam.set_pitch_bias(0.8)
+	cam.reset_pitch(false)
+	assert_true(cam.is_pitch_returning(), "the double action eases")
+	assert_false(cam.is_pitch_auto(), "…and is not home yet")
+	var steps := 0
+	while cam.is_pitch_returning() and steps < 600:
+		cam.advance(1.0 / 60.0)
+		steps += 1
+	assert_true(cam.is_pitch_auto(), "home is AUTO, not a bias of zero")
+	assert_true(float(steps) / 60.0 <= cam.pitch_reset_tween_s + 0.05, "over pitch_reset_tween_s")
+	cam.set_pitch_bias(-0.6)
+	cam.reset_pitch(true)
+	assert_true(cam.is_pitch_auto(), "reduce_motion (A8) is a hard cut")
+	assert_false(cam.is_pitch_returning())
+
+
+func test_a_release_inside_the_detent_lands_on_auto() -> void:
+	var cam := _camera()
+	cam.set_pitch_bias(0.5)
+	cam.begin_tilt()
+	cam.apply_tilt(-0.48)   # to 0.02, inside pitch_detent_units
+	cam.end_tilt()
+	assert_true(cam.is_pitch_auto(), "the middle detent is how a player finds AUTO by feel")
+
+
+func test_save_section_carries_the_pitch_and_validates_the_band() -> void:
+	var cam := _camera()
+	cam.set_zoom_t(0.42)
+	var auto_d := cam.to_dict()
+	assert_eq(str(auto_d["pitch_mode"]), "auto", "AUTO is a word, not a zero")
+	assert_almost_eq(float(auto_d["pitch_bias"]), 0.0, 0.000001)
+	cam.set_pitch_bias(0.6)
+	var d := cam.to_dict()
+	assert_eq(str(d["pitch_mode"]), "manual")
+	assert_almost_eq(float(d["pitch_bias"]), 0.6, 0.000001)
+	var restored := _camera()
+	restored.from_dict(d)
+	assert_false(restored.is_pitch_auto())
+	assert_almost_eq(restored.pitch_bias, 0.6, 0.000001)
+	assert_almost_eq(restored.pitch_deg(), cam.pitch_deg(), 0.0001, "same angle back")
+	# Validation: a save may not resurrect an angle outside the band.
+	var wild := _camera()
+	wild.from_dict({"zoom_t": 0.42, "yaw_deg": 45.0, "focus_x": 100.0, "focus_z": 100.0,
+			"pitch_mode": "manual", "pitch_bias": 5.0})
+	assert_almost_eq(wild.pitch_bias, 1.0, 0.000001, "clamped to the band's end")
+	assert_almost_eq(wild.pitch_deg(), wild.pitch_floor_deg_at(0.42), 0.0001)
+	var nan_save := _camera()
+	nan_save.from_dict({"pitch_mode": "manual", "pitch_bias": NAN})
+	assert_true(nan_save.is_pitch_auto(), "a non-finite bias reads as AUTO")
+	var old := _camera()
+	old.set_pitch_bias(0.7)
+	old.from_dict({"zoom_t": 0.5, "yaw_deg": 0.0, "focus_x": 10.0, "focus_z": 10.0})
+	assert_true(old.is_pitch_auto(), "a pre-Wave-17 save with no pitch keys restores AUTO")
+	var ignored := _camera()
+	ignored.from_dict({"pitch_mode": "auto", "pitch_bias": 0.9})
+	assert_true(ignored.is_pitch_auto(), "a bias under mode auto is ignored")
+
+
+func test_pitch_axis_tunables_come_from_data() -> void:
+	var cfg := _config()
+	var block := cfg.camera()
+	var cam := _camera(cfg)
+	for key: String in ["pitch_manual_min_deg", "pitch_manual_max_deg", "pitch_reach_up_near",
+			"pitch_reach_up_far", "pitch_reach_down_near", "pitch_reach_down_far",
+			"pitch_rubber_band", "pitch_momentum_decay_k", "pitch_momentum_min_start",
+			"pitch_momentum_max", "pitch_momentum_stop", "pitch_spring_omega",
+			"pitch_reset_tween_s", "pitch_detent_units", "tilt_dp_per_unit"]:
+		assert_true(block.has(key), "data/ui.json.camera carries %s" % key)
+		assert_almost_eq(float(cam.get(key)), UIConfig.get_num(block, key, -1.0), 0.000001,
+				"%s is read, not hard-coded" % key)
+	assert_true(cam.pitch_manual_min_deg < cam.pitch_near_deg,
+			"the manual floor is below the curve's own floor, or there is no lean up")
+	assert_true(cam.pitch_manual_max_deg > cam.pitch_far_deg,
+			"the manual ceiling is above the curve's own ceiling")
+	assert_true(cam.pitch_manual_max_deg < 90.0,
+			"and never vertical — yaw would stop meaning anything")
+	for key: String in ["pitch_reach_up_near", "pitch_reach_up_far",
+			"pitch_reach_down_near", "pitch_reach_down_far"]:
+		var reach := UIConfig.get_num(block, key, -1.0)
+		assert_true(reach > 0.0 and reach <= 1.0, "%s is a fraction of the band" % key)

@@ -56,6 +56,7 @@ const SHADERS := [
 	"flood.gdshader", "ground.gdshader", "lamp.gdshader", "light_pool.gdshader",
 	"power_pad.gdshader", "power_smoke.gdshader", "power_wire.gdshader",
 	"road_overlay.gdshader", "road_surface.gdshader", "sidewalk.gdshader",
+	"sky_gradient.gdshader",
 	"street_fx.gdshader", "street_life.gdshader",
 	"vehicle.gdshader", "vehicle_headlight.gdshader", "water.gdshader",
 ]
@@ -76,6 +77,10 @@ const SHADER_OWNER := {
 	"road_overlay.gdshader": "res://game/render/road_overlay_view.gd",
 	"road_surface.gdshader": "res://game/render/road_surface_view.gd",
 	"sidewalk.gdshader": "res://game/render/road_surface_view.gd",
+	# Wave 17's sky is the one shader whose owner is not a `game/render/` view:
+	# `EnvironmentController` installs it on the `Environment`'s `Sky`, which is
+	# where every other environment write already lives (doc 11 §2.8).
+	"sky_gradient.gdshader": "res://game/environment_controller.gd",
 	"street_fx.gdshader": "res://game/render/street_life_view.gd",
 	"street_life.gdshader": "res://game/render/street_life_view.gd",
 	"vehicle.gdshader": "res://game/render/vehicle_view.gd",
@@ -639,7 +644,10 @@ func test_19_the_matrix_census_is_what_doc_91_records() -> void:
 	# 11 §2.17**: `street_life.gdshader` is the crook, the dog and the goat, and
 	# `street_fx.gdshader` is the marker, the label, the poof and the sparkle —
 	# four effects on one buffer, which is why there is one shader and not four.
-	assert_eq(SHADERS.size(), 18, "shaders")
+	# **19 since Wave 17** (doc 98 §43 / RR-114): `sky_gradient.gdshader` is the
+	# gradient sky the manual pitch axis made visible — the first shader in this
+	# list whose owner is the environment rather than a `game/render/` view.
+	assert_eq(SHADERS.size(), 19, "shaders")
 	assert_eq((StarterCityLoader.read_json(VEHICLES).get("types", {}) as Dictionary).size(),
 			5, "doc 06 vehicle types")
 	assert_eq(DEFERRED_BODIES.size(), 1,

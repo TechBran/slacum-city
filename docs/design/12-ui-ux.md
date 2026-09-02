@@ -956,6 +956,81 @@ added in the same commit as the surface, per A91-D-28.
 
 ---
 
+### 2.23 The tilt axis and the right-edge slider (Wave 17)
+
+**The ask (2026-08-21):** *"we need to be able to look up at the buildings — the
+high rise is really tall; if you zoom in you're pretty much just looking at the
+ground… on the right side of the screen a tilt slider, vertically: all the way
+down, all the way up, the slider sits in the middle, up and down motion."*
+
+**1. The axis.** §2.16's rig is `{focus, zoom_t, yaw}` with pitch DERIVED from the
+zoom (`pitch(t) = 34° + 28°·smoothstep(t)`). Wave 17 adds a fourth, manual axis
+that **composes with that curve rather than replacing it**:
+
+    pitch = lerp(pitch(t), target, |bias| · reach(t))
+    bias ∈ [−1, +1]   +1 → pitch_manual_min_deg (12°, up the facades)
+                      −1 → pitch_manual_max_deg (78°, top-down)
+    reach(t) = lerp(near, far, smoothstep(t))   — the zoom coupling, doc 92 §47
+
+`bias = 0` is **AUTO**: the composed pitch is the curve's own answer to the bit,
+so a player who never touches the control has the camera that shipped before this
+wave. 12° and not 10°, because `18·sin 10° = 3.1 m` puts a D_MIN camera inside the
+3.5 m ground floor of doc 11 §2.6's shortest archetype and `18·sin 12° = 3.74 m`
+clears it. 78° and not 90°, because at 90° yaw stops meaning anything and the
+twist gesture becomes a spin about nothing.
+
+**2. Two ways in, one axis.** The slider column, and a **two-finger tilt** (§2.16's
+MULTI state gains a third arm): 24 dp of vertical centroid travel with the span
+still inside half the pinch slop, the bearing inside half the twist deadzone, and
+the travel at least 1.5× more vertical than horizontal. It takes the whole stroke
+when it engages and can never engage after a pinch or a twist has — the
+discrimination table is in `ui/gesture_recognizer.gd::_emit_multi`. Both routes
+share the axis's feel with the pan: rubber band past the ends, a closed-form fling
+on release, a critically damped return, and a **double action home to AUTO**
+(double-tap on the column; A8 `reduce_motion` cuts the ease).
+
+**3. The column.** Right edge, **one 48 dp touch column**, vertically centred in
+the band left between the top bar's first row and the corner rail's reservation —
+not in the whole safe area, because the incident drawer's handle owns the edge
+from 60 to 220 dp above the bottom and a naively centred column lands on it at
+every landscape box. `tilt_slider_h_dp` (240) when there is room, the band when
+there is less, and it **stands down entirely** below `tilt_slider_min_h_dp` (96),
+which is what happens at the 640 × 340 floor box. It **yields the edge** while any
+`PanelLayer` surface is open. The thumb rests on the middle detent, is an A3
+target that grows with the larger-targets setting, and carries `ui_tilt_thumb`;
+the column carries `ui_tilt_slider`. After `tilt_slider_fade_after_s` (2 s) of
+stillness the whole column ghosts to `tilt_slider_ghost_alpha` (0.35) and any
+touch wakes it — the A8 reading is that a ghost is a **state**, not an animation,
+so `reduce_motion` keeps the ghost and cuts the 0.25 s fade to a cut. Preview
+states: `tilt_rest`, `tilt_drag`.
+
+**4. The horizon, and the taps that now miss.** At the floor the top of the frame
+is 8° above the horizon, so a tap up there has **no ground under it at any
+distance**. `CameraState.ground_hit()` answers `{hit, position, reason, distance}`
+(`ground` / `above_horizon` / `grazing`); `screen_to_ground()` is unchanged and
+still answers the clamped point for pan, pinch and the anchor lock, which have
+always wanted it. Placement, picking, the path ghost and tap-to-focus branch on
+`hit` (report 98 RR-116). §2.21's 48 dp tap radius is unaffected by tilt:
+`m_per_dp()` is measured across screen-right, which is parallel to the ground at
+every pitch. The other axis is not, and is published as `m_per_dp_depth()` =
+`m_per_dp / sin(pitch)` — a world circle projects to an ellipse that keeps its
+metres and loses screen height as the camera tilts, so a tilt can only make a
+radius pick more conservative.
+
+**5. What the tilt reveals.** The sky (doc 11 §2.8) is now something a player can
+look at, and the world's 896 m edge is something they can look over: the gradient
+sky's horizon haze is drawn in the same fog tint the far city fogs toward, which
+seats the edge (measured: a ≤ 17/255 per-channel step across the seam, report 98
+RR-114).
+
+**6. Persistence.** D-68: the `camera` block of the `ui` save section —
+`{focus_x, focus_z, zoom_t, yaw_deg, pitch_mode, pitch_bias}`. `pitch_mode` is the
+word (`auto` / `manual`) and is written because a save carrying only the number
+could not tell AUTO from a bias that happened to land on the curve. Restore
+re-composes the bias against the band **this build** authors, so retuning the band
+retunes every restored city rather than leaving old saves pointing where the data
+no longer allows.
+
 ## 3. Data Schema
 
 ### 3.1 `data/` files owned by this doc
@@ -1686,3 +1761,19 @@ finding of every kind, **six** boxes × **three** text scales; 53 states per cel
 at the fork, 55 after): the table is in §2.18. **408 → 0**, with the 100 % row
 unchanged at zero on every box — including 640 × 340, which no `BOXES` list in
 this repository contained until D-58.
+
+### Wave-17 deltas — the camera learns to look up (2026-09-01)
+
+| id | change | doc ref | why |
+|---|---|---|---|
+| D-68 | **The camera joins the `ui` save section**, through `UIRoot.bind_camera()` + `CameraState.to_dict/from_dict`: `camera = {focus_x, focus_z, zoom_t, yaw_deg, pitch_mode, pitch_bias}`, written only when a camera is bound and validated against **this build's** band on the way back in. | §2.16, §2.23, §3.2, D-9 | D-9 has owed the camera keys since §3.2 was written; the manual pitch axis is what made the debt visible, because a player who leans the camera and quits now loses a *pose they chose* rather than a default they never noticed. `pitch_mode` is a word and not just a number because AUTO is a promise about what the next pinch does, not a value: a save carrying `pitch_bias = 0.0` alone cannot say whether the player was in AUTO or had parked the lean on the curve. The re-composition on restore is the same argument as D-16's stand-down — data may retune between builds, and a save may not resurrect an angle the band no longer allows. |
+| D-69 | **The right-edge tilt column, and the third arm of the MULTI gesture** — `ui/tilt_slider.gd` on `HUDLayer`, solved by `UIRoot.solve_tilt_slider()` into the band between the top bar's first row and the corner rail's reservation; `GestureRecognizer`'s `tilt_begin/tilt/tilt_end` and `TouchInput`'s handling of them. Preview states `tilt_rest`, `tilt_drag`. §2.23 has the screen. | §2.3, §2.16, §2.18 A3/A8, §2.23 | The user asked for the control by name and by geometry ("on the right side of the screen… vertically… sits in the middle"), and a camera axis with only a gesture would be an axis most players never discover — the pinch is learned, a two-finger vertical drag is not. Two things the solve is deliberately not: it is **not centred in the safe area** (the drawer handle owns 60…220 dp of that edge, and a naively centred column lands on it at every landscape box), and it is **not a control that shrinks below a usable one** — under 96 dp of band it stands down entirely, D-16's rule, because at 640 × 340 the honest answer is that this edge has no room and the two-finger gesture is still there. |
+
+**Preview states added** (`tools/ui_preview.gd`): `tilt_rest`, `tilt_drag` —
+the resting (ghosted, thumb on the detent) and mid-drag faces, added in the
+same commit as the control (A91-D-28's lesson). The deck is **59** states.
+Swept at five boxes — 412×915, 640×340, 794×924, 880×400, 1280×720 — plus
+360×800 at 130 % with large targets: `--screen=all --audit --strict`, **exit 0**
+at every one. At 640 × 340 the column stands down and the sweep is clean
+because there is nothing there to find, which is the intended answer.
+

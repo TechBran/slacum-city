@@ -203,3 +203,47 @@ func test_the_floor_never_brightens_the_day_frame() -> void:
 				% [hour, float(s["ambient_floor"])])
 		assert_true(float(s["ambient_sky_contribution"]) > 0.85,
 				"%.0f:00 is still lit by its own sky" % [hour])
+
+
+# ---------------------------------------------------------------------------
+# Wave 17 — THE SKY (§2.8): the gradient's four colours from one sample
+# ---------------------------------------------------------------------------
+
+func test_the_sky_haze_is_the_fog_tint_so_the_city_edge_seats_into_it() -> void:
+	var controller := DayNightController.new()
+	assert_true(controller.load_from(StarterCityLoader.read_json("res://data/render.json")))
+	# Dawn: the horizon keeps its authored orange and the haze is the authored
+	# fog — two colours, neither a blend of the other.
+	var dawn := controller.sky_colors(controller.sample(7.0))
+	assert_eq((dawn["horizon"] as Color).to_html(false).to_upper(), "C88A5A")
+	assert_eq((dawn["haze"] as Color).to_html(false).to_upper(), "5A5A66")
+	assert_eq((dawn["zenith"] as Color).to_html(false).to_upper(), "2A3C5E")
+	# At every hour the haze IS the sampled fog tint, and the ground hemisphere is
+	# that tint darkened — never brighter than the band above it.
+	for i in 48:
+		var hour := float(i) * 0.5
+		var s := controller.sample(hour)
+		var colors := controller.sky_colors(s, 0.45)
+		assert_true((colors["haze"] as Color).is_equal_approx(s["fog_tint"]),
+				"haze == fog tint at %.1f" % hour)
+		assert_true(_linear_luma(colors["ground"]) <= _linear_luma(colors["haze"]) + 1e-6,
+				"ground hemisphere darker than the haze at %.1f" % hour)
+		assert_true((colors["ground"] as Color).is_equal_approx(
+				(s["fog_tint"] as Color).darkened(0.45)), "ground = haze darkened at %.1f" % hour)
+	# The shape knobs are data, and the radiance size is the small one.
+	var sky_cfg: Dictionary = StarterCityLoader.read_json("res://data/render.json").get("sky", {})
+	for key: String in ["radiance_size", "zenith_curve", "haze_height", "haze_strength",
+			"ground_falloff", "ground_darken"]:
+		assert_true(sky_cfg.has(key), "data/render.json.sky carries %s" % key)
+	assert_true(int(sky_cfg["radiance_size"]) <= 128,
+			"the ambient cubemap is regenerated every frame — it stays small")
+	assert_true(FileAccess.file_exists("res://game/shaders/sky_gradient.gdshader"),
+			"the gradient sky shader ships")
+	var source := FileAccess.get_file_as_string("res://game/shaders/sky_gradient.gdshader")
+	assert_true(source.begins_with("shader_type sky;"), "it is a sky shader")
+	assert_false(source.contains("use_half_res_pass") or source.contains("use_quarter_res_pass"),
+			"no half/quarter-res sky pass — a second draw for a gradient (doc 11 §2.13)")
+	for uniform: String in ["zenith_color", "horizon_color", "haze_color", "ground_color", "energy"]:
+		assert_true(source.contains("uniform vec3 %s" % uniform)
+				or source.contains("uniform float %s" % uniform),
+				"the shader takes %s" % uniform)

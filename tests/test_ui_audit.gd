@@ -168,6 +168,11 @@ func _populate(root: UIRoot, panel: String = "drawer") -> void:
 	# veil this walk cannot measure.
 	root.present_veil_load(UIWidgets.t(root.config, "ui_saves_slot_autosave"), 11)
 	root.advance_veil_load(7)
+	# Wave 17's tilt slider draws nothing without an axis; a fresh `CameraState`
+	# puts the column into this walk the way `game/main.gd` puts the live one.
+	var cam := CameraState.new(root.config.camera(), root.config.projection_fov_deg(40.0),
+			{"tile_meters": 8, "block_tiles": 16, "size_blocks": [7, 7]})
+	root.bind_camera(cam)
 	match panel:
 		"alerts":
 			root.alerts_center.open()

@@ -29,6 +29,9 @@ extends SceneTree
 ##   --hour=H           hour of day, 0..24                 (default 21 — night,
 ##                      the emissive/glow worst case)
 ##   --poses=z0,z1,z2   which §2.5 poses to measure        (default all three)
+##                      A token `t0.65` is a pose at that `zoom_t` (Wave 17: the
+##                      tilt screenshots frame a 180 m tower from a zoom the
+##                      three named poses do not have)
 ##   --warmup=N         frames discarded per pose          (default 90)
 ##   --frames=N         frames measured per pose           (default 180)
 ##   --resolution=WxH   render size                        (default 1920x1080)
@@ -126,6 +129,20 @@ extends SceneTree
 ##                      delivery cadences, so the yards are full and lorries
 ##                      are on the road; measuring a cold layer would measure
 ##                      the cheap case and call it the budget)
+##   --tilt=DEG|auto    Wave 17 (doc 12 §2.23 / doc 92 §47): park the MANUAL pitch
+##                      axis at DEG for every pose, through `CameraState.set_pitch_deg`
+##                      — the same composition the slider and the two-finger
+##                      gesture drive, so a row here is a pose a player can reach.
+##                      `auto` (default) is the curve's own answer, i.e. every row
+##                      this harness ever printed before the axis existed. The
+##                      row label prints the pitch the rig actually used.
+##   --yaw=DEG          the orbit yaw for every pose (default: the authored
+##                      `default_yaw_deg`). The tilt screenshots need a facade
+##                      square-on, which 45° never is.
+##   --sky=gradient|procedural  Wave 17's gradient sky shader (default) or the
+##                      engine's `ProceduralSkyMaterial` it replaces. The A/B behind
+##                      doc 11 §2.8's sky cost: the two runs differ in nothing
+##                      else, so the `rs gpu` delta IS the sky.
 ##   --quiet            table only
 ##
 ## The first pose absorbs shader compilation and the first MultiMesh uploads,
@@ -181,6 +198,11 @@ var _forced_rows: Array = []
 var _measured_resolution := Vector2i.ZERO
 
 var _order: Array = []
+## `POSES` plus any `t0.65`-style pose `--poses=` named, keyed like `POSES`.
+var _pose_defs: Dictionary = {}
+## The label printed per pose, built from the rig at `_apply_pose` so a `--tilt`
+## row says what pitch it measured rather than the curve's.
+var _labels: Dictionary = {}
 var _pose_index := 0
 var _frames_seen := 0
 var _samples: Array = []
@@ -265,6 +287,9 @@ func _build_scene() -> void:
 	moon.shadow_enabled = false
 	stage.add_child(moon)
 	_env = EnvironmentController.new()
+	# `--sky=`: the controller swaps the engine sky for the gradient shader in
+	# `setup()` unless told to keep it, which is the A/B this flag exists for.
+	_env.use_gradient_sky = String(_opts["sky"]) != "procedural"
 	stage.add_child(_env)
 	_env.world_environment_path = world_environment.get_path()
 	_env.sun_path = sun.get_path()
@@ -371,6 +396,8 @@ func _build_scene() -> void:
 	if wanted.x >= 0.0:
 		focus = Vector3(wanted.x * 8.0, 0.0, wanted.y * 8.0)
 	_camera_state.set_focus(focus)
+	if is_finite(float(_opts["yaw"])):
+		_camera_state.yaw = wrapf(deg_to_rad(float(_opts["yaw"])), -PI, PI)
 	_camera_rig = CameraRig.new()
 	stage.add_child(_camera_rig)
 	_camera_rig.setup(_camera_state, _render_data)
@@ -746,12 +773,25 @@ func _apply_pose(index: int) -> void:
 	_frames_seen = 0
 	_samples.clear()
 	var key := String(_order[index])
-	var wanted := float((POSES[key] as Dictionary)["zoom_t"])
+	var wanted := float((_pose_defs[key] as Dictionary)["zoom_t"])
 	_camera_state.set_zoom_t(wanted)
 	if absf(_camera_state.zoom_t - wanted) > 1e-3:
 		printerr(("profile_frame: pose %s wanted zoom_t %.2f but the rig clamped to %.2f "
 				+ "(D_MAX_eff) — this measurement is NOT at the published pose")
 				% [key, wanted, _camera_state.zoom_t])
+	# `--tilt=`: the manual axis, through the same call the slider makes. `auto`
+	# clears it, so the curve answers alone and the row is the pre-Wave-17 pose.
+	var tilt: Variant = _opts["tilt"]
+	if tilt is float:
+		_camera_state.set_pitch_deg(float(tilt))
+		if absf(_camera_state.pitch_deg() - float(tilt)) > 0.05:
+			printerr(("profile_frame: pose %s wanted pitch %.1f° but the band at zoom_t"
+					+ " %.2f allows %.1f° — this row is at the SECOND number")
+					% [key, float(tilt), _camera_state.zoom_t, _camera_state.pitch_deg()])
+	else:
+		_camera_state.clear_pitch_bias()
+	_labels[key] = "%s  D %.0f m / %.0f°%s" % [key.to_upper(), _camera_state.distance(),
+			_camera_state.pitch_deg(), "" if _camera_state.is_pitch_auto() else "*"]
 	_camera_rig.camera.global_transform = _camera_state.camera_transform()
 	# A pose jump re-tiers every chunk, and §2.5 allows at most ONE tier step per
 	# `lod_dwell_s`. Leaving that to the warm-up frames is a bug in this harness,
@@ -778,6 +818,12 @@ func _process(delta: float) -> bool:
 		_build_scene()
 		_verify_resolution()
 		_order = _opts["poses"]
+		_pose_defs = POSES.duplicate()
+		for raw_key in _order:
+			var key := String(raw_key)
+			if not _pose_defs.has(key):
+				var t := clampf(float(key.substr(1)), 0.0, 1.0)
+				_pose_defs[key] = {"zoom_t": t, "label": "%s  zoom_t %.2f" % [key, t]}
 		_apply_pose(0)
 		_started = true
 		return false
@@ -886,7 +932,10 @@ func _summarise(pose_key: String) -> Dictionary:
 	var split: Dictionary = _city_view.perf_stats()
 	return {
 		"pose": pose_key,
-		"label": String((POSES[pose_key] as Dictionary)["label"]),
+		"label": String(_labels.get(pose_key, (_pose_defs[pose_key] as Dictionary)["label"])),
+		"pitch_deg": _camera_state.pitch_deg(),
+		"pitch_auto": _camera_state.is_pitch_auto(),
+		"zoom_t": _camera_state.zoom_t,
 		"frame_mean_ms": _mean(frame),
 		"frame_p95_ms": frame[clampi(int(ceil(0.95 * float(n))) - 1, 0, n - 1)],
 		"frame_max_ms": frame[n - 1],
@@ -971,11 +1020,14 @@ func _report() -> void:
 		var live := wanted == 1 if wanted >= 0 else bool(
 				(_render_data.get("power_infra", {}) as Dictionary).get("pad_shadows", true))
 		pad_shadow_state = "on" if live else "off"
+	var tilt_state := "auto" if not (_opts["tilt"] is float) \
+			else "%.0f°" % float(_opts["tilt"])
 	print(("=== FRAME COST — %s, preset %s, hour %.1f, %dx%d, road detail %d,"
-			+ " pad shadows %s ===") % [
+			+ " pad shadows %s, tilt %s, sky %s ===") % [
 			String(_opts["city"]).get_file(), String(_opts["preset"]), float(_opts["hour"]),
 			_measured_resolution.x, _measured_resolution.y,
-			_roads.detail if _roads != null else -1, pad_shadow_state])
+			_roads.detail if _roads != null else -1, pad_shadow_state, tilt_state,
+			String(_opts["sky"])])
 	var header := "  %-22s %8s %8s %8s %8s %6s %6s %6s %5s %5s %5s %5s %5s %5s %9s" % [
 			"pose", "mean ms", "p95 ms", "rs cpu", "rs gpu", "dc", "dc+ui",
 			"budget", "buck", "merg", "far#", "near", "med", "far", "prims"]
@@ -989,6 +1041,9 @@ func _report() -> void:
 				int(row["merged_calls"]), int(row["far_calls"]),
 				int(row["near"]), int(row["medium"]), int(row["far"]),
 				int(row["primitives"])])
+	if _opts["tilt"] is float:
+		print("  * = the MANUAL pitch axis (doc 12 §2.23) holds this pitch; a row"
+				+ " without one is the curve's own answer.")
 	print("  `rs cpu` / `rs gpu` are the RenderingServer's own measured times for"
 			+ " this viewport. They do NOT sum to `mean ms`: the remainder is"
 			+ " main-thread work (the render layer's per-frame GDScript) plus"
@@ -1054,6 +1109,8 @@ func _report() -> void:
 			"city": String(_opts["city"]), "preset": String(_opts["preset"]),
 			"hour": float(_opts["hour"]), "buildings": _sim.buildings.size(),
 			"road_detail": _roads.detail if _roads != null else -1,
+			"tilt": _opts["tilt"], "sky": String(_opts["sky"]),
+			"yaw_deg": float(_opts["yaw"]) if is_finite(float(_opts["yaw"])) else null,
 			"resolution": [_measured_resolution.x, _measured_resolution.y],
 			"resolution_asked": [(_opts["resolution"] as Vector2i).x,
 					(_opts["resolution"] as Vector2i).y],
@@ -1078,6 +1135,7 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			"street_shot_lag": 0, "traffic": 0, "units": 0, "street_gm": -1.0,
 		"pad_shadows": -1, "road_detail": -1,
 		"flood": 0.0, "flood_detail": -1,
+		"tilt": "auto", "sky": "gradient", "yaw": NAN,
 	}
 	for raw in argv:
 		var arg := String(raw)
@@ -1117,6 +1175,22 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			opts["traffic"] = maxi(0, int(arg.substr(10)))
 		elif arg.begins_with("--units="):
 			opts["units"] = maxi(0, int(arg.substr(8)))
+		elif arg.begins_with("--tilt="):
+			var raw_tilt := arg.substr(7).strip_edges().to_lower()
+			if raw_tilt == "auto" or raw_tilt == "":
+				opts["tilt"] = "auto"
+			elif raw_tilt.is_valid_float():
+				opts["tilt"] = float(raw_tilt)
+			else:
+				opts["error"] = "--tilt wants a pitch in degrees, or auto"
+		elif arg.begins_with("--yaw="):
+			opts["yaw"] = float(arg.substr(6))
+		elif arg.begins_with("--sky="):
+			var mode := arg.substr(6).strip_edges().to_lower()
+			if mode != "gradient" and mode != "procedural":
+				opts["error"] = "--sky wants gradient|procedural"
+			else:
+				opts["sky"] = mode
 		elif arg.begins_with("--atlas-lod="):
 			opts["atlas_lod"] = int(arg.substr(12))
 		elif arg.begins_with("--shots="):
@@ -1152,10 +1226,12 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			var wanted: Array = []
 			for name in arg.substr(8).split(","):
 				var key := String(name).strip_edges().to_lower()
-				if not POSES.has(key):
-					opts["error"] = "unknown pose '%s' (want z0|z1|z2)" % key
-				else:
+				if POSES.has(key):
 					wanted.append(key)
+				elif key.begins_with("t") and key.substr(1).is_valid_float():
+					wanted.append(key)
+				else:
+					opts["error"] = "unknown pose '%s' (want z0|z1|z2, or t<zoom_t>)" % key
 			if not wanted.is_empty():
 				opts["poses"] = wanted
 		else:

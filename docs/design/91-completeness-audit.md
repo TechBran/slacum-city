@@ -1595,11 +1595,22 @@ exact rather than lenient.
 ### 16.3 The census, and why it is an assertion
 
 `test_19` asserts ten raw counts — 132 building meshes, 133 manifest rows,
-8 façade pages, 4 roof, 2 ground, 3 prop, 1 vehicle atlas, 15 shaders, 5 vehicle
-types, 1 deferred body. It is the only test in the file that asserts a *number*
-rather than a *rule*, and it is deliberate: **doc 91 §16 quotes those totals, so
-the matrix cannot grow without a wave coming here and moving them, and this
-document's headline cannot go stale without a red suite.**
+8 façade pages, 4 roof, 2 ground, 3 prop, 1 vehicle atlas, **19** shaders, 5
+vehicle types, 1 deferred body. It is the only test in the file that asserts a
+*number* rather than a *rule*, and it is deliberate: **doc 91 §16 quotes those
+totals, so the matrix cannot grow without a wave coming here and moving them, and
+this document's headline cannot go stale without a red suite.**
+
+> **The claim above was half true, and Wave 17 measured which half** (2026-09-01,
+> the camera-tilt fork). The gate asserts `SHADERS.size()`, i.e. the *test's* own
+> list — so adding a shader does redden the suite, but the sentence in THIS
+> document is not what turns red: this paragraph still read **15 shaders** while
+> the gate had said 18 since doc 11 §2.17's street-life pass. The number is now
+> 19 (`sky_gradient.gdshader`, report 98 RR-114) and the drift is recorded rather
+> than quietly corrected, because it is the same lesson as §20.4's: a document
+> sentence that quotes a number is only as good as the run that last re-derived
+> it. `~/.local/bin/godot --headless --script tests/run_tests.gd -- --file=test_asset_completeness.gd`
+> is that run.
 
 ### 16.4 What the sweep found on its first run
 
@@ -2787,3 +2798,13 @@ tests/` returns **zero**. Which restates §20.5's real point one wave on: this
 project's open work lives in numbered prose, so a marker sweep is a reading job,
 and the only defence against a reading job going stale is doing it every merge
 and dating what it found.
+
+---
+
+#### New rows, Wave 17 (2026-09-01) — `A91-D-51`, `A91-D-52` (the camera-tilt fork)
+
+| # | Severity | Defect |
+|---|---|---|
+| **A91-D-51** | **Medium** ✅ **CLOSED 2026-09-01 (this wave)** | **A screen-to-ground query that cannot fail, in a camera that was about to be able to look at the sky.** `CameraState.screen_to_ground()` answered a `Vector3` for *every* screen point; its only defence against a ray that never meets `y = 0` was doc 12 §2.16's guard, which clamps the parameter to `dist · 4` and returns the clamped point **as if it were a hit**. That was correct-by-accident for four waves: the pitch curve's shallowest angle is 34° against a 40° FOV, so the top of the frame sat 14° below the horizon and no screen point lacked a ground point. The manual pitch axis makes the top of the frame 8° *above* the horizon at the floor, and the same call then answers a tap on the sky with a point up to 1,680 m away — enough to place a building, draw a road run, or deselect the player's selection, from a tap that touched nothing. Closed by report 98 RR-116: `ground_hit()` returns `{hit, position, reason ∈ ground\|above_horizon\|grazing, distance}`, `screen_to_ground()` stays for the pan/pinch/anchor callers that always wanted the clamped point, and the three callers that must not act on a guess are handed to `game/main.gd` as snippets (98 §43.4). **The shape to look for elsewhere: a total function whose totality is a property of the current camera, not of the maths.** |
+| **A91-D-52** | **Medium** ✅ **CLOSED 2026-09-01 (this wave)** | **Two families of UI/gesture test that a headless harness cannot actually run, both green on arrival.** (a) `UIRoot.force_layout(box)` was being read as "the deck is now laid out at `box`", and geometry was asserted against laid-out rects; in a headless mount `SafeArea`'s `MarginContainer` never fits its children (they are not `is_visible_in_tree()`), so **every rect in the deck is 0×0** and every right-anchored control reports `x = −width`. A test written that way passes or fails on the harness, not on the code — and the repository already knew this, which is why `tests/test_ui_audit.gd` walks `walk_frame_free()` and every other `force_layout` caller asserts minimum sizes only. (b) A two-finger gesture fed as one jump per finger presents an intermediate sample (one finger moved, one not) whose bearing change is **11.3° across a 200 dp span** — enough to engage the twist arm before the arm under test is consulted. Closed by report 98 RR-117: the geometry tests assert what the control sets and the audit sweep photographs the rect; the gesture tests walk in device-sized steps. |
+
