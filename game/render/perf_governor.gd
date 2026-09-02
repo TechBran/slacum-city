@@ -281,6 +281,48 @@ func thermal_status() -> int:
 	return _thermal
 
 
+# -------------------------------------------------------------------- memory
+
+## The knob doc 11's memory-warning response names by name: *"drop `far_cull_m`
+## one governor step"*. Kept beside the ladder rather than inside the response so
+## a re-ordered ladder cannot silently point the response at a different knob.
+const MEMORY_KNOB := "far_cull_m"
+const MEMORY_REASON := "memory_warning"
+
+
+## `NOTIFICATION_OS_MEMORY_WARNING`, answered (PA-20).
+##
+## At the Wave-17 fork `AndroidLifecycle.memory_warning` was **emitted into a
+## void**: `grep -rn "memory_warning" --include=*.gd .` found the declaration,
+## the emit, and one test asserting it does NOT save — no listener anywhere. Docs
+## 11 and 13 both specify a response (tear chunks below MEDIUM, clear the LOD0
+## mesh cache, drop `far_cull_m` one governor step — *"~40 % of VRAM in one
+## frame"*), and on a Fold running a large city beside other apps the cost of not
+## having one is a silent task kill.
+##
+## **Not `_step_down`.** The ladder's next rung is `render_scale`, which is a
+## FRAME-TIME lever and costs nothing in memory; the ladder is ordered by what is
+## cheapest to lose per millisecond, not per megabyte. Android is telling us
+## about bytes, so the response takes the one rung that returns them and takes it
+## out of ladder order. It still enters `_applied`, so `_step_up` unwinds it LIFO
+## like any other rung once the frame budget says there is room.
+##
+## Returns `true` when a rung was actually taken — `false` at the floor, which is
+## the honest answer and lets the shell log "already at the floor" rather than
+## claiming a step it did not make. The cache shed the shell performs alongside
+## this is `CityView.shed_caches()`; it is not called from here, because a
+## governor that reached into the scene tree would stop being testable headless.
+func on_memory_warning() -> bool:
+	for i in ladder.size():
+		var rung: Dictionary = ladder[i]
+		if String(rung.get("id", "")) != MEMORY_KNOB:
+			continue
+		if not _has_room_down(rung, MEMORY_KNOB):
+			return false
+		return _apply_rung(i, MEMORY_REASON)
+	return false
+
+
 ## Doc 13 §2.8's frame cap, for the shell to write into `Engine.max_fps`. The
 ## governor computes it because it is the one object that knows both the active
 ## preset and the thermal status; it never writes it itself (constitution §3 —
@@ -446,6 +488,15 @@ func _step_down(reason: String) -> bool:
 	var index := _next_down_rung()
 	if index < 0:
 		return false
+	return _apply_rung(index, reason)
+
+
+## Take ONE named rung. Split out of `_step_down` so the memory-warning response
+## can take the rung doc 11 names (`far_cull_m`) rather than the rung the ladder
+## happens to offer next (PA-20); `_step_down` still chooses by ladder order and
+## nothing about the arithmetic, the floor, the guard or the emitted event
+## changed when it moved down here.
+func _apply_rung(index: int, reason: String) -> bool:
 	var rung: Dictionary = ladder[index]
 	var id := String(rung.get("id", ""))
 	if id == "preset_drop":

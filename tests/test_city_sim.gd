@@ -409,3 +409,15 @@ func test_an_uncovered_tile_is_lit_and_costs_no_scan() -> void:
 	assert_true(sim._is_tile_powered(Vector2i(2000, 2000)), "uncovered ground is lit")
 	assert_eq(sim._transformer_cover.size(), before,
 			"and the memo did not grow by one entry for it")
+
+
+func test_building_record_is_the_public_door_onto_the_records() -> void:
+	# PA-100: three render-layer files reached through the underscore and indexed
+	# with `[]`, so an id the renderer knew and the roster did not raised inside a
+	# `_process` frame instead of answering blank.
+	var sim := CitySim.boot_from_files()
+	var record := sim.building_record("APT-001")
+	assert_eq(record.get("footprint", Vector2i.ZERO), Vector2i(2, 2))
+	assert_eq(String(record.get("block", "")), "B_2_2")
+	assert_eq(sim.building_record("NOPE-999"), {}, "an unknown id is {}, not a raise")
+	assert_eq(sim.building_record(""), {})

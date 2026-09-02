@@ -193,7 +193,7 @@ func _build() -> void:
 	_plant.setup(_render_data)
 	_plant.set_road_network(_sim.roads)
 
-	var record: Dictionary = _sim._building_records[_sim_id_of(_target_id)]
+	var record: Dictionary = _sim.building_record(_sim_id_of(_target_id))  # PA-100
 	var footprint: Vector2i = record["footprint"]
 	# doc 11 §2.16: the hoarding's gate takes the frontage the vehicle layer
 	# derives, so the coned-off lane and the gate are on the same face of the
@@ -234,7 +234,7 @@ func _pick_target() -> void:
 	var best := -1.0
 	for id in _sim.buildings.keys():
 		var b: Building = _sim.buildings[String(id)]
-		var record: Dictionary = _sim._building_records[String(id)]
+		var record: Dictionary = _sim.building_record(String(id))  # PA-100
 		var size: Vector2i = record["footprint"]
 		var origin: Vector2i = b.origin
 		var lot := Vector2i(origin.x + size.x / 2, origin.y + size.y / 2)
@@ -262,7 +262,7 @@ func _sim_id_of(render_id: int) -> String:
 
 func _building_view(sim_id: String) -> Dictionary:
 	var b: Building = _sim.buildings[sim_id]
-	var record: Dictionary = _sim._building_records[sim_id]
+	var record: Dictionary = _sim.building_record(sim_id)  # PA-100
 	var size: Vector2i = record["footprint"]
 	var centre := Vector3(b.origin.x * TILE_M + size.x * TILE_M * 0.5, 0.0,
 			b.origin.y * TILE_M + size.y * TILE_M * 0.5)

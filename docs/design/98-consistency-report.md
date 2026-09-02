@@ -6668,3 +6668,326 @@ because neither was reachable by any smaller instrument:
    six-row fixture there and measures its own row directly; **the sweep itself
    is left open for the lane that owns that file**, because every modal in that
    list is currently unmeasured.
+
+## 50. WAVE 18 — the fix router, the locator, and the one shell file the suite could not see (binding)
+
+*Filed 2026-09-02 from the production audit's `§3.2 Lane D` brief — PA-05 (router
+half), PA-38, PA-20, PA-76, PA-72, PA-100. Three rulings; every number below is
+quoted with the command that produced it.*
+
+**The shape of it.** `game/main.gd` was 2,257 lines with **zero test
+references** (`grep -rn "main\.gd\|main\.tscn\|MainShell" tests/` → six prose
+comments and no load). Three separate defects lived in it and none of them could
+fail a gate: `Fix this →` looked a **transformer** id up in `sim.buildings` and
+returned; `E_AVENUE` handed the same router an **empty** id, which the router
+discards on its first line; and every camera answer in the file anchored on a
+building's **NW corner tile** rather than on its footprint centre, so a jump to a
+4×4 civic building landed sixteen metres off it. All three are the same missing
+thing — *the shell was doing sim reasoning in a file nothing can boot* — and the
+fix is not to test `main.gd`. It is to move the reasoning out.
+
+### RR-139 — one geometry authority, and a gate that fails on drift rather than an audit that finds it
+
+**Ruled.** `TileGrid.METRES_PER_TILE` (and `METRES_PER_BLOCK`, `corner_of`,
+`centre_of`, `centre_of_footprint`, `centre_of_block`, `tile_at`) is the single
+authority for tile→world conversion. The **store** stays `data/world.json`
+`world.tile_meters`; the constant mirrors it and `tests/test_tile_geometry.gd`
+asserts the two agree.
+
+**Why a gate before a migration.** PA-76 counted the number written **eight
+times under six names** (`METRES_PER_TILE`, `TILE_METERS`, `TILE_M`,
+`DEF_TILE_M`, `TILE_M_DEFAULT`, bare `8.0`) and the footprint→centre formula four
+times, and its evidence line is the damning one: *"No test asserts agreement."*
+The eleven live declarations sit in files owned by six different Wave-18 lanes,
+so a lane that migrated them all would be editing five other lanes' files on a
+rule (99 §3.0.1) that forbids exactly that. The gate is therefore landed **first
+and alone**: `test_tile_geometry.gd::test_every_mirrored_spelling_agrees` names
+all eleven by class constant and fails on the first one that drifts. Every
+consumer migration afterwards becomes a one-line change that cannot go wrong
+quietly, and the migrations themselves are filed per owner (`awaiting_consumer`,
+below) instead of merged by force.
+
+**Hash-neutral, and provable.** No helper here is new arithmetic:
+`test_the_footprint_centre_reproduces_the_hand_written_formula` asserts
+`centre_of_footprint(origin, size)` equals the `origin * 8.0 + size * 4.0` the
+shell and the renderer already wrote, and
+`test_the_block_centre_reproduces_the_hand_written_formula` does the same for the
+`(grid * 16 + 8) * tile_m` the alert locator wrote three times. Adoption moves no
+building and no hash.
+
+**Two things the helpers do that the hand-written code did not.** `tile_at`
+**floors** rather than truncating — truncation folds every point in `(-8, 0)`
+onto tile `0`, which reads as "the tap landed on the map" for a tap that landed
+west of it — and `centre_of_footprint` clamps a zero size to one tile, so a
+malformed record focuses on a tile rather than on its corner.
+
+**And the hand-written census was wrong before the wave ended, which is the
+best argument in this section.** The gate was first written naming **eleven**
+mirrors by class constant — PA-76's own tally, transcribed. Merging the lane onto
+`4503d35` turned up **seventeen**: two shipped (`ConstructionSiteView.DEF_TILE_M`,
+`VehicleView.DEF_TILE_M`, both added by the Wave-17 render lane *while this lane
+was in flight*) and four in `tools/`, which PA-76's evidence line never scanned
+(`onboarding_preview`, `overlay_preview`, `construction_preview`, `flow_test`).
+A gate against drift that is itself a hand-maintained list is `A91-D-19`'s shape
+for the fifth wave running, and it would have shipped as one.
+
+So `test_the_mirror_census_finds_no_declaration_the_named_list_missed` **scans**:
+every `const <TILE-and-metre-shaped> := <number>` under `sim/`, `game/`, `ui/`
+and `tools/` is found by regex on the NAME — not on the value, because a
+value-matched scan skips precisely the declaration that has already drifted — and
+checked against `TileGrid.METRES_PER_TILE`. The count is asserted from below
+(`>= 17`) so a broken scan cannot pass by finding nothing, and the name pattern
+names its spellings rather than matching "anything with TILE in it", so
+`TILES_PER_BLOCK` (a tile COUNT) is not swept in. The named list stays beside it,
+now thirteen, because it checks the LOADED constant rather than the source text.
+
+Verified by negative control: setting `tools/flow_test.gd:43 TILE_M := 8.5`
+fails the file with `res://tools/flow_test.gd:43 TILE_M = 8.5 drifted from
+TileGrid.METRES_PER_TILE`, and reverting restores `10 tests, 66 asserts, 0
+failed`.
+
+**Applied:** `sim/world/tile_grid.gd`, `tests/test_tile_geometry.gd`.
+
+### RR-140 — a fix target resolves to an ACTION, and a router that cannot answer says which of five ways it failed
+
+**Ruled.** `Fix this →` is a two-part contract and the parts belong to different
+files. The **params half** (which id a checklist row carries) belongs to the
+surface that built the row; the **router half** (what that id means and what to
+do about it) belongs to `ui/fix_router.gd`, is headless, and is total over
+`RequirementFormatter`'s `FIX_*` kinds. `game/main.gd::_on_fix_requested` is now
+three lines and does the one thing a shell may do with the answer: move the
+camera.
+
+**The sweep caught this lane's own bug, and that is the row's best evidence.**
+`test_no_real_checklist_row_falls_through_silently` runs the REAL
+`BuildController.upgrade_view` checklist for every building in the starter city
+and routes every row. A first cut of the router treated `FIX_POWER`'s id as a
+building sim id — the natural reading, since `FIX_REPAIR`'s is one — and the
+sweep failed **33 rows in one method**, every `POWER_CAPACITY` row in the city,
+each naming the transformer it had been handed (`APT-001 … id T-02 named nothing
+on the map`). `FIX_POWER`'s id is the component the headroom **binds at**, not
+the subject: it is filled from `sim.grid.attachment_of(sim_id)`, which is
+precisely the mismatch PA-05 is about, and a router that "fixed" it by looking
+the component up among buildings would have reproduced the original defect in a
+new file. It is carried as `binds_at` with the wall's position; the BUILDING is
+taken only from an explicit `sim_id` a caller adds, never by reinterpreting the
+component id. The gate is the reason that is a paragraph here instead of a
+regression on the phone.
+
+**Why "an ACTION" and not "a world position".** Two of the seven kinds have no
+place to go — `FIX_REPAIR` and `FIX_POWER` target the building the player is
+already looking at, so a camera move is a no-op, which is precisely how
+A91-D-54 was found. A router that returns only positions has to lie about those
+two. Three shapes cover the whole table and each is what a real surface already
+does: **focus a world point**, **open a sheet pre-armed** (`FIX_POWER` arms the
+panel's power strip — `building_panel.gd` sets `_power_fix_armed` and the strip
+spends), and **run a verb with a quote** (`FIX_REPAIR` → `cmd_repair_building`).
+The quotes are the sim's own `preview: true` returns, which stop before the
+first mutation in both commands, so **routing a fix target is a read** —
+asserted by `test_fix_router.gd::test_routing_never_moves_the_sim`, not argued.
+
+**The refusal is the load-bearing half.** The two dead branches were dead in the
+same way: a bare `return`. `ACTION_NONE` now carries one of five reasons, and
+the distinction between two of them is the whole point — `no_fix` means the row
+has no remedy and is not a bug; `empty_id` means the row has a remedy and the
+CALLER did not supply a target, which is a bug, and names whose. `E_AVENUE`
+answers `empty_id` today and will answer `focus` the moment
+`ui/build_controller.gd`'s `E_AVENUE` params carry `"fix_target_id": sim_id` —
+one line, filed below, and the router side is already tested against it
+(`test_E_AVENUE_routes_once_its_params_carry_the_building`, which additionally
+asserts the tile it lands on IS an avenue).
+
+**The namespace ruling.** `POWER_CAPACITY` fills `fix_target_id` from
+`sim.grid.attachment_of()`, which is a **transformer** id, and the code table
+maps it to a **building** kind. The mismatch is three waves old and was
+"resolved" twice by re-pointing the kind. The durable answer is that **an id the
+sim published always resolves**: `WorldLocator.locate_any` tries buildings, then
+grid components, then blocks, then districts, in a fixed order over namespaces
+that are disjoint in practice, and `KIND_BUILDING` falls through to it on a miss.
+A future kind/id mismatch is then a wrong camera destination — visible — rather
+than silence.
+
+**And the lane committed RR-139's defect inside RR-140's file, which is the
+second-best evidence in this section.** `WorldLocator.ROAD_SEARCH_TILES` shipped
+as a hand-written `:= 12` under a docstring reading *"Mirrors
+`BuildController.AVENUE_SEARCH_TILES`"* — which is **16**. One number, written
+twice, under a promise that they agree, in the same wave that ruled a promise is
+not a gate. The tile-metre census in RR-139 could not see it: it is a tile
+**count**, not a metre.
+
+The consequence is `Fix this →` refusing a fix that exists.
+`BuildController.nearest_avenue_tiles` searches to 16 before reporting "none in
+range", so `E_AVENUE` is raised for a building whose nearest avenue is up to 16
+tiles off; once lane L's params half lands (§50.2 item 1), a building at 13–16
+hands this locator a row the checklist has just measured and gets `unresolved`.
+That is PA-05's shape one namespace over — and it would have been introduced by
+the lane that closed PA-05.
+
+`ROAD_SEARCH_TILES` is now `BuildController.AVENUE_SEARCH_TILES` **by
+reference**; a reference cannot drift. Two gates stand behind it:
+`test_the_search_reaches_as_far_as_the_check_that_raises_the_row` (the constants
+are the same object) and
+`test_every_building_the_controller_can_measure_the_locator_can_find`, which
+sweeps the real roster and asserts the two hand-written ring walks agree on the
+DISTANCE as well as on the reach — so any other divergence between them fails
+too. `--file=test_world_locator` goes 16 tests / 51 asserts → **18 / 121**.
+
+**Latent, not live, and worth stating as such**: the farthest starter building
+from an avenue is **7 tiles** (`APT-003`; `in_13_to_16 = 0` over all 34), so no
+fixture in the tree could have caught this and none of the numbers above moved
+because of it. `E_AVENUE` is a level-4 check on a building the *player* chose to
+place far from an avenue — exactly the case the starter city does not contain,
+which is why it was found by reading the constant against its own docstring
+rather than by a failing test.
+
+**Applied:** `ui/fix_router.gd`, `ui/world_locator.gd`, `game/main.gd`
+(`_on_fix_requested`, `_alert_world_pos`), `tests/test_fix_router.gd`,
+`tests/test_world_locator.gd`.
+
+### RR-141 — a memory warning spends its step on MEMORY, and a cache shed may not free what a hot path rebuilds
+
+**Ruled.** `AndroidLifecycle.memory_warning` has a listener. The response is two
+independent halves plus an ordering: `PerfGovernor.on_memory_warning()` takes
+the `far_cull_m` rung, `CityView.shed_caches()` returns what nothing is drawing,
+and `game/main.gd::_on_memory_warning` sheds **first** so the chunks the tighter
+cull drops are already gone when `apply_governor` re-uploads.
+
+**Not `_step_down`, and this is the ruling.** The governor's ladder is ordered by
+**cost per millisecond** — `render_scale` first, because dropping resolution buys
+the most frame time for the least visible loss. Android's memory warning is not
+about milliseconds. Handing it to `_step_down` would have spent the one step on
+resolution and returned **no memory at all**, which would have looked like a
+response and been none. The response therefore names its knob (`MEMORY_KNOB =
+"far_cull_m"`, doc 11's own prescription) and takes that rung out of ladder
+order; it still enters `_applied`, so `_step_up` unwinds it LIFO like any other
+and a device that recovers gets its draw distance back.
+
+**What a shed may free.** Only things whose rebuild is *lazy*. `CityView` frees
+the FAR node of a chunk that is no longer FAR and the MEDIUM nodes of a chunk
+that is no longer MEDIUM, because `_upload_all` creates both inside a tier test
+and will not rebuild them until the camera returns; and it evicts merged LOD1
+atlas meshes no live node still points at, because `_atlas_for` caches on
+`archetype:mask:lod` and **never evicted** — a long session accumulates one
+ArrayMesh per mask it has ever shown, and an unreferenced one is pure garbage.
+
+**What it may NOT free, stated because the tempting thing here is wrong.** The
+per-(archetype, level) LOD0 bucket nodes are the largest allocation in the view
+and freeing them reclaims *nothing*: `refresh()` calls `_upload_all()` every
+frame, and that loop calls `_ensure_bucket_node` for every bucket of every chunk
+**before** it decides visibility. A bucket freed this frame is rebuilt next
+frame, at the cost of a mesh load — so the "shed" would be a per-frame thrash
+that reports a big number. Making that creation lazy is a real fix and a change
+to a hot path; it is **filed** (below), not smuggled into a memory handler.
+Materials and textures are not freed either: live nodes hold them, and rebuilding
+an atlas material would drop the overlay paint `set_overlay_palette` wrote into
+it.
+
+**The honest floor.** `on_memory_warning()` returns `false` when `far_cull_m` is
+already at its 600 m floor, and the shell logs that rather than claiming a step.
+A device under sustained pressure gets a truthful `adb logcat` line — which is
+the only instrument doc 13 D-12 has, since none of this can be observed from
+inside the process that is about to be killed.
+
+**Applied:** `game/render/perf_governor.gd` (`on_memory_warning`, `_apply_rung`),
+`game/render/city_view.gd` (`shed_caches`), `game/main.gd` (the connect and
+`_on_memory_warning`), `tests/test_memory_warning.gd`.
+
+### 50.1 Measurements
+
+| Command | Number |
+|---|---|
+| `wc -l game/main.gd` (fork → now) | 2,257 → 2,264 — **the file got 7 lines LONGER**, and §50.3 is why that is the honest result rather than an embarrassing one |
+| `git diff 4503d35 --numstat -- game/main.gd` | `67 60` |
+| of those 67 added lines, `grep -c '^+[[:space:]]*#'` | **46 are `##` rulings**; 21 are code. Deleted: 60, of which 8 are comment → **52 lines of executable shell removed, 21 added, net −31** |
+| `grep -c "sim_host\.sim\." game/main.gd` (fork → now) | 72 → 67 — the metric doc 93 §AI1 argues for |
+| `grep -rn "res://game/main" tests/` | 0 — `main.gd` is still not loaded, and the point is that it no longer has to be |
+| `grep -rn "sim\._[a-z]" --include=*.gd game ui tools` (fork → now) | 8 → 0 (two comments naming the row) |
+| `--file=test_fix_router` | 19 tests, 347 asserts, 0 failed |
+| `--file=test_world_locator` | 18 tests, 121 asserts, 0 failed |
+| `--file=test_tile_geometry` | 10 tests, 66 asserts, 0 failed |
+| mirrors the scan finds (was a hand-list of 11) | **17** — `sim` 5, `game` 7, `ui` 1, `tools` 4 |
+| negative control: `flow_test.gd:43 := 8.5` | `failed: 1`, naming `res://tools/flow_test.gd:43` |
+| `--file=test_power_infra_feed` | 14 tests, 68 asserts, 0 failed |
+| `--file=test_memory_warning` | 12 tests, 41 asserts, 0 failed |
+| full suite (`run_tests.gd`, exit code from the redirect) | **138 files, 2,550 tests, 550,725 asserts, 0 failed, 0 silent, exit 0** — the fork's 2,476 plus this lane's 74 |
+| `profile_sim --hash-only` starter, coarse 24 h | `05614522975fad52…` = the `4503d35` baseline |
+| `profile_sim --hash-only` starter, fine 2.0 h | `d1aaee0dca92f2fd…` = the `4503d35` baseline |
+| `--hash-only --city=res://tests/fixtures/bench_city.json`, coarse 24 h | `275aad9d4aeea809…` = the `4503d35` baseline |
+| same, fine 2.0 h | `d40126e371371d59…` = the `4503d35` baseline |
+
+All four are the lane brief's `4503d35` baselines, unchanged. Nothing this lane
+ships is under `sim/` except `sim/world/tile_grid.gd`, which declares constants
+and pure functions and is called by no sim system — `grep -rn "TileGrid\." sim/`
+names only its own test.
+
+### 50.2 `awaiting_consumer` — filed, with the owner named
+
+Every row below is a one-line-to-one-function change in a file **this lane does
+not own**. None is a blocker for anything shipped above; each closes a hole this
+lane's gate can already see.
+
+1. **`ui/build_controller.gd` — `E_AVENUE`'s params half** (lane L, PA-05's other
+   half). Add `"fix_target_id": sim_id` to the `E_AVENUE` row of
+   `_check_params`. `test_fix_router.gd::test_E_AVENUE_routes_once_its_params_
+   carry_the_building` already asserts the router side, and
+   `test_the_checklist_sweep_still_finds_the_E_AVENUE_hole` will start failing
+   the moment it lands — deliberately, so the two halves cannot drift apart
+   silently.
+2. **`ui/building_panel.gd:414-416` — the button gate** (lane L). It draws
+   `Fix this →` on `kind != FIX_NONE` alone, which is why a row with an empty id
+   rendered a live button; the land panel already requires an id, which is why it
+   was safe. `FixRouter.can_route(sim, fix_target)` is the gate both should use.
+3. **The seventeen mirrored tile constants** (one row per owning lane; PA-76 —
+   which counted eight, and the scan in RR-139 is why the number is now exact).
+   Each is `const X := 8.0` → `const X := TileGrid.METRES_PER_TILE`, and
+   `tests/test_tile_geometry.gd` already fails on drift with the file and line,
+   so there is no hurry and no risk in doing them one at a time:
+   `IncidentWorld`, `Vehicle`, `WaterEdge`, `TravelTimeProvider` (sim),
+   `WeatherSystem` (lane B's neighbourhood), `RoadSurfaceView`,
+   `StreetlightPlacer`, `StreetLifeView`, `ConstructionVehicleView`,
+   **`ConstructionSiteView`**, **`VehicleView`** (render — the last two arrived
+   in `4503d35` after PA-76 was written),
+   `BuildController.TILE_M_DEFAULT` (lane L), `AudioEvents._DEFAULT_TILE_M`, and
+   four in `tools/` that no lens scanned: **`onboarding_preview.gd:19`,
+   `overlay_preview.gd:29`, `construction_preview.gd:41`, `flow_test.gd:43`**.
+   Two remaining hand-written footprint→centre formulas live in
+   `game/showcase.gd` and `tools/profile_frame.gd`.
+4. **`CityView._upload_all`'s eager bucket creation** (lane P or lane O — both
+   own parts of `city_view.gd` next wave; RR-141). Move
+   `_ensure_bucket_node` **below** the visibility decision so a CULLED or FAR
+   chunk's LOD0 buckets are not built at all. That is what would make
+   `shed_caches()` able to free them, and it is a per-frame saving on its own.
+5. **`main.gd::_on_sim_batch` → `RenderEventRouter`** (lane K, doc 93 §AI3). The
+   single highest-consequence extraction left in the shell and the one the
+   constitution's "every `Building` event reaches the translator" rule depends
+   on. Filed with its gate: every `Building`-lifecycle event named in `data/` has
+   an arm in the table.
+
+**Applied:** doc 93 §AI; doc 91 §14.5 (`A91-D-89`, `A91-D-90`); doc 12 §2.7
+(D-79).
+
+
+### 50.3 The file got longer, and the metric that says so is the wrong metric
+
+`main.gd` is **2,264 lines against the fork's 2,257**. Stated without the split
+above that reads as a failed extraction, so state it with the split: the lane
+**removed 52 lines of executable shell and added 21**, and 46 of its 67 added
+lines are the `##` paragraphs that make RR-139/140/141 auditable in the file
+they constrain. The net movement of *code* is **−31 lines**, and it happened
+while the lane also **added a handler the file never had** — `_on_memory_warning`
+plus its wiring is new behaviour (PA-20), not moved behaviour, so it can only
+push the count up.
+
+This is exactly the failure mode doc 93 §AI1 was written to head off, and it is
+worth being blunt about: **PA-38's "under 1,200 lines" target is not met, is not
+close, and is not reachable by extraction.** What moved is the thing that was
+actually broken — `grep -c "sim_host\.sim\." game/main.gd` fell **72 → 67**, and
+the five reads that left were the three defects PA-05 and PA-76 found plus the
+two `_building_records` reach-throughs PA-100 named. A lane that chased the line
+count instead would have extracted `_ready` and `_wire_*`, bought a shorter file,
+and moved no defect at all.
+
+The follow-on is filed rather than claimed: doc 93 §AI2 ranks the eight
+remaining extractions by what a player sees when one is wrong, and item 3
+(`_on_sim_batch` → `RenderEventRouter`) is the one that carries the
+constitution's own event rule.

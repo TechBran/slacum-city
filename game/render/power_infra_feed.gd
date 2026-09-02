@@ -61,12 +61,14 @@ static func topology(sim: CitySim, height_of := Callable(),
 ## footprint is in METRES (doc 02 stores tiles), and how high a service drop may
 ## land on it.
 static func building_view(sim: CitySim, sim_id: String,
-		height_of := Callable(), tile_m: float = 8.0) -> Dictionary:
+		height_of := Callable(), tile_m: float = TileGrid.METRES_PER_TILE) -> Dictionary:
 	var b: Building = sim.buildings.get(sim_id)
 	if b == null:
 		return {}
-	var record: Dictionary = sim._building_records[sim_id]
-	var size: Vector2i = record["footprint"]
+	# PA-100: the public accessor, not `sim._building_records[...]`. The `[]`
+	# form raised on any id the roster did not carry — inside a `_process` frame,
+	# for a building the renderer had already been told about.
+	var size: Vector2i = sim.building_record(sim_id).get("footprint", Vector2i.ONE)
 	var center := Vector3(b.origin.x * tile_m + size.x * tile_m * 0.5, 0.0,
 			b.origin.y * tile_m + size.y * tile_m * 0.5)
 	var height := DEFAULT_HEIGHT_M
@@ -123,7 +125,25 @@ static func road_probe(world: WorldMap) -> Callable:
 ## counts alone read as "nothing happened" and the pad of a transformer that is
 ## no longer there stays on the map. A ghost transformer after a demolish is
 ## precisely this lane's failure mode.
+##
+## **Wave 18 folds in `construction.active_count()`** (PA-72). One hole survived
+## the epoch: a building LEAVING `under_construction` re-rates nothing and
+## changes no count — the key was already in `sim.buildings` and the component
+## map never moved — but `building_view` swaps its `height_m` from the 4.10 m
+## site pole to the finished eave. So a tower topped out and kept its service
+## drop pinned to a hoarding for up to `topology_poll_s` (5 s). The construction
+## queue's job count moves at exactly that moment and is `_jobs.size()`, so the
+## fix costs one integer read and the method stays O(1) at `state_poll_s`.
+##
+## It over-triggers, deliberately: a REPAIR or a road job completing also moves
+## the count and buys one topology rebuild that changed nothing. That is the safe
+## direction — a spurious rebuild costs a pass, a missed one leaves a wire in the
+## air — and the unconditional `topology_poll_s` rebuild already pays that cost
+## every five seconds regardless. The audit also proposed folding Σ transformer
+## level; `mutation_epoch` already covers a re-rate (it bumps on every reshaping
+## call), so a second sum would buy nothing and cost a walk.
 static func signature(sim: CitySim) -> int:
 	return sim.grid.mutation_epoch * 1000003 \
 			+ sim.grid.component_ids_of_kind(&"transformer").size() * 1009 \
+			+ sim.construction.active_count() * 101 \
 			+ sim.buildings.size()

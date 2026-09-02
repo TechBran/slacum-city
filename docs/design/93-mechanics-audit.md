@@ -3892,3 +3892,77 @@ severity for an 18 % cut in majors. The literal reading (`pool.size() == 1`)
 lands at 2.86 game-days for +6.2 % severity. The measurement is doc 92 §49's; the
 ruling is that **a lever whose whole purpose is to convert an idle budget into
 tension may not be allowed to convert a working budget into silence.**
+
+
+---
+
+## AI. Wave-18 rulings — the shell's ten extractions, ranked by what happens when one is wrong (2026-09-02)
+
+*PA-38 asks for a ranked extraction plan for `game/main.gd`. Two of the ten are
+shipped in this wave (they are what PA-05's router needed); the other eight are
+filed here with a named consumer each, so the next lane to touch one has the
+argument already made. The ranking is by RISK, not by size — how bad the
+failure is when the extracted logic is wrong, times how invisible the wrongness
+is inside a file the suite cannot load.*
+
+### AI1. Why a line count is the wrong metric, and what the right one is
+
+PA-38's headline number — 2,034 lines at the audit's own fork, 2,257 at this
+lane's, zero test references either way — is the symptom.
+The disease is narrower and it has a name: **`main.gd` does sim reasoning**.
+`grep -c "sim_host\.sim\." game/main.gd` counted **72** reads at the Wave-17
+fork (67 after this wave),
+and every one of them is a place where a fact about the city is derived outside
+anything that can assert it. The three defects PA-05 and PA-76 found were all in
+that set, and none of them was in a long function: `_on_fix_requested` was
+twenty lines.
+
+So the target is not "get under 1,200 lines". It is **every derivation out; every
+wiring, node and lifecycle line stays**. A shell that is 2,000 lines of
+`add_child`, `connect` and `if node == null` is a shell doing its job; a shell
+that is 300 lines of `sim.buildings.get(id)` is a bug farm whatever its total.
+The two functions extracted this wave came to 45 lines and carried three
+independent defects between them.
+
+### AI2. The ten, ranked
+
+Risk is stated as **what a player sees when it is wrong**, because that is the
+only ranking that survives contact with a lane budget.
+
+| # | Extraction | Reads it does | Risk when wrong | Consumer |
+|---|---|---|---|---|
+| 1 | **`_on_fix_requested` → `FixRouter`** | `buildings`, `world.block`, `grid` | A button that depresses and does nothing, on the game's most-seen teaching row. Two of seven rows were dead. | **SHIPPED** (this wave, `ui/fix_router.gd`) |
+| 2 | **`_alert_world_pos` → `WorldLocator`** | `buildings` (linear scan), `world.block` | The camera jumps to the wrong place, or refuses to jump; silent either way. Anchored every building on its NW corner tile. | **SHIPPED** (this wave, `ui/world_locator.gd`) |
+| 3 | `_on_sim_batch` → `RenderEventRouter` | the whole event vocabulary | **The highest-consequence one left.** It is the ONLY door from a sim event to a mesh: a `building_*` event the table does not name is a building that exists in the sim and not on screen, forever, with no error. 109 lines, one `match`, and the constitution's own rule ("every event that creates, completes or destroys a `Building` must reach the translator") is enforced by review alone. Wants a table-driven form plus a gate that every `Building`-lifecycle event in `data/` has an arm. | lane K (the payload-SHAPE gate beside `test_event_matrix.gd`) |
+| 4 | `_dispatchable_units` → `DispatchPickerFeed` | `incidents.fleet`, `incidents.catalog`, ETA | The unit picker offers a unit that cannot go, or hides one that can, during an incident. Pure arithmetic over doc 06 reads; 24 lines; trivially testable. | lane H or the next incidents lane |
+| 5 | `_feed_dashboard_tabs` → `DashboardFeed` | `grid` ×3, `water`, `incidents.fleet` | Two numbers for one fact. It re-derived the ambient the power layer owns; **fixed this wave** by calling `PowerInfraFeed.ambient_c`, but the roster loop and the water snapshot are still assembled in the shell. | lane S (Economy tab) / whoever owns the Infrastructure tab next |
+| 6 | `_refresh_hud` → `HudFeed` | treasury, clock, population, alerts | Wrong money or wrong time in the top bar — highly visible, and 68 lines of it are in the shell. | lane K (owns `hud_model.gd`'s top-bar solver) |
+| 7 | `_feed_coverage_overlay` → `OverlayFeed` | `buildings`, `catalog.stats`, `world.coverage` | A coverage overlay that disagrees with the panel that quotes the same requirement. 45 lines, one loop over the roster per repaint. | lane J (owns the curriculum that teaches coverage) |
+| 8 | `_handle_tap` / `_route_world_drag` → `TapResolver` | `world.grid`, `buildings` via the render model | A tap that selects the wrong building, or nothing. Doc 12 §2.16's thresholds live here as literals. PA-73's `drag_routed` seam is the same code. | lane Q (owns `test_touch_input.gd`) |
+| 9 | `_resync_world_views` → `WorldResync` | roads, water, power, flood | After a RESTORE the world is drawn from the save; a missed layer is a city that looks like the one before the load. 63 lines, and it runs exactly once per load, which is why nothing has caught it. | lane F (save integrity) |
+| 10 | `_on_hour_settled` → `SettleFeed` | the hour digest | A wrong hourly delta in the log and the toast; 37 lines. Lowest risk of the ten: it is a display of a number the sim already published and a wrong one is visibly wrong. | lane K (event log) |
+
+### AI3. What stays in the shell, and why that is not a compromise
+
+`_ready`, `_build_*`, `_wire_*`, `_process`, `_notification` and the catch-up
+driver stay. Every one of them is *node construction, signal wiring or a
+per-frame budget*, and all three are things a headless model must not do
+(constitution §3). Extracting them would buy a smaller file and a worse one: the
+test would have to stand up a scene tree, and a test that stands up a scene tree
+is testing Godot.
+
+The honest consequence is that `main.gd` does not get under 1,200 lines by
+extraction alone, and PA-38's line target should be read as its assert target
+instead. This wave moved 45 lines out (`_on_fix_requested` 18,
+`_alert_world_pos` 27, measured at `4503d35`) and put **468 assertions** behind
+what those two did — `--file=test_fix_router` 347, `--file=test_world_locator`
+121 — inside a lane total of **643** across its five new test files.
+
+And the count went the other way, which is the part worth writing down:
+`wc -l game/main.gd` reads **2,264 against the fork's 2,257**. The lane removed
+52 lines of executable shell and added 21 (net −31); the file is longer because
+46 of its 67 added lines are the `##` rulings above, and because PA-20's
+`_on_memory_warning` is a handler the shell never had — new behaviour cannot
+shrink a file. Report 98 §50.3 states the same thing with the commands. The
+assert target is met; the line target is not, and §AI1 is the argument for why
+that is the correct trade rather than an excuse for it.

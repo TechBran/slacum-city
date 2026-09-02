@@ -624,7 +624,7 @@ func _stand_up_sites(count: int, stage_index: int) -> void:
 	var rows: Array = []
 	for id in _sim.buildings.keys():
 		var b: Building = _sim.buildings[String(id)]
-		var record: Dictionary = _sim._building_records[String(id)]
+		var record: Dictionary = _sim.building_record(String(id))  # PA-100
 		var size: Vector2i = record["footprint"]
 		var pos := Vector3(b.origin.x * 8.0 + size.x * 4.0, 0.0,
 				b.origin.y * 8.0 + size.y * 4.0)
@@ -923,7 +923,7 @@ func _build_ground(stage: Node3D) -> void:
 
 func _building_view(sim_id: String) -> Dictionary:
 	var b: Building = _sim.buildings.get(sim_id)
-	var record: Dictionary = _sim._building_records[sim_id]
+	var record: Dictionary = _sim.building_record(sim_id)  # PA-100
 	var size: Vector2i = record["footprint"]
 	var centre := Vector3(b.origin.x * 8.0 + size.x * 4.0, 0.0,
 			b.origin.y * 8.0 + size.y * 4.0)
