@@ -36,6 +36,10 @@
     "steady": [0, 1, 2, 3, 4, 4]
   },
   "safety_coverage_factor": {"floor": 0.80, "span": 0.20},
+  "owner_maintenance": {
+    "_note": "Doc 02 s2.6a / doc 93 sec Y1 (Wave 17). PRIVATE STOCK keeps itself up: the city pays for city assets only. This block authors NO number -- the owner's crew starts below condition.band_good and works at condition.repair_time_factor, both of which are below -- it names only the tax classes whose buildings are privately owned. They are exactly cost_curves.REVENUE_CLASSES, which is exactly the set doc 03 sec 2.4's E_building_maint used to bill: that line was charging the city the upkeep of every building it does not own, and doc 93 sec Y1 retires it.",
+    "classes": ["residential", "commercial", "industrial", "tech"]
+  },
   "condition": {
     "start": 1.00,
     "band_good": 0.85,
@@ -101,8 +105,8 @@
     "data_center": {"class": "vertical", "tax_class": "tech", "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 0, "jobs": 12, "power_kw": 400, "water": 3.2, "time_h": 20, "decay": 0.00075, "fire_p": 0.00060, "fire_load": 80, "crime": 2.0, "min_city": 4},
     "police_station": {"class": "standard", "tax_class": "civic", "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 0, "jobs": 12, "power_kw": 25, "water": 0.192, "time_h": 10, "decay": 0.00040, "fire_p": 0.00010, "fire_load": 30, "crime": 0.2, "min_city": 0, "coverage_radius": 20},
     "fire_station": {"class": "standard", "tax_class": "civic", "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 0, "jobs": 14, "power_kw": 28, "water": 0.40, "time_h": 10, "decay": 0.00040, "fire_p": 0.00006, "fire_load": 25, "crime": 0.3, "min_city": 0, "coverage_radius": 18},
-    "power_facility": {"class": "vertical", "tax_class": "utility", "footprints": ["3x3", "3x3", "3x3", "4x4", "4x4"], "pop": 0, "jobs": 20, "power_kw": 0, "water": 0.96, "time_h": 18, "decay": 0.00090, "fire_p": 0.00090, "fire_load": 90, "crime": 1.2, "min_city": 0},
-    "substation": {"class": "standard", "tax_class": "utility", "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 0, "jobs": 4, "power_kw": 0, "water": 0.0, "time_h": 8, "decay": 0.00080, "fire_p": 0.00070, "fire_load": 55, "crime": 1.5, "min_city": 0},
+    "power_facility": {"class": "vertical", "tax_class": "utility", "footprints": ["3x3", "3x3", "3x3", "4x4", "4x4"], "pop": 0, "jobs": 20, "power_kw": 0, "water": 0.96, "time_h": 18, "decay": 0.00045, "fire_p": 0.00090, "fire_load": 90, "crime": 1.2, "min_city": 0},
+    "substation": {"class": "standard", "tax_class": "utility", "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 0, "jobs": 4, "power_kw": 0, "water": 0.0, "time_h": 8, "decay": 0.00045, "fire_p": 0.00070, "fire_load": 55, "crime": 1.5, "min_city": 0},
     "water_facility": {
       "class": "standard",
       "tax_class": "utility",
@@ -112,7 +116,7 @@
       "power_kw": 60,
       "water": 0.0,
       "time_h": 12,
-      "decay": 0.00070,
+      "decay": 0.00045,
       "fire_p": 0.00012,
       "fire_load": 25,
       "crime": 0.8,
@@ -122,7 +126,7 @@
       "footprints_are_reference_variant_only": true,
       "per_variant_footprint_source": "data/water.json components[variant][L].footprint_w/h"
     },
-    "construction_yard": {"class": "steady", "tax_class": "civic", "footprints": ["2x2", "2x2", "2x2", "3x3", "3x3"], "pop": 0, "jobs": 16, "power_kw": 12, "water": 0.16, "time_h": 10, "decay": 0.00065, "fire_p": 0.00040, "fire_load": 50, "crime": 2.2, "min_city": 0, "coverage_radius": 30}
+    "construction_yard": {"class": "steady", "tax_class": "civic", "footprints": ["2x2", "2x2", "2x2", "3x3", "3x3"], "pop": 0, "jobs": 16, "power_kw": 12, "water": 0.16, "time_h": 10, "decay": 0.00045, "fire_p": 0.00040, "fire_load": 50, "crime": 2.2, "min_city": 0, "coverage_radius": 30}
   },
   "rounding": {
     "_applies_to": "the raw product seed x k^(L-1), once per cell, at table-generation time only -- never at runtime",

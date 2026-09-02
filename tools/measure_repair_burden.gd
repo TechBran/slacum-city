@@ -407,6 +407,12 @@ func _absence(sim: CitySim, hours: int) -> void:
 	for event in sim.bus.drain():
 		if String(event.get("type", "")) == "building_damaged":
 			events_damaged += 1
+	# The state census of everything below the auto-damage line. Doc 93 §Y1a
+	# claims a private building can only get there by being left DARK, and the
+	# claim is only checkable if the states are printed beside the bands: a
+	# building under 0.35 that is not `damaged` is a building some other doc's
+	# state machine is holding, and this line is what says which.
+	var low_states: Dictionary = {}
 	var m_repair := float(sim.treasury.difficulty().get("M_repair", 1.0))
 	for id in sim.buildings:
 		var b: Building = sim.buildings[id]
@@ -419,6 +425,9 @@ func _absence(sim: CitySim, hours: int) -> void:
 		if b.state == &"damaged":
 			damaged[cls] += 1
 		(bands[cls] as Array)[_band(b.condition)] += 1
+		if b.condition < 0.35:
+			var key := "%s/%s" % [cls, String(b.state)]
+			low_states[key] = int(low_states.get(key, 0)) + 1
 		if b.condition < MAINTAINER_THRESHOLD:
 			# `CostCurves.resolve_type` maps doc 02's archetype id onto its doc 03
 			# money row (`water_facility` → `water_plant`), so the quote is C-16's.
@@ -435,3 +444,9 @@ func _absence(sim: CitySim, hours: int) -> void:
 				int(bill_count[cls]), int(bill[cls])])
 	print("      building_damaged events during the absence: %d · min condition %.3f"
 			% [events_damaged, Playtest.Api.new(sim).min_condition()])
+	if not low_states.is_empty():
+		var census: Array[String] = []
+		for key in low_states:
+			census.append("%s x%d" % [String(key), int(low_states[key])])
+		census.sort()
+		print("      below the auto-damage line, by state: " + ", ".join(census))

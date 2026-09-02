@@ -218,3 +218,138 @@ func test_serialize_roundtrip() -> void:
 	assert_eq(restored.pending_level, 4)
 	assert_eq(restored.state, &"under_construction")
 	assert_eq(restored.origin, Vector2i(10, 10))
+
+
+# ------------------------- doc 02 §2.6a / §2.6 — PA-13's readers and ownership
+
+## PA-13's own gate, and the reason this pass could not simply edit the JSON:
+## every key in `data/building_rules.json.condition` was validated for presence,
+## asserted by `tests/test_building_catalog.gd`, and read by NOTHING. The test is
+## therefore not "the loader accepted the key" — it is "perturb the key and the
+## BEHAVIOUR moves" (doc 93 §Y2).
+func test_pa13_condition_keys_move_behaviour() -> void:
+	var b := _apartment_l3()
+	b.condition = 0.40
+	b.apply_decay(1.0)
+	assert_eq(b.state, &"active", "0.35 is the shipped auto-damage line")
+	var perturbed := _apartment_l3()
+	perturbed.condition_rules = Building.DEFAULT_CONDITION.duplicate()
+	perturbed.condition_rules["auto_damage_threshold"] = 0.45
+	perturbed.condition = 0.40
+	perturbed.apply_decay(1.0)
+	assert_eq(perturbed.state, &"damaged",
+			"auto_damage_threshold is READ, not hardcoded (PA-13)")
+
+
+func test_pa13_decay_coefficients_are_read() -> void:
+	var flat := _apartment_l3()
+	flat.condition_rules = Building.DEFAULT_CONDITION.duplicate()
+	flat.condition_rules["unpowered_decay_coefficient"] = 0.0
+	flat.apply_decay(168.0, 0.0, 0.0)
+	var shipped := _apartment_l3()
+	shipped.apply_decay(168.0, 0.0, 0.0)
+	assert_true(flat.condition > shipped.condition,
+			"unpowered_decay_coefficient is READ: 0.0 must wear less than 0.50")
+	var no_overload := _apartment_l3()
+	no_overload.condition_rules = Building.DEFAULT_CONDITION.duplicate()
+	no_overload.condition_rules["overload_decay_coefficient"] = 0.0
+	no_overload.apply_decay(168.0, 0.30, 1.0)
+	var with_overload := _apartment_l3()
+	with_overload.apply_decay(168.0, 0.30, 1.0)
+	assert_true(no_overload.condition > with_overload.condition,
+			"overload_decay_coefficient is READ")
+
+
+func test_pa13_repair_time_factor_and_targets_are_read() -> void:
+	var b := _apartment_l3()
+	b.condition = 0.50
+	assert_almost_eq(b.repair_crew_hours(), 14.5 * 0.50 * 0.50, 1e-9)
+	b.condition_rules = Building.DEFAULT_CONDITION.duplicate()
+	b.condition_rules["repair_time_factor"] = 0.25
+	assert_almost_eq(b.repair_crew_hours(), 14.5 * 0.25 * 0.50, 1e-9,
+			"repair_time_factor is READ")
+	b.state = &"damaged"
+	assert_almost_eq(b.repair_target(), 0.85, 1e-9)
+	b.condition_rules["repair_target_damaged"] = 0.70
+	assert_almost_eq(b.repair_target(), 0.70, 1e-9, "repair_target_damaged is READ")
+
+
+func test_pa13_min_condition_to_upgrade_is_read() -> void:
+	var b := _apartment_l3()
+	b.condition = 0.60
+	b.max_level = 6
+	assert_true(bool(b.start_upgrade()["ok"]), "0.60 clears the shipped 0.55")
+	var strict := _apartment_l3()
+	strict.condition_rules = Building.DEFAULT_CONDITION.duplicate()
+	strict.condition_rules["min_condition_to_upgrade"] = 0.75
+	strict.condition = 0.60
+	strict.max_level = 6
+	var refused := strict.start_upgrade()
+	assert_false(bool(refused["ok"]))
+	assert_eq(refused["reason_code"], &"E_CONDITION",
+			"min_condition_to_upgrade is READ (PA-13)")
+
+
+## Doc 93 §Y1: a SERVED private building never reaches the auto-damage line from
+## wear, and settles into a sawtooth between `band_good` and 1.00.
+func test_owner_maintained_building_never_damages_while_served() -> void:
+	var b := _apartment_l3()
+	b.owner_maintained = true
+	var total := 0.0
+	var lowest := 1.0
+	var events := 0
+	for i in range(2000):
+		events += b.apply_decay(1.0, 0.0, 1.0).size()
+		total += b.condition
+		lowest = minf(lowest, b.condition)
+	assert_eq(b.state, &"active", "2000 game-hours of wear, never damaged")
+	assert_eq(events, 0, "and never an event: routine private wear is silent")
+	assert_true(lowest >= 0.85 - 0.01,
+			"the sawtooth floor is band_good, got %.4f" % lowest)
+	assert_true(total / 2000.0 > 0.90,
+			"mean condition sits high, got %.4f" % (total / 2000.0))
+
+
+## Doc 93 §Y1a — the service clause. A building the city has left DARK is not
+## maintained at all: it wears, it reaches the line, and it emits. This is the
+## half of the ruling that keeps gate 29's neglect fatal.
+func test_owner_maintenance_stops_when_the_city_stops_serving() -> void:
+	var b := _apartment_l3()
+	b.owner_maintained = true
+	var events := 0
+	var hours := 0
+	while hours < 4000 and b.state == &"active":
+		events += b.apply_decay(1.0, 0.0, 0.0).size()
+		hours += 1
+	assert_eq(b.state, &"damaged", "a dark private building still fails")
+	assert_eq(events, 1, "exactly one building_damaged, when it crosses")
+	assert_true(hours < 4000, "and it gets there: %d game-hours" % hours)
+
+
+## The owner rebuilds after an incident to §2.12's post-damage target, and says
+## so with `cause: owner` so a surface can tell it from a city crew's work.
+func test_owner_rebuilds_after_damage_with_its_own_cause() -> void:
+	var b := _apartment_l3()
+	b.owner_maintained = true
+	b.condition = 0.20
+	b.state = &"damaged"
+	var seen := {}
+	for i in range(200):
+		for event in b.apply_decay(1.0, 0.0, 1.0):
+			seen[String(event["type"])] = String(event.get("cause", ""))
+		if b.state == &"active":
+			break
+	assert_eq(b.state, &"active")
+	assert_eq(seen.get("building_repaired", ""), "owner",
+			"an owner's rebuild is labelled as one")
+	assert_true(b.condition >= 0.85)
+
+
+## And the default is OFF: a `Building` nobody stamped is the pre-Wave-17
+## building, which is what keeps every fixture in this file true.
+func test_owner_maintenance_defaults_off() -> void:
+	var b := _apartment_l3()
+	assert_false(b.owner_maintained)
+	b.apply_decay(168.0)
+	assert_almost_eq(b.condition, 0.879, 0.0005,
+			"worked example E4 is unmoved by the ruling")

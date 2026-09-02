@@ -189,6 +189,25 @@ func rules() -> Dictionary:
 	return _rules
 
 
+## Doc 02 §2.6's condition block, the dictionary `Building` is stamped with
+## (PA-13, doc 93 §Y2). Returned by reference on purpose: every `Building` in a
+## city shares this one instance, so the stamp costs a reference and no copy.
+## Empty when a fixture's rules carry no block, and `Building` then falls back to
+## its own `DEFAULT_CONDITION`, which is bit-identical to the pre-Wave-17 consts.
+func condition_rules() -> Dictionary:
+	return _rules.get("condition", {})
+
+
+## Doc 02 §2.6a's owner-maintenance rule (doc 93 §Y1): is this archetype PRIVATE
+## STOCK, kept up by its owner rather than by the city's crews? Decided by tax
+## class — `building_rules.owner_maintenance.classes` names them — so a fixture
+## whose rules carry no block answers false for everything and keeps the
+## pre-Wave-17 behaviour exactly.
+func owner_maintained(archetype: String) -> bool:
+	var block: Dictionary = _rules.get("owner_maintenance", {})
+	return (block.get("classes", []) as Array).has(tax_class(archetype))
+
+
 ## The five `water_facility` node kinds (doc 02 §2.1, C-35), in doc order.
 func water_variants() -> Array:
 	return _rules.get("water_facility_variants", []).duplicate()
@@ -525,6 +544,21 @@ func _load_rules(rules_data: Dictionary) -> void:
 	for key in CONDITION_SCALE_KEYS:
 		if not condition.has(key):
 			errors.append("building_rules: condition block missing '%s'" % key)
+
+	# Doc 02 §2.6a (doc 93 §Y1): the owner-maintenance block is optional for a
+	# fixture and validated when present. It authors NO number — only the tax
+	# classes whose stock keeps itself up — so the one thing to check is that
+	# every class it names is a real one, or the block would silently name
+	# nobody and the ruling would be a no-op the loader approved.
+	if rules_data.has("owner_maintenance"):
+		var owner: Dictionary = rules_data.get("owner_maintenance", {})
+		var owner_classes: Array = owner.get("classes", [])
+		if owner_classes.is_empty():
+			errors.append("building_rules: owner_maintenance.classes is empty")
+		for entry in owner_classes:
+			if not TAX_CLASSES.has(String(entry)):
+				errors.append("building_rules: owner_maintenance.classes names '%s', not a tax class"
+						% String(entry))
 
 	var states: Dictionary = rules_data.get("state_modifiers", {})
 	for state_variant in states:

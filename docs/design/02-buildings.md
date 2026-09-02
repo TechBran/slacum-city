@@ -260,33 +260,33 @@ The **`Pwr kW` column needs no seed table**: every L1 power figure is already ex
 #### `power_facility` — vertical (k_dem 2.55; footprint grows at L4)
 | L | Foot | Pop | Jobs | Pwr kW (own use) | Water WU/gh | Build gh | Upg gh | Decay | Fire p/gh | FireLoad | Crime | ReqFire | ReqPol | CityLv |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 3x3 | 0 | 20 | 0 | 0.96 | 18 | 20 | 0.000900 | 0.00090 | 90 | 1.20 | 0.00 | 0.00 | 0 |
-| 2 | 3x3 | 0 | 42 | 0 | 2.4 | 31 | 34 | 0.001080 | 0.00115 | 180 | 1.92 | 0.15 | 0.11 | 1 |
-| 3 | 3x3 | 0 | 88 | 0 | 6.2 | 52 | 57 | 0.001296 | 0.00147 | 360 | 3.07 | 0.30 | 0.26 | 2 |
-| 4 | 4x4 | 0 | 185 | 0 | 16.0 | 88 | 98 | 0.001555 | 0.00189 | 720 | 4.92 | 0.45 | 0.41 | 3 |
-| 5 | 4x4 | 0 | 389 | 0 | 40.5 | 150 | — | 0.001866 | 0.00242 | 1440 | 7.86 | 0.60 | 0.56 | 4 |
+| 1 | 3x3 | 0 | 20 | 0 | 0.96 | 18 | 20 | 0.000450 | 0.00090 | 90 | 1.20 | 0.00 | 0.00 | 0 |
+| 2 | 3x3 | 0 | 42 | 0 | 2.4 | 31 | 34 | 0.000540 | 0.00115 | 180 | 1.92 | 0.15 | 0.11 | 1 |
+| 3 | 3x3 | 0 | 88 | 0 | 6.2 | 52 | 57 | 0.000648 | 0.00147 | 360 | 3.07 | 0.30 | 0.26 | 2 |
+| 4 | 4x4 | 0 | 185 | 0 | 16.0 | 88 | 98 | 0.000778 | 0.00189 | 720 | 4.92 | 0.45 | 0.41 | 3 |
+| 5 | 4x4 | 0 | 389 | 0 | 40.5 | 150 | — | 0.000933 | 0.00242 | 1440 | 7.86 | 0.60 | 0.56 | 4 |
 
 *(The L5 row is the largest single movement in the C-34 rescale: 154.0 old WU/gh → 40.5 m³/h of cooling and process water.)* Generation capacity in MW is **doc 04's**, not a column here.
 
 #### `substation` — standard (k_dem 2.45)
 | L | Foot | Pop | Jobs | Pwr kW | Water WU/gh | Build gh | Upg gh | Decay | Fire p/gh | FireLoad | Crime | ReqFire | ReqPol | CityLv |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 2x2 | 0 | 4 | 0 | 0 | 8 | 8 | 0.000800 | 0.00070 | 55 | 1.50 | 0.00 | 0.00 | 0 |
-| 2 | 2x2 | 0 | 7 | 0 | 0 | 12.5 | 12.5 | 0.000960 | 0.00090 | 110 | 2.40 | 0.15 | 0.11 | 1 |
-| 3 | 2x2 | 0 | 14 | 0 | 0 | 19 | 19.5 | 0.001152 | 0.00115 | 220 | 3.84 | 0.30 | 0.26 | 2 |
-| 4 | 2x2 | 0 | 25 | 0 | 0 | 30 | 30 | 0.001382 | 0.00147 | 440 | 6.14 | 0.45 | 0.41 | 3 |
-| 5 | 2x2 | 0 | 47 | 0 | 0 | 46 | — | 0.001659 | 0.00188 | 880 | 9.83 | 0.60 | 0.56 | 4 |
+| 1 | 2x2 | 0 | 4 | 0 | 0 | 8 | 8 | 0.000450 | 0.00070 | 55 | 1.50 | 0.00 | 0.00 | 0 |
+| 2 | 2x2 | 0 | 7 | 0 | 0 | 12.5 | 12.5 | 0.000540 | 0.00090 | 110 | 2.40 | 0.15 | 0.11 | 1 |
+| 3 | 2x2 | 0 | 14 | 0 | 0 | 19 | 19.5 | 0.000648 | 0.00115 | 220 | 3.84 | 0.30 | 0.26 | 2 |
+| 4 | 2x2 | 0 | 25 | 0 | 0 | 30 | 30 | 0.000778 | 0.00147 | 440 | 6.14 | 0.45 | 0.41 | 3 |
+| 5 | 2x2 | 0 | 47 | 0 | 0 | 46 | — | 0.000933 | 0.00188 | 880 | 9.83 | 0.60 | 0.56 | 4 |
 
 `substation` keeps a deliberately high `crime_weight` for its class (copper theft), so an unguarded remote substation is a real cascade seed. Throughput, `service_radius_tiles` and every other electrical number are **doc 04's**.
 
 #### `water_facility` — standard (k_dem 2.45; footprint grows at L5) — **`pump` reference variant**
 | L | Foot | Pop | Jobs | Pwr kW | Water WU/gh | Build gh | Upg gh | Decay | Fire p/gh | FireLoad | Crime | ReqFire | ReqPol | CityLv |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 3x3 | 0 | 10 | 60 | 0 | 12 | 12 | 0.000700 | 0.00012 | 25 | 0.80 | 0.00 | 0.00 | 0 |
-| 2 | 3x3 | 0 | 19 | 145 | 0 | 18.5 | 19 | 0.000840 | 0.00015 | 50 | 1.28 | 0.15 | 0.11 | 1 |
-| 3 | 3x3 | 0 | 34 | 360 | 0 | 29 | 29 | 0.001008 | 0.00020 | 100 | 2.05 | 0.30 | 0.26 | 2 |
-| 4 | 3x3 | 0 | 63 | 880 | 0 | 45 | 45 | 0.001210 | 0.00025 | 200 | 3.28 | 0.45 | 0.41 | 3 |
-| 5 | 4x4 | 0 | 117 | 2160 | 0 | 69 | — | 0.001452 | 0.00032 | 400 | 5.24 | 0.60 | 0.56 | 4 |
+| 1 | 3x3 | 0 | 10 | 60 | 0 | 12 | 12 | 0.000450 | 0.00012 | 25 | 0.80 | 0.00 | 0.00 | 0 |
+| 2 | 3x3 | 0 | 19 | 145 | 0 | 18.5 | 19 | 0.000540 | 0.00015 | 50 | 1.28 | 0.15 | 0.11 | 1 |
+| 3 | 3x3 | 0 | 34 | 360 | 0 | 29 | 29 | 0.000648 | 0.00020 | 100 | 2.05 | 0.30 | 0.26 | 2 |
+| 4 | 3x3 | 0 | 63 | 880 | 0 | 45 | 45 | 0.000778 | 0.00025 | 200 | 3.28 | 0.45 | 0.41 | 3 |
+| 5 | 4x4 | 0 | 117 | 2160 | 0 | 69 | — | 0.000933 | 0.00032 | 400 | 5.24 | 0.60 | 0.56 | 4 |
 
 The shell table above is generated for the **`pump`** variant **and its `Foot` column is the `pump` footprint only** *(report 98 RR-8, verifier finding F-08)*. The earlier claim that the four non-reference variants "reuse the same footprint" is **deleted** — it contradicted C-35, which gave doc 05 every per-variant number, and it contradicted doc 09's starter-city footprint total, which counts `WTR-2` as a **2×2 tank**. What survives here is a **restatement, not an ownership claim**: the `Foot` column above must equal doc 05's `components.pump` footprint columns, and the loader asserts that equality at boot (§3.1). C-30's "doc 02's footprint is authoritative" remains true against **doc 04**; it was never a claim against doc 05.
 
@@ -302,11 +302,11 @@ Doc 05's published footprints for reference (**doc 05 §8 is the source of truth
 #### `construction_yard` — steady (k_dem 2.35; footprint grows at L4)
 | L | Foot | Pop | Jobs | Pwr kW | Water WU/gh | Build gh | Upg gh | Decay | Fire p/gh | FireLoad | Crime | ReqFire | ReqPol | CityLv |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 2x2 | 0 | 16 | 12 | 0.16 | 10 | 9 | 0.000650 | 0.00040 | 50 | 2.20 | 0.00 | 0.00 | 0 |
-| 2 | 2x2 | 0 | 25 | 28 | 0.38 | 14 | 12.5 | 0.000780 | 0.00051 | 100 | 3.52 | 0.15 | 0.11 | 1 |
-| 3 | 2x2 | 0 | 38 | 66 | 0.88 | 19.5 | 17.5 | 0.000936 | 0.00066 | 200 | 5.63 | 0.30 | 0.26 | 2 |
-| 4 | 3x3 | 0 | 60 | 155 | 2.1 | 27 | 25 | 0.001123 | 0.00084 | 400 | 9.01 | 0.45 | 0.41 | 3 |
-| 5 | 3x3 | 0 | 92 | 365 | 4.9 | 38 | — | 0.001348 | 0.00107 | 800 | 14.42 | 0.60 | 0.56 | 4 |
+| 1 | 2x2 | 0 | 16 | 12 | 0.16 | 10 | 9 | 0.000450 | 0.00040 | 50 | 2.20 | 0.00 | 0.00 | 0 |
+| 2 | 2x2 | 0 | 25 | 28 | 0.38 | 14 | 12.5 | 0.000540 | 0.00051 | 100 | 3.52 | 0.15 | 0.11 | 1 |
+| 3 | 2x2 | 0 | 38 | 66 | 0.88 | 19.5 | 17.5 | 0.000648 | 0.00066 | 200 | 5.63 | 0.30 | 0.26 | 2 |
+| 4 | 3x3 | 0 | 60 | 155 | 2.1 | 27 | 25 | 0.000778 | 0.00084 | 400 | 9.01 | 0.45 | 0.41 | 3 |
+| 5 | 3x3 | 0 | 92 | 365 | 4.9 | 38 | — | 0.000933 | 0.00107 | 800 | 14.42 | 0.60 | 0.56 | 4 |
 
 ### 2.4 Coverage reach table (the only "special output" this doc still owns)
 
@@ -402,6 +402,74 @@ Incident-inflicted damage (doc 06 fire, doc 07 disasters) arrives as a `damage_f
 Same apartment on a grid node at 130 % load with `P = 0.7` for that week:
 `0.000720 × (1 + 0.8×0.30) × (1 + 0.5×0.30) = 0.000720 × 1.24 × 1.15 = 0.00102672/gh` → `1.000 − 0.17249 = **0.828**`.
 Repairing it back to 1.00: `damage_fraction = 0.172`, `repair_hours = 14.5 × 0.50 × 0.172 = **1.25 crew-hours**`, and doc 03 charges `capital_value(apartment L3) 43,029 × 0.172 × 0.85 × 1.00 = **$6,291**` at standard difficulty. *(The old figures — condition 87.9 / 82.1 and $2,855 — used the deleted `[0,100]` scale and doc 02's deleted `build_cost` column. The old 82.1 also contained an arithmetic slip: `0.0720 × 1.24 × 1.15 = 0.10267`, not `0.1067`, giving 82.75 on the old scale.)*
+
+### 2.6a Who pays — private stock keeps itself up (Wave 17)
+
+**Ruled by doc 93 §Y1**, from the 2026-09-01 playtest: *"repair prices should
+fall on the OWNERS of the building, not the city."* Doc 03 §2.4's
+`E_building_maint` billed the treasury the upkeep of every building for which
+`is_revenue_producing(type)` was true — which is `REVENUE_CLASSES`, which is
+`residential / commercial / industrial / tech` — so the line was, exactly and
+only, the city paying for the buildings it does not own. C-08 had already
+excluded the civic and utility shells it *does*.
+
+| asset class | who pays routine repair | what the player sees |
+|---|---|---|
+| **private stock** — the four `REVENUE_CLASSES` (`house`, `apartment`, `store`, `office`, `high_rise`, `data_center`) | **the owner** | nothing: no REPAIR row at any condition, no toast, no banner, no push. Only `f_condition` on the tax line |
+| roads · water infrastructure · power infrastructure · civic buildings | **the city** | the existing surfaces — the road accrual and its policy, the water panel, the grid chip, the panel's REPAIR row |
+
+```
+owner_maintenance.classes = ["residential", "commercial", "industrial", "tech"]   §8
+
+if owner_maintained and (state == damaged or condition < condition.band_good):
+    full_repair_hours = build_time_hours(L) × condition.repair_time_factor
+    condition += (hours_elapsed / full_repair_hours) × P          P = doc 04's power_availability_hour
+    damaged → active at condition.repair_target_damaged, event `building_repaired {cause: owner}`
+```
+
+**No number is authored for this.** The threshold is the Good band's own floor
+and the rate is §2.6's own `repair_hours` read as a rate — the whole of a
+building's damage is made good in `build_time_hours × repair_time_factor`
+game-hours, so the restore is the reciprocal of that per game-hour.
+
+**The service clause** (doc 93 §Y1a). The restore is scaled by `P`, doc 04's
+`power_availability_hour` — the same argument `apply_decay` already takes. A
+building the city has left **dark** is not maintained at all: it wears at the
+unpowered rate, reaches the auto-damage line, emits `building_damaged`, and
+`roll_structural_failure` can reach it like any other. *Stated precisely, because
+the proportionality is nearly a switch:* an owner's restore rate is three orders
+of magnitude larger than the wear it answers (a house restores 1.00/gh against a
+0.00045/gh decay), so **any** service at all holds the sawtooth and only `P = 0`
+lets a private building fall. Neglect is still fatal; it is now fatal through the
+lights, which the player can see, rather than through two hundred untapped REPAIR
+buttons.
+
+**Measured** (`tools/measure_repair_burden.gd`, doc 92 §43.1): a served L1 house
+settles into a sawtooth with a floor of 0.850 and a mean condition of **0.9251**
+over 2,000 game-hours, which is the whole of the drag this ruling leaves on the
+tax base; a dark one reaches `damaged` in **963 gh** (40 game-days).
+
+**`cmd_repair_building` refuses private stock with `E_OWNER_MAINTAINED`**, and
+doc 12's panel folds that code into "there is nothing to buy" beside
+`E_NOT_DAMAGED` so the row is not drawn at all (doc 93 §Y3a). Incident damage is
+unchanged and stays doc 06's: a fire, a collapse or a storm strike damages a
+private building exactly as before and is answered by the city's units at the
+city's price. This ruling is about *wear*, which is time, not about *damage*,
+which is an event.
+
+**And no city asset may wear faster than the cheapest thing on the map** (doc 93
+§Y2a). The four city-owned archetypes are capped at the house seed:
+`power_facility` 0.00090 → **0.00045**, `substation` 0.00080 → **0.00045**,
+`water_facility` 0.00070 → **0.00045**, `construction_yard` 0.00065 →
+**0.00045**; `police_station` and `fire_station` were already at 0.00040 and are
+untouched, and no private seed moves. §2.3's Decay columns for those four
+archetypes are re-published above. The derivation is the arc: over doc 92 §33's
+45-game-day finale (1,080 gh) an L1 asset at 0.00045 wears 0.486, which is below
+the `1 − 0.35 = 0.65` the auto-damage line needs, **so a city building cannot
+reach `damaged` from wear alone inside the arc** — at 0.00090 it wore 0.972 and
+could. At the top of the ladder `k_decay = 1.20` still gives an L5 asset 2.07× its
+seed and 697 gh to the line, so a top-level plant left alone for a month does
+still fail, which is required rather than tolerated.
 
 ### 2.7 Fire — ignition here, dynamics in doc 06
 

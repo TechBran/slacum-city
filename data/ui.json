@@ -998,7 +998,7 @@
 			"assistance"
 		],
 		"expense_keys": [
-			"building_maint",
+			
 			"departments",
 			"fleet",
 			"vehicle_fuel",

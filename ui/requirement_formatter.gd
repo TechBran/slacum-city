@@ -116,6 +116,11 @@ const CODE_TABLE := {
 	# now put in front of a player. Two of them are INFO rather than BLOCKED,
 	# because "it is already being repaired" is news, not a fault.
 	&"E_NOT_DAMAGED": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
+	# Doc 02 §2.6a (doc 93 §Y1/§Y3a). `repair_view` folds this into "nothing
+	# to buy" and never draws a row for it, so this entry exists only so the
+	# code can never fall through to UNKNOWN and print itself at a player —
+	# the failure shape PA-24 found on `E_WATER_HEADROOM`.
+	&"E_OWNER_MAINTAINED": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	&"E_JOB_IN_FLIGHT": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	&"E_UNKNOWN_PRIORITY": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	# --- Wave 6: doc 09 §2.5's land verbs, surfaced by S4 (doc 12 §2.8).

@@ -1205,7 +1205,18 @@ func repair_view(sim_id: String) -> Dictionary:
 	var ok := bool(preview["ok"])
 	# `E_NOT_DAMAGED` is not a refusal the player has to read — it is the normal
 	# state of a healthy building, and the row simply is not there.
-	var nothing_to_buy := not ok and code == &"E_NOT_DAMAGED"
+	#
+	# **`E_OWNER_MAINTAINED` folds in beside it** (Wave 17, doc 93 §Y3a). Private
+	# stock keeps itself up, so on a house there is nothing to buy at ANY
+	# condition and the row is not drawn at all. Drawing it disabled with an
+	# explanation would be *more* interruption than the state this ruling is
+	# fixing, not less: the 2026-09-01 playtest counted a REPAIR affordance on
+	# 260 private buildings in a 21-game-day `balanced` city (doc 92 §43.1), and
+	# a disabled button on 260 buildings is still 260 things asking to be tapped.
+	# The code exists so the command layer, the agents and the tests can name the
+	# reason exactly; it is not a thing to show a player who never asked.
+	var nothing_to_buy := not ok and (code == &"E_NOT_DAMAGED"
+			or code == &"E_OWNER_MAINTAINED")
 	var cost := int(payload.get("cost", 0))
 	var reason: Dictionary = {}
 	if not ok and not nothing_to_buy:
