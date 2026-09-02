@@ -6214,3 +6214,63 @@ stage 1, and `game/main.gd`'s translator adds the site props. Without the arm th
 lot would have kept its ruin overlay and its full damage channel **through the
 whole rebuild and past its completion**, because the `building_completed` arm
 carries damage forward when the event does not name it.
+
+### 56.4 What this lane verified before it closed
+
+| check | command | result |
+|---|---|---|
+| zero callers at the fork | `git grep -n "cmd_rebuild\|\.rebuild(\|order_rebuild" <fork> -- sim ui game` | one hit, and it is the **definition**: `sim/buildings/building.gd:463`. Every other hit in the tree is `RoadSurfaceView.rebuild` or `WaterTopology.rebuild` — two unrelated methods that happen to share a name, which is most of why this survived five waves of audit. |
+| the suite | `godot --headless --script tests/run_tests.gd > suite.log 2>&1; echo $?` | **exit 0** — 135 files, **2,495 tests, 551,375 asserts, failed 0, silent 0** |
+| determinism, founding city | `tools/profile_sim.gd --hash-only` | `05614522975fad52…` / `d1aaee0dca92f2fd…` — **byte-identical to the fork** |
+| determinism, benchmark city | `… --hash-only --city=res://tests/fixtures/bench_city.json` | `275aad9d4aeea809…` / `d40126e371371d59…` — **byte-identical to the fork** |
+| the preview deck | `xvfb-run -a godot --path . res://tools/ui_preview.tscn -- --screen=all --audit --strict` | **exit 0**, **69 of 69** states clean, the two new ones included |
+| the doc ledger | `python3 tools/check_doc_refs.py` | `all resolving; no id assigned twice` |
+
+**The one test that failed on the way, and why it is the best thing in this
+section.** `tests/test_event_matrix.gd::test_every_emitted_event_is_consumed_or_classified`
+failed on `restore_batch_completed` — a new event with no consumer — which is
+precisely the guard `A91-D-19`'s shape exists to trip, tripping on the wave whose
+whole subject is that shape. It is classified `awaiting_consumer` naming
+`ui/city_dashboard.gd`'s Upkeep band and the lane that owns it, **not deleted**:
+every building in a sweep already emits its own `restore_started_sim` and the
+renderer consumes it, so the city visibly comes back; what is missing is the
+one-line summary a twelve-ruin sweep deserves instead of twelve notices. The
+classification carries a mechanical expiry, so the row deletes itself the moment
+that lane lands.
+
+**And one hazard the lane found in its own code before the suite did.**
+`CostCurves` resolves doc 03's archetype aliases (`power_facility` →
+`power_plant_gas`) and `BuildingCatalog` does not. The restore quote reads a
+PRICE from the first and a DURATION from the second, and both were being read
+off one variable — equal on every city today only because `_boot_buildings`
+builds the archetype FROM `record["type"]` and `cmd_place_building` writes it
+INTO it. A catalog read made in the economy's spelling answers `{}` and silently
+gives every ruin a four-hour rebuild. Each side is now asked in its own
+vocabulary, and `tests/test_restore_building.gd::test_the_catalog_and_the_economy_are_each_asked_in_their_own_spelling`
+walks `PLANT-1` — the one founding archetype whose two names differ — and
+asserts the quoted crew-hours are the authored figure rather than the fallback.
+
+### 56.5 What is left to `game/main.gd` — two snippets, both the lead's
+
+Neither is guessed and neither is written here: `game/main.gd` is the lead's
+file, and both arms are anchored in the branch report.
+
+1. **`_on_sim_batch`**, immediately after the `&"upgrade_started_sim":` arm.
+   `restore_started_sim` already carries the int render id (the
+   `repair_started_sim` shape), so it is appended as-is — exactly as
+   `building_construction_stage` is — and `RenderStateModel`'s new arm does the
+   rest. `_add_construction_site()` is the same call every other new project
+   makes.
+2. **The panel wiring**, immediately after
+   `building_panel.demolished.connect(_on_building_demolished)`. Two args, so
+   not `_on_building_action`. It is **wrapped in `flush_sim_events()`** for the
+   same reason `bind_construction`'s rush door is: a verb that emits from inside
+   the command meets a live drain (`SimHost._process`) that does not run while
+   the game is paused, so the rubble a paused player just paid to clear would sit
+   there until they un-paused. RR-108's lesson, applied in the other direction.
+
+Until they land, `sim/` and `ui/` are complete and covered — the verb, the price,
+the panel and the render arm all ship with tests — and the only thing a player
+would notice missing is that the ruin's mesh survives its own restore until the
+next relaunch. That is the pump lesson exactly, which is why the arms are named
+rather than assumed.
