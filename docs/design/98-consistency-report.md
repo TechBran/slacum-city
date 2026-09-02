@@ -5763,12 +5763,18 @@ doc 03 §2.5a, doc 12 §2.10 (D-84), doc 93 §AL.
 **The finding (99-PA PA-31, surface half).** An untouched city loses 53 % of its
 non-subsidy income in 20 game-days from decay alone; at the Wave-17 fork nothing
 said so until a building reached `damaged` at 0.35 — and after doc 93 §Y1's
-ownership floor a private building **never gets there**, so for the four revenue
-classes the only cue that ever existed is now unreachable by construction. The
-lane's own instrument makes the size of the silence exact: on a 45-game-day
-curriculum arc, `tools/measure_repair_burden.gd` counts **321 downward crossings
-of 0.85, 0 of 0.60, 0 of 0.35**, ending with **185 private buildings sitting worn**
-and **118 repair-family events reaching no surface at all**.
+ownership floor **a private building the city keeps SERVED never gets there**
+(§Y1a lifts the floor only for an owner left in the dark), so on the path a
+player actually plays the only cue that ever existed is unreachable by
+construction. Two instruments size the silence:
+
+* `tools/measure_repair_burden.gd --days=45 --seeds=1337 --strategies=curriculum`
+  counts **321 downward crossings of 0.85, 0 of 0.60, 0 of 0.35**, ends with
+  **185 private buildings sitting worn**, and reports **118 repair-family events
+  reaching no surface at all**.
+* A 60-game-day `do_nothing` starter run emits **37 Worn and 11 Poor** crossings
+  and **zero** `building_damaged` — forty-eight moments at which the city got
+  poorer and nothing on any screen moved.
 
 **Ruled, in two halves.**
 

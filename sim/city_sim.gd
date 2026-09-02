@@ -5202,15 +5202,65 @@ func apply_hourly_decay(dt_h: float, availability: Dictionary,
 		if not b.decays():
 			continue
 		var excess := float(overload.get(grid.attachment_of(String(id)), 0.0))
+		var before := b.condition
 		var events: Array = b.apply_decay(dt_h, excess,
 				float(availability.get(id, 1.0)), weather_mult)
 		if destroy_allowed:
 			events.append_array(b.roll_structural_failure(rng, dt_h, now_minutes))
+		_emit_condition_band(String(id), b, before)
 		for event in events:
 			var out: Dictionary = event.duplicate()
 			out["sim_id"] = id
 			out["condition"] = b.condition
 			bus.emit(StringName(String(out["type"])), out)
+
+
+## Doc 02 §2.6's band table, as a name. `""` above `band_good`; the two names
+## below it are the two lines 99-PA PA-31 asks the game to speak at. The
+## thresholds are read off the building's own stamped rules (`Building.rule`,
+## PA-13's accessor), so the band a player is told about and the band the
+## ownership floor holds at are the same number by construction.
+##
+## The auto-damage line (`band_poor`, 0.35) is deliberately NOT a band here:
+## crossing it already emits `building_damaged`, which is a stronger statement
+## about the same building in the same hour, and two events for one crossing is
+## how a log starts repeating itself.
+static func _condition_band_of(b: Building, value: float) -> StringName:
+	if value >= b.rule("band_good"):
+		return &""
+	if value >= b.rule("band_worn"):
+		return &"worn"
+	return &"poor"
+
+
+## **PA-31's surface half** (doc 98 RR-149, doc 93 §AL2). One event per DOWNWARD
+## band crossing, and nothing else.
+##
+## Downward only, on purpose. A building climbing back through a band is the
+## player's own repair or upgrade finishing, and the screen that issued it
+## already knows — announcing it would be the game repeating the player (doc 93's
+## event rule, `player_initiated`).
+##
+## **No state is added for this.** The band is a pure function of the condition
+## before and after this hour's own decay call, which the caller already holds,
+## so nothing is remembered between hours, nothing new is serialized and
+## `state_hash()` cannot move. That matters more than it looks: after doc 93 §Y1
+## a private building floors at `band_worn` and can never reach `damaged`, so for
+## the four revenue classes this event is the ONLY cue the game has left — and it
+## had to be bought for free.
+func _emit_condition_band(sim_id: String, b: Building, before: float) -> void:
+	var band := _condition_band_of(b, b.condition)
+	if band == &"":
+		return
+	var previous := _condition_band_of(b, before)
+	if band == previous:
+		return
+	if previous == &"poor":
+		return  # climbing out of Poor into Worn is a recovery, not a warning
+	bus.emit(&"building_condition_band", {"sim_id": sim_id, "building": b.id,
+			"band": String(band), "previous": String(previous),
+			"condition": b.condition, "type_id": String(b.archetype),
+			"owner_maintained": b.owner_maintained})
 
 
 ## Per-component `max(0, load/capacity − 1)`, computed once per settled hour and

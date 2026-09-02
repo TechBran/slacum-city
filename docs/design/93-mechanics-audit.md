@@ -3361,14 +3361,20 @@ $18,900" is a decision, and a decision is what a management game owes. The count
 belongs on the band too, but as the *subject of the sentence*, never as the
 sentence.
 
-This ruling has a sharp edge that doc 93 §Y1 created and did not close. After the
-ownership floor, a private building **cannot** reach `damaged` at 0.35 — its owner
-holds it at `band_worn` — so the one cue the game had ever given about condition
-became, for the four revenue classes, structurally unreachable. Measured: **185
-private buildings sitting worn** at the end of a 45-game-day curriculum arc,
-**zero** `building_damaged` events for any of them, and a permanent 24 % cut in
-what each pays. §Y1 is right and it silenced the thing it was right about; RR-149
-is the repair.
+This ruling has a sharp edge that §Y1 created and did not close. After the
+ownership floor, a private building the city keeps **served** cannot reach
+`damaged` at 0.35 — its owner holds it at `band_worn` — so the one cue the game
+had ever given about condition became, on the path a player actually plays,
+structurally unreachable. Measured: **185 private buildings sitting worn** at the
+end of a 45-game-day curriculum arc, and on a 60-game-day `do_nothing` starter
+run **48 band crossings against zero `building_damaged` events** — forty-eight
+moments at which the city got poorer and nothing on any screen moved. §Y1 is
+right and it silenced the thing it was right about; RR-149 is the repair.
+
+(§Y1a still bites, and the measurement shows it biting: 4 of those 11 Poor
+crossings were private buildings whose owners had been left in the dark. A city
+that stops serving its stock gets the old physics back, which is the clause
+working.)
 
 ### AL3. A policy may spend the player's money; a default may not
 

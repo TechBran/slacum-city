@@ -173,3 +173,160 @@ func test_pa32_both_steps_reach_a_surface() -> void:
 		assert_true(bool((binding.get("match", {}) as Dictionary).get("final", false)),
 				"and it is gated on `final`")
 	assert_eq(pushes, 1, "one notification binding, for one moment per city")
+
+
+# ===========================================================================
+# PA-31 — the wear says what it costs
+# ===========================================================================
+
+## A building driven straight to `value` without touching the clock, so a band
+## test measures the crossing rule and not a decay rate.
+func _set_condition(sim: CitySim, sim_id: String, value: float) -> Building:
+	var b: Building = sim.buildings[sim_id]
+	b.condition = value
+	return b
+
+
+func _first_private(sim: CitySim) -> String:
+	for id: String in sim.roster_ids():
+		if (sim.buildings[id] as Building).owner_maintained:
+			return String(id)
+	return ""
+
+
+func _first_city_owned(sim: CitySim) -> String:
+	for id: String in sim.roster_ids():
+		var b: Building = sim.buildings[id]
+		if not b.owner_maintained and b.decays():
+			return String(id)
+	return ""
+
+
+func test_pa31_a_downward_crossing_of_each_band_is_one_event() -> void:
+	var sim := _sim()
+	var sim_id := _first_city_owned(sim)
+	assert_ne(sim_id, "", "the starter city owns buildings")
+	var b: Building = sim.buildings[sim_id]
+	var seen: Array = []
+	sim.bus.observer = func(event: Dictionary) -> void:
+		if StringName(String(event.get("type", &""))) == &"building_condition_band" \
+				and str(event.get("sim_id", "")) == sim_id:
+			seen.append(event.duplicate())
+
+	# Good → Worn: one event, naming the band it left.
+	b.condition = b.rule("band_good") + 0.01
+	sim._emit_condition_band(sim_id, b, 1.0)
+	assert_eq(seen.size(), 0, "still in Good — no crossing")
+	b.condition = b.rule("band_good") - 0.01
+	sim._emit_condition_band(sim_id, b, b.rule("band_good") + 0.01)
+	assert_eq(seen.size(), 1, "Good → Worn is one event")
+	assert_eq(str((seen[0] as Dictionary)["band"]), "worn")
+	assert_eq(str((seen[0] as Dictionary)["previous"]), "")
+
+	# Another hour of wear inside the SAME band says nothing.
+	sim._emit_condition_band(sim_id, b, b.rule("band_good") - 0.005)
+	assert_eq(seen.size(), 1, "a band the player already knows about is silent")
+
+	# Worn → Poor.
+	var was := b.condition
+	b.condition = b.rule("band_worn") - 0.01
+	sim._emit_condition_band(sim_id, b, was)
+	assert_eq(seen.size(), 2, "Worn → Poor is the second event")
+	assert_eq(str((seen[1] as Dictionary)["band"]), "poor")
+	assert_eq(str((seen[1] as Dictionary)["previous"]), "worn")
+	sim.bus.observer = Callable()
+
+
+func test_pa31_climbing_back_out_of_a_band_says_nothing() -> void:
+	# A building coming back up is the player's own repair or upgrade finishing,
+	# and the screen that issued it already knows (doc 93's `player_initiated`).
+	var sim := _sim()
+	var sim_id := _first_city_owned(sim)
+	var b: Building = sim.buildings[sim_id]
+	var seen := 0
+	sim.bus.observer = func(event: Dictionary) -> void:
+		if StringName(String(event.get("type", &""))) == &"building_condition_band":
+			seen += 1
+	b.condition = b.rule("band_worn") + 0.05          # Poor → Worn
+	sim._emit_condition_band(sim_id, b, b.rule("band_worn") - 0.05)
+	assert_eq(seen, 0, "Poor → Worn is a recovery")
+	b.condition = 1.0                                  # Worn → Good
+	sim._emit_condition_band(sim_id, b, b.rule("band_good") - 0.05)
+	assert_eq(seen, 0, "Worn → Good is a recovery")
+	sim.bus.observer = Callable()
+
+
+func test_pa31_private_stock_reaches_worn_and_the_event_is_the_only_cue() -> void:
+	# The sharp edge doc 93 §Y1 created: an owner holds their building at
+	# `band_worn`, so it can NEVER reach `damaged` and `building_damaged` — the
+	# one condition cue the game used to have — is unreachable for the four
+	# revenue classes. This event has to be the cue, and it has to say the
+	# building is private so a surface never offers a repair that does not exist.
+	var sim := _sim()
+	var sim_id := _first_private(sim)
+	assert_ne(sim_id, "", "the starter city has private stock")
+	var b: Building = sim.buildings[sim_id]
+	var seen: Array = []
+	sim.bus.observer = func(event: Dictionary) -> void:
+		if StringName(String(event.get("type", &""))) == &"building_condition_band" \
+				and str(event.get("sim_id", "")) == sim_id:
+			seen.append(event.duplicate())
+	b.condition = b.rule("band_good") - 0.01
+	sim._emit_condition_band(sim_id, b, 1.0)
+	sim.bus.observer = Callable()
+	assert_eq(seen.size(), 1)
+	assert_true(bool((seen[0] as Dictionary)["owner_maintained"]),
+			"the payload says the city cannot buy this repair")
+	assert_eq(str(sim.cmd_repair_building(sim_id)["reason_code"]), "E_OWNER_MAINTAINED",
+			"and the command agrees")
+
+
+func test_pa31_the_band_thresholds_are_doc_02s_own_table() -> void:
+	# No second copy: perturb the stamped rule and the band moves with it.
+	var sim := _sim()
+	var sim_id := _first_city_owned(sim)
+	var b: Building = sim.buildings[sim_id]
+	assert_eq(String(CitySim._condition_band_of(b, b.rule("band_good"))), "",
+			"exactly at band_good is still Good")
+	assert_eq(String(CitySim._condition_band_of(b, b.rule("band_good") - 0.001)), "worn")
+	assert_eq(String(CitySim._condition_band_of(b, b.rule("band_worn"))), "worn",
+			"exactly at band_worn is still Worn — the ownership floor sits here")
+	assert_eq(String(CitySim._condition_band_of(b, b.rule("band_worn") - 0.001)), "poor")
+	b.condition_rules = b.condition_rules.duplicate()
+	b.condition_rules["band_good"] = 0.50
+	assert_eq(String(CitySim._condition_band_of(b, 0.60)), "",
+			"the band follows the authored key, it does not restate it")
+
+
+func test_pa31_both_bands_reach_a_surface() -> void:
+	var cfg := _cfg()
+	var wanted := {"worn": "buildings_worn", "poor": "buildings_poor"}
+	var log_rows: Dictionary = {}
+	for raw: Variant in (cfg.section("event_log").get("events", []) as Array):
+		var rule: Dictionary = raw
+		if str(rule.get("type", "")) != "building_condition_band":
+			continue
+		var band := str((rule.get("match", {}) as Dictionary).get("band", ""))
+		assert_true(wanted.has(band), "each rule matches one authored band")
+		log_rows[band] = str(rule["notify_id"])
+		assert_eq(str(rule.get("key", "")), "building",
+				"keyed on the building, so a row can carry `Jump to it`")
+	for band: String in wanted:
+		assert_eq(str(log_rows.get(band, "")), str(wanted[band]),
+				"%s has a log row" % band)
+
+	var notify := NotificationConfig.load_from_files()
+	var classes: Dictionary = {}
+	for raw2: Variant in notify.bindings():
+		var binding: Dictionary = raw2
+		if str(binding.get("type", "")) != "building_condition_band":
+			continue
+		var notify_id := str(binding["notify_id"])
+		classes[notify_id] = str(notify.event_def(notify_id).get("class", ""))
+	assert_eq(classes.size(), 2, "both bands are offered to doc 08")
+	for notify_id: String in classes:
+		assert_eq(str(classes[notify_id]), "P3_routine",
+				"%s is routine — a worn city is a slow bill, not an emergency"
+						% notify_id)
+		assert_true(bool(notify.event_def(notify_id).get("aggregate", false)),
+				"%s aggregates: one line that says how many" % notify_id)
