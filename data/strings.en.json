@@ -1010,5 +1010,17 @@
 	"ui_settings_value_permission_blocked": "Off — open system settings",
 	"ui_settings_value_permission_off": "Off — tap to turn on",
 	"ui_settings_value_permission_on": "On",
-	"ui_settings_value_permission_unavailable": "Not available"
+	"ui_settings_value_permission_unavailable": "Not available",
+	"ui_follow_chip": "Following {unit}  ✕",
+	"ui_follow_chip_stop": "Stop following {unit}",
+	"ui_settings_follow_dispatched_unit_hint": "The camera rides a unit you send until it goes off duty, or until you pan.",
+	"ui_settings_invert_pan_hint": "Drag moves the city with your finger instead of the camera over it.",
+	"ui_settings_rotation_mode_hint": "What a two-finger twist settles on when you let go.",
+	"ui_settings_row_follow_dispatched_unit": "Follow dispatched unit",
+	"ui_settings_row_invert_pan": "Invert pan",
+	"ui_settings_row_rotation_mode": "Rotation",
+	"ui_settings_value_rotation_free": "Free",
+	"ui_settings_value_rotation_locked": "Locked",
+	"ui_settings_value_rotation_snap45": "Snap 45°",
+	"ui_settings_value_rotation_snap90": "Snap 90°"
 }

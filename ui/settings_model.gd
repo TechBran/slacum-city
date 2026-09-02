@@ -65,6 +65,12 @@ const POLICY_ROADS := "roads"
 const DEFAULT_FROM_DEFAULTS := "defaults."
 const DEFAULT_FROM_DISPATCH := "dispatch."
 const DEFAULT_FROM_ROADS := "roads."
+## `data/ui.json.camera` — the interaction range doc 12 owns (§2.16). The
+## rotation row reads `rotation_mode_default` from there rather than authoring a
+## second copy, for exactly the reason the dispatch rows read doc 06's file:
+## `CameraState.setup()` boots from that same key, and two copies of a default
+## are a bug waiting for the day somebody changes one of them.
+const DEFAULT_FROM_CAMERA := "camera."
 
 ## Fallback preset order if `data/render.json` is absent (doc 11 authors it).
 const _DEFAULT_PRESETS := ["performance", "balanced", "high"]
@@ -242,6 +248,11 @@ func _default_for(row: Dictionary) -> Variant:
 		var name := from.substr(DEFAULT_FROM_ROADS.length())
 		if condition.has(name):
 			return condition[name]
+	elif from.begins_with(DEFAULT_FROM_CAMERA):
+		var camera: Dictionary = _cfg.camera() if _cfg != null else {}
+		var name := from.substr(DEFAULT_FROM_CAMERA.length())
+		if camera.has(name):
+			return camera[name]
 	var key := str(row.get("key", ""))
 	var choices := options(key)
 	if not choices.is_empty():

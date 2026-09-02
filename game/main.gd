@@ -649,6 +649,7 @@ func _on_sim_batch(batch: Array) -> void:
 		_note_permission_evidence(notification_router.feed_batch(batch))
 	_note_permission_trigger(batch)
 	_maybe_auto_speed_reset(batch)
+	_advance_follow()
 	var translated: Array = []
 	for event in batch:
 		match StringName(String(event["type"])):
@@ -1020,6 +1021,9 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 	# PA-14: S10's state row and the rationale modal's two answers.
 	root.settings_action.connect(_on_ui_setting_action)
 	root.permission_answered.connect(_on_permission_answered)
+	# PA-58: the follow chip's ✕ — the one way out of follow mode that is not
+	# the finger, the unit going off duty, or a second dispatch.
+	root.follow_cancelled.connect(_end_follow)
 	root.save_loaded.connect(_on_ui_save_loaded)
 	root.set_incident_locator(_alert_world_pos)
 	root.set_unit_provider(_dispatchable_units)
@@ -1850,6 +1854,79 @@ func _resync_world_views() -> void:
 func _on_ui_dispatch(unit_id: int, incident_id: int) -> void:
 	var r := sim_host.sim.cmd_dispatch_unit(unit_id, incident_id)
 	ui_root.report_dispatch_result(unit_id, bool(r["ok"]))
+	if bool(r["ok"]):
+		_begin_follow(unit_id)
+
+
+# ---------------------------------------------------------------------------
+# Follow mode (PA-58) — doc 12 §2.6 step 6 / §2.13 `follow dispatched unit`
+# ---------------------------------------------------------------------------
+#
+# `CameraState.set_follow_target` and `clear_follow` shipped in Wave 3 and
+# `grep -rn 'set_follow_target\|clear_follow' ui/ game/ | grep -v 'func '` found
+# no caller: `follow_dispatched_unit` was a default in `data/ui.json` with no
+# row, no reader and no chip, and after sending an engine the view stayed put.
+#
+# Four ways out, and the finger is the first of them: `begin_pan` already drops
+# `CameraState._following` on touch-down, so a player who moves the camera has
+# ended the mode before this file hears about it. The other three are the unit
+# going off duty, a dispatch of a different unit, and the chip's own ✕.
+
+## `Vehicle.IDLE` / `REFIT` / `OFFLINE` — a unit that is not on its way anywhere.
+const FOLLOW_ACTIVE_STATES: Array[String] = ["RESPONDING", "ON_SCENE", "RETURNING"]
+
+var _follow_unit_id := -1
+
+
+func _begin_follow(unit_id: int) -> void:
+	if ui_root == null or camera_state == null:
+		return
+	if ui_root.settings_sheet == null or ui_root.settings_sheet.model == null:
+		return
+	if not ui_root.settings_sheet.model.value_bool("follow_dispatched_unit"):
+		return
+	var state := _unit_state(unit_id)
+	if state.is_empty():
+		return
+	_follow_unit_id = unit_id
+	camera_state.set_follow_target(_unit_world_pos(state))
+	ui_root.present_follow_chip(UnitPickerModel.unit_name_for(
+			ui_root.config, unit_id, str(state.get("type", ""))))
+
+
+func _end_follow() -> void:
+	_follow_unit_id = -1
+	if camera_state != null:
+		camera_state.clear_follow()
+	if ui_root != null:
+		ui_root.dismiss_follow_chip()
+
+
+## Once per TICK, off the same fleet snapshot `vehicle_view` and the sirens take
+## — never per frame, and never a second walk of the roster.
+func _advance_follow() -> void:
+	if _follow_unit_id < 0:
+		return
+	if camera_state != null and not camera_state.is_following():
+		_end_follow()   # the player panned: the finger always wins
+		return
+	var state := _unit_state(_follow_unit_id)
+	if state.is_empty() or not FOLLOW_ACTIVE_STATES.has(str(state.get("status", ""))):
+		_end_follow()   # off duty — the story this chip was telling is over
+		return
+	camera_state.set_follow_target(_unit_world_pos(state))
+
+
+func _unit_state(unit_id: int) -> Dictionary:
+	for raw: Variant in sim_host.sim.incidents.vehicle_states():
+		if raw is Dictionary and int((raw as Dictionary).get("id", -1)) == unit_id:
+			return raw
+	return {}
+
+
+static func _unit_world_pos(state: Dictionary) -> Vector3:
+	var pos: Array = state.get("pos", [0, 0])
+	return Vector3(float(pos[0]) * 8.0 + 4.0, 0.0, float(pos[1]) * 8.0 + 4.0)
 
 
 func _on_ui_incident_action(action: StringName, incident_id: int, value: Variant) -> void:

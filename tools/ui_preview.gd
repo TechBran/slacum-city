@@ -92,6 +92,12 @@ const SCREENS: Array[String] = [
 	# player who dismissed the dialog twice is permanently in and the only one
 	# they can act on.
 	"permission_first", "permission_missed", "settings_permission_blocked",
+
+	# PA-58's follow chip (doc 12 §2.6 step 6). One state, and it is the widest
+	# the chip ever gets — `Heavy Repair` is the longest unit word in
+	# `ui_unit_kind_*` and a two-digit id is the longest id a starter fleet
+	# reaches. A chip that fits here fits every unit in the game.
+	"follow_chip",
 ]
 
 ## A `Control` does not have a size until its container has laid it out, and the
@@ -779,6 +785,9 @@ func _apply(screen: String) -> void:
 			_root.set_city_difficulty(Difficulty.DEFAULT_PRESET)
 			_root.set_permission_state("blocked")
 			_root.settings_sheet.open()
+		"follow_chip":
+			_root.present_follow_chip(UnitPickerModel.unit_name_for(
+					_root.config, 12, "heavy_repair"))
 		"permission_first":
 			_root.present_permission_rationale(PermissionSheet.REASON_FIRST)
 		"permission_missed":

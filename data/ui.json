@@ -1144,6 +1144,27 @@
 				"default": false
 			},
 			{
+				"_comment": "PA-58, Wave 18 — §2.13's GAMEPLAY block, which had defaults in this file and no rows and no readers. All three are per-CITY rather than device-scoped, and that is a judgement rather than an oversight: which way a camera pans and whether it chases an engine are habits a player forms on a phone, but `follow_dispatched_unit` in particular reads as a property of how they are playing THIS city, and doc 12 §3.2's device list names neither of the two. `rotation_mode` is doc 12's own four-value enum (CameraState.RotationMode); the ladder is inline because it IS the enum — an options_from pointing at a second copy of four constants would be the drift this file is written to avoid. `battery_saver` and confirm-before-demolish stay defaults-with-no-row and are recorded as DEFERRED in doc 12 §2.13; see that section for why each is not a row yet.",
+				"key": "follow_dispatched_unit",
+				"kind": "toggle",
+				"default_from": "defaults.follow_dispatched_unit",
+				"hint_key": "ui_settings_follow_dispatched_unit_hint"
+			},
+			{
+				"key": "invert_pan",
+				"kind": "toggle",
+				"default_from": "defaults.invert_pan",
+				"hint_key": "ui_settings_invert_pan_hint"
+			},
+			{
+				"key": "rotation_mode",
+				"kind": "choice",
+				"options": ["snap45", "snap90", "free", "locked"],
+				"default_from": "camera.rotation_mode_default",
+				"value_text_from": "rotation",
+				"hint_key": "ui_settings_rotation_mode_hint"
+			},
+			{
 				"_comment": "§2.13's AUTO-RESPONSE block (doc 06 §2.12, doc 91 D-11). Every row below carries `policy: dispatch`: its default is read from data/dispatch.json.policy_defaults — doc 06's own file, never a second copy here — and its value is written with CitySim.cmd_set_dispatch_policy, which refuses any key DispatchPolicy does not carry. The keys are spelled exactly as the sim spells them, so a row can never address a policy that does not exist. The utility RESTORATION ORDER (a drag-reorder list) is deliberately absent: it is a list, not a 48 dp cycling target, and shipping it as one would be a control that lies about what it does.",
 				"key": "auto_dispatch_fire",
 				"kind": "toggle",

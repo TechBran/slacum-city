@@ -84,6 +84,8 @@ signal settings_action(key: StringName, action: StringName)
 ## 4–5). BACK does not emit this: a dismissal that was not an answer must not
 ## spend one of Android's two chances.
 signal permission_answered(accepted: bool)
+## PA-58: the player tapped the follow chip's ✕. The shell stops following.
+signal follow_cancelled
 signal save_slot_action(action: StringName, slot: int, result: Dictionary)
 signal save_loaded(slot: int)                          ## the sim was replaced
 signal pause_intent(paused: bool)                      ## → `set_paused` (doc 01)
@@ -194,6 +196,7 @@ var loading_veil: LoadingVeil
 ## `camera_state`'s manual pitch axis and nothing else; the shell binds the
 ## camera with `bind_camera()` and the slider stays hidden until it has one.
 var tilt_slider: TiltSlider
+var follow_chip: FollowChip
 ## The camera this deck talks to — the tilt slider's axis, and (doc 12 §3.2 /
 ## D-9's moment) the `camera` block of the `ui` save section. Null in a mount
 ## that never bound one, in which case neither exists.
@@ -339,6 +342,15 @@ func _bind_nodes() -> void:
 	title_screen = safe_area.get_node_or_null("TitleLayer/TitleScreen") as TitleScreen
 	loading_veil = safe_area.get_node_or_null("VeilLayer/LoadingVeil") as LoadingVeil
 	tilt_slider = safe_area.get_node_or_null("HUDLayer/TiltSlider") as TiltSlider
+	# PA-58's follow chip, built rather than authored for the same reason the
+	# permission modal is: it is absent for whole sessions, and a HUD element
+	# that is usually not there should not cost every mount a node.
+	follow_chip = hud_layer.get_node_or_null("FollowChip") as FollowChip \
+			if hud_layer != null else null
+	if follow_chip == null and hud_layer != null:
+		follow_chip = FollowChip.new()
+		follow_chip.name = "FollowChip"
+		hud_layer.add_child(follow_chip)
 	toast_view = get_node_or_null("ToastLayer/ToastAnchor/Toast") as ToastView
 
 
@@ -414,6 +426,8 @@ func bring_up_screens() -> void:
 	# sheet comes up with no controller: it stays hidden until `bind_camera()`.
 	if tilt_slider != null and tilt_slider.config == null:
 		tilt_slider.setup(config, camera_state)
+	if follow_chip != null and follow_chip.config == null:
+		follow_chip.setup(config)
 	# §2.14: the two screens that fire their own cues share the root's one gate.
 	# The other three cues (dispatch, escalate, relight) are events rather than
 	# taps, so they are fired here, where the sim batch arrives.
@@ -461,6 +475,8 @@ func _connect_screens() -> void:
 		_connect(settings_sheet.saves_requested, _on_saves_requested)
 	if permission_sheet != null:
 		_connect(permission_sheet.answered, permission_answered.emit)
+	if follow_chip != null:
+		_connect(follow_chip.dismissed, follow_cancelled.emit)
 	if save_load_sheet != null:
 		_connect(save_load_sheet.slot_action, _on_slot_action)
 		_connect(save_load_sheet.loaded, _on_save_loaded)
@@ -535,6 +551,10 @@ func _on_settings_changed(key: StringName, value: Variant) -> void:
 		tilt_slider.apply_setting(key, value)
 	_write_dispatch_policy(key, value)
 	_write_road_policy(key, value)
+	# PA-58: the two camera rows reach `CameraState` here rather than through the
+	# shell, on the same reasoning §2.14's haptics rows do — the gesture is live
+	# on the next touch, not one `game/main.gd` branch later.
+	_apply_camera_setting(key, value)
 	# PA-15: a device-scoped row is committed to `user://settings.cfg` on the tap
 	# that changed it, not at some later save. The player who turns notifications
 	# off and immediately swipes the app away has been heard.
@@ -643,6 +663,84 @@ func bind_camera(camera: CameraState) -> void:
 		else:
 			tilt_slider.bind_camera(camera)
 	solve_tilt_slider()
+	# PA-58: the two §2.13 rows the camera answers to. A camera bound after the
+	# rows were restored would otherwise boot on `CameraState.setup()`'s data
+	# default and quietly ignore the player's choice until they tapped the row.
+	_apply_camera_settings()
+
+
+## Push `rotation_mode` and `invert_pan` at the bound camera (PA-58). Both were
+## authored in `data/ui.json.defaults` with no row and no reader; the rows exist
+## now, and this is the one place their values reach `CameraState`.
+func _apply_camera_settings() -> void:
+	if settings_sheet == null or settings_sheet.model == null:
+		return
+	for key: String in ["rotation_mode", "invert_pan"]:
+		if settings_sheet.model.has_key(key):
+			_apply_camera_setting(StringName(key), settings_sheet.model.value(key))
+
+
+func _apply_camera_setting(key: StringName, value: Variant) -> void:
+	if camera_state == null:
+		return
+	match key:
+		&"rotation_mode":
+			camera_state.rotation_mode = CameraState.rotation_mode_from_string(str(value))
+		&"invert_pan":
+			camera_state.invert_pan = bool(value)
+
+
+# ---------------------------------------------------------------------------
+# Follow mode (PA-58) — doc 12 §2.6 step 6's chip
+# ---------------------------------------------------------------------------
+
+## Raise the chip. `unit_name` is already formatted by the shell, so this class
+## holds no naming rule — the same contract `set_city_difficulty` has.
+func present_follow_chip(unit_name: String) -> void:
+	if follow_chip != null:
+		follow_chip.show_for(unit_name)
+		solve_follow_chip()
+
+
+## Where the chip sits, solved rather than authored (PA-58).
+##
+## Its first draft carried a hard-coded 316 dp bottom offset that read well at
+## 360 × 800 and landed **inside the top bar** at 880 × 400, where the whole safe
+## area is 400 dp tall — six `overlapping_targets` findings, all of them against
+## chips the player needs more than this one. So the slot is measured off the
+## thing it has to clear: doc 12's left rail, at whatever offsets
+## `solve_rail_stack()` last gave it.
+##
+## The one collider a slot above the rail still has is the overlay strip, which
+## reaches 300 dp up the same column — so the chip yields while the strip is open,
+## on the tilt slider's ruling (§2.23) that a target under a panel is worse than
+## no target at all.
+func solve_follow_chip() -> void:
+	if follow_chip == null or config == null:
+		return
+	var layout := config.layout()
+	var gap := UIConfig.get_num(layout, "touch_spacing_min_dp", 8.0)
+	var touch_min := float(ThemeBuilder.touch_min_dp(config, _text_scale(), _larger_targets()))
+	var slot := UIWidgets.rail_slot(FollowChip.FALLBACK_RAIL_SLOT, layout, touch_min)
+	var bottom := -float(slot["bottom"])
+	var rail := hud.get_node_or_null("LeftRail") as Control if hud != null else null
+	if rail != null and rail.offset_top < 0.0:
+		bottom = rail.offset_top - gap
+	var host_w := safe_area.size.x if safe_area != null and safe_area.size.x > 1.0 \
+			else float(_safe_area_rect().size.x)
+	follow_chip.place(bottom, touch_min,
+			minf(FollowChip.MAX_WIDTH_DP,
+					maxf(touch_min, host_w - FollowChip.LEFT_INSET_DP * 2.0)))
+	follow_chip.set_yielded(overlay_rail != null and overlay_rail.is_open())
+
+
+func dismiss_follow_chip() -> void:
+	if follow_chip != null:
+		follow_chip.hide_chip()
+
+
+func follow_chip_shown() -> bool:
+	return follow_chip != null and follow_chip.is_shown()
 
 
 ## Doc 12 §2.23's band: the right-edge column lives between the TOP BAR's bottom
@@ -1955,6 +2053,7 @@ func _process(_delta: float) -> void:
 	_update_ui_coverage()
 	solve_rail_stack()
 	solve_tilt_slider()
+	solve_follow_chip()
 	if onboarding == null or not onboarding.is_active() or build_sheet == null:
 		return
 	var category := build_sheet.active_category() if build_sheet.is_open() else ""
@@ -2246,6 +2345,7 @@ func _recompute_layout() -> void:
 		breakpoint_changed.emit(bp)
 	solve_rail_stack()
 	solve_tilt_slider()
+	solve_follow_chip()
 
 
 ## Replaces `DisplayServer.get_display_safe_area()` when it is set. A desktop
@@ -2282,6 +2382,7 @@ func force_layout(box: Vector2i) -> void:
 	# slider's band is measured the same way (the top bar's wrapped height).
 	solve_rail_stack()
 	solve_tilt_slider()
+	solve_follow_chip()
 	UIRoot.sort_tree(safe_area)
 
 

@@ -601,6 +601,134 @@ func test_ui_state_round_trips_through_the_root() -> void:
 
 
 # ===========================================================================
+# PA-58 — the Gameplay rows, and the follow mode they turn on
+# ===========================================================================
+
+func test_the_gameplay_defaults_finally_have_rows_and_readers() -> void:
+	# `invert_pan`, `follow_dispatched_unit` and `rotation_mode` were authored in
+	# `data/ui.json.defaults` with no `settings.rows` entry and no reader:
+	# `grep -rn 'set_follow_target\|clear_follow' ui/ game/ | grep -v 'func '`
+	# found nothing at all.
+	var model := SettingsModel.new(_cfg())
+	var defaults := _cfg().section("defaults")
+	for key: String in ["follow_dispatched_unit", "invert_pan", "rotation_mode"]:
+		assert_true(model.has_key(key), "%s is a row" % key)
+	assert_eq(model.value_bool("follow_dispatched_unit"),
+			bool(defaults["follow_dispatched_unit"]),
+			"the row boots at the authored default, not a second copy")
+	assert_eq(model.value_bool("invert_pan"), bool(defaults["invert_pan"]))
+	# The rotation ladder's default is doc 12's own camera block — the same key
+	# `CameraState.setup()` boots from, so the row and the camera cannot disagree.
+	assert_eq(str(model.value("rotation_mode")),
+			str(_cfg().camera()["rotation_mode_default"]))
+	var camera := CameraState.load_from_files()
+	assert_eq(camera.rotation_mode,
+			CameraState.rotation_mode_from_string(str(model.value("rotation_mode"))))
+
+
+func test_the_two_camera_rows_reach_the_camera_on_the_tap() -> void:
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	var camera := CameraState.load_from_files()
+	root.bind_camera(camera)
+	assert_false(camera.invert_pan, "the shipped default")
+
+	root.settings_sheet.value_button("invert_pan").pressed.emit()
+	assert_true(camera.invert_pan, "live on the next touch, not one frame later")
+
+	var before := camera.rotation_mode
+	root.settings_sheet.value_button("rotation_mode").pressed.emit()
+	assert_true(camera.rotation_mode != before, "the ladder walked and the camera followed")
+	for option: Variant in root.settings_sheet.model.options("rotation_mode"):
+		assert_true(CameraState.rotation_mode_from_string(str(option))
+				!= CameraState.RotationMode.SNAP45 or str(option) == "snap45",
+				"%s is a real RotationMode and not a fallback" % option)
+	_unmount(mounted)
+
+
+func test_a_camera_bound_after_the_rows_still_gets_them() -> void:
+	# The ordering bug this guards: `game/main.gd` restores the `ui` section and
+	# then binds the camera, so a camera that only listened for CHANGES would
+	# boot on the data default and ignore the player until they tapped the row.
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	root.settings_sheet.model.set_value("invert_pan", true)
+	root.settings_sheet.model.set_value("rotation_mode", "locked")
+	var camera := CameraState.load_from_files()
+	root.bind_camera(camera)
+	assert_true(camera.invert_pan)
+	assert_eq(camera.rotation_mode, CameraState.RotationMode.LOCKED)
+	_unmount(mounted)
+
+
+func test_inverted_pan_moves_the_same_distance_the_other_way() -> void:
+	# The 1:1 world lock cannot hold both ways — it is what makes the DEFAULT
+	# exact. So the inverted path preserves the magnitude and flips the sign,
+	# which is the only part of it that is a preference.
+	var viewport := Vector2(360.0, 800.0)
+	var from := Vector2(180.0, 400.0)
+	var to := Vector2(240.0, 400.0)
+
+	var normal := CameraState.load_from_files()
+	normal.set_focus(Vector3(400.0, 0.0, 400.0))
+	var start := normal.focus
+	normal.begin_pan(from, viewport)
+	normal.update_pan(to, viewport)
+	normal.end_pan()
+	var moved := normal.focus - start
+
+	var inverted := CameraState.load_from_files()
+	inverted.invert_pan = true
+	inverted.set_focus(Vector3(400.0, 0.0, 400.0))
+	inverted.begin_pan(from, viewport)
+	inverted.update_pan(to, viewport)
+	inverted.end_pan()
+	var moved_back := inverted.focus - start
+
+	assert_true(moved.length() > 1.0, "the control arm actually panned")
+	assert_true(is_equal_approx(moved.length(), moved_back.length()),
+			"same distance: %.3f vs %.3f" % [moved.length(), moved_back.length()])
+	assert_true(moved.dot(moved_back) < 0.0, "…and the opposite direction")
+
+
+func test_the_follow_chip_is_the_modes_own_off_switch() -> void:
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	assert_false(root.follow_chip_shown(), "no mode, no chip")
+
+	var name := UnitPickerModel.unit_name_for(root.config, 12, "heavy_repair")
+	assert_eq(name, "Heavy Repair 12", "one spelling of a unit's name, not two")
+	root.present_follow_chip(name)
+	assert_true(root.follow_chip_shown())
+	assert_true(root.follow_chip.chip_button().text.contains(name),
+			"the chip says which unit, or it is a mystery light")
+
+	# An Array, not an int: a GDScript lambda captures a local by VALUE.
+	var cancels: Array = []
+	root.follow_cancelled.connect(func() -> void: cancels.append(true))
+	root.follow_chip.chip_button().pressed.emit()
+	assert_eq(cancels.size(), 1, "the ✕ asks the shell to stop following")
+	assert_false(root.follow_chip_shown())
+	_unmount(mounted)
+
+
+func test_the_chip_yields_the_column_while_the_overlay_strip_is_over_it() -> void:
+	# §2.23's ruling, applied to the left column: a target under a panel is a
+	# target nobody can reach, and the follow keeps running either way.
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	root.present_follow_chip("Engine 1")
+	assert_true(root.follow_chip_shown())
+	root.overlay_rail.open()
+	root.solve_follow_chip()
+	assert_false(root.follow_chip_shown(), "the strip reaches 300 dp up this column")
+	root.overlay_rail.close()
+	root.solve_follow_chip()
+	assert_true(root.follow_chip_shown(), "…and the chip comes back with the column")
+	_unmount(mounted)
+
+
+# ===========================================================================
 # PA-59 — the auto-response row with nothing behind it
 # ===========================================================================
 
