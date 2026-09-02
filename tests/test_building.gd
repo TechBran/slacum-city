@@ -165,22 +165,39 @@ func test_burn_down_guarded_offline() -> void:
 	assert_eq(b.level_at_destruction, 3)
 
 
-func test_rebuild_grace_window() -> void:
+## Wave 18, doc 93 §AN. This test used to be `test_rebuild_grace_window` and it
+## asserted the two halves that ruling retired: a 72-game-hour clock, and a
+## demotion to L1 after it. **The level now survives, at any age**, and the age
+## itself comes back as a FACT rather than a price — `sim/buildings/` carries no
+## dollar and no dollar fraction (report 98 C-07), so there is no `cost_fraction`
+## left to assert.
+func test_the_level_survives_a_rebuild_at_any_age() -> void:
 	var b := _apartment_l3()
 	b.ignite()
 	b.burn_down(true, 1000 * 60)
-	# Within 72 gh: rebuild at the destroyed level for 0.60 × cost.
 	var soon := b.order_rebuild((1000 + 60) * 60)
-	assert_true(bool(soon["payload"]["within_grace"]))
-	assert_eq(int(soon["payload"]["rebuild_level"]), 3)
-	assert_almost_eq(float(soon["payload"]["cost_fraction"]), 0.60, 1e-9)
-	# Reset and try after the grace window: back to L1 at full price.
+	assert_true(bool(soon["ok"]))
+	assert_eq(int(soon["payload"]["rebuild_level"]), 3, "one game-hour later: L3")
+	assert_almost_eq(float(soon["payload"]["hours_destroyed"]), 60.0, 1e-9)
+	assert_false(soon["payload"].has("cost_fraction"), "no price lives in sim/buildings/")
+	assert_eq(b.state, &"planned")
+	assert_eq(b.pending_level, 3)
+	# A hundred game-hours later — past the retired 72-hour window, and well
+	# inside doc 08's own 720-hour offline cap, which is the whole reason the
+	# window was wrong.
 	var b2 := _apartment_l3()
 	b2.ignite()
 	b2.burn_down(true, 1000 * 60)
 	var late := b2.order_rebuild((1000 + 100 * 60) * 60)
-	assert_false(bool(late["payload"]["within_grace"]))
-	assert_eq(int(late["payload"]["rebuild_level"]), 1)
+	assert_true(bool(late["ok"]))
+	assert_eq(int(late["payload"]["rebuild_level"]), 3,
+			"a ruin does not get shorter while the player is asleep")
+	assert_almost_eq(float(late["payload"]["hours_destroyed"]), 6000.0, 1e-9)
+	# And a thousand game-hours later, past the cap itself.
+	var b3 := _apartment_l3()
+	b3.ignite()
+	b3.burn_down(true, 1000 * 60)
+	assert_eq(int(b3.order_rebuild((1000 + 1000 * 60) * 60)["payload"]["rebuild_level"]), 3)
 
 
 func test_repair_targets() -> void:

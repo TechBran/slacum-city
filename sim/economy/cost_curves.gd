@@ -37,6 +37,15 @@ const ROUND_EPSILON := 0.000001
 ## places like every money cell in the project, so the residual is ~8e-7.
 const RUSH_DERIVATION_TOLERANCE := 0.00001
 
+## doc 93 §AN: the damage fraction a MAINTAINING player actually buys a repair
+## at. Doc 92 §43.1's `balanced` agent repairs at condition 0.80, so the routine
+## repair it buys is priced at `0.20 × REPAIR_COST_PER_CAPITAL = 0.17 × capital`
+## — and that is the floor `RESTORE_COST_FRACTION` is checked against at load,
+## because a restore cheaper than the repair it replaced would pay for neglect.
+## It is not a price and it prices nothing; it is the agent's own threshold,
+## named here so the check can quote the number it is enforcing.
+const MAINTAINER_DAMAGE_FRACTION := 0.20
+
 ## doc 03 §2.13(a) / §2.2 archetype ids. doc 02's roster names four of them
 ## differently and omits two; the alias map ships in building_economy.json.
 const REQUIRED_ARCHETYPE_KEYS := [
@@ -60,6 +69,10 @@ var _upg_coeff: float = 0.0
 var _upg_growth: float = 0.0
 var _capital_value_v: Array = []
 var _repair_cost_per_capital: float = 0.0
+## doc 03 §2.5's restore row (Wave 18, doc 93 §AN). The share of a building's
+## capital the city pays to bring a RUIN back — the capital end of the same
+## repair family `_repair_cost_per_capital` prices the routine end of.
+var _restore_cost_fraction: float = 0.0
 var _pm_cost_fraction: float = 0.0
 var _pm_min_condition: float = 0.0
 var _demolition_refund_fraction: float = 0.0
@@ -319,6 +332,36 @@ func repair_cost_road(road_class: String, damage_fraction: float, m_repair: floa
 	return repair_cost(capital_value_road(road_class), damage_fraction, m_repair)
 
 
+## doc 03 §2.5's RESTORE row — the price of `CitySim.cmd_restore_building`, the
+## one tap that brings a ruin back (Wave 18, doc 92 §54, doc 93 §AN).
+##
+## `capital × RESTORE_COST_FRACTION × M_repair`, and nothing else: no grace
+## window, no level demotion, no second magnitude. The building comes back at the
+## level it fell down at, so the player is never charged for a ladder they
+## already climbed — and because the level survives, the CAPITAL the price is
+## read off is the same capital on both sides of the event.
+##
+## **The fraction has a floor and a ceiling and it is pinned between them**
+## (`data/economy.json.expenses._restore_note` carries the derivation, and
+## `tests/test_economy.gd` pins the floor as an inequality rather than a
+## constant): below 0.17 — the repair a MAINTAINING player buys at condition
+## 0.80 — a restore would be cheaper than the maintenance it replaced and the
+## game would pay for neglect; above ~0.55 — the repair at doc 02 §2.6's
+## auto-damage line — it stops being a decision and becomes a crisis, which is
+## the state the 2026-09-02 playtest was in.
+func restore_cost(capital: int, m_repair: float = 1.0) -> int:
+	return round_half_up(float(capital) * _restore_cost_fraction * m_repair)
+
+
+func restore_cost_building(type: String, level: int, m_repair: float = 1.0) -> int:
+	return restore_cost(capital_value(type, maxi(level, 1)), m_repair)
+
+
+## The published fraction itself, for the doc and for the balance instruments.
+func restore_cost_fraction() -> float:
+	return _restore_cost_fraction
+
+
 # ============================== §2.5 city services and §2.5a grants (RR-78/78)
 
 ## Doc 03 §2.5's payout table for doc 06's dispatch and doc 12's street
@@ -560,6 +603,7 @@ func _load(building_economy: Dictionary, economy: Dictionary) -> void:
 	_capital_value_v = upgrades.get("CAPITAL_VALUE_V", [])
 	_demolition_refund_fraction = float(upgrades.get("DEMOLITION_REFUND_FRACTION", 0.0))
 	_repair_cost_per_capital = float(expenses.get("REPAIR_COST_PER_CAPITAL", 0.0))
+	_restore_cost_fraction = float(expenses.get("RESTORE_COST_FRACTION", 0.0))
 	_pm_cost_fraction = float(expenses.get("PM_COST_FRACTION", 0.0))
 	_pm_min_condition = float(expenses.get("PM_MIN_CONDITION", 0.0))
 	_vehicle_resale_fraction = float(expenses.get("VEHICLE_RESALE_FRACTION", 0.0))
@@ -587,6 +631,21 @@ func _load(building_economy: Dictionary, economy: Dictionary) -> void:
 				% [_capital_value_v.size(), LEVELS_PER_ARCHETYPE, TOP_LEVELS_PER_ARCHETYPE])
 	if _repair_cost_per_capital <= 0.0:
 		errors.append("economy.json expenses.REPAIR_COST_PER_CAPITAL missing")
+	# doc 93 §AN's floor, re-checked at load exactly as the rush rate below is:
+	# a restore must never be cheaper than the repair a MAINTAINING player buys
+	# (doc 92 §43.1's `balanced` agent repairs at condition 0.80, i.e. a damage
+	# fraction of 0.20). A table edit that dropped below it would silently make
+	# the game pay for neglect, and the boot has to say so rather than the
+	# balance drifting.
+	if _restore_cost_fraction <= 0.0:
+		errors.append("economy.json expenses.RESTORE_COST_FRACTION missing")
+	elif _restore_cost_fraction < MAINTAINER_DAMAGE_FRACTION * _repair_cost_per_capital:
+		errors.append(("economy.json expenses.RESTORE_COST_FRACTION %.4f is below the "
+				+ "maintainer repair floor %.4f (%.2f × REPAIR_COST_PER_CAPITAL %.2f) — "
+				+ "letting a building fall down would be cheaper than keeping it up")
+				% [_restore_cost_fraction,
+				MAINTAINER_DAMAGE_FRACTION * _repair_cost_per_capital,
+				MAINTAINER_DAMAGE_FRACTION, _repair_cost_per_capital])
 	# doc 03 §2.13(f): the rush rate is not an independent number. §2.5's
 	# emergency-contractor row already publishes the price of time — it buys
 	# `1 − CONTRACTOR_TIME_FRACTION` of a project's duration for a surcharge of

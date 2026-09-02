@@ -8212,3 +8212,149 @@ beyond `medium_max_m`.
 cascades.** `shadow_max_m` is the lever with purchase at Z1; a pitch-coupled
 `medium_max_m` is worth 6 there and 65 at Z2. Neither is taken in this lane;
 both are filed with their numbers in doc 11 §2.5b's OPEN note.
+
+---
+
+## 54. Wave 18 — the price of a ruin: what "MODEST" is, measured (2026-09-02)
+
+*(Instrument: `tools/measure_restore_burden.gd`, new this wave. Supporting reads:
+`tools/measure_curriculum.gd --days=45`, `tools/measure_founding_ledger.gd
+--hours=504`, `tools/measure_repair_burden.gd --days=45 --absence=720`. Ruling:
+doc 93 §AN. Verb: report 98 RR-155.)*
+
+### 54.1 The question, and why it could not be inherited
+
+Doc 02 §2.12 authored a rebuild price — `0.60 × build cost(level_at_destruction)`
+inside a 72-game-hour grace window, **full price and back to L1** after it — and
+**no caller ever read it**, because until this wave there was no caller at all
+(doc 91 A91-D-99). A price nothing has ever charged is not a measured price; it
+is a proposal. The 2026-09-02 playtest is the first measurement it ever met, and
+it failed: *"the price should be MODEST — it shouldn't break the bank just to
+repair a few buildings when we have a ton of them."*
+
+So the fraction is re-derived here rather than inherited, against the
+post-economy-lane ledger (doc 92 §43, the Wave-17 dial-in).
+
+### 54.2 What a day is worth, by city level
+
+`tools/measure_curriculum.gd --days=45 --seeds=1337`, the `curriculum` agent —
+the same rig the arrival table is measured on. One real minute is one game-hour,
+so the published `net $/real-min` **is** net per game-hour.
+
+| city level | mean net $/gh | **net per game-day** | game-hours at this level |
+|---|---|---|---|
+| 1 | 535.4 | 12,850 | 14 |
+| 2 | 672.9 | **16,150** | 33 |
+| 3 | 837.7 | **20,105** | 35 |
+| 4 | 983.9 | **23,614** | 53 |
+| 5 | 1,033.7 | 24,809 | 108 |
+| 6 | 2,447.7 | 58,745 | 250 |
+
+The founding city's own anchor, for scale:
+`tools/measure_founding_ledger.gd --hours=504 --presets=standard` → gross
+$824.19/gh, expense $565.23/gh, **net +$258.97/gh = $6,215/game-day**.
+
+### 54.3 How many are down at once, and which ones
+
+`tools/measure_restore_burden.gd --days=45 --seeds=1337
+--strategies=disaster_neglect` — `balanced` that never repairs, which is the arc
+the player described.
+
+| | |
+|---|---|
+| peak simultaneous ruins | **3** (game-hour 1078) |
+| distinct buildings destroyed over 45 game-days | 3 |
+| ruins standing at the end | 3 |
+| day's net at the end (city level 3) | **$17,058** |
+
+**And WHICH three is the finding.** `PLANT-1` (power_facility L1, capital
+$60,000), `SUB-A` (substation L1, $15,000) and `WTR-2` (water_facility L1,
+$45,000): the starter city's **entire utility spine**. That is the mechanism
+behind the player's own sentence — *"I have many buildings that are destroyed
+that I can't actually fix even if I upgrade power"* — read from the other end.
+There was no verb that could bring a power plant back, so a city that lost one
+lost the game, silently, forever. The same arc's ledger shows the outcome
+without any reference to the missing verb: **mean net $53,546/game-day at city
+level 2 collapses to $17,058 at level 3**, a 68 % fall, as the spine dies.
+
+For contrast, `tools/measure_repair_burden.gd --days=45 --seeds=1337
+--strategies=balanced --absence=720`: a maintaining city destroys **0** buildings
+in 45 game-days and **0** across a 720-game-hour absence, and ends with 18 civic
+buildings below doc 02's auto-damage line at minimum condition 0.043 — i.e. the
+next 2 %/gh structural-failure roll away from being exactly the arc above.
+
+### 54.4 The band the fraction has to sit in
+
+A restore price is bounded on both sides by prices the game already publishes,
+and neither bound is invented here.
+
+**FLOOR — the repair a maintaining player buys.** Doc 92 §43.1's `balanced`
+agent repairs at condition 0.80, so the routine repair it buys is priced at
+`0.20 damage × REPAIR_COST_PER_CAPITAL 0.85 = 0.17 × capital`. A restore below
+that would be cheaper than the maintenance it replaced, and the game would **pay
+for neglect** at every level of every archetype.
+
+**CEILING — the deepest repair anyone sanely buys.** Doc 02 §2.6's auto-damage
+line is 0.35, so a repair taken there costs `0.65 × 0.85 = 0.5525 × capital`.
+Above that a restore stops being a decision.
+
+So the fraction must sit in **[0.17, 0.5525]**, and "modest" means the bottom of
+that band rather than the middle. **The ruling is 0.20** (doc 93 §AN).
+
+### 54.5 What each candidate costs, on the arc that actually happened
+
+`tools/measure_restore_burden.gd` prices the three standing ruins at four
+candidate fractions against the $17,058 day they are standing in:
+
+| ruin | archetype | L | capital $ | @0.12 | **@0.20** | @0.30 | @0.60 *(authored)* |
+|---|---|---|---|---|---|---|---|
+| PLANT-1 | power_facility | 1 | 60,000 | 7,200 | **12,000** | 18,000 | 36,000 |
+| SUB-A | substation | 1 | 15,000 | 1,800 | **3,000** | 4,500 | 9,000 |
+| WTR-2 | water_facility | 1 | 45,000 | 5,400 | **9,000** | 13,500 | 27,000 |
+| **ALL 3** | | | | 14,400 | **24,000** | 36,000 | 72,000 |
+| **share of ONE day's net** | | | | 0.84× | **1.41×** | 2.11× | **4.22×** |
+
+**The authored 0.60 charges four and a quarter days of a city's whole net income
+to put its own power plant, substation and water plant back.** At 0.20 the same
+recovery is a day and a half. That is the difference between a crisis and a
+decision, and it is the entire content of this section.
+
+### 54.6 A handful of private ruins, which is the case the player is in
+
+The arc above destroys utilities because that is what a *neglecting* agent kills.
+The 2026-09-02 player has *"a ton"* of ruins across ordinary stock, which is what
+fire and disaster kill. Priced at 0.20 off the published capital ladders
+(`data/building_economy.json`), against the day's net from §54.2:
+
+| what is down | @0.20 total | at L3 ($20,105/day) | at L4 ($23,614/day) |
+|---|---|---|---|
+| 5 × `house` L3 | 6,100 | 0.30× | 0.26× |
+| 10 × `house` L3 | 12,200 | 0.61× | 0.52× |
+| 10 × `house` L3 + 5 × `store` L3 | 25,415 | 1.26× | 1.08× |
+| … + 3 × `office` L3 | 65,063 | 3.24× | 2.76× |
+| the same set at the authored 0.60 | 195,191 | **9.71×** | **8.27×** |
+
+Fifteen ordinary buildings come back for about one day. Eighteen with three
+offices among them cost about three days at 0.20 against **ten** at 0.60.
+
+### 54.7 The demotion, priced
+
+The authored rule also demoted a ruin to L1 once the 72-hour window closed. That
+is not a price, it is a **deletion of the player's own capital**, and it can be
+quoted exactly off the ladder: a `house` at L5 carries $37,955 of capital the
+player paid rung by rung (`build_cost_l1 + Σ upgrade_cost_by_step` = 1,200 +
+1,380 + 3,519 + 8,973 + 22,882 = 37,954 ≈ `capital_value_by_level[4]`). Coming
+back at L1 hands back $1,200 of it and burns **$36,755** — for a fire the player
+did not start, on a deadline of 72 game-hours against doc 08's own **720**-hour
+offline cap. **The window was ten times shorter than the absence the product is
+designed around.** Retired, both halves, in doc 93 §AN.
+
+### 54.8 Determinism
+
+A player verb moves no baseline. All four `profile_sim --hash-only` hashes are
+byte-identical at the fork and at the end of this lane — founding
+`05614522975fad52…` / `d1aaee0dca92f2fd…`, benchmark `275aad9d4aeea809…` /
+`d40126e371371d59…`. The new price row is read only by a command no baseline run
+issues, `Treasury.lifetime` gains **no** key (it is captured into `state_hash`),
+and `StatsRecorder.counters` gains `buildings_restored` only on a city where the
+verb has actually been used.

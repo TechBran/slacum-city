@@ -22,7 +22,11 @@ const STRUCTURAL_FAILURE_P_PER_H := 0.02
 const MIN_CONDITION_TO_UPGRADE := 0.55
 const REPAIR_TIME_FACTOR := 0.50
 const REPAIR_TARGET_FROM_DAMAGED := 0.85
-const REBUILD_GRACE_HOURS := 72
+## RETIRED Wave 18 (doc 93 §AN) — see `order_rebuild()`. It gated a level
+## demotion and a price fraction that no caller ever read, against a window ten
+## times shorter than doc 08's own offline cap. Deleted rather than deprecated:
+## nothing in the project reads it, and a const that gates nothing is a rule the
+## next reader will try to obey.
 const OVERLOAD_DECAY_COEFFICIENT := 0.80
 const UNPOWERED_DECAY_COEFFICIENT := 0.50
 const DAMAGED_DECAY_MULTIPLIER := 1.50
@@ -458,18 +462,38 @@ func interrupt_repair() -> Dictionary:
 	return CommandQueue.ok()
 
 
-## destroyed → planned. Within the grace window the rebuild is priced at the
-## destroyed level (0.60 × build cost); after it, back to L1 (doc 02 §2.12).
+## destroyed → planned, at the level it fell down at (doc 02 §2.12, re-ruled
+## Wave 18 by doc 93 §AN).
+##
+## **THE LEVEL SURVIVES, ALWAYS, AND THERE IS NO CLOCK ON IT.** Until Wave 18
+## this returned `pending_level = level_at_destruction` inside a 72-game-hour
+## grace window and `1` after it, plus a `cost_fraction` of 0.60 / 1.00 — and no
+## caller ever read either, because until Wave 18 there was no caller at all
+## (doc 91 §14.5, A91-D-99). Both halves are retired rather than wired up:
+##
+##   * **the demotion** deleted the player's own money for missing a deadline.
+##     A `house` at L5 carries $37,955 of capital the player paid for rung by
+##     rung; coming back at L1 hands them $1,200 of it and burns the rest, for a
+##     fire they did not start. A game whose promise is *"You built it. Now keep
+##     it alive"* cannot answer a fire by un-building it.
+##   * **the window** was 72 game-hours against doc 08's 720-game-hour offline
+##     cap — a player who closes the app overnight, which is the scenario this
+##     game is DESIGNED around, returns to a city where every ruin has already
+##     aged out. It punished exactly the behaviour the product is shaped for.
+##
+## No price is returned and none is computed here: `sim/buildings/` carries no
+## dollar and no dollar fraction (report 98 C-07). `CostCurves.restore_cost_building`
+## is the one place a restore is priced, and `CitySim.cmd_restore_building` is
+## the one place it is charged. What comes back instead is a FACT the surface
+## wants — how long the ruin has been standing — which is not a price at all.
 func order_rebuild(now_minutes: int) -> Dictionary:
 	if state != &"destroyed":
 		return CommandQueue.fail(&"E_STATE")
-	var within_grace := (now_minutes - destroyed_at_minutes) <= REBUILD_GRACE_HOURS * 60
-	pending_level = level_at_destruction if within_grace else 1
+	pending_level = maxi(level_at_destruction, 1)
 	level = 0
 	state = &"planned"
-	return CommandQueue.ok({"within_grace": within_grace,
-			"rebuild_level": pending_level,
-			"cost_fraction": 0.60 if within_grace else 1.0})
+	return CommandQueue.ok({"rebuild_level": pending_level,
+			"hours_destroyed": maxf(0.0, float(now_minutes - destroyed_at_minutes) / 60.0)})
 
 
 func _destroy(now_minutes: int, cause: StringName) -> Array:

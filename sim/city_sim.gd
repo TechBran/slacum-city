@@ -4288,6 +4288,192 @@ func cmd_repair_building(sim_id: String, preview: bool = false) -> Dictionary:
 	return CommandQueue.ok(quote)
 
 
+# ------------------------------------------------- doc 02 §2.12 the restore
+
+## **Bring a RUIN back.** One tap, one fee, and the building the player built is
+## standing again at the level it fell down at (Wave 18; doc 02 §2.12, doc 03
+## §2.5's restore row, doc 93 §AN, report 98 RR-155).
+##
+## This is the door `Building.order_rebuild` never had. That transition has been
+## authored, documented and untested-against-a-caller since doc 02 shipped —
+## `grep -rn "cmd_rebuild\|\.rebuild(" sim/ ui/ game/` found NOT ONE caller, the
+## sixth instance of doc 91's A91-D-19 shape (A91-D-99) — and the consequence is
+## the 2026-09-02 playtest's own sentence: *"I have many buildings that are
+## destroyed that I can't actually fix even if I upgrade power."* They could not.
+## `cmd_repair_building` answers `E_STATE` for anything that is not `active` or
+## `damaged`, so the verb the player naturally reaches for is closed against
+## exactly this state, and a destroyed building was permanently dead.
+##
+## Checks run in this documented order; the FIRST blocker is the reason code and
+## the full list rides in `payload.blockers`:
+##
+##   1 E_UNKNOWN_BUILDING  no such sim_id
+##   2 E_STATE             not `destroyed` — a fire, a damaged shell and a live
+##                         site all have their own verbs
+##   3 E_JOB_IN_FLIGHT     a project on this building is still on the queue. A
+##                         shell can burn down WHILE it is being built (doc 02
+##                         §2.12: `under_construction → on_fire → destroyed`), and
+##                         that job's completion would call `complete_construction`
+##                         on the restore the player just bought and finish it for
+##                         free. Refused rather than silently cancelled: the
+##                         player's money is not this command's to spend twice.
+##   4 E_FUNDS             treasury below the quoted price — **and the quote is
+##                         in the payload**, so the button can show the price it
+##                         could not pay instead of going blank.
+##
+## **`owner_maintained` is NOT a blocker, and that is a ruling, not an oversight**
+## (doc 93 §AN, against the natural reading of §Y1). Doc 02 §2.6a puts ROUTINE
+## WEAR on the owner: private stock keeps itself up, floors at `band_worn`, and
+## `cmd_repair_building` answers `E_OWNER_MAINTAINED` because there is nothing
+## for the city to buy. A building destroyed by fire or collapse is not routine
+## wear — it is a CAPITAL event, the owner is gone with the building, and whether
+## that lot gets rebuilt is the city's call and the player's money. The natural
+## reading of §Y1 would close this door by accident on every house, store and
+## office in the city, which is most of the stock the player was looking at, so
+## `tests/test_restore_building.gd::test_a_destroyed_private_building_can_still_be_restored`
+## pins it.
+##
+## Price is doc 03 §2.5's restore row, `capital_value(level_at_destruction) ×
+## RESTORE_COST_FRACTION × M_repair`, charged under its own ledger source
+## `&"restore"` — its own row in the deferred-liability event and its own word in
+## a save's reason line, deliberately NOT folded into `construction` (which
+## austerity BLOCKS: a city that cannot restore its own power plant during an
+## austerity is a city that cannot recover) and not into `repair` (a restore is
+## the capital end of the family, and mixing them would make doc 92's repair
+## burden look like it moved when the player simply rebuilt).
+##
+## **It adds no lifetime counter.** `Treasury.lifetime` is captured into
+## `canonical_capture().ledger_totals` and therefore into `state_hash()`, so a
+## new key would move every baseline in the project on a PLAYER VERB that must
+## move none. Doc 91 A91-D-100 is the row that publishes one.
+##
+## The building comes back through the ORDINARY construction path — `planned` →
+## `ConstructionQueue` → `active` — on the authored `rebuild` job kind, so the
+## queue panel lists it, `cmd_rush_construction` rushes it, the stage walk draws
+## its crane, and `building_completed` fires exactly as it does for a new build.
+## There is no second completion path (report 98 RR-108's rule, applied here by
+## not writing one).
+func cmd_restore_building(sim_id: Variant, preview: bool = false) -> Dictionary:
+	# The shell's tap funnel carries ids as text (doc 12 §4.4's one-funnel rule);
+	# the roster keys on String. Coerce here so both callers speak, exactly as
+	# `cmd_collect_opportunity` coerces its int.
+	var id := String(sim_id)
+	var b: Building = buildings.get(id)
+	if b == null:
+		return CommandQueue.fail(&"E_UNKNOWN_BUILDING", {"blockers": [&"E_UNKNOWN_BUILDING"]})
+	var blockers: Array = []
+	if b.state != &"destroyed":
+		blockers.append(&"E_STATE")
+	for job in construction.active_jobs():
+		if String((job.get("payload", {}) as Dictionary).get("sim_id", "")) == id:
+			blockers.append(&"E_JOB_IN_FLIGHT")
+			break
+	var type := String(_building_records.get(id, {}).get("type", String(b.archetype)))
+	# The level the ruin comes back at is the level it fell down at — never a
+	# demotion, never a clock (doc 93 §AN) — so it is also the level the price is
+	# read off, and the two can never disagree.
+	var level := maxi(b.level_at_destruction, 1)
+	var cost := econ_curves.restore_cost_building(type, level,
+			float(treasury.difficulty().get("M_repair", 1.0)))
+	if treasury.balance < cost:
+		blockers.append(&"E_FUNDS")
+	var quote := {"blockers": blockers, "cost": cost, "restore_level": level,
+			"capital": econ_curves.capital_value(type, level),
+			"crew_hours": float(catalog.stats(type, level).get("build_time_hours", 4.0)),
+			"hours_destroyed": maxf(0.0,
+					float(clock.sim_time_minutes() - b.destroyed_at_minutes) / 60.0)}
+	if not blockers.is_empty():
+		return CommandQueue.fail(blockers[0], quote)
+	if preview:
+		return CommandQueue.ok(quote)
+
+	var paid := treasury.spend(cost, &"restore", "restore " + id)
+	if not bool(paid["ok"]):
+		quote["blockers"] = [_spend_reason(paid)]
+		return CommandQueue.fail(_spend_reason(paid), quote)
+	var ordered := b.order_rebuild(clock.sim_time_minutes())
+	if not bool(ordered["ok"]):
+		return ordered  # unreachable: the state gate above already passed
+	# The ruin's stats are the level it died at; the site's are the level it is
+	# coming back to. They are the same level, so this is a re-stamp and not a
+	# change — and it is here for the same reason `cmd_place_building` stamps at
+	# placement: a `Building` holds no catalog, and the crew-hours below and the
+	# renderer's crane both read `stats`.
+	b.stats = catalog.stats(type, level)
+	b.max_level = catalog.max_level_of(type)
+	_stamp_building_rules(b)
+	var crew_hours := float(b.stats.get("build_time_hours", 4.0))
+	var job_id := construction.submit(&"rebuild", id, crew_hours, &"construction_crew",
+			{"sim_id": id, "cost": cost})
+	construction.assign_crew(job_id, "YARD-CREW-1")
+	b.start_construction()
+	bus.emit(&"restore_started_sim", {"sim_id": id, "building": b.id, "cost": cost,
+			"archetype": type, "to_level": level, "crew_hours": crew_hours,
+			"job_id": job_id})
+	stats_add(&"buildings_restored")
+	quote["job_id"] = job_id
+	return CommandQueue.ok(quote)
+
+
+## **The many-at-once half** — the 2026-09-02 playtest had *"a ton"* of ruins,
+## and a per-building tap is the promise but not the whole answer.
+##
+## Quotes (and, uncommitted, buys) every standing ruin in one call, cheapest
+## first, stopping at the first one the treasury cannot cover. Cheapest-first is
+## the ruling and not an implementation detail: a player with $30,000 and a
+## $28,000 power plant beside eleven $900 houses gets the eleven houses AND the
+## plant if the plant is affordable last, and gets only the plant if the sort
+## runs the other way. The city that comes back is the bigger one.
+##
+## `preview = true` answers `{count, cost, rows}` and takes nothing, which is
+## what a "Restore all destroyed (N) · $Y" affordance reads. Nothing here is a
+## second verb: every row goes through `cmd_restore_building` above, so a batch
+## and eleven taps are the same eleven charges, the same eleven jobs and the same
+## eleven events, in the same order.
+func cmd_restore_all_destroyed(preview: bool = false) -> Dictionary:
+	var rows: Array = []
+	var total := 0
+	for id in roster_ids():
+		var quoted := cmd_restore_building(id, true)
+		var payload: Dictionary = quoted.get("payload", {})
+		# Anything that is not a ruin, or is a ruin with a job still on it, is not
+		# this verb's business. `E_FUNDS` IS: it is priced and it is a candidate,
+		# and whether it is affordable depends on what has been bought before it.
+		if not bool(quoted["ok"]) \
+				and StringName(str(quoted.get("reason_code", &""))) != &"E_FUNDS":
+			continue
+		rows.append({"sim_id": String(id), "cost": int(payload["cost"]),
+				"restore_level": int(payload["restore_level"])})
+		total += int(payload["cost"])
+	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return int(a["cost"]) < int(b["cost"]) if int(a["cost"]) != int(b["cost"]) \
+					else String(a["sim_id"]) < String(b["sim_id"]))
+	var quote := {"blockers": [] as Array, "count": rows.size(), "cost": total,
+			"rows": rows.duplicate(true)}
+	if rows.is_empty():
+		quote["blockers"] = [&"E_NO_RUINS"]
+		return CommandQueue.fail(&"E_NO_RUINS", quote)
+	if preview:
+		return CommandQueue.ok(quote)
+	var restored: Array = []
+	var spent := 0
+	for row: Dictionary in rows:
+		var result := cmd_restore_building(String(row["sim_id"]))
+		if not bool(result["ok"]):
+			break  # the first refusal is the funds wall; everything after it is dearer
+		restored.append(String(row["sim_id"]))
+		spent += int((result["payload"] as Dictionary)["cost"])
+	quote["restored"] = restored
+	quote["count"] = restored.size()
+	quote["cost"] = spent
+	if restored.is_empty():
+		quote["blockers"] = [&"E_FUNDS"]
+		return CommandQueue.fail(&"E_FUNDS", quote)
+	bus.emit(&"restore_batch_completed", {"count": restored.size(), "cost": spent,
+			"restored": restored.duplicate()})
+	return CommandQueue.ok(quote)
+
+
 # ------------------------------------------- doc 04 §2.4 shedding priority
 
 ## Set a building's load priority (doc 04 §2.4). The class lives on the grid's
@@ -5027,7 +5213,11 @@ func _emit_construction_stages() -> void:
 	var live := {}
 	for job in construction.active_jobs():
 		var kind := String(job["kind"])
-		if kind != "build" and kind != "upgrade":
+		# `rebuild` joins the walk in Wave 18 (doc 93 §AN): a restore IS a shell
+		# going up, on the same crew and the same accumulator, and a site that
+		# drew no crane would be the renderer telling the player nothing is
+		# happening on a lot they just paid for.
+		if kind != "build" and kind != "upgrade" and kind != "rebuild":
 			continue
 		var sim_id := String((job.get("payload", {}) as Dictionary).get("sim_id", ""))
 		if sim_id == "":

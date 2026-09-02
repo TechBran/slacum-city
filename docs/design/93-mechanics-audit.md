@@ -3603,3 +3603,175 @@ Two consequences, both recorded rather than fixed here:
    whole difficulty table was fitted on a mechanism the docs believed in and the
    sim never had. It belongs to the power lane, and until it lands, §Y1a is a
    correct clause with nothing to bite on.
+
+---
+
+## AN. Wave-18 rulings — the restore: a door that was never cut, a price that was never charged, and one word of §Y1 that had to be read narrowly (2026-09-02)
+
+*(Measured in doc 92 §54. Shipped as report 98 RR-155/156/157. The defect rows
+are doc 91 A91-D-99 and A91-D-100.)*
+
+The player, on their own city, 2026-09-02:
+
+> *"When buildings are destroyed, we should have a ONE BUTTON CLICK to just pay a
+> fee and restore the building. That's it. I have many buildings that are
+> destroyed that I can't actually fix even if I upgrade power. And the price
+> should be MODEST — it shouldn't break the bank just to repair a few buildings
+> when we have a ton of them."*
+
+Every clause of that is a ruling below, and the second sentence is a defect
+report: they were right, there was no way to fix them, and the reason is
+A91-D-19's shape for the sixth time.
+
+### AN1. There is a verb, and it is the ordinary construction path
+
+`CitySim.cmd_restore_building(sim_id, preview)` ships. `Building.order_rebuild`
+— authored, documented against doc 02 §2.12, returning a priced quote — had
+**not one caller** (`grep -rn "cmd_rebuild\|\.rebuild(" sim/ ui/ game/`), and
+`cmd_repair_building` answers `E_STATE` for anything that is not `active` or
+`damaged`, so the verb a player naturally reaches for is closed against exactly
+this state. A destroyed building was permanently dead.
+
+The restore is **not a new machine**. It charges, calls `order_rebuild`, and puts
+a `rebuild` job on doc 02 §2.13's one queue — so the queue panel lists it,
+`cmd_rush_construction` rushes it, the six-stage crane walk draws it, and
+`building_completed` fires exactly as it does for a new build. There is no second
+completion path (report 98 RR-108's rule, obeyed by not writing one).
+
+Two consequences of that choice, both deliberate:
+
+* **the job kind is the authored `rebuild`, not `build`.** `ConstructionQueue.KINDS`
+  has carried `rebuild` since doc 02 shipped and `CONSTRUCTION_SOURCE_BY_KIND`
+  already publishes a word for it, so the roster needed nothing. What it DID need
+  is `CitySim._emit_construction_stages`, whose scan filtered `build`/`upgrade`
+  only — a restored site would have drawn no crane, which is the renderer telling
+  the player nothing is happening on a lot they just paid for. `rebuild` joins
+  the walk.
+* **the player-facing word is RESTORE, in both places.** `ui_queue_source_rebuild`
+  moves from "Rebuild" to "Restore" so the queue row and the button the player
+  pressed say the same word. `rebuild` stays the code word; a second *player*
+  vocabulary for one thing is how two halves of a seam teach the player they are
+  two things.
+
+### AN2. THE PRICE — 0.20 of capital, and the band it had to land in
+
+`data/economy.json.expenses.RESTORE_COST_FRACTION = 0.20`, read through
+`CostCurves.restore_cost_building()` (C-07: `data/buildings.json` and
+`sim/buildings/building.gd` carry no dollar and no dollar fraction). Price is
+`capital_value(level_at_destruction) × 0.20 × M_repair`.
+
+**This REPLACES doc 02 §2.12's authored pair and does not inherit it.** The full
+derivation is doc 92 §54; the ruling is the band:
+
+| bound | value | what it is |
+|---|---|---|
+| **floor** | 0.17 × capital | the repair a MAINTAINING player buys — doc 92 §43.1's `balanced` agent repairs at condition 0.80, i.e. `0.20 damage × REPAIR_COST_PER_CAPITAL 0.85` |
+| **ruled** | **0.20 × capital** | the round number at the bottom of the band |
+| **ceiling** | 0.5525 × capital | the repair at doc 02 §2.6's auto-damage line, `0.65 × 0.85` — the deepest repair anyone sanely buys |
+
+The floor is the load-bearing half and it is enforced **twice**: `CostCurves`
+refuses a table below it at boot (beside the rush-rate derivation check), and
+`tests/test_economy.gd::test_a_restore_is_never_cheaper_than_the_repair_it_replaced`
+asserts the inequality for every archetype at every rung rather than asserting a
+constant. Below 0.17 the game would **pay for neglect**: letting a building fall
+down would be cheaper than keeping it up, at every level, for every archetype.
+
+What 0.20 buys, from §54: the three ruins a `disaster_neglect` arc actually
+leaves standing — the starter city's power plant, substation and water plant —
+come back for **$24,000 against a $17,058 day's net, 1.41×**, where the authored
+0.60 charged **$72,000, 4.22×**. Fifteen ordinary private ruins in a mature city
+come back for about one day.
+
+**M_repair and not M_build.** A restore reads `capital_value` like every other
+line of the repair family; a player who chose `crisis` expects maintenance to
+cost more, and this is maintenance at its capital end.
+
+### AN3. THE LEVEL SURVIVES, AND THERE IS NO CLOCK ON IT
+
+Doc 02 §2.12's grace window (72 game-hours) and its post-window demotion to L1
+are **both retired**. `Building.order_rebuild` now returns
+`pending_level = level_at_destruction` unconditionally, and
+`REBUILD_GRACE_HOURS` is deleted rather than deprecated — a const that gates
+nothing is a rule the next reader will try to obey.
+
+Two reasons, and the second is the stronger one:
+
+1. **A demotion is a second punishment for one event.** `capital_value(L)` IS the
+   total the player paid rung by rung — a `house` at L5 is `1,200 + 1,380 + 3,519
+   + 8,973 + 22,882 = $37,954`, which is the published ladder cell. Coming back
+   at L1 hands back $1,200 and burns **$36,755** of the player's own money, for a
+   fire they did not start. A game whose promise is *"You built it. Now keep it
+   alive"* cannot answer a fire by un-building it.
+2. **The window was ten times shorter than the absence the product is designed
+   around.** Doc 08 caps offline catch-up at **720** game-hours. A player who
+   closes the app overnight — the headline scenario — returns to a city where
+   every ruin has already aged out of a 72-hour window. It punished exactly the
+   behaviour the product is shaped for, and it did so silently.
+
+`order_rebuild` returns no price at all now. `sim/buildings/` carries no dollar
+and no dollar fraction (C-07), and what comes back in its place —
+`hours_destroyed` — is a fact the surface wants, not a price.
+
+### AN4. `owner_maintained` does NOT block a restore — reading §Y1 narrowly, on purpose
+
+This is the ruling most likely to be got wrong by someone doing the obvious
+thing, so it is stated as a rule and pinned by a test
+(`tests/test_restore_building.gd::test_a_destroyed_private_building_can_still_be_restored`).
+
+Doc 02 §2.6a / doc 93 §Y1 put **routine wear** on the owner: private stock keeps
+itself up, floors at `band_worn`, and `cmd_repair_building` answers
+`E_OWNER_MAINTAINED` because there is genuinely nothing for the city to buy.
+
+**A building destroyed by fire or collapse is not routine wear.** It is a
+capital event; the owner is gone with the building; and whether that lot gets
+rebuilt is the city's call and the player's money. Doc 02 §2.6a is a rule about
+*maintenance*, and a restore is not maintenance — it is the city choosing to put
+a lot back into use.
+
+The narrow reading is not a nicety. Houses, stores and offices are
+`owner_maintained`, which is **most of the stock a player is looking at**, so the
+natural reading of §Y1 would have closed this door on the majority of the city
+by accident, and it would have looked like a correct application of a Wave-17
+ruling while doing it.
+
+### AN5. The restore has its own ledger source, and deliberately no lifetime row
+
+Charged as `&"restore"`, not as `construction` and not as `repair`.
+
+* **Not `construction`**, because doc 03 §2.10 layer 2's austerity **blocks**
+  that category. A city that cannot restore its own power plant while austerity
+  is engaged is a city that cannot recover from an austerity. Pinned by
+  `tests/test_restore_building.gd::test_a_restore_survives_austerity`.
+* **Not `repair`**, because folding a capital event into the routine line would
+  make doc 92's repair burden look like it moved when the player simply rebuilt.
+
+**It adds no `lifetime_restores` counter, and that is a determinism ruling, not
+an omission.** `Treasury.lifetime` is captured into
+`canonical_capture().ledger_totals` and therefore into `state_hash()`; a new key
+would move every baseline in the project on a **player verb**, which must move
+none. Doc 91 A91-D-100 is the row that publishes one, in a lane that holds the
+matrix.
+
+### AN6. No confirm dialog. The price is on the button.
+
+Per §AB's precedent (the rush): a one-tap purchase whose price is on its own face
+does not get a second dialog. `RESTORE · $12,000` is the whole affordance,
+48 dp, disabled-with-the-price-still-showing when unaffordable (the build-card
+pattern), and the panel re-reads the sim rather than predicting what moved.
+
+This is deliberately **unlike** `DEMOLISH`, which is hold-to-confirm — demolition
+is the one button in the deck that cannot be undone, and a restore is the one
+that undoes something.
+
+### AN7. A ruin must be SELECTABLE
+
+Checked rather than assumed, and it holds today:
+`CitySim` does not un-stamp a destroyed building's tiles, so
+`BuildController.sim_id_at_tile` → `TileGrid.building_at` still resolves and
+`pick_at_ground` returns `PICK_BUILDING` on a ruin. `building_view()` has no
+state guard either. What the panel then DREW was the defect: `_render_repair`
+drew a disabled REPAIR button with an `E_STATE` sentence on a city-maintained
+ruin, and on private stock `E_OWNER_MAINTAINED` folded into "nothing to buy" and
+the ruin's panel offered **no action at all**. Doc 12 D-86 is the row; the
+destroyed state now has its own block, and the repair affordance is suppressed on
+a ruin because the restore is the verb that answers it.
