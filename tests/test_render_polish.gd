@@ -835,22 +835,42 @@ func test_the_hoarding_instance_colours_are_linear_at_the_write() -> void:
 	hoard.free()
 
 
-func test_the_cobra_head_is_a_value_ramp_and_is_left_alone_on_purpose() -> void:
-	# CobraHeadMesh bakes GRIME, a linear multiplier authored by eye against the
-	# shipped pole (doc 11 §2.10.1), and its two tints are near-white. It is not
-	# an sRGB hex in a vertex and it is NOT converted — the pole's colour is
-	# `StandardMaterial3D.albedo_color`, which is decoded for free. Pinned so a
-	# later "make every builder decode" sweep does not deepen the grime ramp.
+## `CobraHeadMesh` was the fifth vertex builder and the one the first pass at
+## `A91-D-36` MISSED — it was recorded as "checked and deliberately left, its
+## vertex colour is a grime ramp and the pole's colour is
+## `StandardMaterial3D.albedo_color`". Both halves of that were wrong: the ramp
+## MULTIPLIES two authored tints (`COWL_TINT`, `LENS_TINT`), and those tints
+## reach the shader through the vertex colour, not through `albedo_color`.
+##
+## What this test pins is the SPLIT, which is the actual ruling (report 98
+## RR-95): the authored TINT is decoded, the GRIME RAMP is not. A ramp is a
+## reflectance multiplier — soot on a mast — and belongs in linear, where
+## halving it means half the light; decoding the product instead would put the
+## ramp through a 2.4 power and take the foot of the mast to linear 0.18.
+func test_the_cobra_head_decodes_its_tint_and_not_its_grime_ramp() -> void:
 	var cols := _cols_of(CobraHeadMesh.build())
 	assert_true(cols.size() > 0, "the pole has vertices")
 	var lo := 2.0
 	var hi := -1.0
+	var saw_decoded_cowl := false
 	for c in cols:
 		lo = minf(lo, c.r)
 		hi = maxf(hi, c.r)
-	assert_almost_eq(hi, 1.0, 0.02, "the ramp tops out at 1.0 (unweathered)")
-	assert_true(lo >= CobraHeadMesh.GRIME_FLOOR * CobraHeadMesh.COLLAR_GRIME - 0.02,
-			"and bottoms at the authored floor × collar grime, not at its decode")
+		if absf(c.r - CobraHeadMesh.COWL_TINT.srgb_to_linear().r) < 0.005:
+			saw_decoded_cowl = true
+	assert_almost_eq(hi, 1.0, 0.02, "the ramp still tops out at 1.0: "
+			+ "`LENS_TINT` is white in red and white is a FIXED POINT of the "
+			+ "sRGB decode, which is why the glass did not move")
+	var ramp_floor: float = CobraHeadMesh.GRIME_FLOOR * CobraHeadMesh.COLLAR_GRIME
+	assert_almost_eq(lo, ramp_floor, 0.02,
+			"the darkest vertex is the authored floor × collar grime (%.4f) "
+			% ramp_floor + "and NOT its decode (%.4f) — the ramp is linear"
+			% Color(ramp_floor, 0, 0).srgb_to_linear().r)
+	assert_true(saw_decoded_cowl,
+			"…and the painted cowl is present at its DECODED value %.4f, not "
+			% CobraHeadMesh.COWL_TINT.srgb_to_linear().r
+			+ "at the authored %.4f it used to render at"
+			% CobraHeadMesh.COWL_TINT.r)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1333,3 +1353,36 @@ func test_an_unknown_aspect_errs_towards_culling_nothing() -> void:
 			"a headless caller (aspect %.0f) reaches %.0f m against 16:9's "
 			% [authored, unknown] + "%.0f m — further, i.e. it culls less"
 			% known)
+
+
+## Doc 91 `A91-D-36`'s vertex half, as a CENSUS rather than as a memory
+## (report 98 RR-95).
+##
+## RR-91 closed the INSTANCE half — a `MultiMesh` instance colour takes no sRGB
+## decode — and left the vertex half open with `awaiting_consumer`. A vertex
+## `COLOR` takes no decode either, so every procedural mesh that authors a tint
+## as a hex and writes it into `ARRAY_COLOR` was rendering it about two stops
+## light. Four files were converted by hand and a fifth
+## (`cobra_head_mesh.gd`) was missed, which is the whole argument for this
+## test: the list of files that push vertex colours is a `grep`, so the guard
+## should be a `grep` and not a list someone keeps up to date.
+func test_every_procedural_mesh_decodes_its_authored_vertex_colour() -> void:
+	var dir := DirAccess.open("res://game/render")
+	assert_true(dir != null, "game/render is readable")
+	var checked := 0
+	for name: String in dir.get_files():
+		if not name.ends_with(".gd"):
+			continue
+		var path := "res://game/render/".path_join(name)
+		var src := FileAccess.get_file_as_string(path)
+		if not src.contains("Mesh.ARRAY_COLOR"):
+			continue
+		checked += 1
+		assert_true(src.contains("srgb_to_linear"),
+				"%s writes ARRAY_COLOR and never calls srgb_to_linear: " % name
+				+ "a vertex COLOR is handed to the shader as a LINEAR value, "
+				+ "so an authored sRGB hex written straight into it renders "
+				+ "about two stops light (doc 91 A91-D-36, report 98 RR-95)")
+	assert_true(checked >= 4, "the census found %d files that push vertex "
+			% checked + "colours; if that number has fallen, a mesh moved and "
+			+ "this guard stopped guarding it")
