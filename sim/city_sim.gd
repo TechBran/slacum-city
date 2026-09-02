@@ -5356,8 +5356,13 @@ const STORM_PREP_ACTIONS: Array[String] = [
 	"pre_stage_crews", "load_shed", "top_off_water",
 	"callout_crew", "recall_construction", "sandbag_block",
 ]
-## The department a called-out crew joins (§2.7.7: "+1 temporary utility crew").
-const STORM_PREP_CALLOUT_TYPE := "utility_truck"
+## §2.7.7's "+1 temporary utility crew", as `data/vehicles.json` names it. It is
+## a `data/` id and not a department word: `FleetSystem.add_unit` looks it up in
+## the vehicle catalog, and a miss there spawns a truck from an EMPTY row — no
+## department, no speed, no capabilities — which is a unit that exists, counts
+## toward the fleet, and can never be dispatched.
+## `tests/test_storm_prep.gd` pins it against the catalog for exactly that reason.
+const STORM_PREP_CALLOUT_TYPE := "utility_service_truck"
 
 
 ## **The Storm Prep window, as a surface can draw it.** One read, everything the
@@ -5465,11 +5470,19 @@ func cmd_storm_prep_action(action_id: String, target: Dictionary = {},
 		return CommandQueue.fail(&"E_NO_TARGET", payload)
 	if preview:
 		return CommandQueue.ok(payload)
+	var reason := "storm prep " + action_id
 	if cost > 0:
-		var paid := treasury.spend(cost, &"storm_prep", "storm prep " + action_id)
+		var paid := treasury.spend(cost, &"storm_prep", reason)
 		if not bool(paid["ok"]):
 			return CommandQueue.fail(_spend_reason(paid), payload)
 	if not director.storm_prep_action(action_id, target):
+		# Unreachable: every gate `storm_prep_action` applies was checked above,
+		# against the same window read a line earlier. If it ever does fire, the
+		# money is already gone and nothing was bought, so it goes straight back
+		# — a partial charge may never buy a partial action. Same shape, same
+		# reason, as `cmd_rush_construction`'s refund arm.
+		if cost > 0:
+			treasury.credit(cost, &"storm_prep", reason + " refused")
 		return CommandQueue.fail(&"E_PREP_WINDOW", payload)
 	_apply_storm_prep_effect(action_id, int(window["event_uid"]))
 	stats_add(&"storm_prep_actions")
@@ -5569,6 +5582,14 @@ func _storm_callout_station() -> String:
 	var best_idle := -1
 	for station_id in incidents.fleet.station_ids():
 		var id := String(station_id)
+		var station: Dictionary = incidents.fleet.station(id)
+		# A station that cannot HOST this truck is not a home for it: it would
+		# be the truck's `_send_home` destination and its start tile, and doc 06
+		# counts a station's roster against the same ladder. `capacity_for` is
+		# that ladder, asked directly.
+		if incidents.fleet.capacity_for(String(station.get("archetype", "")),
+				STORM_PREP_CALLOUT_TYPE, int(station.get("level", 1))) <= 0:
+			continue
 		var idle := incidents.fleet.idle_count_at_station("utility", id)
 		if idle > best_idle or (idle == best_idle and id < best):
 			best_idle = idle
@@ -5654,7 +5675,7 @@ func _publish_storm_report(event_uid: int, row: Dictionary, now_min: int) -> voi
 		relief = int(roundf(float(reward.get("reimburse_frac", 0.15))
 				* float(ledger_total)))
 		if relief > 0:
-			treasury.credit(relief, &"grants", "storm relief")
+			treasury.credit(relief, &"grant", "storm relief")
 		var bonus := float(reward.get("stability_bonus", 0.05))
 		for district_id in report["districts"]:
 			districts.apply_stability(String(district_id), bonus)

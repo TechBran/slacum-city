@@ -351,6 +351,11 @@ func bring_up_screens() -> void:
 	# build sheet does: `game/main.gd` owns the sim, and `setup()` is idempotent.
 	if goals_sheet != null and goals_sheet.config == null:
 		goals_sheet.setup(config)
+	# S17 comes up with the shared config and a model whose provider is unbound,
+	# which reads as "no storm pending" — so a mount that never calls
+	# `bind_storm_prep()` shows a sheet that cannot be opened onto nothing.
+	if storm_prep_sheet != null and storm_prep_sheet.config == null:
+		storm_prep_sheet.setup(config)
 	if save_load_sheet != null and save_load_sheet.model == null:
 		save_load_sheet.setup(config)
 	if pause_menu != null and pause_menu.config == null:

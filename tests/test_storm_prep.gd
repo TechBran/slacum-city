@@ -164,12 +164,27 @@ func test_load_shed_and_top_off_water_do_what_they_say() -> void:
 	sim.dispose()
 
 
-func test_a_called_out_crew_goes_home_again() -> void:
+func test_a_called_out_crew_is_a_real_truck_and_goes_home_again() -> void:
 	var sim := _city_in_the_window()
+	# The catalog join, asserted first. `FleetSystem.add_unit` takes a
+	# `data/vehicles.json` type id and a MISS spawns a truck from an empty row —
+	# no department, no speed, no capabilities — a unit that counts toward the
+	# fleet and can never be dispatched. (This test caught exactly that: the
+	# constant read `utility_truck` and the roster says `utility_service_truck`.)
+	var row: Dictionary = sim.incident_catalog.vehicle_type(
+			CitySim.STORM_PREP_CALLOUT_TYPE)
+	assert_false(row.is_empty(),
+			"`%s` is not a `data/vehicles.json` type" % CitySim.STORM_PREP_CALLOUT_TYPE)
+	assert_eq(String(row.get("department", "")), "utility",
+			"§2.7.7 calls out a UTILITY crew")
+
 	var before := sim.incidents.fleet.size()
 	assert_true(bool(sim.cmd_storm_prep_action("callout_crew")["ok"]))
 	assert_eq(sim.incidents.fleet.size(), before + 1,
 			"§2.7.7's +1 temporary utility crew")
+	var idle: Dictionary = sim.incidents.fleet.free_units_by_dept()
+	assert_true(int(idle.get("utility", 0)) >= 1,
+			"…and it reports for duty in the department that was called")
 	# 12 game-hours, and then it is somebody else's truck again.
 	sim.advance_coarse_hours(11, false)
 	assert_eq(sim.incidents.fleet.size(), before + 1, "still on strength at 11 h")
