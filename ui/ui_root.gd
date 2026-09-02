@@ -51,6 +51,9 @@ const CONTENT_SCALE_MAX := 4.0
 enum Breakpoint { COMPACT, REGULAR, WIDE }
 
 ## Back-stack verdicts, in doc 12 §2.2 priority order.
+## S10's `state` row (PA-14). Spelled once, here, because three files address it.
+const PERMISSION_ROW := "notification_permission"
+
 const BACK_CLOSE_MODAL := &"close_modal"
 ## S0 is up. Not a rung of its own — it *removes* rungs: there is no city behind
 ## the front door, so sheet / panel / placement / selection cannot exist and back
@@ -73,6 +76,14 @@ signal ui_coverage_changed(coverage01: float)
 signal overlay_changed(mode: StringName, index: int)   ## → doc 11 render mode
 signal focus_requested(world_pos: Vector3)             ## alert tap → camera jump
 signal settings_changed(key: StringName, value: Variant)
+## PA-14: a `state` row was tapped — `notification_permission` today. Separate
+## from `settings_changed` because nothing changed: the shell is being asked to
+## do whatever the platform's current answer allows.
+signal settings_action(key: StringName, action: StringName)
+## The player answered the `POST_NOTIFICATIONS` rationale (doc 13 §2.7 steps
+## 4–5). BACK does not emit this: a dismissal that was not an answer must not
+## spend one of Android's two chances.
+signal permission_answered(accepted: bool)
 signal save_slot_action(action: StringName, slot: int, result: Dictionary)
 signal save_loaded(slot: int)                          ## the sim was replaced
 signal pause_intent(paused: bool)                      ## → `set_paused` (doc 01)
@@ -158,6 +169,7 @@ var event_log: EventLog
 ## does this screen is an empty queue with no chip on screen at all.
 var construction_queue: ConstructionQueueSheet
 var settings_sheet: SettingsSheet
+var permission_sheet: PermissionSheet
 ## S14 (doc 12 §2.19). Brought up with the shared config like every other
 ## screen and with NO model — `game/main.gd` owns the sim, so it calls
 ## `setup(cfg, GoalsModel.new(sim, cfg, controller))` once it has one.
@@ -301,6 +313,17 @@ func _bind_nodes() -> void:
 	construction_queue = safe_area.get_node_or_null(
 			"PanelLayer/ConstructionQueue") as ConstructionQueueSheet
 	settings_sheet = safe_area.get_node_or_null("ModalLayer/SettingsSheet") as SettingsSheet
+	# PA-14's rationale modal is the one screen this scaffold BUILDS rather than
+	# finds: it is Android-only and it opens at most twice in the life of an
+	# install, so it is created on the modal layer here instead of costing every
+	# mount a node it will never show. It still joins the back stack for free —
+	# `_has_open_child` walks the layer and asks anything with `is_open()`.
+	permission_sheet = modal_layer.get_node_or_null("PermissionSheet") as PermissionSheet \
+			if modal_layer != null else null
+	if permission_sheet == null and modal_layer != null:
+		permission_sheet = PermissionSheet.new()
+		permission_sheet.name = "PermissionSheet"
+		modal_layer.add_child(permission_sheet)
 	goals_sheet = safe_area.get_node_or_null("ModalLayer/GoalsSheet") as GoalsSheet
 	save_load_sheet = safe_area.get_node_or_null("ModalLayer/SaveLoadSheet") as SaveLoadSheet
 	pause_menu = safe_area.get_node_or_null("ModalLayer/PauseMenu") as PauseMenu
@@ -343,6 +366,8 @@ func bring_up_screens() -> void:
 		construction_queue.setup(config)
 	if settings_sheet != null and settings_sheet.model == null:
 		settings_sheet.setup(config)
+	if permission_sheet != null and permission_sheet.config == null:
+		permission_sheet.setup(config)
 	# S14 comes up with the config alone and no model, for the same reason the
 	# build sheet does: `game/main.gd` owns the sim, and `setup()` is idempotent.
 	if goals_sheet != null and goals_sheet.config == null:
@@ -432,7 +457,10 @@ func _connect_screens() -> void:
 		_connect(construction_queue.rushed, report_rush)
 	if settings_sheet != null:
 		_connect(settings_sheet.settings_changed, _on_settings_changed)
+		_connect(settings_sheet.settings_action, _on_settings_action)
 		_connect(settings_sheet.saves_requested, _on_saves_requested)
+	if permission_sheet != null:
+		_connect(permission_sheet.answered, permission_answered.emit)
 	if save_load_sheet != null:
 		_connect(save_load_sheet.slot_action, _on_slot_action)
 		_connect(save_load_sheet.loaded, _on_save_loaded)
@@ -514,6 +542,53 @@ func _on_settings_changed(key: StringName, value: Variant) -> void:
 			and settings_sheet.model.is_device_scoped(String(key)):
 		settings_sheet.model.save_device()
 	settings_changed.emit(key, value)
+
+
+func _on_settings_action(key: StringName, action: StringName) -> void:
+	settings_action.emit(key, action)
+
+
+# ---------------------------------------------------------------------------
+# POST_NOTIFICATIONS (PA-14 · A91-D-69) — doc 13 §2.7 steps 3–6
+# ---------------------------------------------------------------------------
+
+## The rationale modal. Returns false when there is nothing to show — no reason
+## token, or a mount with no modal layer — so the shell can tell "declined" from
+## "never asked" without reading the sheet.
+func present_permission_rationale(reason: String) -> bool:
+	if permission_sheet == null or reason == "":
+		return false
+	permission_sheet.present(reason)
+	return true
+
+
+func permission_rationale_open() -> bool:
+	return permission_sheet != null and permission_sheet.is_open()
+
+
+## Is anything on the modal layer up? The same test the back stack's first rung
+## makes, published because the shell needs it too: a modal that opens over
+## another modal is a modal the player dismisses without reading.
+func modal_open() -> bool:
+	return _has_open_child(modal_layer)
+
+
+## S10's row (doc 13 §2.7 step 6), fed from `PermissionFlow.settings_row_state()`
+## — `on` | `off` | `blocked` | `unavailable`. The shell reports it; this screen
+## never asks the platform anything, exactly like doc 03 §2.9's difficulty line.
+func set_permission_state(token: String) -> void:
+	if settings_sheet == null or settings_sheet.model == null:
+		return
+	if not settings_sheet.model.has_key(PERMISSION_ROW):
+		return
+	settings_sheet.model.set_value(PERMISSION_ROW, token)
+	settings_sheet.refresh_values()
+
+
+func permission_state() -> String:
+	if settings_sheet == null or settings_sheet.model == null:
+		return ""
+	return str(settings_sheet.model.value(PERMISSION_ROW))
 
 
 ## Read `user://settings.cfg` and apply it over the rows (PA-15). `game/main.gd`

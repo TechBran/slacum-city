@@ -19,6 +19,18 @@ extends RefCounted
 const KIND_CHOICE := &"choice"
 const KIND_TOGGLE := &"toggle"
 const KIND_SLIDER := &"slider"
+## A row that REPORTS rather than sets (PA-14). Its value is a token some other
+## system owns — today only `notification_permission`, whose four tokens are
+## Android's answer as `PermissionFlow.settings_row_state()` reads it — and its
+## tap runs the row's `action` instead of cycling to the next value.
+##
+## Three consequences, all of them because the value is not the player's:
+## it is never written into a save (`capture_state` skips it), it is never
+## device-scoped (there is nothing to remember), and a save that carries one
+## anyway is ignored rather than dropped, because the shell is about to
+## re-report it either way. It still validates against `options`, so a state
+## this screen has no copy for can never reach a row.
+const KIND_STATE := &"state"
 
 const SOURCE_RENDER_PRESETS := "render_presets"
 const SOURCE_TEXT_SCALE := "text_scale_options"
@@ -272,8 +284,8 @@ func set_value(key: String, new_value: Variant) -> bool:
 	# A wrong-typed value is refused rather than coerced: `"loud"` becoming 0 %
 	# would look like a successful restore of a broken save (§3.2 wants it
 	# dropped, and the default kept).
-	if kind_id != KIND_CHOICE and not (new_value is bool or new_value is int
-			or new_value is float):
+	if kind_id != KIND_CHOICE and kind_id != KIND_STATE \
+			and not (new_value is bool or new_value is int or new_value is float):
 		return false
 	if kind_id == KIND_TOGGLE:
 		coerced = bool(new_value)
@@ -372,8 +384,9 @@ func rows() -> Array[Dictionary]:
 			"min": UIConfig.get_num(row, "min", 0.0),
 			"max": UIConfig.get_num(row, "max", 1.0),
 			"step": UIConfig.get_num(row, "step", 0.1),
-			"device_scoped": device_scoped_keys().has(key),
+			"device_scoped": is_device_scoped(key),
 			"policy": policy_of(key),
+			"action": str(row.get("action", "")),
 			"hint_key": str(row.get("hint_key", "")),
 		})
 	return out
@@ -583,6 +596,12 @@ func _t_args(key: String, args: Dictionary) -> String:
 func capture_state() -> Dictionary:
 	var out: Dictionary = {}
 	for key: String in keys():
+		# A `state` row is a report, not a preference: persisting Android's
+		# answer would put a stale token in front of the player for one frame
+		# after every load, and a WRONG one after they changed it in system
+		# settings while the app was closed.
+		if kind(key) == KIND_STATE:
+			continue
 		out[key] = _values.get(key, null)
 	return out
 
@@ -596,6 +615,8 @@ func restore_state(state: Dictionary) -> PackedStringArray:
 	incoming.sort()  # deterministic apply order, deterministic dropped list
 	for key: Variant in incoming:
 		var name := str(key)
+		if kind(name) == KIND_STATE and not _row_def(name).is_empty():
+			continue   # never captured, never restored — the shell re-reports it
 		if not _row_def(name).is_empty():
 			if not set_value(name, state[key]):
 				# An unchanged value is fine; an invalid one is a drop.

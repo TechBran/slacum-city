@@ -148,6 +148,10 @@ func _ready() -> void:
 	notification_router.set_sink(NativeNotificationSink.new())
 	android_lifecycle.notification_router = notification_router
 	permission_flow = PermissionFlow.new(android_lifecycle.native)
+	# PA-14: the counters are per INSTALL, not per city (doc 08 §2.5), so they
+	# come off `user://settings.cfg` before anything can ask.
+	permission_flow.load_device()
+	permission_flow.state_changed.connect(_on_permission_state_changed)
 	if android_lifecycle.native != null:
 		android_lifecycle.native.permission_result.connect(permission_flow.confirm)
 		android_lifecycle.native.notification_opened.connect(_on_notification_opened)
@@ -640,7 +644,10 @@ func _on_sim_batch(batch: Array) -> void:
 		# once per TICK — the siren follows the streets, throttled inside.
 		audio.feed_unit_states(sim_host.sim.incidents.vehicle_states())
 	if notification_router != null:
-		notification_router.feed_batch(batch)
+		# PA-14: the same classified plans answer the one question a re-prompt
+		# has to answer — was there a P1 the player never heard about?
+		_note_permission_evidence(notification_router.feed_batch(batch))
+	_note_permission_trigger(batch)
 	var translated: Array = []
 	for event in batch:
 		match StringName(String(event["type"])):
@@ -1009,6 +1016,9 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 	root.pause_intent.connect(_on_hud_pause_toggled)     # doc 01 owns `paused`
 	root.quit_requested.connect(_on_ui_quit_requested)
 	root.settings_changed.connect(_on_ui_setting_changed)
+	# PA-14: S10's state row and the rationale modal's two answers.
+	root.settings_action.connect(_on_ui_setting_action)
+	root.permission_answered.connect(_on_permission_answered)
 	root.save_loaded.connect(_on_ui_save_loaded)
 	root.set_incident_locator(_alert_world_pos)
 	root.set_unit_provider(_dispatchable_units)
@@ -1068,6 +1078,7 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 		# data default. One re-apply through the change path puts them on the
 		# player's preset instead of duplicating that list here.
 		_on_ui_setting_changed(&"graphics", root.settings_sheet.model.value("graphics"))
+		_refresh_permission_row()
 		_autosave_interval_s = root.settings_sheet.model.autosave_interval_s()
 		if audio != null:
 			audio.set_sound_volume(root.settings_sheet.model.value_num("sound_volume"))
@@ -1460,6 +1471,145 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 			_apply_overlay_palette(str(model.value("colorblind")))
 		_:
 			pass   # reduce_motion / in_app_banners are read where used
+
+
+# ---------------------------------------------------------------------------
+# POST_NOTIFICATIONS (PA-14 · A91-D-69) — doc 13 §2.7, wired at last
+# ---------------------------------------------------------------------------
+#
+# `PermissionFlow` has been complete and tested since Wave 11 and had no caller:
+# the app on the Fold has never requested the permission, so on a targetSdk-33+
+# device nothing in the notification stack could post at all. What was missing
+# was five seams, and they are all here:
+#
+#   1. the TRIGGER      — `_note_permission_trigger`, below
+#   2. the IDLE FRAME   — `_pump_permission_prompt`, called from `_process`
+#   3. the MODAL        — `UIRoot.present_permission_rationale` → `PermissionSheet`
+#   4. the ANSWER       — `_on_permission_answered` → `accept()` / `decline()`
+#   5. the FALLBACK     — S10's row, `_on_ui_setting_action`
+#
+# Doc 13 §2.7 step 1 names the trigger: "the FIRST time the shell wants to
+# schedule anything, which in practice is the end of onboarding step 10
+# (`Upgrade one building` → first construction timer exists)". Doc 08 §2.13.4
+# names the other one: the first resolved incident. Both are here; whichever the
+# player reaches first wins, and neither is launch — a cold prompt converts
+# badly and burns one of the two chances Android allows.
+#
+# **`building_placed_sim` is deliberately NOT a trigger** even though it creates
+# a construction timer too. The tutorial has the player place a house within its
+# first minute; asking there is asking a player who has not yet seen the city do
+# anything worth being told about, which is the cold prompt with extra steps.
+
+## Doc 13 §2.7 step 1 and doc 08 §2.13.4, as event types.
+const PERMISSION_TRIGGERS: Array[StringName] = [
+	&"upgrade_started_sim",   # the first construction timer the player CHOSE
+	&"incident_resolved",     # …or the first thing they fixed
+]
+## doc 08's own class rank for P1 (`data/notifications.json.classes`).
+const PERMISSION_EVIDENCE_RANK := 1
+
+
+func _note_permission_trigger(batch: Array) -> void:
+	if permission_flow == null or permission_flow.triggered:
+		return
+	for raw: Variant in batch:
+		if not (raw is Dictionary):
+			continue
+		if PERMISSION_TRIGGERS.has(StringName(String((raw as Dictionary).get("type", "")))):
+			permission_flow.note_trigger()
+			return
+
+
+## The evidence a SECOND prompt needs (doc 13 §2.7 step 7): a P1 the player was
+## never told about, because the app had no permission to tell them. Recorded
+## from the router's own classification so this file holds no copy of doc 08's
+## class table, and only while the permission is genuinely absent — a P1 that
+## DID buzz is not a reason to ask for anything.
+func _note_permission_evidence(plans: Array) -> void:
+	if permission_flow == null or notification_router == null:
+		return
+	if permission_flow.notifications_enabled():
+		return
+	for raw: Variant in plans:
+		if not (raw is Dictionary):
+			continue
+		var class_id := str((raw as Dictionary).get("class", ""))
+		if notification_router.config().class_rank(class_id) == PERMISSION_EVIDENCE_RANK:
+			permission_flow.note_missed_p1()
+			return
+
+
+## One frame with nothing else on it. The rationale is a modal and a modal that
+## opens over the title door, over the veil, over a placement or over another
+## modal is a modal the player dismisses without reading — which costs one of
+## the two chances and buys nothing.
+func _pump_permission_prompt() -> void:
+	if permission_flow == null or ui_root == null or _title_up:
+		return
+	if _restore_cursor != null or _catchup_cursor != null or ui_root.veil_open():
+		return
+	if not permission_flow.should_prompt():
+		return
+	if ui_root.modal_open():
+		return
+	ui_root.present_permission_rationale(permission_flow.request_rationale())
+
+
+func _on_permission_answered(accepted: bool) -> void:
+	if permission_flow == null:
+		return
+	# Step 4 opens the system dialog and the answer comes back on
+	# `permission_result`; step 5 records the refusal here and now. Both spend a
+	# chance, and both are written to the device file immediately — a counter
+	# that only reached disk at the next autosave would let a process death hand
+	# the player a third prompt Android will not honour.
+	if accepted:
+		permission_flow.accept()
+	else:
+		permission_flow.decline()
+	permission_flow.save_device()
+	_refresh_permission_row()
+
+
+func _on_permission_state_changed(_state: String) -> void:
+	_refresh_permission_row()
+
+
+func _refresh_permission_row() -> void:
+	if ui_root != null and permission_flow != null:
+		ui_root.set_permission_state(permission_flow.settings_row_state())
+
+
+func _on_ui_setting_action(key: StringName, _action: StringName) -> void:
+	if String(key) == UIRoot.PERMISSION_ROW:
+		_on_permission_row_tapped()
+
+
+## Doc 13 §2.7 step 6, plus the state the step does not name. The row offers the
+## one action that is legal in each state and nothing else — a row that is
+## tappable and does nothing is the control §2.13 forbids.
+func _on_permission_row_tapped() -> void:
+	if permission_flow == null or ui_root == null:
+		return
+	match permission_flow.settings_row_state():
+		"off":
+			# The player asked for it, so the flow's own "not yet" does not
+			# apply — this is the one place both of `should_prompt`'s gates (the
+			# trigger, and once-a-session) are bypassed. Everything downstream is
+			# unchanged: NOT NOW still spends one of Android's two chances, BACK
+			# still spends none, and `accept()` still returns false on a platform
+			# that has none left to spend.
+			permission_flow.note_trigger()
+			ui_root.present_permission_rationale(PermissionSheet.REASON_FIRST)
+		"blocked":
+			# Android has stopped showing the dialog. The app's own page in
+			# system settings is the only route left, and saying so is the whole
+			# of what this row can honestly offer.
+			permission_flow.open_system_settings()
+		_:
+			# `on` and `unavailable`: nothing to do, and the row's value text
+			# already says which of the two it is.
+			pass
 
 
 func _on_ui_save_loaded(_slot: int) -> void:
@@ -2115,6 +2265,10 @@ func _process(delta: float) -> void:
 	# RR-134). `Main` is `SimHost`'s parent and so processes before it.
 	if android_lifecycle != null and not _title_up:
 		android_lifecycle.pump_resume()
+	# PA-14, doc 13 §2.7 step 3: "next idle frame". Everything that owns a frame
+	# has already returned above, so reaching this line IS the definition of idle
+	# — and `should_prompt()` answers false for every reason it possibly can.
+	_pump_permission_prompt()
 	var hour := sim_host.hour_of_day_float()
 	_hud_timer += delta
 	if _hud_timer >= HUD_REFRESH_S:

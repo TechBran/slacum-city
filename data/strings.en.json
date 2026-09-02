@@ -998,5 +998,17 @@
 	"ui_overlay_summary_power_shed": "Held dark",
 	"ui_overlay_summary_power_wall": "Wall",
 	"ui_power_remove": "REMOVE TRANSFORMER  refund {refund}",
-	"ui_power_remove_confirm": "TAP AGAIN — {dark} GO DARK  ·  moving back costs {move}"
+	"ui_power_remove_confirm": "TAP AGAIN — {dark} GO DARK  ·  moving back costs {move}",
+	"ui_permission_accept": "TURN ON",
+	"ui_permission_body_first": "Storm warnings, major outages and finished construction — nothing else.",
+	"ui_permission_body_missed_p1": "It happened while the app was closed, and nothing told you. One buzz next time is all this is for.",
+	"ui_permission_decline": "NOT NOW",
+	"ui_permission_title_first": "Get told when your city is in trouble.",
+	"ui_permission_title_missed_p1": "You missed a citywide emergency.",
+	"ui_settings_permission_hint": "Android decides whether this app may notify you at all. The switches above only matter once it says yes.",
+	"ui_settings_row_notification_permission": "System notifications",
+	"ui_settings_value_permission_blocked": "Off — open system settings",
+	"ui_settings_value_permission_off": "Off — tap to turn on",
+	"ui_settings_value_permission_on": "On",
+	"ui_settings_value_permission_unavailable": "Not available"
 }

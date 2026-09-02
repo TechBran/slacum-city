@@ -601,6 +601,110 @@ func test_ui_state_round_trips_through_the_root() -> void:
 
 
 # ===========================================================================
+# PA-14 · A91-D-69 — S10's permission row and the rationale modal
+# ===========================================================================
+
+func test_the_permission_row_reports_a_state_and_never_stores_one() -> void:
+	var model := SettingsModel.new(_cfg())
+	assert_eq(model.kind(UIRoot.PERMISSION_ROW), SettingsModel.KIND_STATE)
+	assert_eq(str(model.value(UIRoot.PERMISSION_ROW)), "unavailable",
+			"off Android there is no permission to hold, and the row says so")
+	assert_false(model.is_device_scoped(UIRoot.PERMISSION_ROW),
+			"there is nothing to remember: the platform re-answers every time")
+	assert_false(model.capture_state().has(UIRoot.PERMISSION_ROW),
+			"a report is not a preference — it never enters a save")
+	# …and a save that carries one anyway is ignored rather than obeyed.
+	model.set_value(UIRoot.PERMISSION_ROW, "on")
+	model.restore_state({UIRoot.PERMISSION_ROW: "blocked"})
+	assert_eq(str(model.value(UIRoot.PERMISSION_ROW)), "unavailable",
+			"restore_state reset it to the row default and then left it alone")
+
+
+func test_every_permission_state_reads_as_a_sentence_and_only_one_offers_a_route()\
+		-> void:
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	var seen: Array[String] = []
+	for token: String in ["on", "off", "blocked", "unavailable"]:
+		root.set_permission_state(token)
+		var text := root.settings_sheet.value_button(UIRoot.PERMISSION_ROW).text
+		assert_false(text.begins_with("ui_"), "%s has copy" % token)
+		assert_false(seen.has(text), "%s reads differently from the others" % token)
+		seen.append(text)
+	assert_true(seen[1].to_lower().contains("tap"),
+			"`off` is the state that invites a tap")
+	assert_true(seen[2].to_lower().contains("settings"),
+			"`blocked` names the only route Android has left")
+	_unmount(mounted)
+
+
+func test_tapping_the_permission_row_asks_the_shell_instead_of_cycling() -> void:
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	root.set_permission_state("off")
+	var asked: Array = []
+	root.settings_action.connect(func(key: StringName, action: StringName) -> void:
+		asked.append([String(key), String(action)]))
+	var changed: Array = []
+	root.settings_changed.connect(func(key: StringName, _v: Variant) -> void:
+		changed.append(String(key)))
+
+	root.settings_sheet.value_button(UIRoot.PERMISSION_ROW).pressed.emit()
+	assert_eq(str(asked), '[["notification_permission", "permission"]]')
+	assert_eq(str(changed), "[]",
+			"nothing CHANGED — a listener that acts on settings_changed must not fire")
+	assert_eq(root.permission_state(), "off",
+			"…and the tap did not cycle the row to the next token")
+	_unmount(mounted)
+
+
+func test_the_rationale_modal_carries_the_reasons_copy_and_joins_the_back_stack()\
+		-> void:
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	assert_false(root.present_permission_rationale(""),
+			"no reason, no modal — `should_prompt` said no")
+
+	assert_true(root.present_permission_rationale(PermissionSheet.REASON_FIRST))
+	assert_true(root.permission_rationale_open())
+	var first := (root.permission_sheet.get_node("Panel/Body/Title") as Label).text
+	assert_false(first.begins_with("ui_"), "the first-ask copy resolves")
+	assert_eq(root.back_context(0.0)["modal_open"], true,
+			"a modal on the modal layer is the back stack's first rung")
+
+	root.present_permission_rationale(PermissionSheet.REASON_MISSED_P1)
+	var second := (root.permission_sheet.get_node("Panel/Body/Title") as Label).text
+	assert_true(second != first,
+			"'You missed a citywide blackout' is a different sentence from the first ask")
+	_unmount(mounted)
+
+
+func test_back_costs_nothing_and_the_two_buttons_each_cost_a_chance() -> void:
+	# The asymmetry doc 13 §2.7 depends on: NOT NOW is an ANSWER and spends one
+	# of Android's two chances; BACK is "close the thing in front of me" (doc 12
+	# §2.2) and spends none. Getting this wrong burns a permission silently.
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	var answers: Array = []
+	root.permission_answered.connect(func(ok: bool) -> void: answers.append(ok))
+
+	root.present_permission_rationale(PermissionSheet.REASON_FIRST)
+	assert_eq(root.handle_back(0.0), UIRoot.BACK_CLOSE_MODAL)
+	assert_false(root.permission_rationale_open(), "BACK closed it")
+	assert_eq(str(answers), "[]", "…and answered nothing")
+
+	root.present_permission_rationale(PermissionSheet.REASON_FIRST)
+	root.permission_sheet.decline_button().pressed.emit()
+	assert_eq(str(answers), "[false]")
+	assert_false(root.permission_rationale_open())
+
+	root.present_permission_rationale(PermissionSheet.REASON_FIRST)
+	root.permission_sheet.accept_button().pressed.emit()
+	assert_eq(str(answers), "[false, true]")
+	_unmount(mounted)
+
+
+# ===========================================================================
 # PA-15 · A91-D-70 — `user://settings.cfg`, the file that is not in a save
 # ===========================================================================
 

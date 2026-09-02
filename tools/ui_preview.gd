@@ -84,6 +84,14 @@ const SCREENS: Array[String] = [
 	# AUTO detent; and MID-DRAG, full alpha, the thumb leaned toward the
 	# facades with the pressed face.
 	"tilt_rest", "tilt_drag",
+
+	# Wave 18's permission flow (PA-14, doc 13 §2.7). Three states, same commit
+	# as the screens — A91-D-28's lesson again. The two modal faces are the two
+	# reasons `PermissionFlow` can give and they carry different copy; the third
+	# is S10's row in the ONE state that offers a route, which is the state a
+	# player who dismissed the dialog twice is permanently in and the only one
+	# they can act on.
+	"permission_first", "permission_missed", "settings_permission_blocked",
 ]
 
 ## A `Control` does not have a size until its container has laid it out, and the
@@ -764,6 +772,19 @@ func _apply(screen: String) -> void:
 			# or this state photographs a screen the game never shows.
 			_root.set_city_difficulty(Difficulty.DEFAULT_PRESET)
 			_root.settings_sheet.open()
+		"settings_permission_blocked":
+			# doc 13 §2.7 step 6. The row a player reaches after Android has
+			# stopped showing the dialog: it says Off, it names the only route
+			# left, and it is the state the shell can do something about.
+			_root.set_city_difficulty(Difficulty.DEFAULT_PRESET)
+			_root.set_permission_state("blocked")
+			_root.settings_sheet.open()
+		"permission_first":
+			_root.present_permission_rationale(PermissionSheet.REASON_FIRST)
+		"permission_missed":
+			# The second ask, which is allowed only because it has something
+			# true to say — seven days AND a P1 the player never heard.
+			_root.present_permission_rationale(PermissionSheet.REASON_MISSED_P1)
 		"saves":
 			_root.save_load_sheet.open()
 		"pause":
