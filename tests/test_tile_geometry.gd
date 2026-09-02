@@ -1,8 +1,10 @@
 extends SimTest
-## **PA-76's missing gate.** Tile→world conversion is written eight times in this
-## tree under six constant names, and the footprint→centre formula four times. At
-## the Wave-17 fork *no test asserted any of them agreed* — the audit found the
-## drift by reading, which is exactly the failure mode a gate exists to end.
+## **PA-76's missing gate.** Tile→world conversion is written — PA-76 said eight
+## times under six constant names; the scan below finds **seventeen** — and the
+## footprint→centre formula four times. At the Wave-17 fork *no test asserted any
+## of them agreed*: the audit found the drift by reading, which is exactly the
+## failure mode a gate exists to end, and the six declarations its reading missed
+## are why this file scans instead of listing.
 ##
 ## Two halves:
 ##
@@ -54,10 +56,79 @@ func test_every_mirrored_spelling_agrees() -> void:
 		"ConstructionVehicleView.DEF_TILE_M": ConstructionVehicleView.DEF_TILE_M,
 		"BuildController.TILE_M_DEFAULT": BuildController.TILE_M_DEFAULT,
 		"AudioEvents._DEFAULT_TILE_M": AudioEvents._DEFAULT_TILE_M,
+		"ConstructionSiteView.DEF_TILE_M": ConstructionSiteView.DEF_TILE_M,
+		"VehicleView.DEF_TILE_M": VehicleView.DEF_TILE_M,
 	}
 	for name: String in mirrors:
 		assert_almost_eq(float(mirrors[name]), TileGrid.METRES_PER_TILE, 0.0001,
 				"%s drifted from TileGrid.METRES_PER_TILE" % name)
+
+
+func test_the_mirror_census_finds_no_declaration_the_named_list_missed() -> void:
+	# **The list above is hand-written, and a hand-written census rots.** It was
+	# written naming eleven mirrors, from PA-76's own eight-plus-three tally.
+	# Merging the tree it was written against turned up SIX more — two shipped
+	# (`ConstructionSiteView`, `VehicleView`, both added by the Wave-17 render
+	# lane while this one was in flight) and four in `tools/`, which PA-76 never
+	# scanned. That is `A91-D-19`'s shape for the fifth wave running: a claim
+	# about the consumers of a number made from a list rather than from a scan.
+	#
+	# So the gate scans. Every `const <TILE-and-metre-shaped> := <number>` in
+	# `sim/`, `game/`, `ui/` and `tools/` is found and checked against
+	# `TileGrid.METRES_PER_TILE`, and the count is asserted from below so an
+	# empty or broken scan cannot pass by finding nothing. A lane that adds a
+	# twenty-fourth spelling gets a failure naming its file and line, and it
+	# does not have to know this test exists.
+	var mirrors := _scan_mirrors()
+	assert_true(mirrors.size() >= 17,
+			"the scan found only %d mirrors; it found 17 when written, so it is broken"
+					% [mirrors.size()])
+	for site: Dictionary in mirrors:
+		assert_almost_eq(float(site["value"]), TileGrid.METRES_PER_TILE, 0.0001,
+				"%s:%d %s = %s drifted from TileGrid.METRES_PER_TILE"
+						% [site["file"], site["line"], site["name"], site["value"]])
+
+
+## Every tile→metres constant declared anywhere under the scanned roots, as
+## `{file, line, name, value}`. Matched on the NAME rather than on the value, so
+## a mirror that has already drifted is still found (a value-matched scan would
+## skip exactly the declaration the gate exists to catch).
+func _scan_mirrors() -> Array[Dictionary]:
+	var decl := RegEx.new()
+	decl.compile("^const\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*:=\\s*([0-9]+(?:\\.[0-9]+)?)")
+	# `TILES_PER_BLOCK` is a tile COUNT and must not be swept in; `TILE_MASK`
+	# would be a bitfield. Both fail this pattern, which is why it names the
+	# spellings rather than matching "anything with TILE in it".
+	var mirror := RegEx.new()
+	mirror.compile("^(?:.*_)?(?:METRES_PER_TILE|METERS_PER_TILE|TILE_METERS|TILE_METRES|TILE_M)(?:_DEFAULT)?$")
+	var out: Array[Dictionary] = []
+	for root: String in ["res://sim", "res://game", "res://ui", "res://tools"]:
+		_scan_mirrors_in(root, decl, mirror, out)
+	return out
+
+
+func _scan_mirrors_in(path: String, decl: RegEx, mirror: RegEx,
+		out: Array[Dictionary]) -> void:
+	var dir := DirAccess.open(path)
+	if dir == null:
+		return
+	dir.list_dir_begin()
+	var entry := dir.get_next()
+	while entry != "":
+		var full := path + "/" + entry
+		if dir.current_is_dir():
+			_scan_mirrors_in(full, decl, mirror, out)
+		elif entry.ends_with(".gd") and full != "res://sim/world/tile_grid.gd":
+			var lines := FileAccess.get_file_as_string(full).split("\n")
+			for i: int in lines.size():
+				var hit := decl.search(lines[i])
+				if hit == null or mirror.search(hit.get_string(1)) == null:
+					continue
+				out.append({"file": full, "line": i + 1,
+						"name": hit.get_string(1),
+						"value": float(hit.get_string(2))})
+		entry = dir.get_next()
+	dir.list_dir_end()
 
 
 # ----------------------------------------------------------------- the shapes

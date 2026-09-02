@@ -6117,6 +6117,31 @@ onto tile `0`, which reads as "the tap landed on the map" for a tap that landed
 west of it — and `centre_of_footprint` clamps a zero size to one tile, so a
 malformed record focuses on a tile rather than on its corner.
 
+**And the hand-written census was wrong before the wave ended, which is the
+best argument in this section.** The gate was first written naming **eleven**
+mirrors by class constant — PA-76's own tally, transcribed. Merging the lane onto
+`4503d35` turned up **seventeen**: two shipped (`ConstructionSiteView.DEF_TILE_M`,
+`VehicleView.DEF_TILE_M`, both added by the Wave-17 render lane *while this lane
+was in flight*) and four in `tools/`, which PA-76's evidence line never scanned
+(`onboarding_preview`, `overlay_preview`, `construction_preview`, `flow_test`).
+A gate against drift that is itself a hand-maintained list is `A91-D-19`'s shape
+for the fifth wave running, and it would have shipped as one.
+
+So `test_the_mirror_census_finds_no_declaration_the_named_list_missed` **scans**:
+every `const <TILE-and-metre-shaped> := <number>` under `sim/`, `game/`, `ui/`
+and `tools/` is found by regex on the NAME — not on the value, because a
+value-matched scan skips precisely the declaration that has already drifted — and
+checked against `TileGrid.METRES_PER_TILE`. The count is asserted from below
+(`>= 17`) so a broken scan cannot pass by finding nothing, and the name pattern
+names its spellings rather than matching "anything with TILE in it", so
+`TILES_PER_BLOCK` (a tile COUNT) is not swept in. The named list stays beside it,
+now thirteen, because it checks the LOADED constant rather than the source text.
+
+Verified by negative control: setting `tools/flow_test.gd:43 TILE_M := 8.5`
+fails the file with `res://tools/flow_test.gd:43 TILE_M = 8.5 drifted from
+TileGrid.METRES_PER_TILE`, and reverting restores `10 tests, 66 asserts, 0
+failed`.
+
 **Applied:** `sim/world/tile_grid.gd`, `tests/test_tile_geometry.gd`.
 
 ### RR-140 — a fix target resolves to an ACTION, and a router that cannot answer says which of five ways it failed
@@ -6242,7 +6267,9 @@ inside the process that is about to be killed.
 | `grep -rn "sim\._[a-z]" --include=*.gd game ui tools` (fork → now) | 8 → 0 (two comments naming the row) |
 | `--file=test_fix_router` | 19 tests, 347 asserts, 0 failed |
 | `--file=test_world_locator` | 16 tests, 51 asserts, 0 failed |
-| `--file=test_tile_geometry` | 9 tests, 46 asserts, 0 failed |
+| `--file=test_tile_geometry` | 10 tests, 66 asserts, 0 failed |
+| mirrors the scan finds (was a hand-list of 11) | **17** — `sim` 5, `game` 7, `ui` 1, `tools` 4 |
+| negative control: `flow_test.gd:43 := 8.5` | `failed: 1`, naming `res://tools/flow_test.gd:43` |
 | `--file=test_power_infra_feed` | 14 tests, 68 asserts, 0 failed |
 | `--file=test_memory_warning` | 12 tests, 41 asserts, 0 failed |
 | `profile_sim --hash-only` starter, coarse 24 h | `05614522975fad52…` = the `4503d35` baseline |
@@ -6272,15 +6299,21 @@ lane's gate can already see.
    `Fix this →` on `kind != FIX_NONE` alone, which is why a row with an empty id
    rendered a live button; the land panel already requires an id, which is why it
    was safe. `FixRouter.can_route(sim, fix_target)` is the gate both should use.
-3. **The eight mirrored tile constants** (one row per owning lane; PA-76). Each
-   is `const X := 8.0` → `const X := TileGrid.METRES_PER_TILE`, and
-   `tests/test_tile_geometry.gd` already fails on drift, so there is no hurry and
-   no risk in doing them one at a time: `IncidentWorld`, `Vehicle`, `WaterEdge`,
-   `TravelTimeProvider` (sim), `WeatherSystem` (lane B's neighbourhood),
-   `RoadSurfaceView`, `StreetlightPlacer`, `StreetLifeView`,
-   `ConstructionVehicleView` (render), `BuildController.TILE_M_DEFAULT` (lane L),
-   `AudioEvents._DEFAULT_TILE_M`. Two remaining hand-written footprint→centre
-   formulas live in `game/showcase.gd` and `tools/profile_frame.gd`.
+3. **The seventeen mirrored tile constants** (one row per owning lane; PA-76 —
+   which counted eight, and the scan in RR-139 is why the number is now exact).
+   Each is `const X := 8.0` → `const X := TileGrid.METRES_PER_TILE`, and
+   `tests/test_tile_geometry.gd` already fails on drift with the file and line,
+   so there is no hurry and no risk in doing them one at a time:
+   `IncidentWorld`, `Vehicle`, `WaterEdge`, `TravelTimeProvider` (sim),
+   `WeatherSystem` (lane B's neighbourhood), `RoadSurfaceView`,
+   `StreetlightPlacer`, `StreetLifeView`, `ConstructionVehicleView`,
+   **`ConstructionSiteView`**, **`VehicleView`** (render — the last two arrived
+   in `4503d35` after PA-76 was written),
+   `BuildController.TILE_M_DEFAULT` (lane L), `AudioEvents._DEFAULT_TILE_M`, and
+   four in `tools/` that no lens scanned: **`onboarding_preview.gd:19`,
+   `overlay_preview.gd:29`, `construction_preview.gd:41`, `flow_test.gd:43`**.
+   Two remaining hand-written footprint→centre formulas live in
+   `game/showcase.gd` and `tools/profile_frame.gd`.
 4. **`CityView._upload_all`'s eager bucket creation** (lane P or lane O — both
    own parts of `city_view.gd` next wave; RR-141). Move
    `_ensure_bucket_node` **below** the visibility decision so a CULLED or FAR
