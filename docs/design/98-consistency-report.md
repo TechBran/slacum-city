@@ -6188,6 +6188,25 @@ now fails the suite in the commit that adds it.
 hole was found; the same shape applies to any command whose preview returns a
 `blockers` array that a checklist mirrors.
 
+### What the shell must connect (two lines in `game/main.gd`, the lead's file)
+
+The lane is inert in the shipped shell without them, and both are one line:
+
+1. **`ui_root.build_fix_requested.connect(_on_fix_requested)`**, beside
+   `ui_root.land_fix_requested.connect(_on_fix_requested)`. `BuildSheet` emits
+   `fix_requested` and `UIRoot` re-emits it the way it re-emits the land panel's;
+   nothing in the tree connected the sheet's, which would have made PA-23's door
+   a button with nothing behind it — PA-05's own defect one layer up, on the
+   surface this wave had just given a button to. `tests/test_build_controller.gd::
+   test_the_placement_bar_offers_fix_this_with_a_routable_target` asserts the
+   re-emission; only the shell's own `connect` is outside the suite.
+2. **`ui_root.report_dispatch_result(unit_id, bool(r["ok"]), r)`** — the third
+   argument is the whole `CommandQueue` answer, and without it the picker still
+   has only `ok` and still answers doc 06's three refusals with one sentence
+   (PA-52). The parameter is optional, so the two-argument call compiles and
+   keeps today's behaviour; that is the point of the default and the reason this
+   is a snippet rather than a break.
+
 ### The finding that was not this lane's, and was closed anyway
 
 **`hud_banners` at 412 × 915, 130 % text + larger targets.** `HUDLayer/

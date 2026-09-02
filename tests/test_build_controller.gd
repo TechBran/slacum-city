@@ -1211,6 +1211,22 @@ func test_the_placement_bar_offers_fix_this_with_a_routable_target() -> void:
 	assert_eq((seen[0]["params"] as Dictionary)["tile"], occupied,
 			"the router is handed the tile, not a name it would have to resolve")
 
+	# **And the door has something behind it.** `BuildSheet.fix_requested` was a
+	# signal with no consumer anywhere in the tree: `UIRoot` re-emits the land
+	# panel's and the shell connects the building panel's directly, and
+	# placement's — the surface PA-23 had just given a button to — went nowhere.
+	# That is PA-05's own defect one layer up, so it is asserted at the layer the
+	# shell actually connects.
+	var root: UIRoot = mounted["root"]
+	var re_emitted: Array[Dictionary] = []
+	root.build_fix_requested.connect(
+			func(target: Dictionary) -> void: re_emitted.append(target))
+	fix.pressed.emit()
+	assert_eq(re_emitted.size(), 1, "UIRoot re-emits it for the shell")
+	assert_eq(str(re_emitted[0]["kind"]), String(RequirementFormatter.FIX_TILE))
+	assert_eq((re_emitted[0]["params"] as Dictionary)["tile"], occupied,
+			"with the payload unchanged")
+
 	# A valid ghost has nothing to fix, and the button goes away with the reason.
 	var free_tile := _serviceable_vacant_tile(sim)
 	sheet.move_ghost(Vector3(float(free_tile.x) * controller.tile_m + 4.0, 0.0,

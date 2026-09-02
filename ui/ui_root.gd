@@ -107,6 +107,11 @@ signal onboarding_finished(skipped: bool)
 signal land_purchased(block_id: String, result: Dictionary)
 signal land_developed(block_id: String, result: Dictionary)
 signal land_fix_requested(fix_target: Dictionary)
+## S3's door, the one PA-23 gave the placement bar (Wave 18). Same `{kind, id,
+## params}` payload and the same shell handler as the two panels' — a refusal
+## that names a target the router can act on is the same event wherever it is
+## raised, and placement is the first screen a new player ever gets one on.
+signal build_fix_requested(fix_target: Dictionary)
 ## §2.13's progression moment: the city level moved, and this is the one place
 ## that knows it before the alert row does.
 signal city_level_changed(level: int, unlocked: PackedStringArray)
@@ -448,6 +453,7 @@ func _connect_screens() -> void:
 		_connect(build_sheet.sheet_toggled, _on_build_sheet_toggled)
 		_connect(build_sheet.placement_changed, _on_build_placement_changed)
 		_connect(build_sheet.placement_committed, _on_build_placement_committed)
+		_connect(build_sheet.fix_requested, _on_build_fix_requested)
 	if incident_drawer != null:
 		_connect(incident_drawer.drawer_toggled, _on_drawer_toggled)
 	if onboarding != null:
@@ -1602,6 +1608,15 @@ func _on_land_developed(result: Dictionary) -> void:
 
 func _on_land_fix_requested(fix_target: Dictionary) -> void:
 	land_fix_requested.emit(fix_target)
+
+
+## The placement bar's door (PA-23). Re-emitted rather than served here, for the
+## reason `land_fix_requested` is: the target is a place on the map and this root
+## does not own the map. **A door with nothing behind it is the same defect PA-05
+## filed one layer down**, so `tests/test_build_controller.gd` asserts this wire
+## and not merely the button.
+func _on_build_fix_requested(fix_target: Dictionary) -> void:
+	build_fix_requested.emit(fix_target)
 
 
 func set_sim_clock(minute_of_day: int, day_index: int = 0) -> void:
