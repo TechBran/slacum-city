@@ -84,6 +84,7 @@ static func run(strategy_id: String, seed_value: int, days: int,
 		"events": events,
 		"summary": Playtest.Runner._summarise(sim, api, samples, opts),
 		"state_hash": sim.state_hash(),
+		"director": _director_facts(sim),
 	}
 
 
@@ -140,6 +141,41 @@ static func run_fine(strategy_id: String, seed_value: int, days: int,
 		"events": events,
 		"summary": Playtest.Runner._summarise(sim, api, samples, opts),
 		"state_hash": sim.state_hash(),
+		"director": _director_facts(sim),
+	}
+
+
+## 99-PA PA-04 / A91-D-59's gate reads this. The Director's own end-of-run books
+## say two things no counter of bus events can: how LONG each resolved event was
+## held (`history` records `start_min` and `end_min` for every one) and whether
+## the schedule was still alive at the end (`last_start_min`). Before the stall
+## repair both were unreadable, because `history` never gained an entry — nothing
+## resolved, so nothing was ever written to it.
+##
+## `history` is a 32-entry ring, so `max_hold_min` is over the last 32
+## resolutions. On a 60-day run that is the whole tail, which is the half a hold
+## bound cares about.
+static func _director_facts(sim: CitySim) -> Dictionary:
+	if sim.director == null:
+		return {}
+	var max_hold := 0
+	var holds: Array = []
+	for row in sim.director.history:
+		var hold := int(row["end_min"]) - int(row["start_min"])
+		max_hold = maxi(max_hold, hold)
+		holds.append(hold)
+	var last_start := -1
+	for id in sim.director.last_event_start_min:
+		last_start = maxi(last_start, int(sim.director.last_event_start_min[id]))
+	return {
+		"resolved": sim.director.history.size(),
+		"active_end": sim.director.active_events.size(),
+		"scheduled_end": sim.director.scheduled.size(),
+		"max_hold_min": max_hold,
+		"holds": holds,
+		"last_start_min": last_start,
+		"tp_pool": sim.director.tp_pool,
+		"max_active_min": sim.director.max_active_min(),
 	}
 
 

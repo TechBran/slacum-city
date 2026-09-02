@@ -84,6 +84,14 @@ const SCREENS: Array[String] = [
 	# AUTO detent; and MID-DRAG, full alpha, the thumb leaned toward the
 	# facades with the pressed face.
 	"tilt_rest", "tilt_drag",
+
+	# S17, Wave 18 (doc 12 §2.24 / 99-PA PA-26). Two states, same commit as the
+	# screen — A91-D-28's lesson again. `storm_prep` is the window as the player
+	# first meets it: the countdown running, nothing taken, one action already
+	# unaffordable so the reason line is on screen. `storm_prep_ready` is the same
+	# window three actions in, which is the state the whole screen exists to
+	# reach and the only one that draws the Storm Ready line.
+	"storm_prep", "storm_prep_ready",
 ]
 
 ## A `Control` does not have a size until its container has laid it out, and the
@@ -104,6 +112,9 @@ const _TITLE_SLOTS: Array = [
 	{"slot": 1, "saved_at_unix": 1755000000, "day_index": 3,
 			"population": 1204, "treasury": 42000},
 ]
+
+## S17's fixture state: which of §2.7.7's six the fixture door has taken.
+var _storm_prep_taken: Array = []
 
 var _screen := "drawer"
 var _path := ""
@@ -319,6 +330,16 @@ func _populate() -> void:
 			func() -> int: return int(_sim.treasury.balance))
 	if _building_panel != null and _root.construction_queue != null:
 		_building_panel.bind_construction(_root.construction_queue.model)
+	# S17's fixture (doc 12 §2.24). A storm 90 game-minutes out over a city with
+	# a thin grid, half its water and one crew free — the state the screen is
+	# written for — and a door that takes the action so the sweep can photograph
+	# the window before and after without waiting for a Director to schedule one.
+	_root.bind_storm_prep(
+			func() -> Dictionary: return _storm_prep_fixture(),
+			func(action_id: String, _target: Dictionary) -> Dictionary:
+				if not _storm_prep_taken.has(action_id):
+					_storm_prep_taken.append(action_id)
+				return {"ok": true, "reason_code": &"", "payload": {}})
 	for mode: StringName in [OverlayModel.MODE_POLICE, OverlayModel.MODE_FIRE]:
 		_root.feed_overlay_summary(mode, _coverage_summary())
 	# Wave 17's grid reading (doc 12 §2.10 D-72), through the SAME door the shell
@@ -788,6 +809,18 @@ func _apply(screen: String) -> void:
 			_root.present_veil_load(
 					UIWidgets.t(_root.config, "ui_saves_slot_autosave"), 11)
 			_root.advance_veil_load(7)
+		"storm_prep":
+			# The window as the player first meets it. `callout_crew` is priced
+			# above the fixture's balance, so the row that is REFUSED is on
+			# screen beside the rows that are not — which is the state a screen
+			# that explains itself has to be measured in.
+			_storm_prep_taken = []
+			_root.open_storm_prep()
+		"storm_prep_ready":
+			# Three actions in: every mark flipped, the Storm Ready line drawn,
+			# and the countdown down to its last twenty game-minutes.
+			_storm_prep_taken = ["load_shed", "top_off_water", "pre_stage_crews"]
+			_root.open_storm_prep()
 		"queue":
 			# The list S16 is written for: an upgrade climbing a level with two
 			# crews on it, a new building an hour out, and a land development a
@@ -870,6 +903,7 @@ func _close_everything() -> void:
 		_root.street.coach_pending = false
 	_root.dismiss_title()
 	_root.dismiss_veil()
+	_root.close_storm_prep()
 	# Banners live for `alert_ttl_s`, which is longer than a settle window — one
 	# state's banners would otherwise photobomb the next four screens.
 	for alert: Dictionary in _root.hud.model.active_alerts(0.0):
@@ -912,6 +946,40 @@ func _goals_at(earned: int, landed: int) -> void:
 
 
 ## S0 with a chosen profile behind it. The service is a stub for the same reason
+## S17's window (doc 12 §2.24), in `CitySim.storm_prep_overview()`'s shape. The
+## costs are `data/economy.json storm_prep`'s own, so a re-price moves this
+## fixture with it; the balance is deliberately under the crew callout so the
+## sweep always has one REFUSED row to lay out beside five that are not.
+func _storm_prep_fixture() -> Dictionary:
+	const COSTS := {"pre_stage_crews": 6000, "load_shed": 0, "top_off_water": 1240,
+			"callout_crew": 18000, "recall_construction": 0, "sandbag_block": 6000}
+	const AFFORDABLE := 12000
+	var rows: Array = []
+	for action_id: String in ["pre_stage_crews", "load_shed", "top_off_water",
+			"callout_crew", "recall_construction", "sandbag_block"]:
+		var cost: int = int(COSTS[action_id])
+		var taken: bool = _storm_prep_taken.has(action_id)
+		rows.append({
+			"id": action_id, "cost": cost, "taken": taken,
+			"available": not taken and cost <= AFFORDABLE
+					and action_id != "sandbag_block",
+			"reason_code": "E_FUNDS" if cost > AFFORDABLE \
+					else ("E_NO_TARGET" if action_id == "sandbag_block" else ""),
+			"needs_target": action_id == "sandbag_block",
+		})
+	var late: bool = _storm_prep_taken.size() >= 3
+	return {
+		"open": true, "event_uid": 1,
+		"minutes_to_impact": 20 if late else 90,
+		"minutes_left": 5 if late else 70,
+		"severity_mult": 1.28, "intensity": 0.84,
+		"taken": _storm_prep_taken.duplicate(),
+		"min_prep_actions": 3, "actions": rows,
+		"readiness": {"grid_powered_frac": 0.96, "fleet_idle": 3,
+				"water_fill": 0.52},
+	}
+
+
 ## every other fixture here is one: this harness photographs SCREENS, and a real
 ## `SaveService` would photograph whatever happens to be in `user://saves`.
 class TitleSlots extends RefCounted:

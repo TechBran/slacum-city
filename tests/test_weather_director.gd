@@ -477,10 +477,26 @@ func test_severe_storm_begins_and_reports() -> void:
 func test_29_prep_actions_and_the_load_shed() -> void:
 	# §2.7.7 / §7 test 29: the same storm with and without load shed differs by
 	# exactly 8% on the power channels, and preparation is what buys it.
+	#
+	# **This test used to build the state the code could not reach** (A91-D-87,
+	# report 98 §49). It called `storm.begin()` — which the Director itself only
+	# calls at IMPACT — and then asked for a window measured against
+	# `storm.t0_min`, so it was green for seventeen waves over a branch no player
+	# could ever take. The window is a property of the SCHEDULED row, the one
+	# F7's warning went out for, so that is the row this puts on the Director;
+	# `storm.begin()` stays because the second half of the test needs the storm
+	# object's own `prep_actions` list, and at T−50 the real game has both (the
+	# schedule holds the row until `_start_event` moves it).
 	var director := _director(51)
 	var stack := ModifierStack.new()
 	director.attach(director.weather, IncidentRequestSink.Recording.new(), stack)
 	director._now_min = 1000
+	director.scheduled.append({
+		"event_uid": 11, "type": "severe_thunderstorm", "impact_min": 1050,
+		"warned": true, "severity_mult": 1.0, "hazard_tier": 3,
+		"class": "major", "tp_cost": 30, "target": {}, "scheduled_min": 960,
+		"warn_lead_min": 90, "tp_spent": 30.0,
+	})
 	director.storm.begin(11, 1.0, 0.77, 1050, 120, 8)  # T−50: inside the window
 	director.weather.timeline.inject_segment("HEAT_WAVE", 0, 100000, 0.80, -1, "chain")
 	director.weather._apply_modifiers()

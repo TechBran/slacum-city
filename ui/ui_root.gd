@@ -162,6 +162,8 @@ var settings_sheet: SettingsSheet
 ## screen and with NO model — `game/main.gd` owns the sim, so it calls
 ## `setup(cfg, GoalsModel.new(sim, cfg, controller))` once it has one.
 var goals_sheet: GoalsSheet
+## S17 (doc 12 §2.24) — doc 07 §2.7.7's preparation window (99-PA PA-26).
+var storm_prep_sheet: StormPrepSheet
 var save_load_sheet: SaveLoadSheet
 var pause_menu: PauseMenu
 var incident_drawer: IncidentDrawer
@@ -302,6 +304,8 @@ func _bind_nodes() -> void:
 			"PanelLayer/ConstructionQueue") as ConstructionQueueSheet
 	settings_sheet = safe_area.get_node_or_null("ModalLayer/SettingsSheet") as SettingsSheet
 	goals_sheet = safe_area.get_node_or_null("ModalLayer/GoalsSheet") as GoalsSheet
+	storm_prep_sheet = safe_area.get_node_or_null(
+			"ModalLayer/StormPrepSheet") as StormPrepSheet
 	save_load_sheet = safe_area.get_node_or_null("ModalLayer/SaveLoadSheet") as SaveLoadSheet
 	pause_menu = safe_area.get_node_or_null("ModalLayer/PauseMenu") as PauseMenu
 	incident_drawer = safe_area.get_node_or_null(
@@ -347,6 +351,11 @@ func bring_up_screens() -> void:
 	# build sheet does: `game/main.gd` owns the sim, and `setup()` is idempotent.
 	if goals_sheet != null and goals_sheet.config == null:
 		goals_sheet.setup(config)
+	# S17 comes up with the shared config and a model whose provider is unbound,
+	# which reads as "no storm pending" — so a mount that never calls
+	# `bind_storm_prep()` shows a sheet that cannot be opened onto nothing.
+	if storm_prep_sheet != null and storm_prep_sheet.config == null:
+		storm_prep_sheet.setup(config)
 	if save_load_sheet != null and save_load_sheet.model == null:
 		save_load_sheet.setup(config)
 	if pause_menu != null and pause_menu.config == null:
@@ -1468,6 +1477,46 @@ func refresh_goals() -> void:
 		hud.rebuild_chips()
 	if goals_sheet.is_open():
 		goals_sheet.refresh()
+
+
+## **S17's one shell call** (99-PA PA-26). Same shape as `bind_construction`:
+## the screen is built against a CONTRACT — a provider and a door, both
+## Callables — so it can be laid out, measured and photographed by
+## `tools/ui_preview.gd` against a fixture, and the shell decides nothing about
+## what a preparation action costs or whether the window is open.
+func bind_storm_prep(provider: Callable, door: Callable = Callable()) -> void:
+	if storm_prep_sheet == null or storm_prep_sheet.model == null:
+		return
+	storm_prep_sheet.model.provider = provider
+	if door.is_valid():
+		storm_prep_sheet.model.door = door
+	storm_prep_sheet.refresh()
+
+
+## Opened from the `weather_warning` alert, which is the only place a player can
+## learn a storm is coming — doc 07 F7 makes that notification CRITICAL and
+## exempt from every rate limit, so it is the one alert that is always there to
+## be tapped.
+func open_storm_prep() -> void:
+	if storm_prep_sheet != null:
+		storm_prep_sheet.open()
+
+
+func close_storm_prep() -> void:
+	if storm_prep_sheet != null:
+		storm_prep_sheet.close()
+
+
+func storm_prep_open() -> bool:
+	return storm_prep_sheet != null and storm_prep_sheet.is_open()
+
+
+## Re-reads the provider while the sheet is up. Rides the shell's 1 Hz HUD
+## cadence like the goal chip and the construction queue — the countdown is the
+## point of the screen and a countdown that only moves on a tap is a label.
+func refresh_storm_prep() -> void:
+	if storm_prep_sheet != null and storm_prep_sheet.is_open():
+		storm_prep_sheet.refresh()
 
 
 func open_goals() -> void:

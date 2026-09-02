@@ -864,14 +864,35 @@ func test_gate_12b_tax_squeezing_trails_on_population() -> void:
 ## Both readings are honest; only one of them is the ruling's. The fix is the
 ## SAMPLE, not the threshold — 10 %, 8 points and "value created still ahead" are
 ## the ruled numbers and are untouched. It costs four extra 21-game-day runs.
+## **10 % → 7 %, Wave 18** (99-PA PA-04, doc 92 §49.6). The population bound is
+## this gate's SECONDARY reading — the happiness gap below is the direct one —
+## and it narrowed because the CONTROL ARM got poorer, not because squeezing got
+## cheaper. With the Disaster Director running for the first time, `balanced`'s
+## own three-seed mean population falls 1,582 → 1,529 (−3.4 %) while
+## `tax_squeezer`'s rises 1,366 → 1,394: the squeezer ends 21 game-days with
+## ~$100k against balanced's ~$68k and 264 buildings against 217, and it spends
+## the difference growing back through the storms that now happen. Money buying
+## resilience is the game working, and it is exactly what a bound fitted on a
+## matrix where no storm ever came could not have seen.
+##
+## Measured (`tools/playtest.gd --strategies=balanced,tax_squeezer --days=21
+## --seeds=1337,4242,9001 --mode=coarse`): the ratio moves **0.864 → 0.912**.
+## The bound goes to 0.93, keeping ~2 points of headroom on a three-seed mean
+## whose per-seed spread is 110 people. **The ruling's direct reading moved the
+## other way**: the happiness gap widened 14.5 → 15.9 points against a floor of
+## 8, so the slider costs MORE of what it is supposed to cost.
+const TAX_SQUEEZE_POP_MAX_RATIO := 0.93
+
+
 func test_gate_12c_the_tax_slider_is_not_a_free_lunch_for_a_real_agent() -> void:
 	var base_pop := _matrix_mean("balanced", "population_end")
 	var maxed_pop := _matrix_mean("tax_squeezer", "population_end")
-	assert_true(maxed_pop <= base_pop * 0.90,
+	assert_true(maxed_pop <= base_pop * TAX_SQUEEZE_POP_MAX_RATIO,
 			("tax_squeezer ends %d game-days with %.0f people against balanced's "
 					+ "%.0f (means of doc 92's %d matrix seeds) — the ruling wants "
-					+ "it trailing by at least 10 %%")
-					% [LONG_DAYS, maxed_pop, base_pop, MATRIX_SEEDS.size()])
+					+ "it trailing by at least %.0f %%")
+					% [LONG_DAYS, maxed_pop, base_pop, MATRIX_SEEDS.size(),
+					100.0 * (1.0 - TAX_SQUEEZE_POP_MAX_RATIO)])
 	var gap := _matrix_mean("balanced", "happiness_end") \
 			- _matrix_mean("tax_squeezer", "happiness_end")
 	assert_true(gap >= 8.0,
@@ -1405,6 +1426,24 @@ const AMBIENT_FLOOR_CHANNELS := ["crime", "structure_fire", "transformer_failure
 ## measured 6.07/game-week the sum below has an expectation near 91 and a
 ## standard deviation near 9.5.
 const PACING_SEEDS: Array[int] = [1337, 4242, 9001, 101, 202]
+## **ABANDONED is a bound working, not a loss** — and this ceiling exists because
+## Wave 18 gave the gate a second incident source (99-PA PA-04, doc 92 §49.5).
+##
+## Until this wave the Disaster Director stalled after two events, so every
+## incident this gate counted came from the ambient floor, the starter roster
+## answered all of them, and `abandoned` was flatly **0** — which is what this
+## line asserted and what it measured. With the Director running, `do_nothing`
+## takes 45 % more incidents on the same five stations and doc 06 §2.10's
+## terminal rule (RR-26: one game-day with nothing committed) ends **2** of them
+## across 5 seeds × 21 game-days — 0.019 per game-day, against 146 created.
+##
+## The ceiling is 6, roughly 3× the measurement, and it is deliberately NOT a
+## rate band: this is a tripwire for the roster falling over, not a fit. `failed`
+## stays pinned at exactly **0**, because a FAILED incident is a real loss (a
+## building burns down) while an ABANDONED one is doc 06 declining to hold a
+## queue open forever — the two are not the same kind of thing and only one of
+## them may ever be non-zero on the control agent.
+const AMBIENT_ABANDONED_CEILING := 6
 
 
 ## GATE 19 — **doc 92 §18 / audit 91 D-6: the dispatch loop is a DAILY beat, and
@@ -1631,7 +1670,11 @@ func test_gate_19_ambient_incidents_are_a_weekly_beat() -> void:
 			"%d incidents over %d game-days is %.2f per game-week — generation ran away"
 					% [created, game_days, per_week])
 	assert_eq(failed, 0, "a do_nothing city must survive its own pacing floor")
-	assert_eq(abandoned, 0, "the starter roster answered every one of them")
+	assert_true(abandoned <= AMBIENT_ABANDONED_CEILING,
+			("the starter roster abandoned %d of %d incidents over %d game-days; "
+					+ "the ceiling is %d (measured 2 — see "
+					+ "`AMBIENT_ABANDONED_CEILING`)")
+					% [abandoned, created, game_days, AMBIENT_ABANDONED_CEILING])
 
 
 ## GATE 20 — **doc 92 §19 / audit 91 D-7: the level ladder is reachable.**
@@ -2144,18 +2187,45 @@ func _preset_run(preset: String) -> Dictionary:
 	return Rig.run("do_nothing", GATE_SEED, int(PRESET_HORIZON_DAYS[preset]), preset)
 
 
+## **The insolvency day, read at HOUR resolution** (99-PA PA-04, doc 92 §49.5).
+##
+## This gate used to read `summary.day_rows` — the treasury at each day's CLOSE —
+## and on a city hovering on the line that is a knife edge, not a measurement. A
+## `do_nothing` city on `hard` goes below zero every evening from game-day 48 and
+## closes every one of the next 72 game-days above it, and the day-close reading
+## then answers **"still solvent after 120 game-days"** about a city that ran out
+## of money ten game-weeks earlier.
+##
+## Measured on both arms of Wave 18's fork (`tools/probe_neglect.gd`, seed 1337,
+## each preset's own horizon) — the reading change moves nothing about the game:
+##
+## | preset | fork close / hour | this branch close / hour |
+## |---|---|---|
+## | `casual` | 193 / 193 | 193 / 193 |
+## | `standard` | 137 / 137 | 135 / 135 |
+## | `hard` | **58 / 48** | **never / 48** |
+## | `crisis` | 31 / 18 | 35 / 19 |
+##
+## `hard` is the only preset the two readings ever disagreed on, and they
+## disagreed at the fork too (58 vs 48) — the Director waking up just widened the
+## gap until the day-close reading fell off the end of the horizon. Every band
+## below is UNCHANGED and every one of them holds under the finer reading on both
+## arms, which is the evidence that this is a resolution fix and not a re-fit.
 func test_gate_29_neglect_is_fatal_on_every_preset_and_ordered() -> void:
 	var died: Dictionary = {}
 	for preset: String in Difficulty.PRESETS:
 		var horizon := int(PRESET_HORIZON_DAYS[preset])
+		var run := _preset_run(preset)
 		var day := -1
 		var peak_open := 0
-		for row_variant in ((_preset_run(preset)["summary"] as Dictionary)
-				["day_rows"] as Array):
-			var row: Dictionary = row_variant
-			peak_open = maxi(peak_open, int(row["open_incidents"]))
-			if day < 0 and int(row["treasury"]) < 0:
-				day = int(row["day"])
+		for row_variant in ((run["summary"] as Dictionary)["day_rows"] as Array):
+			peak_open = maxi(peak_open, int((row_variant as Dictionary)["open_incidents"]))
+		# `samples[0]` is the pre-run reading; `samples[i]` closes game-hour `i`.
+		var samples: Array = run["samples"]
+		for i in range(1, samples.size()):
+			if float((samples[i] as Dictionary).get("treasury", 0.0)) < 0.0:
+				day = ((i - 1) / 24) + 1
+				break
 		died[preset] = day
 		# The cascade tripwire (see `PRESET_HORIZON_DAYS`). Measured 0–1 inside
 		# every horizon; doc 06 §2.13(b)'s ceiling is 40. It is now the same
@@ -2193,9 +2263,11 @@ func test_gate_29_neglect_is_fatal_on_every_preset_and_ordered() -> void:
 						% [kinder, harder, int(died[kinder]), int(died[harder])])
 	assert_true(absi(int(died["standard"]) - STANDARD_LIFETIME_DAYS)
 					<= STANDARD_LIFETIME_BAND,
-			("standard do_nothing died on game-day %d; measured 68–70 "
-					+ "(doc 92 §33.4; was 74–76 before doc 07 reached doc 10)")
-					% int(died["standard"]))
+			("standard do_nothing died on game-day %d; the pinned value is %d ± %d "
+					+ "(doc 92 §43.8's re-fit, re-read at hour resolution in §49.5: "
+					+ "137 on the fork, 135 on this branch)")
+					% [int(died["standard"]), STANDARD_LIFETIME_DAYS,
+					STANDARD_LIFETIME_BAND])
 
 
 # ============================== 30 the saturation rule (doc 06 §2.13(b), §31)
@@ -2562,6 +2634,72 @@ func test_gate_32_active_play_pays_more_and_idling_still_pays() -> void:
 			("city services are %.2f %% of a played city's net over %d game-days; "
 					+ "measured 4.8–5.8 %% from dispatch alone (doc 92 §36.4)")
 					% [100.0 * share, LONG_DAYS])
+
+
+## The Director's own horizon. 60 game-days rather than `LONG_DAYS`'s 21 because
+## the defect this gate exists for did not show up until game-day 8 and looked
+## like a quiet stretch until game-day 20 — a 21-day gate would have passed over
+## it. One seed, one strategy, ~90 s coarse.
+const DIRECTOR_DAYS := 60
+## Doc 07 §2.6.3's own cadence claim is "one major crisis every ~2–2.5 game-days
+## plus minors between them", which over 60 game-days is 24–30 events at the
+## reference city's size. A founding city is far below that city and F1's floor
+## caps it at cheap tier-1 minors for a long while, so the FLOOR here is a
+## tripwire and not a fit: **measured 23** on this run (balanced / 4242 / 60 d,
+## `tools/probe_director.gd`), and **2** on the Wave-17 fork, where the whole
+## rest of the run was the stall. Anything at or under the fork's number means
+## the schedule has died again.
+const DIRECTOR_MIN_EVENTS := 8
+
+
+## **Gate 33 (99-PA PA-04 / A91-D-59) — the Disaster Director keeps working.**
+##
+## Three claims, and the first is the one that was false at the Wave-17 fork:
+##
+##   1. a played city keeps SCHEDULING — the Director is not two events and
+##      then silence for the rest of the city's life;
+##   2. every event it starts gets RESOLVED, and none is held past the 48
+##      game-hour cap `data/director.json fairness.max_active_min` publishes;
+##   3. the schedule is still alive at the END of the run, not merely alive
+##      early — the fork passed (1) on a short horizon and failed it on a long
+##      one, which is exactly how the defect survived seventeen waves.
+func test_gate_33_the_director_does_not_stall() -> void:
+	var doc := _run("balanced", DIRECTOR_DAYS, 4242)
+	var director: Dictionary = doc["director"]
+	var started := Rig.event_count(doc, "director_event_started")
+	var ended := Rig.event_count(doc, "director_event_ended")
+
+	assert_true(started >= DIRECTOR_MIN_EVENTS,
+			("the Director started %d events in %d game-days; the fork managed 2 "
+					+ "and then stalled forever, and doc §2.6.3's cadence is 24–30 "
+					+ "at the reference city's size")
+					% [started, DIRECTOR_DAYS])
+	assert_true(ended >= started - 2,
+			("%d events started and %d ended — at most the two the pacing gate "
+					+ "allows in flight may still be open at the wall")
+					% [started, ended])
+	assert_eq(ended + int(director["active_end"]), started,
+			("%d started, %d ended, %d still in flight — the three have to add up "
+					+ "or an event left `active_events` without resolving")
+					% [started, ended, int(director["active_end"])])
+	assert_true(int(director["active_end"]) <= 2,
+			"the in-flight list is bounded by `_try_schedule`'s own gate")
+
+	var cap := int(director["max_active_min"])
+	assert_eq(cap, DisasterDirector.MAX_ACTIVE_MIN_DEFAULT,
+			"the gate is held against the shipped knob, not a literal")
+	assert_true(int(director["max_hold_min"]) <= cap,
+			("an event was held %d game-minutes; the cap is %d (48 game-hours). "
+					+ "Holds: %s")
+					% [int(director["max_hold_min"]), cap, str(director["holds"])])
+
+	# (3) Still alive at the wall. The fork's last event started on game-day 7.5
+	# of a 60-day run; anything inside the last third is a living schedule.
+	var last_day := float(int(director["last_start_min"])) / 1440.0
+	assert_true(last_day >= float(DIRECTOR_DAYS) * 0.6,
+			("the last Director event of a %d-game-day run started on game-day "
+					+ "%.1f — the schedule died partway through")
+					% [DIRECTOR_DAYS, last_day])
 
 
 ## `data/economy.json`'s `city_services` block, read live so a gate cannot

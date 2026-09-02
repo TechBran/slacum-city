@@ -64,6 +64,10 @@ const SURFACES: Array[String] = [
 	# S15. The other surface a player meets with no city behind it, and the only
 	# one that can be up while the sim is half-restored.
 	"VeilLayer/LoadingVeil/Center/Panel",
+	# S17 (doc 12 §2.24). Six action rows with a price, a countdown and a reason
+	# line — the widest single column in the deck after S9's settings list, and
+	# the one most likely to blow a 360 dp box at the largest text setting.
+	"ModalLayer/StormPrepSheet/Panel",
 ]
 
 
@@ -154,6 +158,16 @@ func _populate(root: UIRoot, panel: String = "drawer") -> void:
 	root.goals_sheet.setup(root.config,
 			GoalsModel.new(CitySim.boot_from_files(), root.config, null))
 	root.goals_sheet.open()
+	# S17, with all six action rows in it. This screen builds its rows on the
+	# first `refresh()` that has any, so a mount that never binds a provider
+	# measures a header and two empty boxes — which is how a sheet whose action
+	# row needed **395 dp** of the 292 dp content box passed this file's own
+	# 360 dp check while `tools/ui_preview.gd --strict` failed it. The ids come
+	# from `CitySim.STORM_PREP_ACTIONS` so a seventh action cannot slip past,
+	# and every row is priced at the dearest thing `data/economy.json` sells
+	# (`callout_crew`, $18,000) because the price is the widest label in it.
+	root.bind_storm_prep(func() -> Dictionary: return _storm_window())
+	root.storm_prep_sheet.open()
 	root.settings_sheet.open()
 	root.save_load_sheet.open()
 	root.pause_menu.open()
@@ -216,6 +230,30 @@ static func _snapshot() -> Dictionary:
 			"paused": false}
 
 
+## `CitySim.storm_prep_overview()`'s shape at its WIDEST: every authored action
+## offered at once, each carrying the dearest price in `data/economy.json` and
+## the longest reason line the model can print. One action is already taken and
+## one is refused for want of a target, so the mark column shows all three of its
+## glyphs. Nothing here is a copy decision — `StormPrepModel` resolves every
+## string from `data/strings.en.json`.
+static func _storm_window() -> Dictionary:
+	var actions: Array[Dictionary] = []
+	var taken: Array[String] = []
+	for index in CitySim.STORM_PREP_ACTIONS.size():
+		var action_id: String = CitySim.STORM_PREP_ACTIONS[index]
+		actions.append({"id": action_id, "cost": 18000, "taken": index == 0,
+				"available": index > 1,
+				"reason_code": ["E_ALREADY_TAKEN", "E_NO_TARGET", "", "", "", ""][index],
+				"needs_target": index == 1})
+		if index == 0:
+			taken.append(action_id)
+	return {"open": true, "event_uid": 7, "minutes_to_impact": 90,
+		"minutes_left": 70, "severity_mult": 1.28, "intensity": 0.84,
+		"taken": taken, "min_prep_actions": 3, "actions": actions,
+		"readiness": {"grid_powered_frac": 0.96, "fleet_idle": 3,
+			"water_fill": 0.52}}
+
+
 static func _incident_row() -> Dictionary:
 	return {"id": 31, "type": "structure_fire", "subtype": "", "tier": 4,
 			"severity": 4.6, "status": "ASSIGNED", "pos": [12, 20],
@@ -260,6 +298,36 @@ func test_every_surface_fits_the_narrowest_display_at_130_percent_text() -> void
 		assert_true(wanted <= 360.0,
 				"%s needs %d dp at 130 %% text on a 360 dp display"
 				% [path, int(wanted)])
+	_unmount(root)
+
+
+## S17's action row, measured where a headless run can still answer honestly.
+##
+## The two `SURFACES` sweeps above read `get_combined_minimum_size()` on a
+## panel that is CLOSED — `UIWidgets.close_siblings` leaves one modal up and
+## every other modal `Panel` in the list reports **0** from a hidden subtree
+## (`ModalLayer/PauseMenu/Panel` → 260, `ModalLayer/GoalsSheet/Panel` → 0, same
+## mount, same frame). That is why a Storm Prep sheet needing **423 dp** of a
+## 360 dp display passed this file and failed `tools/ui_preview.gd --strict`.
+## Widening the sweep is not this lane's file to widen, so the row it broke is
+## measured directly instead: `Panel/Body` is inside the open subtree the
+## sheet's own `refresh()` built, and it is read here for the first time, so the
+## number is live.
+##
+## **300 dp** is what a 360 dp phone actually offers this Body: 360 − 2×4 dp of
+## safe-area inset − 2×16 dp of the panel's own offsets − 2×10 dp of the
+## `SheetPanel` content margin. (The scroll box inside it keeps 8 dp more for a
+## vertical scrollbar, and that 8 dp is already inside the number read here.)
+func test_the_storm_prep_rows_fit_the_narrowest_display_at_130_percent_text() -> void:
+	var root := _mount(1.3, true)
+	var body := root.storm_prep_sheet.get_node_or_null("Panel/Body") as Control
+	assert_ne(body, null, "S17's body is in the scene")
+	assert_eq(root.storm_prep_sheet._row_nodes.size(),
+			CitySim.STORM_PREP_ACTIONS.size(),
+			"every authored action is on screen, or this measures a header")
+	var wanted := body.get_combined_minimum_size().x
+	assert_true(wanted <= 300.0,
+			"S17 needs %d dp of a 300 dp content box at 130 %% text" % int(wanted))
 	_unmount(root)
 
 

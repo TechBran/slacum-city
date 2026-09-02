@@ -77,6 +77,10 @@ var _vehicles: Dictionary = {}
 var _water_main_cost: Dictionary = {}
 var _water_main_repair_capital_fraction: float = 1.0
 var _water_demolish_refund_fraction: float = 0.0
+## 99-PA PA-26 / C-07: doc 07 §2.7.7's prep-action prices, which used to sit in
+## `data/director.json`. `data/economy.json storm_prep` is the only place a storm
+## preparation costs a dollar.
+var _storm_prep: Dictionary = {}
 
 
 func _init(building_economy: Dictionary, economy: Dictionary) -> void:
@@ -450,6 +454,23 @@ func pm_allowed(condition: float) -> bool:
 	return condition >= _pm_min_condition and condition <= 0.99
 
 
+## doc 07 §2.7.7 preparation, priced by doc 03 (99-PA PA-26 / C-07). `units` is
+## the thing being bought more than one of — crews for `pre_stage_crews`, cubic
+## metres for `top_off_water` — and is 1 for the flat-rate actions. An unknown
+## action costs nothing rather than crashing: the command layer refuses it by
+## name before it ever gets here, and a price table is not the place to raise.
+func storm_prep_cost(action_id: String, units: float = 1.0) -> int:
+	match action_id:
+		"pre_stage_crews":
+			return round_half_up(float(_storm_prep.get("pre_stage_crews_per_crew", 0))
+					* maxf(0.0, units))
+		"top_off_water":
+			return round_half_up(float(_storm_prep.get("top_off_water_per_m3", 0))
+					* maxf(0.0, units))
+		_:
+			return round_half_up(float(_storm_prep.get(action_id, 0)))
+
+
 ## doc 03 §2.5 — money-for-time valve, deliberately bad value.
 func contractor_cost(job_cost: int) -> int:
 	return round_half_up(float(job_cost) * _contractor_surcharge)
@@ -569,6 +590,7 @@ func _load(building_economy: Dictionary, economy: Dictionary) -> void:
 			expenses.get("RUSH_SURCHARGE_PER_DURATION", 0.0))
 	_grid_components = expenses.get("grid_components", {})
 	_vehicles = expenses.get("vehicles", {})
+	_storm_prep = economy.get("storm_prep", {})
 	var water: Dictionary = economy.get("water", {})
 	_water_main_cost = water.get("main_build_cost_per_tile", {})
 	_water_main_repair_capital_fraction = float(

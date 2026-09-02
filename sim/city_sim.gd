@@ -146,6 +146,18 @@ var _prev_block_dark: Dictionary = {}  # block id -> bool
 var _last_construction_stage: Dictionary = {}  # sim_id -> stage 1..6
 var _last_expense_hour: float = 1.0            # DirectorInputs.daily_opex source
 var _director_links: Dictionary = {}           # incident id -> director event_uid
+## 99-PA PA-26 — the storm's repair bill, READ BACK from doc 03's ledger rather
+## than priced here (C-16). `Treasury.lifetime.lifetime_repairs` is a running
+## total of every `repair` charge the city has ever settled, so this holds WHERE
+## THAT STOOD when each in-flight event began and §2.7.6's Storm Report is the
+## difference. A baseline rather than a running tally because doc 03's ledger is
+## the only ledger: a second accumulator beside it is a second number to drift.
+## `event_uid -> lifetime_repairs at the event's start`.
+var _storm_repair_by_event: Dictionary = {}
+## Prep effects with a lifetime: `[{action, until_min, …}]`, swept at REPORT.
+## A crew called out for 12 game-hours has to go home again, and a construction
+## site recalled for the storm has to go back to work.
+var _storm_prep_effects: Array = []
 ## The last settled hour, verbatim (doc 12's budget breakdown reads it).
 ## Derived: not captured, refilled on the first settled hour after a load.
 var last_settlement: Dictionary = {}
@@ -462,6 +474,12 @@ func _boot_weather() -> void:
 		boot_errors.append_array(director.tables.errors)
 	incident_sink = DirectorIncidentSink.new(self)
 	director.attach(weather, incident_sink, modifiers)
+	# 99-PA PA-25 / A91-D-80 — doc 07 §2.6.3 step 8's target provider, which was
+	# declared, read in two places and NEVER ASSIGNED. Without it `_choose_target`
+	# returned `{}` for every pick, `_commit` proceeded with an empty target and
+	# the sink refused the request for an unresolvable one — so five of the eight
+	# catalog events did nothing at all while still spending their TP.
+	director.target_provider = director_targets
 	# Doc 03 §2.9 rule 2 / C-17: the Director stores no difficulty knob. This is
 	# the one write path for its `pressure` row, and it runs on every boot, so
 	# `DirectorTables` no longer needs the read-only mirror it used to carry.
@@ -1237,7 +1255,28 @@ static func encode_captured(raw_body: Dictionary) -> Dictionary:
 ## and the body has a twenty-ninth key. Nothing else in the body changes value —
 ## the spawner reads the city and writes only its own section, and no other
 ## stream's sequence is perturbed, which is the property RR-77 turns into a test.
-const SAVE_SECTION_VERSION := 7
+##
+## **v8 — 2026-09-02, the Director's stall repair (Wave 18, 99-PA PA-04 /
+## A91-D-59).** Every save the game has ever written can carry a Director event
+## that will never end. Nothing called `on_event_resolved`, so `active_events`
+## only ever grew, and after two rows `_try_schedule`'s two-in-flight gate
+## refused every later schedule for the rest of the city's life. This is the
+## first rung on the ladder whose migrator REPAIRS rather than records: the two
+## resolution fields (`resolve_after_min`, `expire_at_min`) are written onto
+## every `director.scheduled` and `director.active_events` row from what the row
+## already carries — its `impact_min`, its `duration_min` if it is a weather row
+## — plus the two `DisasterDirector` constants, because §2.8 forbids a migrator
+## from opening `data/`. A ghost pair that has sat in a save for thirty game-days
+## is then past its hold cap the moment the city ticks, resolves on the first
+## REPORT sweep, and the Director wakes up. A row that is genuinely in flight
+## gets the same stamp and ends when its own clock says so.
+##
+## It is a rules rung as well as a shape one: an event that could not end can now
+## end, so a v7 city advanced under v8 sees storms a v7 binary would never have
+## scheduled. `state_hash()` moves for every played city, which is the honest
+## record of exactly that (RR-135; the four `profile_sim` baselines are re-taken
+## with the fix named).
+const SAVE_SECTION_VERSION := 8
 
 
 func save_section_version() -> int:
@@ -1258,6 +1297,7 @@ func migrate_save_section(body: Dictionary, from_version: int) -> Dictionary:
 			4: body = _v4_to_v5(body)
 			5: body = _v5_to_v6(body)
 			6: body = _v6_to_v7(body)
+			7: body = _v7_to_v8(body)
 		version += 1
 	return body
 
@@ -1356,6 +1396,45 @@ static func _v5_to_v6(body: Dictionary) -> Dictionary:
 ## time the default changes, and `restore_state` already answers this one. The
 ## v5 → v6 rung took the same line for the same reason.
 static func _v6_to_v7(body: Dictionary) -> Dictionary:
+	return body
+
+
+## v7 → v8: **the stall repair** (99-PA PA-04 / A91-D-59). The first rung that
+## is not a record of a rules change but a repair of a state no binary should
+## ever have been able to write: a `director.active_events` list that can never
+## empty. Every save in existence can carry one, and a city with two ghost rows
+## in it has a Director that will never schedule anything again.
+##
+## The repair is a STAMP, not a deletion. Dropping the rows would be the other
+## obvious move and it is wrong twice over: a row that is genuinely in flight
+## has incidents on the map linked to it, and a dropped major would leave F2's
+## `last_major_end_min` never set and `has_pending_major()` lying in the other
+## direction. Instead every scheduled and every active row gets the two fields
+## `DisasterDirector.stamp_resolution` writes at commit time under v8 — computed
+## from what the row already carries, so this invents nothing. A ghost from
+## thirty game-days ago is then instantly past its hold cap and closes on the
+## first REPORT sweep; a real one closes when its own clock says so.
+##
+## §2.8's three rules hold: TOTAL (a body with no `director` section, or rows
+## that are not dictionaries, passes through untouched), additive-first (two
+## keys added, none removed or renamed) and it reads no `data/` — the two knobs
+## arrive as `DisasterDirector` constants, which is why they are constants.
+static func _v7_to_v8(body: Dictionary) -> Dictionary:
+	var raw: Variant = body.get("director", null)
+	if not (raw is Dictionary):
+		return body
+	var block: Dictionary = raw
+	for key in ["scheduled", "active_events"]:
+		var rows: Variant = block.get(key, null)
+		if not (rows is Array):
+			continue
+		for entry in (rows as Array):
+			if not (entry is Dictionary):
+				continue
+			DisasterDirector.stamp_resolution(entry as Dictionary,
+					DisasterDirector.MAX_ACTIVE_MIN_DEFAULT,
+					DisasterDirector.STORM_REPORT_AT_MIN_DEFAULT)
+	body["director"] = block
 	return body
 
 
@@ -1556,6 +1635,10 @@ func capture_state() -> Dictionary:
 		"weather": weather.serialize(),
 		"director": director.serialize(),
 		"street": street.serialize(),
+		# 99-PA PA-26. The storm's ledger tally and the prep effects that have to
+		# be lifted again — both outlive the tick that made them, so both are the
+		# city's state and not a view of it.
+		"storm_prep": _serialize_storm_prep(),
 	}
 
 
@@ -1812,6 +1895,7 @@ func _restore_incidents(body: Dictionary) -> void:
 	# A v6 body has no `street` block and restores to an empty roster, which is
 	# exactly what a v6 city had.
 	street.deserialize(body.get("street", {}))
+	_restore_storm_prep(body.get("storm_prep", {}))
 
 
 func _restore_finish(body: Dictionary) -> void:
@@ -1987,6 +2071,242 @@ func _serialize_director_links() -> Dictionary:
 	for incident_id in _sorted(_director_links):
 		out[str(incident_id)] = int(_director_links[incident_id])
 	return out
+
+
+## PA-04 / A91-D-59 — **the half of the resolution test only this class can
+## answer.** `_director_links` is the incident-to-event book; an event uid in
+## here still has at least one incident open, so it is not over.
+func _director_busy_uids() -> Dictionary:
+	var out: Dictionary = {}
+	for incident_id in _director_links:
+		out[int(_director_links[incident_id])] = true
+	return out
+
+
+## PA-04 / A91-D-59 — **the stall, closed.** Before this, `on_event_resolved`
+## had exactly one caller in the whole tree — the tests — so `active_events`
+## never emptied, `_try_schedule`'s two-in-flight gate refused every later
+## schedule, and after its first two minor events the Director went quiet for
+## the rest of the city's life. Doc 07 §2.6's "~one crisis every 2–2.5 days"
+## and the entire §2.7 thunderstorm beat sheet were unreachable past ~day 8.
+##
+## Called from REPORT, every tick, immediately after the incident drain that
+## erases links — so an event whose last incident closes on this tick resolves
+## on this tick. `DisasterDirector` owns the clock half of the test (has the
+## weather segment ended, has the report beat passed, has the hold cap fired);
+## this joins it to the link book above. The `director_event_ended` the
+## resolution emits is drained by `WeatherReportPhaseSystem`, which is registered
+## one slot EARLIER in the same phase, so it reaches the bus on the next tick —
+## 15 game-seconds, and it buys one place where resolution happens instead of two.
+func _sweep_director_events(now_min: int) -> void:
+	if director == null or director.active_events.is_empty():
+		return
+	_note_storm_repair_baseline()
+	var busy := _director_busy_uids()
+	for entry in director.events_due_for_resolution(now_min, busy):
+		var event_uid := int(entry[0])
+		var outcome := String(entry[1])
+		_on_director_event_resolving(event_uid, outcome, now_min)
+		director.on_event_resolved(event_uid, outcome, now_min)
+
+
+## PA-26 / C-16 — where doc 03's repair ledger stood when this storm began. Taken
+## on the first REPORT tick of the event, which is the same tick the DIRECTOR
+## phase started it on (DIRECTOR runs before REPORT), so nothing charged to the
+## storm is charged before the mark.
+func _note_storm_repair_baseline() -> void:
+	for uid in director.active_events:
+		if String((director.active_events[uid] as Dictionary)["type"]) \
+				!= "severe_thunderstorm":
+			continue
+		if not _storm_repair_by_event.has(int(uid)):
+			_storm_repair_by_event[int(uid)] = int(treasury.lifetime["lifetime_repairs"])
+
+
+## The beats that must happen while the event is still in flight. §2.7.6's storm
+## report is built HERE and not after, because `on_event_resolved` sets
+## `storm.active = false` and the save stops carrying the storm's metrics with
+## it — the report would then have nothing to report.
+func _on_director_event_resolving(event_uid: int, _outcome: String,
+		now_min: int) -> void:
+	var row: Dictionary = director.active_events.get(event_uid, {})
+	if String(row.get("type", "")) != "severe_thunderstorm":
+		return
+	_publish_storm_report(event_uid, row, now_min)
+
+
+# ------------------------------- doc 07 §2.6.5 target selection (99-PA PA-25)
+
+## **The roster doc 07 §2.6.3 step 8 asks for, per catalog event id.** Bound to
+## `DisasterDirector.target_provider` in `_boot_weather`.
+##
+## Doc 07 weights and filters; this only SUPPLIES, and it supplies exactly the
+## descriptor §2.6.5 names: `ref`, `condition`, `district_id`, `domain`,
+## `base_type_weight`, `exposure_factor`, plus `pos` for the sink and
+## `f10_protected` for the one gate that has to be evaluated where "last of its
+## kind" is knowable. Every roster is drawn from doc 06's OWN candidate source
+## for the type (`data/incidents.json`'s `generator.candidate_source`) through
+## `CityIncidentWorld`, so a Director target and an ambient one are drawn from
+## the same population — the Director is not a second, parallel spawner.
+##
+## Order is canonical (`roster_ids()` is sorted; doc 06's rosters are built in
+## sorted id order), because `_choose_target` walks it and normalises weights,
+## and a dictionary-order roster would make the pick depend on insertion order.
+func director_targets(event_id: String) -> Array:
+	if director == null:
+		return []
+	return director_targets_from(
+			String(director.tables.incident_kind(event_id).get("source", "")))
+
+
+## The roster for one §2.6.5 candidate source. Split from the lookup above so
+## the sink can ask for the same roster when it has to pick for itself.
+func director_targets_from(source: String) -> Array:
+	match source:
+		"building":
+			return _director_building_targets("fire_load")
+		"district_building":
+			return _director_building_targets("crime_weight")
+		"transformer":
+			return _director_transformer_targets()
+		"water_segment":
+			return _director_water_targets()
+		"intersection":
+			return _director_intersection_targets()
+	return []
+
+
+## Doc 06's `_state_eligible`: a building that is already burning, still being
+## built, destroyed or merely planned is not a candidate for anything.
+static func _director_state_eligible(state: StringName) -> bool:
+	return state != &"on_fire" and state != &"under_construction" \
+			and state != &"destroyed" and state != &"planned"
+
+
+## Buildings, weighted by doc 02's own per-archetype attractiveness column —
+## `fire_load` for a structure fire, `crime_weight` for a crime — which is
+## exactly what doc 06's generators weight by (C-44). Doc 07 multiplies its
+## `condition_factor` on top, so a worn building is the more likely target of
+## both, which is the whole point of §2.6.5.
+##
+## F10: the sole station of any department may not be destroyed. That test is
+## only answerable here, over the live roster, which is why doc 07 evaluates the
+## gate at selection and ships the floor as `condition_floor` on the request.
+func _director_building_targets(weight_key: String) -> Array:
+	var out: Array = []
+	var by_district := district_of_building()
+	var station_counts: Dictionary = {}
+	for id in roster_ids():
+		var b: Building = buildings[id]
+		var archetype := String(b.archetype)
+		if CityIncidentWorld.STATION_ARCHETYPES.has(archetype):
+			station_counts[archetype] = int(station_counts.get(archetype, 0)) + 1
+	for id in roster_ids():
+		var b: Building = buildings[id]
+		if not _director_state_eligible(b.state):
+			continue
+		var weight := float(b.stats.get(weight_key, 0.0))
+		if weight <= 0.0:
+			continue
+		var archetype := String(b.archetype)
+		out.append({
+			"ref": String(id),
+			"domain": "building",
+			"condition": b.condition,
+			"district_id": String(by_district.get(id, "")),
+			"base_type_weight": weight,
+			"exposure_factor": 1.0,
+			"pos": Vector2(b.origin.x, b.origin.y),
+			"f10_protected": CityIncidentWorld.STATION_ARCHETYPES.has(archetype)
+					and int(station_counts.get(archetype, 0)) <= 1,
+		})
+	return out
+
+
+## Distribution transformers, through doc 06's own four-column roster. The
+## §2.6.5 weight is the LOAD ratio — a transformer running at 96 % is the one
+## that blows — and doc 07's `condition_factor` adds the wear term on top.
+func _director_transformer_targets() -> Array:
+	var out: Array = []
+	for entry in incident_world.power_transformer_rates():
+		var row: Dictionary = entry
+		var id := String(row["id"])
+		var component := grid.component(id)
+		if component.is_empty() or String(component.get("state", "OK")) != "OK":
+			continue
+		var tile: Vector2i = component.get("tile", Vector2i(-1, -1))
+		out.append({
+			"ref": id,
+			"domain": "grid",
+			"condition": float(row.get("condition", 1.0)),
+			"district_id": incident_world.district_of_tile(tile) if tile.x >= 0 else "",
+			"base_type_weight": maxf(0.05, float(row.get("load_ratio", 0.0))),
+			"exposure_factor": 1.0,
+			"pos": Vector2(tile.x, tile.y),
+		})
+	return out
+
+
+## Water mains, through doc 05's roster as doc 06 reads it: only `ok` segments,
+## weighted by length (a longer main is more main to break).
+func _director_water_targets() -> Array:
+	var out: Array = []
+	for entry in incident_world.water_mains():
+		var row: Dictionary = entry
+		var tile: Vector2i = row.get("tile", Vector2i(-1, -1))
+		out.append({
+			"ref": String(row["id"]),
+			"domain": "water",
+			"condition": float(row.get("condition", 1.0)),
+			"district_id": incident_world.district_of_tile(tile) if tile.x >= 0 else "",
+			"base_type_weight": maxf(0.05, float(row.get("length_km", 0.0))),
+			"exposure_factor": 1.0,
+			"pos": Vector2(tile.x, tile.y),
+		})
+	return out
+
+
+## Road intersections, through doc 10's roster as doc 06 reads it. `condition`
+## is inverted out of doc 10's hazard multiplier so §2.6.5's condition term
+## points the same way it does everywhere else: a worn approach is a likelier
+## pile-up. The weight is congestion, which is doc 06's own `f_flow`.
+func _director_intersection_targets() -> Array:
+	var out: Array = []
+	for entry in roads.intersections():
+		var row: Dictionary = entry
+		var tile: Vector2i = row.get("tile", Vector2i(-1, -1))
+		out.append({
+			"ref": String(row["id"]),
+			"domain": "road",
+			"condition": clampf(1.0 / maxf(1.0,
+					float(row.get("condition_hazard_mult", 1.0))), 0.0, 1.0),
+			"district_id": incident_world.district_of_tile(tile) if tile.x >= 0 else "",
+			"base_type_weight": 1.0 + float(row.get("congestion_index", 0.0)),
+			"exposure_factor": 1.0,
+			"pos": Vector2(tile.x, tile.y),
+		})
+	return out
+
+
+## PA-25 item 3 — **the sink picks its own target when the request carries none.**
+## Reachable two ways: the debug force verb, and a save whose in-flight row was
+## written before the provider existed. Deterministic and RNG-free by
+## construction — the heaviest §2.6.5 weight, ties broken by ref — because this
+## is a fallback and not a second scheduler, and a `randf()` here would be a
+## stream position the fine and coarse paths do not agree on.
+func director_fallback_target(source: String) -> String:
+	var best := ""
+	var best_weight := -1.0
+	for entry in director_targets_from(source):
+		var row: Dictionary = entry
+		var condition := clampf(float(row.get("condition", 1.0)), 0.0, 1.0)
+		var weight := float(row.get("base_type_weight", 1.0)) \
+				* (1.0 + 1.5 * (1.0 - condition)) \
+				* float(row.get("exposure_factor", 1.0))
+		if weight > best_weight or (weight == best_weight and String(row["ref"]) < best):
+			best_weight = weight
+			best = String(row["ref"])
+	return best
 
 
 func _serialize_buildings() -> Array:
@@ -5019,6 +5339,408 @@ func cmd_rush_construction(job_id: Variant) -> Dictionary:
 	return {"ok": true, "err": "", "cost": cost}
 
 
+# ------------------------ doc 07 §2.7.7 / §2.7.6 — the storm's player half
+#
+# **99-PA PA-26.** Doc 07 authors six preparation actions, a Storm Report and a
+# Storm Ready payout, and at the Wave-17 fork `grep -c storm_prep sim/city_sim.gd`
+# returned **0**. `DisasterDirector.storm_prep_action` existed and was
+# unreachable twice over: no command layer called it, and its own window test
+# (`storm.active` AND `−90 ≤ now − t0 ≤ −20`) can never be true, because
+# `storm.begin()` sets `t0 = now`. `build_report` and `storm_ready_earned` had no
+# callers at all. The player received *"You have about {minutes} minutes to get
+# ready"* and had nothing to do with it.
+
+## The six, in the order §2.7.7 lists them — which is also the order the sheet
+## draws them, cheapest commitment first.
+const STORM_PREP_ACTIONS: Array[String] = [
+	"pre_stage_crews", "load_shed", "top_off_water",
+	"callout_crew", "recall_construction", "sandbag_block",
+]
+## §2.7.7's "+1 temporary utility crew", as `data/vehicles.json` names it. It is
+## a `data/` id and not a department word: `FleetSystem.add_unit` looks it up in
+## the vehicle catalog, and a miss there spawns a truck from an EMPTY row — no
+## department, no speed, no capabilities — which is a unit that exists, counts
+## toward the fleet, and can never be dispatched.
+## `tests/test_storm_prep.gd` pins it against the catalog for exactly that reason.
+const STORM_PREP_CALLOUT_TYPE := "utility_service_truck"
+
+
+## **The Storm Prep window, as a surface can draw it.** One read, everything the
+## sheet needs: whether the door is open, how long the player has, what the city
+## is walking into, what it has already done, and — the part that makes this a
+## teaching screen rather than a shop — the three readiness numbers §2.7.7's
+## actions each move.
+##
+## Safe to call at any time; `open` is false and `actions` is still populated
+## (every row `available: false`) so the screen has something honest to show
+## when there is no storm.
+func storm_prep_overview() -> Dictionary:
+	var window: Dictionary = director.storm_prep_window() if director != null \
+			else {"open": false, "event_uid": -1, "minutes_left": 0,
+					"minutes_to_impact": 0}
+	var taken: Array = director.prep_actions.duplicate() if director != null else []
+	var rows: Array = []
+	for action_id in STORM_PREP_ACTIONS:
+		var quote := cmd_storm_prep_action(action_id, {}, true)
+		rows.append({
+			"id": action_id,
+			"cost": int((quote["payload"] as Dictionary).get("cost", 0)),
+			"taken": taken.has(action_id),
+			"available": bool(quote["ok"]),
+			"reason_code": String(quote.get("reason_code", "")),
+			"needs_target": action_id == "sandbag_block",
+		})
+	var storm_row: Dictionary = director.pending_storm() if director != null else {}
+	return {
+		"open": bool(window["open"]),
+		"event_uid": int(window.get("event_uid", -1)),
+		"minutes_to_impact": int(window.get("minutes_to_impact", 0)),
+		"minutes_left": int(window.get("minutes_left", 0)),
+		"severity_mult": float(storm_row.get("severity_mult", 0.0)),
+		"intensity": float(storm_row.get("intensity", 0.0)),
+		"taken": taken,
+		"min_prep_actions": int((director.tables.storm.get("reward", {}) as Dictionary)
+				.get("min_prep_actions", 3)) if director != null else 3,
+		"actions": rows,
+		"readiness": storm_readiness(),
+	}
+
+
+## The three numbers §2.7.7's actions move, each ∈ [0,1] and each read from the
+## system that owns it — never recomputed here. A sheet draws them as meters and
+## the player learns which button to press by looking at which meter is short.
+func storm_readiness() -> Dictionary:
+	var powered := 0
+	var lit := 0
+	for id in roster_ids():
+		powered += 1
+		if grid.is_powered(String(id)):
+			lit += 1
+	var idle := 0
+	var free: Dictionary = incidents.fleet.free_units_by_dept()
+	for department in free:
+		idle += int(free[department])
+	var stored := 0.0
+	var capacity := 0.0
+	for node_id in water.nodes:
+		var node: WaterNode = water.nodes[node_id]
+		if node.variant != &"tank":
+			continue
+		stored += node.volume_m3
+		capacity += float(water.data.component(node.variant, node.level)
+				.get("capacity_m3", 0.0))
+	return {
+		"grid_powered_frac": float(lit) / float(maxi(1, powered)),
+		"fleet_idle": idle,
+		"water_fill": (stored / capacity) if capacity > 0.0 else 1.0,
+	}
+
+
+## **`cmd_storm_prep_action(action_id, target, preview)` — the door.**
+##
+## Refusal order, first blocker wins, and every one of them is something the
+## sheet can say in words rather than by greying a button with no reason:
+##
+##   1 `E_UNKNOWN_ACTION`  not one of §2.7.7's six
+##   2 `E_NO_STORM`        nothing scheduled to prepare for
+##   3 `E_PREP_WINDOW`     outside T−90 → T−20 (doc 07 §2.7.7)
+##   4 `E_ALREADY_TAKEN`   each action is once per storm
+##   5 `E_NO_TARGET`       `sandbag_block` without a block
+##   6 `E_FUNDS`/`E_AUSTERITY`  doc 03 §2.10 refused the spend
+##
+## `preview = true` quotes the price and the first blocker without charging
+## anything, which is what `storm_prep_overview` builds its rows from — one code
+## path, so a greyed button and a refused tap can never disagree.
+func cmd_storm_prep_action(action_id: String, target: Dictionary = {},
+		preview: bool = false) -> Dictionary:
+	if not STORM_PREP_ACTIONS.has(action_id):
+		return CommandQueue.fail(&"E_UNKNOWN_ACTION", {"action": action_id})
+	var window: Dictionary = director.storm_prep_window()
+	var cost := _storm_prep_quote(action_id)
+	var payload := {"action": action_id, "cost": cost,
+			"event_uid": int(window.get("event_uid", -1)),
+			"minutes_left": int(window.get("minutes_left", 0))}
+	if int(window.get("event_uid", -1)) < 0:
+		return CommandQueue.fail(&"E_NO_STORM", payload)
+	if not bool(window["open"]):
+		return CommandQueue.fail(&"E_PREP_WINDOW", payload)
+	if director.prep_actions.has(action_id):
+		return CommandQueue.fail(&"E_ALREADY_TAKEN", payload)
+	if action_id == "sandbag_block" and not target.has("block"):
+		return CommandQueue.fail(&"E_NO_TARGET", payload)
+	if preview:
+		return CommandQueue.ok(payload)
+	var reason := "storm prep " + action_id
+	if cost > 0:
+		var paid := treasury.spend(cost, &"storm_prep", reason)
+		if not bool(paid["ok"]):
+			return CommandQueue.fail(_spend_reason(paid), payload)
+	if not director.storm_prep_action(action_id, target):
+		# Unreachable: every gate `storm_prep_action` applies was checked above,
+		# against the same window read a line earlier. If it ever does fire, the
+		# money is already gone and nothing was bought, so it goes straight back
+		# — a partial charge may never buy a partial action. Same shape, same
+		# reason, as `cmd_rush_construction`'s refund arm.
+		if cost > 0:
+			treasury.credit(cost, &"storm_prep", reason + " refused")
+		return CommandQueue.fail(&"E_PREP_WINDOW", payload)
+	_apply_storm_prep_effect(action_id, int(window["event_uid"]))
+	stats_add(&"storm_prep_actions")
+	bus.emit(&"storm_prep_taken", {"action": action_id, "cost": cost,
+			"event_uid": int(window["event_uid"]),
+			"taken": director.prep_actions.size(),
+			"minutes_to_impact": int(window.get("minutes_to_impact", 0))})
+	return CommandQueue.ok(payload)
+
+
+## What one action costs right now, through doc 03's accessor and nothing else.
+## `top_off_water` is the only variable one: it buys the water it actually adds.
+func _storm_prep_quote(action_id: String) -> int:
+	match action_id:
+		"pre_stage_crews":
+			return econ_curves.storm_prep_cost(action_id, float(_storm_prep_knob(
+					action_id, "crews", 2.0)))
+		"top_off_water":
+			return econ_curves.storm_prep_cost(action_id, _storm_water_deficit_m3())
+		_:
+			return econ_curves.storm_prep_cost(action_id)
+
+
+func _storm_prep_knob(action_id: String, key: String, fallback: float) -> float:
+	var actions: Dictionary = director.tables.storm.get("prep_actions", {})
+	return float((actions.get(action_id, {}) as Dictionary).get(key, fallback))
+
+
+## Cubic metres between every live tank and `fill_to`. The price is per m³, so a
+## city that already tops its tanks off pays nothing and the button says so.
+func _storm_water_deficit_m3() -> float:
+	var fill_to := clampf(_storm_prep_knob("top_off_water", "fill_to", 1.0), 0.0, 1.0)
+	var deficit := 0.0
+	for node_id in _sorted(water.nodes):
+		var node: WaterNode = water.nodes[node_id]
+		if node.variant != &"tank" or not node.is_live():
+			continue
+		var capacity := float(water.data.component(node.variant, node.level)
+				.get("capacity_m3", 0.0))
+		deficit += maxf(0.0, capacity * fill_to - node.volume_m3)
+	return deficit
+
+
+## The half of a prep action that is not the Director's. `load_shed` and
+## `sandbag_block` are applied inside `DisasterDirector` (they are a modifier
+## source and a flood-field knob, both of which it owns); these four need the
+## city.
+##
+## **Two are DEFERRED and say so** rather than being taken and doing nothing:
+## `pre_stage_crews`' −35 % travel time needs a knob on `sim/incidents/
+## fleet_system.gd`, and `load_shed`'s −5 % commercial tax needs doc 03's revenue
+## half — neither file is this lane's to edit (99-PA §3.0 rule 1). Both are still
+## PRICED, RECORDED and counted toward Storm Ready, and both carry a row in doc
+## 12 D-78's deferral table. Nothing here pretends to an effect it does not have.
+func _apply_storm_prep_effect(action_id: String, event_uid: int) -> void:
+	var now_min := clock.tick_index / GameClock.TICKS_PER_MINUTE
+	match action_id:
+		"top_off_water":
+			var fill_to := clampf(_storm_prep_knob(action_id, "fill_to", 1.0), 0.0, 1.0)
+			for node_id in _sorted(water.nodes):
+				var node: WaterNode = water.nodes[node_id]
+				if node.variant != &"tank" or not node.is_live():
+					continue
+				var capacity := float(water.data.component(node.variant, node.level)
+						.get("capacity_m3", 0.0))
+				node.volume_m3 = maxf(node.volume_m3, capacity * fill_to)
+		"callout_crew":
+			var station := _storm_callout_station()
+			if station == "":
+				return
+			var tile: Vector2i = (incidents.fleet.station(station) as Dictionary) \
+					.get("tile", Vector2i.ZERO)
+			var unit := incidents.fleet.add_unit(STORM_PREP_CALLOUT_TYPE, station, tile)
+			if unit == null:
+				return
+			_storm_prep_effects.append({"action": action_id, "event_uid": event_uid,
+					"unit_id": unit.id, "until_min": now_min
+							+ int(_storm_prep_knob(action_id, "duration_min", 720.0))})
+		"recall_construction":
+			var recalled: Array = []
+			for job in construction.active_jobs():
+				var job_id := int((job as Dictionary)["id"])
+				construction.set_site_mult(job_id, 0.0)
+				recalled.append(job_id)
+			if recalled.is_empty():
+				return
+			_storm_prep_effects.append({"action": action_id, "event_uid": event_uid,
+					"jobs": recalled, "until_min": now_min
+							+ int(_storm_prep_knob(action_id, "progress_loss_min", 90.0))})
+
+
+## The utility station with the most idle trucks — a called-out crew reports
+## where there is already a yard to report to. Ties by station id, so it is the
+## same station on every replay of the same city.
+func _storm_callout_station() -> String:
+	var best := ""
+	var best_idle := -1
+	for station_id in incidents.fleet.station_ids():
+		var id := String(station_id)
+		var station: Dictionary = incidents.fleet.station(id)
+		# A station that cannot HOST this truck is not a home for it: it would
+		# be the truck's `_send_home` destination and its start tile, and doc 06
+		# counts a station's roster against the same ladder. `capacity_for` is
+		# that ladder, asked directly.
+		if incidents.fleet.capacity_for(String(station.get("archetype", "")),
+				STORM_PREP_CALLOUT_TYPE, int(station.get("level", 1))) <= 0:
+			continue
+		var idle := incidents.fleet.idle_count_at_station("utility", id)
+		if idle > best_idle or (idle == best_idle and id < best):
+			best_idle = idle
+			best = id
+	return best
+
+
+## Prep effects have a lifetime and this is where it runs out — swept beside the
+## Director's own resolution sweep, on the same REPORT tick, from the same clock.
+## A crew called out for 12 game-hours goes home; a recalled construction site
+## goes back to work having lost the progress §2.7.7 said it would.
+func _sweep_storm_prep_effects(now_min: int) -> void:
+	if _storm_prep_effects.is_empty():
+		return
+	var kept: Array = []
+	for entry in _storm_prep_effects:
+		var effect: Dictionary = entry
+		if now_min < int(effect["until_min"]):
+			kept.append(effect)
+			continue
+		match String(effect["action"]):
+			"callout_crew":
+				incidents.fleet.remove_unit(int(effect["unit_id"]))
+			"recall_construction":
+				for job_id in (effect["jobs"] as Array):
+					construction.set_site_mult(int(job_id), 1.0)
+	_storm_prep_effects = kept
+
+
+## **§2.7.6's headline resilience metric, finally counted.**
+## `SevereThunderstorm.metrics.outage_customer_minutes` is the number the Storm
+## Ready check is made against (`< 250 × population/1000`) and at the fork
+## NOTHING WROTE IT — so the check reduced to "did the player take three
+## actions", which is not a resilience test, it is an attendance test.
+##
+## A customer is a resident whose building is dark, because that is the unit
+## §2.7.6's own budget is stated in (its worked example puts 400 customers out of
+## a city of 45,000 at 0.9 %). Accrued at REPORT on the same tick as the sweeps
+## above, from the same `dt`, so the fine and coarse paths integrate the same
+## quantity at their own step sizes.
+func _accrue_storm_outage(dt_min: float) -> void:
+	if director == null or not director.storm.active or dt_min <= 0.0:
+		return
+	var dark := 0
+	for id in roster_ids():
+		var b: Building = buildings[id]
+		if b.state != &"active" or grid.is_powered(String(id)):
+			continue
+		dark += int(b.stats.get("population", 0))
+	if dark <= 0:
+		return
+	director.storm.metrics["outage_customer_minutes"] = int(
+			director.storm.metrics["outage_customer_minutes"]) \
+			+ int(roundf(float(dark) * dt_min))
+
+
+# ------------------------------------------- §2.7.6 the Storm Report and the payout
+
+## **The teaching moment (Core Rule 12), finally built.** Called from
+## `_on_director_event_resolving`, which is the last tick on which the storm's
+## own metrics still exist — `on_event_resolved` takes the storm down and the
+## save stops carrying it.
+##
+## Every dollar in it is READ BACK, never priced here (C-16): `_storm_repair_by_event`
+## is the sum of the `repair` spends doc 03 settled while this event was in
+## flight. The reward is §2.7.6's, whole: ≥ `min_prep_actions` taken AND
+## `outage_customer_minutes` under budget earns `reimburse_frac` of that total
+## back as state aid and `stability_bonus` on every district the storm touched.
+func _publish_storm_report(event_uid: int, row: Dictionary, now_min: int) -> void:
+	var settled := int(treasury.lifetime["lifetime_repairs"])
+	var ledger_total := maxi(0, settled
+			- int(_storm_repair_by_event.get(event_uid, settled)))
+	var report := director.storm.build_report(ledger_total)
+	report["kind"] = "severe_thunderstorm"
+	report["minute"] = now_min
+	report["impact_min"] = int(row.get("impact_min", 0))
+	report["districts"] = _storm_touched_districts(event_uid)
+	var earned := director.storm.storm_ready_earned(population.city_population)
+	report["storm_ready"] = earned
+	var reward: Dictionary = director.tables.storm.get("reward", {})
+	var relief := 0
+	if earned:
+		relief = int(roundf(float(reward.get("reimburse_frac", 0.15))
+				* float(ledger_total)))
+		if relief > 0:
+			treasury.credit(relief, &"grant", "storm relief")
+		var bonus := float(reward.get("stability_bonus", 0.05))
+		for district_id in report["districts"]:
+			districts.apply_stability(String(district_id), bonus)
+	report["relief_paid"] = relief
+	bus.emit(&"storm_report_ready", report)
+	_storm_repair_by_event.erase(event_uid)
+
+
+## Every district the storm actually touched, ascending — the set §2.7.6 applies
+## the Storm Ready bonus to. A struck asset's district, plus the district of
+## every incident this event spawned; empty ids are dropped, because "" is not a
+## district and applying a bonus to it would be a silent no-op that looked like
+## a payout.
+func _storm_touched_districts(event_uid: int) -> Array:
+	var seen: Dictionary = {}
+	for ref in director.storm.struck:
+		var tile := Vector2i(-1, -1)
+		if buildings.has(ref):
+			tile = (buildings[ref] as Building).origin
+		elif grid.has_component(String(ref)):
+			tile = grid.component(String(ref)).get("tile", Vector2i(-1, -1))
+		if tile.x >= 0:
+			var district_id := incident_world.district_of_tile(tile)
+			if district_id != "":
+				seen[district_id] = true
+	for incident_id in _director_links:
+		if int(_director_links[incident_id]) != event_uid:
+			continue
+		var incident := incidents.incident(int(incident_id))
+		if incident != null and incident.district_id != "":
+			seen[incident.district_id] = true
+	return _sorted(seen)
+
+
+# ---------------------------------------------------------------- persistence
+
+func _serialize_storm_prep() -> Dictionary:
+	var repairs := {}
+	for event_uid in _sorted(_storm_repair_by_event):
+		repairs[str(event_uid)] = int(_storm_repair_by_event[event_uid])
+	var effects: Array = []
+	for entry in _storm_prep_effects:
+		effects.append((entry as Dictionary).duplicate(true))
+	return {"repair_by_event": repairs, "effects": effects}
+
+
+func _restore_storm_prep(data: Dictionary) -> void:
+	_storm_repair_by_event.clear()
+	for key in data.get("repair_by_event", {}):
+		_storm_repair_by_event[int(key)] = int(data["repair_by_event"][key])
+	_storm_prep_effects = []
+	for entry in data.get("effects", []):
+		var effect: Dictionary = (entry as Dictionary).duplicate(true)
+		effect["until_min"] = int(effect.get("until_min", 0))
+		effect["event_uid"] = int(effect.get("event_uid", -1))
+		if effect.has("unit_id"):
+			effect["unit_id"] = int(effect["unit_id"])
+		if effect.has("jobs"):
+			var jobs: Array = []
+			for job_id in (effect["jobs"] as Array):
+				jobs.append(int(job_id))
+			effect["jobs"] = jobs
+		_storm_prep_effects.append(effect)
+
+
 ## Construction stage pulses for the renderer (doc 11 §5): a site under
 ## build/upgrade walks six visual stages, and the crane/site loop switches on
 ## each. One event per CHANGE only — a pulse every tick would be 240 events an
@@ -5473,24 +6195,28 @@ class WorkPhaseSystem extends SimSystem:
 class DirectorIncidentSink extends IncidentRequestSink:
 	var sim: CitySim
 	func _init(p_sim: CitySim) -> void: sim = p_sim
+
+	## PA-25 / A91-D-80. Three changes from the shape that shipped at the fork:
+	## `kind` is now doc 06's own type id (the Director translates through
+	## `incident_kind` before it asks); an empty `ref` is answered by picking
+	## from the same §2.6.5 roster rather than by refusing; and the target is
+	## resolved by its DOMAIN — a water segment and a road intersection are not
+	## buildings, and looking either up in `sim.buildings` is how five of the
+	## eight catalog events came to do nothing.
 	func request_incident(kind: StringName, target: Dictionary) -> void:
 		if not sim.incident_catalog.has_type(String(kind)):
 			return
+		var source := String(target.get("candidate_source", ""))
 		var ref := String(target.get("ref", ""))
-		var tile := Vector2i(-1, -1)
-		var target_ref := {}
-		if sim.buildings.has(ref):
-			tile = (sim.buildings[ref] as Building).origin
-			target_ref = {"kind": "building", "id": ref}
-		elif ref != "" and sim.grid.has_component(ref):
-			tile = sim.grid.component(ref).get("tile", Vector2i(-1, -1))
-			target_ref = {"kind": "component", "id": ref}
-		elif target.get("pos") is Vector2:
-			var pos: Vector2 = target["pos"]
-			tile = Vector2i(int(pos.x), int(pos.y))
+		if ref == "" and source != "":
+			ref = sim.director_fallback_target(source)
+		var resolved := _resolve(ref, source, target)
+		var tile: Vector2i = resolved.get("tile", Vector2i(-1, -1))
 		if tile.x < 0 or not TileGrid.in_bounds(tile.x, tile.y):
 			return  # unresolvable target: refused, per the contract
-		var inc := sim.incidents.spawn(String(kind), "", tile, target_ref, -1.0, {
+		var inc := sim.incidents.spawn(String(kind),
+				String(target.get("subtype", "")), tile,
+				resolved.get("target_ref", {}), -1.0, {
 			"reason": "director",
 			"event_uid": int(target.get("event_uid", 0)),
 			"severity_mult": float(target.get("severity_mult", 1.0)),
@@ -5498,6 +6224,37 @@ class DirectorIncidentSink extends IncidentRequestSink:
 		}, String(target.get("district_id", "")))
 		if inc != null:
 			sim._director_links[inc.id] = int(target.get("event_uid", 0))
+
+	## `{tile, target_ref}` for one reference, in the `target_ref` shape doc 06's
+	## own generators use for that source — `power_component` and not
+	## `component`, `water_segment`, `intersection` — so a Director incident and
+	## an ambient one of the same type are the same record to every resolver
+	## downstream.
+	func _resolve(ref: String, source: String, target: Dictionary) -> Dictionary:
+		if ref != "":
+			match source:
+				"water_segment":
+					for entry in sim.incident_world.water_mains():
+						var row: Dictionary = entry
+						if String(row["id"]) == ref:
+							return {"tile": row.get("tile", Vector2i(-1, -1)),
+									"target_ref": {"kind": "water_segment", "id": ref}}
+				"intersection":
+					for entry in sim.roads.intersections():
+						var row: Dictionary = entry
+						if String(row["id"]) == ref:
+							return {"tile": row.get("tile", Vector2i(-1, -1)),
+									"target_ref": {"kind": "intersection", "id": ref}}
+			if sim.buildings.has(ref):
+				return {"tile": (sim.buildings[ref] as Building).origin,
+						"target_ref": {"kind": "building", "id": ref}}
+			if sim.grid.has_component(ref):
+				return {"tile": sim.grid.component(ref).get("tile", Vector2i(-1, -1)),
+						"target_ref": {"kind": "power_component", "id": ref}}
+		if target.get("pos") is Vector2:
+			var pos: Vector2 = target["pos"]
+			return {"tile": Vector2i(int(pos.x), int(pos.y)), "target_ref": {}}
+		return {}
 
 
 class WeatherPhaseSystem extends SimSystem:
@@ -5696,7 +6453,7 @@ class ReportPhaseSystem extends SimSystem:
 	func system_id() -> StringName: return &"report"
 	func phase() -> int: return Phase.REPORT
 	func cadence() -> int: return Cadence.EVERY_TICK
-	func advance_fine(_ctx: TimeContext) -> void:
+	func advance_fine(ctx: TimeContext) -> void:
 		for event in sim.grid.drain_events():
 			# Doc 04 fails the component; doc 06 files the repair.
 			sim.incidents.on_power_event(event)
@@ -5711,6 +6468,12 @@ class ReportPhaseSystem extends SimSystem:
 								int(sim._director_links[incident_id]))
 						sim._director_links.erase(incident_id)
 			sim.bus.emit(StringName(String(event["type"])), event)
+		# PA-04: the link book is now current for this tick, so this is the
+		# first honest moment to ask which Director events are over.
+		var minute: int = ctx.tick_index / GameClock.TICKS_PER_MINUTE
+		sim._sweep_director_events(minute)
+		sim._sweep_storm_prep_effects(minute)  # PA-26
+		sim._accrue_storm_outage(float(ctx.dt_game_seconds) / 60.0)  # PA-26
 		for event in sim.water.drain_events():
 			sim.bus.emit(StringName(String(event["type"])), event)
 		# Doc 06 §2.16. `opportunity_collected` is NOT drained here — the verb

@@ -411,8 +411,9 @@ func test_the_layer_moves_nothing_outside_its_own_three_keys() -> void:
 
 
 func test_the_section_rung_moved_with_the_shape() -> void:
-	assert_eq(CitySim.SAVE_SECTION_VERSION, 7,
-			"the opportunity layer is rung 7 (doc 08 §2.8)")
+	assert_true(CitySim.SAVE_SECTION_VERSION >= 7,
+			"the opportunity layer was rung 7 and the ladder only climbs"
+			+ " (doc 08 §2.8)")
 	var sim := _sim()
 	var body := sim.canonical_capture()
 	assert_true(body.has("street"), "the body carries the section")

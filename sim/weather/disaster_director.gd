@@ -17,6 +17,24 @@ extends RefCounted
 
 const HISTORY_RING := 32
 
+## PA-04 / A91-D-59 — **the hold cap.** Every committed event must have a way to
+## END, and the last of them is a wall clock: no row may sit in `active_events`
+## longer than this. 2880 game-minutes is 48 game-hours, which is comfortably
+## past doc 06 §2.10's terminal rule (one game-day with nothing committed ends an
+## incident as ABANDONED), so a row that hits this wall is a row whose incidents
+## are already gone and whose link book has lost them. `data/director.json`'s
+## `fairness.max_active_min` is the live knob; this constant is its default and
+## the value the save migrator uses, because doc 08 §2.8 forbids a migrator from
+## reading `data/`. `tests/test_weather_director.gd` pins the two together.
+const MAX_ACTIVE_MIN_DEFAULT := 2880
+## §2.7.6's STORM REPORT beat, T+180. Same two-source rule as above.
+const STORM_REPORT_AT_MIN_DEFAULT := 180
+
+## `on_event_resolved` outcomes. `expired` is the hold cap firing: the event is
+## over as far as the player is concerned and the Director must stop waiting.
+const OUTCOME_RESOLVED := "resolved"
+const OUTCOME_EXPIRED := "expired"
+
 var tables: DirectorTables
 var weather: WeatherSystem = null
 var sink: IncidentRequestSink = null
@@ -50,6 +68,13 @@ var scheduled: Array = []
 var active_events: Dictionary = {}  # event_uid -> row
 var post_event_bleed_until_min: int = -1
 var debt_since_min: int = -1
+## 99-PA PA-26 — §2.7.7's prep ledger, kept HERE and not on the storm, because
+## every prep action is taken in the WARNING window and the storm object does not
+## exist yet (`storm.begin()` runs at impact). `_start_event` hands the list over
+## when the storm starts; `on_event_resolved` clears it, so one storm's
+## preparation can never be counted toward the next one's Storm Ready check.
+var prep_actions: Array = []
+var prep_event_uid: int = -1
 
 var _now_min: int = 0
 var _rng: RngStreams
@@ -113,25 +138,75 @@ func scripted_suppression_active() -> bool:
 ## worse. Returns false when the action is unknown, already taken, or outside
 ## the window, so the UI can grey the button rather than lie about it.
 func storm_prep_action(action_id: String, target: Dictionary = {}) -> bool:
-	if not storm.active:
+	var window := storm_prep_window()
+	if not bool(window["open"]):
 		return false
 	var actions: Dictionary = tables.storm.get("prep_actions", {})
-	if not actions.has(action_id) or storm.prep_actions.has(action_id):
+	if not actions.has(action_id) or prep_actions.has(action_id):
 		return false
-	var t := _now_min - storm.t0_min
-	var window_open := -int(tables.event_by_id("severe_thunderstorm").get("warn_min", 90))
-	if t < window_open or t > int(tables.storm_phases().get("cell_entry_min", -20)):
-		return false
-	storm.prep_actions.append(action_id)
+	prep_event_uid = int(window["event_uid"])
+	prep_actions.append(action_id)
+	if storm.active and storm.event_uid == prep_event_uid:
+		storm.prep_actions = prep_actions.duplicate()
 	if action_id == "load_shed":
 		_apply_load_shed(float(actions[action_id].get("power_load_mult", 0.92)))
 	elif action_id == "sandbag_block" and weather != null and target.has("block"):
 		var block: Array = target["block"]
 		weather.flood.set_block_drain_bonus(int(block[0]), int(block[1]),
 				float(actions[action_id].get("drain_rate_mult", 1.6)))
-	_emit(&"storm_prep_action", {"action": action_id, "event_uid": storm.event_uid,
+	_emit(&"storm_prep_action", {"action": action_id, "event_uid": prep_event_uid,
 			"target": target.duplicate()})
 	return true
+
+
+## 99-PA PA-26 — **the row the prep window is measured against, and why it is not
+## the storm object.** `SevereThunderstorm.begin()` runs at IMPACT, in
+## `_start_event`, and sets `t0_min = now`. The fork's window test was
+## `storm.active` AND `−90 ≤ now − t0 ≤ −20`, and those two are never true
+## together: while the storm is active `now − t0 ≥ 0`, so the six authored prep
+## actions were unreachable through this function as well as through the shell.
+## The window is a property of the SCHEDULED row — the one F7's warning went out
+## for — so that is what this reads. It falls back to the in-flight row, so a
+## storm that has already begun answers "closed" rather than "no storm".
+func pending_storm() -> Dictionary:
+	for row in scheduled:
+		if String(row["type"]) == "severe_thunderstorm":
+			return row
+	for uid in _sorted_keys(active_events):
+		var row: Dictionary = active_events[uid]
+		if String(row["type"]) == "severe_thunderstorm":
+			return row
+	return {}
+
+
+## §2.7.7's window, T−90 → T−20 relative to the storm's own T=0, with the lead
+## scaled by difficulty exactly as F7's warning is (`warning_lead_mult`): a
+## casual player gets a longer window because they were given a longer warning.
+## `{open, event_uid, t0_min, opens_at_min, closes_at_min, minutes_left,
+## minutes_to_impact}`; every field is present even when there is no storm, so a
+## surface can bind once and redraw.
+func storm_prep_window() -> Dictionary:
+	var row := pending_storm()
+	if row.is_empty():
+		return {"open": false, "event_uid": -1, "t0_min": -1, "opens_at_min": -1,
+				"closes_at_min": -1, "minutes_left": 0, "minutes_to_impact": 0}
+	var t0 := int(row["impact_min"])
+	var lead := int(roundf(float(tables.event_by_id("severe_thunderstorm")
+			.get("warn_min", 90)) * knob("warning_lead_mult")))
+	var opens := t0 - lead
+	var closes := t0 + int(tables.storm_phases().get("cell_entry_min", -20))
+	return {
+		"open": _now_min >= opens and _now_min <= closes,
+		"event_uid": int(row["event_uid"]),
+		"t0_min": t0, "opens_at_min": opens, "closes_at_min": closes,
+		"minutes_left": maxi(0, closes - _now_min),
+		"minutes_to_impact": maxi(0, t0 - _now_min),
+	}
+
+
+## The Director's clock, for a caller that has to line a window up against it.
+func now_min() -> int:
+	return _now_min
 
 
 ## Voluntary load shed is a POLICY source on the shared ModifierStack, not a
@@ -161,7 +236,15 @@ func debug_force_director_event(event_id: String, inputs: DirectorInputs,
 		return false
 	_now_min = ctx.tick_index / GameClock.TICKS_PER_MINUTE
 	tp_pool = maxf(tp_pool, float(event["tp_cost"]))
-	_commit(event, {}, inputs, ctx, preparedness(inputs), _rng.stream("director"))
+	var director_rng := _rng.stream("director")
+	# PA-25: the forced path chooses a target the same way the scheduled one
+	# does, so a debug force exercises the seam it is used to exercise. It
+	# FORCES, though — a city with no legal target still gets its event, and the
+	# sink picks for itself from the same roster.
+	var target := _choose_target(event, director_rng)
+	if target.has("_no_legal_target"):
+		target = {}
+	_commit(event, target, inputs, ctx, preparedness(inputs), director_rng)
 	return true
 
 
@@ -268,6 +351,60 @@ func severity_for(p: float, scheduled_offline: bool) -> float:
 	if scheduled_offline:
 		value *= float(config.get("offline_mult", 0.75))
 	return value
+
+
+## 99-PA PA-89 — **buy severity** (§2.6.2), authored in `data/director.json`
+## since doc 07 shipped and never implemented: `buy_max_cost_mult` and
+## `buy_max_severity` had zero readers, and late-game tension plateaued lower
+## than the model says because a rich Director could only ever buy the same
+## events at the same severity.
+##
+## The rule, verbatim: the Director may spend up to `1.60 × tp_cost` to add up
+## to `+0.30` to `severity_mult`, and *only when `tp_pool > 1.6 × tp_cost` and
+## **no other candidate is affordable***. `candidates()` has already filtered
+## the pool to what the budget can buy and what the fairness gates allow, so the
+## second clause is exactly `pool.size() == 1`: there is money, there is one
+## thing to spend it on, and the surplus would otherwise sit against F6's cap
+## doing nothing. That is the whole point of the lever — an idle budget becomes
+## a nastier event rather than a stockpile.
+##
+## **The looser reading was measured and rejected.** "Nothing DEARER is
+## affordable" fires far more often (any hour whose pool tops out on a cheap
+## minor), and over doc 07 §7 test 26's 100-game-day × 12-seed rig it took the
+## Standard cadence from one major per 2.64 game-days to one per **3.23** —
+## outside §2.6.3's own "one major every 2–2.5 game-days" claim — while lifting
+## mean severity by only 2.5 %. The literal reading lands at 2.86 game-days and
+## +6.2 % mean severity, which is the trade the section is asking for. Doc 92
+## §49 carries both arms.
+##
+## Returns the multiple of `tp_cost` to spend: `1.0` (buy nothing) or the cap.
+## It is all-or-nothing rather than a slider because a partial buy would need a
+## draw, and a draw here is a `director` stream position the coarse and fine
+## paths would have to agree on for no design gain.
+func buy_severity_spend_mult(event: Dictionary, pool: Array) -> float:
+	var config := tables.severity
+	var cost := float(event.get("tp_cost", 0))
+	var cap := float(config.get("buy_max_cost_mult", 1.6))
+	if cap <= 1.0 or cost <= 0.0 or tp_pool <= cap * cost:
+		return 1.0
+	if pool.size() > 1:
+		return 1.0
+	return cap
+
+
+## The severity the extra spend buys, linear in the overspend and capped:
+## `min(buy_max_severity, (spend/cost − 1) · buy_max_severity/(cost_mult − 1))`.
+## At the cap that is exactly `+0.30`, which is §2.6.2's own number.
+##
+## It is added AFTER `severity_for`'s clamp, deliberately: the clamp is the band
+## preparedness alone can reach, and this is the Director paying to go past it.
+func severity_buy_bonus(spend_mult: float) -> float:
+	var config := tables.severity
+	var cap := float(config.get("buy_max_cost_mult", 1.6))
+	var max_bonus := float(config.get("buy_max_severity", 0.3))
+	if cap <= 1.0:
+		return 0.0
+	return minf(max_bonus, maxf(0.0, spend_mult - 1.0) * max_bonus / (cap - 1.0))
 
 
 # ------------------------------------------------------------- the game-hour
@@ -394,6 +531,17 @@ func _grace_passed(inputs: DirectorInputs) -> bool:
 
 func cooldown(key: String) -> int:
 	return int(roundf(float(tables.fairness.get(key, 0)) * knob("cooldown_mult")))
+
+
+## PA-04: the hold cap, in game-minutes.
+func max_active_min() -> int:
+	return int(tables.fairness.get("max_active_min", MAX_ACTIVE_MIN_DEFAULT))
+
+
+## §2.7.6's report beat, in game-minutes after the storm's T=0.
+func storm_report_at_min() -> int:
+	var recovery: Dictionary = tables.storm.get("recovery", {})
+	return int(recovery.get("report_at_min", STORM_REPORT_AT_MIN_DEFAULT))
 
 
 ## Nothing new is scheduled while a Director event is still in flight — either
@@ -541,10 +689,18 @@ func _try_schedule(inputs: DirectorInputs, ctx: TimeContext, p: float) -> void:
 	var target := _choose_target(pick, director_rng)
 	if target.has("_no_legal_target"):
 		return  # §2.6.3 step 8: drop the pick, spend nothing
-	_commit(pick, target, inputs, ctx, p, director_rng)
+	_commit(pick, target, inputs, ctx, p, director_rng,
+			buy_severity_spend_mult(pick, pool))  # §2.6.2 / PA-89
 
 
 func _choose_target(event: Dictionary, director_rng: RandomNumberGenerator) -> Dictionary:
+	# PA-25: a WEATHER event has no target roster because its target is the whole
+	# city — the segment lands on everyone. Step 8's "no legal target, drop the
+	# pick" is about an event that needs something to hit and cannot find it, and
+	# reading it the other way would delete `storm_minor`, `heat_wave` and the
+	# authored thunderstorm from the schedule the moment a provider was bound.
+	if tables.incident_kind(String(event["id"])).is_empty():
+		return {}
 	if not target_provider.is_valid():
 		return {}
 	var legal: Array = target_provider.call(String(event["id"]))
@@ -584,7 +740,8 @@ func _target_weight(target: Dictionary) -> float:
 
 
 func _commit(event: Dictionary, target: Dictionary, inputs: DirectorInputs,
-		ctx: TimeContext, p: float, director_rng: RandomNumberGenerator) -> void:
+		ctx: TimeContext, p: float, director_rng: RandomNumberGenerator,
+		spend_mult: float = 1.0) -> void:
 	var forecastable := bool(event.get("forecastable", false))
 	var lead := 0
 	if forecastable:
@@ -594,7 +751,7 @@ func _commit(event: Dictionary, target: Dictionary, inputs: DirectorInputs,
 	else:
 		var delay: Array = tables.scheduling.get("sudden_delay_min", [10, 120])
 		lead = director_rng.randi_range(int(delay[0]), int(delay[1]))
-	var severity := severity_for(p, ctx.is_catchup)
+	var severity := severity_for(p, ctx.is_catchup) + severity_buy_bonus(spend_mult)
 	var uid := next_event_uid
 	next_event_uid += 1
 	var row := {
@@ -604,8 +761,11 @@ func _commit(event: Dictionary, target: Dictionary, inputs: DirectorInputs,
 		"class": String(event["class"]), "tp_cost": int(event["tp_cost"]),
 		"target": target.duplicate(), "scheduled_min": _now_min,
 		"warn_lead_min": lead if forecastable else 0,
+		# §2.6.2 / PA-89: what it actually cost, which is `tp_cost` unless the
+		# Director bought severity. The report and the save both want the bill.
+		"tp_spent": float(event["tp_cost"]) * spend_mult,
 	}
-	tp_pool -= float(event["tp_cost"])
+	tp_pool -= float(event["tp_cost"]) * spend_mult
 	scheduled.append(row)
 	last_event_start_min[String(event["id"])] = int(row["impact_min"])
 	if ctx.is_catchup:
@@ -617,7 +777,69 @@ func _commit(event: Dictionary, target: Dictionary, inputs: DirectorInputs,
 		_emit(&"weather_warning", {"event_uid": uid, "kind": String(event["id"]),
 				"impact_min": int(row["impact_min"]), "lead_min": lead,
 				"severity_mult": severity, "notify_class": "CRITICAL", "priority": 1})
+	# PA-04: AFTER `_inject_weather`, because that is where a weather row learns
+	# its `duration_min` and the stamp is written from it.
+	_stamp_resolution(row)
 	_emit(&"director_event_scheduled", _row_payload(row))
+
+
+## PA-04 / A91-D-59 — **give every committed event a way to end.** Two fields,
+## written once at commit and carried through the save:
+##
+##   * `resolve_after_min` — the EARLIEST minute the event may resolve. A weather
+##     event is not over while its segment is still running, so it is
+##     `impact + duration`; a `severe_thunderstorm` also owes the player §2.7.6's
+##     STORM REPORT, so it is `impact + max(duration, report_at_min)` — for the
+##     beat sheet's 120-minute storm that is exactly T+180. An event that only
+##     requests incidents may resolve the moment the last of them closes, so it
+##     is `impact`.
+##   * `expire_at_min` — the hold cap (`MAX_ACTIVE_MIN_DEFAULT`). Nothing waits
+##     forever, however the link book was lost.
+##
+## The `busy` half of the test — "does this event still have an incident open?"
+## — is NOT knowable here: `CitySim` owns the incident-to-event link book. This
+## file owns the CLOCK half and `CitySim` joins them (`_sweep_director_events`).
+func _stamp_resolution(row: Dictionary) -> void:
+	stamp_resolution(row, max_active_min(), storm_report_at_min())
+
+
+## The stamp, with its two knobs passed in rather than read. The live path hands
+## it `data/director.json`'s values; `CitySim._v7_to_v8` hands it the constants,
+## because doc 08 §2.8 forbids a migrator from opening `data/`.
+static func stamp_resolution(row: Dictionary, max_active: int, report_at: int) -> void:
+	var impact := int(row.get("impact_min", 0))
+	var after := impact
+	if row.has("duration_min"):
+		after = impact + int(row["duration_min"])
+	if String(row.get("type", "")) == "severe_thunderstorm":
+		after = maxi(after, impact + report_at)
+	row["resolve_after_min"] = after
+	row["expire_at_min"] = impact + max_active
+
+
+## PA-04 — which in-flight events are ready to close, as `[[uid, outcome], …]`
+## in ascending uid order (the caller resolves them in that order, so two events
+## closing on the same tick close in a canonical one).
+##
+## `busy_uids` is the set of event uids that still have at least one incident
+## open, supplied by the caller. An event whose sink request was REFUSED — an
+## unknown catalog type, an unresolvable target — never enters that set, so it
+## resolves on the first sweep after its impact, which is the honest answer: it
+## produced nothing, so there is nothing to wait for.
+func events_due_for_resolution(now_min: int, busy_uids: Dictionary) -> Array:
+	var out: Array = []
+	for uid in _sorted_keys(active_events):
+		var row: Dictionary = active_events[uid]
+		var impact := int(row["impact_min"])
+		if now_min >= int(row.get("expire_at_min", impact + max_active_min())):
+			out.append([int(uid), OUTCOME_EXPIRED])
+			continue
+		if now_min < int(row.get("resolve_after_min", impact)):
+			continue
+		if busy_uids.has(int(uid)):
+			continue
+		out.append([int(uid), OUTCOME_RESOLVED])
+	return out
 
 
 func _inject_weather(row: Dictionary, director_rng: RandomNumberGenerator) -> void:
@@ -659,6 +881,8 @@ func _fire_due_events(inputs: DirectorInputs) -> void:
 
 func _start_event(row: Dictionary, inputs: DirectorInputs) -> void:
 	var uid := int(row["event_uid"])
+	if not row.has("expire_at_min"):
+		_stamp_resolution(row)  # PA-04: a pre-v8 row arriving from a save
 	active_events[uid] = row
 	_emit(&"director_event_started", _row_payload(row))
 	var target: Dictionary = row.get("target", {})
@@ -672,12 +896,25 @@ func _start_event(row: Dictionary, inputs: DirectorInputs) -> void:
 		storm.begin(uid, float(row["severity_mult"]), float(row.get("intensity", 0.77)),
 				_now_min, int(row.get("duration_min", 120)),
 				maxi(1, inputs.total_response_units), _rng.stream("weather").randf())
+		# PA-26: the warning window's ledger becomes this storm's report line.
+		storm.prep_actions = prep_actions.duplicate() if prep_event_uid == uid else []
 		return
 	# Everything else is one request into doc 06, which decides what it becomes.
-	if sink != null:
-		sink.request_incident(StringName(String(row["type"])), {
+	#
+	# PA-25 / A91-D-80: the request carries doc 06's OWN type id, not this
+	# catalog's. Four of the eight rows are named for the drama and not for the
+	# type — a `traffic_pileup` is a `traffic_accident` — and the sink refuses
+	# what it cannot find, so before this column existed those four picks were
+	# silently free of consequence and expensive in TP. A row with no
+	# `incident_kind` has no incident half at all (the weather rows), and asking
+	# for one would be the same dead request in a different costume.
+	var kind_row: Dictionary = tables.incident_kind(String(row["type"]))
+	if sink != null and not kind_row.is_empty():
+		sink.request_incident(StringName(String(kind_row["type"])), {
 			"event_uid": uid, "ref": ref, "domain": String(target.get("domain", "")),
 			"district_id": String(target.get("district_id", "")),
+			"subtype": String(kind_row.get("subtype", "")),
+			"candidate_source": String(kind_row.get("source", "")),
 			"severity_mult": float(row["severity_mult"]),
 			"hazard_tier": int(row["hazard_tier"]),
 			"condition_floor": condition_floor_for(target),
@@ -695,14 +932,27 @@ func on_incident_resolved(_incident_id: int, event_uid: int) -> void:
 
 ## Doc 06 tells us when an event's spawned incidents are all cleared. F2's
 ## class cooldown starts HERE, at resolution — not at the start.
-func on_event_resolved(event_uid: int, outcome: String = "resolved") -> void:
+##
+## PA-04: `now_min` is the caller's clock. Resolution happens at REPORT, every
+## tick, while `_now_min` is only refreshed on the hourly DIRECTOR phase — so
+## without it F2's from-resolution cooldowns would be quantised to the last hour
+## boundary and could read up to 59 minutes early. `-1` keeps the old behaviour
+## for the tests and tools that call this by hand. It only ever moves the clock
+## FORWARD: `_now_min` is monotone by construction everywhere else in this file.
+func on_event_resolved(event_uid: int, outcome: String = OUTCOME_RESOLVED,
+		now_min: int = -1) -> void:
 	if not active_events.has(event_uid):
 		return
+	if now_min >= 0:
+		_now_min = maxi(_now_min, now_min)
 	var row: Dictionary = active_events[event_uid]
 	active_events.erase(event_uid)
 	if String(row["type"]) == "severe_thunderstorm":
 		_clear_load_shed()  # the shed lasts the storm's duration, not forever
 		storm.active = false
+		# PA-26: one storm's preparation is never counted toward the next one's.
+		prep_actions = []
+		prep_event_uid = -1
 	last_event_end_min[String(row["type"])] = _now_min
 	if String(row["class"]) == DirectorTables.CLASS_MAJOR:
 		last_major_end_min = _now_min
@@ -810,6 +1060,8 @@ func serialize() -> Dictionary:
 		"offline_hazard_used": offline_hazard_used,
 		"post_event_bleed_until_min": post_event_bleed_until_min,
 		"debt_since_min": debt_since_min,
+		"prep_actions": prep_actions.duplicate(),
+		"prep_event_uid": prep_event_uid,
 		"active_storm": storm.serialize() if storm.active else null,
 	}
 
@@ -854,12 +1106,21 @@ func deserialize(data: Dictionary) -> void:
 	var raw_recovery: Dictionary = data.get("recovery_mode", {"active": false, "until_min": -1})
 	recovery_mode = {"active": bool(raw_recovery.get("active", false)),
 			"until_min": int(raw_recovery.get("until_min", -1))}
+	# PA-04: a body written before rung 8 carries rows with no resolution stamp.
+	# `CitySim._v7_to_v8` writes one in on the way past, and this is the second
+	# belt: a fragment restored without the ladder (a fixture, a test, a tool)
+	# still gets an event that can end.
 	scheduled.clear()
 	for raw in data.get("scheduled", []):
-		scheduled.append(_normalize_row(raw))
+		var pending := _normalize_row(raw)
+		if not pending.has("expire_at_min"):
+			_stamp_resolution(pending)
+		scheduled.append(pending)
 	active_events.clear()
 	for raw in data.get("active_events", []):
 		var row := _normalize_row(raw)
+		if not row.has("expire_at_min"):
+			_stamp_resolution(row)
 		active_events[int(row["event_uid"])] = row
 	pop_peak_7d = int(data.get("pop_peak_7d", 0))
 	_pop_history.clear()
@@ -868,6 +1129,10 @@ func deserialize(data: Dictionary) -> void:
 	offline_hazard_used = bool(data.get("offline_hazard_used", false))
 	post_event_bleed_until_min = int(data.get("post_event_bleed_until_min", -1))
 	debt_since_min = int(data.get("debt_since_min", -1))
+	prep_actions = []
+	for action in data.get("prep_actions", []):
+		prep_actions.append(String(action))
+	prep_event_uid = int(data.get("prep_event_uid", -1))
 	var storm_state: Variant = data.get("active_storm", null)
 	if typeof(storm_state) == TYPE_DICTIONARY:
 		storm.deserialize(storm_state)
@@ -878,7 +1143,7 @@ func deserialize(data: Dictionary) -> void:
 static func _normalize_row(raw: Variant) -> Dictionary:
 	var row: Dictionary = (raw as Dictionary).duplicate(true)
 	for key in ["event_uid", "impact_min", "hazard_tier", "tp_cost", "scheduled_min",
-			"warn_lead_min", "duration_min"]:
+			"warn_lead_min", "duration_min", "resolve_after_min", "expire_at_min"]:
 		if row.has(key):
 			row[key] = int(row[key])
 	return row
