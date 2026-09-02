@@ -90,6 +90,69 @@ uniform float band_hi = 0.78;
 uniform vec3 base_albedo: source_color = vec3(0.34, 0.335, 0.325);
 uniform vec3 roof_albedo: source_color = vec3(0.26, 0.258, 0.252);
 uniform vec3 site_albedo: source_color = vec3(0.38, 0.372, 0.355);
+
+// ═════════ BEGIN §2.6b — the tier boundary, WAVE 17 (report 98 RR-98) ══════
+// **The hard line at `medium_max_m`, and it was a COLOUR-SPACE bug wearing an
+// art bug's clothes.** The two `source_color` uniforms above are ONE neutral
+// grey for the whole city, and a `source_color` uniform IS sRGB-decoded by the
+// engine — measured, not assumed: the same 0.5 in a plain `vec3` and in a
+// `source_color` `vec3` renders back 0.7373 and 0.4980, and 0.4980 is
+// sRGB(0.214). So what this shader actually painted was
+//
+//     base_albedo 0.340/0.335/0.325 sRGB  ->  linear (0.0946, 0.0918, 0.0862)
+//     roof_albedo 0.260/0.258/0.252 sRGB  ->  linear (0.0550, 0.0541, 0.0517)
+//
+// — luma 0.092 and 0.054, against a tier in front of it painting
+// `mix(base_albedo, facade_tex, tex_mix) * v_color`, i.e. the MEAN OF ITS
+// FAÇADE PAGE. Measured over the shipped pages, as the linear this shader
+// would see:
+//
+//     family      wall page  luma    roof page  luma    vs the neutral pair
+//     residential brick      0.164   gravel     0.159   wall 1.8x / roof 2.9x too DARK
+//     commercial  curtain    0.146   mech       0.257   wall 1.6x / roof 4.8x too DARK
+//     industrial  utility    0.207   metal      0.216   wall 2.3x / roof 4.0x too DARK
+//     tech        techpanel  0.054   metal      0.216   wall 1.7x too BRIGHT
+//     civic       civic      0.296   gravel     0.159   wall 3.2x / roof 2.9x too DARK
+//
+// So the far city was not "grey" for want of a texture. It was grey AND, for
+// four families out of five, **two to five times too dark** — while being
+// 1.7x too BRIGHT for the one family whose page is genuinely near-black. At Z2
+// the boundary circle crosses the middle of the frame, which is why it read as
+// a line drawn across the skyline rather than as haze.
+//
+// **The fix is agreement, and it needs no fudge.** `CityView` measures each
+// page the near tier wears — an 8x8 Lanczos reduction, which is what that page
+// looks like once it is a few pixels wide — and hands the five wall/roof pairs
+// over IN sRGB, so the engine performs the one and only decode. Measured over
+// the 420 m band at Z2 (hour 13, balanced, 22.9 % of the frame), mean linear
+// luma against the same band drawn MEDIUM: **-31.1 % before, +1.6 % after**,
+// and per-pixel chroma -13.1 % before, +6.3 % after. The gain that would
+// level-match the band fits at **0.96**, i.e. identity, so nothing is authored
+// — `far_albedo_gain` below stays 1.0 and exists only as a sweep lever.
+//
+// **Measured, never authored, and that is the ruling.** A hand-written far
+// palette is a second copy of the art; this one is read off the page the near
+// tier actually wears, so `gen_textures.py` can retint the city and the far
+// tier follows on the next boot with nothing to keep in sync.
+//
+// **A distance fade was rejected**: `Environment.fog_aerial_perspective`
+// already greys the far city with range (§2.8), and a second fade in the
+// albedo greys the skyline twice — the shot §1's "show the tall skyline" is
+// about.
+//
+// `far_family_mix` is 0 by default, which reproduces the pre-Wave-17 frame
+// exactly. `CityView` raises it to 1 only when all five families resolved to a
+// page; a clone that has not run `gen_textures.py` keeps the neutral pair and
+// still boots (the same contract `tex_mix` has on the near shader).
+uniform vec3 far_wall_albedo[5]: source_color;
+uniform vec3 far_roof_albedo[5]: source_color;
+uniform float far_family_mix = 0.0;
+// The sweep lever the level was CHECKED with, at identity because the check
+// said identity. `tools/profile_frame.gd --far-gain=G` is its only caller; it
+// is deliberately not in `data/render.json`, because a constant of 1.0 that
+// nothing varies is the very thing §2.13b spent this wave deleting.
+uniform float far_albedo_gain = 1.0;
+// ═════════ END §2.6b ═══════════════════════════════════════════════════════
 uniform vec3 soot_color: source_color = vec3(0.278, 0.263, 0.239);
 uniform float wet_albedo_mult = 0.85;
 uniform float wet_roughness = 0.42;
@@ -202,7 +265,14 @@ void fragment() {
 	vec3 window_color = window_colors[family];
 	EMISSION = window_color * lit * vary * nits * (1.0 - 0.6 * v_custom.g);
 
-	ALBEDO = mix(base_albedo, roof_albedo, is_roof);
+	// §2.6b: the family's own pair, blended in from the neutral pair. Both
+	// arms are uniform reads and the mix weight is a uniform, so this is two
+	// ALU on a tier whose whole point is that it costs nothing.
+	vec3 wall_c = mix(base_albedo, far_wall_albedo[family] * far_albedo_gain,
+			far_family_mix);
+	vec3 roof_c = mix(roof_albedo, far_roof_albedo[family] * far_albedo_gain,
+			far_family_mix);
+	ALBEDO = mix(wall_c, roof_c, is_roof);
 	float tint = (variant / 15.0 - 0.5) * 0.16;
 	ALBEDO *= vec3(1.0 + tint, 1.0 + tint * 0.8, 1.0 + tint * 0.55);
 	ALBEDO *= mix(vec3(1.0), soot_color, v_custom.g * 0.8);

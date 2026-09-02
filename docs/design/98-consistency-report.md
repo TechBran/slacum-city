@@ -3542,9 +3542,16 @@ decode either. It is not fixed here for one reason: several of those constants
 are used BOTH as vertex colours and as instance tints (`GRAVEL` is the dump
 truck's load and the yard's gravel heap), so converting the constant would move
 both at once and the mesh half has never been judged against a picture.
-**awaiting_consumer:** the next render pass, over
+~~**awaiting_consumer:** the next render pass, over
 `game/render/construction_rig_mesh.gd`, `game/render/vehicle_mesh.gd` and
-`game/render/street_life_mesh.gd`, with a screenshot per mesh family.
+`game/render/street_life_mesh.gd`, with a screenshot per mesh family.~~
+**CONSUMED 2026-09-01 by RR-95** (§38), which is the named pass over the three
+named files with the screenshot pass the filing asked for. One correction to
+this deferral's own text is recorded there: `GRAVEL` as "the dump truck's load"
+is a DEAD vertex colour — the load carries `SURF_STOCK` and the fragment stage
+replaces it with the `stock_color` uniform, which is `source_color` and
+therefore already decoded. The heap half of that dual use is real and is exactly
+why the conversion went at the WRITE and not at the constant.
 
 **Applied:** `game/render/vehicle_view.gd` (`_paint_for` + the `CIV_PAINT`
 re-judgement), `game/render/construction_activity.gd` (`_plant_paint`,
@@ -4068,3 +4075,40 @@ separately.
 | Cold launch never runs the offline catch-up | **P0** | RR-132 | `tests/test_cold_launch_catchup.gd` (10 tests) |
 | Backgrounding mid-catch-up drains synchronously; the pause overwrites the report's 'before' | P1 | RR-134 | `tests/test_catchup_resume.gd` (13 tests) |
 | Doc 08 §2.12's `max_coarse_hours` not implemented | P1 | RR-133 | `tests/test_catchup_clamp.gd` (15 tests) |
+
+---
+
+## 38. WAVE 17 — the preset that did nothing, the linear meshes, the building shadow and the far line (binding)
+
+*Render/art lane, forked off the Wave-17 integration (`a5d9021`), 2026-09-02.
+**Hash-neutral throughout**, proved on both cities at the fork and again at the
+end: nothing in this pass touches `sim/`, and its only `data/` edit is
+`data/render.json`, which no file under `sim/` opens.*
+
+*Two earlier attempts at this task died mid-build on the weekly usage limit,
+each leaving an unverified diff with no suite run. This section is the third.
+Where it inherits a predecessor's code it re-ran the command; where a number
+here differs from a predecessor's draft, this one was measured.*
+
+| `profile_sim --hash-only` | at the fork | after this pass |
+|---|---|---|
+| starter, coarse 24 h | `a27da24aaf6e9663…` | *(filled at the end)* |
+| starter, fine 2.0 h | `7745cb25e55ff65c…` | *(filled at the end)* |
+| bench, coarse 24 h | `7c99720f5ff14553…` | *(filled at the end)* |
+| bench, fine 2.0 h | `d8e8889681b23297…` | *(filled at the end)* |
+
+### RR-95 — a vertex colour takes no decode either, and the constant is the wrong place to fix it (closes `A91-D-36`)
+
+*(drafted; measured content lands with item 3)*
+
+### RR-96 — the layer §2.11 has been owed since the preset table was written
+
+*(drafted; measured content lands with item 4)*
+
+### RR-97 — the lever is the ROAD, and the arm ships without the ruling
+
+*(drafted; measured content lands with item 6)*
+
+### RR-98 — an authored number nothing reads is not a setting, it is a comment
+
+*(drafted; measured content lands with items 1, 2 and 5)*

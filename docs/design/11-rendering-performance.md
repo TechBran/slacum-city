@@ -57,9 +57,14 @@ Chunk_<bx>_<by> (ChunkView)
 ├── Buildings
 │   ├── MM_<archetype>_<level> (MultiMeshInstance3D)  NEAR/MEDIUM only
 │   └── MM_far                 (MultiMeshInstance3D)  FAR only, one for the whole chunk
-├── Props: MM_pole, MM_lamp, MM_pool, MM_wetsmear (MultiMeshInstance3D)
-└── MM_blob  (MultiMeshInstance3D)  fake blob shadows, Performance preset only
+└── Props: MM_pole, MM_lamp, MM_pool, MM_wetsmear (MultiMeshInstance3D)
 ```
+
+`MM_blob` — §2.11's per-building contact shadow — used to be listed here, one per
+chunk. **It is ONE node for the whole city and it is a child of `CityView`, not of
+a chunk** (shipped 2026-09-01, report 98 RR-96): it has no per-chunk state worth
+culling on, and per-chunk buckets measured 36 draw calls at Z0 on the benchmark
+city against Performance's 180-call budget. §2.11 has the argument and the A/B.
 
 **Rule: LOD is per chunk, not per building.** A chunk is 128 m; the narrowest LOD band is 150 m. Per-building LOD would triple MultiMesh count for no visible gain. This single decision is what keeps draw calls tractable (§2.13 worked example).
 
@@ -108,6 +113,47 @@ Roads were one MultiMesh of untextured 8 m slabs. The playtest verdict on the Fo
 **Zero new texture memory.** Both shaders sample the existing generated `ground_asphalt` / `ground_pavement` pages through `load()`, which is resource-cached, so they share the textures `GroundSurface` already has resident. Everything else — wear, patches, seams, wheel paths, joints, and every line of paint — is procedural.
 
 **Night** (report NIGHT-1, unchanged calibration): the carriageway inherits the ROAD row of `data/render.json.ground` verbatim (`road_night_albedo_lift` 0.34, `road_night_glow` 0.048, `night_glow_wet_mult` 0.55). The footway takes its own row between terrain and road (0.30 / 0.042) and just under the road's on purpose. Matching the terrain leaves a black gap either side of a lit carriageway — measured at the first draft's 0.22 / 0.030, where the footway read darker than the lot behind it at 03:00. Matching the road erases the kerb line, which is the edge this whole pass exists to draw. **The gap between the two is the read.** Paint takes a third: `marking_night_glow` 0.075, which is the **retroreflective** read, and at 03:00 it is the strongest single cue that a dark band is a STREET.
+
+**The carriageway tint is an A/B ARM now, and the ruling it feeds is DEVICE-GATED and NOT TAKEN** (2026-09-01, report 98 RR-97, doc 93 §X3). `RoadSurfaceView.set_tint_gain(k)` multiplies the authored `tint` `#57575F` in LINEAR and re-encodes, so `k` is an exposure step rather than a hex nudge; `k = 1.0` is byte-identical to the shipped street and is the default on every path. Nothing in `sim/`, no preset, no governor rung and no settings row touches it. It exists because §2.17b's street-body blob shadow measures near-invisible **on the carriageway** and the alpha is not the lever:
+
+| bench city, Z0, Balanced, pinned | pixels the tint moved | mean \|Δ\| | peak | mean sRGB8 of those pixels, `1.0 → 1.5` | what a 0.50 `blend_mix` disc takes off them (½ × value) |
+|---|---|---|---|---|---|
+| hour 13 | 1,638,794 of 2,073,600 (**79.0 %** of the frame) | 4.3 | 9 | 51.0 → 54.5, **+6.9 %** | 25.5 → 27.3 of 255 |
+| hour 21 | 1,340,009 (64.6 %) | 1.9 | 5 | 41.4 → 42.1, **+1.7 %** | 20.7 → 21.1 of 255 |
+
+**A 1.5× lift of the tint buys under two grey levels on that shadow while moving four fifths of every street frame in the city — by day.** The two arms differ in one uniform, so "the pixels the tint moved" are the carriageway and footway by construction, and their mean is the shaded carriageway's, which is most of a Z0 frame. **At night it buys nothing at all** (+1.7 %, peak 5/255), because after dark the road's value is `road_night_albedo_lift` and `road_night_glow` in the `ground` block and not this tint — so the night arm of this question is a different pair of numbers, and the A/B above cannot answer it. Both facts are why the decision is the lead's on a device and not a render branch's on a desktop.
+
+**The exact commands, both ends.** Desktop, the pair the table above was measured from:
+
+```bash
+# The two arms. Identical but for K; `--anim-step` pins the three animated
+# layers so the pixel diff is the tint and not the frame rate.
+for K in 1.0 1.5; do
+  ~/.local/bin/godot --path "/home/bbx/Slacum City game" \
+    -s res://tools/profile_frame.gd -- --preset=balanced --poses=z0 \
+    --hour=13 --focus=48,48 --street-life=6 --street-gm=600 \
+    --anim-step=0.016667 --warmup=60 --frames=30 --road-tint=$K \
+    --shots=/tmp/tint$K_day
+done
+# …and the same two at --hour=21, which is the arm the table says the tint
+# cannot reach: 0.0182 -> 0.0185 linear.
+```
+
+Device (the Fold, where the look decision actually belongs — a 6.2 mm-per-degree
+cover screen at arm's length is not a 27" monitor). `game/main.gd` already has
+the branch shape for this in `_apply_render_ab_args`, beside `--road-detail=`
+and `--pad-shadows=`; **the one-line snippet is in the Wave-17 branch report**:
+
+```bash
+adb shell am start -n com.slacum.city/com.godot.game.GodotApp \
+  --es args "--preset=balanced --zoom=0.0 --road-tint=1.5"
+```
+
+**What a session has to answer, and it is not "is the shadow more visible".** It
+is: *does a street one step lighter still read as ASPHALT at Z0, and does the
+night street still read as a lit band against a dark lot?* If either answer is
+no, the shadow keeps its 15/255 and the question moves to a per-surface
+`body_alpha`, which is a different change in a different file.
 
 #### 2.1.2a `rebuild()` is a dirty-tile diff — **shipped 2026-08-20** (closes §2.1.2's open question 2)
 
@@ -737,6 +783,8 @@ Network lines (power feeders, water mains, congestion) draw as **one `ImmediateM
 
 **Vehicle shadows are off on mobile (`vehicles.cast_shadows = false`, overridden per preset by `vehicle_shadows`).** A vehicle layer's custom AABB is world-sized — it has to be, because instances are written straight into the MultiMesh buffer and never update the auto AABB — so **every** body layer intersects **every** directional shadow split and is re-drawn once per split whether or not a car is standing in it. At Balanced (2 splits) that is 7 extra draw calls for shadows nobody can see from 87 m up; at High (4 splits) it is 14, which High can afford and takes. The nine remaining `VehicleView` tuning constants (`road_top_m`, `lane_offset_m`, `fade_seconds`, `interp_blend_seconds`, `headlight_cone_m`, `headlight_cone_energy`, `headlight_color`, `lightbar_amber`, `lightbar_amber_pale`) are in `data/render.json`'s `vehicles` block at the same values, with the script constants kept as the fallback.
 
+**Every colour in this renderer is now decoded exactly once, and the LAST place that was not true was the VERTEX** (2026-09-01, report 98 RR-95, doc 93 §X1, closing doc 91 `A91-D-36`'s `awaiting_consumer` half). RR-91 fixed the INSTANCE half — a MultiMesh instance colour takes no sRGB decode, so `VehicleView._paint_for` and `ConstructionActivity._plant_paint` were rendering the whole fleet and every machine about two stops light — and filed the vertex half, because a vertex colour takes no decode either and several constants are used both ways. The seam is now one `srgb_to_linear` in `ConstructionRigMesh._push` (which `StreetLifeMesh` inherits), one in `VehicleMesh._push`, and **one in `ConstructionSiteView.PropMesh._push`, which the hoarding, the crane, the scaffold, the skips AND doc 04's transformer pad are all built with** (`power_pad.gdshader` reads `COLOR.rgb` raw, and a `StandardMaterial3D` with the project's default `vertex_color_is_srgb = false` does too): **at build time, once per vertex, never per frame, and never at the CONSTANT** — `SAND` / `GRAVEL` / `REBAR` are read as instance tints by `ConstructionActivity._stock_linear`, which already decodes them, and converting the constant would decode them twice. The grep that closed the vertex half also found **three instance seams RR-91's closing note had missed** — the hoarding panels and posts (`fence_paint` / `post_paint`), doc 12 §2.5's traffic band (`RoadOverlayView._build_band_paint`, now the legend chip's colour by construction) and the road-drawing ghost (`PathGhostView.tint_for`, filed with a named consumer, report 98 RR-95 (continued)) — and one builder that is correctly left alone: `CobraHeadMesh`'s vertex colour is a grime ramp, not a hex. **Two hexes moved with the pictures and the rest did not**: `DARK` `#1D2022` → `#424548` and `TYRE` `#161618` → `#333336`, in both mesh files, because decoded from their authored values they land at linear 0.0125 and 0.0069 — **below the 0.02-linear shaded carriageway**, so an excavator's track band stopped being an object on the road and became a hole cut in it, and a tyre went blacker than fresh asphalt and took the `dark` atlas cell's tread ribs with it. §2.16's plant, §2.12's fleet, §2.17's bodies, the site props and the pads were all re-judged in one screenshot pass (report 98 RR-95 have the census) and the rest of the palette survives it — the correction is a darkening and a darkening is what the fix is FOR.
+
 **Emergency/service vehicles — individual nodes, real routing** (constitution §8). **Doc 06** (incidents, dispatch & fleets) emits `vehicle_state` at 4 Hz, carrying explicit `speed` and `heading` fields (report C-67, ruled). Pooled `VehicleView` = `Body` (MeshInstance3D, ≤ 180 tris, dept colour) + `LightBar` (2 emissive quads) + `Beacon` (`OmniLight3D`, only while checked out from the emergency light budget).
 
 Light bar: `EMISSION = mix(red, blue, step(0.5, fract(sc_time*2.2 + phase))) * (lightbar ? 3.5 : 0.0)` — 2.2 Hz, phase-offset per vehicle so a convoy does not strobe in lockstep.
@@ -762,9 +810,21 @@ Light bar: `EMISSION = mix(red, blue, step(0.5, fract(sc_time*2.2 + phase))) * (
 | Reflection probe / Moon / Adjustments | no / no / no | no / yes / yes | yes / yes / yes |
 | VRAM / PSS budget | 220 / 700 MB | 320 / 900 MB | 420 / 1,300 MB |
 
-**Performance replaces shadows with blob shadows:** `MM_blob`, one dark radial-gradient quad per building at `y = 0.04`, footprint × 1.15, alpha `0.35·(1 − sc_night·0.6)`. One extra draw call per NEAR/MEDIUM chunk, and the difference between "buildings sit on the ground" and "buildings float".
+**Performance replaces shadows with blob shadows:** `MM_blob`, one dark quad per building at `y = 0.04`, footprint × 1.15, alpha `0.35·(1 − sc_night·0.6)`. The difference between "buildings sit on the ground" and "buildings float". **SHIPPED 2026-09-01** (`game/render/city_view.gd`, `game/shaders/blob_shadow.gdshader`; report 98 RR-96, doc 93 §X2) — and three clauses of the sentence above it are corrected by the build:
 
-**The same block has a second consumer, on a different gate.** §2.17's street bodies read the LOOK keys (`y_m`, `footprint_scale`, `body_alpha`, `night_fade`, `body_m`, `body_lift_m`) and take their on/off from the preset's `vehicle_shadows` **inverted** — blob when real is off — rather than from `enabled_presets`, which stays the building decal's alone. That is not an inconsistency, it is the rule: a body is a dynamic object, so it takes the dynamic-shadow knob, and one knob deciding both is what makes "no real shadow and no blob either" unreachable. That state is what shipped in Wave 14 and it is why every crook at Z0 read as a sticker printed on the pavement (report 98 RR-90). The `MM_blob` building layer itself is still unbuilt; `enabled_presets` is waiting for it.
+* **ONE draw call city-wide, not "one per NEAR/MEDIUM chunk".** The per-chunk shape this paragraph priced was built first, because that is what it asked for, and measured: Performance's chunk census on the benchmark city is not the worked example's 3 NEAR + 3 MEDIUM, it is **12 NEAR + 24 MEDIUM at Z0**, so the layer cost **36 / 36 / 16 draw calls at Z0 / Z1 / Z2** against a budget the city is already over. City-wide costs **one, at every pose**. This is §2.1.2's road-surface ruling on a second layer: a layer with no per-chunk state worth culling on buys nothing from per-chunk buckets and pays a call each.
+* **Every building is in the buffer, whatever tier its chunk is.** That makes the buffer a function of the ROSTER rather than of the camera: scrubbing across a tier boundary rewrites nothing, and no block drops its shadow as it crosses one. The far field costs 2 triangles and a sub-pixel quad per building.
+* **The falloff is a BOX, not a radial gradient.** A radial gradient under a rectangular footprint leaves the building's four corners unshaded and puts penumbra where the wall is. The mask is the Chebyshev distance `max(|u|,|v|)` and `blob_core` is **derived** as `1 / footprint_scale`, so the solid region is exactly the footprint and the ramp is exactly the 15 % overhang — the overhang IS the penumbra and there is no second number to tune.
+
+**Measured, bench city, Performance, hour 13, `--blob=0|1`:** `dc` **229 → 230 / 225 → 226 / 188 → 189** at Z0 / Z1 / Z2; primitives **466,282 → 469,282 / 482,464 → 485,464 / 248,532 → 251,532**, i.e. **+3,000** at every pose (1,500 buildings × 2 triangles); the fork (no blob code) and `--blob=0` agree to the call and the primitive. `rs gpu` is **not resolved here**: the two no-blob arms differ from each other by 0.55 ms at Z0 under sibling load, more than the `0 → 1` delta — that number belongs to a Fold session. Balanced and High are unchanged **to the draw call and to the primitive** (fork vs branch, 229 / 225 / 188 and the same three primitive counts), because `enabled_presets` names neither. A settled city uploads the buffer **zero** times: it is rebuilt every frame and handed to the server only when it differs (`PackedFloat32Array ==` is a native compare), the same bargain §2.10b's pad buffer strikes.
+
+**Alpha 0.35 verified against pictures, not assumed** (bench city, hour 13, `--focus=52,44`, `--anim-step` pinned so the two arms are comparable pixel for pixel): at **Z0** the pavement at a shopfront corner moves on **1.88 %** of the frame (39,029 px), mean |Δ| 10.2, peak **41/255**, the moved pixels going 72.7 → 63.5 sRGB8; at **Z1** 2.94 %, mean 11.3, peak 43; at **Z2** 3.67 %, mean 11.3, peak **60**. Z2 is where it earns most — a city of flat boxes on a flat plane becomes a city of blocks standing on one.
+
+**The same block has a second consumer, on a different gate.** §2.17's street bodies read the LOOK keys (`y_m`, `footprint_scale`, `body_alpha`, `night_fade`, `body_m`, `body_lift_m`) and take their on/off from the preset's `vehicle_shadows` **inverted** — blob when real is off — rather than from `enabled_presets`, which stays the building decal's alone. That is not an inconsistency, it is the rule: a body is a dynamic object, so it takes the dynamic-shadow knob, and one knob deciding both is what makes "no real shadow and no blob either" unreachable. That state is what shipped in Wave 14 and it is why every crook at Z0 read as a sticker printed on the pavement (report 98 RR-90). ~~The `MM_blob` building layer itself is still unbuilt; `enabled_presets` is waiting for it.~~ **Built 2026-09-01 (RR-96); `enabled_presets` is read by `CityView` and by nothing else, and `body_alpha` / `body_m` / `body_lift_m` are read by `StreetLifeModel` and by nothing else. The two consumers are now both live and the split is enforced by `tests/test_render_polish.gd` section 6 and `tests/test_street_life.gd` section 10.**
+
+**The two decals do NOT share a shader, and that is a decision rather than an accident.** §2.17's blob is a sixth mode on the street fx buffer because it is one of six flat quads a per-frame pool is already writing; §2.11's is its own `blob_shadow.gdshader` because (a) the fx buffer is rewritten every frame for objects that WALK while a building decal moves only when a building does, (b) the fx shader's one unconditional `texture(glyph_page, …)` fetch is right for five of its six modes and would be paid by every fragment of every building decal on the LOWEST tier for nothing, and (c) the two gates differ and sharing a shader would not merge them, only hide the split. The full argument is in that shader's header.
+
+**What §2.11's decal cannot do, measured** (report 98 RR-97): it is `blend_mix`, so it darkens what is behind it by a FRACTION. On the footway that is a 40/255 mark; on the shaded carriageway, which sits near **0.026 linear**, the same alpha is a 15/255 mark. That is the whole of street-polish q4 and §2.1.2's own tint A/B carries it.
 
 **Standing water costs one call, at every pose, in the worst case there is** (§2.9b, shipped 2026-08-20). `--flood=350` against `--flood=0` on the bench city, balanced: `dc` 95→96 / 113→114 / 196→197 at Z0/Z1/Z2, `rs gpu` +0.151 / +0.115 / +0.127 ms, `rs cpu` unmoved. That is 21 flooded land blocks, 1,827 tiles and 3,654 primitives in ONE MultiMesh — the flood field has no larger state, because 350 mm is doc 07's top band and only LOW blocks accumulate. `presets.<name>.flood_detail` is its fragment rung (Performance 0, Balanced 2, High 2) and the three rungs are currently inside each other's measurement noise on desktop; see §2.9b.
 
@@ -867,7 +927,7 @@ area   = 0.5 · (16.1 + 53.9) · 33.1 = 1,159 m² = 0.07 land blocks
 
 At Z0 the camera sees one seventh of one hundredth of a chunk's worth of ground; the footprint straddles at most **4 chunks, all NEAR** (distances 12.5–41.6 m).
 
-**Per-chunk draw calls** (unchanged by the camera ruling): NEAR = 8 building buckets + 2 ground/road + 3 props = **13**; MEDIUM = 6 + 2 + 2 = **10**; FAR = 1 + 1 + 1 = **3**. Performance adds 1 blob-shadow call per NEAR/MEDIUM chunk.
+**Per-chunk draw calls** (unchanged by the camera ruling): NEAR = 8 building buckets + 2 ground/road + 3 props = **13**; MEDIUM = 6 + 2 + 2 = **10**; FAR = 1 + 1 + 1 = **3**. ~~Performance adds 1 blob-shadow call per NEAR/MEDIUM chunk.~~ **Corrected 2026-09-01 (RR-96): Performance adds ONE blob-shadow call for the whole city, not one per chunk** — see §2.11. The correction is worth more than one line, because the arithmetic below is what made the per-chunk shape look affordable: this model spends 3 NEAR + 3 MEDIUM, and the benchmark city at Z0 on Performance has **12 NEAR + 24 MEDIUM**, so a per-chunk layer costs 36 rather than 6. **A per-chunk cost multiplied by a chunk count taken from the model rather than from the census is the failure mode; the census is the number.**
 
 *The `road` half of the per-chunk `ground/road` term is no longer per chunk: §2.1.2 draws the whole city's carriageway and footway in **two** calls, not `2 × chunks`. The model above is therefore conservative by roughly one call per visible chunk — 16 at Z2 — and is left as written because a budget that over-counts is the safe direction and every table below is a measurement, not this derivation.*
 
@@ -917,7 +977,8 @@ Worst alignment still clears 320 with 41% headroom, so no alignment of the 128 m
 
 ```
 Performance (cap 3 NEAR, blob shadows, budget 180)
-  3 NEAR·(13+1 blob) + 3 MEDIUM·(10+1) = 42 + 33 = 75; + veh 6 + wx 1 + sky 4 + UI 25 = 111  ✓
+  3 NEAR·13 + 3 MEDIUM·10 = 39 + 30 = 69; + 1 blob (CITY-WIDE, not per chunk)
+                             + veh 6 + wx 1 + sky 4 + UI 25 = 106                            ✓
 High (cap 8 NEAR, 4 splits, budget 520)
   8·13 = 104 opaque; shadow 8·8·4 = 256; + 41 = 401                                          ✓
 ```
@@ -2226,6 +2287,201 @@ at the end that got faster.
 
 The governor never touches `emissive_*`, `blackout.*`, or `glow_enabled`. **The signature moment is not allowed to degrade.**
 
+
+#### 2.6b The MEDIUM/FAR boundary — the far city was grey because a colour space was applied twice (2026-09-01, report 98 RR-98)
+
+**The finding, and it is a seam bug rather than an art bug.**
+`building_far.gdshader` painted a single neutral pair — `base_albedo (0.34,
+0.335, 0.325)`, `roof_albedo (0.26, 0.258, 0.252)` — for every building beyond
+`medium_max_m`. Both are `source_color` uniforms, **and a `source_color`
+uniform IS sRGB-decoded by the engine.** Measured, not assumed: the same 0.5
+pushed into a plain `vec3` and into a `source_color` `vec3` renders back
+**0.7373** and **0.4980**, and 0.4980 is sRGB(0.214) — the tagged one was
+decoded. So what the far tier actually painted was linear **(0.0946, 0.0918,
+0.0862)** on walls and **(0.0550, 0.0541, 0.0517)** on roofs: luma 0.092 and
+0.054.
+
+The tier immediately in front paints `mix(base_albedo, facade_tex, tex_mix) *
+v_color`, so what a MEDIUM chunk shows at range is **the mean of its family's
+pages**. As the linear the far shader would see:
+
+| family | wall page | luma | roof page | luma | the neutral pair was |
+|---|---|---|---|---|---|
+| residential | `brick` | 0.164 | `gravel` | 0.159 | wall **1.8×**, roof **2.9×** too dark |
+| commercial | `curtain` | 0.146 | `mech` | 0.257 | wall **1.6×**, roof **4.8×** too dark |
+| industrial | `utility` | 0.207 | `metal` | 0.216 | wall **2.3×**, roof **4.0×** too dark |
+| tech | `techpanel` | 0.054 | `metal` | 0.216 | wall **1.7× too BRIGHT** |
+| civic | `civic` | 0.296 | `gravel` | 0.159 | wall **3.2×**, roof **2.9×** too dark |
+
+So the far city was not "grey" for want of a texture. It was grey **and, for
+four families out of five, two to five times too dark** — while being 1.7× too
+*bright* for the one family whose page is genuinely near-black. At Z2 the
+boundary circle crosses the middle of the frame, which is why it read as a line
+drawn across the skyline rather than as haze.
+
+**This is `A91-D-36`'s rule one layer on, and it points the other way.** A
+MultiMesh instance colour is NOT decoded (RR-91); a vertex colour is NOT
+decoded (RR-95); a `source_color` uniform IS. Three seams, two answers, and
+this project has now been bitten in both directions — which is why each one is
+written at the write, in the file that performs it.
+
+**What ships.** `CityView._measure_far_family_albedo()` reduces each page the
+near tier wears to 8×8 with a Lanczos filter — the filtered footprint a
+minified page converges to — averages it **in sRGB**, and hands the five
+wall/roof pairs over undecoded, so the engine performs the one and only decode.
+`far_family_mix` stays 0 on a checkout with no generated pages, the same "runs
+untextured" contract `tex_mix` gives the near tier. **The palette is measured,
+never authored**: a hand-written far palette is a second copy of the art, and
+`gen_textures.py` can retint the city with the far tier following on the next
+boot.
+
+**A distance fade was rejected.** `Environment.fog_aerial_perspective` already
+greys the far city with range (§2.8); a second fade in the albedo greys the
+skyline twice, which is the shot §1's "show the tall skyline" is about.
+
+**Measured**, `profile_frame --preset=balanced --hour=13 --poses=z2
+--resolution=1920x1080 --anim-step=0.016667 --quiet-layers`, over the 420 m
+band (474,980 px, **22.9 % of the frame**) isolated with the new
+`--medium-max=548` arm:
+
+| the band drawn as | mean linear luma | vs target | per-pixel chroma | vs target |
+|---|---|---|---|---|
+| MEDIUM — the target | 0.24742 | — | 15.01 | — |
+| FAR, neutral grey (`--far-family=0`) | 0.17043 | **−31.1 %** | 13.05 | **−13.1 %** |
+| FAR, §2.6b as shipped | **0.25148** | **+1.6 %** | **15.96** | **+6.3 %** |
+
+**No fudge factor is authored.** Sweeping `--far-gain=` at 1.0 and 1.3 fits mean
+luma at `0.1116·g + 0.1399`, so the level-matched gain is **0.96** — identity
+within the noise. `far_albedo_gain` therefore stays at the shader's 1.0 and is
+deliberately **not** in `data/render.json`: a constant of 1.0 that nothing
+varies is exactly the inert knob §2.13b spent this wave deleting. It survives
+only as `profile_frame --far-gain=`'s sweep lever.
+
+*An AO correction was considered and is not needed. The near tier multiplies
+its page by `v_color`, the mesh's baked AO, whose area-weighted mean over all
+66 `*_lod1.res` meshes measures **0.8267**, and the far box carries none. With
+the decode fixed the band lands at +1.6 % without it; applying it would push
+the far tier back under the tier in front of it.*
+
+#### 2.13b The engine-side half of a preset (2026-09-01, report 98 RR-98, doc 93 §X5)
+
+**Until Wave 17, none of it reached the engine.** **Thirteen** keys in every
+preset row of `data/render.json` reached no engine call: `render_scale`,
+`msaa`, `fxaa`, `shadow_splits`, `shadow_atlas`, `shadow_max_m`, `glow_levels`,
+`glow_hdr_threshold_day`, `glow_hdr_threshold_night`, `glow_hdr_scale`,
+`env_adjustments`, `moon`, and `street_lights` (§2.13 ladder rung 4).
+
+**Twelve of the thirteen never appear as a string literal anywhere in `game/` or `ui/`** — which is the only way a JSON preset key can be read, so they were unreachable, not merely unread. The thirteenth, `render_scale`, appears exactly twice, both inside `ui/settings_model.gd`'s comparator: **it sorted the graphics menu rows cheapest-first**, so the number that decided the ORDER of the options was the number that did nothing when you chose one.
+
+And
+`EnvironmentController.setup` read glow from `presets["balanced"]` with the name
+hard-coded, so all three presets wore Balanced's bloom whichever was live.
+
+**The ownership split.** `QualityApplier.resolve(render_data, preset, knobs)`
+answers as **plain data** — no engine object touched, which is what lets every
+preset's whole engine-side answer be asserted headlessly. Two appliers write it:
+
+| what | who writes it | why there |
+|---|---|---|
+| `scaling_3d_scale`, `scaling_3d_mode`, `msaa_3d`, `screen_space_aa` | `QualityApplier.apply_viewport(viewport, q)` | viewport properties |
+| the directional shadow atlas | same, via `RenderingServer.directional_shadow_atlas_set_size` | it is a process-wide global, not a viewport property |
+| glow levels / blend / HDR, `adjustment_enabled`, the sun's split count and distance, the moon | `EnvironmentController.apply_quality(q)` | that file's contract: every write to the `WorldEnvironment`, the sun and the sky belongs to ONE place |
+| `street_lights` | `StreetlightView.set_preset()` → `set_light_budget()` | the only file that draws a streetlight |
+
+**Two keys are held rather than written, and the reason is the same both
+times: they compose with a per-frame value.** `shadows` is ANDed into
+`apply()`'s per-frame `_sun.shadow_enabled` derivation (sun elevation, storm
+cover) — written once at preset time it would be overwritten on the next frame.
+`glow_hdr_threshold` is lerped day-to-night in `apply()` by the same `night`
+scalar everything else uses, because a lit window is ~2.4 nits against a noon
+sky the tonemapper puts near 1.0 and the night threshold applied at midday
+blooms the whole façade.
+
+**`render_scale` is the cheapest millisecond in the project** and shipping it
+inert cost the most: the 2D/UI layer is NOT scaled, so a 0.85 Balanced frame is
+72 % of the fill of the 1.0 one it was actually rendering, with a UI that stays
+sharp either way. It is also §2.13 ladder rung 1 — a Fold that thermally
+throttled used to shed draw distance and then drop a whole preset, having never
+once tried rendering fewer pixels. The governor may only ever LOWER it: a stale
+knob from a preset the player has since raised must not drag the new one up.
+
+**`street_lights` caps the two FILL layers and nothing else** — the ground light
+pool and the §2.9 wet smear — and NOT the pole or the lit billboard. A street
+whose lamp posts come and go with the quality setting is a street that changes
+shape; the billboard IS the lamp being lit and §2.13's protected list exists
+because the night city going dark is job 1, not scenery. 6 / 12 / 20 *per 128 m
+chunk* is a plausible count and is what the table already authored; 20 for a
+whole city never was. It is a `visible_instance_count` window, not an
+`instance_count` change, because raising the latter clears the buffer and every
+governor step would re-upload the city's lamps.
+
+**Rungs 1 and 4 are both resolved here now**, and both may only ever LOWER the
+preset's value: `QualityApplier.resolve()` takes `min(preset, knob)` for
+`render_scale` and for `street_lights`, so a knob left over from a preset the
+player has since raised cannot drag the new one anywhere. That is what makes
+the ladder's descent monotone across a settings change, which is the property
+`PerfGovernor.reset()` assumes and nothing enforced.
+
+**Seven keys were DELETED rather than wired**, because no engine call could ever
+have taken them, and the FORBIDDEN_KEYS-style guard
+`test_the_seven_deleted_keys_stay_deleted` keeps them out:
+
+| deleted | why it could never work |
+|---|---|
+| `street_light_radius_m` | the OmniLight pool §2.10 promised was never built; the billboard-and-decal rig replaced it |
+| `reflection_probe`, `probe_size_m`, `probe_move_refresh_m` | no `ReflectionProbe` exists, and `test_water_has_two_octaves_and_no_reflection_probe` is the standing ruling that one is not coming |
+| `snow`, `turbulence` | `WeatherFX` has a rain bed and a splash bed; there is no snow system and no turbulence flag |
+| `civ_headlights` | duplicates a cap `vehicles.headlight_*` already owns |
+
+**Eight remaining unread keys are BUDGETS, not knobs**, and were kept and made
+CHECKED instead: `profile_frame`'s `BUDGETS` line gates `gpu_budget_ms`,
+`cpu_budget_ms`, `chunk_budget`, `near_chunk_max` and `vram_budget_mb` per pose
+and prints `OVER` with the figure; `draw_call_budget` and `instance_budget` were
+already gated there and in `test_bench_city.gd`; `pss_budget_mb` is an Android
+figure whose consumer is `tools/perf_rows.py`. Nothing applies a budget — but
+something must check one, and deleting them would have thrown away the only
+published statement of what a preset may cost.
+
+**Measured**, bench city, Z2, hour 13, 1920×1080, each preset run twice — the
+second with `--no-quality`, which reproduces every §2.13 row published before
+this wave because before this wave nothing applied the keys:
+
+| preset | 3D framebuffer | dc | prims | measured VRAM | `rs gpu` applied | `rs gpu` `--no-quality` |
+|---|---|---|---|---|---|---|
+| performance | 1344×756, FXAA, no shadow | 184 | 239,782 | **74 MB** | 0.824 / 0.825 ms | 1.883 / 1.602 ms |
+| balanced | 1632×918, MSAA 2× | 183 | 237,058 | **123 MB** | 1.430 / 1.395 ms | 2.374 / 1.642 ms |
+| high | 1920×1080, MSAA 2×, 4 splits, 180 m | **186** | **310,948** | **190 MB** | 1.824 / 1.769 ms | 1.675 / 1.627 ms |
+
+**Two independent runs are given for `rs gpu` because it is the one column that
+moves.** These were measured on a workstation running three sibling suites, and
+GPU time under that contention is worth a direction, not a decimal:
+Performance's frame is **48–56 % cheaper**, Balanced's **15–40 %**, and High's
+**9 % dearer** — the sign is stable across both runs and is the claim. The
+columns to the left of it are deterministic and are the harder evidence: **VRAM
+was flat at 125 MB across all three presets before this wave** and now spreads
+74 / 123 / 190 MB with the shadow atlas and MSAA buffers each one asks for, and
+High's primitive count rises 237,076 → **310,948 (+31 %)** with its draw calls
+183 → 186 because it finally renders the four shadow splits and the 180 m
+shadow distance it authors. **High costs more than Balanced now, which is the
+point of it.**
+
+**The `QUALITY` line reads back off the live objects** — `root.scaling_3d_scale`,
+`root.msaa_3d`, the sun's `directional_shadow_mode`, the `Environment`'s
+`adjustment_enabled` — and not off `resolve()`. Printing the resolver's own
+answer would prove the resolver runs; the claim that needed proving is that the
+ENGINE took the value, which is the exact claim these keys failed for three
+waves.
+
+> **OPEN — `performance` does not meet its own `chunk_budget` at Z2.** The new
+> gate reports `OVER: z2 chunks 36>24` on the bench city (24 authored, 36 drawn;
+> `near_chunk_max: 3` is met, at 0). Either the budget is wrong for a 900 m
+> `far_cull_m` or the tier assignment is. Filed rather than adjusted, because
+> changing a published budget to match a measurement is how a budget stops
+> meaning anything — and because the number was invisible until this wave gated
+> it. *Re-open trigger: `profile_frame --preset=performance --poses=z0,z1,z2`;
+> the item closes when the census fits the budget or the budget is re-derived
+> from §2.13's chunk arithmetic the way `_z2_derivation` was.*
+
 ### 2.14 Placeholder-art pipeline: procedural gray-box
 
 **The tool.** `tools/gen_graybox.gd`, `@tool`, runnable headless:
@@ -2796,6 +3052,17 @@ claim nobody re-checks.
 | `--traffic=N` / `--units=N` | stands vehicles on the street with **no UI layer in the frame**; ids are solved so the run walks the whole civilian palette once before repeating, so a screenshot of it is a contact sheet |
 | `--street-gm=M` | PINS the wander clock, which is what makes a street-life screenshot A/B-able: free-running, two runs put the bodies in different parts of their beat and a pixel diff measures the frame rate |
 | `--street-shot-lag=N` | collects the whole roster N frames before the capture, so `--shots` lands on a chosen moment of the leaving animation — the instrument the flee A/B was taken with |
+
+#### 2.17c WAVE 17 — three more flags, and the one that makes a picture A/B legal at all (2026-09-01)
+
+| flag | what it buys |
+|---|---|
+| `--anim-step=S` | hands the three layers that keep their OWN `anim_time` — `VehicleView`, `ConstructionVehicleView`, `StreetLifeView` — a FIXED per-frame delta, so their clocks after N frames are exactly `N·S` and two runs of one command are comparable pixel for pixel. **`--street-gm` pinned the wander and NOT `anim_time`, and nothing pinned the other two at all**: two identical free-running runs of the layered Z1 command differ on **0.28 % of the frame — 5,741 px, mean \|Δ\| 2.6, peak 154** — which is the 2.2 Hz light bar and the beacon sweep, and a peak of 154 on a floor that moves every run is enough to swallow an A/B whose whole change is 1–3 % of the frame. Pinned, two runs are **bit-identical — 0 of 2,073,600 pixels, at Z0 and at Z1.** Report 98 RR-95. Every published TIMING row was measured free-running and stays that way; this is a picture instrument |
+| `--no-lod` | draws EVERY chunk at LOD0 (`CityView.lod_enabled = false`), the showcase's flag of the same name. The reference arm of the LOD-pop sweep: at Z1 the shipped ladder and this arm are **bit-identical** (every chunk in a Z1 frame is inside the 150 m NEAR band); at Z2 the FAR box differs on 25.6 % of the frame, which is §2.5's far tier by design. Report 98 §38, the visual-bar sweep |
+| `--blob=0\|1` | forces §2.11's building decal on or off regardless of `enabled_presets`, the same shape `--pad-shadows` has. The two arms differ in nothing else, so the `dc`, `prims` and `rs gpu` deltas ARE the layer |
+| `--road-tint=K` | multiplies §2.1.2's carriageway tint by K in LINEAR and changes nothing else. `1.0` is byte-identical to a run without the flag. The arm behind the device-gated carriageway question, §2.1.2 |
+
+`profile_frame` also prints a **BLOB SHADOWS** line on every run now, on or off, for the reason RR-83 gave: "zero on the other two presets" is half the claim and an unprinted half is a half nobody re-checks.
 
 ## 3. Data Schema
 

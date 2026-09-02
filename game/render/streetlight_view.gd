@@ -3,7 +3,15 @@ extends Node3D
 ## Streetlights without dynamic lights (doc 11 §2.10): per-chunk MultiMeshes
 ## for poles, lamp billboards, ground light pools and the §2.9 wet smears. Lit
 ## state comes from the RenderStateModel's per-lamp ramps (blackout-aware);
-## this view only uploads. The OmniLight pool arrives with the perf pass.
+## this view only uploads.
+##
+## **The OmniLight pool is not coming, and Wave 17 stopped saying it was.** The
+## line that stood here for four waves ("the OmniLight pool arrives with the
+## perf pass") is why §2.13's `street_lights` and `street_light_radius_m` sat
+## in every preset row with no reader: they describe a pool of real lights that
+## the billboard-and-decal rig replaced and made unnecessary. The radius key is
+## deleted; `street_lights` now means something this file can actually do — see
+## `set_light_budget()` (report 98 RR-98).
 ##
 ## §2.10.1 changed two things about the geometry and nothing about the tuned
 ## billboard/pool/smear system above them:
@@ -63,7 +71,6 @@ var last_diff: Dictionary = {"added": 0, "removed": 0, "moved": 0, "kept": 0}
 var _anchor_of: Dictionary = {}
 var _lamp_ids_by_chunk: Dictionary = {}  # Vector2i -> Array[int]
 var _lamp_nodes: Dictionary = {}  # Vector2i -> {lamp, pool, smear}
-var _smear_nodes: Array[MultiMeshInstance3D] = []
 var _lamp_color := Color(1.0, 0.851, 0.627)
 ## Pole tint, on top of the galvanised page and the baked grime ramp. Dark
 ## enough that a bare pole still reads as a silhouette against a lit pavement,
@@ -75,6 +82,11 @@ var _pole_mesh_cache: ArrayMesh = null
 var _lamp_quad_m := 1.6
 var _smear_alpha := 0.35
 var _smear_visible := false
+## Doc 11 §2.13's `street_lights` — the per-chunk cap on the ground pool and
+## the wet smear. See `set_light_budget()` for what it does and does not gate.
+## The default is Balanced's row, so a caller that never sets a preset draws
+## what shipped before Wave 17 on any chunk of 12 lamps or fewer.
+var light_budget: int = 12
 ## Last wetness this view was told about (doc 11 §2.9). Drives whether the
 ## smear buffer is drawn at all.
 var wetness: float = 0.0
@@ -103,6 +115,94 @@ func setup(p_model: RenderStateModel, render_data: Dictionary, lamps: Array) -> 
 	var weather: Dictionary = render_data.get("weather", {})
 	_smear_alpha = float(weather.get("wet_smear_alpha", 0.35))
 	apply_lamps(lamps)
+
+
+## Doc 11 §2.13's `street_lights`, which is ladder rung 4 and which — until
+## Wave 17 — nobody owned (report 98 RR-98).
+##
+## THE HOLE. §2.10 says the preset's `street_lights` is "how many streetlights
+## are lit", and §2.13's governor drops it by 4 per step to a floor of 4. This
+## file, the only file that draws a streetlight, never read the key: `preset`
+## was not even a parameter of `setup()`, and `Main` routed `knobs` to
+## `CityView` and `PowerInfraView` and to nothing else. So a phone in trouble
+## dropped draw distance and then dropped a whole preset, having skipped a rung
+## that was supposed to fire in between. The class doc's "the OmniLight pool
+## arrives with the perf pass" is why: the key was authored for a pool of real
+## lights that was never built, and when the billboard-and-decal rig shipped
+## instead, the knob was left pointing at nothing.
+##
+## WHAT IT MEANS NOW, and why this reading and not another. It is the per-chunk
+## cap on the two FILL layers — the ground light pool and the §2.9 wet smear —
+## and NOT on the pole or the lamp billboard. That split is the whole design:
+##
+##   * the pole is opaque geometry a few hundred triangles wide and costs
+##     nothing on a fragment-bound device, and a street whose lamp posts came
+##     and went with the quality setting would be a street that changes shape;
+##   * the billboard IS the lamp being lit, and §2.13's protected list exists
+##     because the night city going dark is the game, not the scenery;
+##   * the pool and the smear are large transparent quads over the carriageway
+##     — overdraw, the one thing the Fold is actually short of.
+##
+## So a Performance phone still has every lamp, still lit, and sheds the glow
+## on the tarmac under the farthest ones. 6 / 12 / 20 per 128 m chunk is what
+## the preset table already authored and is a plausible count for a chunk; 20
+## for a whole city never was.
+##
+## `visible_instance_count` rather than `instance_count` because raising the
+## latter CLEARS the buffer (see `_sync_chunk`): the cap has to be a draw-time
+## window over transforms that are already written, or every governor step
+## would re-upload the city's lamps.
+func set_light_budget(n: int) -> void:
+	var want := maxi(0, n)
+	if want == light_budget:
+		return
+	light_budget = want
+	for chunk: Vector2i in _lamp_nodes:
+		_apply_light_budget(_lamp_nodes[chunk])
+
+
+## The preset's half of the same knob. Separate from `set_light_budget` so the
+## governor's rung and the player's setting cannot be confused at the call
+## site: `Main` calls this on a preset change and that on a governor step.
+func set_preset(preset: String, render_data: Dictionary) -> void:
+	var row: Dictionary = (render_data.get("presets", {}) as Dictionary).get(
+			preset, {})
+	set_light_budget(int(row.get("street_lights", light_budget)))
+
+
+## What one chunk's four buffers are actually holding — the roster each was
+## filled with, and for the two FILL layers the window `street_lights` left
+## open on top of it. Published because `--headless` runs on the DUMMY driver
+## and a test cannot read a MultiMesh back, so the only honest way to check
+## that a budget capped the pools and left the poles alone is for this view to
+## say so. Sums across chunks; with one chunk of lamps that is the chunk.
+func chunk_instance_counts() -> Dictionary:
+	var out := {"pole": 0, "lamp": 0, "pool": 0, "smear": 0,
+			"pool_visible": 0, "smear_visible": 0}
+	for chunk: Vector2i in _lamp_nodes:
+		var nodes: Dictionary = _lamp_nodes[chunk]
+		for key: String in ["pole", "lamp", "pool", "smear"]:
+			out[key] = int(out[key]) + (nodes[key] as MultiMesh).instance_count
+		out["pool_visible"] = int(out["pool_visible"]) \
+				+ (nodes["pool"] as MultiMesh).visible_instance_count
+		out["smear_visible"] = int(out["smear_visible"]) \
+				+ (nodes["smear"] as MultiMesh).visible_instance_count
+	return out
+
+
+## RR-83 in its per-buffer form: a MultiMesh whose window is empty does not get
+## submitted at all, it is hidden. A `visible_instance_count` of 0 still costs
+## the draw call on some drivers, and 0 is exactly what a governor at the floor
+## of a very small chunk produces.
+func _apply_light_budget(nodes: Dictionary) -> void:
+	var pool: MultiMesh = nodes["pool"]
+	var smear: MultiMesh = nodes["smear"]
+	var shown := mini(pool.instance_count, light_budget)
+	pool.visible_instance_count = shown
+	smear.visible_instance_count = shown
+	(nodes["pool_node"] as MultiMeshInstance3D).visible = shown > 0
+	var smear_node: MultiMeshInstance3D = nodes["smear_node"]
+	smear_node.visible = _smear_visible and shown > 0
 
 
 ## Re-place the city's lamps against a fresh `StreetlightPlacer.place()` result.
@@ -268,6 +368,7 @@ func _sync_chunk(chunk: Vector2i) -> void:
 	for key: String in ["lamp", "pool", "smear", "pole"]:
 		(nodes[key] as MultiMesh).instance_count = count
 	_write_chunk(ids, nodes["lamp"], nodes["pool"], nodes["smear"], nodes["pole"])
+	_apply_light_budget(nodes)
 
 
 func _free_chunk(chunk: Vector2i) -> void:
@@ -281,7 +382,6 @@ func _free_chunk(chunk: Vector2i) -> void:
 			continue
 		if node.get_parent() == self:
 			remove_child(node)
-		_smear_nodes.erase(node)
 		node.queue_free()
 	_lamp_nodes.erase(chunk)
 
@@ -350,7 +450,6 @@ func _build_chunk(chunk: Vector2i) -> void:
 	smear_node.custom_aabb = aabb
 	smear_node.visible = false
 	add_child(smear_node)
-	_smear_nodes.append(smear_node)
 
 	var pole_mm := MultiMesh.new()
 	pole_mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -365,6 +464,7 @@ func _build_chunk(chunk: Vector2i) -> void:
 	_lamp_nodes[chunk] = {"lamp": lamp_mm, "pool": pool_mm, "smear": smear_mm,
 			"pole": pole_mm, "lamp_node": lamp_node, "pool_node": pool_node,
 			"smear_node": smear_node, "pole_node": pole_node}
+	_apply_light_budget(_lamp_nodes[chunk])
 
 
 func _write_chunk(ids: Array, lamp_mm: MultiMesh, pool_mm: MultiMesh,
@@ -430,8 +530,12 @@ func refresh(p_wetness: float = -1.0) -> void:
 	var want_smear := wetness >= SMEAR_MIN_WETNESS
 	if want_smear != _smear_visible:
 		_smear_visible = want_smear
-		for node in _smear_nodes:
-			node.visible = want_smear
+		# The wetness gate and §2.13's `street_lights` cap compose: a chunk
+		# whose window is empty stays hidden through a downpour.
+		for chunk_key: Vector2i in _lamp_nodes:
+			var nodes: Dictionary = _lamp_nodes[chunk_key]
+			(nodes["smear_node"] as MultiMeshInstance3D).visible = want_smear \
+					and (nodes["smear"] as MultiMesh).visible_instance_count > 0
 	for chunk in _lamp_ids_by_chunk:
 		var ids: Array = _lamp_ids_by_chunk[chunk]
 		var nodes: Dictionary = _lamp_nodes[chunk]

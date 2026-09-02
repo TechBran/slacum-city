@@ -48,6 +48,10 @@ extends SceneTree
 ##                      SEVERE band (0..1) before measuring, so the smoke and
 ##                      spark buffer is exercised rather than assumed absent.
 ##                      Render-side only — the sim is not touched.
+##   --no-lod           draw EVERY chunk at LOD0 — `CityView.lod_enabled = false`,
+##                      the showcase's flag of the same name. The reference arm
+##                      of the LOD-pop sweep: a pixel diff against the shipped
+##                      ladder at Z1 IS the pop, and nothing else differs.
 ##   --no-merge         draw the pre-D-14 renderer: one MultiMesh per
 ##                      (chunk, archetype, level) at MEDIUM, instead of the
 ##                      merged per-archetype atlas. The A/B switch the
@@ -86,6 +90,20 @@ extends SceneTree
 ##                      can be judged with nothing on top of it (A91-D-36).
 ##   --units=N          the same for EMERGENCY units, one per department in
 ##                      rotation, all RESPONDING (bars up, lamps on).
+##   --anim-step=S      hand the three ANIMATED render layers a FIXED per-frame
+##                      delta of S seconds instead of the real one, so their
+##                      `anim_time` after N frames is exactly `N·S` and two runs
+##                      of the same command put every light bar, every beacon
+##                      sweep, every dig cycle and every marker pulse in the
+##                      same phase. `--street-gm` pins the street layer's WANDER
+##                      and not its `anim_time`, and nothing pinned the other
+##                      two at all, so a whole-frame pixel A/B of the vehicle or
+##                      construction layer measured the frame rate — two
+##                      identical free-running runs differ on 0.28 % of a Z1
+##                      frame, peak 154/255, which is the 2.2 Hz light bar and
+##                      the beacon sweep (report 98 RR-95). Use 0.016667 for a
+##                      60 Hz-shaped beat; -1 (the default) is free-running and
+##                      is what every published timing row was measured with.
 ##   --quiet-layers     build `ConstructionVehicleView` AND `StreetLifeView`
 ##                      with NOTHING in them — no sites, no opportunities. The
 ##                      QUIET CITY: the third case, between "the layer is busy"
@@ -98,6 +116,13 @@ extends SceneTree
 ##                      `--street-collect`'s rotation happened to leave there.
 ##                      The A/B instrument for §2.17's crook flee: one run at a
 ##                      lag inside the dash, one past it at the cuff.
+##   --blob=0|1         force doc 11 §2.11's per-building contact decal
+##                      (`MM_blob`) on or off, instead of taking it from
+##                      `blob_shadow.enabled_presets`. The A/B behind that
+##                      layer's draw-call and fill claim — the two runs differ in
+##                      nothing else, so the `dc`, `prims` and `rs gpu` deltas
+##                      ARE the layer. Default: whatever the JSON says for the
+##                      preset under test.
 ##   --pad-shadows=0|1  whether the transformer pad buffer casts into the sun's
 ##                      shadow pass (default: whatever `data/render.json`'s
 ##                      `power_infra.pad_shadows` says). The A/B behind that
@@ -116,11 +141,47 @@ extends SceneTree
 ##                      same draw calls, same everything but the fragment
 ##                      program — which is the A/B the Fold's fragment-bound
 ##                      frame actually needs.
+##   --road-tint=K      multiply §2.1.2's carriageway tint by K, in LINEAR, and
+##                      change NOTHING else. The A/B arm behind the street-body
+##                      blob's visibility question (report 98 RR-97, doc 93 §X3):
+##                      that shadow is a `blend_mix` decal, so it darkens what is
+##                      behind it by a FRACTION, and the carriageway sits near
+##                      0.02 linear — the lever is the ROAD, not the alpha.
+##                      1.0 is the shipped street and is byte-identical to a run
+##                      without the flag. NOT A SETTING: the ruling it feeds is
+##                      device-gated and is not taken on a desktop.
 ##   --road-detail=N    force `road_surface.gdshader`'s fragment ladder to rung
 ##                      N (2 full, 1 no wear, 0 also no zebra) instead of the
 ##                      preset's ceiling. The A/B behind the asphalt fragment
 ##                      cost: same geometry, same draw calls, same everything
 ##                      but the fragment program.
+##   --no-quality       do NOT apply doc 11 §2.13b's engine-side preset keys
+##                      (`render_scale`, `msaa`, `fxaa`, the shadow atlas, the
+##                      sun's split count and distance, glow levels and HDR
+##                      thresholds). Every §2.13 row published before Wave 17
+##                      was measured this way, because before Wave 17 nothing
+##                      in the tree applied them — so this is the flag that
+##                      reproduces the old numbers, and a run WITHOUT it is
+##                      what the preset the player picked actually costs.
+##   --far-gain=G       multiply §2.6b's measured per-family FAR palette by G.
+##                      The sweep lever the boundary's level was checked with;
+##                      the shipped value is identity and the shader carries
+##                      why (`far_albedo_gain`).
+##   --far-family=0|1   force §2.6b's per-family FAR albedo off (0) or leave it
+##                      on (1 / default). 0 puts the pre-Wave-17 neutral grey
+##                      back on the far tier and changes nothing else, so a
+##                      pixel diff of the two `--shots` is exactly the colour
+##                      the tier boundary used to step by.
+##   --medium-max=M     force `RenderStateModel.medium_max_m` to M metres,
+##                      CLAMPED to the preset's `far_cull_m`. The A/B arm
+##                      behind §2.6b's tier-boundary fix: at a value past the
+##                      cull ring every visible chunk is drawn by the NEAR
+##                      shader with its real façade page, the two runs cull
+##                      identically and differ in nothing else, so a pixel
+##                      diff of the two `--shots` is exactly the FAR tier's
+##                      footprint and the mean |Δ| over it is the size of the
+##                      boundary's colour step. Without the clamp the second
+##                      run un-culls chunks and measures a bigger city.
 ##   --site-gm=M        game-minute the construction layer's clock is wound to
 ##                      before the measured frames (default 900 — a dozen
 ##                      delivery cadences, so the yards are full and lorries
@@ -275,7 +336,33 @@ func _build_scene() -> void:
 	_build_ground(stage)
 
 	# --- the city ---------------------------------------------------------
+	# §2.13b: the preset's ENGINE-side half — `render_scale`, MSAA, FXAA, the
+	# shadow atlas, glow and the sun's shadow mode. Applied here for the same
+	# reason every other preset key is: this harness measures what the game
+	# draws, and until Wave 17 the game drew all three presets at scale 1.0
+	# with no MSAA and Balanced's bloom, so every published row in §2.13 was
+	# measured on a frame no preset actually asks for. `--no-quality`
+	# reproduces those rows exactly.
+	if not bool(_opts["no_quality"]):
+		var q := QualityApplier.resolve(_render_data, String(_opts["preset"]))
+		QualityApplier.apply_viewport(root, q)
+		_env.apply_quality(q)
+
 	_model = RenderStateModel.new(_render_data, String(_opts["preset"]))
+	# §2.6b's A/B arm: push the MEDIUM/FAR boundary past the cull distance and
+	# every chunk the camera can see is drawn by the NEAR shader with its real
+	# façade page. The two runs differ in NOTHING else, so a pixel diff of the
+	# two `--shots` is exactly the FAR tier's footprint and the mean |Δ| over
+	# it is the size of the tier-boundary step (report 98 RR-98).
+	#
+	# CLAMPED TO `far_cull_m`, and the clamp is the whole reason the A/B is
+	# legal. `RenderStateModel.raw_tier` tests `medium_max_m` BEFORE
+	# `far_cull_m`, so a boundary pushed past the cull distance does not just
+	# promote FAR chunks to MEDIUM — it UN-CULLS chunks beyond the cull ring
+	# and the second run draws a bigger city than the first. Clamped, the two
+	# runs cull identically and differ only in which shader drew what.
+	if float(_opts["medium_max"]) > 0.0:
+		_model.medium_max_m = minf(float(_opts["medium_max"]), _model.far_cull_m)
 	var manifest: Dictionary = StarterCityLoader.read_json(MESH_MANIFEST)
 	for entry in manifest.get("meshes", []):
 		_family_of[String(entry["archetype"])] = String(entry.get("family", "residential"))
@@ -286,8 +373,17 @@ func _build_scene() -> void:
 		_model.add_building(_building_view(String(id)))
 	_city_view = CityView.new()
 	_city_view.medium_merge_enabled = not bool(_opts["no_merge"])
+	_city_view.lod_enabled = not bool(_opts["no_lod"])
 	if int(_opts["atlas_lod"]) >= 0:
 		_city_view.atlas_lod = int(_opts["atlas_lod"])
+	# Set BEFORE `setup`, so the very first `_upload_all` is already on the arm
+	# under test and no frame of the other one lands in the warm-up.
+	_city_view.blob_override = int(_opts["blob"])
+	# §2.6b's A/B arm, set before `setup` for the same reason `blob_override`
+	# is: the first `_upload_all` must already be on the arm under test.
+	_city_view.far_family_override = int(_opts["far_family"])
+	if float(_opts["far_gain"]) >= 0.0:
+		_city_view.far_gain_override = float(_opts["far_gain"])
 	stage.add_child(_city_view)
 	_city_view.setup(_model, _render_data)
 
@@ -301,6 +397,10 @@ func _build_scene() -> void:
 	_streetlights = StreetlightView.new()
 	stage.add_child(_streetlights)
 	_streetlights.setup(_model, _render_data, lamps)
+	# §2.13's `street_lights` — the per-chunk pool/smear cap. Seeded from the
+	# preset like every other view's, so the harness measures the fill the
+	# preset under test actually asks for (report 98 RR-98).
+	_streetlights.set_preset(String(_opts["preset"]), _render_data)
 
 	_vehicles = VehicleView.new()
 	stage.add_child(_vehicles)
@@ -667,6 +767,9 @@ func _build_ground(stage: Node3D) -> void:
 		# it would silently measure rung 1 and print "2".
 		_roads.detail_ceiling = clampi(int(_opts["road_detail"]), 0, 2)
 		_roads.set_detail(int(_opts["road_detail"]))
+	# The look A/B arm. One uniform, no geometry, byte-identical at 1.0.
+	if not is_equal_approx(float(_opts["road_tint"]), 1.0):
+		_roads.set_tint_gain(float(_opts["road_tint"]))
 	_roads.rebuild(_sim.world.grid, _sim.roads.graph if _sim.roads != null else null)
 
 	var water_mm := MultiMesh.new()
@@ -784,12 +887,20 @@ func _process(delta: float) -> bool:
 	var hour := float(_opts["hour"])
 	_env.apply(hour, delta)
 	var camera_pos := _camera_rig.camera.global_position
+	# `--anim-step`: the three layers that keep their OWN `anim_time` (rather
+	# than reading the `sc_time` global) take a fixed delta, so the phase of
+	# every light bar, beacon, dig cycle and marker pulse is a function of the
+	# FRAME COUNT and two runs of one command are comparable pixel for pixel.
+	# −1 leaves the real delta in place, which is what every timing row this
+	# harness has ever published was measured with.
+	var anim_step := float(_opts["anim_step"])
+	var anim_delta := anim_step if anim_step >= 0.0 else delta
 	# A large dwell so a pose change re-tiers in ONE call: the profiler is not
 	# measuring the hysteresis, it is measuring the steady state on either side.
 	_city_view.refresh(delta, hour, camera_pos)
 	_streetlights.refresh()
 	_vehicles.set_focus(_camera_state.focus)
-	_vehicles.refresh(delta, _env.last_night, 1.0)
+	_vehicles.refresh(anim_delta, _env.last_night, 1.0)
 	if _flood != null:
 		# Held at its primed depth by the ease's own settle rule, so after the
 		# warm-up frames this costs nothing on the CPU and the whole delta the
@@ -808,13 +919,13 @@ func _process(delta: float) -> bool:
 	_street_usec = 0
 	if _street != null:
 		var s0 := Time.get_ticks_usec()
-		_drive_street_life(delta, camera_pos)
+		_drive_street_life(anim_delta, camera_pos)
 		_street_usec = Time.get_ticks_usec() - s0
 	_construction_usec = 0
 	if _construction != null:
 		var t0 := Time.get_ticks_usec()
 		_construction.set_focus(_camera_state.focus)
-		_construction.refresh(delta, _env.last_night, 1.0)
+		_construction.refresh(anim_delta, _env.last_night, 1.0)
 		_construction_usec = Time.get_ticks_usec() - t0
 
 	_frames_seen += 1
@@ -902,6 +1013,12 @@ func _summarise(pose_key: String) -> Dictionary:
 		"bucket_calls": int(split.get("bucket_calls", 0)),
 		"merged_calls": int(split.get("merged_calls", 0)),
 		"far_calls": int(split.get("far_calls", 0)),
+		# Doc 11 §2.11's per-building contact shadow. NOT part of
+		# `bucket_nodes_visible` — that is building GEOMETRY — and printed on its
+		# own line so "+1 city-wide on Performance, zero elsewhere" is a
+		# checkable claim and not an assertion (RR-83, RR-96).
+		"blob_calls": int(split.get("blob_calls", 0)),
+		"blob_enabled": bool(split.get("blob_enabled", false)),
 		"chunks": int(census.get("near", 0)) + int(census.get("medium", 0))
 				+ int(census.get("far", 0)),
 		"near": int(census.get("near", 0)),
@@ -939,6 +1056,79 @@ func _summarise(pose_key: String) -> Dictionary:
 		"non_building_calls": draw_calls - int(split.get("bucket_calls", 0))
 				- int(split.get("merged_calls", 0)) - int(split.get("far_calls", 0)),
 	}
+
+
+## Doc 11 §2.13's BUDGET half of a preset row, checked instead of authored.
+##
+## `gpu_budget_ms`, `cpu_budget_ms`, `chunk_budget`, `near_chunk_max` and
+## `vram_budget_mb` were the other half of the audit's inert-knob finding: five
+## numbers in every preset row that no file in the tree read. They are not
+## knobs — nothing applies a budget — so wiring them was never the answer and
+## deleting them would have thrown away the only published statement of what a
+## preset is allowed to cost. They are ASSERTIONS, and this is the instrument
+## that was already measuring every quantity they bound. Now it says so, per
+## pose, with the word OVER wherever the frame does not fit.
+##
+## `pss_budget_mb` is deliberately not here: process PSS is an Android figure
+## and this harness is a desktop one. Its consumer is `tools/perf_rows.py`,
+## against `tools/bench_device.sh`'s `meminfo_*` capture.
+func _report_budgets(preset_row: Dictionary) -> void:
+	var gpu_budget := float(preset_row.get("gpu_budget_ms", 0.0))
+	var cpu_budget := float(preset_row.get("cpu_budget_ms", 0.0))
+	var chunk_budget := int(preset_row.get("chunk_budget", 0))
+	var near_max := int(preset_row.get("near_chunk_max", 0))
+	var vram_budget := int(preset_row.get("vram_budget_mb", 0))
+	var vram_mb := float(RenderingServer.get_rendering_info(
+			RenderingServer.RENDERING_INFO_VIDEO_MEM_USED)) / 1048576.0
+	var worst: Array[String] = []
+	for row: Dictionary in _results:
+		var pose := String(row["pose"])
+		var chunks := int(row["near"]) + int(row["medium"]) + int(row["far"])
+		if gpu_budget > 0.0 and float(row["gpu_ms"]) > gpu_budget:
+			worst.append("%s gpu %.2f>%.1f" % [pose, float(row["gpu_ms"]), gpu_budget])
+		if cpu_budget > 0.0 and float(row["cpu_ms"]) > cpu_budget:
+			worst.append("%s cpu %.2f>%.1f" % [pose, float(row["cpu_ms"]), cpu_budget])
+		if chunk_budget > 0 and chunks > chunk_budget:
+			worst.append("%s chunks %d>%d" % [pose, chunks, chunk_budget])
+		if near_max > 0 and int(row["near"]) > near_max:
+			worst.append("%s near %d>%d" % [pose, int(row["near"]), near_max])
+	if vram_budget > 0 and vram_mb > float(vram_budget):
+		worst.append("vram %.0f>%d MB" % [vram_mb, vram_budget])
+	print(("  BUDGETS (doc 11 §2.13, preset `%s`): gpu %.1f ms  cpu %.1f ms"
+			+ "  chunks %d  near %d  vram %d MB — measured vram %.0f MB — %s") % [
+			String(_opts["preset"]), gpu_budget, cpu_budget, chunk_budget,
+			near_max, vram_budget, vram_mb,
+			"all within budget" if worst.is_empty() else "OVER: " + ", ".join(worst)])
+	# §2.13b: which engine-side preset keys this run actually applied, so a
+	# timing row can never again be read as belonging to a preset it was not
+	# rendered under.
+	#
+	# READ BACK OFF THE LIVE OBJECTS, not off `resolve()`. Printing what the
+	# resolver returned would prove the resolver runs; the claim that needs
+	# proving is that the ENGINE took the value, which is exactly the claim
+	# every one of these keys failed for three waves. `scaling_3d_scale`,
+	# `msaa_3d` and `screen_space_aa` come off the viewport, the shadow mode
+	# and distance off the sun, `adjustments` off the Environment.
+	var sun: DirectionalLight3D = _env.get_node_or_null(_env.sun_path)
+	var env_res: Environment = (_env.get_node_or_null(
+			_env.world_environment_path) as WorldEnvironment).environment
+	var mode_names := ["off", "2x", "4x", "8x"]
+	print(("  QUALITY (doc 11 §2.13b, read back off the live objects%s):"
+			+ " scaling_3d_scale %.2f (3D %dx%d of %dx%d)  msaa_3d %s"
+			+ "  screen_space_aa %s  shadow splits-mode %d  shadow_max %.0f m"
+			+ "  glow_hdr_scale %.2f  adjustments %s  street_lights %d/chunk") % [
+			" — --no-quality, pre-Wave-17 arm" if bool(_opts["no_quality"]) else "",
+			root.scaling_3d_scale,
+			int(round(float(_measured_resolution.x) * root.scaling_3d_scale)),
+			int(round(float(_measured_resolution.y) * root.scaling_3d_scale)),
+			_measured_resolution.x, _measured_resolution.y,
+			mode_names[clampi(int(root.msaa_3d), 0, 3)],
+			"FXAA" if int(root.screen_space_aa) == 1 else "off",
+			int(sun.directional_shadow_mode) if sun != null else -1,
+			sun.directional_shadow_max_distance if sun != null else -1.0,
+			env_res.glow_hdr_scale if env_res != null else -1.0,
+			"on" if env_res != null and env_res.adjustment_enabled else "off",
+			_streetlights.light_budget if _streetlights != null else -1])
 
 
 func _non_building_rows() -> Array:
@@ -995,6 +1185,17 @@ func _report() -> void:
 			+ " present. On a large city that remainder is the frame.")
 	print("  instances resident %d   (preset instance_budget %d)" % [
 			_model.building_count(), int(preset_row.get("instance_budget", 0))])
+	_report_budgets(preset_row)
+	# Doc 11 §2.11's per-building contact shadow, printed on every run whether
+	# the preset draws it or not — "zero on the other two presets" is half the
+	# claim and an unprinted half is a half nobody re-checks (RR-83, RR-96).
+	if not _results.is_empty():
+		var blob_on := bool((_results[0] as Dictionary).get("blob_enabled", false))
+		var blob_line := "  BLOB SHADOWS (doc 11 §2.11, `enabled_presets`): %s for `%s`" % [
+				"ON" if blob_on else "off", String(_opts["preset"])]
+		for row: Dictionary in _results:
+			blob_line += "   %s %d dc" % [String(row["pose"]), int(row["blob_calls"])]
+		print(blob_line)
 	if _power_infra != null:
 		var power_line := "  power layer (pads / wires / distress) per pose: "
 		for row: Dictionary in _results:
@@ -1076,8 +1277,11 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 		"sites": 0, "site_stage": 2, "site_gm": 900.0,
 		"street_life": 0, "street_collect": 0, "quiet_layers": false,
 			"street_shot_lag": 0, "traffic": 0, "units": 0, "street_gm": -1.0,
-		"pad_shadows": -1, "road_detail": -1,
+		"anim_step": -1.0, "no_lod": false,
+		"pad_shadows": -1, "road_detail": -1, "blob": -1, "road_tint": 1.0,
 		"flood": 0.0, "flood_detail": -1,
+		"no_quality": false, "medium_max": -1.0, "far_family": -1,
+		"far_gain": -1.0,
 	}
 	for raw in argv:
 		var arg := String(raw)
@@ -1087,14 +1291,28 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			opts["quiet_layers"] = true
 		elif arg == "--no-merge":
 			opts["no_merge"] = true
+		elif arg == "--no-lod":
+			opts["no_lod"] = true
+		elif arg == "--no-quality":
+			opts["no_quality"] = true
+		elif arg.begins_with("--medium-max="):
+			opts["medium_max"] = float(arg.trim_prefix("--medium-max="))
+		elif arg.begins_with("--far-family="):
+			opts["far_family"] = int(arg.trim_prefix("--far-family="))
+		elif arg.begins_with("--far-gain="):
+			opts["far_gain"] = float(arg.trim_prefix("--far-gain="))
 		elif arg == "--no-power-infra":
 			opts["no_power_infra"] = true
 		elif arg.begins_with("--power-distress="):
 			opts["power_distress"] = clampf(float(arg.substr(17)), 0.0, 1.0)
 		elif arg.begins_with("--pad-shadows="):
 			opts["pad_shadows"] = clampi(int(arg.substr(14)), 0, 1)
+		elif arg.begins_with("--blob="):
+			opts["blob"] = clampi(int(arg.substr(7)), 0, 1)
 		elif arg.begins_with("--road-detail="):
 			opts["road_detail"] = clampi(int(arg.substr(14)), 0, 2)
+		elif arg.begins_with("--road-tint="):
+			opts["road_tint"] = clampf(float(arg.substr(12)), 0.05, 8.0)
 		elif arg.begins_with("--flood="):
 			opts["flood"] = maxf(0.0, float(arg.substr(8)))
 		elif arg.begins_with("--flood-detail="):
@@ -1113,6 +1331,8 @@ func _parse(argv: PackedStringArray) -> Dictionary:
 			opts["street_shot_lag"] = maxi(0, int(arg.substr(18)))
 		elif arg.begins_with("--street-gm="):
 			opts["street_gm"] = float(arg.substr(13))
+		elif arg.begins_with("--anim-step="):
+			opts["anim_step"] = float(arg.substr(12))
 		elif arg.begins_with("--traffic="):
 			opts["traffic"] = maxi(0, int(arg.substr(10)))
 		elif arg.begins_with("--units="):

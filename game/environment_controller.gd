@@ -35,6 +35,16 @@ var storm: float = 0.0
 ## WeatherFX every frame; zero the rest of the time.
 var flash: float = 0.0
 
+## §2.13b's preset state, written by `apply_quality()` and read per frame.
+## They are held rather than applied once because each composes with a
+## per-frame value: the shadow gate with sun elevation and storm cover, the
+## glow threshold with the night scalar.
+var _shadows_allowed := true
+var _glow_hdr_day: float = 1.05
+var _glow_hdr_night: float = 0.78
+var _env_adjustments := true
+var _contrast: float = 1.06
+
 var _environment: Environment
 var _sky_material: ProceduralSkyMaterial
 var _sun: DirectionalLight3D
@@ -62,8 +72,6 @@ const FLASH_DAY_SCALE := 0.22
 func setup(render_data: Dictionary) -> void:
 	if not controller.load_from(render_data):
 		push_error("day/night data invalid: " + ", ".join(controller.errors))
-	var presets: Dictionary = render_data.get("presets", {})
-	far_cull_m = float(presets.get("balanced", {}).get("far_cull_m", 1200.0))
 	_environment = (get_node(world_environment_path) as WorldEnvironment).environment
 	_sky_material = _environment.sky.sky_material as ProceduralSkyMaterial
 	_sky_energy_base = _sky_material.energy_multiplier
@@ -74,14 +82,16 @@ func setup(render_data: Dictionary) -> void:
 	_environment.tonemap_mode = Environment.TONE_MAPPER_AGX
 	_environment.tonemap_exposure = float(environment_data.get("tonemap_exposure", 1.0))
 	_environment.tonemap_white = float(environment_data.get("tonemap_white", 6.0))
-	_environment.adjustment_enabled = true
-	_environment.adjustment_contrast = float(environment_data.get("contrast", 1.06))
-	var glow: Dictionary = presets.get("balanced", {})
+	_contrast = float(environment_data.get("contrast", 1.06))
+	_environment.adjustment_contrast = _contrast
+	# Glow is ON unconditionally — it is on §2.13's protected list and the
+	# blackout relight is the game's signature moment. WHICH glow is the
+	# preset's business, and it arrives through `apply_quality()`. Until it
+	# does, the Balanced row is the fallback (`QualityApplier.resolve` with no
+	# preset resolves to `balanced` for exactly the same reason), so a caller
+	# that never applies a quality block gets what shipped before §2.13b.
 	_environment.glow_enabled = true
-	_environment.glow_blend_mode = Environment.GLOW_BLEND_MODE_SCREEN
-	_environment.glow_intensity = float(glow.get("glow_intensity", 0.9))
-	_environment.glow_strength = float(glow.get("glow_strength", 1.0))
-	_environment.glow_bloom = float(glow.get("glow_bloom", 0.05))
+	apply_quality(QualityApplier.resolve(render_data, "balanced"))
 	_environment.fog_enabled = true
 	var weather: Dictionary = render_data.get("weather", {})
 	_lightning_color = Color(String(weather.get("lightning_color", "#C9D6FF")))
@@ -90,6 +100,53 @@ func setup(render_data: Dictionary) -> void:
 	_lightning_ambient_gain = float(weather.get("lightning_ambient_gain", 4.0))
 	_lightning_dir_energy = float(weather.get("lightning_dir_energy", 2.4))
 	_lightning_fog_blend = float(weather.get("lightning_fog_blend", 0.7))
+
+
+## Doc 11 §2.13b — the ENVIRONMENT half of a graphics preset, from
+## `QualityApplier.resolve()`. Called at boot, when the player picks a preset,
+## and on the governor's latched drop; safe to call every one of those, because
+## every write here is idempotent.
+##
+## THE TWO KEYS THAT ARE NOT WRITTEN HERE and why. `glow_hdr_threshold` is
+## day/night dependent (§2.4 lifts the threshold in daylight so a lit window
+## does not bloom at noon), so its two ends are STORED and the lerp happens in
+## `apply()` against the same `night` scalar everything else uses. `shadows`
+## is stored for the same reason: `apply()` re-derives `_sun.shadow_enabled`
+## every frame from sun elevation and storm cover, so the preset gate has to
+## be ANDed there or the next frame overwrites it (report 98 RR-98).
+func apply_quality(resolved: Dictionary) -> void:
+	if _environment == null:
+		return
+	far_cull_m = float(resolved.get("far_cull_m", far_cull_m))
+	_shadows_allowed = bool(resolved.get("shadows_allowed", true))
+	_glow_hdr_day = float(resolved.get("glow_hdr_threshold_day", 1.05))
+	_glow_hdr_night = float(resolved.get("glow_hdr_threshold_night", 0.78))
+	_environment.glow_blend_mode = \
+			int(resolved.get("glow_blend", 1)) as Environment.GlowBlendMode
+	_environment.glow_intensity = float(resolved.get("glow_intensity", 0.9))
+	_environment.glow_strength = float(resolved.get("glow_strength", 1.0))
+	_environment.glow_bloom = float(resolved.get("glow_bloom", 0.05))
+	_environment.glow_hdr_scale = float(resolved.get("glow_hdr_scale", 2.0))
+	var levels: Array = resolved.get("glow_levels", [])
+	for i in range(mini(levels.size(), QualityApplier.GLOW_LEVEL_COUNT)):
+		_environment.set_glow_level(i, float(levels[i]))
+	# §2.8's tonemap curve is not a preset axis — it is the game's LOOK, and a
+	# phone that turns it off is playing a different game. Only the colour
+	# correction pass (contrast + the per-hour saturation ramp) is optional,
+	# and Performance is the row that authors it off: `adjustment_enabled` is
+	# a full-screen pass on a fragment-bound device.
+	_env_adjustments = bool(resolved.get("env_adjustments", true))
+	_environment.adjustment_enabled = _env_adjustments
+	_environment.adjustment_contrast = _contrast if _env_adjustments else 1.0
+	if _sun != null:
+		_sun.directional_shadow_mode = \
+				int(resolved.get("shadow_mode", 1)) as DirectionalLight3D.ShadowMode
+		_sun.directional_shadow_max_distance = \
+				float(resolved.get("shadow_max_m", 150.0))
+	if _moon != null:
+		# RR-83: a node that draws nothing is hidden, not dimmed. A moon at
+		# energy 0 is still a shadow-casting directional light in the pass.
+		_moon.visible = bool(resolved.get("moon", true))
 
 
 ## Doc 11 §2.9's renderer-side weather state. `profile` is "" for clear skies,
@@ -137,7 +194,10 @@ func apply(hour: float, delta: float) -> void:
 	_sun.light_color = (s["sun_color"] as Color).lerp(_lightning_color, flash)
 	# An overcast storm has no crisp shadow to cast; dropping the pass is both
 	# the honest look and the cheapest frame of the whole weather system.
-	_sun.shadow_enabled = elevation > 2.0 and storm < STORM_SHADOW_OFF
+	# §2.13b: the preset's gate AND the frame's. Performance authors
+	# `shadows: false` and its sun never casts, whatever the hour.
+	_sun.shadow_enabled = _shadows_allowed and elevation > 2.0 \
+			and storm < STORM_SHADOW_OFF
 	if _moon != null:
 		_moon.light_energy = controller.moon_energy * float(s["night"]) \
 				* (1.0 - storm)
@@ -157,6 +217,12 @@ func apply(hour: float, delta: float) -> void:
 			* sky_cut * (1.0 + _lightning_ambient_gain * flash)
 	_environment.adjustment_saturation = float(s["saturation"]) \
 			* (1.0 - STORM_SATURATION_CUT * storm)
+	# §2.13b's glow threshold, day to night. A lit window is ~2.4 nits against
+	# a noon sky the tonemapper puts near 1.0, so a night threshold applied at
+	# midday blooms the whole façade; the preset authors both ends and the
+	# night scalar picks the point between them.
+	_environment.glow_hdr_threshold = lerpf(_glow_hdr_day, _glow_hdr_night,
+			float(s["night"]))
 	# ---------------------------------------------------------------- fog
 	var fog: Dictionary = controller.fog_state(float(s["night"]), far_cull_m,
 			weather_profile, weather_mix)
