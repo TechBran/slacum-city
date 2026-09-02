@@ -931,3 +931,41 @@ func test_the_actions_row_wraps_rather_than_widening_the_drawer() -> void:
 			% [int(actions.get_combined_minimum_size().x),
 					int(drawer.drawer_width_dp())])
 	_unmount(mounted)
+
+
+## PA-52. `cmd_dispatch_unit` has raised three distinct refusals since Wave 4 and
+## the picker answered all three with "That unit could not be sent." — one
+## sentence for three problems with three different next moves. Doc 12 §2.18 A14
+## is not satisfied by a word standing in for a reason.
+func test_each_dispatch_refusal_says_which_one_it_is() -> void:
+	var mounted := _mount()
+	var picker: UnitPickerSheet = mounted["picker"]
+	var root: UIRoot = mounted["root"]
+	picker.set_provider(func(_incident_id: int) -> Array:
+		return [{"id": 4, "dept": "fire", "kind": "engine", "eta_gs": 48.0,
+				"state": "ON_SCENE"}])
+	picker.open_for({"id": 7, "title": "Structure fire", "tier": 4})
+	var generic := UIWidgets.t(_cfg(), "ui_picker_failed")
+	var seen: Array[String] = []
+	for code: StringName in [&"E_UNIT_UNAVAILABLE", &"E_UNREACHABLE",
+			&"E_UNKNOWN_INCIDENT"]:
+		var text := root.report_dispatch_result(4, false, CommandQueue.fail(code))
+		assert_true(picker.is_open(), "a refusal keeps the sheet up")
+		assert_ne(text, generic, "%s still collapses to the generic line" % code)
+		assert_false(text.contains(String(code)),
+				"%s prints its own identifier at the player: %s" % [code, text])
+		assert_false(seen.has(text), "%s reads the same as another refusal" % code)
+		seen.append(text)
+		assert_eq(picker.message_text(), text, "and it is on the sheet, not only a toast")
+	# The unavailable row names the unit and quotes its status in the picker's own
+	# vocabulary, so a rename on either side is a copy hole rather than a
+	# mis-sentence.
+	var unavailable := root.report_dispatch_result(4, false,
+			CommandQueue.fail(&"E_UNIT_UNAVAILABLE"))
+	var record := picker.model.row(4)
+	assert_true(unavailable.contains(str(record["name"])), unavailable)
+	assert_true(unavailable.contains(str(record["state_text"])), unavailable)
+	# A caller that supplies no result — every pre-Wave-18 one — still compiles
+	# and still gets the generic line rather than an empty label.
+	assert_eq(picker.report_result(4, false), generic)
+	_unmount(mounted)

@@ -537,10 +537,10 @@ func test_the_building_panel_shows_the_same_row_inline_and_only_while_it_exists(
 			func() -> int: return 500)
 	panel.bind_construction(root.construction_queue.model)
 	panel.show_building(picked)
-	var block := panel.get_node_or_null("Panel/Scroll/Body/Progress") as Control
+	var block := panel.get_node_or_null("Panel/Frame/Scroll/Body/Progress") as Control
 	assert_ne(block, null, "the UPGRADE-PROGRESS block is built in code")
 	assert_true(block.visible, "a building with a project shows it")
-	var level := panel.get_node_or_null("Panel/Scroll/Body/Level") as Control
+	var level := panel.get_node_or_null("Panel/Frame/Scroll/Body/Level") as Control
 	assert_eq(block.get_index(), level.get_index() + 1,
 			"directly under the level pips, above the upgrade block")
 	var eta := block.get_node("Eta") as Label
@@ -581,7 +581,7 @@ func test_the_building_panels_rush_carries_the_doors_answer() -> void:
 	var answers: Array = []
 	panel.rushed.connect(func(sim_id: String, job_id: int, result: Dictionary) -> void:
 		answers.append([sim_id, job_id, result]))
-	var block := panel.get_node("Panel/Scroll/Body/Progress") as Control
+	var block := panel.get_node("Panel/Frame/Scroll/Body/Progress") as Control
 	(block.get_node("Rush") as Button).pressed.emit()
 	assert_eq(answers.size(), 1)
 	assert_eq(str(answers[0][0]), picked)

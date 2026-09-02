@@ -56,6 +56,11 @@ var _close: Button
 var _level: Label
 var _vitals: GridContainer
 var _coverage: GridContainer
+## §2.9's coverage reason line (PA-22) and the tiles that fill it.
+var _coverage_reason: Label
+var _coverage_rows: Dictionary = {}   # slot -> Dictionary (the row as rendered)
+## The pinned verb row outside the scroller (PA-47).
+var _footer: HFlowContainer
 var _upgrade_header: Label
 var _upgrade_note: Label
 var _checklist: VBoxContainer
@@ -97,7 +102,7 @@ var _power_remove_armed := ""
 var _power_fix_armed := ""
 var _repair_button: Button
 var _repair_note: Label
-var _priority_row: HBoxContainer
+var _priority_row: Container
 var _priority_note: Label
 var _demolish_button: Button
 var _demolish_note: Label
@@ -138,17 +143,43 @@ func _ready() -> void:
 		setup(UIRoot.config_from(self))
 
 
+## Where the scrolled column lives. The authored scene has `Panel/Scroll/Body`;
+## after `_pin_actions_footer()` has run once (PA-47) the scroller sits inside a
+## `Frame` VBox beside the pinned verb row, exactly as the land panel's authored
+## tree does. `setup()` runs twice in the real shell, so this has to answer for
+## both shapes — a second pass that bound nothing would null every label on the
+## panel and leave a live screen blank.
+func body_path() -> String:
+	return "Panel/Frame/Scroll/Body" if has_node("Panel/Frame/Scroll/Body") \
+			else "Panel/Scroll/Body"
+
+
 func _bind_nodes() -> void:
 	_panel = get_node_or_null("Panel") as PanelContainer
-	_title = get_node_or_null("Panel/Scroll/Body/Header/Title") as Label
-	_close = get_node_or_null("Panel/Scroll/Body/Header/Close") as Button
-	_level = get_node_or_null("Panel/Scroll/Body/Level") as Label
-	_vitals = get_node_or_null("Panel/Scroll/Body/Vitals") as GridContainer
-	_coverage = get_node_or_null("Panel/Scroll/Body/Coverage") as GridContainer
-	_upgrade_header = get_node_or_null("Panel/Scroll/Body/UpgradeHeader") as Label
-	_upgrade_note = get_node_or_null("Panel/Scroll/Body/UpgradeNote") as Label
-	_checklist = get_node_or_null("Panel/Scroll/Body/Checklist") as VBoxContainer
-	_upgrade_button = get_node_or_null("Panel/Scroll/Body/UpgradeButton") as Button
+	var body := body_path() + "/"
+	_title = get_node_or_null(body + "Header/Title") as Label
+	_close = get_node_or_null(body + "Header/Close") as Button
+	_level = get_node_or_null(body + "Level") as Label
+	_vitals = get_node_or_null(body + "Vitals") as GridContainer
+	_coverage = get_node_or_null(body + "Coverage") as GridContainer
+	_upgrade_header = get_node_or_null(body + "UpgradeHeader") as Label
+	_upgrade_note = get_node_or_null(body + "UpgradeNote") as Label
+	_checklist = get_node_or_null(body + "Checklist") as VBoxContainer
+	# `UpgradeButton` is authored inside the scroller and pinned out of it on the
+	# first `setup()`; look in the footer first so the second pass finds it.
+	_upgrade_button = get_node_or_null("Panel/Frame/ActionsFooter/UpgradeButton") \
+			as Button
+	if _upgrade_button == null:
+		_upgrade_button = get_node_or_null(body + "UpgradeButton") as Button
+
+
+## A verb button, wherever it currently is: the pinned footer once PA-47's frame
+## has been built, and the `Actions` block on the first pass that builds it.
+func _pinned_or(actions: Node, node_name: String) -> Button:
+	var pinned := get_node_or_null("Panel/Frame/ActionsFooter/" + node_name) as Button
+	if pinned != null:
+		return pinned
+	return actions.get_node_or_null(node_name) as Button
 
 
 static func _clear_children(node: Node) -> void:
@@ -192,7 +223,96 @@ func _build_static() -> void:
 			grid.add_theme_constant_override(&"h_separation", int(_spacing))
 	if _checklist != null:
 		_checklist.add_theme_constant_override(&"separation", int(_spacing))
+	_build_coverage_reason()
 	_build_actions()
+	_pin_actions_footer()
+
+
+## PA-22's second half: §2.9's one-line reason, on tap. The four tiles are 48 dp
+## buttons rather than labels because the answer to "why is Fire ✕ 0 %?" is a
+## sentence — which station, or which pressure zone — and a tooltip is not a
+## carrier on a touch screen (RR-143). One shared line under the grid rather than
+## four, because a 300 dp column has room for one and the player is asking about
+## the tile they just touched.
+func _build_coverage_reason() -> void:
+	if _coverage == null:
+		return
+	var body := _coverage.get_parent() as Control
+	if body == null:
+		return
+	var existing := body.get_node_or_null("CoverageReason") as Label
+	if existing != null:
+		_coverage_reason = existing
+		return
+	_coverage_reason = UIWidgets.label("CoverageReason", "", &"LegendRow", true)
+	_coverage_reason.visible = false
+	body.add_child(_coverage_reason)
+	body.move_child(_coverage_reason, _coverage.get_index() + 1)
+
+
+## PA-47. On the Fold's outer box (880×400, §2.1's own layout box) the panel's
+## three verbs sat 300–550 dp below the fold: `Scroll` is 320 dp tall, `Body` is
+## 921, and `UpgradeButton` laid out at y = 694 with `Demolish` at 914. The land
+## panel has pinned its verb outside the scroller since Wave 6 (`Panel/Frame/
+## ActionButton`); this gives the building panel the same frame.
+##
+## Built here rather than in `ui_root.tscn` for the reason `_stack_placement_copy`
+## is: the authored tree is one node short, the fix is a reparent, and three
+## other lanes are editing that scene this wave. Idempotent — `setup()` runs
+## twice in the real shell, and the second pass re-binds what the first built.
+func _pin_actions_footer() -> void:
+	if _panel == null:
+		return
+	var frame := _panel.get_node_or_null("Frame") as VBoxContainer
+	# The authored path on the first pass, the framed one on every pass after.
+	var scroll := (frame.get_node_or_null("Scroll") if frame != null \
+			else _panel.get_node_or_null("Scroll")) as ScrollContainer
+	if scroll == null:
+		return
+	if frame == null:
+		frame = VBoxContainer.new()
+		frame.name = "Frame"
+		frame.add_theme_constant_override(&"separation", int(_spacing))
+		_panel.remove_child(scroll)
+		scroll.owner = null
+		# The scroller takes every pixel the footer does not, so the footer is
+		# pinned to the bottom of the panel at any box and any text scale.
+		scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		frame.add_child(scroll)
+		_panel.add_child(frame)
+	# **And the scroller stops making the panel wider than the panel.** With
+	# `SCROLL_MODE_DISABLED` a `ScrollContainer`'s minimum WIDTH is its content's,
+	# so one over-wide row inside pushed the whole side panel out: at 360 dp and
+	# 130 % text the shed-tier row measured 452 dp and the panel laid out 480 wide
+	# with `grow_horizontal = BEGIN`, hanging 124 dp off the LEFT edge of the
+	# screen. Nothing reported it, because `UIAudit` exempts anything inside a
+	# scroller — content in a scroller is meant to run past the viewport — and
+	# everything on this panel was. Pinning three verbs outside it is what made
+	# the overflow visible, and this is the cause rather than the symptom: the
+	# panel is now exactly `UIWidgets.side_panel_width()` at every box, and a row
+	# that still does not fit is reached by dragging it instead of by moving the
+	# screen out from under the player.
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
+	scroll.custom_minimum_size.x = 0.0
+	_footer = frame.get_node_or_null("ActionsFooter") as HFlowContainer
+	if _footer == null:
+		_footer = HFlowContainer.new()
+		_footer.name = "ActionsFooter"
+		_footer.add_theme_constant_override(&"h_separation", int(_spacing))
+		_footer.add_theme_constant_override(&"v_separation", int(_spacing))
+		frame.add_child(_footer)
+	# The three verbs move OUT of the scroller; their explanatory notes stay in
+	# it, beside the block each one is about. A note is read once; a verb is
+	# reached every time, and only one of the two has to survive a scroll.
+	for button: Button in [_upgrade_button, _repair_button, _demolish_button]:
+		if button == null or button.get_parent() == _footer:
+			continue
+		var parent := button.get_parent()
+		if parent != null:
+			parent.remove_child(button)
+		button.owner = null
+		button.custom_minimum_size = Vector2(_touch_min * 2.0, _touch_min)
+		_footer.add_child(button)
 
 
 ## §2.9 item 6 — `Repair` · `Priority` · `Demolish`, built in code (doc 12 test
@@ -202,9 +322,11 @@ func _build_static() -> void:
 ## Idempotent: `setup()` runs twice in the real shell, once from
 ## `UIRoot.bring_up_screens()` and once from `game/main.gd`.
 func _build_actions() -> void:
-	if _upgrade_button == null:
-		return
-	var body := _upgrade_button.get_parent() as Control
+	# The scrolled column, resolved by path rather than by the upgrade button's
+	# parent: since PA-47 that button lives in the pinned footer, and asking it
+	# for its parent on the second `setup()` pass would rebuild the whole actions
+	# block inside the footer.
+	var body := get_node_or_null(body_path()) as Control
 	if body == null:
 		return
 	var existing := body.get_node_or_null("Actions") as VBoxContainer
@@ -212,11 +334,11 @@ func _build_actions() -> void:
 		# Second `setup()` pass: re-bind rather than rebuild, exactly as
 		# `_bind_nodes()` re-binds the authored half.
 		_actions = existing
-		_repair_button = existing.get_node_or_null("Repair") as Button
+		_repair_button = _pinned_or(existing, "Repair")
 		_repair_note = existing.get_node_or_null("RepairNote") as Label
 		_priority_note = existing.get_node_or_null("PriorityNote") as Label
-		_priority_row = existing.get_node_or_null("Priority") as HBoxContainer
-		_demolish_button = existing.get_node_or_null("Demolish") as Button
+		_priority_row = existing.get_node_or_null("Priority") as Container
+		_demolish_button = _pinned_or(existing, "Demolish")
 		_demolish_note = existing.get_node_or_null("DemolishNote") as Label
 		_water = body.get_node_or_null("WaterNodes") as VBoxContainer
 		_water_rows.clear()
@@ -242,9 +364,13 @@ func _build_actions() -> void:
 
 	_priority_note = UIWidgets.label("PriorityNote", "", &"LegendRow", true)
 	_actions.add_child(_priority_note)
-	_priority_row = HBoxContainer.new()
+	# An `HFlowContainer`, not an `HBox`: doc 12 item 27's rule for exactly this
+	# shape — "a row that does not fit wraps instead of widening its sheet". Four
+	# 73 dp class buttons at 130 % text measure 452 dp against a 300 dp column.
+	_priority_row = HFlowContainer.new()
 	_priority_row.name = "Priority"
-	_priority_row.add_theme_constant_override(&"separation", int(_spacing))
+	_priority_row.add_theme_constant_override(&"h_separation", int(_spacing))
+	_priority_row.add_theme_constant_override(&"v_separation", int(_spacing))
 	_actions.add_child(_priority_row)
 
 	_demolish_button = UIWidgets.button("Demolish",
@@ -528,21 +654,69 @@ func _render_vitals(v: Dictionary) -> void:
 
 ## Four 40 dp tiles (§2.9 item 4). Each carries the §2.5 state glyph as well as
 ## the colour, so the row survives grayscale (A5).
+## §2.9 item 4's four tiles. All four carry a live reading since Wave 18
+## (PA-22), and each one is a 48 dp target that answers "why?" on the line below
+## the grid — the station that covers this lot, or the pressure zone that feeds
+## it. The tooltip carries the same sentence for the desktop pointer; it is never
+## the only place it appears (RR-143).
 func _render_coverage(v: Dictionary) -> void:
 	if _coverage == null:
 		return
 	BuildingPanel._clear_children(_coverage)
+	_coverage_rows.clear()
 	var model := HudModel.new(config)
 	for entry: Variant in (v["coverage"] as Array):
 		var tile: Dictionary = entry
-		var label := Label.new()
-		label.name = "Coverage_" + str(tile["id"])
+		var slot := str(tile["id"])
+		_coverage_rows[slot] = tile
 		var state: StringName = tile["state"]
-		label.text = "%s %s %s" % [_text(str(tile["label_key"]), str(tile["id"]).capitalize()),
+		var face := "%s %s %s" % [_text(str(tile["label_key"]), slot.capitalize()),
 				model.state_glyph(state), str(tile["value"])]
-		label.tooltip_text = str(tile.get("attachment", ""))
-		_apply_state_color(label, state)
-		_coverage.add_child(label)
+		var reason := _coverage_reason_text(tile)
+		var button := UIWidgets.button("Coverage_" + slot, face,
+				reason if reason != "" else face,
+				Vector2(_touch_min, _touch_min), &"GhostButton")
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		# Two of these share a 300 dp column, so the face shortens rather than
+		# pushing the panel wider; the whole reading is on the reason line below.
+		UIWidgets.elide(button, _touch_min)
+		button.pressed.connect(_on_coverage_pressed.bind(slot))
+		_apply_state_color(button, state)
+		_coverage.add_child(button)
+	# A refresh rebuilds the tiles; the line under them keeps whatever it said
+	# only if the slot it was about is still on screen.
+	if _coverage_reason != null and _coverage_reason.visible:
+		_show_coverage_reason(str(_coverage_reason.get_meta(&"slot", "")))
+
+
+## The §2.9 sentence for one tile: which station, or which zone. `""` when the
+## controller supplied no reason key — the power tile, whose "why" is the
+## transformer named in the POWER section below.
+func _coverage_reason_text(tile: Dictionary) -> String:
+	var key := str(tile.get("reason_key", ""))
+	if key == "":
+		var attachment := str(tile.get("attachment", ""))
+		return "" if attachment == "" else attachment
+	return _text_args(key, tile.get("reason_args", {}) as Dictionary, key)
+
+
+func _on_coverage_pressed(slot: String) -> void:
+	_show_coverage_reason(slot)
+
+
+func _show_coverage_reason(slot: String) -> void:
+	if _coverage_reason == null:
+		return
+	var tile: Variant = _coverage_rows.get(slot, null)
+	if not (tile is Dictionary):
+		_coverage_reason.visible = false
+		return
+	var text := _coverage_reason_text(tile as Dictionary)
+	_coverage_reason.text = text
+	_coverage_reason.tooltip_text = text
+	_coverage_reason.visible = text != ""
+	_coverage_reason.set_meta(&"slot", slot)
+	_apply_state_color(_coverage_reason, StringName(str((tile as Dictionary)["state"])))
 
 
 func _render_upgrade(v: Dictionary) -> void:

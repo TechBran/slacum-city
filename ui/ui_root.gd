@@ -1646,12 +1646,19 @@ func set_unit_provider(provider: Callable) -> void:
 
 
 ## The shell's verdict on a `dispatch_requested`. Returns the toast copy.
-func report_dispatch_result(unit_id: int, ok: bool) -> String:
+##
+## `result` is the whole `CommandQueue` answer and is optional (Wave 18, PA-52):
+## `ok` alone cannot tell the picker WHICH of doc 06's three dispatch refusals it
+## is reporting, and the three have three different next moves. Additive, so
+## every existing caller compiles unchanged.
+func report_dispatch_result(unit_id: int, ok: bool,
+		result: Dictionary = {}) -> String:
 	feed_onboarding({"kind": OnboardingModel.OBS_COMMAND, "command": "dispatch_unit",
 			"ok": ok, "unit_id": unit_id})
 	if haptics != null:
 		haptics.fire(Haptics.CUE_DISPATCH if ok else Haptics.CUE_BLOCKED)
-	return unit_picker.report_result(unit_id, ok) if unit_picker != null else ""
+	return unit_picker.report_result(unit_id, ok, result) \
+			if unit_picker != null else ""
 
 
 # ---------------------------------------------------------------------------

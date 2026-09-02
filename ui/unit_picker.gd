@@ -250,15 +250,49 @@ func dispatch_auto() -> void:
 ## The shell's answer to a `dispatch_requested`. `ok` closes the sheet (§2.6
 ## step 4) and returns the toast copy; a refusal keeps it open and says so, which
 ## is the only way the player can pick something else without a second ASSIGN.
-func report_result(unit_id: int, ok: bool) -> String:
+##
+## **`result` is the whole `CommandQueue` answer** (Wave 18, PA-52) and it is
+## optional so every existing caller compiles unchanged. Without it this method
+## can only say "That unit could not be sent." — one sentence for three different
+## refusals, none of which it names. `cmd_dispatch_unit` has raised
+## `E_UNIT_UNAVAILABLE`, `E_UNREACHABLE` and `E_UNKNOWN_INCIDENT` since Wave 4,
+## and each one has a different next move: pick another unit, lay a street, or
+## close the sheet because the call has already cleared. Doc 12 §2.18 A14 —
+## "every blocked action states its reason in words" — is not satisfied by one
+## word standing in for three.
+func report_result(unit_id: int, ok: bool, result: Dictionary = {}) -> String:
 	if ok:
 		var text := model.dispatched_text(unit_id)
 		close()
 		return text
+	var text := _refusal_text(unit_id, result)
 	if _message != null:
-		_message.text = UIWidgets.t(config, "ui_picker_failed")
+		_message.text = text
 		_message.visible = true
-	return UIWidgets.t(config, "ui_picker_failed")
+		# A5/A14 again: the refusal is tinted with the same four data states the
+		# rest of the deck uses, so it reads as a refusal without relying on
+		# colour alone — the glyph is already in the sentence's own state.
+		UIWidgets.paint_state(self, _message, HudModel.STATE_CRITICAL)
+	return text
+
+
+## The refusal in words. Routed through `RequirementFormatter.from_result()`, the
+## one place a failure code becomes copy (doc 12 §2.7), with the unit's own
+## display name and status string spliced in — the same vocabulary the rows this
+## sheet is listing are sorted on. Falls back to the generic line when the caller
+## supplied no result, which is what a pre-Wave-18 caller does.
+func _refusal_text(unit_id: int, result: Dictionary) -> String:
+	if result.is_empty() or model == null:
+		return UIWidgets.t(config, "ui_picker_failed")
+	var record := model.row(unit_id)
+	var params := {
+		"unit": str(record.get("name", "")),
+		"status": str(record.get("state_text", "")),
+	}
+	var row := RequirementFormatter.new(config).from_result(result, params)
+	if row.is_empty() or not RequirementFormatter.is_known(row.get("code", "")):
+		return UIWidgets.t(config, "ui_picker_failed")
+	return str(row["body"])
 
 
 # ---------------------------------------------------------------------------

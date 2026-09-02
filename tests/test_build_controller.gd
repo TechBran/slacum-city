@@ -842,7 +842,7 @@ func test_building_panel_renders_the_checklist_and_gates_upgrade() -> void:
 	# and the button is not. The `E_STATE` row is the one that still carries an
 	# affordance on any building, so the general claim is checked there.
 	var fix_row := panel.get_node_or_null(
-			"Panel/Scroll/Body/Checklist/Check_E_CONDITION/Fix") as Button
+			"Panel/Frame/Scroll/Body/Checklist/Check_E_CONDITION/Fix") as Button
 	assert_eq(fix_row, null,
 			"private stock: the blocker is stated, no button is offered")
 	assert_true(panel.checklist_rows().size() >= 6, "and the row itself is still there")
@@ -971,7 +971,7 @@ func test_fix_this_on_condition_buys_the_repair_rather_than_moving_the_camera() 
 	(sim.buildings["POL-1"] as Building).condition = 0.40
 	panel.show_building("POL-1")
 	var fix := panel.get_node_or_null(
-			"Panel/Scroll/Body/Checklist/Check_E_CONDITION/Fix") as Button
+			"Panel/Frame/Scroll/Body/Checklist/Check_E_CONDITION/Fix") as Button
 	assert_ne(fix, null, "the blocker row still carries the affordance")
 	var routed: Array[Dictionary] = []
 	var repairs: Array[Dictionary] = []
@@ -1000,7 +1000,7 @@ func test_fix_this_is_absent_on_a_privately_maintained_building() -> void:
 	house.condition = 0.40
 	panel.show_building("H-001")
 	var row := panel.get_node_or_null(
-			"Panel/Scroll/Body/Checklist/Check_E_CONDITION")
+			"Panel/Frame/Scroll/Body/Checklist/Check_E_CONDITION")
 	assert_ne(row, null, "the blocker is still stated")
 	assert_eq(row.get_node_or_null("Fix"), null,
 			"but there is no repair to sell, so there is no button")
@@ -1020,7 +1020,7 @@ func test_priority_row_lists_doc_fours_classes_and_sets_one() -> void:
 	var results: Array[Dictionary] = []
 	panel.priority_set.connect(func(result: Dictionary) -> void: results.append(result))
 	var button := panel.get_node_or_null(
-			"Panel/Scroll/Body/Actions/Priority/Priority_CRITICAL") as Button
+			"Panel/Frame/Scroll/Body/Actions/Priority/Priority_CRITICAL") as Button
 	assert_ne(button, null, "one 48 dp target per class")
 	button.pressed.emit()
 	assert_eq(results.size(), 1)
@@ -1046,7 +1046,7 @@ func test_demolish_quotes_its_refund_and_only_fires_on_a_full_hold() -> void:
 	var fired: Array[String] = []
 	panel.demolished.connect(func(sim_id: String, _r: Dictionary) -> void:
 		fired.append(sim_id))
-	var button := panel.get_node_or_null("Panel/Scroll/Body/Actions/Demolish") as Button
+	var button := panel.get_node_or_null("Panel/Frame/ActionsFooter/Demolish") as Button
 	assert_ne(button, null)
 	# Half a hold demolishes nothing — the one irreversible button in the deck.
 	button.button_down.emit()
@@ -1148,3 +1148,157 @@ static func _road_edge_tile(sim: CitySim) -> Vector2i:
 				if block != null and block.is_ready():
 					return q
 	return Vector2i(56, 56)
+
+
+# ===========================================================================
+# Wave 18 — the placement bar reads on a touch screen (PA-23 / A91-D-91)
+# ===========================================================================
+
+## The bar's second line used to carry the requirement's TITLE with the sentence
+## in `tooltip_text`, and Godot raises no tooltip for a touch event. So on the
+## device the remedy half of every placement refusal — the half that says what to
+## do — was unreachable from the first screen a new player uses.
+func test_the_placement_bar_states_the_reason_in_visible_copy() -> void:
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var sheet: BuildSheet = mounted["sheet"]
+	var controller: BuildController = mounted["controller"]
+	sheet.open()
+	sheet.select_category("residential")
+	sheet.card_button("house").pressed.emit()
+	# Straight onto a building: doc 02's `E_FOOTPRINT`, whose remedy names both
+	# ways out ("Demolish it or choose another tile").
+	var occupied: Vector2i = (sim.buildings["H-001"] as Building).origin
+	sheet.move_ghost(Vector3(float(occupied.x) * controller.tile_m + 4.0, 0.0,
+			float(occupied.y) * controller.tile_m + 4.0))
+	var issue := sheet.get_node_or_null("PlacementBar/Row/Copy/Issue") as Label
+	assert_ne(issue, null, "the bar's second line")
+	var expected := controller.formatter.format(&"E_FOOTPRINT",
+			{"tile": occupied})
+	assert_true(issue.text.contains(str(expected["body"])),
+			"the bar carries the BODY, not just the title: %s" % issue.text)
+	assert_true(issue.text.length() > str(expected["title"]).length(),
+			"and the body is longer than the title it replaced")
+	# The sentence is on screen; the tooltip merely repeats it (RR-143).
+	assert_eq(issue.tooltip_text, issue.text)
+	assert_true(issue.autowrap_mode != TextServer.AUTOWRAP_OFF, "it wraps")
+	_unmount(mounted)
+
+
+## …and it offers the door. `E_FOOTPRINT` routes `FIX_TILE`, and PA-05's params
+## contract means the emitted target carries the tile the router acts on.
+func test_the_placement_bar_offers_fix_this_with_a_routable_target() -> void:
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var sheet: BuildSheet = mounted["sheet"]
+	var controller: BuildController = mounted["controller"]
+	sheet.open()
+	sheet.select_category("residential")
+	sheet.card_button("house").pressed.emit()
+	var occupied: Vector2i = (sim.buildings["H-001"] as Building).origin
+	sheet.move_ghost(Vector3(float(occupied.x) * controller.tile_m + 4.0, 0.0,
+			float(occupied.y) * controller.tile_m + 4.0))
+	var fix := sheet.get_node_or_null("PlacementBar/Row/Copy/Fix") as Button
+	assert_ne(fix, null, "the bar has a door")
+	assert_true(fix.visible, "and it is up on a refusal that names a target")
+	assert_true(fix.custom_minimum_size.y >= 48.0, "48 dp (A3)")
+	assert_true(fix.tooltip_text.length() > 0, "A15: a spoken name")
+	var seen: Array[Dictionary] = []
+	sheet.fix_requested.connect(func(target: Dictionary) -> void: seen.append(target))
+	fix.pressed.emit()
+	assert_eq(seen.size(), 1, "one emission per tap")
+	assert_eq(str(seen[0]["kind"]), String(RequirementFormatter.FIX_TILE))
+	assert_eq((seen[0]["params"] as Dictionary)["tile"], occupied,
+			"the router is handed the tile, not a name it would have to resolve")
+
+	# A valid ghost has nothing to fix, and the button goes away with the reason.
+	var free_tile := _serviceable_vacant_tile(sim)
+	sheet.move_ghost(Vector3(float(free_tile.x) * controller.tile_m + 4.0, 0.0,
+			float(free_tile.y) * controller.tile_m + 4.0))
+	assert_false(fix.visible, "no refusal, no door")
+	_unmount(mounted)
+
+
+## The commit refusal used to be written into `Sheet/Body/Notice`, a label inside
+## the sheet that `_on_card_pressed` closes before placement begins. It went to a
+## screen that was not there. It goes to the bar now, and it survives until the
+## player moves the ghost — because until then they have not done anything that
+## could change the answer.
+func test_a_refused_commit_is_reported_on_the_bar_that_is_actually_up() -> void:
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var sheet: BuildSheet = mounted["sheet"]
+	var controller: BuildController = mounted["controller"]
+	sheet.open()
+	sheet.select_category("residential")
+	sheet.card_button("house").pressed.emit()
+	assert_false(sheet.is_open(), "placement closes the sheet — D-17's flow")
+	var free_tile := _serviceable_vacant_tile(sim)
+	sheet.move_ghost(Vector3(float(free_tile.x) * controller.tile_m + 4.0, 0.0,
+			float(free_tile.y) * controller.tile_m + 4.0))
+	# Drain the treasury between the verdict and the commit: the ghost is green
+	# and `cmd_place_building` refuses anyway, which is exactly the case the
+	# notice line existed for and never showed.
+	sim.treasury.spend(sim.treasury.balance, &"test_drain")
+	sheet.confirm_placement()
+	var issue := sheet.get_node_or_null("PlacementBar/Row/Copy/Issue") as Label
+	var notice := sheet.get_node_or_null("Sheet/Body/Notice") as Label
+	assert_true(issue.text.contains("$"), "the refusal quotes the money: %s" % issue.text)
+	assert_true(notice == null or not notice.visible,
+			"nothing is written into the closed sheet")
+	# And it clears the moment the player moves, because the answer may have
+	# changed and a stale refusal on a live bar is a lie. Fund the city first, so
+	# what is being asserted is the HELD row going away rather than the same
+	# refusal being raised again live.
+	sim.treasury.credit(500_000, &"test_refund")
+	sheet.move_ghost(Vector3(float(free_tile.x) * controller.tile_m + 4.0, 0.0,
+			float(free_tile.y) * controller.tile_m + 4.0))
+	assert_false(issue.text.contains("$"), "the held refusal is dropped on a move")
+	_unmount(mounted)
+
+
+## PA-47. The three verbs sat 300–550 dp below the fold on the Fold's outer box
+## because everything on the panel was inside one scroller. They are pinned
+## outside it now, exactly as the land panel has pinned its verb since Wave 6.
+func test_the_panel_verbs_are_pinned_outside_the_scroller() -> void:
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var panel: BuildingPanel = mounted["panel"]
+	panel.show_building("H-001")
+	var footer := panel.get_node_or_null("Panel/Frame/ActionsFooter") as HFlowContainer
+	assert_ne(footer, null, "the footer exists")
+	var scroll := panel.get_node_or_null("Panel/Frame/Scroll") as ScrollContainer
+	assert_ne(scroll, null, "and the scroller is its sibling, not its ancestor")
+	assert_eq(panel.upgrade_button().get_parent(), footer, "UPGRADE is pinned")
+	assert_eq(scroll.size_flags_vertical, Control.SIZE_EXPAND_FILL,
+			"the scroller takes every pixel the footer does not")
+	# `setup()` runs twice in the real shell; the second pass must re-bind rather
+	# than rebuild, or a live panel goes blank.
+	panel.setup(mounted["root"].config, mounted["controller"])
+	assert_eq(panel.upgrade_button().get_parent(), footer, "idempotent")
+	assert_ne(panel.get_node_or_null("Panel/Frame/Scroll/Body/Checklist"), null,
+			"and the authored column is still bound")
+	panel.show_building("H-001")
+	assert_true(panel.checklist_rows().size() > 0, "the second pass still renders")
+	_unmount(mounted)
+
+
+## PA-22's second half: §2.9's reason, on tap rather than in a tooltip.
+func test_a_coverage_tile_answers_why_on_tap() -> void:
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	var mounted := _mount(sim)
+	var panel: BuildingPanel = mounted["panel"]
+	panel.show_building("POL-1")
+	var body := panel.body_path() + "/"
+	var reason := panel.get_node_or_null(body + "CoverageReason") as Label
+	assert_ne(reason, null, "the panel has a reason line")
+	assert_false(reason.visible, "silent until asked")
+	var tile := panel.get_node_or_null(body + "Coverage/Coverage_police") as Button
+	assert_ne(tile, null, "the tile is a target, not a label")
+	assert_true(tile.custom_minimum_size.y >= 48.0, "48 dp (A3)")
+	tile.pressed.emit()
+	assert_true(reason.visible, "and it answers")
+	assert_true(reason.text.contains("POL-1"),
+			"naming the station that covers this lot: %s" % reason.text)
+	_unmount(mounted)

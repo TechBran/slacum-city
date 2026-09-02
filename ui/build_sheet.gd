@@ -19,6 +19,10 @@ signal placement_changed                                       ## ghost moved / 
 signal placement_committed(result: Dictionary)                 ## `place_building` answered
 signal placement_cancelled
 signal card_refused(failure: Dictionary)  ## locked / unknown card explained in words
+## `Fix this →` on the placement bar (PA-23). Same payload and same router as the
+## building panel's and the land panel's — `RequirementFormatter`'s
+## `{kind, id, params}` (RR-142) — so the shell learns one contract, not three.
+signal fix_requested(fix_target: Dictionary)
 signal sheet_toggled(open: bool)
 
 const PALETTE_TYPE := "Palette"
@@ -39,6 +43,9 @@ const CLOSE_GLYPH := "✕"
 ## fit with 95 dp to spare. A control the player cannot reach is worse than a
 ## control they have to press twice.
 const RESTART_GLYPH := "↺"
+## How many lines the bar's reason may wrap over before it elides (PA-23). Two:
+## enough for the formatter's sentence pair at 412 dp, and the bar stays a bar.
+const ISSUE_MAX_LINES := 2
 ## The BUILD FAB's slot in §2.3's left rail — the bottom rung, nearest the thumb.
 ## `UIRoot` solves the stack; see `UIWidgets.solve_rail_stack`.
 const RAIL_INDEX := 0
@@ -63,6 +70,13 @@ var _bar: PanelContainer
 var _bar_cancel: Button
 var _bar_title: Label
 var _bar_issue: Label
+## PA-23's door on the placement bar, and the target it is currently pointing at.
+var _bar_fix: Button
+var _bar_fix_target: Dictionary = {}
+## The refusal `confirm_placement` got back, held until the ghost moves. The bar
+## is the surface that is up during placement; the sheet's `Notice` is not, which
+## is why that path had been writing into a closed screen (A91-D-91).
+var _commit_failure: Dictionary = {}
 var _bar_confirm: Button
 ## True while a world drag is drawing a run — see `begin_world_drag()`.
 var _drag_drawing := false
@@ -227,7 +241,11 @@ func _stack_placement_copy() -> void:
 	var row := _bar_title.get_parent() as Control
 	# `setup()` runs twice in the real shell, and on the second pass the labels are
 	# already inside the box this builds — without this guard it wraps the wrapper.
-	if row == null or str(row.name) == "Copy":
+	if row == null:
+		return
+	if str(row.name) == "Copy":
+		# Second pass: re-bind the door rather than rebuild the column.
+		_bar_fix = row.get_node_or_null("Fix") as Button
 		return
 	var slot := _bar_title.get_index()
 	var copy := VBoxContainer.new()
@@ -250,10 +268,62 @@ func _stack_placement_copy() -> void:
 	# 258 dp of a 412 dp bar at 130 % text, and the copy column is the flexible
 	# one — a bigger floor pushed both buttons off the edges.
 	UIWidgets.elide(_bar_title, _touch_min)
-	UIWidgets.elide(_bar_issue, _touch_min)
 	_bar_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_bar_issue.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_bar_issue.theme_type_variation = &"LegendRow"
+	# PA-23 / RR-143. Line two used to carry the requirement's TITLE, with the
+	# sentence that says what to do about it in `tooltip_text` — which a touch
+	# screen never shows, and this build has no long-press-to-tooltip path. So
+	# every `ui_requirement_*_remedy` string was unreachable from the one screen
+	# a new player meets first. It carries the BODY now, wrapped over at most two
+	# lines: the whole column is its, and eliding one word off the end of a
+	# readable sentence is a smaller loss than a sentence nobody can read.
+	_bar_issue.clip_text = false
+	_bar_issue.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_bar_issue.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_bar_issue.max_lines_visible = ISSUE_MAX_LINES
+	# One touch target's worth of floor, not two — the same figure the title has
+	# carried since D-17, and for the same reason recorded there: CANCEL and PLACE
+	# together are 218 dp of a 360 dp bar at 130 % text with larger targets, and a
+	# wider floor on the flexible column pushes both buttons off the edges. The
+	# column is `EXPAND_FILL`, so in practice it lays out at 221 dp on a phone;
+	# the floor only decides what happens when there is nothing left to give.
+	_bar_issue.custom_minimum_size.x = maxf(_bar_issue.custom_minimum_size.x,
+			_touch_min)
+	_build_bar_fix(copy)
+
+
+## The bar's own `Fix this →` (PA-23). Both panels have had one since Wave 6 and
+## placement — the first thing a new player does — did not, so a refusal there
+## was a dead end even when the sentence beside it named a place to go.
+##
+## It sits in the copy column rather than on the button row because the row is
+## already `CANCEL │ copy │ PLACE`: at 412 dp and 130 % text those two buttons
+## are 258 dp of the bar, and a third would have left the sentence 58 dp to live
+## in. Here it is full column width, and it only exists on a refusal whose
+## `fix_target` names something the router can act on — so the bar grows the 48
+## dp it needs exactly when it has somewhere to send the player.
+func _build_bar_fix(copy: Control) -> void:
+	var existing := copy.get_node_or_null("Fix") as Button
+	if existing != null:
+		_bar_fix = existing
+		return
+	_bar_fix = UIWidgets.button("Fix", _text("ui_placement_fix", "FIX THIS  →"),
+			_text("ui_placement_fix", "FIX THIS  →"),
+			Vector2(_touch_min, _touch_min), &"GhostButton")
+	# Same floor, same reason: it is the widest thing in the copy column and the
+	# column is what gives way when the bar runs out of room.
+	UIWidgets.elide(_bar_fix, _touch_min)
+	_bar_fix.visible = false
+	_bar_fix.pressed.connect(_on_bar_fix_pressed)
+	copy.add_child(_bar_fix)
+
+
+func _on_bar_fix_pressed() -> void:
+	if _bar_fix_target.is_empty():
+		return
+	_cue(Haptics.CUE_BUTTON)
+	fix_requested.emit(_bar_fix_target.duplicate(true))
 
 
 ## Six categories plus GRID at 96 dp each is a 720 dp row; a 412 dp phone has 404
@@ -627,6 +697,7 @@ func _on_card_pressed(archetype: String, variant: String) -> void:
 		card_refused.emit(failure)
 		return
 	close()
+	_commit_failure = {}
 	_refresh_bar()
 	placement_started.emit(archetype, variant)
 	placement_changed.emit()
@@ -635,6 +706,9 @@ func _on_card_pressed(archetype: String, variant: String) -> void:
 ## Ground point from `CameraState.screen_to_ground()` — the ghost follows and
 ## the verdict is recomputed (§2.7 re-evaluates while dragging).
 func move_ghost(ground_point: Vector3) -> void:
+	# The ghost moved, so the last refusal is about a tile the player has left
+	# behind. The bar goes back to reporting the verdict where it now stands.
+	_commit_failure = {}
 	if is_placing_path():
 		path.move_to_ground(ground_point)
 		_cue_ghost_at(path.head, StringName(str(path.verdict().get("verdict", ""))))
@@ -722,19 +796,19 @@ func confirm_placement() -> void:
 	if is_placing_path():
 		if path.is_aiming():
 			path.begin_run()
-			_set_notice("")
+			_commit_failure = {}
 			_cue(Haptics.CUE_BUTTON)
 			_refresh_bar()
 			placement_changed.emit()
 			return
 		var run := path.commit()
 		if bool(run["ok"]):
-			_set_notice("")
+			_commit_failure = {}
 			_cue(Haptics.CUE_BUTTON)
 		else:
 			var run_failure := controller.formatter.format(run["reason_code"],
 					run.get("payload", {}))
-			_set_notice(str(run_failure["body"]))
+			_commit_failure = run_failure
 			_cue(Haptics.CUE_BLOCKED)
 		_drag_drawing = false
 		_last_ghost_origin = Vector2i(-1, -1)
@@ -747,11 +821,14 @@ func confirm_placement() -> void:
 		return
 	var result := controller.commit()
 	if bool(result["ok"]):
-		_set_notice("")
+		_commit_failure = {}
 		_cue(Haptics.CUE_BUTTON)
 	else:
-		var failure := controller.formatter.format(result["reason_code"], result["payload"])
-		_set_notice(str(failure["body"]))
+		# To the BAR, which is on screen, and not to the sheet's notice, which is
+		# not (A91-D-91). The row is held until the ghost moves, because a player
+		# who was just refused has not yet done anything to change the answer.
+		_commit_failure = controller.formatter.format(result["reason_code"],
+				result["payload"])
 		_cue(Haptics.CUE_BLOCKED)
 	_last_ghost_origin = Vector2i(-1, -1)
 	_last_verdict = &""
@@ -796,6 +873,7 @@ func cancel_placement() -> void:
 	if path != null:
 		path.cancel()
 	_drag_drawing = false
+	_commit_failure = {}
 	_refresh_bar()
 	placement_cancelled.emit()
 	placement_changed.emit()
@@ -858,25 +936,45 @@ func _refresh_bar() -> void:
 			_bar_confirm.disabled = not bool(view["can_confirm"])
 	if _bar_issue == null:
 		return
-	var failure: Dictionary = view["failure"]
+	# The verdict of the ghost where it stands, or — until it moves — the refusal
+	# the last `PLACE` came back with. That refusal used to be written into
+	# `Sheet/Body/Notice`, a label inside the sheet that `_on_card_pressed` closes
+	# before placement begins, so it was addressed to a screen that was not there
+	# (A91-D-91). The bar is up for exactly as long as placement is.
+	var failure: Dictionary = _commit_failure if not _commit_failure.is_empty() \
+			else (view["failure"] as Dictionary)
 	if failure.is_empty():
 		_bar_issue.text = _run_hint(view) if is_run else _text("ui_placement_ready", "")
 		_bar_issue.tooltip_text = _bar_issue.text
 		_apply_state_color(_bar_issue, HudModel.STATE_NORMAL)
+		_show_bar_fix({})
 		return
 	# A5/A14: the reason is in words, and the state glyph carries the verdict
 	# without relying on colour.
 	#
-	# The **title** of the requirement, not its body: a 56 dp bar shares one line
-	# with CANCEL, the summary and PLACE, and the body is a whole sentence — at
-	# 412 dp it was being squeezed into 49 px, which is not a shortened sentence
-	# but an invisible one. The sentence is still reachable, on the bar's own
-	# tooltip and in the sheet's notice line when a card is refused outright.
+	# The **body**, not the title (PA-23 / RR-143). The title alone names the
+	# requirement and says nothing about what to do; the body is the formatter's
+	# sentence pair, remedy included, and it is the only copy this screen has
+	# ever had that tells a blocked player their next move. It wraps over two
+	# lines in the column D-17 gave it and elides after that.
 	var state: StringName = failure["state"]
 	var glyph := model.state_glyph(state)
-	_bar_issue.text = ("%s %s" % [glyph, str(failure["title"])]).strip_edges()
-	_bar_issue.tooltip_text = str(failure["body"])
+	_bar_issue.text = ("%s %s" % [glyph, str(failure["body"])]).strip_edges()
+	_bar_issue.tooltip_text = _bar_issue.text
 	_apply_state_color(_bar_issue, state)
+	_show_bar_fix(failure.get("fix_target", {}) as Dictionary)
+
+
+## Arms or hides the bar's door. A target whose kind is `FIX_NONE` is not a
+## target and draws no button — the same gate the land panel has always applied
+## and the building panel did not (PA-05).
+func _show_bar_fix(fix_target: Dictionary) -> void:
+	_bar_fix_target = fix_target
+	if _bar_fix == null:
+		return
+	_bar_fix.visible = not fix_target.is_empty() \
+			and StringName(str(fix_target.get("kind", RequirementFormatter.FIX_NONE))) \
+			!= RequirementFormatter.FIX_NONE
 
 
 ## The run bar's first line. While aiming it is the card and its per-tile price;
