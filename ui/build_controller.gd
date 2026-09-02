@@ -58,10 +58,22 @@ const GRID_CARD_LEVEL := 1
 
 ## Doc 02's upgrade gate, in the order `CitySim.cmd_upgrade_building` runs it.
 ## The checklist shows every row, passing ones included (doc 12 §2.9 item 5).
+##
+## **`E_WATER_HEADROOM` is the seventh** (Wave 18, PA-24). `cmd_upgrade_building`
+## has appended it since doc 05's zones landed and this list never carried it, so
+## a building blocked on water alone drew six green ticks, printed "Every
+## requirement met." and left `UPGRADE` dead with nothing on screen to act on.
+## `tests/test_build_controller.gd` now asserts this list against the codes the
+## command can actually append, so the next gate doc 02 grows cannot ship silent.
 const UPGRADE_CHECKS: Array[StringName] = [
 	&"E_STATE", &"E_MAX_LEVEL", &"E_CONDITION", &"E_CITY_LEVEL", &"E_FUNDS",
-	&"E_POWER_HEADROOM", &"E_AVENUE",
+	&"E_POWER_HEADROOM", &"E_WATER_HEADROOM", &"E_AVENUE",
 ]
+
+## Doc 02 §8's `headroom_safety.power`, the factor `CitySim.cmd_upgrade_building`
+## multiplies the kW delta by before it asks doc 04. Read from the catalog's own
+## rules (PA-12); this is the fallback for a fixture whose rules carry no block.
+const HEADROOM_MARGIN_DEFAULT := 1.15
 
 ## `E_AVENUE` only exists as a check from Level 4 up (C-62, hard gate L4/L5).
 const AVENUE_FROM_LEVEL := 4
@@ -69,6 +81,9 @@ const AVENUE_RADIUS_TILES := 4
 ## How far the panel looks for the nearest avenue before it gives up and reports
 ## "beyond the search"; purely a display figure for the `{have}` parameter.
 const AVENUE_SEARCH_TILES := 16
+## The sentinel `nearest_avenue_tile` answers with when the search finds nothing
+## — a tile no map has, so it can never be mistaken for a `Fix this →` target.
+const NO_TILE := Vector2i(-1, -1)
 
 ## Sheet ordering: category first (the doc's tab order), then cost.
 ## `infrastructure` is last-but-one and `roads` is last for the same reason: they
@@ -118,6 +133,11 @@ var water: WaterActions
 ## `water` above: the panel binds, this computes, and the POWER section, the
 ## `Fix this →` strip and the dashboard's grid reading all read one model.
 var power: PowerActions
+
+## Doc 02 §2.9's coverage band ladder, borrowed from the overlay that already
+## owns it (PA-22). Lazily made and kept, because `_coverage()` runs on every
+## panel refresh and the bands come out of `data/ui.json`.
+var _overlay: OverlayModel = null
 
 ## Wave 14's street roster — the thing a tap on a fleeing shoplifter or a loose
 ## dog has to find before it finds the house behind them.
@@ -1360,10 +1380,20 @@ static func _vital(id: String, label_key: String, value: String) -> Dictionary:
 	return {"id": id, "label_key": label_key, "value": value}
 
 
-## Four 40 dp tiles (§2.9 item 4). Only POWER is modelled in this slice; docs 05
-## (water) and 06 (police/fire) have no per-building coverage query yet, so their
-## tiles read OFFLINE with an em dash rather than an invented number — the same
-## honesty rule the HUD's grid/water chips follow.
+## Four 40 dp tiles (§2.9 item 4), all four of them live (Wave 18, PA-22).
+##
+## Three of these read `✕ —` on every building in the city for eleven waves,
+## including on the pump station, whose whole job is the tile that said it had no
+## water. The publishers had been there since Wave 5 — `CityIncidentWorld.
+## coverage_police/coverage_fire` (doc 02 §2.9, C-51) and `WaterSystem.
+## pressure_at` (doc 05) — and the reader was never updated when doc 91 row 2.9
+## closed. The L4 curriculum teaches "stations and coverage" against a surface
+## that could not turn green.
+##
+## Each tile is banded the way its own doc bands it, and `—` survives in exactly
+## one place per slot: the honest one. No station in range at all reads OFFLINE
+## with the scalar beside it; a lot no pressure zone reaches reads OFFLINE with
+## an em dash, because there is no reading to give rather than a reading of zero.
 func _coverage(sim_id: String) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for slot: String in COVERAGE_SLOTS:
@@ -1372,14 +1402,89 @@ func _coverage(sim_id: String) -> Array[Dictionary]:
 			"label_key": "ui_building_coverage_%s" % slot,
 			"state": HudModel.STATE_OFFLINE,
 			"value": HudModel.NO_DATA,
+			# §2.9's one-line reason on tap: which station, or which zone.
+			"reason_key": "",
+			"reason_args": {},
 		}
-		if slot == "power":
-			var availability := sim.grid.power_availability_hour(sim_id)
-			row["value"] = RequirementFormatter.percent(availability)
-			row["state"] = _coverage_state(availability)
-			row["attachment"] = sim.grid.attachment_of(sim_id)
+		match slot:
+			"power":
+				var availability := sim.grid.power_availability_hour(sim_id)
+				row["value"] = RequirementFormatter.percent(availability)
+				row["state"] = _coverage_state(availability)
+				row["attachment"] = sim.grid.attachment_of(sim_id)
+			"water":
+				row.merge(_water_coverage(sim_id), true)
+			"police", "fire":
+				row.merge(_safety_coverage(sim_id, slot), true)
 		out.append(row)
 	return out
+
+
+## Doc 05's per-building service: the pressure at the building's ACCESS tile,
+## which is the tile every other doc-05 reading for this building is taken at.
+## Banded on doc 05's own thresholds — `nominal_pressure` is the design point and
+## `recovery_pressure_threshold` is the line the no-water counter unwinds above,
+## so below it the building is on its way to abandoning. Read from
+## `data/water.json`; no threshold is authored here.
+func _water_coverage(sim_id: String) -> Dictionary:
+	if sim == null or sim.water == null:
+		return {}
+	var tile: Vector2i = sim.water.demand.access_tile(sim_id)
+	var zone: PressureZone = sim.water.zone_at(tile)
+	if zone == null:
+		# The one honest em dash on this row: no zone reaches this lot, so there
+		# is no pressure to report — not a pressure of zero.
+		return {"state": HudModel.STATE_OFFLINE, "value": HudModel.NO_DATA,
+				"reason_key": "ui_building_coverage_reason_no_zone", "reason_args": {}}
+	var pressure := sim.water.pressure_at(tile)
+	var nominal := sim.water.data.effect("nominal_pressure", 0.60)
+	var recover := sim.water.data.effect("recovery_pressure_threshold", 0.35)
+	var state := HudModel.STATE_CRITICAL
+	if pressure >= nominal:
+		state = HudModel.STATE_NORMAL
+	elif pressure >= recover:
+		state = HudModel.STATE_WARNING
+	return {
+		"state": state,
+		"value": RequirementFormatter.percent(pressure),
+		"zone": zone.zone_key,
+		"reason_key": "ui_building_coverage_reason_zone",
+		"reason_args": {"zone": zone.zone_key},
+	}
+
+
+## Doc 02 §2.9's per-position coverage, banded on the building's own REQUIREMENT
+## — "the UI must show the margin, not just pass/fail", verbatim. `OverlayModel.
+## coverage_state_name` is that ladder and the overlay already uses it, so the
+## tile and the overlay can never disagree about one building.
+func _safety_coverage(sim_id: String, slot: String) -> Dictionary:
+	if sim == null or sim.incident_world == null or not sim.buildings.has(sim_id):
+		return {}
+	var b: Building = sim.buildings[sim_id]
+	var kind: StringName = CoverageIndex.KIND_POLICE if slot == "police" \
+			else CoverageIndex.KIND_FIRE
+	var explain: Dictionary = sim.incident_world.coverage_explain(kind, b.origin)
+	var value := float(explain.get("coverage", 0.0))
+	var requirement := float(b.stats.get(
+			"req_police_coverage" if slot == "police" else "req_fire_coverage", 0.0))
+	var best_id := str(explain.get("best_id", ""))
+	return {
+		"state": _overlay_model().coverage_state_name(value, requirement),
+		"value": RequirementFormatter.percent(value),
+		"requirement": requirement,
+		"station": best_id,
+		"reason_key": "ui_building_coverage_reason_station" if best_id != "" \
+				else "ui_building_coverage_reason_none",
+		"reason_args": {"name": best_id},
+	}
+
+
+## The overlay's band ladder, made once and kept — `data/ui.json.overlay` is the
+## only place these thresholds are written down and both surfaces read it there.
+func _overlay_model() -> OverlayModel:
+	if _overlay == null:
+		_overlay = OverlayModel.new(formatter.config if formatter != null else null)
+	return _overlay
 
 
 static func _coverage_state(availability: float) -> StringName:
@@ -1447,12 +1552,19 @@ func _check_params(sim_id: String, b: Building, next_level: int,
 	var deficit := float(payload.get("deficit_kw", 0.0))
 	var delta_kw := float(next_stats.get("power_demand_kw", 0.0)) \
 			- float(b.stats.get("power_demand_kw", 0.0))
-	var avenue_distance := nearest_avenue_tiles(b.origin)
+	var avenue_tile := nearest_avenue_tile(b.origin)
+	var avenue_distance := BuildController._chebyshev(b.origin, avenue_tile) \
+			if avenue_tile != BuildController.NO_TILE else AVENUE_SEARCH_TILES + 1
+	# The repair's own quote, so `E_CONDITION`'s `Fix this →` can name the price
+	# of the purchase it performs rather than the price of the upgrade it is
+	# standing in the way of (PA-05's params contract, `fix_cost`).
+	var repair_cost := int((sim.cmd_repair_building(sim_id, true)
+			.get("payload", {}) as Dictionary).get("cost", 0))
 	return {
 		&"E_STATE": {"state": String(b.state), "required_state": "active",
-				"fix_target_id": sim_id},
-		&"E_MAX_LEVEL": {"level": b.level,
-				"max_level": sim.catalog.max_level_of(String(b.archetype))},
+				"fix_target_id": sim_id, "tile": b.origin},
+		&"E_MAX_LEVEL": RequirementFormatter.level_params(b.level,
+				sim.catalog.max_level_of(String(b.archetype))),
 		# `min_condition` is read off the building (PA-13 / doc 93 §Y2), and the
 		# fix is a PURCHASE only on a building the city may buy a repair for
 		# (doc 02 §2.6a). On private stock the owner is already fixing it and the
@@ -1461,31 +1573,97 @@ func _check_params(sim_id: String, b: Building, next_level: int,
 				"min_condition": b.min_condition_to_upgrade(),
 				"fix_kind": RequirementFormatter.FIX_NONE if b.owner_maintained
 						else RequirementFormatter.FIX_REPAIR,
-				"fix_target_id": "" if b.owner_maintained else sim_id},
+				"fix_target_id": "" if b.owner_maintained else sim_id,
+				"fix_cost": repair_cost, "tile": b.origin},
 		&"E_CITY_LEVEL": {"city_level": sim.progression.city_level,
 				"required_level": int(next_stats.get("min_city_level", 0))},
-		&"E_FUNDS": {"cost": int(payload.get("cost", 0)),
-				"balance": sim.treasury.balance},
-		&"E_POWER_HEADROOM": {
-			"deficit_kw": deficit,
-			"required_kw": delta_kw,
-			"headroom_kw": maxf(0.0, delta_kw - deficit),
-			"at": sim.grid.attachment_of(sim_id),
-			"fix_target_id": sim.grid.attachment_of(sim_id),
-		},
+		&"E_FUNDS": RequirementFormatter.funds_params(int(payload.get("cost", 0)),
+				sim.treasury.balance),
+		# PA-12: the margin the GATE applies, not the raw delta. `city_sim.gd`
+		# asks doc 04 for `delta × headroom_safety.power`; quoting the delta told
+		# the player a number 15 % below the one that would clear the row, so
+		# they bought exactly what the panel asked for and were refused again
+		# with a smaller deficit. One shape, shared with the water block (PA-75).
+		&"E_POWER_HEADROOM": RequirementFormatter.power_headroom_params(
+				delta_kw, deficit, headroom_margin(), sim.grid.attachment_of(sim_id)),
+		# PA-24: doc 02 §2.11's seventh gate, in doc 05's own unit and against
+		# doc 05's own zone. `water.can_upgrade_water` is the gate itself, asked
+		# the same question `cmd_upgrade_building` asks it.
+		&"E_WATER_HEADROOM": _water_headroom_params(sim_id, b, next_stats),
 		&"E_AVENUE": {
 			"avenue_distance_tiles": avenue_distance,
 			"avenue_radius_tiles": AVENUE_RADIUS_TILES,
 			"to_level": next_level,
 			"tile": b.origin,
+			# PA-05: the row quotes the BUILDING's tile in its sentence ("no
+			# avenue within 4 tiles of 12, 30") and routes to the AVENUE's, which
+			# is the thing the player has to go and look at. Before this the row
+			# carried no `fix_target_id` at all, the formatter emitted `id == ""`
+			# and `main.gd`'s router discarded it on its first line — a button
+			# that had never once moved the camera.
+			"fix_tile": avenue_tile,
+			"fix_kind": RequirementFormatter.FIX_ROAD_SEGMENT \
+					if avenue_tile != BuildController.NO_TILE \
+					else RequirementFormatter.FIX_NONE,
+			"fix_target_id": _road_segment_at(avenue_tile),
 		},
 	}
+
+
+## Doc 05 §6's headroom gate, as the checklist row's parameters (PA-24). The
+## zone's spare capacity and what the next level would draw with doc 05's own
+## safety factor on it — both read from `WaterSystem`, which is the gate.
+func _water_headroom_params(sim_id: String, b: Building,
+		next_stats: Dictionary) -> Dictionary:
+	var delta_water := float(next_stats.get("water_demand", 0.0)) \
+			- float(b.stats.get("water_demand", 0.0))
+	var verdict: Dictionary = sim.water.can_upgrade_water(sim_id, delta_water)
+	var headroom := sim.water.zone_headroom_m3h(sim_id)
+	var zone: PressureZone = sim.water.zone_at(sim.water.demand.access_tile(sim_id))
+	var zone_key := zone.zone_key if zone != null else ""
+	return {
+		"deficit_m3h": float(verdict.get("deficit_m3h", 0.0)),
+		"headroom_m3h": headroom,
+		"required_m3h": delta_water * sim.water.data.effect(
+				"upgrade_headroom_safety", 1.10),
+		"zone": zone_key,
+		"district_id": zone_key,
+		"at": zone_key,
+		"tile": b.origin,
+		"fix_target_id": zone_key,
+		# No zone at all is not a district the camera can fly to; the row still
+		# blocks and still says why, and it offers no button rather than one
+		# that resolves to nowhere (the failure shape PA-05 catalogued).
+		"fix_kind": RequirementFormatter.FIX_DISTRICT if zone_key != "" \
+				else RequirementFormatter.FIX_NONE,
+	}
+
+
+## Doc 02 §8's `headroom_safety.power`, read (PA-12/PA-13). Lane C's accessor
+## replaces the two-level `get` at merge; the value is the same either way.
+func headroom_margin() -> float:
+	if sim == null or sim.catalog == null:
+		return HEADROOM_MARGIN_DEFAULT
+	var safety: Variant = sim.catalog.rules().get("headroom_safety", {})
+	if not (safety is Dictionary):
+		return HEADROOM_MARGIN_DEFAULT
+	return float((safety as Dictionary).get("power", HEADROOM_MARGIN_DEFAULT))
 
 
 ## Chebyshev distance in tiles from `p_origin` to the nearest AVENUE, searched
 ## outward and capped — the `{have}` figure of the C-62 message. Returns
 ## `AVENUE_SEARCH_TILES + 1` when none is in range.
 func nearest_avenue_tiles(p_origin: Vector2i) -> int:
+	var tile := nearest_avenue_tile(p_origin)
+	if tile == BuildController.NO_TILE:
+		return AVENUE_SEARCH_TILES + 1
+	return BuildController._chebyshev(p_origin, tile)
+
+
+## The same search, answering with the TILE rather than the distance — the half
+## `E_AVENUE`'s `Fix this →` needs and never had (PA-05). Same walk order, so
+## the tile returned is always the one the distance was measured to.
+func nearest_avenue_tile(p_origin: Vector2i) -> Vector2i:
 	for radius in range(0, AVENUE_SEARCH_TILES + 1):
 		for z in range(p_origin.y - radius, p_origin.y + radius + 1):
 			for x in range(p_origin.x - radius, p_origin.x + radius + 1):
@@ -1493,8 +1671,22 @@ func nearest_avenue_tiles(p_origin: Vector2i) -> int:
 					continue
 				if TileGrid.in_bounds(x, z) \
 						and sim.world.grid.road_class_at(x, z) == TileGrid.ROAD_AVENUE:
-					return radius
-	return AVENUE_SEARCH_TILES + 1
+					return Vector2i(x, z)
+	return BuildController.NO_TILE
+
+
+static func _chebyshev(a: Vector2i, b: Vector2i) -> int:
+	return maxi(absi(a.x - b.x), absi(a.y - b.y))
+
+
+## Doc 10's segment id under a tile, or "" — the `id` half of a
+## `FIX_ROAD_SEGMENT` target. The tile in `params` is what the router acts on;
+## this is what the row can name.
+func _road_segment_at(tile: Vector2i) -> String:
+	if sim == null or tile == BuildController.NO_TILE or sim.roads == null:
+		return ""
+	var edge := sim.roads.edge_at_position(tile)
+	return "" if edge < 0 else str(edge)
 
 
 ## The panel's `UPGRADE` button. Issues the real command (doc 12 §4.4) and hands

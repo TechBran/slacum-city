@@ -998,5 +998,22 @@
 	"ui_overlay_summary_power_shed": "Held dark",
 	"ui_overlay_summary_power_wall": "Wall",
 	"ui_power_remove": "REMOVE TRANSFORMER  refund {refund}",
-	"ui_power_remove_confirm": "TAP AGAIN — {dark} GO DARK  ·  moving back costs {move}"
+	"ui_power_remove_confirm": "TAP AGAIN — {dark} GO DARK  ·  moving back costs {move}",
+	"ui_requirement_e_water_headroom_title": "Water capacity",
+	"ui_requirement_e_water_headroom": "This district has {have} spare and the next level draws {need}. {remedy}",
+	"ui_requirement_e_water_headroom_remedy": "Add a pumping station or a storage tank in this district, or raise an existing one a level.",
+	"ui_requirement_e_unit_unavailable_title": "Unit unavailable",
+	"ui_requirement_e_unit_unavailable": "{unit} is {have}. {remedy}",
+	"ui_requirement_e_unit_unavailable_remedy": "Pick a unit marked Available.",
+	"ui_requirement_e_unreachable_title": "No road to the call",
+	"ui_requirement_e_unreachable": "No road from {unit}'s station reaches this incident. {remedy}",
+	"ui_requirement_e_unreachable_remedy": "Lay a street to connect it, or send a nearer unit.",
+	"ui_requirement_e_unknown_incident_title": "Call cleared",
+	"ui_requirement_e_unknown_incident": "That call has already cleared. {remedy}",
+	"ui_requirement_e_unknown_incident_remedy": "Close this and pick another incident.",
+	"ui_placement_fix": "FIX THIS  →",
+	"ui_building_coverage_reason_station": "Best station: {name}",
+	"ui_building_coverage_reason_none": "No station reaches this lot",
+	"ui_building_coverage_reason_zone": "Pressure zone {zone}",
+	"ui_building_coverage_reason_no_zone": "No pressure zone reaches this lot"
 }

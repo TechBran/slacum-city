@@ -6065,3 +6065,107 @@ the census the fix eventually shipped —
 `test_no_inert_preset_key`, `test_the_deleted_keys_stay_deleted` and
 `test_every_procedural_mesh_decodes_its_authored_vertex_colour` are those
 censuses, and they are the part of this section worth keeping.
+
+---
+
+## 51. WAVE 18 — the building panel and the requirement contract (binding)
+
+Doc 12 §2.7 calls `Fix this →` *"the single most important teaching device in the
+game"*. This wave measured what it actually does, and the answer, on the two
+surfaces a new player meets first, was **nothing at all**. The production audit
+found the mechanism (99-PA PA-05, PA-23, PA-24); this section rules on the shape
+that stops it recurring, because in all three cases the failure was not a wrong
+branch — it was a contract with a hole in it that no test could see.
+
+### RR-142 — A `Fix this →` target is `{kind, id, params}`; an id the router cannot resolve is not a target, it is a button that does nothing (docs 12 §2.7a, 99-PA PA-05)
+
+**The finding.** `RequirementFormatter.format()` emitted `fix_target = {kind,
+id}`, and the shell resolved `id` per kind. Two of the building panel's seven
+checklist rows resolved to nothing:
+
+* `POWER_CAPACITY` set `fix_target_id = grid.attachment_of(sim_id)`, which is a
+  **transformer** (`T-01`…), and routed `FIX_BUILDING`, whose branch reads
+  `sim.buildings.get(id)` → `null` → `return`. `E_NO_SLOT` did the same with a
+  **substation** (`SUB-A`).
+* `E_AVENUE` carried no `fix_target_id` at all, so the formatter emitted `id ==
+  ""` and the router discarded it on its first line.
+
+Neither produced an error, a log line or a haptic. The land panel escaped only
+because `land_panel.gd:392` happens to gate its button on a non-empty id as well
+as a kind — a second, accidental check that the building panel does not have.
+
+**The ruling.** Every formatted row carries a third field, `params`, and it is
+**what the router needs in order to ACT** — a `Vector2i` tile for `FIX_TILE`, a
+district key for `FIX_DISTRICT`, a component id for `FIX_COMPONENT`, the
+`CitySim` verb for the two purchase kinds. The per-kind table lives in
+`ui/requirement_formatter.gd`'s class doc and in doc 12 §2.7a, and it is
+**normative in both directions**: a producer that cannot fill a row's `params`
+routes `FIX_NONE` and draws no button, rather than shipping one the router will
+drop on the floor. `FIX_COMPONENT` is new and exists for exactly this reason — a
+grid component is not a key in `CitySim.buildings`, and routing one through
+`FIX_BUILDING` was never a near miss, it was a category error.
+
+**Why `params` and not a better id.** Because the two halves are written by two
+different lanes and the id alone cannot say which namespace it is in. A tile is
+unambiguous, and the row that computed it — `_check_params`, which already walked
+the map to write the sentence — is the row that has it. `E_AVENUE` searched
+outward to the nearest avenue to print *"no avenue within 4 tiles"* and then
+threw the tile away.
+
+**The test.** `tests/test_requirement_formatter.gd::
+test_every_fix_target_carries_the_params_its_kind_needs` walks every code in
+`CODE_TABLE`, asserts the kind is one of `FIX_KINDS`, and asserts the params its
+kind's row of the table requires — with `FIX_TILE` strict, because for that kind
+the tile **is** the target.
+
+### RR-143 — A refusal reaches a touch screen as visible copy with a door, or it does not reach the player at all (docs 12 §2.7, 99-PA PA-23)
+
+**The finding.** `ui/build_sheet.gd:870-879` put the requirement's TITLE on the
+placement bar and its BODY — the sentence carrying the remedy — in
+`tooltip_text`. Godot shows no tooltip for a touch event, and
+`grep -rn -i tooltip game/touch_input.gd game/main.gd ui/ui_root.gd` returns
+nothing: there is no long-press-to-tooltip path in this build. So on the device,
+`ui_requirement_occupied_remedy` and every other remedy string was **unreachable
+from placement**, which is the first thing a new player does. The bar also had no
+`Fix this →` at all, and the commit-refusal fallback wrote into
+`Sheet/Body/Notice`, a child of the sheet that `_on_card_pressed` had already
+closed.
+
+**The ruling.** A tooltip is an accelerator for a pointer, never the carrier of a
+reason. Any surface that refuses an action states the reason **in visible copy**,
+and if the reason has a `fix_target` whose kind is not `FIX_NONE`, it offers a
+48 dp door to it. The tooltip may keep the same text; it may not be the only
+place the text appears. This is doc 12 A14 (*"every blocked action states its
+reason in words"*) restated as a mechanical rule, because A14 was satisfied on
+paper by a string that existed and could not be read.
+
+**The general form.** A string that only a mouse can reveal is a string this game
+does not have. Any lane adding copy to `tooltip_text` writes it to a visible
+control in the same commit.
+
+### RR-144 — A gate the command raises and the checklist does not list is a silent gate, and the list is checked against the command's own source (docs 02 §2.11, 12 §2.9, 99-PA PA-24)
+
+**The finding.** `CitySim.cmd_upgrade_building` appends seven blocker codes.
+`BuildController.UPGRADE_CHECKS` listed six. The seventh, `E_WATER_HEADROOM`, is
+a real gate (`water_system.gd:824-837`) and had **no row, no `CODE_TABLE` entry
+and no string** — so a building blocked on water alone drew six green ticks,
+printed *"Every requirement met."*, and left `UPGRADE` disabled with nothing on
+screen to act on. Had the code ever reached the formatter it would have folded to
+`UNKNOWN` and printed the identifier `E_WATER_HEADROOM` at the player.
+
+**The ruling.** Two hand-maintained lists that must agree, and no test between
+them, is a defect waiting for a wave. The checklist is now verified against the
+**command's own source**: `tests/test_build_controller.gd::
+test_every_upgrade_blocker_the_command_raises_has_a_row_and_copy` extracts every
+`blockers.append(&"…")` from `cmd_upgrade_building`'s body and requires each code
+to be (a) in `UPGRADE_CHECKS`, (b) `RequirementFormatter.is_known()`, and (c)
+carrying both a body and a title string. A doc-02 gate added without its surface
+now fails the suite in the commit that adds it.
+
+**Scope.** The rule is written for the upgrade gate because that is where the
+hole was found; the same shape applies to any command whose preview returns a
+`blockers` array that a checklist mirrors.
+
+**Applied:** doc 12 §2.7a (the params table), §2.9 (the seventh row, the four
+live coverage tiles, the pinned actions footer) and §2.7 (the placement bar's
+second line and its door); doc 91 §14.5 (`A91-D-91`, `A91-D-92`); doc 93 §AJ.

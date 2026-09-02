@@ -174,30 +174,40 @@ func max_level_of(variant: String) -> int:
 
 
 ## Per-code parameters for the node checklist — the same contract
-## `BuildController._check_params` keeps: the command returns codes and totals,
-## and the numbers each row quotes are re-read here.
+## `BuildController._check_params` keeps.
+##
+## **Since Wave 18 that is literally true** (PA-75). Three of these rows are
+## asked for by both panels and were written out twice, and the two copies had
+## already drifted: `required_kw` carried the ×1.15 margin here and not there
+## (PA-12), and `headroom_kw` was computed off `required` here and off the raw
+## delta there. `RequirementFormatter` owns the shape now — the class whose own
+## docstring says it is the only place a code's parameter shape is written down —
+## and `tests/test_requirement_formatter.gd` asserts the two callers hand it
+## identical dictionaries for one deficit.
 func _check_params(node: WaterNode, next_level: int, top: int,
 		payload: Dictionary) -> Dictionary:
-	var delta_kw := float(payload.get("delta_kw", 0.0))
-	var deficit := float(payload.get("deficit_kw", 0.0))
-	var required := delta_kw * HEADROOM_MARGIN
 	return {
-		&"E_MAX_LEVEL": {"level": node.level, "max_level": top},
+		&"E_MAX_LEVEL": RequirementFormatter.level_params(node.level, top),
 		&"E_LEVEL_UNAVAILABLE": {"need": next_level, "have": node.level},
-		&"E_POWER_HEADROOM": {
-			"deficit_kw": deficit,
-			"required_kw": required,
-			"headroom_kw": maxf(0.0, required - deficit),
-			# The TRANSFORMER the site hangs off, not the site — `power_ref` is
-			# the shell the player already has open, and `Fix this →` that flies
-			# the camera to the thing under their thumb moves nothing (doc 12
-			# D-35's lesson, applied one doc over).
-			"at": _attachment_of(node),
-			"fix_target_id": _attachment_of(node),
-		},
-		&"E_FUNDS": {"cost": int(payload.get("cost", 0)),
-				"balance": sim.treasury.balance if sim != null else 0},
+		&"E_POWER_HEADROOM": RequirementFormatter.power_headroom_params(
+				float(payload.get("delta_kw", 0.0)),
+				float(payload.get("deficit_kw", 0.0)),
+				headroom_margin(), _attachment_of(node)),
+		&"E_FUNDS": RequirementFormatter.funds_params(int(payload.get("cost", 0)),
+				sim.treasury.balance if sim != null else 0),
 	}
+
+
+## Doc 02 §8's `headroom_safety.power` — the margin `CitySim.cmd_upgrade_water_
+## component` applies before it asks doc 04, read rather than authored (PA-12).
+## `HEADROOM_MARGIN` above is the fallback for a fixture with no rules block.
+func headroom_margin() -> float:
+	if sim == null or sim.catalog == null:
+		return HEADROOM_MARGIN
+	var safety: Variant = sim.catalog.rules().get("headroom_safety", {})
+	if not (safety is Dictionary):
+		return HEADROOM_MARGIN
+	return float((safety as Dictionary).get("power", HEADROOM_MARGIN))
 
 
 ## Doc 04's service record for the shell this node is hosted on — the component

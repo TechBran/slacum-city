@@ -365,10 +365,36 @@ func test_building_view_reports_live_stats() -> void:
 	assert_ne(str(power_tile["state"]), String(HudModel.STATE_OFFLINE),
 			"the starter house is fed")
 	assert_true(str(power_tile["attachment"]).length() > 0, "names its transformer")
+	# PA-22: all four tiles are live. The three that are not power were hard-wired
+	# to `✕ —` for eleven waves while the sim published every one of them, so
+	# these assert the FOUNDING CITY's own numbers rather than the stale state.
+	var by_slot: Dictionary = {}
 	for tile: Dictionary in (view["coverage"] as Array):
-		if str(tile["id"]) != "power":
-			assert_eq(str(tile["value"]), HudModel.NO_DATA,
-					"docs 05/06 publish no coverage yet — no invented number")
+		by_slot[str(tile["id"])] = tile
+	# H-001 sits in `WTR-1-PMP` at doc 05's nominal 0.60, so the water tile reads
+	# 60 % and NORMAL — the reading the pump station's own tile used to deny.
+	var water_tile: Dictionary = by_slot["water"]
+	assert_eq(str(water_tile["value"]),
+			RequirementFormatter.percent(sim.water.pressure_at(
+					sim.water.demand.access_tile("H-001"))))
+	assert_eq(str(water_tile["state"]), String(HudModel.STATE_NORMAL))
+	assert_eq(str(water_tile["zone"]), "WTR-1-PMP", "the tile names its zone")
+	# H-001 is 32 tiles from POL-1 and 29 from FIRE-1, both outside an L1 radius:
+	# OFFLINE with the real 0 %, and a reason that says no station reaches it.
+	for slot: String in ["police", "fire"]:
+		var tile: Dictionary = by_slot[slot]
+		assert_eq(str(tile["state"]), String(HudModel.STATE_OFFLINE), slot)
+		assert_eq(str(tile["reason_key"]), "ui_building_coverage_reason_none", slot)
+	# …and the station's own lot is covered, which is what makes the tile a
+	# teaching surface rather than a decoration.
+	var at_station := _controller(sim).building_view("POL-1")
+	for tile: Dictionary in (at_station["coverage"] as Array):
+		if str(tile["id"]) != "police":
+			continue
+		assert_eq(str(tile["state"]), String(HudModel.STATE_NORMAL),
+				"POL-1 covers its own lot")
+		assert_eq(str(tile["station"]), "POL-1", "and the row names the station")
+		assert_ne(str(tile["value"]), HudModel.NO_DATA)
 	assert_eq(str(view["state_key"]), "ui_building_state_active")
 	assert_false(view["condition_text"] == "")
 
@@ -388,12 +414,82 @@ func test_upgrade_checklist_shows_every_check_passing() -> void:
 	assert_eq(int(upgrade["to_level"]), 2)
 	assert_eq(int(upgrade["cost"]), sim.econ_curves.upgrade_cost("house", 1))
 	var rows: Array = upgrade["checklist"]
-	assert_eq(rows.size(), 6, "E_AVENUE is not a check below Level 4 (C-62)")
+	# Seven: the six that always ran plus `E_WATER_HEADROOM` (PA-24), which
+	# `cmd_upgrade_building` has appended since doc 05's zones landed and this
+	# checklist never listed. `E_AVENUE` is still absent below Level 4 (C-62).
+	assert_eq(rows.size(), 7, "E_AVENUE is not a check below Level 4 (C-62)")
 	for row: Dictionary in rows:
 		assert_true(bool(row["ok"]))
 		assert_eq(str(row["glyph"]), RequirementFormatter.GLYPH_PASS)
 		assert_true(str(row["body"]).length() > 0, "a passing row still explains itself")
 	assert_true((upgrade["blocked_by"] as Dictionary).is_empty())
+
+
+## PA-24's gate. `E_WATER_HEADROOM` reached the player as nothing at all for
+## eleven waves — no checklist row, no copy, and "Every requirement met." printed
+## over six green ticks while `UPGRADE` stayed dead — because `UPGRADE_CHECKS`
+## was hand-maintained beside a command that had grown a seventh gate. This reads
+## the command's own source and refuses any code it can append that the panel
+## cannot draw or the formatter cannot explain, so the next gate doc 02 grows
+## cannot ship silent the way this one did.
+func test_every_upgrade_blocker_the_command_raises_has_a_row_and_copy() -> void:
+	var source := FileAccess.get_file_as_string("res://sim/city_sim.gd")
+	assert_true(source.length() > 0, "city_sim.gd is readable")
+	var start := source.find("func cmd_upgrade_building(")
+	assert_true(start > 0, "found the command")
+	var stop := source.find("\nfunc ", start + 1)
+	var body := source.substr(start, stop - start)
+	var codes: Array[String] = []
+	for line: String in body.split("\n"):
+		var trimmed := line.strip_edges()
+		if not trimmed.begins_with("blockers.append(&\""):
+			continue
+		var code := trimmed.substr(18)
+		code = code.substr(0, code.find("\""))
+		if not codes.has(code):
+			codes.append(code)
+	assert_true(codes.size() >= 7,
+			"doc 02 §2.11's gate raises at least seven codes, found %d" % codes.size())
+	var cfg := UIConfig.load_from_files()
+	for code: String in codes:
+		assert_true(BuildController.UPGRADE_CHECKS.has(StringName(code)),
+				"%s is a blocker `cmd_upgrade_building` appends and the checklist \
+never draws" % code)
+		assert_true(RequirementFormatter.is_known(code),
+				"%s folds to UNKNOWN and prints its own code at the player" % code)
+		assert_true(cfg.has_string(RequirementFormatter.string_key(code)),
+				"%s has no body copy" % code)
+		assert_true(cfg.has_string(RequirementFormatter.string_key(code, "_title")),
+				"%s has no title copy" % code)
+
+
+## PA-12. The panel quoted the RAW kW delta while `cmd_upgrade_building` asked
+## doc 04 for `delta × headroom_safety.power`, so a player who bought exactly the
+## quoted capacity was refused again with a smaller deficit — the user's
+## "transformers do not visibly add capacity", from the panel's side.
+func test_power_headroom_row_quotes_the_margin_the_gate_applies() -> void:
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	var controller := _controller(sim)
+	var margin := controller.headroom_margin()
+	assert_eq(margin, float((sim.catalog.rules()["headroom_safety"]
+			as Dictionary)["power"]), "read from doc 02 §8, not authored in ui/")
+	var b: Building = sim.buildings["H-001"]
+	var next_stats: Dictionary = sim.catalog.stats(String(b.archetype), b.level + 1)
+	var delta_kw := float(next_stats.get("power_demand_kw", 0.0)) \
+			- float(b.stats.get("power_demand_kw", 0.0))
+	assert_true(delta_kw > 0.0, "a level costs power")
+	var params := controller._check_params("H-001", b, b.level + 1,
+			(sim.cmd_upgrade_building("H-001", true).get("payload", {}) as Dictionary))
+	var row: Dictionary = params[&"E_POWER_HEADROOM"]
+	assert_eq(float(row["required_kw"]), delta_kw * margin,
+			"the quote is the number the gate asks doc 04 for")
+	# And the quote is the one the gate answers on: asking `power_headroom` for
+	# exactly `required_kw` reproduces the command's own verdict.
+	assert_eq(bool(sim.power_headroom("H-001", float(row["required_kw"]))["ok"]),
+			not (sim.cmd_upgrade_building("H-001", true).get("payload", {})
+					as Dictionary).get("blockers", []).has(&"E_POWER_HEADROOM"),
+			"panel and gate agree on the same number")
 
 
 func test_upgrade_checklist_names_the_blocker_in_words() -> void:
@@ -734,7 +830,7 @@ func test_building_panel_renders_the_checklist_and_gates_upgrade() -> void:
 	panel.show_building("H-001")
 	assert_true(panel.is_open())
 	assert_eq(panel.selected_id(), "H-001")
-	assert_eq(panel.checklist_rows().size(), 6, "every check is listed, not just the first")
+	assert_eq(panel.checklist_rows().size(), 7, "every check is listed, not just the first")
 	assert_false(panel.upgrade_button().disabled, "no blockers, so UPGRADE is live")
 
 	# Break one requirement and the button must lock behind it.
