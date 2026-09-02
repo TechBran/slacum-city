@@ -6305,6 +6305,7 @@ inside the process that is about to be killed.
 | negative control: `flow_test.gd:43 := 8.5` | `failed: 1`, naming `res://tools/flow_test.gd:43` |
 | `--file=test_power_infra_feed` | 14 tests, 68 asserts, 0 failed |
 | `--file=test_memory_warning` | 12 tests, 41 asserts, 0 failed |
+| full suite (`run_tests.gd`, exit code from the redirect) | **138 files, 2,550 tests, 550,725 asserts, 0 failed, 0 silent, exit 0** — the fork's 2,476 plus this lane's 74 |
 | `profile_sim --hash-only` starter, coarse 24 h | `05614522975fad52…` = the `4503d35` baseline |
 | `profile_sim --hash-only` starter, fine 2.0 h | `d1aaee0dca92f2fd…` = the `4503d35` baseline |
 | `--hash-only --city=res://tests/fixtures/bench_city.json`, coarse 24 h | `275aad9d4aeea809…` = the `4503d35` baseline |
