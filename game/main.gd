@@ -648,6 +648,7 @@ func _on_sim_batch(batch: Array) -> void:
 		# has to answer — was there a P1 the player never heard about?
 		_note_permission_evidence(notification_router.feed_batch(batch))
 	_note_permission_trigger(batch)
+	_maybe_auto_speed_reset(batch)
 	var translated: Array = []
 	for event in batch:
 		match StringName(String(event["type"])):
@@ -1471,6 +1472,41 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 			_apply_overlay_palette(str(model.value("colorblind")))
 		_:
 			pass   # reduce_motion / in_app_banners are read where used
+
+
+## doc 01 §2.9 / doc 12 §2.11's `auto_speed_reset_on_critical`, wired (PA-84).
+##
+## `HudModel.auto_speed_reset` had no caller outside its own test. It has one
+## now, and the whole design decision is in WHAT reaches it: three authored
+## events (`data/ui.json.speed.auto_speed_reset_triggers`), not every CRITICAL
+## alert, plus a ten-real-minute re-arm — because the naive wiring drops the
+## player to 1× several times an hour under PA-07's alert load, and a speed
+## control that keeps being taken away is worse than a feature that never landed.
+##
+## It never touches `paused`: §2.11 is explicit that pausing the player mid-crisis
+## is worse than the crisis. The alert banner is not raised here either — the same
+## event is already on its way to `AlertsModel` through `feed_events` above.
+var _auto_speed_reset_at_ms := -1.0e12
+
+
+func _maybe_auto_speed_reset(batch: Array) -> void:
+	if ui_root == null or hud == null or hud.model == null:
+		return
+	if sim_host.paused or sim_host.speed <= 1:
+		return   # nothing to hand back
+	var now_ms := float(Time.get_ticks_msec())
+	if now_ms - _auto_speed_reset_at_ms < hud.model.auto_speed_reset_rearm_s() * 1000.0:
+		return
+	for raw: Variant in batch:
+		if not (raw is Dictionary):
+			continue
+		if not hud.model.is_auto_speed_reset_trigger(raw as Dictionary):
+			continue
+		var answer := hud.model.auto_speed_reset(sim_host.speed, sim_host.paused)
+		sim_host.speed = int(answer["speed"])
+		_auto_speed_reset_at_ms = now_ms
+		_refresh_hud()   # the rail's face follows the sim, as it does for a tap
+		return
 
 
 # ---------------------------------------------------------------------------
