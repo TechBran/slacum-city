@@ -3336,7 +3336,8 @@ is inside a file the suite cannot load.*
 
 PA-38's headline number — 2,229 lines, zero test references — is the symptom.
 The disease is narrower and it has a name: **`main.gd` does sim reasoning**.
-`grep -c "sim_host\.sim\." game/main.gd` counted 67 reads at the Wave-17 fork,
+`grep -c "sim_host\.sim\." game/main.gd` counted **72** reads at the Wave-17
+fork (67 after this wave),
 and every one of them is a place where a fact about the city is derived outside
 anything that can assert it. The three defects PA-05 and PA-76 found were all in
 that set, and none of them was in a long function: `_on_fix_requested` was

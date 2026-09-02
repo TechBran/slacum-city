@@ -5853,6 +5853,7 @@ inside the process that is about to be killed.
 | Command | Number |
 |---|---|
 | `wc -l game/main.gd` (fork → now) | 2,229 → 2,210 |
+| `grep -c "sim_host\.sim\." game/main.gd` (fork → now) | 72 → 67 — the metric doc 93 §AI1 argues for |
 | `grep -rn "res://game/main" tests/` | 0 — `main.gd` is still not loaded, and the point is that it no longer has to be |
 | `grep -rn "sim\._[a-z]" --include=*.gd game ui tools` (fork → now) | 8 → 0 (two comments naming the row) |
 | `--file=test_fix_router` | 18 tests, 330 asserts, 0 failed |

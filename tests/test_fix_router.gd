@@ -137,7 +137,8 @@ func test_FIX_NONE_refuses_with_no_fix() -> void:
 func test_an_id_that_names_nothing_refuses_with_unresolved() -> void:
 	var sim := _sim()
 	for kind: StringName in [RequirementFormatter.FIX_BUILDING,
-			RequirementFormatter.FIX_BLOCK, RequirementFormatter.FIX_DISTRICT]:
+			RequirementFormatter.FIX_BLOCK, RequirementFormatter.FIX_DISTRICT,
+			RequirementFormatter.FIX_REPAIR, RequirementFormatter.FIX_POWER]:
 		var action := FixRouter.route(sim, _target(kind, "NOPE-999"))
 		assert_eq(action["reason"], FixRouter.REASON_UNRESOLVED,
 				"%s with a junk id" % [kind])

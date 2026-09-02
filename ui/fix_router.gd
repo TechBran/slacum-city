@@ -89,6 +89,8 @@ static func route(sim: CitySim, fix_target: Dictionary,
 			# open, and focusing the camera on it moves nothing (A91-D-54).
 			if id == "":
 				return _none(kind, id, REASON_EMPTY_ID)
+			if not sim.buildings.has(id):
+				return _none(kind, id, REASON_UNRESOLVED)
 			var answer := {"action": ACTION_VERB, "reason": &"", "kind": kind, "id": id,
 					"verb": VERB_REPAIR, "args": {"sim_id": id}}
 			if with_quote:
@@ -99,6 +101,11 @@ static func route(sim: CitySim, fix_target: Dictionary,
 			# the strip spends. The router names the surface and the arm.
 			if id == "":
 				return _none(kind, id, REASON_EMPTY_ID)
+			# Both purchase kinds target a BUILDING by sim id. An id that names
+			# none of them is `unresolved` like any other, rather than a sheet
+			# armed to quote something that is not there.
+			if not sim.buildings.has(id):
+				return _none(kind, id, REASON_UNRESOLVED)
 			var armed := {"action": ACTION_SHEET, "reason": &"", "kind": kind, "id": id,
 					"sheet": SHEET_BUILDING_PANEL, "arm": ARM_POWER_FIX, "sim_id": id}
 			if with_quote:
