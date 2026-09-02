@@ -693,13 +693,14 @@ func test_only_three_events_are_allowed_to_take_the_speed_control_away() -> void
 	assert_false(model.is_auto_speed_reset_trigger({}))
 
 
-func test_the_re_arm_is_ten_real_minutes_which_is_ten_game_hours_at_1x() -> void:
-	# The second failure inside one storm is the same crisis, and the player has
-	# already been handed the wheel for it. Constitution §4 makes 600 real
-	# seconds ten game-hours at 1×, which is what `tools/measure_speed_resets.gd`
-	# counts against the ≤ 1-per-real-hour bar.
+func test_the_re_arm_is_half_an_hour_because_ten_minutes_missed_the_bar() -> void:
+	# PA-84 suggested ten minutes; `tools/measure_speed_resets.gd` over eleven
+	# curriculum seeds says ten minutes misses PA-84's OWN ≤ 1-per-real-hour bar
+	# on seed 8888 (1.071). 1200 s gives 0.952 and 1800 s gives 0.714, so the
+	# shipped number is the measurement's, not the suggestion's. Constitution §4
+	# makes 1800 real seconds thirty game-hours at 1×.
 	var model := _model()
-	assert_eq(model.auto_speed_reset_rearm_s(), 600.0)
+	assert_eq(model.auto_speed_reset_rearm_s(), 1800.0)
 
 
 func test_switching_the_feature_off_in_data_silences_every_trigger() -> void:

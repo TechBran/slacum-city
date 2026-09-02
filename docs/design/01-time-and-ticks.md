@@ -322,8 +322,9 @@ if not paused:
   > 78–271 events over 21 game-days, which is up to **32.3 forced resets per real
   > hour**. The shipped trigger set is `data/ui.json.speed.auto_speed_reset_triggers`
   > — `incident_failed`, `credit_limit_reached`, and `flood_level_changed` at band
-  > `flooded` — plus a ten-real-minute re-arm, which brings the worst of six seeds
-  > to **0.952 per real hour**. Doc 12 §2.11 carries the table and the measurement;
+  > `flooded` — plus a **thirty**-real-minute re-arm (PA-84 suggested ten; ten
+  > misses PA-84's own ≤ 1-per-real-hour bar on one of eleven seeds), which brings
+  > the worst of eleven to **0.714 per real hour**. Doc 12 §2.11 carries the sweep;
   > `tools/measure_speed_resets.gd` re-runs it. The toast is not raised separately:
   > the same event is already on its way to the alert surface.
 

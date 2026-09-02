@@ -6159,19 +6159,35 @@ away every three minutes has not implemented a safety feature; it has
 implemented a fault. That is the reason the function sat uncalled for seventeen
 waves, and *"nobody got round to it"* was the wrong diagnosis.
 
-**What the re-arm buys, exactly.** The same streams, with 600 real seconds
-between forced resets: **0 / 4 / 6** on those three seeds, worst **0.714 per real
-hour**. Widened to six seeds (`--seeds=1337,4242,9001,2718,3141,1618`) the raw
-column runs 0 / 138 / 161 / 161 / 271 / 78 and the forced column 0 / 4 / 6 / 6 /
-8 / 5 — worst **0.952**, still under PA-84's ≤ 1 bar and **not by much**.
-`tools/measure_speed_resets.gd` prints both columns and exits non-zero above the
-bar, so the bar is a runnable claim rather than a sentence.
+**What the re-arm buys, and why it is not the ten minutes PA-84 asked for.** The
+audit's fix column prescribes "a 10-real-minute re-arm" and its target in the
+same sentence: ≤ 1 forced reset per real hour. **Those two are inconsistent, and
+only a measurement could have said so.** Eleven curriculum seeds, 21 game-days:
+
+| re-arm | worst seed | forced per real hour |
+|---|---|---:|
+| 600 s — the audit's suggestion | 8888 | **1.071, over its own bar** |
+| 1200 s | 3141 | 0.952 |
+| **1800 s — shipped** | 3141 / 1234 | **0.714** |
+
+**The seed that breaks ten minutes is the one that explains the whole shape.**
+8888 has the FEWEST raw triggers of the eleven (41) and, at 600 s, the MOST
+forced resets (9): its crises are *spread out*, which is exactly the case a short
+re-arm cannot coalesce. A burst is what a short re-arm is good at; a drizzle is
+what it is useless against, and a drizzle is what annoys. So the lever that
+closes the bar is silence, not selectivity — and this is the second time in this
+section that the naive reading of a doc sentence produces the failure the feature
+was written to prevent.
+
+`tools/measure_speed_resets.gd` prints both columns, takes `--rearm=N` so the
+lever can be swept without editing the data file, and exits non-zero above the
+bar — so the bar is a runnable claim rather than a sentence.
 
 **Where the margin should be spent if a future seed crosses it.** On
 `auto_speed_reset_rearm_real_s`, never on the trigger list. Dropping a trigger
 leaves a crisis the player cannot fix at 3× unannounced, which is the failure the
-feature exists to prevent; lengthening the re-arm only says *"you have already
-been handed the wheel for this storm"*, which is true by construction.
+feature exists to prevent; lengthening the re-arm only repeats something already
+true — that the wheel was handed over once for this crisis.
 
 **The generalisable shape.** A spec clause whose subject is an undefined
 adjective — *critical*, *significant*, *nearby* — is not a feature that has not

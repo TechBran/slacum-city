@@ -386,16 +386,32 @@ Pause freezes the sim clock only — camera, overlays, panels and build preview 
 >   {"type": "credit_limit_reached"},                             // spending is blocked
 >   {"type": "flood_level_changed", "match": {"band": "flooded"}} // streets close
 > ],
-> "auto_speed_reset_rearm_real_s": 600.0
+> "auto_speed_reset_rearm_real_s": 1800.0
 > ```
 >
 > Three events, each one a thing the player cannot fix at 3×, each one already
 > doc 08's own P1 binding in `data/notifications.json` — spelled as the sim event
 > rather than the `notify_id` so the list needs no notification config to read,
 > and matched with doc 08's own `{type, match}` comparator so a row cannot mean
-> two things. The re-arm is ten real minutes, which is ten game-hours at 1×: the
-> second failure inside one storm is the same crisis and the player has already
-> been handed the wheel.
+> two things.
+>
+> **The re-arm is thirty real minutes, not the ten PA-84 suggested, and the
+> difference is a measurement.** Over eleven curriculum seeds, ten minutes misses
+> PA-84's *own* ≤ 1-per-real-hour bar on one of them:
+>
+> | re-arm | worst seed | per real hour |
+> |---|---|---:|
+> | 600 s (PA-84's suggestion) | 8888 | **1.071 — FAIL** |
+> | 1200 s | 3141 | 0.952 |
+> | **1800 s (shipped)** | 9001 / 3141 | **0.714** |
+>
+> And the seed that breaks ten minutes is the interesting one: **8888 has the
+> FEWEST raw triggers of the eleven (41) and the MOST forced resets (9).** Its
+> crises are spread out, which is precisely the case a short re-arm cannot
+> coalesce — so the fix is not a bigger trigger filter but a longer silence.
+> Thirty real seconds is thirty game-minutes (constitution §4), so 1800 s is
+> thirty game-hours at 1×, and it states a rule a player would accept: *at most
+> one forced speed reset per half-hour of play.*
 >
 > **Measured, not asserted.** `tools/measure_speed_resets.gd`, curriculum
 > strategy, 21 game-days (504 game-hours = 8.4 real hours at 1×):
@@ -403,19 +419,28 @@ Pause freezes the sim clock only — camera, overlays, panels and build preview 
 > | seed | raw triggers | forced resets | per real hour |
 > |---|---:|---:|---:|
 > | 1337 | 0 | 0 | 0.000 |
-> | 4242 | 138 | 4 | 0.476 |
-> | 9001 | 161 | 6 | 0.714 |
-> | 2718 | 161 | 6 | 0.714 |
-> | 3141 | 271 | 8 | **0.952** |
-> | 1618 | 78 | 5 | 0.595 |
+> | 4242 | 138 | 3 | 0.357 |
+> | 9001 | 161 | 5 | 0.595 |
+> | 2718 | 161 | 5 | 0.595 |
+> | 3141 | 271 | 6 | **0.714** |
+> | 1618 | 78 | 4 | 0.476 |
+> | 7777 | 95 | 4 | 0.476 |
+> | 8888 | 41 | 4 | 0.476 |
+> | 9999 | 92 | 2 | 0.238 |
+> | 1234 | 211 | 6 | **0.714** |
+> | 5555 | 161 | 4 | 0.476 |
 >
-> Six seeds, worst **0.952** against PA-84's ≤ 1 bar. **The margin is thin and
-> that is worth saying out loud**: the re-arm is the audit's own prescribed ten
-> minutes, and on seed 3141 the raw stream is 271 events — **32.3 per real hour**
-> without it. If a future seed crosses 1.0 the lever is `auto_speed_reset_rearm_real_s`,
-> not the trigger list: dropping a trigger would leave a crisis the player cannot
-> fix at 3× unannounced, while lengthening the re-arm only says "you have already
-> been handed the wheel for this storm".
+> Eleven seeds, worst **0.714** against PA-84's ≤ 1 bar, at the shipped 1800 s.
+> The raw column is the counterfactual and it is the argument: seed 3141's stream
+> is 271 events, **32.3 per real hour**, which is the feature as doc 01 §2.9
+> described it and the number that explains why it was never wired.
+>
+> **If a future seed crosses 1.0 the lever is `auto_speed_reset_rearm_real_s`,
+> never the trigger list.** Dropping a trigger leaves a crisis the player cannot
+> fix at 3× unannounced, which is the failure the feature exists to prevent;
+> lengthening the re-arm only repeats something already true — that the wheel was
+> handed over once for this crisis. `tools/measure_speed_resets.gd --rearm=N`
+> sweeps it without editing the data file.
 
 ### 2.12 WHILE YOU WERE AWAY (S11, spec §21.2)
 

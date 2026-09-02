@@ -1199,10 +1199,18 @@ func auto_speed_reset_triggers() -> Array:
 
 
 ## Real seconds before a second forced reset is allowed. The second failure
-## inside one storm is the same crisis, and the player has already been handed
-## the wheel once for it. 600 s is ten game-hours at 1× (constitution §4).
+## inside one crisis is the same crisis, and the player has already been handed
+## the wheel once for it.
+##
+## **1800 s, and it is fitted rather than chosen.** PA-84 suggested ten minutes;
+## `tools/measure_speed_resets.gd` over eleven curriculum seeds says ten minutes
+## misses PA-84's *own* ≤ 1-per-real-hour bar on one of them (seed 8888, 1.071).
+## 1200 s brings the worst to 0.952 and 1800 s to 0.714. Thirty real seconds is
+## thirty game-minutes (constitution §4), so this is thirty game-hours at 1× —
+## and it states a rule a player would accept: at most one forced speed reset per
+## half-hour of play. Doc 12 §2.11 carries the sweep.
 func auto_speed_reset_rearm_s() -> float:
-	return maxf(0.0, UIConfig.get_num(_speed_cfg, "auto_speed_reset_rearm_real_s", 600.0))
+	return maxf(0.0, UIConfig.get_num(_speed_cfg, "auto_speed_reset_rearm_real_s", 1800.0))
 
 
 ## §2.11: "A save that was paused resumes unpaused at its stored speed."
