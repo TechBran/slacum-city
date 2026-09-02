@@ -108,13 +108,6 @@ const REGISTER := {
 	"power_restored_by_repair":
 		"covered: the relight is BlockDarkChanged(false) / PowerRestored, which"
 		+ " is what the blackout ceremony rides.",
-	"grid_component_upgraded":
-		"player_initiated: the player just bought the rung, on the building"
-		+ " panel's own POWER section, and that section re-reads the grid on the"
-		+ " next refresh and redraws the row they pressed. PowerInfraView"
-		+ " re-polls the topology through PowerInfraFeed.signature, which folds"
-		+ " in grid.mutation_epoch, so the pads and drops move without a wire"
-		+ " here (Wave 17, doc 12 §2.9 D-70).",
 	"power_capacity_fixed":
 		"player_initiated: the one-tap POWER_CAPACITY fix reports itself twice"
 		+ " over — the confirm strip that spent the money redraws with the"
@@ -310,15 +303,6 @@ const REGISTER := {
 		+ " building_removed.",
 	"construction_job_preempted":
 		"bookkeeping: the queue re-ordered itself. Neither site changed state.",
-	"construction_rushed":
-		"awaiting_consumer: the receipt for doc 03 §2.13(f)'s money-for-time"
-		+ " valve — job, dollars and source — and the player has to hear the"
-		+ " money leave, because the COMPLETION it also fires is the ordinary"
-		+ " building_completed and says nothing about a purchase. Wave 17's UI"
-		+ " branch owns the cue: ui/construction_queue_model.gd draws the roster"
-		+ " and the rush button, and game/notifications/ turns this into the"
-		+ " toast. The sim half ships first because both branches build against"
-		+ " one seam contract; this row deletes itself the day the model lands.",
 
 	# ── doc 06 §2.16, the opportunity layer ────────────────────────────────
 	# opportunity_spawned / opportunity_expired: consumed by
