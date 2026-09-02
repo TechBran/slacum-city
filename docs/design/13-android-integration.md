@@ -504,6 +504,87 @@ Per-step cost, benchmark city, `profile_save.gd --steps` (best of 7):
 
 **Why the restore cannot simply move off the main thread, restated because it is asked every wave.** It writes the live sim, and the sim is single-owner `RefCounted` (constitution §3) — the same C-22 ruling that refused to thread the catch-up. What *did* move is the SAVE's second half: the float canonicalisation is a pure function of a detached snapshot and now runs on the write thread (report 98 §24 RR-49), which is why the pause-path row above fell 125 → 106 ms and the autosave row fell 85 → 39.
 
+##### The budget lines, re-derived against the 2026-09-01 device numbers
+
+**Every figure in this section above is a workstation figure or a single device
+sample. The 2026-09-01 Fold session produced FIFTEEN load rows and one
+lifecycle-save row on the player's live 288 KB slot**, so the arithmetic can be
+re-derived against medians instead of estimates. Source:
+`tools/device_results/run_matrix_2026-09-01.log`; extract with
+
+    grep -a 'PERFIO' tools/device_results/run_matrix_2026-09-01.log
+
+| term | 2026-08-21 (one sample, 202,946 B) | **2026-09-01 (median of 15, 288,385 B)** | change |
+|---|---|---|---|
+| `read_ms` | 24.0 | **11.4** | −52.5 % |
+| **`restore_ms`** | **136.2** | **138.9** | **+2.0 %** |
+| unaccounted (`ms` − read − restore) | 5.3 | **0.7** | — |
+| **total `ms`** | **165.5** | **151.0** | −8.8 % |
+| slot bytes | 202,946 | 288,385 | **+42.1 %** |
+| spread (min … max of 15) | — | **147.8 … 171.4** | the two outliers are `read_ms` 17.8 and 21.6 |
+
+| the save (`reason=pause`, the real backgrounding path) | 2026-08-21 | **2026-09-01** | change |
+|---|---|---|---|
+| `write_ms` | 42.9 | **43.3** | **+0.9 %** |
+| total `ms` | 159.4 | **88.1** | **−44.7 %** |
+| the non-write half (`ms` − `write_ms`) | 116.5 | **44.8** | −61.5 % |
+| bytes | 203,538 | 345,597 | **+69.8 %** |
+
+**Four budget lines, re-derived.**
+
+1. **The restore is still the longest term, and by more than it was.** It is
+   **138.9 of 151.0 ms = 92.0 %** of the load, and **12.2×** the read. The 2026-08-21
+   read of this section — *"the load is CPU-bound on deserialisation, not on
+   storage, and shaving it is a restore-path question"* — is not merely confirmed,
+   it is sharper: storage has fallen to **7.6 %** of the load and the residual
+   term to 0.5 %. **There is exactly one term left to optimise and §2.9.1's
+   per-step table is where it lives.**
+2. **The restore does not scale with slot size, and that is new information.**
+   The slot grew **42.1 %** between the two sessions and the restore grew
+   **2.0 %**. A restore whose cost is 42× less elastic than its input is
+   dominated by fixed per-structure work (`roads_graph` is 37 % of the
+   workstation step table and rebuilds a graph, not a byte count), which is the
+   same conclusion the per-step table reaches from the other end. **It also means
+   the veil budget does not have to be re-derived every time a city grows** — the
+   number this section has always feared, "what happens at 1,500 buildings", is a
+   step-count question and not a byte question.
+3. **ANR safety is structural and the measured margin is 33×.** Android's line is
+   5 s. The whole device load — read, restore and residual together, in the worst
+   of fifteen samples — is **171.4 ms, a 29× margin**; at the median 151.0 ms it
+   is **33×**, and the restore alone (138.9 ms) is **36×**. That holds *even if
+   the restore ran wholly unsliced in one frame*, which is the pessimistic
+   reading, and it is the first time this section has been able to say so from a
+   phone rather than from a 3–5× guess.
+4. **The `onPause` window has gone from comfortable to uncontested.** The save is
+   **88.1 ms against the 500 ms budget — 17.6 %, a 5.7× margin**, where
+   2026-08-21's 159.4 ms was 31.9 % and 3.1×. And it got there on a payload
+   **70 % larger**: `write_ms` is flat at 43.3 ms, so the whole of the gain is in
+   the non-write half, which is where RR-49 moved the float canonicalisation onto
+   the write thread. **This is the first device confirmation that RR-49's move
+   pays on hardware**, and it pays about as much as it did on the workstation
+   (125 → 106 ms there, 116.5 → 44.8 ms here).
+
+**Two things this still does NOT measure, stated so nobody quotes it for them.**
+
+* **The 3–5× device penalty is still an estimate.** This section's *"at the
+  Fold's measured 3–5× penalty the worst frame a restore can produce is ≈0.4 s"*
+  cannot be checked against these rows, because no workstation run of *this* save
+  exists — the player's city lives on the phone, and the two workstation
+  reference cities (founding, 42.2 ms restore; benchmark, 202.1 ms) bracket the
+  device's 138.9 ms without pinning a ratio. The ≈0.4 s figure remains the
+  conservative planning number; what these rows prove is that the *total* is
+  151.0 ms, so the estimate is an over-estimate for this city by at least 2.6×
+  even in the unsliced case.
+* **`PERFIO` carries no per-step breakdown, so the veil's actual budget line —
+  the LONGEST step — has never been measured on a phone.** `kind=load` reports
+  `read_ms` and `restore_ms` and nothing between them. The workstation says
+  `roads_graph` is 76.5 ms of 207.6 ms on the benchmark city; the device says the
+  whole restore of a smaller city is 138.9 ms; neither statement constrains the
+  other. **A `step_ms_max=` field on the load row would close doc 91 §20.4 device
+  item 6's arithmetic half without a 12-hour absence**, and it is the second
+  cheap instrument fix this session's data asks for (the first is doc 11 §2.13's
+  `hour=` column).
+
 ### 2.10 Export pipeline
 
 > **As built:** §10.1–§10.4. The `--install-android-build-template` line below
@@ -854,7 +935,7 @@ Adds: release AAB, upload keystore + Play App Signing, store listing assets, Dat
 | D-14 | 16 KB alignment | `llvm-readelf -l` on every shipped `.so` → `Align 0x4000` |
 | D-15 | Long absence | Set device clock +3 days, relaunch → elapsed clamps to 12 real hours (720 coarse steps), catch-up sliced, no ANR (`dumpsys activity anr` clean), report renders and states the discarded surplus |
 | D-16 | Cold start | `am start -W` → `TotalTime` ≤ 4 000 ms on Tier B |
-| **D-17** | **Save and load, timed** | Three cold starts, five runs each, median `TotalTime`: **A** `--esa command_line_params "--,--title"` (no city load), **B** `"--,--resume"`, **C** `"--,--resume,--save-now"`. **`B − A` is the load, `C − B` is the save** — the difference cancels process start, Vulkan init and shader warm-up, which is what makes it work with no instrumentation in the build. Provisional (workstation, `tools/profile_save.gd`, the shipped `SaveService` path): founding city **14.4 ms save / 49.2 ms load**, 1,500-building city **138 ms / 456 ms**. Expect 2–3× on device. On a telemetry build, read `PERFIO` off logcat instead. **NOT RUN 2026-08-20 — blocked twice over:** the three arms are selected by arguments and no argument arrives (D-20), and the `PERFIO` fallback could not cover the LOAD either, because `game/main.gd` set `save_service.log_io` inside `_build_city_view()` (~line 344) while the boot load runs at ~line 133. **The flag now moves to `SaveService` construction**, so the next build times the load — which is the one number §2.9's ANR arithmetic has never had. **MEASURED 2026-08-21 (third session), both rows, on the player's real 203 KB slot** — and the `SaveService`-construction fix is confirmed on device, because the boot load emitted at last: **load `ms=165.5` (`read_ms=24.0`, `restore_ms=136.2`, `bytes=202946`, `ok=1`)** and **save `reason=pause ms=159.4` (`write_ms=42.9`, `bytes=203538`, `ok=1`)**. Read for §2.9: the load is **CPU-bound on restore, not on I/O** — 24 ms of the 165.5 ms is storage and 136.2 ms is deserialisation — so the ANR margin is a restore-path question, not a flash-speed one; and both operations sit inside a 500 ms `onPause` budget with room. The save was triggered by real lifecycle backgrounding, not `--save-now`, so it is the path a player actually takes. The A/B/C `TotalTime` differential is no longer needed for these two numbers |
+| **D-17** | **Save and load, timed** | Three cold starts, five runs each, median `TotalTime`: **A** `--esa command_line_params "--,--title"` (no city load), **B** `"--,--resume"`, **C** `"--,--resume,--save-now"`. **`B − A` is the load, `C − B` is the save** — the difference cancels process start, Vulkan init and shader warm-up, which is what makes it work with no instrumentation in the build. Provisional (workstation, `tools/profile_save.gd`, the shipped `SaveService` path): founding city **14.4 ms save / 49.2 ms load**, 1,500-building city **138 ms / 456 ms**. Expect 2–3× on device. On a telemetry build, read `PERFIO` off logcat instead. **NOT RUN 2026-08-20 — blocked twice over:** the three arms are selected by arguments and no argument arrives (D-20), and the `PERFIO` fallback could not cover the LOAD either, because `game/main.gd` set `save_service.log_io` inside `_build_city_view()` (~line 344) while the boot load runs at ~line 133. **The flag now moves to `SaveService` construction**, so the next build times the load — which is the one number §2.9's ANR arithmetic has never had. **MEASURED 2026-08-21 (third session), both rows, on the player's real 203 KB slot** — and the `SaveService`-construction fix is confirmed on device, because the boot load emitted at last: **load `ms=165.5` (`read_ms=24.0`, `restore_ms=136.2`, `bytes=202946`, `ok=1`)** and **save `reason=pause ms=159.4` (`write_ms=42.9`, `bytes=203538`, `ok=1`)**. Read for §2.9: the load is **CPU-bound on restore, not on I/O** — 24 ms of the 165.5 ms is storage and 136.2 ms is deserialisation — so the ANR margin is a restore-path question, not a flash-speed one; and both operations sit inside a 500 ms `onPause` budget with room. The save was triggered by real lifecycle backgrounding, not `--save-now`, so it is the path a player actually takes. The A/B/C `TotalTime` differential is no longer needed for these two numbers. **RE-TAKEN 2026-09-01 (`tools/run_matrix.sh` end to end, the player's 288 KB slot, fifteen load rows and one pause save): load median `ms=151.0` (`read_ms=11.4`, `restore_ms=138.9`, `bytes=288385`), spread 147.8–171.4; save `reason=pause ms=88.1` (`write_ms=43.3`, `bytes=345597`).** The slot grew 42 % and the restore grew 2 %; the save fell 45 % on a 70 % larger payload with `write_ms` flat. Full re-derivation in §2.9.1, "The budget lines, re-derived against the 2026-09-01 device numbers" |
 | **D-18** | **Frame time and jank at the three poses, day and night** | Six runs: `--zoom=` 0.0 / 0.5 / 1.0 × hour 13 / hour 21, 60 s of `dumpsys gfxinfo … framestats` each. **Hour 13 is the shadow worst case and is the one that matters** — doc 11's whole measured record was taken at 21:00 with the sun down and an empty shadow pass, and daylight costs the benchmark city +142 draw calls at Z0. Gate: doc 11 §7.4's table, read against the DAY rows |
 | **D-19** | **Harness pre-flight** | Before D-17/D-18: **(0) confirm the phone is UNLOCKED** — `adb shell dumpsys window \| grep mDreamingLockscreen` — because a locked device accepts `am start`, reports success, and then stops the app in 21 ms with no GDScript run at all, which is indistinguishable from a D-20 regression (2026-08-21; runbook §1.0). **(1) quote for the REMOTE shell** — `adb shell "am start … --es args '…'"`, since `adb` joins argv on spaces and `am` rejects the split tokens before launching. **(2)** confirm the launcher activity (`com.godot.game.GodotAppLauncher`). **(3)** confirm `--zoom=1.0` reaches the camera (a visible signal, not a log line). **(4)** confirm the shell actually parses the flag the session is built around — `grep -n 'road-detail\|pad-shadows\|flood-detail' game/main.gd` — three of the 2026-08-21 questions had no lever in `game/` at all. "Profile HWUI rendering" no longer matters (D-21: `gfxinfo` sees nothing here). `tools/device_runbook.md` §1 is the procedure; `tools/run_matrix.sh` runs the whole session and refuses to start on a locked phone |
 | **D-20** | **Make `--esa command_line_params` reach the game** *(blocked D-17 and D-18)* | **FAILED 2026-08-20, FIXED the same day — re-run to confirm on device.** *The finding:* arguments do not reach `OS.get_cmdline_user_args()` on this export template — two runs at `--zoom=0.0` / `--zoom=0.5` produced byte-identical `dc`/`prim` sequences, and `--rain=1.0,--overlay=2` came up clear with no overlay. The city still loaded on every launch, through `CrashSentinel`'s recovery branch (`am force-stop` registers as an unclean exit), which is what disguised the fault. *The fix, and why it is where it is:* the extra is on the Intent — `GodotAppLauncher` is an `activity-alias` for `.GodotApp` and Android forwards extras across an alias — so the loss is inside the template's own command-line plumbing, which we do not patch (doc 13 §10.5: the patch set under `android/build/` is kept empty on purpose). **`SlacumNative.launch_args()` reads the Intent extras in Kotlin**, where they demonstrably survive, and **`game/dev_args.gd` merges that list with `OS.get_cmdline_user_args()`**, de-duplicating so a future engine fix cannot make `--advance-hours=4` count twice. Two extras are accepted: `--esa command_line_params "--,--resume,--zoom=1.0"` (Godot's own form, separator included) and `--es args "--resume --zoom=1.0"` (the one with no syntax to get wrong). Consumers read `DevArgs.user_args()`. **Verified off device:** `tests/test_dev_args.gd` (10 cases), `launch_args()` present in the exported APK's `classes.dex`, `aapt2` badging clean, debug APK 89.2 MB and signed. **The device half is the §1.2 probe: `--zoom=1.0` must visibly put the camera at the Z2 stop** — **RUN 2026-08-21 (third session): the transport PASSED and the receiver was MISSING.** `logcat` shows the launch reaching `am` byte-perfect in both forms, and `GodotActivity` logging `Launch intent … (has extras) with parameters []` — the engine-side drop, observed directly. But `launch_args` was absent from **all three `classes*.dex`** of the *installed* APK (control `thermal_status`: present), so `has_method("launch_args")` was false and `DevArgs.user_args()` returned empty on every launch. **Cause: `android/plugins/slacum_native.aar` is a gitignored BUILD ARTIFACT that exporting does not rebuild and a fresh `git worktree` does not contain at all.** The tree's AAR was still the 2026-08-19 build (6,201 bytes) while D-20's Kotlin landed 08-20/21; the export packaged it and nothing complained. The "verified off device" note above was taken against a tree whose AAR happened to be fresh — **an APK verification is only as good as the AAR that went into it, so verify the APK that is actually INSTALLED.** Rebuilt (35,808 bytes), re-exported, `adb install -r` (saves preserved), and confirmed on device: `tools/run_matrix.sh build_check` → `launch_args in dex: 1`. **That step is now a gate: the matrix refuses to run on a build that cannot receive arguments.** Second trap on the same path: `android/build/libs/{debug,release}/godot-lib.template_*.aar` is also gitignored, and its absence fails the export with 21 misleading `cannot find symbol: variable super` errors in `GodotApp.java` whose real first error is `package org.godotengine.godot does not exist` |

@@ -2186,6 +2186,105 @@ wrong section** because the money pass was drafted as doc 92 §35 and merged as
 and a reader notices; a pointer that resolves to the wrong section is a lie with
 a footnote. **It belongs in CI, next to the suite.**
 
+## AF. Wave-17 rulings — what the first complete device matrix says about measuring at all (2026-09-01)
+
+*Three rulings. None of them is about a mechanic; all three are about the
+conditions under which a device number may be quoted, and all three came out of a
+session that ran perfectly and still produced three unusable captures out of
+fourteen. Report 98 §47 / RR-129, RR-130, RR-131 is the binding form; doc 11
+§2.13's "The 2026-09-01 session" carries the table. These are the three
+decisions a mechanics reader needs.*
+
+### AF1. A delta measured ACROSS an unnamed state is not a measurement of the thing you varied
+
+The session set out to price three levers and found a **~2.5 ms two-state in
+`gpu_est`** underneath all of them: seven of seven night captures read ≥ 8.5 ms,
+and so do three of seven **day** captures, while the first three day captures and
+the last capture of the session read 6.0–6.3 ms. Hour is *sufficient* for the
+slow state and *not necessary* for it, and nothing in the fourteen captures
+identifies the second cause.
+
+**The rule, and it is what separates the three rulings from each other.** A
+lever's A/B may be ruled when **both arms sit in the same state**, and may not
+when they straddle it — regardless of how clean each arm looks on its own.
+
+* **`road_detail` rules** (RR-129): both arms are adjacent captures inside the
+  slow state, and the delta is +0.4 ms in the direction that makes the ladder
+  pointless.
+* **`flood_detail` rules** (RR-130): both arms adjacent, both 8.8 ms.
+* **`pad_shadows` does not rule** (RR-131): its two arms are the *only* adjacent
+  pair in the session that crosses the boundary — 8.6 ms and 6.5 ms — so the
+  entire measured "cost of pad shadows" is the two-state, and the arm that
+  allegedly cost 2.5 ms sets a flag to the value the build already boots with.
+
+**Why this is a mechanics ruling and not a lab-technique note.** The tempting
+move was to publish `pads1 − pads0 = 2.1 ms` as *the price of pad shadows* — a
+number with an arm, a control and a plausible sign, produced by a harness that
+exited 0. It would have been wrong, it would have overturned RR-33, and nothing
+in the pipeline would have objected. **The defence is not more captures; it is
+requiring an arm to be attributable before it is subtracted.**
+
+### AF2. A capture's POSE is part of its identity, and until the harness asserts it, "same pose" is a hope
+
+`cap_pose.sh` asserts one thing about a hold: that the app was in the foreground
+before and after it. That caught `pads0` and correctly stamped it. It cannot see
+the two failures that actually cost this session its pose matrix:
+
+* **`rd0_h21`** — the camera moved *inside* the hold. `near: 6 → 0`,
+  `prim: 45,820 → 53,666`, `dc: 90 → 130`, all in the single sample at
+  `t = 14.0 s`, then flat for eighteen more. The harness reported a clean
+  capture and `perf_rows.py` published a median across both halves (58.0 fps /
+  11.1 ms / dc 130) that reads exactly like a `road_detail` result and is a pose
+  result.
+* **every zoom row** — the camera did not move *between* holds. Eleven of the
+  fourteen captures share one `md5` over their whole render column set.
+
+**The ruling.** A pose is asserted by the **census**, not by the argument that
+was supposed to set it. `run_matrix.sh:152` already knows this — its own comment
+names `near` as *"the column that proves the poses actually separated"* — and
+knowing it in a comment is what let two sessions in a row publish one pose as
+three. **Two mechanical checks discharge it, and both are one line:** stamp a
+capture whose `near`/`prim` change by more than a threshold *within* the hold,
+and refuse a *sweep* whose arms come back with an identical census. Neither is
+this lane's to write and both are named in doc 11 §2.13.
+
+**The corollary a mechanics reader should carry:** `near` is
+`RenderStateModel.tier_census()["near"]` — chunks within `near_max_m = 150 m` of
+`camera_rig.camera.global_position`, i.e. of the **eye**, not the focus. It is
+therefore a direct function of zoom, which is precisely why it is the right
+discriminator and why `near = 4` at `--zoom=0.0`, `0.5` **and** `1.0` is
+impossible unless the argument is inert.
+
+### AF3. A cap that is only written when something else changes is not a cap
+
+`game/main.gd:1935` sets `Engine.max_fps = perf_governor.target_fps()` inside
+`if perf_governor.update(delta):`. The governor returns true when a rung moves.
+On a phone that never trips a rung — which is every settled capture this project
+has ever taken on the Fold — **the cap is never written**, `project.godot`
+carries no `max_fps`, and the frame free-runs at the panel's rate. Measured:
+**106.5, 107.8 and 109.2 fps** at three daylight captures under
+`preset=balanced`, whose `target_fps` is 60.
+
+**Three consequences, and the mechanics one is the third.**
+
+1. Battery and heat: doc 13 §2.8 calls the 60 cap *"the single biggest battery
+   lever available (roughly halves GPU work)"*, and it has never been pulled on
+   this device.
+2. The high-refresh **toggle** is specified as opt-**in** and off by default;
+   what ships is a build in which "off" is indistinguishable from "on".
+3. **It corrupts every `fps` column this project has taken from this phone.**
+   Free-running against a 120 Hz panel puts a hard cliff at 8.33 ms in the middle
+   of the measured range. The session's day/night delta is **+2.60 ms of
+   `gpu_est`** and reads as **−38.5 fps**, because 6.03 ms clears the interval
+   and 8.63 ms misses it by 0.30 ms. **The ruling: quote `gpu_est`, never `fps`,
+   from any uncapped device capture** — and the actionable statement of the
+   night cost is *0.30 ms over a vsync cliff*, not *38 fps slower*.
+
+**Why the fix is worth more than the three A/Bs it sits beside.** With the cap in
+force, `fps` becomes a flat 60 on every settled capture and `gpu_est` becomes the
+only column that moves — which is the shape every table in doc 11 §2.13 has been
+trying to be. `A91-D-83`.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

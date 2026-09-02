@@ -2211,6 +2211,257 @@ with their owners:
 so the first of those is measurable at both ends of the trade rather than only
 at the end that got faster.
 
+#### The 2026-09-01 session — the whole matrix in one window, and the Fold table re-taken from it
+
+**`tools/run_matrix.sh` ran end to end, on an unlocked and connected phone, and
+exited 0.** Galaxy Z Fold 6 (`SM-F956U`), Android 16, **Adreno 750, Vulkan
+1.3.128, Godot "Forward Mobile"**, inner panel 1856 × 2160 @ 120 Hz. The
+installed build is the **Wave-15 build, `versionName` 0.4.0, installed
+2026-08-21** — `build_check` first: `launch_args in dex: 1` (control
+`thermal_status`: 1), so the 2026-08-21 killer was checked rather than assumed.
+The city is **the player's own live save**, slot 0, restored byte-identically on
+every one of the fourteen launches (`bytes=288385` in all fifteen
+`PERFIO kind=load` rows of the session). Sections 2–4 pin `--preset=balanced`, and every `PERF` line in the
+session reads `preset=balanced`.
+
+**Fourteen captures, 25 `PERF` samples each at a 2 s cadence.** Every row below
+is `tools/perf_rows.py`'s median over the steady window `t ≥ 12 s` (`n = 20`) —
+the same rule the 2026-08-20 session used, and the same one that drops the
+shader-cache and stream-in frames. The raw captures are
+`tools/device_results/log_*.txt` and the session log is
+`tools/device_results/run_matrix_2026-09-01.log`.
+
+##### The table, re-taken
+
+| capture | hour | what it adds to `--resume … --perf` | fps | p95 ms | cpu ms | gpu ms | dc / budget | prim | vram MB | chunks | near | inst | knob(s) | thermal |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `z0.0_h13` | **13** | `--zoom=0.0` | **109.2** | 12.6 | 0.35 | **6.1** | 100 / 320 | 47,783 | 134 | 9 | 4 | 86 | 0 | 0 |
+| `z0.5_h13` | **13** | `--zoom=0.5` | **107.8** | 12.1 | 0.40 | **6.0** | 100 / 320 | 47,783 | 134 | 9 | 4 | 86 | 0 | 0 |
+| `z1.0_h13` | **13** | `--zoom=1.0` | **106.5** | 15.2 | 0.40 | **6.0** | 100 / 320 | 47,783 | 134 | 9 | 4 | 86 | 0 | 0 |
+| `z0.0_h21` | **21** | `--zoom=0.0` | **71.3** | 16.7 | 0.50 | **8.6** | 100 / 320 | 47,783 | 134 | 9 | 4 | 86 | 0 | 0 |
+| `z0.5_h21` | **21** | `--zoom=0.5` | **68.6** | 17.1 | 0.50 | **8.7** | 100 / 320 | 47,783 | 134 | 9 | 4 | 86 | 0 | 0 |
+| `z1.0_h21` | **21** | `--zoom=1.0` | **68.1** | 18.1 | 0.40 | **8.6** | 100 / 320 | 47,783 | 134 | 9 | 4 | 86 | 0 | 0 |
+| `rd2_h13` | 13 | `--road-detail=2` | 69.7 | 18.0 | 0.50 | 8.5 | 100 / 320 | 47,783 | 134 | 9 | 4 | 86 | 0 | 0 |
+| `rd0_h13` | 13 | `--road-detail=0` | 69.4 | 18.3 | 0.50 | 8.9 | 100 / 320 | 47,783 | 134 | 9 | 4 | 86 | 0 | 0 |
+| `rd2_h21` | 21 | `--road-detail=2` | 69.5 | 17.3 | 0.50 | 8.6 | 100 / 320 | 47,783 | 134 | 9 | 4 | 86 | 0 | 0 |
+| `rd0_h21` | 21 | `--road-detail=0` | **58.0** | **21.3** | 0.60 | **11.1** | **130** / 320 | **54,551** | 134 | 9 | **0** | 86 | **0, 1, 2** | 0 |
+| `flood2` | 21 | `--zoom=0.5 --flood=350 --flood-detail=2` | 67.5 | 17.2 | 0.40 | 8.8 | 101 / 320 | 45,889 | 134 | 9 | **7** | 86 | 0 | 0 |
+| `flood0` | 21 | `--zoom=0.5 --flood=350 --flood-detail=0` | 69.1 | 17.6 | 0.55 | 8.8 | 100 / 320 | 47,783 | 134 | 9 | 4 | 86 | 0 | 0 |
+| `pads1` | 13 | `--pad-shadows=1` | 69.2 | 17.5 | 0.40 | 8.6 | 100 / 320 | 47,783 | 134 | 9 | 4 | 86 | 0 | **1** |
+| `pads0` ⚠ | 13 | `--pad-shadows=0` | 91.5 | 15.8 | 0.35 | 6.5 | 100 / 320 | 47,783 | 134 | 9 | 4 | 86 | 0 | **1** |
+
+⚠ **`pads0` is stamped `CONTAMINATED`** by `cap_pose.sh` (`fg_before=0
+fg_after=1`) and must not be quoted as a number — report 98 RR-131 says why in
+three parts, and the third part is the one that matters.
+
+**Reading the columns.** `dc / budget` is against
+`presets.balanced.draw_call_budget = 320`; `prim` is
+`RENDER_TOTAL_PRIMITIVES_IN_FRAME`; `vram` is the engine's own
+`RENDER_VIDEO_MEM_USED` against `presets.balanced.vram_budget_mb = 320`; `near`
+is `RenderStateModel.tier_census()["near"]`, chunks within `near_max_m = 150 m`
+of the camera; `knob(s)` is the set of governor rungs seen across the steady
+window, not a median. `cpu` and `gpu` are
+`RenderingServer.viewport_get_measured_render_time_*`, against
+`cpu_budget_ms = 4.0` and `gpu_budget_ms = 13.0`. **The governor's own budget is
+neither of those**: `PerfGovernor` uses `1000 / target_fps` = **16.667 ms**
+(`perf_governor.gd:175`), with `× 1.25` down (**20.83 ms**, held 5 s) and
+`× 0.80` up (**13.33 ms**, held 30 s) — which is the arithmetic the `rd0_h21`
+row below is read against.
+
+**One caveat about the last two rows: `step_pads` does NOT pin the preset.** Its
+launch line is `--resume --zoom=0.0 --pad-shadows=<n> --perf --advance-hours=19`
+with no `--preset=balanced`, so both pads captures read `preset=balanced` by
+**auto-detection** rather than by instruction. On this phone that is the same
+thing; on a phone that decides differently it would silently be a different
+experiment, which is exactly the trap `step_zebra`'s own comment warns about.
+Report 98 RR-131's re-run pins it.
+
+##### The headline: night costs +2.60 ms of GPU and NOT ONE draw call
+
+| | day (h13, three poses) | night (h21, three poses) | Δ |
+|---|---|---|---|
+| `gpu_est` mean | **6.03 ms** | **8.63 ms** | **+2.60 ms (× 1.43)** |
+| `fps` mean | 107.83 | 69.33 | **−38.50** |
+| `p95` mean | 13.30 ms | 17.30 ms | +4.00 ms |
+| `cpu` mean | 0.383 ms | 0.467 ms | +0.083 ms |
+| `dc` | 100 | 100 | **0** |
+| `prim` | 47,783 | 47,783 | **0** |
+| `vram` | 134 MB | 134 MB | **0** |
+
+**Zero on three of those rows is the finding.** The six day and night captures
+submit *the same* draw calls and *the same* primitives, sample for sample —
+`md5sum` over the `dc … lights` columns of all 25 lines is
+`cc761e3e782311b8db9b578f109b2417` for five of the six (`z0.5_h21` differs in
+one sample of 25). So the whole 2.60 ms is **per-pixel and post**, paid inside
+draws that already existed: §2.7's emissive windows, §2.10's lamp cards, §2.8's
+night sky and tonemap, and balanced's three-level glow
+(`glow_levels [2,3,4]`, `glow_hdr_threshold_night 0.78` against
+`glow_hdr_threshold_day 1.05` — the night threshold is what lets the emissives
+into the bloom). **That is exactly the list §2.13 forbids the governor to
+touch**, so the 2.60 ms is not a knob and is not meant to be: it is what the
+signature moment costs, priced on hardware for the first time.
+
+**Why 2.60 ms costs 38.5 fps, and why that number is an artefact.** The panel is
+120 Hz — an 8.33 ms interval. **6.03 ms clears it; 8.63 ms misses it by
+0.30 ms**, and a missed interval is a doubled one, which is why every night row's
+`p95` sits at or just above **16.7 ms = 2 × 8.33** and every night `fps` sits
+near 69 rather than near 120. The frame is free-running because the shipped cap
+is never applied (`A91-D-83`), so the `fps` column is a step function of the
+`gpu_est` column and not an independent measurement of anything. **Quote
+`gpu_est`. The actionable form of this row is that the night pose is 0.30 ms
+over a cliff**, not that it is 38 fps slower.
+
+##### The caveat that has to be printed beside the headline
+
+**Three daylight captures also read 8.5–8.9 ms, and the session cannot say
+why.** In chronological order, `gpu_est` medians run:
+
+    6.1  6.1  6.1 | 8.5  8.7  8.6 | 8.5  8.8  8.6  10.8  8.8  8.8  8.6 | 6.3
+    ^ h13 × 3       ^ h21 × 3       ^ rd2_h13  rd0_h13 …               ^ pads0 (h13)
+
+Every night capture is ≥ 8.5 ms (7 of 7), and **four of the seven day captures
+are too** (`rd2_h13`, `rd0_h13`, `pads1` — and `pads0`, the last capture of the
+session, comes back to 6.3). So *hour* is sufficient for the 8.6 ms state and
+not necessary for it, and the +2.60 ms above is measured across a two-state
+whose second cause is unidentified. **The ruled-out list**, so the next window
+does not re-walk it: it is not the pad-shadow lever (`pads1` sets the value the
+build already boots with — `data/render.json:184`,
+`power_infra_view.gd:279`/`:131` — and still costs 2.5 ms, report 98 RR-131); it
+is not thermal (`pads1`'s high samples predate its own `0 → 1` step at
+`t = 14.1 s`, and the last capture of the session is the fast one); it is not
+the city (`prim`, `inst` and the whole census are byte-identical throughout);
+and it is not run order (fast, slow, fast).
+
+**What separates the two states cannot be recovered from these files, because
+the `PERF` line does not carry the sim hour.** That is the single cheapest fix
+in the instrument and it is named here rather than in a backlog: an `hour=`
+column in `PerfGovernor.perf_line()` would have settled this in one `grep`, and
+until it exists **no capture can prove which hour it rendered**. The
+next-window discriminator that needs no code is to interleave the hours *within*
+a round — `h13, h21, h13, h21` — instead of running three of one and then three
+of the other, which is what `step_q1`'s `for h in 13 21; do for z in …` does
+today.
+
+##### Against the 2026-08-21 partial numbers
+
+The previous session settled at **`dc` 103–107, `prim` ≈ 37,270, `vram` 198 MB,
+`inst` 81, `fps` 99.5–112.4, `gpu_est` 6.1–6.8, `knob = 0`, `thermal = 0`** on a
+202,946-byte slot, at one unknown-hour pose. Against this session's daylight
+rows:
+
+| column | 2026-08-21 (settled) | 2026-09-01 (h13) | read |
+|---|---|---|---|
+| `fps` | 99.5–112.4 | 106.5–109.2 | **the same frame**, which is the first cross-build, cross-city agreement this doc has |
+| `gpu_est` | 6.1–6.8 | 6.0–6.1 | the same, at the low end |
+| `dc` | 103–107 | 100 | 69 % headroom against 320, up from 67 % |
+| `prim` | ≈ 37,270 | 47,783 | **+28 %** — the city grew and the draw count did not |
+| `vram` | 198 MB | **134 MB** | **−64 MB across the builds**, on a bigger city; 42 % of balanced's 320 MB budget |
+| `inst` | 81 | 86 | +5 buildings |
+| slot | 202,946 B | 288,385 B | **+42 %** |
+| `knob` / `thermal` | 0 / 0 | 0 / 0 *(except `rd0_h21`, `pads*`)* | the governor still does not move at a settled pose |
+
+**The 2026-08-21 session's one-sample incremental-add spike did not recur.** It
+read `dc = 149 / p95 = 36.5 ms` at `t = 16 s` as `inst` went 34 → 81. This
+session's `inst` is **86 from the first sample of every capture** and no sample
+in the fourteen captures exceeds `dc = 130` (and that one is the pose change of
+report 98 RR-129). The add path is still worth its own budget; it simply had
+nothing to add here, because the save restores a settled city rather than
+streaming one in.
+
+##### Memory, thermal and the driver
+
+`dumpsys meminfo`, taken at the end of the session
+(`tools/device_results/meminfo.txt`):
+
+| line | KB | note |
+|---|---|---|
+| Native Heap | 231,514 PSS (161,035 SwapPss) | the sim, the save buffers and Godot's own |
+| **GL mtrack** | **373,804** | 365 MB — the driver's accounting |
+| **EGL mtrack** | **126,912** | 124 MB |
+| **total PSS** | **840,172** | **820 MB against `presets.balanced.pss_budget_mb = 900` — 91 %** |
+
+    grep -aE "Native Heap|Dalvik|Stack|Ashmem|Other dev|mmap|mtrack" \
+      tools/device_results/meminfo.txt \
+      | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/){s+=$i; break}} END{print s}'
+    # 840172
+
+**PSS is the tightest budget in the session by a wide margin** — 91 % used,
+against 31 % of the draw-call budget, 66 % of the GPU budget, 12 % of the CPU
+budget and 42 % of the engine's own VRAM budget. It is also the one the
+engine's `vram` column cannot see: `RENDER_VIDEO_MEM_USED` reports **134 MB**
+while the OS attributes **489 MB** to `GL mtrack` + `EGL mtrack`. **A pass that
+watches only `vram` is watching a quarter of the graphics memory this app
+actually holds**, and the 900 MB row of the preset table has never been checked
+against `meminfo` before today.
+
+Thermal at the end of the session (`tools/device_results/thermal.txt`):
+`Thermal Status: 1`, `AP 47.4 °C`, `CP 38.4 °C`, `PA 38.8 °C`, `SUBBAT
+28.2 °C`. The status stepped `0 → 1` once, **inside `log_pads1.txt` at
+`t = 14.1 s`**, i.e. after twelve captures and ~12 minutes of uncapped
+120 Hz-seeking rendering (`A91-D-83`). `PerfGovernor.target_fps()` treats
+`THERMAL_MODERATE` and above as a cap; status 1 is below that and changed
+nothing.
+
+##### Three instrument findings, filed rather than buried
+
+1. **`lights=` has read 0 in every device line ever taken, and it is not a
+   measurement.** `PerfTelemetry.set_light_source()` is never called —
+   `grep -rn "set_light_source" --include=*.gd .` returns **one** hit, its own
+   definition at `game/render/perf_telemetry.gd:80` — and the method's own doc
+   says what that means: *"without it the `lights=` column reports 0 rather than
+   the preset's authored ceiling, because the ceiling is not a measurement."* So
+   `presets.balanced.street_lights = 12` and the governor's rung 4 (street omnis
+   −4, floor 4) have **never been observed on hardware**, and the night rows
+   above cannot attribute any part of their 2.60 ms to omni count. Wiring it is
+   one line at `game/main.gd:402`'s sibling.
+2. **`flood2` runs at `near = 7` against `presets.balanced.near_chunk_max = 6`.**
+   Constant from its first sample, in the only capture of the fourteen that
+   exceeds the ceiling. Either the ceiling is advisory, or the flood layer's
+   chunks are counted in a census the ceiling does not gate. Not chased here;
+   `grep -a 'near=' tools/device_results/log_flood2.txt` is the whole evidence.
+3. **`--zoom` arrives and the camera does not move (`A91-D-84`).** **Eleven of
+   the fourteen captures share one `md5`** over their entire render column set —
+   all three zoom values at h13, two of three at h21, both zebra day arms,
+   `rd2_h21`, `flood0` and both pads arms:
+
+       cd tools/device_results
+       for f in log_z0.0_h13 log_z0.5_h13 log_z1.0_h13 log_z0.0_h21 \
+                log_z1.0_h21 log_rd0_h13 log_rd2_h13 log_rd2_h21 \
+                log_flood0 log_pads0 log_pads1; do
+         printf '%s ' "$f"; grep -ao 'dc=.* lights=[0-9]*' "$f.txt" | md5sum
+       done
+       # cc761e3e782311b8db9b578f109b2417, eleven times
+
+   Only three captures differ, and each for a reason that is not the zoom:
+   `z0.5_h21` in one sample of 25, `rd0_h21` at its mid-hold pose change, and
+   `flood2` from its first sample. **The `Z0` and
+   `Z2` rows of every pose table in this section are still unmeasured**, and
+   this is the second session in a row to produce one pose while believing it
+   produced three. The 2026-08-20 note — *"the device session did not manage to
+   separate the three zoom poses … and the pose matrix is still open"* — stands,
+   for a new reason.
+
+##### What this session closes, and what it does not
+
+**Closed.** The day/night half of doc 91 §20.4 device item 2 (six captures, two
+hours, one pinned preset, +2.60 ms with the arithmetic above); the `road_detail`
+A/B (report 98 RR-129 — free at both hours); the `flood_detail` A/B and the
+flood screenshot (RR-130 — free, rung 2 stays, `flood_night.png`); the first
+`PERFIO` pair taken as a *median of fifteen* rather than a single sample (doc 13
+§2.9.1).
+
+**Not closed.** The three-**pose** half of item 2 (`A91-D-84`); the pad-shadow
+A/B (RR-131 — re-run command filed, RR-33 unrevisited and standing); the
+2.5 ms two-state above; tier-C `road_detail` (item 4, a different part); and the
+governor's ladder ORDER, which this session watched run for the first time and
+which spent two pixel-side rungs on a submission-side frame without recovering a
+frame (RR-129's last bullet).
+
+**Cost charged to the player: none that survives.** Every launch restored the
+same 288,385-byte slot (`bytes=288385` in all fifteen load rows), and the one
+pause-save the session produced wrote 345,597 bytes at `15:25:59` after the
+matrix was over. A `tar` backup of `files/saves` predates the session as usual.
+
 #### Device matrix
 
 | Tier | Representative devices | GPU | Preset | Target |

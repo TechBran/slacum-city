@@ -3766,3 +3766,255 @@ files that are not documents — `tests/test_city_sim.gd:146` and
 None can change behaviour, and that is proved rather than asserted:
 `profile_sim --hash-only` was run on both cities **before and after** these
 edits and all four digests are byte-identical.
+
+## 47. WAVE 17 — the first complete device matrix (binding)
+
+*`tools/run_matrix.sh` ran end to end for the first time on 2026-09-01: an
+unlocked, connected Galaxy Z Fold 6 (SM-F956U, Android 16, inner panel), the
+Wave-15 build (`versionName` 0.4.0, installed 2026-08-21), the player's live
+city, `--preset=balanced` pinned in sections 2-4, `MATRIX EXIT: 0`. Fourteen
+captures, 25 `PERF` samples each, fifteen `PERFIO kind=load` rows and one
+`kind=save`, one screenshot, one `meminfo`, one thermal dump — all committed under `tools/device_results/`, with
+`run_matrix_2026-09-01.log` as the session log. The full write-up and the
+re-taken Fold table are **doc 11 §2.13, "The 2026-09-01 session"**; the three
+rulings the deltas support are here, and so are the two defects the matrix found
+by accident, which are the more expensive half of the day.*
+
+**Three A/Bs were asked and three rulings come out, but not the three that were
+expected.** The zebra A/B rules cleanly. The flood A/B rules cleanly. The pad
+A/B does not rule at all, and the reason it does not is a *third* measurement
+nobody went looking for: **a ~2.5 ms two-state in `gpu_est` that the hour does
+not fully control**, sitting underneath every arm in the session. It is named in
+each ruling below rather than averaged into any of them.
+
+### RR-129 — The asphalt fragment ladder is FREE on Adreno 750, at BOTH hours; the `rd0_h21` capture that looks like a result is a pose change
+
+**Ruling.** `road_detail` 2 versus 0 is **below the noise floor on device at
+both hours**, and it is below it in the direction that makes the ladder
+pointless: the *cheaper* arm is the *slower* one in both matched pairs, by the
+same 0.3–0.4 ms, which is the run-order drift between two captures a minute
+apart and not a shader. `presets.balanced.road_detail = 2` and
+`presets.high.road_detail = 2` stand. **RR-42's note — "if rung 2 and rung 0 are
+within each other's spread on device, the ladder is pointless" — is answered
+YES for this part**, and the ladder survives only as `presets.performance`'s
+tier-C ceiling, which is a different part and is still unmeasured (doc 91 §20.4
+device item 4).
+
+| pair | arm | fps | p95 ms | cpu ms | gpu ms | dc | Δ gpu (rd0 − rd2) |
+|---|---|---|---|---|---|---|---|
+| day, whole hold | `rd2_h13` | 69.7 | 18.0 | 0.50 | **8.5** | 100 | — |
+| day, whole hold | `rd0_h13` | 69.4 | 18.3 | 0.50 | **8.9** | 100 | **+0.4** |
+| night, `t = 4–12 s` (matched) | `rd2_h21` | 70.9 | 16.7 | — | **8.5** | 93 | — |
+| night, `t = 4–12 s` (matched) | `rd0_h21` | 71.1 | 16.7 | — | **8.9** | 93 | **+0.4** |
+
+*(The day rows are `tools/perf_rows.py`'s own medians over `t ≥ 12 s`, `n = 20`.
+The night rows are medians over the five samples `t = 4, 6, 8, 10, 12 s`, which
+is the window in which the two night arms are at the same pose — see below. The
+arms' own spreads over those windows are `gpu_est` 8.4–9.6 and 8.4–10.1, so a
+0.4 ms delta is inside both.)*
+
+**The arms rendered the same geometry, and that is checked rather than
+assumed.** The ladder is a fragment branch (§2.1.2), so identical `dc`/`prim`
+between the arms is the expected result and confirms both arms drew the same
+city:
+
+    cd tools/device_results
+    md5sum <(grep -ao 'dc=.* lights=[0-9]*' log_rd0_h13.txt) \
+           <(grep -ao 'dc=.* lights=[0-9]*' log_rd2_h13.txt)
+    # cc761e3e782311b8db9b578f109b2417  — both
+
+**And the rung-2 arm was really rung 2.** `set_detail` clamps to the preset's
+ceiling, so a phone that auto-detected `performance` would have measured rung 1
+against rung 1 and reported "free" for the wrong reason —
+`tools/run_matrix.sh:186` pins `--preset=balanced` for exactly that reason, and
+every `PERF` line in all four captures reads `preset=balanced`.
+
+#### The `rd0_h21` headline row is NOT a `road_detail` result, and here is what it is
+
+`tools/perf_rows.py` prints `rd0_h21` as **58.0 fps / p95 21.3 / gpu 11.1 /
+dc 130/130 / prim 54,551 / near 0 / knob [0, 1, 2]**, which reads like the one
+place in the session where the ladder mattered. It is not. Read the capture:
+
+    grep -a 'PERF t=' tools/device_results/log_rd0_h21.txt
+
+* **The step is a single sample wide and it is a POSE change.** At `t = 12.0 s`
+  the capture is `dc=90 prim=45,820 near=6`. At `t = 14.0 s` it is
+  `dc=122 prim=53,666 **near=0**`, and at `t = 16.1 s` `dc=130 prim=53,954
+  near=0`, where it stays for the remaining eighteen samples. `near` is the
+  chunk-tier census (`RenderStateModel.tier_census()`, chunks within
+  `near_max_m = 150 m` of `camera_rig.camera.global_position`), so `near: 6 → 0`
+  with `chunks` constant at 9 is the camera moving, and nothing else in the file
+  moves at that sample. **What raised `dc` from ~100 to 130 is +8,000 primitives
+  arriving in the frustum, not a detail level.**
+* **It is not the detail level, and the control that proves it is in the same
+  session.** `rd0_h13` carries the *identical* `--road-detail=0` and holds
+  `near=4 / dc≈100 / prim≈47.8k` for all 25 samples; `rd2_h21` holds the same at
+  the same hour. **`rd0_h21` is the only capture of the fourteen whose census
+  moves mid-hold.**
+* **It is not the junction pose either — there is no junction pose.** Section 3
+  of the harness is *named* "road_detail A/B at a junction pose" and launches
+  `--zoom=0.0` and nothing else; no argument in the session selects a junction,
+  and `--zoom` did not move the camera in any capture (A91-D-84). Whatever moved
+  it at `t = 14 s` was not the harness.
+* **The knobs, and heat had nothing to do with them.** `knob = 0` through
+  `t = 36.1 s`, `1` at `t = 38.2–40.2 s`, `2` from `t = 42.2 s` to the last
+  sample — **two down-steps, 24 s after the `dc` rise, at `thermal = 0` for the
+  entire capture.** The trigger is §2.13's own rule (`p95 > budget × 1.25`
+  sustained 5 s): balanced's 60 fps target is a 16.67 ms budget, ×1.25 = 20.83 ms,
+  and `p95` ran 18.1–26.9 ms from `t = 22 s` onward, **above that line in 11
+  of those 15 samples**. Rungs 1 and 2 are
+  `render_scale −0.05` and particle `amount_ratio ×0.60`; **rung 3 (`far_cull
+  −128 m`) was never reached, which is why `dc` stayed at 130 rather than
+  falling.**
+* **They did not recover, and could not have.** The up-step needs
+  `p95 < budget × 0.80 = 13.3 ms` sustained **30 s**; `p95` never went below
+  18.1 ms after `t = 14 s`, and the capture ends 8 s after the second step. A
+  50 s hold cannot observe a recovery even if one were due.
+* **And the two steps bought nothing measurable.** Median fps at `knob = 0`
+  after the pose change (`t = 16–36 s`) is **58.8**; at `knob = 2`
+  (`t = 42–50 s`) it is **53.3**. The governor stepped twice and the frame rate
+  went *down* 5.5 fps. Four samples is a short window and this is reported as an
+  observation rather than a ruling — but it is the first time the ladder has
+  been watched running on hardware, and what it shows is two rungs spent on a
+  frame whose cost is submission-side (`dc` 130) against two knobs that are
+  pixel-side. **Filed as the first device evidence that the ladder's ORDER may
+  be wrong for this frame**; the workstation ladder table (§2.13, "The
+  performance ladder — four named levers, measured") ranked the rungs on a frame
+  that was fragment-bound, and this one is not.
+
+### RR-130 — `flood_detail` rung 2 is FREE on device; it stays 2, and standing water has finally been photographed
+
+**Ruling.** `presets.balanced.flood_detail = 2` and
+`presets.high.flood_detail = 2` stand. Rung 2 versus rung 0 is **identical to
+0.0 ms of median GPU** on the Fold at a night flood pose, and the two arms
+disagree about `fps` and `p95` in *opposite* directions, which is the signature
+of noise rather than of a cost:
+
+| arm | fps | p95 ms | cpu ms | gpu ms | dc | prim | near |
+|---|---|---|---|---|---|---|---|
+| `flood2` (`--flood=350 --flood-detail=2`) | 67.5 | **17.2** | 0.40 | **8.8** | 101 | 45,889 | **7** |
+| `flood0` (`--flood=350 --flood-detail=0`) | 69.1 | **17.6** | 0.55 | **8.8** | 100 | 47,783 | **4** |
+
+**Stated rather than buried: these two arms are not census-matched.** `flood2`
+runs at `near = 7 / prim = 45,889` from its very first sample and `flood0` at
+`near = 4 / prim = 47,783` from its first — a difference present at `t = 2.0 s`,
+so it is a starting-camera difference and not something the flood did. This is
+therefore *two nearby poses that cost the same* rather than *one pose measured
+twice*, and it is weaker evidence than the zebra pair. It is still enough to
+rule, because the rung's entire claim is a per-pixel one and the arm carrying
+the rung is not more expensive at either pose. **`near = 7` also exceeds
+`presets.balanced.near_chunk_max = 6`**, which is a separate thread and is filed
+in doc 11 §2.13 rather than ruled here.
+
+**The screenshot exists.** `tools/device_results/flood_night.png`, 2,618,648
+bytes, taken through `cap_pose.sh --snap` (which resolves the display — a bare
+`screencap` on this two-display phone writes a warning ahead of the PNG bytes
+and produces a file that is not an image; the 2026-08-21 session found that and
+doc 11 §2.13 carries it). It is the first device look at doc 07 §2.4's standing
+water and the
+first artefact of any kind from the flood layer on hardware.
+
+### RR-131 — The pad-shadow A/B produced NO usable pair; RR-33 stands unrevisited, and the re-run is a command rather than a wish
+
+**Ruling.** **RR-33 is unchanged and `power_infra.pad_shadows = true` stays
+shipped.** The 2026-09-01 pads pair is *not* evidence for it and *not* evidence
+against it, and is recorded as an unusable pair rather than as a number. Three
+independent reasons, in ascending order of how badly each one hurts:
+
+1. **The harness stamped one arm.** `cap_pose.sh` asserts foreground before and
+   after each hold and wrote `CONTAMINATED fg_before=0 fg_after=1` into
+   `log_pads0.txt` (`tools/cap_pose.sh:153`). Unlike the 2026-08-21 case, the
+   ordering argument does **not** rescue it: that capture's `PERF` lines stop
+   when the surface is lost, and `log_pads0.txt` emits all 25 samples across the
+   full 50 s, so the loss is not cleanly outside the sampled window.
+2. **The pair straddles a thermal boundary.** `thermal` rises `0 → 1` *inside*
+   `log_pads1.txt` at `t = 14.1 s` and is `1` for the whole of `log_pads0.txt`.
+   The pair is the only one in the session that is not taken at one thermal
+   status.
+3. **And the reason that actually disqualifies it: the "no-op" arm cost
+   2.5 ms.** `--pad-shadows=1` sets the value the build already boots with —
+   `data/render.json:184` is `"pad_shadows": true`, `power_infra_view.gd:279`
+   builds `_pad_node` with `SHADOW_CASTING_SETTING_ON`, and `:131` re-applies
+   the authored value at setup — yet `pads1` reads **`gpu_est` 8.6 ms** against
+   the three no-lever daylight captures' **6.1 ms**, and `pads0` (the arm that
+   *changes* something) reads **6.5 ms**. An arm that sets a flag to the value it
+   already has cannot cost 2.5 ms, so **something other than pad shadows is
+   moving `gpu_est` by 2.5 ms in this session** and it is inside the pads pair.
+   Until that is explained neither arm is a pad-shadow measurement. It is the
+   same two-state named in the section preamble and written up in doc 11 §2.13.
+
+**RR-33's own re-open gate is unmet for the second session running, and by a
+wider margin than the first.** RR-33 made itself revisitable only by *"a daylight
+Z0/Z1 Fold pose within 5 % of the draw-call budget"*. The 2026-09-01 session
+measured **`dc` 100 against balanced's `draw_call_budget` 320 — 69 % headroom**,
+against 41–56 % on 2026-08-20. The frame is nowhere near submission-bound at any
+pose the harness can reach, so the condition RR-33 wrote for its own revision has
+now failed twice and by a growing margin. **RR-33 is confirmed on its own terms
+and untouched by this session's numbers.**
+
+**The re-run, exact, so the next window starts at the measurement.** The fault in
+the 2026-09-01 attempt is that the two arms ran once each, in sequence, across a
+thermal step; the fix is interleaving, which is the convention every workstation
+A/B in doc 11 already uses:
+
+    adb shell run-as com.slacumcity.game rm -f files/perf_capture.flag
+    bash tools/run_matrix.sh build_check
+    for r in 1 2 3 4; do
+      bash tools/cap_pose.sh "pads1_r$r" \
+        "--resume --zoom=0.0 --preset=balanced --pad-shadows=1 --perf" 40 13
+      bash tools/cap_pose.sh "pads0_r$r" \
+        "--resume --zoom=0.0 --preset=balanced --pad-shadows=0 --perf" 40 13
+    done
+    python3 tools/perf_rows.py tools/device_results/log_pads[01]_r*.txt
+
+Three things this adds to what ran on 2026-09-01, each of which one of the three
+reasons above demands: `--preset=balanced` is **pinned** (the 2026-09-01 pads
+captures did not pin it — they read `preset=balanced` by auto-detection, which is
+luck, not control); the arms are **round-paired** so a thermal step lands on both
+arms rather than between them; and **four rounds** give each arm a spread to be
+compared against instead of one number. Take it as the FIRST section of a window,
+not the last — `pads1`/`pads0` were captures 13 and 14 of 14 on 2026-09-01, at
+`AP 47.4 °C`.
+
+### The two defects the matrix found by accident, and why they cost more than the three A/Bs
+
+Both are filed in doc 91 §14.5; both are `game/`'s and neither is fixed here.
+
+* **`A91-D-83` — doc 13 §2.8's frame cap is only applied when the governor
+  changes something.** `game/main.gd:1935` writes `Engine.max_fps =
+  perf_governor.target_fps()` **inside** `if perf_governor.update(delta):`, so a
+  device that never trips a rung never gets a cap and runs at whatever the panel
+  offers. Measured: **106.5–109.2 fps at the three daylight poses**, on a phone
+  whose active preset asks for 60. Doc 13 §2.8 calls capping at 60 on a 120 Hz
+  panel *"the single biggest battery lever available (roughly halves GPU work)"*,
+  and it has never been pulled on this device. **It also distorts this session's
+  own headline**: the day→night `gpu_est` delta of +2.60 ms costs **38.5 fps**
+  only because the frame is free-running against a 8.33 ms vsync interval that
+  6.03 ms clears and 8.63 ms misses. Capped at 60 the same 2.60 ms would have
+  been invisible in `fps` and visible only in `gpu_est`, which is the number that
+  matters for heat and battery.
+* **`A91-D-84` — `--zoom` is delivered, parsed, and does not move the camera.**
+  The plugin logs the argument (`SlacumNative: launch args: [--resume,
+  --zoom=1.0, --perf]`) and `game/main.gd:218` parses it, and the three zoom
+  values produce **byte-identical** `dc`/`prim`/`vram`/`chunks`/`near`/`inst`
+  columns across 25 samples — **one `md5`
+  (`cc761e3e782311b8db9b578f109b2417`) shared by eleven of the fourteen
+  captures**, day rows and night rows and both zebra day arms and both pads arms
+  alike. `near` is `tools/run_matrix.sh:152`'s own stated discriminator
+  for whether the poses separated (*"2026-08-20 got `near=4` at every 'zoom'
+  because no argument landed"*), and it reads **4 in every capture again**. The
+  2026-08-20 conclusion — *the pose matrix is still open* — therefore survives the
+  session that was meant to close it, for a **different** reason: the argument
+  now arrives and the camera still does not move.
+
+**What this means for doc 91 §20.4 device item 2, stated plainly and against the
+instruction this lane was given.** The day/night half of the pose matrix
+**closes** — six captures, two hours, one pinned preset, an unambiguous +2.60 ms
+and a re-taken table. The three-**pose** half does **not**: the session produced
+one pose three times, and A91-D-84 is why. The row is split rather than ticked.
+
+**Applied:** doc 11 §2.13 (the re-taken Fold table, "The 2026-09-01 session");
+doc 13 §2.9.1 (the ANR budget lines, re-derived against the measured load and
+save); doc 91 §14.5 (`A91-D-83`, `A91-D-84`) and §20.4 (device items 2, 3 and 5,
+and the completion statement); doc 93 §AF; and
+`tools/device_results/README.md`.
