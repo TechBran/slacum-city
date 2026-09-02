@@ -316,6 +316,17 @@ if not paused:
 - **Pause semantics.** Paused: the clock is frozen, no phases run, commands queue and drain at P01 of the first resumed tick, rendering and camera stay live. Pause is **foreground-only**: backgrounding stamps `last_advance_wall_ms` regardless of pause state, and the return credits elapsed time normally. Core Rule 2 ("the city continues while the player is away") outranks the pause button. The pause UI states this once, on first use.
 - **Grace window.** `OFFLINE_GRACE_SECONDS = 120`. Real elapsed under 120 s while backgrounded is credited as **zero**, so checking a notification or taking a call does not cost the player two game-hours. Above the grace window, the full elapsed time is credited (not elapsed-minus-grace).
 - **Auto-speed.** Setting `auto_speed_reset_on_critical` (default **on**): a P1 notification (class owned by doc 08) forces `speed = 1` and raises a toast. It never force-pauses — pausing the player mid-crisis is worse than the crisis.
+  > **As built (Wave 18, PA-84): not *a P1 notification* — three of them.** This
+  > clause said "a P1" and had no caller for seventeen waves, because *every* P1
+  > is far too many: measured on the curriculum path, the matching stream is
+  > 78–271 events over 21 game-days, which is up to **32.3 forced resets per real
+  > hour**. The shipped trigger set is `data/ui.json.speed.auto_speed_reset_triggers`
+  > — `incident_failed`, `credit_limit_reached`, and `flood_level_changed` at band
+  > `flooded` — plus a **thirty**-real-minute re-arm (PA-84 suggested ten; ten
+  > misses PA-84's own ≤ 1-per-real-hour bar on one of eleven seeds), which brings
+  > the worst of eleven to **0.714 per real hour**. Doc 12 §2.11 carries the sweep;
+  > `tools/measure_speed_resets.gd` re-runs it. The toast is not raised separately:
+  > the same event is already on its way to the alert surface.
 
 ### 2.10 Offline catch-up: the schedule planner
 

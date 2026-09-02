@@ -425,6 +425,76 @@ Doc 01 locks `speed ∈ {1, 2, 3}` with `paused` as a **separate bool**, so the 
 
 Pause freezes the sim clock only — camera, overlays, panels and build preview stay live, and state-mutating commands are **allowed** while paused, taking effect on the next tick (planning while paused gains nothing because the clock is stopped). Placement mode, dashboard and drawer never auto-pause. Doc 01's `auto_speed_reset_on_critical` (default on) **resets speed to 1× and never force-pauses** — pausing the player mid-crisis is worse than the crisis — so the UI raises the alert banner and drops to 1× without touching `paused`. A save that was paused resumes unpaused at its stored speed.
 
+> **As built, Wave 18 (PA-84) — WHICH critical, and how often.** This clause and
+> doc 01 §2.9 had said *"a critical event"* since the first draft and
+> `HudModel.auto_speed_reset` had no caller outside its own test for seventeen
+> waves. The reason is not neglect: *critical* was never defined, and the obvious
+> reading — every `STATE_CRITICAL` alert — takes the speed control away several
+> times an hour under PA-07's alert load, which is worse than the feature never
+> landing. So the answer is **authored, in `data/ui.json.speed`**:
+>
+> ```jsonc
+> "auto_speed_reset_triggers": [
+>   {"type": "incident_failed"},                                  // ran out of time
+>   {"type": "credit_limit_reached"},                             // spending is blocked
+>   {"type": "flood_level_changed", "match": {"band": "flooded"}} // streets close
+> ],
+> "auto_speed_reset_rearm_real_s": 1800.0
+> ```
+>
+> Three events, each one a thing the player cannot fix at 3×, each one already
+> doc 08's own P1 binding in `data/notifications.json` — spelled as the sim event
+> rather than the `notify_id` so the list needs no notification config to read,
+> and matched with doc 08's own `{type, match}` comparator so a row cannot mean
+> two things.
+>
+> **The re-arm is thirty real minutes, not the ten PA-84 suggested, and the
+> difference is a measurement.** Over eleven curriculum seeds, ten minutes misses
+> PA-84's *own* ≤ 1-per-real-hour bar on one of them:
+>
+> | re-arm | worst seed | per real hour |
+> |---|---|---:|
+> | 600 s (PA-84's suggestion) | 8888 | **1.071 — FAIL** |
+> | 1200 s | 3141 | 0.952 |
+> | **1800 s (shipped)** | 9001 / 3141 | **0.714** |
+>
+> And the seed that breaks ten minutes is the interesting one: **8888 has the
+> FEWEST raw triggers of the eleven (41) and the MOST forced resets (9).** Its
+> crises are spread out, which is precisely the case a short re-arm cannot
+> coalesce — so the fix is not a bigger trigger filter but a longer silence.
+> Thirty real seconds is thirty game-minutes (constitution §4), so 1800 s is
+> thirty game-hours at 1×, and it states a rule a player would accept: *at most
+> one forced speed reset per half-hour of play.*
+>
+> **Measured, not asserted.** `tools/measure_speed_resets.gd`, curriculum
+> strategy, 21 game-days (504 game-hours = 8.4 real hours at 1×):
+>
+> | seed | raw triggers | forced resets | per real hour |
+> |---|---:|---:|---:|
+> | 1337 | 0 | 0 | 0.000 |
+> | 4242 | 138 | 3 | 0.357 |
+> | 9001 | 161 | 5 | 0.595 |
+> | 2718 | 161 | 5 | 0.595 |
+> | 3141 | 271 | 6 | **0.714** |
+> | 1618 | 78 | 4 | 0.476 |
+> | 7777 | 95 | 4 | 0.476 |
+> | 8888 | 41 | 4 | 0.476 |
+> | 9999 | 92 | 2 | 0.238 |
+> | 1234 | 211 | 6 | **0.714** |
+> | 5555 | 161 | 4 | 0.476 |
+>
+> Eleven seeds, worst **0.714** against PA-84's ≤ 1 bar, at the shipped 1800 s.
+> The raw column is the counterfactual and it is the argument: seed 3141's stream
+> is 271 events, **32.3 per real hour**, which is the feature as doc 01 §2.9
+> described it and the number that explains why it was never wired.
+>
+> **If a future seed crosses 1.0 the lever is `auto_speed_reset_rearm_real_s`,
+> never the trigger list.** Dropping a trigger leaves a crisis the player cannot
+> fix at 3× unannounced, which is the failure the feature exists to prevent;
+> lengthening the re-arm only repeats something already true — that the wheel was
+> handed over once for this crisis. `tools/measure_speed_resets.gd --rearm=N`
+> sweeps it without editing the data file.
+
 ### 2.12 WHILE YOU WERE AWAY (S11, spec §21.2)
 
 **Trigger:** shown on resume when `real_elapsed_seconds ≥ 120` (= 2 game-hours) **or** any P1/P2 event occurred offline. Below the threshold with no notable events, a toast (`Away 4m · +$3.1K`) replaces it.
@@ -436,6 +506,30 @@ Layout, top to bottom: **(1) Header** `WHILE YOU WERE AWAY` + `6h 14m of city ti
 **S9 pages:** Gameplay · Notifications · Accessibility · Graphics · Audio · Data & Saves · About.
 
 - *Gameplay:* ~~difficulty (Casual/Standard/Hard, spec §35 — changing mid-city warns and is one-way downward)~~ **difficulty is READ-ONLY here (2026-08-20, doc 93 §K1)**, `auto_speed_reset_on_critical`, camera rotation mode (`free / snap45 / snap90 / locked`, default `snap45`), invert pan (off), follow dispatched unit (on), confirm before demolish (on).
+
+> **As built, Wave 18 (PA-58, D-82).** Three of that list are rows now —
+> `follow_dispatched_unit`, `invert_pan` and `rotation_mode` — and until this
+> wave all three were `data/ui.json.defaults` entries with **no row and no
+> reader**, which is worse than absent: `follow_dispatched_unit: true` was
+> authored, documented and inert, so after sending an engine the view stayed put.
+> The ladder's default is read from `camera.rotation_mode_default` rather than
+> spelled again, because `CameraState.setup()` boots from that same key and two
+> copies of a default are a bug waiting for the day somebody changes one.
+>
+> **Two of the list stay DEFERRED, and this is the record of why rather than an
+> omission.** `battery_saver` is a `defaults` key with no consumer: doc 11
+> §2.13's governor already owns the thermal and load ladder and the `auto_quality`
+> row is the player's say over it, so a second switch would either duplicate that
+> control or promise a power policy nothing implements — it ships as a row the
+> day something reads it and not before. **Confirm-before-demolish** is deferred
+> for the opposite reason: doc 12 §2.9's REMOVE path is already a two-tap
+> confirm-in-place (`TAP AGAIN — n GO DARK`, §2.9 D-70), so the switch would
+> control a confirmation that is not a dialog and cannot be skipped without
+> re-shaping that verb. Both are named here so the next reader does not file them
+> a third time; PA-58 is closed on that basis.
+>
+> `auto_speed_reset_on_critical` is a row of doc 01's, not of S9's — see §2.11,
+> where Wave 18 finally says which events are *critical*.
 
 > **The difficulty row is a sentence, not a control.** Doc 03 §2.9 authors four
 > presets (Casual / Standard / Hard / **Crisis** — this row said three); doc 93
@@ -460,6 +554,27 @@ Layout, top to bottom: **(1) Header** `WHILE YOU WERE AWAY` + `6h 14m of city ti
 | Push **policy** | **doc 08** | `data/notifications.json` | the four classes P1–P4 (P4 ships disabled), event→class mapping (18 events), push budgets, quiet hours, coalescing |
 | Push **platform** | **doc 13** | `data/android.json` | Android channels (mapped to P1/P2/P3), `AlarmManager`, permission flow, scheduling mechanics; consumes doc 08's plan |
 | **In-app** banner/toast gate | **this doc** | `data/ui.json` → `in_app_alerts` | the foreground surface only |
+
+> **As built, Wave 18 (PA-14, D-82/D-83) — S10's fifth row is a STATE, not a
+> switch.** Every switch above is a *preference of this app*; whether the app may
+> post at all is **Android's** answer, and until this wave S10 had no row for it
+> at all — so on a targetSdk-33+ device every one of those switches was on, and
+> nothing could post. `notification_permission` is the row, and it is the first
+> of a new kind (`kind: "state"`): four tokens rendered as sentences, no stored
+> value, no save, no device file, and a tap that runs the row's `action` rather
+> than cycling.
+>
+> | token | reads | tapping it |
+> |---|---|---|
+> | `on` | *On* | nothing — it is already on |
+> | `off` | *Off — tap to turn on* | opens the rationale modal (doc 13 §2.7 step 3), bypassing the flow's own trigger and once-a-session gates, because the player asked |
+> | `blocked` | *Off — open system settings* | `open_app_notification_settings()` — the only route Android leaves after two dismissals |
+> | `unavailable` | *Not available* | nothing — API < 33, or no plugin |
+>
+> The row exists so that the *one* state the player can act on has somewhere to
+> be acted on. A tappable row that does nothing is the control this section
+> forbids, which is why `on` and `unavailable` say which they are instead of
+> offering a button.
 
 This doc no longer owns `data/notifications.json` in any form — its former block (priority classes, `event_priority`, `quiet_hours_default`, `default_enabled`) is **deleted**; read those from doc 08. S10 is a *view* that writes doc 08's and doc 13's values and must not re-implement them; where they disagree, doc 08 wins on policy and doc 13 on platform.
 
@@ -1486,6 +1601,39 @@ Completion kinds: `command_accepted`, `sim_event`, `ui_opened` (`{path, min_seco
 
 Device-scoped preferences (`text_scale`, `colorblind`, `reduce_motion`, `larger_touch_targets`, `haptics`, `graphics`, `battery_saver`) are also written to `user://settings.cfg` per constitution §2 so they survive city deletion and checkpoint rollback; the copy above is the per-city snapshot, and on load `settings.cfg` wins for those keys.
 
+> **As built, Wave 18 (PA-15 · A91-D-70) — the file is written and read, and the
+> WHICH is data.** The paragraph above was true as a design and false as a build:
+> `settings_file_path()` had no caller, so every device-scoped row lived only
+> inside each city's save and came back at data defaults at the title door, on
+> New City and on every other slot — including the notification master switch
+> doc 08 §2.13.4 says must survive city deletion.
+>
+> `game/device_settings.gd` is the file's whole I/O: a **section registry**
+> (`settings` for doc 12's rows, `permission` for doc 13's bookkeeping), merge-
+> read-write so one owner's write cannot lose another's, committed tmp+rename
+> because a settings write happens on the tap the player makes on their way out
+> of the app. Which keys are device-scoped is
+> `data/ui.json.settings.device_scoped_keys` — the twelve rows listed there, not
+> the seven named above; `colorblind` and `battery_saver` are `defaults` entries
+> with no row, so they have nothing to persist yet.
+>
+> **The ordering rule lives in the MODEL, not the shell.**
+> `SettingsModel.restore_state()` ends by re-applying the device copy, which
+> makes *"on load `settings.cfg` wins"* true for the resumed save at boot, a
+> mid-session load, and the empty block New City restores — instead of true only
+> where a caller remembered to ask. `_on_title_new_game` restores `{}` for
+> exactly that reason: the city-scoped rows go back to their data defaults and
+> the device-scoped ones do not move.
+>
+> A `state` row (D-82) is in neither copy: it is not a preference, and persisting
+> Android's answer would show the player a stale token for one frame after every
+> load and a *wrong* one after they changed it in system settings. **It also
+> survives `reset_to_defaults()`** — the mirror-image bug, and the one this lane
+> nearly shipped: a load or a New City would otherwise put *Not available* in
+> front of a player whose notifications are on, until the shell happened to
+> re-report. A value that was never this screen's to set is not this screen's to
+> clear.
+
 **`street` (Wave 14, §2.21).** Two things, for two different reasons. `coached` / `coach_pending` are the one-shot discovery flag — a lesson taught twice is a lesson nobody trusts, and a mark the tutorial was standing on is owed rather than lost. **The mark's coordinates are deliberately NOT here**: restored a day later they would point at a street that emptied hours ago, and a mark that points at nothing is worse than one that centres. `live` / `settled` are the per-game-hour tally the Economy tab's two unsettled revenue lines are drawn from; they ride along because a save taken mid-hour and restored would otherwise print a ledger line for money the restored city no longer remembers earning. Both halves retire the day doc 03 settles `revenue.bounties` — the tally is ignored for any key the settle snapshot carries.
 
 Migration policy: unknown settings keys are dropped, missing keys take defaults from `data/ui.json` — a settings change must never invalidate a city (constitution §9).
@@ -2230,3 +2378,22 @@ untouched, and the ramp rides the bias they already produce. What moved is what
 the frame is a picture OF, so §2.18's screenshot rows that show a tilted camera
 are stale by design: at the pitch floor a screenshot taken before this wave is a
 picture of the pavement and one taken after is a picture of the skyline.
+
+### Wave-18 deltas — the settings screen stops lying: a file that is written, a permission that is asked for, and three rows that finally do something (2026-09-02)
+
+*Lane G, production audit PA-14 / PA-15 / PA-58 / PA-59 / PA-84. Report 98 §52
+carries the rulings; doc 93 §AK carries the mechanics argument.*
+
+| id | change | doc ref | why |
+|---|---|---|---|
+| D-82 | **S9 gains five rows and loses one, and one of the five is a new row KIND.** Added: three §2.13 GAMEPLAY rows that had defaults in `data/ui.json` and no row — `follow_dispatched_unit`, `invert_pan`, `rotation_mode` (`snap45 / snap90 / free / locked`, default read from `camera.rotation_mode_default`, the same key `CameraState.setup()` boots from) — plus S10's `notification_permission`. Removed: `auto_spend_contractor` (PA-59), moved whole into `settings.retired_rows` so its copy keys stay reachable and `SettingsModel.retired_keys()` can ignore it on restore in silence rather than report it as an unknown key. The new kind is **`state`** (`SettingsModel.KIND_STATE`): a row whose value belongs to some other system, never captured into a save, never device-scoped, and whose tap runs the row's `action` instead of cycling. | §2.13, §3.2 | A row is a promise that tapping it does something. `auto_spend_contractor` wrote a key `grep -rn` finds no reader for; the three gameplay rows did not exist at all, so a `follow_dispatched_unit` default of `true` meant nothing and after sending an engine the view stayed put. |
+| D-83 | **Two new surfaces, both built in code rather than authored into `ui_root.tscn`, and both absent for whole sessions.** (a) `ui/permission_sheet.gd` — doc 13 §2.7's `POST_NOTIFICATIONS` rationale as a §2.2 full-screen modal on `ModalLayer`, two copies (`first`, `missed_p1`), three exits that are **not** the same exit: TURN ON opens the system dialog, NOT NOW spends one of Android's two chances, and **BACK spends none**. (b) `ui/follow_chip.gd` — §2.6 step 6's `Following Utility 1 ✕`, one 48 dp target in doc 12's LEFT column, one slot above the speed rail, solved by `UIRoot.solve_follow_chip()` off the rail's laid-out offsets and yielding the column while the overlay strip is over it (§2.23's ruling about targets under panels, applied to the other edge). | §2.2, §2.6, doc 13 §2.7 | A mode with no face is a bug: a camera that keeps re-centring on something the player did not ask for reads as a broken camera. And a rationale modal whose BACK counted as an answer would burn a permission silently. |
+
+**The chip's position is SOLVED, and the first draft is worth recording.** It
+carried a hard-coded 316 dp bottom offset, which reads correctly at 360 x 800
+and lands **inside the top bar** at 880 x 400, where the whole safe area is 400
+dp tall: six `overlapping_targets` findings against the stat chips, i.e. against
+controls the player needs far more than this one. Any HUD element placed by a
+constant measured on a portrait phone has the same bug waiting in it; the fix is
+the one §2.23 already made for the right edge — measure the neighbour, do not
+guess the gap.

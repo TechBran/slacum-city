@@ -1162,6 +1162,57 @@ func auto_speed_reset(speed: int, paused: bool) -> Dictionary:
 	return {"speed": floor_speed, "paused": paused}
 
 
+## Does this sim event deserve the wheel back? (PA-84.)
+##
+## Doc 01 §2.9 and doc 12 §2.11 have said "resets speed to 1× on a critical
+## event" since the first draft and this function's neighbour above had no caller
+## outside its own test — because *critical* was never defined. The obvious
+## reading, every CRITICAL-state alert, is the one that must not ship: under
+## PA-07's alert load it takes the speed control away several times an hour, and
+## a game that keeps doing that is worse than one that never had the feature.
+##
+## So the answer is **authored, not inferred**: `data/ui.json.speed`'s
+## `auto_speed_reset_triggers`, three events, each one a thing the player cannot
+## fix at 3×. The match is doc 08's own `{type, match}` shape, evaluated by doc
+## 08's own comparator, so a trigger row cannot mean one thing here and another
+## in `data/notifications.json`.
+func is_auto_speed_reset_trigger(event: Dictionary) -> bool:
+	if not bool(_speed_cfg.get("auto_speed_reset_on_critical", true)):
+		return false
+	var type_name := str(event.get("type", ""))
+	if type_name == "":
+		return false
+	for raw: Variant in auto_speed_reset_triggers():
+		if not (raw is Dictionary):
+			continue
+		var rule: Dictionary = raw
+		if str(rule.get("type", "")) != type_name:
+			continue
+		if NotificationConfig.matches(rule.get("match", {}), event):
+			return true
+	return false
+
+
+func auto_speed_reset_triggers() -> Array:
+	var raw: Variant = _speed_cfg.get("auto_speed_reset_triggers", [])
+	return (raw as Array) if raw is Array else []
+
+
+## Real seconds before a second forced reset is allowed. The second failure
+## inside one crisis is the same crisis, and the player has already been handed
+## the wheel once for it.
+##
+## **1800 s, and it is fitted rather than chosen.** PA-84 suggested ten minutes;
+## `tools/measure_speed_resets.gd` over eleven curriculum seeds says ten minutes
+## misses PA-84's *own* ≤ 1-per-real-hour bar on one of them (seed 8888, 1.071).
+## 1200 s brings the worst to 0.952 and 1800 s to 0.714. Thirty real seconds is
+## thirty game-minutes (constitution §4), so this is thirty game-hours at 1× —
+## and it states a rule a player would accept: at most one forced speed reset per
+## half-hour of play. Doc 12 §2.11 carries the sweep.
+func auto_speed_reset_rearm_s() -> float:
+	return maxf(0.0, UIConfig.get_num(_speed_cfg, "auto_speed_reset_rearm_real_s", 1800.0))
+
+
 ## §2.11: "A save that was paused resumes unpaused at its stored speed."
 func resume_from_save(saved_speed: int, saved_paused: bool) -> Dictionary:
 	if not bool(_speed_cfg.get("resume_unpaused", true)):

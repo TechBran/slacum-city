@@ -182,10 +182,17 @@ func dept_glyph(dept: String) -> String:
 
 
 func _unit_name(unit_id: int, kind: String) -> String:
+	return UnitPickerModel.unit_name_for(_cfg, unit_id, kind)
+
+
+## `Engine 1`, `Heavy Repair 12`. Public and static because PA-58's follow chip
+## names the same unit on a different surface, and two spellings of a unit's
+## name is exactly the drift `ui_picker_unit` exists to prevent.
+static func unit_name_for(cfg: UIConfig, unit_id: int, kind: String) -> String:
 	var key := "ui_unit_kind_%s" % kind
-	var label := _cfg.t(key) if _cfg != null and _cfg.has_string(key) \
-			else UIWidgets.t(_cfg, "ui_unit_kind_unknown")
-	return UIWidgets.t_args(_cfg, "ui_picker_unit", {"kind": label, "id": unit_id})
+	var label := cfg.t(key) if cfg != null and cfg.has_string(key) \
+			else UIWidgets.t(cfg, "ui_unit_kind_unknown")
+	return UIWidgets.t_args(cfg, "ui_picker_unit", {"kind": label, "id": unit_id})
 
 
 func _eta_text(eta_gs: float) -> String:

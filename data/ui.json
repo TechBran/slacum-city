@@ -1144,6 +1144,32 @@
 				"default": false
 			},
 			{
+				"_comment": "PA-58, Wave 18 — §2.13's GAMEPLAY block, which had defaults in this file and no rows and no readers. All three are per-CITY rather than device-scoped, and that is a judgement rather than an oversight: which way a camera pans and whether it chases an engine are habits a player forms on a phone, but `follow_dispatched_unit` in particular reads as a property of how they are playing THIS city, and doc 12 §3.2's device list names neither of the two. `rotation_mode` is doc 12's own four-value enum (CameraState.RotationMode); the ladder is inline because it IS the enum — an options_from pointing at a second copy of four constants would be the drift this file is written to avoid. `battery_saver` and confirm-before-demolish stay defaults-with-no-row and are recorded as DEFERRED in doc 12 §2.13; see that section for why each is not a row yet.",
+				"key": "follow_dispatched_unit",
+				"kind": "toggle",
+				"default_from": "defaults.follow_dispatched_unit",
+				"hint_key": "ui_settings_follow_dispatched_unit_hint"
+			},
+			{
+				"key": "invert_pan",
+				"kind": "toggle",
+				"default_from": "defaults.invert_pan",
+				"hint_key": "ui_settings_invert_pan_hint"
+			},
+			{
+				"key": "rotation_mode",
+				"kind": "choice",
+				"options": [
+					"snap45",
+					"snap90",
+					"free",
+					"locked"
+				],
+				"default_from": "camera.rotation_mode_default",
+				"value_text_from": "rotation",
+				"hint_key": "ui_settings_rotation_mode_hint"
+			},
+			{
 				"_comment": "§2.13's AUTO-RESPONSE block (doc 06 §2.12, doc 91 D-11). Every row below carries `policy: dispatch`: its default is read from data/dispatch.json.policy_defaults — doc 06's own file, never a second copy here — and its value is written with CitySim.cmd_set_dispatch_policy, which refuses any key DispatchPolicy does not carry. The keys are spelled exactly as the sim spells them, so a row can never address a policy that does not exist. The utility RESTORATION ORDER (a drag-reorder list) is deliberately absent: it is a list, not a 48 dp cycling target, and shipping it as one would be a control that lies about what it does.",
 				"key": "auto_dispatch_fire",
 				"kind": "toggle",
@@ -1201,14 +1227,6 @@
 				"default_from": "dispatch.auto_repair_cost_cap",
 				"value_format": "money",
 				"hint_key": "ui_settings_auto_repair_cost_cap_hint"
-			},
-			{
-				"_comment": "§2.13 phrases this one as `never spend emergency contractor funds (on)`. The ROW is phrased as the sim key instead — spending ON/OFF, not never-spend ON/OFF — because an inverted control is the single easiest settings bug to ship and the hardest for a player to notice.",
-				"key": "auto_spend_contractor",
-				"kind": "toggle",
-				"policy": "dispatch",
-				"default_from": "dispatch.auto_spend_contractor",
-				"hint_key": "ui_settings_auto_spend_contractor_hint"
 			},
 			{
 				"_comment": "Doc 10 §2.13's AUTOMATIC ROAD REPAIR, the pair `RoadNetwork.cmd_set_auto_repair_policy` takes. Doc 93 §J3 rules road condition the policy's job rather than a per-tile player verb, which makes these two dials the whole of the player's say over it. Both carry `policy: roads`: the ladder and the default are read from data/roads.json.condition — doc 10's own file, never a second copy here — and a change writes the PAIR, because the command takes both at once. The threshold ladder is the sim's own `auto_repair_thresholds`, so a rung the command would answer E_BAD_THRESHOLD for can never appear on the control.",
@@ -1270,6 +1288,31 @@
 				"key": "quiet_hours_allow_critical",
 				"kind": "toggle",
 				"default": false
+			},
+			{
+				"_comment": "PA-14 / doc 13 §2.7 step 6 — the row S10 never had. It is a STATE, not a preference: Android owns the answer, this app only reports it and offers the one action that is legal in each state (`off` -> ask; `blocked` -> open the app's page in system settings; `on`/`unavailable` -> nothing, and the row says so instead of pretending to be a switch). Hence `kind: state`, which stores the token PermissionFlow.settings_row_state() returns rather than a player's choice: it is NOT captured into a save and NOT in device_scoped_keys, because a value the platform re-reports every time it is looked at has nothing to persist. The four options ARE the four tokens, so a state this app could not render can never reach the row.",
+				"key": "notification_permission",
+				"kind": "state",
+				"options": [
+					"on",
+					"off",
+					"blocked",
+					"unavailable"
+				],
+				"default": "unavailable",
+				"value_text_from": "permission",
+				"action": "permission",
+				"hint_key": "ui_settings_permission_hint"
+			}
+		],
+		"retired_rows": [
+			{
+				"_comment": "PA-59, Wave 18 — WITHDRAWN from the sheet, kept here on purpose. §2.13 phrases this one as `never spend emergency contractor funds (on)`; the row was phrased as the sim key instead (spending ON/OFF) because an inverted control is the easiest settings bug to ship. Neither phrasing was the problem: `grep -rn auto_spend_contractor sim/ game/ ui/` finds no reader at all — `dispatch_policy.gd` stores the flag and there is no contractor unit to hire, which doc 06 line 1749 says outright. A control the sim never consults is a control that lies about what the player just did, so the ROW goes and the KEY stays: doc 06's `data/dispatch.json.policy_defaults` still carries it, `DispatchPolicy` still round-trips it, and a save written while the row existed still restores without a drop (`SettingsModel.retired_keys`). The row comes back the day a contractor unit does — restore this object to `rows` and nothing else changes.",
+				"key": "auto_spend_contractor",
+				"kind": "toggle",
+				"policy": "dispatch",
+				"default_from": "dispatch.auto_spend_contractor",
+				"hint_key": "ui_settings_auto_spend_contractor_hint"
 			}
 		],
 		"device_scoped_keys": [
@@ -1488,7 +1531,14 @@
 		"default": 1,
 		"paused_is_separate_flag": true,
 		"resume_unpaused": true,
-		"auto_speed_reset_on_critical": true
+		"auto_speed_reset_on_critical": true,
+		"_comment_auto_speed_reset": "PA-84, Wave 18 — WHICH critical. Doc 01 §2.9 and doc 12 §2.11 have said `resets speed to 1x on a critical event` since the first draft and `HudModel.auto_speed_reset` had no caller outside its own test, because `critical` was never defined and the obvious reading (every CRITICAL-state alert) would drop the player to 1x several times an hour under PA-07's alert load — a game that keeps taking the speed control away is worse than one that never had the feature. So the trigger set is authored here, it is THREE events, and each one is a thing the player cannot fix at 3x: an incident that ran out of time, the credit limit (spending is blocked until income recovers), and the flood band at which streets close. Each is doc 08's own P1 binding in data/notifications.json, spelled as the sim event rather than the notify_id so this list needs no notification config to read. `rearm_real_s` is 1800 -- THIRTY real minutes, not the ten PA-84 suggested, and the number is a measurement rather than a guess. tools/measure_speed_resets.gd over eleven seeds: at 600 s the worst seed (8888) forces 1.071 resets per real hour, which MISSES the audit's own <= 1 bar; at 1200 s the worst is 0.952; at 1800 s it is 0.714. The reason 600 s does not work is not burstiness -- seed 8888 has the FEWEST raw triggers of the eleven (41) and the MOST forced resets, because its crises are spread out, which is exactly the case a short re-arm cannot coalesce. Thirty real minutes is thirty game-hours at 1x, and it reads as a rule a player would accept: at most one forced speed reset per half-hour of play.",
+		"auto_speed_reset_triggers": [
+			{"type": "incident_failed"},
+			{"type": "credit_limit_reached"},
+			{"type": "flood_level_changed", "match": {"band": "flooded"}}
+		],
+		"auto_speed_reset_rearm_real_s": 1800.0
 	},
 	"storm_prep": {
 	  "_source": "12-ui-ux.md §2.24 (S17). Doc 07 §2.7.7 owns the six actions and their knobs; doc 03 owns their dollars (data/economy.json storm_prep); this block is layout only.",

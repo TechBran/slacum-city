@@ -664,6 +664,235 @@ func test_28_off_device_the_flow_is_silent_and_survives_a_round_trip() -> void:
 
 
 # ===========================================================================
+# PA-14 · A91-D-69 — the two seams that were missing, as the shell has them
+# ===========================================================================
+#
+# `PermissionShellMirror` below is `game/main.gd`'s two batch hooks, verbatim
+# apart from the field names a test can reach — the same arrangement
+# `ShellResumeRig` uses and for the same reason: `main.gd` is the lead's file
+# and this branch delivers its changes as snippets, so the only place the
+# ORDERING is executable without a window is here.
+
+class PermissionShellMirror extends RefCounted:
+	const PERMISSION_TRIGGERS: Array[StringName] = [
+		&"upgrade_started_sim",
+		&"incident_resolved",
+	]
+	const PERMISSION_EVIDENCE_RANK := 1
+
+	var permission_flow: PermissionFlow
+	var notification_router: NotificationRouter
+	## `Main._permission_prompt_shown` and `Main.modal_open`, as a test can have
+	## them: the first is the shell's own once-a-session guard, the second stands
+	## in for `UIRoot.modal_open()`.
+	var permission_prompt_shown := false
+	var modal_open := false
+	## `Main._draining_offline` — true only while `_finish_catchup` drains the
+	## batch an ABSENCE produced.
+	var draining_offline := false
+	## Every reason handed to `present_permission_rationale`, by either path.
+	var shown: Array[String] = []
+
+	## `Main._on_permission_row_tapped`, `off` arm — the one place BOTH of
+	## `should_prompt`'s gates are bypassed, because the player asked.
+	func _on_permission_row_tapped() -> void:
+		match permission_flow.settings_row_state():
+			"off":
+				permission_flow.note_trigger()
+				shown.append(PermissionFlow.REASON_FIRST)
+				permission_prompt_shown = true
+			"blocked":
+				permission_flow.open_system_settings()
+
+	func _pump_permission_prompt() -> void:
+		if permission_flow == null or permission_prompt_shown or modal_open:
+			return
+		if not permission_flow.should_prompt():
+			return
+		var reason := permission_flow.request_rationale()
+		if reason == "":
+			return
+		shown.append(reason)
+		permission_prompt_shown = true
+
+	func _note_permission_trigger(batch: Array) -> void:
+		if permission_flow == null or permission_flow.triggered:
+			return
+		for raw: Variant in batch:
+			if not (raw is Dictionary):
+				continue
+			if PERMISSION_TRIGGERS.has(StringName(String(
+					(raw as Dictionary).get("type", "")))):
+				permission_flow.note_trigger()
+				return
+
+	func _note_permission_evidence(plans: Array) -> void:
+		if permission_flow == null or notification_router == null:
+			return
+		if not draining_offline:
+			return
+		if permission_flow.notifications_enabled():
+			return
+		for raw: Variant in plans:
+			if not (raw is Dictionary):
+				continue
+			var class_id := str((raw as Dictionary).get("class", ""))
+			if notification_router.config().class_rank(class_id) \
+					== PERMISSION_EVIDENCE_RANK:
+				permission_flow.note_missed_p1()
+				return
+
+
+func _mirror(native: FakeNative) -> PermissionShellMirror:
+	var mirror := PermissionShellMirror.new()
+	mirror.permission_flow = _flow(native)
+	mirror.notification_router = _router(native)
+	return mirror
+
+
+func test_30_the_trigger_is_the_first_timer_the_player_chose_never_the_launch()\
+		-> void:
+	# Doc 13 §2.7 step 1 ("the first construction timer") and doc 08 §2.13.4
+	# ("the first resolved incident"). Neither is launch, and neither is the
+	# house the tutorial has the player place in its first minute — that is the
+	# cold prompt with extra steps.
+	var native := FakeNative.new()
+	native.permission = AndroidNative.PERMISSION_NEVER_ASKED
+	var mirror := _mirror(native)
+
+	mirror._note_permission_trigger([
+		{"type": "building_placed_sim", "sim_id": "B-7"},
+		{"type": "economy_hour_settled", "net": 120.0},
+		{"type": "weather_changed", "state": "rain"}])
+	assert_false(mirror.permission_flow.triggered,
+			"a placed house and an hour of weather are not a reason to ask")
+	assert_false(mirror.permission_flow.should_prompt(NOW_UNIX))
+
+	mirror._note_permission_trigger([{"type": "upgrade_started_sim", "sim_id": "B-7"}])
+	assert_true(mirror.permission_flow.triggered, "the first construction timer is")
+	assert_true(mirror.permission_flow.should_prompt(NOW_UNIX))
+
+	var by_incident := _mirror(FakeNative.new())
+	by_incident.permission_flow.native.permission = AndroidNative.PERMISSION_NEVER_ASKED
+	by_incident._note_permission_trigger([{"type": "incident_resolved", "incident_id": 3}])
+	assert_true(by_incident.permission_flow.triggered, "…and so is the first fix")
+
+
+func test_31_a_second_prompt_is_earned_by_a_p1_the_player_never_heard() -> void:
+	# doc 13 §2.7 step 7's evidence, read off the router's own classification so
+	# the shell holds no second copy of doc 08's class table.
+	var heard := FakeNative.new()          # the permission IS held
+	var heard_mirror := _mirror(heard)
+	heard_mirror.draining_offline = true   # …so the PERMISSION is what is on trial
+	heard_mirror._note_permission_evidence(
+			heard_mirror.notification_router.feed_batch(
+					[{"type": "incident_failed", "incident_id": 9,
+						"incident_type": "fire", "tier_peak": 4}]))
+	assert_false(heard_mirror.permission_flow.missed_p1_offline,
+			"a P1 that DID buzz is not a reason to ask for anything")
+
+	var unheard := FakeNative.new()
+	unheard.enabled = false                # …and here it is not
+	unheard.permission = AndroidNative.PERMISSION_DENIED
+	var mirror := _mirror(unheard)
+	# A P1 the player WATCHED, with the permission absent. Still not evidence:
+	# step 7 says "occurred offline", and a re-prompt that said "you missed a
+	# citywide emergency" about a storm they sat through would be a lie told to
+	# obtain a permission.
+	mirror._note_permission_evidence(mirror.notification_router.feed_batch(
+			[{"type": "incident_failed", "incident_id": 8,
+				"incident_type": "fire", "tier_peak": 4}]))
+	assert_false(mirror.permission_flow.missed_p1_offline,
+			"a live batch earns nothing, however bad the event was")
+
+	mirror.draining_offline = true
+	mirror._note_permission_evidence(mirror.notification_router.feed_batch(
+			[{"type": "economy_hour_settled", "net": 12.0}]))
+	assert_false(mirror.permission_flow.missed_p1_offline, "a settled hour is not a P1")
+	mirror._note_permission_evidence(mirror.notification_router.feed_batch(
+			[{"type": "incident_failed", "incident_id": 9,
+				"incident_type": "fire", "tier_peak": 4}]))
+	assert_true(mirror.permission_flow.missed_p1_offline)
+
+	# …and the evidence is only half of what a re-prompt costs.
+	mirror.permission_flow.note_trigger()
+	mirror.permission_flow.asked_count = 1
+	mirror.permission_flow.last_asked_unix = int(NOW_UNIX)
+	assert_false(mirror.permission_flow.should_prompt(NOW_UNIX + 3_600.0),
+			"an hour is not seven days")
+	assert_eq(mirror.permission_flow.request_rationale(
+			NOW_UNIX + PermissionFlow.REPROMPT_COOLDOWN_S + 1.0),
+			PermissionFlow.REASON_MISSED_P1)
+
+
+func test_31b_a_modal_the_player_backed_out_of_does_not_come_straight_back() -> void:
+	# The trap in "BACK spends no chance": `_asked_this_session` is set by
+	# `accept()` and `decline()` and by NOTHING else, deliberately — so
+	# `should_prompt()` is still true on the very next frame after a BACK. A pump
+	# that trusted it alone would re-open the sheet every frame and hand the
+	# player a modal they cannot get out of. The shell keeps its own
+	# once-a-session guard for exactly that, and the two are not the same rule:
+	# the flow's counts CHANCES SPENT, this one counts SHEETS SHOWN.
+	var native := FakeNative.new()
+	native.permission = AndroidNative.PERMISSION_NEVER_ASKED
+	var mirror := _mirror(native)
+	mirror._note_permission_trigger([{"type": "incident_resolved", "incident_id": 1}])
+
+	for frame in 300:
+		mirror._pump_permission_prompt()
+	assert_eq(mirror.shown.size(), 1, "three hundred idle frames, one modal")
+	assert_eq(mirror.shown[0], PermissionFlow.REASON_FIRST)
+	assert_eq(mirror.permission_flow.asked_count, 0,
+			"and BACK spent none of Android's two chances")
+
+	# A modal already on screen also stops the pump, so the rationale can never
+	# open over the title door, the veil, or another sheet.
+	var busy := _mirror(FakeNative.new())
+	busy.permission_flow.native.permission = AndroidNative.PERMISSION_NEVER_ASKED
+	busy.modal_open = true
+	busy._note_permission_trigger([{"type": "upgrade_started_sim", "sim_id": "B-1"}])
+	busy._pump_permission_prompt()
+	assert_eq(busy.shown.size(), 0)
+
+	# The SAME trap reached from the one path that bypasses the flow's own gates:
+	# the settings row calls `note_trigger()` itself, so a BACK out of a
+	# row-opened sheet leaves `should_prompt()` true. The row raises the shell's
+	# guard for exactly that reason.
+	var tapped := _mirror(FakeNative.new())
+	tapped.permission_flow.native.permission = AndroidNative.PERMISSION_NEVER_ASKED
+	tapped._on_permission_row_tapped()
+	assert_eq(tapped.shown.size(), 1, "the row opened it")
+	for frame in 100:
+		tapped._pump_permission_prompt()
+	assert_eq(tapped.shown.size(), 1, "…and a hundred idle frames did not re-open it")
+	assert_eq(tapped.permission_flow.asked_count, 0)
+
+
+func test_32_the_permission_bookkeeping_is_device_scoped_not_city_scoped() -> void:
+	# The correctness argument, not a convenience: Android's two dismissals are
+	# spent per INSTALL. A counter that rode in the city's save would hand a
+	# player who deleted their city a third prompt the system will not show, and
+	# the modal would open a dialog that never appears.
+	var path := "user://test_permission_%d.cfg" % Time.get_ticks_usec()
+	var native := FakeNative.new()
+	native.permission = AndroidNative.PERMISSION_DENIED
+	var flow := _flow(native)
+	flow.note_trigger()
+	flow.decline(NOW_UNIX)
+	assert_eq(flow.asked_count, 1)
+	assert_true(flow.save_device(path))
+
+	var relaunched := PermissionFlow.new(native)
+	relaunched.load_device(path)
+	assert_eq(relaunched.asked_count, 1, "the chance stayed spent across a relaunch")
+	assert_eq(relaunched.last_asked_unix, int(NOW_UNIX))
+	# The settings row is the only surface a denied player has left.
+	assert_eq(relaunched.settings_row_state(), "off")
+	native.permission = AndroidNative.PERMISSION_DENIED_PERMANENT
+	assert_eq(relaunched.settings_row_state(), "blocked")
+
+
+# ===========================================================================
 # The lifecycle wiring (doc 13 §2.2)
 # ===========================================================================
 

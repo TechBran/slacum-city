@@ -346,6 +346,69 @@ Release manifest, complete:
    user's system toggle, so the Settings row stays truthful.
 ```
 
+> **As built (Wave 18, PA-14 · A91-D-69) — the eight steps had a state machine
+> and no caller.** `game/notifications/permission_flow.gd` implemented all eight
+> and had been tested since Wave 11; `grep -rn "note_trigger\|request_rationale\|
+> should_prompt\|\.accept(\|\.decline(" game/ ui/ | grep -v permission_flow.gd`
+> returned **nothing**, and `main.gd` connected only `permission_result → confirm`.
+> So on a targetSdk-33+ device the app had never asked, could not post, and doc
+> 13 §11.10's "no notification has ever been posted on real hardware" was the
+> consequence rather than a coincidence. Five seams close it:
+>
+> | step | seam | file |
+> |---|---|---|
+> | 1 trigger | `upgrade_started_sim` **or** `incident_resolved` in the batch | `Main._note_permission_trigger` |
+> | 3 modal | next idle frame, on a frame nothing else owns | `Main._pump_permission_prompt` → `UIRoot.present_permission_rationale` → `ui/permission_sheet.gd` |
+> | 4/5 answer | TURN ON → `accept()`, NOT NOW → `decline()`, **BACK → neither** | `Main._on_permission_answered` |
+> | 6 fallback | S10's `notification_permission` row, four states (doc 12 §2.13) | `Main._on_permission_row_tapped` |
+> | 7 evidence | a P1 in the batch an **absence** produced, while `notifications_enabled()` is false | `Main._note_permission_evidence`, off the router's own classification, gated on `_draining_offline` |
+>
+> **`building_placed_sim` is deliberately not a trigger** even though it creates a
+> construction timer: the tutorial has the player place a house inside its first
+> minute, and asking there is the cold prompt this section exists to forbid, with
+> extra steps. Step 1's own words — *"the end of onboarding step 10 (`Upgrade one
+> building`)"* — are what `upgrade_started_sim` means.
+>
+> **BACK is not step 5.** Doc 12 §2.2 makes BACK the universal "close the thing
+> in front of me"; a player who reached for it did not answer a question, and
+> counting it as a dismissal would spend one of Android's two chances silently.
+> `PermissionSheet.answered` is emitted by the two buttons and never by `close()`.
+>
+> **…and that has a trap in it, which cost this lane a bug.** `_asked_this_session`
+> is set by `accept()` and `decline()` and by *nothing else* — deliberately — so
+> `should_prompt()` is **still true on the very next frame after a BACK**. A pump
+> that trusted it alone re-opened the sheet every frame and handed the player a
+> modal they could not get out of. The shell therefore keeps its own
+> `_permission_prompt_shown` guard, and the two rules are not the same rule: the
+> flow's counts **chances spent**, the shell's counts **sheets shown**. S10's row
+> is not *gated* by the shell's guard — a row that did nothing for the rest of
+> the session would be the control doc 12 §2.13 forbids — but it does **raise**
+> it, because the row's own `note_trigger()` is exactly what would otherwise let
+> the pump re-open a sheet the player had just backed out of.
+> `tests/test_android_notifications.gd::test_31b` walks 300 idle frames after the
+> pump and 100 after the row, and asserts one modal each and `asked_count == 0`.
+>
+> **Step 7's "offline" is load-bearing, and the gate is one flag.** The evidence
+> hook rides `_on_sim_batch`, which every batch goes through — including the live
+> ones. Recording a foreground P1 as *missed* would let the second prompt say
+> *"you missed a citywide emergency"* about a storm the player sat through, which
+> is a lie told to obtain a permission and is the one thing this flow exists not
+> to do. `Main._draining_offline` is set only around `_finish_catchup`'s drain of
+> the absence's batch, and `_note_permission_evidence` refuses everything else.
+>
+> **The counters are device-scoped** (`user://settings.cfg`, section
+> `permission`, doc 08 §2.5), and that is a correctness argument rather than a
+> convenience: Android's two dismissals are spent per INSTALL, so a counter that
+> rode in the city's save would hand a player who deleted their city a third
+> prompt the system will not show — a modal that opens a dialog which never
+> appears. `PermissionFlow.load_device()` runs before anything can ask;
+> `save_device()` runs on the answer, not at the next autosave.
+>
+> **Still unverified on hardware.** Everything above is derived from code, data
+> and the headless suite; `dumpsys notification` after a pause is the check this
+> ruling is owed, and doc 99 §4.1 already lists "the permission dialog never
+> appearing" among the on-device claims no lens has seen.
+
 > **As built (Wave 14) — the four permissions have TWO sources now, and the reason is not the one this wave was sent to fix.** The third Fold session concluded that the plugin manifest's `<uses-permission>` elements never reach an APK and that the preset is the only source; **that is measured false** (report 98 §29 RR-70). The 2×2, `aapt2 dump permissions` on four locally built debug APKs:
 >
 > | plugin AAR declares the four | `export_presets.cfg` declares the four | APK requests |

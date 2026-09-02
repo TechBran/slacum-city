@@ -99,6 +99,20 @@ const SCREENS: Array[String] = [
 	# window three actions in, which is the state the whole screen exists to
 	# reach and the only one that draws the Storm Ready line.
 	"storm_prep", "storm_prep_ready",
+
+	# Wave 18's permission flow (PA-14, doc 13 §2.7). Three states, same commit
+	# as the screens — A91-D-28's lesson again. The two modal faces are the two
+	# reasons `PermissionFlow` can give and they carry different copy; the third
+	# is S10's row in the ONE state that offers a route, which is the state a
+	# player who dismissed the dialog twice is permanently in and the only one
+	# they can act on.
+	"permission_first", "permission_missed", "settings_permission_blocked",
+
+	# PA-58's follow chip (doc 12 §2.6 step 6). One state, and it is the widest
+	# the chip ever gets — `Heavy Repair` is the longest unit word in
+	# `ui_unit_kind_*` and a two-digit id is the longest id a starter fleet
+	# reaches. A chip that fits here fits every unit in the game.
+	"follow_chip",
 ]
 
 ## A `Control` does not have a size until its container has laid it out, and the
@@ -805,6 +819,22 @@ func _apply(screen: String) -> void:
 			# or this state photographs a screen the game never shows.
 			_root.set_city_difficulty(Difficulty.DEFAULT_PRESET)
 			_root.settings_sheet.open()
+		"settings_permission_blocked":
+			# doc 13 §2.7 step 6. The row a player reaches after Android has
+			# stopped showing the dialog: it says Off, it names the only route
+			# left, and it is the state the shell can do something about.
+			_root.set_city_difficulty(Difficulty.DEFAULT_PRESET)
+			_root.set_permission_state("blocked")
+			_root.settings_sheet.open()
+		"follow_chip":
+			_root.present_follow_chip(UnitPickerModel.unit_name_for(
+					_root.config, 12, "heavy_repair"))
+		"permission_first":
+			_root.present_permission_rationale(PermissionSheet.REASON_FIRST)
+		"permission_missed":
+			# The second ask, which is allowed only because it has something
+			# true to say — seven days AND a P1 the player never heard.
+			_root.present_permission_rationale(PermissionSheet.REASON_MISSED_P1)
 		"saves":
 			_root.save_load_sheet.open()
 		"pause":

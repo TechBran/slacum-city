@@ -601,6 +601,418 @@ func test_ui_state_round_trips_through_the_root() -> void:
 
 
 # ===========================================================================
+# PA-58 — the Gameplay rows, and the follow mode they turn on
+# ===========================================================================
+
+func test_the_gameplay_defaults_finally_have_rows_and_readers() -> void:
+	# `invert_pan`, `follow_dispatched_unit` and `rotation_mode` were authored in
+	# `data/ui.json.defaults` with no `settings.rows` entry and no reader:
+	# `grep -rn 'set_follow_target\|clear_follow' ui/ game/ | grep -v 'func '`
+	# found nothing at all.
+	var model := SettingsModel.new(_cfg())
+	var defaults := _cfg().section("defaults")
+	for key: String in ["follow_dispatched_unit", "invert_pan", "rotation_mode"]:
+		assert_true(model.has_key(key), "%s is a row" % key)
+	assert_eq(model.value_bool("follow_dispatched_unit"),
+			bool(defaults["follow_dispatched_unit"]),
+			"the row boots at the authored default, not a second copy")
+	assert_eq(model.value_bool("invert_pan"), bool(defaults["invert_pan"]))
+	# The rotation ladder's default is doc 12's own camera block — the same key
+	# `CameraState.setup()` boots from, so the row and the camera cannot disagree.
+	assert_eq(str(model.value("rotation_mode")),
+			str(_cfg().camera()["rotation_mode_default"]))
+	var camera := CameraState.load_from_files()
+	assert_eq(camera.rotation_mode,
+			CameraState.rotation_mode_from_string(str(model.value("rotation_mode"))))
+
+
+func test_the_two_camera_rows_reach_the_camera_on_the_tap() -> void:
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	var camera := CameraState.load_from_files()
+	root.bind_camera(camera)
+	assert_false(camera.invert_pan, "the shipped default")
+
+	root.settings_sheet.value_button("invert_pan").pressed.emit()
+	assert_true(camera.invert_pan, "live on the next touch, not one frame later")
+
+	var before := camera.rotation_mode
+	root.settings_sheet.value_button("rotation_mode").pressed.emit()
+	assert_true(camera.rotation_mode != before, "the ladder walked and the camera followed")
+	for option: Variant in root.settings_sheet.model.options("rotation_mode"):
+		assert_true(CameraState.rotation_mode_from_string(str(option))
+				!= CameraState.RotationMode.SNAP45 or str(option) == "snap45",
+				"%s is a real RotationMode and not a fallback" % option)
+	_unmount(mounted)
+
+
+func test_a_camera_bound_after_the_rows_still_gets_them() -> void:
+	# The ordering bug this guards: `game/main.gd` restores the `ui` section and
+	# then binds the camera, so a camera that only listened for CHANGES would
+	# boot on the data default and ignore the player until they tapped the row.
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	root.settings_sheet.model.set_value("invert_pan", true)
+	root.settings_sheet.model.set_value("rotation_mode", "locked")
+	var camera := CameraState.load_from_files()
+	root.bind_camera(camera)
+	assert_true(camera.invert_pan)
+	assert_eq(camera.rotation_mode, CameraState.RotationMode.LOCKED)
+	_unmount(mounted)
+
+
+func test_inverted_pan_moves_the_same_distance_the_other_way() -> void:
+	# The 1:1 world lock cannot hold both ways — it is what makes the DEFAULT
+	# exact. So the inverted path preserves the magnitude and flips the sign,
+	# which is the only part of it that is a preference.
+	var viewport := Vector2(360.0, 800.0)
+	var from := Vector2(180.0, 400.0)
+	var to := Vector2(240.0, 400.0)
+
+	var normal := CameraState.load_from_files()
+	normal.set_focus(Vector3(400.0, 0.0, 400.0))
+	var start := normal.focus
+	normal.begin_pan(from, viewport)
+	normal.update_pan(to, viewport)
+	normal.end_pan()
+	var moved := normal.focus - start
+
+	var inverted := CameraState.load_from_files()
+	inverted.invert_pan = true
+	inverted.set_focus(Vector3(400.0, 0.0, 400.0))
+	inverted.begin_pan(from, viewport)
+	inverted.update_pan(to, viewport)
+	inverted.end_pan()
+	var moved_back := inverted.focus - start
+
+	assert_true(moved.length() > 1.0, "the control arm actually panned")
+	assert_true(is_equal_approx(moved.length(), moved_back.length()),
+			"same distance: %.3f vs %.3f" % [moved.length(), moved_back.length()])
+	assert_true(moved.dot(moved_back) < 0.0, "…and the opposite direction")
+
+
+func test_the_follow_chip_is_the_modes_own_off_switch() -> void:
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	assert_false(root.follow_chip_shown(), "no mode, no chip")
+
+	var name := UnitPickerModel.unit_name_for(root.config, 12, "heavy_repair")
+	assert_eq(name, "Heavy Repair 12", "one spelling of a unit's name, not two")
+	root.present_follow_chip(name)
+	assert_true(root.follow_chip_shown())
+	assert_true(root.follow_chip.chip_button().text.contains(name),
+			"the chip says which unit, or it is a mystery light")
+
+	# An Array, not an int: a GDScript lambda captures a local by VALUE.
+	var cancels: Array = []
+	root.follow_cancelled.connect(func() -> void: cancels.append(true))
+	root.follow_chip.chip_button().pressed.emit()
+	assert_eq(cancels.size(), 1, "the ✕ asks the shell to stop following")
+	assert_false(root.follow_chip_shown())
+	_unmount(mounted)
+
+
+func test_the_chip_yields_the_column_while_the_overlay_strip_is_over_it() -> void:
+	# §2.23's ruling, applied to the left column: a target under a panel is a
+	# target nobody can reach, and the follow keeps running either way.
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	root.present_follow_chip("Engine 1")
+	assert_true(root.follow_chip_shown())
+	root.overlay_rail.open()
+	root.solve_follow_chip()
+	assert_false(root.follow_chip_shown(), "the strip reaches 300 dp up this column")
+	root.overlay_rail.close()
+	root.solve_follow_chip()
+	assert_true(root.follow_chip_shown(), "…and the chip comes back with the column")
+	_unmount(mounted)
+
+
+# ===========================================================================
+# PA-59 — the auto-response row with nothing behind it
+# ===========================================================================
+
+func test_no_settings_row_writes_a_key_the_sim_never_reads() -> void:
+	# `auto_spend_contractor` was a `policy: dispatch` toggle that wrote a flag
+	# `DispatchPolicy` stores and no code consults, because there is no
+	# contractor unit to hire (doc 06 line 1749). A control the sim never reads
+	# is a control that lies about what the player just did.
+	var model := SettingsModel.new(_cfg())
+	assert_false(model.keys().has("auto_spend_contractor"),
+			"the row is withdrawn until there is a unit behind it")
+	assert_false(model.policy_keys(SettingsModel.POLICY_DISPATCH)
+			.has("auto_spend_contractor"), "…and it seeds nothing from the sim")
+
+
+func test_a_withdrawn_row_is_not_an_unknown_key() -> void:
+	# The distinction PA-59 asks for in its own words: "keep the key and default
+	# so saves stay valid". A save written while the control existed still
+	# restores clean, and doc 06 still owns the number.
+	var model := SettingsModel.new(_cfg())
+	assert_true(model.retired_keys().has("auto_spend_contractor"))
+	var dropped := model.restore_state({
+		"auto_spend_contractor": true,   # written by a build that had the row
+		"favourite_colour": "teal",      # never a row at all
+	})
+	assert_eq(str(dropped), "[\"favourite_colour\"]",
+			"the withdrawn key is ignored in silence; the unknown one is reported")
+	var policy: Dictionary = _cfg().dispatch_policy_defaults()
+	assert_true(policy.has("auto_spend_contractor"),
+			"doc 06 still carries the default, so the sim is unchanged")
+
+
+# ===========================================================================
+# PA-14 · A91-D-69 — S10's permission row and the rationale modal
+# ===========================================================================
+
+func test_the_permission_row_reports_a_state_and_never_stores_one() -> void:
+	var model := SettingsModel.new(_cfg())
+	assert_eq(model.kind(UIRoot.PERMISSION_ROW), SettingsModel.KIND_STATE)
+	assert_eq(str(model.value(UIRoot.PERMISSION_ROW)), "unavailable",
+			"off Android there is no permission to hold, and the row says so")
+	assert_false(model.is_device_scoped(UIRoot.PERMISSION_ROW),
+			"there is nothing to remember: the platform re-answers every time")
+	assert_false(model.capture_state().has(UIRoot.PERMISSION_ROW),
+			"a report is not a preference — it never enters a save")
+	# …and a save that carries one anyway is ignored rather than obeyed — while
+	# what the PLATFORM last reported survives the reset, because a load or a
+	# New City must never put "Not available" in front of a player whose
+	# notifications are on until the shell happens to re-report.
+	model.set_value(UIRoot.PERMISSION_ROW, "on")
+	model.restore_state({UIRoot.PERMISSION_ROW: "blocked"})
+	assert_eq(str(model.value(UIRoot.PERMISSION_ROW)), "on",
+			"the save was ignored and the reported state was kept")
+
+
+func test_every_permission_state_reads_as_a_sentence_and_only_one_offers_a_route()\
+		-> void:
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	var seen: Array[String] = []
+	for token: String in ["on", "off", "blocked", "unavailable"]:
+		root.set_permission_state(token)
+		var text := root.settings_sheet.value_button(UIRoot.PERMISSION_ROW).text
+		assert_false(text.begins_with("ui_"), "%s has copy" % token)
+		assert_false(seen.has(text), "%s reads differently from the others" % token)
+		seen.append(text)
+	assert_true(seen[1].to_lower().contains("tap"),
+			"`off` is the state that invites a tap")
+	assert_true(seen[2].to_lower().contains("settings"),
+			"`blocked` names the only route Android has left")
+	_unmount(mounted)
+
+
+func test_tapping_the_permission_row_asks_the_shell_instead_of_cycling() -> void:
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	root.set_permission_state("off")
+	var asked: Array = []
+	root.settings_action.connect(func(key: StringName, action: StringName) -> void:
+		asked.append([String(key), String(action)]))
+	var changed: Array = []
+	root.settings_changed.connect(func(key: StringName, _v: Variant) -> void:
+		changed.append(String(key)))
+
+	root.settings_sheet.value_button(UIRoot.PERMISSION_ROW).pressed.emit()
+	assert_eq(str(asked), '[["notification_permission", "permission"]]')
+	assert_eq(str(changed), "[]",
+			"nothing CHANGED — a listener that acts on settings_changed must not fire")
+	assert_eq(root.permission_state(), "off",
+			"…and the tap did not cycle the row to the next token")
+	_unmount(mounted)
+
+
+func test_the_rationale_modal_carries_the_reasons_copy_and_joins_the_back_stack()\
+		-> void:
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	assert_false(root.present_permission_rationale(""),
+			"no reason, no modal — `should_prompt` said no")
+
+	assert_true(root.present_permission_rationale(PermissionSheet.REASON_FIRST))
+	assert_true(root.permission_rationale_open())
+	var first := (root.permission_sheet.get_node("Panel/Body/Title") as Label).text
+	assert_false(first.begins_with("ui_"), "the first-ask copy resolves")
+	assert_eq(root.back_context(0.0)["modal_open"], true,
+			"a modal on the modal layer is the back stack's first rung")
+
+	root.present_permission_rationale(PermissionSheet.REASON_MISSED_P1)
+	var second := (root.permission_sheet.get_node("Panel/Body/Title") as Label).text
+	assert_true(second != first,
+			"'You missed a citywide blackout' is a different sentence from the first ask")
+	_unmount(mounted)
+
+
+func test_back_costs_nothing_and_the_two_buttons_each_cost_a_chance() -> void:
+	# The asymmetry doc 13 §2.7 depends on: NOT NOW is an ANSWER and spends one
+	# of Android's two chances; BACK is "close the thing in front of me" (doc 12
+	# §2.2) and spends none. Getting this wrong burns a permission silently.
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	var answers: Array = []
+	root.permission_answered.connect(func(ok: bool) -> void: answers.append(ok))
+
+	root.present_permission_rationale(PermissionSheet.REASON_FIRST)
+	assert_eq(root.handle_back(0.0), UIRoot.BACK_CLOSE_MODAL)
+	assert_false(root.permission_rationale_open(), "BACK closed it")
+	assert_eq(str(answers), "[]", "…and answered nothing")
+
+	root.present_permission_rationale(PermissionSheet.REASON_FIRST)
+	root.permission_sheet.decline_button().pressed.emit()
+	assert_eq(str(answers), "[false]")
+	assert_false(root.permission_rationale_open())
+
+	root.present_permission_rationale(PermissionSheet.REASON_FIRST)
+	root.permission_sheet.accept_button().pressed.emit()
+	assert_eq(str(answers), "[false, true]")
+	_unmount(mounted)
+
+
+# ===========================================================================
+# PA-15 · A91-D-70 — `user://settings.cfg`, the file that is not in a save
+# ===========================================================================
+
+## A fresh path per test, so two methods in this file cannot read each other's
+## file and the suite's `UserDirIsolation` keeps it off the developer's own.
+var _device_seq := 0
+
+
+func _device_path() -> String:
+	_device_seq += 1
+	return "user://test_settings_%d.cfg" % _device_seq
+
+
+func test_the_device_file_round_trips_only_the_device_scoped_rows() -> void:
+	var path := _device_path()
+	var model := SettingsModel.new(_cfg())
+	model.set_value("text_scale", 1.3)
+	model.set_value("notifications_enabled", false)
+	model.set_value("replay_tutorial", true)   # city-scoped: a door into THIS city
+	assert_true(model.save_device(path))
+
+	var stored := DeviceSettings.read_section(path, DeviceSettings.SECTION_SETTINGS)
+	assert_true(stored.has("text_scale"), "an accessibility row is the device's")
+	assert_false(stored.has("replay_tutorial"),
+			"the tutorial door belongs to the city, not the phone")
+	assert_eq(stored.size(), model.device_scoped_keys().size(),
+			"every device-scoped row is written, and nothing else is")
+
+	# A second model — a relaunch, or the next city — sees the same answers.
+	var fresh := SettingsModel.new(_cfg())
+	assert_eq(fresh.value_num("text_scale"), 1.0, "…before it reads the file")
+	assert_eq(str(fresh.load_device(path)), "[]", "nothing dropped")
+	assert_eq(fresh.value_num("text_scale"), 1.3)
+	assert_false(fresh.value_bool("notifications_enabled"))
+	assert_false(fresh.value_bool("replay_tutorial"), "and the door stayed shut")
+
+
+func test_the_device_copy_outranks_a_citys_saved_block() -> void:
+	# Doc 12 §3.2: "on load `settings.cfg` wins for those keys". The failure this
+	# pins is the one a player notices: a city saved at 100 % text scale putting
+	# their 130 % back every single time they load it.
+	var path := _device_path()
+	var device := SettingsModel.new(_cfg())
+	device.set_value("text_scale", 1.3)
+	device.set_value("graphics", "performance")
+	assert_true(device.save_device(path))
+
+	var model := SettingsModel.new(_cfg())
+	model.load_device(path)
+	var dropped := model.restore_state({"text_scale": 1.0, "graphics": "high",
+			"in_app_banners": false})
+	assert_eq(str(dropped), "[]")
+	assert_eq(model.value_num("text_scale"), 1.3, "the device wins")
+	assert_eq(str(model.value("graphics")), "performance")
+	assert_false(model.value_bool("in_app_banners"),
+			"…and a city-scoped row still comes from the city")
+
+
+func test_a_settings_change_survives_the_city_that_was_deleted() -> void:
+	# PA-15's own acceptance test, spelled the way the audit spells it: change
+	# text scale, delete the city, relaunch, the scale survives.
+	var path := _device_path()
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	root.settings_sheet.model.load_device(path)
+	root.settings_sheet.value_button("text_scale").pressed.emit()   # one tap
+	var chosen: float = root.settings_sheet.model.value_num("text_scale")
+	assert_true(chosen != 1.0, "the tap moved the row")
+	assert_true(FileAccess.file_exists(path), "the tap COMMITTED it")
+
+	# The city goes away and a new one is founded over the same shell.
+	root.set_permission_state("on")
+	root.reset_ui_state_for_new_city()
+	assert_eq(root.settings_sheet.model.value_num("text_scale"), chosen,
+			"New City does not reset the phone's accessibility settings")
+	assert_eq(root.permission_state(), "on",
+			"…and it does not tell the player their notifications went away either")
+
+	# …and a whole new process comes up on the same device file.
+	var relaunched := _mount()
+	var fresh: UIRoot = relaunched["root"]
+	assert_eq(fresh.settings_sheet.model.value_num("text_scale"), 1.0,
+			"before the read, the model is on data defaults")
+	fresh.load_device_settings(path)
+	assert_eq(fresh.settings_sheet.model.value_num("text_scale"), chosen)
+	assert_eq(fresh.settings_sheet.value_button("text_scale").text,
+			root.settings_sheet.value_button("text_scale").text,
+			"the sheet re-rendered from the file, not just the model")
+	_unmount(relaunched)
+	_unmount(mounted)
+
+
+func test_a_nonsense_device_file_costs_preferences_and_never_the_launch() -> void:
+	var path := _device_path()
+	DeviceSettings.write_section(path, DeviceSettings.SECTION_SETTINGS, {
+		"text_scale": "enormous",          # wrong type for a choice row
+		"replay_tutorial": true,           # real row, but not device-scoped
+		"favourite_colour": "teal",        # no row at all
+	})
+	var model := SettingsModel.new(_cfg())
+	var dropped := model.load_device(path)
+	assert_eq(str(dropped), "[\"favourite_colour\", \"replay_tutorial\", \"text_scale\"]",
+			"every refusal is reported, sorted, and none of them threw")
+	assert_eq(model.value_num("text_scale"), 1.0, "the default is kept")
+	assert_false(model.value_bool("replay_tutorial"))
+
+
+func test_two_owners_share_one_file_without_overwriting_each_other() -> void:
+	# doc 08 §2.5: docs 08, 11, 12 and 13 all write into this one file. The
+	# permission block and the settings block are written by different classes
+	# at different moments, and a write of either must leave the other standing.
+	var path := _device_path()
+	var model := SettingsModel.new(_cfg())
+	model.set_value("notifications_enabled", false)
+	assert_true(model.save_device(path))
+
+	var flow := PermissionFlow.new(null)
+	flow.asked_count = 2
+	flow.last_asked_unix = 1_700_000_000
+	flow.reprompt_count = 1
+	assert_true(flow.save_device(path))
+
+	assert_false(bool(DeviceSettings.read_section(path,
+			DeviceSettings.SECTION_SETTINGS)["notifications_enabled"]),
+			"the permission write left the settings block alone")
+	model.set_value("notifications_enabled", true)
+	assert_true(model.save_device(path))
+	var back := PermissionFlow.new(null)
+	back.load_device(path)
+	assert_eq(back.asked_count, 2, "…and the settings write left the permission block alone")
+	assert_eq(back.last_asked_unix, 1_700_000_000)
+	assert_eq(back.reprompt_count, 1)
+
+
+func test_the_device_write_is_atomic_and_leaves_no_temporary_behind() -> void:
+	var path := _device_path()
+	var model := SettingsModel.new(_cfg())
+	assert_true(model.save_device(path))
+	assert_true(FileAccess.file_exists(path))
+	assert_false(FileAccess.file_exists(path + ".tmp"),
+			"tmp+rename: the half-written file never has the real name")
+
+
+# ===========================================================================
 # The stub — exactly `game/save_service.gd`'s published API, nothing more
 # ===========================================================================
 

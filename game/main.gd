@@ -148,6 +148,10 @@ func _ready() -> void:
 	notification_router.set_sink(NativeNotificationSink.new())
 	android_lifecycle.notification_router = notification_router
 	permission_flow = PermissionFlow.new(android_lifecycle.native)
+	# PA-14: the counters are per INSTALL, not per city (doc 08 §2.5), so they
+	# come off `user://settings.cfg` before anything can ask.
+	permission_flow.load_device()
+	permission_flow.state_changed.connect(_on_permission_state_changed)
 	if android_lifecycle.native != null:
 		android_lifecycle.native.permission_result.connect(permission_flow.confirm)
 		android_lifecycle.native.notification_opened.connect(_on_notification_opened)
@@ -644,7 +648,12 @@ func _on_sim_batch(batch: Array) -> void:
 		# once per TICK — the siren follows the streets, throttled inside.
 		audio.feed_unit_states(sim_host.sim.incidents.vehicle_states())
 	if notification_router != null:
-		notification_router.feed_batch(batch)
+		# PA-14: the same classified plans answer the one question a re-prompt
+		# has to answer — was there a P1 the player never heard about?
+		_note_permission_evidence(notification_router.feed_batch(batch))
+	_note_permission_trigger(batch)
+	_maybe_auto_speed_reset(batch)
+	_advance_follow()
 	var translated: Array = []
 	for event in batch:
 		match StringName(String(event["type"])):
@@ -1013,6 +1022,12 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 	root.pause_intent.connect(_on_hud_pause_toggled)     # doc 01 owns `paused`
 	root.quit_requested.connect(_on_ui_quit_requested)
 	root.settings_changed.connect(_on_ui_setting_changed)
+	# PA-14: S10's state row and the rationale modal's two answers.
+	root.settings_action.connect(_on_ui_setting_action)
+	root.permission_answered.connect(_on_permission_answered)
+	# PA-58: the follow chip's ✕ — the one way out of follow mode that is not
+	# the finger, the unit going off duty, or a second dispatch.
+	root.follow_cancelled.connect(_end_follow)
 	root.save_loaded.connect(_on_ui_save_loaded)
 	root.set_incident_locator(_alert_world_pos)
 	root.set_unit_provider(_dispatchable_units)
@@ -1058,6 +1073,26 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 	if save_service != null:
 		root.bind_save_service(save_service, sim_host.sim)
 	if root.settings_sheet != null:
+		# PA-15: `user://settings.cfg` FIRST, before anything below reads a row.
+		# It is the device's answer — graphics preset, refresh pin, text scale,
+		# the notification switches — and it outranks both the data defaults the
+		# model booted on and the `ui` block a resumed save is about to restore
+		# (doc 08 §2.5, doc 12 §3.2, constitution §2 amendment #3). The three
+		# reads under it therefore pick the device's numbers up for free.
+		var dropped_device := root.load_device_settings()
+		if not dropped_device.is_empty():
+			push_warning("[settings] device file dropped %s" % str(dropped_device))
+		# The preset is the one device row whose effect is spread over eight
+		# views and the governor, and all of them were seeded at boot from the
+		# data default (`:441` above). One re-apply through the change path puts
+		# them on the player's preset instead of duplicating that list here —
+		# and it is skipped when the two agree, which is every launch with no
+		# `settings.cfg` and every launch where the player never moved the row,
+		# because that path re-reads `data/render.json` five times.
+		var device_preset := str(root.settings_sheet.model.value("graphics"))
+		if render_model != null and render_model.preset != device_preset:
+			_on_ui_setting_changed(&"graphics", device_preset)
+		_refresh_permission_row()
 		_autosave_interval_s = root.settings_sheet.model.autosave_interval_s()
 		if audio != null:
 			audio.set_sound_volume(root.settings_sheet.model.value_num("sound_volume"))
@@ -1460,6 +1495,224 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 			pass   # reduce_motion / in_app_banners are read where used
 
 
+## doc 01 §2.9 / doc 12 §2.11's `auto_speed_reset_on_critical`, wired (PA-84).
+##
+## `HudModel.auto_speed_reset` had no caller outside its own test. It has one
+## now, and the whole design decision is in WHAT reaches it: three authored
+## events (`data/ui.json.speed.auto_speed_reset_triggers`), not every CRITICAL
+## alert, plus a **thirty**-real-minute re-arm — because the naive wiring drops
+## the player to 1× several times an hour under PA-07's alert load, and a speed
+## control that keeps being taken away is worse than a feature that never landed.
+## (Thirty, not the ten PA-84 suggested: ten misses PA-84's own ≤ 1-per-real-hour
+## target on one of eleven curriculum seeds. Doc 12 §2.11 carries the sweep.)
+##
+## It never touches `paused`: §2.11 is explicit that pausing the player mid-crisis
+## is worse than the crisis. The alert banner is not raised here either — the same
+## event is already on its way to `AlertsModel` through `feed_events` above.
+var _auto_speed_reset_at_ms := -1.0e12
+
+
+func _maybe_auto_speed_reset(batch: Array) -> void:
+	if ui_root == null or hud == null or hud.model == null:
+		return
+	if sim_host.paused or sim_host.speed <= 1:
+		return   # nothing to hand back
+	var now_ms := float(Time.get_ticks_msec())
+	if now_ms - _auto_speed_reset_at_ms < hud.model.auto_speed_reset_rearm_s() * 1000.0:
+		return
+	for raw: Variant in batch:
+		if not (raw is Dictionary):
+			continue
+		if not hud.model.is_auto_speed_reset_trigger(raw as Dictionary):
+			continue
+		var answer := hud.model.auto_speed_reset(sim_host.speed, sim_host.paused)
+		sim_host.speed = int(answer["speed"])
+		_auto_speed_reset_at_ms = now_ms
+		_refresh_hud()   # the rail's face follows the sim, as it does for a tap
+		return
+
+
+# ---------------------------------------------------------------------------
+# POST_NOTIFICATIONS (PA-14 · A91-D-69) — doc 13 §2.7, wired at last
+# ---------------------------------------------------------------------------
+#
+# `PermissionFlow` has been complete and tested since Wave 11 and had no caller:
+# the app on the Fold has never requested the permission, so on a targetSdk-33+
+# device nothing in the notification stack could post at all. What was missing
+# was five seams, and they are all here:
+#
+#   1. the TRIGGER      — `_note_permission_trigger`, below
+#   2. the IDLE FRAME   — `_pump_permission_prompt`, called from `_process`
+#   3. the MODAL        — `UIRoot.present_permission_rationale` → `PermissionSheet`
+#   4. the ANSWER       — `_on_permission_answered` → `accept()` / `decline()`
+#   5. the FALLBACK     — S10's row, `_on_ui_setting_action`
+#
+# Doc 13 §2.7 step 1 names the trigger: "the FIRST time the shell wants to
+# schedule anything, which in practice is the end of onboarding step 10
+# (`Upgrade one building` → first construction timer exists)". Doc 08 §2.13.4
+# names the other one: the first resolved incident. Both are here; whichever the
+# player reaches first wins, and neither is launch — a cold prompt converts
+# badly and burns one of the two chances Android allows.
+#
+# **`building_placed_sim` is deliberately NOT a trigger** even though it creates
+# a construction timer too. The tutorial has the player place a house within its
+# first minute; asking there is asking a player who has not yet seen the city do
+# anything worth being told about, which is the cold prompt with extra steps.
+
+## Doc 13 §2.7 step 1 and doc 08 §2.13.4, as event types.
+const PERMISSION_TRIGGERS: Array[StringName] = [
+	&"upgrade_started_sim",   # the first construction timer the player CHOSE
+	&"incident_resolved",     # …or the first thing they fixed
+]
+## doc 08's own class rank for P1 (`data/notifications.json.classes`).
+const PERMISSION_EVIDENCE_RANK := 1
+
+
+func _note_permission_trigger(batch: Array) -> void:
+	if permission_flow == null or permission_flow.triggered:
+		return
+	for raw: Variant in batch:
+		if not (raw is Dictionary):
+			continue
+		if PERMISSION_TRIGGERS.has(StringName(String((raw as Dictionary).get("type", "")))):
+			permission_flow.note_trigger()
+			return
+
+
+## True only while `_finish_catchup` is draining the batch an ABSENCE produced.
+var _draining_offline := false
+
+
+## The evidence a SECOND prompt needs (doc 13 §2.7 step 7): a P1 the player was
+## never told about, because the app had no permission to tell them. Recorded
+## from the router's own classification so this file holds no copy of doc 08's
+## class table, and under three conditions, all of them necessary:
+##
+##   * the batch is an OFFLINE one (`_draining_offline`) — step 7 says "occurred
+##     offline", and a P1 the player watched happen is not something they missed;
+##   * the permission is genuinely absent — a P1 that DID buzz is not a reason to
+##     ask for anything;
+##   * the plan's class is doc 08's P1, read off the router rather than a second
+##     copy of the class table.
+##
+## Get the first one wrong and the second prompt says *"you missed a citywide
+## emergency"* about a storm the player sat through — a lie told to obtain a
+## permission, which is the one thing this whole flow exists not to do.
+func _note_permission_evidence(plans: Array) -> void:
+	if permission_flow == null or notification_router == null:
+		return
+	if not _draining_offline:
+		return
+	if permission_flow.notifications_enabled():
+		return
+	for raw: Variant in plans:
+		if not (raw is Dictionary):
+			continue
+		var class_id := str((raw as Dictionary).get("class", ""))
+		if notification_router.config().class_rank(class_id) == PERMISSION_EVIDENCE_RANK:
+			permission_flow.note_missed_p1()
+			return
+
+
+## Set the moment the modal goes up, and never cleared. It is the other half of
+## "BACK spends no chance": `PermissionFlow._asked_this_session` is set by
+## `accept()` and `decline()` and by nothing else — deliberately, because BACK is
+## not an answer — so `should_prompt()` is still true on the very next frame
+## after a BACK, and a pump that trusted it alone would re-open the sheet
+## **every frame** and hand the player a modal they cannot get out of.
+##
+## The right place for the guard is here rather than in `PermissionFlow`: the
+## flow's own once-a-session rule is about *chances spent*, and this one is about
+## *sheets shown*. S10's row is not gated by it — a row that did nothing for the
+## rest of the session would be the control doc 12 §2.13 forbids — but it does
+## RAISE it, because its own `note_trigger()` is what would otherwise let the
+## pump re-open a sheet the player had just backed out of.
+var _permission_prompt_shown := false
+
+
+## One frame with nothing else on it. The rationale is a modal and a modal that
+## opens over the title door, over the veil, over a placement or over another
+## modal is a modal the player dismisses without reading — which costs one of
+## the two chances and buys nothing.
+func _pump_permission_prompt() -> void:
+	if permission_flow == null or ui_root == null or _title_up:
+		return
+	if _permission_prompt_shown:
+		return
+	if _restore_cursor != null or _catchup_cursor != null or ui_root.veil_open():
+		return
+	if not permission_flow.should_prompt():
+		return
+	if ui_root.modal_open():
+		return
+	if ui_root.present_permission_rationale(permission_flow.request_rationale()):
+		_permission_prompt_shown = true
+
+
+func _on_permission_answered(accepted: bool) -> void:
+	if permission_flow == null:
+		return
+	# Step 4 opens the system dialog and the answer comes back on
+	# `permission_result`; step 5 records the refusal here and now. Both spend a
+	# chance, and both are written to the device file immediately — a counter
+	# that only reached disk at the next autosave would let a process death hand
+	# the player a third prompt Android will not honour.
+	if accepted:
+		permission_flow.accept()
+	else:
+		permission_flow.decline()
+	permission_flow.save_device()
+	_refresh_permission_row()
+
+
+func _on_permission_state_changed(_state: String) -> void:
+	_refresh_permission_row()
+
+
+func _refresh_permission_row() -> void:
+	if ui_root != null and permission_flow != null:
+		ui_root.set_permission_state(permission_flow.settings_row_state())
+
+
+func _on_ui_setting_action(key: StringName, _action: StringName) -> void:
+	if String(key) == UIRoot.PERMISSION_ROW:
+		_on_permission_row_tapped()
+
+
+## Doc 13 §2.7 step 6, plus the state the step does not name. The row offers the
+## one action that is legal in each state and nothing else — a row that is
+## tappable and does nothing is the control §2.13 forbids.
+func _on_permission_row_tapped() -> void:
+	if permission_flow == null or ui_root == null:
+		return
+	match permission_flow.settings_row_state():
+		"off":
+			# The player asked for it, so the flow's own "not yet" does not
+			# apply — this is the one place both of `should_prompt`'s gates (the
+			# trigger, and once-a-session) are bypassed. Everything downstream is
+			# unchanged: NOT NOW still spends one of Android's two chances, BACK
+			# still spends none, and `accept()` still returns false on a platform
+			# that has none left to spend.
+			permission_flow.note_trigger()
+			ui_root.present_permission_rationale(PermissionSheet.REASON_FIRST)
+			# …and the shell's guard goes up too. `note_trigger()` above is what
+			# makes `should_prompt()` true, so without this a BACK out of a
+			# ROW-opened sheet would be re-opened by the idle pump on the very
+			# next frame — the same trap the pump's own guard closes, reached
+			# from the one path that deliberately bypasses that guard. The row
+			# itself is unaffected: it calls `present_` directly and always will.
+			_permission_prompt_shown = true
+		"blocked":
+			# Android has stopped showing the dialog. The app's own page in
+			# system settings is the only route left, and saying so is the whole
+			# of what this row can honestly offer.
+			permission_flow.open_system_settings()
+		_:
+			# `on` and `unavailable`: nothing to do, and the row's value text
+			# already says which of the two it is.
+			pass
+
+
 func _on_ui_save_loaded(_slot: int) -> void:
 	# The sim was replaced in place; re-seed EVERYTHING that cached from it —
 	# and don't carry the old city's thunder into the new one.
@@ -1556,6 +1809,13 @@ func _on_title_new_game(slot: int, difficulty: String) -> void:
 	_title_up = false
 	if android_lifecycle != null:
 		android_lifecycle.save_enabled = true
+	# PA-15: the door hands a NEW city a clean `ui` section — the overlay choice,
+	# the street tally and the city-scoped settings rows all go back to their
+	# data defaults, because they belonged to the city that just left. The
+	# device-scoped rows do not move: `SettingsModel.restore_state` re-applies
+	# `user://settings.cfg` last, so a player who turned notifications off does
+	# not get them back by founding a city (doc 08 §2.13.4).
+	ui_root.reset_ui_state_for_new_city()
 	ui_root.start_onboarding({
 		"tutorial_lot_a": sim_host.sim.loader.resolve_tag("tutorial_lot_a")["tile_global"],
 		"tutorial_lot_b": sim_host.sim.loader.resolve_tag("tutorial_lot_b")["tile_global"]})
@@ -1655,6 +1915,79 @@ func _resync_world_views() -> void:
 func _on_ui_dispatch(unit_id: int, incident_id: int) -> void:
 	var r := sim_host.sim.cmd_dispatch_unit(unit_id, incident_id)
 	ui_root.report_dispatch_result(unit_id, bool(r["ok"]))
+	if bool(r["ok"]):
+		_begin_follow(unit_id)
+
+
+# ---------------------------------------------------------------------------
+# Follow mode (PA-58) — doc 12 §2.6 step 6 / §2.13 `follow dispatched unit`
+# ---------------------------------------------------------------------------
+#
+# `CameraState.set_follow_target` and `clear_follow` shipped in Wave 3 and
+# `grep -rn 'set_follow_target\|clear_follow' ui/ game/ | grep -v 'func '` found
+# no caller: `follow_dispatched_unit` was a default in `data/ui.json` with no
+# row, no reader and no chip, and after sending an engine the view stayed put.
+#
+# Four ways out, and the finger is the first of them: `begin_pan` already drops
+# `CameraState._following` on touch-down, so a player who moves the camera has
+# ended the mode before this file hears about it. The other three are the unit
+# going off duty, a dispatch of a different unit, and the chip's own ✕.
+
+## `Vehicle.IDLE` / `REFIT` / `OFFLINE` — a unit that is not on its way anywhere.
+const FOLLOW_ACTIVE_STATES: Array[String] = ["RESPONDING", "ON_SCENE", "RETURNING"]
+
+var _follow_unit_id := -1
+
+
+func _begin_follow(unit_id: int) -> void:
+	if ui_root == null or camera_state == null:
+		return
+	if ui_root.settings_sheet == null or ui_root.settings_sheet.model == null:
+		return
+	if not ui_root.settings_sheet.model.value_bool("follow_dispatched_unit"):
+		return
+	var state := _unit_state(unit_id)
+	if state.is_empty():
+		return
+	_follow_unit_id = unit_id
+	camera_state.set_follow_target(_unit_world_pos(state))
+	ui_root.present_follow_chip(UnitPickerModel.unit_name_for(
+			ui_root.config, unit_id, str(state.get("type", ""))))
+
+
+func _end_follow() -> void:
+	_follow_unit_id = -1
+	if camera_state != null:
+		camera_state.clear_follow()
+	if ui_root != null:
+		ui_root.dismiss_follow_chip()
+
+
+## Once per TICK, off the same fleet snapshot `vehicle_view` and the sirens take
+## — never per frame, and never a second walk of the roster.
+func _advance_follow() -> void:
+	if _follow_unit_id < 0:
+		return
+	if camera_state != null and not camera_state.is_following():
+		_end_follow()   # the player panned: the finger always wins
+		return
+	var state := _unit_state(_follow_unit_id)
+	if state.is_empty() or not FOLLOW_ACTIVE_STATES.has(str(state.get("status", ""))):
+		_end_follow()   # off duty — the story this chip was telling is over
+		return
+	camera_state.set_follow_target(_unit_world_pos(state))
+
+
+func _unit_state(unit_id: int) -> Dictionary:
+	for raw: Variant in sim_host.sim.incidents.vehicle_states():
+		if raw is Dictionary and int((raw as Dictionary).get("id", -1)) == unit_id:
+			return raw
+	return {}
+
+
+static func _unit_world_pos(state: Dictionary) -> Vector3:
+	var pos: Array = state.get("pos", [0, 0])
+	return Vector3(float(pos[0]) * 8.0 + 4.0, 0.0, float(pos[1]) * 8.0 + 4.0)
 
 
 func _on_ui_incident_action(action: StringName, incident_id: int, value: Variant) -> void:
@@ -1871,7 +2204,14 @@ func _finish_catchup() -> void:
 		ui_root.dismiss_veil()
 	sim.clock.residual_game_ms = int(_catchup_after.get("residual_game_ms", 0))
 	var offline_batch: Array = sim.bus.drain()
+	# PA-14, doc 13 §2.7 step 7: this — and only this — is the batch that can
+	# earn a second permission prompt. A P1 the player WATCHED is not evidence
+	# they missed anything, and a re-prompt that said "you missed a citywide
+	# emergency" about one they sat through would be a lie told to get a
+	# permission. See `_note_permission_evidence`.
+	_draining_offline = true
 	_on_sim_batch(offline_batch)
+	_draining_offline = false
 	var elapsed_wall_s := float(_catchup_after.get("elapsed_wall_s", 0.0))
 	var capped := bool(_catchup_after.get("capped", false))
 	var cap_game_hours := float(_catchup_after.get("cap_game_hours", 720.0))
@@ -2121,6 +2461,10 @@ func _process(delta: float) -> void:
 	# RR-134). `Main` is `SimHost`'s parent and so processes before it.
 	if android_lifecycle != null and not _title_up:
 		android_lifecycle.pump_resume()
+	# PA-14, doc 13 §2.7 step 3: "next idle frame". Everything that owns a frame
+	# has already returned above, so reaching this line IS the definition of idle
+	# — and `should_prompt()` answers false for every reason it possibly can.
+	_pump_permission_prompt()
 	var hour := sim_host.hour_of_day_float()
 	_hud_timer += delta
 	if _hud_timer >= HUD_REFRESH_S:

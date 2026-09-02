@@ -151,6 +151,16 @@ var follow_lerp_k := 8.0
 var rotation_snap_deg := 45.0
 var rotation_snap_tween_s := 0.25
 var rotation_mode: RotationMode = RotationMode.SNAP45
+## Doc 12 §2.13's `invert pan` (PA-58), off by default.
+##
+## The default pan is a **1:1 world lock**: the ground point under the finger
+## stays under the finger, which is the gesture every map has. Inverting it means
+## the opposite — the city travels WITH the finger — and the two cannot both be
+## exact, because the lock is what makes the default exact. So the inverted path
+## applies the same displacement with the opposite sign and re-anchors every
+## frame: the finger still drives the world exactly as far as it moved, in the
+## other direction. Magnitude is preserved; only the sign is a preference.
+var invert_pan := false
 
 # --- Projection (doc 11, data/render.json) ----------------------------------
 var fov_deg := FOV_DEG_FALLBACK
@@ -849,7 +859,15 @@ func _lock_anchor(screen_dp: Vector2, viewport_dp: Vector2) -> void:
 	var answer := ground_hit(screen_dp, viewport_dp)
 	if not bool(answer["hit"]):
 		return
-	_translate_focus(_pan_anchor - (answer["position"] as Vector3))
+	var delta := _pan_anchor - (answer["position"] as Vector3)
+	if invert_pan:
+		# Same distance, other direction — and then re-anchor, because the point
+		# the lock was holding is no longer under the finger by construction.
+		# Without the re-anchor the error compounds every frame of the drag.
+		_translate_focus(-delta)
+		_set_anchor(screen_dp, viewport_dp)
+		return
+	_translate_focus(delta)
 
 
 ## Release: hand the tracked velocity to momentum, or start the rubber-band

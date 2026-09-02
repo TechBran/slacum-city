@@ -14,6 +14,11 @@ extends Control
 ## the display strings; this file owns none of them.
 
 signal settings_changed(key: StringName, value: Variant)
+## A `state` row was tapped (PA-14). It carries no value for the player to
+## change, so the tap is a REQUEST — `notification_permission` asks the shell to
+## do whatever its current state allows — and it deliberately does not travel on
+## `settings_changed`, which every listener reads as "a preference moved".
+signal settings_action(key: StringName, action: StringName)
 signal saves_requested
 signal sheet_toggled(open: bool)
 
@@ -211,6 +216,14 @@ func refresh_city() -> void:
 # ---------------------------------------------------------------------------
 
 func _on_row_pressed(key: String) -> void:
+	if model.kind(key) == SettingsModel.KIND_STATE:
+		# Nothing to cycle: the value belongs to the platform. The row still
+		# has to be a live 48 dp target, because a row that is tappable and
+		# does nothing is precisely the control §2.13 forbids — so the tap
+		# leaves as an action and the shell decides what is legal right now.
+		settings_action.emit(StringName(key),
+				StringName(str(_row_action(key))))
+		return
 	match model.kind(key):
 		SettingsModel.KIND_TOGGLE:
 			model.toggle(key)
@@ -302,3 +315,12 @@ func _on_saves_pressed() -> void:
 
 func value_button(key: String) -> Button:
 	return _row_buttons.get(key, null)
+
+
+## A `state` row's declared action, from `data/ui.json`. Empty for every other
+## kind, which is why the tap never leaves a row that has nothing to ask for.
+func _row_action(key: String) -> String:
+	for row: Dictionary in model.rows():
+		if str(row.get("key", "")) == key:
+			return str(row.get("action", ""))
+	return ""

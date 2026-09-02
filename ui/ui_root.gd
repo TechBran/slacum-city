@@ -51,6 +51,9 @@ const CONTENT_SCALE_MAX := 4.0
 enum Breakpoint { COMPACT, REGULAR, WIDE }
 
 ## Back-stack verdicts, in doc 12 §2.2 priority order.
+## S10's `state` row (PA-14). Spelled once, here, because three files address it.
+const PERMISSION_ROW := "notification_permission"
+
 const BACK_CLOSE_MODAL := &"close_modal"
 ## S0 is up. Not a rung of its own — it *removes* rungs: there is no city behind
 ## the front door, so sheet / panel / placement / selection cannot exist and back
@@ -73,6 +76,16 @@ signal ui_coverage_changed(coverage01: float)
 signal overlay_changed(mode: StringName, index: int)   ## → doc 11 render mode
 signal focus_requested(world_pos: Vector3)             ## alert tap → camera jump
 signal settings_changed(key: StringName, value: Variant)
+## PA-14: a `state` row was tapped — `notification_permission` today. Separate
+## from `settings_changed` because nothing changed: the shell is being asked to
+## do whatever the platform's current answer allows.
+signal settings_action(key: StringName, action: StringName)
+## The player answered the `POST_NOTIFICATIONS` rationale (doc 13 §2.7 steps
+## 4–5). BACK does not emit this: a dismissal that was not an answer must not
+## spend one of Android's two chances.
+signal permission_answered(accepted: bool)
+## PA-58: the player tapped the follow chip's ✕. The shell stops following.
+signal follow_cancelled
 signal save_slot_action(action: StringName, slot: int, result: Dictionary)
 signal save_loaded(slot: int)                          ## the sim was replaced
 signal pause_intent(paused: bool)                      ## → `set_paused` (doc 01)
@@ -163,6 +176,7 @@ var event_log: EventLog
 ## does this screen is an empty queue with no chip on screen at all.
 var construction_queue: ConstructionQueueSheet
 var settings_sheet: SettingsSheet
+var permission_sheet: PermissionSheet
 ## S14 (doc 12 §2.19). Brought up with the shared config like every other
 ## screen and with NO model — `game/main.gd` owns the sim, so it calls
 ## `setup(cfg, GoalsModel.new(sim, cfg, controller))` once it has one.
@@ -189,6 +203,7 @@ var loading_veil: LoadingVeil
 ## `camera_state`'s manual pitch axis and nothing else; the shell binds the
 ## camera with `bind_camera()` and the slider stays hidden until it has one.
 var tilt_slider: TiltSlider
+var follow_chip: FollowChip
 ## The camera this deck talks to — the tilt slider's axis, and (doc 12 §3.2 /
 ## D-9's moment) the `camera` block of the `ui` save section. Null in a mount
 ## that never bound one, in which case neither exists.
@@ -308,6 +323,17 @@ func _bind_nodes() -> void:
 	construction_queue = safe_area.get_node_or_null(
 			"PanelLayer/ConstructionQueue") as ConstructionQueueSheet
 	settings_sheet = safe_area.get_node_or_null("ModalLayer/SettingsSheet") as SettingsSheet
+	# PA-14's rationale modal is the one screen this scaffold BUILDS rather than
+	# finds: it is Android-only and it opens at most twice in the life of an
+	# install, so it is created on the modal layer here instead of costing every
+	# mount a node it will never show. It still joins the back stack for free —
+	# `_has_open_child` walks the layer and asks anything with `is_open()`.
+	permission_sheet = modal_layer.get_node_or_null("PermissionSheet") as PermissionSheet \
+			if modal_layer != null else null
+	if permission_sheet == null and modal_layer != null:
+		permission_sheet = PermissionSheet.new()
+		permission_sheet.name = "PermissionSheet"
+		modal_layer.add_child(permission_sheet)
 	goals_sheet = safe_area.get_node_or_null("ModalLayer/GoalsSheet") as GoalsSheet
 	storm_prep_sheet = safe_area.get_node_or_null(
 			"ModalLayer/StormPrepSheet") as StormPrepSheet
@@ -325,6 +351,15 @@ func _bind_nodes() -> void:
 	title_screen = safe_area.get_node_or_null("TitleLayer/TitleScreen") as TitleScreen
 	loading_veil = safe_area.get_node_or_null("VeilLayer/LoadingVeil") as LoadingVeil
 	tilt_slider = safe_area.get_node_or_null("HUDLayer/TiltSlider") as TiltSlider
+	# PA-58's follow chip, built rather than authored for the same reason the
+	# permission modal is: it is absent for whole sessions, and a HUD element
+	# that is usually not there should not cost every mount a node.
+	follow_chip = hud_layer.get_node_or_null("FollowChip") as FollowChip \
+			if hud_layer != null else null
+	if follow_chip == null and hud_layer != null:
+		follow_chip = FollowChip.new()
+		follow_chip.name = "FollowChip"
+		hud_layer.add_child(follow_chip)
 	toast_view = get_node_or_null("ToastLayer/ToastAnchor/Toast") as ToastView
 
 
@@ -352,6 +387,8 @@ func bring_up_screens() -> void:
 		construction_queue.setup(config)
 	if settings_sheet != null and settings_sheet.model == null:
 		settings_sheet.setup(config)
+	if permission_sheet != null and permission_sheet.config == null:
+		permission_sheet.setup(config)
 	# S14 comes up with the config alone and no model, for the same reason the
 	# build sheet does: `game/main.gd` owns the sim, and `setup()` is idempotent.
 	if goals_sheet != null and goals_sheet.config == null:
@@ -403,6 +440,8 @@ func bring_up_screens() -> void:
 	# sheet comes up with no controller: it stays hidden until `bind_camera()`.
 	if tilt_slider != null and tilt_slider.config == null:
 		tilt_slider.setup(config, camera_state)
+	if follow_chip != null and follow_chip.config == null:
+		follow_chip.setup(config)
 	# §2.14: the two screens that fire their own cues share the root's one gate.
 	# The other three cues (dispatch, escalate, relight) are events rather than
 	# taps, so they are fired here, where the sim batch arrives.
@@ -446,7 +485,12 @@ func _connect_screens() -> void:
 		_connect(construction_queue.rushed, report_rush)
 	if settings_sheet != null:
 		_connect(settings_sheet.settings_changed, _on_settings_changed)
+		_connect(settings_sheet.settings_action, _on_settings_action)
 		_connect(settings_sheet.saves_requested, _on_saves_requested)
+	if permission_sheet != null:
+		_connect(permission_sheet.answered, permission_answered.emit)
+	if follow_chip != null:
+		_connect(follow_chip.dismissed, follow_cancelled.emit)
 	if save_load_sheet != null:
 		_connect(save_load_sheet.slot_action, _on_slot_action)
 		_connect(save_load_sheet.loaded, _on_save_loaded)
@@ -522,7 +566,93 @@ func _on_settings_changed(key: StringName, value: Variant) -> void:
 		tilt_slider.apply_setting(key, value)
 	_write_dispatch_policy(key, value)
 	_write_road_policy(key, value)
+	# PA-58: the two camera rows reach `CameraState` here rather than through the
+	# shell, on the same reasoning §2.14's haptics rows do — the gesture is live
+	# on the next touch, not one `game/main.gd` branch later.
+	_apply_camera_setting(key, value)
+	# PA-15: a device-scoped row is committed to `user://settings.cfg` on the tap
+	# that changed it, not at some later save. The player who turns notifications
+	# off and immediately swipes the app away has been heard.
+	if settings_sheet != null and settings_sheet.model != null \
+			and settings_sheet.model.is_device_scoped(String(key)):
+		settings_sheet.model.save_device()
 	settings_changed.emit(key, value)
+
+
+func _on_settings_action(key: StringName, action: StringName) -> void:
+	settings_action.emit(key, action)
+
+
+# ---------------------------------------------------------------------------
+# POST_NOTIFICATIONS (PA-14 · A91-D-69) — doc 13 §2.7 steps 3–6
+# ---------------------------------------------------------------------------
+
+## The rationale modal. Returns false when there is nothing to show — no reason
+## token, or a mount with no modal layer — so the shell can tell "declined" from
+## "never asked" without reading the sheet.
+func present_permission_rationale(reason: String) -> bool:
+	if permission_sheet == null or reason == "":
+		return false
+	permission_sheet.present(reason)
+	return true
+
+
+func permission_rationale_open() -> bool:
+	return permission_sheet != null and permission_sheet.is_open()
+
+
+## S10's row (doc 13 §2.7 step 6), fed from `PermissionFlow.settings_row_state()`
+## — `on` | `off` | `blocked` | `unavailable`. The shell reports it; this screen
+## never asks the platform anything, exactly like doc 03 §2.9's difficulty line.
+func set_permission_state(token: String) -> void:
+	if settings_sheet == null or settings_sheet.model == null:
+		return
+	if not settings_sheet.model.has_key(PERMISSION_ROW):
+		return
+	settings_sheet.model.set_value(PERMISSION_ROW, token)
+	settings_sheet.refresh_values()
+
+
+func permission_state() -> String:
+	if settings_sheet == null or settings_sheet.model == null:
+		return ""
+	return str(settings_sheet.model.value(PERMISSION_ROW))
+
+
+## Read `user://settings.cfg` and apply it over the rows (PA-15). `game/main.gd`
+## calls this once, BEFORE the title door — the door is a screen the player can
+## read, so the text scale that lets them read it has to be in place already.
+## Returns the keys the file was carrying that no row will take.
+func load_device_settings(path: String = "") -> PackedStringArray:
+	if settings_sheet == null or settings_sheet.model == null:
+		return PackedStringArray()
+	var dropped := settings_sheet.model.load_device(path)
+	settings_sheet.refresh_values()
+	_apply_device_side_effects()
+	return dropped
+
+
+## New City (doc 12 §2.19): the city-scoped rows go back to their data defaults —
+## a new city has not seen the tutorial — and the device-scoped ones do not move,
+## because they never belonged to the city that was just replaced. Restoring an
+## EMPTY ui block is exactly that statement, since `SettingsModel.restore_state`
+## re-applies the device copy last.
+func reset_ui_state_for_new_city() -> void:
+	restore_ui_state({})
+
+
+## The two rows whose effect lives outside the model. Both are idempotent, and
+## both are the same call `_on_settings_changed` would have made had the value
+## arrived from a tap rather than from the file.
+func _apply_device_side_effects() -> void:
+	if settings_sheet == null or settings_sheet.model == null:
+		return
+	var model := settings_sheet.model
+	if haptics != null:
+		for key: StringName in [Haptics.SETTING_LEVEL, Haptics.SETTING_REDUCE_MOTION]:
+			if model.has_key(String(key)):
+				haptics.apply_setting(key, model.value(String(key)))
+	rebuild_theme(model.theme_opts())
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +671,84 @@ func bind_camera(camera: CameraState) -> void:
 		else:
 			tilt_slider.bind_camera(camera)
 	solve_tilt_slider()
+	# PA-58: the two §2.13 rows the camera answers to. A camera bound after the
+	# rows were restored would otherwise boot on `CameraState.setup()`'s data
+	# default and quietly ignore the player's choice until they tapped the row.
+	_apply_camera_settings()
+
+
+## Push `rotation_mode` and `invert_pan` at the bound camera (PA-58). Both were
+## authored in `data/ui.json.defaults` with no row and no reader; the rows exist
+## now, and this is the one place their values reach `CameraState`.
+func _apply_camera_settings() -> void:
+	if settings_sheet == null or settings_sheet.model == null:
+		return
+	for key: String in ["rotation_mode", "invert_pan"]:
+		if settings_sheet.model.has_key(key):
+			_apply_camera_setting(StringName(key), settings_sheet.model.value(key))
+
+
+func _apply_camera_setting(key: StringName, value: Variant) -> void:
+	if camera_state == null:
+		return
+	match key:
+		&"rotation_mode":
+			camera_state.rotation_mode = CameraState.rotation_mode_from_string(str(value))
+		&"invert_pan":
+			camera_state.invert_pan = bool(value)
+
+
+# ---------------------------------------------------------------------------
+# Follow mode (PA-58) — doc 12 §2.6 step 6's chip
+# ---------------------------------------------------------------------------
+
+## Raise the chip. `unit_name` is already formatted by the shell, so this class
+## holds no naming rule — the same contract `set_city_difficulty` has.
+func present_follow_chip(unit_name: String) -> void:
+	if follow_chip != null:
+		follow_chip.show_for(unit_name)
+		solve_follow_chip()
+
+
+## Where the chip sits, solved rather than authored (PA-58).
+##
+## Its first draft carried a hard-coded 316 dp bottom offset that read well at
+## 360 × 800 and landed **inside the top bar** at 880 × 400, where the whole safe
+## area is 400 dp tall — six `overlapping_targets` findings, all of them against
+## chips the player needs more than this one. So the slot is measured off the
+## thing it has to clear: doc 12's left rail, at whatever offsets
+## `solve_rail_stack()` last gave it.
+##
+## The one collider a slot above the rail still has is the overlay strip, which
+## reaches 300 dp up the same column — so the chip yields while the strip is open,
+## on the tilt slider's ruling (§2.23) that a target under a panel is worse than
+## no target at all.
+func solve_follow_chip() -> void:
+	if follow_chip == null or config == null:
+		return
+	var layout := config.layout()
+	var gap := UIConfig.get_num(layout, "touch_spacing_min_dp", 8.0)
+	var touch_min := float(ThemeBuilder.touch_min_dp(config, _text_scale(), _larger_targets()))
+	var slot := UIWidgets.rail_slot(FollowChip.FALLBACK_RAIL_SLOT, layout, touch_min)
+	var bottom := -float(slot["bottom"])
+	var rail := hud.get_node_or_null("LeftRail") as Control if hud != null else null
+	if rail != null and rail.offset_top < 0.0:
+		bottom = rail.offset_top - gap
+	var host_w := safe_area.size.x if safe_area != null and safe_area.size.x > 1.0 \
+			else float(_safe_area_rect().size.x)
+	follow_chip.place(bottom, touch_min,
+			minf(FollowChip.MAX_WIDTH_DP,
+					maxf(touch_min, host_w - FollowChip.LEFT_INSET_DP * 2.0)))
+	follow_chip.set_yielded(overlay_rail != null and overlay_rail.is_open())
+
+
+func dismiss_follow_chip() -> void:
+	if follow_chip != null:
+		follow_chip.hide_chip()
+
+
+func follow_chip_shown() -> bool:
+	return follow_chip != null and follow_chip.is_shown()
 
 
 ## Doc 12 §2.23's band: the right-edge column lives between the TOP BAR's bottom
@@ -1052,7 +1260,14 @@ func dismiss_title() -> void:
 		title_screen.close()
 
 
-## Is a full-screen surface over the city? Every child of `ModalLayer` is one by
+## Is a full-screen surface over the city? Two lanes grew this function in the
+## same wave — the permission flow's (`_has_open_child(modal_layer)`) and this
+## one — and `git` text-merged BOTH copies in without reporting a conflict, so
+## the tree only failed at import. This is the survivor because it is the
+## superset: both callers (the permission prompt and the quality governor) want
+## the title door and the loading veil counted as well.
+##
+## Every child of `ModalLayer` is one by
 ## construction (§2.2: the layer is STOP when populated), and the title door and
 ## the loading veil are their own layers with the same property. The renderer's
 ## quality governor asks this every frame: a frame drawn under a sheet measures
@@ -1969,6 +2184,7 @@ func _process(_delta: float) -> void:
 	_update_ui_coverage()
 	solve_rail_stack()
 	solve_tilt_slider()
+	solve_follow_chip()
 	if onboarding == null or not onboarding.is_active() or build_sheet == null:
 		return
 	var category := build_sheet.active_category() if build_sheet.is_open() else ""
@@ -2260,6 +2476,7 @@ func _recompute_layout() -> void:
 		breakpoint_changed.emit(bp)
 	solve_rail_stack()
 	solve_tilt_slider()
+	solve_follow_chip()
 
 
 ## Replaces `DisplayServer.get_display_safe_area()` when it is set. A desktop
@@ -2296,6 +2513,7 @@ func force_layout(box: Vector2i) -> void:
 	# slider's band is measured the same way (the top bar's wrapped height).
 	solve_rail_stack()
 	solve_tilt_slider()
+	solve_follow_chip()
 	UIRoot.sort_tree(safe_area)
 
 

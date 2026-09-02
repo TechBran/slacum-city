@@ -663,6 +663,57 @@ func test_auto_speed_reset_never_force_pauses() -> void:
 	assert_true(bool(while_paused["paused"]), "an existing pause is left alone")
 
 
+func test_only_three_events_are_allowed_to_take_the_speed_control_away() -> void:
+	# PA-84. `critical` was never defined, which is why this function had no
+	# caller for seventeen waves: read as "every CRITICAL alert" it would drop
+	# the player to 1× several times an hour under PA-07's alert load. The
+	# trigger set is authored in `data/ui.json.speed` and it is THREE events,
+	# each one a thing the player cannot fix at 3×.
+	var model := _model()
+	assert_eq(model.auto_speed_reset_triggers().size(), 3)
+	assert_true(model.is_auto_speed_reset_trigger(
+			{"type": "incident_failed", "incident_id": 4}),
+			"an incident that ran out of time")
+	assert_true(model.is_auto_speed_reset_trigger(
+			{"type": "credit_limit_reached", "balance": -50000.0}),
+			"spending is blocked until income recovers")
+	assert_true(model.is_auto_speed_reset_trigger(
+			{"type": "flood_level_changed", "cell": "B12", "band": "flooded"}),
+			"the band at which streets close")
+
+	# …and the near misses, which are the whole reason the set is authored.
+	assert_false(model.is_auto_speed_reset_trigger(
+			{"type": "flood_level_changed", "cell": "B12", "band": "standing_water"}),
+			"a lower flood band is something to SEE, not to be handed the wheel for")
+	assert_false(model.is_auto_speed_reset_trigger(
+			{"type": "credit_line_engaged", "balance": -1000.0}),
+			"the credit LINE is not the credit LIMIT")
+	assert_false(model.is_auto_speed_reset_trigger({"type": "incident_created"}))
+	assert_false(model.is_auto_speed_reset_trigger({"type": "building_damaged"}))
+	assert_false(model.is_auto_speed_reset_trigger({}))
+
+
+func test_the_re_arm_is_half_an_hour_because_ten_minutes_missed_the_bar() -> void:
+	# PA-84 suggested ten minutes; `tools/measure_speed_resets.gd` over eleven
+	# curriculum seeds says ten minutes misses PA-84's OWN ≤ 1-per-real-hour bar
+	# on seed 8888 (1.071). 1200 s gives 0.952 and 1800 s gives 0.714, so the
+	# shipped number is the measurement's, not the suggestion's. Constitution §4
+	# makes 1800 real seconds thirty game-hours at 1×.
+	var model := _model()
+	assert_eq(model.auto_speed_reset_rearm_s(), 1800.0)
+
+
+func test_switching_the_feature_off_in_data_silences_every_trigger() -> void:
+	# doc 01 §2.9's `auto_speed_reset_on_critical` is a real switch, and a
+	# trigger table that ignored it would be a second copy of the policy.
+	var raw := StarterCityLoader.read_json("res://data/ui.json")
+	(raw["speed"] as Dictionary)["auto_speed_reset_on_critical"] = false
+	var model := HudModel.new(UIConfig.new(raw))
+	assert_false(model.is_auto_speed_reset_trigger({"type": "incident_failed"}))
+	assert_eq(int(model.auto_speed_reset(3, false)["speed"]), 3,
+			"and the reset itself is a no-op, as it always was")
+
+
 # ===========================================================================
 # CityHUD binding — the Control half, exercised in a live tree
 # ===========================================================================

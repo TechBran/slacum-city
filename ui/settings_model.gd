@@ -19,6 +19,18 @@ extends RefCounted
 const KIND_CHOICE := &"choice"
 const KIND_TOGGLE := &"toggle"
 const KIND_SLIDER := &"slider"
+## A row that REPORTS rather than sets (PA-14). Its value is a token some other
+## system owns — today only `notification_permission`, whose four tokens are
+## Android's answer as `PermissionFlow.settings_row_state()` reads it — and its
+## tap runs the row's `action` instead of cycling to the next value.
+##
+## Three consequences, all of them because the value is not the player's:
+## it is never written into a save (`capture_state` skips it), it is never
+## device-scoped (there is nothing to remember), and a save that carries one
+## anyway is ignored rather than dropped, because the shell is about to
+## re-report it either way. It still validates against `options`, so a state
+## this screen has no copy for can never reach a row.
+const KIND_STATE := &"state"
 
 const SOURCE_RENDER_PRESETS := "render_presets"
 const SOURCE_TEXT_SCALE := "text_scale_options"
@@ -53,6 +65,12 @@ const POLICY_ROADS := "roads"
 const DEFAULT_FROM_DEFAULTS := "defaults."
 const DEFAULT_FROM_DISPATCH := "dispatch."
 const DEFAULT_FROM_ROADS := "roads."
+## `data/ui.json.camera` — the interaction range doc 12 owns (§2.16). The
+## rotation row reads `rotation_mode_default` from there rather than authoring a
+## second copy, for exactly the reason the dispatch rows read doc 06's file:
+## `CameraState.setup()` boots from that same key, and two copies of a default
+## are a bug waiting for the day somebody changes one of them.
+const DEFAULT_FROM_CAMERA := "camera."
 
 ## Fallback preset order if `data/render.json` is absent (doc 11 authors it).
 const _DEFAULT_PRESETS := ["performance", "balanced", "high"]
@@ -68,6 +86,12 @@ var _settings: Dictionary = {}
 var _defaults: Dictionary = {}
 var _rows: Array = []
 var _values: Dictionary = {}
+## The `user://settings.cfg` copy of the device-scoped rows, as last read or
+## written. Empty until `load_device()` runs — a mount that never calls it (the
+## preview harness, most of the suite) behaves exactly as it did before this
+## file learned to read anything.
+var _device: Dictionary = {}
+var _device_path: String = ""
 ## Doc 03 §2.9's preset, as REPORTED by the shell. Empty until a city is bound —
 ## S9 can be opened over the title door, where there is no city to report on.
 var _city_difficulty: String = ""
@@ -88,13 +112,24 @@ static func load_from_files() -> SettingsModel:
 	return SettingsModel.new(UIConfig.load_from_files())
 
 
+## Every row back to its authored default — **except a `state` row**, whose value
+## is not a preference and was not this screen's to begin with. Clearing one
+## would put *Not available* in front of a player whose notifications are on,
+## every time a city was loaded or founded, until the platform next reported.
+## The shell re-reports on its own schedule; this must not race it.
 func reset_to_defaults() -> void:
+	var reported: Dictionary = {}
+	for raw_key: Variant in _values:
+		var key := str(raw_key)
+		if kind(key) == KIND_STATE:
+			reported[key] = _values[raw_key]
 	_values.clear()
 	for raw: Variant in _rows:
 		if not (raw is Dictionary):
 			continue
 		var row: Dictionary = raw
-		_values[str(row.get("key", ""))] = _default_for(row)
+		var key := str(row.get("key", ""))
+		_values[key] = reported[key] if reported.has(key) else _default_for(row)
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +259,11 @@ func _default_for(row: Dictionary) -> Variant:
 		var name := from.substr(DEFAULT_FROM_ROADS.length())
 		if condition.has(name):
 			return condition[name]
+	elif from.begins_with(DEFAULT_FROM_CAMERA):
+		var camera: Dictionary = _cfg.camera() if _cfg != null else {}
+		var name := from.substr(DEFAULT_FROM_CAMERA.length())
+		if camera.has(name):
+			return camera[name]
 	var key := str(row.get("key", ""))
 	var choices := options(key)
 	if not choices.is_empty():
@@ -266,8 +306,8 @@ func set_value(key: String, new_value: Variant) -> bool:
 	# A wrong-typed value is refused rather than coerced: `"loud"` becoming 0 %
 	# would look like a successful restore of a broken save (§3.2 wants it
 	# dropped, and the default kept).
-	if kind_id != KIND_CHOICE and not (new_value is bool or new_value is int
-			or new_value is float):
+	if kind_id != KIND_CHOICE and kind_id != KIND_STATE \
+			and not (new_value is bool or new_value is int or new_value is float):
 		return false
 	if kind_id == KIND_TOGGLE:
 		coerced = bool(new_value)
@@ -366,8 +406,9 @@ func rows() -> Array[Dictionary]:
 			"min": UIConfig.get_num(row, "min", 0.0),
 			"max": UIConfig.get_num(row, "max", 1.0),
 			"step": UIConfig.get_num(row, "step", 0.1),
-			"device_scoped": device_scoped_keys().has(key),
+			"device_scoped": is_device_scoped(key),
 			"policy": policy_of(key),
+			"action": str(row.get("action", "")),
 			"hint_key": str(row.get("hint_key", "")),
 		})
 	return out
@@ -474,10 +515,106 @@ func device_scoped_keys() -> Array:
 	return (raw as Array) if raw is Array else []
 
 
+func is_device_scoped(key: String) -> bool:
+	return device_scoped_keys().has(key)
+
+
+## Rows that USED to be on this screen and are not any more (PA-59).
+##
+## A withdrawn row is not the same as an unknown key and must not be reported as
+## one: the save that carries it was written by this game, at a version where the
+## control existed, and the value in it is still meaningful to whoever owns the
+## number. `data/ui.json.settings.retired_rows` keeps the whole row object — copy
+## keys included, so the string table does not read them as orphans — and putting
+## it back in `rows` is the entire cost of re-shipping the control.
+func retired_keys() -> Array[String]:
+	var out: Array[String] = []
+	var raw: Variant = _settings.get("retired_rows", [])
+	if not (raw is Array):
+		return out
+	for entry: Variant in (raw as Array):
+		if entry is Dictionary:
+			out.append(str((entry as Dictionary).get("key", "")))
+	return out
+
+
 ## Where the device-scoped copy lives (constitution §2): these survive city
 ## deletion and checkpoint rollback, and win over the per-city snapshot on load.
 func settings_file_path() -> String:
 	return str(_settings.get("settings_file", "user://settings.cfg"))
+
+
+# ---------------------------------------------------------------------------
+# The device file (PA-15 · A91-D-70) — `user://settings.cfg`
+# ---------------------------------------------------------------------------
+##
+## Two persistence paths, and which key takes which is **data**, not a branch:
+## `data/ui.json.settings.device_scoped_keys` names the rows that belong to the
+## phone rather than to the city. Everything else stays where it was, inside the
+## `ui` save section, because it is a property of that city — `replay_tutorial`
+## is a door into THIS city's tutorial and `auto_repair_threshold` is a policy
+## the sim itself already persists.
+##
+## The rule, in one line: **the save may not lower the device copy.** A city
+## saved before the player raised their text scale would otherwise put it back
+## every time they loaded it, and a player who cannot read the game cannot fix a
+## setting that keeps un-fixing itself. `restore_state()` therefore ends by
+## re-applying `_device`, which makes the ordering true for every caller —
+## the resumed save at boot, a mid-session load, and the empty block New City
+## restores — instead of true only where a shell remembered to ask for it.
+
+## Read the device file and apply it over the current values. Returns the keys
+## it refused, on §3.2's migration terms: an unknown key, a key that is not
+## device-scoped, or a value the row will not take is DROPPED, and the default
+## it already had is kept. A missing file drops nothing and changes nothing.
+func load_device(path: String = "") -> PackedStringArray:
+	_device_path = path if path != "" else settings_file_path()
+	var stored := DeviceSettings.read_section(_device_path, DeviceSettings.SECTION_SETTINGS)
+	var dropped: PackedStringArray = []
+	_device.clear()
+	var names: Array = stored.keys()
+	names.sort()   # deterministic apply order, deterministic dropped list
+	for raw_name: Variant in names:
+		var name := str(raw_name)
+		if not is_device_scoped(name) or _row_def(name).is_empty():
+			dropped.append(name)
+			continue
+		var incoming: Variant = stored[name]
+		if not set_value(name, incoming) and not _same_option(_values.get(name, null), incoming):
+			dropped.append(name)
+			continue
+		_device[name] = _values[name]
+	return dropped
+
+
+## Write the device-scoped subset. Called on every row tap that touches one of
+## those rows — the player who changes a setting and then swipes the app away
+## has already had their answer committed.
+func save_device(path: String = "") -> bool:
+	var target := path if path != "" else _device_file()
+	_device = device_block()
+	return DeviceSettings.write_section(target, DeviceSettings.SECTION_SETTINGS, _device)
+
+
+## The subset as it stands right now, whether or not it has ever been written.
+func device_block() -> Dictionary:
+	var out: Dictionary = {}
+	for raw_key: Variant in device_scoped_keys():
+		var key := str(raw_key)
+		if has_key(key):
+			out[key] = _values.get(key, null)
+	return out
+
+
+## Re-apply the loaded device copy over whatever is in the values now. No-op
+## before `load_device()`, which is what keeps every existing mount unchanged.
+func apply_device() -> void:
+	for key: Variant in _device:
+		set_value(str(key), _device[key])
+
+
+func _device_file() -> String:
+	return _device_path if _device_path != "" else settings_file_path()
 
 
 ## Autosave cadence in real seconds for the shell's timer; 0 means "off".
@@ -500,6 +637,12 @@ func _t_args(key: String, args: Dictionary) -> String:
 func capture_state() -> Dictionary:
 	var out: Dictionary = {}
 	for key: String in keys():
+		# A `state` row is a report, not a preference: persisting Android's
+		# answer would put a stale token in front of the player for one frame
+		# after every load, and a WRONG one after they changed it in system
+		# settings while the app was closed.
+		if kind(key) == KIND_STATE:
+			continue
 		out[key] = _values.get(key, null)
 	return out
 
@@ -511,15 +654,25 @@ func restore_state(state: Dictionary) -> PackedStringArray:
 	var dropped: PackedStringArray = []
 	var incoming: Array = state.keys()
 	incoming.sort()  # deterministic apply order, deterministic dropped list
+	var retired := retired_keys()
 	for key: Variant in incoming:
 		var name := str(key)
+		if kind(name) == KIND_STATE and not _row_def(name).is_empty():
+			continue   # never captured, never restored — the shell re-reports it
 		if not _row_def(name).is_empty():
 			if not set_value(name, state[key]):
 				# An unchanged value is fine; an invalid one is a drop.
 				if not _same_option(_values.get(name, null), state[key]):
 					dropped.append(name)
 			continue
+		if retired.has(name):
+			continue   # withdrawn, not unknown — see `retired_keys()`
 		dropped.append(name)
+	# Last, and deliberately: the device file outranks the city's snapshot for
+	# the keys it owns (doc 12 §3.2 — "on load `settings.cfg` wins for those
+	# keys"). Doing it here rather than in the shell makes it true for the
+	# resumed save, a mid-session load and New City's empty block alike.
+	apply_device()
 	return dropped
 
 

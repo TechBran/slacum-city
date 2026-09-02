@@ -4054,3 +4054,109 @@ tree where a `Dictionary` crosses from `ui/` to `game/` is worth the same
 question: *is there a test that a real producer's output resolves in the real
 consumer?* This wave answers it for the requirement rows. It does not answer it
 for the event batch, the notification payloads, or the overlay feeds.
+
+
+---
+
+## AK. Wave-18 rulings — the settings deck: what belongs to the phone, what belongs to the city, and what belongs to Android (2026-09-02)
+
+*Lane G, production audit PA-14 / PA-15 / PA-58 / PA-59 / PA-84. Report 98 §52
+carries the rulings as rulings; this section carries the mechanics they turn on.
+Every question below is the same question asked five times: **who owns this
+value, and what happens when the owner is not the one storing it?***
+
+### AK1. Three custodies, and the row's KIND is how the code says which
+
+A settings screen looks like one list and is really three, and until this wave
+the code could not tell them apart:
+
+| custody | example | lives in | survives city deletion? | in a save? |
+|---|---|---|---|---|
+| **the phone's** | text scale, graphics preset, the notification switches | `user://settings.cfg` (`device_scoped_keys`) | **yes** | mirrored only |
+| **the city's** | `replay_tutorial`, the dispatch and road policies | the `ui` save section (and the sim's own sections) | no | **yes** |
+| **the platform's** | `notification_permission` | nowhere — it is re-read | n/a | **no** |
+
+The third is the one that had no representation at all, and it is the one that
+needs the strongest rule: a value the platform re-answers every time it is
+looked at **must not be persisted anywhere**. Persisting it shows the player a
+stale token for one frame after every load, and a *wrong* one after they changed
+it in system settings while the app was closed. Hence `SettingsModel.KIND_STATE`:
+no capture, no device file, no cycling, and a tap that runs the row's `action`.
+
+**The generalisable shape.** When a screen shows values with different owners,
+the difference has to be in the *type*, not in a comment or a special case at
+the call site — otherwise the next row of the awkward kind is written as the
+common kind and the bug is silent.
+
+### AK2. A withdrawn control is not an unknown key
+
+PA-59 removes `auto_spend_contractor` — a `policy: dispatch` toggle whose value
+reached `DispatchPolicy` and stopped there, because there is no contractor unit
+to hire (doc 06 line 1749).
+
+The tempting move is to delete the row and let doc 12 §3.2's migration policy
+handle the leftovers: *"unknown settings keys are dropped"*. **That is wrong, and
+the distinction is worth stating.** A save carrying `auto_spend_contractor` was
+written *by this game*, at a version where the control existed, and the value in
+it is still meaningful to doc 06 — which still carries the default and still
+round-trips the key. Reporting it as an unknown key would put a drop in the log
+for something nobody did wrong, and would make a real corruption harder to see
+in the same log. So `settings.retired_rows` keeps the row object whole (copy keys
+included, so the string table does not read them as orphans) and
+`SettingsModel.retired_keys()` ignores those keys in silence. **Re-shipping the
+control is moving one object back into `rows`** — which is the test that the
+withdrawal was reversible rather than destructive.
+
+### AK3. A gesture preference cannot preserve the property the gesture is built on
+
+Doc 12 §2.16's pan is a **1:1 world lock**: the ground point under the finger
+stays under the finger, and the lock is not a nicety — it is what makes the pan
+exact at any zoom, pitch or yaw, in one step, with no accumulated error.
+
+`invert_pan` asks for the opposite: the city travels *with* the finger. The two
+cannot both hold, because the lock is precisely the statement that they cannot.
+So the inverted path **keeps the magnitude and gives up the lock**: it applies
+the same displacement with the opposite sign and re-anchors every frame, so the
+finger still drives the world exactly as far as it moved. Without the re-anchor
+the anchor and the touch diverge and the error compounds for the length of the
+drag.
+
+Pinned by `test_inverted_pan_moves_the_same_distance_the_other_way`: equal
+lengths, negative dot product. **The shape: when a preference inverts an
+invariant, name which half of the invariant survives — here, distance survives
+and identity does not — or the feature ships as "roughly the other way".**
+
+### AK4. A mode with no face is a bug, and the face has to be measured into place
+
+Follow mode moves the camera on its own. An invisible mode that moves the camera
+does not read as a feature; it reads as a broken camera. So doc 12 §2.6 step 6's
+chip is not decoration — it is the mode's only *statement that it exists*, and
+it doubles as one of the four ways out (the other three: a pan, which
+`CameraState.begin_pan` already ends on touch-down because the finger always
+wins; the unit going off duty; and a dispatch of a different unit).
+
+**And the face has to be placed against its neighbours rather than by a
+constant.** The chip's first draft used a 316 dp bottom offset, chosen by reading
+the 360 × 800 layout. At 880 × 400 — the same safe area, 400 dp tall — that
+offset lands inside the top bar: six `overlapping_targets` findings against the
+stat chips, which are controls the player needs far more than this one. The fix
+is the ruling doc 12 §2.23 already made for the right edge, applied to the left:
+measure the neighbour (`LeftRail`'s solved `offset_top`), and yield the column
+outright while something else is drawn over it.
+
+### AK5. "Critical", "significant", "nearby" — an undefined adjective is an unmade decision
+
+PA-84's row is filed as *"`auto_speed_reset` has no caller"*, and the interesting
+part is **why** it had none for seventeen waves. Doc 01 §2.9 said "a P1
+notification"; the P1 class on the curriculum path is 138–161 events per 21
+game-days, which is 19.2 forced speed resets per real hour on the worst seed. The
+literal implementation is a fault, not a feature — so the function was written,
+tested, documented, and quietly never called, which is the shape a *deferred
+decision* takes when nobody records that a decision is owed.
+
+The close is not "wire it". The close is: **make the decision in data, and put
+the measurement that justifies the number next to it.** Three authored triggers
+and a 600 s re-arm bring the same streams to 0.714 per real hour, and
+`tools/measure_speed_resets.gd` exits non-zero above the bar so the number stays
+a claim rather than a memory. Doc 12 §2.11 and doc 01 §2.9 now say which events;
+neither says "critical" on its own any more.
