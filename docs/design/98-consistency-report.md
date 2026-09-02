@@ -6182,7 +6182,13 @@ above it answers `MISS_ABOVE_HORIZON`. No caller changed — RR-116's split alre
 routes every caller that ACTS on the world through `hit` — and *which* ground is
 pickable did not move either: the `ray_parallel_eps` and `dist·4` limits are
 properties of the camera POSITION, not of the aim. Only where that ground is
-DRAWN moved, from "below 32 % of the frame" to "below 78 %".
+DRAWN moved, from "below 32 % of the frame" to "below 78 %". **The consequence
+that is real and is filed rather than hidden:** the screen AREA a placement tap
+can land on at a full lean shrinks from the bottom 68 % of the frame to the
+bottom 22 %. The same world ground is reachable and the remedy is the control the
+player already has — let the slider go and the frame comes back — but a build
+flow driven at the floor has a smaller target than it had, and no measurement in
+this wave says whether that reads as tight on a phone. Owed on the device.
 
 ### RR-153 — What the recomposition costs: the near zoom pays, the far zoom is REFUNDED, and the cull cannot arbitrate either (docs 11 §2.5b/§2.13, 92 §53, 93 §AM5)
 
