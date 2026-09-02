@@ -20,9 +20,21 @@ extends Node3D
 ## the per-(chunk, archetype, LEVEL) set the benchmark city measured at 16.4
 ## nodes per chunk — see the block above `_atlas_for` for how one MultiMesh
 ## draws several meshes, and why the packed `.b` carries the level at 448.
+##
+## §2.11's `MM_blob` is the fourth thing this view draws: one dark contact
+## decal per building, on NEAR and MEDIUM chunks, on the presets
+## `data/render.json`'s `blob_shadow.enabled_presets` names — which is the tier
+## whose `shadows` knob is `false` and which therefore had nothing under a
+## building at all. See the block above `_read_blob`.
 
 const TEXTURE_MANIFEST := "res://game/textures/generated/manifest.json"
 const FAR_MESH_ARCHETYPE := "far_unit_box"
+## Doc 11 §2.11's per-building contact shadow. See `_upload_blob`.
+const BLOB_SHADER := "res://game/shaders/blob_shadow.gdshader"
+## The blob buffer carries NO instance colour and NO custom data — every value
+## the decal needs is a uniform or the `sc_night` global — so its stride is the
+## bare TRANSFORM_3D twelve and not `INSTANCE_STRIDE`.
+const BLOB_STRIDE := 12
 ## §2.6's five building families, in the order the FAR shader's `window_colors`
 ## array is indexed. The index is what `_upload_far` writes into the far
 ## buffer's `.a` channel.
@@ -133,6 +145,24 @@ var _textures: Dictionary = {}              # "facade:brick" -> Texture2D
 var _roof_tile_m: float = 4.0
 var _bay_m := Vector2(3.2, 3.5)
 # --- FAR tier (§2.5 / §2.6 / §2.14 LOD2) -----------------------------------
+## §2.6b: the side of the reduction `_page_mean_srgb` takes a page down to.
+const FAR_PAGE_PROBE := 8
+## §2.6b's measured per-family albedo, in `FAMILY_ORDER`, and the flag that
+## says all five resolved. Empty and false on a clone with no texture pages,
+## which leaves the far shader's `far_family_mix` at 0 and its neutral pair
+## standing — the same "runs untextured" contract `tex_mix` gives the near tier.
+## §2.6b's A/B arm, the same shape `blob_override` has: -1 takes the measured
+## palette whenever it resolved, 0 FORCES the pre-Wave-17 neutral grey back.
+## `tools/profile_frame.gd --far-family=0` is its only caller — the shipped
+## game has no way to ask for the old frame, because the old frame was wrong.
+var far_family_override: int = -1
+## §2.6b's albedo-gain sweep, negative for "leave the shader's identity".
+## Set by `tools/profile_frame.gd --far-gain=G` and by nothing the player can
+## reach — it is a measuring lever, not a setting.
+var far_gain_override: float = -1.0
+var _far_wall_albedo := PackedColorArray()
+var _far_roof_albedo := PackedColorArray()
+var _far_family_albedo_ready := false
 var _far_shader: Shader
 var _far_mesh: Mesh
 var _far_nodes: Dictionary = {}     # Vector2i chunk -> MultiMeshInstance3D
@@ -148,6 +178,12 @@ var _far_energy_scale: float = 0.62
 var _far_cell_m: float = 6.4
 var _far_bay_m: float = 3.2
 var _far_mullion_duty: float = 0.72
+## §2.6b (2)'s day façade relief. 0 is the flat far tier that shipped before
+## Wave 17; the modulation is zero-mean at every depth, so this knob changes
+## the STRUCTURE the far city shows and never its level.
+var _far_relief_depth: float = 0.0
+## `--far-relief=D` (tools/profile_frame.gd). Negative = take the authored row.
+var far_relief_override: float = -1.0
 ## Tests only. `MultiMesh.buffer` round-trips through the rendering server,
 ## which is the dummy one headless, so the far buffer has to be readable from
 ## the CPU side to be asserted at all. Off in play: keeping it would double the
@@ -172,6 +208,44 @@ var _medium_nodes: Dictionary = {}
 ## through the (dummy, headless) rendering server and cannot be read back.
 var keep_medium_buffers := false
 var _medium_buffers: Dictionary = {}  # "cx_cy_archetype" -> PackedFloat32Array
+# --- the contact-shadow decal (§2.11's MM_blob) ----------------------------
+## `data/render.json` → `blob_shadow.enabled_presets`. THIS row is the building
+## decal's gate and nothing else's: §2.17's street bodies read the same block's
+## LOOK keys and take their on/off from the preset's `vehicle_shadows` inverted,
+## which is why one block has two consumers (report 98 RR-90, and the
+## `_blob_shadow` note in the file itself).
+var _blob_presets: Array = []
+## The whole `blob_shadow` block, kept because the material is built lazily —
+## the first frame a chunk goes NEAR on a preset that wants the decal, which can
+## be long after `setup`.
+var _blob_cfg: Dictionary = {}
+## Whether the ACTIVE preset is in that list. Re-derived from `model.preset` at
+## the top of every `_upload_all`, which is what makes a live preset swap and a
+## governor latched drop both work with no call from the shell: both paths go
+## through `RenderStateModel.set_preset`, and this view reads the model.
+var _blob_enabled := false
+var _blob_preset := ""
+## A/B lever, the same shape as `lod_enabled` and `medium_merge_enabled`:
+## −1 obeys `enabled_presets`, 0 forces the decal off and 1 forces it on
+## whatever the preset says. `tools/profile_frame.gd --blob=` drives it, so the
+## two arms of the draw-call and fill A/B differ in NOTHING but this layer.
+var blob_override := -1
+var _blob_y_m := 0.04
+var _blob_scale := 1.15
+var _blob_mesh: Mesh
+var _blob_material: ShaderMaterial
+## ONE node for the whole city — see the block above `_read_blob` for the
+## measurement that chose it over one per chunk.
+var _blob_instance: MultiMeshInstance3D
+## The buffer as last handed to the server, for the "uploaded only when it
+## moved" compare in `_upload_blob`.
+var _blob_last := PackedFloat32Array()
+var _blob_uploads := 0
+## Tests only, and for the same reason `keep_far_buffers` exists: the dummy
+## headless server stores no instance data, so a decal's transform can only be
+## asserted from the CPU side.
+var keep_blob_buffers := false
+var _blob_buffers: Dictionary = {}
 ## The last `set_overlay_palette` argument, replayed onto atlas materials as
 ## they are built. Empty before the shell ever pushes one.
 var _overlay_paint: Array = []
@@ -213,10 +287,12 @@ func setup(p_model: RenderStateModel, render_data: Dictionary) -> void:
 	_far_bay_m = float(emissive.get("far_bay_m",
 			world.get("window_spacing_x_m", 3.2)))
 	_far_mullion_duty = float(emissive.get("far_mullion_duty", 0.72))
+	_far_relief_depth = float(emissive.get("far_relief_depth", 0.0))
 	_far_band = Vector2(float(emissive.get("far_band_lo", 0.30)),
 			float(emissive.get("far_band_hi", 0.78)))
 	_day_gate = float(emissive.get("day_gate", 0.06))
 	_construction = render_data.get("construction", {})
+	_read_blob(render_data.get("blob_shadow", {}))
 	_load_textures()
 	_rebuild()
 
@@ -273,6 +349,91 @@ func _load_textures() -> void:
 				push_warning("city_view: missing texture page %s" % path)
 				continue
 			_textures["%s:%s" % [kind, name]] = load(path)
+	_measure_far_family_albedo()
+
+
+## §2.6b — what each family's pages LOOK like once they are a few pixels wide,
+## which is the colour the FAR tier has to paint to stop the boundary reading
+## as a line (report 98 RR-98, doc 11 §2.6b).
+##
+## **Measured, not authored, and that is the point.** A hand-written far
+## palette is a second copy of the art, and the version this replaced had
+## drifted 5.4× on the tech family without anyone writing a wrong number —
+## the pages simply moved and the far tier did not. Reading it off the page the
+## near tier actually wears means `tools/gen_textures.py` can retint the whole
+## city and the far tier follows on the next boot, with nothing to keep in sync.
+##
+## **Why an 8×8 Lanczos reduction and not the arithmetic mean.** They differ by
+## under a per-cent here, but the reduction is the right QUESTION: it is the
+## filtered footprint a minified page converges to, in the same sRGB space the
+## GPU's own mipmap chain averages in, so what is measured is what a MEDIUM
+## chunk shows at the boundary rather than what the page contains. 8×8 rather
+## than 1×1 because a single-texel target makes the resampler's window the
+## whole image and its edge handling starts to matter; 64 texels averaged in
+## GDScript costs 64 `get_pixel` calls per page, once, at load.
+func _measure_far_family_albedo() -> void:
+	_far_family_albedo_ready = false
+	_far_wall_albedo = PackedColorArray()
+	_far_roof_albedo = PackedColorArray()
+	for family: String in FAMILY_ORDER:
+		var surface := _surface_for("", family)
+		var facade: Texture2D = _textures.get("facade:%s" % surface.get("facade", ""))
+		var roof: Texture2D = _textures.get("roof:%s" % surface.get("roof", ""))
+		if facade == null or roof == null:
+			return
+		_far_wall_albedo.append(_page_mean_srgb(facade))
+		_far_roof_albedo.append(_page_mean_srgb(roof))
+	_far_family_albedo_ready = _far_wall_albedo.size() == FAMILY_ORDER.size()
+
+
+## §2.6b's measured per-family WALL albedo, in `FAMILY_ORDER`. Empty on a
+## checkout with no texture pages, which is the same state that leaves the far
+## shader's `far_family_mix` at 0.
+func far_wall_albedo() -> PackedColorArray:
+	return _far_wall_albedo.duplicate()
+
+
+## The same for the ROOF page each family wears. Separate because the far
+## shader already splits wall from roof by normal, and because the families do
+## not pair up: tech and industrial share `metal` while wearing very different
+## walls, and residential and civic share `gravel`.
+func far_roof_albedo() -> PackedColorArray:
+	return _far_roof_albedo.duplicate()
+
+
+## The mean of one page, in the space a `source_color` uniform WANTS: sRGB.
+##
+## **The seam, and it is `A91-D-36`'s rule one layer further on.** A
+## `source_color` uniform IS decoded by the engine — measured, not assumed: the
+## same 0.5 pushed into a plain `vec3` and into a `source_color` `vec3` renders
+## back 0.7373 and 0.4980, and 0.4980 is sRGB(0.214), so the tagged one was
+## decoded. That is the OPPOSITE of a MultiMesh instance colour (RR-91) and of
+## a vertex colour (RR-95), neither of which is decoded — which is why this
+## project keeps getting this seam wrong in both directions, and why every one
+## of them is now written down at the write.
+##
+## So the value handed over here must be sRGB and must NOT be pre-decoded.
+## `Image.get_pixel` on an imported page already returns the stored sRGB byte
+## as a 0..1 float without decoding it, the average is taken in that space
+## (which is what the GPU's own mip chain does), and the engine performs the
+## one and only decode when the uniform is set. An `srgb_to_linear()` here
+## decodes twice and lands the far city at a third of its brightness — which is
+## exactly what this section's first draft did, and what a `far_albedo_gain` of
+## 2.0 was silently compensating for until the seam was measured.
+func _page_mean_srgb(tex: Texture2D) -> Color:
+	var img := tex.get_image()
+	if img == null:
+		return Color(0.5, 0.5, 0.5)
+	if img.is_compressed():
+		img.decompress()
+	img.resize(FAR_PAGE_PROBE, FAR_PAGE_PROBE, Image.INTERPOLATE_LANCZOS)
+	var acc := Vector3.ZERO
+	for y in FAR_PAGE_PROBE:
+		for x in FAR_PAGE_PROBE:
+			var p := img.get_pixel(x, y)
+			acc += Vector3(p.r, p.g, p.b)
+	acc /= float(FAR_PAGE_PROBE * FAR_PAGE_PROBE)
+	return Color(acc.x, acc.y, acc.z)
 
 
 ## Which pages an archetype wears; falls back to its family, then to nothing.
@@ -309,8 +470,15 @@ func _rebuild() -> void:
 		for node in (_medium_nodes[chunk] as Dictionary).values():
 			(node as Node).queue_free()
 	_medium_nodes.clear()
+	if _blob_instance != null:
+		_blob_instance.queue_free()
+		_blob_instance = null
+	_blob_last = PackedFloat32Array()
+	_blob_buffers.clear()
 	# The atlas MESHES and MATERIALS survive: they are keyed by archetype and
-	# level set, not by chunk, so a rebuilt city reuses every one of them.
+	# level set, not by chunk, so a rebuilt city reuses every one of them. The
+	# blob mesh and its ONE material survive for the same reason — neither is
+	# keyed by anything a rebuild moves.
 	_medium_buffers.clear()
 	for chunk in model._sorted_chunk_coords():
 		for bucket in _sorted_buckets(chunk):
@@ -748,6 +916,282 @@ func _renders_medium(chunk: Vector2i) -> bool:
 	return model.chunk_tier(chunk) == RenderStateModel.TIER_MEDIUM
 
 
+# ------------------------------------------------ the contact shadow, MM_blob
+#
+# Doc 11 §2.11: "one dark radial-gradient quad per building at y = 0.04,
+# footprint × 1.15, alpha 0.35·(1 − sc_night·0.6). One extra draw call per
+# NEAR/MEDIUM chunk, and the difference between 'buildings sit on the ground'
+# and 'buildings float'."
+#
+# **The layer this file has been owed since the preset table was written.**
+# `presets.performance.shadows` is `false` — no sun shadow, no splits — so on
+# the tier the cheapest phones run, nothing under a building told the eye it was
+# standing on anything. `data/render.json`'s `blob_shadow.enabled_presets` has
+# named the answer for as long as the block has existed and no code read that
+# row (report 98 RR-90 named it; the street-life layer took the block's LOOK
+# keys and deliberately left `enabled_presets` alone, because it belongs here).
+#
+# **Why a DEDICATED MultiMesh and not a mode on the street fx buffer**, which is
+# where the OTHER blob shadow in this renderer lives: the argument is in the
+# header of `game/shaders/blob_shadow.gdshader` and it comes down to the fx
+# buffer being a per-frame pool for objects that WALK, while a building decal
+# moves only when a building does. The full three reasons are there.
+#
+# **ONE MultiMesh CITY-WIDE, not one per chunk — and §2.11's own arithmetic is
+# corrected here rather than obeyed.** The doc prices this at "one extra draw
+# call per NEAR/MEDIUM chunk" and its worked example spends 6 of them
+# (3 NEAR + 3 MEDIUM). The per-chunk arm was BUILT first and measured, because
+# that is what the doc asked for, and on the benchmark city the Performance
+# preset's chunk census is not 3 + 3: it is **12 NEAR + 24 MEDIUM at Z0**, so
+# the per-chunk layer cost **36 draw calls at Z0, 36 at Z1 and 16 at Z2** —
+# against a 180-call budget the bench city is already over. City-wide costs
+# **one**, at every pose, for ever.
+#
+# This is §2.1.2's road-surface ruling applied to a second layer: when a layer
+# has no per-chunk state worth culling on, per-chunk buckets buy nothing and
+# cost a call each. The blob buffer has even less per-chunk state than the road
+# does — no material varies, no uniform varies, and the whole thing is 2
+# triangles per building.
+#
+# **Every building in the city is in the buffer, whatever tier its chunk is**,
+# and that is the second half of the decision. It makes the buffer a function of
+# the ROSTER and not of the camera, so scrubbing the city across a tier boundary
+# rewrites nothing and no chunk drops its shadows as it crosses one. The cost of
+# including the far field is 2 triangles and a sub-pixel quad per building; the
+# cost of excluding it would be a rewrite on every band crossing plus a visible
+# pop at 420 m.
+#
+# Stride 12: no instance colour, no custom data. Every value the decal needs is
+# a material uniform or the `sc_night` global, so the buffer is transforms only
+# and one material serves the whole city.
+
+func _read_blob(cfg: Dictionary) -> void:
+	_blob_cfg = cfg.duplicate()
+	_blob_presets = (cfg.get("enabled_presets", []) as Array).duplicate()
+	_blob_y_m = float(cfg.get("y_m", _blob_y_m))
+	_blob_scale = maxf(float(cfg.get("footprint_scale", _blob_scale)), 0.01)
+	# `alpha` and `night_fade` reach the shader, not this script: nothing on the
+	# CPU side has an opinion about them, and a uniform is one place rather than
+	# one place per instance. `body_alpha` / `body_m` / `body_lift_m` are the
+	# OTHER consumer's and are not read here.
+	_blob_material = null
+	_blob_preset = ""
+
+
+## One flat unit quad in the XZ plane, `UV` running 0..1 across it — the whole
+## mesh of the layer, shared by every building in the city. Authored here rather
+## than in a builder because it is four vertices and because putting it in
+## `StreetLifeMesh.billboard_quad`'s file would imply the two shadows share a
+## shader, which is the thing the header above spends its argument denying.
+func _blob_quad() -> Mesh:
+	if _blob_mesh != null:
+		return _blob_mesh
+	var mesh := ArrayMesh.new()
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = PackedVector3Array([
+		Vector3(-0.5, 0.0, -0.5), Vector3(0.5, 0.0, -0.5),
+		Vector3(0.5, 0.0, 0.5), Vector3(-0.5, 0.0, 0.5)])
+	arrays[Mesh.ARRAY_NORMAL] = PackedVector3Array([
+		Vector3.UP, Vector3.UP, Vector3.UP, Vector3.UP])
+	arrays[Mesh.ARRAY_TEX_UV] = PackedVector2Array([
+		Vector2(0.0, 0.0), Vector2(1.0, 0.0),
+		Vector2(1.0, 1.0), Vector2(0.0, 1.0)])
+	arrays[Mesh.ARRAY_INDEX] = PackedInt32Array([0, 1, 2, 0, 2, 3])
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	_blob_mesh = mesh
+	return _blob_mesh
+
+
+## ONE material for the whole city. `blob_core` is derived rather than authored:
+## the quad is scaled up by `footprint_scale`, so `1 / footprint_scale` puts the
+## solid part of the mask exactly on the footprint and the penumbra exactly on
+## the overhang. Author the scale, get the falloff.
+func _blob_material_for() -> ShaderMaterial:
+	if _blob_material != null:
+		return _blob_material
+	if not ResourceLoader.exists(BLOB_SHADER):
+		return null
+	var material := ShaderMaterial.new()
+	material.shader = load(BLOB_SHADER)
+	material.set_shader_parameter("blob_alpha", float(_blob_cfg.get("alpha", 0.35)))
+	material.set_shader_parameter("night_fade",
+			float(_blob_cfg.get("night_fade", 0.6)))
+	material.set_shader_parameter("blob_core", 1.0 / _blob_scale)
+	_blob_material = material
+	return _blob_material
+
+
+## Flat, and city-wide. The decal lies at `_blob_y_m` and nothing in this buffer
+## is ever taller than a building's own ground plane, so the cull volume is a
+## SLAB and not `_chunk_aabb`'s 260 m tower box — a world-height AABB on a layer
+## that is 4 cm thick is the shape RR-83 measured the cost of. The horizontal
+## extent is the model's own chunk set, grown by one chunk so a decal on the
+## outermost lot cannot poke out of its own volume.
+func _blob_aabb() -> AABB:
+	var lo := Vector2i(0, 0)
+	var hi := Vector2i(0, 0)
+	var first := true
+	for chunk: Vector2i in model._sorted_chunk_coords():
+		if first:
+			lo = chunk
+			hi = chunk
+			first = false
+		else:
+			lo = Vector2i(mini(lo.x, chunk.x), mini(lo.y, chunk.y))
+			hi = Vector2i(maxi(hi.x, chunk.x), maxi(hi.y, chunk.y))
+	return AABB(
+			Vector3(float(lo.x - 1) * CHUNK_M, -2.0, float(lo.y - 1) * CHUNK_M),
+			Vector3(float(hi.x - lo.x + 3) * CHUNK_M, 8.0,
+					float(hi.y - lo.y + 3) * CHUNK_M))
+
+
+func _blob_node() -> MultiMeshInstance3D:
+	if _blob_instance != null:
+		return _blob_instance
+	var material := _blob_material_for()
+	if material == null:
+		return null
+	var node := MultiMeshInstance3D.new()
+	node.name = "MM_blob"
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = _blob_quad()
+	mm.instance_count = 1
+	mm.visible_instance_count = 0
+	node.multimesh = mm
+	node.material_override = material
+	node.custom_aabb = _blob_aabb()
+	# A shadow does not cast one, and must not be re-drawn into a split if the
+	# player switches UP to a preset that has splits before this node is stood
+	# down.
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# Born hidden, RR-83: an empty MultiMesh under a world AABB still costs a
+	# draw call, and a city before its first building is exactly that.
+	node.visible = false
+	add_child(node)
+	_blob_instance = node
+	return node
+
+
+## Fold EVERY visible building in the city into the one decal buffer. Returns
+## the instance count written, so the caller can gate the node on it.
+##
+## Axis-aligned, following `_upload_far`'s precedent and for the same reason:
+## every path that feeds this model builds `Transform3D(Basis.IDENTITY, pos)`
+## (`game/main.gd`, `tools/profile_frame.gd`, `game/showcase.gd` and the
+## fixtures all do), so the source basis carries no rotation to preserve and
+## reading it back out of the mirror would only be arithmetic that agrees with
+## itself. The footprint comes from `_far_scale`, which is the manifest's own
+## `footprint_tiles × 8 m` and is already resolved once at setup.
+##
+## **Built every frame, uploaded only when it MOVED.** The write loop is
+## GDScript and the upload is a server round trip, and only the second one is
+## worth avoiding: `PackedFloat32Array ==` is a native compare, so a settled
+## city rebuilds 18,000 floats and hands the server nothing. That is the same
+## bargain §2.10b's pad buffer strikes for the same reason — a city where
+## nothing is being built uploads nothing — reached with a comparison rather
+## than with a dirty flag this view has no way to be given.
+func _upload_blob() -> int:
+	var node := _blob_node()
+	if node == null:
+		return 0
+	var mm := node.multimesh
+	var total := 0
+	for chunk: Vector2i in model._sorted_chunk_coords():
+		for bucket: RenderStateModel.Bucket in _sorted_buckets(chunk):
+			total += bucket.visible_count
+	if total <= 0:
+		mm.visible_instance_count = 0
+		return 0
+	if mm.instance_count < total:
+		# The model's own granularity (§2.2), in blocks of 32, so a city that
+		# gains one building does not reallocate.
+		mm.instance_count = int(ceil(float(total) / 32.0)) * 32
+	var buffer := PackedFloat32Array()
+	buffer.resize(mm.instance_count * BLOB_STRIDE)
+	var out := 0
+	for chunk: Vector2i in model._sorted_chunk_coords():
+		for bucket: RenderStateModel.Bucket in _sorted_buckets(chunk):
+			var scale: Vector3 = _far_scale.get(
+					"%s:%d" % [bucket.archetype, bucket.level], Vector3(8.0, 10.0, 8.0))
+			var sx := scale.x * _blob_scale
+			var sz := scale.z * _blob_scale
+			var mirror := bucket.mirror
+			for i in bucket.visible_count:
+				var base := i * INSTANCE_STRIDE
+				if base + INSTANCE_STRIDE > mirror.size():
+					break
+				buffer[out + 0] = sx
+				buffer[out + 3] = mirror[base + 3]
+				buffer[out + 5] = 1.0
+				# The building's own ground plane plus §2.11's 4 cm. Read off the
+				# instance rather than assumed zero: a lot the map raises takes
+				# its buildings up with it, and a shadow buried in the terrain is
+				# the defect report NIGHT-1 found under the lamp pools.
+				buffer[out + 7] = mirror[base + 7] + _blob_y_m
+				buffer[out + 10] = sz
+				buffer[out + 11] = mirror[base + 11]
+				out += BLOB_STRIDE
+	if keep_blob_buffers:
+		_blob_buffers["all"] = buffer.slice(0, out)
+	if buffer != _blob_last:
+		mm.buffer = buffer
+		_blob_last = buffer
+		_blob_uploads += 1
+	mm.visible_instance_count = total
+	return total
+
+
+## The decal buffer last written, when `keep_blob_buffers` is on. 12 floats per
+## instance, transforms only.
+func blob_buffer() -> PackedFloat32Array:
+	return _blob_buffers.get("all", PackedFloat32Array())
+
+
+## How many times the decal buffer has actually reached the server. A settled
+## city must not move this: it is the proof that "built every frame, uploaded
+## only when it moved" is a claim and not a hope.
+func blob_upload_count() -> int:
+	return _blob_uploads
+
+
+## Whether the ACTIVE preset draws the decal at all — `enabled_presets`.
+func blob_enabled() -> bool:
+	return _blob_enabled
+
+
+## Contact-shadow MultiMeshes actually submitted this frame: 0 or 1, because the
+## layer is one node city-wide. Kept OUT of `building_draw_calls()`, which is the
+## count of building GEOMETRY calls that §2.13's table and four tests are written
+## against; this is a separate line in `perf_stats` for the reason RR-83 gave —
+## a budget claim that cannot be printed is a budget claim nobody re-checks.
+func blob_draw_calls() -> int:
+	if _blob_instance != null and _blob_instance.visible:
+		return 1
+	return 0
+
+
+## Re-derive the gate from the model. Called at the top of every `_upload_all`,
+## which is one string compare per frame and is what lets BOTH preset paths work
+## with no call from the shell: the settings row and the governor's latched drop
+## both go through `RenderStateModel.set_preset`, and this view reads the model
+## rather than being told twice.
+func _sync_blob_preset() -> void:
+	var name := "%s#%d" % [model.preset if model != null else "", blob_override]
+	if name == _blob_preset:
+		return
+	_blob_preset = name
+	if blob_override >= 0:
+		_blob_enabled = blob_override == 1
+	else:
+		_blob_enabled = _blob_presets.has(model.preset if model != null else "")
+	if not _blob_enabled and _blob_instance != null:
+		# Switched UP: the tier now casts real shadows, so the decal stands down
+		# at once rather than on whatever frame it is next uploaded.
+		_blob_instance.visible = false
+
+
 # ------------------------------------------------------------- the FAR tier
 #
 # §2.14's LOD2: one 12-triangle unit box (x,z ∈ [-0.5,0.5], y ∈ [0,1]) for the
@@ -782,11 +1226,22 @@ func _far_node_for(chunk: Vector2i) -> MultiMeshInstance3D:
 	material.set_shader_parameter("far_cell_m", _far_cell_m)
 	material.set_shader_parameter("far_bay_m", _far_bay_m)
 	material.set_shader_parameter("far_mullion_duty", _far_mullion_duty)
+	material.set_shader_parameter("far_relief_depth",
+			_far_relief_depth if far_relief_override < 0.0 else far_relief_override)
 	material.set_shader_parameter("day_gate", _day_gate)
 	material.set_shader_parameter("floor_height_m", _floor_height_m)
 	material.set_shader_parameter("band_lo", _far_band.x)
 	material.set_shader_parameter("band_hi", _far_band.y)
 	material.set_shader_parameter("window_colors", far_window_colors())
+	# §2.6b's tier-boundary fix: the far tier paints what the tier in front of
+	# it paints. `far_family_mix` stays 0 — the pre-Wave-17 neutral grey —
+	# unless all five families resolved to a page that could be measured.
+	if _far_family_albedo_ready and far_family_override != 0:
+		material.set_shader_parameter("far_wall_albedo", _far_wall_albedo)
+		material.set_shader_parameter("far_roof_albedo", _far_roof_albedo)
+		if far_gain_override >= 0.0:
+			material.set_shader_parameter("far_albedo_gain", far_gain_override)
+		material.set_shader_parameter("far_family_mix", 1.0)
 	# The `.a` packing constant, pushed rather than left to the shader default,
 	# so the buffer writer and its only reader cannot drift apart silently.
 	material.set_shader_parameter("far_overlay_stride", FAR_OVERLAY_STRIDE)
@@ -1095,10 +1550,17 @@ func perf_stats() -> Dictionary:
 		"bucket_calls": near_calls,
 		"merged_calls": medium_draw_calls(),
 		"far_calls": far_chunk_count(),
+		# §2.11's contact shadow, counted separately from the geometry above:
+		# it is ONE call city-wide on the presets that ask for it and zero on
+		# the presets that do not, and both halves of that claim have to be
+		# printable (RR-83, RR-96).
+		"blob_calls": blob_draw_calls(),
+		"blob_enabled": _blob_enabled,
 	}
 
 
 func _upload_all() -> void:
+	_sync_blob_preset()
 	for chunk in model._sorted_chunk_coords():
 		var far := _renders_far(chunk)
 		var culled := _renders_culled(chunk)
@@ -1149,6 +1611,15 @@ func _upload_all() -> void:
 				far_node.visible = far_total > 0
 		elif far_node != null:
 			far_node.visible = false
+	# §2.11's contact decal, OUTSIDE the chunk loop because it is one node for
+	# the whole city — see the block above `_read_blob`.
+	if _blob_enabled:
+		var blob_total := _upload_blob()
+		if _blob_instance != null:
+			# RR-83, once more: `> 0`, not `true`. A city whose buildings have
+			# all come down leaves an allocated, empty buffer under a world AABB,
+			# which is a draw call the culler cannot drop.
+			_blob_instance.visible = blob_total > 0
 
 
 ## Doc 12 §2.5's `overlay_changed`, forwarded into the model and flushed at
@@ -1219,6 +1690,53 @@ func _paint_material(material: ShaderMaterial, paint: Array, names: Array) -> vo
 			float((paint[2] as Dictionary).get("emission", 0.55)))
 
 
+## Doc 11 §2.5b — the camera pitch the tier pass is culling against, in degrees
+## below horizontal.
+##
+## **Read off the live `Camera3D` rather than passed in, on purpose.** The
+## alternative was a fourth argument to `refresh()`, which would have made this
+## feature inert in the shipped game until the shell was edited to supply it —
+## and a knob that is authored and not applied is the exact defect this wave
+## exists to close (report 98 RR-98). The viewport's current camera is the same
+## object `camera_pos` was taken from, so nothing can disagree; the shell keeps
+## its one-line call.
+##
+## `pitch_override` is for the harnesses (`tools/profile_frame.gd`'s
+## `--pitch-cull`, the headless tests): `--headless` has no `Camera3D` at all,
+## and a test that had to stand a camera up to check a distance would be
+## testing Godot. A negative return means "no pitch known", which
+## `RenderStateModel.set_camera_pose` reads as "leave `far_cull_m` alone".
+var pitch_override: float = -1.0
+
+
+func camera_pitch_deg() -> float:
+	if pitch_override >= 0.0:
+		return pitch_override
+	if not is_inside_tree():
+		return -1.0
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return -1.0
+	# -Z is Godot's camera forward. Its Y component is the sine of the angle
+	# below horizontal, which is the pitch §2.5 authors and `CameraState`
+	# derives — taken off the basis rather than off `rotation`, so a rig that
+	# builds its transform any other way still reports the truth.
+	var forward := -cam.global_transform.basis.z
+	return rad_to_deg(asin(clampf(-forward.y, -1.0, 1.0)))
+
+
+## The render target's width/height, for §2.5b's corner reach. Negative when
+## there is no viewport (headless), which the model reads as "use the authored
+## `max_aspect`" and therefore as "cull nothing you are not sure of".
+func viewport_aspect() -> float:
+	if not is_inside_tree():
+		return -1.0
+	var size := get_viewport().get_visible_rect().size
+	if size.y <= 0.0:
+		return -1.0
+	return size.x / size.y
+
+
 func refresh(delta: float, hour: float, camera_pos: Vector3 = Vector3.ZERO) -> void:
 	model.set_hour(hour)
 	model.advance(delta)
@@ -1231,5 +1749,6 @@ func refresh(delta: float, hour: float, camera_pos: Vector3 = Vector3.ZERO) -> v
 		# inherits both: a chunk cannot flip tiers more than twice a second and
 		# never inside 20 m of a band edge. That is what stops the boundary
 		# popping under a normal-speed zoom.
-		model.update_chunk_tiers(camera_pos, delta)
+		model.update_chunk_tiers(camera_pos, delta, camera_pitch_deg(),
+				viewport_aspect())
 	_upload_all()

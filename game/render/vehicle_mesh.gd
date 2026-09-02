@@ -10,6 +10,9 @@ extends RefCounted
 ##   INSTANCE colour and multiplies into this, so painted panels are authored
 ##   WHITE and everything else (tyres, glass, trim) is authored dark enough
 ##   that the paint tint on it never reads as a colour of its own.
+##   **The tints are authored sRGB and decoded to LINEAR once, in `_push`** —
+##   `VehicleView._paint_for` already does the same to the instance half
+##   (report 98 RR-91); this is the vertex half (RR-95, doc 91 `A91-D-36`).
 ## * **UV.y** — the part ROLE, which `game/shaders/vehicle.gdshader` switches
 ##   on: `0` body, `0.25` headlight, `0.5` taillight, `0.75` lightbar red half,
 ##   `1.0` lightbar blue half. Light quads take their colour from shader
@@ -61,11 +64,25 @@ const UV_FLAT_EPS := 0.0005
 
 # Shared part tints. Painted panels are WHITE — the instance colour is the
 # paint. Everything else is dark enough to survive being multiplied by it.
+#
+# ALL AUTHORED sRGB, ALL DECODED ONCE IN `_push` (report 98 RR-95). Nothing
+# outside this file reads these rows as an instance tint, so unlike
+# `ConstructionRigMesh`'s stock trio there is no dual-use hazard here — the
+# conversion still sits at the write rather than at the constant, because one
+# rule for all three mesh files is worth more than one saved indirection.
 const PAINT := Color(1.0, 1.0, 1.0)
-const TYRE := Color(0.085, 0.085, 0.095)
+## Re-judged with the conversion, `#161618` → `#333336`; the argument, the
+## measurement and the decoded values are on `ConstructionRigMesh.TYRE`, which
+## carries the same number because it is the same rubber on the same street.
+const TYRE := Color(0.200, 0.200, 0.210)
 const GLASS := Color(0.145, 0.175, 0.225)
 const TRIM := Color(0.30, 0.32, 0.34)
-const DARK := Color(0.115, 0.125, 0.135)
+## Re-judged with the conversion, `#1D2022` → `#424548` — see
+## `ConstructionRigMesh.DARK`. Here it is the grille, the bumper shadow and the
+## light-bar housing rather than a track frame, and the same 0.0125-against-0.02
+## arithmetic applies: a housing darker than the road it is driving over is not
+## a housing.
+const DARK := Color(0.260, 0.272, 0.284)
 const CHROME := Color(0.62, 0.65, 0.68)
 
 ## Livery-band tints, one per department body. The atlas's livery cell is VALUE
@@ -375,11 +392,18 @@ static func headlight_cone(length_m: float, near_half: float,
 
 # ------------------------------------------------------------------ internals
 
+## The colour seam — the only one in this file. See `ConstructionRigMesh._linear`
+## for the argument; the rule is identical and deliberately not shared through
+## an import, because these two builders have no other coupling.
+static func _linear(color: Color) -> Color:
+	return color.srgb_to_linear()
+
+
 func _push(p: Vector3, n: Vector3, color: Color, uv: Vector2,
 		uv2: Vector2 = Vector2.ZERO) -> int:
 	_verts.push_back(p)
 	_norms.push_back(n)
-	_cols.push_back(color)
+	_cols.push_back(_linear(color))
 	_uvs.push_back(uv)
 	_uv2s.push_back(uv2)
 	return _verts.size() - 1

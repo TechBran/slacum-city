@@ -2018,11 +2018,47 @@ to be re-openable.** `OpportunitySystem._normalise_kind` parses the key and
 `_expire_through` — the one function that would spend it — does not, and says so
 at the point where the spending would go. So the day this is re-opened it is a
 three-line change against one authored number rather than a new field, a new
-migration and a new test. **RE-OPEN ON ONE CONDITION AND NO OTHER:** telemetry
-showing players farm-ignoring crooks at scale. Pinned by
+migration and a new test. ~~**RE-OPEN ON ONE CONDITION AND NO OTHER:** telemetry
+showing players farm-ignoring crooks at scale.~~ Pinned by
 `tests/test_street_opportunities.gd::test_an_unanswered_crook_costs_the_player_nothing`,
 which asserts both halves — the authored 0.0 AND that thirty game-hours of
 unanswered expiries leave the city bit-identical to a mirror run.
+
+> **The re-open condition, restated 2026-09-01 because the old one could not
+> fire** (report 98 RR-97, doc 93 §X4). *"Telemetry showing players
+> farm-ignoring crooks at scale"* names an instrument this project does not have
+> and is not going to have: `game/crash_sentinel.gd` writes a local breadcrumb
+> and sends nothing, doc 13 §2.11 ranks a network reporter post-alpha, no
+> `INTERNET` permission is requested and doc 91 §17 records the Data Safety
+> declaration that absence buys. A ruling whose own argument is that it must
+> stay re-openable may not be gated on a capability that does not exist.
+>
+> **RE-OPEN ON EITHER OF TWO PLAYTEST-OBSERVABLE CONDITIONS AND NO OTHER**, both
+> written in the two instruments the lead actually runs:
+>
+> 1. **A play session in which the tester says, unprompted, that the markers
+> became WALLPAPER** — that they stopped registering as an offer and started
+> reading as furniture, and that they let them expire without deciding to. That
+> is the observation the penalty was ever meant to answer, and a human saying it
+> out loud is a stronger signal than a counter: the counter cannot tell "ignored
+> because bored" from "ignored because busy building", and the tester can.
+> 2. **A `tools/run_matrix.sh` row in which the TAPPING agent's
+> `street_share_of_net` collapses** — the offers are being taken and the money
+> is no longer worth the tap. `tools/playtest.gd` already computes and reports
+> `opportunities_collected`, `street_income`, `street_missed` and
+> `street_share_of_net` per run (`tools/playtest.gd:3000–3007`), so this is a
+> column that already prints and not a new field. It is the honest matrix form
+> of the question, and it is the one §V1's own binding points at: *"a system
+> whose whole proposition is 'notice this and be paid' is balanced by the size
+> of the payment and by nothing else."* If the payment stops carrying it, the
+> lever to reach for is the payment — and only if RAISING the payment has been
+> tried and has not moved condition 1 does the penalty come back on the table.
+>
+> Neither condition needs a new event, a new persisted field or a new
+> subsystem; the three-line change §V1 describes is still the whole of what
+> re-opening costs. **Dated, because a re-open condition that has been restated
+> once may be restated again, and the next reader is owed the date on which this
+> one was true.**
 
 ### V2 — A field the RENDERER needs is a field the SAVE owes it (report 98 RR-93)
 
@@ -2596,6 +2632,254 @@ carries no `max_fps`, and the frame free-runs at the panel's rate. Measured:
 force, `fps` becomes a flat 60 on every settled capture and `gpu_est` becomes the
 only column that moves — which is the shape every table in doc 11 §2.13 has been
 trying to be. `A91-D-83`.
+
+## X. Wave-17 rulings — where a colour is decoded, what a chunk count is, and a door with a sign on it (2026-09-01)
+
+*Five rulings off the render/art fork that closed `A91-D-36`, built §2.11's
+decal, and made the graphics presets reach the engine. Hash-neutral throughout,
+on both cities. The full arguments and the measurements are report 98 §38
+(RR-95 … RR-98 — §X3 and §X4 are two halves of RR-97, which absorbed the
+re-open-condition ruling when RR-98 was re-assigned to the preset table);
+what follows is what each one BINDS.*
+
+### X1 — A colour is decoded ONCE, at the WRITE, and never at the constant (report 98 RR-95)
+
+**Binding:** `srgb_to_linear` belongs at the point where an authored hex is
+handed to something that will not decode it — and that point is the **write**,
+not the **constant**, whenever the constant has more than one consumer.
+
+§V4 established the first half: a MultiMesh instance colour takes no decode, so
+an authored hex used as one renders about two stops light. This is the second
+half, and it is the same rule on a different channel: a **vertex** `COLOR` takes
+no decode either. What is new is *where the fix goes*. Three of
+`ConstructionRigMesh`'s tints are read BOTH as vertex colours here and as
+instance tints by `ConstructionActivity`, which already decodes them — so
+converting the constant in place would have decoded them **twice** on that path
+and turned a heap of gravel black while fixing nothing the mesh half needed. One
+`srgb_to_linear` in each builder's `_push` gives every consumer exactly one
+decode from one authored source of truth, at build time rather than per frame.
+
+**The corollary, and it is the one that will save the next reader an hour.** A
+constant that *looks* dual-use may not be: `GRAVEL` is named in RR-91's deferral
+as "the dump truck's load and the yard's gravel heap", and the load half is dead
+— `construction_rig.gdshader` replaces the vertex colour on `SURF_STOCK` with a
+`source_color` uniform, which is decoded for free. **Check the consumer, not the
+grep.**
+
+**And the converse, which RR-91's closing note got wrong: an audit answer of
+the form "every X is fixed" is a GREP, not a memory.** `_push(` across
+`game/render/` and `set_instance_color(` across `game/` found two more vertex
+builders (`ConstructionSiteView.PropMesh` — which also builds doc 04's
+transformer pad — and `CobraHeadMesh`) and three more instance seams (the
+hoarding panels, the traffic overlay band, the road-drawing ghost) that "every
+authored livery" had not covered (report 98 RR-95 (continued)).
+
+**One of the five was then recorded as "correctly left alone" — and that was
+this section's own binding being broken by the paragraph that states it.**
+`CobraHeadMesh` was written off as *"a value ramp, not a hex, and decoding it
+would deepen weathering fitted by eye"*. Reading the writer, which is what the
+rule says to do, shows the ramp MULTIPLYING two authored hex tints
+(`COWL_TINT`, `LENS_TINT`) and reaching the shader through `ARRAY_COLOR` — not
+through the `albedo_color` the note also claimed. **The channel carried both
+things at once, and the rule as written offered only two answers.** So the rule
+gains its missing third:
+
+> **When a channel carries an authored colour TIMES a computed multiplier, the
+> two are decoded separately: the colour takes the decode, the multiplier does
+> not.** A ramp, a mask, an occlusion term or a fade is a reflectance
+> multiplier — halving it means half the light — and belongs in linear.
+> Decoding the product puts the multiplier through a 2.4 power: the cobra
+> mast's foot goes from linear 0.41 to 0.18, which is not grime, it is night.
+
+**And the census is now a TEST, because "check the consumer, not the grep" is
+only half an instruction.** The grep is what produces the candidate set; reading
+the writer is what decides each one; and *neither* survives as an audit answer
+unless something re-runs it. `test_every_procedural_mesh_decodes_its_authored_vertex_colour`
+walks `game/render/` for `Mesh.ARRAY_COLOR` and requires `srgb_to_linear` in
+every file that has one. **A hand-kept list of builders is what missed this file
+twice** — once in RR-91's closing note, once in RR-95's.
+
+**And §V4's own second half applies to itself.** Every hex authored against the
+broken seam is unfitted when the seam is fixed, and the re-judgement is a
+screenshot pass and not an inspection. Two of twenty moved — `DARK` and `TYRE`,
+in both mesh files — and they moved because decoded they landed **below** the
+carriageway they were standing on, which is `CIV_PAINT[3]`'s failure one layer
+down. The other eighteen survive, and the reason they survive is that the fix is
+a DARKENING and a darkening is what it is for. **A hex is moved when the picture
+asks; a part that is not in the picture is not re-judged** — the sprocket
+inversion this pass found is real arithmetic on geometry that is fully enclosed
+by its own track frame and has never drawn a pixel.
+
+### X2 — A per-chunk cost is priced against the CENSUS, never against the model (report 98 RR-96)
+
+**Binding:** where a doc prices a layer "per chunk", the number of chunks is a
+MEASUREMENT, and until it has been measured the layer's cost is unknown.
+
+Doc 11 §2.11 priced its contact decal at *"one extra draw call per NEAR/MEDIUM
+chunk"* and §2.13's worked example spent six of them, from a model of 3 NEAR + 3
+MEDIUM. The benchmark city at Z0 on Performance has **12 NEAR + 24 MEDIUM**, so
+the per-chunk shape — which was built first, because that is what the doc asked
+for — cost **36 draw calls** against a 180-call budget the city is already over.
+One MultiMesh city-wide costs **one**.
+
+This is RR-76's sibling and deserves its own name. RR-76 governs a derived total
+re-derived from a source that has since MOVED. This governs a derived total
+computed from a factor that was never measured at all: `near_chunk_max` is 3 and
+the census reports 12, and nothing in the arithmetic ever asked. **A number
+inside a budget claim is either measured or it is a guess wearing a table.**
+
+**The layer-shape half, generalised.** §2.1.2 ruled that a layer with no
+per-chunk state worth culling on should be ONE bucket city-wide — it was written
+about roads and it is not about roads. A building decal has no per-chunk
+material, no per-chunk uniform and two triangles per building; per-chunk buckets
+bought it nothing and charged it a call each. **The corollary the second
+application adds:** put the WHOLE roster in the buffer, not just the tiers that
+draw, so the buffer is a function of the roster rather than of the camera —
+scrubbing across a tier band then rewrites nothing and no block drops its shadow
+as it crosses one.
+
+**And a shared shader is not the same thing as a shared layer.** There are two
+blob shadows in this renderer and they do not share a shader, deliberately: one
+is a mode on a per-frame pool of objects that WALK, the other is a static decal
+under objects that do not; one wants the glyph page and the other must not pay
+for it; and the two take different gates from the same authored block. Sharing
+the shader would not have merged the gates, only hidden the split.
+
+### X3 — The lever with authority is not always the lever with the ruling (report 98 RR-97)
+
+**Binding:** when a cue reads badly, name the lever that actually moves it, then
+check whether that lever is yours to pull. If it is a whole-scene look decision,
+the branch that found the problem ships the **ARM** and the **measurement**, and
+does not ship the ruling.
+
+§2.17's street-body blob is near-invisible on the carriageway, and `body_alpha`
+is not the cause: a `blend_mix` decal darkens what is behind it by a FRACTION,
+so the same disc is a **15/255** mark on the carriageway and a **40/255** mark
+on the footway. The lever with authority is the road, and the road is every
+street in the city on a phone screen. So this branch ships
+`RoadSurfaceView.set_tint_gain(k)` — live, one uniform, byte-identical at the
+shipped value — plus both commands and the question a device session has to
+answer, and moves **nothing**.
+
+**An A/B arm has to be checked for AUTHORITY before its result is believed**:
+an arm that cannot move the thing under test returns a null result that looks
+like an answer. This section was written on that binding and then, at the
+re-measurement two days later, **broke it twice — which is why the binding now
+carries two failures it caused rather than one it caught.**
+
+**Failure 1: the arm was measured at a pose containing none of the thing under
+test.** The re-measurement began at Z0, `--focus=52,44`, and moved **zero
+pixels at `k = 4.0`** — three shots at `k` = 1.0, 1.5 and 4.0 were byte-identical
+by `md5sum`. The arm was not broken; that pose has no carriageway in it. A null
+from an empty frame is indistinguishable from a null from a dead lever, and the
+only thing that told them apart was making the harness print the uniform **read
+back off the live `ShaderMaterial`** beside the value the arithmetic wanted.
+**So the binding grows a clause: an arm reports what the ENGINE holds, not what
+the resolver computed, and it reports the size of the thing it is measuring in
+the frame.** `profile_frame`'s `ROAD TINT` line does both now.
+
+**Failure 2: the numbers this section published were wrong about the shape of
+the answer.** It claimed a 1.5× tint lift moves the rendered carriageway by
+17 % by day and by 1.6 % at night, on the theory that after dark the road's
+value belongs to `road_night_albedo_lift` and `road_night_glow` in a different
+block. Re-measured at Z1/Z2 on a road-bearing pose, the same +21.4 % lift of
+the authored triple moves it **+3.1 % / +1.2 % by day and +3.6 % / +2.5 % at
+night** — there is no day/night asymmetry, and at Z1 the night arm moves the
+road *more* than the day arm. The theory was reasonable and it is not what the
+frames do.
+
+**What survives is the ruling, and it survives STRONGER.** The response is
+near-linear and measured rather than extrapolated (`k` 1.0 → 3.0 gives
+73.55 → 81.96 luma at Z1 by day, **+4.21 luma per unit of `k`**, against +4.46
+from the 1.0 → 1.5 arm), so moving the road the ~15/255 §2.17b's blob needs
+takes **`k ≈ 4.6`** — an authored tint near `(0.68, 0.68, 0.73)`. That is not a
+tint adjustment, it is a different, pale-grey road: the lever with authority
+here is bigger than the branch that found the problem, which is exactly what
+this section says to do about it.
+
+### X4 — A re-open condition is written in terms of an instrument that EXISTS (report 98 RR-97)
+
+**Binding:** a deferral's re-open condition names something the project can
+observe **on the day the condition is written**. A condition whose trigger
+requires a capability the project does not have is not a deferral — it is a
+refusal wearing a deferral's clothes, and it is worse than an honest refusal
+because it reads as revisable.
+
+§V1 ruled `expire_stability_delta` at 0.0 and made the ruling's own
+re-openability part of its argument — *"'we decided not to' is a decision that
+has to be re-openable"* — then wrote the trigger as *"telemetry showing players
+farm-ignoring crooks at scale"*. **There is no analytics path in this project**:
+the crash sentinel writes a local file and sends nothing, no `INTERNET`
+permission is requested, and doc 91 §17 records the Data Safety declaration that
+absence buys. The door was shut and signposted with a key that does not exist.
+
+The condition is restated at §V1 in terms of the two instruments this project
+runs — a play session and `tools/run_matrix.sh` — and the ruling, the authored
+0.0 and the test are unchanged. **Every other re-open condition in this document
+was checked against this rule at the same fork and they pass**: they name a
+`profile_sim` digest, a balance gate, or a device session, all of which exist.
+
+### X5 — A table of knobs is a table of knobs only while something READS it, and the test that keeps it so names the consumer (report 98 RR-98)
+
+**Binding:** a configuration table that a player, a governor or a device tier
+selects between is only real to the extent that every row in it reaches an
+engine call. A key with no consumer is not a setting that is "not implemented
+yet" — from the outside it is indistinguishable from a setting that works,
+because the row appears in the menu and the value appears in the file. **The
+guard is a test that names the CONSUMING FILE per key, not a test that checks
+the value**, because the failure mode is not a wrong number; it is a right
+number nobody fetches.
+
+Wave 17 found **twenty-two** such keys in `data/render.json`'s three preset
+rows (the count is a `grep` over the fork tree, and it corrects a "thirteen"
+that an earlier draft of this section published from memory), one
+of which — `render_scale` — was read in exactly one place: `SettingsModel`, to
+**sort the graphics menu cheapest-first**. The number that decided the order of
+the rows was the number that did nothing when a row was picked. Two more
+(`msaa`, `fxaa`) did not appear anywhere in the source tree in any form. The
+observable consequence was the audit's own sentence, *"High is Balanced with
+more cars"*: with the engine-side half of every preset unread, the only
+differences that reached a frame were vehicle caps, particle counts and draw
+distance.
+
+**Three corollaries, each of which cost something here.**
+
+1. **A budget is not a knob, and deleting it is not the fix.** Nothing applies
+   a budget; something must CHECK it. Eight of the unread keys
+   (`gpu_budget_ms`, `chunk_budget`, `vram_budget_mb`, …) were the published
+   statement of what a preset is allowed to cost, and the answer was to gate
+   them in the instrument that was already measuring every quantity they bound,
+   not to remove the statement.
+
+2. **A key whose feature was never built is DELETED, and the promise that it
+   was coming is deleted with it.** `street_light_radius_m` described an
+   OmniLight pool; `StreetlightView`'s class doc had said *"the OmniLight pool
+   arrives with the perf pass"* for four waves after the billboard-and-decal
+   rig had made it unnecessary. The stale promise is why nobody re-checked the
+   key. Six keys and one sentence went together.
+
+   The same corollary has a **converse that cost more**: a key deleted on a
+   claim about its consumer, when the claim is wrong, deletes a working lever.
+   `civ_headlights` was on the deleted list on the ground that it "duplicates a
+   cap `vehicles.headlight_*` already owns" — but those four rows are a night
+   threshold, a cone length, an energy and a colour, none of them a count, and
+   `MM_headlights` was in fact the **one buffer in `VehicleView` with no
+   ceiling at all**. **Deleting a key requires the same evidence as wiring
+   one: the grep, not the recollection.**
+
+3. **The same rule reaches into shaders.** `building_far.gdshader` held one
+   neutral albedo pair for five building families while the tier in front of it
+   painted five measured façade pages — a constant standing in for a table
+   nothing read, drifted 6.6× on one family without anyone writing a wrong
+   number. The fix is the same shape as the preset fix: **measure the thing the
+   other tier actually uses and hand it over**, so the two cannot drift again.
+   A second copy of the art is not a palette, it is a bug with a schedule.
+
+**Re-open condition** (per §X4, and named against an instrument that exists):
+if `tests/test_render_polish.gd::test_no_inert_preset_key` is ever relaxed to a
+warning, or if a preset key is added with its consumer listed as a file that
+does not read it, this ruling has failed and the census in report 98 RR-98 is
+re-walked key by key.
 
 ## F. Explicitly deferred (unchanged from master plan)
 

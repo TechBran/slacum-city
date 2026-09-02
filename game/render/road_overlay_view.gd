@@ -81,7 +81,11 @@ func _build_band_paint(palette_variant: String) -> void:
 		_band_order.append(band)
 		var paint := model.traffic_band_row(band)
 		var hex := str(palette.get(String(paint["state"]), "#FFFFFF"))
-		var col := Color(hex)
+		# LINEAR at the write (A91-D-36, report 98 RR-91): the band reaches the
+		# shader as a MultiMesh instance colour, which takes no sRGB decode, so
+		# the authored legend hue was arriving lifted and the road band did not
+		# match the legend chip drawn beside it. Once per band per palette build.
+		var col := Color(hex).srgb_to_linear()
 		var darken := clampf(float(paint["darken"]), 0.0, 1.0)
 		_band_paint[band] = {
 			"color": Color(col.r * (1.0 - darken), col.g * (1.0 - darken),
