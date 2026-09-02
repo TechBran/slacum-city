@@ -5752,3 +5752,152 @@ west of it — and `centre_of_footprint` clamps a zero size to one tile, so a
 malformed record focuses on a tile rather than on its corner.
 
 **Applied:** `sim/world/tile_grid.gd`, `tests/test_tile_geometry.gd`.
+
+### RR-140 — a fix target resolves to an ACTION, and a router that cannot answer says which of five ways it failed
+
+**Ruled.** `Fix this →` is a two-part contract and the parts belong to different
+files. The **params half** (which id a checklist row carries) belongs to the
+surface that built the row; the **router half** (what that id means and what to
+do about it) belongs to `ui/fix_router.gd`, is headless, and is total over
+`RequirementFormatter`'s `FIX_*` kinds. `game/main.gd::_on_fix_requested` is now
+three lines and does the one thing a shell may do with the answer: move the
+camera.
+
+**Why "an ACTION" and not "a world position".** Two of the seven kinds have no
+place to go — `FIX_REPAIR` and `FIX_POWER` target the building the player is
+already looking at, so a camera move is a no-op, which is precisely how
+A91-D-54 was found. A router that returns only positions has to lie about those
+two. Three shapes cover the whole table and each is what a real surface already
+does: **focus a world point**, **open a sheet pre-armed** (`FIX_POWER` arms the
+panel's power strip — `building_panel.gd` sets `_power_fix_armed` and the strip
+spends), and **run a verb with a quote** (`FIX_REPAIR` → `cmd_repair_building`).
+The quotes are the sim's own `preview: true` returns, which stop before the
+first mutation in both commands, so **routing a fix target is a read** —
+asserted by `test_fix_router.gd::test_routing_never_moves_the_sim`, not argued.
+
+**The refusal is the load-bearing half.** The two dead branches were dead in the
+same way: a bare `return`. `ACTION_NONE` now carries one of five reasons, and
+the distinction between two of them is the whole point — `no_fix` means the row
+has no remedy and is not a bug; `empty_id` means the row has a remedy and the
+CALLER did not supply a target, which is a bug, and names whose. `E_AVENUE`
+answers `empty_id` today and will answer `focus` the moment
+`ui/build_controller.gd`'s `E_AVENUE` params carry `"fix_target_id": sim_id` —
+one line, filed below, and the router side is already tested against it
+(`test_E_AVENUE_routes_once_its_params_carry_the_building`, which additionally
+asserts the tile it lands on IS an avenue).
+
+**The namespace ruling.** `POWER_CAPACITY` fills `fix_target_id` from
+`sim.grid.attachment_of()`, which is a **transformer** id, and the code table
+maps it to a **building** kind. The mismatch is three waves old and was
+"resolved" twice by re-pointing the kind. The durable answer is that **an id the
+sim published always resolves**: `WorldLocator.locate_any` tries buildings, then
+grid components, then blocks, then districts, in a fixed order over namespaces
+that are disjoint in practice, and `KIND_BUILDING` falls through to it on a miss.
+A future kind/id mismatch is then a wrong camera destination — visible — rather
+than silence.
+
+**Applied:** `ui/fix_router.gd`, `ui/world_locator.gd`, `game/main.gd`
+(`_on_fix_requested`, `_alert_world_pos`), `tests/test_fix_router.gd`,
+`tests/test_world_locator.gd`.
+
+### RR-141 — a memory warning spends its step on MEMORY, and a cache shed may not free what a hot path rebuilds
+
+**Ruled.** `AndroidLifecycle.memory_warning` has a listener. The response is two
+independent halves plus an ordering: `PerfGovernor.on_memory_warning()` takes
+the `far_cull_m` rung, `CityView.shed_caches()` returns what nothing is drawing,
+and `game/main.gd::_on_memory_warning` sheds **first** so the chunks the tighter
+cull drops are already gone when `apply_governor` re-uploads.
+
+**Not `_step_down`, and this is the ruling.** The governor's ladder is ordered by
+**cost per millisecond** — `render_scale` first, because dropping resolution buys
+the most frame time for the least visible loss. Android's memory warning is not
+about milliseconds. Handing it to `_step_down` would have spent the one step on
+resolution and returned **no memory at all**, which would have looked like a
+response and been none. The response therefore names its knob (`MEMORY_KNOB =
+"far_cull_m"`, doc 11's own prescription) and takes that rung out of ladder
+order; it still enters `_applied`, so `_step_up` unwinds it LIFO like any other
+and a device that recovers gets its draw distance back.
+
+**What a shed may free.** Only things whose rebuild is *lazy*. `CityView` frees
+the FAR node of a chunk that is no longer FAR and the MEDIUM nodes of a chunk
+that is no longer MEDIUM, because `_upload_all` creates both inside a tier test
+and will not rebuild them until the camera returns; and it evicts merged LOD1
+atlas meshes no live node still points at, because `_atlas_for` caches on
+`archetype:mask:lod` and **never evicted** — a long session accumulates one
+ArrayMesh per mask it has ever shown, and an unreferenced one is pure garbage.
+
+**What it may NOT free, stated because the tempting thing here is wrong.** The
+per-(archetype, level) LOD0 bucket nodes are the largest allocation in the view
+and freeing them reclaims *nothing*: `refresh()` calls `_upload_all()` every
+frame, and that loop calls `_ensure_bucket_node` for every bucket of every chunk
+**before** it decides visibility. A bucket freed this frame is rebuilt next
+frame, at the cost of a mesh load — so the "shed" would be a per-frame thrash
+that reports a big number. Making that creation lazy is a real fix and a change
+to a hot path; it is **filed** (below), not smuggled into a memory handler.
+Materials and textures are not freed either: live nodes hold them, and rebuilding
+an atlas material would drop the overlay paint `set_overlay_palette` wrote into
+it.
+
+**The honest floor.** `on_memory_warning()` returns `false` when `far_cull_m` is
+already at its 600 m floor, and the shell logs that rather than claiming a step.
+A device under sustained pressure gets a truthful `adb logcat` line — which is
+the only instrument doc 13 D-12 has, since none of this can be observed from
+inside the process that is about to be killed.
+
+**Applied:** `game/render/perf_governor.gd` (`on_memory_warning`, `_apply_rung`),
+`game/render/city_view.gd` (`shed_caches`), `game/main.gd` (the connect and
+`_on_memory_warning`), `tests/test_memory_warning.gd`.
+
+### 50.1 Measurements
+
+| Command | Number |
+|---|---|
+| `wc -l game/main.gd` (fork → now) | 2,229 → 2,210 |
+| `grep -rn "res://game/main" tests/` | 0 — `main.gd` is still not loaded, and the point is that it no longer has to be |
+| `grep -rn "sim\._[a-z]" --include=*.gd game ui tools` (fork → now) | 8 → 0 (two comments naming the row) |
+| `--file=test_fix_router` | 18 tests, 330 asserts, 0 failed |
+| `--file=test_world_locator` | 16 tests, 51 asserts, 0 failed |
+| `--file=test_tile_geometry` | 9 tests, 46 asserts, 0 failed |
+| `--file=test_power_infra_feed` | 14 tests, 68 asserts, 0 failed |
+| `--file=test_memory_warning` | 12 tests, 41 asserts, 0 failed |
+| `profile_sim --hash-only`, starter + bench, coarse + fine | all four identical to the fork — the lane is hash-neutral |
+
+### 50.2 `awaiting_consumer` — filed, with the owner named
+
+Every row below is a one-line-to-one-function change in a file **this lane does
+not own**. None is a blocker for anything shipped above; each closes a hole this
+lane's gate can already see.
+
+1. **`ui/build_controller.gd` — `E_AVENUE`'s params half** (lane L, PA-05's other
+   half). Add `"fix_target_id": sim_id` to the `E_AVENUE` row of
+   `_check_params`. `test_fix_router.gd::test_E_AVENUE_routes_once_its_params_
+   carry_the_building` already asserts the router side, and
+   `test_the_checklist_sweep_still_finds_the_E_AVENUE_hole` will start failing
+   the moment it lands — deliberately, so the two halves cannot drift apart
+   silently.
+2. **`ui/building_panel.gd:414-416` — the button gate** (lane L). It draws
+   `Fix this →` on `kind != FIX_NONE` alone, which is why a row with an empty id
+   rendered a live button; the land panel already requires an id, which is why it
+   was safe. `FixRouter.can_route(sim, fix_target)` is the gate both should use.
+3. **The eight mirrored tile constants** (one row per owning lane; PA-76). Each
+   is `const X := 8.0` → `const X := TileGrid.METRES_PER_TILE`, and
+   `tests/test_tile_geometry.gd` already fails on drift, so there is no hurry and
+   no risk in doing them one at a time: `IncidentWorld`, `Vehicle`, `WaterEdge`,
+   `TravelTimeProvider` (sim), `WeatherSystem` (lane B's neighbourhood),
+   `RoadSurfaceView`, `StreetlightPlacer`, `StreetLifeView`,
+   `ConstructionVehicleView` (render), `BuildController.TILE_M_DEFAULT` (lane L),
+   `AudioEvents._DEFAULT_TILE_M`. Two remaining hand-written footprint→centre
+   formulas live in `game/showcase.gd` and `tools/profile_frame.gd`.
+4. **`CityView._upload_all`'s eager bucket creation** (lane P or lane O — both
+   own parts of `city_view.gd` next wave; RR-141). Move
+   `_ensure_bucket_node` **below** the visibility decision so a CULLED or FAR
+   chunk's LOD0 buckets are not built at all. That is what would make
+   `shed_caches()` able to free them, and it is a per-frame saving on its own.
+5. **`main.gd::_on_sim_batch` → `RenderEventRouter`** (lane K, doc 93 §AI3). The
+   single highest-consequence extraction left in the shell and the one the
+   constitution's "every `Building` event reaches the translator" rule depends
+   on. Filed with its gate: every `Building`-lifecycle event named in `data/` has
+   an arm in the table.
+
+**Applied:** doc 93 §AI; doc 91 §14.5 (`A91-D-89`, `A91-D-90`); doc 12 §2.7
+(D-79).
