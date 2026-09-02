@@ -123,7 +123,7 @@ func _populate(root: UIRoot, panel: String = "drawer") -> void:
 			"power01": 0.93, "water01": 0.71})
 	root.feed_settlement({"hour": 1,
 			"revenue": {"tax": 12480.0, "power_tariff": 940.0, "gross": 13420.0},
-			"expenses": {"building_maint": 4120.0, "departments": 2260.0,
+			"expenses": {"departments": 2260.0,
 					"total": 6380.0},
 			"net": 7040.0})
 	root.alerts_center.set_clock(372, 2)

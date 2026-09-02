@@ -2382,7 +2382,8 @@ instance beside `stats` and `max_level`.** Not a static and not a singleton —
 `sim/` is RefCounted-only and the test rigs boot several `CitySim`s in one
 process, so a process-global rules dict would let one city's fixture move
 another's physics. The coordinator stamps the same shared `Dictionary` on every
-`Building` at the three sites that make one live (boot, restore, placement), and
+`Building` at the four sites that make one live (boot, restore, building
+placement, and doc 05's water shell), and
 a `Building` that is never stamped falls back to `DEFAULT_CONDITION`, whose
 values are the consts this ruling deletes — so every fixture and every worked
 example is bit-identical to the day before.

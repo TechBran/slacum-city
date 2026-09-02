@@ -3828,7 +3828,8 @@ there.** PA-13 found that all fifteen keys were validated for presence, asserted
 by `tests/test_building_catalog.gd`, and **read by nothing** — `building.gd`
 hardcoded every one of them — so this wave's decay retune would have edited a
 file that moves nothing. The block is stamped beside `stats` and `max_level` at
-the three sites that make a `Building` live (boot, restore, placement), never as
+the four sites that make a `Building` live (boot, restore, placement, and doc
+05's water shell), never as
 a static: `sim/` is RefCounted-only and the rigs boot several `CitySim`s per
 process, so a process-global would let one city's fixture move another city's
 physics. The consts remain as the fallback, so a `Building` nobody stamped is

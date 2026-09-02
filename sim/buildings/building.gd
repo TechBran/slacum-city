@@ -67,8 +67,9 @@ var stats: Dictionary = {}
 ## stamp is under-upgradable rather than infinitely upgradable.
 var max_level: int = 5
 ## Doc 02 §2.6's condition block, stamped by the coordinator beside `stats` and
-## `max_level` at the three sites that make a `Building` live — boot, restore,
-## placement (PA-13, doc 93 §Y2). It is the SAME shared `Dictionary` on every
+## `max_level` at the four sites that make a `Building` live — boot, restore,
+## placement and the doc 05 water shell (PA-13, doc 93 §Y2). It is the SAME
+## shared `Dictionary` on every
 ## instance, so this costs one reference per building and no copy. Never a
 ## static and never a singleton: `sim/` is RefCounted-only and the rigs boot
 ## several `CitySim`s in one process, so a process-global would let one city's

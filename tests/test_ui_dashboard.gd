@@ -46,7 +46,7 @@ static func _settlement() -> Dictionary:
 		"hour": 40,
 		"revenue": {"tax": 12000.0, "power_tariff": 900.0, "water_tariff": 400.0,
 				"city_services": 0.0, "assistance": 0.0, "gross": 13300.0},
-		"expenses": {"building_maint": 4000.0, "departments": 2200.0, "fleet": 600.0,
+		"expenses": {"departments": 2200.0, "fleet": 600.0,
 				"vehicle_fuel": 120.0, "grid": 300.0, "generation_fuel": 800.0,
 				"water": 250.0, "roads_repair": 0.0, "debt": 0.0, "total": 8270.0},
 		"net": 5030.0,

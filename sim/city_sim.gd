@@ -2816,6 +2816,7 @@ func cmd_place_water_component(kind: String, tile: Vector2i, level: int = 1,
 	var b := Building.new(grid_id, StringName(WATER_SHELL_ARCHETYPE), tile, variant)
 	b.stats = shell_stats
 	b.max_level = catalog.max_level_of(WATER_SHELL_ARCHETYPE)
+	_stamp_building_rules(b)
 	b.level = level
 	b.built_at_minutes = clock.sim_time_minutes()
 	world.grid.stamp_building(grid_id, tile, size)
@@ -3476,8 +3477,9 @@ func _queue_refund_fraction(job: Dictionary) -> float:
 ## lives in `data/building_rules.json` rather than in its own stats row — the
 ## condition block it reads its physics from (PA-13: before this it read fifteen
 ## hardcoded consts and the authored file moved nothing), and whether its owner
-## keeps it up. Stamped beside `stats` and `max_level` at the three sites that
-## make a `Building` live: boot, restore and placement. Neither is persisted —
+## keeps it up. Stamped beside `stats` and `max_level` at the four sites that
+## make a `Building` live: boot, restore, building placement and the doc 05
+## water shell. Neither is persisted —
 ## both are properties of the archetype, not of the row, so a save written before
 ## the ruling loads into a city that applies it.
 func _stamp_building_rules(b: Building) -> void:

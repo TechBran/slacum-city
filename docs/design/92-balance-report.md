@@ -7428,3 +7428,100 @@ is **`on_fire`** — 29 private, 6 civic — which is an incident burning unatte
 for a month with no player and no dispatch, not wear. That is doc 06/07's
 business and is filed as an open question rather than fixed here; what matters
 for note (a) is that it is the *only* way a building gets there now.
+
+### 43.6 Income after the ruling — what actually moved, and what did not
+
+**The founding ledger, both sides, same command** (`tools/measure_founding_ledger.gd
+--hours=24`, `standard`, seed 1337, mean of the first 24 settled game-hours):
+
+| line | fork | after | delta |
+|---|---|---|---|
+| gross | 1047.184374 | 1047.184374 | **0.000000 — bit-identical** |
+| `building_maint` | 27.70 | **—** (retired) | −27.70 |
+| `departments` | 96.00 | 96.81 | +0.81 (§Y5's condition coefficient) |
+| `roads_repair` | 183.92 | 183.92 | 0.00 |
+| every other expense line | — | — | 0.00 |
+| **expense** | 532.296003 | **505.410898** | −26.885105 |
+| **net $/real-minute** | 514.888371 | **541.773476** | **+5.22 %** |
+| net × 24 (the game-day) | 12357.320908 | 13002.563428 | +645.24 |
+
+**The revenue side did not move by one cent.** That is the discriminating
+evidence for doc 93 §Y1: this is a charge withdrawn, not a subsidy added, and it
+is the only kind of income increase this pass makes. Street rewards were off
+limits and are untouched; no tax constant, no `base_tax` row, no yield
+multiplier and no grant *rate* moved.
+
+**The relief is late by construction**, because the line it removes was late:
+`building_maint` was 5.2 % of the founding bill and §13.4 measured it at 36.2 %
+in a 320-building city. So the founding hour gains 5.2 % and the 45-day arc gains
+what the table below shows.
+
+**The curriculum arc** (`tools/measure_curriculum.gd --days=45`, three seeds).
+Level boundaries are game-hours, i.e. real minutes at 1×:
+
+| level | fork (1337/4242/9001) | **after** | band length, real minutes (fork → after) |
+|---|---|---|---|
+| 1 | 14 / 13 / 17 | 16 / 14 / 16 | 13–17 → 14–16 |
+| 2 | 47 / 42 / 47 | 43 / 38 / 42 | 29–33 → **24–27** |
+| 3 | 82 / 79 / 83 | 75 / 74 / 77 | 35–37 → **32–36** |
+| 4 | 135 / 131 / 132 | 135 / 107 / 119 | 49–53 → **33–60** |
+| 5 | 246 / 258 / 284 | 203 / 229 / 234 | 111–152 → **68–122** |
+| 6 | 710 / 709 / 754 | **481 / 554 / 540** | 451–470 → **278–325** |
+
+| arc total | fork | after |
+|---|---|---|
+| repairs (taps) | 245 / 211 / 231 | **32 / 29 / 30** (−87 %) |
+| repair spend | $620,212 / $567,679 / $595,385 | **$133,173 / $124,131 / $127,677** (−79 %) |
+| treasury end | $190,075 / $178,919 / $135,259 | $1,312,950 / $1,229,616 / $1,081,162 |
+| population end | 3,648 / 2,887 / 2,650 | 5,581 / 5,010 / 5,859 |
+
+**$/real-minute by level band** (new column in the instrument; mean of the
+settled hours inside the band, three seeds pooled):
+
+| band | mean $/real-min | min | max | band length (real min) | treasury when the band ends |
+|---|---|---|---|---|---|
+| 1 | 566.5 | 488.6 | 818.6 | 14–16 | $18,066 |
+| 2 | 704.5 | 555.9 | 1,508.3 | 24–27 | $24,544 |
+| 3 | 917.2 | 688.4 | 1,879.7 | 32–36 | $31,679 |
+| 4 | 1,058.6 | 897.3 | 1,938.6 | 33–60 | $54,129 |
+| 5 | 1,103.3 | 902.9 | 2,081.3 | 68–122 | $77,918 |
+| 6 | 3,420.5 | 837.6 | 6,844.1 | 278–325 | $217,627 |
+
+### 43.7 Rule N, tested — the wait is zero at every rung
+
+Doc 93 §Y6 rules the target off doc 03 §2.12's own beat table: its shortest
+opening play session is **10 real minutes** (rows S2 and S4) and every session in
+it contains at least one player purchase, so *the player may never be left
+unable to afford what the curriculum asks for, for longer than one short
+session*. **N = 10 real minutes.**
+
+The test is doc 03 §2.5a's own basis table — "the city pays half of what the next
+chapter asks you to buy" — read against the treasury column above at the moment
+each rung is earned:
+
+| rung earned | the next chapter's taught purchase (doc 03 §2.5a) | treasury at that moment | **wait** |
+|---|---|---|---|
+| 1 | two stores @ $2,600 + one upgrade ($1,380) | $18,066 | **0 min** |
+| 2 | one apartment $7,000 + four street tiles $7,200 | $24,544 | **0 min** |
+| 3 | one police station $18,000 | $31,679 | **0 min** |
+| 4 | one water works $45,000 (measured spend $46,430) | $54,129 | **0 min** |
+| 5 | the level-6 tower upgrade $58,350 | $77,918 | **0 min** |
+
+**Every rung's next purchase is already affordable at the instant the rung is
+earned**, so the idle-wait is 0 and N = 10 holds with the whole margin to spare.
+
+**And it did not before.** At the fork the level-4 rung is earned at game-hour
+135, i.e. game-day 5.6, and the coarse matrix's own per-game-day treasury column
+for `curriculum` reads **$31,117 at day 5 and $48,611 at day 6** against a
+measured water-works spend of **$46,430** — so the fork city *could not* buy what
+level 5 teaches at the moment it earned level 4, and needed up to a further
+game-day (**24 real minutes**) of accumulation to get there. That is the wait the
+user reported, in the one place the curriculum makes it compulsory.
+
+**What is NOT closed.** Repair taps fall 245 → 32 per 45-day arc (−87 %), which
+is a different game and still **above PA-33's published target of ≤ 20**. The
+remaining 32 are all city assets, at the 2.4 trips-per-asset-per-arc the §Y2a cap
+derives, on a city that ends the arc owning more of them than the starter did.
+Closing the last dozen is PA-33's own fix — `cmd_set_building_repair_policy`
+mirroring the road policy — which is a verb this lane did not add. Recorded as
+open rather than claimed.

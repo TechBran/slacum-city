@@ -477,7 +477,7 @@ func _settlement() -> Dictionary:
 	return {
 		"hour": 41,
 		"revenue": {"tax": 5200.0, "power_tariff": 640.0, "gross": 5840.0},
-		"expenses": {"building_maint": 2100.0, "total": 2100.0},
+		"expenses": {"departments": 2100.0, "total": 2100.0},
 		"net": 3740.0,
 	}
 
