@@ -78,3 +78,6 @@ build/bench/
 # 40 MB save tree is not something to commit by accident.
 .xdg/
 .xdg-*/
+
+# Test-suite output (tools/run_suite.sh and `--script tests/run_tests.gd > suite.log`)
+suite.log
