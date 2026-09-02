@@ -562,6 +562,23 @@ func solve_tilt_slider() -> void:
 		if clock != null and clock.visible:
 			row_h = maxf(row_h, maxf(clock.size.y, clock.get_combined_minimum_size().y))
 		top = maxf(top, top_bar.offset_top + row_h)
+	# **The other right-edge occupant** (Wave 18). §2.4's banner stack is as wide
+	# as the display allows, so its `VIEW` — a 48 dp target that grows with A3 —
+	# lands *in this column* whenever a banner is up on a box narrow enough that
+	# the banner reaches the edge. The measurement is `banner_band_top()`'s; what
+	# is here is the reading of the tree it is measured off.
+	var host_w := safe_area.size.x
+	if host_w <= 1.0:
+		host_w = float(_safe_area_rect().size.x)
+	var banners: Array[Rect2] = []
+	var stack := hud.get_node_or_null("AlertStack") as Control if hud != null else null
+	if stack != null and stack.visible:
+		for child in stack.get_children():
+			var banner := child as Control
+			if banner == null or not banner.visible:
+				continue
+			banners.append(Rect2(stack.position + banner.position, banner.size))
+	top = UIRoot.banner_band_top(top, banners, host_w, touch_min)
 	# The corner rail's reservation: the drawer handle's authored slot, or its
 	# laid-out top when the tree has one (A3 may have grown it).
 	var handle_raw: Variant = layout.get("drawer_handle_dp", [44, 160])
@@ -582,6 +599,31 @@ func solve_tilt_slider() -> void:
 				yielding = true
 				break
 	tilt_slider.set_yielding(yielding)
+
+
+## Where §2.23's band starts once §2.4's banner stack is counted: `bar_bottom`,
+## or the bottom of the LOWEST banner that actually reaches the right-edge
+## column, whichever is further down. Pure, because the rule is the testable
+## half and reading the tree is not — a headless mount lays nothing out, so the
+## caller above hands this an empty array there and the authored band survives
+## unchanged (`tests/test_ui_tilt.gd::_authored_band`).
+##
+## **Two conditions, and the second is the one that matters** (Wave 18). A
+## banner whose right edge stops short of `host_w − touch_min` is not in this
+## column and may not move it: at 794 dp the stack is `alert_dp`'s 400 wide and
+## centred, so the band is exactly what Wave 17 solved. At 412 dp with 130 %
+## text and larger targets it is 388 wide and its `VIEW` covered 1,155 px² of
+## the thumb, which is the finding this exists for.
+static func banner_band_top(bar_bottom: float, banners: Array[Rect2],
+		host_w: float, touch_min: float) -> float:
+	var top := bar_bottom
+	for rect: Rect2 in banners:
+		if rect.size.y <= 1.0 or rect.size.x <= 1.0:
+			continue
+		if rect.end.x <= host_w - touch_min:
+			continue
+		top = maxf(top, rect.end.y)
+	return top
 
 
 # ---------------------------------------------------------------------------

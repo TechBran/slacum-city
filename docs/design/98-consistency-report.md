@@ -6173,20 +6173,36 @@ now fails the suite in the commit that adds it.
 hole was found; the same shape applies to any command whose preview returns a
 `blockers` array that a checklist mirrors.
 
-### Not this lane's, filed rather than fixed
+### The finding that was not this lane's, and was closed anyway
 
-**Two findings this lane surfaced and did not own.**
+**`hud_banners` at 412 × 915, 130 % text + larger targets.** `HUDLayer/
+AlertStack/Alert1/Row/View` P(296, 296) S(94, 76) covered **1,155 px²** of
+`HUDLayer/TiltSlider/Thumb` at P(335, 351) — the *only* finding standing between
+this deck and `--screen=all --audit --strict` exit 0 across **all six `BOXES` ×
+both accessibility settings**, the other eleven cells clean. It is **pre-existing
+at the fork**: Wave 17 added the tilt column (doc 12 §2.23) and solved its band
+against the top bar and the drawer handle, and §2.4's banner stack — the third
+thing on that edge — was never a measurement point. Nothing in Lane L's diff
+touches either surface (`git diff 4503d35 -- ui/ui_root.gd` is PA-52's
+`report_dispatch_result` signature and nothing else).
 
-1. **`hud_banners` at 412 × 915, 130 % text + larger targets:** `HUDLayer/
-   AlertStack/Alert1/Row/View` covers **1,155 px²** of `HUDLayer/TiltSlider/
-   Thumb`. It is the one finding standing between the deck and `--screen=all
-   --audit --strict` exit 0 across all five boxes × two text scales; the other
-   nine cells are clean. **Verified pre-existing at the fork by A/B**: with
-   `ui/ui_root.gd` and `tools/ui_preview.gd` restored to the fork's own state and
-   every other Lane-L change in place, the finding reproduces with byte-identical
-   rects. Owners: the alert stack's solve (doc 12 §2.4) and the tilt column's
-   band (§2.23, Wave 17). Not touched here — Lane L owns neither.
-2. **The side panel could grow wider than the screen and nothing could see it.**
+**It was closed here regardless, and the ruling is why.** A lane that owns "the
+refusal is reachable" and hands back a deck where a 48 dp target sits on another
+48 dp target at the accessibility setting has not finished; and the fix is
+three lines in the function whose whole job is already this — `solve_tilt_slider`
+starts the band under the top bar's first row and above the drawer handle's
+reservation, so the banner stack joins them as a third measurement point. The
+band starts under the **lowest banner actually on screen**, and only when that
+banner's right edge is inside the column: at 794 dp the stack is `alert_dp`'s 400
+wide and centred, never reaches the edge, and the band does not move. Measured,
+same cell, after: the column P(335, 267.5) → P(335, **416.5**), the thumb 351 →
+**500**, twelve sweeps exit 0. Headless the guard is inert — a mount with no
+frames lays nothing out, which is why `tests/test_ui_tilt.gd`'s authored-band
+assertions are untouched and still pass.
+
+**One finding this lane surfaced and did not own.**
+
+1. **The side panel could grow wider than the screen and nothing could see it.**
    Fixed here because PA-47 could not land without it (`SCROLL_MODE_SHOW_NEVER`
    plus the shed row's `HFlowContainer`), but the *class* of defect is wider than
    this panel: `UIAudit` exempts everything inside a `ScrollContainer`, which is
@@ -6196,6 +6212,7 @@ hole was found; the same shape applies to any command whose preview returns a
    against the viewport would find the rest of them; this lane did not write it.
 
 **Applied:** doc 12 §2.7a (the params table), §2.9 (the seventh row, the four
-live coverage tiles, the pinned actions footer) and §2.7 (the placement bar's
-second line and its door); doc 91 §14.5 (`A91-D-91`, `A91-D-92`); doc 92 §51 (the
-founding city's first coverage readings); doc 93 §AJ.
+live coverage tiles, the pinned actions footer), §2.7 (the placement bar's second
+line and its door) and §2.23 (the band's third measurement point); doc 91 §14.5
+(`A91-D-91`, `A91-D-92`); doc 92 §51 (the founding city's first coverage
+readings); doc 93 §AJ; doc 12 deltas `D-80`, `D-81`.
