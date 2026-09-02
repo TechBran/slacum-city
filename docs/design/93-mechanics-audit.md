@@ -3665,9 +3665,9 @@ is testing Godot.
 The honest consequence is that `main.gd` does not get under 1,200 lines by
 extraction alone, and PA-38's line target should be read as its assert target
 instead. This wave moved 45 lines out (`_on_fix_requested` 18,
-`_alert_world_pos` 27, measured at `4503d35`) and put **398 assertions** behind
+`_alert_world_pos` 27, measured at `4503d35`) and put **468 assertions** behind
 what those two did — `--file=test_fix_router` 347, `--file=test_world_locator`
-51 — inside a lane total of **553** across its five new test files.
+121 — inside a lane total of **643** across its five new test files.
 
 And the count went the other way, which is the part worth writing down:
 `wc -l game/main.gd` reads **2,264 against the fork's 2,257**. The lane removed

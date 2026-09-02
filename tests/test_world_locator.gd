@@ -139,6 +139,42 @@ func test_the_nearest_avenue_is_the_nearest_one() -> void:
 						"a closer avenue existed at %d,%d" % [x, z])
 
 
+func test_the_search_reaches_as_far_as_the_check_that_raises_the_row() -> void:
+	# This locator shipped with `ROAD_SEARCH_TILES := 12` under a docstring
+	# claiming it mirrored `BuildController.AVENUE_SEARCH_TILES`, which is 16 —
+	# RR-139's defect inside RR-139's own lane. The consequence is a `Fix this →`
+	# that refuses a fix that exists: the controller raises `E_AVENUE` for a
+	# building whose nearest avenue is up to 16 tiles away, and a locator that
+	# gives up at 12 answers `unresolved` for one at 13..16.
+	assert_eq(WorldLocator.ROAD_SEARCH_TILES, BuildController.AVENUE_SEARCH_TILES,
+			"the locator must look at least as far as the check that raised the row")
+
+
+func test_every_building_the_controller_can_measure_the_locator_can_find() -> void:
+	# The invariant behind the constant, swept over the real roster rather than
+	# argued from it: wherever `nearest_avenue_tiles` reports a distance IN range,
+	# `nearest_road_tile` must return a tile. These are two hand-written copies of
+	# one ring walk; this is what stops them diverging in any other way too.
+	var sim := _sim()
+	var controller := BuildController.new(sim, RequirementFormatter.load_from_files())
+	var checked := 0
+	var ids: Array = sim.buildings.keys()
+	ids.sort()
+	for sim_id: String in ids:
+		var b: Building = sim.buildings[sim_id]
+		var measured := controller.nearest_avenue_tiles(b.origin)
+		if measured > BuildController.AVENUE_SEARCH_TILES:
+			continue
+		checked += 1
+		var tile := WorldLocator.nearest_road_tile(sim, b.origin, TileGrid.ROAD_AVENUE)
+		assert_ne(tile, Vector2i(-1, -1),
+				"%s: the controller measured an avenue %d tiles out and the locator missed it"
+						% [sim_id, measured])
+		assert_eq(maxi(absi(tile.x - b.origin.x), absi(tile.y - b.origin.y)), measured,
+				"%s: the two walks disagree on the distance" % [sim_id])
+	assert_true(checked > 0, "the sweep ran")
+
+
 # --------------------------------------------------------------- the refusals
 
 func test_an_unknown_id_answers_null_rather_than_a_point() -> void:

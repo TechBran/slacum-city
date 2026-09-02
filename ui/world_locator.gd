@@ -45,9 +45,32 @@ const KIND_DISTRICT := &"district"
 const KIND_ROAD_SEGMENT := &"road_segment"
 
 ## How far `nearest_road_tile` will search for an avenue before giving up, in
-## tiles. Mirrors `BuildController.AVENUE_SEARCH_TILES`; a Chebyshev ring walk of
-## radius 12 is 625 tiles worst case, run once on a button press.
-const ROAD_SEARCH_TILES := 12
+## tiles. **A reference, not a copy — and it was a copy.**
+##
+## This shipped as a hand-written `:= 12` under a docstring that said it mirrored
+## `BuildController.AVENUE_SEARCH_TILES`, which is **16**. That is RR-139's own
+## defect — a number written twice under a promise that it agrees — committed in
+## this lane's own new file in the same wave that ruled against it, and the
+## tile-metre census could not see it because it is a tile COUNT, not a metre.
+##
+## It was not cosmetic. `BuildController.nearest_avenue_tiles` searches to 16
+## before reporting "none in range", so `E_AVENUE` is raised for a building whose
+## nearest avenue is up to 16 tiles off. Once lane L's params half lands
+## (`fix_target_id`, §50.2 item 1) a building at 13–16 tiles would hand this
+## locator a row the checklist had just measured, and get `unresolved` — a
+## `Fix this →` that refuses a fix that exists, which is the exact shape of the
+## PA-05 defect the lane was chartered to kill, one namespace over.
+##
+## **Latent, not live, and said so rather than dressed up**: in the starter city
+## the farthest building from an avenue is 7 tiles (`APT-003`), so nothing sits
+## in the 13–16 band today and no shipped sweep could have caught it. It is a
+## player-placement defect — `E_AVENUE` is a level-4 check (C-62) on a building
+## the player chose to put far from an avenue, which is precisely the case the
+## starter fixture does not contain.
+##
+## A reference cannot drift. A Chebyshev ring walk of radius 16 is 33² = 1,089
+## tiles worst case, run once on a button press.
+const ROAD_SEARCH_TILES := BuildController.AVENUE_SEARCH_TILES
 
 
 ## The one entry point. Returns a `Vector3` in metres, or `null` when the id does
@@ -238,7 +261,9 @@ static func locate_road_segment(sim: CitySim, id: Variant) -> Variant:
 
 
 ## Chebyshev ring walk outward from `from` for the nearest tile of `road_class`.
-## Returns `Vector2i(-1, -1)` when none is within `ROAD_SEARCH_TILES`. Same walk
+## Returns `Vector2i(-1, -1)` when none is within `ROAD_SEARCH_TILES` — which is
+## `BuildController.AVENUE_SEARCH_TILES` by reference, so this walk reaches
+## exactly as far as the check that raises the row (see the constant). Same walk
 ## `BuildController.nearest_avenue_tiles` does for the DISTANCE; this wants the
 ## tile, and the ring order (rows then columns, ascending) makes the answer
 ## deterministic when two are equidistant.

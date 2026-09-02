@@ -6203,6 +6203,39 @@ that are disjoint in practice, and `KIND_BUILDING` falls through to it on a miss
 A future kind/id mismatch is then a wrong camera destination — visible — rather
 than silence.
 
+**And the lane committed RR-139's defect inside RR-140's file, which is the
+second-best evidence in this section.** `WorldLocator.ROAD_SEARCH_TILES` shipped
+as a hand-written `:= 12` under a docstring reading *"Mirrors
+`BuildController.AVENUE_SEARCH_TILES`"* — which is **16**. One number, written
+twice, under a promise that they agree, in the same wave that ruled a promise is
+not a gate. The tile-metre census in RR-139 could not see it: it is a tile
+**count**, not a metre.
+
+The consequence is `Fix this →` refusing a fix that exists.
+`BuildController.nearest_avenue_tiles` searches to 16 before reporting "none in
+range", so `E_AVENUE` is raised for a building whose nearest avenue is up to 16
+tiles off; once lane L's params half lands (§50.2 item 1), a building at 13–16
+hands this locator a row the checklist has just measured and gets `unresolved`.
+That is PA-05's shape one namespace over — and it would have been introduced by
+the lane that closed PA-05.
+
+`ROAD_SEARCH_TILES` is now `BuildController.AVENUE_SEARCH_TILES` **by
+reference**; a reference cannot drift. Two gates stand behind it:
+`test_the_search_reaches_as_far_as_the_check_that_raises_the_row` (the constants
+are the same object) and
+`test_every_building_the_controller_can_measure_the_locator_can_find`, which
+sweeps the real roster and asserts the two hand-written ring walks agree on the
+DISTANCE as well as on the reach — so any other divergence between them fails
+too. `--file=test_world_locator` goes 16 tests / 51 asserts → **18 / 121**.
+
+**Latent, not live, and worth stating as such**: the farthest starter building
+from an avenue is **7 tiles** (`APT-003`; `in_13_to_16 = 0` over all 34), so no
+fixture in the tree could have caught this and none of the numbers above moved
+because of it. `E_AVENUE` is a level-4 check on a building the *player* chose to
+place far from an avenue — exactly the case the starter city does not contain,
+which is why it was found by reading the constant against its own docstring
+rather than by a failing test.
+
 **Applied:** `ui/fix_router.gd`, `ui/world_locator.gd`, `game/main.gd`
 (`_on_fix_requested`, `_alert_world_pos`), `tests/test_fix_router.gd`,
 `tests/test_world_locator.gd`.
@@ -6266,7 +6299,7 @@ inside the process that is about to be killed.
 | `grep -rn "res://game/main" tests/` | 0 — `main.gd` is still not loaded, and the point is that it no longer has to be |
 | `grep -rn "sim\._[a-z]" --include=*.gd game ui tools` (fork → now) | 8 → 0 (two comments naming the row) |
 | `--file=test_fix_router` | 19 tests, 347 asserts, 0 failed |
-| `--file=test_world_locator` | 16 tests, 51 asserts, 0 failed |
+| `--file=test_world_locator` | 18 tests, 121 asserts, 0 failed |
 | `--file=test_tile_geometry` | 10 tests, 66 asserts, 0 failed |
 | mirrors the scan finds (was a hand-list of 11) | **17** — `sim` 5, `game` 7, `ui` 1, `tools` 4 |
 | negative control: `flow_test.gd:43 := 8.5` | `failed: 1`, naming `res://tools/flow_test.gd:43` |
