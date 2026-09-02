@@ -2422,16 +2422,37 @@ player has since raised cannot drag the new one anywhere. That is what makes
 the ladder's descent monotone across a settings change, which is the property
 `PerfGovernor.reset()` assumes and nothing enforced.
 
-**Seven keys were DELETED rather than wired**, because no engine call could ever
-have taken them, and the FORBIDDEN_KEYS-style guard
-`test_the_seven_deleted_keys_stay_deleted` keeps them out:
+**Six keys were DELETED rather than wired**, because each names a FEATURE THAT
+DOES NOT EXIST — the only ground on which a preset key may be deleted instead
+of given an owner — and the FORBIDDEN_KEYS-style guard
+`test_the_deleted_keys_stay_deleted` keeps them out:
 
-| deleted | why it could never work |
-|---|---|
-| `street_light_radius_m` | the OmniLight pool §2.10 promised was never built; the billboard-and-decal rig replaced it |
-| `reflection_probe`, `probe_size_m`, `probe_move_refresh_m` | no `ReflectionProbe` exists, and `test_water_has_two_octaves_and_no_reflection_probe` is the standing ruling that one is not coming |
-| `snow`, `turbulence` | `WeatherFX` has a rain bed and a splash bed; there is no snow system and no turbulence flag |
-| `civ_headlights` | duplicates a cap `vehicles.headlight_*` already owns |
+| deleted | why it could never work | what would bring it back |
+|---|---|---|
+| `street_light_radius_m` | the OmniLight pool §2.10 promised for four waves was never built; the billboard-and-decal rig replaced it and needs no radius | nothing: a radius without a light is not a setting |
+| `reflection_probe`, `probe_size_m`, `probe_move_refresh_m` | **DEFERRED, not refused.** §2.9 authors a High-only `ReflectionProbe` and no file constructs one; `grep -rn "ReflectionProbe" game/ ui/` is empty | the wave that builds it: a `ReflectionProbe` child of `EnvironmentController` (the file that owns every write to the environment), box `[256, 120, 256]` m about the camera focus, `UPDATE_ONCE` re-armed when the focus has moved `100` m. Re-author the three rows in that commit, and move them into `PRESET_KEYS_APPLIED` naming that file |
+| `snow`, `turbulence` | `WeatherFX` has a rain bed and a splash bed; `grep -rn "snow\|turbulence" game/` finds these rows and nothing else | doc 07's snow segment reaching the renderer |
+
+**One key on that list in the first draft of this section was wrong, and is
+WIRED instead: `civ_headlights`.** The draft claimed it duplicated a cap
+`vehicles.headlight_*` already owns. It does not — those four rows are a night
+threshold, a cone length, a cone energy and a colour, none of them a count —
+and `MM_headlights` was in fact the ONE buffer in `VehicleView` with no ceiling
+at all: `_ensure_capacity` clamps every body layer against `caps`, and
+`_ensure_cone_capacity` grew the cone buffer to the next multiple of 32 above
+the roster and clamped against nothing. It is now `VehicleView.cone_cap`
+(96 / 256 / 512), applied at the buffer so the write loop's existing guard
+carries it, and a preset DROP shrinks the buffer rather than merely ceasing to
+fill it. This is the one additive, transparent layer the vehicle system draws,
+on a device doc §2.13 has measured as fragment-bound — the single worst place
+in the tree to have been missing a cap.
+
+**The `test_water_has_two_octaves_and_no_reflection_probe` citation in that
+draft was a misreading and is corrected here**, because it would otherwise
+stand as a ruling the project never made: that test forbids the WATER SHADER
+from faking a reflection, and its own failure message says §2.11 "gates the ONE
+probe the game may own to High and to the city at large" — it assumes the
+probe, it does not refuse it.
 
 **Eight remaining unread keys are BUDGETS, not knobs**, and were kept and made
 CHECKED instead: `profile_frame`'s `BUDGETS` line gates `gpu_budget_ms`,
@@ -2442,28 +2463,58 @@ figure whose consumer is `tools/perf_rows.py`. Nothing applies a budget — but
 something must check one, and deleting them would have thrown away the only
 published statement of what a preset may cost.
 
-**Measured**, bench city, Z2, hour 13, 1920×1080, each preset run twice — the
-second with `--no-quality`, which reproduces every §2.13 row published before
-this wave because before this wave nothing applied the keys:
+**Measured**, bench city, hour 13, 1920×1080, `--focus=52,44`, warmup 30 /
+frames 60, on the workstation's RTX 2000 Ada. Every preset was run TWICE — once
+as it now ships, and once with `--no-quality`, which reproduces the frame the
+game actually drew before this wave, because before this wave nothing applied
+the keys. Read the `--no-quality` block first:
 
-| preset | 3D framebuffer | dc | prims | measured VRAM | `rs gpu` applied | `rs gpu` `--no-quality` |
-|---|---|---|---|---|---|---|
-| performance | 1344×756, FXAA, no shadow | 184 | 239,782 | **74 MB** | 0.824 / 0.825 ms | 1.883 / 1.602 ms |
-| balanced | 1632×918, MSAA 2× | 183 | 237,058 | **123 MB** | 1.430 / 1.395 ms | 2.374 / 1.642 ms |
-| high | 1920×1080, MSAA 2×, 4 splits, 180 m | **186** | **310,948** | **190 MB** | 1.824 / 1.769 ms | 1.675 / 1.627 ms |
+**Before — the audit's sentence, as three numbers.** With the engine-side keys
+inert, the three presets rendered the SAME FRAME:
 
-**Two independent runs are given for `rs gpu` because it is the one column that
-moves.** These were measured on a workstation running three sibling suites, and
-GPU time under that contention is worth a direction, not a decimal:
-Performance's frame is **48–56 % cheaper**, Balanced's **15–40 %**, and High's
-**9 % dearer** — the sign is stable across both runs and is the claim. The
-columns to the left of it are deterministic and are the harder evidence: **VRAM
-was flat at 125 MB across all three presets before this wave** and now spreads
-74 / 123 / 190 MB with the shadow atlas and MSAA buffers each one asks for, and
-High's primitive count rises 237,076 → **310,948 (+31 %)** with its draw calls
-183 → 186 because it finally renders the four shadow splits and the 180 m
-shadow distance it authors. **High costs more than Balanced now, which is the
-point of it.**
+| pre-Wave-17 (`--no-quality`) | Z0 dc | Z0 prims | Z0 `rs gpu` | Z1 dc | Z1 `rs gpu` | Z2 dc | measured VRAM |
+|---|---|---|---|---|---|---|---|
+| performance | 224 | 276,530 | 1.271 ms | 311 | 1.738 ms | 197 | — |
+| balanced | 223 | 273,710 | 1.290 ms | 310 | 1.762 ms | 196 | **125 MB** |
+| high | 223 | 273,710 | 1.286 ms | 310 | 1.755 ms | 196 | — |
+
+Balanced and High are **identical to the primitive** — 223 draw calls and
+273,710 primitives each — and their GPU times differ by 0.3 %, which is noise.
+Performance's single extra draw call and its 2,820 extra primitives are the
+`MM_blob` decal (§2.11), the only thing on the whole engine side that was
+separating the rows. **That is "High is Balanced with more cars", measured.**
+
+**After — each preset renders what it authors:**
+
+| as shipped | 3D framebuffer | Z0 dc | Z0 prims | Z0 `rs gpu` | Z1 dc | Z1 `rs gpu` | Z2 `rs gpu` | measured VRAM |
+|---|---|---|---|---|---|---|---|---|
+| performance | 1344×756, FXAA, **no shadow pass** | **90** | **92,822** | **0.583 ms** | 124 | 0.739 ms | 1.228 ms | **74 MB** |
+| balanced | 1632×918, MSAA 2×, 2 splits, 150 m | 223 | 273,710 | 0.964 ms | 310 | 1.375 ms | 1.442 ms | **123 MB** |
+| high | 1920×1080, MSAA 2×, **4 splits, 180 m** | 223 | **455,852** | 1.405 ms | 312 | 1.902 ms | 1.819 ms | **191 MB** |
+
+Three things in that table are the wave:
+
+* **`shadows: false` is finally a shipping state.** Performance's Z0 frame goes
+  224 → **90 draw calls** and 276,530 → **92,822 primitives**, because the sun
+  stops re-drawing the city into a shadow map it was never going to sample. The
+  saving is **134 draw calls and 183,708 primitives in one key**, and it is the
+  largest single number in this section. §2.11's `MM_blob` (RR-96) is what
+  makes it a look and not just a saving.
+* **High costs more than Balanced now, which is the point of it.** Same 223
+  draw calls, but **455,852 primitives against 273,710 (+67 %)** and 1.405 ms
+  against 0.964 ms (+46 %), because it renders the four shadow splits and the
+  180 m shadow distance it authors and Balanced's two and 150 m it does not.
+  The draw-call count does not move with the split count — Godot batches the
+  PSSM passes — so **`dc` is the wrong column to look for a shadow setting in**,
+  and the primitive count is the right one.
+* **VRAM was FLAT at 125 MB across all three presets before this wave** and now
+  spreads **74 / 123 / 191 MB** with the framebuffer, MSAA and shadow-atlas
+  allocations each row asks for.
+
+`rs gpu` is the RenderingServer's own per-viewport figure and it is the softest
+column here — these runs share a workstation with sibling suites. The two
+deterministic columns (dc, prims) are the evidence; the GPU column agrees with
+them in sign and rough size at every pose, which is all that is claimed of it.
 
 **The `QUALITY` line reads back off the live objects** — `root.scaling_3d_scale`,
 `root.msaa_3d`, the sun's `directional_shadow_mode`, the `Environment`'s
@@ -2472,15 +2523,24 @@ answer would prove the resolver runs; the claim that needed proving is that the
 ENGINE took the value, which is the exact claim these keys failed for three
 waves.
 
-> **OPEN — `performance` does not meet its own `chunk_budget` at Z2.** The new
-> gate reports `OVER: z2 chunks 36>24` on the bench city (24 authored, 36 drawn;
-> `near_chunk_max: 3` is met, at 0). Either the budget is wrong for a 900 m
-> `far_cull_m` or the tier assignment is. Filed rather than adjusted, because
+> **OPEN — `performance` misses its `chunk_budget` at every pose and its
+> `near_chunk_max` at two.** The new gate reports, on the bench city at
+> `--focus=52,44`, `OVER: z0 chunks 36>24, z0 near 10>3, z1 chunks 36>24,
+> z1 near 10>3, z2 chunks 36>24` — 24 chunks authored against 36 drawn at all
+> three poses, and 3 NEAR authored against 10 drawn at Z0/Z1. Balanced misses
+> `near_chunk_max` too (`10>6`), and High (`10>8`); **only the NEAR count at Z2
+> is met by any preset, and it is met at 0.** So this is not a Performance
+> problem, it is the whole `near_chunk_max` column being authored against a
+> chunk census nothing had ever taken. Filed rather than adjusted, because
 > changing a published budget to match a measurement is how a budget stops
-> meaning anything — and because the number was invisible until this wave gated
-> it. *Re-open trigger: `profile_frame --preset=performance --poses=z0,z1,z2`;
-> the item closes when the census fits the budget or the budget is re-derived
-> from §2.13's chunk arithmetic the way `_z2_derivation` was.*
+> meaning anything — and because every one of these numbers was invisible until
+> this wave gated it. *Re-open trigger:
+> `profile_frame --preset=<row> --focus=52,44`; the item closes when the census
+> fits the budget or the budget is re-derived from §2.13's chunk arithmetic the
+> way `_z2_derivation` was. Note for whoever takes it: the NEAR count is
+> `near_max_m` 150 m against a 128 m chunk grid, which cannot produce fewer
+> than 9 chunks at any pose whose camera is inside the city — the authored
+> 3 / 6 / 8 may simply be a boundary that was never multiplied out.*
 
 ### 2.14 Placeholder-art pipeline: procedural gray-box
 

@@ -126,6 +126,27 @@ var preset := "balanced"
 ## preset change cannot make the renderer the thing that falls over.
 var caps: Dictionary = {}
 var beacon_budget := 4
+## Doc 11 §2.13's `civ_headlights` — the instance ceiling on `MM_headlights`,
+## the ONE additive layer this view draws (report 98 RR-98).
+##
+## Every other buffer here has had a preset ceiling since §2.12: `caps` clamps
+## the body layers inside `_ensure_capacity`. The cone layer did not, because
+## `_ensure_cone_capacity` grows on demand and clamps against nothing — so the
+## preset row that was supposed to own it (96 / 256 / 512) had no reader, and a
+## Performance phone at 21:00 drew one additive cone per lit vehicle with no
+## ceiling at all. That is the worst shape a missing cap can have on this
+## project's actual bottleneck: the Fold is fragment-bound (doc 11 §2.13's
+## 2026-09-01 matrix, night 8.6 ms GPU), the cone is 8 m of transparent
+## geometry lying along the carriageway, and transparency is the one cost that
+## does not care how few triangles it is spread over.
+##
+## It is a CEILING on the buffer, not a cull: the write loop fills the nearest
+## `cone_cap` lit vehicles it walks and the rest simply drive without cones.
+## The bodies are untouched — a car whose headlights are over the ceiling is
+## still drawn, still lit by its own emissive lamp pair, and only the cast cone
+## on the tarmac is missing, which is invisible at any pose that has 96 lit
+## vehicles in it in the first place.
+var cone_cap := 256
 
 var _vehicles: Dictionary = {}      # render key -> VehicleMotion
 var _layers: Dictionary = {}        # mesh key -> Layer
@@ -675,10 +696,23 @@ func _ensure_capacity(layer: Layer, needed: int) -> void:
 	layer.mm.instance_count = mini(layer.cap, ((needed / 32) + 1) * 32)
 
 
+## How many cone instances `MM_headlights` is currently sized for. Published
+## because `--headless` runs on the DUMMY driver and a test cannot read a
+## MultiMesh back through a frame, and because the buffer size IS the cap: the
+## write loop's own guard is `cone_i < _cone_mm.instance_count`.
+func cone_buffer_size() -> int:
+	return _cone_mm.instance_count if _cone_mm != null else 0
+
+
+## §2.13's `civ_headlights` is applied HERE and not at the write loop, so the
+## ceiling is one number in one place: `cone_i < _cone_mm.instance_count` in
+## `refresh` is already the write guard, and capping the buffer caps the writes
+## with it. `mini` against the cap is the only line that differs from
+## `_ensure_capacity`, which is what the cone layer was missing.
 func _ensure_cone_capacity(needed: int) -> void:
 	if needed <= _cone_mm.instance_count:
 		return
-	_cone_mm.instance_count = ((needed / 32) + 1) * 32
+	_cone_mm.instance_count = mini(cone_cap, ((needed / 32) + 1) * 32)
 
 
 # ------------------------------------------------------------------ beacons
@@ -757,6 +791,15 @@ func _read_presets(render_data: Dictionary) -> void:
 	for key: String in EMERGENCY_MESHES:
 		caps[key] = nodes
 	beacon_budget = clampi(int(row.get("emergency_lights", 4)), 0, 8)
+	cone_cap = maxi(0, int(row.get("civ_headlights", cone_cap)))
+	if _cone_mm != null and _cone_mm.instance_count > cone_cap:
+		# A DROP has to shrink the buffer, not merely stop filling it: a preset
+		# swap down (settings row, or the governor's latched drop) leaves a
+		# buffer sized for the richer row, and `visible_instance_count` alone
+		# would keep the memory. Growing resets the buffer, and so does this —
+		# every visible instance is rewritten next frame anyway.
+		_cone_mm.instance_count = cone_cap
+		_cone_mm.visible_instance_count = 0
 	# The preset has the last word on shadows: a quality tier that has already
 	# decided how many splits it can afford is the right place to decide whether
 	# the traffic layer gets re-drawn into all of them. A row without the key

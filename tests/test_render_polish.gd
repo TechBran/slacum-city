@@ -895,6 +895,7 @@ const PRESET_KEYS_APPLIED := {
 	"civ_trucks": "VehicleView._read_presets",
 	"emergency_nodes": "VehicleView._read_presets",
 	"emergency_lights": "VehicleView._read_presets -> beacon_budget",
+	"civ_headlights": "VehicleView._read_presets -> cone_cap (MM_headlights)",
 	"vehicle_shadows": "VehicleView / StreetLifeView / ConstructionVehicleView",
 	"road_detail": "RoadSurfaceView.set_preset",
 	"flood_detail": "FloodView.setup",
@@ -912,14 +913,34 @@ const PRESET_KEYS_BUDGET := {
 	"instance_budget": "tools/profile_frame.gd",
 	"pss_budget_mb": "tools/perf_rows.py, against bench_device.sh meminfo",
 }
-## Deleted in Wave 17 because no engine call could ever have taken them — the
-## FORBIDDEN_KEYS pattern, so they cannot drift back. `street_light_radius_m`
-## and the three probe keys describe an OmniLight pool and a ReflectionProbe
-## that were never built (`test_water_has_two_octaves_and_no_reflection_probe`
-## is the standing ruling that the probe is not coming); `snow` and
-## `turbulence` name particle systems `WeatherFX` does not have;
-## `civ_headlights` duplicates a cap `vehicles.headlight_*` already owns.
-const PRESET_KEYS_DELETED := ["street_light_radius_m", "civ_headlights", "snow",
+## DELETED in Wave 17, with the FORBIDDEN_KEYS pattern so they cannot drift
+## back. Each names a FEATURE THAT DOES NOT EXIST — which is the only reason a
+## preset key may be deleted rather than wired, and the reason is recorded per
+## key in doc 11 §2.13b:
+##
+##   * `street_light_radius_m` — the OmniLight pool `StreetlightView`'s class
+##     doc promised for four waves and that the billboard-and-decal rig
+##     replaced. A radius is meaningless without a light to give it to.
+##   * `snow`, `turbulence` — `WeatherFX` has a rain bed and a splash bed and
+##     no third system; `grep -rn "snow\|turbulence" game/` finds nothing but
+##     these rows.
+##   * `reflection_probe`, `probe_size_m`, `probe_move_refresh_m` — doc 11
+##     §2.9's High-only `ReflectionProbe`, which no file constructs. DEFERRED,
+##     not refused: §2.13b records the node, the owner and the three numbers so
+##     the wave that builds it re-authors the rows in the same commit. (The
+##     earlier draft of this list cited
+##     `test_water_has_two_octaves_and_no_reflection_probe` as a standing
+##     ruling that the probe is not coming. It is not one: that test forbids
+##     the WATER SHADER from faking a reflection and says in its own message
+##     that §2.11 "gates the ONE probe the game may own to High" — i.e. it
+##     assumes the probe, it does not refuse it.)
+##
+## `civ_headlights` was on this list in that same draft, on the claim that it
+## duplicated a cap `vehicles.headlight_*` already owns. It does not:
+## `vehicles.headlight_night_threshold/_cone_m/_cone_energy/_color` are a
+## threshold, a length, an energy and a colour, and `_ensure_cone_capacity`
+## grew `MM_headlights` against NO ceiling at all. It is wired, not deleted.
+const PRESET_KEYS_DELETED := ["street_light_radius_m", "snow",
 		"turbulence", "reflection_probe", "probe_size_m", "probe_move_refresh_m"]
 
 
@@ -945,7 +966,7 @@ func test_no_inert_preset_key() -> void:
 				% key + "authors it any more — drop the row")
 
 
-func test_the_seven_deleted_keys_stay_deleted() -> void:
+func test_the_deleted_keys_stay_deleted() -> void:
 	var presets: Dictionary = _data()["presets"]
 	for name: String in presets:
 		if name.begins_with("_"):
@@ -1137,4 +1158,41 @@ func test_street_lights_caps_the_fill_layers_and_not_the_lamps() -> void:
 	counts = view.chunk_instance_counts()
 	assert_eq(int(counts["pool_visible"]), 10,
 			"a budget above the chunk's roster shows every pool and no more")
+	view.free()
+
+
+## §2.13's `civ_headlights`, wired in Wave 17 (report 98 RR-98).
+##
+## `MM_headlights` is the one ADDITIVE buffer the vehicle layer draws and it
+## was the one buffer with no ceiling: `_ensure_capacity` clamps every body
+## layer against `caps`, and `_ensure_cone_capacity` clamped against nothing.
+## The buffer is what this asserts rather than a frame, because `--headless`
+## runs on the DUMMY driver — but the buffer IS the cap: the write loop's guard
+## is `cone_i < _cone_mm.instance_count`, so a capped buffer is capped writes.
+func test_civ_headlights_caps_the_one_additive_buffer() -> void:
+	var data := _data()
+	var presets: Dictionary = data["presets"]
+	assert_eq(int((presets["performance"] as Dictionary)["civ_headlights"]), 96)
+	assert_eq(int((presets["balanced"] as Dictionary)["civ_headlights"]), 256)
+	assert_eq(int((presets["high"] as Dictionary)["civ_headlights"]), 512)
+
+	var view := VehicleView.new()
+	view.setup(data)
+	assert_eq(view.cone_cap, 256, "the default preset is balanced")
+	view.set_preset("performance", data)
+	assert_eq(view.cone_cap, 96, "…and a preset swap moves the ceiling")
+	# Ask for far more cones than Performance allows. Before Wave 17 this grew
+	# to 1024 and the preset row watched it happen.
+	view._ensure_cone_capacity(1000)
+	assert_eq(view.cone_buffer_size(), 96,
+			"the cone buffer stops at the preset's ceiling; before RR-98 it "
+			+ "grew to the next multiple of 32 above the roster, with no cap")
+	# A DROP has to shrink, not merely stop filling: High first, then down.
+	view.set_preset("high", data)
+	view._ensure_cone_capacity(1000)
+	assert_eq(view.cone_buffer_size(), 512, "High's ceiling is 512")
+	view.set_preset("performance", data)
+	assert_eq(view.cone_buffer_size(), 96,
+			"a preset DROP shrinks the buffer it inherited — the governor's "
+			+ "latched drop takes this path and must not keep High's memory")
 	view.free()
