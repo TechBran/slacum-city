@@ -687,6 +687,9 @@ class PermissionShellMirror extends RefCounted:
 	## in for `UIRoot.modal_open()`.
 	var permission_prompt_shown := false
 	var modal_open := false
+	## `Main._draining_offline` — true only while `_finish_catchup` drains the
+	## batch an ABSENCE produced.
+	var draining_offline := false
 	## Every reason the pump handed to `present_permission_rationale`.
 	var shown: Array[String] = []
 
@@ -714,6 +717,8 @@ class PermissionShellMirror extends RefCounted:
 
 	func _note_permission_evidence(plans: Array) -> void:
 		if permission_flow == null or notification_router == null:
+			return
+		if not draining_offline:
 			return
 		if permission_flow.notifications_enabled():
 			return
@@ -767,6 +772,7 @@ func test_31_a_second_prompt_is_earned_by_a_p1_the_player_never_heard() -> void:
 	# the shell holds no second copy of doc 08's class table.
 	var heard := FakeNative.new()          # the permission IS held
 	var heard_mirror := _mirror(heard)
+	heard_mirror.draining_offline = true   # …so the PERMISSION is what is on trial
 	heard_mirror._note_permission_evidence(
 			heard_mirror.notification_router.feed_batch(
 					[{"type": "incident_failed", "incident_id": 9,
@@ -778,6 +784,17 @@ func test_31_a_second_prompt_is_earned_by_a_p1_the_player_never_heard() -> void:
 	unheard.enabled = false                # …and here it is not
 	unheard.permission = AndroidNative.PERMISSION_DENIED
 	var mirror := _mirror(unheard)
+	# A P1 the player WATCHED, with the permission absent. Still not evidence:
+	# step 7 says "occurred offline", and a re-prompt that said "you missed a
+	# citywide emergency" about a storm they sat through would be a lie told to
+	# obtain a permission.
+	mirror._note_permission_evidence(mirror.notification_router.feed_batch(
+			[{"type": "incident_failed", "incident_id": 8,
+				"incident_type": "fire", "tier_peak": 4}]))
+	assert_false(mirror.permission_flow.missed_p1_offline,
+			"a live batch earns nothing, however bad the event was")
+
+	mirror.draining_offline = true
 	mirror._note_permission_evidence(mirror.notification_router.feed_batch(
 			[{"type": "economy_hour_settled", "net": 12.0}]))
 	assert_false(mirror.permission_flow.missed_p1_offline, "a settled hour is not a P1")

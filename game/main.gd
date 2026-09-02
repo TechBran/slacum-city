@@ -1560,13 +1560,29 @@ func _note_permission_trigger(batch: Array) -> void:
 			return
 
 
+## True only while `_finish_catchup` is draining the batch an ABSENCE produced.
+var _draining_offline := false
+
+
 ## The evidence a SECOND prompt needs (doc 13 §2.7 step 7): a P1 the player was
 ## never told about, because the app had no permission to tell them. Recorded
 ## from the router's own classification so this file holds no copy of doc 08's
-## class table, and only while the permission is genuinely absent — a P1 that
-## DID buzz is not a reason to ask for anything.
+## class table, and under three conditions, all of them necessary:
+##
+##   * the batch is an OFFLINE one (`_draining_offline`) — step 7 says "occurred
+##     offline", and a P1 the player watched happen is not something they missed;
+##   * the permission is genuinely absent — a P1 that DID buzz is not a reason to
+##     ask for anything;
+##   * the plan's class is doc 08's P1, read off the router rather than a second
+##     copy of the class table.
+##
+## Get the first one wrong and the second prompt says *"you missed a citywide
+## emergency"* about a storm the player sat through — a lie told to obtain a
+## permission, which is the one thing this whole flow exists not to do.
 func _note_permission_evidence(plans: Array) -> void:
 	if permission_flow == null or notification_router == null:
+		return
+	if not _draining_offline:
 		return
 	if permission_flow.notifications_enabled():
 		return
@@ -2160,7 +2176,14 @@ func _finish_catchup() -> void:
 		ui_root.dismiss_veil()
 	sim.clock.residual_game_ms = int(_catchup_after.get("residual_game_ms", 0))
 	var offline_batch: Array = sim.bus.drain()
+	# PA-14, doc 13 §2.7 step 7: this — and only this — is the batch that can
+	# earn a second permission prompt. A P1 the player WATCHED is not evidence
+	# they missed anything, and a re-prompt that said "you missed a citywide
+	# emergency" about one they sat through would be a lie told to get a
+	# permission. See `_note_permission_evidence`.
+	_draining_offline = true
 	_on_sim_batch(offline_batch)
+	_draining_offline = false
 	var elapsed_wall_s := float(_catchup_after.get("elapsed_wall_s", 0.0))
 	var capped := bool(_catchup_after.get("capped", false))
 	var cap_game_hours := float(_catchup_after.get("cap_game_hours", 720.0))

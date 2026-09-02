@@ -361,7 +361,7 @@ Release manifest, complete:
 > | 3 modal | next idle frame, on a frame nothing else owns | `Main._pump_permission_prompt` → `UIRoot.present_permission_rationale` → `ui/permission_sheet.gd` |
 > | 4/5 answer | TURN ON → `accept()`, NOT NOW → `decline()`, **BACK → neither** | `Main._on_permission_answered` |
 > | 6 fallback | S10's `notification_permission` row, four states (doc 12 §2.13) | `Main._on_permission_row_tapped` |
-> | 7 evidence | a P1 in the drained batch while `notifications_enabled()` is false | `Main._note_permission_evidence`, off the router's own classification |
+> | 7 evidence | a P1 in the batch an **absence** produced, while `notifications_enabled()` is false | `Main._note_permission_evidence`, off the router's own classification, gated on `_draining_offline` |
 >
 > **`building_placed_sim` is deliberately not a trigger** even though it creates a
 > construction timer: the tutorial has the player place a house inside its first
@@ -385,6 +385,14 @@ Release manifest, complete:
 > session would be the control doc 12 §2.13 forbids.
 > `tests/test_android_notifications.gd::test_31b` walks 300 idle frames and
 > asserts one modal and `asked_count == 0`.
+>
+> **Step 7's "offline" is load-bearing, and the gate is one flag.** The evidence
+> hook rides `_on_sim_batch`, which every batch goes through — including the live
+> ones. Recording a foreground P1 as *missed* would let the second prompt say
+> *"you missed a citywide emergency"* about a storm the player sat through, which
+> is a lie told to obtain a permission and is the one thing this flow exists not
+> to do. `Main._draining_offline` is set only around `_finish_catchup`'s drain of
+> the absence's batch, and `_note_permission_evidence` refuses everything else.
 >
 > **The counters are device-scoped** (`user://settings.cfg`, section
 > `permission`, doc 08 §2.5), and that is a correctness argument rather than a
