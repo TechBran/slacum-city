@@ -6306,3 +6306,10 @@ not touched; this wave is shell and `ui/` only.
 |---|---|---|
 | starter | `05614522975fad52…` | `d1aaee0dca92f2fd…` |
 | bench | `275aad9d4aeea809…` | `d40126e371371d59…` |
+
+**Gates.** `~/.local/bin/godot --headless --script tests/run_tests.gd` — **134
+files, 2,490 tests, 551,462 asserts, failed 0, silent 0**, exit 0.
+`xvfb-run -a ~/.local/bin/godot --path . res://tools/ui_preview.tscn --
+--screen=all --audit --strict` — **exit 0**, and the two tilt preview states
+(`tilt_rest`, `tilt_drag`) are clean at every box: the ramp adds no control and
+changes no layout, so the deck stays at 59 states.
