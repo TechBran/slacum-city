@@ -96,7 +96,18 @@ static func locate(sim: CitySim, kind: StringName, id: Variant) -> Variant:
 		KIND_COMPONENT:
 			return locate_component(sim, str(id))
 		KIND_DISTRICT:
-			return locate_district(sim, str(id))
+			# Same fallthrough the building arm takes, for the same reason and
+			# found the same way. Doc 05 keys a PRESSURE ZONE by its source node
+			# (`WTR-1-PMP`), and `E_WATER_HEADROOM` calls that key `district_id`
+			# because it is the area the remedy applies to — so a row whose fix
+			# kind is honestly "a district" can carry an id doc 09's district
+			# table has never heard of. Rather than let the button resolve to
+			# nowhere, ask the other namespaces: the id came from the sim, and
+			# the sim knows what it is. (Wave 18 merge; Lane D's own
+			# `test_no_real_checklist_row_falls_through_silently` caught it on
+			# every building in the starter city.)
+			var district: Variant = locate_district(sim, str(id))
+			return district if district != null else locate_any(sim, id)
 		KIND_ROAD_SEGMENT:
 			return locate_road_segment(sim, id)
 	return null
@@ -195,7 +206,22 @@ static func locate_building(sim: CitySim, sim_id: String) -> Variant:
 ## from `sim.grid.attachment_of(sim_id)`, which returns a TRANSFORMER id, and the
 ## shell looked it up among buildings.
 static func locate_component(sim: CitySim, component_id: String) -> Variant:
-	if sim.grid == null or component_id == "":
+	if component_id == "":
+		return null
+	# A "component" is not one namespace. Doc 04's grid components (`T-nn`,
+	# `F-nn`, `SUB-n`) and doc 05's water nodes (`WTR-1-PMP`, tanks, treatment)
+	# are both addressed this way by the checklist, and Wave 18 proved it the
+	# expensive way: Lane L's E_WATER_HEADROOM row hands the router a water node
+	# id, Lane D's locator asked only the power grid, and every checklist row on
+	# every building in the starter city resolved to nothing. Neither lane could
+	# see it — the merge did, through Lane D's own completeness gate
+	# (`test_no_real_checklist_row_falls_through_silently`). Water is asked
+	# SECOND because the power table is the larger and the ids are disjoint.
+	if sim.water != null:
+		var node: WaterNode = sim.water.node(component_id)
+		if node != null:
+			return TileGrid.centre_of(node.tile)
+	if sim.grid == null:
 		return null
 	var row: Dictionary = sim.grid.component(component_id)
 	# `PowerGrid.component_tile` answers `Vector2i.ZERO` for BOTH an unknown id

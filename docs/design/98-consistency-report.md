@@ -7656,3 +7656,45 @@ here because the button was this lane's), and `test_event_matrix.gd`'s stale
    un-paused.
 2. **The §2.13 settings row** (doc 12 D-84's note), which lands the moment Lane
    G's `POLICY_BUILDINGS` arm exists. Not a blocker: D-84 (d) is the door.
+
+---
+
+## 57. WAVE 18 MERGE — the seam two lanes could not see (binding)
+
+**Lane D's completeness gate earned its keep on the day it landed.** Merging
+Lane D (the fix router) and Lane L (the requirement contract) each passed its own
+suite; the merged tree failed 35 assertions in `tests/test_fix_router.gd`, in two
+shapes, on every building in the starter city.
+
+### RR-158 — A declared fix kind that no router maps is a button that answers `unknown_kind`
+
+`RequirementFormatter.FIX_COMPONENT` was declared by the power wave and used by
+Lane L's `E_TRANSFORMER_FULL` / `E_NEEDS_TRANSFORMER` rows. `FixRouter._locator_kind`
+— written by Lane D, from a tree where those rows did not exist — had no arm for
+it, so it returned `&""` and the route answered `unknown_kind`. Neither lane was
+wrong on its own; the mapping was the piece no lane owned. Fixed by mapping it to
+`WorldLocator.KIND_COMPONENT` and adding it to the focus arm's match list.
+`test_every_declared_fix_kind_is_routed` is exactly the gate that says so, and it
+is worth keeping BECAUSE it fails at a merge rather than in a player's hands.
+
+### RR-159 — "Component" is two namespaces, and "district" is sometimes a third
+
+`WorldLocator.locate_component` asked doc 04's `PowerGrid` only. Doc 05's water
+nodes (`WTR-1-PMP`, tanks, treatment, sources) are addressed the same way by the
+checklist, so every water component resolved to nothing. Water is now asked
+first, then the grid; the ids are disjoint and the order is stated.
+
+The second half is subtler and is the reason all 35 rows failed rather than a
+few. `E_WATER_HEADROOM`'s `fix_target_id` is the **pressure-zone key**, and doc 05
+keys a zone by its SOURCE NODE — so the row honestly declares `FIX_DISTRICT` (the
+remedy is "add a pump or a tank in this area") while carrying an id doc 09's
+district table has never heard of. The district arm now falls through to
+`locate_any()` when the district table does not know the id, which is the same
+fallthrough the building arm already took, for the same reason, written down in
+the same words: **the id came from the sim, and the sim knows what it is.**
+
+**The rule this leaves.** A fix row's `kind` says what the remedy IS; it does not
+promise which table the `id` lives in. A locator arm that cannot find its id in
+its own table asks the others rather than returning null, and a `FIX_*` with no
+locator mapping fails loudly at a gate. Both halves are pinned by Lane D's two
+tests, which is why this cost one merge and not one playtest.

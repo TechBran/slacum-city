@@ -132,7 +132,8 @@ static func route(sim: CitySim, fix_target: Dictionary,
 			return armed
 		RequirementFormatter.FIX_BUILDING, RequirementFormatter.FIX_BLOCK, \
 				RequirementFormatter.FIX_TILE, RequirementFormatter.FIX_DISTRICT, \
-				RequirementFormatter.FIX_ROAD_SEGMENT:
+				RequirementFormatter.FIX_ROAD_SEGMENT, \
+				RequirementFormatter.FIX_COMPONENT:
 			if id == "":
 				return _none(kind, id, REASON_EMPTY_ID)
 			var where: Variant = WorldLocator.locate(sim, _locator_kind(kind), id)
@@ -167,6 +168,12 @@ static func _locator_kind(fix_kind: StringName) -> StringName:
 			return WorldLocator.KIND_DISTRICT
 		RequirementFormatter.FIX_ROAD_SEGMENT:
 			return WorldLocator.KIND_ROAD_SEGMENT
+		RequirementFormatter.FIX_COMPONENT:
+			# Declared in `RequirementFormatter`'s table by the power wave and
+			# used by Lane L's E_WATER_HEADROOM row; this mapping was the piece
+			# no single lane owned, and its absence made every component row
+			# answer `unknown_kind` (Wave 18 merge, report 98 §57).
+			return WorldLocator.KIND_COMPONENT
 	return &""
 
 
