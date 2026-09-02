@@ -414,6 +414,56 @@ application/config/quit_on_go_back=false
 
 Capping at 60 on a 120 Hz panel is the single biggest battery lever available (roughly halves GPU work); the high-refresh toggle is off by default and lives under Settings → Graphics with the label "High refresh rate (uses more battery)".
 
+#### The rate is DECLARED, not merely capped — RR-126, Wave 17 (2026-09-01)
+
+**The half of this subsection that was never built.** Every rule in the table
+above resolves to a number written into `Engine.max_fps`, and until this wave
+**nothing told the display about it**. `vsync_mode=1` is a swapchain property and
+Swappy is a *consumer* of the refresh rate, not a declarer of it, so on the
+reference device — a Galaxy Z Fold 6 whose inner panel is **1856 × 2160 LTPO,
+1–120 Hz adaptive** — the platform's only input to its mode policy was the app's
+observed present cadence. The panel therefore re-derived its mode whenever the
+cadence changed, and an adaptive re-time part-way down a scan is a horizontal
+band. Doc 93 §AE has the analysis and the falsifier; the player's own verdict
+after days on the Aug-21 build is *"tearing only happens in the sub menus"*,
+which is exactly where a workload step lands on a still image.
+
+**What now happens.** `game/render/refresh_pin.gd` is fed the same number the
+frame cap is, and declares it:
+
+| what | where | how |
+|---|---|---|
+| the app's own rate | `Surface.setFrameRate(fps, FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)` | API 30+, cast on the Vulkan surface Godot presents to, and **re-cast on `onVkSurfaceCreated` / `onVkSurfaceChanged`** — a vote lives on the surface and dies with it, and the Fold's fold/unfold recreates it |
+| the panel's mode | `window.attributes.preferredRefreshRate` + `preferredDisplayModeId` | the smallest supported mode at the current resolution that is an integer multiple of the rate; `preferredDisplayModeId` is set only for a same-resolution mode, because anything else is a reconfiguration rather than a refresh-rate switch |
+
+**The mode rule**, table-tested in `tests/test_refresh_pin.gd` and written in
+`RefreshPin.choose_refresh_hz()`: the **smallest integer multiple** at or above
+the cap (60 → 60 and 30 → 60 on a {60, 120} panel; 45 → 90 on {60, 90, 120});
+failing that the **fastest mode at or above** it (45 → 120 on {60, 120}, because
+neither 60 nor 120 divides 45 and the faster mode halves the one-scanout error);
+failing that the fastest mode there is. Smallest-multiple rather than fastest is
+this section's own battery lever restated — pinning a 60 fps game to 120 Hz would
+hand back the sentence above it.
+
+**The two-argument `setFrameRate` overload is deliberate**: on API 31+ it means
+`CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS`, so a mode switch the panel could not make
+invisibly is refused rather than made. A fix for banding may not be a new source
+of it. `minSdk` is 29 and the surface vote is API 30, so an API-29 device takes
+the stated fallback — **no vote, today's behaviour exactly**, reported as `false`
+rather than pretended.
+
+**Levers.** `--refresh=auto|60|90|120|off` (doc 13 D-20's argument path) and a
+Settings row, `Auto / 60 / 120 / Off` (doc 12 D-75). `off` declares **nothing at
+all** rather than declaring zero, so the A/B's control arm is the shipped
+behaviour in the same binary — report 98 §46 has the protocol and RR-128 has the
+reason. The ladders live in `data/render.json.refresh`.
+
+**Still open:** the modal row of the table above. `idle_fps` and
+`render_target_update_mode = UPDATE_DISABLED` remain unimplemented — `grep -rn
+"idle_fps\|UPDATE_DISABLED" game/ ui/` returns nothing — which is why a sheet
+over the world is a cost *step* rather than a cost *drop*, and is the second
+half of doc 93 §AE3's mechanism. The pin does not close it and does not claim to.
+
 **Sim cost while foregrounded** is negligible by construction — 4 Hz utility tick, 1 Hz incidents, per-game-hour economy (constitution §4). No battery rule touches sim cadence; slowing the sim to save battery would change gameplay, which is not allowed.
 
 **Measurement protocol.** `dumpsys batterystats --reset`, play a scripted 30-minute session (§7 D-07), then `dumpsys batterystats com.slacumcity.game`, and convert: `drain_pct_per_hour = (level_start - level_end) * 2`. Ship gate: Tier B ≤ 6.0 %/h Balanced, ≤ 3.5 %/h Saver.

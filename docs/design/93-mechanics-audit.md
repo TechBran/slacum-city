@@ -2186,6 +2186,111 @@ wrong section** because the money pass was drafted as doc 92 §35 and merged as
 and a reader notices; a pointer that resolves to the wrong section is a lie with
 a footnote. **It belongs in CI, next to the suite.**
 
+## AE. Wave-17 rulings — what the panel is asked to do today, and why that predicts bands in the sub menus and nowhere else (2026-09-01)
+
+The screen-tearing investigation (doc 11 §2.13, doc 13 §2.8) has a verdict from
+the player after days of play on the Aug-21 build: **"tearing only happens in
+the sub menus."** World play is clean. That is not a weaker version of "the app
+tears" — it is a much narrower claim, and it rules out most of the suspects the
+open band has carried. This section writes down what the app actually asks the
+display for today, why that asks for exactly the symptom described, and what
+observation would refute it.
+
+### AE1. Today the panel is asked for nothing at all, and the one line that could ask does not run at boot
+
+Three settings and one assignment are the whole of this app's relationship with
+the display, and none of them is a declaration.
+
+* **`project.godot:45` `window/vsync/vsync_mode=1`.** VSYNC_ENABLED is a property
+  of the SWAPCHAIN — present FIFO, do not tear at the swap. It says nothing
+  whatsoever about which mode the panel runs in.
+* **`project.godot:46-47` Swappy, `swappy_mode=2` (auto-fps + auto-pipeline).**
+  Swappy is a **consumer** of the refresh rate, not a declarer of it: it measures
+  frame time, picks a swap interval against the mode the panel is currently in,
+  and paces to it. Hand it a panel that changes mode and it re-derives; it has no
+  vote on when that happens.
+* **`game/main.gd:1935` `Engine.max_fps = perf_governor.target_fps()`.** The only
+  write in the shipped tree — `grep -rn "max_fps" game/ ui/` returns this line
+  and `game/showcase.gd:138` (`= 0`, the screenshot harness), and nothing else.
+* **The plugin says nothing.** At the Aug-21 build,
+  `git show HEAD:…/SlacumNative.kt | grep -c 'setFrameRate\|preferredRefreshRate\|preferredDisplayModeId'`
+  → **0**.
+
+**And the assignment does not run at boot.** Line 1935 sits inside
+`if perf_governor.update(delta):` — the branch that fires only when a knob moved.
+`project.godot` sets no `run/max_fps`, so a fresh launch runs with
+`Engine.max_fps == 0` until the governor first steps. The 2026-08-21 Fold capture
+(doc 11 §2.13) held `knob = 0` and `thermal = 0` for its entire 38-second settled
+window at **99.5 – 112.4 fps**. So the reference device was not running at 60 with
+a declared 60: it was running **uncapped, at whatever Swappy paced against
+whatever mode the panel had chosen for itself**, with nobody in the process
+having an opinion about either.
+
+**The ruling: the app's frame policy has a producer (the governor), a pacer
+(Swappy) and no declaration.** On a fixed-rate panel that is a complete design.
+On the reference device it is a design with a hole in it, and the hole is the
+size of the panel's own mode policy.
+
+### AE2. A cap the display was never told about is a cadence the platform has to infer, and an inference changes when its input does
+
+The Fold 6's inner panel is **1856 × 2160, LTPO, 1–120 Hz adaptive**. An LTPO
+panel does not have a refresh rate; it has a *current* refresh rate, chosen by
+the platform, and the platform's inputs are what the app declares (nothing, here)
+and what the app is observed to present.
+
+That leaves observed cadence as the **sole** input. Which means:
+
+* the panel's mode is a function of the app's frame time;
+* the app's frame time changes whenever the workload does;
+* therefore **every workload change is a candidate mode change**, and the app has
+  no way to know one happened and no way to ask for one not to.
+
+A mode change on an LTPO panel re-times the scanout. Done seamlessly it is
+invisible; done across a frame that is mid-scan it is a horizontal discontinuity
+— a band, not the diagonal shear a torn swap produces, which is one of the
+reasons "tearing" has been the wrong word for this for three waves. **Nothing in
+the app is asking for it to be seamless**, because nothing in the app is asking
+for anything.
+
+**The ruling: a frame cap that is not declared is not a frame policy, it is a
+side effect the platform reverse-engineers.** The remedy is the shape of the
+defect: declare the rate, and declare it in the same statement that caps it
+(report 98 RR-126).
+
+### AE3. Why the symptom is menus-only — and the one observation that refutes all of this
+
+The menus-only shape is the strongest evidence there is, because it discriminates
+between the suspects rather than merely being consistent with them.
+
+1. **A sheet is a step change in cost with a STILL image behind it.** The 3D
+   viewport keeps rendering while a sheet is open — doc 13 §2.8's modal row
+   (`idle_fps`, `render_target_update_mode = UPDATE_DISABLED`) has never been
+   implemented, and `grep -rn "idle_fps\|UPDATE_DISABLED" game/ ui/` returns
+   nothing — so opening one adds the sheet's own cost and its build in a single
+   frame without removing the world's. That is precisely the input a cadence
+   inference reacts to.
+2. **A still image is what makes a re-time visible.** During world play the
+   camera is moving or the city is animating, and a seam lands on content that
+   has already changed; over a paused-looking city under a flat UI panel the same
+   seam sits on an unchanging picture and stays legible for as long as the eye
+   looks at it.
+3. **A flat panel is the worst possible carrier.** A band across a large area of
+   one colour is maximally visible; the same band across a noisy skyline is not.
+
+Every one of those three is specific to a sheet over a static world, which is
+exactly the region the player reported and exactly the complement of the region
+they reported clean.
+
+**And this is falsifiable in one session.** Report 98 §46's A/B changes ONE thing
+— whether the rate is declared — in ONE binary, with the perf-capture flag
+disarmed in both arms so the GPU-timestamp suspect (doc 91 §19's row 5) is absent
+from both. **If bands appear with `--refresh=auto` at the same rate as with
+`--refresh=off`, this whole section is wrong**, the declaration keeps only its
+battery and pacing arguments, and the next suspect is the one this cannot see:
+the compositor's own handling of a translucent full-screen layer over a
+SurfaceView. Say so in that order, and do not let the pin claim a fix it did not
+make.
+
 ## F. Explicitly deferred (unchanged from master plan)
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,

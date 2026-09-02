@@ -394,5 +394,10 @@
                 "thermal_step_down_status": 3,
                 "thermal_force_preset_status": 4,
                 "thermal_recover_s": 30.0,
-                "perf_log_interval_s": 2.0 }
+                "perf_log_interval_s": 2.0 },
+
+  "_refresh": "doc 13 \u00a72.8's missing half (report 98 RR-126), implemented by game/render/refresh_pin.gd with the platform half in android/plugins/slacum_native. The game caps Engine.max_fps at the governor's target_fps and had never DECLARED that rate to the display; on the reference device -- a Galaxy Z Fold 6 whose inner panel is a 1-120 Hz LTPO -- the platform then infers a mode from observed cadence and hunts whenever the cadence changes, which is what the player reports as bands in the sub menus. `default_mode` is what a fresh install runs; `lever_modes` is what --refresh= accepts (doc 13 D-20); `settings_modes` is the shorter ladder the S9 row cycles, 90 being a dev arm rather than a player choice because the reference panel has no 90 Hz mode to land on.",
+  "refresh": { "default_mode": "auto",
+               "lever_modes": ["auto", "60", "90", "120", "off"],
+               "settings_modes": ["auto", "60", "120", "off"] }
 }

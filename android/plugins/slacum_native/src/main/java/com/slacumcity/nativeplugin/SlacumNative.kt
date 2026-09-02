@@ -12,12 +12,16 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
+import android.view.Display
+import android.view.Surface
 import org.godotengine.godot.Dictionary
 import org.godotengine.godot.Godot
 import org.godotengine.godot.plugin.GodotPlugin
 import org.godotengine.godot.plugin.SignalInfo
 import org.godotengine.godot.plugin.UsedByGodot
 import java.io.File
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * `SlacumNative` — the Slacum City Android plugin (design doc 13 §2.6).
@@ -51,6 +55,13 @@ import java.io.File
  *     forward `--esa command_line_params` into `OS.get_cmdline_user_args()` on
  *     this build. Reading the extra is a *how*; what an argument MEANS stays in
  *     `game/dev_args.gd` and `game/main.gd`.
+ *  6. **The refresh pin** (doc 13 §2.8, report 98 RR-126) — [set_frame_rate]
+ *     DECLARES the rate the app intends to present at, and
+ *     [get_supported_refresh_rates] reports what the panel can actually do. The
+ *     app caps `Engine.max_fps` and never told the display about it; on an LTPO
+ *     panel that leaves the platform inferring a mode from observed cadence.
+ *     Which rate to declare is policy and stays in `game/render/refresh_pin.gd`;
+ *     this side only knows how to say it to `Surface` and to the window.
  */
 class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 
@@ -87,6 +98,14 @@ class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 
 		/** Returned by every accessor that has no platform answer to give. */
 		private const val UNKNOWN_STATUS = -1
+
+		/**
+		 * How far a panel's published refresh rate may sit from a whole multiple
+		 * of the target and still count as one. Half a hertz: it swallows the
+		 * 59.94-style rates a panel may report and nothing else — 60 against a
+		 * 45 fps target misses by 15 Hz and is never mistaken for a multiple.
+		 */
+		private const val RATE_EPSILON_HZ = 0.5
 
 		private const val PERMISSION_REQUEST_CODE = 7301
 		private const val PREFS = "slacum_native"
@@ -144,6 +163,27 @@ class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 	@Volatile
 	private var launchArgs: List<String> = emptyList()
 
+	/**
+	 * The Vulkan surface Godot presents to, handed to every plugin by
+	 * [onVkSurfaceCreated]. It is the surface a frame-rate vote has to be cast on
+	 * — the vote is a property of the SURFACE, not of the process, so a surface
+	 * that was recreated (the Fold folding, a rotation, a resume) has no vote
+	 * until it is cast again. That is what [pinnedFps] is kept for.
+	 */
+	@Volatile
+	private var vkSurface: Surface? = null
+
+	/**
+	 * The last rate GDScript asked for, or `< 0` for "never asked". Re-applied on
+	 * every new surface. Not a policy — a policy would decide the number; this
+	 * only remembers the one it was given.
+	 */
+	@Volatile
+	private var pinnedFps: Double = -1.0
+
+	@Volatile
+	private var pinnedFixed: Boolean = true
+
 	override fun getPluginName(): String = PLUGIN_NAME
 
 	override fun getPluginSignals(): MutableSet<SignalInfo> = mutableSetOf(
@@ -171,8 +211,25 @@ class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 
 	override fun onMainDestroy() {
 		unregisterThermalListener()
+		vkSurface = null
 		live = null
 		super.onMainDestroy()
+	}
+
+	// A frame-rate vote lives on the Surface and dies with it, so both callbacks
+	// re-cast whatever GDScript last asked for. `onVkSurfaceChanged` fires on the
+	// Fold's fold/unfold as well as on rotation, which is precisely the moment the
+	// pin would otherwise be silently lost.
+	override fun onVkSurfaceCreated(surface: Surface) {
+		super.onVkSurfaceCreated(surface)
+		vkSurface = surface
+		reapplyFrameRate()
+	}
+
+	override fun onVkSurfaceChanged(surface: Surface, width: Int, height: Int) {
+		super.onVkSurfaceChanged(surface, width, height)
+		vkSurface = surface
+		reapplyFrameRate()
 	}
 
 	// ------------------------------------------------------------------ time
@@ -257,6 +314,264 @@ class SlacumNative(godot: Godot) : GodotPlugin(godot) {
 				Log.w(TAG, "sustained performance mode refused: ${e.message}")
 			}
 		}
+	}
+
+	// ------------------------------------------------------------ refresh rate
+
+	/**
+	 * DECLARE the frame rate this app intends to present at (doc 13 §2.8,
+	 * report 98 RR-126). Returns true when the surface vote was actually cast.
+	 *
+	 * **The fault this closes.** The game caps `Engine.max_fps` at the preset's
+	 * `target_fps` and has never told the display about it. On a fixed 60 Hz panel
+	 * that costs nothing. On the reference device — a Galaxy Z Fold 6 whose inner
+	 * panel is a 1–120 Hz LTPO — the platform is left to INFER a mode from
+	 * observed present cadence, so the panel hunts whenever the cadence changes,
+	 * and a mode change mid-scan is the horizontal band the player reports.
+	 *
+	 * Two votes are cast, because they answer two different questions and Android
+	 * has no one call that answers both:
+	 *
+	 *  * **`Surface.setFrameRate(fps, compatibility)`** (API 30) tells
+	 *    SurfaceFlinger what the app PRODUCES. `FRAME_RATE_COMPATIBILITY_FIXED_SOURCE`
+	 *    is the honest compatibility for content that has capped itself: it says
+	 *    "this rate is fixed, pick a mode that carries it cleanly", where
+	 *    `_DEFAULT` says only "I would prefer this" and leaves the heuristics in
+	 *    charge. The **two-argument** overload is deliberate: on API 31+ it means
+	 *    `CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS`, so a mode switch the panel could
+	 *    not make invisibly is REFUSED rather than made — this call may not become
+	 *    a new source of the artifact it exists to remove.
+	 *  * **`window.attributes.preferredRefreshRate` / `preferredDisplayModeId`**
+	 *    tell the window manager which MODE to sit in. `preferredRefreshRate` is
+	 *    a request the framework matches loosely (nearest); `preferredDisplayModeId`
+	 *    names one exactly, and is set **only for a mode at the current
+	 *    resolution**, because a mode that also changes resolution is a
+	 *    reconfiguration, not a refresh-rate switch, and is the one kind the
+	 *    platform cannot do seamlessly.
+	 *
+	 * `fps <= 0` CLEARS both votes — that is how the app hands the panel back to
+	 * the platform's own policy, and it is what `--refresh=off` leaves in place.
+	 *
+	 * API 30 is the floor for the surface vote and `minSdk` is 29, so an API-29
+	 * device takes the documented fallback: **no vote at all, today's behaviour
+	 * exactly**, reported as `false` rather than pretended.
+	 */
+	@UsedByGodot
+	fun set_frame_rate(fps: Double, fixed: Boolean): Boolean {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+			// Recorded as "never declared", not as "declared and ignored":
+			// `current_frame_rate_pin()` is a diagnostic and it may only report
+			// what the platform was actually told.
+			Log.i(TAG, "frame rate not declared: API ${Build.VERSION.SDK_INT} < 30")
+			return false
+		}
+		pinnedFps = fps
+		pinnedFixed = fixed
+		val cast = castSurfaceFrameRate(fps, fixed)
+		applyPreferredMode(fps)
+		return cast
+	}
+
+	/**
+	 * The panel's refresh rates at the CURRENT resolution, rounded to whole Hz,
+	 * de-duplicated and ascending; empty when there is no display to ask.
+	 *
+	 * Rounded because the consumer is a settings row and a mode chooser that
+	 * reasons in integer multiples, and because every rate a phone panel actually
+	 * publishes is a whole number (60 / 90 / 120 / 144, and the LTPO rungs below
+	 * them). The rounding is this method's alone: [set_frame_rate] matches modes
+	 * on the unrounded `Display.Mode.refreshRate`, so the pin itself loses nothing.
+	 */
+	@UsedByGodot
+	fun get_supported_refresh_rates(): IntArray {
+		val display = currentDisplay() ?: return IntArray(0)
+		val current = display.mode ?: return IntArray(0)
+		val rates = sortedSetOf<Int>()
+		for (mode in display.supportedModes ?: emptyArray()) {
+			if (mode.physicalWidth != current.physicalWidth ||
+				mode.physicalHeight != current.physicalHeight
+			) {
+				continue
+			}
+			val hz = mode.refreshRate.roundToInt()
+			if (hz > 0) {
+				rates.add(hz)
+			}
+		}
+		return rates.toIntArray()
+	}
+
+	/**
+	 * The rate the app is presently declaring, rounded to whole Hz, or `-1` when
+	 * it has never declared one. GDScript's `RefreshPin` keeps its own copy for
+	 * the idempotence test; this one exists so a device session can read the
+	 * PLUGIN's answer rather than the shell's belief about it — and, because its
+	 * own signature carries no `double`, it answers `-1` rather than going missing
+	 * if [set_frame_rate] were ever to fail registration.
+	 */
+	@UsedByGodot
+	fun current_frame_rate_pin(): Int = if (pinnedFps < 0.0) -1 else pinnedFps.roundToInt()
+
+	private fun castSurfaceFrameRate(fps: Double, fixed: Boolean): Boolean {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+			return false
+		}
+		val surface = currentSurface() ?: return false
+		if (!surface.isValid) {
+			return false
+		}
+		return try {
+			surface.setFrameRate(
+				fps.toFloat().coerceAtLeast(0.0f),
+				if (fps > 0.0 && fixed) {
+					Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE
+				} else {
+					Surface.FRAME_RATE_COMPATIBILITY_DEFAULT
+				},
+			)
+			true
+		} catch (e: Exception) {
+			Log.w(TAG, "setFrameRate refused: ${e.message}")
+			false
+		}
+	}
+
+	/**
+	 * `Window` is UI-thread-only, hence the hop — the same one
+	 * [set_sustained_performance] takes.
+	 */
+	private fun applyPreferredMode(fps: Double) {
+		val host = activity ?: return
+		val chosen = if (fps > 0.0) modeFor(fps) else null
+		runOnHostThread {
+			try {
+				val params = host.window.attributes
+				params.preferredRefreshRate = chosen?.refreshRate ?: 0.0f
+				params.preferredDisplayModeId = chosen?.modeId ?: 0
+				host.window.attributes = params
+				Log.i(TAG, "refresh pin: fps=$fps mode=${chosen?.refreshRate ?: 0.0f}Hz")
+			} catch (e: Exception) {
+				Log.w(TAG, "preferred display mode refused: ${e.message}")
+			}
+		}
+	}
+
+	/**
+	 * **Mirror of `RefreshPin.choose_refresh_hz()` in `game/render/refresh_pin.gd`,
+	 * which is where the rule is written down and table-tested.** It is duplicated
+	 * here for the same reason `PerfGovernor` mirrors `THERMAL_STATUS_*`: the rule
+	 * has to run on a `Display.Mode` object that only exists on a device, and the
+	 * suite has to be able to check the rule without one.
+	 *
+	 * Three clauses, in order, over the modes at the current resolution:
+	 *
+	 *  1. **the SMALLEST mode that is an integer multiple of the target** — 60 on
+	 *     a {60, 120} panel for a 60 fps cap, 90 on a {60, 90, 120} panel for 45.
+	 *     A multiple is what makes the cadence exact: every app frame is held for
+	 *     the same whole number of scanouts, which is the condition under which a
+	 *     capped game has no beat against the panel at all. Smallest rather than
+	 *     largest because every extra scanout is battery for a picture that does
+	 *     not change — 120 Hz for a 60 fps game buys nothing and doc 13 §2.8 calls
+	 *     capping at 60 "the single biggest battery lever available".
+	 *  2. **no multiple exists: the FASTEST mode at or above the target** — 120 for
+	 *     a 45 fps cap on a {60, 120} panel. Neither 60 nor 120 divides 45, so
+	 *     some frames are held one scanout longer than others whatever is picked;
+	 *     the jitter is one scanout, so the faster mode halves it (±4.2 ms at
+	 *     120 Hz against ±8.3 ms at 60).
+	 *  3. **nothing reaches the target: the fastest mode there is** — the panel
+	 *     cannot do what the preset asked, and saying so beats asking for a mode
+	 *     that does not exist.
+	 *
+	 * `null` when there is no display or no mode at this resolution: the surface
+	 * vote is still cast and the window is left alone, which is strictly more than
+	 * the app did before and strictly less than a guess.
+	 */
+	private fun modeFor(fps: Double): Display.Mode? {
+		val display = currentDisplay() ?: return null
+		val current = display.mode ?: return null
+		val candidates = (display.supportedModes ?: emptyArray()).filter {
+			it.physicalWidth == current.physicalWidth &&
+				it.physicalHeight == current.physicalHeight &&
+				it.refreshRate > 0.0f
+		}
+		if (candidates.isEmpty()) {
+			return null
+		}
+		var best: Display.Mode? = null
+		var bestRate = 0.0f
+		for (mode in candidates) {
+			val rate = mode.refreshRate
+			if (rate + RATE_EPSILON_HZ < fps) {
+				continue
+			}
+			val multiple = (rate / fps).roundToInt()
+			if (multiple < 1 || abs(rate - multiple * fps) > RATE_EPSILON_HZ) {
+				continue
+			}
+			if (best == null || rate < bestRate) {
+				best = mode
+				bestRate = rate
+			}
+		}
+		if (best != null) {
+			return best
+		}
+		for (mode in candidates) {
+			if (mode.refreshRate + RATE_EPSILON_HZ < fps) {
+				continue
+			}
+			if (best == null || mode.refreshRate > bestRate) {
+				best = mode
+				bestRate = mode.refreshRate
+			}
+		}
+		if (best != null) {
+			return best
+		}
+		for (mode in candidates) {
+			if (best == null || mode.refreshRate > bestRate) {
+				best = mode
+				bestRate = mode.refreshRate
+			}
+		}
+		return best
+	}
+
+	/**
+	 * The surface Godot presents to. The Vulkan callback is the first source
+	 * because it is handed the exact surface the renderer uses; the render view is
+	 * the fallback for a host that never delivered the callback (a GL build, or a
+	 * plugin attached after the surface existed).
+	 */
+	private fun currentSurface(): Surface? {
+		vkSurface?.let { return it }
+		return try {
+			getGodot().renderView?.view?.holder?.surface
+		} catch (e: Exception) {
+			Log.w(TAG, "render view surface unreadable: ${e.message}")
+			null
+		}
+	}
+
+	private fun currentDisplay(): Display? {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+			return null
+		}
+		return try {
+			(context ?: activity)?.display
+		} catch (e: Exception) {
+			Log.w(TAG, "display unreadable: ${e.message}")
+			null
+		}
+	}
+
+	/** Re-cast the standing vote on a surface that has just been (re)created. */
+	private fun reapplyFrameRate() {
+		val fps = pinnedFps
+		if (fps < 0.0 || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+			return
+		}
+		castSurfaceFrameRate(fps, pinnedFixed)
 	}
 
 	// ------------------------------------------------------------- permissions

@@ -93,13 +93,19 @@ step_build_check() {
   adb pull "$apk" "$tmp/base.apk" >/dev/null 2>&1 || {
     echo "   pull failed"; rm -rf "$tmp"; return 1; }
   unzip -o -q "$tmp/base.apk" 'classes*.dex' -d "$tmp" 2>/dev/null
-  local hits control
+  local hits control pin
   hits=$(cat "$tmp"/classes*.dex 2>/dev/null | grep -a -c 'launch_args') || hits=0
   # A control string that is in EVERY build of this plugin, so "0 hits" can be
   # told apart from "the grep is broken / the dex did not extract".
   control=$(cat "$tmp"/classes*.dex 2>/dev/null | grep -a -c 'thermal_status') || control=0
+  # Wave 17: the refresh pin (report 98 RR-126) has the same failure mode as
+  # D-20 and the same tell — a stale AAR ships a plugin with no
+  # `set_frame_rate`, `AndroidNative.set_frame_rate()` finds no method, the
+  # panel is never told, and the --refresh A/B runs both of its arms as `off`.
+  pin=$(cat "$tmp"/classes*.dex 2>/dev/null | grep -a -c 'set_frame_rate') || pin=0
   rm -rf "$tmp"
   echo "   launch_args in dex: $hits    (control thermal_status: $control)"
+  echo "   set_frame_rate in dex: $pin"
   if [[ "$control" -eq 0 ]]; then
     echo "   INCONCLUSIVE: the control symbol is missing too — the dex scan itself failed."
     return 1
@@ -110,7 +116,13 @@ step_build_check() {
     echo "   Rebuild the AAR, re-export, reinstall (see the comment above) first."
     return 2
   fi
-  echo "   OK — the plugin can read the launch Intent."
+  if [[ "$pin" -eq 0 ]]; then
+    echo "   *** STALE PLUGIN for the REFRESH PIN: --refresh=auto and =off are the"
+    echo "   same arm on this build. The dev-argument half above is fine; the"
+    echo "   frame-rate declaration is not. Rebuild the AAR before report 98 §46's A/B."
+    return 2
+  fi
+  echo "   OK — the plugin can read the launch Intent and declare a frame rate."
 }
 
 # ---------------------------------------------------------------- 1. the probe

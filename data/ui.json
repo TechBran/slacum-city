@@ -1065,6 +1065,15 @@
 				"default_from": "defaults.graphics"
 			},
 			{
+				"_comment": "D-75 / report 98 RR-126 — the refresh pin. The game caps Engine.max_fps at the preset's target_fps and had never DECLARED that rate to the display; on the reference device's 1-120 Hz LTPO panel the platform then infers a mode from cadence and hunts when the cadence changes, which is the banding the player reports in the sub menus. AUTO (the default) declares whatever the cap is; 60 and 120 pin the panel outright; OFF declares nothing and is the shipped behaviour, kept because the A/B needs a control arm that is the build rather than a rebuild of it. The ladder is doc 11's file (`render.json.refresh.settings_modes`), never a second copy here — 90 is on the LEVER and not on this row, because the reference panel has no 90 Hz mode for a player to land on. Device-scoped, like the preset above it.",
+				"key": "refresh_rate",
+				"kind": "choice",
+				"options_from": "refresh_modes",
+				"default_from": "defaults.refresh_rate",
+				"value_text_from": "refresh",
+				"hint_key": "ui_settings_refresh_rate_hint"
+			},
+			{
 				"key": "autosave_interval_min",
 				"kind": "choice",
 				"options": [
@@ -1255,6 +1264,7 @@
 		],
 		"device_scoped_keys": [
 			"graphics",
+			"refresh_rate",
 			"auto_quality",
 			"text_scale",
 			"reduce_motion",
@@ -1747,6 +1757,7 @@
 		"invert_pan": false,
 		"follow_dispatched_unit": true,
 		"graphics": "balanced",
+		"refresh_rate": "auto",
 		"battery_saver": false
 	}
 }

@@ -1686,3 +1686,17 @@ finding of every kind, **six** boxes × **three** text scales; 53 states per cel
 at the fork, 55 after): the table is in §2.18. **408 → 0**, with the 100 % row
 unchanged at zero on every box — including 640 × 340, which no `BOXES` list in
 this repository contained until D-58.
+
+### Wave-17 deltas — the refresh row (2026-09-01)
+
+| id | change | doc ref | why |
+|---|---|---|---|
+| D-75 | **S9 gains one 48 dp cycling row, `Refresh rate` — Auto / 60 / 120 / Off**, immediately under Graphics. `data/ui.json.settings.rows.refresh_rate` is a `choice` whose ladder is `options_from: "refresh_modes"` → `data/render.json.refresh.settings_modes` and whose default is `defaults.refresh_rate` (`auto`); `value_text_from: "refresh"` resolves `ui_settings_value_refresh_*` with no branch in `SettingsModel.value_text()`. Device-scoped, beside the preset it modulates. `ui/settings_model.gd` gains one option source and nothing else; the sheet is untouched, because a row is data. | §2.13, §3.2, doc 13 §2.8, report 98 RR-126 | **The game caps its frame rate and had never told the screen.** On the reference device — a Fold 6 with a 1–120 Hz LTPO inner panel — the platform then infers a mode from the app's observed cadence and re-derives it whenever the cadence changes, which is what the player reports as bands *"only in the sub menus"*: a sheet opening over a still world is a workload step with no camera motion to hide the re-time (doc 93 §AE). The row exists for two reasons and one of them is not a preference: **Off is the A/B's control arm**, the shipped behaviour, selectable without a second binary, and Auto is what a player who never opens this screen gets. `90` is on the `--refresh=` lever and deliberately **not** on this ladder — the reference panel has no 90 Hz mode to land on, and a row offering a mode the phone cannot enter is a control that lies (the same rule §2.13's road-repair ladder already follows). |
+
+**One row, and it is a real one.** `refresh_rate` writes no sim state and takes no
+`policy`: it is a device preference like `graphics`, and the shell hands its value
+to `RefreshPin.set_mode()` the way it hands `auto_quality` to
+`PerfGovernor.enabled`. Round-tripped and migration-tested in
+`tests/test_ui_settings.gd` (`…_round_trips_and_refuses_a_mode_the_pin_would_not_take`):
+a saved `"240"` from a build whose ladder was longer is **dropped for its
+default**, which is §3.2's promise applied to a row that did not exist last wave.

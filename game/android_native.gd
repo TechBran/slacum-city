@@ -26,6 +26,12 @@ extends RefCounted
 ##   `OS.get_cmdline_user_args()`. Without it no dev argument reaches the game on
 ##   device and the runbook's whole scenario vocabulary is unreachable.
 ##
+## * **the refresh pin** — `set_frame_rate()`, `supported_refresh_rates()` and
+##   `current_frame_rate_pin()`, doc 13 §2.8's RR-126. The game caps
+##   `Engine.max_fps` and never told the panel; on an LTPO display that leaves the
+##   platform guessing a mode from cadence. Same split as thermal: this class only
+##   carries the number across, and `game/render/refresh_pin.gd` decides it.
+##
 ## A fourth capability **now ships**: the notification platform
 ## (`supports_notifications`, `ensure_channel`, `post_notification`,
 ## `schedule_notification`, `cancel_notifications`, the `POST_NOTIFICATIONS`
@@ -179,6 +185,47 @@ func set_sustained_performance(on: bool) -> void:
 	if _plugin == null:
 		return
 	_plugin.set_sustained_performance(on)
+
+
+# ------------------------------------------------------------ the refresh pin
+
+## Declare the frame rate the app intends to present at (doc 13 §2.8's RR-126).
+## The plugin casts two votes — `Surface.setFrameRate` and the window's preferred
+## display mode — and answers true when the surface vote landed. `fps <= 0`
+## clears both. **Which** rate to declare is `game/render/refresh_pin.gd`'s.
+##
+## `has_method` rather than a bare call, on the same terms as `launch_args()`: an
+## older AAR beside newer GDScript degrades to "the panel was never told", which
+## is the behaviour that shipped before this method existed.
+func set_frame_rate(fps: float, fixed: bool = true) -> bool:
+	if _plugin == null or not _plugin.has_method("set_frame_rate"):
+		return false
+	return bool(_plugin.set_frame_rate(fps, fixed))
+
+
+## The panel's refresh rates at the current resolution, whole Hz, ascending.
+## Empty off-device, on an older AAR, and on API < 30 — and empty means "no
+## opinion", never "the panel has one mode".
+func supported_refresh_rates() -> PackedInt32Array:
+	if _plugin == null or not _plugin.has_method("get_supported_refresh_rates"):
+		return PackedInt32Array()
+	var out := PackedInt32Array()
+	var raw: Variant = _plugin.get_supported_refresh_rates()
+	if raw is PackedInt32Array:
+		return raw
+	if raw is Array:
+		for value: Variant in (raw as Array):
+			out.append(int(value))
+	return out
+
+
+## What the PLUGIN believes it is declaring, or -1. The shell keeps its own copy;
+## this is the second reading that tells a device session whether the JNI hop
+## landed at all.
+func current_frame_rate_pin() -> int:
+	if _plugin == null or not _plugin.has_method("current_frame_rate_pin"):
+		return -1
+	return int(_plugin.current_frame_rate_pin())
 
 
 # ----------------------------------------------------------- notifications
