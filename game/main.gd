@@ -1579,6 +1579,20 @@ func _note_permission_evidence(plans: Array) -> void:
 			return
 
 
+## Set the moment the modal goes up, and never cleared. It is the other half of
+## "BACK spends no chance": `PermissionFlow._asked_this_session` is set by
+## `accept()` and `decline()` and by nothing else — deliberately, because BACK is
+## not an answer — so `should_prompt()` is still true on the very next frame
+## after a BACK, and a pump that trusted it alone would re-open the sheet
+## **every frame** and hand the player a modal they cannot get out of.
+##
+## The right place for the guard is here rather than in `PermissionFlow`: the
+## flow's own once-a-session rule is about *chances spent*, and this one is about
+## *sheets shown*. The settings row deliberately bypasses both (§2.13's row would
+## otherwise do nothing for the rest of the session).
+var _permission_prompt_shown := false
+
+
 ## One frame with nothing else on it. The rationale is a modal and a modal that
 ## opens over the title door, over the veil, over a placement or over another
 ## modal is a modal the player dismisses without reading — which costs one of
@@ -1586,13 +1600,16 @@ func _note_permission_evidence(plans: Array) -> void:
 func _pump_permission_prompt() -> void:
 	if permission_flow == null or ui_root == null or _title_up:
 		return
+	if _permission_prompt_shown:
+		return
 	if _restore_cursor != null or _catchup_cursor != null or ui_root.veil_open():
 		return
 	if not permission_flow.should_prompt():
 		return
 	if ui_root.modal_open():
 		return
-	ui_root.present_permission_rationale(permission_flow.request_rationale())
+	if ui_root.present_permission_rationale(permission_flow.request_rationale()):
+		_permission_prompt_shown = true
 
 
 func _on_permission_answered(accepted: bool) -> void:

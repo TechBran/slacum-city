@@ -682,6 +682,24 @@ class PermissionShellMirror extends RefCounted:
 
 	var permission_flow: PermissionFlow
 	var notification_router: NotificationRouter
+	## `Main._permission_prompt_shown` and `Main.modal_open`, as a test can have
+	## them: the first is the shell's own once-a-session guard, the second stands
+	## in for `UIRoot.modal_open()`.
+	var permission_prompt_shown := false
+	var modal_open := false
+	## Every reason the pump handed to `present_permission_rationale`.
+	var shown: Array[String] = []
+
+	func _pump_permission_prompt() -> void:
+		if permission_flow == null or permission_prompt_shown or modal_open:
+			return
+		if not permission_flow.should_prompt():
+			return
+		var reason := permission_flow.request_rationale()
+		if reason == "":
+			return
+		shown.append(reason)
+		permission_prompt_shown = true
 
 	func _note_permission_trigger(batch: Array) -> void:
 		if permission_flow == null or permission_flow.triggered:
@@ -777,6 +795,36 @@ func test_31_a_second_prompt_is_earned_by_a_p1_the_player_never_heard() -> void:
 	assert_eq(mirror.permission_flow.request_rationale(
 			NOW_UNIX + PermissionFlow.REPROMPT_COOLDOWN_S + 1.0),
 			PermissionFlow.REASON_MISSED_P1)
+
+
+func test_31b_a_modal_the_player_backed_out_of_does_not_come_straight_back() -> void:
+	# The trap in "BACK spends no chance": `_asked_this_session` is set by
+	# `accept()` and `decline()` and by NOTHING else, deliberately — so
+	# `should_prompt()` is still true on the very next frame after a BACK. A pump
+	# that trusted it alone would re-open the sheet every frame and hand the
+	# player a modal they cannot get out of. The shell keeps its own
+	# once-a-session guard for exactly that, and the two are not the same rule:
+	# the flow's counts CHANCES SPENT, this one counts SHEETS SHOWN.
+	var native := FakeNative.new()
+	native.permission = AndroidNative.PERMISSION_NEVER_ASKED
+	var mirror := _mirror(native)
+	mirror._note_permission_trigger([{"type": "incident_resolved", "incident_id": 1}])
+
+	for frame in 300:
+		mirror._pump_permission_prompt()
+	assert_eq(mirror.shown.size(), 1, "three hundred idle frames, one modal")
+	assert_eq(mirror.shown[0], PermissionFlow.REASON_FIRST)
+	assert_eq(mirror.permission_flow.asked_count, 0,
+			"and BACK spent none of Android's two chances")
+
+	# A modal already on screen also stops the pump, so the rationale can never
+	# open over the title door, the veil, or another sheet.
+	var busy := _mirror(FakeNative.new())
+	busy.permission_flow.native.permission = AndroidNative.PERMISSION_NEVER_ASKED
+	busy.modal_open = true
+	busy._note_permission_trigger([{"type": "upgrade_started_sim", "sim_id": "B-1"}])
+	busy._pump_permission_prompt()
+	assert_eq(busy.shown.size(), 0)
 
 
 func test_32_the_permission_bookkeeping_is_device_scoped_not_city_scoped() -> void:

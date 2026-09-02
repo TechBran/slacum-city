@@ -374,6 +374,18 @@ Release manifest, complete:
 > counting it as a dismissal would spend one of Android's two chances silently.
 > `PermissionSheet.answered` is emitted by the two buttons and never by `close()`.
 >
+> **…and that has a trap in it, which cost this lane a bug.** `_asked_this_session`
+> is set by `accept()` and `decline()` and by *nothing else* — deliberately — so
+> `should_prompt()` is **still true on the very next frame after a BACK**. A pump
+> that trusted it alone re-opened the sheet every frame and handed the player a
+> modal they could not get out of. The shell therefore keeps its own
+> `_permission_prompt_shown` guard, and the two rules are not the same rule: the
+> flow's counts **chances spent**, the shell's counts **sheets shown**. S10's row
+> bypasses both on purpose, because a row that did nothing for the rest of the
+> session would be the control doc 12 §2.13 forbids.
+> `tests/test_android_notifications.gd::test_31b` walks 300 idle frames and
+> asserts one modal and `asked_count == 0`.
+>
 > **The counters are device-scoped** (`user://settings.cfg`, section
 > `permission`, doc 08 §2.5), and that is a correctness argument rather than a
 > convenience: Android's two dismissals are spent per INSTALL, so a counter that
