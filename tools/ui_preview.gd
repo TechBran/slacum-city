@@ -45,6 +45,10 @@ const SCREENS: Array[String] = [
 	"hud", "hud_banners", "hud_critical",
 	"build", "build_grid", "build_locked", "build_roads",
 	"placement_ok", "placement_blocked",
+	# Wave 18 (doc 12 §2.7, PA-23): the placement bar with the REASON on line two
+	# and a door under it. `placement_unowned` is the refusal whose fix is
+	# somewhere else on the map — the state the door exists for.
+	"placement_unowned",
 	"path_aiming", "path_ok", "path_blocked", "path_refund", "path_feeder",
 	"building", "building_blocked", "building_repairable", "building_water",
 	# Wave 17's POWER section (doc 12 §2.9 D-70) in its two states: the wire with
@@ -53,6 +57,9 @@ const SCREENS: Array[String] = [
 	"land_buy", "land_blocked", "land_developing",
 	"drawer", "drawer_empty", "drawer_expanded", "drawer_water",
 	"picker", "picker_empty",
+	# Wave 18 (PA-52): a dispatch the sim refused, in the words of the refusal it
+	# actually raised rather than "That unit could not be sent."
+	"picker_refused",
 	"dashboard", "economy", "infrastructure", "response",
 	"away", "away_short",
 	"alerts", "alerts_empty",
@@ -596,6 +603,11 @@ func _apply(screen: String) -> void:
 			_place_ghost(true)
 		"placement_blocked":
 			_place_ghost(false)
+		"placement_unowned":
+			# `E_NOT_OWNED` routes `FIX_BLOCK`, so this is the bar carrying both
+			# halves of PA-23: the sentence that says why, and the button that
+			# goes to the block the player has to buy first.
+			_place_ghost_at(_unowned_tile())
 		"path_aiming":
 			# Step one of the two-step run flow: the card is held, the ghost is
 			# hunting, and the bar's primary button reads START.
@@ -696,6 +708,14 @@ func _apply(screen: String) -> void:
 			_root.incident_drawer.open()
 			_root.incident_drawer.row_button(31).pressed.emit()
 			_root.incident_drawer.action_button("Assign", 31).pressed.emit()
+		"picker_refused":
+			_root.incident_drawer.open()
+			_root.incident_drawer.row_button(31).pressed.emit()
+			_root.incident_drawer.action_button("Assign", 31).pressed.emit()
+			var picked: Array = _root.unit_picker.model.rows()
+			if not picked.is_empty():
+				_root.report_dispatch_result(int((picked[0] as Dictionary)["id"]),
+						false, CommandQueue.fail(&"E_UNREACHABLE"))
 		"picker_empty":
 			_root.set_unit_provider(func(_incident_id: int) -> Array: return [])
 			_root.incident_drawer.open()
@@ -1202,6 +1222,36 @@ func _power_blocked_building() -> String:
 		if blockers.has(&"E_POWER_HEADROOM"):
 			return str(key)
 	return _first_building()
+
+
+## The same flow as `_place_ghost`, aimed at a tile the caller names — the states
+## whose point is WHICH refusal the bar is carrying, not whether it has one.
+func _place_ghost_at(tile: Vector2i) -> void:
+	var sheet := _root.build_sheet
+	sheet.open()
+	sheet.select_category("residential")
+	var card := sheet.card_button("house")
+	if card == null:
+		return
+	card.pressed.emit()
+	sheet.move_ghost(Vector3(float(tile.x) * 8.0 + 4.0, 0.0, float(tile.y) * 8.0 + 4.0))
+
+
+## A tile on land the city has not bought. Asked for, never named: doc 09's
+## starter city is data and the owned core may move.
+func _unowned_tile() -> Vector2i:
+	var origin := _occupied_tile()
+	for radius in range(1, 40):
+		for dx in [-radius, radius]:
+			for dy in range(-radius, radius + 1):
+				for tile: Vector2i in [origin + Vector2i(dx, dy),
+						origin + Vector2i(dy, dx)]:
+					if not TileGrid.in_bounds(tile.x, tile.y):
+						continue
+					var block: LandBlock = _sim.world.block_of_tile(tile.x, tile.y)
+					if block != null and not block.is_owned():
+						return tile
+	return origin + Vector2i(20, 20)
 
 
 func _occupied_tile() -> Vector2i:

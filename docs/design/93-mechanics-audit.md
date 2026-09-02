@@ -3966,3 +3966,91 @@ And the count went the other way, which is the part worth writing down:
 shrink a file. Report 98 §50.3 states the same thing with the commands. The
 assert target is met; the line target is not, and §AI1 is the argument for why
 that is the correct trade rather than an excuse for it.
+
+
+## AJ. Wave-18 rulings — the requirement contract: what a `Fix this →` is, what a tooltip may carry, and how a checklist stays honest (2026-09-02)
+
+Three findings from the production audit's UI lane sit on one mechanism. Doc 12
+§2.7 calls `Fix this →` the game's most important teaching device; this section
+records what it was actually doing, and the three rulings that make the claim
+true. Report 98 §51 carries the binding text (RR-142, RR-143, RR-144).
+
+### AJ1. `{kind, id}` is not a target (99-PA PA-05, RR-142)
+
+The formatter has always emitted a kind and an id, and the shell has always
+resolved the id **per kind**. That works exactly as long as every producer knows
+which namespace the consumer will look the id up in, and two producers did not:
+
+| Row | `id` it supplied | Kind it routed | What the shell did |
+|---|---|---|---|
+| `POWER_CAPACITY` (pre-Wave-17) | `grid.attachment_of()` → `T-06` | `FIX_BUILDING` | `sim.buildings.get("T-06")` → `null` → `return` |
+| `E_TRANSFORMER_FULL` / `E_NEEDS_TRANSFORMER` | *(none)* | `FIX_TILE` | flew the camera to the **ghost's** tile — the one under the player's finger |
+| `E_AVENUE` | *(none supplied)* → `""` | `FIX_ROAD_SEGMENT` | `if id == "": return` |
+
+None of them logged anything. The building panel drew the button on `kind !=
+FIX_NONE` alone; the land panel escaped only because `land_panel.gd:392` also
+requires a non-empty id — a second check nobody wrote down as a rule.
+
+**`E_NO_SLOT` is the row that is NOT on that list, and it is worth its own
+line**, because this lane put it there first and the suite took it back off. Its
+target is a doc 04 **substation**, and a substation is also a doc 02 shell:
+`sim.buildings.has("SUB-A")` is `true` on the founding city and `substation` is
+an archetype the build sheet sells. `FIX_BUILDING` resolves, the camera move is
+the whole useful answer, and doc 12 D-71 had already ruled it deliberate. The
+general point is the one that survives the wave: *"the id looks like a
+component"* is not evidence, and `has()` is — which is why the corrected routing
+of `E_TRANSFORMER_FULL` and `E_NEEDS_TRANSFORMER` above rests on
+`attachment_of("H-001")` = `T-06`, `buildings.has("T-06")` = `false`,
+`component_tile("T-06")` = `(39, 34)`, measured rather than reasoned.
+
+**The ruling** (RR-142): the row carries `params`, and `params` is what the
+router **acts on**. A tile for `FIX_TILE`, a district key for `FIX_DISTRICT`, a
+component id for the new `FIX_COMPONENT`, the `CitySim` verb for the two purchase
+kinds. A producer that cannot fill them routes `FIX_NONE`.
+
+**Why a tile is the currency.** Because the producer already has one. Every one
+of these rows walked the map to write its sentence — `E_AVENUE` searched outward
+to the nearest avenue precisely so it could print *"no avenue within 4 tiles"* —
+and then discarded the coordinate and passed a name. The fix is not a better
+lookup on the consumer's side; it is to stop throwing away the answer.
+
+### AJ2. A tooltip is an accelerator, never a carrier (99-PA PA-23, RR-143)
+
+The placement bar put the requirement's title on screen and its remedy in
+`tooltip_text`. On a phone that is not a shortened message — it is an absent one.
+The general rule is in RR-143: any string written to `tooltip_text` is written to
+a visible control in the same commit.
+
+The second half of the same row is subtler and worth recording separately. The
+bar's commit-refusal fallback wrote into a label that lives **inside the build
+sheet**, and the flow closes the sheet before the write can happen. A surface
+whose lifetime is shorter than the message it carries is not a surface; the
+notice is gone and the bar — which is up for exactly as long as placement is —
+carries the sentence instead.
+
+### AJ3. Two hand-maintained lists that must agree are a defect with a date on it (99-PA PA-24, RR-144)
+
+`cmd_upgrade_building` appends seven codes; `UPGRADE_CHECKS` listed six. The
+missing one, `E_WATER_HEADROOM`, is a live gate, and the panel's answer to a
+building blocked on it was **six green ticks and the sentence "Every requirement
+met."** over a dead button. This is worse than an unexplained refusal: it is a
+surface actively asserting the opposite of what the gate found.
+
+The ruling (RR-144) is not "add the row" — that is the fix, not the rule. It is
+that the checklist is verified against the **command's own source**, so the next
+gate doc 02 grows fails the suite in the commit that adds it rather than in the
+audit two waves later. The test parses `blockers.append(&"…")` out of
+`cmd_upgrade_building`'s body; a source scan is the honest instrument here,
+because the alternative — a second list of codes for the test to compare against
+— is the same defect with one more copy of it.
+
+### AJ4. What this predicts elsewhere
+
+Three rows, one shape: **a contract whose consumer half was written against
+assumptions the producer half never promised to keep.** The audit's own evidence
+line for PA-05 records that `grep -rn "main.gd" tests/` finds six prose comments
+and no test — the dispatcher had never been exercised at all. Every seam in this
+tree where a `Dictionary` crosses from `ui/` to `game/` is worth the same
+question: *is there a test that a real producer's output resolves in the real
+consumer?* This wave answers it for the requirement rows. It does not answer it
+for the event batch, the notification payloads, or the overlay feeds.

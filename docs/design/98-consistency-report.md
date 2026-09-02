@@ -6991,3 +6991,199 @@ The follow-on is filed rather than claimed: doc 93 §AI2 ranks the eight
 remaining extractions by what a player sees when one is wrong, and item 3
 (`_on_sim_batch` → `RenderEventRouter`) is the one that carries the
 constitution's own event rule.
+
+## 51. WAVE 18 — the building panel and the requirement contract (binding)
+
+Doc 12 §2.7 calls `Fix this →` *"the single most important teaching device in the
+game"*. This wave measured what it actually does, and the answer, on the two
+surfaces a new player meets first, was **nothing at all**. The production audit
+found the mechanism (99-PA PA-05, PA-23, PA-24); this section rules on the shape
+that stops it recurring, because in all three cases the failure was not a wrong
+branch — it was a contract with a hole in it that no test could see.
+
+### RR-142 — A `Fix this →` target is `{kind, id, params}`; an id the router cannot resolve is not a target, it is a button that does nothing (docs 12 §2.7a, 99-PA PA-05)
+
+**The finding.** `RequirementFormatter.format()` emitted `fix_target = {kind,
+id}`, and the shell resolved `id` per kind. Two of the building panel's seven
+checklist rows resolved to nothing:
+
+* `POWER_CAPACITY` set `fix_target_id = grid.attachment_of(sim_id)`, which is a
+  **transformer** (`T-06` on the founding city), and routed `FIX_BUILDING`, whose
+  branch reads `sim.buildings.get(id)` → `null` → `return`.
+* `E_AVENUE` carried no `fix_target_id` at all, so the formatter emitted `id ==
+  ""` and the router discarded it on its first line.
+
+*(The audit's third candidate, `E_NO_SLOT`, is **not** one of them and the ruling
+below says why: `buildings.has("SUB-A")` is `true`.)* Neither of the two produced
+an error, a log line or a haptic. The land panel escaped only
+because `land_panel.gd:392` happens to gate its button on a non-empty id as well
+as a kind — a second, accidental check that the building panel does not have.
+
+**The ruling.** Every formatted row carries a third field, `params`, and it is
+**what the router needs in order to ACT** — a `Vector2i` tile for `FIX_TILE`, a
+district key for `FIX_DISTRICT`, a component id for `FIX_COMPONENT`, the
+`CitySim` verb for the two purchase kinds. The per-kind table lives in
+`ui/requirement_formatter.gd`'s class doc and in doc 12 §2.7a, and it is
+**normative in both directions**: a producer that cannot fill a row's `params`
+routes `FIX_NONE` and draws no button, rather than shipping one the router will
+drop on the floor. `FIX_COMPONENT` is new and exists for exactly this reason, and **which rows
+belong in it was measured rather than assumed**: on the founding city
+`attachment_of("H-001")` = `T-06`, `buildings.has("T-06")` = `false`,
+`component_tile("T-06")` = `(39, 34)`. `E_TRANSFORMER_FULL` and
+`E_NEEDS_TRANSFORMER` move there. `E_NO_SLOT` does **not** — its substation is
+also a doc 02 shell (`buildings.has("SUB-A")` = `true`), so `FIX_BUILDING`
+resolves and doc 12 D-71 already ruled that one deliberate. A contract this lane
+first got wrong in the other direction, and the suite caught it: the correction
+is recorded here rather than quietly fixed, because "the id looks like a
+component" is not evidence and `has()` is.
+
+**Why `params` and not a better id.** Because the two halves are written by two
+different lanes and the id alone cannot say which namespace it is in. A tile is
+unambiguous, and the row that computed it — `_check_params`, which already walked
+the map to write the sentence — is the row that has it. `E_AVENUE` searched
+outward to the nearest avenue to print *"no avenue within 4 tiles"* and then
+threw the tile away.
+
+**The test**, in three parts, because "normative in both directions" is three
+claims. `tests/test_requirement_formatter.gd::
+test_every_fix_target_carries_the_params_its_kind_needs` walks every code in
+`CODE_TABLE`, asserts the kind is one of `FIX_KINDS`, and asserts the params its
+kind's row of the table requires — with `FIX_TILE` strict, because for that kind
+the tile **is** the target. `tests/test_build_controller.gd::
+test_every_real_fix_target_resolves_or_is_none` is the half PA-05 asked for by
+name: the same walk over rows the REAL producers build against a BOOTED sim —
+the upgrade checklist on a building broken every way it can be, placement refused
+on each wall a player hits, the water block's own ladder — every one of which
+resolves to something `ui/fix_router.gd` can act on, or is `FIX_NONE`, never a
+silent null.
+
+And `test_the_two_copies_of_the_params_contract_agree` diffs the class doc's
+table against doc 12 §2.7a's, kind by kind and key by key. **That test exists
+because this lane drifted them inside one wave**: `FIX_BLOCK` gained `block_id`
+in `_fix_params_for` and in doc 12 and not in the class doc, which is the copy
+Lane D's router is written against. A contract written twice is a contract that
+drifts — PA-75's whole finding, one file over — and the only cure that survives
+the wave is a test that reads both copies.
+
+### RR-143 — A refusal reaches a touch screen as visible copy with a door, or it does not reach the player at all (docs 12 §2.7, 99-PA PA-23)
+
+**The finding.** `ui/build_sheet.gd:870-879` put the requirement's TITLE on the
+placement bar and its BODY — the sentence carrying the remedy — in
+`tooltip_text`. Godot shows no tooltip for a touch event, and
+`grep -rn -i tooltip game/touch_input.gd game/main.gd ui/ui_root.gd` returns
+nothing: there is no long-press-to-tooltip path in this build. So on the device,
+`ui_requirement_occupied_remedy` and every other remedy string was **unreachable
+from placement**, which is the first thing a new player does. The bar also had no
+`Fix this →` at all, and the commit-refusal fallback wrote into
+`Sheet/Body/Notice`, a child of the sheet that `_on_card_pressed` had already
+closed.
+
+**The ruling.** A tooltip is an accelerator for a pointer, never the carrier of a
+reason. Any surface that refuses an action states the reason **in visible copy**,
+and if the reason has a `fix_target` whose kind is not `FIX_NONE`, it offers a
+48 dp door to it. The tooltip may keep the same text; it may not be the only
+place the text appears. This is doc 12 A14 (*"every blocked action states its
+reason in words"*) restated as a mechanical rule, because A14 was satisfied on
+paper by a string that existed and could not be read.
+
+**The general form.** A string that only a mouse can reveal is a string this game
+does not have. Any lane adding copy to `tooltip_text` writes it to a visible
+control in the same commit.
+
+### RR-144 — A gate the command raises and the checklist does not list is a silent gate, and the list is checked against the command's own source (docs 02 §2.11, 12 §2.9, 99-PA PA-24)
+
+**The finding.** `CitySim.cmd_upgrade_building` appends seven blocker codes.
+`BuildController.UPGRADE_CHECKS` listed six. The seventh, `E_WATER_HEADROOM`, is
+a real gate (`water_system.gd:824-837`) and had **no row, no `CODE_TABLE` entry
+and no string** — so a building blocked on water alone drew six green ticks,
+printed *"Every requirement met."*, and left `UPGRADE` disabled with nothing on
+screen to act on. Had the code ever reached the formatter it would have folded to
+`UNKNOWN` and printed the identifier `E_WATER_HEADROOM` at the player.
+
+**The ruling.** Two hand-maintained lists that must agree, and no test between
+them, is a defect waiting for a wave. The checklist is now verified against the
+**command's own source**: `tests/test_build_controller.gd::
+test_every_upgrade_blocker_the_command_raises_has_a_row_and_copy` extracts every
+`blockers.append(&"…")` from `cmd_upgrade_building`'s body and requires each code
+to be (a) in `UPGRADE_CHECKS`, (b) `RequirementFormatter.is_known()`, and (c)
+carrying both a body and a title string. A doc-02 gate added without its surface
+now fails the suite in the commit that adds it.
+
+**Scope.** The rule is written for the upgrade gate because that is where the
+hole was found; the same shape applies to any command whose preview returns a
+`blockers` array that a checklist mirrors.
+
+### What the shell must connect (two lines in `game/main.gd`, the lead's file)
+
+The lane is inert in the shipped shell without them, and both are one line:
+
+1. **`ui_root.build_fix_requested.connect(_on_fix_requested)`**, beside
+   `ui_root.land_fix_requested.connect(_on_fix_requested)`. `BuildSheet` emits
+   `fix_requested` and `UIRoot` re-emits it the way it re-emits the land panel's;
+   nothing in the tree connected the sheet's, which would have made PA-23's door
+   a button with nothing behind it — PA-05's own defect one layer up, on the
+   surface this wave had just given a button to. `tests/test_build_controller.gd::
+   test_the_placement_bar_offers_fix_this_with_a_routable_target` asserts the
+   re-emission; only the shell's own `connect` is outside the suite.
+2. **`ui_root.report_dispatch_result(unit_id, bool(r["ok"]), r)`** — the third
+   argument is the whole `CommandQueue` answer, and without it the picker still
+   has only `ok` and still answers doc 06's three refusals with one sentence
+   (PA-52). The parameter is optional, so the two-argument call compiles and
+   keeps today's behaviour; that is the point of the default and the reason this
+   is a snippet rather than a break.
+
+### The finding that was not this lane's, and was closed anyway
+
+**`hud_banners` at 412 × 915, 130 % text + larger targets.** `HUDLayer/
+AlertStack/Alert1/Row/View` P(296, 296) S(94, 76) covered **1,155 px²** of
+`HUDLayer/TiltSlider/Thumb` at P(335, 351) — the *only* finding standing between
+this deck and `--screen=all --audit --strict` exit 0 across **all six `BOXES` ×
+both accessibility settings**, the other eleven cells clean. It is **pre-existing
+at the fork**: Wave 17 added the tilt column (doc 12 §2.23) and solved its band
+against the top bar and the drawer handle, and §2.4's banner stack — the third
+thing on that edge — was never a measurement point. Nothing in Lane L's diff
+touches either surface (`git diff 4503d35 -- ui/ui_root.gd` is PA-52's
+`report_dispatch_result` signature and nothing else).
+
+**It was closed here regardless, and the ruling is why.** A lane that owns "the
+refusal is reachable" and hands back a deck where a 48 dp target sits on another
+48 dp target at the accessibility setting has not finished; and the fix is
+three lines in the function whose whole job is already this — `solve_tilt_slider`
+starts the band under the top bar's first row and above the drawer handle's
+reservation, so the banner stack joins them as a third measurement point. The
+band starts under the **lowest banner actually on screen**, and only when that
+banner's right edge is inside the column: at 794 dp the stack is `alert_dp`'s 400
+wide and centred, never reaches the edge, and the band does not move. Measured,
+same cell, after: the column P(335, 267.5) → P(335, **416.5**), the thumb 351 →
+**500**, twelve sweeps exit 0. Headless the guard is inert — a mount with no
+frames lays nothing out, which is why `tests/test_ui_tilt.gd`'s authored-band
+assertions are untouched and still pass.
+
+**One finding this lane surfaced and did not own.**
+
+1. **The side panel could grow wider than the screen and nothing could see it.**
+   Fixed here because PA-47 could not land without it (`SCROLL_MODE_SHOW_NEVER`
+   plus the shed row's `HFlowContainer`), but the *class* of defect is wider than
+   this panel: `UIAudit` exempts everything inside a `ScrollContainer`, which is
+   correct for content and wrong for the container's own outer geometry. Every
+   deck surface whose only child is a scroller with `SCROLL_MODE_DISABLED` has
+   the same blind spot. A check that measures a scroller's own laid-out rect
+   against the viewport would find the rest of them; this lane did not write it.
+
+### Measured at the branch tip
+
+| claim | command | number |
+|---|---|---|
+| the suite | `tools/run_suite.sh` | 133 files, **2,492 tests**, 550,118 asserts, failed **0**, silent **0**, exit **0** |
+| the deck | `--screen=all --audit --strict`, six `BOXES` × {100 %, 130 % + larger targets} | **12 sweeps, 68 states each, exit 0 in every one** |
+| the sim | `profile_sim --hash-only`, starter and `bench_city.json` | all four digests **byte-identical to `4503d35`** |
+
+The third row is the one that says what kind of wave this was: every finding in
+this section was a **surface** that disagreed with a sim that was already right.
+Nothing here needed a number to move, and none moved.
+
+**Applied:** doc 12 §2.7a (the params table), §2.9 (the seventh row, the four
+live coverage tiles, the pinned actions footer), §2.7 (the placement bar's second
+line and its door) and §2.23 (the band's third measurement point); doc 91 §14.5
+(`A91-D-91`, `A91-D-92`); doc 92 §51 (the founding city's first coverage
+readings); doc 93 §AJ; doc 12 deltas `D-80`, `D-81`.

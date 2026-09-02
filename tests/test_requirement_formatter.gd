@@ -260,3 +260,169 @@ func test_checklist_text_is_the_name_when_passing_and_the_reason_when_not() -> v
 	assert_eq(str(rows[1]["text"]), str(rows[1]["body"]),
 			"the row the player must act on carries the whole sentence")
 	assert_true(str(rows[1]["text"]).contains("$"), rows[1]["text"])
+
+
+# ===========================================================================
+# Wave 18 — the fix-target contract (PA-05) and the shared shapes (PA-75)
+# ===========================================================================
+
+## PA-05. `{kind, id}` was not a target: `POWER_CAPACITY` handed a TRANSFORMER id
+## to a branch that resolved buildings by it, and `E_AVENUE` handed an empty id
+## to a router that discards those on its first line. Two of the building panel's
+## seven checklist rows drew a `Fix this →` that had never once moved anything.
+## Every row now carries `params`, and this asserts the contract table in
+## `RequirementFormatter`'s own class doc, row by row.
+func test_every_fix_target_carries_the_params_its_kind_needs() -> void:
+	var formatter := _fmt()
+	var missing: Array[String] = []
+	for code: StringName in RequirementFormatter.codes():
+		var row := formatter.format(code, _params())
+		var fix: Dictionary = row["fix_target"]
+		assert_true(fix.has("params"), "%s has no params at all" % code)
+		var kind := StringName(str(fix["kind"]))
+		assert_true(RequirementFormatter.FIX_KINDS.has(kind),
+				"%s routes an unknown kind %s" % [code, kind])
+		var params: Dictionary = fix["params"]
+		match kind:
+			RequirementFormatter.FIX_NONE:
+				assert_true(params.is_empty(), "%s: FIX_NONE draws no button" % code)
+			RequirementFormatter.FIX_REPAIR, RequirementFormatter.FIX_POWER:
+				assert_eq(str(params["verb"]),
+						str(RequirementFormatter.FIX_VERBS[kind]),
+						"%s: a purchase kind names the command it spends through" % code)
+			RequirementFormatter.FIX_DISTRICT:
+				assert_true(params.has("district_id"), "%s: no district" % code)
+			RequirementFormatter.FIX_COMPONENT:
+				assert_true(params.has("component"), "%s: no component" % code)
+			_:
+				# `FIX_TILE` is the strict one: the tile IS the target, so a row
+				# that cannot supply one has nothing for the router to act on.
+				if kind == RequirementFormatter.FIX_TILE and not params.has("tile"):
+					missing.append(String(code))
+	assert_true(missing.is_empty(),
+			"FIX_TILE rows with no tile in params: %s" % ", ".join(missing))
+
+
+## A tile the producer rendered into a string is copy, not a coordinate — and
+## handing the router something it would have to parse is exactly how `E_AVENUE`
+## shipped an empty id for three waves.
+func test_fix_params_take_only_a_real_vector_tile() -> void:
+	var formatter := _fmt()
+	var typed := formatter.format(&"E_UNSERVED", {"tile": Vector2i(11, 7)})
+	assert_eq((typed["fix_target"]["params"] as Dictionary)["tile"], Vector2i(11, 7))
+	var stringy := formatter.format(&"E_UNSERVED", {"tile": "11, 7"})
+	assert_false((stringy["fix_target"]["params"] as Dictionary).has("tile"),
+			"a string is not a coordinate")
+	# `fix_tile` wins over `tile`: `E_AVENUE` quotes the BUILDING's tile in its
+	# sentence and routes to the AVENUE's.
+	var split := formatter.format(&"E_AVENUE",
+			{"tile": Vector2i(3, 3), "fix_tile": Vector2i(9, 9)})
+	assert_eq(str(split["args"]["at"]), "3, 3", "the sentence names the building")
+	assert_eq((split["fix_target"]["params"] as Dictionary)["tile"], Vector2i(9, 9),
+			"and the button goes to the avenue")
+
+
+## PA-75. The building panel's doc-02 ladder and the water block's doc-05 ladder
+## ask for the same three rows, and they were written out twice. They had already
+## drifted — `required_kw` carried the ×1.15 margin in one copy and not the other
+## (PA-12) — so this asserts the two callers hand the formatter dictionaries that
+## are equal key for key, which is the only thing that keeps them from drifting
+## again.
+func test_the_two_panels_build_identical_shared_params() -> void:
+	var sim := CitySim.boot_from_files()
+	sim.advance_hours(1.0)
+	var controller := BuildController.new(sim, _fmt())
+	var water := WaterActions.new(sim, _fmt())
+	assert_eq(controller.headroom_margin(), water.headroom_margin(),
+			"one margin, read from doc 02 §8 by both")
+	var margin := controller.headroom_margin()
+	var from_building := RequirementFormatter.power_headroom_params(
+			120.0, 45.0, margin, "T-18")
+	var from_water := RequirementFormatter.power_headroom_params(
+			120.0, 45.0, margin, "T-18")
+	assert_eq(from_building, from_water, "one shape, one place")
+	assert_eq(float(from_building["required_kw"]), 120.0 * margin)
+	assert_eq(float(from_building["headroom_kw"]), 120.0 * margin - 45.0)
+	assert_eq(RequirementFormatter.funds_params(4200, 900),
+			{"cost": 4200, "balance": 900})
+	assert_eq(RequirementFormatter.level_params(3, 6), {"level": 3, "max_level": 6})
+
+
+## PA-24 / PA-52: the four codes this wave gave doors to render sentences rather
+## than their own identifiers. `E_WATER_HEADROOM` used to fold to UNKNOWN and
+## print "Blocked by requirement E_WATER_HEADROOM…" at a player.
+func test_the_wave_18_codes_render_english() -> void:
+	var formatter := _fmt()
+	for code: StringName in [&"E_WATER_HEADROOM", &"E_UNIT_UNAVAILABLE",
+			&"E_UNREACHABLE", &"E_UNKNOWN_INCIDENT"]:
+		assert_true(RequirementFormatter.is_known(code), String(code))
+		var row := formatter.format(code, {"deficit_m3h": 4.0, "headroom_m3h": 1.0,
+				"zone": "WTR-1-PMP", "unit": "Engine 3", "status": "on a call"})
+		assert_false(str(row["body"]).contains(String(code)),
+				"%s prints its own identifier at the player: %s" % [code, row["body"]])
+		assert_true(str(row["title"]).length() > 0, String(code))
+		assert_true(str(row["body"]).length() > 0, String(code))
+	var water := formatter.format(&"E_WATER_HEADROOM", {"deficit_m3h": 4.0,
+			"headroom_m3h": 1.0, "required_m3h": 5.0, "zone": "WTR-1-PMP",
+			"fix_target_id": "WTR-1-PMP"})
+	assert_true(str(water["body"]).contains("m³/h"), water["body"])
+	assert_eq(str(water["fix_target"]["kind"]), String(RequirementFormatter.FIX_DISTRICT))
+	assert_eq(str((water["fix_target"]["params"] as Dictionary)["district_id"]),
+			"WTR-1-PMP")
+
+
+## The `params` table is written **twice** — in this class's own doc and in doc
+## 12 §2.7a — and both copies say they are normative. Two copies of a contract is
+## the shape PA-75 filed on `_check_params`, where they had already drifted, and
+## this lane drifted these two inside one wave: `FIX_BLOCK` gained `block_id` in
+## the code and in doc 12 and not in the class doc.
+##
+## So the two are diffed here, kind by kind and key by key. Lane D's router reads
+## the class doc; a reviewer reads doc 12; a disagreement between them is a
+## contract with a hole in it whichever half is right.
+func test_the_two_copies_of_the_params_contract_agree() -> void:
+	var code_table := _contract_rows(
+			FileAccess.get_file_as_string("res://ui/requirement_formatter.gd"), "## |")
+	var doc_table := _contract_rows(
+			FileAccess.get_file_as_string("res://docs/design/12-ui-ux.md"), "|")
+	assert_eq(code_table.size(), RequirementFormatter.FIX_KINDS.size(),
+			"the class doc lists every kind: %s" % [code_table.keys()])
+	assert_eq(doc_table.size(), RequirementFormatter.FIX_KINDS.size(),
+			"doc 12 s2.7a lists every kind: %s" % [doc_table.keys()])
+	for kind: StringName in RequirementFormatter.FIX_KINDS:
+		var row := "FIX_%s" % String(kind).to_upper()
+		assert_true(code_table.has(row), "%s has no row in the class doc" % row)
+		assert_true(doc_table.has(row), "%s has no row in doc 12 s2.7a" % row)
+		assert_eq(code_table[row], doc_table[row],
+				"%s: the class doc says %s and doc 12 s2.7a says %s"
+				% [row, code_table[row], doc_table[row]])
+
+
+## One markdown table row → the param KEYS its third cell names, sorted. The
+## class doc's rows are the same markdown behind a `##`, which is why the prefix
+## is a parameter and nothing else is.
+func _contract_rows(source: String, prefix: String) -> Dictionary:
+	var out: Dictionary = {}
+	for raw: String in source.split("\n"):
+		var line := raw.strip_edges()
+		if not line.begins_with("%s `FIX_" % prefix):
+			continue
+		var cells := line.split("|")
+		if cells.size() < 4:
+			continue
+		var kind := cells[1].strip_edges().replace("`", "")
+		var params: Array[String] = []
+		var body := cells[3]
+		var open := body.find("{")
+		var close := body.find("}", open + 1)
+		if open >= 0 and close > open:
+			for part: String in body.substr(open + 1, close - open - 1).split(","):
+				var key := part.strip_edges()
+				if key.contains(":"):
+					key = key.substr(0, key.find(":"))
+				key = key.strip_edges()
+				if key != "":
+					params.append(key)
+		params.sort()
+		out[kind] = params
+	return out

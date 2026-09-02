@@ -375,3 +375,39 @@ func test_the_strings_the_slider_uses_exist() -> void:
 	assert_eq(root.tilt_slider.thumb_button().tooltip_text, cfg.t("ui_tilt_thumb"))
 	assert_eq(root.tilt_slider.tooltip_text, cfg.t("ui_tilt_slider"))
 	_unmount(root)
+
+
+## **Wave 18 — the band's third measurement point** (doc 12 §2.23, report 98 §51).
+## Wave 17 solved the column against the top bar and the drawer handle and never
+## against §2.4's banner stack, which is as wide as the display allows: at
+## 412 × 915, 130 % text with larger targets, `AlertStack/Alert1/Row/View`
+## P(296, 296) S(94, 76) covered **1,155 px²** of the thumb at P(335, 351).
+##
+## The geometry itself is `tools/ui_preview.gd --audit --strict`'s to photograph
+## — a headless mount lays nothing out, which is why every other assertion in
+## this file is about authored numbers. The RULE is pure and is asserted here.
+func test_a_banner_that_reaches_the_right_edge_pushes_the_band_down() -> void:
+	# 412 dp box, 48 dp column, the two banners the 130 % sweep laid out.
+	var wide: Array[Rect2] = [Rect2(12.0, 180.0, 388.0, 96.0),
+			Rect2(12.0, 286.0, 388.0, 96.0)]
+	assert_almost_eq(UIRoot.banner_band_top(56.0, wide, 412.0, 48.0), 382.0, 0.01,
+			"the LOWEST banner's bottom, not the first one's")
+	# The same call with no banners is the bar's own answer, unchanged — which is
+	# what a headless mount hands it, and why `_authored_band` still holds.
+	var none: Array[Rect2] = []
+	assert_almost_eq(UIRoot.banner_band_top(56.0, none, 412.0, 48.0), 56.0, 0.01,
+			"no banner, no push")
+	# A banner short of the column may not move it: 794 dp, `alert_dp`'s 400 wide
+	# centred, right edge 597 against a column that starts at 746.
+	var narrow: Array[Rect2] = [Rect2(197.0, 180.0, 400.0, 96.0)]
+	assert_almost_eq(UIRoot.banner_band_top(56.0, narrow, 794.0, 48.0), 56.0, 0.01,
+			"a centred banner that never reaches the edge leaves the band alone")
+	# And a zero-height row — a hidden alert panel a container still reports — is
+	# not a banner. This is the guard that makes the headless case inert.
+	var empty: Array[Rect2] = [Rect2(12.0, 180.0, 388.0, 0.0)]
+	assert_almost_eq(UIRoot.banner_band_top(56.0, empty, 412.0, 48.0), 56.0, 0.01,
+			"an unlaid-out row is not a banner")
+	# Never upward: a banner above the bar cannot pull the band up into it.
+	var above: Array[Rect2] = [Rect2(12.0, 4.0, 388.0, 20.0)]
+	assert_almost_eq(UIRoot.banner_band_top(56.0, above, 412.0, 48.0), 56.0, 0.01,
+			"the bar's bottom is a floor")

@@ -26,6 +26,53 @@ extends RefCounted
 ## doc's name and the remaining seven get their own entry. Copy is therefore
 ## keyed by the doc's vocabulary while the sim keeps its own identifiers — the
 ## split C-62 asked for, with nothing duplicated.
+##
+## ## The `fix_target` contract (Wave 18, PA-05 · doc 12 §2.7a · RR-142)
+##
+## Every row this class formats carries
+##
+##     fix_target = {"kind": StringName, "id": String, "params": Dictionary}
+##
+## `kind` is one of the `FIX_*` constants below, `id` is the entity that kind
+## names, and **`params` is what the router needs in order to ACT**. Before this
+## wave the pair was `{kind, id}` alone, and two of the building panel's seven
+## checklist rows were dead because of it: `POWER_CAPACITY` handed a TRANSFORMER
+## id to a branch that looked buildings up by it, and `E_AVENUE` handed an empty
+## id to a router whose first line discards those. An id with no way to resolve
+## it is not a target; it is a button that does nothing.
+##
+## `ui/fix_router.gd` is the only consumer. The table is normative — a producer
+## that cannot fill a row's `params` must route `FIX_NONE` rather than ship a
+## button the router will drop on the floor:
+##
+## | kind               | `id`                    | `params` the router acts on |
+## |--------------------|-------------------------|-----------------------------|
+## | `FIX_NONE`         | `""`                    | `{}` — no button is drawn |
+## | `FIX_BUILDING`     | `sim_id`                | `{tile: Vector2i}` the building's origin |
+## | `FIX_BLOCK`        | `block_id`              | `{tile: Vector2i, block_id: String}` — the tile is the block's, when the producer knows it |
+## | `FIX_TILE`         | `""`                    | `{tile: Vector2i}` — **required**; the tile IS the target |
+## | `FIX_DISTRICT`     | district / zone key     | `{district_id: String, tile: Vector2i}` |
+## | `FIX_ROAD_SEGMENT` | segment id, or `""`     | `{tile: Vector2i}` the nearest tile of the road the row is short of |
+## | `FIX_COMPONENT`    | grid / water component  | `{component: String}` — resolve with `PowerGrid.component_tile()` |
+## | `FIX_REPAIR`       | `sim_id`                | `{verb: "cmd_repair_building", cost: int, cost_text: String}` |
+## | `FIX_POWER`        | `sim_id`                | `{verb: "cmd_fix_power_capacity", cost: int, cost_text: String}` |
+##
+## **The invariant the router may rely on** (`_is_routable`, checked by `format()`
+## on every row it emits): if `kind != FIX_NONE` then the `params` that kind's row
+## requires are present. A row whose producer could not fill them is folded to
+## `FIX_NONE` here, with an empty `id` and empty `params`, so a consumer never has
+## to defend against a half-filled target — and a surface that draws its button on
+## `kind != FIX_NONE` alone (which the building panel does, and did before this
+## was true) is drawing it exactly when there is somewhere to go.
+##
+## The two verb kinds are performed **in place** by `ui/building_panel.gd` and
+## never reach the router (A91-D-54); their `params` exist so a second surface
+## can offer the same purchase without re-deriving the quote.
+##
+## `params` is assembled by `_fix_params_for()` from the same raw dictionary the
+## row's `{named}` arguments come from, so a producer that already passes `tile`,
+## `block_id` or `at` gets a routable target for free. A producer that knows
+## better may pass `fix_target_params` and it is merged over the derived table.
 
 # --- Severity (doc 12 §2.7's VALID / WARN / BLOCKED verdict ladder) -----------
 const SEVERITY_BLOCKED := &"blocked"  ## hard gate: the command will be refused
@@ -56,6 +103,33 @@ const FIX_REPAIR := &"repair"
 ## single purchase that clears the serving path, the strip shows the price, and
 ## the second tap buys it. Same shape as `FIX_REPAIR`, one row down.
 const FIX_POWER := &"power"
+## A doc 04 grid component or a doc 05 water component — a SUBSTATION, a
+## transformer, a pump. Not a `Building`, which is why it needs a kind of its
+## own: `FIX_BUILDING` resolves through `CitySim.buildings`, and a transformer id
+## (`T-06`, from `PowerGrid.attachment_of()`) is not a key in that dictionary —
+## measured on the founding city, where `sim.buildings.has("T-06")` is `false`
+## and `component_tile("T-06")` is `(39, 34)`. A doc 04 SUBSTATION is the
+## exception that proves it: `SUB-A` is also a doc 02 shell and is in
+## `buildings`, which is why `E_NO_SLOT` correctly stays `FIX_BUILDING`.
+const FIX_COMPONENT := &"component"
+
+## Every kind this class can emit, for the lint that walks them (doc 12 §2.7a).
+const FIX_KINDS: Array[StringName] = [
+	FIX_NONE, FIX_BUILDING, FIX_BLOCK, FIX_TILE, FIX_DISTRICT, FIX_ROAD_SEGMENT,
+	FIX_REPAIR, FIX_POWER, FIX_COMPONENT,
+]
+
+## The two kinds the building panel performs in place rather than emitting to
+## the camera router (A91-D-54) — a purchase, not a place.
+const FIX_VERB_KINDS: Array[StringName] = [FIX_REPAIR, FIX_POWER]
+
+## `params["verb"]` for the two purchase kinds: the `CitySim` command the strip
+## spends through. Named here rather than in the panel so a second surface
+## offering the same purchase cannot drift onto a different command.
+const FIX_VERBS := {
+	FIX_REPAIR: "cmd_repair_building",
+	FIX_POWER: "cmd_fix_power_capacity",
+}
 
 const KEY_PREFIX := "ui_requirement_"
 const TITLE_SUFFIX := "_title"
@@ -147,6 +221,13 @@ const CODE_TABLE := {
 	# or upgrade the substation), so it routes the camera like `POWER_CAPACITY`.
 	&"E_CLASS_UNAVAILABLE": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	&"E_DISCONTINUOUS": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	# **Stays `FIX_BUILDING`, and that is measured** (Wave 18, PA-05). A doc 04
+	# substation is also a doc 02 SHELL — `sim.buildings.has("SUB-A")` is `true`
+	# on the founding city and `substation` is an archetype the build sheet sells
+	# — so this id resolves and the camera move is the whole useful answer, which
+	# is what doc 12 D-71 ruled deliberate. The component namespace below is a
+	# different thing: `attachment_of("H-001")` answers `T-06`, which is NOT a
+	# building.
 	&"E_NO_SLOT": {"severity": SEVERITY_BLOCKED, "fix": FIX_BUILDING},
 	&"E_UNKNOWN_NODE": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	&"E_NOT_UPGRADEABLE": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
@@ -165,9 +246,30 @@ const CODE_TABLE := {
 	# the ghost is a fact the player is told, not a tile they are refused (§AD3).
 	# `E_NEEDS_TRANSFORMER` is the top of the ladder: nothing the fix strip can
 	# buy in one tap clears it, and the answer is a tile the player has to pick.
-	&"E_TRANSFORMER_FULL": {"severity": SEVERITY_WARN, "fix": FIX_TILE},
-	&"E_NEEDS_TRANSFORMER": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	# Wave 18 (PA-05): both of these name a TRANSFORMER, and a transformer is a
+	# doc 04 component (`T-06`), not a `Building` — `CitySim.buildings` has no
+	# such key. They routed `FIX_TILE` with the GHOST's tile, which is the tile
+	# the player's finger is already on, so the button answered "go to where you
+	# are" (doc 12 D-35's lesson). `FIX_COMPONENT` is the namespace they are in
+	# and `PowerGrid.component_tile()` is what resolves it — measured on the
+	# founding city: `component_tile("T-06")` = `(39, 34)`.
+	&"E_TRANSFORMER_FULL": {"severity": SEVERITY_WARN, "fix": FIX_COMPONENT},
+	&"E_NEEDS_TRANSFORMER": {"severity": SEVERITY_BLOCKED, "fix": FIX_COMPONENT},
 	&"E_NOT_BLOCKED": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
+	# --- Wave 18: doc 02 §2.11's SEVENTH upgrade gate (PA-24). `city_sim.gd`
+	# has appended `E_WATER_HEADROOM` since the water system landed and no
+	# surface has ever named it: the panel drew six green ticks, printed "Every
+	# requirement met." and left UPGRADE dead. Its fix is doc 05's DISTRICT —
+	# the pressure zone that is short, not the building that is thirsty.
+	&"E_WATER_HEADROOM": {"severity": SEVERITY_BLOCKED, "fix": FIX_DISTRICT},
+	# --- Wave 18: doc 06 §2.6's three dispatch refusals (PA-52). `cmd_dispatch_
+	# unit` has raised all three since Wave 4 and the picker collapsed every one
+	# of them to "That unit could not be sent." `E_UNKNOWN_INCIDENT` is INFO for
+	# the same reason `E_NOT_ISOLATED` is: the call cleared while the sheet was
+	# open, which is news about the world and not a fault in the ask.
+	&"E_UNIT_UNAVAILABLE": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	&"E_UNREACHABLE": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	&"E_UNKNOWN_INCIDENT": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	UNKNOWN_CODE: {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 }
 
@@ -313,6 +415,24 @@ func format(code: Variant, params: Dictionary = {}) -> Dictionary:
 	var title := _resolve(RequirementFormatter.string_key(name, TITLE_SUFFIX), args,
 			String(name).capitalize())
 	var severity: StringName = RequirementFormatter.severity_of(name)
+	# `CODE_TABLE` gives the fix a code has in GENERAL; a caller that knows this
+	# particular building can say otherwise by passing `fix_kind` (Wave 17, doc
+	# 93 §Y3a). Resolved before the return so the params table below can be built
+	# for the kind that will actually be emitted.
+	var fix_kind_out := StringName(str(params.get("fix_kind",
+			RequirementFormatter.fix_kind(name))))
+	var fix_id := str(params.get("fix_target_id", ""))
+	var fix_params := RequirementFormatter._fix_params_for(fix_kind_out, params)
+	# **The contract enforces itself** (PA-05). A kind that answers "where do I
+	# go?" with neither a tile nor an id it can resolve is not a target, and the
+	# honest render of that is NO BUTTON — not a button the router drops on its
+	# first line, which is what `E_AVENUE` shipped for three waves. This is the
+	# one place the decision can be made, because it is the one place that knows
+	# both what the kind needs and what the producer actually supplied.
+	if not RequirementFormatter._is_routable(fix_kind_out, fix_id, fix_params):
+		fix_kind_out = FIX_NONE
+		fix_id = ""
+		fix_params = {}
 	return {
 		"code": StringName(str(code).to_upper()),
 		"canonical": name,
@@ -324,17 +444,16 @@ func format(code: Variant, params: Dictionary = {}) -> Dictionary:
 		"state": SEVERITY_STATE.get(severity, HudModel.STATE_CRITICAL),
 		"blocking": severity == SEVERITY_BLOCKED,
 		"glyph": GLYPH_FAIL,
+		# The one case `fix_kind` needs overriding today is `E_CONDITION` on
+		# private stock: the remedy in general is a repair, and on a building
+		# whose owner maintains it there is no repair to sell, so the row states
+		# the blocker and offers no button rather than offering one that refuses.
 		"fix_target": {
-			# `CODE_TABLE` gives the fix a code has in GENERAL; a caller that
-			# knows this particular building can say otherwise by passing
-			# `fix_kind` (Wave 17, doc 93 §Y3a). The one case that needs it today
-			# is `E_CONDITION` on private stock: the remedy in general is a
-			# repair, and on a building whose owner maintains it there is no
-			# repair to sell, so the row states the blocker and offers no button
-			# rather than offering one that refuses.
-			"kind": StringName(str(params.get("fix_kind",
-					RequirementFormatter.fix_kind(name)))),
-			"id": str(params.get("fix_target_id", "")),
+			"kind": fix_kind_out,
+			"id": fix_id,
+			# PA-05: what the router needs in order to ACT. See the contract
+			# table in this class's doc — it is normative for both halves.
+			"params": fix_params,
 		},
 		"args": args,
 	}
@@ -474,6 +593,29 @@ func _args_for(name: StringName, p: Dictionary) -> Dictionary:
 		&"E_UNSERVED":
 			args["have"] = str(p.get("have", _tile_text(p)))
 			args["need"] = str(p.get("need", ""))
+		&"E_WATER_HEADROOM":
+			# Doc 05's own unit, and doc 05's own answer to "how short?".
+			# `can_upgrade_water` returns `deficit_m3h` and `zone_headroom_m3h`
+			# is the standing figure, so `{have}` is what the zone has spare and
+			# `{need}` is what the next level would draw with §6's safety margin
+			# on it — the same shape `POWER_CAPACITY` uses one row up.
+			var water_deficit := float(p.get("deficit_m3h", 0.0))
+			var water_headroom := float(p.get("headroom_m3h", 0.0))
+			args["have"] = str(p.get("have",
+					RequirementFormatter.water_m3h(water_headroom)))
+			args["need"] = str(p.get("need", RequirementFormatter.water_m3h(
+					p.get("required_m3h", water_headroom + water_deficit))))
+			args["deficit"] = RequirementFormatter.water_m3h(water_deficit)
+			args["at"] = str(p.get("at", p.get("zone", "")))
+		&"E_UNIT_UNAVAILABLE", &"E_UNREACHABLE", &"E_UNKNOWN_INCIDENT":
+			# Doc 06's dispatch refusals (PA-52). `unit` is the vehicle's display
+			# name and `have` its `Vehicle` status string verbatim — the same
+			# vocabulary the picker sorts its rows on, so a rename on either side
+			# is a copy hole rather than a silent mis-sentence.
+			args["unit"] = str(p.get("unit", p.get("unit_name", p.get("unit_id", ""))))
+			args["have"] = str(p.get("have", p.get("status", "")))
+			args["need"] = str(p.get("need", ""))
+			args["at"] = str(p.get("at", p.get("station", "")))
 		&"E_STATE":
 			args["have"] = str(p.get("have", p.get("state", "")))
 			args["need"] = str(p.get("need", p.get("required_state", "")))
@@ -566,6 +708,142 @@ func _args_for(name: StringName, p: Dictionary) -> Dictionary:
 	if p.has("balance"):
 		args["balance"] = RequirementFormatter.money(p["balance"])
 	return args
+
+
+## The `fix_target.params` of one row — the contract table in this class's doc,
+## in code (PA-05). Built from the SAME raw dictionary the `{named}` arguments
+## come from, so a producer that already passes `tile`, `block_id` or `at` gets a
+## routable target without a second table to keep in step.
+##
+## Two escape hatches, in this order: `fix_tile` names a tile that is NOT the
+## row's own `tile` (`E_AVENUE` quotes the building's tile in its sentence and
+## routes to the avenue's), and `fix_target_params` is merged last for a producer
+## that knows something this table cannot derive.
+static func _fix_params_for(kind: StringName, p: Dictionary) -> Dictionary:
+	var out: Dictionary = {}
+	var tile: Variant = RequirementFormatter._fix_tile(p)
+	match kind:
+		FIX_NONE:
+			pass
+		FIX_REPAIR, FIX_POWER:
+			out["verb"] = str(FIX_VERBS.get(kind, ""))
+			# `fix_cost`, deliberately not `cost`: the checklist's shared `cost`
+			# is the UPGRADE's price, and quoting it as the price of the repair
+			# or the transformer would be a wrong number wearing a right one's
+			# name. A producer that knows the purchase quote passes `fix_cost`;
+			# one that does not ships the verb alone and the surface quotes it.
+			if p.has("fix_cost"):
+				out["cost"] = int(round(float(p["fix_cost"])))
+				out["cost_text"] = RequirementFormatter.money(p["fix_cost"])
+		FIX_DISTRICT:
+			out["district_id"] = str(p.get("district_id",
+					p.get("zone", p.get("zone_key", p.get("at", "")))))
+			if tile != null:
+				out["tile"] = tile
+		FIX_COMPONENT:
+			out["component"] = str(p.get("component",
+					p.get("fix_target_id", p.get("at", ""))))
+			# **Only an explicit `fix_tile`.** The row's own `tile` is where the
+			# GHOST is, and a router that preferred it would fly the camera to
+			# the finger instead of to the full transformer. The component id is
+			# the target; `PowerGrid.component_tile()` turns it into a place.
+			if p.get("fix_tile", null) is Vector2i:
+				out["tile"] = p["fix_tile"]
+		_:
+			# `FIX_TILE`, `FIX_BUILDING`, `FIX_BLOCK`, `FIX_ROAD_SEGMENT`: every
+			# one of them answers "where do I go?", and a tile is the answer the
+			# router can always act on — an id it cannot resolve is a dead button.
+			if tile != null:
+				out["tile"] = tile
+			if kind == FIX_BLOCK and p.has("block_id"):
+				out["block_id"] = str(p["block_id"])
+	var extra: Variant = p.get("fix_target_params", null)
+	if extra is Dictionary:
+		for key: Variant in (extra as Dictionary):
+			out[str(key)] = (extra as Dictionary)[key]
+	return out
+
+
+## Can `ui/fix_router.gd` do anything with this target? The contract table in
+## this class's doc, read as a predicate.
+##
+##   * the two purchase kinds are ALWAYS routable: they are performed in place by
+##     the surface that already has the building open, so they need no locator at
+##     all — a producer that wants one of them silent says so with an explicit
+##     `fix_kind: FIX_NONE` (which is how a privately maintained building draws
+##     no repair button);
+##   * `FIX_TILE` needs its tile — for that kind the tile IS the target;
+##   * every other placing kind needs a tile, or an id of its own namespace.
+static func _is_routable(kind: StringName, id: String, params: Dictionary) -> bool:
+	if kind == FIX_NONE:
+		return false
+	if FIX_VERB_KINDS.has(kind):
+		return true
+	if kind == FIX_TILE:
+		return params.has("tile")
+	# The component id IS the target for this kind, so a tile does not stand in
+	# for a missing one — see `_fix_params_for`.
+	if kind == FIX_COMPONENT:
+		return str(params.get("component", "")) != ""
+	if params.has("tile"):
+		return true
+	if kind == FIX_DISTRICT:
+		return str(params.get("district_id", "")) != ""
+	return id != ""
+
+
+## `fix_tile` over `tile`, and only a real `Vector2i` — a tile the producer
+## rendered into a string is copy, not a coordinate, and handing the router a
+## string it would have to parse is how `E_AVENUE` shipped an empty id.
+static func _fix_tile(p: Dictionary) -> Variant:
+	for key: String in ["fix_tile", "tile"]:
+		var raw: Variant = p.get(key, null)
+		if raw is Vector2i:
+			return raw
+	return null
+
+
+# ---------------------------------------------------------------------------
+# Shared parameter shapes (PA-75)
+#
+# Three rows are asked for by two panels at once — the building panel's doc 02
+# ladder (`BuildController._check_params`) and the water block's doc 05 ladder
+# (`WaterActions._check_params`) — and they were written out twice. They had
+# already drifted: the building panel quoted `required_kw` with no headroom
+# margin at all while the water panel applied ×1.15, so the panel told the
+# player a number 15 % below the one its own gate demands (PA-12). One shape,
+# one place, and a test that asserts the two callers produce identical params.
+# ---------------------------------------------------------------------------
+
+## Doc 02 §2.11 / doc 05 §6's `E_POWER_HEADROOM` row. `margin` is doc 02's
+## `headroom_safety.power` — the SAME factor `CitySim` multiplies the delta by
+## before it asks doc 04, so `{need}` is the number the gate actually demanded
+## and buying exactly it clears the row.
+static func power_headroom_params(delta_kw: float, deficit_kw: float,
+		margin: float, at_id: String) -> Dictionary:
+	var required := delta_kw * margin
+	return {
+		"deficit_kw": deficit_kw,
+		"required_kw": required,
+		"headroom_kw": maxf(0.0, required - deficit_kw),
+		# The TRANSFORMER the site hangs off, not the site: `Fix this →` that
+		# flies the camera to the thing already under the player's thumb moves
+		# nothing (doc 12 D-35). "" when the grid has no record, and the row then
+		# has no camera target rather than a target that resolves to nowhere.
+		# NOT a `fix_kind` override: `POWER_CAPACITY` routes `FIX_POWER` and the
+		# building panel performs that purchase in place (Wave 17, A91-D-54).
+		# The id rides along so the row's sentence can name the blocker.
+		"at": at_id,
+		"fix_target_id": at_id,
+	}
+
+
+static func funds_params(cost: int, balance: int) -> Dictionary:
+	return {"cost": cost, "balance": balance}
+
+
+static func level_params(level: int, max_level: int) -> Dictionary:
+	return {"level": level, "max_level": max_level}
 
 
 ## An `Array` of anything → the strings a `{need}` list is joined from. Used by

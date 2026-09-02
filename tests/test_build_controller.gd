@@ -365,10 +365,36 @@ func test_building_view_reports_live_stats() -> void:
 	assert_ne(str(power_tile["state"]), String(HudModel.STATE_OFFLINE),
 			"the starter house is fed")
 	assert_true(str(power_tile["attachment"]).length() > 0, "names its transformer")
+	# PA-22: all four tiles are live. The three that are not power were hard-wired
+	# to `✕ —` for eleven waves while the sim published every one of them, so
+	# these assert the FOUNDING CITY's own numbers rather than the stale state.
+	var by_slot: Dictionary = {}
 	for tile: Dictionary in (view["coverage"] as Array):
-		if str(tile["id"]) != "power":
-			assert_eq(str(tile["value"]), HudModel.NO_DATA,
-					"docs 05/06 publish no coverage yet — no invented number")
+		by_slot[str(tile["id"])] = tile
+	# H-001 sits in `WTR-1-PMP` at doc 05's nominal 0.60, so the water tile reads
+	# 60 % and NORMAL — the reading the pump station's own tile used to deny.
+	var water_tile: Dictionary = by_slot["water"]
+	assert_eq(str(water_tile["value"]),
+			RequirementFormatter.percent(sim.water.pressure_at(
+					sim.water.demand.access_tile("H-001"))))
+	assert_eq(str(water_tile["state"]), String(HudModel.STATE_NORMAL))
+	assert_eq(str(water_tile["zone"]), "WTR-1-PMP", "the tile names its zone")
+	# H-001 is 32 tiles from POL-1 and 29 from FIRE-1, both outside an L1 radius:
+	# OFFLINE with the real 0 %, and a reason that says no station reaches it.
+	for slot: String in ["police", "fire"]:
+		var tile: Dictionary = by_slot[slot]
+		assert_eq(str(tile["state"]), String(HudModel.STATE_OFFLINE), slot)
+		assert_eq(str(tile["reason_key"]), "ui_building_coverage_reason_none", slot)
+	# …and the station's own lot is covered, which is what makes the tile a
+	# teaching surface rather than a decoration.
+	var at_station := _controller(sim).building_view("POL-1")
+	for tile: Dictionary in (at_station["coverage"] as Array):
+		if str(tile["id"]) != "police":
+			continue
+		assert_eq(str(tile["state"]), String(HudModel.STATE_NORMAL),
+				"POL-1 covers its own lot")
+		assert_eq(str(tile["station"]), "POL-1", "and the row names the station")
+		assert_ne(str(tile["value"]), HudModel.NO_DATA)
 	assert_eq(str(view["state_key"]), "ui_building_state_active")
 	assert_false(view["condition_text"] == "")
 
@@ -388,12 +414,82 @@ func test_upgrade_checklist_shows_every_check_passing() -> void:
 	assert_eq(int(upgrade["to_level"]), 2)
 	assert_eq(int(upgrade["cost"]), sim.econ_curves.upgrade_cost("house", 1))
 	var rows: Array = upgrade["checklist"]
-	assert_eq(rows.size(), 6, "E_AVENUE is not a check below Level 4 (C-62)")
+	# Seven: the six that always ran plus `E_WATER_HEADROOM` (PA-24), which
+	# `cmd_upgrade_building` has appended since doc 05's zones landed and this
+	# checklist never listed. `E_AVENUE` is still absent below Level 4 (C-62).
+	assert_eq(rows.size(), 7, "E_AVENUE is not a check below Level 4 (C-62)")
 	for row: Dictionary in rows:
 		assert_true(bool(row["ok"]))
 		assert_eq(str(row["glyph"]), RequirementFormatter.GLYPH_PASS)
 		assert_true(str(row["body"]).length() > 0, "a passing row still explains itself")
 	assert_true((upgrade["blocked_by"] as Dictionary).is_empty())
+
+
+## PA-24's gate. `E_WATER_HEADROOM` reached the player as nothing at all for
+## eleven waves — no checklist row, no copy, and "Every requirement met." printed
+## over six green ticks while `UPGRADE` stayed dead — because `UPGRADE_CHECKS`
+## was hand-maintained beside a command that had grown a seventh gate. This reads
+## the command's own source and refuses any code it can append that the panel
+## cannot draw or the formatter cannot explain, so the next gate doc 02 grows
+## cannot ship silent the way this one did.
+func test_every_upgrade_blocker_the_command_raises_has_a_row_and_copy() -> void:
+	var source := FileAccess.get_file_as_string("res://sim/city_sim.gd")
+	assert_true(source.length() > 0, "city_sim.gd is readable")
+	var start := source.find("func cmd_upgrade_building(")
+	assert_true(start > 0, "found the command")
+	var stop := source.find("\nfunc ", start + 1)
+	var body := source.substr(start, stop - start)
+	var codes: Array[String] = []
+	for line: String in body.split("\n"):
+		var trimmed := line.strip_edges()
+		if not trimmed.begins_with("blockers.append(&\""):
+			continue
+		var code := trimmed.substr(18)
+		code = code.substr(0, code.find("\""))
+		if not codes.has(code):
+			codes.append(code)
+	assert_true(codes.size() >= 7,
+			"doc 02 §2.11's gate raises at least seven codes, found %d" % codes.size())
+	var cfg := UIConfig.load_from_files()
+	for code: String in codes:
+		assert_true(BuildController.UPGRADE_CHECKS.has(StringName(code)),
+				"%s is a blocker `cmd_upgrade_building` appends and the checklist \
+never draws" % code)
+		assert_true(RequirementFormatter.is_known(code),
+				"%s folds to UNKNOWN and prints its own code at the player" % code)
+		assert_true(cfg.has_string(RequirementFormatter.string_key(code)),
+				"%s has no body copy" % code)
+		assert_true(cfg.has_string(RequirementFormatter.string_key(code, "_title")),
+				"%s has no title copy" % code)
+
+
+## PA-12. The panel quoted the RAW kW delta while `cmd_upgrade_building` asked
+## doc 04 for `delta × headroom_safety.power`, so a player who bought exactly the
+## quoted capacity was refused again with a smaller deficit — the user's
+## "transformers do not visibly add capacity", from the panel's side.
+func test_power_headroom_row_quotes_the_margin_the_gate_applies() -> void:
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	var controller := _controller(sim)
+	var margin := controller.headroom_margin()
+	assert_eq(margin, float((sim.catalog.rules()["headroom_safety"]
+			as Dictionary)["power"]), "read from doc 02 §8, not authored in ui/")
+	var b: Building = sim.buildings["H-001"]
+	var next_stats: Dictionary = sim.catalog.stats(String(b.archetype), b.level + 1)
+	var delta_kw := float(next_stats.get("power_demand_kw", 0.0)) \
+			- float(b.stats.get("power_demand_kw", 0.0))
+	assert_true(delta_kw > 0.0, "a level costs power")
+	var params := controller._check_params("H-001", b, b.level + 1,
+			(sim.cmd_upgrade_building("H-001", true).get("payload", {}) as Dictionary))
+	var row: Dictionary = params[&"E_POWER_HEADROOM"]
+	assert_eq(float(row["required_kw"]), delta_kw * margin,
+			"the quote is the number the gate asks doc 04 for")
+	# And the quote is the one the gate answers on: asking `power_headroom` for
+	# exactly `required_kw` reproduces the command's own verdict.
+	assert_eq(bool(sim.power_headroom("H-001", float(row["required_kw"]))["ok"]),
+			not (sim.cmd_upgrade_building("H-001", true).get("payload", {})
+					as Dictionary).get("blockers", []).has(&"E_POWER_HEADROOM"),
+			"panel and gate agree on the same number")
 
 
 func test_upgrade_checklist_names_the_blocker_in_words() -> void:
@@ -734,7 +830,7 @@ func test_building_panel_renders_the_checklist_and_gates_upgrade() -> void:
 	panel.show_building("H-001")
 	assert_true(panel.is_open())
 	assert_eq(panel.selected_id(), "H-001")
-	assert_eq(panel.checklist_rows().size(), 6, "every check is listed, not just the first")
+	assert_eq(panel.checklist_rows().size(), 7, "every check is listed, not just the first")
 	assert_false(panel.upgrade_button().disabled, "no blockers, so UPGRADE is live")
 
 	# Break one requirement and the button must lock behind it.
@@ -746,7 +842,7 @@ func test_building_panel_renders_the_checklist_and_gates_upgrade() -> void:
 	# and the button is not. The `E_STATE` row is the one that still carries an
 	# affordance on any building, so the general claim is checked there.
 	var fix_row := panel.get_node_or_null(
-			"Panel/Scroll/Body/Checklist/Check_E_CONDITION/Fix") as Button
+			"Panel/Frame/Scroll/Body/Checklist/Check_E_CONDITION/Fix") as Button
 	assert_eq(fix_row, null,
 			"private stock: the blocker is stated, no button is offered")
 	assert_true(panel.checklist_rows().size() >= 6, "and the row itself is still there")
@@ -875,7 +971,7 @@ func test_fix_this_on_condition_buys_the_repair_rather_than_moving_the_camera() 
 	(sim.buildings["POL-1"] as Building).condition = 0.40
 	panel.show_building("POL-1")
 	var fix := panel.get_node_or_null(
-			"Panel/Scroll/Body/Checklist/Check_E_CONDITION/Fix") as Button
+			"Panel/Frame/Scroll/Body/Checklist/Check_E_CONDITION/Fix") as Button
 	assert_ne(fix, null, "the blocker row still carries the affordance")
 	var routed: Array[Dictionary] = []
 	var repairs: Array[Dictionary] = []
@@ -904,7 +1000,7 @@ func test_fix_this_is_absent_on_a_privately_maintained_building() -> void:
 	house.condition = 0.40
 	panel.show_building("H-001")
 	var row := panel.get_node_or_null(
-			"Panel/Scroll/Body/Checklist/Check_E_CONDITION")
+			"Panel/Frame/Scroll/Body/Checklist/Check_E_CONDITION")
 	assert_ne(row, null, "the blocker is still stated")
 	assert_eq(row.get_node_or_null("Fix"), null,
 			"but there is no repair to sell, so there is no button")
@@ -924,7 +1020,7 @@ func test_priority_row_lists_doc_fours_classes_and_sets_one() -> void:
 	var results: Array[Dictionary] = []
 	panel.priority_set.connect(func(result: Dictionary) -> void: results.append(result))
 	var button := panel.get_node_or_null(
-			"Panel/Scroll/Body/Actions/Priority/Priority_CRITICAL") as Button
+			"Panel/Frame/Scroll/Body/Actions/Priority/Priority_CRITICAL") as Button
 	assert_ne(button, null, "one 48 dp target per class")
 	button.pressed.emit()
 	assert_eq(results.size(), 1)
@@ -950,7 +1046,7 @@ func test_demolish_quotes_its_refund_and_only_fires_on_a_full_hold() -> void:
 	var fired: Array[String] = []
 	panel.demolished.connect(func(sim_id: String, _r: Dictionary) -> void:
 		fired.append(sim_id))
-	var button := panel.get_node_or_null("Panel/Scroll/Body/Actions/Demolish") as Button
+	var button := panel.get_node_or_null("Panel/Frame/ActionsFooter/Demolish") as Button
 	assert_ne(button, null)
 	# Half a hold demolishes nothing — the one irreversible button in the deck.
 	button.button_down.emit()
@@ -1052,3 +1148,286 @@ static func _road_edge_tile(sim: CitySim) -> Vector2i:
 				if block != null and block.is_ready():
 					return q
 	return Vector2i(56, 56)
+
+
+# ===========================================================================
+# Wave 18 — the placement bar reads on a touch screen (PA-23 / A91-D-91)
+# ===========================================================================
+
+## The bar's second line used to carry the requirement's TITLE with the sentence
+## in `tooltip_text`, and Godot raises no tooltip for a touch event. So on the
+## device the remedy half of every placement refusal — the half that says what to
+## do — was unreachable from the first screen a new player uses.
+func test_the_placement_bar_states_the_reason_in_visible_copy() -> void:
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var sheet: BuildSheet = mounted["sheet"]
+	var controller: BuildController = mounted["controller"]
+	sheet.open()
+	sheet.select_category("residential")
+	sheet.card_button("house").pressed.emit()
+	# Straight onto a building: doc 02's `E_FOOTPRINT`, whose remedy names both
+	# ways out ("Demolish it or choose another tile").
+	var occupied: Vector2i = (sim.buildings["H-001"] as Building).origin
+	sheet.move_ghost(Vector3(float(occupied.x) * controller.tile_m + 4.0, 0.0,
+			float(occupied.y) * controller.tile_m + 4.0))
+	var issue := sheet.get_node_or_null("PlacementBar/Row/Copy/Issue") as Label
+	assert_ne(issue, null, "the bar's second line")
+	var expected := controller.formatter.format(&"E_FOOTPRINT",
+			{"tile": occupied})
+	assert_true(issue.text.contains(str(expected["body"])),
+			"the bar carries the BODY, not just the title: %s" % issue.text)
+	assert_true(issue.text.length() > str(expected["title"]).length(),
+			"and the body is longer than the title it replaced")
+	# The sentence is on screen; the tooltip merely repeats it (RR-143).
+	assert_eq(issue.tooltip_text, issue.text)
+	assert_true(issue.autowrap_mode != TextServer.AUTOWRAP_OFF, "it wraps")
+	_unmount(mounted)
+
+
+## …and it offers the door. `E_FOOTPRINT` routes `FIX_TILE`, and PA-05's params
+## contract means the emitted target carries the tile the router acts on.
+func test_the_placement_bar_offers_fix_this_with_a_routable_target() -> void:
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var sheet: BuildSheet = mounted["sheet"]
+	var controller: BuildController = mounted["controller"]
+	sheet.open()
+	sheet.select_category("residential")
+	sheet.card_button("house").pressed.emit()
+	var occupied: Vector2i = (sim.buildings["H-001"] as Building).origin
+	sheet.move_ghost(Vector3(float(occupied.x) * controller.tile_m + 4.0, 0.0,
+			float(occupied.y) * controller.tile_m + 4.0))
+	var fix := sheet.get_node_or_null("PlacementBar/Row/Copy/Fix") as Button
+	assert_ne(fix, null, "the bar has a door")
+	assert_true(fix.visible, "and it is up on a refusal that names a target")
+	assert_true(fix.custom_minimum_size.y >= 48.0, "48 dp (A3)")
+	assert_true(fix.tooltip_text.length() > 0, "A15: a spoken name")
+	var seen: Array[Dictionary] = []
+	sheet.fix_requested.connect(func(target: Dictionary) -> void: seen.append(target))
+	fix.pressed.emit()
+	assert_eq(seen.size(), 1, "one emission per tap")
+	assert_eq(str(seen[0]["kind"]), String(RequirementFormatter.FIX_TILE))
+	assert_eq((seen[0]["params"] as Dictionary)["tile"], occupied,
+			"the router is handed the tile, not a name it would have to resolve")
+
+	# **And the door has something behind it.** `BuildSheet.fix_requested` was a
+	# signal with no consumer anywhere in the tree: `UIRoot` re-emits the land
+	# panel's and the shell connects the building panel's directly, and
+	# placement's — the surface PA-23 had just given a button to — went nowhere.
+	# That is PA-05's own defect one layer up, so it is asserted at the layer the
+	# shell actually connects.
+	var root: UIRoot = mounted["root"]
+	var re_emitted: Array[Dictionary] = []
+	root.build_fix_requested.connect(
+			func(target: Dictionary) -> void: re_emitted.append(target))
+	fix.pressed.emit()
+	assert_eq(re_emitted.size(), 1, "UIRoot re-emits it for the shell")
+	assert_eq(str(re_emitted[0]["kind"]), String(RequirementFormatter.FIX_TILE))
+	assert_eq((re_emitted[0]["params"] as Dictionary)["tile"], occupied,
+			"with the payload unchanged")
+
+	# A valid ghost has nothing to fix, and the button goes away with the reason.
+	var free_tile := _serviceable_vacant_tile(sim)
+	sheet.move_ghost(Vector3(float(free_tile.x) * controller.tile_m + 4.0, 0.0,
+			float(free_tile.y) * controller.tile_m + 4.0))
+	assert_false(fix.visible, "no refusal, no door")
+	_unmount(mounted)
+
+
+## The commit refusal used to be written into `Sheet/Body/Notice`, a label inside
+## the sheet that `_on_card_pressed` closes before placement begins. It went to a
+## screen that was not there. It goes to the bar now, and it survives until the
+## player moves the ghost — because until then they have not done anything that
+## could change the answer.
+func test_a_refused_commit_is_reported_on_the_bar_that_is_actually_up() -> void:
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var sheet: BuildSheet = mounted["sheet"]
+	var controller: BuildController = mounted["controller"]
+	sheet.open()
+	sheet.select_category("residential")
+	sheet.card_button("house").pressed.emit()
+	assert_false(sheet.is_open(), "placement closes the sheet — D-17's flow")
+	var free_tile := _serviceable_vacant_tile(sim)
+	sheet.move_ghost(Vector3(float(free_tile.x) * controller.tile_m + 4.0, 0.0,
+			float(free_tile.y) * controller.tile_m + 4.0))
+	# Drain the treasury between the verdict and the commit: the ghost is green
+	# and `cmd_place_building` refuses anyway, which is exactly the case the
+	# notice line existed for and never showed.
+	sim.treasury.spend(sim.treasury.balance, &"test_drain")
+	sheet.confirm_placement()
+	var issue := sheet.get_node_or_null("PlacementBar/Row/Copy/Issue") as Label
+	var notice := sheet.get_node_or_null("Sheet/Body/Notice") as Label
+	assert_true(issue.text.contains("$"), "the refusal quotes the money: %s" % issue.text)
+	assert_true(notice == null or not notice.visible,
+			"nothing is written into the closed sheet")
+	# And it clears the moment the player moves, because the answer may have
+	# changed and a stale refusal on a live bar is a lie. Fund the city first, so
+	# what is being asserted is the HELD row going away rather than the same
+	# refusal being raised again live.
+	sim.treasury.credit(500_000, &"test_refund")
+	sheet.move_ghost(Vector3(float(free_tile.x) * controller.tile_m + 4.0, 0.0,
+			float(free_tile.y) * controller.tile_m + 4.0))
+	assert_false(issue.text.contains("$"), "the held refusal is dropped on a move")
+	_unmount(mounted)
+
+
+## PA-47. The three verbs sat 300–550 dp below the fold on the Fold's outer box
+## because everything on the panel was inside one scroller. They are pinned
+## outside it now, exactly as the land panel has pinned its verb since Wave 6.
+func test_the_panel_verbs_are_pinned_outside_the_scroller() -> void:
+	var sim := _sim()
+	var mounted := _mount(sim)
+	var panel: BuildingPanel = mounted["panel"]
+	panel.show_building("H-001")
+	var footer := panel.get_node_or_null("Panel/Frame/ActionsFooter") as HFlowContainer
+	assert_ne(footer, null, "the footer exists")
+	var scroll := panel.get_node_or_null("Panel/Frame/Scroll") as ScrollContainer
+	assert_ne(scroll, null, "and the scroller is its sibling, not its ancestor")
+	assert_eq(panel.upgrade_button().get_parent(), footer, "UPGRADE is pinned")
+	assert_eq(scroll.size_flags_vertical, Control.SIZE_EXPAND_FILL,
+			"the scroller takes every pixel the footer does not")
+	# `setup()` runs twice in the real shell; the second pass must re-bind rather
+	# than rebuild, or a live panel goes blank.
+	panel.setup(mounted["root"].config, mounted["controller"])
+	assert_eq(panel.upgrade_button().get_parent(), footer, "idempotent")
+	assert_ne(panel.get_node_or_null("Panel/Frame/Scroll/Body/Checklist"), null,
+			"and the authored column is still bound")
+	panel.show_building("H-001")
+	assert_true(panel.checklist_rows().size() > 0, "the second pass still renders")
+	_unmount(mounted)
+
+
+## PA-22's second half: §2.9's reason, on tap rather than in a tooltip.
+func test_a_coverage_tile_answers_why_on_tap() -> void:
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	var mounted := _mount(sim)
+	var panel: BuildingPanel = mounted["panel"]
+	panel.show_building("POL-1")
+	var body := panel.body_path() + "/"
+	var reason := panel.get_node_or_null(body + "CoverageReason") as Label
+	assert_ne(reason, null, "the panel has a reason line")
+	assert_false(reason.visible, "silent until asked")
+	var tile := panel.get_node_or_null(body + "Coverage/Coverage_police") as Button
+	assert_ne(tile, null, "the tile is a target, not a label")
+	assert_true(tile.custom_minimum_size.y >= 48.0, "48 dp (A3)")
+	tile.pressed.emit()
+	assert_true(reason.visible, "and it answers")
+	assert_true(reason.text.contains("POL-1"),
+			"naming the station that covers this lot: %s" % reason.text)
+	_unmount(mounted)
+
+
+## PA-05's own gate, written the way the audit asked for it: **every** row the
+## real producers build against a **booted sim** either resolves to something
+## `ui/fix_router.gd` can act on, or is `FIX_NONE`. Never a silent null.
+##
+## The synthetic-params walk in `tests/test_requirement_formatter.gd` asserts the
+## contract's shape; this asserts that the shipped producers keep it. That is the
+## half that was missing — `grep -rn "main.gd" tests/` found six prose comments
+## and no test, and two dead `Fix this →` buttons survived three waves because of
+## it.
+func test_every_real_fix_target_resolves_or_is_none() -> void:
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	var controller := _controller(sim)
+	var rows: Array[Dictionary] = []
+	# 1. The upgrade checklist, on a building broken in every way it can be:
+	#    worn, poor, and one level from a gate it cannot pass.
+	var b: Building = sim.buildings["H-001"]
+	b.condition = 0.30
+	sim.treasury.spend(sim.treasury.balance, &"test_drain")
+	sim.progression.city_level = 0
+	for entry: Variant in (controller.building_view("H-001")["upgrade"]["checklist"] as Array):
+		rows.append(entry as Dictionary)
+	# 2. Placement, refused on each of the walls a player actually hits.
+	for archetype: String in ["house", "office"]:
+		controller.enter(archetype)
+		for tile: Vector2i in [b.origin, Vector2i(0, 0), Vector2i(120, 120)]:
+			var verdict := controller.evaluate(tile)
+			var failure: Dictionary = verdict.get("failure", {})
+			if not failure.is_empty():
+				rows.append(failure)
+		controller.cancel()
+	# 3. The water block's own ladder, on the shell that hosts three nodes.
+	for entry: Variant in (controller.water.building_block("WTR-1")["nodes"] as Array):
+		for row: Variant in ((entry as Dictionary)["upgrade"]["checklist"] as Array):
+			rows.append(row as Dictionary)
+	assert_true(rows.size() >= 12, "the walk saw %d rows" % rows.size())
+
+	var unroutable: Array[String] = []
+	for row: Dictionary in rows:
+		var fix: Dictionary = row["fix_target"]
+		var kind := StringName(str(fix["kind"]))
+		assert_true(RequirementFormatter.FIX_KINDS.has(kind),
+				"%s routes %s, which is not a kind" % [row["canonical"], kind])
+		if kind == RequirementFormatter.FIX_NONE:
+			continue
+		var params: Dictionary = fix["params"]
+		var id := str(fix["id"])
+		match kind:
+			RequirementFormatter.FIX_REPAIR, RequirementFormatter.FIX_POWER:
+				# Performed in place by the panel; the verb names the command.
+				if not params.has("verb"):
+					unroutable.append("%s: no verb" % row["canonical"])
+			RequirementFormatter.FIX_TILE:
+				if not (params.get("tile", null) is Vector2i):
+					unroutable.append("%s: no tile" % row["canonical"])
+			RequirementFormatter.FIX_BUILDING:
+				if not sim.buildings.has(id) and not (params.get("tile", null) is Vector2i):
+					unroutable.append("%s: %s is not a building and there is no \
+tile to fall back on" % [row["canonical"], id])
+			RequirementFormatter.FIX_COMPONENT:
+				# The failure PA-05 catalogued: a component id looked up in
+				# `CitySim.buildings`, where it has never been a key. The router
+				# resolves it with `component_tile()`, so that is what is asserted.
+				# `component_tile()` answers `Vector2i.ZERO` for an id it does not
+				# know, which is a real tile — so the lookup that decides is
+				# `component()`, whose empty dictionary cannot be mistaken.
+				var component := str(params.get("component", ""))
+				if sim.grid.component(component).is_empty():
+					unroutable.append("%s: %s resolves to no component" \
+							% [row["canonical"], component])
+			RequirementFormatter.FIX_BLOCK:
+				if sim.world.block(id) == null \
+						and not (params.get("tile", null) is Vector2i):
+					unroutable.append("%s: %s is not a block" % [row["canonical"], id])
+			RequirementFormatter.FIX_DISTRICT:
+				if str(params.get("district_id", "")) == "" \
+						and not (params.get("tile", null) is Vector2i):
+					unroutable.append("%s: no district" % row["canonical"])
+			RequirementFormatter.FIX_ROAD_SEGMENT:
+				if not (params.get("tile", null) is Vector2i):
+					unroutable.append("%s: no road tile" % row["canonical"])
+	assert_true(unroutable.is_empty(),
+			"targets the router cannot act on: %s" % ", ".join(unroutable))
+
+
+## And the two rows the audit named by name, on a real city: `E_AVENUE` used to
+## emit an empty id and `POWER_CAPACITY` a transformer id into a building lookup.
+func test_the_avenue_row_carries_the_avenue_it_searched_for() -> void:
+	var sim := _sim()
+	sim.advance_hours(1.0)
+	var controller := _controller(sim)
+	var b: Building = sim.buildings["H-001"]
+	var payload: Dictionary = sim.cmd_upgrade_building("H-001", true).get("payload", {})
+	# Level 4 is where C-62's gate starts existing at all.
+	var params := controller._check_params("H-001", b, 4, payload)
+	var avenue: Dictionary = params[&"E_AVENUE"]
+	var tile: Variant = avenue["fix_tile"]
+	assert_true(tile is Vector2i, "the search answers with a tile")
+	if tile != BuildController.NO_TILE:
+		assert_eq(sim.world.grid.road_class_at((tile as Vector2i).x,
+				(tile as Vector2i).y), TileGrid.ROAD_AVENUE,
+				"and the tile it answers with is an AVENUE")
+		assert_eq(controller.nearest_avenue_tiles(b.origin),
+				maxi(absi((tile as Vector2i).x - b.origin.x),
+						absi((tile as Vector2i).y - b.origin.y)),
+				"the distance the sentence quotes is measured to that tile")
+		var row := controller.formatter.format(&"E_AVENUE", avenue)
+		assert_eq(str(row["fix_target"]["kind"]),
+				String(RequirementFormatter.FIX_ROAD_SEGMENT))
+		assert_eq((row["fix_target"]["params"] as Dictionary)["tile"], tile,
+				"and the button goes to the avenue, not to the building")

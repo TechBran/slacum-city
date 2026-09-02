@@ -351,6 +351,59 @@ The avenue row is the **13th** failure code (report 98 C-62): doc 02's upgrade p
 
 Rules: at most **3** failure chips in the bar; `⚠ n issues` expands the full list in a 200 dp popover. Every failure row carries a **`Fix this →`** affordance that closes the sheet, `camera.focus_on()`s the blocking entity and opens its panel — the single most important teaching device in the game, turning an abstract denial into a navigable dependency edge.
 
+
+#### 2.7a The `fix_target` contract *(Wave 18, PA-05 · report 98 §51 RR-142)*
+
+`Fix this →` is only a teaching device if it *goes* somewhere. Every row
+`RequirementFormatter` produces carries
+
+```
+fix_target = {"kind": StringName, "id": String, "params": Dictionary}
+```
+
+`ui/fix_router.gd` is the only consumer, and `params` is **what it acts on**. The
+table below is normative for both halves: a producer that cannot fill a row's
+`params` routes `FIX_NONE` and no button is drawn, rather than shipping one that
+resolves to nothing.
+
+| kind | `id` | `params` |
+|---|---|---|
+| `FIX_NONE` | `""` | `{}` — no button |
+| `FIX_BUILDING` | `sim_id` | `{tile: Vector2i}` — the building's origin |
+| `FIX_BLOCK` | `block_id` | `{tile: Vector2i, block_id: String}` |
+| `FIX_TILE` | `""` | `{tile: Vector2i}` — **required**; the tile *is* the target |
+| `FIX_DISTRICT` | district / pressure-zone key | `{district_id: String, tile: Vector2i}` |
+| `FIX_ROAD_SEGMENT` | segment id, or `""` | `{tile: Vector2i}` — the nearest tile of the road the row is short of |
+| `FIX_COMPONENT` | grid / water component id | `{component: String}` — resolve with `PowerGrid.component_tile()`; **never** the row's own `tile`, which is where the ghost is |
+| `FIX_REPAIR` | `sim_id` | `{verb: "cmd_repair_building", cost, cost_text}` |
+| `FIX_POWER` | `sim_id` | `{verb: "cmd_fix_power_capacity", cost, cost_text}` |
+
+Two rules the table encodes:
+
+* **A tile is the currency.** Every one of these rows already walked the map to
+  write its own sentence; `E_AVENUE` searched outward to the nearest avenue so it
+  could print *"no avenue within 4 tiles"* and then discarded the coordinate. An
+  id in a namespace the router does not hold is not a target.
+* **The two purchase kinds never reach the router.** `FIX_REPAIR` and
+  `FIX_POWER` are performed in place by `ui/building_panel.gd`, because their
+  target is the building the player already has open (A91-D-54). Their `params`
+  exist so a second surface can offer the same purchase without re-deriving the
+  quote; `fix_cost` — never the row's `cost`, which is the *upgrade's* price — is
+  what a producer passes to fill them.
+
+`FIX_COMPONENT` is new this wave, and which rows belong in it was **measured, not
+assumed**. On the founding city `PowerGrid.attachment_of("H-001")` answers
+`T-06`, `sim.buildings.has("T-06")` is `false`, and `component_tile("T-06")` is
+`(39, 34)` — so a transformer id handed to a branch that resolves buildings is a
+dead button. `E_TRANSFORMER_FULL` and `E_NEEDS_TRANSFORMER` move here from
+`FIX_TILE`, whose tile was the **ghost's** — the tile under the player's own
+finger, which is D-35's lesson in miniature.
+
+`E_NO_SLOT` deliberately does **not** move. Its target is a doc 04 *substation*,
+and a substation is also a doc 02 shell: `sim.buildings.has("SUB-A")` is `true`
+and `substation` is an archetype the build sheet sells. The id resolves, the
+camera move is the whole useful answer, and D-71 already ruled it so.
+
 ### 2.8 Land purchase flow (S4)
 
 1. Build ▸ `Land` tab auto-enables a land overlay: owned blocks unshaded; purchasable blocks (adjacent to owned, spec §7.1) outlined in the selection-ring blue (`palette.selected`, §2.5) with a floating price tag; non-adjacent blocks greyed with a chain glyph and tooltip `Not adjacent to your city`.
@@ -1169,6 +1222,20 @@ stillness the whole column ghosts to `tilt_slider_ghost_alpha` (0.35) and any
 touch wakes it — the A8 reading is that a ghost is a **state**, not an animation,
 so `reduce_motion` keeps the ghost and cuts the 0.25 s fade to a cut. Preview
 states: `tilt_rest`, `tilt_drag`.
+
+**The band has a third measurement point as of Wave 18**, and it was the sweep
+that found it. §2.4's banner stack is as wide as the display allows, so on a
+phone box its `VIEW` button — a 48 dp target that grows with A3 — lands *inside*
+this column: at 412 × 915, 130 % text with larger targets,
+`AlertStack/Alert1/Row/View` P(296, 296) S(94, 76) covered **1,155 px²** of
+`TiltSlider/Thumb` at P(335, 351), which is the one thing between this deck and
+`--screen=all --audit --strict` exit 0 at every box × both settings. The band
+therefore starts under the **lowest banner actually on screen**, and only when
+that banner's own right edge is inside the column — at 794 dp the stack is
+`alert_dp`'s 400 wide and centred, so it never is, and the band does not move.
+The same argument as the top bar's row 0: two targets may not share a pixel (A3),
+and the column is the one that can move. Measured after, same cell: the column
+P(335, 267.5) → P(335, **416.5**), the thumb 351 → **500**, sweep clean.
 
 **4. The horizon, and the taps that now miss.** At the floor the top of the frame
 is 8° above the horizon, so a tap up there has **no ground under it at any
@@ -2079,6 +2146,17 @@ reading. **The deck is 60 states**, and the whole sweep is clean:
 `--screen=all --size=412x915 --audit --strict` → 60 states, 60 clean, 0 findings,
 exit 0.
 
+At Wave 18, two more (D-80, D-81), on the same terms and in the same commits as
+the surfaces they photograph: **`placement_unowned`** — the placement bar
+carrying a refusal whose fix is somewhere else on the map, which is the state
+`FIX THIS →` exists for, and the only one that shows both halves of PA-23 at once
+— and **`picker_refused`**, a dispatch the sim refused rendered in the words of
+the refusal it actually raised rather than *"That unit could not be sent."*
+**The deck is 68 states**, and the whole sweep is clean at every box and both
+accessibility settings: `--screen=all --audit --strict` × six `BOXES` × {100 %,
+130 % + larger targets} → **twelve sweeps, exit 0 in every one** (the twelfth
+needed §2.23's band to count the banner stack; see D-80).
+
 **Measured, whole-deck, before → after** (`--screen=all --audit --strict`, every
 finding of every kind, **six** boxes × **three** text scales; 53 states per cell
 at the fork, 55 after): the table is in §2.18. **408 → 0**, with the 100 % row
@@ -2112,6 +2190,13 @@ because there is nothing there to find, which is the intended answer.
 | id | change | doc ref | why |
 |---|---|---|---|
 | D-75 | **S9 gains one 48 dp cycling row, `Refresh rate` — Auto / 60 / 120 / Off**, immediately under Graphics. `data/ui.json.settings.rows.refresh_rate` is a `choice` whose ladder is `options_from: "refresh_modes"` → `data/render.json.refresh.settings_modes` and whose default is `defaults.refresh_rate` (`auto`); `value_text_from: "refresh"` resolves `ui_settings_value_refresh_*` with no branch in `SettingsModel.value_text()`. Device-scoped, beside the preset it modulates. `ui/settings_model.gd` gains one option source and nothing else; the sheet is untouched, because a row is data. | §2.13, §3.2, doc 13 §2.8, report 98 RR-126 | **The game caps its frame rate and had never told the screen.** On the reference device — a Fold 6 with a 1–120 Hz LTPO inner panel — the platform then infers a mode from the app's observed cadence and re-derives it whenever the cadence changes, which is what the player reports as bands *"only in the sub menus"*: a sheet opening over a still world is a workload step with no camera motion to hide the re-time (doc 93 §AE). The row exists for two reasons and one of them is not a preference: **Off is the A/B's control arm**, the shipped behaviour, selectable without a second binary, and Auto is what a player who never opens this screen gets. `90` is on the `--refresh=` lever and deliberately **not** on this ladder — the reference panel has no 90 Hz mode to land on, and a row offering a mode the phone cannot enter is a control that lies (the same rule §2.13's road-repair ladder already follows). |
+
+#### Wave 18 — the building panel and the requirement contract (2026-09-02, 99-PA §3.2 lane L)
+
+| # | Change | Sections | Why |
+|---|---|---|---|
+| D-80 | **A refusal is visible copy with a door, or it did not happen — and the side panel's verbs are pinned outside the scroller.** The placement bar's second line carries the requirement's **body** (wrapped, two lines, `ISSUE_MAX_LINES`) instead of its title, and a 48 dp `FIX THIS →` sits under it whenever `fix_target.kind != FIX_NONE`, emitting `BuildSheet.fix_requested` — the same `{kind, id, params}` the two panels emit (§2.7a). The commit refusal goes to that bar instead of `Sheet/Body/Notice`. `BuildingPanel` gains `Panel/Frame` with `ActionsFooter` outside `Scroll`, holding UPGRADE · REPAIR · DEMOLISH, the shape `LandPanel` has had since Wave 6. | §2.7, §2.9, report 98 §51 RR-143, 99-PA PA-23/PA-47 | The remedy string was in `tooltip_text`, and Godot raises no tooltip for a touch event: `grep -rn -i tooltip game/touch_input.gd game/main.gd ui/ui_root.gd` → nothing, so there is no long-press path either. Every `ui_requirement_*_remedy` was therefore unreachable from the one screen a new player uses first, and the fallback notice was addressed to a label inside a sheet that placement had already closed (A91-D-91). Measured, 880×400 — the box §2.1 calls the design's own. Before (99-PA PA-47's own reading at `fd4d8a0`): `UpgradeButton` P(544, **694**), `Repair` P(544, 750), `Demolish` P(544, **914**), all three 300–550 dp below a viewport that ends at 400. After: `Panel/Frame/ActionsFooter` P(584, **338**) S(284, 50) with `UpgradeButton` P(584, 338) and `Demolish` P(688, 338) beside it — one 48 dp row, on screen. The **x** moved too, and that is the second half of the same fix: the panel is `side_panel_width()` (300) at 576 now instead of laying itself out from its content's width. **The footer also exposed a defect nothing could see:** with `SCROLL_MODE_DISABLED` a `ScrollContainer`'s minimum *width* is its content's, so the shed-tier row made the panel lay out **480 dp wide on a 360 dp screen**, hanging 124 dp off the left edge — invisible to every sweep because `UIAudit` exempts anything inside a scroller. **A/B at the fork**, `--screen=building_blocked --size=360x800 --text-scale=1.3 --large-targets --rects=BuildingPanel/Panel`: `4503d35`'s panel reads P(**−124**, 60) S(**480**, 736), this branch's reads P(56, 60) S(**300**, 736) — the same file, the same command, one line of difference. At 100 % it reads 340 wide and on screen in both, which is why eleven waves of sweeps at the default scale saw nothing. The scroller is `SCROLL_MODE_SHOW_NEVER` now, the shed row is an `HFlowContainer` (item 27's rule), and the panel is exactly `side_panel_width()` at every box. Whole deck, **all six `BOXES` × both accessibility settings — twelve sweeps, 68 states each, `--screen=all --audit --strict` exit 0 in every one**. Eleven were clean the moment the panel was; the twelfth (412 × 915 at 130 % + larger targets) carried one finding this lane did not cause and closed anyway, because it was the only thing left: §2.4's banner `VIEW` sitting on the §2.23 tilt thumb. |
+| D-81 | **Four live service tiles, a seventh checklist row, and three dispatch refusals that say which one they are.** `BuildController._coverage()` reads `WaterSystem.pressure_at(access tile)` banded on `data/water.json`'s own thresholds and `CityIncidentWorld.coverage_explain()` banded on the building's **requirement** through `OverlayModel.coverage_state_name` — the ladder the overlay already uses, so tile and overlay can never disagree. Each tile is a 48 dp target and answers §2.9's one-line reason (`ui_building_coverage_reason_*`) on tap. `E_WATER_HEADROOM` joins `UPGRADE_CHECKS` with copy and a `FIX_DISTRICT` target; `E_UNIT_UNAVAILABLE` / `E_UNREACHABLE` / `E_UNKNOWN_INCIDENT` join `CODE_TABLE` and reach the unit picker through `RequirementFormatter.from_result()`. | §2.9, §2.6, report 98 §51 RR-144, 99-PA PA-22/PA-24/PA-52 | Three of the four tiles were hard-wired to `✕ —` on **every building in the city**, including the pump station's own water tile, while the sim had published all three since Wave 5 — and `tests/test_build_controller.gd` asserted the placeholder (A91-D-92). Founding-city readings now: `H-001` water **60 %** in `WTR-1-PMP`, police/fire OFFLINE at a true 0 %, **32.6** and **29.5** tiles from their stations' centroids against radii of 20 and 18 (Euclidean, the metric `CoverageIndex` itself uses); `POL-1` police **99 %**, `WTR-1` **44 %**, `FIRE-1` fire **99 %**. The checklist was six rows against a gate that raises seven, so a building blocked on water alone read "Every requirement met." over six ticks with UPGRADE dead; the list is verified against `cmd_upgrade_building`'s own source now. The picker answered all three dispatch codes with one sentence, "That unit could not be sent." |
 
 **One row, and it is a real one.** `refresh_rate` writes no sim state and takes no
 `policy`: it is a device preference like `graphics`, and the shell hands its value
