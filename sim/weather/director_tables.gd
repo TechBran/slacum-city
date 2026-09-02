@@ -92,6 +92,22 @@ func event_by_id(id: String) -> Dictionary:
 	return _by_id.get(id, {})
 
 
+## 99-PA PA-25 / A91-D-80 — **the column that names doc 06's own type.** Four of
+## the eight catalog ids are not doc 06 types (`traffic_pileup` is a
+## `traffic_accident`, `transformer_explosion` a `transformer_failure`,
+## `crime_surge` a `crime`, `major_structure_fire` a `structure_fire`), so every
+## request the Director made for one was refused by the sink and the pick died
+## having already spent its TP, armed its cooldown and burned the offline-hazard
+## slot. This is the translation, authored beside the event it translates:
+## `{type, subtype, source}` — doc 06's type id, its subtype (only `storm_damage`
+## has any), and the §2.6.5 candidate source the target roster is drawn from.
+##
+## EMPTY means "this event has no incident half" — the three weather rows, whose
+## whole effect is the segment they inject.
+func incident_kind(event_id: String) -> Dictionary:
+	return event_by_id(event_id).get("incident_kind", {})
+
+
 ## The NOMINAL pressure row — every scale at 1.0 with soft suppression on, which
 ## is `standard` by construction. It is what a `DisasterDirector` reads when
 ## nobody has called `set_pressure_knobs()`, which in the shipped game is never:

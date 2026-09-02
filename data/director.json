@@ -57,16 +57,18 @@
       "allowed_bands": ["FULL"],
       "hazards_on_casual": 0
     },
-    "irreplaceable_condition_floor": 0.1
+    "irreplaceable_condition_floor": 0.1,
+    "_max_active_note": "99-PA PA-04 / A91-D-59. The hold cap: no committed event may sit in active_events longer than this. 2880 game-minutes = 48 game-hours, past doc 06 §2.10's one-game-day ABANDONED terminal rule, so a row that reaches it is a row whose incidents are already gone. DisasterDirector.MAX_ACTIVE_MIN_DEFAULT mirrors it for the save migrator (doc 08 §2.8 forbids a migrator reading data/); tests/test_weather_director.gd pins the two equal.",
+    "max_active_min": 2880
   },
   "_difficulty_note": "MOVED and now GONE (2026-08-20, doc 91 A91-D-19). Doc 07 §8.3's four pressure knobs plus soft_suppression live in data/difficulty.json section \"pressure\", read via Difficulty.value(\"pressure\", key) and handed to the Director by CitySim._push_difficulty_to_systems(). repair_cost_mult is DELETED; repair difficulty is economic.M_repair. The _difficulty_fallback mirror that sat here until doc 03's file shipped is deleted, and DirectorTables.load_from() now REFUSES a file that carries one — one file, one loader (C-17).",
   "events": [
-    {"id": "traffic_pileup", "tp_cost": 6, "class": "minor", "hazard_tier": 1, "forecastable": false, "warn_min": 0, "min_city_tier": 1, "min_preparedness": 0.0, "base_weight": 1.1},
-    {"id": "water_main_break", "tp_cost": 8, "class": "minor", "hazard_tier": 1, "forecastable": false, "warn_min": 0, "min_city_tier": 1, "min_preparedness": 0.0, "base_weight": 1.0},
+    {"id": "traffic_pileup", "tp_cost": 6, "class": "minor", "hazard_tier": 1, "forecastable": false, "warn_min": 0, "min_city_tier": 1, "min_preparedness": 0.0, "base_weight": 1.1, "incident_kind": {"type": "traffic_accident", "subtype": "", "source": "intersection"}},
+    {"id": "water_main_break", "tp_cost": 8, "class": "minor", "hazard_tier": 1, "forecastable": false, "warn_min": 0, "min_city_tier": 1, "min_preparedness": 0.0, "base_weight": 1.0, "incident_kind": {"type": "water_main_break", "subtype": "", "source": "water_segment"}},
     {"id": "storm_minor", "tp_cost": 8, "class": "minor", "hazard_tier": 1, "forecastable": true, "warn_min": 60, "min_city_tier": 1, "min_preparedness": 0.0, "base_weight": 1.4},
-    {"id": "transformer_explosion", "tp_cost": 10, "class": "minor", "hazard_tier": 1, "forecastable": false, "warn_min": 0, "min_city_tier": 1, "min_preparedness": 0.1, "base_weight": 1.2},
-    {"id": "crime_surge", "tp_cost": 12, "class": "minor", "hazard_tier": 1, "forecastable": false, "warn_min": 0, "min_city_tier": 2, "min_preparedness": 0.15, "base_weight": 0.9},
-    {"id": "major_structure_fire", "tp_cost": 14, "class": "major", "hazard_tier": 2, "forecastable": false, "warn_min": 0, "min_city_tier": 2, "min_preparedness": 0.2, "base_weight": 0.8},
+    {"id": "transformer_explosion", "tp_cost": 10, "class": "minor", "hazard_tier": 1, "forecastable": false, "warn_min": 0, "min_city_tier": 1, "min_preparedness": 0.1, "base_weight": 1.2, "incident_kind": {"type": "transformer_failure", "subtype": "", "source": "transformer"}},
+    {"id": "crime_surge", "tp_cost": 12, "class": "minor", "hazard_tier": 1, "forecastable": false, "warn_min": 0, "min_city_tier": 2, "min_preparedness": 0.15, "base_weight": 0.9, "incident_kind": {"type": "crime", "subtype": "", "source": "district_building"}},
+    {"id": "major_structure_fire", "tp_cost": 14, "class": "major", "hazard_tier": 2, "forecastable": false, "warn_min": 0, "min_city_tier": 2, "min_preparedness": 0.2, "base_weight": 0.8, "incident_kind": {"type": "structure_fire", "subtype": "", "source": "building"}},
     {"id": "heat_wave", "tp_cost": 24, "class": "major", "hazard_tier": 2, "forecastable": true, "warn_min": 360, "min_city_tier": 1, "min_preparedness": 0.15, "base_weight": 0.7, "season_affinity": {"SPRING": 0.3, "SUMMER": 1.6, "AUTUMN": 0.3, "WINTER": 0.0}},
     {"id": "severe_thunderstorm", "tp_cost": 36, "class": "major", "hazard_tier": 3, "forecastable": true, "warn_min": 90, "min_city_tier": 1, "min_preparedness": 0.2, "base_weight": 1.0, "season_affinity": {"SPRING": 1.0, "SUMMER": 1.4, "AUTUMN": 0.8, "WINTER": 0.3}}
   ],

@@ -5696,3 +5696,201 @@ doc 13 §2.9.1 (the ANR budget lines, re-derived against the measured load and
 save); doc 91 §14.5 (`A91-D-83`, `A91-D-84`) and §20.4 (device items 2, 3 and 5,
 and the completion statement); doc 93 §AF; and
 `tools/device_results/README.md`.
+
+---
+
+## 49. WAVE 18 — the Director wakes up, and the storm the game never ran (binding)
+
+*Filed 2026-09-02 from `99-production-audit.md` lane B — rows **PA-04** (P0),
+**PA-25**, **PA-26** and **PA-89**. Every number below was measured on this
+branch and the command that produced it is quoted beside it. This lane holds the
+balance matrix for the wave; §49.5 carries the re-fits and their derivations.*
+
+**The shape of it.** Doc 07's Disaster Director is the system that decides what
+tests the city. At the Wave-17 fork it decided twice, and then it stopped — for
+the rest of every city's life, in every save on every phone.
+
+Three independent defects stacked, and each one alone would have been enough to
+make doc 07 §2.6's SHIPPED grade false:
+
+1. **Nothing resolved an event.** `on_event_resolved` is the only eraser of
+   `active_events` and `grep -rn on_event_resolved sim/ game/` at the fork
+   returned **the definition and the tests**. `_try_schedule`'s pacing gate —
+   `if has_pending_major() or scheduled.size() + active_events.size() >= 2:
+   return` — therefore refused every schedule after the second event, forever.
+2. **Five of the eight catalog events could not become anything.**
+   `target_provider` was declared, read twice and never assigned; four of the
+   eight ids are not doc 06 catalog types at all; and the sink resolved a
+   reference against buildings and grid components only, so a water segment or a
+   road intersection could never resolve. Each dead pick still spent its TP.
+3. **The player's half of the storm had no door.** Six authored prep actions, a
+   Storm Report, a Storm Ready payout — `grep -c storm_prep sim/city_sim.gd` →
+   **0**.
+
+Measured at the fork, `tools/probe_director.gd`, balanced / seed 4242 / 60
+game-days on the coarse online path:
+
+| | fork (`d0d114f`) | this branch |
+|---|---|---|
+| `director_event_started` | **2** | **23** |
+| `director_event_ended` | **0** | **23** |
+| `active_events` at the wall | **2** | **0** |
+| last event started on game-day | **7.5** | **47.3** |
+| longest hold (game-minutes) | — (nothing ever ended) | **226** |
+| kinds that resolved | *none* | `traffic_pileup` ×8, `water_main_break` ×6, `storm_minor` ×5, `transformer_explosion` ×4 |
+
+### RR-135 — every committed event is STAMPED at commit with the two minutes that end it
+
+**Ruled.** An event that cannot end is a scheduling gate that cannot open, so the
+end is written at the beginning. `DisasterDirector._stamp_resolution` puts two
+fields on every committed row:
+
+* **`resolve_after_min`** — the earliest minute it may resolve. A weather event
+  is not over while its segment runs, so `impact + duration`; a
+  `severe_thunderstorm` also owes §2.7.6's STORM REPORT, so
+  `impact + max(duration, storm.recovery.report_at_min)`, which for the beat
+  sheet's own 120-minute storm is **exactly T+180**. An event that only requests
+  incidents may end the moment they close, so `impact`.
+* **`expire_at_min`** — the hold cap, `impact + fairness.max_active_min`
+  (**2880** game-minutes = 48 game-hours, past doc 06 §2.10's one-game-day
+  ABANDONED terminal rule). Nothing waits forever, however the link book was
+  lost.
+
+**The two halves of the test live in the two places that can answer them.**
+`DisasterDirector.events_due_for_resolution(now_min, busy_uids)` owns the clock;
+`CitySim._sweep_director_events` owns `_director_links`, the incident-to-event
+book, and joins them on every REPORT tick immediately after the drain that erases
+links — so an event whose last incident closes on a tick resolves on that tick. A
+request the sink REFUSED never enters the busy set and therefore resolves at
+once, which is the honest answer: it produced nothing, so there is nothing to
+wait for. Resolutions are handed back in ascending uid so two events closing on
+one tick close in a canonical order.
+
+**Rejected: resolving in `on_incident_resolved`.** That hook already exists and
+already fires; making it the resolver would have closed an event on its FIRST
+incident rather than its last, which is not what F2 measures its cooldowns from.
+
+**Rejected: an hourly sweep in the DIRECTOR phase.** Cheaper, and it would have
+quantised every resolution to the hour boundary — F2's from-resolution cooldowns
+would then read up to 59 minutes early. `active_events` holds at most two rows;
+the per-tick sweep is a two-row loop behind an `is_empty()` guard.
+
+`on_event_resolved` gained a third argument, `now_min`, for the same reason: the
+Director's `_now_min` only advances on its hourly tick, and resolution happens at
+REPORT. It only ever moves the clock forward.
+
+### RR-136 — the save ladder's rung 8 REPAIRS rather than records, and it is the first one that does
+
+**Ruled.** `CitySim.SAVE_SECTION_VERSION` moves **7 → 8**. Every rung before this
+one recorded a rules change with an identity migrator; this one writes into the
+body, because the state it is fixing is one no binary should have been able to
+write — a `director.active_events` list that can never empty. Every save the
+game has ever produced can carry one, and a city with two ghost rows has a
+Director that will never schedule again.
+
+`_v7_to_v8` stamps `resolve_after_min` and `expire_at_min` onto every
+`director.scheduled` and `director.active_events` row, computed from what the row
+already carries (`impact_min`, and `duration_min` if it is a weather row) plus
+`DisasterDirector.MAX_ACTIVE_MIN_DEFAULT` and `STORM_REPORT_AT_MIN_DEFAULT`. The
+two constants exist **because** doc 08 §2.8 forbids a migrator from opening
+`data/`; `tests/test_director_resolution.gd` pins each equal to the
+`data/director.json` value it mirrors, so they cannot drift.
+
+**Rejected: dropping the ghost rows.** It is the obvious move and it is wrong
+twice: a row that is genuinely in flight has incidents on the map linked to it,
+and a dropped major would leave `last_major_end_min` never set and
+`has_pending_major()` lying in the other direction. A stamp is total; a deletion
+is a guess.
+
+`DisasterDirector.deserialize` writes the same stamp when a row arrives without
+one, so a fragment restored by a tool or a fixture — anything that never walked
+the ladder — still gets an event that can end.
+
+This rung is **hash-moving on every played city**: an event that could not end
+can now end, so a v7 city advanced under v8 sees storms a v7 binary would never
+have scheduled. §49.5 carries the re-taken baselines.
+
+### RR-137 — the Director's catalog names the drama; doc 06's catalog names the type, and one column joins them
+
+**Ruled.** `data/director.json`'s eight event rows gain an **`incident_kind`**
+column, `{type, subtype, source}`: doc 06's own type id, its subtype (only
+`storm_damage` has any) and the §2.6.5 candidate source its target roster is
+drawn from. Five rows carry one; the three weather rows do not, because their
+whole effect is the segment they inject, and an EMPTY column is the statement
+"this event has no incident half" rather than an omission.
+
+| director event | doc 06 type | §2.6.5 source |
+|---|---|---|
+| `traffic_pileup` | `traffic_accident` | `intersection` |
+| `water_main_break` | `water_main_break` | `water_segment` |
+| `transformer_explosion` | `transformer_failure` | `transformer` |
+| `crime_surge` | `crime` | `district_building` |
+| `major_structure_fire` | `structure_fire` | `building` |
+| `storm_minor` · `heat_wave` · `severe_thunderstorm` | — | — |
+
+**`CitySim.director_targets` is bound to `target_provider` at boot** and supplies
+§2.6.5's descriptor — `ref`, `condition`, `district_id`, `domain`,
+`base_type_weight`, `exposure_factor`, plus `pos` and `f10_protected` — drawn
+from **doc 06's own candidate source** through `CityIncidentWorld`, so a Director
+target and an ambient one come from the same population. The Director is not a
+second, parallel spawner. F10's "last of its kind" test is evaluated there,
+because the live roster is the only place it is answerable, and it ships to the
+resolver as `condition_floor`.
+
+**The trap this fix walks past, recorded because it cost a measurement.** §2.6.3
+step 8 says *"if no legal target, drop the pick"*. A weather event has no target
+roster — its target is the whole city — so reading step 8 the other way deleted
+`storm_minor`, `heat_wave` and the authored thunderstorm from the schedule the
+moment a provider was bound: the 60-day probe went from 23 events with 5 warnings
+to 20 events with **zero** `weather_warning` emissions. `_choose_target` now
+returns "no target, proceed" for a row with no `incident_kind`, and drops the
+pick only for a row that needs something to hit and cannot find it.
+
+**The sink picks for itself when the request carries no reference** (the debug
+force verb; a row restored from a save written before the provider existed). The
+pick is the heaviest §2.6.5 weight with ties broken by `ref` — deterministic and
+RNG-free, because this is a fallback and not a second scheduler, and a `randf()`
+here would be a `director` stream position the fine and coarse paths would have
+to agree on.
+
+### RR-138 — "no other candidate is affordable" is `pool.size() == 1`, and the looser reading was measured and rejected
+
+**Ruled.** §2.6.2's *buy severity* ships: the Director may spend up to
+`1.60 × tp_cost` to add up to `+0.30` to `severity_mult`, linearly, and only when
+`tp_pool > 1.6 × tp_cost` **and no other candidate is affordable**. Since
+`candidates()` has already filtered the pool to what the budget can buy and what
+the fairness gates allow, the second clause is exactly `pool.size() == 1`: there
+is money, there is one thing to spend it on, and the surplus would otherwise sit
+against F6's cap doing nothing.
+
+**The looser reading — "nothing DEARER is affordable" — was implemented first,
+measured, and rejected.** Over doc 07 §7 test 26's own rig (100 game-days × 12
+seeds × 4 presets, `tools/probe_test26.gd`):
+
+| | majors, Standard | game-days per major, Standard | mean `severity_mult`, Standard | crisis/casual major ratio |
+|---|---|---|---|---|
+| fork (no buy) | 454 | 2.643 | 1.2080 | 2.644 |
+| "nothing dearer" | 372 | **3.226** | 1.2377 | **2.506** |
+| **shipped** (`pool.size() == 1`) | 420 | **2.857** | **1.2825** | **2.622** |
+
+The looser reading fires on any hour whose pool tops out on a cheap minor. It
+took the Standard cadence outside §2.6.3's own claim (*"one major crisis every
+~2–2.5 game-days"*), and outside the two bounds `test_26_difficulty_scaling`
+already held, while buying only **+2.5 %** mean severity for an **18 %** cut in
+majors. The literal reading buys **+6.2 %** mean severity for **7.5 %**, keeps
+both existing bounds green with no re-fit, and is what the sentence says.
+
+**One doc-internal inconsistency is recorded, not silently resolved.** Doc 07
+§2.6.2's parenthetical *"(+0.50×tp_cost buys +0.125)"* cannot be reconciled with
+its own *"spend up to 1.60 × tp_cost to add up to +0.30"*: the second sentence
+fixes the rate at `+0.50` of severity per unit of `tp_cost` overspent, which puts
+`+0.50×tp_cost` at `+0.25`. The rate implied by the two endpoints is the one
+implemented (`(spend/cost − 1) × buy_max_severity / (buy_max_cost_mult − 1)`,
+exactly `+0.30` at the cap); the parenthetical is an arithmetic slip in the
+authored text and is flagged as an open question rather than patched by this
+lane, which does not own doc 07's prose.
+
+The buy is **all-or-nothing** rather than a slider: a partial buy would need a
+draw, and a draw here is a stream position the coarse and fine paths would have
+to agree on for no design gain. `tp_spent` rides on the committed row so the
+report and the save both carry what it actually cost.

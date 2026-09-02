@@ -337,12 +337,12 @@ static func _sha256_of(text: String) -> String:
 	return ctx.finish().hex_encode()
 
 
-func test_the_city_section_is_on_rung_seven() -> void:
+func test_the_city_section_is_on_rung_eight() -> void:
 	# The constant, the published accessor and the bytes on disk must agree.
 	# A bump that lands in only two of the three is how a save silently keeps
 	# claiming to be something it is not.
-	assert_eq(CitySim.SAVE_SECTION_VERSION, 7,
-			"the opportunity layer is rung 7 (doc 08 §2.8, doc 91 A91-D-33)")
+	assert_eq(CitySim.SAVE_SECTION_VERSION, 8,
+			"the Director's stall repair is rung 8 (doc 08 §2.8, 99-PA PA-04)")
 	var sim := CitySim.boot_from_files(4242)
 	assert_eq(sim.save_section_version(), CitySim.SAVE_SECTION_VERSION)
 	var service := _fresh_service()

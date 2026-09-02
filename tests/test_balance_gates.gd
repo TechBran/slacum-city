@@ -2564,6 +2564,72 @@ func test_gate_32_active_play_pays_more_and_idling_still_pays() -> void:
 					% [100.0 * share, LONG_DAYS])
 
 
+## The Director's own horizon. 60 game-days rather than `LONG_DAYS`'s 21 because
+## the defect this gate exists for did not show up until game-day 8 and looked
+## like a quiet stretch until game-day 20 — a 21-day gate would have passed over
+## it. One seed, one strategy, ~90 s coarse.
+const DIRECTOR_DAYS := 60
+## Doc 07 §2.6.3's own cadence claim is "one major crisis every ~2–2.5 game-days
+## plus minors between them", which over 60 game-days is 24–30 events at the
+## reference city's size. A founding city is far below that city and F1's floor
+## caps it at cheap tier-1 minors for a long while, so the FLOOR here is a
+## tripwire and not a fit: **measured 23** on this run (balanced / 4242 / 60 d,
+## `tools/probe_director.gd`), and **2** on the Wave-17 fork, where the whole
+## rest of the run was the stall. Anything at or under the fork's number means
+## the schedule has died again.
+const DIRECTOR_MIN_EVENTS := 8
+
+
+## **Gate 33 (99-PA PA-04 / A91-D-59) — the Disaster Director keeps working.**
+##
+## Three claims, and the first is the one that was false at the Wave-17 fork:
+##
+##   1. a played city keeps SCHEDULING — the Director is not two events and
+##      then silence for the rest of the city's life;
+##   2. every event it starts gets RESOLVED, and none is held past the 48
+##      game-hour cap `data/director.json fairness.max_active_min` publishes;
+##   3. the schedule is still alive at the END of the run, not merely alive
+##      early — the fork passed (1) on a short horizon and failed it on a long
+##      one, which is exactly how the defect survived seventeen waves.
+func test_gate_33_the_director_does_not_stall() -> void:
+	var doc := _run("balanced", DIRECTOR_DAYS, 4242)
+	var director: Dictionary = doc["director"]
+	var started := Rig.event_count(doc, "director_event_started")
+	var ended := Rig.event_count(doc, "director_event_ended")
+
+	assert_true(started >= DIRECTOR_MIN_EVENTS,
+			("the Director started %d events in %d game-days; the fork managed 2 "
+					+ "and then stalled forever, and doc §2.6.3's cadence is 24–30 "
+					+ "at the reference city's size")
+					% [started, DIRECTOR_DAYS])
+	assert_true(ended >= started - 2,
+			("%d events started and %d ended — at most the two the pacing gate "
+					+ "allows in flight may still be open at the wall")
+					% [started, ended])
+	assert_eq(ended + int(director["active_end"]), started,
+			("%d started, %d ended, %d still in flight — the three have to add up "
+					+ "or an event left `active_events` without resolving")
+					% [started, ended, int(director["active_end"])])
+	assert_true(int(director["active_end"]) <= 2,
+			"the in-flight list is bounded by `_try_schedule`'s own gate")
+
+	var cap := int(director["max_active_min"])
+	assert_eq(cap, DisasterDirector.MAX_ACTIVE_MIN_DEFAULT,
+			"the gate is held against the shipped knob, not a literal")
+	assert_true(int(director["max_hold_min"]) <= cap,
+			("an event was held %d game-minutes; the cap is %d (48 game-hours). "
+					+ "Holds: %s")
+					% [int(director["max_hold_min"]), cap, str(director["holds"])])
+
+	# (3) Still alive at the wall. The fork's last event started on game-day 7.5
+	# of a 60-day run; anything inside the last third is a living schedule.
+	var last_day := float(int(director["last_start_min"])) / 1440.0
+	assert_true(last_day >= float(DIRECTOR_DAYS) * 0.6,
+			("the last Director event of a %d-game-day run started on game-day "
+					+ "%.1f — the schedule died partway through")
+					% [DIRECTOR_DAYS, last_day])
+
+
 ## `data/economy.json`'s `city_services` block, read live so a gate cannot
 ## re-state a tunable it exists to gate.
 static func _city_services() -> Dictionary:
