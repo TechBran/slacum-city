@@ -99,6 +99,28 @@ var detail_ceiling: int = 2
 ## What is actually in the material right now. Never above `detail_ceiling`.
 var detail: int = 2
 
+## **A/B LEVER, NOT A SETTING — and the ruling it feeds is DEVICE-GATED and NOT
+## TAKEN (report 98 RR-97, doc 93 §X3).** An exposure multiplier on §2.1.2's
+## carriageway `tint`, applied in LINEAR and re-encoded, so `1.5` is "two thirds
+## of a stop lighter" rather than "twenty points of hex".
+##
+## Why it exists. Doc 11 §2.17b's street-body blob shadow measures near-invisible
+## ON THE CARRIAGEWAY at `body_alpha` 0.50, and the reason is not the alpha: a
+## `blend_mix` decal darkens what is behind it by a FRACTION, and the shaded
+## carriageway sits near **0.02 linear**, so 50 % of nothing is nothing. Raising
+## `body_alpha` cannot fix that — it is already most of the way to opaque and the
+## disc would read as a hole before it read as a shadow. **The honest lever is
+## the road**, and the road is a whole-scene look decision that belongs to a
+## device session and not to a render branch. So this ships as an ARM, at the
+## shipped value, with the command that flips it written down.
+##
+## `1.0` is the shipped look and the default on every path. Nothing in `sim/`,
+## no preset, no governor rung and no settings row touches it.
+var tint_gain: float = 1.0
+## The authored carriageway colour, kept so `set_tint_gain` is a function of the
+## DATA rather than of whatever the last gain left in the material.
+var _tint_base := Color(0.34, 0.34, 0.37)
+
 var _asphalt: MultiMeshInstance3D
 var _sidewalk: MultiMeshInstance3D
 var _tiles: Array[Vector2i] = []
@@ -190,6 +212,53 @@ func set_detail(level: int) -> void:
 		(_asphalt.material_override as ShaderMaterial).set_shader_parameter("detail", detail)
 
 
+## The A/B arm. `gain` multiplies the authored carriageway tint in LINEAR — the
+## space an exposure step is measured in — and hands the shader the sRGB value
+## whose decode lands there, because `tint` is hinted `source_color` and Godot
+## decodes what it is given. 1.0 restores the shipped street exactly.
+##
+## Live: one uniform write, no rebuild, no re-upload, no geometry. That is what
+## makes it usable from a device session, where the arm has to be flipped while
+## the same street is on the screen.
+func set_tint_gain(gain: float) -> void:
+	tint_gain = clampf(gain, 0.05, 8.0)
+	if _asphalt != null and _asphalt.material_override is ShaderMaterial:
+		(_asphalt.material_override as ShaderMaterial).set_shader_parameter(
+				"tint", _tinted())
+
+
+## The authored tint under the current gain. Exposed so a test can assert the
+## arithmetic without a live viewport.
+func tinted_road_color() -> Color:
+	return _tinted()
+
+
+## The tint the LIVE material is actually carrying, read back off the shader
+## rather than recomputed. `tinted_road_color()` says what the arithmetic
+## wants; this says what the renderer got, and report 98 RR-97 exists because
+## those were not the same thing.
+func live_tint_color() -> Color:
+	if _asphalt == null or _asphalt.material_override == null:
+		return Color(-1, -1, -1)
+	if _asphalt.material_override is ShaderMaterial:
+		var v: Variant = (_asphalt.material_override as ShaderMaterial) \
+				.get_shader_parameter("tint")
+		return v if v is Color else Color(-2, -2, -2)
+	return Color(-3, -3, -3)
+
+
+func _tinted() -> Color:
+	if is_equal_approx(tint_gain, 1.0):
+		# BYTE-IDENTICAL at the shipped gain: the round trip through linear and
+		# back is not exact in f32, and an A/B lever that changes the picture at
+		# its own default is not a lever, it is a bug.
+		return _tint_base
+	var lin := _tint_base.srgb_to_linear()
+	return Color(clampf(lin.r * tint_gain, 0.0, 1.0),
+			clampf(lin.g * tint_gain, 0.0, 1.0),
+			clampf(lin.b * tint_gain, 0.0, 1.0), _tint_base.a).linear_to_srgb()
+
+
 ## Metres of footway the tile's class carries on each kerbed side.
 func sidewalk_width(road_class: int) -> float:
 	return sidewalk_w_avenue if road_class == TileGrid.ROAD_AVENUE else sidewalk_w_street
@@ -234,10 +303,11 @@ func _build_nodes(render_data: Dictionary) -> void:
 ## NIGHT-1 calibration.
 func _road_material(render_data: Dictionary) -> Material:
 	var mat := ShaderMaterial.new()
+	_tint_base = Color(String(cfg.get("tint", "#57575F")))
 	if not ResourceLoader.exists(ROAD_SHADER):
-		return _fallback(Color(String(cfg.get("tint", "#57575F"))), 0.85)
+		return _fallback(_tint_base, 0.85)
 	mat.shader = load(ROAD_SHADER)
-	mat.set_shader_parameter("tint", Color(String(cfg.get("tint", "#57575F"))))
+	mat.set_shader_parameter("tint", _tinted())
 	mat.set_shader_parameter("dry_roughness", float(cfg.get("roughness", 0.85)))
 	mat.set_shader_parameter("tile_m", TILE_M)
 	mat.set_shader_parameter("sidewalk_w_street", sidewalk_w_street)

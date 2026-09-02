@@ -52,6 +52,7 @@ const FAMILY_ORDER := ["residential", "commercial", "industrial", "tech", "civic
 ## Every shader the shipped renderer owns. A `.gdshader` that stops being
 ## referenced is either dead weight or a layer that quietly lost its material.
 const SHADERS := [
+	"blob_shadow.gdshader",
 	"building.gdshader", "building_far.gdshader", "construction_rig.gdshader",
 	"flood.gdshader", "ground.gdshader", "lamp.gdshader", "light_pool.gdshader",
 	"power_pad.gdshader", "power_smoke.gdshader", "power_wire.gdshader",
@@ -64,6 +65,9 @@ const SHADERS := [
 ## Where each shader is expected to be reachable from. One entry per row of
 ## SHADERS; the sweep asserts the named file mentions the shader by path.
 const SHADER_OWNER := {
+	# Doc 11 §2.11's per-building contact decal, Performance only (report 98
+	# RR-96). Owned by the same view that owns the buildings it sits under.
+	"blob_shadow.gdshader": "res://game/render/city_view.gd",
 	"building.gdshader": "res://game/render/city_view.gd",
 	"building_far.gdshader": "res://game/render/city_view.gd",
 	"construction_rig.gdshader": "res://game/render/construction_vehicle_view.gd",
@@ -644,10 +648,15 @@ func test_19_the_matrix_census_is_what_doc_91_records() -> void:
 	# 11 §2.17**: `street_life.gdshader` is the crook, the dog and the goat, and
 	# `street_fx.gdshader` is the marker, the label, the poof and the sparkle —
 	# four effects on one buffer, which is why there is one shader and not four.
-	# **19 since Wave 17** (doc 98 §43 / RR-114): `sky_gradient.gdshader` is the
+	# **20 since Wave 17** — two shaders in one wave, from two lanes that could
+	# not see each other. (doc 98 §43 / RR-114): `sky_gradient.gdshader` is the
 	# gradient sky the manual pitch axis made visible — the first shader in this
 	# list whose owner is the environment rather than a `game/render/` view.
-	assert_eq(SHADERS.size(), 19, "shaders")
+	# And (doc 11 §2.11, report 98 RR-96):
+	# `blob_shadow.gdshader` is the per-building contact decal on the one preset
+	# whose `shadows` knob is false — its own file rather than a seventh mode on
+	# `street_fx.gdshader`, for the three reasons in its header.
+	assert_eq(SHADERS.size(), 20, "shaders")
 	assert_eq((StarterCityLoader.read_json(VEHICLES).get("types", {}) as Dictionary).size(),
 			5, "doc 06 vehicle types")
 	assert_eq(DEFERRED_BODIES.size(), 1,
