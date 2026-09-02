@@ -5696,3 +5696,59 @@ doc 13 §2.9.1 (the ANR budget lines, re-derived against the measured load and
 save); doc 91 §14.5 (`A91-D-83`, `A91-D-84`) and §20.4 (device items 2, 3 and 5,
 and the completion statement); doc 93 §AF; and
 `tools/device_results/README.md`.
+
+---
+
+## 50. WAVE 18 — the fix router, the locator, and the one shell file the suite could not see (binding)
+
+*Filed 2026-09-02 from the production audit's `§3.2 Lane D` brief — PA-05 (router
+half), PA-38, PA-20, PA-76, PA-72, PA-100. Three rulings; every number below is
+quoted with the command that produced it.*
+
+**The shape of it.** `game/main.gd` was 2,229 lines with **zero test
+references** (`grep -rn "main\.gd\|main\.tscn\|MainShell" tests/` → six prose
+comments and no load). Three separate defects lived in it and none of them could
+fail a gate: `Fix this →` looked a **transformer** id up in `sim.buildings` and
+returned; `E_AVENUE` handed the same router an **empty** id, which the router
+discards on its first line; and every camera answer in the file anchored on a
+building's **NW corner tile** rather than on its footprint centre, so a jump to a
+4×4 civic building landed sixteen metres off it. All three are the same missing
+thing — *the shell was doing sim reasoning in a file nothing can boot* — and the
+fix is not to test `main.gd`. It is to move the reasoning out.
+
+### RR-139 — one geometry authority, and a gate that fails on drift rather than an audit that finds it
+
+**Ruled.** `TileGrid.METRES_PER_TILE` (and `METRES_PER_BLOCK`, `corner_of`,
+`centre_of`, `centre_of_footprint`, `centre_of_block`, `tile_at`) is the single
+authority for tile→world conversion. The **store** stays `data/world.json`
+`world.tile_meters`; the constant mirrors it and `tests/test_tile_geometry.gd`
+asserts the two agree.
+
+**Why a gate before a migration.** PA-76 counted the number written **eight
+times under six names** (`METRES_PER_TILE`, `TILE_METERS`, `TILE_M`,
+`DEF_TILE_M`, `TILE_M_DEFAULT`, bare `8.0`) and the footprint→centre formula four
+times, and its evidence line is the damning one: *"No test asserts agreement."*
+The eleven live declarations sit in files owned by six different Wave-18 lanes,
+so a lane that migrated them all would be editing five other lanes' files on a
+rule (99 §3.0.1) that forbids exactly that. The gate is therefore landed **first
+and alone**: `test_tile_geometry.gd::test_every_mirrored_spelling_agrees` names
+all eleven by class constant and fails on the first one that drifts. Every
+consumer migration afterwards becomes a one-line change that cannot go wrong
+quietly, and the migrations themselves are filed per owner (`awaiting_consumer`,
+below) instead of merged by force.
+
+**Hash-neutral, and provable.** No helper here is new arithmetic:
+`test_the_footprint_centre_reproduces_the_hand_written_formula` asserts
+`centre_of_footprint(origin, size)` equals the `origin * 8.0 + size * 4.0` the
+shell and the renderer already wrote, and
+`test_the_block_centre_reproduces_the_hand_written_formula` does the same for the
+`(grid * 16 + 8) * tile_m` the alert locator wrote three times. Adoption moves no
+building and no hash.
+
+**Two things the helpers do that the hand-written code did not.** `tile_at`
+**floors** rather than truncating — truncation folds every point in `(-8, 0)`
+onto tile `0`, which reads as "the tap landed on the map" for a tap that landed
+west of it — and `centre_of_footprint` clamps a zero size to one tile, so a
+malformed record focuses on a tile rather than on its corner.
+
+**Applied:** `sim/world/tile_grid.gd`, `tests/test_tile_geometry.gd`.

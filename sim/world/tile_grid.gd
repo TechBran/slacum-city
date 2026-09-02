@@ -20,6 +20,25 @@ const ROAD_NONE: int = 0
 const ROAD_STREET: int = 1
 const ROAD_AVENUE: int = 2
 
+## **The one authority for tile→world geometry** (doc 09 §2.1; the STORE is
+## `data/world.json world.tile_meters`, and `tests/test_tile_geometry.gd` asserts
+## the two agree and that every mirrored spelling in the tree still equals this).
+##
+## At the Wave-17 fork this number was written eight times under six names —
+## `METRES_PER_TILE`, `TILE_METERS`, `TILE_M`, `DEF_TILE_M`, `TILE_M_DEFAULT` and
+## bare `8.0` literals — and the footprint→centre formula four times, with no
+## test asserting any of them agreed (PA-76). Nothing here is new arithmetic: the
+## constant and the three helpers below reproduce the expressions the shell and
+## the renderer already wrote by hand, so adopting them is hash-neutral by
+## construction. New readers take it from here; the migration of the existing
+## spellings is one row per owning lane (doc 98 §50).
+const METRES_PER_TILE := 8.0
+
+## A land block's side in metres — `METRES_PER_TILE * TILES_PER_BLOCK`. The alert
+## locator spelled the `16` three times as a bare literal beside a `tile_m` it
+## had already declared (PA-76 evidence).
+const METRES_PER_BLOCK := METRES_PER_TILE * float(TILES_PER_BLOCK)
+
 var _flags := PackedByteArray()
 var _building_ids := PackedInt32Array()
 var _road_class := PackedByteArray()
@@ -43,6 +62,51 @@ static func block_of(x: int, z: int) -> Vector2i:
 
 static func block_index(bx: int, bz: int) -> int:
 	return bz * BLOCKS + bx
+
+
+# ---------------------------------------------------------------------------
+# Tile → world (PA-76). Every one of these is `y = 0` — GRADE, not the mesh top.
+# Elevation is a per-block integer the render layer applies; a locator that
+# guessed at it would put the camera underground on the two raised blocks.
+# ---------------------------------------------------------------------------
+
+## The NW corner of a tile, in metres. This is what a raw `tile * tile_m`
+## multiplication produces, and it is the anchor a mesh instance is placed at —
+## not where a camera should look.
+static func corner_of(tile: Vector2i) -> Vector3:
+	return Vector3(float(tile.x) * METRES_PER_TILE, 0.0,
+			float(tile.y) * METRES_PER_TILE)
+
+
+## The CENTRE of one tile, in metres — half a tile in from the corner. What a
+## pad, a lamp, a road slab and a camera focus all want.
+static func centre_of(tile: Vector2i) -> Vector3:
+	return Vector3(float(tile.x) * METRES_PER_TILE + METRES_PER_TILE * 0.5, 0.0,
+			float(tile.y) * METRES_PER_TILE + METRES_PER_TILE * 0.5)
+
+
+## The centre of a footprint whose NW tile is `origin` and whose size is in
+## TILES (doc 02 stores tiles). Degenerates to `centre_of` at 1×1, which is what
+## makes it safe to use everywhere a tile centre was wanted.
+static func centre_of_footprint(origin: Vector2i, size: Vector2i) -> Vector3:
+	var w := float(maxi(size.x, 1)) * METRES_PER_TILE
+	var d := float(maxi(size.y, 1)) * METRES_PER_TILE
+	return Vector3(float(origin.x) * METRES_PER_TILE + w * 0.5, 0.0,
+			float(origin.y) * METRES_PER_TILE + d * 0.5)
+
+
+## The centre of a land block, addressed by its BLOCK grid coordinate
+## (`LandBlock.grid`, 0..6 on each axis) — not by a tile.
+static func centre_of_block(block_grid: Vector2i) -> Vector3:
+	return Vector3(float(block_grid.x) * METRES_PER_BLOCK + METRES_PER_BLOCK * 0.5,
+			0.0, float(block_grid.y) * METRES_PER_BLOCK + METRES_PER_BLOCK * 0.5)
+
+
+## World metres → the tile containing them. `floor`, not truncation: a negative
+## x is off the map and must stay off it rather than folding onto tile 0.
+static func tile_at(point: Vector3) -> Vector2i:
+	return Vector2i(int(floorf(point.x / METRES_PER_TILE)),
+			int(floorf(point.z / METRES_PER_TILE)))
 
 
 func _idx(x: int, z: int) -> int:
