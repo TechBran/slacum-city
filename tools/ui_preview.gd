@@ -70,11 +70,13 @@ const SCREENS: Array[String] = [
 	# never on screen together: the one-shot discovery mark over the world, and
 	# the Economy ledger with the two lines doc 03 does not settle.
 	"street_coach", "economy_street",
-	# Wave 18, Lane S (99-PA PA-32). The founding fortnight: doc 03 §2.5a's grant
-	# still paying, with the row that now says what it pays today and which
-	# game-day it stops. `economy` above is a settlement with the grant already
-	# retired, so it can never photograph this.
-	"economy_assistance",
+	# Wave 18, Lane S. `economy_assistance` (99-PA PA-32) is the founding
+	# fortnight: doc 03 §2.5a's grant still paying, with the row that now says
+	# what it pays today and which game-day it stops — `economy` above is a
+	# settlement with the grant already retired, so it can never photograph this.
+	# `economy_upkeep` (PA-31/PA-33) is the Upkeep band with a worn city under it
+	# and the batch button live, which is the state the band exists for.
+	"economy_assistance", "economy_upkeep",
 	# S16, Wave 17 (doc 12 §2.22). Four states, in the same commit as the screen
 	# — A91-D-28's lesson, applied on the way in. `queue` is the mixed list the
 	# panel is written for; `queue_uncrewed` is the row that says so in words
@@ -707,6 +709,24 @@ func _apply(screen: String) -> void:
 						"debt": 0.0, "total": 532.0},
 				"net": 671.29,
 			})
+			_root.city_dashboard.open(DashboardModel.TAB_ECONOMY)
+		"economy_upkeep":
+			# A worn city, through the REAL verbs: the band's repair half is
+			# `CitySim.cmd_repair_all_worn` and its policy line is
+			# `CitySim.building_repair_policy`, so what this photographs is the
+			# shipped screen and not a fixture of it (99-PA PA-31/PA-33).
+			for sim_id: String in _sim.roster_ids():
+				var worn: Building = _sim.buildings[sim_id]
+				if worn.state == &"active":
+					worn.condition = 0.62
+			# One settled game-hour on the worn roster, so `last_settlement`
+			# carries doc 03's own per-building `f_condition` rows — which is
+			# where every figure on the band comes from.
+			_sim.advance_coarse_hours(1)
+			_root.feed_settlement(_sim.last_settlement)
+			_root.city_dashboard.bind_upkeep(_sim.cmd_repair_all_worn,
+					_sim.building_repair_policy,
+					func() -> float: return float(_sim.treasury.balance))
 			_root.city_dashboard.open(DashboardModel.TAB_ECONOMY)
 		"economy_street":
 			# The same ledger with a policed city's real income in it: bounties

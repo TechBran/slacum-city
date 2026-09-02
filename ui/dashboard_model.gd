@@ -79,6 +79,12 @@ var _selected_row := ""
 ## says so in words (A14) rather than a tab of zeroes.
 var _infrastructure: Dictionary = {}
 var _response: Dictionary = {}
+## The Upkeep band's sim-side half: `CitySim.cmd_repair_all_worn(preview)`'s
+## payload and `CitySim.building_repair_policy()`. Empty until the shell feeds
+## it, and an empty feed draws the band with the loss half only — which is still
+## the whole of PA-31 and is exactly what a shell that has not bound the batch
+## verb should show.
+var _upkeep: Dictionary = {}
 
 
 func _init(cfg: UIConfig = null, p_history: HistoryModel = null,
@@ -204,11 +210,94 @@ func build_view(snapshot: Dictionary) -> Dictionary:
 		"rows": rows,
 		"chart": chart(_selected_row),
 		"budget": budget.breakdown(),
+		"upkeep": upkeep_view(),
 		"selected_row": _selected_row,
 		"history_size": history.size(),
 		"infrastructure": infrastructure_view(),
 		"response": response_view(),
 	}
+
+
+# ---------------------------------------------------------------------------
+# The Upkeep band (99-PA PA-31 + PA-33, doc 98 RR-149/RR-150)
+#
+# The audit's target for PA-31, in its own words: *whenever city-wide
+# `f_condition < 0.95` the lost $/gh and the repair total are on one screen*.
+# This is that screen. The band is three readings and one button:
+#
+#   1. **what wear costs**, per settled hour and per game-day, off doc 03's own
+#      per-building rows (`BudgetModel.condition_loss`);
+#   2. **how much of the taxed stock is below Good**, which is the subject of the
+#      sentence and never the sentence itself;
+#   3. **what the city's own repairable stock would cost to put right**, which is
+#      a DIFFERENT and smaller set — doc 93 §Y1 means the city cannot buy a
+#      private repair at any price, and a band that quoted one would be offering
+#      a purchase that does not exist;
+#   4. the button that buys (3), and the policy that would buy it every game-day
+#      without being asked again.
+# ---------------------------------------------------------------------------
+
+## `{quote, policy, balance}` — `CitySim.cmd_repair_all_worn(true)`'s payload,
+## `CitySim.building_repair_policy()`, and the treasury balance the button's
+## affordability is judged against. The shell is the only holder of a sim, so the
+## shell is the only thing that can fill this; this model still computes no
+## engineering and prices nothing.
+func feed_upkeep(snapshot: Dictionary) -> void:
+	_upkeep = snapshot.duplicate(true)
+
+
+func has_upkeep() -> bool:
+	return not _upkeep.is_empty()
+
+
+func upkeep_view() -> Dictionary:
+	var loss := budget.condition_loss()
+	var quote: Dictionary = _upkeep.get("quote", {})
+	var policy: Dictionary = _upkeep.get("policy", {})
+	var lost := float(loss["tax_lost_per_hour"])
+	var count := int(quote.get("count", 0))
+	var cost := int(quote.get("cost", 0))
+	var balance := float(_upkeep.get("balance", 0.0))
+	var view := {
+		"has_data": bool(loss["has_data"]) or not quote.is_empty(),
+		"title": UIWidgets.t(_cfg, "ui_dashboard_upkeep_title"),
+		"loss_label": UIWidgets.t(_cfg, "ui_dashboard_upkeep_loss"),
+		# The minus is the reading: this is money the city is NOT collecting.
+		"loss_text": HudModel.money_signed(-int(round(lost))),
+		"loss_per_day_text": HudModel.rate_per_day(-lost),
+		"loss_state": HudModel.STATE_WARNING if lost > 0.0 else HudModel.STATE_NORMAL,
+		"worn_text": UIWidgets.t_args(_cfg, "ui_dashboard_upkeep_worn",
+				{"count": int(loss["worn"]), "total": int(loss["counted"])}),
+		"tax_lost_per_hour": lost,
+		"worn": int(loss["worn"]),
+		"counted": int(loss["counted"]),
+		"f_condition_mean": float(loss["f_condition_mean"]),
+		"repair_count": count,
+		"repair_cost": cost,
+		# A button with nothing behind it is drawn as words, not as a dead
+		# control (A14): "Nothing the city owns needs repair."
+		"can_repair": count > 0 and float(cost) <= balance,
+		"repair_text": UIWidgets.t_args(_cfg, "ui_dashboard_upkeep_repair",
+				{"count": count, "amount": HudModel.money_exact(cost)}),
+		"none_text": UIWidgets.t(_cfg, "ui_dashboard_upkeep_none"),
+		"has_repair": count > 0,
+		"unaffordable": count > 0 and float(cost) > balance,
+	}
+	view["policy_text"] = _upkeep_policy_text(policy)
+	return view
+
+
+## What the city's standing auto-repair decision says, in one line. `off` is not
+## a state to be ashamed of and is the shipped default (doc 98 RR-150), so it
+## reads as a setting rather than as a warning.
+func _upkeep_policy_text(policy: Dictionary) -> String:
+	if policy.is_empty() or not bool(policy.get("enabled", false)):
+		return UIWidgets.t(_cfg, "ui_dashboard_upkeep_policy_off")
+	return UIWidgets.t_args(_cfg, "ui_dashboard_upkeep_policy_on", {
+		"percent": HudModel.percent_text(
+				float(policy.get("building_repair_threshold", 0.0)) * 100.0),
+		"amount": HudModel.money_exact(int(policy.get("building_repair_daily_cap", 0))),
+	})
 
 
 # ---------------------------------------------------------------------------

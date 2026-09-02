@@ -384,6 +384,61 @@ func breakdown() -> Dictionary:
 	}
 
 
+## **What wear is costing the city this hour** (99-PA PA-31, doc 98 RR-149).
+##
+## Doc 03 publishes `f_condition` per building in the settle snapshot's own
+## `buildings` rows, and the audit's formula is `(1 − f_condition) × tax` — where
+## *tax* is the tax that row would pay at condition 1.00, everything else about
+## it held exactly as it is. That figure is `revenue / f_condition`, so the loss
+## is `revenue / f_condition − revenue`, and **not one number is authored here**:
+## every term comes off doc 03's own row.
+##
+## The rows are the TAXED ones only, because civic and utility buildings carry
+## `base_tax = 0` and doc 03 skips them (§2.2) — a civic building's wear costs
+## the city through its department line, not through this one, and adding it here
+## would be counting a dollar doc 03 already bills somewhere else.
+##
+## `{has_data, tax_lost_per_hour, tax_at_full, worn, counted, f_condition_mean}`.
+## `worn` is *rows paying less than full*, which is a different and larger set
+## than the buildings the city may repair — see `CitySim.cmd_repair_all_worn`,
+## and see the Upkeep band, which prints both and labels them differently.
+func condition_loss() -> Dictionary:
+	var out := {"has_data": false, "tax_lost_per_hour": 0.0, "tax_at_full": 0.0,
+			"worn": 0, "counted": 0, "f_condition_mean": 1.0}
+	var raw: Variant = _settlement.get("buildings", [])
+	if not (raw is Array) or (raw as Array).is_empty():
+		return out
+	var lost := 0.0
+	var full := 0.0
+	var fc_sum := 0.0
+	var worn := 0
+	var counted := 0
+	for entry: Variant in (raw as Array):
+		if not (entry is Dictionary):
+			continue
+		var row: Dictionary = entry
+		var fc := clampf(float(row.get("f_condition", 1.0)), 0.0, 1.0)
+		var revenue := float(row.get("revenue", 0.0))
+		counted += 1
+		fc_sum += fc
+		if fc <= 0.0 or fc >= 1.0:
+			full += revenue
+			continue
+		var at_full := revenue / fc
+		full += at_full
+		lost += at_full - revenue
+		worn += 1
+	if counted == 0:
+		return out
+	out["has_data"] = true
+	out["tax_lost_per_hour"] = lost
+	out["tax_at_full"] = full
+	out["worn"] = worn
+	out["counted"] = counted
+	out["f_condition_mean"] = fc_sum / float(counted)
+	return out
+
+
 func _line(side: String, key: String, amount: float) -> Dictionary:
 	return {
 		"key": key,

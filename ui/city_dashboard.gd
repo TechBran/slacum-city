@@ -24,6 +24,9 @@ signal deeplink_requested(target: String)          ## "overlay/power", "drawer",
 signal row_selected(row_id: String)
 signal tax_applied(level: int, rate: float)
 signal sheet_toggled(open: bool)
+## The Upkeep band's batch (99-PA PA-33). Carries `cmd_repair_all_worn`'s whole
+## result so a shell can toast the count and the price without asking again.
+signal repair_all_worn(result: Dictionary)
 
 const SCRIM_ALPHA := 0.55
 const STEP_DOWN := "−"
@@ -48,6 +51,11 @@ var _tax_note: Label
 var _tax_apply: Button
 var _tax_happiness: Label
 var _tax_growth: Label
+## The Upkeep band's three wires (`bind_upkeep`). All three may be invalid — a
+## shell that has not bound them draws the band's loss half and no button.
+var _repair_all := Callable()
+var _upkeep_policy := Callable()
+var _upkeep_balance := Callable()
 var _touch_min := 48.0
 var _spacing := 8.0
 var _row_h := 48.0
@@ -463,6 +471,11 @@ func _build_economy(view: Dictionary) -> void:
 	_content.add_child(_build_tax())
 	# After the box is in the tree, so the preview writes into live labels.
 	_apply_preview(model.budget.preview(model.budget.pending_level()))
+	# The Upkeep band is refreshed HERE and nowhere else: its sim half is a
+	# roster walk and a preview per candidate, and there is no reason to pay for
+	# it on the three tabs that do not draw it (99-PA PA-31).
+	_refresh_upkeep()
+	_content.add_child(_build_upkeep(model.upkeep_view()))
 	var ledger: Dictionary = view["budget"]
 	if not bool(ledger["has_data"]):
 		_content.add_child(UIWidgets.label("NoData",
@@ -491,6 +504,88 @@ func _build_economy(view: Dictionary) -> void:
 	totals.add_child(_total_line("Net", "ui_budget_total_net",
 			str(ledger["net_text"]), ledger["net_state"]))
 	_content.add_child(totals)
+
+
+# ---------------------------------------------------------------------------
+# The Upkeep band (99-PA PA-31 + PA-33, doc 98 RR-149 / RR-150)
+# ---------------------------------------------------------------------------
+
+## `CitySim.cmd_repair_all_worn` (preview and commit are the same Callable, taken
+## with a different first argument), `CitySim.building_repair_policy` and a
+## treasury reading, so an unaffordable batch shows its price on a disabled face
+## instead of vanishing — the same contract S16's rush door uses.
+##
+## The shell binds this; a shell that does not gets the band's LOSS half only,
+## which is still the whole of PA-31.
+func bind_upkeep(repair_all: Callable, policy: Callable, balance: Callable) -> void:
+	_repair_all = repair_all
+	_upkeep_policy = policy
+	_upkeep_balance = balance
+	if is_open():
+		refresh(_last_snapshot)
+
+
+func _refresh_upkeep() -> void:
+	if not _repair_all.is_valid():
+		return
+	var quoted: Variant = _repair_all.call(true)
+	var quote: Dictionary = {}
+	if quoted is Dictionary and bool((quoted as Dictionary).get("ok", false)):
+		var payload: Variant = (quoted as Dictionary).get("payload", {})
+		quote = payload if payload is Dictionary else {}
+	model.feed_upkeep({
+		"quote": quote,
+		"policy": _upkeep_policy.call() if _upkeep_policy.is_valid() else {},
+		"balance": float(_upkeep_balance.call()) if _upkeep_balance.is_valid() else 0.0,
+	})
+
+
+## The audit's target for PA-31, drawn: *the lost $/gh and the repair total on
+## one screen*. Four lines and a button — what wear costs, how much of the taxed
+## stock is below Good, what the city's own repairable stock would cost, and the
+## standing policy that would buy it without being asked again.
+func _build_upkeep(upkeep: Dictionary) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	box.name = "Upkeep"
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_theme_constant_override(&"separation", int(_spacing))
+	box.add_child(UIWidgets.label("Title", str(upkeep["title"]), &"LegendRow"))
+
+	var loss := HBoxContainer.new()
+	loss.name = "Loss"
+	loss.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	loss.add_theme_constant_override(&"separation", int(_spacing))
+	var loss_label := UIWidgets.elide(UIWidgets.label("Label",
+			str(upkeep["loss_label"])), _touch_min) as Label
+	loss_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	loss.add_child(loss_label)
+	var loss_value := _fixed(UIWidgets.label("Amount", str(upkeep["loss_text"])))
+	UIWidgets.paint_state(self, loss_value, upkeep["loss_state"])
+	loss.add_child(loss_value)
+	loss.add_child(_gutter())
+	box.add_child(loss)
+	box.add_child(UIWidgets.label("Worn", str(upkeep["worn_text"]), &"", true))
+
+	if bool(upkeep["has_repair"]):
+		var button := UIWidgets.button("RepairAllWorn", str(upkeep["repair_text"]),
+				str(upkeep["repair_text"]),
+				Vector2(maxf(_touch_min * 2.0, 96.0), _touch_min), &"GhostButton")
+		button.disabled = not bool(upkeep["can_repair"])
+		button.pressed.connect(_on_repair_all_pressed)
+		box.add_child(button)
+	else:
+		box.add_child(UIWidgets.label("NoRepair", str(upkeep["none_text"]), &"", true))
+	box.add_child(UIWidgets.label("Policy", str(upkeep["policy_text"]), &"", true))
+	return box
+
+
+func _on_repair_all_pressed() -> void:
+	if not _repair_all.is_valid():
+		return
+	var result: Variant = _repair_all.call(false)
+	repair_all_worn.emit(result if result is Dictionary else {})
+	# The band is a reading of the roster, and the roster just changed.
+	refresh(_last_snapshot)
 
 
 ## §2.10's tax-rate control: a stepper, not a slider. Doc 03's ladder is a set of

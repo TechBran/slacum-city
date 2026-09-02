@@ -513,3 +513,136 @@ func test_pa33_the_receipt_reaches_a_surface() -> void:
 		if str((raw2 as Dictionary).get("type", "")) == "building_repair_policy_ran":
 			bound += 1
 	assert_eq(bound, 1, "a policy that spends the player's money says so")
+
+
+# ===========================================================================
+# The Upkeep band — PA-31's target, drawn: the lost $/gh and the repair total
+# on ONE screen
+# ===========================================================================
+
+func test_upkeep_the_loss_is_doc_03s_own_rows_read_back() -> void:
+	# `(1 − f_condition) × tax`, where tax is what the row would pay at 1.00.
+	# Two rows: one at f_condition 0.80 earning 800 (so 1000 at full, 200 lost),
+	# one untouched at 1.00 earning 500.
+	var model := BudgetModel.load_from_files()
+	model.feed_settlement({
+		"hour": 100,
+		"revenue": {"tax": 1300.0, "gross": 1300.0},
+		"expenses": {"total": 400.0},
+		"net": 900.0,
+		"buildings": [
+			{"f_condition": 0.80, "revenue": 800.0},
+			{"f_condition": 1.00, "revenue": 500.0},
+		],
+	})
+	var loss := model.condition_loss()
+	assert_true(bool(loss["has_data"]))
+	assert_almost_eq(float(loss["tax_lost_per_hour"]), 200.0, 1e-6,
+			"800/0.80 − 800 = 200")
+	assert_almost_eq(float(loss["tax_at_full"]), 1500.0, 1e-6)
+	assert_eq(int(loss["worn"]), 1, "one row is paying less than full")
+	assert_eq(int(loss["counted"]), 2)
+	assert_almost_eq(float(loss["f_condition_mean"]), 0.90, 1e-6)
+
+
+func test_upkeep_a_settlement_with_no_rows_says_so_rather_than_zero() -> void:
+	var model := BudgetModel.load_from_files()
+	model.feed_settlement({"hour": 4, "gross": 10.0, "expense": 2.0, "net": 8.0})
+	var loss := model.condition_loss()
+	assert_false(bool(loss["has_data"]),
+			"the bus event carries no per-building rows, and a band that "
+			+ "printed $0 from that would be lying about a city it cannot see")
+
+
+func test_upkeep_the_band_prints_the_loss_and_the_price_of_ending_it() -> void:
+	var model := DashboardModel.load_from_files()
+	model.budget.feed_settlement({
+		"hour": 100,
+		"revenue": {"tax": 800.0, "gross": 800.0},
+		"expenses": {"total": 100.0}, "net": 700.0,
+		"buildings": [{"f_condition": 0.80, "revenue": 800.0}],
+	})
+	model.feed_upkeep({
+		"quote": {"count": 7, "cost": 18900, "candidates": 9, "skipped": 2},
+		"policy": {"building_repair_threshold": 0.0, "building_repair_daily_cap": 0,
+				"enabled": false},
+		"balance": 250000.0,
+	})
+	var band := model.upkeep_view()
+	assert_true(bool(band["has_data"]))
+	assert_almost_eq(float(band["tax_lost_per_hour"]), 200.0, 1e-6)
+	assert_true(str(band["loss_text"]).contains("200"),
+			"the loss is on the band as money: " + str(band["loss_text"]))
+	assert_eq(str(band["loss_state"]), str(HudModel.STATE_WARNING))
+	assert_true(str(band["repair_text"]).contains("7"), "the count is on the button")
+	assert_true(str(band["repair_text"]).contains("18,900"),
+			"and so is the price: " + str(band["repair_text"]))
+	assert_true(bool(band["can_repair"]), "the treasury covers it")
+	assert_eq(str(band["policy_text"]),
+			UIWidgets.t(_cfg(), "ui_dashboard_upkeep_policy_off"),
+			"and the standing policy is stated, off included")
+
+
+func test_upkeep_an_unaffordable_batch_shows_its_price_on_a_dead_face() -> void:
+	var model := DashboardModel.load_from_files()
+	model.feed_upkeep({
+		"quote": {"count": 4, "cost": 90000},
+		"policy": {"enabled": false},
+		"balance": 1200.0,
+	})
+	var band := model.upkeep_view()
+	assert_true(bool(band["has_repair"]), "the work exists")
+	assert_false(bool(band["can_repair"]), "the money does not")
+	assert_true(bool(band["unaffordable"]))
+	assert_true(str(band["repair_text"]).contains("90,000"),
+			"the price is still shown, which is the whole point of a dead face")
+
+
+func test_upkeep_nothing_to_repair_is_words_not_a_dead_button() -> void:
+	var model := DashboardModel.load_from_files()
+	model.feed_upkeep({"quote": {"count": 0, "cost": 0}, "policy": {"enabled": false},
+			"balance": 50000.0})
+	var band := model.upkeep_view()
+	assert_false(bool(band["has_repair"]))
+	assert_ne(str(band["none_text"]), "", "A14: it says so in words")
+
+
+func test_upkeep_a_live_policy_states_its_two_dials() -> void:
+	var model := DashboardModel.load_from_files()
+	model.feed_upkeep({
+		"quote": {"count": 1, "cost": 100},
+		"policy": {"building_repair_threshold": 0.85,
+				"building_repair_daily_cap": 10000, "enabled": true},
+		"balance": 50000.0,
+	})
+	var text := str(model.upkeep_view()["policy_text"])
+	assert_true(text.contains("85"), "the threshold is stated: " + text)
+	assert_true(text.contains("10,000"), "and the budget is: " + text)
+
+
+func test_upkeep_the_band_is_the_real_sim_end_to_end() -> void:
+	# The JOIN this row is actually about: a real worn city, doc 03's real
+	# settlement, and `cmd_repair_all_worn`'s real quote, all reaching one band.
+	var sim := _sim()
+	_wear_city_stock(sim, 0.55)
+	for id: String in sim.roster_ids():
+		var b: Building = sim.buildings[id]
+		if b.owner_maintained:
+			b.condition = 0.70
+	sim.advance_coarse_hours(1)
+	var model := DashboardModel.load_from_files()
+	model.budget.feed_settlement(sim.last_settlement)
+	var quote: Dictionary = sim.cmd_repair_all_worn(true)["payload"]
+	model.feed_upkeep({"quote": quote, "policy": sim.building_repair_policy(),
+			"balance": float(sim.treasury.balance)})
+	var band := model.upkeep_view()
+	assert_true(float(band["tax_lost_per_hour"]) > 0.0,
+			"a worn city is losing tax, and the band says how much")
+	assert_true(int(band["worn"]) > 0, "and how much of the stock is below Good")
+	assert_true(int(band["repair_count"]) > 0,
+			"and what the city can buy to stop it")
+	assert_true(int(band["repair_cost"]) > 0)
+	# The two counts are deliberately different sets, and the band never conflates
+	# them: private stock is in the loss and can never be in the quote.
+	assert_true(int(band["worn"]) >= int(band["repair_count"]),
+			"the loss counts taxed stock; the button counts what the city owns")
