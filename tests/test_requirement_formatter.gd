@@ -118,7 +118,9 @@ func test_power_capacity_renders_kw_and_names_the_feeder() -> void:
 			{"deficit_kw": 87.4, "required_kw": 87.4, "headroom_kw": 0.0, "at": "SUB-A"})
 	assert_true(str(row["body"]).contains("87.4 kW"), row["body"])
 	assert_true(str(row["body"]).contains("SUB-A"), "the remedy names the blocker")
-	assert_eq(str(row["fix_target"]["kind"]), String(RequirementFormatter.FIX_BUILDING))
+	# Wave 17 (A91-D-54): this row's fix is a PURCHASE the panel performs in
+	# place, not a camera jump to the building the player already has open.
+	assert_eq(str(row["fix_target"]["kind"]), String(RequirementFormatter.FIX_POWER))
 	# The MW ladder of the doc's worked example.
 	assert_eq(RequirementFormatter.power(1800.0), "1.8 MW")
 	assert_eq(RequirementFormatter.power(2400.0), "2.4 MW")

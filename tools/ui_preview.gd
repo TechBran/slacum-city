@@ -47,13 +47,16 @@ const SCREENS: Array[String] = [
 	"placement_ok", "placement_blocked",
 	"path_aiming", "path_ok", "path_blocked", "path_refund", "path_feeder",
 	"building", "building_blocked", "building_repairable", "building_water",
+	# Wave 17's POWER section (doc 12 §2.9 D-70) in its two states: the wire with
+	# room, and the wire that is the reason the UPGRADE button is dead.
+	"building_power", "building_power_fix",
 	"land_buy", "land_blocked", "land_developing",
 	"drawer", "drawer_empty", "drawer_expanded", "drawer_water",
 	"picker", "picker_empty",
 	"dashboard", "economy", "infrastructure", "response",
 	"away", "away_short",
 	"alerts", "alerts_empty",
-	"overlay", "overlay_police", "overlay_fire", "overlay_folded",
+	"overlay", "overlay_police", "overlay_fire", "overlay_folded", "overlay_power",
 	"goals", "goals_late", "goals_done",
 	"settings", "saves", "pause",
 	"title", "title_fresh", "title_confirm", "title_crisis",
@@ -265,6 +268,10 @@ func _populate() -> void:
 		_root.refresh_goals()
 	for mode: StringName in [OverlayModel.MODE_POLICE, OverlayModel.MODE_FIRE]:
 		_root.feed_overlay_summary(mode, _coverage_summary())
+	# Wave 17's grid reading (doc 12 §2.10 D-72), through the SAME door the shell
+	# uses, so this photographs the shipping lines rather than a fixture.
+	_root.feed_overlay_summary(OverlayModel.MODE_POWER,
+			UIRoot.power_summary_lines(_controller.power.grid_reading(), _root.config))
 
 
 ## §2.10's Infrastructure feed, in the shape `PowerGrid.feeder_rows()` and
@@ -532,6 +539,22 @@ func _apply(screen: String) -> void:
 			if _building_panel != null:
 				_sim.treasury.balance = 500_000
 				_building_panel.show_building(_water_shell())
+		"building_power":
+			# Wave 17's POWER section with the wire in good shape: the hops named,
+			# the spare capacity in words, and a live UPGRADE button with its
+			# price on its face.
+			if _building_panel != null:
+				_sim.treasury.balance = 500_000
+				_building_panel.show_building(_first_building())
+		"building_power_fix":
+			# The state the wave exists for: the next level does not fit on the
+			# transformer, the checklist row says so, and the `Fix this →` strip
+			# under it quotes the one purchase that clears it. `T-18` is the
+			# starter city's own bottleneck — `WTR-2`'s +98 kW on a 150 kW node
+			# — so this is a photograph of a real refusal, not a fixture.
+			if _building_panel != null:
+				_sim.treasury.balance = 500_000
+				_building_panel.show_building(_power_blocked_building())
 		"land_buy":
 			# The city can afford it: the panel's happy face, with the primary
 			# button live and no blocker rows under it.
@@ -634,6 +657,11 @@ func _apply(screen: String) -> void:
 		"overlay_folded":
 			_root.overlay_rail.select(OverlayModel.MODE_FIRE)
 			_root.overlay_rail.legend_card().toggle_button().pressed.emit()
+		"overlay_power":
+			# Wave 17's grid reading on the §2.5 legend card (D-72): the pool, the
+			# WIRES, and which of the two is the wall.
+			_root.overlay_rail.open()
+			_root.overlay_rail.select(OverlayModel.MODE_POWER)
 		"goals":
 			# Level 1 with one objective landed — the state a player is in for
 			# their first session, and the one the copy is written for.
@@ -955,6 +983,22 @@ func _first_building() -> String:
 	var keys := _sim.buildings.keys()
 	keys.sort()
 	return str(keys[0]) if not keys.is_empty() else ""
+
+
+## The first building whose next level is refused on POWER, for
+## `building_power_fix`. Found rather than fabricated — `cmd_upgrade_building
+## (preview)` is the same gate the panel draws, so the state photographs a
+## refusal the shipped city actually makes. Falls back to the first building, so
+## the sweep never has a hole in it.
+func _power_blocked_building() -> String:
+	var keys := _sim.buildings.keys()
+	keys.sort()
+	for key: Variant in keys:
+		var preview := _sim.cmd_upgrade_building(str(key), true)
+		var blockers: Array = (preview.get("payload", {}) as Dictionary).get("blockers", [])
+		if blockers.has(&"E_POWER_HEADROOM"):
+			return str(key)
+	return _first_building()
 
 
 func _occupied_tile() -> Vector2i:

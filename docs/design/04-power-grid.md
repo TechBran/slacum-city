@@ -528,6 +528,53 @@ so the ceiling is no longer a number at all — it is a purchase, and every subs
 
 ---
 
+### 2.14 Operating the grid you placed (Wave 17)
+
+§4 has named `upgrade_power_component` and `demolish_power_component` since this
+doc was written and neither existed. They exist now, plus a third the audit
+produced. Full audit: doc 93 §AD. Prices: doc 92 §48.3. Surfaces: doc 12 §2.9
+D-70 / §2.7 D-71.
+
+**`cmd_upgrade_grid_component(component_id, preview)`** — re-rate a placed node
+one rung up §2.2's ladder: a transformer L → L+1, a feeder class c → c+1. The
+two grid nodes that are BUILDINGS (substation, plant) upgrade through
+`cmd_upgrade_building` and are refused here (report 98 C-30). Refusals, in order:
+`E_UNKNOWN_COMPONENT`, `E_MAX_LEVEL`, `E_STATE` (repair a FAILED node first,
+§2.8), `E_FUNDS` / `E_AUSTERITY`. **A transformer's service radius grows with its
+level**, so the command re-attaches every unserved building the wider radius now
+reaches and returns them as `adopted`.
+
+**`cmd_demolish_grid_component(component_id, preview)`** — transformers only. A
+feeder is the trunk other transformers hang off and has no demolish verb in this
+cut; a substation or plant goes through `cmd_demolish_building`. Refund is doc 03
+§2.3's 0.25 of the build cost at the current level. **What happens to its
+customers is the honest half and it uses no special path:** `remove_component`
+detaches them, `_reattach_unserved` re-homes whoever another radius covers, and
+the rest go dark through §2.4's ordinary service ledger — `served = 0`,
+`< 0.35 × demand` for 20 game-seconds ⇒ `BuildingPowerChanged DARK`, then
+`BlockDarkChanged` at 60 %. That is what makes the alerts, the notifications and
+the block relight fire without a second wiring. **MOVE is demolish + place**, and
+is quoted as such (`replace_cost − refund`); there is deliberately no move-window
+refund — doc 92 §48.4.
+
+**`cmd_fix_power_capacity(sim_id, preview)`** — the one-tap answer to a
+`POWER_CAPACITY` blocker: the cheapest SINGLE purchase that clears the serving
+path for that building's next level, quoted from the same numbers
+`cmd_upgrade_building` refuses on. It reads `can_upgrade_power`'s binder and
+answers it in kind — a transformer rung, a parallel transformer when the ladder
+is topped out, heavier copper or a new feeder run, or the substation shell — and
+`next_blocker` names what a second tap would meet. **One purchase per tap**,
+deliberately: a path can bind twice, and a strip that quoted two prices would be
+a plan rather than a button.
+
+**Headroom is judged at the PEAK, not at the current hour** (§5.3, doc 98 §44
+RR-120): the load each component carries is scaled by its own customers' demand
+channel's daily maximum before the 0.90 ceiling is applied. `CapacityWarning`
+(§4) is now emitted on an upward crossing of §5.10's WARNING and CRITICAL bands
+— doc 98 §44 RR-118.
+
+---
+
 ## 3. Data Schema
 
 ### 3.1 `data/power.json`
@@ -686,7 +733,19 @@ Color state: `NORMAL` r < 0.75; `WARNING` 0.75 ≤ r < 0.95; `CRITICAL` r ≥ 0.
 
 **Ships:** `plant_gas` L1–3, `substation` L1–3, `feeder` class 1–2 overhead, `transformer` L1–4, `transmission` class 1; the full demand model reading doc 02's `base_kw` and doc 01's channels, including streetlights and signals; the full four-pass solve, thermal model, hazard curve, inverse-time relays and auto-reclose; per-building `power_availability_hour`; failure types `XFMR_BURNOUT`, `FEEDER_TRIP`, `FEEDER_DOWN`, `SUB_TRIP`, `PLANT_TRIP`, `CASCADE_OVERLOAD`; weather couplings for temperature and for lightning **damage resolution**, plus publication of the storm-exposure attributes doc 06's storm generator needs (all exercised by the MVP thunderstorm, spec §43.4); tie switches MANUAL + AUTO with the N-1 headroom readout; load shedding with rolling rotation; repair via service and bucket trucks; the power overlay, dark-tile mask, `block_dark` and the block blackout/relight with `restore_order`; player-drawn routing with the route-along-roads assist; the save section and offline coarse path.
 
-**Deferred:** black start as a player action (§2.11 auto-restart ships instead); batteries; solar and wind generation (tables ship, buildable later); underground feeders, flood walls and surge arresters (fields exist, defaulted); nuclear, plant L4–5, substation L4–5, transformer L5, feeder class 3; `FUEL_SHORTAGE`, `PLANT_FAULT`, `SUB_FLOOD`, backup generators; preventive maintenance jobs (condition still decays, repair still restores it); regional imports/exports; tiered `powered_fraction` (the field ships, the value stays binary).
+**Deferred:** black start as a player action (§2.11 auto-restart ships instead); batteries; solar and wind generation (tables ship, buildable later); underground feeders, flood walls and surge arresters (fields exist, defaulted); nuclear, plant L4–5, substation L4–5, ~~transformer L5, feeder class 3~~ (**promoted, Wave 17 — see §6.1**); `FUEL_SHORTAGE`, `PLANT_FAULT`, `SUB_FLOOD`, backup generators; preventive maintenance jobs (condition still decays, repair still restores it); regional imports/exports; tiered `powered_fraction` (the field ships, the value stays binary).
+
+### 6.1 Wave 17 — the placeable roster is the AUTHORED roster
+
+**Ruling.** `transformer` L5 and `feeder` class 3 are promoted out of *Deferred* into *Ships*, and `data/grid_components.json` now offers `placeable_levels [1,2,3,4,5]` and `conductor_classes [1,2,3]`.
+
+**Why.** The deferral was written as a content cut and read as one, but the AUTHORED cities were never cut to match it. `data/starter_city.json` runs class-2 trunks and `tests/fixtures/bench_city.json` runs L5 transformers and class-3 feeders — so the player was handed a city built out of components the build sheet would not sell and `cmd_upgrade_grid_component` would not climb to. Measured with `tools/audit_power.gd` on the benchmark city at the fork: **every one of the 140 `POWER_CAPACITY` blockers bound at a transformer**, the pool sat at **56 % of supply with 105,198 kW spare**, and **70 of the 140 had no purchase that cleared them** — the biggest placeable transformer was 400 kW against an authored 2,500 kW node. That is the whole of the user's report ("how power stations add to the overall grid capacity … doesn't seem to be working well at all"): a second station added exactly its rating to a pool that was not the constraint, and the constraint could not be bought.
+
+**Price.** No new magnitude. Doc 03 §2.13(b) has priced all five transformer rungs and all three conductor classes since it shipped — $500 / $1,100 / $2,800 / $6,900 / $16,300 and $110 / $210 / $400 per tile — and `CostCurves` reads them unchanged. This is a roster edit, not a price edit (C-07 holds).
+
+**The BUILD SHEET is unchanged, deliberately.** `BuildController.grid_level` picks the roster's *lowest* rung for the card, so the sheet still sells one $500 L1 pole and has not grown four more cards. The ladder is climbed where the need is discovered instead: `cmd_upgrade_grid_component` on the building panel's POWER section re-rates the pole that is actually full, and `cmd_fix_power_capacity` places a bigger one when a parallel node is the answer. Five cards on a sheet would be five prices to compare before the player knows which one they need; one card plus a rung on the thing that is overloaded is the same ladder, met in the order a player meets the problem.
+
+**Re-open condition.** If the benchmark's L5 transformers turn out to be an authoring error rather than a design intent — doc 09's inventory, not this doc's ladder — the correct fix is to re-author the city downward and re-close the roster, not to re-widen the gap.
 
 ---
 

@@ -123,13 +123,15 @@ func test_grid_placement_rejections() -> void:
 	# placing, and its own blockers are tested with `cmd_route_feeder` below.
 	assert_eq(sim.cmd_place_grid_component("feeder", spot, 2)["reason_code"],
 			&"E_NO_SLOT", "doc 09 §2.9.5 fills both of SUB-A's slots at t0")
-	# 2 level outside the placeable roster (L1–L3 in this cut).
-	assert_eq(sim.cmd_place_grid_component("transformer", spot, 4)["reason_code"],
+	# 2 level outside the placeable roster. Wave 17 opened it to the full doc 04
+	# §2.2 ladder (A91-D-55, doc 04 §6.1): the authored cities run L2s and L5s,
+	# so a roster that stopped at L3 sold nothing that could carry them.
+	assert_eq(sim.cmd_place_grid_component("transformer", spot, 6)["reason_code"],
 			&"E_LEVEL_UNAVAILABLE")
 	assert_eq(sim.cmd_place_grid_component("transformer", spot, 0)["reason_code"],
 			&"E_LEVEL_UNAVAILABLE")
-	assert_true(bool(sim.cmd_place_grid_component("transformer", spot, 3, true)["ok"]),
-			"L3 is inside the roster")
+	assert_true(bool(sim.cmd_place_grid_component("transformer", spot, 5, true)["ok"]),
+			"L5 — the rung tests/fixtures/bench_city.json is authored with")
 	# 3 off the map.
 	assert_eq(sim.cmd_place_grid_component("transformer", Vector2i(-1, 5), 1)["reason_code"],
 			&"E_OUT_OF_BOUNDS")
@@ -409,8 +411,9 @@ func test_route_feeder_rejections() -> void:
 	var routes := _feeder_route_tiles(sim)
 	var trunk: Vector2i = routes[0]
 
-	# 2 E_CLASS_UNAVAILABLE — doc 04 §6 ships class 1–2 overhead, not class 3.
-	assert_eq(sim.cmd_route_feeder([trunk, trunk + Vector2i(1, 0)], 3)["reason_code"],
+	# 2 E_CLASS_UNAVAILABLE — class 1–3 overhead since Wave 17 (doc 04 §6.1;
+	# the benchmark city's own trunks are class 3), and nothing outside that.
+	assert_eq(sim.cmd_route_feeder([trunk, trunk + Vector2i(1, 0)], 4)["reason_code"],
 			&"E_CLASS_UNAVAILABLE")
 	assert_eq(sim.cmd_route_feeder([trunk, trunk + Vector2i(1, 0)], 0)["reason_code"],
 			&"E_CLASS_UNAVAILABLE")
@@ -824,26 +827,37 @@ func test_set_priority_rejections() -> void:
 func test_priority_loads_survive_shedding() -> void:
 	# Doc 04 §2.4: critical feeders shed last. Same city, same deficit, one
 	# priority change — and the blackout moves to the other feeder.
-	var baseline := _shed_set_under_deficit(false)
-	var protected := _shed_set_under_deficit(true)
-	assert_eq(baseline, ["F_NORTH"], "with every load STANDARD the bigger feeder sheds")
-	assert_eq(protected, ["F_SOUTH"],
-			"one CRITICAL load on F_NORTH moves the same blackout to F_SOUTH")
+	#
+	# **The baseline flipped at Wave 17, and it flipped ONTO the sentence this
+	# test has always carried** (doc 98 §44 RR-121). `_shed_score` used to
+	# `break` on the first attached building it found, so a whole trunk was
+	# ranked by whichever building sorted first by id; the score that came out
+	# was not a property of the feeder at all. Measured at 13:00 on the starter
+	# city under a 40 kW deficit: F_SOUTH carries **430.0 kW** and F_NORTH
+	# **382.6 kW** — F_SOUTH is "the bigger feeder" the line below names, and it
+	# is the one that goes dark now. The protected case is mirrored with it, so
+	# the discriminating half is intact: one priority change, and the blackout
+	# moves to the other feeder.
+	var baseline := _shed_set_under_deficit("")
+	var protected := _shed_set_under_deficit("F_SOUTH")
+	assert_eq(baseline, ["F_SOUTH"], "with every load STANDARD the bigger feeder sheds")
+	assert_eq(protected, ["F_NORTH"],
+			"one CRITICAL load on F_SOUTH moves the same blackout to F_NORTH")
 
 
 ## Run the city to the evening peak, flatten every priority class, optionally
-## promote one F_NORTH load to CRITICAL, then starve generation by 40 kW — a
-## deficit small enough that exactly one feeder must go dark.
-static func _shed_set_under_deficit(promote: bool) -> Array:
+## promote one load on `promote_feeder` to CRITICAL, then starve generation by
+## 40 kW — a deficit small enough that exactly one feeder must go dark.
+static func _shed_set_under_deficit(promote_feeder: String) -> Array:
 	var sim := CitySim.boot_from_files()
 	sim.advance_hours(13.0)
 	for id in ["WTR-1", "WTR-2"]:
 		sim.cmd_set_priority(id, "STANDARD")
-	if promote:
+	if promote_feeder != "":
 		for id in CitySim._sorted(sim.buildings):
 			var transformer := sim.grid.attachment_of(String(id))
 			if transformer != "" \
-					and String(sim.grid.component(transformer)["parent"]) == "F_NORTH":
+					and String(sim.grid.component(transformer)["parent"]) == promote_feeder:
 				sim.cmd_set_priority(String(id), "CRITICAL")
 				break
 	sim.grid.component("PLANT-1")["capacity_kw"] = sim.grid.system_demand_kw - 40.0

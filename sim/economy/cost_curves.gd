@@ -174,6 +174,36 @@ func capital_value_grid(component: String, level: int = 1) -> int:
 	return _grid_build_cost_l(component, level)
 
 
+## doc 03 §2.13(f) (Wave 17) — re-rating a placed node onto a higher rung of
+## its §2.13(b) ladder. **Priced as a replacement at the target level's full
+## build cost**, which is the rule doc 04 §2.13 WE-1 has always quoted
+## ("upgrade T7 to L4 — doc 03 price $6,900") and the reading §2.5 gives grid
+## capital ("replaced, not upgraded"). No new magnitude: the same `build_cost`
+## column, read at `to_level`. `from_level` is accepted so the accessor can
+## refuse a downgrade the way §2.3 refuses one for buildings.
+func grid_upgrade_cost(component: String, from_level: int, to_level: int,
+		m_build: float = 1.0) -> int:
+	if to_level <= from_level:
+		return 0
+	return grid_build_cost(component, to_level, m_build)
+
+
+## doc 03 §2.13(f) — the per-tile price of re-conductoring a line onto a heavier
+## class: the target class's own §2.13(b) per-tile price, charged on every tile
+## of the run (the same tiles `line_km` bills), because the copper is replaced.
+func grid_line_upgrade_cost_per_tile(kind: String, to_class: int,
+		underground: bool = false) -> int:
+	return grid_line_cost_per_tile(kind, to_class, underground)
+
+
+## doc 03 §2.3's `DEMOLITION_REFUND_FRACTION`, applied to a grid component's
+## §2.5 capital — its build cost at the current level. The same 0.25 buildings,
+## road tiles and water mains return; grid components had no demolition verb
+## until Wave 17 and so no accessor.
+func grid_demolition_refund(component: String, level: int = 1) -> int:
+	return demolition_refund(capital_value_grid(component, level))
+
+
 func _grid_build_cost_l(component: String, level: int) -> int:
 	var entry: Dictionary = _grid_components.get(component, {})
 	var cost: Variant = entry.get("build_cost", null)

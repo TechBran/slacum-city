@@ -108,6 +108,21 @@ const REGISTER := {
 	"power_restored_by_repair":
 		"covered: the relight is BlockDarkChanged(false) / PowerRestored, which"
 		+ " is what the blackout ceremony rides.",
+	"grid_component_upgraded":
+		"player_initiated: the player just bought the rung, on the building"
+		+ " panel's own POWER section, and that section re-reads the grid on the"
+		+ " next refresh and redraws the row they pressed. PowerInfraView"
+		+ " re-polls the topology through PowerInfraFeed.signature, which folds"
+		+ " in grid.mutation_epoch, so the pads and drops move without a wire"
+		+ " here (Wave 17, doc 12 §2.9 D-70).",
+	"power_capacity_fixed":
+		"player_initiated: the one-tap POWER_CAPACITY fix reports itself twice"
+		+ " over — the confirm strip that spent the money redraws with the"
+		+ " blocker gone, and the purchase it made emits its OWN event"
+		+ " (grid_component_upgraded, grid_component_placed or"
+		+ " grid_feeder_routed) which carries the world change. This one is the"
+		+ " receipt for the plan, and it is here for the stats counter and the"
+		+ " tests (Wave 17, doc 12 §2.7 D-71).",
 
 	# ── doc 09, the land and its development ───────────────────────────────
 	"block_road_access_changed":

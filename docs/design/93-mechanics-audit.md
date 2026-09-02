@@ -2190,3 +2190,174 @@ a footnote. **It belongs in CI, next to the suite.**
 
 Multiplayer/social, city trading, seasons/holidays, mod hooks, cloud saves,
 monetisation — none are Phase-1/2 scope; nothing in Waves 1–3 blocks them.
+
+---
+
+## AD. Wave 17 — the doc 04 model, audited end to end (2026-09-01)
+
+The user's two reports, three weeks apart, are the same report: *"feeders adding
+extra power to a building is not clear and I'm not sure it actually works"*
+(2026-08-21) and *"we have to really take a deep look at how the transformers
+feed power, how power stations add to the overall grid capacity — it doesn't
+seem to be working well at all"* (2026-09-01). This section is the audit that
+answers them, run as a tool rather than read: `tools/audit_power.gd` boots a
+city, plays it if asked, and answers five discriminating questions as numbers.
+
+**The runs.** `godot --headless --script tools/audit_power.gd` (starter city,
+seed 1337, 6 fine game-hours) and the same with
+`--city=res://tests/fixtures/bench_city.json` (1,500 buildings).
+
+### AD1. The five questions, answered on two cities — **AT THE FORK**
+
+Every number in this table is the state of the game BEFORE this wave's fixes.
+The after-numbers, and the delta each fix accounts for, are doc 92 §48.
+
+| Question | Starter (34 buildings) | Benchmark (1,500) |
+|---|---|---|
+| (i) does a second station raise `system_supply_kw` by its rating? | **yes, 8,000 → 16,000 kW** | **yes, 240,000 → 248,000** |
+| …and how many `POWER_CAPACITY` blockers does that clear? | **0 of 1** | **0 of 140 — and 14 MORE appeared** |
+| (ii) where does every blocker actually bind? | transformer **1 / 1** | transformer **140 / 140**, feeder 0, substation 0 |
+| …with what pool headroom? | **7,488 kW spare, r 0.064** | **105,198 kW spare, r 0.562** |
+| (iii) can a feeder route reach a blocked transformer? | no feeder-bound blocker to route to | **`E_NOT_CONNECTED` on a map with six substations and 36 feeders** — see AD2(b). It answers `E_NO_SLOT` after the fix, which is both true and buyable |
+| (iv) what sheds, and does the player see it? | nothing sheds (no deficit) | **4 feeders, 15,239 kW dark**, `LoadShedStarted` + 4 × `BlockDarkChanged` |
+| (v) what silently refuses? | transformer levels **[1,2,3]** of a **[50,150,400,1000,2500]** ladder; feeder classes **[1,2]** of **[1200,3000,7500]** | same roster, against **authored L5s and class-3 trunks** |
+
+**The finding.** The model is not broken. Supply rises by exactly the rating,
+the four-pass solve is correct, and shedding works. What is broken is that
+**the pool has never been the constraint and the constraint could never be
+bought**: on both cities, 100 % of the blockers bound at a pole-top transformer
+while the bulk pool sat at 6 % and 56 % of supply, and the biggest transformer
+the build sheet would sell was **400 kW against a 2,500 kW authored node**. A
+player buying a second station is buying the one thing that cannot help, and
+nothing in the game told them so. Filed as **A91-D-55**; the roster ruling is
+doc 04 §6.1 and the reading that makes it legible is doc 12 §2.10 D-72.
+
+### AD2. Defects the audit found, each with the test that would have caught it
+
+Every row is closed in this wave. Tests are in `tests/test_power_operations.gd`.
+
+| # | Defect | Test |
+|---|---|---|
+| **AD2(a)** | The placeable roster stopped three rungs below the authored city (A91-D-55). | `test_c_upgrade_grid_component_prices_and_refuses_per_its_header` walks the whole ladder at doc 03's prices and asserts **only L5 / class 3** answers `E_MAX_LEVEL`. |
+| **AD2(b)** | `_best_feeder_source_for` walked the BUILDING roster, so an authored substation was invisible to the player's own routing verb and `_route_line` answered `E_NOT_CONNECTED` rather than `E_NO_SLOT` (A91-D-55). | `test_b_a_feeder_bound_blocker_gets_heavier_copper_or_a_new_run` routes from a substation and asserts the run is adopted. |
+| **AD2(c)** | `can_upgrade_power` returned a kW deficit and no id, so no surface could name the hop that binds (A91-D-55). | `test_a_the_upgrade_gate_names_the_component_that_binds`. |
+| **AD2(d)** | A zero-delta upgrade was refused `UNSERVED`, making the substation ladder unbuyable (A91-D-53). | `test_a_a_zero_delta_upgrade_needs_no_headroom_so_a_substation_can_be_upgraded`. |
+| **AD2(e)** | `is_energized` was a bare `_components[id]` index — a key error on any id the grid no longer carried, which the demolition verb makes reachable. | `test_d_demolishing_a_transformer_darkens_its_stranded_customers_through_the_ledger`. |
+
+### AD3. P0 — placement checked COVERAGE and never CAPACITY
+
+`CitySim.cmd_place_building` and `BuildController.evaluate` both gated on
+`PowerGrid.would_serve(origin)`, which answers *"is this tile inside some
+transformer's service radius"*. Capacity was never asked, so **a green ghost
+could stand a 98 kW water facility on a 50 kW pole-top that was already at
+r 0.9**, and the first the player heard of it was the whole street browning out.
+
+**Ruling: it is a WARNING, not a refusal.** Doc 04 §2.1 gates placement on
+coverage and authorises no capacity gate; inventing one here would be a balance
+change wearing a bug fix's clothes, and it belongs to the economy lane if it is
+wanted. What ships is the fact: `PowerGrid.can_serve_tile` walks the path the
+new load would take, `CitySim.serving_headroom_for_new` scales the archetype's
+level-1 draw to its channel's daily peak, the ghost goes **amber**
+(`E_TRANSFORMER_FULL`, `SEVERITY_WARN`, `FIX_TILE`) and `cmd_place_building`'s
+own answer carries the same dictionary. **Re-open condition:** if the economy
+lane wants placement to refuse, the code path is one `return` in
+`cmd_place_building` and the rule is already computed.
+
+*Test:* `test_f_placement_warns_when_the_serving_transformer_cannot_carry_it`.
+
+### AD4. P1 — headroom was judged at the hour the player happened to tap in
+
+Every headroom gate in the project read `PowerGrid._components[id].load_kw`,
+which is the load **at this instant**, and doc 01's demand channels swing that
+load by more than a factor of two across a day:
+`power_demand_residential` runs **0.67 at 05:00 and 1.46 at 20:00** (2.18×),
+`power_demand_commercial` **0.36 at 00:00 and 1.51** from 10:00 to 18:00
+(4.19×). An upgrade approved in the residential trough is an upgrade that
+browns out at dinner, and nothing told the player which hour they were reading.
+
+Closed by `CitySim.peak_component_loads()`: each building's present demand is
+scaled by **its own channel's** daily maximum over that channel's value now, the
+scaled demand is walked up the service path exactly as `_pass_a` walks the live
+one, and the result is handed to `can_upgrade_power` as a `load_override`. The
+scale is **clamped at 1.0 from below** — the gate may never be more permissive
+than the live reading, which is the one number doc 04 §5.3 has always been
+written against — and the table is memoised on `(game-minute, grid.
+mutation_epoch)`, because the placement ghost asks for it once a frame.
+
+**Measured consequence** (`tools/audit_power.gd`): starter city 1 → **2**
+blockers, benchmark 140 → **400**, of which **86 now bind at a feeder** where
+the live-load reading saw none at all. Those blockers were always real; the game
+was reading them at the wrong hour.
+
+*Tests:* `test_f_the_headroom_gate_is_read_at_the_peak_not_at_the_trough`,
+`test_f_the_peak_table_is_memoised_and_survives_a_grid_change`.
+
+### AD5. P1 — `CapacityWarning` was authored and never emitted
+
+Doc 04 §4 lists `CapacityWarning` among the events the grid raises. Nothing in
+`sim/power/power_grid.gd` ever called `_emit` with it, so **the only cue a
+transformer gave before failing was the failure** — §2.8's burnout, which is a
+repair bill and an outage.
+
+It now fires on an **upward band crossing** of §5.10's own thresholds
+(`r ≥ 0.75` WARNING, `r ≥ 0.95` CRITICAL, derated), with a 0.03 re-arm margin so
+a load hovering on the line raises one warning rather than one per fine tick.
+Downward moves are silent: "your transformer is fine again" is not an
+interruption. `data/notifications.json` binds **band 2 only** to a P3 row
+(`capacity_warning`), because a P3 that fired at 0.75 on every transformer in a
+growing city is the notification a player turns off.
+
+**The implementation is stateless, and that is the interesting part** (doc 98
+§44 RR-118): the obvious version is a per-component "already warned" latch, and
+a latch is state that must be captured, restored and hashed — it would have
+moved every baseline in the project for the sake of an event. The previous
+tick's `load_kw` is **already in the save section**, so the crossing is derived
+from what is there and a restore compares against the same number the live sim
+does. All four baselines are bit-identical across this wave.
+
+*Test:* `test_f_capacity_warning_is_emitted_when_a_component_crosses_a_band`.
+
+### AD6. Two more, found while looking
+
+**An UNSERVED building was permanently, silently lit.** `PowerGrid.is_powered`
+answers `true` for a building the grid has never heard of (a deliberate default:
+it is what the pre-boot roster needs), and `attach_building` opened **no service
+record** when it found no transformer. A building that fell out of every service
+radius was therefore invisible to `unserved_building_ids`, uncounted by
+`block_dark_fractions`, and un-adoptable by the very transformer upgrade whose
+wider radius now reached it. Closed by opening the record either way — doc 98
+§44 RR-119. *Test:* `test_f_an_unserved_building_is_on_the_books_rather_than_permanently_lit`.
+
+**The load-shed rank read one building per feeder.** `_shed_score`'s loop
+carried a `break` on its first match, so a whole trunk was ranked by the priority
+class of whichever attached building sorted first by id — reproducible, and
+arbitrary. `_feeder_has_critical` is why nothing catastrophic came of it
+(criticals shed last as a hard rule above the score). Closed by summing the
+whole feeder, weighting each building by its transformer's load share — doc 98
+§44 RR-121. *Test:* `test_f_the_shed_score_reads_the_whole_feeder_not_its_first_building`.
+
+### AD7. What the outage costs, measured
+
+`cmd_demolish_grid_component("T-04")` on the starter city — an L2 with four
+customers, **refund $275** (doc 03 §2.3's 0.25 × the $1,100 build cost) — against
+an otherwise identical control city, both advanced the same hours:
+
+| | h+1 | h+2 | h+3 |
+|---|---|---|---|
+| dark buildings | 4 | 4 | 4 |
+| control treasury | +$504 | +$1,008 | +$1,511 |
+| victim treasury, net of refund | +$505 | +$982 | +$1,458 |
+| **cost of the outage** | **−$1** | **$26** | **$53** |
+
+**A one-game-hour outage of four houses costs about nothing**, and that is a
+finding, not a null result: the tax those four houses pay in an hour is smaller
+than the hour's noise, so the outage's real price is the *happiness* and the
+*development* it stalls, not the ledger line. On the benchmark city the same verb
+on T-001 (L5, 13 customers, 4 stranded, refund $4,075) is the same story at
+scale. **`MOVE` is demolish + place** and is priced honestly by the panel:
+`move_cost = replace_cost − refund`, **$825 for an L2**. Ruling: no move-window
+refund. The lights going out and the hurry to get them back on is the mechanic
+the user asked for by name, and a free move deletes it.
+
+*Tests:* `test_d_move_is_demolish_plus_place_and_the_lights_come_back`,
+`test_g_the_transformer_demolish_quote_prices_the_move`.

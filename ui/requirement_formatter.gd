@@ -47,6 +47,15 @@ const FIX_ROAD_SEGMENT := &"road_segment"
 ## which is what `Fix this →` did on this row before doc 02 §2.6's repair had a
 ## door (doc 92 §17.6).
 const FIX_REPAIR := &"repair"
+## `POWER_CAPACITY`'s fix is a PURCHASE too, and it was the wrong kind for three
+## waves. It routed `FIX_BUILDING`, and `game/main.gd`'s router answers that kind
+## by focusing the camera on the building — which is the building the player
+## already has open, so the row's whole affordance was a no-op (the lead's
+## Wave-17 reproduction, A91-D-54). It now routes here, and the building panel
+## performs it in place: `CitySim.cmd_fix_power_capacity` quotes the cheapest
+## single purchase that clears the serving path, the strip shows the price, and
+## the second tap buys it. Same shape as `FIX_REPAIR`, one row down.
+const FIX_POWER := &"power"
 
 const KEY_PREFIX := "ui_requirement_"
 const TITLE_SUFFIX := "_title"
@@ -67,7 +76,7 @@ const ALIASES := {
 ## Canonical code → {severity, fix}. The 13 of doc 12 §4.4 first, then the seven
 ## `sim/city_sim.gd` codes the doc's list does not name.
 const CODE_TABLE := {
-	&"POWER_CAPACITY": {"severity": SEVERITY_BLOCKED, "fix": FIX_BUILDING},
+	&"POWER_CAPACITY": {"severity": SEVERITY_BLOCKED, "fix": FIX_POWER},
 	&"WATER_PRESSURE": {"severity": SEVERITY_BLOCKED, "fix": FIX_DISTRICT},
 	&"NO_ROAD": {"severity": SEVERITY_BLOCKED, "fix": FIX_ROAD_SEGMENT},
 	&"NO_CREW": {"severity": SEVERITY_WARN, "fix": FIX_BUILDING},
@@ -145,6 +154,15 @@ const CODE_TABLE := {
 	&"E_UNIT_NOT_DEPLOYED": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	&"E_UNKNOWN_UNIT": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	&"E_BAD_THRESHOLD": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	# --- Wave 17: doc 04 §4's operating verbs (doc 93 §AD). `E_TRANSFORMER_FULL`
+	# is the one WARN in the placement ladder — doc 04 §2.1 gates a placement on
+	# coverage and authorises no capacity refusal, so a full transformer under
+	# the ghost is a fact the player is told, not a tile they are refused (§AD3).
+	# `E_NEEDS_TRANSFORMER` is the top of the ladder: nothing the fix strip can
+	# buy in one tap clears it, and the answer is a tile the player has to pick.
+	&"E_TRANSFORMER_FULL": {"severity": SEVERITY_WARN, "fix": FIX_TILE},
+	&"E_NEEDS_TRANSFORMER": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
+	&"E_NOT_BLOCKED": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	UNKNOWN_CODE: {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 }
 
@@ -473,6 +491,23 @@ func _args_for(name: StringName, p: Dictionary) -> Dictionary:
 		&"E_DISCONTINUOUS":
 			args["have"] = str(p.get("have", _tile_text(p)))
 			args["need"] = str(p.get("need", ""))
+		&"E_TRANSFORMER_FULL":
+			# Wave 17's placement WARNING (doc 93 §AD3). `component` is the
+			# transformer that would take the new load, `have` its spare
+			# capacity at the peak and `need` what the building would add there.
+			args["component"] = str(p.get("component", p.get("transformer", "")))
+			args["at"] = str(p.get("at", args["component"]))
+			args["have"] = str(p.get("have",
+					RequirementFormatter.power(p.get("headroom_kw", 0.0))))
+			args["need"] = str(p.get("need",
+					RequirementFormatter.power(p.get("demand_kw", 0.0))))
+		&"E_NEEDS_TRANSFORMER":
+			# The top of the ladder: nothing the one-tap fix can buy clears it,
+			# and the answer is a second transformer on a tile the player picks.
+			args["component"] = str(p.get("component", p.get("at", "")))
+			args["at"] = str(p.get("at", args["component"]))
+			args["have"] = str(p.get("have", int(p.get("level", 0))))
+			args["need"] = str(p.get("need", int(p.get("max_level", 0))))
 		&"E_NO_SLOT":
 			# Doc 04 §2.2's 2/3/4/6/8 slot ladder, at the substation the run
 			# would have rooted on. `at` is that substation, which is also the

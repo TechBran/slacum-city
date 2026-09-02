@@ -3766,3 +3766,179 @@ files that are not documents — `tests/test_city_sim.gd:146` and
 None can change behaviour, and that is proved rather than asserted:
 `profile_sim --hash-only` was run on both cities **before and after** these
 edits and all four digests are byte-identical.
+
+---
+
+## 44. WAVE 17 — POWER THAT WORKS AND POWER YOU CAN OPERATE (binding)
+
+Five rulings from the doc 04 model audit (doc 93 §AD) and the player surface it
+produced (doc 12 §2.9 D-70 / §2.7 D-71 / §2.10 D-72). Defects are doc 91 §14.5
+`A91-D-53` … `A91-D-55`; the measurements are doc 92 §48.
+
+### RR-118 — An event that has to survive a save is not a reason to grow state (docs 04 §4, 08 §2.8, 93 §AD5)
+
+**Finding.** Doc 04 §4 authors `CapacityWarning` and `sim/power/power_grid.gd`
+never emitted it, so a transformer's only pre-failure cue was the failure.
+
+**The trap.** The obvious implementation is a per-component `already_warned`
+latch. `PowerGrid.serialize` writes each component dictionary whole
+(`duplicate(true)`), so a latch on the component rides the save automatically —
+and **moves every `state_hash` in the project**, because the component
+dictionary is what the hash is taken over. An authored event would have cost
+four baselines and every downstream lane's re-measurement.
+
+**Ruling.** *Derive the transition from state the save already carries.* The
+previous tick's `load_kw` is in the section; sampling the band **before** pass A
+overwrites it and comparing **after** gives exactly "did this component cross a
+band during this tick", with no new field, no migration and no hash movement. A
+restore compares against the same number the live sim compares against.
+Hysteresis is a constant (`BAND_REARM_MARGIN = 0.03`), not a memory.
+
+**Generalisation, binding on every doc.** Before adding a field to a serialized
+structure for the sake of an edge-triggered event, check whether the level the
+edge is taken on is already persisted. It usually is — this project stores
+*state*, and an event is a *difference of state*.
+
+**Re-open condition.** A band that must fire once per **game-day** rather than
+once per crossing genuinely needs a timestamp, and that is a real field with a
+real migration. Nothing asks for one today.
+
+### RR-119 — A default that means "not modelled" must not be reachable by a modelled object (docs 04 §2.4, 93 §AD6)
+
+**Finding.** `PowerGrid.is_powered` answers `true` for a building with no
+service record — correct, and deliberate: the roster asks before boot has
+attached anything, and doc 09's authored buildings must not read dark for the
+half-tick between `add_component` and `attach_building`. But
+`attach_building` opened **no record at all** when it found no transformer, so a
+building that fell out of every service radius landed on that default and stayed
+there: permanently lit, invisible to `unserved_building_ids`, uncounted by
+`block_dark_fractions`, and — the reason it was found — un-adoptable by the very
+transformer upgrade whose wider radius now reached it
+(`CitySim._reattach_unserved` iterates service records).
+
+**Ruling.** The record is opened either way. A building the grid has been ASKED
+about is on the books; the `true` default now covers only ids the grid has never
+been told about, which is what it was written for. The record opens `LIT` and
+goes `DARK` through §2.4's ordinary hysteresis, exactly as a burnout's customers
+do — no second outage path.
+
+**Hash-neutral, and here is why:** on both authored cities every building is in
+range at boot (`boot_errors` is empty) and `cmd_place_building` refuses
+`E_UNSERVED` outside coverage, so no live path reached the defaulted state. All
+four baselines are bit-identical.
+
+**Generalisation.** A "we have not been told about this" default is fine. A
+"we were told and had nothing to say" default is a silent branch. If a function
+can distinguish the two, it must.
+
+### RR-120 — A gate written against an instantaneous reading must name the hour (docs 01 §2.6, 02 §2.11, 04 §5.3, 93 §AD3/§AD4)
+
+**Finding.** Every headroom gate — `cmd_upgrade_building`,
+`cmd_upgrade_water_component`, and placement's coverage check — read
+`load_kw`, the load at this instant. Doc 01's channels move that load by
+**2.18× (residential) and 4.19× (commercial)** across a day. An upgrade approved
+at 05:00 browns out at 20:00, and the player was told nothing about which hour
+they had asked in.
+
+**Ruling.** Doc 04 §5.3's ceiling is judged at the **peak**, per channel.
+`CitySim.peak_component_loads()` scales each building's present demand by its own
+channel's daily maximum over that channel's value now, walks the scaled demand
+up the service path as `_pass_a` walks the live one, and hands the result to
+`can_upgrade_power` as a `load_override`. Three properties make it safe:
+
+1. **Clamped at 1.0 from below** — the gate can never be *more* permissive than
+   the live reading, so no previously-refused upgrade becomes possible.
+2. **Per channel, not per system** — a transformer serving houses peaks at
+   20:00 and one serving shops at 10:00; one city-wide multiplier would
+   understate the first and overstate the second.
+3. **Read-only and memoised on `(game-minute, grid.mutation_epoch)`** — it is
+   derived, saved nowhere, and cannot outlive the topology it was measured on.
+   The placement ghost asks for it once a frame; the game-minute is the period
+   doc 04 already banks service on.
+
+`delta_kw` itself stays doc 02 §2.11's nameplate × 1.15. The margin is that
+doc's own allowance for exactly this and re-scaling it too would double-count.
+
+**Consequence, published:** blockers rise (starter 1 → 2, benchmark 140 → 400,
+of which 86 now bind at a feeder where the live reading saw none). Those
+refusals were always true; the game was reading them at the wrong hour. No
+baseline moves, because no player command runs inside `profile_sim`'s identity
+pass. Doc 92 §48.5 carries the `awaiting_consumer` note for the economy lane.
+
+### RR-121 — A loop that samples one row of a set must not be described as summarising it (docs 04 §2.4, 93 §AD6)
+
+**Finding.** `PowerGrid._shed_score` walked every attached building, and
+`break`'d on the first one whose transformer hung off the feeder in question.
+Its own comment said "one class sample per transformer GROUP is the MVP
+granularity"; the code took one sample per **feeder**. A trunk carrying one
+discretionary shop and two hundred houses was ranked by the shop, because `a_`
+sorts before `z_`.
+
+**Why it was survivable and still wrong.** `_feeder_has_critical` protects
+critical feeders as a hard rule ABOVE this score, so nothing catastrophic came of
+it — but the shed ORDER among ordinary feeders was reproducible and arbitrary,
+which is the worst kind of deterministic: it looks like a decision.
+
+**Ruling.** Sum the whole feeder, weighting each building by its transformer's
+load divided among that transformer's customers. That is the "per-building
+demand folded through the service record" the comment promised. **Hash-neutral
+on both baselines** — neither city sheds in the identity pass.
+
+**It moved one live expectation, and it moved it onto that test's own
+sentence.** `tests/test_player_verbs.gd::test_priority_loads_survive_shedding`
+asserted `["F_NORTH"]` under the caption *"with every load STANDARD the bigger
+feeder sheds"*. Measured at 13:00 on the starter city under the test's own 40 kW
+deficit: **F_SOUTH carries 430.0 kW and F_NORTH 382.6 kW**, so the bigger feeder
+is F_SOUTH — and the old rank shed F_NORTH. The expectation was pinned to the
+defect while the caption described the rule. The test now asserts `["F_SOUTH"]`
+and promotes its CRITICAL load onto F_SOUTH, so the discriminating half — one
+priority change moves the blackout to the other feeder — is preserved mirrored.
+This is the third time this project has found a test whose PROSE was right and
+whose NUMBER was the bug (A91-D-19, A91-D-33, A91-D-40); it is worth saying out
+loud that the caption is the specification and the literal is the measurement.
+
+**Generalisation.** A comment that describes a granularity is a claim, and a
+claim in this project is testable. `tests/test_power_operations.gd::
+test_f_the_shed_score_reads_the_whole_feeder_not_its_first_building` builds the
+discriminating case: one DISCRETIONARY that sorts first, four CRITICALs behind
+it, and an assertion that the mean has moved off the first row.
+
+### RR-122 — Derived state rebuilt from BOOT data must be reconciled with the LIVE graph on restore (docs 04 §2.1, 08 §2.8, 10 §5.4, 93 §AD)
+
+**Finding, and it broke determinism.** `CitySim._transformer_cover` is doc 10's
+tile → transformer memo for signalled intersections. It is derived, not saved,
+and refilled after a load from `_index_transformers()`, which reads
+`loader.power` — **boot data, which lists every authored transformer whether or
+not the city still has it**. Wave 17's `cmd_demolish_grid_component` makes the
+two disagree: the live sim forgets the node, the restored one does not.
+`is_energized` answers `false` for a missing id, so every intersection that
+transformer covered read DARK in the restored city and LIT in the live one; doc
+10 turns that into signal delay and congestion, and `save → load → advance`
+stopped being bit-identical.
+
+**Measured before the fix**, starter city, T-04 demolished, 0.5 h advance, then
+6 h on both sides: live `state_hash` `54c9a6d2709bce2f…`, restored
+`b6ca57575cc45b4b…`.
+
+**Ruling.** `_sync_transformer_cover()` runs in `_restore_core` immediately
+after `grid.deserialize` and drops every packed column whose id the GRID no
+longer carries, then re-warms. The rule is the one the live sim already follows:
+*a transformer the graph does not have is not in the memo.* A player-placed
+transformer was never in it either, live or restored, which keeps the two halves
+symmetric.
+
+**Second ruling, recorded so it is not re-litigated.** A demolished
+transformer's tiles go back to **uncovered**, and `_is_tile_powered` answers
+`true` for an uncovered tile — most of the 112×112 map has no transformer over
+it and doc 10 must not read every rural intersection as a dead signal. So the
+intersection reads LIT after the demolition, exactly as it would have if no
+transformer had ever stood there, and what the player sees is the BUILDINGS
+going dark through the service ledger. **Re-open condition:** if doc 10 ever
+wants "was covered and now is not" to mean dark, it needs a second set —
+authored coverage versus live coverage — and that is a doc 10 change, not a
+doc 04 one.
+
+**Generalisation, binding.** Any memo refilled from `loader.*` after a restore
+is refilled from a snapshot of the world at FOUNDING. The moment a verb can
+delete one of the things that snapshot lists, the refill needs a reconciliation
+pass. Grep for `loader.` inside restore paths before shipping a delete verb.

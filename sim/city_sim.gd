@@ -1684,6 +1684,7 @@ func _restore_core(body: Dictionary) -> void:
 	rng.deserialize(body.get("rng", {}))
 	grid.deserialize(body.get("grid", {}))
 	_restamp_authored_power_tiles()
+	_sync_transformer_cover()
 	districts.deserialize(body.get("districts", {}))
 	population.deserialize(body.get("population", {}))
 	happiness.deserialize(body.get("happiness", {}))
@@ -2052,7 +2053,8 @@ func cmd_place_building(archetype: String, origin: Vector2i, variant: String = "
 	var size := Vector2i(int(foot[0]), int(foot[1]))
 	if not world.grid.can_place(origin, size):
 		return CommandQueue.fail(&"E_FOOTPRINT")
-	if not grid.would_serve(origin):
+	var serve := serving_headroom_for_new(archetype, origin)
+	if String(serve["reason"]) == "UNSERVED":
 		# Doc 04 §2.1: unservable placements are blocked; the fix is a
 		# transformer (grid-component placement is the Phase-1 command).
 		return CommandQueue.fail(&"E_UNSERVED")
@@ -2091,7 +2093,14 @@ func cmd_place_building(archetype: String, origin: Vector2i, variant: String = "
 	bus.emit(&"building_placed_sim", {"building": grid_id, "sim_id": sim_id,
 			"archetype": archetype, "cost": cost})
 	stats_add(&"buildings_built")
-	return CommandQueue.ok({"sim_id": sim_id, "cost": cost, "job_id": job_id})
+	# The capacity half of doc 04 §2.1, which placement has never checked (doc 93
+	# §AD3). It is a WARNING and not a refusal: doc 04 gates placement on
+	# COVERAGE and nothing in it authorises a capacity refusal, so inventing one
+	# here would be a balance change wearing a bug fix's clothes. What the player
+	# gets is the fact, on the ghost and in the answer — an amber ghost, the
+	# transformer's name, and what it will read at the evening peak.
+	return CommandQueue.ok({"sim_id": sim_id, "cost": cost, "job_id": job_id,
+			"power": serve})
 
 
 ## The doc 02 §2.11 upgrade gate. Checks run in the documented order and the
@@ -2120,7 +2129,7 @@ func cmd_upgrade_building(sim_id: String, preview: bool = false) -> Dictionary:
 		blockers.append(&"E_FUNDS")
 	var delta_kw := float(next_stats.get("power_demand_kw", 0.0)) \
 			- float(b.stats.get("power_demand_kw", 0.0))
-	var headroom := grid.can_upgrade_power(sim_id, delta_kw * 1.15)
+	var headroom := power_headroom(sim_id, delta_kw * UPGRADE_HEADROOM_MARGIN)
 	if not bool(headroom["ok"]):
 		blockers.append(&"E_POWER_HEADROOM")
 	var delta_water := float(next_stats.get("water_demand", 0.0)) \
@@ -2317,6 +2326,554 @@ func _next_component_id(kind: String) -> String:
 	return "%s-%03d" % [prefix, highest + 1]
 
 
+# ------------------------- doc 04 §4 — operating the placed grid (Wave 17)
+#
+# Three verbs that did not exist, measured into existence (doc 92 §48.1): on
+# every city this wave audited — the starter city, the 1,500-building benchmark
+# and a 20-game-day `balanced` city — EVERY `POWER_CAPACITY` blocker bound at
+# the TRANSFORMER (1 / 1, 124 / 130, 30 / 31) and none at a feeder, while the
+# bulk pool sat at 6 %, 55 % and 31 % of supply. A second power station moved
+# `system_supply_kw` by exactly its rating and cleared 0 of them. The player's
+# "it doesn't seem to be working" was the model working: the wall was the
+# 50 kW pole-top transformer, and the only verbs were a plant and a feeder.
+
+## Re-rate a placed grid component one rung up its doc 04 §2.2 ladder: a
+## transformer L → L+1 (50 → 150 → 400 kW, `placeable.transformer.
+## placeable_levels`), a feeder class c → c+1 (1,200 → 3,000 kW,
+## `routable.feeder.conductor_classes`). The two grid nodes that are BUILDINGS
+## (substation, plant) upgrade through `cmd_upgrade_building` (report 98 C-30)
+## and are refused here.
+##
+##   1 E_UNKNOWN_COMPONENT  no such id, or a kind with no ladder here
+##   2 E_MAX_LEVEL          the roster offers no rung above this one
+##   3 E_STATE              FAILED — repair it first (doc 04 §2.8)
+##   4 E_FUNDS / E_AUSTERITY
+##
+## Price is doc 03 §2.13(f): the target rung's full §2.13(b) build cost for a
+## transformer (WE-1's own "upgrade T7 to L4 — $6,900"), the target class's
+## per-tile price on every tile of the run for a feeder. `M_build` applies. A
+## transformer's service radius grows with its level (§2.2), so the command
+## re-attaches any unserved building the wider radius now reaches.
+func cmd_upgrade_grid_component(component_id: String, preview: bool = false) -> Dictionary:
+	if not grid.has_component(component_id):
+		return CommandQueue.fail(&"E_UNKNOWN_COMPONENT", {"blockers": [&"E_UNKNOWN_COMPONENT"]})
+	var c := grid.component(component_id)
+	var kind := String(c["kind"])
+	var m_build := float(treasury.difficulty().get("M_build", 1.0))
+	var blockers: Array = []
+	var quote := {"component": component_id, "kind": kind,
+			"capacity_kw": float(c["capacity_kw"])}
+	var cost := 0
+	match kind:
+		"transformer":
+			var levels := _int_list(_placeable_rules("transformer").get("placeable_levels", []))
+			var level := int(c["level"])
+			var next := level + 1
+			quote["from_level"] = level
+			quote["to_level"] = next
+			if not levels.has(next):
+				blockers.append(&"E_MAX_LEVEL")
+				quote["max_level"] = int(levels.max()) if not levels.is_empty() else level
+			else:
+				quote["to_capacity_kw"] = float(PowerGrid.CAPACITY[&"transformer"][next - 1])
+				quote["to_service_radius_tiles"] = int(PowerGrid.TRANSFORMER_SERVICE_RADIUS[next - 1])
+				cost = econ_curves.grid_upgrade_cost("transformer", level, next, m_build)
+		"feeder":
+			var classes := _int_list(_routable_rules("feeder").get("conductor_classes", []))
+			var conductor_class := int(c["conductor_class"])
+			var next_class := conductor_class + 1
+			var tiles := (c["route"] as Array).size()
+			quote["from_class"] = conductor_class
+			quote["to_class"] = next_class
+			quote["tiles"] = tiles
+			if not classes.has(next_class):
+				blockers.append(&"E_MAX_LEVEL")
+				quote["max_level"] = int(classes.max()) if not classes.is_empty() else conductor_class
+			else:
+				quote["to_capacity_kw"] = float(PowerGrid.FEEDER_CAPACITY[next_class - 1])
+				cost = CostCurves.round_half_up(float(tiles)
+						* float(econ_curves.grid_line_upgrade_cost_per_tile("feeder", next_class,
+								bool(c["underground"]))) * m_build)
+		_:
+			return CommandQueue.fail(&"E_UNKNOWN_COMPONENT",
+					{"blockers": [&"E_UNKNOWN_COMPONENT"], "component": component_id, "kind": kind})
+	if String(c["state"]) == "FAILED":
+		blockers.append(&"E_STATE")
+		quote["state"] = String(c["state"])
+		quote["required_state"] = "OK"
+	if treasury.balance < cost:
+		blockers.append(&"E_FUNDS")
+	quote["blockers"] = blockers
+	quote["cost"] = cost
+	quote["balance"] = treasury.balance
+	if not blockers.is_empty():
+		return CommandQueue.fail(blockers[0], quote)
+	if preview:
+		return CommandQueue.ok(quote)
+
+	var paid := treasury.spend(cost, &"construction", "upgrade " + component_id)
+	if not bool(paid["ok"]):
+		quote["blockers"] = [_spend_reason(paid)]
+		return CommandQueue.fail(_spend_reason(paid), quote)
+	var adopted: Array = []
+	if kind == "transformer":
+		grid.set_level(component_id, int(quote["to_level"]))
+		adopted = _reattach_unserved()
+	else:
+		grid.set_conductor_class(component_id, int(quote["to_class"]))
+	quote["capacity_kw"] = float(grid.component(component_id)["capacity_kw"])
+	quote["adopted"] = adopted
+	bus.emit(&"grid_component_upgraded", {"component": component_id, "kind": kind,
+			"level": int(grid.component(component_id)["level"]),
+			"conductor_class": int(grid.component(component_id)["conductor_class"]),
+			"capacity_kw": float(quote["capacity_kw"]), "cost": cost,
+			"adopted": adopted.duplicate()})
+	stats_add(&"grid_components_upgraded")
+	return CommandQueue.ok(quote)
+
+
+## Take a transformer out of the city (doc 02 §2.12's demolition, applied to the
+## one grid component a player places by the tile). **Only transformers**: a
+## feeder is the trunk other transformers hang off and has no demolish verb in
+## this cut; a substation or plant is a BUILDING and goes through
+## `cmd_demolish_building`, which retires its node (C-30).
+##
+##   1 E_UNKNOWN_COMPONENT  no such id, or not a transformer
+##
+## Refund is doc 03 §2.3's `DEMOLITION_REFUND_FRACTION` (0.25) of the §2.5
+## capital — the build cost at the current level: $125 for an L1, $275 for an
+## L2, $700 for an L3. **MOVE is demolish + place**, so moving an L1 across the
+## street costs `500 − 125 + lateral × $110`; the quote carries `replace_cost`
+## so the panel can say so before the hold lands.
+##
+## What happens to its customers is the honest half. `remove_component`
+## detaches every building it fed; `_reattach_unserved` then re-homes each one
+## another transformer's service radius covers, and the rest are STRANDED —
+## UNSERVED, and DARK through the ordinary service ledger (§2.4: `served = 0`,
+## `< 0.35 × demand` for 20 game-seconds ⇒ `BuildingPowerChanged DARK`, then
+## `BlockDarkChanged` when the block crosses 60 %). No special outage path: the
+## same events a burnout raises, which is what makes the alerts, the blackout
+## ceremony and the notifications fire without a second wiring. `fed`, `rehomed`
+## and `stranded` ride the `grid_component_removed` event so the shell can say
+## how many went dark. The feeder lateral it was placed with stays in the route
+## (copper in the ground is copper doc 03 keeps billing, §2.13(b)).
+func cmd_demolish_grid_component(component_id: String, preview: bool = false) -> Dictionary:
+	if not grid.has_component(component_id) \
+			or String(grid.component(component_id)["kind"]) != "transformer":
+		return CommandQueue.fail(&"E_UNKNOWN_COMPONENT",
+				{"blockers": [&"E_UNKNOWN_COMPONENT"], "component": component_id})
+	var c := grid.component(component_id)
+	var level := int(c["level"])
+	var tile: Vector2i = c["tile"]
+	var refund := econ_curves.grid_demolition_refund("transformer", level)
+	var fed: Array = []
+	var stranded: Array = []
+	var attachments := grid.attachment_map()
+	for building_id in attachments:
+		if String(attachments[building_id]) != component_id:
+			continue
+		fed.append(String(building_id))
+		var b: Building = buildings.get(String(building_id))
+		if b != null and not _covered_by_another_transformer(b.origin, component_id):
+			stranded.append(String(building_id))
+	fed.sort()
+	stranded.sort()
+	var quote := {"blockers": [], "component": component_id, "kind": "transformer",
+			"level": level, "tile": [tile.x, tile.y], "refund": refund,
+			"replace_cost": econ_curves.grid_build_cost("transformer", level,
+					float(treasury.difficulty().get("M_build", 1.0))),
+			"fed": fed, "customers": fed.size(), "stranded": stranded,
+			"player_placed": bool(c.get("player_placed", false))}
+	if preview:
+		return CommandQueue.ok(quote)
+
+	var removed := grid.remove_component(component_id)
+	if bool(c.get("player_placed", false)):
+		# `cmd_place_grid_component` reserved the tile; an authored transformer
+		# never held a flag (`_boot_power` stamps none), so only the player's is
+		# released — clearing a flag nothing set would free ground a building or
+		# a road may be standing on.
+		world.grid.clear_flag(tile.x, tile.y, TileGrid.FLAG_OCCUPIED)
+	_forget_transformer_cover(component_id)
+	var rehomed := _reattach_unserved()
+	var still_dark: Array = []
+	for building_id in fed:
+		if grid.attachment_of(String(building_id)) == "":
+			still_dark.append(String(building_id))
+	if refund > 0:
+		treasury.credit(refund, &"construction", "demolition " + component_id)
+	quote["removed"] = removed
+	quote["rehomed"] = rehomed
+	quote["stranded"] = still_dark
+	bus.emit(&"grid_component_removed", {"component": component_id, "kind": "transformer",
+			"level": level, "tile": [tile.x, tile.y], "refund": refund,
+			"fed": fed.duplicate(), "rehomed": rehomed.duplicate(),
+			"stranded": still_dark.duplicate(), "customers": fed.size()})
+	stats_add(&"grid_components_demolished")
+	return CommandQueue.ok(quote)
+
+
+## Is `tile` inside the service radius of some OK transformer other than
+## `except`? The preview half of `cmd_demolish_grid_component`'s `stranded`
+## count — `would_serve` with one node masked out.
+func _covered_by_another_transformer(tile: Vector2i, except: String) -> bool:
+	for id in grid.component_ids_of_kind(&"transformer"):
+		if String(id) == except:
+			continue
+		var c := grid.component(String(id))
+		if String(c["state"]) == "FAILED":
+			continue
+		var t: Vector2i = c["tile"]
+		if maxi(absi(tile.x - t.x), absi(tile.y - t.y)) \
+				<= int(PowerGrid.TRANSFORMER_SERVICE_RADIUS[int(c["level"]) - 1]):
+			return true
+	return false
+
+
+## Drop an AUTHORED transformer from doc 10's tile → transformer memo and
+## re-warm it. `_index_transformers` reads `loader.power`, which is boot data
+## and still lists the node, so the packed columns are edited in place; a
+## player-placed transformer was never in the memo and there is nothing to
+## forget. One pass over the survivors (~10 ms on the benchmark city, once per
+## verb) — the alternative was a signal memo that named a transformer the grid
+## no longer had, which `is_energized` now answers `false` rather than crashing,
+## but which would have read every intersection it covered as dark for the
+## rest of the session even after a replacement stood beside it.
+func _forget_transformer_cover(component_id: String) -> void:
+	var index := -1
+	for i in _tf_id.size():
+		if _tf_id[i] == component_id:
+			index = i
+			break
+	if index < 0:
+		return
+	_tf_id.remove_at(index)
+	_tf_x.remove_at(index)
+	_tf_y.remove_at(index)
+	_tf_radius.remove_at(index)
+	_warm_transformer_cover()
+
+
+## The same forgetting, applied to a LOAD (Wave 17, doc 98 §44 RR-122).
+##
+## `_index_transformers` reads `loader.power`, which is boot data and lists every
+## authored transformer whether or not the city still has it, so a restore of a
+## save taken after `cmd_demolish_grid_component` re-stamped doc 10's signal memo
+## with a node the grid no longer carries. `is_energized` answers `false` for a
+## missing id, so every intersection that transformer covered read DARK in the
+## restored city and LIT in the live one — doc 10 turns that into signal delay
+## and congestion, so `save → load → advance` stopped being bit-identical.
+## Measured before the fix on the starter city with T-04 demolished: live
+## `state_hash` 54c9a6d2709bce2f…, restored b6ca57575cc45b4b….
+##
+## The rule is the one the live sim already follows: a transformer the GRID does
+## not have is not in the memo. A player-placed transformer was never in it
+## either, live or restored, which is the asymmetry doc 10 §5.4's re-open
+## condition names.
+func _sync_transformer_cover() -> void:
+	var keep_x := PackedInt32Array()
+	var keep_y := PackedInt32Array()
+	var keep_radius := PackedInt32Array()
+	var keep_id := PackedStringArray()
+	for i in _tf_id.size():
+		if not grid.has_component(_tf_id[i]):
+			continue
+		keep_x.append(_tf_x[i])
+		keep_y.append(_tf_y[i])
+		keep_radius.append(_tf_radius[i])
+		keep_id.append(_tf_id[i])
+	if keep_id.size() == _tf_id.size():
+		return
+	_tf_x = keep_x
+	_tf_y = keep_y
+	_tf_radius = keep_radius
+	_tf_id = keep_id
+	_warm_transformer_cover()
+
+
+## The one-tap answer to `POWER_CAPACITY` (doc 12 §2.7's `Fix this →`, Wave 17
+## / A91-D-54): the cheapest single purchase that clears the serving path for
+## `sim_id`'s NEXT level, quoted from the same numbers `cmd_upgrade_building`
+## refuses on, and bought on confirm.
+##
+## The plan reads `can_upgrade_power`'s binder and answers it in kind:
+##
+##   transformer binds → `upgrade_transformer` to the first rung of the
+##                       placeable ladder that leaves it ≤ `UPGRADE_MAX_R`;
+##                       none left ⇒ E_NEEDS_TRANSFORMER (place a second one
+##                       beside it — a tile the player has to pick)
+##   feeder binds      → the cheaper of `upgrade_feeder` (re-class the run) and
+##                       `route_feeder` (new copper from the nearest substation
+##                       with a free slot to the transformer's tile, which
+##                       §2.9's adoption then hands the transformer to);
+##                       neither possible ⇒ the routing blocker itself,
+##                       `E_NO_SLOT` first among them, with the substation price
+##   substation binds  → `upgrade_substation` through `cmd_upgrade_building`,
+##                       or that command's own first blocker
+##
+##   1 E_UNKNOWN_BUILDING
+##   2 E_NOT_BLOCKED       the next level is not power-blocked — nothing to buy
+##   3 E_UNSERVED          no transformer at all (place one: FIX_TILE)
+##   4 E_NEEDS_TRANSFORMER / E_NO_SLOT / … the plan's own refusal
+##   5 E_FUNDS / E_AUSTERITY
+##
+## One purchase per tap, deliberately: a path can bind twice (a 50 kW transformer
+## on a saturated feeder), and a strip that quoted two prices would be a plan,
+## not a button. `next_blocker` names what the second tap would meet.
+func cmd_fix_power_capacity(sim_id: String, preview: bool = false) -> Dictionary:
+	var b: Building = buildings.get(sim_id)
+	if b == null:
+		return CommandQueue.fail(&"E_UNKNOWN_BUILDING", {"blockers": [&"E_UNKNOWN_BUILDING"]})
+	var top_level: int = catalog.max_level_of(String(b.archetype))
+	var next_level: int = mini(b.level + 1, top_level)
+	var next_stats: Dictionary = catalog.stats(String(b.archetype), next_level)
+	var delta_kw := (float(next_stats.get("power_demand_kw", 0.0))
+			- float(b.stats.get("power_demand_kw", 0.0))) * UPGRADE_HEADROOM_MARGIN
+	var headroom := power_headroom(sim_id, delta_kw)
+	if b.level >= top_level or bool(headroom["ok"]):
+		return CommandQueue.fail(&"E_NOT_BLOCKED", {"blockers": [&"E_NOT_BLOCKED"],
+				"sim_id": sim_id, "level": b.level})
+	if String(headroom["reason"]) == "UNSERVED":
+		return CommandQueue.fail(&"E_UNSERVED", {"blockers": [&"E_UNSERVED"],
+				"sim_id": sim_id, "tile": b.origin})
+	var plan := _power_fix_plan(sim_id, delta_kw, headroom)
+	plan["sim_id"] = sim_id
+	plan["delta_kw"] = delta_kw
+	plan["deficit_kw"] = float(headroom["deficit_kw"])
+	plan["binds_at"] = String(headroom["at"])
+	plan["binds_kind"] = String(headroom["kind"])
+	var blockers: Array = plan.get("blockers", [])
+	if blockers.is_empty() and treasury.balance < int(plan.get("cost", 0)):
+		blockers.append(&"E_FUNDS")
+		plan["blockers"] = blockers
+		plan["balance"] = treasury.balance
+	if not blockers.is_empty():
+		return CommandQueue.fail(blockers[0], plan)
+	if preview:
+		return CommandQueue.ok(plan)
+
+	var result: Dictionary
+	match String(plan["action"]):
+		"upgrade_transformer", "upgrade_feeder":
+			result = cmd_upgrade_grid_component(String(plan["component"]))
+		"route_feeder":
+			result = cmd_route_feeder(plan["path"], int(plan["conductor_class"]))
+		"place_transformer":
+			result = cmd_place_grid_component("transformer", plan["tile"], int(plan["level"]))
+		"upgrade_substation":
+			result = cmd_upgrade_building(String(plan["component"]))
+		_:
+			return CommandQueue.fail(&"E_UNKNOWN_COMPONENT", plan)
+	if not bool(result["ok"]):
+		plan["blockers"] = [result["reason_code"]]
+		plan["result"] = result.get("payload", {})
+		return CommandQueue.fail(result["reason_code"], plan)
+	plan["result"] = result.get("payload", {})
+	var after := power_headroom(sim_id, delta_kw)
+	plan["cleared"] = bool(after["ok"])
+	plan["next_blocker"] = "" if bool(after["ok"]) else String(after["at"])
+	bus.emit(&"power_capacity_fixed", {"sim_id": sim_id, "building": b.id,
+			"action": String(plan["action"]), "component": String(plan.get("component", "")),
+			"cost": int(plan.get("cost", 0)), "cleared": bool(after["ok"])})
+	stats_add(&"power_capacity_fixes")
+	return CommandQueue.ok(plan)
+
+
+## Doc 02 §2.11's headroom margin on an upgrade's added kW — the ×1.15
+## `cmd_upgrade_building` and `cmd_upgrade_water_component` both ask doc 04 for.
+const UPGRADE_HEADROOM_MARGIN := 1.15
+
+
+## The quote half of `cmd_fix_power_capacity`, pure: reads the grid, prices
+## through doc 03's accessors, adds nothing to the graph. `{action, component,
+## cost, …}` or `{blockers: [code], …}` with the refusal's own parameters.
+func _power_fix_plan(sim_id: String, delta_kw: float, headroom: Dictionary) -> Dictionary:
+	var t := _ambient_c()
+	var m_build := float(treasury.difficulty().get("M_build", 1.0))
+	var rows: Array = headroom.get("path", [])
+	var by_kind := {}
+	for row in rows:
+		by_kind[String(row["kind"])] = row
+	var transformer_id := String(by_kind.get("transformer", {}).get("id", ""))
+	var binds_kind := String(headroom["kind"])
+	match binds_kind:
+		"transformer":
+			var c := grid.component(transformer_id)
+			var levels := _int_list(_placeable_rules("transformer").get("placeable_levels", []))
+			var level := int(c["level"])
+			var need := float(c["load_kw"]) + delta_kw
+			var amb := clampf(1.0 - 0.008 * maxf(0.0, t - 30.0), 0.80, 1.0)
+			var cond := 0.55 + 0.45 * float(c["condition"])
+			# Rung by rung, and the next rung ONLY: `cmd_upgrade_grid_component`
+			# moves one level per call, so a plan that named L3 from L1 would
+			# quote a price the verb cannot charge in one purchase. If the next
+			# rung does not clear the gate on its own, the tap still buys it
+			# and `next_blocker` says the transformer binds again.
+			var next := level + 1
+			if levels.has(next):
+				var r_next := need / maxf(1.0, float(PowerGrid.CAPACITY[&"transformer"][next - 1]) * cond * amb)
+				return {"action": "upgrade_transformer", "component": transformer_id,
+						"from_level": level, "to_level": next,
+						"to_capacity_kw": float(PowerGrid.CAPACITY[&"transformer"][next - 1]),
+						"r_after": r_next, "clears": r_next <= PowerGrid.UPGRADE_MAX_R,
+						"cost": econ_curves.grid_upgrade_cost("transformer", level, next, m_build)}
+			# Top of the placeable ladder (L3 in this cut; the benchmark city's
+			# authored L5s are above it too). Doc 04 §2.9's other answer is a
+			# PARALLEL transformer: a second node inside the building's reach
+			# that adoption hands the building to. The tile is chosen here —
+			# nearest legal one to the building, deterministic scan order — so
+			# the tap stays one tap; refused when even the biggest placeable
+			# transformer could not carry the building's next level alone.
+			var parallel := _parallel_transformer_plan(sim_id, transformer_id, delta_kw,
+					levels, amb, m_build)
+			if not parallel.is_empty():
+				return parallel
+			var top := int(levels.max()) if not levels.is_empty() else level
+			return {"blockers": [&"E_NEEDS_TRANSFORMER"], "at": transformer_id,
+					"tile": c["tile"], "level": level, "max_level": top,
+					"service_radius_tiles": int(PowerGrid.TRANSFORMER_SERVICE_RADIUS[level - 1]),
+					"place_cost": econ_curves.grid_build_cost("transformer", top, m_build)}
+		"feeder":
+			var feeder_id := String(headroom["at"])
+			var f := grid.component(feeder_id)
+			var need := float(f["load_kw"]) + delta_kw
+			var amb := clampf(1.0 - 0.008 * maxf(0.0, t - 30.0), 0.80, 1.0)
+			var cond := 0.55 + 0.45 * float(f["condition"])
+			var options: Array = []
+			# A: heavier copper on the run that is there.
+			var classes := _int_list(_routable_rules("feeder").get("conductor_classes", []))
+			var next_class := int(f["conductor_class"]) + 1
+			if classes.has(next_class):
+				var r_next := need / maxf(1.0, float(PowerGrid.FEEDER_CAPACITY[next_class - 1]) * cond * amb)
+				var tiles := (f["route"] as Array).size()
+				options.append({"action": "upgrade_feeder", "component": feeder_id,
+						"from_class": int(f["conductor_class"]), "to_class": next_class,
+						"tiles": tiles, "r_after": r_next,
+						"clears": r_next <= PowerGrid.UPGRADE_MAX_R,
+						"cost": CostCurves.round_half_up(float(tiles)
+								* float(econ_curves.grid_line_upgrade_cost_per_tile("feeder",
+										next_class, bool(f["underground"]))) * m_build)})
+			# B: a new run to the transformer, which §2.9's adoption then takes.
+			var route_blocker := {}
+			if transformer_id != "":
+				var tile: Vector2i = grid.component(transformer_id)["tile"]
+				var route_class := int(classes.max()) if not classes.is_empty() else 2
+				var quoted := _route_line("feeder", tile, route_class, true)
+				if bool(quoted["ok"]):
+					var start := _best_feeder_source_for(tile)
+					var path := suggest_feeder_route(start, tile)
+					var radius := int(_placeable_rules("transformer").get("feeder_tap_radius_tiles", 0))
+					var dry := grid.adoption_plan(_route_payload(path),
+							PowerGrid.FEEDER_CAPACITY[route_class - 1], 1.0, 0.0, "", radius, t)
+					var takes: bool = (dry["adopted"] as Array).has(transformer_id)
+					var r_new := (float(grid.component(transformer_id)["load_kw"]) + delta_kw) \
+							/ maxf(1.0, float(PowerGrid.FEEDER_CAPACITY[route_class - 1]) * amb)
+					options.append({"action": "route_feeder", "component": "",
+							"path": path, "conductor_class": route_class,
+							"tiles": path.size(), "r_after": r_new,
+							"clears": takes and r_new <= PowerGrid.UPGRADE_MAX_R,
+							"adopts": takes,
+							"substation": String(quoted["payload"].get("substation", "")),
+							"cost": int(quoted["payload"].get("cost", 0))})
+				else:
+					route_blocker = quoted.get("payload", {}).duplicate()
+					route_blocker["blockers"] = [quoted["reason_code"]]
+			var best := {}
+			for option in options:
+				if not bool(option["clears"]):
+					continue
+				if best.is_empty() or int(option["cost"]) < int(best["cost"]):
+					best = option
+			if not best.is_empty():
+				return best
+			if not route_blocker.is_empty():
+				if StringName(String(route_blocker["blockers"][0])) == &"E_NO_SLOT":
+					route_blocker["substation_cost"] = econ_curves.grid_build_cost(
+							"substation", 1, m_build)
+				return route_blocker
+			return {"blockers": [&"E_NO_SLOT"], "at": String(f["parent"]),
+					"feeder_slots_free": 0,
+					"substation_cost": econ_curves.grid_build_cost("substation", 1, m_build)}
+		"substation":
+			var substation_id := String(headroom["at"])
+			var quoted := cmd_upgrade_building(substation_id, true)
+			var payload: Dictionary = quoted.get("payload", {})
+			if bool(quoted["ok"]):
+				var s := grid.component(substation_id)
+				var next := int(s["level"]) + 1
+				return {"action": "upgrade_substation", "component": substation_id,
+						"from_level": int(s["level"]), "to_level": next,
+						"to_capacity_kw": float(PowerGrid.CAPACITY[&"substation"][mini(next, 5) - 1]),
+						"clears": true, "cost": int(payload.get("cost", 0))}
+			var out := payload.duplicate()
+			out["at"] = substation_id
+			out["blockers"] = payload.get("blockers", [quoted["reason_code"]])
+			return out
+	return {"blockers": [&"E_UNSERVED"], "sim_id": sim_id}
+
+
+## The parallel-transformer half of `_power_fix_plan`: the biggest placeable
+## transformer, on the legal tile nearest `sim_id` that keeps the building in
+## its service radius, provided §2.9's adoption would take the building and the
+## building's NEXT level fits on it at ≤ `UPGRADE_MAX_R`. `{}` when no such tile
+## or no such level. Scan order is distance, then z, then x — the same tile on
+## every run. Bounded: the radius is at most 8, so at most 289 previews.
+func _parallel_transformer_plan(sim_id: String, host_id: String, delta_kw: float,
+		levels: Array, amb: float, m_build: float) -> Dictionary:
+	if levels.is_empty():
+		return {}
+	var b: Building = buildings[sim_id]
+	var level := int(levels.max())
+	var capacity := float(PowerGrid.CAPACITY[&"transformer"][level - 1])
+	var radius := int(PowerGrid.TRANSFORMER_SERVICE_RADIUS[level - 1])
+	var need := float(_last_demands.get(sim_id, 0.0)) + delta_kw
+	if need / maxf(1.0, capacity * amb) > PowerGrid.UPGRADE_MAX_R:
+		return {}
+	var origins := _building_origins()
+	for distance in range(1, radius + 1):
+		for dz in range(-distance, distance + 1):
+			for dx in range(-distance, distance + 1):
+				if maxi(absi(dx), absi(dz)) != distance:
+					continue
+				var tile := b.origin + Vector2i(dx, dz)
+				# The cheap refusals FIRST. `cmd_place_grid_component`'s preview
+				# runs doc 04's eight checks in their order, and check 6 is
+				# `nearest_feeder_tap`, a radius-8 scan over every feeder route
+				# in the city — on the benchmark city that is ~1,800 tile
+				# comparisons, and this loop would have paid it 289 times for a
+				# question ("is this square free?") the tile grid answers in one
+				# lookup. Measured: it is the whole of the fix quote's cost.
+				if not TileGrid.in_bounds(tile.x, tile.y) \
+						or not world.grid.can_place(tile, Vector2i.ONE):
+					continue
+				var quote := cmd_place_grid_component("transformer", tile, level, true)
+				var payload: Dictionary = quote.get("payload", {})
+				var blockers: Array = payload.get("blockers", [])
+				# Funds are the planner's own last check; every other refusal
+				# is a tile this transformer cannot stand on.
+				if not bool(quote["ok"]) and blockers != [&"E_FUNDS"]:
+					continue
+				var dry := grid.building_adoption_plan(tile, radius, capacity, 1.0, 0.0, "",
+						_last_demands, origins, _ambient_c())
+				if not (dry["adopted"] as Array).has(sim_id):
+					continue
+				return {"action": "place_transformer", "component": host_id, "tile": tile,
+						"level": level, "to_capacity_kw": capacity,
+						"r_after": need / maxf(1.0, capacity * amb), "clears": true,
+						"adopts": (dry["adopted"] as Array).size(),
+						"cost": int(payload.get("cost", 0))}
+	return {}
+
+
+## JSON numbers arrive as floats; a level or a class is an int. One reader.
+static func _int_list(raw: Variant) -> Array:
+	var out: Array = []
+	if raw is Array:
+		for entry in (raw as Array):
+			out.append(int(entry))
+	return out
+
+
 # --------------------------------------------- doc 04 §4 `route_feeder`
 
 ## Route a feeder (doc 04 §4's `route_feeder`, §2.1's tile polyline). The verb
@@ -2466,12 +3023,12 @@ func _route_line(kind: String, tile: Vector2i, conductor_class: int,
 		# ladder biting, not a disconnected map — say which, because the two
 		# have different prices ($15,000 for a new substation, an upgrade job
 		# for a bigger one) and only one of them is a mistake.
+		# The GRID's substations, not the roster's: an authored substation has no
+		# doc-02 shell, and asking the roster answered "there is no network here"
+		# on a map with six of them (Wave 17, A91-D-55).
 		var blocked: StringName = &"E_NOT_CONNECTED"
-		for sim_id in roster_ids():
-			if grid.has_component(String(sim_id)) \
-					and String(grid.component(String(sim_id))["kind"]) == "substation":
-				blocked = &"E_NO_SLOT"
-				break
+		if not grid.component_ids_of_kind(&"substation").is_empty():
+			blocked = &"E_NO_SLOT"
 		return CommandQueue.fail(blocked, {"blockers": [blocked]})
 	return cmd_route_feeder(suggest_feeder_route(start, tile), conductor_class, preview)
 
@@ -2556,26 +3113,45 @@ func _feeder_route_tile_legal(tile: Vector2i) -> bool:
 ## Chebyshev on the shell's own footprint (report 98 C-30: the substation IS the
 ## building), returning the footprint-adjacent tile on the target's side — which
 ## is exactly where doc 09 §2.9.5 puts SUB-A's terminal.
+##
+## **Every substation, not only the ones that are buildings** (Wave 17,
+## A91-D-55). It walked `roster_ids()`, so it could only ever find a substation
+## the PLAYER had built: an AUTHORED substation is a grid component with a tile
+## and no doc-02 shell, and `tests/fixtures/bench_city.json` authors all six of
+## its substations that way. Measured before the fix: `_route_line` on the
+## benchmark city answered `E_NOT_CONNECTED` for every one of the 86
+## feeder-bound `POWER_CAPACITY` blockers — not "your substations are full",
+## which would have been true and buyable, but "there is no network here", on a
+## map with six substations and 36 feeders. The authored half of the city was
+## invisible to the player's own routing verb.
 func _best_feeder_source_for(target: Vector2i) -> Vector2i:
 	var best := Vector2i(-1, -1)
 	var best_key := [999999, ""]
-	for sim_id in roster_ids():
-		if not grid.has_component(String(sim_id)):
+	for id in grid.component_ids_of_kind(&"substation"):
+		var substation_id := String(id)
+		if int(grid.feeder_slots(substation_id)["free"]) <= 0:
 			continue
-		if String(grid.component(String(sim_id))["kind"]) != "substation":
-			continue
-		if int(grid.feeder_slots(String(sim_id))["free"]) <= 0:
-			continue
-		var b: Building = buildings[sim_id]
-		var size: Vector2i = _building_records.get(sim_id, {}).get("footprint", Vector2i.ONE)
+		var origin: Vector2i
+		var size := Vector2i.ONE
+		var b: Building = buildings.get(substation_id)
+		if b != null:
+			origin = b.origin
+			size = _building_records.get(substation_id, {}).get("footprint", Vector2i.ONE)
+		else:
+			# An authored node: `_boot_power` stamps its terminal tile from
+			# `data/starter_city.json`, which is the same fence-line tile a
+			# shell's footprint would resolve to.
+			origin = grid.component(substation_id)["tile"]
+			if origin.x < 0:
+				continue
 		# The corner of the pad facing the target. Deliberately the pad tile
 		# itself and not one step out: a transformer standing right against the
 		# fence would otherwise make the suggested run a single tile, which is
 		# not a polyline and which `cmd_route_feeder` correctly refuses.
-		var terminal := Vector2i(clampi(target.x, b.origin.x, b.origin.x + size.x - 1),
-				clampi(target.y, b.origin.y, b.origin.y + size.y - 1))
+		var terminal := Vector2i(clampi(target.x, origin.x, origin.x + size.x - 1),
+				clampi(target.y, origin.y, origin.y + size.y - 1))
 		var distance: int = maxi(absi(target.x - terminal.x), absi(target.y - terminal.y))
-		var key := [distance, String(sim_id)]
+		var key := [distance, substation_id]
 		if key < best_key:
 			best_key = key
 			best = terminal
@@ -2631,6 +3207,159 @@ static func _route_payload(path: Array) -> Array:
 ## adoption decision taken at 39 °C must use 39 °C.
 func _ambient_c() -> float:
 	return float(weather.env_for_grid().get("t_ambient_c", 25.0))
+
+
+## The same ambient, for a reader outside this class. `ui/power_actions.gd` has
+## to derate the panel's readings with the number the tick derates with, and a
+## UI file reaching into an underscore is a UI file that will be wrong the day
+## the underscore moves.
+func ambient_c() -> float:
+	return _ambient_c()
+
+
+## The kW one building drew on the last composed tick — occupancy, channel,
+## variant multiplier and all. `0.0` for an id the roster does not carry.
+func building_demand_kw(sim_id: String) -> float:
+	return float(_last_demands.get(sim_id, 0.0))
+
+
+# --------------------------------- doc 04 §5.3 headroom, judged at the PEAK
+#
+# The audit's P1 (doc 93 §AD4): every headroom gate in the project reads
+# `PowerGrid._components[id].load_kw`, which is the load AT THIS INSTANT, and
+# doc 01's demand channels swing that load by more than a factor of two across a
+# day — `power_demand_residential` runs 0.67 at 05:00 and 1.46 at 20:00,
+# `power_demand_commercial` 0.36 at 00:00 and 1.51 from 10:00 to 18:00. An
+# upgrade approved in the residential trough is an upgrade that browns out at
+# dinner, and the player is told nothing until it does.
+#
+# Measured on the starter city (`tools/audit_power.gd --hours=5`): T-18 carries
+# 32.4 kW at 05:00 and 66.6 kW at 20:00 on the same roster — 2.06×.
+
+## The load each grid component would carry at ITS CUSTOMERS' peak, keyed by
+## component id. Every building is scaled by its own channel's daily maximum
+## over that channel's value right now, and the scaled demand is walked up the
+## service path exactly as `PowerGrid._pass_a` walks the live one, so the
+## dictionary is a drop-in `load_override` for `can_upgrade_power`.
+##
+## **Per channel, not per system.** A transformer serving houses peaks at 20:00
+## and one serving shops peaks at 10:00; a single city-wide multiplier would
+## understate the first and overstate the second. The scale is clamped at 1.0
+## from below — the gate may never be *more* permissive than the live reading,
+## which is the one number doc 04 §5.3 has always been written against.
+##
+## Streetlight and signal sinks (`distributed_sinks`) ride at their own peak:
+## `streetlight_load` is an absolute 0/1 curve, so its peak is 1.0 and a decision
+## taken at noon still accounts for the lamps that come on at 19:00.
+##
+## Derived, and memoised on `(game-minute, grid.mutation_epoch)` — the ledger
+## period doc 04 already banks service on, and the graph the table was measured
+## on, so no command that re-shapes the grid is ever answered from a stale table
+## while the placement ghost, which asks this once a frame, is answered from the
+## memo. Costs one pass over the roster
+## (measured: 1.9 ms on the 1,500-building benchmark city).
+func peak_component_loads() -> Dictionary:
+	var stamp := "%d|%d" % [clock.game_seconds() / SERVICE_PEAK_PERIOD_GS, grid.mutation_epoch]
+	if _peak_loads_stamp == stamp:
+		return _peak_loads
+	var hour := clock.fine_sample_hour()
+	var scale_by_channel: Dictionary = {}
+	var out: Dictionary = {}
+	for sim_id in _last_demands:
+		var b: Building = buildings.get(String(sim_id))
+		if b == null:
+			continue
+		var channel := String(DEMAND_CLASS_CHANNEL.get(b.archetype, "power_demand_civic"))
+		var scale: Variant = scale_by_channel.get(channel)
+		if scale == null:
+			var now: float = curves.channel_clamp(channel,
+					curves.channel_curve_value(channel, hour))
+			var peak: float = float(curves.channel_peak(channel)["value"])
+			scale = maxf(1.0, peak / maxf(0.001, now))
+			scale_by_channel[channel] = scale
+		var kw := float(_last_demands[sim_id]) * float(scale)
+		for id in grid.service_path_ids(String(sim_id)):
+			out[id] = float(out.get(id, 0.0)) + kw
+	# The transformer-hosted sinks, at their own peak: `distributed_sinks` reads
+	# `streetlight_load` at the current hour, and the peak of an absolute 0/1
+	# curve is 1.0.
+	for node in loader.power.get("nodes", []):
+		if String(node["kind"]) != "transformer":
+			continue
+		var id := String(node["id"])
+		if not grid.has_component(id):
+			continue
+		var kw := float(node.get("streetlights", 0)) * STREETLIGHT_KW \
+				+ float(node.get("signals", 0)) * SIGNAL_KW
+		if kw <= 0.0:
+			continue
+		for up in [id, String(grid.component(id)["parent"])]:
+			if up == "" or not grid.has_component(up):
+				continue
+			out[up] = float(out.get(up, 0.0)) + kw
+			var parent := String(grid.component(up)["parent"])
+			if up != id and parent != "" and grid.has_component(parent):
+				out[parent] = float(out.get(parent, 0.0)) + kw
+	_peak_loads = out
+	_peak_loads_stamp = stamp
+	return out
+
+
+var _peak_loads: Dictionary = {}
+var _peak_loads_stamp: String = ""
+## The memo period, in game-seconds: one game-minute, the same grid the service
+## ledger banks on (`PowerGrid.SERVICE_PERIOD_GS`). A peak-load table is a
+## judgement about the whole day and does not need re-deriving four times a
+## game-minute; the placement ghost re-asks for it every frame.
+const SERVICE_PEAK_PERIOD_GS := 60
+
+
+## The hour the day's worst channel peaks, for the strings that say *when* — the
+## latest peak across the channels the city's buildings actually draw on.
+func peak_hour_of_day() -> float:
+	var latest := 0.0
+	var seen: Dictionary = {}
+	for sim_id in _last_demands:
+		var b: Building = buildings.get(String(sim_id))
+		if b == null:
+			continue
+		var channel := String(DEMAND_CLASS_CHANNEL.get(b.archetype, "power_demand_civic"))
+		if seen.has(channel):
+			continue
+		seen[channel] = true
+		latest = maxf(latest, float(curves.channel_peak(channel)["hour"]))
+	return latest
+
+
+## `can_upgrade_power` with doc 04 §5.3 read at the peak (see above). Every
+## caller in this class goes through here; the grid's own two-argument form is
+## kept for the unit tests that build a graph with no clock.
+func power_headroom(building_id: String, delta_kw: float) -> Dictionary:
+	return grid.can_upgrade_power(building_id, delta_kw, _ambient_c(),
+			peak_component_loads())
+
+
+## Can the grid carry a NEW level-1 `archetype` on `origin`, at the peak? The
+## read-only rule behind `cmd_place_building`'s power payload and
+## `BuildController.evaluate`'s amber ghost, so the two can never disagree
+## (Wave 17, doc 93 §AD3 / A91-D-55).
+##
+## The kW asked for is the archetype's own level-1 `power_demand_kw` scaled to
+## its demand channel's daily maximum — the load this building will put on that
+## transformer once it is occupied and the sun goes down, not the load it puts on
+## it during the construction hour the player placed it in. Occupancy is NOT
+## folded in: a building is placed to be occupied, and quoting a fresh site at
+## its empty draw is how the trough lied in the first place.
+func serving_headroom_for_new(archetype: String, origin: Vector2i) -> Dictionary:
+	var stats: Dictionary = catalog.stats(archetype, 1)
+	var base := float(stats.get("power_demand_kw", 0.0))
+	var channel := String(DEMAND_CLASS_CHANNEL.get(StringName(archetype),
+			"power_demand_civic"))
+	var kw := base * float(curves.channel_peak(channel)["value"])
+	var out := grid.can_serve_tile(origin, kw, _ambient_c(), peak_component_loads())
+	out["demand_kw"] = kw
+	out["nameplate_kw"] = base
+	return out
 
 
 # ------------------------------------ doc 04 §2.1 grid nodes that are BUILDINGS
@@ -2995,7 +3724,7 @@ func cmd_upgrade_water_component(node_id: String, preview: bool = false) -> Dict
 		blockers.append(&"E_LEVEL_UNAVAILABLE")
 	var delta_kw := water.data.kw_required(node.variant, next_level, node.subtype) \
 			- water.data.kw_required(node.variant, node.level, node.subtype)
-	var headroom := grid.can_upgrade_power(node.power_ref, delta_kw * 1.15)
+	var headroom := power_headroom(node.power_ref, delta_kw * UPGRADE_HEADROOM_MARGIN)
 	if not bool(headroom["ok"]):
 		blockers.append(&"E_POWER_HEADROOM")
 	var cost := econ_curves.water_component_upgrade_cost(

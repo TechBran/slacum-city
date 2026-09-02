@@ -9,8 +9,8 @@
   },
   "placeable": {
     "transformer": {
-      "placeable_levels": [1, 2, 3],
-      "_placeable_levels_note": "Doc 04 §6 MVP ships transformer L1–L4; the Wave-1.5 placement roster is L1–L3 (audit doc 93 §B). Raising the cap is a data edit, not a code edit.",
+      "placeable_levels": [1, 2, 3, 4, 5],
+      "_placeable_levels_note": "Wave 17 opens the roster to the full doc 04 §2.2 ladder, L1–L5 (50 / 150 / 400 / 1,000 / 2,500 kW). It was L1–L3 and doc 04 §6's MVP cut said L1–L4, while data/starter_city.json authors L2s and tests/fixtures/bench_city.json authors L5s — so the city the player is GIVEN ran on rungs the player could not buy. Measured with tools/audit_power.gd on the benchmark city: every one of the 140 POWER_CAPACITY blockers bound at a transformer, and 70 of them had NO purchase that cleared them because the biggest placeable transformer was 400 kW against an authored 2,500 kW. Doc 03 §2.13(b) has priced all five rungs since it shipped ($500 / $1,100 / $2,800 / $6,900 / $16,300), so this is the data edit the old note promised and not a price change (doc 91 §14.5 A91-D-55, doc 93 §AD2).",
       "footprint_tiles": 1,
       "service_radius_tiles": [3, 4, 5, 6, 8],
       "requires_parent_kind": "feeder",
@@ -22,8 +22,8 @@
   },
   "routable": {
     "feeder": {
-      "conductor_classes": [1, 2],
-      "_conductor_classes_note": "Doc 04 §6 MVP ships feeder class 1-2 overhead; class 3 (7,500 kW) is deferred there and is refused here with E_CLASS_UNAVAILABLE. The per-tile price of each class is doc 03 §2.13(b)'s expenses.grid_components.feeder.cost_per_tile_overhead — $110 / $210 / $400 — and the capacities are doc 04 §2.2's, mirrored in sim/power/power_grid.gd. CitySim asserts at boot that every class listed here exists in PowerGrid.FEEDER_CAPACITY (the P0-01 pattern).",
+      "conductor_classes": [1, 2, 3],
+      "_conductor_classes_note": "Wave 17 opens the line roster to class 1-3 overhead for the same reason the transformer ladder opened: data/starter_city.json's own trunks are class 2 and tests/fixtures/bench_city.json's are class 3, so the authored city ran on copper the player could not buy or re-class. Doc 04 §6 deferred class 3 and this supersedes that line (doc 91 §14.5 A91-D-55, doc 93 §AD2). The per-tile price of each class is doc 03 §2.13(b)'s expenses.grid_components.feeder.cost_per_tile_overhead — $110 / $210 / $400 — and the capacities are doc 04 §2.2's, mirrored in sim/power/power_grid.gd. CitySim asserts at boot that every class listed here exists in PowerGrid.FEEDER_CAPACITY (the P0-01 pattern).",
       "source_tap_radius_tiles": 1,
       "_source_tap_note": "Doc 04 §2.1: a feeder is rooted on exactly one substation. The run must therefore START on the network — on a tile of an existing feeder's route (branching a trunk), or within this radius of a substation building's footprint. 1 is the fence line, not a free parameter: doc 09 §2.9.5 authors SUB-A's pad at global (65,49)-(66,50) and starts BOTH authored feeders at the terminal tile (64,50), which is Chebyshev 1 from that pad, so the shipped topology is exactly reproducible by the player's own verb (tests assert this against data/starter_city.json rather than against this number).",
       "requires_block_owned": true,

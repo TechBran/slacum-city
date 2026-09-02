@@ -7173,3 +7173,155 @@ merge — founding `a27da24aaf6e9663…` / `d2dec6727c64001d…`, bench
 `7c99720f5ff14553…` / `8f60accb6d91ad1e…` — were taken **after** the edits and
 reproduce the pre-edit run on the same tree to the byte, on both cities and both
 paths.
+
+---
+
+## 48. Wave 17 — the power fork: what the model actually costs, measured (2026-09-01)
+
+The audit itself is doc 93 §AD; this section is the money and the baselines.
+
+### 48.1 The census, on three cities
+
+`tools/audit_power.gd`, which runs `cmd_upgrade_building(preview)` over the whole
+roster and asks `CitySim.power_headroom` where each `POWER_CAPACITY` refusal
+binds. Run before and after this wave's model fixes.
+
+| | starter, fork | starter, after | benchmark, fork | benchmark, after |
+|---|---|---|---|---|
+| buildings | 34 | 34 | 1,500 | 1,500 |
+| `system_supply_kw` | 8,000 | 8,000 | 240,000 | 240,000 |
+| `system_demand_kw` | 512 | 512 | 134,802 | 134,802 |
+| pool `load_ratio` | 0.064 | 0.064 | 0.562 | 0.562 |
+| `POWER_CAPACITY` blockers | 1 | **2** | 140 | **400** |
+| …transformer-bound | 1 | 2 | 140 | 314 |
+| …feeder-bound | 0 | 0 | **0** | **86** |
+| …substation-bound | 0 | 0 | 0 | 0 |
+| blockers the one-tap fix REFUSES | 0 | 0 | **70** | **113** |
+| …because the ladder is topped out (`E_NEEDS_TRANSFORMER`) | 0 | 0 | 70 | **27** |
+| …because every substation slot is full (`E_NO_SLOT`) | 0 | 0 | 0 | **86** |
+| blockers the one-tap fix BUYS | 1 | 2 | **70** | **287** |
+
+**Read the bottom half together.** The blocker COUNT rose because the gate moved
+off the trough and onto the peak (doc 93 §AD4) — those refusals were always real
+and were being read at 05:00. The feeder-bound column appearing at all is the
+same fix: a class-3 trunk at r 0.775 *now* is over 0.90 at the evening peak.
+
+The rows that matter are the last three. At the fork, **70 of 140** blockers —
+half of them — had no legal purchase in the game that would clear them, and the
+refusal was `E_NEEDS_TRANSFORMER`: the biggest transformer the roster sold was
+400 kW against an authored 2,500 kW node. After, **287 of 400** are answered by
+a purchase the one-tap fix will make, **27** are genuinely at the top of the
+ladder (the answer is a second transformer on a tile the player picks — a
+refusal that says so), and **86** answer `E_NO_SLOT`: every one of the six
+substations is at 6/6 feeders, so the answer is doc 04 §2.2's substation ladder,
+which the refusal now prices. **At the fork those 86 answered `E_NOT_CONNECTED`
+— "there is no network here" — on a map with six substations and 36 feeders**,
+because `_best_feeder_source_for` walked the BUILDING roster and every one of
+those substations is authored (A91-D-55(b)). A refusal that names a purchase is
+a different object from a refusal that denies the city exists.
+
+**None of this moves a dollar.** No price changed; `data/economy.json` is
+untouched by this fork. What changed is which of doc 03's existing prices the
+player is allowed to pay.
+
+### 48.2 The second power station, reproduced
+
+The user's report, as a measurement. Benchmark city, `cmd_place_building
+("power_facility", …)` driven to completion:
+
+* `system_supply_kw` **240,000 → 248,000 kW** — exactly the `plant_gas` L1
+  rating of 8,000. The model does what it says.
+* `POWER_CAPACITY` blockers **400 → 406**. The station cleared **none** and
+  created **six**, because the plant's own doc-02 shell is a building with a
+  service draw and it attaches to a pole-top transformer like any other.
+* Pool headroom before the purchase: **105,198 kW**.
+
+There is no bug in that sequence. The player bought 8,000 kW of a commodity they
+already had 105,198 kW of, because the game's only visible power number was the
+pool. Doc 12 §2.10 D-72's second legend line exists to end this.
+
+### 48.3 The verbs, priced
+
+All three read doc 03 through `CostCurves` accessors; none authors a number.
+
+| Verb | Price | Accessor |
+|---|---|---|
+| `cmd_upgrade_grid_component` (transformer L→L+1) | the target rung's full build cost — $1,100 / $2,800 / $6,900 / $16,300 | `grid_upgrade_cost` → `grid_build_cost` |
+| `cmd_upgrade_grid_component` (feeder class c→c+1) | the target class's per-tile price on **every tile of the run** — $210 or $400 | `grid_line_upgrade_cost_per_tile` |
+| `cmd_demolish_grid_component` (transformer) | **refund** 0.25 × the build cost at the current level — $125 / $275 / $700 / $1,725 / $4,075 | `grid_demolition_refund` → `demolition_refund` |
+| MOVE (= demolish + place) | `replace_cost − refund`; **$825 for an L2**, quoted before the hold | both of the above |
+
+**The 0.25 is doc 03 §2.3's `DEMOLITION_REFUND_FRACTION`**, the same fraction
+buildings, road tiles and water mains return. Grid components had no demolition
+verb before this wave and therefore no accessor; `grid_demolition_refund` is a
+new door onto the existing number, not a new number.
+
+**Upgrade priced as a replacement at full build cost** is doc 03 §2.13(f)'s own
+rule and doc 04 §2.13 WE-1's own worked example ("upgrade T7 to L4 — doc 03
+price $6,900"). It is deliberately unkind: re-rating a pole-top means a new
+pole-top, and §2.5 reads grid capital as "replaced, not upgraded".
+
+### 48.4 The outage's price
+
+Doc 93 §AD7 has the table. Headline: on the starter city, taking out an L2 that
+feeds four houses costs the treasury **$53 over three game-hours** net of the
+$275 refund — that is, roughly nothing. The consequence a player feels is the
+four `BuildingPowerChanged DARK` events, the `BlockDarkChanged` behind them and
+the happiness they drag, not the ledger. **Ruling: no move-window refund.** A
+free move would delete the mechanic the user asked for in the same sentence
+("if we remove it the power goes out and we hurry to reconnect").
+
+### 48.4b What the POWER section costs to compute
+
+The building panel refreshes on the HUD's 1 Hz cadence, so `building_view()` is
+a once-a-second main-thread cost and the POWER section is new work inside it.
+`tools/measure_power_panel.gd`, benchmark city (1,500 buildings, 194 grid
+components), 40-building sample:
+
+| | first cut | shipped |
+|---|---|---|
+| `peak_component_loads()` **cold** | 3.79 ms | 3.47 ms (memoised per game-minute) |
+| `grid.service_path()` | 0.50 | 0.46 |
+| `power.fix_quote()` | **3.55** | **0.96** |
+| `power.building_block()` | 4.98 | **2.64** |
+| `building_view()` (whole panel) | 5.58 | **3.14** |
+
+Starter city, for scale: 0.14 / 0.42 / 0.85 ms.
+
+**The 3.7× on the fix quote is one `if`.** `_parallel_transformer_plan` scans up
+to 289 tiles for a place-a-second-transformer plan, and it asked
+`cmd_place_grid_component(preview)` about each one — which runs doc 04's eight
+checks in order, and check 6 is `nearest_feeder_tap`, a radius-8 scan over every
+feeder route in the city (~1,800 tile comparisons on this fixture). The question
+that rejects almost every candidate is "is this square free?", which
+`TileGrid.can_place` answers in one lookup. Cheap refusals first.
+
+**3.1 ms once a second, on the largest city in the project, while a panel is
+open** — under a fifth of a 60 fps frame, and paid only when the player has a
+panel up. The peak-load table is the floor and it is memoised on the
+game-minute, so a panel left open pays it once per game-minute rather than once
+per refresh.
+
+### 48.5 Baselines — all four bit-identical
+
+Nothing in this fork moves a hash. Measured after every model change in it:
+
+| City | coarse 24 h | fine 2.0 h |
+|---|---|---|
+| starter (`--hash-only`) | `a27da24aaf6e9663…` | `7745cb25e55ff65c…` |
+| benchmark (`--city=res://tests/fixtures/bench_city.json`) | `7c99720f5ff14553…` | `d8e8889681b23297…` |
+
+All four match the fork exactly. That is the load-bearing claim of this section
+and it is why the ledger above needs no `awaiting_consumer` row: **the gate that
+moved is a PLAYER-FACING gate** (`cmd_upgrade_building`'s preview, the placement
+ghost), and no player command runs inside `profile_sim`'s identity pass.
+`tests/test_balance_gates.gd` re-run: **32 tests, 411 asserts, 0 failed**, the
+same as at the fork.
+
+**One thing to watch, and it is the economy lane's** (`awaiting_consumer`): the
+peak-hour gate makes `E_POWER_HEADROOM` **strictly more common** (starter 1 → 2,
+benchmark 140 → 400 previews refused). The 32 gates do not move today, because
+the strategies that drive them answer a power refusal by buying copper and the
+roster now sells copper that works. If a future pacing gate is written against
+"how often is an upgrade refused on power", it must be fitted **after** this
+fork, not before it.
