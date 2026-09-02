@@ -929,3 +929,35 @@ func test_building_default_condition_matches_the_authored_block() -> void:
 			"auto_damage_threshold", "min_condition_to_upgrade", "repair_time_factor"]:
 		assert_true(Building.DEFAULT_CONDITION.has(key),
 				"every key `Building` READS must be in the fallback: '%s'" % key)
+
+
+## Doc 02 §2.6a / doc 93 §Y1's ownership table, asserted archetype by archetype
+## rather than by the predicate that produces it — the point of the ruling is
+## WHICH buildings are on each side, and a test that re-derives the answer from
+## `owner_maintenance.classes` would pass on any class list at all.
+func test_the_ownership_split_is_six_and_six() -> void:
+	var catalog := _catalog()
+	const PRIVATE := ["house", "apartment", "store", "office", "high_rise",
+			"data_center"]
+	const CITY := ["police_station", "fire_station", "construction_yard",
+			"power_facility", "substation", "water_facility"]
+	for archetype: String in PRIVATE:
+		assert_true(catalog.owner_maintained(archetype),
+				"%s is private stock: its owner keeps it up" % archetype)
+	for archetype: String in CITY:
+		assert_false(catalog.owner_maintained(archetype),
+				"%s is the city's: the city buys its repairs" % archetype)
+	assert_eq(PRIVATE.size() + CITY.size(), catalog.archetypes().size(),
+			"every archetype is on exactly one side of the ruling")
+	# And the split is doc 03's revenue predicate, not a second opinion about it:
+	# `E_building_maint` bills exactly the buildings whose owners repair them,
+	# which is the observation doc 93 §Y1 is built on. Asserted against the const
+	# itself, so the two lists cannot drift apart in a later wave.
+	var authored: Array = (catalog.rules()["owner_maintenance"]["classes"] as Array)
+	authored.sort()
+	var revenue := CostCurves.REVENUE_CLASSES.duplicate()
+	revenue.sort()
+	assert_eq(str(authored), str(revenue),
+			"owner_maintenance.classes IS CostCurves.REVENUE_CLASSES — the set "
+			+ "E_building_maint bills is the set whose owners repair it")
+
