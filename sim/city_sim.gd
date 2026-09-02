@@ -4402,6 +4402,13 @@ func building_repair_policy() -> Dictionary:
 		"building_repair_daily_cap": building_repair_daily_cap,
 		"thresholds": building_repair_thresholds(),
 		"daily_caps": econ_curves.building_repair().get("AUTO_REPAIR_DAILY_CAPS", []),
+		# Doc 03's own `AUTO_REPAIR_DEFAULT_DAILY_CAP`, published so a control
+		# that switches the policy ON has a budget to switch it on WITH and does
+		# not have to author one. This is the same thing a `data/ui.json`
+		# settings row's `default_from` does for the road pair; a dollar in `ui/`
+		# would be C-07's second copy.
+		"default_daily_cap": int(econ_curves.building_repair().get(
+				"AUTO_REPAIR_DEFAULT_DAILY_CAP", 0)),
 		# BOTH dials, because a threshold with a zero budget buys nothing and a
 		# surface that called that "on" would be describing a policy the city
 		# does not have.

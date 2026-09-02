@@ -692,6 +692,223 @@ func test_upkeep_the_band_is_the_real_sim_end_to_end() -> void:
 
 
 # ===========================================================================
+# PA-33 — the verb's DOOR (doc 98 RR-150a)
+#
+# `cmd_set_building_repair_policy` shipped without one: the band REPORTED the
+# standing policy and there was no way to stand a different one. These mount the
+# real `ui_root.tscn`, bind the real four-wire contract to a real `CitySim` and
+# press the real buttons — a control that only moved a model would be exactly
+# the failure mode (RR-1, a control that lies) the door is here to avoid.
+# ===========================================================================
+
+func _tree() -> SceneTree:
+	return Engine.get_main_loop() as SceneTree
+
+
+## The Economy tab, open, with the Upkeep band's four wires on a real worn city.
+## `set_policy` is passed only when `with_door` — the read-only shell is a
+## shipped state and is asserted below.
+func _mount_upkeep(sim: CitySim, with_door: bool = true) -> Dictionary:
+	var packed: PackedScene = load("res://game/ui/ui_root.tscn")
+	var root: UIRoot = packed.instantiate()
+	root.apply_content_scale = false
+	_tree().root.add_child(root)
+	root.initialize()
+	_wear_city_stock(sim, 0.55)
+	sim.advance_coarse_hours(1)
+	root.feed_settlement(sim.last_settlement)
+	var dashboard: CityDashboard = root.city_dashboard
+	if with_door:
+		dashboard.bind_upkeep(sim.cmd_repair_all_worn, sim.building_repair_policy,
+				func() -> float: return float(sim.treasury.balance),
+				sim.cmd_set_building_repair_policy)
+	else:
+		dashboard.bind_upkeep(sim.cmd_repair_all_worn, sim.building_repair_policy,
+				func() -> float: return float(sim.treasury.balance))
+	dashboard.open(DashboardModel.TAB_ECONOMY)
+	return {"root": root, "dashboard": dashboard}
+
+
+func _unmount_upkeep(mounted: Dictionary) -> void:
+	var root: Node = mounted["root"]
+	_tree().root.remove_child(root)
+	root.free()
+
+
+func _face(mounted: Dictionary, node_name: String) -> Button:
+	var found: Node = (mounted["dashboard"] as CityDashboard).find_child(
+			node_name, true, false)
+	return found as Button
+
+
+func test_door_the_band_cycles_the_real_command_and_the_sim_moves() -> void:
+	var sim := _sim()
+	var mounted := _mount_upkeep(sim)
+	var ladder := sim.building_repair_thresholds()
+	assert_ne(_face(mounted, "PolicyBand"), null, "the dial is on the band")
+	assert_almost_eq(sim.building_repair_threshold, 0.0, 1e-9, "off, as shipped")
+
+	# One press: off -> rung 1, and the budget it is switched on WITH is doc 03's
+	# own default, because a rung with no money behind it is still `off`.
+	_face(mounted, "PolicyBand").pressed.emit()
+	assert_almost_eq(sim.building_repair_threshold, ladder[1], 1e-9,
+			"the press reached CitySim, not just the model")
+	assert_eq(sim.building_repair_daily_cap, int(sim.econ_curves.building_repair()
+			.get("AUTO_REPAIR_DEFAULT_DAILY_CAP", 0)),
+			"doc 03's default budget, not one ui/ authored")
+	assert_true(bool(sim.building_repair_policy()["enabled"]),
+			"one press is a LIVE policy, not a rung with nothing behind it")
+
+	# Round the ladder and back to off. Every rung the control can reach is a
+	# rung the command accepts, so `E_BAD_THRESHOLD` is unreachable from here.
+	_face(mounted, "PolicyBand").pressed.emit()
+	assert_almost_eq(sim.building_repair_threshold, ladder[2], 1e-9)
+	_face(mounted, "PolicyBand").pressed.emit()
+	assert_almost_eq(sim.building_repair_threshold, 0.0, 1e-9, "the ladder wraps")
+	assert_true(sim.building_repair_daily_cap > 0,
+			"switching off KEEPS the budget the player chose")
+	assert_false(bool(sim.building_repair_policy()["enabled"]))
+	_unmount_upkeep(mounted)
+
+
+func test_door_the_budget_dial_walks_doc_03s_own_ladder() -> void:
+	var sim := _sim()
+	var mounted := _mount_upkeep(sim)
+	var caps: Array = sim.building_repair_policy()["daily_caps"]
+	assert_true(caps.size() >= 2, "doc 03 authors a caps ladder")
+	assert_eq(sim.building_repair_daily_cap, 0, "and the city starts on rung 0")
+	for i in range(1, caps.size()):
+		_face(mounted, "PolicyCap").pressed.emit()
+		assert_eq(sim.building_repair_daily_cap, int(caps[i]),
+				"rung %d of doc 03's own ladder" % i)
+	_face(mounted, "PolicyCap").pressed.emit()
+	assert_eq(sim.building_repair_daily_cap, int(caps[0]), "the ladder wraps")
+	assert_almost_eq(sim.building_repair_threshold, 0.0, 1e-9,
+			"and the budget dial never moved the band dial")
+	_unmount_upkeep(mounted)
+
+
+func test_door_every_face_it_can_show_is_a_rung_the_command_accepts() -> void:
+	# The property that makes the control incapable of lying: it offers exactly
+	# `building_repair_thresholds()` and `daily_caps`, so no sequence of presses
+	# can produce a pair the sim answers E_BAD_THRESHOLD for.
+	var sim := _sim()
+	var mounted := _mount_upkeep(sim)
+	var ladder := sim.building_repair_thresholds()
+	var caps: Array = sim.building_repair_policy()["daily_caps"]
+	var refusals := 0
+	var band_face := _face(mounted, "PolicyBand")
+	var cap_face := _face(mounted, "PolicyCap")
+	(mounted["dashboard"] as CityDashboard).building_repair_policy_set.connect(
+			func(result: Dictionary) -> void:
+				if not bool(result.get("ok", false)):
+					refusals += 1)
+
+	# Each dial on its own, twice round its ladder. Separately, because the two
+	# interact by design — switching the band ON from `off` supplies the budget —
+	# and this test is about what each ladder can REACH.
+	var seen_bands: Array[float] = []
+	for i in ladder.size() * 2:
+		band_face.pressed.emit()
+		if not seen_bands.has(sim.building_repair_threshold):
+			seen_bands.append(sim.building_repair_threshold)
+	assert_eq(seen_bands.size(), ladder.size(),
+			"every band rung was reachable, and none that is not on the ladder")
+	for rung: float in ladder:
+		assert_true(seen_bands.any(func(v: float) -> bool:
+				return absf(v - rung) < 1e-6), "rung %f was reached" % rung)
+
+	var seen_caps: Array[int] = []
+	for i in caps.size() * 2:
+		cap_face.pressed.emit()
+		if not seen_caps.has(sim.building_repair_daily_cap):
+			seen_caps.append(sim.building_repair_daily_cap)
+	seen_caps.sort()
+	var expected: Array[int] = []
+	for raw: Variant in caps:
+		expected.append(int(raw))
+	expected.sort()
+	assert_eq(seen_caps, expected, "and every budget rung, doc 03's own")
+	assert_eq(refusals, 0,
+			"no sequence of presses ever produced a pair the sim refused")
+	_unmount_upkeep(mounted)
+
+
+func test_door_the_sentence_above_the_dials_agrees_with_them() -> void:
+	# Two readings of one decision on one band: `policy_text` is the sentence and
+	# the two faces are the dials. They are derived from the same dictionary, and
+	# this is the assertion that keeps them that way.
+	var sim := _sim()
+	var mounted := _mount_upkeep(sim)
+	var dashboard: CityDashboard = mounted["dashboard"]
+	assert_true(str(dashboard.model.upkeep_view()["policy_text"]).to_lower()
+			.contains("off"), "off, and the face says so too")
+	assert_true(str(dashboard.model.upkeep_view()["policy_band_text"]).to_lower()
+			.contains("off"))
+	_face(mounted, "PolicyBand").pressed.emit()
+	var view: Dictionary = dashboard.model.upkeep_view()
+	var percent := HudModel.percent_text(sim.building_repair_threshold * 100.0)
+	assert_true(str(view["policy_text"]).contains(percent),
+			"the sentence names the standing rung: " + str(view["policy_text"]))
+	assert_true(str(view["policy_band_text"]).contains(percent),
+			"and so does the face: " + str(view["policy_band_text"]))
+	assert_true(str(view["policy_cap_text"]).contains(
+			HudModel.money_exact(sim.building_repair_daily_cap)),
+			"and the budget face names the budget: " + str(view["policy_cap_text"]))
+	_unmount_upkeep(mounted)
+
+
+func test_door_a_shell_that_binds_no_verb_draws_no_control() -> void:
+	# The read-only contract `bind_upkeep` documents, asserted rather than
+	# promised: three wires draw the band and the sentence, four draw the dials.
+	var sim := _sim()
+	var mounted := _mount_upkeep(sim, false)
+	assert_eq(_face(mounted, "PolicyBand"), null, "no verb, no dial")
+	assert_eq(_face(mounted, "PolicyCap"), null)
+	assert_ne((mounted["dashboard"] as CityDashboard).find_child("Upkeep", true,
+			false), null, "the band itself is still drawn")
+	_unmount_upkeep(mounted)
+
+
+func test_door_the_control_never_authors_a_band_or_a_dollar() -> void:
+	# C-07 and doc 02 §2.6, as a grep over the files this lane owns: the two
+	# ladders and the default budget are read from the sim's own dictionary, and
+	# `ui/` states none of the four numbers behind them.
+	var view: Dictionary = DashboardModel.load_from_files().upkeep_view()
+	assert_false(bool(view["has_policy_control"]),
+			"an unbound band offers no control at all")
+	assert_eq((view["policy_bands"] as Array).size(), 0,
+			"and invents no ladder to offer")
+	assert_eq(int(view["policy_default_cap"]), 0,
+			"and no budget: doc 03's default arrives with the policy or not at all")
+	# The model is a CONDUIT and holds no ladder: feed it a policy whose rungs
+	# are nothing doc 02 or doc 03 ever authored and it offers those, unchanged.
+	# A model with an opinion about the ladder would overwrite one of these.
+	var model := DashboardModel.load_from_files()
+	model.feed_upkeep({"quote": {"count": 0, "cost": 0}, "balance": 0.0, "policy": {
+		"building_repair_threshold": 0.42, "building_repair_daily_cap": 7,
+		"thresholds": [0.0, 0.42], "daily_caps": [7, 9], "default_daily_cap": 9,
+	}})
+	var doctored: Dictionary = model.upkeep_view()
+	assert_true(bool(doctored["has_policy_control"]))
+	assert_eq(doctored["policy_bands"], [0.0, 0.42], "the sim's ladder, verbatim")
+	assert_eq(doctored["policy_caps"], [7, 9])
+	assert_eq(int(doctored["policy_band_index"]), 1, "and it finds the standing rung")
+	assert_eq(int(doctored["policy_cap_index"]), 0)
+	assert_eq(int(doctored["policy_default_cap"]), 9,
+			"including the budget it would switch on with")
+
+	# And doc 03's own default budget appears in neither file as a literal: a
+	# second copy in `ui/` is exactly the drift C-07 and PA-13 were filed for.
+	var default_cap := str(int(CostCurves.load_from_files().building_repair()[
+			"AUTO_REPAIR_DEFAULT_DAILY_CAP"]))
+	for path: String in ["ui/dashboard_model.gd", "ui/city_dashboard.gd"]:
+		var text := FileAccess.get_file_as_string("res://" + path)
+		assert_false(text.contains(default_cap),
+				"%s restates %s instead of reading it" % [path, default_cap])
+
+
+# ===========================================================================
 # PA-83 — a debit the player never saw
 # ===========================================================================
 

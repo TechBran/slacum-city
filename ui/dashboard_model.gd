@@ -284,6 +284,7 @@ func upkeep_view() -> Dictionary:
 		"unaffordable": count > 0 and float(cost) > balance,
 	}
 	view["policy_text"] = _upkeep_policy_text(policy)
+	view.merge(_upkeep_policy_control(policy))
 	return view
 
 
@@ -298,6 +299,71 @@ func _upkeep_policy_text(policy: Dictionary) -> String:
 				float(policy.get("building_repair_threshold", 0.0)) * 100.0),
 		"amount": HudModel.money_exact(int(policy.get("building_repair_daily_cap", 0))),
 	})
+
+
+## The DOOR for `CitySim.cmd_set_building_repair_policy` (99-PA PA-33, doc 98
+## RR-150a). Two cycling faces, one per dial, and both ladders are the sim's —
+## `building_repair_policy()` publishes `thresholds` (doc 02 §2.6's own band
+## table, resolved off a real building's stamped rules) and `daily_caps` (doc 03
+## `AUTO_REPAIR_DAILY_CAPS`). This model picks NO rung and authors NO dollar; it
+## only says which rung is standing and what the next one would read as.
+##
+## A cycling ladder rather than a slider is A3: doc 03's caps are detents and a
+## drag cannot land on one. `has_policy_control` is false when the shell has not
+## bound the verb — the ladders arrive with the policy dictionary or not at all —
+## and the band then draws `policy_text` as a sentence, which is the read-only
+## contract `bind_upkeep` already documents.
+func _upkeep_policy_control(policy: Dictionary) -> Dictionary:
+	var bands: Array = policy.get("thresholds", [])
+	var caps: Array = policy.get("daily_caps", [])
+	var band := float(policy.get("building_repair_threshold", 0.0))
+	var cap := int(policy.get("building_repair_daily_cap", 0))
+	return {
+		"has_policy_control": not bands.is_empty() and not caps.is_empty(),
+		"policy_bands": bands,
+		"policy_caps": caps,
+		"policy_band": band,
+		"policy_cap": cap,
+		"policy_band_index": _ladder_index(bands, band),
+		"policy_cap_index": _ladder_index(caps, cap),
+		"policy_band_text": _upkeep_band_text(band),
+		"policy_cap_text": _upkeep_cap_text(cap),
+		# Doc 03's own default, forwarded untouched. `CityDashboard` spends it on
+		# the one transition that needs a budget it does not yet have — `off` to a
+		# live rung — so switching the policy on switches it on WITH something.
+		"policy_default_cap": int(policy.get("default_daily_cap", 0)),
+	}
+
+
+## Where `value` sits on `ladder`, or `0` when it sits nowhere. Floats are
+## compared with the same 1e-6 tolerance `cmd_set_building_repair_policy` matches
+## its rungs with, so a control can never disagree with the command about which
+## rung is standing.
+static func _ladder_index(ladder: Array, value: Variant) -> int:
+	for i in ladder.size():
+		if absf(float(ladder[i]) - float(value)) < 1e-6:
+			return i
+	return 0
+
+
+## `off` / `below 85%` — the same words and the same percent the standing
+## sentence above the control uses, because two vocabularies for one dial is how
+## a player ends up believing there are two dials.
+func _upkeep_band_text(band: float) -> String:
+	if band <= 0.0:
+		return UIWidgets.t(_cfg, "ui_dashboard_upkeep_policy_band_off")
+	return UIWidgets.t_args(_cfg, "ui_dashboard_upkeep_policy_band",
+			{"percent": HudModel.percent_text(band * 100.0)})
+
+
+## `no budget` / `$10,000/day`. Zero gets words rather than `$0/day` for the
+## reason RR-150's zero-budget rule exists: a budget of nothing is a decision
+## the player made, and it reads as one.
+func _upkeep_cap_text(cap: int) -> String:
+	if cap <= 0:
+		return UIWidgets.t(_cfg, "ui_dashboard_upkeep_policy_cap_none")
+	return UIWidgets.t_args(_cfg, "ui_dashboard_upkeep_policy_cap",
+			{"amount": HudModel.money_exact(cap)})
 
 
 # ---------------------------------------------------------------------------

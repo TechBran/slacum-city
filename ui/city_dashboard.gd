@@ -27,6 +27,10 @@ signal sheet_toggled(open: bool)
 ## The Upkeep band's batch (99-PA PA-33). Carries `cmd_repair_all_worn`'s whole
 ## result so a shell can toast the count and the price without asking again.
 signal repair_all_worn(result: Dictionary)
+## The Upkeep band's standing decision (99-PA PA-33). Carries
+## `cmd_set_building_repair_policy`'s whole result, so a shell can toast the new
+## pair — or the `E_BAD_THRESHOLD` a rung the sim would refuse came back with.
+signal building_repair_policy_set(result: Dictionary)
 
 const SCRIM_ALPHA := 0.55
 const STEP_DOWN := "−"
@@ -51,11 +55,14 @@ var _tax_note: Label
 var _tax_apply: Button
 var _tax_happiness: Label
 var _tax_growth: Label
-## The Upkeep band's three wires (`bind_upkeep`). All three may be invalid — a
-## shell that has not bound them draws the band's loss half and no button.
+## The Upkeep band's four wires (`bind_upkeep`). All four may be invalid — a
+## shell that has not bound them draws the band's loss half and no button, and
+## one that binds the first three but not `_set_policy` draws the standing policy
+## as a sentence instead of as a control.
 var _repair_all := Callable()
 var _upkeep_policy := Callable()
 var _upkeep_balance := Callable()
+var _set_policy := Callable()
 var _touch_min := 48.0
 var _spacing := 8.0
 var _row_h := 48.0
@@ -523,10 +530,18 @@ func _build_economy(view: Dictionary) -> void:
 ##
 ## The shell binds this; a shell that does not gets the band's LOSS half only,
 ## which is still the whole of PA-31.
-func bind_upkeep(repair_all: Callable, policy: Callable, balance: Callable) -> void:
+##
+## `set_policy` is `CitySim.cmd_set_building_repair_policy` — the verb's DOOR
+## (doc 98 RR-150a). It is last and optional because the three readings above it
+## are a *reading* of the city and this one *changes* it: a shell may want the
+## band before it wants the control, and the band without it is the sentence it
+## always drew.
+func bind_upkeep(repair_all: Callable, policy: Callable, balance: Callable,
+		set_policy: Callable = Callable()) -> void:
 	_repair_all = repair_all
 	_upkeep_policy = policy
 	_upkeep_balance = balance
+	_set_policy = set_policy
 	if is_open():
 		refresh(_last_snapshot)
 
@@ -582,7 +597,51 @@ func _build_upkeep(upkeep: Dictionary) -> VBoxContainer:
 	else:
 		box.add_child(UIWidgets.label("NoRepair", str(upkeep["none_text"]), &"", true))
 	box.add_child(UIWidgets.label("Policy", str(upkeep["policy_text"]), &"", true))
+	if _set_policy.is_valid() and bool(upkeep["has_policy_control"]):
+		box.add_child(_build_policy_control(upkeep))
 	return box
+
+
+## The standing decision, as two dials rather than as a sentence about someone
+## else's decision (99-PA PA-33, doc 98 RR-150a). One face per dial, each
+## cycling its own ladder — doc 02 §2.6's bands and doc 03's caps, both arriving
+## from `CitySim.building_repair_policy()`, neither authored here.
+##
+## The two are on ONE row under the sentence that reports them, because they are
+## one decision with two numbers in it: `cmd_set_building_repair_policy` takes
+## the pair, so every press writes the pair, exactly as `UIRoot._write_road_policy`
+## does for doc 10's identical control.
+##
+## The row carries no label of its own. `Policy` — the sentence directly above —
+## is the label, and `_build_tax`'s lesson is why: `Automatic repair  below 85%
+## $10,000/day` is 300 dp of content on a 360 dp screen at `--text-scale=1.3`,
+## and the audit catches it as the whole panel pushed off the viewport. The
+## faces name themselves to a screen reader instead (`..._band_a11y`), which is
+## where a name of that length belongs.
+func _build_policy_control(upkeep: Dictionary) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.name = "PolicyControl"
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_theme_constant_override(&"separation", int(_spacing))
+	row.add_child(_policy_face("PolicyBand", str(upkeep["policy_band_text"]),
+			"ui_dashboard_upkeep_policy_band_a11y", true))
+	row.add_child(_policy_face("PolicyCap", str(upkeep["policy_cap_text"]),
+			"ui_dashboard_upkeep_policy_cap_a11y", false))
+	return row
+
+
+## One dial's face. `clip_text` because the row must never widen the panel: the
+## two ladders' longest rungs are data, a translation can lengthen them further,
+## and a control that grows the modal is A2's failure rather than the string's.
+func _policy_face(node_name: String, text: String, a11y_key: String,
+		is_band: bool) -> Button:
+	var face := UIWidgets.button(node_name, text,
+			UIWidgets.t_args(config, a11y_key, {"value": text}),
+			Vector2(maxf(_touch_min * 1.5, 72.0), _touch_min), &"GhostButton")
+	face.clip_text = true
+	face.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	face.pressed.connect(_on_policy_cycled.bind(is_band))
+	return face
 
 
 func _on_repair_all_pressed() -> void:
@@ -591,7 +650,58 @@ func _on_repair_all_pressed() -> void:
 	var result: Variant = _repair_all.call(false)
 	repair_all_worn.emit(result if result is Dictionary else {})
 	# The band is a reading of the roster, and the roster just changed.
-	refresh(_last_snapshot)
+	_reread_upkeep_after_press()
+
+
+## Every control on the Upkeep band lives INSIDE the subtree a refresh rebuilds,
+## which makes `refresh()` from its own `pressed` handler a use-after-free:
+## `UIWidgets.clear_children` frees the button while the signal it emitted is
+## still on the stack, and Godot says so — *"Object was freed or unreferenced
+## while a signal is being emitted from it"* — before it crashes on a phone. The
+## tab buttons never hit this because they sit outside `_content`; these do.
+##
+## So the two halves are split. The **reading** is refreshed now, synchronously,
+## because it is data and the next press has to see it. The **nodes** are rebuilt
+## once the emission has unwound.
+func _reread_upkeep_after_press() -> void:
+	_refresh_upkeep()
+	refresh.call_deferred(_last_snapshot)
+
+
+## One press advances one dial one rung and writes the PAIR. Wrapping is the
+## ladder's own end — three bands and five caps are short enough that a wrap is
+## faster than a second control to go back with, and every rung is legible on the
+## face before it is pressed.
+##
+## **Switching ON supplies a budget.** A city ships at `off / no budget`
+## (RR-150), so cycling the band off `off` while the cap is still zero would
+## otherwise stand the policy at a rung with nothing behind it — which
+## `building_repair_policy()` correctly reports as `off`, i.e. a control that
+## did nothing when pressed. The budget it is switched on with is doc 03's own
+## `AUTO_REPAIR_DEFAULT_DAILY_CAP`, forwarded by the sim, and the sentence above
+## says the number out loud the moment it lands. Cycling back to `off` KEEPS the
+## cap, so a player who chose a budget gets it back.
+func _on_policy_cycled(is_band: bool) -> void:
+	if not _set_policy.is_valid():
+		return
+	var upkeep: Dictionary = model.upkeep_view()
+	var bands: Array = upkeep["policy_bands"]
+	var caps: Array = upkeep["policy_caps"]
+	if bands.is_empty() or caps.is_empty():
+		return
+	var band := float(upkeep["policy_band"])
+	var cap := int(upkeep["policy_cap"])
+	if is_band:
+		band = float(bands[(int(upkeep["policy_band_index"]) + 1) % bands.size()])
+		if band > 0.0 and cap <= 0:
+			cap = int(upkeep["policy_default_cap"])
+	else:
+		cap = int(caps[(int(upkeep["policy_cap_index"]) + 1) % caps.size()])
+	var result: Variant = _set_policy.call(band, cap)
+	building_repair_policy_set.emit(result if result is Dictionary else {})
+	# The quote the button above is drawn from is taken at the policy's own rung
+	# when the band is live, so the whole band is re-read and not just this row.
+	_reread_upkeep_after_press()
 
 
 ## §2.10's tax-rate control: a stepper, not a slider. Doc 03's ladder is a set of

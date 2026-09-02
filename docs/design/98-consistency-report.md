@@ -6220,6 +6220,73 @@ never disagree about which buildings are candidates or what they cost.
 `data/economy.json` (`building_repair`), `ui/dashboard_model.gd`,
 `ui/city_dashboard.gd`; doc 02 §2.6, doc 03 §2.5, doc 12 §2.10 (D-84), doc 93 §AL.
 
+### RR-150a — The verb gets a DOOR, and it is on the band that reports the loss
+
+**The finding, against this section's own first draft.** RR-150 shipped
+`cmd_set_building_repair_policy`, its ladders, its refusal code, its save rung and
+its daily pass — and no way for a player to call it. The Upkeep band *reported*
+the standing policy in a sentence; a command with no control is 99-PA's own
+PA-55 shape ("verbs get doors") filed against the lane that had just written the
+verb. Doc 99 §3.2 assigns Lane S `data/ui.json settings.rows` for it, and the
+first draft of D-84 declined the row for a sound reason — §2.13's plumbing
+(`SettingsModel.POLICY_*`, `UIRoot._write_*_policy`) belongs to Lane G this wave,
+and a row appended without the arm would be **stored, written to the device
+settings file and never reach the sim**, which is RR-1's control-that-lies. That
+reasoning is kept; the conclusion "therefore no door" is not.
+
+**Ruled (doc 93 §AL3a).** The door is **two cycling faces on the Upkeep band**,
+under the sentence that reports them:
+
+1. **Both ladders are the sim's.** `building_repair_policy()` publishes
+   `thresholds` (doc 02 §2.6's band table, resolved off a real building's stamped
+   rules) and `daily_caps` (doc 03's `AUTO_REPAIR_DAILY_CAPS`), and
+   `DashboardModel` forwards both **verbatim** — it picks no rung and authors no
+   dollar. Feed it a ladder doc 02 never wrote and it offers that one, which is
+   the test that proves the model has no opinion of its own
+   (`test_door_the_control_never_authors_a_band_or_a_dollar`). So no sequence of
+   presses can produce a pair the command answers `E_BAD_THRESHOLD` for
+   (`test_door_every_face_it_can_show_is_a_rung_the_command_accepts`: 6 + 10
+   presses, 0 refusals).
+2. **A press writes the PAIR**, because `cmd_set_building_repair_policy` takes
+   the pair, exactly as `UIRoot._write_road_policy` does for doc 10's control.
+3. **Switching on supplies a budget** — doc 03's own `AUTO_REPAIR_DEFAULT_DAILY_CAP`,
+   newly published on `building_repair_policy()` so `ui/` reads it rather than
+   restating it (C-07). Switching off keeps it. §AL3a is the argument.
+4. **A shell that binds three wires and not the fourth draws the sentence and no
+   dials** — `bind_upkeep`'s fourth parameter is optional and the read-only band
+   is a shipped state, asserted rather than promised
+   (`test_door_a_shell_that_binds_no_verb_draws_no_control`).
+
+**And the row's own first press found a live use-after-free in the button RR-150
+had already shipped.** Every control on the Upkeep band lives *inside* the
+subtree a refresh rebuilds, so `refresh()` called from a `pressed` handler frees
+the button while its own signal is still on the stack — Godot's *"Object was
+freed or unreferenced while a signal is being emitted from it"*, which the tab
+buttons never hit because they sit outside `_content`. `Repair all worn` had this
+from the moment it was written and no test had ever pressed it, because until
+this row nothing mounted the dashboard. The fix splits the two halves: the
+**reading** refreshes synchronously (the next press must see it) and the
+**nodes** rebuild once the emission has unwound (`_reread_upkeep_after_press`).
+
+*Verification:* `tests/test_money_surfaces.gd` `test_door_*` — six tests that
+mount the real `ui_root.tscn`, bind a real `CitySim` and press the real buttons.
+`tools/ui_preview.gd` gains `economy_upkeep_auto`, the policy-ON state a
+screenshot of the shipped default can never show, and it is the state that caught
+the control's first layout: `Automatic repair  below 85%  $10,000/day` is 300 dp
+on a 360 dp screen at `--text-scale=1.3`, and the audit reported the whole panel
+pushed off the viewport. The row label is dropped (the sentence above is the
+label, the faces name themselves to a screen reader) and both faces clip. Both
+audits exit 0 at 412×915 and at 360×800 `--text-scale=1.3 --large-targets`.
+
+**Hash-neutral.** The only `sim/` change is one derived key on a dictionary
+nothing serializes; the default pair is still `off / no budget`, so §53.5's four
+baselines are unmoved.
+
+**Applied:** `ui/city_dashboard.gd`, `ui/dashboard_model.gd`, `sim/city_sim.gd`
+(`building_repair_policy`'s `default_daily_cap`), `data/strings.en.json`,
+`tools/ui_preview.gd`, `tests/test_money_surfaces.gd`; doc 12 §2.10 (D-84),
+doc 93 §AL3a.
+
 ### 53.4 PA-83 — the six silent debits, and the two defects the wiring found
 
 Land development charges the treasury **six times per block**, $1.2K to $21K a

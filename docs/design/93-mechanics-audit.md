@@ -3678,3 +3678,34 @@ job is to *surface* what the money already does. So the shipped default is
 manual: the control exists, the ladder is doc 02's own band table, and a player
 who never opens it plays the game they played yesterday, bit for bit. See RR-150
 and its §53.5 baselines.
+
+### AL3a. A default of `off` obliges the control to be findable, and to switch ON to something
+
+**Question.** AL3 shipped the policy `off`. A control that ships off is a control
+the player has to find and press before the feature exists at all — so where does
+it live, and what happens on the first press?
+
+**Ruled: the door goes where the loss is, and the first press supplies a budget.**
+
+*Where.* The obvious home is doc 12 §2.13's Auto-response rows, beside the road
+pair. It is the wrong one, and not only because §2.13's plumbing belongs to
+another lane this wave. The settings sheet is where a player goes having
+*already decided*; the Upkeep band is where the game tells them there is a
+decision — *"you are losing $169/gh; ending it costs $24,281"* — and a control
+that is one line under that sentence is answerable in the moment the sentence
+lands. AL2 ruled that wear is reported in the unit the player is losing it in;
+the same reasoning puts the remedy on the same band as the report. A settings row
+remains **appropriate as a second door** once §2.13's `POLICY_BUILDINGS` arm
+exists (doc 12 D-84's note), and a second door onto one command is not a
+contradiction — `cmd_set_building_repair_policy` is the single source either
+would write through.
+
+*What the first press does.* The pair ships `off / no budget`, and
+`building_repair_policy().enabled` requires **both** dials, so cycling the band
+alone would stand the policy at a rung with nothing behind it: a control that
+does nothing when pressed, which is RR-1's failure mode wearing a different hat.
+So the transition `off → a live rung` also supplies doc 03's own
+`AUTO_REPAIR_DEFAULT_DAILY_CAP`, and the sentence above the dials says the number
+out loud in the same frame. **The reverse is not symmetric**: cycling back to
+`off` keeps the budget, because a budget the player chose is a decision and
+switching a policy off is not a reason to forget it. See RR-150a.
