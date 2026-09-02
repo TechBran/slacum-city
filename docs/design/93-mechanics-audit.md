@@ -2521,7 +2521,8 @@ yield multiplier, no grant *rate* and **no expense line** moves. What moves is
 what the city *spends*:
 
 * §Y1 stops it buying repairs on buildings it does not own — measured at
-  **−79 % of repair spend and −87 % of repair taps** across a 45-game-day arc;
+  **−66 % of repair spend and −81 % of repair taps** across a 45-game-day arc
+  (245/211/231 taps → 44/43/44; $620,212/$567,679/$595,385 → $207,135/$204,359/$207,741);
 * §Y7 cuts every upgrade price by **20.7 %**.
 
 The founding ledger is therefore **unmoved** (doc 92 §43.6: gross bit-identical,
@@ -2586,10 +2587,17 @@ it must stay above 1.
 
 **The ruled window is `[100, 200] gh` — one new-build payback to two** — and
 `UPG_COEFF = 1.15` is the largest value for which the whole six-rung ladder fits
-inside it (100.0 / 118.6 / 140.7 / 166.9 / 197.9). At 1.45 the ladder was
-126.1 / 149.5 / 177.4 / 210.4 / 249.5 and **the first rung was already 26 %
-worse than simply building another house** — which is what PA-46 found and what
-level 2's "upgrade instead of building more" card was teaching against.
+inside it. Measured on the shipped, rounded house table
+(`upgrade_cost / Δbase_tax`): **98.6 / 121.3 / 140.2 / 167.0 / 197.8**, and the
+same five figures to within a game-hour on `apartment`, `store` and `office`.
+At 1.45 the same table gave
+**124.3 / 153.0 / 176.8 / 210.6 / 249.4**, so **the first rung was already 24 %
+worse than simply building another house** and the top two were outside the
+window entirely — which is what PA-46 found and what level 2's "upgrade instead
+of building more" card was teaching against. *(The closed form gives 126.1 /
+149.5 / 177.4 / 210.4 / 249.5 for the same coefficient; the shipped table differs
+by up to two game-hours because `base_tax` is published rounded. The window is
+ruled against the SHIPPED table, because that is the one the player pays.)*
 
 *PA-46's own constant is 15 % loose and is superseded.* It proposes
 `UPG_COEFF ≤ 1.15 × (TAX_LEVEL_GROWTH − 1) = 1.32` "so L1→L2 payback ≤

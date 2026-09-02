@@ -1,2 +1,27 @@
 Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
 
+WARNING: [catchup] device clock is behind this city's newest save (max_seen_unix 1788352108); the absence credits 0
+     at: push_warning (core/variant/variant_utility.cpp:1033)
+     GDScript backtrace (most recent call first):
+         [0] arm_cold_resume (res://game/android_lifecycle.gd:325)
+         [1] test_a_clock_that_moved_backwards_owes_zero_and_says_so (res://tests/test_cold_launch_catchup.gd:281)
+         [2] _initialize (res://tests/run_tests.gd:97)
+  [event-matrix] 144 types emitted, 83 consumed by the game, 62 classified
+  [P0-30] coarse step on starter city: 5.62 ms/step (24 steps in 134.9 ms)
+  [P0-30] max_coarse_hours at the 2s budget: 336 (cap 720)
+      [roads perf] cached re-priced quote: 58.4 us
+      [roads perf] 5488 tiles / 1406 nodes / 2134 edges: full build 48.1 ms
+      [roads perf] 6 cross-city P0 routes (eps=1.00): 6921 expansions, 97.89 ms
+      [roads perf] the same six at eps=1.25: 895 expansions, 15.53 ms
+      [roads perf] median P0 expansions 1154 vs trigger 800 -> hierarchical routing REQUIRED
+      [roads perf] single-tile incremental rebuild: 2.991 ms
+      [roads perf] full congestion pass over 2134 edges: 3.14 ms
+      [weather] mean c 0.0972 -> 0.2869, cross-city civilian trip 19.324 -> 24.956 gm
+[runner-guard] the SCRIPT ERROR below is DELIBERATE — tests/fixtures/aborting_suite.gd aborts on purpose.
+SCRIPT ERROR: Invalid access to property or key 'absent' on a base object of type 'Dictionary'.
+          at: test_aborts_on_a_missing_key (res://tests/fixtures/aborting_suite.gd:34)
+          GDScript backtrace (most recent call first):
+              [0] test_aborts_on_a_missing_key (res://tests/fixtures/aborting_suite.gd:34)
+              [1] _drive (res://tests/test_runner_guard.gd:35)
+              [2] test_the_guard_names_every_method_that_ran_without_asserting (res://tests/test_runner_guard.gd:48)
+              [3] _initialize (res://tests/run_tests.gd:97)

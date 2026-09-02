@@ -7364,19 +7364,25 @@ revenue archetype:
 payback(L -> L+1) = 100 x [UPG_COEFF / (TAX_LEVEL_GROWTH - 1)] x 1.18605^(L-1)   game-hours
 ```
 
-| step | payback at the fork (`UPG_COEFF` 1.45) | vs a new build |
-|---|---|---|
-| L1→L2 | 126.1 gh | **+26 %** |
-| L2→L3 | 149.5 gh | +49 % |
-| L3→L4 | 177.4 gh | +77 % |
-| L4→L5 | 210.4 gh | +110 % |
-| L5→L6 | 249.5 gh | +150 % |
+| step | closed form at `UPG_COEFF` 1.45 | the SHIPPED house table | vs a new build |
+|---|---|---|---|
+| L1→L2 | 126.1 gh | **124.3 gh** | **+24 %** |
+| L2→L3 | 149.5 gh | 153.0 gh | +53 % |
+| L3→L4 | 177.4 gh | 176.8 gh | +77 % |
+| L4→L5 | 210.4 gh | 210.6 gh | +111 % |
+| L5→L6 | 249.5 gh | 249.4 gh | +149 % |
 
-The first rung reproduces doc 03 §2.3's published "126 → 210 gh" to the tenth of
-a game-hour, which is the check that the closed form is the shipped curve and
-not a model of it. **Every rung is slower than building a fresh L1**, and level
-2's card teaches "upgrading instead of building more" — PA-46's finding, and the
-arithmetic reason note (c) is right.
+The closed form reproduces doc 03 §2.3's published "126 → 210 gh" to the tenth of
+a game-hour, which is the check that it is the shipped curve and not a model of
+it; the third column is the same ratio taken off the rounded
+`upgrade_cost_by_step` and `base_tax_by_level` the player actually pays, and the
+two agree to within two game-hours. **Every rung is slower than building a fresh
+L1** — and the top two are outside the `[100, 200] gh` window §43.3's ruling
+adopts — while level 2's card teaches "upgrading instead of building more". That
+is PA-46's finding and the arithmetic reason note (c) is right.
+
+*Everything below is ruled against the shipped table, because that is the one the
+player pays.*
 
 ### 43.4 The interruption audit — every repair, condition and damage row
 
@@ -7640,9 +7646,12 @@ the Worn floor instead of being repaired back to new, which is exactly the drag
 doc 93 §Y3 rules and prices at 24 % of that building's tax.
 
 `tax_squeezer` trails `balanced` on population by **11.1 %** (1,340 against
-1,508), against gate 12c's ruled 10 % — a gate that was *failing* at the fork
-(1,650 against 1,659) and is not re-fitted here; it simply came back inside its
-own threshold once repairs stopped distorting both agents' spend.
+1,508), against gate 12c's ruled 10 %, and the gate is **not re-fitted**. Stated
+precisely, because the tempting claim here is one this pass cannot support: the
+gates were never run on the untouched fork, so what is known is that 12c *failed
+under this pass's own first draft* (1,650 against 1,659) and passes on what
+ships. Whether it was already failing at `a5d9021` is unmeasured and is left
+that way rather than assumed.
 
 ### 43.11 The new baselines
 
