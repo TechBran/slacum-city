@@ -996,6 +996,82 @@ func apply_governor(knobs: Dictionary) -> void:
 		_upload_all()
 
 
+## `NOTIFICATION_OS_MEMORY_WARNING`'s half of doc 11's response (PA-20): give
+## back everything this view is holding that nothing on screen is using.
+##
+## Returns a census — `{far_nodes, medium_nodes, atlas_meshes, far_buffers,
+## medium_buffers}`, each the COUNT FREED — so the shell can log it and a test
+## can assert it. Safe to call at any time and idempotent: a second call in the
+## same frame frees nothing, because the first left nothing unreferenced.
+##
+## **What is freed, and why it stays freed.**
+##
+##  * **FAR nodes of chunks that are not FAR, and MEDIUM nodes of chunks that are
+##    not MEDIUM.** `_upload_all` creates these *lazily* — inside `if far:` and
+##    `if _renders_medium(chunk):` — so a freed one is not rebuilt until the
+##    camera actually puts that chunk back in that tier. Each is a MultiMesh with
+##    a live instance buffer, which is the VRAM doc 11 is asking for.
+##  * **Merged LOD1 atlas meshes no live MEDIUM node still points at.** This is
+##    the cache doc 11 calls the mesh library: `_atlas_for` keys on
+##    `archetype:mask:lod` and **never evicts**, so a city that grows through
+##    level combinations accumulates one ArrayMesh per mask it has ever shown.
+##    An entry no node references is pure garbage and freeing it costs nothing to
+##    rebuild, because nothing is asking for it.
+##  * **The retained debug buffers** (`keep_far_buffers` / `keep_medium_buffers`).
+##    Off in shipping; a capture session that left them on is exactly the session
+##    most likely to get the warning.
+##
+## **What is deliberately NOT freed, and the honest reason.** The per-(archetype,
+## level) LOD0 bucket nodes are the biggest allocation here, and freeing them
+## reclaims nothing: `refresh()` calls `_upload_all()` every frame and that loop
+## calls `_ensure_bucket_node` for *every* bucket of *every* chunk before it
+## decides visibility, so a bucket freed on this frame is rebuilt on the next
+## one — the same memory, plus a mesh load. Making the creation lazy is a change
+## to `_upload_all`'s hot path and is filed rather than smuggled in here
+## (doc 98 §50, `awaiting_consumer`). Materials and textures are not freed
+## either: live nodes hold them, and `_atlas_material_for` rebuilding one would
+## drop the overlay paint `set_overlay_palette` wrote into it.
+func shed_caches() -> Dictionary:
+	var freed := {"far_nodes": 0, "medium_nodes": 0, "atlas_meshes": 0,
+			"far_buffers": _far_buffers.size(), "medium_buffers": _medium_buffers.size()}
+	_far_buffers.clear()
+	_medium_buffers.clear()
+	# Before `setup()` there are no tiers to ask about and nothing is on screen,
+	# so everything held is droppable.
+	var have_model := model != null
+	for chunk: Vector2i in _far_nodes.keys():
+		if have_model and _renders_far(chunk):
+			continue
+		(_far_nodes[chunk] as MultiMeshInstance3D).queue_free()
+		_far_nodes.erase(chunk)
+		freed["far_nodes"] = int(freed["far_nodes"]) + 1
+	for chunk: Vector2i in _medium_nodes.keys():
+		if have_model and _renders_medium(chunk) and not _renders_far(chunk) \
+				and not _renders_culled(chunk):
+			continue
+		var per_chunk: Dictionary = _medium_nodes[chunk]
+		for arch: String in per_chunk:
+			(per_chunk[arch] as MultiMeshInstance3D).queue_free()
+			freed["medium_nodes"] = int(freed["medium_nodes"]) + 1
+		_medium_nodes.erase(chunk)
+	# Only now, with the nodes gone, is the atlas sweep worth running: the meshes
+	# those nodes held are unreferenced as of the loop above.
+	var still_used: Dictionary = {}
+	for chunk: Vector2i in _medium_nodes:
+		var per_chunk: Dictionary = _medium_nodes[chunk]
+		for arch: String in per_chunk:
+			var mesh: Mesh = (per_chunk[arch] as MultiMeshInstance3D).multimesh.mesh
+			if mesh != null:
+				still_used[mesh.get_instance_id()] = true
+	for key: String in _atlas_mesh.keys():
+		var mesh: Mesh = _atlas_mesh[key]
+		if mesh != null and still_used.has(mesh.get_instance_id()):
+			continue
+		_atlas_mesh.erase(key)
+		freed["atlas_meshes"] = int(freed["atlas_meshes"]) + 1
+	return freed
+
+
 ## The counters §7.4's PERF line reports, gathered in the one place that can see
 ## both the model's tiers and the nodes actually submitted.
 func perf_stats() -> Dictionary:
