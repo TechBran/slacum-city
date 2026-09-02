@@ -240,6 +240,15 @@ func test_a_partly_affordable_batch_says_how_far_the_money_reaches() -> void:
 			"the partial sentence resolves: %s" % note.text)
 	assert_true(note.text.contains("1") and note.text.contains("3"),
 			"and it names both numbers: %s" % note.text)
+
+	# And a treasury that cannot reach even the cheapest ruin gets a sentence
+	# rather than "Enough for 0 of 3", which is arithmetic.
+	sim.treasury.balance = 0
+	panel.show_building(ruins[0])
+	assert_true(panel.restore_all_button().disabled, "nothing is affordable")
+	var broke_note := panel.restore_all_note().text
+	assert_true(broke_note.length() > 0 and not broke_note.contains("{"))
+	assert_false(broke_note.contains("0 of"), "not arithmetic: %s" % broke_note)
 	_unmount(mounted)
 
 

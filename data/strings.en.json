@@ -230,6 +230,7 @@
 	"ui_building_restore": "RESTORE",
 	"ui_building_restore_all": "RESTORE ALL",
 	"ui_building_restore_all_cost": "RESTORE ALL {count} · {cost}",
+	"ui_building_restore_all_none": "{count} buildings are down and the city cannot afford any of them yet.",
 	"ui_building_restore_all_note": "{others} more buildings are down across the city.",
 	"ui_building_restore_all_partial": "Enough for {affordable} of {count} — the cheapest are rebuilt first.",
 	"ui_building_restore_cost": "RESTORE · {cost}",

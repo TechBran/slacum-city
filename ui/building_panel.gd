@@ -761,6 +761,12 @@ func _render_restore_all(batch: Dictionary) -> void:
 				{"others": int(batch["others"])},
 				"%d more down" % int(batch["others"]))
 		_apply_state_color(_restore_all_note, &"")
+	elif int(batch["affordable_count"]) <= 0:
+		# "Enough for 0 of 3" is arithmetic, not a sentence. When the treasury
+		# cannot reach even the cheapest ruin the row says the plain thing.
+		_restore_all_note.text = _text_args("ui_building_restore_all_none",
+				{"count": int(batch["count"])}, "%d down" % int(batch["count"]))
+		_apply_state_color(_restore_all_note, HudModel.STATE_CRITICAL)
 	else:
 		_restore_all_note.text = _text_args("ui_building_restore_all_partial",
 				{"affordable": int(batch["affordable_count"]),
