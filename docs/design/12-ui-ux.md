@@ -1122,6 +1122,81 @@ called clean in all eighteen cells (A91-D-50, RR-113; doc 92 §46.3's table).
 
 ---
 
+### 2.23 The tilt axis and the right-edge slider (Wave 17)
+
+**The ask (2026-08-21):** *"we need to be able to look up at the buildings — the
+high rise is really tall; if you zoom in you're pretty much just looking at the
+ground… on the right side of the screen a tilt slider, vertically: all the way
+down, all the way up, the slider sits in the middle, up and down motion."*
+
+**1. The axis.** §2.16's rig is `{focus, zoom_t, yaw}` with pitch DERIVED from the
+zoom (`pitch(t) = 34° + 28°·smoothstep(t)`). Wave 17 adds a fourth, manual axis
+that **composes with that curve rather than replacing it**:
+
+    pitch = lerp(pitch(t), target, |bias| · reach(t))
+    bias ∈ [−1, +1]   +1 → pitch_manual_min_deg (12°, up the facades)
+                      −1 → pitch_manual_max_deg (78°, top-down)
+    reach(t) = lerp(near, far, smoothstep(t))   — the zoom coupling, doc 92 §47
+
+`bias = 0` is **AUTO**: the composed pitch is the curve's own answer to the bit,
+so a player who never touches the control has the camera that shipped before this
+wave. 12° and not 10°, because `18·sin 10° = 3.1 m` puts a D_MIN camera inside the
+3.5 m ground floor of doc 11 §2.6's shortest archetype and `18·sin 12° = 3.74 m`
+clears it. 78° and not 90°, because at 90° yaw stops meaning anything and the
+twist gesture becomes a spin about nothing.
+
+**2. Two ways in, one axis.** The slider column, and a **two-finger tilt** (§2.16's
+MULTI state gains a third arm): 24 dp of vertical centroid travel with the span
+still inside half the pinch slop, the bearing inside half the twist deadzone, and
+the travel at least 1.5× more vertical than horizontal. It takes the whole stroke
+when it engages and can never engage after a pinch or a twist has — the
+discrimination table is in `ui/gesture_recognizer.gd::_emit_multi`. Both routes
+share the axis's feel with the pan: rubber band past the ends, a closed-form fling
+on release, a critically damped return, and a **double action home to AUTO**
+(double-tap on the column; A8 `reduce_motion` cuts the ease).
+
+**3. The column.** Right edge, **one 48 dp touch column**, vertically centred in
+the band left between the top bar's first row and the corner rail's reservation —
+not in the whole safe area, because the incident drawer's handle owns the edge
+from 60 to 220 dp above the bottom and a naively centred column lands on it at
+every landscape box. `tilt_slider_h_dp` (240) when there is room, the band when
+there is less, and it **stands down entirely** below `tilt_slider_min_h_dp` (96),
+which is what happens at the 640 × 340 floor box. It **yields the edge** while any
+`PanelLayer` surface is open. The thumb rests on the middle detent, is an A3
+target that grows with the larger-targets setting, and carries `ui_tilt_thumb`;
+the column carries `ui_tilt_slider`. After `tilt_slider_fade_after_s` (2 s) of
+stillness the whole column ghosts to `tilt_slider_ghost_alpha` (0.35) and any
+touch wakes it — the A8 reading is that a ghost is a **state**, not an animation,
+so `reduce_motion` keeps the ghost and cuts the 0.25 s fade to a cut. Preview
+states: `tilt_rest`, `tilt_drag`.
+
+**4. The horizon, and the taps that now miss.** At the floor the top of the frame
+is 8° above the horizon, so a tap up there has **no ground under it at any
+distance**. `CameraState.ground_hit()` answers `{hit, position, reason, distance}`
+(`ground` / `above_horizon` / `grazing`); `screen_to_ground()` is unchanged and
+still answers the clamped point for pan, pinch and the anchor lock, which have
+always wanted it. Placement, picking, the path ghost and tap-to-focus branch on
+`hit` (report 98 RR-116). §2.21's 48 dp tap radius is unaffected by tilt:
+`m_per_dp()` is measured across screen-right, which is parallel to the ground at
+every pitch. The other axis is not, and is published as `m_per_dp_depth()` =
+`m_per_dp / sin(pitch)` — a world circle projects to an ellipse that keeps its
+metres and loses screen height as the camera tilts, so a tilt can only make a
+radius pick more conservative.
+
+**5. What the tilt reveals.** The sky (doc 11 §2.8) is now something a player can
+look at, and the world's 896 m edge is something they can look over: the gradient
+sky's horizon haze is drawn in the same fog tint the far city fogs toward, which
+seats the edge (measured: a ≤ 17/255 per-channel step across the seam, report 98
+RR-114).
+
+**6. Persistence.** D-68: the `camera` block of the `ui` save section —
+`{focus_x, focus_z, zoom_t, yaw_deg, pitch_mode, pitch_bias}`. `pitch_mode` is the
+word (`auto` / `manual`) and is written because a save carrying only the number
+could not tell AUTO from a bias that happened to land on the curve. Restore
+re-composes the bias against the band **this build** authors, so retuning the band
+retunes every restored city rather than leaving old saves pointing where the data
+no longer allows.
+
 ## 3. Data Schema
 
 ### 3.1 `data/` files owned by this doc
@@ -1868,3 +1943,19 @@ this repository contained until D-58.
 |---|---|---|---|
 | D-66 | **S16, the construction queue, ships** — `ui/construction_queue_model.gd` (headless: the contract row verbatim, the sort, the words, the affordability reading, the rush door, the spend record) + `ui/construction_queue_sheet.gd` (code-built rows on a `PanelLayer` side panel, a `⚒ n` chip on rung 3 of the corner rail) + S5's inline `Progress` block + `data/audio.json`'s `construction_rushed → purchase` rule + four preview states. `UIRoot.bind_construction(provider, rush, treasury)` is the one shell call; the camera jump rides `set_incident_locator()`, the cue rides `data/audio.json` and the toast/pulse ride `feed_events()`, all of which the shell already makes. §2.22 has the screen; doc 93 §AB1 the one-tap ruling; doc 91 A91-D-49 the defect. | §2.2, §2.3, §2.22, §4.4, §4.5 | The sim has carried jobs, crews, progress and ETAs since doc 02 shipped and nothing on screen showed any of it. Built against the seam CONTRACT through a provider `Callable`, hash-neutral by construction: all four `profile_sim` baselines are byte-identical at this fork (`a27da24a…` / `7745cb25…`, `7c99720f…` / `d8e88896…`). The three `ui_land_time_*` keys became the neutral `ui_time_*` and their arithmetic moved to `UIWidgets.duration_text()` — one span, two screens, one place to drift. |
 | D-67 | **The corner rail wraps before it overflows, and three findings from building on it.** (a) `UIWidgets.solve_corner_rail()` takes `host_h` and `corner_rail_capacity()` fits `floor((H − margin + gap)/(pitch + gap))` chips per column before starting a second one; `0` is the old column byte for byte. (b) `tools/ui_preview.gd --screen=<one>` now waits two whole frames, not just the settle window. (c) `UIWidgets.release_children()` — detach now, free at frame end — for a list rebuilt from inside its own child's signal. | §2.3, §2.22, D-46, doc 93 §AB2, report 98 RR-111/RR-113 | (a) At 640 × 340 with 150 % text and larger targets a chip measures 92 dp and rung 3 would have been placed with its top edge at window `y −48` — **48 dp above the display** — and the queue chip is that rung. Measured, not assumed: `tests/test_ui_audit.gd::test_the_corner_rail_wraps_before_it_overflows` pins 2 per column there and 5 at the reference box. (b) A parent's `_process` runs before its children's and the first frame's `delta` carries the boot, so a single-state audit measured a deck no chip had processed: three states × six boxes reported **46** `overlapping_targets` — every finding of that one kind — on a tree `--screen=all` called clean in all eighteen sweep cells; after the guard, **0** in all eighteen single-state runs. Doc 92 §46.3 has the table. (c) The RUSH press removes the row it sits in, and `clear_children()`'s immediate `free()` on the emitting button is an engine error and a potential crash. It surfaces as ENGINE OUTPUT and not as a failed assertion, which is the part worth writing down: with `clear_children()` restored, test 31 still passes 22/22 while the run prints `Object … was freed or unreferenced while a signal is being emitted from it`; with `release_children()` that line is gone. A green suite is not the whole of the evidence — the log is. |
+
+### Wave-17 deltas — the camera learns to look up (2026-09-01)
+
+| id | change | doc ref | why |
+|---|---|---|---|
+| D-68 | **The camera joins the `ui` save section**, through `UIRoot.bind_camera()` + `CameraState.to_dict/from_dict`: `camera = {focus_x, focus_z, zoom_t, yaw_deg, pitch_mode, pitch_bias}`, written only when a camera is bound and validated against **this build's** band on the way back in. | §2.16, §2.23, §3.2, D-9 | D-9 has owed the camera keys since §3.2 was written; the manual pitch axis is what made the debt visible, because a player who leans the camera and quits now loses a *pose they chose* rather than a default they never noticed. `pitch_mode` is a word and not just a number because AUTO is a promise about what the next pinch does, not a value: a save carrying `pitch_bias = 0.0` alone cannot say whether the player was in AUTO or had parked the lean on the curve. The re-composition on restore is the same argument as D-16's stand-down — data may retune between builds, and a save may not resurrect an angle the band no longer allows. |
+| D-69 | **The right-edge tilt column, and the third arm of the MULTI gesture** — `ui/tilt_slider.gd` on `HUDLayer`, solved by `UIRoot.solve_tilt_slider()` into the band between the top bar's first row and the corner rail's reservation; `GestureRecognizer`'s `tilt_begin/tilt/tilt_end` and `TouchInput`'s handling of them. Preview states `tilt_rest`, `tilt_drag`. §2.23 has the screen. | §2.3, §2.16, §2.18 A3/A8, §2.23 | The user asked for the control by name and by geometry ("on the right side of the screen… vertically… sits in the middle"), and a camera axis with only a gesture would be an axis most players never discover — the pinch is learned, a two-finger vertical drag is not. Two things the solve is deliberately not: it is **not centred in the safe area** (the drawer handle owns 60…220 dp of that edge, and a naively centred column lands on it at every landscape box), and it is **not a control that shrinks below a usable one** — under 96 dp of band it stands down entirely, D-16's rule, because at 640 × 340 the honest answer is that this edge has no room and the two-finger gesture is still there. |
+
+**Preview states added** (`tools/ui_preview.gd`): `tilt_rest`, `tilt_drag` —
+the resting (ghosted, thumb on the detent) and mid-drag faces, added in the
+same commit as the control (A91-D-28's lesson). The deck is **59** states.
+Swept at five boxes — 412×915, 640×340, 794×924, 880×400, 1280×720 — plus
+360×800 at 130 % with large targets: `--screen=all --audit --strict`, **exit 0**
+at every one. At 640 × 340 the column stands down and the sweep is clean
+because there is nothing there to find, which is the intended answer.
+

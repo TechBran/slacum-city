@@ -881,6 +881,9 @@
 	"ui_time_dh": "{d}d {h}h",
 	"ui_time_hm": "{h}h {m}m",
 	"ui_time_m": "{m}m",
+
+	"ui_tilt_slider": "Tilt the view",
+	"ui_tilt_thumb": "Tilt — drag up to look along the skyline, down for top-down; double-tap to reset",
 	"ui_title_confirm_difficulty": "Founded on {value}.",
 	"ui_title_confirm_kept": "Kept: {slots}.",
 	"ui_title_confirm_no_room": "Every save slot is full, so this city lives only in the autosave — starting a new one replaces it. Free a slot in Settings ▸ Manage saves to keep it.",

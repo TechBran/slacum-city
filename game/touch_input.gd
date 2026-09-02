@@ -37,6 +37,10 @@ var recognizer: GestureRecognizer
 var world_drag_router: Callable = Callable()
 var _pan_active := false
 var _routing := false
+## Wave 17: a two-finger TILT stroke is live (`GestureRecognizer.KIND_TILT_BEGIN`
+## … `KIND_TILT_END`). The recogniser owns the discrimination; this only turns
+## dp into bias units and closes the stroke exactly once.
+var _tilt_active := false
 var _time_ms := 0.0
 
 
@@ -64,6 +68,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			if _routing:
 				_route(PHASE_END, touch.position)
 				_routing = false
+			# Belt and braces: the recogniser emits `tilt_end` on the first finger
+			# up, so this only fires if a stroke lost its samples on the way here.
+			if _tilt_active:
+				_tilt_active = false
+				camera_state.end_tilt()
 			if _pan_active:
 				_pan_active = false
 				camera_state.end_pan()
@@ -111,6 +120,27 @@ func _apply(gestures: Array) -> void:
 			&"twist":
 				camera_state.apply_twist(deg_to_rad(float(g["delta_deg"])),
 						g["centroid"], viewport)
+			&"tilt_begin":
+				# Wave 17 (doc 12 §2.23). Two fingers are still the camera's — a
+				# run mid-draw is closed exactly as `pinch_begin` closes it.
+				if _routing:
+					_route(PHASE_END, g.get("centroid", Vector2.ZERO))
+					_routing = false
+				_tilt_active = true
+				camera_state.begin_tilt()
+			&"tilt":
+				# Screen-up is a NEGATIVE dp delta and a POSITIVE lean (toward the
+				# grazing floor — look up the facades), at the same dp-per-unit gain
+				# the slider column uses. `tilt_invert` is the one data row that
+				# flips it, for the player who reads a drag as pushing the horizon.
+				var lean := 1.0 if camera_state.tilt_invert else -1.0
+				camera_state.apply_tilt(
+						lean * float(g["delta_dp"]) / camera_state.tilt_dp_per_unit,
+						g["centroid"], viewport, get_process_delta_time())
+			&"tilt_end":
+				if _tilt_active:
+					_tilt_active = false
+					camera_state.end_tilt()
 			&"tap":
 				tapped.emit(g.get("position", Vector2.ZERO))
 			&"double_tap":
@@ -134,3 +164,8 @@ func _route(phase: StringName, position: Vector2) -> bool:
 ## Test seam: is a stroke currently being drawn rather than panned?
 func is_routing() -> bool:
 	return _routing
+
+
+## Test seam: is a two-finger tilt stroke live?
+func is_tilting() -> bool:
+	return _tilt_active

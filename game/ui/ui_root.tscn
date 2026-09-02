@@ -22,6 +22,8 @@
 [ext_resource type="Script" path="res://ui/loading_veil.gd" id="20_loadingveil"]
 [ext_resource type="Script" path="res://ui/construction_queue_sheet.gd" id="21_queue"]
 
+[ext_resource type="Script" path="res://ui/tilt_slider.gd" id="21_tiltslider"]
+
 [node name="UIRoot" type="CanvasLayer"]
 layer = 10
 script = ExtResource("1_uiroot")
@@ -179,6 +181,18 @@ offset_right = 200.0
 offset_bottom = 144.0
 grow_horizontal = 2
 mouse_filter = 2
+
+[node name="TiltSlider" type="Control" parent="SafeArea/HUDLayer"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -48.0
+offset_top = 80.0
+offset_bottom = 172.0
+grow_horizontal = 0
+mouse_filter = 0
+script = ExtResource("21_tiltslider")
 
 [node name="PanelLayer" type="Control" parent="SafeArea"]
 layout_mode = 2

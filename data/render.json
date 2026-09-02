@@ -82,6 +82,10 @@
     "ambient_sky_contribution_day": 1.00, "ambient_sky_contribution_night": 0.12,
     "ambient_floor_gamma": 2.0 },
 
+  "_sky": "Wave 17 (doc 11 §2.8, doc 12 §2.23). THE SKY: until the manual pitch axis let the horizon into the frame, no pose could see the sky at all (34° of pitch minus 20° of half-FOV is 14° of depression at the top of the frame), so the ProceduralSkyMaterial main.gd built was ambient-only and had never been judged. At the 12° floor the top of the frame is 8° ABOVE the horizon and the sky is the backdrop the skyline is read against. game/shaders/sky_gradient.gdshader replaces the engine material (EnvironmentController.setup swaps it in; `--sky=procedural` in tools/profile_frame.gd is the A/B): zenith and horizon from the same daynight keys, a HAZE band at the horizon in the sampled FOG tint so the far city's fogged roofs and the sky meet on one colour, and the ground hemisphere on that tint darkened — a clean gradient, no sun disc, no scattering, no clouds. `radiance_size` is the cubemap the sky's AMBIENT (ambient_light_source = SKY) is convolved from: 64 is the smallest the Mobile renderer resolves a smooth gradient into without banding the ambient, and a gradient has no detail a larger map could keep. `haze_height` is sin(elevation): 0.08 is ~4.6°, the band the fogged skyline is silhouetted against from the floor. `ground_darken` is how far below the horizon the hemisphere falls from the haze — 0.45 puts the sliver a grazing camera sees between the world edge and the horizon on the haze itself.",
+  "sky": { "radiance_size": 64, "zenith_curve": 0.55, "haze_height": 0.08,
+           "haze_strength": 0.8, "ground_falloff": 0.35, "ground_darken": 0.45 },
+
   "environment": {
     "tonemap": "agx", "tonemap_exposure": 1.0, "tonemap_white": 6.0,
     "contrast": 1.06, "saturation_day": 1.05, "saturation_night": 0.92,

@@ -2496,3 +2496,68 @@ pre-rolled into the save (doc 13 §2.4 classes (a) and (b)). Mid-catch-up neithe
 has settled, so the alarms would be predictions about a future that is still
 being computed. It is skipped, and the resume — cold or warm — re-plans from the
 finished city, which is what doc 08 §2.13 already says happens on every resume.
+
+## AC. Wave-17 rulings — the pitch axis: what composes, what may miss, and what a headless mount is allowed to claim (2026-09-01)
+
+### AC1. A camera axis the player drives COMPOSES with the authored curve; it does not replace it
+
+`pitch(t) = 34° + 28°·smoothstep(t)` stays the answer the camera rests on. The
+manual axis is a normalised lean on top of it —
+`pitch = lerp(curve(t), target, |bias|·reach(t))` — with three consequences that
+are the ruling:
+
+* **AUTO is a bit-exact identity.** At `bias = 0` the composed pitch *is*
+  `pitch_deg_at(t)`, so a city whose player never touches the slider renders the
+  camera it rendered before Wave 17. A design that offset the curve, or replaced
+  it, could not say that, and every screenshot and coverage table in doc 12 §2.16
+  would have needed re-taking.
+* **The middle detent means something.** `pitch_detent_units = 0.04` snaps a
+  release near the middle back to AUTO — the state, not a value that resembles
+  it — which is how a player finds the middle without aiming for it and how the
+  camera keeps re-deriving its own pitch on the next pinch.
+* **The zoom still owns the default.** Zooming out after a lean re-composes
+  against the new curve rather than holding an absolute angle, so the axis cannot
+  strand the player at a pitch the zoom was never designed for.
+
+**Re-open** only if a pose is wanted that the composition cannot reach — the first
+candidate is a true 90° top-down, deliberately excluded because yaw stops meaning
+anything there and the twist gesture becomes a spin about nothing.
+
+### AC2. A budget a feature cannot meet is published with its mechanism, not tuned into a feature nobody asked for
+
+The pitch floor takes the bench city to 363 dc+ui at Z0 by day against a 320
+budget (doc 92 §47). The knee is at `pitch = FOV/2 = 20°`, where the horizon
+enters the frame — so the only band that stays inside the budget is one that
+cannot see the sky, and the user's directive was to see the sky. The ruling is
+therefore: **state the excess, name the mechanism, couple the band where the
+coupling buys something real, and hand the runtime case to the governor.** The
+far end is coupled (`reach_up_far = 0.76`) because there the measurement bought a
+tier boundary — 4 NEAR chunks and 97 dc — rather than a preference; the near end
+is not, because there it would buy only the number.
+
+### AC3. A query that can fail answers whether it failed; the old total function stays for the callers that were always right
+
+`ground_hit()` returns `{hit, position, reason, distance}`;
+`screen_to_ground()` remains, unchanged, on top of it. Both are correct at once
+and the split is the ruling: **pan, pinch and the anchor lock want a point and
+have always wanted the clamped one**, while placement, picking and focus must not
+act on a guess. Making the honest read the only read would have made the pan
+stutter at the frame edge — a worse bug, introduced while fixing a better one.
+
+The rule generalises to every ray this project casts from a screen point: the
+caller that *acts* on the world branches on `hit`; the caller that *tracks* the
+finger does not.
+
+### AC4. A test may only assert what its harness can produce
+
+Two shapes, both found green in salvaged Wave-17 work (report 98 RR-117):
+
+* A **headless** `UIRoot.force_layout(box)` produces no layout at all — the
+  containers do not fit invisible children — so a test asserting a laid-out rect
+  is asserting the harness. Assert what the code sets (anchors, offsets, the band
+  solve); photograph the rect where a viewport exists (`tools/ui_preview.gd
+  --audit --strict`).
+* A **synthetic gesture** fed one finger-jump at a time is not the device's
+  event stream. Two-finger strokes are walked in device-sized steps, and the
+  intermediate sample — one finger moved, one not — is part of what the
+  recogniser must survive, not an artefact to be fed around.

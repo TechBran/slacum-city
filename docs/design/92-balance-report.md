@@ -7329,3 +7329,125 @@ The four determinism baselines, re-measured on the finished tree with
 `7c99720f5ff14553…` / fine `d8e8889681b23297…` — **byte-identical to the
 fork's**, which is what "hash-neutral by construction" has to mean when it is
 claimed.
+
+## 47. Wave 17 — the pitch axis, measured: where the horizon costs its draw calls (2026-09-01)
+
+Every row below is `tools/profile_frame.gd` on the 1,500-building benchmark city,
+preset **balanced**, **1920 × 1080**, road detail 2, pad shadows on, gradient sky,
+warm-up 90 / 180 frames per pose — the harness's own defaults, so a re-run needs
+only the two flags named. `dc` is the city's draw calls; `dc+ui` adds doc 11
+§2.13's 25 batched UI calls and is the column the **320** budget compares against.
+The harness parks the manual axis with `--tilt=DEG`, which clamps into the band
+this zoom allows and prints the angle it actually used.
+
+    ~/.local/bin/godot --path . -s res://tools/profile_frame.gd -- --tilt=12 --hour=13
+
+### 47.1 The table — pitch {floor, 34°, 62°, ceiling} × zoom {Z0, Z1, Z2}, day and night
+
+| pitch asked | pose | pitch used | DAY dc | DAY dc+ui | NIGHT dc | NIGHT dc+ui |
+|---|---|---|---|---|---|---|
+| AUTO (curve) | Z0 | 34° | 229 | 254 | 87 | 112 |
+| AUTO (curve) | Z1 | 48° | 225 | 250 | 105 | 130 |
+| AUTO (curve) | Z2 | 62° | 188 | 213 | 188 | 213 |
+| **12° (floor)** | Z0 | 12° | **338** | **363** ✗ | 196 | 221 |
+| **12° (floor)** | Z1 | 16.3° | **308** | **333** ✗ | 191 | 216 |
+| **12° (floor)** | Z2 | 24.0° | 233 | 258 | 226 | 251 |
+| 34° | Z0 | 34° | 229 | 254 | 87 | 112 |
+| 34° | Z1 | 34° | 247 | 272 | 127 | 152 |
+| 34° | Z2 | 34° | 229 | 254 | 226 | 251 |
+| 62° | Z0 | 62° | 226 | 251 | 86 | 111 |
+| 62° | Z1 | 62° | 223 | 248 | 103 | 128 |
+| 62° | Z2 | 62° | 188 | 213 | 188 | 213 |
+| **78° (ceiling)** | Z0 | 78° | 210 | 235 | 86 | 111 |
+| **78° (ceiling)** | Z1 | 78° | 212 | 237 | 92 | 117 |
+| **78° (ceiling)** | Z2 | 78° | 164 | 189 | 164 | 189 |
+
+✗ = over the 320 budget. **Two cells of thirty, both by day, both at the floor.**
+
+Three readings, in order of what they change:
+
+1. **The DOWN half of the band is free.** The ceiling is cheaper than the curve at
+   every pose and both hours (Z2 78° is 164 dc against the curve's 188), which is
+   why `pitch_reach_down_*` is authored 1.0 everywhere and is not coupled to zoom.
+2. **Night is not the worst case here, and that is new.** The harness's default
+   hour is 21 *because* night is the emissive/glow worst case for the frame; for
+   the pitch axis it is the cheap case in every cell, because the sun-shadow pass
+   is what doubles the marginal cost of the geometry a shallow frustum drags in.
+   The floor at Z0 is 338 dc by day and 196 by night. This is not an inference:
+   `EnvironmentController.apply()` sets `_sun.shadow_enabled = elevation > 2.0`
+   and the moon never casts, so the sun's shadow pass is the ONLY renderer
+   difference between hour 13 and hour 21 at a fixed pose — and at the AUTO Z0
+   pose it is 229 dc against 87.
+3. **The cliff is at 20°, not at the floor.** Half the 40° vertical FOV: below it
+   the horizon is inside the frame and the whole city is inside the frustum.
+   Measured at Z0, day, either side of it — 26° → **235 dc**, 20° → **332 dc**,
+   12° → **338 dc**. The step is the horizon crossing the top edge, not the last
+   few degrees of lean. (The two probe rows are
+   `--tilt=20|26 --hour=13 --poses=z0,z1 --warmup=60 --frames=120`; the shorter
+   warm-up moves `mean ms`, and moves `dc` by nothing, which is the column being
+   read.)
+
+### 47.2 The one number the budget bought: `pitch_reach_up_far = 0.76`
+
+A/B on the same fixture, Z2, changing only
+`data/ui.json.camera.pitch_reach_up_far` and re-running
+`--tilt=12 --hour=13|21 --poses=z2 --warmup=60 --frames=120`:
+
+| reach_up_far | Z2 floor | camera height | NEAR chunks | DAY dc+ui | NIGHT dc+ui |
+|---|---|---|---|---|---|
+| 1.00 | 12.0° | 420·sin 12° = **87 m** | **4** | **355** ✗ | 280 |
+| **0.76** (shipped) | 24.0° | 420·sin 24° = **171 m** | 0 | **258** | 251 |
+
+87 m is under doc 11 §2.5's **150 m NEAR boundary**, so a lean alone re-tiers four
+chunks into the near/shadow pass — a zoom-coupled band is not a taste, it is the
+tier table's own line drawn in the axis the player controls. The coupling is
+visible rather than silent: `reach(t)` shortens the *angle* the slider's end buys,
+the thumb keeps its whole column, and `TiltSlider.thumb_y_for_bias()` compresses
+the track to match (`tests/test_ui_tilt.gd::test_the_track_compresses_with_the_zoom_reach`).
+
+### 47.3 The near/mid excess, and why it is published instead of tuned away
+
+Getting Z0 under 320 by data alone means a floor of ~26°, i.e. a camera that
+cannot see the sky — the feature retracted to protect a proxy for it. The excess is
+therefore stated: **+43 dc at Z0 and +13 dc at Z1 over the 320 budget, day only, at
+the pitch floor, on the 1,500-building bench city.** Frame times cannot arbitrate
+it on this hardware — every row of every run above sits at 12–19 ms mean with
+`rs gpu` between 1.2 and 4.0 ms, i.e. present-bound on an RTX 2000 Ada, and the
+budget exists for the Fold's tile GPU, not this one. **The device row is owed**
+(doc 11 §2.13's matrix); the runtime guard until it lands is §2.13's adaptive
+governor, and the re-open condition is in report 98 RR-115.
+
+### 47.5 Per preset: the axis costs the same calls everywhere, and only the budget moves
+
+The same floor pose (`--tilt=12 --hour=13 --warmup=60 --frames=120`) at all three
+presets, against each preset's own doc 11 §2.13 draw-call budget:
+
+| preset | budget | Z0 dc+ui | Z1 dc+ui | Z2 dc+ui | AUTO Z0 dc+ui, same preset |
+|---|---|---|---|---|---|
+| performance | 180 | 363 | 333 | 258 | **254** |
+| balanced | 320 | 363 | 333 | 258 | 254 |
+| high | 520 | 363 | 333 | 258 | 254 |
+
+**The draw calls do not move with the preset** — identical to the call in all
+nine cells — because what a preset changes (road detail, instance budget, far
+cull, shadow settings) does not change which chunk buckets a given frustum
+contains. So the axis's cost is one number, `+109 / +83 / +45` calls over AUTO,
+and the only thing a preset changes is whether that number fits.
+
+**And it is not this wave that puts `performance` over its budget:** the AUTO
+pose on this fixture already measures **254** against a 180 budget at that
+preset, before the axis exists. The bench city is 1,500 buildings, i.e. doc 09
+§2.13's stress fixture and not a device-representative city; the performance row
+is a fixture fact, recorded here so nobody reads the tilt rows as its cause.
+`high` has headroom for the floor at every pose (363 of 520).
+
+### 47.4 The sky's cost is inside the noise, and the noise is published too
+
+`--sky=gradient` (shipped) against `--sky=procedural` (the engine material it
+replaces), tilt 12°, both hours, all three poses: **draw calls identical in all six
+cells** (day 338 / 308 / 233, night 196 / 191 / 226). `rs gpu` moves by −0.13 …
++0.87 ms with no consistent sign — and repeating a single cell with nothing
+changed at all moves it by 1.77 ms (Z1 day floor: 3.955 then 2.187). **The sky is
+not resolvable on this GPU**; what is authored on argument rather than measurement
+is `sky.radiance_size = 64` against the engine's 256, because the ambient cubemap
+is re-convolved every frame the hour moves.

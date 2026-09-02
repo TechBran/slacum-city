@@ -4,11 +4,35 @@ extends RefCounted
 ## (constitution §3: all camera STATE math lives in `RefCounted` classes so it is
 ## testable without a scene tree).
 ##
-## State is exactly `{focus (y=0), zoom_t ∈ [0,1], yaw}` (doc 12 §2.16). Distance,
-## pitch, the camera transform, ground rays and screen projection are all
-## derived. That triple is the whole handoff to doc 11 §2.5: the renderer's
-## `CameraRig` reads `{focus, zoom_t, yaw}` (or the ready-made
-## `camera_transform()`) each frame and never reads input.
+## State is exactly `{focus (y=0), zoom_t ∈ [0,1], yaw, pitch_bias}` (doc 12
+## §2.16). Distance, pitch, the camera transform, ground rays and screen
+## projection are all derived. That quadruple is the whole handoff to doc 11
+## §2.5: the renderer's `CameraRig` reads `{focus, zoom_t, yaw, pitch}` (or the
+## ready-made `camera_transform()`) each frame and never reads input.
+##
+## **The manual pitch axis (Wave 17, doc 98 §43).** `pitch(t)` is still the
+## curve, and the curve is still the DEFAULT — but it is now the value the axis
+## RESTS on rather than the only value there is. `pitch_bias ∈ [-1, +1]` leans
+## the pitch off the curve toward an authored band:
+##
+##     pitch = lerp(curve(t), target, |bias| · reach(t))
+##     target = pitch_manual_min_deg  when bias > 0   (drag UP — look up facades)
+##              pitch_manual_max_deg  when bias < 0   (drag DOWN — top-down)
+##
+## The composition is a **normalised lean toward a floor/ceiling**, not an
+## absolute override and not a degree offset, and the reason is the slider's
+## middle detent. An absolute override makes the detent a fixed angle that stops
+## agreeing with the curve the moment the player zooms; a degree offset makes the
+## slider's two ends clip at different zooms (at `t = 0` the curve is 22° off the
+## floor and 44° off the ceiling, at `t = 1` it is 50° and 16°). The lean makes
+## `bias = 0` mean *exactly* "the curve's own answer" at every zoom, and `±1`
+## mean *exactly* "as far as this zoom is allowed to go" — which is the only
+## composition where a centred thumb is honest and both ends are reachable.
+##
+## `reach(t)` is the zoom coupling doc 92 §47 measured: a grazing angle at far
+## zoom fills a fragment-bound frustum with skyline, so the allowed lean NARROWS
+## as `zoom_t` rises. It is authored per direction, because the cost is not
+## symmetric — leaning toward top-down is cheaper than the pose it came from.
 ##
 ## Ownership split (report 98 C-63): this class owns the **interaction range**
 ## (`D_MIN`/`D_MAX`, the pitch band, the curves, gestures, momentum, bounds) from
@@ -30,6 +54,16 @@ const FOV_DEG_FALLBACK := 40.0
 
 const WORLD_JSON_PATH := "res://data/world.json"
 
+## `ground_hit()`'s typed answers. A caller branches on `hit`; `reason` is for
+## the log line and for the tests, never for control flow that matters.
+const GROUND_OK := &"ground"
+## The ray leaves the camera going UP (or level). At the pitch floor the top of
+## the frustum is above the horizon and a tap up there has no ground under it.
+const MISS_ABOVE_HORIZON := &"above_horizon"
+## The ray points down but so shallowly that the intersection is past
+## `dist * 4` — geometrically a hit, practically the far haze.
+const MISS_GRAZING := &"grazing"
+
 # --- Interaction range (data/ui.json.camera) --------------------------------
 var d_min_m := 18.0
 var d_max_m := 420.0
@@ -37,6 +71,30 @@ var d_max_city_factor := 1.6
 var d_max_city_min_m := 120.0
 var pitch_near_deg := 34.0
 var pitch_far_deg := 62.0
+## The manual band the lean reaches for. `min` is the grazing floor (look UP the
+## facades), `max` the top-down ceiling. Both are absolute limits on
+## `pitch_deg()`; no bias, save file or gesture can put the camera outside them.
+var pitch_manual_min_deg := 12.0
+var pitch_manual_max_deg := 78.0
+## `reach(t)` — how much of the lean the zoom allows, up and down, near and far.
+## Interpolated by `smoothstep(zoom_t)`, the same shape as the pitch curve, so
+## the band closes on the same feel the pitch opens on.
+var pitch_reach_up_near := 1.0
+var pitch_reach_up_far := 1.0
+var pitch_reach_down_near := 1.0
+var pitch_reach_down_far := 1.0
+## Gesture feel for the axis, mirroring the pan's: a rubber band past the ends
+## while the finger is down, a decaying fling on release, an eased return home.
+var pitch_rubber_band := 0.35
+var pitch_momentum_decay_k := 9.0
+var pitch_momentum_min_start := 0.35   ## bias units / s
+var pitch_momentum_max := 4.0          ## bias units / s
+var pitch_momentum_stop := 0.05        ## bias units / s
+var pitch_spring_omega := 16.0
+var pitch_reset_tween_s := 0.3
+var pitch_detent_units := 0.04         ## |bias| this small snaps back to AUTO
+var tilt_dp_per_unit := 260.0          ## dp of finger travel for a full lean
+var tilt_invert := false
 var default_zoom_t := 0.42
 var default_yaw_deg := 45.0
 var bounds_pad_blocks := 2.0
@@ -71,11 +129,32 @@ var zoom_t := 0.42
 var yaw := 0.0  ## radians
 var bounds_enabled := true
 
+## The manual pitch axis. `pitch_auto` true means "nobody has touched it" — the
+## curve answers alone and `pitch_bias` is held at 0 so a reader never has to ask
+## which of the two is live. Positive bias leans toward the grazing floor.
+var pitch_auto := true
+var pitch_bias := 0.0
+
+var _pitch_raw := 0.0          ## unbanded bias; `pitch_bias` is its banded view
+var _pitch_rubber := false     ## true while tilting or coasting
+var _tilting := false
+var _pitch_track_v := 0.0
+var _pitch_momentum_v := 0.0
+var _pitch_momentum_active := false
+var _pitch_spring_active := false
+var _pitch_spring_v := 0.0
+var _pitch_reset_active := false
+var _pitch_reset_from := 0.0
+var _pitch_reset_elapsed := 0.0
+
 var _raw_focus := Vector3.ZERO  ## unbanded focus; `focus` is its rubber-banded view
 var _rubber_active := false     ## true while dragging or coasting
 
 var _panning := false
 var _pan_anchor := Vector3.ZERO
+## Whether `_pan_anchor` came from a real ground intersection. False only at the
+## manual pitch floor, where a finger can go down above the horizon.
+var _anchor_valid := true
 var _pan_velocity := Vector3.ZERO
 
 var _momentum_v := Vector3.ZERO
@@ -148,6 +227,24 @@ func _apply_camera_config(c: Dictionary) -> void:
 	d_max_city_min_m = UIConfig.get_num(c, "dist_max_city_min_m", d_max_city_min_m)
 	pitch_near_deg = UIConfig.get_num(c, "pitch_near_deg", pitch_near_deg)
 	pitch_far_deg = UIConfig.get_num(c, "pitch_far_deg", pitch_far_deg)
+	pitch_manual_min_deg = UIConfig.get_num(c, "pitch_manual_min_deg", pitch_manual_min_deg)
+	pitch_manual_max_deg = UIConfig.get_num(c, "pitch_manual_max_deg", pitch_manual_max_deg)
+	pitch_reach_up_near = UIConfig.get_num(c, "pitch_reach_up_near", pitch_reach_up_near)
+	pitch_reach_up_far = UIConfig.get_num(c, "pitch_reach_up_far", pitch_reach_up_far)
+	pitch_reach_down_near = UIConfig.get_num(c, "pitch_reach_down_near", pitch_reach_down_near)
+	pitch_reach_down_far = UIConfig.get_num(c, "pitch_reach_down_far", pitch_reach_down_far)
+	pitch_rubber_band = UIConfig.get_num(c, "pitch_rubber_band", pitch_rubber_band)
+	pitch_momentum_decay_k = UIConfig.get_num(c, "pitch_momentum_decay_k",
+			pitch_momentum_decay_k)
+	pitch_momentum_min_start = UIConfig.get_num(c, "pitch_momentum_min_start",
+			pitch_momentum_min_start)
+	pitch_momentum_max = UIConfig.get_num(c, "pitch_momentum_max", pitch_momentum_max)
+	pitch_momentum_stop = UIConfig.get_num(c, "pitch_momentum_stop", pitch_momentum_stop)
+	pitch_spring_omega = UIConfig.get_num(c, "pitch_spring_omega", pitch_spring_omega)
+	pitch_reset_tween_s = UIConfig.get_num(c, "pitch_reset_tween_s", pitch_reset_tween_s)
+	pitch_detent_units = UIConfig.get_num(c, "pitch_detent_units", pitch_detent_units)
+	tilt_dp_per_unit = maxf(1.0, UIConfig.get_num(c, "tilt_dp_per_unit", tilt_dp_per_unit))
+	tilt_invert = bool(c.get("tilt_invert", tilt_invert))
 	default_zoom_t = UIConfig.get_num(c, "default_zoom_t", default_zoom_t)
 	default_yaw_deg = UIConfig.get_num(c, "default_yaw_deg", default_yaw_deg)
 	bounds_pad_blocks = UIConfig.get_num(c, "bounds_pad_blocks", bounds_pad_blocks)
@@ -191,6 +288,7 @@ func reset() -> void:
 	_yaw_snap_active = false
 	_jump_active = false
 	_following = false
+	clear_pitch_bias()
 
 
 # ---------------------------------------------------------------------------
@@ -219,8 +317,68 @@ func distance() -> float:
 	return distance_at(zoom_t)
 
 
+## The pitch the rig actually uses: the curve, leaned by the manual axis. In AUTO
+## this is `pitch_deg_at(zoom_t)` to the last bit — the axis composes, it does not
+## replace, so a city that never touches the slider is byte-for-byte the camera
+## it was before Wave 17.
 func pitch_deg() -> float:
-	return pitch_deg_at(zoom_t)
+	return pitch_deg_for(zoom_t, 0.0 if pitch_auto else pitch_bias)
+
+
+## `lerp(curve, target, |bias| · reach)` — see the class doc for why this
+## composition and not an override or an offset.
+func pitch_deg_for(t: float, bias: float) -> float:
+	var curve := pitch_deg_at(t)
+	var b := clampf(bias, -1.0, 1.0)
+	if is_zero_approx(b):
+		return curve
+	if b > 0.0:
+		return lerpf(curve, pitch_manual_min_deg, b * reach_up_at(t))
+	return lerpf(curve, pitch_manual_max_deg, -b * reach_down_at(t))
+
+
+## How much of the upward (grazing) lean this zoom allows — doc 92 §47's coupling.
+func reach_up_at(t: float) -> float:
+	return clampf(lerpf(pitch_reach_up_near, pitch_reach_up_far,
+			smoothstep(0.0, 1.0, clampf(t, 0.0, 1.0))), 0.0, 1.0)
+
+
+func reach_down_at(t: float) -> float:
+	return clampf(lerpf(pitch_reach_down_near, pitch_reach_down_far,
+			smoothstep(0.0, 1.0, clampf(t, 0.0, 1.0))), 0.0, 1.0)
+
+
+## The shallowest angle reachable at this zoom (bias +1). Equal to
+## `pitch_manual_min_deg` wherever `reach_up_at` is 1.
+func pitch_floor_deg_at(t: float) -> float:
+	return pitch_deg_for(t, 1.0)
+
+
+func pitch_ceiling_deg_at(t: float) -> float:
+	return pitch_deg_for(t, -1.0)
+
+
+## The bias that puts the pitch at `deg` at zoom `t` — the inverse of
+## `pitch_deg_for` for the harness's `--tilt=` and for tests that speak degrees.
+## A request outside the reachable band clamps to the nearer end, and a zoom
+## whose `reach()` has closed the lean entirely answers 0 (the curve).
+func pitch_bias_for_deg(deg: float, t: float) -> float:
+	var curve := pitch_deg_at(t)
+	if absf(deg - curve) < 0.000001:
+		return 0.0
+	if deg < curve:
+		var span := curve - pitch_floor_deg_at(t)
+		return 0.0 if span <= 0.000001 else clampf((curve - deg) / span, 0.0, 1.0)
+	var span_down := pitch_ceiling_deg_at(t) - curve
+	return 0.0 if span_down <= 0.000001 \
+			else -clampf((deg - curve) / span_down, 0.0, 1.0)
+
+
+## Put the pitch at `deg` for the CURRENT zoom, through `set_pitch_bias` — so the
+## middle detent still applies: a degree inside `pitch_detent_units` of the
+## curve lands on AUTO rather than on a bias that merely looks like it.
+func set_pitch_deg(deg: float) -> void:
+	set_pitch_bias(pitch_bias_for_deg(deg, zoom_t))
 
 
 func pitch_rad() -> float:
@@ -285,10 +443,43 @@ func ground_forward() -> Vector3:
 
 ## Metres of ground per dp at the focus depth, along the screen-right axis:
 ## the frame is 2·D·tan(h_half) metres wide across `viewport_dp.x` dp.
+##
+## **Pitch-INVARIANT, and that is the point.** Screen-right is parallel to the
+## ground at every pitch, so this number does not move when the camera tilts —
+## which is what keeps §2.21's 48 dp tap radius and §2.7's drag ghost the same
+## size in metres before and after a tilt. The anisotropy is entirely in the
+## other axis; `m_per_dp_depth()` is that one, and no caller may use this figure
+## as if it covered both.
 func m_per_dp(viewport_dp: Vector2) -> float:
 	if viewport_dp.x <= 0.0:
 		return 0.0
 	return (2.0 * distance() * _tan_half_h(viewport_dp)) / viewport_dp.x
+
+
+## Metres of ground per dp at the focus depth along the screen-UP axis, i.e. into
+## the scene. Square pixels make the per-dp angle the same in both axes, so this
+## is just the horizontal figure divided by `sin(pitch)`: the same angular step
+## rakes further across the ground the shallower the camera looks.
+##
+##     m_per_dp_depth = m_per_dp / sin(pitch)
+##
+## At the 34° curve floor that is ×1.79; at the 12° manual floor it is ×4.81. A
+## world-space circle of radius `r` therefore projects to an ellipse `2r/m_per_dp`
+## dp wide and `2r·sin(pitch)/m_per_dp` dp tall — the tap radius keeps its metres
+## and loses screen height as the camera tilts, never the other way round, so a
+## tilt can only make the pick MORE conservative.
+func m_per_dp_depth(viewport_dp: Vector2) -> float:
+	var s := sin(pitch_rad())
+	if s <= 0.000001:
+		return 0.0
+	return m_per_dp(viewport_dp) / s
+
+
+## `m_per_dp_depth / m_per_dp` = `1 / sin(pitch)`. The one number that says how
+## far from round a screen-space radius has become.
+func m_per_dp_anisotropy() -> float:
+	var s := sin(pitch_rad())
+	return 0.0 if s <= 0.000001 else 1.0 / s
 
 
 func _tan_half_v() -> float:
@@ -315,20 +506,45 @@ func screen_ray(screen_dp: Vector2, viewport_dp: Vector2) -> Dictionary:
 	return {"origin": camera_position(), "direction": (camera_basis() * local).normalized()}
 
 
-## Ray-cast a touch point to the ground plane y = 0. Guard (doc 12 §2.16): a ray
-## near-parallel to the ground — or pointing above the horizon — has its
-## intersection distance clamped to `dist * 4` instead of shooting to infinity.
-func screen_to_ground(screen_dp: Vector2, viewport_dp: Vector2) -> Vector3:
+## Ray-cast a touch point to the ground plane y = 0, **typed**. Returns
+##     {hit: bool, position: Vector3, reason: StringName, distance: float}
+## `reason` is `GROUND_OK`, `MISS_ABOVE_HORIZON` or `MISS_GRAZING`.
+##
+## Wave 17 made this the honest signature. Doc 12 §2.16's guard — clamp a
+## near-parallel ray to `dist * 4` rather than let it shoot to infinity — is
+## still applied and `position` still carries the clamped point, because pan and
+## pinch want *a* point and the old behaviour is exactly right for them. What
+## changed is that a caller which must not act on a guess can now ask: at the
+## manual pitch floor the top of the frustum is above the horizon, and a tap up
+## there has no tile under it at any distance.
+func ground_hit(screen_dp: Vector2, viewport_dp: Vector2) -> Dictionary:
 	var ray := screen_ray(screen_dp, viewport_dp)
 	var origin: Vector3 = ray["origin"]
 	var dir: Vector3 = ray["direction"]
 	var max_t := distance() * 4.0
 	var t := max_t
-	if dir.y < -ray_parallel_eps:
-		t = minf(-origin.y / dir.y, max_t)
-	var hit := origin + dir * t
-	hit.y = 0.0
-	return hit
+	var hit := true
+	var reason := GROUND_OK
+	if dir.y >= -ray_parallel_eps:
+		hit = false
+		reason = MISS_ABOVE_HORIZON if dir.y >= 0.0 else MISS_GRAZING
+	else:
+		var exact := -origin.y / dir.y
+		if exact > max_t:
+			hit = false
+			reason = MISS_GRAZING
+		else:
+			t = exact
+	var point := origin + dir * t
+	point.y = 0.0
+	return {"hit": hit, "position": point, "reason": reason, "distance": t}
+
+
+## The untyped read, kept verbatim for the callers that want the guard's answer
+## whether or not it was a real intersection (pan, pinch, the anchor lock). Every
+## byte of its behaviour predates Wave 17.
+func screen_to_ground(screen_dp: Vector2, viewport_dp: Vector2) -> Vector3:
+	return ground_hit(screen_dp, viewport_dp)["position"]
 
 
 ## Forward projection of a world point to dp screen space (the inverse of
@@ -426,13 +642,19 @@ func begin_pan(screen_dp: Vector2, viewport_dp: Vector2) -> void:
 	_rubber_active = true
 	_pan_velocity = Vector3.ZERO
 	_raw_focus = focus
-	_pan_anchor = screen_to_ground(screen_dp, viewport_dp)
+	_set_anchor(screen_dp, viewport_dp)
 
 
 ## Re-anchor without moving the camera (MULTI → PAN when one finger lifts:
 ## "re-anchor to the remaining finger, no jump").
 func reanchor_pan(screen_dp: Vector2, viewport_dp: Vector2) -> void:
-	_pan_anchor = screen_to_ground(screen_dp, viewport_dp)
+	_set_anchor(screen_dp, viewport_dp)
+
+
+func _set_anchor(screen_dp: Vector2, viewport_dp: Vector2) -> void:
+	var answer := ground_hit(screen_dp, viewport_dp)
+	_pan_anchor = answer["position"]
+	_anchor_valid = bool(answer["hit"])
 
 
 ## `focus += anchor − ray_to_ground(touch)`. Because translating the focus
@@ -447,8 +669,19 @@ func update_pan(screen_dp: Vector2, viewport_dp: Vector2, dt: float = 0.0) -> vo
 				+ instantaneous * velocity_ema_alpha
 
 
+## The 1:1 lock, guarded at both ends. Above the pitch curve's own floor both
+## rays always hit (34° − 20° of half-FOV is 14° of depression, well past the
+## 4.6° `ray_parallel_eps` horizon), so this guard is unreachable for every pose
+## that existed before the manual axis — and at the manual floor it is the
+## difference between "the world stops tracking the finger" and "the focus is
+## thrown a kilometre because a ray was clamped".
 func _lock_anchor(screen_dp: Vector2, viewport_dp: Vector2) -> void:
-	_translate_focus(_pan_anchor - screen_to_ground(screen_dp, viewport_dp))
+	if not _anchor_valid:
+		return
+	var answer := ground_hit(screen_dp, viewport_dp)
+	if not bool(answer["hit"]):
+		return
+	_translate_focus(_pan_anchor - (answer["position"] as Vector3))
 
 
 ## Release: hand the tracked velocity to momentum, or start the rubber-band
@@ -518,9 +751,14 @@ func cancel_momentum() -> void:
 ## Self-contained "zoom about this screen point": used by double-tap and by
 ## `focus_on`. The ground point under `screen_dp` is invariant.
 func zoom_about_point(screen_dp: Vector2, viewport_dp: Vector2, new_t: float) -> void:
-	var anchor := screen_to_ground(screen_dp, viewport_dp)
+	var before := ground_hit(screen_dp, viewport_dp)
 	set_zoom_t(new_t)
-	_translate_focus(anchor - screen_to_ground(screen_dp, viewport_dp))
+	var after := ground_hit(screen_dp, viewport_dp)
+	# A double tap on the sky zooms without re-anchoring rather than dragging the
+	# focus to a clamped point that was never a place.
+	if not bool(before["hit"]) or not bool(after["hit"]):
+		return
+	_translate_focus((before["position"] as Vector3) - (after["position"] as Vector3))
 
 
 ## Pinch step (doc 12 §2.16): `dist = clamp(dist * (span_prev/span_now), D_MIN,
@@ -599,6 +837,204 @@ static func ease_out_back(x: float, overshoot: float = 0.8) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Pitch — the manual axis (Wave 17, doc 98 §43)
+# ---------------------------------------------------------------------------
+
+## Back to AUTO with no tween, and every transient on the axis dropped. This is
+## `reset()`'s call and the loader's, not the double-tap's — that one eases.
+func clear_pitch_bias() -> void:
+	pitch_auto = true
+	pitch_bias = 0.0
+	_pitch_raw = 0.0
+	_pitch_rubber = false
+	_tilting = false
+	_pitch_track_v = 0.0
+	_pitch_momentum_v = 0.0
+	_pitch_momentum_active = false
+	_pitch_spring_active = false
+	_pitch_spring_v = 0.0
+	_pitch_reset_active = false
+
+
+## Put the axis at an exact bias. `|bias| ≤ pitch_detent_units` is the middle
+## detent and lands on AUTO rather than on a bias that merely looks like it —
+## the detent is what makes the slider's middle *mean* something.
+func set_pitch_bias(bias: float) -> void:
+	_pitch_reset_active = false
+	_pitch_momentum_active = false
+	_pitch_spring_active = false
+	var b := clampf(bias, -1.0, 1.0)
+	if absf(b) <= pitch_detent_units:
+		pitch_auto = true
+		pitch_bias = 0.0
+		_pitch_raw = 0.0
+		return
+	pitch_auto = false
+	_pitch_raw = b
+	_sync_pitch()
+
+
+func is_pitch_auto() -> bool:
+	return pitch_auto
+
+
+func is_tilting() -> bool:
+	return _tilting
+
+
+func is_pitch_coasting() -> bool:
+	return _pitch_momentum_active
+
+
+func is_pitch_returning() -> bool:
+	return _pitch_reset_active
+
+
+## Finger down on the axis (slider thumb or the two-finger drag). Kills whatever
+## the axis was doing so the grab is exact, and turns the rubber band on.
+func begin_tilt() -> void:
+	_pitch_reset_active = false
+	_pitch_momentum_active = false
+	_pitch_spring_active = false
+	_pitch_momentum_v = 0.0
+	_pitch_track_v = 0.0
+	_tilting = true
+	_pitch_rubber = true
+	pitch_auto = false
+	_pitch_raw = pitch_bias
+
+
+## One step of the drag, in **bias units** (`dp / tilt_dp_per_unit` upstream).
+## `centroid_dp` re-locks the pan anchor exactly the way `apply_twist` does, so
+## the ground point under the fingers survives the tilt — but only when the
+## anchor is real, which at the pitch floor it may not be (see `_lock_anchor`).
+func apply_tilt(delta_units: float, centroid_dp := Vector2.ZERO,
+		viewport_dp := Vector2.ZERO, dt: float = 0.0) -> void:
+	if not _tilting:
+		begin_tilt()
+	var before := pitch_bias
+	_pitch_raw = clampf(_pitch_raw + delta_units, -2.0, 2.0)
+	_sync_pitch()
+	if dt > 0.0:
+		var instantaneous := (pitch_bias - before) / dt
+		_pitch_track_v = _pitch_track_v * (1.0 - velocity_ema_alpha) \
+				+ instantaneous * velocity_ema_alpha
+	if viewport_dp.x > 0.0 and _panning:
+		_lock_anchor(centroid_dp, viewport_dp)
+
+
+## Release. Hands the tracked velocity to the axis momentum, or springs back into
+## range when the band was stretched past an end; a release inside the detent
+## lands on AUTO, which is how a player finds the middle without aiming for it.
+func end_tilt() -> void:
+	_tilting = false
+	var clamped := _clamp_bias(_pitch_raw)
+	if absf(_pitch_raw - clamped) > 0.000001:
+		_pitch_raw = pitch_bias
+		_pitch_spring_v = 0.0
+		_pitch_spring_active = true
+		_pitch_track_v = 0.0
+		return
+	_pitch_rubber = false
+	_pitch_raw = pitch_bias
+	if absf(pitch_bias) <= pitch_detent_units and absf(_pitch_track_v) < pitch_momentum_min_start:
+		clear_pitch_bias()
+		return
+	if absf(_pitch_track_v) >= pitch_momentum_min_start:
+		_pitch_momentum_v = clampf(_pitch_track_v, -pitch_momentum_max, pitch_momentum_max)
+		_pitch_momentum_active = true
+		_pitch_rubber = true
+	else:
+		_pitch_momentum_v = 0.0
+	_pitch_track_v = 0.0
+
+
+## The double-action: snap home to AUTO with an ease. `reduce_motion` (A8) cuts
+## instead of easing, like every other tween in this file.
+func reset_pitch(reduce_motion: bool = false) -> void:
+	_tilting = false
+	_pitch_momentum_active = false
+	_pitch_spring_active = false
+	_pitch_momentum_v = 0.0
+	_pitch_track_v = 0.0
+	if reduce_motion or pitch_auto or is_zero_approx(pitch_bias) \
+			or pitch_reset_tween_s <= 0.0:
+		clear_pitch_bias()
+		return
+	_pitch_reset_from = pitch_bias
+	_pitch_reset_elapsed = 0.0
+	_pitch_reset_active = true
+	_pitch_rubber = false
+
+
+## The reachable bias range at this zoom is always the full [-1, 1]; the band
+## `reach()` closes is in DEGREES, not in slider travel, so the thumb keeps its
+## whole column and the *angle* it buys shrinks. `_clamp_bias` therefore only
+## enforces the ends.
+func _clamp_bias(b: float) -> float:
+	return clampf(b, -1.0, 1.0)
+
+
+func _sync_pitch() -> void:
+	var clamped := _clamp_bias(_pitch_raw)
+	pitch_bias = clamped + (_pitch_raw - clamped) * pitch_rubber_band \
+			if _pitch_rubber else clamped
+	if not _pitch_rubber:
+		_pitch_raw = pitch_bias
+
+
+func _advance_pitch(dt: float) -> void:
+	if _pitch_reset_active:
+		_pitch_reset_elapsed += dt
+		var x := 1.0 if pitch_reset_tween_s <= 0.0 \
+				else clampf(_pitch_reset_elapsed / pitch_reset_tween_s, 0.0, 1.0)
+		pitch_bias = _pitch_reset_from * (1.0 - CameraState._ease_out_cubic(x))
+		_pitch_raw = pitch_bias
+		if x >= 1.0:
+			clear_pitch_bias()
+		return
+	if _pitch_momentum_active:
+		# Same closed form as the pan's fling: Δx = v·(1 − e^{−K·dt}) / K, exact
+		# and identical at any frame rate.
+		var decay := exp(-pitch_momentum_decay_k * dt)
+		_pitch_raw += _pitch_momentum_v * ((1.0 - decay) / pitch_momentum_decay_k)
+		_pitch_momentum_v *= decay
+		_sync_pitch()
+		var out_of_band := absf(_pitch_raw - _clamp_bias(_pitch_raw)) > 0.000001
+		if absf(_pitch_momentum_v) < pitch_momentum_stop or out_of_band:
+			_pitch_momentum_active = false
+			_pitch_momentum_v = 0.0
+			if out_of_band:
+				_pitch_raw = pitch_bias
+				_pitch_spring_v = 0.0
+				_pitch_spring_active = true
+			else:
+				_pitch_rubber = false
+				_pitch_raw = pitch_bias
+				if absf(pitch_bias) <= pitch_detent_units:
+					clear_pitch_bias()
+		return
+	if _pitch_spring_active:
+		# Critically damped, closed form — `_advance_spring`'s scalar twin.
+		var target := _clamp_bias(pitch_bias)
+		var a := pitch_bias - target
+		var b := _pitch_spring_v + a * pitch_spring_omega
+		var decay := exp(-pitch_spring_omega * dt)
+		var x := (a + b * dt) * decay
+		_pitch_spring_v = (b - (a + b * dt) * pitch_spring_omega) * decay
+		pitch_bias = target + x
+		_pitch_raw = pitch_bias
+		if absf(pitch_bias - target) < 0.0005 and absf(_pitch_spring_v) < 0.005:
+			pitch_bias = target
+			_pitch_raw = target
+			_pitch_spring_v = 0.0
+			_pitch_spring_active = false
+			_pitch_rubber = false
+			if absf(pitch_bias) <= pitch_detent_units:
+				clear_pitch_bias()
+
+
+# ---------------------------------------------------------------------------
 # Camera jumps and follow
 # ---------------------------------------------------------------------------
 
@@ -669,6 +1105,11 @@ func advance(dt: float) -> void:
 	if dt <= 0.0:
 		return
 	_advance_yaw_snap(dt)
+	# The pitch axis is independent of the focus terms below — a fling can coast
+	# while the tilt settles, and a jump does not cancel the angle the player
+	# chose to look at the city from.
+	if not _tilting:
+		_advance_pitch(dt)
 	if _jump_active:
 		_advance_jump(dt)
 		return
@@ -793,17 +1234,36 @@ static func _ease_in_out_cubic(x: float) -> float:
 # Persistence — the `ui.camera` block of doc 12 §3.2
 # ---------------------------------------------------------------------------
 
+## D-9's camera keys. `pitch_mode` is the word, `pitch_bias` the number, and both
+## are written because a save that carried only the number could not tell AUTO
+## apart from a bias that happened to land on the curve — and AUTO is a promise
+## about what happens when the player zooms next, not a value.
 func to_dict() -> Dictionary:
 	return {
 		"focus_x": focus.x,
 		"focus_z": focus.z,
 		"zoom_t": zoom_t,
 		"yaw_deg": rad_to_deg(yaw),
+		"pitch_mode": "auto" if pitch_auto else "manual",
+		"pitch_bias": 0.0 if pitch_auto else pitch_bias,
 	}
 
 
+## Restore, through validation. A save may not resurrect an angle outside the
+## authored band: `pitch_bias` is clamped to [-1, 1] and re-composed against the
+## band *this build* authors, so retuning `pitch_manual_min_deg` retunes every
+## restored city rather than leaving old saves pointing somewhere the data no
+## longer allows. An unknown or missing `pitch_mode` reads as AUTO (§3.2's
+## "missing keys take defaults").
 func from_dict(d: Dictionary) -> void:
 	set_zoom_t(UIConfig.get_num(d, "zoom_t", default_zoom_t))
 	yaw = wrapf(deg_to_rad(UIConfig.get_num(d, "yaw_deg", default_yaw_deg)), -PI, PI)
 	set_focus(Vector3(UIConfig.get_num(d, "focus_x", focus.x), 0.0,
 			UIConfig.get_num(d, "focus_z", focus.z)))
+	clear_pitch_bias()
+	if str(d.get("pitch_mode", "auto")) != "manual":
+		return
+	var bias := UIConfig.get_num(d, "pitch_bias", 0.0)
+	if not is_finite(bias):
+		return
+	set_pitch_bias(clampf(bias, -1.0, 1.0))

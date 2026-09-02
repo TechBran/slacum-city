@@ -4395,3 +4395,324 @@ again on the finished tree, and all four are byte-identical to 9e3f5d3's —
 starter `a27da24aaf6e9663…` / `7745cb25e55ff65c…`, bench `7c99720f5ff14553…` /
 `d8e8889681b23297…`. Doc 92 §46 has the geometry and the sweep table; doc 91
 §14.5 the two rows; doc 12 §2.22 the screen and its deferral rows.
+
+---
+
+## 43. WAVE 17 — the camera learns to look up: a sky nobody had judged, a band the budget bought, and a ray that is allowed to miss (binding)
+
+**The user's directive (2026-08-21), verbatim:** *"we need to be able to look up
+at the buildings — the high rise is really tall; if you zoom in you're pretty
+much just looking at the ground… on the right side of the screen a tilt slider,
+vertically: all the way down, all the way up, the slider sits in the middle, up
+and down motion."* The 2026-09-01 visual audit added the warning that goes with
+it: *"what the horizon will expose once the camera tilts: an 896 m floating slab
+with a hard cliff."*
+
+**What shipped:** a manual pitch axis on `ui/camera_state.gd` composing with the
+zoom curve (never replacing it); a two-finger tilt arm in
+`ui/gesture_recognizer.gd` + `game/touch_input.gd`; the right-edge column
+`ui/tilt_slider.gd` (doc 12 §2.23) with two preview states; a procedural gradient
+sky (`game/shaders/sky_gradient.gdshader`, installed by
+`game/environment_controller.gd`) whose horizon haze is the day/night FOG tint;
+`--tilt=`, `--yaw=`, `--sky=` and `t<zoom_t>` poses in `tools/profile_frame.gd`;
+and the `camera` block of the `ui` save section (doc 12 D-68). **Nothing in
+`sim/` moved and no baseline moved** — `profile_sim --hash-only` on both cities,
+before and after, all four digests byte-identical (§43.5).
+
+### RR-114 — A sky nobody could see had never been judged (docs 11 §2.8, 12 §2.23, 93 §AC1)
+
+Before this wave **no reachable camera pose could see the sky at all**: the pitch
+curve's shallowest angle is 34°, the vertical FOV is 40°, so the top of the frame
+sat 14° *below* the horizon at every zoom. The `ProceduralSkyMaterial` the scene
+built was therefore an AMBIENT SOURCE wearing a sky's name — its colours reached
+the frame only through `ambient_light_source = SKY`, and nobody had ever looked
+at it, because looking at it was not possible.
+
+The manual floor makes the top of the frame 8° *above* the horizon (12° of pitch
+minus 20° of half-FOV) and the sky becomes the backdrop the skyline is read
+against. What ships is a gradient and nothing else — zenith → horizon in one
+`pow`, a haze band at the horizon, a ground hemisphere below it; no sun disc, no
+scattering, no clouds, no half-res pass (the Fold is fragment-bound, doc 11
+§2.13). **The one non-obvious decision is that the haze band is the FOG tint, not
+the sky's own horizon colour** (`DayNightController.sky_colors`): the far city
+fogs toward `fog_tint` and the sky draws toward the same colour, so the two meet
+on one value and the world's edge is seated rather than cut.
+
+**Measured, and this is the audit's P1 answered with a number.** Worst case as
+specified — pitch floor, far zoom, camera at the city's own corner looking out
+over the edge (`--tilt=12 --hour=13 --yaw=225 --focus=60,60 --poses=z2`) — the
+sky→ground seam at the world edge is a **single-pixel step of at most 17/255 in
+any channel**, sampled at three columns: sky `(118,131,145)` → ground
+`(111,123,128)`, max step 15 / 16 / 17 at x = 120 / 300 / 1700. There is no
+cliff, and there is no black band: what a grazing camera sees past the last block
+is haze in the same colour the far roofs are already wearing. **Re-open:** a
+capture on the Fold's OLED where the same step may band; and the `ground_darken`
+sliver, which is authored (0.45) rather than measured.
+
+The sky's own cost is **not resolvable on the dev GPU** and is published that way
+rather than claimed: `--sky=gradient` against `--sky=procedural`, same city, same
+hour, same poses, gives **identical draw calls in all six cells** and `rs gpu`
+differences of −0.13 … +0.87 ms, inside a run-to-run spread of ±0.9 ms measured
+by repeating one cell (Z1 day floor: 3.955 then 2.187 ms with nothing changed).
+Per preset, which is what doc 11 §2.8 asks for: the sky is drawn on the pixels
+the city does not cover and the presets do not change that — the floor pose measures
+the **same** 363 / 333 / 258 dc+ui at performance, balanced and high (doc 92 §47.5),
+so the sky's per-preset cost is the same unresolvable GPU term three times.
+The term that should matter on a tile GPU is `sky.radiance_size` **64** against
+the engine's default 256 — the ambient cubemap is re-convolved whenever a colour
+moves, which is every frame, because the hour is. That one is **unmeasured here
+and owed on the device**.
+
+### RR-115 — The band composes; the far end of it was bought with a measurement (docs 11 §2.5/§2.13, 12 §2.23, 92 §47, 93 §AC2)
+
+`pitch = lerp(curve(t), target, |bias| · reach(t))`, `target` = 12° up / 78° down.
+Three properties fall out and all three are tested: bias 0 is **exactly**
+`pitch_deg_at(t)` at every zoom (so a city that never touches the slider is the
+camera it was before Wave 17, to the bit); the middle detent is honest, because
+the value it holds is the curve's own answer rather than a number that resembles
+it; and the ZOOM still owns the default, which is what keeps AUTO meaningful
+after a pinch.
+
+`reach_up_far = 0.76` is the wave's one bought number. At `reach 1.0` the Z2 floor
+is 12°, the camera sits `420·sin 12° = 87 m` up — **under doc 11 §2.5's 150 m NEAR
+boundary** — and four chunks re-tier into the near/shadow pass: **330 dc (355 with
+the UI's 25) against a 320 budget**, day, bench city. At 0.76 the floor is 24°,
+the camera is `420·sin 24° = 171 m` up, past the boundary, NEAR back to zero:
+**233 dc (258)**. The slider's track visibly compresses to match — the *angle* the
+ends buy shrinks, never the travel, so the thumb keeps its whole column.
+
+**What the same measurement refuses to hide:** the near and mid floors bust the
+budget by day — Z0 **338 dc (363)**, Z1 **308 (333)** — and no band that shows the
+horizon can avoid it, because the cliff is not at the floor: it is at
+**pitch = half the FOV = 20°**, the angle at which the horizon enters the top of
+the frame and the whole city enters the frustum behind it. Measured either side of
+it at Z0, day: 26° → 235 dc, 20° → 332 dc. Narrowing the near reach far enough to
+stay under 320 would put the floor at ~26°, which is a camera that cannot see the
+sky — i.e. it would retract the feature to protect a proxy for it. The excess is
+published (doc 92 §47), the mechanism is named, and the runtime guard is doc 11
+§2.13's governor. **Re-open:** a Fold capture at a Z0/Z1 floor pose whose p95
+passes 16.7 ms at balanced lowers `pitch_reach_up_near`, or grows the row a mid
+knot; the fix with the best prize, if one is wanted, is a pitch-coupled
+`far_cull_m` — at the floor the far city is already fogged to within 7 % of the
+sky, so the geometry paying for those draw calls is geometry nobody can see.
+
+### RR-116 — A ground ray that misses is an ANSWER, not a zero (docs 12 §2.16/§2.23, 93 §AC3, 91 A91-D-51)
+
+`CameraState.screen_to_ground()` has always answered a `Vector3` for every screen
+point, because until this wave every screen point *had* a ground point: the guard
+that clamps a near-parallel ray to `dist · 4` was a numerical safety net, not a
+semantic one. **At the manual floor the top of the frame is sky**, and the old
+signature can only answer that tap with a point 1,680 m away that the player did
+not touch — which would place a building, draw a road, or deselect, on a tap
+aimed at a cloud.
+
+`ground_hit()` is therefore the honest read: `{hit, position, reason, distance}`
+with `reason` ∈ `ground` / `above_horizon` / `grazing`. `screen_to_ground()`
+survives verbatim on top of it, because **pan, pinch and the anchor lock want *a*
+point and the old behaviour is exactly right for them** — a pan that stopped
+tracking because the anchor left the ground would be a worse bug than the one
+being fixed. The callers that must not act on a guess are all in `game/main.gd`
+and are handed over as snippets (§43.4): the tap path, the world-drag router and
+the mouse-hover ghost. `m_per_dp()` is **pitch-invariant by construction** (screen
+right is parallel to the ground at every pitch), so §2.21's 48 dp tap radius keeps
+its metres through a tilt; the anisotropy is entirely in the other axis and is
+published as `m_per_dp_depth()` = `m_per_dp / sin(pitch)` (×1.79 at the 34° curve
+floor, ×4.81 at 12°), which means a tilt can only make a radius pick MORE
+conservative on screen, never less.
+
+### RR-117 — A headless mount has no layout, so a test that asserts a laid-out rect is asserting the harness (docs 12 §2.18, 91 A91-D-52, 93 §AC4)
+
+Two families of test arrived with this wave's salvaged work and **both were
+green-looking and wrong**; they are recorded because the shapes recur.
+
+**(a) A `force_layout()` box is not a laid-out deck.** `SafeArea` is a
+`MarginContainer`, and a container only fits children that are
+`is_visible_in_tree()`; a `CanvasLayer` mounted into a headless `SceneTree` root
+is not, so **every rect in the deck is 0×0** and every right-anchored control sits
+at `x = −width`. This is why `tests/test_ui_audit.gd` walks `walk_frame_free()`
+and why every other `force_layout()` caller in the repository asserts *minimum
+sizes* and never positions. The tilt slider's geometry tests now assert what the
+control itself sets — anchors, offsets, the band solve, the stand-down — and the
+laid-out rect is checked where a real viewport exists: `tools/ui_preview.gd
+--screen=all --audit --strict`, which is clean at 412×915, 640×340 and
+360×800 @130 % with large targets, exit 0 in all three.
+
+**(b) A synthetic two-finger stroke fed as one jump is not a gesture.** Godot
+delivers each finger's drag as its own event, so the recogniser always sees an
+intermediate sample with one finger moved and the other not. Fed as a single
+40 dp jump per finger, that intermediate is an **11.3° bearing change across a
+200 dp span** and engages the (pre-Wave-17) TWIST arm before the tilt table is
+ever consulted — a fact about the feed, not about a device, where 60 fps at
+600 dp/s is a 10 dp step and 2.9°. Every discrimination test now walks in
+device-sized steps (`_walk_pair`). The residual finding, filed and not fixed
+because the twist arm is not this lane's: **at ≥ 28 dp of inter-event finger lag
+(≈ 1,700 dp/s at 60 fps, or 850 dp/s at 30) a two-finger vertical stroke can trip
+the 8° twist deadzone before the tilt engages**, and the city yaws where the
+player meant to tilt. The tilt's own thresholds are already half the twist's
+precisely so it cannot steal a rotation; the reverse direction wants a per-finger
+travel test rather than a centroid one.
+
+### 43.4 The `game/main.gd` snippets (the lead's file — not edited on this branch)
+
+Four hand-overs, each anchored on a line quoted from `game/main.gd` at this fork.
+Numbers 1–3 are the RR-116 callers; number 4 is what binds the slider and the
+save block. Without number 4 the column never appears and `capture_ui_state()`
+writes no `camera` key — the deck degrades to exactly its pre-Wave-17 behaviour,
+which is the intended failure mode.
+
+1. **The tap** — anchor `var ground := camera_state.screen_to_ground(screen_pos, viewport_size)`
+   in `_handle_tap()`; replace with the typed read and bail on a miss.
+2. **The world-drag router** — anchor `var ground := camera_state.screen_to_ground(position,`
+   in `_route_world_drag()`; a `PHASE_BEGIN` above the horizon declines the
+   stroke, which hands it back to the camera as a pan.
+3. **The hover ghost** — anchor `build_sheet.move_ghost(camera_state.screen_to_ground(`
+   in `_unhandled_input()`; a hover above the horizon leaves the ghost where it
+   was rather than teleporting it to the far clamp.
+4. **The camera binding** — anchor `save_service.ui_provider = root.capture_ui_state`
+   in the UI wiring; `root.bind_camera(camera_state)` goes immediately before it,
+   so the block exists before the first save and before the resume restore two
+   lines below.
+
+The four, in full. Applied to `game/main.gd` on this branch for a parse check
+(`godot --headless --check-only --script game/main.gd`, exit 0) and then reverted
+with `git checkout -- game/main.gd`, so the file this branch ships is the lead's,
+byte for byte.
+
+**1 — `_handle_tap()`.** Replaces the `screen_to_ground` line and the two
+branches under it:
+
+```gdscript
+	# Wave 17 (doc 12 §2.23 / report 98 RR-116): at the manual pitch floor the top
+	# of the frame is sky, and `screen_to_ground` would answer a tap up there with
+	# the far clamp — a point the player never touched.
+	var answer := camera_state.ground_hit(screen_pos, viewport_size)
+	var ground: Vector3 = answer["position"]
+	var on_ground := bool(answer["hit"])
+	if build_sheet != null and build_sheet.is_placing():
+		if on_ground:
+			build_sheet.move_ghost(ground)
+		return
+	if build_sheet != null and build_sheet.is_open():
+		# A tap that reached the world missed every sheet control: dismiss.
+		build_sheet.close()
+		return
+	if not on_ground:
+		# Not a pick, and not a deselect either: the selection survives a tap on
+		# the sky, because the player did not touch anything to change it.
+		return
+```
+
+**2 — `_route_world_drag()`.** Replaces the `screen_to_ground` line and the two
+`match` arms that use it:
+
+```gdscript
+	var answer := camera_state.ground_hit(position,
+			Vector2(get_viewport().get_visible_rect().size))
+	var ground: Vector3 = answer["position"]
+	var on_ground := bool(answer["hit"])
+	match phase:
+		TouchInput.PHASE_BEGIN:
+			# Wave 17 (RR-116): a run that begins above the horizon has no first
+			# tile. Declining hands the stroke back to the camera as a pan.
+			return on_ground and build_sheet.begin_world_drag(ground)
+		TouchInput.PHASE_UPDATE:
+			# Mid-run the stroke stays the tool's: a finger that crosses the
+			# horizon holds the last valid tile rather than dropping the run.
+			return build_sheet.update_world_drag(ground) if on_ground \
+					else build_sheet.is_drag_drawing()
+```
+
+**3 — `_unhandled_input()`, the mouse path drag and the hover ghost.** Two
+replacements in the `InputEventMouseMotion` branch:
+
+```gdscript
+			if build_sheet != null and build_sheet.is_placing_path():
+				# Wave 17 (RR-116): both ends of this stroke have to be ON the
+				# ground — the anchor (the press point) and this sample.
+				var from_hit := camera_state.ground_hit(_tap_origin, viewport_size)
+				var at_hit := camera_state.ground_hit(motion.position, viewport_size)
+				if bool(from_hit["hit"]) and bool(at_hit["hit"]):
+					if not build_sheet.is_drag_drawing():
+						build_sheet.begin_world_drag(from_hit["position"])
+					build_sheet.update_world_drag(at_hit["position"])
+```
+
+```gdscript
+		elif build_sheet != null and build_sheet.is_placing():
+			# Hover keeps the ghost under the pointer; the verdict is recomputed
+			# on every move (§2.7) and only PLACE ever commits it. Wave 17
+			# (RR-116): a hover above the horizon leaves the ghost where it is.
+			var hover := camera_state.ground_hit(motion.position, viewport_size)
+			if bool(hover["hit"]):
+				build_sheet.move_ghost(hover["position"])
+```
+
+**4 — the camera binding.** One insertion, immediately above
+`save_service.ui_provider = root.capture_ui_state`:
+
+```gdscript
+	# Wave 17 (doc 12 §2.23 / D-68): the deck's one handle on the camera — the
+	# tilt slider's axis, and the `camera` block of the `ui` save section. Bound
+	# BEFORE the provider below, so the first save and the resume restore two
+	# lines down both see it.
+	root.bind_camera(camera_state)
+```
+
+**What needs no snippet, and why.** The gradient sky ships with no `main.gd`
+change at all: `_build_environment()` already hands its `Environment` to
+`EnvironmentController.setup()`, which is where the swap happens — so the sky is
+live the moment this branch merges, while the slider and the save block wait for
+number 4. The two-finger tilt likewise needs nothing: `TouchInput` already holds
+the `CameraState` and reads the recogniser's new kinds. `set_tap_radius_from(
+camera_state.m_per_dp(viewport_size))` is **deliberately untouched** — that
+figure is pitch-invariant (§2.23 item 4), so §2.21's 48 dp radius keeps its
+metres through a tilt with no change here. The coach-mark projector
+(`_coach_world_rect` / `_coach_world_point`) is also correct as written: it
+already returns `null` on `behind`, and a GROUND point never projects above the
+horizon at any pitch, so the tilt cannot invent a mark that is not there.
+
+### 43.5 What this cost, and the four digests
+
+`profile_sim --hash-only`, both cities, at this branch's tip: starter coarse
+`a27da24aaf6e9663…` / fine `7745cb25e55ff65c…`, bench coarse `7c99720f5ff14553…`
+/ fine `d8e8889681b23297…` — **byte-identical to the fork**, which is what
+separates "the shell learned to look up" from "the game changed".
+
+### 43.6 Re-running every number in this section
+
+A fresh worktree has no `.godot`, and **every** command below fails with a parse
+error until the project has been imported once — the class-name cache is what
+`class_name CameraState` resolves through:
+
+```
+~/.local/bin/godot --headless --import
+```
+
+Then, in order of what they prove:
+
+```
+~/.local/bin/godot --headless --script tools/profile_sim.gd -- --hash-only
+~/.local/bin/godot --headless --script tools/profile_sim.gd -- --hash-only \
+    --city=res://tests/fixtures/bench_city.json
+~/.local/bin/godot --headless --script tests/run_tests.gd > suite.log 2>&1; echo $?
+python3 tools/check_doc_refs.py
+~/.local/bin/godot --path . tools/ui_preview.tscn -- --screen=all \
+    --size=412x915 --audit --strict            # and 640x340, 794x924, 880x400, 1280x720
+~/.local/bin/godot --path . tools/ui_preview.tscn -- --screen=all --size=360x800 \
+    --text-scale=1.3 --large-targets --audit --strict
+~/.local/bin/godot --path . -s res://tools/profile_frame.gd -- --tilt=12 --hour=13
+~/.local/bin/godot --path . -s res://tools/profile_frame.gd -- --tilt=12 --hour=13 \
+    --yaw=225 --focus=60,60 --poses=z2 --warmup=30 --frames=30 --shots=/tmp/edge
+```
+
+The last one is the world-edge picture RR-114 measures; the 17/255 figure is a
+per-channel `max` over the seam rows of three columns of `/tmp/edge/z2.png`.
+`--tilt=` accepts `auto` and any angle: the band clamps it per zoom and the table
+row prints the angle that was actually rendered, which is why doc 92 §47's Z1 and
+Z2 floor rows read 16.3° and 24.0° rather than 12°.
+
+**Deviation, stated:** every code comment, data row and test in this lane names
+**doc 12 §2.23**, not §2.22. §2.22 is claimed 47 times by the in-flight
+construction-queue branch of the same wave (S16, the construction queue), and doc
+91 §14.5's fifth collision is exactly this: two lanes, one free number. The tilt
+slider took the next one.

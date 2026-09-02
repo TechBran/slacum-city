@@ -15,6 +15,13 @@ extends Node
 @export var world_environment_path: NodePath
 @export var sun_path: NodePath
 @export var moon_path: NodePath
+## Wave 17 (doc 11 §2.8): swap whatever sky material the scene built for the
+## gradient sky shader in `setup()`. Off, the engine's `ProceduralSkyMaterial`
+## is driven exactly as before — `tools/profile_frame.gd --sky=procedural` is
+## the A/B, and a scene that hands over a `ShaderMaterial` of its own keeps it.
+@export var use_gradient_sky: bool = true
+
+const SKY_SHADER_PATH := "res://game/shaders/sky_gradient.gdshader"
 
 var controller := DayNightController.new()
 var far_cull_m: float = 1200.0
@@ -37,6 +44,10 @@ var flash: float = 0.0
 
 var _environment: Environment
 var _sky_material: ProceduralSkyMaterial
+## The gradient sky (Wave 17). Exactly one of `_sky_material` / `_sky_shader`
+## is non-null after `setup()`, and `apply()` writes whichever it is.
+var _sky_shader: ShaderMaterial
+var _sky_ground_darken: float = 0.45
 var _sun: DirectionalLight3D
 var _moon: DirectionalLight3D
 var _sky_energy_base: float = 1.0
@@ -65,8 +76,7 @@ func setup(render_data: Dictionary) -> void:
 	var presets: Dictionary = render_data.get("presets", {})
 	far_cull_m = float(presets.get("balanced", {}).get("far_cull_m", 1200.0))
 	_environment = (get_node(world_environment_path) as WorldEnvironment).environment
-	_sky_material = _environment.sky.sky_material as ProceduralSkyMaterial
-	_sky_energy_base = _sky_material.energy_multiplier
+	_install_sky(render_data)
 	_sun = get_node(sun_path) as DirectionalLight3D
 	if moon_path != NodePath("") and has_node(moon_path):
 		_moon = get_node(moon_path) as DirectionalLight3D
@@ -90,6 +100,63 @@ func setup(render_data: Dictionary) -> void:
 	_lightning_ambient_gain = float(weather.get("lightning_ambient_gain", 4.0))
 	_lightning_dir_energy = float(weather.get("lightning_dir_energy", 2.4))
 	_lightning_fog_blend = float(weather.get("lightning_fog_blend", 0.7))
+
+
+## THE SKY (Wave 17, doc 11 §2.8). The scene hands over an `Environment` whose
+## sky carries the engine's `ProceduralSkyMaterial`; with `use_gradient_sky` the
+## material is replaced here by `sky_gradient.gdshader`, so neither
+## `game/main.gd` nor the harness has to know which sky is in force. The shader's
+## shape knobs and the radiance size are `data/render.json.sky`'s; the colours
+## are written per frame in `apply()` from the day/night sample.
+##
+## `radiance_size` matters more than the shader: `ambient_light_source` is SKY,
+## so the whole scene's ambient is a convolution of this cubemap, regenerated
+## whenever a colour moves — every frame, because the hour does. A 256 map (the
+## engine default) is 6 × 256² texels of gradient per frame for an ambient term
+## that a 64 map reproduces without banding.
+func _install_sky(render_data: Dictionary) -> void:
+	var sky_cfg: Dictionary = render_data.get("sky", {})
+	_sky_ground_darken = clampf(float(sky_cfg.get("ground_darken", 0.45)), 0.0, 1.0)
+	var sky: Sky = _environment.sky
+	if sky == null:
+		sky = Sky.new()
+		_environment.sky = sky
+	var existing_shader := sky.sky_material as ShaderMaterial
+	if use_gradient_sky and existing_shader == null:
+		var shader: Shader = load(SKY_SHADER_PATH)
+		if shader != null:
+			existing_shader = ShaderMaterial.new()
+			existing_shader.shader = shader
+			sky.sky_material = existing_shader
+	if existing_shader != null and use_gradient_sky:
+		_sky_shader = existing_shader
+		_sky_material = null
+		_sky_energy_base = 1.0
+		for key: String in ["zenith_curve", "haze_height", "haze_strength", "ground_falloff"]:
+			if sky_cfg.has(key):
+				_sky_shader.set_shader_parameter(key, float(sky_cfg[key]))
+		sky.radiance_size = _radiance_size_for(int(sky_cfg.get("radiance_size", 64)))
+	else:
+		_sky_shader = null
+		_sky_material = sky.sky_material as ProceduralSkyMaterial
+		if _sky_material == null:
+			_sky_material = ProceduralSkyMaterial.new()
+			sky.sky_material = _sky_material
+		_sky_energy_base = _sky_material.energy_multiplier
+
+
+static func _radiance_size_for(texels: int) -> Sky.RadianceSize:
+	if texels <= 32:
+		return Sky.RADIANCE_SIZE_32
+	if texels <= 64:
+		return Sky.RADIANCE_SIZE_64
+	if texels <= 128:
+		return Sky.RADIANCE_SIZE_128
+	return Sky.RADIANCE_SIZE_256
+
+
+func uses_gradient_sky() -> bool:
+	return _sky_shader != null
 
 
 ## Doc 11 §2.9's renderer-side weather state. `profile` is "" for clear skies,
@@ -119,15 +186,27 @@ func apply(hour: float, delta: float) -> void:
 	# ---------------------------------------------------------------- sky
 	var sky_top := _storm_shift(s["sky_top"])
 	var sky_horizon := _storm_shift(s["sky_horizon"])
-	_sky_material.sky_top_color = sky_top
-	_sky_material.sky_horizon_color = sky_horizon
-	# Ground hemisphere must meet the sky at the SAME horizon color or the
-	# seam reads as a dark band across the skyline from any elevated camera.
-	_sky_material.ground_horizon_color = sky_horizon
-	_sky_material.ground_bottom_color = sky_horizon.darkened(0.55)
 	# §2.9's sky pop: the stroke lights the CLOUD DECK, so the sky brightens
 	# and the façades catch it a frame later through ambient + sun.
-	_sky_material.energy_multiplier = _sky_energy_base * (1.0 + _lightning_sky_gain * flash)
+	var sky_energy := _sky_energy_base * (1.0 + _lightning_sky_gain * flash)
+	if _sky_shader != null:
+		# Wave 17's gradient: the haze and the ground hemisphere are the FOG
+		# tint, storm-shifted like the rest, so the far city and the sky meet on
+		# one colour at the horizon (`DayNightController.sky_colors`).
+		var colors := controller.sky_colors(s, _sky_ground_darken)
+		_sky_shader.set_shader_parameter("zenith_color", sky_top)
+		_sky_shader.set_shader_parameter("horizon_color", sky_horizon)
+		_sky_shader.set_shader_parameter("haze_color", _storm_shift(colors["haze"]))
+		_sky_shader.set_shader_parameter("ground_color", _storm_shift(colors["ground"]))
+		_sky_shader.set_shader_parameter("energy", sky_energy)
+	else:
+		_sky_material.sky_top_color = sky_top
+		_sky_material.sky_horizon_color = sky_horizon
+		# Ground hemisphere must meet the sky at the SAME horizon color or the
+		# seam reads as a dark band across the skyline from any elevated camera.
+		_sky_material.ground_horizon_color = sky_horizon
+		_sky_material.ground_bottom_color = sky_horizon.darkened(0.55)
+		_sky_material.energy_multiplier = sky_energy
 	# ---------------------------------------------------------------- sun
 	var elevation: float = s["sun_elevation_deg"]
 	var azimuth: float = s["sun_azimuth_deg"]

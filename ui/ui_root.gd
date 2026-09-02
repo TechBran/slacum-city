@@ -178,6 +178,14 @@ var title_screen: TitleScreen
 ## S15. Its own layer, above the coach layer: a half-restored city is not a city,
 ## and nothing — not even the tutorial — draws over the veil that says so.
 var loading_veil: LoadingVeil
+## Wave 17 (doc 12 §2.23): the right-edge tilt slider, on `HUDLayer`. It drives
+## `camera_state`'s manual pitch axis and nothing else; the shell binds the
+## camera with `bind_camera()` and the slider stays hidden until it has one.
+var tilt_slider: TiltSlider
+## The camera this deck talks to — the tilt slider's axis, and (doc 12 §3.2 /
+## D-9's moment) the `camera` block of the `ui` save section. Null in a mount
+## that never bound one, in which case neither exists.
+var camera_state: CameraState
 
 ## Doc 12 §2.14's one vibrator. Owned here because three screens fire cues and
 ## two settings rows gate them; a per-screen instance would be a per-screen
@@ -307,6 +315,7 @@ func _bind_nodes() -> void:
 	land_panel = safe_area.get_node_or_null("PanelLayer/LandPanel") as LandPanel
 	title_screen = safe_area.get_node_or_null("TitleLayer/TitleScreen") as TitleScreen
 	loading_veil = safe_area.get_node_or_null("VeilLayer/LoadingVeil") as LoadingVeil
+	tilt_slider = safe_area.get_node_or_null("HUDLayer/TiltSlider") as TiltSlider
 	toast_view = get_node_or_null("ToastLayer/ToastAnchor/Toast") as ToastView
 
 
@@ -376,6 +385,10 @@ func bring_up_screens() -> void:
 	# lets the other 53 preview states measure the deck rather than measure this.
 	if loading_veil != null and loading_veil.config == null:
 		loading_veil.setup(config)
+	# Wave 17's tilt slider comes up with the config and NO camera, like the build
+	# sheet comes up with no controller: it stays hidden until `bind_camera()`.
+	if tilt_slider != null and tilt_slider.config == null:
+		tilt_slider.setup(config, camera_state)
 	# §2.14: the two screens that fire their own cues share the root's one gate.
 	# The other three cues (dispatch, escalate, relight) are events rather than
 	# taps, so they are fired here, where the sim batch arrives.
@@ -490,9 +503,85 @@ func _on_settings_changed(key: StringName, value: Variant) -> void:
 	# one `game/main.gd` branch later.
 	if haptics != null:
 		haptics.apply_setting(key, value)
+	if tilt_slider != null:
+		tilt_slider.apply_setting(key, value)
 	_write_dispatch_policy(key, value)
 	_write_road_policy(key, value)
 	settings_changed.emit(key, value)
+
+
+# ---------------------------------------------------------------------------
+# The camera (doc 12 §2.16 / §2.23 / §3.2) — the deck's one handle on it
+# ---------------------------------------------------------------------------
+
+## The shell's `CameraState`. Two things hang off it and neither exists without
+## it: the tilt slider (its axis) and the `camera` block of the `ui` save
+## section. `game/main.gd` calls this once, after the camera is built; a headless
+## mount that wants the slider on screen binds a fresh `CameraState`.
+func bind_camera(camera: CameraState) -> void:
+	camera_state = camera
+	if tilt_slider != null:
+		if tilt_slider.config == null:
+			tilt_slider.setup(config, camera)
+		else:
+			tilt_slider.bind_camera(camera)
+	solve_tilt_slider()
+
+
+## Doc 12 §2.23's band: the right-edge column lives between the TOP BAR's bottom
+## and the corner rail's reservation (the drawer handle keeps the edge from
+## `drawer_handle_center_from_bottom_dp ± handle_h/2`), never in the whole safe
+## area — a naively centred column lands on the handle at every landscape box.
+## Both ends are MEASURED off the laid-out tree where one exists (the bar wraps
+## to two rows on a near-square display, D-51) and fall back to the authored
+## numbers where it does not. The slider yields the edge outright while any
+## `PanelLayer` surface is up: those are right-edge panels, and a thumb drawn
+## under a sheet is a target nobody can reach.
+##
+## Cheap and idempotent like `solve_rail_stack()`: a few reads and a `set_band`
+## whose offsets early-return when nothing moved.
+func solve_tilt_slider() -> void:
+	if tilt_slider == null or config == null or safe_area == null:
+		return
+	var layout := config.layout()
+	var gap := UIConfig.get_num(layout, "touch_spacing_min_dp", 8.0)
+	var touch_min := float(ThemeBuilder.touch_min_dp(config, _text_scale(), _larger_targets()))
+	var host_h := safe_area.size.y
+	if host_h <= 1.0:
+		host_h = float(_safe_area_rect().size.y)
+	# The top bar's FIRST row's bottom edge, not the whole bar's: §2.4's solver
+	# reserves the clock column on every wrapped row (`avail = W − clock_w −
+	# 16`), so the right edge under row 0 is free even when the chips wrap to a
+	# second row (D-51) — and on a 400 dp landscape box that difference is the
+	# whole column. The clock chip is as tall as its row, so it is the measure.
+	var top := UIConfig.get_num(layout, "top_bar_h_dp", 48.0)
+	var top_bar := hud.get_node_or_null("TopBar") as Control if hud != null else null
+	if top_bar != null and top_bar.visible:
+		var row_h := top
+		var clock := hud.clock_chip() if hud.has_method("clock_chip") else null
+		if clock != null and clock.visible:
+			row_h = maxf(row_h, maxf(clock.size.y, clock.get_combined_minimum_size().y))
+		top = maxf(top, top_bar.offset_top + row_h)
+	# The corner rail's reservation: the drawer handle's authored slot, or its
+	# laid-out top when the tree has one (A3 may have grown it).
+	var handle_raw: Variant = layout.get("drawer_handle_dp", [44, 160])
+	var handle_h := float((handle_raw as Array)[1]) \
+			if handle_raw is Array and (handle_raw as Array).size() >= 2 else 160.0
+	var reserve := UIConfig.get_num(layout, "drawer_handle_center_from_bottom_dp", 140.0) \
+			+ maxf(handle_h, touch_min) * 0.5
+	if incident_drawer != null and incident_drawer.has_method("corner_rail_entry"):
+		var entry: Dictionary = incident_drawer.call("corner_rail_entry")
+		var handle := entry.get("control") as Control
+		if handle != null and handle.size.y > 1.0 and handle.position.y > 1.0:
+			reserve = maxf(reserve, host_h - handle.position.y)
+	tilt_slider.set_band(top + gap, host_h - reserve - gap)
+	var yielding := false
+	if panel_layer != null and panel_layer.visible:
+		for child in panel_layer.get_children():
+			if child.has_method("is_open") and bool(child.call("is_open")):
+				yielding = true
+				break
+	tilt_slider.set_yielding(yielding)
 
 
 # ---------------------------------------------------------------------------
@@ -1748,6 +1837,7 @@ func _on_build_placement_committed(result: Dictionary) -> void:
 func _process(_delta: float) -> void:
 	_update_ui_coverage()
 	solve_rail_stack()
+	solve_tilt_slider()
 	if onboarding == null or not onboarding.is_active() or build_sheet == null:
 		return
 	var category := build_sheet.active_category() if build_sheet.is_open() else ""
@@ -1882,8 +1972,10 @@ func present_away_report(input: Dictionary) -> String:
 
 
 ## The `ui` save section this scaffold owns today (doc 12 §3.2): the overlay
-## choice, the settings block and — since S12 landed — the onboarding block. The
-## camera and selection keys join them as those systems land.
+## choice, the settings block, the onboarding block, the street tally and —
+## since Wave 17 (D-68) — the `camera` block: `{focus_x, focus_z, zoom_t,
+## yaw_deg, pitch_mode, pitch_bias}`, written only when a camera is bound. The
+## selection key joins them as that system lands.
 func capture_ui_state() -> Dictionary:
 	var out: Dictionary = {"section_version": 1}
 	if overlay_rail != null:
@@ -1894,12 +1986,24 @@ func capture_ui_state() -> Dictionary:
 		out["onboarding"] = onboarding.capture_state()
 	if street != null:
 		out["street"] = street.capture_state()
+	if camera_state != null:
+		out["camera"] = camera_state.to_dict()
 	return out
 
 
 func restore_ui_state(state: Dictionary) -> void:
 	if overlay_rail != null:
 		overlay_rail.restore_state(state)
+	# The camera comes back where the player left it, pitch included — through
+	# `CameraState.from_dict`, which validates the band (§3.2: a save may not
+	# resurrect an angle the data no longer allows). A save with no block, or a
+	# mount with no camera, leaves the camera exactly where it is.
+	if camera_state != null:
+		var block: Variant = state.get("camera", {})
+		if block is Dictionary and not (block as Dictionary).is_empty():
+			camera_state.from_dict(block)
+			if tilt_slider != null:
+				tilt_slider.bind_camera(camera_state)
 	if settings_sheet != null:
 		var block: Variant = state.get("settings", {})
 		settings_sheet.apply_state(block if block is Dictionary else {})
@@ -1978,6 +2082,7 @@ func _recompute_layout() -> void:
 		current_breakpoint = bp
 		breakpoint_changed.emit(bp)
 	solve_rail_stack()
+	solve_tilt_slider()
 
 
 ## Replaces `DisplayServer.get_display_safe_area()` when it is set. A desktop
@@ -2010,8 +2115,10 @@ func force_layout(box: Vector2i) -> void:
 	safe_area.size = Vector2(box)
 	UIRoot.sort_tree(safe_area)
 	# After the sort, not before: the rail's pitch is a MEASUREMENT, and a
-	# headless mount has none until the tree has been laid out once.
+	# headless mount has none until the tree has been laid out once. The tilt
+	# slider's band is measured the same way (the top bar's wrapped height).
 	solve_rail_stack()
+	solve_tilt_slider()
 	UIRoot.sort_tree(safe_area)
 
 

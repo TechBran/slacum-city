@@ -10,7 +10,8 @@ extends RefCounted
 ##      "time": float (milliseconds)}
 ## Gestures out: an Array of dictionaries, each with a `kind` StringName —
 ## `tap`, `double_tap`, `long_press`, `two_finger_tap`, `pan_begin`, `pan`,
-## `pan_end`, `multi_begin`, `pinch_begin`, `pinch`, `twist_begin`, `twist`.
+## `pan_end`, `multi_begin`, `pinch_begin`, `pinch`, `twist_begin`, `twist`,
+## `tilt_begin`, `tilt`, `tilt_end` (Wave 17's two-finger tilt, see `_emit_multi`).
 ##
 ## The chart (doc 12 §2.16):
 ##     IDLE ─(down f0)→ PENDING ─┬ up ≤220ms & ≤8dp        → TAP / DOUBLE_TAP
@@ -19,6 +20,8 @@ extends RefCounted
 ##                               └ down f1 (≤80ms suppresses the pending tap) → MULTI
 ##     PAN  ─(down f1)→ MULTI ; ─(all up)→ pan_end
 ##     MULTI: centroid pan always; + ZOOM past 24 dp span change; + ROTATE past 8°
+##            or TILT: 24 dp of vertical centroid travel with the span and bearing
+##            still inside half of those deadzones — takes the stroke (Wave 17)
 ##            ─(one finger up)→ PAN, re-anchored to the remaining finger, no jump
 ##
 ## Two deliberate readings of the chart, both required by doc 12 §7:
@@ -47,6 +50,12 @@ const KIND_PINCH_BEGIN := &"pinch_begin"
 const KIND_PINCH := &"pinch"
 const KIND_TWIST_BEGIN := &"twist_begin"
 const KIND_TWIST := &"twist"
+const KIND_TILT_BEGIN := &"tilt_begin"
+const KIND_TILT := &"tilt"
+## The tilt stroke is over — the fingers lifted, or one of them did and the
+## survivor is a PAN again. Emitted so the camera's `end_tilt()` (momentum, the
+## rubber band's spring, the detent) runs exactly once per stroke.
+const KIND_TILT_END := &"tilt_end"
 
 # --- Thresholds (data/ui.json.gestures_dp_ms) --------------------------------
 var tap_slop_dp := 8.0
@@ -59,6 +68,11 @@ var drag_start_slop_dp := 8.0
 var pinch_span_slop_dp := 24.0
 var twist_deadzone_deg := 8.0
 var multi_suppress_ms := 80.0
+## The tilt arm (Wave 17). See `_emit_multi` for the discrimination table.
+var tilt_engage_dp := 24.0
+var tilt_span_tolerance_dp := 12.0
+var tilt_bearing_tolerance_deg := 4.0
+var tilt_dominance_ratio := 1.5
 
 # --- Observable results ------------------------------------------------------
 var state: State = State.IDLE
@@ -92,6 +106,9 @@ var _angle_prev_deg := 0.0
 var _zoom_engaged := false
 var _twist_engaged := false
 var _twist_cumulative_deg := 0.0
+var _tilt_engaged := false
+var _tilt_prev_centroid := Vector2.ZERO
+var _tilt_cumulative_dp := 0.0
 
 
 func _init(gestures_cfg: Dictionary = {}) -> void:
@@ -106,6 +123,13 @@ func _init(gestures_cfg: Dictionary = {}) -> void:
 		pinch_span_slop_dp = UIConfig.get_num(gestures_cfg, "pinch_span_slop_dp", pinch_span_slop_dp)
 		twist_deadzone_deg = UIConfig.get_num(gestures_cfg, "twist_deadzone_deg", twist_deadzone_deg)
 		multi_suppress_ms = UIConfig.get_num(gestures_cfg, "multi_suppress_ms", multi_suppress_ms)
+		tilt_engage_dp = UIConfig.get_num(gestures_cfg, "tilt_engage_dp", tilt_engage_dp)
+		tilt_span_tolerance_dp = UIConfig.get_num(gestures_cfg, "tilt_span_tolerance_dp",
+				tilt_span_tolerance_dp)
+		tilt_bearing_tolerance_deg = UIConfig.get_num(gestures_cfg,
+				"tilt_bearing_tolerance_deg", tilt_bearing_tolerance_deg)
+		tilt_dominance_ratio = UIConfig.get_num(gestures_cfg, "tilt_dominance_ratio",
+				tilt_dominance_ratio)
 
 
 static func load_from_file() -> GestureRecognizer:
@@ -124,6 +148,7 @@ func reset() -> void:
 	_has_last_tap = false
 	_zoom_engaged = false
 	_twist_engaged = false
+	_tilt_engaged = false
 	_release_velocity = Vector2.ZERO
 
 
@@ -149,6 +174,15 @@ func is_twist_engaged() -> bool:
 
 func twist_total_deg() -> float:
 	return _twist_cumulative_deg
+
+
+func is_tilt_engaged() -> bool:
+	return _tilt_engaged
+
+
+## Vertical centroid travel since the tilt engaged, in dp, screen-down positive.
+func tilt_total_dp() -> float:
+	return _tilt_cumulative_dp
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +257,10 @@ func _enter_multi(time: float, out: Array[Dictionary]) -> void:
 	_zoom_engaged = false
 	_twist_engaged = false
 	_twist_cumulative_deg = 0.0
+	_tilt_engaged = false
+	_tilt_cumulative_dp = 0.0
 	_multi_start_centroid = _centroid()
+	_tilt_prev_centroid = _multi_start_centroid
 	_emit(out, KIND_MULTI_BEGIN, {
 		"centroid": _multi_start_centroid, "span": _span_engage,
 		"angle_deg": _angle_engage_deg, "simultaneous": _multi_simultaneous, "time": time,
@@ -280,13 +317,34 @@ func _emit_pan(out: Array[Dictionary], pos: Vector2, prev: Vector2, time: float)
 	_emit(out, KIND_PAN, {"position": pos, "delta": pos - prev, "time": time}, &"pan")
 
 
-## Per-frame order inside MULTI is twist → zoom → centroid pan, matching the
-## camera's twist → zoom → anchor-lock ordering, so the anchored ground point
-## stays under the fingers however many sub-gestures are live.
+## Per-frame order inside MULTI is tilt → twist → zoom → centroid pan, matching
+## the camera's tilt/twist → zoom → anchor-lock ordering, so the anchored ground
+## point stays under the fingers however many sub-gestures are live.
+##
+## **The discrimination table (Wave 17).** Three two-finger readings share one
+## MULTI, and the first two compose while the third excludes them:
+##
+## | reading | engages on | composes with |
+## |---|---|---|
+## | ZOOM (pinch) | `\|span − span_engage\| > 24 dp` | twist, centroid pan |
+## | ROTATE (twist) | `\|Δbearing\| > 8°` | zoom, centroid pan |
+## | TILT | `\|Δcentroid.y\| > 24 dp` **and** `\|Δspan\| ≤ 12 dp` **and** `\|Δbearing\| ≤ 4°` **and** `\|Δy\| ≥ 1.5·\|Δx\|` **and** neither zoom nor twist has engaged | nothing — it takes the stroke |
+##
+## Tilt is the odd one out because its raw signal — the centroid translating — is
+## the *same* signal centroid-pan reads. Two readings of one motion cannot both
+## be right, so the tilt takes the whole stroke once it engages and never
+## engages after a pinch or a twist has. Its own thresholds are deliberately
+## HALF the other two's deadzones: a gesture already drifting toward a pinch
+## (span past 12 dp) or a twist (bearing past 4°) is disqualified before it can
+## steal them, which is what makes "neither pinch nor twist regresses" a property
+## of the table rather than a hope.
 func _emit_multi(out: Array[Dictionary], time: float) -> void:
 	var centroid := _centroid()
 	var span := _span()
 	var angle := _angle_deg()
+
+	if _try_tilt(out, centroid, span, angle, time):
+		return
 
 	if not _twist_engaged and absf(_wrap_deg(angle - _angle_engage_deg)) > twist_deadzone_deg:
 		_twist_engaged = true
@@ -321,6 +379,46 @@ func _emit_multi(out: Array[Dictionary], time: float) -> void:
 			"time": time}, &"pan")
 
 
+## The TILT arm of the table above. Returns true when the tilt owns this sample,
+## in which case `_emit_multi` emits nothing else for it.
+##
+## Engage is decided against the ENGAGE-time geometry, not the previous sample:
+## a stroke that has drifted 12 dp of span or 4° of bearing since the fingers
+## went down is on its way to being a pinch or a twist and is refused for good
+## — `_zoom_engaged` / `_twist_engaged` then take it on a later sample, exactly
+## as they would have without this arm. The engage travel itself is absorbed
+## (re-based at `_tilt_prev_centroid`) the way the pinch absorbs its 24 dp
+## deadzone: the first sample of a tilt reports the delta since engage, never
+## the 24 dp it took to decide.
+func _try_tilt(out: Array[Dictionary], centroid: Vector2, span: float,
+		angle: float, time: float) -> bool:
+	if not _tilt_engaged:
+		if _zoom_engaged or _twist_engaged:
+			return false
+		var travel := centroid - _multi_start_centroid
+		if absf(travel.y) <= tilt_engage_dp:
+			return false
+		if absf(span - _span_engage) > tilt_span_tolerance_dp:
+			return false
+		if absf(_wrap_deg(angle - _angle_engage_deg)) > tilt_bearing_tolerance_deg:
+			return false
+		if absf(travel.y) < tilt_dominance_ratio * absf(travel.x):
+			return false
+		_tilt_engaged = true
+		_tilt_prev_centroid = centroid
+		_tilt_cumulative_dp = 0.0
+		_emit(out, KIND_TILT_BEGIN, {"centroid": centroid, "time": time}, &"tilt")
+		return true
+	var delta := centroid - _tilt_prev_centroid
+	_tilt_prev_centroid = centroid
+	_tilt_cumulative_dp += delta.y
+	_emit(out, KIND_TILT, {
+		"centroid": centroid, "delta": delta, "delta_dp": delta.y,
+		"cumulative_dp": _tilt_cumulative_dp, "time": time,
+	}, &"tilt")
+	return true
+
+
 func _on_up(index: int, pos: Vector2, time: float, out: Array[Dictionary]) -> void:
 	var f: Dictionary = _fingers.get(index, {})
 	if not f.is_empty():
@@ -341,6 +439,13 @@ func _on_up(index: int, pos: Vector2, time: float, out: Array[Dictionary]) -> vo
 			# waiting for the second finger would land after the MULTI → PAN hop.
 			if _is_two_finger_tap(time):
 				_emit(out, KIND_TWO_FINGER_TAP, {"position": _multi_start_centroid, "time": time})
+			# The tilt ends with the FIRST finger up, before the PAN hop below:
+			# the survivor is a pan again, and a tilt that outlived its second
+			# finger would keep leaning the pitch off a single-finger drag.
+			if _tilt_engaged:
+				_tilt_engaged = false
+				_emit(out, KIND_TILT_END, {"cumulative_dp": _tilt_cumulative_dp,
+						"time": time}, &"tilt")
 			_forget(index)
 			if _order.size() == 1:
 				# Re-anchor on the surviving finger; the camera must not jump.
@@ -384,7 +489,7 @@ func _resolve_pending(f: Dictionary, pos: Vector2, time: float, out: Array[Dicti
 
 
 func _is_two_finger_tap(time: float) -> bool:
-	if not _multi_simultaneous or _zoom_engaged or _twist_engaged:
+	if not _multi_simultaneous or _zoom_engaged or _twist_engaged or _tilt_engaged:
 		return false
 	if _order.size() != 2:
 		return false
@@ -397,6 +502,7 @@ func _end_pan(out: Array[Dictionary], time: float) -> void:
 	state = State.IDLE
 	_zoom_engaged = false
 	_twist_engaged = false
+	_tilt_engaged = false
 	_emit(out, KIND_PAN_END, {"velocity_dp_s": _release_velocity, "time": time}, &"pan")
 
 

@@ -1636,11 +1636,22 @@ exact rather than lenient.
 ### 16.3 The census, and why it is an assertion
 
 `test_19` asserts ten raw counts — 132 building meshes, 133 manifest rows,
-8 façade pages, 4 roof, 2 ground, 3 prop, 1 vehicle atlas, 15 shaders, 5 vehicle
-types, 1 deferred body. It is the only test in the file that asserts a *number*
-rather than a *rule*, and it is deliberate: **doc 91 §16 quotes those totals, so
-the matrix cannot grow without a wave coming here and moving them, and this
-document's headline cannot go stale without a red suite.**
+8 façade pages, 4 roof, 2 ground, 3 prop, 1 vehicle atlas, **19** shaders, 5
+vehicle types, 1 deferred body. It is the only test in the file that asserts a
+*number* rather than a *rule*, and it is deliberate: **doc 91 §16 quotes those
+totals, so the matrix cannot grow without a wave coming here and moving them, and
+this document's headline cannot go stale without a red suite.**
+
+> **The claim above was half true, and Wave 17 measured which half** (2026-09-01,
+> the camera-tilt fork). The gate asserts `SHADERS.size()`, i.e. the *test's* own
+> list — so adding a shader does redden the suite, but the sentence in THIS
+> document is not what turns red: this paragraph still read **15 shaders** while
+> the gate had said 18 since doc 11 §2.17's street-life pass. The number is now
+> 19 (`sky_gradient.gdshader`, report 98 RR-114) and the drift is recorded rather
+> than quietly corrected, because it is the same lesson as §20.4's: a document
+> sentence that quotes a number is only as good as the run that last re-derived
+> it. `~/.local/bin/godot --headless --script tests/run_tests.gd -- --file=test_asset_completeness.gd`
+> is that run.
 
 ### 16.4 What the sweep found on its first run
 
@@ -2866,3 +2877,11 @@ carries the mechanics argument.
 |---|---|---|---|---|
 | **A91-D-85** | **Core Design Rule 2 is void on a cold launch.** The only `CatchUpPlanner` call in the shell was inside `Main._on_app_resumed`, reachable only from `AndroidLifecycle.resumed`, i.e. only from `NOTIFICATION_APPLICATION_RESUMED` — which a *dead process never receives*. `AndroidLifecycle._paused_wall` was an in-memory member, `-1.0` at every boot and never seeded from disk, and `manifest.active.real_unix` / `manifest.max_seen_unix` were written by two files and read by none. So after a process death, a swipe-away, a low-memory kill, or the title door's CONTINUE — the *default* player launch (doc 12 §2.19) — the city resumed **frozen at the pause**: no catch-up, no veil, no away report. | **P0** | ✅ **CLOSED 2026-09-01** | Doc 13 §3.2's `save.android.last_pause` is written by `game/android/lifecycle_stamp.gd`; `AndroidLifecycle.arm_cold_resume()` seeds a synthetic pause from the loaded generation and `pump_resume()` hands it to the **same** `resumed` signal. `tests/test_cold_launch_catchup.gd` — 10 tests, and the load-bearing one compares a cold-loaded city against an in-process-resumed one on `state_hash()` over the same absence. Report 98 §48 RR-132. |
 | **A91-D-86** | **A second absence on top of an unfinished catch-up was drained synchronously, and the pause between them ate the away report's 'before'.** `_on_app_resumed` answered an in-flight cursor with `_catchup_cursor.run()` — up to 720 coarse steps in one frame, `720 × 165 ms = 119 s` of blocked main thread on the benchmark city, an ANR twenty-four times over. `_on_paused` meanwhile committed a mid-absence city and overwrote `_before_snapshot` with it, so the report diffed the city against a half-advanced version of itself; and the unspent plan was lost outright if the process then died. Separately, doc 08 §2.12's NORMATIVE `max_coarse_hours` rule was implemented nowhere (`grep -rn max_coarse_hours sim/ game/ data/` → 0 hits) and `ui/away_model.gd`'s `capped_text` had never been reachable, because the shell's report dictionary carried no `capped` key. | **P1** | ✅ **CLOSED 2026-09-01** | The second absence is queued (`AndroidLifecycle.defer_absence`), the pause is tagged `pause_mid_catchup` and carries the unspent segments in `last_pause.unfinished`, and `CatchUpPlanner.plan_after` puts them back in front of the next plan. `max_coarse_hours` is derived, shipped in `data/persistence.json` and applied in `plan()`; both capped surfaces now quote the cap that was applied. `tests/test_catchup_resume.gd` (13) + `tests/test_catchup_clamp.gd` (15). Report 98 §48 RR-133 / RR-134, doc 93 §AG. |
+
+#### New rows, Wave 17 (2026-09-01) — `A91-D-51`, `A91-D-52` (the camera-tilt fork)
+
+| # | Severity | Defect |
+|---|---|---|
+| **A91-D-51** | **Medium** ✅ **CLOSED 2026-09-01 (this wave)** | **A screen-to-ground query that cannot fail, in a camera that was about to be able to look at the sky.** `CameraState.screen_to_ground()` answered a `Vector3` for *every* screen point; its only defence against a ray that never meets `y = 0` was doc 12 §2.16's guard, which clamps the parameter to `dist · 4` and returns the clamped point **as if it were a hit**. That was correct-by-accident for four waves: the pitch curve's shallowest angle is 34° against a 40° FOV, so the top of the frame sat 14° below the horizon and no screen point lacked a ground point. The manual pitch axis makes the top of the frame 8° *above* the horizon at the floor, and the same call then answers a tap on the sky with a point up to 1,680 m away — enough to place a building, draw a road run, or deselect the player's selection, from a tap that touched nothing. Closed by report 98 RR-116: `ground_hit()` returns `{hit, position, reason ∈ ground\|above_horizon\|grazing, distance}`, `screen_to_ground()` stays for the pan/pinch/anchor callers that always wanted the clamped point, and the three callers that must not act on a guess are handed to `game/main.gd` as snippets (98 §43.4). **The shape to look for elsewhere: a total function whose totality is a property of the current camera, not of the maths.** |
+| **A91-D-52** | **Medium** ✅ **CLOSED 2026-09-01 (this wave)** | **Two families of UI/gesture test that a headless harness cannot actually run, both green on arrival.** (a) `UIRoot.force_layout(box)` was being read as "the deck is now laid out at `box`", and geometry was asserted against laid-out rects; in a headless mount `SafeArea`'s `MarginContainer` never fits its children (they are not `is_visible_in_tree()`), so **every rect in the deck is 0×0** and every right-anchored control reports `x = −width`. A test written that way passes or fails on the harness, not on the code — and the repository already knew this, which is why `tests/test_ui_audit.gd` walks `walk_frame_free()` and every other `force_layout` caller asserts minimum sizes only. (b) A two-finger gesture fed as one jump per finger presents an intermediate sample (one finger moved, one not) whose bearing change is **11.3° across a 200 dp span** — enough to engage the twist arm before the arm under test is consulted. Closed by report 98 RR-117: the geometry tests assert what the control sets and the audit sweep photographs the rect; the gesture tests walk in device-sized steps. |
+
