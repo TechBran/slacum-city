@@ -475,7 +475,13 @@ func _build_economy(view: Dictionary) -> void:
 	# roster walk and a preview per candidate, and there is no reason to pay for
 	# it on the three tabs that do not draw it (99-PA PA-31).
 	_refresh_upkeep()
-	_content.add_child(_build_upkeep(model.upkeep_view()))
+	# A band with nothing behind it is not drawn at all. Before the first hour
+	# settles there are no per-building rows and no quote, and a confident
+	# `Tax lost to wear $0` sitting above a ledger that says *"No hour has
+	# settled yet"* would be the screen contradicting itself (A14).
+	var upkeep := model.upkeep_view()
+	if bool(upkeep["has_data"]):
+		_content.add_child(_build_upkeep(upkeep))
 	var ledger: Dictionary = view["budget"]
 	if not bool(ledger["has_data"]):
 		_content.add_child(UIWidgets.label("NoData",

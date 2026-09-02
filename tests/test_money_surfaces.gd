@@ -444,6 +444,32 @@ func test_pa33_the_daily_cap_is_a_budget_and_it_is_respected() -> void:
 			"the surface can say `N of M`, not quietly do less than it offered")
 
 
+func test_pa33_a_zero_budget_means_spend_nothing_never_spend_freely() -> void:
+	# The worst possible reading of a budget dial, closed on purpose: a cap of 0
+	# buys nothing, and a policy standing at a rung with no money behind it is
+	# reported as OFF rather than as a policy the city does not have.
+	var sim := _sim()
+	_wear_city_stock(sim, 0.40)
+	var nothing: Dictionary = sim.cmd_repair_all_worn(true, -1.0, 0)["payload"]
+	assert_eq(int(nothing["count"]), 0, "a zero budget buys nothing")
+	assert_eq(int(nothing["cost"]), 0)
+	assert_true(int(nothing["candidates"]) > 0, "though the work existed")
+	assert_true(bool(sim.cmd_set_building_repair_policy(
+			sim.building_repair_thresholds()[2], 0)["ok"]))
+	assert_false(bool(sim.building_repair_policy()["enabled"]),
+			"a threshold with no budget behind it is not a live policy")
+	var runs := 0
+	var repairs := 0
+	sim.bus.observer = func(event: Dictionary) -> void:
+		match StringName(String(event.get("type", &""))):
+			&"building_repair_policy_ran": runs += 1
+			&"repair_started_sim": repairs += 1
+	sim.advance_coarse_hours(HOURS_PER_DAY)
+	sim.bus.observer = Callable()
+	assert_eq(runs, 0, "and the daily pass does not run")
+	assert_eq(repairs, 0, "…nor is one repair bought")
+
+
 func test_pa33_the_pass_is_worst_first_and_deterministic() -> void:
 	var sim := _sim()
 	var ids: Array[String] = []
@@ -605,6 +631,23 @@ func test_upkeep_nothing_to_repair_is_words_not_a_dead_button() -> void:
 	var band := model.upkeep_view()
 	assert_false(bool(band["has_repair"]))
 	assert_ne(str(band["none_text"]), "", "A14: it says so in words")
+
+
+func test_upkeep_an_unfed_band_has_no_data_and_is_not_drawn() -> void:
+	# Before the first hour settles there are no per-building rows and no quote.
+	# A confident `Tax lost to wear $0` above a ledger that says "No hour has
+	# settled yet" is the screen contradicting itself, so the band is absent
+	# rather than zeroed (A14). `CityDashboard._build_economy` gates on this flag.
+	var model := DashboardModel.load_from_files()
+	assert_false(bool(model.upkeep_view()["has_data"]),
+			"nothing fed, nothing drawn")
+	# A bound shell on a HEALTHY city is a different case and does draw: the
+	# quote is `{count: 0, …}`, which is data, and "nothing needs repair" is
+	# worth saying.
+	model.feed_upkeep({"quote": {"count": 0, "cost": 0}, "policy": {},
+			"balance": 1000.0})
+	assert_true(bool(model.upkeep_view()["has_data"]),
+			"a real quote of zero is still a reading")
 
 
 func test_upkeep_a_live_policy_states_its_two_dials() -> void:

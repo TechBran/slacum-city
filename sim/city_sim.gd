@@ -4402,7 +4402,10 @@ func building_repair_policy() -> Dictionary:
 		"building_repair_daily_cap": building_repair_daily_cap,
 		"thresholds": building_repair_thresholds(),
 		"daily_caps": econ_curves.building_repair().get("AUTO_REPAIR_DAILY_CAPS", []),
-		"enabled": building_repair_threshold > 0.0,
+		# BOTH dials, because a threshold with a zero budget buys nothing and a
+		# surface that called that "on" would be describing a policy the city
+		# does not have.
+		"enabled": building_repair_threshold > 0.0 and building_repair_daily_cap > 0,
 	}
 
 
@@ -4426,9 +4429,15 @@ func cmd_repair_all_worn(preview: bool = false, threshold: float = -1.0,
 			# The button is offered on a city with the policy OFF, and the band it
 			# offers is doc 02's Good line — "worn" in the panel's own words.
 			band = _band_value("band_good")
-	var cap := daily_cap if daily_cap >= 0 else building_repair_daily_cap
-	if cap <= 0 and daily_cap < 0:
-		cap = int(treasury.balance)  # a hand-pressed batch is capped by the purse
+	var cap := daily_cap
+	if cap < 0:
+		# Not supplied: this is the HAND-PRESSED batch, and it is bounded by the
+		# purse rather than by the automatic policy's daily budget — a budget is
+		# a rule for the pass that runs unattended, and the player pressing the
+		# button is not unattended. It still has to be bounded by SOMETHING,
+		# because every quote below is taken against the same unspent balance and
+		# ten individually affordable repairs are not an affordable batch.
+		cap = maxi(0, int(treasury.balance))
 	return _repair_worn_pass(band, cap, preview)
 
 
@@ -4471,7 +4480,10 @@ func _repair_worn_pass(threshold: float, daily_cap: int, preview: bool) -> Dicti
 			skipped += 1
 			continue
 		var cost := int((quote.get("payload", {}) as Dictionary).get("cost", 0))
-		if daily_cap > 0 and spent + cost > daily_cap:
+		# `daily_cap <= 0` means SPEND NOTHING, never "spend without limit". A
+		# budget dial at zero that quietly meant unlimited would be the worst
+		# reading of any control in the game.
+		if spent + cost > daily_cap:
 			skipped += 1
 			continue
 		if not preview:
@@ -4492,7 +4504,7 @@ func _repair_worn_pass(threshold: float, daily_cap: int, preview: bool) -> Dicti
 ## whole feature hash-neutral: with `building_repair_threshold` at 0.0 the pass
 ## selects no candidate, takes no quote and moves no dollar.
 func run_building_repair_policy() -> void:
-	if building_repair_threshold <= 0.0:
+	if building_repair_threshold <= 0.0 or building_repair_daily_cap <= 0:
 		return
 	var result: Dictionary = _repair_worn_pass(building_repair_threshold,
 			building_repair_daily_cap, false)

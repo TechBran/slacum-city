@@ -318,8 +318,16 @@ static func _add_row(into: Dictionary, row: Dictionary) -> void:
 
 ## The repair family: the events a player would read as "something needs
 ## fixing", and what each one is offered to.
+##
+## Wave 18 adds the two the instrument could not see when it was written
+## (99-PA PA-31/PA-33): `building_condition_band` is the ONLY cue a served
+## private building now has — doc 93 §Y1's floor means it can never reach
+## `building_damaged` — so an instrument that measured what reaches a surface
+## while ignoring it was measuring the wrong roster. `building_repair_policy_ran`
+## is the auto-repair pass's receipt.
 const REPAIR_FAMILY := ["building_damaged", "building_destroyed", "repair_started_sim",
-		"building_repaired", "road_condition_critical", "road_collapsed",
+		"building_repaired", "building_condition_band", "building_repair_policy_ran",
+		"road_condition_critical", "road_collapsed",
 		"water_main_break", "water_freeze_break", "water_node_failed", "water_pump_failed",
 		"water_treatment_failed", "water_source_failed", "water_repair_completed",
 		"PowerComponentFailed", "PowerComponentTripped"]

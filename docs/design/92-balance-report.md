@@ -8140,7 +8140,7 @@ generator had already corrected and the shipped file had not.
 
 *Every figure the Economy tab's two new surfaces print, and the re-measurement
 that made 99-PA PA-33 smaller than it was filed. Instruments only — this lane
-authored one balance number (§52.3) and moved no hash (§52.4).*
+authored one balance number (§52.3) and moved no hash (§52.5).*
 
 ### 52.1 The taper, per game-day
 
@@ -8207,7 +8207,31 @@ whole bill on an ordinary day and throttles a catch-up spike over two or three
 days instead of emptying the treasury in one — which is what a budget is for. It
 is inert at the shipped default (the policy is `off`), so it enters no gate.
 
-### 52.4 Hashes
+### 52.4 What now reaches a surface, on the arc a player plays
+
+`tools/measure_repair_burden.gd` gained the two event names it could not have
+known about (`building_condition_band`, `building_repair_policy_ran`) — an
+instrument that measures *what reaches a surface* while ignoring the only cue a
+served private building has left was measuring the wrong roster. Same command,
+same seed, before and after Lane S:
+
+| reading, 45 game-days curriculum | fork `d0d114f` | after Lane S |
+|---|---|---|
+| doc 12 event-log rows | 205 | **665** (+460) |
+| doc 08 P3 offers | 6 | **466** (+460) |
+| doc 08 P2 offers | 199 | 199 |
+| repair-family events reaching **no** surface | 118 | 118 |
+| played-arc `state_hash` | `09c2b55f5b81ded9…` | **`09c2b55f5b81ded9…`** |
+
+The 118 that still reach nothing are **not** this lane's: they are
+`road_condition_critical` and the power trip family, and they belong to lanes I
+and C. What moved is the 460 moments a player now has a line for and had none of
+before.
+
+The last row is the strongest hash statement this lane can make: **45 game-days
+of real play, through the real command layer, bit-identical to the fork.**
+
+### 52.5 Hashes
 
 Recorded at the fork and re-taken at delivery, both cities, both passes:
 
