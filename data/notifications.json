@@ -137,6 +137,9 @@
 			"cooldown_minutes": 720, "deeplink": "dashboard", "state": "warning"},
 		"buildings_poor": {"class": "P3_routine", "severity": 2, "aggregate": true,
 			"cooldown_minutes": 360, "deeplink": "dashboard", "state": "critical"},
+		"_comment_auto_repair": "99-PA PA-33 / doc 98 RR-150. The receipt for a policy the player switched on: it spent their money while they were not looking, so it says how much. `aggregate` is false because the event ALREADY carries its own count — one pass, one line — and `@count` would overwrite a real number with 1. It cannot fire at the shipped default, which is manual.",
+		"auto_repair_ran": {"class": "P3_routine", "severity": 1, "aggregate": false,
+			"cooldown_minutes": 720, "deeplink": "dashboard", "state": "normal"},
 		"_comment_assistance": "99-PA PA-32 / doc 98 RR-148. ONE row for EIGHT sim events, and that is the whole design: `assistance_stepped` fires once per game-day for the seven days doc 03 §2.5a's founding grant tapers, and only the LAST one — `final: true`, the day the subsidy is gone and the city starts paying its own departments and fleet — is worth a notification. The other seven are doc 12 event-log rows and nothing else (data/ui.json.event_log.events), because a push a day for a week about a number that is going down on a published schedule is the notification budget spent on a thing the player cannot act on. P3 for the same reason: it is a fact to find, not an emergency.",
 		"assistance_ended": {"class": "P3_routine", "severity": 1, "aggregate": false,
 			"cooldown_minutes": 1440, "deeplink": "budget", "state": "warning"},
@@ -263,6 +266,8 @@
 		{"type": "building_condition_band", "match": {"band": "poor"},
 			"notify_id": "buildings_poor", "key": "building",
 			"coalesce_by": "notify_id", "args": {"count": "@count", "time": "@time"}},
+		{"type": "building_repair_policy_ran", "notify_id": "auto_repair_ran",
+			"args": {"count": "count", "amount": "@money:cost", "time": "@time"}},
 
 		{"_comment": "Progression (doc 02). `city_level_changed` carries `from`/`to`, NOT `level` — the stand-in table read `level` and quietly rendered an empty title against the real event while passing its own fixture. Likewise `block_ready` carries `block`, not `block_id`. Both are fixed here against the emit sites in sim/population/progression_system.gd and sim/world/development_controller.gd."},
 		{"type": "city_level_changed", "notify_id": "city_level_up", "args": {"level": "to"}},

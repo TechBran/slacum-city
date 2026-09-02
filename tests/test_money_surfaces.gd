@@ -330,3 +330,186 @@ func test_pa31_both_bands_reach_a_surface() -> void:
 						% notify_id)
 		assert_true(bool(notify.event_def(notify_id).get("aggregate", false)),
 				"%s aggregates: one line that says how many" % notify_id)
+
+
+# ===========================================================================
+# PA-33 — the city repairs what it owns
+# ===========================================================================
+
+## Wear every city-owned building down to `value` and return how many there are.
+func _wear_city_stock(sim: CitySim, value: float) -> int:
+	var n := 0
+	for id: String in sim.roster_ids():
+		var b: Building = sim.buildings[id]
+		if b.owner_maintained or b.state != &"active":
+			continue
+		b.condition = value
+		n += 1
+	return n
+
+
+func test_pa33_the_shipped_default_is_manual_and_writes_nothing() -> void:
+	# RR-150's whole second half. A city that never opens the control must be
+	# byte-identical to the Wave-17 fork, which means the pair is not in the save
+	# at all — an unconditional key would move all four profile_sim baselines for
+	# a feature that, at its default, does nothing.
+	var sim := _sim()
+	assert_almost_eq(sim.building_repair_threshold, 0.0, 1e-9, "off by default")
+	assert_eq(sim.building_repair_daily_cap, 0, "no budget by default")
+	assert_false(bool(sim.building_repair_policy()["enabled"]))
+	var policy: Dictionary = sim.capture_state()["policy"]
+	assert_false(policy.has("building_repair"),
+			"the city section carries no key until the player moves the dial")
+
+	# And with the policy on, it IS written, and it round-trips.
+	assert_true(bool(sim.cmd_set_building_repair_policy(
+			sim.building_repair_thresholds()[1], 12345)["ok"]))
+	var written: Dictionary = sim.capture_state()["policy"]
+	assert_true(written.has("building_repair"), "a moved dial is saved")
+	var restored := _sim()
+	restored.restore_state(sim.capture_state())
+	assert_almost_eq(restored.building_repair_threshold,
+			sim.building_repair_threshold, 1e-9)
+	assert_eq(restored.building_repair_daily_cap, 12345)
+
+
+func test_pa33_the_threshold_ladder_is_doc_02s_band_table() -> void:
+	var sim := _sim()
+	var ladder := sim.building_repair_thresholds()
+	assert_eq(ladder.size(), 3, "off, Worn, Good")
+	assert_almost_eq(ladder[0], 0.0, 1e-9, "rung 0 is off")
+	var sample: Building = sim.buildings[_first_city_owned(sim)]
+	assert_almost_eq(ladder[1], sample.rule("band_worn"), 1e-9,
+			"rung 1 is doc 02's band_worn, not a copy of it")
+	assert_almost_eq(ladder[2], sample.rule("band_good"), 1e-9,
+			"rung 2 is doc 02's band_good, not a copy of it")
+	# A rung the command would refuse can therefore never reach a control.
+	var refused: Dictionary = sim.cmd_set_building_repair_policy(0.73, 10000)
+	assert_false(bool(refused["ok"]))
+	assert_eq(str(refused["reason_code"]), "E_BAD_THRESHOLD")
+	assert_eq((refused["payload"] as Dictionary)["allowed"], ladder,
+			"the refusal hands back the ladder the control should be drawn from")
+	assert_almost_eq(sim.building_repair_threshold, 0.0, 1e-9,
+			"a refused move changed nothing")
+
+
+func test_pa33_repair_all_worn_never_offers_a_repair_the_city_cannot_buy() -> void:
+	var sim := _sim()
+	# Wear EVERYTHING, private stock included.
+	for id: String in sim.roster_ids():
+		(sim.buildings[id] as Building).condition = 0.50
+	var quote: Dictionary = sim.cmd_repair_all_worn(true)
+	assert_true(bool(quote["ok"]))
+	var payload: Dictionary = quote["payload"]
+	assert_true(int(payload["count"]) > 0, "there is work to buy")
+	for raw: Variant in (payload["sim_ids"] as Array):
+		var b: Building = sim.buildings[str(raw)]
+		assert_false(b.owner_maintained,
+				"%s is private — E_OWNER_MAINTAINED, so the batch never offers it"
+						% str(raw))
+	# And the quote is doc 03's, not a second sum: it equals the sum of the same
+	# previews the building panel's REPAIR button takes.
+	var by_hand := 0
+	for raw2: Variant in (payload["sim_ids"] as Array):
+		by_hand += int((sim.cmd_repair_building(str(raw2), true)["payload"]
+				as Dictionary)["cost"])
+	assert_eq(int(payload["cost"]), by_hand,
+			"the batch price is the sum of doc 03's own quotes")
+
+
+func test_pa33_a_preview_buys_nothing_and_the_commit_buys_what_it_quoted() -> void:
+	var sim := _sim()
+	_wear_city_stock(sim, 0.50)
+	var before := sim.treasury.balance
+	var quote: Dictionary = sim.cmd_repair_all_worn(true)["payload"]
+	assert_almost_eq(sim.treasury.balance, before, 1e-6, "a preview is free")
+	var done: Dictionary = sim.cmd_repair_all_worn(false)["payload"]
+	assert_eq(int(done["count"]), int(quote["count"]),
+			"the button's face and the button's effect are the same pass")
+	assert_almost_eq(sim.treasury.balance, before - float(done["cost"]), 1.0,
+			"the treasury moved by exactly what was quoted")
+
+
+func test_pa33_the_daily_cap_is_a_budget_and_it_is_respected() -> void:
+	var sim := _sim()
+	_wear_city_stock(sim, 0.40)
+	var full: Dictionary = sim.cmd_repair_all_worn(true)["payload"]
+	assert_true(int(full["count"]) >= 2, "enough candidates to cap")
+	var cap := int(full["cost"]) / 2
+	var capped: Dictionary = sim.cmd_repair_all_worn(true, -1.0, cap)["payload"]
+	assert_true(int(capped["cost"]) <= cap, "the pass stops at the budget")
+	assert_true(int(capped["count"]) < int(full["count"]),
+			"and it does less work than the uncapped pass")
+	assert_true(int(capped["skipped"]) > 0,
+			"the surface can say `N of M`, not quietly do less than it offered")
+
+
+func test_pa33_the_pass_is_worst_first_and_deterministic() -> void:
+	var sim := _sim()
+	var ids: Array[String] = []
+	for id: String in sim.roster_ids():
+		var b: Building = sim.buildings[id]
+		if not b.owner_maintained and b.state == &"active":
+			ids.append(String(id))
+	assert_true(ids.size() >= 3, "enough city stock to order")
+	# Descending condition down the roster, so worst-first is NOT roster order.
+	for index in ids.size():
+		(sim.buildings[ids[index]] as Building).condition = 0.80 - 0.05 * float(index)
+	var pass_a: Array = (sim.cmd_repair_all_worn(true)["payload"] as Dictionary)["sim_ids"]
+	var pass_b: Array = (sim.cmd_repair_all_worn(true)["payload"] as Dictionary)["sim_ids"]
+	assert_eq(pass_a, pass_b, "two previews of one city queue the same order")
+	assert_eq(str(pass_a[0]), ids[ids.size() - 1],
+			"the worst building is bought first — a fixed budget buys the repairs "
+			+ "that are costing the city the most")
+
+
+func test_pa33_the_policy_runs_once_a_game_day_and_reports_what_it_spent() -> void:
+	var sim := _sim()
+	assert_true(bool(sim.cmd_set_building_repair_policy(
+			sim.building_repair_thresholds()[2], 1000000)["ok"]))
+	_wear_city_stock(sim, 0.50)
+	var runs: Array = []
+	sim.bus.observer = func(event: Dictionary) -> void:
+		if StringName(String(event.get("type", &""))) == &"building_repair_policy_ran":
+			runs.append(event.duplicate())
+	var before := sim.treasury.balance
+	sim.advance_coarse_hours(HOURS_PER_DAY)
+	sim.bus.observer = Callable()
+	assert_eq(runs.size(), 1, "one pass per game-day, on the boundary")
+	var run: Dictionary = runs[0]
+	assert_true(int(run["count"]) > 0, "it repaired something")
+	assert_true(int(run["cost"]) > 0, "and it says what that cost")
+	assert_true(sim.treasury.balance < before,
+			"the money left the treasury, which is why the receipt exists")
+
+
+func test_pa33_a_manual_city_never_runs_the_pass() -> void:
+	var sim := _sim()
+	_wear_city_stock(sim, 0.30)
+	var runs := 0
+	sim.bus.observer = func(event: Dictionary) -> void:
+		if StringName(String(event.get("type", &""))) == &"building_repair_policy_ran":
+			runs += 1
+	sim.advance_coarse_hours(HOURS_PER_DAY * 3)
+	sim.bus.observer = Callable()
+	assert_eq(runs, 0, "the shipped default takes no quote and moves no dollar")
+
+
+func test_pa33_the_receipt_reaches_a_surface() -> void:
+	var cfg := _cfg()
+	var log_rows := 0
+	for raw: Variant in (cfg.section("event_log").get("events", []) as Array):
+		var rule: Dictionary = raw
+		if str(rule.get("type", "")) != "building_repair_policy_ran":
+			continue
+		log_rows += 1
+		var args: Dictionary = rule["args"]
+		assert_eq(str(args["count"]), "count",
+				"the row prints the pass's OWN count, not the log's @count of 1")
+	assert_eq(log_rows, 1)
+	var notify := NotificationConfig.load_from_files()
+	var bound := 0
+	for raw2: Variant in notify.bindings():
+		if str((raw2 as Dictionary).get("type", "")) == "building_repair_policy_ran":
+			bound += 1
+	assert_eq(bound, 1, "a policy that spends the player's money says so")

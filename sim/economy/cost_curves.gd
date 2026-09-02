@@ -398,6 +398,15 @@ func grants() -> Dictionary:
 	return _economy.get("grants", {})
 
 
+## The building auto-repair policy's two dials (99-PA PA-33, report 98 RR-150).
+## Doc 03 holds them because the cap is dollars (C-07) and because the pass they
+## bound spends against `repair_cost_building`; the THRESHOLD half of the block
+## authors no number at all — it names doc 02 §2.6's own band keys and `CitySim`
+## resolves them off the building's stamped rules.
+func building_repair() -> Dictionary:
+	return _economy.get("building_repair", {})
+
+
 ## Doc 03 §2.5a — the founding operating subsidy, in $/game-hour, on the settled
 ## game-day `day`. `share(day) = clamp(1 − day / FOUNDING_ASSISTANCE_DAYS, 0, 1)`,
 ## so it is the full civic bill on the founding day and exactly zero from

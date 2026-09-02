@@ -825,6 +825,18 @@
 				}
 			},
 			{
+				"_comment": "99-PA PA-33 / doc 98 RR-150. The auto-repair pass's receipt. `count` is the PAYLOAD's own number, not `@count`: one pass repaired N buildings, and the log row for that pass has to say N rather than 1.",
+				"type": "building_repair_policy_ran",
+				"category": "economy",
+				"notify_id": "auto_repair_ran",
+				"state": "normal",
+				"args": {
+					"count": "count",
+					"amount": "@money:cost",
+					"time": "@time"
+				}
+			},
+			{
 				"type": "assistance_stepped",
 				"match": {
 					"final": true
