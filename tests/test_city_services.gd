@@ -220,7 +220,11 @@ func test_a_level_up_grant_is_paid_once_per_rung() -> void:
 	var curves := _curves()
 	assert_eq(curves.level_up_grant(0), 0, "the founding level celebrates nothing")
 	assert_eq(curves.level_up_grant(1), 2500)
-	assert_eq(curves.level_up_grant(6), 83000)
+	# Rungs 5 and 6 were re-derived in Wave 17 by doc 03 §2.5a's OWN rule — half
+	# of what the next chapter asks you to buy — because rung 5's basis is an
+	# upgrade and doc 93 §Y7 re-priced the upgrade ladder (73,572 → 58,350).
+	assert_eq(curves.level_up_grant(5), 29000)
+	assert_eq(curves.level_up_grant(6), 65000)
 	assert_eq(curves.level_up_grant(7), 0,
 			"a level above the published ladder pays nothing rather than "
 			+ "extrapolating itself")

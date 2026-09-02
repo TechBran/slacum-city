@@ -7373,3 +7373,58 @@ a game-hour, which is the check that the closed form is the shipped curve and
 not a model of it. **Every rung is slower than building a fresh L1**, and level
 2's card teaches "upgrading instead of building more" — PA-46's finding, and the
 arithmetic reason note (c) is right.
+
+### 43.4 The interruption audit — every repair, condition and damage row
+
+Note (a)'s second half is *"we shouldn't have to interrupt the gameplay to repair
+buildings because nothing actually happened"*. Every authored row that could
+carry such an interruption, checked one at a time:
+
+| surface | row | before | after |
+|---|---|---|---|
+| `data/notifications.json.bindings` | any `building_damaged` / `building_repaired` / condition-band row | **none exists** | unchanged — there was never a push to silence |
+| `data/notifications.json.events` | any repair notify id | `water_repair_done` (P3, doc 05's) only | unchanged, and correctly the city's |
+| `data/ui.json.event_log.events` | any building condition row | `road_condition_critical` (log-only, doc 10's) and `building_completed` | unchanged, and both correctly the city's |
+| `data/ui.json.in_app_alerts` | any banner or toast on wear | **none** | unchanged |
+| `ui/build_controller.gd.repair_view` | **the REPAIR row** | drawn on **any** building under condition 1.00 — 260 private / 21 civic in a 21-day `balanced` city | `E_OWNER_MAINTAINED` folds into "nothing to buy": **0 private**, on every strategy |
+| `ui/build_controller.gd._check_params` | `E_CONDITION`'s `Fix this →` | a purchase, on every building | a purchase on city assets; the row still blocks on private stock but offers no button |
+| `ui/budget_model.gd` + `data/ui.json.budget` | the `Building upkeep` ledger row | a line item | retired with the charge (a row whose key the snapshot no longer carries would read $0 forever) |
+| `data/strings.en.json` | `ui_settings_auto_repair_cost_cap_hint` | "Repairs above this wait for you." | "**City** repairs above this wait for you — roads, water, power and civic buildings." |
+| `game/render/render_state_model.gd` | soot and the WARNING tint | set by `building_damaged`, **never cleared** | `building_repaired` clears both |
+
+**The finding under the finding: it was never an alert.** The push and log
+channels have no building-condition row and never had one, which is PA-31's
+complaint from the other side — a city could lose 53 % of its income to wear
+with nothing on any surface. What actually interrupted was an *affordance*: a
+button drawn on every worn building, which a player reads as a to-do. Silencing
+a channel would have changed nothing; not drawing the button changes everything,
+and the measurement is in §43.1.
+
+**One row was deliberately NOT added.** Doc 12 A8's principle — *"a toast that
+interrupts for a $12 fender-bender teaches the player to ignore the next one"* —
+permits an event-log line for an owner's rebuild, and this pass declines it. The
+`building_repaired {cause: owner}` event fires only when a building the city had
+left dark comes back, so the rows would arrive in **bursts of exactly the size of
+the blackout** — measured at 29 at once in the `curriculum` city's 720-game-hour
+absence — into a 200-row log the player is already reading for the blackout
+itself, to say that the thing they have just fixed is fixed. The event exists,
+carries its `cause`, and the renderer spends it on the soot.
+
+### 43.5 What a night away looks like now
+
+The same three cities, run 21 game-days and then through doc 01's capped
+720-game-hour catch-up (§43.1's table, re-taken):
+
+| strategy | private bands Good/Worn/Poor/Failing | civic bands | **morning bill** | `building_damaged` during the absence |
+|---|---|---|---|---|
+| `do_nothing` | 0/0/19/8 → **27/0/0/0** | 0/0/2/5 → 0/1/6/0 | $208,899 → **$101,300** | 13 → **0** |
+| `balanced` | 2/16/236/8 → **238/0/0/0** | 0/14/3/6 → 0/18/6/0 | $564,524 → **$172,158** | 10 → **0** |
+| `curriculum` | 1/18/61/19 → **65/2/0/29** | 0/3/1/6 → 0/4/0/6 | $631,219 → **$267,477** | 21 → **0** |
+
+**Zero `building_damaged` events in a 30-game-day absence, on every strategy**,
+against 10–21 before. And the state census says what the survivors are: every
+one of the 35 buildings still below the auto-damage line in the `curriculum` row
+is **`on_fire`** — 29 private, 6 civic — which is an incident burning unattended
+for a month with no player and no dispatch, not wear. That is doc 06/07's
+business and is filed as an open question rather than fixed here; what matters
+for note (a) is that it is the *only* way a building gets there now.

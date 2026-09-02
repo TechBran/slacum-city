@@ -30,12 +30,20 @@
   },
 
   "upgrades": {
-    "UPG_COEFF": 1.45, "UPG_GROWTH": 2.55, "DEMOLITION_REFUND_FRACTION": 0.25,
+    "UPG_COEFF": 1.15,
+  "_upg_coeff_note": "1.45 -> 1.15 (Wave 17, doc 93 sec Y7, doc 92 sec 43.3). NOT a fit: UPG_COEFF = TAX_LEVEL_GROWTH - 1 is an IDENTITY. Doc 03 sec 2.3's ladders make payback(upgrade L->L+1) = (build_cost_l1/base_tax_l1) x [UPG_COEFF/(TAX_LEVEL_GROWTH-1)] x (UPG_GROWTH/TAX_LEVEL_GROWTH)^(L-1), and build_cost_l1/base_tax_l1 is exactly 100 gh for every revenue archetype, so at UPG_COEFF = TAX_LEVEL_GROWTH - 1 the FIRST rung pays back in exactly the time a fresh building does and the ruled window [100, 200] gh holds for all five rungs (measured 98.6 / 121.3 / 140.2 / 167.0 / 197.8). At 1.45 the ladder was 124.3 / 153.0 / 176.8 / 210.6 / 249.4 -- the first rung 24% worse than simply building another house, which is what level 2's `upgrade instead of building more` card taught against (PA-46). PA-46's own proposed ceiling 1.15 x (TAX_LEVEL_GROWTH - 1) = 1.3225 is 15% loose and is superseded: it yields a first rung 15% WORSE than a new build, the opposite of its stated target. CAPITAL_VALUE_V below is re-derived from this coefficient and every cell is now its own closed form at 3 dp.", "UPG_GROWTH": 2.55, "DEMOLITION_REFUND_FRACTION": 0.25,
     "_demand_growth_note": "RR-7: the requirement is an EXCLUSIVE FLOOR, not an equality. Every doc-02 growth class must satisfy k_dem > REQUIRED_MIN_DEMAND_LEVEL_GROWTH. Doc 02 is the authority on the values (2.35 steady / 2.45 standard / 2.55 vertical, C-13). The old REQUIRED_DEMAND_LEVEL_GROWTH: 2.35 equality constant is DELETED - it rejected 9 of 12 archetypes.",
     "REQUIRED_MIN_DEMAND_LEVEL_GROWTH": 2.15,
     "REQUIRED_MIN_DEMAND_LEVEL_GROWTH_EXCLUSIVE": true,
     "_v6_note": "The sixth cell is NEW (doc 92 §24.4, the level-6 tower tier). It is the only cell of this vector this project ever placed itself and it is placed by the rule the other five claim: the closed form V(6) = 1 + (1.45/1.55)(2.55^5 − 1) = 100.9287528125 exactly, half-up at 3 dp = 100.929. Six of doc 02's twelve archetypes have a level 6; the other six never index past 5 and cannot see this cell.",
-    "CAPITAL_VALUE_V": [1.000, 2.450, 6.147, 15.576, 39.620, 100.929]
+    "CAPITAL_VALUE_V": [
+    1.0,
+    2.15,
+    5.083,
+    12.56,
+    31.629,
+    80.254
+  ]
   },
 
   "roads": {
@@ -62,8 +70,8 @@
   },
 
   "expenses": {
-    "_maint_condition_penalty_note": "HELD at 1.5, measured (doc 92 sec 13.4). building_maint is the single largest expense line in a grown city ($466.89/gh of $1,289.80 at 320 buildings), but isolated on the maintenance-pays A/B a move to 2.5 contributes only +$703 of a $5,874 gap (12%) while charging BOTH agents 8-16% more. COND_FLOOR alone flips the gate. Recorded so it is not re-litigated.",
-    "BUILDING_MAINT_RATE": 0.00040, "MAINT_CONDITION_PENALTY": 1.5, "DEPT_LEVEL_GROWTH": 1.75,
+    "_building_maint_retired_note": "BUILDING_MAINT_RATE (0.00040) and MAINT_CONDITION_PENALTY (1.5) are DELETED in Wave 17 (doc 93 sec Y1, doc 03 sec 2.4). E_building_maint billed the city `capital x rate x (1 + penalty x (1 - condition))` for every row where CostCurves.is_revenue_producing(type) was true -- which is REVENUE_CLASSES, which is exactly the set of buildings the city does NOT own, because C-08 had already excluded the civic and utility shells it does. The line was the wrong party rather than the wrong rate, private stock now keeps itself up (doc 02 sec 2.6a), and a constant nobody reads is the PA-13 defect in a new place, so the constants go with the charge. The measurements that used to sit here: the line was $466.89/gh of $1,289.80 (36.2%) at 320 buildings and $27.70/gh of $532.30 (5.2%) at founding, and the A/B that HELD the penalty at 1.5 (doc 92 sec 13.4) stands recorded there -- this line is retired, not re-tuned.",
+    "DEPT_LEVEL_GROWTH": 1.75,
     "MOTHBALL_UPKEEP_FRACTION": 0.15, "MOTHBALL_REACTIVATE_HOURS_OF_UPKEEP": 14.4,
     "VEHICLE_RESALE_FRACTION": 0.40, "ASSET_CONDITION_PENALTY_COEFF": 2.0,
     "GRID_MAINT_PER_MW_HOUR": 4.0, "LINE_MAINT_PER_KM_HOUR": 0.9, "PLANT_OM_PER_MW_HOUR": 5.0,
@@ -165,7 +173,7 @@
     "FOUNDING_ASSISTANCE_DAYS": 7,
     "_founding_assistance_derivation": "172 is not a fit - it is doc 03 sec 2.12's own founding `departments` ($96.00/gh) plus `fleet` ($76.00/gh), the two operating lines the player is billed for and never chose. A founded city is handed three stations and eight vehicles by data/starter_city.json and starts paying full price for them in game-hour 1; that is the mechanical reason the opening reads slow, and it is measurable: those two lines are $172.00 of a $504.73/gh expense bill against $841.22 of gross, i.e. 34.1% of everything the city spends before it has built anything. The state covers them at founding and hands them back on a straight line over FOUNDING_ASSISTANCE_DAYS: share(day) = clamp(1 - day / 7, 0, 1), evaluated on the settled game-day so the line steps once a day rather than drifting inside one. It is a published constant and NOT a fraction of the live bill, deliberately - a subsidy that grew with the fleet would pay a player to buy vehicles, and a revenue line carrying an M_exp inside it would break doc 03 test 46's one-knob-per-line contract (doc 93 sec N1).",
     "_founding_assistance_window": "7 game-days is the curriculum's own opening: doc 92 sec 27.4 measures curriculum level 3 arriving at game-hour 122-128, i.e. game-day 5.1-5.3, so the taper covers levels 1-3 with a day and a half of margin and is fully retired before level 4's incident wait begins. Total paid over the window is 172 * 24 * (7+6+5+4+3+2+1)/7 = 172 * 24 * 4 = $16,512, against a founding purse of $25,000. Note the DISCRETE daily step, not the continuous integral: the share is evaluated once per settled game-day, so the seven daily shares average 4/7 = 0.5714 rather than 0.5, and a reader who integrates gets $14,448 and is $2,064 light.",
-    "LEVEL_UP_GRANT_BY_CITY_LEVEL": [0, 2500, 7000, 9000, 22500, 37000, 83000],
+    "LEVEL_UP_GRANT_BY_CITY_LEVEL": [0, 2500, 7000, 9000, 22500, 29000, 65000],
     "_level_up_grant_derivation": "Indexed by city level; index 0 is the founding level and pays nothing. The rule is one sentence - THE CITY PAYS HALF OF WHAT THE NEXT CHAPTER ASKS YOU TO BUY - applied to doc 09 sec 2.14's curriculum row above each rung and rounded to a readable figure: level 1 celebrates and level 2 teaches two stores at $2,600 each plus an upgrade (half of ~$5,200 -> 2,500); level 2 -> level 3's apartment $7,000 + four street tiles $7,200 = $14,200 (-> 7,000); level 3 -> level 4's police station $18,000 (-> 9,000); level 4 -> level 5's water works $45,000 (-> 22,500); level 5 -> level 6's $73,572 tower upgrade (-> 37,000). Level 6 is the top rung and has no chapter above it, so its grant is the extrapolation the rung itself is (doc 92 sec 24.6, thresholds note): 37,000 * 2.25 = 83,250, published as 83,000. Labelled honest extrapolation, exactly as rungs 4 and 5 of the population ladder are.",
     "_level_up_grant_scope": "Paid by ProgressionSystem on the level TRANSITION, once per level per city, on whichever route earned it - the population ladder or doc 09's objectives (doc 93 sec G1 composes them with max(), and this pays the composed level so neither route is worth more than the other). A one-off receipt is NOT an hourly ledger line, for the same reason doc 03 sec 2.4 keeps one-off capital spends out of the recurring rate: it is a treasury event and a notification, and the budget panel's income statement stays an income statement."
   },

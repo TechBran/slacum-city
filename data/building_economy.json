@@ -12,18 +12,18 @@
     "archetype_order": ["house", "store", "apartment", "office", "factory", "highrise_res", "highrise_com", "data_center", "construction_yard", "substation", "police_station", "fire_station", "water_plant", "power_plant_gas"],
     "curves": {
       "TAX_LEVEL_GROWTH": "2.15",
-      "UPG_COEFF": "1.45",
+      "UPG_COEFF": "1.15",
       "UPG_GROWTH": "2.55",
-      "CAPITAL_VALUE_V": ["1.000", "2.450", "6.147", "15.576", "39.620", "100.929"],
+      "CAPITAL_VALUE_V": ["1.000", "2.150", "5.083", "12.560", "31.629", "80.254"],
       "_v6_note": "V(6) = 100.929 is NEW (doc 92 s23.4): the closed form gives 100.9287528125 exactly and half-up at 3 dp is 100.929. It is the only cell of this vector the project placed itself, and it is placed by the rule the other five claim.",
       "rounding": "half-up, once per cell (doc 03 s2.8)"
     },
     "_file_placement_note": "doc 03 s2.2 costs 14 archetypes; doc 02's shipped data/buildings.json costs 12 and names four of them differently. `high_rise` (doc 02, tax_class residential) is doc 03's `highrise_res`; `power_facility` is `power_plant_gas`; `water_facility` is `water_plant`. doc 03's `factory` (industrial, 22,000) and `highrise_com` (commercial, 40,000) have no doc-02 archetype at all -- their rows ship here because doc 03 s2.2, s2.13(a) and the s7 test plan are all written against them.",
     "capital_value_basis": {
       "basis": "upgrades.CAPITAL_VALUE_V (doc 03 s8), applied as round_half_up(build_cost_l1 x V(L))",
-      "cells_differing_from_closed_form": 44,
-      "max_absolute_difference_dollars": 159,
-      "_note": "doc 03 s2.3 states BOTH the closed form V(L) = 1 + (UPG_COEFF/(UPG_GROWTH-1)) x (UPG_GROWTH^(L-1) - 1) AND the rounded 3-dp vector CAPITAL_VALUE_V [1.000, 2.450, 6.147, 15.576, 39.620] that data/economy.json s8 ships. They disagree at L3 and L5: exact V3 = 6.1475 and V5 = 39.6191187, so a house generates 7377 / 47543 from the closed form against the 7376 / 47544 doc 03 s2.3 and s3.2 publish (and doc 02 s2.2's payback check recomputes at 7376). The published cells win, so this generator multiplies by CAPITAL_VALUE_V."
+      "cells_differing_from_closed_form": 42,
+      "max_absolute_difference_dollars": 90,
+      "_note": "doc 03 s2.3 states BOTH the closed form V(L) = 1 + (UPG_COEFF/(UPG_GROWTH-1)) x (UPG_GROWTH^(L-1) - 1) AND the rounded 3-dp vector CAPITAL_VALUE_V [1.000, 2.150, 5.083, 12.560, 31.629, 80.254] that data/economy.json s8 ships. Since Wave 17 (doc 93 sec Y7) they AGREE at every rung: the vector was re-derived from UPG_COEFF 1.15 and each cell is the closed form at 3 dp, half-up. The old L3/L5 disagreement (6.147 vs 6.1475, 39.620 vs 39.6191187) was an artefact of the 1.45 coefficient and went with it. This generator still multiplies by CAPITAL_VALUE_V, which is now the same answer either way."
     },
     "_base_tax_note": "base_tax_by_level ships doc 03 s2.2's PUBLISHED rows verbatim (report 98 RR-5): they are normative, TAX_YIELD is a derivation aid, and the generator diffs rather than replaces them.",
     "starter_anchor": {
@@ -49,45 +49,44 @@
       {"archetype": "highrise_res", "level": 5, "field": "base_tax_by_level", "published": 5555, "from_curve": 5556, "arithmetic": "260 x 2.15^4 = 5555.5516 -> half-up 5556", "ruling": "report 98 RR-5 -- the published rows are normative; doc 03 s2.2 flags these three cells and locks them. s7 test 8 carries a +/-$1 tolerance on generated cells instead."},
       {"archetype": "data_center", "level": 4, "field": "base_tax_by_level", "published": 20870, "from_curve": 20871, "arithmetic": "2100 x 2.15^3 = 20870.5875 -> half-up 20871", "ruling": "report 98 RR-5 -- the published rows are normative; doc 03 s2.2 flags these three cells and locks them. s7 test 8 carries a +/-$1 tolerance on generated cells instead."},
       {"archetype": "data_center", "level": 5, "field": "base_tax_by_level", "published": 44871, "from_curve": 44872, "arithmetic": "2100 x 2.15^4 = 44871.7631 -> half-up 44872", "ruling": "report 98 RR-5 -- the published rows are normative; doc 03 s2.2 flags these three cells and locks them. s7 test 8 carries a +/-$1 tolerance on generated cells instead."},
-      {"archetype": "house", "level": 3, "field": "capital_value_by_level", "published": 7376, "from_closed_form": 7377, "arithmetic": "1200 x V(3): CAPITAL_VALUE_V 6.147 -> 7376, closed form 6.1475000 -> 7377", "ruling": "doc 03 s8 ships CAPITAL_VALUE_V as the 3-dp vector and s2.3 / s3.2 publish the cells it produces; the vector wins."},
-      {"archetype": "house", "level": 5, "field": "capital_value_by_level", "published": 47544, "from_closed_form": 47543, "arithmetic": "1200 x V(5): CAPITAL_VALUE_V 39.620 -> 47544, closed form 39.6191188 -> 47543", "ruling": "doc 03 s8 ships CAPITAL_VALUE_V as the 3-dp vector and s2.3 / s3.2 publish the cells it produces; the vector wins."},
-      {"archetype": "apartment", "level": 3, "field": "capital_value_by_level", "published": 43029, "from_closed_form": 43033, "arithmetic": "7000 x V(3): CAPITAL_VALUE_V 6.147 -> 43029, closed form 6.1475000 -> 43033", "ruling": "doc 03 s8 ships CAPITAL_VALUE_V as the 3-dp vector and s2.3 / s3.2 publish the cells it produces; the vector wins."}
+      {"archetype": "house", "level": 3, "field": "capital_value_by_level", "published": 6100, "from_closed_form": 6099, "arithmetic": "1200 x V(3): CAPITAL_VALUE_V 5.083 -> 6100, closed form 5.0825000 -> 6099", "ruling": "doc 03 s8 ships CAPITAL_VALUE_V as the 3-dp vector and s2.3 / s3.2 publish the cells it produces; the vector wins."},
+      {"archetype": "apartment", "level": 3, "field": "capital_value_by_level", "published": 35581, "from_closed_form": 35578, "arithmetic": "7000 x V(3): CAPITAL_VALUE_V 5.083 -> 35581, closed form 5.0825000 -> 35578", "ruling": "doc 03 s8 ships CAPITAL_VALUE_V as the 3-dp vector and s2.3 / s3.2 publish the cells it produces; the vector wins."}
     ]
   },
   "doc02_archetype_alias": {"high_rise": "highrise_res", "power_facility": "power_plant_gas", "water_facility": "water_plant"},
   "doc02_unmapped_archetypes": ["factory", "highrise_com"],
   "archetypes": {
-    "house": {"class": "residential", "build_cost_l1": 1200, "base_tax_l1": 12, "revenue_producing": true, "base_tax_by_level": [12, 26, 55, 119, 256, 551], "upgrade_cost_by_step": [1740, 4437, 11314, 28852, 73572], "capital_value_by_level": [1200, 2940, 7376, 18691, 47544, 121115]},
-    "store": {"class": "commercial", "build_cost_l1": 2600, "base_tax_l1": 26, "revenue_producing": true, "base_tax_by_level": [26, 56, 120, 258, 556, 1194], "upgrade_cost_by_step": [3770, 9614, 24514, 62512, 159405], "capital_value_by_level": [2600, 6370, 15982, 40498, 103012, 262415]},
-    "apartment": {"class": "residential", "build_cost_l1": 7000, "base_tax_l1": 70, "revenue_producing": true, "base_tax_by_level": [70, 151, 324, 696, 1496, 3216], "upgrade_cost_by_step": [10150, 25883, 66000, 168301, 429167], "capital_value_by_level": [7000, 17150, 43029, 109032, 277340, 706503]},
-    "office": {"class": "commercial", "build_cost_l1": 13000, "base_tax_l1": 130, "revenue_producing": true, "base_tax_by_level": [130, 280, 601, 1292, 2778, 5972], "upgrade_cost_by_step": [18850, 48068, 122572, 312559, 797025], "capital_value_by_level": [13000, 31850, 79911, 202488, 515060, 1312077]},
-    "factory": {"class": "industrial", "build_cost_l1": 22000, "base_tax_l1": 210, "revenue_producing": true, "base_tax_by_level": [210, 452, 971, 2087, 4487], "upgrade_cost_by_step": [31900, 81345, 207430, 528946], "capital_value_by_level": [22000, 53900, 135234, 342672, 871640]},
-    "highrise_res": {"class": "residential", "build_cost_l1": 26000, "base_tax_l1": 260, "revenue_producing": true, "base_tax_by_level": [260, 559, 1202, 2584, 5555, 11944], "upgrade_cost_by_step": [37700, 96135, 245144, 625118, 1594050], "capital_value_by_level": [26000, 63700, 159822, 404976, 1030120, 2624154]},
-    "highrise_com": {"class": "commercial", "build_cost_l1": 40000, "base_tax_l1": 420, "revenue_producing": true, "base_tax_by_level": [420, 903, 1941, 4174, 8974], "upgrade_cost_by_step": [58000, 147900, 377145, 961720], "capital_value_by_level": [40000, 98000, 245880, 623040, 1584800]},
-    "data_center": {"class": "tech", "build_cost_l1": 180000, "base_tax_l1": 2100, "revenue_producing": true, "base_tax_by_level": [2100, 4515, 9707, 20870, 44871, 96474], "upgrade_cost_by_step": [261000, 665550, 1697153, 4327739, 11035734], "capital_value_by_level": [180000, 441000, 1106460, 2803680, 7131600, 18167220]},
-    "construction_yard": {"class": "civic", "build_cost_l1": 16000, "base_tax_l1": 0, "revenue_producing": false, "base_tax_by_level": [0, 0, 0, 0, 0], "upgrade_cost_by_step": [23200, 59160, 150858, 384688], "capital_value_by_level": [16000, 39200, 98352, 249216, 633920]},
+    "house": {"class": "residential", "build_cost_l1": 1200, "base_tax_l1": 12, "revenue_producing": true, "base_tax_by_level": [12, 26, 55, 119, 256, 551], "upgrade_cost_by_step": [1380, 3519, 8973, 22882, 58350], "capital_value_by_level": [1200, 2580, 6100, 15072, 37955, 96305]},
+    "store": {"class": "commercial", "build_cost_l1": 2600, "base_tax_l1": 26, "revenue_producing": true, "base_tax_by_level": [26, 56, 120, 258, 556, 1194], "upgrade_cost_by_step": [2990, 7625, 19442, 49578, 126425], "capital_value_by_level": [2600, 5590, 13216, 32656, 82235, 208660]},
+    "apartment": {"class": "residential", "build_cost_l1": 7000, "base_tax_l1": 70, "revenue_producing": true, "base_tax_by_level": [70, 151, 324, 696, 1496, 3216], "upgrade_cost_by_step": [8050, 20528, 52345, 133480, 340374], "capital_value_by_level": [7000, 15050, 35581, 87920, 221403, 561778]},
+    "office": {"class": "commercial", "build_cost_l1": 13000, "base_tax_l1": 130, "revenue_producing": true, "base_tax_by_level": [130, 280, 601, 1292, 2778, 5972], "upgrade_cost_by_step": [14950, 38123, 97212, 247892, 632123], "capital_value_by_level": [13000, 27950, 66079, 163280, 411177, 1043302]},
+    "factory": {"class": "industrial", "build_cost_l1": 22000, "base_tax_l1": 210, "revenue_producing": true, "base_tax_by_level": [210, 452, 971, 2087, 4487], "upgrade_cost_by_step": [25300, 64515, 164513, 419509], "capital_value_by_level": [22000, 47300, 111826, 276320, 695838]},
+    "highrise_res": {"class": "residential", "build_cost_l1": 26000, "base_tax_l1": 260, "revenue_producing": true, "base_tax_by_level": [260, 559, 1202, 2584, 5555, 11944], "upgrade_cost_by_step": [29900, 76245, 194425, 495783, 1264247], "capital_value_by_level": [26000, 55900, 132158, 326560, 822354, 2086604]},
+    "highrise_com": {"class": "commercial", "build_cost_l1": 40000, "base_tax_l1": 420, "revenue_producing": true, "base_tax_by_level": [420, 903, 1941, 4174, 8974], "upgrade_cost_by_step": [46000, 117300, 299115, 762743], "capital_value_by_level": [40000, 86000, 203320, 502400, 1265160]},
+    "data_center": {"class": "tech", "build_cost_l1": 180000, "base_tax_l1": 2100, "revenue_producing": true, "base_tax_by_level": [2100, 4515, 9707, 20870, 44871, 96474], "upgrade_cost_by_step": [207000, 527850, 1346018, 3432345, 8752479], "capital_value_by_level": [180000, 387000, 914940, 2260800, 5693220, 14445720]},
+    "construction_yard": {"class": "civic", "build_cost_l1": 16000, "base_tax_l1": 0, "revenue_producing": false, "base_tax_by_level": [0, 0, 0, 0, 0], "upgrade_cost_by_step": [18400, 46920, 119646, 305097], "capital_value_by_level": [16000, 34400, 81328, 200960, 506064]},
     "substation": {
       "class": "utility",
       "build_cost_l1": 15000,
       "base_tax_l1": 0,
       "revenue_producing": false,
       "base_tax_by_level": [0, 0, 0, 0, 0],
-      "upgrade_cost_by_step": [21750, 55463, 141429, 360645],
-      "capital_value_by_level": [15000, 36750, 92205, 233640, 594300],
+      "upgrade_cost_by_step": [17250, 43988, 112168, 286029],
+      "capital_value_by_level": [15000, 32250, 76245, 188400, 474435],
       "repair_capital_source": "expenses.grid_components.substation.build_cost",
       "_repair_capital_note": "doc 03 s2.5: grid components are replaced, not upgraded, so their repair capital_value is the s2.13(b) build cost at the current level, NOT the V(L) column above. The V(L) column is kept so the shell still has a maintenance/demolition basis as a building."
     },
-    "police_station": {"class": "civic", "build_cost_l1": 18000, "base_tax_l1": 0, "revenue_producing": false, "base_tax_by_level": [0, 0, 0, 0, 0], "upgrade_cost_by_step": [26100, 66555, 169715, 432774], "capital_value_by_level": [18000, 44100, 110646, 280368, 713160]},
-    "fire_station": {"class": "civic", "build_cost_l1": 20000, "base_tax_l1": 0, "revenue_producing": false, "base_tax_by_level": [0, 0, 0, 0, 0], "upgrade_cost_by_step": [29000, 73950, 188573, 480860], "capital_value_by_level": [20000, 49000, 122940, 311520, 792400]},
-    "water_plant": {"class": "utility", "build_cost_l1": 45000, "base_tax_l1": 0, "revenue_producing": false, "base_tax_by_level": [0, 0, 0, 0, 0], "upgrade_cost_by_step": [65250, 166388, 424288, 1081935], "capital_value_by_level": [45000, 110250, 276615, 700920, 1782900]},
+    "police_station": {"class": "civic", "build_cost_l1": 18000, "base_tax_l1": 0, "revenue_producing": false, "base_tax_by_level": [0, 0, 0, 0, 0], "upgrade_cost_by_step": [20700, 52785, 134602, 343234], "capital_value_by_level": [18000, 38700, 91494, 226080, 569322]},
+    "fire_station": {"class": "civic", "build_cost_l1": 20000, "base_tax_l1": 0, "revenue_producing": false, "base_tax_by_level": [0, 0, 0, 0, 0], "upgrade_cost_by_step": [23000, 58650, 149558, 381372], "capital_value_by_level": [20000, 43000, 101660, 251200, 632580]},
+    "water_plant": {"class": "utility", "build_cost_l1": 45000, "base_tax_l1": 0, "revenue_producing": false, "base_tax_by_level": [0, 0, 0, 0, 0], "upgrade_cost_by_step": [51750, 131963, 336504, 858086], "capital_value_by_level": [45000, 96750, 228735, 565200, 1423305]},
     "power_plant_gas": {
       "class": "utility",
       "build_cost_l1": 60000,
       "base_tax_l1": 0,
       "revenue_producing": false,
       "base_tax_by_level": [0, 0, 0, 0, 0],
-      "upgrade_cost_by_step": [87000, 221850, 565718, 1442580],
-      "capital_value_by_level": [60000, 147000, 368820, 934560, 2377200],
+      "upgrade_cost_by_step": [69000, 175950, 448673, 1144115],
+      "capital_value_by_level": [60000, 129000, 304980, 753600, 1897740],
       "repair_capital_source": "expenses.grid_components.plant_gas.build_cost",
       "_repair_capital_note": "doc 03 s2.5: grid components are replaced, not upgraded, so their repair capital_value is the s2.13(b) build cost at the current level, NOT the V(L) column above. The V(L) column is kept so the shell still has a maintenance/demolition basis as a building."
     }

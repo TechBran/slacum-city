@@ -1423,9 +1423,15 @@ func _check_params(sim_id: String, b: Building, next_level: int,
 				"fix_target_id": sim_id},
 		&"E_MAX_LEVEL": {"level": b.level,
 				"max_level": sim.catalog.max_level_of(String(b.archetype))},
+		# `min_condition` is read off the building (PA-13 / doc 93 §Y2), and the
+		# fix is a PURCHASE only on a building the city may buy a repair for
+		# (doc 02 §2.6a). On private stock the owner is already fixing it and the
+		# city's job is to serve it, so the row blocks and offers no button.
 		&"E_CONDITION": {"condition": b.condition,
-				"min_condition": Building.MIN_CONDITION_TO_UPGRADE,
-				"fix_target_id": sim_id},
+				"min_condition": b.min_condition_to_upgrade(),
+				"fix_kind": RequirementFormatter.FIX_NONE if b.owner_maintained
+						else RequirementFormatter.FIX_REPAIR,
+				"fix_target_id": "" if b.owner_maintained else sim_id},
 		&"E_CITY_LEVEL": {"city_level": sim.progression.city_level,
 				"required_level": int(next_stats.get("min_city_level", 0))},
 		&"E_FUNDS": {"cost": int(payload.get("cost", 0)),

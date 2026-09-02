@@ -1214,6 +1214,26 @@ func apply_event(e: Dictionary) -> void:
 				rec3.powered = false
 				_write_overlay(rec3, OVERLAY_OFFLINE)
 				_retarget(rec3)
+		&"building_repaired":
+			# The soot's OTHER end (Wave 17, doc 93 §Y1). `building_repaired` has
+			# been emitted by `Building.complete_repair` since doc 02 §2.6 shipped
+			# and consumed by nothing, so the damage channel and the WARNING tint
+			# a `building_damaged` wrote were never cleared — a repaired building
+			# stayed sooty until something else happened to it. Doc 02 §2.6a makes
+			# that visible rather than rare: a private building the city left dark
+			# goes damaged and then, when the lights come back, repairs ITSELF with
+			# no player action at all, so nothing else is coming to clear it.
+			# `condition` rides the event where the sim sends it and the damage is
+			# derived from it otherwise, exactly as the `building_damaged` branch
+			# above does.
+			var rec_fixed := _rec_of(e.get("building", e.get("building_id", -1)))
+			if rec_fixed != null:
+				if e.has("condition"):
+					rec_fixed.condition = clampf(float(e["condition"]), 0.0, 1.0)
+				rec_fixed.damage = clampf(1.0 - rec_fixed.condition, 0.0, 1.0)
+				if base_overlay_state(rec_fixed.id) == OVERLAY_WARNING:
+					_write_overlay(rec_fixed, OVERLAY_NORMAL)
+				_retarget(rec_fixed)
 		&"building_completed", &"building_upgraded":
 			var rec4 := _rec_of(e.get("building", e.get("building_id", -1)))
 			if rec4 != null:

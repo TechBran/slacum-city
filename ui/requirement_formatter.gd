@@ -307,7 +307,15 @@ func format(code: Variant, params: Dictionary = {}) -> Dictionary:
 		"blocking": severity == SEVERITY_BLOCKED,
 		"glyph": GLYPH_FAIL,
 		"fix_target": {
-			"kind": RequirementFormatter.fix_kind(name),
+			# `CODE_TABLE` gives the fix a code has in GENERAL; a caller that
+			# knows this particular building can say otherwise by passing
+			# `fix_kind` (Wave 17, doc 93 §Y3a). The one case that needs it today
+			# is `E_CONDITION` on private stock: the remedy in general is a
+			# repair, and on a building whose owner maintains it there is no
+			# repair to sell, so the row states the blocker and offers no button
+			# rather than offering one that refuses.
+			"kind": StringName(str(params.get("fix_kind",
+					RequirementFormatter.fix_kind(name)))),
 			"id": str(params.get("fix_target_id", "")),
 		},
 		"args": args,
