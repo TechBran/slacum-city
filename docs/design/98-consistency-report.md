@@ -6246,6 +6246,18 @@ assertions are untouched and still pass.
    the same blind spot. A check that measures a scroller's own laid-out rect
    against the viewport would find the rest of them; this lane did not write it.
 
+### Measured at the branch tip
+
+| claim | command | number |
+|---|---|---|
+| the suite | `tools/run_suite.sh` | 133 files, **2,492 tests**, 550,118 asserts, failed **0**, silent **0**, exit **0** |
+| the deck | `--screen=all --audit --strict`, six `BOXES` × {100 %, 130 % + larger targets} | **12 sweeps, 68 states each, exit 0 in every one** |
+| the sim | `profile_sim --hash-only`, starter and `bench_city.json` | all four digests **byte-identical to `4503d35`** |
+
+The third row is the one that says what kind of wave this was: every finding in
+this section was a **surface** that disagreed with a sim that was already right.
+Nothing here needed a number to move, and none moved.
+
 **Applied:** doc 12 §2.7a (the params table), §2.9 (the seventh row, the four
 live coverage tiles, the pinned actions footer), §2.7 (the placement bar's second
 line and its door) and §2.23 (the band's third measurement point); doc 91 §14.5
