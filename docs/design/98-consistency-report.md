@@ -3766,3 +3766,114 @@ files that are not documents — `tests/test_city_sim.gd:146` and
 None can change behaviour, and that is proved rather than asserted:
 `profile_sim --hash-only` was run on both cities **before and after** these
 edits and all four digests are byte-identical.
+
+
+## 45. WAVE 17 FORK — the production audit's three rulings (binding)
+
+*Filed 2026-09-01 from `main` `fd4d8a0` by the synthesis agent of the production
+audit (`99-production-audit.md`). Sections §38–§44 and rulings 95–122 of the `RR` space are
+reserved for the Wave-17 lanes that forked from the same commit; this section's
+number and its three ids were pre-assigned by the lead so that no two branches
+of the wave could claim the same one (RR-94(b)). The gap is deliberate and
+`tools/check_doc_refs.py` tolerates a gap — it refuses only a collision.*
+
+### RR-123 — Severity in a production audit is measured on the device path, not in the tree, and the ladder maps onto doc 91's grades (docs 91 §14.5, 99-PA §1.2)
+
+**Seven lenses filed 112 findings with seven private notions of P0.** The
+shape hunter called a dead data table P0; the sim lens called a stalled
+scheduler P0; the breakage lens called an uncalled function P0. Each was right
+by its own light and the ledger could not be ranked until one rule held for all
+of them. The rule:
+
+- **P0 (doc 91 Critical):** on the path a player actually plays, the shipped
+  build *lies* (a false sentence, a dead affordance, a green gate that punishes
+  later), *discards* their progress or a valid decision, or a
+  constitution-level loop is unreachable in every save.
+- **P1 (High):** an authored mechanic doc 91 grades SHIPPED cannot fire or be
+  reached, or a control lies about part of what it claims.
+- **P2 (Medium):** a drift or a missing surface the player can route around,
+  or a test gap with a named on-device consequence.
+- **P3 (Low):** doc-only, cosmetic or forward-looking.
+
+**Applied at the fork.** Two lens P0s moved: the auto-reclose that never
+resolves (`99-PA PA-08`, A91-D-63) is P1 — it never lies and it never
+finishes, which is quieter than a false push; the goals-sheet standing line
+laid out one character per line was **dropped**, because `main` had closed it
+at `f9ccfd7`/`fd4d8a0` before the lens's tree caught up. The Director stall
+(`PA-04`, A91-D-59) stays P0 under the third clause: the weather loop is one of
+the constitution's four and it is unreachable in every save after the second
+minor event. Five P0s survive; every one of them is A91-D-19's shape — a
+computed value with no consumer — and every one of them was found by a census
+or a probe, not by a test.
+
+**Why the device path and not the tree.** A count of dead keys is a fact about
+the repository; a player cannot see it. A flood push that says traffic is being
+turned back while every engine drives through at full speed is a fact about the
+phone, and it is the one the user reported as "alerts for nothing". The audit
+ranks the second kind above the first even when the first is larger, and it
+says so in the row so that the next audit can disagree with the ranking without
+disagreeing with the evidence.
+
+### RR-124 — A row a concurrent lane owns is recorded, not re-proposed; a hub file is partitioned by function; a pre-assigned id block leaves a gap and the gap is not a defect (docs 91 §14.5, 98 §37, 99-PA §3)
+
+**Six Wave-17 lanes were building while the seven lenses read.** Four of the
+audit's rows, and halves of five more, fall inside those lanes' remits
+(`99-PA §3.1`). The audit does not propose them again — a second agent on the
+same seam is a merge conflict with a plan — but it does **record their evidence
+here**, because the merge check needs something to check against: the decay
+retune lands nothing unless `Building` reads `building_rules.json` (A91-D-68);
+the fix-button rework lands nothing on the transformer case unless a `T-nn` id
+resolves (A91-D-60). A row marked *in flight* therefore carries the sentence
+the merge must find true.
+
+**Two hub files cannot be avoided.** `sim/city_sim.gd` (4,700 lines) and
+`game/main.gd` (2,034 lines) are named by more than half the Wave-18 lanes.
+Rather than serialise the wave behind them, each lane owns **named functions**
+in those two files and nothing else there; a lane that needs a function outside
+its partition files a one-line note for the lead instead of editing it.
+`data/*.json` binding tables, `data/strings.en.json` and `KNOWN_VERBS` are
+**append-only** across lanes. The lead resolves order at merge. This is the
+merge discipline of RR-94 applied one level earlier, at the fork.
+
+**On the ids.** The lead pre-assigned this audit `A91-D-56 … 80`, `RR-123 …
+125` and doc 98 §45, leaving `41 … 55`, `95 … 122` and §38–§44 to the lanes.
+The sequences will show gaps until the wave merges, and may keep some. A gap is
+not a double assignment and the checker treats it so; a reader who finds number 47 missing from the `A91-D` sequence should look for a Wave-17 branch, not a lost row.
+
+### RR-125 — Which rows get an `A91-D` id: a defect in a thing that exists, never a feature the doc authors; the audit's own ledger keeps every row (docs 91 §14.5, 99-PA §2)
+
+**Doc 91 §14.5 is a register of defects, and this audit found more rows than it
+has ids for.** 100 survived merging; 25 ids were assigned. The rule for the 25:
+a row is promoted when it is **P0 or P1** *and* names **something that exists
+in the tree and does not do what it claims** — a gate that reads the wrong
+hour, an event that is authored and never emitted, a file that is validated and
+never read, a button that returns before it acts. A row that asks for something
+that does not exist yet — the storm prep panel (`PA-26`, master plan P1-19),
+the land tab (`PA-28`), the missing tutorial rows (`PA-29`), the jump-to-worst
+button (`PA-30`), the auto-repair policy for buildings (`PA-33`), the ground
+textures (`PA-36`) — is a *plan item*, and plan items go to the master plan's
+backlog and this document's §3, not to the defect register. The `max_coarse_hours`
+clamp (`PA-27`) sits on the line — a NORMATIVE rule unimplemented — and is not
+promoted because its on-device consequence is already carried by A91-D-74.
+
+**The audit's `PA-nn` ids are permanent handles.** Every one of the 100 rows is
+cited as `99-production-audit.md PA-nn` (short form `99-PA PA-nn`) and the
+promoted 25 carry that pointer in their doc 91 row. A fix that closes a promoted
+row closes it in doc 91 the way every other `A91-D` row is closed — struck
+severity, date, wave, the discriminating test — and the `PA` row in this
+document is **not** edited: the audit is a record of a fork, not a living
+register, which is the same status doc 92's measurements have (RR-55).
+
+**What this costs and what it buys.** Nothing in `sim/`, `game/` or `ui/` moved
+on the branch that filed this: the whole audit is one new document, 25 register
+rows and this section. The four determinism baselines are untouched by
+construction. What it buys is a ranked, verified, lane-partitioned roster for
+Wave 18 that the lead can assign without re-reading 112 findings — and a
+severity rule that the next audit can apply before it starts filing.
+
+**Applied:** doc 91 §14.5 (rows A91-D-56 … A91-D-80 and the block note beneath
+them); this section; `docs/design/99-production-audit.md` (new). Re-grades of
+doc 91's SHIPPED rows that this audit contradicts (doc 07 §2.6, doc 05 §2.11,
+doc 09 §2.6/§2.10, doc 04 §2.5, doc 02 §2.9, doc 10 §2.10, doc 12 §2.17) are
+**deferred to Wave 18 lane T** so that the branch that filed the evidence is not
+also the branch that rewrites the grades (RR-94(e): re-run, then re-grade).
