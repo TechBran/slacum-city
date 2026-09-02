@@ -23,6 +23,10 @@ signal demolished(sim_id: String, result: Dictionary)  ## `cmd_demolish_building
 ## nodes and each has a capacity to buy; this fires with the sim's own answer,
 ## exactly as `upgraded` does for the doc-02 shell above it.
 signal water_upgraded(node_id: String, result: Dictionary)
+## S16's verb, on the panel of the building it is about (doc 12 §2.22 item 3).
+## Carries `cmd_rush_construction`'s own answer, exactly as `upgraded` carries
+## `upgrade_building`'s, so the shell re-reads the city rather than guessing.
+signal rushed(sim_id: String, job_id: int, result: Dictionary)
 
 const PALETTE_TYPE := "Palette"
 ## §2.9's `L1 L2 ▮L3▮ L4 L5` level pips — glyphs, not copy (A5 redundancy).
@@ -47,6 +51,21 @@ var _upgrade_header: Label
 var _upgrade_note: Label
 var _checklist: VBoxContainer
 var _upgrade_button: Button
+
+## §2.22's inline progress block, built in code directly under the level pips —
+## above the upgrade block, because while a project is in flight the question
+## "when does THIS land" outranks "what comes after it".
+var _progress: VBoxContainer
+var _progress_title: Label
+var _progress_bar: MeterBar
+var _progress_percent: Label
+var _progress_eta: Label
+var _progress_crew: Label
+var _progress_rush: Button
+## S16's model, shared with the queue panel. Null until the shell binds one, and
+## the block then never appears — the same degrade S4 and S5 already make.
+var construction: ConstructionQueueModel
+var _progress_job := -1
 
 ## §2.9 item 6's actions row, built in code below `UpgradeButton`.
 var _actions: VBoxContainer
@@ -178,7 +197,9 @@ func _build_actions() -> void:
 		_demolish_note = existing.get_node_or_null("DemolishNote") as Label
 		_water = body.get_node_or_null("WaterNodes") as VBoxContainer
 		_water_rows.clear()
+		_bind_progress(body)
 		return
+	_build_progress(body)
 	_actions = VBoxContainer.new()
 	_actions.name = "Actions"
 	_actions.add_theme_constant_override(&"separation", int(_spacing))
@@ -223,9 +244,83 @@ func _build_actions() -> void:
 	body.add_child(_water)
 
 
+## §2.22 item 3 — the queue's row, inline on the building it is about.
+##
+## **It reuses S16's model and S16's words, and that is the point.** A player who
+## reads `about 12m left` on this panel and `about 12m left` in the queue is
+## reading one fact; two screens computing their own ETA from the same seam is
+## how they come to disagree by a minute and teach the player to trust neither.
+## The widgets are the ones that already generalise — `MeterBar` (§2.6's clock,
+## S14's level bar) and the build-card price face (§2.7) — rather than a second
+## private copy of either.
+##
+## It sits directly under the level pips, ABOVE the upgrade block: while a
+## project is in flight, "when does this land" outranks "what comes after it",
+## and the upgrade button below is disabled anyway while the shell is busy.
+func _build_progress(body: Control) -> void:
+	_progress = VBoxContainer.new()
+	_progress.name = "Progress"
+	_progress.add_theme_constant_override(&"separation", int(_spacing * 0.5))
+	_progress.visible = false
+	body.add_child(_progress)
+	# Under `Level`, which is the second authored child of the body.
+	var level_index := _level.get_index() if _level != null else 0
+	body.move_child(_progress, level_index + 1)
+
+	_progress_title = UIWidgets.label("Title", "", &"SeverityBadge", true)
+	_progress_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_progress.add_child(_progress_title)
+
+	var clock := HBoxContainer.new()
+	clock.name = "Clock"
+	clock.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	clock.add_theme_constant_override(&"separation", int(_spacing))
+	_progress.add_child(clock)
+	_progress_bar = MeterBar.new()
+	_progress_bar.name = "Bar"
+	_progress_bar.custom_minimum_size = Vector2(_touch_min, 6.0)
+	_progress_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_progress_bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	clock.add_child(_progress_bar)
+	_progress_percent = UIWidgets.label("Percent", "")
+	clock.add_child(_progress_percent)
+
+	_progress_eta = UIWidgets.label("Eta", "", &"", true)
+	_progress_eta.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_progress.add_child(_progress_eta)
+	_progress_crew = UIWidgets.label("Crew", "", &"LegendRow", true)
+	_progress.add_child(_progress_crew)
+
+	_progress_rush = UIWidgets.button("Rush", "", "",
+			Vector2(_touch_min * 2.0, _touch_min), &"PrimaryFAB")
+	_progress_rush.clip_text = false
+	_progress_rush.pressed.connect(request_rush)
+	_progress.add_child(_progress_rush)
+
+
+func _bind_progress(body: Control) -> void:
+	_progress = body.get_node_or_null("Progress") as VBoxContainer
+	if _progress == null:
+		return
+	_progress_title = _progress.get_node_or_null("Title") as Label
+	_progress_bar = _progress.get_node_or_null("Clock/Bar") as MeterBar
+	_progress_percent = _progress.get_node_or_null("Clock/Percent") as Label
+	_progress_eta = _progress.get_node_or_null("Eta") as Label
+	_progress_crew = _progress.get_node_or_null("Crew") as Label
+	_progress_rush = _progress.get_node_or_null("Rush") as Button
+
+
 # ---------------------------------------------------------------------------
 # Binding
 # ---------------------------------------------------------------------------
+
+## Hands this panel S16's model — the SAME instance the queue panel holds, so
+## the two can never publish different numbers for the same project. Unbound is
+## the shipped default and it simply hides the block.
+func bind_construction(model: ConstructionQueueModel) -> void:
+	construction = model
+	refresh()
+
 
 func is_open() -> bool:
 	return _panel != null and _panel.visible
@@ -302,11 +397,59 @@ func _render(v: Dictionary) -> void:
 	if _level != null:
 		_level.text = "%s  %s" % [BuildingPanel.level_pips(int(v["level"]),
 				int(v["max_level"])), _text(str(v["state_key"]), String(v["state"]))]
+	_render_progress()
 	_render_vitals(v)
 	_render_coverage(v)
 	_render_upgrade(v)
 	_render_actions(v)
 	_render_water(v.get("water", {}))
+
+
+## The queue's row for THIS building, or nothing at all.
+##
+## The lookup is by `ref` — the contract's own field, which is the queue's
+## `target_ref` — and a building whose project the seam does not name simply has
+## no block. That is the whole failure mode: no crash, no empty bar, no `0:00`.
+func _render_progress() -> void:
+	if _progress == null:
+		return
+	_progress_job = -1
+	var row: Dictionary = construction.row_for_ref(_sim_id) if construction != null \
+			and _sim_id != "" else {}
+	_progress.visible = not row.is_empty()
+	if row.is_empty():
+		return
+	_progress_job = int(row["job_id"])
+	var kind := str(row["source_label"])
+	if str(row["level_text"]) != "":
+		kind = "%s · %s" % [kind, str(row["level_text"])]
+	_progress_title.text = kind
+	# A5: the stalled bar is hatched as well as amber — §2.6's held-clock channel,
+	# and the ETA sentence beside it says the same thing in words (A14).
+	_progress_bar.set_value(float(row["progress01"]), row["state"],
+			not bool(row["working"]))
+	_progress_percent.text = str(row["percent_text"])
+	_apply_state_color(_progress_percent, row["state"])
+	_progress_eta.text = str(row["eta_text"])
+	_apply_state_color(_progress_eta, row["state"])
+	_progress_crew.text = str(row["crew_text"])
+	_progress_rush.visible = bool(row["rushable"])
+	_progress_rush.text = str(row["rush_text"])
+	_progress_rush.tooltip_text = str(row["rush_tooltip"])
+	_progress_rush.disabled = not bool(row["affordable"])
+
+
+## One tap, with the price on the face (§2.22's ruling). The door answers; the
+## panel re-reads rather than predicting, and the toast, the chip pulse and the
+## cue all arrive from the bus like every other rush.
+func request_rush() -> void:
+	if construction == null or _progress_job < 0:
+		return
+	var job := _progress_job
+	var result := construction.rush(job)
+	rushed.emit(_sim_id, job, result)
+	construction.refresh()
+	refresh()
 
 
 ## `L1 L2 ▮L3▮ L4 L5` (§2.9), the doc's row verbatim: only the current level is

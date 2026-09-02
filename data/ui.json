@@ -404,6 +404,16 @@
 		"unread_badge_max": 99,
 		"coalesce_window_s": 300
 	},
+	"construction": {
+		"_comment": "S16 (doc 12 §2.22) — the construction queue: PRESENTATION ONLY. Not one number in this block is a price, a duration or a rate; every one of those belongs to doc 03 and reaches this screen through CitySim.construction_overview()'s `rush_cost` and `eta_gm`. What is here is the width of a column, the height of a row and the length of a flash, which is all a view is allowed to own.",
+		"row_h_dp": 96,
+		"panel_w_dp": 320,
+		"chip_w_dp": 72,
+		"_bar_h_dp": "The per-row progress bar. Thinner than S14's level bar (10) and thicker than §2.6's escalation clock (4): this one is read at a glance down a column of four, so it wants weight without becoming the row.",
+		"bar_h_dp": 6,
+		"_chip_flash_s": "How long the treasury chip pulses after a rush is paid for — the same beat §2.21's payday uses, and deliberately the same number, because a dollar leaving and a dollar arriving must not feel like two different mechanisms.",
+		"chip_flash_s": 0.9
+	},
 	"event_log": {
 		"_comment": "S13 (doc 12) — the city's HISTORY. The alerts centre above is a to-do list that coalesces and is marked read; this is the ledger behind it: one row per event, newest first, filtered by category, never coalesced and never persisted (§3.2 keeps no feed in the save — a resumed city starts its log from the resume). Copy resolves the SAME `n_<notify_id>_title`/`_body` keys the alerts centre and doc 13's pushes use, so a line in the log and the push that woke the player can never drift (G-8). `category` is the only thing this table adds that `alerts.events` does not have, and it is the whole filter strip.",
 		"max_entries": 200,

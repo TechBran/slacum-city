@@ -41,6 +41,26 @@ static func detach_children(node: Node) -> void:
 		node.remove_child(child)
 
 
+## Detaches NOW and frees at the end of the frame — for a list that is rebuilt
+## from inside one of its own children's signals (Wave 17, doc 98 RR-113).
+##
+## `clear_children()` frees immediately, and that is right everywhere a rebuild
+## is driven by a refresh: nothing is mid-emit. S16's RUSH button is the one
+## control in the deck whose press REMOVES the row it sits in, so the handler
+## runs while that button's `pressed` is still being emitted, and `free()` on
+## an object that is emitting is an engine error ("freed or unreferenced while a
+## signal is being emitted") and a potential crash. Removing the child first
+## keeps the rebuilt row from colliding with the old one for a frame — which is
+## the whole reason `clear_children()` frees immediately — and `queue_free()`
+## lets the emitting button finish its own signal before it goes.
+static func release_children(node: Node) -> void:
+	if node == null:
+		return
+	for child in node.get_children():
+		node.remove_child(child)
+		child.queue_free()
+
+
 ## A3 (≥ 48 dp both axes) and A15 (non-empty `tooltip_text`) by construction.
 ## `tooltip` falls back to the visible text, which is the right accessibility
 ## name for a labelled button and the only sane default for a glyph one.
@@ -248,6 +268,30 @@ static func t_args(cfg: UIConfig, key: String, args: Dictionary,
 	return fallback if fallback != "" else key
 
 
+## `2d 4h` / `3h 20m` / `45m` — a SPAN of game time, in the units this project
+## writes them in. Never `—`: a negative reading is the caller's own sentence to
+## write, because "no reading" and "no crew on it" are different facts and only
+## the caller knows which one it has (doc 12 §2.8's rule, §2.22's ETA line).
+##
+## It lives here rather than on a screen because two screens now need the same
+## span in the same words — S4's development phases and S16's queue — and a
+## second copy of `{h}h {m}m` is a second place for the copy to drift. The keys
+## are neutral (`ui_time_*`) for the same reason: a span of hours belongs to no
+## one screen.
+static func duration_text(cfg: UIConfig, minutes: float) -> String:
+	var total := maxi(0, int(round(minutes)))
+	var days := total / 1440
+	var hours := (total % 1440) / 60
+	var mins := total % 60
+	if days > 0:
+		return t_args(cfg, "ui_time_dh", {"d": days, "h": hours},
+				"%dd %dh" % [days, hours])
+	if hours > 0:
+		return t_args(cfg, "ui_time_hm", {"h": hours, "m": mins},
+				"%dh %dm" % [hours, mins])
+	return t_args(cfg, "ui_time_m", {"m": mins}, "%dm" % mins)
+
+
 ## Paints one of the four data-state colours (§2.5) from the theme's generated
 ## palette. `source` is any Control in the tree — the lookup is a theme lookup,
 ## so it follows the one Theme rather than an override table.
@@ -421,6 +465,27 @@ static func corner_slot(index: int, layout: Dictionary, touch_min: float,
 			"height": pitch, "right": reserved_w}
 
 
+## How many chips one column of the corner rail can hold on a display `host_h`
+## dp tall. `0` means "no budget given, stack for ever" — every caller before
+## S16 passed no height and gets exactly that.
+##
+## Pure arithmetic so the wrap point is testable without a scene: the first chip
+## costs `margin + pitch` and each one after it `gap + pitch`, and the column ends
+## at the top edge of the safe area rather than at the top bar's underside. That
+## second half is deliberate — the bar is a different LAYER, the event-log chip
+## has passed under it at 150 % text since D-46 shipped, and moving today's two
+## chips to fix a cosmetic overlap would break D-46's own promise that the
+## reference box does not move.
+static func corner_rail_capacity(layout: Dictionary, host_h: float,
+		pitch: float) -> int:
+	if host_h <= 1.0:
+		return 0
+	var margin := UIConfig.get_num(layout, "corner_rail_margin_dp", 92.0)
+	var gap := UIConfig.get_num(layout, "rail_gap_dp", 8.0)
+	var step := maxf(1.0, pitch + gap)
+	return maxi(1, int(floor((host_h - margin + gap) / step)))
+
+
 ## Solves the whole bottom-right corner in one pass and applies it.
 ##
 ## Three edge affordances claim that corner — the incident drawer's handle, the
@@ -437,8 +502,21 @@ static func corner_slot(index: int, layout: Dictionary, touch_min: float,
 ## `corner_rail_entry()` with `{"control": Control, "index": int}`. A hidden
 ## affordance is skipped and the ones above it close the gap, so an affordance
 ## that has stood down (D-16) costs the others nothing.
+##
+## **`host_h` makes the column WRAP before it overflows** (Wave 17, doc 12
+## §2.22). `0.0` — the default, and every caller before S16 — is the old
+## unbounded behaviour byte-for-byte; a real height is the safe area's, and the
+## solver then fits `floor((host_h − margin + gap) / (pitch + gap))` chips per
+## column and starts a second column, one chip-width plus a gap further in, for
+## the ones that would not fit. This is D-1's rule for the top bar applied to the
+## other corner: **wrap before you overflow, and never hide a door to make room.**
+## It is not a theoretical guard — measured at `640 × 340` (the project's own
+## `min_safe_box_dp`) with 150 % text and larger targets, the two chips that were
+## already there are 92 dp tall and the second one's top edge sits at **y 52 of a
+## 340 dp box**: a third rung would have been placed at **y −48**, off the
+## display, and the queue chip is that third rung.
 static func solve_corner_rail(node: Node, layout: Dictionary,
-		touch_min: float) -> void:
+		touch_min: float, host_h: float = 0.0) -> void:
 	var parent := node.get_parent() if node != null else null
 	if parent == null:
 		return
@@ -467,12 +545,24 @@ static func solve_corner_rail(node: Node, layout: Dictionary,
 	# and a font class, so the tallest of them is the pitch all of them keep and
 	# the stack stays evenly spaced when the type grows.
 	var pitch := touch_min
+	# One WIDTH for the whole rail too, for the same reason: a second column has
+	# to be a column, and a ragged one would put the wrapped chip under the one
+	# beside it the moment a badge changed by a digit.
+	var column_w := touch_min
 	for chip: Dictionary in chips:
-		pitch = maxf(pitch, (chip["control"] as Control).get_combined_minimum_size().y)
+		var control := chip["control"] as Control
+		pitch = maxf(pitch, control.get_combined_minimum_size().y)
+		column_w = maxf(column_w, control.get_combined_minimum_size().x)
+	var per_column := corner_rail_capacity(layout, host_h, pitch)
 	var slot_index := 1
+	var column := 0
 	for chip: Dictionary in chips:
+		if per_column > 0 and slot_index > per_column:
+			slot_index = 1
+			column += 1
 		var control: Control = chip["control"]
-		var slot := corner_slot(slot_index, layout, touch_min, pitch, reserved)
+		var slot := corner_slot(slot_index, layout, touch_min, pitch,
+				reserved + float(column) * (column_w + gap))
 		control.offset_bottom = -float(slot["bottom"])
 		control.offset_top = control.offset_bottom - float(slot["height"])
 		control.offset_right = -float(slot["right"])

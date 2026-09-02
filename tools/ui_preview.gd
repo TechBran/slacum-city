@@ -67,12 +67,24 @@ const SCREENS: Array[String] = [
 	# never on screen together: the one-shot discovery mark over the world, and
 	# the Economy ledger with the two lines doc 03 does not settle.
 	"street_coach", "economy_street",
+	# S16, Wave 17 (doc 12 §2.22). Four states, in the same commit as the screen
+	# — A91-D-28's lesson, applied on the way in. `queue` is the mixed list the
+	# panel is written for; `queue_uncrewed` is the row that says so in words
+	# rather than counting down from nothing; `queue_empty` is the panel with the
+	# last project gone out from under it (reachable: the queue can drain while
+	# it is open, and the chip leaves with it); `building_upgrading` is the same
+	# facts inline on S5.
+	"queue", "queue_uncrewed", "queue_empty", "building_upgrading",
 ]
 
 ## A `Control` does not have a size until its container has laid it out, and the
 ## whole point of this harness is to judge sizes — so every state gets a settle
 ## window before it is measured or photographed.
 const SETTLE_S := 0.12
+## …and at least this many whole frames, because a settle window measured in
+## seconds can be satisfied by ONE frame whose `delta` carried the boot. Two: the
+## frame `_apply()` ran in, and one in which every child has processed since.
+const MIN_FRAMES_BEFORE_MEASURE := 2
 
 ## S0's fixture profile: a city in the autosave rotation plus one manual save, so
 ## CONTINUE carries a meta line and NEW CITY's confirmation has both a save to
@@ -91,6 +103,9 @@ var _strict := false
 var _size := Vector2i.ZERO
 var _shot_at := SHOT_AT_S
 var _timer := 0.0
+## Frames processed since the current state was applied — see
+## `MIN_FRAMES_BEFORE_MEASURE`.
+var _frames_since_apply := 0
 var _root: UIRoot
 var _sim: CitySim
 var _controller: BuildController
@@ -106,6 +121,10 @@ var _large_targets := false
 var _no_goal_chip := false
 ## `--rects=`: print the laid-out rect of every Control whose path contains this.
 var _rects := ""
+## S16's provider, as a swappable fixture. The seam is a `Callable` precisely so
+## this harness can reach a queue with an uncrewed row on demand — in a live city
+## a starved job and a crewed one are hours apart, and a sweep cannot wait.
+var _queue_rows: Array = []
 
 
 func _ready() -> void:
@@ -263,6 +282,30 @@ func _populate() -> void:
 	# finding is attributed to the chip rather than to the bar it landed on.
 	if not _no_goal_chip:
 		_root.refresh_goals()
+	# S16's seam. Bound in `_populate` and not in one state's branch, for the
+	# goal chip's reason: the queue chip is a corner-rail affordance and it
+	# changes the rail's solve on EVERY screen behind it, so it has to be
+	# measured on every screen — a chip that only exists in its own state is a
+	# chip nothing else in the deck has ever been laid out beside.
+	_queue_rows = _queue_fixture()
+	_root.bind_construction(
+			func() -> Array: return _queue_rows,
+			func(job_id: Variant) -> Dictionary:
+				# The fixture door: it answers, it takes the money, and it drops
+				# the row — so the sweep can photograph the list before and after
+				# without a sim. `int(str())` at the door is the contract's own
+				# coercion (the Wave-14 String-id lesson).
+				var wanted := int(str(job_id))
+				for i in _queue_rows.size():
+					var row: Dictionary = _queue_rows[i]
+					if int(row["job_id"]) != wanted:
+						continue
+					_queue_rows.remove_at(i)
+					return {"ok": true, "err": "", "cost": int(row["rush_cost"])}
+				return {"ok": false, "err": "E_UNKNOWN_JOB", "cost": 0},
+			func() -> int: return int(_sim.treasury.balance))
+	if _building_panel != null and _root.construction_queue != null:
+		_building_panel.bind_construction(_root.construction_queue.model)
 	for mode: StringName in [OverlayModel.MODE_POLICE, OverlayModel.MODE_FIRE]:
 		_root.feed_overlay_summary(mode, _coverage_summary())
 
@@ -425,6 +468,32 @@ static func _incident(id: int, type_id: String, severity: float, where: String,
 			"progress": 0.2, "escalation_eta_min": eta_min, "priority": 100.0,
 			"pinned": false, "seen": false, "unreachable": false,
 			"notification_priority": 2}
+
+
+## S16's contract rows (doc 12 §2.22), in `CitySim.construction_overview()`'s
+## shape verbatim: a mixed queue with an upgrade climbing a level, a new
+## building, and a land development, sorted the way the seam promises.
+##
+## The first row's `ref` is the LIVE sim's own first building, because
+## `building_upgrading` shows the same facts on S5 and S5 finds them by `ref` —
+## a made-up id would photograph a panel with no block on it and nothing would
+## fail.
+func _queue_fixture() -> Array:
+	return [
+		{"job_id": 41, "source": &"upgrade", "title_key": "ui_build_card_house",
+				"ref": _first_building(), "tile": _occupied_tile(),
+				"level_from": 2, "level_to": 3, "progress01": 0.62,
+				"eta_gm": 14.0, "crews": 2, "rushable": true, "rush_cost": 1240},
+		{"job_id": 44, "source": &"build",
+				"title_key": "ui_build_card_fire_station", "ref": "b_new_1",
+				"tile": Vector2i(46, 38), "level_from": 0, "level_to": 0,
+				"progress01": 0.18, "eta_gm": 96.0, "crews": 1,
+				"rushable": true, "rush_cost": 18400},
+		{"job_id": 47, "source": &"development", "title_key": "ui_land_phase_grading",
+				"ref": "E4", "tile": Vector2i(64, 48), "level_from": 0,
+				"level_to": 0, "progress01": 0.35, "eta_gm": 1_910.0, "crews": 1,
+				"rushable": false, "rush_cost": 0},
+	]
 
 
 ## Sim-bus events for the alerts centre — one of every notifiable shape, so the
@@ -676,6 +745,38 @@ func _apply(screen: String) -> void:
 			_root.present_veil_load(
 					UIWidgets.t(_root.config, "ui_saves_slot_autosave"), 11)
 			_root.advance_veil_load(7)
+		"queue":
+			# The list S16 is written for: an upgrade climbing a level with two
+			# crews on it, a new building an hour out, and a land development a
+			# day out that cannot be rushed at all.
+			_sim.treasury.balance = 500_000
+			_root.open_construction_queue()
+		"queue_uncrewed":
+			# The row §2.8's rule exists for. `eta_gm = -1` and no crew: the line
+			# says so in words, the bar is hatched, and nothing anywhere renders
+			# `0:00`. The rush price is still on its face — a project nobody is
+			# working is exactly the one a player would pay to unstick.
+			var starved: Array = _queue_fixture()
+			var row: Dictionary = starved[0]
+			row["crews"] = 0
+			row["eta_gm"] = -1.0
+			starved.remove_at(0)
+			starved.append(row)   # the seam sorts uncrewed last; so does the model
+			_queue_rows = starved
+			_sim.treasury.balance = 500_000
+			_root.open_construction_queue()
+		"queue_empty":
+			# Reachable, not theoretical: the last project can finish while the
+			# panel is open. The chip goes with it (the empty-state rule) and the
+			# panel says what a player should do next instead of showing a blank.
+			_queue_rows = []
+			_root.open_construction_queue()
+		"building_upgrading":
+			# The same three facts inline on S5, from the same model — the first
+			# fixture row's `ref` is this building.
+			if _building_panel != null:
+				_sim.treasury.balance = 500_000
+				_building_panel.show_building(_first_building())
 		"veil_catchup":
 			# The C-19 cap exactly: 12 real hours away is 720 coarse game-hours,
 			# and the absence ran longer than the sim will credit — so this is
@@ -718,6 +819,10 @@ func _close_everything() -> void:
 	_root.refresh_incidents(_incidents(), 24.0)
 	_root.hud.refresh(_snapshot())
 	_root.ingest_service({"power01": 0.93, "water01": 0.71})
+	# S16's fixture is state, and state leaks: an emptied queue would take the
+	# corner rail's third rung away from the 60 screens after it.
+	_queue_rows = _queue_fixture()
+	_root.refresh_construction()
 
 
 ## Drives the fixture sim's curriculum to a named state and opens S14.
@@ -1018,7 +1123,20 @@ func _walk_rects(node: Node) -> void:
 ## screen because booting the sim costs more than every screen put together.
 func _process(delta: float) -> void:
 	_timer += delta
+	_frames_since_apply += 1
 	if _timer < (_shot_at if _path != "" else SETTLE_S) or _queue.is_empty():
+		return
+	# **Two whole frames, not just the settle window** (Wave 17, doc 98 RR-113).
+	# A parent's `_process` runs before its children's, and the first frame's
+	# `delta` carries the whole boot — so `--screen=<one>` used to audit on the
+	# very first frame, before any sibling chip had run the `_process` that
+	# yields the edge to an open panel. Measured: three single states across the
+	# six gate boxes reported 46 `overlapping_targets` that `--screen=all` never
+	# saw, on a tree the whole-deck sweep called clean in all eighteen of its
+	# cells; after this guard, all eighteen read zero (doc 92 §46.3). A
+	# single-state run is what a developer reaches for first, and it has to
+	# answer the same as the sweep.
+	if _frames_since_apply < MIN_FRAMES_BEFORE_MEASURE:
 		return
 	var screen := _queue[0]
 	if _audit:
@@ -1038,4 +1156,5 @@ func _process(delta: float) -> void:
 		get_tree().quit(1 if (_strict and _findings > 0) else 0)
 		return
 	_timer = 0.0
+	_frames_since_apply = 0
 	_apply(_queue[0])

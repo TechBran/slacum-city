@@ -44,6 +44,7 @@ const SURFACES: Array[String] = [
 	"HUDLayer/AlertStack",
 	"HUDLayer/OverlayRail/Strip",
 	"PanelLayer/AlertsCenter/Panel",
+	"PanelLayer/ConstructionQueue/Panel",
 	"PanelLayer/IncidentDrawer/Panel",
 	"PanelLayer/BuildingPanel/Panel",
 	"PanelLayer/LandPanel/Panel",
@@ -422,15 +423,52 @@ func test_the_corner_rail_is_solved_from_the_scene_not_from_its_offsets() -> voi
 			"PanelLayer/AlertsCenter") as AlertsCenter
 	var log_screen := root.safe_area.get_node_or_null(
 			"PanelLayer/EventLog") as EventLog
+	var queue := root.safe_area.get_node_or_null(
+			"PanelLayer/ConstructionQueue") as ConstructionQueueSheet
 	assert_eq(int(drawer.corner_rail_entry().get("index", -1)), 0,
 			"the drawer's handle is the tab, and the tab keeps the edge")
 	assert_eq(int(alerts.corner_rail_entry().get("index", -1)), 1)
 	assert_eq(int(log_screen.corner_rail_entry().get("index", -1)), 2)
+	# S16 (Wave 17, doc 12 §2.22): the queue chip is the THIRD rung — above the
+	# log, so that nothing which exists today moves when it appears or leaves.
+	assert_ne(queue, null, "S16 is on PanelLayer")
+	assert_eq(int(queue.corner_rail_entry().get("index", -1)),
+			ConstructionQueueSheet.RAIL_INDEX)
+	assert_eq(ConstructionQueueSheet.RAIL_INDEX, 3)
 	for entry: Dictionary in [drawer.corner_rail_entry(),
-			alerts.corner_rail_entry(), log_screen.corner_rail_entry()]:
+			alerts.corner_rail_entry(), log_screen.corner_rail_entry(),
+			queue.corner_rail_entry()]:
 		assert_ne(entry.get("control"), null,
 				"every rail entry names a Control the solver can place")
 	_unmount(root)
+
+
+func test_the_corner_rail_wraps_before_it_overflows() -> void:
+	# Wave 17 (doc 12 §2.22, doc 98 RR-111). Three chips in one column no longer
+	# fit the project's own minimum box at the scale A2 names for it: at 640 × 340
+	# with 150 % text and larger targets the chips measure 92 dp, so rung 3's
+	# bottom edge would sit at 92 + 2 × (92 + 8) = 292 and its top at 384 — off a
+	# 340 dp display. The solver's capacity is pure arithmetic, so the wrap point
+	# is pinned here without a frame.
+	var layout := UIConfig.load_from_files().layout()
+	assert_eq(UIWidgets.corner_rail_capacity(layout, 0.0, 48.0), 0,
+			"no height given means the old unbounded column, byte for byte")
+	# 392 dp of safe height (400 less the 4 dp bleed each side) at the authored
+	# 48 dp pitch: floor((392 − 92 + 8) / 56) = 5 rungs before the top edge.
+	assert_eq(UIWidgets.corner_rail_capacity(layout, 392.0, 48.0), 5)
+	# 332 dp (640 × 340 less the bleed) at the measured 92 dp pitch: 2 per column,
+	# so the third rung starts a second column instead of leaving the display.
+	assert_eq(UIWidgets.corner_rail_capacity(layout, 332.0, 92.0), 2)
+	# A column that cannot hold even one still holds one: a door is never hidden
+	# to make room (D-1's rule for the top bar, applied to the other corner).
+	assert_eq(UIWidgets.corner_rail_capacity(layout, 100.0, 92.0), 1)
+	# And the second column is one chip-width plus a gap further in: with a 56 dp
+	# tab reserve and 72 dp chips, rung 1 of column 2 keeps 56 + 72 + 8 = 136 dp
+	# clear of the right edge and sits at the same height as rung 1 of column 1.
+	var first := UIWidgets.corner_slot(1, layout, 48.0, 48.0, 56.0)
+	var wrapped := UIWidgets.corner_slot(1, layout, 48.0, 48.0, 56.0 + 72.0 + 8.0)
+	assert_almost_eq(float(wrapped["bottom"]), float(first["bottom"]), 0.001)
+	assert_almost_eq(float(wrapped["right"]), 136.0, 0.001)
 
 
 func test_a_sheet_row_wraps_rather_than_widening_its_sheet() -> void:

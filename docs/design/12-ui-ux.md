@@ -48,6 +48,7 @@ Drawer width formula: `drawer_w = clamp(round(0.34 * W), 260, 340)`.
 | S13 | Event log | `EventLogModal` | full-screen modal | Away report ▸ See all | back |
 | S14 | **Goals** | `GoalsSheet` | full-screen modal | the goal chip (§2.4), or the tutorial's last step | back |
 | S15 | **Loading veil** | `LoadingVeil` | full, own `VeilLayer` **above everything** | a stepped restore or an offline catch-up (shell calls `UIRoot.present_veil_load()`) | the shell, when the slicer is done |
+| S16 | **Construction queue** | `ConstructionQueueSheet` | side panel 320 dp on `PanelLayer`, plus a corner-rail chip that exists only while something is building | the `⚒ n` chip — rung 3 of the bottom-right rail (§2.3, §2.22) | ✕ / back / a sibling panel opening |
 
 **S0 carries a fourth control, and it is not a door** (2026-08-20, doc 03 §2.9,
 doc 93 §K1). Directly under NEW CITY sits a 48 dp chip that cycles the four
@@ -109,6 +110,7 @@ Exact geometry (all inside `SafeArea`, origin top-left, H = safe height, W = saf
 | Drawer handle | (W−44, H−220, 44, 160) | **frequent** |
 | Alerts chip | (W−128, H−140, 72, 48) — rung 1 of the corner rail (D-37) | frequent |
 | Event-log chip | (W−128, H−196, 72, 48) — rung 2 of the corner rail (D-37) | occasional |
+| Queue chip `⚒ n` | (W−128, H−252, 72, 48) — rung 3 of the corner rail, **present only while something is building** (§2.22, D-66); wraps into a second column when the rail runs out of height (D-67) | rare — centre `(W−92, H−228)`, `d = √(64²+200²) = 210` from `PR`, edge-anchored; the verb it leads to is also on S5, one tap from the building itself |
 | Alert banner stack | (W/2−200, 56, 400, 44 each, max 2) | notification |
 | Toast | (W/2−160, H−60, 320, 40) | notification |
 
@@ -956,6 +958,170 @@ added in the same commit as the surface, per A91-D-28.
 
 ---
 
+### 2.22 S16 — the construction queue (Wave 17)
+
+The sim has had a construction queue since doc 02 shipped — jobs, crews,
+progress, an ETA in game minutes — and until this wave **nothing on screen
+showed any of it.** A player who placed a fire station learned when it was
+finished by noticing the crane had gone. §4.4's table listed `reorder_project`
+and `cancel_project` with no door, and doc 91 A91-D-49 is the row for that.
+This section is the surface: what the city is building, how far along each
+project is, when it lands, and what it costs to make it land now.
+
+**The seam, verbatim.** Both halves of this wave were built against one
+contract and this screen reads *nothing else*:
+
+```
+CitySim.construction_overview() -> Array[Dictionary]      # one row per IN-FLIGHT project,
+    {job_id: int, source: StringName, title_key: String,  # sorted eta ascending, uncrewed last
+     ref: String, tile: Vector2i, level_from: int, level_to: int,
+     progress01: float, eta_gm: float (-1 = nothing working it),
+     crews: int, rushable: bool, rush_cost: int (0 when not rushable)}
+CitySim.cmd_rush_construction(job_id: Variant) -> {ok, err, cost}   # int(str(job_id)) at the door
+event &"construction_rushed" {job: int, cost: int, source: StringName}  # through the normal batch
+```
+
+`ConstructionQueueModel.ROW_KEYS` is that row, field for field, and
+`tests/test_ui_construction_queue.gd` holds it there. The model is handed **two
+`Callable`s and a treasury reading** (`UIRoot.bind_construction(provider,
+rush, treasury)`) rather than a sim, for two reasons: `tools/ui_preview.gd`
+has to reach a queue with three mixed rows and one nobody is working, on
+demand, and a live city puts those hours apart; and it is what let this half
+be built and swept before the sim half existed. Every one of the three may be
+left unbound and the screen then shows what a city with nothing under way
+shows — nothing, and no chip.
+
+**The screen.** A side panel on `PanelLayer` — the incident drawer's shape,
+not a modal, because **tapping a row focuses the camera on the site** and a
+scrim would have to be dismissed before the player could see the thing they
+asked to look at (§2.6 settled this one screen over). One row per project:
+
+| line | reads | from |
+| --- | --- | --- |
+| head | what is being built — `title_key` resolved, or *Project* if the key is not in the table | `title_key` |
+| kind | *Upgrade · Level 2 → 3*, *New building*, *Land development* — the level climb only when `level_from/level_to` is one, never `Level 0 → 0` | `source`, `level_*` |
+| bar | a `MeterBar` (§2.6's held-clock widget, S14's level bar) with the percentage beside it; **hatched and amber when nothing is working it** (A5: never the colour alone) | `progress01` |
+| ETA | *about 1h 36m left* — game time, through the one `UIWidgets.duration_text()` S4's phases also use — or, said out loud, ***Nothing is working on this yet.*** | `eta_gm`, `crews` |
+| crews | *2 crews* / *No crew* | `crews` |
+| verb | `RUSH $1,240` — the price ON the face; **disabled with the price still on it** when the treasury is short; absent, not blank, when the seam says it cannot be rushed | `rushable`, `rush_cost`, the treasury reading |
+
+The row head is the whole tap target and the verb is a sibling
+`HFlowContainer` below it (D-47's shape): two 48 dp targets cannot share a
+line in a 320 dp column at 150 % text, and a flow container drops the verb to
+its own line rather than widening the panel. Rows sort **ETA ascending with
+the unworked last**, and the model sorts again what the sim already sorted —
+`ui/` cannot hold a `Callable` to its promise, and a fixture that arrives
+unsorted would put the thing that lands next halfway down a scrolling list.
+Under the title one line reads *4 under way · 1 waiting for a crew*, and the
+second half exists only when something is actually waiting.
+
+**`0:00` is the one thing this screen may never print.** `eta_gm = -1` is a
+*state* — nothing is working this — and a clock that reads zero says the
+opposite: *finishing now*. The model treats the contract's two ways of saying
+it as one fact that has to agree before a sentence is written: a job with no
+crew is unworked whatever number came with it, and a job with `-1` is unworked
+however many crews it claims. Report 98 RR-112 is the ruling.
+
+**The entry point, argued from §2.3.** The top bar is full — D-65 is the story
+of two chips landing at x = −121 in the audit box — so the door is a
+**corner-rail chip, `⚒ n`, on rung 3 of the bottom-right rail** above the
+alerts and event-log chips, and it **exists only while something is building**
+(doc 93 §AB3). Three things about that are deliberate:
+
+1. **Rung 3, not rung 2.** By the rail's own ordering rule the log is the
+   least urgent of the chips and should take the rung furthest from the thumb
+   — and the queue, which carries a live count and leads to a paid verb,
+   outranks it. Rung 2 was declined anyway, because D-46's rail *closes gaps*:
+   a queue chip that appeared at rung 2 would push the log chip up when the
+   player placed something and drop it back when a project finished on its
+   own — a control moving under the thumb for a reason that is not the
+   player's (D-59's argument, the other corner). At rung 3 **nothing that
+   exists today moves** when the chip comes or goes. The cost is reach: rung 3's
+   centre is `(W−92, H−228)`, `d = 210` from the right pivot — §2.3's *rare*
+   band, edge-anchored — where rung 2 would have been `157.6` (*occasional*).
+   It is paid because the chip is a *glance* surface (the count is the
+   reading) and the verb it leads to is **also one tap from the building
+   itself** on S5, which is in the frequent zone of whatever the player is
+   looking at. Re-open: an on-device playtest that reaches for the queue more
+   than for the log.
+2. **The rail wraps before it overflows** (D-67, doc 93 §AB2, report 98
+   RR-111). At 640 × 340 with 150 % text and larger targets the chips measure
+   92 dp and rung 3 would have started **48 dp above the display** (its top
+   edge at window `y −48` of a 340 dp box).
+   `UIWidgets.solve_corner_rail()` now takes the safe area's height and fits
+   `floor((H − margin + gap) / (pitch + gap))` chips per column — **2** there,
+   **5** at the 880 × 400 reference box — and starts a second column, one
+   chip-width plus a gap further in, for the ones that would not fit. D-1's
+   rule for the top bar, applied to the other corner: *wrap before you
+   overflow, and never hide a door to make room.* `host_h = 0` is the old
+   unbounded column byte for byte, and the reference box does not move.
+3. **No dashboard row this wave.** §2.10's Overview is a full-screen modal
+   behind a *rare* tap; the queue's reading is a count and a verb, and the chip
+   gives both from the HUD. A row there would be a second door to the same
+   panel with nothing the chip does not already say. Re-open when the
+   Overview grows a "what is happening" block — it is a one-line
+   `DashboardModel` read of the same model.
+
+**S5 joins up.** A picked building whose `ref` the seam names shows the same
+row inline — kind and level climb, the bar, the ETA sentence, the crews and
+`RUSH $n` — in a bounded `Progress` block built in code **directly under the
+level pips and above the upgrade block**: while a project is in flight, *when
+does this land* outranks *what comes after it*, and the UPGRADE button below
+is disabled for the duration anyway. It is the **same `ConstructionQueueModel`
+instance** the panel holds (`BuildingPanel.bind_construction(model)`), so the
+two can never publish different numbers for one project; a building the seam
+does not name simply has no block — no crash, no empty bar, no `0:00`. The
+lookup is `row_for_ref()`, the contract's own field, and two projects on one
+ref answer the soonest, because that is the bar that is moving.
+
+**A rush is one tap, and the price is the confirmation** — doc 93 §AB1 has the
+ruling and the threshold. The one line worth repeating here: the verb is a
+separate 48 dp target in its own row *below* the row head, and the row head's
+own tap does something harmless, so a mis-tap on the row costs nothing and
+only the face that carries the price spends.
+
+**The cue** (D-62's shape, backwards). `construction_rushed` on the bus is
+worth: the **`purchase`** cue — the deck's spend sound, the one
+`building_placed_sim` already uses, never `cash`, because a player who hears a
+till when their balance *drops* learns the wrong thing about their own
+treasury; the treasury chip's pulse for `construction.chip_flash_s`
+(deliberately `street.chip_flash_s`'s number); **one toast** — *Upgrade rushed
+— −$1,240*; and a haptic, unlike a bounty, because the player's own thumb is on
+the button. It is felt **from the bus, once**: the door's accepted answer adds
+nothing, so a rush from the queue, from S5, from a later automation or a
+replayed batch is felt identically, and a refusal is §2.7's formatter over
+`err` as a toast — except `E_NO_COMMAND`, which is silence for §2.21's reason.
+The completion the rush causes is **not** sounded here; it arrives a moment
+later on `building_completed` and rings `construct_complete` exactly as an
+unrushed one does, which is the whole point of a rush firing the same events a
+natural finish fires. **No first-rush notice.** D-63's machinery would carry
+one, but a notice costs a `ui` save-section flag (§3.2's ladder, doc 08's
+migration) for a sentence the button already says on its face; the price *is*
+the lesson.
+
+**What is left to the sim half — deferral rows, never guesses.**
+
+| awaiting_consumer | what this screen does meanwhile | closes when |
+| --- | --- | --- |
+| `source` spelling for a land development — the contract says `block`, `ConstructionQueue.KINDS` says `development` | both resolve (`ui_queue_source_block` / `_development`, one label); the other is dead copy the orphan check tolerates because the model splices the family | the sim half ships one and the other key is deleted |
+| `title_key` for a non-building project (a block's grading phase, a road run) | an unresolved key renders as *Project*, never as the raw key (`UIAudit.raw_string_key` would call that a defect) | the sim half names the keys it sends, from `ui_land_phase_*` / `ui_build_card_*` |
+| a solvency floor the affordability rule could read (doc 93 §AB1) | disabled-with-price at `rush_cost > balance`, which is where the door refuses | doc 03 publishes one on the seam |
+| the four `game/main.gd` lines (bind the seam, bind S5, the 1 Hz `refresh_construction()`, S5's `rushed` → `report_rush`) | the harness wires the same seam with a fixture provider; the shell shows no chip until the lead lands them | the lead merges |
+
+**Preview states** (`tools/ui_preview.gd`, same commit, A91-D-28's lesson):
+`queue` — the mixed list the panel is written for; `queue_uncrewed` — the row
+that says so in words; `queue_empty` — the panel with the last project gone
+out from under it, which is reachable; `building_upgrading` — the same facts
+inline on S5. The fixture is bound on **every** screen, not only these four,
+because the chip changes the rail's solve behind every screen and has to be
+measured beside all of them. The deck is **61** states. The harness also
+gained a guard this wave — `--screen=<one>` used to audit on its first frame,
+before any sibling chip had run the `_process` that yields the edge, and
+reported **46** overlaps across three states × six boxes on a tree the sweep
+called clean in all eighteen cells (A91-D-50, RR-113; doc 92 §46.3's table).
+
+---
+
 ## 3. Data Schema
 
 ### 3.1 `data/` files owned by this doc
@@ -1111,6 +1277,7 @@ All commands go through one funnel: `SimBridge.submit(cmd: Dictionary) -> Comman
 | Policy editor | `set_auto_policy` | `{key, value}` | 08 offline/persistence | — |
 | Construction queue reorder | `reorder_project` | `{project_id, index}` | 02 owns `ConstructionQueue.reorder` / 06 owns the crews as units (report G-2) | toast |
 | Cancel a project | `cancel_project` | `{project_id}` | 02 | confirm dialog |
+| Queue row `RUSH $n` / S5 `RUSH $n` | `cmd_rush_construction` | `{job_id}` — coerced `int(str(job_id))` at the door (the Wave-14 String-id lesson) | 02 owns the queue / 03 owns the price (`rush_cost` is quoted by `construction_overview()`, never computed here) | the price is the confirmation (doc 93 §AB1); a refusal is §2.7's formatter over `err` as a toast, and `E_NO_COMMAND` is silence |
 
 Read side — the queries this doc requires (constitution §3 snapshot/query model):
 
@@ -1156,7 +1323,7 @@ AwayReport.build(from_min, to_min) -> {ledger, deltas, timeline[], unresolved[],
 
 ### 4.5 Events consumed from the sim bus
 
-`incident_created`, `incident_escalated`, `incident_resolved`, `unit_dispatched`, `unit_arrived`, `unit_freed`, `power_restored`, `power_lost`, `construction_completed`, `land_developed`, `treasury_threshold`, `weather_warning`, `weather_changed`, `day_phase_changed`, `city_level_up`, **`level_up_grant_paid`** *(report 98 RR-79 — LOG ONLY, no push: `city_level_up` already wakes the player for that rung and a second push would be the game repeating itself, but a payment belongs in the money ledger where it can be found again an hour later)*.
+`incident_created`, `incident_escalated`, `incident_resolved`, `unit_dispatched`, `unit_arrived`, `unit_freed`, `power_restored`, `power_lost`, `construction_completed`, `land_developed`, `treasury_threshold`, `weather_warning`, `weather_changed`, `day_phase_changed`, `city_level_up`, **`level_up_grant_paid`** *(report 98 RR-79 — LOG ONLY, no push: `city_level_up` already wakes the player for that rung and a second push would be the game repeating itself, but a payment belongs in the money ledger where it can be found again an hour later)*, and — Wave 17, §2.22 — **`construction_rushed`** `{job, cost, source}`: the spend cue (`purchase`, a `data/audio.json` rule), the treasury chip's pulse and one toast, felt from the bus so that a rush from any door is felt exactly once; the completion it causes rides the existing `building_completed` untouched.
 Each maps to: a marker update, an optional in-app alert banner (via `InAppAlertGate`, §2.13), an optional **push** — which this doc only *requests*; doc 08 decides class and budget and doc 13 delivers it — and an optional `OnboardingDirector` trigger.
 
 ---
@@ -1244,6 +1411,8 @@ Headless (`tests/ui/`), no scene tree — these exercise `ui/logic/` classes wit
 
 30. **`test_veil_model`** (§2.20, D-60, Wave 13) — the phase machine, the copy and the fraction, headless: a cursor with no steps reads 0 rather than dividing; a step count past the total cannot overfill the bar; a late `advance_load` from the frame the catch-up started cannot rewind the bar the catch-up now drives; an absence beneath `veil.min_steps` is refused **and takes a showing veil down with it**, which is the sequence a returning player produces; `ui_veil_catchup_one` is picked for one hour and not for two; a capped absence says so; `finish()` is idempotent; and a second load behind the same veil starts from zero. The pixel-accurate pass is `tools/ui_preview.gd --screen=veil_load|veil_catchup`.
 
+31. **`test_ui_construction_queue`** (§2.22, D-66/D-67, Wave 17) — the UI half of the construction seam, proved against the CONTRACT through the two `Callable`s and the treasury reading the model takes: `ROW_KEYS` is the contract's twelve fields verbatim and `KNOWN_SOURCES` equals `ConstructionQueue.KINDS` plus the contract's `block`, so a field or a kind one side ships and the other does not fails a test rather than rendering grey; rows sort ETA-ascending with the unworked last and ties on `job_id`; an unworked project — `eta_gm < 0` **or** no crew, whichever the seam sent — reads as a sentence and never as `0:00` or `0m`; the ETA reads in game time through the one `UIWidgets.duration_text()` S4 also uses, and the old `ui_land_time_*` keys are gone; the level line prints only for a level change; the rush price is on the face, DISABLED with the price when the treasury is short and absent when the seam says not rushable, with the tooltip naming both numbers; the door coerces a String id and answers verbatim, and no door is `E_NO_COMMAND`; a rush on the bus is one toast and one chip flash and the door's accepted answer adds nothing, while a refusal is a sentence and `E_NO_COMMAND` is silence; the mounted chip hides at zero, badges the count, is rung 3 of the corner rail, yields to a sibling panel and to Android BACK; a row tap focuses the site through the injected locator; pressing RUSH removes the row without freeing the button mid-signal; S5 shows the same row inline directly under the level pips and only while it exists; and `data/ui.json.construction` holds no price. 22 tests. The pixel pass is `tools/ui_preview.gd --screen=queue|queue_uncrewed|queue_empty|building_upgrading`, and the corner rail's wrap point is pinned in `test_ui_audit`.
+
 Manual/device checklist (not automated): thumb-reach on a 6.1" and a 6.8" device, notch/cutout safe area on a punch-hole and a notched device, one-handed reachability of jump-to-worst, ~~150 % text scale at 640 dp~~ (**automated as of Wave 13's D-58** — 640 × 340 is a `BOXES` row and the sweep runs it at 100 / 130 / 150 %), and the step-9 relight moment reading as a payoff.
 
 ---
@@ -1297,6 +1466,10 @@ Ships as three files — `data/ui.json`, `data/onboarding.json`, `data/strings.e
     "desaturate": 0.25, "exposure": 0.70, "transition_s": 0.18,
     "strip_chip_dp": [64,56], "strip_x_offset_dp": 80,
     "outage_fill_alpha": 0.25, "coverage_disc_alpha": 0.18, "flow_dash_speed_m_s": 14.0, "heat_bin_m": 32.0
+  },
+  "construction": {
+    "_comment": "S16 (§2.22) — PRESENTATION ONLY. Not one number here is a price, a duration or a rate; those are doc 03's and reach the screen through construction_overview()'s rush_cost and eta_gm. chip_flash_s is deliberately street.chip_flash_s: a dollar leaving and a dollar arriving must not feel like two mechanisms.",
+    "row_h_dp": 96, "panel_w_dp": 320, "chip_w_dp": 72, "bar_h_dp": 6, "chip_flash_s": 0.9
   },
   "veil": {
     "_comment": "S15 (§2.20). min_steps is doc 13's own catchup_veil_min_steps: an offline catch-up worth fewer steps than this gets no veil. A stepped RESTORE always gets one whatever its step count — doc 13 §2.9.1's per-step table runs 0.2 ms to 76.5 ms, so few steps does not mean fast.",
@@ -1688,3 +1861,10 @@ finding of every kind, **six** boxes × **three** text scales; 53 states per cel
 at the fork, 55 after): the table is in §2.18. **408 → 0**, with the 100 % row
 unchanged at zero on every box — including 640 × 340, which no `BOXES` list in
 this repository contained until D-58.
+
+### Wave-17 deltas — the queue surface (2026-09-01)
+
+| id | change | doc ref | why |
+|---|---|---|---|
+| D-66 | **S16, the construction queue, ships** — `ui/construction_queue_model.gd` (headless: the contract row verbatim, the sort, the words, the affordability reading, the rush door, the spend record) + `ui/construction_queue_sheet.gd` (code-built rows on a `PanelLayer` side panel, a `⚒ n` chip on rung 3 of the corner rail) + S5's inline `Progress` block + `data/audio.json`'s `construction_rushed → purchase` rule + four preview states. `UIRoot.bind_construction(provider, rush, treasury)` is the one shell call; the camera jump rides `set_incident_locator()`, the cue rides `data/audio.json` and the toast/pulse ride `feed_events()`, all of which the shell already makes. §2.22 has the screen; doc 93 §AB1 the one-tap ruling; doc 91 A91-D-49 the defect. | §2.2, §2.3, §2.22, §4.4, §4.5 | The sim has carried jobs, crews, progress and ETAs since doc 02 shipped and nothing on screen showed any of it. Built against the seam CONTRACT through a provider `Callable`, hash-neutral by construction: all four `profile_sim` baselines are byte-identical at this fork (`a27da24a…` / `7745cb25…`, `7c99720f…` / `d8e88896…`). The three `ui_land_time_*` keys became the neutral `ui_time_*` and their arithmetic moved to `UIWidgets.duration_text()` — one span, two screens, one place to drift. |
+| D-67 | **The corner rail wraps before it overflows, and three findings from building on it.** (a) `UIWidgets.solve_corner_rail()` takes `host_h` and `corner_rail_capacity()` fits `floor((H − margin + gap)/(pitch + gap))` chips per column before starting a second one; `0` is the old column byte for byte. (b) `tools/ui_preview.gd --screen=<one>` now waits two whole frames, not just the settle window. (c) `UIWidgets.release_children()` — detach now, free at frame end — for a list rebuilt from inside its own child's signal. | §2.3, §2.22, D-46, doc 93 §AB2, report 98 RR-111/RR-113 | (a) At 640 × 340 with 150 % text and larger targets a chip measures 92 dp and rung 3 would have been placed with its top edge at window `y −48` — **48 dp above the display** — and the queue chip is that rung. Measured, not assumed: `tests/test_ui_audit.gd::test_the_corner_rail_wraps_before_it_overflows` pins 2 per column there and 5 at the reference box. (b) A parent's `_process` runs before its children's and the first frame's `delta` carries the boot, so a single-state audit measured a deck no chip had processed: three states × six boxes reported **46** `overlapping_targets` — every finding of that one kind — on a tree `--screen=all` called clean in all eighteen sweep cells; after the guard, **0** in all eighteen single-state runs. Doc 92 §46.3 has the table. (c) The RUSH press removes the row it sits in, and `clear_children()`'s immediate `free()` on the emitting button is an engine error and a potential crash. It surfaces as ENGINE OUTPUT and not as a failed assertion, which is the part worth writing down: with `clear_children()` restored, test 31 still passes 22/22 while the run prints `Object … was freed or unreferenced while a signal is being emitted from it`; with `release_children()` that line is gone. A green suite is not the whole of the evidence — the log is. |
