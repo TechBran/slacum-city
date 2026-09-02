@@ -160,7 +160,7 @@ func test_the_reach_curve_still_compresses_the_lean_in_the_aim() -> void:
 	# the axis can never disagree about how far this zoom is allowed to lean.
 	# The quantity that carries the composition is the VIEW ANGLE: the derived
 	# look-at HEIGHT is not a proxy for it and is not asserted as one — at Z2 a
-	# full lean aims LOWER in metres than a half lean (144.0 m against 149.4 m)
+	# full lean aims LOWER in metres than a half lean (144.0 m against 149.5 m)
 	# while looking 20° further up, because the camera itself has dropped from
 	# 286.5 m to 170.8 m on the way there.
 	var cam := _camera()

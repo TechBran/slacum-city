@@ -6084,7 +6084,9 @@ cities, at the fork and at the end, all four digests byte-identical (§54.4).
 ### RR-151 — A camera axis built to look UP could not, at any angle it had (docs 12 §2.23.7, 93 §AM1/§AM2/§AM3, A91-D-97)
 
 Wave 17 answered *"we need to be able to look up at the buildings"* with a manual
-pitch band floored at 12°, and eleven tests that assert the ANGLE. **None of them
+pitch band floored at 12° and **thirty tests** across
+`test_camera_state.gd`, `test_ui_tilt.gd` and `test_gestures.gd` — every one of
+which asserts the ANGLE, the bias, the reach or the gesture. **Not one of them
 asserted the FRAME**, and the frame is what the directive was about. In doc 12
 §2.16's rig the camera looks AT THE FOCUS and the focus is on `y = 0`, so the
 horizon is always `pitch` above the view axis and is drawn at
