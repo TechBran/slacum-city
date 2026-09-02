@@ -230,58 +230,75 @@ func apply_decay(dt_h: float, overload_excess: float = 0.0, powered_fraction: fl
 			* weather_decay_mult
 	if state == &"damaged":
 		rate *= rule("damaged_decay_multiplier")  # §2.12 state table
-	condition = clampf(condition - rate * dt_h, 0.0, 1.0)
 	var events: Array = []
-	if owner_maintained:
-		# Doc 02 §2.6a (doc 93 §Y1): the owner's crew runs in the same settled
-		# hour, so a private building the city is SERVING can never wear past the
-		# owner — it sits in a sawtooth between the threshold and 1.00, and the
-		# auto-damage line below is unreachable from wear alone. It stays
-		# reachable from an incident (`apply_damage`, `suppress_fire`), which is
-		# doc 06's domain, and from the city failing to hold up its end.
+	if owner_maintained and state == &"damaged":
+		# An INCIDENT put it here (doc 06), and the owner rebuilds it — see
+		# `_owner_maintain`. That path owns the whole hour when it fires.
 		events = _owner_maintain(dt_h, powered_fraction)
 		if not events.is_empty():
 			return events
-		# …and then FALL THROUGH. An owner the city has left in the dark could
-		# not work this hour, and a building nobody is keeping up is exactly as
-		# exposed as a city asset: it reaches the auto-damage line, it emits, and
-		# `roll_structural_failure` can reach it. The alternative — an early
-		# return here — would make an abandoned private building silently
-		# immortal, which is the one thing worse than billing the city for it.
+	condition = clampf(condition - rate * dt_h, 0.0, 1.0)
+	if owner_maintained and clampf(powered_fraction, 0.0, 1.0) > 0.0:
+		# **Doc 02 §2.6a, the ownership FLOOR (doc 93 §Y1).** A private building
+		# wears exactly as §2.6 has always said — this ruling moves not one
+		# `decay_per_hour` cell — but its owner will not let it fall past the
+		# Worn band's floor, because below that it stops being an asset and
+		# starts being a liability, and it is *their* asset. So a private
+		# building is never `damaged` by wear, is never destroyed by wear, and is
+		# always still upgradable (`band_worn` 0.60 sits above
+		# `min_condition_to_upgrade` 0.55 — that ordering is what makes the
+		# floor a floor rather than a trap).
+		#
+		# What the city sees is the whole of the drag: `f_condition` runs down to
+		# `COND_FLOOR + (1 − COND_FLOOR) × 0.60 = 0.76`, i.e. **a permanent 24 %
+		# cut in what a neglected building pays**, and it is the ONLY thing the
+		# city sees, because there is no repair to buy at any condition.
+		#
+		# **The answer to a worn city is to invest in it, not to tap REPAIR on
+		# it**: `complete_construction` sets condition back to 1.00, so an
+		# UPGRADE is the recovery — the loop doc 09 level 2 already teaches, and
+		# 20.7 % cheaper since doc 93 §Y7.
+		#
+		# **The service clause** (doc 93 §Y1a) is the `powered_fraction > 0`
+		# guard: an owner the city has left in the dark cannot hold anything, so
+		# the floor lifts, the building falls past the auto-damage line, and
+		# `roll_structural_failure` can take it. That is what keeps neglect fatal
+		# — and it is why the floor is not simply `clampf`ed into the line above.
+		#
+		# No new constant: `band_worn` is doc 02 §2.6's own band table.
+		condition = maxf(condition, rule("band_worn"))
 	if state == &"active" and condition < auto_damage_threshold():
 		state = &"damaged"
 		events.append({"type": &"building_damaged", "building": id, "cause": &"decay"})
 	return events
 
 
-## Doc 02 §2.6a — the owner's crew, one settled hour (or `dt_h` of them) of it.
+## Doc 02 §2.6a — the owner's crew REBUILDING after an incident, one settled
+## hour (or `dt_h` of them) of it. Ordinary wear is not handled here: it is
+## absorbed in `apply_decay` above, by subtracting the base rate from the rate.
 ##
-## Below `owner_repair_threshold()`, or while `damaged` after an incident, the
-## owner restores condition at exactly the rate a city crew would work: §2.6's
+## While `damaged`, the owner restores condition at exactly the rate a city crew
+## would work: §2.6's
 ## `repair_hours = build_time_hours × repair_time_factor × damage_fraction`
 ## means the WHOLE of a building's damage is made good in
 ## `build_time_hours × repair_time_factor` game-hours, so the restore rate is
 ## `1 / that` per game-hour — a house in under an hour, a level-3 apartment's
 ## 0.15 in about an hour, a level-4 data centre's in seven. No new number.
 ##
-## **The service clause** (doc 93 §Y1a). An owner keeps up a building the CITY is
-## still serving, and does it in proportion to the service actually delivered
-## that hour: `powered_fraction` is doc 04's `power_availability_hour`, already
-## in this method's caller's hand. A fully served building is maintained as
-## §2.6a rules; a half-dark one half as fast; a building the city has left dark
-## is not maintained at all and wears at the unpowered rate above until the
-## lights come back. No new constant — doc 04's own fraction, used once more.
-## This is what keeps neglect fatal after the ownership ruling (gate 29): a city
-## that stops holding up its end loses its tax base because the lights went out,
-## which the player can see and fix, rather than because they did not tap REPAIR
-## on two hundred houses.
+## **The service clause** (doc 93 §Y1a) gates this the same way it gates the
+## wear offset: an owner with no power cannot rebuild either, so a building the
+## city has left dark stays damaged, keeps wearing, and stays reachable by
+## `roll_structural_failure`. That is what keeps neglect fatal after the
+## ownership ruling (gate 29) — a city that stops holding up its end loses its
+## tax base because the lights went out, which the player can see and fix,
+## rather than because they did not tap REPAIR on two hundred houses.
 ##
 ## Nothing is billed to the city and nothing is emitted for routine wear: the
 ## only event this path can produce is the `damaged → active` return after an
 ## incident, which carries `cause: owner` so a surface can tell an owner's
 ## rebuild from a city crew's.
 func _owner_maintain(dt_h: float, powered_fraction: float = 1.0) -> Array:
-	if state != &"damaged" and condition >= owner_repair_threshold():
+	if state != &"damaged":
 		return []
 	var service := clampf(powered_fraction, 0.0, 1.0)
 	if service <= 0.0:

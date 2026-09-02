@@ -124,6 +124,7 @@
 	"ui_bounty_toast_crime": "Crime stopped — {amount} bounty",
 	"ui_budget_cooldown": "Locked for {hours}h more.",
 	"ui_budget_expense_debt": "Debt interest",
+	"ui_budget_expense_building_maint": "Building upkeep",
 	"ui_budget_expense_departments": "Departments",
 	"ui_budget_expense_fleet": "Fleet",
 	"ui_budget_expense_generation_fuel": "Generation fuel",

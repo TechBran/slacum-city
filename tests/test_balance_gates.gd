@@ -2027,7 +2027,35 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 ##
 ## Total ~48 s. The three-seed table above is doc 92 §31.5's; this is the
 ## tripwire.
-const PRESET_HORIZON_DAYS := {"casual": 120, "standard": 90, "hard": 70, "crisis": 55}
+##
+## **RE-FITTED Wave 17 (doc 92 §43.8, doc 93 §Y1/§Y3).** The ownership floor took
+## the dominant term out of this gate's engine and the horizons roughly double.
+## The engine was never really the blackout: `tools/probe_neglect` showed
+## `PLANT-1` destroyed on game-day 40 and `SUB-A` on 45 **with the tax line
+## unmoved** (569 → 585 $/gh across the failure), so what actually killed a
+## neglected city was PRIVATE STRUCTURAL FAILURE — buildings rotting past 0.35,
+## going `damaged`, and being destroyed one at a time until the tax base was
+## gone. Doc 02 §2.6a stops exactly that (an owner does not let their own asset
+## become a liability), so what remains is `f_condition` capped at the Worn
+## floor — a permanent 24 % cut, not a slide to zero — plus the city's own
+## assets failing. Half the engine, so about twice the clock.
+##
+## `tools/measure_insolvency.gd --max-days=220`, three seeds, all four presets:
+##
+## | preset | 1337 / 4242 / 9001 | mean | before (Wave 14) |
+## |---|---|---|---|
+## | `casual` | 193 / 190 / 189 | **190.7** | 105.0 |
+## | `standard` | 137 / 139 / 129 | **135.0** | 69.0 |
+## | `hard` | 58 / 97 / 64 | **73.0** | 51.0 |
+## | `crisis` | 31 / 18 / 43 | **30.7** | 26.0 |
+##
+## **Every preset still dies and the §2.9 ordering holds on every seed
+## individually**, which is the assertion this gate is actually for. The seed
+## spread widened on `hard` and `crisis` (39 and 25 game-days against 2 and 6),
+## and that is the same finding read from the other end: with the smooth
+## condition slide gone, the remaining collapse is driven by the incident
+## cascade, which is stochastic where wear was not.
+const PRESET_HORIZON_DAYS := {"casual": 210, "standard": 160, "hard": 120, "crisis": 70}
 ## casual must die before its own horizon; crisis must not die absurdly early.
 ## The ordering assertions carry the rest.
 ##
@@ -2058,14 +2086,20 @@ const PRESET_HORIZON_DAYS := {"casual": 120, "standard": 90, "hard": 70, "crisis
 ## little tighter, because 26 game-days is close enough to "a different game"
 ## that the guard should not be relaxed proportionally). The CEILING stays 118:
 ## `casual`'s worst seed is 108 and its horizon is 120.
-const PRESET_LIFETIME_CEILING := 118
+## **118 → 200 (Wave 17)**: `casual`'s worst seed is 193 and its horizon is 210.
+## The FLOOR stays at 18 — `crisis` measures 18–43 across the three seeds, so 18
+## is now the observed minimum rather than 0.69× the mean, and moving it down
+## would stop it guarding anything.
+const PRESET_LIFETIME_CEILING := 200
 const PRESET_LIFETIME_FLOOR := 18
 ## `standard` is the preset every other gate in this file is measured on, so its
-## own number is pinned rather than merely ordered. **76 → 69, Wave 14**: the
-## seed spread is 2 game-days (68–70) and the band stays 6, so this still fails
-## on anything that moves `standard`'s neglect curve by more than ~9 %.
-const STANDARD_LIFETIME_DAYS := 69
-const STANDARD_LIFETIME_BAND := 6
+## own number is pinned rather than merely ordered. **69 → 137, Wave 17** (doc 92
+## §43.8): the three-seed spread is 10 game-days (129–139) and the band widens
+## 6 → 12 to hold it, which keeps the guard at the same ~9 % of the pinned value
+## it had before — so this still fails on anything that moves `standard`'s
+## neglect curve by more than about a tenth.
+const STANDARD_LIFETIME_DAYS := 137
+const STANDARD_LIFETIME_BAND := 12
 ## The cascade tripwire, asserted inside the horizon rather than assumed away:
 ## doc 06 §2.13's own worst-case accounting is ≤ 40 active incidents, and a
 ## `do_nothing` city inside these horizons measures 0 or 1.

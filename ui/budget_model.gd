@@ -31,12 +31,7 @@ const REASON_NO_COMMAND := &"E_NO_COMMAND"
 
 const _DEFAULT_REVENUE_KEYS: Array[String] = ["tax", "power_tariff", "water_tariff",
 		"city_services", "assistance"]
-## `building_maint` is GONE from this list in Wave 17 (doc 93 §Y1): the city
-## stopped paying the upkeep of buildings it does not own, `settle_hour` carries
-## no such key, and a row whose value is always absent is a row that reads $0
-## forever. The owner's upkeep is visible on the `tax` row instead, through
-## `f_condition` (doc 93 §Y3).
-const _DEFAULT_EXPENSE_KEYS: Array[String] = ["departments", "fleet",
+const _DEFAULT_EXPENSE_KEYS: Array[String] = ["building_maint", "departments", "fleet",
 		"vehicle_fuel", "grid", "generation_fuel", "water", "roads_repair", "debt"]
 
 var _cfg: UIConfig

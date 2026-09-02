@@ -326,10 +326,8 @@ func e_fuel_vehicle(vehicles: Array, fuel_weather_mult: float = 1.0) -> float:
 ##
 ## **Which line takes which difficulty knob** (doc 03 §2.4, doc 93 §N1). Three
 ## groups, and the rule is *one knob per line, never two*:
-##   * six recurring lines take `M_exp` — departments, fleet, vehicle fuel,
-##     grid, generation fuel, water (`building_maint` was the seventh until
-##     Wave 17 retired it: the city no longer pays upkeep on private stock,
-##     doc 03 §2.4 / doc 93 §Y1);
+##   * seven recurring lines take `M_exp` — maint, departments, fleet, vehicle
+##     fuel, grid, generation fuel, water;
 ##   * `roads_repair` takes `M_repair` and NOT `M_exp`, because it is a repair
 ##     price booked as a recurring accrual, and the policy that realises it pays
 ##     `repair_cost_road(…, M_repair)`;
@@ -410,31 +408,45 @@ func settle_hour(inputs: Dictionary) -> Dictionary:
 	var gross_revenue := floored + power_tariff + water_tariff + assistance
 
 	# --- §2.4 expenses ----------------------------------------------------
-	# `E_building_maint` is GONE (Wave 17, doc 03 §2.4, doc 93 §Y1). It billed the
-	# city `capital × BUILDING_MAINT_RATE`, scaled up as the building rotted, for
-	# every row where `is_revenue_producing(type)` was true — and that predicate
-	# is `REVENUE_CLASSES.has(class_of(type))`, i.e. residential, commercial,
-	# industrial and tech. Which is to say: the line billed the city the upkeep
-	# of exactly the buildings the city does NOT own, and nothing else, because
-	# C-08 had already excluded the civic and utility shells it does. It is the
-	# wrong party rather than the wrong rate. Private stock is kept up by its
-	# owners (doc 02 §2.6a) and what the city sees of that is `f_condition` on
-	# the tax line (doc 93 §Y3).
+	# **`E_building_maint` STAYS, and doc 93 §Y1 says why it stays** (Wave 17).
+	# The first draft of that ruling retired it: the loop below skips every row
+	# where `is_revenue_producing(type)` is false — C-08, so a civic shell is not
+	# billed beside its own department line — and that predicate is exactly the
+	# four `REVENUE_CLASSES`, so the line bills exactly the buildings the city
+	# does not own. It reads like the city paying a landlord's repair bill.
 	#
-	# **Retired, not zeroed.** The snapshot carries no `building_maint` key at
-	# all, so a surface that used to print the row prints nothing rather than a
-	# $0 line that invites the question.
+	# **It is not.** It is the city's cost of SERVING a building — the reading
+	# C-08 itself implies, since the civic exclusion is "those are billed by
+	# their own O&M lines", not "the city only pays for what it owns" — and it
+	# rises as the building wears because a worn building costs more to serve.
+	# The thing the 2026-09-01 playtest asked to move to the owner is the lumpy,
+	# TAPPED repair, and that is what `E_OWNER_MAINTAINED` moves.
 	#
-	# **And the station's own condition now reaches its own bill** (doc 93 §Y5).
-	# `ASSET_CONDITION_PENALTY_COEFF` has always been applied to the two other
-	# classes of asset the city owns — a worn grid node and a worn water main
-	# both cost more per hour, on exactly this coefficient — and the station line
-	# was the one that stayed flat: a police station at condition 0.20 was billed
-	# the same staffing as one at 1.00. That is an inconsistency inside doc 03's
-	# own model, and after doc 02 §2.6a the city's stations are among the only
-	# buildings left that CAN rot on the city's books. A row that carries no
-	# `condition` reads 1.00 and bills exactly what it billed before, so every
-	# fixture and every worked example is unmoved.
+	# Retiring it was measured before it was believed, and the measurement is why
+	# it is here: doc 92 §43.8. With this line gone AND private stock kept up by
+	# its owners, `tools/measure_insolvency.gd` put `do_nothing` on `standard` at
+	# game-day 176 against gate 29's ruled 69, and `casual` never went insolvent
+	# inside 200 game-days at all — "a preset on which standing still never costs
+	# anything is a preset with no game in it", in the gate's own words.
+	var maint_rate := float(_expenses.get("BUILDING_MAINT_RATE", 0.0))
+	var maint_penalty := float(_expenses.get("MAINT_CONDITION_PENALTY", 0.0))
+	var building_maint := 0.0
+	for entry in inputs.get("buildings", []):
+		var record: Dictionary = entry
+		var type := String(record.get("type", ""))
+		if not _curves.is_revenue_producing(type):
+			continue  # civic/utility are covered by their department / O&M lines (C-08)
+		var capital := float(_curves.capital_value(type, int(record.get("level", 1))))
+		building_maint += capital * maint_rate \
+				* (1.0 + maint_penalty * (1.0 - float(record.get("condition", 1.0))))
+
+	# **The station's own condition reaches its own bill** (Wave 17, doc 03 §2.4,
+	# doc 93 §Y5). `ASSET_CONDITION_PENALTY_COEFF` has always been applied to the
+	# two other classes of asset the city owns — a worn grid node and a worn
+	# water main both cost more per hour, on exactly this coefficient — and the
+	# station line was the one that stayed flat: a police station at condition
+	# 0.20 was billed the same staffing as one at 1.00. A row that carries no
+	# `condition` reads 1.00 and bills exactly what it billed before.
 	var asset_penalty := float(_expenses.get("ASSET_CONDITION_PENALTY_COEFF", 0.0))
 	var departments := 0.0
 	for entry in inputs.get("stations", []):
@@ -452,7 +464,7 @@ func settle_hour(inputs: Dictionary) -> Dictionary:
 	var water_expense := e_water(water)
 	var roads_repair := e_roads_repair(inputs.get("roads", {}), m_repair)
 
-	var recurring := departments + fleet + vehicle_fuel + grid \
+	var recurring := building_maint + departments + fleet + vehicle_fuel + grid \
 			+ generation_fuel + water_expense
 	var austerity_mult := _treasury.austerity_expense_mult() if _treasury != null else 1.0
 	recurring *= m_exp * austerity_mult
@@ -499,6 +511,7 @@ func settle_hour(inputs: Dictionary) -> Dictionary:
 			"gross": revenue_total,
 		},
 		"expenses": {
+			"building_maint": building_maint * m_exp * austerity_mult * yield_mult,
 			"departments": departments * m_exp * austerity_mult * yield_mult,
 			"fleet": fleet * m_exp * austerity_mult * yield_mult,
 			"vehicle_fuel": vehicle_fuel * m_exp * austerity_mult * yield_mult,

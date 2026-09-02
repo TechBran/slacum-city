@@ -963,7 +963,7 @@ REVENUE
                                                     GROSS REVENUE    = 1008.349 $/gh
 
 EXPENSES
-  building maintenance   RETIRED Wave 17 (s2.6a / doc 93 sec Y1)     =        -
+  building maintenance   68,600 capital x 0.00040 x 1.0              =   27.440
   departments            26 + 30 + 20 (staffing only) + 20          =   96.000
   fleet                  2x7 + 12 + 9 + 9 + 14                      =   58.000
   E_grid                 40.000 + 24.000 + 9.000 + 1.274            =   74.274
@@ -972,29 +972,33 @@ EXPENSES
   E_water                0.334 + 1.058 + 14.000                     =   15.392
   routine road repair    150.667 + 35.204   (c_day 0.35, x 1.2625)  =  185.871
   debt service                                                      =    0.000
-                                                    TOTAL EXPENSE    =  492.537 $/gh
+                                                    TOTAL EXPENSE    =  519.977 $/gh
 
-NET  = 1008.349 - 492.537  =  +515.81 $/gh  ->  +$516/gh  =  +$12,379/game-day
+NET  = 1008.349 - 519.977  =  +488.37 $/gh  ->  +$488/gh  =  +$11,721/game-day
 ```
 
-> **WAVE 17 — one line leaves this ledger and nothing else moves** *(doc 93 §Y1,
-> doc 92 §43.2)*. `E_building_maint` billed the city `capital_value ×
-> BUILDING_MAINT_RATE × (1 + MAINT_CONDITION_PENALTY × (1 − C))` on every row for
-> which `is_revenue_producing(type)` was true — which is `REVENUE_CLASSES`, which
-> is exactly the set of buildings the city does **not** own, because C-08 had
-> already excluded the civic and utility shells it does. It was the wrong party,
-> not the wrong rate. Private stock keeps itself up (doc 02 §2.6a) and what the
-> city sees of that is `f_condition` on the tax line. Expense `519.977 →
-> 492.537`, net `488.372846 → 515.812846`, game-day `+$11,721 → +$12,379`.
+> **WAVE 17 — this ledger does not move, and that is the finding** *(doc 93 §Y1,
+> doc 92 §43.8)*. The ownership ruling was drafted to retire `E_building_maint`
+> here, on the reading that it bills exactly the four `REVENUE_CLASSES` — exactly
+> the buildings the city does not own. **Measured, the retirement broke the
+> game**: with the line gone and private stock kept up by its owners,
+> `tools/measure_insolvency.gd` put `do_nothing` on `standard` at game-day
+> **176** against gate 29's ruled 69, and `casual` **never went insolvent inside
+> 200 game-days at all**. So the line stays, and §2.4 now says what it is: the
+> city's cost of *serving* a building, which is what C-08's civic exclusion
+> already implied — civic shells are excluded because their own O&M lines bill
+> them, not because the city only pays for what it owns. What moves to the owner
+> is the lumpy, TAPPED repair (§2.6a's `E_OWNER_MAINTAINED`), which is what the
+> 2026-09-01 playtest actually asked for.
 >
 > **Measured on the live sim, 24 settled game-hours, `standard`, seed 1337**
-> (`tools/measure_founding_ledger.gd --hours=24`): gross **1047.184374 both
-> sides — bit-identical** — expense `532.296003 → 505.410898`, net `514.888371 →
-> 541.773476` (**+5.22 %**), game-day `12357.320908 → 13002.563428`. The whole of
-> the founding move is `−27.70` of retired maintenance and `+0.81` of §2.4's
-> asset-condition coefficient finally reaching a worn station (doc 93 §Y5). The
-> revenue side did not move by one cent, which is the point: this is a charge
-> withdrawn, not a subsidy added.
+> (`tools/measure_founding_ledger.gd --hours=24`): gross **1047.184374 on both
+> sides, bit-identical**; expense `532.296003 → 533.212457`; net `514.888371 →
+> 513.971917`. The only line that moves at all is `departments`, by
+> **+$0.92/gh**, because doc 93 §Y5 finally applies
+> `ASSET_CONDITION_PENALTY_COEFF` to a worn station — **0.18 % of the game-day
+> net, inside every anchor's own ±1 % tolerance, so not one pacing guardrail is
+> re-fitted and gates 1, 2 and 2b hold unchanged.**
 
 > **WAVE 15 — the revenue side moves by exactly +$169.00/gh and not one expense
 > line moves at all** *(report 98 RR-78 / RR-79, doc 92 §36.2).* Two published
@@ -1017,7 +1021,7 @@ NET  = 1008.349 - 492.537  =  +515.81 $/gh  ->  +$516/gh  =  +$12,379/game-day
 
 **The net line, from unrounded components on both sides (report 98 RR-18).** Round 2 subtracted an unrounded expense total from a *rounded* $839 gross, which is the one arithmetic sin this pass will not repeat. Revenue: `740.291412 + 93 + 3.058 + 3 = 839.349412` (tax = `686 × 0.9722 × 1.110 = 686 × 1.079142`). Expense: `27.44 + 96 + 58 + 74.274 + 57 + 6 + 15.392 + 185.870566 = 519.976566`. Net: `839.349412 − 519.976566 = ` **319.372846 $/gh**, displayed as **+$319/gh** and **+$7,664.95/game-day**. Nothing here is rounded until the last step. *(The `E_grid` term is the Wave-4 18-node roster — see the note under the ledger.)*
 
-**Progression of this line across the passes:** expense `306 → 347 → 482 → 521 → 493` (Wave 17); net `+414 → +373 → +357 → +319 → +488 → +516` (Wave 15's revenue re-anchor, then Wave 17's retired charge). Round 2's four moves nearly cancelled; Round 3 moves exactly one line:
+**Progression of this line across the four passes:** expense `306 → 347 → 482 → 521`; net `+414 → +373 → +357 → +319`. *(Wave 15's revenue re-anchor moved the net to +488; Wave 17 moved neither figure — see the box above.)* Round 2's four moves nearly cancelled; Round 3 moves exactly one line:
 
 ```
 ROUND 1 -> ROUND 2
@@ -1735,7 +1739,7 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
     "STARTER_TAX_REVENUE_PER_HOUR": 740,
     "STARTER_GROSS_REVENUE_PER_HOUR": 839,
     "STARTER_GROSS_REVENUE_PER_HOUR_EXACT": 839.349412,
-    "STARTER_EXPENSE_PER_HOUR": 493, "STARTER_NET_PER_HOUR": 516,
+    "STARTER_EXPENSE_PER_HOUR": 521, "STARTER_NET_PER_HOUR": 319,
     "_exact_pair_note": "The _EXACT pair is the AS-INTEGRATED ledger doc 93 sec E2 owns (live doc-05/doc-06/doc-10 inventories, and the fleet-billing ruling), NOT this doc's sec 2.12 arithmetic. The unsuffixed 521/319 are this doc's own published round figures and do not move; tests/test_balance_gates.gd gates 1-2 hold the sim to the _EXACT pair and tests/test_economy.gd holds this doc to its own.",
     "STARTER_EXPENSE_PER_HOUR_EXACT": 504.176677, "STARTER_NET_PER_HOUR_EXACT": 337.047860,
     "STARTER_FIRST_GAME_DAY_NET_EXACT": 8004.047,

@@ -40,11 +40,7 @@ const DEFAULT_HOURS := 1
 
 ## The eight recurring lines of doc 03 §2.4, in the doc's own order, plus the
 ## debt line that carries its own difficulty term.
-## `building_maint` is GONE since Wave 17 (doc 93 §Y1) and is not listed: the
-## snapshot carries no such key, so a row here would print a $0 line for a charge
-## that no longer exists. The BEFORE side of doc 92 §43.2's table was taken with
-## the pre-ruling binary.
-const EXPENSE_LINES: Array[String] = ["departments", "fleet",
+const EXPENSE_LINES: Array[String] = ["building_maint", "departments", "fleet",
 		"vehicle_fuel", "grid", "generation_fuel", "water", "roads_repair", "debt"]
 ## `fines` retired, `city_services` and `assistance` in its place (report 98
 ## RR-78 / RR-79).

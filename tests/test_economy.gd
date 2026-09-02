@@ -48,14 +48,13 @@ func test_economy_json_carries_the_locked_constants() -> void:
 	assert_almost_eq(float(data["upgrades"]["UPG_COEFF"]), 1.15)
 	assert_almost_eq(float(data["upgrades"]["UPG_GROWTH"]), 2.55)
 	assert_almost_eq(float(data["expenses"]["REPAIR_COST_PER_CAPITAL"]), 0.85)
-	# Wave 17 (doc 93 §Y1): `E_building_maint` is retired and its two constants
-	# are DELETED, not defaulted — the city does not pay the upkeep of buildings
-	# it does not own, and a constant nobody reads is PA-13's defect in a new
-	# place. The same shape as C-59's `manual_collection` below.
-	assert_false((data["expenses"] as Dictionary).has("BUILDING_MAINT_RATE"),
-			"expenses.BUILDING_MAINT_RATE must not exist (doc 93 §Y1)")
-	assert_false((data["expenses"] as Dictionary).has("MAINT_CONDITION_PENALTY"),
-			"expenses.MAINT_CONDITION_PENALTY must not exist (doc 93 §Y1)")
+	assert_almost_eq(float(data["expenses"]["BUILDING_MAINT_RATE"]), 0.00040, 1e-9)
+	# Wave 17 (doc 93 §Y1, doc 92 §43.8): the ownership ruling was drafted to
+	# retire this line and the retirement was WITHDRAWN on the measurement — with
+	# it gone, `do_nothing` on `standard` survived to game-day 176 against gate
+	# 29's ruled 69. The constant is pinned here so a second attempt has to read
+	# the note in `data/economy.json` first.
+	assert_almost_eq(float(data["expenses"]["MAINT_CONDITION_PENALTY"]), 1.5, 1e-9)
 	assert_almost_eq(float(data["roads"]["ROAD_REPAIR_CAPITAL_FRACTION"]), 0.20)
 	assert_eq(int(data["land"]["LAND_BASE"]), 9000)
 	# report 98 C-59: the knob is deleted, not defaulted.
@@ -456,12 +455,7 @@ func test_founding_ledger() -> void:
 	assert_almost_eq(float(revenue["assistance"]), 172.0, 0.01)
 	assert_almost_eq(float(revenue["gross"]), 1008.349412, 0.5, "GROSS REVENUE $/gh")
 
-	# Wave 17 (doc 93 §Y1): the line is RETIRED, and the snapshot carries no key
-	# at all rather than a $0 one — a $0 row invites the question of whose upkeep
-	# it is, which is the question the ruling answers by deleting the row.
-	assert_false(expenses.has("building_maint"),
-			"E_building_maint is retired, not zeroed (doc 93 §Y1): $27.44 of "
-			+ "upkeep on 68,600 of PRIVATE capital was never the city's to pay")
+	assert_almost_eq(float(expenses["building_maint"]), 27.44, 0.01, "68,600 × 0.00040")
 	assert_almost_eq(float(expenses["departments"]), 96.0, 0.01, "26 + 30 + 20 + 20")
 	assert_almost_eq(float(expenses["fleet"]), 58.0, 0.01, "2×7 + 12 + 9 + 9 + 14")
 	assert_almost_eq(float(expenses["grid"]), 74.274, 0.5)  # F-4: 2.40 -> 2.25 MVA
@@ -471,8 +465,7 @@ func test_founding_ledger() -> void:
 	assert_almost_eq(float(expenses["roads_repair"]), 185.87, 0.5,
 			"150.667 + 35.204 at c_day 0.35")
 	assert_almost_eq(float(expenses["debt"]), 0.0)
-	assert_almost_eq(float(expenses["total"]), 492.537016, 0.5,
-			"TOTAL EXPENSE $/gh — 519.977016 less the retired 27.44 (doc 93 §Y1)")
+	assert_almost_eq(float(expenses["total"]), 519.977016, 0.5, "TOTAL EXPENSE $/gh")
 
 	# RR-79 moves this row and only this row's revenue side: +$172.00 of founding
 	# assistance, -$3.00 of retired `fines`, so net 319.372396 -> 488.372396 and
@@ -572,9 +565,7 @@ func test_one_difficulty_knob_per_ledger_line() -> void:
 	var base_expenses: Dictionary = base["expenses"]
 	var base_revenue: Dictionary = base["revenue"]
 
-	# SIX lines take `M_exp`, not seven: `building_maint` was the seventh until
-	# Wave 17 retired it (doc 93 §Y1 / §N1's one-knob-per-line contract).
-	var swept_by_m_exp: Array[String] = ["departments", "fleet",
+	var swept_by_m_exp: Array[String] = ["building_maint", "departments", "fleet",
 			"vehicle_fuel", "grid", "generation_fuel", "water"]
 	for preset in Difficulty.PRESETS:
 		var row := difficulty.row_of("economic", preset)

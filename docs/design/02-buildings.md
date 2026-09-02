@@ -260,33 +260,33 @@ The **`Pwr kW` column needs no seed table**: every L1 power figure is already ex
 #### `power_facility` — vertical (k_dem 2.55; footprint grows at L4)
 | L | Foot | Pop | Jobs | Pwr kW (own use) | Water WU/gh | Build gh | Upg gh | Decay | Fire p/gh | FireLoad | Crime | ReqFire | ReqPol | CityLv |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 3x3 | 0 | 20 | 0 | 0.96 | 18 | 20 | 0.000450 | 0.00090 | 90 | 1.20 | 0.00 | 0.00 | 0 |
-| 2 | 3x3 | 0 | 42 | 0 | 2.4 | 31 | 34 | 0.000540 | 0.00115 | 180 | 1.92 | 0.15 | 0.11 | 1 |
-| 3 | 3x3 | 0 | 88 | 0 | 6.2 | 52 | 57 | 0.000648 | 0.00147 | 360 | 3.07 | 0.30 | 0.26 | 2 |
-| 4 | 4x4 | 0 | 185 | 0 | 16.0 | 88 | 98 | 0.000778 | 0.00189 | 720 | 4.92 | 0.45 | 0.41 | 3 |
-| 5 | 4x4 | 0 | 389 | 0 | 40.5 | 150 | — | 0.000933 | 0.00242 | 1440 | 7.86 | 0.60 | 0.56 | 4 |
+| 1 | 3x3 | 0 | 20 | 0 | 0.96 | 18 | 20 | 0.000900 | 0.00090 | 90 | 1.20 | 0.00 | 0.00 | 0 |
+| 2 | 3x3 | 0 | 42 | 0 | 2.4 | 31 | 34 | 0.001080 | 0.00115 | 180 | 1.92 | 0.15 | 0.11 | 1 |
+| 3 | 3x3 | 0 | 88 | 0 | 6.2 | 52 | 57 | 0.001296 | 0.00147 | 360 | 3.07 | 0.30 | 0.26 | 2 |
+| 4 | 4x4 | 0 | 185 | 0 | 16.0 | 88 | 98 | 0.001555 | 0.00189 | 720 | 4.92 | 0.45 | 0.41 | 3 |
+| 5 | 4x4 | 0 | 389 | 0 | 40.5 | 150 | — | 0.001866 | 0.00242 | 1440 | 7.86 | 0.60 | 0.56 | 4 |
 
 *(The L5 row is the largest single movement in the C-34 rescale: 154.0 old WU/gh → 40.5 m³/h of cooling and process water.)* Generation capacity in MW is **doc 04's**, not a column here.
 
 #### `substation` — standard (k_dem 2.45)
 | L | Foot | Pop | Jobs | Pwr kW | Water WU/gh | Build gh | Upg gh | Decay | Fire p/gh | FireLoad | Crime | ReqFire | ReqPol | CityLv |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 2x2 | 0 | 4 | 0 | 0 | 8 | 8 | 0.000450 | 0.00070 | 55 | 1.50 | 0.00 | 0.00 | 0 |
-| 2 | 2x2 | 0 | 7 | 0 | 0 | 12.5 | 12.5 | 0.000540 | 0.00090 | 110 | 2.40 | 0.15 | 0.11 | 1 |
-| 3 | 2x2 | 0 | 14 | 0 | 0 | 19 | 19.5 | 0.000648 | 0.00115 | 220 | 3.84 | 0.30 | 0.26 | 2 |
-| 4 | 2x2 | 0 | 25 | 0 | 0 | 30 | 30 | 0.000778 | 0.00147 | 440 | 6.14 | 0.45 | 0.41 | 3 |
-| 5 | 2x2 | 0 | 47 | 0 | 0 | 46 | — | 0.000933 | 0.00188 | 880 | 9.83 | 0.60 | 0.56 | 4 |
+| 1 | 2x2 | 0 | 4 | 0 | 0 | 8 | 8 | 0.000800 | 0.00070 | 55 | 1.50 | 0.00 | 0.00 | 0 |
+| 2 | 2x2 | 0 | 7 | 0 | 0 | 12.5 | 12.5 | 0.000960 | 0.00090 | 110 | 2.40 | 0.15 | 0.11 | 1 |
+| 3 | 2x2 | 0 | 14 | 0 | 0 | 19 | 19.5 | 0.001152 | 0.00115 | 220 | 3.84 | 0.30 | 0.26 | 2 |
+| 4 | 2x2 | 0 | 25 | 0 | 0 | 30 | 30 | 0.001382 | 0.00147 | 440 | 6.14 | 0.45 | 0.41 | 3 |
+| 5 | 2x2 | 0 | 47 | 0 | 0 | 46 | — | 0.001659 | 0.00188 | 880 | 9.83 | 0.60 | 0.56 | 4 |
 
 `substation` keeps a deliberately high `crime_weight` for its class (copper theft), so an unguarded remote substation is a real cascade seed. Throughput, `service_radius_tiles` and every other electrical number are **doc 04's**.
 
 #### `water_facility` — standard (k_dem 2.45; footprint grows at L5) — **`pump` reference variant**
 | L | Foot | Pop | Jobs | Pwr kW | Water WU/gh | Build gh | Upg gh | Decay | Fire p/gh | FireLoad | Crime | ReqFire | ReqPol | CityLv |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 3x3 | 0 | 10 | 60 | 0 | 12 | 12 | 0.000450 | 0.00012 | 25 | 0.80 | 0.00 | 0.00 | 0 |
-| 2 | 3x3 | 0 | 19 | 145 | 0 | 18.5 | 19 | 0.000540 | 0.00015 | 50 | 1.28 | 0.15 | 0.11 | 1 |
-| 3 | 3x3 | 0 | 34 | 360 | 0 | 29 | 29 | 0.000648 | 0.00020 | 100 | 2.05 | 0.30 | 0.26 | 2 |
-| 4 | 3x3 | 0 | 63 | 880 | 0 | 45 | 45 | 0.000778 | 0.00025 | 200 | 3.28 | 0.45 | 0.41 | 3 |
-| 5 | 4x4 | 0 | 117 | 2160 | 0 | 69 | — | 0.000933 | 0.00032 | 400 | 5.24 | 0.60 | 0.56 | 4 |
+| 1 | 3x3 | 0 | 10 | 60 | 0 | 12 | 12 | 0.000700 | 0.00012 | 25 | 0.80 | 0.00 | 0.00 | 0 |
+| 2 | 3x3 | 0 | 19 | 145 | 0 | 18.5 | 19 | 0.000840 | 0.00015 | 50 | 1.28 | 0.15 | 0.11 | 1 |
+| 3 | 3x3 | 0 | 34 | 360 | 0 | 29 | 29 | 0.001008 | 0.00020 | 100 | 2.05 | 0.30 | 0.26 | 2 |
+| 4 | 3x3 | 0 | 63 | 880 | 0 | 45 | 45 | 0.001210 | 0.00025 | 200 | 3.28 | 0.45 | 0.41 | 3 |
+| 5 | 4x4 | 0 | 117 | 2160 | 0 | 69 | — | 0.001452 | 0.00032 | 400 | 5.24 | 0.60 | 0.56 | 4 |
 
 The shell table above is generated for the **`pump`** variant **and its `Foot` column is the `pump` footprint only** *(report 98 RR-8, verifier finding F-08)*. The earlier claim that the four non-reference variants "reuse the same footprint" is **deleted** — it contradicted C-35, which gave doc 05 every per-variant number, and it contradicted doc 09's starter-city footprint total, which counts `WTR-2` as a **2×2 tank**. What survives here is a **restatement, not an ownership claim**: the `Foot` column above must equal doc 05's `components.pump` footprint columns, and the loader asserts that equality at boot (§3.1). C-30's "doc 02's footprint is authoritative" remains true against **doc 04**; it was never a claim against doc 05.
 
@@ -302,11 +302,11 @@ Doc 05's published footprints for reference (**doc 05 §8 is the source of truth
 #### `construction_yard` — steady (k_dem 2.35; footprint grows at L4)
 | L | Foot | Pop | Jobs | Pwr kW | Water WU/gh | Build gh | Upg gh | Decay | Fire p/gh | FireLoad | Crime | ReqFire | ReqPol | CityLv |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 2x2 | 0 | 16 | 12 | 0.16 | 10 | 9 | 0.000450 | 0.00040 | 50 | 2.20 | 0.00 | 0.00 | 0 |
-| 2 | 2x2 | 0 | 25 | 28 | 0.38 | 14 | 12.5 | 0.000540 | 0.00051 | 100 | 3.52 | 0.15 | 0.11 | 1 |
-| 3 | 2x2 | 0 | 38 | 66 | 0.88 | 19.5 | 17.5 | 0.000648 | 0.00066 | 200 | 5.63 | 0.30 | 0.26 | 2 |
-| 4 | 3x3 | 0 | 60 | 155 | 2.1 | 27 | 25 | 0.000778 | 0.00084 | 400 | 9.01 | 0.45 | 0.41 | 3 |
-| 5 | 3x3 | 0 | 92 | 365 | 4.9 | 38 | — | 0.000933 | 0.00107 | 800 | 14.42 | 0.60 | 0.56 | 4 |
+| 1 | 2x2 | 0 | 16 | 12 | 0.16 | 10 | 9 | 0.000650 | 0.00040 | 50 | 2.20 | 0.00 | 0.00 | 0 |
+| 2 | 2x2 | 0 | 25 | 28 | 0.38 | 14 | 12.5 | 0.000780 | 0.00051 | 100 | 3.52 | 0.15 | 0.11 | 1 |
+| 3 | 2x2 | 0 | 38 | 66 | 0.88 | 19.5 | 17.5 | 0.000936 | 0.00066 | 200 | 5.63 | 0.30 | 0.26 | 2 |
+| 4 | 3x3 | 0 | 60 | 155 | 2.1 | 27 | 25 | 0.001123 | 0.00084 | 400 | 9.01 | 0.45 | 0.41 | 3 |
+| 5 | 3x3 | 0 | 92 | 365 | 4.9 | 38 | — | 0.001348 | 0.00107 | 800 | 14.42 | 0.60 | 0.56 | 4 |
 
 ### 2.4 Coverage reach table (the only "special output" this doc still owns)
 
