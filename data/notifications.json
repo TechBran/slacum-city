@@ -132,6 +132,9 @@
 			"cooldown_minutes": 360, "deeplink": "budget", "state": "warning"},
 		"tax_changed": {"class": "P3_routine", "severity": 0, "aggregate": false,
 			"cooldown_minutes": 720, "deeplink": "budget", "state": "normal"},
+		"_comment_assistance": "99-PA PA-32 / doc 98 RR-148. ONE row for EIGHT sim events, and that is the whole design: `assistance_stepped` fires once per game-day for the seven days doc 03 §2.5a's founding grant tapers, and only the LAST one — `final: true`, the day the subsidy is gone and the city starts paying its own departments and fleet — is worth a notification. The other seven are doc 12 event-log rows and nothing else (data/ui.json.event_log.events), because a push a day for a week about a number that is going down on a published schedule is the notification budget spent on a thing the player cannot act on. P3 for the same reason: it is a fact to find, not an emergency.",
+		"assistance_ended": {"class": "P3_routine", "severity": 1, "aggregate": false,
+			"cooldown_minutes": 1440, "deeplink": "budget", "state": "warning"},
 
 		"construction_complete": {"class": "P3_routine", "severity": 1, "aggregate": true,
 			"cooldown_minutes": 180, "deeplink": "building/{ref}", "state": "normal"},
@@ -247,6 +250,8 @@
 			"args": {"balance": "@money:balance", "time": "@time"}},
 		{"type": "austerity_entered", "notify_id": "austerity", "args": {"time": "@time"}},
 		{"type": "tax_rate_changed", "notify_id": "tax_changed", "args": {"level": "level"}},
+		{"type": "assistance_stepped", "match": {"final": true},
+			"notify_id": "assistance_ended", "args": {"time": "@time"}},
 
 		{"_comment": "Progression (doc 02). `city_level_changed` carries `from`/`to`, NOT `level` — the stand-in table read `level` and quietly rendered an empty title against the real event while passing its own fixture. Likewise `block_ready` carries `block`, not `block_id`. Both are fixed here against the emit sites in sim/population/progression_system.gd and sim/world/development_controller.gd."},
 		{"type": "city_level_changed", "notify_id": "city_level_up", "args": {"level": "to"}},

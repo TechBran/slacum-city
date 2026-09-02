@@ -567,7 +567,22 @@ func _build_ledger(node_name: String, title: String, lines: Array) -> VBoxContai
 		record.add_child(label)
 		record.add_child(_fixed(UIWidgets.label("Amount", str(line["text"]))))
 		record.add_child(_gutter())
-		box.add_child(record)
+		# A line may carry a NOTE — one sentence under its own figure, in the
+		# muted style, saying something the amount cannot (99-PA PA-32: the
+		# founding grant's per-day rate and the game-day it ends on). It is drawn
+		# here rather than appended to the label because the label is the left
+		# half of a two-column row and a longer one pushes the figure off the
+		# panel; a note is its own line and can wrap.
+		var note := str(line.get("note", ""))
+		if note == "":
+			box.add_child(record)
+			continue
+		var stack := VBoxContainer.new()
+		stack.name = "Note_" + str(line["key"])
+		stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		stack.add_child(record)
+		stack.add_child(UIWidgets.label("Note", note, &"", true))
+		box.add_child(stack)
 	return box
 
 

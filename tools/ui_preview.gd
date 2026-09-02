@@ -70,6 +70,11 @@ const SCREENS: Array[String] = [
 	# never on screen together: the one-shot discovery mark over the world, and
 	# the Economy ledger with the two lines doc 03 does not settle.
 	"street_coach", "economy_street",
+	# Wave 18, Lane S (99-PA PA-32). The founding fortnight: doc 03 §2.5a's grant
+	# still paying, with the row that now says what it pays today and which
+	# game-day it stops. `economy` above is a settlement with the grant already
+	# retired, so it can never photograph this.
+	"economy_assistance",
 	# S16, Wave 17 (doc 12 §2.22). Four states, in the same commit as the screen
 	# — A91-D-28's lesson, applied on the way in. `queue` is the mixed list the
 	# panel is written for; `queue_uncrewed` is the row that says so in words
@@ -684,6 +689,24 @@ func _apply(screen: String) -> void:
 			_root.city_dashboard.open(DashboardModel.TAB_OVERVIEW)
 			_root.city_dashboard.row_button("treasury").pressed.emit()
 		"economy":
+			_root.city_dashboard.open(DashboardModel.TAB_ECONOMY)
+		"economy_assistance":
+			# Game-day 3 of the founding week: the grant is still paying and the
+			# row has to say what it pays TODAY and which day it stops (99-PA
+			# PA-32). The settlement is doc 03's own snapshot shape, `hour` and
+			# `assistance_days_left` included, because the end day is derived
+			# from those two and not authored anywhere in `ui/`.
+			_root.feed_settlement({
+				"hour": 74,
+				"assistance_days_left": 4,
+				"revenue": {"tax": 980.0, "power_tariff": 61.0, "water_tariff": 26.0,
+						"city_services": 38.0, "assistance": 98.29, "gross": 1203.29},
+				"expenses": {"building_maint": 214.0, "departments": 96.0,
+						"fleet": 76.0, "vehicle_fuel": 12.0, "grid": 31.0,
+						"generation_fuel": 74.0, "water": 21.0, "roads_repair": 8.0,
+						"debt": 0.0, "total": 532.0},
+				"net": 671.29,
+			})
 			_root.city_dashboard.open(DashboardModel.TAB_ECONOMY)
 		"economy_street":
 			# The same ledger with a policed city's real income in it: bounties

@@ -338,12 +338,25 @@ func breakdown() -> Dictionary:
 		# end date anywhere (doc 93 §Y4). No dollar moves for this: the row says
 		# how many game-days of itself are left, on its own label, from the
 		# count doc 03 now publishes in the settle snapshot.
+		# **The taper, before it bites** (99-PA PA-32, doc 98 RR-148). RR-102 put
+		# the COUNT on this row; the audit's finding was that a count alone does
+		# not tell a player what the step is going to cost them. So the note now
+		# carries all three of the numbers the sentence needs — what the grant
+		# pays TODAY as a per-day rate (the unit the net chip is read in, not the
+		# per-hour figure in the column beside it), which game-day it ends on,
+		# and how many game-days that leaves — and none of them is authored here:
+		# `per_day` is this row's own settled amount × 24 through
+		# `HudModel.rate_per_day`, and `end_day` is the settled hour's own day
+		# plus doc 03's published count.
 		if key == "assistance":
 			var days_left := int(_settlement.get("assistance_days_left", 0))
 			line["days_left"] = days_left
+			line["end_day"] = int(_settlement.get("hour", 0)) / 24 + days_left
 			if days_left > 0:
 				line["note"] = UIWidgets.t_args(_cfg, "ui_budget_assistance_days_left",
-						{"days": str(days_left)})
+						{"per_day": str(line["per_day_text"]),
+						"end_day": str(line["end_day"]),
+						"days": str(days_left)})
 		revenue_rows.append(line)
 	net = float(_settlement.get("net", gross - expense)) + side_total
 	gross += side_total

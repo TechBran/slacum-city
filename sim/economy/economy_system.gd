@@ -540,7 +540,49 @@ func settle_hour(inputs: Dictionary) -> Dictionary:
 			"gross": revenue_total, "expense": expense_total,
 			"city_services": services_total, "assistance": assistance * yield_mult,
 			"net": revenue_total - expense_total})
+	_publish_assistance_step(hour, assistance * yield_mult,
+			int(inputs.get("founding_assistance_days_left", 0)))
 	return snapshot
+
+
+## **§2.5a's taper, said out loud** (99-PA PA-32, doc 93 §Y4, doc 98 RR-148).
+##
+## RR-102 made the count honest — `assistance_days_left` rides the snapshot and
+## the budget row spends it on its own label — but a sheet the player has to open
+## is not a surface for the largest single mover of the opening fortnight's net
+## chip. The audit measured the taper at $589.71 a game-day against a `do_nothing`
+## net that falls 517 → 266 over the same window, with **no toast, no log row and
+## no end date anywhere**, and named that silence as the whole of "income too
+## slow" (99-PA PA-32).
+##
+## So the step gets an event, once per game-day, on the day it steps:
+##
+##   * **days 0…6** — `days_left > 0`, `final` false: doc 12's routine log row,
+##     "State assistance is now $X/day — N days left".
+##   * **day 7** — `per_day` 0, `final` true: the last step, and the one that
+##     reaches the alerts centre, because it is the only one that changes what
+##     the player has to do next.
+##
+## Exactly **8 events per city** on the shipped constants (7 + 1, the audit's own
+## target), and none at all after the taper retires.
+##
+## **No state and no dollar.** The day is `hour / 24`, the step is detected by
+## asking `CostCurves` what YESTERDAY's share was — the same published function
+## the live figure comes from — so nothing is remembered between hours, nothing
+## new is serialized, and `state_hash()` cannot move for this. `per_day` is the
+## live per-hour grant × 24, not a second copy of doc 03 §2.5a's constant.
+func _publish_assistance_step(hour: int, per_hour: float, days_left: int) -> void:
+	var hours_per_day := int(HOURS_PER_GAME_DAY)
+	if hours_per_day <= 0 or hour % hours_per_day != 0:
+		return
+	var day := hour / hours_per_day
+	var previous := _curves.founding_assistance_per_hour(day - 1) if day > 0 else 0.0
+	if per_hour <= 0.0 and previous <= 0.0:
+		return  # the taper retired before today; there is no step to report
+	events.append({"type": &"assistance_stepped", "hour": hour, "day": day,
+			"per_hour": per_hour, "per_day": per_hour * HOURS_PER_GAME_DAY,
+			"days_left": days_left, "end_day": day + days_left,
+			"final": per_hour <= 0.0})
 
 
 # ================================================== §2.7 land purchase price

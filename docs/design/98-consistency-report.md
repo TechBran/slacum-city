@@ -5696,3 +5696,171 @@ doc 13 §2.9.1 (the ANR budget lines, re-derived against the measured load and
 save); doc 91 §14.5 (`A91-D-83`, `A91-D-84`) and §20.4 (device items 2, 3 and 5,
 and the completion statement); doc 93 §AF; and
 `tools/device_results/README.md`.
+
+---
+
+## 53. WAVE 18 — money has surfaces: the taper says when it ends, the wear says what it costs, and the city repairs what it owns (binding)
+
+*Filed 2026-09-02 against 99-PA §3.2 Lane S (rows PA-31 surface half, PA-32,
+PA-33, PA-83). Baselines re-recorded at the lane fork `d0d114f` and unmoved at
+delivery — see §53.4. Every number below is a command in this section.*
+
+**The shape of all four rows is one shape.** The Wave-17 economy dial-in made the
+money HONEST: the repair fell on the owner (doc 93 §Y1), the founding grant's
+window was published into the settle snapshot (RR-102), the upgrade ladder became
+an identity (§Y7). None of that put a number on a screen. The audit's Lane S is
+therefore not a tuning lane at all — every row is a computed value with no
+consumer, and the fix is a consumer:
+
+| row | the value the sim already had | where it now lands |
+|---|---|---|
+| PA-32 | `founding_assistance_days_left` (RR-102) | `assistance_stepped` ×8 per city; the Economy tab's assistance note |
+| PA-31 | `Building.condition` crossing doc 02 §2.6's bands | `building_condition_band`; the Economy tab's **Upkeep** band |
+| PA-33 | `cmd_repair_building`, one building at a time | `cmd_set_building_repair_policy` + `cmd_repair_all_worn` |
+| PA-83 | `development_phase_charged` | a doc 12 economy log row |
+
+### RR-148 — A scheduled taper announces its OWN schedule, once per step, and only the last step is a notification
+
+**The finding (99-PA PA-32).** Doc 03 §2.5a's founding assistance retires
+`FOUNDING_ASSISTANCE_PER_HOUR / FOUNDING_ASSISTANCE_DAYS` = **$589.71 a game-day**
+for seven game-days. Measured on the coarse curriculum arc, `do_nothing` net falls
+517 → 266 $/gh across the same window and the taper is the largest single mover in
+it. At the Wave-17 fork the whole surface was `ui/budget_model.gd`'s
+`"ends in {days} days"` on a row inside a sheet — a count, on a screen the player
+has to open, with no rate and no end date.
+
+**Ruled.** A change the game has *already scheduled* is owed a statement at each
+step, and the statement must carry **the rate, the end day and the days left** —
+the three numbers the sentence needs — because a count alone does not tell a
+player what the next step is going to cost them.
+
+**And the corollary that keeps it cheap: only the LAST step is a notification.**
+Seven pushes about a number going down on a published schedule is the doc 08
+budget spent on a thing the player cannot act on. So `assistance_stepped` fires
+eight times per city and exactly one of them (`final: true`, the game-day the
+grant is gone) carries a `data/notifications.json` binding; the other seven are
+`data/ui.json.event_log` rows and nothing else. That is the audit's own target —
+*1 toast + 7 log rows per city* — reached by construction rather than by a budget
+rule.
+
+**Hash-neutral by construction.** The step is detected by asking `CostCurves` what
+YESTERDAY's published share was, so `EconomySystem` remembers nothing between
+hours, serializes nothing new, and `state_hash()` cannot move for it.
+
+*Verification:* `tests/test_money_surfaces.gd`
+`test_pa32_the_taper_steps_once_a_game_day_and_says_when_it_ends`,
+`test_pa32_each_step_is_the_published_daily_retirement`,
+`test_pa32_the_economy_row_carries_the_rate_and_the_end_day`,
+`test_pa32_both_steps_reach_a_surface`.
+
+**Applied:** `sim/economy/economy_system.gd` (`_publish_assistance_step`),
+`ui/budget_model.gd`, `ui/city_dashboard.gd` (ledger notes),
+`data/ui.json.event_log`, `data/notifications.json`, `data/strings.en.json`;
+doc 03 §2.5a, doc 12 §2.10 (D-84), doc 93 §AL.
+
+### RR-149 — Wear that costs money is reported as MONEY, in one band, and the band names the repair that ends it
+
+**The finding (99-PA PA-31, surface half).** An untouched city loses 53 % of its
+non-subsidy income in 20 game-days from decay alone; at the Wave-17 fork nothing
+said so until a building reached `damaged` at 0.35 — and after doc 93 §Y1's
+ownership floor a private building **never gets there**, so for the four revenue
+classes the only cue that ever existed is now unreachable by construction. The
+lane's own instrument makes the size of the silence exact: on a 45-game-day
+curriculum arc, `tools/measure_repair_burden.gd` counts **321 downward crossings
+of 0.85, 0 of 0.60, 0 of 0.35**, ending with **185 private buildings sitting worn**
+and **118 repair-family events reaching no surface at all**.
+
+**Ruled, in two halves.**
+
+*(a) The crossing is an event.* `building_condition_band` is emitted on a
+**downward** crossing of doc 02 §2.6's `band_good` (0.85) and `band_worn` (0.60) —
+the two lines the band table already draws, read out of `building_rules.json`, not
+restated. Downward only: a building climbing back through a band is the player's
+own repair or upgrade finishing, and the screen that issued it already knows
+(doc 93's event rule, `player_initiated`). Worn is a doc 12 log row, aggregated;
+Poor is a P3.
+
+*(b) The consequence is a BAND on the Economy tab, denominated in dollars.* A
+count of worn buildings is not a reason to act. `(1 − f_condition) × tax` is: it
+is the money the city is not collecting this hour because its stock is worn,
+computed off doc 03's own per-building settle rows and off nothing this lane
+authors, printed beside **the repair quote that would end it**. That pairing is
+the whole ruling — *the loss and the price of stopping it, on one screen*, which
+is the audit's stated target for this row.
+
+**Hash-neutral by construction.** The band is derived from `condition` before and
+after the hour's own decay call. No band is stored, so nothing new is serialized,
+and the Upkeep band is a read of `last_settlement` plus `preview` quotes — no
+dollar moves to draw it.
+
+*Verification:* `tests/test_money_surfaces.gd` `test_pa31_*`.
+
+**Applied:** `sim/city_sim.gd` (`apply_hourly_decay`), `ui/dashboard_model.gd`,
+`ui/city_dashboard.gd`, `data/ui.json.event_log`, `data/notifications.json`,
+`data/strings.en.json`; doc 02 §2.6, doc 12 §2.10 (D-84), doc 93 §AL.
+
+### RR-150 — The city repairs what it OWNS under a policy, the way roads already do; the default is manual, and that is what keeps the matrix still
+
+**The finding (99-PA PA-33).** Roads have `cmd_set_auto_repair_policy` and a
+settings row (doc 10 §2.13, doc 93 §J3); buildings had `cmd_repair_building(sim_id)`,
+one call per building, and nothing ruled them manual. The audit measured 211–245
+repair taps per 45-game-day arc. **That number has already fallen**, and this
+ruling records the new one rather than the one that motivated it: after doc 93
+§Y1 moved private stock to its owners, `tools/measure_repair_burden.gd --days=45
+--seeds=1337 --strategies=curriculum` counts **51 civic repair trips and $226,852
+of civic repair** on the same arc — 0 private, because there is no private repair
+left to buy. So the row is smaller than filed and it is the same row: 51 taps is
+still one every ~21 game-hours, on buildings the city unambiguously owns, for a
+decision that has exactly one sensible answer.
+
+**Ruled.** `cmd_set_building_repair_policy(threshold, daily_cap)` and
+`cmd_repair_all_worn(preview)`, mirroring roads:
+
+1. **The threshold ladder is doc 02's own band table**, resolved through
+   `BuildingCatalog` — `0.0` (off), `band_worn`, `band_good`. A policy dial that
+   authored its own condition constants would be the second copy doc 02 §2.6
+   exists to prevent, and `E_BAD_THRESHOLD` is answered for anything else exactly
+   as `RoadNetwork` answers it.
+2. **The daily cap is doc 03's**, because it is dollars (C-07). It is a player
+   *budget*, not a price: the pass never invents a number, it asks
+   `cmd_repair_building(sim_id, true)` for each quote and stops at the cap.
+3. **Only what the city owns.** `owner_maintained` buildings are skipped, and not
+   as an optimisation — `cmd_repair_building` refuses them with
+   `E_OWNER_MAINTAINED`, so a policy that tried would be a policy that spends its
+   whole pass being refused.
+4. **The default is `off` / manual.** A city that never opens the control behaves
+   exactly as it did at the fork: no candidate is selected, no quote is taken, no
+   dollar moves, and the policy is omitted from the city section entirely, so
+   `capture_state()` is byte-identical and **the four `profile_sim` baselines do
+   not move** (§53.4). A default of *auto* would have been a balance change, would
+   have moved every gate, and is not what a surfacing lane is for.
+
+**And the batch verb is the same pass, run once, by hand.** `cmd_repair_all_worn`
+is what the Upkeep band's *"Repair all worn (N) — $X"* button presses; it shares
+one implementation with the daily policy pass, so the button and the policy can
+never disagree about which buildings are candidates or what they cost.
+
+*Verification:* `tests/test_money_surfaces.gd` `test_pa33_*`.
+
+**Applied:** `sim/city_sim.gd` (`cmd_set_building_repair_policy`,
+`cmd_repair_all_worn`, `building_repair_policy`, `run_building_repair_policy`),
+`data/economy.json` (`building_repair`), `ui/dashboard_model.gd`,
+`ui/city_dashboard.gd`; doc 02 §2.6, doc 03 §2.5, doc 12 §2.10 (D-84), doc 93 §AL.
+
+### 53.4 Baselines
+
+Re-recorded at the lane fork `d0d114f` (`~/.local/bin/godot --headless --script
+tools/profile_sim.gd -- --hash-only`, and again with
+`--city=res://tests/fixtures/bench_city.json`) and re-taken at delivery:
+
+| city | pass | fork `d0d114f` | after Lane S |
+|---|---|---|---|
+| starter | coarse 24 h | `05614522975fad52…` | unchanged |
+| starter | fine 2.0 h | `d1aaee0dca92f2fd…` | unchanged |
+| bench | coarse 24 h | `275aad9d4aeea809…` | unchanged |
+| bench | fine 2.0 h | `d40126e371371d59…` | unchanged |
+
+**No hash delta, so no `awaiting_consumer` row and nothing for the matrix holder
+(Lane B) to re-fit.** That is a deliberate constraint on the lane and not a happy
+accident: RR-148's step detection is stateless, RR-149's band is derived, and
+RR-150's policy is omitted from the save at its default.

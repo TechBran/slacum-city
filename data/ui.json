@@ -781,6 +781,33 @@
 				}
 			},
 			{
+				"_comment": "99-PA PA-32 / doc 98 RR-148. Doc 03 §2.5a's founding assistance retires $589.71 a game-day for seven game-days and used to do it in total silence: the audit measured it as the largest single mover of the opening fortnight's net chip, with no toast, no log row and no end date anywhere, and named that silence as most of what reads on the phone as 'income too slow'. `EconomySystem` now steps the grant out loud once per game-day. TWO rows because the last step is a different sentence: days 0-6 are `final: false` and are routine bookkeeping the player can scroll back to, while day 7 is `final: true`, is the day the city starts paying its own departments and fleet, and is the ONE that is also a doc 08 notification (see data/notifications.json). Exactly 8 rows per city, then never again.",
+				"type": "assistance_stepped",
+				"match": {
+					"final": false
+				},
+				"category": "economy",
+				"notify_id": "assistance_stepped",
+				"state": "normal",
+				"args": {
+					"days": "days_left",
+					"per_day": "@money:per_day",
+					"end_day": "end_day"
+				}
+			},
+			{
+				"type": "assistance_stepped",
+				"match": {
+					"final": true
+				},
+				"category": "economy",
+				"notify_id": "assistance_ended",
+				"state": "warning",
+				"args": {
+					"time": "@time"
+				}
+			},
+			{
 				"type": "building_completed",
 				"category": "economy",
 				"notify_id": "construction_complete",

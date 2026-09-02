@@ -3319,3 +3319,72 @@ Two consequences, both recorded rather than fixed here:
    whole difficulty table was fitted on a mechanism the docs believed in and the
    sim never had. It belongs to the power lane, and until it lands, §Y1a is a
    correct clause with nothing to bite on.
+
+---
+
+## AL. Wave-18 rulings — what the money is allowed to do in silence (2026-09-02)
+
+*Three fairness questions came out of Lane S (99-PA PA-31/PA-32/PA-33). All three
+are the same question asked about three different dollars: when is the game
+allowed to change what a player earns, or spend what a player has, without
+saying so?*
+
+### AL1. A scheduled change must announce its own schedule
+
+**Question.** Doc 03 §2.5a's founding assistance is correct, published and on a
+clock the player never agreed to. Is it fair for it to shrink in silence?
+
+**Ruled: no, and the reason is not the size of it.** A number that falls because
+the player neglected something is a consequence and the game owes them the
+*cause*. A number that falls because the game always intended it to is a
+**schedule**, and the game owes them the schedule — the rate today, the day it
+ends, the days between. The taper is the clearest case in the project because it
+is the only income line whose entire future is already written down: there is
+nothing to predict, only something to say.
+
+The corollary is where the fairness actually bites. **Saying it seven times on
+the lock screen is not more honest, it is louder.** Doc 08's budget is finite and
+every push spends it; a push about a scheduled step the player cannot alter buys
+nothing and crowds out a transformer that is about to cook. So the routine steps
+are log rows — findable, scroll-backable, free — and exactly one step is a
+notification: the last one, because *that* one changes what the city has to do
+next. See RR-148.
+
+### AL2. Wear is reported in the unit the player is losing it in
+
+**Question.** A worn building pays less tax. Does the player get told the count
+of worn buildings, or the money?
+
+**Ruled: the money, and the price of ending it, in the same band.** "34 buildings
+are worn" is a fact. "You are losing $412/gh to condition; repairing it costs
+$18,900" is a decision, and a decision is what a management game owes. The count
+belongs on the band too, but as the *subject of the sentence*, never as the
+sentence.
+
+This ruling has a sharp edge that doc 93 §Y1 created and did not close. After the
+ownership floor, a private building **cannot** reach `damaged` at 0.35 — its owner
+holds it at `band_worn` — so the one cue the game had ever given about condition
+became, for the four revenue classes, structurally unreachable. Measured: **185
+private buildings sitting worn** at the end of a 45-game-day curriculum arc,
+**zero** `building_damaged` events for any of them, and a permanent 24 % cut in
+what each pays. §Y1 is right and it silenced the thing it was right about; RR-149
+is the repair.
+
+### AL3. A policy may spend the player's money; a default may not
+
+**Question.** Roads repair themselves under a policy (§J3). Should buildings?
+
+**Ruled: yes for the buildings the city OWNS, and no by default.** The §J3
+argument transfers exactly — a per-building repair tap is not a decision, it is
+the same decision restated 51 times over a 45-game-day arc — and it transfers
+*only* as far as ownership goes. §Y1 already ruled that the city pays for what it
+owns; a policy that repaired private stock would be the retired
+`E_building_maint` reading, re-introduced through a settings row.
+
+**The default is the whole of the second half.** An auto-repair default would take
+money from a treasury without being asked, on a city founded before the control
+existed, and would move every balance gate in the matrix in a wave whose stated
+job is to *surface* what the money already does. So the shipped default is
+manual: the control exists, the ladder is doc 02's own band table, and a player
+who never opens it plays the game they played yesterday, bit for bit. See RR-150
+and its §53.4 baselines.
