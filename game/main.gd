@@ -55,6 +55,8 @@ var notification_router: NotificationRouter
 var crash_sentinel: CrashSentinel
 var permission_flow: PermissionFlow
 var perf_governor: PerfGovernor
+## doc 13 §2.8 / RR-126 — the rate is DECLARED, not merely capped.
+var refresh_pin: RefreshPin
 var save_service: SaveService
 var _before_snapshot: Dictionary = {}   # captured on pause for the away report
 var android_lifecycle: AndroidLifecycle
@@ -398,6 +400,9 @@ func _build_city_view(render_data: Dictionary) -> void:
 	add_child(vehicle_view)
 	vehicle_view.setup(render_data)
 	perf_governor = PerfGovernor.new(render_data, render_model.preset)
+	refresh_pin = RefreshPin.new(render_data, android_lifecycle.native)
+	refresh_pin.apply_lever(DevArgs.user_args())
+	_apply_frame_cap(perf_governor.target_fps())
 	# doc 11 §2.13's Fold pass: the PERF capture rig — measurement machinery,
 	# NOT a player feature, so it arms only when `_perf_capture_armed()`.
 	# Always-on it cost every session a per-frame GPU timestamp query
@@ -494,6 +499,16 @@ func _build_city_view(render_data: Dictionary) -> void:
 ##
 ## Debug/QA only, and they are read from the same merged list as everything else,
 ## so they arrive over `--es args` exactly like `--zoom`.
+## doc 13 §2.8 / RR-126: the ONE door for the frame cap. Capping without
+## declaring the rate leaves a 1-120 Hz LTPO panel hunting between modes on
+## every cadence change — the sub-menu bands the user reported — so the pin
+## tells the compositor and the panel the same number the cap does.
+func _apply_frame_cap(fps: int) -> void:
+	Engine.max_fps = fps
+	if refresh_pin != null:
+		refresh_pin.pin(fps)
+
+
 func _apply_render_ab_args() -> void:
 	for arg in DevArgs.user_args():
 		var a := String(arg)
@@ -586,6 +601,7 @@ func _on_sim_batch(batch: Array) -> void:
 				_rebuild_road_multimesh()
 			&"grid_component_placed", &"grid_feeder_routed", \
 					&"grid_node_commissioned", &"grid_node_retired", \
+					&"grid_component_upgraded", &"grid_component_removed", \
 					&"building_placed_sim", &"building_removed":
 				# doc 11 §2.10b: the pad/wire topology moved. A flag only; the
 				# rebuild lands on the next `sync` and is a no-op if the grid's
@@ -664,6 +680,21 @@ func _on_sim_batch(batch: Array) -> void:
 				pass
 	if not translated.is_empty():
 		render_model.apply_events(translated)
+
+
+## A player verb that COMPLETES work (doc 03 §2.13(f)'s rush) emits its events
+## from inside the command, and the only live drain is `SimHost._process`'s,
+## which does not run while the game is paused (`sim_host.gd:27`). This is the
+## door that lets a command's own batch through immediately. It is NOT a
+## second translator — it is `_on_sim_batch`, called once, with the events
+## already on the bus — and it is idempotent: a second call drains an empty
+## array and does nothing. The same two lines `_apply_offline_progress` runs.
+func flush_sim_events() -> void:
+	if sim_host == null or sim_host.sim == null:
+		return
+	var batch: Array = sim_host.sim.bus.drain()
+	if not batch.is_empty():
+		_on_sim_batch(batch)
 
 
 func _render_id(sim_id: String) -> int:
@@ -828,6 +859,8 @@ func _refresh_hud() -> void:
 		elif active_overlay == OverlayModel.MODE_POLICE \
 				or active_overlay == OverlayModel.MODE_FIRE:
 			_feed_coverage_overlay(active_overlay)
+		elif active_overlay == OverlayModel.MODE_POWER:
+			_feed_power_overlay_summary()
 	if ui_root != null:
 		ui_root.refresh_incidents(sim.incidents.snapshot(), sim.incidents.now_h)
 		ui_root.set_incident_reference(camera_state.focus)
@@ -846,6 +879,9 @@ func _refresh_hud() -> void:
 		# after a save load: `_on_ui_save_loaded` calls `_refresh_hud()`, and
 		# `GoalsModel` holds the same `CitySim` instance the load restores into.
 		ui_root.refresh_goals()
+		# S16: the chip's badge while the panel is shut, the bars and the ETAs
+		# while it is open. Bounded by the city's in-flight job count.
+		ui_root.refresh_construction()
 
 
 # ---------------------------------------------------------------------------
@@ -899,6 +935,24 @@ func _wire_build_ui(ui_instance: Node) -> void:
 		# doc 05 §6's node ladder (doc 93 §J1). Two args, so not `_on_building_action`.
 		building_panel.water_upgraded.connect(
 				func(_node_id: String, _result: Dictionary) -> void: _refresh_hud())
+		# doc 04 §4's operating verbs (Wave 17, doc 12 D-70/D-71). Same shape as
+		# the water ladder above: two args, and the city moved, so the chips do.
+		building_panel.power_fixed.connect(
+				func(_sim_id: String, _result: Dictionary) -> void: _refresh_hud())
+		building_panel.grid_upgraded.connect(
+				func(_component_id: String, _result: Dictionary) -> void: _refresh_hud())
+		building_panel.grid_demolished.connect(
+				func(_component_id: String, _result: Dictionary) -> void: _refresh_hud())
+		# S16 on S5 (doc 12 §2.22 item 3): the SAME model instance the queue
+		# panel holds, so the two can never publish different numbers for one
+		# project. Three args, so the refusal is forwarded by hand — an accepted
+		# rush is felt from the bus (flushed by the bound verb, see
+		# `bind_construction` below) and `report_rush` deliberately says nothing.
+		if ui_root != null and ui_root.construction_queue != null:
+			building_panel.bind_construction(ui_root.construction_queue.model)
+			building_panel.rushed.connect(
+					func(_sim_id: String, job_id: int, result: Dictionary) -> void:
+						ui_root.report_rush(job_id, result))
 	if ui_root != null and ui_root.land_panel != null:
 		ui_root.land_panel.setup(cfg, LandPanelModel.new(sim_host.sim,
 				build_controller.formatter, cfg, build_controller.tile_m))
@@ -951,6 +1005,21 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 			sim_host.sim.auto_repair_policy())
 	# Doc 06 §2.11's recall (doc 12 D-48, doc 91 A91-D-24): one line is the door.
 	root.bind_recall(sim_host.sim.cmd_recall_unit)
+	# S16 (doc 12 §2.22, D-66): the construction seam — the overview provider,
+	# the rush door and a treasury reading so an unaffordable rush shows its
+	# price on a disabled face instead of vanishing. The rush door is WRAPPED:
+	# a verb that completes work emits from inside the command, and the only
+	# live drain (`SimHost._process`) does not run while paused — so the crane
+	# a paused player just paid to remove would stand until they un-paused
+	# (doc 98 RR-108). The camera jump already rides `set_incident_locator()`;
+	# the toast, the chip pulse and the `purchase` cue ride `feed_events()`.
+	root.bind_construction(sim_host.sim.construction_overview,
+			func(job_id: Variant) -> Dictionary:
+				var result: Dictionary = sim_host.sim.cmd_rush_construction(job_id)
+				if bool(result.get("ok", false)):
+					flush_sim_events()
+				return result,
+			func() -> int: return int(sim_host.sim.treasury.balance))
 	root.bind_dispatch_policy(sim_host.sim.cmd_set_dispatch_policy,
 			sim_host.sim.incidents.dispatch.policy.serialize())
 	# Doc 03 §2.9: S9 shows the city's difficulty read-only (doc 93 §K1 — there
@@ -965,10 +1034,17 @@ func _wire_ui_screens(ui_instance: Node) -> void:
 		_autosave_interval_s = root.settings_sheet.model.autosave_interval_s()
 		if audio != null:
 			audio.set_sound_volume(root.settings_sheet.model.value_num("sound_volume"))
+		if refresh_pin != null and perf_governor != null:
+			# doc 12 D-75: the saved refresh mode, applied before the first frame cap.
+			refresh_pin.set_mode(str(root.settings_sheet.model.value("refresh_rate")), true)
+			_apply_frame_cap(perf_governor.target_fps())
 	_wire_audio_ui(root)
 	root.ui_coverage_changed.connect(audio.set_ui_coverage)  # interior muffle
 	# Saves carry the UI section (doc 12 §3.2) so a restored city keeps its
 	# tutorial progress and overlay prefs; the provider rides every save.
+	# Doc 12 §2.16's tilt axis (Wave 17, D-68): the slider, the gesture and the
+	# camera save block all hang off this one binding.
+	root.bind_camera(camera_state)
 	save_service.ui_provider = root.capture_ui_state
 	if _resumed_slot >= 0:
 		root.restore_ui_state(save_service.last_loaded_ui)
@@ -1046,6 +1122,7 @@ func _wire_overlays(root: UIRoot) -> void:
 	_feed_traffic_overlay()
 	_feed_coverage_overlay(OverlayModel.MODE_POLICE, true)
 	_feed_coverage_overlay(OverlayModel.MODE_FIRE, true)
+	_feed_power_overlay_summary()
 	# A6: the four state hues the 3D city tints with follow the same palette the
 	# legend does. One table, `data/ui.json.overlay.building_state_paint`.
 	_apply_overlay_palette(variant)
@@ -1065,6 +1142,8 @@ func _on_overlay_changed(mode: StringName, _index: int) -> void:
 		_feed_traffic_overlay()
 	elif mode == OverlayModel.MODE_POLICE or mode == OverlayModel.MODE_FIRE:
 		_feed_coverage_overlay(mode, true)
+	elif mode == OverlayModel.MODE_POWER:
+		_feed_power_overlay_summary()
 	if city_view != null:
 		city_view.set_overlay_mode(mode, camera_rig.camera.global_position)
 	if road_overlay != null:
@@ -1149,6 +1228,18 @@ func _feed_coverage_overlay(mode: StringName, rebuild: bool = false) -> void:
 				"value": str(below),
 				"state": HudModel.STATE_NORMAL if below == 0 else HudModel.STATE_WARNING},
 	])
+
+
+## §2.5's three aggregate lines for the POWER overlay (doc 12 §2.10 D-72). The
+## legend card's own reading: the pool, the WIRES, and which of the two is the
+## wall. `PowerActions` computes it, `UIRoot.power_summary_lines` shapes it, and
+## this only decides when — the same contract `_feed_coverage_overlay` has.
+func _feed_power_overlay_summary() -> void:
+	if ui_root == null or build_controller == null or build_controller.power == null:
+		return
+	ui_root.feed_overlay_summary(OverlayModel.MODE_POWER,
+			UIRoot.power_summary_lines(build_controller.power.grid_reading(),
+					ui_root.config))
 
 
 ## §2.10's Infrastructure and Response tabs. Both are pure reads of queries the
@@ -1298,6 +1389,9 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 			if perf_governor != null:
 				# A player's preset choice clears the ladder and any latched drop.
 				perf_governor.reset(str(model.value("graphics")))
+				# RR-126: Performance's target_fps is 30 and reset() re-reads it — the
+				# cap used to wait for the governor to step a knob before it moved.
+				_apply_frame_cap(perf_governor.target_fps())
 		&"autosave_interval_min":
 			_autosave_interval_s = model.autosave_interval_s()
 			_autosave_timer = 0.0
@@ -1307,6 +1401,10 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 		&"auto_quality":
 			if perf_governor != null:
 				perf_governor.enabled = bool(model.value("auto_quality"))
+		&"refresh_rate":
+			if refresh_pin != null and perf_governor != null:
+				refresh_pin.set_mode(str(model.value("refresh_rate")), true)
+				_apply_frame_cap(perf_governor.target_fps())
 		&"sound_volume":
 			if audio != null:
 				audio.set_sound_volume(model.value_num("sound_volume"))
@@ -1790,13 +1888,16 @@ func _on_placement_changed() -> void:
 func _route_world_drag(phase: StringName, position: Vector2) -> bool:
 	if build_sheet == null or camera_state == null:
 		return false
-	var ground := camera_state.screen_to_ground(position,
+	var answer := camera_state.ground_hit(position,
 			Vector2(get_viewport().get_visible_rect().size))
+	var ground: Vector3 = answer["position"]
+	var on_ground := bool(answer["hit"])
 	match phase:
 		TouchInput.PHASE_BEGIN:
-			return build_sheet.begin_world_drag(ground)
+			return on_ground and build_sheet.begin_world_drag(ground)
 		TouchInput.PHASE_UPDATE:
-			return build_sheet.update_world_drag(ground)
+			return build_sheet.update_world_drag(ground) if on_ground \
+					else build_sheet.is_drag_drawing()
 		TouchInput.PHASE_END:
 			return build_sheet.end_world_drag()
 	return false
@@ -1843,9 +1944,12 @@ func _on_land_changed(_block_id: String, _result: Dictionary) -> void:
 	_refresh_hud()
 
 
-## §2.7's `Fix this →`: focus the blocking entity. Only the power path resolves
-## to a placed entity today (docs 05/06/10 own the rest), so anything else is a
-## no-op rather than a camera jump to nowhere.
+## §2.7's `Fix this →`: focus the blocking entity. `FIX_POWER` and `FIX_REPAIR`
+## never reach here — the building panel performs both in place, because their
+## target is the building the player already has open (A91-D-54). Of the kinds
+## that do, only a block and a building resolve to a placed entity today (docs
+## 05/06/10 own the rest), so anything else is a no-op rather than a camera jump
+## to nowhere.
 func _on_fix_requested(fix_target: Dictionary) -> void:
 	var id := str(fix_target.get("id", ""))
 	if id == "" or build_controller == null:
@@ -1876,13 +1980,20 @@ func _on_ui_back(action: StringName) -> void:
 func _handle_tap(screen_pos: Vector2, viewport_size: Vector2) -> void:
 	if build_controller == null:
 		return
-	var ground := camera_state.screen_to_ground(screen_pos, viewport_size)
+	var answer := camera_state.ground_hit(screen_pos, viewport_size)
+	var ground: Vector3 = answer["position"]
+	var on_ground := bool(answer["hit"])
 	if build_sheet != null and build_sheet.is_placing():
-		build_sheet.move_ghost(ground)
+		if on_ground:
+			build_sheet.move_ghost(ground)
 		return
 	if build_sheet != null and build_sheet.is_open():
 		# A tap that reached the world missed every sheet control: dismiss.
 		build_sheet.close()
+		return
+	if not on_ground:
+		# Not a pick, and not a deselect either: the selection survives a tap on
+		# the sky, because the player did not touch anything to change it.
 		return
 	# doc 12 §2.8: one pick, three answers, decided in the controller so the two
 	# panels can never both claim a tap. `""` used to mean "deselect", which is
@@ -2013,7 +2124,7 @@ func _process(delta: float) -> void:
 			city_view.apply_governor(knobs)
 			if power_infra != null:
 				power_infra.apply_governor(knobs)   # `particle_ratio` only
-			Engine.max_fps = perf_governor.target_fps()          # doc 13 §2.8
+			_apply_frame_cap(perf_governor.target_fps())          # doc 13 §2.8 / RR-126
 			if String(knobs["preset"]) != render_model.preset:   # a latched drop
 				render_model.set_preset(String(knobs["preset"]))
 				vehicle_view.set_preset(String(knobs["preset"]), _render_data)
@@ -2100,16 +2211,18 @@ func _unhandled_input(event: InputEvent) -> void:
 			# §2.7: while a run tool is up the drag DRAWS. Anchored on the press
 			# point, so the run starts under the finger.
 			if build_sheet != null and build_sheet.is_placing_path():
-				if not build_sheet.is_drag_drawing():
-					build_sheet.begin_world_drag(camera_state.screen_to_ground(
-							_tap_origin, viewport_size))
-				build_sheet.update_world_drag(camera_state.screen_to_ground(
-						motion.position, viewport_size))
+				var from_hit := camera_state.ground_hit(_tap_origin, viewport_size)
+				var at_hit := camera_state.ground_hit(motion.position, viewport_size)
+				if bool(from_hit["hit"]) and bool(at_hit["hit"]):
+					if not build_sheet.is_drag_drawing():
+						build_sheet.begin_world_drag(from_hit["position"])
+					build_sheet.update_world_drag(at_hit["position"])
 			else:
 				camera_state.update_pan(motion.position, viewport_size,
 						get_process_delta_time())
 		elif build_sheet != null and build_sheet.is_placing():
 			# Hover keeps the ghost under the pointer; the verdict is recomputed
 			# on every move (§2.7) and only PLACE ever commits it.
-			build_sheet.move_ghost(camera_state.screen_to_ground(
-					motion.position, viewport_size))
+			var hover := camera_state.ground_hit(motion.position, viewport_size)
+			if bool(hover["hit"]):
+				build_sheet.move_ghost(hover["position"])
