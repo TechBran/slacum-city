@@ -427,6 +427,10 @@ func _build_city_view(render_data: Dictionary) -> void:
 		flood_view.set_preset(render_model.preset, render_data)
 	vehicle_view.set_preset(render_model.preset, render_data)
 	android_lifecycle.thermal_status_changed.connect(perf_governor.set_thermal_status)
+	# PA-20: `memory_warning` was emitted into a void for the whole life of the
+	# project — the declaration, the emit, and one test asserting it does NOT
+	# save were its only references. Docs 11 and 13 both specify the response.
+	android_lifecycle.memory_warning.connect(_on_memory_warning)
 	construction_view = ConstructionSiteView.new()
 	construction_view.name = "ConstructionSites"
 	add_child(construction_view)
@@ -536,10 +540,12 @@ func _building_view(sim_id: String) -> Dictionary:
 	var b: Building = sim_host.sim.buildings.get(sim_id)
 	if b == null:
 		return {}
-	var record: Dictionary = sim_host.sim._building_records[sim_id]
-	var size: Vector2i = record["footprint"]
-	var center := Vector3(b.origin.x * 8.0 + size.x * 4.0, 0.0,
-			b.origin.y * 8.0 + size.y * 4.0)
+	# PA-100: `building_record()` rather than `sim._building_records[...]`. The
+	# `[]` form was an index error on any id the renderer knew and the roster did
+	# not; PA-76: one footprint→centre formula, not the fourth copy of it.
+	var record: Dictionary = sim_host.sim.building_record(sim_id)
+	var size: Vector2i = record.get("footprint", Vector2i.ONE)
+	var center := TileGrid.centre_of_footprint(b.origin, size)
 	return {
 		"id": b.id,
 		"archetype_id": StringName(b.archetype),
@@ -561,10 +567,8 @@ func _add_construction_site(sim_id: String) -> void:
 	var b: Building = sim_host.sim.buildings.get(sim_id)
 	if b == null or construction_view == null:
 		return
-	var record: Dictionary = sim_host.sim._building_records[sim_id]
-	var size: Vector2i = record["footprint"]
-	var center := Vector3(b.origin.x * 8.0 + size.x * 4.0, 0.0,
-			b.origin.y * 8.0 + size.y * 4.0)
+	var size: Vector2i = sim_host.sim.building_record(sim_id).get("footprint", Vector2i.ONE)
+	var center := TileGrid.centre_of_footprint(b.origin, size)
 	var target_level := maxi(b.pending_level, maxi(b.level, 1))
 	var height := float(_height_of.get("%s:%d" % [b.archetype, target_level], 10.0))
 	# doc 11 §2.16: the hoarding's gate takes the frontage the vehicle layer
@@ -1250,9 +1254,12 @@ func _feed_power_overlay_summary() -> void:
 func _feed_dashboard_tabs() -> void:
 	var sim := sim_host.sim
 	# The same ambient doc 04's own tick derates on, so the headroom the tab
-	# prints is the headroom the protection pass is working against.
-	var t_ambient := float(sim.weather.env_for_grid().get("t_ambient_c", 25.0)) \
-			if sim.weather != null else 25.0
+	# prints is the headroom the protection pass is working against — and the
+	# same expression the smoking-transformer layer uses, because it is now the
+	# same CALL (PA-38: this file re-derived what `PowerInfraFeed.ambient_c`
+	# already owned, with its own literal fallback of 25.0 against the model's
+	# `REFERENCE_AMBIENT_C`).
+	var t_ambient := PowerInfraFeed.ambient_c(sim)
 	ui_root.feed_infrastructure({
 		"power": sim.grid.capacity_summary(t_ambient),
 		"feeders": sim.grid.feeder_rows(t_ambient),
@@ -1312,33 +1319,38 @@ func _on_coach_action(action: StringName, payload: Dictionary) -> void:
 
 ## `Callable(kind, id) -> Vector3` for the alerts centre: only the shell knows
 ## where an entity id sits in metres. `null` means "no jump affordance".
+##
+## `WorldLocator` knows it now, headless and under test (PA-38 / PA-76). The
+## twenty-eight lines this replaces declared `tile_m := 8.0` and then used the
+## bare literal on their own `&"tile"` branch, spelled `16` three times where
+## `TileGrid.TILES_PER_BLOCK` existed, scanned `sim.buildings.keys()` linearly
+## for a key they were holding, and anchored a building on its NW corner tile
+## instead of its lot centre. Same four kinds, same `null`, three more kinds
+## (`component`, `district`, `road_segment`) and one test each.
 func _alert_world_pos(kind: StringName, id: Variant) -> Variant:
-	var tile_m := 8.0
-	if kind == &"tile":
-		var t: Vector2i = id
-		return Vector3(t.x * 8.0 + 4.0, 0.0, t.y * 8.0 + 4.0)
-	if kind == &"block_id":
-		var block: LandBlock = sim_host.sim.world.block(str(id))
-		if block == null:
-			return null
-		return Vector3((block.grid.x * 16 + 8) * tile_m, 0.0,
-				(block.grid.y * 16 + 8) * tile_m)
-	if kind == &"building":
-		for sim_id: String in sim_host.sim.buildings.keys():
-			var b: Building = sim_host.sim.buildings[sim_id]
-			if sim_id == str(id) or b.id == int(id):
-				return Vector3(b.origin.x * tile_m, 0.0, b.origin.y * tile_m)
-	if kind == &"cell":
-		# doc 07 §2.4 keys a flood cell "B<bx>,<bz>" (land block) or "<tx>,<tz>".
-		var parts := str(id).split(",")
-		if parts.size() == 2:
-			if str(id).begins_with("B"):
-				var bx := int(parts[0].substr(1))
-				var bz := int(parts[1])
-				return Vector3((bx * 16 + 8) * tile_m, 0.0, (bz * 16 + 8) * tile_m)
-			return Vector3(int(parts[0]) * tile_m + 4.0, 0.0,
-					int(parts[1]) * tile_m + 4.0)
-	return null
+	return WorldLocator.locate(sim_host.sim, kind, id)
+
+
+## `NOTIFICATION_OS_MEMORY_WARNING` (PA-20). Both halves are owned elsewhere and
+## tested there — `PerfGovernor.on_memory_warning()` takes the `far_cull_m` rung
+## doc 11 names, `CityView.shed_caches()` gives back what nothing is drawing —
+## and this only decides the ORDER: shed first, so the chunks the tighter cull
+## drops are already gone when `apply_governor` re-uploads.
+##
+## Only `far_cull_m` moved, and `CityView` is its only consumer, so the knob goes
+## straight there rather than through `_process`'s full routing block: nothing
+## else in the fan-out has anything to re-read.
+func _on_memory_warning() -> void:
+	if city_view == null or perf_governor == null:
+		return
+	var freed := city_view.shed_caches()
+	var stepped := perf_governor.on_memory_warning()
+	if stepped:
+		city_view.apply_governor(perf_governor.knobs())
+	# One line, unconditionally: doc 13 D-12 is a DEVICE test, and the only way
+	# to know the response ran on a Fold that was about to be killed is a line in
+	# `adb logcat` written before it was.
+	print("[memory-warning] shed %s, far_cull stepped %s" % [freed, stepped])
 
 
 func _on_ui_focus_requested(world_pos: Vector3) -> void:
@@ -1945,30 +1957,25 @@ func _on_land_changed(_block_id: String, _result: Dictionary) -> void:
 	_refresh_hud()
 
 
-## §2.7's `Fix this →`: focus the blocking entity. `FIX_POWER` and `FIX_REPAIR`
-## never reach here — the building panel performs both in place, because their
-## target is the building the player already has open (A91-D-54). Of the kinds
-## that do, only a block and a building resolve to a placed entity today (docs
-## 05/06/10 own the rest), so anything else is a no-op rather than a camera jump
-## to nowhere.
+## §2.7's `Fix this →`. **The dispatch is `FixRouter`'s and the camera is this
+## file's** — that is the whole of the shell's job here now (PA-05 / PA-38).
+##
+## What used to be here was twenty lines of sim reasoning in a file the suite
+## never loads, and it was dead on two of the panel's seven checklist rows: a
+## `POWER_CAPACITY` row hands over a TRANSFORMER id (`sim.grid.attachment_of()`)
+## which this looked up in `sim.buildings` and dropped, and an `E_AVENUE` row
+## hands over an empty id which the first line discarded. Both now resolve or
+## refuse by name in `ui/fix_router.gd`, under `tests/test_fix_router.gd`.
+##
+## `ACTION_SHEET` and `ACTION_VERB` — `FIX_POWER` and `FIX_REPAIR` — do not reach
+## here: their target is the building the player already has open, so the panel
+## that raised the row performs them in place (A91-D-54, `building_panel.gd`
+## `_on_fix_pressed`). The router still answers for them, so a surface that has
+## no in-place path (the placement bar, PA-23) can route the same target.
 func _on_fix_requested(fix_target: Dictionary) -> void:
-	var id := str(fix_target.get("id", ""))
-	if id == "" or build_controller == null:
-		return
-	if StringName(str(fix_target.get("kind", ""))) == RequirementFormatter.FIX_BLOCK:
-		var block: LandBlock = sim_host.sim.world.block(id)
-		if block == null:
-			return
-		var centre: Vector2i = block.grid * TileGrid.TILES_PER_BLOCK \
-				+ Vector2i(TileGrid.TILES_PER_BLOCK / 2, TileGrid.TILES_PER_BLOCK / 2)
-		camera_state.focus_on(Vector3(float(centre.x) * build_controller.tile_m, 0.0,
-				float(centre.y) * build_controller.tile_m))
-		return
-	var b: Building = sim_host.sim.buildings.get(id)
-	if b == null:
-		return
-	camera_state.focus_on(Vector3(b.origin.x * build_controller.tile_m, 0.0,
-			b.origin.y * build_controller.tile_m))
+	var action := FixRouter.route(sim_host.sim, fix_target, false)
+	if String(action["action"]) == String(FixRouter.ACTION_FOCUS):
+		camera_state.focus_on(action["world_pos"])
 
 
 func _on_ui_back(action: StringName) -> void:
