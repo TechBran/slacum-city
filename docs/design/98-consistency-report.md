@@ -8402,3 +8402,26 @@ used a second time and which is what let this lane ship without holding the
 matrix. **If a later lane wants the auto half raised, the insolvency gate has to
 be re-fitted in the same commit**, and this row is the record that it was
 considered and refused.
+
+### §60 AS VERIFIED — the closing run
+
+*Taken on the final tree, in one pass, after the last edit in this section.*
+
+| check | command | result |
+|---|---|---|
+| the suite | `godot --headless --path <worktree> --script tests/run_tests.gd` | **150 files, 2727 tests, 576067 asserts, failed **0**, silent **0**** |
+| the deck, 412×915 | `tools/ui_preview.tscn -- --screen=all --size=412x915 --audit --strict` | **exit 0** |
+| the deck, 360×800 | …`--size=360x800` | **exit 0** |
+| the deck, 880×400 | …`--size=880x400` | **exit 0** |
+| the deck, 360×800 at 130 % + larger targets | …`--text-scale=1.3 --large-targets` | **exit 0** |
+| the four ledgers | `python3 tools/check_doc_refs.py` | **all resolving; no id assigned twice** |
+
+**One defect in this lane's own tests is worth recording, because of the shape it
+had rather than the size.** Gate 32's new arm (h) declared a local `band` in a
+function whose arm (f) already had one; GDScript refuses the redeclaration
+outright rather than shadowing it, so **the whole of `tests/test_balance_gates.gd`
+failed to load** — all 33 gates, silently, with the runner printing a load error
+and carrying on to a run that otherwise looked normal. That is the worst shape a
+test-file error can take: not a red suite, but a green-looking one with a third of
+the balance surface absent from it. It was caught by reading the run's log rather
+than its verdict, and the closing run above is the one taken after the fix.
