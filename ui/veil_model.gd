@@ -55,10 +55,14 @@ var steps_total := 0
 var catchup_hours := 0
 ## Doc 01's cap bit: the absence was longer than the sim will credit.
 var capped := false
-## REAL hours the clamp allows, for the capped line's `{hours}`. It stopped
-## being a constant in Wave 17: doc 08 §2.12's `max_coarse_hours` can pull the
-## effective cap below doc 01's 720 game-hours / 12 real hours, and copy that
-## says "12" while the sim credited six is a lie with a footnote (RR-133).
+## REAL hours the cap allows, for the capped line's `{hours}`. It is doc 01
+## C-19's 12 again and it is a parameter rather than a constant on purpose: it
+## stopped being one in Wave 17, when doc 08 §2.12's `max_coarse_hours` could
+## pull the effective cap down to six and copy that said "12" was a lie with a
+## footnote (RR-133). RR-160 deleted that clamp — the plan's own `cap_real_hours`
+## is the only source now — but the parameter stays, because a surface that
+## quotes a cap must quote the cap that was applied and never a constant of its
+## own.
 var cap_real_hours := 12
 
 var _min_steps := DEFAULT_MIN_STEPS

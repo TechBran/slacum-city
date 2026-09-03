@@ -138,14 +138,28 @@ func test_the_header_states_both_clocks_and_the_cap_when_it_bit() -> void:
 
 	var capped := _input(26.0 * 3600.0)
 	capped["capped"] = true
-	capped["cap_game_hours"] = 720.0
+	capped["cap_real_hours"] = 12.0
 	capped["elapsed_game_minutes"] = 720.0 * 60.0
 	var capped_header: Dictionary = model.build(capped)["header"]
 	assert_true(bool(capped_header["capped"]))
-	assert_true(str(capped_header["capped_text"]).contains("720"),
+	# RR-162: the cap is stated in the unit the player was AWAY in. The line
+	# used to quote `cap_game_hours` and render "Your city ran for 720h", which
+	# is city time in a sentence about somebody's night.
+	assert_true(str(capped_header["capped_text"]).contains("12"),
 			"doc 01's cap is stated honestly: %s" % capped_header["capped_text"])
+	assert_false(str(capped_header["capped_text"]).contains("720"),
+			"and not in city time: %s" % capped_header["capped_text"])
 	assert_almost_eq(float(capped_header["game_days"]), 30.0, 0.001,
 			"720 game-hours is 30 game-days")
+
+	# The legacy spelling still says something true rather than something
+	# absurd, so a caller that has not been updated is not a new bug.
+	var legacy := _input(26.0 * 3600.0)
+	legacy["capped"] = true
+	legacy["cap_game_hours"] = 720.0
+	legacy["elapsed_game_minutes"] = 720.0 * 60.0
+	assert_true(str((model.build(legacy)["header"] as Dictionary)["capped_text"]).contains("12"),
+			"cap_game_hours 720 converts to the 12 real hours the player slept")
 
 
 func test_needs_you_now_is_first_capped_and_worst_first() -> void:

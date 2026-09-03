@@ -112,7 +112,7 @@
 	"ui_alerts_repeat": "×{n}",
 	"ui_alerts_title": "Alerts",
 	"ui_alerts_unread": "{n} unread",
-	"ui_away_capped": "Your city ran for {hours}h — the maximum.",
+	"ui_away_capped": "Your city ran for {hours} hours while you were away — the maximum.",
 	"ui_away_change": "City change",
 	"ui_away_day_index": "Day {day} · {n} days passed",
 	"ui_away_day_index_one": "Day {day} · {n} day passed",

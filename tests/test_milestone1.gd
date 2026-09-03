@@ -99,7 +99,11 @@ func test_coarse_step_cost_budget() -> void:
 	var per_step := elapsed_ms / 24.0
 	print("  [P0-30] coarse step on starter city: %.2f ms/step (24 steps in %.1f ms)"
 			% [per_step, elapsed_ms])
-	var max_coarse_hours := mini(720, maxi(72, int(2000.0 / maxf(per_step, 0.01) / 24.0) * 24))
-	print("  [P0-30] max_coarse_hours at the 2s budget: %d (cap 720)" % max_coarse_hours)
+	# RR-161: the budget this feeds is the VEIL's, not the player's. It used to
+	# print `max_coarse_hours` — a clamp on the CREDITED ABSENCE derived from
+	# this very number, which is how a 5.488 ms measurement came to cost a
+	# sleeping player 42.5% of a twelve-hour night (doc 92 §55).
+	var veil_ms := CatchUpPlanner.veil_ms_at_cap(per_step)
+	print("  [P0-30] whole 12-real-hour catch-up at that step: %.0f ms of veil" % veil_ms)
 	assert_true(per_step < 50.0, "starter-city coarse step must be far under budget")
-	assert_true(max_coarse_hours >= 72, "the C-21 floor holds")
+	assert_true(veil_ms > 0.0, "a measured step estimates a veil")
