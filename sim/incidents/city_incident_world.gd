@@ -826,9 +826,21 @@ func dispatch_payout(type_id: String, shape_mult: float, manual: bool,
 	var base: float = sim.econ_curves.dispatch_payout_base(type_id)
 	if base <= 0.0:
 		return 0
-	var dispatcher: float = sim.econ_curves.manual_dispatch_mult() if manual else 1.0
-	var payout := CostCurves.round_half_up(base * shape_mult * dispatcher)
 	var prevented := prevented_loss_value(target_ref, residual_fraction)
+	# **The premium's level curve is asked for ONLY where the clamp below can
+	# answer** (Wave 19, RR-169). `MORAL_HAZARD_UNPRICED_CEILING` is a dollar
+	# bound derived from an avenue rebuild, and an avenue does not get dearer
+	# because the city levelled up — so on the three types whose targets doc 03
+	# prices no capital for, the premium stays at the flat `MANUAL_DISPATCH_MULT`
+	# gate 31(c)'s published table was fitted against, and that table does not
+	# move. Where the target IS priced, the clamp is a fraction of the loss the
+	# response prevented and therefore already grows with the asset, so the raise
+	# is bounded by the value of the thing the player saved.
+	var dispatcher := 1.0
+	if manual:
+		dispatcher = sim.econ_curves.manual_dispatch_mult() if prevented < 0 \
+				else sim.econ_curves.manual_dispatch_mult_at_level(sim.progression.city_level)
+	var payout := CostCurves.round_half_up(base * shape_mult * dispatcher)
 	if prevented < 0:
 		return payout  # doc 03 prices no capital for this asset class — gate 31
 	var cap_fraction: float = sim.econ_curves.moral_hazard_cap_fraction()

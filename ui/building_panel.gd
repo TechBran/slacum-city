@@ -24,6 +24,10 @@ signal demolished(sim_id: String, result: Dictionary)  ## `cmd_demolish_building
 ## same command N times — so the shell re-reads the city rather than predicting
 ## what a rebuild moved.
 signal restored(sim_id: String, result: Dictionary)
+## Wave 19's other ruin verb (doc 12 §2.9 D-89). Carries
+## `cmd_salvage_building`'s own answer. The panel CLOSES on success, exactly as
+## it does after a demolition, because the building it was describing is gone.
+signal salvaged(sim_id: String, result: Dictionary)
 ## Doc 05 §6's node ladder (doc 93 §J1). A water shell hosts one or more doc-05
 ## nodes and each has a capacity to buy; this fires with the sim's own answer,
 ## exactly as `upgraded` does for the doc-02 shell above it.
@@ -111,6 +115,12 @@ var _restore_button: Button
 var _restore_note: Label
 var _restore_all_button: Button
 var _restore_all_note: Label
+## Wave 19's salvage row (doc 12 §2.9 D-89). It sits under `RESTORE` on the same
+## ruin and it is the other half of the same decision, so it is a GHOST button
+## next to a primary one — and it is hold-to-confirm, because like `DEMOLISH` it
+## is a button that cannot be undone.
+var _salvage_button: Button
+var _salvage_note: Label
 var _repair_button: Button
 var _repair_note: Label
 var _priority_row: Container
@@ -126,6 +136,11 @@ var _hold_ms := HOLD_TO_CONFIRM_MS_DEFAULT
 ## Seconds the demolish button has been held, and the label it is overwriting
 ## while it counts. `< 0` when nothing is being held.
 var _hold_elapsed := -1.0
+## Which button the hold is counting, and which verb it fires. Wave 19 gave the
+## panel a second hold-to-confirm control (`SALVAGE`), and a second copy of the
+## counter would be a second place for the window to drift.
+var _hold_button: Button
+var _hold_action: StringName = &""
 var _priority_buttons: Dictionary = {}   # class name -> Button
 
 
@@ -351,6 +366,8 @@ func _build_actions() -> void:
 		_restore_note = existing.get_node_or_null("RestoreNote") as Label
 		_restore_all_button = existing.get_node_or_null("RestoreAll") as Button
 		_restore_all_note = existing.get_node_or_null("RestoreAllNote") as Label
+		_salvage_button = existing.get_node_or_null("Salvage") as Button
+		_salvage_note = existing.get_node_or_null("SalvageNote") as Label
 		_repair_button = existing.get_node_or_null("Repair") as Button
 		_repair_note = existing.get_node_or_null("RepairNote") as Label
 		_priority_note = existing.get_node_or_null("PriorityNote") as Label
@@ -386,6 +403,22 @@ func _build_actions() -> void:
 	_restore_button.visible = false
 	_restore_button.pressed.connect(request_restore)
 	_actions.add_child(_restore_button)
+	# --- Wave 19: the OTHER half of the ruin's decision (doc 12 §2.9 D-89) ---
+	# A ghost under the primary, because keeping the lot is the offer the game
+	# leads with and taking the money is the one it will still make. Hold-to-
+	# confirm for the same reason `DEMOLISH` is: the building does not come back.
+	_salvage_button = UIWidgets.button("Salvage",
+			_text("ui_building_salvage", "SALVAGE"),
+			_text("ui_building_salvage", "SALVAGE"),
+			Vector2(_touch_min * 2.0, _touch_min), &"GhostButton")
+	_salvage_button.visible = false
+	_salvage_button.button_down.connect(_on_salvage_down)
+	_salvage_button.button_up.connect(_on_salvage_up)
+	_actions.add_child(_salvage_button)
+	_salvage_note = UIWidgets.label("SalvageNote", "", &"LegendRow", true)
+	_salvage_note.visible = false
+	_actions.add_child(_salvage_note)
+
 	# The many-at-once affordance, on the panel of the ruin that made the player
 	# open it. Absent unless there is more than one.
 	_restore_all_button = UIWidgets.button("RestoreAll",
@@ -850,6 +883,7 @@ func _render_actions(v: Dictionary) -> void:
 	var actions: Dictionary = v.get("actions", {})
 	var restore: Dictionary = actions.get("restore", {})
 	_render_restore(restore)
+	_render_salvage(actions.get("salvage", {}))
 	# **On a ruin, the panel draws what the sim will ACCEPT and hides what it
 	# refuses** (doc 93 §AN7). Both of the buttons below answer `E_STATE` on a
 	# destroyed building — `cmd_repair_building` because a ruin is not `active`
@@ -917,6 +951,60 @@ func _render_restore(restore: Dictionary) -> void:
 	_restore_note.tooltip_text = _restore_note.text
 	_apply_state_color(_restore_note, &"")
 	_render_restore_all(restore.get("batch", {}))
+
+
+## **THE OTHER HALF OF THE RUIN'S DECISION** (Wave 19; doc 12 §2.9 D-89,
+## doc 93 §AQ2, report 98 RR-171):
+##
+##     Destroyed 2h 30m ago · comes back at Level 3
+##     [        RESTORE · $1,220        ]
+##     [       SALVAGE · +$915          ]
+##     Strip the lot for scrap. This building does not come back.
+##
+## Until this wave a ruin had exactly one button and therefore no decision: pay,
+## or look at rubble. The player who filed the 2026-09-03 report had a city of
+## ruins and a negative balance, which is the state in which the only button on
+## the panel is the one they cannot press.
+##
+## Three deliberate differences from the primary above, each with a reason:
+##
+##   * **it is a ghost, not a FAB.** Keeping the city is the offer the game leads
+##     with; this one is still there tomorrow.
+##   * **it is hold-to-confirm**, sharing `DEMOLISH`'s 800 ms machinery, because
+##     it is the second button in the deck that cannot be undone. The note under
+##     it says so in words before the hold starts, not after it.
+##   * **it is never disabled for money.** The verb spends nothing, so there is
+##     no affordability arm to draw — which is exactly what makes it the row a
+##     broke player can use.
+func _render_salvage(salvage: Dictionary) -> void:
+	if _salvage_button == null or _salvage_note == null:
+		return
+	var available := bool(salvage.get("available", false))
+	_salvage_button.visible = available
+	_salvage_note.visible = available
+	if not available:
+		return
+	_salvage_button.text = _text_args("ui_building_salvage_value",
+			{"value": str(salvage["value_text"])},
+			_text("ui_building_salvage", "SALVAGE"))
+	_salvage_button.tooltip_text = _text("ui_building_salvage_hint",
+			"Hold to confirm")
+	_salvage_button.disabled = not bool(salvage["ok"])
+	var reason: Dictionary = salvage.get("reason", {})
+	if not reason.is_empty():
+		_salvage_note.text = str(reason["body"])
+		_apply_state_color(_salvage_note, StringName(str(reason["state"])))
+		_salvage_note.tooltip_text = _salvage_note.text
+		return
+	# The consequence, before the hold rather than after it. It is stated against
+	# the OTHER button's number, because that is the comparison the row exists to
+	# make: a player is not deciding whether $915 is a lot, they are deciding
+	# whether it is worth more to them than a level-3 building.
+	_salvage_note.text = _text_args("ui_building_salvage_note",
+			{"restore_cost": str(salvage["restore_cost_text"])},
+			"Cleared for good.")
+	_salvage_note.tooltip_text = _salvage_note.text
+	_apply_state_color(_salvage_note, HudModel.STATE_WARNING)
 
 
 ## `Restore all destroyed (12) · $84,200`, on the panel of the ruin that made the
@@ -1376,18 +1464,45 @@ func _on_water_upgrade_pressed(node_id: String) -> void:
 
 
 func _on_demolish_down() -> void:
-	if _demolish_button == null or _demolish_button.disabled:
+	_begin_hold(_demolish_button, &"demolish")
+
+
+func _on_demolish_up() -> void:
+	_end_hold()
+
+
+## Wave 19: the salvage button holds on exactly the same clock. Two buttons that
+## each counted their own milliseconds would be two places for the window to
+## drift from `data/ui.json`'s `hold_to_confirm_ms`.
+func _on_salvage_down() -> void:
+	_begin_hold(_salvage_button, &"salvage")
+
+
+func _on_salvage_up() -> void:
+	_end_hold()
+
+
+## Arms the hold on ONE button. `_hold_action` is what `_process` fires when the
+## window closes, so the machinery has no opinion about which verb it is holding.
+func _begin_hold(button: Button, action: StringName) -> void:
+	if button == null or button.disabled or not button.visible:
 		return
+	_hold_button = button
+	_hold_action = action
 	_hold_elapsed = 0.0
 	set_process(true)
 
 
-func _on_demolish_up() -> void:
+func _end_hold() -> void:
 	if _hold_elapsed >= 0.0:
 		# Released early: the hold is abandoned and the label goes back to the
-		# word. A partial hold demolishes nothing and says nothing.
+		# word. A partial hold destroys nothing and says nothing.
 		_hold_elapsed = -1.0
-		_render_demolish((_view.get("actions", {}) as Dictionary).get("demolish", {}))
+		var actions: Dictionary = _view.get("actions", {})
+		_render_demolish(actions.get("demolish", {}))
+		_render_salvage(actions.get("salvage", {}))
+	_hold_button = null
+	_hold_action = &""
 	set_process(false)
 
 
@@ -1395,7 +1510,7 @@ func _on_demolish_up() -> void:
 ## why `set_process` is toggled rather than left on — a panel that is not being
 ## held has nothing to advance.
 func _process(delta: float) -> void:
-	if _hold_elapsed < 0.0 or _demolish_button == null:
+	if _hold_elapsed < 0.0 or _hold_button == null:
 		set_process(false)
 		return
 	_hold_elapsed += delta * 1000.0
@@ -1404,13 +1519,20 @@ func _process(delta: float) -> void:
 		# The button counts itself down, so the hold is visible on the control
 		# being held rather than somewhere else on the panel (A5: the progress is
 		# in the label, not only in a colour).
-		_demolish_button.text = _text_args("ui_building_demolish_holding",
-				{"percent": HudModel.percent_text(fraction * 100.0)},
-				_text("ui_building_demolish", "DEMOLISH"))
+		var word := _text("ui_building_demolish", "DEMOLISH") if _hold_action == &"demolish" \
+				else _text("ui_building_salvage", "SALVAGE")
+		_hold_button.text = _text_args("ui_building_demolish_holding",
+				{"percent": HudModel.percent_text(fraction * 100.0)}, word)
 		return
 	_hold_elapsed = -1.0
+	var action := _hold_action
+	_hold_button = null
+	_hold_action = &""
 	set_process(false)
-	request_demolish()
+	if action == &"salvage":
+		request_salvage()
+	else:
+		request_demolish()
 
 
 # ---------------------------------------------------------------------------
@@ -1479,6 +1601,21 @@ func request_demolish() -> void:
 	demolished.emit(target, result)
 
 
+## The salvage hold landed. Same shape as `request_demolish` and for the same
+## reason: the lot is empty now, so a panel still describing a building would be
+## describing nothing.
+func request_salvage() -> void:
+	if controller == null or _sim_id == "":
+		return
+	var target := _sim_id
+	var result := controller.salvage(target)
+	if bool(result["ok"]):
+		close()
+	else:
+		refresh()
+	salvaged.emit(target, result)
+
+
 ## `Fix this →`. `E_CONDITION` is answered HERE rather than by the shell: its fix
 ## target is the building the player already has open, so focusing the camera on
 ## it — which is all the shell can do — moves nothing. The row's remedy is a
@@ -1539,6 +1676,16 @@ func repair_button() -> Button:
 
 func demolish_button() -> Button:
 	return _demolish_button
+
+
+## The Wave-19 salvage button, for `tests/test_ui_salvage.gd` and the preview
+## harness — the same accessor shape the four rows above already publish.
+func salvage_button() -> Button:
+	return _salvage_button
+
+
+func salvage_note() -> Label:
+	return _salvage_note
 
 
 ## The `UPGRADE` button of one doc-05 node's row, or null — the water twin of

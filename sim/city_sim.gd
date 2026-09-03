@@ -4509,23 +4509,49 @@ func cmd_demolish_building(sim_id: String, preview: bool = false) -> Dictionary:
 
 	for job_id in job_ids:
 		construction.cancel(job_id)
+	_take_building_off_the_map(sim_id, b, type, record, maxi(b.level, 1))
+	if refund > 0:
+		treasury.credit(refund, &"construction", "demolition " + sim_id)
+	bus.emit(&"building_removed", {"building": b.id, "sim_id": sim_id,
+			"archetype": type, "refund": refund, "cause": &"demolished"})
+	stats_add(&"buildings_demolished")
+	return CommandQueue.ok(quote)
+
+
+## Everything that has to stop being true when a building leaves the city, and
+## NOTHING that is about why it left (Wave 19, RR-171).
+##
+## Extracted from `cmd_demolish_building` when `cmd_salvage_building` needed the
+## same twelve steps: the tiles, the two utility attachments, the doc-05 nodes
+## and the doc-04 node the shell hosted, the fleet the station carried, five
+## per-building caches, the road-density index, the grid-id high-water mark, the
+## replay row an AUTHORED building owes a save, and the district rollup. Two
+## verbs that each did eleven of the twelve would be a bug that only shows up on
+## whichever one was written second — the shape doc 91 keeps filing.
+##
+## The CREDIT and the EVENT stay with the callers, because they are the half
+## that differs: a demolition refunds `construction` money and emits
+## `cause: demolished`; a salvage credits the `city_services` line and emits
+## `cause: salvaged`.
+func _take_building_off_the_map(sim_id: String, b: Building, type: String,
+		record: Dictionary, level: int) -> void:
 	var footprint: Vector2i = record.get("footprint", Vector2i.ONE)
 	if not record.has("footprint"):
-		var stats_row: Dictionary = catalog.stats(type, maxi(b.level, 1))
+		var stats_row: Dictionary = catalog.stats(type, maxi(level, 1))
 		var foot: Array = stats_row.get("footprint", [1, 1])
 		footprint = Vector2i(int(foot[0]), int(foot[1]))
 	world.grid.remove_building(b.id, b.origin, footprint)
 	grid.detach_building(sim_id)
 	water.detach_building(sim_id)
-	# A demolished water site takes its doc-05 nodes with it, for the same reason
-	# a demolished station takes its units: the shell IS the node's power_ref, and
-	# an orphaned pump would keep supplying a city from a building that is gone.
+	# A removed water site takes its doc-05 nodes with it, for the same reason a
+	# removed station takes its units: the shell IS the node's power_ref, and an
+	# orphaned pump would keep supplying a city from a building that is gone.
 	_retire_water_nodes(sim_id)
-	# …and a demolished substation or plant takes its grid node, for the same
+	# …and a removed substation or plant takes its grid node, for the same
 	# reason: the shell IS the node (doc 04 §2.1 / C-30).
 	_retire_grid_node(sim_id)
-	# A demolished station takes its units with it (doc 06 §2.11): the roster has
-	# to shrink for the same reason it has to grow (doc 92 F-3).
+	# A removed station takes its units with it (doc 06 §2.11): the roster has to
+	# shrink for the same reason it has to grow (doc 92 F-3).
 	if FLEET_STATION_ARCHETYPES.has(b.archetype):
 		var retired := incidents.fleet.remove_station(sim_id)
 		if int(retired.get("removed", 0)) > 0:
@@ -4547,15 +4573,9 @@ func cmd_demolish_building(sim_id: String, preview: bool = false) -> Dictionary:
 		# re-stamps it on every boot, so the save has to say it is gone.
 		_removed_records[sim_id] = {"grid_id": b.id, "type": type,
 				"footprint": footprint, "origin": b.origin}
-	if refund > 0:
-		treasury.credit(refund, &"construction", "demolition " + sim_id)
-	# Aggregates must not lag a demolition by an hour: the district rollup is the
+	# Aggregates must not lag a removal by an hour: the district rollup is the
 	# only place population/jobs live, so refresh it now.
 	_rollup_district_population()
-	bus.emit(&"building_removed", {"building": b.id, "sim_id": sim_id,
-			"archetype": type, "refund": refund, "cause": &"demolished"})
-	stats_add(&"buildings_demolished")
-	return CommandQueue.ok(quote)
 
 
 ## The §2.10 refund table, read off a live job exactly as `ConstructionQueue`
@@ -5016,6 +5036,111 @@ func cmd_restore_building(sim_id: Variant, preview: bool = false) -> Dictionary:
 			"job_id": job_id})
 	stats_add(&"buildings_restored")
 	quote["job_id"] = job_id
+	return CommandQueue.ok(quote)
+
+
+## **SALVAGE A RUIN — the verb that runs the other way** (Wave 19, doc 03 §2.5,
+## doc 12 §2.9 D-89, doc 93 §AQ2, report 98 RR-171).
+##
+## The player, on their own city at 3 a.m. on 2026-09-03: *"There was a natural
+## disaster, a water flooding, I woke up to — and there's negative money. …ALL of
+## my buildings are destroyed right now."* Every priced verb the game offered
+## them asks for money they did not have. This one pays.
+##
+## It is also the half of doc 02 §2.12 that has never had a caller. The table
+## has carried `destroyed → (removed)` since Wave 1 with a cost fraction and a
+## crew-hours factor; `ConstructionQueue.KINDS` carries `clear_rubble`;
+## `ConstructionQueueModel` renders it; `NotificationScheduler` exempts it. There
+## has never been a `cmd_clear_rubble`, and doc 12 §2.9 D-86 named that absence
+## as `A91-D-99`'s remaining half when Wave 18 closed the other one.
+##
+## Order of checks:
+##
+##   1 E_UNKNOWN_BUILDING  no such sim_id
+##   2 E_STATE             not a ruin — a standing building is `cmd_demolish_building`'s,
+##                         and a lot with a restore already on it stopped being a ruin
+##                         the moment the restore was ordered
+##
+## **There is no `E_JOB_IN_FLIGHT` arm and it is not an omission.** The pair verb
+## `cmd_restore_building` carries one defensively; here it would be unreachable
+## by construction, because the only job that can exist on this lot is the
+## rebuild that verb files and `Building.order_rebuild` moves the state out of
+## `destroyed` in the same call. A blocker that cannot fire is a blocker nobody
+## can test, so the state check is the whole gate and the test says so.
+##
+## **No `E_FUNDS`, because nothing is spent** — which is the point, and which is
+## why this verb is reachable at a negative balance when every other one is not.
+##
+## Priced by `SALVAGE_FRACTION` off the level the building fell down at, so the
+## panel can put `RESTORE · $1,220` and `SALVAGE · $915` side by side and they
+## are quotes on the same building. Credited through the settled `city_services`
+## channel with SOURCE `salvage`, beside `street`: it is money the player
+## collected by making a decision, not a rate on the city's value, and the budget
+## panel has to be able to say which.
+##
+## **Instant, and NOT a construction job.** Doc 02 §2.12 authors `0.25 ×
+## build_time` crew-hours for the clearance, and this verb does not spend them —
+## it follows the shipped precedent of its nearest sibling instead:
+## `cmd_demolish_building` is instant today for a whole intact building, and a
+## verb that made a WRECK take longer to clear than an office block would be
+## explaining the queue rather than the city. `clear_rubble` therefore stays an
+## unused `ConstructionQueue` kind and doc 93 §AQ2 records the deviation.
+##
+## **There is deliberately no `cmd_salvage_all_destroyed`,** and the asymmetry
+## with `cmd_restore_all_destroyed` above is the ruling, not an omission: a batch
+## is safe when the worst case is spending money and unsafe when the worst case
+## is a city that cannot be brought back. Restore-all can be undone by earning;
+## salvage-all cannot be undone at all.
+func cmd_salvage_building(sim_id: Variant, preview: bool = false) -> Dictionary:
+	# The shell's tap funnel carries ids as text (doc 12 §4.4's one-funnel rule).
+	var id := String(sim_id)
+	var b: Building = buildings.get(id)
+	if b == null:
+		return CommandQueue.fail(&"E_UNKNOWN_BUILDING", {"blockers": [&"E_UNKNOWN_BUILDING"]})
+	var blockers: Array = []
+	if b.state != &"destroyed":
+		blockers.append(&"E_STATE")
+	var record: Dictionary = _building_records.get(id, {})
+	var type := String(record.get("type", String(b.archetype)))
+	var level := maxi(b.level_at_destruction, 1)
+	var value := econ_curves.salvage_value_building(type, level)
+	var quote := {"blockers": blockers, "value": value, "level": level,
+			"capital": econ_curves.capital_value(type, level),
+			"restore_cost": econ_curves.restore_cost_building(type, level,
+					float(treasury.difficulty().get("M_repair", 1.0))),
+			"hours_destroyed": maxf(0.0,
+					float(clock.sim_time_minutes() - b.destroyed_at_minutes) / 60.0)}
+	if not blockers.is_empty():
+		return CommandQueue.fail(blockers[0], quote)
+	if preview:
+		return CommandQueue.ok(quote)
+
+	var grid_id := b.id
+	_take_building_off_the_map(id, b, type, record, level)
+	if value > 0:
+		# **`&"construction"`, and not a new `city_services` source, and the
+		# reason is a hash** (doc 91 A91-D-100, A91-D-108). Salvage IS a
+		# demolition refund at a different fraction — `cmd_demolish_building`
+		# credits its refund to exactly this category — so the category is the
+		# honest one and not a compromise. A `salvage` sub-row on
+		# `hour_city_services` would ALSO be right, and it is deferred rather
+		# than taken: `Treasury.lifetime` is captured into
+		# `canonical_capture().ledger_totals` and therefore into `state_hash()`,
+		# so adding a key moves ALL FOUR `profile_sim` baselines on every city
+		# for a schema change that belongs in one edit with `A91-D-37`'s
+		# `&"incident"` arm and `A91-D-100`'s `&"restore"` arm. Filed for the
+		# lane that holds the matrix; until then the money is visible in the
+		# balance, in the toast, in the event log and on the Construction
+		# ledger line, and invisible only as a lifetime total.
+		treasury.credit(value, &"construction", "salvage " + id)
+	# `building_removed` and not a verb-specific event: the renderer, the event
+	# log and the alerts centre already know how to stop drawing a building that
+	# left, and a second event for the same fact is a second thing to keep in
+	# step. The `cause` is what says which verb did it.
+	bus.emit(&"building_removed", {"building": grid_id, "sim_id": id,
+			"archetype": type, "refund": value, "cause": &"salvaged",
+			"level": level})
+	stats_add(&"buildings_salvaged")
 	return CommandQueue.ok(quote)
 
 

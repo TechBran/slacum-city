@@ -712,7 +712,7 @@ Full transition table:
 | `repairing` | `active` | repair progress ≥ 1.0 | `condition = 0.85` |
 | `repairing` | `damaged` | crew withdrawn or new damage | partial progress kept |
 | `destroyed` | `planned` | **`cmd_restore_building`** (Wave 18); doc 03 §2.5 charges `capital_value(level_at_destruction) × RESTORE_COST_FRACTION × M_repair`. **The level always survives — no grace window, no demotion** | rubble cleared as part of the project; a `rebuild` job on §2.13's one queue |
-| `destroyed` | (removed) | `cmd_clear_rubble`; `0.10` cost fraction, `0.25 × build_time` crew-hours | tiles freed |
+| `destroyed` | (removed) | **`cmd_salvage_building`** (Wave 19); doc 03 §2.5 CREDITS `capital_value(level_at_destruction) × SALVAGE_FRACTION`. **Instant, no job, no crew-hours** | tiles freed, `building_removed` with `cause: salvaged` |
 
 **Offline note.** `destroy_building` is guarded by `world.destroy_allowed()` (report 98 C-47): while catching up, doc 08's fairness rule clamps the outcome to condition **0.15** with the incident left open, and the verb is refused **visibly** rather than swallowed. The player arrives to a building still burning.
 
@@ -1287,6 +1287,23 @@ Two files. `data/buildings.json` is generated from the seed rows by the rules in
   }
 }
 ```
+
+**AS BUILT, WAVE 19 (report 98 §60 RR-171, doc 93 §AQ2).** The `destroyed →
+(removed)` row above shipped its caller seventeen waves after the row was
+written, and it shipped INVERTED and SIMPLIFIED, both deliberately:
+
+* **the `0.10` cost fraction is not charged — it is subtracted.** A ruin is worth
+  its scrap, and its scrap is worth more than clearing it: doc 03's
+  `SALVAGE_FRACTION` is the closed form `DEMOLITION_REFUND_FRACTION 0.25 − 0.10 =
+  0.15`, a NET CREDIT off the capital the building had when it fell. The 0.10
+  above is still the number the derivation is built on; it is simply on the other
+  side of the subtraction.
+* **the `0.25 × build_time` crew-hours are not spent.** The verb is instant and
+  files no `ConstructionQueue` job, following the shipped precedent of its
+  nearest sibling — `cmd_demolish_building` is instant today for a whole intact
+  building, and a verb that made a WRECK take longer to clear than an office
+  block would be explaining the queue rather than the city. `clear_rubble`
+  therefore remains a declared `ConstructionQueue.KINDS` entry with no producer.
 
 **Constants that used to live here and no longer do** (report 98): `upkeep_fraction_of_build_cost_per_hour` (C-08 → doc 03), `upgrade_cost_factor` and `k_cost` (C-07 → doc 03 `UPG_COEFF`/`UPG_GROWTH`), `repair_cost_factor` (C-16 → doc 03 `REPAIR_COST_PER_CAPITAL`), `service_factor.power_*`/`water_*` (C-09 → doc 03 `f_power`/`f_water`), `condition.factor_*` (C-09 → doc 03 `f_condition`), the whole `crime` coefficient block (C-44 → doc 06), `fire.base_burn_hours` / `k_burn_hours` / `units_per_fire_load` / `max_required_units` / `tiles_per_spread_step` / `max_spread_radius_tiles` (C-43 → doc 06), the five `weather_*_mult` values (C-57 → doc 07 `get_effect()`), `feeder_condition_derate` (C-30 → doc 04), `city_level_population_thresholds` (G-1 → doc 09 `data/progression.json`), `rebuild_cost_factor` and `rubble_clear_cost_factor` (C-07 → doc 03).
 

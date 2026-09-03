@@ -7905,3 +7905,305 @@ the panel and the render arm all ship with tests — and the only thing a player
 would notice missing is that the ruin's mesh survives its own restore until the
 next relaunch. That is the pump lesson exactly, which is why the arms are named
 rather than assumed.
+
+## 60. WAVE 19 — money you actually collect (binding)
+
+*Lane 3 of Wave 19, forked off the Wave-18 merge (`d4f62e1`), 2026-09-03. The
+lane exists for one overnight report, and the sentence it is built against is the
+player's own:*
+
+> *"The crimes we stop are only a few hundred dollars — add a zero to that.
+> 15,000 for one. And any other fun ideas to collect money in the game, something
+> to actually DO to collect, other than tax revenue."*
+
+*Two of the three asks are answered by re-pricing what already exists; the third
+needed verbs that were not there. **The lane does NOT touch the balance matrix**
+— every dollar it adds is reachable only through a player verb or a level curve
+that is exactly 1.00 at the founding city, so `do_nothing`, `balanced`,
+`tax_squeezer` and `infrastructure_first` earn what they earned before it, and
+gate 29's insolvency day does not move.*
+
+| `profile_sim --hash-only` | at the fork | after this pass |
+|---|---|---|
+| starter, coarse 24 h | `64c4d7e9d8f8fb74…` | `64c4d7e9d8f8fb74…` |
+| starter, fine 2.0 h | `9f19dcc5212f834d…` | **moved — see RR-169** |
+| bench, coarse 24 h | `6f383de1ed6940a2…` | `6f383de1ed6940a2…` |
+| bench, fine 2.0 h | `311e29d10b1cb43d…` | **moved — see RR-169** |
+
+**The two coarse hashes are bit-identical and that is the load-bearing half.**
+The opportunity layer is a FINE-PATH system by construction (doc 08 §2.3 rule 9:
+`advance_coarse` draws nothing and spawns nothing), so the balance matrix — which
+runs the coarse step — cannot see a street re-price at all. The two fine hashes
+move because `spawn.target_interval_h` moved, which changes the Bernoulli
+threshold `_try_spawn` compares its first draw against; the cause is one authored
+number and it is published below.
+
+### RR-169 — the street layer and the dispatcher's premium: what "add a zero" can honestly mean (docs 03 §2.5, 06 §2.16, 92 §57.1/§57.2, 93 §AQ1)
+
+**The finding is not that the numbers were low. It is that two of them were
+FLAT.**
+
+`dispatch_payout_base` has no city-level term at all. A resolved crime pays
+`350 × (1 + 0.35·(tier−1)) × speed`, and every factor in that product is a
+property of the *incident*; none is a property of the *city*. So the reference
+crime — tier 3, answered on target — paid **$595 on game-day one and $595 on game
+day three hundred**, while the city's own net per real-minute went
+**537.7 → 2,755.4** (`tools/measure_curriculum.gd --days=45 --seeds=1337,4242,9001`).
+The reward for answering an incident therefore lost about four fifths of its real
+value as the player got better at the game. That is a decay, not a level, and it
+is exactly what the player reported.
+
+The street layer's `STREET_REWARD_CITY_LEVEL_K` was not flat but was fitted
+against a run AVERAGE, and it decayed for the same reason at a slower rate: 1.8×
+by level 5 against a city that got 3.3× richer.
+
+**What "$15,000 for one" costs, stated before anything is changed.** The street
+layer delivers 0.339 offers per game-hour (measured). A $15,000 collection at
+that rate is **$5,090/gh**, which is **1.85× the entire net income of a level-6
+city**. A street table that paid the player's number would not be a strong second
+income; it would be the economy, and every other system in the game would become
+scenery. So the number is answered by a verb that fires about once a game-day — the
+contract board, in the ruling below — and the street layer is re-priced against
+what it can actually carry.
+
+**(a) The street trade — 1.70× per collection, 1.00× per game-hour.**
+
+The ceiling on this layer is a SHARE of the city's income
+(`STREET_CEILING_SHARE_MAX`), and the shipped layer was already at 35.9 % of a
+40 % bound. There was therefore **no room to make one pickup bigger by making the
+layer richer — only by making pickups rarer.** Both sides move in the same
+commit:
+
+| | before | after | ratio |
+|---|---|---|---|
+| `petty_crime` band | 260 + 90 | **430 + 155** | mean ×1.664 |
+| `loose_animal` band | 150 + 60 | **250 + 100** | mean ×1.667 |
+| `lost_valuables` band | 420 + 180 | **700 + 300** | mean ×1.667 |
+| `spawn.target_interval_h` | 1.50 | **2.85** | ×1.90 |
+| measured mean bounty | $320.29 | **$543.11** | ×1.696 |
+| measured mean interval | 1.763 gh | **2.947 gh** | ×1.671 |
+| measured ceiling | $181.65/gh | **$184.30/gh** | ×1.015 |
+| ceiling ÷ founding net | 35.90 % | **36.42 %** | bound 40 % |
+
+*(Instrument: `tools/measure_street_yield.gd --hours=720 --seeds=1337,4242,9001
+--net=506.04786`.)*
+
+**`target_interval_h` is 2.85 and not 2.50, and the difference is a finding.**
+Delivery is not the table rate: `max_live`, `min_separation_tiles` and an empty
+kerb pool reject a fraction of the draws, and **that fraction falls as the table
+slows**. A table divided by exactly 5/3 delivered only 1.50× fewer offers and the
+ceiling went UP 12 % — measured $204.23/gh, 40.4 % of founding net, *over* the
+bound. The trade is only neutral at the interval where the measured delivered
+interval matches the measured bounty ratio, and that is 2.85.
+
+The beat moves 1.76 → 2.95 real minutes between offers. Doc 06 §2.16's own
+authored band is 1–3 real minutes, so the layer is still inside it and now sits
+at its **slow** edge — which is where a $500 pickup belongs and where a $305 one
+did not.
+
+**(b) `STREET_REWARD_CITY_LEVEL_K` 0.20 → 0.25, and the rung that binds it is
+FIVE.**
+
+The old value's note closes *"that is why 0.20 is HELD rather than raised"*, and
+what held it was a denominator taken from a 21-game-day run average. The
+per-LEVEL series is now measured and published as
+`pacing_guardrails.MODEL_NET_PER_HOUR_BY_CITY_LEVEL`:
+
+| city level | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| mean net $/real-min | 537.7 | 658.8 | 851.0 | 956.4 | 1017.2 | **2755.4** |
+
+**That series is not a ramp.** It is roughly flat from level 2 to level 5 and
+then triples. So a curve fitted against the run average is fitted against a
+number the player is never at, and the binding rung for a share ceiling is level
+**5**, not 1 and not 6. Holding `184.30 × (1 + k·(L−1)) ≤ 0.40 × net(L)` at every
+rung gives `k ≤ 0.302`; 0.25 is that bound with a seed's worth of margin, and the
+per-level ceiling shares become **34.3 / 35.0 / 32.5 / 33.7 / 36.2 / 15.1 %**.
+
+Gate 32 gains arm **(d2)**, which checks exactly this at every rung. Before this
+wave (d) measured the founding city only, which is how a level curve could be
+moved with nothing asking what the share became at level 5.
+
+**(c) `MANUAL_DISPATCH_LEVEL_K` 0.90 — new, and it is the only thing in this lane
+that touches doc 06's payout.**
+
+`manual_dispatch_mult(level) = 1.50 + 0.90 × (level − 1)`, so the dispatcher's
+premium is **1.50× at the founding city and 6.00× at level 6**. Fitted under the
+series above and deliberately not to it: 6.00/1.50 = **4.00×** against a city that
+got **5.12×** richer, so the premium closes most of the decay and never outruns
+the city that pays it.
+
+Two bounds keep it out of the matrix and out of gate 31, and **both were already
+in the file**:
+
+1. **Only the MANUAL half scales.** `Incident.manual_requested` is set by
+   `cmd_dispatch_unit` and by nothing else, so auto-dispatch keeps exactly the
+   dollars it has and every control agent in the balance matrix earns what it
+   earned before this wave. This is RR-78's own argument used a second time —
+   *"the new money this wave pays out is the dispatcher's premium, and a control
+   agent never earns one."*
+2. **Only where doc 03 can PRICE the target.** `CityIncidentWorld.dispatch_payout`
+   asks for the level curve only when `prevented_loss_value(...) ≥ 0`. There the
+   runtime clamp is `MORAL_HAZARD_CAP_FRACTION × prevented_loss`, which already
+   grows with the asset, so the raise is bounded by the value of the thing the
+   player saved and can never become a moral hazard. Where the target is unpriced
+   (road edges, water segments) the premium stays flat at 1.50, because
+   `MORAL_HAZARD_UNPRICED_CEILING` is derived from an avenue rebuild and an avenue
+   does not get dearer because the city levelled up. **Gate 31(c)'s published
+   table is therefore unmoved and untouched.**
+
+**(d) The ratio ruling, re-derived for the second time — and for the second time
+the derivation moved while the ruling did not.**
+
+The ruling is still *"a tapped crook is petty, a dispatched crime is the real
+one."* The 2026-08-21 derivation stated it against ONE denominator, the
+auto-dispatched reference of $595, and a crook re-priced to a mean of $507.50 is
+0.853 of that — which would fail the old 0.60 bound.
+
+**That denominator was the loose half, and RR-78 said so in its own words when it
+invented the premium: *"the drawer is where the raise is."*** A *dispatched* crime
+is one a human dispatched, and doc 06's reference case dispatched by hand pays
+`350 × 1.70 × 1.50 = $892.50`. Gate 32(b) now holds two assertions that say
+different things, which is cheaper than re-litigating one:
+
+* **(b1) the ORDERING** — the street mean is under the AUTO reference. 507.50 <
+  595, 15 % of margin. This is the assertion that catches a street table priced
+  past the incident it is a lesser version of.
+* **(b2) the READS-AS-ABOUT-HALF claim** — street mean ≤ 0.60 × the MANUAL
+  reference, **at every city level**. Both sides now carry a level curve and the
+  dispatch side is the steeper by construction, so the ratio FALLS across the
+  ladder: **0.569 at level 1 → 0.331 at level 6.** The dispatched crime becomes
+  more the real one as the city grows, not less. The old form read the base
+  tables and stopped, so a future wave that raised the street curve past the
+  dispatch curve would have passed it and shipped an inversion.
+
+**What the player gets.** A level-6 crook's mean bounty goes $610 → **$1,142**; a
+level-6 `lost_valuables` tops out at $1,200 → **$2,250**; the reference crime the
+player dispatches by hand goes $892.50 → **$3,570** (clamped at 0.75 × the loss
+it prevented, which on upgraded stock is far above it). That is between 1.9× and
+4.0× on the mature city, and it is what this layer can carry. The zero the player
+asked for belongs to the contract board.
+
+### RR-171 — `cmd_salvage_building`: a ruin is worth something, and the verb that runs the other way (closes the other half of `A91-D-99`; docs 02 §2.12, 03 §2.5, 12 §2.9 D-89, 92 §57.2, 93 §AQ2)
+
+**The state the player woke to, in their words:** *"There was a natural disaster,
+a water flooding, I woke up to — and there's negative money … ALL of my buildings
+are destroyed right now."*
+
+Every priced verb the game offers a player in that state asks them for money they
+do not have. `cmd_restore_building` (Wave 18) is a *purchase*; the panel draws it
+disabled with its price on its face, which is correct and is also the whole
+screen. There was nothing on any surface a broke player could press.
+
+**And doc 02 §2.12's own table has always had the missing row.** Under the
+`destroyed → planned` line Wave 18 finally gave a caller sits
+`destroyed → (removed)`, `cmd_clear_rubble`, `0.10` cost fraction,
+`0.25 × build_time` crew-hours. `ConstructionQueue.KINDS` carries `clear_rubble`;
+`ConstructionQueueModel` renders it; `NotificationScheduler` exempts it by name.
+**Everything existed except a verb** — which is `A91-D-19`'s shape for the seventh
+time, and doc 12 §2.9 D-86 named it as `A91-D-99`'s remaining half when it closed
+the other one.
+
+```
+grep -rn "cmd_clear_rubble" sim/ ui/ game/     # before: 3 hits, all comments
+                                               #         saying it does not exist
+```
+
+**The price is a closed form, not a fit.** `SALVAGE_FRACTION = 0.15 =
+DEMOLITION_REFUND_FRACTION 0.25 − doc 02 §2.12's own authored rubble-clearance
+fraction 0.10`: a ruin is worth what an intact building is worth knocked down,
+less the cost of clearing a mess the demolition contractor never had to make.
+Three bounds, and it sits inside all of them — `tests/test_salvage_building.gd`
+holds each as an inequality against the other published fractions rather than
+against a literal:
+
+1. **strictly below 0.25**, or a building is worth more dead than demolished and
+   letting stock fall is a strategy — the exact failure the moral-hazard cap
+   exists to refuse one system over;
+2. **strictly below `RESTORE_COST_FRACTION` 0.20**, so salvaging a ruin never pays
+   for restoring the same ruin and the two verbs are a decision rather than a
+   loop;
+3. **strictly above 0.05**, which is the net of an arbitrage that already existed
+   and that nobody had noticed — see `A91-D-107`.
+
+Worth, on shipped stock: a house L1 **$180**, L3 **$915**, L5 **$5,693**; the
+starter city's power plant **$13,875**.
+
+**Two deliberate deviations, both recorded rather than smuggled.**
+
+* **It is instant and files no job**, so doc 02 §2.12's `0.25 × build_time` is not
+  spent and `clear_rubble` remains an unused queue kind. It follows the shipped
+  precedent of its nearest sibling: `cmd_demolish_building` is instant today for
+  a whole intact building, and a verb that made a WRECK take longer to clear than
+  an office block would be explaining the queue rather than the city.
+* **There is no `cmd_salvage_all_destroyed`**, and the asymmetry with
+  `cmd_restore_all_destroyed` is the ruling: a batch is safe when the worst case
+  is spending money and unsafe when the worst case is a city that cannot be
+  brought back. Restore-all can be undone by earning; salvage-all cannot be
+  undone at all.
+
+**The money is credited to `&"construction"`, not to a new `city_services`
+source**, and the reason is a hash (`A91-D-108`): `Treasury.lifetime` is captured
+into `canonical_capture().ledger_totals` and therefore into `state_hash()`, so a
+`salvage` key would move all four baselines on every city for a schema change
+that belongs in one edit with `A91-D-37`'s `&"incident"` arm and `A91-D-100`'s
+`&"restore"` arm. The category is also the honest one on its own terms: a
+demolition refund goes there already, and this is a demolition refund at a
+different fraction.
+
+**The refactor that came with it.** `cmd_demolish_building`'s teardown is now
+`_take_building_off_the_map()` — twelve steps (tiles, both utility attachments,
+the doc-05 nodes and the doc-04 node the shell hosted, the station's fleet, five
+per-building caches, the road-density index, the grid-id high-water mark, the
+replay row an authored building owes a save, and the district rollup). Two verbs
+that each did eleven of the twelve would be a bug that only shows up on whichever
+was written second, which is the shape doc 91 keeps filing. The credit and the
+event stay with the callers, because they are the half that differs.
+
+**One blocker was written and then removed as unreachable.** The first draft
+carried an `E_JOB_IN_FLIGHT` arm mirroring `cmd_restore_building`'s. It can never
+fire: the only job that can exist on a ruin's lot is the rebuild that verb files,
+and `Building.order_rebuild` moves the state out of `destroyed` in the same call,
+so `E_STATE` always wins. A blocker that cannot fire is a blocker nobody can
+test; the state check is the whole gate and
+`test_a_rebuild_in_flight_takes_the_lot_out_of_this_verbs_reach` says so.
+
+### RR-172 — the salvage row: a second button on the one panel that had a decision missing (docs 12 §2.9 D-89, 93 §AQ2)
+
+A verb with no door is this project's signature defect, so the row ships in the
+same commit as the verb, with its preview state, exactly as D-86 did.
+
+```
+Destroyed 2h 30m ago. Rebuilds at level 3, condition as new.
+[            RESTORE · $1,220            ]     ← primary FAB, disabled under water
+[            SALVAGE · +$915             ]     ← ghost, HOLD to confirm
+Strip the lot for scrap. This building does not come back;
+rebuilding it later costs $1,220.
+[        RESTORE ALL 12 · $84,200        ]
+```
+
+Three deliberate differences from the primary above it, each with a reason:
+
+* **a ghost, not a FAB** — keeping the city is the offer the game leads with, and
+  this one is still there tomorrow;
+* **hold-to-confirm**, sharing `DEMOLISH`'s 800 ms window from
+  `data/ui.json.layout`, because it is the second button in the deck that cannot
+  be undone. `BuildingPanel`'s hold machinery was single-target and is now
+  `_begin_hold(button, action)` / `_end_hold()` with `_hold_button` and
+  `_hold_action`: two buttons each counting their own milliseconds would be two
+  places for the window to drift from the authored key;
+* **never disabled for money** — the verb spends nothing, so `salvage_view` has no
+  affordability arm at all, and that is precisely what makes it the one row a
+  negative balance cannot close.
+
+The note states the consequence **before** the hold and states it *against the
+other button's number*, because the decision is not "is $915 a lot" but "is $915
+worth more to me than a level-3 building". Four new `ui_building_salvage_*`
+strings; `salvage_view` quotes `restore_cost` off the same `preview = true` call
+so the two figures on the panel can never come from two reads.
+
+**Preview state `building_salvage`, same commit** — a ruin on a **negative**
+balance, which is the 2026-09-03 state photographed rather than described: both
+ruin buttons on screen and only one of them pressable. `--screen=all --audit
+--strict` exits **0** at 412×915, 360×800, 880×400 and at 360×800 with
+`--text-scale=1.3 --large-targets`.

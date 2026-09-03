@@ -56,6 +56,12 @@ const SCREENS: Array[String] = [
 	# disabled-with-the-price-still-showing. Same commit as the row, which is
 	# A91-D-28's lesson applied on the way in.
 	"building_destroyed", "building_destroyed_broke",
+	# Wave 19 (doc 12 §2.9 D-89): the ruin's SECOND button, in the state it was
+	# written for — a city under water. RESTORE is dead with its price still on
+	# its face and SALVAGE is live beside it, because salvage spends nothing and
+	# is therefore the one verb a negative balance cannot refuse. Same commit as
+	# the row, which is A91-D-28's lesson applied on the way in.
+	"building_salvage",
 	# Wave 17's POWER section (doc 12 §2.9 D-70) in its two states: the wire with
 	# room, and the wire that is the reason the UPGRADE button is dead.
 	"building_power", "building_power_fix",
@@ -694,6 +700,15 @@ func _apply(screen: String) -> void:
 				var ruin := _burn_two_down()
 				_sim.treasury.balance = 0
 				_building_panel.show_building(ruin)
+		"building_salvage":
+			# THE 2026-09-03 STATE, photographed rather than described: the
+			# player woke to a flooded city with every building destroyed and a
+			# NEGATIVE balance. Both ruin buttons are on screen and only one of
+			# them can be pressed.
+			if _building_panel != null:
+				var stranded := _burn_two_down()
+				_sim.treasury.balance = -12_500
+				_building_panel.show_building(stranded)
 		"building_water":
 			# Doc 05 §6's node block: a `water_facility` shell with its own
 			# ladder rows under the doc-02 one. `WTR-1` hosts three nodes, which
