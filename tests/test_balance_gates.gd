@@ -2496,6 +2496,33 @@ func test_gate_32_active_play_pays_more_and_idling_still_pays() -> void:
 	# delivered street bounty to an undelivered dispatch BASE was the arithmetic
 	# error the placeholder table hid; it reads as "about half" against the
 	# payout, which is what the ruling always meant.
+	#
+	# **RE-DERIVED A SECOND TIME, WAVE 19 (doc 92 §57.1, report 98 RR-169), and
+	# for the second time the derivation moved while the ruling did not.** The
+	# 2026-08-21 form stated the ratio against ONE denominator, the AUTO
+	# reference, and the re-priced crook ($507.50 mean) is 0.853 of it. That is
+	# not a retune to refuse — it is the wrong denominator for the word
+	# "dispatched". RR-78's own sentence when it invented the premium was *"the
+	# drawer is where the raise is"*: a DISPATCHED crime is one a human
+	# dispatched, and what that pays at doc 06's reference case is
+	# `350 × 1.70 × MANUAL_DISPATCH_MULT` = $892.50.
+	#
+	# So the ruling is held by TWO assertions that say different things, which is
+	# cheaper than re-litigating one:
+	#
+	#   (b1) the ORDERING — a tapped crook pays less than an auto-answered crime.
+	#        This is the assertion that would catch a street table priced past
+	#        the incident it is a lesser version of. 507.50 < 595, 15 % of margin.
+	#   (b2) the READS-AS-ABOUT-HALF claim, against the manual reference.
+	#
+	# **And both now hold AT EVERY CITY LEVEL**, which the old single form never
+	# checked — it read the base tables and stopped. Both sides carry a level
+	# curve now (`STREET_REWARD_CITY_LEVEL_K` 0.25 against
+	# `MANUAL_DISPATCH_LEVEL_K` 0.90) and the dispatch side is the steeper by
+	# construction, so the ratio FALLS across the ladder: the dispatched crime
+	# becomes more the real one as the city grows, not less. A future wave that
+	# raises the street curve past the dispatch curve fails here at level 6
+	# rather than passing a base-table check and shipping an inversion.
 	var street: Dictionary = services["street_payout"]
 	var petty := _street_mean_bounty(street, "petty_crime")
 	var dispatched := _dispatch_reference_payout(services, "crime")
@@ -2503,9 +2530,17 @@ func test_gate_32_active_play_pays_more_and_idling_still_pays() -> void:
 			("a tapped crook's mean bounty $%.2f must sit under what a dispatched "
 					+ "crime pays at doc 06's own reference (tier 3, on target): $%.2f")
 					% [petty, dispatched])
-	assert_true(petty / dispatched <= 0.60,
-			("and it must read as about half, not as nearly the same: %.3f "
-					+ "($%.2f against $%.2f)") % [petty / dispatched, petty, dispatched])
+	var street_k := float(services["STREET_REWARD_CITY_LEVEL_K"])
+	var manual_base := float(services["MANUAL_DISPATCH_MULT"])
+	var manual_k := float(services.get("MANUAL_DISPATCH_LEVEL_K", 0.0))
+	for level in range(1, GoalSystem.top_level() + 1):
+		var street_at := petty * (1.0 + street_k * float(level - 1))
+		var manual_at := dispatched * (manual_base + manual_k * float(level - 1))
+		assert_true(street_at / manual_at <= 0.60,
+				("at city level %d a tapped crook's mean bounty is $%.2f against "
+						+ "$%.2f for the same crime dispatched by hand — %.3f, and it "
+						+ "must read as about half rather than as nearly the same")
+						% [level, street_at, manual_at, street_at / manual_at])
 
 	# (c) THE RATE CONTRACT, AND IT IS FINALLY A CONTRACT. Both files are in this
 	# tree since RR-85, so the number doc 03 publishes can be checked against the
@@ -2528,9 +2563,13 @@ func test_gate_32_active_play_pays_more_and_idling_still_pays() -> void:
 	# This is doc 92 §35.3's ruling made executable. It measured 57 % against the
 	# PRE-money-pass founding net and asked for a retune to 35–40 %; the money
 	# pass moved the denominator instead (337.05 → 506.05/gh), and the same
-	# $181.65/gh ceiling is 35.9 % of it. Nothing in the street tables was
-	# retuned — see §39.2 — so this assertion is the one that would catch a
-	# future retune of either side, in either direction.
+	# $181.65/gh ceiling is 35.9 % of it. **Wave 19 retuned both sides of the
+	# street product on purpose and held their product still** (RR-169): the
+	# bounty bands are 1.70× and `spawn.target_interval_h` is 1.50 → 2.85, so the
+	# measured ceiling moves $181.65 → **$184.30/gh**, 36.42 % of the same
+	# opening. This assertion is the one that catches a future retune of either
+	# side, in either direction, and (d2) below is the one that catches a retune
+	# of the level curve that this arm cannot see.
 	#
 	# The instrument is `OpportunitySystem.advance` at the phase adapter's own
 	# cadence, exactly as `tools/measure_street_yield.gd` drives it: the whole
@@ -2552,6 +2591,33 @@ func test_gate_32_active_play_pays_more_and_idling_still_pays() -> void:
 			("the whole street layer is worth $%.2f/gh, %.2f %% of the opening's "
 					+ "income — at that share nobody would cross the map for it")
 					% [ceiling, 100.0 * ceiling_share])
+
+	# (d2) **THE SAME CEILING AT EVERY RUNG OF THE LADDER** (Wave 19, RR-169).
+	#
+	# (d) measures the founding city and the founding city only, and until this
+	# wave that was the whole check — which is how `STREET_REWARD_CITY_LEVEL_K`
+	# could be raised without anything asking what the share became at level 5.
+	# The reason it matters is that the city's income is NOT a smooth ramp:
+	# `MODEL_NET_PER_HOUR_BY_CITY_LEVEL` is flat from level 2 to level 5 and then
+	# triples at level 6, so the binding rung for a share ceiling is FIVE, not
+	# one and not six, and a curve fitted against a run average is fitted against
+	# a number the player is never at.
+	#
+	# The ceiling at level L is (d)'s measured founding ceiling times the authored
+	# level multiplier: the spawn table does not change with level, only the
+	# bounty does. Measured shares at the shipped k = 0.25 are
+	# 34.3 / 35.0 / 32.5 / 33.7 / **36.2** / 15.0 %.
+	var net_by_level: Array = _pacing()["MODEL_NET_PER_HOUR_BY_CITY_LEVEL"]
+	for level in range(1, net_by_level.size() + 1):
+		var level_ceiling := ceiling * (1.0 + street_k * float(level - 1))
+		var level_net := float(net_by_level[level - 1])
+		assert_true(level_ceiling / level_net <= ceiling_max,
+				("at city level %d a player who collected EVERY street offer would "
+						+ "earn $%.2f/gh against a measured net of $%.2f/gh (%.2f %%); "
+						+ "doc 03's ruled ceiling is %.0f %% and this rung is where "
+						+ "STREET_REWARD_CITY_LEVEL_K binds")
+						% [level, level_ceiling, level_net,
+						100.0 * level_ceiling / level_net, 100.0 * ceiling_max])
 
 	# (e) AND EXACTLY ZERO WHEN IDLE — asserted as the written-down zero it is,
 	# and then MEASURED on an agent that never taps. `curriculum` is `collector`
@@ -2615,6 +2681,69 @@ func test_gate_32_active_play_pays_more_and_idling_still_pays() -> void:
 					+ "floor is %.0f %% and under it the layer is not worth the "
 					+ "attention it asks for")
 					% [100.0 * played_share, 100.0 * float(band[0])])
+
+	# (h) **THE COMMISSIONS BOARD'S CEILING, AT EVERY RUNG** (Wave 19, RR-170).
+	#
+	# `data/contracts.json` says what the board offers and how long it rests;
+	# `data/economy.json` says what a commission pays and what share of the
+	# city's income the layer may take. **The bound is the product of the two and
+	# neither file can see the other**, which is exactly the shape arm (c) was
+	# built for when the street's spawn table and its bounty table were split by
+	# RR-85. This arm reads both.
+	#
+	# The worst case a player can produce: accept the best tier their city level
+	# allows, finish it, claim it, and repeat as fast as the cooldown permits.
+	# With `max_active` = 1 that is one payout per `cooldown_h_after_claim`,
+	# whatever else they do — which is why the cooldown is the whole bound and
+	# why moving it is a balance change rather than a pacing one.
+	#
+	# Measured shares at the shipped tables: **6.5 / 18.1 / 18.0 / 19.6 / 21.7 /
+	# 21.0 %** of net at levels 1–6 against a ruled 25 %.
+	var contracts_data := StarterCityLoader.read_json("res://data/contracts.json")
+	var cooldown_h := float((contracts_data["board"] as Dictionary)["cooldown_h_after_claim"])
+	assert_true(cooldown_h > 0.0,
+			"a board with no cooldown has no income bound at all")
+	var contract_k := float(services["CONTRACT_REWARD_CITY_LEVEL_K"])
+	var contract_max := float(services["CONTRACT_CEILING_SHARE_MAX"])
+	var payouts: Dictionary = services["contract_payout"]
+	for level in range(1, net_by_level.size() + 1):
+		# The dearest commission this rung can be offered. `min_city_level` is a
+		# BALANCE gate and this is what it is enforcing.
+		var best := 0.0
+		for row_variant: Variant in contracts_data["templates"]:
+			var row: Dictionary = row_variant
+			if int(row.get("min_city_level", 1)) > level:
+				continue
+			# NOT `band` — arm (f) above already holds
+			# `STREET_PLAYED_SHARE_BAND` under that name in this same function
+			# scope, and GDScript refuses the redeclaration outright rather than
+			# shadowing it.
+			var tier_band: Dictionary = payouts[String(row["tier"])]
+			best = maxf(best,
+					float(tier_band["base"]) + 0.5 * float(tier_band.get("spread", 0.0)))
+		if best <= 0.0:
+			continue
+		var per_hour := best * (1.0 + contract_k * float(level - 1)) / cooldown_h
+		var share := per_hour / float(net_by_level[level - 1])
+		assert_true(share <= contract_max,
+				("at city level %d the best commission the board can offer pays a "
+						+ "mean $%.0f, which is $%.2f/gh across the %.0f game-hour "
+						+ "cooldown — %.2f %% of a measured net of $%.2f/gh, against "
+						+ "doc 03's ruled ceiling of %.0f %%")
+						% [level, best * (1.0 + contract_k * float(level - 1)),
+						per_hour, cooldown_h, 100.0 * share,
+						float(net_by_level[level - 1]), 100.0 * contract_max])
+
+	# **And the two active layers are ADDED, which is the bound that decides
+	# whether the city is still the thing being played.** A player who takes every
+	# street offer AND completes every commission is at the sum of the two
+	# ceilings; above two thirds of net, active play would outpay the city itself.
+	assert_true(ceiling_max + contract_max <= 0.67,
+			("the street ceiling (%.0f %%) and the commission ceiling (%.0f %%) sum "
+					+ "to %.0f %% of net for a player who takes everything; above two "
+					+ "thirds the city stops being the thing being played")
+					% [100.0 * ceiling_max, 100.0 * contract_max,
+					100.0 * (ceiling_max + contract_max)])
 
 	# (g) The dispatch half, unchanged. A played city's `city_services` line is a
 	# real share of its income and not a rounding error: measured on the

@@ -422,6 +422,32 @@ static func _v3_to_v4(b: Dictionary) -> Dictionary:
 > (`tools/profile_sim.gd --baseline`). What it does not get is the city v3 would
 > have produced next, and that is exactly what the rung records.
 
+> ### Shipped 2026-09-03 — `city.section_version` 8 → 9, **the commissions board**
+>
+> A SHAPE rung, and the second one of exactly this shape: doc 03 §2.5b's
+> commissions board (report 98 §60 RR-170) adds one top-level key, `contracts`,
+> and one entry inside an existing one, `rng.contracts` — which is precisely what
+> rung 7 added for doc 06 §2.16's opportunity layer. `CitySim._v8_to_v9` is the
+> identity function for the same reason `_v6_to_v7` was, and the reason is the
+> §2.8 rule rather than a convenience: **missing input means a DOCUMENTED
+> default**, and both defaults are documented. `ContractBoard.deserialize({})` is
+> an empty board, which is what a city that has never seen the board should
+> restore to; `RngStreams.deserialize` leaves the new stream on the seed
+> `hash(master_seed + ":contracts")` gave it at boot rather than inventing a
+> state. Stamping an empty `contracts` block in would be WORSE than leaving it
+> out — it would record a board the writing binary never had.
+>
+> **What it costs a returning player: nothing, and one thing it deliberately does
+> not give them.** Every building, dollar and RNG stream opens where it was left.
+> What a v8 save does not come back with is a commission in hand, because it
+> never had one; the board posts a fresh offer on its next posting attempt, which
+> is the same answer rung 7 gave a returning player and an empty kerb.
+>
+> **It is also the rung that moves the four determinism baselines,** and the
+> cause is one line: `rng.serialize()`'s key set is inside `state_hash()`, so a
+> named stream is a hash change on every city including one that never opens the
+> board. Report 98 §60 publishes the before/after for all four.
+
 > ### Shipped 2026-08-20 — `city.section_version` 4 → 5, **the upgrade-timing epoch**
 >
 > The smallest rung this ladder has and the clearest illustration of why it is a

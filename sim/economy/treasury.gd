@@ -101,7 +101,15 @@ var lifetime: Dictionary = {
 ## between a resolve and the hour's settlement would otherwise lose a line the
 ## income statement is about to print — and `save → load → advance` has to be
 ## bit-identical.
-var hour_city_services: Dictionary = {"dispatch": 0, "street": 0}
+## The §2.5 city-services line's sub-grain. `contracts` joined in Wave 19 for
+## doc 03 §2.5b's commissions board: the settlement's `services_total` is the SUM
+## of this dictionary, so a source with no key here would move the balance and
+## not the line, and the ledger would disagree with the treasury. Adding a key
+## moves every determinism baseline (it is inside `serialize()` and therefore
+## inside `state_hash()`), which is why the three LIFETIME arms doc 91 A91-D-37 /
+## A91-D-100 / A91-D-108 owe are still deferred: they are a separate dictionary
+## and a separate re-record, and they belong in one edit with each other.
+var hour_city_services: Dictionary = {"dispatch": 0, "street": 0, "contracts": 0}
 
 var _recovery: Dictionary = {}
 var _difficulty: Dictionary = {}
@@ -162,7 +170,7 @@ func credit(amount: int, category: StringName = &"misc", reason: String = "") ->
 
 ## A city-services receipt (doc 03 §2.5, RR-78): the same `credit()` as any
 ## other, plus a tally the hour's settlement will print on its own ledger line.
-## `source` is `"dispatch"` or `"street"`; an unknown source is credited and
+## `source` is `"dispatch"`, `"street"` or `"contracts"`; an unknown source is credited and
 ## tallied under `dispatch` rather than dropped, because losing the tally would
 ## make the line disagree with the balance.
 ## **The second `_note_lifetime` is not a double count, and it is a FIX** (Wave

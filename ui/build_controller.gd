@@ -1229,9 +1229,56 @@ func building_view(sim_id: String) -> Dictionary:
 func actions_view(sim_id: String) -> Dictionary:
 	return {
 		"restore": restore_view(sim_id),
+		"salvage": salvage_view(sim_id),
 		"repair": repair_view(sim_id),
 		"priority": priority_view(sim_id),
 		"demolish": demolish_view(sim_id),
+	}
+
+
+## **The ruin's SECOND row, and the one that runs the other way** (Wave 19;
+## doc 12 §2.9 D-89, doc 93 §AQ2, report 98 RR-171).
+##
+## Drawn on exactly the buildings `restore_view` is drawn on, because it is the
+## other half of the same decision: keep the lot and pay, or take the money and
+## lose it. A ruin with only one of the two buttons is a ruin with no decision
+## on it, which is what the panel had until this wave.
+##
+## Same contract as every row here — `CitySim.cmd_salvage_building(…, true)`
+## answers every value, so the button cannot be enabled on a rule `ui/` believes
+## and the sim does not — with one difference worth stating: **there is no
+## affordability arm.** Salvage spends nothing, so `ok` is `true` at any balance
+## including a negative one, and that is precisely the state the verb exists for.
+func salvage_view(sim_id: String) -> Dictionary:
+	var blank := {"available": false, "ok": false, "value": 0,
+			"value_text": RequirementFormatter.money(0), "reason": {}}
+	if sim == null or not sim.buildings.has(sim_id):
+		return blank
+	var b: Building = sim.buildings[sim_id]
+	if b.state != &"destroyed":
+		return blank
+	var preview := sim.cmd_salvage_building(sim_id, true)
+	var payload: Dictionary = preview.get("payload", {})
+	var ok := bool(preview["ok"])
+	var value := int(payload.get("value", 0))
+	var reason: Dictionary = {}
+	if not ok:
+		reason = formatter.format(preview["reason_code"],
+				{"state": String(b.state), "required_state": "destroyed",
+				"sim_id": sim_id})
+	return {
+		"available": true,
+		"ok": ok,
+		"value": value,
+		"value_text": RequirementFormatter.money(value),
+		"level": int(payload.get("level", maxi(b.level_at_destruction, 1))),
+		"capital": int(payload.get("capital", 0)),
+		# The price of the OTHER verb, off the same call, because the row's whole
+		# job is to be read against it.
+		"restore_cost": int(payload.get("restore_cost", 0)),
+		"restore_cost_text": RequirementFormatter.money(
+				int(payload.get("restore_cost", 0))),
+		"reason": reason,
 	}
 
 
@@ -1458,6 +1505,20 @@ func restore(sim_id: String) -> Dictionary:
 	if sim == null:
 		return CommandQueue.fail(&"E_UNKNOWN_BUILDING", {"sim_id": sim_id})
 	return sim.cmd_restore_building(sim_id)
+
+
+## Doc 02 §2.12's OTHER ruin transition, through the same funnel (Wave 19).
+## One tap, the money on the button's face, and the panel re-reads the city —
+## which it has to, because unlike every other verb on this panel the building
+## the panel is about stops existing.
+##
+## **Hold-to-confirm lives on the BUTTON, not here** (doc 12 §2.9 D-89): this is
+## the funnel and it commits what it is asked to commit. The panel is where a
+## verb that cannot be undone earns its 800 ms, exactly as `Demolish` does.
+func salvage(sim_id: String) -> Dictionary:
+	if sim == null:
+		return CommandQueue.fail(&"E_UNKNOWN_BUILDING", {"sim_id": sim_id})
+	return sim.cmd_salvage_building(sim_id)
 
 
 ## The many-at-once half. Cheapest first and stopping at the funds wall, both of

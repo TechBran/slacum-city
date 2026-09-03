@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "_doc": "doc 03 §2.5b — THE COMMISSIONS BOARD. Work the city takes on a clock, run by `sim/economy/contract_board.gd` on the `contracts` RNG stream. This file owns WHICH commissions exist, WHAT each one asks the player to do, HOW LONG they run and WHEN the board is allowed to post one. **It owns no dollar** (C-07, report 98 §60 RR-170): every payout is priced by `data/economy.json`'s `city_services.contract_payout`, the same split RR-78 gave doc 06's dispatch rewards and RR-85 gave doc 06 §2.16's street bounties. `ContractBoard.FORBIDDEN_KEYS` refuses a price put back, at any depth, as a BOOT ERROR.",
+  "_why": "The 2026-09-03 overnight report asked for two things this file exists for: a single collection worth about $15,000, and 'any other fun ideas to collect money in the game, something to actually DO to collect, other than tax revenue'. The first cannot be answered on the street layer — 15,000 at that layer's measured 0.339 offers/gh is $5,090/gh, 1.85x the whole net income of a level-6 city — so the number belongs to a verb that fires about once a game-day, and this is it.",
+  "_offline": "doc 08 §2.3 rule 9 — the board does NOT run while the player is away. `advance(dt, online=false)` returns before its first statement: no offer is posted, no deadline runs down, no offer ages out, and the `contracts` stream is not advanced by a single call. A player who closes the app mid-commission finds it with exactly the hours they left it with. That also means the balance matrix, which runs the coarse step, cannot see this file at all.",
+  "_kinds": "Every `kind` below is a row in `GoalSystem.EVENT_KINDS` or in `ContractBoard.EXTRA_EVENT_KINDS`, which is one row — `restore_buildings`, whose event did not exist until Wave 18 gave the restore a verb. The board invents NO objective vocabulary: a commission can only ask for something doc 09's curriculum already knows how to notice, so a verb that grows a curriculum objective grows a contract kind for free, and a kind named here that no evaluator knows is DROPPED at parse with a boot error rather than silently sitting at zero progress forever.",
+  "_verbs": "Every row is answerable with a door that exists today: `lay_streets` through the build sheet's ROADS tab and the drag-path tool, `patrol` through the street layer's tap (doc 06 §2.16), `retainer` through the incident drawer's auto and manual dispatch both, `assessor` through the building panel's REPAIR, `insurance`/`reconstruction` through the building panel's RESTORE (Wave 18), `convention` through the building panel's UPGRADE. `tests/test_contracts.gd` holds this file to the reachable set the same way `tests/test_goals_system.gd` holds data/goals.json to it.",
+  "_level_gate": "`min_city_level` is a BALANCE gate and not a difficulty curve. `data/economy.json pacing_guardrails.MODEL_NET_PER_HOUR_BY_CITY_LEVEL` is flat from level 2 to level 5 and then TRIPLES, so a `major` payout only fits inside `CONTRACT_CEILING_SHARE_MAX` at the top rung and is refused below it. See doc 92 §57.3.",
+
+  "board": {
+    "_note": "`offer_interval_h` is the mean game-hours between posting attempts that clear the Bernoulli, evaluated once per game-hour (the phase adapter's own cadence, never authored here). One game-hour is one real minute at 1x, so 6.0 is 'something new appears on the board every few minutes while there is room for it'.",
+    "offer_interval_h": 6.0,
+    "max_offers": 2,
+    "offer_lifetime_h": [24.0, 36.0],
+    "_cooldown_note": "THE INCOME BOUND, and it is the only one. The city holds exactly one commission at a time, so the fastest a player can earn from this layer is one payout per (time to finish + this cooldown). 30.0 is fitted against `CONTRACT_CEILING_SHARE_MAX` 0.25 at every rung of the level ladder — see doc 92 §57.3's table. It suppresses OFFERS as well as accepts, so the quiet stretch after a delivery is visible on the board rather than only in a refusal.",
+    "cooldown_h_after_claim": 30.0
+  },
+
+  "templates": [
+    {
+      "id": "watch_patrol",
+      "_note": "The neighbourhood watch pays per pickup. It is the tutorial contract of this layer: the work is the tap the player already knows, the deadline is short, and it teaches that a commission is accepted BEFORE the work counts.",
+      "tier": "minor", "kind": "collect_opportunities",
+      "target": 4, "deadline_h": 12.0, "min_city_level": 1, "weight": 1.0,
+      "client_key": "ui_contract_client_watch", "text_key": "ui_contract_watch_patrol"
+    },
+    {
+      "id": "film_permit",
+      "_note": "A film unit wants fresh tarmac for a chase scene. Counts road TILES stamped, so a single drag can finish it — which is the point: it is the commission that rewards a player for doing a thing they were going to do anyway, and teaches that the board is worth reading before you build.",
+      "tier": "minor", "kind": "stamp_road_tiles",
+      "target": 6, "deadline_h": 18.0, "min_city_level": 1, "weight": 0.8,
+      "client_key": "ui_contract_client_film", "text_key": "ui_contract_film_permit"
+    },
+    {
+      "id": "insurance_payout",
+      "_note": "The insurer pays for stock brought back, and it is the row the 2026-09-03 report is about: a player restoring a flooded city is doing this work anyway and was being paid nothing for it. Level 2 rather than 1 because a founding city has nothing destroyed yet and an unfinishable commission on the board is worse than an empty one.",
+      "tier": "standard", "kind": "restore_buildings",
+      "target": 2, "deadline_h": 24.0, "min_city_level": 2, "weight": 1.0,
+      "client_key": "ui_contract_client_insurer", "text_key": "ui_contract_insurance_payout"
+    },
+    {
+      "id": "county_retainer",
+      "_note": "The county pays a retainer for incidents answered. Counts resolutions of any type, auto or manual, so it rewards a city that RESPONDS rather than one that happens to have the right station — and it is the one commission a player can finish by working the drawer.",
+      "tier": "standard", "kind": "resolve_incidents",
+      "target": 5, "deadline_h": 24.0, "min_city_level": 3, "weight": 1.0,
+      "client_key": "ui_contract_client_county", "text_key": "ui_contract_county_retainer"
+    },
+    {
+      "id": "assessor_survey",
+      "_note": "A condition survey the city is paid to pass. Counts repairs STARTED, which is doc 02 §2.6's verb and the one the Wave-18 Upkeep band already teaches; the fiction is that the assessor pays for the work order, not for the crew's arrival.",
+      "tier": "standard", "kind": "repair_buildings",
+      "target": 3, "deadline_h": 24.0, "min_city_level": 3, "weight": 0.9,
+      "client_key": "ui_contract_client_assessor", "text_key": "ui_contract_assessor_survey"
+    },
+    {
+      "id": "convention_bid",
+      "_note": "The convention bureau needs capacity, and capacity is doc 02's ladder rather than doc 02's roster — it counts UPGRADES, not new builds, which is the lesson level 2 of the curriculum teaches and the one a rich player stops practising.",
+      "tier": "major", "kind": "upgrade_building",
+      "target": 3, "deadline_h": 36.0, "min_city_level": 6, "weight": 0.8,
+      "client_key": "ui_contract_client_convention", "text_key": "ui_contract_convention_bid"
+    },
+    {
+      "id": "reconstruction_grant",
+      "_note": "A state reconstruction grant, and the biggest single thing a player can collect in this game. It pays at least $15,000 at level 6 — the player's own number, on the verb they were already using at three in the morning: 'I've been trying to restore all the buildings so we can get revenue back up.'",
+      "tier": "major", "kind": "restore_buildings",
+      "target": 3, "deadline_h": 36.0, "min_city_level": 6, "weight": 1.0,
+      "client_key": "ui_contract_client_state", "text_key": "ui_contract_reconstruction_grant"
+    }
+  ],
+
+  "_no_penalty": "RULED, v1 (doc 93 §AQ3). A contract that runs out of hours costs the player NOTHING — no fee, no stability ding, no reputation. The layer exists because a playtester asked for something to DO, and a penalty for not finishing converts an opportunity into a chore; it would also tax precisely the player who put the phone down, which is the player doc 08 §2.3 rule 9 promises not to punish. It is the same ruling `data/street.json`'s `expire_stability_delta: 0.0` makes for an unanswered crook, and it re-opens on the same one condition: telemetry showing players farm-ignoring commissions at scale.",
+  "_tests": "tests/test_contracts.gd — the offer/accept/progress/claim lifecycle, the coarse contract (zero draws, zero aging, zero offers while away), a save->load round-trip mid-contract, the level gate, the price guard (this file carries no dollar at any depth and a tier the economy does not price is a boot error), and that progress counts only against an ACCEPTED contract."
+}

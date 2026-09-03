@@ -73,6 +73,10 @@ var _repair_cost_per_capital: float = 0.0
 ## capital the city pays to bring a RUIN back — the capital end of the same
 ## repair family `_repair_cost_per_capital` prices the routine end of.
 var _restore_cost_fraction: float = 0.0
+## Doc 03 §2.5 / Wave 19 (RR-171): what a RUIN is worth stripped, as a fraction
+## of the capital it had when it fell down. 0.0 in a table that does not author
+## it, which makes the salvage verb quote $0 rather than crash a boot.
+var _salvage_fraction: float = 0.0
 var _pm_cost_fraction: float = 0.0
 var _pm_min_condition: float = 0.0
 var _demolition_refund_fraction: float = 0.0
@@ -366,6 +370,32 @@ func restore_cost_fraction() -> float:
 	return _restore_cost_fraction
 
 
+## What a RUIN is worth stripped (Wave 19, report 98 RR-171) — the money half of
+## doc 02 §2.12's `destroyed → (removed)` row, which has had a table entry, a
+## queue kind and a renderer arm since Wave 1 and never had a caller.
+##
+## `capital_value(level_at_destruction) × SALVAGE_FRACTION`, and the fraction is
+## a CLOSED FORM rather than a fit: `DEMOLITION_REFUND_FRACTION − 0.10`, i.e.
+## what an intact building is worth knocked down, less doc 02 §2.12's own
+## authored rubble-clearance fraction. A ruin is worth its scrap less the mess.
+##
+## No `M_repair`, deliberately: this is not a repair and the difficulty presets
+## scale what the city BUYS, never what it is paid. `capital_value` already
+## carries the level, and the level a ruin is valued at is the one it fell down
+## at — the same level `restore_cost_building` charges against, so a player can
+## read the two numbers on one panel and they are about the same building.
+func salvage_value(capital: int) -> int:
+	return round_half_up(float(capital) * _salvage_fraction)
+
+
+func salvage_value_building(type: String, level: int) -> int:
+	return salvage_value(capital_value(type, maxi(level, 1)))
+
+
+func salvage_fraction() -> float:
+	return _salvage_fraction
+
+
 # ============================== §2.5 city services and §2.5a grants (RR-78/78)
 
 ## Doc 03 §2.5's payout table for doc 06's dispatch and doc 12's street
@@ -382,8 +412,37 @@ func dispatch_payout_base(type_id: String) -> float:
 
 ## 1.50 — doc 06's own `speed_bonus_max`, paid only when a human made the call
 ## (`Incident.manual_requested`). Auto-dispatch pays 1.00.
+##
+## This is the premium at the FOUNDING city and it is the base of the level
+## curve below; nothing but `manual_dispatch_mult_at_level` should read it as a
+## payout multiplier.
 func manual_dispatch_mult() -> float:
 	return float(city_services().get("MANUAL_DISPATCH_MULT", 1.0))
+
+
+## The dispatcher's premium AT A CITY LEVEL (Wave 19, RR-169):
+## `MANUAL_DISPATCH_MULT + MANUAL_DISPATCH_LEVEL_K × (level − 1)`, floored at
+## level 1 so a city that has not levelled pays exactly the number the founding
+## anchor was measured with and every hash across the change is bit-identical.
+##
+## **The base is flat for the life of the city and that was the defect**
+## (`data/economy.json` `_manual_level_k_derivation`): a resolved crime paid the
+## same $595 on game-day one and game-day three hundred while the city's income
+## per real-minute went 537.7 → 2,755.4, so the reward for answering an incident
+## lost four fifths of its real value as the player got better. The curve closes
+## most of that gap (4.00× by level 6) and deliberately not all of it (5.12×).
+##
+## Applied ONLY to a manually dispatched incident on a target doc 03 can price —
+## see `CityIncidentWorld.dispatch_payout`, which is where the clamp that bounds
+## it lives.
+func manual_dispatch_mult_at_level(city_level: int) -> float:
+	return manual_dispatch_mult() + manual_dispatch_level_k() * float(maxi(1, city_level) - 1)
+
+
+## The slope of the curve above. 0.0 in a table that does not author it, which
+## restores the pre-Wave-19 flat premium exactly.
+func manual_dispatch_level_k() -> float:
+	return float(city_services().get("MANUAL_DISPATCH_LEVEL_K", 0.0))
 
 
 ## The moral-hazard ceiling: a payout may never exceed this fraction of the loss
@@ -413,6 +472,48 @@ func street_payout(kind: String) -> Dictionary:
 
 func has_street_payout(kind: String) -> bool:
 	return not street_payout(kind).is_empty()
+
+
+## Doc 03 §2.5b's payout band for one commission TIER, as `{base, spread}`
+## (Wave 19, report 98 §60 RR-170).
+##
+## **This file is where the commissions board's money lives.**
+## `data/contracts.json` owns which commissions exist, what they ask for and how
+## long they run; it owns no dollar, and `ContractBoard.FORBIDDEN_KEYS` refuses
+## one that comes back — the same guard RR-85 gave the street table. An unpriced
+## tier answers an EMPTY dictionary rather than a zero, so `has_contract_payout`
+## can tell "priced at nothing" from "not priced".
+func contract_payout(tier: String) -> Dictionary:
+	var row: Variant = (city_services().get("contract_payout", {}) as Dictionary).get(tier, null)
+	return (row as Dictionary) if row is Dictionary else {}
+
+
+func has_contract_payout(tier: String) -> bool:
+	return not contract_payout(tier).is_empty()
+
+
+func contract_payout_base(tier: String) -> float:
+	return float(contract_payout(tier).get("base", 0.0))
+
+
+func contract_payout_spread(tier: String) -> float:
+	return float(contract_payout(tier).get("spread", 0.0))
+
+
+## The commissions board's level curve — the same shape the street bounty uses,
+## and steeper, because a commission is gated by city level in a way a kerb
+## pickup is not. `mult(L) = 1 + k(L − 1)`, fitted to land the `major` band's
+## FLOOR on the player's own $15,000 at the top rung.
+func contract_reward_city_level_k() -> float:
+	return float(city_services().get("CONTRACT_REWARD_CITY_LEVEL_K", 0.0))
+
+
+## The ruled share of the city's net this layer may pay somebody who completes
+## every commission it offers. Published for the balance instruments and for
+## gate 32 arm (h); the thing that ENFORCES it is
+## `data/contracts.json board.cooldown_h_after_claim`.
+func contract_ceiling_share_max() -> float:
+	return float(city_services().get("CONTRACT_CEILING_SHARE_MAX", 1.0))
 
 
 func street_payout_base(kind: String) -> float:
@@ -574,6 +675,13 @@ func demolition_refund_building(type: String, level: int) -> int:
 	return demolition_refund(capital_value(type, level))
 
 
+## The published fraction itself. `SALVAGE_FRACTION` is derived FROM it (Wave 19,
+## RR-171), and the bound "a wreck is never worth more than the same building
+## knocked down intact" is checked against it rather than against a literal.
+func demolition_refund_fraction() -> float:
+	return _demolition_refund_fraction
+
+
 ## doc 03 §2.13(d) — STREET $450, AVENUE $1,300.
 func road_demolish_refund(road_class: String) -> int:
 	return round_half_up(float(_road_build_cost.get(road_class, 0))
@@ -634,6 +742,7 @@ func _load(building_economy: Dictionary, economy: Dictionary) -> void:
 	_demolition_refund_fraction = float(upgrades.get("DEMOLITION_REFUND_FRACTION", 0.0))
 	_repair_cost_per_capital = float(expenses.get("REPAIR_COST_PER_CAPITAL", 0.0))
 	_restore_cost_fraction = float(expenses.get("RESTORE_COST_FRACTION", 0.0))
+	_salvage_fraction = float(expenses.get("SALVAGE_FRACTION", 0.0))
 	_pm_cost_fraction = float(expenses.get("PM_COST_FRACTION", 0.0))
 	_pm_min_condition = float(expenses.get("PM_MIN_CONDITION", 0.0))
 	_vehicle_resale_fraction = float(expenses.get("VEHICLE_RESALE_FRACTION", 0.0))

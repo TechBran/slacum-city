@@ -4806,3 +4806,222 @@ states the four price-free gates once, and `CitySim` walks the roster only when
 they already pass — which on any city that is not deep in the credit line is
 never. Both `profile_sim` cities are solvent throughout, which is why the walk
 does not appear in this wave's timing deltas.
+
+## AQ. Wave-19 rulings — what a collection is allowed to be worth, and what "something to DO" has to survive (2026-09-03)
+
+*The lane is Wave 19 Lane 3. Its whole brief is one overnight report and the
+report's last sentence is the hard part: "any other fun ideas to collect money in
+the game, something to actually DO to collect, other than tax revenue." Sections
+§AQ1 and §AQ2 rule on the money that already existed; §AQ3 is the argument for
+what was added and, more importantly, for what was refused.*
+
+### AQ1. The ratio ruling survives; its denominator does not
+
+**Q.** A tapped crook's mean bounty rises from $305 to $507.50. Doc 03's ruling
+is that "a tapped crook is petty, a dispatched crime is the real one, and the
+ratio has to read as about half at a glance", and the shipped bound is
+`street_mean / dispatch_reference ≤ 0.60`. At 507.50/595 = 0.853 the re-price
+fails it. Is the ruling wrong, or is the re-price wrong?
+
+**Neither. The DENOMINATOR is wrong, and RR-78 said so when it created the
+number that should have been there.**
+
+$595 is `dispatch_payout_base.crime × (1 + 0.35 × 2) × 1.00` — doc 06's reference
+case, **auto-dispatched**. But the ruling's own word is *dispatched*, and a
+dispatched crime is one a human dispatched. RR-78's `_manual_mult_note` is
+explicit about what that is worth: *"a human on the incident drawer is worth
+exactly [1.50×] … the drawer is where the raise is."* The reference case a player
+who works the drawer actually collects is $892.50, and against that the re-priced
+crook is **0.569**.
+
+**RULED.** The bound is stated against the MANUAL reference, and the ordering
+against the AUTO one, and they are two assertions because they are two claims:
+
+* a tapped crook must pay **less than an auto-answered crime** (507.50 < 595) —
+  this is what stops the street layer being priced past the incident it is a
+  lesser version of;
+* and **no more than 0.60 of a hand-dispatched one** — this is the "reads as about
+  half" claim, and it is the one the player's attention is being priced by.
+
+**And it is checked at every city level, which the old form never did.** Both
+sides carry a level curve now; the dispatch curve is steeper by construction
+(`MANUAL_DISPATCH_LEVEL_K` 0.90 against `STREET_REWARD_CITY_LEVEL_K` 0.25), so the
+ratio falls from 0.569 to 0.320 across the ladder. A base-table check would have
+passed a wave that inverted the two at level 6.
+
+**The corollary, and it is the uncomfortable half.** The player asked for
+$15,000 a collection. At the layer's delivered rate of 0.339 offers/gh that is
+$5,090/gh — **1.85× the entire net income of a level-6 city**. There is no value
+of any street constant that pays it and leaves a game underneath. The number is
+therefore ruled OUT of this layer and INTO one that fires about once a game-day.
+Saying so in the doc is the point: the next lane that reads "add a zero" must not
+try again here.
+
+### AQ2. A ruin is worth something, and the verb that pays is the one a broke player can press
+
+**Q.** Doc 02 §2.12 has always carried `destroyed → (removed)` with a `0.10` COST
+fraction — clearing rubble is something the city *pays* for. Wave 19 ships it as
+something the city is *paid* for. Which is right?
+
+**Both, and the fraction is the difference.** Clearing costs 0.10 of capital; the
+scrap off a building that was worth 0.25 of its capital intact is worth more than
+that. `SALVAGE_FRACTION = 0.25 − 0.10 = 0.15` is the NET, and it is a closed form
+off two numbers the project already published rather than a fourth magnitude
+invented for this wave. The wrecking company pays the city, and the amount is the
+scrap less the mess.
+
+**Q.** Doesn't a paying ruin-removal verb reward destruction?
+
+**No, and the three bounds are what prove it rather than assert it.** Salvage
+(0.15) is strictly worse than demolishing the same building while it still
+stands (0.25), so letting stock fall is never a way to make money. It is strictly
+less than restoring costs (0.20), so the pair is a decision and not a loop. And
+it is strictly more than the restore→demolish arbitrage nets (0.05), which is the
+bound nobody was looking for — see §AQ4.
+
+**Q.** Why is it hold-to-confirm when `RESTORE` is one tap?
+
+Because the deck's rule is not "expensive things get a confirm", it is
+**"irreversible things get a confirm"** — §2.9 item 6's own words for `DEMOLISH`,
+*"the one button in the deck that cannot be undone"*. `RESTORE` undoes something;
+this removes something. It is the second member of that set and it takes the same
+800 ms from the same authored key.
+
+**Q.** Why no `SALVAGE ALL`, when `RESTORE ALL` exists two lines above it?
+
+**RULED, and the asymmetry is the ruling.** A batch is safe when its worst case is
+spending money and unsafe when its worst case is a city that cannot be brought
+back. `RESTORE ALL` at its worst leaves the player poor, which earning fixes;
+`SALVAGE ALL` at its worst leaves them with an empty map, which nothing fixes. A
+player with a dozen ruins presses twelve buttons and each one is a decision they
+made. **Re-open on one condition and no other:** telemetry showing players
+abandoning cities *because* clearing them one at a time was too slow — which is
+a different complaint from the one this wave answers.
+
+**Q.** Why does the money go to `&"construction"` rather than to a
+`city_services.salvage` row beside `street`?
+
+Because `Treasury.lifetime` is inside `state_hash()`, so a new ledger key moves
+all four determinism baselines on every city (doc 91 `A91-D-100` already records
+this for `&"restore"`, and `A91-D-37` for `&"incident"`). Three arms belong in
+one edit and one re-record, in a lane that holds the matrix. The category is not
+a compromise on its own terms either: a demolition refund is credited to
+`&"construction"` today and this is a demolition refund at a different fraction.
+Filed as `A91-D-108` with the three-arm fix written out.
+
+### AQ3. What "something to DO" has to survive
+
+*The player's last sentence is the one this section rules on: "any other fun
+ideas to collect money in the game, something to actually DO to collect, other
+than tax revenue." Five candidates were weighed against the two tests this
+project applies — **does it give the player something to DO when they open the
+app**, and **does it survive doc 03's dollar monopoly** — and two shipped.*
+
+| candidate | something to DO? | survives C-07? | ruling |
+|---|---|---|---|
+| **contracts / commissions** | **yes, and it is the only one with a CLOCK** | yes — one payout table, `data/contracts.json` carries no dollar | **SHIPPED** (§2.5b) |
+| **salvage from ruins** | **yes, and it is the only one a broke player can press** | yes — a closed form off two published fractions | **SHIPPED** (§AQ2) |
+| inspections / permits | weakly — a repeatable tap with a per-building cooldown | yes | **REFUSED**, see below |
+| response-time bounties | no — it is a multiplier on a thing the player already does | yes | **FOLDED INTO RR-169(c)** as the manual premium's level curve |
+| tourism / landmark revenue | **no — it is a RATE**, and the ask was explicitly for something other than a rate | yes | **REFUSED** |
+| a mayor's daily objective | yes, but it is the contract board with one client and no choice | yes | **SUBSUMED** |
+
+**Why contracts and not the others, in one sentence each.**
+
+*Contracts win the first test outright because they are the only candidate with a
+DEADLINE.* Everything else in this game waits for the player: a tax rate settles
+on the hour, a block develops over game-days, a crook stands on a kerb for four
+minutes and then does not. A commission is the first thing in the project that
+gives a player a reason to open the app **at a particular time**, which is
+precisely what the 2026-09-03 report was missing — the player went to bed hoping
+to wake up to something and woke up to nothing.
+
+*They also fold the answer into work the player was doing anyway.* Two of the
+seven commissions pay for restoring destroyed buildings, which is the literal
+sentence the report contains: *"I've been trying to restore all the buildings so
+we can get revenue back up."* A reward layer that pays for the grind the player
+described is worth more than one that adds a new grind beside it.
+
+*Salvage wins the first test in a way nothing else can:* it is the only verb in
+the project a player with a negative balance can press. Every other candidate
+here, and every priced verb the game already had, asks that player for money.
+
+**INSPECTIONS: refused, and the reason is worth writing down because it will be
+proposed again.** *Tap a building, pay a fee, learn its condition* is a clean
+loop and it teaches the thing the same playtest complained about ("the buildings
+are still being destroyed super fast"). It is refused on the second test — not
+C-07, which it passes, but the test under it. **The condition it would reveal is
+already on the panel.** S5 draws a condition meter, four service tiles and a
+`Fix this →` on every blocked requirement; an inspection would charge a fee for
+re-showing information the game gives away, and would be a paid tooltip. A verb
+that pays the player for reading a number the panel already prints teaches them
+that the panel was hiding something. **Re-open only if** the panel stops
+publishing per-building condition, which nothing plans.
+
+**TOURISM: refused on the ask's own words.** *"Something to actually DO to
+collect, other than tax revenue"* — landmark revenue IS tax revenue with a
+different multiplier on it. It would be a good feature and it is not an answer to
+this sentence.
+
+**RESPONSE BOUNTIES: not refused, absorbed.** The dispatch layer already prices
+speed (`speed_bonus` on [0.60, 1.50]) and already pays a human premium; what was
+broken was that neither grew with the city (`A91-D-106`). RR-169(c) fixes the
+decay rather than adding a second reward on top of it, which is the cheaper and
+more honest half of the same idea.
+
+**The three properties every new money source in this project has to have**, and
+they are stated here because two candidates were shaped by them rather than
+merely checked against them:
+
+1. **A CLAIM, not an accrual.** Nothing on the board is money until it is tapped.
+   The street layer's rule ("nothing spawns VALUE; a TAP is money") is what makes
+   an attention reward an attention reward instead of a rate with extra steps.
+2. **A bound that is one authored number, in data, that a gate can read.** For
+   the street it is the offer interval; for commissions it is
+   `cooldown_h_after_claim`. A layer whose income bound is an emergent property
+   of five interacting knobs is a layer nobody can retune safely.
+3. **Nothing while the player is away.** Doc 08 §2.3 rule 9. Both new sources
+   return before their first statement on the coarse path, which also means the
+   balance matrix cannot see either of them — and that is what let this lane ship
+   two income systems without holding the matrix.
+
+**The one thing §AQ3 declines to rule on.** Whether the board should ever offer
+more than one commission at a time. One-at-a-time is what makes the cooldown a
+bound the gate can state in a sentence, and it is also what makes accepting a
+DECISION rather than a checklist. If a later wave wants two, the ceiling
+derivation has to be re-done against the pair and not against the tier, and this
+section is the record that it was a choice.
+
+### AQ4. The arbitrage nobody was looking for
+
+**Found while deriving `SALVAGE_FRACTION`'s floor, not while hunting for it.**
+
+`RESTORE_COST_FRACTION` is 0.20 and `DEMOLITION_REFUND_FRACTION` is 0.25, both
+read off the same `capital_value(level)`. So on any ruin, at any level, of any
+archetype:
+
+```
+restore  −0.20 × capital
+demolish +0.25 × capital
+net      +0.05 × capital   ← per ruin, repeatable
+```
+
+It is real, it is not new — it has been true since Wave 18 shipped the restore —
+and nothing bounds it but the construction time the rebuild spends and the crew
+it occupies. On the starter city's power plant (capital $60,000 at L1) it is **+$3,000 a cycle**.
+
+**It is recorded and NOT closed in this lane** (`A91-D-107`), for two reasons.
+First, closing it means moving one of two fractions that were each derived
+against something else — `RESTORE_COST_FRACTION` against the repair a maintaining
+player buys, `DEMOLITION_REFUND_FRACTION` against every other demolition in the
+project — and a fraction moved to fix a third thing is a fraction that no longer
+means what its note says. Second, the honest fix is probably neither: a rebuild
+that has just completed could carry a short window in which the demolition refund
+is the salvage fraction instead, which is one authored number and a state field,
+and belongs with whoever owns doc 02 §2.12's transition table.
+
+**What this wave does about it is make it pointless.** Salvage pays 0.15 of
+capital immediately, with no construction time and no crew, against the
+arbitrage's 0.05 after a full rebuild. The exploit is now strictly dominated by
+the button next to it, which is the cheapest possible mitigation and is not a
+fix.

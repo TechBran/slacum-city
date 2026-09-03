@@ -90,14 +90,22 @@ func test_no_street_price_survives_in_doc_06s_data() -> void:
 	live.bind_payouts(curves)
 	assert_true(live.errors.is_empty(),
 			"the shipped pair boots clean: %s" % str(live.errors))
-	for row: Array in [["petty_crime", 260.0, 90.0], ["loose_animal", 150.0, 60.0],
-			["lost_valuables", 420.0, 180.0]]:
+	# **RE-PRICED, WAVE 19** (doc 92 §57.1, report 98 RR-169): the bands are the
+	# migrated ones times 5/3 and `spawn.target_interval_h` is 1.50 -> 2.85 in the
+	# same commit, so a single collection is worth 1.70x and the LAYER's income
+	# per game-hour is unmoved ($181.65 -> $184.30, measured). These literals are
+	# the shipped table and they are here for the same reason they were here
+	# before: this file is the guard that doc 03 is the only place they live, and
+	# a guard that read the value out of the file it is guarding would guard
+	# nothing.
+	for row: Array in [["petty_crime", 430.0, 155.0], ["loose_animal", 250.0, 100.0],
+			["lost_valuables", 700.0, 300.0]]:
 		var kind := String(row[0])
 		assert_almost_eq(curves.street_payout_base(kind), float(row[1]), 1e-9,
 				"doc 03 prices %s's floor" % kind)
 		assert_almost_eq(curves.street_payout_spread(kind), float(row[2]), 1e-9,
 				"and %s's spread" % kind)
-	assert_almost_eq(curves.street_reward_city_level_k(), 0.20, 1e-9,
+	assert_almost_eq(curves.street_reward_city_level_k(), 0.25, 1e-9,
 			"and the level scalar that used to sit in the spawn block")
 
 	# A kind the price table does not know is refused rather than paid zero.
@@ -184,8 +192,19 @@ func test_the_receipt_book_survives_a_save() -> void:
 	old_save.erase("hour_city_services")
 	var legacy := Treasury.new(_curves().economy_data(), {}, 0)
 	legacy.deserialize(old_save)
-	assert_eq(legacy.hour_city_services, {"dispatch": 0, "street": 0},
+	# **The KEY SET is the assertion, not a literal pair.** `hour_city_services`
+	# grew a `contracts` source in Wave 19 (report 98 §60 RR-170) and this line
+	# read the pair as a constant, so the file that guards doc 03's ledger was
+	# the file a new ledger source broke. What must hold is the shape: every
+	# source the live book knows, present and zeroed — which is what "an empty
+	# book, not a missing one" always meant.
+	var empty_book: Dictionary = {}
+	for source: String in treasury.hour_city_services:
+		empty_book[source] = 0
+	assert_eq(legacy.hour_city_services, empty_book,
 			"a pre-RR-78 save restores an empty book, not a missing one")
+	assert_true(empty_book.has("dispatch") and empty_book.has("street"),
+			"and the two sources RR-78 created are still in it")
 
 	# An unknown source is tallied rather than dropped: losing the tally would
 	# make the printed line disagree with the balance, which is the one failure
@@ -248,6 +267,69 @@ func test_a_level_up_grant_is_paid_once_per_rung() -> void:
 	var after := sim.treasury.balance
 	sim.publish_progression([{"type": "city_level_changed", "from": 2, "to": 2}])
 	assert_eq(sim.treasury.balance, after, "a rung already crossed pays nothing")
+
+
+# ============== 50 the dispatcher's premium grows with the city (Wave 19)
+
+## **RR-169 — a flat reward is a shrinking reward.**
+##
+## `dispatch_payout_base` never moved with the city: a resolved crime paid $595
+## on game-day one and $595 on game-day three hundred, while the city's own net
+## per real-minute went 537.7 → 2,755.4 (`MODEL_NET_PER_HOUR_BY_CITY_LEVEL`).
+## The player found it from the outside: *"the crimes we stop are only a few
+## hundred dollars."*
+##
+## Four claims, and the last two are the ones that keep the change out of the
+## balance matrix and out of gate 31:
+##
+##   1. the curve is the authored one and it is exactly 1.50 at level 1, so a
+##      founding city pays the number every anchor was measured with;
+##   2. it is monotone and reaches 6.00× by the top of doc 09's ladder;
+##   3. **auto-dispatch does not move at any level** — the premium is the only
+##      thing that scales, so every control agent in the balance matrix earns
+##      what it earned before this wave;
+##   4. **an unpriced target does not move either** — `MORAL_HAZARD_UNPRICED_CEILING`
+##      is derived from an avenue rebuild and an avenue does not get dearer
+##      because the city levelled up, so the three types that ceiling holds keep
+##      the flat premium gate 31(c)'s published table was fitted against.
+func test_the_dispatchers_premium_grows_with_the_city_and_nothing_else_does() -> void:
+	var curves := _curves()
+	var services: Dictionary = curves.city_services()
+	var base := float(services["MANUAL_DISPATCH_MULT"])
+	var k := float(services["MANUAL_DISPATCH_LEVEL_K"])
+	assert_almost_eq(curves.manual_dispatch_mult_at_level(1), base, 1e-9,
+			"a founding city pays exactly the premium the anchors were measured with")
+	assert_almost_eq(curves.manual_dispatch_mult_at_level(0), base, 1e-9,
+			"and a level the ladder cannot reach is floored, never negative")
+	var previous := 0.0
+	for level in range(1, GoalSystem.top_level() + 1):
+		var mult := curves.manual_dispatch_mult_at_level(level)
+		assert_almost_eq(mult, base + k * float(level - 1), 1e-9,
+				"the curve at level %d is the authored one" % level)
+		assert_true(mult > previous, "and it is monotone at level %d" % level)
+		previous = mult
+	assert_almost_eq(curves.manual_dispatch_mult_at_level(GoalSystem.top_level()),
+			6.00, 1e-9, "and reaches 6.00x at the top of doc 09's ladder")
+
+	# (3) and (4): the runtime, not the table. A booted city, one incident type
+	# with a PRICED target and one with an unpriced one, at level 1 and at the top
+	# rung of the ladder.
+	var sim := CitySim.boot_from_files(SEED)
+	var target := {"kind": "building", "id": String(sim.roster_ids()[0])}
+	var road := {"kind": "road_edge", "id": "R-1"}
+	var auto_low := sim.incident_world.dispatch_payout("crime", 1.0, false, target, 0.0)
+	var road_low := sim.incident_world.dispatch_payout(
+			"traffic_accident", 1.0, true, road, 0.0)
+	sim.progression.city_level = GoalSystem.top_level()
+	var auto_high := sim.incident_world.dispatch_payout("crime", 1.0, false, target, 0.0)
+	var road_high := sim.incident_world.dispatch_payout(
+			"traffic_accident", 1.0, true, road, 0.0)
+	assert_eq(auto_high, auto_low,
+			"auto-dispatch pays the same at level 1 and at the top of the ladder: the "
+					+ "matrix's control agents never earn a premium and so never move")
+	assert_eq(road_high, road_low,
+			"and an unpriced target keeps the flat premium gate 31(c) is fitted to")
+	sim.dispose()
 
 
 # ------------------------------------------------------------------ helpers

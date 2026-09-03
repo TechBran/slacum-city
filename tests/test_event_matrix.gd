@@ -86,6 +86,25 @@ const CLASSIFICATIONS: Array[String] = [
 ## reason it is allowed to stay that way. Adding an emit without adding a
 ## consumer or a row here fails this suite, which is the whole mechanism.
 const REGISTER := {
+	# ── doc 03 §2.5b, the commissions board (Wave 19) ───────────────────────
+	# Four of the board's seven events ARE wired, in `data/ui.json.event_log`:
+	# `contract_offered`, `contract_ready`, `contract_claimed` and
+	# `contract_expired` all happen while the player is looking somewhere else.
+	# These three do not.
+	"contract_accepted":
+		"player_initiated: the player just pressed ACCEPT on the commissions"
+		+ " band, and the band re-reads the board in the same frame. Telling"
+		+ " them what they did is the game repeating the player.",
+	"contract_progress":
+		"covered: the band's own bar and `2 / 3` counter are read off"
+		+ " `ContractBoard.active()` on every refresh, so the progress a player"
+		+ " can see is already on the one screen the commission lives on. A log"
+		+ " line per step would be four lines for one job.",
+	"contract_withdrawn":
+		"bookkeeping: an OFFER nobody took ran out of hours. Nothing the city"
+		+ " agreed to has been lost, no money moved, and `contract_expired` —"
+		+ " which IS wired — is the one that fires when a commission the player"
+		+ " actually accepted lapses.",
 	# ── doc 04, the grid ────────────────────────────────────────────────────
 	"CascadeStep":
 		"covered: doc 04's cascade trace. Every step of a cascade the player can"

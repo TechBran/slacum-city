@@ -1398,6 +1398,22 @@ Measured on the settled starter city across seeds 1337 / 4242 / 9001, 120
 game-hours each: **one offer per 1.85 game-hours**. One game-hour is one real
 minute at 1x, so that is the 1–3 real-minute beat the design asked for.
 
+**RE-MEASURED AND MOVED, WAVE 19 (report 98 §60 RR-169, doc 92 §57.1).**
+`target_interval_h` is 1.50 → **2.85** and doc 03's bounty bands are ×5/3 in the
+same commit: the layer pays the same dollars per game-hour and **1.70× per
+collection**, because doc 03's ceiling on this layer is a share of the city's
+income and it was already at 35.9 % of a 40 % bound. There was no way to make one
+pickup bigger except by making pickups rarer. Measured over 720 game-hours × 3
+seeds: mean bounty $320.29 → **$543.11**, mean interval 1.763 → **2.947
+game-hours**, ceiling $181.65 → **$184.30/gh**. The beat is now **2.95 real
+minutes** — still inside the band above and now at its SLOW edge, which is where
+a $500 pickup belongs and where a $305 one did not. **Delivery is not the table
+rate and the difference matters here**: `max_live`, `min_separation_tiles` and an
+empty kerb pool reject a fraction of the draws, and that fraction FALLS as the
+table slows, so an interval multiplied by exactly 5/3 delivered only 1.50× fewer
+offers and the ceiling went UP 12 %. 2.85 is the value at which the trade
+measures neutral.
+
 **It is a FINE-PATH system, and that is the offline rule made structural.**
 `advance_coarse` expires and returns, drawing nothing. Doc 08 §2.3 rule 9:
 opportunities do not accrue while the player is away, because they are the

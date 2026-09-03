@@ -411,7 +411,7 @@ city_services = Σ dispatch payouts this game-hour + Σ street collections this 
 
 dispatch payout = dispatch_payout_base[type]              # this doc, §2.13(e)
                 × (1 + tier_k·(tier_peak − 1)) × speed_bonus   # doc 06 §2.7's SHAPE
-                × (manual ? MANUAL_DISPATCH_MULT (1.50) : 1.00)
+                × (manual ? manual_dispatch_mult(city_level) : 1.00)   # Wave 19
                 capped at MORAL_HAZARD_CAP_FRACTION (0.75) × prevented_loss
 
 prevented_loss  = capital_value(target) − repair_cost(target, residual_damage_fraction)
@@ -422,27 +422,53 @@ prevented_loss  = capital_value(target) − repair_cost(target, residual_damage_
 
 **`MANUAL_DISPATCH_MULT = 1.50` is doc 06's own `speed_bonus_max`, adopted rather than invented.** The game already prices a perfect response at 1.50×; a human working the incident drawer is worth the same. It applies only when `Incident.manual_requested` is true — only through `cmd_dispatch_unit` — so auto-dispatch pays exactly the dollars it has quietly earned since Wave 1 and the premium is the part a player has to turn up for.
 
+**AND SINCE WAVE 19 THE PREMIUM GROWS WITH THE CITY** *(report 98 §60 RR-169, doc 92 §57.2.1, doc 91 A91-D-106)*:
+
+```
+manual_dispatch_mult(city_level) = MANUAL_DISPATCH_MULT (1.50)
+                                 + MANUAL_DISPATCH_LEVEL_K (0.90) × (city_level − 1)
+```
+
+| city level | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| premium | 1.50× | 2.40× | 3.30× | 4.20× | 5.10× | **6.00×** |
+| reference crime, dispatched by hand | $892.50 | $1,428 | $1,964 | $2,499 | $3,035 | **$3,570** |
+
+**The defect it closes is that every factor in the payout above is a property of the INCIDENT and none of the PAYER.** The reference crime paid $595 on game-day one and $595 on game-day three hundred, while the city's own net per real-minute went **537.7 → 2,755.4** (`pacing_guardrails.MODEL_NET_PER_HOUR_BY_CITY_LEVEL`). The reward for answering an incident therefore lost **80.5 %** of its real value across doc 09's ladder — a decay, not a level, and the player reported it from outside the project: *"the crimes we stop are only a few hundred dollars."*
+
+**0.90 is fitted under that series and deliberately not to it**: 6.00/1.50 = 4.00× against a city that got 5.12× richer, so the premium closes most of the decay and never outruns the city that pays it. **Two bounds keep it out of the balance matrix and out of gate 31, and both were already here.** (1) Only the MANUAL half scales, so auto-dispatch is untouched at every level and every control agent earns what it earned before — RR-78's own argument, used a second time. (2) It is asked for only where this doc can PRICE the target, i.e. where `prevented_loss ≥ 0`; there the moral-hazard clamp is a fraction of the loss prevented and therefore already grows with the asset. Where the target is unpriced, the premium stays flat at 1.50, because `MORAL_HAZARD_UNPRICED_CEILING` is derived from an avenue rebuild and an avenue does not get dearer because the city levelled up.
+
 **The moral-hazard ceiling, and why it BINDS on shipped numbers.** The hazard is not arson (there is no arson verb); it is *waiting*. Doc 06 grows the payout at `tier_k = 0.35` per tier while doc 02 grows the residual damage at `0.10` per tier, so on a cheap building the reward outruns the value at risk from about tier 4 up. House L1, capital $1,200, tier-5 fire answered at the target response: the payout is `900 × 2.40 = $2,160`, the residual damage is 0.40 so the repair costs `1,200 × 0.40 × 0.85 = $408`, and the loss prevented is **$792** — an unclamped ratio of **2.73**. At 0.75 the city pays $594. The fraction is placed between doc 06 §2.7's own ruled worked example (0.679 of prevented loss, so a lower cap would retune a ruled payout at its reference point) and 1.00 (indifference between a fire and no fire, which plus variance is a strategy): the midpoint to the nearest 0.05. Balance gate 31 holds all three surfaces of it.
 
 **Where the clamp cannot reach**, `prevented_loss` answers −1 rather than 0 — a road edge and a water segment have no `capital_value` in this doc, and a clamp that read a zero there would silently delete a payout the design intends to pay. Those three types are held instead by `MORAL_HAZARD_UNPRICED_CEILING = $3,900`, derived from the most expensive single asset a road-class response protects (a `COLLAPSED` AVENUE rebuilt at the full §2.13(d) build price, $5,200, × 0.75). The worst case any of them can pay today is `base × 5.40` — tier 5, best speed, manually dispatched — i.e. $1,620 / $2,160 / $2,700.
 
 **Street opportunities** (doc 06 §2.16's tappable street life) are priced here too, for the same C-07 reason — **and since Wave 15 they are priced here ONLY** *(report 98 RR-81, doc 92 §39.1)*. Each kind is a BAND, `{base, spread}`, drawn once at spawn and frozen onto the offer:
 
-| kind | base | spread | mean | top |
-|---|---:|---:|---:|---:|
-| `petty_crime` | 260 | 90 | **305** | 350 |
-| `loose_animal` | 150 | 60 | **180** | 210 |
-| `lost_valuables` | 420 | 180 | **510** | 600 |
+| kind | base | spread | mean | top | *(Wave-18 band, for reference)* |
+|---|---:|---:|---:|---:|---|
+| `petty_crime` | 430 | 155 | **507.50** | 585 | *260 + 90* |
+| `loose_animal` | 250 | 100 | **300** | 350 | *150 + 60* |
+| `lost_valuables` | 700 | 300 | **850** | 1,000 | *420 + 180* |
 
-`reward = round((base + spread·u) × (1 + STREET_REWARD_CITY_LEVEL_K·(city_level − 1)))`, `k = 0.20`. `data/street.json` owns when an opportunity appears, where it stands and how long it lives; it owns no dollar, and `OpportunitySystem.FORBIDDEN_KEYS` refuses one that comes back — the same guard `IncidentCatalog` puts on `reward_base`.
+`reward = round((base + spread·u) × (1 + STREET_REWARD_CITY_LEVEL_K·(city_level − 1)))`, `k = 0.25` *(Wave 19; it was 0.20)*.
+
+**RE-PRICED WAVE 19, AND IT IS A TRADE RATHER THAN A RAISE** *(report 98 §60 RR-169, doc 92 §57.1)*. The bands above are ×5/3 and `data/street.json`'s `spawn.target_interval_h` is 1.50 → 2.85 **in the same commit**, so a single collection is worth 1.70× and the LAYER's income per game-hour is unmoved: measured mean bounty $320.29 → $543.11, measured mean interval 1.763 → 2.947 game-hours, measured ceiling $181.65 → $184.30/gh, founding ceiling share 35.90 % → 36.42 % against a 40 % bound.
+
+**There was no other move available, and the arithmetic is the reason.** The ceiling on this layer is a SHARE of the city's net and it was already at 35.9 % of 40 %, i.e. 1.114× of headroom. A bigger pickup could only be bought with a rarer one. The beat moves 1.76 → 2.95 real minutes, still inside doc 06 §2.16's authored 1–3 minute band and now at its slow edge, which is where a $500 pickup belongs and where a $305 one did not.
+
+**And `k` is fitted against a per-LEVEL series rather than a run average.** `pacing_guardrails.MODEL_NET_PER_HOUR_BY_CITY_LEVEL` is `[537.7, 658.8, 851.0, 956.4, 1017.2, 2755.4]` — flat from level 2 to 5 and then tripling — so the binding rung for the share ceiling is **level 5**, not the founding city and not the top. `184.30 × (1 + k·4) ≤ 0.40 × 1017.2` gives `k ≤ 0.302`; 0.25 leaves a seed's worth of margin and the ceiling shares by level are **34.3 / 35.0 / 32.5 / 33.7 / 36.2 / 15.0 %**. Balance gate 32 gains arm (d2) to hold exactly that.
+
+**What this layer CANNOT be asked for.** The 2026-09-03 report asks for $15,000 a collection. At the measured delivered rate of 0.339 offers/gh that is **$5,090/gh = 1.85× the entire net income of a level-6 city**. No value of any constant in this table pays it and leaves a game underneath, so the number is ruled out of this layer and into one that fires about once a game-day (doc 93 §AQ1). `data/street.json` owns when an opportunity appears, where it stands and how long it lives; it owns no dollar, and `OpportunitySystem.FORBIDDEN_KEYS` refuses one that comes back — the same guard `IncidentCatalog` puts on `reward_base`.
 
 **What this migration corrected, because it is the reason the migration was ranked.** Until Wave 15 this table read `petty_crime 180 / stray_animal 120 / abandoned_haul 150` and **nothing read it**: the live columns were in `data/street.json`, at the bands above, under kind names this table did not even use (`stray_animal` and `abandoned_haul` were never live kind ids). One feature, two price tables, and the balance gate was holding the dead one. The bands are MOVED, not retuned — every determinism baseline is bit-identical across the change, which is the check that says so.
 
-**The ruled ratio holds, and its DENOMINATOR was what was wrong.** *A tapped crook is petty; a dispatched crime is the real one, and the ratio has to read as about half at a glance.* The placeholder stated that as `180 / 350 = 0.514` against `dispatch_payout_base[crime]` — but nobody is ever paid 350: doc 06 multiplies it by tier and by a speed bonus first, and the crime a player watches resolve is doc 06's own reference case, tier 3 answered on target, which pays `350 × 1.70 × 1.00 = $595`. Against that, the live mean bounty of **$305 is 0.513** — the ruled "about half" to three decimals, within 0.002 of the ratio the placeholder claimed. So nothing retunes; gate 32(b) now compares a payout to a payout.
+**The ruled ratio holds, and its DENOMINATOR was what was wrong.** *A tapped crook is petty; a dispatched crime is the real one, and the ratio has to read as about half at a glance.* The placeholder stated that as `180 / 350 = 0.514` against `dispatch_payout_base[crime]` — but nobody is ever paid 350: doc 06 multiplies it by tier and by a speed bonus first, and the crime a player watches resolve is doc 06's own reference case, tier 3 answered on target, which pays `350 × 1.70 × 1.00 = $595`. Against that, the live mean bounty of **$305 is 0.513** — the ruled "about half" to three decimals, within 0.002 of the ratio the placeholder claimed. So nothing retuned in Wave 15; gate 32(b) compared a payout to a payout.
+
+**RE-DERIVED AGAIN IN WAVE 19, and the denominator moved a second time** *(doc 93 §AQ1)*. Against the auto reference the re-priced crook is 507.50/595 = 0.853, which reads as "nearly the same" and would fail the bound. But the ruling's own word is *dispatched*, and a dispatched crime is one a **human** dispatched — RR-78 said as much when it invented the premium (*"the drawer is where the raise is"*). That reference pays `350 × 1.70 × 1.50 = $892.50`, and against it the crook is **0.569**. Gate 32(b) now holds two assertions because they are two claims: **(b1)** the street mean is under the AUTO reference (507.50 < 595, 15 % of margin), which is what stops the street layer being priced past the incident it is a lesser version of; and **(b2)** it is ≤ 0.60 of the MANUAL one, **at every city level**. Both sides carry a level curve now and the dispatch curve is the steeper by construction, so the ratio FALLS from 0.569 at level 1 to 0.320 at level 6 — the dispatched crime becomes more the real one as the city grows, not less.
 
 **The income bounds, both re-derived** *(doc 92 §39.2 / §39.4)*:
 
-- `STREET_MAX_RATE_PER_GAME_HOUR = 0.70` is the ruled ceiling on the spawn table's un-rejected offer rate, `1 / target_interval_h`. It was **0.45 against a table running at 0.667** — a contract violated by 48 % since the day it was written, because the table it constrained lived in a file no test could open. Gate 32(c) now reads both files and holds one against the other.
+- `STREET_MAX_RATE_PER_GAME_HOUR = 0.37` *(Wave 19; it was 0.70, and 0.45 before that)* is the ruled ceiling on the spawn table's un-rejected offer rate, `1 / target_interval_h`. It was once **0.45 against a table running at 0.667** — a contract violated by 48 % since the day it was written, because the table it constrained lived in a file no test could open. Gate 32(c) reads both files and holds one against the other. It is re-fitted with the rate trade above and at the same tightness the 0.70 had: 5.4 % above the shipped `1/2.85 = 0.3509`, refusing any `target_interval_h` under 2.703. **It is a tripwire, not a fit** — a wave that wants the offers back has to say out loud that it is re-pricing the bounty down as well, because the bands and the rate are one number seen twice.
 - `STREET_CEILING_SHARE_MAX = 0.40` is the ruled ceiling on what the layer pays a player who collects **every** offer, as a share of the opening's own net. Measured: **$181.65/gh = 35.90 %** of $506.05/gh. Doc 92 §35.3 measured the same $181.65 at **57 %** and asked for a retune to 35–40 %; the money pass (RR-78/RR-79) delivered it from the other side by raising the founding net 337.05 → 506.05, so the share is inside the ruled band with no street dollar moving.
 - `STREET_PLAYED_SHARE_BAND = [0.05, 0.20]` is the same question on a played 21-game-day arc, measured for the first time in Wave 15 by the `collector` agent (RR-82). The old band claimed 10–20 % "when played" and was never measured; the floor is loosened to 5 % because the share DECAYS across an arc by construction — street income grows 1.8× with city level while a curriculum city's net grows about three-fold.
 
@@ -569,6 +595,105 @@ restore_cost = round( capital_value(type, level_at_destruction) × RESTORE_COST_
 Measured consequence: the three ruins a neglected 45-day arc actually leaves standing — the starter city's power plant, substation and water plant — come back for **$24,000 against a $17,058 day's net (1.41×)**, where the authored 0.60 charged **$72,000 (4.22×)**.
 
 **`M_repair`, not `M_build`**, because the price is read off `capital_value` like every other line of the repair family. **Not `&"construction"`**, because §2.10 layer 2's austerity blocks that category and a city that cannot restore its own power plant during an austerity cannot recover from one; **not `&"repair"`**, because folding a capital event into the routine line would make doc 92's repair burden appear to move when the player simply rebuilt. No `lifetime_restores` row ships — `Treasury.lifetime` is inside `state_hash()` and Wave 18 is a player-verb lane that moves no baseline (doc 91 A91-D-100).
+
+**THE SALVAGE — the same family, running the other way (new Wave 19; doc 02 §2.12, doc 92 §57.2.2, doc 93 §AQ2, report 98 §60 RR-171).** The row under the restore in doc 02 §2.12's transition table, `destroyed → (removed)`, had a cost fraction and a crew-hours factor and no caller for seventeen waves. It ships as a CREDIT:
+
+```
+salvage_value = round( capital_value(type, level_at_destruction) × SALVAGE_FRACTION (0.15) )
+```
+
+| | |
+|---|---|
+| **key** | `data/economy.json.expenses.SALVAGE_FRACTION` |
+| **accessor** | `CostCurves.salvage_value_building(type, level)` — the only place a ruin is valued (C-07) |
+| **credited by** | `CitySim.cmd_salvage_building`, to `&"construction"` (doc 91 A91-D-108) |
+| **level** | `level_at_destruction`, the same level the restore is priced at, so the panel's two numbers are about the same building |
+| **no `M_repair`** | the difficulty presets scale what the city BUYS, never what it is paid |
+
+**0.15 is a closed form, not a fit:** `DEMOLITION_REFUND_FRACTION (0.25) − doc 02 §2.12's own authored rubble-clearance fraction (0.10)`. A ruin is worth its scrap less the mess, and both halves of that sentence are numbers this project already published. Three bounds, all held as inequalities in `tests/test_salvage_building.gd` rather than as literals:
+
+- **< 0.25**, or a wreck beats an intact demolition and letting stock fall is a strategy;
+- **< `RESTORE_COST_FRACTION` 0.20**, or salvaging a ruin pays for restoring it and the two verbs are a loop instead of a decision — and the ratio `0.15/0.20 = 0.75` means **four ruins salvaged pay for three restored**, at every level and every archetype, because both fractions read the same `capital_value`;
+- **> 0.05**, the net of the restore-then-demolish arbitrage that has existed since Wave 18 and that nobody had looked for (doc 91 A91-D-107). Salvage pays it immediately with no crew and no construction time, so the exploit is strictly dominated by the honest button beside it.
+
+Worth, on shipped stock: house L1 **$180**, L3 **$915**, L5 **$5,693**; the starter city's power plant (capital $60,000 at L1) **$9,000**.
+
+**Why the game pays for this at all.** The 2026-09-03 report is a city with every building destroyed and a negative balance, and every priced verb in the project asks that player for money they do not have. This is the one verb that runs the other way, and it is the only reason there is a pressable button on that panel.
+
+### 2.5b Commissions — the third way the city gets paid (new Wave 19)
+
+*(Doc 92 §57.3, doc 93 §AQ3, report 98 §60 RR-170. Data:
+`data/contracts.json` for the work, `city_services.contract_payout` for the
+money, `sim/economy/contract_board.gd` for the loop.)*
+
+**The ask this section exists for**, 2026-09-03: *"any other fun ideas to collect
+money in the game, something to actually DO to collect, other than tax
+revenue"* — and, in the same breath, *"add a zero to that. 15,000 for one."*
+
+**Why the $15,000 is here and not on the street layer.** §2.5's opportunity layer
+delivers **0.339 offers per game-hour** (measured). A $15,000 pickup at that rate
+is **$5,090/gh**, which is **1.85× the entire net income of a level-6 city**. No
+value of any street constant pays the player's number and leaves a game
+underneath it; a figure that size has to belong to something that fires about
+once a game-day. This is that something.
+
+**The loop, and where the money is in it.** A client posts a commission. The
+player ACCEPTS one — the city holds exactly one at a time — which starts a
+deadline in game-hours. They do the work with verbs the game already has. When
+the target is met the commission goes `ready`, and the player CLAIMS it, **which
+is the only step that moves a dollar**. Nothing on the board is money until it is
+tapped, which is §2.5's own rule for a street bounty applied to a bigger one.
+
+```
+reward = round( (base + spread·u) × (1 + CONTRACT_REWARD_CITY_LEVEL_K·(city_level − 1)) )
+```
+
+`u ~ U[0,1)` is drawn once on the `contracts` stream at OFFER time and frozen
+onto the row **with the city level**, so the card, the accept, the claim and a
+save → load all quote the same dollars.
+
+| tier | base | spread | mean | at level 6 (×3.00) |
+|---|---:|---:|---:|---|
+| `minor` | 900 | 300 | 1,050 | 2,700 – 3,600 |
+| `standard` | 2,200 | 700 | 2,550 | 6,600 – 8,700 |
+| `major` | 5,000 | 1,600 | 5,800 | **15,000 – 19,800** |
+
+`CONTRACT_REWARD_CITY_LEVEL_K = 0.40` — the same shape §2.5 gives a street
+bounty and a steeper slope, because a commission is gated by city level in a way
+a kerb pickup is not. It is fitted to land the `major` band's **floor** exactly
+on the player's own $15,000 at the top rung.
+
+**The income bound, and it is ONE authored number in another file.**
+`CONTRACT_CEILING_SHARE_MAX = 0.25` is the ruled share of the city's net this
+layer may pay somebody who completes every commission offered. What ENFORCES it
+is `data/contracts.json board.cooldown_h_after_claim = 30.0`: the city holds one
+commission at a time, so income cannot exceed one payout per cooldown whatever
+the player does. Measured against `MODEL_NET_PER_HOUR_BY_CITY_LEVEL`, the best
+tier available at each rung lands at **6.5 / 18.1 / 18.0 / 19.6 / 21.7 / 21.0 %**
+of net. Balance gate 32 arm (h) reads both files and holds one against the other,
+exactly as arm (c) does for the street rate.
+
+**Why 0.25 and not 0.40 like the street's.** *The two are added.* A player who
+takes every street offer AND completes every commission is at `0.40 + 0.25 =
+0.65` of net from active play, which leaves the passive city 61 % of the total.
+That is the line: **above one half from any single active layer, or above two
+thirds from all of them together, and the city stops being the thing being
+played.**
+
+**The ledger.** Credited through §2.5's settled `city_services` channel with
+SOURCE `contracts`, beside `dispatch` and `street` — its own sub-row, because the
+budget panel has to be able to say which of the three a player's money came from.
+Deliberately NOT tax: tax is a rate on the city's value and this is a fee for a
+job delivered, and a ledger that mixed them would make the tax slider look like
+it moved when the player simply worked.
+
+**What it does not do.** It does not run while the player is away (doc 08 §2.3
+rule 9 — no offer appears, no deadline runs, no draw is taken), it charges
+nothing to accept, and **a lapsed commission costs nothing**: no fee, no
+stability, no reputation. A penalty for not finishing converts an opportunity
+into a chore and taxes precisely the player who put the phone down. Ruled in
+`data/contracts.json._no_penalty`, on the same terms as the street layer's
+`expire_stability_delta: 0.0`, and re-opens on the same one condition.
 
 **Emergency contractor.** Paying to bypass the construction/crew queue costs `CONTRACTOR_SURCHARGE = 1.80 ×` the job cost and completes in `CONTRACTOR_TIME_FRACTION = 0.35` of the normal duration. Available at any treasury ≥ 0. This is the *money-for-time* valve and it is deliberately bad value.
 
@@ -1686,6 +1811,8 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
     "REPAIR_COST_PER_CAPITAL": 0.85, "PM_COST_FRACTION": 0.06, "PM_MIN_CONDITION": 0.50, "PM_CREW_HOURS": 2,
     "_repair_note": "repair_cost = capital_value * damage_fraction * REPAIR_COST_PER_CAPITAL * M_repair (C-16). Docs 02/04/05/06/07 supply damage_fraction only and hold no price table.",
     "RESTORE_COST_FRACTION": 0.20,
+    "SALVAGE_FRACTION": 0.15,                          // Wave 19 - what a RUIN is worth
+    "_salvage_note": "salvage_value = capital_value(level_at_destruction) * SALVAGE_FRACTION (Wave 19, doc 92 sec 57.2.2, doc 93 sec AQ2). Closed form: DEMOLITION_REFUND_FRACTION 0.25 - doc 02 sec 2.12's authored 0.10 clearance. Credited, not charged.",
     "_restore_note": "restore_cost = capital_value(level_at_destruction) * RESTORE_COST_FRACTION * M_repair (Wave 18, doc 92 sec 54, doc 93 sec AN). Replaces doc 02's authored 0.60/72h pair, which no caller ever read. Floor: 0.17 = the repair a maintaining player buys.",
     "CONTRACTOR_SURCHARGE": 1.80, "CONTRACTOR_TIME_FRACTION": 0.35,
     "RUSH_SURCHARGE_PER_DURATION": 1.23077,
@@ -1746,13 +1873,16 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
       "transformer_failure": 600, "water_main_break": 500,
       "traffic_accident": 300, "storm_damage": 400 },  // doc 06 §2.7's column, MOVED not retuned
     "MANUAL_DISPATCH_MULT": 1.50,                      // = doc 06's own speed_bonus_max
+    "MANUAL_DISPATCH_LEVEL_K": 0.90,                   // Wave 19 - the premium stops shrinking
     "MORAL_HAZARD_CAP_FRACTION": 0.75,
     "MORAL_HAZARD_UNPRICED_CEILING": 3900,             // 0.75 × a COLLAPSED AVENUE rebuild
     "street_payout": {                                 // §2.5, report 98 RR-81 — MOVED from
       "petty_crime":    { "base": 260, "spread":  90 },//   data/street.json at the same values
       "loose_animal":   { "base": 150, "spread":  60 },
       "lost_valuables": { "base": 420, "spread": 180 } },
-    "STREET_REWARD_CITY_LEVEL_K": 0.20,                // MOVED with them (a term in a $ formula)
+    "STREET_REWARD_CITY_LEVEL_K": 0.25,                // MOVED with them (a term in a $ formula);
+                                                       // 0.20 -> 0.25 in Wave 19, fitted against
+                                                       // MODEL_NET_PER_HOUR_BY_CITY_LEVEL
     "STREET_MAX_RATE_PER_GAME_HOUR": 0.70,             // ceiling on 1/target_interval_h
     "STREET_CEILING_SHARE_MAX": 0.40,                  // every offer taken, vs the opening's net
     "STREET_PLAYED_SHARE_BAND": [0.05, 0.20],          // measured on a 21-day arc (RR-82)

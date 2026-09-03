@@ -2491,3 +2491,56 @@ already published, so neither needs a sim change:
 3. **The relief notification's copy.** The payload carries the three terms as of
    this wave; the line they are for is
    `State assistance: $83,398 — toward $238,280 of rebuilding.`
+
+### Wave 19 delta — the ruin gets a decision (2026-09-03)
+
+*The ruin's row got a second button, and the panel it is on got its first
+irreversible verb since `DEMOLISH`. Ruling: doc 93 §AQ2. Verb: report 98 §60
+RR-171/RR-172. Price: doc 92 §57.2.2.*
+
+| id | change | doc ref | why |
+|---|---|---|---|
+| D-89 | **S5's ruin block gets its second button, and the block becomes a decision instead of a bill.** `BuildController.salvage_view()` (asking `CitySim.cmd_salvage_building(…, true)`, so this file authors no gate) → `BuildingPanel._render_salvage`: a **48 dp ghost `SALVAGE · +$915`** under D-86's primary, with a note that states the consequence *before* the hold and states it against the other button's number — *"Strip the lot for scrap. This building does not come back; rebuilding it later costs $1,220."* **Three deliberate differences from the primary above it.** (a) A GHOST, not a FAB: keeping the city is the offer the game leads with, and this one is still there tomorrow. (b) **HOLD-TO-CONFIRM**, sharing `DEMOLISH`'s window from `data/ui.json.layout.hold_to_confirm_ms` — the deck's rule is not "expensive things get a confirm" but *"irreversible things get a confirm"* (§2.9 item 6's own words), `RESTORE` undoes something and this removes something, so it is the second member of that set. `BuildingPanel`'s hold machinery was single-target and is now `_begin_hold(button, action)` / `_end_hold()`; two buttons each counting their own milliseconds would be two places for the authored window to drift. (c) **Never disabled for money** — `salvage_view` has no affordability arm at all, because the verb spends nothing. Four `ui_building_salvage_*` strings; `restore_cost` comes off the SAME `preview = true` call as the value, so the two figures on the panel can never come from two reads. Preview state **`building_salvage`, same commit** — a ruin on a NEGATIVE balance, both buttons on screen and only one pressable. | §2.9 item 6, doc 02 §2.12, doc 03 §2.5, doc 93 §AQ2 | The player, on their own city, 2026-09-03: *"There was a natural disaster, a water flooding, I woke up to — and there's negative money. … ALL of my buildings are destroyed right now."* **D-86 shipped a panel with one button on it, and at a negative balance that is a panel with none.** Every priced verb in the game asks a player in that state for money they do not have; the build-card pattern correctly draws `RESTORE` dead with its price on its face, and correctly drawing a dead button is still a dead screen. The verb behind this row is also the half of doc 02 §2.12 D-86 itself named as missing — *"§2.12 routes a ruin to `cmd_clear_rubble`, **which has no door either** and is A91-D-99's remaining half"* — so the row closes a deferral this table wrote down a wave earlier rather than inventing a surface. **`SALVAGE ALL` is deliberately not shipped** beside `RESTORE ALL`, and the asymmetry is the ruling (doc 93 §AQ2): a batch is safe when its worst case is spending money and unsafe when its worst case is a city that cannot be brought back. |
+
+**What the row deliberately does NOT do.** It does not replace `RESTORE` when
+the city cannot afford it, and it does not reorder itself to put the affordable
+button first. The panel's job is to say what the two choices are, in the order
+the game recommends them, and let the player read which one is live — a deck that
+promoted whichever button happened to be pressable would teach that the ordering
+means something it does not.
+
+**The deck is 70 states**, the new one included; `--screen=all --audit --strict`
+exits 0 at 412×915, 360×800, 880×400 and at 360×800 with `--text-scale=1.3
+--large-targets`.
+
+### Wave 19 delta — the commissions band on S14 (2026-09-03)
+
+*One band, on the screen a player already opens to ask "what should I be doing?".
+Ruling: doc 93 §AQ3. Verb: report 98 §60 RR-170. Price: doc 03 §2.5b, doc 92 §57.3.*
+
+| id | change | doc ref | why |
+|---|---|---|---|
+| D-90 | **S14 gains a COMMISSIONS band above the level card, and it is the first thing on the sheet with a clock.** `GoalsModel.contracts_view()` (asking `CitySim.cmd_accept_contract(…, true)` and `cmd_claim_contract(true)`, so this file authors no gate) → `GoalsSheet._apply_contracts`. Three faces. **(a) The commission in hand**: a `DrawerRow` card with the client, what it asks for, a `MeterBar` and a `2 / 3` counter, `21h 30m left` in `UIWidgets.duration_text`'s words, and one **primary 48 dp `CLAIM · $15,600`** — drawn from the moment work starts and DISABLED until the target is met, with the money still on its face (§2.7's build-card pattern: the number a player is working toward belongs on the control they are working toward). **(b) The offers**, one `HFlowContainer` row each — `HFlow` and not `HBox` because at 130 % text with larger targets a sentence and a 48 dp button do not fit on one 360 dp line (D-80's rule) — with a ghost `ACCEPT · $1,120` carrying its own price, disabled with the sim's own refusal sentence beside it when one is already in hand. **(c) The note**, one line, which is the band's whole state machine when there is nothing to show: *"No commissions on the board right now"* or *"The board is quiet — the next commission is posted in 12h."* 22 `ui_contract_*` strings plus 15 requirement lines (five codes × title/body/remedy); four `data/ui.json.event_log` rows (`contract_offered`, `contract_ready`, `contract_claimed`, `contract_expired`); two preview states, **`goals_contract` and `goals_contract_ready`, same commit**, both driving the REAL board rather than a fabricated row. | §2.19, §2.7, doc 03 §2.5b, doc 93 §AQ3 | The player, 2026-09-03: *"any other fun ideas to collect money in the game, something to actually DO to collect, other than tax revenue."* **It lives on S14 and not on a sheet of its own**, and that is the ruling rather than a convenience: a commission is an objective that pays — it asks for a target, counts progress toward it and hands something over when it is met, which is the sentence S14 already exists to say. A second screen answering *"what should I be doing?"* is the opposite of the fix for a player who could not find a reason to open the app. **It sits ABOVE the level card** because everything else on this sheet waits for the player and a commission is the only thing in the game with a deadline they can lose. |
+
+**What the first draft got wrong, and it is worth keeping.** The band hid itself
+when the board was empty, on the reasonable-sounding argument that a header over
+nothing is worse than no header. For this project specifically that is backwards:
+a player who has never seen the header has no way to learn that commissions
+exist, and a feature nobody can discover is `A91-D-19` with a nicer name. The
+band is drawn whenever the board exists, and the note is what carries the state —
+*"No commissions on the board right now"* is a sentence; an absent header is not.
+`tests/test_ui_contracts.gd::test_an_empty_board_still_says_it_is_there` is the
+assertion that keeps it that way.
+
+**Five refusal codes, all `FIX_NONE`, and that is the right answer rather than a
+stub.** `E_CONTRACT_ACTIVE`, `E_CONTRACT_COOLDOWN`, `E_UNKNOWN_CONTRACT`,
+`E_CONTRACT_UNMET` and `E_NO_CONTRACT` are every one of them answered on the band
+the player is already looking at — the commission in hand, the clock on it, or
+the offers under it — so a `Fix this →` could only focus the camera on a screen
+that is already open. §2.7a's contract is that a row with `kind != FIX_NONE`
+carries the params that kind needs; a row that has nowhere useful to send the
+player says so.
+
+**The deck is 72 states**, the two new ones included; `--screen=all --audit
+--strict` exits 0 at 412×915, 360×800, 880×400 and at 360×800 with
+`--text-scale=1.3 --large-targets`.

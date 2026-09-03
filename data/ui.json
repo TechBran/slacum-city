@@ -988,6 +988,50 @@
 				"args": {
 					"time": "@time"
 				}
+			},
+			{
+				"_comment": "Wave 19 \u2014 doc 03 \u00a72.5b's commissions board (report 98 \u00a760 RR-170). FOUR rows and not seven: `contract_accepted` and `contract_progress` are the player's own tap, and the band they tapped it on is already showing them; `contract_withdrawn` is an offer nobody took. These four are the ones that happen while the player is looking somewhere else, which is doc 93's own test for whether an event owes the log a line. `client` resolves through `@lookup:` with an EMPTY prefix because the payload already carries a string-table key rather than a bare id \u2014 the board is authored in `data/contracts.json` and its copy is authored in the string table, and the event is the one place the two meet.",
+				"type": "contract_offered",
+				"category": "economy",
+				"notify_id": "contract_offered",
+				"state": "normal",
+				"args": {
+					"client": "@lookup::client_key",
+					"reward": "@money:reward",
+					"time": "@time"
+				}
+			},
+			{
+				"type": "contract_ready",
+				"category": "economy",
+				"notify_id": "contract_ready",
+				"state": "normal",
+				"args": {
+					"client": "@lookup::client_key",
+					"reward": "@money:reward",
+					"time": "@time"
+				}
+			},
+			{
+				"type": "contract_claimed",
+				"category": "economy",
+				"notify_id": "contract_claimed",
+				"state": "normal",
+				"args": {
+					"client": "@lookup::client_key",
+					"reward": "@money:reward",
+					"time": "@time"
+				}
+			},
+			{
+				"type": "contract_expired",
+				"category": "economy",
+				"notify_id": "contract_expired",
+				"state": "warning",
+				"args": {
+					"client": "@lookup::client_key",
+					"time": "@time"
+				}
 			}
 		]
 	},
