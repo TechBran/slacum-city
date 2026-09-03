@@ -9314,8 +9314,9 @@ level curves fitted against it, and why gates 1, 2, 21 and 29 are unmoved.
 **The line, as a rule rather than a number:** *above one half from any single
 active layer, or above two thirds from all of them together, and the city stops
 being the thing being played.* At 65 % a player who takes literally every offer
-and completes every commission still earns **35 %** of a maximally-active income
-from the city running itself — or, put the way a player would feel it, perfect
+and completes every commission still earns **61 %** of their TOTAL income from
+the city running itself (1 / 1.65, and the 65 % is a share of the passive line
+rather than of the total) — or, put the way a player would feel it, perfect
 attention is worth **1.65×** a passive session and never 2×. Gate 32's last
 assertion is that sum, held at 0.67, so no future wave can raise one ceiling
 without being made to look at the other.
