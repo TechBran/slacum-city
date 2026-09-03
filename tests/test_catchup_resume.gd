@@ -288,6 +288,43 @@ func test_a_second_absence_mid_veil_is_queued_not_drained() -> void:
 	_free(world)
 
 
+func test_a_nine_hour_night_is_credited_whole_and_reported_honestly() -> void:
+	# RR-160/RR-162 through the SHELL, which is where the regression was
+	# visible: under the Wave-18 clamp this absence credited 6 real hours of
+	# its 9, the veil quoted a 6-hour cap, and the away report claimed 9 real
+	# hours of city time over a city that had lived 6.
+	var world := _world(37)
+	var shell: ShellResumeRig = world["shell"]
+	var life: AndroidLifecycle = world["lifecycle"]
+	var rig: ClockRig = world["rig"]
+
+	life.notification(Node.NOTIFICATION_APPLICATION_PAUSED)
+	rig.wall += 9.0 * 3600.0
+	life.notification(Node.NOTIFICATION_APPLICATION_RESUMED)
+	shell.run_until_settled()
+
+	assert_eq(shell.veil_calls.size(), 1)
+	var veil: Dictionary = shell.veil_calls[0]
+	assert_eq(int(veil["total_ticks"]), 540 * 240,
+			"9 real hours = 540 game-hours = 129,600 ticks, not the 86,400 the"
+			+ " 360-game-hour clamp credited")
+	assert_false(bool(veil["capped"]), "a nine-hour night is not a capped absence")
+	assert_eq(int(veil["cap_real_hours"]), CatchUpPlanner.OFFLINE_CAP_REAL_HOURS)
+
+	assert_eq(shell.reports.size(), 1)
+	var report: Dictionary = shell.reports[0]
+	assert_almost_eq(float(report["elapsed_game_minutes"]), 9.0 * 3600.0, 1.0,
+			"the header counts the credited absence — 32,400 game-minutes")
+	assert_false(bool(report["capped"]))
+	var away := AwayModel.new(UIConfig.load_from_files())
+	var header: Dictionary = away.build(report)["header"]
+	assert_eq(str(header["capped_text"]), "",
+			"and says nothing about a cap that did not apply")
+	assert_almost_eq(float(header["game_days"]), 22.5, 0.01,
+			"540 game-hours is 22.5 game-days")
+	_free(world)
+
+
 func test_the_pause_mid_veil_does_not_overwrite_the_away_report_s_before() -> void:
 	var world := _world(32)
 	var shell: ShellResumeRig = world["shell"]

@@ -3,14 +3,16 @@
 
 	"schema_version": 1,
 
-	"_comment_catchup": "doc 08 §2.12's NORMATIVE max_coarse_hours rule (report 98 C-21), IMPLEMENTED 2026-09-01 (report 98 §48, RR-133). Until this wave the rule existed only in prose: `grep -rn max_coarse_hours sim/ game/ data/` returned nothing and CatchUpPlanner clamped at OFFLINE_CAP_REAL_MS alone.",
+	"_comment_catchup": "doc 08 §2.12's performance budget, RE-RULED 2026-09-03 (report 98 §58, RR-160/RR-161) onto the axis it belongs on. Wave 17 (RR-133) implemented the budget as `max_coarse_hours`, a second clamp on the CREDITED ABSENCE: at the measured 5.488 ms/hour it shipped as 360 game-hours = 6 REAL hours, so hours 7-9 of a night paid nothing (doc 92 §55 measures the bill: $281,319 instead of $354,830 for an eight-hour night on a settled L3 city). A performance budget bounds how long the catch-up VEIL takes; it may never bound what the player is paid for being away. `max_coarse_hours` is therefore DELETED — from this file, from SavePolicy and from CatchUpPlanner's signature — and the budget below is a wall-clock gate on the veil.",
 
 	"catchup": {
-		"_comment_measurement": "`measured_coarse_ms` is ONE FULL-band coarse hour on the REFERENCE CITY (data/starter_city.json) on the reference workstation: `godot --headless -s res://tools/profile_sim.gd -- --coarse-hours=48 --fine-hours=1 --repeats=3 --no-profile` -> 5.488 ms/hour. `bench_coarse_ms` is the same measurement on tests/fixtures/bench_city.json (1,500 buildings) -> 165.493 ms/hour, which derives 72 (the floor). It is RECORDED, NOT SHIPPED — report 98 §48 RR-133 rules which city the rule reads and why. The Fold multiplier is doc 13 §2.13's 3-5x on top of both figures.",
-		"_comment_rule": "max_coarse_hours is derived from measured_coarse_ms and from NOTHING else: raw = ceil(2000 / measured_coarse_ms) = 365; floorm = floor(raw / 24) * 24 = 360; max_coarse_hours = clamp(floorm, 72, 720) = 360. `tests/test_catchup_clamp.gd` re-derives it from this file and fails if the two disagree, so the number can never drift from the measurement beside it.",
+		"_comment_measurement": "`measured_coarse_ms` is ONE FULL-band coarse hour on the FOUNDING city (data/starter_city.json) on the reference workstation: `godot --headless -s res://tools/profile_sim.gd -- --coarse-hours=48 --fine-hours=1 --repeats=3 --no-profile` -> 5.488 ms/hour. `bench_coarse_ms` is the same measurement on tests/fixtures/bench_city.json (1,500 buildings) -> 165.493 ms/hour. Both are RECORDED, not shipped: neither is what the budget is measured against, because a per-hour cost times a cap is an estimate and this block now carries the measurement itself. The Fold multiplier is doc 13 §2.13's 3-5x on top of every figure here.",
+		"_comment_rule": "THE GATE, and it compares two wall-clock numbers with no arithmetic in between: `veil_ms_at_cap` is the MEASURED wall clock of a whole 12-real-hour catch-up plan on the settled reference city (`tools/measure_offline_night.gd --absences=12 --settle-hours=180 --seeds=1337` -> 6,432 ms over 719 coarse hours = 8.95 ms/hour, doc 92 §55.6), and `veil_budget_ms` is what that is allowed to be. `tests/test_catchup_veil_budget.gd` asserts `veil_ms_at_cap <= veil_budget_ms` and asserts that NOTHING in sim/ or game/ reads either number — a performance budget that can reach the player's wallet is how RR-133 happened, and the structural half of the fix is that this pair is a gate and not a tunable. When the gate fails the answer is a cheaper coarse hour (doc 92 §55.7 AC-19-1), never a smaller credit.",
+		"_comment_bench": "The benchmark city does NOT meet the budget: 116,882 ms for the same plan (doc 92 §55.6). That is filed as AC-19-1 against the coarse step, and it is not new — at the deleted `max_coarse_hours = 360` the same city already spent 64,552 ms, because the clamp was derived from the founding city's 5.488 and had no idea the benchmark city existed. A clamp that produced 3 s on one city and 65 s on another was never bounding a veil.",
 		"measured_coarse_ms": 5.488,
 		"bench_coarse_ms": 165.493,
-		"max_coarse_hours": 360
+		"veil_ms_at_cap": 6432,
+		"veil_budget_ms": 9000
 	},
 
 	"save": {

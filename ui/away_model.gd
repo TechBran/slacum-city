@@ -12,9 +12,10 @@ extends RefCounted
 ##
 ##     {
 ##       elapsed_wall_s:        float,   # AndroidLifecycle.resumed's argument
-##       elapsed_game_minutes:  float,   # doc 01's credited minutes (else derived)
+##       elapsed_game_minutes:  float,   # doc 01's CREDITED minutes (else derived)
 ##       capped:                bool,    # doc 01 credited less than really elapsed
-##       cap_game_hours:        float,   # what the cap was, for the honest note
+##       cap_real_hours:        float,   # the cap in the unit the player slept in
+##       cap_game_hours:        float,   # legacy spelling of the same cap, ÷60
 ##       before: {treasury:int, population:int, day_index:int,
 ##                stability:float, happiness:float},
 ##       after:  { … same keys … },
@@ -185,8 +186,23 @@ func _header(input: Dictionary) -> Dictionary:
 	}
 	if bool(out["capped"]):
 		out["capped_text"] = UIWidgets.t_args(_cfg, "ui_away_capped",
-				{"hours": int(round(float(input.get("cap_game_hours", 0.0))))})
+				{"hours": _cap_real_hours(input)})
 	return out
+
+
+## The cap in the unit the player was away in (RR-162). The line used to quote
+## `cap_game_hours` and render *"Your city ran for 720h — the maximum."* — city
+## time, in a sentence about somebody's night. `CatchUpPlanner.plan` now carries
+## `cap_real_hours` and that is what fills it; `cap_game_hours` is still accepted
+## and converted, so a caller that has not been updated says something true
+## rather than something absurd.
+func _cap_real_hours(input: Dictionary) -> int:
+	if input.has("cap_real_hours"):
+		return maxi(1, int(round(float(input["cap_real_hours"]))))
+	var game_hours := float(input.get("cap_game_hours", 0.0))
+	if game_hours > 0.0:
+		return maxi(1, int(round(game_hours / 60.0)))
+	return 12
 
 
 ## §2.12 section 2: "only if non-empty, rendered first in CRITICAL styling, up to

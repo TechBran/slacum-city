@@ -30,7 +30,7 @@ This system makes Core Design Rule 2 — *"The city continues while the player i
 
 Doc 01 owns and this doc **does not re-specify**: `CatchUpPlanner`, the decomposition `head_align fine → N coarse → mid_fine → 40-tick fine tail`, `OFFLINE_GRACE_SECONDS = 120` (absences under 2 real minutes credit zero), `OFFLINE_CAP_REAL_MS = 43,200,000` (**12 real hours = 720 game-hours = 30 game-days**; excess discarded, never banked — report C-19), the sliced entry point `advance_coarse_sliced(max_ms) -> bool` with `steps_done()` / `steps_total()` (report C-22), the tick→wall alarm conversion, and `ctx.is_catchup / ctx.catchup_index / ctx.catchup_total`.
 
-The cap constant lives in `data/time.json` and is owned by doc 01. **This doc defines no cap of its own and doc 13 defines none either** (report C-19); `max_coarse_hours` (§2.12) is a *performance* clamp that may only ever be ≤ the doc-01 cap.
+The cap constant lives in `data/time.json` and is owned by doc 01. **This doc defines no cap of its own and doc 13 defines none either** (report C-19), and since report 98 §58 (RR-160) **neither does §2.12**: the credited absence is doc 01's C-19 cap and nothing narrows it. §2.12's `max_coarse_hours` — a *performance* clamp that could pull the credited window down to six real hours — is retired; what §2.12 publishes now is a wall-clock budget on the catch-up **veil**, which nothing in `sim/` reads.
 
 This doc adds exactly one thing to each coarse step: an **offline policy band** resolved from `ctx.catchup_index`, carried on the same `TimeContext` as a set of multipliers.
 
@@ -703,31 +703,40 @@ The assignment target is **24 game-hours < 2 s**. Independently derived per-enti
 
 **Report C-21 settles the 45× disagreement with doc 01's 0.6 ms budget by measurement.** Doc 01's 0.6 ms line is retired; **this doc's decision rule is adopted verbatim and is normative, not conditional**, and this doc owns the tunable.
 
-> #### Decision rule for `max_coarse_hours` (NORMATIVE — report C-21)
+> #### ~~Decision rule for `max_coarse_hours`~~ — **RETIRED 2026-09-03 (report 98 §58, RR-161)**
 >
-> Phase 0 task **P0-27** builds `tests/perf/test_coarse_step_cost.gd`. It measures **one FULL-band coarse hour** on the reference city and reference device and writes `measured_coarse_ms`. Then, with no discretion left to anybody:
+> The rule was: `max_coarse_hours = clamp(floor(ceil(2000 / measured_coarse_ms) / 24) × 24, 72, 720)`, measured by P0-27, written into `data/persistence.json`, and applied by `CatchUpPlanner.plan` as a clamp on the **credited absence**. It shipped in Wave 17 at **360 game-hours = 6 real hours** (RR-133) and it is deleted — from this doc, from the data file, from `SavePolicy` and from the planner's signature.
+>
+> **It was on the wrong axis.** A performance budget bounds how long the catch-up VEIL takes; it may never bound what the player is paid for being away. Doc 92 §55 measures what the confusion cost: an eight-hour night on a settled L3 city paid **$281,319** where the uncapped absence pays **$354,830**, and a twelve-hour absence was paid **57.5%** of what those hours were worth. The 2,000 ms numerator was G4's *"24 game-hours caught up well under 2 s"* applied to the **720**-hour catch-up, and the result bounded neither veil: at the shipped 360 the founding city spent ~3 s on a full absence and the benchmark city spent **64,552 ms**.
+>
+> **The credited absence is doc 01's C-19 cap and nothing else** (RR-160). `CatchUpPlanner.plan` takes three arguments and reads no data file, so no workstation measurement has a path to a player's wallet.
+
+> #### The veil budget (NORMATIVE — report 98 §58, RR-161)
+>
+> The performance budget stays, on the axis it is a budget for, and it is **two measured wall-clock numbers with no arithmetic between them**. `data/persistence.json.catchup`:
 >
 > ```
-> raw   = ceil(2000 / measured_coarse_ms)          # 2,000 ms total catch-up budget
-> floorm = floor(raw / 24) * 24                    # round DOWN to a whole game-day
-> max_coarse_hours = clamp(floorm, 72, 720)        # floor 72 h, cap = doc 01's C-19 cap
+> veil_ms_at_cap : 6432   # MEASURED: one whole 12-real-hour catch-up plan on the
+>                         # settled reference city, tools/measure_offline_night.gd
+> veil_budget_ms : 9000   # what that is allowed to be
 > ```
 >
-> Hours beyond `max_coarse_hours` are discarded exactly as over-cap hours already are, and the report says so (`catchup_capped`). The value is written into `data/persistence.json` and is deterministic for a given measurement.
+> **The gate is `veil_ms_at_cap ≤ veil_budget_ms`**, asserted by `tests/test_catchup_veil_budget.gd`. When it fails the answer is **a cheaper coarse hour, never a smaller credit**.
+>
+> Both fields are a **gate and not a tunable**: nothing in `sim/`, `ui/` or `game/` reads either, and the same test asserts that too. A performance number that can reach a player's wallet is how RR-133 happened, and the structural half of the fix is that this pair cannot.
+>
+> `measured_coarse_ms` (founding city, 5.488 ms) and `bench_coarse_ms` (1,500 buildings, 165.493 ms) stay in the file as **recorded** measurements. `CatchUpPlanner.veil_ms_at_cap(m) = m × 720` estimates a veil from either of them; it is an estimator for a gate and never an input to a plan.
 
-Generated from the rule above — every row is `clamp(floor(ceil(2000/m)/24)×24, 72, 720)`:
+Measured 2026-09-03 (doc 92 §55.6), the whole 12-real-hour plan, dev workstation:
 
-| `measured_coarse_ms` | `ceil(2000/m)` | ↓ to ×24 | `max_coarse_hours` | Real-time cover | Cost at that many hours |
+| city | coarse hours | veil ms | ms / coarse hour | frames at 60 fps | vs 9,000 ms |
 |---|---|---|---|---|---|
-| 0.6 (doc 01's retired budget) | 3,334 | 3,312 | **720** (cap) | 12 h | 432 ms |
-| 2.0 | 1,000 | 984 | **720** (cap) | 12 h | 1,440 ms |
-| 2.7 | 741 | 720 | **720** (cap) | 12 h | 1,944 ms |
-| 4.0 | 500 | 480 | **480** | 8 h | 1,920 ms |
-| 8.0 | 250 | 240 | **240** | 4 h | 1,920 ms |
-| 27.3 (§2.12 accounting) | 74 | 72 | **72** | 1 h 12 m | 1,966 ms |
-| 55.0 (with 2× overhead) | 37 | 24 → below floor | **72** (floor) | 1 h 12 m | 3,960 ms |
+| founding + 60 gh settle (L2) | 719 | 4,845 | 6.74 | 291 | ✅ |
+| founding + 110 gh settle (L3) | 719 | **5,504** | 7.65 | 331 | ✅ |
+| founding + 180 gh settle (L4) | 719 | **6,432** | 8.95 | 386 | ✅ (shipped figure) |
+| `bench_city`, 1,500 buildings | 719 | **116,882** | 162.6 | 7,013 | ❌ **AC-19-1** |
 
-Two readings worth stating: **2.78 ms is the break-even** at which the full 720-hour cap is affordable (`720 × 2.78 = 2,002 ms`), and at the 72-hour **floor the floor wins over the budget** — we would rather spend 4 s once than hand back less than three game-days, because below 72 hours the FULL band never ends and the fidelity model stops meaning anything.
+**The reference figure is this section's own accepted worst case, and that is the argument for it.** The paragraph below already ruled 3,960 ms of work ⇒ ~5.5 s of veil preferable to handing back less than three game-days. 6,432 ms is the same order and it hands back **thirty** game-days. The benchmark city is 13× over and is filed against the coarse step (doc 92 §55.7 AC-19-1) — it is not new, and the deleted clamp never bounded it either.
 
 Two design constraints this doc imposes for the budget's sake:
 
@@ -1257,7 +1266,7 @@ report C-04 withdrew this doc's `platform/` proposal, see §9):
 
 **In the vertical slice** (spec §43.1: "Persistent save", "Offline catch-up", "Basic notifications"):
 
-Single slot; atomic write with manifest commit; generation files; retention slots A–C (3 generations). SHA-256 verification, candidate walk, quarantine, recovery dialog, safe mode. `user://settings.cfg` for device-scoped prefs. Envelope + per-section ladder machinery with at least one real migration exercised by a fixture test (proving the mechanism, not the intent). Both fidelity bands and **all eight fairness rules from day one** — they are the difference between the offline city being a feature and being a bug. `reserve_treasury` and `policy_blocked` surfacing. Main-thread sliced catch-up with `catchup_progress` and the `is_resync` flag. `max_coarse_hours` set by the P0-27 measurement per §2.12's rule. Event rings, accumulator, report sections 0–5. Notifications: P1–P3, per-class toggles, global + per-class buckets, quiet hours with `defer_to_end`, inexact alarms, deterministic completions (class a) + storm forecast (class b) only — both of which reach the full 12-real-hour cap with zero projection.
+Single slot; atomic write with manifest commit; generation files; retention slots A–C (3 generations). SHA-256 verification, candidate walk, quarantine, recovery dialog, safe mode. `user://settings.cfg` for device-scoped prefs. Envelope + per-section ladder machinery with at least one real migration exercised by a fixture test (proving the mechanism, not the intent). Both fidelity bands and **all eight fairness rules from day one** — they are the difference between the offline city being a feature and being a bug. `reserve_treasury` and `policy_blocked` surfacing. Main-thread sliced catch-up with `catchup_progress` and the `is_resync` flag. The §2.12 veil budget gated against a measured full-cap catch-up (`veil_ms_at_cap ≤ veil_budget_ms`; RR-161 — the former `max_coarse_hours` clamp on the credited absence is retired). Event rings, accumulator, report sections 0–5. Notifications: P1–P3, per-class toggles, global + per-class buckets, quiet hours with `defer_to_end`, inexact alarms, deterministic completions (class a) + storm forecast (class b) only — both of which reach the full 12-real-hour cap with zero projection.
 
 **Deferred:** retention slots D–F · multiple city slots · cloud / Play Games saved games · **emergent risk projection, notification class (c)** (ships present, `emergent_projection_enabled = false` — report C-23) · P4 ambient class and re-engagement (ships present but disabled and empty, `mvp_enabled = false` — report C-71) · report sharing (spec §54) · save export/import for support · `id_remap` + Save Repair panel (needed once content ids start churning, ~Phase 3).
 
@@ -1315,9 +1324,10 @@ Headless: `godot --headless --path "…" -s res://tests/run_tests.gd`.
 32c. `test_notification_policy_is_single_source` — no other `data/*.json` in the repo defines a notification class, capacity, window or min-gap; doc 12's constants exist only under `ui.json.in_app_alerts`; `P4_ambient.mvp_enabled == false` and nothing P4 is ever emitted (report C-71/C-72).
 
 **Performance** (`tests/perf/`, 2× tolerance for CI noise)
-33. `test_coarse_step_cost` — **P0-27; the arbiter for §2.12's normative rule.** Measures one FULL-band coarse hour on the reference city, writes `measured_coarse_ms`, and asserts `max_coarse_hours == clamp(floor(ceil(2000/measured_ms)/24)×24, 72, 720)`. It does not fail on a slow measurement — it *sets the tunable*; only a `max_coarse_hours` inconsistent with the measurement fails.
-34. `test_catchup_perf_24h` — 24 game-hours < **2,000 ms** (design expectation 0.66–1.32 s per §2.12).
-35. `test_catchup_perf_cap` — `max_coarse_hours` game-hours complete within `max_coarse_hours × measured_coarse_ms` and < **2,500 ms**, *except* when the 72-hour floor is in force, where the budget is deliberately exceeded (§2.12) and the assertion is instead ≤ 4,500 ms.
+33. `test_coarse_step_cost` — **P0-27; RE-AIMED 2026-09-03 (RR-161).** As built it is `tests/test_milestone1.gd::test_coarse_step_cost_budget`: it measures one FULL-band coarse hour on the founding city and now prints what that costs at the full 12-real-hour cap (`CatchUpPlanner.veil_ms_at_cap`) instead of deriving a clamp on the player's credit. It still does not fail on a slow measurement — a wall-clock assert beside sibling suites is a flake, not a gate.
+33b. `test_catchup_veil_budget` — **the arbiter for §2.12's rule, and it is a whole file.** Asserts (a) the credited absence is doc 01's C-19 cap at every length from 6 to 12 real hours and there is no argument to `plan()` that can narrow it; (b) `veil_ms_at_cap ≤ veil_budget_ms` from `data/persistence.json`; (c) **nothing in `sim/`, `ui/` or `game/` reads either field**, and the planner names `SavePolicy` nowhere; (d) the capped copy, in both directions.
+34. `test_catchup_perf_24h` — 24 game-hours < **2,000 ms** (design expectation 0.66–1.32 s per §2.12). This is G4 and it is the only place the 2,000 ms number still belongs.
+35. ~~`test_catchup_perf_cap`~~ — **RETIRED with the clamp (RR-161).** Its subject was `max_coarse_hours × measured_coarse_ms`, which no longer exists. The full-cap cost is measured directly by `tools/measure_offline_night.gd` and recorded as `veil_ms_at_cap`; test 33b gates it.
 36. `test_snapshot_perf` < 25 ms (also proves doc 13's 250 ms pause budget is met by the snapshot alone) · `test_encode_write_perf` < 120 ms and < 250 KB · `test_load_perf` < 400 ms.
 37. `test_bench_city_fixture_valid` — **amended 2026-08-19; see the ruling below.** Doc 09's generated `tests/fixtures/bench_city.json` is validated as a **BOOT file**: it parses, its `schema_version` tracks `data/starter_city.json`'s (the loader's data-file version, *not* the save envelope's), and it boots a `CitySim` clean at 1,500 buildings. The save-schema half of report G-7 is then covered by putting the booted city **through** the save path — `save_slot` → `load_slot` → identical `state_hash()`, with zero structural repairs — so doc 11's on-device gates cannot silently stop running against a stale fixture, and a save-schema drift is caught on 1,500 buildings rather than on the starter city's 35. Lives in `tests/test_save_migration.gd`; the boot-file legs are also asserted by `tests/test_bench_city.gd` (doc 11 test 26).
 
@@ -1369,14 +1379,16 @@ Headless: `godot --headless --path "…" -s res://tests/run_tests.gd`.
   "offline": {
     "full_fidelity_hours": 72,
 
-    // The absence cap itself is data/time.json's (doc 01, report C-19): 12 real h = 720 game-h.
-    // Everything below is the performance clamp this doc owns (report C-21), which may never exceed it.
-    "max_coarse_hours": 720,                 // set by P0-27 from the rule below; 720 until measured
-    "max_coarse_hours_cap": 720,
-    "max_coarse_hours_floor": 72,
-    "catchup_time_budget_ms": 2000,
-    "coarse_hours_rounding_multiple": 24,
-    "measured_coarse_ms": null,              // written by tests/perf/test_coarse_step_cost.gd (P0-27)
+    // The absence cap itself is data/time.json's (doc 01, report C-19): 12 real h = 720 game-h,
+    // and since report 98 §58 (RR-160) it is the ONLY thing that bounds the credit.
+    // max_coarse_hours / _cap / _floor / catchup_time_budget_ms / coarse_hours_rounding_multiple
+    // are DELETED (RR-161): they were a performance clamp on the player's wallet.
+    // What this doc publishes instead is a wall-clock gate on the VEIL, and it lives in
+    // data/persistence.json's `catchup` block because SavePolicy is that file's only reader:
+    "veil_ms_at_cap": 6432,                  // MEASURED, tools/measure_offline_night.gd (doc 92 §55.6)
+    "veil_budget_ms": 9000,                  // what that is allowed to be; the gate is <=
+    "measured_coarse_ms": 5.488,             // RECORDED, founding city (P0-30)
+    "bench_coarse_ms": 165.493,              // RECORDED, 1,500 buildings — over budget, AC-19-1
 
     // main-thread sliced catch-up only (report C-22); the WorkerThreadPool branch is deleted
     "slice_budget_ms": 12,
@@ -1597,6 +1609,14 @@ written out there.
 
 ### §2.12 — `max_coarse_hours`, implemented, with the numbers
 
+> **SUPERSEDED 2026-09-03 — report 98 §58, RR-160/RR-161.** Everything in this
+> subsection happened and is kept as the record of it. What it shipped was a
+> clamp on the **credited absence**, and six real hours of credit is what a
+> player got for a night's sleep; doc 92 §55 measures the bill at **$73,511 for
+> an eight-hour night on a settled L3 city**. `max_coarse_hours` is deleted and
+> §2.12's budget now gates the **veil**. Read the section above, not this one,
+> for what ships.
+
 The decision rule in §2.12 has been NORMATIVE since report C-21 and was
 implemented nowhere: `grep -rn max_coarse_hours sim/ game/ data/` returned zero
 hits at the fork. It is now `CatchUpPlanner.derive_max_coarse_hours`, stated once,
@@ -1679,3 +1699,49 @@ RR-134, doc 93 §AG3):
 `tests/test_catchup_clamp.gd` re-derives `max_coarse_hours` from
 `measured_coarse_ms` and fails if the two disagree, so the shipped number cannot
 drift from the measurement printed beside it.
+
+---
+
+## WAVE 19 — the clamp was on the wrong axis, and a night is paid in full again (2026-09-03)
+
+**Report 98 §58 (RR-160..RR-163) is binding; doc 92 §55 carries the numbers.**
+The player's sentence, from their own Fold 6 city: *"I went to bed hoping I'd
+wake up to a bunch of money. The money stops after a certain amount of hours of
+the game being closed."*
+
+They were describing the subsection immediately above. Wave 17 implemented this
+doc's `max_coarse_hours` and fed it into `CatchUpPlanner.plan` as a second clamp
+on the credited absence; at the founding city's 5.488 ms coarse hour it shipped
+at **360 game-hours = 6 real hours**, and hours 7, 8 and 9 of a night credited
+nothing at all.
+
+### What changed in this document
+
+| §  | was | is |
+|---|---|---|
+| §2.1 | "`max_coarse_hours` is a performance clamp that may only ever be ≤ the doc-01 cap" | this doc narrows the credited absence by nothing; §2.12's budget bounds the veil |
+| §2.12 | a NORMATIVE derivation, `clamp(floor(ceil(2000/m)/24)×24, 72, 720)`, applied to the credit | a measured wall-clock gate, `veil_ms_at_cap ≤ veil_budget_ms`, applied to the veil and read by no shipped code |
+| §7 (33) | P0-27 sets the clamp | P0-27 prints the veil estimate; new test **33b** `test_catchup_veil_budget` is the arbiter |
+| §7 (35) | `test_catchup_perf_cap` | retired with its subject |
+| §8 | five clamp tunables under `offline` | `veil_ms_at_cap` / `veil_budget_ms`, with the two coarse-hour measurements recorded beside them |
+
+### What did NOT change, and why that is the finding
+
+**§2.3's eight fairness rules are untouched.** Offline still draws no street
+opportunities (rule 9), catch-up is still a session kind and not a step size, and
+the Director is still held to one pre-warned Tier-1 event per absence. The
+obvious suspects for *"the money stops"* were those rules and doc 03 §2.11's
+exponential taper, and both were **measured** rather than assumed: with the
+credited window restored, an absence pays **97.4–101.1%** of what the same hours
+are worth online-and-idle, at every length from one real hour to twelve (doc 92
+§55.4). The taper's 94-effective-hour ceiling is real and is very nearly
+cancelled at a growing city, because the work the player already paid for is
+`TAPER_EXEMPT`. No taper change is shipped and no difficulty scalar moved.
+
+### The one thing left to the shell
+
+`game/main.gd` passes `elapsed_wall_s` as the away report's
+`elapsed_game_minutes`, so a **capped** absence over-reports city time (RR-162).
+The snippet is the lead's and is anchored in report 98 §58.2. An uncapped absence
+— which is now every absence up to 12 real hours — already reports correctly,
+because credited *is* elapsed.

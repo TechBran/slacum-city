@@ -44,22 +44,30 @@ var repair_threshold_frac: float = 0.02
 var max_entities_sane: int = 200000
 
 # ------------------------------------------------- doc 08 §2.12, the catch-up
-# clamp. It is not a `save` tunable — it is a *performance* clamp on the offline
-# credit — but it lives in the same file because doc 08 owns both and because
-# this class is the file's only reader (see the class doc). Report 98 §48
-# RR-133.
+# VEIL budget. It is not a `save` tunable — it is a *performance* gate on how
+# long the catch-up veil may run — but it lives in the same file because doc 08
+# owns both and because this class is the file's only reader (see the class doc).
+#
+# **It is a gate and not a tunable, and that is deliberate (RR-161).** Wave 17's
+# `max_coarse_hours` lived here too and `CatchUpPlanner` read it as a second cap
+# on the CREDITED ABSENCE, which cost a sleeping player 42.5% of a twelve-hour
+# night (doc 92 §55). Nothing in `sim/` or `game/` reads the two fields below;
+# `tests/test_catchup_veil_budget.gd` is their only consumer and it asserts both
+# the budget and the absence of a runtime reader.
 
-## ONE FULL-band coarse hour on the reference city, measured (doc 08 §2.12).
-## 0.0 means "not measured", in which case the clamp is doc 01's C-19 cap and
-## nothing is discarded that was not already being discarded.
+## ONE FULL-band coarse hour on the founding city, measured (doc 08 §2.12).
+## RECORDED. `0.0` means "not measured", which is not an error — the budget is
+## measured directly, not derived from this.
 var measured_coarse_ms: float = 0.0
-## The same measurement on `tests/fixtures/bench_city.json`. RECORDED, not
-## applied — RR-133 rules which city the rule reads.
+## The same measurement on `tests/fixtures/bench_city.json`. RECORDED.
 var bench_coarse_ms: float = 0.0
-## `clamp(floor(ceil(2000 / measured_coarse_ms) / 24) * 24, 72, 720)`, in
-## GAME hours. The default is doc 01's C-19 cap, so a build with no `catchup`
-## block behaves exactly as every build before this one did.
-var max_coarse_hours: int = 720
+## MEASURED wall clock, in ms, of a whole 12-real-hour catch-up plan on the
+## settled reference city (doc 92 §55.6). `0.0` means "not measured".
+var veil_ms_at_cap: float = 0.0
+## What that is allowed to be. The gate is `veil_ms_at_cap <= veil_budget_ms`,
+## and when it fails the answer is a cheaper coarse hour, never a smaller
+## credit (doc 92 §55.7 AC-19-1).
+var veil_budget_ms: float = 9000.0
 
 ## Non-empty when the file was present but something in it was unusable. The
 ## policy is still returned fully populated — a bad tunable must never be the
@@ -124,11 +132,9 @@ static func from_dict(data: Dictionary) -> SavePolicy:
 	var catchup: Dictionary = data.get("catchup", {}) if data.get("catchup") is Dictionary else {}
 	policy.measured_coarse_ms = maxf(0.0, _float_or(catchup, "measured_coarse_ms", 0.0))
 	policy.bench_coarse_ms = maxf(0.0, _float_or(catchup, "bench_coarse_ms", 0.0))
-	# The FILE is the authority, not the derivation: a build must not silently
-	# re-derive a different clamp because the workstation it was packaged on is
-	# faster than the one that measured. `tests/test_catchup_clamp.gd` asserts
-	# the two agree, which is where a drift is supposed to be caught.
-	policy.max_coarse_hours = _int_or(catchup, "max_coarse_hours", policy.max_coarse_hours)
+	policy.veil_ms_at_cap = maxf(0.0, _float_or(catchup, "veil_ms_at_cap", 0.0))
+	policy.veil_budget_ms = maxf(0.0, _float_or(catchup, "veil_budget_ms",
+			policy.veil_budget_ms))
 	return policy
 
 

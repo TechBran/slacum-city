@@ -5,15 +5,28 @@ extends RefCounted
 ## Same input ⇒ same schedule, which is what makes constitution §5's offline
 ## determinism guarantee literally true.
 ##
-## **Two clamps, not one (Wave 17, report 98 §48 / RR-133).** [OFFLINE_CAP_REAL_MS]
-## is doc 01's C-19 outer bound and has always been here. Doc 08 §2.12's
-## `max_coarse_hours` is a second, *performance*-derived clamp that may only ever
-## be tighter — it was NORMATIVE prose in doc 08 and implemented nowhere until
-## this wave (`grep -rn max_coarse_hours sim/ game/ data/` returned nothing).
-## It arrives from `data/persistence.json` through `SavePolicy`, never from a
-## live measurement: a clamp that changed with the device would make the same
-## absence credit two different cities on two phones, and constitution §5 forbids
-## exactly that. See [derive_max_coarse_hours] for the rule, stated once.
+## **ONE clamp, and it is a fairness clamp (Wave 19, report 98 §58 / RR-160).**
+## [OFFLINE_CAP_REAL_MS] is doc 01's C-19 outer bound and it is the ONLY thing
+## that bounds what a returning player is credited. There is no second clamp and
+## there is no argument to [plan] by which a caller can credit less: the window
+## is a property of the design, not of the workstation the build was packaged on.
+##
+## **What was here before, and why it was wrong.** Wave 17 (RR-133) implemented
+## doc 08 §2.12's `max_coarse_hours` — `clamp(floor(ceil(2000/measured_coarse_ms)
+## /24)*24, 72, 720)` — and fed it into this function as a second, tighter cap.
+## Measured at 5.488 ms/coarse-hour it shipped as 360 game-hours, so the credited
+## absence was **6 real hours** and the seventh, eighth and ninth hours of a
+## night paid nothing. Doc 92 §55 measures what that cost: an eight-hour night on
+## a settled L3 city paid $281,319 where the uncapped absence pays $354,830, and
+## a twelve-hour absence paid 57.5% of what those hours were worth.
+##
+## The defect was not the arithmetic — it was the AXIS. A performance budget
+## bounds how long the catch-up VEIL takes; it may never bound what the player is
+## paid for being away. Doc 08 §2.12 now says so, the budget it publishes
+## (`veil_budget_ms`) is a wall-clock gate measured by `tests/test_catchup_veil_budget.gd`,
+## and **nothing in `sim/` or `game/` reads it** — which is the structural half of
+## the fix. `veil_ms_at_cap` below is the estimator that gate uses; it is a static
+## function of a measurement and it never touches a plan's credit.
 ##
 ## **A plan can also be RESUMED (RR-134).** A catch-up that is interrupted by a
 ## process death mid-veil leaves unspent segments behind; [plan_after] puts them
@@ -23,67 +36,49 @@ extends RefCounted
 ## with, so the doc-93 §AG ruling is *sequential concatenation, never arithmetic*.
 
 const OFFLINE_CAP_REAL_MS: int = 43200000  # 12 real hours = 720 game-hours
+## The same cap in GAME hours — doc 01 C-19's other face, stated once so no
+## caller has to divide.
+const OFFLINE_CAP_GAME_HOURS: int = 720
+## And in REAL hours, which is the unit a player sleeps in and the unit the away
+## report and the veil quote (RR-162).
+const OFFLINE_CAP_REAL_HOURS: int = 12
 const OFFLINE_GRACE_MS: int = 120000
 const FINE_CATCHUP_MAX_TICKS: int = 20
 const FINE_TAIL_TICKS: int = 40
 const GAME_MS_PER_TICK: int = 15000
 ## One GAME hour of absence costs this many REAL ms (1 real s = 1 game min at 1x).
 const REAL_MS_PER_GAME_HOUR: int = 60000
-
-## Doc 08 §2.12's numerator: the total catch-up work budget, in ms.
-const CATCHUP_WORK_BUDGET_MS: float = 2000.0
-## Doc 08 §2.12's floor — below three game-days of creditable absence the FULL
-## band never ends and the fidelity model stops meaning anything.
-const MAX_COARSE_HOURS_FLOOR: int = 72
-## Doc 08 §2.12's ceiling — doc 01's C-19 cap, in game hours.
-const MAX_COARSE_HOURS_CEIL: int = 720
-
-static var _configured_max_coarse_hours: int = 0
+const REAL_MS_PER_REAL_HOUR: int = 3600000
 
 
-## Doc 08 §2.12's decision rule, NORMATIVE and stated exactly once:
+## Doc 08 §2.12's performance budget, applied to the thing it is a budget FOR:
+## the wall clock a full-cap catch-up spends behind the veil, estimated from one
+## measured coarse hour.
 ##
-##     raw    = ceil(2000 / measured_coarse_ms)
-##     floorm = floor(raw / 24) * 24
-##     result = clamp(floorm, 72, 720)
-##
-## `measured_coarse_ms <= 0` means "nobody measured", and the honest answer to
-## that is doc 01's cap — a clamp derived from no measurement may not discard a
-## player's time.
-static func derive_max_coarse_hours(measured_coarse_ms: float) -> int:
-	if measured_coarse_ms <= 0.0:
-		return MAX_COARSE_HOURS_CEIL
-	var raw := int(ceil(CATCHUP_WORK_BUDGET_MS / measured_coarse_ms))
-	var floorm := (raw / 24) * 24
-	return clampi(floorm, MAX_COARSE_HOURS_FLOOR, MAX_COARSE_HOURS_CEIL)
+## This is an ESTIMATOR for a gate, never an input to [plan]. It is `static` and
+## takes its measurement as an argument for exactly that reason — there is no
+## instance state it could quietly reach a credit through.
+static func veil_ms_at_cap(measured_coarse_ms: float) -> float:
+	return maxf(0.0, measured_coarse_ms) * float(OFFLINE_CAP_GAME_HOURS)
 
 
-## The shipped clamp, in game hours — `data/persistence.json`'s `catchup` block
-## through `SavePolicy` (which caches its parse, so this is one dictionary read
-## after the first call). Tests override it with [set_max_coarse_hours].
-static func configured_max_coarse_hours() -> int:
-	if _configured_max_coarse_hours <= 0:
-		_configured_max_coarse_hours = SavePolicy.load_from_files().max_coarse_hours
-	return clampi(_configured_max_coarse_hours, MAX_COARSE_HOURS_FLOOR, MAX_COARSE_HOURS_CEIL)
-
-
-## Force the clamp for a test. `0` restores "read the file again".
-static func set_max_coarse_hours(hours: int) -> void:
-	_configured_max_coarse_hours = hours
+## `true` when a city whose coarse hour costs `measured_coarse_ms` finishes a
+## full 12-real-hour catch-up inside `budget_ms`. When it is `false` the answer
+## is a cheaper coarse hour (doc 92 §55.7 AC-19-1) — never a smaller credit.
+static func meets_veil_budget(measured_coarse_ms: float, budget_ms: float) -> bool:
+	return veil_ms_at_cap(measured_coarse_ms) <= budget_ms
 
 
 ## Returns {credited_real_ms, capped, total_ticks, new_residual_game_ms,
-##          cap_real_ms, cap_game_hours, discarded_real_ms,
+##          cap_real_ms, cap_game_hours, cap_real_hours, discarded_real_ms,
 ##          segments: [{kind: "fine"|"coarse", count}]}  (coarse count in hours)
 ##
-## `max_coarse_hours` overrides the shipped clamp for one call; 0 means "use the
-## shipped one". It can only ever make the credited window SMALLER than doc 01's
-## cap, never larger.
-static func plan(elapsed_real_ms: int, residual_game_ms: int, tick_index: int,
-		max_coarse_hours: int = 0) -> Dictionary:
-	var cap_hours := max_coarse_hours if max_coarse_hours > 0 else configured_max_coarse_hours()
-	cap_hours = clampi(cap_hours, MAX_COARSE_HOURS_FLOOR, MAX_COARSE_HOURS_CEIL)
-	var cap_ms := mini(OFFLINE_CAP_REAL_MS, cap_hours * REAL_MS_PER_GAME_HOUR)
+## There is deliberately no `max_hours` argument. RR-160: the credited absence is
+## doc 01's cap and nothing else may tighten it, and a parameter that could is a
+## parameter someone will eventually pass.
+static func plan(elapsed_real_ms: int, residual_game_ms: int,
+		tick_index: int) -> Dictionary:
+	var cap_ms := OFFLINE_CAP_REAL_MS
 	var credited := 0
 	var capped := false
 	if elapsed_real_ms >= OFFLINE_GRACE_MS:
@@ -118,6 +113,10 @@ static func plan(elapsed_real_ms: int, residual_game_ms: int, tick_index: int,
 		"new_residual_game_ms": new_residual,
 		"cap_real_ms": cap_ms,
 		"cap_game_hours": cap_ms / REAL_MS_PER_GAME_HOUR,
+		# The away report and the veil quote the cap in the unit the player was
+		# away in, not in city time (RR-162). Carried rather than divided at the
+		# call site so the two surfaces cannot disagree.
+		"cap_real_hours": cap_ms / REAL_MS_PER_REAL_HOUR,
 		"discarded_real_ms": maxi(0, elapsed_real_ms - credited) if capped else 0,
 		"segments": segments,
 	}
@@ -134,14 +133,13 @@ static func plan(elapsed_real_ms: int, residual_game_ms: int, tick_index: int,
 ## count of owed milliseconds: `plan()`'s head-alignment, its 40-tick fine tail
 ## and its residual are not recoverable from a duration.
 static func plan_after(unfinished: Dictionary, elapsed_real_ms: int,
-		residual_game_ms: int, tick_index: int,
-		max_coarse_hours: int = 0) -> Dictionary:
+		residual_game_ms: int, tick_index: int) -> Dictionary:
 	var head_segments: Array = unfinished.get("segments", [])
 	var head_ticks := segments_total_ticks({"segments": head_segments})
 	if head_ticks <= 0:
-		return plan(elapsed_real_ms, residual_game_ms, tick_index, max_coarse_hours)
+		return plan(elapsed_real_ms, residual_game_ms, tick_index)
 	var head_residual := int(unfinished.get("new_residual_game_ms", residual_game_ms))
-	var tail := plan(elapsed_real_ms, head_residual, tick_index + head_ticks, max_coarse_hours)
+	var tail := plan(elapsed_real_ms, head_residual, tick_index + head_ticks)
 	var segments: Array[Dictionary] = []
 	for segment: Variant in head_segments:
 		segments.append((segment as Dictionary).duplicate())

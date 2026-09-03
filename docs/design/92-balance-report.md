@@ -9048,3 +9048,182 @@ pre-assigned; the repro above is what a lane that takes it needs.
 number in §54.2–§54.7 is either a published ladder cell or a settled-ledger
 figure. The one sentence it does correct is §54.3's, which is why that paragraph
 now says the net fall is a correlation.
+
+---
+
+## 55. Wave 19 — what a night away is worth, measured (2026-09-03)
+
+**The brief is one sentence of the player's, from their own Fold 6 city:** *"I
+went to bed hoping I'd wake up to a bunch of money. The money stops after a
+certain amount of hours of the game being closed."* This section is that
+sentence turned into numbers, and the numbers name the thing that stops the
+money. It is **not** doc 03 §2.11's offline income taper. It is doc 08 §2.12's
+performance clamp, which had been credited against the player's wallet.
+
+### 55.1 The instrument
+
+`tools/measure_offline_night.gd` — a measuring tool on the same terms as
+`tools/profile_sim.gd`: it boots the real `CitySim`, settles it with the real
+`curriculum` strategy on the real coarse step (`BalanceGateRig`'s own loop,
+online, `advance_coarse_hours(1, false)`), then plans a real absence with
+`CatchUpPlanner.plan` and spends it through a real `CatchUpCursor`. It owns no
+constant but its defaults.
+
+```
+~/.local/bin/godot --headless --path . -s res://tools/measure_offline_night.gd \
+    -- --absences=1,4,8,12 --settle-hours=110 --seeds=1337 [--cap-hours=720]
+```
+
+Three columns matter and two of them had never been printed together:
+
+* **$ credited** — treasury after the catch-up minus treasury before it. What
+  the PLAYER experiences. Only a *fairness* rule may bound this.
+* **veil ms** — wall clock the plan actually costs. What a *performance* budget
+  may bound, measured rather than derived from a per-hour estimate.
+* **$ same h ONLINE** — the control arm: the same settled city, the same number
+  of real hours, run online with the player present and buying nothing. The
+  ratio against it is the only comparison a player makes — *what would those
+  hours have been worth if I had been holding the phone?*
+
+`--settle-hours` picks the curriculum level: doc 92 §36's money pass on seed
+1337 has **L2 arriving at 47 gh, L3 at 82 gh, L4 at 135 gh, L5 at 243 gh**, so
+60 / 110 / 180 game-hours of settle land inside L2 / L3 / L4 respectively.
+
+### 55.2 What a settled city earns per real hour, online
+
+Re-measured this wave: `tools/measure_money_pass.gd --days=28 --seeds=1337`.
+One game-hour is one real minute at 1x (`data/time.json`), so the ledger's
+`$/gh` column **is** the player's `$/real-minute` and ×60 is the real-hour rate:
+
+| level | arrives (gh) | net $/gh | **net $/REAL HOUR of play** |
+|---|---|---|---|
+| L1 | 14 | 535.4 | $32,124 |
+| L2 | 47 | 672.9 | $40,374 |
+| L3 | 82 | 837.7 | $50,262 |
+| L4 | 135 | 977.2 | $58,632 |
+| L5 | 243 | 1,030.6 | $61,836 |
+| L6 | 509 | 2,527.1 | $151,626 |
+
+### 55.3 The player's actual case: eight real hours, a settled L3 city
+
+**BEFORE** is the shipped clamp (`data/persistence.json.catchup.max_coarse_hours
+= 360`, credited window 6 real hours). **AFTER** is the same run with the clamp
+off the pay path (`--cap-hours=720`, i.e. doc 01's C-19 cap and nothing else).
+Same seed, same settle, same city, same code — the only difference is which
+number bounds the credit.
+
+| level | settle | absence | BEFORE $ | AFTER $ | Δ | Δ% |
+|---|---|---|---|---|---|---|
+| L2 | 60 gh | **8 real h** | 227,042 | **285,526** | **+58,484** | **+25.8%** |
+| L2 | 60 gh | 12 real h | 227,042 | 378,866 | +151,824 | +66.9% |
+| **L3** | **110 gh** | **8 real h** | **281,319** | **354,830** | **+73,511** | **+26.1%** |
+| L3 | 110 gh | 12 real h | 281,319 | 478,377 | +197,058 | +70.0% |
+| L4 | 180 gh | **8 real h** | 314,221 | **402,062** | **+87,841** | **+28.0%** |
+| L4 | 180 gh | 12 real h | 314,221 | 550,371 | +236,150 | +75.2% |
+
+**The headline: an eight-hour night on a settled L3 city was worth $281,319 and
+is now worth $354,830 — $73,511 more, +26.1%.** A twelve-hour absence gains
++70.0%. The player slept through the difference.
+
+### 55.4 Where the money actually stopped — the taper is exonerated
+
+The shipped clamp is 360 game-hours = **6 real hours**, so hours 7, 8 and 9 of a
+night credited *nothing*. That is a hard stop and it is exactly the shape the
+player described. Run at the shipped clamp, the offline take is identical at
+6 h, 8 h and 12 h:
+
+```
+--absences=6,8,12 --settle-hours=110       # shipped clamp
+ 6 real h -> $281,319      8 real h -> $281,319      12 real h -> $281,319
+```
+
+Doc 03 §2.11's exponential taper — the other candidate — was **measured and is
+not the culprit**. Against the online control arm, with the clamp off the pay
+path:
+
+| absence | L2 offline / online | L3 offline / online | L4 offline / online |
+|---|---|---|---|
+| 1 real h | — | 54,527 / 53,947 = **101.1%** | — |
+| 4 real h | — | 196,240 / 198,751 = **98.7%** | — |
+| 8 real h | 285,526 / 287,404 = **99.3%** | 354,830 / 359,457 = **98.7%** | 402,062 / 410,073 = **98.0%** |
+| 12 real h | 378,866 / 388,964 = **97.4%** | 478,377 / 488,834 = **97.9%** | 550,371 / 562,482 = **97.8%** |
+
+An offline hour on a settled city is worth **97.4–101.1%** of the same hour
+online-and-idle. The taper's arithmetic ceiling (`E(∞) = OFF_FULL + OFF_TAU = 94`
+effective game-hours) is real, but at a *growing* city it is almost exactly
+cancelled: the work the player already paid for — construction, upgrades,
+population arrival — is **not** tapered (doc 03 §2.11 `TAPER_EXEMPT`), so the
+untapered base grows while the multiplier shrinks. **No taper change is shipped
+and none is needed.** The 101.1% row is the Director's offline fairness rule
+showing up as money: an absence draws at most one pre-warned Tier-1 hazard
+(doc 07 C-55), so the offline city spends less on repairs than the online one.
+
+The same table read the other way is the counted cost of the clamp: at the
+shipped 360, an 8-hour night paid **76.6–79.0%** of what those hours were worth
+and a 12-hour absence paid **55.9–58.4%**.
+
+### 55.5 The window, ruled in the player's unit
+
+**12 real hours, credited in full. Doc 01's C-19 cap stands and nothing tightens
+it.** The argument, in numbers a player experiences rather than in step costs:
+
+1. **A night is 6–9 hours; 12 is a night plus a lie-in.** At 12 the cap only
+   binds on an absence that is no longer a night — a workday, a flight — and
+   §55.3 shows that absence still pays $478,377 at L3 rather than $281,319.
+2. **It does not pay better than playing.** 97.4–98.7% of idle-online, and an
+   *online* player also builds (which compounds), collects street opportunities
+   (which offline draws none of, doc 08 §2.3 rule 9) and answers incidents.
+   Closing the app remains strictly worse than playing; it is no longer worse
+   than *sleeping less*.
+3. **Every extra hour asleep is worth money again.** The marginal real hour of
+   absence at L3 pays $54.5K at the first hour and $39.9K averaged over twelve —
+   a gentle decline, not a wall. The player's sentence was about a wall.
+
+Doc 08 §2.3's fairness rules are **unchanged**: offline still draws no street
+opportunities, catch-up is still a session kind and not a step size, the
+Director is still held to one pre-warned Tier-1 event. §55.4 measures the city
+under those rules at 97.9% of online, so they are not what made an overnight
+feel empty and this wave does not move them.
+
+### 55.6 What the veil costs, now that it is the only thing the budget bounds
+
+Measured wall clock for the whole plan, dev workstation, from the `veil ms`
+column (`veil frames` is that at 60 fps; doc 13 §2.13's Fold multiplier is 3–5×
+on top):
+
+| city | absence | coarse hours | veil ms | ms / coarse hour | frames at 60 fps |
+|---|---|---|---|---|---|
+| starter + 60 gh settle (L2) | 12 real h | 719 | 4,845 | 6.74 | 291 |
+| starter + 110 gh settle (L3) | 12 real h | 719 | 5,504 | 7.65 | 331 |
+| starter + 180 gh settle (L4) | 12 real h | 719 | 6,432 | 8.95 | 386 |
+| starter + 110 gh settle (L3) | 8 real h | 479 | 3,760 | 7.85 | 226 |
+| `bench_city` (1,500 buildings) | 12 real h | 719 | **116,882** | 162.6 | 7,013 |
+
+**Read the `veil ms` column as wall clock, because that is what it is.** The
+dollar columns are deterministic and reproduce to the cent; these do not — a
+re-run of the L3 row on this workstation spanned **5,435–5,747 ms** across three
+runs depending on what else the machine was doing, which is ±3%. The shipped
+`veil_ms_at_cap = 6432` is the L4 row recorded once, and it is the largest
+reference figure on purpose: a budget measured on the cheapest city is not a
+budget. Doc 01 §2.10's own knife-edge note is the standing warning here — a 5.5%
+spread in this measurement used to move `max_coarse_hours` by a whole game-day,
+which is precisely why it no longer moves anything a player can feel.
+
+**The reference-city figure is inside doc 08 §2.12's own accepted worst case.**
+That section already ruled a 3,960 ms catch-up (~5.5 s of veil at 60 fps,
+"animated and progress-bared rather than frozen") preferable to handing back less
+than three game-days. 5,504 ms is the same order for four times the credit.
+
+**The benchmark city's 116,882 ms is not, and it is filed rather than hidden**
+(§55.7). It is also not new and it was never fixed by the clamp: at the shipped
+`max_coarse_hours = 360` the same city costs **64,552 ms**, because the clamp was
+derived from the *starter* city's 5.488 ms/hour and had no idea the benchmark
+city existed. A clamp that produced 3 s on one city and 65 s on another was not
+bounding a veil; it was only bounding a wallet.
+
+### 55.7 Filed, not fixed — `awaiting_consumer`
+
+| row | what | number | who |
+|---|---|---|---|
+| **AC-19-1** | A 1,500-building city spends 116,882 ms of veil on a 12-real-hour catch-up (7,013 frames; ×3–5 on the Fold). The coarse step is 162.6 ms there against 7.65 ms on a settled starter city, and it is 57% `incidents` + `roads_congestion` (`profile_sim --coarse-hours=240`). **The fix is a cheaper coarse hour, not a smaller credit.** | 116,882 ms | the coarse-step performance lane |
+| **AC-19-2** | Gate re-fits: **no balance gate cell is expected to move.** No gate reads the offline path — `BalanceGateRig` runs `advance_coarse_hours(1, false)`, online, not catch-up — and `tools/profile_sim.gd` calls `advance_coarse_hours` directly rather than through `CatchUpPlanner`, so neither `--hash-only` pair is on the changed path. Verified in report 98 §58 with all four hashes re-run. | 0 cells | the survivable-city lane |

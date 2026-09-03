@@ -7905,3 +7905,271 @@ the panel and the render arm all ship with tests — and the only thing a player
 would notice missing is that the ruin's mesh survives its own restore until the
 next relaunch. That is the pump lesson exactly, which is why the arms are named
 rather than assumed.
+
+---
+
+## 58. WAVE 19 — the money stopped at six hours, and it was our clamp (binding)
+
+**The player's report, 2026-09-03, on their own Fold 6 city:** *"I went to bed
+hoping I'd wake up to a bunch of money. The money stops after a certain amount of
+hours of the game being closed — we should boost those numbers."*
+
+They are describing a wall, and there was one, and it was ours. `RR-133` (§48,
+2026-09-01) implemented doc 08 §2.12's performance budget as `max_coarse_hours`
+and fed it into `CatchUpPlanner.plan` as a second clamp — on the **credited
+absence**. Derived from the founding city's measured 5.488 ms coarse hour it
+shipped at 360 game-hours, and 360 game-hours is **six real hours**. Every hour
+of sleep past the sixth paid nothing.
+
+Doc 92 §55 measures the bill on a settled L3 city, seed 1337: an **eight-hour
+night was worth $281,319 and is worth $354,830** — the wall cost the player
+**$73,511, 26.1% of a night** — and a twelve-hour absence was paid 57.5% of what
+those hours were worth.
+
+This section rules the axis, not the number.
+
+### RR-160 — the credited absence is doc 01's cap and NOTHING may tighten it (docs 01 §2.10, 08 §2.12, 92 §55)
+
+**Binding.** `CatchUpPlanner.plan(elapsed_real_ms, residual_game_ms, tick_index)`
+credits `mini(elapsed, OFFLINE_CAP_REAL_MS)` and there is **no fourth argument**.
+`max_coarse_hours` is deleted from the planner, from `SavePolicy` and from
+`data/persistence.json`, and `tests/test_catchup_veil_budget.gd` scans the
+planner's source to prove the name is gone rather than merely unused — the
+inverse of the grep that opened RR-133.
+
+**The reasoning, stated once.** A performance budget and a fairness rule answer
+different questions:
+
+| | question | may bound | measured in |
+|---|---|---|---|
+| **Fairness rule** (doc 01 C-19) | *what is the player paid for being away?* | the credited absence | real hours of the player's life |
+| **Performance budget** (doc 08 §2.12) | *how long does the catch-up veil run?* | wall clock behind the veil | milliseconds |
+
+Wave 17 made one number do both, and when the two disagreed the *player* paid.
+That is the defect. It is also why the fix is structural and not a retune: the
+planner now reads **no data file at all** (`grep -n SavePolicy
+sim/time/catchup_planner.gd` → nothing), so no workstation measurement has a path
+to a player's wallet, and constitution §5 gets a stronger guarantee for free —
+two phones cannot credit the same absence differently because there is nothing
+device-shaped left in the credit.
+
+**A second, quieter correction rides along.** `plan()` publishes `cap_real_hours`
+beside `cap_game_hours`. The cap has always been quotable in two units and the
+surfaces were picking one each; RR-162 makes them pick the same one.
+
+### RR-161 — the performance budget moves to the axis it is a budget for (doc 08 §2.12, doc 92 §55.6)
+
+**Binding.** Doc 08 §2.12's decision rule — `max_coarse_hours = clamp(floor(
+ceil(2000 / measured_coarse_ms) / 24) × 24, 72, 720)` — is **retired**. In its
+place, `data/persistence.json.catchup` carries two wall-clock numbers with no
+arithmetic between them:
+
+```
+veil_ms_at_cap : 6432   # MEASURED: a whole 12-real-hour plan on the settled
+                        # reference city (doc 92 §55.6)
+veil_budget_ms : 9000   # what that is allowed to be
+```
+
+and the gate is `veil_ms_at_cap ≤ veil_budget_ms`. `tests/test_catchup_veil_budget.gd`
+asserts it, asserts that **nothing in `sim/`, `ui/` or `game/` reads either
+field**, and prints a live founding-city measurement rather than asserting one (a
+wall-clock assert beside a fleet of sibling suites is a flake, not a gate).
+
+**Three things the old rule got wrong, for the record.**
+
+1. **The numerator was the wrong budget.** `2000` is doc 08 G4's *"24 game-hours
+   of absence caught up well under 2 s"*. G4 bounds a **24-hour** catch-up; the
+   rule applied it to the **720-hour** one and then took the difference out of
+   the credit.
+2. **It bounded neither veil.** At the shipped 360 the founding city spent ~3 s
+   and the benchmark city spent **64,552 ms** on the same absence (doc 92 §55.6),
+   because the clamp was derived from one city and applied to all of them. A
+   number that produces 3 s here and 65 s there is not a bound.
+3. **It erred the wrong way against its own stated preference.** §2.12 says *"we
+   would rather spend 4 s once than hand back less than three game-days"*. The
+   full cap on the settled reference city costs **5,504 ms** — 4 s once, almost
+   exactly — and hands back 30 game-days.
+
+**What is NOT fixed:** the benchmark city needs 116,882 ms for a full-cap
+catch-up and is over budget by 13×. Filed as doc 92 §55.7 **AC-19-1** against the
+coarse step (57% `incidents` + `roads_congestion` at `profile_sim
+--coarse-hours=240`). **The fix is a cheaper coarse hour, never a smaller
+credit** — that is the whole content of RR-160 and it does not get suspended
+because the number is inconvenient.
+
+### RR-162 — the away report tells the truth about the cap, in the unit the player slept in (doc 12 §2.12 D-87, doc 08 §2.12)
+
+**Binding.** Three defects in one header, and two of them were invisible because
+the third hid them.
+
+1. **`elapsed_game_minutes` was the WALL CLOCK, not the credited time.**
+   `game/main.gd` passed `elapsed_wall_s` straight through, so a 26-hour absence
+   rendered *"Away 26h · 65 days of city time"* over a city that had lived 30.
+   The shell now passes `plan.credited_real_ms / 1000`, and
+   `tests/test_catchup_veil_budget.gd::test_the_header_counts_the_city_time_that_actually_ran`
+   pins 720 game-hours / 30 game-days against a 26-hour absence.
+2. **The capped line quoted city time at a sleeping player.**
+   `ui_away_capped` filled `{hours}` from `cap_game_hours` and rendered *"Your
+   city ran for 720h — the maximum."* `AwayModel._cap_real_hours` reads the
+   plan's new `cap_real_hours`, falls back to `cap_game_hours ÷ 60` so an
+   un-updated caller says something true rather than something absurd, and the
+   copy is now **"Your city ran for 12 hours while you were away — the
+   maximum."** — the player's own unit and very nearly their own words.
+3. **Nothing tested the other direction.** D-77 pinned the line firing when the
+   cap bit; nothing pinned it staying quiet when it did not, which is the case
+   that matters now that an eight-hour night is uncapped.
+   `test_an_uncapped_away_report_does_not_imply_a_cap` builds the report from a
+   real eight-hour plan and asserts `capped_text == ""`.
+
+### RR-163 — the window is ruled against what a player earns, not against a step cost (doc 92 §55.5)
+
+**Binding: 12 real hours, credited in full.** Doc 01 C-19 stands and doc 08
+§2.12 no longer tightens it. The ruling is made in the unit a player experiences,
+which RR-133's was not, and doc 92 §55.2/§55.4 carry the arithmetic:
+
+* A settled city earns **$40,374 (L2) / $50,262 (L3) / $58,632 (L4) per REAL
+  HOUR** of play. One game-hour is one real minute at 1x, so the ledger's `$/gh`
+  column *is* the per-real-minute rate; nothing is converted.
+* An absence pays **97.4–101.1% of the same hours online-and-idle** at every
+  length from one hour to twelve — measured against a control arm that runs the
+  same settled city the same number of real hours with `is_catchup = false`.
+* Therefore the cap is not where the money is decided; it is only where it is
+  **stopped**. At 12 real hours it stops on an absence that is no longer a night.
+
+**Doc 03 §2.11's taper is exonerated, and this is the finding that kept the wave
+honest.** The obvious suspect for "the money stops" is the exponential taper,
+whose effective-hours ceiling is `OFF_FULL + OFF_TAU = 94` game-hours. It was
+measured (doc 92 §55.4) and it is very nearly cancelled at a growing city,
+because the work the player already paid for — construction, upgrades, population
+arrival — is `TAPER_EXEMPT`: the untapered base grows while the multiplier
+shrinks. **No taper change is shipped, no difficulty scalar moves, and
+`data/difficulty.json` is untouched.** Doc 08 §2.3's eight fairness rules are
+likewise unchanged: offline still draws no street opportunities, catch-up is
+still a session kind rather than a step size, and the Director is still held to
+one pre-warned Tier-1 event per absence. Under those rules the city measures at
+97.9% of online, so they are not what made an overnight feel empty.
+
+### 58.1 Hash deltas, and why there are none
+
+All four `profile_sim --hash-only` baselines are **unchanged** at the end of this
+wave — recorded at the fork and re-run at the tip:
+
+| pass | city | hash |
+|---|---|---|
+| coarse 24 h | `data/starter_city.json` | `64c4d7e9d8f8fb74…` |
+| fine 2.0 h | `data/starter_city.json` | `9f19dcc5212f834d…` |
+| coarse 24 h | `tests/fixtures/bench_city.json` | `6f383de1ed6940a2…` |
+| fine 2.0 h | `tests/fixtures/bench_city.json` | `311e29d10b1cb43d…` |
+
+**Structurally, not luckily.** Nothing this wave touches what a coarse hour or a
+fine tick *does*: `CatchUpPlanner` decides how many of them run, and
+`tools/profile_sim.gd` calls `CitySim.advance_coarse_hours` directly rather than
+through a plan. For the same reason **no balance gate cell moves** —
+`BalanceGateRig` runs `advance_coarse_hours(1, false)`, online, never through the
+planner. Doc 92 §55.7 AC-19-2 files that for the survivable-city lane rather than
+assuming it.
+
+### 58.1b Verified at the tip — the commands, and what they printed
+
+Every claim in this section is re-runnable. Recorded 2026-09-03 on the branch's
+final commit, in this order:
+
+```
+~/.local/bin/godot --headless --script tests/run_tests.gd > suite.log 2>&1; echo $?
+  -> 0 · files 146 · tests 2,705 · asserts 570,321 · failed 0 · silent 0
+
+~/.local/bin/godot --headless -s res://tools/profile_sim.gd -- --hash-only
+  coarse 24h  64c4d7e9d8f8fb74e5dd1502ad06c0bce46dd8940cdd777098c80b7aae9e8787
+  fine  2.0h  9f19dcc5212f834dacbbe61ccaf3c42674a793c564b23f8c645e33c76cb69ba4
+… same, --city=res://tests/fixtures/bench_city.json
+  coarse 24h  6f383de1ed6940a28b4f27c9ddfa8593ef9edeb0a71efaf20814feae4012c496
+  fine  2.0h  311e29d10b1cb43d2b52b94f02e4b346943ebb1ac7bc42a5445b0d5473ed2127
+  -> all four IDENTICAL to the same four recorded at the fork, before any edit
+
+python3 tools/check_doc_refs.py
+  -> 4,399 references, all resolving; no id assigned twice
+
+grep -n SavePolicy sim/time/catchup_planner.gd
+  -> nothing: the planner reads no data file
+
+grep -rn "max_coarse_hours" sim/ game/ ui/ --include=*.gd | grep -v ":[0-9]*:##\?"
+  -> nothing: the three surviving mentions are `##` prose explaining the deletion
+```
+
+The headline, re-measured after the change with the same instrument that
+measured before it (doc 92 §55.3, settled L3 city, seed 1337):
+
+```
+tools/measure_offline_night.gd --absences=8,12 --settle-hours=110 --seeds=1337
+  8 real h -> $354,830   12 real h -> $478,377      # ships
+… --cap-hours=360                                   # the Wave-18 clamp, as a what-if
+  8 real h -> $281,319   12 real h -> $281,319
+```
+
+**The suite cost of the fix, stated because it is real.**
+`tests/test_catchup_cursor.gd` plans a 7 h 41 m absence and proves slice
+bit-identity at four slice sizes on two cities; that absence used to be clamped
+to 6 h, so the file now runs 461 coarse hours per arm instead of 360 and takes
+**6 m 57 s** instead of ~5 m 20 s. The test was silently proving a smaller
+property than it claimed. Nothing was weakened to buy the minute back.
+
+### 58.2 What is left to `game/main.gd` — one snippet, the lead's
+
+`game/main.gd` is the lead's file. The arm is named and anchored rather than
+written here; until it lands, the shell still passes the wall clock as
+`elapsed_game_minutes` and the away header over-reports city time on a **capped**
+absence only (an uncapped one is already correct, because credited *is* elapsed).
+Every other half of RR-160/161/163 is live without it: the credit itself comes
+out of `CatchUpPlanner.plan`, which the shell already calls.
+
+**It is not a guess.** `tests/shell_resume_rig.gd` mirrors these same two
+functions and has the change already, so the snippet below is a copy of code with
+a green test behind it —
+`tests/test_catchup_resume.gd::test_a_nine_hour_night_is_credited_whole_and_reported_honestly`
+drives a real nine-hour absence through `AndroidLifecycle` and asserts 129,600
+ticks (the Wave-18 clamp credited 86,400), an uncapped veil, 22.5 game-days in
+the header and an empty capped line.
+
+**(a) `_on_app_resumed`** — the `_catchup_after` literal, two keys appended:
+
+```gdscript
+	_catchup_after = {
+		"elapsed_wall_s": elapsed_wall_s + float(unfinished.get("elapsed_wall_s", 0.0)),
+		"residual_game_ms": int(plan.get("new_residual_game_ms", 0)),
+		"capped": bool(plan.get("capped", false)),
+		"cap_game_hours": float(cap_game_hours),
+		# RR-162 / doc 12 D-87. The away report counts the city time that
+		# ACTUALLY RAN and quotes the cap in the hours the player was away;
+		# `elapsed_wall_s` is neither of those on a capped absence.
+		"credited_real_ms": int(plan.get("credited_real_ms", 0)),
+		"cap_real_hours": float(plan.get("cap_real_hours",
+				CatchUpPlanner.OFFLINE_CAP_REAL_HOURS)),
+	}
+```
+
+**(b) `_finish_catchup`** — beside the three existing reads, immediately after
+`var cap_game_hours := float(_catchup_after.get("cap_game_hours", 720.0))`:
+
+```gdscript
+	var credited_real_ms := int(_catchup_after.get("credited_real_ms",
+			int(elapsed_wall_s * 1000.0)))
+	var cap_real_hours := float(_catchup_after.get("cap_real_hours",
+			float(CatchUpPlanner.OFFLINE_CAP_REAL_HOURS)))
+```
+
+…and in the same function's `ui_root.present_away_report({…})` literal, the
+`elapsed_game_minutes` line is replaced and one key is appended:
+
+```gdscript
+		# 1 real s = 1 game min at 1x — on the CREDITED absence, not on the wall
+		# clock. A capped resume claimed city time the city never lived (RR-162).
+		"elapsed_game_minutes": float(credited_real_ms) / 1000.0,
+		…
+		"capped": capped,
+		"cap_game_hours": cap_game_hours,
+		"cap_real_hours": cap_real_hours,
+```
+
+`AwayModel` accepts `cap_game_hours` alone and divides it by 60, so the file is
+correct before the snippet lands and more correct after — there is no window in
+which the two disagree.

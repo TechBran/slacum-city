@@ -4471,3 +4471,89 @@ can usefully decide while the lot is still rubble.
 
 `tests/test_ui_restore.gd` asserts both halves **against the sim's own answer**
 rather than against the panel's rule, so a change to either has to move both.
+
+---
+
+## AO. Wave-19 rulings — a budget that was charged to the wrong account (2026-09-03)
+
+### AO1. The mechanic: two questions that had one number
+
+`CatchUpPlanner.plan` did this, and it is the whole defect in one line:
+
+```gdscript
+var cap_ms := mini(OFFLINE_CAP_REAL_MS, cap_hours * REAL_MS_PER_GAME_HOUR)
+```
+
+`OFFLINE_CAP_REAL_MS` is doc 01 C-19's **fairness** rule — *how much of an
+absence does the game pay for?* — answered in real hours of a person's life, and
+it is 12. `cap_hours` is doc 08 §2.12's **performance** budget — *how long may the
+catch-up veil run?* — answered in milliseconds of wall clock, derived from a
+coarse-step measurement on a workstation, and it resolved to 360 game-hours = **6
+real hours**. `mini` made the second one win, every night, silently.
+
+**The mechanical tell is the units.** A `mini` between two quantities is only
+meaningful when they measure the same thing, and these do not: one is a promise to
+a player and the other is a property of a machine. Wave 17 converted the machine
+number into game-hours to make the comparison type-check, and a unit conversion
+is exactly the move that hides a category error. There was no bug in the
+arithmetic — `clamp(floor(ceil(2000/5.488)/24)×24, 72, 720) = 360` is correct —
+and the code did precisely what it said.
+
+### AO2. Why the fix is a deleted parameter and not a bigger number
+
+The obvious repair is to raise `max_coarse_hours` to 720 and move on. It is
+rejected, and the reason is that it leaves the mechanism intact: the next
+measurement on the next city lowers it again, and the clamp is *supposed* to
+respond to measurements — that is what it is for. A knob that is only safe at one
+value is not a knob.
+
+So `plan()` loses the parameter. It takes three arguments, it reads no data file
+(`grep -n SavePolicy sim/time/catchup_planner.gd` → nothing), and
+`tests/test_catchup_veil_budget.gd` scans the source to prove the name is gone
+rather than merely unused. **There is no expression a caller can write that
+credits a player less than doc 01's cap.** That is a stronger property than a
+correct number and it is the only one a future wave cannot un-tune.
+
+It also strengthens constitution §5 for free. A clamp derived from a live
+measurement would credit two phones differently for the same absence; Wave 17
+avoided that by shipping the measurement in a data file, which fixed the
+determinism and kept the theft. Removing the read removes both.
+
+### AO3. The unit a surface quotes is part of the ruling
+
+The cap is one fact with two spellings — 720 game-hours, 12 real hours — and the
+two surfaces had picked one each. The veil said *"The longest stretch this city
+simulates at once is 6 hours"* (real) and the away report said *"Your city ran for
+720h"* (game). Both were true and one of them was useless, because a player who
+slept eight hours is not counting in city time.
+
+**Rule: a surface that quotes a limit quotes it in the unit of the thing the
+player did.** They were away for hours, so the cap is in hours away.
+`CatchUpPlanner.plan` therefore publishes `cap_real_hours` beside
+`cap_game_hours` and the copy fills from the first; the alternative — each
+surface dividing by 60 on its own — is how the two disagreed in the first place.
+
+The same rule catches the older half of the same header: `elapsed_game_minutes`
+was the raw wall clock, so a capped absence reported city time the city never
+lived. City-time facts come from the plan's `credited_real_ms`, not from how long
+the phone was in a pocket.
+
+### AO4. What was measured before it was ruled, and what that changed
+
+Two candidates were available for *"the money stops"* and only one of them was
+ours. Doc 03 §2.11's exponential taper has an arithmetic ceiling of `OFF_FULL +
+OFF_TAU = 94` effective game-hours, which reads exactly like a wall on paper.
+
+It was measured against a control arm — the same settled city, the same number of
+real hours, run **online** with the player present and buying nothing — and it is
+not a wall in practice: an absence pays **97.4–101.1%** of the online figure at
+every length from one real hour to twelve (doc 92 §55.4). The reason is in doc 03
+§2.11's own `TAPER_EXEMPT` list: construction, upgrades and population arrival are
+work the player already paid for, so the untapered base grows while the multiplier
+shrinks, and at a growing city the two very nearly cancel.
+
+**So no taper change shipped, no difficulty scalar moved, and doc 08 §2.3's eight
+fairness rules are untouched.** The ruling worth recording is the method rather
+than the result: a plausible mechanism that has never been measured against a
+control is a suspect, not a cause, and this wave's whole change would have been
+mis-aimed if the taper had been retuned on the strength of how it reads.

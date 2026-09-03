@@ -103,7 +103,8 @@ func on_app_resumed(elapsed_wall_s: float) -> void:
 		"hours": total_ticks / GameClock.TICKS_PER_HOUR,
 		"total_ticks": total_ticks,
 		"capped": bool(plan.get("capped", false)),
-		"cap_real_hours": int(plan.get("cap_game_hours", 720)) / 60,
+		"cap_real_hours": int(plan.get("cap_real_hours",
+				CatchUpPlanner.OFFLINE_CAP_REAL_HOURS)),
 	})
 	_catchup_was_paused = paused
 	paused = true
@@ -112,6 +113,12 @@ func on_app_resumed(elapsed_wall_s: float) -> void:
 		"residual_game_ms": int(plan.get("new_residual_game_ms", 0)),
 		"capped": bool(plan.get("capped", false)),
 		"cap_game_hours": float(int(plan.get("cap_game_hours", 720))),
+		# RR-162 / doc 12 D-87. The away report counts the city time that
+		# ACTUALLY RAN and quotes the cap in the hours the player was away;
+		# `elapsed_wall_s` is neither of those on a capped absence.
+		"credited_real_ms": int(plan.get("credited_real_ms", 0)),
+		"cap_real_hours": float(plan.get("cap_real_hours",
+				CatchUpPlanner.OFFLINE_CAP_REAL_HOURS)),
 	}
 	_catchup_cursor = sim.begin_catchup(plan)
 	advance_catchup()
@@ -142,6 +149,10 @@ func finish_catchup() -> void:
 	var elapsed_wall_s := float(_catchup_after.get("elapsed_wall_s", 0.0))
 	var capped := bool(_catchup_after.get("capped", false))
 	var cap_game_hours := float(_catchup_after.get("cap_game_hours", 720.0))
+	var credited_real_ms := int(_catchup_after.get("credited_real_ms",
+			int(elapsed_wall_s * 1000.0)))
+	var cap_real_hours := float(_catchup_after.get("cap_real_hours",
+			float(CatchUpPlanner.OFFLINE_CAP_REAL_HOURS)))
 	_catchup_after = {}
 	# The 'before' belongs to the absence that just finished. A QUEUED second
 	# absence gets its own, captured in [on_app_resumed] from the city this
@@ -152,11 +163,14 @@ func finish_catchup() -> void:
 		return
 	reports.append({
 		"elapsed_wall_s": elapsed_wall_s,
-		"elapsed_game_minutes": elapsed_wall_s,
+		# 1 real s = 1 game min at 1x — on the CREDITED absence, not on the wall
+		# clock. A capped resume used to claim city time the city never lived.
+		"elapsed_game_minutes": float(credited_real_ms) / 1000.0,
 		"before": before,
 		"after": snapshot_city(sim),
 		"capped": capped,
 		"cap_game_hours": cap_game_hours,
+		"cap_real_hours": cap_real_hours,
 		"events_digest": offline_batch,
 	})
 
