@@ -291,8 +291,19 @@ func _age_offers(dt_h: float) -> void:
 
 
 ## One Bernoulli per step at `dt_h / offer_interval_h`, skipped entirely while
-## the board is full or a cooldown is running — **two draws per successful offer
-## and none on a quiet step**, all on the `contracts` stream.
+## the board is full or a cooldown is running.
+##
+## **The draw budget, counted rather than claimed** (doc 01 §2.5's coarse
+## contract would ask for this if this system had a coarse path): **zero** draws
+## on a step where the board is full or resting, **one** on a step whose
+## Bernoulli fails, **two** where it clears and no template is eligible for the
+## city's level, and **four** on a posted offer — the Bernoulli, the weighted
+## template pick, the payout's `u` and the offer's lifetime, in that order and
+## always in that order, all on the `contracts` stream and no other.
+##
+## That the count depends on board state is deliberate and is not a determinism
+## hazard: every branch is a function of state the save carries, so a
+## save → load → advance lands on the same draw at the same tick.
 ##
 ## The cooldown suppresses OFFERS as well as accepts, so the quiet stretch after
 ## a claim is visible on the board rather than only in a refusal. That is the

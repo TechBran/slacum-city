@@ -9139,13 +9139,30 @@ Gate 32 gains arm **(d2)**, which asserts exactly this table.
 game-minute and nothing else, so every difference between the two rows is the
 street layer.)*
 
-| | fork, seed 1337 | Wave 19, seed 1337 |
+*(Means of seeds 1337 and 4242; the per-seed rows and the by-level bounty table
+are in §57.3.1, and every figure there is read out of the tool's own log.)*
+
+| | fork | Wave 19 |
 |---|---|---|
-| `curriculum` net $/gh | 1,947 | see 57.3 |
-| `collector` net $/gh | 2,604 | see 57.3 |
-| `collector` street income | $184,863 | see 57.3 |
-| offers taken in 21 game-days | 340 | see 57.3 |
-| **street share of `collector` net** | **14.09 %** | see 57.3 |
+| `curriculum` net $/gh — the CONTROL | 1,871 | **1,871, unmoved on both seeds** |
+| `collector` net $/gh | 2,779 | 3,207 |
+| `collector` street income, 21 game-days | $177,738 | $188,285 (**+5.9 %**) |
+| offers taken | 328.0 | **183.5 (−44.1 %)** |
+| **dollars per collection** | **$542** | **$1,026 (1.89×)** |
+| **street share of `collector` net** | **12.78 %** | **11.64 %** |
+
+**Read the third and fourth rows together — they are the trade.** 44 % fewer
+collections, 5.9 % more money from them, and the share of a played city's net
+falls slightly rather than rising. `STREET_PLAYED_SHARE_BAND` [0.05, 0.20] is
+**HELD, not re-fitted**, which is what a neutral trade is supposed to produce and
+is the check that it was neutral.
+
+**The `collector`'s own net rose 15 % and the street layer did not pay for it.**
+Street income is up 5.9 %; the rest is the agent's spending heuristic meeting
+lumpier income at different game-hours and building a bigger city (value created
+1,176,663 → 1,348,801, population 1,200 → 1,305). It is emergent, it is not a
+balance claim, and the row that matters for a balance claim is the one above it:
+`curriculum`, the same agent with the tap removed, is identical to the dollar.
 
 **Where the line is, stated as a rule rather than as a number.** Three bounds,
 and they are three different questions:
@@ -9217,6 +9234,96 @@ makes that work is `0.15 / 0.20 = 0.75` — **four ruins salvaged pay for three
 restored**, at every level and every archetype, because both fractions read the
 same `capital_value`.
 
-### 57.3 The arc after, and the opening
+### 57.3 The arc after, and the control that did not move
 
-*Filled in at the end of the lane; see the closing measurement block.*
+*(Instruments: `tools/measure_street_arc.gd --days=21 --seeds=1337,4242`, the
+controlled `curriculum`/`collector` pair; `tools/measure_curriculum.gd --days=45
+--seeds=1337,4242,9001`. The BEFORE column is taken on an untouched `git archive`
+export of the fork commit, in its own directory — a control run that shares a
+working tree with a lane still editing it is not a control.)*
+
+#### 57.3.1 The played arc: fewer, bigger, and a slightly smaller share
+
+| seed | agent | net $/gh | street $ | offers | street share of net |
+|---|---|---|---|---|---|
+| 1337 | `collector` | 2604 → **3223** | 184,863 → **191,817** | 340 → **191** | 14.09 % → **11.81 %** |
+| 1337 | `curriculum` | 1947 → **1947** | 0 → **0** | 0 → **0** | 0.00 % → **0.00 %** |
+| 4242 | `collector` | 2954 → **3192** | 170,613 → **184,753** | 316 → **176** | 11.46 % → **11.48 %** |
+| 4242 | `curriculum` | 1796 → **1796** | 0 → **0** | 0 → **0** | 0.00 % → **0.00 %** |
+| **mean** | **`collector`** | 2779 → **3207** | 177,738 → **188,285** | 328.0 → **183.5** | 12.78 % → **11.64 %** |
+
+**The trade lands exactly where it was aimed.** The collector takes **44.1 %
+fewer offers** and earns **+5.9 %** from them, so the layer's income per
+game-hour is where it was and **one collection is worth $1026 against $542
+— 1.89×**. Its share of a played city's net falls 12.78 % → **11.64 %**, still
+inside `STREET_PLAYED_SHARE_BAND` [5 %, 20 %], and **the band is HELD rather than
+re-fitted** — which is the outcome a neutral trade is supposed to produce.
+
+**The mean bounty by city level, which is the number the player feels:**
+
+| city level | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|---|
+| fork | $313 | $320 | $376 | $427 | $507 | $589 | $628 |
+| Wave 19 | **$555** | **$540** | **$719** | **$825** | **$934** | **$1131** | **$1200** |
+| × | 1.78 | 1.69 | 1.91 | 1.93 | 1.84 | 1.92 | 1.91 |
+
+At the top rung a single collection goes **$628 → $1200, 1.91×**, which is what
+*"add a zero to that"* buys on this layer. The rest of the zero is RR-170's.
+
+#### 57.3.2 The control, and it is the strongest result in this section
+
+**The `curriculum` agent did not move by one dollar, on either seed.**
+
+| seed | net $/gh | treasury | value created | level at the wall |
+|---|---|---|---|---|
+| 1337 | 1947 → 1947 | 64,649 → 64,649 | 768,858 → 768,858 | 5 → 5 (identical) |
+| 4242 | 1796 → 1796 | 58,285 → 58,285 | 703,981 → 703,981 | 5 → 5 (identical) |
+
+**And the 45-game-day opening arc is bit-identical too.**
+`tools/measure_curriculum.gd --days=45 --seeds=1337,4242,9001`, every published
+figure, fork against Wave 19:
+
+| curriculum level | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| fork, arrival game-hour (1337/4242/9001) | 14/13/17 | 47/41/47 | 82/79/82 | 135/127/133 | 243/257/281 | 509/534/590 |
+| Wave 19 | 14/13/17 | 47/41/47 | 82/79/82 | 135/127/133 | 243/257/281 | 509/534/590 |
+| fork, mean net $/real-min | 537.7 | 658.8 | 851.0 | 956.4 | 1017.2 | 2755.4 |
+| Wave 19 | 537.7 | 658.8 | 851.0 | 956.4 | 1017.2 | 2755.4 |
+
+**Every cell matches**, and so does every counter the tool prints — roads built,
+repairs bought, repair spend, water spend, tax changes, population and treasury at
+the wall on all three seeds. The only difference between the two runs is the
+`state_hash`, which carries the new `rng.contracts` key.
+
+That is the evidence for the claim the rest of this wave rests on: **everything
+Lane 3 added is reachable only through a player verb.** An agent that does not tap
+a kerb, does not accept a commission, does not work the dispatch drawer and does
+not salvage a ruin plays exactly the city it played at the fork — which is why
+`MODEL_NET_PER_HOUR_BY_CITY_LEVEL` is still the right denominator for the three
+level curves fitted against it, and why gates 1, 2, 21 and 29 are unmoved.
+
+#### 57.3.3 Active against passive: where the line is
+
+| layer | ceiling, takes everything | played, measured | idle |
+|---|---|---|---|
+| street opportunities | **40 %** ruled; 36.42 % measured at founding, max 36.2 % across the ladder | **11.64 %** at 21 game-days | **0 %**, written down |
+| commissions | **25 %** ruled; 21.7 % at the binding rung (level 5) | — no tapping agent yet | **0 %** |
+| dispatch premium | bounded per incident by 0.75 × the loss prevented | 4.8–5.8 % of net from dispatch entire (gate 32(g)) | unchanged |
+| **the two ceilings SUMMED** | **65 %** | | |
+
+**The line, as a rule rather than a number:** *above one half from any single
+active layer, or above two thirds from all of them together, and the city stops
+being the thing being played.* At 65 % a player who takes literally every offer
+and completes every commission still earns **35 %** of a maximally-active income
+from the city running itself — or, put the way a player would feel it, perfect
+attention is worth **1.65×** a passive session and never 2×. Gate 32's last
+assertion is that sum, held at 0.67, so no future wave can raise one ceiling
+without being made to look at the other.
+
+**The honest gap.** The commissions row has no measured *played* figure, because
+`tools/playtest.gd` has no agent that accepts one — exactly the gap `collector`
+filled for the street layer in Wave 15 (RR-86), one layer later. The ceiling is
+DERIVED, from one authored cooldown and one authored payout table, and gate 32(h)
+checks the derivation across both files at every rung. A `contractor` agent is the
+instrument this section is missing; it is ranked first in the lane's open
+questions.
