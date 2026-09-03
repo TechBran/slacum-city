@@ -2458,3 +2458,36 @@ thing are not.
 
 **The deck is 69 states**, the two new ones included; `--screen=all --audit
 --strict` reads clean in every cell.
+
+### Wave 19 delta — the fourth band: a state the surface had never had to draw (2026-09-03)
+
+*One row. Wave 19 changes what the SIM does to a building, and the surface's job
+is to stop describing a state that no longer exists. Rulings: doc 93
+§AP1/§AP4. Measurement: doc 92 §56. Ship: report 98 §59 RR-164/RR-167.*
+
+| id | change | doc ref | why |
+|---|---|---|---|
+| D-88 | **`condemned` — doc 02 §2.6's band table gains a fourth, terminal rung, and it is wired end to end.** *(a)* `CitySim._condition_band_of` returns `condemned` below `structural_failure_threshold`, under `poor`; the downward-only rule that was the single special case `previous == &"poor"` is now an ORDERING over `CONDITION_BAND_ORDER`, so a building climbing back out of Condemned announces nothing. It costs no state and no hash — the band is still a pure function of one float, exactly as PA-31 bought it. *(b)* `data/notifications.json` gains `buildings_condemned` — **P2_important, severity 3, aggregate, 720-minute cooldown** — and its router row; `data/ui.json.event_log` gains the matching `economy` row **keyed on `building`, so it carries `Jump to it`**; `data/strings.en.json` gains the three keys. The copy is the whole ruling in two sentences: *"{count} buildings are condemned / They earn 40 % and they will not fall down. Restore their power and their owners bring them back."* *(c)* `relief_grant_awarded` now carries `revenue_term`, `damage_term` and `outstanding_restore_cost`, so a grant can be narrated as what it is measured against rather than as a bare number. | §2.9 item 6, doc 02 §2.6a, doc 03 §2.10 layer 5, doc 93 §AP1/§AP4 | The player, 2026-09-03: *"ALL of my buildings are destroyed right now."* Doc 92 §56.1 found every destruction in the game came through wear; §AP1 stops wear demolishing private stock — which hands the surface a state it has never had to draw: a building at the bottom, **staying** there, that the player can get back. **Drawing it as `Poor` would be the lie this row exists to remove**, because `Poor` implies further to fall and there is none. It is **P2 where Worn and Poor are P3** for the one property they do not have — it is terminal, it will neither worsen nor recover on its own — and **not P1** on those rows' own argument: a condemned building is a standing building earning 40 %, not an emergency. **It also corrects a sentence in `data/notifications.json`** that was true when it was written: `_comment_condition_bands` says Poor is "always about an asset the player can actually repair" *because* §Y1's floor kept private stock out of it. §AP1 makes that false, and the new comment says so beside it. |
+
+**What this row deliberately does NOT do.** It adds **no verb**. The temptation
+on seeing a condemned building is a button, and there is nothing to sell: the
+recovery is restoring the service that lifted doc 02 §2.6a's ownership floor in
+the first place (doc 92 §56.2 — 74 to 107 dark buildings with **zero failed
+components**, a city that outgrew its own generation), and the door for that is
+the power panel the player already has. A `REPAIR · $X` on a condemned house
+would sell a repair the owner undoes for free the moment the lights come back,
+which is doc 93 §Y1 read backwards.
+
+**Two `awaiting_consumer` halves, named rather than written.** Both are in files a
+sibling lane owns this wave (§3.0 rule 1), and both consume things this row has
+already published, so neither needs a sim change:
+
+1. **S5's band line.** `BuildingPanel` renders no condition band by name today
+   (`grep -rn "band_worn\|condition_band" ui/` finds one hit, and it is the
+   dashboard's Upkeep box). When it does, `condemned` is the rung that most needs
+   the sentence, and the sentence is the notification body above.
+2. **The dashboard's citywide count** — *"14 buildings condemned"* — belongs in
+   the Upkeep band beside `worn_text` in `ui/city_dashboard.gd:589`.
+3. **The relief notification's copy.** The payload carries the three terms as of
+   this wave; the line they are for is
+   `State assistance: $83,398 — toward $238,280 of rebuilding.`

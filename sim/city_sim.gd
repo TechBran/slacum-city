@@ -1805,6 +1805,25 @@ func _restore_core(body: Dictionary) -> void:
 	construction.deserialize(body.get("construction", {}))
 	development.deserialize(body.get("development", {}))
 	treasury.deserialize(body.get("treasury", {}))
+	# **Doc 93 §AP4's migration, and it is the half that rescues the save the
+	# 2026-09-03 report was written about.** A pre-Wave-19 save carries a spent
+	# `relief_grants_used` and no `relief_era_level`, so it would load at era 0 —
+	# and a city whose stock is all ruins cannot reach a new city level, which
+	# means the ruling would refill an allowance for every city EXCEPT the one
+	# that needs it. Opening the era at the level the city has already reached
+	# hands that player exactly one fresh allowance and nothing more.
+	#
+	# **Conditional on the save's shape, and that is what makes it safe.** It runs
+	# only when `deserialize` saw no `relief_era_level` key, so a save written by
+	# THIS build migrates nothing and a save→load→advance round trip stays
+	# bit-identical to the uninterrupted run (constitution §5,
+	# `tests/test_save_determinism_days.gd`). It is ordered here rather than
+	# inside `Treasury.deserialize` because the level lives in another save
+	# section and a section loader may not reach across (doc 08's SaveSection
+	# contract).
+	if treasury.relief_needs_era_migration:
+		treasury.relief_needs_era_migration = false
+		treasury.note_era(progression.city_level)
 	stats.deserialize(body.get("stats", {}))
 
 
@@ -2035,6 +2054,13 @@ func _pay_level_up_grant(event: Dictionary) -> void:
 		treasury.credit(amount, &"grant", "city_level_%d" % level)
 		bus.emit(&"level_up_grant_paid", {"city_level": level, "amount": amount,
 				"balance": treasury.balance})
+	# Doc 93 §AP4: an ERA is a city level, and this is the transition that opens
+	# one. It sits OUTSIDE the loop above and takes `to_level` because a level
+	# whose grant is 0 — the founding level — is still a level, and because a
+	# double promotion opens one era, not two. `note_era` is idempotent and
+	# monotone, so a re-crossing that `city_level_monotone` already forbids could
+	# not refill the allowance even if it happened.
+	treasury.note_era(to_level)
 
 
 ## The O(1) scalars `GoalSystem.STATE_KINDS` reads, once a game-hour.
@@ -4584,6 +4610,7 @@ func _stamp_building_rules(b: Building) -> void:
 	if not condition_block.is_empty():
 		b.condition_rules = condition_block
 	b.owner_maintained = catalog.owner_maintained(String(b.archetype))
+	b.wear_may_demolish = catalog.wear_may_demolish()
 
 
 ## Repair a CITY building back toward condition 1.00 (doc 02 §2.6). Order of
@@ -6443,12 +6470,28 @@ func apply_hourly_decay(dt_h: float, availability: Dictionary,
 ## crossing it already emits `building_damaged`, which is a stronger statement
 ## about the same building in the same hour, and two events for one crossing is
 ## how a log starts repeating itself.
+## **A fourth band, Wave 19 (doc 93 §AP1, doc 12 D-88).** §AP1 stops wear
+## demolishing private stock, which creates a state the game had never had to
+## name: a building resting permanently ON `structural_failure_threshold`,
+## earning 40 %, that will not fall down and that the player can get back by
+## restoring the service that lifted §2.6a's floor. Drawing that as `poor` would
+## be a lie — `poor` implies further to fall and there is none — and saying
+## nothing would hide the only consequence §AP1 leaves behind. It costs no state
+## and no hash: the band is still a pure function of one float.
 static func _condition_band_of(b: Building, value: float) -> StringName:
 	if value >= b.rule("band_good"):
 		return &""
 	if value >= b.rule("band_worn"):
 		return &"worn"
-	return &"poor"
+	if value >= b.rule("structural_failure_threshold"):
+		return &"poor"
+	return &"condemned"
+
+
+## The bands, worst last. `_emit_condition_band` announces a crossing only when
+## the band got WORSE, and with four bands that is an ordering question rather
+## than the single `previous == &"poor"` special case it used to be.
+const CONDITION_BAND_ORDER := [&"", &"worn", &"poor", &"condemned"]
 
 
 ## **PA-31's surface half** (doc 98 RR-149, doc 93 §AL2). One event per DOWNWARD
@@ -6473,8 +6516,13 @@ func _emit_condition_band(sim_id: String, b: Building, before: float) -> void:
 	var previous := _condition_band_of(b, before)
 	if band == previous:
 		return
-	if previous == &"poor":
-		return  # climbing out of Poor into Worn is a recovery, not a warning
+	# Downward only. This was `previous == &"poor"` while Poor was the bottom;
+	# with `condemned` under it (§AP1) the same rule has to be stated as an
+	# ORDERING, or a building climbing out of Condemned into Poor would announce
+	# itself as a warning — the game repeating the player's own repair, which is
+	# exactly what the doc comment below forbids.
+	if CONDITION_BAND_ORDER.find(band) < CONDITION_BAND_ORDER.find(previous):
+		return
 	bus.emit(&"building_condition_band", {"sim_id": sim_id, "building": b.id,
 			"band": String(band), "previous": String(previous),
 			"condition": b.condition, "type_id": String(b.archetype),
@@ -6513,8 +6561,44 @@ func update_recovery_ladder(settled: Dictionary, hour: int) -> void:
 	var daily_expense := maxf(0.0, expense) * 24.0
 	treasury.update_credit_limit(daily_revenue)
 	treasury.update_austerity(daily_expense, hour)
-	treasury.maybe_grant_relief(hour, daily_revenue, (gross - expense) * 24.0)
+	# The damage term's price is O(roster), so it is only paid when the grant's
+	# own gates already say a grant is possible — see `Treasury.relief_gates_pass`.
+	# On a solvent city this is four comparisons and no walk.
+	var trailing_net := (gross - expense) * 24.0
+	if treasury.relief_gates_pass(hour, trailing_net):
+		treasury.maybe_grant_relief(hour, daily_revenue, trailing_net,
+				outstanding_restore_cost())
 	_publish_treasury_events()
+
+
+## Doc 93 §AP4: what it would cost, at doc 03's own published price, to bring
+## every ruin in the city back. The damage term of layer 5's relief grant is a
+## fraction of this, so a catastrophe raises the relief instead of shrinking it.
+##
+## It is `CostCurves.restore_cost_building` per ruin — the SAME call
+## `cmd_restore_building` charges, at the same difficulty multiplier — summed in
+## roster order, so the grant is measured against the bill the player is actually
+## looking at and C-07 keeps its single price. A city with no ruins answers 0.0
+## and the grant reduces to its pre-Wave-19 formula exactly.
+##
+## Walked rather than cached: a cached total is a persisted field, and doc 03
+## §2.10's ladder is deliberately stateless (see `update_recovery_ladder`). The
+## walk is once per settled game-hour over the ruins only.
+func outstanding_restore_cost() -> float:
+	var total := 0.0
+	var m_repair := float(treasury.difficulty().get("M_repair", 1.0))
+	for id in roster_ids():
+		var b: Building = buildings[id]
+		if b.state != &"destroyed":
+			continue
+		# The archetype key `cmd_restore_building` prices with: the record's
+		# `type` where there is one, the archetype otherwise. Reading it any
+		# other way here would let the grant and the bill disagree.
+		var type := String(_building_records.get(String(id), {}).get(
+				"type", String(b.archetype)))
+		total += float(econ_curves.restore_cost_building(type,
+				maxi(b.level_at_destruction, 1), m_repair))
+	return total
 
 
 ## Drain the treasury's own event queue every settled hour — the ladder's events

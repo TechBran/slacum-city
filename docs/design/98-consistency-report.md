@@ -8180,3 +8180,178 @@ the header and an empty capped line.
 `AwayModel` accepts `cap_game_hours` alone and divides it by 60, so the file is
 correct before the snippet lands and more correct after — there is no window in
 which the two disagree.
+
+
+## 59. WAVE 19 — a city that cannot be wiped out while you sleep (binding)
+
+*(Lane 2. Measured in doc 92 §56, ruled in doc 93 §AP, defect rows doc 91
+A91-D-103/104/105, UI delta doc 12 D-88. This lane held the balance matrix.)*
+
+The player, on their own Galaxy Z Fold 6 city, 2026-09-03:
+
+> *"The buildings are still being destroyed super fast. There was a natural
+> disaster, a water flooding, I woke up to — and there's negative money … ALL of
+> my buildings are destroyed right now."*
+
+**The first result of the wave is that the disaster did not do it.** Doc 92
+§56.1's instrument ran 45 game-days × 4 presets × 2 session kinds and every
+destruction in all eight arms came through `Building.roll_structural_failure` —
+0 through `apply_damage`, 0 through `burn_down` — and the flood has no path to a
+building's condition at all. What took the city was doc 02 §2.6 wear, on stock
+the city had left dark, through a door that only opens one way.
+
+---
+
+### RR-164 — wear may CONDEMN a private building, it may not demolish one
+
+`data/building_rules.json owner_maintenance.wear_may_demolish = false`;
+`Building.wear_may_demolish` stamped by `BuildingCatalog.wear_may_demolish()` at
+doc 93 §Y2's four sites; `roll_structural_failure` returns empty for
+owner-maintained stock. Ruling: doc 93 §AP1.
+
+The chain it cuts, measured (doc 92 §56.2): a city outgrows its generation →
+**74–107 of 251 buildings permanently dark with zero failed components** → doc 02
+§2.6a's ownership floor lifts under its own service clause (§Y1a) → the private
+stock falls to 0.10 → the 0.02/gh roll deletes it, **nine buildings on a bad
+game-day, one every 2.7 real minutes.**
+
+Measured effect, same seed and instrument, before → after: standard **42 → 6**
+ruins over 45 game-days, casual **21 → 10**; hard and crisis unchanged at 6 and
+7 because every ruin there was already civic or utility stock the city owns.
+`damaged` rises by what `ruins` falls (standard +34 against −36) — the same
+buildings, condemned instead of demolished, still paying `output_mult` 0.40.
+
+**Not a shield.** `burn_down`, doc 06's explicit `destroy_building`, an event
+landing on an already-condemned building, and this same roll on the city's own
+civic and utility stock all still demolish.
+
+### RR-165 — one event may not demolish a standing building
+
+`Building.apply_damage` floors at `structural_failure_threshold` for any building
+above it; a building already at or below it is finished off as before. The floor
+is doc 02 §2.6's own 0.10 and not a new constant. Ruling: doc 93 §AP2.
+
+**One line had to split.** `CityIncidentWorld.destroy_building` spelled its
+non-fire branch `apply_damage(1.0)`, so a floor on damage would have silently
+disarmed doc 06's terminal outcomes. `Building.demolish()` now says what it
+means — **and carries doc 08 C-47's guard, which that branch never had.** Before
+this wave an explicit destroy was the one door through which an ABSENCE could
+still take a building, inside a rule whose entire purpose is that absences may
+not.
+
+### RR-166 — three lifetime ledger rows, and the wave that was allowed to pay for them
+
+`Treasury.lifetime` gains `lifetime_dispatch`, `lifetime_restores` and
+`lifetime_relief`, with the matching `_note_lifetime` arms.
+
+This closes **doc 91 A91-D-37** (`&"incident"`, open since Wave 15) and
+**A91-D-100** (`&"restore"`, opened by Wave 18), and it closes them *here* for the
+reason A91-D-100's own row gives: `lifetime` is captured into
+`canonical_capture().ledger_totals` and therefore into `state_hash()`, so adding
+a key moves **all four `profile_sim` baselines on both cities**. The row rules
+that they close "in a lane that holds the balance matrix … as one `ledger_totals`
+edit and one re-record". Wave 19 holds the matrix, and this is that one
+re-record. `lifetime_relief` joins them because RR-167 creates a grant that
+would otherwise be un-auditable.
+
+### RR-167 — the recovery ladder gets a bottom that cannot run out
+
+Doc 03 §2.10 layer 5, two defects, one ruling (doc 93 §AP4):
+
+* **A91-D-103 — the allowance had no era.** `relief_grants_per_era` has carried
+  that word since doc 03 §2.9 and `relief_grants_used` was reset by nothing
+  anywhere in the project, so it was a LIFETIME allowance of three on standard.
+  `Treasury.note_era(city_level)`, called from `_pay_level_up_grant`, makes an
+  era a city level: already tracked, already persisted, monotone, unfarmable.
+* **A91-D-104 — the grant shrank with the disaster.** It was
+  `1.5 × daily_gross_revenue`, measured on the city *after* the loss. Measured at
+  the limit (doc 92 §56.5): a city of 251 ruins with a **$238 280** restore bill
+  was offered **$8 000**, `RELIEF_MIN`, on every preset. Relief is now
+  `max(revenue term, RELIEF_DAMAGE_FRACTION × outstanding restore bill)` inside
+  the same clamp: **$83 398** on standard, 10.4×, and still $155 000 short of the
+  bill.
+
+`RELIEF_DAMAGE_FRACTION = 0.35` is `DEFERRED_REPAY_FRACTION` adopted, not
+invented — doc 03's existing answer to *how much of a hole does the city close
+per step*. **The anti-farm is an inequality**: 0.35 < 1, so the grant never
+covers the bill and wrecking your own city always loses money.
+`Treasury.relief_gates_pass()` splits the four price-free gates out so the
+`O(roster)` bill is priced only when a grant is already possible — the ladder runs
+every settled game-hour and the bench city has 1 500 buildings.
+
+**One migration, and it is the half that rescues the reported save.** A
+pre-Wave-19 save carries a spent `relief_grants_used` and no `relief_era_level`,
+so it would load at era 0 — and a city whose stock is all ruins cannot reach a
+new city level, which means the ruling would refill an allowance for every city
+**except the one that needs it**. `Treasury.relief_needs_era_migration` is set by
+`deserialize` only when the key is absent, and `CitySim._restore_systems` opens
+the era at the level the city has already reached. **Conditional on the save's
+shape, and that is what makes it safe**: a save written by this build migrates
+nothing, so save→load→advance stays bit-identical (constitution §5,
+`tests/test_save_determinism_days.gd`, 6 tests green). It cannot be farmed by
+reloading — `note_era` is idempotent per level.
+
+### The four baselines, re-recorded, with the cause measured rather than assumed
+
+| city / path | at the fork | after Wave 19 |
+| --- | --- | --- |
+| starter, coarse 24 h | `64c4d7e9…8787` | `50d22101…d620` |
+| starter, fine 2.0 h | `9f19dcc5…9ba4` | `140ded24…34f7` |
+| bench, coarse 24 h | `6f383de1…c496` | `0fd19f68…6c46` |
+| bench, fine 2.0 h | `311e29d1…2127` | `d1a58e7c…30f6` |
+
+**All four moved. §AP1 contributes nothing — that half IS measured; the claim
+that RR-166's three `ledger_totals` keys are "the whole of it" is NOT, and is
+withdrawn here (verify pass, 2026-09-03).** The flip-the-switch experiment below
+exonerates §AP1 and only §AP1: flipping `owner_maintenance.wear_may_demolish`
+back to `true` and re-hashing both cities on both paths returns all four shipped
+hashes unchanged. It says nothing about §AP4's new save key or RR-167's
+`relief_era_level`, both of which are also inside `canonical_capture()`, so the
+attribution to three keys is an inference wearing a measurement's clothes. What
+is established: §AP1 is not a cause — neither profiling
+city has a building near `structural_failure_threshold` inside 24 coarse hours or
+2 fine hours, and neither is insolvent, so §AP2 and §AP4 cannot fire. Doc 92
+§56.6 carries the commands.
+
+**Gates: 33 of 33, no re-fit.** This lane held the matrix and was entitled to
+re-fit any gate whose derivation had moved; none had. Gate 29's insolvency
+ordering is unchanged **to the game-day on all four presets** (`probe_neglect`,
+seed 1337: 193/193, 135/135, never/48, 35/19 — eight numbers, eight matches
+against §49.5's published table), because a `do_nothing` founding city loses one
+to five buildings across its whole horizon, so the stock §AP1 saves was never
+what decided the insolvency day. Neglect is still fatal; it is no longer fatal by
+demolition. The curriculum arc still earns all six levels on all three seeds
+(`measure_curriculum --days=45`).
+
+### RR-168 — the instrument, and five knobs that were re-derived and not moved
+
+`tools/measure_catastrophe.gd`: per-game-day ruins, damaged, destructions by
+cause, dark buildings, failed components, mean condition, treasury and
+population, across two session kinds that are not interchangeable
+(`--mode=online` is gate 29's arm; `--mode=absence` is a real closed app under
+C-47), with `--warm`, `--real-hours`, `--then-online`, `--treasury` and
+`--relief`.
+
+The lane brief named five Director knobs to re-derive against a Director that no
+longer stalls. **All five are HELD, each with its number** (doc 93 §AP3), and the
+before/after Director event count is **bit-identical on all eight arms** —
+15/13/41/44 online, 0/0/1/0 offline — so nothing this wave shipped made a storm
+rarer, weaker or later. Two of the verdicts are worth repeating because reading
+the code disproved the premise:
+
+* `floor.tp_per_day` **already passes through** `pressure = 0.55 + 0.90·P`
+  (`tp_base_per_day` returns `max(ladder, floor)`, and `tp_rate_per_day`
+  multiplies that base by `age_ramp × pressure × tp_rate_mult`). The apparent
+  inversion — crisis 44 events against casual 15 — is the difficulty ladder plus
+  F5 holding the large city down on its own ambient load;
+* **the flood has no damage fraction to tune.** `FloodField` emits
+  `flood_level_changed` and `road_closed_flood` and nothing else.
+
+**What the measurement found instead is filed, not fixed** (doc 91 A91-D-105):
+the `building_damaged` cause column reads `decay=61 incident=0 fire=0` on every
+arm — the whole incident and disaster layer does **zero** damage to buildings over
+45 game-days, because `building_condition` ops sit on tier-2/tier-4 escalations
+auto-dispatch resolves first. A storm is currently spectacle. The honest sequence
+is this wave's door first, then a measured damage pass in the lane that owns doc
+06's escalation ladder — not both in one measurement, where neither could be
+attributed.

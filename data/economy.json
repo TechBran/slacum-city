@@ -242,7 +242,9 @@
     "AUSTERITY_EXPENSE_MULT": 0.55, "AUSTERITY_DECAY_MULT": 2.5, "AUSTERITY_VEHICLE_BREAKDOWN_MULT": 2.0,
     "AUSTERITY_EXIT_DAYS_OF_EXPENSE": 0.5, "CREDIT_LIMIT_FLOOR": 20000, "CREDIT_LIMIT_DAYS_OF_REVENUE": 6,
     "DEFERRED_CONDITION_PENALTY_PER_1000": 0.004, "DEFERRED_REPAY_FRACTION": 0.35,
-    "RELIEF_COOLDOWN_HOURS": 120, "RELIEF_TRIGGER_CREDIT_FRACTION": 0.5, "RELIEF_DAYS_OF_REVENUE": 1.5,
+    "RELIEF_DAMAGE_FRACTION": 0.35,
+  "_relief_damage_fraction_derivation": "NEW, Wave 19 (doc 93 sec AP4, measured in doc 92 sec 56.3). THE DEFECT: layer 5's grant was `clamp(1.5 x daily_gross_revenue, 8000, 250000)`, measured on the city AFTER the loss, so the worse the catastrophe the SMALLER the relief -- and at the limit the 2026-09-03 player report describes, every building a ruin, gross revenue is near zero, the grant is RELIEF_MIN 8,000, and the restore bill is in the hundreds of thousands. The ladder's bottom rung was thinnest exactly where it was the only rung. Relief is now max(the revenue term, this fraction x the outstanding restore bill), same clamp. THE NUMBER IS DEFERRED_REPAY_FRACTION, adopted rather than invented: 0.35 is already this document's answer to the only other question of the same shape -- how much of a hole the city closes per step while it is in one (doc 03 sec 2.10 layer 4 repays 35% of positive net against deferred liability), and a second number for the same idea would be a second source of truth. THE ANTI-FARM IS AN INEQUALITY, NOT A HOPE: 0.35 < 1, so the grant never covers the bill it is measured against and deliberately wrecking your own city loses 65 cents on the dollar for every building in the catalogue. The insolvency pair (treasury below -0.5 x credit_limit AND non-positive 24-gh trailing net), RELIEF_COOLDOWN_HOURS and relief_grants_per_era all still gate it, and the bill SHRINKS as it is spent, so relief decays back to the revenue term as the city recovers.",
+  "RELIEF_COOLDOWN_HOURS": 120, "RELIEF_TRIGGER_CREDIT_FRACTION": 0.5, "RELIEF_DAYS_OF_REVENUE": 1.5,
     "RELIEF_MIN": 8000, "RELIEF_MAX": 250000,
     "RELIEF_AD_COOLDOWN_REDUCTION_HOURS": 24, "RELIEF_AD_ENABLED": false
   },

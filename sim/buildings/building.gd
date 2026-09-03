@@ -55,6 +55,12 @@ const DEFAULT_CONDITION := {
 	"band_good": 0.85,
 	"band_worn": 0.60,
 	"band_poor": 0.35,
+	# Doc 08 C-47's offline clamp. Here for the same reason `band_worn` is: this
+	# fallback must be the WHOLE authored block, not the part that happened to
+	# have a reader. `burn_down` and `demolish` both read it through `rule()`,
+	# and without a default an unstamped fixture would clamp to 0.0 — i.e. to a
+	# ruin — which is the exact outcome the clamp exists to prevent.
+	"offline_burn_down_clamp": 0.15,
 }
 
 var id: int = 0
@@ -93,6 +99,16 @@ var condition_rules: Dictionary = DEFAULT_CONDITION
 ## fixture that never sets it wears and damages exactly as it did before the
 ## ruling, which is what keeps every pre-Wave-17 worked example true.
 var owner_maintained: bool = false
+## Doc 93 §AP1 (Wave 19): may ordinary WEAR take this building all the way to
+## `destroyed`? Stamped from `data/building_rules.json`'s
+## `owner_maintenance.wear_may_demolish` beside [owner_maintained], and read only
+## by [roll_structural_failure]. The default is `true` — the pre-Wave-19
+## behaviour — so a fixture that never stamps it collapses exactly as it always
+## did, and the ruling arrives only where the coordinator applied it.
+## It is not persisted, for [owner_maintained]'s reason: it is a property of the
+## archetype and the file, not of the row, so a save written before the ruling
+## loads into a city that applies it.
+var wear_may_demolish: bool = true
 
 
 func _init(p_id: int = 0, p_archetype: StringName = &"", p_origin := Vector2i.ZERO,
@@ -333,8 +349,37 @@ func _owner_maintain(dt_h: float, powered_fraction: float = 1.0) -> Array:
 
 ## Structural-failure roll (§2.6): below condition 0.10, 0.02/gh on the
 ## `failures` stream. Returns events; may transition damaged → destroyed.
+##
+## **WEAR MAY CONDEMN, IT MAY NOT DEMOLISH — doc 93 §AP1 (Wave 19).** For an
+## `owner_maintained` building this roll no longer destroys anything, and that
+## is the whole of Wave 19's answer to *"ALL of my buildings are destroyed right
+## now"*. The instrument (`tools/measure_catastrophe.gd`, doc 92 §56.1) put a
+## number on the door: over 45 game-days × 4 presets × 2 session kinds, **every
+## single destruction in the game came through THIS function** — 0 from
+## `apply_damage`, 0 from `burn_down`, 42 of 42 on standard from here — and the
+## chain behind it has nothing to do with any disaster. A city that outgrows its
+## own generation leaves ~30 % of its stock permanently dark; §2.6a's ownership
+## floor has a service clause (§Y1a) and lifts when the lights go out; the
+## private stock then falls unbounded to 0.10 and this roll deletes it at
+## 0.02/gh — nine buildings on a bad game-day, one every 2.7 real minutes.
+##
+## Deleting the player's capital is not a difficulty setting, it is a genre
+## change. §Y1's own sentence is the argument: it is *their* asset, and an owner
+## whose building is condemned boards it up — they do not bulldoze it. So a
+## private building stops at the threshold, in `damaged`, where doc 02 §2.12
+## already charges it dearly and REVERSIBLY: `output_mult` 0.40, `coverage_mult`
+## 0.25, and doc 03's `f_condition` at 0.46. A neglected city still collapses to
+## roughly a fifth of its income; it simply has something left to save.
+##
+## What can still take a building down, so that a storm still MATTERS:
+## `burn_down` (an unanswered tier-5 fire), doc 06's explicit `destroy_building`
+## cascade op, an event landing on a building already at the threshold (§AP2),
+## and this roll on the city's OWN stock — civic and utility buildings the
+## player chose to build and the city, not an owner, is responsible for.
 func roll_structural_failure(rng: RngStreams, dt_h: float, now_minutes: int) -> Array:
 	if state != &"damaged" or condition >= rule("structural_failure_threshold"):
+		return []
+	if owner_maintained and not wear_may_demolish:
 		return []
 	var p := 1.0 - pow(1.0 - rule("structural_failure_p_per_hour"), dt_h)
 	if rng.stream("failures").randf() < p:
@@ -416,16 +461,45 @@ func burn_down(destroy_allowed: bool, now_minutes: int) -> Dictionary:
 	if state != &"on_fire":
 		return CommandQueue.fail(&"E_STATE")
 	if not destroy_allowed:
-		condition = maxf(condition, 0.15)  # doc 08 clamp; incident stays open
+		# doc 08 C-47's clamp; incident stays open. Read from the authored block
+		# rather than spelled 0.15 here (Wave 19) — the number never moved, but
+		# `data/building_rules.json` has carried `offline_burn_down_clamp` since
+		# doc 02 shipped and this was the one reader that ignored it.
+		condition = maxf(condition, rule("offline_burn_down_clamp"))
 		return CommandQueue.fail(&"E_DESTROY_SUPPRESSED_OFFLINE")
 	return CommandQueue.ok({"events": _destroy(now_minutes, &"fire")})
 
 
 ## Incident/disaster damage arriving as a damage_fraction (one pricing path).
+##
+## **ONE EVENT MAY NOT DEMOLISH A STANDING BUILDING — doc 93 §AP2 (Wave 19).**
+## A building ABOVE `structural_failure_threshold` when the damage lands cannot
+## be taken past it by that damage, however large the fraction: the worst a
+## single event does is CONDEMN. A building already at or below the threshold is
+## finished off exactly as before, so nothing is immortal — it takes a second
+## event, or a fire, or the city's own neglect to get it there first.
+##
+## The floor is `structural_failure_threshold` and NOT a new number, deliberately:
+## doc 02 §2.6 already names 0.10 as the line below which a building is no longer
+## structurally sound, and a second authored constant meaning the same thing
+## would be a second source of truth for one idea (C-07's rule, applied to a
+## fraction instead of a dollar).
+##
+## **This door fires zero times on the shipped tables** — doc 92 §56.1 measured
+## 45 game-days × 4 presets × 2 session kinds and saw not one `damage`
+## destruction — and that is precisely why the guarantee is worth writing down
+## now rather than after it fires. §56.4 is about to move the Director's
+## pressure, and the promise *"You built it. Now keep it alive"* should not
+## depend on nobody ever authoring a damage fraction of 1.0.
+##
+## The explicit `destroy_building` cascade op does NOT come through here — see
+## `CityIncidentWorld.destroy_building`, which now says what it means.
 func apply_damage(fraction: float, now_minutes: int) -> Array:
 	if state == &"destroyed" or state == &"planned":
 		return []
-	condition = clampf(condition - fraction, 0.0, 1.0)
+	var floor_condition := rule("structural_failure_threshold")
+	var hit := clampf(condition - fraction, 0.0, 1.0)
+	condition = maxf(hit, floor_condition) if condition > floor_condition else hit
 	var events: Array = []
 	if condition <= 0.0:
 		events.append_array(_destroy(now_minutes, &"damage"))
@@ -433,6 +507,26 @@ func apply_damage(fraction: float, now_minutes: int) -> Array:
 		state = &"damaged"
 		events.append({"type": &"building_damaged", "building": id, "cause": &"incident"})
 	return events
+
+
+## Doc 06's `destroy_building` op and doc 07's terminal outcomes: DEMOLISH this
+## building outright, whatever its condition. Split out of [apply_damage] by doc
+## 93 §AP2 — until Wave 19 the two shared one line (`apply_damage(1.0)`), which
+## is why a floor could not be put on damage without also disarming the op that
+## means destruction. They were never the same statement: one is *this building
+## took a beating*, the other is *this building is gone*.
+##
+## `destroy_allowed` is doc 08 C-47, on `burn_down`'s own terms: an absence may
+## not silently demolish the city, so offline the call clamps the condition to
+## the same `offline_burn_down_clamp` floor and refuses, leaving the wreck
+## standing where the player can see it.
+func demolish(destroy_allowed: bool, now_minutes: int) -> Array:
+	if state == &"destroyed" or state == &"planned":
+		return []
+	if not destroy_allowed:
+		condition = maxf(condition, rule("offline_burn_down_clamp"))
+		return []
+	return _destroy(now_minutes, &"damage")
 
 
 ## damaged/active → repairing. Target: 1.00 preventive from active,

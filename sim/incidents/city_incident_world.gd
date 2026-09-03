@@ -408,10 +408,17 @@ func destroy_building(id: String, _cause: String) -> void:
 		return
 	# Building.burn_down carries the same C-47 guard; doc 06 has already checked
 	# it, so this call only ever runs on the allowed branch.
+	#
+	# The non-fire branch used to spell itself `apply_damage(1.0)`. Doc 93 §AP2
+	# put a survival floor on the DAMAGE path, so the two statements had to stop
+	# sharing a line: an op named `destroy_building` means destruction, and it
+	# now calls the verb that says so. `demolish` carries the same C-47 guard as
+	# `burn_down`, which this branch never had — before Wave 19 an explicit
+	# destroy was the one door an ABSENCE could still take a building through.
 	if b.state == &"on_fire":
 		b.burn_down(destroy_allowed(), now_minutes())
 	else:
-		b.apply_damage(1.0, now_minutes())
+		b.demolish(destroy_allowed(), now_minutes())
 
 
 # ------------------------------------------------------- doc 09 districts/pop

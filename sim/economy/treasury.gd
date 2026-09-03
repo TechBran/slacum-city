@@ -49,6 +49,15 @@ var austerity_active: bool = false
 var austerity_entered_hour: int = -1
 var relief_grants_used: int = 0
 var relief_last_grant_hour: int = -1
+## The city level whose era `relief_grants_used` is counting (doc 93 §AP4).
+## Starts at 0, the founding level, so the first level-up opens the second era.
+var relief_era_level: int = 0
+## Set by [deserialize] when the save predates doc 93 §AP4, cleared by the one
+## caller that acts on it. Never persisted and never read by the ladder itself:
+## it exists so the migration is a MIGRATION — conditional on the save's shape —
+## rather than a reset that runs on every load, which would make a save→load
+## round trip diverge from an uninterrupted run and break constitution §5.
+var relief_needs_era_migration: bool = false
 
 ## Doc 03 §2.5's revenue and repair rows, counted for life. `lifetime_street` is
 ## doc 06 §2.16's opportunity bounties and is its OWN row on purpose: folding
@@ -58,9 +67,20 @@ var relief_last_grant_hour: int = -1
 ## never renaming — `deserialize` walks the keys it has, so an older
 ## `ledger_totals` block restores the rows it carries and starts this one at
 ## zero, which is what a city that could not earn it genuinely had.
+## **Two rows land here in Wave 19, together, on purpose** — doc 91 A91-D-37 and
+## A91-D-100. Both were `_note_lifetime` arms that did not exist: `&"incident"`
+## (what auto-dispatch has earned the city for life) and `&"restore"` (what the
+## player has spent bringing ruins back). A91-D-100's own row says why they were
+## left open and who closes them: this dictionary is captured into
+## `canonical_capture().ledger_totals` and therefore into `state_hash()`, so
+## adding a key moves ALL FOUR `profile_sim` baselines on both cities — and the
+## row rules that they close "in a lane that holds the balance matrix … as one
+## `ledger_totals` edit and one re-record", because doing them separately costs
+## two re-records for one schema change. Wave 19 holds the matrix.
 var lifetime: Dictionary = {
 	"lifetime_tax": 0, "lifetime_tariff": 0, "lifetime_expense": 0,
 	"lifetime_repairs": 0, "lifetime_foregone": 0, "lifetime_street": 0,
+	"lifetime_dispatch": 0, "lifetime_restores": 0, "lifetime_relief": 0,
 }
 
 ## **The city-services receipt book** (doc 03 §2.5, report 98 RR-78).
@@ -298,6 +318,16 @@ func update_austerity(daily_gross_expense: float, hour: int) -> bool:
 	return austerity_active
 
 
+## One published `data/economy.json recovery` constant, by name (Wave 19). The
+## ladder's own code reads `_recovery` directly; this exists so a TEST, a gate or
+## a balance instrument can quote the shipped number instead of restating it —
+## a restated constant is a second source of truth that drifts silently, which is
+## the failure C-07 exists to prevent for prices and which applies just as well
+## to the fractions beside them.
+func recovery_value(key: String, fallback: float = 0.0) -> float:
+	return float(_recovery.get(key, fallback))
+
+
 ## Layer 2: every recurring expense line is scaled by this.
 func austerity_expense_mult() -> float:
 	return float(_recovery.get("AUSTERITY_EXPENSE_MULT", 1.0)) if austerity_active else 1.0
@@ -330,31 +360,101 @@ func defer(amount: int, category: StringName = &"misc", reason: String = "") -> 
 	return {"ok": false, "reason_code": &"DEFERRED", "deferred": amount, "balance": balance}
 
 
-## Layer 5: free, automatic, cooldowned, capped, and absent on crisis.
-## All four §2.10 conditions must hold; returns the granted amount (0 = no grant).
+## Doc 03 §2.10 layer 5, **the bottom rung of the recovery ladder, which Wave 19
+## gave a bottom** (doc 93 §AP4). Free, automatic, cooldowned, capped, and absent
+## on crisis. All four §2.10 conditions must hold; returns the granted amount
+## (0 = no grant).
+##
+## `outstanding_restore_cost` is doc 03's own price — `CostCurves`'s restore
+## quote summed over the city's ACTUAL ruins — and it is passed in rather than
+## computed here because this file may not walk a building roster. 0 means "no
+## ruins", which reduces this function to exactly the pre-Wave-19 formula.
+##
+## **Two defects, one function** (doc 91 A91-D-103 / A91-D-104):
+##
+## 1. *the allowance had no era.* `relief_grants_used` was incremented,
+##    persisted, and reset by nothing anywhere in the project, so
+##    `relief_grants_per_era` was a LIFETIME allowance of three on standard —
+##    for a game meant to be played for weeks. [note_era] is the reset, and the
+##    era is a city level (see it for the derivation).
+## 2. *the grant shrank with the disaster.* `1.5 × daily_gross_revenue` is
+##    measured on the city AFTER the loss, so the worse the catastrophe the
+##    smaller the relief; at the limit the 2026-09-03 report describes — every
+##    building a ruin — gross revenue is near zero and the grant is `RELIEF_MIN`
+##    against a restore bill in the hundreds of thousands. The `max()` below is
+##    the fix: relief is the LARGER of what the city normally earns in a day and
+##    a half and a fixed fraction of what it would cost to put the city back.
+##
+## **Why this is not a farm**, in one inequality: `RELIEF_DAMAGE_FRACTION < 1`,
+## so the grant never covers the restore bill it is measured against, and
+## breaking your own city to draw relief loses money for every building in the
+## catalogue at every fraction below 1. The insolvency pair, the 120-game-hour
+## cooldown and the per-era allowance all still gate it, and the bill SHRINKS as
+## it is spent, so relief decays back to the revenue term as the city recovers.
 func maybe_grant_relief(hour: int, daily_gross_revenue: float,
-		trailing_net_24: float) -> int:
-	var allowed := int(_difficulty.get("relief_grants_per_era", 0))
-	if relief_grants_used >= allowed:
+		trailing_net_24: float, outstanding_restore_cost: float = 0.0) -> int:
+	if not relief_gates_pass(hour, trailing_net_24):
 		return 0
-	var trigger := float(_recovery.get("RELIEF_TRIGGER_CREDIT_FRACTION", 0.5))
-	if float(balance) > -trigger * float(credit_limit):
-		return 0
-	if trailing_net_24 > 0.0:
-		return 0
-	var cooldown := int(_recovery.get("RELIEF_COOLDOWN_HOURS", 0))
-	if relief_last_grant_hour >= 0 and hour - relief_last_grant_hour < cooldown:
-		return 0
+	var revenue_term := float(_recovery.get("RELIEF_DAYS_OF_REVENUE", 0.0)) \
+			* daily_gross_revenue
+	var damage_term := float(_recovery.get("RELIEF_DAMAGE_FRACTION", 0.0)) \
+			* maxf(0.0, outstanding_restore_cost)
 	var grant: int = clampi(
-			CostCurves.round_half_up(float(_recovery.get("RELIEF_DAYS_OF_REVENUE", 0.0))
-					* daily_gross_revenue),
+			CostCurves.round_half_up(maxf(revenue_term, damage_term)),
 			int(_recovery.get("RELIEF_MIN", 0)), int(_recovery.get("RELIEF_MAX", 0)))
 	relief_grants_used += 1
 	relief_last_grant_hour = hour
 	balance += grant
+	_note_lifetime(&"relief", grant)
 	_emit(&"relief_grant_awarded", {"hour": hour, "amount": grant,
-			"grants_used": relief_grants_used, "balance": balance})
+		"grants_used": relief_grants_used, "balance": balance,
+		"revenue_term": revenue_term, "damage_term": damage_term,
+		"outstanding_restore_cost": outstanding_restore_cost})
 	return grant
+
+
+## The four §2.10 gates that do not need a price, split out of
+## [maybe_grant_relief] so a caller can ask *"is it even worth pricing the
+## damage?"* before walking a roster.
+##
+## This is a PERFORMANCE seam and it earns its keep: `update_recovery_ladder`
+## runs once per settled game-hour, `outstanding_restore_cost()` is O(roster),
+## and the bench city carries 1 500 buildings. On every city that is not deep in
+## the credit line — which is every city, almost always — these four comparisons
+## return false and the walk never happens. Splitting it also means the gates are
+## stated exactly once and both callers read the same four.
+func relief_gates_pass(hour: int, trailing_net_24: float) -> bool:
+	if relief_grants_used >= int(_difficulty.get("relief_grants_per_era", 0)):
+		return false
+	var trigger := float(_recovery.get("RELIEF_TRIGGER_CREDIT_FRACTION", 0.5))
+	if float(balance) > -trigger * float(credit_limit):
+		return false
+	if trailing_net_24 > 0.0:
+		return false
+	var cooldown := int(_recovery.get("RELIEF_COOLDOWN_HOURS", 0))
+	if relief_last_grant_hour >= 0 and hour - relief_last_grant_hour < cooldown:
+		return false
+	return true
+
+
+## Doc 93 §AP4: **an era is a city level.** `relief_grants_per_era` has carried
+## that word since doc 03 §2.9 was authored and nothing in the project ever
+## defined it, so the allowance was spent once and gone.
+##
+## A city level is the smallest honest definition available: the quantity is
+## already tracked, already persisted, already composed from both routes by
+## doc 93 §G1, and it only ever goes UP — so the allowance refreshes when the
+## city demonstrably grew, and cannot be farmed by oscillating anything. Crisis
+## stays at 0 per era, because crisis is a preset that is allowed to be lost.
+##
+## Called by `ProgressionSystem` on the same transition that pays
+## `LEVEL_UP_GRANT_BY_CITY_LEVEL`. Idempotent: a level that has already opened
+## an era opens nothing.
+func note_era(city_level: int) -> void:
+	if city_level <= relief_era_level:
+		return
+	relief_era_level = city_level
+	relief_grants_used = 0
 
 
 # ------------------------------------------------------------- persistence
@@ -370,6 +470,7 @@ func serialize() -> Dictionary:
 		"austerity_active": austerity_active,
 		"austerity_entered_hour": null if austerity_entered_hour < 0 else austerity_entered_hour,
 		"relief_grants_used": relief_grants_used,
+		"relief_era_level": relief_era_level,
 		"relief_last_grant_hour": null if relief_last_grant_hour < 0 else relief_last_grant_hour,
 		"ledger_totals": lifetime.duplicate(),
 		"hour_city_services": hour_city_services.duplicate(),
@@ -385,6 +486,13 @@ func deserialize(data: Dictionary) -> void:
 	austerity_active = bool(data.get("austerity_active", false))
 	austerity_entered_hour = _nullable_int(data.get("austerity_entered_hour", null))
 	relief_grants_used = int(data.get("relief_grants_used", 0))
+	relief_era_level = int(data.get("relief_era_level", 0))
+	## A save written BEFORE doc 93 §AP4 carries no `relief_era_level` at all,
+	## and the flag says so for exactly one caller — see
+	## `CitySim._restore_systems`, which is the only place that can know what
+	## level the city reached. It is set on every load and consumed immediately,
+	## never persisted.
+	relief_needs_era_migration = not data.has("relief_era_level")
 	relief_last_grant_hour = _nullable_int(data.get("relief_last_grant_hour", null))
 	var totals: Dictionary = data.get("ledger_totals", {})
 	for key in lifetime:
@@ -409,6 +517,18 @@ func _note_lifetime(category: StringName, amount: int) -> void:
 			lifetime["lifetime_repairs"] = int(lifetime["lifetime_repairs"]) + amount
 		&"street":
 			lifetime["lifetime_street"] = int(lifetime["lifetime_street"]) + amount
+		# Wave 19, doc 91 A91-D-37 / A91-D-100. `dispatch` is the source key
+		# `credit_city_service` already passes and this arm was the reason the
+		# comment there says "dispatch gets nothing here"; `restore` is the
+		# category `CitySim.cmd_restore_building` already spends under; `relief`
+		# is doc 03 §2.10 layer 5's grant, counted so an assistance floor can
+		# never be audited by guesswork.
+		&"dispatch":
+			lifetime["lifetime_dispatch"] = int(lifetime["lifetime_dispatch"]) + amount
+		&"restore":
+			lifetime["lifetime_restores"] = int(lifetime["lifetime_restores"]) + amount
+		&"relief":
+			lifetime["lifetime_relief"] = int(lifetime["lifetime_relief"]) + amount
 
 
 func _fail(reason_code: StringName, payload: Dictionary) -> Dictionary:

@@ -298,9 +298,16 @@ func test_pa31_the_band_thresholds_are_doc_02s_own_table() -> void:
 			"the band follows the authored key, it does not restate it")
 
 
+## **THREE bands since Wave 19, not two** (doc 93 §AP1, doc 12 D-88). §AP1 stops
+## wear demolishing private stock, so a building now RESTS on
+## `structural_failure_threshold` instead of disappearing through it, and
+## `condemned` is the rung that names that state. This test grew a row rather
+## than being relaxed: every band still has to reach both surfaces, still has to
+## be keyed on the building, and still has to aggregate.
 func test_pa31_both_bands_reach_a_surface() -> void:
 	var cfg := _cfg()
-	var wanted := {"worn": "buildings_worn", "poor": "buildings_poor"}
+	var wanted := {"worn": "buildings_worn", "poor": "buildings_poor",
+			"condemned": "buildings_condemned"}
 	var log_rows: Dictionary = {}
 	for raw: Variant in (cfg.section("event_log").get("events", []) as Array):
 		var rule: Dictionary = raw
@@ -323,13 +330,23 @@ func test_pa31_both_bands_reach_a_surface() -> void:
 			continue
 		var notify_id := str(binding["notify_id"])
 		classes[notify_id] = str(notify.event_def(notify_id).get("class", ""))
-	assert_eq(classes.size(), 2, "both bands are offered to doc 08")
+	assert_eq(classes.size(), wanted.size(), "every band is offered to doc 08")
+	# **Worn and Poor are routine; Condemned is important, and the split is the
+	# ruling.** A worn city is a slow bill. A CONDEMNED building is terminal — it
+	# will neither worsen nor recover on its own — and it names a cause the player
+	# can act on in one screen, which is what earns it P2. Neither is ever P1: a
+	# condemned building is still standing and still earning 40 %, and doc 08's
+	# critical channel is for the things that wake somebody up.
+	var expected_class := {"buildings_worn": "P3_routine",
+			"buildings_poor": "P3_routine",
+			"buildings_condemned": "P2_important"}
 	for notify_id: String in classes:
-		assert_eq(str(classes[notify_id]), "P3_routine",
-				"%s is routine — a worn city is a slow bill, not an emergency"
-						% notify_id)
+		assert_eq(str(classes[notify_id]), str(expected_class.get(notify_id, "")),
+				"%s sits in the class its severity earns" % notify_id)
 		assert_true(bool(notify.event_def(notify_id).get("aggregate", false)),
 				"%s aggregates: one line that says how many" % notify_id)
+		assert_ne(str(classes[notify_id]), "P1_critical",
+				"%s is never critical — the building is still standing" % notify_id)
 
 
 # ===========================================================================
