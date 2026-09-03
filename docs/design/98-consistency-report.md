@@ -8004,6 +8004,45 @@ covers the bill and wrecking your own city always loses money.
 `O(roster)` bill is priced only when a grant is already possible — the ladder runs
 every settled game-hour and the bench city has 1 500 buildings.
 
+**One migration, and it is the half that rescues the reported save.** A
+pre-Wave-19 save carries a spent `relief_grants_used` and no `relief_era_level`,
+so it would load at era 0 — and a city whose stock is all ruins cannot reach a
+new city level, which means the ruling would refill an allowance for every city
+**except the one that needs it**. `Treasury.relief_needs_era_migration` is set by
+`deserialize` only when the key is absent, and `CitySim._restore_systems` opens
+the era at the level the city has already reached. **Conditional on the save's
+shape, and that is what makes it safe**: a save written by this build migrates
+nothing, so save→load→advance stays bit-identical (constitution §5,
+`tests/test_save_determinism_days.gd`, 6 tests green). It cannot be farmed by
+reloading — `note_era` is idempotent per level.
+
+### The four baselines, re-recorded, with the cause measured rather than assumed
+
+| city / path | at the fork | after Wave 19 |
+| --- | --- | --- |
+| starter, coarse 24 h | `64c4d7e9…8787` | `50d22101…d620` |
+| starter, fine 2.0 h | `9f19dcc5…9ba4` | `140ded24…34f7` |
+| bench, coarse 24 h | `6f383de1…c496` | `0fd19f68…6c46` |
+| bench, fine 2.0 h | `311e29d1…2127` | `d1a58e7c…30f6` |
+
+**All four moved; RR-166's three `ledger_totals` keys are the whole of it.**
+Measured, not inferred: flipping `owner_maintenance.wear_may_demolish` back to
+`true` and re-hashing both cities on both paths returns all four shipped hashes
+unchanged, so §AP1 contributes nothing to either baseline — neither profiling
+city has a building near `structural_failure_threshold` inside 24 coarse hours or
+2 fine hours, and neither is insolvent, so §AP2 and §AP4 cannot fire. Doc 92
+§56.6 carries the commands.
+
+**Gates: 33 of 33, no re-fit.** This lane held the matrix and was entitled to
+re-fit any gate whose derivation had moved; none had. Gate 29's insolvency
+ordering is unchanged **to the game-day on all four presets** (`probe_neglect`,
+seed 1337: 193/193, 135/135, never/48, 35/19 — eight numbers, eight matches
+against §49.5's published table), because a `do_nothing` founding city loses one
+to five buildings across its whole horizon, so the stock §AP1 saves was never
+what decided the insolvency day. Neglect is still fatal; it is no longer fatal by
+demolition. The curriculum arc still earns all six levels on all three seeds
+(`measure_curriculum --days=45`).
+
 ### RR-168 — the instrument, and five knobs that were re-derived and not moved
 
 `tools/measure_catastrophe.gd`: per-game-day ruins, damaged, destructions by

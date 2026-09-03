@@ -52,6 +52,12 @@ var relief_last_grant_hour: int = -1
 ## The city level whose era `relief_grants_used` is counting (doc 93 §AP4).
 ## Starts at 0, the founding level, so the first level-up opens the second era.
 var relief_era_level: int = 0
+## Set by [deserialize] when the save predates doc 93 §AP4, cleared by the one
+## caller that acts on it. Never persisted and never read by the ladder itself:
+## it exists so the migration is a MIGRATION — conditional on the save's shape —
+## rather than a reset that runs on every load, which would make a save→load
+## round trip diverge from an uninterrupted run and break constitution §5.
+var relief_needs_era_migration: bool = false
 
 ## Doc 03 §2.5's revenue and repair rows, counted for life. `lifetime_street` is
 ## doc 06 §2.16's opportunity bounties and is its OWN row on purpose: folding
@@ -480,10 +486,13 @@ func deserialize(data: Dictionary) -> void:
 	austerity_active = bool(data.get("austerity_active", false))
 	austerity_entered_hour = _nullable_int(data.get("austerity_entered_hour", null))
 	relief_grants_used = int(data.get("relief_grants_used", 0))
-	# A save written before doc 93 §AP4 carries no era. 0 is the honest default:
-	# the city's next level-up opens its first era and refills the allowance,
-	# which is the ruling applied forward rather than retroactively.
 	relief_era_level = int(data.get("relief_era_level", 0))
+	## A save written BEFORE doc 93 §AP4 carries no `relief_era_level` at all,
+	## and the flag says so for exactly one caller — see
+	## `CitySim._restore_systems`, which is the only place that can know what
+	## level the city reached. It is set on every load and consumed immediately,
+	## never persisted.
+	relief_needs_era_migration = not data.has("relief_era_level")
 	relief_last_grant_hour = _nullable_int(data.get("relief_last_grant_hour", null))
 	var totals: Dictionary = data.get("ledger_totals", {})
 	for key in lifetime:

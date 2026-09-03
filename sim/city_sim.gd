@@ -1805,6 +1805,25 @@ func _restore_core(body: Dictionary) -> void:
 	construction.deserialize(body.get("construction", {}))
 	development.deserialize(body.get("development", {}))
 	treasury.deserialize(body.get("treasury", {}))
+	# **Doc 93 §AP4's migration, and it is the half that rescues the save the
+	# 2026-09-03 report was written about.** A pre-Wave-19 save carries a spent
+	# `relief_grants_used` and no `relief_era_level`, so it would load at era 0 —
+	# and a city whose stock is all ruins cannot reach a new city level, which
+	# means the ruling would refill an allowance for every city EXCEPT the one
+	# that needs it. Opening the era at the level the city has already reached
+	# hands that player exactly one fresh allowance and nothing more.
+	#
+	# **Conditional on the save's shape, and that is what makes it safe.** It runs
+	# only when `deserialize` saw no `relief_era_level` key, so a save written by
+	# THIS build migrates nothing and a save→load→advance round trip stays
+	# bit-identical to the uninterrupted run (constitution §5,
+	# `tests/test_save_determinism_days.gd`). It is ordered here rather than
+	# inside `Treasury.deserialize` because the level lives in another save
+	# section and a section loader may not reach across (doc 08's SaveSection
+	# contract).
+	if treasury.relief_needs_era_migration:
+		treasury.relief_needs_era_migration = false
+		treasury.note_era(progression.city_level)
 	stats.deserialize(body.get("stats", {}))
 
 

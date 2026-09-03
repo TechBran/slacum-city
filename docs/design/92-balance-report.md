@@ -9272,3 +9272,79 @@ so the grant is always smaller than the bill it is measured against. There is no
 city, no archetype and no level at which deliberately destroying your own stock
 pays. `tests/test_relief_ladder.gd` asserts the inequality itself rather than any
 particular dollar, so a future retune of the fraction cannot quietly cross 1.
+
+### 56.6 The gates, the arc and the four baselines — what moved, and what it was
+
+**The gates: 33 of 33, no re-fit.** This lane held the balance matrix and was
+entitled to re-fit any gate whose derivation had legitimately moved. It re-fitted
+none, because none moved.
+
+```
+tools/run_suite.sh --one=test_balance_gates.gd
+-> tests: 33  asserts: 418  failed: 0  silent: 0
+```
+
+**Gate 29's insolvency ordering is not merely intact, it is unchanged to the
+game-day.** `tools/probe_neglect.gd`, seed 1337, each preset's own horizon,
+against the table §49.5 published for this branch:
+
+| preset | §49.5's published close / hour | Wave 19 close / hour |
+| --- | --- | --- |
+| casual | 193 / 193 | **193 / 193** |
+| standard | 135 / 135 | **135 / 135** |
+| hard | never / 48 | **never / 48** |
+| crisis | 35 / 19 | **35 / 19** |
+
+Eight numbers, eight matches. That is the answer to the obvious worry about
+§AP1 — *a city that keeps its buildings keeps its income, so does neglect stop
+being fatal?* It does not, and the reason is visible in the same run: a
+`do_nothing` founding city loses **one to five** buildings across its whole
+horizon (doc 92 §56.1's `--warm=0` arms), so the buildings §AP1 saves were never
+what decided the insolvency day. What decides it is the expense bill, which this
+wave does not touch. **Neglect is still fatal; it is no longer fatal by
+demolition.**
+
+**The curriculum arc, re-measured** — `tools/measure_curriculum.gd --days=45`,
+three seeds. All six levels are still earned on all three seeds, at game-hours
+14 / 47 / 82 / 135 / 243 / 509 (seed 1337), and gate 21's bounds hold:
+
+| band | mean net $/real-min | band length (real min) |
+| --- | --- | --- |
+| 1 | 537.7 | 13–17 |
+| 2 | 658.8 | 28–33 |
+| 3 | 851.0 | 35–38 |
+| 4 | 956.4 | 48–53 |
+| 5 | 1 017.2 | 108–148 |
+| 6 | 2 755.4 | 266–309 |
+
+**The four determinism baselines: all four moved, and all four moved for exactly
+one reason.**
+
+| city / path | at the fork | after Wave 19 |
+| --- | --- | --- |
+| starter, coarse 24 h | `64c4d7e9…8787` | `50d22101…d620` |
+| starter, fine 2.0 h | `9f19dcc5…9ba4` | `140ded24…34f7` |
+| bench, coarse 24 h | `6f383de1…c496` | `0fd19f68…6c46` |
+| bench, fine 2.0 h | `311e29d1…2127` | `d1a58e7c…30f6` |
+
+**The cause is RR-166 and nothing else** — the three new `Treasury.lifetime`
+keys, which `canonical_capture()` folds into `ledger_totals` and therefore into
+`state_hash()`. This is not an inference. It was measured by toggling the wave's
+one behavioural data switch and re-hashing both cities on both paths:
+
+```
+sed -i 's/"wear_may_demolish": false/"wear_may_demolish": true/' data/building_rules.json
+profile_sim --hash-only                                  # starter
+profile_sim --hash-only --city=…/bench_city.json         # bench
+```
+
+All four hashes come back **identical to the shipped ones**, so §AP1 contributes
+nothing to either baseline — and it should not: neither profiling city has a
+building anywhere near `structural_failure_threshold` inside 24 coarse hours or
+2 fine hours, and neither is insolvent, so §AP2 and §AP4 cannot fire either. The
+whole delta is a dictionary that gained three zero-valued keys.
+
+That is the re-record doc 91 A91-D-100 asked a matrix-holding lane to make, and
+it pays for three arms at once: `lifetime_dispatch` (A91-D-37, open since Wave
+15), `lifetime_restores` (A91-D-100, Wave 18) and `lifetime_relief` (new with
+§AP4, which would otherwise create an un-auditable grant).
