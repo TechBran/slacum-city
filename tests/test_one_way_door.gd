@@ -172,6 +172,52 @@ func test_a_neglected_city_keeps_its_private_stock() -> void:
 			"45 online game-days of the worst case cost the city no private stock")
 
 
+# ------------------------------------------- the climb back (§AP1's payoff)
+
+## **The whole promise of the wave, end to end.** §AP1 is only worth shipping if
+## the state it leaves behind is recoverable, and the recovery must not be a
+## purchase — doc 02 §2.6a's owner rebuilds for free once the city serves the lot
+## again. A condemned private building on a POWERED lot climbs back to `active`
+## with no command issued and no dollar spent.
+func test_a_condemned_private_building_climbs_back_when_the_lights_come_on() -> void:
+	var sim := CitySim.boot_from_files()
+	var sim_id := _first(sim, true)
+	var b: Building = sim.buildings[sim_id]
+	b.state = &"damaged"
+	b.condition = b.rule("structural_failure_threshold")
+	var treasury_before := sim.treasury.balance
+
+	# The service clause (doc 93 §Y1a) is what gates the owner's crew, so this is
+	# `apply_decay` with a served lot — the same call the hourly loop makes.
+	for _hour in 400:
+		b.apply_decay(1.0, 0.0, 1.0, 1.0)
+		if b.state == &"active":
+			break
+
+	assert_eq(String(b.state), "active",
+			"a served condemned building is rebuilt by its owner")
+	assert_true(b.condition >= b.rule("repair_target_damaged"),
+			"back to doc 02 §2.12's post-damage target")
+	assert_eq(sim.treasury.balance, treasury_before,
+			"and the city was charged nothing for it — the recovery is service, "
+			+ "not a purchase")
+
+
+## …and the same building on a DARK lot stays exactly where it is. This is the
+## other half of the ruling: neglect is not forgiven, it is made reversible, and
+## a city that never turns the lights back on never gets its tax base back.
+func test_a_condemned_building_on_a_dark_lot_stays_condemned() -> void:
+	var sim := CitySim.boot_from_files()
+	var b: Building = sim.buildings[_first(sim, true)]
+	b.state = &"damaged"
+	b.condition = b.rule("structural_failure_threshold")
+	for _hour in 400:
+		b.apply_decay(1.0, 0.0, 0.0, 1.0)   # powered_fraction 0 — no owner, no floor
+	assert_eq(String(b.state), "damaged", "no service, no rebuild")
+	assert_true(b.condition <= b.rule("structural_failure_threshold"),
+			"it keeps wearing; it simply cannot be demolished for it")
+
+
 # ------------------------------------------------- the fourth band (D-88)
 
 ## §AP1 leaves private stock resting at the structural-failure line for good, so

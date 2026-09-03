@@ -380,11 +380,12 @@ Thresholds and effects (all rescaled by ÷100):
 | 0.85–1.00 | Good | nominal; `fire_condition_mult` 1.00–1.09; doc 03's `f_condition` 0.93–1.00 |
 | 0.60–0.85 | Worn | `fire_condition_mult` 1.09–1.38; doc 03's `f_condition` 0.82–0.93 |
 | 0.35–0.60 | Poor | `fire_condition_mult` 1.38–1.79; doc 03's `f_condition` 0.71–0.82; UI warning badge |
-| 0.00–0.35 | Failing | auto-transition `active → damaged` at **0.35**; below **0.10**, `p_structural_failure = 0.02/gh` → `destroyed` |
+| 0.10–0.35 | Failing | auto-transition `active → damaged` at **0.35** |
+| 0.00–0.10 | **Condemned** | `p_structural_failure = 0.02/gh` → `destroyed` for stock the **city** owns. **Private stock stops here** (§2.6a, doc 93 §AP1): it stays `damaged` at `output_mult` 0.40 and doc 03's `f_condition` 0.46, and the band reaches the player as `buildings_condemned` |
 
 `fire_condition_mult = 1 + 1.5 × (1 − condition)^1.5` — now natively on `[0,1]`: `C=1.00 → 1.00`, `C=0.50 → 1.53`, `C=0.00 → 2.50`.
 
-**Structural failure, as shipped (Wave 4).** `Building.roll_structural_failure` is called once per settled game-hour from `CitySim.apply_hourly_decay`, immediately after `apply_decay` and in the same sorted-id loop, on the **`failures`** RNG stream (constitution §5 — no new stream was minted for it; `failures` is the one doc 02's damage already owns). It rolls only for buildings that are `damaged` **and** below `structural_failure_threshold 0.10`, so a healthy city draws nothing and the stream advances only where the city is already rotting. It emits doc 02's own `building_destroyed` with `cause = structural_failure`; the destroyed building stays in the registry at `STATE_OCCUPANCY 0.00` exactly as a burned-down one does, so population, revenue and the rebuild grace window all follow the existing path. **Offline:** during a catch-up the roll is not *taken* rather than taken and refused (doc 08 C-47 / report 98 — an absence may not silently consume the stream, and the rot must still be standing where the returning player can see it).
+**Structural failure, as shipped (Wave 4).** `Building.roll_structural_failure` is called once per settled game-hour from `CitySim.apply_hourly_decay`, immediately after `apply_decay` and in the same sorted-id loop, on the **`failures`** RNG stream (constitution §5 — no new stream was minted for it; `failures` is the one doc 02's damage already owns). It rolls only for buildings that are `damaged` **and** below `structural_failure_threshold 0.10`, so a healthy city draws nothing and the stream advances only where the city is already rotting. **Since Wave 19 it also rolls only for stock the CITY owns** — `owner_maintenance.wear_may_demolish` is `false`, so wear condemns private stock and stops (§2.6a, doc 93 §AP1, measured in doc 92 §56). The reason is that this roll was, measurably, the *only* door destruction ever came through: 45 game-days × 4 presets × 2 session kinds and every destruction in all eight arms was `structural_failure`, none from `apply_damage` and none from `burn_down`. A private building at the line stays `damaged` and keeps paying `output_mult` 0.40 — neglect still costs a city roughly four fifths of its income, and it is recoverable by restoring the service that lifted the §2.6a floor. It emits doc 02's own `building_destroyed` with `cause = structural_failure`; the destroyed building stays in the registry at `STATE_OCCUPANCY 0.00` exactly as a burned-down one does, so population, revenue and the rebuild grace window all follow the existing path. **Offline:** during a catch-up the roll is not *taken* rather than taken and refused (doc 08 C-47 / report 98 — an absence may not silently consume the stream, and the rot must still be standing where the returning player can see it).
 
 **Repair / maintenance.** This doc supplies a **`damage_fraction ∈ [0,1]` and crew-hours only**; doc 03 prices it *(report 98 C-16)*.
 
@@ -453,12 +454,36 @@ unpowered rate, crosses the auto-damage line, emits, and
 clause has nothing to bite on, because destroying the power plant and the
 substation darkens nothing — doc 93 §Y8, filed for the power lane.
 
+> **AMENDED, Wave 19 (doc 93 §AP1).** Two sentences above are now wrong and are
+> corrected here rather than quietly left. **(1)** `roll_structural_failure` can
+> no longer take a private building at all — the clause still lifts the floor,
+> the building still wears, still crosses the auto-damage line and still emits,
+> but it comes to rest at `structural_failure_threshold` in `damaged` instead of
+> being demolished. **(2)** *"that clause has nothing to bite on"* was measured
+> false: doc 92 §56.2 finds **74 to 107 of 251 buildings permanently dark from
+> game-day 24 with ZERO failed grid components** — the clause bites constantly,
+> not because anything breaks but because a growing city outruns the generation
+> it bought, which is a far more common shape than the destroyed-plant case §Y8
+> was looking for. That measurement is what made §AP1 necessary: the clause was
+> the *entrance* to the only door destruction ever came through.
+
 **What the city sees, and what the player does about it.** A building left to
 wear settles at the floor, where `f_condition = COND_FLOOR + (1 − COND_FLOOR) ×
 0.60 = 0.76` — a permanent **24 %** cut in what it pays. The recovery is an
 **upgrade**: `complete_construction` sets condition back to 1.00, so the answer
 to a worn city is to invest in it, which is the loop doc 09 level 2 already
 teaches and which doc 93 §Y7 made 20.7 % cheaper in the same wave.
+
+**And what the city sees when the clause has lifted the floor** (Wave 19). A
+private building the city has left dark does not settle at `band_worn`; it falls
+to `structural_failure_threshold` and settles THERE, `damaged`, at
+`output_mult` 0.40 / `state_occupancy` 0.40 / `coverage_mult` 0.25 and
+`f_condition = 0.40 + 0.60 × 0.10 = 0.46`. That is a far heavier bill than the
+24 % above — a fully condemned city earns on the order of a fifth of nominal —
+and it is **reversible by the one action that caused it**: restore the service,
+the floor comes back, `_owner_maintain` rebuilds the building for free, and the
+city recovers without the player buying anything. The band reaches them as
+`buildings_condemned` (doc 12 D-88).
 
 **Measured** (`tools/measure_repair_burden.gd`, doc 92 §43): the REPAIR
 affordance falls from 260 private / 21 civic to **0 / 24** in a 21-game-day
@@ -703,11 +728,11 @@ Full transition table:
 | `active` | `under_construction` | `cmd_upgrade` passes §2.11 | `pending_level = L+1`, cost charged, `work_units = 0` |
 | `under_construction` | `active` | `progress >= 1.0` | `level = pending_level or 1`; `condition = 1.00`; emits `BuildingCompleted` + `job_completed` |
 | `under_construction` | `on_fire` | doc 06 ignition (state mult 1.4) | progress frozen |
-| `active` | `damaged` | incident/disaster `damage_fraction`, or `condition < 0.35` | occupancy →0.40, emits `BuildingDamaged` |
+| `active` | `damaged` | incident/disaster `damage_fraction`, or `condition < 0.35` | occupancy →0.40, emits `BuildingDamaged`. **A single event's `damage_fraction` may not take a building that was ABOVE `structural_failure_threshold` below it** (Wave 19, doc 93 §AP2): one event condemns, it does not demolish |
 | `active` / `damaged` / `under_construction` | `on_fire` | doc 06 `FireStarted` (ignition roll or spread) | occupancy →0, emits `BuildingIgnited`, doc 06 opens the incident |
 | `on_fire` | `damaged` | doc 06 `FireSuppressed` | doc 06 supplies the residual `damage_fraction`; condition set from it |
 | `on_fire` | `destroyed` | doc 06 `BurnDown` **and** `world.destroy_allowed()` | pop/jobs →0, rubble placed, emits `BuildingDestroyed` |
-| `damaged` | `destroyed` | `condition <= 0` or structural-failure roll (`0.02/gh` below condition 0.10) | as above |
+| `damaged` | `destroyed` | `condition <= 0` (only reachable from at/below 0.10 — §AP2), the structural-failure roll (`0.02/gh` below 0.10) **on stock the city owns**, or doc 06's explicit `destroy_building` op via `Building.demolish()` | as above. **Private stock is not reachable by the roll** (§2.6a, doc 93 §AP1) |
 | `damaged` | `repairing` | `cmd_repair` + crew assigned | doc 03 charges `repair_cost(damage_fraction)` |
 | `repairing` | `active` | repair progress ≥ 1.0 | `condition = 0.85` |
 | `repairing` | `damaged` | crew withdrawn or new damage | partial progress kept |
