@@ -9125,7 +9125,22 @@ number bounds the credit.
 is now worth $354,830 — $73,511 more, +26.1%.** A twelve-hour absence gains
 +70.0%. The player slept through the difference.
 
-### 55.4 Where the money actually stopped — the taper is exonerated
+### 55.4 Where the money actually stopped — and why the taper could not have done it
+
+> **CORRECTED AT MERGE, 2026-09-03, by the verify pass — the measurement stands
+> and the explanation was wrong.** This section originally read that doc 03
+> §2.11's offline yield taper is *exonerated* because its ceiling is "almost
+> exactly cancelled" by `TAPER_EXEMPT` growth. It is not cancelled: **it is not
+> wired.** `CitySim.build_settlement_inputs` (`sim/city_sim.gd`) sets no
+> `yield_mult` key, so `EconomySystem.settle_hour` reads its default of `1.0` on
+> every catch-up hour (`economy_system.gd:352`), and `TAPER_EXEMPT` has no reader
+> anywhere outside `data/economy.json` (`grep -rn TAPER_EXEMPT --include=*.gd
+> sim/ ui/ game/` → nothing). The 97-101 %-of-online figure is real and
+> reproduces; its cause is that offline income is NOT tapered at all. Filed as
+> **A91-D-109** — the seventh instance of this project's oldest shape: authored,
+> documented, tested for presence, read by nobody. Whoever wires it owns the
+> balance question that comes with it, and this document must not be cited as
+> evidence that the taper is doing its job.
 
 The shipped clamp is 360 game-hours = **6 real hours**, so hours 7, 8 and 9 of a
 night credited *nothing*. That is a hard stop and it is exactly the shape the

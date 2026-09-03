@@ -8036,7 +8036,14 @@ which RR-133's was not, and doc 92 §55.2/§55.4 carry the arithmetic:
 * Therefore the cap is not where the money is decided; it is only where it is
   **stopped**. At 12 real hours it stops on an absence that is no longer a night.
 
-**Doc 03 §2.11's taper is exonerated, and this is the finding that kept the wave
+**Doc 03 §2.11's taper is NOT WIRED — corrected at merge, 2026-09-03.** The
+measurement that produced this ruling (offline earns 97-101 % of idle-online)
+reproduces exactly; the mechanism the ruling gave for it does not. The taper is
+not cancelled by `TAPER_EXEMPT` growth: `CitySim.build_settlement_inputs` never
+sets `yield_mult`, `EconomySystem.settle_hour` therefore reads `1.0` every
+catch-up hour, and `TAPER_EXEMPT` is data with no reader. Offline income is
+untapered because nothing tapers it. Filed A91-D-109. The original sentence,
+kept so the correction is legible: this is the finding that kept the wave
 honest.** The obvious suspect for "the money stops" is the exponential taper,
 whose effective-hours ceiling is `OFF_FULL + OFF_TAU = 94` game-hours. It was
 measured (doc 92 §55.4) and it is very nearly cancelled at a growing city,
