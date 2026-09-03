@@ -474,6 +474,48 @@ func has_street_payout(kind: String) -> bool:
 	return not street_payout(kind).is_empty()
 
 
+## Doc 03 §2.5b's payout band for one commission TIER, as `{base, spread}`
+## (Wave 19, report 98 §60 RR-170).
+##
+## **This file is where the commissions board's money lives.**
+## `data/contracts.json` owns which commissions exist, what they ask for and how
+## long they run; it owns no dollar, and `ContractBoard.FORBIDDEN_KEYS` refuses
+## one that comes back — the same guard RR-85 gave the street table. An unpriced
+## tier answers an EMPTY dictionary rather than a zero, so `has_contract_payout`
+## can tell "priced at nothing" from "not priced".
+func contract_payout(tier: String) -> Dictionary:
+	var row: Variant = (city_services().get("contract_payout", {}) as Dictionary).get(tier, null)
+	return (row as Dictionary) if row is Dictionary else {}
+
+
+func has_contract_payout(tier: String) -> bool:
+	return not contract_payout(tier).is_empty()
+
+
+func contract_payout_base(tier: String) -> float:
+	return float(contract_payout(tier).get("base", 0.0))
+
+
+func contract_payout_spread(tier: String) -> float:
+	return float(contract_payout(tier).get("spread", 0.0))
+
+
+## The commissions board's level curve — the same shape the street bounty uses,
+## and steeper, because a commission is gated by city level in a way a kerb
+## pickup is not. `mult(L) = 1 + k(L − 1)`, fitted to land the `major` band's
+## FLOOR on the player's own $15,000 at the top rung.
+func contract_reward_city_level_k() -> float:
+	return float(city_services().get("CONTRACT_REWARD_CITY_LEVEL_K", 0.0))
+
+
+## The ruled share of the city's net this layer may pay somebody who completes
+## every commission it offers. Published for the balance instruments and for
+## gate 32 arm (h); the thing that ENFORCES it is
+## `data/contracts.json board.cooldown_h_after_claim`.
+func contract_ceiling_share_max() -> float:
+	return float(city_services().get("CONTRACT_CEILING_SHARE_MAX", 1.0))
+
+
 func street_payout_base(kind: String) -> float:
 	return float(street_payout(kind).get("base", 0.0))
 

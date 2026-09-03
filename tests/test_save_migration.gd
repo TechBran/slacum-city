@@ -337,12 +337,19 @@ static func _sha256_of(text: String) -> String:
 	return ctx.finish().hex_encode()
 
 
-func test_the_city_section_is_on_rung_eight() -> void:
+func test_the_city_section_is_on_rung_nine() -> void:
 	# The constant, the published accessor and the bytes on disk must agree.
 	# A bump that lands in only two of the three is how a save silently keeps
 	# claiming to be something it is not.
-	assert_eq(CitySim.SAVE_SECTION_VERSION, 8,
-			"the Director's stall repair is rung 8 (doc 08 §2.8, 99-PA PA-04)")
+	#
+	# **Rung 9, Wave 19** (report 98 §60 RR-170): doc 03 §2.5b's commissions
+	# board adds one top-level key, `contracts`, and one entry inside an existing
+	# one, `rng.contracts` — the same two shapes rung 7 added for the street
+	# layer, and `_v8_to_v9` is the identity function for the same reason
+	# `_v6_to_v7` was: an absent block deserialises to an empty board, which is
+	# what a city that has never seen the board should restore to.
+	assert_eq(CitySim.SAVE_SECTION_VERSION, 9,
+			"the commissions board is rung 9 (doc 08 §2.8, report 98 §60 RR-170)")
 	var sim := CitySim.boot_from_files(4242)
 	assert_eq(sim.save_section_version(), CitySim.SAVE_SECTION_VERSION)
 	var service := _fresh_service()

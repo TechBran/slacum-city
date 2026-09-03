@@ -4576,7 +4576,86 @@ Filed as `A91-D-108` with the three-arm fix written out.
 
 ### AQ3. What "something to DO" has to survive
 
-*(Filled in with the contract board; see §AQ3 below the closing block.)*
+*The player's last sentence is the one this section rules on: "any other fun
+ideas to collect money in the game, something to actually DO to collect, other
+than tax revenue." Five candidates were weighed against the two tests this
+project applies — **does it give the player something to DO when they open the
+app**, and **does it survive doc 03's dollar monopoly** — and two shipped.*
+
+| candidate | something to DO? | survives C-07? | ruling |
+|---|---|---|---|
+| **contracts / commissions** | **yes, and it is the only one with a CLOCK** | yes — one payout table, `data/contracts.json` carries no dollar | **SHIPPED** (§2.5b) |
+| **salvage from ruins** | **yes, and it is the only one a broke player can press** | yes — a closed form off two published fractions | **SHIPPED** (§AQ2) |
+| inspections / permits | weakly — a repeatable tap with a per-building cooldown | yes | **REFUSED**, see below |
+| response-time bounties | no — it is a multiplier on a thing the player already does | yes | **FOLDED INTO RR-169(c)** as the manual premium's level curve |
+| tourism / landmark revenue | **no — it is a RATE**, and the ask was explicitly for something other than a rate | yes | **REFUSED** |
+| a mayor's daily objective | yes, but it is the contract board with one client and no choice | yes | **SUBSUMED** |
+
+**Why contracts and not the others, in one sentence each.**
+
+*Contracts win the first test outright because they are the only candidate with a
+DEADLINE.* Everything else in this game waits for the player: a tax rate settles
+on the hour, a block develops over game-days, a crook stands on a kerb for four
+minutes and then does not. A commission is the first thing in the project that
+gives a player a reason to open the app **at a particular time**, which is
+precisely what the 2026-09-03 report was missing — the player went to bed hoping
+to wake up to something and woke up to nothing.
+
+*They also fold the answer into work the player was doing anyway.* Two of the
+seven commissions pay for restoring destroyed buildings, which is the literal
+sentence the report contains: *"I've been trying to restore all the buildings so
+we can get revenue back up."* A reward layer that pays for the grind the player
+described is worth more than one that adds a new grind beside it.
+
+*Salvage wins the first test in a way nothing else can:* it is the only verb in
+the project a player with a negative balance can press. Every other candidate
+here, and every priced verb the game already had, asks that player for money.
+
+**INSPECTIONS: refused, and the reason is worth writing down because it will be
+proposed again.** *Tap a building, pay a fee, learn its condition* is a clean
+loop and it teaches the thing the same playtest complained about ("the buildings
+are still being destroyed super fast"). It is refused on the second test — not
+C-07, which it passes, but the test under it. **The condition it would reveal is
+already on the panel.** S5 draws a condition meter, four service tiles and a
+`Fix this →` on every blocked requirement; an inspection would charge a fee for
+re-showing information the game gives away, and would be a paid tooltip. A verb
+that pays the player for reading a number the panel already prints teaches them
+that the panel was hiding something. **Re-open only if** the panel stops
+publishing per-building condition, which nothing plans.
+
+**TOURISM: refused on the ask's own words.** *"Something to actually DO to
+collect, other than tax revenue"* — landmark revenue IS tax revenue with a
+different multiplier on it. It would be a good feature and it is not an answer to
+this sentence.
+
+**RESPONSE BOUNTIES: not refused, absorbed.** The dispatch layer already prices
+speed (`speed_bonus` on [0.60, 1.50]) and already pays a human premium; what was
+broken was that neither grew with the city (`A91-D-106`). RR-169(c) fixes the
+decay rather than adding a second reward on top of it, which is the cheaper and
+more honest half of the same idea.
+
+**The three properties every new money source in this project has to have**, and
+they are stated here because two candidates were shaped by them rather than
+merely checked against them:
+
+1. **A CLAIM, not an accrual.** Nothing on the board is money until it is tapped.
+   The street layer's rule ("nothing spawns VALUE; a TAP is money") is what makes
+   an attention reward an attention reward instead of a rate with extra steps.
+2. **A bound that is one authored number, in data, that a gate can read.** For
+   the street it is the offer interval; for commissions it is
+   `cooldown_h_after_claim`. A layer whose income bound is an emergent property
+   of five interacting knobs is a layer nobody can retune safely.
+3. **Nothing while the player is away.** Doc 08 §2.3 rule 9. Both new sources
+   return before their first statement on the coarse path, which also means the
+   balance matrix cannot see either of them — and that is what let this lane ship
+   two income systems without holding the matrix.
+
+**The one thing §AQ3 declines to rule on.** Whether the board should ever offer
+more than one commission at a time. One-at-a-time is what makes the cooldown a
+bound the gate can state in a sentence, and it is also what makes accepting a
+DECISION rather than a checklist. If a later wave wants two, the ceiling
+derivation has to be re-done against the pair and not against the tier, and this
+section is the record that it was a choice.
 
 ### AQ4. The arbitrage nobody was looking for
 

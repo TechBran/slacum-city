@@ -33,7 +33,13 @@ const STRINGS_PATH := "res://data/strings.en.json"
 ## Data files besides `data/ui.json` that NAME copy through `*_key` fields.
 ## `data/goals.json` (doc 09 §8.3) is the first: the curriculum's level titles
 ## and objective sentences live there, and nothing in `ui/` spells one out.
-const DATA_KEY_FILES: Array[String] = ["res://data/goals.json"]
+## Data files that name copy through `*_key` fields and that no GDScript source
+## ever spells out. `data/contracts.json` joined in Wave 19 for the same reason
+## `data/goals.json` is here: every commission carries a `client_key` and a
+## `text_key`, and without this the whole `ui_contract_*` family would read as
+## orphaned and the orphan check below would invite somebody to delete live copy.
+const DATA_KEY_FILES: Array[String] = ["res://data/goals.json",
+		"res://data/contracts.json"]
 
 ## Lookup idioms. A `ui_*` literal on a line that carries one of these is a
 ## string-table key; one anywhere else is an audio cue id, an observation kind or

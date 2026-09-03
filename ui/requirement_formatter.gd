@@ -171,6 +171,16 @@ const CODE_TABLE := {
 	&"E_UNKNOWN_BUILDING": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
 	&"E_NO_FEEDER": {"severity": SEVERITY_BLOCKED, "fix": FIX_TILE},
 	&"E_AUSTERITY": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	# --- Wave 19: doc 03 §2.5b's commissions board (report 98 §60 RR-170). All
+	# five route `FIX_NONE`, and that is the right answer rather than a stub:
+	# every one of them is answered on the band the player is already looking at
+	# — the commission in hand, the clock on it, or the offers under it — so a
+	# `Fix this →` could only focus the camera on a screen that is already open.
+	&"E_CONTRACT_ACTIVE": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	&"E_CONTRACT_COOLDOWN": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
+	&"E_UNKNOWN_CONTRACT": {"severity": SEVERITY_BLOCKED, "fix": FIX_NONE},
+	&"E_CONTRACT_UNMET": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
+	&"E_NO_CONTRACT": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	# --- Wave 5: the infrastructure verbs (doc 05 §6 water, doc 10 §2.13 roads).
 	# Placement's `E_UNSERVED` twin for water, and the roster/level rows the
 	# INFRASTRUCTURE tab can now show on a card it refuses to place.

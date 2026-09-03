@@ -7962,9 +7962,9 @@ layer delivers 0.339 offers per game-hour (measured). A $15,000 collection at
 that rate is **$5,090/gh**, which is **1.85× the entire net income of a level-6
 city**. A street table that paid the player's number would not be a strong second
 income; it would be the economy, and every other system in the game would become
-scenery. So the number is answered by a verb that fires about once a game-day — the
-contract board, in the ruling below — and the street layer is re-priced against
-what it can actually carry.
+scenery. So the number is answered by a verb that fires about once a game-day (RR-170's
+contract board), and the street layer is re-priced against what it can actually
+carry.
 
 **(a) The street trade — 1.70× per collection, 1.00× per game-hour.**
 
@@ -8082,7 +8082,7 @@ level-6 `lost_valuables` tops out at $1,200 → **$2,250**; the reference crime 
 player dispatches by hand goes $892.50 → **$3,570** (clamped at 0.75 × the loss
 it prevented, which on upgraded stock is far above it). That is between 1.9× and
 4.0× on the mature city, and it is what this layer can carry. The zero the player
-asked for belongs to the contract board.
+asked for is RR-170's.
 
 ### RR-171 — `cmd_salvage_building`: a ruin is worth something, and the verb that runs the other way (closes the other half of `A91-D-99`; docs 02 §2.12, 03 §2.5, 12 §2.9 D-89, 92 §57.2, 93 §AQ2)
 
@@ -8207,3 +8207,158 @@ balance, which is the 2026-09-03 state photographed rather than described: both
 ruin buttons on screen and only one of them pressable. `--screen=all --audit
 --strict` exits **0** at 412×915, 360×800, 880×400 and at 360×800 with
 `--text-scale=1.3 --large-targets`.
+
+### RR-170 — the commissions board: what "$15,000 for one" costs, and where it can honestly live (docs 03 §2.5b, 08 §2.8, 12 §2.19 D-90, 92 §57.3, 93 §AQ3)
+
+**The arithmetic that decides where this feature goes, done before anything was
+built.** The player asked for a $15,000 collection. The street layer delivers
+**0.339 offers per game-hour**, so $15,000 a pickup is **$5,090/gh** — **1.85×
+the entire net income of a level-6 city** (`MODEL_NET_PER_HOUR_BY_CITY_LEVEL`
+row 6 = 2,755.4). There is no value of `street_payout`, of
+`STREET_REWARD_CITY_LEVEL_K` or of `target_interval_h` that pays that number and
+leaves a game underneath it. **A figure that size has to belong to a verb that
+fires about once a game-day**, and that is the whole design constraint the
+commissions board is built from.
+
+**The loop.** A client posts a commission to a board. The player ACCEPTS one —
+the city holds exactly one at a time — which starts a deadline in game-hours.
+They do the work with the verbs they already have. When the target is met the
+commission goes `ready` and they CLAIM it, which is the only step that moves a
+dollar. Seven commissions ship:
+
+| id | tier | asks for | window | from level |
+|---|---|---|---|---|
+| `watch_patrol` | minor | collect 4 street pickups | 12 h | 1 |
+| `film_permit` | minor | stamp 6 road tiles | 18 h | 1 |
+| `insurance_payout` | standard | restore 2 buildings | 24 h | 2 |
+| `county_retainer` | standard | resolve 5 incidents | 24 h | 3 |
+| `assessor_survey` | standard | start 3 repairs | 24 h | 3 |
+| `convention_bid` | major | 3 upgrades | 36 h | 6 |
+| `reconstruction_grant` | major | restore 3 buildings | 36 h | 6 |
+
+**The board invents no objective vocabulary and that is the reuse that made it
+affordable.** Progress is counted off `GoalSystem.EVENT_KINDS` — doc 09's
+curriculum table — extended by exactly ONE row, `restore_buildings`, whose event
+did not exist until Wave 18 gave the restore a verb. So a commission can only ask
+for something the game already knows how to notice, a verb that grows a
+curriculum objective grows a contract kind for free, and
+`tests/test_contracts.gd` asserts the extension is one row rather than a second
+vocabulary growing in a second place.
+
+**The two commissions that are the 2026-09-03 report, by name.**
+`insurance_payout` and `reconstruction_grant` pay for *restoring destroyed
+buildings*, which is the exact sentence the player wrote at three in the morning:
+*"I've been trying to restore all the buildings so we can get revenue back up,
+but it seems really difficult."* They were doing the work and being paid nothing
+for it.
+
+**Pricing, and the bound that is one number in another file.**
+`contract_payout` is `{minor 900+300, standard 2200+700, major 5000+1600}` with
+`CONTRACT_REWARD_CITY_LEVEL_K = 0.40`, so at level 6 a `major` pays **$15,000 at
+the FLOOR of its band and $19,800 at the top** — the player's number, delivered
+by the band's floor rather than by its luckiest draw.
+
+What stops that becoming the economy is `data/contracts.json
+board.cooldown_h_after_claim = 30.0`. One commission at a time means income
+cannot exceed one payout per cooldown, whatever the player does, and 30.0 is the
+value at which the best tier available at every rung lands under
+`CONTRACT_CEILING_SHARE_MAX = 0.25`: measured **6.5 / 18.1 / 18.0 / 19.6 / 21.7 /
+21.0 %** of net at levels 1–6. Balance gate 32 gains arm **(h)**, which reads both
+files and asserts the one against the other — the same shape arm (c) has held the
+street rate in since RR-85.
+
+**Why 0.25 when the street's ceiling is 0.40: the two are ADDED.** A player who
+takes every street offer and completes every commission is at 0.65 of net from
+active play, leaving the passive city 61 % of the total. That is where this wave
+puts the line, stated as a rule rather than a number: *above one half from any
+single active layer, or above two thirds from all of them together, and the city
+stops being the thing being played.*
+
+**`major` waits for level 6, and that is a BALANCE gate rather than a difficulty
+curve.** `MODEL_NET_PER_HOUR_BY_CITY_LEVEL` is flat from level 2 to level 5 and
+then triples; a `major` payout at level 5 would be 38 % of that rung's net on its
+own. The tier ladder is gated where the income series says it fits, not where a
+progression curve would like it to.
+
+**Three structural properties, each enforced where it cannot be forgotten.**
+
+1. **It is a FINE-PATH system.** `ContractBoard.advance(dt, online = false)`
+   returns before its first statement: no offer posted, no deadline run, no offer
+   aged, **and not one draw taken on the `contracts` stream**. That is doc 08
+   §2.3 rule 9 made structural, and it is also why the balance matrix — which
+   runs the coarse step — cannot see this file at all.
+   `test_the_board_does_not_run_while_the_player_is_away` asserts the stream
+   state is byte-identical across 500 game-hours away.
+2. **It owns no dollar.** `data/contracts.json` is refused at boot if it carries
+   `reward`, `payout`, `base`, `spread` or `reward_city_level_k` at any depth,
+   and a tier `city_services.contract_payout` does not price is a boot error too
+   — the same pair of guards RR-78 gave `reward_base` and RR-85 gave the street
+   bands.
+3. **A lapsed commission costs NOTHING** — no fee, no stability, no reputation.
+   Ruled in the data file so it is visible there and not only in a doc, on the
+   same terms as the street layer's `expire_stability_delta: 0.0`.
+
+**The bus grew a fan-out, and the objection it answers is in the bus's own
+docstring.** `SimEventBus.observer` is deliberately one `Callable` because *"a
+list would make emission order depend on registration order, which is exactly the
+kind of thing determinism forbids"*. That objection is about a bus anybody can
+subscribe to; the answer is not a list on the bus but `CitySim.EventFanout` with
+a fixed authored order set once at boot (`[goals.observe, contracts.observe]`).
+It is a separate object rather than a method on `CitySim` so the bus does not
+hold a bound `Callable` back onto the sim that owns it, and `dispose()` drops
+both ends.
+
+**City section rung 8 → 9** (doc 08 §2.8), and `_v8_to_v9` is the identity
+function for the same reason `_v6_to_v7` was — the two new shapes are a
+top-level `contracts` block and an `rng.contracts` entry, and both have documented
+defaults an absent save falls back to.
+
+**THE FOUR BASELINES MOVE, and the cause is one line.** `RngStreams.STREAM_NAMES`
+gains `"contracts"`; `rng.serialize()` is inside `canonical_capture()` and
+therefore inside `state_hash()`, so a named stream is a hash change on every
+city, including one that never opens the board. `Treasury.hour_city_services`
+gains a `contracts` key for the same reason it had to (the settlement's
+`services_total` is the SUM of that dictionary, so a source with no key there
+would move the balance and not the line). Both are published in the table at the
+head of this section. **The three LIFETIME arms doc 91 `A91-D-37` / `A91-D-100` /
+`A91-D-108` owe are still deferred**: they are a different dictionary and belong
+in one edit with each other, in a lane that holds the matrix.
+
+### RR-173 — what the wave measures, and the two numbers it did not move (docs 92 §57, 12 §2.19 D-90)
+
+**The surfaces, both shipped in the same commit as their verbs**, which is
+A91-D-28's lesson and this project's signature defect applied on the way in
+rather than a wave late:
+
+* the ruin's `SALVAGE` row and preview state `building_salvage` (RR-172);
+* the goals sheet's COMMISSIONS band and preview states `goals_contract` /
+  `goals_contract_ready`, with `ui_contract_*` strings, five new
+  `RequirementFormatter` codes with title/body/remedy, and four
+  `data/ui.json.event_log` rows.
+
+`--screen=all --audit --strict` exits **0** at 412×915, 360×800, 880×400 and at
+360×800 with `--text-scale=1.3 --large-targets` — four sweeps, 72 states each.
+
+**The band is drawn on an EMPTY board, and the first draft was wrong about
+this.** It hid itself when there was nothing on it, on the reasonable-sounding
+argument that a header over nothing is worse than no header. For this project
+specifically that is backwards: a player who has never seen the header has no way
+to learn that commissions exist, and a feature nobody can discover is `A91-D-19`
+with a nicer name. *"No commissions on the board right now"* is a sentence; an
+absent header is not.
+
+**One blocker was written and removed as unreachable.** `cmd_salvage_building`'s
+first draft carried an `E_JOB_IN_FLIGHT` arm mirroring `cmd_restore_building`'s.
+It can never fire — the only job that can exist on a ruin's lot is the rebuild
+that verb files, and `Building.order_rebuild` moves the state out of `destroyed`
+in the same call, so `E_STATE` always wins. A blocker that cannot fire is a
+blocker nobody can test.
+
+**The two numbers this wave deliberately did not move**, because both belong to
+lanes that hold the matrix:
+
+* `dispatch_payout_base` — the AUTO payout. Raising it would make every control
+  agent in the balance matrix richer and move gate 29's insolvency day, which is
+  Lane 2's. The whole raise is on the manual half instead (RR-169(c)), which is
+  RR-78's own argument used a second time.
+* `Treasury.lifetime` — the three ledger arms. See `A91-D-108`.

@@ -76,6 +76,12 @@ const SCREENS: Array[String] = [
 	"alerts", "alerts_empty",
 	"overlay", "overlay_police", "overlay_fire", "overlay_folded", "overlay_power",
 	"goals", "goals_late", "goals_done",
+	# Wave 19's commissions band (doc 12 §2.19 D-90), in the two states that
+	# decide whether it is a decision or a wall: an OFFER on the board with the
+	# money on the ACCEPT button, and a commission FINISHED with the primary
+	# CLAIM live. Same commit as the band — A91-D-28's lesson applied on the way
+	# in, the way D-86 and D-89 applied it.
+	"goals_contract", "goals_contract_ready",
 	"settings", "saves", "pause",
 	"title", "title_fresh", "title_confirm", "title_crisis",
 	# S15. A91-D-28's lesson, applied on the way in rather than a wave late: a
@@ -901,6 +907,20 @@ func _apply(screen: String) -> void:
 			# Level 5's four objectives with two of them landed: the widest the
 			# sheet ever gets, and where its reward card is longest.
 			_goals_at(4, 2)
+		"goals_contract":
+			# The board with something on it and nothing taken: an offer, priced,
+			# with a client and a window, and the ACCEPT button carrying the
+			# money. This is the state a player opens the sheet INTO — the one
+			# that answers "what should I be doing?" with a number.
+			_goals_at(2, 1)
+			_offer_a_contract(false)
+		"goals_contract_ready":
+			# The same band with the work done: the bar full, the counter at
+			# `3 / 3`, and the primary CLAIM live with what it pays on its face.
+			# It is the state the whole layer exists to reach and the only one
+			# that draws an enabled CLAIM.
+			_goals_at(2, 1)
+			_offer_a_contract(true)
 		"goals_done":
 			# The curriculum finished. The chip has left the bar and the sheet is
 			# a payoff card — the one state with no objective rows at all.
@@ -1083,6 +1103,41 @@ func _goals_at(earned: int, landed: int) -> void:
 			goals.done[str((objectives[i] as Dictionary)["id"])] = true
 	goals.reconcile(_sim.goal_state_view())
 	goals.drain_events()
+	_root.refresh_goals()
+	_root.open_goals()
+
+
+## Drive the commissions board to a photographable state (Wave 19, doc 12 §2.19
+## D-90). It runs the REAL board — `ContractBoard.advance` at the phase adapter's
+## own cadence until it posts — rather than hand-building a row, for the same
+## reason `_burn_two_down` burns a real building: a fixture that fabricates the
+## state cannot photograph a state the game does not actually reach.
+##
+## `accept_and_finish` also accepts the offer and drives it to `ready` through
+## the same bus events the sim would raise, so the second state is the first one
+## plus work rather than a different row.
+func _offer_a_contract(accept_and_finish: bool) -> void:
+	var board := _sim.contracts
+	_sim.progression.city_level = maxi(_sim.progression.city_level, 3)
+	for h in 400:
+		board.advance(1.0, true)
+		if not board.offers().is_empty():
+			break
+	board.drain_events()
+	if board.offers().is_empty():
+		return
+	if accept_and_finish:
+		var offer: Dictionary = board.offers()[0]
+		_sim.cmd_accept_contract(int(offer["id"]))
+		var rule := ContractBoard.rule_for(StringName(String(offer["kind"])))
+		var payload: Dictionary = {}
+		if String(rule.get("amount", "")) != "":
+			payload[String(rule["amount"])] = int(offer["target"])
+		for i in int(offer["target"]):
+			_sim.bus.emit(StringName(String(rule["event"])), payload)
+			if board.is_ready():
+				break
+	_sim.bus.drain()
 	_root.refresh_goals()
 	_root.open_goals()
 

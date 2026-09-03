@@ -65,6 +65,20 @@ var incident_sink: IncidentRequestSink
 ## the coarse step, which is doc 08 §2.3 rule 9 made structural. See
 ## `_boot_street` and `cmd_collect_opportunity`.
 var street: OpportunitySystem
+## Doc 03 §2.5b's commissions board — work the city takes on a clock, and the
+## biggest single thing a player can collect (Wave 19, report 98 §60 RR-170).
+## Fine-path only, like the street layer and for the same offline-fairness
+## reason. Booted by `_boot_contracts`; driven by `cmd_accept_contract` and
+## `cmd_claim_contract`.
+var contracts: ContractBoard
+## The bus's single in-sim listener, fanned out to the two counters that need it
+## in an AUTHORED order. `SimEventBus` deliberately exposes one `Callable` and
+## says why — *"a list would make emission order depend on registration order,
+## which is exactly the kind of thing determinism forbids"* — and the answer to
+## that objection is not a list on the bus but a fixed fan-out here, written down
+## once. It is its own object rather than a method on `CitySim` so the bus does
+## not hold a reference back to the sim that owns it.
+var _fanout: EventFanout
 
 ## The last held metering constant (doc 03 §9 item 6b): a constant until doc 04
 ## meters delivered energy. (HELD_WATER retired — doc 05's live inventory()
@@ -231,7 +245,12 @@ func boot(seed_value: int, time_data: Dictionary, starter_data: Dictionary,
 	# emits `building_placed_sim` from the command thread of control, and a
 	# counter that only looked at events during a tick would miss the tap that
 	# caused it until the next one.
-	bus.observer = goals.observe
+	# Doc 09 §2.14's one subscription, and since Wave 19 doc 03 §2.5b's beside it.
+	# The ORDER is authored and is a contract: the curriculum counts first, then
+	# the commissions board, so an event that would advance both advances them in
+	# the same order on every machine and in every replay.
+	_fanout = EventFanout.new()
+	bus.observer = _fanout.observe
 	stats = StatsRecorder.new()
 	econ_curves = CostCurves.new(
 			StarterCityLoader.read_json("res://data/building_economy.json"),
@@ -270,6 +289,12 @@ func boot(seed_value: int, time_data: Dictionary, starter_data: Dictionary,
 	# through `CityIncidentWorld`, so the world has to exist first. It draws
 	# nothing at boot, so the reorder costs no stream position.
 	_boot_street()
+	_boot_contracts()
+	# The fan-out's targets, in the authored order (see `_fanout`). Installed
+	# here rather than beside `bus.observer` because `contracts` does not exist
+	# until `_boot_contracts` has run and a half-built target would count events
+	# into a board that has no templates.
+	_fanout.targets = [goals.observe, contracts.observe]
 	_boot_weather()
 	_check_grid_rules()
 	_register_systems()
@@ -388,6 +413,27 @@ func _boot_street() -> void:
 	street.residential_ids = _residential_grid_ids
 	street.roster_revision = func() -> int: return roster_revision
 	street.city_level = func() -> int: return progression.city_level
+
+
+## Doc 03 §2.5b's board (Wave 19, RR-170). Three seams and no more:
+##
+##   * `data/contracts.json`, whole — which commissions exist and what they ask;
+##   * `econ_curves`, handed over whole AFTER `configure()` so the check *"every
+##     tier this board can offer has a price"* can run against the parsed
+##     templates (the same order `_boot_street` uses, for the same reason);
+##   * `city_level`, a `Callable`, because the payout is frozen at OFFER time and
+##     the board must not hold a reference back to `CitySim`.
+##
+## The board's own cadence is NOT authored here: `ContractPhaseSystem` hands it
+## the adapter's period, so a hand-written `dt` cannot drift from the schedule.
+func _boot_contracts() -> void:
+	contracts = ContractBoard.new(
+			StarterCityLoader.read_json("res://data/contracts.json"))
+	contracts.bind_payouts(econ_curves)
+	if not contracts.errors.is_empty():
+		boot_errors.append_array(contracts.errors)
+	contracts.bind_stream(rng)
+	contracts.city_level = func() -> int: return progression.city_level
 
 
 ## Grid building id -> true, for every RESIDENTIAL building in the roster. Doc
@@ -1038,6 +1084,14 @@ func dispose() -> void:
 		scheduler.dispose()
 	if street != null:
 		street.dispose()
+	if contracts != null:
+		contracts.dispose()
+	# The fan-out holds bound `Callable`s onto two systems this object owns; the
+	# bus holds the fan-out. Dropping both here is what lets the whole graph go.
+	if _fanout != null:
+		_fanout.targets = []
+	if bus != null:
+		bus.observer = Callable()
 
 
 func advance_hours(hours: float) -> void:
@@ -1289,7 +1343,7 @@ static func encode_captured(raw_body: Dictionary) -> Dictionary:
 ## scheduled. `state_hash()` moves for every played city, which is the honest
 ## record of exactly that (RR-135; the four `profile_sim` baselines are re-taken
 ## with the fix named).
-const SAVE_SECTION_VERSION := 8
+const SAVE_SECTION_VERSION := 9
 
 
 func save_section_version() -> int:
@@ -1311,6 +1365,7 @@ func migrate_save_section(body: Dictionary, from_version: int) -> Dictionary:
 			5: body = _v5_to_v6(body)
 			6: body = _v6_to_v7(body)
 			7: body = _v7_to_v8(body)
+			8: body = _v8_to_v9(body)
 		version += 1
 	return body
 
@@ -1448,6 +1503,23 @@ static func _v7_to_v8(body: Dictionary) -> Dictionary:
 					DisasterDirector.MAX_ACTIVE_MIN_DEFAULT,
 					DisasterDirector.STORM_REPORT_AT_MIN_DEFAULT)
 	body["director"] = block
+	return body
+
+
+## v8 → v9: **the identity function, and that is the whole migration.** The
+## commissions board (doc 03 §2.5b, report 98 §60 RR-170) adds one top-level key,
+## `contracts` — a board of offers, one accepted commission and a cooldown — and
+## one entry inside an existing one, `rng.contracts`, the new named stream.
+##
+## Neither is invented for an old save. `ContractBoard.deserialize({})` is an
+## EMPTY board, which is exactly what a city that has never seen the board should
+## restore to, and `RngStreams.deserialize` leaves `contracts` on the seed
+## `hash(master_seed + ":contracts")` gave it at boot rather than inventing a
+## state — the same two decisions `_v6_to_v7` made for `street`, for the same
+## reasons. Stamping an empty `contracts` block in would be worse than leaving it
+## out: doc 08 §2.8's rule is that a missing input means a DOCUMENTED default,
+## and the default is documented here.
+static func _v8_to_v9(body: Dictionary) -> Dictionary:
 	return body
 
 
@@ -1647,6 +1719,7 @@ func capture_state() -> Dictionary:
 		"weather": weather.serialize(),
 		"director": director.serialize(),
 		"street": street.serialize(),
+		"contracts": contracts.serialize(),
 		# 99-PA PA-26. The storm's ledger tally and the prep effects that have to
 		# be lifted again — both outlive the tick that made them, so both are the
 		# city's state and not a view of it.
@@ -1927,6 +2000,11 @@ func _restore_incidents(body: Dictionary) -> void:
 	# A v6 body has no `street` block and restores to an empty roster, which is
 	# exactly what a v6 city had.
 	street.deserialize(body.get("street", {}))
+	# A v8 body has no `contracts` block and restores to an empty board, which is
+	# the same total-migration rule the `street` block above takes: a returning
+	# player is offered a fresh commission on the next posting attempt rather
+	# than being handed one they never accepted.
+	contracts.deserialize(body.get("contracts", {}))
 	_restore_storm_prep(body.get("storm_prep", {}))
 
 
@@ -5334,6 +5412,98 @@ func cmd_collect_opportunity(opportunity_id: Variant, preview: bool = false) -> 
 	return CommandQueue.ok(quote)
 
 
+# --------------------------------------------- doc 03 §2.5b the commissions board
+
+## **ACCEPT A COMMISSION** (Wave 19; doc 03 §2.5b, doc 12 §2.19 D-90,
+## doc 93 §AQ3, report 98 §60 RR-170).
+##
+## The player's ask was for *"something to actually DO to collect, other than tax
+## revenue"*, and the shape of this verb is the answer: the money is not on the
+## board, it is on the OTHER SIDE of work the player was probably doing anyway.
+## Accepting is free and starts a deadline; nothing is owed if it runs out.
+##
+## Order of checks:
+##
+##   1 E_UNKNOWN_CONTRACT   no such offer on the board (expired, or already taken)
+##   2 E_CONTRACT_ACTIVE    the city already holds one — one at a time, by ruling
+##   3 E_CONTRACT_COOLDOWN  the board is quiet after a delivery
+##                          (payload carries `hours_remaining`)
+##
+## **Free, and that is a price decision rather than an absence of one.** Doc 03
+## charges nothing to accept work: a deposit would make the honest failure mode
+## (a deadline the player could not meet) cost money, which is exactly the chore
+## conversion `data/contracts.json._no_penalty` refuses.
+func cmd_accept_contract(contract_id: Variant, preview: bool = false) -> Dictionary:
+	# The shell's tap funnel carries ids as text (doc 12 §4.4's one-funnel rule);
+	# the board keys on int. Coerce here, exactly as `cmd_collect_opportunity` does.
+	var offer_id := int(str(contract_id))
+	var row := contracts.find_offer(offer_id)
+	if row.is_empty():
+		return CommandQueue.fail(&"E_UNKNOWN_CONTRACT",
+				{"blockers": [&"E_UNKNOWN_CONTRACT"]})
+	var quote := {"blockers": [] as Array, "id": offer_id,
+			"template": String(row["template"]), "tier": String(row["tier"]),
+			"kind": String(row["kind"]), "target": int(row["target"]),
+			"reward": int(row["reward"]), "deadline_h": float(row["deadline_h"])}
+	if contracts.has_active():
+		quote["blockers"] = [&"E_CONTRACT_ACTIVE"]
+		return CommandQueue.fail(&"E_CONTRACT_ACTIVE", quote)
+	if contracts.cooldown_hours() > 0.0:
+		quote["blockers"] = [&"E_CONTRACT_COOLDOWN"]
+		quote["hours_remaining"] = contracts.cooldown_hours()
+		return CommandQueue.fail(&"E_CONTRACT_COOLDOWN", quote)
+	if preview:
+		return CommandQueue.ok(quote)
+	var accepted := contracts.accept(offer_id)
+	if accepted.is_empty():
+		return CommandQueue.fail(&"E_UNKNOWN_CONTRACT",
+				{"blockers": [&"E_UNKNOWN_CONTRACT"]})
+	for event in contracts.drain_events():
+		bus.emit(StringName(String(event["type"])), event)
+	stats_add(&"contracts_accepted")
+	quote["remaining_h"] = float(accepted["remaining_h"])
+	return CommandQueue.ok(quote)
+
+
+## **CLAIM A FINISHED COMMISSION** — the tap that is the money.
+##
+##   1 E_NO_CONTRACT     the city holds none
+##   2 E_CONTRACT_UNMET  it is not finished yet (payload carries progress/target)
+##
+## Credited through doc 03 §2.5's settled `city_services` channel with SOURCE
+## `contracts`, beside `dispatch` and `street`, so the budget row, the ledger
+## line and the balance gates all see the same dollar under its own name. It is
+## deliberately NOT tax: tax is a rate on the city's value and this is a fee for
+## a job delivered, and a ledger that mixed them would make the tax slider look
+## like it moved when the player simply worked.
+func cmd_claim_contract(preview: bool = false) -> Dictionary:
+	if not contracts.has_active():
+		return CommandQueue.fail(&"E_NO_CONTRACT", {"blockers": [&"E_NO_CONTRACT"]})
+	var row := contracts.active()
+	var quote := {"blockers": [] as Array, "id": int(row["id"]),
+			"template": String(row["template"]), "tier": String(row["tier"]),
+			"reward": int(row["reward"]), "progress": int(row["progress"]),
+			"target": int(row["target"]),
+			"remaining_h": float(row["remaining_h"])}
+	if not contracts.is_ready():
+		quote["blockers"] = [&"E_CONTRACT_UNMET"]
+		return CommandQueue.fail(&"E_CONTRACT_UNMET", quote)
+	if preview:
+		return CommandQueue.ok(quote)
+	var claimed := contracts.claim()
+	if claimed.is_empty():
+		return CommandQueue.fail(&"E_CONTRACT_UNMET", quote)
+	var reward := int(claimed["reward"])
+	if reward > 0:
+		treasury.credit_city_service(reward, &"contracts",
+				"contract " + String(claimed["template"]))
+	for event in contracts.drain_events():
+		bus.emit(StringName(String(event["type"])), event)
+	stats_add(&"contracts_claimed")
+	quote["cooldown_h"] = contracts.cooldown_hours()
+	return CommandQueue.ok(quote)
+
+
 ## The city's absolute game-hour, off the exact integer tick. The one clock read
 ## the command layer needs — `expires_h` is stated in these units.
 func sim_hour() -> float:
@@ -6792,6 +6962,7 @@ func _register_systems() -> void:
 	scheduler.register(WorkPhaseSystem.new(self))
 	scheduler.register(IncidentPhaseSystem.new(self))
 	scheduler.register(StreetPhaseSystem.new(self))
+	scheduler.register(ContractPhaseSystem.new(self))
 	scheduler.register(DistrictPhaseSystem.new(self))
 	scheduler.register(HourlyPhaseSystem.new(self))
 	scheduler.register(DirectorPhaseSystem.new(self))
@@ -7014,6 +7185,54 @@ class StreetPhaseSystem extends SimSystem:
 	func advance_coarse(ctx: TimeContext) -> void:
 		sim.street.advance(float(ctx.tick_index + GameClock.TICKS_PER_HOUR)
 				/ float(GameClock.TICKS_PER_HOUR), false)
+
+
+## Doc 03 §2.5b's board, on the REPORT phase at an HOURLY cadence — a system
+## whose deadlines are stated in game-hours has nothing to do on a game-minute,
+## and this is the cheapest cadence that can still resolve one. Its `dt` is the
+## adapter's OWN period, never a literal, so the board's Bernoulli rate and the
+## schedule can never disagree (the same rule `_boot_street` states for the
+## street layer's `eval_period_h`).
+##
+## `advance_coarse` calls the same method with `online = false`, which
+## `ContractBoard.advance` answers by returning before its first statement. That
+## is doc 08 §2.3 rule 9 made structural rather than remembered: the board does
+## not run while the player is away, and the balance matrix — which runs the
+## coarse step — cannot see this system at all.
+class ContractPhaseSystem extends SimSystem:
+	var sim: CitySim
+	func _init(p_sim: CitySim) -> void: sim = p_sim
+	func system_id() -> StringName: return &"contracts"
+	func phase() -> int: return Phase.REPORT
+	func cadence() -> int: return Cadence.EVERY_HOUR
+	func advance_fine(_ctx: TimeContext) -> void:
+		sim.contracts.advance(
+				float(period_ticks()) / float(GameClock.TICKS_PER_HOUR), true)
+		for event in sim.contracts.drain_events():
+			sim.bus.emit(StringName(String(event["type"])), event)
+	func advance_coarse(_ctx: TimeContext) -> void:
+		sim.contracts.advance(1.0, false)
+
+
+## The bus's one in-sim listener, fanned out to a FIXED, AUTHORED list.
+##
+## `SimEventBus.observer` is deliberately a single `Callable` and its own doc
+## says why: *"a list would make emission order depend on registration order,
+## which is exactly the kind of thing determinism forbids."* That objection is
+## about a bus that lets anybody subscribe, and the answer to it is not a list on
+## the bus but a fan-out with a written-down order, in the one place that knows
+## about every listener. `CitySim._boot` sets `targets` once, in one order, and
+## nothing else ever appends to it.
+##
+## It is a separate object rather than a method on `CitySim` for one reason: the
+## bus would otherwise hold a bound `Callable` back onto the sim that owns it,
+## and a RefCounted cycle is a leak `dispose()` has to remember to break.
+class EventFanout extends RefCounted:
+	var targets: Array[Callable] = []
+	func observe(event: Dictionary) -> void:
+		for target in targets:
+			if target.is_valid():
+				target.call(event)
 
 
 class DirectorPhaseSystem extends SimSystem:

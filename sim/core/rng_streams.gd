@@ -10,9 +10,15 @@ extends RefCounted
 ## so a new name draws its own sequence and perturbs nobody's. What it does move
 ## is `serialize()`'s key set — one more entry in the `rng` block — which is why
 ## the city section takes a rung (doc 08 §2.8 v7) rather than growing quietly.
+##
+## `contracts` joined in Wave 19 for doc 03 §2.5b's commissions board, on exactly
+## the same terms and with the same consequence: a new name perturbs no existing
+## stream and moves `serialize()`'s key set, so the city section takes another
+## rung (doc 08 §2.8 v9) and all four `profile_sim` baselines are re-recorded
+## with the cause published (report 98 §60 RR-170).
 const STREAM_NAMES: Array[String] = [
 	"weather", "incidents", "crime", "failures", "director", "traffic",
-	"street", "misc",
+	"street", "contracts", "misc",
 ]
 
 var _streams: Dictionary = {}

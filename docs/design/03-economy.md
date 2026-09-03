@@ -620,6 +620,81 @@ Worth, on shipped stock: house L1 **$180**, L3 **$915**, L5 **$5,693**; the star
 
 **Why the game pays for this at all.** The 2026-09-03 report is a city with every building destroyed and a negative balance, and every priced verb in the project asks that player for money they do not have. This is the one verb that runs the other way, and it is the only reason there is a pressable button on that panel.
 
+### 2.5b Commissions — the third way the city gets paid (new Wave 19)
+
+*(Doc 92 §57.3, doc 93 §AQ3, report 98 §60 RR-170. Data:
+`data/contracts.json` for the work, `city_services.contract_payout` for the
+money, `sim/economy/contract_board.gd` for the loop.)*
+
+**The ask this section exists for**, 2026-09-03: *"any other fun ideas to collect
+money in the game, something to actually DO to collect, other than tax
+revenue"* — and, in the same breath, *"add a zero to that. 15,000 for one."*
+
+**Why the $15,000 is here and not on the street layer.** §2.5's opportunity layer
+delivers **0.339 offers per game-hour** (measured). A $15,000 pickup at that rate
+is **$5,090/gh**, which is **1.85× the entire net income of a level-6 city**. No
+value of any street constant pays the player's number and leaves a game
+underneath it; a figure that size has to belong to something that fires about
+once a game-day. This is that something.
+
+**The loop, and where the money is in it.** A client posts a commission. The
+player ACCEPTS one — the city holds exactly one at a time — which starts a
+deadline in game-hours. They do the work with verbs the game already has. When
+the target is met the commission goes `ready`, and the player CLAIMS it, **which
+is the only step that moves a dollar**. Nothing on the board is money until it is
+tapped, which is §2.5's own rule for a street bounty applied to a bigger one.
+
+```
+reward = round( (base + spread·u) × (1 + CONTRACT_REWARD_CITY_LEVEL_K·(city_level − 1)) )
+```
+
+`u ~ U[0,1)` is drawn once on the `contracts` stream at OFFER time and frozen
+onto the row **with the city level**, so the card, the accept, the claim and a
+save → load all quote the same dollars.
+
+| tier | base | spread | mean | at level 6 (×3.00) |
+|---|---:|---:|---:|---|
+| `minor` | 900 | 300 | 1,050 | 2,700 – 3,600 |
+| `standard` | 2,200 | 700 | 2,550 | 6,600 – 8,700 |
+| `major` | 5,000 | 1,600 | 5,800 | **15,000 – 19,800** |
+
+`CONTRACT_REWARD_CITY_LEVEL_K = 0.40` — the same shape §2.5 gives a street
+bounty and a steeper slope, because a commission is gated by city level in a way
+a kerb pickup is not. It is fitted to land the `major` band's **floor** exactly
+on the player's own $15,000 at the top rung.
+
+**The income bound, and it is ONE authored number in another file.**
+`CONTRACT_CEILING_SHARE_MAX = 0.25` is the ruled share of the city's net this
+layer may pay somebody who completes every commission offered. What ENFORCES it
+is `data/contracts.json board.cooldown_h_after_claim = 30.0`: the city holds one
+commission at a time, so income cannot exceed one payout per cooldown whatever
+the player does. Measured against `MODEL_NET_PER_HOUR_BY_CITY_LEVEL`, the best
+tier available at each rung lands at **6.5 / 18.1 / 18.0 / 19.6 / 21.7 / 21.0 %**
+of net. Balance gate 32 arm (h) reads both files and holds one against the other,
+exactly as arm (c) does for the street rate.
+
+**Why 0.25 and not 0.40 like the street's.** *The two are added.* A player who
+takes every street offer AND completes every commission is at `0.40 + 0.25 =
+0.65` of net from active play, which leaves the passive city 61 % of the total.
+That is the line: **above one half from any single active layer, or above two
+thirds from all of them together, and the city stops being the thing being
+played.**
+
+**The ledger.** Credited through §2.5's settled `city_services` channel with
+SOURCE `contracts`, beside `dispatch` and `street` — its own sub-row, because the
+budget panel has to be able to say which of the three a player's money came from.
+Deliberately NOT tax: tax is a rate on the city's value and this is a fee for a
+job delivered, and a ledger that mixed them would make the tax slider look like
+it moved when the player simply worked.
+
+**What it does not do.** It does not run while the player is away (doc 08 §2.3
+rule 9 — no offer appears, no deadline runs, no draw is taken), it charges
+nothing to accept, and **a lapsed commission costs nothing**: no fee, no
+stability, no reputation. A penalty for not finishing converts an opportunity
+into a chore and taxes precisely the player who put the phone down. Ruled in
+`data/contracts.json._no_penalty`, on the same terms as the street layer's
+`expire_stability_delta: 0.0`, and re-opens on the same one condition.
+
 **Emergency contractor.** Paying to bypass the construction/crew queue costs `CONTRACTOR_SURCHARGE = 1.80 ×` the job cost and completes in `CONTRACTOR_TIME_FRACTION = 0.35` of the normal duration. Available at any treasury ≥ 0. This is the *money-for-time* valve and it is deliberately bad value.
 
 **Preventive maintenance.** Player action on any asset with condition ∈ [0.50, 0.99], costing `pm_cost = round( capital_value(asset) × PM_COST_FRACTION (0.06) )`.

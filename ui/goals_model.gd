@@ -111,6 +111,115 @@ func view() -> Dictionary:
 	return out
 
 
+# --------------------------------------------------- the commissions band
+
+## S14's second band (Wave 19; doc 03 §2.5b, doc 12 §2.19 D-90, report 98 §60
+## RR-170) — the commissions board, rendered.
+##
+## **Why it lives on the goals sheet and not on a screen of its own.** A
+## commission is an objective that pays: it asks for a target, counts progress
+## toward it and hands over something when it is met, which is the sentence S14
+## already exists to say. Giving it a sheet would put two screens in the deck
+## that answer *"what should I be doing?"*, and the 2026-09-03 report is from a
+## player who could not find a reason to open the app — one more place to look is
+## the opposite of the fix.
+##
+## Everything here is READ, never authored: the board's own rows, priced by doc
+## 03, with `cmd_accept_contract(…, true)` and `cmd_claim_contract(true)` asked
+## for the two gates so a button is never live on a rule `ui/` believes and the
+## sim does not.
+func contracts_view() -> Dictionary:
+	var out := {"available": false, "active": {}, "offers": [] as Array,
+			"cooldown_hours": 0.0, "note": ""}
+	if sim == null or sim.contracts == null:
+		return out
+	out["available"] = true
+	var board := sim.contracts
+	out["cooldown_hours"] = board.cooldown_hours()
+	if board.has_active():
+		out["active"] = _contract_active_view(board.active())
+	for row_variant: Variant in board.offers():
+		out["offers"].append(_contract_offer_view(row_variant as Dictionary))
+	# The one-line state sentence, and the three states it has to tell apart: a
+	# board with something on it says nothing (the rows speak for it), a board
+	# that is RESTING after a delivery says when the next one is posted, and an
+	# EMPTY board says so — because the band is drawn either way and a header
+	# over a gap is worse than a header over a sentence.
+	if out["active"].is_empty() and (out["offers"] as Array).is_empty():
+		out["note"] = _t_args("ui_contract_cooldown",
+				{"time": UIWidgets.duration_text(config, board.cooldown_hours() * 60.0)}) \
+				if board.cooldown_hours() > 0.0 else _t("ui_contract_none")
+	return out
+
+
+func _contract_active_view(row: Dictionary) -> Dictionary:
+	var preview := sim.cmd_claim_contract(true)
+	var ready := bool(preview["ok"])
+	var target := maxi(1, int(row["target"]))
+	return {
+		"id": int(row["id"]),
+		"client": _t(String(row["client_key"])),
+		"text": _t(String(row["text_key"])),
+		"tier": String(row["tier"]),
+		"reward": int(row["reward"]),
+		"reward_text": RequirementFormatter.money(int(row["reward"])),
+		"progress": int(row["progress"]),
+		"target": target,
+		"ratio": clampf(float(row["progress"]) / float(target), 0.0, 1.0),
+		"progress_text": _t_args("ui_contract_progress",
+				{"done": int(row["progress"]), "total": target}),
+		"ready": ready,
+		# The clock, in the queue panel's own words — a player who reads `21h 30m`
+		# on one screen and `21.5 hours` on another is reading two things.
+		"remaining_text": _t_args("ui_contract_deadline",
+				{"time": UIWidgets.duration_text(config,
+						maxf(0.0, float(row["remaining_h"])) * 60.0)}),
+	}
+
+
+func _contract_offer_view(row: Dictionary) -> Dictionary:
+	var preview := sim.cmd_accept_contract(int(row["id"]), true)
+	var ok := bool(preview["ok"])
+	var reason: Dictionary = {}
+	if not ok and controller != null and controller.formatter != null:
+		reason = controller.formatter.format(preview["reason_code"],
+				(preview.get("payload", {}) as Dictionary))
+	return {
+		"id": int(row["id"]),
+		"client": _t(String(row["client_key"])),
+		"text": _t(String(row["text_key"])),
+		"tier": String(row["tier"]),
+		"reward": int(row["reward"]),
+		"reward_text": RequirementFormatter.money(int(row["reward"])),
+		"target": int(row["target"]),
+		"deadline_text": _t_args("ui_contract_window",
+				{"time": UIWidgets.duration_text(config,
+						float(row["deadline_h"]) * 60.0)}),
+		"ok": ok,
+		"reason": reason,
+	}
+
+
+## The two doors, through the same funnel every other verb in `ui/` uses: the
+## real command, the sim's own answer, no prediction.
+func accept_contract(contract_id: int) -> Dictionary:
+	if sim == null:
+		return CommandQueue.fail(&"E_UNKNOWN_CONTRACT", {})
+	return sim.cmd_accept_contract(contract_id)
+
+
+func claim_contract() -> Dictionary:
+	if sim == null:
+		return CommandQueue.fail(&"E_NO_CONTRACT", {})
+	return sim.cmd_claim_contract()
+
+
+## Args-taking sibling of `_t`, added with the commissions band because every
+## line in it carries a number.
+func _t_args(key: String, args: Dictionary) -> String:
+	return UIWidgets.t_args(config, key, args, key)
+
+
 ## One objective row, rendered. `counter` is the readout the eye lands on; a
 ## counted objective shows `2/4`, a state objective shows the reading against the
 ## number it has to beat, and a finished one shows neither — it shows a tick.
