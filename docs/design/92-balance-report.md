@@ -9199,6 +9199,16 @@ on top):
 | starter + 110 gh settle (L3) | 8 real h | 479 | 3,760 | 7.85 | 226 |
 | `bench_city` (1,500 buildings) | 12 real h | 719 | **116,882** | 162.6 | 7,013 |
 
+**Read the `veil ms` column as wall clock, because that is what it is.** The
+dollar columns are deterministic and reproduce to the cent; these do not — a
+re-run of the L3 row on this workstation spanned **5,435–5,747 ms** across three
+runs depending on what else the machine was doing, which is ±3%. The shipped
+`veil_ms_at_cap = 6432` is the L4 row recorded once, and it is the largest
+reference figure on purpose: a budget measured on the cheapest city is not a
+budget. Doc 01 §2.10's own knife-edge note is the standing warning here — a 5.5%
+spread in this measurement used to move `max_coarse_hours` by a whole game-day,
+which is precisely why it no longer moves anything a player can feel.
+
 **The reference-city figure is inside doc 08 §2.12's own accepted worst case.**
 That section already ruled a 3,960 ms catch-up (~5.5 s of veil at 60 fps,
 "animated and progress-bared rather than frozen") preferable to handing back less
