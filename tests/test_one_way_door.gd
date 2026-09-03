@@ -172,6 +172,52 @@ func test_a_neglected_city_keeps_its_private_stock() -> void:
 			"45 online game-days of the worst case cost the city no private stock")
 
 
+# ------------------------------------------------- the fourth band (D-88)
+
+## §AP1 leaves private stock resting at the structural-failure line for good, so
+## doc 02 §2.6's band table needs a name for it. Drawing that as `Poor` would say
+## "further to fall" about a building that has nowhere left to go.
+func test_the_condemned_band_exists_and_is_announced() -> void:
+	var sim := CitySim.boot_from_files()
+	var sim_id := _first(sim, true)
+	var b: Building = sim.buildings[sim_id]
+	var seen: Array = []
+	sim.bus.observer = func(event: Dictionary) -> void:
+		if StringName(String(event.get("type", &""))) == &"building_condition_band":
+			seen.append(event.duplicate())
+
+	# Poor → Condemned, across the same line the structural roll used to fire on.
+	var line := b.rule("structural_failure_threshold")
+	b.condition = line - 0.01
+	sim._emit_condition_band(sim_id, b, line + 0.05)
+	assert_eq(seen.size(), 1, "crossing the structural line is one event")
+	assert_eq(String((seen[0] as Dictionary)["band"]), "condemned")
+	assert_eq(String((seen[0] as Dictionary)["previous"]), "poor")
+	sim.bus.observer = Callable()
+
+
+## The ordering fix the fourth band forces. This was `previous == &"poor"` while
+## Poor was the bottom rung; with `condemned` under it, the same rule stated the
+## old way would announce a building climbing OUT of Condemned as a warning —
+## the game repeating the player's own repair.
+func test_climbing_out_of_condemned_says_nothing() -> void:
+	var sim := CitySim.boot_from_files()
+	var sim_id := _first(sim, true)
+	var b: Building = sim.buildings[sim_id]
+	var seen := 0
+	sim.bus.observer = func(event: Dictionary) -> void:
+		if StringName(String(event.get("type", &""))) == &"building_condition_band":
+			seen += 1
+	var line := b.rule("structural_failure_threshold")
+	b.condition = line + 0.05                      # Condemned → Poor
+	sim._emit_condition_band(sim_id, b, line - 0.01)
+	assert_eq(seen, 0, "Condemned → Poor is a recovery, not a warning")
+	b.condition = 1.0                              # Condemned → Good
+	sim._emit_condition_band(sim_id, b, line - 0.01)
+	assert_eq(seen, 0, "and so is a full restoration")
+	sim.bus.observer = Callable()
+
+
 # ------------------------------------------------------------------ helpers
 
 ## The first building in roster order that is (or is not) private stock and that
