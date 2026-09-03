@@ -2714,8 +2714,13 @@ func test_gate_32_active_play_pays_more_and_idling_still_pays() -> void:
 			var row: Dictionary = row_variant
 			if int(row.get("min_city_level", 1)) > level:
 				continue
-			var band: Dictionary = payouts[String(row["tier"])]
-			best = maxf(best, float(band["base"]) + 0.5 * float(band.get("spread", 0.0)))
+			# NOT `band` — arm (f) above already holds
+			# `STREET_PLAYED_SHARE_BAND` under that name in this same function
+			# scope, and GDScript refuses the redeclaration outright rather than
+			# shadowing it.
+			var tier_band: Dictionary = payouts[String(row["tier"])]
+			best = maxf(best,
+					float(tier_band["base"]) + 0.5 * float(tier_band.get("spread", 0.0)))
 		if best <= 0.0:
 			continue
 		var per_hour := best * (1.0 + contract_k * float(level - 1)) / cooldown_h
