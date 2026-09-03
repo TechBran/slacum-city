@@ -192,8 +192,19 @@ func test_the_receipt_book_survives_a_save() -> void:
 	old_save.erase("hour_city_services")
 	var legacy := Treasury.new(_curves().economy_data(), {}, 0)
 	legacy.deserialize(old_save)
-	assert_eq(legacy.hour_city_services, {"dispatch": 0, "street": 0},
+	# **The KEY SET is the assertion, not a literal pair.** `hour_city_services`
+	# grew a `contracts` source in Wave 19 (report 98 §60 RR-170) and this line
+	# read the pair as a constant, so the file that guards doc 03's ledger was
+	# the file a new ledger source broke. What must hold is the shape: every
+	# source the live book knows, present and zeroed — which is what "an empty
+	# book, not a missing one" always meant.
+	var empty_book: Dictionary = {}
+	for source: String in treasury.hour_city_services:
+		empty_book[source] = 0
+	assert_eq(legacy.hour_city_services, empty_book,
 			"a pre-RR-78 save restores an empty book, not a missing one")
+	assert_true(empty_book.has("dispatch") and empty_book.has("street"),
+			"and the two sources RR-78 created are still in it")
 
 	# An unknown source is tallied rather than dropped: losing the tally would
 	# make the printed line disagree with the balance, which is the one failure
