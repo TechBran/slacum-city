@@ -8035,7 +8035,7 @@ then triples. So a curve fitted against the run average is fitted against a
 number the player is never at, and the binding rung for a share ceiling is level
 **5**, not 1 and not 6. Holding `184.30 × (1 + k·(L−1)) ≤ 0.40 × net(L)` at every
 rung gives `k ≤ 0.302`; 0.25 is that bound with a seed's worth of margin, and the
-per-level ceiling shares become **34.3 / 35.0 / 32.5 / 33.7 / 36.2 / 15.1 %**.
+per-level ceiling shares become **34.3 / 35.0 / 32.5 / 33.7 / 36.2 / 15.0 %**.
 
 Gate 32 gains arm **(d2)**, which checks exactly this at every rung. Before this
 wave (d) measured the founding city only, which is how a level curve could be

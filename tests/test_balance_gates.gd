@@ -2606,7 +2606,7 @@ func test_gate_32_active_play_pays_more_and_idling_still_pays() -> void:
 	# The ceiling at level L is (d)'s measured founding ceiling times the authored
 	# level multiplier: the spawn table does not change with level, only the
 	# bounty does. Measured shares at the shipped k = 0.25 are
-	# 34.3 / 35.0 / 32.5 / 33.7 / **36.2** / 15.1 %.
+	# 34.3 / 35.0 / 32.5 / 33.7 / **36.2** / 15.0 %.
 	var net_by_level: Array = _pacing()["MODEL_NET_PER_HOUR_BY_CITY_LEVEL"]
 	for level in range(1, net_by_level.size() + 1):
 		var level_ceiling := ceiling * (1.0 + street_k * float(level - 1))
