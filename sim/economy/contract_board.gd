@@ -118,6 +118,21 @@ var _cooldown_h: float = 0.0
 var _next_id: int = 1
 var _rng: RandomNumberGenerator = null
 var _events: Array[Dictionary] = []
+## **Is the player watching?** Set by `ContractPhaseSystem` at the top of every
+## step — `true` on the fine path, `false` on the coarse one — and read by
+## `observe` as well as by `advance`.
+##
+## `advance` takes `online` as an argument because it is a property of the STEP;
+## this field exists because `observe` is not called from a step at all. It runs
+## synchronously from `SimEventBus.emit`, which fires during a catch-up as
+## readily as during a session, and without this a player who accepted "answer 5
+## incidents" and closed the app would come back to a finished commission and an
+## untouched deadline. That is a reward for being away, which is precisely what
+## doc 08 §2.3 rule 9 forbids and what the rest of this file is careful about.
+##
+## Defaults to `true` so a fixture-built board, a test that emits directly and a
+## player's own tap between ticks all count.
+var online: bool = true
 
 
 func _init(table: Dictionary = {}) -> void:
@@ -232,8 +247,9 @@ func dispose() -> void:
 ## away, no deadline runs down, no offer ages out, and the `contracts` stream is
 ## not advanced by a single call. A player who closes the app mid-commission
 ## finds it with exactly the hours left they left it with.
-func advance(dt_h: float, online: bool) -> void:
-	if not online or dt_h <= 0.0:
+func advance(dt_h: float, is_online: bool) -> void:
+	online = is_online
+	if not is_online or dt_h <= 0.0:
 		return
 	if _cooldown_h > 0.0:
 		_cooldown_h = maxf(0.0, _cooldown_h - dt_h)
@@ -380,6 +396,11 @@ func _city_level() -> int:
 ## "accept, then work" a decision rather than a formality — a player who does the
 ## work first gets nothing for it, and finding that out once teaches the loop.
 func observe(event: Dictionary) -> void:
+	# **Nothing counts while the player is away.** See `online` — this is the
+	# half of the offline rule `advance` cannot enforce, because `observe` is
+	# called from the bus and not from a step.
+	if not online:
+		return
 	if _active.is_empty() or StringName(String(_active["state"])) != STATE_ACTIVE:
 		return
 	var rule := rule_for(StringName(String(_active["kind"])))

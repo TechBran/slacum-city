@@ -7203,8 +7203,20 @@ class ContractPhaseSystem extends SimSystem:
 	var sim: CitySim
 	func _init(p_sim: CitySim) -> void: sim = p_sim
 	func system_id() -> StringName: return &"contracts"
-	func phase() -> int: return Phase.REPORT
-	func cadence() -> int: return Cadence.EVERY_HOUR
+	## **`Phase.CLOCK`, which is FIRST, and that placement is load-bearing.**
+	## `ContractBoard.advance` is what sets the board's `online` flag, and the
+	## flag has to be correct for every event raised in the same step — including
+	## `incident_resolved`, which the INCIDENTS phase raises later in the very
+	## hour a catch-up is integrating. A board that learned it was offline at the
+	## END of the step would count one hour of a catch-up's work every time the
+	## player closed the app.
+	func phase() -> int: return Phase.CLOCK
+	## EVERY_MINUTE and not EVERY_HOUR for the other end of the same problem: a
+	## player who resumes and immediately taps must have their tap counted, and
+	## an hourly flag would leave the board thinking it was offline for up to a
+	## real minute after they came back. A game-minute of staleness is a real
+	## second, and it is on the conservative side.
+	func cadence() -> int: return Cadence.EVERY_MINUTE
 	func advance_fine(_ctx: TimeContext) -> void:
 		sim.contracts.advance(
 				float(period_ticks()) / float(GameClock.TICKS_PER_HOUR), true)

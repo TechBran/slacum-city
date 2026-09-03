@@ -84,14 +84,23 @@ func test_work_done_before_the_accept_counts_for_nothing() -> void:
 	assert_true(_run_until_offers(board, 1) > 0)
 	var offer: Dictionary = board.offers()[0]
 
-	# Do the work FIRST, while the offer is still only an offer.
+	# Do the work FIRST, while the offer is still only an offer — with the real
+	# payload, so the assertion is about the ACCEPT gate and not about a payload
+	# the counter would have ignored anyway.
+	var rule := ContractBoard.rule_for(StringName(String(offer["kind"])))
+	var step := _step_payload(offer)
 	for i in 8:
-		sim.bus.emit(StringName(String(ContractBoard.rule_for(
-				StringName(String(offer["kind"])))["event"])), {})
+		sim.bus.emit(StringName(String(rule["event"])), step)
 	assert_true(bool(sim.cmd_accept_contract(int(offer["id"]))["ok"]))
 	assert_eq(int(board.active()["progress"]), 0,
 			"the counter starts at the accept, not at the offer")
 	assert_false(board.is_ready())
+
+	# …and the same payload DOES count once the commission is in hand, which is
+	# what makes the assertion above a statement about the gate.
+	sim.bus.emit(StringName(String(rule["event"])), step)
+	assert_eq(int(board.active()["progress"]), 1,
+			"the identical event counts the moment the city has agreed to the job")
 	sim.dispose()
 
 
@@ -149,6 +158,28 @@ func test_the_board_does_not_run_while_the_player_is_away() -> void:
 			"nothing was posted and nothing was withdrawn")
 	assert_eq(sim.rng.stream(ContractBoard.STREAM_NAME).state, stream_state,
 			"and the contracts stream was not advanced by a single draw")
+
+	# **And the PROGRESS half, which `advance` cannot enforce on its own.**
+	# `observe` runs synchronously from `SimEventBus.emit`, which fires during a
+	# catch-up as readily as during a session — so without the `online` flag a
+	# player who accepted "answer 5 incidents" and closed the app would come back
+	# to a finished commission and an untouched deadline. That is a reward for
+	# being away, which is the one thing doc 08 §2.3 rule 9 forbids outright.
+	var active_row := board.active()
+	var rule := ContractBoard.rule_for(StringName(String(active_row["kind"])))
+	var step := _step_payload(active_row)
+	for i in 20:
+		sim.bus.emit(StringName(String(rule["event"])), step)
+	assert_eq(int(board.active()["progress"]), 0,
+			"twenty of the very events this commission counts, raised while the "
+					+ "board is offline, moved it not one step")
+	assert_false(board.is_ready())
+
+	# …and it starts counting again the moment the player is back.
+	board.advance(1.0, true)
+	sim.bus.emit(StringName(String(rule["event"])), step)
+	assert_eq(int(board.active()["progress"]), 1,
+			"one online event, one step — the flag gates the counter, not the verb")
 	sim.dispose()
 
 
@@ -165,8 +196,11 @@ func test_a_save_taken_mid_commission_restores_it() -> void:
 	var offer: Dictionary = board.offers()[0]
 	assert_true(bool(sim.cmd_accept_contract(int(offer["id"]))["ok"]))
 	sim.bus.emit(StringName(String(ContractBoard.rule_for(
-			StringName(String(offer["kind"])))["event"])), {})
+			StringName(String(offer["kind"])))["event"])),
+			_step_payload(board.active()))
 	var before := board.active()
+	assert_true(int(before["progress"]) > 0,
+			"the save is taken MID-commission, or it proves nothing")
 
 	var body := sim.capture_state().duplicate(true)
 	var revived := CitySim.boot_from_files(SEED)
@@ -280,15 +314,25 @@ func test_the_money_lands_on_its_own_line() -> void:
 
 # ------------------------------------------------------------------ helpers
 
+## The payload one step of `kind` needs. Most kinds count one per event; the
+## amount-bearing ones (`stamp_road_tiles` reads `tiles`) need the field, and a
+## test that emitted a bare `{}` against one of those would assert nothing at
+## all — it would be measuring a payload the counter correctly ignores.
+static func _step_payload(row: Dictionary, amount: int = 1) -> Dictionary:
+	var rule := ContractBoard.rule_for(StringName(String(row["kind"])))
+	var out: Dictionary = {}
+	if String(rule.get("match_field", "")) != "" and String(row["match_key"]) != "":
+		out[String(rule["match_field"])] = String(row["match_key"])
+	if String(rule.get("amount", "")) != "":
+		out[String(rule["amount"])] = amount
+	return out
+
+
 ## Drive the accepted contract to `ready` by emitting the event its kind counts.
 func _finish(sim: CitySim, board: ContractBoard) -> void:
 	var row := board.active()
 	var rule := ContractBoard.rule_for(StringName(String(row["kind"])))
-	var payload: Dictionary = {}
-	if String(rule.get("match_field", "")) != "" and String(row["match_key"]) != "":
-		payload[String(rule["match_field"])] = String(row["match_key"])
-	if String(rule.get("amount", "")) != "":
-		payload[String(rule["amount"])] = int(row["target"])
+	var payload := _step_payload(row, int(row["target"]))
 	for i in int(row["target"]):
 		sim.bus.emit(StringName(String(rule["event"])), payload)
 		if board.is_ready():

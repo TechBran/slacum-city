@@ -7923,20 +7923,37 @@ that is exactly 1.00 at the founding city, so `do_nothing`, `balanced`,
 `tax_squeezer` and `infrastructure_first` earn what they earned before it, and
 gate 29's insolvency day does not move.*
 
-| `profile_sim --hash-only` | at the fork | after this pass |
+| `profile_sim --hash-only` | at the fork (`d4f62e1`) | after this pass |
 |---|---|---|
-| starter, coarse 24 h | `64c4d7e9d8f8fb74…` | `64c4d7e9d8f8fb74…` |
-| starter, fine 2.0 h | `9f19dcc5212f834d…` | **moved — see RR-169** |
-| bench, coarse 24 h | `6f383de1ed6940a2…` | `6f383de1ed6940a2…` |
-| bench, fine 2.0 h | `311e29d10b1cb43d…` | **moved — see RR-169** |
+| starter, coarse 24 h | `64c4d7e9d8f8fb74…` | `e05f57a6caa87297…` |
+| starter, fine 2.0 h | `9f19dcc5212f834d…` | `35826d0d9c7510c3…` |
+| bench, coarse 24 h | `6f383de1ed6940a2…` | `7c849bb295dc8653…` |
+| bench, fine 2.0 h | `311e29d10b1cb43d…` | `5b2a3bfb5c13afd2…` |
 
-**The two coarse hashes are bit-identical and that is the load-bearing half.**
-The opportunity layer is a FINE-PATH system by construction (doc 08 §2.3 rule 9:
-`advance_coarse` draws nothing and spawns nothing), so the balance matrix — which
-runs the coarse step — cannot see a street re-price at all. The two fine hashes
-move because `spawn.target_interval_h` moved, which changes the Bernoulli
-threshold `_try_spawn` compares its first draw against; the cause is one authored
-number and it is published below.
+**All four move, and there are exactly TWO causes. Neither is a balance change.**
+
+1. **`RngStreams.STREAM_NAMES` gains `"contracts"`** (RR-170). `rng.serialize()`
+   is inside `canonical_capture()` and therefore inside `state_hash()`, so a
+   named stream is a hash change on **every** city — including one that never
+   opens the board, and including the coarse path, where the board takes no draws
+   at all. `Treasury.hour_city_services` gains a `contracts` key for the same
+   reason it had to: the settlement's `services_total` is the SUM of that
+   dictionary, so a source with no key there would move the balance and not the
+   line. This is the same shape RR-85's `street` stream had at rung 7.
+2. **`data/street.json spawn.target_interval_h` 1.50 → 2.85** (RR-169), which
+   changes the Bernoulli threshold `_try_spawn` compares its first draw against.
+   This one moves the FINE hashes only — the opportunity layer's coarse contract
+   is zero draws and zero spawns.
+
+**What did NOT move is the half that matters for the matrix.** Nothing in this
+lane changes what a `do_nothing`, `balanced`, `tax_squeezer` or
+`infrastructure_first` agent EARNS: the street layer is fine-path only, the
+commissions board is fine-path only, the dispatcher's premium scales on the
+manual half that no scripted agent ever uses, and the salvage verb is a player
+tap. Gates 1, 2, 21, 29, 31 and 33 all pass unmoved. The re-record is a schema
+cost, not a behaviour cost, and the way to check that claim is the one this
+project always uses: the four gates that hold the founding ledger and the
+insolvency day are green in the same suite run this table was taken in.
 
 ### RR-169 — the street layer and the dispatcher's premium: what "add a zero" can honestly mean (docs 03 §2.5, 06 §2.16, 92 §57.1/§57.2, 93 §AQ1)
 

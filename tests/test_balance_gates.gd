@@ -2682,6 +2682,64 @@ func test_gate_32_active_play_pays_more_and_idling_still_pays() -> void:
 					+ "attention it asks for")
 					% [100.0 * played_share, 100.0 * float(band[0])])
 
+	# (h) **THE COMMISSIONS BOARD'S CEILING, AT EVERY RUNG** (Wave 19, RR-170).
+	#
+	# `data/contracts.json` says what the board offers and how long it rests;
+	# `data/economy.json` says what a commission pays and what share of the
+	# city's income the layer may take. **The bound is the product of the two and
+	# neither file can see the other**, which is exactly the shape arm (c) was
+	# built for when the street's spawn table and its bounty table were split by
+	# RR-85. This arm reads both.
+	#
+	# The worst case a player can produce: accept the best tier their city level
+	# allows, finish it, claim it, and repeat as fast as the cooldown permits.
+	# With `max_active` = 1 that is one payout per `cooldown_h_after_claim`,
+	# whatever else they do — which is why the cooldown is the whole bound and
+	# why moving it is a balance change rather than a pacing one.
+	#
+	# Measured shares at the shipped tables: **6.5 / 18.1 / 18.0 / 19.6 / 21.7 /
+	# 21.0 %** of net at levels 1–6 against a ruled 25 %.
+	var contracts_data := StarterCityLoader.read_json("res://data/contracts.json")
+	var cooldown_h := float((contracts_data["board"] as Dictionary)["cooldown_h_after_claim"])
+	assert_true(cooldown_h > 0.0,
+			"a board with no cooldown has no income bound at all")
+	var contract_k := float(services["CONTRACT_REWARD_CITY_LEVEL_K"])
+	var contract_max := float(services["CONTRACT_CEILING_SHARE_MAX"])
+	var payouts: Dictionary = services["contract_payout"]
+	for level in range(1, net_by_level.size() + 1):
+		# The dearest commission this rung can be offered. `min_city_level` is a
+		# BALANCE gate and this is what it is enforcing.
+		var best := 0.0
+		for row_variant: Variant in contracts_data["templates"]:
+			var row: Dictionary = row_variant
+			if int(row.get("min_city_level", 1)) > level:
+				continue
+			var band: Dictionary = payouts[String(row["tier"])]
+			best = maxf(best, float(band["base"]) + 0.5 * float(band.get("spread", 0.0)))
+		if best <= 0.0:
+			continue
+		var per_hour := best * (1.0 + contract_k * float(level - 1)) / cooldown_h
+		var share := per_hour / float(net_by_level[level - 1])
+		assert_true(share <= contract_max,
+				("at city level %d the best commission the board can offer pays a "
+						+ "mean $%.0f, which is $%.2f/gh across the %.0f game-hour "
+						+ "cooldown — %.2f %% of a measured net of $%.2f/gh, against "
+						+ "doc 03's ruled ceiling of %.0f %%")
+						% [level, best * (1.0 + contract_k * float(level - 1)),
+						per_hour, cooldown_h, 100.0 * share,
+						float(net_by_level[level - 1]), 100.0 * contract_max])
+
+	# **And the two active layers are ADDED, which is the bound that decides
+	# whether the city is still the thing being played.** A player who takes every
+	# street offer AND completes every commission is at the sum of the two
+	# ceilings; above two thirds of net, active play would outpay the city itself.
+	assert_true(ceiling_max + contract_max <= 0.67,
+			("the street ceiling (%.0f %%) and the commission ceiling (%.0f %%) sum "
+					+ "to %.0f %% of net for a player who takes everything; above two "
+					+ "thirds the city stops being the thing being played")
+					% [100.0 * ceiling_max, 100.0 * contract_max,
+					100.0 * (ceiling_max + contract_max)])
+
 	# (g) The dispatch half, unchanged. A played city's `city_services` line is a
 	# real share of its income and not a rounding error: measured on the
 	# curriculum agent at 21 game-days, three seeds, **4.83 / 5.21 / 5.76 %** of
