@@ -208,6 +208,15 @@ func owner_maintained(archetype: String) -> bool:
 	return (block.get("classes", []) as Array).has(tax_class(archetype))
 
 
+## Doc 93 §AP1 (Wave 19): may ordinary WEAR demolish private stock? The authored
+## answer is `false`; the DEFAULT here is `true`, because a fixture whose rules
+## carry no `owner_maintenance` block must keep the pre-Wave-19 physics exactly,
+## the same way `owner_maintained` answers false for it.
+func wear_may_demolish() -> bool:
+	var block: Dictionary = _rules.get("owner_maintenance", {})
+	return bool(block.get("wear_may_demolish", true))
+
+
 ## The five `water_facility` node kinds (doc 02 §2.1, C-35), in doc order.
 func water_variants() -> Array:
 	return _rules.get("water_facility_variants", []).duplicate()

@@ -4471,3 +4471,252 @@ can usefully decide while the lot is still rubble.
 
 `tests/test_ui_restore.gd` asserts both halves **against the sim's own answer**
 rather than against the panel's rule, so a change to either has to move both.
+
+
+## AP. Wave-19 rulings — the one-way door: what wear is allowed to do to a building, and what a city is owed when it falls over (2026-09-03)
+
+*(Measured in doc 92 §56. Shipped as report 98 §59, RR-164..RR-168. The defect
+rows are doc 91 A91-D-103, A91-D-104 and A91-D-105.)*
+
+The player, on their own Galaxy Z Fold 6 city, 2026-09-03, after one night:
+
+> *"The buildings are still being destroyed super fast. There was a natural
+> disaster, a water flooding, I woke up to — and there's negative money. I've
+> been trying to restore all the buildings so we can get revenue back up, but it
+> seems really difficult when all the buildings just keep being destroyed. ALL of
+> my buildings are destroyed right now."*
+
+**The first job was to find out whether that is the flood's doing, and it is
+not.** `tools/measure_catastrophe.gd` (doc 92 §56.1) ran 45 game-days across all
+four presets in both session kinds — an online city fast-forwarded, and a real
+closed app — and the cause column is unanimous in all eight arms:
+
+| door | destructions, 8 arms × 45 game-days |
+| --- | --- |
+| `apply_damage` reaching condition 0 (incidents, disasters, the flood) | **0** |
+| `burn_down` (a fire that was never answered) | **0** |
+| `roll_structural_failure` (doc 02 §2.6's wear roll) | **all of them** |
+
+So every ruling below is about wear, and none of them is about the storm. The
+storm the player enjoyed is not the thing that took their city.
+
+### AP1. Wear may CONDEMN a private building. It may not demolish one.
+
+`data/building_rules.json owner_maintenance.wear_may_demolish = false`;
+`Building.roll_structural_failure` returns empty for an `owner_maintained`
+building; `BuildingCatalog.wear_may_demolish()` stamps it beside
+`owner_maintained` at doc 93 §Y2's same four sites.
+
+**The chain this cuts**, measured hour by hour on the standard preset (doc 92
+§56.2) and containing no disaster at all:
+
+1. a city grows past the generation it bought, and **74 to 107 of its 251
+   buildings are permanently dark** from game-day 24 onward — with `failed`
+   grid components sitting at 0, so this is not a broken transformer, it is
+   arithmetic;
+2. doc 02 §2.6a's ownership floor has a service clause (§Y1a) — *an owner the
+   city has left in the dark cannot hold anything* — so the floor lifts for
+   exactly those buildings;
+3. they fall unbounded through `auto_damage_threshold` 0.35 into `damaged`,
+   where `damaged_decay_multiplier` 1.50 speeds them up, and on down to 0.10;
+4. `structural_failure_p_per_hour` 0.02 then deletes them: 42 of 251 gone
+   between game-day 31 and game-day 45, **peaking at nine buildings in one
+   game-day — one every 2.7 real minutes.**
+
+That is the player's report, reproduced, and step 4 is the only irreversible
+step in it. Steps 1–3 are a city the player can see going wrong and can fix;
+step 4 converts the fixing into a purchase they cannot afford, because a ruin
+earns nothing and costs money to restore.
+
+**The argument for the ruling is §Y1's own sentence, read to its end.** §Y1
+justifies the floor with *"below that it stops being an asset and starts being a
+liability, and it is **their** asset"*. An owner in that position boards a
+building up. They do not bulldoze it and walk away from the land. §Y1 stopped
+one word early, and that word was the whole ratchet.
+
+**Neglect is not forgiven, it is made reversible.** A condemned building sits in
+`damaged` at 0.10, where doc 02 §2.12 already charges it hard: `output_mult`
+0.40, `state_occupancy` 0.40, `coverage_mult` 0.25, and doc 03's `f_condition`
+pays `0.40 + 0.60 × 0.10 = 0.46`. A fully condemned city earns on the order of a
+fifth of its nominal income (§56.1 measures the standard arm's population fall,
+1512 → 1302, with the ruling in force). The punishment is severe and it is
+**recoverable by fixing the thing that caused it**, which is the loop the game is
+named after.
+
+**This is not a shield, and four doors stay open**, which is what keeps a storm
+worth being afraid of:
+
+* `burn_down` — a tier-5 structure fire nobody answered for half a game-hour;
+* doc 06's explicit `destroy_building` cascade op;
+* an event landing on a building already at or below the threshold (§AP2);
+* this same roll on the city's **own** stock — civic and utility archetypes are
+  not in `owner_maintenance.classes`, so a police station, a substation or a
+  water works the player let rot is still lost. The city is responsible for what
+  the city owns.
+
+**Why not a `derelict` state instead** (the option the brief weighed second):
+because `damaged` at 0.10 already IS that state. It has its own output, occupancy,
+coverage and revenue multipliers, its own decay multiplier, its own band name in
+the building panel (99-PA PA-31), its own repair verb and its own price. Adding
+an eighth state to doc 02 §2.5's machine would have bought a second name for
+behaviour the seven-state machine already has, at the cost of a save migration,
+a renderer case and a UI case in four lanes' files.
+
+**Why not a cap on destructions per absence** (the option weighed fourth):
+because doc 08 C-47 already caps it at zero, and §56.1 confirms it — the absence
+arm destroys **0 buildings in 45 game-days on every preset**. The absence was
+never the moment of destruction. The moment of destruction is the RETURN, when
+C-47's suppression lifts on a city that spent the night rotting and the roll is
+taken on the whole backlog at once. A cap on the absence would have been a cap
+on a number that is already zero.
+
+### AP2. One event may not demolish a standing building
+
+`Building.apply_damage` floors at `structural_failure_threshold`: a building
+ABOVE 0.10 when damage lands cannot be taken past 0.10 by that damage, however
+large the fraction. A building already at or below it is finished off exactly as
+before.
+
+The floor is `structural_failure_threshold` itself and **not a new constant**.
+Doc 02 §2.6 already names 0.10 as the line below which a building is no longer
+structurally sound; a second authored number meaning the same thing would be a
+second source of truth for one idea, which is C-07's rule applied to a fraction
+instead of to a dollar.
+
+**This door fires zero times on the shipped tables and the guarantee is worth
+writing down anyway.** §56.1's cause column is the evidence that no live damage
+fraction reaches condition 0 today. §56.4 then moves the Director's pressure, and
+the promise *"You built it. Now keep it alive"* should not rest on the
+assumption that nobody ever authors a `building_condition` op of −1.0.
+
+**One line had to be split to make the floor possible.** `destroy_building` — an
+op whose name is its specification — used to spell itself `apply_damage(1.0)`, so
+a floor on damage would have silently disarmed destruction. `Building.demolish()`
+now says what it means, and `CityIncidentWorld.destroy_building` calls it.
+**It carries doc 08 C-47's guard, which that branch never had**: before Wave 19
+an explicit destroy was the one door through which an ABSENCE could still take a
+building, in a function whose whole point was that absences may not.
+
+### AP3. The Director's pressure knobs are not retuned this wave, and the measurement is the reason
+
+The brief for this lane named five knobs to re-derive — `floor.tp_per_day`,
+`tp.offline_rate_mult`, `fairness.offline.max_hazards_per_catchup`, the
+cooldowns, and the flood's own damage fractions — on the grounds that all of them
+were authored while the Director stalled after two events, and that 99-PA PA-04
+unstalled it the day before. That is a correct reason to *re-derive*. It is not
+by itself a reason to *move*, and the re-derivation (doc 92 §56.4) says move
+none of them. Each verdict, with the number behind it:
+
+**`floor.tp_per_day = 6.0` — HELD, and the premise that it bypasses the spine is
+false.** The floor looked like it hit the weak hardest: over 45 game-days the
+Director fires 15 / 13 / 41 / 44 events on casual / standard / hard / crisis,
+i.e. **the smallest and poorest city in the matrix takes three times the events
+of the largest**, which reads as doc 07's spine — *threat scales UP with
+preparedness* — running backwards. It is not the floor doing it.
+`DirectorTables.tp_base_per_day` returns `max(ladder[tier], floor)` and
+`DisasterDirector.tp_rate_per_day` then multiplies that base by `age_ramp ×
+pressure(P) × tp_rate_mult`, so **the floor already passes through
+`0.55 + 0.90·P` exactly as the tier ladder does.** The spread is the difficulty
+ladder (`tp_rate_mult` 0.6 → 1.6) plus F5: a large city generates enough ambient
+incidents to trip `suppress.customers_out_pct` and hold itself down (624 incidents
+on standard against 121 on crisis), which is F5 working. A knob was almost moved
+here on a premise that reading the code disproved, and that is worth recording as
+loudly as a change would have been.
+
+**`tp.offline_rate_mult = 0.35` and `fairness.offline.max_hazards_per_catchup =
+1` — HELD.** §56.1 measures what an absence actually delivers: **0 Director
+events in 45 game-days on three of four presets, 1 on the fourth.** The offline
+budget is not the thing that hurt this player, and the direction the report asks
+for is *fewer* overnight surprises, not more. Raising it because §AP1 made
+destruction non-terminal would be spending the safety §AP1 just bought, in the
+one session kind the player was asleep for.
+
+**The cooldowns — HELD**, for the same reason: they are measured inside the event
+counts above, and those counts did not change across this wave's ship (§56.4's
+before/after is bit-identical, 15 / 13 / 41 / 44 both sides).
+
+**The flood's damage fractions — there are none, and that is the finding.**
+`FloodField` integrates depth from `precip_mm_h` and emits exactly two things:
+`flood_level_changed` and `road_closed_flood`. `grep -rn "flood" sim/ | grep -i
+damage` finds no path from the flood field to a building at all. **The water
+flooding the player woke up to could not have damaged one building**, and the
+`water_main_break` incident beside it damages pressure and roads, never
+structures. Their rubble was §AP1's wear chain; the flood was the weather they
+happened to see while it was happening.
+
+**What the measurement DID find, and what it is filed as.** Across all eight arms
+the `building_damaged` cause column reads `decay=61 incident=0 fire=0` — that
+shape, on every preset. **The entire incident and disaster layer does zero
+damage to buildings over 45 game-days**, because `building_condition` ops live on
+tier-2 and tier-4 escalations that auto-dispatch resolves before they arrive. So
+today a storm is spectacle and wear is the only physics with teeth, which is the
+wrong way round for a game about keeping a city alive. That is doc 91 A91-D-105.
+It is **not** fixed here: the honest sequence is §AP1 first (so that damage is no
+longer terminal), then a measured damage pass on doc 06's escalation ladder in
+the lane that owns it — and doing them in one wave would mean opening a damage
+path and removing a destruction door in the same measurement, with no way to
+attribute either.
+
+### AP4. A city that has fallen over is owed a way back, and "per era" has to mean something
+
+Two defects, one ruling.
+
+**(a) `relief_grants_per_era` has never had an era** (doc 91 A91-D-103). Doc 03
+§2.10 layer 5 is the recovery ladder's top rung: a free automatic grant when the
+treasury is past half the credit line and the trailing net is negative.
+`Treasury.relief_grants_used` is incremented, persisted, and **reset by nothing**
+— `grep -rn "era" sim/` finds the word in one place, the key's own name. So the
+allowance is a LIFETIME one: three grants on standard, two on hard, zero on
+crisis, for the whole life of a city this game expects to be played for weeks. A
+player who has spent theirs has reached a dead end with no losing screen, which
+is exactly the state the report describes.
+
+An era is now a **city level**. `relief_grants_used` resets on the level
+transition that already pays `LEVEL_UP_GRANT_BY_CITY_LEVEL`. It is the smallest
+honest definition available: the quantity is already tracked, already persisted,
+already composed from both routes by §G1, and it only ever goes up — so the
+allowance refreshes when the city demonstrably grew, and cannot be farmed by
+oscillating anything. Crisis stays at 0 per era, because crisis is a preset that
+is allowed to be lost.
+
+**(b) The grant is proportional to the revenue the disaster destroyed** (doc 91
+A91-D-104). `grant = clamp(1.5 × daily_gross_revenue, 8 000, 250 000)` is
+measured on the city AFTER the loss, so the worse the catastrophe the smaller the
+relief. At the limit the report describes — every building a ruin — gross revenue
+is near zero and the grant is `RELIEF_MIN`, $8 000, against a restore bill in the
+hundreds of thousands. The rung is thinnest exactly where it is the only rung.
+
+Relief is now `max(` the revenue term `, RELIEF_DAMAGE_FRACTION × the outstanding
+restore bill `)`, still inside the same `[RELIEF_MIN, RELIEF_MAX]` clamp. The
+bill is not a new price: it is `CostCurves.restore_cost_building` summed over the
+city's actual ruins at the city's own `M_repair` — the identical call
+`cmd_restore_building` charges — so C-07 keeps its single price and the grant can
+never disagree with the invoice the player is looking at.
+
+`RELIEF_DAMAGE_FRACTION = 0.35` is **adopted, not invented**: it is
+`DEFERRED_REPAY_FRACTION`, already this document's answer to the only other
+question of the same shape — how much of a hole the city closes per step while it
+is in one (§2.10 layer 4 repays 35 % of positive net against deferred liability).
+A second number for one idea would be a second source of truth.
+
+**What stops it being a farm**, stated as the brief requires:
+
+1. it pays only while **both** insolvency conditions hold — treasury under
+   `−0.5 × credit_limit` **and** a non-positive 24-hour trailing net — so a city
+   with income cannot draw it at all;
+2. `RELIEF_DAMAGE_FRACTION < 1`, so the grant never covers the loss. Wrecking
+   your own city to draw relief loses 65 cents on the dollar, for every building
+   in the catalogue. **That is an inequality, not a hope**, and it is the whole
+   anti-farm argument;
+3. the 120-game-hour cooldown and the per-era allowance both still bind;
+4. the bill it is measured against SHRINKS as it is spent — every restore the
+   grant pays for leaves the sum — so relief decays back to the revenue term as
+   the city recovers, which is the direction a subsidy should run.
+
+**A performance seam came with it, and it is load-bearing.**
+`update_recovery_ladder` runs once per settled game-hour and the bill is
+`O(roster)`; the bench city carries 1 500 buildings. `Treasury.relief_gates_pass`
+states the four price-free gates once, and `CitySim` walks the roster only when
+they already pass — which on any city that is not deep in the credit line is
+never. Both `profile_sim` cities are solvent throughout, which is why the walk
+does not appear in this wave's timing deltas.

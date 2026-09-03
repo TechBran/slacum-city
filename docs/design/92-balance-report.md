@@ -325,7 +325,7 @@ what the sim bills; they should be re-stamped in the same ruling.
 | 9 | 341.47 | 2,817.47 | 501.82 | 2,409.47 | 3,404.71 | 2,415.93 |
 | 12 | 340.24 | 1,562.23 | 447.76 | 2,483.90 | 2,118.90 | 2,467.71 |
 | 15 | 337.71 | 1,313.83 | 444.19 | 1,705.56 | 1,187.25 | 1,542.31 |
-| 18 | 336.22 | 587.75 | 515.43 | 573.66 | 156.35 | 1,288.61 |
+| 18 | 336.22 | 587.75 | 515.43 | 573.66 | 156.55 | 1,288.61 |
 | 21 | 334.21 | 280.99 | 592.26 | 482.96 | 119.45 | 1,255.32 |
 
 **Every growth curve turns over, and this time it is a cliff, not a slope.**
@@ -5485,7 +5485,7 @@ after §N1:
 |---|---|---|---|---|---|---|
 | `casual` | **104** | **110** | **108** | 107.3 | 109 / 116 / 113 | $471k around day 50 |
 | `standard` | **76** | **75** | **74** | **75.0** | **76 / 75 / 74 — unmoved** | $237k around day 44 |
-| `hard` | **57** | **56** | **56** | 56.3 | 52 / 52 / 53 | $88k around day 28 |
+| `hard` | **57** | **56** | **56** | 56.5 | 52 / 52 / 53 | $88k around day 28 |
 | `crisis` | **41** | **42** | **40** | 41.0 | 35 / 34 / 35 | $21k around day 10 |
 
 **Strictly ordered on every seed, finite on all four, and `standard` unmoved on
@@ -5981,7 +5981,7 @@ the four load-bearing numbers are here, because they are this document's.
    | preset | 1337 | 4242 | 9001 | mean | peak treasury (game-day) | peak open inc | wall s |
    |---|---|---|---|---|---|---|---|
    | `crisis` | **41** | **42** | **40** | 41.0 | **$20,657 (day 10)** | 2 | 16.9 |
-   | `hard` | **57** | **56** | **56** | 56.3 | $88,205 (day 28) | 3 | 22.6 |
+   | `hard` | **57** | **56** | **56** | 56.5 | $88,205 (day 28) | 3 | 22.6 |
 
    §32.5's rows to the seed, and its "$21k around day 10" / "$88k around day 28"
    resolved to the dollar and the day. **A $12,000 purse that reaches $20,657
@@ -9048,3 +9048,227 @@ pre-assigned; the repro above is what a lane that takes it needs.
 number in §54.2–§54.7 is either a published ladder cell or a settled-ledger
 figure. The one sentence it does correct is §54.3's, which is why that paragraph
 now says the net fall is a correlation.
+
+
+## 56. Wave 19 — the catastrophe, measured: which door a city actually falls through (2026-09-03)
+
+*(Rulings in doc 93 §AP. Shipped as report 98 §59, RR-164..RR-168. Instrument:
+`tools/measure_catastrophe.gd`, new this wave.)*
+
+### 56.1 The instrument, and the eight arms that name the door
+
+Nothing in the project could answer *"ALL of my buildings are destroyed right
+now"* with a number. `tools/probe_neglect.gd` measures the insolvency day of an
+online neglected city and prints no building column at all; `tools/playtest.gd`
+samples `destroyed_buildings` but never the CAUSE, and drives its coarse path
+with `is_catchup` defaulting to `true`, which is a different physics from the one
+gate 29 measures. So the wave opens with an instrument.
+
+`tools/measure_catastrophe.gd` reports, per game-day: buildings standing, ruins,
+damaged, destructions split by cause, dark buildings, failed grid components,
+mean condition, treasury and population. It runs **two arms that are not
+interchangeable**, and the difference between them is the wave's first finding:
+
+* `--mode=online` — `advance_coarse_hours(1, false)`, an online city
+  fast-forwarded. This is gate 29's arm. `destroy_allowed()` is true.
+* `--mode=absence` — `director.catchup_begin()` once, then coarse hours with
+  `is_catchup = true`: a real closed app. Doc 08 C-47 suppresses burn-down and
+  does not TAKE the structural-failure roll; `data/director.json
+  fairness.offline` allows one pre-warned tier-1 hazard for the whole session.
+
+`--warm=N` plays N game-days with the `balanced` agent first, so the absence
+lands on a city rather than on the 34-building founding fixture, and
+`--real-hours=F` converts the player's own units: **1 real hour of absence is 60
+game-hours, so their ~8-hour night is 20 game-days of city time.** That
+conversion is most of why an overnight absence is a bigger event than it sounds.
+
+```
+~/.local/bin/godot --headless --path <repo> -s res://tools/measure_catastrophe.gd -- \
+    --days=45 --mode=both --warm=21
+```
+
+**The cause column, all eight arms, 45 game-days each, seed 1337** (`bld` is the
+stock at the fork; `ruin` the count at the end):
+
+| mode | preset | pop0 | bld | ruin | damaged | dstr: damage | fire | **structural** | dir_ev | inc_new |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| online | casual | 2 018 | 252 | 21 | 42 | 0 | 0 | **21** | 15 | 745 |
+| online | standard | 1 512 | 251 | 42 | 20 | 0 | 0 | **42** | 13 | 624 |
+| online | hard | 830 | 176 | 6 | 1 | 0 | 0 | **6** | 41 | 225 |
+| online | crisis | 156 | 37 | 7 | 0 | 0 | 0 | **7** | 44 | 121 |
+| absence | casual | 2 018 | 252 | **0** | 16 | 0 | 0 | 0 | 0 | 781 |
+| absence | standard | 1 512 | 251 | **0** | 10 | 0 | 0 | 0 | 0 | 859 |
+| absence | hard | 830 | 176 | **0** | 7 | 0 | 0 | 0 | 1 | 160 |
+| absence | crisis | 156 | 37 | **0** | 7 | 0 | 0 | 0 | 0 | 49 |
+
+Two facts, and neither of them is the flood:
+
+1. **Every destruction in the game is `roll_structural_failure`.** Not one came
+   through `apply_damage` — the door every incident, every Director event and
+   every disaster uses — and not one through `burn_down`. The same holds on the
+   founding fixture with `--warm=0` (1/3/2/5 ruins across the four presets, all
+   structural). The damage tables were not what took the player's city.
+2. **An absence destroys nothing.** Zero ruins in 45 game-days on every preset,
+   which is C-47 working exactly as specified. The player's city was not
+   destroyed *while* they slept.
+
+### 56.2 The chain, hour by hour — and it contains no disaster
+
+`--mode=online --warm=21 --presets=standard --rows --stride=1`, abridged to the
+rows where something changes:
+
+| day | standing | ruins | damaged | dark | failed | mean cond | treasury | pop |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 251 | 0 | 0 | 0 | 0 | 0.885 | 143 313 | 1 520 |
+| 15 | 251 | 0 | 1 | 0 | 0 | 0.699 | 1 197 226 | 1 520 |
+| 24 | 251 | 0 | 5 | **74** | 0 | 0.613 | 1 685 378 | 1 507 |
+| 30 | 251 | 0 | 15 | 67 | 0 | 0.573 | 1 836 372 | 1 503 |
+| 31 | 250 | **1** | 14 | 67 | 0 | 0.570 | 1 861 153 | 1 503 |
+| 35 | 250 | 1 | 58 | 107 | 0 | 0.543 | 1 938 778 | 1 314 |
+| 40 | 235 | 16 | 46 | 64 | 0 | 0.532 | 2 056 419 | 1 270 |
+| 41 | 226 | **25** | 36 | 56 | 0 | 0.544 | 2 085 375 | 1 248 |
+| 45 | 209 | 42 | 20 | 38 | 0 | 0.568 | 2 203 563 | 1 206 |
+
+Read it in four steps:
+
+1. **Day 24: 74 of 251 buildings are dark, with `failed` grid components at
+   zero.** Nothing broke. The city outgrew the generation it bought, and roughly
+   thirty per cent of it is unserved from then on.
+2. Doc 02 §2.6a's ownership floor has a service clause (doc 93 §Y1a) — an owner
+   the city has left in the dark cannot hold anything — so the floor lifts for
+   exactly those buildings. Mean condition, which was pinned near `band_worn`
+   0.60, keeps falling.
+3. `damaged` climbs 1 → 15 → 58 as they cross `auto_damage_threshold` 0.35, and
+   `damaged_decay_multiplier` 1.50 then speeds them toward 0.10.
+4. From day 31 the 0.02/gh roll starts deleting them, and it accelerates as more
+   of the stock arrives below the line: **+9 ruins on day 40, +9 on day 41, +6
+   on day 42.** One game-day is 24 real minutes, so nine ruins in a game-day is
+   **one building lost every 2.7 real minutes** — the player's "destroyed super
+   fast", to the minute.
+
+The rising mean condition after day 41 (0.532 → 0.568) is not a recovery. It is
+the average improving because the worst buildings have been deleted from it.
+
+**Why the absence arm shows none of this, and why that makes it worse.** C-47
+does not repair anything; it defers. Every building the night rotted below 0.10
+is still standing at 0.10 when the app opens, and the roll that was not taken is
+taken every game-hour from that moment. A player returning to a primed city pays
+the whole suppressed backlog at the door. The absence is the loading; the return
+is the trigger.
+
+### 56.3 Why the arc differs from the player's, precisely
+
+The player's city is ~452 population at city level 3. The closest arm here is
+`--warm=21` on standard: 1 512 population at city level 2, 251 buildings. It is
+**larger in population and lower in level**, and the difference is the agent:
+`balanced` builds housing steadily and does not chase doc 09's objectives, so it
+converts money into residents faster than into curriculum levels. Two things
+follow, and both make this report's numbers a LOWER bound on the player's:
+
+* their stock is smaller, so the same proportion of dark buildings is a smaller
+  absolute count — but the fall is proportional, not absolute, and §56.2's
+  mechanism is scale-free;
+* **they were insolvent and the arms here are not.** Doc 03 §2.10 layer 2's
+  `AUSTERITY_DECAY_MULT` is **2.5**, applied in `apply_hourly_decay` through
+  `treasury.austerity_decay_mult()`. An insolvent city wears two and a half times
+  faster, so steps 2→4 of §56.2's chain run in 40 % of the game-days they take
+  here. The `--treasury` flag exists for exactly this arm; it could not be used
+  to reproduce their arc because the `balanced` agent's city re-earns its way out
+  of any forced deficit within four game-days (measured: −5 000 → +278 748 by day
+  4), which is itself the finding that the neglect arms in this document are
+  *easy* mode for this mechanism.
+
+That is the honest statement of the gap: same door, same chain, a faster clock on
+their city than on any arm this instrument can currently drive.
+
+### 56.4 The Director, re-derived against a Director that runs — before and after
+
+99-PA PA-04 unstalled the Disaster Director on 2026-09-02; every pressure number
+in `data/director.json` was authored while it froze after two events per save. So
+this wave re-derived the five knobs the lane brief named. **It moved none of
+them**, and the table below is why: it is the same instrument, the same seed and
+the same eight arms, run at the fork and again after §AP1 and §AP2 shipped.
+
+| preset | ruins BEFORE | ruins AFTER | damaged BEFORE | damaged AFTER | **Director events BEFORE** | **AFTER** | incidents BEFORE | AFTER |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| casual (online) | 21 | **10** | 42 | 52 | 15 | **15** | 745 | 757 |
+| standard (online) | 42 | **6** | 20 | 54 | 13 | **13** | 624 | 638 |
+| hard (online) | 6 | **6** | 1 | 1 | 41 | **41** | 225 | 225 |
+| crisis (online) | 7 | **7** | 0 | 0 | 44 | **44** | 121 | 121 |
+| casual (absence) | 0 | **0** | 16 | 16 | 0 | **0** | 781 | 781 |
+| standard (absence) | 0 | **0** | 10 | 10 | 0 | **0** | 859 | 859 |
+| hard (absence) | 0 | **0** | 7 | 7 | 1 | **1** | 160 | 160 |
+| crisis (absence) | 0 | **0** | 7 | 7 | 0 | **0** | 49 | 49 |
+
+Three readings:
+
+* **The storm still runs, unchanged.** The Director's event count is identical on
+  every arm — 15 / 13 / 41 / 44 online, 0 / 0 / 1 / 0 offline — before and after.
+  Nothing in this wave made a disaster rarer, weaker or later. The lane brief's
+  constraint was *"storms must still MATTER"*, and the strongest form of that
+  claim is a column that does not move.
+* **The ruins fell where they were private stock and nowhere else.** Standard
+  42 → 6, casual 21 → 10; hard and crisis unchanged at 6 and 7, because every ruin
+  in those two arms was already a civic or utility building the city owns and
+  §AP1 does not touch. A ruling that had accidentally protected everything would
+  have shown four zeroes.
+* **`damaged` rose by almost exactly what `ruins` fell** (standard +34 against
+  −36; casual +10 against −11). That is the ruling stated as arithmetic: the same
+  buildings, condemned instead of demolished, still costing the city
+  `output_mult` 0.40 and still standing where the player can fix them.
+
+**The five verdicts** are in doc 93 §AP3 with the number behind each. The two
+worth repeating here because they are measurements and not judgements:
+
+* the floor `tp_per_day = 6.0` **already passes through** `pressure = 0.55 +
+  0.90·P` — `tp_base_per_day` returns `max(ladder, floor)` and `tp_rate_per_day`
+  multiplies that by `age_ramp × pressure × tp_rate_mult` — so the apparent
+  inversion (crisis 44 events against casual 15) is `tp_rate_mult` 0.6→1.6 plus
+  F5 holding the large city down on its own ambient incident load, not the floor
+  escaping the spine;
+* **the flood has no damage fraction to tune.** `FloodField` emits
+  `flood_level_changed` and `road_closed_flood` and nothing else; there is no path
+  from the flood field to a building's condition. The water the player woke up to
+  could not have damaged a building.
+
+### 56.5 The bottom rung, priced: what a fallen city is actually offered
+
+Doc 03 §2.10's ladder has five layers and the bottom one is a free grant. Two
+things were wrong with it and both are arithmetic (doc 93 §AP4, doc 91 A91-D-103
+and A91-D-104).
+
+**The allowance had no era.** `relief_grants_per_era` is 4 / 3 / 2 / 0 across the
+presets and `Treasury.relief_grants_used` is reset by nothing in the project, so
+those are LIFETIME numbers. An era is now a city level.
+
+**The grant shrank with the disaster.** Measured — not derived — by
+`measure_catastrophe --relief --warm=21`, which plays a city for 21 game-days,
+demolishes every building in it through doc 06's own terminal path, and asks the
+shipped ladder what it offers:
+
+| preset | ruins | outstanding restore bill | grant BEFORE | grant AFTER | grants per era |
+| --- | --- | --- | --- | --- | --- |
+| casual | 252 | $227 699 | $8 000 | **$79 695** | 4 |
+| standard | 251 | $238 280 | $8 000 | **$83 398** | 3 |
+| hard | 176 | $164 919 | $8 000 | **$57 722** | 2 |
+| crisis | 37 | $93 184 | $8 000 | **$0** | 0 |
+
+Read three things off it:
+
+* **the before column is the defect.** $8 000 is `RELIEF_MIN` on every preset,
+  because a city of ruins earns nothing and the grant was a multiple of what it
+  earns. The ladder's bottom rung paid the same $8 000 whether the city had lost
+  one building or all 251 of them;
+* **the after column is 0.35 × the bill and nothing else** — 10.4× the old grant
+  on standard, and still $155 000 short of the bill it is measured against, which
+  is the anti-farm inequality doing its job in dollars;
+* **`RELIEF_MAX` never binds**, at any preset, even at total loss. The $250 000
+  ceiling is not what is holding this rung down and this wave does not move it.
+  **Crisis gets $0 and that is the ruling, not a bug**: `relief_grants_per_era` is
+  0 there, because crisis is a preset that is allowed to be lost.
+
+**The anti-farm is checkable in one line**: `RELIEF_DAMAGE_FRACTION = 0.35 < 1`,
+so the grant is always smaller than the bill it is measured against. There is no
+city, no archetype and no level at which deliberately destroying your own stock
+pays. `tests/test_relief_ladder.gd` asserts the inequality itself rather than any
+particular dollar, so a future retune of the fraction cannot quietly cross 1.

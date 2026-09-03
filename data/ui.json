@@ -825,6 +825,21 @@
 				}
 			},
 			{
+				"_comment": "NEW, Wave 19 (doc 93 §AP1, doc 12 D-88). The fourth band, and the only TERMINAL one: §AP1 stops wear demolishing private stock, so a building that reaches the structural-failure line now rests there instead of disappearing. It is filed under `economy` beside its three siblings for their reason — what a condemned building costs is money — and keyed on `building` so the row carries `Jump to it`, which matters more here than for Worn or Poor because the fix is at the building (its power), not in a menu.",
+				"type": "building_condition_band",
+				"match": {
+					"band": "condemned"
+				},
+				"category": "economy",
+				"notify_id": "buildings_condemned",
+				"state": "critical",
+				"key": "building",
+				"args": {
+					"count": "@count",
+					"time": "@time"
+				}
+			},
+			{
 				"_comment": "99-PA PA-83. Land development charges the treasury SIX times per block, $1.2K to $21K a phase, 14-15 times per 21 game-days on a curriculum run, and until now not one of them appeared anywhere the player could see: `development_phase_charged` had zero shell consumers. A log row and nothing louder — the player pressed DEVELOP and the schedule is doc 03 §2.8's own, so this is a receipt, not news. `phase` resolves through the same `ui_land_phase_*` copy the land panel's own progress line uses, because 'road_install started on Block E4' is a sentence written by a machine for a machine.",
 				"type": "development_phase_charged",
 				"category": "economy",
