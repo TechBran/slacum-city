@@ -541,7 +541,7 @@ half of doc 93 §AE3's mechanism. The pin does not close it and does not claim t
 
 ### 2.9 Long catch-up without an ANR
 
-The worst case is now the C-19 cap: **12 real hours of absence = 720 coarse steps** (720 game-hours = 30 game-days), down from the 4 320 steps the deleted 72-hour cap implied. Doc 08 may lower the effective count further via `max_coarse_hours` (report 98 C-21: `ceil(2000 / measured_ms)`, floored at 72, capped at 720, set by the P0-27 benchmark). Catch-up is **sliced on the main thread** — report 98 C-22 ruled against threading it, because sim state is single-owner `RefCounted` (constitution §3) and the platform can kill the process mid-task:
+The worst case is the C-19 cap and, since report 98 §58 (RR-160), it is also the ORDINARY case: **12 real hours of absence = 720 coarse steps** (720 game-hours = 30 game-days). Doc 08 may no longer lower the effective count — `max_coarse_hours` clamped the *credited absence*, shipped at 360 = six real hours, and is retired (RR-161); doc 08 §2.12's budget now bounds this section's veil instead, which is the thing it was always a budget for. **This section therefore has to carry the full 720 steps on every absence, and the table below is the honest reading of that.** Catch-up is **sliced on the main thread** — report 98 C-22 ruled against threading it, because sim state is single-owner `RefCounted` (constitution §3) and the platform can kill the process mid-task:
 
 ```
 veil.show()                                  # animated "Simulating 30 days…" with a progress bar
@@ -557,8 +557,10 @@ Veil wall time = `steps × measured_coarse_ms`, generated from doc 08's P0-27 me
 |---|---|---|---|
 | 0.60 (doc 01's retired estimate) | 432 ms | 36 | a blink |
 | 4.00 | 2.88 s | 240 | a short load |
-| 12.0 | 8.64 s | 720 | a real load screen |
-| 55.0 (doc 08 §2.12 estimate) | 39.6 s | 720 (one step per frame, 55 ms each) | unacceptable — this is why `max_coarse_hours` exists |
+| **7.65 — MEASURED, settled reference city (doc 92 §55.6)** | **5.50 s** | 459 | a real load screen, once a night |
+| **8.95 — MEASURED, settled L4 city; the shipped `veil_ms_at_cap`** | **6.43 s** | 536 | the budget's worst passing case |
+| 12.0 | 8.64 s | 720 | at the 9 s budget's edge |
+| **162.6 — MEASURED, 1,500-building `bench_city`** | **116.9 s** | 7 013 (one step per frame) | over budget by 13×; **doc 92 §55.7 AC-19-1** |
 
 **ANR safety is structural, not budgetary.** `advance_coarse_sliced` runs *whole* coarse steps, so a single step longer than the budget still runs to completion; the main loop is therefore blocked for at most one step. Android's ANR line is 5 s, so the design is safe for any `measured_coarse_ms < 5 000` — a 90× margin even at the pessimistic 55 ms. The 12 ms budget is about keeping the 30 fps veil animation smooth, not about avoiding the ANR.
 
@@ -980,7 +982,7 @@ Nothing in this document lives in `sim/`. The shell classes below are `game/` la
 | **03** Economy, taxes & land market | needs | Treasury-crossing events emitted with the keys doc 08's event table classifies (e.g. `treasury_threshold`). |
 | **06** Incidents, dispatch & fleets | needs | Every emitted incident event carries a stable event `key` and a `payload` string usable as a deep link (`incident:<type>:<id>`). Classification is doc 08's `data/notifications.json`; this doc only delivers. |
 | **07** Weather & Disaster Director | **needs (hard dependency)** | `Director.forecast_queue() -> Array[{event_id, kind, severity, onset_gmin, warning_lead_gmin}]`, **pre-rolled and committed to the save**, deterministic under the `director` RNG stream. This is predictability class (b): without pre-rolling, storm-warning notifications (spec §22 P1) are impossible — the single most important notification in the game — because class (c) projection ships disabled. |
-| **08** Persistence, offline policy & notification policy | **needs (hard dependency)** | (a) `SaveManager.request_save(reason)` returning after the snapshot barrier, `load_slot(slot) -> LoadResult`, and all recovery/retention (C-24); (b) `Sim.deserialize()` round-trip fidelity, for the optional class (c) projection; (c) `OfflinePolicy.band_for(hour_index)` and `max_coarse_hours` (C-21); (d) `NotificationPlanner.plan()` — classes, budgets, quiet hours, coalescing, event→class mapping in `data/notifications.json` (C-71). |
+| **08** Persistence, offline policy & notification policy | **needs (hard dependency)** | (a) `SaveManager.request_save(reason)` returning after the snapshot barrier, `load_slot(slot) -> LoadResult`, and all recovery/retention (C-24); (b) `Sim.deserialize()` round-trip fidelity, for the optional class (c) projection; (c) `OfflinePolicy.band_for(hour_index)` and — since RR-161 — the §2.12 **veil** budget, not a clamp on the credit (C-21 retired); (d) `NotificationPlanner.plan()` — classes, budgets, quiet hours, coalescing, event→class mapping in `data/notifications.json` (C-71). |
 | **08** | provides | Implementations of `IClockSource`, `IFileSink` and `INotificationSink`; the elapsed-time measurement and `offline_rate` hook; the device-local UTC offset for quiet hours; alarm ids for `notifications.scheduled[].alarm_id`; delivery receipts (`delivered_log`) for report reconciliation. |
 | **09** Map, land, districts, population & stability | needs | Land-development completion times for class (a) notifications. |
 | **11** Rendering & performance | provides | Authoritative frame cap and graphics preset, with the reason (`thermal`, `power_save`, `user`). Doc 11 owns what each preset *means*; this doc owns *when* it switches. needs: `GraphicsPresets.apply(name)` and the `SubViewport` handle for idle-render suspension. |
@@ -1995,14 +1997,25 @@ the 1,500-building bench fixture, this workstation, `tools/profile_sim.gd
 | Starter (reference) | 5.488 | 360 | **1.98 s** | 165 | 5.9 – 9.9 s |
 | Bench (1,500 buildings) | 165.493 | 360 | **59.6 s** | 360 | 3 – 5 minutes |
 
+> **AMENDED 2026-09-03 — report 98 §58, RR-160/RR-161.** The clamp in this
+> table is deleted: it bounded the *credited absence*, not the veil, and 360
+> game-hours is six real hours of a player's night (doc 92 §55 prices the
+> difference at **$73,511** for one eight-hour absence). Both rows above are
+> therefore read at **720 steps**, not 360 — starter **3.95 s**, bench
+> **119.2 s** — and the veil is measured directly now rather than multiplied out:
+> **6.43 s** on a settled reference city, **116.9 s** on the bench fixture (doc 92
+> §55.6). Every sentence below about ANR safety and about the interruption stands
+> unchanged; only the step count doubles.
+
 The bench row is the honest one to look at and it is why `bench_coarse_ms` is
-recorded in `data/persistence.json` beside the shipped number rather than
+recorded in `data/persistence.json` beside the measured veil rather than
 forgotten. **ANR safety is unaffected** and is still structural, not budgetary:
 the blocked frame is one whole coarse step — 165 ms on the bench city on this
 workstation, 0.5–0.8 s on the Fold — against Android's 5 s line, a 6× margin at
 the worst measured combination. What the bench row costs is *veil length*, not an
-ANR, and a 3-minute veil is a product problem for the lead, filed as an open
-question in report 98 §48 rather than fixed here.
+ANR, and a 2-minute veil is a product problem for the lead — filed as doc 92
+§55.7 **AC-19-1** against the coarse step, where it belongs, rather than deducted
+from the player's night.
 
 **The interruption.** This section's own Wave-14 note said a second
 `_on_app_resumed` "drains the unfinished cursor on the spot and then plans the new

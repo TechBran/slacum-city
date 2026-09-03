@@ -373,22 +373,10 @@ So the worst case this doc must plan for is **719 coarse steps**, not 371 and no
 
 1. Phase 0 task **P0-27** builds `tests/perf/test_coarse_step_cost.gd`.
 2. It measures one FULL-band coarse hour on the reference city, on the reference device, and reports `measured_ms`.
-3. `max_coarse_hours = clamp( floor_to_multiple_of_24( ceil(2000 / measured_ms) ), 72, 720 )` — the 2 000 ms numerator is doc 08's catch-up work budget, the floor of 72 keeps three game-days of absence always creditable, and the ceiling of **720** is the C-19 cap above.
-4. **`max_coarse_hours` lives in doc 08's tunables, not in `data/time.json`.** This doc supplies `OFFLINE_CAP_REAL_MS` (the 720-hour outer bound) and the coarse entry point; doc 08 supplies the measured cap and reports discarded hours exactly as it already reports over-cap hours.
+3. ~~`max_coarse_hours = clamp( floor_to_multiple_of_24( ceil(2000 / measured_ms) ), 72, 720 )`~~ — **RETIRED 2026-09-03, report 98 §58 / RR-161.** The rule shipped in Wave 17 at **360 game-hours = 6 real hours** and it clamped the *credited absence*, so a player who slept eight hours was paid for six. Doc 92 §55 measures the bill: **$281,319 instead of $354,830 for an eight-hour night** on a settled L3 city. The measurement now feeds a wall-clock gate on the catch-up **veil** (doc 08 §2.12's `veil_ms_at_cap ≤ veil_budget_ms`), which is the thing a performance budget is a budget for.
+4. **This doc's `OFFLINE_CAP_REAL_MS` is the whole of the credited window** (RR-160). It is 43 200 000 ms — 12 real hours, 720 game-hours — and doc 08 narrows it by nothing. `CatchUpPlanner.plan(elapsed_real_ms, residual_game_ms, tick_index)` takes three arguments and reads no data file; there is no parameter by which any caller can credit a player less.
 
-Worked out across the plausible measurement range, so the shape of the rule is visible before P0-27 runs:
-
-| `measured_ms` | `ceil(2000 / m)` | floor to ×24 | clamp [72, 720] → `max_coarse_hours` |
-|---|---|---|---|
-| 0.6 (this doc's retired claim) | 3 334 | 3 312 | **720** (full cap) |
-| 2.0 | 1 000 | 984 | **720** (full cap) |
-| 2.77 | 723 | 720 | **720** (the break-even point) |
-| 4.0 (doc 08's pass threshold) | 500 | 480 | **480** |
-| 12.0 | 167 | 144 | **144** |
-| 27.0 (doc 08's accounting) | 75 | 72 | **72** (floor) |
-| 50.0 | 40 | 24 | **72** (floor binds) |
-
-The full 720-hour cap is therefore reachable only at `measured_ms ≤ 2.77`; anything at or above doc 08's 4 ms threshold caps catch-up below the C-19 bound and the surplus is discarded and reported.
+The worked table that stood here — seven rows of `clamp(floor(ceil(2000/m)/24)×24, 72, 720)` — went with the rule. What replaces it is a measurement rather than a derivation, and it lives with its owner in doc 08 §2.12: one whole 12-real-hour plan on the settled reference city costs **6 432 ms** against a **9 000 ms** veil budget. **The full 720-hour cap is therefore always credited**, on every city and every device; when a city cannot afford the veil (the 1 500-building benchmark fixture needs 116 882 ms) the answer is a cheaper coarse hour, filed as doc 92 §55.7 AC-19-1, and never a smaller credit.
 
 > **Measured 2026-08-20 (Wave 9) — the cap does not move, and the stress fixture does.** Doc 06 §2.10's dispatch now prices every ETA through doc 10's router (report 98 RR-26), which more than doubles the incident phase of a coarse step and takes **66 % more integrator sub-steps**, because street-true arrival times are all distinct where the Chebyshev stand-in's collided on a grid. Interleaved A/B, same session, `git stash` for the before arm:
 >
@@ -398,7 +386,7 @@ The full 720-hour cap is therefore reachable only at `measured_ms ≤ 2.77`; any
 > | 12 h catch-up | 0.076 → **0.080 s** | 1.517 → **2.280 s** |
 > | sub-steps / coarse hour | 1.25 → **1.25** | 8.75 → **14.54** |
 >
-> **`max_coarse_hours` sits on a knife-edge, and this wave measured both sides of it in one session.** `tests/test_milestone1.gd` derives the cap from its own reading of the starter city's coarse step, and this branch was measured twice: **6.42 ms → 288** on a loaded run and **6.07 ms → 312** on the full-suite run twenty minutes later. Wave 8 measured 6.21 → 312. **The boundary is at exactly `measured_ms = 6.410`** (`floor(2000 / m / 24) × 24` steps there), so a 5.5 % spread in the measurement straddles it — and a workstation carrying three other agents' test suites has more than that in it. The honest statement is *the cap sits on the 312/288 boundary and the rule reports whichever side the device lands on*, not *the cap moved*. Nothing breaks either way: the test asserts only the C-21 floor of 72, doc 08 owns the constant, and 288 game-hours is still twelve game-days of creditable absence.
+> **~~`max_coarse_hours` sits on a knife-edge~~ — RETIRED 2026-09-03 (report 98 §58, RR-161); the record is kept because the knife-edge is the argument against the rule.** A number that decides how much a player is paid should not move when another agent's test suite is running, and this note is the measurement that showed it did. **`max_coarse_hours` sits on a knife-edge, and Wave 15 measured both sides of it in one session.** `tests/test_milestone1.gd` derives the cap from its own reading of the starter city's coarse step, and this branch was measured twice: **6.42 ms → 288** on a loaded run and **6.07 ms → 312** on the full-suite run twenty minutes later. Wave 8 measured 6.21 → 312. **The boundary is at exactly `measured_ms = 6.410`** (`floor(2000 / m / 24) × 24` steps there), so a 5.5 % spread in the measurement straddles it — and a workstation carrying three other agents' test suites has more than that in it. The honest statement is *the cap sits on the 312/288 boundary and the rule reports whichever side the device lands on*, not *the cap moved*. Nothing breaks either way: the test asserts only the C-21 floor of 72, doc 08 owns the constant, and 288 game-hours is still twelve game-days of creditable absence.
 >
 > What *is* unambiguously out of budget is the **benchmark** figure: 2.28 s against the 2 s target on a 1,500-building stress fixture, 14 % over, filed in audit 91's narrowed D-15 with the cheapest lever named (quantising arrival times onto the SimTick grid — they are already whole game-seconds, and 15 would collapse most of the extra breakpoints). It is doc 06's fidelity call, not doc 01's budget to relax.
 
@@ -435,7 +423,7 @@ Capped at `background_wall_ms + OFFLINE_CAP_REAL_MS` — now **43 200 000 ms** (
 | Fine tick on an hour boundary | 3.0 ms | 8.0 ms | adds P14 economy |
 | Fine tick on a day boundary | 6.0 ms | 14.0 ms | adds P15 population; once per 24 real min @1x |
 
-**There is deliberately no coarse-step row.** The former `0.6 ms avg / 1.5 ms p99` coarse budget is **retired** by report 98 C-21 — it was an estimate 45× below doc 08's per-entity accounting, and a budget nobody can adjudicate is worse than no budget. The coarse step is governed by *measurement* instead: `tests/perf/test_coarse_step_cost.gd` (Phase 0, P0-27) reports `measured_ms`, and **doc 08** derives and owns `max_coarse_hours` from it by the rule in §2.10. The retired `budget.coarse_step_avg_ms` and `budget.catchup_total_warn_ms` constants are removed from `data/time.json`; the catch-up work budget (2 000 ms target, 2 500 ms test gate) lives in doc 08.
+**There is deliberately no coarse-step row.** The former `0.6 ms avg / 1.5 ms p99` coarse budget is **retired** by report 98 C-21 — it was an estimate 45× below doc 08's per-entity accounting, and a budget nobody can adjudicate is worse than no budget. The coarse step is governed by *measurement* instead: `tests/perf/test_coarse_step_cost.gd` (Phase 0, P0-27) reports `measured_ms`, and **doc 08** spends it on a wall-clock gate over the catch-up **veil** (§2.12's `veil_ms_at_cap <= veil_budget_ms`; RR-161 retired the `max_coarse_hours` clamp it used to derive). The retired `budget.coarse_step_avg_ms` and `budget.catchup_total_warn_ms` constants are removed from `data/time.json`; the veil budget lives in doc 08.
 
 If a day-boundary tick is measured above **8 ms** on the reference device, `EVERY_DAY` systems may declare `sliceable = true` and receive `ctx.slice_index / ctx.slice_count`, spreading their per-building work across the 240 ticks of the day's first hour (`slice_count = 1` in coarse mode). The mechanism is specified now and **off in MVP** — it is a measured-need escape hatch, not a default.
 
@@ -578,7 +566,7 @@ Doc numbers below are the canonical on-disk numbers (report 98 Ruling Zero).
 5. **Doc 02** authors construction durations against the `construction_rate` 24-hour mean of **0.804**, not against a nominal 1.0.
 6. **Doc 03** authors all rates per game-hour (constitution §7) and treats the hourly invocation as settling the *previous* hour.
 7. **Doc 13** owns wall-clock measurement in the app shell and passes elapsed ms to the sim exactly once per resume, and owns the per-frame `max_ms` slice budget passed to `advance_coarse_sliced`.
-8. **Doc 08** owns `max_coarse_hours`, derived from `test_coarse_step_cost` per §2.10, and owns the catch-up work budget. This doc defines neither.
+8. **Doc 08** owns the catch-up **veil** budget (§2.12's `veil_ms_at_cap` / `veil_budget_ms`), measured rather than derived. This doc defines neither — and since RR-160 doc 08 owns no bound on the CREDIT either: `OFFLINE_CAP_REAL_MS` here is the whole of the credited window.
 
 ---
 
@@ -625,7 +613,7 @@ Headless, via `godot --headless --path . -s res://tests/run_tests.gd`.
 | T-10 | Work accumulation exactness | The §2.7 overnight high-rise example completes at 08:09:43 to the tick, and running the same interval as 12 coarse hours produces the same `work_done_mu` ± 1. |
 | T-11 | Catch-up planner determinism | §2.10 worked example A produces exactly `[38 fine, 371 coarse, 162 fine, 40 fine]`; §2.10 worked example B (the 12-h cap) produces exactly `[38 fine, 719 coarse, 162 fine, 40 fine]` summing to 172 800 ticks; total ticks equal `game_ms / 15000`; residual carries correctly; 200 random elapsed values all conserve total ticks. |
 | T-12 | Coarse statistical equivalence | Harness for stochastic systems: 1 000 independent coarse-hours vs 1 000 fine-hours on a probe system with `p = 0.004/tick`; mean event counts within 5 %, and the coarse path consumes a fixed draw count per step. |
-| T-13 | Cap and grace | Elapsed 90 s credits 0 ticks; 130 s credits 520 ticks (`130 × 60 = 7 800` game-sec `/ 15`); 26 h credits exactly `OFFLINE_CAP_REAL_MS = 43 200 000 ms` worth — **172 800 ticks = 720 game-hours = 30 game-days** (was 115 200 / 20 days under the retired 8 h cap) — and sets `capped = true`. Also asserts `data/time.json` carries no `max_coarse_hours` and no offline-hazard constant: both belong to doc 08. |
+| T-13 | Cap and grace | Elapsed 90 s credits 0 ticks; 130 s credits 520 ticks (`130 × 60 = 7 800` game-sec `/ 15`); 26 h credits exactly `OFFLINE_CAP_REAL_MS = 43 200 000 ms` worth — **172 800 ticks = 720 game-hours = 30 game-days** (was 115 200 / 20 days under the retired 8 h cap) — and sets `capped = true`. Also asserts `data/time.json` carries no offline-hazard constant (it belongs to doc 08). The former `max_coarse_hours` leg is retired with the clamp (RR-161); what stands in its place is `tests/test_catchup_veil_budget.gd`, which asserts every absence from 6 to 12 real hours credits itself. |
 | T-14 | Save round-trip | Serialize at a non-aligned tick with 3 timers, 2 work units (one mid-carry), 1 open event phase and residual 4 200 ms; deserialize; advance 1 000 ticks on both; state hashes match. `sim_time_minutes == tick_index / 4`. The section carries `section_version` and **no** `schema_version` key (C-25). |
 | T-15 | Timer heap ordering | 10 000 timers with duplicate `due_tick`s fire in `(due_tick, id)` order across 5 shuffled insertion orders. |
 | T-16 | Scheduled event timeline | The §2.8 stadium example opens/closes all five phases on the exact ticks listed, both fine and through a coarse catch-up spanning the whole event. |
@@ -816,7 +804,7 @@ Headless, via `godot --headless --path . -s res://tests/run_tests.gd`.
     }
   },
   "budget": {
-    "_note": "report 98 C-21: coarse_step_avg_ms (0.6) and catchup_total_warn_ms (500) are REMOVED. The coarse step is settled by measurement — tests/perf/test_coarse_step_cost.gd (P0-27) — and doc 08 owns max_coarse_hours and the catch-up work budget. See §2.10 / §2.12.",
+    "_note": "report 98 C-21: coarse_step_avg_ms (0.6) and catchup_total_warn_ms (500) are REMOVED. The coarse step is settled by measurement — tests/perf/test_coarse_step_cost.gd (P0-27) — and doc 08 owns the catch-up VEIL budget (report 98 §58 RR-161 retired the max_coarse_hours clamp it used to derive). See §2.10 / §2.12.",
     "fine_tick_avg_ms": 1.2,
     "fine_tick_p99_ms": 3.0,
     "hour_tick_avg_ms": 3.0,
