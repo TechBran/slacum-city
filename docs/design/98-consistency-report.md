@@ -8069,6 +8069,50 @@ through a plan. For the same reason **no balance gate cell moves** —
 planner. Doc 92 §55.7 AC-19-2 files that for the survivable-city lane rather than
 assuming it.
 
+### 58.1b Verified at the tip — the commands, and what they printed
+
+Every claim in this section is re-runnable. Recorded 2026-09-03 on the branch's
+final commit, in this order:
+
+```
+~/.local/bin/godot --headless --script tests/run_tests.gd > suite.log 2>&1; echo $?
+  -> 0 · files 146 · tests 2,705 · asserts 570,321 · failed 0 · silent 0
+
+~/.local/bin/godot --headless -s res://tools/profile_sim.gd -- --hash-only
+  coarse 24h  64c4d7e9d8f8fb74e5dd1502ad06c0bce46dd8940cdd777098c80b7aae9e8787
+  fine  2.0h  9f19dcc5212f834dacbbe61ccaf3c42674a793c564b23f8c645e33c76cb69ba4
+… same, --city=res://tests/fixtures/bench_city.json
+  coarse 24h  6f383de1ed6940a28b4f27c9ddfa8593ef9edeb0a71efaf20814feae4012c496
+  fine  2.0h  311e29d10b1cb43d2b52b94f02e4b346943ebb1ac7bc42a5445b0d5473ed2127
+  -> all four IDENTICAL to the same four recorded at the fork, before any edit
+
+python3 tools/check_doc_refs.py
+  -> 4,399 references, all resolving; no id assigned twice
+
+grep -n SavePolicy sim/time/catchup_planner.gd
+  -> nothing: the planner reads no data file
+
+grep -rn "max_coarse_hours" sim/ game/ ui/ --include=*.gd | grep -v ":[0-9]*:##\?"
+  -> nothing: the three surviving mentions are `##` prose explaining the deletion
+```
+
+The headline, re-measured after the change with the same instrument that
+measured before it (doc 92 §55.3, settled L3 city, seed 1337):
+
+```
+tools/measure_offline_night.gd --absences=8,12 --settle-hours=110 --seeds=1337
+  8 real h -> $354,830   12 real h -> $478,377      # ships
+… --cap-hours=360                                   # the Wave-18 clamp, as a what-if
+  8 real h -> $281,319   12 real h -> $281,319
+```
+
+**The suite cost of the fix, stated because it is real.**
+`tests/test_catchup_cursor.gd` plans a 7 h 41 m absence and proves slice
+bit-identity at four slice sizes on two cities; that absence used to be clamped
+to 6 h, so the file now runs 461 coarse hours per arm instead of 360 and takes
+**6 m 57 s** instead of ~5 m 20 s. The test was silently proving a smaller
+property than it claimed. Nothing was weakened to buy the minute back.
+
 ### 58.2 What is left to `game/main.gd` — one snippet, the lead's
 
 `game/main.gd` is the lead's file. The arm is named and anchored rather than
@@ -8077,3 +8121,55 @@ written here; until it lands, the shell still passes the wall clock as
 absence only (an uncapped one is already correct, because credited *is* elapsed).
 Every other half of RR-160/161/163 is live without it: the credit itself comes
 out of `CatchUpPlanner.plan`, which the shell already calls.
+
+**It is not a guess.** `tests/shell_resume_rig.gd` mirrors these same two
+functions and has the change already, so the snippet below is a copy of code with
+a green test behind it —
+`tests/test_catchup_resume.gd::test_a_nine_hour_night_is_credited_whole_and_reported_honestly`
+drives a real nine-hour absence through `AndroidLifecycle` and asserts 129,600
+ticks (the Wave-18 clamp credited 86,400), an uncapped veil, 22.5 game-days in
+the header and an empty capped line.
+
+**(a) `_on_app_resumed`** — the `_catchup_after` literal, two keys appended:
+
+```gdscript
+	_catchup_after = {
+		"elapsed_wall_s": elapsed_wall_s + float(unfinished.get("elapsed_wall_s", 0.0)),
+		"residual_game_ms": int(plan.get("new_residual_game_ms", 0)),
+		"capped": bool(plan.get("capped", false)),
+		"cap_game_hours": float(cap_game_hours),
+		# RR-162 / doc 12 D-87. The away report counts the city time that
+		# ACTUALLY RAN and quotes the cap in the hours the player was away;
+		# `elapsed_wall_s` is neither of those on a capped absence.
+		"credited_real_ms": int(plan.get("credited_real_ms", 0)),
+		"cap_real_hours": float(plan.get("cap_real_hours",
+				CatchUpPlanner.OFFLINE_CAP_REAL_HOURS)),
+	}
+```
+
+**(b) `_finish_catchup`** — beside the three existing reads, immediately after
+`var cap_game_hours := float(_catchup_after.get("cap_game_hours", 720.0))`:
+
+```gdscript
+	var credited_real_ms := int(_catchup_after.get("credited_real_ms",
+			int(elapsed_wall_s * 1000.0)))
+	var cap_real_hours := float(_catchup_after.get("cap_real_hours",
+			float(CatchUpPlanner.OFFLINE_CAP_REAL_HOURS)))
+```
+
+…and in the same function's `ui_root.present_away_report({…})` literal, the
+`elapsed_game_minutes` line is replaced and one key is appended:
+
+```gdscript
+		# 1 real s = 1 game min at 1x — on the CREDITED absence, not on the wall
+		# clock. A capped resume claimed city time the city never lived (RR-162).
+		"elapsed_game_minutes": float(credited_real_ms) / 1000.0,
+		…
+		"capped": capped,
+		"cap_game_hours": cap_game_hours,
+		"cap_real_hours": cap_real_hours,
+```
+
+`AwayModel` accepts `cap_game_hours` alone and divides it by 60, so the file is
+correct before the snippet lands and more correct after — there is no window in
+which the two disagree.
