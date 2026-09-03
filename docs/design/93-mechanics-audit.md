@@ -4511,7 +4511,7 @@ against the AUTO one, and they are two assertions because they are two claims:
 **And it is checked at every city level, which the old form never did.** Both
 sides carry a level curve now; the dispatch curve is steeper by construction
 (`MANUAL_DISPATCH_LEVEL_K` 0.90 against `STREET_REWARD_CITY_LEVEL_K` 0.25), so the
-ratio falls from 0.569 to 0.331 across the ladder. A base-table check would have
+ratio falls from 0.569 to 0.320 across the ladder. A base-table check would have
 passed a wave that inverted the two at level 6.
 
 **The corollary, and it is the uncomfortable half.** The player asked for
@@ -4673,7 +4673,7 @@ net      +0.05 × capital   ← per ruin, repeatable
 
 It is real, it is not new — it has been true since Wave 18 shipped the restore —
 and nothing bounds it but the construction time the rebuild spends and the crew
-it occupies. On the starter city's power plant it is **+$4,625 a cycle**.
+it occupies. On the starter city's power plant (capital $60,000 at L1) it is **+$3,000 a cycle**.
 
 **It is recorded and NOT closed in this lane** (`A91-D-107`), for two reasons.
 First, closing it means moving one of two fractions that were each derived

@@ -8089,7 +8089,7 @@ different things, which is cheaper than re-litigating one:
 * **(b2) the READS-AS-ABOUT-HALF claim** — street mean ≤ 0.60 × the MANUAL
   reference, **at every city level**. Both sides now carry a level curve and the
   dispatch side is the steeper by construction, so the ratio FALLS across the
-  ladder: **0.569 at level 1 → 0.331 at level 6.** The dispatched crime becomes
+  ladder: **0.569 at level 1 → 0.320 at level 6.** The dispatched crime becomes
   more the real one as the city grows, not less. The old form read the base
   tables and stopped, so a future wave that raised the street curve past the
   dispatch curve would have passed it and shipped an inversion.
@@ -8144,7 +8144,7 @@ against a literal:
    and that nobody had noticed — see `A91-D-107`.
 
 Worth, on shipped stock: a house L1 **$180**, L3 **$915**, L5 **$5,693**; the
-starter city's power plant **$13,875**.
+starter city's power plant (capital $60,000 at L1) **$9,000**.
 
 **Two deliberate deviations, both recorded rather than smuggled.**
 
@@ -8379,3 +8379,26 @@ lanes that hold the matrix:
   Lane 2's. The whole raise is on the manual half instead (RR-169(c)), which is
   RR-78's own argument used a second time.
 * `Treasury.lifetime` — the three ledger arms. See `A91-D-108`.
+
+### §60 AWAITING CONSUMER — what this lane hands to the lane that holds the matrix
+
+*Lane 3 does not hold the balance matrix and did not re-fit a matrix gate. It
+moved two things a matrix holder has to know about, and it re-measured one number
+the matrix will move again. All three are written here rather than in a commit
+message, because a hand-off in a commit message is a hand-off nobody finds.*
+
+| # | what | who it is for | what they owe |
+|---|---|---|---|
+| **AC-1** | **The four determinism baselines moved.** Causes published in the table at the head of this section: `rng.contracts` (a named stream, inside `state_hash()`) and `spawn.target_interval_h`. | the lane that re-records `profile_sim` baselines | Re-record against `e05f57a6…` / `35826d0d…` / `7c849bb2…` / `5b2a3bfb…`. **Nothing a scripted agent EARNS moved** — the street layer and the commissions board are both fine-path only, the dispatcher's premium scales on the manual half no agent uses, and salvage is a player tap — so gates 1, 2, 21, 29, 31 and 33 hold unchanged and this is a schema re-record, not a re-fit. |
+| **AC-2** | **`pacing_guardrails.MODEL_NET_PER_HOUR_BY_CITY_LEVEL` is new and three level curves are fitted against it** — `STREET_REWARD_CITY_LEVEL_K`, `MANUAL_DISPATCH_LEVEL_K` and `CONTRACT_REWARD_CITY_LEVEL_K`, plus gate 32 arms (d2) and (h). | **the survivable-city lane** (Lane 2), and any lane that re-arcs `data/goals.json` | The row is a MEASUREMENT (`tools/measure_curriculum.gd --days=45 --seeds=1337,4242,9001`) and it moves whenever the curriculum, the destruction rates or the offline credit move. **A lane that makes a mature city poorer makes all three curves too generous, and gate 32(d2)/(h) is where that shows up** — which is the point of writing them as share assertions rather than as dollar assertions. Re-measure the row, do not re-fit the curves by hand. |
+| **AC-3** | **A third ledger arm is owed and still deferred** (`A91-D-108`, beside `A91-D-37` and `A91-D-100`). `hour_city_services` gained `contracts` because the settlement's total is the sum of that dictionary; `Treasury.lifetime` gained nothing. | the lane that holds the matrix | Three arms — `&"incident"`, `&"restore"`, `&"salvage"` — in one `_note_lifetime` edit and ONE baseline re-record. Three lanes have now each declined this edit for the same correct reason; doing them one at a time costs three re-records for one change. |
+
+**And one thing this lane deliberately did NOT hand over.** `dispatch_payout_base`
+— the AUTO payout — is untouched. Raising it is the obvious way to answer *"the
+crimes we stop are only a few hundred dollars"*, and it would make every control
+agent in the balance matrix richer and move gate 29's insolvency day. The whole
+raise is on the manual half instead (RR-169(c)), which is RR-78's own argument
+used a second time and which is what let this lane ship without holding the
+matrix. **If a later lane wants the auto half raised, the insolvency gate has to
+be re-fitted in the same commit**, and this row is the record that it was
+considered and refused.

@@ -9205,9 +9205,9 @@ What it pays, on shipped stock:
 
 | | house L1 | house L3 | house L5 | power plant (starter) |
 |---|---|---|---|---|
-| capital | 1,200 | 6,100 | 37,955 | 92,500 |
-| **salvage** | **$180** | **$915** | **$5,693** | **$13,875** |
-| restore (for comparison) | $240 | $1,220 | $7,591 | $18,500 |
+| capital | 1,200 | 6,100 | 37,955 | 60,000 |
+| **salvage** | **$180** | **$915** | **$5,693** | **$9,000** |
+| restore (for comparison) | $240 | $1,220 | $7,591 | $12,000 |
 
 **The founding-city bootstrap, which is the number this verb exists for.** The
 2026-09-03 city is every building destroyed and a negative balance. On the
