@@ -1391,6 +1391,7 @@ func feed_events(batch: Array) -> void:
 		incident_drawer.feed_batch(batch)
 	_cue_events(raised)
 	_check_city_level(batch)
+	_check_grant_arrears(batch)
 	_check_flood(batch)
 	_check_goal_events(batch)
 	_check_street(batch)
@@ -1519,6 +1520,49 @@ func _check_city_level(batch: Array) -> void:
 		if hud != null:
 			hud.flash_chip(StringName(HudModel.CHIP_TREASURY),
 					street.chip_flash_s() if street != null else 0.9)
+
+
+## **The back-pay receipt** (Wave 24, doc 03 §2.5a, doc 12 §2.13).
+##
+## `CitySim._settle_grant_arrears` pays a returning city every celebration grant
+## the table has grown since it last played, and on the player's own 2026-09-03
+## save that is **$14,922,000 arriving on the frame after a load**. A balance
+## that moves by fourteen million dollars with nothing on any surface saying why
+## is indistinguishable from a bug, and the player's instruction was that the
+## money be *collected*, which is a thing you are told about.
+##
+## So this is one toast, named, with the RUNGS in it — *"back-pay for levels
+## 1–5"* — and the same §2.21 payday surfaces the level-up grant spends: the
+## treasury chip flashes, because a jump of that size on a bar the eye is not
+## looking at is otherwise invisible.
+##
+## It is a separate toast from `_check_city_level`'s and not a fold into it,
+## because it is a different moment: nothing was just earned, a debt was just
+## settled. `push_toast` replaces, and these two cannot arrive in the same batch
+## — arrears are emitted inside a restore and a level-up cannot be.
+func _check_grant_arrears(batch: Array) -> void:
+	for entry: Variant in batch:
+		if not (entry is Dictionary):
+			continue
+		var event: Dictionary = entry
+		if StringName(str(event.get("type", ""))) != &"level_up_grant_arrears_paid":
+			continue
+		var amount := int(event.get("amount", 0))
+		if amount <= 0:
+			continue
+		var levels: Array = event.get("levels", [])
+		var span := "—"
+		if levels.size() == 1:
+			span = str(int(levels[0]))
+		elif levels.size() > 1:
+			span = "%d–%d" % [int(levels[0]), int(levels[levels.size() - 1])]
+		push_toast(UIWidgets.t_args(config, "ui_toast_grant_arrears",
+				{"levels": span, "amount": HudModel.money_exact(amount)}),
+				HudModel.STATE_NORMAL)
+		if hud != null:
+			hud.flash_chip(StringName(HudModel.CHIP_TREASURY),
+					street.chip_flash_s() if street != null else 0.9)
+		return
 
 
 ## Doc 07 §2.4's flood, the first time a player meets one (defect A91-D-26).

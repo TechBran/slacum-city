@@ -5026,6 +5026,172 @@ arbitrage's 0.05 after a full rebuild. The exploit is now strictly dominated by
 the button next to it, which is the cheapest possible mitigation and is not a
 fix.
 
+## AW. Wave-24 rulings — a million at the first rung, the wall the money found, and what a returning city is owed (2026-09-04)
+
+*The lane's brief is one instruction from the player, 2026-09-04, and it contains
+two numbers and one promise: "**Start with one million dollars, and then at level
+seven we give them seven million** … And I want you to make it so if a player has
+already passed level one and was supposed to get a million dollars, you should be
+able to collect it for all of them AUTOMATICALLY — you should just check if you
+have received it, and if you haven't, then you get it. That way we can keep one
+city going for a while." §AW1 rules on the curve between the two anchors; §AW2 on
+what the money broke and what that turned out to be; §AW3 on the shape of the
+back-pay; §AW4 on the two things this lane found and deliberately did not fix.*
+
+### AW1. Two anchors and a straight line — and the anti-farm argument survives it
+
+**Q.** Wave 22 (§AU1) shipped a geometric run at ratio 1.5, because 1.5 is
+`sqrt(2.25)` and 2.25 is doc 09 §2.11's own rung ratio — so *the grant grows at
+half the exponent the city does* and its share of the city falls by two thirds a
+rung by construction. The player has now named the two endpoints instead of a
+band. Does the derived ratio survive, or does the instruction replace it?
+
+**RULING: the instruction replaces it, and the property the ratio existed to
+guarantee is CHECKED rather than assumed.**
+
+Two anchors fix a curve as soon as you name a family, and the honest reading of
+*"one million at rung one, seven million at rung seven"* is the family with the
+fewest invented numbers in it: a straight run of step $1,000,000, so that **rung k
+pays k million dollars**. There is no third constant. The alternative —
+`7^(1/6) = 1.3831` — introduces one, and the one it introduces is not derived
+from anything this project publishes, which is precisely the sin §AU1 was written
+to avoid.
+
+**The property is what matters, not the shape that used to imply it.** §AU1's
+guarantee was *the grant's share of the city it lands on falls every rung*.
+Measured on the linear ladder, the rung-on-rung ratio is 2.00 / 1.50 / 1.33 /
+1.25 / 1.20 / 1.17 against the city's own 2.25 — so from rung 2 up the grant
+grows **more slowly** than the city, the share falls, and the fall accelerates
+(0.89 / 0.67 / 0.59 / 0.56 / 0.53 / 0.52) where the geometric run's was flat at
+0.61. **The linear ladder is the more anti-farm of the two**, which is a finding
+and not a convenience; it is asserted in `tests/test_city_services.gd` as a bound
+on the ratio, so a future re-scale that grew at or above 2.25 fails there.
+
+**And the half-of-the-next-chapter rule is RETIRED, out loud.** Rung 6 is
+$6,000,000 against chapter 7's whole ask of $644,370 — 9.3×, not half. Doc 03
+§2.5a says so in those words. A derivation that survives only by being restated
+after the numbers moved is worse than no derivation, and doc 91 A91-D-120 is
+already filed against exactly that failure mode one wave back.
+
+### AW2. The gate said "power" and meant GENERATION — and the gate is not what moves
+
+**Q.** The new table takes gate 18b — *a city may not outrun its own power* —
+from 5.99 % of building-time dark to 37.60 % across three seeds, against a ruled
+ceiling of 20 %. The lane's brief names three candidate answers: the gate is
+measuring a reactive agent rather than a player; the game should help; or the
+bound genuinely moves. Which?
+
+**RULING: none of the three, because all three assume the diagnosis. Measure the
+cause first, and the cause is that nothing in this game has ever bought
+GENERATION.**
+
+`tools/probe_dark.gd` was written to split gate 18b's single share into doc 04's
+three distinct failures — **unattached**, **orphaned** and **starved**. On the
+rich city: zero unattached, zero unparented transformers, zero CRITICAL
+transformers, worst feeder at r = 0.25, and `supply_kw` **pinned at 8,000 for the
+whole run** against a demand that reaches 11,585. Every founded city has one
+`power_facility` at doc 04 §2.2's L1 rating, nothing else generates, and no
+strategy in `tools/playtest.gd` has ever bought or upgraded one.
+
+**The wall is at the fork too, inside gate 18b's own run** — game-day 50 reads
+15.55 % dark, 166 orphaned buildings and 9,227 kW of demand against 8,000 of
+supply. The gate's 5.99 % is a fifty-day MEAN over a column that ends at 15.55 %.
+So the ruling has three parts:
+
+1. **The bound does not move**, and it does not need to. `Balanced` gains
+   `_lead_generation` — the same *"a purchase the agent never makes"* family as
+   both of Wave 6's grid fixes — and the shipped arm reads **4.61 / 20.88 /
+   0.55 %, mean 8.68 %**, against a fork mean of **12.16 %**. The money leaves the
+   city lighter than it found it. Not one ceiling in the gate file moves.
+2. **The rule may not introduce a number.** Its trigger is doc 04 §5.10's own
+   WARNING band, the same authority `FEEDER_RELIEF_RATIO` cites; its choice
+   between upgrading and building is doc 02's own prices ($69,000 for +10,000 kW
+   against $60,000 for +8,000); and it has **no cooldown constant**, because the
+   fix is a construction job whose duration doc 02 publishes and a shell in
+   flight is `under_construction`.
+3. **The gate's docstring is corrected rather than its threshold**, because the
+   Wave-6 three-seed table it quotes (6.25 / 5.91 / 5.74) has been five waves
+   stale and the gate asserts one seed. See §AW4.
+
+*A note on what was NOT ruled: the lane's candidate (b) — the game warning the
+player before they place — is a real improvement and remains available, but it is
+not what this measurement asked for. A human with Wave 18's power panel reads
+supply against demand and buys the plant; the AGENT could not, because no agent
+had the rule. Fixing the agent is fixing the measurement instrument, and fixing
+the instrument is what makes the gate's answer trustworthy again.*
+
+### AW3. Back-pay is a LEDGER, and the ledger is dollars
+
+**Q.** *"Check if you have received it, and if you haven't, then you get it."*
+What is "it", and what records having received it?
+
+**RULING: "it" is a DIFFERENCE, so the record has to be dollars per level, not a
+paid/unpaid bit and not a level number.**
+
+A city paid $2,500 for rung 1 under the original ladder **has** received rung 1.
+It is owed $997,500, not $1,000,000 and not nothing. A flag cannot say that; a
+high-water level cannot say it either. So `Treasury.grant_paid_by_level` is an
+array of dollars indexed like the grant table, written by both payment sites
+through `note_grant_paid`, which **only ever adds**. Idempotence, pay-only-the-
+difference, once-per-level-per-city-for-life and immunity to a future table that
+pays less are all properties of that shape rather than guards somebody has to
+remember.
+
+**Three sub-rulings, each of which is a way this could have been got wrong:**
+
+**(a) The walk stops at the CURRICULUM level, never the composed one.** This is
+§AU6 applied to the second payment site: a level is a permission and a permission
+may not depend on how it was reached; a grant is payment for a lesson, and the
+population backstop teaches none. A city that grew to level 5 on residents alone
+is owed nothing.
+
+**(b) The SEED runs further than the ARREARS, and that asymmetry is the reason
+the ledger holds dollars.** Below section version 9 the grant rode the composed
+level, so a legacy city was paid for rungs its curriculum never earned. Those
+rungs are **recorded** (so they are never back-paid) and **credited** (so the day
+the curriculum finally earns one, it pays the difference and not the face value).
+A bit-per-level would have had to choose between paying twice and forgetting.
+
+**(c) Back-pay opens no era.** Doc 03 §2.10 layer 5's relief allowance refreshes
+on a city LEVEL (§AP4). Arrears settle rungs the city climbed in the past; the
+eras those rungs opened were opened then. Paying a debt late is not a promotion,
+`_settle_grant_arrears` never calls `note_era`, and the relief ladder is
+untouched by the whole feature.
+
+**And the migrator marks rather than answers** — v2 → v3's line, for v2 → v3's
+two reasons (the answer needs `data/`, which doc 08 §2.8 forbids it to open, and
+it needs a restored city that does not exist yet). The mark is the **section
+version**, because what a legacy city was paid depends on which binary paid it.
+Row `"9"` of `LEVEL_UP_GRANT_SUPERSEDED_BY_SAVE_VERSION` is deliberately the
+element-wise MAXIMUM of the tables that could have written a v9 body, and is
+labelled as such: crediting the larger is what makes double payment impossible
+rather than unlikely, and the cost is published (at most $487,000 under-credited
+on a $15,000,000 settlement).
+
+### AW4. Two things this lane found and did not fix, both filed
+
+**(a) A city's grid is never repaired, and gate 18b cannot see it** (doc 91
+**A91-D-125**). Seed 4242 reads **20.98 % at the fork** — over gate 18b's own
+ruled ceiling, five waves before this one — and the probe says why: 20 grid
+components sitting FAILED and unrepaired for the last fifteen game-days, 82
+buildings orphaned behind them, with the pool nowhere near short. On the richer
+city the same shape is 105 failed and 234 orphaned. A FAILED component is
+repaired only by doc 06 resolving its incident, and the failure rate scales with
+the fleet the player buys. **This lane does not close it**: the fix is either a
+grid-repair verb in the agent or a dispatch-capacity question, both of which are
+somebody's whole lane, and fitting a bound around it here would bury it. What
+this lane does is make it VISIBLE — `tools/probe_dark.gd` and the two new summary
+columns — and say plainly that gate 18b asserts one seed and has been silent
+about a 21-point reading on another.
+
+**(b) The dark share is three failures wearing one number, and the gate asserts
+the sum** (doc 91 **A91-D-126**). `unserved_share` cannot distinguish *no
+transformer covers this tile* from *the pool is short* from *the feeder is
+broken*, and a wave reading the sum will fix whichever of the three it happened
+to guess. That is exactly what nearly happened here. Filed as Medium with the
+instrument attached, because the instrument is the cheap half and splitting the
+gate's assertion is the expensive one.
+
 ## AU. Wave-22 rulings — what a rung is allowed to be worth, and what the last one has to ask for (2026-09-04)
 
 *The lane's whole brief is one sentence from the player, 2026-09-04, and the

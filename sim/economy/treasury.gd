@@ -75,6 +75,41 @@ var relief_era_paid: int = 0
 ## round trip diverge from an uninterrupted run and break constitution §5.
 var relief_needs_era_migration: bool = false
 
+## **Doc 03 §2.5a's celebration-grant ledger** (Wave 24, ruling 93 §AW3): how
+## many DOLLARS this city has been paid for each curriculum level, indexed
+## exactly like `grants.LEVEL_UP_GRANT_BY_CITY_LEVEL` itself, index 0 unused.
+##
+## It is a ledger and not a set of paid/unpaid flags, and that is the whole
+## design. The player's instruction was *"check if you have received it, and if
+## you haven't, then you get it"*, and a city that received $2,500 for rung 1
+## under the old table has received it — it is owed the DIFFERENCE, not the
+## whole rung and not nothing. A flag cannot express that; a dollar figure can,
+## and it keeps expressing it the next time the table moves.
+##
+## Written by exactly two callers, both in `CitySim`: `_pay_level_up_grant` (the
+## live payment, on `city_level_objectives_met`) and `_settle_grant_arrears`
+## (the back-pay, on load). Both go through [note_grant_paid], which only ever
+## ADDS — so a future table that pays LESS claws nothing back and re-pays
+## nothing, and once-per-level-per-city-for-life is a property of the shape
+## rather than a guard somebody has to remember to write.
+##
+## Persisted as a plain Array of ints. Not a Dictionary keyed by level: a save
+## body is compared byte-for-byte by `state_hash()` and an Array is the only one
+## of the two whose order is a fact rather than an insertion accident (the same
+## reason `GoalSystem.serialize` sorts its `done` set into one).
+var grant_paid_by_level: Array[int] = []
+## Set by [deserialize] to the save-section version of a body that carries NO
+## ledger, and −1 for a body that does. Cleared by the one caller that acts on
+## it (`CitySim._settle_grant_arrears`). Never persisted.
+##
+## Same shape and the same reason as `relief_needs_era_migration` one line up:
+## the seed has to be conditional on the save, or a save → load → advance round
+## trip would stop being bit-identical to the uninterrupted run (constitution
+## §5). It carries the VERSION and not just a bit because what a legacy city was
+## paid depends on which binary paid it — see
+## `CostCurves.superseded_level_up_grant`.
+var grant_ledger_migrate_from: int = -1
+
 ## Doc 03 §2.5's revenue and repair rows, counted for life. `lifetime_street` is
 ## doc 06 §2.16's opportunity bounties and is its OWN row on purpose: folding
 ## street money into `lifetime_tax` would make the tax slider look like it moved
@@ -497,6 +532,11 @@ func relief_gates_pass(hour: int, trailing_net_24: float) -> bool:
 ## Called by `ProgressionSystem` on the same transition that pays
 ## `LEVEL_UP_GRANT_BY_CITY_LEVEL`. Idempotent: a level that has already opened
 ## an era opens nothing.
+##
+## **Back-pay does NOT open an era** (Wave 24). Arrears are paid for a rung the
+## city earned in the past; the era that rung opened was opened then, and paying
+## its money late is not a second promotion. `_settle_grant_arrears` therefore
+## never calls this, and the relief ladder is untouched by the whole feature.
 func note_era(city_level: int) -> void:
 	if city_level <= relief_era_level:
 		return
@@ -505,6 +545,25 @@ func note_era(city_level: int) -> void:
 	# Doc 93 §AS4: the allowance and the money it may hand out are one thing, so
 	# they reset together. A new era is a new bill, not a running total.
 	relief_era_paid = 0
+
+
+## What this city has already been paid for curriculum `level`, in dollars.
+## A level the ledger has never heard of has been paid nothing.
+func grant_paid(level: int) -> int:
+	if level < 0 or level >= grant_paid_by_level.size():
+		return 0
+	return grant_paid_by_level[level]
+
+
+## Record `amount` more dollars paid for curriculum `level`. Grows the ledger to
+## fit and NEVER shrinks a cell: this is a receipt book, and a receipt book that
+## could go down would be a way to be paid twice.
+func note_grant_paid(level: int, amount: int) -> void:
+	if level < 0 or amount <= 0:
+		return
+	while grant_paid_by_level.size() <= level:
+		grant_paid_by_level.append(0)
+	grant_paid_by_level[level] += amount
 
 
 # ------------------------------------------------------------- persistence
@@ -523,6 +582,10 @@ func serialize() -> Dictionary:
 		"relief_era_level": relief_era_level,
 		"relief_era_paid": relief_era_paid,
 		"relief_last_grant_hour": null if relief_last_grant_hour < 0 else relief_last_grant_hour,
+		# Doc 03 §2.5a's grant ledger (Wave 24, city section rung 10). Duplicated
+		# rather than handed out, for the same reason every other collection here
+		# is: a save body a caller can mutate is not a record.
+		"grant_paid_by_level": grant_paid_by_level.duplicate(),
 		"ledger_totals": lifetime.duplicate(),
 		"hour_city_services": hour_city_services.duplicate(),
 	}
@@ -550,6 +613,17 @@ func deserialize(data: Dictionary) -> void:
 	## never persisted.
 	relief_needs_era_migration = not data.has("relief_era_level")
 	relief_last_grant_hour = _nullable_int(data.get("relief_last_grant_hour", null))
+	# **The grant ledger** (Wave 24, city section rung 10). A body written by this
+	# build carries the array and needs no seed; a body written before it carries
+	# nothing, and `_v9_to_v10` has stamped the version it came from so that
+	# `CitySim._settle_grant_arrears` can seed the ledger with what THAT binary
+	# would have paid (`CostCurves.superseded_level_up_grant`). The stamp is read
+	# here and never persisted — the next `serialize` writes a real ledger.
+	grant_paid_by_level = [] as Array[int]
+	for raw: Variant in (data.get("grant_paid_by_level", []) as Array):
+		grant_paid_by_level.append(int(raw))
+	grant_ledger_migrate_from = -1 if data.has("grant_paid_by_level") \
+			else int(data.get("grant_ledger_bootstrap", 0))
 	var totals: Dictionary = data.get("ledger_totals", {})
 	for key in lifetime:
 		lifetime[key] = int(totals.get(key, 0))

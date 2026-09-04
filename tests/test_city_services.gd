@@ -238,26 +238,34 @@ func test_the_founding_assistance_tapers_on_a_clock() -> void:
 func test_a_level_up_grant_is_paid_once_per_rung() -> void:
 	var curves := _curves()
 	assert_eq(curves.level_up_grant(0), 0, "the founding level celebrates nothing")
-	# RE-SCALED in Wave 22 (doc 92 §61) to the scale the player asked for —
-	# "each level … a few hundred thousand dollars", and $5,000,000 for the
-	# capstone. The curve between the two anchors is geometric at 1.08616, and
-	# the anchors themselves are the two claims worth asserting here.
-	assert_eq(curves.level_up_grant(1), 45000)
-	assert_eq(curves.level_up_grant(5), 215000)
-	assert_eq(curves.level_up_grant(6), 325000)
-	# **The ratio is the derivation** (doc 92 §61.2): 1.5 = sqrt(2.25), doc 09
-	# §2.11's own rung ratio square-rooted, so the grant grows at half the
-	# exponent the city does. Asserted as the RUN rather than as six literals,
-	# because six literals are six chances for a retune to land on five of them.
-	for level in range(1, 6):
-		var exact := 325000.0 / pow(1.5, float(6 - level))
-		assert_almost_eq(float(curves.level_up_grant(level)), exact,
-				0.06 * exact,
-				("rung %d is %d; the run 325,000 / 1.5^%d puts it at %.0f, and the "
-						+ "published figure rounds to a readable one")
-						% [level, curves.level_up_grant(level), 6 - level, exact])
-	assert_eq(curves.level_up_grant(7), 5000000,
-			"the capstone rung pays the graduation the player named")
+	# **RE-SCALED AGAIN in Wave 24 (doc 92 §63.1), and this time the player gave
+	# two anchors instead of a band**: *"Start with one million dollars, and then
+	# at level seven we give them seven million."* Those two anchors are the
+	# whole curve — a straight run of step $1,000,000 is the only shape that hits
+	# both with one constant — so the rule is `grant(k) = k × $1,000,000` and
+	# THAT is what is asserted, not seven literals. Seven literals are seven
+	# chances for the next re-scale to land on six of them.
+	assert_eq(curves.level_up_grant(1), 1_000_000,
+			"the player's first anchor: one million dollars at rung 1")
+	assert_eq(curves.level_up_grant(7), 7_000_000,
+			"and the second: seven million at the capstone")
+	for level in range(1, 8):
+		assert_eq(curves.level_up_grant(level), level * 1_000_000,
+				("rung %d pays %d; the ladder the player named is k million "
+						+ "dollars at rung k") % [level, curves.level_up_grant(level)])
+	# **The step is CONSTANT and the ratio therefore FALLS** — 2.00 / 1.50 / 1.33
+	# / 1.25 / 1.20 / 1.17 against doc 09 §2.11's own rung ratio of 2.25 — which
+	# is the anti-farm half of §63.1: from rung 2 up the grant grows more slowly
+	# than the city it lands on, so its share of that city falls by construction
+	# and keeps falling faster. A ladder that ever grew at 2.25 or above would be
+	# paying a player to climb, and this is the assertion that would catch it.
+	for level in range(2, 8):
+		var ratio := float(curves.level_up_grant(level)) \
+				/ float(curves.level_up_grant(level - 1))
+		assert_true(ratio < 2.25,
+				("rung %d pays %.2f× rung %d; doc 09 §2.11's city grows 2.25× a "
+						+ "rung, and a grant that grew faster would be a subsidy "
+						+ "that compounds") % [level, ratio, level - 1])
 	assert_eq(curves.level_up_grant(8), 0,
 			"a level above the published ladder pays nothing rather than "
 			+ "extrapolating itself")
@@ -300,8 +308,18 @@ func test_a_level_up_grant_is_paid_once_per_rung() -> void:
 		var event: Dictionary = event_variant
 		if String(event.get("type", "")) == "level_up_grant_paid":
 			paid.append(int(event["amount"]))
-	assert_eq(paid, [45000, 65000] as Array[int], "both rungs, in order")
-	assert_eq(sim.treasury.balance, before + 110000)
+	assert_eq(paid, [1_000_000, 2_000_000] as Array[int], "both rungs, in order")
+	assert_eq(sim.treasury.balance, before + 3_000_000)
+	# **And the ledger recorded it** (Wave 24). This is the record the back-pay
+	# settles against, and a payment that did not write to it would be a rung
+	# the next load pays for a second time.
+	assert_eq(sim.treasury.grant_paid(1), 1_000_000)
+	assert_eq(sim.treasury.grant_paid(2), 2_000_000)
+	# A second call for a rung already paid IN FULL pays nothing, and it is the
+	# ledger and not the event queue that says so.
+	sim._pay_level_up_grant(1)
+	assert_eq(sim.treasury.balance, before + 3_000_000,
+			"a rung already paid in full is paid nothing a second time")
 
 	# **The population route pays NOTHING**, which is the whole of the Wave-22
 	# change and the reason doc 92's balance matrix does not move: every scripted

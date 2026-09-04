@@ -9873,6 +9873,308 @@ checks the derivation across both files at every rung. A `contractor` agent is t
 instrument this section is missing; it is ranked first in the lane's open
 questions.
 
+## 63. Wave 24 — a million at the first rung, the wall the money found, and the money a returning city was already owed (2026-09-04)
+
+*(Instruments: `tools/measure_dark_share.gd`, `tools/probe_dark.gd`,
+`tools/measure_backpay.gd` and `tools/dump_save.gd`, all new; plus
+`tools/measure_curriculum.gd`, pre-existing. Rulings: doc 93 §AW. Data, verbs and
+the save rung: report 98 §66, RR-197..RR-201. Defect rows doc 91 A91-D-124..126.
+Surfaces: doc 12 §2.19 D-98/D-99.)*
+
+**The player has read Wave 22's curve and overruled it, and the instruction is
+the deliverable** (verbatim, 2026-09-04):
+
+> *"For each level we need a much bigger boost. We're trying to give the players
+> enough money so they can really get their city going — something like a real
+> city. The first level of building up your city, you're going to at least get a
+> million dollars or a few. We want them to have plenty enough room to actually
+> build everything and just play the game. And then you'll lose money from things
+> and you'll gain money for more things — that's how it should be, not struggling
+> right away. So $45k — let's jump that and start the players off in the million
+> dollar range. **Start with one million dollars, and then at level seven we give
+> them seven million.** And I want you to make it so if a player has already
+> passed level one and was supposed to get a million dollars, you should be able
+> to collect it for all of them AUTOMATICALLY — you should just check if you have
+> received it, and if you haven't, then you get it. That way we can keep one city
+> going for a while."*
+
+Wave 22 (§61) set its curve at $45,000 / $325,000 because a flat few-hundred-
+thousand table failed **eight assertions across seven balance gates**, gate 18b's
+*a city may not outrun its own power* among them at 26.44 % of building-time dark.
+**That measurement was right and its diagnosis was incomplete**, and §63.3 is the
+correction: the ceiling the flat draft hit was not the city outrunning its
+copper. It was the city outrunning its **generation**, which nothing in this
+project has ever bought.
+
+### 63.1 The table: two anchors, one step, no third number
+
+`LEVEL_UP_GRANT_BY_CITY_LEVEL = [0, 1000000, 2000000, 3000000, 4000000,
+5000000, 6000000, 7000000]`.
+
+**Rung k pays k million dollars.** The player named two anchors — one million at
+rung 1, seven million at rung 7 — and a straight run of step $1,000,000 is the
+only shape that hits both with a single constant. Nothing between them is
+invented, which is the whole of the derivation and is the strongest form one can
+take: the table IS the instruction, written as arithmetic.
+
+**The shape that was rejected, and why.** The other curve through the same two
+anchors is geometric at ratio `7^(1/6) = 1.3831`. It loses on two counts. The
+ratio is a number nothing in this project publishes — Wave 22's 1.5 was
+`sqrt(2.25)` and 2.25 is doc 09 §2.11's own rung ratio, so it was *derived*;
+1.3831 would be a third invented number wearing a derivation. And the comparison
+that matters is not dollars but **share**:
+
+| rung | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|
+| grant | $1.0M | $2.0M | $3.0M | $4.0M | $5.0M | $6.0M | $7.0M |
+| ratio to the rung below | — | 2.00 | 1.50 | 1.33 | 1.25 | 1.20 | 1.17 |
+| the city's own ratio (doc 09 §2.11) | — | 2.25 | 2.25 | 2.25 | 2.25 | 2.25 | 2.25 |
+| share of the rung below's share | — | 0.89 | 0.67 | 0.59 | 0.56 | 0.53 | 0.52 |
+
+From rung 2 up **the grant grows more slowly than the city it lands on**, so its
+share of that city falls by construction and the fall accelerates. The geometric
+run falls at a constant 0.61. The linear one is therefore the *more* anti-farm of
+the two, and it is also the only one a player can state out loud: your level, in
+millions. `tests/test_city_services.gd` asserts the rule and the falling ratio
+rather than seven literals, because seven literals are seven chances for the next
+re-scale to land on six of them.
+
+**The half-of-the-next-chapter rule is retired, and this says so.** Wave 22 kept
+rung 6 at $325,000 because that was half of doc 09 §2.14.2 chapter 7's ask, and
+half of a purchase is a real constraint at that scale. Rung 6 is now $6,000,000,
+which is **9.3× chapter 7's whole ask** of $644,370 (data centre L1 $180,000 plus
+one upgrade step of each of the twelve `data/buildings.json` archetypes,
+$464,370 — recomputed at this fork, unchanged). Keeping a half-of-the-next-chapter
+derivation on a table that pays nine times the chapter would be a rule written
+after the fact. Prepaying the capstone **is** the instruction.
+
+**What each grant buys, at list price.** Two yardsticks: doc 09 §2.14.2's whole
+remaining shopping list, chapters 2 through 7 summed, is **$853,130**
+($6,580 + $14,200 + $18,000 + $85,630 + $84,350 + $644,370); and the deepest
+single climb doc 02 has is a data centre L2 → L5 at **$5,306,213**
+($527,850 + $1,346,018 + $3,432,345).
+
+| rung | pays | = the whole curriculum | = the data-centre climb | also |
+|---|---|---|---|---|
+| 1 | $1,000,000 | **1.17×** | 19 % | 833 houses, or 22 water works |
+| 2 | $2,000,000 | 2.34× | 38 % | a data centre L1 → L3 ($914,850) twice |
+| 3 | $3,000,000 | 3.52× | 57 % | 428 apartments |
+| 4 | $4,000,000 | 4.69× | 75 % | |
+| 5 | $5,000,000 | 5.86× | 94.2 % | *(Wave 22's own rung-7 check, two rungs earlier)* |
+| 6 | $6,000,000 | 7.03× | 1.13× | 9.3× chapter 7's ask |
+| 7 | $7,000,000 | 8.21× | 1.32× | 10.9× chapter 7's ask |
+
+**Rung 1 alone pays for every lesson the curriculum will ever ask for, with
+$146,870 left over.** That is the player's sentence made literal and it is the
+design of the table. All seven together are **$28,000,000**, against Wave 22's
+$5,890,000 (4.75×) and the project's original $135,000 (207×).
+
+### 63.2 What the money does on its own: gate 18b, 5.99 % → 37.60 %
+
+The table alone, on the unchanged agent matrix, `tools/measure_dark_share.gd
+--days=50`:
+
+| seed | dark share | taps | feeders | subs | worst feeder | buildings | upgrades | treasury |
+|---|---|---|---|---|---|---|---|---|
+| 1337 | **37.20 %** | 312 | 29 | 10 | 0.25 | 745 | 86 | $444,812 |
+| 4242 | **36.47 %** | 317 | 27 | 9 | 0.29 | 771 | 98 | $308,663 |
+| 9001 | **39.14 %** | 306 | 28 | 9 | 0.27 | 773 | 92 | $280,646 |
+| | **mean 37.60 %** | | | | | | | |
+
+Against the fork's 5.99 / 20.98 / 9.52, mean **12.16 %**. Gate 18b's ceiling is
+20 %.
+
+**And the columns beside the share are what made this wave.** The rich city buys
+2.4× the taps, 2.6× the feeders and 5× the substations of the poor one, and ends
+with its worst feeder at **r = 0.25** — a quarter loaded, against 0.75 at the
+fork. A city cannot simultaneously have four times the trunk headroom and six
+times the darkness *if darkness means the trunk*. So it does not.
+
+### 63.3 The diagnosis: it is GENERATION, and it was already broken at the fork
+
+`tools/probe_dark.gd` prints the census doc 04 makes possible, because doc 04
+gives a building exactly three ways to be dark and they are not the same
+failure — **unattached** (no transformer's radius covers its tile),
+**orphaned** (attached to a transformer with no live path back to a source), and
+**starved** (the pool is short and §2.7 shed the circuit). Gate 18b's
+`unserved_share` is the sum of the three, and a wave that reads the sum as *"the
+city has too little capacity"* fixes the wrong thing.
+
+Seed 1337, 50 game-days, the new table, no other change:
+
+| game-day | 5 | 10 | 20 | 25 | 30 | **35** | 40 | 45 | 50 |
+|---|---|---|---|---|---|---|---|---|---|
+| dark % that day | 0.00 | 5.83 | 4.54 | 16.77 | 26.71 | **44.83** | 41.05 | 48.48 | 59.00 |
+| unattached | 0 | 0 | 0 | 0 | 0 | **0** | 0 | 0 | 0 |
+| orphaned | 0 | 3 | 4 | 3 | 3 | **71** | 161 | 224 | 263 |
+| shed feeders | 0 | 0 | 0 | 0 | 0 | **2** | 5 | 7 | 8 |
+| transformers CRITICAL | 0 | 0 | 0 | 0 | 0 | **0** | 0 | 0 | 0 |
+| demand kW | 1,511 | 3,578 | 5,099 | 6,775 | 7,745 | **8,619** | 10,360 | 11,492 | 11,585 |
+| supply kW | 8,000 | 8,000 | 8,000 | 8,000 | 8,000 | **8,000** | 8,000 | 8,000 | 8,000 |
+
+**Not one tile is unattached. Not one transformer is unparented. Not one
+transformer is critical. `supply_kw` never moves off 8,000 for the whole run.**
+
+Every city in this project is founded with exactly one `power_facility` at doc 04
+§2.2's L1 rating — **8,000 kW, and nothing else in the game generates** — and
+**no strategy in `tools/playtest.gd` has ever bought or upgraded generation**.
+`Balanced` buys taps on a *ground* trigger, feeders at WARNING and parallel
+transformers at CRITICAL; the pool is not any of those three readings. So the
+city crosses its own generation ceiling on game-day ~33 and doc 04 §2.7 sheds
+whole circuits for the rest of the run.
+
+**THE SAME WALL IS AT THE FORK, INSIDE GATE 18b'S OWN RUN.** Identical probe, the
+shipped Wave-22 curve, no Wave-24 change of any kind:
+
+| game-day | 20 | 30 | 40 | 45 | **50** |
+|---|---|---|---|---|---|
+| dark % that day | 0.08 | 3.31 | 4.63 | 6.24 | **15.55** |
+| orphaned | 0 | 0 | 0 | 0 | **166** |
+| shed feeders | 0 | 0 | 0 | 0 | **2** |
+| demand kW | 2,108 | 3,229 | 4,591 | 5,729 | **9,227** |
+| supply kW | 8,000 | 8,000 | 8,000 | 8,000 | **8,000** |
+
+**Gate 18b has been standing on top of a wall it could not see.** Its headline is
+a 50-game-day *mean*, the collapse begins on about game-day 46, and 5.99 % is what
+the mean does to a column that ends at 15.55 %. The money does not create this
+wall; it moves the city to it thirteen game-days earlier. Doc 92 §17.3's Wave-6
+sentence — *"with the trunk fixed, the ceiling moves to the transformer"* — was
+one level short: it moves once more, to the pool, and nobody looked.
+
+**The fix is the purchase the agent never made**, which is the same family as
+both of Wave 6's (`route_feeder` and the parallel transformer) and is written the
+same way. `Balanced._lead_generation` reads `capacity_summary().load_ratio` — the
+whole-system reading doc 04 already publishes — and buys when it crosses doc 04
+§5.10's **WARNING** band, the same authority `FEEDER_RELIEF_RATIO` cites and not
+a swept number. It upgrades the plant the city already has before it builds a
+second one, because doc 02 prices L1 → L2 at **$69,000 for 8,000 → 18,000 kW**
+against **$60,000 for another 8,000** — more capacity for less money, on ground
+the city owns, needing no site and no trunk — and `CitySim._commission_grid_node`
+re-rates the node on *completion*, so the city is never darker for having started
+the upgrade. **There is no cooldown constant**: the fix is a construction job
+whose duration doc 02 publishes (20 game-hours at L1 → L2, 34 at L2 → L3, 57 at
+L3 → L4), a shell in flight is `under_construction`, and the job is the cooldown.
+
+**The three arms, `tools/measure_dark_share.gd --days=50`, three seeds:**
+
+| arm | 1337 | 4242 | 9001 | **mean** |
+|---|---|---|---|---|
+| fork (Wave 22 table, no generation rule) | 5.99 % | **20.98 %** | 9.52 % | **12.16 %** |
+| Wave 24 money, no generation rule | 37.20 % | 36.47 % | 39.14 % | **37.60 %** |
+| **shipped (money + generation rule)** | **4.61 %** | 20.88 % | **0.55 %** | **8.68 %** |
+
+**The money leaves the city lighter than it found it** — better than the fork on
+the mean and on every seed, and better on gate 18b's own seed 1337 (4.61 %
+against 5.99 %) with more margin under the ruled 20 % than the fork had. On the
+shipped arm the city buys 350 taps, 30 feeders, 11 substations **and takes its
+pool from 8,000 kW to 48,000**, and no feeder is shed on seed 1337 at all.
+
+**Seed 4242 is a pre-existing defect this lane did not cause and does not close,
+and it is filed rather than fitted.** It reads 20.98 % at the fork and 20.88 %
+shipped — a 0.10-point *improvement* — and the probe says why: **105 grid
+components sitting FAILED and unrepaired from game-day 35 to the end of the run**,
+234 buildings orphaned behind them, with the pool at 48,000 kW against 12,108 of
+demand. A FAILED component is repaired by doc 06 resolving its incident
+(`CityIncidentWorld.power_restore_component`), and on a city with 321 transformers
+the failures outrun the roster. The same shape is at the fork at a fifth of the
+size (20 failed, 82 orphaned) because the fork's city has 151 transformers.
+**Gate 18b asserts seed 1337 only, which is why a 21-point reading on 4242 has
+been invisible.** Doc 91 **A91-D-125**; the awaiting row is in report 98 §AW.
+
+### 63.4 Back-pay: a ledger, not a level
+
+The second half of the instruction is *"check if you have received it, and if you
+haven't, then you get it"*, and the operative word is **received**. A city that
+was paid $2,500 for rung 1 under the original ladder has received it; it is owed
+the **difference**. A paid/unpaid flag cannot express that and a level cannot
+either, so what ships is a ledger: `Treasury.grant_paid_by_level`, dollars per
+curriculum level, indexed exactly like the grant table itself, persisted in the
+`treasury` block behind **doc 08 §2.8 city-section rung 10**.
+
+Both payment sites write to it — `CitySim._pay_level_up_grant` (live, on
+`city_level_objectives_met`) and `CitySim._settle_grant_arrears` (on load) — and
+both go through `Treasury.note_grant_paid`, which **only ever adds**. Four
+properties fall out of that shape rather than out of a guard:
+
+1. **Idempotent.** The second load recomputes the same differences against a
+   ledger that now records them and gets zero for every level.
+2. **Only the difference.** `max(0, table[k] − paid[k])`, per level.
+3. **Never for a level the city has not earned.** The walk stops at
+   `GoalSystem.earned_level`, which is monotone and sticky, and the population
+   backstop is not consulted — the same ruling (93 §AU6) that moved the live
+   payment site off the composed level.
+4. **Unfarmable for life.** A future table that pays LESS claws nothing back and
+   re-pays nothing.
+
+**The migration seed is the interesting half.** A body written before rung 10 has
+no ledger, and the honest default is not zero — a city at curriculum level 5 HAS
+been paid, just not this much, and zeros would pay it a second time for every
+rung it climbed. `_v9_to_v10` therefore takes v2 → v3's line — **mark, do not
+answer** — for v2 → v3's two reasons: the answer needs `data/economy.json`, which
+doc 08 §2.8 forbids a migrator from opening, and it needs the restored city's
+curriculum level, which does not exist until `_restore_goals` returns. The marker
+is the **section version the body came from**, because what a legacy city was paid
+depends on which binary paid it, and
+`grants.LEVEL_UP_GRANT_SUPERSEDED_BY_SAVE_VERSION` publishes one row per shipped
+table keyed on the lowest section version that shipped it:
+
+| row | table | paid on | exact for |
+|---|---|---|---|
+| `"0"` | `[0, 2500, 7000, 9000, 22500, 37000, 83000]` | the **composed** city level | every body at section version ≤ 8 |
+| `"9"` | `[0, 45000, 65000, 95000, 145000, 215000, 325000, 5000000]` | the **curriculum** transition | a v9 body, as the element-wise maximum |
+
+Row `"9"` is a maximum and is labelled as one: Wave 22 changed no *shape*, so a
+v9 body may have been written either side of its merge, and crediting the LARGER
+of the two tables that could have paid it is what makes double payment
+**impossible** rather than unlikely. The cost of that choice is bounded and
+published: a pre-Wave-22 v9 city is under-credited by at most $487,000 across
+five rungs, against a back-pay of $15,000,000.
+
+**The seed runs to the level the OLD rule paid, which is not always the level the
+NEW rule earns.** Below rung 9 the grant rode doc 93 §G1's composed level, so the
+seed runs to `max(city_level, earned_level)` while the arrears still only pay out
+to `earned_level`. That asymmetry is exactly why the ledger stores dollars and not
+bits: a rung the population backstop already bought is **recorded**, is **never
+back-paid**, and is **credited against the day the curriculum finally earns it**.
+`tests/test_grant_arrears.gd` has that case as its own test.
+
+**And it is visible.** One `level_up_grant_arrears_paid` event carrying the
+per-level breakdown, and one toast — *"Back-pay collected — $14,922,000 for levels
+1–5"* — plus the §2.21 payday chip flash. A silent credit of fourteen million
+dollars is indistinguishable from a bug.
+
+### 63.5 The real city: −$22,624 → $14,899,376, and $0 the second time
+
+`tools/measure_backpay.gd` against the player's own generation file
+(`slot_0/gen_000291.sav`, 2026-09-03), through doc 08's real migrator and a real
+`restore_state`:
+
+```
+city section   version 8  (this build writes 10)
+earned_level   5     city_level 5     treasury $-22,624     ledger (none — legacy)
+stamp          grant_ledger_bootstrap = 8
+
+FIRST LOAD    receipt levels [1, 2, 3, 4, 5]
+                      amounts [997500, 1993000, 2991000, 3977500, 4963000]
+                      total $14,922,000
+              ledger  [0, 1000000, 2000000, 3000000, 4000000, 5000000, 0, 0]
+              treasury $14,899,376   deferred $569,547
+
+SECOND LOAD   receipt (none — nothing was owed)
+              treasury $14,899,376
+              second load paid $0
+```
+
+Every per-rung figure is the new table less the **original** ladder, cell by cell:
+$1,000,000 − $2,500, $2,000,000 − $7,000, $3,000,000 − $9,000, $4,000,000 −
+$22,500, $5,000,000 − $37,000. The seed is $78,000; the arrears are $14,922,000.
+
+This is the city the 2026-09-03 report was written about — game-day 166,
+population 41, austerity active, $569,547 of deferred liability, a treasury below
+zero and a player *"trying to restore all the buildings so we can get revenue back
+up"*. Rungs 6 and 7 stay at $0 in the ledger, because it has not earned them.
+**That is what "keep one city going for a while" costs, and it is paid once.**
+
 ## 61. Wave 22 — the reward, re-scaled: what a rung is worth, and what the last one costs (2026-09-04)
 
 *(Instruments: `tools/measure_curriculum.gd`, pre-existing; `tools/playtest.gd`'s

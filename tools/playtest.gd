@@ -2115,6 +2115,51 @@ class Balanced extends Strategy:
 	## ~$6k–$11k; this is the working balance below which even that waits.
 	const FEEDER_ATTEMPT_FLOOR := 10_000
 
+	# --- Wave 24: GENERATION, which is a third decision again -----------------
+	##
+	## **The wall this agent has always walked into, and nobody had looked**
+	## (doc 92 §63.3, doc 93 §AW2). Wave 6 lifted doc 92 §17.3's trunk ceiling
+	## and recorded that with the trunk fixed the ceiling *"moves to the
+	## transformer"*. It moves once more, and the next one is the POOL: every
+	## city in this project is founded with one `power_facility` at doc 04 §2.2's
+	## L1 rating — **8,000 kW, and nothing else generates** — and no strategy in
+	## this file has ever bought or upgraded generation.
+	##
+	## It was invisible because 8,000 kW is a long way off for a poor city, and
+	## it is invisible in gate 18b's headline number for a sharper reason: the
+	## gate averages a dark share over 50 game-days, and the pool goes short at
+	## the very END of that window. Measured at the Wave-24 fork with
+	## `tools/probe_dark.gd`, seed 1337, the SHIPPED Wave-22 grant table:
+	##
+	## | game-day | 20 | 30 | 40 | 45 | **50** |
+	## |---|---|---|---|---|---|
+	## | dark % that day | 0.08 | 3.31 | 4.63 | 6.24 | **15.55** |
+	## | demand kW | 2,108 | 3,229 | 4,591 | 5,729 | **9,227** |
+	## | supply kW | 8,000 | 8,000 | 8,000 | 8,000 | **8,000** |
+	## | buildings orphaned by a shed circuit | 0 | 0 | 0 | 0 | **166** |
+	##
+	## The 50-game-day mean of that column is 5.99 %, which is the number gate
+	## 18b passes on. **The gate was already standing on top of a wall it could
+	## not see**, and on Wave 24's money the city reaches the same wall on
+	## game-day ~33 instead of ~46, which is what turns 5.99 % into 37.60 %.
+	##
+	## Not one tile was unattached on either arm; not one transformer was
+	## unparented; not one transformer was CRITICAL. **The distribution grid the
+	## agent buys is correct and the city simply has no power.**
+	##
+	## So this rule is the same family as Wave 6's two — *a purchase the agent
+	## never makes* — one level further up, and it is placed FIRST in the growth
+	## ladder because no number of feeders relieves a pool that is short.
+	##
+	## **The trigger is doc 04 §5.10's own band and not a swept number**, exactly
+	## like `FEEDER_RELIEF_RATIO`: a competent player buys generation when the
+	## power panel's pool reading goes amber. `capacity_summary().load_ratio` is
+	## the whole-system reading doc 04 already publishes for it.
+	const GENERATION_RELIEF_RATIO := PowerGrid.OVERLAY_WARNING_R
+	## The one archetype doc 02 sells that generates (`power_plant_gas` in doc
+	## 03's naming; `data/building_economy.json` carries the alias table).
+	const GENERATION_ARCHETYPE := "power_facility"
+
 	## **The hotspot rule**, and it is the same reading one level down.
 	##
 	## With the trunk fixed, doc 92 §17.3's ceiling moves to the transformer —
@@ -2361,6 +2406,11 @@ class Balanced extends Strategy:
 		var spare := api.balance() - reserve()
 		if spare <= 0:
 			return
+		# 0a0. GENERATION, before the trunk: a pool that is short sheds whole
+		#      circuits, and no amount of copper under it helps (Wave 24,
+		#      doc 92 §63.3). See `GENERATION_RELIEF_RATIO` for the measurement.
+		if maintains and _lead_generation(api, spare):
+			return
 		# 0a. The TRUNK, before the tap: a saturated feeder takes its whole
 		#     subtree dark, and no number of transformers under it helps.
 		if maintains and _relieve_feeders(api, hour, spare):
@@ -2469,6 +2519,56 @@ class Balanced extends Strategy:
 			return false
 		_grid_hour = hour
 		return bool(api.place_grid_component("transformer", tile, GRID_LEVEL)["ok"])
+
+	## Generation ahead of the shed — see `GENERATION_RELIEF_RATIO` for the
+	## doc 92 §63.3 measurement this answers. One number in, two purchases out,
+	## in the order a competent player takes them:
+	##
+	## 1. **Upgrade the plant the city already has.** Doc 02 prices `L1 → L2` at
+	##    $69,000 for doc 04 §2.2's 8,000 → 18,000 kW, against $60,000 for a
+	##    whole second L1 plant at 8,000 — more capacity for less money, on
+	##    ground the city already owns, needing no site and no trunk. The
+	##    component keeps its old rating and stays OK for the whole job
+	##    (`CitySim._commission_grid_node` re-rates it on COMPLETION), so the
+	##    city is never darker for having started the upgrade.
+	## 2. **Build one**, when every plant standing is at its top rung — or when
+	##    the city somehow has none at all, which no founded city does.
+	##
+	## **There is no cooldown constant, and that is deliberate.** The fix is a
+	## construction job with a duration doc 02 already publishes (20 game-hours
+	## at L1→L2, 34 at L2→L3, 57 at L3→L4), and a shell in flight is
+	## `under_construction`, which `archetype_upgrade_candidate` excludes and
+	## `_generation_in_flight` catches for the build branch. The job IS the
+	## cooldown, so this rule can neither queue two plants against one shortfall
+	## nor need a swept number to stop it.
+	func _lead_generation(api: Api, spare: int) -> bool:
+		if not api.has_verb("cmd_place_building"):
+			return false
+		var caps := api.sim.grid.capacity_summary()
+		if float(caps["load_ratio"]) < GENERATION_RELIEF_RATIO:
+			return false
+		if _generation_in_flight(api):
+			return false
+		var row := api.archetype_upgrade_candidate(GENERATION_ARCHETYPE)
+		if not row.is_empty():
+			if spare < int(row["cost"]):
+				return false
+			return bool(api.upgrade(String(row["sim_id"]))["ok"])
+		if spare < api.build_cost(GENERATION_ARCHETYPE):
+			return false
+		return bool(api.place(GENERATION_ARCHETYPE)["ok"])
+
+	## True while any generating shell is building or upgrading. `Building.state`
+	## is `under_construction` for both jobs (doc 02 §2.2), and a plant that is
+	## mid-job is the shortfall already being answered.
+	func _generation_in_flight(api: Api) -> bool:
+		for id: Variant in api.sim.buildings:
+			var b: Building = api.sim.buildings[id]
+			if String(b.archetype) != GENERATION_ARCHETYPE:
+				continue
+			if b.state == &"under_construction":
+				return true
+		return false
 
 	## Trunk ahead of the relay — see `FEEDER_RELIEF_RATIO` for the doc 92 §17.3
 	## measurement this answers. One number in, two possible purchases out:
@@ -3419,6 +3519,16 @@ class Runner extends RefCounted:
 			## say whether the city ended over its own trunk.
 			"feeder_peak_ratio_end": float(sim.grid.worst_feeder(
 					float(sim.weather.env_for_grid().get("t_ambient_c", 25.0)))["load_ratio"]),
+			# --- Wave 24: the POOL, one level above the trunk (doc 92 §63.3) --
+			## Every founded city starts on doc 04 §2.2's one L1 gas plant —
+			## **8,000 kW, and nothing else generates** — and until this wave no
+			## strategy in this file ever bought or upgraded generation. These
+			## two columns are what let a report row say whether a city that
+			## went dark had run out of POWER or run out of COPPER; they are
+			## different failures and gate 18b's single share cannot tell them
+			## apart. See `Balanced.GENERATION_RELIEF_RATIO`.
+			"supply_kw_end": float(sim.grid.capacity_summary()["supply_kw"]),
+			"demand_kw_end": float(sim.grid.capacity_summary()["demand_kw"]),
 			"repaired": api.repaired,
 			"repair_spend": api.repair_spend,
 			"demolished": api.demolished,
