@@ -9221,3 +9221,9 @@ $118–138/gh gross, for 89 lots of road and a grid sized for 450 people.
 at doc 06's saturation ceiling continuously — 28,573 incidents in 90 game-days,
 bounded but loud, because every abandoned incident costs district stability and
 `f_arson` triples at stability 0 (doc 91 A91-D-117).
+
+**The suite**: `tools/run_suite.sh` — **153 files, 2,780 tests, 581,193 asserts,
+failed 0, silent 0.** `python3 tools/check_doc_refs.py` prints *all resolving; no id
+assigned twice* over 5,099 references. Not one balance constant moves
+(doc 92 §60.11), and the four `profile_sim` baselines move on exactly one
+`Treasury.serialize()` key, proven by A/B (doc 92 §60.10).
