@@ -10422,3 +10422,21 @@ rung** — a data table that pays nobody on this fixture cannot move its hash, a
 neither can a curriculum row nor a ladder rung the fixture never reaches. It is
 also the plainest available statement of why the old routing was wrong: the
 profiling fixture was being handed the curriculum's money.
+
+### 61.14 What the whole suite says, and the shape of what this wave shipped
+
+`tools/run_suite.sh` over the merged lane: **152 files, 2,758 tests, 578,008
+asserts, failed 0, silent 0.**
+
+The wave's shape in one paragraph, because §61 is long and the shape is the
+argument. **One data table** (`LEVEL_UP_GRANT_BY_CITY_LEVEL`, re-scaled 43.6×
+and one row longer), **one curriculum row** (doc 09 §2.14.2's twelve-archetype
+capstone), **one ladder rung** (40,500, which had to land first or the level
+would be earned and never paid), **one evaluator kind** (`upgrade_archetype`,
+the third reading of one button), **one event field** (`archetype` on
+`upgrade_started_sim`, additive), **one payment site moved** (off the composed
+level and onto the curriculum's own transition), **two surfaces** (the toast and
+the reward card, which is also what makes the capstone a legal level under
+ruling 93 §G3), and **three balance bounds re-fitted with their measurements**.
+No ceiling in the gate file moved. Four `profile_sim` digests: two unchanged, two
+moved by one attributable cause with an ablation in both directions.
