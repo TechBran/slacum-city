@@ -53,14 +53,23 @@ func _initialize() -> void:
 	print("probe_dark: strategy=%s seed=%d days=%d" % [strategy_id, seed_value, days])
 	print("| day | dark % | unattached | orphaned | shed feeders | failed comps | "
 			+ "buildings | taps | unparented taps | feeders | subs | supply kW | "
-			+ "demand kW | tx crit | treasury |")
-	print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+			+ "demand kW | peak r | tx crit | treasury |")
+	print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
 
 	var dark_day := 0.0
 	var metered_day := 0.0
+	# The **peak** whole-system load ratio inside the day, which is the number
+	# `Balanced._lead_generation` actually reads. The `demand kW` column below is
+	# a single day-boundary sample and is routinely a TROUGH — doc 04's demand
+	# swings with the hour — so the two columns disagree on purpose, and a reader
+	# who takes the trough for the trigger will not understand why a city with
+	# 3,573 kW of sampled demand bought a second plant.
+	var peak_ratio_day := 0.0
 	for h in days * HOURS_PER_DAY:
 		api.hour = h
 		strategy.act(api, h)
+		peak_ratio_day = maxf(peak_ratio_day,
+				float(sim.grid.capacity_summary()["load_ratio"]))
 		sim.advance_coarse_hours(1, false)
 		var settled: Dictionary = Playtest.Runner._drain(sim, events)
 		var sample: Dictionary = Playtest.Runner._sample(sim, h + 1, settled, 0.0)
@@ -75,13 +84,15 @@ func _initialize() -> void:
 			metered_day += 60.0
 		if (h + 1) % (HOURS_PER_DAY * every) != 0:
 			continue
-		print(_row(sim, (h + 1) / HOURS_PER_DAY, dark_day, metered_day))
+		print(_row(sim, (h + 1) / HOURS_PER_DAY, dark_day, metered_day, peak_ratio_day))
 		dark_day = 0.0
 		metered_day = 0.0
+		peak_ratio_day = 0.0
 	quit(0)
 
 
-func _row(sim: CitySim, day: int, dark: float, metered: float) -> String:
+func _row(sim: CitySim, day: int, dark: float, metered: float,
+		peak_ratio: float) -> String:
 	var caps := sim.grid.capacity_summary()
 	var unattached := sim.grid.unserved_building_ids().size()
 	var orphaned := 0
@@ -101,10 +112,10 @@ func _row(sim: CitySim, day: int, dark: float, metered: float) -> String:
 		if String(sim.grid.component(String(raw)).get("state", "OK")) != "OK":
 			failed += 1
 	return ("| %d | **%.2f** | %d | %d | %d | %d | %d | %d | %d | %d | %d | "
-			+ "%.0f | %.0f | %d | $%d |") % [
+			+ "%.0f | %.0f | %.2f | %d | $%d |") % [
 			day, 100.0 * dark / maxf(1.0, metered), unattached, orphaned,
 			int(caps["shed_feeders"]), failed, sim.buildings.size(),
 			int(caps["transformers"]), unparented, int(caps["feeders"]),
 			sim.grid.component_ids_of_kind(&"substation").size(),
-			float(caps["supply_kw"]), float(caps["demand_kw"]),
+			float(caps["supply_kw"]), float(caps["demand_kw"]), peak_ratio,
 			int(caps["transformers_critical"]), sim.treasury.balance]

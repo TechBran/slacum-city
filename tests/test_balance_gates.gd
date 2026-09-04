@@ -1384,13 +1384,86 @@ func test_gate_18_a_competent_player_keeps_the_city_lit() -> void:
 ## and a half of that is this one run. It is here rather than in
 ## `balance_matrix.gd` because the ruling it answers is a THRESHOLD, and a
 ## threshold that only merge-time runs is a threshold nothing defends.
+##
+## ---------------------------------------------------------------------------
+## **WAVE 24 — the ceiling this gate was ALREADY standing on, and the money that
+## found it** (doc 92 §63.2–§63.3, ruling 93 §AW2, doc 91 A91-D-125/126).
+##
+## **The bound does not move and the assertions get stronger.** What moves is
+## this docstring, because the three-seed table above is Wave 6's and has been
+## five waves stale, and because the number it quotes was hiding a wall.
+##
+## Wave 24 pays $1,000,000 at the first curriculum rung. On the unchanged agent
+## that took this gate's reading from **5.99 % to 37.20 %**, and the obvious
+## conclusion — *a rich city outruns its grid* — is **wrong**. `tools/probe_dark.gd`
+## splits `unserved_share` into doc 04's three distinct failures, and on that
+## city: **zero** buildings unattached, **zero** transformers unparented,
+## **zero** transformers CRITICAL, worst feeder at **r = 0.25** (a quarter
+## loaded, against 0.75 at the fork) — and `supply_kw` **pinned at 8,000 kW for
+## the whole run** against a demand reaching 11,585.
+##
+## **Every founded city has one `power_facility` at doc 04 §2.2's L1 rating —
+## 8,000 kW, and nothing else in the game generates — and no strategy in
+## `tools/playtest.gd` had ever bought or upgraded generation.** `Balanced` buys
+## taps on a GROUND trigger, feeders at WARNING and parallel transformers at
+## CRITICAL; the pool is none of those three readings.
+##
+## **AND THE SAME WALL IS INSIDE THIS GATE'S OWN RUN AT THE FORK**, on the
+## shipped Wave-22 curve with no Wave-24 change of any kind — which is the
+## finding this gate most needed and could not make, because it reports a MEAN:
+##
+## | game-day | 20 | 30 | 40 | 45 | **50** |
+## |---|---|---|---|---|---|
+## | dark % that day | 0.08 | 3.31 | 4.63 | 6.24 | **15.55** |
+## | buildings orphaned by a shed circuit | 0 | 0 | 0 | 0 | **166** |
+## | demand kW | 2,108 | 3,229 | 4,591 | 5,729 | **9,227** |
+## | supply kW | 8,000 | 8,000 | 8,000 | 8,000 | **8,000** |
+##
+## The collapse begins around game-day 46 and 5.99 % is what a fifty-day mean
+## does to a column that ends at 15.55 %. The money does not create the wall; it
+## moves the city to it thirteen game-days earlier.
+##
+## `Balanced._lead_generation` is the purchase the agent never made — the same
+## family as both of Wave 6's fixes, and written the same way: doc 04 §5.10's own
+## WARNING band, doc 02's own prices, and no cooldown constant. **Three arms,
+## `tools/measure_dark_share.gd --days=50`, three seeds:**
+##
+## | arm | 1337 | 4242 | 9001 | mean |
+## |---|---|---|---|---|
+## | fork (Wave 22 table, no generation rule) | 5.99 % | **20.98 %** | 9.52 % | **12.16 %** |
+## | Wave 24 money, no generation rule | 37.20 % | 36.47 % | 39.14 % | **37.60 %** |
+## | **shipped** | **4.61 %** | 20.88 % | **0.55 %** | **8.68 %** |
+##
+## **The money leaves the city lighter than it found it** — better than the fork
+## on the mean and on every seed, and on this gate's own seed 1337 it is 4.61 %
+## against 5.99 %, i.e. MORE margin under the ruled 20 % than the fork had. The
+## ceiling stays at 20 for the reason it always did: it is a tripwire for the
+## ceiling coming back, not a target to ratchet a measurement into.
+##
+## **Seed 4242 is filed, not fitted** (A91-D-125). It reads **20.98 % at the
+## fork** — over this gate's own ruled bound, five waves before Wave 24 — and
+## 20.88 % shipped. The cause is neither pool nor copper: **105 grid components
+## sitting FAILED and unrepaired** from game-day 35 to the end, 234 buildings
+## orphaned behind them, with 48,000 kW of supply against 12,108 of demand. A
+## FAILED component is restored only by doc 06 resolving its incident, and the
+## failure rate scales with the fleet the player buys. **This gate asserts
+## `GATE_SEED` alone, which is why a 21-point reading has been invisible**; the
+## cheap half of A91-D-125 is running this gate on `MATRIX_SEEDS`, and it is not
+## done here because it triples the slowest assertion in the file behind a bound
+## the fork already fails.
 const CEILING_DAYS := 50
 ## The ruled bound. Measured across three seeds on this rig: **6.25 / 5.91 /
-## 5.74 %** (741 / 701 / 673 buildings; 11 / 11 / 12 feeders; 3 / 3 / 5
-## substations; worst feeder 0.31 / 0.36 / 0.32). The ruling's 20 % therefore has
-## better than 3× of margin, deliberately: the point of the gate is to catch the
-## ceiling COMING BACK, not to ratchet a measurement into a target.
+## 5.74 %** at Wave 6, and **4.61 / 20.88 / 0.55 %** at Wave 24 (see the block
+## above for why 4242 is what it is and why it is filed rather than fitted). The
+## ruling's 20 % keeps better than 4× of margin on this gate's own seed,
+## deliberately: the point of the gate is to catch the ceiling COMING BACK, not
+## to ratchet a measurement into a target.
 const CEILING_DARK_SHARE := 0.20
+## Doc 04 §2.2's founding pool: one `power_facility` at L1, and nothing else in
+## the game generates. A city that ends a 50-game-day run still on this number
+## has bought no generation at all — which is what every agent in this file did
+## until Wave 24, and what the assertion below now forbids.
+const FOUNDING_SUPPLY_KW := 8000.0
 
 
 func test_gate_18b_the_late_game_ceiling_is_lifted() -> void:
@@ -1398,8 +1471,8 @@ func test_gate_18b_the_late_game_ceiling_is_lifted() -> void:
 	var dark := float(summary["unserved_share"])
 	assert_true(dark <= CEILING_DARK_SHARE,
 			("balanced spent %.2f %% of building-time dark over %d game-days; the "
-					+ "ruled bound is %.0f %% (measured 6.25 %% on this seed, against "
-					+ "Wave 5's 54.63 %%)")
+					+ "ruled bound is %.0f %% (measured 4.61 %% on this seed at "
+					+ "Wave 24, against 5.99 %% at that fork and Wave 5's 54.63 %%)")
 					% [dark * 100.0, CEILING_DAYS, CEILING_DARK_SHARE * 100.0])
 	# …and it got there by buying TRUNK, not by building a smaller city.
 	assert_true(int(summary["feeders_routed"]) >= 4,
@@ -1411,6 +1484,23 @@ func test_gate_18b_the_late_game_ceiling_is_lifted() -> void:
 	assert_true(float(summary["feeder_peak_ratio_end"]) < PowerGrid.OVERLAY_CRITICAL_R,
 			"the city ends UNDER its own trunk: worst feeder %.2f"
 					% float(summary["feeder_peak_ratio_end"]))
+	# **…and it bought GENERATION, which is the assertion this gate spent five
+	# waves without** (Wave 24, doc 92 §63.3). Every city in this project is
+	# founded with one L1 gas plant and nothing else generates; a city that ends
+	# fifty game-days still on `FOUNDING_SUPPLY_KW` has crossed its own pool and
+	# is shedding whole circuits, which the dark share above reports as a MEAN
+	# and therefore hides until the very end of the run. The three trunk
+	# assertions above cannot catch it — the fork's city passes all three with
+	# 166 buildings orphaned.
+	assert_true(float(summary["supply_kw_end"]) > FOUNDING_SUPPLY_KW,
+			("the city ended on %.0f kW of generation, which is doc 04 §2.2's "
+					+ "founding plant and nothing more — a 50-game-day city that "
+					+ "never bought a kilowatt is a city shedding its own circuits")
+					% float(summary["supply_kw_end"]))
+	assert_true(float(summary["supply_kw_end"]) > float(summary["demand_kw_end"]),
+			("…and it ended ABOVE its own demand: %.0f kW of supply against "
+					+ "%.0f of demand") % [float(summary["supply_kw_end"]),
+					float(summary["demand_kw_end"])])
 	assert_true(int(summary["buildings_end"]) >= 600,
 			"on a city of %d buildings — the ceiling moved, it was not avoided"
 					% int(summary["buildings_end"]))
@@ -1853,6 +1943,59 @@ func test_gate_20_the_city_level_ladder_is_reachable() -> void:
 ##   3. **The pacing is the session beat the player asked for**: level 1 inside
 ##      the first game-day, level 3 inside six, level 5 inside three game-weeks,
 ##      and the whole arc inside `CURRICULUM_TOP_LEVEL_DAYS`.
+##
+## **RE-MEASURED, WAVE 24 — and not one bound in this gate moves** (doc 92
+## §63.6). The grant table becomes $1,000,000 at rung 1 and $7,000,000 at rung 7
+## (§63.1). Every ceiling here is a CEILING, so an arc that got faster is an arc
+## with more margin, and a ceiling with more margin under it is not re-cut to
+## look tight — the same rule the Wave-15 block below states and the same one
+## Wave 22 applied. Same instrument, same horizon, same seeds
+## (`tools/measure_curriculum.gd --days=45`, 1337 / 4242 / 9001):
+##
+## | level | Wave 22 (1337/4242/9001) | Wave 24 | beat, W22 → W24 |
+## |---|---|---|---|
+## | 1 | 14 / 13 / 17 | **14 / 13 / 17** | 13–17 → **13–17, bit-identical** |
+## | 2 | 42 / 35 / 44 | 46 / 43 / 50 | 22–29 → 30–33 |
+## | 3 | 76 / 74 / 81 | 76 / 78 / 57 | 34–37 → 7–35 |
+## | 4 | 117 / 115 / 123 | 100 / 102 / 85 | 41–42 → 24–28 |
+## | 5 | 178 / 178 / 195 | 164 / 168 / 156 | 61–72 → 64–71 |
+## | 6 | 316 / 273 / — | **234 / 184 / 223** | 95–138 → 16–70, **and all three seeds** |
+## | 7 | 430 / 377 / — | 403 / 563 / — | 114 / 104 → 169 / 379 |
+##
+## **Level 1 is bit-identical on every seed**, which is the shape a grant change
+## must have at the top of the arc: the first grant is paid when level 1 is
+## EARNED, so nothing it does can reach the band underneath it. That cell is this
+## gate's control arm and it has now survived three re-scales.
+##
+## **What actually improved is the MIDDLE of the arc, and one seed's capstone got
+## worse.** Rung 6 now lands on all three seeds (game-hour 184–234, game-day
+## 7.7–9.8) where Wave 22 reached it on two; rung 4 and rung 5 come 15–30 %
+## sooner. Rung 7 is 403 on seed 1337 (game-day 16.8, better than Wave 22's 17.9)
+## and **563 on seed 4242** (game-day 23.5 against 15.7) — later, and honestly
+## later: the capstone asks for one upgrade step of each of twelve archetypes, a
+## bigger city has more of each to choose between, and the agent's cheapest-first
+## ranking walks a longer list. It is still 16.5 game-days inside
+## `CURRICULUM_TOP_LEVEL_DAYS`.
+##
+## **Seed 9001 still stops one rung short, and for the SAME measured reason
+## Wave 22 published** — `l6_tower` refused `E_WATER_HEADROOM` on a city with one
+## water component ever placed — except that it now reaches rung **6** rather
+## than rung 5, so the `CURRICULUM_FLOOR_LEVEL` assertion below has gained a rung
+## of margin rather than lost one. `reached_top >= 2` is met by 1337 and 4242
+## exactly as it was.
+##
+## **Does the curriculum still teach?** The beat bands say yes and they are the
+## executable half of the question: the opening is 13–17 and 30–33 game-hours
+## against a ceiling of 58, and the middle is 7–35 and 24–28 against 90. No band
+## collapses to nothing — the fastest single rung in the arc is seed 9001's level
+## 3 at **7 game-hours**, which is a real lesson landing inside one sitting, and
+## the slowest is 71. What the money removes is WAITING, not doing: every
+## objective is still built, placed, repaired or waited out by the same verbs in
+## the same order, and `water_placed`, `road_tiles_built` and `repaired` are all
+## still asserted below on every seed.
+##
+## --- WAVE 22 AND EARLIER BELOW THIS LINE. Kept because a superseded
+## measurement is what makes the next one checkable.
 ##
 ## **RE-FITTED, Wave 10 (doc 92 §24.9).** The curriculum grew a sixth level and
 ## the horizon grew with it. Claim 1 and claim 2 are UNCHANGED in substance —

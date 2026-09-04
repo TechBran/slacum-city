@@ -63,6 +63,28 @@ func _initialize() -> void:
 			hi = maxi(hi, duration)
 		print(row + "| %s |" % ("—" if hi < 0 else ("%d" % lo if lo == hi else "%d–%d" % [lo, hi])))
 
+	# ---- Wave 24: the CITY level, which is the ladder gate 20 measures --------
+	# Doc 93 §G1 composes it as `max(population_ladder, objectives_earned)`, so a
+	# strategy that never opens the goals sheet still climbs it — and gate 20's
+	# window is quoted in game-DAYS off `day_rows`, which is this column divided
+	# by 24. It is printed here rather than left to the gate because a bound the
+	# gate asserts should be reproducible from the instrument the doc quotes.
+	print("")
+	print("| city level | %s | first game-day |" % _seed_header(seeds))
+	for level in range(1, ProgressionSystem.city_level_pop().size()):
+		var row := "| %10d " % level
+		var day_lo := 1 << 30
+		var day_hi := -1
+		for run: Dictionary in runs:
+			var hour := int(_first_hour_of(run, "city_level").get(level, -1))
+			row += "| %6s " % (str(hour) if hour >= 0 else "—")
+			if hour < 0:
+				continue
+			day_lo = mini(day_lo, hour / HOURS_PER_DAY)
+			day_hi = maxi(day_hi, hour / HOURS_PER_DAY)
+		print(row + "| %s |" % ("—" if day_hi < 0 else ("%d" % day_lo if day_lo == day_hi
+				else "%d–%d" % [day_lo, day_hi])))
+
 	# ---- doc 92 §43.2: what a level band pays, in dollars per REAL minute ----
 	# `data/time.json.clock.real_seconds_per_game_minute` is 1.0, so at 1x speed
 	# one game-hour IS one real minute and one settled hour's `net` IS a
@@ -136,10 +158,23 @@ func _initialize() -> void:
 ## Objective level → the first game-hour a sample carried it. Level 0 is the
 ## founding hour, so a duration is always `hour(N) − hour(N−1)`.
 func _first_hour_at(run: Dictionary) -> Dictionary:
+	return _first_hour_of(run, "goal_level")
+
+
+## The same walk over any level column the sample stream carries — `goal_level`
+## for the curriculum, `city_level` for doc 09 §2.11's composed ladder.
+func _first_hour_of(run: Dictionary, key: String) -> Dictionary:
 	var out: Dictionary = {0: 0}
 	for entry: Variant in (run["samples"] as Array):
 		var sample: Dictionary = entry
-		var level := int(sample.get("goal_level", 0))
+		var level := int(sample.get(key, 0))
 		if level > 0 and not out.has(level):
 			out[level] = int(sample["h"])
 	return out
+
+
+static func _seed_header(seeds: Array[int]) -> String:
+	var out := ""
+	for seed_value: Variant in seeds:
+		out += "%6d | " % int(seed_value)
+	return out.trim_suffix(" | ")

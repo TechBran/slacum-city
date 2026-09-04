@@ -8936,6 +8936,61 @@ doc 12 §2.19 D-98/D-99.*
 
 *Files: `tools/measure_backpay.gd` (new), `tools/dump_save.gd` (new), doc 92 §63.5*
 
+### 66.AW — `awaiting_consumer`: gate 29's delta (there is none), and the two rows this lane filed
+
+**Gate 29 belongs to the sibling wave (Wave 23, the fire capability), and this
+lane does not touch it.** The rule is that a delta is PUBLISHED rather than
+assumed, so here is the measurement rather than the argument.
+
+**The delta is zero, and it is measured bit-for-bit.** Gate 29 runs `do_nothing`
+across doc 03 §2.9's four presets. `tools/measure_dark_share.gd --days=21
+--seeds=1337,4242,9001 --strategies=do_nothing`, at the fork and as shipped:
+
+| seed | dark share | buildings | upgrades | **treasury at 21 game-days** |
+|---|---|---|---|---|
+| 1337 | 0.02 % → **0.02 %** | 34 → **34** | 0 → **0** | $156,406 → **$156,406** |
+| 4242 | 0.00 % → **0.00 %** | 34 → **34** | 0 → **0** | $159,093 → **$159,093** |
+| 9001 | 0.23 % → **0.23 %** | 34 → **34** | 0 → **0** | $148,724 → **$148,724** |
+
+Every cell is identical to the dollar, and the mechanism says why it must be:
+the grant is paid on `city_level_objectives_met` (ruling 93 §AU6), `do_nothing`
+completes no objective of any level, and `Balanced._lead_generation` is a method
+on `Balanced` while `DoNothing extends Strategy` directly. Nothing gate 29 reads
+moved — not `MODEL_NET_PER_HOUR_BY_CITY_LEVEL`, which it does not consult, and
+not a preset horizon or an ordering bound. **Wave 23 has nothing to re-fit from
+this lane.**
+
+**Two rows are filed for owners this lane is not, and both are named:**
+
+* **A91-D-125 — a city's grid is never repaired, and gate 18b asserts one seed.**
+  Measured at this fork on the SHIPPED Wave-22 build with no Wave-24 change:
+  **5.99 / 20.98 / 9.52 %** across `MATRIX_SEEDS`, against gate 18b's own ruled
+  ceiling of 20 %. Seed 4242 has been over that bound for at least two waves and
+  nothing could see it, because the gate runs `GATE_SEED` alone. The cause is
+  measured (`tools/probe_dark.gd`): grid components that go FAILED are restored
+  only by doc 06 resolving their incident, the failure rate scales with the
+  transformer fleet, and no agent buys a repair — so a richer city accumulates
+  105 failed components and 234 orphaned buildings behind them. **Owner:** the
+  lane that holds doc 06's dispatch capacity, or the one that gives an agent a
+  grid-repair rule. **The cheap half is one line** — gate 18b over `MATRIX_SEEDS`
+  — and it is not done here because it triples the slowest assertion in the file
+  behind a bound the fork already fails, which would hand the next wave a red
+  gate and no diagnosis.
+* **A91-D-126 — `unserved_share` is three unrelated failures wearing one
+  number.** Doc 04 gives a building three distinct ways to be dark and
+  `Playtest.Runner._blackout_minutes` sums them, so a wave reading the sum fixes
+  whichever it guessed. That is not hypothetical: §61.12 diagnosed a 26.44 %
+  reading as a grid problem and set a whole grant curve against it, when the
+  cause was generation. **Owner:** the lane that holds gate 18b. The instrument
+  is already shipped (`tools/probe_dark.gd`, plus `supply_kw_end` /
+  `demand_kw_end` on the playtest summary); what remains is re-cutting the gate's
+  assertion into three.
+
+**No `tests/test_event_matrix.gd` row is owed.** The one new sim event this wave
+emits, `level_up_grant_arrears_paid`, has a consumer in the same commit
+(`ui_root._check_grant_arrears`), so the register neither gains a row nor needs
+one — which the matrix suite asserts on its own.
+
 ## 64. WAVE 22 — the reward: a rung is worth something now, and there is one more of them (binding)
 
 *Forked off the Wave-19 merge (`ef08351`), 2026-09-04. The lane exists for one

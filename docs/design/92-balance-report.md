@@ -10015,6 +10015,13 @@ Seed 1337, 50 game-days, the new table, no other change:
 **Not one tile is unattached. Not one transformer is unparented. Not one
 transformer is critical. `supply_kw` never moves off 8,000 for the whole run.**
 
+*The `demand kW` row is a single day-boundary sample and is routinely a TROUGH —
+doc 04's demand swings with the hour — so `tools/probe_dark.gd` also prints the
+**peak** whole-system load ratio inside each day, which is the number the fix
+below actually reads. On the shipped arm those two columns disagree on purpose,
+and a reader who takes the trough for the trigger will not understand why a city
+with 3,573 kW of sampled demand had already bought a second plant.*
+
 Every city in this project is founded with exactly one `power_facility` at doc 04
 §2.2's L1 rating — **8,000 kW, and nothing else in the game generates** — and
 **no strategy in `tools/playtest.gd` has ever bought or upgraded generation**.
@@ -10068,6 +10075,26 @@ the mean and on every seed, and better on gate 18b's own seed 1337 (4.61 %
 against 5.99 %) with more margin under the ruled 20 % than the fork had. On the
 shipped arm the city buys 350 taps, 30 feeders, 11 substations **and takes its
 pool from 8,000 kW to 48,000**, and no feeder is shed on seed 1337 at all.
+
+**The shipped arm's own census, and it is the rule working** (`tools/probe_dark.gd
+--seed=1337`, same run):
+
+| game-day | 5 | 10 | 15 | 20 | 25 | 30 | 35 | 40 | **45** | 50 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| dark % that day | 0.00 | 7.00 | 3.46 | 1.95 | 1.02 | 0.93 | 1.58 | 0.73 | **8.47** | 11.30 |
+| supply kW | 8,000 | 16,000 | 16,000 | 16,000 | 16,000 | 32,000 | 32,000 | 32,000 | **40,000** | 48,000 |
+| peak load ratio in the day | 0.32 | 0.83 | 0.46 | 0.60 | 0.81 | 0.76 | 0.65 | 0.67 | **1.00** | 0.66 |
+| shed feeders | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | **0** | 0 |
+| failed components | 0 | 6 | 6 | 6 | 5 | 5 | 5 | 6 | **41** | 41 |
+| orphaned | 0 | 4 | 3 | 4 | 3 | 3 | 3 | 6 | **95** | 54 |
+
+**Zero shed feeders for the whole run** — the pool is never short again — and the
+peak ratio oscillates around doc 04 §5.10's WARNING band, which is the rule doing
+exactly what it is written to do. The one bad pair of days is game-day 45–50, and
+it is **A91-D-125 again and not the pool**: 41 grid components go FAILED and stay
+FAILED, and a FAILED `plant_gas` is excluded from `system_supply_kw` by doc 04's
+own `state == OK` test — which is why the peak ratio touches 1.00 on a city
+holding 40,000 kW of nameplate. Nothing in the game repairs it.
 
 **Seed 4242 is a pre-existing defect this lane did not cause and does not close,
 and it is filed rather than fitted.** It reads 20.98 % at the fork and 20.88 %
@@ -10174,6 +10201,202 @@ population 41, austerity active, $569,547 of deferred liability, a treasury belo
 zero and a player *"trying to restore all the buildings so we can get revenue back
 up"*. Rungs 6 and 7 stay at $0 in the ledger, because it has not earned them.
 **That is what "keep one city going for a while" costs, and it is paid once.**
+
+### 63.6 The arc, before and after — and whether the curriculum still teaches
+
+`tools/measure_curriculum.gd --days=45`, seeds 1337 / 4242 / 9001, both arms run
+**at this fork**. The before column is the fork tree with the Wave-22 table and
+no `_lead_generation`; it reproduces doc 92 §61.8's shipped column **to the
+game-hour on every cell**, which is what makes this an A/B and not a re-record —
+and incidentally proves Wave 21's fire lane moved no cell of the arc.
+
+| level | fork (1337/4242/9001) | **shipped** | first-hour delta |
+|---|---|---|---|
+| 1 | 14 / 13 / 17 | **14 / 13 / 17** | **0 / 0 / 0 — bit-identical** |
+| 2 | 42 / 35 / 44 | 46 / 43 / 50 | +4 / +8 / +6 |
+| 3 | 76 / 74 / 81 | 76 / 78 / 57 | 0 / +4 / **−24** |
+| 4 | 117 / 115 / 123 | 100 / 102 / 85 | −17 / −13 / **−38** |
+| 5 | 178 / 178 / 195 | 164 / 168 / 156 | −14 / −10 / **−39** |
+| 6 | 316 / 273 / **—** | **234 / 184 / 223** | −82 / −89 / **a rung that was never reached** |
+| 7 | 430 / 377 / — | 403 / 563 / — | −27 / **+186** |
+
+**Level 1 is bit-identical on all three seeds**, and that is the control arm: the
+first grant is paid when level 1 is *earned*, so nothing the money does can reach
+the band underneath it. It is the third re-scale that cell has survived unmoved.
+
+**Level 2 gets SLOWER, and it is the same shape Wave 22 measured one table
+back.** A city handed $1,000,000 at game-hour 14 spends band 2 **building**
+rather than banking, and construction is an expense before it is a taxpayer —
+which is also why band 2 is the only band whose $/real-minute falls.
+
+**Rung 6 now lands on every seed** (game-hour 184–234, game-day 7.7–9.8) where
+the fork reached it on two. Seed 9001 still stops one rung short of the capstone
+for the reason §61.11 measured — `l6_tower` refused `E_WATER_HEADROOM` on a city
+with one water component ever placed — but it stops at **6** rather than at 5, so
+gate 21's `CURRICULUM_FLOOR_LEVEL` assertion gained a rung of margin.
+
+**Seed 4242's capstone gets later, and honestly later:** game-hour 377 → 563
+(game-day 15.7 → 23.5). Doc 09 §2.14.2's level 7 asks for one upgrade step of
+each of twelve archetypes, and a bigger city has more of each to choose between,
+so the agent's cheapest-first ranking walks a longer list. It is still 16.5
+game-days inside `CURRICULUM_TOP_LEVEL_DAYS`.
+
+**$/real-minute by band** — one game-hour is one real minute at 1×
+(`SimHost.GAME_MS_PER_REAL_MS` = 60), so this is the player's own unit:
+
+| band | fork | **shipped** | change | treasury at band end, fork → shipped |
+|---|---|---|---|---|
+| 1 | 537.7 | **537.7** | **0.0 %** — the control | $60,746 → **$1,015,746** |
+| 2 | 640.9 | 625.3 | **−2.4 %** | $85,193 → $2,917,558 |
+| 3 | 801.7 | 1,122.8 | +40 % | $122,685 → $5,837,045 |
+| 4 | 976.1 | 1,715.8 | +76 % | $215,814 → $9,722,573 |
+| 5 | 1,827.3 | 3,792.3 | +108 % | $275,524 → $14,413,426 |
+| 6 | 4,201.1 | 5,961.4 | +42 % | $387,461 → $19,888,379 |
+| 7 | 6,966.5 | 9,104.1 | +31 % | $5,091,238 → $25,865,292 |
+
+`data/economy.json`'s `MODEL_NET_PER_HOUR_BY_CITY_LEVEL` is re-measured to that
+row, which report 98 AC-2 requires of any lane that moves the arc — *"the row is
+a MEASUREMENT … re-measure the row, do not re-fit the curves by hand"*. The three
+curves that read it (`STREET_REWARD_CITY_LEVEL_K`, `MANUAL_DISPATCH_LEVEL_K`,
+`CONTRACT_REWARD_CITY_LEVEL_K`) are **untouched**, and gate 32 arms (d2) and (h)
+re-assert their share ceilings against the new denominators.
+
+**Does the curriculum still teach? Yes — and the thin part is named rather than
+glossed.**
+
+*What is still true.* Every rung is still completed by the same verbs in the same
+authored order; nothing is skipped, granted or shortcut. `water_placed`,
+`road_tiles_built` and `repaired` are ≥ 1 / ≥ 1 / ≥ 85 on every seed, so the
+lessons that cost a purchase are still bought. The three-tier beat bands hold
+with room: the opening is 13–17 and 30–33 game-hours against a ceiling of 58, the
+middle 7–35 and 24–28 against 90.
+
+*What is thinner.* **The middle of the arc is where the money lands, and one cell
+of it is now very short:** seed 9001's level 3 arrives **7 game-hours** after
+level 2 — seven real minutes at 1×. A rung that fast is a lesson the player may
+not notice they were taught. The other two seeds spend 30 and 35 game-hours
+there, so this is a seed, not the design; but the direction is unambiguous and
+levels 3–5 are all 15–30 % shorter. **What the money removes is WAITING, not
+DOING** — the objective list per rung has not changed — and that is exactly what
+the player asked for (*"not struggling right away"*). Whether a curriculum whose
+middle takes half an hour instead of an hour still lands is a question a player
+answers, not a gate, and it is ranked first in this wave's open questions.
+
+*What did not happen.* The arc did not collapse: game-hour 14 to 403 is still
+16.8 game-days of play to the capstone on seed 1337, against 17.9 at the fork.
+The money made the city bigger, not the game shorter.
+
+### 63.7 The gates: what moved, what did not, and what was filed
+
+**No bound in `tests/test_balance_gates.gd` moves.** That is the headline and it
+is the opposite of what this wave expected to be able to say.
+
+| gate | what it asserts | fork | **shipped** | bound | verdict |
+|---|---|---|---|---|---|
+| 18b | a city may not outrun its own power | 5.99 % | **4.61 %** | ≤ 20 % | **holds, with more margin than the fork** |
+| 20 | `balanced` reaches city level 2 in a window | game-day 4 / 4 / 4 | **4 / 4 / 4** | 3–14 | **holds unchanged** |
+| 21 | the curriculum is completable and paced | see §63.6 | see §63.6 | every rung, every seed, ≤ 40 game-days | **holds unchanged** |
+
+**Gate 20 is the surprise, and the reason is worth recording.** §61.12 had to
+re-cut its floor from 8 to 3 because Wave 22's $110,000 to rungs 1 + 2 took
+`balanced` to city level 2 on game-day 4. Wave 24 pays **$1,000,000** at rung 1
+and the reading is **still game-day 4** — measured on the instrument, not
+inferred: `tools/measure_curriculum.gd --days=21 --strategy=balanced` puts city
+level 1 at game-hour 22 / 17 / 22 and city level 2 at **101 / 101 / 103**. The
+floor did not have to move again because **`balanced` cannot spend the money any
+faster than one action per game-hour**, and city level 2 is a POPULATION rung it
+reaches by building, not by paying. What the extra money buys it is a bigger
+city, not an earlier rung: the same run shows it earning curriculum level 2 at
+game-hour **381 / 422 / 434**, so the second $2,000,000 arrives on game-day 16
+and not on game-day 4.
+
+**Gate 18b gains two assertions rather than losing a bound** (`supply_kw_end >
+FOUNDING_SUPPLY_KW` and `supply_kw_end > demand_kw_end`). They are the ones that
+would have caught §63.3's wall five waves ago, and they cost nothing: the run is
+already made, and both columns are new keys on a summary the rig already builds.
+
+**Two things are filed rather than fitted**, and both are in doc 91:
+**A91-D-125** (a city's grid is never repaired, and this gate asserts one seed —
+which is how 20.98 % at the fork on seed 4242 has been invisible) and
+**A91-D-126** (`unserved_share` is three unrelated failures wearing one number).
+Their awaiting rows are in report 98 §AW.
+
+### 63.8 The four `profile_sim --hash-only` baselines
+
+| digest | at the fork (`6dba66c`) | as shipped |
+|---|---|---|
+| starter, coarse 24 h | `34ba7d972f3a78e2e08e8417fd83536ac3311257a3fc5c8b9d32486352279e65` | `d09597510c21106279a3955668aa83fe75156dac69357853891e04952f3db266` |
+| starter, fine 2.0 h | `dde437bc234fc2c24e19de1994666662cf1a3640c1b400d92aff079f948d4764` | `4c5aea2928d1991e0101086f6a025d6fcce8b0b4ea29a1dc19ea8db6d66fb5ef` |
+| bench, coarse 24 h | `db934239d6d84c0492b1c3d8b2a5d6cd98ad8c9a8399926a1a683635072288a1` | `db208d59c6fe7bdc7cb6417654b9dcc6b37b77e574ebcdb6ab7a2f0b3a622176` |
+| bench, fine 2.0 h | `bf57bbac708c35b7aa501ca7d10d9862c19402a8fae37801f947ec80b1c1ec1e` | `28ec8a1c33f3bf88251565ff38a2ab463545e6b4bbb078c441edda473790a6d8` |
+
+**All four move, and the cause is exactly one thing, isolated by ablation rather
+than inferred.** `Treasury.serialize()` gains one key, `grant_paid_by_level`;
+that dictionary is captured into `canonical_capture()` and therefore into
+`state_hash()`, so a body with one more key hashes differently on every city,
+played or founding. It is the same mechanism doc 91 A91-D-100 names for
+`ledger_totals`, and doc 08's rung-10 entry records it.
+
+**The ablation, one line, both fixtures:**
+
+```
+# remove the one new key from Treasury.serialize() and re-run, changing nothing else
+profile_sim --hash-only                             -> 34ba7d97… / dde437bc…   (= FORK, exactly)
+profile_sim --hash-only --city=…/bench_city.json    -> db934239… / bf57bbac…   (= FORK, exactly)
+```
+
+All four digests return to the fork **byte-for-byte**, which is the strongest
+form this claim can take: **nothing else in this wave moves a hash on either
+fixture.** That is what it should say, and each half is checkable on its own —
+`profile_sim` runs no strategy (so `_lead_generation` cannot fire), performs no
+restore (so `_settle_grant_arrears` never runs), and crosses no curriculum
+transition on either city (so the grant table pays nobody). The generation rule,
+the back-pay, the migrator and the table are all invisible to these two
+fixtures, and the save key is not.
+
+### 63.9 Open questions, ranked
+
+**AC-24-1 — the middle of the arc is now half an hour, and only a player can say
+whether that still teaches.** Levels 3–5 are 15–30 % shorter and one cell is
+much shorter than that: seed 9001's level 3 lands **7 game-hours** after level 2,
+which is seven real minutes at 1×. Every objective is still built, placed or
+repaired by the same verbs — what the money removes is waiting, not doing, and
+that is what was asked for — but a rung nobody notices they climbed is a lesson
+the game did not give. **This is not a gate question** (the beat bands hold with
+30 game-hours of margin) and it is not a number a lane can fit. It is a playtest.
+Ranked first because it is the only thing in this wave that could make the game
+worse and cannot be measured from here.
+
+**AC-24-2 — the game should HELP before the player outruns their own pool, and
+this lane shipped the agent's fix rather than the player's.** §63.3's whole
+finding is that a city crosses 8,000 kW with no warning of any kind: Wave 18's
+power panel shows the trunk and the fleet, the fix-router quotes a substation,
+and nothing on any surface says *your pool is at 83 % and the plant upgrade takes
+twenty game-hours*. The agent now buys generation because it was written a rule;
+a human is still expected to notice. **What would close it:** a headroom line on
+the power panel reading `capacity_summary().load_ratio` against doc 04 §5.10's
+own bands, and a fix-router entry that quotes the plant upgrade the way it
+already quotes a substation. Doc 12's lane, one wave, no new data.
+
+**AC-24-3 — the seed-4242 defect is two lanes wide and neither is this one.**
+A91-D-125 is filed with its measurement and its instrument, and the cheap half of
+it (gate 18b over `MATRIX_SEEDS`) is one line that this lane deliberately did not
+write, because it would hand the next wave a red gate with a bound the FORK
+already fails and no owner. Ranked third because the game is not worse for it
+today — the shipped arm reads 20.88 % against the fork's 20.98 % — but a city
+that never repairs its grid is a defect with a growing blast radius: it scales
+with the fleet the player buys, and this wave makes players buy more fleet.
+
+**AC-24-4 — a v9 save cannot be told from a v9 save, and the ledger paid for
+that in the only currency available.** Wave 22 changed the grant table without
+changing a shape, so two different tables shipped under one section version and
+the back-pay seed for row `"9"` has to be the element-wise maximum (§63.4). The
+cost is bounded and published — at most $487,000 under-credited on a $15,000,000
+settlement — and it is zero for the only save in the wild, which is a v8. **What
+would close it for the future:** a data-version stamp in the body that moves when
+a balance TABLE moves, distinct from the section version that moves when a SHAPE
+moves. That is a doc 08 ruling, not a Wave-24 edit, and it is worth exactly one
+conversation because the next re-scale will have the same problem.
 
 ## 61. Wave 22 — the reward, re-scaled: what a rung is worth, and what the last one costs (2026-09-04)
 
