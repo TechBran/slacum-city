@@ -9417,6 +9417,17 @@ FLASHABLE_CHIPS` generalises `_process`'s expiry sweep from the treasury alone
 to the set of chips whose pulse can only have come from a flash — `grid` and
 `water` may never join it, because they carry §2.4's standing pulse.
 
+**And S5 was a still photograph, which is the third finding of this wave**
+(doc 91 A91-D-129). `BuildingPanel.refresh()` has documented itself since Wave 5
+as the re-read *"after an upgrade, a tick, or a construction completion"* and
+**nothing outside `tests/` has ever called it** — `ui/ui_root.gd` calls
+`land_panel.refresh()`, which is a different panel and is what made the absence
+read as present in a grep. An open panel showed the city as it was at the moment
+of the tap and never moved again, so a vital that now says `0 of 4` could never
+go on to say `4 of 4` while the player watched. `UIRoot.refresh_building_panel()`
+is the door, on `refresh_land_panel`'s exact shape and cost, called from
+`_refresh_hud`'s 1 Hz cadence (snippet handed to the lead).
+
 Preview state **`building_moving_in` in the same commit**: a house placed
 through the real `cmd_place_building`, panel open, `0 of 4` on its face.
 `--screen=all --size=412x915 --audit --strict` exits **0** over **84** states.

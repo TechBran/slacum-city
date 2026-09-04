@@ -859,6 +859,46 @@ func test_locked_card_explains_itself_instead_of_placing() -> void:
 	_unmount(mounted)
 
 
+## **The panel was a still photograph, and that is half of D-100.** Nothing in
+## the shipped shell has ever called `BuildingPanel.refresh()` — only tests and
+## `land_panel.refresh()`, which is a different panel — so an open S5 showed the
+## city as it was at the moment of the tap and never moved again. A vital that
+## says `0 of 4` is worth nothing if it cannot go on to say `4 of 4` while the
+## player is looking at it. `UIRoot.refresh_building_panel()` is the door, on
+## `refresh_land_panel`'s exact shape; `game/main.gd::_refresh_hud` calls it on
+## the shell's 1 Hz cadence.
+func test_an_open_building_panel_follows_the_city_it_is_describing() -> void:
+	var sim := _sim()
+	var origin := _serviceable_vacant_tile(sim)
+	var placed := sim.cmd_place_building("house", origin)
+	assert_true(bool(placed["ok"]), str(placed))
+	var sim_id := String((placed["payload"] as Dictionary)["sim_id"])
+	var mounted := _mount(sim)
+	var root: UIRoot = mounted["root"]
+	assert_ne(root.building_panel, null, "UIRoot finds S5 on the panel layer")
+	var panel: BuildingPanel = mounted["panel"]
+	panel.show_building(sim_id)
+	assert_eq(_panel_vital(panel, "occupants"), "0 of 4")
+	# Three game-hours: two of shell, then the settle that counts them.
+	sim.advance_hours(3.0)
+	root.refresh_building_panel()
+	assert_eq(_panel_vital(panel, "occupants"), "4",
+			"the panel the player is watching says they moved in")
+	# And a closed panel is not re-read at all.
+	panel.close()
+	root.refresh_building_panel()
+	assert_eq(panel.selected_id(), "")
+	_unmount(mounted)
+
+
+## The text of one vital tile as it is actually PAINTED — the `Value_<id>` label
+## `BuildingPanel._render_vitals` builds — and not the view model behind it,
+## because the test above is about what is on the screen the player is watching.
+static func _panel_vital(panel: BuildingPanel, id: String) -> String:
+	var label := panel.find_child("Value_" + id, true, false) as Label
+	return label.text if label != null else ""
+
+
 func test_building_panel_renders_the_checklist_and_gates_upgrade() -> void:
 	var sim := _sim()
 	sim.advance_hours(1.0)

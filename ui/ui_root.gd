@@ -192,6 +192,12 @@ var away_report: AwayReportSheet
 var build_sheet: BuildSheet
 var onboarding: OnboardingFlow
 var land_panel: LandPanel
+## S5. **Bound here only so it can be RE-READ on the shell's own cadence**
+## (Wave 24, D-100). `game/main.gd` still finds this node itself, owns its
+## `setup()` and owns every one of its signals — this reference calls exactly
+## one method, `refresh_building_panel()` below, and nothing else in this file
+## touches it.
+var building_panel: BuildingPanel
 var toast_view: ToastView
 ## S0. Present in every mount and **closed in every one of them** — only
 ## `present_title()` opens it, and only `game/main.gd` calls that.
@@ -348,6 +354,8 @@ func _bind_nodes() -> void:
 	build_sheet = safe_area.get_node_or_null("SheetLayer/BuildSheet") as BuildSheet
 	onboarding = safe_area.get_node_or_null("CoachLayer/Onboarding") as OnboardingFlow
 	land_panel = safe_area.get_node_or_null("PanelLayer/LandPanel") as LandPanel
+	building_panel = safe_area.get_node_or_null(
+			"PanelLayer/BuildingPanel") as BuildingPanel
 	title_screen = safe_area.get_node_or_null("TitleLayer/TitleScreen") as TitleScreen
 	loading_veil = safe_area.get_node_or_null("VeilLayer/LoadingVeil") as LoadingVeil
 	tilt_slider = safe_area.get_node_or_null("HUDLayer/TiltSlider") as TiltSlider
@@ -1936,6 +1944,24 @@ func close_land_panel() -> void:
 func refresh_land_panel() -> void:
 	if land_panel != null and land_panel.is_open():
 		land_panel.refresh()
+
+
+## **S5 was a still photograph** (Wave 24, doc 12 D-100). `BuildingPanel.refresh`
+## has documented itself since Wave 5 as the re-read *"after an upgrade, a tick,
+## or a construction completion"*, and outside the tests **nothing in the shipped
+## shell has ever called it**: an open panel showed whatever the city looked like
+## at the moment it was tapped, so its condition, its ETA and — the reason this
+## is being fixed now — its `Occupants 0 of 4` never moved while the player
+## watched the very thing they were waiting for.
+##
+## Exactly `refresh_land_panel`'s shape and exactly its cost: `refresh()`
+## returns immediately unless a building is selected AND the panel is open, and
+## `building_view()` is the same O(1) read the tap already paid for. On the
+## shell's 1 Hz cadence that is one dictionary a second while a panel is up and
+## nothing at all when it is down.
+func refresh_building_panel() -> void:
+	if building_panel != null and building_panel.is_open():
+		building_panel.refresh()
 
 
 func _on_land_purchased(result: Dictionary) -> void:
