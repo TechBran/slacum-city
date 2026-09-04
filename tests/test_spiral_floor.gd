@@ -466,10 +466,22 @@ func test_fire_coverage_lowers_the_ignition_rate() -> void:
 	var uncovered := _fire_rate_total(0.0)
 	var covered := _fire_rate_total(1.0)
 	assert_true(uncovered > 0.0, "the rig has something that can burn")
-	var slope := 0.4286
+	# The slope is READ, not retyped: a test that carried its own copy of a
+	# balance number would pass a wave that moved the number and changed nothing
+	# else. `data/incidents.json` is the authority (C-07's shape, one file over).
+	var catalog := IncidentCatalog.load_from_files()
+	var slope := catalog.factor("fire", "coverage_slope", 0.0)
+	assert_true(slope > 0.0, "the term is authored, not defaulted off")
 	assert_almost_eq(covered / uncovered, 1.0 - slope, 1e-6,
 			"full fire coverage cuts doc 06's ignition rate by crime's own"
-			+ " full-coverage reduction, 0.6 / 1.4")
+			+ " full-coverage reduction, police_slope / police_base = 0.6 / 1.4")
+
+	# …and the derivation itself, so a wave that re-fits crime's ladder and
+	# forgets fire's gets a failing assertion rather than a silent divergence.
+	var police_base := catalog.factor("crime", "police_base", 0.0)
+	var police_slope := catalog.factor("crime", "police_slope", 0.0)
+	assert_almost_eq(slope, police_slope / police_base, 5e-5,
+			"and the slope IS that reduction, not a number that resembles it")
 
 
 ## The fallback in [CityIncidentWorld._could_have_answered] — an empty `role`
