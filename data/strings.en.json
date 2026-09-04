@@ -39,6 +39,8 @@
 	"n_flood_deepening_title": "Streets are flooding",
 	"n_flood_started_body": "It is {depth} mm deep and still rising. Traffic there is crawling.",
 	"n_flood_started_title": "Standing water on low streets",
+	"n_building_condemned_body": "Nobody could answer it. The building is boarded up and needs a repair before it earns again.",
+	"n_building_condemned_title": "{building} was condemned by fire",
 	"n_incident_failed_body": "It peaked at tier {tier} before it burned out.",
 	"n_incident_failed_title": "{kind} got away from us",
 	"n_incident_resolved_body": "Crews cleared it in {minutes} minutes.",

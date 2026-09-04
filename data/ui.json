@@ -686,6 +686,18 @@
 				}
 			},
 			{
+				"_comment": "NEW, Wave 21 (doc 93 sec AS1, doc 12 D-94). The other half of a fire's terminal outcome. Under sec AS1 a city with no fire service gets its building CONDEMNED rather than destroyed, and until this row the feed could only ever say the harsher sentence -- `incident_failed`, `it burned out`, about a building that is still standing. It sits beside that row on purpose: same fire, same moment, different ending, and the player has to be able to tell which one they got, because one of them has a REPAIR button behind it (doc 12 D-94).",
+				"type": "building_condemned_by_fire",
+				"category": "incidents",
+				"notify_id": "building_condemned",
+				"state": "warning",
+				"key": "target",
+				"args": {
+					"building": "target",
+					"time": "@time"
+				}
+			},
+			{
 				"type": "road_collapsed",
 				"category": "incidents",
 				"notify_id": "road_collapsed",

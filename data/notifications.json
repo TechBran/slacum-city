@@ -107,6 +107,9 @@
 			"cooldown_minutes": 180, "deeplink": "incident/{ref}", "state": "normal"},
 		"incident_failed": {"class": "P1_critical", "severity": 4, "aggregate": false,
 			"cooldown_minutes": 120, "deeplink": "incident/{ref}", "state": "critical"},
+		"_building_condemned_comment": "NEW, Wave 21 (doc 93 sec AS1, doc 12 D-94). A fire a city had no fire service to answer leaves the building CONDEMNED rather than destroyed, and the feed had only ever been able to say the harsher sentence. P2 and not P1: the building is still standing and still earning a fifth of its tax, and the thing the player has to do about it -- buy the repair -- is not urgent in the way a fire in progress is. Aggregated, because a city with no department collects these several at a time and fifty separate lines would be the event storm doc 93 sec AS3 exists to end, one screen over.",
+		"building_condemned": {"class": "P2_important", "severity": 2, "aggregate": true,
+			"cooldown_minutes": 120, "deeplink": "building/{ref}", "state": "warning"},
 
 		"road_collapsed": {"class": "P2_important", "severity": 3, "aggregate": true,
 			"cooldown_minutes": 120, "deeplink": "overlay/traffic", "state": "critical"},

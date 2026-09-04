@@ -978,11 +978,32 @@ So the punishment for insolvency is a **decaying city**, never a locked one.
 
 ```
 grant = clamp( round( max( RELIEF_DAYS_OF_REVENUE × daily_gross_revenue,
-                           RELIEF_DAMAGE_FRACTION × outstanding_restore_cost ) ),
+                           max( 0, RELIEF_DAMAGE_FRACTION × outstanding_restore_cost
+                                   - relief_era_paid ) ) ),
                RELIEF_MIN (8,000), RELIEF_MAX (250,000) )
+
+relief_era_paid += grant          # reset by note_era, with the allowance
 ```
 
 The revenue term alone was measured on the city **after** the loss, so the worse the catastrophe the smaller the relief: a standard city of 251 ruins carrying a **$238,280** restore bill was offered **$8,000** — `RELIEF_MIN` — on every preset. `outstanding_restore_cost` is `CostCurves.restore_cost_building` summed over the city's actual ruins at its own `M_repair`, i.e. the identical call `cmd_restore_building` charges, so C-07 keeps one price and the grant can never disagree with the invoice. `RELIEF_DAMAGE_FRACTION = 0.35` is `DEFERRED_REPAY_FRACTION` adopted, not invented. **It is not farmable, and the argument is an inequality: 0.35 < 1**, so the grant never covers the bill it is measured against and wrecking your own stock always loses money; the bill also shrinks as it is spent, so relief decays back to the revenue term as the city recovers.
+
+> **THE INEQUALITY WAS TRUE PER GRANT AND FALSE PER ERA, and Wave 21 fixed it**
+> (doc 93 §AS4, measured in doc 92 §60.4). `relief_grants_per_era` is 3 on
+> standard, and **3 × 0.35 = 1.05**. The shipped build paid the 2026-09-03
+> player **$306,233 against a $296,438 restore bill — 1.033×** — and a unit
+> control driving three grants against a fixed bill returns **$311,259**, which
+> is 1.050× to the dollar. `Treasury.relief_era_paid` — dollars, persisted,
+> reset by `note_era` with the allowance it belongs to — subtracts what the era
+> has already handed over from the DAMAGE term, so an era's damage-side relief
+> sums to at most `RELIEF_DAMAGE_FRACTION × (the largest bill any grant in it
+> was measured against)`. **No new constant is authored**: the cap is the
+> fraction that was already here, applied to the era instead of to the grant.
+> The **revenue term stays outside it** — it is measured on what the city EARNS
+> rather than on what it lost, and netting it would punish a city for having
+> spent its last grant well — and so does `RELIEF_MIN`, which is the floor this
+> layer guarantees every grant. A save written before the cap carries no counter
+> and loads at 0, which is what a city that has taken no grant means.
+
 
 **An era is a CITY LEVEL** (Wave 19, doc 91 A91-D-103). `relief_grants_per_era` carried that word from this table's first draft and nothing in the project ever defined it, so `relief_grants_used` — incremented and persisted but reset by nothing — made the allowance a *lifetime* three. `Treasury.note_era(city_level)` resets it on the same transition that pays `LEVEL_UP_GRANT_BY_CITY_LEVEL`: already tracked, already persisted, monotone, and therefore unfarmable.
 
