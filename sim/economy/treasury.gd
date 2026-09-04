@@ -430,24 +430,30 @@ func defer(amount: int, category: StringName = &"misc", reason: String = "") -> 
 ## from below, outside both. `RELIEF_MIN × relief_grants_per_era` is
 ## $8,000 × 3 = $24,000 of relief an era pays whatever it is measured against, so
 ## every bill under ~$24,615 was out-paid and a $2,000 one drew **12.0×** itself.
-## The ERA CEILING in [maybe_grant_relief] is what closes it:
+## **THE FLOOR IS AN ERA'S GUARANTEE, NOT A GRANT'S.** That is the whole of §AV2,
+## and it is deliberately narrower than *"an era may never out-pay its bill"*:
 ##
-##     era_ceiling = max(revenue_term, outstanding_restore_cost)
-##     grant       = min(max(revenue_term, damage_term, RELIEF_MIN),
-##                       era_ceiling − relief_era_paid)
+##     payable = max(revenue_term, damage_term)
+##     if payable < RELIEF_MIN and relief_era_paid < RELIEF_MIN:
+##         payable = RELIEF_MIN          # the bottom rung, once per era
 ##
-## **State the guarantee exactly, because the loose form is what went wrong the
-## first time.** What is now true is *"an era's relief never exceeds the LARGER
-## of what the city earns in a day and a half and the restore bill it was
-## measured against"*. That is NOT the same sentence as *"an era never out-pays
-## its bill"*, and the difference is the case where the bill is the smaller of
-## the two: a city with no ruins and real revenue can still collect its revenue
-## term, which is the pre-Wave-19 ladder and is meant to. Wherever the DAMAGE
-## side is what is paying — which is every case §AP4's inequality was written
-## about and every disaster this ladder exists for — the ceiling IS the bill and
-## the era cannot out-pay it. The floor still lifts a single grant to
-## `RELIEF_MIN` whenever there is room for it, which is every case the floor was
-## written for.
+## **What it promises:** an era receives `RELIEF_MIN` at least once, and after
+## that a grant is worth what it is MEASURED on. So
+## `relief_grants_per_era` can no longer multiply the floor — $8,000 × 3 =
+## $24,000 an era becomes $8,000 — which is the defect.
+##
+## **What it does NOT promise, stated so nobody has to rediscover it:** a bill
+## smaller than `RELIEF_MIN` is still out-paid, once. A $2,000 bill draws $8,000
+## — **4.0×, down from 12.0×** — and doc 92 §62.5 publishes that residual rather
+## than claiming it away. The bottom rung is not negotiable: doc 03 §2.10 layer 5
+## guarantees it, and a city whose stock is all standing but dark has a $0 bill, a
+## $0 revenue term and every reason to need rescuing.
+##
+## **Two wider drafts were tried and the suite killed both** (see
+## [maybe_grant_relief]): a per-era ceiling of `max(revenue_term, bill)` takes the
+## bottom rung away from a city with nothing to measure, and it nets the revenue
+## term against past grants — which is the very thing the paragraph above says
+## must not happen, and which `tests/test_economy.gd`'s gate 18 guards.
 ##
 ## **The revenue term is deliberately outside the DAMAGE cap** — and inside the
 ## era ceiling, which is a different statement and not a retraction. `1.5 × daily
@@ -491,11 +497,33 @@ func maybe_grant_relief(hour: int, daily_gross_revenue: float,
 	# inside this one, which is not the same statement: a city that earns more
 	# gets a bigger ceiling, so recovering re-opens the room rather than closing
 	# it.
-	var era_ceiling := maxf(revenue_term, maxf(0.0, outstanding_restore_cost))
-	var era_room := maxf(0.0, era_ceiling - float(relief_era_paid))
-	var grant: int = clampi(
-			CostCurves.round_half_up(minf(maxf(maxf(revenue_term, damage_term),
-					float(_recovery.get("RELIEF_MIN", 0))), era_room)),
+	# **THE FLOOR IS AN ERA'S GUARANTEE, NOT A GRANT'S — and the scope of that
+	# sentence is the whole of §AV2.** `clampi(…, RELIEF_MIN, …)` lifted EVERY
+	# grant, so `RELIEF_MIN × relief_grants_per_era` = $8,000 × 3 = $24,000 an era
+	# paid whatever it was measured against: a $2,000 bill drew 12.0× itself.
+	#
+	# **TWO WIDER DRAFTS WERE TRIED AND THE SUITE KILLED BOTH, which is why this
+	# one is narrow.** A per-era CEILING of `max(revenue_term, bill)` does make an
+	# era's relief bounded by its bill — and it breaks two guarantees this file
+	# already had. `tests/test_relief_ladder.gd` says *"no revenue and no damage
+	# is RELIEF_MIN"*: a city whose stock is all standing but dark has a $0 bill
+	# and a $0 revenue term, and under that draft it collected NOTHING, which is a
+	# hole in the floor Waves 20 and 21 exist to close. And `tests/test_economy
+	# .gd`'s gate 18 says a city may collect its revenue term MORE THAN ONCE in an
+	# era — the docstring above says so in words ("a city that used its relief
+	# well gets nothing the next time it is in trouble … is the opposite of the
+	# ladder's purpose") — and netting the revenue term against `relief_era_paid`
+	# takes exactly that away.
+	#
+	# So only the FLOOR is charged to the era, and only when the floor is what
+	# would be paying. Nothing else moves: a grant the two terms can carry on
+	# their own is the number it always was.
+	var floor_amount := float(_recovery.get("RELIEF_MIN", 0))
+	var raw := maxf(revenue_term, damage_term)
+	var payable := raw
+	if raw < floor_amount and float(relief_era_paid) < floor_amount:
+		payable = floor_amount
+	var grant: int = clampi(CostCurves.round_half_up(payable),
 			0, int(_recovery.get("RELIEF_MAX", 0)))
 	# **A GRANT OF NOTHING IS NOT A GRANT.** The era's allowance is three real
 	# rescues, and an ask that prices to zero may not burn one of them — that

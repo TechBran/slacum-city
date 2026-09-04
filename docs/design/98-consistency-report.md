@@ -9415,30 +9415,36 @@ longer buy it for you. RR-195 is the ruling that the bulldoze has to lose.
 
 ### RR-193 — §AV2: `RELIEF_MIN` is inside the era ceiling (corrects `RR-185`; docs 03 §2.10, 92 §62.5, 93 §AV2)
 
-`Treasury.maybe_grant_relief` gains an era ceiling and the floor goes inside it:
+`Treasury.maybe_grant_relief` charges the FLOOR to the era, and only the floor:
 
-    era_ceiling = max(revenue_term, outstanding_restore_cost)
-    grant       = min(max(revenue_term, damage_term, RELIEF_MIN),
-                      era_ceiling − relief_era_paid)
+    payable = max(revenue_term, damage_term)
+    if payable < RELIEF_MIN and relief_era_paid < RELIEF_MIN:
+        payable = RELIEF_MIN          # the bottom rung, once per era
 
 §AS4 charged the two TERMS against the era and left `clampi(…, RELIEF_MIN, …)`
 outside both — and a floor is not a term, it does not shrink. So
 `RELIEF_MIN × relief_grants_per_era` = $8,000 × 3 = **$24,000 an era pays whatever
 it was measured against**, and a $2,000 bill drew **12.0× itself** while §AS4's
 heading claimed an era may never out-pay its bill. **The guarantee, stated
-exactly:** an era's relief never exceeds the LARGER of its revenue term and the
-restore bill it was measured against — so wherever the DAMAGE side is what is
-paying, which is every disaster case this ladder exists for, the ceiling IS the
-bill and the era cannot out-pay it. A city with no ruins still collects its
-revenue term, which is the pre-Wave-19 ladder and is meant to.
+exactly: an era receives `RELIEF_MIN` at least once, and after that a grant is
+worth what it is MEASURED on.** `relief_grants_per_era` can no longer multiply
+the floor, which is the defect. It does NOT promise that an era is bounded by its
+bill: $8,000 against $2,000 is 4.0×, down from 12.0×, and that residual is
+published (doc 92 §62.5) because doc 03 §2.10 layer 5's bottom rung is not
+negotiable — a city whose stock is all standing but dark has a $0 bill, a $0
+revenue term and every reason to need rescuing.
 
-The ceiling is the BILL, not `RELIEF_DAMAGE_FRACTION × bill`: the fraction is
-already the damage term's own per-era cap, and re-using it here would have taken
-$16,000 off the acceptance arm. Measured (doc 92 §62.5): the player's slot 0
-still collects **$114,727 in 3 grants, bit-identical to the fork**; the $2,000 rig
-falls from $24,000 to $2,000. An ask that prices to zero is not paid and does not
-spend one of the era's three rescues — it does stamp the cooldown, so the
-O(roster) bill walk cannot run every settled game-hour.
+Measured: the $2,000 rig falls **$24,000 → $8,000**; the player's slot 0 passive
+arm falls **$114,727 → $107,467** (its third grant priced at its own $740 revenue
+term instead of lifted to $8,000 for the third time) and its Restore-All arm
+**$114,727 → $114,668**, where the damage term is still what pays. **Two wider
+drafts were tried and the suite killed both** — a per-era ceiling of
+`max(revenue_term, bill)` takes the bottom rung from a city with nothing to
+measure (`tests/test_relief_ladder.gd`) and nets the revenue term against past
+grants (`tests/test_economy.gd` gate 18), which doc 03's own docstring forbids in
+words. An ask that prices to zero is not paid and does not spend one of the era's
+three rescues — it does stamp the cooldown, so the O(roster) bill walk cannot run
+every settled game-hour.
 
 ### RR-194 — §AV3: the water-works staffing follows the plant, not the graph (completes `RR-178`; docs 03 §2.4, 05 §2.6, 92 §62.4, 93 §AV3)
 

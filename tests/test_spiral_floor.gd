@@ -828,29 +828,43 @@ func test_relief_may_not_out_pay_the_bill_it_is_measured_against() -> void:
 			"and therefore never covers the bill it is measured against")
 
 
-## **AND THE SAME SENTENCE ON A SMALL BILL, WHICH IS WHERE IT WAS FALSE — doc 93
-## §AV2.** §AS4 capped the two terms and left `RELIEF_MIN` outside both, so an era
-## paid `$8,000 × relief_grants_per_era` however little it was measured against.
-## At the fork a $2,000 bill drew $24,000 — 12.0× — and the heading above claimed
-## it could not.
+## **THE FLOOR IS GUARANTEED ONCE PER ERA, NOT ONCE PER GRANT — doc 93 §AV2.**
+## §AS4 capped the two terms and left `RELIEF_MIN` outside both, so an era paid
+## `$8,000 × relief_grants_per_era` however little it was measured against: at
+## the fork a $2,000 bill drew **$24,000, 12.0×**.
+##
+## **This test asserts the narrow claim and NOT the wide one, and the difference
+## was found by the suite rather than by argument.** The first draft made the
+## ceiling `max(revenue_term, bill)` outright, which does make an era's relief
+## bounded by its bill — and `tests/test_relief_ladder.gd` failed, because a city
+## with no revenue AND no ruins then collected nothing at all. Doc 03 §2.10 layer
+## 5's bottom rung exists for that city. So the floor is kept, once, and the
+## residual is asserted here with its number rather than claimed away.
 func test_the_floor_may_not_multiply_an_era() -> void:
 	var treasury := _broke_treasury()
 	var bill := 2000.0
+	var floor_amount := treasury.recovery_value("RELIEF_MIN")
+	var grants_per_era := int(treasury.difficulty().get("relief_grants_per_era", 3))
 	var cooldown := int(treasury.recovery_value("RELIEF_COOLDOWN_HOURS"))
 	var paid := 0
 	var hour := 0
-	for _grant in int(treasury.difficulty().get("relief_grants_per_era", 3)) + 2:
+	for _grant in grants_per_era + 2:
 		paid += treasury.maybe_grant_relief(hour, 0.0, -1.0, bill)
 		treasury.balance = -treasury.credit_limit
 		hour += cooldown
-	assert_true(float(paid) <= bill,
-			"an era never out-pays the bill it is measured against (got $%d of"
-			% paid + " $%d)" % int(bill))
-	assert_true(paid > 0, "and a city with a small bill is still helped")
+	assert_almost_eq(float(paid), floor_amount, 1.0,
+			("an era pays the floor ONCE, not %d times — $%d, not $%d"
+					% [grants_per_era, paid, int(floor_amount)
+					* grants_per_era]))
+	# The residual, stated as an assertion so it cannot drift unmeasured: a bill
+	# below `RELIEF_MIN` is still out-paid, once, and that is the price of doc 03
+	# §2.10 layer 5's bottom rung.
+	assert_true(float(paid) > bill,
+			"a bill under the floor is still out-paid, once and only once")
 
 
-## …and the ask that prices to zero may not burn one of the era's three rescues.
-## The ceiling closes the money, not the ladder.
+## …and the ask that prices to zero may not burn one of the era's rescues. The
+## ceiling closes the money, not the ladder.
 func test_a_zero_priced_ask_does_not_spend_the_allowance() -> void:
 	var treasury := _broke_treasury()
 	var bill := 2000.0
@@ -869,6 +883,17 @@ func test_a_zero_priced_ask_does_not_spend_the_allowance() -> void:
 	treasury.balance = -treasury.credit_limit
 	assert_true(treasury.maybe_grant_relief(cooldown * 2, 40000.0, -1.0, bill) > 0,
 			"a city earning again is measured on what it earns")
+
+
+## The bottom rung itself, on the rig §AV2's first draft broke: no revenue, no
+## ruins, and `RELIEF_MIN` is still what the city gets. This is the assertion
+## `tests/test_relief_ladder.gd` already makes, restated inside the §AV2 block so
+## the ruling and its limit sit in one file.
+func test_a_city_with_nothing_to_measure_still_gets_the_bottom_rung() -> void:
+	var treasury := _broke_treasury()
+	assert_eq(treasury.maybe_grant_relief(0, 0.0, -1.0, 0.0),
+			int(treasury.recovery_value("RELIEF_MIN")),
+			"no revenue and no damage is RELIEF_MIN, exactly as before")
 
 
 ## The first grant is not made smaller by the cap: a city in the hole still gets

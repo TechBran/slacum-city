@@ -11216,10 +11216,11 @@ godot --headless --path <repo> -s res://tools/measure_player_city.gd -- \
 **Not regressed, and the Restore-All arm gains a building.** The gained building
 is a `CIVIC/substation` — doc 93 §AR1's utility spine — and the cause is §AV3's
 $11.00/gh buying the agent one more restore (52 ruins → 53). **A/B-isolated, not
-inferred:** re-running the same arm with `coverage_slope` at 0.0 returns 65 alive,
-53 restored and $114,869 of relief — every figure identical — so §AV4 is not the
-cause; §AV1 cannot be, because both the fork and this tree destroy ZERO buildings
-on this arm; and §AV2 pays the same three grants on the fork's own bill path.
+inferred:** re-running the same arm with `coverage_slope` at 0.0 returns **65
+alive, 53 restored and $114,668 of relief — every figure identical** — so §AV4 is
+not the cause; §AV1 cannot be, because both the fork and this tree destroy ZERO
+buildings on this arm; and §AV2 moves this arm's relief by $59 in 90 game-days,
+which does not buy a building.
 
 **The published Wave-21 figures were 71 / 68 / 68 and they do not reproduce at
 this fork; 64 / 64 / 64 is what the fork gives and it is what "do not regress"
@@ -11252,21 +11253,33 @@ ladder is $23,892 over 90 game-days against the $23,760 the arithmetic predicts
 
 | rig | fork | shipped |
 | --- | --- | --- |
-| the player's slot 0, bill $282,078 | $98,727 + $8,000 + $8,000 = **$114,727** in 3 grants | **$114,727 in 3 grants — bit-identical** |
-| `test_the_floor_may_not_multiply_an_era`, bill $2,000 | $8,000 × 3 = **$24,000 — 12.0× the bill** | **$2,000 — 1.0×** |
+| `test_the_floor_may_not_multiply_an_era`, bill $2,000, no revenue | $8,000 × 3 = **$24,000 — 12.0× the bill** | **$8,000 — 4.0×**, the floor paid once |
+| the player's slot 0, Restore-All (bill stays > $240,000) | $114,727 in 3 grants | **$114,668 in 3 grants** — the damage term is still what pays |
+| the player's slot 0, passive (bill $282,078, revenue ≈ $740/grant) | $98,727 + $8,000 + $8,000 = $114,727 | **$98,727 + $8,000 + $740 = $107,467** |
 
-**What the era ceiling guarantees, stated exactly:** an era's relief never
-exceeds the LARGER of its revenue term and the bill it was measured against. On
-the damage side — the side §AP4's inequality was written about, and the side both
-rows above are measured on — that ceiling IS the bill. A city with no ruins and
-real revenue still collects its revenue term, which is the pre-Wave-19 ladder and
-is not what the 12.0× was about.
+**What the ruling promises, stated exactly:** an era receives `RELIEF_MIN` at
+least once, and after that a grant is worth what it is MEASURED on. So
+`relief_grants_per_era` can no longer MULTIPLY the floor — which is the defect —
+and the third row above is the ruling biting on the real save: the passive arm's
+third grant is priced at its own $740 revenue term instead of being lifted to
+$8,000 for the third time.
 
-The disaster case does not move by a dollar, which is the point of taking the era
-ceiling as the BILL rather than as `RELIEF_DAMAGE_FRACTION × bill`: the fraction
-is already the damage term's own per-era cap, and re-using it here would have
-taken $16,000 off the arm the acceptance test is measured on. The small-bill case
-is the one that closes, and it closes to exactly the bill.
+**What it does NOT promise, and this is published rather than claimed away:** a
+bill under `RELIEF_MIN` is still out-paid once. $8,000 against $2,000 is **4.0×**,
+down from 12.0×, and that residual is the price of doc 03 §2.10 layer 5's bottom
+rung.
+
+**TWO WIDER DRAFTS WERE TRIED AND THE SUITE KILLED BOTH.** A per-era CEILING of
+`max(revenue_term, bill)` does bound an era by its bill — and it breaks two
+guarantees this ladder already had, neither of which was found by argument:
+`tests/test_relief_ladder.gd` says *"no revenue and no damage is RELIEF_MIN"*,
+and a city whose stock is all standing but dark has a $0 bill and a $0 revenue
+term, so under that draft it collected **nothing at all**; and
+`tests/test_economy.gd`'s gate 18 collects the revenue term TWICE in one era,
+which any ceiling charged against `relief_era_paid` takes away — the very thing
+doc 03's own docstring says must not happen. Both failures are in the record
+because the wide draft shipped as far as a full-suite run before they were
+caught; the narrow rule is what survived them.
 
 ### 62.6 §AV4 — is owning a fire department worth it?
 

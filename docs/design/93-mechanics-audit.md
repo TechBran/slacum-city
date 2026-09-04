@@ -5886,27 +5886,35 @@ so `RELIEF_MIN × relief_grants_per_era` = $8,000 × 3 = **$24,000 of relief an 
 pays whatever it was measured against**, and every bill under ~$24,615 was
 out-paid — a $2,000 bill drew 12.0× itself. §AS4's own heading says an era may
 never out-pay its bill, and the body disclosed the floor as an exception. **The
-arithmetic that closes it:**
+ruling, and it is one `if`:**
 
-    era_ceiling = max(revenue_term, outstanding_restore_cost)
-    grant       = min(max(revenue_term, damage_term, RELIEF_MIN),
-                      era_ceiling − relief_era_paid)
+    payable = max(revenue_term, damage_term)
+    if payable < RELIEF_MIN and relief_era_paid < RELIEF_MIN:
+        payable = RELIEF_MIN          # the bottom rung, once per era
 
-**State the guarantee exactly, because the loose form is what went wrong the
-first time.** What is now true is *"an era's relief never exceeds the LARGER of
-what the city earns in a day and a half and the restore bill it was measured
-against"* — not *"an era never out-pays its bill"*. The difference is the case
-where the bill is the smaller of the two: a city with no ruins and real revenue
-still collects its revenue term, which is the pre-Wave-19 ladder and is meant to.
-Wherever the DAMAGE side is what is paying — every case §AP4's inequality was
-written about, and every disaster this ladder exists for — the ceiling IS the
-bill and the era cannot out-pay it.
+**THE FLOOR IS AN ERA'S GUARANTEE, NOT A GRANT'S.** An era receives `RELIEF_MIN`
+at least once; after that a grant is worth what it is MEASURED on, so
+`relief_grants_per_era` can no longer multiply the floor. Doc 92 §62.5 measures
+it: the $2,000 rig falls from **$24,000 (12.0×) to $8,000 (4.0×)**, and on the
+player's own slot 0 the passive arm's third grant is priced at its own $740
+revenue term instead of being lifted to $8,000 for the third time —
+$114,727 → $107,467, while the Restore-All arm, where the damage term is still
+what pays, moves $114,727 → $114,668.
 
-The ceiling is the BILL and not `RELIEF_DAMAGE_FRACTION × bill`, because the
-fraction is already the damage term's own per-era cap and re-using it here would
-cut the disaster case this ladder exists for. Doc 92 §62.5 measures both ends: on
-the player's slot 0 the era still pays **$98,727 + $8,000 + $8,000 = $114,727,
-bit-identical to the fork**, and the $2,000 rig falls from $24,000 to $2,000.
+**What it does not promise, published rather than claimed away:** a bill under
+`RELIEF_MIN` is still out-paid once. That is the price of doc 03 §2.10 layer 5's
+bottom rung, and the bottom rung is not negotiable.
+
+**TWO WIDER DRAFTS WERE TRIED AND THE SUITE KILLED BOTH, which is the reason
+this ruling is narrow.** A per-era CEILING of `max(revenue_term, bill)` does
+bound an era by its bill, and it breaks two guarantees the ladder already had:
+`tests/test_relief_ladder.gd` says *"no revenue and no damage is RELIEF_MIN"* —
+a city whose stock is all standing but dark has a $0 bill and a $0 revenue term
+and collected **nothing** under that draft, a hole in the floor Waves 20 and 21
+exist to close — and `tests/test_economy.gd`'s gate 18 collects the revenue term
+TWICE in one era, which any ceiling charged against `relief_era_paid` removes.
+Neither was found by argument. Both were found by the suite, after the wide draft
+had already been written up as correct.
 
 An ask that prices to zero is not paid and does not spend one of the era's three
 rescues; it does stamp the cooldown, because `outstanding_restore_cost` is an
