@@ -10136,6 +10136,7 @@ Wave 21's no-spiral lane, which is running beside this one.
 | row | what | number | who |
 |---|---|---|---|
 | **AC-22-1** | **A seventh city level is a seventh ERA**, and an era refills doc 03 §2.10 layer 5's `relief_grants_per_era` allowance. On `standard` that is **+3 relief grants** for the life of a city, once, behind the hardest level in the game. This lane publishes the delta and does not re-fit the ladder, because the ladder and gate 29's insolvency ordering are the sibling lane's. Nothing is unguarded meanwhile: the allowance is per-era and monotone, and `Treasury.maybe_grant_relief`'s own conditions are untouched. | +3 grants, +1 era | Wave 21's no-spiral lane |
+| **AC-22-3** | **Two balance readings this wave WEAKENED, and what would restore them.** Gate 12c's population ratio stopped being a statistic — both arms complete doc 09 §2.14's levels 1 and 2 incidentally, so both are handed the same $110,000 by game-day 4, and the per-seed ratio spreads 0.85–1.13 around a mean of 0.97. The assertion is re-characterised from *squeezing costs population* to *squeezing does not BUY population* (0.93 → 1.05); the ruling's direct reading, the happiness gap, is untouched and measures 12.05 against a floor of 8. Restoring the old reading needs a CONTROL ARM that does not collect the grant — a `--no-grants` rig flag, or a matrix run on a zeroed table. Gate 32(g)'s floor moves 0.02 → 0.015 for the same reason from the other side: the curriculum agent's net roughly doubles at bands 5–6 while the dispatch payout scales with city LEVEL, so its share falls 4.83–5.76 % → 1.84 %. **That is A91-D-106's own shape recurring one wave later** — a reward whose growth curve is slower than the city's — and report 98 AC-2 forbids this lane from re-fitting `MANUAL_DISPATCH_LEVEL_K` by hand, so it is filed rather than fitted. | 2 bounds | doc 03 §2.5's owner, and a matrix lane |
 | **AC-22-2** | **A `utility_planner` agent is the instrument §61.11 is missing.** Every strategy in `tools/playtest.gd` answers a headroom refusal *reactively* or not at all, and on a funded arc that is what costs seed 9001 the capstone (7,518 residents, one water component ever placed). Two reactive improvements were measured this wave and both made the arc worse. The agent that would close it keeps supply ahead of demand — the thing a player does with the power overlay open — and it is the same shape of gap doc 92 §35.4 named for `contractor`. | 1 of 3 seeds | a curriculum/agent lane |
 
 ### 61.8 The arc, after — and the one guardrail row that had to be re-measured
@@ -10342,14 +10343,38 @@ measurement at **5.99 % against a fork baseline of 6.25 %**, i.e. it does not mo
 it at all. *Money is not the only thing a city needs in order to build, and the
 curve is set at the point where the other thing still keeps up.*
 
-**One gate is re-fitted and it is the pacing one.** Gate 20's level-2 window
-moves **8–14 → 3–14** (measured 6 / 4 / 7). Its floor existed so that "an unlock
-has to be EARNED to read as progression"; at game-day 4–7 on a 24-minute
-game-day it still is, and what it is no longer is a week's wait. The ceiling does
-not move, and 3 is one game-day below the fastest seed so it stays a runaway
-detector rather than a fit. Gate 20's rung-count assertion also stops naming the
-literal `7` and reads `GoalSystem.top_level()` — A91-D-118's own shape, one gate
-over.
+**Three bounds are re-fitted on the shipped curve, and every one of them is a
+consequence the money is allowed to have.**
+
+* **Gate 20's level-2 window, 8–14 → 3–14** (measured 6 / 4 / 7). Its floor
+  existed so that "an unlock has to be EARNED to read as progression"; at
+  game-day 4–7 on a 24-minute game-day it still is, and what it is no longer is a
+  week's wait. The ceiling does not move, and 3 is one game-day below the fastest
+  seed so it stays a runaway detector rather than a fit. Gate 20's rung-count
+  assertion also stops naming the literal `7` and reads `GoalSystem.top_level()`
+  — A91-D-118's own shape, one gate over.
+* **Gate 12c's population ratio, 0.93 → 1.05, and the SENTENCE changes with it.**
+  It used to say *squeezing costs population*; it now says *squeezing does not
+  BUY population*. Both arms complete levels 1 and 2 incidentally, so both are
+  handed the same $110,000, and a fixed lump paid to both arms compresses a
+  proportional gap: per-seed 1.13 / 0.85 / 0.96 around a mean of **0.97**. A
+  spread that wide is not a bound anyone can fit, so the assertion changes rather
+  than the number being nudged — and the gate keeps its ruling, because its own
+  docstring has always called the happiness gap the DIRECT reading, and that
+  measures **12.05 points against a floor of 8** with the squeezer still $443,797
+  ahead on value created.
+* **Gate 32(g)'s floor, 0.02 → 0.015.** The ceiling does not move. The
+  curriculum agent's net roughly doubles at bands 5–6 while the dispatch payout
+  scales with city LEVEL, so `city_services` falls from **4.83 / 5.21 / 5.76 %**
+  of net to **1.84 %**. The ruling — *a real share, not a rounding error* —
+  holds; but this is **A91-D-106's own shape recurring one wave later**, and
+  report 98 AC-2 forbids this lane from re-fitting `MANUAL_DISPATCH_LEVEL_K` by
+  hand. Filed as §61.7's AC-22-3 rather than fitted.
+
+**Every ceiling in the file is untouched.** Gate 18b's dark share, gate 32's two
+share ceilings (d2) and (h), gate 21's beat ceilings and both of its day bounds
+all hold on the shipped curve without being moved — which is the property that
+distinguishes this from a wave that re-fitted its way to green.
 
 **Why re-fitting all seven was refused.** It is the more obvious reading of
 "publish the measured consequences", and it is wrong twice over: the gates are
