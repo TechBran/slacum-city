@@ -8921,6 +8921,12 @@ the causes; this lane is the other half — what the game hands you on the way u
 *Files: `ui/ui_root.gd`, `ui/goals_model.gd`, `data/ui.json`, `data/strings.en.json`, `tools/ui_preview.gd`, doc 12 §2.19 D-95 / D-96*
 
 
+### RR-191 — the grant is paid for the LESSON, not for the level (docs 03 §2.5a, 92 §61.12, 93 §AU6)
+
+**`CitySim._pay_level_up_grant` moves off `city_level_changed` and onto `city_level_objectives_met`.** Doc 03 §2.5a's celebration grant is now paid for completing doc 09 §2.14's objectives for a rung, not for crossing the city level; doc 93 §G1's `max()` composition is UNTOUCHED and `Treasury.note_era` still fires on the composed transition (§AP4's era is a permission, and a permission may not depend on how the level was reached). **The reason is measured and it is RR-187's own scale.** At $2,500 a rung, paying on the composed level was a nicety. At $215,000 it hands every scripted agent in doc 92's balance matrix — `do_nothing`, `balanced`, `tax_squeezer`, `infrastructure_first`, none of which can read a goals sheet — the curriculum's money, and it moves **seven** balance gates: 4b (upkeep 3.0 % of net), 12 / 12b / 12c (max tax stops costing anything), 16 and **18b (32.59 % of building-time dark against a ruled 20 %)**, 20 (`balanced` reaches level 2 on game-day 4 against a ruled window of 8–14) and 33 (the Director stalls on game-day 25.2 of 60). Gate 18b is the one that settles it: *the money must not break the game it is meant to open up*, and on the composed level it broke the rule that a city has to be able to power what it builds. **With the move, not one matrix gate needs re-fitting** — the only balance gates this wave touches are 21 (the curriculum arc, this lane's to re-fit) and 20's rung-count assertion, which now reads `GoalSystem.top_level()` instead of the literal `7` that A91-D-118 is about. One-shot-per-rung survives the move structurally: `GoalSystem.earned_level` is monotone, `done` is sticky, `_settle` emits one event per rung, and `bootstrap` drains its own queue — which is what stops a migrated level-6 city being handed $1,605,000 on load.
+
+*Files: `sim/city_sim.gd`, `tests/test_city_services.gd`, `tests/test_balance_gates.gd`, doc 03 §2.5a, doc 93 §AU6*
+
 ### 64.1 Every `city_level` consumer, walked (RR-189)
 
 A level the ladder can reach that no data row describes is this project's
@@ -8952,8 +8958,46 @@ that MAP a level to something, and every one was checked against 7:
   therefore three more relief grants per city — is published in doc 92 §61.7 as
   a filed row, not fixed.
 * **The relief ladder itself** (doc 03 §2.10 layer 5). Same owner.
-* **The balance matrix's control agents.** `do_nothing`, `balanced`,
-  `tax_squeezer` and `infrastructure_first` never reach a curriculum objective,
-  and the grant is paid on the composed level, which for them is the population
-  ladder they were always on. What DOES move them is that a level-7 rung now
-  exists to be crossed — see doc 92 §61.8 for which matrix cells that reaches.
+* **The balance matrix, and not one of its gates.** `do_nothing`, `balanced`,
+  `tax_squeezer` and `infrastructure_first` never complete a curriculum
+  objective, and since RR-191 the grant is paid for completing one — so every
+  control agent in doc 92's matrix earns exactly what it earned at the fork. The
+  seventh ladder rung does not reach them either: nothing measured in this
+  repository has ever crossed 18,000 residents on a played city, let alone
+  40,500. **The only balance gates this wave touches are 21** (the curriculum
+  arc, this lane's to re-fit, doc 92 §61.11) **and 20's rung-count assertion**,
+  which stops naming a literal. Doc 92 §61.12 has the seven-gate table the
+  composed-level routing produced, which is the measurement that sent RR-191
+  looking for a different payment site rather than for seven re-fits.
+
+### 64.3 The four `profile_sim --hash-only` baselines
+
+| digest | at the fork (`ef08351`) | as shipped |
+|---|---|---|
+| starter, coarse 24 h | `84e2f9fa91a8bf78…` | **unchanged** |
+| starter, fine 2.0 h | `ae602e79a039a27a…` | **unchanged** |
+| bench, coarse 24 h | `3ad4e5b59af210b5…` | `dfe20abe47801e5c…` |
+| bench, fine 2.0 h | `d5e8192c392b0f2a…` | `2677b9af350c1e00…` |
+
+**The starter pair does not move, and the reason is the shape of the change.** A
+founding city is level 0 and crosses no rung inside 24 coarse hours or 2 fine
+ones, so neither the grant table nor the payment site nor the seventh ladder rung
+can reach it. Both digests are byte-identical to the fork's.
+
+**The bench pair moves, and the cause is EXACTLY ONE THING, isolated by
+ablation.** `tests/fixtures/bench_city.json` is 1,500 buildings and 35,411
+residents, so it boots straight to city level 6 — and at the fork that paid it
+**$135,000** of celebration grants for a curriculum it has never touched. Under
+RR-191 it is paid nothing. Two arms, each one command:
+
+* **new payment site + the OLD grant table** → `dfe20abe…` / `2677b9af…`,
+  *identical to the shipped digests*. The table is invisible to this fixture now.
+* **old payment site + the NEW grant table** → `3ad4e5b5…` / `d5e8192c…`,
+  *identical to the FORK digests*, because the fixture's own boot-time grant is
+  the only thing either digest ever saw of this system.
+
+So the whole delta is RR-191 and none of it is RR-187, RR-188 or RR-189: a data
+table that pays nobody on this fixture cannot move its hash, and neither can a
+curriculum row nor a ladder rung the fixture never reaches. **It is also the
+clearest statement of why the old routing was wrong** — the profiling fixture was
+being handed the curriculum's money.

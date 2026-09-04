@@ -274,13 +274,17 @@ func test_a_level_up_grant_is_paid_once_per_rung() -> void:
 			+ "`grant_level` clamps to it, so a curriculum rung above it could "
 			+ "be earned in `GoalSystem` and never paid")
 
+	# **The runtime half, on the CURRICULUM's transition** (Wave 22, ruling
+	# 93 §AU6). The grant used to be paid from `publish_progression` on
+	# `city_level_changed`; it is now paid when doc 09 §2.14's objectives for a
+	# rung are met, because a grant is payment for a lesson and the population
+	# backstop teaches none.
 	var sim := CitySim.boot_from_files(SEED)
 	var before := sim.treasury.balance
 	var paid: Array[int] = []
 	sim.bus.drain()
-	# One move that crosses TWO rungs: both are paid, because doc 93 §G1's
-	# `max()` can jump a level and a rung that was earned must not be skipped.
-	sim.publish_progression([{"type": "city_level_changed", "from": 0, "to": 2}])
+	sim._pay_level_up_grant(1)
+	sim._pay_level_up_grant(2)
 	for event_variant in sim.bus.drain():
 		var event: Dictionary = event_variant
 		if String(event.get("type", "")) == "level_up_grant_paid":
@@ -288,11 +292,18 @@ func test_a_level_up_grant_is_paid_once_per_rung() -> void:
 	assert_eq(paid, [215000, 235000] as Array[int], "both rungs, in order")
 	assert_eq(sim.treasury.balance, before + 450000)
 
-	# And a rung is never sold twice — `city_level` is monotone, so a repeat
-	# event for ground already covered pays nothing.
+	# **The population route pays NOTHING**, which is the whole of the Wave-22
+	# change and the reason doc 92's balance matrix does not move: every scripted
+	# agent in it climbs this ladder and none of them can read a goals sheet.
 	var after := sim.treasury.balance
-	sim.publish_progression([{"type": "city_level_changed", "from": 2, "to": 2}])
-	assert_eq(sim.treasury.balance, after, "a rung already crossed pays nothing")
+	sim.publish_progression([{"type": "city_level_changed", "from": 0, "to": 3}])
+	assert_eq(sim.treasury.balance, after,
+			"a city level crossed on the population ladder pays no celebration "
+			+ "grant — the level is a permission, the grant is a lesson's fee")
+	# …and it still opens an ERA, because an era IS a city level (doc 93 §AP4)
+	# and a permission may not depend on how the level was reached.
+	assert_eq(sim.treasury.relief_era_level, 3,
+			"the era still opens on the composed level")
 
 
 # ============== 50 the dispatcher's premium grows with the city (Wave 19)

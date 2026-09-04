@@ -5165,3 +5165,72 @@ That is published as a delta and not fixed here. It is bounded — +1 era, once,
 the top of the ladder, behind the hardest level in the game, monotone and
 therefore unfarmable — and the ladder it touches belongs to Wave 21's no-spiral
 lane, running beside this one. Doc 92 §61.7 carries the row.
+
+### AU6. The grant is paid for the LESSON, not for the level — §G1 amended, narrowly
+
+**Q.** Doc 93 §G1 composes the two routes up doc 09 §2.11's ladder with `max()`,
+and doc 03 §2.5a has always paid its celebration grant on that composed level, so
+that *"neither route to a rung is worth more than the other."* At $2,500 a rung
+that was uncontroversial. At $215,000 it hands every scripted agent in doc 92's
+balance matrix — none of which can read a goals sheet — the curriculum's money.
+Is the composition wrong, or is the payment site wrong?
+
+**RULING: the composition is right and the PAYMENT SITE is wrong. §G1 is
+untouched; doc 03 §2.5a's grant moves to `city_level_objectives_met`.**
+
+**The distinction §G1 was making, restated.** A LEVEL is a *permission* — what
+you may build, what land you may buy, how far a building may be upgraded, how
+many relief grants an era allows. A permission must not depend on how you got
+there, or the game is quietly telling a player who plays well without the sheet
+that they played wrong. That argument is sound and this ruling does not touch it:
+`city_level` is still `max(population_ladder, objectives_earned)`, and
+`Treasury.note_era` still fires on the composed transition for exactly the same
+reason (§AP4's era is a permission to ask for help).
+
+**A celebration grant is not a permission.** It is payment for a lesson
+completed, and the population backstop completes no lessons — it is a threshold
+that arrives while you play. Reading §G1's sentence onto the grant was a category
+error that cost nothing while the number was small.
+
+**And the cost, once the number is not small, is measured** (doc 92 §61.12).
+Paying on the composed level moves **seven** balance gates, on agents that have
+never touched a curriculum objective:
+
+| gate | what it says | on the composed level |
+|---|---|---|
+| 4b | upkeep is a line item, not a chore | 3.0 % of net against a floor — a rich city's maintenance is noise |
+| 12 / 12b / 12c | max tax has to COST a city | all three fail: with a lump this size the slider stops mattering |
+| 16 / 18b | a city may not outrun its own power | **32.59 %** of building-time dark over 50 game-days against a ruled 20 % |
+| 20 | `balanced` reaches level 2 in game-days 8–14 | game-day **4** |
+| 33 | the Director does not stall | last event on game-day 25.2 of 60 |
+
+Gate 18b is the one that settles it. *The money must not break the game it is
+meant to open up*, and on the composed level it breaks the rule that a city has
+to be able to power what it builds — on the DEFAULT agent, for a reward the
+player asked to be given for finishing tutorial levels.
+
+**What a player who ignores the sheet still gets is the LEVEL**: every unlock,
+every ring of land, every upgrade tier, every relief era, exactly as before. What
+they do not get is the money for a lesson they did not take. The sheet is one
+chip away on the top bar, the chip names the rung and the fraction, and doc 12
+§2.19's reward card now prints the figure they are declining.
+
+**Two properties the move had to preserve, and both do.**
+
+1. **A rung is still paid exactly once per city.** `GoalSystem.earned_level` is
+   monotone, `done` is sticky, and `_settle` emits exactly one
+   `city_level_objectives_met` per rung it promotes through.
+2. **A restore pays nothing.** `bootstrap` completes every level at or below the
+   city's own and then *drains its own event queue* (doc 09 §2.14.4 point 3) —
+   which is what stops a migrated level-6 city being handed $1,605,000 for work
+   it did last week. That drain was written for a different reason (four
+   level-up toasts on a returning player) and it turns out to have been load
+   bearing for this one too.
+
+**The alternative that was rejected: re-fit the seven gates.** It is the more
+obvious reading of "publish the measured consequences", and it is wrong here for
+two reasons. The gates are not noise — 32.59 % dark is a worse game, not a
+different one. And re-fitting them would have written the category error into
+seven more places, so that the next wave to look at the matrix would find a
+balance built around scripted agents being paid for a curriculum they cannot
+read.

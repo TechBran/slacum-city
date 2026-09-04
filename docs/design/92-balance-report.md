@@ -10247,3 +10247,95 @@ Three things keep this honest rather than convenient:
   agent — one that keeps headroom ahead of demand rather than answering refusals
   — is the instrument this measurement is missing, and it is the same gap doc 92
   §35.4 named for `contractor`, one layer over.
+
+### 61.12 The seven gates the money broke, and the one line that unbroke them
+
+**This is the measurement the lane nearly missed, and it is the reason doc 03
+§2.5a's grant is now paid on a different event.**
+
+Doc 93 §G1 composes the two routes up doc 09 §2.11's ladder with `max()`, and
+until this wave the grant was paid on that composed level, so *"neither route to
+a rung is worth more than the other."* Every scripted agent in this document's
+balance matrix climbs the POPULATION route. At $2,500 a rung that was worth
+$135,000 to a `balanced` agent over a whole run and nothing to anybody's
+conclusions. At $215,000 a rung it is $1,605,000, and it was measured on the
+first full gate pass after the re-scale:
+
+| gate | what it asserts | on the composed level, with the new table |
+|---|---|---|
+| 4b | maintenance is a line item, not a chore | upkeep **3.0 %** of net over 21 game-days, against Wave 17's measured 4.4 % — a rich city's maintenance is noise |
+| 12 | the top tax detent has to COST a city | fails: *"the top detent still earns more money"* |
+| 12b | tax-squeezing trails on population and the money half is still worth taking | fails: $491,189 against $440,166 |
+| 12c | the slider is not a free lunch for a real agent | fails: $2,542,584 of value against $2,919,632 |
+| 16 | the online/offline dark edge is pinned | fails: online 0.3428, offline 0.3428 |
+| **18b** | **a city may not outrun its own power** | **32.59 % of building-time dark over 50 game-days, against a ruled 20 %** |
+| 20 | `balanced` reaches city level 2 in game-days 8–14 | game-day **4** |
+| 33 | the Director does not stall | last event on game-day 25.2 of a 60-day run |
+
+**Gate 18b is the one that settles it.** The brief for this lane says *the money
+must not break the game it is meant to open up*, and on the composed level it
+breaks the rule that a city has to be able to power what it builds — on the
+DEFAULT agent, for a reward the player asked to be given for finishing tutorial
+levels. Handing a `balanced` agent $215,000 at game-day 2 does not make it a
+better player; it makes it a faster builder than its own grid.
+
+**The fix is one line and it is a ruling, not a retune** (doc 93 §AU6, report 98
+§64 RR-191). `CitySim` pays the grant on `city_level_objectives_met` — the
+curriculum's own transition — instead of on `city_level_changed`. §G1's
+composition is untouched, and `Treasury.note_era` still fires on the composed
+level because §AP4's era is a permission and a permission may not depend on how
+the level was reached. **A level is a permission; a grant is payment for a
+lesson; the population backstop teaches none.**
+
+With the move, **every one of the eight rows above returns to its fork value**,
+because none of those agents completes a curriculum objective. The only balance
+gates this wave touches are 21 — this lane's, re-fitted in §61.11 — and gate 20's
+rung-count assertion, which stops naming the literal `7` (A91-D-118's own shape)
+and reads `GoalSystem.top_level()` instead.
+
+**Why re-fitting the seven was refused.** It is the more obvious reading of
+"publish the measured consequences", and it is wrong twice over: the gates are
+not noise (32.59 % dark is a worse game, not a different one), and a re-fit would
+have written the category error into seven more places, so that the next wave to
+open the matrix would find a balance built around scripted agents being paid for
+a curriculum they cannot read.
+
+### 61.13 The four `profile_sim --hash-only` baselines
+
+| digest | at the fork (`ef08351`) | as shipped |
+|---|---|---|
+| starter, coarse 24 h | `84e2f9fa91a8bf78afb05d4aacc0e9fe921af15bacb44bb201f661ce8926e092` | **unchanged** |
+| starter, fine 2.0 h | `ae602e79a039a27aca622360e24fb36dee05de1aebd3b7ff4f92db83de49f480` | **unchanged** |
+| bench, coarse 24 h | `3ad4e5b59af210b55545da429f70511b42df98ca4812ad7f1bbc583e20b9225c` | `dfe20abe47801e5c9b727b34de204ed270966f0ee3e3221a4cd96bb74e809e37` |
+| bench, fine 2.0 h | `d5e8192c392b0f2a0d68ff44d8a6da81e21faf98d6a81337a8947815975db185` | `2677b9af350c1e00b887556d9b51d896ce217f2923bae6e461bc15ae69218440` |
+
+**The starter pair does not move**, and the shape of the change says why: a
+founding city is level 0 and crosses no rung inside 24 coarse hours or 2 fine
+ones, so neither the grant table, nor the payment site, nor the seventh ladder
+rung, nor the new `archetype` field on `upgrade_started_sim` (which is an event
+payload and not state) can reach it. Both digests are byte-identical.
+
+**The bench pair moves, and the cause is exactly one thing — isolated by
+ablation, not inferred.** `tests/fixtures/bench_city.json` is 1,500 buildings and
+35,411 residents, so it boots straight to city level 6, and at the fork that paid
+it **$135,000** of celebration grants for a curriculum it has never touched.
+Under §61.12's ruling it is paid nothing, and the treasury it starts its 24
+profiled hours with is $135,000 lower. Two arms, each one command:
+
+```
+# arm 1 — the new payment site, the OLD grant table
+sed -i 's/\[0, 215000, .*, 5000000\]/[0, 2500, 7000, 9000, 22500, 29000, 65000, 5000000]/' data/economy.json
+profile_sim --hash-only --city=…/bench_city.json     -> dfe20abe… / 2677b9af…   (= SHIPPED)
+
+# arm 2 — the old payment site, the NEW grant table
+git stash sim/city_sim.gd  # (the payment-site hunk only)
+profile_sim --hash-only --city=…/bench_city.json     -> 3ad4e5b5… / d5e8192c…   (= FORK)
+```
+
+Arm 1 says the TABLE is invisible to this fixture now; arm 2 says the table was
+the whole of the fork's reading. **So the entire delta is RR-191's payment site
+and none of it is RR-187's table, RR-188's curriculum row or RR-189's ladder
+rung** — a data table that pays nobody on this fixture cannot move its hash, and
+neither can a curriculum row nor a ladder rung the fixture never reaches. It is
+also the plainest available statement of why the old routing was wrong: the
+profiling fixture was being handed the curriculum's money.

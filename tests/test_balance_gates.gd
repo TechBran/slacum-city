@@ -1707,12 +1707,25 @@ func test_gate_19_ambient_incidents_are_a_weekly_beat() -> void:
 ## game-day **11**.
 func test_gate_20_the_city_level_ladder_is_reachable() -> void:
 	var ladder := ProgressionSystem.city_level_pop()
-	# **RE-FITTED, Wave 10 (doc 92 §24.6).** Six rungs became seven. The rung
-	# is an APPEND — 18,000 above 8,000 — placed by §19.2's own 2.25× recipe
-	# one step further, and nothing below it moved. The count is asserted
-	# rather than bounded because a ladder that grows by accident is exactly
-	# the kind of change this gate exists to catch.
-	assert_eq(ladder.size(), 7, "doc 09 §2.11: seven rungs, 0–6")
+	# **RE-FITTED, Wave 10 (doc 92 §24.6) and again Wave 22 (doc 92 §61).** Six
+	# rungs became seven and seven became eight. Both are APPENDS — 18,000 above
+	# 8,000, then 40,500 above 18,000 — placed by §19.2's own 2.25× recipe one
+	# step further each time, and nothing below either one moved.
+	#
+	# **The count is now asserted against the CURRICULUM rather than against a
+	# literal**, and that is Wave 22's correction rather than a convenience: the
+	# literal `7` was the shape A91-D-118 is about. `grant_level` clamps to this
+	# ladder's height, so a curriculum with more rows than the ladder has rungs
+	# earns a level that is never granted, never celebrated and never paid — an
+	# entirely silent failure. Tying the two together here is the assertion that
+	# would have caught it, and it still catches a ladder that grows by accident,
+	# because a ladder growing without a curriculum row fails just as loudly.
+	assert_eq(ladder.size(), GoalSystem.top_level() + 1,
+			("doc 09 §2.11: one rung per curriculum level plus the founding "
+					+ "level. The ladder has %d rungs and the curriculum has %d "
+					+ "levels; `grant_level` clamps to the ladder, so the "
+					+ "difference is a level that can be earned and never paid")
+					% [ladder.size(), GoalSystem.top_level()])
 	assert_eq(ladder[0], 0, "the founding city is level 0 by construction")
 	for i in range(1, ladder.size()):
 		assert_true(ladder[i] > ladder[i - 1],
