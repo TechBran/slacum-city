@@ -8988,7 +8988,12 @@ contributes $0 of `potential`, which is what doc 03 §2.10 layer 1's revenue flo
 is measured on), no traffic. `station_upkeep` is STAFFING and a ruin has no
 staff. `station_rows()` is `FleetSystem.populate_from_stations`'s only source, so
 a ruined station there also gave doc 06 a garage that does not exist and doc 03
-an `E_fleet` line for it.
+an `E_fleet` line for it — **closed for the BOOT path only**, because
+`FleetSystem.deserialize` rebuilds the roster from the save and `sync_station`
+never fires on a destruction, so a station lost mid-run keeps its engines and
+slot 0 still pays $91.58/gh for four ruined shells after 45 game-days. Recorded
+as A91-D-111's open remainder rather than claimed: retiring a unit on destruction
+means retiring one that may be dispatched, en route or on scene.
 
 **Losing a building still hurts.** The lot is dead capital until it is restored —
 no tax, no coverage, no power, no water, and `restore_cost_building` to bring it

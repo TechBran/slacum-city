@@ -5237,6 +5237,16 @@ traffic. `station_upkeep` is STAFFING, and a destroyed station has no staff.
 ruined station listed there also gave doc 06 a garage that does not exist and doc
 03 an `E_fleet` line to bill for it.
 
+**The fleet half is closed for the BOOT path only, and the remainder is
+recorded rather than claimed.** `populate_from_stations` runs once, before any
+restore; `FleetSystem.deserialize` then clears the roster and rebuilds it from
+the save, and `sync_station` fires on a building's COMPLETION and never on its
+destruction. So a station destroyed while the city runs keeps its engines, and
+the player's slot 0 still pays `E_fleet` $91.58/gh against four ruined shells
+after 45 game-days. Retiring a unit on destruction means retiring one that may be
+dispatched, en route or on scene — doc 06's ladder, not this guard's. Doc 91
+A91-D-111 carries it as that row's open remainder.
+
 **What still costs money, so that losing a building still hurts.** The lot is
 dead capital until it is restored: no tax, no coverage, no power, no water, and
 `CostCurves.restore_cost_building` to bring it back. `E_roads_repair` still bills

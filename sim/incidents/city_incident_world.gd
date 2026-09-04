@@ -83,11 +83,21 @@ func station_rows() -> Array:
 		# `FleetSystem.populate_from_stations` is this method's only caller, so
 		# a destroyed station listed here gives doc 06 a garage that does not
 		# exist and gives doc 03 `E_fleet` + `E_fuel_vehicle` to bill for it.
-		# Measured on the player's slot 0 (doc 92 §58.2): four ruined stations,
-		# $91.58–$180.00 of fleet upkeep per game-hour, on a city whose gross was
-		# $124.90. Coverage already reads this correctly — `_rebuild_coverage`
-		# multiplies by `Building.coverage_mult()`, which is 0.0 for `destroyed`
-		# — so this is the one reader that still believed in them.
+		# Coverage already reads this correctly — `_rebuild_coverage` multiplies
+		# by `Building.coverage_mult()`, which is 0.0 for `destroyed` — so this
+		# is the one reader that still believed in them.
+		#
+		# **THIS CLOSES THE BOOT PATH AND ONLY THE BOOT PATH, and the rest is
+		# recorded rather than claimed** (doc 91 A91-D-111's remainder).
+		# `populate_from_stations` runs once, in `CitySim._boot_incidents`,
+		# BEFORE any restore; `FleetSystem.deserialize` then clears `_units` and
+		# rebuilds them from the save, and `sync_station` is called on a
+		# building's COMPLETION and never on its destruction. So a station
+		# destroyed while the city runs keeps its engines for the life of that
+		# city, and the player's slot 0 still shows `E_fleet` at $91.58/gh
+		# against four ruined shells after 45 game-days (doc 92 §58.2). Retiring
+		# units on destruction means retiring units that may be dispatched,
+		# en route or on scene, which is doc 06's ladder and not this guard.
 		if b.state == &"destroyed" or b.state == &"planned":
 			continue
 		out.append({"id": String(building_id), "archetype": archetype,
