@@ -7044,11 +7044,32 @@ func build_settlement_inputs(ctx: TimeContext, availability: Dictionary) -> Dict
 						"condition": b.condition})
 			&"water_facility":
 				pass  # water_works staffing added once, below (RR-16)
+	# **AND THE REMAINDER OF §AR3, CLOSED — doc 93 §AV3.** The loop above is the
+	# sole author of the `buildings` array and of every station row it appends,
+	# and it skips rubble. This second loop was not: `water_works` staffing is
+	# keyed on `water.nodes`, which is the GRAPH, and a `water_facility` that
+	# BURNS DOWN keeps its nodes. (A demolished one does not —
+	# `_take_building_off_the_map` calls `_retire_water_nodes` — which is why the
+	# hole only opens on the destruction path, exactly like §AR3's own.)
+	#
+	# Measured on the player's slot 0: all three `water_facility` buildings in
+	# rubble, 2 pump nodes still in the graph, and `E_departments` still billing
+	# **$20.00/gh** — $480 a game-day of wages for plants that do not exist (doc
+	# 92 §62.4). The node's `power_ref` IS its host shell (doc 05 §2.6), so the
+	# staffing follows the plant: a pump whose host is rubble is not staffed. A
+	# node with no host — the implicit `junction`, or any fixture that names
+	# none — is billed exactly as it was.
 	var pump_ids := water.nodes.keys()
 	pump_ids.sort()
 	for node_id in pump_ids:
-		if (water.nodes[node_id] as WaterNode).variant == &"pump":
-			has_pump = true
+		var node: WaterNode = water.nodes[node_id]
+		if node.variant != &"pump":
+			continue
+		var host := node.power_ref
+		if host != "" and buildings.has(host) \
+				and (buildings[host] as Building).state == &"destroyed":
+			continue
+		has_pump = true
 	if has_pump:
 		stations.append({"type": "water_works", "level": 1})
 	return {

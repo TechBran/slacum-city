@@ -38,6 +38,20 @@ extends SceneTree
 ##                  restore every ruin the treasury can pay for above the
 ##                  reserve N, cheapest first
 ##   --spine-first  as --restore, but buy doc 93 §AR1's utility spine first
+##   --fire-dept=A  **DOC 93 §AV4's INCENTIVE SWEEP.** Three arms that differ in
+##                  the fire department and in NOTHING else:
+##                    keep — reinstate every `fire_station` at condition 1.0 and
+##                           PIN it there, so it can never wear out
+##                    burn — reinstate it once and then leave it alone
+##                    none — the city owns no fire department at all: the shells
+##                           stay rubble AND `FleetSystem.remove_station` retires
+##                           their engines, which is the player's own bulldoze
+##                           and the one door that ends a service (§AV1)
+##                  The reinstatement is FREE in every arm on purpose: charging
+##                  it would make the arms differ by a restore bill as well as by
+##                  a department, and then no delta could be attributed.
+##   --service-audit  print the fleet-and-capability reading the §AV1 predicate
+##                  actually sees, at load and at every mark
 ##
 ## **`user://` IS SHARED AND THIS TOOL WRITES INTO IT.** Every worktree of this
 ## project resolves `user://` to the same
@@ -86,6 +100,9 @@ func _initialize() -> void:
 	## thing — it buys doc 93 §AR1's utility spine before anything else — so the
 	## difference between the two runs is attributable to that single decision.
 	var spine_first := false
+	## Doc 93 §AV4's arm selector — "", "keep", "burn" or "none".
+	var fire_dept := ""
+	var service_audit := false
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--saves="):
 			saves = arg.substr(8)
@@ -113,6 +130,10 @@ func _initialize() -> void:
 		elif arg == "--spine-first":
 			restoring = true
 			spine_first = true
+		elif arg.begins_with("--fire-dept="):
+			fire_dept = arg.substr(12)
+		elif arg == "--service-audit":
+			service_audit = true
 	if saves == "":
 		printerr("measure_player_city: --saves=DIR is required")
 		quit(2)
@@ -153,6 +174,10 @@ func _initialize() -> void:
 		sim.scheduler.advance_fine_n(GameClock.TICKS_PER_HOUR - misalign)
 	sim.bus.drain()
 
+	if fire_dept != "":
+		print("measure_player_city: fire-dept arm '%s' -> %s"
+				% [fire_dept, _apply_fire_dept_arm(sim, fire_dept)])
+
 	var report := {"marks": [] as Array}
 	print("")
 	print("=== AT LOAD (game-day %d, treasury $%d, population %d, preset %s) ==="
@@ -162,6 +187,8 @@ func _initialize() -> void:
 	_print_census(at_load)
 	_print_ladder(sim)
 	print("  " + _ruin_bill_line(sim))
+	if service_audit:
+		print("  " + _service_line(sim))
 	report["at_load"] = at_load
 
 	if catchup and sim.director != null:
@@ -187,8 +214,11 @@ func _initialize() -> void:
 	var restored := 0
 	var repaired := 0
 	for h in total:
+		if fire_dept == "keep":
+			_pin_fire_departments(sim)
 		if restoring and h % HOURS_PER_DAY == 0:
-			restored += _restore_what_it_can_afford(sim, restore_reserve, spine_first)
+			restored += _restore_what_it_can_afford(sim, restore_reserve,
+					spine_first, fire_dept == "none")
 			repaired += _repair_what_it_can_afford(sim, restore_reserve)
 		sim.scheduler.advance_coarse_n(1, catchup, h, total)
 		_tally(sim, destroyed_by_cause, damaged_by_cause)
@@ -212,6 +242,8 @@ func _initialize() -> void:
 			print("  " + _ruin_bill_line(sim))
 			print("  relief paid this run: $%d in %d grant(s)" % [relief_paid, relief_grants])
 			print("  unanswered: " + str(_unanswered))
+			if service_audit:
+				print("  " + _service_line(sim))
 			print("  bus, top event types: " + _top_events(12))
 			if restoring:
 				print("  restored this run: %d ruins, repaired %d shells"
@@ -549,6 +581,90 @@ func _mean_condition(sim: CitySim) -> float:
 	return total / maxf(1.0, float(counted))
 
 
+## **DOC 93 §AV4's THREE ARMS.** The city on disk owns a fire station that is
+## already rubble and a fire engine that outlived it, so every arm has to be
+## CONSTRUCTED from that one save — and the only honest way to do that is to make
+## the reinstatement free in all three, so the arms differ by the department and
+## not by a restore bill. Returns a one-line description of what it did.
+##
+## `keep` and `burn` put the shell back at condition 1.0 and re-house its engines
+## through the real `FleetSystem.sync_station`. `none` is the player's own
+## bulldoze: the shell stays rubble and `remove_station` retires the engines,
+## which under §AV1 is the one door in the game that ends a service.
+func _apply_fire_dept_arm(sim: CitySim, arm: String) -> String:
+	var touched := 0
+	var units_before: int = sim.incidents.fleet.size()
+	for id in sim.roster_ids():
+		var b: Building = sim.buildings[id]
+		if b.archetype != &"fire_station":
+			continue
+		touched += 1
+		if arm == "none":
+			b.state = &"destroyed"
+			b.condition = 0.0
+			sim.incidents.fleet.remove_station(String(id))
+			continue
+		b.state = &"active"
+		b.condition = 1.0
+		b.level = maxi(b.level, 1)
+		sim.incidents.fleet.sync_station(String(id), String(b.archetype),
+				b.level, b.origin)
+	return "%d station(s), fleet %d -> %d units, fire capability %s" % [
+			touched, units_before, sim.incidents.fleet.size(),
+			str(sim.incident_world.has_fire_capability())]
+
+
+## The `keep` arm's pin, applied every game-hour: the department may not wear
+## out, so any delta between `keep` and `burn` is maintenance and nothing else.
+func _pin_fire_departments(sim: CitySim) -> void:
+	for id in sim.roster_ids():
+		var b: Building = sim.buildings[id]
+		if b.archetype != &"fire_station":
+			continue
+		if b.state == &"damaged" or b.state == &"repairing":
+			b.state = &"active"
+		b.condition = 1.0
+
+
+## What doc 93 §AV1's predicate actually sees, printed rather than inferred: the
+## fleet by role, the two capability readings, and the answered/blocked split
+## that says whether owning the service bought anything.
+func _service_line(sim: CitySim) -> String:
+	var fleet: FleetSystem = sim.incidents.fleet
+	var by_role := {}
+	for role in ["fire", "police", "utility", "water", "construction"]:
+		var count := 0
+		for unit_id in fleet.unit_ids_ref():
+			var u: Vehicle = fleet.unit(int(unit_id))
+			if u != null and u.has_capability_for(String(role)):
+				count += 1
+		by_role[role] = count
+	# Doc 93 §AS1's SHELL half, restated here for one purpose: so the two
+	# readings can be printed side by side on the same city at the same instant,
+	# and §AV1's correction is a measurement rather than a derivation from the
+	# diff. It owns no rule — `CityIncidentWorld` is the authority — and nothing
+	# outside this line reads it.
+	var standing := 0
+	for id in sim.roster_ids():
+		var b: Building = sim.buildings[id]
+		if b.archetype != &"fire_station":
+			continue
+		if b.state == &"active" or b.state == &"damaged" or b.state == &"repairing":
+			standing += 1
+	var as1_reading := standing > 0 and int(by_role["fire"]) > 0
+	return ("service: fire_station shells standing %d | fleet %d units"
+			+ " (fire %d, police %d, utility %d, water %d, construction %d)"
+			+ " | §AS1 shell reading %s -> §AV1 service reading %s"
+			+ " | assigned %d, blocked_no_units %d, blocked_unreachable %d") % [
+			standing, fleet.size(), int(by_role["fire"]), int(by_role["police"]),
+			int(by_role["utility"]), int(by_role["water"]),
+			int(by_role["construction"]), str(as1_reading),
+			str(sim.incident_world.has_fire_capability()),
+			int(_types_total.get("incident_assigned", 0)),
+			int(_types_total.get("dispatch_blocked_no_units", 0)),
+			int(_types_total.get("dispatch_blocked_unreachable", 0))]
+
+
 ## **DOES THE SAVED CITY HAVE ANYTHING TO SPEND?** (doc 92 §58.6.)
 ##
 ## The acceptance test is not "fewer ruins" — it is a city that **stops falling
@@ -565,11 +681,15 @@ func _mean_condition(sim: CitySim) -> float:
 ## (`CostCurves.restore_cost_building` at the city's own `M_repair`) charged
 ## through the real treasury, so nothing here is free.
 func _restore_what_it_can_afford(sim: CitySim, reserve: int,
-		spine_first: bool = false) -> int:
+		spine_first: bool = false, skip_fire_stations: bool = false) -> int:
 	var quotes: Array = []
 	for id in sim.roster_ids():
 		var b: Building = sim.buildings[id]
 		if b.state != &"destroyed":
+			continue
+		# The `none` arm owns no fire department and does not buy one back; the
+		# agent is otherwise identical, which is what makes the arms comparable.
+		if skip_fire_stations and b.archetype == &"fire_station":
 			continue
 		var quote := sim.cmd_restore_building(id, true)
 		var payload: Dictionary = quote.get("payload", {})

@@ -73,9 +73,16 @@ func run_one(inc: Incident, action: Dictionary) -> Dictionary:
 				# `answerable` is doc 93 §AR2 on the DAMAGE door, on exactly the
 				# predicate the `destroy_building` op below uses: an event may
 				# not finish a building the city could not defend.
+				#
+				# **AND `role` IS WHICH DEFENCE — doc 93 §AV1.** This op is the
+				# one every hazard in the catalogue reaches: `roof_damage` runs
+				# it on three escalation tiers, and under §AS1 it asked whether
+				# the city owned a FIRE department before letting a STORM take a
+				# roof off. The hazard names its own service now.
 				world.apply_building_damage(building_id,
 						-float(action.get("value", 0.0)),
-						system.incident_was_answerable(inc))
+						system.incident_was_answerable(inc),
+						system.incident_primary_role(inc))
 			return {"op": op, "result": DONE}
 		"destroy_building":
 			return _destroy_building(inc, action)
@@ -147,7 +154,8 @@ func _destroy_building(inc: Incident, _action: Dictionary) -> Dictionary:
 	# balance instrument read this line, and a terminal event that lies about the
 	# roster is worse than no event at all.
 	var destroyed := world.destroy_building(target, "incident:%d" % inc.id,
-			system.incident_was_answerable(inc))
+			system.incident_was_answerable(inc),
+			system.incident_primary_role(inc))
 	# Two branches rather than one ternary argument, and the reason is an
 	# INSTRUMENT: `tests/test_event_matrix.gd` reads emitted names out of the
 	# source, one line at a time, from the call up to the payload dict. A name

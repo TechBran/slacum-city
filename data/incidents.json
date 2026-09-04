@@ -83,6 +83,9 @@
       "sev_stability_knee": 0.5, "sev_stability_k": 1.2, "sev_unpowered_bonus": 0.3
     },
     "fire": {
+      "_coverage_note": "doc 93 AV4 / RR-195. f_fire_coverage = clamp(coverage_base - coverage_slope * the district's fire_coverage, coverage_min, coverage_max), multiplied into doc 06 2.6's per-building ignition rate at exactly the place f_police already multiplies the crime rate. NO NEW MAGIC NUMBER: the slope is crime's own full-coverage reduction, police_slope / police_base = 0.6 / 1.4 = 0.4286, re-anchored at 1.0 so an UNCOVERED city's fire rate is exactly what it has always been (crime's ladder anchors at 1.4 and RAISES the uncovered rate; doing that to fire would make every city harder for a ruling that is about departments). coverage_min = coverage_base - coverage_slope. A catalog without these four keys reads slope 0.0 and is bit-identical to the pre-AV4 build.",
+      "coverage_base": 1.0, "coverage_slope": 0.4286,
+      "coverage_min": 0.5714, "coverage_max": 1.0,
       "unpowered_mult": 0.8, "arson_stability_knee": 0.35, "arson_k": 2.0,
       "base_rate_source": "doc02.fire_ignition_per_hour * doc02.fire_condition_mult * doc02.state_fire_mult",
       "esc_wind_knee_kph": 20.0, "esc_wind_k": 0.010,

@@ -21,6 +21,12 @@ const STATION_ARCHETYPES := [
 ## §AS1 turns on this exact string matching `data/incidents.json`'s
 ## `primary_role` for `structure_fire`, and a typo would silently make every
 ## city capability-less.
+##
+## **It is no longer the only role in the predicate — doc 93 §AV1.** A hazard is
+## answerable by the service THAT hazard needs, and the role comes from the
+## incident's own row; `FIRE_ROLE` survives as the DEFAULT for a caller that
+## predates the argument, so nothing that has not been taught the role changes
+## behaviour.
 const FIRE_ROLE := "fire"
 
 var sim  # CitySim
@@ -407,7 +413,7 @@ func buildings_within_m(tile: Vector2i, radius_m: float, exclude_id: String = ""
 
 ## `fraction` is DAMAGE: a positive number lowers the condition by that much.
 func apply_building_damage(id: String, fraction: float,
-		answerable: bool = true) -> void:
+		answerable: bool = true, role: String = FIRE_ROLE) -> void:
 	var b: Building = sim.buildings.get(id, null)
 	if b == null:
 		return
@@ -417,11 +423,16 @@ func apply_building_damage(id: String, fraction: float,
 	# being dropped on the floor here. See [_publish].
 	#
 	# `may_destroy` is doc 93 §AR2 on the DAMAGE door, on the same predicate the
-	# terminal door uses: a city with no fire department cannot answer, so an
-	# event may not finish a building §AR2 has already condemned. See
+	# terminal door uses: a city with no service for THIS hazard cannot answer,
+	# so an event may not finish a building §AR2 has already condemned. See
 	# [Building.apply_damage] and [_could_have_answered].
+	#
+	# **`role` is what doc 93 §AV1 adds here, and it is the whole of the fix on
+	# this door.** Wave 21 asked the FIRE question on every op that damages a
+	# building, so doc 92 §62.2's probe found a city with no fire department
+	# surviving a flood it had every water truck in the game parked next to.
 	_publish(id, b, b.apply_damage(fraction, now_minutes(),
-			_could_have_answered(answerable)))
+			_could_have_answered(answerable, role)))
 
 
 func set_building_condition_floor(id: String, condition: float) -> void:
@@ -454,7 +465,8 @@ func suppress_building_fire(id: String, residual_damage_fraction: float) -> void
 ## each — a `building_destroyed_by_fire` for a building that is still standing is
 ## a lie the bus told 3,891 times in 45 game-days on the player's own save (doc
 ## 92 §60.3).
-func destroy_building(id: String, _cause: String, answerable: bool = true) -> bool:
+func destroy_building(id: String, _cause: String, answerable: bool = true,
+		role: String = FIRE_ROLE) -> bool:
 	var b: Building = sim.buildings.get(id, null)
 	if b == null:
 		return false
@@ -491,7 +503,7 @@ func destroy_building(id: String, _cause: String, answerable: bool = true) -> bo
 	#
 	# **WHAT STILL BURNS DOWN, AND WHY THAT IS FAIR.** A city that owns a fire
 	# service loses buildings to fire exactly as it always did — this branch is
-	# untouched for it. Concretely: a station stands, engines exist, the fire is
+	# untouched for it. Concretely: engines exist, the fire is
 	# reachable, and either an engine was committed and lost the fight, or every
 	# engine was busy on another call (`dispatch_blocked_no_units`, which doc 06
 	# deliberately reads as ANSWERABLE). That is a fleet-sizing choice, a
@@ -500,12 +512,21 @@ func destroy_building(id: String, _cause: String, answerable: bool = true) -> bo
 	# city being deleted for failing to buy a service while it had no service to
 	# buy it with.
 	#
-	# **THE ANTI-FARM IS AN INEQUALITY, NOT A FEE.** Demolishing your own fire
-	# station to buy this loses money at every level in the catalogue, because a
-	# station's upkeep buys SUPPRESSION and suppression is strictly better than
-	# condemnation: an answered fire leaves residual damage and the building goes
-	# on earning at near-full output, an unanswered one leaves a fifth of a
-	# building AND a gutted shell that must be repaired before it earns again.
+	# **THE DOOR TO THE EXEMPTION IS NOW EXACTLY ONE VERB — doc 93 §AV1.** Under
+	# §AS1's shell reading, a city bought the exemption by LOSING its station:
+	# the building burned, the predicate went false, and the engines went on
+	# answering calls anyway. Under the service reading there is one path that
+	# retires a unit, and it is `FleetSystem.remove_station` — reached from doc
+	# 02 §2.12's demolition, i.e. the PLAYER'S OWN BULLDOZE. A fire cannot buy
+	# you the exemption any more; only a decision can.
+	#
+	# **AND THAT DECISION HAS TO LOSE, WHICH IS §AV4's LANE.** Demolishing your
+	# own fire station is meant to lose money at every level in the catalogue,
+	# because a station's upkeep buys SUPPRESSION and suppression is strictly
+	# better than condemnation: an answered fire leaves residual damage and the
+	# building goes on earning at near-full output, an unanswered one leaves a
+	# fifth of a building AND a gutted shell that must be repaired before it
+	# earns again.
 	# On top of that the city loses fire coverage everywhere at once (doc 02's
 	# `req_fire_coverage` gates upgrades, doc 09's happiness reads it) and every
 	# other incident the fire fleet answers stops being answered too. Doc 92
@@ -519,7 +540,7 @@ func destroy_building(id: String, _cause: String, answerable: bool = true) -> bo
 	# 90 and still climbing ~$10k a game-day**, against a treasury pinned at the
 	# −$20,000 credit floor. A fee an insolvent city cannot pay is the unbounded
 	# ratchet this ruling exists to end, wearing a different hat.
-	if not _could_have_answered(answerable):
+	if not _could_have_answered(answerable, role):
 		_publish(id, b, b.condemn_unanswered(destroy_allowed(), now_minutes()))
 		return false
 	if b.state == &"on_fire":
@@ -535,19 +556,37 @@ func destroy_building(id: String, _cause: String, answerable: bool = true) -> bo
 	return b.state == &"destroyed"
 
 
-## Doc 93 §AS1's predicate: **did the city have the CAPABILITY to answer?**
+## Doc 93 §AS1's predicate, **as §AV1 corrects it: did the city have the
+## CAPABILITY to answer THIS hazard?**
 ##
 ## True — the terminal outcome demolishes, exactly as it always did — when the
-## city owns a fire service AND doc 06 says this particular incident was one that
-## service could have reached. It is the conjunction of two facts and nothing
-## else:
+## city owns the service this hazard needs AND doc 06 says this particular
+## incident was one that service could have reached. It is the conjunction of two
+## facts and nothing else:
 ##
-##   * [has_fire_capability] — a `fire_station` standing and an engine in the
-##     fleet. A ROSTER fact.
+##   * [has_service_capability] — a dispatchable unit in `FleetSystem` whose
+##     `resolve_rate` answers `role`. A SERVICE fact.
 ##   * `answerable` — doc 06's own reading, from
 ##     `IncidentSystem.incident_was_answerable`: something was committed to this
 ##     incident, or `DispatchSystem` never marked it `unreachable`. An INCIDENT
 ##     fact.
+##
+## **`role` IS THE HAZARD'S OWN, AND THAT IS §AV1's SECOND HALF.** Wave 21 asked
+## `has_fire_capability()` on every damage door in the game — `CascadeOps`'
+## `building_condition` op runs it for a flood, a storm and a roof — so a city
+## with no fire department could not have a building finished off by WATER. The
+## role now comes from the incident's `primary_role`, so a `roof_damage` asks
+## doc 06 for a construction crew and a `water_main_break` asks for a water
+## truck.
+##
+## **AN EMPTY `role` READS AS THE FIRE ROLE, WHICH IS EXACTLY §AS1's BEHAVIOUR.**
+## It is unreachable from the shipped catalogue — `test_every_hazard_names_the
+## _service_that_answers_it` asserts every merged row carries a `primary_role`,
+## and a subtype inherits its parent's — so this is the branch a future row that
+## forgets to name a service takes. It falls back to the FLOOR rather than
+## through it: a hazard nobody is on the hook for must not be the one hazard that
+## can delete a city, and "protection on" is the direction a defect here should
+## fail in.
 ##
 ## **WEALTH IS NOT IN IT, AND THAT IS THE WHOLE OF WAVE 21's CORRECTION.** Wave
 ## 20's draft opened with `if not sim.treasury.austerity_active: return true` —
@@ -573,57 +612,77 @@ func destroy_building(id: String, _cause: String, answerable: bool = true) -> bo
 ## reading. Coverage falls off with distance, so gating on `coverage_fire(tile)`
 ## would make "build far from the station" a fireproofing strategy — the farm the
 ## ruling must not open.
-func _could_have_answered(answerable: bool) -> bool:
-	if not has_fire_capability():
+func _could_have_answered(answerable: bool, role: String = FIRE_ROLE) -> bool:
+	if not has_service_capability(FIRE_ROLE if role == "" else role):
 		return false
 	return answerable
 
 
-## **DOES THIS CITY OWN A FIRE SERVICE?** — doc 93 §AS1. Two halves, because doc
-## 02 and doc 06 each hold one of them and neither is sufficient alone:
+## **DOES THIS CITY OWN THE SERVICE THIS HAZARD NEEDS?** — doc 93 §AV1, and it
+## is ONE fact, not two.
 ##
-##   * **A station standing.** `active`, `damaged` and `repairing` all count —
-##     doc 02 §2.12 still gives a damaged station `coverage_mult` 0.25, so it is
-##     a department, just a poor one. `destroyed` and `planned` do not, and
-##     `under_construction` does not either: a station that has not opened cannot
-##     roll an engine.
-##   * **An engine to roll.** At least one unit in `FleetSystem` whose
-##     `resolve_rate` answers the `fire` role. Doc 93 §AR3 measured why this half
-##     cannot be assumed from the first: `populate_from_stations` runs once at
-##     boot and `FleetSystem.deserialize` rebuilds from the save, and
-##     `sync_station` fires on a building's COMPLETION and never on its
-##     destruction — so the two halves genuinely drift apart in both directions
-##     (a city can hold engines whose garage is rubble, and a city can hold a
-##     station doc 06 never housed).
+## **WHAT WAVE 21 GOT WRONG, MEASURED BY ITS OWN VERIFIER.** §AS1 read the
+## predicate as *a `fire_station` STANDING and an engine in the fleet*, and the
+## first half is a shell, not a service. The ability to answer a fire lives in
+## `FleetSystem`, and doc 93 §AR3's own finding is that the engines OUTLIVE the
+## building on every destruction path there is: `sync_station` fires on a
+## building's COMPLETION and never on its destruction, so a burned-down station
+## leaves its engines in the roster, on duty, answering calls. Doc 92 §62.1
+## measures the contradiction on the player's own slot 0: station destroyed,
+## `has_fire_capability()` false, protection ON — **while 1 fire engine was still
+## in the fleet and 28 of 28 incidents were still answered by it**. The city was
+## being told it had no fire service by a predicate that could not see the fire
+## service.
+##
+## So the shell half is DELETED and the fleet half is the whole predicate:
+##
+##   * **A unit that can answer.** At least one unit in `FleetSystem` whose
+##     `resolve_rate` answers `role`, and that is not parked `OFFLINE` — the same
+##     exclusion [_staffing] already applies, and for its reason: a unit doc 03's
+##     austerity layer has parked does not live anywhere.
+##   * **Availability is NOT capability.** A unit on another call, or in `REFIT`,
+##     still counts: doc 06 reads `dispatch_blocked_no_units` as ANSWERABLE
+##     precisely because fleet size is a PURCHASE, and a predicate that exempted
+##     a city whose only engine was busy would pay it for under-buying engines.
+##     "Can it reach this one?" is the `answerable` half's question, not this
+##     one's.
+##
+## The two halves §AS1 named do not come apart under this reading — they collapse
+## into it. *"A garage with no engine in it is not a fire service"* is still
+## false here, because the garage contributes no unit. *"An engine with no
+## station to roll out of"* is now TRUE, and the 28-of-28 measurement is why: an
+## engine with no station rolls.
+##
+## The station test was also a city-level fact and deliberately not a per-tile
+## coverage reading, and that stays: gating on `coverage_fire(tile)` would make
+## "build far from the station" a fireproofing strategy — the farm the ruling
+## must not open. Distance is priced by `answerable`, which is a route, not a
+## radius.
 ##
 ## Public rather than private because doc 92's balance gates assert on it
 ## directly: a ruling this load-bearing has to be checkable from a test without
 ## re-deriving it, which is how the Wave-20 draft's exemption went unmeasured.
-func has_fire_capability() -> bool:
-	if sim == null:
+func has_service_capability(role: String) -> bool:
+	if sim == null or role == "":
 		return false
-	var standing := false
-	for building_id in sim.buildings:
-		var b: Building = sim.buildings[building_id]
-		if b.archetype == &"fire_station" \
-				and (b.state == &"active" or b.state == &"damaged"
-					or b.state == &"repairing"):
-			standing = true
-			break
-	if not standing:
-		return false
-	# The fleet half. `sim.incidents` is null only while `CitySim._boot_incidents`
-	# is still wiring, which is before any incident can exist — and a city with a
-	# station and no fleet at all has no engine either way, so `false` is the
-	# right answer at both moments.
+	# `sim.incidents` is null only while `CitySim._boot_incidents` is still
+	# wiring, which is before any incident can exist — and a city with no fleet
+	# at all has no unit either way, so `false` is the right answer at both
+	# moments.
 	if sim.incidents == null or sim.incidents.fleet == null:
 		return false
 	var fleet: FleetSystem = sim.incidents.fleet
 	for unit_id in fleet.unit_ids_ref():
 		var u: Vehicle = fleet.unit(unit_id)
-		if u != null and u.has_capability_for(FIRE_ROLE):
+		if u != null and u.status != Vehicle.OFFLINE and u.has_capability_for(role):
 			return true
 	return false
+
+
+## The fire reading of [has_service_capability], kept under its own name because
+## doc 92's balance gates and doc 93 §AS1's tests assert on it directly.
+func has_fire_capability() -> bool:
+	return has_service_capability(FIRE_ROLE)
 
 
 ## **Doc 93 §AR2(a): a building the city loses is a building the city is TOLD
@@ -673,6 +732,12 @@ func district(id: String) -> Dictionary:
 		"population": float(row.get("population", 0)),
 		"stability": clampf(float(row.get("stability", 1.0)), 0.0, 1.0),
 		"police_coverage": district_coverage(id, CoverageIndex.KIND_POLICE),
+		# **AND ITS TWIN — doc 93 §AV4.** Doc 06 §2.6(a) has always read
+		# `police_coverage` into the crime rate; the fire rate read no coverage
+		# at all, so a fire station bought RESPONSE and nothing else. On a city
+		# where nothing is reachable that is a department that does literally
+		# nothing for its upkeep. The same district scalar, from the same index.
+		"fire_coverage": district_coverage(id, CoverageIndex.KIND_FIRE),
 		"outage_frac": clampf(float(row.get("district_dark_fraction", 0.0)), 0.0, 1.0),
 	}
 

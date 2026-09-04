@@ -101,7 +101,7 @@ func test_the_loader_refuses_a_spine_that_names_nothing() -> void:
 ## terminal op CONDEMNS instead of demolishing.
 func test_a_city_with_no_fire_department_condemns_instead_of_demolishing() -> void:
 	var sim := CitySim.boot_from_files()
-	_raze_every_fire_station(sim)
+	_close_every_fire_department(sim)
 	var sim_id := _first_private(sim)
 	var b: Building = sim.buildings[sim_id]
 	b.state = &"on_fire"
@@ -153,7 +153,7 @@ func test_an_unreachable_incident_was_not_answerable() -> void:
 ## this the condemn ruling would buy a building one game-hour.
 func test_damage_may_not_finish_a_building_the_city_could_not_defend() -> void:
 	var sim := CitySim.boot_from_files()
-	_raze_every_fire_station(sim)
+	_close_every_fire_department(sim)
 	var sim_id := _first_private(sim)
 	var b: Building = sim.buildings[sim_id]
 	b.state = &"damaged"
@@ -247,6 +247,47 @@ func test_a_ruined_station_houses_no_engines() -> void:
 			"the ruined station is gone from the garage list")
 
 
+## **§AR3's REMAINDER, AND IT IS THE ONE STATION ROW THE GUARD COULD NOT SEE —
+## doc 93 §AV3.** `build_settlement_inputs` says of itself *"one guard, one
+## place: this loop is the sole author of both arrays"*, and it is not: the
+## `water_works` row is appended by a SECOND loop, over `water.nodes`, keyed on a
+## pump existing in the GRAPH. A `water_facility` that is demolished takes its
+## nodes with it (`_retire_water_nodes`), but one that BURNS DOWN does not — so on
+## the player's own slot 0, with all three water plants in rubble and 2 pump
+## nodes still in the graph, `E_departments` billed $20.00/gh for plants that do
+## not exist.
+func test_a_burned_down_water_plant_draws_no_wages() -> void:
+	var sim := CitySim.boot_from_files()
+	assert_ne(_first_of(sim, &"water_facility"), "",
+			"the founding manifest has a water plant")
+	var before := _settlement_expense(sim, "departments")
+
+	# The fire/failure door, NOT `demolish`: demolition retires the nodes and
+	# would close the hole by a route this ruling is not about. Every plant,
+	# because `has_pump` is one boolean for the whole graph.
+	for id in sim.roster_ids():
+		var b: Building = sim.buildings[id]
+		if b.archetype != &"water_facility":
+			continue
+		b.state = &"destroyed"
+		b.condition = 0.0
+	var after := _settlement_expense(sim, "departments")
+	var upkeep := sim.economy.station_upkeep("water_works", 1, false)
+	assert_true(upkeep > 0.0, "doc 03 prices water_works staffing")
+	assert_true(after < before,
+			"the wages of a plant that burned down come off the bill"
+			+ " ($%.2f -> $%.2f)" % [before, after])
+	assert_true(sim.water.nodes.size() > 0,
+			"and the nodes are STILL in the graph — this is a roster reading,"
+			+ " not a graph edit")
+
+	# …and the other direction, which is what stops this from being "never bill
+	# water_works": a plant still standing is still staffed.
+	var alive := CitySim.boot_from_files()
+	assert_almost_eq(_settlement_expense(alive, "departments"), before, 1e-9,
+			"a standing plant is billed exactly as it was")
+
+
 ## The whole ruling in the shape the player feels it: a city that has lost most
 ## of its stock is billed LESS than it was when the stock was standing, not more.
 func test_the_bill_falls_as_the_city_falls() -> void:
@@ -265,7 +306,7 @@ func test_the_bill_falls_as_the_city_falls() -> void:
 ## is a state doc 02 §2.12's table does not describe.
 func test_a_new_build_site_is_still_lost() -> void:
 	var sim := CitySim.boot_from_files()
-	_raze_every_fire_station(sim)
+	_close_every_fire_department(sim)
 	var sim_id := _first_private(sim)
 	var b: Building = sim.buildings[sim_id]
 	b.state = &"under_construction"
@@ -281,7 +322,7 @@ func test_a_new_build_site_is_still_lost() -> void:
 ## other and keeps the level it already had.
 func test_an_upgrade_in_flight_is_condemned_not_lost() -> void:
 	var sim := CitySim.boot_from_files()
-	_raze_every_fire_station(sim)
+	_close_every_fire_department(sim)
 	var sim_id := _first_private(sim)
 	var b: Building = sim.buildings[sim_id]
 	b.state = &"under_construction"
@@ -305,7 +346,7 @@ func test_the_ruling_does_not_read_the_treasury() -> void:
 	# Rich, and no fire service: still condemned. Under the Wave-20 draft this
 	# was `destroyed`, and it is the assertion that pins the deletion.
 	var rich := CitySim.boot_from_files()
-	_raze_every_fire_station(rich)
+	_close_every_fire_department(rich)
 	rich.treasury.austerity_active = false
 	rich.treasury.balance = 397081
 	var rich_id := _first_private(rich)
@@ -333,15 +374,54 @@ func test_the_ruling_does_not_read_the_treasury() -> void:
 			"a city that owns engines and loses the fight loses the building")
 
 
-## Capability has TWO halves and neither is sufficient. Doc 93 §AR3 measured why:
-## `sync_station` fires on completion and never on destruction, so a station and
-## its engines drift apart in both directions.
-func test_capability_is_a_station_and_an_engine() -> void:
+## **THE WAVE-20 EXPLOITS STAY SHUT, ON THE ROSTER AND NOT ONLY ON A PREDICATE.**
+##
+## `test_the_ruling_does_not_read_the_treasury` pins the PREDICATE at two
+## balances. This pins the OUTCOME: two cities, identical but for a treasury at
+## the insolvency floor and a treasury at +$5,000,000, driven through three doors
+## on the same buildings in the same order. The rosters must come out identical,
+## because wealth is not in §AV1 either — and §AV1 WIDENED the door to every
+## hazard, so the assertion has to be re-taken on the wider door rather than
+## inherited from the narrow one.
+func test_wealth_moves_no_roster_at_either_extreme() -> void:
+	var rosters: Array[String] = []
+	for balance in [-20000, 5000000]:
+		var city := CitySim.boot_from_files()
+		city.treasury.balance = int(balance)
+		city.treasury.austerity_active = int(balance) < 0
+		_close_every_fire_department(city)
+		var ids := city.roster_ids()
+		var burned := String(ids[0])
+		var flooded := String(ids[1])
+		var stormed := String(ids[2])
+		(city.buildings[burned] as Building).state = &"on_fire"
+		(city.buildings[burned] as Building).condition = 0.5
+		city.incident_world.destroy_building(burned, "incident:1", true, "fire")
+		city.incident_world.apply_building_damage(flooded, 1.0, true, "water")
+		city.incident_world.apply_building_damage(stormed, 1.0, true, "construction")
+		rosters.append(_roster_states(city))
+	assert_eq(rosters[0], rosters[1],
+			"an insolvent city and a city with five million in the bank lose"
+			+ " exactly the same buildings")
+	assert_true(rosters[0].length() > 0, "and the roster was actually read")
+
+
+## **CAPABILITY IS THE SERVICE, NOT THE SHELL — doc 93 §AV1, re-fitting §AS1.**
+##
+## §AS1 read two halves and called neither sufficient. The station half is
+## DELETED here, and the assertion that used to pin it is INVERTED, with the
+## measurement that inverted it: on the player's own slot 0 the station was
+## rubble, `has_fire_capability()` was false and the protection was on — while
+## one fire engine was still in the fleet and answered 28 of 28 incidents
+## (doc 92 §62.1). An engine with no station rolls.
+func test_capability_is_the_service_not_the_shell() -> void:
 	var sim := CitySim.boot_from_files()
 	assert_true(sim.incident_world.has_fire_capability(),
-			"a founding city has both halves")
+			"a founding city owns engines")
 
-	# Take the engines away and leave the station standing.
+	# Take the engines away and leave the station standing. This half of §AS1
+	# survives §AV1 unchanged, because it was always the fleet doing the work:
+	# a garage contributes no unit.
 	var fleet: FleetSystem = sim.incidents.fleet
 	for unit_id in fleet.unit_ids_ref().duplicate():
 		var u: Vehicle = fleet.unit(unit_id)
@@ -350,13 +430,100 @@ func test_capability_is_a_station_and_an_engine() -> void:
 	assert_false(sim.incident_world.has_fire_capability(),
 			"a garage with no engine in it is not a fire service")
 
-	# …and the other half, on a fresh city: the engines exist, the station does
-	# not. `demolish` does not retire a unit (doc 93 §AR3), so this is the real
-	# shape of the player's own save.
+	# …and the half §AV1 inverts, on a fresh city: the shell is gone and the
+	# engines are not. `Building.demolish` does not retire a unit (doc 93 §AR3),
+	# which is the real shape of the player's own save — and the city that shape
+	# describes STILL HAS a fire department.
 	var razed := CitySim.boot_from_files()
-	_raze_every_fire_station(razed)
+	for id in razed.roster_ids():
+		var b: Building = razed.buildings[id]
+		if b.archetype == &"fire_station":
+			b.demolish(true, 0)
+	assert_true(razed.incident_world.has_fire_capability(),
+			"engines that outlive their station are still a fire service")
+
+	# The one verb that ends it is the player's own bulldoze, which retires the
+	# units with the shell (`CitySim._take_building_off_the_map`).
+	_close_every_fire_department(razed)
 	assert_false(razed.incident_world.has_fire_capability(),
-			"an engine with no station to roll out of is not a fire service")
+			"a bulldozed department is a department the city no longer owns")
+
+
+## **A HAZARD IS ANSWERABLE BY THE SERVICE THAT HAZARD NEEDS — doc 93 §AV1.**
+##
+## §AS1 put `has_fire_capability()` on `apply_building_damage`, which is the door
+## EVERY hazard's `building_condition` op goes through, so a city with no fire
+## department could not have a building finished off by a storm, a flood or
+## anything else. The city below owns every construction crew in the founding
+## manifest and no fire department at all; a `roof_damage` — `primary_role`
+## `construction` — is answerable and finishes the building.
+## The fallback in [CityIncidentWorld._could_have_answered] — an empty `role`
+## reading as the fire role — must be UNREACHABLE from the shipped catalogue, or
+## §AV1's per-hazard scoping is one missing key away from being §AS1 again. Every
+## merged row names the service that answers it; a subtype inherits its parent's.
+func test_every_hazard_names_the_service_that_answers_it() -> void:
+	var catalog := IncidentCatalog.load_from_files()
+	var checked := 0
+	for type_id in catalog.type_ids():
+		var row := catalog.type_row(String(type_id))
+		assert_ne(String(row.get("primary_role", "")), "",
+				"%s names the service that answers it" % String(type_id))
+		checked += 1
+	assert_true(checked >= 6, "every type in data/incidents.json was checked")
+
+
+func test_a_storm_is_answered_by_the_crew_not_the_engine() -> void:
+	var sim := CitySim.boot_from_files()
+	_close_every_fire_department(sim)
+	assert_false(sim.incident_world.has_fire_capability(),
+			"no fire service")
+	assert_true(sim.incident_world.has_service_capability("construction"),
+			"but the construction yard's crews are still in the fleet")
+
+	var sim_id := _first_private(sim)
+	var b: Building = sim.buildings[sim_id]
+	b.state = &"damaged"
+	b.condition = b.rule("structural_failure_threshold")
+	sim.incident_world.apply_building_damage(sim_id, 1.0, true, "construction")
+	assert_eq(String(b.state), "destroyed",
+			"the roof came off and the city owned the crew that answers roofs")
+
+	# …and the same door, same city, for the hazard the city really cannot
+	# answer: the fire floor is untouched.
+	var other := CitySim.boot_from_files()
+	_close_every_fire_department(other)
+	var other_id := _first_private(other)
+	var ob: Building = other.buildings[other_id]
+	ob.state = &"damaged"
+	ob.condition = ob.rule("structural_failure_threshold")
+	other.incident_world.apply_building_damage(other_id, 1.0, true, "fire")
+	assert_eq(String(ob.state), "damaged",
+			"and a fire it has no engine for still condemns")
+
+
+## **AN UPGRADE IN FLIGHT IS NOT A CLOSED DEPARTMENT — doc 93 §AV1.** §AS1
+## excluded `under_construction` from the station half on the stated ground that
+## "a station that has not opened cannot roll an engine". That is true of a
+## level-0 new build and FALSE of a level-1 upgrade, whose engines are in the
+## fleet and dispatchable for every hour of the works — so starting an upgrade
+## switched the protection on. Reading the fleet answers it with no special case.
+func test_an_upgrade_in_flight_does_not_close_the_department() -> void:
+	var sim := CitySim.boot_from_files()
+	var station := _first_of(sim, &"fire_station")
+	assert_ne(station, "", "the founding manifest has a fire station")
+	var b: Building = sim.buildings[station]
+	b.state = &"under_construction"
+	b.pending_level = maxi(b.level, 1) + 1
+	assert_true(sim.incident_world.has_fire_capability(),
+			"the engines are still in the bay while the works run")
+
+	var sim_id := _first_private(sim)
+	var victim: Building = sim.buildings[sim_id]
+	victim.state = &"on_fire"
+	victim.condition = 0.5
+	sim.incident_world.destroy_building(sim_id, "incident:1")
+	assert_eq(String(victim.state), "destroyed",
+			"so a fire during the works is answerable, exactly as it was before")
 
 
 ## The line §AS1 draws inside a city that DOES own a service, and it is the
@@ -396,16 +563,28 @@ func _first_private(sim: CitySim) -> String:
 	return ""
 
 
-## **Doc 93 §AS1's fixture, and Wave 21 DELETED a line from it.** Wave 20's
-## version also set `austerity_active = true`, because that draft read the
-## treasury; §AS1 does not read money at all, so the fixture no longer has to
-## bankrupt the city to reach the ruling. What is left is the only fact §AS1
-## turns on: the city has no fire service.
-func _raze_every_fire_station(sim: CitySim) -> void:
+## **Doc 93 §AS1's fixture, and Wave 23 CORRECTED it (§AV1).** Wave 20's version
+## also set `austerity_active = true`, because that draft read the treasury; §AS1
+## does not read money at all, so the fixture no longer has to bankrupt the city
+## to reach the ruling.
+##
+## What Wave 21 left was `b.demolish()` and nothing else, and that is a SHELL
+## verb: it takes the building off the map and leaves every engine in
+## `FleetSystem`, on duty, answering calls. Under §AV1's service reading that
+## city still owns a fire department, so the old fixture no longer reaches the
+## ruling at all — it reached it under §AS1 only because §AS1 was reading the
+## wrong thing. The fixture is now the pair `CitySim._take_building_off_the_map`
+## performs for a real player bulldoze: the shell goes AND
+## `FleetSystem.remove_station` retires its units. That is the one door in the
+## game that ends a service (doc 93 §AV1), so it is the one door the fixture may
+## use.
+func _close_every_fire_department(sim: CitySim) -> void:
 	for id in sim.roster_ids():
 		var b: Building = sim.buildings[id]
-		if b.archetype == &"fire_station":
-			b.demolish(true, 0)
+		if b.archetype != &"fire_station":
+			continue
+		b.demolish(true, 0)
+		sim.incidents.fleet.remove_station(String(id))
 
 
 func _events_of(sim: CitySim, type: StringName) -> Array:
@@ -462,7 +641,7 @@ func _errors_mention(catalog: BuildingCatalog, needle: String) -> bool:
 ## that clears a roster terminates the same way destruction used to terminate it.
 func test_a_gutted_shell_is_not_fuel() -> void:
 	var sim := CitySim.boot_from_files()
-	_raze_every_fire_station(sim)
+	_close_every_fire_department(sim)
 	var sim_id := _first_private(sim)
 	var b: Building = sim.buildings[sim_id]
 	b.state = &"on_fire"
@@ -484,7 +663,7 @@ func test_a_gutted_shell_is_not_fuel() -> void:
 ## shell makes it a building again, and a building burns.
 func test_repairing_the_shell_makes_it_fuel_again() -> void:
 	var sim := CitySim.boot_from_files()
-	_raze_every_fire_station(sim)
+	_close_every_fire_department(sim)
 	var sim_id := _first_private(sim)
 	var b: Building = sim.buildings[sim_id]
 	b.state = &"on_fire"
@@ -571,7 +750,7 @@ func test_a_blocked_incident_says_each_reason_once() -> void:
 ## either way — 3,891 times in 45 game-days about buildings still standing.
 func test_the_bus_does_not_announce_a_destruction_that_did_not_happen() -> void:
 	var sim := CitySim.boot_from_files()
-	_raze_every_fire_station(sim)
+	_close_every_fire_department(sim)
 	var sim_id := _first_private(sim)
 	var b: Building = sim.buildings[sim_id]
 	b.state = &"on_fire"
@@ -622,6 +801,49 @@ func test_relief_may_not_out_pay_the_bill_it_is_measured_against() -> void:
 			"and therefore never covers the bill it is measured against")
 
 
+## **AND THE SAME SENTENCE ON A SMALL BILL, WHICH IS WHERE IT WAS FALSE — doc 93
+## §AV2.** §AS4 capped the two terms and left `RELIEF_MIN` outside both, so an era
+## paid `$8,000 × relief_grants_per_era` however little it was measured against.
+## At the fork a $2,000 bill drew $24,000 — 12.0× — and the heading above claimed
+## it could not.
+func test_the_floor_may_not_multiply_an_era() -> void:
+	var treasury := _broke_treasury()
+	var bill := 2000.0
+	var cooldown := int(treasury.recovery_value("RELIEF_COOLDOWN_HOURS"))
+	var paid := 0
+	var hour := 0
+	for _grant in int(treasury.difficulty().get("relief_grants_per_era", 3)) + 2:
+		paid += treasury.maybe_grant_relief(hour, 0.0, -1.0, bill)
+		treasury.balance = -treasury.credit_limit
+		hour += cooldown
+	assert_true(float(paid) <= bill,
+			"an era never out-pays the bill it is measured against (got $%d of"
+			% paid + " $%d)" % int(bill))
+	assert_true(paid > 0, "and a city with a small bill is still helped")
+
+
+## …and the ask that prices to zero may not burn one of the era's three rescues.
+## The ceiling closes the money, not the ladder.
+func test_a_zero_priced_ask_does_not_spend_the_allowance() -> void:
+	var treasury := _broke_treasury()
+	var bill := 2000.0
+	var cooldown := int(treasury.recovery_value("RELIEF_COOLDOWN_HOURS"))
+	assert_true(treasury.maybe_grant_relief(0, 0.0, -1.0, bill) > 0,
+			"the first ask is paid")
+	var used_after_first := treasury.relief_grants_used
+	treasury.balance = -treasury.credit_limit
+	assert_eq(treasury.maybe_grant_relief(cooldown, 0.0, -1.0, bill), 0,
+			"the second is priced at nothing")
+	assert_eq(treasury.relief_grants_used, used_after_first,
+			"and costs the era none of its allowance")
+
+	# …and the room re-opens when the city has more to be measured on, which is
+	# the property that keeps the revenue ladder alive under the ceiling.
+	treasury.balance = -treasury.credit_limit
+	assert_true(treasury.maybe_grant_relief(cooldown * 2, 40000.0, -1.0, bill) > 0,
+			"a city earning again is measured on what it earns")
+
+
 ## The first grant is not made smaller by the cap: a city in the hole still gets
 ## the full fraction of its own damage the first time it asks.
 func test_the_first_grant_is_the_full_fraction() -> void:
@@ -657,6 +879,16 @@ func test_a_save_without_the_counter_loads_at_zero() -> void:
 
 # ------------------------------------------------------- helpers (Wave 21)
 
+## Every building's id, state and condition, in roster order, as one string —
+## the cheapest total ordering two cities can be compared on.
+func _roster_states(sim: CitySim) -> String:
+	var parts: Array[String] = []
+	for id in sim.roster_ids():
+		var b: Building = sim.buildings[id]
+		parts.append("%s=%s@%.6f" % [String(id), String(b.state), b.condition])
+	return "|".join(parts)
+
+
 func _incident_event_types(sim: CitySim) -> Array:
 	var out: Array = []
 	for event in sim.incidents.drain_events():
@@ -682,7 +914,7 @@ func _broke_treasury() -> Treasury:
 ## two-game-hour delay and the same building burned 156 times a game-day.
 func test_owner_upkeep_does_not_rebuild_a_gutted_shell() -> void:
 	var sim := CitySim.boot_from_files()
-	_raze_every_fire_station(sim)
+	_close_every_fire_department(sim)
 	var sim_id := _first_private(sim)
 	var b: Building = sim.buildings[sim_id]
 	b.state = &"on_fire"
@@ -719,7 +951,7 @@ func test_owner_upkeep_does_not_rebuild_a_gutted_shell() -> void:
 ## and a repair ends it.
 func test_a_paid_repair_is_the_door_out_of_the_shell() -> void:
 	var sim := CitySim.boot_from_files()
-	_raze_every_fire_station(sim)
+	_close_every_fire_department(sim)
 	var sim_id := _first_private(sim)
 	var b: Building = sim.buildings[sim_id]
 	b.state = &"on_fire"

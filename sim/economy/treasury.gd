@@ -425,13 +425,31 @@ func defer(amount: int, category: StringName = &"misc", reason: String = "") -> 
 ## new constant: the cap is the fraction that was already there, applied to the
 ## era instead of to the grant.
 ##
-## **The revenue term is deliberately OUTSIDE the cap.** `1.5 × daily gross` is
-## the pre-Wave-19 ladder, it is measured on what the city EARNS rather than on
-## what it lost, and it is what carries a city whose ruins are already restored.
-## Netting it against past grants would mean a city that used its relief well
-## gets nothing the next time it is in trouble, which is the opposite of the
-## ladder's purpose. It is separately bounded by the insolvency pair, the
-## 120-game-hour cooldown, `relief_grants_per_era` and `RELIEF_MAX`.
+## **AND THE HEADING WAS STILL FALSE, BECAUSE THE FLOOR IS NOT A TERM — doc 93
+## §AV2.** §AS4 capped the two TERMS and left `RELIEF_MIN` clamping the result
+## from below, outside both. `RELIEF_MIN × relief_grants_per_era` is
+## $8,000 × 3 = $24,000 of relief an era pays whatever it is measured against, so
+## every bill under ~$24,615 was out-paid and a $2,000 one drew **12.0×** itself.
+## The claim above is now true as written, and it is the ERA CEILING in
+## [maybe_grant_relief] that makes it true rather than a re-wording:
+##
+##     era_ceiling = max(revenue_term, outstanding_restore_cost)
+##     grant       = min(max(revenue_term, damage_term, RELIEF_MIN),
+##                       era_ceiling − relief_era_paid)
+##
+## An era never pays more than the largest thing any of its grants was measured
+## on. The floor still lifts a single grant to `RELIEF_MIN` whenever there is
+## room for it, which is every case the floor was written for.
+##
+## **The revenue term is deliberately outside the DAMAGE cap** — and inside the
+## era ceiling, which is a different statement and not a retraction. `1.5 × daily
+## gross` is the pre-Wave-19 ladder, it is measured on what the city EARNS rather
+## than on what it lost, and it is what carries a city whose ruins are already
+## restored; netting it against `RELIEF_DAMAGE_FRACTION × bill` would mean a city
+## that used its relief well gets nothing the next time it is in trouble. The era
+## ceiling does not do that, because it GROWS with the revenue term: a city that
+## recovers re-opens its own room. It is separately bounded by the insolvency
+## pair, the 120-game-hour cooldown, `relief_grants_per_era` and `RELIEF_MAX`.
 ##
 ## The rest of the gating is unchanged, and the bill SHRINKS as it is spent, so
 ## relief decays back to the revenue term as the city recovers.
@@ -444,9 +462,42 @@ func maybe_grant_relief(hour: int, daily_gross_revenue: float,
 	var damage_allowance := float(_recovery.get("RELIEF_DAMAGE_FRACTION", 0.0)) \
 			* maxf(0.0, outstanding_restore_cost)
 	var damage_term := maxf(0.0, damage_allowance - float(relief_era_paid))
+	# **THE FLOOR SAT OUTSIDE THE CAP, AND THREE OF THEM OUT-PAID THE BILL — doc
+	# 93 §AV2.** `clampi(…, RELIEF_MIN, RELIEF_MAX)` lifts EVERY grant to $8,000,
+	# and `relief_grants_per_era` is 3 on `standard`, so an era paid $24,000
+	# however small the thing it was measured against: a $2,000 restore bill drew
+	# **12.0× its own bill** (doc 92 §62.5). §AS4 charged the DAMAGE term against
+	# the era and left the floor beside it, which is the one term that does not
+	# shrink.
+	#
+	# The ceiling is what the grant is MEASURED ON — the larger of the revenue
+	# term and the outstanding bill — and it is charged against the era, so the
+	# floor may lift a grant but no longer multiply an era. It is the bill
+	# itself and NOT `RELIEF_DAMAGE_FRACTION × bill`, because the fraction is
+	# already the damage term's own cap and re-using it here would cut the
+	# disaster case: on the player's slot 0 this line changes nothing at all
+	# ($98,727 + $8,000 + $8,000, bit-identical, doc 92 §62.5), and it is the
+	# small-bill case it closes.
+	#
+	# The revenue term stays outside the DAMAGE cap for the reason above and is
+	# inside this one, which is not the same statement: a city that earns more
+	# gets a bigger ceiling, so recovering re-opens the room rather than closing
+	# it.
+	var era_ceiling := maxf(revenue_term, maxf(0.0, outstanding_restore_cost))
+	var era_room := maxf(0.0, era_ceiling - float(relief_era_paid))
 	var grant: int = clampi(
-			CostCurves.round_half_up(maxf(revenue_term, damage_term)),
-			int(_recovery.get("RELIEF_MIN", 0)), int(_recovery.get("RELIEF_MAX", 0)))
+			CostCurves.round_half_up(minf(maxf(maxf(revenue_term, damage_term),
+					float(_recovery.get("RELIEF_MIN", 0))), era_room)),
+			0, int(_recovery.get("RELIEF_MAX", 0)))
+	# **A GRANT OF NOTHING IS NOT A GRANT.** The era's allowance is three real
+	# rescues, and an ask that prices to zero may not burn one of them — that
+	# would hand the ceiling a way to end the ladder early. The COOLDOWN is still
+	# stamped, because the ask was made and `outstanding_restore_cost` is an
+	# O(roster) walk the caller has already paid for: without it this branch
+	# re-prices the whole roster every settled game-hour.
+	if grant <= 0:
+		relief_last_grant_hour = hour
+		return 0
 	relief_grants_used += 1
 	relief_last_grant_hour = hour
 	relief_era_paid += grant

@@ -9357,3 +9357,147 @@ failed 0, silent 0.** `python3 tools/check_doc_refs.py` prints *all resolving; n
 assigned twice* over 5,099 references. Not one balance constant moves
 (doc 92 §60.11), and the four `profile_sim` baselines move on exactly one
 `Treasury.serialize()` key, proven by A/B (doc 92 §60.10).
+
+## 65. WAVE 23 — the predicate measured the shell, not the service (binding)
+
+*(Measured in doc 92 §62. Rulings in doc 93 §AV. Defect rows doc 91 A91-D-121,
+A91-D-122, A91-D-123. Delta row doc 12 §2.19 D-97.)*
+
+Wave 21's fire floor is **kept, and it is why this save is playable at all**: the
+acceptance test's passive arm is unchanged at 12/12/12 with zero destructions of
+any cause, and its Restore-All arm improves. What this wave corrects is one word
+in §AS1 — *capability* meant a BUILDING, and the ability to answer a fire is not
+a building. It lives in `FleetSystem`, and doc 93 §AR3's own finding is that the
+engines outlive the shell on every destruction path in the game.
+
+Five resolutions. Four are the four consequences Wave 21's own adversarial
+verifier measured and merged deliberately as strictly-better-than-dying.
+
+### RR-192 — §AV1: capability is the SERVICE, and the hazard names its own service (corrects `RR-182`; docs 02 §2.6, 06 §2.6/§2.10, 92 §62.1/§62.2, 93 §AV1)
+
+`CityIncidentWorld._could_have_answered(answerable, role)` is
+`has_service_capability(role) and answerable`. It still reads no money anywhere.
+Two changes:
+
+* **The shell half is deleted.** `has_service_capability(role)` is one fact: a
+  `FleetSystem` unit whose `resolve_rate` answers `role` and that is not parked
+  `OFFLINE`. `has_fire_capability()` survives as its fire reading, because doc
+  92's gates assert on that name.
+* **`role` is the incident's own `primary_role`**, supplied by the new
+  `IncidentSystem.incident_primary_role` and carried on both damage doors —
+  `IncidentWorld.apply_building_damage(id, fraction, answerable, role)` and
+  `destroy_building(id, cause, answerable, role)`, defaulting to the fire role so
+  a caller that predates the argument behaves exactly as it did.
+
+**The measurement, on one tree, on the player's own save** (doc 92 §62.1):
+`fire_station shells standing 0 | fleet 14 units (fire 1, …) | §AS1 shell reading
+false -> §AV1 service reading true`. Both readings taken at the same instant by
+`tools/measure_player_city.gd --service-audit`, so the correction is a
+measurement and not a derivation from the diff. The city was being told it had no
+fire service by a predicate that could not see the fire service, while paying
+$91.58/gh of `E_fleet` to keep it.
+
+**And the same predicate was ruling about floods.** `CascadeOps`'
+`building_condition` op is the door EVERY hazard's damage goes through, so under
+§AS1 a city with no fire department could not lose a building to water or wind.
+Doc 92 §62.2's probe is deterministic and fails on the fork.
+
+**Two things §AS1 got right and this keeps.** Availability is not capability — a
+unit on another call or in `REFIT` still counts, because doc 06 reads
+`dispatch_blocked_no_units` as ANSWERABLE and fleet size is a purchase. And the
+predicate is still a city-level fact and not `coverage_fire(tile)`, because
+gating the CONDEMN door on coverage makes "build far from the station" a
+fireproofing strategy.
+
+**The door to the exemption is now one verb**: `FleetSystem.remove_station`,
+reached from doc 02 §2.12's demolition — the player's own bulldoze. A fire can no
+longer buy it for you. RR-195 is the ruling that the bulldoze has to lose.
+
+### RR-193 — §AV2: `RELIEF_MIN` is inside the era ceiling (corrects `RR-185`; docs 03 §2.10, 92 §62.5, 93 §AV2)
+
+`Treasury.maybe_grant_relief` gains an era ceiling and the floor goes inside it:
+
+    era_ceiling = max(revenue_term, outstanding_restore_cost)
+    grant       = min(max(revenue_term, damage_term, RELIEF_MIN),
+                      era_ceiling − relief_era_paid)
+
+§AS4 charged the two TERMS against the era and left `clampi(…, RELIEF_MIN, …)`
+outside both — and a floor is not a term, it does not shrink. So
+`RELIEF_MIN × relief_grants_per_era` = $8,000 × 3 = **$24,000 an era pays whatever
+it was measured against**, and a $2,000 bill drew **12.0× itself** while §AS4's
+heading claimed an era may never out-pay its bill. **The heading is now true as
+written.**
+
+The ceiling is the BILL, not `RELIEF_DAMAGE_FRACTION × bill`: the fraction is
+already the damage term's own per-era cap, and re-using it here would have taken
+$16,000 off the acceptance arm. Measured (doc 92 §62.5): the player's slot 0
+still collects **$114,727 in 3 grants, bit-identical to the fork**; the $2,000 rig
+falls from $24,000 to $2,000. An ask that prices to zero is not paid and does not
+spend one of the era's three rescues — it does stamp the cooldown, so the
+O(roster) bill walk cannot run every settled game-hour.
+
+### RR-194 — §AV3: the water-works staffing follows the plant, not the graph (completes `RR-178`; docs 03 §2.4, 05 §2.6, 92 §62.4, 93 §AV3)
+
+`CitySim.build_settlement_inputs` claims to be "the sole author of both arrays"
+and is not: the `water_works` row is appended by a second loop over `water.nodes`,
+keyed on a pump existing in the GRAPH. A DEMOLISHED `water_facility` takes its
+nodes with it (`_retire_water_nodes`); one that BURNS DOWN does not — the same
+path §AR3's own hole opened on. The pump's `power_ref` IS its host shell, so a
+pump whose host is rubble is no longer staffed; a node with no host is billed
+exactly as before.
+
+Measured on the player's slot 0 at game-day 90, passive arm: `E_departments`
+**$11.00/gh → $0.00** (that is doc 03's $20.00 through the city's own 0.55
+`m_exp × austerity_mult`), total expense $556.27 → $545.27/gh, deferred liability
+$1,374,124 → $1,350,232. **$480 a game-day of wages for three plants that do not
+exist.**
+
+### RR-195 — §AV4: a fire station buys prevention, not only response (docs 02 §2.9, 06 §2.6, 09 §2.11, 92 §62.6, 93 §AV4)
+
+`data/incidents.json` `factors.fire` gains `coverage_base` 1.0, `coverage_slope`
+0.4286, `coverage_min` 0.5714, `coverage_max` 1.0, and
+`IncidentSystem._structure_fire_rates` multiplies its per-building rate by
+`clamp(coverage_base − coverage_slope × the district's fire_coverage, min, max)`
+— at exactly the place doc 06 §2.6(a)'s crime rate already multiplies by
+`f_police`. `CityIncidentWorld.district()` gains the `fire_coverage` key beside
+the `police_coverage` it has always carried.
+
+**NO NEW MAGIC NUMBER.** The slope is crime's own full-coverage reduction,
+`police_slope / police_base` = 0.6 / 1.4 = 0.4286, re-anchored at 1.0 so an
+UNCOVERED city's fire rate is exactly what it has always been. A catalog without
+the four keys reads slope 0.0 and is bit-identical to the pre-§AV4 build.
+
+**Why it is needed.** §AV1 makes the predicate honest and that alone makes the
+incentive WORSE: with the floor keyed on not owning a service, the cheapest fire
+insurance in the game is to have no fire service. Doc 92 §62.6 measures 90
+game-days on a founding city, three arms, the `none` arm bulldozing through the
+real command so it collects the refund: **keep 32 alive / $322,479, burn 31 /
+$260,098, none 31 / $267,443.** Owning and keeping the department is the best arm
+on both numbers — **+1 alive and +$55,036** — while paying $30.02/gh more to hold
+it, and the worst arm is `burn`: bought and left to rot.
+
+**A/B, one line of data:** with `coverage_slope` alone at 0.0 the keep arm returns
+to 31 alive / $281,360, so §AV4 is worth +1 alive and +$41,119 of that advantage.
+This is not the farm §AS1 refused — coverage in the IGNITION rate runs the other
+way, so building far from the station gives you MORE fires, not fewer.
+
+**It also answers doc 91 A91-D-117's own prescription** ("a floor under the
+stability term, or a coverage-aware generation damper"): 30,610 incidents born in
+90 game-days with no department, 26,944 with one — **−12.0 %** — on the player's
+own save.
+
+### RR-196 — the instruments, the gates and the four baselines (docs 92 §62.6/§62.8)
+
+`tools/measure_fire_incentive.gd` is new: three arms on a founding city, a printed
+verdict, and the inequality checked rather than asserted in prose.
+`tools/measure_player_city.gd` gains `--fire-dept=keep|burn|none` and
+`--service-audit`, and the arms' reinstatement is free in every arm on purpose —
+charging it would make them differ by a restore bill as well as by a department.
+`tools/probe_fire_coverage.gd` prints the district scalar the ignition rate
+actually reads.
+
+**The four baselines: one of four moves, and its cause is isolated by ablation.**
+Setting `coverage_slope` to 0.0 returns the bench coarse digest to
+`db934239…88a1`, bit-identical to the fork, with the other three untouched — so
+§AV4 is the sole cause and §AV1, §AV2 and §AV3 move no baseline at all. Doc 92
+§62.8 carries the digests and the commands.
