@@ -11145,3 +11145,152 @@ replacement.
 
 `hard` and `crisis` do not move at all, for §58.7's own reason: a city that dies
 on game-day 47 never sees enough unanswerable fire for the ruling to reach it.
+
+## 65. Wave 25 — the transformer is a thing you tap: what a repair costs, who is behind the pad, and what the building panel was carrying (2026-09-04)
+
+*(Rulings doc 93 §AY. Resolutions report 98 §68 RR-205..RR-208. Defect rows doc
+91 A91-D-129, A91-D-130, A91-D-131. Delta rows doc 12 D-114, D-115, D-116.)*
+
+Every number below is printed by `tools/measure_transformer_panel.gd`, which
+boots the real `CitySim`, asks the real commands with `preview = true`, and
+mounts the real `ui_root.tscn` for the panel figures. It owns no constant.
+
+```
+~/.local/bin/godot --headless --path "<project>" \
+    -s res://tools/measure_transformer_panel.gd -- --panel
+~/.local/bin/godot --headless --path "<project>" \
+    -s res://tools/measure_transformer_panel.gd -- --city=res://tests/fixtures/bench_city.json
+```
+
+### 65.1 Who is behind the pad
+
+Seed 1337, 6 game-hours, both shipped cities:
+
+| city | transformers | attached buildings | mean per transformer | widest | feeding nobody | unserved |
+|---|---|---|---|---|---|---|
+| `data/starter_city.json` | 18 | 33 | **1.83** | `T-04`, **4** | 2 | 0 |
+| `tests/fixtures/bench_city.json` | 144 | 1,494 | **10.38** | `T-023`, **17** | 13 | 0 |
+
+**Both ends of that range are load-bearing for S18.** The founding city's
+transformers feed one to four buildings, so the customer list is a short block
+the player reads at a glance — which is the state the panel is designed to be
+readable in. A grown city's widest transformer feeds **17**, which is why the
+list is inside the panel's scroller and why each row is a 48 dp target rather
+than a line of text: seventeen rows is 816 dp of list on a 915 dp display.
+
+**"Feeding nobody" is a real state and not an error** — 2 of 18 on the founding
+city, 13 of 144 on the benchmark. A pad the player placed ahead of the houses,
+or one whose customers were demolished, has an empty list, and the panel says so
+rather than drawing an empty box.
+
+### 65.2 What a transformer repair costs, and how long it takes
+
+Every transformer in the founding city, quoted through
+`cmd_repair_grid_component(preview = true)` at its live condition and again with
+the unit forced FAILED — the same call the panel's button makes.
+
+| level | live (condition 0.9979, wear only) | forced FAILED (damage 0.3521) | crew-hours |
+|---|---|---|---|
+| L1 ($500 capital) | $1 | **$150** | 0.3169 |
+| L2 ($1,100) | $2 | **$329** | 0.3169 |
+| L3 ($2,800) | $5 | **$838** | 0.3169 |
+
+Roster total if every one of the 18 failed at once: **$5,178, mean $288.**
+
+**Every term is somebody else's number.** `150 = round(500 × 0.3521 × 0.85)` is
+doc 03 §2.5's one repair formula on §2.5's own grid capital;
+`0.3521 = FAILURE_DAMAGE[transformer] 0.35 + (1 − 0.9979)` is doc 04 §2.6's
+burnout damage plus six game-hours of wear; `0.3169 = 0.90 × 0.3521` is doc 06's
+`transformer_failure.w_base` scaled by that damage. Nothing in the table was
+authored by this wave.
+
+**The bill is deliberately small against the alternative.** A player whose L1
+transformer burns out pays **$150** and waits a crew out, against **$500** to
+place a replacement (doc 03 §2.13(b)) less **$125** of demolition refund — so
+repairing is 40 % of the price of replacing, and the reason to replace is
+capacity, not damage. At L3 it is $838 against $2,800 − $700 = $2,100, the same
+40 %. That ratio is `REPAIR_COST_PER_CAPITAL × damage / (1 − 0.25)` and it holds
+at every rung because both ladders read the same capital column.
+
+**Crew-hours are a real wait and not a formality.** 0.3169 crew-hours at
+`WORK_UNITS_PER_CREW_HOUR` 100 and one crew (`max_crews_for(0.317)` = 1) is
+**19 game-minutes** of work — long enough that the ETA on the panel is worth
+reading and the pad visibly stays dark, short enough that a player is not
+punished twice for a failure they have already paid for.
+
+**And the wear branch is not a trap.** At condition 0.9979 the quote is $1 — six
+game-hours of wear, honestly priced — and it lifts the unit to 1.00, because doc
+02 §2.12's `repair_target_active` applies to a component that is still standing
+(doc 93 §AY1). Below the rounding, `E_NOT_DAMAGED` refuses: a repair that would
+take money and move nothing is not offered at all.
+
+### 65.3 The tap: what the fork answered for a tap on a transformer
+
+`CameraState.load_from_files().m_per_dp(412 × 915)` at the shipped default camera
+height is **0.05376 m/dp**, so `data/ui.json.street.tap_dp` 48 is a **2.581 m**
+radius of ground — the same radius the street collectable already uses.
+
+| | founding city | benchmark city |
+|---|---|---|
+| pads reached by a tap on their own centre | **18 of 18** | **144 of 144** |
+| sample points in a finger's worth of ground around every pad | 648 | 5,184 |
+| …that now select the transformer | **570 (88.0 %)** | **4,424 (85.3 %)** |
+| …that the FORK gave to a building | 0 | 0 |
+| …that the FORK gave to a block (S4) | 0 | 0 |
+| …that the FORK gave to **nothing at all** | **648 (100 %)** | **5,184 (100 %)** |
+
+**That last row is the finding, and it is worse than the one the lane was opened
+on.** The lane brief expected the house behind the pad to steal the tap. It does
+not: doc 09's starter city puts every transformer on a tile no building occupies,
+and every one of those tiles is inside a developed block whose stage does not
+open S4. So `pick_at_ground` fell through all three of its answers and returned
+`PICK_NONE` — and `game/main.gd`'s tap handler treats `PICK_NONE` as **deselect**.
+**A tap on the most complicated, most expensive, most failure-prone object the
+renderer draws closed whatever the player had open and did nothing.** 100 % of
+the time, on both shipped cities.
+
+The 12 % of the disc that still resolves elsewhere is the outer ring falling onto
+a neighbouring building's tile, which is correct: at the edge of a finger the
+nearer object should win, and the transformer is 2.4 m across inside a 2.581 m
+radius.
+
+### 65.4 What the building panel was carrying
+
+The real panel, mounted from `game/ui/ui_root.tscn`, laid out by
+`UIRoot.force_layout` at three device widths, counting every visible `Label`,
+`Button` and `MeterBar` and summing their own minimum heights. (Content height,
+not the body's reported size: the body lives in a `ScrollContainer` and reports
+the VIEWPORT's height however long its contents are — the number that hides the
+problem.)
+
+| building | | rows before | content before | rows after | content after |
+|---|---|---|---|---|---|
+| `APT-001` | residential | **65** | **1,795 dp** | *(65.4b)* | *(65.4b)* |
+| `OFF-1` | commercial | **76** | **2,098 dp** | *(65.4b)* | *(65.4b)* |
+| `FIRE-1` | service | **66** | **1,818 dp** | *(65.4b)* | *(65.4b)* |
+
+Identical at 360, 412 and 794 dp — the panel is a fixed-width column, so nothing
+about its length is a phone-only problem.
+
+**2,098 dp is 2.3 screenfuls of a 915 dp display**, on a surface whose primary
+action (`UPGRADE`) is pinned to a footer precisely because Wave 18 had already
+found it below the fold. The player's *"right now there's too many things there"*
+is 76 rows.
+
+### 65.5 Determinism
+
+All four `profile_sim --hash-only` baselines are **byte-identical at the fork
+(`6dba66c`) and at the end of this pass**:
+
+| | fork | after |
+|---|---|---|
+| starter, coarse 24 h | `34ba7d972f3a78e2…` | `34ba7d972f3a78e2…` |
+| starter, fine 2.0 h | `dde437bc234fc2c2…` | `dde437bc234fc2c2…` |
+| `bench_city.json`, coarse 24 h | `db934239d6d84c04…` | `db934239d6d84c04…` |
+| `bench_city.json`, fine 2.0 h | `bf57bbac708c35b7…` | `bf57bbac708c35b7…` |
+
+This wave holds no gate and moves no hash. The two `sim/` changes that COULD
+have moved one are the `FAILURE_DAMAGE` hoist (identical values at all three call
+sites, RR-205) and the `repair_component` target parameter (defaulted to the
+0.85 the one existing caller always got, RR-206); everything else is a new
+command nothing calls unless the player taps it, and two read-only accessors.

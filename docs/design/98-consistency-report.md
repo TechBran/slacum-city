@@ -9357,3 +9357,137 @@ failed 0, silent 0.** `python3 tools/check_doc_refs.py` prints *all resolving; n
 assigned twice* over 5,099 references. Not one balance constant moves
 (doc 92 §60.11), and the four `profile_sim` baselines move on exactly one
 `Treasury.serialize()` key, proven by A/B (doc 92 §60.10).
+
+## 68. WAVE 25 — the transformer is a thing you tap (binding)
+
+*(Measured in doc 92 §65. Rulings in doc 93 §AY. Defect rows doc 91 A91-D-129,
+A91-D-130, A91-D-131. Delta rows doc 12 D-114, D-115, D-116.)*
+
+The player, 2026-09-04: *"In every building we have the transformer power
+information. We should have that on the transformer itself. So if you click on
+the transformer, you can repair it — which means calling your crews there. If it
+fails, you can fix it from there, call your crews; and all of the buildings that
+connect to that transformer and the power-feed situation, and the ability to
+upgrade the transformer — all should be there on the transformer. You click the
+transformer and all of that information pops up just like a building does. So we
+don't clutter the building information. The buildings just need a few things:
+repair, upgrading, and things we already have. Right now there's too many things
+there."*
+
+Three separate things were true of the fork, and only the third is a matter of
+taste:
+
+1. **A transformer was not selectable.** `BuildController.pick_at_ground`
+   answered `opportunity → building → block` and nothing else, and
+   `game/main.gd` routed those three. There was no id a tap could produce for a
+   grid component, so there was no panel it could open, so every verb doc 04 §4
+   owns had to be reached through a BUILDING the transformer happened to feed.
+2. **A failed transformer had exactly one door and the player did not hold the
+   key to it.** `PowerGrid.repair_component` was called from one place in the
+   whole project — `CityIncidentWorld.power_restore_component`, inside doc 06's
+   incident resolution. There was no command. A player looking at a dead pad
+   could upgrade it (refused: `E_STATE`), demolish it, or wait.
+3. **The building panel had grown a whole subsystem inside it.** Wave 17 put the
+   hop list, the per-hop UPGRADE buttons, the armed REMOVE row and the fix strip
+   into `ui/building_panel.gd`, because the building was the only door there was.
+
+### RR-205 — `buildings_served_by`: the grid could not name its own customers (docs 04 §4.1, 12 D-114, 92 §65.1)
+
+`PowerGrid` publishes `attachment_of(building_id)` (one building → its
+transformer) and `attachment_map()` (the whole table). It published **no way to
+ask a transformer who is behind it**. `_children_of` is private and walks
+COMPONENTS, not buildings.
+
+The consequence was three open-coded copies of one loop, all sweeping the
+attachment map by hand: `CitySim.cmd_demolish_grid_component` (then re-sorting
+what it built), `CityIncidentWorld.power_customers_downstream` (a
+per-building `attachment_of()` over the whole roster — **1,500 dictionary
+lookups on the benchmark city** for a count the grid already holds), and
+`PowerGrid._customer_index` (a count, kept). `buildings_served_by(id)` is the
+public read, sorted for the same determinism reason `attachment_map()` is; the
+first two callers are now one line each.
+
+**`PowerGrid.damage_fraction(id)` lands with it**, and it closes an
+A91-D-19-shaped hole in doc 04's own middle.
+`_fail(id, cause, damage_fraction)` published a per-kind damage on every
+`PowerComponentFailed` — 0.35 transformer, 0.05 feeder, 0.30 substation, 0.05
+line — **written three times** (twice as literals in `_pass_c_thermal`, a third
+time as a ternary inside `_resolve_lightning_with`) and **read by nothing**:
+`_fail` does not touch `condition`, `repair_component` lifted to a flat 0.85, and
+no consumer in `sim/`, `ui/`, `game/` or `data/` ever named the key. It is now
+`PowerGrid.FAILURE_DAMAGE`, one table, and RR-206's price is read off it. Values
+unchanged: all four `profile_sim` baselines are byte-identical (doc 92 §65.5).
+
+### RR-206 — `cmd_repair_grid_component`: the verb the player asked for by name (docs 03 §2.5, 04 §4.2, 06 §2.6, 92 §65.2, 93 §AY1)
+
+A doc-03-priced repair that **dispatches a crew** rather than healing on the tap.
+Nothing about it is authored in `sim/`:
+
+| term | value | whose number |
+|---|---|---|
+| capital | `CostCurves.capital_value_grid(kind, level)` | doc 03 §2.5's grid bullet, shipped C-16, spender-less until now |
+| `damage_fraction` | `(1 − condition) + FAILURE_DAMAGE[kind]` when FAILED | doc 04 §2.6 (RR-205's hoisted table) |
+| price | `capital × damage × REPAIR_COST_PER_CAPITAL (0.85) × M_repair` | doc 03 §2.5, the one repair formula in the project |
+| crew-hours | `w_base(power_event_map[kind]) × damage_fraction` | doc 06's `transformer_failure.w_base` = **0.90 game-hours** |
+| crew type | `heavy_equipment_crew` | doc 09 §2.3's `UTILITY_CORRIDOR` crew — the phase that lays this equipment |
+| repair target | 0.85 from FAILED, 1.00 from standing | doc 02 §2.12's two targets, applied to a component |
+
+**No new ledger line and no new row in `data/economy.json`.** The charge books
+under the existing `&"repair"` category, so the Economy ledger's `Repairs` line
+carries it with no schema change. The job is an ordinary `ConstructionQueue`
+`repair` with a `grid_component` payload key, so it is listed by S16, rushable by
+`cmd_rush_construction`, and completed by the one completion door
+(`_route_completed_jobs`) — routed to `_complete_grid_repair` **ahead of**
+`on_construction_completed`, whose first act is a `buildings` lookup that a
+component id can never satisfy.
+
+Refusal ladder, in order: `E_UNKNOWN_COMPONENT`, `E_NOT_DAMAGED`,
+`E_ALREADY_REPAIRING`, `E_FUNDS` / the treasury's own spend refusals.
+
+**Two things it deliberately refuses, and both are written down rather than
+approximated.** A component that is only OPEN is not damaged — a tripped relay
+is a position, and doc 04's auto-reclose or doc 06's dispatch closes it for
+nothing. And a FEEDER is out of scope: doc 03 §2.5 prices a grid component's
+repair capital as its §2.13(b) build cost, a feeder's §2.13(b) price is **per
+tile of its run**, so `capital_value_grid("feeder", 1)` answers **0** and a
+feeder repair admitted here would have been free. Filed as A91-D-131 rather than
+shipped.
+
+**`E_NOT_DAMAGED` has a third arm that is not obvious and is the whole reason
+the verb is not a trap.** `repair_component` never LOWERS a condition, so a
+repair of a standing component already at its target would take doc 03's money
+and move nothing. The gate therefore refuses when the quoted price rounds to
+$0 as well as when the damage is zero — the threshold is doc 03's own rounding,
+not a number this wave authored.
+
+### RR-207 — `PICK_COMPONENT` and S18: the panel the pad opens (docs 12 §2.25, 04 §4.1, 92 §65.3, 93 §AY2)
+
+`pick_at_ground` gains a fourth answer between OPPORTUNITY and BUILDING, on the
+same 48 dp radius `set_tap_radius_from` already computes, measured against the
+pad's own tile centre. **The order is the point**: a padmount cabinet is 2.4 m
+across standing in front of a house that occupies a whole 8 m tile, so a pick
+decided by tile ownership hands every tap to the house — the same asymmetry doc
+12 §2.21 argued for the street collectable, one object over. The house has not
+moved and is one tap away.
+
+`ui/transformer_panel_model.gd` is the headless model (every number, every string
+KEY, every refusal) and `ui/transformer_panel.gd` is the code-built view that
+computes nothing — the same split `LandPanelModel` / `LandPanel` uses, and the
+reason the whole surface is under `tests/test_ui_transformer.gd` rather than
+under a screenshot.
+
+### RR-208 — the building panel diet (docs 12 §2.9 D-115/D-116, 92 §65.4, 93 §AY3)
+
+Wave 17's POWER section — header, draw line, shed line, N hop rows each with a
+title, a reading, an UPGRADE button, a checklist and an armed REMOVE row, then
+the next-level line and the fix strip — becomes **one row**:
+`Power · fed by T-03 · 78 % · ›`, or `Power · NOT SERVED · ›`, which opens S18.
+The water block takes the same treatment for the same reason. Measured in doc 92
+§65.4.
+
+**The three blocks that were examined and KEPT are as much of the ruling as the
+two that moved** (doc 93 §AY3): the priority row is a decision only this panel
+can make about this building; the coverage checklist is the requirement contract
+doc 12 §2.7 calls the game's most important teaching device; the progress block
+is the answer to *"is anything happening here?"*, which a player asks of the
+building and not of a queue.

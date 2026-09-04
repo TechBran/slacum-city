@@ -969,6 +969,16 @@ const PICK_BUILDING := &"building"
 const PICK_BLOCK := &"block"
 ## Wave 14. A collectable thing standing on the street, not a thing built on it.
 const PICK_OPPORTUNITY := &"opportunity"
+## Wave 25 (report 98 §68 RR-207, doc 93 §AY2). A `PowerGrid` component the
+## player can tap — a transformer pad today, which is the only grid component
+## `PowerInfraView` draws as an object standing on a tile.
+const PICK_COMPONENT := &"component"
+
+## The grid kinds a tap may select. A feeder and a transmission line are drawn as
+## a ROUTE and have no tile to measure a radius from; a substation and a plant
+## are BUILDINGS (report 98 C-30) and are already picked as one, so admitting
+## them here would give one object two pick kinds.
+const PICKABLE_COMPONENT_KINDS: Array[StringName] = [&"transformer"]
 
 ## `data/ui.json.street.tap_dp`, and the fallback for a malformed file. The path
 ## is `UIConfig`'s own — a second copy of it here is a second thing to rename.
@@ -1023,6 +1033,43 @@ func set_tap_radius_from(m_per_dp: float, dp: float = -1.0) -> float:
 	var want := dp if dp > 0.0 else BuildController.tap_dp()
 	tap_radius_m = maxf(0.0, m_per_dp) * want
 	return tap_radius_m
+
+
+## The nearest pickable grid component within `radius_m` of `point`, as
+## `{id, kind, tile, world_pos, distance_m}`, or `{}` (Wave 25, RR-207).
+##
+## **A radius from the tapped POINT to the pad's TILE CENTRE**, not a tile test,
+## and the two differ in the case that matters: a transformer standing on a
+## building's tile is one object inside another, and only a radius can put the
+## smaller one in front. The radius is `tap_radius_m` — the same 48 dp of finger
+## `set_tap_radius_from` converts for the street collectable — so a player who
+## has zoomed out until the pad is four pixels across gets a proportionally
+## wider catch, and one zoomed all the way in has to be on it.
+##
+## The scan is over `component_ids_of_kind(&"transformer")` and nothing else: a
+## line has a route, not a tile, and would answer `Vector2i.ZERO` for every
+## query. Ties are broken by distance and then by id, so two pads on adjacent
+## tiles resolve the same way on every machine.
+func component_near(point: Vector3, radius_m: float = -1.0) -> Dictionary:
+	var radius := radius_m if radius_m >= 0.0 else tap_radius_m
+	if radius <= 0.0 or sim == null or sim.grid == null:
+		return {}
+	var best: Dictionary = {}
+	var best_d := radius
+	for kind in PICKABLE_COMPONENT_KINDS:
+		for id_value in sim.grid.component_ids_of_kind(kind):
+			var id := String(id_value)
+			var tile := sim.grid.component_tile(id)
+			var centre := Vector3((float(tile.x) + 0.5) * tile_m, 0.0,
+					(float(tile.y) + 0.5) * tile_m)
+			var d := Vector2(centre.x - point.x, centre.z - point.z).length()
+			if d > best_d or (d == best_d and not best.is_empty() \
+					and id > String(best["id"])):
+				continue
+			best_d = d
+			best = {"id": id, "kind": String(kind), "tile": tile,
+					"world_pos": centre, "distance_m": d}
+	return best
 
 
 ## The roster, or `null`. The shell's binding wins; otherwise the sim is asked
@@ -1108,6 +1155,8 @@ func collect_opportunity(id: String) -> Dictionary:
 ##
 ##   0. a street opportunity within `tap_radius_m` → `{kind: "opportunity", id}`
 ##      → collect (Wave 14, below)
+##   0b. a grid component within `tap_radius_m` → `{kind: "component", id}` → S18
+##      (Wave 25, below)
 ##   1. a building on the tile  → `{kind: "building", id: sim_id}` → S5
 ##   2. otherwise the block, when S4 has something to offer for it (unowned,
 ##      owned-undeveloped, or mid-pipeline) → `{kind: "block", id: block_id}`
@@ -1128,6 +1177,14 @@ func collect_opportunity(id: String) -> Dictionary:
 ## there on the next tap, which is exactly the asymmetry that makes this order
 ## the safe one.
 ##
+## **And why a transformer outranks a building for the SAME reason** (Wave 25,
+## doc 93 §AY2). `PowerInfraView` draws a padmount cabinet 2.40 × 2.00 m on the
+## transformer's tile, and doc 09's starter city puts most of them on tiles a
+## building already occupies. A pick decided by tile ownership therefore hands
+## every tap on a visible, smoking, failed transformer to the house behind it —
+## the same defect the dog had, one object over. The transformer is also the
+## thing that is on fire, and the house is the thing that is fine.
+##
 ## `block` is filled in on every in-bounds pick, kind 1 and 3 included, so a
 ## caller that wants the block a *building* sits in does not need a second query.
 func pick_at_ground(point: Vector3) -> Dictionary:
@@ -1139,6 +1196,12 @@ func pick_at_ground(point: Vector3) -> Dictionary:
 		out["kind"] = PICK_OPPORTUNITY
 		out["id"] = str(chance["id"])
 		out["opportunity"] = chance
+		return out
+	var component := component_near(point)
+	if not component.is_empty():
+		out["kind"] = PICK_COMPONENT
+		out["id"] = String(component["id"])
+		out["component"] = component
 		return out
 	var sim_id := sim_id_at_tile(tile)
 	if sim_id != "":

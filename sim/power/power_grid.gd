@@ -30,6 +30,26 @@ const HAZARD := {
 	&"transformer": [85.0, 60.0, 2.00, 0.00012], &"feeder": [75.0, 55.0, 1.20, 0.00008],
 	&"substation": [80.0, 60.0, 0.90, 0.00010], &"transmission": [70.0, 55.0, 0.70, 0.00006],
 }
+## §2.6's failure damage, per kind — how much of the asset a burnout takes with
+## it. **Hoisted, not invented (Wave 25, RR-205).** These four values were
+## written THREE times before this wave: twice as literals in `_pass_c_thermal`'s
+## two failure arms, and a third time inside `_resolve_lightning_with`'s `ds2`
+## band, which re-derived `0.35 transformer / 0.30 substation / 0.05 otherwise`
+## with its own ternary. Every one of them travelled out on
+## `PowerComponentFailed.damage_fraction` — and **nothing anywhere consumed it**:
+## `_fail` does not touch `condition`, `repair_component` lifts to a flat 0.85,
+## and no reader in `sim/`, `ui/` or `game/` ever read the key. That is this
+## project's signature defect (A91-D-19 shape), sitting in the middle of doc 04.
+##
+## It has a consumer now. `CitySim.cmd_repair_grid_component` prices doc 03
+## §2.5's repair on `damage_fraction = (1 − condition) + FAILURE_DAMAGE[kind]`
+## when the component is FAILED, so the number that describes how badly a
+## transformer burned out is the number the player is charged to put it right.
+## Values are unchanged, so no hash moves.
+const FAILURE_DAMAGE := {
+	&"transformer": 0.35, &"feeder": 0.05,
+	&"substation": 0.30, &"transmission": 0.05,
+}
 const K_TRIP := {&"feeder": 120.0, &"substation": 90.0, &"transmission": 100.0}
 const R_PICKUP := 1.05
 const TRIP_ACCUM_DECAY_GS := 120.0
@@ -428,6 +448,58 @@ func attach_building(building_id: String, tile: Vector2i,
 		return ""
 	_attachments[building_id] = best
 	return best
+
+
+## **Every building this transformer feeds**, ascending by building id (Wave 25,
+## RR-205 — doc 04 §4.1, doc 12 D-114).
+##
+## `attachment_of()` answers the question one building at a time and
+## `attachment_map()` answers it for the whole city; neither answers *"who is
+## behind THIS pad?"*, which is the first thing a player asks after tapping one.
+## Before this wave the only code that could answer it was `_children_of` — which
+## is PRIVATE, and walks COMPONENTS rather than buildings — so
+## `cmd_demolish_grid_component` and `power_customers_downstream` each open-coded
+## their own sweep of `_attachments` (three copies of one loop, doc 98 RR-205).
+##
+## Read-only, consumes no RNG, and sorted for the same reason `attachment_map()`
+## is: two runs that listed a transformer's customers in different orders would
+## draw two different panels from identical state. Empty for an id the grid has
+## never heard of, and for a transformer with no customers — which is a real
+## state (a pad the player placed ahead of the houses) and not an error.
+func buildings_served_by(transformer_id: String) -> Array:
+	var out: Array = []
+	if transformer_id == "" or not _components.has(transformer_id):
+		return out
+	for building_id in _sorted_keys(_attachments):
+		if String(_attachments[building_id]) == transformer_id:
+			out.append(String(building_id))
+	return out
+
+
+## How much of this component a repair has to buy back, on doc 03 §2.5's own
+## `damage_fraction ∈ [0,1]` scale (Wave 25, RR-206).
+##
+## Two terms, and neither is authored here: the WEAR `_pass_c_thermal` has
+## accumulated (`1 − condition`), plus — only when the component is FAILED —
+## §2.6's own `FAILURE_DAMAGE` for its kind, the number `_fail` has always
+## published on `PowerComponentFailed` and nothing has ever read. An `OK`
+## component at condition 1.00 answers exactly 0.0, which is what
+## `cmd_repair_grid_component` refuses `E_NOT_DAMAGED` on.
+##
+## OPEN is deliberately NOT damage. A tripped or locked-out component is a relay
+## position, not a broken asset — doc 06's dispatch closes it (`force_close`) and
+## charges nothing, and pricing a repair on it would sell the player a
+## $0 purchase or, worse, a real one for a fault that does not exist.
+func damage_fraction(id: String) -> float:
+	var c: Variant = _components.get(id)
+	if c == null:
+		return 0.0
+	var row: Dictionary = c
+	var wear := 1.0 - float(row["condition"])
+	var burn := 0.0
+	if String(row["state"]) == "FAILED":
+		burn = float(FAILURE_DAMAGE.get(row["kind"], 0.0))
+	return clampf(wear + burn, 0.0, 1.0)
 
 
 func attachment_of(building_id: String) -> String:
@@ -1160,7 +1232,7 @@ func _pass_c_thermal(dt_gs: int, weather: Dictionary, rng: RngStreams) -> void:
 			continue
 		# Transformer hard ceiling: it cooks, it does not trip — until 3.0.
 		if kind == &"transformer" and r >= XFMR_BURNOUT_R:
-			_fail(id, "XFMR_BURNOUT", 0.35)
+			_fail(id, "XFMR_BURNOUT", float(FAILURE_DAMAGE[kind]))
 			continue
 		# Inverse-time relay (feeder / substation / transmission only).
 		if K_TRIP.has(kind) and c["energized"]:
@@ -1182,14 +1254,15 @@ func _pass_c_thermal(dt_gs: int, weather: Dictionary, rng: RngStreams) -> void:
 		var cond_mult2 := 1.0 + 3.0 * pow(1.0 - float(c["condition"]), 2)
 		var hazard := (h_cold + h_hot * pow(stress, 3)) * cond_mult2
 		if c["energized"] and rng.stream("failures").randf() < 1.0 - exp(-hazard * dt_gh):
+			var burn := float(FAILURE_DAMAGE.get(kind, 0.05))
 			if kind == &"transformer":
-				_fail(id, "XFMR_BURNOUT", 0.35)
+				_fail(id, "XFMR_BURNOUT", burn)
 			elif kind == &"feeder":
-				_fail(id, "FEEDER_FAULT", 0.05)
+				_fail(id, "FEEDER_FAULT", burn)
 			elif kind == &"substation":
-				_fail(id, "SUB_FAULT", 0.30)
+				_fail(id, "SUB_FAULT", burn)
 			else:
-				_fail(id, "LINE_FAULT", 0.05)
+				_fail(id, "LINE_FAULT", burn)
 			continue
 		# Condition wear.
 		if c["energized"]:
@@ -1269,12 +1342,26 @@ func evaluate_reclose(id: String, t_ambient: float) -> void:
 		topology_dirty = true
 
 
-## Crew repair completion: component returns to service at condition 0.85.
-func repair_component(id: String) -> void:
+## Post-failure repair target — doc 02 §2.12's `repair_target_damaged`, applied
+## to a grid component: **a post-damage repair never restores to new.** The
+## default, and the only value doc 06's incident resolution ever passes.
+const REPAIR_TARGET_FAILED := 0.85
+## …and §2.12's other half, `repair_target_active`: an overhaul of a component
+## that is still STANDING restores it fully, because the player is buying the
+## wear back rather than putting a burnt-out unit into service. Only
+## `CitySim.cmd_repair_grid_component`'s worn branch passes it (Wave 25, RR-206);
+## without it a repair bought at condition 0.99 would charge doc 03 for
+## `1 − condition` and move the condition by nothing, which is a trap.
+const REPAIR_TARGET_WORN := 1.0
+
+
+## Crew repair completion: component returns to service at `target` — 0.85 for
+## the failure path doc 06 resolves, 1.00 for the overhaul a player buys.
+func repair_component(id: String, target: float = REPAIR_TARGET_FAILED) -> void:
 	var c: Dictionary = _components[id]
 	c["state"] = &"OK"
 	c["failed_cause"] = ""
-	c["condition"] = maxf(float(c["condition"]), 0.85)
+	c["condition"] = maxf(float(c["condition"]), target)
 	c["reclose_attempts"] = 0
 	c["theta_c"] = 0.0
 	topology_dirty = true
@@ -1313,7 +1400,7 @@ func _resolve_lightning_with(id: String, energy: float, u: float) -> Dictionary:
 		_trip(id, &"LIGHTNING_TRIP", "")
 		return {"band": "ds1", "damage_fraction": 0.005}
 	if u < 0.90 * p:
-		var fraction := 0.35 if c["kind"] == &"transformer" else (0.30 if c["kind"] == &"substation" else 0.05)
+		var fraction := float(FAILURE_DAMAGE.get(c["kind"], 0.05))
 		_fail(id, "LIGHTNING", fraction)
 		return {"band": "ds2", "damage_fraction": fraction}
 	_fail(id, "LIGHTNING_DESTROYED", 1.0)

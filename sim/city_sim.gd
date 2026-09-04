@@ -2953,18 +2953,15 @@ func cmd_demolish_grid_component(component_id: String, preview: bool = false) ->
 	var level := int(c["level"])
 	var tile: Vector2i = c["tile"]
 	var refund := econ_curves.grid_demolition_refund("transformer", level)
-	var fed: Array = []
+	# RR-205: `PowerGrid.buildings_served_by` is the one sweep of the attachment
+	# map now, and it comes back sorted — this used to be a third open-coded copy
+	# of the same loop plus a `sort()` to undo the dictionary order.
+	var fed: Array = grid.buildings_served_by(component_id)
 	var stranded: Array = []
-	var attachments := grid.attachment_map()
-	for building_id in attachments:
-		if String(attachments[building_id]) != component_id:
-			continue
-		fed.append(String(building_id))
+	for building_id in fed:
 		var b: Building = buildings.get(String(building_id))
 		if b != null and not _covered_by_another_transformer(b.origin, component_id):
 			stranded.append(String(building_id))
-	fed.sort()
-	stranded.sort()
 	var quote := {"blockers": [], "component": component_id, "kind": "transformer",
 			"level": level, "tile": [tile.x, tile.y], "refund": refund,
 			"replace_cost": econ_curves.grid_build_cost("transformer", level,
@@ -2998,6 +2995,218 @@ func cmd_demolish_grid_component(component_id: String, preview: bool = false) ->
 			"stranded": still_dark.duplicate(), "customers": fed.size()})
 	stats_add(&"grid_components_demolished")
 	return CommandQueue.ok(quote)
+
+
+# ------------------- doc 04 §4.2 — CALL THE CREWS (Wave 25, RR-206)
+#
+# The player, 2026-09-04: *"if you click on the transformer, you can repair it —
+# which means calling your crews there. If it fails, you can fix it from there,
+# call your crews."*
+#
+# **There was no such verb.** A transformer could be upgraded, demolished and
+# placed; the ONLY way one came back from FAILED was doc 06 resolving the
+# incident its failure filed — a dispatch, on doc 06's clock, with the crew doc
+# 06 chose. That is a fine second door and it stays. It is not a door the player
+# could open from the thing that broke.
+#
+# Three rules this obeys, each of them somebody else's:
+#
+#   * **Doc 03 owns the dollar.** The price is §2.5's one repair formula read
+#     through `CostCurves.repair_cost_grid`, on §2.5's own grid capital
+#     (`capital_value_grid` — the §2.13(b) build cost at the current level) and
+#     §2.6's own `damage_fraction`. No number is authored here or in
+#     `data/economy.json`; the row this consumes has been in doc 03 since C-16
+#     and had no spender until now.
+#   * **Doc 09's crew machinery does the work.** Not an instant heal: a
+#     `ConstructionQueue` job with crew-hours, a crew id and a job id, exactly
+#     the shape `DevelopmentController._submit_phase` and `cmd_repair_building`
+#     use. The transformer comes back when the crew FINISHES, which is what
+#     makes the ETA on the panel a real number.
+#   * **Doc 06 owns how long the work takes.** `w_base` for this component's own
+#     `power_event_map` row is doc 06's authored work for exactly this job —
+#     0.90 game-hours for a `transformer_failure` — and the crew-hours are that
+#     work scaled by the damage being bought back. The same shape doc 02 gives a
+#     building (`build_time × 0.50 × damage_fraction`), with doc 06's number in
+#     place of doc 02's because doc 06 is the one that measured this job.
+
+## The crew id every yard job in this file binds to (`cmd_repair_building`,
+## `cmd_place_grid_component`, the road pair). Named once here so a grid repair
+## and a building repair cannot drift onto different crews.
+const GRID_REPAIR_CREW := "YARD-CREW-1"
+
+
+## Repair a placed grid component, by sending a crew (doc 04 §4.2). Order of
+## checks — every one of them a row the panel's checklist draws:
+##
+##   1 E_UNKNOWN_COMPONENT  no such id, or a kind with no repair here. A
+##                          substation and a plant ARE buildings (report 98
+##                          C-30) and repair through `cmd_repair_building`; a
+##                          transmission line is not placeable in this cut.
+##   2 E_NOT_DAMAGED        `PowerGrid.damage_fraction` is 0 — condition 1.00 and
+##                          not FAILED. A component that is merely OPEN is in
+##                          this bucket on purpose: a tripped relay is a
+##                          position, not a fault, and doc 04's auto-reclose or
+##                          doc 06's dispatch closes it for nothing.
+##   3 E_ALREADY_REPAIRING  a crew is already on this component. One job per
+##                          component, the same rule `cmd_repair_building` makes
+##                          with `E_JOB_IN_FLIGHT`.
+##   4 E_FUNDS / E_AUSTERITY / E_CREDIT_FLOOR  the treasury's own refusals.
+##
+## `preview = true` stops before the first mutation and returns the whole quote,
+## so `ui/power_actions.gd` can put the price on the button's face without
+## spending anything (doc 12 §2.7's "never spend on one tap").
+func cmd_repair_grid_component(component_id: String, preview: bool = false) -> Dictionary:
+	var kind := String(grid.component(component_id).get("kind", ""))
+	if not grid.has_component(component_id) or not REPAIRABLE_GRID_KINDS.has(kind):
+		return CommandQueue.fail(&"E_UNKNOWN_COMPONENT",
+				{"blockers": [&"E_UNKNOWN_COMPONENT"], "component": component_id,
+				"kind": kind})
+	var c := grid.component(component_id)
+	var level := int(c["level"])
+	var damage := grid.damage_fraction(component_id)
+	var failed := String(c["state"]) == "FAILED"
+	var target := PowerGrid.REPAIR_TARGET_FAILED if failed else PowerGrid.REPAIR_TARGET_WORN
+	var blockers: Array = []
+	# Two ways to have nothing to buy, and the second one is the trap this gate
+	# exists to close: `repair_component` never lowers a condition, so a repair
+	# of a STANDING component already at its target would take doc 03's money
+	# and move nothing at all.
+	var cost := econ_curves.repair_cost_grid(kind, level, damage,
+			float(treasury.difficulty().get("M_repair", 1.0)))
+	# …and a third: doc 03 prices this at nothing. A hair of wear on a nearly-new
+	# transformer rounds to $0, and a free job that occupies a crew to move a
+	# condition by half a thousandth is not a purchase the player should be
+	# offered. The threshold is doc 03's own rounding, not a number authored here.
+	if damage <= 0.0 or (not failed and float(c["condition"]) >= target) or cost <= 0:
+		blockers.append(&"E_NOT_DAMAGED")
+	var in_flight := grid_repair_job(component_id)
+	if in_flight >= 0:
+		blockers.append(&"E_ALREADY_REPAIRING")
+	if treasury.balance < cost:
+		blockers.append(&"E_FUNDS")
+	var crew_hours := grid_repair_crew_hours(component_id)
+	var quote := {"blockers": blockers, "component": component_id, "kind": kind,
+			"level": level, "state": String(c["state"]),
+			"condition": float(c["condition"]),
+			"damage_fraction": damage, "cost": cost, "balance": treasury.balance,
+			"crew_hours": crew_hours, "crew_type": String(GRID_REPAIR_CREW_TYPE),
+			"job_id": in_flight,
+			# What the crew leaving restores it to — doc 02 §2.12's two targets,
+			# published so the panel can say so before the money goes.
+			"repair_target": target,
+			"failed": failed,
+			"customers": grid.buildings_served_by(component_id).size()}
+	if not blockers.is_empty():
+		return CommandQueue.fail(blockers[0], quote)
+	if preview:
+		return CommandQueue.ok(quote)
+
+	# `repair` is not an austerity-blocked category (doc 03 §2.10 layer 2 keeps
+	# the city repairable) but the credit floor can still refuse it.
+	var paid := treasury.spend(cost, &"repair", "repair " + component_id)
+	if not bool(paid["ok"]):
+		quote["blockers"] = [_spend_reason(paid)]
+		return CommandQueue.fail(_spend_reason(paid), quote)
+	var job_id := construction.submit(&"repair", component_id, crew_hours,
+			GRID_REPAIR_CREW_TYPE,
+			{"grid_component": component_id, "kind": kind, "cost": cost,
+			"damage_fraction": damage, "repair_target": target})
+	construction.assign_crew(job_id, GRID_REPAIR_CREW)
+	quote["job_id"] = job_id
+	# Consumers, named: `data/ui.json.event_log` logs it under `power`,
+	# `ui/transformer_panel.gd` re-reads the job for its ETA, and
+	# `game/main.gd`'s toast arm says the crew is rolling.
+	bus.emit(&"grid_component_repair_started", {"component": component_id,
+			"kind": kind, "level": level, "cost": cost,
+			"damage_fraction": damage, "crew_hours": crew_hours,
+			"job_id": job_id, "customers": int(quote["customers"])})
+	stats_add(&"grid_components_repaired")
+	return CommandQueue.ok(quote)
+
+
+## The kinds `cmd_repair_grid_component` answers for.
+##
+## **Transformers only, and the exclusions are three different reasons.** A
+## substation and a plant ARE buildings (report 98 C-30) and have had
+## `cmd_repair_building` all along. A TIE SWITCH has no condition worth pricing.
+## A FEEDER is excluded for a reason worth writing down rather than shipping
+## around: doc 03 §2.5 prices a grid component's repair capital as its §2.13(b)
+## build cost, and a feeder's §2.13(b) price is **per tile of its run** — so
+## `CostCurves.capital_value_grid("feeder", 1)` answers **0**, and a feeder
+## repair admitted here would be free. The honest fix is a route-length-aware
+## capital accessor, which is doc 03's to author and is filed as this wave's open
+## question 1 (report 98 §68, A91-D-131) rather than approximated here. Until
+## then a failed feeder keeps the door it has always had: doc 06's dispatch.
+const REPAIRABLE_GRID_KINDS := {"transformer": true}
+
+## The crew a grid repair asks for. Doc 09 §2.3's `UTILITY_CORRIDOR` phase — the
+## phase that lays this exact equipment — asks for the same one, so a city that
+## can develop a block can repair a transformer.
+const GRID_REPAIR_CREW_TYPE := &"heavy_equipment_crew"
+
+## Doc 06's own work for this component's failure, scaled by the damage the
+## repair buys back — the crew-hours the job is submitted with.
+##
+## **Nothing is authored here.** `w_base` is `data/incidents.json`'s
+## `transformer_failure.w_base` (0.90 game-hours at tier 1) reached through the
+## same `power_event_map` doc 06 uses to decide WHICH incident a failed component
+## files, so a retune of doc 06's work moves this repair's clock with it. The
+## `× damage_fraction` is doc 02 §2.6's shape for a building repair, applied to
+## doc 06's number instead of doc 02's build time — because doc 06 is the
+## document that measured how long fixing a transformer takes.
+func grid_repair_crew_hours(component_id: String) -> float:
+	var kind := String(grid.component(component_id).get("kind", "transformer"))
+	var row := incident_catalog.power_event_row(kind)
+	if row.is_empty():
+		row = incident_catalog.power_event_row("transformer")
+	var type_row := incident_catalog.type_row(String(row.get("type", "transformer_failure")),
+			String(row.get("subtype", "")))
+	return float(type_row.get("w_base", 0.90)) * grid.damage_fraction(component_id)
+
+
+## The live repair job on this component, or `-1`. One sweep of the queue, and
+## the single reader of the `grid_component` payload key — `E_ALREADY_REPAIRING`
+## and the panel's ETA both ask this rather than each walking the queue.
+func grid_repair_job(component_id: String) -> int:
+	for job in construction.active_jobs():
+		if StringName(String(job["kind"])) != &"repair":
+			continue
+		if String((job.get("payload", {}) as Dictionary).get("grid_component", "")) \
+				== component_id:
+			return int(job["job_id"])
+	return -1
+
+
+## A finished grid repair: the crew has arrived, done the work and left, so doc
+## 04 puts the component back in service. The FAILED → OK half is
+## `PowerGrid.repair_component`; a component that was only WORN keeps its state
+## and takes the same condition floor, which is the honest reading of "the crew
+## overhauled it".
+##
+## Called from `_route_completed_jobs`, ahead of `on_construction_completed`,
+## because that function's first act is to look `payload.sim_id` up in
+## `buildings` and return when it misses — which a component id always does.
+func _complete_grid_repair(job: Dictionary) -> void:
+	var payload: Dictionary = job.get("payload", {})
+	var component_id := String(payload.get("grid_component", ""))
+	if component_id == "" or not grid.has_component(component_id):
+		return
+	var before := String(grid.component(component_id)["state"])
+	# The target the job was QUOTED at, never re-derived: a component that failed
+	# after the crew was dispatched must not silently become a cheaper repair
+	# than the one the player paid for. Same contract `on_construction_completed`
+	# makes with a building's `repair_target`.
+	grid.repair_component(component_id, float(payload.get("repair_target",
+			PowerGrid.REPAIR_TARGET_FAILED)))
+	# Consumers, named: the event log's `power` filter, the transformer panel's
+	# refresh, and `game/main.gd`'s toast. `was_failed` is what decides whether
+	# the copy says "back on" or "overhauled".
+	bus.emit(&"grid_component_repaired", {"component": component_id,
+			"kind": String(payload.get("kind", "")),
+			"job_id": int(job["job_id"]),
+			"was_failed": before == "FAILED",
+			"condition": float(grid.component(component_id)["condition"]),
+			"customers": grid.buildings_served_by(component_id).size()})
 
 
 ## Is `tile` inside the service radius of some OK transformer other than
@@ -6015,6 +6224,11 @@ func _construction_row(job: Dictionary) -> Dictionary:
 			level_to = b.pending_level
 	elif kind == &"development":
 		tile = _block_focus_tile(String(payload.get("block_id", "")))
+	elif payload.has("grid_component"):
+		# Wave 25 (RR-206): a crew on a transformer is a project like any other,
+		# so S16 lists it — with the pad's tile, so the row's jump affordance
+		# lands on the thing being fixed instead of at (−1, −1).
+		tile = grid.component_tile(String(payload["grid_component"]))
 	elif payload.has("roads_kind"):
 		var record := _road_job_record(job_id)
 		var tiles: Array = record.get("tiles", [])
@@ -6085,6 +6299,11 @@ func _construction_title_key(job: Dictionary) -> String:
 		if road_class == RoadTunables.CLASS_AVENUE:
 			return "ui_queue_title_road_avenue"
 		return "ui_queue_title_road_street"
+	if payload.has("grid_component"):
+		# The noun is the component's KIND — `Transformer`, `Feeder` — read from
+		# the same `ui_power_kind_*` roster the panel's hop rows use, so S16 and
+		# S18 name the same thing the same way (Wave 25, RR-206).
+		return "ui_power_kind_%s" % String(payload.get("kind", "transformer"))
 	var b: Building = buildings.get(String(payload.get("sim_id", "")))
 	if b == null:
 		return CONSTRUCTION_TITLE_FALLBACK
@@ -6646,6 +6865,12 @@ func _route_completed_jobs(completed: Array) -> void:
 	for job: Dictionary in completed:
 		if (job.get("payload", {}) as Dictionary).has("roads_kind"):
 			roads.on_job_completed(int(job["job_id"]))
+		elif (job.get("payload", {}) as Dictionary).has("grid_component"):
+			# Wave 25 (RR-206). Ahead of `on_construction_completed`, whose first
+			# act is a `buildings` lookup on `payload.sim_id` — a component id is
+			# never one, so a grid repair routed there would complete silently
+			# and the transformer would stay dead with the money spent.
+			_complete_grid_repair(job)
 		elif not development.on_job_completed(job):
 			on_construction_completed(job)
 

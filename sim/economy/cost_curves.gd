@@ -340,6 +340,22 @@ func repair_cost_road(road_class: String, damage_fraction: float, m_repair: floa
 	return repair_cost(capital_value_road(road_class), damage_fraction, m_repair)
 
 
+## doc 03 §2.5's repair, read against a GRID component's capital (Wave 25,
+## RR-206). **No new magnitude and no new ledger line**: §2.5's own bullet has
+## published "grid components — their §2.13(b) build cost at the current level"
+## since C-16, and `capital_value_grid` above has implemented it since Wave 17.
+## What was missing was a COMMAND that spent it — the door
+## `CitySim.cmd_repair_grid_component` now is. The charge books under the same
+## `&"repair"` category `cmd_repair_building` and the road repair policy use, so
+## the Economy ledger's `Repairs` line needs no new row either.
+##
+## `damage_fraction` is `PowerGrid.damage_fraction(id)`: the wear plus §2.6's
+## own `FAILURE_DAMAGE` when the component is FAILED.
+func repair_cost_grid(component: String, level: int, damage_fraction: float,
+		m_repair: float = 1.0) -> int:
+	return repair_cost(capital_value_grid(component, level), damage_fraction, m_repair)
+
+
 ## doc 03 §2.5's RESTORE row — the price of `CitySim.cmd_restore_building`, the
 ## one tap that brings a ruin back (Wave 18, doc 92 §54, doc 93 §AN).
 ##
