@@ -23,7 +23,7 @@
 	"n_austerity_lifted_body": "Discretionary spending resumed at {time}.",
 	"n_austerity_lifted_title": "Austerity lifted",
 	"n_austerity_title": "Austerity measures",
-	"n_city_level_grant_body": "The council has voted the city a founding grant of {amount}.",
+	"n_city_level_grant_body": "The council has voted the city a grant of {amount} for the work.",
 	"n_city_level_grant_title": "Level {level} grant paid",
 	"n_city_level_up_body": "New buildings are unlocked.",
 	"n_city_level_up_title": "City reached Level {level}",

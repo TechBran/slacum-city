@@ -9981,16 +9981,24 @@ the arithmetic says so without a guard being written anywhere.
 The other three anti-farm facts, none of them new and all of them re-checked at
 the new scale:
 
-1. **One-shot per level per city is structural.** `city_level` is monotone
-   (`data/progression.json`'s `city_level_monotone`), `ProgressionSystem.grant_level`
-   is its only writer and returns early on a level it already holds, and
-   `CitySim._pay_level_up_grant` walks `range(from + 1, to + 1)` so a double
-   promotion pays each crossed rung exactly once.
+1. **One-shot per level per city is structural.** `GoalSystem.earned_level` is
+   monotone, its `done` set is sticky, and `_settle` emits exactly one
+   `city_level_objectives_met` per rung it promotes through — so a rung cannot be
+   re-earned and cannot be sold twice. A restore emits nothing at all, because
+   `bootstrap` drains its own event queue (doc 09 §2.14.4), which is what stops a
+   migrated level-6 city being handed $1,605,000 on load. *(The payment site is
+   §61.12's ruling and the reason it is `GoalSystem`'s monotonicity being cited
+   here rather than `city_level`'s.)*
 2. **Over a city's life the grants are a starting capital, not a revenue.**
    $7,415,000 is **112 game-days** of a level-6 city's own net ($66,130/game-day).
    The arc that collects them takes 15–21 game-days. After that they pay nothing,
    forever.
 3. **The one compounding surface, named rather than assumed** — see §61.7.
+4. **And no scripted agent can reach any of it.** Since §61.12's ruling the grant
+   is paid for completing doc 09 §2.14's objectives, and no strategy in
+   `tools/playtest.gd` except `curriculum` and `collector` reads a goals sheet.
+   That is not a side effect: it is the reason the seven gates in §61.12 come
+   back to their fork values.
 
 ### 61.4 The `curriculum` agent, extended — measured on the OLD money first
 
