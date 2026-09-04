@@ -148,9 +148,17 @@ func _destroy_building(inc: Incident, _action: Dictionary) -> Dictionary:
 	# roster is worse than no event at all.
 	var destroyed := world.destroy_building(target, "incident:%d" % inc.id,
 			system.incident_was_answerable(inc))
-	system.emit_event(
-			"building_destroyed_by_fire" if destroyed else "building_condemned_by_fire",
-			{"incident_id": inc.id, "target": target})
+	# Two branches rather than one ternary argument, and the reason is an
+	# INSTRUMENT: `tests/test_event_matrix.gd` reads emitted names out of the
+	# source, one line at a time, from the call up to the payload dict. A name
+	# that reaches the bus on a continuation line is a name no matrix can see —
+	# which is how doc 06's ops emitted four types the matrix had never heard of
+	# (report 98 §63 RR-184).
+	var payload := {"incident_id": inc.id, "target": target}
+	if destroyed:
+		system.emit_event("building_destroyed_by_fire", payload)
+	else:
+		system.emit_event("building_condemned_by_fire", payload)
 	return {"op": "destroy_building", "result": DONE}
 
 

@@ -686,6 +686,18 @@
 				}
 			},
 			{
+				"_comment": "NEW, Wave 21 (doc 93 sec AS1, doc 12 D-94). The harsher of a fire's two terminal outcomes, and it had never been on the feed at all: doc 06 has emitted `building_destroyed_by_fire` since Wave 8 and no router named it, so a building the fire actually TOOK was announced only by doc 02's own `building_destroyed`, which says nothing about a fire. Its sibling row below is the other ending. Both, or neither -- a feed that could only say one of them is how the 3,891 lying events in doc 92 sec 60.3 went unnoticed for a wave.",
+				"type": "building_destroyed_by_fire",
+				"category": "incidents",
+				"notify_id": "incident_failed",
+				"state": "critical",
+				"key": "target",
+				"args": {
+					"kind": "@kind:incident_type",
+					"tier": "tier_peak"
+				}
+			},
+			{
 				"_comment": "NEW, Wave 21 (doc 93 sec AS1, doc 12 D-94). The other half of a fire's terminal outcome. Under sec AS1 a city with no fire service gets its building CONDEMNED rather than destroyed, and until this row the feed could only ever say the harsher sentence -- `incident_failed`, `it burned out`, about a building that is still standing. It sits beside that row on purpose: same fire, same moment, different ending, and the player has to be able to tell which one they got, because one of them has a REPAIR button behind it (doc 12 D-94).",
 				"type": "building_condemned_by_fire",
 				"category": "incidents",

@@ -5480,6 +5480,20 @@ emits `building_condemned_by_fire` when it did not. `GoalSystem`, the
 notification feed and every balance instrument read this line; a terminal event
 that lies about the roster is worse than no event at all.
 
+**(c) The matrix could not see the call.** `tests/test_event_matrix.gd` exists to
+assert that every event `sim/` emits is consumed or classified and every router
+row names an event `sim/` emits — and it scans for `bus.emit(` and `_emit(`
+only. Doc 06's `CascadeOps` publishes through `IncidentSystem.emit_event`, whose
+own body calls `_emit(type, …)` with a VARIABLE, so **five call sites and four
+event types were invisible to it**: `incident_notify`,
+`destroy_refused_offline`, `power_component_destroyed`, and
+`building_destroyed_by_fire` itself. That is why (b) could stand for a wave — no
+router had ever named that event either, so neither side of the matrix was
+looking. The pattern gains `emit_event(`, the three bookkeeping types carry
+written classifications, and **both** of a fire's endings become
+`data/ui.json.event_log` rows: the harsher one had never been on the feed at
+all. 168 types emitted / 98 consumed / 70 classified, against 163 / 96 / 67.
+
 ### AS4. An era of relief may not out-pay the bill it is measured against
 
 §AP4 authored `RELIEF_DAMAGE_FRACTION` at 0.35 with the argument *"0.35 < 1, so

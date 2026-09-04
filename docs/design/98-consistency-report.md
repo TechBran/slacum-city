@@ -9172,6 +9172,18 @@ which is **1.01–1.02 announcements per incident**: the floor, not a target.
 3,891 `building_destroyed_by_fire` in 45 game-days named buildings the census
 still shows standing.
 
+**And the instrument that should have caught it could not see the call at all.**
+`tests/test_event_matrix.gd` reads emitted names out of `sim/` with a regex over
+`bus.emit(` and `_emit(`; doc 06's `CascadeOps` publishes through
+`IncidentSystem.emit_event`, whose body calls `_emit(type, …)` with a VARIABLE,
+so **five call sites and four event types were invisible to the matrix** —
+`incident_notify`, `destroy_refused_offline`, `power_component_destroyed` and
+`building_destroyed_by_fire` itself. The pattern now includes `emit_event(`, the
+three bookkeeping types carry written classifications, and **both** of a fire's
+endings are rows in `data/ui.json.event_log` — the harsher one had never been on
+the feed at all. The matrix reads 168 types emitted / 98 consumed / 70
+classified, against 163 / 96 / 67 before.
+
 ### RR-185 — §AS4: an era of relief may not out-pay the bill it is measured against (docs 03 §2.10, 92 §60.4, 93 §AS4)
 
 `Treasury.relief_era_paid`, persisted, reset by `note_era` with the allowance it
