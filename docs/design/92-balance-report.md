@@ -10465,3 +10465,43 @@ wave spends the re-record on ONE of them (§AS4) rather than on all four, becaus
 the other three are ledger rows with no defect behind them and §AS4 closes a
 measured 1.033× over-payment. The next lane that touches `Treasury.serialize()`
 should take the remaining three in the same commit.
+
+### 60.11 The gates: NOT re-fitted, and the three game-days that says
+
+`tools/run_suite.sh --one=test_balance_gates.gd` — **33 tests, 437 asserts,
+failed 0, silent 0.** Not one constant in `test_balance_gates.gd` moves in this
+wave, and that is a measurement rather than an omission: gate 29 is the only gate
+Wave 21 could plausibly have moved, and it was read on its own rig before the
+suite was trusted.
+
+`tools/measure_gate29.gd --horizons=casual:300,standard:200,hard:120,crisis:70`,
+seed 1337, `do_nothing`, gate 29's own hour-resolution scan:
+
+| preset | horizon | insolvent on game-day, Wave 20 | insolvent on game-day, **Wave 21** | Δ | peak open incidents |
+| --- | --- | --- | --- | --- | --- |
+| `casual` | 300 | 258 | **255** | **−3** | 36 |
+| `standard` | 200 | 167 | **164** | **−3** | 36 |
+| `hard` | 120 | 47 | **47** | **0** | 36 |
+| `crisis` | 70 | 19 | **19** | **0** | 1 |
+
+`STANDARD_LIFETIME_DAYS` is 167 with `STANDARD_LIFETIME_BAND` 12, so 164 sits
+comfortably inside [155, 179]; `PRESET_LIFETIME_CEILING` 290 and
+`PRESET_LIFETIME_FLOOR` 18 are both clear; the cascade tripwire's peak is 36
+against a ceiling of 40, **unchanged to the incident** from Wave 20's reading.
+
+**The sign of the delta is the interesting part, and it is the right sign.** A
+neglected city now dies THREE GAME-DAYS SOONER, not later — because §AS1 and
+§AS2 keep buildings that used to be deleted, and a boarded-up building is not
+free. A ruin costs the city nothing at all (§AR3's guard), while a gutted shell
+at condition 0.10 still bills `E_building_maint` at
+`1 + MAINT_CONDITION_PENALTY × 0.90` = **2.35×** the healthy rate and returns only
+`output_mult 0.40 × f_condition 0.46` = **0.184** of the tax. Keeping the roster
+alive is a COST to a city that will not act on it, which is exactly the property
+gate 29 exists to protect: **neglect is still fatal on all four presets, still
+strictly ordered, and now marginally more so.** Nothing about these rulings makes
+a `do_nothing` city survivable — that was the whole objection to Wave 20's
+austerity clause, and this is the number that shows it is not true of the
+replacement.
+
+`hard` and `crisis` do not move at all, for §58.7's own reason: a city that dies
+on game-day 47 never sees enough unanswerable fire for the ruling to reach it.

@@ -2220,6 +2220,16 @@ const PRESET_LIFETIME_FLOOR := 18
 ## at 12 rather than growing with the pin — it now covers the spread more than
 ## twice over and still fails on anything that moves `standard`'s neglect curve
 ## by more than about 7 %.
+##
+## **NOT re-fitted in Wave 21, and that is measured** (doc 92 §60.11). Doc 93
+## §AS1 and §AS2 keep buildings a `do_nothing` city used to lose, and gate 29's
+## own rig reads `standard` at **164** — three game-days SOONER, not later, and
+## well inside this band. The sign is the point: a ruin costs the city nothing
+## (§AR3's guard) while a boarded-up shell still bills `E_building_maint` at
+## 2.35× and returns 0.184 of the tax, so keeping the roster alive is a cost to a
+## city that will not act on it. `casual` reads 255 against the 290 ceiling,
+## `hard` 47 and `crisis` 19 are unmoved to the day, and the cascade tripwire's
+## peak is 36 on all three long presets — unchanged to the incident.
 const STANDARD_LIFETIME_DAYS := 167
 const STANDARD_LIFETIME_BAND := 12
 ## The cascade tripwire, asserted inside the horizon rather than assumed away:
