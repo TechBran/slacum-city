@@ -10412,3 +10412,56 @@ claim is withdrawn with §AR4's.
 
 **Every number in §60 was taken on this branch's final tree.** The commands are
 at the head of this section; the four determinism baselines are in §60.10.
+
+### 60.10 The four determinism baselines — they MOVE, and one key is the whole reason
+
+`tools/profile_sim.gd --hash-only --quiet`, seed 1337, 24 coarse game-hours and
+2 fine, on the starter city and on `tests/fixtures/bench_city.json`.
+
+| baseline | at the fork `f27c402` | at the end of Wave 21 |
+| --- | --- | --- |
+| starter, coarse 24h | `84e2f9fa91a8bf78afb05d4aacc0e9fe921af15bacb44bb201f661ce8926e092` | `34ba7d972f3a78e2e08e8417fd83536ac3311257a3fc5c8b9d32486352279e65` |
+| starter, fine 2.0h | `ae602e79a039a27aca622360e24fb36dee05de1aebd3b7ff4f92db83de49f480` | `dde437bc234fc2c24e19de1994666662cf1a3640c1b400d92aff079f948d4764` |
+| bench, coarse 24h | `3ad4e5b59af210b55545da429f70511b42df98ca4812ad7f1bbc583e20b9225c` | `eb617fe3dbf39c56c033365665ed41cf26f978d3cb84bc0def7c61ebbb9f1b49` |
+| bench, fine 2.0h | `d5e8192c392b0f2a0d68ff44d8a6da81e21faf98d6a81337a8947815975db185` | `d4169d6af309c505960ef22f4b1200e1df4ddc61b249cb3d1463361dc8157f9a` |
+
+**THE CAUSE IS ONE KEY, AND IT WAS MEASURED RATHER THAN ASSUMED.** `Treasury.serialize()`
+gains `"relief_era_paid"` (doc 93 §AS4). It is inside `canonical_capture()` and
+therefore inside `state_hash()`, so it moves every hash on every city
+unconditionally — which is exactly what doc 91 A91-D-100, A91-D-108 and
+A91-D-112 have each predicted, in turn, for the same dictionary.
+
+The attribution is an **A/B on this branch's own final tree**: delete that single
+line from `serialize()`, change nothing else, and re-run all four —
+
+```
+state_hash  coarse 24h : 84e2f9fa91a8bf78afb05d4aacc0e9fe921af15bacb44bb201f661ce8926e092   ← starter
+state_hash  fine  2.0h : ae602e79a039a27aca622360e24fb36dee05de1aebd3b7ff4f92db83de49f480
+state_hash  coarse 24h : 3ad4e5b59af210b55545da429f70511b42df98ca4812ad7f1bbc583e20b9225c   ← bench
+state_hash  fine  2.0h : d5e8192c392b0f2a0d68ff44d8a6da81e21faf98d6a81337a8947815975db185
+```
+
+— **all four are bit-identical to the fork's**. So the whole of the rest of the
+wave is behaviour-neutral on both reference cities on both paths:
+
+* §AS1's capability predicate replacing the austerity one — neither reference
+  city loses a building to an unanswerable fire inside 24 game-hours, so the
+  branch is never taken;
+* §AS2's `burnt_out`, its `state_fire_mult` screen, its seventh
+  `fire_candidate_columns` column, the `_owner_maintain` hold, and the
+  `E_OWNER_MAINTAINED` exception — nothing is ever gutted here, and
+  **`Building.serialize()` writes the key only when true**, which is why it costs
+  a hash nothing;
+* §AS3's blocked-dispatch set and `building_condemned_by_fire` — the de-dup slot
+  keeps its name and only its VALUE shape changed, and neither city blocks a
+  dispatch on two reasons inside the window;
+* §AS4's arithmetic itself — no relief is granted on a solvent city.
+
+**The four moves are a schema change and nothing else**, and that is the most
+useful single fact this section hands the next reader: the rulings are dormant on
+a healthy city and a floor only under one that has fallen. Doc 91 A91-D-108 and
+A91-D-112 note that four lanes had queued behind this same `Treasury` edit; this
+wave spends the re-record on ONE of them (§AS4) rather than on all four, because
+the other three are ledger rows with no defect behind them and §AS4 closes a
+measured 1.033× over-payment. The next lane that touches `Treasury.serialize()`
+should take the remaining three in the same commit.

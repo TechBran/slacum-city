@@ -431,6 +431,12 @@ beside `E_NOT_DAMAGED` so the row is not drawn at all (doc 93 §Y3a).
 > `output_mult` 0.40 forever with a REPAIR button greyed out and a reason line
 > saying somebody else was handling it. `Building.complete_repair` clears the
 > flag; the building is fuel again, and burns again.
+>
+> **The auto-repair POLICY does not follow it through the door.**
+> `CitySim._repair_worn_pass` skips `owner_maintained` stock before it quotes
+> anything, `burnt_out` or not — so §2.6's policy dial can never spend a
+> treasury on private buildings the player did not ask it to. The exception
+> opens a button, not a budget line (99-PA PA-33, doc 93 §AL3).
 
 **(2) The owner holds a FLOOR.** A private building wears exactly as §2.6 says —
 **not one `decay_per_hour` cell moves** — and its owner will not let it fall past
