@@ -499,12 +499,22 @@ func suppress_fire(residual_damage_fraction: float) -> Dictionary:
 ##
 ## Offline it behaves exactly as `burn_down` and `demolish` do — doc 08 C-47's
 ## clamp and a refusal — so an absence still cannot change the roster.
-func condemn_unanswered(destroy_allowed: bool) -> Array:
+func condemn_unanswered(destroy_allowed: bool, now_minutes: int) -> Array:
 	if state == &"destroyed" or state == &"planned":
 		return []
 	if not destroy_allowed:
 		condition = maxf(condition, rule("offline_burn_down_clamp"))
 		return []
+	# **A NEW BUILD HAS NOTHING TO CONDEMN.** `level == 0` is a site that has
+	# never completed (`is_new_build`), so there is no standing structure to
+	# board up — and putting one in `damaged` at level 0 would strand it: it is
+	# no longer `under_construction`, so `complete_construction` can never run,
+	# and `damaged` at level 0 is a state doc 02 §2.12's table does not describe.
+	# The city loses the site, exactly as it did before this ruling. An UPGRADE
+	# in flight (`level >= 1`) is a real building and IS condemned — it falls
+	# back to the level it already had, which is `cancel_upgrade`'s own rule.
+	if is_new_build():
+		return _destroy(now_minutes, &"unanswered")
 	condition = minf(condition, rule("structural_failure_threshold"))
 	if state == &"damaged":
 		return []

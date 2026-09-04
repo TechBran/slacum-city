@@ -5169,6 +5169,15 @@ can reach the fire and loses it anyway still loses the building, through the
 `burn_down` this ruling does not touch. `tests/test_spiral_floor.gd` asserts both
 sides of that line.
 
+**One branch still demolishes, and it is not an exception so much as a fact about
+what is there.** A NEW BUILD — `is_new_build()`, `under_construction` at level 0 —
+has no standing structure to board up, and putting a level-0 site in `damaged`
+would strand it: it is no longer `under_construction`, so
+`complete_construction` can never run, and `damaged` at level 0 is a state doc 02
+§2.12's table does not describe. The city loses the site, exactly as it did before
+the ruling. An UPGRADE in flight is a real building at a real level and IS
+condemned, falling back to the level it already had — `cancel_upgrade`'s own rule.
+
 ### AR2a. A building the city loses is a building the city is TOLD about.
 
 `CityIncidentWorld._publish`. Every `Building` verb returns the events its

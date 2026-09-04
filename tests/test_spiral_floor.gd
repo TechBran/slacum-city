@@ -259,6 +259,40 @@ func test_the_bill_falls_as_the_city_falls() -> void:
 			"a city of ruins costs less to run than a city of buildings")
 
 
+## The one branch of §AR2 that still demolishes: a NEW BUILD has no standing
+## structure to board up, and putting a level-0 site in `damaged` would strand it
+## — `complete_construction` can never run from there, and `damaged` at level 0
+## is a state doc 02 §2.12's table does not describe.
+func test_a_new_build_site_is_still_lost() -> void:
+	var sim := CitySim.boot_from_files()
+	_raze_every_fire_station(sim)
+	var sim_id := _first_private(sim)
+	var b: Building = sim.buildings[sim_id]
+	b.state = &"under_construction"
+	b.level = 0
+	b.pending_level = 1
+
+	sim.incident_world.destroy_building(sim_id, "incident:1")
+	assert_eq(String(b.state), "destroyed",
+			"a site that never opened is a site, not a building")
+
+
+## …and an UPGRADE in flight IS a real building, so it is condemned like any
+## other and keeps the level it already had.
+func test_an_upgrade_in_flight_is_condemned_not_lost() -> void:
+	var sim := CitySim.boot_from_files()
+	_raze_every_fire_station(sim)
+	var sim_id := _first_private(sim)
+	var b: Building = sim.buildings[sim_id]
+	b.state = &"under_construction"
+	b.level = 2
+	b.pending_level = 3
+
+	sim.incident_world.destroy_building(sim_id, "incident:1")
+	assert_eq(String(b.state), "damaged", "a level-2 building still stands")
+	assert_eq(b.level, 2, "at the level it had")
+
+
 # ---------------------------------------------------------------- helpers
 
 func _first_of(sim: CitySim, archetype: StringName) -> String:

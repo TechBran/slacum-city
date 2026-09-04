@@ -481,7 +481,7 @@ func destroy_building(id: String, _cause: String, answerable: bool = true) -> vo
 	# cannot pay becomes deferred liability, which is the unbounded ratchet this
 	# ruling exists to end, wearing a different hat.
 	if not (answerable and _has_fire_department()):
-		_publish(id, b, b.condemn_unanswered(destroy_allowed()))
+		_publish(id, b, b.condemn_unanswered(destroy_allowed(), now_minutes()))
 		return
 	if b.state == &"on_fire":
 		# `burn_down` answers in `CommandQueue`'s envelope, so the events are one
