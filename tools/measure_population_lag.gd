@@ -18,7 +18,7 @@ extends SceneTree
 ##   * its age in game-hours since `built_at_minutes`
 ##   * `Building.state_occupancy()` — the state gate
 ##   * `PopulationSystem.ramp(age_h)` — what doc 09's ramp WOULD say, beside
-##     `_population_inputs`' hard-coded `age_hours` (they disagree; that is RR-202)
+##     `_population_inputs`' hard-coded `age_hours` (they disagree; that is RR-204)
 ##   * `population.occ_of(id)` — the settled per-building occupancy
 ##   * `occupied_population` (float) and `city_population` (int)
 ##   * the exact string `ui/hud.gd` would paint in the population chip, via the
@@ -42,6 +42,16 @@ extends SceneTree
 ##   --rows           print the whole per-minute table instead of the summary
 ##   --boot           ALSO run the boot/load arm: what the chip reads at t=0 on
 ##                    a fresh boot and immediately after a save restore
+##   --houses=N       ALSO run the session arm: place one building an hour for N
+##                    game-hours and print the census on every settle — the
+##                    PLURAL in the player's report ("as I'm building up
+##                    houses"), and the arm that would catch an attractiveness
+##                    drift swallowing a placement
+##   --happiness=N    HOLD `HappinessModel.happiness` at N through the session
+##                    arm, which drives doc 09 §2.10.2's ceiling down and makes
+##                    `attractiveness` fall hour by hour — the one arithmetic
+##                    way a placement CAN be swallowed. `--happiness=20` is the
+##                    measurement published in doc 92 §64.5
 ##   --seed=N         RNG seed (default 1337)
 ##   --json=FILE      write the run as JSON
 ##
@@ -63,6 +73,8 @@ func _initialize() -> void:
 	var stride := 15
 	var rows := false
 	var boot_arm := false
+	var houses := 0
+	var happiness := -1.0
 	var seed_value := 1337
 	var json_path := ""
 	for arg in OS.get_cmdline_user_args():
@@ -81,6 +93,10 @@ func _initialize() -> void:
 			rows = true
 		elif text == "--boot":
 			boot_arm = true
+		elif text.begins_with("--houses="):
+			houses = int(text.substr(9))
+		elif text.begins_with("--happiness="):
+			happiness = float(text.substr(12))
 		elif text.begins_with("--seed="):
 			seed_value = int(text.substr(7))
 		elif text.begins_with("--json="):
@@ -95,6 +111,8 @@ func _initialize() -> void:
 			"offset_minutes": offset_min, "seed": seed_value}
 	if boot_arm:
 		out["boot"] = _boot_arm(seed_value)
+	if houses > 0:
+		out["session"] = _session_arm(seed_value, archetype, houses, happiness)
 	out["place"] = _place_arm(seed_value, archetype, warm, offset_min, minutes,
 			stride, rows)
 	if json_path != "":
@@ -165,6 +183,57 @@ func _boot_arm(seed_value: int) -> Dictionary:
 			% [settled, zero_ticks, zero_seconds])
 	return {"settled": settled, "zero_ticks_after_load": zero_ticks,
 		"zero_real_seconds_after_load": zero_seconds, "samples": samples}
+
+
+# ------------------------------------------------------------- the session arm
+
+## **"As I'm building up houses…"** — the plural in the report. One house every
+## game-hour, and the census printed on every settle, so the question the player
+## is actually asking ("does what I am doing show up?") is answered as a
+## trajectory rather than as one event.
+##
+## It is also the arm that would catch the one arithmetic way the counter could
+## swallow a placement: `occupied_population` is recomputed from scratch each
+## hour and multiplied by the CURRENT `attractiveness`, so a city whose
+## attractiveness is drifting DOWN can absorb a new house's residents entirely —
+## 144 × 0.97 + 4 × 0.97 ≈ 143.6, which `roundi` prints as 144 and the player
+## reads as "nothing happened". The `A_city` column is there to be watched.
+func _session_arm(seed_value: int, archetype: String, houses: int,
+		happiness: float) -> Dictionary:
+	print("")
+	print("=== SESSION ARM — one %s an hour for %d game-hours%s ==="
+			% [archetype, houses,
+			"" if happiness < 0.0 else ", happiness held at %.0f" % happiness])
+	var sim := CitySim.boot_from_files(seed_value)
+	sim.advance_hours(1.0)
+	var hud := HudModel.new()
+	print("  %5s %6s %8s %10s %8s %7s  %s"
+			% ["gh", "real_s", "placed", "occupied", "A_city", "pop", "chip"])
+	var rows: Array = []
+	var placed_total := 0
+	var prev := sim.population.city_population
+	for h in houses + 4:  # four quiet hours after the last tap, to see it land
+		if h < houses:
+			var lot := _serviceable_lot(sim, archetype)
+			if lot.x >= 0 and bool(sim.cmd_place_building(archetype, lot)["ok"]):
+				placed_total += 1
+		if happiness >= 0.0:
+			sim.happiness.happiness = happiness
+		sim.advance_hours(1.0)
+		var pop_now := sim.population.city_population
+		var chip: Dictionary = hud.chip_values({"population": pop_now})
+		print("  %5d %6.0f %8d %10.3f %8.4f %7d  %s%s"
+				% [h + 1, float(h + 1) * 60.0 * REAL_SECONDS_PER_GAME_MINUTE,
+				placed_total, sim.population.occupied_population,
+				sim.population.attractiveness, pop_now,
+				String((chip["population"] as Dictionary)["text_full"]),
+				"" if pop_now != prev else "   <-- the number did not move"])
+		rows.append({"game_hour": h + 1, "placed": placed_total,
+			"occupied_population": sim.population.occupied_population,
+			"attractiveness": sim.population.attractiveness,
+			"city_population": pop_now})
+		prev = pop_now
+	return {"placed": placed_total, "rows": rows}
 
 
 # --------------------------------------------------------------- the place arm

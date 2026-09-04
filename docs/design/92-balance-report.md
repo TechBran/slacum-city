@@ -11262,3 +11262,61 @@ arm prints **0 ticks = 0 REAL SECONDS**.
 threshold; `data/economy.json` is untouched. The one authored number added is
 `data/ui.json.layout.population_flash_s` (1.2 s), which is a presentation
 duration and buys nothing.
+
+### 64.5 The plural in the report: "as I'm building up houses"
+
+One house an hour, on the settled starter city, census printed on every settle:
+
+```
+~/.local/bin/godot --headless --path . -s res://tools/measure_population_lag.gd \
+    -- --houses=8 --minutes=1
+```
+
+| game-hour | real s | houses placed | occupied | `A_city` | chip |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 60 | 1 | 144.000 | 1.0000 | **144 — did not move** |
+| 2 | 120 | 2 | 144.000 | 1.0000 | **144 — did not move** |
+| 3 | 180 | 3 | 148.000 | 1.0000 | 148 |
+| 4 | 240 | 4 | 152.000 | 1.0000 | 152 |
+| … | | | | | +4 per hour |
+| 10 | 600 | 8 | 176.000 | 1.0000 | 176 |
+
+**A player who places two houses and watches for two minutes sees nothing at
+all.** That is the report, reproduced from the committed instrument. After that
+it climbs at exactly +4 an hour, one settle behind the taps, and never faster.
+`A_city` is **1.0000 at every row** on a healthy city, so `roundi` swallows
+nothing and the "fraction of a person" hypothesis in the lane brief is false
+(doc 92 §64.2).
+
+### 64.6 The one arithmetic way a placement CAN be swallowed, and it is not a bug
+
+`occupied_population` is recomputed from scratch each hour and multiplied by the
+CURRENT `attractiveness`, so a city whose ceiling is falling loses more from the
+stock than one house adds. Held at happiness 20 — doc 09 §2.10.2's happiness
+ceiling, which is the ONLY lever this probe touches:
+
+```
+~/.local/bin/godot --headless --path . -s res://tools/measure_population_lag.gd \
+    -- --houses=6 --happiness=20 --minutes=1
+```
+
+| game-hour | houses placed | occupied | `A_city` | chip |
+| --- | --- | --- | --- | --- |
+| 1 | 1 | 138.013 | 0.9584 | 138 |
+| 2 | 2 | 132.505 | 0.9202 | 133 |
+| 3 | 3 | 130.977 | 0.8850 | 131 |
+| 6 | 6 | 127.263 | 0.7954 | 127 |
+| 10 | 6 | 118.606 | 0.7060 | 119 |
+
+**Six houses bought, and the number falls 144 → 127 the whole time.** Each of
+them is worth ≈3.5 people at that attractiveness and the relaxation is taking
+more than that out of the stock every hour: at hour 3 the drop is −2 against a
+−5 trend, which is the house arriving, and no player will read it that way.
+
+**This is not a defect and it is not fixed.** The city IS emptying; a counter
+that hid that to flatter a purchase would be the lie. But it is the strongest
+argument for doc 12 D-100's panel half: `0 of 4` → `4 of 4` tells the player
+their house filled **even in the hour the city total fell**, which the chip
+alone cannot and should not do. Filed as an open question for a doc 09/12 lane:
+the chip has no channel for *"you gained 4 and lost 9"*, and the dashboard's
+history line is the only surface in the game that could carry one.
