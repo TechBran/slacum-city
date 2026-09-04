@@ -11214,8 +11214,12 @@ godot --headless --path <repo> -s res://tools/measure_player_city.gd -- \
 | Restore-All | 65 | 65 | 65 | **0, of any cause** | 64 / 64 / 64 |
 
 **Not regressed, and the Restore-All arm gains a building.** The gained building
-is a `CIVIC/substation` — doc 93 §AR1's utility spine — and it is §AV3's $11.00/gh
-buying one more restore, which is the only thing that changed for that agent.
+is a `CIVIC/substation` — doc 93 §AR1's utility spine — and the cause is §AV3's
+$11.00/gh buying the agent one more restore (52 ruins → 53). **A/B-isolated, not
+inferred:** re-running the same arm with `coverage_slope` at 0.0 returns 65 alive,
+53 restored and $114,869 of relief — every figure identical — so §AV4 is not the
+cause; §AV1 cannot be, because both the fork and this tree destroy ZERO buildings
+on this arm; and §AV2 pays the same three grants on the fork's own bill path.
 
 **The published Wave-21 figures were 71 / 68 / 68 and they do not reproduce at
 this fork; 64 / 64 / 64 is what the fork gives and it is what "do not regress"

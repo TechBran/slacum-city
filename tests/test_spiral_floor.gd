@@ -457,6 +457,21 @@ func test_capability_is_the_service_not_the_shell() -> void:
 ## anything else. The city below owns every construction crew in the founding
 ## manifest and no fire department at all; a `roof_damage` — `primary_role`
 ## `construction` — is answerable and finishes the building.
+## **§AV4's TERM, ON THE UNIT RIG RATHER THAN ON A 90-GAME-DAY ARC.** Doc 92
+## §62.6 measures what fire coverage is WORTH; this measures that it is wired,
+## in one assertion that cannot be absorbed by a Poisson draw: the same roster,
+## the same hour, the same everything, with the district's `fire_coverage` at 0
+## and at 1, read off doc 06's own rate sum.
+func test_fire_coverage_lowers_the_ignition_rate() -> void:
+	var uncovered := _fire_rate_total(0.0)
+	var covered := _fire_rate_total(1.0)
+	assert_true(uncovered > 0.0, "the rig has something that can burn")
+	var slope := 0.4286
+	assert_almost_eq(covered / uncovered, 1.0 - slope, 1e-6,
+			"full fire coverage cuts doc 06's ignition rate by crime's own"
+			+ " full-coverage reduction, 0.6 / 1.4")
+
+
 ## The fallback in [CityIncidentWorld._could_have_answered] — an empty `role`
 ## reading as the fire role — must be UNREACHABLE from the shipped catalogue, or
 ## §AV1's per-hazard scoping is one missing key away from being §AS1 again. Every
@@ -878,6 +893,20 @@ func test_a_save_without_the_counter_loads_at_zero() -> void:
 
 
 # ------------------------------------------------------- helpers (Wave 21)
+
+## Doc 06 §2.6's per-building ignition rate summed over one district, on the
+## doc-06 unit rig, at a stated `fire_coverage`. Everything else is held: same
+## building, same condition, same hour, same catalog.
+func _fire_rate_total(fire_coverage: float) -> float:
+	var world := IncidentTestWorld.new()
+	world.add_district("D1", 5000.0, 1.0, 0.5, 0.0, fire_coverage)
+	world.add_building("H1", "house", 1, Vector2i(4, 4), "D1",
+			{"fire_ignition_per_hour": 0.01})
+	var system := IncidentSystem.new(IncidentCatalog.load_from_files(), world,
+			RngStreams.new(4242), null)
+	system.generation_enabled = false
+	return float(system._structure_fire_rates(1.0, false)["total"])
+
 
 ## Every building's id, state and condition, in roster order, as one string —
 ## the cheapest total ordering two cities can be compared on.

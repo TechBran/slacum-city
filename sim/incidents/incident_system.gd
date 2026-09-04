@@ -1307,18 +1307,21 @@ func _structure_fire_rates(dt_h: float, collect: bool) -> Dictionary:
 			continue
 		var f_power := 1.0 + unpowered_mult * (0.0 if powered[i] != 0 else 1.0)
 		var district_id := districts[i]
+		# **ONE `world.district()` per district per sub-step, not two.** §AV4
+		# needs a second scalar off the same row, and asking for it separately
+		# would double the calls on a walk that already runs over the whole
+		# roster on every integrator sub-step — `CityIncidentWorld.district()`
+		# builds a Dictionary and reads the coverage index to do it. Both memos
+		# are filled from the same read, keyed on the same id.
 		if not stability_by_district.has(district_id):
+			var row := world.district(district_id)
 			stability_by_district[district_id] = clampf(
-					float(world.district(district_id).get("stability", 1.0)), 0.0, 1.0)
+					float(row.get("stability", 1.0)), 0.0, 1.0)
+			coverage_by_district[district_id] = clampf(
+					float(row.get("fire_coverage", 0.0)), 0.0, 1.0)
 		var stability: float = stability_by_district[district_id]
 		var f_arson := 1.0 + arson_k \
 				* maxf(0.0, knee - stability) / maxf(0.0001, knee)
-		# Memoised per district exactly like `stability`, and for its reason:
-		# this loop runs over the whole roster on every integrator sub-step.
-		if not coverage_by_district.has(district_id):
-			coverage_by_district[district_id] = clampf(
-					float(world.district(district_id).get("fire_coverage", 0.0)),
-					0.0, 1.0)
 		var f_fire_coverage := clampf(
 				fire_base - fire_slope * float(coverage_by_district[district_id]),
 				fire_cov_min, fire_cov_max)

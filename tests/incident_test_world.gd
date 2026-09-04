@@ -67,10 +67,16 @@ func add_building(id: String, archetype: String, level: int, tile: Vector2i,
 	return row
 
 
+## `fire_coverage` is doc 93 §AV4's scalar and defaults to **0.0**, which is the
+## value that makes `f_fire_coverage` exactly 1.0 — so every fixture written
+## before §AV4 gets the ignition rate it has always had, and a test that wants to
+## exercise the term has to say so.
 func add_district(id: String, population: float, stability: float,
-		police_coverage: float = 0.5, outage_frac: float = 0.0) -> void:
+		police_coverage: float = 0.5, outage_frac: float = 0.0,
+		fire_coverage: float = 0.0) -> void:
 	districts[id] = {"id": id, "population": population, "stability": stability,
-			"police_coverage": police_coverage, "outage_frac": outage_frac}
+			"police_coverage": police_coverage, "outage_frac": outage_frac,
+			"fire_coverage": fire_coverage}
 
 
 func add_component(id: String, tile: Vector2i, extra: Dictionary = {}) -> Dictionary:
