@@ -2544,3 +2544,14 @@ player says so.
 **The deck is 72 states**, the two new ones included; `--screen=all --audit
 --strict` exits 0 at 412×915, 360×800, 880×400 and at 360×800 with
 `--text-scale=1.3 --large-targets`.
+
+### Wave 20 delta — the surfaces that were already right, and had nothing to draw (2026-09-03)
+
+*This lane adds no widget, no string and no preview state. It is here because it
+turned three existing surfaces back on, and a delta table that only records new
+pixels would not record the wave in which the player finally SEES a building
+fall. Ruling: doc 93 §AR2a. Verb: report 98 §61 RR-175.*
+
+| id | change | doc ref | why |
+|---|---|---|---|
+| D-91 | **Nothing is drawn that was not drawn before; three surfaces simply start receiving the event they were already wired for.** `CityIncidentWorld` published nothing when doc 06 took a building down (A91-D-110), so every consumer of `building_destroyed` sat idle for the entire class of destruction the player was actually experiencing: `game/main.gd`'s `&"building_damaged", &"building_destroyed", …` arm never translated a render id, so **`RenderStateModel`'s `building_destroyed` arm never wrote `damage = 1.0`, `powered = false` and `OVERLAY_OFFLINE` — the mesh stayed intact and lit on a lot the sim had already turned to rubble, until the next relaunch rebuilt the world from state**; `game/audio/audio_events.gd`'s `building_destroyed` cue never fired; and doc 09's `GoalSystem`, which names `building_destroyed` in the events it watches, never counted one. **No file in `ui/`, `game/` or `data/` changes** — the arms were correct, the wire was cut upstream of them. | doc 93 §AR2a, report 98 §61 RR-175, doc 91 A91-D-110 | The player, on their own city, 2026-09-03: *"ALL of my buildings are destroyed right now."* Not *"I watched them go"* — and on slot 0, over 45 game-days, **twelve buildings were destroyed and the bus announced one**. A city that loses a building without saying so is not a hard game, it is an unreadable one: the whole promise is *"You built it. Now keep it alive"*, and a player cannot keep alive something they are not told is dying. **The two rulings beside it are what the player will actually feel on this screen**: §AR2 means a fire in a city with no department leaves a CONDEMNED building — which doc 12 D-88's `buildings_condemned` row already knows how to announce, and which the panel already knows how to price a repair for — instead of a lot that silently becomes rubble; §AR3 means the budget sheet's Upkeep band stops charging for buildings that are not there. |

@@ -119,8 +119,9 @@ func buildings_within_m(tile: Vector2i, radius_m: float, exclude_id: String = ""
 
 
 ## `fraction` is DAMAGE: positive lowers the condition.
-func apply_building_damage(id: String, fraction: float) -> void:
-	damaged.append({"id": id, "fraction": fraction})
+func apply_building_damage(id: String, fraction: float,
+		answerable: bool = true) -> void:
+	damaged.append({"id": id, "fraction": fraction, "answerable": answerable})
 	if buildings.has(id):
 		buildings[id]["condition"] = clampf(float(buildings[id]["condition"]) - fraction, 0.0, 1.0)
 
@@ -156,8 +157,12 @@ func suppress_building_fire(id: String, residual_damage_fraction: float) -> void
 		buildings[id]["condition"] = clampf(1.0 - residual_damage_fraction, 0.0, 1.0)
 
 
-func destroy_building(id: String, cause: String) -> void:
-	destroyed.append({"id": id, "cause": cause})
+## `answerable` is recorded, not acted on: doc 93 §AR2's condemn-instead-of-
+## demolish lives in `CityIncidentWorld` (it needs the roster), and a double that
+## silently applied it would make doc 06's own tests measure doc 02's ruling.
+## Recording it is what lets a test assert that doc 06 passed the right answer.
+func destroy_building(id: String, cause: String, answerable: bool = true) -> void:
+	destroyed.append({"id": id, "cause": cause, "answerable": answerable})
 	if buildings.has(id):
 		buildings[id]["state"] = "destroyed"
 

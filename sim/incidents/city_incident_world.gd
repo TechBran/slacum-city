@@ -79,6 +79,17 @@ func station_rows() -> Array:
 		var archetype := String(b.archetype)
 		if not STATION_ARCHETYPES.has(archetype):
 			continue
+		# **A RUIN HOUSES NO ENGINES — doc 93 §AR3, the fleet half** (Wave 20).
+		# `FleetSystem.populate_from_stations` is this method's only caller, so
+		# a destroyed station listed here gives doc 06 a garage that does not
+		# exist and gives doc 03 `E_fleet` + `E_fuel_vehicle` to bill for it.
+		# Measured on the player's slot 0 (doc 92 §58.2): four ruined stations,
+		# $91.58–$180.00 of fleet upkeep per game-hour, on a city whose gross was
+		# $124.90. Coverage already reads this correctly — `_rebuild_coverage`
+		# multiplies by `Building.coverage_mult()`, which is 0.0 for `destroyed`
+		# — so this is the one reader that still believed in them.
+		if b.state == &"destroyed" or b.state == &"planned":
+			continue
 		out.append({"id": String(building_id), "archetype": archetype,
 				"level": maxi(1, b.level), "tile": b.origin})
 	return out
@@ -370,11 +381,22 @@ func buildings_within_m(tile: Vector2i, radius_m: float, exclude_id: String = ""
 
 
 ## `fraction` is DAMAGE: a positive number lowers the condition by that much.
-func apply_building_damage(id: String, fraction: float) -> void:
+func apply_building_damage(id: String, fraction: float,
+		answerable: bool = true) -> void:
 	var b: Building = sim.buildings.get(id, null)
 	if b == null:
 		return
-	b.apply_damage(fraction, now_minutes())
+	# The events are PUBLISHED (doc 93 §AR2(a), A91-D-110). This call could
+	# already produce a `building_damaged` and — at fraction 1.0 on a building
+	# doc 93 §AP2's floor does not catch — a `building_destroyed`, and both were
+	# being dropped on the floor here. See [_publish].
+	#
+	# `may_destroy` is doc 93 §AR2 on the DAMAGE door, on the same predicate the
+	# terminal door uses: a city with no fire department cannot answer, so an
+	# event may not finish a building §AR2 has already condemned. See
+	# [Building.apply_damage] and [_has_fire_department].
+	_publish(id, b, b.apply_damage(fraction, now_minutes(),
+			answerable and _has_fire_department()))
 
 
 func set_building_condition_floor(id: String, condition: float) -> void:
@@ -402,7 +424,7 @@ func suppress_building_fire(id: String, residual_damage_fraction: float) -> void
 		b.suppress_fire(residual_damage_fraction)
 
 
-func destroy_building(id: String, _cause: String) -> void:
+func destroy_building(id: String, _cause: String, answerable: bool = true) -> void:
 	var b: Building = sim.buildings.get(id, null)
 	if b == null:
 		return
@@ -415,10 +437,118 @@ func destroy_building(id: String, _cause: String) -> void:
 	# now calls the verb that says so. `demolish` carries the same C-47 guard as
 	# `burn_down`, which this branch never had — before Wave 19 an explicit
 	# destroy was the one door an ABSENCE could still take a building through.
+	# **DOC 93 §AR2: A CITY WITH NO FIRE DEPARTMENT IS NOT A CITY BEING ERASED.**
+	#
+	# This op is only ever reached as an incident's TERMINAL outcome — the burn
+	# timer ran out, or doc 06's `on_fail` fired — and the department that answers
+	# a terminal incident is the fire department. A city with no fire station
+	# standing has not *declined* to answer: it was unable to, at every fire, for
+	# as long as it stays that way. Doc 92 §58.4 measures what that costs on the
+	# player's own slot 0: **431 incidents abandoned, 17 failed and 11 buildings
+	# burned down in fourteen game-days**, ten of the eleven through this line —
+	# the city's whole remaining stock, deleted by a service it could not buy
+	# because the treasury was $22,624 under water.
+	#
+	# So when the city could not answer, the terminal outcome CONDEMNS
+	# ([Building.condemn_unanswered]) instead of demolishing. "Could not answer"
+	# has exactly two halves, and both are facts the game already records:
+	#
+	#   * `answerable` — doc 06's own reading, from
+	#     `IncidentSystem.incident_was_answerable`: nothing is committed to this
+	#     incident AND `DispatchSystem` marked it `unreachable`, i.e. it had
+	#     units, had permission, and doc 10's graph offered no route.
+	#   * `_has_fire_department()` — doc 02's reading, which doc 06 cannot make:
+	#     the city has no fire station standing at all.
+	#
+	# It stays possible to lose a building to fire: a city that HAS a department,
+	# CAN reach the fire, and loses it anyway still loses the building through
+	# `burn_down` below, which is untouched. Doc 92 §58.6 measures both halves —
+	# the second alone took the player's save from 12 buildings to 12 over 45
+	# game-days but let the recovered city burn again the moment it rebuilt a
+	# station onto a severed road network.
+	#
+	# **The anti-farm is an inequality, not a fee.** Demolishing your own fire
+	# station to buy this does not pay: every fire still condemns the building it
+	# reaches (doc 02 §2.12 — `output_mult` 0.40, `coverage_mult` 0.25, doc 03's
+	# `f_condition` 0.46, i.e. the building keeps paying about a fifth of its
+	# tax), the city loses fire coverage everywhere at once (doc 02's
+	# `req_fire_coverage` gates upgrades, doc 09's happiness reads it), and no
+	# other incident the fire fleet answers gets answered either. A station's
+	# upkeep buys SUPPRESSION — an answered fire leaves residual damage and the
+	# building goes on earning — which is strictly worth more than the difference
+	# between a condemned building and a ruin at every level in the catalogue.
+	# A MUTUAL-AID FEE WAS CONSIDERED AND REJECTED: a bill an insolvent city
+	# cannot pay becomes deferred liability, which is the unbounded ratchet this
+	# ruling exists to end, wearing a different hat.
+	if not (answerable and _has_fire_department()):
+		_publish(id, b, b.condemn_unanswered(destroy_allowed()))
+		return
 	if b.state == &"on_fire":
-		b.burn_down(destroy_allowed(), now_minutes())
+		# `burn_down` answers in `CommandQueue`'s envelope, so the events are one
+		# level down in `payload`; `demolish` and `apply_damage` answer with the
+		# bare array. A refusal (offline, C-47) carries no `payload` at all and
+		# reads as the empty array, which is exactly right — nothing happened.
+		var answer := b.burn_down(destroy_allowed(), now_minutes())
+		_publish(id, b, ((answer.get("payload", {}) as Dictionary).get(
+				"events", []) as Array))
 	else:
-		b.demolish(destroy_allowed(), now_minutes())
+		_publish(id, b, b.demolish(destroy_allowed(), now_minutes()))
+
+
+## Doc 93 §AR2's predicate: has the city a fire station that is STANDING?
+##
+## A city-level fact and deliberately not a per-tile coverage reading. Coverage
+## falls off with distance, so gating on `coverage_fire(tile)` would make
+## "build far from the station" a fireproofing strategy — the farm the ruling
+## must not open. "Do you have a fire department at all?" is a fact the player
+## can see on one screen and change with one build, which is what makes the
+## ruling a floor rather than a shield.
+##
+## `destroyed` and `planned` do not count; `under_construction` does not either,
+## because a station that has not opened cannot roll an engine. `damaged` DOES
+## count — doc 02 §2.12 still gives it `coverage_mult` 0.25, so it is a
+## department, just a poor one, and a city that lets its only station rot to the
+## condemned line has made a choice this ruling should not protect it from.
+func _has_fire_department() -> bool:
+	for building_id in sim.buildings:
+		var b: Building = sim.buildings[building_id]
+		if b.archetype == &"fire_station" \
+				and (b.state == &"active" or b.state == &"damaged"
+					or b.state == &"repairing"):
+			return true
+	return false
+
+
+## **Doc 93 §AR2(a): a building the city loses is a building the city is TOLD
+## about** (doc 91 A91-D-110, Wave 20).
+##
+## Every `Building` verb returns the events its transition produced, and
+## `CitySim.apply_hourly_decay` publishes them exactly like this. The three doc
+## 06 verbs on this adapter — `apply_building_damage`, `destroy_building`'s two
+## branches — called the same verbs and **threw the return away**, so a building
+## taken down by a cascade op emitted nothing at all: no `building_destroyed`, no
+## `building_damaged`, no notification, nothing for `GoalSystem` (which lists
+## `building_destroyed` among the events it watches) and nothing for a save
+## surface to count.
+##
+## Measured on the player's slot 0 (doc 92 §58.1): over 45 game-days,
+## **12 of 12 destructions were silent** — the census showed twelve buildings
+## gone and the bus reported one. The player's city was being erased through a
+## door that never announced itself, which is why the report says "ALL of my
+## buildings are destroyed" and not "I watched them go".
+##
+## The shape matches `apply_hourly_decay`'s publish exactly — `sim_id` and the
+## post-transition `condition` stamped onto a duplicate — so a subscriber cannot
+## tell a wear death from an incident death by the event's shape, only by its
+## `cause`, which is the whole point of carrying one.
+func _publish(id: String, b: Building, events: Array) -> void:
+	if sim == null or sim.bus == null:
+		return
+	for event in events:
+		var out: Dictionary = (event as Dictionary).duplicate()
+		out["sim_id"] = id
+		out["condition"] = b.condition
+		sim.bus.emit(StringName(String(out["type"])), out)
 
 
 # ------------------------------------------------------- doc 09 districts/pop

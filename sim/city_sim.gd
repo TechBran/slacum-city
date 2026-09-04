@@ -4708,7 +4708,10 @@ func _stamp_building_rules(b: Building) -> void:
 	if not condition_block.is_empty():
 		b.condition_rules = condition_block
 	b.owner_maintained = catalog.owner_maintained(String(b.archetype))
-	b.wear_may_demolish = catalog.wear_may_demolish()
+	# Doc 93 §AR1 (Wave 20) folded §AP1's private-stock answer and the spine's
+	# into ONE predicate, so this stamp carries both rulings and neither can be
+	# applied at one of the four stamping sites and forgotten at another.
+	b.wear_may_demolish = catalog.wear_may_demolish_for(String(b.archetype))
 
 
 ## Repair a CITY building back toward condition 1.00 (doc 02 §2.6). Order of
@@ -6927,6 +6930,50 @@ func build_settlement_inputs(ctx: TimeContext, availability: Dictionary) -> Dict
 	var district_by_id := district_of_building()
 	for id in roster_ids():
 		var b: Building = buildings[id]
+		# **THE CITY IS NOT BILLED FOR RUBBLE — doc 93 §AR3 (Wave 20).**
+		#
+		# `roster_ids()` keeps a destroyed building in the roster (that is what
+		# makes RESTORE possible), and every row this loop appends is billed:
+		# `EconomySystem.settle_hour` charges `E_building_maint` on `buildings`
+		# and `E_departments` on `stations`. Neither line ever asked what STATE
+		# the building was in, so a ruin was billed — and billed at the WORST
+		# rate either line can charge, because both scale on `1 − condition` and
+		# a ruin's condition is exactly 0:
+		#
+		#   E_building_maint  × (1 + MAINT_CONDITION_PENALTY × 1) = **2.5×**
+		#   E_departments     × (1 + ASSET_CONDITION_PENALTY_COEFF × 1) = **3.0×**
+		#
+		# So every building that died made the city's bill go UP. That is a
+		# ratchet with no floor, and doc 92 §58.2 measures it on the player's own
+		# slot 0: of $1,055.12/gh of `E_building_maint`, **$1,044.39 was charged
+		# against buildings that are rubble** (99.0 %), and all $306.00/gh of
+		# `E_departments` was staffing for four police/fire/yard shells that no
+		# longer exist — **$32,409 a game-day for a city that was not there**,
+		# against a gross of $2,998 a game-day. No relief ladder can outrun that,
+		# and doc 92 §58.4 shows it did not: $305,827 of grants vanished into it
+		# inside fourteen game-days.
+		#
+		# **The ruling is doc 93 §Y1's own sentence, read on the other side.**
+		# §Y1 kept `E_building_maint` alive by defining it as *the city's cost of
+		# SERVING a building* rather than a landlord's repair bill. A ruin is
+		# served by nothing: it draws no power (doc 04 skips it), no water,
+		# houses nobody (`state_occupancy()` is 0.0 for `destroyed`, so it
+		# already contributes exactly $0 of tax and $0 of `potential`, and the
+		# §2.10 layer-1 revenue floor is measured on `potential`) and generates
+		# no traffic. And `station_upkeep` is STAFFING — a destroyed station has
+		# no staff to pay.
+		#
+		# **What still costs money, so that losing a building still hurts.** The
+		# lot is dead capital until it is restored: no tax, no coverage, no
+		# power, no water, and `CostCurves.restore_cost_building` to bring it
+		# back. `E_roads_repair` still bills the street outside it, because the
+		# street is still there. The city loses the whole of the asset's income
+		# and keeps the whole of its restore bill; it simply stops paying wages
+		# to a building that burned down.
+		#
+		# One guard, one place: this loop is the sole author of both arrays.
+		if b.state == &"destroyed":
+			continue
 		var district_id: String = district_by_id[id]
 		var stability := 1.0
 		if district_id != "":

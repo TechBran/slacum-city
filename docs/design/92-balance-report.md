@@ -9872,3 +9872,199 @@ DERIVED, from one authored cooldown and one authored payout table, and gate 32(h
 checks the derivation across both files at every rung. A `contractor` agent is the
 instrument this section is missing; it is ranked first in the lane's open
 questions.
+
+## 58. Wave 20 — the player's own city, loaded off disk and advanced (2026-09-03)
+
+*(Rulings in doc 93 §AR. Shipped as report 98 §61, RR-174..RR-178. Defect rows
+doc 91 A91-D-110..A91-D-112. Instrument: `tools/measure_player_city.gd`, new.)*
+
+Every catastrophe measurement this project has taken was taken on a city this
+repository generated. `tools/probe_neglect.gd` grows one; `tools/playtest.gd`
+plays one; `tools/measure_catastrophe.gd` warms one with the `balanced` agent and
+calls it "within a few percent" of the player's. That is a model of the player's
+city. **This section is the player's city**: `tools/measure_player_city.gd`
+copies slot 0 into a private `user://`, loads it through the real `SaveService` —
+same generation ladder, same seven-check gate, same `restore_state` — and
+advances it on the real coarse path.
+
+The difference between the model and the file turned out to be the whole wave.
+Doc 92 §56 concluded that **42 of 42** destructions on `standard` came through
+`roll_structural_failure` and **0** through fire. On the file: **0** through
+`roll_structural_failure` and **10 of 11** through fire.
+
+### 58.1 The instrument, and the two things it had to get right
+
+```
+~/.local/bin/godot --headless --path <repo> -s res://tools/measure_player_city.gd -- \
+    --saves=<dir with slot_0/ and slot_0.json> --marks=14,45 --rows --stride=5
+```
+
+**A private `user://`, because the shared one is somebody's work.** Every
+worktree of this project resolves `user://` to the same
+`~/.local/share/godot/app_userdata/Slacum City`, and the save has to be *in*
+`user://saves` for `SaveService` to find it. The tool takes the three switches
+`tests/user_dir_isolation.gd` documents — `use_custom_user_dir`,
+`custom_user_dir_name`, `XDG_DATA_HOME` — copies the slot into the private
+directory and sweeps it at exit, and its recursive delete refuses any path not
+carrying its own marker.
+
+**The head-align, which is not a detail.** A save is written when the player
+pauses, so its `sim_time_minutes` is almost never on an hour boundary — slot 0's
+is **239,884**, 4.4 minutes past game-hour 3,998 — and
+`TickScheduler.advance_coarse_n` asserts hour alignment. Without
+`CatchUpPlanner.plan()`'s own first segment (fine-tick to the next hour, then
+advance coarse) the assert fires once per attempted hour and **the city does not
+move at all**, which reads exactly like a city that has stopped falling.
+
+**Attribution by roster diff, not by bus event, and that is finding A91-D-110.**
+The first run reported one destruction where the census showed twelve. The tool
+now snapshots every building's state each game-hour and diffs; an event naming
+the same building in the same hour supplies the cause, and a destruction with no
+event is counted as `SILENT`. On the Wave-19 tree, **12 of 12 were SILENT**.
+
+### 58.2 AT LOAD — what the file actually contains
+
+Game-day **166**, treasury **−$22,624**, population **41**, preset `standard`,
+city level 5, deferred liability **$569,547**, credit limit $25,786, austerity
+engaged, outstanding restore bill **$282,078**.
+
+```
+ALIVE      (12): CIVIC/power_facility x1, private/apartment x1, private/house x10
+DESTROYED  (77): CIVIC construction_yard x1, fire_station x1, police_station x2,
+                 power_facility x1, substation x2, water_facility x3,
+                 private apartment x10, data_center x3, high_rise x10, house x27,
+                 office x4, store x13
+```
+
+This reproduces the lane brief's census exactly, building for building.
+
+**And here is the bill that city was being handed.** Doc 03 §2.4's two
+roster-driven lines, split by the state of the building each row belongs to:
+
+| line | billed to RUINS | of total | share |
+| --- | --- | --- | --- |
+| `E_building_maint` | **$1,044.39/gh** | $1,055.12/gh | **99.0 %** |
+| `E_departments` | **$306.00/gh** | $306.00/gh | **100 %** (4 ruined shells) |
+| **both** | **$1,350.39/gh** | | **= $32,409 per game-day** |
+
+against a gross of **$124.90/gh = $2,998 per game-day**. And it was billed at the
+*maximum* rate either line can charge, because both scale on `1 − condition` and a
+ruin's condition is 0: `MAINT_CONDITION_PENALTY` 1.5 puts a ruin at **2.5×** a
+perfect building and `ASSET_CONDITION_PENALTY_COEFF` 2.0 puts a ruined station at
+**3.0×** a healthy one. Every building that died raised the bill.
+
+### 58.3 The Wave-19 baseline, reproduced
+
+`--marks=14,45`, no player action:
+
+| game-day | standing | ruins | treasury | deferred | relief paid | population |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 (load) | 12 | 77 | −$22,624 | $569,547 | — | 41 |
+| 5 | 8 | 81 | −$25,250 | $633,090 | $98,727 | 35 |
+| 10 | 4 | 85 | −$20,000 | $707,389 | $201,906 | 10 |
+| **14** | **4** | **85** | −$20,000 | $752,625 | $305,827 | 10 |
+| 20 | 3 | 86 | −$20,000 | $918,669 | $305,827 | 5 |
+| 30 | 2 | 87 | −$20,000 | $1,193,763 | $305,827 | 4 |
+| **45** | **0** | **89** | −$20,000 | **$1,612,599** | $305,827 | **0** |
+
+Causes over the 45 game-days, by roster diff: `SILENT` **12**, of which
+`power_facility` 1, `house` 10, `apartment` 1. With A91-D-110's publish in place
+the same twelve resolve to **`fire` 10, `damage` 1** in the first fourteen days
+and `structural_failure` **0** throughout. **Wear was not the door on this city.**
+
+**The lane brief's "$2,624 of relief" is not relief.** The balance moving from
+−$22,624 to exactly −$20,000 is `Treasury.settle`'s credit-limit clamp:
+`CREDIT_LIMIT_FLOOR` is $20,000, a city with no revenue sizes its limit at the
+floor, and the $2,624 overshoot is booked as **deferred liability** — the opposite
+of a payment. Relief actually paid **$305,827 in three grants**, and it vanished
+into the $32,409-a-game-day bill for buildings that did not exist.
+
+### 58.4 The rulings, one at a time, on the same file
+
+Each row is the full 45-game-day passive run with the rulings above it applied.
+
+| build | standing @14 | standing @45 | treasury @14 | destroyed in 45 gd, by cause |
+| --- | --- | --- | --- | --- |
+| Wave 19 (fork) | 4 | **0** | −$20,000 | 12 SILENT |
+| + §AR2a publish + §AR3 bill | 1 | 0 | **+$47,117** | `fire` 10, `damage` 1, `structural_failure` 0 |
+| + §AR2 condemn (no-department half) | 8 | 0 | +$52,458 | `fire` **0**, `damage` 12 |
+| + §AR2 `may_destroy` floor + fleet half | **12** | **12** | **+$68,464** | **all doors 0** |
+
+Read down the `treasury @14` column for §AR3 and down `standing @45` for §AR2:
+the money ruling alone makes the city solvent and still lets it be erased; the
+fire ruling alone stops the fire door and hands the same buildings to §AP2's
+damage door one game-hour later; **both, and the city stops falling.**
+
+### 58.5 THE ACCEPTANCE TEST
+
+**Passive — the player never touches the phone again:**
+
+```
+AT LOAD (game-day 166, treasury -$22,624, population 41)
+  ALIVE     (12): CIVIC/power_facility x1, private/apartment x1, private/house x10
+AFTER 14 GAME-DAYS  treasury +$68,464   population 43   austerity EXITED
+  ALIVE     (12): CIVIC/power_facility x1, private/apartment x1, private/house x10
+  destroyed this run: damage=0 fire=0 structural_failure=0 demolish=0
+AFTER 45 GAME-DAYS  treasury -$26,045   population 40
+  ALIVE     (12): CIVIC/power_facility x1, private/apartment x1, private/house x10
+  destroyed this run: damage=0 fire=0 structural_failure=0 demolish=0
+```
+
+**Zero destructions in forty-five game-days, against eighty-nine on the fork.**
+The last power plant is alive at day 45. The treasury reaches **+$68,464** on day
+14 — from −$22,624, with no player action and no change to any authored number —
+and austerity exits. It goes back under by day 45 because a twelve-building city
+that never acts is still paying for eighty-nine lots of roads, a grid sized for
+450 people and a fleet; that is a bill the player can cut, and a city nobody plays
+should not climb on its own.
+
+**Active — the dumbest possible player.** `--restore=5000`: once a game-day,
+restore every ruin the treasury can pay for above a $5,000 reserve, cheapest
+first. No coverage reading, no prioritising the fire station, no tax, no
+building — if a city climbs under this agent it climbs under any player.
+
+| game-day | standing | ruins | population | treasury |
+| --- | --- | --- | --- | --- |
+| 0 | 12 | 77 | 41 | −$22,624 |
+| 5 | **69** | 20 | 285 | +$6,175 |
+| 10 | 68 | 21 | 238 | −$2,632 |
+| **15** | **80** | **9** | 175 | −$23,142 |
+| 20 | 80 | 9 | 179 | −$24,279 |
+| 30 | 75 | 14 | 115 | −$26,722 |
+| **45** | **68** | **21** | **99** | −$26,272 |
+
+**Twelve buildings to eighty in fifteen game-days, and sixty-eight still standing
+at forty-five.** On the fork the identical agent reached 80 standing on day 20 and
+was back to **21** by day 25, because restoring the fire station re-armed
+`burn_down` and the ratchet resumed at full strength — 69 fire destructions in the
+run. With §AR2's `unreachable` half in place: **0 fire destructions**, and the 14
+buildings lost across 45 game-days are `damage` 10 (§AP2, in a city that could
+answer), `structural_failure:construction_yard` 2 and
+`structural_failure:police_station` 2 — every one of them through a door §AR1 and
+§AR2 deliberately leave open, and not one of them a power plant.
+
+### 58.6 The four determinism baselines: UNCHANGED
+
+`tools/profile_sim.gd --hash-only`, seed 1337, 24 coarse game-hours + 2 fine,
+recorded at the fork (`ef08351`) and re-taken after every change in this lane.
+
+| city | path | fork | this pass | delta |
+| --- | --- | --- | --- | --- |
+| `data/starter_city.json` | coarse 24 h | `84e2f9fa91a8bf78…` | `84e2f9fa91a8bf78…` | **none** |
+| `data/starter_city.json` | fine 2.0 h | `ae602e79a039a27a…` | `ae602e79a039a27a…` | **none** |
+| `tests/fixtures/bench_city.json` | coarse 24 h | `3ad4e5b59af210b5…` | `3ad4e5b59af210b5…` | **none** |
+| `tests/fixtures/bench_city.json` | fine 2.0 h | `d5e8192c392b0f2a…` | `d5e8192c392b0f2a…` | **none** |
+
+**This is the strongest available statement of what the wave is.** Neither
+reference city holds a ruin, reaches a terminal incident, or brings a spine
+building to the structural-failure line inside 24 game-hours, so every ruling is
+dormant — the settlement bills the same rows, the same roll is taken, the same
+verbs run. Not one authored number moved: `MAINT_CONDITION_PENALTY` 1.5,
+`ASSET_CONDITION_PENALTY_COEFF` 2.0, `structural_failure_p_per_hour` 0.02, the
+whole `recovery` block and every price stand exactly as Wave 19 shipped them. The
+wave is a floor under a fallen city and nothing else.
+
+**And it is why the relief ladder is not touched** (doc 93 §AR4). The one honest
+fix for a collapsed city's spent allowance is a persisted latch, `Treasury.serialize()`
+is inside `state_hash()`, and a bit would cost all four of these rows. Doc 91
+A91-D-112 carries it.

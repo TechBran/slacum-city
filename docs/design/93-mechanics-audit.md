@@ -5025,3 +5025,233 @@ capital immediately, with no construction time and no crew, against the
 arbitrage's 0.05 after a full rebuild. The exploit is now strictly dominated by
 the button next to it, which is the cheapest possible mitigation and is not a
 fix.
+
+## AR. Wave-20 rulings — the spiral has a floor: what a city is billed for after it falls, what an unanswerable fire may take, and the one building wear may never have (2026-09-03)
+
+*(Measured in doc 92 §58. Shipped as report 98 §61, RR-174..RR-178. The defect
+rows are doc 91 A91-D-110, A91-D-111 and A91-D-112.)*
+
+Wave 19 §AP1 ruled that wear may condemn a private building but never demolish
+one, and shipped. **This wave loaded the player's actual save file and advanced
+it**, which nothing in this project had ever done: every catastrophe measurement
+before it — `probe_neglect.gd`, `measure_catastrophe.gd`, the whole of doc 92
+§56 — was taken on a city this repository generated. `tools/measure_player_city.gd`
+takes slot 0 through the real `SaveService`, the real ladder, the real
+seven-check gate, and advances it on the real coarse path.
+
+On the Wave-19 tree, the player's city — game-day 166, treasury −$22,624,
+**twelve** buildings standing against seventy-seven ruins — went to **zero
+buildings and population zero in forty-five game-days**, and the last power plant
+went with it. §AP1 was not wrong; it had closed a door this city was not walking
+through. Doc 92 §58 names the three it was:
+
+| door | share of the fourteen-day loss | ruling |
+| --- | --- | --- |
+| the city is billed for its own rubble, at the **worst** rate either line can charge | $32,409/game-day against a $2,998/game-day gross | **§AR3** |
+| a fire in a city with no fire station | **10 of 11** destructions | **§AR2** |
+| wear on the generation and water spine | §AP1's own listed exception | **§AR1** |
+
+**And a fourth finding that is not a ruling but a correction.** The lane brief
+recorded that relief paid this city **$2,624 across fourteen game-days**. It did
+not. That $2,624 is `Treasury.settle`'s credit-limit clamp — the balance moving
+from −$22,624 to exactly −`CREDIT_LIMIT_FLOOR`, with the $2,624 overshoot booked
+as deferred liability — and it is the *opposite* of a payment. Relief actually
+paid **$296,181 in three grants inside fifteen game-days**, which is **105 % of
+the city's entire $282,078 restore bill**. Doc 03 §2.10's bottom rung was not too
+thin. The hole under it was too big, and §AR3 is the hole. **No number in the
+relief ladder is moved by this wave**, and that is a finding, not an omission:
+fitting a grant to a symptom before the symptom's cause was found is exactly how
+a balance number stops meaning what its note says.
+
+### AR1. Wear may CONDEMN the utility spine. It may not demolish it.
+
+`data/building_rules.json utility_spine.archetypes = ["power_facility",
+"substation", "water_facility"]`, `utility_spine.wear_may_demolish = false`;
+`BuildingCatalog.wear_may_demolish_for(archetype)` folds this with §AP1's
+private-stock answer into the ONE flag `Building.wear_may_demolish`, stamped at
+doc 93 §Y2's same four sites; `Building.roll_structural_failure`'s guard loses
+its `owner_maintained and` conjunct and reads the flag alone.
+
+**§AP1's own text is the argument.** It ruled that an owner whose building is
+condemned boards it up rather than bulldozing it, *because it is their asset* —
+and then listed, as a deliberate exception, "this same roll on the city's OWN
+civic and utility stock". The city is the owner of a power plant. The sentence
+applies with more force, not less, because of what the exception costs:
+
+* a demolished power plant takes **the whole city's** power with it, not one
+  lot's revenue;
+* with no generation, every remaining building is dark, so §Y1a's service clause
+  lifts the ownership floor **city-wide** and §AP1's protection of private stock
+  stops meaning anything;
+* and the player cannot buy it back, because the same collapse has the treasury
+  under water. A loss you cannot recover from is not a difficulty setting.
+
+On the player's save all of that had already happened: both plants gone, all
+three water facilities gone, both substations gone, and the twelve survivors
+sitting in permanent darkness.
+
+**THE LINE IS THE SPINE, NOT ALL CIVIC STOCK, and that is the ruling rather than
+a convenience.** Police, fire and the construction yard stay losable to wear.
+Losing a station costs coverage — a loss the player can see on the overlay, price
+from the build menu and rebuild out of. Losing the last plant costs everything at
+once and is unrecoverable while insolvent. Generation, distribution and water are
+exactly the three a city can neither function without nor rebuy while broke; the
+`utility_spine` block names them, `BuildingCatalog._check_utility_spine` refuses a
+block that names an archetype which does not exist, and a fixture carrying no
+block keeps the pre-Wave-20 physics exactly.
+
+**What a condemned plant is.** It rests at `structural_failure_threshold` in
+`damaged`, where doc 02 §2.12 pays `output_mult` **0.40**. So a neglected city
+browns out to two fifths of its generation; it never goes dark for good. The
+player's repair is a real purchase at doc 03's own price, and it is theirs to
+make.
+
+**NOT A SHIELD, for the spine either.** An unanswered tier-5 fire in a city that
+CAN answer (`burn_down`), doc 06's explicit `destroy_building` cascade op in a
+city that can answer, an event landing on a building already at the threshold
+(§AP2), and the player's own demolish all still take a power plant down. A
+disaster still matters.
+
+### AR2. An incident the city could not answer CONDEMNS. It does not demolish.
+
+`Building.condemn_unanswered(destroy_allowed)`;
+`Building.apply_damage(fraction, now_minutes, may_destroy)`;
+`IncidentSystem.incident_was_answerable(inc)`;
+`CityIncidentWorld._has_fire_department()`. Doc 06's two building-destroying
+verbs take an `answerable` argument that defaults to `true`, so every adapter and
+caller that predates the ruling behaves exactly as it did.
+
+With no fire station standing, the player's city could answer nothing: **431
+incidents abandoned, 17 failed and 11 buildings burned down in fourteen
+game-days**, ten of the eleven through `burn_down`. There is no move that fixes
+that. The station is a ruin, restoring it costs money the collapse has already
+taken, and every fire deletes another building — an unbounded ratchet driven by
+the absence of a purchase the player cannot make.
+
+**"Could not answer" is two facts the game already records, and neither is a
+choice the player made:**
+
+* `IncidentSystem.incident_was_answerable` — **nothing is committed** to the
+  incident AND `DispatchSystem` marked it `unreachable`, i.e. it had candidate
+  units, had permission to send them, and doc 10's road graph offered no route.
+  `dispatch_blocked_no_units` is deliberately NOT in this bucket: a city with a
+  department and no free engine made a fleet-sizing choice, and doc 06 §2.16's
+  whole dispatch economy rests on that choice having consequences.
+* `CityIncidentWorld._has_fire_department` — the city has **no fire station
+  standing at all**. A city-level fact and deliberately not a per-tile coverage
+  reading: gating on `coverage_fire(tile)` would make "build far from the
+  station" a fireproofing strategy, which is the farm this ruling must not open.
+
+**Both doors, or the ruling buys one game-hour.** §AP2's damage floor is
+conditional — `if condition > floor_condition` — so a building already at the
+line is finished by the next event. That is fair when the city could have
+answered the first one. §AR2 puts unanswered incidents' targets exactly at that
+line, so without `may_destroy` the condemn would hand them straight to the next
+hazard: doc 92 §58.5 measured that arm and the player's save still lost 12 of 12,
+with `cause: damage` in place of the `cause: fire` it used to lose. Where the
+city CAN answer, §AP2 is untouched.
+
+**THE ANTI-FARM IS AN INEQUALITY, NOT A FEE.** Demolishing your own fire station
+to buy this does not pay: every fire still condemns the building it reaches (doc
+02 §2.12 — `output_mult` 0.40, `coverage_mult` 0.25, doc 03's `f_condition` 0.46,
+so the building keeps paying about a fifth of its tax), the city loses fire
+coverage everywhere at once (doc 02's `req_fire_coverage` gates upgrades, doc 09's
+happiness reads it), and nothing the fire fleet answers gets answered. A
+station's upkeep buys SUPPRESSION — an answered fire leaves residual damage and
+the building goes on earning — which is worth more than the difference between a
+condemned building and a ruin at every level in the catalogue. **A mutual-aid fee
+was considered and rejected**: a bill an insolvent city cannot pay becomes
+deferred liability, which is the unbounded ratchet this ruling exists to end
+wearing a different hat.
+
+**It stays possible to lose a building to fire.** A city with a department that
+can reach the fire and loses it anyway still loses the building, through the
+`burn_down` this ruling does not touch. `tests/test_spiral_floor.gd` asserts both
+sides of that line.
+
+### AR2a. A building the city loses is a building the city is TOLD about.
+
+`CityIncidentWorld._publish`. Every `Building` verb returns the events its
+transition produced and `CitySim.apply_hourly_decay` publishes them;
+`CityIncidentWorld.apply_building_damage` and `destroy_building` called the same
+verbs and **threw the return away**. So a building taken down by a doc 06 cascade
+op emitted nothing at all: no `building_destroyed`, no `building_damaged`, no
+notification, nothing for `GoalSystem` — which lists `building_destroyed` among
+the events it watches — and nothing a report could count.
+
+Measured on slot 0: over 45 game-days the census showed twelve buildings gone and
+the bus reported **one**. The player's city was being erased through a door that
+never announced itself, which is why the report reads *"ALL of my buildings are
+destroyed"* and not *"I watched them go"*. Doc 91 A91-D-110.
+
+The publish stamps `sim_id` and the post-transition `condition` exactly as
+`apply_hourly_decay` does, which also fixes the join: `Building._destroy` puts
+the **int** `Building.id` in the `building` field, while every roster key is the
+authored **string** sim_id (`P-077`, `H-001`). A subscriber that joined on
+`building` would have attributed nothing.
+
+### AR3. The city is not billed for its rubble.
+
+`CitySim.build_settlement_inputs` skips `state == &"destroyed"`;
+`CityIncidentWorld.station_rows` skips destroyed and planned shells.
+
+`roster_ids()` keeps a ruin in the roster — that is what makes RESTORE possible —
+and every row that loop appended was billed. Doc 03 §2.4's `E_building_maint`
+charges the `buildings` array and `E_departments` charges the `stations` array,
+and **neither line ever asked what state the building was in**. Worse, both scale
+on `1 − condition`, and a ruin's condition is exactly 0:
+
+```
+E_building_maint  x (1 + MAINT_CONDITION_PENALTY x 1)      = 2.5x
+E_departments     x (1 + ASSET_CONDITION_PENALTY_COEFF x 1) = 3.0x
+```
+
+**A destroyed building was billed two and a half times what the same building
+costs in perfect repair, and a destroyed station three times.** Every building
+that died made the city's bill go up. That is a ratchet with no floor, and it is
+the death spiral's actual engine. On the player's slot 0, at load (doc 92 §58.2):
+
+| line | billed to RUINS | of total |
+| --- | --- | --- |
+| `E_building_maint` | **$1,044.39/gh** | $1,055.12/gh (**99.0 %**) |
+| `E_departments` | **$306.00/gh** | $306.00/gh (**100 %**, four ruined shells) |
+| both | **$1,350.39/gh = $32,409/game-day** | against a gross of $2,998/game-day |
+
+**The ruling is doc 93 §Y1's own sentence, read on the other side.** §Y1 kept
+`E_building_maint` alive by defining it as *the city's cost of SERVING a
+building* rather than a landlord's repair bill. A ruin is served by nothing: it
+draws no power, no water, houses nobody (`state_occupancy()` is 0.0 for
+`destroyed`, so it already contributes $0 of tax and $0 of `potential`, and doc 03
+§2.10 layer 1's revenue floor is measured on `potential`) and generates no
+traffic. `station_upkeep` is STAFFING, and a destroyed station has no staff.
+`station_rows()` is `FleetSystem.populate_from_stations`'s only source, so a
+ruined station listed there also gave doc 06 a garage that does not exist and doc
+03 an `E_fleet` line to bill for it.
+
+**What still costs money, so that losing a building still hurts.** The lot is
+dead capital until it is restored: no tax, no coverage, no power, no water, and
+`CostCurves.restore_cost_building` to bring it back. `E_roads_repair` still bills
+the street outside it, because the street is still there. The city loses the whole
+of the asset's income and keeps the whole of its restore bill; it simply stops
+paying wages to a building that burned down.
+
+**Nothing here is a balance knob.** Not one authored number moves in §AR1, §AR2 or
+§AR3 — the two condition penalties, the structural-failure probability, the
+relief ladder and every price stand exactly as Wave 19 shipped them. All four
+`profile_sim` determinism baselines are **unchanged on both cities and both
+paths**, which is the strongest available statement of what these rulings are:
+dormant on a healthy city, and a floor only under one that has fallen.
+
+### AR4. What is NOT ruled, and why
+
+**The relief allowance still cannot re-open for a city that cannot grow.**
+`Treasury.note_era` makes an era a city level (§AP4) and `ProgressionSystem.city_level`
+is monotone by construction, so a collapsed city spends its three grants and never
+gets another. On slot 0 that is visible from game-day 15 onward. It is not closed
+here because the honest fix is a latch — one persisted "this collapse has already
+been counted" bit — and `Treasury.serialize()` is inside `state_hash()`, so it
+moves all four baselines. This wave's baselines are unchanged, which is the single
+most useful fact it can hand the next reader, and spending that on a bit is a bad
+trade when §AR3 has just made the same three grants sufficient: the same relief
+now leaves the city at **+$68,464 on game-day 14** with every building it still
+had. Doc 91 A91-D-112 carries the row, the shape of the fix and the cost.

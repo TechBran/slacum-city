@@ -167,7 +167,12 @@ static func state_fire_mult_value(state: Variant) -> float:
 	return 0.0
 
 
-func apply_building_damage(_id: String, _fraction: float) -> void:
+## `answerable` is doc 93 §AR2, as on [destroy_building]: false means the city
+## could not get a unit to this incident, and doc 02 §2.6's damage floor is then
+## absolute rather than conditional. Defaults to `true`, so an adapter or a
+## caller that predates the ruling behaves exactly as it did.
+func apply_building_damage(_id: String, _fraction: float,
+		_answerable: bool = true) -> void:
 	pass
 
 
@@ -191,7 +196,12 @@ func suppress_building_fire(_id: String, _residual_damage_fraction: float) -> vo
 	pass
 
 
-func destroy_building(_id: String, _cause: String) -> void:
+## `answerable` is doc 93 §AR2 (Wave 20): could the city have got a unit to this
+## incident? `IncidentSystem.incident_was_answerable` computes it, an adapter is
+## free to widen it with facts only it holds (`CityIncidentWorld` also asks
+## whether a fire station exists at all), and it defaults to `true` so an adapter
+## or a caller that predates the ruling behaves exactly as it did.
+func destroy_building(_id: String, _cause: String, _answerable: bool = true) -> void:
 	pass
 
 

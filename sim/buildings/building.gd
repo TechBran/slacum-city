@@ -99,12 +99,15 @@ var condition_rules: Dictionary = DEFAULT_CONDITION
 ## fixture that never sets it wears and damages exactly as it did before the
 ## ruling, which is what keeps every pre-Wave-17 worked example true.
 var owner_maintained: bool = false
-## Doc 93 §AP1 (Wave 19): may ordinary WEAR take this building all the way to
-## `destroyed`? Stamped from `data/building_rules.json`'s
-## `owner_maintenance.wear_may_demolish` beside [owner_maintained], and read only
-## by [roll_structural_failure]. The default is `true` — the pre-Wave-19
+## Doc 93 §AP1 (Wave 19) and §AR1 (Wave 20): may ordinary WEAR take this building
+## all the way to `destroyed`? Stamped from
+## `BuildingCatalog.wear_may_demolish_for`, which folds both rulings —
+## `building_rules.owner_maintenance.wear_may_demolish` for private stock and
+## `building_rules.utility_spine.wear_may_demolish` for the city's own generation
+## and water — beside [owner_maintained], and read only by
+## [roll_structural_failure]. The default is `true` — the pre-Wave-19
 ## behaviour — so a fixture that never stamps it collapses exactly as it always
-## did, and the ruling arrives only where the coordinator applied it.
+## did, and the rulings arrive only where the coordinator applied them.
 ## It is not persisted, for [owner_maintained]'s reason: it is a property of the
 ## archetype and the file, not of the row, so a save written before the ruling
 ## loads into a city that applies it.
@@ -374,12 +377,32 @@ func _owner_maintain(dt_h: float, powered_fraction: float = 1.0) -> Array:
 ## What can still take a building down, so that a storm still MATTERS:
 ## `burn_down` (an unanswered tier-5 fire), doc 06's explicit `destroy_building`
 ## cascade op, an event landing on a building already at the threshold (§AP2),
-## and this roll on the city's OWN stock — civic and utility buildings the
-## player chose to build and the city, not an owner, is responsible for.
+## and this roll on the city's own POLICE, FIRE and CONSTRUCTION stock.
+##
+## **WEAR MAY NOT TAKE THE UTILITY SPINE EITHER — doc 93 §AR1 (Wave 20).** The
+## paragraph above used to end "…and this roll on the city's OWN civic and
+## utility stock", and that exception is the hole the 2026-09-03 player fell
+## through: doc 92 §58 loaded their slot 0 and found both power plants, all three
+## water facilities and both substations already gone, so every remaining lot was
+## dark forever, §Y1a's service clause had lifted the ownership floor for the
+## whole city, and nothing could be rebuilt because the treasury was $22,624
+## under water. §AP1's own argument is stronger here, not weaker — the city IS
+## the owner of a power plant — so `power_facility`, `substation` and
+## `water_facility` are condemned by wear and never demolished by it. A neglected
+## city browns out to §2.12's `output_mult` 0.40; it does not go dark for good.
+## Police, fire and the construction yard stay losable, because losing coverage
+## is a loss a player can see, price and rebuild out of.
 func roll_structural_failure(rng: RngStreams, dt_h: float, now_minutes: int) -> Array:
 	if state != &"damaged" or condition >= rule("structural_failure_threshold"):
 		return []
-	if owner_maintained and not wear_may_demolish:
+	# **Wave 20 widened this guard and DELETED a conjunct** (doc 93 §AR1).
+	# It read `owner_maintained and not wear_may_demolish`, which is why §AP1's
+	# own text had to list "this same roll on the city's OWN civic and utility
+	# stock" as an exception. `BuildingCatalog.wear_may_demolish_for` now answers
+	# for both rulings at the stamping site, so this line asks the flag and
+	# nothing else — and a fixture that stamps neither still reads the `true`
+	# default and collapses exactly as it did before Wave 19.
+	if not wear_may_demolish:
 		return []
 	var p := 1.0 - pow(1.0 - rule("structural_failure_p_per_hour"), dt_h)
 	if rng.stream("failures").randf() < p:
@@ -455,6 +478,40 @@ func suppress_fire(residual_damage_fraction: float) -> Dictionary:
 			"cause": &"fire"}]})
 
 
+## **AN INCIDENT NOBODY COULD ANSWER CONDEMNS; IT DOES NOT DEMOLISH** — doc 93
+## §AR2 (Wave 20). The terminal outcome of an incident in a city that has NO
+## standing fire station: the building is put at `structural_failure_threshold`
+## in `damaged` — doc 02 §2.12's condemned rung, `output_mult` 0.40,
+## `coverage_mult` 0.25, doc 03's `f_condition` 0.46 — instead of being deleted.
+##
+## It is `burn_down`'s sibling, not its replacement: `CityIncidentWorld` decides
+## which of the two an incident gets, and it hands a city that HAS a fire
+## department the old verb, so a fire the player could have answered and did not
+## still takes the building. Wave 19 §AP1 draws this exact line for wear ("wear
+## condemns, it may not demolish"); §AR2 says the same sentence about the one
+## door §AP1 explicitly left open, and only for the case where the player could
+## not have closed it.
+##
+## The floor is `structural_failure_threshold` and NOT a new number, for §AP2's
+## reason: doc 02 §2.6 already names 0.10 as the line below which a building is
+## no longer structurally sound, and a second constant meaning the same thing
+## would be a second source of truth.
+##
+## Offline it behaves exactly as `burn_down` and `demolish` do — doc 08 C-47's
+## clamp and a refusal — so an absence still cannot change the roster.
+func condemn_unanswered(destroy_allowed: bool) -> Array:
+	if state == &"destroyed" or state == &"planned":
+		return []
+	if not destroy_allowed:
+		condition = maxf(condition, rule("offline_burn_down_clamp"))
+		return []
+	condition = minf(condition, rule("structural_failure_threshold"))
+	if state == &"damaged":
+		return []
+	state = &"damaged"
+	return [{"type": &"building_damaged", "building": id, "cause": &"unanswered"}]
+
+
 ## doc 06 BurnDown — guarded by world.destroy_allowed() (report 98 C-47):
 ## refused VISIBLY during offline catch-up, never silently swallowed.
 func burn_down(destroy_allowed: bool, now_minutes: int) -> Dictionary:
@@ -494,12 +551,32 @@ func burn_down(destroy_allowed: bool, now_minutes: int) -> Dictionary:
 ##
 ## The explicit `destroy_building` cascade op does NOT come through here — see
 ## `CityIncidentWorld.destroy_building`, which now says what it means.
-func apply_damage(fraction: float, now_minutes: int) -> Array:
+func apply_damage(fraction: float, now_minutes: int,
+		may_destroy: bool = true) -> Array:
 	if state == &"destroyed" or state == &"planned":
 		return []
 	var floor_condition := rule("structural_failure_threshold")
 	var hit := clampf(condition - fraction, 0.0, 1.0)
-	condition = maxf(hit, floor_condition) if condition > floor_condition else hit
+	# **`may_destroy` is doc 93 §AR2's second half, and it closes §AP2's own
+	# exception where that exception has no argument left** (Wave 20).
+	#
+	# §AP2's floor is conditional — `if condition > floor_condition` — so a
+	# building ALREADY at the structural-failure line is finished off by the next
+	# event. That is deliberate and it is fair when the city could have answered
+	# the first event and did not. In a city with NO fire department it is not:
+	# §AR2 puts unanswered incidents' targets exactly at that line, so without
+	# this parameter the ruling would buy the building one game-hour and hand it
+	# to the very next hazard. Doc 92 §58.5 measured that: with §AR2's condemn
+	# alone the player's save still lost 12 of 12 through this door, `cause:
+	# damage`, in place of the ten it used to lose to `cause: fire`.
+	#
+	# `CityIncidentWorld` is the only caller that passes it, and it passes false
+	# on exactly the predicate §AR2 already turns on. Every other caller keeps
+	# §AP2 unchanged, so an ordinary city's physics does not move at all.
+	if may_destroy:
+		condition = maxf(hit, floor_condition) if condition > floor_condition else hit
+	else:
+		condition = maxf(hit, floor_condition)
 	var events: Array = []
 	if condition <= 0.0:
 		events.append_array(_destroy(now_minutes, &"damage"))
