@@ -10371,7 +10371,14 @@ consequence the money is allowed to have.**
   report 98 AC-2 forbids this lane from re-fitting `MANUAL_DISPATCH_LEVEL_K` by
   hand. Filed as §61.7's AC-22-3 rather than fitted.
 
-**Every ceiling in the file is untouched.** Gate 18b's dark share, gate 32's two
+**Every ceiling in the file is untouched, WITH ONE EXCEPTION named at merge by
+the verify pass (2026-09-04): `TAX_SQUEEZE_POP_MAX_RATIO` IS an upper bound —
+`tests/test_balance_gates.gd:934` asserts `maxed_pop <= base_pop ×
+TAX_SQUEEZE_POP_MAX_RATIO` — and it moved 0.93 → 1.05, which LOOSENS it. The
+re-fit is argued in §61.12 and the argument stands (per-seed 1.13 / 0.85 / 0.96
+is no longer a fittable statistic, so the sentence the gate asserted stopped
+being true of the world before this wave touched it); what does not stand is a
+blanket claim that no ceiling moved.** Gate 18b's dark share, gate 32's two
 share ceilings (d2) and (h), gate 21's beat ceilings and both of its day bounds
 all hold on the shipped curve without being moved — which is the property that
 distinguishes this from a wave that re-fitted its way to green.
@@ -10411,11 +10418,23 @@ sed -i 's/\[0, 215000, .*, 5000000\]/[0, 2500, 7000, 9000, 22500, 29000, 65000, 
 profile_sim --hash-only --city=…/bench_city.json     -> dfe20abe… / 2677b9af…   (= SHIPPED)
 
 # arm 2 — the old payment site, the NEW grant table
-git stash sim/city_sim.gd  # (the payment-site hunk only)
+git stash sim/city_sim.gd  # <-- DO NOT RUN THIS. See the retraction below:
+                           # `git stash` is forbidden in this repo (refs/stash
+                           # is shared across every worktree, so one agent's
+                           # stash lands in another's tree). Use
+                           # `git diff > /tmp/x.patch && git apply -R` instead.
 profile_sim --hash-only --city=…/bench_city.json     -> 3ad4e5b5… / d5e8192c…   (= FORK)
 ```
 
-Arm 1 says the TABLE is invisible to this fixture now; arm 2 says the table was
+**ARM 2 IS RETRACTED — it does not reproduce (verify pass, 2026-09-04).** Run
+twice by two independent methods, the old payment site with the new table gives
+`6a268597ad2f3805…` / `ff44acafef83932a…`, which is neither the fork pair nor
+the shipped pair this section claims for it. Arm 1 — the shipped payment site
+with the OLD table returning the shipped digests — WAS reproduced exactly, and
+the conclusion rests on arm 1 alone: the cause is the payment site (RR-191),
+and the bench fixture, which boots at city level 6, had been collecting
+$135,000 of grants for a curriculum it never played. The retracted sentence
+followed: arm 1 says the TABLE is invisible to this fixture now; arm 2 said the table was
 the whole of the fork's reading. **So the entire delta is RR-191's payment site
 and none of it is RR-187's table, RR-188's curriculum row or RR-189's ladder
 rung** — a data table that pays nobody on this fixture cannot move its hash, and

@@ -1500,6 +1500,25 @@ func _check_city_level(batch: Array) -> void:
 			push_toast(UIWidgets.t_args(config, "ui_toast_city_level",
 					{"level": level}), HudModel.STATE_NORMAL)
 		city_level_changed.emit(level, unlocked)
+		grant_by_level.erase(level)
+	# A GRANT WITH NO LEVEL CHANGE STILL HAPPENED TO THE PLAYER (Wave 22 verify
+	# pass, 2026-09-04). Every surface above hangs on `city_level_changed`, and
+	# doc 93 §G1's composed level is `max(population ladder, goals.earned_level)`
+	# — so a player who grew into level 3 by POPULATION and then completes
+	# curriculum rungs 1, 2 and 3 is paid three grants while the composed level
+	# never moves, and the money lands with no toast, no chip flash and no
+	# fanfare. Measured on that arc: $205,000 arriving in total silence. The
+	# receipt is owed to the player who earned it, whichever ladder moved.
+	for paid_level: Variant in grant_by_level:
+		var amount := int(grant_by_level[paid_level])
+		if amount <= 0:
+			continue
+		push_toast(UIWidgets.t_args(config, "ui_toast_city_level_grant",
+				{"level": int(paid_level), "amount": HudModel.money_exact(amount)}),
+				HudModel.STATE_NORMAL)
+		if hud != null:
+			hud.flash_chip(StringName(HudModel.CHIP_TREASURY),
+					street.chip_flash_s() if street != null else 0.9)
 
 
 ## Doc 07 §2.4's flood, the first time a player meets one (defect A91-D-26).
