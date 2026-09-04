@@ -139,9 +139,18 @@ func _destroy_building(inc: Incident, _action: Dictionary) -> Dictionary:
 		system.emit_event("destroy_refused_offline", {"incident_id": inc.id,
 				"target": target, "reason": "offline"})
 		return {"op": "destroy_building", "result": REFUSED}
-	world.destroy_building(target, "incident:%d" % inc.id,
+	# **THE BUS SAYS WHAT ACTUALLY HAPPENED — doc 93 §AS1.** Under §AS1 this op
+	# may condemn instead of destroying, and the old line announced
+	# `building_destroyed_by_fire` either way: doc 92 §60.3 caught it saying so
+	# **3,891 times in 45 game-days about buildings that were still standing** on
+	# the player's own save. `GoalSystem`, the notification feed and every
+	# balance instrument read this line, and a terminal event that lies about the
+	# roster is worse than no event at all.
+	var destroyed := world.destroy_building(target, "incident:%d" % inc.id,
 			system.incident_was_answerable(inc))
-	system.emit_event("building_destroyed_by_fire", {"incident_id": inc.id, "target": target})
+	system.emit_event(
+			"building_destroyed_by_fire" if destroyed else "building_condemned_by_fire",
+			{"incident_id": inc.id, "target": target})
 	return {"op": "destroy_building", "result": DONE}
 
 

@@ -1258,10 +1258,20 @@ func _structure_fire_rates(dt_h: float, collect: bool) -> Dictionary:
 	var ignitions: PackedFloat64Array = columns["fire_ignition_per_hour"]
 	var powered: PackedByteArray = columns["powered"]
 	var districts: PackedStringArray = columns["district_id"]
+	# Doc 93 §AS2's column. A world that predates the ruling supplies none, and
+	# the empty array then answers "not burnt out" for every index below.
+	var burnt: PackedByteArray = columns.get("burnt_out", PackedByteArray())
 	var pick_ids := PackedStringArray()
 	var pick_lambdas := PackedFloat64Array()
 	var total := 0.0
 	for i in ids.size():
+		# Doc 93 §AS2: a shell an unanswered fire already gutted is not fuel. It
+		# is screened here rather than folded into `state_fire_mult_value`
+		# because that form takes a state and this is a fact about the building —
+		# `IncidentWorld.state_fire_mult_of`, which doc 06 §2.8's spread screen
+		# uses, makes the same check on the row form.
+		if i < burnt.size() and burnt[i] != 0:
+			continue
 		var state_mult := IncidentWorld.state_fire_mult_value(states[i])
 		if state_mult <= 0.0:
 			continue

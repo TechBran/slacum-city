@@ -161,10 +161,11 @@ func suppress_building_fire(id: String, residual_damage_fraction: float) -> void
 ## demolish lives in `CityIncidentWorld` (it needs the roster), and a double that
 ## silently applied it would make doc 06's own tests measure doc 02's ruling.
 ## Recording it is what lets a test assert that doc 06 passed the right answer.
-func destroy_building(id: String, cause: String, answerable: bool = true) -> void:
+func destroy_building(id: String, cause: String, answerable: bool = true) -> bool:
 	destroyed.append({"id": id, "cause": cause, "answerable": answerable})
 	if buildings.has(id):
 		buildings[id]["state"] = "destroyed"
+	return true
 
 
 # --- doc 09 ----------------------------------------------------------------

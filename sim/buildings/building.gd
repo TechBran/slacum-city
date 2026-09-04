@@ -113,6 +113,47 @@ var owner_maintained: bool = false
 ## loads into a city that applies it.
 var wear_may_demolish: bool = true
 
+## **A GUTTED SHELL IS NOT FUEL — doc 93 §AS2 (Wave 21).** Set by
+## [condemn_unanswered] and by nothing else: an unanswered fire has already
+## taken everything in this building that could burn, and until the shell is
+## rebuilt there is nothing left in it to ignite. Read by [state_fire_mult], so
+## it takes the building out of doc 06 §2.6's ignition roll AND out of §2.8's
+## spread candidates at the same time and by the same number.
+##
+## **It is the BOUND, and without it §AS1 has no floor.** §AS1 rules that a fire
+## the city cannot answer condemns rather than destroys — and destruction was
+## the only thing that ever made fire self-limiting. Doc 06's own saturation note
+## says so in as many words: *"five of the eight resolve to a BUILDING and take
+## it off the board, which makes them self-limiting the way fire spread is"*. A
+## condemned building comes to rest in `damaged` at 0.10, where
+## `state_fire_mult` is **1.8** and `fire_condition_mult(0.10)` is **2.28** — 4.1
+## times a healthy building's ignition rate — so a shell that survives its own
+## burn-down is the most flammable object in the city, forever. Doc 92 §60.3
+## measured the loop that makes: on the player's slot 0 with the ruling and no
+## bound, **7,379 incidents born in 45 game-days on a 76-building city** (doc 06
+## §2.10.1's own worst legitimate arrival rate is 26 a game-day), 3,919 of them
+## failing, each failure spawning a `blocked_road`, and 72,195
+## `dispatch_blocked_unreachable` behind the roads that made.
+##
+## **It is not a shield and it is not a farm.** The shell earns doc 02 §2.12's
+## `output_mult` 0.40 and doc 03's `f_condition` 0.46 while it stands gutted, so
+## the player is holding a fifth of a building; the moment they repair it — or
+## its owner does, or they restore it — the flag lifts and it burns like anything
+## else. Choosing to be un-burnable by staying gutted costs four fifths of the
+## asset's income, every game-hour, which is strictly worse than any fire.
+##
+## **THREE VERBS LIFT IT, AND ALL THREE ARE SOMEBODY PAYING.**
+## [complete_repair] (the player bought a repair), [complete_construction] (the
+## player restored or rebuilt it) and [_destroy] (there is no shell left to
+## board). Routine owner upkeep deliberately does NOT — see [_owner_maintain] for
+## the measurement that made that the difference between a bound and a
+## two-game-hour delay.
+##
+## Persisted, but only when TRUE (see [serialize]): a shell that survives a
+## reload has to still be a shell, and a city that has never had one writes the
+## byte-identical save it wrote before this ruling.
+var burnt_out: bool = false
+
 
 func _init(p_id: int = 0, p_archetype: StringName = &"", p_origin := Vector2i.ZERO,
 		p_variant: StringName = &"") -> void:
@@ -187,6 +228,11 @@ func decays() -> bool:
 
 
 func state_fire_mult() -> float:
+	# Doc 93 §AS2: a shell an unanswered fire already gutted has nothing left in
+	# it to burn. Checked BEFORE the state table, because the state a gutted
+	# building rests in is `damaged`, which is the table's most flammable row.
+	if burnt_out:
+		return 0.0
 	match state:
 		&"under_construction": return 1.4
 		&"damaged", &"repairing": return 1.8
@@ -339,6 +385,38 @@ func _owner_maintain(dt_h: float, powered_fraction: float = 1.0) -> Array:
 	var service := clampf(powered_fraction, 0.0, 1.0)
 	if service <= 0.0:
 		return []
+	# **AN OWNER BOARDS UP A GUTTED SHELL; THEY DO NOT REBUILD IT OUT OF PETTY
+	# CASH — doc 93 §AS2** (Wave 21). §AP1's own sentence for a condemned
+	# building is *"an owner boards it up rather than bulldozing it"*, and this is
+	# where that sentence ends: the owner HOLDS the shell at doc 02 §2.6's line —
+	# so it does not rot away and it goes on paying §2.12's `output_mult` 0.40 and
+	# doc 03's `f_condition` 0.46, a fifth of a building — and does no more.
+	# Putting a burnt-out structure back is a construction job somebody pays for.
+	#
+	# **Without this the bound is a two-game-hour delay.** `restore` below is
+	# `dt_h / (build_time_hours × repair_time_factor)`, which takes ordinary
+	# private stock from 0.10 back over `repair_target_damaged` in about two
+	# game-hours — and the flip to `active` lifted [burnt_out], so the building
+	# was fuel again before the smoke cleared. Doc 92 §60.7 measured that cycle on
+	# the player's own slot 0: **14,071 unanswerable fires in ninety game-days on
+	# a 68-building city**, 156 a game-day, one per powered building every 2.4
+	# game-hours, with `building_repaired` firing 14,062 times to feed them. With
+	# this line it is **65 in ninety game-days**.
+	#
+	# **The service gate above still applies, and it is not weakened here.** A
+	# dark shell falls exactly as any other dark private building falls, because
+	# doc 93 §Y1a's service clause is the ruling for a building nobody is serving
+	# and §AS2 has no business restating it.
+	#
+	# **The exit is a BILL the player chooses, not a fee they are handed.**
+	# `cmd_repair_building` opens on a gutted shell even for private stock (doc 93
+	# §AS2, `CitySim.cmd_repair_building` check 2), at doc 03 §2.5's own repair
+	# price, and `complete_repair` lifts the flag. That is §AS1's *"spends instead
+	# of being erased"* half, and it is why a mutual-aid FEE was rejected: this
+	# never hands an insolvent city a liability it cannot pay.
+	if burnt_out:
+		condition = maxf(condition, rule("structural_failure_threshold"))
+		return []
 	var build_hours := float(stats.get("build_time_hours",
 			stats.get("build_hours", 0.0)))
 	var full_repair_hours := build_hours * repair_time_factor()
@@ -430,6 +508,11 @@ func complete_construction() -> Dictionary:
 	pending_level = 0
 	state = &"active"
 	condition = 1.0
+	# Doc 93 §AS2, one of the four "the shell is whole again" transitions that
+	# lift the flag. This is the one a RESTORE arrives through (`order_rebuild`
+	# → `start_construction` → here), so a rebuilt building is fuel again —
+	# which is what keeps §AS2 an inconvenience rather than a strategy.
+	burnt_out = false
 	return CommandQueue.ok({"events": [
 		{"type": &"building_completed", "building": id, "level": level},
 	]})
@@ -516,6 +599,9 @@ func condemn_unanswered(destroy_allowed: bool, now_minutes: int) -> Array:
 	if is_new_build():
 		return _destroy(now_minutes, &"unanswered")
 	condition = minf(condition, rule("structural_failure_threshold"))
+	# **THE BOUND — doc 93 §AS2, and it is set on BOTH exits below.** The fire
+	# took the fuel; see [burnt_out] for why the ruling has no floor without it.
+	burnt_out = true
 	if state == &"damaged":
 		return []
 	state = &"damaged"
@@ -632,6 +718,7 @@ func complete_repair(repair_target: float) -> Dictionary:
 		return CommandQueue.fail(&"E_STATE")
 	state = &"active"
 	condition = maxf(condition, repair_target)
+	burnt_out = false  # doc 93 §AS2: repaired is rebuilt, and rebuilt burns.
 	return CommandQueue.ok({"events": [{"type": &"building_repaired", "building": id}]})
 
 
@@ -682,13 +769,17 @@ func _destroy(now_minutes: int, cause: StringName) -> Array:
 	level_at_destruction = maxi(level, pending_level)
 	destroyed_at_minutes = now_minutes
 	condition = 0.0
+	# Doc 93 §AS2: rubble is not a gutted shell, it is rubble — `state_fire_mult`
+	# already answers 0 for `destroyed`, and carrying the flag on a ruin would
+	# put a key in [serialize] that says nothing.
+	burnt_out = false
 	return [{"type": &"building_destroyed", "building": id, "cause": cause}]
 
 
 # ------------------------------------------------------------- persistence
 
 func serialize() -> Dictionary:
-	return {
+	var out := {
 		"id": id, "archetype": String(archetype), "variant": String(variant),
 		"level": level, "pending_level": pending_level,
 		"origin": [origin.x, origin.y], "state": String(state),
@@ -696,6 +787,16 @@ func serialize() -> Dictionary:
 		"destroyed_at_minutes": destroyed_at_minutes,
 		"level_at_destruction": level_at_destruction,
 	}
+	# **SPARSE ON PURPOSE — doc 93 §AS2, and it is why Wave 21's four
+	# `profile_sim` baselines are still comparable with Wave 20's.**
+	# `serialize()` is captured into `CitySim.canonical_capture()` and therefore
+	# into `state_hash()`, so an unconditional key would move every hash on every
+	# city for a flag no city without a gutted shell has ever set. Written only
+	# when true; [deserialize] defaults it to false, which is exactly what every
+	# save written before this ruling means.
+	if burnt_out:
+		out["burnt_out"] = true
+	return out
 
 
 static func deserialize(data: Dictionary) -> Building:
@@ -710,4 +811,5 @@ static func deserialize(data: Dictionary) -> Building:
 	b.built_at_minutes = int(data.get("built_at_minutes", 0))
 	b.destroyed_at_minutes = int(data.get("destroyed_at_minutes", 0))
 	b.level_at_destruction = int(data.get("level_at_destruction", 0))
+	b.burnt_out = bool(data.get("burnt_out", false))
 	return b

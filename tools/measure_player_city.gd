@@ -34,6 +34,10 @@ extends SceneTree
 ##                  an online fast-forward. Default is online, which is the arm
 ##                  the player's report describes and the arm gate 29 uses.
 ##   --json=FILE    also write the censuses as JSON, for a diff between builds
+##   --restore[=N]  ALSO play the one verb a fallen city has: once a game-day,
+##                  restore every ruin the treasury can pay for above the
+##                  reserve N, cheapest first
+##   --spine-first  as --restore, but buy doc 93 §AR1's utility spine first
 ##
 ## **`user://` IS SHARED AND THIS TOOL WRITES INTO IT.** Every worktree of this
 ## project resolves `user://` to the same
@@ -55,6 +59,10 @@ const DESTROY_CAUSES := ["damage", "fire", "structural_failure", "demolish"]
 ## will touch — `tests/user_dir_isolation.gd`'s guard, restated because a tool
 ## in `tools/` may not import a class out of `tests/`.
 const DIR_MARK := "slacum-playercity-"
+## Doc 93 §AR1's utility spine, restated for the `--spine-first` arm only. It is
+## a MEASUREMENT ordering and owns no rule — `data/building_rules.json` is the
+## authority — and nothing outside that arm reads it.
+const SPINE_ARCHETYPES := ["power_facility", "substation", "water_facility"]
 
 var _user_dir := ""
 var _pending_incidents := 0
@@ -72,6 +80,12 @@ func _initialize() -> void:
 	## Doc 92 §58.6's arm: does the city the rulings SAVE have anything to spend?
 	var restoring := false
 	var restore_reserve := 20000
+	## Doc 92 §60.8's second agent. The cheapest-first arm is deliberately the
+	## dumbest possible player, and on a city whose generation is a ruin the
+	## cheapest ruins are never the ones that matter. This arm changes exactly one
+	## thing — it buys doc 93 §AR1's utility spine before anything else — so the
+	## difference between the two runs is attributable to that single decision.
+	var spine_first := false
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--saves="):
 			saves = arg.substr(8)
@@ -96,6 +110,9 @@ func _initialize() -> void:
 			restoring = true
 		elif arg == "--restore":
 			restoring = true
+		elif arg == "--spine-first":
+			restoring = true
+			spine_first = true
 	if saves == "":
 		printerr("measure_player_city: --saves=DIR is required")
 		quit(2)
@@ -168,9 +185,11 @@ func _initialize() -> void:
 	var day_rows: Array[Dictionary] = []
 	var total := days * HOURS_PER_DAY
 	var restored := 0
+	var repaired := 0
 	for h in total:
 		if restoring and h % HOURS_PER_DAY == 0:
-			restored += _restore_what_it_can_afford(sim, restore_reserve)
+			restored += _restore_what_it_can_afford(sim, restore_reserve, spine_first)
+			repaired += _repair_what_it_can_afford(sim, restore_reserve)
 		sim.scheduler.advance_coarse_n(1, catchup, h, total)
 		_tally(sim, destroyed_by_cause, damaged_by_cause)
 		_attribute(sim, was_state, destroyed_by_cause)
@@ -193,9 +212,10 @@ func _initialize() -> void:
 			print("  " + _ruin_bill_line(sim))
 			print("  relief paid this run: $%d in %d grant(s)" % [relief_paid, relief_grants])
 			print("  unanswered: " + str(_unanswered))
+			print("  bus, top event types: " + _top_events(12))
 			if restoring:
-				print("  restored this run: %d ruins (reserve $%d)"
-						% [restored, restore_reserve])
+				print("  restored this run: %d ruins, repaired %d shells"
+						% [restored, repaired] + " (reserve $%d)" % restore_reserve)
 			mark_census["day"] = day
 			mark_census["destroyed_by_cause"] = destroyed_by_cause.duplicate()
 			mark_census["relief_paid"] = relief_paid
@@ -375,6 +395,23 @@ func _ruin_bill_line(sim: CitySim) -> String:
 			ruin_maint + ruin_dept, int((ruin_maint + ruin_dept) * 24.0)]
 
 
+## The loudest lines on the bus, descending. Doc 93 §AS3's number.
+func _top_events(limit: int) -> String:
+	var keys := _types_total.keys()
+	keys.sort_custom(func(x: Variant, y: Variant) -> bool:
+		if int(_types_total[x]) != int(_types_total[y]):
+			return int(_types_total[x]) > int(_types_total[y])
+		return String(x) < String(y))
+	var parts: Array[String] = []
+	var shown := 0
+	for key in keys:
+		if shown >= limit:
+			break
+		parts.append("%s=%d" % [String(key), int(_types_total[key])])
+		shown += 1
+	return ", ".join(parts)
+
+
 func _tally_line(counts: Dictionary) -> String:
 	if counts.is_empty():
 		return "(none)"
@@ -416,6 +453,11 @@ var _relief_grants_this_hour := 0
 ## refilled by [_tally] so [_attribute] can join them to the roster diff.
 var _destroyed_ids_this_hour := {}
 var _types_this_hour := {}
+## Every event type this run has seen, and how many times. **An event storm is
+## its own defect** (doc 93 §AS3): a bus line that fires six figures of times in
+## ninety game-days is not telling the player anything, it is drowning every
+## other line, and no census can say so unless something counts.
+var _types_total := {}
 ## Doc 93 §AR2's counters: incidents nobody could answer, and what they cost.
 var _unanswered := {}
 
@@ -430,6 +472,7 @@ func _tally(sim: CitySim, destroyed: Dictionary, damaged: Dictionary) -> void:
 	for event in sim.bus.drain():
 		var type := String(event["type"])
 		_types_this_hour[type] = int(_types_this_hour.get(type, 0)) + 1
+		_types_total[type] = int(_types_total.get(type, 0)) + 1
 		if type == "incident_abandoned" or type == "incident_failed":
 			_unanswered[type] = int(_unanswered.get(type, 0)) + 1
 		elif type == "building_destroyed_by_fire":
@@ -521,18 +564,67 @@ func _mean_condition(sim: CitySim) -> float:
 ## `cmd_restore_building` is the real command with the real price
 ## (`CostCurves.restore_cost_building` at the city's own `M_repair`) charged
 ## through the real treasury, so nothing here is free.
-func _restore_what_it_can_afford(sim: CitySim, reserve: int) -> int:
+func _restore_what_it_can_afford(sim: CitySim, reserve: int,
+		spine_first: bool = false) -> int:
 	var quotes: Array = []
 	for id in sim.roster_ids():
-		if (sim.buildings[id] as Building).state != &"destroyed":
+		var b: Building = sim.buildings[id]
+		if b.state != &"destroyed":
 			continue
 		var quote := sim.cmd_restore_building(id, true)
 		var payload: Dictionary = quote.get("payload", {})
 		if not (payload.get("blockers", [&"E"]) as Array).is_empty():
 			continue
-		quotes.append({"id": id, "cost": int(payload.get("cost", 0))})
+		var rank := 0
+		if spine_first and SPINE_ARCHETYPES.has(String(b.archetype)):
+			rank = -1
+		quotes.append({"id": id, "cost": int(payload.get("cost", 0)), "rank": rank})
 	# Cheapest first, ties broken by roster order, which is a total order — so
-	# the arm is deterministic and re-runnable.
+	# the arm is deterministic and re-runnable. `rank` is the ONLY thing the
+	# spine-first arm changes, and it is 0 for every row in the default arm.
+	quotes.sort_custom(func(x: Dictionary, y: Dictionary) -> bool:
+		if int(x["rank"]) != int(y["rank"]):
+			return int(x["rank"]) < int(y["rank"])
+		if int(x["cost"]) != int(y["cost"]):
+			return int(x["cost"]) < int(y["cost"])
+		return String(x["id"]) < String(y["id"]))
+	var done := 0
+	for quote in quotes:
+		var cost := int((quote as Dictionary)["cost"])
+		if sim.treasury.balance - cost < reserve:
+			# The spine-first arm does not STOP at the first thing it cannot
+			# afford: a plant it is saving up for must not block the houses it
+			# can buy today, or "spine first" would mean "spine only".
+			if spine_first:
+				continue
+			break
+		if bool(sim.cmd_restore_building(String((quote as Dictionary)["id"]),
+				false).get("ok", false)):
+			done += 1
+	return done
+
+
+## **AND THE OTHER VERB THE GAME OFFERS A FALLEN CITY** (doc 92 §60.7). Doc 93
+## §AS1 condemns rather than destroys, so a city that has been through fires it
+## could not answer is a city of SHELLS, not of ruins — and `cmd_restore_building`
+## cannot see a shell, because a shell is not `destroyed`. An agent that only
+## restored would therefore measure the ruling's floor and never its exit.
+##
+## Same shape as the restore arm and the same deliberate dumbness: once a
+## game-day, every repair the treasury can pay for above `reserve`, cheapest
+## first, through the real `cmd_repair_building` at doc 03's own price. It reads
+## no coverage map and has no strategy.
+func _repair_what_it_can_afford(sim: CitySim, reserve: int) -> int:
+	var quotes: Array = []
+	for id in sim.roster_ids():
+		var b: Building = sim.buildings[id]
+		if b.state != &"damaged" and b.state != &"active":
+			continue
+		var quote := sim.cmd_repair_building(String(id), true)
+		var payload: Dictionary = quote.get("payload", {})
+		if not (payload.get("blockers", [&"E"]) as Array).is_empty():
+			continue
+		quotes.append({"id": String(id), "cost": int(payload.get("cost", 0))})
 	quotes.sort_custom(func(x: Dictionary, y: Dictionary) -> bool:
 		if int(x["cost"]) != int(y["cost"]):
 			return int(x["cost"]) < int(y["cost"])
@@ -542,7 +634,7 @@ func _restore_what_it_can_afford(sim: CitySim, reserve: int) -> int:
 		var cost := int((quote as Dictionary)["cost"])
 		if sim.treasury.balance - cost < reserve:
 			break
-		if bool(sim.cmd_restore_building(String((quote as Dictionary)["id"]),
+		if bool(sim.cmd_repair_building(String((quote as Dictionary)["id"]),
 				false).get("ok", false)):
 			done += 1
 	return done

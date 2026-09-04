@@ -52,6 +52,22 @@ var relief_last_grant_hour: int = -1
 ## The city level whose era `relief_grants_used` is counting (doc 93 §AP4).
 ## Starts at 0, the founding level, so the first level-up opens the second era.
 var relief_era_level: int = 0
+## **WHAT THIS ERA'S EARLIER GRANTS ALREADY PAID — doc 93 §AS4 (Wave 21).**
+## Dollars, reset with the allowance by [note_era], persisted because the ladder
+## it caps is persisted.
+##
+## §AP4 authored `RELIEF_DAMAGE_FRACTION` at 0.35 with the argument *"0.35 < 1,
+## so the grant never covers the restore bill it is measured against"*. That is
+## true of ONE grant and false of an era: `relief_grants_per_era` is 3 on
+## standard, and 3 × 0.35 = **1.05**. Doc 92 §60.4 measured it on the player's
+## own slot 0 — **$305,827 of relief against a $296,438 restore bill, 1.03×** in
+## fourteen game-days, and $618,010 across two eras. The one inequality the
+## ruling rests on was false in the shipped build.
+##
+## This is the counter that makes each grant see what the era already paid; see
+## [maybe_grant_relief] for the arithmetic and for why the revenue term is
+## deliberately outside the cap.
+var relief_era_paid: int = 0
 ## Set by [deserialize] when the save predates doc 93 §AP4, cleared by the one
 ## caller that acts on it. Never persisted and never read by the ladder itself:
 ## it exists so the migration is a MIGRATION — conditional on the save's shape —
@@ -393,30 +409,53 @@ func defer(amount: int, category: StringName = &"misc", reason: String = "") -> 
 ##    the fix: relief is the LARGER of what the city normally earns in a day and
 ##    a half and a fixed fraction of what it would cost to put the city back.
 ##
-## **Why this is not a farm**, in one inequality: `RELIEF_DAMAGE_FRACTION < 1`,
-## so the grant never covers the restore bill it is measured against, and
-## breaking your own city to draw relief loses money for every building in the
-## catalogue at every fraction below 1. The insolvency pair, the 120-game-hour
-## cooldown and the per-era allowance all still gate it, and the bill SHRINKS as
-## it is spent, so relief decays back to the revenue term as the city recovers.
+## **THE ANTI-FARM IS AN INEQUALITY, AND WAVE 21 MADE IT TRUE PER ERA — doc 93
+## §AS4.** §AP4's argument was *"`RELIEF_DAMAGE_FRACTION < 1`, so the grant never
+## covers the restore bill it is measured against"*. Read per GRANT that is
+## sound; read per ERA it is false, because `relief_grants_per_era` is 3 and
+## 3 × 0.35 = 1.05 — and doc 92 §60.4 measured the city collecting **1.03× its
+## own restore bill** on the shipped build. The damage term is therefore charged
+## against what this era has already paid ([relief_era_paid]):
+##
+##     damage_term = max(0, RELIEF_DAMAGE_FRACTION × bill − relief_era_paid)
+##
+## so however many grants an era holds, the damage side of relief sums to at most
+## `RELIEF_DAMAGE_FRACTION × (the largest bill any of them was measured against)`
+## — strictly below the bill, which is the sentence §AP4 meant to be writing. No
+## new constant: the cap is the fraction that was already there, applied to the
+## era instead of to the grant.
+##
+## **The revenue term is deliberately OUTSIDE the cap.** `1.5 × daily gross` is
+## the pre-Wave-19 ladder, it is measured on what the city EARNS rather than on
+## what it lost, and it is what carries a city whose ruins are already restored.
+## Netting it against past grants would mean a city that used its relief well
+## gets nothing the next time it is in trouble, which is the opposite of the
+## ladder's purpose. It is separately bounded by the insolvency pair, the
+## 120-game-hour cooldown, `relief_grants_per_era` and `RELIEF_MAX`.
+##
+## The rest of the gating is unchanged, and the bill SHRINKS as it is spent, so
+## relief decays back to the revenue term as the city recovers.
 func maybe_grant_relief(hour: int, daily_gross_revenue: float,
 		trailing_net_24: float, outstanding_restore_cost: float = 0.0) -> int:
 	if not relief_gates_pass(hour, trailing_net_24):
 		return 0
 	var revenue_term := float(_recovery.get("RELIEF_DAYS_OF_REVENUE", 0.0)) \
 			* daily_gross_revenue
-	var damage_term := float(_recovery.get("RELIEF_DAMAGE_FRACTION", 0.0)) \
+	var damage_allowance := float(_recovery.get("RELIEF_DAMAGE_FRACTION", 0.0)) \
 			* maxf(0.0, outstanding_restore_cost)
+	var damage_term := maxf(0.0, damage_allowance - float(relief_era_paid))
 	var grant: int = clampi(
 			CostCurves.round_half_up(maxf(revenue_term, damage_term)),
 			int(_recovery.get("RELIEF_MIN", 0)), int(_recovery.get("RELIEF_MAX", 0)))
 	relief_grants_used += 1
 	relief_last_grant_hour = hour
+	relief_era_paid += grant
 	balance += grant
 	_note_lifetime(&"relief", grant)
 	_emit(&"relief_grant_awarded", {"hour": hour, "amount": grant,
 		"grants_used": relief_grants_used, "balance": balance,
 		"revenue_term": revenue_term, "damage_term": damage_term,
+		"damage_allowance": damage_allowance, "era_paid": relief_era_paid,
 		"outstanding_restore_cost": outstanding_restore_cost})
 	return grant
 
@@ -463,6 +502,9 @@ func note_era(city_level: int) -> void:
 		return
 	relief_era_level = city_level
 	relief_grants_used = 0
+	# Doc 93 §AS4: the allowance and the money it may hand out are one thing, so
+	# they reset together. A new era is a new bill, not a running total.
+	relief_era_paid = 0
 
 
 # ------------------------------------------------------------- persistence
@@ -479,6 +521,7 @@ func serialize() -> Dictionary:
 		"austerity_entered_hour": null if austerity_entered_hour < 0 else austerity_entered_hour,
 		"relief_grants_used": relief_grants_used,
 		"relief_era_level": relief_era_level,
+		"relief_era_paid": relief_era_paid,
 		"relief_last_grant_hour": null if relief_last_grant_hour < 0 else relief_last_grant_hour,
 		"ledger_totals": lifetime.duplicate(),
 		"hour_city_services": hour_city_services.duplicate(),
@@ -495,6 +538,11 @@ func deserialize(data: Dictionary) -> void:
 	austerity_entered_hour = _nullable_int(data.get("austerity_entered_hour", null))
 	relief_grants_used = int(data.get("relief_grants_used", 0))
 	relief_era_level = int(data.get("relief_era_level", 0))
+	# Doc 93 §AS4. Absent on every save written before the cap, and 0 is the
+	# honest reading there: those cities have no recorded era spend, so the first
+	# grant after the load is capped at the full fraction of the bill and no
+	# more — the same answer a city that had taken no grant yet would get.
+	relief_era_paid = int(data.get("relief_era_paid", 0))
 	## A save written BEFORE doc 93 §AP4 carries no `relief_era_level` at all,
 	## and the flag says so for exactly one caller — see
 	## `CitySim._restore_systems`, which is the only place that can know what

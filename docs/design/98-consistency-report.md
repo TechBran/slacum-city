@@ -9105,3 +9105,105 @@ inside fifteen game-days, 105 % of the city's entire $282,078 restore bill.** Th
 lane brief's "$2,624 of relief across fourteen game-days" is `Treasury.settle`'s
 credit-limit clamp booking a $2,624 overshoot into deferred liability — the
 opposite of a payment. Doc 93 §AR4 states what is not ruled and why.
+
+## 63. WAVE 21 — a fire nobody could answer (binding)
+
+*(Measured in doc 92 §60. Rulings in doc 93 §AS. Defect rows doc 91 A91-D-115,
+A91-D-116, A91-D-117. Delta row doc 12 §2.19 D-94.)*
+
+Wave 20's lane 1 was rejected at merge and this wave finishes it. Its
+rubble-billing ruling (§AR3) and its utility-spine ruling (§AR1) are **kept
+unchanged and re-measured**; its fire ruling (§AR2) is **replaced**. The five
+resolutions below are the whole of the difference.
+
+### RR-182 — §AS1: capability, not wealth, decides whether a fire may destroy (replaces `RR-177`; docs 02 §2.6, 06 §2.10, 92 §60.1/§60.2/§60.5, 93 §AS1)
+
+`CityIncidentWorld._could_have_answered` loses its opening line —
+`if sim.treasury != null and not sim.treasury.austerity_active: return true` —
+and becomes `has_fire_capability() and answerable`. `has_fire_capability()` is a
+`fire_station` STANDING (`active`, `damaged` or `repairing`) **and** a
+`FleetSystem` unit that answers the `fire` role. No money is read anywhere.
+
+**The deletion is not a preference, it is two measurements** (doc 92 §60.2).
+(a) The clause switches itself off: relief lifts austerity on game-day 11 and the
+player's roster goes 12 → 6 in that window, the last power plant included.
+(b) Held under the line it is total immunity: 76 buildings alive at game-day 45
+and the identical 76 at game-day 90, zero destructions in 45 consecutive
+game-days, while the bus emitted `building_destroyed_by_fire` 8,938 times.
+
+**What still burns down.** A city with a station and an engine loses buildings to
+fire exactly as before, including when every engine is already out —
+`dispatch_blocked_no_units` stays ANSWERABLE, because fleet size is a purchase.
+**The anti-farm is priced**, not asserted: a level-1 fire station is $30.00/gh and
+each building it keeps off the condemned rung is worth ≈$9.00/gh, so it breaks
+even at 3.3 buildings (doc 92 §60.5).
+
+### RR-183 — §AS2: a gutted shell is not fuel, and an owner boards it up rather than rebuilding it (docs 02 §2.6/§2.6a/§2.12, 06 §2.6/§2.8, 92 §60.3/§60.7, 93 §AS2)
+
+`Building.burnt_out` — set by `condemn_unanswered`, lifted by `complete_repair`,
+`complete_construction` and `_destroy`, read by `state_fire_mult`, by
+`IncidentWorld.state_fire_mult_of` and by a seventh `fire_candidate_columns`
+column. `Building._owner_maintain` HOLDS a gutted shell at the structural-failure
+line and does no more. `CitySim.cmd_repair_building`'s `E_OWNER_MAINTAINED`
+blocker gains exactly one exception, the gutted shell, so the player has a paid
+way out of it.
+
+**Without the bound §AS1 has no floor.** A condemned building rests where
+`state_fire_mult` is 1.8 and `fire_condition_mult(0.10)` is 2.28 — 4.1× a healthy
+building's ignition rate — so the fork produced 7,379 incidents in 45 game-days
+on a 76-building city. With the flag lifting on the owner's free rebuild it was
+still **14,071 terminal fires in 90 game-days**; with the hold it is **65**, on
+an identical roster (doc 92 §60.7).
+
+**`Building.serialize()` writes the key only when true**, because it is inside
+`state_hash()`.
+
+### RR-184 — §AS3: an event storm is its own defect, and so is an event that lies (docs 06 §2.16, 92 §60.3, 93 §AS3)
+
+`DispatchSystem._emit_blocked`'s one-slot de-dup becomes a SET of the reasons an
+incident has already announced, cleared on assignment.
+**279,071 `dispatch_blocked_unreachable` in 45 game-days → 29,685 in 90**, which
+is 1.01 announcements per incident: the floor, not a target.
+
+`IncidentWorld.destroy_building` now returns whether it destroyed, and
+`CascadeOps` emits `building_condemned_by_fire` when it did not. On the fork,
+3,891 `building_destroyed_by_fire` in 45 game-days named buildings the census
+still shows standing.
+
+### RR-185 — §AS4: an era of relief may not out-pay the bill it is measured against (docs 03 §2.10, 92 §60.4, 93 §AS4)
+
+`Treasury.relief_era_paid`, persisted, reset by `note_era` with the allowance it
+belongs to. `damage_term = max(0, RELIEF_DAMAGE_FRACTION × bill −
+relief_era_paid)`. §AP4's inequality — "0.35 < 1, so the grant never covers the
+bill" — was true per grant and false per era at 3 × 0.35 = 1.05; the shipped
+build paid **$306,233 against a $296,438 bill (1.033×)**, and the unit control
+returns **$311,259**, which is 1.050× to the dollar. No new constant is
+authored: the cap is the fraction that was already there, applied to the era.
+`RELIEF_MIN` and the revenue term stay outside it, for the reasons in §AS4.
+
+### RR-186 — what this wave measures, what it kept, and what it did not fix (docs 92 §60, 93 §AS5)
+
+**Kept from the rejected branch, verbatim and re-measured**: §AR3's `state ==
+destroyed` guard in `CitySim.build_settlement_inputs` (the city is not billed for
+its rubble — $1,044.39/gh of $1,055.12 `E_building_maint` and $306.00/gh of
+$306.00 `E_departments` were charged against ruins at the maximum rate both lines
+can charge, $32,409 a game-day against a $2,998 gross), §AR3's `station_rows()`
+boot guard, §AR2a's event publishing, and §AR1's utility spine.
+
+**The acceptance test** (doc 92 §60.1, §60.8), the player's own slot 0:
+
+| | passive | Restore All every game-day |
+| --- | --- | --- |
+| alive @load / @14 / @45 / **@90** | 12 / 12 / 12 / **12** | 12 / 71 / 68 / **68** |
+| utility spine @90 | `power_facility ×1` | `power_facility ×1`, `substation ×2` |
+| destroyed in 90 gd | **none, any cause** | 3, all `structural_failure` on §AR1's losable civic stock |
+| population @90 | 6 | 45 |
+
+**Not fixed, and named**: the treasury does not recover on either arm — `E_grid`
++ `E_roads_repair` + `E_fleet` are $478.77 of a $556.27/gh bill against a
+$118–138/gh gross, for 89 lots of road and a grid sized for 450 people.
+`E_fleet`'s $91.58/gh with no station standing is §AR3's recorded remainder (doc
+91 A91-D-111 / A91-D-115); the other two are doc 03's. A collapsed city also runs
+at doc 06's saturation ceiling continuously — 28,573 incidents in 90 game-days,
+bounded but loud, because every abandoned incident costs district stability and
+`f_arson` triples at stability 0 (doc 91 A91-D-117).

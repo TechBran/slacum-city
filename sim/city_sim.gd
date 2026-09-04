@@ -4720,7 +4720,22 @@ func _stamp_building_rules(b: Building) -> void:
 ##   1 E_UNKNOWN_BUILDING  no such sim_id
 ##   2 E_OWNER_MAINTAINED  private stock (doc 02 §2.6a, doc 93 §Y1) — its owner
 ##                         keeps it up and the city has nothing to buy, whatever
-##                         its condition
+##                         its condition. **ONE EXCEPTION, doc 93 §AS2 (Wave
+##                         21): a shell an unanswered fire has GUTTED.** §Y1's
+##                         reasoning is that the owner is already doing the work,
+##                         and `Building._owner_maintain` is where they do it —
+##                         and §AS2 stops that verb on a gutted shell, because an
+##                         owner boards a burnt-out building up rather than
+##                         rebuilding it out of petty cash. Blocking the city's
+##                         repair too would leave a private shell with NO exit at
+##                         all: 40 % output and 46 % tax forever, on a building
+##                         the player is not allowed to spend money on. So when
+##                         `burnt_out` is set the city may buy the rebuild, at
+##                         doc 03 §2.5's own repair price and through the same
+##                         queue as any other repair. That is §AS1's *"the player
+##                         spends instead of being erased"* half, and it is a
+##                         BILL the player chooses rather than a fee they are
+##                         handed.
 ##   3 E_STATE             not `active` or `damaged` (a site under construction,
 ##                         a fire and a ruin all have their own verbs)
 ##   4 E_NOT_DAMAGED       condition is already 1.00 — nothing to buy
@@ -4738,7 +4753,11 @@ func cmd_repair_building(sim_id: String, preview: bool = false) -> Dictionary:
 	if b == null:
 		return CommandQueue.fail(&"E_UNKNOWN_BUILDING", {"blockers": [&"E_UNKNOWN_BUILDING"]})
 	var blockers: Array = []
-	if b.owner_maintained:
+	# Doc 93 §AS2's exception — see check 2 in the doc block above. `burnt_out`
+	# is set by `Building.condemn_unanswered` and by nothing else, and it is
+	# lifted by this very repair completing, so the door opens exactly once per
+	# fire and closes behind the player.
+	if b.owner_maintained and not b.burnt_out:
 		blockers.append(&"E_OWNER_MAINTAINED")
 	if b.state != &"active" and b.state != &"damaged":
 		blockers.append(&"E_STATE")

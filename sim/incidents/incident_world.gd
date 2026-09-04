@@ -144,6 +144,13 @@ static func fire_condition_mult_of(row: Dictionary) -> float:
 static func state_fire_mult_of(row: Dictionary) -> float:
 	if row.is_empty():
 		return 0.0
+	# Doc 93 §AS2: a shell an unanswered fire already gutted is not fuel. The
+	# check is HERE and not inside `state_fire_mult_value` because that form
+	# takes a state and nothing else, and this is a fact about the building. A
+	# row that carries no `burnt_out` — every fixture world, every pre-§AS2
+	# adapter — answers exactly as it did.
+	if bool(row.get("burnt_out", false)):
+		return 0.0
 	return state_fire_mult_value(row.get("state", "active"))
 
 
@@ -196,13 +203,19 @@ func suppress_building_fire(_id: String, _residual_damage_fraction: float) -> vo
 	pass
 
 
-## `answerable` is doc 93 §AR2 (Wave 20): could the city have got a unit to this
-## incident? `IncidentSystem.incident_was_answerable` computes it, an adapter is
-## free to widen it with facts only it holds (`CityIncidentWorld` also asks
-## whether a fire station exists at all), and it defaults to `true` so an adapter
-## or a caller that predates the ruling behaves exactly as it did.
-func destroy_building(_id: String, _cause: String, _answerable: bool = true) -> void:
-	pass
+## `answerable` is doc 93 §AS1 (Wave 21, replacing §AR2's draft): could the city
+## have got a unit to this incident? `IncidentSystem.incident_was_answerable`
+## computes it, an adapter is free to narrow it with facts only it holds
+## (`CityIncidentWorld` also asks whether the city owns a fire service at all),
+## and it defaults to `true` so an adapter or a caller that predates the ruling
+## behaves exactly as it did.
+##
+## **RETURNS WHETHER THE BUILDING WAS ACTUALLY DESTROYED**, because under §AS1 it
+## may not have been, and the caller publishes a different event either way. The
+## stand-in answers `true`: a world that models no roster cannot condemn, so
+## "the op ran" and "the building died" are the same statement there.
+func destroy_building(_id: String, _cause: String, _answerable: bool = true) -> bool:
+	return true
 
 
 # ------------------------------------------------------- doc 09 districts/pop
