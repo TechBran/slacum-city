@@ -9545,3 +9545,29 @@ Setting `coverage_slope` to 0.0 returns the bench coarse digest to
    evidence, and it is not evidence about fire. The lane that owns doc 06's
    escalation ladder should re-derive it against a measured fire arc, and doc 92
    §62.6 is the rig that would judge the answer.
+
+### §65's whole-suite reading, and the shape of what this wave shipped
+
+**Suite: 153 files, 2,798 tests, 582,843 asserts, failed 0, silent 0.**
+**Balance gates: 33 tests, 445 asserts, failed 0, silent 0** — one cell re-fitted
+(doc 92 §62.9) and not one other constant moved. **Doc references: 5,365, all
+resolving, no id assigned twice.**
+
+**The suite is in the record as an INSTRUMENT this wave, not as a formality.**
+It failed 2 of 2,798 on §AV2's first shipped draft, both of them guarantees this
+ladder already held and argument had missed — the bottom rung for a city with
+nothing to measure, and the revenue term being collectable more than once in an
+era. Doc 93 §AV2 carries both, and the narrow ruling is what survived them.
+
+**No file in `ui/` or `game/` changes.** A wave that rewrites what *"this city
+cannot answer a fire"* MEANS and touches no screen is a wave whose surfaces were
+built to read the sim rather than to re-derive it — doc 12 D-97 carries that as a
+row rather than as an absence, because a future reader finding no D-row could not
+tell the two apart.
+
+**What the diff actually is.** Four rulings, and three of them are one expression
+each: a predicate that reads `FleetSystem` instead of the roster, one `if` around
+a grant's floor, a `continue` on a pump whose host is rubble. The fourth is one
+multiplication in doc 06's ignition rate and four numbers in `data/incidents.json`
+derived from four that were already there. The rest is measurement, argument and
+the tests that make both falsifiable.
