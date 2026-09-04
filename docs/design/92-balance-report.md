@@ -9954,6 +9954,13 @@ remaining shopping list, chapters 2 through 7 summed, is **$853,130**
 single climb doc 02 has is a data centre L2 → L5 at **$5,306,213**
 ($527,850 + $1,346,018 + $3,432,345).
 
+*Four of those six chapter asks are recomputed from `data/building_economy.json`
+at this fork and are exact — ch2 = 2 × `store` $2,600 + one `house` step $1,380;
+ch3 = `apartment` $7,000 + 4 × `STREET` $1,800; ch4 = `police_station` $18,000;
+ch7 = `data_center` L1 $180,000 + the twelve archetypes' first upgrade steps
+$464,370. Ch5 ($85,630) and ch6 ($84,350) are §61.2's published figures, carried
+forward and labelled as carried.*
+
 | rung | pays | = the whole curriculum | = the data-centre climb | also |
 |---|---|---|---|---|
 | 1 | $1,000,000 | **1.17×** | 19 % | 833 houses, or 22 water works |
@@ -10201,6 +10208,34 @@ population 41, austerity active, $569,547 of deferred liability, a treasury belo
 zero and a player *"trying to restore all the buildings so we can get revenue back
 up"*. Rungs 6 and 7 stay at $0 in the ledger, because it has not earned them.
 **That is what "keep one city going for a while" costs, and it is paid once.**
+
+**And it is confirmed through the REAL save ladder, not only through the
+migrator.** `tools/measure_backpay.gd` reads the generation file directly;
+`tools/measure_player_city.gd` (Wave 20's instrument, unchanged) copies the slot
+into a private `user://` and loads it through the real `SaveService` — same
+generation ladder, same seven-check gate, same `restore_state`:
+
+```
+=== AT LOAD (game-day 166, treasury $14899376, population 0, preset standard) ===
+  ALIVE      (12): CIVIC/power_facility x1, private/apartment x1, private/house x10
+  DESTROYED  (77): … 27 houses, 13 stores, 10 high_rise, 10 apartments, 3 data_center, …
+  ladder: treasury $14899376 | deferred $569547 | relief used 0/3 in era (level 5)
+        | austerity true | outstanding restore bill $282078
+
+=== AFTER 1 GAME-DAY (treasury $14882613, population 41) ===
+  ladder: … | austerity FALSE | outstanding restore bill $282078
+  relief paid this run: $0 in 0 grant(s)
+```
+
+Three readings worth naming. **The whole outstanding restore bill is $282,078** —
+1.9 % of what the city now holds, so every one of those 77 ruins is affordable in
+an afternoon, which is the answer to the 2026-09-03 report's *"I've been trying to
+restore all the buildings so we can get revenue back up"*. **Austerity clears
+inside one game-day** (doc 03 §2.10 layer 2 lifts itself once the balance is
+above the floor), so the city can commit to construction again. And **`relief
+used 0/3 in era (level 5)`** is ruling 93 §AW3(c) holding in the field: the
+back-pay settled five rungs and opened no era, so the recovery ladder is exactly
+where the city left it.
 
 ### 63.6 The arc, before and after — and whether the curriculum still teaches
 
