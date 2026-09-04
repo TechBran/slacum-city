@@ -5804,3 +5804,96 @@ stability, and `f_arson` is `1 + 2.0 × max(0, 0.35 − stability)/0.35`, so a c
 that cannot answer anything triples its own ignition rate and keeps it there.
 That is a doc 06 / doc 09 re-fit with its own derivation and its own gate, and
 doc 91 A91-D-117 carries it.
+
+## AX. Wave-24 rulings — a city may not report a population it does not have, and a ramp that does not run is not a rule (2026-09-04)
+
+*Measured in doc 92 §64. Verbs in report 98 §67 RR-202/RR-203/RR-204. Defect
+rows doc 91 A91-D-127, A91-D-128. Delta row doc 12 D-100.*
+
+### AX1. A derived aggregate that only a tick writes is a lie between ticks
+
+**Ruling.** `city_population`, `occupied_population`, `workforce`,
+`jobs_capacity`, `jobs_market` and `job_fill_city` are DERIVED views of the
+roster. They are not persisted, and a class that only computes them inside a
+periodic `advance()` must also expose a way to compute them **without a step**,
+which every door into a city then calls before that city is readable — boot and
+restore both.
+
+**Why it is a ruling and not a patch.** The failure was not that a number was
+briefly wrong; it was that `city_population` was authored as *"what the last
+hourly settle found"* and read everywhere as *"how many people live here"*. The
+two agree at every moment except the first, and the first is exactly when a
+player is looking: `main.gd::_wire_hud` paints the HUD before the sim has
+stepped, and `_on_ui_save_loaded` paints it again the instant a save lands.
+Measured, a 144-person city reported **0 for 55 real seconds** after a load
+taken 21 ticks past the hour (doc 92 §64.3).
+
+**And the lie was not confined to the chip.** `build_director_inputs`,
+`goal_state_view()` — read by `_restore_goals` *during the restore itself* — and
+doc 07's `storm_ready_earned` all take the figure, and the last of those prices
+a reward against `pop / 1000`, so a zero population makes the Storm Ready
+budget zero and the reward unearnable. A display bug that can cost the player
+money is not a display bug.
+
+**The shape of the fix is the other half of the ruling.**
+`PopulationSystem.settle_aggregates` is pass 1 of `advance` and nothing else:
+
+* **No `dt_h`.** `attractiveness` is not relaxed. Nothing about time moves.
+* **The `occupancy` map is NOT written.** It is the one part of this class doc 08
+  persists, doc 03 bills the first hour after a load off the restored copy
+  through `occ_of`, and recomputing it at restore would make a
+  save→load→advance round trip diverge from the uninterrupted run
+  (constitution §5). The aggregate may be recomputed because it is derived; the
+  map may not, because it is state.
+
+The two callers are `CitySim.boot()`'s last line and the first line of
+`_restore_finish` — the latter **before** `_restore_goals`, because reconciling
+the curriculum against a zero population is the same lie one layer down.
+
+### AX2. A ramp that clamps to 1.0 for every building in the game is not a rule the code has
+
+**Finding, not a change.** Doc 09 §2.10 describes an occupancy ramp: a new
+building opens at 35 % and fills over `OCCUPANCY_RAMP_HOURS` (36).
+`PopulationSystem.ramp` implements it exactly. **`CitySim._population_inputs`
+has never called it with a real age** — every building in the city is handed the
+literal `48.0` (now `CitySim.POPULATION_INPUT_AGE_HOURS`), which is above the
+horizon, so `ramp()` returns 1.0 for all of them and the curve is inert. Doc 92
+§64.2 measures the two side by side at the moment a house completes: **0.386
+against 1.000.**
+
+**This wave does not wire the real age, and the reason is the report it is
+answering.** Wiring it is a balance change with a known sign: it would add 36
+game-hours of near-invisible fill on top of the 176 real seconds already
+measured between the tap and the chip moving, which is the complaint, made
+worse. A defect that would be *deepened* by making the code match the doc is a
+question for the lead, not a fix for a lane.
+
+**Asked of the lead, ranked.** (a) Delete the ramp from doc 09 §2.10 and from
+`PopulationSystem`, since nothing in the shipped game runs it and a constant
+that gates nothing is a rule the next reader will try to obey. (b) Keep it,
+wire `age_hours` from `Building.built_at_minutes`, and pay for it with a
+feedback surface that shows the fill — which is a doc 12 job larger than D-100.
+**(a) is recommended**: the ramp models a thing the game has no other way to
+show, and doc 09's own §2.10 aggregate has no per-arrival channel to show it
+through.
+
+### AX3. The counter is honest, so the deficiency is a doc 12 deficiency
+
+**Ruling.** Where a measurement shows a sim number to be correct and a player
+report to be true anyway, the defect is in the surfaces and it is filed against
+doc 12 — never "fixed" by making the sim lie faster.
+
+Doc 92 §64.1 measures 176 real seconds from tap to chip, decomposed into 120 s
+of shell (during which a `level == 0` build's `state_occupancy()` is 0.00, which
+is correct: nobody lives in a foundation) and up to 60 s of waiting for doc 01's
+hourly settle (which is correct: doc 01 settles population once per game-hour).
+Neither term is a bug and neither is negotiable without moving a cadence the
+whole sim is built on.
+
+**What WAS a bug is that two surfaces disagreed.** The panel of the house the
+player had just placed read `Occupants 4` — the AUTHORED capacity — beside a
+population chip that had not moved and would not move for another three
+minutes. The chip was right. D-100 makes the panel say `0 of 4` and pulses the
+chip on the frame it changes; `CitySim.settled_residents` is the one accessor
+both readings come from, so the panel and the counter can no longer be computed
+two different ways.

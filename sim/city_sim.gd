@@ -21,6 +21,25 @@ const DEMAND_CLASS_CHANNEL := {
 	&"data_center": "power_demand_datacenter",
 }
 
+## **The age every building in this city is, as far as doc 09's occupancy ramp
+## is concerned** — the literal `_population_inputs` has carried since Wave 1,
+## named here because `settled_residents` has to quote the same number to give
+## doc 12 an answer the hourly settle will agree with.
+##
+## It is above `PopulationSystem.OCCUPANCY_RAMP_HOURS` (36), so `ramp()` clamps
+## to 1.0 for EVERY building and **the ramp does not run in the shipped game**
+## (report 98 RR-204). That was authored for the starter city, whose stock is
+## older than the ramp horizon — but it applies just as flatly to a house the
+## player placed thirty seconds ago, which therefore counts its full four
+## residents the moment its shell is finished rather than filling from 35 %.
+## Doc 09 §2.10 still describes a ramp. **Wiring the real age is a BALANCE
+## change and this wave does not make it**: it would take the 2026-09-04
+## report's complaint — the counter does not visibly move — and make it
+## strictly worse, adding 36 game-hours of near-invisible fill on top of the
+## 176 real seconds already measured. Doc 93 §AX asks the lead to rule which of
+## the two, code or doc, is wrong.
+const POPULATION_INPUT_AGE_HOURS: float = 48.0
+
 var clock: GameClock
 var curves: DayCurveSet
 var modifiers: ModifierStack
@@ -298,6 +317,14 @@ func boot(seed_value: int, time_data: Dictionary, starter_data: Dictionary,
 	_boot_weather()
 	_check_grid_rules()
 	_register_systems()
+	# **A city knows its own population before its first tick** (report 98
+	# RR-202). `PopulationSystem.advance` runs once per game-HOUR, so until this
+	# line every freshly booted `CitySim` reported `city_population == 0` — the
+	# shell's `_refresh_hud()` fires in `_wire_hud` BEFORE the sim has stepped,
+	# so the very first frame of a 144-person city painted `0` in the chip.
+	# `settle_aggregates` relaxes nothing and writes no persisted value; see its
+	# own header for why it may not touch the occupancy map.
+	population.settle_aggregates(_population_inputs())
 	return boot_errors.is_empty()
 
 
@@ -2032,6 +2059,16 @@ func _restore_finish(body: Dictionary) -> void:
 	director.deserialize(body.get("director", {}))
 	_restore_difficulty(body)
 	_refresh_road_density()
+	# **A loaded city knows its own population before its first tick** (report 98
+	# RR-202, and the half of it a player can actually be hurt by). The
+	# aggregates are DERIVED and doc 08 does not persist them, so a restore left
+	# `city_population` at the 0 `PopulationSystem.new()` starts on until the
+	# next hour boundary — measured at 55 real seconds on a save taken 21 ticks
+	# past the hour (`tools/measure_population_lag.gd --boot`). BEFORE
+	# `_restore_goals`, because `goal_state_view()` reads `city_population` and
+	# reconciling the curriculum against a zero population is the same lie one
+	# layer down.
+	population.settle_aggregates(_population_inputs())
 	_restore_goals(body)
 
 
@@ -2472,6 +2509,36 @@ func _serialize_buildings() -> Array:
 	return out
 
 
+## **How many of this building's authored residents actually live there**, on
+## the same product the hourly settle sums into `city_population` (doc 12 D-100,
+## report 98 RR-203). `-1` for a building that houses nobody, so the caller can
+## tell "no residents yet" from "not a home".
+##
+## Doc 12's panel needs this because the vital beside it is the AUTHORED figure:
+## a house placed thirty seconds ago says `Occupants 4` while its shell is still
+## going up and it is contributing exactly zero to the chip at the top of the
+## screen. That gap — a building that claims four residents next to a counter
+## that has not moved — is what the 2026-09-04 report is describing.
+##
+## Read LIVE rather than off `PopulationSystem.occupancy`, for two reasons the
+## map cannot answer: a building placed since the last settle is not in it at
+## all (and `occ_of` answers `1.0` for an id it has never seen, which is the
+## right default for a revenue row and the wrong one here), and the map is
+## SPARSE on save, so after a load every fully-occupied building is missing from
+## it. The product is `population × state_occupancy × ramp × attractiveness`,
+## which is `PopulationSystem._occ_residential` term for term.
+func settled_residents(sim_id: String) -> int:
+	var b: Building = buildings.get(sim_id)
+	if b == null:
+		return -1
+	var authored := int(b.stats.get("population", 0))
+	if authored <= 0 or catalog.category(String(b.archetype)) != "residential":
+		return -1
+	return roundi(float(authored) * b.state_occupancy()
+			* PopulationSystem.ramp(POPULATION_INPUT_AGE_HOURS)
+			* population.attractiveness)
+
+
 func _population_inputs() -> Array:
 	var out: Array = []
 	# Category is a function of archetype, and there are a handful of archetypes
@@ -2493,7 +2560,7 @@ func _population_inputs() -> Array:
 			"residential": category == "residential",
 			"civic": category == "service" or category == "utility",
 			"state_occupancy": b.state_occupancy(),
-			"age_hours": 48.0,  # authored starter age ≥ ramp horizon
+			"age_hours": POPULATION_INPUT_AGE_HOURS,
 		})
 	return out
 

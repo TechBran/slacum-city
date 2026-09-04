@@ -36,6 +36,42 @@ func test_t0_aggregates_worked_values() -> void:
 	assert_almost_eq(pop.employment_balance(), 0.8333, 0.0005)
 
 
+## Report 98 RR-202. `settle_aggregates` is pass 1 of `advance` and nothing
+## else: the same reported numbers, no step, and — the part that keeps a
+## save→load→advance round trip bit-identical — not one byte written into the
+## persisted occupancy map.
+func test_settle_aggregates_reports_without_stepping() -> void:
+	var fresh := PopulationSystem.new()
+	fresh.attractiveness = 0.80
+	fresh.settle_aggregates(starter_buildings())
+	assert_almost_eq(fresh.occupied_population, 115.2, 0.01,
+			"144 authored residents at A_city 0.80")
+	assert_eq(fresh.city_population, 115)
+	assert_almost_eq(fresh.workforce, 63.36, 0.01)
+	assert_eq(fresh.jobs_market, 66, "5×6 + 30 + 3×2; civic excluded")
+	assert_eq(fresh.jobs_capacity, 106)
+	assert_almost_eq(fresh.attractiveness, 0.80, 1e-9,
+			"no dt_h, no relaxation — this moves no time")
+	assert_true(fresh.occupancy.is_empty(),
+			"the PERSISTED map is untouched; doc 03 bills the first hour after "
+			+ "a load off the restored one")
+
+
+## The same call on a system that already holds a settled map must leave every
+## entry of that map exactly where it was, however stale it has become.
+func test_settle_aggregates_does_not_rewrite_a_restored_map() -> void:
+	var pop := PopulationSystem.new()
+	pop.advance(starter_buildings(), 1.0, 0.9475)
+	var was: Dictionary = pop.occupancy.duplicate()
+	# A house that emptied since the last settle: the aggregate must follow it,
+	# the map must not.
+	var moved := starter_buildings()
+	(moved[0] as Dictionary)["state_occupancy"] = 0.0
+	pop.settle_aggregates(moved)
+	assert_eq(pop.city_population, 140, "four residents gone from the aggregate")
+	assert_eq(pop.occupancy, was, "and not one entry of the saved map moved")
+
+
 func test_ramp() -> void:
 	assert_almost_eq(PopulationSystem.ramp(0.0), 0.35, 1e-9)
 	assert_almost_eq(PopulationSystem.ramp(18.0), 0.675, 1e-9)

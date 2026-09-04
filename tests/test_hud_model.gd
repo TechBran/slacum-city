@@ -779,6 +779,37 @@ func test_hud_scene_refresh_binds_the_snapshot() -> void:
 	(scene["root"] as Node).free()
 
 
+## **Doc 12 D-100 / report 98 RR-203.** Doc 01 settles population once per
+## game-HOUR, so the chip moves in one jump 120–180 real seconds after the tap
+## that earned it (`tools/measure_population_lag.gd` measures 176 s for a
+## house) — far too late for the player to connect the two, which is what the
+## 2026-09-04 report is about. The chip therefore pulses on the frame it moves.
+func test_the_population_chip_pulses_on_the_frame_it_moves() -> void:
+	var scene := _hud_scene()
+	var hud: CityHUD = scene["hud"]
+	var snapshot := {"treasury": 25000, "net_per_hour": 0.0, "population": 144,
+		"stability": 0.9, "incidents": 0,
+		"clock": {"minute_of_day": 372, "day_index": 2}, "speed": 1, "paused": false}
+	hud.refresh(snapshot)
+	assert_false(hud.model.chip_flashing(HudModel.CHIP_POPULATION),
+			"the FIRST reading of a city is not a change")
+	# A re-layout re-runs `refresh` with the same snapshot and must not pulse.
+	hud.refresh(snapshot)
+	assert_false(hud.model.chip_flashing(HudModel.CHIP_POPULATION))
+	# The house lands.
+	var grown := snapshot.duplicate()
+	grown["population"] = 148
+	hud.refresh(grown)
+	assert_true(hud.model.chip_flashing(HudModel.CHIP_POPULATION),
+			"four residents moved in and the chip says so")
+	assert_true(bool(hud.chip_button(HudModel.CHIP_POPULATION)
+			.get_meta("pulse", false)))
+	# And it comes back down on its own, like every other flash.
+	hud.model.advance_flashes(99.0)
+	assert_false(hud.model.chip_flashing(HudModel.CHIP_POPULATION))
+	(scene["root"] as Node).free()
+
+
 func test_hud_scene_speed_rail_emits_commands() -> void:
 	# A10: one tap raises the rail, the second selects any of the four targets.
 	var scene := _hud_scene()

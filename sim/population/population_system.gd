@@ -96,19 +96,7 @@ func advance(buildings: Array, dt_h: float, city_stability: float,
 	# Pass 1: workforce comes from residential occupancy, which does not
 	# depend on job fill — so it resolves before the market ratio.
 	occupancy.clear()
-	jobs_capacity = 0
-	jobs_market = 0
-	occupied_population = 0.0
-	for b in buildings:
-		jobs_capacity += int(b.get("jobs", 0))
-		if not bool(b.get("civic", false)):
-			jobs_market += int(b.get("jobs", 0))
-		if bool(b.get("residential", false)):
-			var occ := _occ_residential(b)
-			occupancy[String(b["id"])] = occ
-			occupied_population += float(int(b.get("population", 0))) * occ
-	workforce = occupied_population * WORKFORCE_FRACTION
-	job_fill_city = clampf(workforce / maxf(1.0, float(jobs_market)), 0.0, 1.0)
+	_pass_one(buildings, true)
 
 	# Pass 2: revenue buildings additionally scale by the market ratio;
 	# civic/utility buildings are always fully staffed (doc 09 §2.10.1).
@@ -120,7 +108,8 @@ func advance(buildings: Array, dt_h: float, city_stability: float,
 			occupancy[id] = float(b.get("state_occupancy", 1.0))
 		else:
 			occupancy[id] = _occ_residential(b) * job_fill_city
-	city_population = roundi(occupied_population)
+	# `city_population` is `_pass_one`'s — pass 2 moves no resident, only the
+	# staffing of the shops they work in.
 	return {
 		"occupied_population": occupied_population,
 		"city_population": city_population,
@@ -131,6 +120,57 @@ func advance(buildings: Array, dt_h: float, city_stability: float,
 		"attractiveness": attractiveness,
 		"attractiveness_target": target,
 	}
+
+
+## **The reported aggregates, without a step (report 98 RR-202).** `advance` is
+## the only writer of `city_population`, and it runs once per game-HOUR — so a
+## city that has just been booted or just been loaded reports **zero people**
+## until the next hour boundary comes round, which on a save taken mid-hour is
+## up to 59 game-minutes and therefore up to 59 REAL seconds of a live city
+## telling the player it is empty (`tools/measure_population_lag.gd --boot`
+## measures 55 s on the starter city). Every reader of `city_population` in that
+## window reads the lie with it — the HUD chip, `build_director_inputs`,
+## `goal_state_view` at the end of a restore, and doc 07's
+## `storm_ready_earned`, whose budget is `outage_cm_per_1k_pop × pop / 1000` and
+## is therefore ZERO for a zero population, so a storm report published in that
+## window can never earn its relief.
+##
+## This is pass 1 of `advance` and nothing else:
+##
+##   * `attractiveness` is NOT relaxed — no `dt_h`, no step, no time passes.
+##   * `occupancy` is NOT written. It is the one part of this class that is
+##     PERSISTED (sparsely), doc 03 bills the first hour after a load off the
+##     restored map through `occ_of`, and a recompute here would make a
+##     save→load→advance round trip diverge from the uninterrupted run.
+##
+## So it moves derived, unpersisted numbers to what they already were, and
+## `state_hash` cannot see it (`serialize` writes `attractiveness` and
+## `occupancy`, neither of which this touches).
+func settle_aggregates(buildings: Array) -> void:
+	_pass_one(buildings, false)
+
+
+## Pass 1's arithmetic, shared by `advance` (which wants the occupancy map
+## rewritten) and `settle_aggregates` (which must not touch it). The flag is
+## tested once per building per game-hour, against a per-building Dictionary
+## the caller has already allocated — it is not a cost, and one copy of this
+## loop is worth more than two that can drift.
+func _pass_one(buildings: Array, write_occupancy: bool) -> void:
+	jobs_capacity = 0
+	jobs_market = 0
+	occupied_population = 0.0
+	for b in buildings:
+		jobs_capacity += int(b.get("jobs", 0))
+		if not bool(b.get("civic", false)):
+			jobs_market += int(b.get("jobs", 0))
+		if bool(b.get("residential", false)):
+			var occ := _occ_residential(b)
+			if write_occupancy:
+				occupancy[String(b["id"])] = occ
+			occupied_population += float(int(b.get("population", 0))) * occ
+	workforce = occupied_population * WORKFORCE_FRACTION
+	job_fill_city = clampf(workforce / maxf(1.0, float(jobs_market)), 0.0, 1.0)
+	city_population = roundi(occupied_population)
 
 
 func _occ_residential(b: Dictionary) -> float:

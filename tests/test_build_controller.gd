@@ -25,6 +25,42 @@ static func _serviceable_vacant_tile(sim: CitySim, size: Vector2i = Vector2i.ONE
 	return Vector2i(-1, -1)
 
 
+static func _vital_value(view: Dictionary, id: String) -> String:
+	for raw: Variant in (view.get("vitals", []) as Array):
+		var vital: Dictionary = raw
+		if str(vital["id"]) == id:
+			return str(vital["value"])
+	return ""
+
+
+## **Doc 12 D-100 / report 98 RR-203 — the vital that answers "where are my
+## people?"** The occupants row was the AUTHORED capacity and nothing else, so
+## the panel of a house tapped thirty seconds ago read `Occupants 4` while the
+## population chip had not moved and would not move for another 176 real
+## seconds (`tools/measure_population_lag.gd`). It now reads `settled of
+## authored` whenever the two disagree — which for a shell still going up is
+## `0 of 4`, the literal truth about what `city_population` currently counts.
+func test_the_occupants_vital_says_how_many_have_actually_moved_in() -> void:
+	var sim := _sim()
+	var origin := _serviceable_vacant_tile(sim)
+	assert_true(origin.x >= 0, "the core has a serviceable vacant lot")
+	var placed := sim.cmd_place_building("house", origin)
+	assert_true(bool(placed["ok"]), str(placed))
+	var sim_id := String((placed["payload"] as Dictionary)["sim_id"])
+	assert_eq(_vital_value(_controller(sim).building_view(sim_id), "occupants"),
+			"0 of 4", "the shell is up, nobody lives in it, and the chip agrees")
+	assert_eq(sim.settled_residents(sim_id), 0)
+	# Two game-hours of shell, then the hourly settle that counts them.
+	sim.advance_hours(3.0)
+	assert_eq((sim.buildings[sim_id] as Building).state, &"active")
+	assert_eq(_vital_value(_controller(sim).building_view(sim_id), "occupants"), "4",
+			"a full house reads exactly what it always did")
+	assert_eq(sim.settled_residents(sim_id), 4)
+	# A shop houses nobody and must keep reading `0`, not `0 of 0`.
+	assert_eq(sim.settled_residents("STR-001"), -1)
+	assert_eq(_vital_value(_controller(sim).building_view("STR-001"), "occupants"), "0")
+
+
 # ===========================================================================
 # Build sheet cards (doc 12 §2.7)
 # ===========================================================================
@@ -359,6 +395,8 @@ func test_building_view_reports_live_stats() -> void:
 		assert_eq(int(station["max_level"]), 5,
 				"the fire station's ladder still stops at five")
 	assert_eq((view["vitals"] as Array).size(), 6, "§2.9's 2×3 vitals grid")
+	assert_eq(_vital_value(view, "occupants"), "4",
+			"a full house spends no extra characters saying so")
 	assert_eq((view["coverage"] as Array).size(), 4, "Power/Water/Police/Fire tiles")
 	var power_tile: Dictionary = (view["coverage"] as Array)[0]
 	assert_eq(str(power_tile["id"]), "power")

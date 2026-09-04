@@ -1188,7 +1188,7 @@ func building_view(sim_id: String) -> Dictionary:
 				int((b.stats.get("footprint", [1, 1]) as Array)[1])),
 		"vitals": [
 			_vital("occupants", "ui_building_vital_occupants",
-					HudModel.pop(int(b.stats.get("population", 0)))),
+					_occupants_text(sim_id, b)),
 			_vital("jobs", "ui_building_vital_jobs",
 					HudModel.pop(int(b.stats.get("jobs", 0)))),
 			_vital("tax", "ui_building_vital_tax",
@@ -1552,6 +1552,33 @@ func upgrade_water_node(node_id: String) -> Dictionary:
 
 static func _vital(id: String, label_key: String, value: String) -> Dictionary:
 	return {"id": id, "label_key": label_key, "value": value}
+
+
+## **`3 of 4` — the vital that answers "where are my people?"** (doc 12 D-100,
+## report 98 RR-203, the 2026-09-04 player report).
+##
+## This vital was the AUTHORED capacity and nothing else, so the panel of a
+## house the player tapped thirty seconds ago read `Occupants 4` while the
+## population chip at the top of the same screen had not moved and would not
+## move for another **176 real seconds** (`tools/measure_population_lag.gd`
+## measures the whole journey: 120 s of shell, then up to 60 s waiting for doc
+## 01's hourly settle). A building claiming four residents beside a counter that
+## disagrees is not a slow counter, it is two surfaces telling the player
+## different things — and the counter is the one that is right.
+##
+## So the value is now `settled of authored` whenever the two differ, and the
+## plain authored figure when they agree — a full building reads `4`, exactly as
+## it always did, and only a building that is genuinely not full spends the
+## extra characters. `-1` from the sim means "houses nobody", which is every
+## shop, station and pump in the city and must keep reading `0`.
+func _occupants_text(sim_id: String, b: Building) -> String:
+	var authored := int(b.stats.get("population", 0))
+	var settled := sim.settled_residents(sim_id)
+	if settled < 0 or settled == authored:
+		return HudModel.pop(authored)
+	return _t("ui_building_occupants_of",
+			{"settled": HudModel.pop(settled), "authored": HudModel.pop(authored)},
+			"%s of %s" % [HudModel.pop(settled), HudModel.pop(authored)])
 
 
 ## Four 40 dp tiles (§2.9 item 4), all four of them live (Wave 18, PA-22).
