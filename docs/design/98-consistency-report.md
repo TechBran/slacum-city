@@ -8930,7 +8930,7 @@ the causes; this lane is the other half — what the game hands you on the way u
 ### 64.1 Every `city_level` consumer, walked (RR-189)
 
 A level the ladder can reach that no data row describes is this project's
-signature defect. `grep -rn "city_level"` returns 78 files; these are the ones
+signature defect. `grep -rln "city_level"` returns 88 files; these are the ones
 that MAP a level to something, and every one was checked against 7:
 
 | consumer | shape | at level 7 |
