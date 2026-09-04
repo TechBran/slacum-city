@@ -9095,6 +9095,11 @@ the player's own demolish all still take a plant down.
 | with `--restore=5000`, standing @ 15 | 80, back to 21 by day 25 | **80, 68 at day 45** |
 | with `--restore=5000`, fire destructions | 69 | **0** |
 
+**The suite**: `tools/run_suite.sh` — **2,766 tests, 579,661 asserts, failed 0,
+silent 0**. Gate 29 is re-fitted with the attribution in doc 92 §58.7 and the
+derivation in `test_balance_gates.gd` itself; every other gate is untouched.
+`python3 tools/check_doc_refs.py` prints *all resolving; no id assigned twice*.
+
 Relief is unchanged and pays what it always paid: **$296,181 in three grants
 inside fifteen game-days, 105 % of the city's entire $282,078 restore bill.** The
 lane brief's "$2,624 of relief across fourteen game-days" is `Treasury.settle`'s
