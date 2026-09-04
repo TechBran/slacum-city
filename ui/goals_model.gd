@@ -260,12 +260,28 @@ static func _number(kind: StringName, value: float) -> String:
 
 # --------------------------------------------------------------- the reward
 
-## What reaching `level` pays out, as sentences. Three real reads and no
-## authored list: the build cards whose `min_city_level` is exactly this rung,
-## the building level doc 02's upgrade ladder opens at it, and the land doc 09
-## unlocks on it.
+## What reaching `level` pays out, as sentences. FOUR real reads and no authored
+## list: the celebration grant doc 03 §2.5a pays for the rung, the build cards
+## whose `min_city_level` is exactly this rung, the building level doc 02's
+## upgrade ladder opens at it, and the land doc 09 unlocks on it.
+##
+## **The money goes FIRST and it is new** (Wave 22; 99-PA PA-44, ruling 93 §G3).
+## Two defects met on this card. PA-44: the grant was the largest single income
+## event of a session and no foreground surface carried its amount — the card
+## said "new buildings unlocked" while $9,000 landed silently. And §G3's rule —
+## *a level whose reward card is empty is a number, not a goal* — was about to
+## bite for real: **nothing in `data/buildings.json` unlocks at city level 7**,
+## so the capstone rung's card would have read `ui_goals_reward_none` over a
+## $5,000,000 payment. Reading the grant fixes both at once, and it is a READ
+## like the other three: `CostCurves.level_up_grant` off `data/economy.json`, so
+## a retune of the table moves this card with it and cannot leave it lying.
 func reward(level: int) -> Dictionary:
 	var lines: PackedStringArray = []
+	var grant := grant_amount(level)
+	if grant > 0:
+		lines.append(UIWidgets.t_args(config, "ui_goals_reward_grant",
+				{"amount": HudModel.money_exact(grant)},
+				"%s council grant" % HudModel.money_exact(grant)))
 	for name in unlocked_card_names(level):
 		lines.append(name)
 	var tier := unlocked_upgrade_level(level)
@@ -280,6 +296,15 @@ func reward(level: int) -> Dictionary:
 	while lines.size() > cap:
 		lines.remove_at(lines.size() - 1)
 	return {"level": level, "lines": lines, "empty": lines.is_empty()}
+
+
+## Doc 03 §2.5a's celebration grant for `level`, in dollars, or 0. Public so the
+## level-up toast can name the same figure the card promised — one read, two
+## moments, and no chance of the promise and the payment disagreeing.
+func grant_amount(level: int) -> int:
+	if sim == null or sim.econ_curves == null:
+		return 0
+	return sim.econ_curves.level_up_grant(level)
 
 
 ## Display names of every build card that becomes placeable at exactly `level`.

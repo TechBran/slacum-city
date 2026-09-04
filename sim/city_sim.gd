@@ -2632,7 +2632,15 @@ func cmd_upgrade_building(sim_id: String, preview: bool = false) -> Dictionary:
 			upgrade_hours, &"construction_crew",
 			{"sim_id": sim_id, "cost": cost})
 	construction.assign_crew(job_id, "YARD-CREW-1")
-	bus.emit(&"upgrade_started_sim", {"sim_id": sim_id, "to_level": next_level, "cost": cost})
+	# `archetype` is NEW (Wave 22, doc 09 §2.14.2's level 7) and it is additive:
+	# every existing reader of this event asks for `sim_id`, `to_level` or
+	# `cost` and none of them can see a fourth key. It is here because
+	# `GoalSystem`'s `upgrade_archetype` kind has to answer *which* building
+	# type went up a rung, and the only alternative — handing the goal system
+	# the roster so it could look the id up — would have made a per-event
+	# evaluator O(buildings) and broken doc 09 §2.14's own cost rule.
+	bus.emit(&"upgrade_started_sim", {"sim_id": sim_id, "to_level": next_level,
+			"cost": cost, "archetype": String(b.archetype)})
 	return CommandQueue.ok({"job_id": job_id, "cost": cost, "to_level": next_level})
 
 

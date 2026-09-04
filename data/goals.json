@@ -99,6 +99,41 @@
         {"id": "l6_population", "kind": "reach_population",
          "target": 900, "text_key": "ui_goal_l6_population"}
       ]
+    },
+    {
+      "level": 7,
+      "title_key": "ui_level_7_title",
+      "intent_key": "ui_level_7_intent",
+      "teaches_key": "ui_level_7_teaches",
+      "_added": "doc 92 §61 (Wave 22, the reward wave), and the player asked for it in these words on 2026-09-04: \"we can even make a SEVENTH level where it's pretty much get a lot of buildings upgraded — get one of each type of building upgraded — and you get the big money when you go through the last level. That'll be five million.\" The rung is the whole city, audited: twelve rows, one per archetype `data/buildings.json` ships, each asking for ONE upgrade of that type. It is the last level and it is a CAPITAL level, so it is the only row in this file with no `reach_population` objective — doc 09 §2.14.2 says why, and `data/progression.json`'s rung 7 (40,500) is still underneath as the backstop the goals sheet greys out.",
+      "_archetype_scope": "ALL TWELVE, civic and utility included, and the reason is the build sheet's own roster: `BuildController.cards()` walks `sim.catalog.archetypes()` with no filter, so every one of these twelve is a card the player can tap, every one has a priced upgrade ladder in `data/building_economy.json`, and `cmd_upgrade_building` accepts every one. Excluding the stations and the works would have made the graduation a residential-and-commercial exercise — and doc 03 §2.12 has been billing the player for `departments` and `fleet` since game-hour 1, so upgrading the station you have been paying for since founding is the curriculum closing its own loop. It is also what makes the level TEACHABLE rather than a wall: `data/starter_city.json` stands ten of the twelve up on the founding day, so ten rows are 'upgrade what you were given' and only `high_rise` (built at level 6) and `data_center` (the one archetype no earlier level ever mentions) have to be built first.",
+      "_the_ask": "$644,370 at list price, and that is the number `data/economy.json`'s rung-6 grant is derived against: a data centre ($180,000) plus one L1→L2 step of each of the twelve — house 1,380 · store 2,990 · apartment 8,050 · office 14,950 · high_rise 29,900 · data_center 207,000 · police_station 20,700 · fire_station 23,000 · power_facility 69,000 · substation 17,250 · water_facility 51,750 · construction_yard 18,400 = 464,370. The rung-6 grant pays HALF of it ($325,000), which is doc 03 §2.5a's own rule and the reason the capstone is not prepaid: a grant that bought the chapter outright would delete it.",
+      "objectives": [
+        {"id": "l7_house", "kind": "upgrade_archetype", "archetype": "house",
+         "target": 1, "text_key": "ui_goal_l7_house"},
+        {"id": "l7_store", "kind": "upgrade_archetype", "archetype": "store",
+         "target": 1, "text_key": "ui_goal_l7_store"},
+        {"id": "l7_apartment", "kind": "upgrade_archetype", "archetype": "apartment",
+         "target": 1, "text_key": "ui_goal_l7_apartment"},
+        {"id": "l7_office", "kind": "upgrade_archetype", "archetype": "office",
+         "target": 1, "text_key": "ui_goal_l7_office"},
+        {"id": "l7_high_rise", "kind": "upgrade_archetype", "archetype": "high_rise",
+         "target": 1, "text_key": "ui_goal_l7_high_rise"},
+        {"id": "l7_data_center", "kind": "upgrade_archetype", "archetype": "data_center",
+         "target": 1, "text_key": "ui_goal_l7_data_center"},
+        {"id": "l7_police_station", "kind": "upgrade_archetype", "archetype": "police_station",
+         "target": 1, "text_key": "ui_goal_l7_police_station"},
+        {"id": "l7_fire_station", "kind": "upgrade_archetype", "archetype": "fire_station",
+         "target": 1, "text_key": "ui_goal_l7_fire_station"},
+        {"id": "l7_power_facility", "kind": "upgrade_archetype", "archetype": "power_facility",
+         "target": 1, "text_key": "ui_goal_l7_power_facility"},
+        {"id": "l7_substation", "kind": "upgrade_archetype", "archetype": "substation",
+         "target": 1, "text_key": "ui_goal_l7_substation"},
+        {"id": "l7_water_facility", "kind": "upgrade_archetype", "archetype": "water_facility",
+         "target": 1, "text_key": "ui_goal_l7_water_facility"},
+        {"id": "l7_construction_yard", "kind": "upgrade_archetype", "archetype": "construction_yard",
+         "target": 1, "text_key": "ui_goal_l7_construction_yard"}
+      ]
     }
   ]
 }

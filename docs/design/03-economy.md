@@ -499,20 +499,38 @@ doc 12 log rows. No dollar moves for it and no state is added: the step is
 detected by asking `founding_assistance_per_hour` what *yesterday's* published
 share was, so `state_hash()` cannot move.
 
-**The celebration grant.** `LEVEL_UP_GRANT_BY_CITY_LEVEL = [0, 2500, 7000, 9000, 22500, 29000, 65000]` *(rungs 5 and 6 re-derived in Wave 17: the rule is "half of what the next chapter asks you to buy" and rung 5's basis is an UPGRADE, which doc 93 §Y7 re-priced 73,572 → 58,350. Rungs 1–4 are built on build costs, which did not move.)*, indexed by city level, paid once per level for the life of a city, on whichever route earned it (doc 93 §G1 composes the population ladder and doc 09's objectives with `max()`, and this pays the composed level so neither route is worth more than the other).
+**The celebration grant.** `LEVEL_UP_GRANT_BY_CITY_LEVEL = [0, 215000, 235000, 255000, 275000, 300000, 325000, 5000000]`, indexed by city level, paid once per level for the life of a city, on whichever route earned it (doc 93 §G1 composes the population ladder and doc 09's objectives with `max()`, and this pays the composed level so neither route is worth more than the other).
 
-The rule is one sentence — **the city pays half of what the next chapter asks you to buy** — applied to doc 09 §2.14's curriculum row above each rung and rounded to a readable figure:
+**RE-SCALED in Wave 22** *(doc 92 §61, ruling 93 §AU, report 98 §64 RR-187)*. The table paid **$135,000 across the entire curriculum** and now pays **$7,415,000**, and the reason is the player, 2026-09-04: *"we should get a substantial amount of money so you can start your city … each level, since we have six, should give let's say a few hundred thousand dollars … and then a SEVENTH level … you get the big money … that'll be five million."* **The SCALE is authored by the player; the CURVE is derived**, and this doc says which is which rather than dressing the first up as the second.
 
-| rung earned | the next chapter's taught purchase | half | published |
+**Two anchors, five rungs of geometric interpolation between them, and a seventh rung that is a graduation rather than a rung.**
+
+*Bottom anchor — rung 1 at $215,000, derived twice, and the two derivations agree to 3.5 %:*
+
+* **the whole remaining curriculum, bought outright.** Chapters 2–6 ask for $6,580 + $14,200 + $18,000 + $85,630 + $84,350 = **$208,760** at list price.
+* **the whole city, put back in repair.** `tools/measure_curriculum.gd --days=45 --seeds=1337,4242,9001` measures `repair_spend` at $203,591 / $216,378 / $229,432, mean **$216,467**.
+
+$215,000 sits between them, and the sentence it buys is the one that was asked for: *the opening grant buys every lesson left in the game, or puts a ruined city back on its feet, and the player chooses which.*
+
+*Top anchor of the six — rung 6 at $325,000 — is **the old rule, unchanged**.* **The city pays half of what the next chapter asks you to buy**: doc 09 §2.14.2's level 7 asks for a data centre ($180,000) plus one upgrade step of each of the twelve archetypes ($464,370) = **$644,370**, and half is $322,185. The half-rule survives at the one rung where half is real money, and it survives for the reason it was written — *a grant that buys the chapter outright deletes the chapter*.
+
+*The ratio the two anchors imply is* `(325,000 / 215,000)^(1/5) = 1.08616`, *and the run rounded to the nearest $5,000 closes back on its own top anchor:*
+
+| rung earned | `215,000 × 1.08616^k` | published | what it buys |
 |---|---|---|---|
-| 1 | two stores @ $2,600 + one upgrade | ~$2,600 | **$2,500** |
-| 2 | one apartment $7,000 + four street tiles $7,200 | $7,100 | **$7,000** |
-| 3 | one police station $18,000 | $9,000 | **$9,000** |
-| 4 | one water works $45,000 | $22,500 | **$22,500** |
-| 5 | the level-6 tower upgrade $58,350 | $29,175 | **$29,000** |
-| 6 | *(no chapter above it)* | — | **$83,000** |
+| 1 | 215,000 | **$215,000** | chapters 2–6 outright ($208,760), or a whole curriculum's repairs |
+| 2 | 233,523 | **$235,000** | chapter 3's apartment + four street tiles, **16.5×** over |
+| 3 | 253,648 | **$255,000** | chapter 4's police station **14.2×** over — and a water works with $210,000 left, so chapter 5 is prepaid |
+| 4 | 275,500 | **$275,000** | chapter 5's pump + block + development, **3.2×** over; or a data centre with $95,000 left |
+| 5 | 299,247 | **$300,000** | chapter 6's high-rise + a tower step, **3.6×** over |
+| 6 | 325,000 | **$325,000** | **half** of chapter 7's $644,370 — the rung the rule is derived on |
+| 7 | *(no chapter above it)* | **$5,000,000** | authored, and checked three ways below |
 
-Rung 6 is the extrapolation the rung itself is (doc 92 §24.6): `29,000 × 2.25 = 65,250`, on the same 2.25× step the population ladder uses above rung 3, published as $65,000 and labelled honest extrapolation exactly as ladder rungs 4 and 5 are.
+**Rung 7 is AUTHORED and this doc refuses to pretend otherwise.** There is no chapter above it, so the half-rule has nothing to read; unlike doc 92 §24.6's population rungs it is not an extrapolation either. What can be checked is whether the figure is sane at the top of this game, and it is: it is **7.76×** chapter 7's own ask; it funds **94.2 %** of the deepest climb doc 02 has (a data centre from level 2 to level 5 is $527,850 + $1,346,018 + $3,432,345 = $5,306,213); and at the measured level-7 net it is **75.6 game-days** of a top-rung city's entire net income, handed over at once.
+
+**The curve is gentle on purpose, and that is the anti-farm argument.** The six rise 1.51× across five rungs while doc 09 §2.11's ladder rises 2.25× *per* rung, so the grant grows in dollars and **shrinks as a share of the city it lands on** — measured against each band's own income it is worth 10.7 / 7.6 / 5.3 / 2.1 / 0.38 chapters at rungs 1–5 (doc 92 §61.3). It starts as ten chapters of income and ends as a third of one. Over a whole city the seven grants are **112 game-days** of a mature city's net, paid once, across an arc that takes 15–21 game-days to climb; after that they pay nothing, forever.
+
+**One-shot per level per city is structural, not a guard.** `city_level` is monotone (`data/progression.json`'s `city_level_monotone`), `ProgressionSystem.grant_level` is its only writer and returns early on a level it already holds, and `CitySim._pay_level_up_grant` walks `range(from + 1, to + 1)` so a double promotion pays each crossed rung exactly once. **The one compounding surface is named rather than assumed:** `Treasury.note_era(to_level)` resets §2.10 layer 5's relief allowance on this same transition (doc 93 §AP4), so a seventh rung is one more era and three more relief grants for the life of a city — +1 era, once, at the top of the ladder, behind the hardest level in the game, and monotone. Doc 92 §61.7 publishes that delta; the relief ladder itself is not re-fitted here.
 
 **A one-off receipt is not an hourly ledger line.** §2.4 keeps one-off capital *spends* out of the recurring rate; the symmetric treatment for a one-off *receipt* is the same. The player sees it as a treasury event and a notification, and the budget panel's income statement stays an income statement.
 
@@ -1889,10 +1907,12 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
     "STREET_IDLE_SHARE": 0.0                           // a written-down zero
   },
 
-  "grants": {                                          // §2.5a, report 98 RR-79
+  "grants": {                                          // §2.5a, report 98 RR-79 / RR-187
     "FOUNDING_ASSISTANCE_PER_HOUR": 172,               // = §2.12 departments 96 + fleet 76
     "FOUNDING_ASSISTANCE_DAYS": 7,
-    "LEVEL_UP_GRANT_BY_CITY_LEVEL": [0, 2500, 7000, 9000, 22500, 37000, 83000]
+                                                       // Wave 22: re-scaled, and one row longer
+    "LEVEL_UP_GRANT_BY_CITY_LEVEL":
+        [0, 215000, 235000, 255000, 275000, 300000, 325000, 5000000]
   },
 
   "land": {

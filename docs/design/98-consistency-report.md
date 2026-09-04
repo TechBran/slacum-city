@@ -8875,3 +8875,85 @@ and carrying on to a run that otherwise looked normal. That is the worst shape a
 test-file error can take: not a red suite, but a green-looking one with a third of
 the balance surface absent from it. It was caught by reading the run's log rather
 than its verdict, and the closing run above is the one taken after the fix.
+
+## 64. WAVE 22 — the reward: a rung is worth something now, and there is one more of them (binding)
+
+*Forked off the Wave-19 merge (`ef08351`), 2026-09-04. The lane exists for one
+sentence from the player, and the sentence carries its own numbers:*
+
+> *"The reward system for getting through the tutorial levels — we should get a
+> substantial amount of money so you can start your city, so you can actually
+> have a good start, and the situation I'm in now with the negative money goes
+> away. Each level, since we have six, should give let's say a few hundred
+> thousand dollars. And then we can even make a SEVENTH level where it's pretty
+> much get a lot of buildings upgraded — get one of each type of building
+> upgraded — and you get the big money when you go through the last level.
+> That'll be five million."*
+
+*They are at **−$22,624** with most of the city a ruin. A sibling wave is fixing
+the causes; this lane is the other half — what the game hands you on the way up.
+**The scale is authored by the player and the curve is derived**, and doc 03
+§2.5a says which is which rather than dressing the first up as the second
+(ruling 93 §AU1).*
+
+### RR-187 — the celebration grant, re-scaled: an authored scale under a derived curve (docs 03 §2.5a, 92 §61, 93 §AU1)
+
+**`LEVEL_UP_GRANT_BY_CITY_LEVEL` is re-scaled and one row longer: `[0, 215000, 235000, 255000, 275000, 300000, 325000, 5000000]`.** $135,000 across the whole curriculum becomes **$7,415,000**. TWO ANCHORS with a geometric run between them: rung 1 at **$215,000** is derived twice and the derivations agree to 3.5 % (chapters 2–6's whole purchase list at list price, $208,760; and the measured repair bill of a played curriculum, mean $216,467 over three seeds at 45 game-days) — *the opening grant buys every lesson left in the game, or puts a ruined city back on its feet, and the player chooses which*. Rung 6 at **$325,000** is doc 03 §2.5a's OLD rule kept verbatim — half of what chapter 7 asks ($644,370) — which is what stops the capstone being prepaid. The ratio the anchors imply is `(325000/215000)^(1/5) = 1.08616` and the run rounded to $5,000 closes back on its own anchor. Rung 7's $5,000,000 is **authored**, labelled as authored, and checked three ways (7.76× the capstone's ask; 94.2 % of a data centre's L2→L5 climb; 75.6 game-days of a top-rung city's whole net).
+
+*Files: `data/economy.json`, doc 03 §2.5a, doc 92 §61*
+
+### RR-188 — a seventh curriculum level, and the one new evaluator kind it needs (docs 09 §2.14.2, 92 §61.5, 93 §AU3)
+
+**A seventh curriculum level: `data/goals.json` gains twelve `upgrade_archetype` rows, one per archetype `data/buildings.json` ships.** The kind is new and it is the third reading of one button — it counts the same `upgrade_started_sim` that `upgrade_building` and `upgrade_to_level` count, filtered by an **`archetype` field that `CitySim.cmd_upgrade_building` now stamps onto the event**. The field is ADDITIVE (every existing reader asks for `sim_id`, `to_level` or `cost`) and it is stamped at the emit site rather than resolved by `GoalSystem`, because handing the goal system the roster would make a per-event evaluator O(buildings) and break doc 09 §2.14's own cost rule. Twelve rows and not one distinct-set counter, because `GoalSystem.serialize` writes `progress` as `id → int` and a set would be a save-shape change for no reader's benefit. **Civic and utility stock counts** — the roster is `BuildController.cards()`'s own, which filters nothing — and the row is the only level in the file with no `reach_population` objective.
+
+*Files: `data/goals.json`, `sim/progression/goal_system.gd`, `sim/city_sim.gd`, `data/strings.en.json`, doc 09 §2.14.2*
+
+### RR-189 — the ladder gets the rung FIRST, or the level is earned and never paid (docs 09 §2.11, 91 A91-D-118)
+
+**`data/progression.json` gains rung 7 at 40,500, and it had to land BEFORE the curriculum row could.** `ProgressionSystem.grant_level` clamps its argument to `city_level_pop().size() - 1`: a seventh curriculum row over a six-rung ladder earns level 7 inside `GoalSystem`, shows the sheet complete, and **never fires `city_level_changed` for rung 7 — so the $5,000,000 is never paid.** That is this project's signature defect and it is closed by a data row, not by a special case in the clamp. `ProgressionSystem.CITY_LEVEL_POP_FALLBACK` moves with it (gate 20 holds the two equal). **Every `city_level` consumer was walked** and the audit is in §64's second table below.
+
+*Files: `data/progression.json`, `sim/population/progression_system.gd`, doc 09 §2.11*
+
+### RR-190 — the level-up moment names the money, and the reward card reads it (docs 12 §2.19 D-95/D-96, 91 A91-D-119, 99-PA PA-44)
+
+**The level-up moment names the money, and the reward card reads it** (99-PA PA-44, open since 2026-09-01; ruling 93 §G3). `ui_root._check_city_level` sums the batch's own `level_up_grant_paid` amounts and pushes `ui_toast_city_level_grant` — *"City level 3 — $255,000 paid into the treasury"* — with §2.21's payday chip flash behind it, as ONE toast rather than two (doc 12 §2.15's toasts replace each other). `GoalsModel.reward()` prepends the grant as the card's first line, read from `CostCurves.level_up_grant`, which is also what makes rung 7 a legal level at all: **nothing in `data/buildings.json` unlocks at city level 7**, so §G3's *"a level whose reward card is empty is a number, not a goal"* would have failed on a $5,000,000 payment. `data/ui.json.goals.max_reward_rows` 4 → 5 so no unlock line is displaced. One new preview state, `goals_capstone`, same commit.
+
+*Files: `ui/ui_root.gd`, `ui/goals_model.gd`, `data/ui.json`, `data/strings.en.json`, `tools/ui_preview.gd`, doc 12 §2.19 D-95 / D-96*
+
+
+### 64.1 Every `city_level` consumer, walked (RR-189)
+
+A level the ladder can reach that no data row describes is this project's
+signature defect. `grep -rn "city_level"` returns 78 files; these are the ones
+that MAP a level to something, and every one was checked against 7:
+
+| consumer | shape | at level 7 |
+|---|---|---|
+| `data/progression.json city_level_population_thresholds` | indexed by level | **row added** — 40,500, §19.2's 2.25× recipe one rung further |
+| `ProgressionSystem.CITY_LEVEL_POP_FALLBACK` | missing-file degrade, gated equal by gate 20 | **row added**, same value |
+| `data/economy.json grants.LEVEL_UP_GRANT_BY_CITY_LEVEL` | indexed by level | **row added** — $5,000,000 (RR-187) |
+| `data/economy.json pacing_guardrails.MODEL_NET_PER_HOUR_BY_CITY_LEVEL` | indexed by level, a MEASUREMENT | **re-measured, seven cells** — AC-2 says a lane that re-arcs `data/goals.json` re-measures this row rather than re-fitting the curves that read it |
+| `data/buildings.json` per-level `min_city_level` | a floor per building level | tops out at 5; nothing new unlocks at 6 or 7, which is why doc 12 D-96 had to put the grant on the reward card |
+| `data/building_rules.json min_city_level_by_level` / `_by_growth_class` | indexed by BUILDING level (1–6), not city level | untouched |
+| `data/contracts.json min_city_level` | a floor per offer, max 6 | every offer is available at 7 |
+| `city_services.STREET_REWARD_CITY_LEVEL_K`, `MANUAL_DISPATCH_LEVEL_K`, `CONTRACT_REWARD_CITY_LEVEL_K` | `(1 + k·(level − 1))`, unbounded | evaluate at 7 with no special case; **gate 32 arms (d2) and (h) now assert the share at seven rungs instead of six**, which is the whole reason they were written as share assertions |
+| `data/roads.json road_crew_unlock_city_level` | one threshold, 3 | already unlocked |
+| `data/vehicles.json unlock.city_level` | one threshold, 1 | already unlocked |
+| `data/world.json t0_city_level`, `LandBlock.min_city_level` | founding value / a floor per block, max 2 | already unlocked |
+| `data/notifications.json`, `data/audio.json`, `data/ui.json` | route `city_level_changed` by event, never by level | no level-indexed table |
+| `Treasury.note_era(city_level)` | monotone latch | **+1 era** — the one compounding surface, published in doc 92 §61.7 and NOT fixed here |
+| doc 08 save shape | `city_level` / `city_level_max` are ints in the `progression` section | **no schema change**; `GoalSystem`'s `done`/`progress` gain twelve string keys inside the existing v3 `city` body, which is additive and needs no section rung |
+| `GoalSystem.bootstrap` | completes every level ≤ the city's own | a v2 save restored at level 6 starts level 7 at zero, which is correct: an upgrade leaves no residue and `residue_key` returns `""` for the new kind |
+
+### 64.2 What this lane does NOT touch
+
+* **Gate 29 and the insolvency ordering.** Wave 21's no-spiral lane owns them and
+  is running beside this one. The delta this lane creates for it — one more era,
+  therefore three more relief grants per city — is published in doc 92 §61.7 as
+  a filed row, not fixed.
+* **The relief ladder itself** (doc 03 §2.10 layer 5). Same owner.
+* **The balance matrix's control agents.** `do_nothing`, `balanced`,
+  `tax_squeezer` and `infrastructure_first` never reach a curriculum objective,
+  and the grant is paid on the composed level, which for them is the population
+  ladder they were always on. What DOES move them is that a level-7 rung now
+  exists to be crossed — see doc 92 §61.8 for which matrix cells that reaches.

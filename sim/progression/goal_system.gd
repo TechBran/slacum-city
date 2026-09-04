@@ -66,6 +66,21 @@ const EVENT_KINDS: Dictionary = {
 	&"upgrade_to_level": {"event": &"upgrade_started_sim",
 			"match_field": "", "match_key": "", "amount": "",
 			"min_field": "to_level", "min_key": "to_level"},
+	# The same event a third time, filtered by WHICH ARCHETYPE went up a rung
+	# (Wave 22, doc 09 §2.14.2's level 7). `build_archetype` already reads an
+	# `archetype` field off `building_placed_sim`; this row reads the
+	# identically-named field off `upgrade_started_sim`, which
+	# `CitySim.cmd_upgrade_building` now stamps.
+	#
+	# It is the only kind that can say *"one upgraded building of each type"*,
+	# and it says it with ONE ROW PER ARCHETYPE rather than one clever row that
+	# counts DISTINCT archetypes. That is a persistence decision, not a style
+	# one: a distinct-set counter would have to remember a SET per objective,
+	# and [serialize] writes `progress` as `id -> int`. Twelve integer counters
+	# cost one save key each and cost this file nothing at all — and they read
+	# on the sheet as twelve ticks, which is what a checklist level wants.
+	&"upgrade_archetype": {"event": &"upgrade_started_sim",
+			"match_field": "archetype", "match_key": "archetype", "amount": ""},
 	&"repair_buildings": {"event": &"repair_started_sim",
 			"match_field": "", "match_key": "", "amount": ""},
 	&"resolve_incidents": {"event": &"incident_resolved",

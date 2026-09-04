@@ -699,6 +699,16 @@ class Api extends RefCounted:
 	const UPGRADE_LIMIT := 8
 	const UPGRADE_SCAN := 64
 
+	## [archetype_upgrade_candidate]'s own scan depth, and it is deliberately
+	## much shallower than [UPGRADE_SCAN] (Wave 22). That method is asked twelve
+	## times a game-hour for the whole of doc 09 §2.14.2's level 7, and each
+	## preview it takes runs `CitySim.peak_component_loads()`. Eight is the
+	## cheapest depth that still answers the question it is asked: an archetype
+	## whose eight cheapest instances are ALL refused is refused for a city-wide
+	## reason — power headroom, water headroom — and a ninth instance of the same
+	## archetype would be refused for the same one.
+	const ARCHETYPE_SCAN := 8
+
 	## Every upgradeable building, cheapest first, id tie-break. Each entry is
 	## `{sim_id, cost, level, archetype}`; only clear-gate rows are returned.
 	func upgrade_candidates(categories: Array = []) -> Array[Dictionary]:
@@ -731,6 +741,62 @@ class Api extends RefCounted:
 			if out.size() >= UPGRADE_LIMIT:
 				break
 		return out
+
+	## The cheapest building OF ONE ARCHETYPE that can upgrade right now, or `{}`
+	## when the city has none standing, none below its own top rung, or none that
+	## clears the gate. Same row shape as [upgrade_candidates].
+	##
+	## It exists for doc 09 §2.14.2's level 7 — *one upgraded building of each
+	## type* — and it is a third ranking rather than a filter on either of the
+	## two above, for the reason the [top_upgrade_candidate] docstring gives one
+	## paragraph up: a cheapest-first list over the whole roster is all houses,
+	## and a progress-first list is all towers. Neither can be asked "and what
+	## about the fire station?".
+	func archetype_upgrade_candidate(archetype: String) -> Dictionary:
+		if not has_verb("cmd_upgrade_building"):
+			return {}
+		var m_build := float(sim.treasury.difficulty().get("M_build", 1.0))
+		var ranked: Array[Dictionary] = []
+		# NOT `_sorted(sim.buildings)`: this is asked twelve times a game-hour
+		# for the whole of level 7, and sorting six hundred ids to keep eight of
+		# them was measurably the most expensive thing the agent did. The
+		# `sort_custom` below is TOTAL (cost, then id), so the answer does not
+		# depend on the order the roster was walked in.
+		for id: Variant in sim.buildings:
+			var sim_id := String(id)
+			var b: Building = sim.buildings[sim_id]
+			if b.state != &"active" or b.level >= b.max_level:
+				continue
+			if String(b.archetype) != archetype:
+				continue
+			ranked.append({"sim_id": sim_id, "archetype": archetype, "level": b.level,
+					"cost": sim.econ_curves.upgrade_cost(archetype, b.level, m_build)})
+		ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			if int(a["cost"]) != int(b["cost"]):
+				return int(a["cost"]) < int(b["cost"])
+			return String(a["sim_id"]) < String(b["sim_id"]))
+		for i in mini(ranked.size(), ARCHETYPE_SCAN):
+			var row: Dictionary = ranked[i]
+			var preview := upgrade_preview(String(row["sim_id"]))
+			if not bool(preview["ok"]):
+				continue
+			row["cost"] = int(preview["payload"].get("cost", row["cost"]))
+			return row
+		return {}
+
+
+	## How many buildings of `archetype` the city is standing up right now, in
+	## any state. The question "do I own one of these at all?" — which is a
+	## different question from "can I upgrade one", and the one that decides
+	## whether the answer to a level-7 row is BUILD or UPGRADE.
+	func archetype_count(archetype: String) -> int:
+		var count := 0
+		for id: Variant in sim.buildings:
+			var b: Building = sim.buildings[String(id)]
+			if String(b.archetype) == archetype:
+				count += 1
+		return count
+
 
 	## The building CLOSEST to the top of its own ladder that can upgrade right
 	## now, highest level first, cost then id as tie-breaks. `{}` when none can.
@@ -1143,6 +1209,111 @@ class Api extends RefCounted:
 					"transformer_level": Api.transformer_level_for(
 							float(next_stats.get("power_demand_kw", 0.0)))}
 		return {}
+
+	## Raise supply where there is no ROOM for another component (Wave 22, doc 92
+	## §61.4). Upgrades the first water node whose own gate lets it, pumps first
+	## because doc 05 §2.5's supply term is the pump roster and a bigger tank
+	## stores water the zone never had.
+	##
+	## **Why the second door exists.** `place_water_component` scans the ready
+	## blocks for a free footprint, and on the arc the grants produce there is
+	## not one: seed 9001 finished 45 game-days with 328 apartments and 164
+	## offices standing and **one** successful pump placement in the whole run,
+	## because the map was full. A city that cannot build outwards has to build
+	## upwards, which is the same sentence doc 09 §2.14.2's level 6 teaches about
+	## housing.
+	func upgrade_water_node() -> Dictionary:
+		if not has_verb("cmd_upgrade_water_component"):
+			return CommandQueue.fail(&"E_NO_VERB")
+		for wanted: StringName in [&"pump", &"source", &"treatment"]:
+			var ids: Array = sim.water.nodes.keys()
+			ids.sort()
+			for id: Variant in ids:
+				var node: WaterNode = sim.water.nodes[id]
+				if node.variant != wanted:
+					continue
+				if not bool(sim.cmd_upgrade_water_component(String(id), true)["ok"]):
+					continue
+				var result: Dictionary = sim.cmd_upgrade_water_component(String(id), false)
+				if bool(result["ok"]):
+					water_spend += int((result["payload"] as Dictionary).get("cost", 0))
+				return _log("water_upgrade", String(id), result, {})
+		return CommandQueue.fail(&"E_NO_SITE")
+
+
+	## The same second door for copper: upgrade the transformer that is short
+	## rather than parallel it, for the same reason and on the same evidence —
+	## `relief_spot_near` needs a free tile within [Curriculum.HOTSPOT_RADIUS]
+	## and a full map has none. `component_id` is the feeder of the building that
+	## was refused, so the copper lands where the refusal happened.
+	func upgrade_grid_component(component_id: String) -> Dictionary:
+		if not has_verb("cmd_upgrade_grid_component") or component_id == "":
+			return CommandQueue.fail(&"E_NO_VERB")
+		if not bool(sim.cmd_upgrade_grid_component(component_id, true)["ok"]):
+			return CommandQueue.fail(&"E_BLOCKED")
+		# No counter of its own: `_log` already records the verb, the subject and
+		# the verdict, and the summary's `substations_built` counts SHELLS. An
+		# upgraded transformer is neither a new shell nor a new component.
+		return _log("grid_upgrade", component_id,
+				sim.cmd_upgrade_grid_component(component_id, false), {})
+
+
+	## [power_blocked_top_rung]'s sibling, asked of ONE ARCHETYPE and of any rung
+	## (Wave 22, doc 92 §61.4). Returns the first standing building of
+	## `archetype` whose upgrade the doc 02 §2.11 gate refuses, with the FIRST
+	## blocker on its checklist, the tile it stands on, and the transformer rung
+	## that would carry its next step. `{}` when none of them is blocked.
+	##
+	## **Why it had to exist.** Doc 09 §2.14.2's level 7 asks for one upgrade of
+	## each of the twelve archetypes, and the first 45-game-day measurement of it
+	## (doc 92 §61.4) came back with four rows unmet, a $2,018,221 treasury and
+	## the same two words on every refusal in the city: `E_POWER_HEADROOM` and
+	## `E_WATER_HEADROOM`. The capstone is not a money wall, it is a UTILITY
+	## wall — which is the right lesson for the last level and the wrong thing
+	## for an agent to be unable to answer. `power_blocked_top_rung` could not
+	## answer it: it only looks at buildings one rung short of their top, and a
+	## level-1 fire station is five rungs short of nothing.
+	func blocked_upgrade(archetype: String) -> Dictionary:
+		if not has_verb("cmd_upgrade_building"):
+			return {}
+		# The subset is sorted, not the roster — same argument as
+		# [archetype_upgrade_candidate], and the answer still has to be the
+		# FIRST one by id, so the sort cannot be dropped entirely.
+		var ids: Array[String] = []
+		for id: Variant in sim.buildings:
+			var candidate: Building = sim.buildings[String(id)]
+			if String(candidate.archetype) == archetype:
+				ids.append(String(id))
+		ids.sort()
+		for id: Variant in ids:
+			var sim_id := String(id)
+			var b: Building = sim.buildings[sim_id]
+			if b.state != &"active" or b.level >= b.max_level:
+				continue
+			var preview: Dictionary = sim.cmd_upgrade_building(sim_id, true)
+			if bool(preview["ok"]):
+				continue
+			var blockers: Array = (preview.get("payload", {}) as Dictionary).get(
+					"blockers", [])
+			if blockers.is_empty():
+				continue
+			var next_stats: Dictionary = sim.catalog.stats(archetype, b.level + 1)
+			# WHICH component is short, asked of the grid rather than guessed:
+			# `can_upgrade_power` already names it (`at`) and the building
+			# preview does not forward it. Empty when power is not the blocker.
+			var at := ""
+			var delta_kw := float(next_stats.get("power_demand_kw", 0.0)) \
+					- float(b.stats.get("power_demand_kw", 0.0))
+			if String(blockers[0]) == "E_POWER_HEADROOM":
+				at = String(sim.power_headroom(sim_id, delta_kw).get("at", ""))
+			return {"sim_id": sim_id, "tile": b.origin,
+					"blocker": String(blockers[0]),
+					"cost": int((preview.get("payload", {}) as Dictionary).get("cost", 0)),
+					"power_at": at,
+					"transformer_level": Api.transformer_level_for(
+							float(next_stats.get("power_demand_kw", 0.0)))}
+		return {}
+
 
 	## The smallest doc 04 §2.2 transformer rung that can carry `kw` and still sit
 	## under the 90 % headroom `PowerGrid.can_upgrade_power` demands. Clamped to
@@ -2499,19 +2670,84 @@ class Curriculum extends Balanced:
 	## `Balanced` already has the machinery for exactly that — the land fund.
 	var _goal_price: int = 0
 
-	func reserve() -> int:
-		return super() + _goal_price
+	## **The REST of the open checklist** (Wave 22, doc 92 §61.4). `_goal_price`
+	## is the one thing the hour is saving for; this is everything else the
+	## active level still asks for, and the growth ladder may not spend it
+	## either.
+	##
+	## It is the same argument `_goal_price` was written on, one level of the
+	## curriculum later. With one earmark and twelve rows, level 7 measured like
+	## this: the agent ticked the cheap rows, spent every remaining surplus on
+	## apartments, and by game-day 70 was running **11,496 residents in 476
+	## apartments** whose water demand had swallowed the whole zone's supply —
+	## so every one of the twelve upgrades was refused `E_WATER_HEADROOM` and the
+	## $207,000 data-centre step was refused `E_FUNDS` on a $191,301 treasury.
+	## That is not a player following a checklist; a player saving for twelve
+	## things does not build four hundred and seventy-six apartments first.
+	var _checklist_price: int = 0
 
+	## One game-day between capacity purchases — see [_relieve] for the
+	## measurement that set it.
+	const RELIEF_COOLDOWN_H := 24
+	## The game-hour the last capacity purchase landed on. `-RELIEF_COOLDOWN_H`
+	## so the first one is free.
+	var _relief_hour: int = -RELIEF_COOLDOWN_H
+
+	func reserve() -> int:
+		return super() + _goal_price + _checklist_price
+
+	## **The whole checklist, not just its first line** (Wave 22, doc 92 §61.3).
+	##
+	## This used to read exactly one objective — the active level's first unmet
+	## row — and it worked because no level had more than three buyable rows and
+	## they were authored in the order a player would do them. Doc 09 §2.14.2's
+	## level 7 has TWELVE, and the first of them is a house upgrade that can be
+	## blocked by power, by condition or by every house in the city already
+	## standing at its top rung. A one-row reader stalls on it and the other
+	## eleven never get looked at, which would have made the capstone level
+	## measure as unreachable and would have said nothing true about the game.
+	##
+	## So the hour is spent in two passes, and both are what a player with a
+	## checklist does: **save for the first thing you cannot afford, and while
+	## you are saving, tick off anything on the list you can.** The earmark is
+	## still exactly one price — the hour buys one thing — and `reserve()` still
+	## protects it from the growth ladder.
+	##
+	## It changes the arc BELOW level 7 as well (levels 3, 4, 5 and 6 each carry
+	## two or three buyable rows) and doc 92 §61.3 measures that separately from
+	## the grants, on the old table, so the two are not attributed to each other.
 	func act(api: Api, hour: int) -> void:
 		# Before `super.reserve()` below, which reads the floor this resolves.
 		note_founding_purse(api)
 		_goal_price = 0
-		var wanted := _next_objective(api)
-		if not wanted.is_empty():
-			var price := _price_of(api, wanted)
-			if price > 0 and api.balance() - price < super.reserve():
-				_goal_price = price   # save for it; the growth ladder may not
-			elif _serve(api, wanted):
+		_checklist_price = 0
+		var wanted := _unmet_objectives(api)
+		# Priced ONCE per hour, into a parallel array. `_price_of` runs command
+		# previews and, for the level-7 kinds, walks the roster — pricing the
+		# same twelve rows three times an hour is the difference between a
+		# 45-game-day run that finishes and one that does not.
+		var prices: Array[int] = []
+		for raw: Variant in wanted:
+			prices.append(_price_of(api, raw as Dictionary))
+		var saving_index := -1
+		for i in wanted.size():
+			if prices[i] > 0 and api.balance() - prices[i] < super.reserve():
+				_goal_price = prices[i]   # save for it; the growth ladder may not
+				saving_index = i
+				break
+		# Everything else the level still asks for, held back from `_grow`.
+		for i in wanted.size():
+			if i != saving_index:
+				_checklist_price += prices[i]
+		for i in wanted.size():
+			if i == saving_index:
+				continue   # already priced and already unaffordable
+			# The floor this row has to clear is the reserve MINUS its own share
+			# of the checklist: a row may spend the money that was being held for
+			# it, and may not spend the money being held for its neighbours.
+			if prices[i] > 0 and api.balance() - prices[i] < reserve() - prices[i]:
+				continue
+			if _serve(api, wanted[i]):
 				# The hour's ACTION is spent, but the two per-hour accruals are
 				# bookkeeping rather than actions — skipping them would make a
 				# studious agent quietly worse at maintenance than a lazy one.
@@ -2521,16 +2757,19 @@ class Curriculum extends Balanced:
 				return
 		super(api, hour)
 
-	## The active level's first unmet objective that a verb can advance.
-	func _next_objective(api: Api) -> Dictionary:
+	## The active level's unmet objectives that a verb can advance, in authored
+	## order — which is teaching order, and therefore the order a player works
+	## them.
+	func _unmet_objectives(api: Api) -> Array[Dictionary]:
+		var out: Array[Dictionary] = []
 		var view: Dictionary = api.sim.goals.view()
 		if bool(view.get("complete", true)):
-			return {}
+			return out
 		for raw: Variant in (view["objectives"] as Array):
 			var obj: Dictionary = raw
 			if not bool(obj["done"]) and not PASSIVE_KINDS.has(str(obj["kind"])):
-				return obj
-		return {}
+				out.append(obj)
+		return out
 
 	## What serving `obj` costs, or 0 when the answer is "nothing" or "unknown".
 	func _price_of(api: Api, obj: Dictionary) -> int:
@@ -2552,6 +2791,35 @@ class Curriculum extends Balanced:
 				# to protect the rung the agent is buying this game-hour.
 				var top := api.top_upgrade_candidate()
 				return 0 if top.is_empty() else int(top["cost"])
+			"upgrade_archetype":
+				# THREE prices, matching `_serve`'s three answers (doc 09
+				# §2.14.2's level 7): the upgrade itself, the first one of a type
+				# the city does not own, or the CAPACITY a headroom refusal is
+				# asking for. The earmark protects whichever of the three the
+				# hour is about to spend and never more than one, because the
+				# hour buys one thing.
+				var archetype := str(obj["archetype"])
+				var row := api.archetype_upgrade_candidate(archetype)
+				if not row.is_empty():
+					return int(row["cost"])
+				if api.archetype_count(archetype) == 0:
+					return api.build_cost(archetype)
+				var blocked := api.blocked_upgrade(archetype)
+				# `E_FUNDS` is the one blocker whose answer is *money*, and
+				# therefore the only one this earmark can price.
+				# `archetype_upgrade_candidate` cannot report it — it filters on
+				# a preview that `E_FUNDS` fails — so without this arm the most
+				# expensive row in the game (the $207,000 data-centre step) was
+				# the one row the agent never saved for.
+				#
+				# **A HEADROOM blocker is priced at ZERO on purpose.** Its fix is
+				# a transformer or a pump, and one of those unblocks ALL the rows
+				# it is short for; pricing it per row would earmark twelve copies
+				# of one purchase and starve the checklist it was protecting.
+				# `_serve` buys it, once, on its own cooldown.
+				if blocked.is_empty() or String(blocked["blocker"]) != "E_FUNDS":
+					return 0
+				return int(blocked["cost"])
 			"buy_block":
 				var block := api.purchasable_block()
 				if block == "":
@@ -2606,6 +2874,27 @@ class Curriculum extends Balanced:
 				if tile.x < 0:
 					return false
 				return bool(api.place_grid_component("transformer", tile, level)["ok"])
+			"upgrade_archetype":
+				# THREE answers, in the order a player would try them, and the
+				# third one is the level's actual lesson.
+				var archetype := str(obj["archetype"])
+				var row := api.archetype_upgrade_candidate(archetype)
+				if not row.is_empty():
+					return bool(api.upgrade(String(row["sim_id"]))["ok"])
+				if api.archetype_count(archetype) == 0:
+					# Buy the first one. `data_center` is what this branch exists
+					# for — no earlier level ever mentions it, so at level 7 the
+					# city has never owned one.
+					if api.min_city_level(archetype) > api.city_level():
+						return false
+					return bool(api.place(archetype)["ok"])
+				# It exists and the gate refused it. Doc 92 §61.4: on the arc
+				# the grants produce, the refusal is not money — it is
+				# `E_POWER_HEADROOM` or `E_WATER_HEADROOM` on a city that grew
+				# faster than its own utilities. The answer to a headroom
+				# refusal is CAPACITY, bought where the refusal happened, and it
+				# is exactly what the building panel tells the player to do.
+				return _relieve(api, api.blocked_upgrade(archetype))
 			"set_tax_rate":
 				# One detent up, which is the smallest real move the slider
 				# makes. The objective teaches that the slider EXISTS and that
@@ -2632,6 +2921,61 @@ class Curriculum extends Balanced:
 					return false
 				return bool(api.repair(String(worst[0]["sim_id"])).get("ok", false))
 		return false
+
+	## Buy the capacity a blocked upgrade is short of (Wave 22, doc 92 §61.4).
+	## `blocked` is [Api.blocked_upgrade]'s row, or `{}` for "nothing is blocked",
+	## in which case this spends nothing and returns false so the hour falls
+	## through to the growth ladder.
+	##
+	## Two blockers are answerable and the rest are not, deliberately:
+	## `E_POWER_HEADROOM` buys a parallel transformer at the building that was
+	## refused (the same move `upgrade_to_level` already makes for the tower
+	## tier), and `E_WATER_HEADROOM` buys a pump. `E_CONDITION` is answered by
+	## the maintenance purse `Balanced` already runs, `E_STATE` by waiting for
+	## the crew, and `E_AVENUE` by doc 10's road tool — all three are somebody
+	## else's hour, and an agent that tried to answer them here would be doing
+	## the level's work twice.
+	##
+	## **[RELIEF_COOLDOWN_H] is what makes this an agent and not a leak.** A
+	## bought pump is not a *supplying* pump until its crew is done, so the
+	## refusal it was bought for is still standing the next game-hour — and the
+	## first version of this method answered that by buying another one, every
+	## hour, for as long as the row stayed open. Measured (doc 92 §61.4): seed
+	## 9001 bought **64 pumps for $2,946,924** and still did not finish the level.
+	## One game-day is the wait a player takes before deciding the last thing they
+	## bought did not work, and it is longer than any single water or grid
+	## component takes to build.
+	func _relieve(api: Api, blocked: Dictionary) -> bool:
+		if blocked.is_empty():
+			return false
+		if api.hour - _relief_hour < RELIEF_COOLDOWN_H:
+			return false
+		# **The clock starts on the PURCHASE, not on the attempt**, and the
+		# difference is measured: charging the cooldown for a failed attempt took
+		# the arc from two seeds finishing level 7 to none, because a city whose
+		# map is momentarily full gets one try a game-day and spends the level
+		# waiting. A failed relief buys nothing, so there is nothing to wait for.
+		var bought := false
+		# Both arms try the SAME two doors in the same order — build beside it,
+		# and if the map has no room left, build it taller. A full map is not a
+		# hypothetical here: seed 9001 reaches level 7 with 328 apartments and
+		# 164 offices standing (doc 92 §61.4).
+		match String(blocked["blocker"]):
+			"E_POWER_HEADROOM":
+				var level := int(blocked["transformer_level"])
+				var tile := api.relief_spot_near(blocked["tile"], level, HOTSPOT_RADIUS)
+				bought = tile.x >= 0 and bool(api.place_grid_component(
+						"transformer", tile, level)["ok"])
+				if not bought:
+					bought = bool(api.upgrade_grid_component(
+							String(blocked.get("power_at", "")))["ok"])
+			"E_WATER_HEADROOM":
+				bought = bool(api.place_water_component("pump", 1).get("ok", false))
+				if not bought:
+					bought = bool(api.upgrade_water_node()["ok"])
+		if bought:
+			_relief_hour = api.hour
+		return bought
 
 	## How much of a road objective is left to lay, floored at one tile. The
 	## agent lays the REMAINDER in one run rather than the whole target, so a

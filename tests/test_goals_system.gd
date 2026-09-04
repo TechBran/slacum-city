@@ -27,7 +27,13 @@ const PLAYER_REACHABLE_KINDS: Array[String] = [
 	# `upgrade_to_level` rides the same building-panel button as
 	# `upgrade_building` — it counts the same command, filtered by the rung
 	# the upgrade reaches — so if one is reachable the other is.
-	"upgrade_building", "upgrade_to_level", "buy_block", "develop_block",
+	# `upgrade_archetype` (Wave 22) is the third reading of the SAME button:
+	# `upgrade_building` counts every press, `upgrade_to_level` filters by the
+	# rung the press reaches, and this one filters by the archetype the pressed
+	# building is. One door, three counters — so if the building panel's UPGRADE
+	# is reachable, all three are.
+	"upgrade_building", "upgrade_to_level", "upgrade_archetype",
+	"buy_block", "develop_block",
 	"set_tax_rate",
 	"resolve_incidents", "reach_population", "reach_happiness",
 	"reach_stability", "reach_treasury", "survive_no_abandonment",
@@ -548,3 +554,123 @@ static func _place_transformer(sim: CitySim) -> bool:
 						"transformer", Vector2i(x, z), 1)["ok"]):
 					return true
 	return false
+
+
+# ===========================================================================
+# 8. The capstone rung (Wave 22, doc 09 §2.14.2 level 7)
+# ===========================================================================
+
+## The one row in `data/goals.json` that names a set rather than a target: every
+## archetype the build sheet offers has an objective, and no archetype has two.
+func test_the_capstone_asks_for_every_archetype_exactly_once() -> void:
+	var top := GoalSystem.top_level()
+	var row := GoalSystem.level_row(top)
+	assert_false(row.is_empty(), "the ladder has a top rung with a curriculum row")
+	var wanted: Dictionary = {}
+	for raw: Variant in (row["objectives"] as Array):
+		var obj: Dictionary = raw
+		if String(obj["kind"]) != "upgrade_archetype":
+			continue
+		var archetype := str(obj.get("archetype", ""))
+		assert_false(wanted.has(archetype),
+				"%s is asked for twice on the capstone rung" % archetype)
+		wanted[archetype] = true
+	var sim := _sim()
+	var offered: Array[String] = []
+	for raw: Variant in sim.catalog.archetypes():
+		offered.append(String(raw))
+	offered.sort()
+	# Doc 09 §2.14.2's `_archetype_scope`: the roster is the BUILD SHEET's, which
+	# filters nothing, so civic and utility stock is in it. A curriculum row that
+	# named eleven of the twelve would be a graduation with a hole in it, and the
+	# hole would be silent.
+	assert_eq(wanted.size(), offered.size(),
+			"every placeable archetype has a capstone row")
+	for archetype in offered:
+		assert_true(wanted.has(archetype),
+				"%s has no capstone row" % archetype)
+
+
+## The new evaluator kind, end to end on a real city: the counter ticks on the
+## COMMAND, it is filtered by archetype, and an upgrade of a different archetype
+## does not answer it.
+func test_upgrade_archetype_counts_its_own_archetype_and_no_other() -> void:
+	var goals := GoalSystem.new()
+	var top := GoalSystem.top_level()
+	goals.earned_level = top - 1
+	var row := GoalSystem.level_row(top)
+	var house := _archetype_objective(row, "house")
+	var store := _archetype_objective(row, "store")
+	assert_false(house.is_empty(), "the capstone asks for a house")
+	assert_false(store.is_empty(), "the capstone asks for a shop")
+	goals.observe({"type": &"upgrade_started_sim", "sim_id": "X", "to_level": 2,
+			"cost": 1380, "archetype": "store"})
+	assert_eq(int(goals.progress.get(str(house["id"]), 0)), 0,
+			"a shop upgrade did not answer the house row")
+	assert_true(bool(goals.done.get(str(store["id"]), false)),
+			"and it did answer the shop row")
+	goals.observe({"type": &"upgrade_started_sim", "sim_id": "Y", "to_level": 2,
+			"cost": 1380, "archetype": "house"})
+	assert_true(bool(goals.done.get(str(house["id"]), false)),
+			"a house upgrade answers the house row")
+	# An event with NO archetype answers nothing rather than answering the first
+	# row — the safe direction, and the one a stale emit site would land in.
+	var office := _archetype_objective(row, "office")
+	goals.observe({"type": &"upgrade_started_sim", "sim_id": "Z", "to_level": 2})
+	assert_eq(int(goals.progress.get(str(office["id"]), 0)), 0,
+			"an upgrade event with no archetype answers no archetype row")
+
+
+## The field the kind depends on, asserted at the EMIT SITE rather than on a
+## fixture — this is the join that would break silently if `cmd_upgrade_building`
+## were ever rewritten, and the symptom would be a capstone nobody can finish.
+func test_the_upgrade_event_carries_the_archetype_it_upgraded() -> void:
+	var sim := _sim()
+	# A founding city is level 0 and doc 02 §2.11's gate refuses every L1 → L2
+	# step with `E_CITY_LEVEL`; the rung is granted through the one monotone
+	# writer, exactly as the population route would.
+	sim.publish_progression(sim.progression.grant_level(2))
+	var target := ""
+	var expected := ""
+	for raw: Variant in sim.roster_ids():
+		var b: Building = sim.buildings[String(raw)]
+		if b.state != &"active" or b.level >= b.max_level:
+			continue
+		if bool(sim.cmd_upgrade_building(String(raw), true)["ok"]):
+			target = String(raw)
+			expected = String(b.archetype)
+			break
+	assert_true(target != "", "the starter city has something it can upgrade")
+	sim.bus.drain()
+	assert_true(bool(sim.cmd_upgrade_building(target)["ok"]), "and it upgraded")
+	var seen := ""
+	for raw: Variant in sim.bus.drain():
+		var event: Dictionary = raw
+		if String(event.get("type", "")) == "upgrade_started_sim":
+			seen = str(event.get("archetype", ""))
+	assert_eq(seen, expected,
+			"upgrade_started_sim carries the archetype that went up a rung")
+
+
+## Doc 09 §2.14.4's bootstrap rule, at the new rung: an upgrade leaves no
+## observable residue, so a restored city starts the capstone at zero rather
+## than being credited for work nobody recorded.
+func test_the_capstone_leaves_no_residue_to_bootstrap_from() -> void:
+	var row := GoalSystem.level_row(GoalSystem.top_level())
+	for raw: Variant in (row["objectives"] as Array):
+		var obj: Dictionary = raw
+		if String(obj["kind"]) != "upgrade_archetype":
+			continue
+		assert_eq(GoalSystem.residue_key(obj), "",
+				("%s: a city keeps no record of which archetypes it once "
+						+ "upgraded, so the key must be empty")
+						% str(obj["id"]))
+
+
+static func _archetype_objective(level: Dictionary, archetype: String) -> Dictionary:
+	for raw: Variant in (level["objectives"] as Array):
+		var obj: Dictionary = raw
+		if String(obj["kind"]) == "upgrade_archetype" \
+				and str(obj.get("archetype", "")) == archetype:
+			return obj
+	return {}

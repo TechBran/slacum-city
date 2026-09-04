@@ -238,15 +238,41 @@ func test_the_founding_assistance_tapers_on_a_clock() -> void:
 func test_a_level_up_grant_is_paid_once_per_rung() -> void:
 	var curves := _curves()
 	assert_eq(curves.level_up_grant(0), 0, "the founding level celebrates nothing")
-	assert_eq(curves.level_up_grant(1), 2500)
-	# Rungs 5 and 6 were re-derived in Wave 17 by doc 03 §2.5a's OWN rule — half
-	# of what the next chapter asks you to buy — because rung 5's basis is an
-	# upgrade and doc 93 §Y7 re-priced the upgrade ladder (73,572 → 58,350).
-	assert_eq(curves.level_up_grant(5), 29000)
-	assert_eq(curves.level_up_grant(6), 65000)
-	assert_eq(curves.level_up_grant(7), 0,
+	# RE-SCALED in Wave 22 (doc 92 §61) to the scale the player asked for —
+	# "each level … a few hundred thousand dollars", and $5,000,000 for the
+	# capstone. The curve between the two anchors is geometric at 1.08616, and
+	# the anchors themselves are the two claims worth asserting here.
+	assert_eq(curves.level_up_grant(1), 215000)
+	assert_eq(curves.level_up_grant(5), 300000)
+	assert_eq(curves.level_up_grant(6), 325000)
+	assert_eq(curves.level_up_grant(7), 5000000,
+			"the capstone rung pays the graduation the player named")
+	assert_eq(curves.level_up_grant(8), 0,
 			"a level above the published ladder pays nothing rather than "
 			+ "extrapolating itself")
+	# **The curve rises and never doubles back**, which is the shape assertion
+	# the old six-cell table never had and which a re-scale most needs: a rung
+	# that paid less than the one below it would be the game asking the player
+	# to stop climbing.
+	var previous_grant := 0
+	for level in range(1, GoalSystem.top_level() + 1):
+		var grant := curves.level_up_grant(level)
+		assert_true(grant > previous_grant,
+				"rung %d pays more than rung %d" % [level, level - 1])
+		previous_grant = grant
+	# **Every rung of the ladder has a grant row**, asserted against
+	# `GoalSystem.top_level()` rather than against a number, because this
+	# project's signature defect is a level the ladder can reach that no data row
+	# describes. A seventh curriculum rung with a six-cell grant table would have
+	# celebrated the hardest level in the game by paying nothing.
+	assert_eq(GoalSystem.top_level(),
+			(curves.grants()["LEVEL_UP_GRANT_BY_CITY_LEVEL"] as Array).size() - 1,
+			"the grant table has exactly one row per curriculum rung, plus the "
+			+ "founding level's zero")
+	assert_eq(GoalSystem.top_level(), ProgressionSystem.city_level_pop().size() - 1,
+			"and the population ladder reaches the same top rung — "
+			+ "`grant_level` clamps to it, so a curriculum rung above it could "
+			+ "be earned in `GoalSystem` and never paid")
 
 	var sim := CitySim.boot_from_files(SEED)
 	var before := sim.treasury.balance
@@ -259,8 +285,8 @@ func test_a_level_up_grant_is_paid_once_per_rung() -> void:
 		var event: Dictionary = event_variant
 		if String(event.get("type", "")) == "level_up_grant_paid":
 			paid.append(int(event["amount"]))
-	assert_eq(paid, [2500, 7000] as Array[int], "both rungs, in order")
-	assert_eq(sim.treasury.balance, before + 9500)
+	assert_eq(paid, [215000, 235000] as Array[int], "both rungs, in order")
+	assert_eq(sim.treasury.balance, before + 450000)
 
 	# And a rung is never sold twice — `city_level` is monotone, so a repeat
 	# event for ground already covered pays nothing.
@@ -308,8 +334,14 @@ func test_the_dispatchers_premium_grows_with_the_city_and_nothing_else_does() ->
 				"the curve at level %d is the authored one" % level)
 		assert_true(mult > previous, "and it is monotone at level %d" % level)
 		previous = mult
+	# The top of the ladder is READ, not written down: it was 6 and the assertion
+	# said `6.00`, and Wave 22's seventh rung moved the answer to 6.90 without
+	# moving one authored number (`base` 1.50 + `k` 0.90 × 6). A gate that names
+	# a rung by number goes stale on the next wave that adds one.
 	assert_almost_eq(curves.manual_dispatch_mult_at_level(GoalSystem.top_level()),
-			6.00, 1e-9, "and reaches 6.00x at the top of doc 09's ladder")
+			base + k * float(GoalSystem.top_level() - 1), 1e-9,
+			"and reaches the authored curve's own value at the top of doc 09's "
+			+ "ladder — 6.90x at the seven-rung ladder Wave 22 published")
 
 	# (3) and (4): the runtime, not the table. A booted city, one incident type
 	# with a PRICED target and one with an unpriced one, at level 1 and at the top
