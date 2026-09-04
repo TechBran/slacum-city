@@ -10314,7 +10314,13 @@ it is arithmetic rather than taste. From `data/economy.json` and doc 02 §2.12:
 
 **Break-even: 30 / 9.00 = 3.3 buildings.** A fire station pays for itself the
 moment it keeps four buildings out of the condemned rung — permanently, because a
-suppressed fire leaves the building earning and an unanswered one does not. The
+suppressed fire leaves the building earning and an unanswered one does not.
+*(The per-building figure divides a measured city gross by a roster the census
+says is uniformly condemned, so it is an average and not a quote for any one
+building; it is an order-of-magnitude derivation and it is published as one. The
+inequality it supports does not turn on the third digit — the station would have
+to cost eighteen times its authored $30.00/gh before the arithmetic reversed on
+a 68-building city.)* The
 same save sees tens of unanswerable fires a game-day. The station is never the
 worse trade, and that is before doc 02's `req_fire_coverage` upgrade gate, doc
 09's happiness term, and every non-fire incident the same fleet answers.
