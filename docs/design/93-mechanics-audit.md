@@ -5128,8 +5128,8 @@ that. The station is a ruin, restoring it costs money the collapse has already
 taken, and every fire deletes another building — an unbounded ratchet driven by
 the absence of a purchase the player cannot make.
 
-**"Could not answer" is two facts the game already records, and neither is a
-choice the player made:**
+**"Could not answer" is THREE facts the game already records, and none of them
+is a choice the player made** (`CityIncidentWorld._could_have_answered`):
 
 * `IncidentSystem.incident_was_answerable` — **nothing is committed** to the
   incident AND `DispatchSystem` marked it `unreachable`, i.e. it had candidate
@@ -5137,10 +5137,28 @@ choice the player made:**
   `dispatch_blocked_no_units` is deliberately NOT in this bucket: a city with a
   department and no free engine made a fleet-sizing choice, and doc 06 §2.16's
   whole dispatch economy rests on that choice having consequences.
-* `CityIncidentWorld._has_fire_department` — the city has **no fire station
-  standing at all**. A city-level fact and deliberately not a per-tile coverage
-  reading: gating on `coverage_fire(tile)` would make "build far from the
-  station" a fireproofing strategy, which is the farm this ruling must not open.
+* **no fire station standing at all.** A city-level fact and deliberately not a
+  per-tile coverage reading: gating on `coverage_fire(tile)` would make "build
+  far from the station" a fireproofing strategy, which is the farm this ruling
+  must not open.
+* **AND `Treasury.austerity_active`.** Doc 03 §2.10 layer 2 lists `construction`
+  in `AUSTERITY_BLOCKED_CATEGORIES`, so under austerity the game itself REFUSES
+  to let the player build a fire station or repair the road that would have
+  carried the engine. Above austerity it refuses neither.
+
+**The third clause is gate 29's, and gate 29 was right.** The first draft asked
+only the first two, and the shipped suite answered with a number: `do_nothing` on
+`standard` stopped going insolvent until game-day 165 and on `casual` never went
+insolvent inside 210 game-days at all. The reason is that a `do_nothing` city
+lets its own fire station rot — and the moment wear took the last one, the draft
+handed that city, sitting on a peak balance of **$397,081**, the same protection
+this ruling was written for a player whose station a catastrophe took while the
+treasury was $22,624 under water. Those are not the same situation, and the
+difference is not the roster: it is whether the player had the option. Austerity
+is not a proxy for "could not afford it" — it is doc 03 refusing the purchase,
+which is exactly the thing §AR2 must not punish. (It turned out to cost gate 29
+nothing either way — doc 92 §58.7 attributes the entire gate-29 delta to §AR3 —
+but a ruling that is only right by accident is not right.)
 
 **Both doors, or the ruling buys one game-hour.** §AP2's damage floor is
 conditional — `if condition > floor_condition` — so a building already at the

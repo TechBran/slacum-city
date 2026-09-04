@@ -404,9 +404,9 @@ func apply_building_damage(id: String, fraction: float,
 	# `may_destroy` is doc 93 §AR2 on the DAMAGE door, on the same predicate the
 	# terminal door uses: a city with no fire department cannot answer, so an
 	# event may not finish a building §AR2 has already condemned. See
-	# [Building.apply_damage] and [_has_fire_department].
+	# [Building.apply_damage] and [_could_have_answered].
 	_publish(id, b, b.apply_damage(fraction, now_minutes(),
-			answerable and _has_fire_department()))
+			_could_have_answered(answerable)))
 
 
 func set_building_condition_floor(id: String, condition: float) -> void:
@@ -467,8 +467,9 @@ func destroy_building(id: String, _cause: String, answerable: bool = true) -> vo
 	#     `IncidentSystem.incident_was_answerable`: nothing is committed to this
 	#     incident AND `DispatchSystem` marked it `unreachable`, i.e. it had
 	#     units, had permission, and doc 10's graph offered no route.
-	#   * `_has_fire_department()` — doc 02's reading, which doc 06 cannot make:
-	#     the city has no fire station standing at all.
+	#   * [_could_have_answered]'s own two clauses, which doc 06 cannot make:
+	#     the city has no fire station standing at all, AND doc 03 §2.10 layer 2
+	#     is blocking the `construction` that would build one.
 	#
 	# It stays possible to lose a building to fire: a city that HAS a department,
 	# CAN reach the fire, and loses it anyway still loses the building through
@@ -490,7 +491,7 @@ func destroy_building(id: String, _cause: String, answerable: bool = true) -> vo
 	# A MUTUAL-AID FEE WAS CONSIDERED AND REJECTED: a bill an insolvent city
 	# cannot pay becomes deferred liability, which is the unbounded ratchet this
 	# ruling exists to end, wearing a different hat.
-	if not (answerable and _has_fire_department()):
+	if not _could_have_answered(answerable):
 		_publish(id, b, b.condemn_unanswered(destroy_allowed(), now_minutes()))
 		return
 	if b.state == &"on_fire":
@@ -505,21 +506,54 @@ func destroy_building(id: String, _cause: String, answerable: bool = true) -> vo
 		_publish(id, b, b.demolish(destroy_allowed(), now_minutes()))
 
 
-## Doc 93 §AR2's predicate: has the city a fire station that is STANDING?
+## Doc 93 §AR2's predicate: **could the city have bought the answer?**
 ##
-## A city-level fact and deliberately not a per-tile coverage reading. Coverage
-## falls off with distance, so gating on `coverage_fire(tile)` would make
-## "build far from the station" a fireproofing strategy — the farm the ruling
-## must not open. "Do you have a fire department at all?" is a fact the player
-## can see on one screen and change with one build, which is what makes the
-## ruling a floor rather than a shield.
+## True — meaning the terminal outcome demolishes as it always did — whenever
+## the city has a standing fire station, OR could build one and did not.
 ##
-## `destroyed` and `planned` do not count; `under_construction` does not either,
-## because a station that has not opened cannot roll an engine. `damaged` DOES
-## count — doc 02 §2.12 still gives it `coverage_mult` 0.25, so it is a
-## department, just a poor one, and a city that lets its only station rot to the
-## condemned line has made a choice this ruling should not protect it from.
-func _has_fire_department() -> bool:
+## **The second clause is gate 29, and gate 29 was right** (doc 92 §58.7). The
+## first draft asked only "is a station standing", and the shipped suite
+## answered with a number: `do_nothing` on `standard` stopped going insolvent
+## until game-day 165 and on `casual` never went insolvent inside 210 game-days
+## at all. The reason is that a `do_nothing` city LETS its own fire station rot —
+## and the moment wear took the last one, the draft handed that city the same
+## protection it was written for the 2026-09-03 player, whose station a
+## catastrophe took while the treasury was $22,624 under water. Those are not the
+## same situation, and the difference is not the roster. It is whether the player
+## had the option.
+##
+## **`Treasury.austerity_active` IS that option, and it is not a proxy for it.**
+## Doc 03 §2.10 layer 2 lists `construction` in `AUSTERITY_BLOCKED_CATEGORIES`,
+## so under austerity the game itself REFUSES to let the player build a fire
+## station. Punishing them for not making a purchase the rules forbid is the
+## thing §AR2 exists to stop; declining to punish a solvent city with $397,081 in
+## the bank for the same omission is not. One published, persisted flag, already
+## in the save and already in the state hash, and it moves the ruling from "do
+## you have one" to "could you have had one" — which is what it always meant.
+##
+## The station test is a city-level fact and deliberately not a per-tile coverage
+## reading. Coverage falls off with distance, so gating on `coverage_fire(tile)`
+## would make "build far from the station" a fireproofing strategy — the farm the
+## ruling must not open.
+##
+## `destroyed` and `planned` do not count as standing; `under_construction` does
+## not either, because a station that has not opened cannot roll an engine.
+## `damaged` DOES count — doc 02 §2.12 still gives it `coverage_mult` 0.25, so it
+## is a department, just a poor one.
+func _could_have_answered(answerable: bool) -> bool:
+	# **THE AUSTERITY GATE, and it covers BOTH halves for one reason.** Doc 03
+	# §2.10 layer 2 lists `construction` in `AUSTERITY_BLOCKED_CATEGORIES`, so
+	# under austerity the game itself refuses to let the player build a fire
+	# station OR repair the road that would have carried the engine. Above
+	# austerity it refuses neither, so a city with no department and a city with
+	# no route are both looking at a purchase they declined to make — and §AR2
+	# does not protect a choice. Below it, the rules forbid the purchase, and
+	# punishing a player for not making a forbidden purchase is the whole of what
+	# this ruling exists to stop.
+	if sim.treasury != null and not sim.treasury.austerity_active:
+		return true
+	if not answerable:
+		return false
 	for building_id in sim.buildings:
 		var b: Building = sim.buildings[building_id]
 		if b.archetype == &"fire_station" \

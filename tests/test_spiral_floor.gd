@@ -293,6 +293,29 @@ func test_an_upgrade_in_flight_is_condemned_not_lost() -> void:
 	assert_eq(b.level, 2, "at the level it had")
 
 
+## **THE GATE-29 CLAUSE.** A SOLVENT city with no fire department still loses the
+## building, because doc 03 §2.10 layer 2 is not blocking `construction` and a
+## fire station is therefore a purchase it declined to make. Without this the
+## shipped suite measured `do_nothing` on `casual` never going insolvent inside
+## 210 game-days — a city that let its own station rot, sitting on a peak balance
+## of $397,081, collecting the protection written for a player at -$22,624.
+func test_a_solvent_city_with_no_department_still_loses_the_building() -> void:
+	var sim := CitySim.boot_from_files()
+	for id in sim.roster_ids():
+		var station: Building = sim.buildings[id]
+		if station.archetype == &"fire_station":
+			station.demolish(true, 0)
+	sim.treasury.austerity_active = false
+	var sim_id := _first_private(sim)
+	var b: Building = sim.buildings[sim_id]
+	b.state = &"on_fire"
+	b.condition = 0.5
+
+	sim.incident_world.destroy_building(sim_id, "incident:1")
+	assert_eq(String(b.state), "destroyed",
+			"§AR2 protects an option the rules removed, not a choice")
+
+
 # ---------------------------------------------------------------- helpers
 
 func _first_of(sim: CitySim, archetype: StringName) -> String:
@@ -310,11 +333,19 @@ func _first_private(sim: CitySim) -> String:
 	return ""
 
 
+## Doc 93 §AR2's protection has THREE clauses, and a test that razed the stations
+## and left the treasury solvent would be asserting a shield the ruling refuses to
+## give: `_could_have_answered` returns true above austerity, because doc 03
+## §2.10 layer 2 is not blocking the `construction` that would rebuild one. So the
+## fixture puts the city in the state the ruling is written for — no department,
+## and the rules forbidding it a new one — which is exactly the 2026-09-03
+## player's state and not a `do_nothing` city's.
 func _raze_every_fire_station(sim: CitySim) -> void:
 	for id in sim.roster_ids():
 		var b: Building = sim.buildings[id]
 		if b.archetype == &"fire_station":
 			b.demolish(true, 0)
+	sim.treasury.austerity_active = true
 
 
 func _events_of(sim: CitySim, type: StringName) -> Array:

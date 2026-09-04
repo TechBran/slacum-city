@@ -10075,3 +10075,85 @@ wave is a floor under a fallen city and nothing else.
 fix for a collapsed city's spent allowance is a persisted latch, `Treasury.serialize()`
 is inside `state_hash()`, and a bit would cost all four of these rows. Doc 91
 A91-D-112 carries it.
+
+### 58.7 Gate 29 re-fitted, and what it had been measuring
+
+The full suite failed gate 29 — *"neglect has stopped being fatal"* on `casual`
+and `standard` — and the failure was correct and worth the whole of this
+subsection. **A gate that fires on a wave's headline ruling is the most useful
+thing that can happen to it**, and the first job was not to re-fit the number but
+to find out which of the three rulings moved it.
+
+**The instrument.** `tools/measure_gate29.gd`, new: it calls
+`tests/balance_gate_rig.gd` with gate 29's own arguments and applies gate 29's
+own hour-resolution scan. It exists because `tools/measure_insolvency.gd` is a
+*different reading* of the same question — it answers **49** on `hard` where this
+gate answers **47** — and re-fitting a pinned constant against a number a
+different instrument produced is how a constant stops meaning what its note says.
+
+**The attribution**, seed 1337, with §AR3's one guard in
+`CitySim.build_settlement_inputs` toggled and everything else in Wave 20 left on:
+
+| preset | horizon | §AR3 **off** | §AR3 **on** (shipped) | delta | peak open incidents (off → on) |
+|---|---|---|---|---|---|
+| `casual` | 210 / 300 | 192 | **258** | **+66** | 10 → 14 |
+| `standard` | 160 / 200 | 136 | **167** | **+31** | 36 → 36 |
+| `hard` | 120 | 47 | **47** | **0** | 2 → 36 |
+| `crisis` | 70 | 19 | **19** | **0** | 1 → 1 |
+
+**Three findings, in order of how much they should change a reader's mind.**
+
+**(a) §AR1 and §AR2 move this gate by ZERO.** The §AR3-off column is the fork,
+reproduced: **136** against the constant's own pinned `STANDARD_LIFETIME_DAYS`
+137, and **192** against the 193 that constant's Wave-17 note records as
+`casual`'s worst seed. The condemn rulings — the utility spine, the unanswerable
+fire — cost a neglected city nothing at all, because a condemned building is
+billed 2.35× (it sits at condition 0.10) where a ruin was billed 2.5×, and it
+goes on paying doc 03's `f_condition` 0.46 on 0.40 occupancy either way. The
+whole 31-and-66-game-day delta is **one guard**.
+
+**(b) `hard` and `crisis` do not move at all** — 47 and 19, to the game-day, in
+both arms. A city that runs out of money on game-day 47 never accumulates enough
+ruins for the bill to matter. The ruling bites exactly where the ruins are, which
+is the property you want from a floor and cannot get from a difficulty knob.
+
+**(c) So gate 29 was partly measuring a defect, and it was measuring it on the
+two presets a player actually chooses.** "Neglect is fatal" was being carried, on
+`casual` and `standard`, by doc 91 A91-D-111: a destroyed building billed at
+`(1 + MAINT_CONDITION_PENALTY × 1)` = **2.5×** and a destroyed station at
+`(1 + ASSET_CONDITION_PENALTY_COEFF × 1)` = **3.0×** what the same asset costs in
+perfect repair, so every building a neglected city lost made its bill go up. That
+is a ratchet, and a gate that depends on one is asserting the ratchet.
+
+**The re-fit is therefore a re-fit and not a relaxation.** Neglect is still fatal
+on all four presets, still strictly ordered `casual > standard > hard > crisis`
+(258 > 167 > 47 > 19), and still finite on the preset the constant's own note
+worries about — *"a preset on which standing still never costs anything is a
+preset with no game in it"*. It simply takes 66 more game-days on `casual`,
+because the city stops paying wages to buildings that burned down.
+
+| constant | before | after | derivation |
+|---|---|---|---|
+| `PRESET_HORIZON_DAYS.casual` | 210 | **300** | insolvency at 258, keeping the old ~1.09× headroom over it (210/193) |
+| `PRESET_HORIZON_DAYS.standard` | 160 | **200** | insolvency at 167 (165–172 across three seeds) |
+| `PRESET_HORIZON_DAYS.hard` / `.crisis` | 120 / 70 | **unmoved** | both presets measure to the game-day what they measured |
+| `PRESET_LIFETIME_CEILING` | 200 | **290** | ten game-days under the horizon, exactly as 200 was under 210 |
+| `PRESET_LIFETIME_FLOOR` | 18 | **unmoved** | `crisis` measures 19, unmoved |
+| `STANDARD_LIFETIME_DAYS` | 137 | **167** | the +31 attributed above |
+| `STANDARD_LIFETIME_BAND` | 12 | **unmoved** | the three-seed spread NARROWED 10 → **7** (165 / 167 / 172 on 1337 / 4242 / 9001), so the band already covers it twice over |
+| `PRESET_MAX_OPEN_INCIDENTS` | 40 | **unmoved** | see below |
+
+**The one number this pass declines to move, and the margin it is recording.**
+`PRESET_MAX_OPEN_INCIDENTS` stays at 40, but its note's claim that "a `do_nothing`
+city inside these horizons measures 0 or 1" is now false and has been corrected in
+place. `standard` peaks at **36 in BOTH arms** — so that is not Wave 20's doing,
+it is the router's, and no previous pass had measured it. `hard` moves 2 → 36 and
+`casual` 10 → 14, which IS this wave: a city that keeps its buildings keeps their
+ignition sources. **Four of forty is the thinnest margin in the balance file**,
+and it is recorded rather than widened, because widening a ceiling to fit a
+measurement is how a tripwire stops being one. It is the first ranked open
+question of this lane.
+
+**The cost.** `casual`'s horizon 210 → 300 makes gate 29 — already the slow one —
+about 43 % longer on that preset. It is the minimum honest horizon: the gate
+cannot assert that a city dies without running until it does.

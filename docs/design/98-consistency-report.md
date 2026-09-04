@@ -9016,10 +9016,17 @@ a ruin and restoring it costs money the collapse has already taken — so the fi
 door was an unbounded ratchet driven by the absence of a purchase the player could
 not make.
 
-**"Could not answer" is two facts the game already records, and neither is a
+**"Could not answer" is three facts the game already records, and none is a
 choice the player made:** nothing committed to the incident AND `DispatchSystem`
 marked it `unreachable` (it had units, had permission, and doc 10's graph offered
-no route); or the city has no fire station standing at all.
+no route); the city has no fire station standing at all; **and
+`Treasury.austerity_active`** — doc 03 §2.10 layer 2 lists `construction` in
+`AUSTERITY_BLOCKED_CATEGORIES`, so under austerity the game itself refuses to let
+the player build a station or repair the road. **The third clause is gate 29's**:
+without it a `do_nothing` city that let its own station rot, sitting on a peak
+balance of $397,081, got the same protection as a player whose station a
+catastrophe took at −$22,624. §AR2 protects an option the rules removed, not a
+choice the player made.
 `dispatch_blocked_no_units` is deliberately excluded — a department with no free
 engine is a fleet-sizing choice, and doc 06 §2.16's dispatch economy rests on that
 choice having consequences. The department test is a city-level fact and not a
