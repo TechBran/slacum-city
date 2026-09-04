@@ -638,6 +638,17 @@ func development_phases() -> Array:
 	return _development.get("phases", [])
 
 
+## Every `dev_terrain` §2.8 prices, ascending — the data file's own list rather
+## than a copy of it. Wave 25's bounds are checked over all of them
+## (`tests/test_land_works.gd`, doc 92 §66.3), and a terrain added to
+## `terrain_phase_mult` without a bound to hold is exactly the kind of thing a
+## literal list in a test would not notice.
+func development_terrains() -> Array:
+	var out: Array = (_development.get("terrain_phase_mult", {}) as Dictionary).keys()
+	out.sort()
+	return out
+
+
 func development_phase_index(phase: Variant) -> int:
 	if phase is int:
 		return int(phase)
@@ -677,6 +688,153 @@ func development_total_cost(dev_terrain: String, d: float = 0.0,
 	for index in development_phases().size():
 		total += development_phase_cost(index, dev_terrain, d, arterial_connections, m_dev)
 	return total
+
+
+# ============================ §2.8b what the crews find — the `land_works` line
+#
+# Doc 03 §2.8b, doc 92 §66, ruling 93 §AZ. A block being dug out gives some of
+# the dig back: timber off the CLEARING, fill and aggregate off the GRADING,
+# spoil (and occasionally something better) off the UTILITY_CORRIDOR. This
+# section prices ONE find; `CitySim._credit_land_works` is the only caller, the
+# `land_works` RNG stream is the only roll, and doc 03 owns every number below
+# through `data/economy.json.development.works_yield` (C-07).
+#
+# **There is no terrain table here and that is the design.** A yield is a
+# fraction of THAT PHASE'S OWN COST, and §2.8's `terrain_phase_mult` already
+# says clearing a forest costs 1.90x and grading rock costs 2.80x — so a forest
+# block yields 1.90x the timber and a rocky one 2.80x the aggregate out of a
+# table this doc already publishes, with nothing new to keep in step. `M_dev` is
+# inside the phase cost for the same reason: a harder difficulty charges more
+# AND hands proportionally more back, and the RATIO is difficulty-invariant.
+
+## The whole `works_yield` block, or `{}` on a data file that predates it — in
+## which case every function below returns zero and the feature is simply off.
+func works_yield() -> Dictionary:
+	return _development.get("works_yield", {})
+
+
+## Doc 09 spells a phase `&"UTILITY_CORRIDOR"`; doc 03 spells it
+## `"utility_corridor"`. Every entry point below takes either (or the 0-based
+## index), and this is the ONE place the two spellings meet — a second
+## `.to_lower()` anywhere else in this file would be a second place for them to
+## drift.
+static func works_phase_key(phase: Variant) -> Variant:
+	return phase if phase is int else String(phase).to_lower()
+
+
+## The three rows, in phase order. Each is `{id, material, low, high, stockpiles}`.
+func works_yield_rows() -> Array:
+	return (works_yield().get("phases", []) as Array)
+
+
+## The row for a development phase id (`"clearing"`, `&"CLEARING"`, `1`, …), or
+## `{}` for the three phases that yield nothing. Accepts the same `phase`
+## spellings `development_phase_cost` does, so a caller never converts.
+func works_yield_row(phase: Variant) -> Dictionary:
+	var index := development_phase_index(works_phase_key(phase))
+	if index < 0:
+		return {}
+	var id := String((development_phases()[index] as Dictionary).get("id", ""))
+	for raw: Variant in works_yield_rows():
+		if raw is Dictionary and String((raw as Dictionary).get("id", "")) == id:
+			return raw
+	return {}
+
+
+## **The ceiling** (ruling 93 §AZ2): the most a single block may ever hand back,
+## as dollars. `CEILING_FRACTION` × the block's own six-phase development bill,
+## so it scales with terrain, distance, road access and difficulty exactly as
+## the bill does. `CitySim` clamps the block's CUMULATIVE yield to this, which
+## is what makes "a block can never pay for its own development" a theorem.
+func works_yield_ceiling(dev_terrain: String, d: float = 0.0,
+		arterial_connections: int = 0, m_dev: float = 1.0) -> int:
+	return CostCurves.round_half_up(float(works_yield().get("CEILING_FRACTION", 0.0))
+			* float(development_total_cost(dev_terrain, d, arterial_connections, m_dev)))
+
+
+## One find, priced. `roll01` is the caller's draw off the `land_works` stream
+## (0 → the band's floor, 1 → its ceiling); `bonus` applies `BONUS_MULT`. The
+## result is rounded to `ROUNDING` dollars and is NOT yet clamped to the block's
+## ceiling — that is `CitySim`'s, because only the coordinator knows what this
+## block has already yielded.
+func works_yield_value(phase: Variant, dev_terrain: String, d: float = 0.0,
+		arterial_connections: int = 0, m_dev: float = 1.0,
+		roll01: float = 0.5, bonus: bool = false) -> int:
+	var row := works_yield_row(phase)
+	if row.is_empty():
+		return 0
+	var cost := float(development_phase_cost(works_phase_key(phase), dev_terrain, d,
+			arterial_connections, m_dev))
+	var fraction := lerpf(float(row.get("low", 0.0)), float(row.get("high", 0.0)),
+			clampf(roll01, 0.0, 1.0))
+	if bonus:
+		fraction *= float(works_yield().get("BONUS_MULT", 1.0))
+	return _round_to(fraction * cost, int(works_yield().get("ROUNDING", 1)))
+
+
+## §2.8b's published BAND for a block — the `Typically returns $X–$Y` line the
+## land panel shows BEFORE the player buys (doc 12 §2.8 D-117). The floor and
+## ceiling of the three rows summed, each clamped to the block's own ceiling.
+## The `copper` bonus is deliberately OUTSIDE the band: it fires on 12 % of
+## utility corridors and a range that quoted it would overstate the typical one.
+func works_yield_band(dev_terrain: String, d: float = 0.0,
+		arterial_connections: int = 0, m_dev: float = 1.0) -> Dictionary:
+	var cap := works_yield_ceiling(dev_terrain, d, arterial_connections, m_dev)
+	var low := 0
+	var high := 0
+	for raw: Variant in works_yield_rows():
+		if not (raw is Dictionary):
+			continue
+		var row: Dictionary = raw
+		var id := String(row.get("id", ""))
+		low += works_yield_value(id, dev_terrain, d, arterial_connections, m_dev, 0.0)
+		high += works_yield_value(id, dev_terrain, d, arterial_connections, m_dev, 1.0)
+	return {"low": mini(low, cap), "high": mini(high, cap), "ceiling": cap}
+
+
+## The share of a find that is KEPT AS MATERIAL rather than sold — and the
+## number is a hash, not a taste: `LandBlock.road_tiles_est()` puts **0.34** of
+## a block's usable ground under road, and 0.34 of what comes out of the ground
+## is what goes back into it. Applies only to the rows whose `stockpiles` flag
+## is true (fill and aggregate are road base; timber is not).
+func works_stockpile_share() -> float:
+	return float(works_yield().get("STOCKPILE_SHARE", 0.0))
+
+
+## The yard is a WORKING STOCK, not a bank: it holds at most what one phase may
+## ever take off — `STOCKPILE_MAX_OFFSET_FRACTION × (road_install +
+## utility_corridor)` on flat ground at d = 0, which is $4,125.
+func works_stockpile_cap() -> int:
+	return int(works_yield().get("STOCKPILE_CAP", 0))
+
+
+## What the yard takes off ONE phase's invoice: nothing at all unless the phase
+## is the one the materials were dug for (`road_install` / `utility_corridor`),
+## then the lesser of what is standing in the yard and
+## `STOCKPILE_MAX_OFFSET_FRACTION` of that phase's cost — 0.25, doc 03 §2.5's
+## own published `DEMOLITION_REFUND_FRACTION`, reused as "what a thing taken
+## apart is worth against the next one".
+func works_stockpile_offset(phase: Variant, cost: int, stockpile: int) -> int:
+	if cost <= 0 or stockpile <= 0:
+		return 0
+	var index := development_phase_index(works_phase_key(phase))
+	var phases: Array = development_phases()
+	if index < 0 or index >= phases.size():
+		return 0
+	var id := String((phases[index] as Dictionary).get("id", ""))
+	if id != "road_install" and id != "utility_corridor":
+		return 0
+	var ceiling := CostCurves.round_half_up(float(cost)
+			* float(works_yield().get("STOCKPILE_MAX_OFFSET_FRACTION", 0.0)))
+	return maxi(0, mini(stockpile, mini(ceiling, cost)))
+
+
+## Half-up to the nearest `step` dollars, so a receipt reads `$430` and not
+## `$427`. `step <= 1` is plain half-up rounding.
+static func _round_to(value: float, step: int) -> int:
+	if step <= 1:
+		return CostCurves.round_half_up(value)
+	return CostCurves.round_half_up(value / float(step)) * step
 
 
 # ================================================== §2.11 offline yield taper

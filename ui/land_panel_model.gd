@@ -163,6 +163,7 @@ func block_view(block_id: String) -> Dictionary:
 	var phases := _phases(block, d, m_dev)
 	var progress := _progress(block, phases)
 	var action := _action(block, stage, price)
+	var works := works_view(block, d, m_dev)
 	return {
 		"exists": true,
 		"block_id": block_id,
@@ -177,6 +178,7 @@ func block_view(block_id: String) -> Dictionary:
 		"advantages": advantages(block_id, inputs, price),
 		"phases": phases,
 		"progress": progress,
+		"works": works,
 		"action": action,
 		"blockers": action["blockers"],
 		"price": price,
@@ -184,6 +186,55 @@ func block_view(block_id: String) -> Dictionary:
 		"development_total": development_total,
 		"schedule_hours": schedule_hours,
 		"note_key": _note_key(stage),
+	}
+
+
+# ===========================================================================
+# §2.8b — what the crews find (doc 12 §2.8 D-117)
+# ===========================================================================
+
+## The excavation band, this block's running total and the city's materials
+## yard, as the rows the panel draws under the advantages.
+##
+## **The band is shown BEFORE the purchase and that is the point.** Doc 03 §2.8's
+## `Est. development` line has always told the player what a block will COST;
+## this is the other half of the same sentence, and it is derived from the same
+## table by the same function (`EconomySystem.works_yield_band`), so a retune of
+## `data/economy.json` moves the quote the same hour it moves the money. Nothing
+## here restates a fraction, a ceiling or a share.
+##
+## `Recovered so far` appears only once the block is the player's: a number that
+## reads `$0` on land nobody owns is a question the panel is not answering.
+## `Materials yard` is the CITY's stock, so it appears whenever there is any —
+## the block being read is not necessarily the block that filled it.
+func works_view(block: LandBlock, d: float, m_dev: float) -> Dictionary:
+	var band := sim.economy.works_yield_band(String(block.dev_terrain), d,
+			block.arterial_connections, m_dev)
+	var rows: Array[Dictionary] = []
+	var typical := _t("ui_land_works_typical_range", {
+		"low": HudModel.money_exact(int(band["low"])),
+		"high": HudModel.money_exact(int(band["high"])),
+	})
+	rows.append({"id": "typical", "label_key": "ui_land_works_typical",
+			"value": typical, "state": HudModel.STATE_NORMAL})
+	if block.is_owned():
+		rows.append({"id": "recovered", "label_key": "ui_land_works_recovered",
+				"value": HudModel.money_exact(block.works_yield_total)
+						if block.works_yield_total > 0
+						else _t("ui_land_works_none", {}),
+				"state": HudModel.STATE_NORMAL})
+	if sim.works_stockpile > 0:
+		rows.append({"id": "yard", "label_key": "ui_land_works_yard",
+				"value": HudModel.money_exact(sim.works_stockpile),
+				"state": HudModel.STATE_NORMAL})
+	return {
+		"typical_low": int(band["low"]),
+		"typical_high": int(band["high"]),
+		"typical_text": typical,
+		"ceiling": int(band["ceiling"]),
+		"recovered": block.works_yield_total,
+		"yard": sim.works_stockpile,
+		"rows": rows,
 	}
 
 
@@ -335,6 +386,16 @@ func _phases(block: LandBlock, d: float, m_dev: float) -> Array[Dictionary]:
 			progress01 = sim.construction.progress(job_id) if job_id > 0 else 0.0
 		var cost := sim.economy.development_phase_cost(index, String(block.dev_terrain),
 				d, block.arterial_connections, m_dev)
+		# Ruling 93 §AZ3's yard, quoted on the two phases it may pay towards —
+		# and only while they are still PENDING. A done phase already took
+		# whatever the yard held at the moment it was charged, and re-quoting
+		# today's yard against yesterday's invoice would print a discount the
+		# player never got; an ACTIVE phase has been charged too. So the offset
+		# is what the yard would take off this phase **if it were charged now**,
+		# which is the only honest thing a quote can be.
+		var offset := 0
+		if state == PHASE_STATE_PENDING:
+			offset = sim.economy.works_stockpile_offset(index, cost, sim.works_stockpile)
 		out.append({
 			"id": String(phase),
 			"index": index,
@@ -346,6 +407,11 @@ func _phases(block: LandBlock, d: float, m_dev: float) -> Array[Dictionary]:
 					"phase_bar_segments", 5))),
 			"cost": cost,
 			"cost_text": HudModel.money_exact(cost),
+			"stockpile_offset": offset,
+			"stockpile_offset_text": "" if offset <= 0 \
+					else _t("ui_land_works_yard_offset",
+							{"amount": HudModel.money_exact(offset)}),
+			"cost_net": cost - offset,
 			"crew_hours": sim.development.phase_crew_hours(phase, &"construction_crew",
 					bool(live.get("first_block", sim.development.is_first_block()))),
 		})

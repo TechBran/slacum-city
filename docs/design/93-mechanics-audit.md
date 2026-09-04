@@ -5804,3 +5804,148 @@ stability, and `f_arson` is `1 + 2.0 × max(0, 0.35 − stability)/0.35`, so a c
 that cannot answer anything triples its own ignition rate and keeps it there.
 That is a doc 06 / doc 09 re-fit with its own derivation and its own gate, and
 doc 91 A91-D-117 carries it.
+
+
+## AZ. Wave-25 rulings — what the ground is allowed to be worth, and whether "resources" is a number worth persisting (2026-09-04)
+
+*The lane's brief is one sentence from the player, 2026-09-04: "when we open up a
+new plot of land, we want construction animations for that land — to show that
+the land is being worked: digging it, materials. We will find materials from
+digging it out for the infrastructure. So potentially opening up a piece of land
+will give you resources and money back." §AZ1 rules on where the money is
+credited from; §AZ2 on what bounds it; §AZ3 on whether "resources" beyond cash
+earns its state; §AZ4 on what the render layer is allowed to read. Prices: doc 03
+§2.8b. Measured: doc 92 §66. Verbs and deltas: report 98 §69.*
+
+### AZ1. Who credits a find — the pipeline, or the coordinator?
+
+**Q.** `DevelopmentController` runs the six phases and knows exactly which one
+just finished. It is the obvious place to pay for what that phase turned up. Is
+it allowed to?
+
+**Ruling: no. `CitySim._credit_land_works` is the only writer, and the reason is
+already written on the controller's own header** — *"this controller never
+touches money; it only records what was started"*. That line was written for the
+CHARGE direction (`take_phase_charges` hands the coordinator a list and the
+coordinator prices it), and a credit that ignored it would leave the pipeline
+paying out on one side and asking on the other.
+
+Three things make the coordinator the honest place rather than merely the legal
+one. It holds the RNG streams, and a `RefCounted` sim class that reached for a
+stream it was not given would be the start of a second seeding path. It holds the
+treasury, and doc 03 §5's rule is that nothing outside `Treasury` moves the
+balance. And it already owns exactly this seam for exactly this pipeline: the two
+phase effects that reach outside the land block — `_stamp_block_roads` and
+`_extend_utility_corridor` — are the coordinator's for the same reason, and the
+credit is filed directly beneath them, in the same match, on the same drained
+event.
+
+**Order is part of the ruling.** The find is credited AFTER
+`development_phase_completed` has been emitted, never before. A receipt that
+arrived before the thing it is a receipt for would read, in the event log, as the
+crews being paid for work they had not finished.
+
+### AZ2. What bounds a find — and why a ceiling that never binds is a defect
+
+**Q.** The player asked for "money back". What stops that becoming "a block that
+pays for its own development"?
+
+**Ruling: a hard clamp on a PERSISTED cumulative per-block total, at
+`0.10 × the block's own six-phase bill`, and it is chosen so that it BINDS.**
+
+The clamp itself is the easy half. `LandBlock.works_yield_total` is persisted
+(doc 08 §2.8 rung 10) rather than derived, and that is not bookkeeping: a total
+that reset on load would let a player save, reload and be paid the ceiling twice,
+which is a duplication bug wearing a balance constant's clothes.
+
+The hard half is the VALUE, and the ruling here is about method. Doc 92 §66.3
+measures three bounds — under the smallest `road_install` share of any bill
+(0.2375), under `SALVAGE_FRACTION` (0.15), and **strictly above the maximum draw
+that can happen without the `copper` bonus (0.0845) while strictly below the
+maximum draw with it (0.1223)**. The third is the one this ruling exists for.
+
+**A ceiling set at 0.15 would have satisfied every stated requirement and would
+still have been wrong**, because at 0.15 no roll on any terrain at any distance
+can ever reach it. It would have been authored, documented, tested-for-presence
+behaviour that nothing consumes — this project's signature defect (A91-D-19's
+shape), written into a balance constant instead of into an event. A number in
+`data/economy.json` that cannot change any outcome is a number the next person to
+retune will move without knowing whether it mattered. **A bound must be reachable
+or it is decoration**, and this one is reachable exactly where a bound should be:
+on the best possible roll of the rarest event.
+
+### AZ3. Does "resources" beyond cash earn its state? — YES, at one integer
+
+**Q.** The brief asks whether a materials stockpile that discounts the next
+`road_install` / `utility_corridor` phase is worth its state, with the condition:
+ship it if it stays at one persisted number per city, say why if not.
+
+**Ruling: ship it. `CitySim.works_stockpile`, one integer, dollars of fill and
+aggregate, for the whole city.** It is the honest reading of the player's own
+words — the sentence is *"materials from digging it out **for the
+infrastructure**"*, and a find that could only ever be cash would drop the second
+half of it.
+
+**Four decisions make one integer enough:**
+
+1. **It is not a second currency.** A find has ONE value; `STOCKPILE_SHARE`
+   (0.34, the road share of a block's own ground — doc 92 §66.5) says how much of
+   that value is kept rather than sold. Cash and material always sum to the
+   find, so the ceiling in §AZ2 bounds both together and there is nothing to
+   balance twice.
+2. **It is per CITY, not per block.** A per-block inventory would be six or seven
+   integers the player can never see the whole of, and it would make the yard's
+   own story — *the fill from block 3 went into block 4's road* — impossible.
+   The heap is on a hardstanding; there is one hardstanding.
+3. **It is capped, and the cap means something.** `$4,125` is what one phase may
+   ever take off (doc 03 §2.8b). The yard is a working stock, not a bank.
+   Measured (doc 92 §66.5), it peaks at $1,383 on serial development and empties
+   itself on the very next phase — so the cap is honestly reported as a guard
+   against parallel pipelines rather than as a limit players will feel.
+4. **Nothing is ever lost.** When the yard is full the share that will not fit is
+   paid as cash instead. A resource system whose failure mode is "your material
+   evaporated" is one the player has to manage; this one has no failure mode.
+
+**And it is visible in three places, because a number that silently shrinks an
+invoice is the one thing a ledger may never contain.** The land panel names the
+yard and quotes the draw under the pending phase it would come off; the event log
+carries `land_works_stockpile_spent`; and `development_phase_charged` now carries
+`stockpile_offset` so the row's `cost` and the treasury's movement are the same
+number. Without those three the player would read `road_install $6,340` against a
+doc that publishes $7,500 and have nowhere to find the missing $1,160.
+
+**The one thing deliberately NOT shipped**: the yard cannot be spent by the
+player, sold, or moved. There is no verb. It is a discount that happens to them,
+and that is the whole of it — a resource with an inventory screen is a different
+game, and doc 93 §F's deferral list is where that belongs if it is ever wanted.
+
+### AZ4. What `LandWorksView` may read, and what it may never do
+
+**Q.** The render layer has never known anything about land development —
+`grep -rn "CLEARING\|GRADING\|development_state" game/` was empty before this
+wave. What is the new view allowed to read?
+
+**Ruling: sim EVENTS for transitions, and a THROTTLED read of its own active set
+for progress. Never a per-frame scan of the world.**
+
+A block's phase changes on `development_phase_started` /
+`development_phase_completed` / `block_ready`, which are already on the bus and
+already drained once per tick by the shell — so the view's membership is
+event-driven and costs nothing between transitions. Progress WITHIN a phase is
+not on any event and should not be: it moves every tick and an event per tick is
+a bus flooded with a number.
+
+So the view polls, and the ruling is about what it may poll. It walks **its own
+active set** — the blocks it has already been told are developing, which is a
+handful and is bounded by the pipeline, not by the map — at a throttled cadence,
+and asks `DevelopmentController.active_view` and `ConstructionQueue.progress` for
+those ids only. It may never iterate `world.block_ids_sorted()`. The distinction
+is not academic: the map is 7×7 blocks today and doc 09's own §2.13 benchmark
+city is larger, and a renderer whose cost grows with the MAP rather than with the
+WORK is exactly the class of thing doc 11's chunk stride exists to prevent.
+
+**And it writes nothing.** Constitution §3: the renderer reads the sim through
+snapshots and events and never calls back into it. Every choice `LandWorksView`
+makes about where a stake, a stump or a spoil heap goes is a hash of the block id
+and the index, so it is the same on every device and after every load, and the
+sim's state hash cannot move because the view exists.

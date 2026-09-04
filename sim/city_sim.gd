@@ -45,6 +45,14 @@ var grid: PowerGrid
 var catalog: BuildingCatalog
 var construction: ConstructionQueue
 var development: DevelopmentController
+## **The materials yard** (doc 03 §2.8b, ruling 93 §AZ3). Dollars of fill,
+## aggregate and spoil the crews kept instead of selling, for the WHOLE CITY —
+## one integer, because the honest reading of "materials for the infrastructure"
+## is a heap on a hardstanding, not a per-block inventory nobody can see. It is
+## filled by `_credit_land_works` and spent by `_charge_development_phases`,
+## which are the only two writers, and it is capped at
+## `EconomySystem.works_stockpile_cap()` so it can never become a bank.
+var works_stockpile: int = 0
 var econ_curves: CostCurves
 ## Doc 03 §2.9's one difficulty file, resolved at boot and pinned for the life of
 ## the city (doc 93 §K1). Every difficulty scalar in the project is read through
@@ -1343,7 +1351,39 @@ static func encode_captured(raw_body: Dictionary) -> Dictionary:
 ## scheduled. `state_hash()` moves for every played city, which is the honest
 ## record of exactly that (RR-135; the four `profile_sim` baselines are re-taken
 ## with the fix named).
-const SAVE_SECTION_VERSION := 9
+## **v10 — 2026-09-04, doc 03 §2.8b's excavation yield (Wave 25, report 98 §69
+## RR-209..212).** The `land_works` line — what the crews find while they dig a
+## block out — and the materials yard it half fills. THREE additive shape
+## changes, and no rules change at all for a city that never develops another
+## block:
+##
+##   * `works_stockpile`, one top-level integer: doc 03 §2.8b's yard, in dollars
+##     of fill and aggregate the crews kept instead of selling (ruling 93 §AZ3);
+##   * `works_yield_total` on every `world_blocks` row: what THAT block has
+##     handed back for life, which is the clamp — the ceiling
+##     (`EconomySystem.works_yield_ceiling`) is enforced against a cumulative
+##     total, and a counter that reset on load would let a save/reload pay the
+##     ceiling twice;
+##   * `rng.land_works`, the tenth named stream (constitution §5), plus
+##     `treasury.ledger_totals.lifetime_excavation` and
+##     `treasury.hour_city_services.excavation` — doc 03 §2.5's line, at its own
+##     sub-grain, so a find credited between two settlements is on the line the
+##     settlement is about to print.
+##
+## Nothing is invented for an old save and `_v9_to_v10` is therefore the identity
+## function: an absent `works_stockpile` restores to 0 (an empty yard, which is
+## what a city that has never dug is), an absent `works_yield_total` restores to
+## 0 (those blocks were dug out before anyone was counting, so the ceiling starts
+## fresh rather than retro-charging a city for money it was never paid), and
+## `RngStreams.deserialize` leaves `land_works` on the seed
+## `hash(master_seed + ":land_works")` gave it at boot — the same three decisions
+## `_v6_to_v7` and `_v8_to_v9` made for `street` and `contracts`.
+##
+## `state_hash()` moves for every city, founding or played, because the `rng`
+## block has a tenth entry, the `treasury` block has two new sub-keys and the
+## body has a new top-level key. The four `profile_sim` baselines are re-taken
+## with each cause A/B-isolated (doc 92 §66.6).
+const SAVE_SECTION_VERSION := 10
 
 
 func save_section_version() -> int:
@@ -1366,6 +1406,7 @@ func migrate_save_section(body: Dictionary, from_version: int) -> Dictionary:
 			6: body = _v6_to_v7(body)
 			7: body = _v7_to_v8(body)
 			8: body = _v8_to_v9(body)
+			9: body = _v9_to_v10(body)
 		version += 1
 	return body
 
@@ -1520,6 +1561,21 @@ static func _v7_to_v8(body: Dictionary) -> Dictionary:
 ## out: doc 08 §2.8's rule is that a missing input means a DOCUMENTED default,
 ## and the default is documented here.
 static func _v8_to_v9(body: Dictionary) -> Dictionary:
+	return body
+
+
+## v9 → v10: **the identity function, and that is the whole migration.** Doc 03
+## §2.8b's excavation yield adds one top-level key, one per-block field and one
+## named RNG stream, and every one of them has a documented default that is
+## exactly what an old save means — see `SAVE_SECTION_VERSION` for the three of
+## them and why inventing any of them would be worse than leaving them out.
+##
+## It is not a rules rung either, and that is worth saying because the last two
+## additive rungs were. A v9 city that is never developed again advances
+## identically under v10: the yield is credited on a development phase COMPLETING
+## and nothing else, and a city with no pipeline in flight completes none. What
+## does move for every city is `state_hash()`, because the shape moved.
+static func _v9_to_v10(body: Dictionary) -> Dictionary:
 	return body
 
 
@@ -1704,6 +1760,11 @@ func capture_state() -> Dictionary:
 		"events": events.serialize(),
 		"construction": construction.serialize(),
 		"development": development.serialize(),
+		# Doc 03 §2.8b's materials yard — ONE integer for the whole city, and
+		# ruling 93 §AZ3 is the argument for why it is one and not a per-block
+		# inventory. Absent on every pre-Wave-25 save; `restore_state` reads 0
+		# there, which is what an empty yard means.
+		"works_stockpile": works_stockpile,
 		"buildings": _serialize_buildings(),
 		"treasury": treasury.serialize(),
 		"stats": stats.serialize(),
@@ -1877,6 +1938,7 @@ func _restore_core(body: Dictionary) -> void:
 	events.deserialize(body.get("events", {}))
 	construction.deserialize(body.get("construction", {}))
 	development.deserialize(body.get("development", {}))
+	works_stockpile = maxi(0, int(body.get("works_stockpile", 0)))
 	treasury.deserialize(body.get("treasury", {}))
 	# **Doc 93 §AP4's migration, and it is the half that rescues the save the
 	# 2026-09-03 report was written about.** A pre-Wave-19 save carries a spent
@@ -5846,6 +5908,87 @@ func _open_block_for_building(block_id: String) -> void:
 			world.grid.set_flag(x, z, TileGrid.FLAG_BUILDABLE)
 
 
+## **What the crews found** — doc 03 §2.8b, doc 92 §66, ruling 93 §AZ.
+##
+## Called once for every completed development phase, immediately after the
+## phase's own `development_phase_completed` reaches the bus, and does nothing at
+## all for the three phases that yield nothing (SURVEY, ROAD_INSTALL,
+## FINAL_DEVELOPMENT return `{}` from `works_yield_row`).
+##
+## **Two draws, in a fixed order, on the `land_works` stream and nowhere else**
+## (constitution §5): the band roll first, the bonus roll second, both taken
+## unconditionally so the sequence depends on WHICH phases completed and never on
+## what the first roll happened to be. A stream of this feature's own means the
+## sequence perturbs no other system and no other system perturbs it.
+##
+## **The ceiling is the theorem.** `works_yield_ceiling` is
+## `CEILING_FRACTION × the block's own six-phase bill`, and the block's running
+## `works_yield_total` is clamped to it — so the third find on a rich block is
+## short-paid or paid nothing rather than the ceiling being a suggestion. That is
+## what makes "a block can never pay for its own development" checkable rather
+## than hoped for: the ceiling is 0.10 and the cheapest ROAD_INSTALL share of any
+## terrain's bill is 0.2375 (doc 92 §66.3).
+##
+## **The split** (ruling 93 §AZ3). A find is worth `value`; the rows flagged
+## `stockpiles` (fill and aggregate — road base) keep `STOCKPILE_SHARE` of it in
+## the city's materials yard and the player is paid the rest in cash. Timber is
+## not road base, so a CLEARING find is all cash. Nothing is lost when the yard
+## is full: the part that will not fit is paid as cash instead.
+##
+## Consumers of `land_works_find`, all shipped in this same wave: the toast and
+## the chip flash (`ui/land_works_model.gd` → `UIRoot.report_land_works`), the
+## event-log row (`data/ui.json.event_log.events`), and the land panel's
+## `Recovered so far` line, which reads the block's own total.
+func _credit_land_works(block_id: String, phase: StringName) -> void:
+	var block := world.block(block_id)
+	if block == null:
+		return
+	var row := economy.works_yield_row(String(phase).to_lower())
+	if row.is_empty():
+		return
+	var stream := rng.stream("land_works")
+	var roll := stream.randf()
+	var bonus_roll := stream.randf()
+	# "Occasionally something better" is the UTILITY CORRIDOR's alone: a trench
+	# is the only one of the three digs that goes deep enough to turn up an
+	# abandoned main. Timber and aggregate are what they are.
+	var bonus := String(row.get("id", "")) == "utility_corridor" \
+			and bonus_roll < float(economy.works_yield().get("BONUS_CHANCE", 0.0))
+	var d := float(world.d_from_center(block_id))
+	var m_dev := float(treasury.difficulty().get("M_dev", 1.0))
+	var value := economy.works_yield_value(String(phase).to_lower(),
+			String(block.dev_terrain), d, block.arterial_connections, m_dev, roll, bonus)
+	var ceiling := economy.works_yield_ceiling(String(block.dev_terrain), d,
+			block.arterial_connections, m_dev)
+	var headroom := maxi(0, ceiling - block.works_yield_total)
+	var capped := value > headroom
+	value = mini(value, headroom)
+	if value <= 0:
+		return
+	var banked := 0
+	if bool(row.get("stockpiles", false)):
+		banked = mini(CostCurves.round_half_up(float(value)
+				* economy.works_stockpile_share()),
+				maxi(0, economy.works_stockpile_cap() - works_stockpile))
+	var cash := value - banked
+	block.works_yield_total += value
+	works_stockpile += banked
+	if cash > 0:
+		treasury.credit_city_service(cash, "excavation",
+				"land works %s %s" % [block_id, String(phase)])
+	var material := String(row.get("material", ""))
+	if bonus:
+		material = String(economy.works_yield().get("bonus_material", material))
+	bus.emit(&"land_works_find", {
+		"block": block_id, "block_id": block_id, "phase": String(phase),
+		"material": material, "value": value, "amount": cash, "stockpiled": banked,
+		"bonus": bonus, "capped": capped, "block_total": block.works_yield_total,
+		"ceiling": ceiling, "stockpile": works_stockpile,
+	})
+	stats_add(&"land_works_finds")
+	_publish_treasury_events()
+
+
 func _development_phase_cost(block_id: String, phase_index: int) -> int:
 	var block := world.block(block_id)
 	if block == null:
@@ -5868,6 +6011,23 @@ func _charge_development_phases() -> void:
 		if cost <= 0:
 			continue
 		var reason := "development %s %s" % [block_id, String(charge["phase"])]
+		# Doc 03 §2.8b, ruling 93 §AZ3: the yard pays first. `road_install` and
+		# `utility_corridor` are the two phases the dug-out material is FOR, so
+		# whatever is standing on the hardstanding comes off their invoice before
+		# the treasury sees it — up to a quarter of the phase, never more. Every
+		# other phase reads an offset of 0 and is charged exactly what it was.
+		var offset := economy.works_stockpile_offset(String(charge["phase"]).to_lower(),
+				cost, works_stockpile)
+		# `works_stockpile_offset` is capped at a QUARTER of the phase, so the
+		# net can never reach zero and there is no "the yard paid for all of it"
+		# branch below to write. The yard shortens the bill; it never replaces it.
+		if offset > 0:
+			works_stockpile -= offset
+			cost -= offset
+			bus.emit(&"land_works_stockpile_spent", {"block": block_id,
+					"block_id": block_id, "phase": String(charge["phase"]),
+					"amount": offset, "stockpile": works_stockpile,
+					"gross_cost": cost + offset})
 		var paid := treasury.spend(cost, &"construction", reason)
 		var deferred := int(paid.get("deferred", 0))
 		if StringName(String(paid.get("reason_code", ""))) == &"AUSTERITY_BLOCKED":
@@ -5887,7 +6047,11 @@ func _charge_development_phases() -> void:
 		bus.emit(&"development_phase_charged", {"block": block_id,
 				"block_id": block_id,
 				"phase": String(charge["phase"]), "cost": cost,
-				"deferred": deferred})
+				"deferred": deferred,
+				# Wave 25: what the yard took off this invoice, so the log row's
+				# `cost` and the treasury's movement are the same number and the
+				# land panel's quoted NET can be checked against the receipt.
+				"stockpile_offset": offset})
 	_publish_treasury_events()
 
 
@@ -7576,6 +7740,14 @@ class ReportPhaseSystem extends SimSystem:
 				"block_ready":
 					sim._open_block_for_building(String(event["block"]))
 			sim.bus.emit(StringName(String(event["type"])), event)
+			# Doc 03 §2.8b — what the crews found, AFTER the phase's own event.
+			# Order is the receipt's order: the phase finished, and then it paid.
+			# `_credit_land_works` is the coordinator's because
+			# `DevelopmentController` may not touch money (its own header), and
+			# because only this class holds the RNG streams and the treasury.
+			if String(event["type"]) == "development_phase_completed":
+				sim._credit_land_works(String(event["block"]),
+						StringName(String(event.get("phase", ""))))
 		for event in sim.events.drain_events():
 			sim.bus.emit(StringName(String(event["type"])), event)
 		# Doc 09 §2.14. LAST of the republishers, because every emit above may

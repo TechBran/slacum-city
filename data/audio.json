@@ -182,6 +182,10 @@
 		{"type": "incident_resolved", "range": {"reward": {"min": 1}}, "cue": "cash",
 			"dedup_by": "cue", "dedup_s": 0.30, "cooldown_s": 0.35,
 			"attenuation": {"curve": "none"}},
+		{"_comment": "Wave 25, doc 03 §2.8b. A THIRD door to the same coin: what the crews turned up while they dug a block out. It is the bounty case exactly — money that arrived while the player was looking somewhere else — so it takes `cash` on the same shared identity and inherits the same 0.35 s cooldown, which is what stops three phases completing in one catch-up tick from firing three coins in one frame. The `amount` guard is the cash half of the find: a find that went entirely to the materials yard moved no balance and rings nothing."},
+		{"type": "land_works_find", "range": {"amount": {"min": 1}}, "cue": "cash",
+			"dedup_by": "cue", "dedup_s": 0.30, "cooldown_s": 0.35,
+			"attenuation": {"curve": "none"}},
 
 		{"_comment": "The payday BACKWARDS, Wave 17 (doc 12 §2.22). Rushing a project is money leaving, so it takes `purchase` — the deck's spend cue, the one `building_placed_sim` already uses — and not `cash`: a player who hears a till when their balance DROPS learns the wrong thing about their own treasury, and that is the one thing the coin was added to teach. It is never attenuated, for §2.21's reason: this is feedback on the player's own thumb, and feedback that gets quieter because the camera drifted is feedback they stop trusting. The completion the rush causes is NOT sounded here — it arrives a moment later on `building_completed` and rings `construct_complete`, exactly as an unrushed one does, which is the whole point of a rush firing the same events a natural finish fires."},
 		{"type": "construction_rushed", "cue": "purchase", "key": "job",

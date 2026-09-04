@@ -66,6 +66,13 @@ const SCREENS: Array[String] = [
 	# room, and the wire that is the reason the UPGRADE button is dead.
 	"building_power", "building_power_fix",
 	"land_buy", "land_blocked", "land_developing",
+	# Wave 25 (doc 12 §2.21 D-117): the same panel with doc 03 §2.8b's excavation
+	# band on it — a block far enough through the pipeline that CLEARING and
+	# GRADING have both paid, so `Recovered so far` and `Materials yard` are both
+	# real numbers and a pending `utility_corridor` is quoting the yard under its
+	# own price. Same commit as the row, which is A91-D-28's lesson applied on
+	# the way in.
+	"land_yield",
 	"drawer", "drawer_empty", "drawer_expanded", "drawer_water",
 	"picker", "picker_empty",
 	# Wave 18 (PA-52): a dispatch the sim refused, in the words of the refusal it
@@ -763,6 +770,26 @@ func _apply(screen: String) -> void:
 			_sim.cmd_buy_block(block_id, false, true)
 			_sim.advance_hours(3.0)
 			_root.land_panel.show_block(block_id)
+		"land_yield":
+			# **The SECOND block, and it has to be the second one.** Doc 03
+			# §2.8b's yard empties itself on the very next phase of the block
+			# that filled it (doc 92 §66.5) — the fill found while grading goes
+			# straight into the road base — so the only moment all three of
+			# §2.8b's rows are on screen together is a block whose own pipeline
+			# has not reached `road_install` yet, standing beside a yard the
+			# PREVIOUS block's utility corridor filled. One block developed to
+			# READY, then a second bought and taken 20 game-hours in: past
+			# CLEARING (so `Recovered so far` is a real number), still in
+			# GRADING (so both infrastructure phases are PENDING and both quote
+			# `Yard materials −$…` under their own price).
+			_sim.treasury.balance = 500_000
+			var first_block := _purchasable_block()
+			_sim.cmd_buy_block(first_block, false, true)
+			_sim.advance_hours(70.0)
+			var yield_block := _purchasable_block()
+			_sim.cmd_buy_block(yield_block, false, true)
+			_sim.advance_hours(20.0)
+			_root.land_panel.show_block(yield_block)
 		"drawer":
 			_root.incident_drawer.open()
 		"drawer_empty":

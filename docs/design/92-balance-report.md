@@ -11145,3 +11145,184 @@ replacement.
 
 `hard` and `crisis` do not move at all, for §58.7's own reason: a city that dies
 on game-day 47 never sees enough unanswerable fire for the ruling to reach it.
+
+
+## 66. Wave 25 — what the crews find, measured: the band, the ceiling that binds, and the yard that empties itself (2026-09-04)
+
+*(Instrument: `tools/measure_land_works.gd`, new. Ruling: doc 93 §AZ. Prices and
+accessors: doc 03 §2.8b. Surfaces: doc 12 §2.8 D-117 / D-118. Verbs, deltas and
+the baseline re-record: report 98 §69.)*
+
+**The specification is the player's, 2026-09-04:**
+
+> *"When we open up a new plot of land, we want construction animations for that
+> land — to show that the land is being worked: digging it, materials. We will
+> find materials from digging it out for the infrastructure. So potentially
+> opening up a piece of land will give you resources and money back."*
+
+Two words in that do the balance work. **"Money back"**, not profit — so the
+question this section answers is *how much back is honest?* And **"for the
+infrastructure"** — so the material found is not only cash, and §66.5 is where
+that half is priced.
+
+### 66.1 The shape of the answer: a fraction of the phase, not a table of its own
+
+A find is priced as a FRACTION OF THE PHASE'S OWN COST. That is the whole model,
+and it is worth saying why before any number:
+
+`data/economy.json.development.terrain_phase_mult` is an 8×6 table this project
+has published since doc 03 §2.8 shipped, and it already says that clearing a
+forest costs **1.90×** and grading rock costs **2.80×**. A yield expressed as a
+fraction of the phase therefore gets its terrain signal **free and correct**: a
+forest block yields 1.90× the timber and a rocky one 2.80× the aggregate, out of
+a table that already exists, with no second 8×3 table to keep in step with the
+first. `M_dev` rides inside the phase cost for the same reason — `crisis` charges
+1.30× and hands back 1.30×, and the RATIO is difficulty-invariant.
+
+The alternative — an authored `terrain_yield_mult` — was written, costed at
+twenty-four new numbers, and thrown away. It would have had to agree with a table
+the same file already carries, and the day it did not, nobody would have known
+which one was wrong.
+
+### 66.2 The bands
+
+| phase | material | low | high | banks material? |
+|---|---|---|---|---|
+| `clearing` | `timber` | 0.08 | 0.18 | no |
+| `grading` | `aggregate` | 0.06 | 0.14 | yes |
+| `utility_corridor` | `spoil` | 0.05 | 0.11 | yes |
+
+plus a **12 %** chance on `utility_corridor` alone of `copper` at **×2.00**.
+
+Two draws per credited phase on the `land_works` stream, band then bonus, both
+taken unconditionally so the sequence depends on which phases completed and never
+on what the first roll happened to be.
+
+### 66.3 The ceiling, derived — and the three bounds it has to clear
+
+`WORKS_YIELD_CEILING = 0.10` of the block's own six-phase development bill,
+clamped against a PERSISTED cumulative total so a reload cannot pay it twice.
+
+`~/.local/bin/godot --headless --path . -s res://tools/measure_land_works.gd -- --table-only`
+
+| terrain | d | bill | band low | band high | low % | high % | max w/ bonus | ceiling $ | `road_install` share |
+|---|---|---|---|---|---|---|---|---|---|
+| flat | 0 | 30,200 | 960 | 2,160 | 3.18 % | 7.15 % | 10.43 % | 3,020 | 24.83 % |
+| gentle | 0 | 32,675 | 1,060 | 2,400 | 3.24 % | 7.35 % | 10.53 % | 3,268 | 25.25 % |
+| hilly | 0 | 42,060 | 1,420 | 3,230 | 3.38 % | 7.68 % | 10.51 % | 4,206 | 26.75 % |
+| steep | 0 | 55,180 | 1,910 | 4,340 | 3.46 % | 7.87 % | 10.46 % | 5,518 | 28.54 % |
+| **rocky** | **0** | 50,520 | 1,890 | 4,260 | 3.74 % | **8.43 %** | **11.48 %** | 5,052 | **23.75 %** |
+| forest | 0 | 36,275 | 1,310 | 2,940 | 3.61 % | 8.10 % | 11.11 % | 3,628 | 23.78 % |
+| marsh | 0 | 50,920 | 1,710 | 3,890 | 3.36 % | 7.64 % | 10.35 % | 5,092 | 27.99 % |
+| island | 0 | 80,760 | 2,160 | 4,820 | 2.67 % | 5.97 % | 9.89 % | 8,076 | 41.79 % |
+| flat | 4 | 44,916 | 1,420 | 3,170 | 3.16 % | 7.06 % | 11.20 % | 4,492 | 27.38 % |
+| rocky | 4 | 73,792 | 2,640 | 5,950 | 3.58 % | 8.06 % | 11.98 % | 7,379 | 26.67 % |
+| island | 4 | 130,307 | 3,510 | 7,810 | 2.69 % | 5.99 % | 10.56 % | 13,031 | 42.48 % |
+| flat | 8 | 59,632 | 1,870 | 4,180 | 3.14 % | 7.01 % | 11.59 % | 5,963 | 28.68 % |
+| **rocky** | **8** | 97,063 | 3,410 | 7,640 | 3.51 % | 7.87 % | **12.23 %** | 9,706 | 28.19 % |
+| island | 8 | 179,854 | 4,860 | 10,780 | 2.70 % | 5.99 % | 10.86 % | 17,985 | 42.78 % |
+
+*(The full run prints all eight terrains at d = 0, 4 and 8; the rows omitted here
+sit inside the range the extremes bracket.)*
+
+**Bound 1 — the find may never pay for the road it was dug for.** `0.10 <
+0.2375`, the smallest `road_install` share of any bill on the table (rocky,
+d = 0). If it did, the infrastructure would build itself and "materials for the
+infrastructure" would stop being a phrase about materials.
+
+**Bound 2 — the ground may never be worth more than a building taken apart.**
+`0.10 < SALVAGE_FRACTION 0.15` (doc 03 §2.5, Wave 19). Digging out a lot is a
+smaller act than dismantling what stood on it, and the two fractions now say so.
+
+**Bound 3 — the clamp binds on the tail and only on the tail.** The maximum draw
+with NO bonus is **8.45 %** of the bill (rocky, d = 0); with the `copper` bonus on
+top of a maximum roll it reaches **12.23 %** (rocky, d = 8). So `0.10` sits
+strictly between the two: it cannot bite an ordinary block, and it must bite the
+best possible roll of the rarest event. **A ceiling that never binds is a number
+with no reader** — this one has one, and `tests/test_land_works.gd::
+test_a_block_at_its_ceiling_is_short_paid_and_says_so` drives it directly by
+walking a block to $10 under its ceiling and asserting the credit is the headroom
+rather than the roll.
+
+*Why not 0.15, the salvage fraction itself?* Because bound 3 fails at 0.15: the
+maximum bonus draw is 12.23 %, so a 0.15 ceiling could never bind on any city and
+would be authored, documented, tested-for-presence behaviour that nothing
+consumes — this project's signature defect, written into a balance constant.
+0.10 was chosen as the largest round fraction strictly under the un-capped
+maximum, and it is also, exactly, doc 02 §2.12's authored rubble-clearance
+fraction: **the ground pays back what clearing it is worth, and not a cent more.**
+
+### 66.4 The run
+
+`... -s res://tools/measure_land_works.gd -- --seeds=1337,4242,9001 --blocks=3 --hours=720`
+
+Three cities, three blocks each, developed to READY, 30 game-days apiece.
+
+| | |
+|---|---|
+| finds | **27** (9 per city — three phases × three blocks, and never a fourth) |
+| value found | **$24,680** |
+| paid in cash | **$18,674** |
+| kept as material | **$6,006** |
+| yard spent back against invoices | **$2,109** |
+| `copper` bonus | 1 of 27 finds (authored 12 %; 27 draws is a small sample) |
+| ceiling clamped | 0 finds — as §66.3 predicts for ordinary rolls |
+| worst single block | **7.27 %** of its own development bill (ceiling 10 %) |
+| best–worst per block | 5.49 % – 7.27 % |
+| **magnitude** | **$207.49 of `land_works` cash per game-day** |
+
+**$207.49/game-day is $8.65 per game-hour, or 2.7 % of the founding city's
+$319/gh net** (doc 92 §35's own reference number). A player developing land
+continuously sees roughly $200–$520 a game-day — the higher figure is the
+two-blocks-in-ten-game-days arm, where the finds are not spread thin — and a
+player who has stopped buying land sees exactly $0, which is the correct answer
+for an income line that is paid for digging.
+
+Every developed block in the run came back **5.49 %–7.27 %** of what it cost.
+That is the sentence "money back, not profit" as a number.
+
+### 66.5 The yard: one integer, and what it is worth
+
+`STOCKPILE_SHARE = 0.34` is a hash, not a taste: `LandBlock.road_tiles_est()`
+puts **0.34** of a block's usable ground under road, so 0.34 of what comes out of
+the ground is what goes back into it. `STOCKPILE_MAX_OFFSET_FRACTION = 0.25` is
+doc 03 §2.5's own `DEMOLITION_REFUND_FRACTION`. `STOCKPILE_CAP = $4,125` is
+`0.25 × (road_install + utility_corridor at flat, d = 0)` — the yard holds at most
+what one phase may ever take off it.
+
+**Measured: the yard empties itself, and that is the honest behaviour.** Yard
+peak across the whole 27-find run was **$1,383** against a $4,125 cap, and
+$2,109 of $6,006 banked was spent back. The reason is the pipeline's own order:
+`grading` banks material and `road_install` — the very next phase — draws on it
+immediately. That is *literally* the player's sentence ("we will find materials
+from digging it out for the infrastructure") happening on one block: the fill
+found while grading goes into the road base. What carries between blocks is the
+`utility_corridor` spoil, because it is found after the corridor has been paid
+for, so block N's trench discounts block N+1's road.
+
+**The cap therefore does NOT bind on serial development**, and is reported as
+what it is: a guard against a player who runs several pipelines at once and would
+otherwise be banking an unbounded integer. `tests/test_land_works.gd::
+test_a_full_yard_pays_the_remainder_in_cash_and_never_overflows` drives it
+directly and asserts the important property — a full yard loses nothing, it just
+pays cash instead.
+
+### 66.6 What moved, and what did not
+
+Not one existing balance constant changes. `data/economy.json` gains exactly one
+new block (`development.works_yield`) and nothing already in the file is touched.
+The four `profile_sim --hash-only` baselines DO move, on shape and not on
+behaviour, and each cause is A/B-isolated in report 98 §69.3:
+
+1. `rng.land_works` — a tenth named stream inside `state_hash()`;
+2. `treasury.ledger_totals.lifetime_excavation` and
+   `treasury.hour_city_services.excavation` — two sub-keys of the same;
+3. `works_stockpile` — one top-level body key;
+4. `works_yield_total` on every `world_blocks` row.
+
+**Nothing a scripted agent EARNS moved.** The yield is credited on a development
+phase COMPLETING, and neither `profile_sim` city nor any balance-gate agent
+develops a block during its run — so gates 18b, 20, 21 and 29 are re-recorded
+against the new digests, not re-fitted. The magnitude a re-fit would have to
+absorb, if one is ever wanted, is the $8.65/gh in §66.4 and only while a pipeline
+is actually running.

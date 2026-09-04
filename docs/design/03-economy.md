@@ -902,6 +902,52 @@ The land purchase dialog must therefore display **Purchase / Est. development / 
 
 *(Test 11's threshold moves with the example: the invariant is now `all_in(E) ≥ 1.50 × all_in(D)`, model value 1.602 — see §7.)*
 
+### 2.8b `land_works` — what the crews find (SOURCE `excavation`, Wave 25)
+
+*Added 2026-09-04 from the player's own words: "when we open up a new plot of land … we will find materials from digging it out for the infrastructure. So potentially opening up a piece of land will give you resources and money back." Ruling 93 §AZ; measured in doc 92 §66; report 98 §69 RR-210.*
+
+**The line.** `land_works` is a REVENUE line credited at the COMPLETION of three of §2.8's six phases. It is a direct credit through `Treasury.credit_city_service(amount, "excavation", …)` — the same door doc 06's dispatch payout and doc 06 §2.16's street collection use — so it lands in the balance the instant it is earned and is tallied on §2.5's settled `city_services` line at its own sub-grain until the hour settles.
+
+| | |
+|---|---|
+| **line** | `land_works` |
+| **SOURCE** | `excavation` — `Treasury.hour_city_services["excavation"]`, `ledger_totals.lifetime_excavation` |
+| **paid at** | the completion of `clearing`, `grading`, `utility_corridor` |
+| **accessor** | `EconomySystem.works_yield_value(phase, terrain, d, n, M_dev, roll, bonus)` — the only place a find is priced (C-07) |
+| **credited by** | `CitySim._credit_land_works`, the coordinator, because `DevelopmentController` may not touch money (its own header) |
+| **stream** | `land_works`, the tenth named stream (constitution §5) — two draws per credited phase, band then bonus, in that fixed order |
+| **receipt** | `land_works_find` on the bus → a toast (`ui/land_works_model.gd`), an event-log row (`data/ui.json.event_log.events`), a `cash` cue (`data/audio.json`), and the land panel's `Recovered so far` |
+
+**The prices.** Each band is a FRACTION OF THAT PHASE'S OWN COST, drawn uniformly on the `land_works` stream:
+
+| phase | material | low | high | keeps material? |
+|---|---|---|---|---|
+| clearing | `timber` | 0.08 | 0.18 | no — timber is not road base |
+| grading | `aggregate` | 0.06 | 0.14 | yes |
+| utility_corridor | `spoil` | 0.05 | 0.11 | yes |
+
+with a **12 % chance** on `utility_corridor` alone of turning up `copper` instead — an abandoned main — at **×2.00**. A trench is the only one of the three digs that goes deep enough for that to be true.
+
+**There is no terrain table and that is the design.** §2.8's `terrain_phase_mult` already says clearing a forest costs 1.90× and grading rock 2.80×, so a forest block yields 1.90× the timber and a rocky one 2.80× the aggregate *out of a table this doc already publishes* — with nothing new to keep in step. `M_dev` is inside the phase cost for the same reason: a harder difficulty charges more AND hands proportionally more back, and the ratio is difficulty-invariant.
+
+**The ceiling — `WORKS_YIELD_CEILING = 0.10`.** A block's CUMULATIVE yield, cash and kept material together, is clamped to `0.10 × its own six-phase development bill`. `LandBlock.works_yield_total` is persisted (doc 08 §2.8 rung 10) precisely so a save-and-reload cannot pay the ceiling twice. Three bounds, all held as inequalities in `tests/test_land_works.gd` rather than as literals, and all measured in doc 92 §66.3:
+
+- **< the smallest `road_install` share of a development bill on any terrain at any distance (0.2375, rocky at d = 0)** — the find may never pay for the road it was dug for, or the infrastructure builds itself;
+- **< `SALVAGE_FRACTION` 0.15** — the ground you dig may never be worth more than a whole building taken apart;
+- **it binds only on the bonus tail.** The maximum draw with no bonus is 8.45 % of the bill (rocky, d = 0); with the `copper` bonus on top of a maximum roll it reaches 12.23 %. So the clamp can only ever bite where a clamp should: on the best possible roll of the rarest event.
+
+Measured over three cities × three blocks (doc 92 §66.4): every block recovered **5.49 %–7.27 %** of its own bill, and `land_works` paid **$207.49 a game-day** — **2.7 %** of the founding city's $319/gh net. That is "money back", which is what was asked for, and not profit.
+
+**The materials yard** (ruling 93 §AZ3) is ONE persisted integer for the whole city, `CitySim.works_stockpile`. The rows flagged as keeping material bank `STOCKPILE_SHARE` of a find instead of selling it; the player is paid the rest in cash, and when the yard is full the part that will not fit is paid as cash instead, so nothing is ever lost.
+
+| knob | value | derivation |
+|---|---|---|
+| `STOCKPILE_SHARE` | **0.34** | `LandBlock.road_tiles_est()` puts 0.34 of a block's usable ground under road; 0.34 of what comes out of the ground is what goes back into it |
+| `STOCKPILE_MAX_OFFSET_FRACTION` | **0.25** | §2.5's own published `DEMOLITION_REFUND_FRACTION`, reused as "what a thing taken apart is worth against the next one" |
+| `STOCKPILE_CAP` | **$4,125** | `0.25 × (road_install + utility_corridor at flat, d = 0) = 0.25 × 16,500`. The yard is a WORKING STOCK, not a bank: it holds at most what one phase may ever take off |
+
+The yard pays towards `road_install` and `utility_corridor` and nothing else — the two phases the dug-out material is *for* — up to a quarter of that phase's invoice. Because the offset is capped at a quarter, the net can never reach zero: **the yard shortens a bill and never replaces one.** Every draw is announced on `land_works_stockpile_spent` and carries its own event-log row, because an invoice that silently got smaller is the one thing a ledger may never do.
+
 ### 2.9 Difficulty — one file, one schema, one loader (spec §35, report 98 C-17)
 
 **This doc owns `data/difficulty.json` and every difficulty knob in the project lives in it.** Before C-17 the knobs were scattered: this doc held the economic multipliers, doc 07 held pressure knobs *plus* a `repair_cost_mult` that duplicated `M_repair`, doc 06 held `difficulty.escalation_mult`, doc 08 held `difficulty_offline_mult`. That is now one file with four authored sections:

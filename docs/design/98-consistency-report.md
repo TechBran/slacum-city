@@ -9357,3 +9357,176 @@ failed 0, silent 0.** `python3 tools/check_doc_refs.py` prints *all resolving; n
 assigned twice* over 5,099 references. Not one balance constant moves
 (doc 92 §60.11), and the four `profile_sim` baselines move on exactly one
 `Treasury.serialize()` key, proven by A/B (doc 92 §60.10).
+
+
+## 69. WAVE 25 — opening land looks like work, and pays back what the crews dig up (binding)
+
+*Lane 2 of Wave 25, forked off `6dba66c` (which carries Waves 19–22), 2026-09-04.
+The lane exists for one instruction, and it is quoted whole because both halves of
+it are load-bearing:*
+
+> *"When we open up a new plot of land, we want construction animations for that
+> land — to show that the land is being worked: digging it, materials. We will
+> find materials from digging it out for the infrastructure. So potentially
+> opening up a piece of land will give you resources and money back."*
+
+*Prices: doc 03 §2.8b. Rulings: doc 93 §AZ. Measured: doc 92 §66. Surfaces: doc
+12 §2.8 D-117 / D-118. Save rung: doc 08 §2.8 v10.*
+
+**What was there before this lane.** Land development has been a six-phase
+pipeline since doc 09 §2.3 shipped — SURVEY → CLEARING → GRADING → ROAD_INSTALL →
+UTILITY_CORRIDOR → FINAL_DEVELOPMENT → READY, each with crew-hours, a primary crew
+type and a doc 03 §2.8 phase cost — and **the render layer knew nothing about any
+of it**: `grep -rn "CLEARING\|GRADING\|development_state" game/` was empty. A
+block being dug out looked exactly like one nobody had touched, for fourteen to
+fifteen phase charges of $1.2K–$21K each per 21 game-days. The player watched
+their money buy a change of colour on a panel.
+
+### RR-209 — `land_works`: a doc 03 income line for what comes out of the ground (§69.1)
+
+**The line.** `land_works`, SOURCE `excavation`, credited at the COMPLETION of
+CLEARING, GRADING and UTILITY_CORRIDOR through
+`Treasury.credit_city_service(amount, "excavation", …)` — the same settled
+`city_services` channel doc 06's dispatch payout and doc 06 §2.16's street
+collection use, and for the same reason: it is money the player collected by
+making a decision, not a rate on the city's value, and §2.5's income statement
+has to be able to say which.
+
+**Where every number lives.** `data/economy.json.development.works_yield`, behind
+`EconomySystem.works_yield_*` accessors (C-07). The bands are fractions of THAT
+PHASE'S OWN COST, which is the design decision the whole feature turns on: doc 03
+§2.8's `terrain_phase_mult` already prices clearing a forest at 1.90× and grading
+rock at 2.80×, so the terrain signal is free and correct and there is no second
+8×3 table to keep in step with the first (doc 92 §66.1).
+
+**The ceiling is 0.10 of the block's own six-phase bill**, clamped against a
+PERSISTED cumulative per-block total, and it was chosen so that it BINDS — see
+ruling 93 §AZ2 and doc 92 §66.3. A ceiling of 0.15 would have satisfied every
+stated bound and could never have been reached by any roll on any terrain, which
+is this project's signature defect (A91-D-19's shape) written into a balance
+constant. 0.10 sits strictly above the maximum draw with no bonus (0.0845) and
+strictly below the maximum with it (0.1223).
+
+**Measured** (doc 92 §66.4): every block in a 27-find, three-city run recovered
+**5.49 %–7.27 %** of its own development bill, and the line paid **$207.49 a
+game-day** — **2.7 %** of the founding city's $319/gh net. "Money back", which is
+what was asked for, and not profit.
+
+**The materials yard** (ruling 93 §AZ3) is `CitySim.works_stockpile`, ONE integer
+for the whole city. `STOCKPILE_SHARE` 0.34 is a hash and not a taste —
+`LandBlock.road_tiles_est()` puts 0.34 of a block's usable ground under road, so
+0.34 of what comes out of the ground is what goes back into it. It pays towards
+`road_install` and `utility_corridor` only, at most a quarter of the invoice, and
+because the cap is a quarter the net can never reach zero: **the yard shortens a
+bill and never replaces one.** Measured, it empties itself on the very next phase
+of the same block, which is the player's own sentence happening.
+
+**Files.** `sim/economy/economy_system.gd` (§2.8b accessors,
+`development_terrains()`), `sim/economy/treasury.gd` (the `excavation` source key
+and its lifetime arm), `sim/core/rng_streams.gd` (the tenth named stream),
+`sim/world/land_block.gd` (`works_yield_total`), `sim/city_sim.gd`
+(`works_stockpile`, `_credit_land_works`, the yard's draw inside
+`_charge_development_phases`, save rung v10), `data/economy.json`,
+`tests/test_land_works.gd`, `tools/measure_land_works.gd`, `tools/ab_land_works.gd`.
+
+### RR-210 — the receipts: a toast, a coin, a log row and a panel line (§69.2)
+
+**Every find is a receipt, and the receipt names the block, the material and the
+dollars.** `land_works_find` reaches the bus and is consumed FOUR ways, all in
+this same commit — the rule being that an event this lane emits names its
+consumer on the way in:
+
+| consumer | what it does |
+|---|---|
+| `ui/land_works_model.gd` → `UIRoot.report_land_works()` | the toast and the treasury-chip flash, spent through `_spend_feedback` exactly as `StreetModel`'s bounty is |
+| `data/ui.json.event_log.events` | one `economy` row per find, keyed on `block_id` so it carries `Jump to it` |
+| `data/audio.json` | the `cash` cue, on the same shared identity a bounty rings, guarded on the CASH half so a find that went entirely to the yard rings nothing |
+| `ui/land_panel_model.gd` | `Recovered so far`, off the block's own persisted total |
+
+**Two sentences, not one.** A CLEARING find is all cash and reads
+`Timber — $540`. A GRADING or UTILITY_CORRIDOR find keeps 0.34 as material and
+reads `Fill and aggregate — $297, $153 to the yard` — because a player told $450
+who sees $297 land in the treasury has been lied to by rounding. The branch is on
+`stockpiled`, the payload's own number, never on the phase, so a full yard falls
+back to the first sentence honestly.
+
+**No haptic, deliberately** — `StreetModel`'s bounty rule, for its reason: §2.14's
+cues answer something the player DID, and nobody pressed anything here.
+
+**The yard gets no toast and that is a ruling** (§AZ3): five toasts per block is
+the shape that teaches a player to swipe them away. It gets the two surfaces a
+smaller invoice owes instead — `land_works_stockpile_spent` in the event log, and
+`Yard materials −$1,160` under the pending phase in the land panel — plus a
+`stockpile_offset` field on `development_phase_charged` so the log row's `cost`
+and the treasury's movement are the same number.
+
+**The land panel now answers the question before the purchase.** §2.8's
+`Est. development` line has always said what a block will COST; `Typically
+returns $1,310 – $2,940` is the other half of the same sentence, derived from the
+same table by `EconomySystem.works_yield_band` so a retune moves the quote the
+same hour it moves the money. It shows on land nobody owns; `Recovered so far`
+appears only once the block is the player's, because `$0` on somebody else's land
+is an answer to a question the panel is not asking.
+
+**Files.** `ui/land_works_model.gd` (new), `ui/ui_root.gd`,
+`ui/land_panel_model.gd`, `ui/land_panel.gd`, `game/ui/ui_root.tscn`,
+`data/ui.json`, `data/audio.json`, `data/strings.en.json`.
+
+### 69.3 The four `profile_sim --hash-only` baselines, and the A/B that isolates them
+
+| `profile_sim --hash-only` | at the fork (`6dba66c`) | after this pass |
+|---|---|---|
+| starter, coarse 24 h | `34ba7d972f3a78e2…` | `28627a982cde9d61…` |
+| starter, fine 2.0 h | `dde437bc234fc2c2…` | `6c8df958370c9beb…` |
+| bench, coarse 24 h | `db934239d6d84c04…` | `fd86903b0bf1ced3…` |
+| bench, fine 2.0 h | `bf57bbac708c35b7…` | `736a4f453561d6fa…` |
+
+**All four move, on SHAPE and not on behaviour, and the isolation is an identity
+rather than an argument.** `tools/ab_land_works.gd` reproduces `profile_sim`'s
+exact two advances on both cities and then digests the canonical body with this
+lane's four key groups stripped, one at a time:
+
+```
+~/.local/bin/godot --headless --path . -s res://tools/ab_land_works.gd -- \
+    --fork=34ba7d97…,dde437bc…,db934239…,bf57bbac…
+```
+
+| stripped | starter coarse | starter fine | bench coarse | bench fine |
+|---|---|---|---|---|
+| (full body) | `28627a98…` | `6c8df958…` | `fd86903b…` | `736a4f45…` |
+| less `rng.land_works` | `7192389d…` | `c40d6c46…` | `3a2dc79b…` | `6d9d7ee0…` |
+| less `treasury.{ledger_totals.lifetime_excavation, hour_city_services.excavation}` | `fbf8568d…` | `6af86478…` | `e1d1e3fe…` | `7f2fd6ef…` |
+| less `works_stockpile` | `6546706d…` | `83e3bb89…` | `a11b7f09…` | `8dfe8aeb…` |
+| less `world_blocks[].works_yield_total` | **`34ba7d97…`** | **`dde437bc…`** | **`db934239…`** | **`bf57bbac…`** |
+
+**The last row IS the fork, on all four, to the byte.** So the delta is exactly
+those four key groups and nothing else: not a float, not a stream position, not a
+dollar of any city that never develops a block. The tool exits non-zero if that
+stops being true, so this is a standing property and not a one-time table.
+
+**Nothing a scripted agent EARNS moved.** The yield is credited on a development
+phase COMPLETING, and neither `profile_sim` city — nor any balance-gate agent —
+develops a block during its run. Gates 18b, 20, 21 and 29 are therefore a
+**re-record, not a re-fit**.
+
+### 69.4 Awaiting the gate holders
+
+**Two sibling waves hold the gates this lane cannot re-run.** This lane holds
+none, so both rows below are `awaiting_consumer` in the strict sense: the numbers
+are published, the cause is isolated, and the re-record belongs to whoever owns
+the gate.
+
+| # | to | what is owed | the number they need |
+|---|---|---|---|
+| **AZ-1** | **Wave 23 (gate 29, insolvency)** | Re-record gate 29's baselines against `28627a98…` / `6c8df958…` / `fd86903b…` / `736a4f45…`. **A re-record, not a re-fit**: §69.3's A/B shows the stripped bodies are byte-identical to the fork, and gate 29's `do_nothing` agent buys no land, so its insolvency day cannot move. | If a re-fit is ever wanted anyway: `land_works` pays **$8.65 per game-hour** ($207.49/game-day, doc 92 §66.4) and **only while a development pipeline is running**. A city that has stopped buying land earns exactly $0 from it. |
+| **AZ-2** | **Wave 24 (the curriculum, gates 21 / 20 / 18b)** | Same re-record against the same four digests. The curriculum agent DOES develop blocks, so this is the row where a re-fit could genuinely be indicated — the check is whether an agent that buys land now reaches a rung earlier. | **$207.49/game-day while developing**, **2.7 % of the founding city's $319/gh net**, three finds per block, and a per-block ceiling of **10 %** of that block's own development bill (so a curriculum block can never fund itself). Doc 92 §66.4 has the per-block spread: 5.49 %–7.27 %. |
+
+**One debt is offered and not taken.** §AC-3 has stood since Wave 19: the three
+`_note_lifetime` arms doc 91 A91-D-37 / A91-D-100 / A91-D-108 owe (`&"incident"`,
+`&"restore"`, `&"salvage"`) are "one edit and ONE baseline re-record", and three
+lanes have each correctly declined to pay three re-records for one change. **This
+lane is re-recording all four baselines anyway**, so it is the cheapest moment
+that has ever existed to land them — and it still does not, because they are
+three other lanes' ledger rows and folding them in would put a change with no
+brief inside a merge two sibling waves are re-fitting against. The offer is filed
+here so the next lane that moves a baseline can take it in one line.
