@@ -10530,6 +10530,13 @@ seed 1337, `do_nothing`, gate 29's own hour-resolution scan:
 | 9001 | 172 | **163** |
 | spread | 7 game-days | **6 game-days** |
 
+*(Wave 20's two readings of seed 1337 disagree by two game-days — its
+`measure_gate29` table says 167 and its `STANDARD_LIFETIME_BAND` note says 165 —
+and the disagreement is quoted rather than reconciled, because it is that wave's
+and not this one's. Both are inside this wave's own band either way, and the Δ
+column above uses the `measure_gate29` figure because that is the instrument this
+table is taken with.)*
+
 `STANDARD_LIFETIME_DAYS` is 167 with `STANDARD_LIFETIME_BAND` 12, so all three
 seeds sit inside [155, 179] and the band still covers the spread twice over; `PRESET_LIFETIME_CEILING` 290 and
 `PRESET_LIFETIME_FLOOR` 18 are both clear; the cascade tripwire's peak is 36
