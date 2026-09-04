@@ -242,9 +242,20 @@ func test_a_level_up_grant_is_paid_once_per_rung() -> void:
 	# "each level … a few hundred thousand dollars", and $5,000,000 for the
 	# capstone. The curve between the two anchors is geometric at 1.08616, and
 	# the anchors themselves are the two claims worth asserting here.
-	assert_eq(curves.level_up_grant(1), 215000)
-	assert_eq(curves.level_up_grant(5), 300000)
+	assert_eq(curves.level_up_grant(1), 45000)
+	assert_eq(curves.level_up_grant(5), 215000)
 	assert_eq(curves.level_up_grant(6), 325000)
+	# **The ratio is the derivation** (doc 92 §61.2): 1.5 = sqrt(2.25), doc 09
+	# §2.11's own rung ratio square-rooted, so the grant grows at half the
+	# exponent the city does. Asserted as the RUN rather than as six literals,
+	# because six literals are six chances for a retune to land on five of them.
+	for level in range(1, 6):
+		var exact := 325000.0 / pow(1.5, float(6 - level))
+		assert_almost_eq(float(curves.level_up_grant(level)), exact,
+				0.06 * exact,
+				("rung %d is %d; the run 325,000 / 1.5^%d puts it at %.0f, and the "
+						+ "published figure rounds to a readable one")
+						% [level, curves.level_up_grant(level), 6 - level, exact])
 	assert_eq(curves.level_up_grant(7), 5000000,
 			"the capstone rung pays the graduation the player named")
 	assert_eq(curves.level_up_grant(8), 0,
@@ -289,8 +300,8 @@ func test_a_level_up_grant_is_paid_once_per_rung() -> void:
 		var event: Dictionary = event_variant
 		if String(event.get("type", "")) == "level_up_grant_paid":
 			paid.append(int(event["amount"]))
-	assert_eq(paid, [215000, 235000] as Array[int], "both rungs, in order")
-	assert_eq(sim.treasury.balance, before + 450000)
+	assert_eq(paid, [45000, 65000] as Array[int], "both rungs, in order")
+	assert_eq(sim.treasury.balance, before + 110000)
 
 	# **The population route pays NOTHING**, which is the whole of the Wave-22
 	# change and the reason doc 92's balance matrix does not move: every scripted

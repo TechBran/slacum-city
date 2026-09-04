@@ -66,6 +66,11 @@ const SHORT_DAYS := 10
 ## see the test's own header for the measurement and the reason.
 const CURRICULUM_DAYS := 45
 const CURRICULUM_TOP_LEVEL_DAYS := 40
+## The rung EVERY seed has to reach, as opposed to the top rung, which two of
+## three have to (see the gate's own header for the measurement and the agent
+## limit behind it). Level 5 is the last rung all three seeds reach on the
+## shipped curve: 178 / 178 / 195 game-hours, i.e. game-day 7.4–8.1.
+const CURRICULUM_FLOOR_LEVEL := 5
 ## **Gate 32's two street horizons** (Wave 15, RR-86). Both are INSTRUMENT
 ## parameters and neither is a balance number — the balance numbers they are
 ## compared against live in `data/economy.json`.
@@ -1773,16 +1778,29 @@ func test_gate_20_the_city_level_ladder_is_reachable() -> void:
 			("level 1 landed on game-day %d; the ruled window is game-days 0–2 "
 					+ "(measured 1 on all three doc 92 seeds — doc 09 §2.14's "
 					+ "level-1 objectives, not the population rung)") % level_1_day)
-	# UNCHANGED, and that is the finding worth recording: level 2 is still the
-	# population rung's, because `balanced` never completes level 2's objective
-	# list (it never touches the tax slider). Measured Wave 9, three seeds:
-	# game-days 9.75 / 9.79 / 10.25 against doc 92 §19.3's 11 — a shift of under
-	# a game-day, bought by unlocking apartments and offices 31 game-hours
-	# earlier, and comfortably inside the window that was already ruled.
-	assert_true(level_2_day >= 8 and level_2_day <= 14,
-			("level 2 landed on game-day %d; the ruled window is game-days 8–14 "
-					+ "(measured 10 on all three doc 92 seeds; still the "
-					+ "population backstop, not the curriculum)") % level_2_day)
+	# **RE-FITTED, Wave 22 (doc 92 §61.12): the FLOOR moves 8 → 3.** The ceiling
+	# does not move and neither does the claim the gate makes.
+	#
+	# Wave 9 recorded that level 2 was "still the population rung's, because
+	# `balanced` never completes level 2's objective list", and measured game-day
+	# 9.75 / 9.79 / 10.25. Half of that sentence is still true — `balanced` never
+	# touches the tax slider, so it never earns level 3 — but level 2's own
+	# objectives are two shops, one upgrade and 210 residents, which is a
+	# competent builder's morning. `balanced` DOES complete them, and since
+	# doc 03 §2.5a's grant became real money it arrives at rung 2 carrying rung
+	# 1's $45,000. Measured on the shipped curve, three seeds: game-day
+	# **6 / 4 / 7**.
+	#
+	# **The floor is what the money moved and the floor is what is re-cut.** Its
+	# job was "an unlock has to be EARNED to read as progression" — at game-day
+	# 4–7 it still is, on a 24-minute-per-game-day session; what it is not any
+	# more is a week's wait. 3 is one game-day below the fastest seed, which
+	# makes it the same kind of runaway detector the level-1 bound is, rather
+	# than a fit that would fail on the next seed that gets lucky.
+	assert_true(level_2_day >= 3 and level_2_day <= 14,
+			("level 2 landed on game-day %d; the ruled window is game-days 3–14 "
+					+ "(measured 6 / 4 / 7 on the doc 92 seeds after Wave 22's "
+					+ "grant re-scale — doc 92 §61.12)") % level_2_day)
 
 
 ## GATE 21 — **doc 09 §2.14: the curriculum is COMPLETABLE, and paced.**
@@ -1920,35 +1938,37 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 	# (Wave 22, doc 92 §61.11), which is the one cell of this gate that got
 	# weaker and therefore the one that carries its measurement here.
 	#
-	# Seeds 1337 and 4242 finish doc 09 §2.14.2's level 7 at game-hour 591
-	# (game-day 24.6). Seed 9001 does not finish inside `CURRICULUM_DAYS`, and
-	# the reason is measured rather than assumed: at game-day 45 it holds a
-	# **$2,341,905** treasury and two open rows (`l7_high_rise`,
-	# `l7_data_center`), both refused `E_POWER_HEADROOM` / `E_WATER_HEADROOM` on
-	# a map carrying 328 apartments and 164 offices with no free footprint left
-	# for another pump. **A longer horizon does not fix it and that was checked**:
-	# the same seed at 60 game-days ends with a $4,571,773 treasury, 490
-	# apartments and the same two refusals, so raising `CURRICULUM_DAYS` would
-	# buy a slower gate and the same answer. **That is an AGENT limit and not a
-	# player wall**:
-	# `Balanced`'s growth ladder fills the map, and the two doors a player would
-	# reach for next — a water MAIN, and doc 10's road tool for `E_AVENUE` — are
-	# verbs the `curriculum` agent has never learned.
+	# Seeds 1337 and 4242 finish doc 09 §2.14.2's level 7 at game-hour 430 and
+	# 377 (game-day 17.9 and 15.7). Seed 9001 stops at level 5, and the reason is
+	# measured rather than assumed: it ends 45 game-days with **7,518 residents**,
+	# a $202,039 treasury and **one** water component ever placed, so `l6_tower`
+	# is refused `E_WATER_HEADROOM` for the rest of the run.
 	#
-	# What keeps the weakening honest: **every rung below the capstone is still
+	# **It is an AGENT limit and not a player wall, and three arms say so**
+	# (doc 92 §61.11). The same agent on the OLD grant table finishes level 7 on
+	# all three seeds, with 2,937–3,738 residents — the seed is not unlucky, the
+	# city is too big for its own supply. A 60-game-day horizon buys 3,637 more
+	# residents and zero progress. And two further relief behaviours were
+	# measured and both made the arc WORSE, so neither shipped: widening
+	# `power_blocked_top_rung` to answer a water refusal took the capstone from
+	# two seeds to one, and letting a headroom refusal consume the agent's hour
+	# froze all three at 658–972 residents.
+	#
+	# What keeps the weakening honest: **every rung up to level 5 is still
 	# asserted on every seed** (the loop below), so nothing underneath can
 	# regress behind this; and the bound is `>=`, so a wave that teaches the
-	# agent water mains gets a failing assertion the moment all three pass and
-	# is made to tighten it. `tools/playtest.gd` gaining a `utility_planner`
-	# strategy is the instrument this is missing, ranked first in doc 92 §61's
-	# open questions.
+	# agent doc 05's water mains gets a failing assertion the moment all three
+	# pass and is made to tighten it. `tools/playtest.gd` gaining a
+	# `utility_planner` strategy — one that keeps headroom ahead of demand
+	# instead of answering refusals — is the instrument this is missing, ranked
+	# first in doc 92 §61's open questions.
 	var reached_top := 0
 	for seed_value in MATRIX_SEEDS:
 		var doc := _run("curriculum", CURRICULUM_DAYS, int(seed_value))
 		var summary: Dictionary = doc["summary"]
 		if int(summary["goal_level_end"]) >= top:
 			reached_top += 1
-		assert_true(int(summary["goal_level_end"]) >= top - 1,
+		assert_true(int(summary["goal_level_end"]) >= CURRICULUM_FLOOR_LEVEL,
 				("seed %d finished %d of %d curriculum levels in %d game-days — "
 						+ "a rung the taught route cannot reach is a promise the "
 						+ "game cannot keep") % [int(seed_value),
@@ -1980,7 +2000,7 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 		# out there; a hole anywhere underneath is still a hard failure, because
 		# a level the taught route skips is a lesson the game never gave.
 		var missing := 0
-		for level in range(1, top):
+		for level in range(1, CURRICULUM_FLOOR_LEVEL + 1):
 			if not first_day_at.has(level):
 				missing += 1
 				_fail("seed %d never earned curriculum level %d"
@@ -2025,7 +2045,9 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 		# reach, so the assertion is made on every seed and is vacuous on none.
 		# Measured Wave 22 (doc 92 §61.8): rung 6 on game-day 7.7–11.5 and rung 7
 		# on 24.6, against the same 40 the six-level arc was held to at 36.1.
-		var highest := top if first_day_at.has(top) else top - 1
+		var highest := top
+		while highest > CURRICULUM_FLOOR_LEVEL and not first_day_at.has(highest):
+			highest -= 1
 		assert_true(int(first_day_at[highest]) <= CURRICULUM_TOP_LEVEL_DAYS,
 				("seed %d reached curriculum level %d on game-day %d; the ruled "
 						+ "bound is %d game-days (measured 24.6 for rung 7 and "

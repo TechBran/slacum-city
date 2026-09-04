@@ -1210,6 +1210,7 @@ class Api extends RefCounted:
 							float(next_stats.get("power_demand_kw", 0.0)))}
 		return {}
 
+
 	## Raise supply where there is no ROOM for another component (Wave 22, doc 92
 	## §61.4). Upgrades the first water node whose own gate lets it, pumps first
 	## because doc 05 §2.5's supply term is the pump roster and a bigger tank

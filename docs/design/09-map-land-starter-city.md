@@ -1293,8 +1293,8 @@ and change no schema. `CitySim.SAVE_SECTION_VERSION` (9 as this wave forks) does
 move and doc 08's ladder is untouched. **The bootstrap's third rule turned out to be load bearing
 for a second reason**: it empties the event queue, and since doc 03 §2.5a's grant
 is now paid off `city_level_objectives_met` (ruling 93 §AU6), a restore that
-published those events would hand a migrated level-6 city **$1,605,000** for work
-it did last week. The rule was written to stop four level-up toasts; it stops
+published those events would hand a migrated level-6 city the whole table
+(**$890,000**) for work it did last week. The rule was written to stop four level-up toasts; it stops
 that too.
 
 #### 2.14.5 Events
