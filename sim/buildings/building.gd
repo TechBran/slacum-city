@@ -576,7 +576,7 @@ func apply_damage(fraction: float, now_minutes: int,
 	# the first event and did not. In a city with NO fire department it is not:
 	# §AR2 puts unanswered incidents' targets exactly at that line, so without
 	# this parameter the ruling would buy the building one game-hour and hand it
-	# to the very next hazard. Doc 92 §58.5 measured that: with §AR2's condemn
+	# to the very next hazard. Doc 92 §58.4 measured that: with §AR2's condemn
 	# alone the player's save still lost 12 of 12 through this door, `cause:
 	# damage`, in place of the ten it used to lose to `cause: fire`.
 	#

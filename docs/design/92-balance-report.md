@@ -9967,6 +9967,13 @@ perfect building and `ASSET_CONDITION_PENALTY_COEFF` 2.0 puts a ruined station a
 | 30 | 2 | 87 | −$20,000 | $1,193,763 | $305,827 | 4 |
 | **45** | **0** | **89** | −$20,000 | **$1,612,599** | $305,827 | **0** |
 
+**What the city was living through while that happened**, counted off the bus
+over the first fourteen game-days: **431 incidents ABANDONED, 17 failed, 11
+buildings burned down, and 77,380 `dispatch_blocked_unreachable` events** - a
+city with no fire station and a road network so closed that nothing could be
+reached even if it had one. Over the full 45: 2,616 abandoned, 523 failed, 506
+burned, 251,930 unreachable.
+
 Causes over the 45 game-days, by roster diff: `SILENT` **12**, of which
 `power_facility` 1, `house` 10, `apartment` 1. With A91-D-110's publish in place
 the same twelve resolve to **`fire` 10, `damage` 1** in the first fourteen days

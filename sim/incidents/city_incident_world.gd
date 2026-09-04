@@ -462,7 +462,7 @@ func destroy_building(id: String, _cause: String, answerable: bool = true) -> vo
 	#
 	# It stays possible to lose a building to fire: a city that HAS a department,
 	# CAN reach the fire, and loses it anyway still loses the building through
-	# `burn_down` below, which is untouched. Doc 92 §58.6 measures both halves —
+	# `burn_down` below, which is untouched. Doc 92 §58.5 measures both halves —
 	# the second alone took the player's save from 12 buildings to 12 over 45
 	# game-days but let the recovered city burn again the moment it rebuilt a
 	# station onto a severed road network.
