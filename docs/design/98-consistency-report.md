@@ -8956,7 +8956,10 @@ that MAP a level to something, and every one was checked against 7:
 * **Gate 29 and the insolvency ordering.** Wave 21's no-spiral lane owns them and
   is running beside this one. The delta this lane creates for it — one more era,
   therefore three more relief grants per city — is published in doc 92 §61.7 as
-  a filed row, not fixed.
+  filed row **AC-22-1**, not fixed. `Treasury.note_era` stays on the CITY-LEVEL
+  transition even though RR-191 moved the grant off it, so nothing about the
+  relief ladder's trigger changes; what changes is that there is one more rung
+  for it to fire on.
 * **The relief ladder itself** (doc 03 §2.10 layer 5). Same owner.
 * **The balance matrix, and not one of its gates.** `do_nothing`, `balanced`,
   `tax_squeezer` and `infrastructure_first` never complete a curriculum

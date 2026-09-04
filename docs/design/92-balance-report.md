@@ -10114,20 +10114,29 @@ this game, and it is:
 
 ### 61.7 The relief ladder — a delta published, not a fix (Wave 21's lane)
 
-`Treasury.note_era(to_level)` resets doc 03 §2.10 layer 5's `relief_grants_used`
-on the same transition that pays this grant, because doc 93 §AP4 ruled that *an
-era is a city level*. **A seventh rung is therefore one more era, and three more
-relief grants (standard preset) for the life of a city.**
+`Treasury.note_era(city_level)` resets doc 03 §2.10 layer 5's
+`relief_grants_used` on the CITY-LEVEL transition, because doc 93 §AP4 ruled that
+*an era is a city level*. It stays there even though §61.12 moved the grant off
+that transition, for §AP4's own reason: an era is a *permission to ask for help*
+and a permission may not depend on how the level was reached. **A seventh rung is
+therefore one more era, and three more relief grants (standard preset) for the
+life of a city.**
 
 That is a real delta and it is the whole of it: **+1 era, once, at the top of the
 ladder, behind the hardest level in the game, and monotone** — it cannot be
 oscillated, farmed, or reached twice. Grants and relief cannot compound into a
-farm because both are one-way: the grant pays each rung once and the era opens
-once, and reaching rung 7 requires spending $644,370 on twelve upgrades.
+farm because both are one-way, and they now do not even share a trigger: the
+grant pays each rung once off `city_level_objectives_met`, the era opens once off
+`city_level_changed`, and reaching rung 7 requires spending $644,370 on twelve
+upgrades.
 
 **Gate 29 and the insolvency ordering are NOT re-fitted here.** They belong to
-Wave 21's no-spiral lane, which is running beside this one; report 98 §64 files
-the `awaiting_consumer` row that names it.
+Wave 21's no-spiral lane, which is running beside this one.
+
+| row | what | number | who |
+|---|---|---|---|
+| **AC-22-1** | **A seventh city level is a seventh ERA**, and an era refills doc 03 §2.10 layer 5's `relief_grants_per_era` allowance. On `standard` that is **+3 relief grants** for the life of a city, once, behind the hardest level in the game. This lane publishes the delta and does not re-fit the ladder, because the ladder and gate 29's insolvency ordering are the sibling lane's. Nothing is unguarded meanwhile: the allowance is per-era and monotone, and `Treasury.maybe_grant_relief`'s own conditions are untouched. | +3 grants, +1 era | Wave 21's no-spiral lane |
+| **AC-22-2** | **A `utility_planner` agent is the instrument §61.11 is missing.** Every strategy in `tools/playtest.gd` answers a headroom refusal *reactively* or not at all, and on a funded arc that is what costs seed 9001 the capstone (7,518 residents, one water component ever placed). Two reactive improvements were measured this wave and both made the arc worse. The agent that would close it keeps supply ahead of demand — the thing a player does with the power overlay open — and it is the same shape of gap doc 92 §35.4 named for `contractor`. | 1 of 3 seeds | a curriculum/agent lane |
 
 ### 61.8 The arc, after — and the one guardrail row that had to be re-measured
 
