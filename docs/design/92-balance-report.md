@@ -9988,6 +9988,15 @@ into the $32,409-a-game-day bill for buildings that did not exist.
 
 ### 58.4 The rulings, one at a time, on the same file
 
+> **⚠ THE LAST ROW OF THIS TABLE AND THE WHOLE OF §58.5 ARE STALE, AND WAVE 21
+> RE-MEASURED THEM RATHER THAN DELETING THEM** (doc 92 §60.9). They were taken
+> before this branch's own last two checkpoints — `ac584cc` and `dec43c9`, which
+> added §AR2's austerity clause — and never re-taken. On `f27c402`, the branch's
+> actual head, the last row reads **6 / 6 / +$57,032 / `fire` 5 + `damage` 1**,
+> not 12 / 12 / +$68,464 / all doors 0. The first three rows are attribution
+> steps and are left as taken; the numbers a reader should USE are in §60.1 and
+> §60.8.
+
 Each row is the full 45-game-day passive run with the rulings above it applied.
 
 | build | standing @14 | standing @45 | treasury @14 | destroyed in 45 gd, by cause |
@@ -10002,7 +10011,17 @@ the money ruling alone makes the city solvent and still lets it be erased; the
 fire ruling alone stops the fire door and hands the same buildings to §AP2's
 damage door one game-hour later; **both, and the city stops falling.**
 
-### 58.5 THE ACCEPTANCE TEST
+### 58.5 THE ACCEPTANCE TEST — ⚠ SUPERSEDED BY §60.8
+
+> Every number in this section was taken before `dec43c9` and does not reproduce
+> on the branch it belongs to (doc 92 §60.9). The passive block re-measures at
+> **6 alive at game-day 14 and at 45, +$57,032 / −$20,000**; the active block
+> re-measures at **75 / 76 / 76** alive with **8,938 `building_destroyed_by_fire`
+> events**, which is §60.2(b)'s austerity-immunity exploit rather than the "0
+> fire destructions" this section reads it as. It is kept in place, marked,
+> rather than deleted, because the mistake it records — publishing a measurement
+> from before your own last checkpoint — is the finding doc 93 §AS5 and doc 91
+> A91-D-115 are both partly about. **The live acceptance test is §60.8.**
 
 **Passive — the player never touches the phone again:**
 
@@ -10384,13 +10403,17 @@ None of those three lines is a fire ruling and none is this lane's to re-fit;
 A91-D-115) — **$91.58/gh with no station of any kind standing**. Doc 03 owns
 every dollar of the other two.
 
-A second agent was run to test whether the ordering is the problem —
-`--spine-first`, identical except that it buys doc 93 §AR1's utility spine before
-anything else. It restores all three `water_facility` and both `substation`s by
-game-day 14 and reaches **43 standing at 14, 45 and 90** with 40 still dark,
-because the second `power_facility` is out of reach at any ordering while the
-treasury is on the floor. The ordering is not the problem; the generation bill
-is. Recorded, not fixed.
+A second agent was run to test whether the ORDERING is the problem —
+`--spine-first`, which buys doc 93 §AR1's utility spine before anything else. It
+restores all three `water_facility` and both `substation`s by game-day 14 and
+reaches **43 standing at 14, 45 and 90**, with 40 still dark, because the second
+`power_facility` is out of reach at any ordering while the treasury is on the
+floor. **It is NOT a clean control and it is not published as one**: the flag
+leaves `restore_reserve` at the tool's $20,000 default where the arm above sets
+it to $0, so it restored 31 ruins against 59 and two variables moved. What it
+does establish is the negative it was run for — buying generation first does not
+light the city, because the missing plant is unaffordable either way. The
+ordering is not the blocker; the generation bill is. Recorded, not fixed.
 
 ### 60.9 The four published numbers this wave re-measured, and what happened to them
 
