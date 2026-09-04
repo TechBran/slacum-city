@@ -9501,3 +9501,37 @@ Setting `coverage_slope` to 0.0 returns the bench coarse digest to
 `db934239…88a1`, bit-identical to the fork, with the other three untouched — so
 §AV4 is the sole cause and §AV1, §AV2 and §AV3 move no baseline at all. Doc 92
 §62.8 carries the digests and the commands.
+
+### §65's open questions, ranked by what breaks if nobody takes them
+
+1. **`tools/playtest.gd` has no water-headroom PLANNER, and the curriculum's
+   capstone is decided by that.** Doc 91 A91-D-123, and doc 92 §62.9 is the
+   measurement: seed 1337 on a 75-game-day horizon ends at curriculum level 6
+   holding **13,946 residents, $3,633,922 and one water works**. It is the reason
+   gate 21's capstone count is 1 and not 3, and until it is fixed **every wave
+   that perturbs doc 06's incident stream will look like a curriculum
+   regression**. `_relieve` already answers `E_WATER_HEADROOM` by buying a pump;
+   what is missing is buying it BEFORE the refusal. First, because it is now
+   costing other lanes their attribution.
+2. **A fire station cuts its district's ignition rate by up to 42.9 % and no
+   screen says so.** Doc 12 D-97. §AV4 makes coverage a real mechanic and the
+   only surface that mentions coverage is doc 02 §2.9's radius overlay. This is
+   PA-44's shape one wave earlier in its life — an unlabelled number the player
+   is expected to make a purchase decision on.
+3. **The condemn floor cannot be judged on a city whose roads are gone.** Doc 93
+   §AV5. Doc 92 §62.6's rig 1 ties all three arms at 65 buildings with the
+   treasury pinned at the credit floor, because neither number the gate is stated
+   in can move there. Every future ruling about departments will hit the same
+   wall on that save, and the instrument it needs is a mid-collapse rig — a city
+   that is falling but still has roads — which this project does not have.
+4. **`E_fleet` bills $91.58/gh for engines whose garage is rubble, and under
+   §AV1 that is now CORRECT.** Doc 91 A91-D-111's remainder should be re-read
+   rather than carried: those units are the city's service, they answer calls,
+   and the predicate now says so. What is still worth asking is whether a city
+   should be able to DECOMMISSION them without bulldozing the shell — today the
+   only door is demolition, and §AV1 makes that door consequential.
+5. **`coverage_slope` 0.4286 is derived from crime's ladder, not fitted to
+   fire.** It is the honest way to author a number with no fire-specific
+   evidence, and it is not evidence about fire. The lane that owns doc 06's
+   escalation ladder should re-derive it against a measured fire arc, and doc 92
+   §62.6 is the rig that would judge the answer.

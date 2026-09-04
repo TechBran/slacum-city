@@ -11413,4 +11413,14 @@ carries the open question and what would close it.
 **Every other cell of gate 21 is untouched and passes on all three seeds**: every
 rung up to `CURRICULUM_FLOOR_LEVEL`, the day bounds, the monotonicity, the water
 and road and repair counters. And **no other gate in the file moved** — 33 tests,
-and not one constant was re-fitted anywhere else.
+445 asserts, failed 0, silent 0, and not one constant was re-fitted anywhere
+else.
+
+**One stale number found while re-fitting, and corrected in passing.** The
+assertion's own failure string read *"measured game-hour 591 on seeds 1337 and
+4242"* while the gate's docstring six lines above it read *"game-hour 430 and
+377"* — the same measurement, written twice, disagreeing. 430/377 is the pair
+`measure_curriculum` reproduces, so 591 was the stale one and the new string
+quotes a single seed and a single hour it can be checked against. **The shape:
+a number written into a failure message is a second copy of a measurement, and
+nothing re-derives a failure message.**
