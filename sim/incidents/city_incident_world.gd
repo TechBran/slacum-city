@@ -477,8 +477,9 @@ func destroy_building(id: String, _cause: String, answerable: bool = true) -> bo
 	# stays that way. Doc 92 §60.1 measures what that costs on the player's own
 	# slot 0: over 45 game-days the merged tree emitted `building_destroyed_by_
 	# fire` for the entire standing roster while `dispatch_blocked_unreachable`
-	# fired 279,071 times, and a player driving `cmd_restore_all_destroyed` every
-	# single game-day was still at **0 buildings alive by game-day 50**.
+	# fired 279,071 times (466,321 over ninety), and a player driving
+	# `cmd_restore_all_destroyed` every single game-day was still at **0
+	# buildings alive by game-day 50**.
 	#
 	# So when the city could not answer, the terminal outcome CONDEMNS
 	# ([Building.condemn_unanswered]) instead of demolishing: the shell stays at

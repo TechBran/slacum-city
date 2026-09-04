@@ -9162,8 +9162,10 @@ an identical roster (doc 92 §60.7).
 
 `DispatchSystem._emit_blocked`'s one-slot de-dup becomes a SET of the reasons an
 incident has already announced, cleared on assignment.
-**279,071 `dispatch_blocked_unreachable` in 45 game-days → 29,685 in 90**, which
-is 1.01 announcements per incident: the floor, not a target.
+**279,071 `dispatch_blocked_unreachable` in 45 game-days** (the lane brief's
+reading on the merged tree; this branch re-measures the fork at **255,050** over
+the same 45 and **466,321** over 90) **→ 14,100 over 45 and 29,685 over 90**,
+which is **1.01–1.02 announcements per incident**: the floor, not a target.
 
 `IncidentWorld.destroy_building` now returns whether it destroyed, and
 `CascadeOps` emits `building_condemned_by_fire` when it did not. On the fork,

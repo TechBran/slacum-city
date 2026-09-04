@@ -460,8 +460,9 @@ func unmet_needs(inc: Incident) -> Array:
 ## incident whose `fire` need is blocked for one reason and whose `police` need
 ## is blocked for another overwrites the slot on every need, every sub-step, and
 ## announces BOTH forever. Doc 92 §60.3 measured it on the player's slot 0:
-## **279,071 `dispatch_blocked_unreachable` in 45 game-days** — 258 a game-hour,
-## on a city with twelve buildings — and 466,321 over ninety. It is not a
+## **279,071 `dispatch_blocked_unreachable` in 45 game-days** on the merged tree,
+## re-measured at 255,050 over the same 45 and **466,321 over ninety** on this
+## branch's fork — 236 a game-hour, on a city with twelve buildings. It is not a
 ## cosmetic problem: `CitySim` republishes every one of these on the shared bus,
 ## so every subscriber in the game paid for them.
 ##

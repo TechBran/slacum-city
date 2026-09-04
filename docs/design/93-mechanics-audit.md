@@ -5462,7 +5462,9 @@ Two lines on the bus were lying about the city, in opposite ways.
 need is blocked for one reason and whose `police` need is blocked for another
 overwrites that slot on every need, on every integrator sub-step, and announces
 both forever. Measured on slot 0: **279,071 `dispatch_blocked_unreachable` in 45
-game-days and 466,321 in 90** — 258 a game-hour on a city with twelve buildings.
+game-days** on the merged tree, re-measured on this branch's fork at 255,050 over
+the same 45 and **466,321 over 90** — 236 a game-hour on a city with twelve
+buildings.
 `CitySim` republishes every one of them on the shared bus, so every subscriber in
 the game paid for it. The slot is now a SET of the reasons this incident has
 already announced, cleared where it always was — the moment something is finally

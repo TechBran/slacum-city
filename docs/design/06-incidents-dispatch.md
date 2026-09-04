@@ -1715,8 +1715,9 @@ NOTIFICATIONS — they tell the player why an incident is not being answered —
 kept a single `"<event>:<role>"` slot and suppressed only an exact repeat, so an
 incident blocked on two roles for two reasons overwrote the slot on every need,
 on every integrator sub-step, and announced both forever: **279,071
-`dispatch_blocked_unreachable` in 45 game-days on the 2026-09-03 player's save**,
-258 a game-hour on a city with twelve buildings. The slot is now a set of the
+`dispatch_blocked_unreachable` in 45 game-days on the 2026-09-03 player's save**
+(re-measured at 255,050 over 45 and 466,321 over 90 on the branch that shipped
+this fix), 236 a game-hour on a city with twelve buildings. The slot is now a set of the
 reasons that incident has already announced, cleared the moment something is
 assigned — **1.01 announcements per incident**, which is the floor and not a
 target. A reason that CHANGES is a different sentence about a different problem

@@ -539,7 +539,8 @@ func test_the_burnt_out_key_is_written_only_when_it_is_true() -> void:
 ## **AN EVENT STORM IS ITS OWN DEFECT.** The old de-dup kept ONE slot, so an
 ## incident blocked on two roles for two reasons overwrote it on every need and
 ## announced both on every integrator sub-step: 279,071
-## `dispatch_blocked_unreachable` in 45 game-days on the player's slot 0. Each
+## `dispatch_blocked_unreachable` in 45 game-days on the player's slot 0, and
+## 466,321 in 90. Each
 ## reason is now announced once per incident until something is assigned.
 func test_a_blocked_incident_says_each_reason_once() -> void:
 	var sim := CitySim.boot_from_files()

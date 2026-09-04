@@ -10243,9 +10243,16 @@ Wave 21's predicate reads no money. §60.5 is the inequality that replaces it.
 
 | tree, passive | terminal incidents in the run | `dispatch_blocked_unreachable` | announcements per incident |
 | --- | --- | --- | --- |
-| fork, 45 game-days | 436 (`abandoned` 413 + `failed` 23) | **255,050** | 585 |
-| fork, 90 game-days | 3,030 | **466,321** | 154 |
-| **Wave 21, 90 game-days** | 29,403 | **29,685** | **1.01** |
+| merged Wave 20, 45 game-days (the lane brief's own reading) | — | **279,071** | — |
+| fork `f27c402`, 14 game-days | 436 (`abandoned` 413 + `failed` 23) | **76,018** | 174 |
+| fork `f27c402`, 45 game-days | 1,479 (1,438 + 41) | **255,050** | 172 |
+| fork `f27c402`, 90 game-days | 3,030 (2,975 + 55) | **466,321** | 154 |
+| **Wave 21, 45 game-days** | 13,843 (13,819 + 24) | **14,100** | **1.02** |
+| **Wave 21, 90 game-days** | 29,403 (29,375 + 28) | **29,685** | **1.01** |
+
+*(279,071 is the lane brief's measurement on the MERGED Wave-20 tree and is
+quoted rather than re-taken; every other row is this branch's own re-measurement
+on `f27c402` and on the final tree, same save, same seed, same head-align.)*
 
 The old de-dup kept one slot holding `"<event>:<role>"`; an incident blocked on
 two roles for two reasons overwrote it on every need, on every integrator
