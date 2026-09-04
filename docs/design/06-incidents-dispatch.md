@@ -154,7 +154,7 @@ Fields (spec §33 / §46 superset):
 | `ACTIVE` | ≥1 capability-matching unit on scene; `progress` accumulating | arrival of a primary-role unit | → `RESOLVED` at `progress ≥ 1`; → `ASSIGNED` if primary role leaves; → `FAILED` on terminal condition |
 | `RESOLVED` | success; rewards paid; units released | `progress ≥ 1.0` | terminal (removed after `KEEP_RESOLVED_MIN = 15` game-min for the UI/report) |
 | `FAILED` | terminal consequence fired (burn-down, transformer destroyed, main washout) | `on_fail` condition | terminal |
-| `ABANDONED` | **the city never answered this**; the type's own penalty applied | `self_resolve_h` elapsed in `QUEUED` at tier < `self_resolve_max_tier`, **or `unanswered_h` reaches `UNANSWERED_ABANDON_H` (24 gh) with nothing committed — §2.10.1, RR-26** | terminal |
+| `ABANDONED` | **the city never answered this**; the type's own penalty applied | `self_resolve_h` elapsed in `QUEUED` at tier < `self_resolve_max_tier`, **or `unanswered_h` reaches `UNANSWERED_ABANDON_H` (24 gh) with nothing committed — §2.10.1, RR-26** | terminal. **What the terminal outcome may TAKE depends on whether the city had the CAPABILITY to answer** (doc 93 §AS1, Wave 21, replacing §AR2's draft): `IncidentSystem.incident_was_answerable()` answers false when nothing is committed AND `DispatchSystem` set `unreachable` (units existed, permission existed, doc 10 offered no route), and `CityIncidentWorld` narrows that with the two facts doc 06 cannot see — whether a `fire_station` is standing at all, and whether the fleet holds a unit that answers the `fire` role. **No wealth is read**: Wave 20's draft consulted `Treasury.austerity_active` and was refuted twice (doc 92 §60.2 — it switches itself off the moment relief works, and held the other way it is total fire immunity bought by staying broke). When the answer is false, `destroy_building` CONDEMNS instead of demolishing, and doc 02 sets `burnt_out` so the shell leaves §2.6's ignition pool and §2.8's spread pool — the BOUND, without which a condemned building sits at 4.1× a healthy one's ignition rate and the chain never terminates (doc 93 §AS2). `dispatch_blocked_no_units` is deliberately excluded: a department with no free engine is a fleet-sizing choice, and §2.16's dispatch economy rests on that choice having consequences |
 
 **Only `ACTIVE` accumulates progress. `QUEUED` and `ASSIGNED` accumulate escalation at full rate; `ACTIVE` accumulates escalation at the suppressed rate.**
 
@@ -403,6 +403,9 @@ incident.position = b.centre ; incident.target_ref = {kind:"building", id:b.id}
 p_ignite_base(b) = fire_ignition_per_hour(archetype, level)   ← doc 02 §2.3, NORMATIVE
                  * fire_condition_mult(b)                     ← doc 02 §2.6 = 1 + 1.5·(1 − condition)^1.5
                  * state_fire_mult(b)                         ← doc 02 §2.12
+                                                              (0 when doc 02's
+                                                               `burnt_out` is set
+                                                               — §AS2's bound)
 
 R_fire_base = 0.40            # recalibrated, R-11 — a dimensionless global scalar, NOT a per-archetype rate
 f_power   = 1 + 0.8 * (1 if building unpowered else 0)
@@ -1543,7 +1546,7 @@ path never spawns).
 | `scope` | target | eligibility |
 |---|---|---|
 | `self` | the parent's own `target_ref` | none — the parent had one |
-| `district_random_building` | a weighted pick in the parent's district | `state_fire_mult > 0` (doc 02 §2.12) |
+| `district_random_building` | a weighted pick in the parent's district | `state_fire_mult > 0` (doc 02 §2.12) — which is **0 for a shell an unanswered fire has already gutted**, doc 93 §AS2, so a burnt-out building is neither an ignition candidate nor a spread target until somebody pays to rebuild it |
 | `nearest_building` | the closest eligible building | same |
 | `district` | none — the district itself | **the type's own generator eligibility**: `population > 0` for `crime` (§2.6(a)); nothing for the per-asset types |
 | `adjacent_edge` | none — the parent's tile | none |
@@ -1703,7 +1706,22 @@ sim/fleet/fleet_system.gd                 # roster, stations, upkeep hook, arriv
 
 **Commands handled:** `dispatch_unit`, `recall_unit`, `pin_incident`, `set_dispatch_policy`, `buy_vehicle`, `sell_vehicle`, `set_unit_home_station`, `acknowledge_incident`.
 
-**Events emitted:** `incident_created`, `incident_tier_changed`, `incident_assigned`, `unit_dispatched`, `unit_arrived`, `unit_returned`, `incident_resolved`, `incident_failed`, `incident_abandoned`, `fire_spread`, `building_destroyed_by_fire`, **`destroy_refused_offline`** (C-47), **`construction_job_preempted`** (G-2), `dispatch_blocked_no_units`, `dispatch_blocked_unreachable`, `policy_changed`.
+**Events emitted:** `incident_created`, `incident_tier_changed`, `incident_assigned`, `unit_dispatched`, `unit_arrived`, `unit_returned`, `incident_resolved`, `incident_failed`, `incident_abandoned`, `fire_spread`, `building_destroyed_by_fire`, **`building_condemned_by_fire`** (doc 93 §AS1 — the terminal op emits this one when it condemned instead of destroying, and it is not decoration: the old line said `building_destroyed_by_fire` either way, **3,891 times in 45 game-days about buildings the census still showed standing**), **`destroy_refused_offline`** (C-47), **`construction_job_preempted`** (G-2), `dispatch_blocked_no_units`, `dispatch_blocked_unreachable`, `policy_changed`.
+
+**The two blocked-dispatch events are announced ONCE PER INCIDENT PER REASON**
+(doc 93 §AS3, Wave 21), and that is a rule rather than an optimisation. They are
+NOTIFICATIONS — they tell the player why an incident is not being answered — and
+`CitySim` republishes every one of them on the shared bus. The original de-dup
+kept a single `"<event>:<role>"` slot and suppressed only an exact repeat, so an
+incident blocked on two roles for two reasons overwrote the slot on every need,
+on every integrator sub-step, and announced both forever: **279,071
+`dispatch_blocked_unreachable` in 45 game-days on the 2026-09-03 player's save**
+(re-measured at 255,050 over 45 and 466,321 over 90 on the branch that shipped
+this fix), 236 a game-hour on a city with twelve buildings. The slot is now a set of the
+reasons that incident has already announced, cleared the moment something is
+assigned — **1.01 announcements per incident**, which is the floor and not a
+target. A reason that CHANGES is a different sentence about a different problem
+and is still announced, once.
 
 **`vehicle_state` snapshot record** (per unit, per tick, consumed by doc 11): `{ id, type, pos, speed, heading, status, incident_id, route_progress }` — `speed` and `heading` are explicit per C-67.
 

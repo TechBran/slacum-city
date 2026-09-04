@@ -448,11 +448,44 @@ func unmet_needs(inc: Incident) -> Array:
 ## Emit a blocked event only when the reason CHANGES. The assignment loop runs
 ## every sub-step, so an unanswered incident would otherwise fill doc 08's
 ## history ring with thousands of identical rows.
+## **ONE ANNOUNCEMENT PER INCIDENT PER REASON — doc 93 §AS3 (Wave 21). AN EVENT
+## STORM IS ITS OWN DEFECT.**
+##
+## This is a NOTIFICATION: it tells the player *why* an incident is not being
+## answered. Saying it again on the next integrator sub-step tells them nothing
+## and drowns every other line on the bus.
+##
+## **The old de-dup was one slot, and one slot cannot hold two roles.** It kept a
+## single `"<event>:<role>"` string and suppressed only an exact repeat — so an
+## incident whose `fire` need is blocked for one reason and whose `police` need
+## is blocked for another overwrites the slot on every need, every sub-step, and
+## announces BOTH forever. Doc 92 §60.3 measured it on the player's slot 0:
+## **279,071 `dispatch_blocked_unreachable` in 45 game-days** on the merged tree,
+## re-measured at 255,050 over the same 45 and **466,321 over ninety** on this
+## branch's fork — 236 a game-hour, on a city with twelve buildings. It is not a
+## cosmetic problem: `CitySim` republishes every one of these on the shared bus,
+## so every subscriber in the game paid for them.
+##
+## The slot is now a SET of the reasons this incident has already announced,
+## under the same key, and it is cleared where it always was — the moment
+## something is actually assigned, because *"a unit is finally coming"* makes the
+## next block genuine news. A reason that CHANGES (no engine free → no route in)
+## is still announced, because it is a different sentence about a different
+## problem, and it is still announced exactly once.
+##
+## A save written before this ruling carries a String under this key. It is read
+## defensively and replaced, rather than migrated: the value is a per-incident
+## de-dup hint with no meaning beyond the current block, so the worst a stale one
+## can cost is one extra notification on the load.
 func _emit_blocked(inc: Incident, event_type: String, role: String) -> void:
+	var said: Variant = inc.context.get("blocked_reason", null)
+	if not (said is Dictionary):
+		said = {}
+		inc.context["blocked_reason"] = said
 	var key := "%s:%s" % [event_type, role]
-	if String(inc.context.get("blocked_reason", "")) == key:
+	if bool((said as Dictionary).get(key, false)):
 		return
-	inc.context["blocked_reason"] = key
+	(said as Dictionary)[key] = true
 	_emit(event_type, {"incident_id": inc.id, "role": role})
 
 

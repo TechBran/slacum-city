@@ -317,7 +317,7 @@ All × `M_exp[difficulty]` except **`E_roads_repair`**, `E_debt` and `E_oneoff` 
 
 **`E_roads_repair`'s exception is new (Wave 12, doc 93 §N1) and it is a fix, not a design change.** That line's own formula below ends `× M_repair[difficulty]`, and it is an ACCRUAL against a payment — the auto-repair policy's realised job, priced by §2.5's `repair_cost = capital_value × damage_fraction × 0.85 × M_repair`. Before the ruling the settlement swept it into `M_exp` as well, so it took **`M_repair × M_exp` — 2.0000 on `crisis` against 1.2500 on every other line** — and the ledger accrued 1.25× what the same tiles cost to fix. An accrual that does not converge on its payment is the double count C-07 / C-08 / C-12 / RR-2 keep removing, one knob down. Doc 92 §29.2(b) measured it; doc 92 §32 measures the fix. **Nothing on the default preset moves**: both knobs are 1.00 on `standard`. The rule, stated once so no fourth reading is possible: **one difficulty knob per ledger line, never two** — seven recurring lines take `M_exp`, `E_roads_repair` takes `M_repair`, `E_debt` takes the APR, `E_oneoff` takes whichever price knob authored it.
 
-**E_building_maint** — revenue-producing buildings only. Civic and utility buildings are covered entirely by their department/O&M lines; billing them twice was the original balance error.
+**E_building_maint** — revenue-producing buildings only, **and STANDING ones only** (doc 93 §AR3, Wave 20). Civic and utility buildings are covered entirely by their department/O&M lines; billing them twice was the original balance error. **A RUIN IS NOT BILLED.** This line is the city's cost of SERVING a building (§Y1's own definition, which is what kept the line alive when the ownership ruling landed), and a ruin is served by nothing — no power, no water, nobody housed, no traffic, `state_occupancy()` 0.00 and therefore $0 of tax and $0 of `potential`. Until Wave 20 it WAS billed, and at the worst rate the formula can produce: `C_b` is 0 for a ruin, so `(1 + MAINT_CONDITION_PENALTY × (1 − C_b))` sits at its maximum **2.5×** and a destroyed building cost the city two and a half times what the same building costs in perfect repair. On the 2026-09-03 player save that was **$1,044.39/gh of $1,055.12 — 99.0 % of the line — charged against rubble** (doc 92 §58.2). `CitySim.build_settlement_inputs` skips `state == destroyed`.
 
 ```
 E_building_maint = Σ capital_value(b) × BUILDING_MAINT_RATE × (1 + MAINT_CONDITION_PENALTY × (1 - C_b))
@@ -327,7 +327,7 @@ MAINT_CONDITION_PENALTY = 1.5
 
 At full condition and L1 this is exactly 4% of the building's gross base tax. Because capital grows on the 2.55 curve while tax grows on 2.15, maintenance climbs to 7.4% of gross by L5 — a deliberate, mild drag that makes tall buildings slightly more expensive to hold than wide ones.
 
-**E_departments** — per station, per level: `station_upkeep(type, L) = round( station_upkeep_L1[type] × DEPT_LEVEL_GROWTH^(L-1) )`, `DEPT_LEVEL_GROWTH = 1.75`. Upkeep at L1 ($/gh): police_station 26, fire_station 30, utility_depot 24, **water_works 20 (staffing only)**, construction_yard 20, ems_station 28 (post-MVP), hospital 45 (post-MVP).
+**E_departments** — per **standing** station, per level: `station_upkeep(type, L) = round( station_upkeep_L1[type] × DEPT_LEVEL_GROWTH^(L-1) )`, `DEPT_LEVEL_GROWTH = 1.75`. **A RUINED STATION DRAWS NO WAGES** (doc 93 §AR3, Wave 20): this line is staffing, and a destroyed shell has no staff. It too was billed at its maximum before Wave 20 — `ASSET_CONDITION_PENALTY_COEFF` 2.0 against a ruin's condition 0 is **3.0×** a healthy station — and on the 2026-09-03 player save **100 % of the line, $306.00/gh, was four shells that no longer existed**. `CityIncidentWorld.station_rows()` carries the same guard, because it is `FleetSystem.populate_from_stations`'s only source and a ruined garage was also housing an `E_fleet` bill — **on the boot path only**: `FleetSystem.deserialize` rebuilds the roster from the save and nothing retires a unit when its station is destroyed, so `E_fleet` for a station lost mid-run is doc 91 A91-D-111's open remainder and is not closed here. Upkeep at L1 ($/gh): police_station 26, fire_station 30, utility_depot 24, **water_works 20 (staffing only)**, construction_yard 20, ems_station 28 (post-MVP), hospital 45 (post-MVP).
 
 **Staffing-only lines (report 98 RR-16).** Where a utility formula already bills a facility's O&M, the department line for that service covers **staffing only** and must say so, or the facility is charged twice — the C-08 error in a new place. Two cases exist today: `water_works 20` is **staffing only**, because the water works' plant O&M is `E_water`'s `pump_capacity_m3h × PUMP_OM_PER_M3H_HOUR` ($14.00/gh on the starter pump); and `PLANT-1` / `SUB-A` carry **no department line at all**, because `E_grid`'s `PLANT_OM_PER_MW_HOUR` and `GRID_MAINT_PER_MW_HOUR` bill them in full (§2.12(b)). No number changes — the labelling makes the existing split legible.
 
@@ -991,11 +991,32 @@ So the punishment for insolvency is a **decaying city**, never a locked one.
 
 ```
 grant = clamp( round( max( RELIEF_DAYS_OF_REVENUE × daily_gross_revenue,
-                           RELIEF_DAMAGE_FRACTION × outstanding_restore_cost ) ),
+                           max( 0, RELIEF_DAMAGE_FRACTION × outstanding_restore_cost
+                                   - relief_era_paid ) ) ),
                RELIEF_MIN (8,000), RELIEF_MAX (250,000) )
+
+relief_era_paid += grant          # reset by note_era, with the allowance
 ```
 
 The revenue term alone was measured on the city **after** the loss, so the worse the catastrophe the smaller the relief: a standard city of 251 ruins carrying a **$238,280** restore bill was offered **$8,000** — `RELIEF_MIN` — on every preset. `outstanding_restore_cost` is `CostCurves.restore_cost_building` summed over the city's actual ruins at its own `M_repair`, i.e. the identical call `cmd_restore_building` charges, so C-07 keeps one price and the grant can never disagree with the invoice. `RELIEF_DAMAGE_FRACTION = 0.35` is `DEFERRED_REPAY_FRACTION` adopted, not invented. **It is not farmable, and the argument is an inequality: 0.35 < 1**, so the grant never covers the bill it is measured against and wrecking your own stock always loses money; the bill also shrinks as it is spent, so relief decays back to the revenue term as the city recovers.
+
+> **THE INEQUALITY WAS TRUE PER GRANT AND FALSE PER ERA, and Wave 21 fixed it**
+> (doc 93 §AS4, measured in doc 92 §60.4). `relief_grants_per_era` is 3 on
+> standard, and **3 × 0.35 = 1.05**. The shipped build paid the 2026-09-03
+> player **$306,233 against a $296,438 restore bill — 1.033×** — and a unit
+> control driving three grants against a fixed bill returns **$311,259**, which
+> is 1.050× to the dollar. `Treasury.relief_era_paid` — dollars, persisted,
+> reset by `note_era` with the allowance it belongs to — subtracts what the era
+> has already handed over from the DAMAGE term, so an era's damage-side relief
+> sums to at most `RELIEF_DAMAGE_FRACTION × (the largest bill any grant in it
+> was measured against)`. **No new constant is authored**: the cap is the
+> fraction that was already here, applied to the era instead of to the grant.
+> The **revenue term stays outside it** — it is measured on what the city EARNS
+> rather than on what it lost, and netting it would punish a city for having
+> spent its last grant well — and so does `RELIEF_MIN`, which is the floor this
+> layer guarantees every grant. A save written before the cap carries no counter
+> and loads at 0, which is what a city that has taken no grant means.
+
 
 **An era is a CITY LEVEL** (Wave 19, doc 91 A91-D-103). `relief_grants_per_era` carried that word from this table's first draft and nothing in the project ever defined it, so `relief_grants_used` — incremented and persisted but reset by nothing — made the allowance a *lifetime* three. `Treasury.note_era(city_level)` resets it on the same transition that pays `LEVEL_UP_GRANT_BY_CITY_LEVEL`: already tracked, already persisted, monotone, and therefore unfarmable.
 

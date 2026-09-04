@@ -2259,7 +2259,12 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 ## and that is the same finding read from the other end: with the smooth
 ## condition slide gone, the remaining collapse is driven by the incident
 ## cascade, which is stochastic where wear was not.
-const PRESET_HORIZON_DAYS := {"casual": 210, "standard": 160, "hard": 120, "crisis": 70}
+## **RE-FITTED Wave 20 (doc 92 §58.7, report 98 §61 RR-176).** `casual`
+## 210 → **300** and `standard` 160 → **200**, because doc 93 §AR3 stopped the
+## city being billed for its own rubble and a neglected city therefore takes
+## longer to run out of money. `hard` and `crisis` are UNMOVED, and that is the
+## finding rather than a convenience — see the attribution table below.
+const PRESET_HORIZON_DAYS := {"casual": 300, "standard": 200, "hard": 120, "crisis": 70}
 ## casual must die before its own horizon; crisis must not die absurdly early.
 ## The ordering assertions carry the rest.
 ##
@@ -2294,7 +2299,41 @@ const PRESET_HORIZON_DAYS := {"casual": 210, "standard": 160, "hard": 120, "cris
 ## The FLOOR stays at 18 — `crisis` measures 18–43 across the three seeds, so 18
 ## is now the observed minimum rather than 0.69× the mean, and moving it down
 ## would stop it guarding anything.
-const PRESET_LIFETIME_CEILING := 200
+## **RE-FITTED Wave 20 (doc 92 §58.7).** 200 → **290**: `casual` now dies on
+## game-day 258 and the ceiling keeps its old relationship to the horizon (ten
+## game-days under it, as 200 was under 210). The FLOOR stays **18** — `crisis`
+## measures 19, unmoved to the day by this wave.
+##
+## **THE ATTRIBUTION, on this gate's own rig and its own seed** (1337, hour
+## resolution), with doc 93 §AR3's one guard toggled and everything else in
+## Wave 20 left on. `tools/measure_gate29.gd` is the instrument, and it exists
+## because re-fitting a gate against a number a *different* instrument produced
+## is how a pinned constant stops meaning what its note says
+## (`measure_insolvency.gd` answers 49 on `hard` where this gate answers 47):
+##
+## | preset | §AR3 off | §AR3 on (shipped) | delta |
+## |---|---|---|---|
+## | `casual` | 192 | **258** | +66 |
+## | `standard` | 136 | **167** | +31 |
+## | `hard` | 47 | **47** | **0** |
+## | `crisis` | 19 | **19** | **0** |
+##
+## Two things to read off it. **The §AR3-off column reproduces the fork**: 136
+## against this constant's own pinned 137, and 192 against the 193 the Wave-17
+## note below records as `casual`'s worst seed — so doc 93 §AR1 and §AR2 move
+## this gate by ZERO, and the whole delta is one guard in
+## `CitySim.build_settlement_inputs`. **And `hard` and `crisis` do not move at
+## all**, because a city that dies on game-day 47 never accumulates enough ruins
+## for the bill to matter; the ruling bites exactly where the ruins are.
+##
+## **What this gate was partly measuring, and should not have been.** "Neglect is
+## fatal" was being carried, on the two long presets, by a defect: a destroyed
+## building was billed 2.5× and a destroyed station 3.0× what the same asset
+## costs in perfect repair (doc 91 A91-D-111), so every building a neglected city
+## lost made its bill go UP. Neglect is still fatal on all four presets and still
+## strictly ordered; it now takes 66 more game-days on `casual` because the city
+## stops paying wages to buildings that burned down.
+const PRESET_LIFETIME_CEILING := 290
 const PRESET_LIFETIME_FLOOR := 18
 ## `standard` is the preset every other gate in this file is measured on, so its
 ## own number is pinned rather than merely ordered. **69 → 137, Wave 17** (doc 92
@@ -2302,11 +2341,40 @@ const PRESET_LIFETIME_FLOOR := 18
 ## 6 → 12 to hold it, which keeps the guard at the same ~9 % of the pinned value
 ## it had before — so this still fails on anything that moves `standard`'s
 ## neglect curve by more than about a tenth.
-const STANDARD_LIFETIME_DAYS := 137
+## **137 → 167, Wave 20** (doc 92 §58.7): the same +31 the table above
+## attributes to doc 93 §AR3 alone. The three-seed spread NARROWED, 10 game-days
+## (129–139) to **7** (165 / 167 / 172 on 1337 / 4242 / 9001), so the band stays
+## at 12 rather than growing with the pin — it now covers the spread more than
+## twice over and still fails on anything that moves `standard`'s neglect curve
+## by more than about 7 %.
+##
+## **NOT re-fitted in Wave 21, and that is measured** (doc 92 §60.11). Doc 93
+## §AS1 and §AS2 keep buildings a `do_nothing` city used to lose, and gate 29's
+## own rig reads `standard` at **164 / 169 / 163** on this band's own three seeds
+## (1337 / 4242 / 9001, against Wave 20's 165 / 167 / 172) — three game-days
+## SOONER on the pinned seed, not later, a spread of **6** where Wave 20 measured
+## 7, and all three well inside this band. The sign is the point: a ruin costs the city nothing
+## (§AR3's guard) while a boarded-up shell still bills `E_building_maint` at
+## 2.35× and returns 0.184 of the tax, so keeping the roster alive is a cost to a
+## city that will not act on it. `casual` reads 255 against the 290 ceiling,
+## `hard` 47 and `crisis` 19 are unmoved to the day, and the cascade tripwire's
+## peak is 36 on all three long presets — unchanged to the incident.
+const STANDARD_LIFETIME_DAYS := 167
 const STANDARD_LIFETIME_BAND := 12
 ## The cascade tripwire, asserted inside the horizon rather than assumed away:
-## doc 06 §2.13's own worst-case accounting is ≤ 40 active incidents, and a
-## `do_nothing` city inside these horizons measures 0 or 1.
+## doc 06 §2.13's own worst-case accounting is ≤ 40 active incidents.
+##
+## **The constant does not move and the MARGIN did** (Wave 20, doc 92 §58.7).
+## The sentence here used to end "and a `do_nothing` city inside these horizons
+## measures 0 or 1", which was true when the Chebyshev stand-in was the travel
+## provider and is not true now: with the router, `standard` peaks at **36 in
+## BOTH arms of the §AR3 attribution above** — so this is not Wave 20's doing and
+## Wave 20 did not measure it before. `casual` moves 10 → 14 and `hard` 2 → 36,
+## which IS this wave: a city that keeps its buildings keeps their ignition
+## sources. Four of forty is the thinnest margin in this file and it is recorded
+## rather than widened, because widening a ceiling to fit a measurement is how a
+## tripwire stops being one. Gate 30 asserts the same bound on a 200-game-day run
+## and is the one to read first if either ever fires.
 const PRESET_MAX_OPEN_INCIDENTS := 40
 
 

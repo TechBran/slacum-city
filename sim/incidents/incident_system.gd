@@ -530,6 +530,41 @@ func _accumulate_terminal_timers(inc: Incident, dt_h: float, assist: float) -> v
 		inc.unanswered_h = 0.0
 
 
+## **COULD THE CITY HAVE ANSWERED THIS?** — doc 93 §AR2 (Wave 20). The question
+## doc 06 has to answer before doc 02 decides whether an incident's terminal
+## outcome demolishes a building or merely condemns it.
+##
+## Two readings of "answered", and both are already recorded here:
+##
+##   * **Something is committed.** `assigned` non-empty means units are on it as
+##     the timer runs out — the city answered and the fire won. That is a fair
+##     loss and it still demolishes, which is what keeps a storm meaningful.
+##   * **The dispatcher could not get there.** `unreachable` is set by
+##     `DispatchSystem` when it had candidate units, had permission to send them,
+##     and doc 10's road graph offered no route — "there is no way in", which the
+##     UI already reports as a different problem from "no truck is free". A city
+##     whose roads are severed did not decline to answer.
+##
+## `dispatch_blocked_no_units` is deliberately NOT in the second bucket: a city
+## with a fire department and no free engine made a fleet-sizing choice, and doc
+## 06 §2.16's whole dispatch economy rests on that choice having consequences.
+## The one case where having no units is not a choice — having no fire station at
+## ALL — is answered one layer out, by `CityIncidentWorld._has_fire_department`,
+## because it is a fact about doc 02's roster and not about this incident.
+##
+## **Not a farm.** The player cannot set `unreachable`: it is computed by the
+## dispatcher against doc 10's graph. Severing your own roads to make fires
+## non-lethal would cost you every dispatch, doc 03's `f_road` term on every
+## building's tax and doc 10's whole access model — vastly more than the
+## difference between a condemned building and a ruin.
+func incident_was_answerable(inc: Incident) -> bool:
+	if inc == null:
+		return true
+	if not inc.assigned.is_empty():
+		return true
+	return not inc.unreachable
+
+
 ## The clock is paused, not merely reset, while a `fail_refused` incident waits
 ## for the player to come back (C-47). The refusal exists so the returning player
 ## finds the building still burning; abandoning it in their absence would delete
@@ -1223,10 +1258,20 @@ func _structure_fire_rates(dt_h: float, collect: bool) -> Dictionary:
 	var ignitions: PackedFloat64Array = columns["fire_ignition_per_hour"]
 	var powered: PackedByteArray = columns["powered"]
 	var districts: PackedStringArray = columns["district_id"]
+	# Doc 93 §AS2's column. A world that predates the ruling supplies none, and
+	# the empty array then answers "not burnt out" for every index below.
+	var burnt: PackedByteArray = columns.get("burnt_out", PackedByteArray())
 	var pick_ids := PackedStringArray()
 	var pick_lambdas := PackedFloat64Array()
 	var total := 0.0
 	for i in ids.size():
+		# Doc 93 §AS2: a shell an unanswered fire already gutted is not fuel. It
+		# is screened here rather than folded into `state_fire_mult_value`
+		# because that form takes a state and this is a fact about the building —
+		# `IncidentWorld.state_fire_mult_of`, which doc 06 §2.8's spread screen
+		# uses, makes the same check on the row form.
+		if i < burnt.size() and burnt[i] != 0:
+			continue
 		var state_mult := IncidentWorld.state_fire_mult_value(states[i])
 		if state_mult <= 0.0:
 			continue

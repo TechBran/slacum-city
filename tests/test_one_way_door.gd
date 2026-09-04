@@ -40,12 +40,22 @@ func test_wear_cannot_demolish_a_private_building() -> void:
 
 ## And the city's OWN stock is still losable, which is what keeps neglect fatal
 ## for the things the player chose to build.
+##
+## **NARROWED BY WAVE 20** (doc 93 §AR1). This test used to take the first civic
+## or utility building in roster order; §AR1 rules that the GENERATION AND WATER
+## SPINE is condemned by wear rather than demolished by it, so the sentence
+## "the city's own stock is still losable" is now precisely about police, fire
+## and the construction yard — and the test says so rather than depending on
+## roster order to hand it a losable one. See
+## `tests/test_spiral_floor.gd::test_wear_cannot_demolish_the_utility_spine`
+## for the other side of the same line.
 func test_wear_still_demolishes_what_the_city_owns() -> void:
 	var sim := CitySim.boot_from_files()
-	var sim_id := _first(sim, false)
-	assert_ne(sim_id, "", "the founding manifest has civic/utility stock")
+	var sim_id := _first_losable_civic(sim)
+	assert_ne(sim_id, "", "the founding manifest has a station")
 	var b: Building = sim.buildings[sim_id]
 	assert_false(b.owner_maintained, "civic and utility are not private stock")
+	assert_true(b.wear_may_demolish, "and a station is not the utility spine")
 	b.state = &"damaged"
 	b.condition = 0.05
 
@@ -272,5 +282,16 @@ func _first(sim: CitySim, private: bool) -> String:
 	for id in sim.roster_ids():
 		var b: Building = sim.buildings[id]
 		if b.owner_maintained == private and b.decays():
+			return String(id)
+	return ""
+
+
+## The city's own stock that doc 93 §AR1 leaves LOSABLE: not private, not the
+## generation/water spine. Named by the flag rather than by an archetype list, so
+## the day the spine gains or loses a member this helper follows the file.
+func _first_losable_civic(sim: CitySim) -> String:
+	for id in sim.roster_ids():
+		var b: Building = sim.buildings[id]
+		if not b.owner_maintained and b.decays() and b.wear_may_demolish:
 			return String(id)
 	return ""

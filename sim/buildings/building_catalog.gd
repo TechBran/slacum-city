@@ -217,6 +217,37 @@ func wear_may_demolish() -> bool:
 	return bool(block.get("wear_may_demolish", true))
 
 
+## Doc 93 §AR1 (Wave 20): is this archetype part of the UTILITY SPINE — the
+## generation, distribution and water stock a city cannot function without and
+## cannot rebuy while it is insolvent? Named by archetype and not by tax class,
+## because `civic` holds both the spine and the losable stock and the ruling is
+## precisely that they are not the same thing.
+##
+## A fixture whose rules carry no `utility_spine` block answers false for
+## everything, so the pre-Wave-20 physics survives it exactly.
+func is_utility_spine(archetype: String) -> bool:
+	var block: Dictionary = _rules.get("utility_spine", {})
+	return (block.get("archetypes", []) as Array).has(archetype)
+
+
+## **The one predicate `Building.wear_may_demolish` is stamped from** (doc 93
+## §AR1). It folds the two rulings that answer the same question — §AP1 for
+## private stock, §AR1 for the city's own spine — so `roll_structural_failure`
+## reads one flag and neither ruling can be applied at one of the four stamping
+## sites and forgotten at another.
+##
+## Both halves default to `true`, so a fixture carrying neither block gets the
+## pre-Wave-19 physics; a fixture carrying only `owner_maintenance` gets exactly
+## Wave 19's.
+func wear_may_demolish_for(archetype: String) -> bool:
+	if owner_maintained(archetype) and not wear_may_demolish():
+		return false
+	if is_utility_spine(archetype):
+		var block: Dictionary = _rules.get("utility_spine", {})
+		return bool(block.get("wear_may_demolish", true))
+	return true
+
+
 ## The five `water_facility` node kinds (doc 02 §2.1, C-35), in doc order.
 func water_variants() -> Array:
 	return _rules.get("water_facility_variants", []).duplicate()
@@ -325,6 +356,29 @@ func _load(buildings_data: Dictionary, rules_data: Dictionary) -> void:
 		_load_archetype(archetype, entry)
 	_ids = _levels.keys()
 	_ids.sort()
+	_check_utility_spine()
+
+
+## Doc 93 §AR1 (Wave 20), on `owner_maintenance`'s own terms: the spine block is
+## optional for a fixture, authors no number, and the one thing that can go wrong
+## with it is naming an archetype that does not exist — which would make the
+## ruling a no-op the loader approved, exactly the failure `_load_rules`'s
+## tax-class check exists to stop one field over.
+##
+## It runs HERE and not in `_load_rules` because `_load_rules` is called first,
+## before one archetype has been read: a check against `_archetypes` up there
+## would reject every name in the block.
+func _check_utility_spine() -> void:
+	if not _rules.has("utility_spine"):
+		return
+	var spine: Dictionary = _rules.get("utility_spine", {})
+	var spine_archetypes: Array = spine.get("archetypes", [])
+	if spine_archetypes.is_empty():
+		errors.append("building_rules: utility_spine.archetypes is empty")
+	for entry in spine_archetypes:
+		if not _archetypes.has(String(entry)):
+			errors.append("building_rules: utility_spine.archetypes names '%s', not an archetype"
+					% String(entry))
 
 
 func _load_archetype(archetype: String, entry: Dictionary) -> void:

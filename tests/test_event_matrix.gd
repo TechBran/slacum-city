@@ -350,6 +350,28 @@ const REGISTER := {
 	# integration — their awaiting_consumer rows deleted themselves exactly as
 	# written. opportunity_collected: goal_system + street_life + ui/street_model.,
 
+	# ── doc 06 §3.1's cascade ops, surfaced by Wave 21's widened scan ──────
+	# `building_destroyed_by_fire` and `building_condemned_by_fire` are NOT here:
+	# the widened scan showed the feed could say neither of a fire's two endings,
+	# and both are now rows in `data/ui.json.event_log` (doc 12 D-94).
+	"incident_notify":
+		"bookkeeping: doc 06 §3.1's `notify` op RAISES an incident's"
+		+ " notification_priority, and the number it raises is already carried on"
+		+ " incident_created and incident_tier_changed, which the feed and the"
+		+ " alerts model both read. The op announces its own side effect; the"
+		+ " surface learns it from the incident.",
+	"destroy_refused_offline":
+		"covered: C-47's refusal is VISIBLE by construction — the building is"
+		+ " still standing and still on fire when the player opens the app, which"
+		+ " is the whole point of refusing rather than swallowing, and doc 08's"
+		+ " return summary is where an absence gets narrated. The event is the"
+		+ " audit trail a test asserts the refusal fired exactly once.",
+	"power_component_destroyed":
+		"covered: doc 04 republishes the component's own failure the moment this"
+		+ " op lands — PowerComponentFailed is an event_log row with a"
+		+ " notification behind it, and it names the component, which this one"
+		+ " does not.",
+
 	# ── not an event at all ────────────────────────────────────────────────
 	"water_works":
 		"not_an_event: sim/city_sim.gd builds a STATION roster row"
@@ -375,7 +397,14 @@ const REGISTER := {
 func _emitted() -> Dictionary:
 	var out: Dictionary = {}
 	var emit_call := RegEx.new()
-	emit_call.compile("(?:bus\\.emit\\(|_emit\\()")
+	# **`emit_event(` joined the pattern in Wave 21** (report 98 §63 RR-184), and
+	# it was a real hole: doc 06's `CascadeOps` publishes through
+	# `IncidentSystem.emit_event`, whose own body calls `_emit(type, …)` with a
+	# VARIABLE, so `incident_notify`, `destroy_refused_offline`,
+	# `power_component_destroyed` and `building_destroyed_by_fire` were emitted by
+	# five call sites this scan could not see. It surfaced the moment a data
+	# router named one of them.
+	emit_call.compile("(?:bus\\.emit\\(|_emit\\(|emit_event\\()")
 	var payload_cut := RegEx.new()
 	payload_cut.compile(",\\s*\\{")
 	var literal := RegEx.new()

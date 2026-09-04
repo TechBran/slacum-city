@@ -70,7 +70,12 @@ func run_one(inc: Incident, action: Dictionary) -> Dictionary:
 			if action.has("floor"):
 				world.set_building_condition_floor(building_id, float(action["floor"]))
 			else:
-				world.apply_building_damage(building_id, -float(action.get("value", 0.0)))
+				# `answerable` is doc 93 §AR2 on the DAMAGE door, on exactly the
+				# predicate the `destroy_building` op below uses: an event may
+				# not finish a building the city could not defend.
+				world.apply_building_damage(building_id,
+						-float(action.get("value", 0.0)),
+						system.incident_was_answerable(inc))
 			return {"op": op, "result": DONE}
 		"destroy_building":
 			return _destroy_building(inc, action)
@@ -134,8 +139,26 @@ func _destroy_building(inc: Incident, _action: Dictionary) -> Dictionary:
 		system.emit_event("destroy_refused_offline", {"incident_id": inc.id,
 				"target": target, "reason": "offline"})
 		return {"op": "destroy_building", "result": REFUSED}
-	world.destroy_building(target, "incident:%d" % inc.id)
-	system.emit_event("building_destroyed_by_fire", {"incident_id": inc.id, "target": target})
+	# **THE BUS SAYS WHAT ACTUALLY HAPPENED — doc 93 §AS1.** Under §AS1 this op
+	# may condemn instead of destroying, and the old line announced
+	# `building_destroyed_by_fire` either way: doc 92 §60.3 caught it saying so
+	# **3,891 times in 45 game-days about buildings that were still standing** on
+	# the player's own save. `GoalSystem`, the notification feed and every
+	# balance instrument read this line, and a terminal event that lies about the
+	# roster is worse than no event at all.
+	var destroyed := world.destroy_building(target, "incident:%d" % inc.id,
+			system.incident_was_answerable(inc))
+	# Two branches rather than one ternary argument, and the reason is an
+	# INSTRUMENT: `tests/test_event_matrix.gd` reads emitted names out of the
+	# source, one line at a time, from the call up to the payload dict. A name
+	# that reaches the bus on a continuation line is a name no matrix can see —
+	# which is how doc 06's ops emitted four types the matrix had never heard of
+	# (report 98 §63 RR-184).
+	var payload := {"incident_id": inc.id, "target": target}
+	if destroyed:
+		system.emit_event("building_destroyed_by_fire", payload)
+	else:
+		system.emit_event("building_condemned_by_fire", payload)
 	return {"op": "destroy_building", "result": DONE}
 
 

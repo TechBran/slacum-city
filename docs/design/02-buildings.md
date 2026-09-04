@@ -381,11 +381,11 @@ Thresholds and effects (all rescaled by ÷100):
 | 0.60–0.85 | Worn | `fire_condition_mult` 1.09–1.38; doc 03's `f_condition` 0.82–0.93 |
 | 0.35–0.60 | Poor | `fire_condition_mult` 1.38–1.79; doc 03's `f_condition` 0.71–0.82; UI warning badge |
 | 0.10–0.35 | Failing | auto-transition `active → damaged` at **0.35** |
-| 0.00–0.10 | **Condemned** | `p_structural_failure = 0.02/gh` → `destroyed` for stock the **city** owns. **Private stock stops here** (§2.6a, doc 93 §AP1): it stays `damaged` at `output_mult` 0.40 and doc 03's `f_condition` 0.46, and the band reaches the player as `buildings_condemned` |
+| 0.00–0.10 | **Condemned** | `p_structural_failure = 0.02/gh` → `destroyed` for the city's **police, fire and construction** stock only. **Private stock stops here** (§2.6a, doc 93 §AP1) **and so does the UTILITY SPINE** — `power_facility`, `substation`, `water_facility` (doc 93 §AR1, Wave 20). Both stay `damaged` at `output_mult` 0.40 and doc 03's `f_condition` 0.46, and the band reaches the player as `buildings_condemned` |
 
 `fire_condition_mult = 1 + 1.5 × (1 − condition)^1.5` — now natively on `[0,1]`: `C=1.00 → 1.00`, `C=0.50 → 1.53`, `C=0.00 → 2.50`.
 
-**Structural failure, as shipped (Wave 4).** `Building.roll_structural_failure` is called once per settled game-hour from `CitySim.apply_hourly_decay`, immediately after `apply_decay` and in the same sorted-id loop, on the **`failures`** RNG stream (constitution §5 — no new stream was minted for it; `failures` is the one doc 02's damage already owns). It rolls only for buildings that are `damaged` **and** below `structural_failure_threshold 0.10`, so a healthy city draws nothing and the stream advances only where the city is already rotting. **Since Wave 19 it also rolls only for stock the CITY owns** — `owner_maintenance.wear_may_demolish` is `false`, so wear condemns private stock and stops (§2.6a, doc 93 §AP1, measured in doc 92 §56). The reason is that this roll was, measurably, the *only* door destruction ever came through: 45 game-days × 4 presets × 2 session kinds and every destruction in all eight arms was `structural_failure`, none from `apply_damage` and none from `burn_down`. A private building at the line stays `damaged` and keeps paying `output_mult` 0.40 — neglect still costs a city roughly four fifths of its income, and it is recoverable by restoring the service that lifted the §2.6a floor. It emits doc 02's own `building_destroyed` with `cause = structural_failure`; the destroyed building stays in the registry at `STATE_OCCUPANCY 0.00` exactly as a burned-down one does, so population, revenue and the rebuild grace window all follow the existing path. **Offline:** during a catch-up the roll is not *taken* rather than taken and refused (doc 08 C-47 / report 98 — an absence may not silently consume the stream, and the rot must still be standing where the returning player can see it).
+**Structural failure, as shipped (Wave 4).** `Building.roll_structural_failure` is called once per settled game-hour from `CitySim.apply_hourly_decay`, immediately after `apply_decay` and in the same sorted-id loop, on the **`failures`** RNG stream (constitution §5 — no new stream was minted for it; `failures` is the one doc 02's damage already owns). It rolls only for buildings that are `damaged` **and** below `structural_failure_threshold 0.10`, so a healthy city draws nothing and the stream advances only where the city is already rotting. **Since Wave 19 it also rolls only for stock the CITY owns** — `owner_maintenance.wear_may_demolish` is `false`, so wear condemns private stock and stops (§2.6a, doc 93 §AP1, measured in doc 92 §56) — **and since Wave 20 not for the UTILITY SPINE either**: `building_rules.utility_spine` names `power_facility`, `substation` and `water_facility`, `BuildingCatalog.wear_may_demolish_for()` folds both rulings into the one stamped `Building.wear_may_demolish` flag, and the guard reads that flag alone (doc 93 §AR1, measured in doc 92 §58). A demolished power plant takes the whole city's power with it and cannot be rebought while insolvent, so wear leaves it at the line generating `output_mult` 0.40 — a neglected city browns out and never goes dark for good. The city's police, fire and construction stock stays losable, because coverage is a loss the player can see, price and rebuild out of. The reason is that this roll was, measurably, the *only* door destruction ever came through: 45 game-days × 4 presets × 2 session kinds and every destruction in all eight arms was `structural_failure`, none from `apply_damage` and none from `burn_down`. A private building at the line stays `damaged` and keeps paying `output_mult` 0.40 — neglect still costs a city roughly four fifths of its income, and it is recoverable by restoring the service that lifted the §2.6a floor. It emits doc 02's own `building_destroyed` with `cause = structural_failure`; the destroyed building stays in the registry at `STATE_OCCUPANCY 0.00` exactly as a burned-down one does, so population, revenue and the rebuild grace window all follow the existing path. **Offline:** during a catch-up the roll is not *taken* rather than taken and refused (doc 08 C-47 / report 98 — an absence may not silently consume the stream, and the rot must still be standing where the returning player can see it).
 
 **Repair / maintenance.** This doc supplies a **`damage_fraction ∈ [0,1]` and crew-hours only**; doc 03 prices it *(report 98 C-16)*.
 
@@ -421,6 +421,23 @@ interrupt the gameplay to repair buildings because nothing actually happened."*
 any condition, and doc 12's panel folds that code into "there is nothing to buy"
 beside `E_NOT_DAMAGED` so the row is not drawn at all (doc 93 §Y3a).
 
+> **ONE EXCEPTION, Wave 21 — the GUTTED SHELL** (doc 93 §AS2, doc 12 D-94).
+> `Building.burnt_out` marks a building an unanswered fire took to the
+> structural-failure line, and on one of those the blocker does not raise: the
+> city may buy the rebuild, at doc 03 §2.5's own repair price and through the
+> same construction queue as any other repair. The reason is in (2) below — the
+> owner does not rebuild a burnt-out structure out of petty cash — and without
+> the exception a private shell would have **no exit at all**, earning
+> `output_mult` 0.40 forever with a REPAIR button greyed out and a reason line
+> saying somebody else was handling it. `Building.complete_repair` clears the
+> flag; the building is fuel again, and burns again.
+>
+> **The auto-repair POLICY does not follow it through the door.**
+> `CitySim._repair_worn_pass` skips `owner_maintained` stock before it quotes
+> anything, `burnt_out` or not — so §2.6's policy dial can never spend a
+> treasury on private buildings the player did not ask it to. The exception
+> opens a button, not a budget line (99-PA PA-33, doc 93 §AL3).
+
 **(2) The owner holds a FLOOR.** A private building wears exactly as §2.6 says —
 **not one `decay_per_hour` cell moves** — and its owner will not let it fall past
 the Worn band's floor:
@@ -431,9 +448,25 @@ owner_maintenance.classes = ["residential", "commercial", "industrial", "tech"] 
 after wear, if owner_maintained and P > 0:
     condition = max(condition, condition.band_worn)          # 0.60
 if state == damaged (an INCIDENT, doc 06) and P > 0:
-    condition += (hours / (build_time_hours × repair_time_factor)) × P
-    damaged → active at condition.repair_target_damaged, event `building_repaired {cause: owner}`
+    if burnt_out:                                            # doc 93 §AS2
+        condition = max(condition, condition.structural_failure_threshold)
+    else:
+        condition += (hours / (build_time_hours × repair_time_factor)) × P
+        damaged → active at condition.repair_target_damaged, event `building_repaired {cause: owner}`
 ```
+
+**The `burnt_out` branch is Wave 21 (doc 93 §AS2), and it is §AP1's own sentence
+read to its end**: an owner whose building is condemned *boards it up*. They HOLD
+the shell at doc 02 §2.6's line — it does not rot away, and it goes on paying
+`output_mult` 0.40 and doc 03's `f_condition` floor, about a fifth of a building
+— and they do no more, because putting a burnt-out structure back is a
+construction job somebody pays for. Two measurements fix the shape (doc 92
+§60.7): with the free rebuild, the same powered building burned every 2.4
+game-hours — **14,071 unanswerable fires in ninety game-days** — and with no hold
+at all the shell decayed to a mean condition of **0.015** with no way back. The
+service gate `P > 0` is unchanged and deliberately not restated: a DARK shell
+falls exactly as any other dark private building falls, which is §Y1a's ruling
+and not this one's.
 
 so a private building is **never `damaged` by wear, never destroyed by wear, and
 always still upgradable** — 0.60 sits above `min_condition_to_upgrade` 0.55, and
@@ -731,10 +764,12 @@ Full transition table:
 | `active` | `damaged` | incident/disaster `damage_fraction`, or `condition < 0.35` | occupancy →0.40, emits `BuildingDamaged`. **A single event's `damage_fraction` may not take a building that was ABOVE `structural_failure_threshold` below it** (Wave 19, doc 93 §AP2): one event condemns, it does not demolish |
 | `active` / `damaged` / `under_construction` | `on_fire` | doc 06 `FireStarted` (ignition roll or spread) | occupancy →0, emits `BuildingIgnited`, doc 06 opens the incident |
 | `on_fire` | `damaged` | doc 06 `FireSuppressed` | doc 06 supplies the residual `damage_fraction`; condition set from it |
-| `on_fire` | `destroyed` | doc 06 `BurnDown` **and** `world.destroy_allowed()` | pop/jobs →0, rubble placed, emits `BuildingDestroyed` |
-| `damaged` | `destroyed` | `condition <= 0` (only reachable from at/below 0.10 — §AP2), the structural-failure roll (`0.02/gh` below 0.10) **on stock the city owns**, or doc 06's explicit `destroy_building` op via `Building.demolish()` | as above. **Private stock is not reachable by the roll** (§2.6a, doc 93 §AP1) |
+| `on_fire` | `destroyed` | doc 06 `BurnDown` **and** `world.destroy_allowed()` **and the city had the CAPABILITY to answer it** (doc 93 §AS1, Wave 21 — a `fire_station` standing AND an engine in the fleet, AND doc 06's `answerable`; the treasury is not consulted) | pop/jobs →0, rubble placed, emits `BuildingDestroyed` |
+| `on_fire` / `active` / `under_construction` at L≥1 | `damaged`, and **`burnt_out`** | doc 06's terminal outcome in a city with no CAPABILITY to answer — no `fire_station` standing, or no fire-capable unit in the fleet, or `DispatchSystem` marked the incident `unreachable` with nothing committed (doc 93 §AS1, Wave 21) | `Building.condemn_unanswered`: condition set to `structural_failure_threshold`, `burnt_out` set, emits `BuildingDamaged` with `cause = unanswered`. A city with no department is not a city being erased. **`burnt_out` is the BOUND** (doc 93 §AS2): the shell's `state_fire_mult` is 0, so it is neither an ignition candidate nor a spread target until it is rebuilt — without it the shell would sit in `damaged` at 0.10, which is **4.1×** a healthy building's ignition rate, and the chain would never terminate |
+| `under_construction` at L0 | `destroyed` | the same terminal outcome on a NEW BUILD (doc 93 §AS1) | a site that never opened has no structure to condemn, and `damaged` at level 0 is not a state this table describes. Emits `BuildingDestroyed` with `cause = unanswered` |
+| `damaged` | `destroyed` | `condition <= 0` (only reachable from at/below 0.10 — §AP2, **and only in a city with the capability to answer** — §AS1's `may_destroy`), the structural-failure roll (`0.02/gh` below 0.10) **on the city's police, fire and construction stock**, or doc 06's explicit `destroy_building` op via `Building.demolish()` in a city that could answer | as above. **Private stock is not reachable by the roll** (§2.6a, doc 93 §AP1) **and neither is the utility spine** — `power_facility`, `substation`, `water_facility` (doc 93 §AR1) |
 | `damaged` | `repairing` | `cmd_repair` + crew assigned | doc 03 charges `repair_cost(damage_fraction)` |
-| `repairing` | `active` | repair progress ≥ 1.0 | `condition = 0.85` |
+| `repairing` | `active` | repair progress ≥ 1.0 | `condition = 0.85`, and **`burnt_out` is cleared** — a paid rebuild is one of the three verbs that lifts it, with `complete_construction` (a restore) and `_destroy`. Routine owner upkeep is NOT one of them (§2.6a, doc 93 §AS2) |
 | `repairing` | `damaged` | crew withdrawn or new damage | partial progress kept |
 | `destroyed` | `planned` | **`cmd_restore_building`** (Wave 18); doc 03 §2.5 charges `capital_value(level_at_destruction) × RESTORE_COST_FRACTION × M_repair`. **The level always survives — no grace window, no demotion** | rubble cleared as part of the project; a `rebuild` job on §2.13's one queue |
 | `destroyed` | (removed) | **`cmd_salvage_building`** (Wave 19); doc 03 §2.5 CREDITS `capital_value(level_at_destruction) × SALVAGE_FRACTION`. **Instant, no job, no crew-hours** | tiles freed, `building_removed` with `cause: salvaged` |
