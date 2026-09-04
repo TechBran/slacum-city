@@ -305,6 +305,28 @@
                              "beacon_hz": 1.35, "beacon_energy": 3.2, "lamp_energy": 2.2,
                              "visible_radius_m": 520.0, "max_sites": 28 },
 
+  "_land_works": "Doc 11 section 2.18, LAND UNDER DEVELOPMENT: the stakes, brush, spoil, base, trench and kerbs LandWorksView dresses a block with while doc 09 section 2.3's six-phase pipeline runs on it. Everything here is per BLOCK, and a block is 16x16 tiles. The two scatter counts are the only per-preset knobs because they are the only numbers that scale with a block's AREA -- eight stakes is eight stakes on a phone. The runs this layer paves are NOT authored here: they are doc 10's own block template (RoadNetwork.TEMPLATE_COLLECTOR_INDEX and the boundary), so the base goes down exactly where the street lands two phases later, and a template change moves both together. visible_radius_m is larger than the plant layer's 520 on purpose: a block is 128 m across and its dressing reads as terrain at a distance where a lorry no longer reads as anything. Heavy plant is not here at all -- it goes through construction_vehicles above, with a per-phase profile.",
+  "land_works": {
+    "visible_radius_m": 640.0,
+    "max_blocks": 8,
+    "brush_per_block": 40,
+    "spoil_per_block": 6,
+    "stake_color": "#D8C24A",
+    "tape_color": "#E8752A",
+    "brush_color": "#3B5323",
+    "stump_color": "#5A4A31",
+    "graded_color": "#6B5C48",
+    "spoil_color": "#7A6B54",
+    "pave_color": "#3A3D41",
+    "trench_color": "#241F1A",
+    "pipe_color": "#6E8A72",
+    "kerb_color": "#9AA0A6",
+    "presets": {
+      "performance": { "brush": 16, "spoil": 3, "blocks": 4 },
+      "balanced":    { "brush": 40, "spoil": 6, "blocks": 8 },
+      "quality":     { "brush": 64, "spoil": 8, "blocks": 12 }
+    }
+  },
   "_street_life": "Doc 11 section 2.17, STREET LIFE: the crook, the stray, the goat and the dropped stash the sim's opportunity system puts on the street, drawn by StreetLifeView off StreetLifeModel. TWO CLOCKS and they are not the same one. The WANDER is in GAME-MINUTES, like the traffic and the plant, so a paused city is a still city; the FX (collect_s, expire_s, burst_s, label_s) are REAL SECONDS, because a +$N that freezes in mid-air because the player paused a quarter-second after tapping is a bug. The footway numbers this layer stands a body on are NOT here: it reads road_surface.asphalt_top_m, kerb_height_m and the two sidewalk widths, so a body stands on the kerb the street pass actually drew. marker_angular is METRES OF MARKER PER METRE OF CAMERA DISTANCE -- an ANGULAR size, so a marker is the same number of screen pixels at Z0 (18 m) as at Z1 (86.9 m); at the shipped 0.0310 with a 40 deg vertical FOV that is 46 px on a 1080-line frame, and the clamps stop it becoming a postage stamp at Z0 or a billboard at Z2. max_live is the RENDER ceiling and deliberately above the sim's own cap: the slack is for the frame on which one opportunity is collected and its replacement spawns.",
   "street_life": { "wander_radius_m": 2.9, "wander_across_frac": 0.30, "waypoints": 5,
                    "gait_move_gm": [0.90, 1.10, 1.55, 1.0],

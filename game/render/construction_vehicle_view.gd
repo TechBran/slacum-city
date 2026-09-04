@@ -203,6 +203,16 @@ func set_stage(id: int, stage: int) -> void:
 	activity.set_stage(id, stage)
 
 
+## **The plant a site is running, when the stage ladder is the wrong answer**
+## (Wave 25, doc 11 §2.18). A building site never calls this and reads
+## `EXCAVATORS_BY_STAGE` and `stage >= CLEANUP_STAGE` exactly as it always has;
+## `LandWorksView` calls it once per development phase, because doc 09 §2.3
+## names a crew per phase and "two excavators AND lorries hauling out" is a
+## combination no building stage has. `excavators < 0` restores the table.
+func set_site_profile(id: int, excavators: int, haul_out: bool) -> void:
+	activity.set_profile(id, excavators, 1 if haul_out else 0)
+
+
 func remove_site(id: int) -> void:
 	activity.remove_site(id)
 	_pending.erase(id)

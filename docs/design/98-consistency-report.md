@@ -9472,6 +9472,139 @@ is an answer to a question the panel is not asking.
 `ui/land_panel_model.gd`, `ui/land_panel.gd`, `game/ui/ui_root.tscn`,
 `data/ui.json`, `data/audio.json`, `data/strings.en.json`.
 
+### RR-211 — `LandWorksView`: the render layer learns that land development exists (§69.3a)
+
+**`grep -rn "CLEARING\|GRADING\|development_state" game/` came back EMPTY at the
+fork.** Doc 09 §2.3's six-phase pipeline has run since Wave 4 and no pixel in the
+game has ever known about it: a block being dug out was rendered exactly like a
+block nobody had touched, while the treasury was charged fourteen or fifteen
+times per 21 game-days for work the player could not see happening.
+
+`game/render/land_works_view.gd` draws it — pegs and tape at SURVEY, scrub that
+goes clump by clump through CLEARING, a graded plane and spoil heaps at GRADING,
+base laid progressively along **doc 10's own block template** at ROAD_INSTALL, an
+open trench toward the block centre at UTILITY_CORRIDOR, kerbs at
+FINAL_DEVELOPMENT, and nothing at all at READY. The per-phase draw-call and
+instance table is doc 11 §2.18's and is taken by the suite rather than by hand
+(`tests/test_land_works_view.gd`), so it cannot rot: **zero calls on a city with
+nothing in flight, four at the busiest phase, six as the ceiling however many
+blocks are being developed**, and 7 nodes, constant.
+
+**The heavy plant is doc 11 §2.16's, given a profile.** `ConstructionActivity`
+grows one optional per-site override — how many excavators are working and which
+way the lorries run — because *two machines AND lorries leaving loaded* is a
+combination no BUILDING stage has, and doc 09 §2.3 names a crew per phase.
+`heavy_equipment_crew` phases get two excavators hauling out, `road_crew` gets one
+machine and deliveries in, and the two `construction_crew` phases register no
+plant at all. A building site sets neither field and is byte-identical to what it
+was, which `test_a_building_site_is_untouched_by_the_profile` holds.
+
+**Two defects were found by photographing it, and both are recorded because
+neither was visible in a headless count.** (a) The instance tints were authored
+as sRGB hexes and written raw into a MultiMesh, which the renderer reads as
+LINEAR — a dark olive scrub rendered as pale sand. Decoded once at the read now,
+which is doc 91 A91-D-36's rule. (b) `Basis.scaled` applies its factors on the
+WORLD axes after a rotation, so a base run laid along Z came out `width` long and
+`length` wide: four clean block edges photographed as a zigzag. Every rotated
+instance uses `scaled_local`.
+
+#### The shell wiring — `game/main.gd`, six snippets
+
+*The lead owns this file; these are the patches, each against a named anchor.*
+
+**1. The member, beside `construction_plant` (anchor: `var construction_plant: ConstructionVehicleView   # doc 11 §2.16: plant + deliveries`, line ~42):**
+
+```gdscript
+var land_works: LandWorksView                     # doc 11 §2.18: land under development
+```
+
+**2. Bring-up, immediately after the `construction_plant.site_frontage_changed`
+connect (anchor: the closing `construction_view.set_gate_side(id, side))`, line
+~474), and BEFORE the `street_life` block:**
+
+```gdscript
+	# doc 11 §2.18 — LAND UNDER DEVELOPMENT. The first render layer that has ever
+	# known doc 09 §2.3's pipeline exists. It dresses the block itself and hands
+	# the heavy plant to `construction_plant` above with a per-phase profile, so
+	# the crew type the phase names is the machine that turns up. `set_gate_side`
+	# above is a no-op on an id it does not hold, so a land site riding the same
+	# `site_frontage_changed` wire needs no guard.
+	land_works = LandWorksView.new()
+	land_works.name = "LandWorks"
+	add_child(land_works)
+	land_works.setup(render_data)
+	land_works.set_preset(render_model.preset, render_data)
+	land_works.bind(sim_host.sim.world, sim_host.sim.development,
+			sim_host.sim.construction)
+	land_works.set_plant(construction_plant)
+	# A city resumed mid-pipeline has no events left to tell this layer about it.
+	land_works.adopt()
+```
+
+**3. The tick batch, in `_on_sim_batch`, beside the other three `feed_events`
+calls (anchor: `street_life.feed_events(batch)  # doc 11 §2.17's opportunity_* trio`, line ~444):**
+
+```gdscript
+	if land_works != null:
+		land_works.feed_events(batch)   # doc 11 §2.18's phase transitions
+```
+
+**4. The frame, in `_process`, after the `construction_plant.refresh` block
+(anchor: the `float(sim_host.sim.clock.game_seconds()) / 60.0)` line, ~2526):**
+
+```gdscript
+	# doc 11 §2.18. No sim clock: this layer animates nothing — it re-reads its
+	# own active set at 4 Hz and re-uploads only when something moved.
+	if land_works != null:
+		land_works.set_focus(camera_state.focus)
+		land_works.refresh(delta, environment_controller.last_night)
+```
+
+**5. The preset swap, both call sites (anchors: the
+`construction_plant.set_preset(str(model.value("graphics")), …)` at ~1490 and the
+`construction_plant.set_preset(String(knobs["preset"]), _render_data)` at ~2575):**
+
+```gdscript
+			if land_works != null:
+				land_works.set_preset(str(model.value("graphics")), _render_data)
+```
+```gdscript
+				if land_works != null:
+					land_works.set_preset(String(knobs["preset"]), _render_data)
+```
+
+**6. The load, beside `construction_plant.clear()` (anchor: `construction_plant.set_road_network(sim.roads)`, line ~1908):**
+
+```gdscript
+	if land_works != null:
+		land_works.clear()
+		land_works.bind(sim.world, sim.development, sim.construction)
+		land_works.adopt()
+```
+
+### RR-212 — the preview states, and what this lane files to whoever holds the gates (§69.4)
+
+**Seven preview states in the same commit as the layer** — A91-D-28's lesson,
+applied on the way in rather than a wave late.
+
+* `tools/land_works_preview.gd --out=DIR [--census]` — one PNG per phase from the
+  block's own frontage, plus the draw-call table. `tools/construction_preview.gd`'s
+  sibling for a land block, for its reason: the suite holds the counts, and only a
+  picture holds whether a graded plane with three spoil heaps on it reads as
+  ground being worked.
+* `tools/ui_preview.gd --screen=land_yield` — doc 12 §2.21 D-117's panel with
+  doc 03 §2.8b's three rows on it. **It has to be the SECOND block**, and that is
+  a measurement rather than a fixture choice: the yard empties itself on the very
+  next phase of the block that filled it (doc 92 §66.5), so the only moment all
+  three rows are on screen together is a fresh pipeline standing beside a yard the
+  previous block's utility corridor filled. `--audit --strict` exit 0, and the
+  whole 68-state deck sweeps clean at 412 × 915.
+
+The two `awaiting_consumer` rows this lane files — to Wave 23 for gate 29 and to
+Wave 24 for the curriculum gates — are §69.4's table above, with the per-day
+dollar magnitude each holder needs to decide whether their gate re-records or
+re-fits.
+
 ### 69.3 The four `profile_sim --hash-only` baselines, and the A/B that isolates them
 
 | `profile_sim --hash-only` | at the fork (`6dba66c`) | after this pass |

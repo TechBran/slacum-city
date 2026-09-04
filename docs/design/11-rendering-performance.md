@@ -3645,6 +3645,137 @@ claim nobody re-checks.
 
 `profile_frame` also prints a **BLOB SHADOWS** line on every run now, on or off, for the reason RR-83 gave: "zero on the other two presets" is half the claim and an unprinted half is a half nobody re-checks.
 
+### 2.18 LAND UNDER DEVELOPMENT — the block being dug out, **shipped 2026-09-04**
+
+*The player, 2026-09-04: "when we open up a new plot of land, we want
+construction animations for that land — to show that the land is being worked:
+digging it, materials." Arguments: report 98 §69 RR-211. Rulings: doc 93 §AZ4.
+Sim: doc 09 §2.3's six-phase pipeline; money: doc 03 §2.8b.*
+
+**What was there before: nothing.** `grep -rn "CLEARING\|GRADING\|development_state"
+game/` came back empty. Doc 09 §2.3's pipeline has run since Wave 4 — six phases,
+one crew each, $1.2K–$21K a phase, fourteen or fifteen charges per 21 game-days —
+and a block being dug out was rendered exactly like a block nobody had touched.
+`game/render/land_works_view.gd` is the layer that closes that.
+
+#### The six phases, drawn
+
+| phase | what the block shows |
+|---|---|
+| SURVEY | eight pegs on the lot line with tape off each head; the brush is still standing, because nothing has been cleared |
+| CLEARING | the scrub and the stumps go **clump by clump as the job runs** — the live count is `budget × (1 − progress)`, so the block empties in front of the player |
+| GRADING | a graded dirt plane over the block interior, and spoil heaps that grow with the cut |
+| ROAD_INSTALL | base laid progressively along **doc 10's own template** — `RoadNetwork.TEMPLATE_COLLECTOR_INDEX` and the boundary, read rather than guessed, so the strip is exactly where the street lands two phases later |
+| UTILITY_CORRIDOR | an open trench down the collector line **toward the block centre**, which is where `CitySim._extend_utility_corridor` runs the lateral, with pipe stacked on the spoil side |
+| FINAL_DEVELOPMENT | kerbs going in along the finished runs, the spoil coming down |
+| READY | nothing. The block is ground now. |
+
+#### Six buffers, and the budget
+
+One MultiMesh per prop kind, every buffer born hidden and switched off again the
+moment it empties — RR-83's rule, applied on the way in this time. **A city with
+no pipeline in flight costs ZERO draw calls and 7 nodes** (six
+`MultiMeshInstance3D` plus the layer's own `Node3D`), and the node count is
+constant however many blocks are being developed, because every block writes into
+the same six buffers.
+
+Measured by `tests/test_land_works_view.gd::test_the_per_phase_budget_is_what_doc_11_publishes`,
+one block, `balanced`, at the middle of each phase — so this table cannot rot:
+
+| phase | draw calls | stake | brush | graded | spoil | pave | trench | instances |
+|---|---|---|---|---|---|---|---|---|
+| SURVEY | **2** | 8 | 40 | 0 | 0 | 0 | 0 | 48 |
+| CLEARING @ 0.5 | **2** | 8 | 20 | 0 | 0 | 0 | 0 | 28 |
+| GRADING @ 0.5 | **2** | 0 | 0 | 1 | 3 | 0 | 0 | 4 |
+| ROAD_INSTALL @ 0.5 | **3** | 0 | 0 | 1 | 6 | 18 | 0 | 25 |
+| UTILITY_CORRIDOR @ 0.5 | **4** | 0 | 0 | 1 | 5 | 36 | 6 | 48 |
+| FINAL_DEVELOPMENT @ 0.5 | **3** | 0 | 0 | 1 | 3 | 54 | 0 | 58 |
+
+**Six is the ceiling and four is the worst single phase.** The layer's whole cost
+is bounded by the number of PROP KINDS, not by the number of blocks: three blocks
+at three different phases still submit at most six buffers between them.
+
+Two per-preset knobs, and they are the only two that scale with a block's AREA —
+a block on `performance` still gets pegs, a graded plane, base, a trench and
+kerbs; it gets fewer stumps and fewer heaps:
+
+| preset | brush | spoil | blocks drawn |
+|---|---|---|---|
+| performance | 16 | 3 | 4 |
+| balanced | 40 | 6 | 8 |
+| quality | 64 | 8 | 12 |
+
+#### Three layers carry a page and three do not, and the split is the transform
+
+`ConstructionRigMesh` bakes its UVs in MESH space, so a `prop_*` page is only
+physical while an instance is near unit size. The peg, the scrub clump and the
+spoil heap are (1.0–5.4×) and carry the same grain every other prop in the city
+carries. The graded plane, the base runs and the trench are the opposite case —
+their whole SIZE is the instance transform (126 m of plane, 20 m of run) — so a
+tiled page would be stretched by two orders of magnitude and read as smeared
+rectangles rather than as ground. Those three take flat vertex-colour materials,
+which is exactly what `PropSurface` degrades to on a clone with no pages.
+
+**And `Basis.scaled_local`, not `Basis.scaled`.** `scaled` applies its factors on
+the WORLD axes after the rotation, so a run laid along Z came out `width` long and
+`length` wide: the first photograph of this layer had four clean block edges
+rendered as a zigzag. Every rotated instance on this layer uses `scaled_local`.
+
+#### The plant is doc 11 §2.16's, with a per-phase profile
+
+Nothing on this layer drives a machine. A block is registered with
+`ConstructionVehicleView` — the layer that already routes real streets to a
+site's frontage — and given a profile per phase, so **the crew type doc 09 §2.3
+names is the machine that turns up**:
+
+| phase | doc 09 crew | excavators | lorries |
+|---|---|---|---|
+| SURVEY | `construction_crew` | — | **no site registered at all** |
+| CLEARING | `heavy_equipment_crew` | 2 | hauling OUT |
+| GRADING | `heavy_equipment_crew` | 2 | hauling OUT |
+| ROAD_INSTALL | `road_crew` | 1 | delivering IN |
+| UTILITY_CORRIDOR | `heavy_equipment_crew` | 2 | hauling OUT |
+| FINAL_DEVELOPMENT | `construction_crew` | 0 | hauling OUT (the tidy) |
+
+That combination — two machines AND lorries leaving loaded — is one no BUILDING
+stage has, which is why `ConstructionActivity` grew an optional per-site profile
+rather than this layer growing a second plant system. A building site sets
+neither field and reads `EXCAVATORS_BY_STAGE` and `stage >= CLEANUP_STAGE`
+exactly as it always has (`tests/test_land_works_view.gd::test_a_building_site_is_untouched_by_the_profile`).
+
+Plant ids are `LandWorksView.PLANT_ID_BASE + hash(block_id) % 100000` — 800,000
+and up, against a building id space that starts at 1 and reaches 1,500 on doc 09
+§2.13's benchmark city. `ConstructionSiteView.set_gate_side` is a no-op on an id
+it does not hold, so the shell's existing `site_frontage_changed` wire needs no
+guard.
+
+#### What it reads, and what it may never read
+
+Ruling 93 §AZ4. Membership is EVENT-driven — `development_phase_started`,
+`development_phase_completed`, `block_ready`, `development_paused`, on the batch
+the shell already drains once per tick — so it costs nothing between transitions.
+Progress *within* a phase is on no event and must not be: it moves every tick and
+an event per tick is a bus flooded with a number. So the view polls at 4 Hz, and
+it polls **its own active set**: the handful of blocks it has already been told
+are developing, never `world.block_ids_sorted()`. `adopt()` is the one place it
+walks the world, once per bring-up, for the boot-and-load case where there are no
+events left to hear.
+
+It writes nothing. Every scatter is a hash of the block id and an index, so a
+block looks the same on every device and after every load, and
+`tests/test_land_works_view.gd::test_the_view_cannot_move_the_state_hash` pins
+that a city advanced with this layer reading it hashes identically to one that
+never had a view.
+
+#### The instrument
+
+`tools/land_works_preview.gd --out=DIR [--census]` shoots one PNG per phase from
+the block's own frontage and prints the table above. It is
+`tools/construction_preview.gd`'s sibling for a land block: same stack minus the
+building, same reason for existing — the suite holds the counts, and only a
+picture holds whether a graded plane with three spoil heaps on it reads as ground
+being worked.
+
 ## 3. Data Schema
 
 ### 3.1 `data/render.json`
