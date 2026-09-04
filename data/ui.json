@@ -689,12 +689,12 @@
 				"_comment": "NEW, Wave 21 (doc 93 sec AS1, doc 12 D-94). The harsher of a fire's two terminal outcomes, and it had never been on the feed at all: doc 06 has emitted `building_destroyed_by_fire` since Wave 8 and no router named it, so a building the fire actually TOOK was announced only by doc 02's own `building_destroyed`, which says nothing about a fire. Its sibling row below is the other ending. Both, or neither -- a feed that could only say one of them is how the 3,891 lying events in doc 92 sec 60.3 went unnoticed for a wave.",
 				"type": "building_destroyed_by_fire",
 				"category": "incidents",
-				"notify_id": "incident_failed",
+				"notify_id": "building_lost_to_fire",
 				"state": "critical",
 				"key": "target",
 				"args": {
-					"kind": "@kind:incident_type",
-					"tier": "tier_peak"
+					"building": "target",
+					"time": "@time"
 				}
 			},
 			{
